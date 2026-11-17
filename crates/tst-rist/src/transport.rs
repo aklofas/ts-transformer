@@ -32,7 +32,8 @@ use crate::url::RistUrl;
 ///   `ExplicitClose`);
 /// - calls started after `cancel()` return `ExplicitClose` at their entry
 ///   check (`send_bytes` never parks — `rist_sender_data_write` enqueues —
-///   so the entry check is its only cancel point);
+///   so the entry check is its only cancel point that interrupts work; a
+///   write that then fails reads the latch too);
 /// - a tick that delivered a block returns it; the *next* call fails;
 /// - `is_alive()` reads `false` after `cancel()`; `close()` afterwards
 ///   still runs `rist_destroy` exactly once (double close stays a no-op).
@@ -127,9 +128,12 @@ impl Transport for RistTransport {
     ///   and nothing was sent);
     /// - `rc == -2` (sender queue full) → [`TransportError::Backpressure`]
     ///   `{ errno_code: Some(-2) }`, transport alive, `msg` NOT consumed —
-    ///   retry it later;
+    ///   retry it later ([`TransportError::ExplicitClose`] instead when the
+    ///   cancel is latched);
     /// - any other `rc < 0` → [`TransportError::Broken`] `{ errno_code:
-    ///   Some(rc) }` and the transport is latched dead.
+    ///   Some(rc) }` and the transport is latched dead
+    ///   ([`TransportError::ExplicitClose`] instead when the cancel is
+    ///   latched).
     fn send_bytes(&mut self, msg: &[u8]) -> Result<(), TransportError> {
         // Cancel wins over close: a caller who fired the handle sees the
         // cancel outcome even if a close() raced in afterwards.
