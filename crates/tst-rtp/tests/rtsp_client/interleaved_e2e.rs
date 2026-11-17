@@ -1,6 +1,7 @@
 //! TCP-interleaved producer thread wiring, client against our server.
-//! Dropping the client writes TEARDOWN (500 ms bounds the wait for the
-//! control stream and the write) and does not wait for the reply, so the
+//! Dropping the client writes TEARDOWN (500 ms, or with the pump at least
+//! its `read_timeout` plus 100 ms, bounds the wait for the control stream
+//! and the write) and does not wait for the reply, so the
 //! post-PLAY teardown cannot hang on the server's lingering write-half
 //! references after `RtspServer::stop`.
 //!
