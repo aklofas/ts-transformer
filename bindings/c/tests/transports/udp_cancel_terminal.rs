@@ -125,3 +125,32 @@ fn udp_mux_sender_cancel_then_finish_returns_closed() {
     );
     unsafe { tst_udp_mux_sender_close(tx) };
 }
+
+/// A finished sender answers a repeated `_finish` with 0 until it is
+/// cancelled; after `_cancel` the repeat is `TST_E_CLOSED`.
+#[test]
+fn udp_mux_sender_finish_cancel_then_finish_returns_closed() {
+    let url = CString::new(format!("udp://127.0.0.1:{}", free_port())).unwrap();
+    let (tx, cfg) = unsafe {
+        let cfg = tst_mux_config_new();
+        let prog = tst_mux_config_add_program(cfg, 1, 0x1000);
+        tst_mux_config_add_video_stream(cfg, prog, 0x1011, TstVideoCodec::H264 as i32);
+        (tst_udp_mux_sender_open(url.as_ptr(), cfg), cfg)
+    };
+    unsafe { tst_mux_config_free(cfg) };
+    assert!(!tx.is_null(), "open: {}", last_error_msg());
+    assert_eq!(
+        unsafe { tst_udp_mux_sender_finish(tx) },
+        0,
+        "first finish: {}",
+        last_error_msg()
+    );
+    assert_eq!(unsafe { tst_udp_mux_sender_cancel(tx) }, 0, "cancel rc");
+    assert_eq!(
+        unsafe { tst_udp_mux_sender_finish(tx) },
+        TstError::Closed as i32,
+        "finish after finish and cancel: {}",
+        last_error_msg()
+    );
+    unsafe { tst_udp_mux_sender_close(tx) };
+}

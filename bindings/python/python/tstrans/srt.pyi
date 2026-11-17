@@ -690,8 +690,10 @@ class ManagedMuxSender:
     def finish(self) -> None:
         """Drain pending bytes to the transport, raise the first drain error
         (``SrtError`` with the transport's kind), then close.
-        The sender is closed either way; a second ``finish()`` is a no-op,
-        and so is a ``finish()`` after ``close()``. It does NOT free the
+        The sender is closed either way; a second ``finish()`` is a no-op
+        unless the sender has been cancelled (after a cancel every
+        ``finish()`` raises ``CLOSED``, a repeated one included). A
+        ``finish()`` after ``close()`` is a no-op too. It does NOT free the
         handle — call ``close()`` (or use the ``with`` block) to release it.
         Unlike ``close()`` this does not cancel a parked send first.
         After ``cancel_handle().cancel()`` this raises ``CLOSED``, buffered

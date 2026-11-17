@@ -541,7 +541,9 @@ impl PyManagedMuxSender {
     /// Drain every byte the muxer still holds to the transport, raise the
     /// first drain error, then close the transport — the lossless
     /// counterpart to `close()`. The sender is closed either way; a second
-    /// `finish()` is a no-op, and so is a `finish()` after `close()`.
+    /// `finish()` is a no-op unless the sender has been cancelled (after a
+    /// cancel every `finish()` raises `CLOSED`, a repeated one included). A
+    /// `finish()` after `close()` is a no-op too.
     ///
     /// Unlike `close()` this does NOT cancel first: a push parked on
     /// another thread — including one waiting out a reconnect backoff —
