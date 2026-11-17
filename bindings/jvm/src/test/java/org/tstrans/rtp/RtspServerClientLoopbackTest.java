@@ -19,6 +19,7 @@ import org.tstrans.mpegts.DemuxEvent;
 import org.tstrans.mpegts.Demuxer;
 import org.tstrans.mpegts.Muxer;
 import org.tstrans.shells.DemuxReceiver;
+import org.tstrans.shells.EndReason;
 
 /**
  * Capstone live cross-binding loopback: an in-JVM {@link RtspServer} (mount fed by
@@ -243,6 +244,81 @@ class RtspServerClientLoopbackTest {
                 done.countDown();
                 watchdog.interrupt();
                 producer.join(TimeUnit.SECONDS.toMillis(2));
+                rx.close();
+                mount.close();
+            }
+        }
+    }
+
+    /**
+     * {@code session.close()} sends TEARDOWN and waits for the server's reply; the
+     * accepted TEARDOWN ends the live interleaved receiver with end of stream: its
+     * iteration drains what is queued and ends without throwing.
+     */
+    @Test
+    @Timeout(TIMEOUT_SEC + 10)
+    void closingTheSessionEndsALiveDemuxReceiverWithEndOfStream() throws Exception {
+        assumeTrue(isLinux(),
+            "RTSP live loopback gated to Linux (real sockets + tokio runtime)");
+
+        try (RtspServer server = RtspServer.start(RtspServerConfig.of("127.0.0.1:0"))) {
+            String addr = server.localAddr();
+            int port = Integer.parseInt(addr.substring(addr.lastIndexOf(':') + 1));
+            MountHandle mount = server.addUnicastMount("/live", roundtripConfig());
+
+            CountDownLatch done = new CountDownLatch(1);
+            Thread producer = new Thread(() -> {
+                long pts = 0;
+                try {
+                    while (done.getCount() > 0) {
+                        mount.pushVideo(syntheticH264Idr(), pts, true);
+                        mount.flush();
+                        pts += 3000;
+                        Thread.sleep(20);
+                    }
+                } catch (Exception ignored) {
+                    // server stop / mount close races teardown
+                }
+            });
+            producer.setDaemon(true);
+            producer.start();
+
+            RtspSession session = RtspClient.connect(
+                RtspClientConfig.of("rtsp://127.0.0.1:" + port + "/live?transport=tcp"));
+            DemuxReceiver rx = session.intoDemuxReceiver();
+            // A parked read must not wedge the runner: close() cancels first,
+            // which fails the test with CLOSED instead of hanging it.
+            Thread watchdog = new Thread(() -> {
+                try {
+                    Thread.sleep(TimeUnit.SECONDS.toMillis(TIMEOUT_SEC - 3));
+                    rx.close();
+                } catch (InterruptedException ignored) {
+                    // happy path
+                }
+            });
+            watchdog.setDaemon(true);
+            watchdog.start();
+            try {
+                boolean sawVideo = false;
+                for (DemuxEvent e : rx) {
+                    if (e instanceof DemuxEvent.Video v && !v.parse().isEmpty()) {
+                        sawVideo = true;
+                        break;
+                    }
+                }
+                assertTrue(sawVideo, "the receiver is live before the session closes");
+
+                session.close();
+
+                for (DemuxEvent ignored : rx) {
+                    // drain the queued events; the iteration must end, not throw
+                }
+                assertEquals(EndReason.CLEAN_TEARDOWN, rx.endReason());
+            } finally {
+                done.countDown();
+                watchdog.interrupt();
+                producer.join(TimeUnit.SECONDS.toMillis(2));
+                session.close();
                 rx.close();
                 mount.close();
             }
