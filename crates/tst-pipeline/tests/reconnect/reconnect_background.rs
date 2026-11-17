@@ -405,6 +405,68 @@ fn flap_cycles_never_wedge_or_hang() {
     );
 }
 
+/// Reject policy, capacity 1, one whole budget of failed attempts: the
+/// give-up leaves a full backlog and no worker.
+fn reject_full_after_give_up(rig: &Rig) -> ManagedTransport<ScriptedSend> {
+    rig.push_outcome(SendStep::Broken);
+    let policy = ReconnectPolicy::default()
+        .with_max_attempts(Some(2))
+        .with_backoff(BackoffStrategy::Constant(Duration::from_millis(10)))
+        .with_gap_buffer_capacity(1)
+        .with_overflow_policy(OverflowPolicy::Reject)
+        .with_mode(ReconnectMode::Background);
+    // The factory fails its first two calls (one whole budget), then succeeds.
+    let mut managed = ManagedTransport::new(rig.transport(), rig.factory(2), policy)
+        .expect("the policy validates");
+    let stats = managed.stats_handle();
+    managed.send_bytes(&[0]).unwrap(); // breaks, queued, worker starts
+    wait_until(Duration::from_secs(10), || {
+        !stats.stats().unwrap().reconnecting
+    });
+    managed
+}
+
+#[test]
+fn background_reject_full_backlog_restarts_the_worker_after_a_give_up() {
+    let rig = Rig::new();
+    let mut managed = reject_full_after_give_up(&rig);
+    // The one-shot give-up report.
+    assert!(matches!(
+        managed.send_bytes(&[1]),
+        Err(TransportError::Broken { .. })
+    ));
+    // Refused, not queued, but the backlog's worker restarts.
+    assert!(matches!(
+        managed.send_bytes(&[2]),
+        Err(TransportError::Backpressure { .. })
+    ));
+    wait_until(Duration::from_secs(10), || {
+        rig.sent_snapshot() == vec![vec![0]]
+    });
+    managed.send_bytes(&[3]).unwrap();
+}
+
+#[test]
+fn background_cancelled_wrapper_does_not_restart_a_worker_for_a_full_reject_backlog() {
+    let rig = Rig::new();
+    let mut managed = reject_full_after_give_up(&rig);
+    let stats = managed.stats_handle();
+    let cancel = managed
+        .cancel_handle()
+        .expect("managed always has a handle");
+    assert!(matches!(
+        managed.send_bytes(&[1]),
+        Err(TransportError::Broken { .. })
+    ));
+    cancel.cancel();
+    assert!(matches!(
+        managed.send_bytes(&[2]),
+        Err(TransportError::ExplicitClose)
+    ));
+    assert!(!stats.stats().unwrap().reconnecting);
+    assert!(rig.sent_snapshot().is_empty(), "nothing was delivered");
+}
+
 #[test]
 fn background_give_up_reports_broken_once_then_restarts_budget() {
     let rig = Rig::new();
