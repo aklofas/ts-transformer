@@ -5752,3 +5752,12 @@ owning_tests = ["crates/tst-udp/tests/net_source.rs", "crates/tst-rist/tests/net
 bindings = ["c:n/a(the C ABI reads the record through the _peer_addr and _get_source_rejected getters)", "python:n/a(the Python transports and shells read the record through their peer_addr and source_rejected getters)", "java:n/a(the JVM shells read the record through their peerAddr and sourceRejected getters)", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-rtp"
+item = "tst_rtp::rtsp::client::RtspClient::teardown_within"
+owning_tests = ["crates/tst-rtp/src/rtsp/client/teardown.rs", "bindings/c/tests/transports/rtsp_client_connect.rs"]
+bindings = ["c:tst_rtsp_session_teardown_and_free", "python:deferred(RtspSession.teardown() and a collected session use the request timeout and the drop path)", "java:deferred(RtspSession.teardown() and close() use the request timeout)", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"

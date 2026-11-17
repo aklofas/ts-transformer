@@ -717,6 +717,7 @@ pub fn tst_rtp::rtsp::client::RtspClient::setup_h264_auto(&mut self, &tst_rtp::s
 pub fn tst_rtp::rtsp::client::RtspClient::setup_mp2t_auto(&mut self, &tst_rtp::sdp::Sdp) -> core::result::Result<tst_rtp::rtsp::client::session::RtspSession, tst_rtp::error::RtspError>
 impl tst_rtp::rtsp::client::RtspClient
 pub fn tst_rtp::rtsp::client::RtspClient::teardown(&mut self) -> core::result::Result<(), tst_rtp::error::RtspError>
+pub fn tst_rtp::rtsp::client::RtspClient::teardown_within(&mut self, core::time::Duration) -> core::result::Result<(), tst_rtp::error::RtspError>
 impl core::fmt::Debug for tst_rtp::rtsp::client::RtspClient
 pub fn tst_rtp::rtsp::client::RtspClient::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::ops::drop::Drop for tst_rtp::rtsp::client::RtspClient
@@ -2503,6 +2504,7 @@ pub fn tst_rtp::rtsp::client::RtspClient::setup_h264_auto(&mut self, &tst_rtp::s
 pub fn tst_rtp::rtsp::client::RtspClient::setup_mp2t_auto(&mut self, &tst_rtp::sdp::Sdp) -> core::result::Result<tst_rtp::rtsp::client::session::RtspSession, tst_rtp::error::RtspError>
 impl tst_rtp::rtsp::client::RtspClient
 pub fn tst_rtp::rtsp::client::RtspClient::teardown(&mut self) -> core::result::Result<(), tst_rtp::error::RtspError>
+pub fn tst_rtp::rtsp::client::RtspClient::teardown_within(&mut self, core::time::Duration) -> core::result::Result<(), tst_rtp::error::RtspError>
 impl core::fmt::Debug for tst_rtp::rtsp::client::RtspClient
 pub fn tst_rtp::rtsp::client::RtspClient::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::ops::drop::Drop for tst_rtp::rtsp::client::RtspClient
