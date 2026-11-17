@@ -156,6 +156,18 @@ through its join handle with `pthread_kill`, runs on macOS.
 """
 
 [[platform_skip]]
+file = "crates/tst-rtp/tests/rtsp_client/request_failures.rs"
+platform = "macos-arm64,windows-msvc"
+capability = "tcp_reset_then_request"
+class = "environmental"
+note = """
+The two "request after a reset" tests (an abortive `SO_LINGER=0` close, then a
+request once the client has recorded it) are Linux only: that sequence has
+not been measured on macOS or Windows. The two EOF tests in the file run on
+every platform.
+"""
+
+[[platform_skip]]
 file = "crates/tst-rtp/tests/net_rtp.rs"
 platform = "windows-msvc"
 capability = "unix_signals"
