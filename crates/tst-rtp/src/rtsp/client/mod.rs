@@ -472,9 +472,10 @@ impl RtspClient {
     /// cancel is already set, the TEARDOWN is still written, its reply is
     /// not awaited and the result is [`RtspError::LocalCancel`].
     ///
-    /// On a client that was not cancelled, the end reason it leaves (unless
-    /// one was recorded before) is `CleanTeardown` when the server accepts
-    /// the TEARDOWN (`2xx` or `454`), else `Cancelled`.
+    /// The end reason it leaves (unless one was recorded before) is
+    /// `CleanTeardown` when the server accepts the TEARDOWN (`2xx` or
+    /// `454`); `Cancelled` when it refuses or does not answer it, or when
+    /// `close` is called on a cancelled client.
     ///
     /// Dropping the client instead sets the cancel, writes TEARDOWN within
     /// the same 500 ms bound when a session is open, and tells the thread
@@ -493,6 +494,11 @@ impl RtspClient {
 
     /// [`Self::close`] with `join_bound` as the wait for the thread.
     fn close_with(mut self, join_bound: Duration) -> Result<(), RtspError> {
+        // On a cancelled client the reply is not awaited: the reason goes
+        // first, as in `Drop`, so a fast answer cannot replace it.
+        if self.cancel.is_cancelled() {
+            crate::transport::record_end(&self.end_reason, EndReason::Cancelled);
+        }
         let r = self.teardown_within(CLOSE_TEARDOWN_BOUND);
         self.driver.stop();
         let _ = self.driver.join_within(join_bound);
