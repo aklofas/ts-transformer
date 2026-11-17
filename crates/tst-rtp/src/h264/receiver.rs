@@ -41,11 +41,16 @@
 //!    fired), the terminal value is `Err(TransportError::ExplicitClose)`,
 //!    returned on every later call. After the receiver's own `close()` it
 //!    is the same, without the flush: `close()` discards an open AU.
-//! 3. When the media queue closes with no cancel recorded (the RTSP
-//!    client's thread closed it: the control connection ended for any
-//!    reason, a TEARDOWN was accepted, or a later SETUP replaced the
-//!    queue), the terminal value is `Ok(None)`, returned on every later
-//!    call until a cancel.
+//! 3. When the media queue of an RTSP interleaved session closes, the
+//!    reason the RTSP client's thread recorded decides. `Cancelled` (the
+//!    owning `RtspClient` was dropped, or its TEARDOWN was accepted after
+//!    its cancel fired) ends the receiver as a cancel: the flush, then
+//!    `Err(TransportError::ExplicitClose)` on every later call. Any other
+//!    end (the server accepted a TEARDOWN from a client that was not
+//!    cancelled or closed the connection, the control connection failed,
+//!    or a later SETUP replaced the queue)
+//!    gives `Ok(None)`, returned on every later call until a cancel;
+//!    [`H264Receiver::end_reason`] tells a clean end from a failure.
 //!
 //! Any other hard I/O error surfaces as `Err(TransportError::Broken {..})`.
 
@@ -94,8 +99,10 @@ use tst_core::transport::{EndReason, EndReasonHandle};
 ///    - `Err(ExplicitClose)` — a cancel fired mid-recv (also a source end
 ///      or failure with the cancel latched): go to step 1.
 ///    - `Err(Broken)` carrying the `MPSC_PUMP_DISCONNECTED` sentinel
-///      (`pub(crate)` const in `transport.rs`) — clean RTSP teardown: set
-///      EOS, flush depacketizer, return flushed AU if any else `Ok(None)`.
+///      (`pub(crate)` const in `transport.rs`) — the media queue closed: if
+///      the recorded reason is `Cancelled` (the owning `RtspClient` was
+///      dropped or stopped), latch the cancel and go to step 1; otherwise
+///      set EOS, flush depacketizer, return flushed AU if any else `Ok(None)`.
 ///    - `Err(Broken)` otherwise — clear source, propagate.
 ///
 /// # Stats
@@ -268,10 +275,14 @@ impl H264Receiver {
     /// Receive the next reassembled H.264 Access Unit.
     ///
     /// Returns `Ok(Some(au))` when a complete AU is available,
-    /// `Err(TransportError::ExplicitClose)` once cancelled or closed (after
-    /// the drain described in the [EOS contract](crate::h264::receiver#eos-contract)),
-    /// `Ok(None)` at EOS (clean RTSP teardown), and
-    /// `Err(TransportError::Broken {..})` on a hard I/O error.
+    /// `Err(TransportError::ExplicitClose)` once cancelled or closed, or once
+    /// the owning `RtspClient` was dropped or torn down after its cancel
+    /// fired (after the drain described in the
+    /// [EOS contract](crate::h264::receiver#eos-contract)), `Ok(None)` at
+    /// end of stream (the server ended the session or accepted a TEARDOWN
+    /// from a client that was not cancelled;
+    /// also a failed control connection, which [`Self::end_reason`] names),
+    /// and `Err(TransportError::Broken {..})` on a hard I/O error.
     ///
     /// Blocks the calling thread. See the [struct-level doc](Self) for the
     /// full loop contract. Honors a persistent deadline configured via

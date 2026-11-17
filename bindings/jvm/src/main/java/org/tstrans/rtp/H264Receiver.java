@@ -24,10 +24,11 @@ import org.tstrans.shells.SocketStats;
  *
  * <p>{@link #recvAu()} blocks until a complete H.264 Access Unit is reassembled
  * or EOS. Returns {@link H264AccessUnit} on success, {@code null} at EOS (the
- * RTSP server ended the session, or a {@link #close()} on another thread freed
- * the receiver just as the call began), or throws {@link RtpException} on
- * transport failure. After a cancel it returns the AUs it already holds, then
- * throws {@link RtpException} with kind {@code CLOSED}.
+ * RTSP server ended the session or accepted a TEARDOWN, or a {@link #close()} on
+ * another thread freed the receiver just as the call began; a failed RTSP control
+ * connection also ends it with {@code null}, and {@link #endReason()} names it), or
+ * throws {@link RtpException} on transport failure. After a cancel it returns the
+ * AUs it already holds, then throws {@link RtpException} with kind {@code CLOSED}.
  *
  * <h3>Thread safety</h3>
  *

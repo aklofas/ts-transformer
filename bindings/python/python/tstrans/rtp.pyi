@@ -355,7 +355,12 @@ class RtspSession:
 
     A session collected without `teardown()` writes a best-effort TEARDOWN
     (500 ms bounds the wait for the control stream and the write; the reply
-    is not awaited) and joins its threads with the GIL released.
+    is not awaited) and joins its threads with the GIL released. A receiver
+    never owns the client, so keep the session object alive while one
+    receives: collecting it ends a live TCP-interleaved receiver with
+    `RtpError(CLOSED)` after what is already queued, where `teardown()` ends
+    it with end of stream once the server accepts the TEARDOWN (unless the
+    session's cancel handle fired first).
     """
 
     def pause(self) -> None: ...
@@ -900,11 +905,15 @@ class H264Receiver:
 
     `recv_au(timeout_ms=None)` — block until an Access Unit is reassembled
     (releasing the GIL via `py.allow_threads()`). Returns `H264AccessUnit`
-    or `None` at EOS (the RTSP server ended the session). `timeout_ms=N`
+    or `None` at EOS (the RTSP server ended the session or accepted a
+    TEARDOWN from a session whose cancel handle had not fired; a failed
+    control connection also gives `None`, and
+    `end_reason()` names it). `timeout_ms=N`
     bounds a single call; expiry raises `RtpError(BACKPRESSURE)` — the
-    receiver stays open, call again to retry. After a cancel the AUs
-    already buffered are returned first, then `RtpError(CLOSED)` is
-    raised. A `close()` from another thread lets a parked call return one
+    receiver stays open, call again to retry. After a cancel, or once its
+    `RtspSession` is collected without `teardown()`, the AUs already
+    buffered are returned first, then `RtpError(CLOSED)` is raised. A
+    `close()` from another thread lets a parked call return one
     held AU if there is one (a queued AU, or the one the cancel flushes);
     the receiver is then empty, later calls raise `RtpError(CLOSED)` and
     any further queued AU is discarded.

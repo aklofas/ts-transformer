@@ -554,8 +554,9 @@ pub unsafe extern "C" fn tst_rtsp_session_into_demux_receiver(
             }
         };
 
-        // The client moves into the receiver: dropping it here would join the
-        // pump and send TEARDOWN, ending the stream after the queued backlog.
+        // The client moves into the receiver: dropping it here would stop its
+        // thread and end an interleaved stream as a cancel (`TST_E_CLOSED`)
+        // after the queued backlog.
         let (client, rtsp_session) = *pair;
 
         // Step 2: convert RtspSession into RtpRecvTransport.

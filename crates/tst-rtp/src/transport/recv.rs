@@ -814,6 +814,18 @@ impl RecvTransport for RtpRecvTransport {
     /// arrives within the configured window — the transport stays
     /// alive and the next call starts a fresh deadline (the receive
     /// shells surface this as their `Backpressure`-kind error).
+    ///
+    /// # End of an RTSP interleaved session
+    ///
+    /// On a transport from an interleaved RTSP session the packets already
+    /// queued are returned first; then the reason the RTSP client's thread
+    /// recorded decides. A TEARDOWN the server accepted from a client that
+    /// was not cancelled, or the server's orderly close (`CleanTeardown`), is
+    /// [`TransportError::Closed`], which the receive shells report as end of
+    /// stream. The owning `RtspClient` dropped, or a TEARDOWN accepted after
+    /// its cancel fired (`Cancelled`), is [`TransportError::ExplicitClose`],
+    /// the cancel. Any other end is
+    /// [`TransportError::Broken`]; [`RtpRecvTransport::end_reason`] names it.
     fn recv_bytes(&mut self, buf: &mut [u8]) -> Result<usize, TransportError> {
         // checked_add mirrors `recv_timeout`'s saturation: a configured
         // timeout too large to represent as an `Instant` (e.g.
