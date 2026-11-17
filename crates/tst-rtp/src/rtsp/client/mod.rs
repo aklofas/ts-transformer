@@ -783,20 +783,27 @@ impl Drop for RtspClient {
     fn drop(&mut self) {
         // Signal cancel to the pump + keepalive threads FIRST, before the
         // best-effort TEARDOWN. The interleaved pump re-takes the shared
-        // `Mutex<Stream>` on every read cycle (~100 ms); with cancel set it
+        // `Mutex<Stream>` on every read cycle (one `read_timeout`, 100 ms
+        // by default); with cancel set it
         // exits at its next loop-top check and stops re-locking, so the
         // TEARDOWN normally gets the lock within one read cycle.
         self.cancel.cancel();
         if let Some(pump) = self.pump_state.as_ref() {
             pump.cancel.store(true, Ordering::Relaxed);
         }
-        // Best-effort TEARDOWN if a session is still active. The 500 ms
-        // bound covers the wait for the stream lock and the request write.
-        // The reply is not awaited: with the cancel flag already set, the
-        // reply wait returns `LocalCancel` at its first check, so Drop
+        // Best-effort TEARDOWN if a session is still active. The bound
+        // covers the wait for the stream lock and the request write: 500 ms,
+        // or with a pump installed at least one pump read (`read_timeout`)
+        // plus 100 ms, since the pump holds the lock across its in-flight
+        // read. The reply is not awaited: with the cancel flag already set,
+        // the reply wait returns `LocalCancel` at its first check, so Drop
         // writes the request and moves on.
         if self.session_id.is_some() {
-            let _ = self.teardown_within(std::time::Duration::from_millis(500));
+            let mut bound = Duration::from_millis(500);
+            if self.pump_state.is_some() {
+                bound = bound.max(self.read_timeout.saturating_add(Duration::from_millis(100)));
+            }
+            let _ = self.teardown_within(bound);
         }
         // Reap the threads (already winding down from the cancel above) so
         // they're joined before the TcpStream FD they hold is closed by the

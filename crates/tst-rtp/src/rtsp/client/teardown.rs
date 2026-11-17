@@ -39,8 +39,9 @@ impl RtspClient {
     /// the keepalive pinger or the interleaved pump, may be using it), the
     /// request write and the reply. Unlike [`Self::teardown`], the request
     /// timeout does not apply. Dropping the client uses the same deadline
-    /// with a 500 ms bound, after setting the cancel, so it does not wait
-    /// for the reply.
+    /// with a 500 ms bound (on a TCP-interleaved session at least the
+    /// `read_timeout` plus 100 ms, so the pump's in-flight read can end),
+    /// after setting the cancel, so it does not wait for the reply.
     ///
     /// This does not set the cancel flag: the reply is awaited up to the
     /// bound. A cancel already set, or set during the call, ends the

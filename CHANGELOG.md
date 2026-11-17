@@ -92,7 +92,7 @@ Next release: 0.11.0
 
 ### Added — tst-rtp
 
-- `RtspClient::teardown_within(bound)` sends TEARDOWN and waits for the reply under one deadline that covers the wait for the client's stream, the request write and the reply; expiry in any of the three is `RtspError::Timeout`. `teardown()` keeps using the client's request timeout, which bounds the reply only. Dropping a client still sends a best-effort TEARDOWN and does not wait for the reply; the wait for the stream and the write are now bounded at 500 ms there.
+- `RtspClient::teardown_within(bound)` sends TEARDOWN and waits for the reply under one deadline that covers the wait for the client's stream, the request write and the reply; expiry in any of the three is `RtspError::Timeout`. `teardown()` keeps using the client's request timeout, which bounds the reply only. Dropping a client still sends a best-effort TEARDOWN and does not wait for the reply; the wait for the stream and the write are now bounded at 500 ms there, or on a TCP-interleaved session at least `read_timeout` plus 100 ms, so the pump's in-flight read can end first.
 
 ### Changed — tst-interop
 
