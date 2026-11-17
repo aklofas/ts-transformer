@@ -325,6 +325,7 @@ rejected at SETUP with `RtspError::UnsupportedPacketizationMode(2)`.
 
 The canonical path for an RTSP camera is the four-step sequence in the
 example: `connect` → `describe` → `setup_h264_auto` → `into_h264_receiver`.
+
 Run it with:
 
 ```bash
@@ -336,6 +337,16 @@ cargo run -p tst-examples --example recv_rtsp_h264 -- 'rtsp://cam.local/h264?tra
 The example is at
 [`examples/receiving/recv_rtsp_h264.rs`](/examples/receiving/recv_rtsp_h264.rs).
 It covers every step with rich `// why + how` commentary.
+
+End the session with `RtspClient::close()`. With a session open it sends
+TEARDOWN and waits for the reply (500 ms at most), then stops the client's
+thread and waits for it to end (2 s at most), and returns the TEARDOWN's
+result (`Ok(())` with no session open). On a client whose cancel is set,
+the TEARDOWN is still written, the reply is not awaited and the result is
+`RtspError::LocalCancel`. Dropping the client instead sets its cancel,
+writes TEARDOWN without waiting for the reply, and tells the client's
+thread to stop without waiting for it; the thread closes the connection
+on its own.
 
 ### Key types
 
@@ -368,14 +379,6 @@ while let Some(au) = rx.recv_au()? {
 ```
 
 ### Integration notes
-
-- **Ending the session.** Call `client.close()`: with a session open it
-  sends TEARDOWN and waits for the reply (500 ms at most), then stops the
-  client's thread and waits for it to end (2 s at most), and returns the
-  TEARDOWN's result (`Ok(())` with no session open). Dropping the client
-  instead sets its cancel, writes TEARDOWN without waiting for the reply,
-  and tells the client's thread to stop without waiting for it; the thread
-  closes the connection on its own.
 
 - **`sprop-parameter-sets` handled automatically.** `setup_h264_auto` decodes the
   `a=fmtp:N sprop-parameter-sets=…` SDP attribute from base64 into raw NALU
