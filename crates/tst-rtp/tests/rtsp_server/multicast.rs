@@ -129,3 +129,79 @@ fn multicast_mount_push_video_succeeds() {
     assert!(stats.bytes_pushed > 0);
     server.stop().ok();
 }
+
+/// A hard cancel stops a multicast mount's sender on a server that was
+/// never started: the sender task leaves the mount's fanout, and nothing
+/// more reaches the group. Linux only: it needs loopback multicast.
+#[cfg(target_os = "linux")]
+#[test]
+fn hard_cancel_stops_the_multicast_sender_of_a_never_started_server() {
+    use std::net::{Ipv4Addr, UdpSocket};
+    const GROUP: Ipv4Addr = Ipv4Addr::new(239, 55, 55, 7);
+    const PORT: u16 = 55040;
+    let sock = UdpSocket::bind((GROUP, PORT)).unwrap();
+    sock.join_multicast_v4(&GROUP, &Ipv4Addr::LOCALHOST)
+        .unwrap();
+    sock.set_read_timeout(Some(Duration::from_millis(50)))
+        .unwrap();
+
+    let server = RtspServer::bind("rtsp://127.0.0.1:0").unwrap();
+    let mount = server
+        .add_multicast_mount(
+            "/mc",
+            make_muxer_cfg(),
+            "rtp://239.55.55.7:55040?ttl=1&iface=127.0.0.1",
+        )
+        .unwrap();
+    warm_mount(&mount);
+    let nal = [0x00, 0x00, 0x00, 0x01, 0x65, 0xBB];
+    let mut pts = 0i64;
+    let mut push = || {
+        pts += 3_000;
+        mount.push_video(&nal, Pts90khz::new(pts), true)
+    };
+    let mut buf = [0u8; 2048];
+
+    // Latch: the sender task delivers to the group.
+    let deadline = Instant::now() + scaled(Duration::from_secs(10));
+    loop {
+        push().unwrap();
+        if sock.recv(&mut buf).is_ok() {
+            break;
+        }
+        assert!(Instant::now() < deadline, "no datagram reached the group");
+    }
+
+    server.cancel_handle().cancel();
+    let deadline = Instant::now() + scaled(Duration::from_secs(5));
+    while push().is_ok() {
+        assert!(Instant::now() < deadline, "a push was never refused");
+    }
+    // The sender task ends and drops its subscription.
+    let deadline = Instant::now() + scaled(Duration::from_secs(5));
+    while mount.peer_count() != 0 {
+        assert!(
+            Instant::now() < deadline,
+            "the multicast sender task is still subscribed after the cancel"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    // Drain what was sent before the cancel.
+    sock.set_read_timeout(Some(Duration::from_millis(200)))
+        .unwrap();
+    while sock.recv(&mut buf).is_ok() {}
+    // Nothing more reaches the group while pushes are attempted.
+    let quiet = Instant::now() + Duration::from_millis(300);
+    sock.set_read_timeout(Some(Duration::from_millis(50)))
+        .unwrap();
+    while Instant::now() < quiet {
+        assert!(
+            matches!(push(), Err(tst_rtp::MountError::Closed)),
+            "a push after the cancel was accepted"
+        );
+        assert!(
+            sock.recv(&mut buf).is_err(),
+            "a datagram reached the group after the cancel"
+        );
+    }
+}

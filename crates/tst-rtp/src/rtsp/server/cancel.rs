@@ -5,20 +5,17 @@
 
 /// Cancel handle for an `RtspServer`.
 ///
-/// `cancel()` is the HARD cancel. The listener observes the flag within
-/// 100 ms, stops accepting, fires the session cancel token so parked
-/// sessions end, performs the same shutdown bookkeeping as
-/// `RtspServer::stop` (a parked `next_publisher` returns `Shutdown`,
-/// publish mounts' application transports read `Closed`, registration and
-/// rule edits are refused) without the Notice 5402, and drains sessions for
-/// `graceful_shutdown_drain`. Clients see the connection close with no
-/// RTSP TEARDOWN-style notification.
-///
-/// On a server that was never started there is no listener: a parked or
-/// later `next_publisher` still returns `Shutdown` (it re-checks the flag
-/// every 100 ms), and registration, rule edits and `start()` are refused,
-/// but publish mounts' application transports stay open until the server
-/// is dropped.
+/// `cancel()` is the HARD cancel, on a started server or one never
+/// started. Registration, rule edits, mount pushes and `start()` read the
+/// flag and are refused at once, and a parked or later `next_publisher`
+/// returns `Shutdown` (a parked call within 100 ms). Within 100 ms a task
+/// on the server's runtime observes the flag and performs the same
+/// shutdown bookkeeping as `RtspServer::stop` without the Notice 5402: it
+/// fires the session cancel token (the listener stops accepting and drains
+/// sessions for `graceful_shutdown_drain`, sessions and multicast senders
+/// end), drops the on-demand publish queue, and closes publish mounts'
+/// application transports, which then read `Closed`. Clients see the
+/// connection close with no RTSP TEARDOWN-style notification.
 ///
 /// For graceful shutdown with session-end notification + bounded drain,
 /// use `RtspServer::stop` instead.

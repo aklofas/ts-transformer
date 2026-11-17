@@ -18,8 +18,8 @@ use crate::rtsp::server::ServerState;
 /// Reports the bind outcome (address or typed error) through
 /// `state.startup_tx`, the one-shot channel `RtspServer::start` blocks on.
 /// Sets `state.local_addr` once the listener binds. Continues accepting
-/// until either the hard cancel handle is flipped or the graceful
-/// cancellation token fires.
+/// until the server's cancellation token fires: `stop()`, Drop, or the
+/// server's hard-cancel watcher once the hard cancel handle is flipped.
 pub(crate) async fn run_listener(state: Arc<ServerState>) -> Result<(), RtspServerError> {
     // Bind. `state.builder.bind_url` is guaranteed to be IP-literal at
     // builder time (validate_for_server_bind enforced it).
@@ -85,21 +85,6 @@ pub(crate) async fn run_listener(state: Arc<ServerState>) -> Result<(), RtspServ
     // Every session task, so a shutdown can wait for them.
     let mut sessions: tokio::task::JoinSet<()> = tokio::task::JoinSet::new();
     loop {
-        // Reap finished sessions so the set stays as small as the live count.
-        while sessions.try_join_next().is_some() {}
-        if state.hard_cancel.is_cancelled() {
-            tracing::info!(target: "tst_rtp::server", "hard cancel observed; listener exiting");
-            // Sessions select on the server token, not on this polled flag:
-            // fire it so a session parked in its read ends now. The flag
-            // stays a plain atomic so `cancel()` remains async-signal-safe
-            // for C callers.
-            state.cancel_token.cancel();
-            // The server is down for good: the same publish-side shutdown
-            // as `stop()` (no Notice 5402 is sent).
-            state.shut_down();
-            drain_sessions(&mut sessions, state.builder.graceful_shutdown_drain).await;
-            return Ok(());
-        }
         tokio::select! {
             accept_res = listener.accept() => {
                 match accept_res {
@@ -221,13 +206,13 @@ pub(crate) async fn run_listener(state: Arc<ServerState>) -> Result<(), RtspServ
                 }
             }
             _ = state.cancel_token.cancelled() => {
-                tracing::info!(target: "tst_rtp::server", "graceful cancel observed; listener exiting");
+                tracing::info!(target: "tst_rtp::server", "server cancel observed; listener exiting");
                 drain_sessions(&mut sessions, state.builder.graceful_shutdown_drain).await;
                 return Ok(());
             }
-            _ = tokio::time::sleep(std::time::Duration::from_millis(100)) => {
-                // Wake to check hard_cancel flag.
-            }
+            // Reap finished sessions so the set stays as small as the live
+            // count.
+            Some(_) = sessions.join_next(), if !sessions.is_empty() => {}
         }
     }
 }

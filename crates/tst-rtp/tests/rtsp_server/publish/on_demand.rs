@@ -240,8 +240,7 @@ fn hard_cancel_wakes_a_parked_next_publisher_with_shutdown() {
 }
 
 /// A hard cancel wakes a parked `next_publisher` with `Shutdown` even on a
-/// server that was never started, where no listener runs the shutdown: the
-/// call itself re-checks the flag while it waits.
+/// server that was never started, where no listener runs.
 #[test]
 fn hard_cancel_wakes_a_parked_next_publisher_on_a_never_started_server() {
     let mut b = RtspServerBuilder::new("rtsp://127.0.0.1:0").unwrap();
@@ -275,19 +274,57 @@ fn hard_cancel_ends_a_publish_mounts_app_transport_with_closed() {
     assert!(matches!(r, Err(TransportError::Closed)), "got {r:?}");
 }
 
+/// A hard cancel ends a publish mount's application transport with `Closed`
+/// on a server that was never started too.
+#[test]
+fn hard_cancel_ends_a_publish_mounts_app_transport_on_a_never_started_server() {
+    let server = RtspServerBuilder::new("rtsp://127.0.0.1:0")
+        .unwrap()
+        .build()
+        .unwrap();
+    let handle = server.add_publish_mount("/p").unwrap();
+    let mut app = handle.into_recv_transport().unwrap();
+    // The budget, not the synchroniser: a transport that is closed returns
+    // within one poll of the cancel.
+    app.set_recv_timeout(Some(scaled(Duration::from_secs(5))));
+    server.cancel_handle().cancel();
+    let mut buf = vec![0u8; 2048];
+    let r = app.recv_bytes(&mut buf);
+    assert!(matches!(r, Err(TransportError::Closed)), "got {r:?}");
+}
+
 /// `stop()` after a hard cancel returns with the publish side already shut:
 /// a publish mount's application transport reads `Closed` at once, without
-/// waiting for the listener to observe the cancel (it polls every 100 ms).
+/// waiting for the server to observe the cancel (it polls every 100 ms).
 #[test]
 fn stop_after_a_hard_cancel_closes_publish_mounts_before_returning() {
     let server = on_demand_server();
     let handle = server.add_publish_mount("/p").unwrap();
     let mut app = handle.into_recv_transport().unwrap();
-    // Far below the listener's 100 ms poll: a transport still open reads
+    // Far below the server's 100 ms poll: a transport still open reads
     // its recv deadline here, not `Closed`.
     app.set_recv_timeout(Some(Duration::from_millis(1)));
     server.cancel_handle().cancel();
     server.stop().unwrap();
+    let mut buf = vec![0u8; 2048];
+    let r = app.recv_bytes(&mut buf);
+    assert!(matches!(r, Err(TransportError::Closed)), "got {r:?}");
+}
+
+/// The same on a server that was never started: `stop()` after a hard
+/// cancel returns `Ok(())`, not `NotStarted`, and shuts the publish side.
+#[test]
+fn stop_after_a_hard_cancel_on_a_never_started_server_closes_publish_mounts() {
+    let server = RtspServerBuilder::new("rtsp://127.0.0.1:0")
+        .unwrap()
+        .build()
+        .unwrap();
+    let handle = server.add_publish_mount("/p").unwrap();
+    let mut app = handle.into_recv_transport().unwrap();
+    app.set_recv_timeout(Some(Duration::from_millis(1)));
+    server.cancel_handle().cancel();
+    let stopped = server.stop();
+    assert!(stopped.is_ok(), "got {stopped:?}");
     let mut buf = vec![0u8; 2048];
     let r = app.recv_bytes(&mut buf);
     assert!(matches!(r, Err(TransportError::Closed)), "got {r:?}");
