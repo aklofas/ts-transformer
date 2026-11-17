@@ -333,11 +333,7 @@ impl TcpTransport {
     /// plain close (own `close()`, or latched dead by a terminal error —
     /// those callers return `Broken` directly and never reach this).
     fn dead_error(&self) -> TransportError {
-        if self.cancel.is_cancelled() {
-            TransportError::ExplicitClose
-        } else {
-            TransportError::Closed
-        }
+        dead_kind(&self.cancel)
     }
 }
 
@@ -358,10 +354,11 @@ impl TcpTransport {
 /// mid-message.
 ///
 /// Returns `Ok(())` on a full write. On error the `bool` is `true` when the
-/// transport must be marked dead (`Ok(0)` or a hard error, with no cancel latched) and `false` for a
-/// clean zero-progress `Backpressure` the caller may retry, or an
-/// `ExplicitClose` (cancel) / `Closed` (close) after a mid-message wake (the
-/// canceller already dropped the flag).
+/// transport must be marked dead (`Ok(0)` or a hard error, with the transport
+/// still live and no cancel latched) and `false` for a clean zero-progress
+/// `Backpressure` the caller may retry, or an `ExplicitClose` (cancel) /
+/// `Closed` (close) after a mid-message wake (the canceller already dropped
+/// the flag).
 fn write_loop<W: FnMut(&[u8]) -> std::io::Result<usize>>(
     msg: &[u8],
     alive: &AtomicBool,
