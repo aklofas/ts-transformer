@@ -710,32 +710,38 @@ impl<T: Transport + 'static> ManagedTransport<T> {
                 if !worker_active && gap.is_empty() {
                     None // fall through to the direct path below
                 } else {
-                    if let Err(gap_buffer::GapBufferError::Full) = gap.enqueue(bytes.to_vec()) {
-                        return Err(TransportError::Backpressure {
-                            msg: "gap buffer full".into(),
-                            errno_code: None,
-                        });
-                    }
-                    if worker_active {
-                        Some(false)
+                    // Admission and recovery are separate: a message refused
+                    // by a full `Reject` buffer still leaves a backlog that
+                    // needs its worker.
+                    let refused = matches!(
+                        gap.enqueue(bytes.to_vec()),
+                        Err(gap_buffer::GapBufferError::Full)
+                    );
+                    let restart = if worker_active {
+                        false
                     } else {
                         // Backlog with no worker (post-give-up): start a
                         // fresh cycle. Flag set under the gap lock.
                         self.shared
                             .bg_active
                             .store(true, std::sync::atomic::Ordering::Release);
-                        Some(true)
-                    }
+                        true
+                    };
+                    Some((restart, refused))
                 }
             }; // gap lock dropped — never spawn while holding it (invariant 3)
-            match need_worker {
-                Some(true) => {
+            if let Some((restart, refused)) = need_worker {
+                if restart {
                     self.spawn_worker();
-                    return Ok(());
                 }
-                Some(false) => return Ok(()),
-                None => {} // direct path
-            }
+                if refused {
+                    return Err(TransportError::Backpressure {
+                        msg: "gap buffer full".into(),
+                        errno_code: None,
+                    });
+                }
+                return Ok(());
+            } // else: direct path
         }
 
         // Drain any queued bytes first. If drain breaks the transport
