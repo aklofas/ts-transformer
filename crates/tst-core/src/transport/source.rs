@@ -115,9 +115,9 @@ impl SourceHandle {
         }
     }
 
-    /// The form this record stores, reports and compares: an IPv4-mapped
-    /// IPv6 address becomes the IPv4 address with the same port; any other
-    /// address, an IPv6 scope id included, is kept as it is.
+    /// The form this record stores and reports: an IPv4-mapped IPv6 address
+    /// becomes the IPv4 address with the same port; any other address, an
+    /// IPv6 scope id included, is kept as it is. A pin compares the IP alone.
     #[must_use]
     pub fn canonical(addr: SocketAddr) -> SocketAddr {
         match addr {
