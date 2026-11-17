@@ -316,12 +316,12 @@ impl MountHandle {
     ///   [`tst_core::error::MuxError`] from the muxer (invalid NAL,
     ///   `BufferFull`, ambiguous target, etc.).
     /// - [`crate::error::MountError::Closed`] once the server has ended
-    ///   ([`crate::RtspServer::stop`], a hard cancel through
-    ///   [`crate::RtspServer::cancel_handle`], or the server being
-    ///   dropped), whether it was started or not and whether or not the
-    ///   mount was removed first; also if the inner mutex is poisoned (a
-    ///   push panicked while holding the lock). An ended server is
-    ///   reported ahead of an invalid frame, and the refused push leaves
+    ///   ([`crate::RtspServer::stop`] on a started server; a hard cancel
+    ///   through [`crate::RtspServer::cancel_handle`] or the server being
+    ///   dropped, started or not), whether or not the mount was removed
+    ///   first; also if the inner mutex is poisoned (a push panicked while
+    ///   holding the lock). An ended server is reported ahead of an invalid
+    ///   frame, and the refused push leaves
     ///   the muxer and [`Self::stats`] unchanged.
     ///
     /// The push itself always succeeds if the muxer accepts the frame; a

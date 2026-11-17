@@ -36,10 +36,14 @@ use self::cancel::RtspServerCancelHandle;
 use self::mount_rules::MountRules;
 use crate::url::RtspScheme;
 
+/// How often the server's hard-cancel watcher reads the cancel flag (see
+/// [`watch_hard_cancel`]).
+const HARD_CANCEL_POLL: Duration = Duration::from_millis(100);
+
 /// How often a parked [`RtspServer::next_publisher`], and a graceful
 /// [`RtspServer::stop`] waiting out its drain, re-check the shutdown flag:
-/// the same period as the listener's hard-cancel poll.
-const NEXT_PUBLISHER_SLICE: Duration = Duration::from_millis(100);
+/// the same period as the hard-cancel watcher.
+const NEXT_PUBLISHER_SLICE: Duration = HARD_CANCEL_POLL;
 
 /// Bound of the on-demand publish-mount queue (see
 /// [`RtspServerBuilder::accept_unregistered_publishers`]): handles created
@@ -169,8 +173,17 @@ impl ServerState {
         }
     }
 
+    /// What a hard cancel ends, run by the hard-cancel watcher or by a
+    /// `stop()` that finds the cancel fired: the cancel token (sessions, the
+    /// listener and multicast senders end on it), then the publish side.
+    /// Idempotent; never blocks.
+    pub(crate) fn end_on_hard_cancel(&self) {
+        self.cancel_token.cancel();
+        self.shut_down();
+    }
+
     /// The publish-side shutdown every terminal path performs (`stop()`,
-    /// Drop and the listener's hard-cancel branch). Idempotent.
+    /// Drop and a hard cancel). Idempotent.
     ///
     /// Order matters. Dropping the queue's only sender first wakes a
     /// parked `next_publisher` with `Disconnected` (`Shutdown`), and an
@@ -201,22 +214,48 @@ impl ServerState {
     /// `close()` every publish mount in the table: snapshot them under the
     /// mounts lock, release it, then close each (synchronous, never
     /// blocks). A parked or later `recv_bytes` on a mount's application
-    /// transport then reads `Closed`.
+    /// transport then reads `Closed`. A poisoned lock is recovered: the
+    /// table is only read here, and Drop must still close the mounts.
     pub(crate) fn close_publish_mounts(&self) {
         let publish_mounts: Vec<_> = self
             .mounts
             .lock()
-            .map(|g| {
-                g.values()
-                    .filter_map(|m| match m {
-                        crate::rtsp::server::mount::MountEntry::Publish(p) => Some(p.clone()),
-                        crate::rtsp::server::mount::MountEntry::Local(_) => None,
-                    })
-                    .collect()
+            .unwrap_or_else(|e| e.into_inner())
+            .values()
+            .filter_map(|m| match m {
+                crate::rtsp::server::mount::MountEntry::Publish(p) => Some(p.clone()),
+                crate::rtsp::server::mount::MountEntry::Local(_) => None,
             })
-            .unwrap_or_default();
+            .collect();
         for m in &publish_mounts {
             m.close();
+        }
+    }
+}
+
+/// Spawned on the server's runtime by `build()`, started or not.
+/// `cancel()` is one atomic store (safe from a signal handler), so it cannot
+/// run the shutdown itself: this task reads the flag every
+/// [`HARD_CANCEL_POLL`], runs [`ServerState::end_on_hard_cancel`] once it
+/// fires, and ends. It also ends when the cancel token fires for another
+/// reason (`stop()`, Drop). It holds the state weakly so a dropped server's
+/// state is never kept alive by it.
+async fn watch_hard_cancel(
+    state: std::sync::Weak<ServerState>,
+    hard_cancel: RtspServerCancelHandle,
+    token: CancellationToken,
+) {
+    loop {
+        tokio::select! {
+            () = token.cancelled() => return,
+            () = tokio::time::sleep(HARD_CANCEL_POLL) => {}
+        }
+        if hard_cancel.is_cancelled() {
+            tracing::info!(target: "tst_rtp::server", "hard cancel observed; ending the server");
+            if let Some(state) = state.upgrade() {
+                state.end_on_hard_cancel();
+            }
+            return;
         }
     }
 }
@@ -293,9 +332,9 @@ pub(crate) fn unregister_session(state: &Arc<ServerState>, entry: &Arc<ActiveSes
 ///
 /// Three shutdown patterns:
 ///
-/// 1. **Drop** — fires the hard-cancel path: all per-session tasks abort
-///    at their next poll, the runtime is shut down with a 5 s budget.
-///    Implicit; no acknowledgement to connected clients. Every publish
+/// 1. **Drop** — fires the hard-cancel path: every session ends on the
+///    server's cancel token, and the runtime is shut down with a 5 s
+///    budget. Implicit; no acknowledgement to connected clients. Every publish
 ///    mount's application transport (see
 ///    [`crate::rtsp::server::publish::PublishMountHandle::into_recv_transport`])
 ///    ends with `TransportError::Closed`, as with [`Self::stop`], even
@@ -309,13 +348,13 @@ pub(crate) fn unregister_session(state: &Arc<ServerState>, entry: &Arc<ActiveSes
 ///    and that loss is not counted in any drop counter.
 /// 3. **Hard cross-thread — `cancel_handle()`** — returns an
 ///    [`RtspServerCancelHandle`] that can be cancelled from any thread.
-///    Cancelling it is terminal for the publish side as `stop()` and Drop
-///    are: a parked or later `next_publisher` returns `Shutdown`, every
-///    publish mount's application transport reads `Closed`, mount
-///    registration and rule edits are refused, and `start()` is refused.
-///    Sessions end at their next poll; no Notice is sent. On a server that
-///    was never started, publish mounts' application transports stay open
-///    until the server is dropped.
+///    Cancelling it is terminal as `stop()` and Drop are, on a started
+///    server or one never started: a parked or later `next_publisher`
+///    returns `Shutdown`, every publish mount's application transport
+///    reads `Closed`, mount registration, rule edits, mount pushes and
+///    `start()` are refused, and sessions and multicast senders end. No
+///    Notice is sent. What reads the flag itself refuses at once; the rest
+///    ends within 100 ms (see [`Self::cancel_handle`]).
 ///
 /// Dropping the server, [`Self::stop`] and [`Self::remove_mount`] block
 /// the calling thread on the server's internal runtime. Call them from a
@@ -607,6 +646,11 @@ impl RtspServer {
             startup_tx: std::sync::Mutex::new(None),
             publish_queue_tx: std::sync::Mutex::new(Some(publish_queue_tx)),
         });
+        runtime.spawn(watch_hard_cancel(
+            Arc::downgrade(&state),
+            state.hard_cancel.clone(),
+            state.cancel_token.clone(),
+        ));
         Ok(Self {
             state,
             runtime: Some(runtime),
@@ -892,10 +936,9 @@ impl RtspServer {
             .lock()
             .unwrap_or_else(|e| e.into_inner());
         // Wait in slices and re-check the shutdown flag between them: a
-        // hard cancel is one atomic store (async-signal-safe), so it cannot
-        // drop the queue's sender itself, and on a server that was never
-        // started no listener does it either. `None` = no deadline (a
-        // timeout too large for `Instant`).
+        // hard cancel is one atomic store (async-signal-safe), so the queue's
+        // sender is dropped only at the watcher's next poll. `None` = no
+        // deadline (a timeout too large for `Instant`).
         let deadline = std::time::Instant::now().checked_add(timeout);
         loop {
             let slice = match deadline {
@@ -1179,22 +1222,27 @@ impl RtspServer {
     /// its way out, then a parked or later `recv_bytes` on it returns
     /// `TransportError::Closed`.
     ///
+    /// After a hard cancel through [`Self::cancel_handle`], started or not,
+    /// it sends no Notice and waits for nothing: it ends what the cancel
+    /// ends (see [`Self::cancel_handle`]) and returns `Ok(())` with every
+    /// publish mount's application transport already reading `Closed`.
+    ///
     /// Blocks the calling thread on the server's runtime, drain included:
     /// never call it from inside a tokio runtime (see [`RtspServer`]).
     ///
     /// # Errors
-    /// - [`RtspServerError::NotStarted`] if called before `start()`.
+    /// - [`RtspServerError::NotStarted`] if called before `start()`, unless
+    ///   the hard cancel has fired.
     pub fn stop(&self) -> Result<(), RtspServerError> {
+        // Hard-cancelled, started or not: the watcher polls the flag every
+        // 100 ms and may not have run yet, so end the server here too
+        // (idempotent, non-blocking) so it is ended when this returns.
+        if self.state.hard_cancel.is_cancelled() {
+            self.state.end_on_hard_cancel();
+            return Ok(());
+        }
         if !self.state.started.load(Ordering::Relaxed) {
             return Err(RtspServerError::NotStarted);
-        }
-        // Hard-cancelled: the listener's cancel branch does the rest, but it
-        // polls the flag every 100 ms and may already be gone. Run the
-        // publish-side shutdown here too (idempotent, non-blocking) so the
-        // publish side is shut when this returns.
-        if self.state.hard_cancel.is_cancelled() {
-            self.state.shut_down();
-            return Ok(());
         }
         // Idempotent: already stopped. The swap makes exactly one of two
         // racing `stop()` calls do the work.
@@ -1231,10 +1279,10 @@ impl RtspServer {
             // the margin only covers its scheduling.
             let bound = self.state.builder.graceful_shutdown_drain + Duration::from_millis(500);
             let state = &self.state;
-            // The listener is in its own drain and no longer polls the hard
-            // cancel, so this wait does: a hard cancel closes the publish
-            // side within one poll, as it does outside a graceful stop. The
-            // wait itself still ends with the sessions or the bound.
+            // The token fired above ended the hard-cancel watcher, so this
+            // wait polls the hard cancel itself: a hard cancel closes the
+            // publish side within one poll, as it does outside a graceful
+            // stop. The wait itself still ends with the sessions or the bound.
             let hard_cancel = async {
                 while !state.hard_cancel.is_cancelled() {
                     tokio::time::sleep(NEXT_PUBLISHER_SLICE).await;
@@ -1393,20 +1441,23 @@ impl RtspServer {
     /// Hard-cancel handle. Cloning is cheap; multiple holders can race
     /// the cancel call (idempotent).
     ///
-    /// Cancelling it is terminal for the publish side as [`Self::stop`]
-    /// and Drop are: a parked or later [`Self::next_publisher`] returns
-    /// [`RtspServerError::Shutdown`], every publish mount's application
-    /// transport reads `Closed`, mount registration and rule edits are
-    /// refused, and [`Self::start`] is refused. Sessions end at their next
-    /// poll; no Notice is sent.
+    /// Cancelling it is terminal as [`Self::stop`] and Drop are, whether
+    /// or not the server was started: a parked or later
+    /// [`Self::next_publisher`] returns [`RtspServerError::Shutdown`],
+    /// every publish mount's application transport reads `Closed`, mount
+    /// registration, rule edits, mount pushes and [`Self::start`] are
+    /// refused, and sessions and multicast senders end. No Notice is sent.
     ///
-    /// `cancel()` is one atomic store, so the transports are closed by the
-    /// running listener (within 100 ms; while a graceful [`Self::stop`]
-    /// waits out its drain, that `stop()` does it within 100 ms instead),
-    /// by [`Self::stop`] or by Drop. On a
-    /// server that was never started, a publish mount's application
-    /// transport therefore stays open until the server is dropped;
-    /// everything else above holds.
+    /// `cancel()` is one atomic store, safe from a signal handler. What
+    /// reads the flag itself refuses at once: `next_publisher` (a parked
+    /// call within 100 ms), registration, rule edits, mount pushes and
+    /// `start()`. The rest is done by a task on the server's runtime that
+    /// polls the flag every 100 ms: it fires the cancel token that ends the
+    /// sessions, the listener and multicast senders, drops the on-demand
+    /// queue and closes the publish mounts' application transports. While
+    /// a graceful [`Self::stop`] waits out its drain, that `stop()` closes
+    /// them within 100 ms instead; a [`Self::stop`] called after the cancel
+    /// does it before returning.
     pub fn cancel_handle(&self) -> RtspServerCancelHandle {
         self.state.hard_cancel.clone()
     }
@@ -1587,6 +1638,31 @@ mod runtime_tests {
         let mut buf = vec![0u8; 2048];
         let r = t.recv_bytes(&mut buf);
         assert!(matches!(r, Err(TransportError::Closed)), "{r:?}");
+    }
+
+    /// A panic while the mount table was locked does not stop Drop from
+    /// closing the publish mounts in it.
+    #[test]
+    fn drop_with_a_poisoned_mount_table_still_closes_publish_transports() {
+        use tst_core::transport::{RecvTransport, TransportError};
+        let server = RtspServer::bind("rtsp://127.0.0.1:0").unwrap();
+        let handle = server.add_publish_mount("/p").unwrap();
+        let keep = handle.clone();
+        let mut t = handle.into_recv_transport().unwrap();
+        t.set_recv_timeout(Some(Duration::from_secs(5)));
+        std::thread::scope(|s| {
+            let poisoner = s.spawn(|| {
+                let _held = server.state.mounts.lock().unwrap();
+                panic!("poison the mount table");
+            });
+            assert!(poisoner.join().is_err());
+        });
+        assert!(server.state.mounts.is_poisoned());
+        drop(server);
+        let mut buf = vec![0u8; 2048];
+        let r = t.recv_bytes(&mut buf);
+        assert!(matches!(r, Err(TransportError::Closed)), "{r:?}");
+        drop(keep);
     }
 
     #[test]
@@ -1851,12 +1927,22 @@ mod graceful_shutdown_tests {
 
     /// A mount that reaches the queue after the hard cancel fired is never
     /// handed to a `next_publisher` call already parked on the queue: the
-    /// call returns `Shutdown`, the terminal outcome, not the mount.
+    /// call returns `Shutdown`, the terminal outcome, not the mount. The
+    /// server drops its queue sender after the cancel, never started too.
     #[test]
     fn a_parked_next_publisher_returns_shutdown_not_a_mount_queued_after_a_hard_cancel() {
         let mut b = RtspServerBuilder::new("rtsp://127.0.0.1:0").unwrap();
         b.accept_unregistered_publishers(true);
         let server = b.build().unwrap();
+        // Stands in for an ANNOUNCE that took the sender before the cancel
+        // and queues its mount after it.
+        let late_tx = server
+            .state
+            .publish_queue_tx
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("queue sender before the cancel");
         std::thread::scope(|s| {
             let parked = s.spawn(|| server.next_publisher(Duration::from_secs(30)));
             // Parked: past its shutdown check and holding the receiver.
@@ -1871,15 +1957,7 @@ mod graceful_shutdown_tests {
                 8,
                 server.state.publish_counters.clone(),
             );
-            server
-                .state
-                .publish_queue_tx
-                .lock()
-                .unwrap()
-                .as_ref()
-                .expect("a never-started server keeps its queue sender")
-                .try_send(mount)
-                .unwrap();
+            late_tx.try_send(mount).unwrap();
             let r = parked.join().unwrap();
             assert!(
                 matches!(r, Err(RtspServerError::Shutdown)),
@@ -1887,6 +1965,14 @@ mod graceful_shutdown_tests {
                 r.as_ref().map(|h| h.is_some())
             );
         });
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        while server.state.publish_queue_tx.lock().unwrap().is_some() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the queue sender outlived the hard cancel"
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        }
     }
 }
 
