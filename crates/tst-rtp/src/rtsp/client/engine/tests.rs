@@ -306,6 +306,24 @@ fn a_401_without_www_authenticate_is_bad_response() {
 }
 
 #[test]
+fn an_empty_password_answers_basic_with_the_user_and_a_colon() {
+    let t0 = Instant::now();
+    let mut e = ClientEngine::new(cfg(Some(("u", ""))));
+    e.submit(spec(RtspMethod::Describe, URI), None, t0).unwrap();
+    one(&mut e);
+    e.handle_reply(resp(BASIC_401), t0);
+    let expected = {
+        use base64::Engine as _;
+        format!(
+            "Basic {}",
+            base64::engine::general_purpose::STANDARD.encode("u:")
+        )
+    };
+    assert_eq!(authz(&one(&mut e)), Some(expected));
+    assert!(events(&mut e).is_empty());
+}
+
+#[test]
 fn a_401_without_credentials_is_auth_failed() {
     let t0 = Instant::now();
     let mut e = ClientEngine::new(cfg(None));

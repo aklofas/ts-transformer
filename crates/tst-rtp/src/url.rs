@@ -1186,6 +1186,24 @@ mod rtsp_tests {
         );
     }
 
+    /// The fields keep what the URL said: no `:` is no password, `:` with
+    /// nothing after it is an empty one, and an empty user name is kept.
+    #[test]
+    fn rtsp_url_userinfo_forms_are_recorded_as_written() {
+        use secrecy::ExposeSecret;
+        let parts = |s: &str| {
+            let u = RtspUrl::parse(s).unwrap();
+            let password = u.password.as_ref().map(|p| p.expose_secret().to_string());
+            (u.username, password)
+        };
+        let some = |s: &str| Some(s.to_string());
+        assert_eq!(parts("rtsp://u@h/x"), (some("u"), None));
+        assert_eq!(parts("rtsp://u:@h/x"), (some("u"), some("")));
+        assert_eq!(parts("rtsp://:p@h/x"), (some(""), some("p")));
+        assert_eq!(parts("rtsp://@h/x"), (some(""), None));
+        assert_eq!(parts("rtsp://h/x"), (None, None));
+    }
+
     #[test]
     fn rtsp_url_bad_percent_escape_in_password_is_rejected() {
         let e = RtspUrl::parse("rtsp://u:p%zz@h/x").unwrap_err();
