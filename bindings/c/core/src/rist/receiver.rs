@@ -61,6 +61,8 @@ pub struct TstRistReceiver {
 /// - `rist://@host:port` — bind on a specific interface address
 /// - Query params: `?profile=simple|main`, `?buffer=N` (recovery buffer ms,
 ///   controls the retransmission window), `?cname=...`
+/// - `?source=<ip>|first` — deliver data from one IP only (any port); see
+///   `tst_rist_receiver_peer_addr`.
 ///
 /// Encryption (requires mbedtls feature, forces Main Profile):
 /// - `?aes-type=128|192|256&secret=<psk>` — AES PSK decryption.
@@ -291,15 +293,17 @@ pub unsafe extern "C" fn tst_rist_receiver_reset_stats(p: *mut TstRistReceiver) 
 /// delivered, and this names whichever delivered last.
 ///
 /// Returns the text's length without the NUL; 0, with `""` written, until the
-/// first block is delivered. Returns `TST_E_INVALID_CONFIG` when `p` or `buf`
-/// is NULL, or with a "buffer too small" message when `buf_len` cannot hold the
-/// text plus its NUL (`buf_len == 0` included, even before the first block);
-/// nothing is written then.
+/// first block from a known address is delivered. Returns
+/// `TST_E_INVALID_CONFIG` when `p` or `buf` is NULL, or with a "buffer too
+/// small" message when `buf_len` cannot hold the text plus its NUL (`buf_len ==
+/// 0` included, even before the first block); nothing is written then.
 ///
 /// It reads a record kept beside the receiver, never the handle's slot, so it
-/// answers while `tst_rist_receiver_recv_ts` runs on another thread, and after
-/// `tst_rist_receiver_cancel` it still answers with the last address delivered.
-/// After `tst_rist_receiver_close` the pointer is freed, as for every getter.
+/// answers while `tst_rist_receiver_recv_ts` runs on another thread. After
+/// `tst_rist_receiver_cancel`, after a receive ended with an error, and after a
+/// caught panic retired the shell it still answers, with the last address
+/// delivered. After `tst_rist_receiver_close` the pointer is freed, as for
+/// every getter.
 ///
 /// # Safety
 ///
@@ -319,14 +323,16 @@ pub unsafe extern "C" fn tst_rist_receiver_peer_addr(
     })
 }
 
-/// Read into `*out` the count of datagrams and blocks the URL's `source` pin
-/// turned away since open; 0 without a pin. The pin compares the IP address
-/// only, never the port. Data turned away is counted here and never reaches
-/// this handle's `_get_stats` counters; neither sender is told.
+/// Read into `*out` how many times the URL's `source` pin turned data away:
+/// each time librist reported a sender the pin refuses or whose address cannot
+/// be read, and each delivered block it refused, since open; 0 without a pin.
+/// The pin compares the IP address only, never the port. Neither sender is
+/// told.
 ///
 /// Answers in the same states as `tst_rist_receiver_peer_addr`: while a receive
-/// runs on another thread and after `tst_rist_receiver_cancel`. Returns 0, or
-/// `TST_E_INVALID_CONFIG` when `p` or `out` is NULL.
+/// runs on another thread, after `tst_rist_receiver_cancel`, after a receive
+/// ended with an error and after a caught panic retired the shell. Returns 0,
+/// or `TST_E_INVALID_CONFIG` when `p` or `out` is NULL.
 ///
 /// # Safety
 ///

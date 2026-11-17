@@ -53,6 +53,8 @@ pub struct TstUdpReceiver {
 /// - `udp://@group:port` (`@` prefix is ffmpeg convention) — multicast recv
 /// - Query params: `?iface=<IPv4 literal>`, `?rcvbuf=8M`. Interface names are
 ///   not resolved; an IPv6 group takes an interface index.
+/// - `?source=<ip>|first` — deliver datagrams from one IP only (any port);
+///   see `tst_udp_receiver_peer_addr`.
 ///
 /// Port `0` causes the kernel to assign an ephemeral port.
 ///
@@ -268,9 +270,11 @@ pub unsafe extern "C" fn tst_udp_receiver_reset_stats(p: *mut TstUdpReceiver) ->
 /// datagram); nothing is written then.
 ///
 /// It reads a record kept beside the receiver, never the handle's slot, so it
-/// answers while `tst_udp_receiver_recv_ts` runs on another thread, and after
-/// `tst_udp_receiver_cancel` it still answers with the last address delivered.
-/// After `tst_udp_receiver_close` the pointer is freed, as for every getter.
+/// answers while `tst_udp_receiver_recv_ts` runs on another thread. After
+/// `tst_udp_receiver_cancel`, after a receive ended with an error, and after a
+/// caught panic retired the shell it still answers, with the last address
+/// delivered. After `tst_udp_receiver_close` the pointer is freed, as for every
+/// getter.
 ///
 /// # Safety
 ///
@@ -296,8 +300,9 @@ pub unsafe extern "C" fn tst_udp_receiver_peer_addr(
 /// neither sender is told.
 ///
 /// Answers in the same states as `tst_udp_receiver_peer_addr`: while a receive
-/// runs on another thread and after `tst_udp_receiver_cancel`. Returns 0, or
-/// `TST_E_INVALID_CONFIG` when `p` or `out` is NULL.
+/// runs on another thread, after `tst_udp_receiver_cancel`, after a receive
+/// ended with an error and after a caught panic retired the shell. Returns 0,
+/// or `TST_E_INVALID_CONFIG` when `p` or `out` is NULL.
 ///
 /// # Safety
 ///
