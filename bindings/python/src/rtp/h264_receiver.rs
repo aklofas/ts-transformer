@@ -26,10 +26,12 @@
 //! another (a `&mut self` receive made PyO3 raise `RuntimeError: Already
 //! borrowed` there). Methods raise `RtpError(CLOSED)` once the slot is
 //! empty. `close()` is cancel-first, so any parked `recv_au` unparks
-//! promptly: it returns the access unit the cancel flushes, if the open one
-//! completes cleanly, and otherwise raises `RtpError(CLOSED)`; the end
-//! reason is snapshotted by `H264Held::close`, the one moment it can be
-//! read before the receiver drops.
+//! promptly: it returns one held access unit if there is one (a queued
+//! one, or the one the cancel flushes) and otherwise raises
+//! `RtpError(CLOSED)`; `close()` then empties the slot, so any further
+//! queued unit is discarded. The end reason is snapshotted by
+//! `H264Held::close`, the one moment it can be read before the receiver
+//! drops.
 //!
 //! # Error mapping
 //!
@@ -464,9 +466,10 @@ impl PyH264Receiver {
     /// - `RtpError(BACKPRESSURE)` if `timeout_ms` was given and no AU
     ///   completed within it — retryable, the receiver stays open.
     /// - `RtpError(BROKEN)` on a hard I/O error.
-    /// - `RtpError(CLOSED)` once cancelled (including a `close()` from
-    ///   another thread), after the AUs already buffered, or if the
-    ///   receiver is already closed.
+    /// - `RtpError(CLOSED)` once cancelled, after the AUs already
+    ///   buffered; after a `close()` from another thread, once a parked
+    ///   call has returned the one held AU (if any); or if the receiver is
+    ///   already closed.
     #[pyo3(signature = (timeout_ms = None))]
     fn recv_au(
         &self,
@@ -592,9 +595,10 @@ impl PyH264Receiver {
 
     /// Close the receiver. Idempotent. Fires the cancel handle BEFORE
     /// taking the slot so a thread parked in `recv_au` unparks at the
-    /// next cancel-poll tick (~100 ms) and returns the access unit the
-    /// cancel flushes, if the open one completes cleanly, or else raises
-    /// `RtpError(CLOSED)`; then
+    /// next cancel-poll tick (~100 ms) and returns one held access unit if
+    /// there is one (a queued one, or the one the cancel flushes), or else
+    /// raises `RtpError(CLOSED)`; later calls raise `RtpError(CLOSED)` and
+    /// any further queued unit is discarded. It then
     /// calls the inner `H264Receiver`'s own idempotent `close()` (records
     /// `EndReason::Cancelled` unless some earlier signal already claimed
     /// the slot), snapshots its `end_reason()` into `closed_end_reason`,
