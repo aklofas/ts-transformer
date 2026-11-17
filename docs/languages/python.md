@@ -1531,7 +1531,7 @@ A server that gives each stream name its own port can let the first
 publisher take the port and then decide whether to keep it. The wait for
 that first publisher needs a limit, as any idle port does, and here it
 matters more: `recv_bytes()` returns only aligned TS packets (four sync
-bytes 188 bytes apart), so a first datagram that is not TS (a probe, a
+bytes 188 bytes apart), so a first datagram with a payload that is not TS (a probe, a
 stray byte) takes the lock and the receive then returns nothing until the
 receiver is closed, unless that sender goes on to send TS. The example
 closes the receiver when its idle limit passes and opens the port again:
@@ -1563,25 +1563,29 @@ def admit_first(port: int, blocked: set[str], idle_s: float) -> tuple[Receiver, 
     timer = threading.Timer(idle_s, idle)
     timer.start()
     try:
-        first = rx.recv_bytes()              # the first TS packet
+        try:
+            first = rx.recv_bytes()          # the first TS packet
+        finally:
+            timer.cancel()
+            timer.join()                     # the limit has run or never will
+        if timed_out.is_set():
+            rx.close()                       # the limit fired as data came
+            return None
+        addr = rx.peer_addr()
+        assert addr is not None              # a packet was delivered
+        host, _ = addr                       # what the datagrams carry, unverified
+        if host in blocked:
+            rx.close()                       # the lock is released only by closing
+            return None
+        return rx, first                     # open: the caller owns it now
     except UdpError as exc:
         rx.close()                           # quiet if the limit closed it
         if timed_out.is_set() and exc.kind == UdpErrorKind.CLOSED:
             return None                      # the limit closed it
         raise
-    finally:
-        timer.cancel()
-        timer.join()                         # the limit has run or never will
-    if timed_out.is_set():
-        return None                          # the limit fired as data came
-
-    addr = rx.peer_addr()
-    assert addr is not None                  # a packet was delivered
-    host, _ = addr                           # what the datagrams carry, unverified
-    if host in blocked:
-        rx.close()                           # the lock is released only by closing
-        return None
-    return rx, first
+    except BaseException:
+        rx.close()                           # every other failure closes it too
+        raise
 
 
 blocked = {"192.0.2.7"}                      # your rule

@@ -108,10 +108,11 @@ let pinned = b.build()?;
   the shell then returns nothing until the receiver is closed, unless that
   sender goes on to send TS.
 - **Windows.** A datagram larger than the caller's buffer, from any sender,
-  fails the receive before its source is known, with
-  `TransportError::Broken`, which ends the receiver. The shells size their
-  buffers to `max_payload()` (65 535 bytes), so only a direct caller with a
-  smaller buffer meets it.
+  fails the receive before its source is known. `recv_bytes` returns
+  `TransportError::Broken`, which ends the receiver; `recv_timeout` returns
+  `UdpError::Io` and the receiver stays open. The shells size their buffers
+  to `max_payload()` (65 535 bytes), so only a direct caller with a smaller
+  buffer meets it.
 - **Refusals.** A sender URL with the key is refused with a URL error, and
   so is a value that is neither an IP literal nor `first`. An IPv6 pin on
   a receiver bound to an IPv4 address is refused at open, since it could

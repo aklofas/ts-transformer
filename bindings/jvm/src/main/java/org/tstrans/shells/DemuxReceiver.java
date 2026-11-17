@@ -443,7 +443,8 @@ public class DemuxReceiver extends NativeHandle implements Iterable<DemuxEvent> 
     /**
      * How much the {@code source} key of a {@code udp://} or {@code rist://} receiver
      * URL turned away: datagrams on {@code udp://}; on {@code rist://}, datagrams from a
-     * sender the pin refuses and delivered blocks refused on the read path.
+     * sender the pin refuses, datagrams whose source address could not be read, and
+     * delivered blocks refused on the read path.
      * {@code source=<ip>} admits that IP only; {@code source=first} admits the IP of the
      * first datagram or block delivered and holds it until the receiver is closed. Either
      * compares the IP address, never the port. What is turned away is counted here, and
