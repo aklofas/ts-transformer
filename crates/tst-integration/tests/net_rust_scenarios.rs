@@ -574,16 +574,6 @@ mod url_corpus_leg {
         d.as_millis()
     }
 
-    /// A receive-side `source` pin as the URL wrote it.
-    fn pin_text(pin: tst_core::transport::SourcePin) -> String {
-        use tst_core::transport::SourcePin;
-        match pin {
-            SourcePin::Ip(ip) => ip.to_string(),
-            SourcePin::First => "first".to_string(),
-            other => panic!("no corpus spelling for {other:?}"),
-        }
-    }
-
     fn bit(b: bool) -> &'static str {
         if b { "1" } else { "0" }
     }
@@ -785,7 +775,7 @@ mod url_corpus_leg {
         put_opt(&mut k, "rcvbuf", c.rcvbuf);
         put_opt(&mut k, "sndbuf", c.sndbuf);
         put_opt(&mut k, "pkt_size", c.pkt_size);
-        put_opt(&mut k, "source", c.source.map(pin_text));
+        put_opt(&mut k, "source", c.source);
         Record {
             bind: u.recv_bind.then_some(true),
             ..record("udp", &u.addr.to_string(), u.port, k)
@@ -885,7 +875,7 @@ mod url_corpus_leg {
         put_opt(&mut k, "cname", c.cname.as_deref());
         put(&mut k, "compression", bit(c.compression));
         put(&mut k, "pkt_size", c.pkt_size);
-        put_opt(&mut k, "source", c.source.map(pin_text));
+        put_opt(&mut k, "source", c.source);
         Record {
             bind: u.is_recv_bind.then_some(true),
             ..record("rist", &u.addr.to_string(), u.port, k)

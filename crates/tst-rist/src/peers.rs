@@ -46,7 +46,8 @@ pub(crate) fn on_connect(
         }
         return Verdict::Unrecorded;
     };
-    let addr = SocketAddr::new(ip.to_canonical(), port);
+    // librist's text carries no IPv6 scope id, so none is kept here.
+    let addr = SourceHandle::canonical(SocketAddr::new(ip, port));
     // `allows`, not `admit`: a peer is created before its key is proven, so
     // only a delivered block may latch a `first` pin.
     if !source.allows(addr.ip()) {
@@ -170,6 +171,9 @@ impl Attribution {
     /// the reader must leave the old peer's blocks queued at least that long.
     /// Under an unlatched `first`, such a stale block can latch the pin to the
     /// new peer's address; under an IP pin every entry carries the pinned IP.
+    /// Under a latched `first`, a block of a refused sender that connected
+    /// before the latch, read after its peer was freed and a new peer of the
+    /// latched sender took the same pointer, is delivered.
     fn address(&mut self, peers: &Peers, peer: usize) -> Option<SocketAddr> {
         // Read before the lookup: a change landing in between leaves the pair
         // with an older generation, so it is re-read next time.

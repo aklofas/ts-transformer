@@ -9,7 +9,8 @@ use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SourcePin {
-    /// Only this IP address (any port). Held in canonical form.
+    /// Only this IP address (any port), compared in canonical form: an
+    /// IPv4-mapped IPv6 address matches the IPv4 address.
     Ip(IpAddr),
     /// Whichever address delivers first; every other one is refused after.
     First,
@@ -26,6 +27,16 @@ impl SourcePin {
         s.parse::<IpAddr>()
             .ok()
             .map(|ip| Self::Ip(ip.to_canonical()))
+    }
+}
+
+/// Prints the URL value: the IP address in canonical form, or `first`.
+impl std::fmt::Display for SourcePin {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Ip(ip) => ip.to_canonical().fmt(f),
+            Self::First => f.write_str("first"),
+        }
     }
 }
 
@@ -104,9 +115,23 @@ impl SourceHandle {
         }
     }
 
-    /// Store `from` (canonical IP, same port) as the delivering address.
+    /// The form this record stores, reports and compares: an IPv4-mapped
+    /// IPv6 address becomes the IPv4 address with the same port; any other
+    /// address, an IPv6 scope id included, is kept as it is.
+    #[must_use]
+    pub fn canonical(addr: SocketAddr) -> SocketAddr {
+        match addr {
+            SocketAddr::V6(v6) => match v6.ip().to_ipv4_mapped() {
+                Some(v4) => SocketAddr::new(IpAddr::V4(v4), v6.port()),
+                None => addr,
+            },
+            SocketAddr::V4(_) => addr,
+        }
+    }
+
+    /// Store `from`, in [`Self::canonical`] form, as the delivering address.
     pub fn record(&self, from: SocketAddr) {
-        let canon = SocketAddr::new(from.ip().to_canonical(), from.port());
+        let canon = Self::canonical(from);
         *self.0.peer.lock().unwrap_or_else(PoisonError::into_inner) = Some(canon);
     }
 
@@ -115,7 +140,8 @@ impl SourceHandle {
         self.0.rejected.fetch_add(1, Ordering::Relaxed);
     }
 
-    /// The address that last delivered, if one was recorded.
+    /// The address that last delivered, if one was recorded. It is the
+    /// datagrams' source address, which nothing verifies.
     #[must_use]
     pub fn peer_addr(&self) -> Option<SocketAddr> {
         *self.0.peer.lock().unwrap_or_else(PoisonError::into_inner)
@@ -210,6 +236,51 @@ mod tests {
         assert_eq!(h.peer_addr(), None);
         h.record(sa("[::ffff:10.0.0.5]:9"));
         assert_eq!(h.peer_addr(), Some(sa("10.0.0.5:9")));
+    }
+
+    #[test]
+    fn record_keeps_an_ipv6_scope_id_and_maps_ipv4_back() {
+        let h = SourceHandle::default();
+        h.record(sa("[fe80::1%3]:9"));
+        match h.peer_addr() {
+            Some(SocketAddr::V6(v6)) => assert_eq!(v6.scope_id(), 3, "{v6}"),
+            other => panic!("{other:?}"),
+        }
+        h.record(sa("[::ffff:10.0.0.5]:9"));
+        assert_eq!(h.peer_addr(), Some(sa("10.0.0.5:9")));
+    }
+
+    #[test]
+    fn canonical_maps_ipv4_back_and_keeps_everything_else() {
+        assert_eq!(
+            SourceHandle::canonical(sa("[::ffff:10.0.0.5]:9")),
+            sa("10.0.0.5:9")
+        );
+        for keep in ["10.0.0.5:9", "[fe80::1%3]:9", "[::1]:9"] {
+            assert_eq!(SourceHandle::canonical(sa(keep)), sa(keep), "{keep}");
+        }
+        match SourceHandle::canonical(sa("[fe80::1%3]:9")) {
+            SocketAddr::V6(v6) => assert_eq!(v6.scope_id(), 3),
+            other => panic!("{other}"),
+        }
+    }
+
+    #[test]
+    fn display_prints_the_url_value_and_parses_back() {
+        for pin in [
+            SourcePin::First,
+            SourcePin::Ip(ip("10.0.0.5")),
+            SourcePin::Ip(ip("fe80::1")),
+        ] {
+            assert_eq!(SourcePin::parse(&pin.to_string()), Some(pin), "{pin}");
+        }
+        assert_eq!(SourcePin::First.to_string(), "first");
+        let mapped = SourcePin::Ip(ip("::ffff:10.0.0.5"));
+        assert_eq!(mapped.to_string(), "10.0.0.5");
+        assert_eq!(
+            SourcePin::parse(&mapped.to_string()),
+            Some(SourcePin::Ip(ip("10.0.0.5")))
+        );
     }
 
     #[test]

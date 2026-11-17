@@ -654,3 +654,17 @@ fn the_builders_unreachable_pin_is_refused_at_build() {
         .expect("refused");
     assert!(err.to_string().contains("source"), "{err}");
 }
+
+#[test]
+fn the_builders_pin_in_ipv4_mapped_form_is_accepted_on_an_ipv4_bind() {
+    let mapped = SourcePin::Ip(std::net::Ipv4Addr::LOCALHOST.to_ipv6_mapped().into());
+    let t = UdpRecvTransportBuilder::from_url("udp://@127.0.0.1:0")
+        .unwrap()
+        .source(mapped)
+        .build()
+        .expect("a mapped IPv4 pin matches an IPv4 bind");
+    assert_eq!(
+        t.source_handle().unwrap().pin(),
+        Some(SourcePin::Ip("127.0.0.1".parse().unwrap()))
+    );
+}

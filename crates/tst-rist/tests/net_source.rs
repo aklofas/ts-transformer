@@ -227,8 +227,17 @@ fn wait_for(what: &str, mut cond: impl FnMut() -> bool) {
     }
 }
 
+/// Linux always has `::1`, so there a failed bind fails the test rather
+/// than skip the dual-stack case.
 fn ipv6_dual_stack_available() -> bool {
-    !cfg!(windows) && UdpSocket::bind("[::1]:0").is_ok()
+    if cfg!(windows) {
+        return false;
+    }
+    match UdpSocket::bind("[::1]:0") {
+        Ok(_) => true,
+        Err(e) if cfg!(target_os = "linux") => panic!("no [::1] bind on Linux: {e}"),
+        Err(_) => false,
+    }
 }
 
 fn assert_reports_localhost(rx: &mut RistRecvTransport, query: &str, what: &str) {
@@ -429,11 +438,15 @@ fn a_restarted_sender_on_a_new_port_continues() {
     let port = rx.local_addr().port();
     let first = Tx::start(port, "", 0xA1);
     read_until(&mut rx, "the first sender", |t, _| t.contains(&0xA1));
+    let before = rx.peer_addr().expect("the first sender's address");
     drop(first);
     // A new sender on the same host: a new source port, so a new librist peer.
+    // A sender's own port cannot be read, so the check is that it moved.
     let _second = Tx::start(port, "", 0xA2);
     read_until(&mut rx, "the restarted sender", |t, _| t.contains(&0xA2));
-    assert_eq!(rx.peer_addr().map(|a| a.ip()), Some(LOCALHOST));
+    let after = rx.peer_addr().expect("the restarted sender's address");
+    assert_eq!(after.ip(), LOCALHOST);
+    assert_ne!(after.port(), before.port(), "{before} then {after}");
     assert_eq!(rx.stats().source_rejected, 0);
 }
 

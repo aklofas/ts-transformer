@@ -111,7 +111,7 @@ impl UdpRecvTransport {
         // An IPv6 pin on an IPv4 bind could never match: say so now rather
         // than drop every datagram.
         if let Some(SourcePin::Ip(pin)) = cfg.source
-            && pin.is_ipv6()
+            && pin.to_canonical().is_ipv6()
             && url.addr.is_ipv4()
         {
             return Err(UdpError::Url(UrlError::BadQueryValue {
@@ -283,7 +283,7 @@ impl UdpRecvTransport {
                         }
                     }
                     Verdict::Empty | Verdict::Deliver => {
-                        let from = SocketAddr::new(from.ip().to_canonical(), from.port());
+                        let from = SourceHandle::canonical(from);
                         return Ok(Some((n, from)));
                     }
                 },
