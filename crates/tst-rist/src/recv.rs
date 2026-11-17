@@ -11,7 +11,7 @@ use tst_core::transport::{
 
 use crate::config::RistConfig;
 use crate::error::RistError;
-use crate::peers::Peers;
+use crate::peers::{Attribution, Peers};
 use crate::stats::RistStats;
 use crate::transport::RistCancelHandle;
 use crate::url::RistUrl;
@@ -78,14 +78,8 @@ pub struct RistRecvTransport {
     end_reason: EndReasonHandle,
     /// Which sender each librist peer is, and the `source` pin.
     peers: Arc<Peers>,
-    /// The peer of the last delivered block, the table's generation when it
-    /// was looked up, and the address found for it. A sender's blocks arrive
-    /// in runs from one peer, so the table lock is taken only when the
-    /// pointer or the generation moves, not once per block.
-    last_peer: Option<(usize, u64, Option<SocketAddr>)>,
-    /// The address last stored in the source handle; it is written only when
-    /// the delivering address changes.
-    recorded: Option<SocketAddr>,
+    /// Which sender each delivered block came from.
+    attribution: Attribution,
 }
 
 /// The reasons a RIST receive stream can end with: a cancel or close, or a
@@ -126,12 +120,17 @@ impl RistRecvTransport {
 
     /// Build a receiver from a parsed URL + config.
     pub fn listen_with_config(url: &RistUrl, cfg: &RistConfig) -> Result<Self, RistError> {
-        let ctx = crate::ctx::RistCtx::open(url, cfg, crate::ctx::Role::Receiver)?;
-        let (Some(local), Some(peers)) = (ctx.local, ctx.peers.clone()) else {
+        let mut ctx = crate::ctx::RistCtx::open(url, cfg, crate::ctx::Role::Receiver)?;
+        let Some(local) = ctx.local else {
             return Err(RistError::Ffi {
                 code: -1,
                 function: "rist_peer_get_socket",
             });
+        };
+        let Some(peers) = ctx.peers.take() else {
+            return Err(RistError::InvalidConfig(
+                "a receiver context was opened without its peer table".into(),
+            ));
         };
         Ok(Self {
             ctx,
@@ -140,8 +139,7 @@ impl RistRecvTransport {
             cancel: RistCancelHandle::new(),
             end_reason: EndReasonHandle::default(),
             peers,
-            last_peer: None,
-            recorded: None,
+            attribution: Attribution::default(),
         })
     }
 
@@ -151,10 +149,16 @@ impl RistRecvTransport {
         self.local
     }
 
-    /// The address (IP and UDP source port) of the sender whose data was
-    /// delivered last; `None` before the first block. An IPv4 sender seen
-    /// on a dual-stack bind is reported as plain IPv4. In the Simple profile
-    /// the port is the sender's data socket's.
+    /// The address (IP and UDP source port) of the sender whose block was
+    /// delivered last and whose address is known; `None` before the first
+    /// such block. A block from a peer the receiver holds no address for
+    /// leaves it unchanged. An IPv4 sender seen on a dual-stack bind is
+    /// reported as plain IPv4; in the Simple profile the port is the sender's
+    /// data socket's.
+    ///
+    /// It is the source address of the sender's UDP datagrams, which nothing
+    /// verifies: anyone who can send to the receiver can claim any address,
+    /// and the Simple profile has no handshake at all.
     pub fn peer_addr(&self) -> Option<SocketAddr> {
         self.peers.source.peer_addr()
     }
@@ -174,46 +178,6 @@ impl RistRecvTransport {
         let mut s = self.ctx.stats.lock().map(|s| *s).unwrap_or_default();
         s.source_rejected = self.peers.source.rejected();
         s
-    }
-
-    /// The address the table holds for `peer`, through the one-entry cache.
-    fn peer_address(&mut self, peer: usize) -> Option<SocketAddr> {
-        let generation = self.peers.generation();
-        if let Some((p, g, addr)) = self.last_peer
-            && p == peer
-            && g == generation
-        {
-            return addr;
-        }
-        let addr = self.peers.lookup(peer);
-        self.last_peer = Some((peer, generation, addr));
-        addr
-    }
-
-    /// Apply the `source` pin to a block from `peer` about to be delivered,
-    /// and record its sender. False: the block is refused (and counted).
-    fn admit_block(&mut self, peer: usize) -> bool {
-        let addr = self.peer_address(peer);
-        let source = &self.peers.source;
-        match addr {
-            Some(addr) => {
-                if !source.admit(addr) {
-                    return false;
-                }
-                if self.recorded != Some(addr) {
-                    source.record(addr);
-                    self.recorded = Some(addr);
-                }
-                true
-            }
-            // A peer the table does not hold (a full table, or one freed
-            // since): without a pin it is delivered as before, unrecorded.
-            None if source.pin().is_some() => {
-                source.count_rejected();
-                false
-            }
-            None => true,
-        }
     }
 
     /// Count one dropped datagram (oversize / malformed). Centralized so the
@@ -333,7 +297,7 @@ impl RistRecvTransport {
             BlockDisposition::Accept(copy_n) => {
                 // A table key only: the peer may be freed, never dereference it.
                 let peer = unsafe { (*block).peer } as usize;
-                if !self.admit_block(peer) {
+                if !self.attribution.admit_block(&self.peers, peer) {
                     unsafe {
                         rist_sys::rist_receiver_data_block_free2(&mut block);
                     }
@@ -444,8 +408,8 @@ impl RistRecvTransport {
         Arc::strong_count(&self.ctx.stats)
     }
 
-    /// Strong references to the peers table: the context's and this
-    /// transport's, plus librist's leaked one until `close()` reclaims it.
+    /// Strong references to the peers table: this transport's, plus
+    /// librist's leaked one until `close()` reclaims it.
     pub(crate) fn peers_refs_for_test(&self) -> usize {
         Arc::strong_count(&self.peers)
     }
@@ -552,11 +516,11 @@ mod tests {
             Ok(t) => t,
             Err(_) => return,
         };
-        assert_eq!(t.peers_refs_for_test(), 3);
-        t.close();
         assert_eq!(t.peers_refs_for_test(), 2);
         t.close();
-        assert_eq!(t.peers_refs_for_test(), 2);
+        assert_eq!(t.peers_refs_for_test(), 1);
+        t.close();
+        assert_eq!(t.peers_refs_for_test(), 1);
     }
 
     /// Without the `mbedtls` feature, a config asking for encryption is

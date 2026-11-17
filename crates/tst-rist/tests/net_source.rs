@@ -4,13 +4,15 @@
 //! A tst-rist sender cannot choose its source address, so the second sender
 //! of a two-address test is relayed through a two-way UDP relay whose outward
 //! socket is bound to 127.0.0.2. Every Linux host routes all of 127/8 to the
-//! loopback, so there the relay always opens; elsewhere a host without that
-//! address skips the two-address tests.
+//! loopback, so there the relay always opens. Where 127.0.0.2 cannot be
+//! bound, the receiver binds `[::]` and the relay's outward socket `[::1]`:
+//! the direct sender is seen as 127.0.0.1 and the relayed one as `::1`. Only
+//! a host where both fail skips the two-address tests, never Linux.
 //!
 //! Each payload is seven TS packets whose byte 1 carries the sending
 //! instance's tag, so a test can tell from the bytes who delivered them.
 
-use std::net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, UdpSocket};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::thread::JoinHandle;
@@ -32,7 +34,7 @@ const KEY: &str = "secret=correct-horse-battery&aes-type=128";
 const WRONG_KEY: &str = "secret=another-secret-entirely&aes-type=128";
 
 const LOCALHOST: IpAddr = IpAddr::V4(Ipv4Addr::LOCALHOST);
-const SECOND: IpAddr = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 2));
+const SECOND_V4: IpAddr = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 2));
 
 fn ts_chunk(tag: u8) -> Vec<u8> {
     let mut out = vec![0xffu8; 188 * 7];
@@ -44,8 +46,40 @@ fn ts_chunk(tag: u8) -> Vec<u8> {
 }
 
 fn listen(query: &str) -> RistRecvTransport {
-    let url = format!("rist://@0.0.0.0:0?{BUFFER}{query}");
+    listen_on("0.0.0.0", query)
+}
+
+fn listen_on(host: &str, query: &str) -> RistRecvTransport {
+    let url = format!("rist://@{host}:0?{BUFFER}{query}");
     RistRecvTransport::listen(&url).unwrap_or_else(|e| panic!("{url}: {e:?}"))
+}
+
+/// A receiver and a relay whose datagrams reach it from a second address
+/// (`Relay::second`). `None`, with the reason printed, only where neither way
+/// works; never on Linux.
+fn listen_with_relay(query: &str) -> Option<(RistRecvTransport, Relay)> {
+    let v4 = UdpSocket::bind((SECOND_V4, 0));
+    if let Ok(back) = v4 {
+        let rx = listen_on("0.0.0.0", query);
+        let to = SocketAddr::new(LOCALHOST, rx.local_addr().port());
+        return Some((rx, Relay::start(back, to)));
+    }
+    // Windows does not take IPv4 on an IPv6 socket by default.
+    let v6 = if cfg!(windows) {
+        None
+    } else {
+        UdpSocket::bind("[::1]:0").ok()
+    };
+    if let Some(back) = v6 {
+        let rx = listen_on("[::]", query);
+        let to = SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), rx.local_addr().port());
+        return Some((rx, Relay::start(back, to)));
+    }
+    if cfg!(target_os = "linux") {
+        panic!("no second loopback address: {v4:?}");
+    }
+    eprintln!("skipping: neither {SECOND_V4} nor [::1] can be bound here ({v4:?})");
+    None
 }
 
 /// A sender on its own thread that sends one tagged chunk every 5 ms until
@@ -91,6 +125,8 @@ impl Drop for Tx {
 /// receiver sees its datagrams come from 127.0.0.2.
 struct Relay {
     front_port: u16,
+    /// The address the receiver sees the relayed sender at.
+    second: IpAddr,
     /// Datagrams relayed towards the receiver.
     forwarded: Arc<AtomicU64>,
     stop: Arc<AtomicBool>,
@@ -98,16 +134,9 @@ struct Relay {
 }
 
 impl Relay {
-    /// `None` where 127.0.0.2 cannot be bound (never on Linux).
-    fn start(rx_port: u16) -> Option<Self> {
-        let back = match UdpSocket::bind((SECOND, 0)) {
-            Ok(s) => s,
-            Err(e) if !cfg!(target_os = "linux") => {
-                eprintln!("skipping: cannot bind {SECOND} on this host: {e}");
-                return None;
-            }
-            Err(e) => panic!("bind {SECOND}: {e}"),
-        };
+    /// Relay from a new front socket on 127.0.0.1 to `to`, out of `back`.
+    fn start(back: UdpSocket, to: SocketAddr) -> Self {
+        let second = back.local_addr().expect("back addr").ip();
         let front = UdpSocket::bind((LOCALHOST, 0)).expect("bind the relay's front");
         let front_port = front.local_addr().expect("front addr").port();
         front
@@ -124,7 +153,7 @@ impl Relay {
             while !stopped.load(Ordering::Relaxed) {
                 if let Ok((n, from)) = front.recv_from(&mut buf) {
                     sender = Some(from);
-                    if back.send_to(&buf[..n], (LOCALHOST, rx_port)).is_ok() {
+                    if back.send_to(&buf[..n], to).is_ok() {
                         count.fetch_add(1, Ordering::Relaxed);
                     }
                 }
@@ -135,12 +164,13 @@ impl Relay {
                 }
             }
         });
-        Some(Self {
+        Self {
             front_port,
+            second,
             forwarded,
             stop,
             thread: Some(thread),
-        })
+        }
     }
 }
 
@@ -283,11 +313,10 @@ fn peer_addr_is_none_before_the_first_block() {
 
 #[test]
 fn an_unpinned_receiver_delivers_two_senders() {
-    let mut rx = listen("");
-    let port = rx.local_addr().port();
-    let Some(relay) = Relay::start(port) else {
+    let Some((mut rx, relay)) = listen_with_relay("") else {
         return;
     };
+    let port = rx.local_addr().port();
     let _a = Tx::start(port, "", 0xA1);
     let _b = Tx::start(relay.front_port, "", 0xB2);
     let tags = read_until(&mut rx, "both senders", |t, _| {
@@ -295,7 +324,7 @@ fn an_unpinned_receiver_delivers_two_senders() {
     });
     assert!(tags.iter().all(|t| [0xA1, 0xB2].contains(t)));
     let peer = rx.peer_addr().expect("a peer");
-    assert!([LOCALHOST, SECOND].contains(&peer.ip()), "{peer}");
+    assert!([LOCALHOST, relay.second].contains(&peer.ip()), "{peer}");
     assert_eq!(rx.stats().source_rejected, 0);
 }
 
@@ -315,11 +344,10 @@ fn assert_only_a(rx: &mut RistRecvTransport, what: &str) {
 
 #[test]
 fn source_ip_keeps_the_second_sender_out() {
-    let mut rx = listen("&source=127.0.0.1");
-    let port = rx.local_addr().port();
-    let Some(relay) = Relay::start(port) else {
+    let Some((mut rx, relay)) = listen_with_relay("&source=127.0.0.1") else {
         return;
     };
+    let port = rx.local_addr().port();
     // B first, so the pin, not arrival order, keeps it out.
     let _b = Tx::start(relay.front_port, "", 0xB2);
     wait_for("B's datagrams through the relay", || {
@@ -331,11 +359,10 @@ fn source_ip_keeps_the_second_sender_out() {
 
 #[test]
 fn source_first_keeps_the_second_sender_out() {
-    let mut rx = listen("&source=first");
-    let port = rx.local_addr().port();
-    let Some(relay) = Relay::start(port) else {
+    let Some((mut rx, relay)) = listen_with_relay("&source=first") else {
         return;
     };
+    let port = rx.local_addr().port();
     let _a = Tx::start(port, "", 0xA1);
     read_until(&mut rx, "A's first block", |t, _| !t.is_empty());
     let _b = Tx::start(relay.front_port, "", 0xB2);
@@ -346,8 +373,7 @@ fn source_first_keeps_the_second_sender_out() {
 /// path never sees a block, yet B's datagrams are refused.
 #[test]
 fn source_ip_refuses_the_second_sender_before_its_data_is_read() {
-    let rx = listen("&source=127.0.0.1");
-    let Some(relay) = Relay::start(rx.local_addr().port()) else {
+    let Some((rx, relay)) = listen_with_relay("&source=127.0.0.1") else {
         return;
     };
     let _b = Tx::start(relay.front_port, "", 0xB2);
@@ -362,11 +388,10 @@ fn source_ip_refuses_the_second_sender_before_its_data_is_read() {
 /// both.
 #[test]
 fn source_first_refuses_a_sender_that_connected_before_the_latch() {
-    let mut rx = listen("&source=first");
-    let port = rx.local_addr().port();
-    let Some(relay) = Relay::start(port) else {
+    let Some((mut rx, relay)) = listen_with_relay("&source=first") else {
         return;
     };
+    let port = rx.local_addr().port();
     let _b = Tx::start(relay.front_port, "", 0xB2);
     let _a = Tx::start(port, "", 0xA1);
     wait_for("B sending for a while", || {
@@ -382,18 +407,21 @@ fn source_first_refuses_a_sender_that_connected_before_the_latch() {
         tags.iter().filter(|&&t| t != winner).count(),
         tags.len()
     );
-    let ip = if winner == 0xA1 { LOCALHOST } else { SECOND };
+    let ip = if winner == 0xA1 {
+        LOCALHOST
+    } else {
+        relay.second
+    };
     assert_eq!(rx.peer_addr().map(|a| a.ip()), Some(ip));
 }
 
 #[cfg(feature = "mbedtls")]
 #[test]
 fn a_wrong_key_sender_first_does_not_take_the_lock() {
-    let mut rx = listen(&format!("&source=first&{KEY}"));
-    let port = rx.local_addr().port();
-    let Some(relay) = Relay::start(port) else {
+    let Some((mut rx, relay)) = listen_with_relay(&format!("&source=first&{KEY}")) else {
         return;
     };
+    let port = rx.local_addr().port();
     let _b = Tx::start(relay.front_port, &format!("&{WRONG_KEY}"), 0xB2);
     // B runs for a second before A starts; nothing of B's can be delivered.
     let b_started = Instant::now();

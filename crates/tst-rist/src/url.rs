@@ -201,7 +201,7 @@ pub const URL_KEYS: &[QueryKey<RistUrl>] = &[
     QueryKey::new(
         "source",
         &[],
-        "Accept data only from this sender's IP, or from the first to deliver (receive URLs only)",
+        "Deliver data from this IP only, any port, or `first`: the IP of the first delivered block, for the receiver's life (receive URLs only; the source address is not verified)",
         "IPv4 or IPv6 literal, or `first`",
         set_source,
     ),
