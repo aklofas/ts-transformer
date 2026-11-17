@@ -679,3 +679,36 @@ fn an_accepted_teardown_ends_the_receiver_while_the_peer_keeps_the_connection_op
     drop(client);
     peer.join().unwrap();
 }
+
+/// Dropping the client is a cancel even when the server answers the drop's
+/// own TEARDOWN at once: `Drop` sets the cancel before it writes the
+/// TEARDOWN, and an accepted TEARDOWN on a cancelled client records the
+/// cancel. Three hundred fresh sessions against the loopback server, which
+/// answers TEARDOWN as soon as it reads it.
+#[test]
+fn dropping_the_client_is_a_cancel_even_when_the_server_answers_its_teardown() {
+    let h = FixtureHandle::spawn(FixtureConfig::default());
+    for run in 0..300 {
+        let url = format!("rtsp://127.0.0.1:{}/test?transport=tcp", h.port);
+        let mut client = RtspClient::connect(&url).unwrap();
+        let sdp = client.describe().unwrap();
+        let session = client.setup_mp2t_auto(&sdp).unwrap();
+        let mut transport = session.into_recv_transport();
+        // A safety net only: a regression fails with `Backpressure`.
+        transport.set_recv_timeout(Some(scaled(Duration::from_secs(5))));
+
+        drop(client);
+
+        let mut buf = vec![0u8; transport.max_payload()];
+        let result = transport.recv_bytes(&mut buf);
+        assert!(
+            matches!(result, Err(TransportError::ExplicitClose)),
+            "run {run}: a dropped client must end the transport as a cancel, got {result:?}"
+        );
+        assert_eq!(
+            transport.end_reason(),
+            Some(EndReason::Cancelled),
+            "run {run}"
+        );
+    }
+}
