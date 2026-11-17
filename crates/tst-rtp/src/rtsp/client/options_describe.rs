@@ -1091,21 +1091,30 @@ mod tests {
         ctrl_tx
     }
 
-    /// A peer that resets the connection as soon as it accepts it
-    /// (`SO_LINGER` 0, then close).
+    /// A peer that accepts the connection, waits for the go signal (sent
+    /// once `connect` has returned, so the reset cannot land while the client
+    /// is still setting its socket up), then resets it (`SO_LINGER` 0, then
+    /// close). It resets anyway after 10 s, so a failed test cannot leave
+    /// the thread parked.
     #[cfg(target_os = "linux")]
-    fn resetting_peer() -> (u16, std::thread::JoinHandle<()>) {
+    fn resetting_peer() -> (
+        u16,
+        std::sync::mpsc::Sender<()>,
+        std::thread::JoinHandle<()>,
+    ) {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
+        let (go_tx, go_rx) = std::sync::mpsc::channel::<()>();
         let h = std::thread::spawn(move || {
             if let Ok((sock, _)) = listener.accept() {
+                let _ = go_rx.recv_timeout(Duration::from_secs(10));
                 socket2::SockRef::from(&sock)
                     .set_linger(Some(Duration::ZERO))
                     .unwrap();
                 drop(sock);
             }
         });
-        (port, h)
+        (port, go_tx, h)
     }
 
     /// Reads the client's control socket until the peer's reset shows up,
@@ -1137,8 +1146,9 @@ mod tests {
     /// has not been measured on macOS or Windows.
     #[cfg(target_os = "linux")]
     fn failed_write(pump: bool, cancel: bool) -> Result<RtspResponse, RtspError> {
-        let (port, peer) = resetting_peer();
+        let (port, go, peer) = resetting_peer();
         let mut client = RtspClient::connect(&format!("rtsp://127.0.0.1:{port}/test")).unwrap();
+        go.send(()).unwrap();
         let _ctrl = pump.then(|| install_stand_in_pump(&mut client));
         peer.join().unwrap();
         wait_for_reset(&client);
