@@ -545,3 +545,137 @@ fn dropping_the_client_ends_an_h264_receiver_as_a_cancel_after_its_queued_units(
     drop(receiver);
     peer.join().unwrap();
 }
+
+/// Peer for the accepted-TEARDOWN tests: answer DESCRIBE and an
+/// interleaved SETUP, then answer every request with 200. After the
+/// TEARDOWN's reply it closes the connection when `close_after_teardown`
+/// is set (its FIN then races the client's drop); otherwise it keeps the
+/// connection open until the client closes it.
+fn spawn_teardown_peer(close_after_teardown: bool) -> (u16, std::thread::JoinHandle<()>) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let peer = std::thread::spawn(move || {
+        let (mut sock, _): (TcpStream, _) = listener.accept().unwrap();
+        let mut leftover = Vec::new();
+        answer_describe_and_setup(
+            &mut sock,
+            &mut leftover,
+            "RTP/AVP/TCP;unicast;interleaved=0-1",
+        );
+        let mut buf = [0u8; 4096];
+        loop {
+            while let Some(pos) = leftover.windows(4).position(|w| w == b"\r\n\r\n") {
+                let req = String::from_utf8_lossy(&leftover[..pos + 4]).into_owned();
+                leftover.drain(..pos + 4);
+                let cseq = cseq_of(&req);
+                sock.write_all(
+                    format!("RTSP/1.0 200 OK\r\nCSeq: {cseq}\r\nSession: DEADBEEF\r\n\r\n")
+                        .as_bytes(),
+                )
+                .unwrap();
+                if method_of(&req) == "TEARDOWN" && close_after_teardown {
+                    return;
+                }
+            }
+            match sock.read(&mut buf) {
+                Ok(0) | Err(_) => break,
+                Ok(n) => leftover.extend_from_slice(&buf[..n]),
+            }
+        }
+    });
+    (port, peer)
+}
+
+/// `teardown()` and then dropping the client end a live interleaved
+/// transport with end of stream, whether or not the peer's FIN after its
+/// TEARDOWN reply was read before the drop: the accepted TEARDOWN records
+/// `CleanTeardown` and closes the media queue before `teardown()` returns.
+/// Fifty fresh sessions, so a race between the FIN and the drop would show.
+#[test]
+fn teardown_then_drop_ends_an_interleaved_recv_transport_with_end_of_stream() {
+    for run in 0..50 {
+        let (port, peer) = spawn_teardown_peer(true);
+        let url = format!("rtsp://127.0.0.1:{port}/test?transport=tcp");
+        let mut client = RtspClient::connect(&url).unwrap();
+        let sdp = client.describe().unwrap();
+        let session = client.setup_mp2t_auto(&sdp).unwrap();
+        let mut transport = session.into_recv_transport();
+        // A safety net only: a regression fails with `Backpressure`.
+        transport.set_recv_timeout(Some(scaled(Duration::from_secs(5))));
+
+        client.teardown().unwrap();
+        drop(client);
+
+        let mut buf = vec![0u8; transport.max_payload()];
+        let result = transport.recv_bytes(&mut buf);
+        assert!(
+            matches!(result, Err(TransportError::Closed)),
+            "run {run}: an accepted TEARDOWN must end the transport with end of stream, got {result:?}"
+        );
+        assert_eq!(
+            transport.end_reason(),
+            Some(EndReason::CleanTeardown),
+            "run {run}"
+        );
+        peer.join().unwrap();
+    }
+}
+
+/// The H.264 twin: after `teardown()` and the drop, `recv_au()` is
+/// `Ok(None)` on every run, never the cancel.
+#[test]
+fn teardown_then_drop_ends_an_h264_receiver_with_end_of_stream() {
+    for run in 0..50 {
+        let (port, peer) = spawn_teardown_peer(true);
+        let url = format!("rtsp://127.0.0.1:{port}/test?transport=tcp");
+        let mut client = RtspClient::connect(&url).unwrap();
+        let sdp = client.describe().unwrap();
+        let session = client.setup_mp2t_auto(&sdp).unwrap();
+        // H264DepayConfig is non-exhaustive — default-and-assign.
+        let mut h264_config = H264DepayConfig::default();
+        h264_config.payload_type = 96;
+        let mut receiver = session.into_h264_receiver(h264_config);
+        receiver.set_recv_timeout(Some(scaled(Duration::from_secs(5))));
+
+        client.teardown().unwrap();
+        drop(client);
+
+        let result = receiver.recv_au();
+        assert!(
+            matches!(result, Ok(None)),
+            "run {run}: an accepted TEARDOWN must end the receiver with end of stream, got {result:?}"
+        );
+        assert_eq!(
+            receiver.end_reason(),
+            Some(EndReason::CleanTeardown),
+            "run {run}"
+        );
+        peer.join().unwrap();
+    }
+}
+
+/// The TEARDOWN's `200` alone ends the receiver: the peer keeps the
+/// connection open and the client is not dropped, so no FIN and no cancel
+/// can be what ends it.
+#[test]
+fn an_accepted_teardown_ends_the_receiver_while_the_peer_keeps_the_connection_open() {
+    let (port, peer) = spawn_teardown_peer(false);
+    let url = format!("rtsp://127.0.0.1:{port}/test?transport=tcp");
+    let mut client = RtspClient::connect(&url).unwrap();
+    let sdp = client.describe().unwrap();
+    let session = client.setup_mp2t_auto(&sdp).unwrap();
+    let mut transport = session.into_recv_transport();
+
+    client.teardown().unwrap();
+
+    let mut buf = vec![0u8; transport.max_payload()];
+    let result = transport.recv_timeout(&mut buf, scaled(Duration::from_secs(5)));
+    assert!(
+        matches!(result, Err(TransportError::Closed)),
+        "the TEARDOWN's reply must end the transport with end of stream, got {result:?}"
+    );
+    assert_eq!(transport.end_reason(), Some(EndReason::CleanTeardown));
+
+    drop(client);
+    peer.join().unwrap();
+}
