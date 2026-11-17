@@ -32,14 +32,18 @@
 //!
 //! # EOS contract
 //!
-//! `recv_au` always drains already-assembled AUs before signalling EOS:
+//! `recv_au` always drains already-assembled AUs before its terminal value:
 //!
-//! 1. On cancel (`close()`) or clean disconnect (mpsc pump dropped its
-//!    `Sender`, indicating RTSP teardown): the depacketizer is flushed,
-//!    which may yield one final partial AU. Any queued complete AUs are
-//!    returned first via `Ok(Some(au))`.
-//! 2. `Ok(None)` is the terminal value — it is returned only after all
-//!    queued and flushed AUs have been surfaced.
+//! 1. Any queued complete AUs are returned first via `Ok(Some(au))`. Then
+//!    the depacketizer is flushed once, which may yield one final AU (the
+//!    open one, if it completes cleanly).
+//! 2. On a cancel (the [cancel handle](H264Receiver::cancel_handle)
+//!    fired), the terminal value is `Err(TransportError::ExplicitClose)`,
+//!    returned on every later call. After the receiver's own `close()` it
+//!    is the same, without the flush: `close()` discards an open AU.
+//! 3. On a clean disconnect with no cancel (the mpsc pump dropped its
+//!    `Sender`, indicating RTSP teardown), the terminal value is
+//!    `Ok(None)`, returned on every later call until a cancel.
 //!
 //! Any other hard I/O error surfaces as `Err(TransportError::Broken {..})`.
 
@@ -80,16 +84,18 @@ use tst_core::transport::{EndReason, EndReasonHandle};
 ///
 /// 1. Drain `depay.next_au()` first — the depacketizer may have queued
 ///    AUs from a prior `feed` call.
-/// 2. If the EOS flag is set, return `Ok(None)`.
+/// 2. If the cancel flag is set: record `Cancelled`; unless the EOS flag
+///    is already set, set it, flush the depacketizer and return the
+///    flushed AU if there is one; otherwise return `Err(ExplicitClose)`.
+///    Else, if the EOS flag is set, return `Ok(None)`.
 /// 3. Call `source.recv_raw(scratch, cancel, deadline)`:
 ///    - `Ok(n)` — tick counters, decode RTP header (malformed → tick +
 ///      continue), check payload type (wrong PT → tick + continue), feed
 ///      depacketizer, go to step 1.
-///    - `Err(ExplicitClose)` — set EOS, flush depacketizer, return
-///      flushed AU if any else `Ok(None)`.
+///    - `Err(ExplicitClose)` — a cancel fired mid-recv: go to step 1.
 ///    - `Err(Broken)` carrying the `MPSC_PUMP_DISCONNECTED` sentinel
-///      (`pub(crate)` const in `transport.rs`) — same EOS path (clean
-///      RTSP teardown).
+///      (`pub(crate)` const in `transport.rs`) — clean RTSP teardown: set
+///      EOS, flush depacketizer, return flushed AU if any else `Ok(None)`.
 ///    - `Err(Broken)` otherwise — clear source, propagate.
 ///
 /// # Stats
@@ -287,7 +293,9 @@ impl H264Receiver {
     /// Receive the next reassembled H.264 Access Unit.
     ///
     /// Returns `Ok(Some(au))` when a complete AU is available,
-    /// `Ok(None)` at EOS (cancel/close or clean RTSP teardown), and
+    /// `Err(TransportError::ExplicitClose)` once cancelled or closed (after
+    /// the drain described in the [EOS contract](crate::h264::receiver#eos-contract)),
+    /// `Ok(None)` at EOS (clean RTSP teardown), and
     /// `Err(TransportError::Broken {..})` on a hard I/O error.
     ///
     /// Blocks the calling thread. See the [struct-level doc](Self) for the
@@ -385,7 +393,21 @@ impl H264Receiver {
                 return Ok(Some(au));
             }
 
-            // ── Step 2: check EOS ─────────────────────────────────────────
+            // ── Step 2: cancel, then EOS ──────────────────────────────────
+            // The sticky cancel flag is the latch: once it is set every call
+            // ends with the cancel, after the queued AUs above and one flush
+            // (skipped when `eos` is already set: `close()` does not flush
+            // and a peer end already did).
+            if self.cancel.is_cancelled() {
+                record_end(&self.end_reason, EndReason::Cancelled);
+                if !self.eos {
+                    self.eos = true;
+                    if let Some(au) = self.depay.flush() {
+                        return Ok(Some(au));
+                    }
+                }
+                return Err(TransportError::ExplicitClose);
+            }
             if self.eos {
                 return Ok(None);
             }
@@ -403,17 +425,8 @@ impl H264Receiver {
             );
             let n = match raw_result {
                 Ok(n) => n,
-                Err(TransportError::ExplicitClose) => {
-                    // Cancel / close — drain depacketizer then EOS. Same
-                    // reasoning as `RtpRecvTransport::recv_bytes_inner`'s
-                    // ExplicitClose arm: `Self::close` already records
-                    // this directly when there's no recv in flight, so
-                    // this branch is reached for a bare
-                    // `cancel_handle().cancel()` fired mid-recv.
-                    record_end(&self.end_reason, EndReason::Cancelled);
-                    self.eos = true;
-                    return Ok(self.depay.flush());
-                }
+                // A cancel fired mid-recv: step 2 drains and answers it.
+                Err(TransportError::ExplicitClose) => continue,
                 Err(TransportError::Broken { ref msg, .. }) if msg == MPSC_PUMP_DISCONNECTED => {
                     // Clean RTSP teardown — same EOS path.
                     self.eos = true;
@@ -504,9 +517,10 @@ impl H264Receiver {
 
     /// Return a clone of the cancel handle. Setting the flag causes
     /// [`recv_au`](Self::recv_au) to stop blocking on I/O; it will not
-    /// initiate any new reads. Already-assembled AUs and any partial AU
-    /// produced by the flush are still returned before the terminal
-    /// `Ok(None)` — see the [EOS contract](Self#eos-contract) above.
+    /// initiate any new reads. Already-assembled AUs and any AU produced
+    /// by the flush are still returned before the terminal
+    /// `Err(TransportError::ExplicitClose)` — see the
+    /// [EOS contract](crate::h264::receiver#eos-contract).
     ///
     /// The returned value is an `Arc<RtpCancelHandle>`-compatible clone —
     /// callers hold a shared reference and set it from any thread.
@@ -515,7 +529,8 @@ impl H264Receiver {
     }
 
     /// Cancel any in-progress [`recv_au`](Self::recv_au) and drop the
-    /// underlying source. Idempotent.
+    /// underlying source. Idempotent. Does not flush: later calls return
+    /// any queued complete AUs, then `Err(TransportError::ExplicitClose)`.
     pub fn close(&mut self) {
         self.cancel.cancel();
         self.source = None;
@@ -697,6 +712,12 @@ mod tests {
         drop(tx); // causes Disconnected on recv_raw
         let result = receiver.recv_au().unwrap();
         assert!(result.is_none(), "expected Ok(None) at EOS, got {result:?}");
+        // A peer end with no cancel stays end of stream on every call.
+        let again = receiver.recv_au();
+        assert!(
+            matches!(again, Ok(None)),
+            "expected Ok(None) again, got {again:?}"
+        );
     }
 
     /// A stalled source (no packets, no disconnect) must not block
@@ -855,24 +876,139 @@ mod tests {
         );
     }
 
-    /// Firing the cancel handle (without calling `close()`) is observed
-    /// on the next `recv_au()` call — flushes via the normal EOS path and
-    /// records `Cancelled`.
+    /// One single-NAL-unit RTP packet (PT 96) carrying `nal`.
+    fn single_nal_packet(seq: u16, ts: u32, marker: bool, nal: &[u8]) -> bytes::Bytes {
+        let mut pkt = vec![0u8; crate::packet::RTP_HEADER_LEN];
+        let mut hdr = crate::packet::RtpHeader::new(seq, ts, 0xABCD);
+        hdr.marker = marker;
+        hdr.payload_type = 96;
+        hdr.encode_into(&mut pkt);
+        pkt.extend_from_slice(nal);
+        bytes::Bytes::from(pkt)
+    }
+
+    #[track_caller]
+    fn assert_explicit_close(result: Result<Option<H264Au>, TransportError>, what: &str) {
+        assert!(
+            matches!(result, Err(TransportError::ExplicitClose)),
+            "{what}: expected Err(ExplicitClose), got {result:?}"
+        );
+    }
+
+    /// Firing the cancel handle (without calling `close()`) with nothing
+    /// buffered ends every later `recv_au()` with the cancel and records
+    /// `Cancelled`.
     #[test]
-    fn cancel_handle_fire_records_cancelled_on_next_recv() {
+    fn cancel_handle_fire_ends_explicit_close_and_records_cancelled() {
         let (_tx, rx) = std::sync::mpsc::channel::<bytes::Bytes>();
         let mut r = H264Receiver::from_mpsc_with_rtcp_drain(rx, None, H264DepayConfig::default());
         r.cancel_handle().cancel();
-        let result = r.recv_au();
-        assert!(
-            matches!(result, Ok(None)),
-            "a cancelled receiver must still surface clean EOS, got {result:?}"
-        );
+        for call in 1..=3 {
+            assert_explicit_close(r.recv_au(), &format!("call {call}"));
+        }
         assert!(
             matches!(r.end_reason(), Some(EndReason::Cancelled)),
             "a cancel-handle fire observed at recv must record Cancelled, got {:?}",
             r.end_reason()
         );
+    }
+
+    /// An open, clean AU is flushed and handed out before the cancel.
+    /// Packet B's timestamp change completes A's AU and leaves B's open;
+    /// reading A's AU proves B was fed before the cancel.
+    #[test]
+    fn cancel_hands_out_flushed_au_then_explicit_close() {
+        let (tx, rx) = std::sync::mpsc::channel::<bytes::Bytes>();
+        let mut r = H264Receiver::from_mpsc_with_rtcp_drain(rx, None, H264DepayConfig::default());
+        tx.send(single_nal_packet(1, 0, false, &[0x65, 0x01]))
+            .unwrap();
+        tx.send(single_nal_packet(2, 3000, false, &[0x41, 0x02]))
+            .unwrap();
+        let first = r.recv_au().unwrap().expect("AU at ts 0");
+        assert_eq!(first.rtp_timestamp, 0);
+
+        r.cancel_handle().cancel();
+        let flushed = r.recv_au().unwrap().expect("flushed AU at ts 3000");
+        assert_eq!(flushed.rtp_timestamp, 3000);
+        assert_eq!(flushed.annexb, [0, 0, 0, 1, 0x41, 0x02]);
+        assert_explicit_close(r.recv_au(), "after the flushed AU");
+        assert_explicit_close(r.recv_au(), "every later call");
+    }
+
+    /// A complete AU already queued when the cancel lands is delivered
+    /// before the cancel.
+    #[test]
+    fn cancel_keeps_queued_complete_au_then_explicit_close() {
+        let (tx, rx) = std::sync::mpsc::channel::<bytes::Bytes>();
+        let mut r = H264Receiver::from_mpsc_with_rtcp_drain(rx, None, H264DepayConfig::default());
+        tx.send(single_nal_packet(1, 0, false, &[0x65, 0x01]))
+            .unwrap();
+        // Completes A's AU (timestamp change) and its own (marker).
+        tx.send(single_nal_packet(2, 3000, true, &[0x41, 0x02]))
+            .unwrap();
+        let first = r.recv_au().unwrap().expect("AU at ts 0");
+        assert_eq!(first.rtp_timestamp, 0);
+
+        r.cancel_handle().cancel();
+        let queued = r.recv_au().unwrap().expect("queued AU at ts 3000");
+        assert_eq!(queued.rtp_timestamp, 3000);
+        assert_explicit_close(r.recv_au(), "after the queued AU");
+    }
+
+    /// A cancel wins over a deadline that is already due.
+    #[test]
+    fn cancel_beats_due_deadline() {
+        let (_tx, rx) = std::sync::mpsc::channel::<bytes::Bytes>();
+        let mut r = H264Receiver::from_mpsc_with_rtcp_drain(rx, None, H264DepayConfig::default());
+        r.cancel_handle().cancel();
+        assert_explicit_close(r.recv_au_timeout(Duration::ZERO), "cancel + ZERO deadline");
+    }
+
+    /// The receiver's own `close()` ends later calls with the cancel too.
+    /// `close()` does not flush: an open AU is discarded.
+    #[test]
+    fn recv_after_close_ends_explicit_close() {
+        let (tx, rx) = std::sync::mpsc::channel::<bytes::Bytes>();
+        let mut r = H264Receiver::from_mpsc_with_rtcp_drain(rx, None, H264DepayConfig::default());
+        tx.send(single_nal_packet(1, 0, false, &[0x65, 0x01]))
+            .unwrap();
+        tx.send(single_nal_packet(2, 3000, false, &[0x41, 0x02]))
+            .unwrap();
+        r.recv_au().unwrap().expect("AU at ts 0");
+        r.close();
+        assert_explicit_close(r.recv_au(), "after close()");
+        assert_explicit_close(r.recv_au(), "every later call");
+    }
+
+    /// A cancel that follows an already-reported peer end ends later calls
+    /// with the cancel; the peer end's reason is kept (first writer wins).
+    #[test]
+    fn cancel_after_peer_end_ends_explicit_close() {
+        let (tx, rx) = std::sync::mpsc::channel::<bytes::Bytes>();
+        let mut r = H264Receiver::from_mpsc_with_rtcp_drain(rx, None, H264DepayConfig::default());
+        drop(tx);
+        assert!(matches!(r.recv_au(), Ok(None)));
+        r.cancel_handle().cancel();
+        assert_explicit_close(r.recv_au(), "cancel after peer end");
+    }
+
+    /// A cancel fired from another thread ends a `recv_au()` on a UDP
+    /// source with the cancel, whether it lands before the call starts or
+    /// while the call is parked: both orders give the same answer.
+    #[test]
+    fn cross_thread_cancel_ends_parked_udp_recv_with_explicit_close() {
+        let mut r = H264Receiver::listen("rtp://127.0.0.1:0?pt=96").unwrap();
+        let cancel = r.cancel_handle();
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            let _ = done_tx.send(r.recv_au());
+        });
+        cancel.cancel();
+        let result = done_rx
+            .recv_timeout(tst_test_helpers::timing::scaled(Duration::from_secs(5)))
+            .expect("recv_au did not return after the cancel");
+        worker.join().unwrap();
+        assert_explicit_close(result, "cross-thread cancel");
     }
 
     /// `Drop` must record `Cancelled` too, mirroring
