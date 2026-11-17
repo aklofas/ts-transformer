@@ -62,8 +62,8 @@ Next release: 0.11.0
 
 ### Added — tst-core, tst-udp, tst-rist
 
-- `tst_core::transport::SourcePin` (`Ip(IpAddr)` or `First`; `SourcePin::parse` reads the URL text) and `SourceHandle`, the record of where a receiver's datagrams come from, shared by its clones: `peer_addr()`, `rejected()`, `pin()`. `RecvTransport::source_handle()` returns it (default `None`, forwarded through `Box<dyn RecvTransport>`); take it before the transport moves into a shell.
-- `UdpRecvTransport::peer_addr()` and `RistRecvTransport::peer_addr()`: the address of the sender of the datagram or block delivered last, `None` before the first. `UdpConfig::source`, `RistConfig::source`, the receive builders' `source(SourcePin)` and the `source` URL key set the pin; `UdpStats::source_rejected` and `RistStats::source_rejected` count what it turned away, and neither sender is told. The pin compares the IP, never the port, and an IPv4 sender on a dual-stack bind is reported and compared in IPv4 form. On UDP a datagram turned away is in no received counter, and any first datagram with a payload takes a `first` lock, whoever sent it; on a RIST receiver with a pre-shared key only a sender whose data decrypts can. The address is the datagrams' source address and nothing verifies it: anyone who can reach the port can forge it.
+- `tst_core::transport::SourcePin` (`Ip(IpAddr)` or `First`; `SourcePin::parse` reads the URL text) and `SourceHandle`, the record of where a receiver's datagrams come from, shared by its clones: `peer_addr()`, `rejected()`, `pin()`, and the methods a transport uses to fill it. `RecvTransport::source_handle()` returns it (default `None`, forwarded through `Box<dyn RecvTransport>`); take it before the transport moves into a shell.
+- `UdpRecvTransport::peer_addr()` and `RistRecvTransport::peer_addr()`: the address of the sender of the datagram or block delivered last, `None` before the first. `UdpConfig::source`, `RistConfig::source`, the receive builders' `source(SourcePin)` and the `source` URL key set the pin; `UdpStats::source_rejected` and `RistStats::source_rejected` count what it turned away, and neither sender is told. The pin compares the IP, never the port, and an IPv4 sender on a dual-stack bind is reported and compared in IPv4 form. On UDP a datagram turned away is in no received counter, and any first datagram with a payload takes a `first` lock, whoever sent it; on a RIST receiver without a key the first delivered block takes it, whoever sent it, and with a pre-shared key only a sender whose data decrypts can. The address is the datagrams' source address and nothing verifies it: anyone who can reach the port can forge it.
 
 ### Added — tst-jni
 
@@ -71,11 +71,11 @@ Next release: 0.11.0
 
 ### Added — tst-py
 
-- `peer_addr() -> Optional[Tuple[str, int]]` and `source_rejected() -> int` on `shells.Receiver`, `shells.DemuxReceiver`, `udp.RecvTransport` and `rist.RecvTransport`; `udp.RecvTransportBuilder.source(value)` and `rist.RecvTransportBuilder.source(value)` (`"first"` or an IP literal); `source_rejected` on `udp.SocketStats` and `rist.RistStats`.
+- `peer_addr() -> Optional[Tuple[str, int]]` and `source_rejected() -> int` on `shells.Receiver`, `shells.DemuxReceiver`, `udp.RecvTransport` and `rist.RecvTransport`, neither of which waits behind a receive parked on another thread; `udp.RecvTransportBuilder.source(value)` and `rist.RecvTransportBuilder.source(value)` (`"first"` or an IP literal); `source_rejected` on `udp.SocketStats` and `rist.RistStats`, the same count read through `stats()`, which does wait.
 
 ### Added — tst-c
 
-- `tst_udp_receiver_peer_addr`, `tst_udp_demux_receiver_peer_addr`, `tst_rist_receiver_peer_addr` and `tst_rist_demux_receiver_peer_addr` write the sender's address as `ip:port` text (`[v6]:port`) and return its length, 0 with an empty string until the first datagram or block is delivered; `tst_udp_receiver_get_source_rejected` and its three twins read what the `source` pin turned away (C ABI 0.31, additions only: no existing symbol, layout, enum value or error code changed). The key works through the open functions' URLs. The getters answer while a receive is parked on another thread and after `_cancel`.
+- `tst_udp_receiver_peer_addr`, `tst_udp_demux_receiver_peer_addr`, `tst_rist_receiver_peer_addr` and `tst_rist_demux_receiver_peer_addr` write the sender's address as `ip:port` text (`[v6]:port`) and return its length, 0 with an empty string until the first datagram or block from a known address is delivered; `tst_udp_receiver_get_source_rejected` and its three twins read what the `source` pin turned away (C ABI 0.31, additions only: no existing symbol, layout, enum value or error code changed). The key works through the open functions' URLs. The getters answer while a receive is parked on another thread and after `_cancel`.
 
 ### Changed — tst-interop
 

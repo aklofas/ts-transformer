@@ -407,8 +407,10 @@ counted in `source_rejected` (`sourceRejected()` on the JVM,
 `_get_source_rejected` in C); neither sender is told. Check the key's
 spelling: a misspelt key (`?sourse=`) is ignored like any unknown key on
 `udp://` and `rist://`, which leaves the receiver without a pin. The pin is
-a filter, not authentication: the source address is unverified, and on UDP
-`source=first` is taken by whichever datagram with a payload arrives first.
+a filter, not authentication: the source address is unverified. On UDP
+`source=first` is taken by whichever datagram with a payload arrives first;
+on RIST without a key, by whichever sender's block is delivered first; with
+a pre-shared key, only by a sender whose data decrypts.
 See [the publisher's address and the `source` pin](/docs/cookbook/receiving/udp.md#the-publishers-address-and-the-source-pin).
 
 ## UDP / RIST receive cancellation

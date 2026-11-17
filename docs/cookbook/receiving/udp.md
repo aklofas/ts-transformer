@@ -82,29 +82,36 @@ let pinned = b.build()?;
 ```
 
 - **What is reported.** `UdpRecvTransport::peer_addr()` returns the source
-  of the datagram delivered last, or `None` before the first one. An empty
-  datagram is not delivered and does not count. Without a `source` key
-  every sender that reaches the receiver is delivered, interleaved, and
-  `peer_addr()` names whichever delivered last. An IPv4 sender on a
-  dual-stack (`[::]`) bind is reported in IPv4 form.
+  of the datagram delivered last, or `None` before the first one. Without
+  a `source` key every sender that reaches the receiver is delivered,
+  interleaved, and `peer_addr()` names whichever delivered last. An IPv4
+  sender on a dual-stack (`[::]`) bind is reported, and compared by the
+  pin, in IPv4 form.
+- **An empty datagram** does not change `peer_addr()` and does not take a
+  `first` lock. From an allowed sender it is counted in
+  `datagrams_received`, and `recv_timeout` returns it as `Ok(Some(0))`;
+  `recv_bytes`, and so the shells, skip it.
 - **Reading it from a shell.** `RecvTransport::source_handle()` returns a
   `SourceHandle` whose clones share the receiver's record; take it before
   the transport moves into a shell. `peer_addr()`, `rejected()` and
   `pin()` on it never wait behind a receive parked on another thread.
 - **What the pin compares.** The IP address only, never the port, so a
-  sender that restarts, or whose NAT changes its port, continues. An IPv4
-  sender on a dual-stack bind is compared in IPv4 form. If the publisher's
+  sender that restarts, or whose NAT changes its port, continues. If the publisher's
   IP changes under a pin, its datagrams are rejected and counted, and the
   receiver delivers nothing until it is closed and reopened.
 - **What happens to the rest.** A datagram turned away is counted in
   `UdpStats::source_rejected` (`stats()`) and in `SourceHandle::rejected()`,
-  and in no received counter. Neither sender is told. `source=first` is not
-  taken by an empty datagram.
-- **Deadlines.** `recv_timeout` keeps waiting after a datagram the pin
-  turns away while the time since the call began is below its deadline,
-  so it returns no later than twice the deadline.
+  and in no received counter. Neither sender is told.
+- **A first datagram that is not TS.** A shell returns data only once it
+  has found four TS sync bytes 188 bytes apart. A datagram with a payload
+  that is not TS (a probe, a stray byte) can still take a `first` lock, and
+  the shell then returns nothing until the receiver is closed, unless that
+  sender goes on to send TS.
 - **Windows.** A datagram larger than the caller's buffer, from any sender,
-  fails the receive before its source is known.
+  fails the receive before its source is known, with
+  `TransportError::Broken`, which ends the receiver. The shells size their
+  buffers to `max_payload()` (65 535 bytes), so only a direct caller with a
+  smaller buffer meets it.
 - **Refusals.** A sender URL with the key is refused with a URL error, and
   so is a value that is neither an IP literal nor `first`. An IPv6 pin on
   a receiver bound to an IPv4 address is refused at open, since it could

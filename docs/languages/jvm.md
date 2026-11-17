@@ -1626,17 +1626,29 @@ address is the source address the datagrams carry, and nothing proves the
 sender can receive there: it can be forged (a TCP peer address is proven by
 the handshake, a UDP or RIST one is not). On `udp://`, `source=first` is
 taken by the first datagram with a payload that reaches the port, whoever
-sent it; on a `rist://` receiver with a pre-shared key, only by a sender
-whose data decrypts. Either way it holds until the receiver is closed: there
-is no release. Use the address for logging and per-address rules, not as an
+sent it; on a `rist://` receiver without a key, by the first block
+delivered, whoever sent it; with a pre-shared key, only by a sender whose
+data decrypts. Either way it holds until the receiver is closed: there is
+no release. Use the address for logging and per-address rules, not as an
 identity.
 
 A server that gives each stream name its own port can let the first
-publisher take the port and then decide whether to keep it:
+publisher take the port and then decide whether to keep it. The wait for
+that first publisher needs a limit, as any idle port does, and here it
+matters more: the receive returns only aligned TS packets (four sync bytes
+188 bytes apart), so a first datagram that is not TS (a probe, a stray
+byte) takes the lock and the receive then returns nothing until the
+receiver is closed, unless that sender goes on to send TS. The example
+closes the receiver when its idle limit passes and opens the port again:
 
 ```java
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
+import java.time.Duration;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
 import java.util.function.Predicate;
 import org.tstrans.BindingException;
 import org.tstrans.shells.Receiver;
@@ -1645,21 +1657,39 @@ import org.tstrans.shells.Receiver;
 final class UdpNameIngest implements AutoCloseable {
     private final Receiver rx;
 
-    UdpNameIngest(int port) throws BindingException {  // 0: the kernel picks
+    UdpNameIngest(int port) throws BindingException {
         // source=first: the IP of the first datagram with a payload takes
-        // the receiver until close(); any other IP is dropped and counted
-        // in sourceRejected(), and its sender is not told.
+        // the receiver until close(), whoever sent it; any other IP is
+        // dropped and counted in sourceRejected(), and its sender is not told.
         rx = Receiver.open("udp://0.0.0.0:" + port + "?source=first");
     }
 
-    int port() { return rx.localPort().getAsInt(); }
-
     /**
-     * Waits for the first packet and judges its sender. Returns the packet,
-     * or null after a refusal, which closes the receiver.
+     * Waits up to {@code idleLimit} for the first TS packet and judges its
+     * sender. Returns the packet, or null when the sender is refused or
+     * nothing came in time; the receiver is then closed, and the caller
+     * opens a new one to wait again.
      */
-    byte[] admitFirst(Predicate<InetAddress> allowed) throws BindingException {
-        byte[] first = rx.recvBytes();               // blocks until data arrives
+    byte[] admitFirst(Predicate<InetAddress> allowed, Duration idleLimit)
+            throws BindingException {
+        // The server's ordinary rule for an idle port. It also ends the wait
+        // when a datagram that is not TS took the lock: the receive returns
+        // only aligned TS packets, so it then returns nothing until the
+        // receiver is closed, unless that sender goes on to send TS.
+        ScheduledExecutorService timer = Executors.newSingleThreadScheduledExecutor();
+        ScheduledFuture<?> idle =
+            timer.schedule(rx::close, idleLimit.toMillis(), TimeUnit.MILLISECONDS);
+        byte[] first;
+        try {
+            first = rx.recvBytes();              // parks until a packet or close()
+        } catch (BindingException | IllegalStateException e) {
+            if (!idle.cancel(false)) return null;  // the limit closed it
+            throw e;
+        } finally {
+            timer.shutdown();                    // its thread ends with its task
+        }
+        if (!idle.cancel(false)) return null;    // the limit fired as data came
+
         // A packet was delivered, so the sender is known. The address is
         // what the datagrams carry, not proof of who sent them.
         InetSocketAddress publisher = rx.peerAddr().orElseThrow();
@@ -1682,16 +1712,22 @@ final class UdpNameIngest implements AutoCloseable {
 ```
 
 ```java
-try (UdpNameIngest ingest = new UdpNameIngest(0)) {
-    int port = ingest.port();                    // hand it to the name's publisher
-    byte[] ts = ingest.admitFirst(ip -> !blocked.contains(ip));
-    if (ts == null) return;                      // refused, and closed
-    while (true) {
-        recorder.write(ts);                      // your consumer
-        ts = ingest.next();
+while (true) {
+    try (UdpNameIngest ingest = new UdpNameIngest(port)) {  // the name's port
+        byte[] ts = ingest.admitFirst(ip -> !blocked.contains(ip), Duration.ofSeconds(30));
+        if (ts == null) continue;                // refused or idle: closed, open again
+        while (true) {
+            recorder.write(ts);                  // your consumer
+            ts = ingest.next();
+        }
     }
 }
 ```
+
+After the first packet the data loop has no limit of its own: a `udp://`
+receive blocks until a packet is ready or the shell is closed, so a server
+that must not wait forever closes the receiver from another thread when the
+stream stops progressing.
 
 - **Without the key** every sender that reaches the receiver is delivered,
   interleaved, and `peerAddr()` names whichever delivered last.
@@ -1700,10 +1736,14 @@ try (UdpNameIngest ingest = new UdpNameIngest(0)) {
   its datagrams are turned away and counted, and the receiver delivers
   nothing until it is closed and reopened.
 - **`sourceRejected()`** counts what the pin turned away: datagrams on
-  `udp://`; on `rist://`, datagrams from a sender the pin refuses and
-  delivered blocks refused on the read path. Neither sender is told. On
-  `udp://` a datagram turned away is in no received counter of
-  `socketStats()`.
+  `udp://`; on `rist://`, datagrams from a new sender whose IP the pin
+  refuses, datagrams whose source address could not be read, and delivered
+  blocks refused on the read path (from an IP other than the one `first`
+  latched, or from a sender the receiver holds no address for). Neither
+  sender is told. On `udp://` a datagram turned away is in no received
+  counter of `socketStats()`. On `rist://` a block refused on the read path
+  surfaces from the receive as the same `RistException(BACKPRESSURE)` a
+  quiet link gives, so the retry loop above carries on.
 - **IPv4 on a dual-stack bind.** An IPv4 sender on a `[::]` bind is reported
   as an `Inet4Address` and compared in IPv4 form. The address is built from
   its bytes, with no name lookup.

@@ -271,10 +271,9 @@ mean **Deferred**. An entry whose feature has shipped must never read
   `RtpStats::source_rejected`, not by the shells' getter); `first` on
   `rtp://`; a list or prefix of allowed addresses; verification of the
   address.
-- **Why deferred:** a UDP or RIST source address is whatever the datagrams
-  carry, and neither protocol has a handshake that proves the sender can
-  receive there, so nothing can verify it. The other items wait for a
-  caller that needs them.
+- **Why deferred:** the address these receivers report is the source
+  address the datagrams carry, and they verify nothing about it. The other
+  items wait for a caller that needs them.
 - **Trigger to revisit:** an embedder that needs a `first` lock to move to
   a new publisher without reopening, an allow list, or the address through
   the shells for SRT, TCP or RTP.
