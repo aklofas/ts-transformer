@@ -183,6 +183,12 @@ impl TlsStream {
     pub(crate) fn set_write_timeout(&self, t: std::time::Duration) -> std::io::Result<()> {
         self.sock.set_write_timeout(Some(t))
     }
+
+    /// The rustls connection, with whatever it has already decrypted or
+    /// still has to write, and the socket beneath it.
+    pub(crate) fn into_parts(self) -> (rustls::ClientConnection, TcpStream) {
+        (self.conn, self.sock)
+    }
 }
 
 impl Read for TlsStream {
@@ -334,21 +340,26 @@ pub(crate) mod test_peer {
     /// that address, returned with a root store that trusts it. It reads the
     /// ClientHello, calls `before_first_write`, completes the handshake and
     /// hands the stream to `then`. A handshake that fails ends the peer
-    /// without calling `then`.
+    /// without calling `then`. Plaintext `before_first_write` gives the
+    /// connection's writer goes out right after the server's Finished, in
+    /// the same flight (TLS 1.3 half-RTT data). The peer sends no session
+    /// tickets, so nothing reaches the client after the handshake unless
+    /// `then` writes it.
     pub(crate) fn tls_test_peer(
         then: impl FnOnce(rustls::StreamOwned<rustls::ServerConnection, TcpStream>) + Send + 'static,
-        before_first_write: impl FnOnce() + Send + 'static,
+        before_first_write: impl FnOnce(&mut rustls::ServerConnection) + Send + 'static,
     ) -> (u16, rustls::RootCertStore, JoinHandle<()>) {
         let cert = rcgen::generate_simple_self_signed(vec!["127.0.0.1".to_string()]).unwrap();
         let mut roots = rustls::RootCertStore::empty();
         roots.add(cert.cert.der().clone()).unwrap();
         let key = rustls::pki_types::PrivateKeyDer::Pkcs8(cert.signing_key.serialize_der().into());
-        let config = Arc::new(
-            rustls::ServerConfig::builder()
-                .with_no_client_auth()
-                .with_single_cert(vec![cert.cert.der().clone()], key)
-                .unwrap(),
-        );
+        let mut config = rustls::ServerConfig::builder()
+            .with_no_client_auth()
+            .with_single_cert(vec![cert.cert.der().clone()], key)
+            .unwrap();
+        config.send_half_rtt_data = true;
+        config.send_tls13_tickets = 0;
+        let config = Arc::new(config);
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
         let peer = std::thread::spawn(move || {
@@ -370,7 +381,7 @@ pub(crate) mod test_peer {
                     return;
                 }
             }
-            before_first_write();
+            before_first_write(&mut conn);
             while conn.is_handshaking() {
                 if conn.complete_io(&mut sock).is_err() {
                     return;
@@ -431,7 +442,7 @@ mod tests {
         let late = Arc::new(AtomicBool::new(false));
         let set_late = late.clone();
         let (port, roots, peer) =
-            tls_test_peer(drop, move || set_late.store(true, Ordering::SeqCst));
+            tls_test_peer(drop, move |_| set_late.store(true, Ordering::SeqCst));
         let sock = TcpStream::connect(("127.0.0.1", port)).unwrap();
         let t0 = Instant::now();
         let mut clock = || {
