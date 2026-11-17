@@ -1,7 +1,7 @@
 //! `RtspClient` sync facade.
 //!
 //! The control connection (plain TCP for `rtsp://`, rustls over TCP for
-//! `rtsps://`) belongs to one thread, `tst-rtsp-client` (see [`driver`]),
+//! `rtsps://`) belongs to one thread, `tst-rtsp-client` (see `driver`),
 //! which reads it all the time, writes requests and keepalive pings, and
 //! hands interleaved media to the receiver. The request methods run on
 //! the caller's thread: they hand a request to that thread and wait for
