@@ -354,14 +354,13 @@ class RtspSession:
     `RtspError(PROTOCOL)` and leaves the data plane in place.
 
     A session collected without `teardown()` writes a best-effort TEARDOWN
-    with the GIL released (500 ms bounds the wait for the control stream and
-    the write; the reply is not awaited), then tells the client's thread to
-    stop; that thread closes the connection on its own. A receiver never
-    owns the client, so keep the session object alive while one receives:
-    collecting it ends a live TCP-interleaved receiver with
-    `RtpError(CLOSED)` after what is already queued, where `teardown()` ends
-    it with end of stream once the server accepts the TEARDOWN (unless the
-    session's cancel handle fired first).
+    with the GIL released (500 ms bounds the write; the reply is not
+    awaited), then tells the client's thread to stop; that thread closes
+    the connection on its own. A receiver never owns the client, so keep
+    the session object alive while one receives: collecting it ends a live
+    TCP-interleaved receiver with `RtpError(CLOSED)` after what is already
+    queued, where `teardown()` ends it with end of stream once the server
+    accepts the TEARDOWN (unless the session's cancel handle fired first).
     """
 
     def pause(self) -> None: ...

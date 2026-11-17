@@ -309,8 +309,7 @@ pub unsafe extern "C" fn tst_rtsp_session_pause(session: *mut TstRtspSession) ->
 // Teardown + free
 // ---------------------------------------------------------------------------
 
-/// Bound on the whole TEARDOWN exchange: the wait for the control stream
-/// (another thread may be using it), the request write and the reply.
+/// Bound on the whole TEARDOWN exchange: the request write and the reply.
 const TEARDOWN_BOUND: Duration = Duration::from_millis(500);
 
 /// Send TEARDOWN and free the session handle.
@@ -319,8 +318,7 @@ const TEARDOWN_BOUND: Duration = Duration::from_millis(500);
 /// and its `RtspClient` regardless of whether TEARDOWN succeeded (network
 /// errors at teardown time are recorded in last-error but do not prevent
 /// the handle from being freed). A healthy peer's 200 returns 0. The
-/// TEARDOWN exchange is bounded to 500 ms, covering the wait for the
-/// control stream (another thread may be using it), the request write and
+/// TEARDOWN exchange is bounded to 500 ms, covering the request write and
 /// the reply: when the bound passes (a peer that does not answer, or one
 /// that stopped reading) the call returns `TST_E_RTSP_TIMEOUT` and the
 /// handle is still freed. A session cancelled with
