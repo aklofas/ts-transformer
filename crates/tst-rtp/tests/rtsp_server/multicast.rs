@@ -132,16 +132,29 @@ fn multicast_mount_push_video_succeeds() {
 
 /// A hard cancel stops a multicast mount's sender on a server that was
 /// never started: the sender task leaves the mount's fanout, and nothing
-/// more reaches the group. Linux only: it needs loopback multicast.
+/// more reaches the group. Linux only: it needs loopback multicast, and
+/// skips (a failure where `TST_REQUIRE_MULTICAST=1`) when the host has
+/// none. The group and port are this test's own; no other test uses them.
 #[cfg(target_os = "linux")]
 #[test]
 fn hard_cancel_stops_the_multicast_sender_of_a_never_started_server() {
     use std::net::{Ipv4Addr, UdpSocket};
+    use tst_test_helpers::capability::skip_unless_required;
     const GROUP: Ipv4Addr = Ipv4Addr::new(239, 55, 55, 7);
     const PORT: u16 = 55040;
-    let sock = UdpSocket::bind((GROUP, PORT)).unwrap();
-    sock.join_multicast_v4(&GROUP, &Ipv4Addr::LOCALHOST)
-        .unwrap();
+    let sock = match UdpSocket::bind((GROUP, PORT)).and_then(|s| {
+        s.join_multicast_v4(&GROUP, &Ipv4Addr::LOCALHOST)
+            .map(|()| s)
+    }) {
+        Ok(s) => s,
+        Err(e) => {
+            skip_unless_required(
+                "MULTICAST",
+                format_args!("bind/join failed: {e:?}. Likely no multicast routing on lo."),
+            );
+            return;
+        }
+    };
     sock.set_read_timeout(Some(Duration::from_millis(50)))
         .unwrap();
 
@@ -169,7 +182,13 @@ fn hard_cancel_stops_the_multicast_sender_of_a_never_started_server() {
         if sock.recv(&mut buf).is_ok() {
             break;
         }
-        assert!(Instant::now() < deadline, "no datagram reached the group");
+        if Instant::now() >= deadline {
+            skip_unless_required(
+                "MULTICAST",
+                "no datagram reached the group — kernel filter on lo",
+            );
+            return;
+        }
     }
 
     server.cancel_handle().cancel();
