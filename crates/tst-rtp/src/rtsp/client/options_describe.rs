@@ -63,7 +63,7 @@ impl RtspClient {
     /// - [`RtspError::AuthFailed`] if the server rejects the credentials.
     /// - [`RtspError::Protocol`] on any other non-200 status.
     /// - [`RtspError::LocalCancel`] if the cancel handle was triggered
-    ///   mid-read.
+    ///   mid-read, or was set when the exchange failed.
     pub fn options(&mut self) -> Result<OptionsResponse, RtspError> {
         let uri = self.url.render_no_credentials();
         let mut extra: Vec<(&str, String)> = Vec::new();
@@ -95,7 +95,7 @@ impl RtspClient {
     /// - [`RtspError::Protocol`] on any other non-200 status.
     /// - [`RtspError::BadSdp`] if the response body isn't parseable SDP.
     /// - [`RtspError::LocalCancel`] if the cancel handle was triggered
-    ///   mid-read.
+    ///   mid-read, or was set when the exchange failed.
     pub fn describe(&mut self) -> Result<Sdp, RtspError> {
         let uri = self.url.render_no_credentials();
         let mut extra: Vec<(&str, String)> = vec![("accept", "application/sdp".to_string())];
@@ -298,19 +298,39 @@ impl RtspClient {
     /// `send_deadline` also bounds the wait for the stream lock and the
     /// request write (see [`Self::lock_and_write`]); `None` leaves them
     /// to the lock and the socket's write timeout.
+    ///
+    /// The cancel flag is not checked before the write: a cancelled
+    /// client still writes its request (`Drop` relies on this to send
+    /// TEARDOWN). An exchange that then fails with an I/O error, an EOF
+    /// or a passed deadline while the cancel is set reports
+    /// [`RtspError::LocalCancel`]; a response that arrives is returned.
     pub(crate) fn send_and_read_with_deadline(
         &mut self,
         request_bytes: &[u8],
         deadline: Option<std::time::Instant>,
         send_deadline: Option<std::time::Instant>,
     ) -> Result<RtspResponse, RtspError> {
-        if self.pump_state.is_some() {
-            return self.send_and_read_via_pump_with_deadline(
-                request_bytes,
-                deadline,
-                send_deadline,
-            );
-        }
+        let r = if self.pump_state.is_some() {
+            self.send_and_read_via_pump_with_deadline(request_bytes, deadline, send_deadline)
+        } else {
+            self.send_and_read_direct(request_bytes, deadline, send_deadline)
+        };
+        r.map_err(|e| match e {
+            RtspError::Io(_) | RtspError::Timeout if self.cancel.is_cancelled() => {
+                RtspError::LocalCancel
+            }
+            e => e,
+        })
+    }
+
+    /// Non-pump path of [`Self::send_and_read_with_deadline`]: the reply
+    /// is read from the socket under the held stream lock.
+    fn send_and_read_direct(
+        &mut self,
+        request_bytes: &[u8],
+        deadline: Option<std::time::Instant>,
+        send_deadline: Option<std::time::Instant>,
+    ) -> Result<RtspResponse, RtspError> {
         let mut s = self.lock_and_write(request_bytes, send_deadline)?;
         let mut applied = self.read_timeout;
         let r = self.read_response(&mut s, deadline, &mut applied);
@@ -1053,5 +1073,198 @@ mod tests {
         let _ = done_tx.send(());
         drop(client);
         h.join().unwrap();
+    }
+
+    const PROBE_REQUEST: &[u8] = b"OPTIONS rtsp://127.0.0.1/test RTSP/1.0\r\nCSeq: 7\r\n\r\n";
+
+    /// Stands in for an active interleaved pump (only the write gate and
+    /// the control channel matter to the request path); returns the
+    /// channel's sender.
+    fn install_stand_in_pump(client: &mut RtspClient) -> std::sync::mpsc::SyncSender<bytes::Bytes> {
+        let (ctrl_tx, ctrl_rx) = std::sync::mpsc::sync_channel::<bytes::Bytes>(1);
+        client.pump_state = Some(crate::rtsp::client::InterleavedPumpState {
+            cancel: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            write_gate: client.write_gate.clone(),
+            ctrl_rx,
+            thread: None,
+        });
+        ctrl_tx
+    }
+
+    /// A peer that resets the connection as soon as it accepts it
+    /// (`SO_LINGER` 0, then close).
+    #[cfg(target_os = "linux")]
+    fn resetting_peer() -> (u16, std::thread::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let h = std::thread::spawn(move || {
+            if let Ok((sock, _)) = listener.accept() {
+                socket2::SockRef::from(&sock)
+                    .set_linger(Some(Duration::ZERO))
+                    .unwrap();
+                drop(sock);
+            }
+        });
+        (port, h)
+    }
+
+    /// Reads the client's control socket until the peer's reset shows up,
+    /// after which every write on it fails. Puts the configured read
+    /// timeout back.
+    #[cfg(target_os = "linux")]
+    fn wait_for_reset(client: &RtspClient) {
+        let mut s = crate::rtsp::client::lock_unpoisoned(&client.stream);
+        let give_up = std::time::Instant::now() + Duration::from_secs(10);
+        let mut chunk = [0u8; 64];
+        loop {
+            assert!(
+                std::time::Instant::now() < give_up,
+                "the reset never arrived"
+            );
+            match s.read(&mut chunk) {
+                Ok(0) => break,
+                Ok(_) => {}
+                Err(e) if classify_recv_error(e.kind()) == RecvAction::Retry => {}
+                Err(_) => break,
+            }
+        }
+        s.set_read_timeout(client.read_timeout).unwrap();
+    }
+
+    /// The request write fails on a reset connection: `LocalCancel` when
+    /// the client was cancelled before the request, the write's own
+    /// `Io` error otherwise. Linux only: the reset-then-write sequence
+    /// has not been measured on macOS or Windows.
+    #[cfg(target_os = "linux")]
+    fn failed_write(pump: bool, cancel: bool) -> Result<RtspResponse, RtspError> {
+        let (port, peer) = resetting_peer();
+        let mut client = RtspClient::connect(&format!("rtsp://127.0.0.1:{port}/test")).unwrap();
+        let _ctrl = pump.then(|| install_stand_in_pump(&mut client));
+        peer.join().unwrap();
+        wait_for_reset(&client);
+        if cancel {
+            client.cancel_handle().cancel();
+        }
+        client.send_and_read(PROBE_REQUEST)
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_write_failure_on_a_cancelled_client_reports_the_cancel() {
+        let r = failed_write(false, true);
+        assert!(matches!(r, Err(RtspError::LocalCancel)), "got {r:?}");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_write_failure_on_a_cancelled_client_reports_the_cancel_in_pump_mode() {
+        let r = failed_write(true, true);
+        assert!(matches!(r, Err(RtspError::LocalCancel)), "got {r:?}");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_write_failure_without_a_cancel_is_io() {
+        let r = failed_write(false, false);
+        assert!(matches!(r, Err(RtspError::Io(_))), "got {r:?}");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_write_failure_without_a_cancel_is_io_in_pump_mode() {
+        let r = failed_write(true, false);
+        assert!(matches!(r, Err(RtspError::Io(_))), "got {r:?}");
+    }
+
+    /// A peer that reads one request head, runs `end`, then closes the
+    /// connection.
+    fn peer_ending_after_request(
+        end: impl FnOnce() + Send + 'static,
+    ) -> (u16, std::thread::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let h = std::thread::spawn(move || {
+            let Ok((mut sock, _)) = listener.accept() else {
+                return;
+            };
+            sock.set_read_timeout(Some(Duration::from_secs(10))).ok();
+            let mut head = Vec::new();
+            let mut chunk = [0u8; 1024];
+            while !head.windows(4).any(|w| w == b"\r\n\r\n") {
+                match sock.read(&mut chunk) {
+                    Ok(0) | Err(_) => return,
+                    Ok(n) => head.extend_from_slice(&chunk[..n]),
+                }
+            }
+            end();
+            drop(sock);
+        });
+        (port, h)
+    }
+
+    /// The request is written, then the reply wait ends without a reply:
+    /// the connection closes (non-pump path, EOF) or the pump's control
+    /// channel goes away (pump path). With `cancel`, the peer fires the
+    /// client's cancel after it has the request and before it ends the
+    /// wait, so the cancel lands during the wait. Whichever of the two
+    /// the client sees first, a cancelled client reports `LocalCancel`;
+    /// otherwise the result is the `Io(UnexpectedEof)` it is without a
+    /// cancel.
+    fn ended_reply_wait(pump: bool, cancel: bool) -> Result<RtspResponse, RtspError> {
+        let (handle_tx, handle_rx) =
+            std::sync::mpsc::channel::<crate::rtsp::client::RtspCancelHandle>();
+        let (ctrl_slot_tx, ctrl_slot_rx) =
+            std::sync::mpsc::channel::<std::sync::mpsc::SyncSender<bytes::Bytes>>();
+        let (port, peer) = peer_ending_after_request(move || {
+            if let Ok(h) = handle_rx.recv_timeout(Duration::from_secs(10)) {
+                h.cancel();
+            }
+            // Ends the pump's control channel (pump mode only).
+            drop(ctrl_slot_rx.recv_timeout(Duration::from_secs(10)));
+        });
+        let mut client = RtspClient::connect(&format!("rtsp://127.0.0.1:{port}/test")).unwrap();
+        if pump {
+            ctrl_slot_tx
+                .send(install_stand_in_pump(&mut client))
+                .unwrap();
+        }
+        drop(ctrl_slot_tx);
+        if cancel {
+            handle_tx.send(client.cancel_handle()).unwrap();
+        }
+        drop(handle_tx);
+        let r = client.send_and_read(PROBE_REQUEST);
+        peer.join().unwrap();
+        r
+    }
+
+    #[test]
+    fn an_eof_on_a_cancelled_client_reports_the_cancel() {
+        let r = ended_reply_wait(false, true);
+        assert!(matches!(r, Err(RtspError::LocalCancel)), "got {r:?}");
+    }
+
+    #[test]
+    fn a_closed_control_channel_on_a_cancelled_client_reports_the_cancel() {
+        let r = ended_reply_wait(true, true);
+        assert!(matches!(r, Err(RtspError::LocalCancel)), "got {r:?}");
+    }
+
+    #[test]
+    fn an_eof_without_a_cancel_is_io() {
+        let r = ended_reply_wait(false, false);
+        assert!(
+            matches!(r, Err(RtspError::Io(std::io::ErrorKind::UnexpectedEof))),
+            "got {r:?}"
+        );
+    }
+
+    #[test]
+    fn a_closed_control_channel_without_a_cancel_is_io() {
+        let r = ended_reply_wait(true, false);
+        assert!(
+            matches!(r, Err(RtspError::Io(std::io::ErrorKind::UnexpectedEof))),
+            "got {r:?}"
+        );
     }
 }

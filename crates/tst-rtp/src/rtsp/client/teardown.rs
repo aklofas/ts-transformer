@@ -20,6 +20,9 @@ impl RtspClient {
     /// - [`RtspError::Timeout`] when the response deadline
     ///   (`RtspClientBuilder::request_timeout`, default 10 s) elapses;
     ///   `session_id` is still cleared.
+    /// - [`RtspError::LocalCancel`] when the cancel handle fires before
+    ///   the reply arrives, or is set when the exchange fails. The
+    ///   request is written even on a cancelled client.
     pub fn teardown(&mut self) -> Result<(), RtspError> {
         // checked_add: see `send_and_read`'s copy of this idiom — a
         // `request_timeout` too large to represent as an `Instant` (e.g.
@@ -39,8 +42,8 @@ impl RtspClient {
     ///
     /// This does not set the cancel flag: the reply is awaited up to the
     /// bound. A cancel already set, or set during the call, ends the
-    /// reply wait at once with [`RtspError::LocalCancel`]; the request is
-    /// still written. If no session is established, this returns `Ok(())`
+    /// reply wait at once with [`RtspError::LocalCancel`] and turns any
+    /// failure of the exchange into it; the request is still written. If no session is established, this returns `Ok(())`
     /// without I/O. `session_id` is cleared on every outcome, so no later
     /// teardown (nor `Drop`) retries.
     ///
@@ -53,7 +56,8 @@ impl RtspClient {
     ///   the connection (the TEARDOWN was not sent), during the write
     ///   (it may be partly sent) or while waiting for the reply.
     /// - [`RtspError::LocalCancel`] when the cancel handle fires before
-    ///   the reply arrives.
+    ///   the reply arrives, or is set when the exchange fails (also when
+    ///   the bound passes).
     /// - [`RtspError::Io`] on another socket failure, and
     ///   [`RtspError::BadResponse`] (or another variant) for a malformed
     ///   reply.
@@ -282,20 +286,28 @@ mod tests {
     /// would end it as `Io`. Linux only: the fill latch is tuned to
     /// Linux TCP (a pinned 4 KiB send buffer, and a delayed ACK of at
     /// most 200 ms as the last thing that frees space) and has not been
-    /// measured on macOS or Windows.
+    /// measured on macOS or Windows. With `cancel` set before the call,
+    /// the same expiry reports the cancel.
     #[cfg(target_os = "linux")]
-    fn blocked_write_is_bounded(pump: bool) {
+    fn blocked_write_is_bounded(pump: bool, cancel: bool) {
         let (port, done_tx, peer) = non_reading_peer();
         let mut client = RtspClient::connect(&format!("rtsp://127.0.0.1:{port}/test")).unwrap();
         let _ctrl = pump.then(|| stand_in_pump(&mut client));
         client.session_id = Some("blocked-write".into());
         fill_send_buffer(&client);
+        if cancel {
+            client.cancel_handle().cancel();
+        }
 
         let t0 = Instant::now();
         let r = client.teardown_within(Duration::from_millis(500));
         let elapsed = t0.elapsed();
 
-        assert!(matches!(r, Err(RtspError::Timeout)), "got {r:?}");
+        if cancel {
+            assert!(matches!(r, Err(RtspError::LocalCancel)), "got {r:?}");
+        } else {
+            assert!(matches!(r, Err(RtspError::Timeout)), "got {r:?}");
+        }
         assert!(
             elapsed < scaled(Duration::from_secs(2)),
             "teardown_within took {elapsed:?}"
@@ -312,28 +324,32 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn teardown_within_bounds_a_blocked_write() {
-        blocked_write_is_bounded(false);
+        blocked_write_is_bounded(false, false);
     }
 
     /// See [`blocked_write_is_bounded`], which says why this is Linux only.
     #[cfg(target_os = "linux")]
     #[test]
     fn teardown_within_bounds_a_blocked_write_in_pump_mode() {
-        blocked_write_is_bounded(true);
+        blocked_write_is_bounded(true, false);
     }
 
     /// Another thread holds the stream lock while blocked in a write on a
     /// full send buffer (a keepalive ping's shape): the bound ends the
     /// lock wait as a `Timeout` instead of waiting out the holder's 5 s
     /// write timeout. Linux only, for the reason given on
-    /// [`blocked_write_is_bounded`].
+    /// [`blocked_write_is_bounded`]. With `cancel` set before the call,
+    /// the same expiry reports the cancel.
     #[cfg(target_os = "linux")]
-    fn held_lock_is_bounded(pump: bool) {
+    fn held_lock_is_bounded(pump: bool, cancel: bool) {
         let (port, done_tx, peer) = non_reading_peer();
         let mut client = RtspClient::connect(&format!("rtsp://127.0.0.1:{port}/test")).unwrap();
         let _ctrl = pump.then(|| stand_in_pump(&mut client));
         client.session_id = Some("held-lock".into());
         fill_send_buffer(&client);
+        if cancel {
+            client.cancel_handle().cancel();
+        }
 
         let stream = Arc::clone(&client.stream);
         let (held_tx, held_rx) = mpsc::channel::<()>();
@@ -350,7 +366,11 @@ mod tests {
         let r = client.teardown_within(Duration::from_millis(500));
         let elapsed = t0.elapsed();
 
-        assert!(matches!(r, Err(RtspError::Timeout)), "got {r:?}");
+        if cancel {
+            assert!(matches!(r, Err(RtspError::LocalCancel)), "got {r:?}");
+        } else {
+            assert!(matches!(r, Err(RtspError::Timeout)), "got {r:?}");
+        }
         assert!(
             elapsed < scaled(Duration::from_secs(2)),
             "teardown_within took {elapsed:?}"
@@ -368,14 +388,28 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn teardown_within_bounds_a_held_stream_lock() {
-        held_lock_is_bounded(false);
+        held_lock_is_bounded(false, false);
     }
 
     /// See [`held_lock_is_bounded`], which says why this is Linux only.
     #[cfg(target_os = "linux")]
     #[test]
     fn teardown_within_bounds_a_held_stream_lock_in_pump_mode() {
-        held_lock_is_bounded(true);
+        held_lock_is_bounded(true, false);
+    }
+
+    /// See [`blocked_write_is_bounded`], which says why this is Linux only.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_blocked_write_on_a_cancelled_client_reports_the_cancel() {
+        blocked_write_is_bounded(false, true);
+    }
+
+    /// See [`held_lock_is_bounded`], which says why this is Linux only.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_held_stream_lock_on_a_cancelled_client_reports_the_cancel() {
+        held_lock_is_bounded(false, true);
     }
 
     /// A cancelled client still writes its TEARDOWN when dropped: nothing

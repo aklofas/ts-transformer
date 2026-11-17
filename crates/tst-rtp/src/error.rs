@@ -92,12 +92,13 @@ pub enum RtspError {
     #[error("RTSP request timed out waiting for the server's response")]
     Timeout,
 
-    /// The caller's `RtspCancelHandle::cancel` ended the wait for a
-    /// response. The cancel is seen only while the response is awaited:
-    /// the request was still written, and whether the server acted on it
-    /// is unknown, so treat the session as indeterminate. Bindings project
-    /// this as the one cancel outcome, `Closed` (`TST_E_CLOSED`,
-    /// `RtspError(CLOSED)`, `RtspException(CLOSED)`).
+    /// The caller's `RtspCancelHandle::cancel` ended a request: it ended
+    /// the wait for the response, or the request failed (an I/O error, an
+    /// EOF or a passed deadline) while the cancel was set. A cancel does
+    /// not stop the request from being written, so whether the server
+    /// acted on it is unknown: treat the session as indeterminate.
+    /// Bindings project this as the one cancel outcome, `Closed`
+    /// (`TST_E_CLOSED`, `RtspError(CLOSED)`, `RtspException(CLOSED)`).
     #[error("RTSP request canceled by caller")]
     LocalCancel,
 
