@@ -11,6 +11,9 @@ import static org.tstrans.shells.ShellPeers.within;
 import java.io.IOException;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
+import java.net.ConnectException;
+import java.net.Inet4Address;
+import java.net.Inet6Address;
 import java.net.InetAddress;
 import java.net.SocketTimeoutException;
 import java.util.concurrent.TimeUnit;
@@ -53,12 +56,12 @@ class ListenerTest {
             try (Watchdog w = new Watchdog(l.cancelHandle(), scaledMs(10_000))) {
                 t = c.add(l.accept());
             }
-            assertEquals("127.0.0.1:" + client.getLocalPort(), t.peerAddr());
+            assertEquals(client.getLocalSocketAddress(), t.peerAddr());
         }
     }
 
     @Test
-    void ipv6PeerAddressIsBracketed() throws Exception {
+    void ipv6PeerAddressIsAnInet6Address() throws Exception {
         TestSupport.assumeIpv6Loopback();
         try (Cleanup c = new Cleanup()) {
             Listener l = c.add(Listener.open("tcp://[::1]:0?listen=1"));
@@ -67,7 +70,32 @@ class ListenerTest {
             try (Watchdog w = new Watchdog(l.cancelHandle(), scaledMs(10_000))) {
                 t = c.add(l.accept());
             }
-            assertEquals("[::1]:" + client.getLocalPort(), t.peerAddr());
+            assertEquals(client.getLocalSocketAddress(), t.peerAddr());
+            assertInstanceOf(Inet6Address.class, t.peerAddr().getAddress());
+        }
+    }
+
+    @Test
+    void anIpv4PeerOnADualStackListenerIsAnInet4Address() throws Exception {
+        TestSupport.assumeIpv6Loopback();
+        try (Cleanup c = new Cleanup()) {
+            Listener l = c.add(Listener.open("tcp://[::]:0?listen=1"));
+            java.net.Socket client;
+            try {
+                client = c.add(new java.net.Socket(InetAddress.getByAddress(new byte[] {127, 0, 0, 1}), l.localPort()));
+            } catch (ConnectException e) {
+                // Linux accepts IPv4 on a [::] socket by default; other platforms may not.
+                if (TestSupport.isLinux()) throw e;
+                System.out.println("skipping: this platform's [::] listener takes no IPv4: " + e);
+                org.junit.jupiter.api.Assumptions.assumeTrue(false, "no dual-stack listener: " + e);
+                return;
+            }
+            Transport t;
+            try (Watchdog w = new Watchdog(l.cancelHandle(), scaledMs(10_000))) {
+                t = c.add(l.accept());
+            }
+            assertInstanceOf(Inet4Address.class, t.peerAddr().getAddress());
+            assertEquals(client.getLocalSocketAddress(), t.peerAddr());
         }
     }
 
@@ -198,7 +226,7 @@ class ListenerTest {
                 t = c.add(l.accept());
             }
             l.close();
-            assertEquals("127.0.0.1:" + client.getLocalPort(), t.peerAddr());
+            assertEquals(client.getLocalSocketAddress(), t.peerAddr());
             // Still connected: a read on the client waits for data instead of seeing EOF or a reset.
             client.setSoTimeout((int) scaledMs(300));
             assertThrows(SocketTimeoutException.class, () -> client.getInputStream().read());

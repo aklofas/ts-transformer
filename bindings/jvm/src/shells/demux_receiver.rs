@@ -22,9 +22,9 @@ use std::sync::{Arc, LazyLock};
 
 use jni::Env;
 use jni::objects::{JLongArray, JObject, JString};
-use jni::sys::{jboolean, jint, jlong, jobject, jstring};
+use jni::sys::{jboolean, jbyteArray, jint, jlong, jobject, jstring};
 
-use tst_core::transport::{RecvTransport, TransportCancel};
+use tst_core::transport::{RecvTransport, SourceHandle, TransportCancel};
 use tst_pipeline::binding::view::{BlockingReason, Snapshot};
 use tst_pipeline::binding::{BindingError, BindingErrorKind, Domain, Opened, Owned};
 use tst_pipeline::{
@@ -41,6 +41,7 @@ use crate::error::{throw_binding, throw_handle_state};
 use crate::generated::stats_mpegts::build_muxer_stats;
 use crate::generated::stats_shells::build_socket_stats;
 use crate::handle::OwnedRegistry;
+use crate::jutil::socket_addr_array;
 use crate::mpegts::{
     build_demux_config_from_args, convert_event, shell_muxer_stats, throw_demux_error,
 };
@@ -80,6 +81,8 @@ struct RxSnap {
     mount_cancel: Option<Arc<dyn TransportCancel>>,
     /// The address the transport bound at open, for the transports that report one.
     local_addr: Option<std::net::SocketAddr>,
+    /// Where the transport's datagrams come from, for the transports that record it.
+    source: Option<SourceHandle>,
 }
 
 static REGISTRY: LazyLock<OwnedRegistry<JniDemuxReceiver, Snapshot<RxSnap>>> =
@@ -166,6 +169,7 @@ fn register_with(
     } = opened;
     // Taken before the transport moves into the shell.
     let end_reason = transport.end_reason_handle();
+    let source = transport.source_handle();
     let inner = match opts {
         None => RustDemuxReceiver::new(transport),
         Some(opts) => RustDemuxReceiver::with_demux_options(transport, opts),
@@ -181,6 +185,7 @@ fn register_with(
                 ts_bytes_demuxed,
                 mount_cancel,
                 local_addr,
+                source,
             },
         },
     );
@@ -515,6 +520,51 @@ jni_native! {
             None => {
                 crate::error::throw_closed(env, "DemuxReceiver");
                 -1
+            }
+        }
+    }
+}
+
+jni_native! {
+    /// `nLocalAddr(handle)` — the address the transport bound at open, as
+    /// `NativeAddr` bytes; null for a shell that has none. Reads the snapshot.
+    fn Java_org_tstrans_shells_DemuxReceiver_nLocalAddr(env, _class, handle: jlong) -> jbyteArray = std::ptr::null_mut() => {
+        match REGISTRY.snapshot(handle as u64, |s| s.handles.local_addr) {
+            Some(Some(addr)) => socket_addr_array(env, addr),
+            Some(None) => std::ptr::null_mut(),
+            None => {
+                crate::error::throw_closed(env, "DemuxReceiver");
+                std::ptr::null_mut()
+            }
+        }
+    }
+}
+
+jni_native! {
+    /// `nPeerAddr(handle)` — the sender of the datagram or block delivered last,
+    /// as `NativeAddr` bytes; null before the first one and for a transport that
+    /// keeps no source record. Reads the snapshot's shared record, never the slot.
+    fn Java_org_tstrans_shells_DemuxReceiver_nPeerAddr(env, _class, handle: jlong) -> jbyteArray = std::ptr::null_mut() => {
+        match REGISTRY.snapshot(handle as u64, |s| s.handles.source.as_ref().and_then(SourceHandle::peer_addr)) {
+            Some(Some(addr)) => socket_addr_array(env, addr),
+            Some(None) => std::ptr::null_mut(),
+            None => {
+                crate::error::throw_closed(env, "DemuxReceiver");
+                std::ptr::null_mut()
+            }
+        }
+    }
+}
+
+jni_native! {
+    /// `nSourceRejected(handle)` — datagrams or blocks the source pin turned
+    /// away; 0 for a transport that keeps no source record. Reads the snapshot.
+    fn Java_org_tstrans_shells_DemuxReceiver_nSourceRejected(env, _class, handle: jlong) -> jlong = 0 => {
+        match REGISTRY.snapshot(handle as u64, |s| s.handles.source.as_ref().map_or(0, SourceHandle::rejected)) {
+            Some(n) => counter_to_jlong(n),
+            None => {
+                crate::error::throw_closed(env, "DemuxReceiver");
+                0
             }
         }
     }

@@ -14,12 +14,13 @@ import org.junit.jupiter.api.Test;
 class ModuleDescriptorTest {
 
     /**
-     * Every package of org.tstrans is public API: a named-module consumer ({@code requires
-     * org.tstrans;}) must reach each one. The classpath test run never enforces the descriptor, so
-     * this reads the compiled one.
+     * Every package of org.tstrans but {@code org.tstrans.internal} is public API: a named-module
+     * consumer ({@code requires org.tstrans;}) must reach each one, and must not reach the
+     * internal one. The classpath test run never enforces the descriptor, so this reads the
+     * compiled one.
      */
     @Test
-    void everyPackageIsExported() throws Exception {
+    void everyPackageButTheInternalOneIsExported() throws Exception {
         Path classes =
                 Path.of(Version.class.getProtectionDomain().getCodeSource().getLocation().toURI());
         ModuleDescriptor d = ModuleFinder.of(classes).find("org.tstrans").orElseThrow().descriptor();
@@ -28,7 +29,9 @@ class ModuleDescriptorTest {
                         .filter(e -> !e.isQualified())
                         .map(ModuleDescriptor.Exports::source)
                         .collect(Collectors.toCollection(TreeSet::new));
-        assertEquals(new TreeSet<>(d.packages()), exported);
+        Set<String> packages = new TreeSet<>(d.packages());
+        assertTrue(packages.remove("org.tstrans.internal"), "org.tstrans.internal is missing");
+        assertEquals(packages, exported);
         assertTrue(
                 exported.containsAll(
                         Set.of("org.tstrans.shells", "org.tstrans.hls", "org.tstrans.webrtc")));

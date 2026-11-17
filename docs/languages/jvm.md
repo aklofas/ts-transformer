@@ -1615,6 +1615,7 @@ A small class serves one publisher at a time on its own thread until
 `close()`:
 
 ```java
+import java.net.InetSocketAddress;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import org.tstrans.BindingException;
@@ -1662,7 +1663,7 @@ final class TcpIngest implements AutoCloseable {
                 }
                 continue;
             }
-            String publisher = conn.peerAddr();   // read before the conversion
+            InetSocketAddress publisher = conn.peerAddr();  // read before the conversion
             try (DemuxReceiver rx = conn.intoDemuxReceiver()) {
                 serving.set(rx);
                 if (stop.isCancelled()) return;   // close() during accept()
@@ -1752,13 +1753,9 @@ Each `accept()` returns one connection as a `tcp.Transport`. A publisher
 that connects while another is being served waits in the kernel's queue
 until the next `accept()`; closing the listener drops whatever is still
 queued, and such a connection is never handed out. `peerAddr()` is the
-peer's `ip:port` (an IPv6 address in brackets, `[::1]:5000`), the TCP source
-address: behind a proxy, the proxy's. A listener bound to `::` that also
-accepts IPv4 clients (the default on Linux) reports an IPv4 peer in the
-IPv4-mapped IPv6 form, `[::ffff:203.0.113.5]:40000`; a rule that compares
-`peerAddr()` against plain IPv4 text (`203.0.113.5`) does not match it, so
-bind `0.0.0.0` for IPv4 publishers or compare parsed addresses. A listener
-bound to an IPv4 address reports the plain form.
+peer's `InetSocketAddress`, the TCP source address: behind a proxy, the
+proxy's. An IPv4 client of a listener bound to `::` is reported as an
+`Inet4Address`. The address is built from its bytes, with no name lookup.
 
 A `Transport` becomes a shell with `intoReceiver()`, `intoDemuxReceiver()`,
 `intoDemuxReceiver(DemuxerConfig)` or `intoSender()`. The conversion

@@ -233,7 +233,7 @@ class TransportTest {
             Transport t = accept(l, c);
             // A null config is refused before the take: the transport stays usable.
             assertThrows(NullPointerException.class, () -> t.intoDemuxReceiver(null));
-            assertTrue(t.peerAddr().startsWith("127.0.0.1:"), t.peerAddr());
+            assertEquals(InetAddress.getByAddress(new byte[] {127, 0, 0, 1}), t.peerAddr().getAddress());
             c.add(t.intoReceiver());
             assertThrows(IllegalStateException.class, t::peerAddr);
             assertThrows(IllegalStateException.class, t::intoSender);

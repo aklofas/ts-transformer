@@ -10,7 +10,8 @@ use jni::objects::{JByteArray, JClass, JObject, JValue};
 use jni::refs::{Auto, IntoAuto as _};
 use jni::signature::RuntimeFieldSignature;
 use jni::strings::{JNIStr, JNIString};
-use jni::sys::jlong;
+use jni::sys::{jbyteArray, jlong};
+use std::net::SocketAddr;
 use tst_core::error::KlvFieldError as RustKlvFieldError;
 use tst_core::klv::OwnedRawField;
 
@@ -485,6 +486,45 @@ pub fn read_nullable_int(
 /// `Listener::bind_with` resolve: [`tst_srt::addr::join_host_port`].
 pub fn join_host_port(host: &str, port: u16) -> String {
     tst_srt::addr::join_host_port(host, port)
+}
+
+/// A socket address as the `byte[]` that `org.tstrans.internal.NativeAddr`
+/// reads: the address bytes (4, or 16 for IPv6), the port big-endian, and for
+/// IPv6 the scope id big-endian. An IPv4-mapped IPv6 address goes out as IPv4,
+/// so a dual-stack bind reports an IPv4 peer as one. Null with an exception
+/// pending if the array cannot be made.
+pub(crate) fn socket_addr_array(env: &mut Env, addr: SocketAddr) -> jbyteArray {
+    let mut out = Vec::with_capacity(22);
+    match addr {
+        SocketAddr::V4(a) => {
+            out.extend_from_slice(&a.ip().octets());
+            out.extend_from_slice(&a.port().to_be_bytes());
+        }
+        SocketAddr::V6(a) => match a.ip().to_ipv4_mapped() {
+            Some(v4) => {
+                out.extend_from_slice(&v4.octets());
+                out.extend_from_slice(&a.port().to_be_bytes());
+            }
+            None => {
+                out.extend_from_slice(&a.ip().octets());
+                out.extend_from_slice(&a.port().to_be_bytes());
+                out.extend_from_slice(&a.scope_id().to_be_bytes());
+            }
+        },
+    }
+    match env.byte_array_from_slice(&out) {
+        Ok(arr) => arr.into_raw(),
+        Err(e) => {
+            // Null alone reads as "no address" on the Java side.
+            if !env.exception_check() {
+                let _ = env.throw_new(
+                    FindClass(jni_str!("java/lang/RuntimeException")),
+                    JNIString::from(e.to_string()),
+                );
+            }
+            std::ptr::null_mut()
+        }
+    }
 }
 
 /// Read a Java `byte[]` argument, or throw `RuntimeException` + return `None`.
