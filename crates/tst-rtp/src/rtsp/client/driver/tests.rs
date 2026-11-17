@@ -440,6 +440,82 @@ fn the_media_queue_closes_after_the_end_reason_is_recorded() {
 
 /// The first `Ended` closes the media queue and its reason stays when
 /// the stream ends afterwards.
+fn expect_media(data_rx: &mpsc::Receiver<Bytes>, seq: u16) {
+    let p = data_rx
+        .recv_timeout(scaled(Duration::from_secs(5)))
+        .expect("a media frame");
+    assert_eq!(seq_of(&p), seq);
+}
+
+/// A `454` to a ping ends the session, not the stream: media keeps coming.
+#[test]
+fn a_ping_answered_454_keeps_the_media_queue_open() {
+    let (stream, mut peer) = plain_pair();
+    let h = drive(stream);
+    let (data_tx, data_rx) = mpsc::sync_channel(8);
+    interleaved(&h, data_tx);
+    let mut rest = Vec::new();
+    round_trip(&h, &mut peer, &mut rest);
+    h.handle
+        .send(Command::EnableKeepalive(Some(Duration::from_millis(50))))
+        .unwrap();
+    let head = read_head(&mut peer, &mut rest);
+    let ping = cseq(&head);
+    assert!(ping > 1_000_000, "a ping's CSeq");
+    peer.write_all(format!("RTSP/1.0 454 Session Not Found\r\nCSeq: {ping}\r\n\r\n").as_bytes())
+        .unwrap();
+    assert_eq!(h.wait_end(), EndReason::SessionExpired);
+    assert!(h.session_dead.load(Ordering::Acquire));
+    peer.write_all(&rtp_frame(7, 8)).unwrap();
+    expect_media(&data_rx, 7);
+    h.stop_and_join();
+}
+
+/// The closed queue is not sticky: a later SETUP's queue gets media.
+#[test]
+fn set_interleaved_after_an_accepted_teardown_delivers_media_again() {
+    let (stream, mut peer) = plain_pair();
+    let h = drive(stream);
+    let (first_tx, first_rx) = mpsc::sync_channel(8);
+    interleaved(&h, first_tx);
+    let mut rest = Vec::new();
+    round_trip(&h, &mut peer, &mut rest);
+    let rx = h.request(RequestSpec {
+        method: RtspMethod::Teardown,
+        uri: URI.to_string(),
+        headers: Vec::new(),
+    });
+    assert!(matches!(next(&rx), Progress::Written));
+    let head = read_head(&mut peer, &mut rest);
+    peer.write_all(&ok_reply(cseq(&head))).unwrap();
+    assert_eq!(done_ok(next(&rx)).status, 200);
+    assert!(matches!(
+        first_rx.recv_timeout(scaled(Duration::from_secs(5))),
+        Err(RecvTimeoutError::Disconnected)
+    ));
+    let (second_tx, second_rx) = mpsc::sync_channel(8);
+    interleaved(&h, second_tx);
+    round_trip(&h, &mut peer, &mut rest);
+    peer.write_all(&rtp_frame(9, 8)).unwrap();
+    expect_media(&second_rx, 9);
+    assert_eq!(h.stop_and_join().get(), Some(EndReason::CleanTeardown));
+}
+
+#[test]
+fn set_interleaved_after_the_stream_ended_gets_a_closed_queue() {
+    let (stream, peer) = plain_pair();
+    let h = drive(stream);
+    drop(peer);
+    assert_eq!(h.wait_end(), EndReason::CleanTeardown);
+    let (data_tx, data_rx) = mpsc::sync_channel(8);
+    interleaved(&h, data_tx);
+    assert!(matches!(
+        data_rx.recv_timeout(scaled(Duration::from_secs(5))),
+        Err(RecvTimeoutError::Disconnected)
+    ));
+    h.stop_and_join();
+}
+
 #[test]
 fn an_accepted_teardown_closes_the_media_queue_and_keeps_its_reason() {
     let (stream, mut peer) = plain_pair();

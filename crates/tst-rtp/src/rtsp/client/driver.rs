@@ -15,7 +15,7 @@ use std::time::{Duration, Instant};
 use bytes::Bytes;
 use mio::{Events, Interest, Poll, Token, Waker};
 use tst_core::cancel::FlagCancel;
-use tst_core::transport::EndReasonHandle;
+use tst_core::transport::{EndReason, EndReasonHandle};
 
 use super::CONTROL_WRITE_TIMEOUT;
 use super::engine::{ClientEngine, Event, InterleavedChannels, RequestSpec, StreamEnd, TxnId};
@@ -175,7 +175,6 @@ pub(crate) fn spawn_with(
         stall_from: None,
         media: None,
         rtcp: None,
-        ended: false,
         read_more: false,
         inbuf: Vec::new(),
     };
@@ -232,8 +231,6 @@ struct Driver {
     stall_from: Option<Instant>,
     media: Option<mpsc::SyncSender<Bytes>>,
     rtcp: Option<RtcpSink>,
-    /// An `Ended` has been delivered.
-    ended: bool,
     /// The last read stopped at its budget with bytes perhaps left.
     read_more: bool,
     inbuf: Vec<u8>,
@@ -307,8 +304,9 @@ impl Driver {
                     rtcp,
                 } => {
                     self.engine.set_interleaved(channels);
-                    // After an end the receiver sees its queue close at once.
-                    self.media = (!self.ended).then_some(data_tx);
+                    // After the stream's end the receiver sees its queue
+                    // close at once; the reason is already recorded.
+                    self.media = (!self.engine.is_closed()).then_some(data_tx);
                     self.rtcp = Some(rtcp);
                 }
                 Command::EnableKeepalive(interval) => {
@@ -423,11 +421,15 @@ impl Driver {
                 }
                 Event::SessionDead => self.shared.session_dead.store(true, Ordering::Release),
                 Event::Ended(reason) => {
+                    // A `454` to a ping with the stream still open ends the
+                    // session, not the media: the queue stays.
+                    let close_media = reason == EndReason::CleanTeardown || self.engine.is_closed();
                     // The reason first: a receiver that sees its queue
                     // close reads it at once.
                     record_end(&self.shared.end_reason, reason);
-                    self.ended = true;
-                    self.media = None;
+                    if close_media {
+                        self.media = None;
+                    }
                 }
             }
         }
