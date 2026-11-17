@@ -39,13 +39,13 @@ use tst_pipeline::binding::view::BlockingReason;
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 
-use tst_core::transport::{RecvTransport, Transport, TransportError};
-use tst_core::url::redact_url;
-use tst_pipeline::binding::{BindingError, Owned, SendHalf};
+use tst_core::transport::{RecvTransport, SourceHandle, SourcePin, Transport, TransportError};
+use tst_core::url::{UrlError, query::lookup, redact_url};
+use tst_pipeline::binding::{BindingError, HandleState, Owned, SendHalf};
 use tst_rist::config::{EncryptionKey, RistProfile};
 use tst_rist::recv::RistRecvTransport;
 use tst_rist::transport::RistTransport;
-use tst_rist::{RistRecvTransportBuilder, RistTransportBuilder};
+use tst_rist::{RistError, RistRecvTransportBuilder, RistTransportBuilder, RistUrl};
 
 use crate::generated::stats_rist::RistStats;
 use crate::raise::{RIST, pyok, pyres, raise};
@@ -451,6 +451,12 @@ impl tst_pipeline::binding::Close for RistRecvInner {
     }
 }
 
+/// What a `RecvTransport` answers without the slot.
+struct RistRecvSnapshot {
+    bind_url: String,
+    source: Option<SourceHandle>,
+}
+
 /// RIST receiver — wraps `tst_rist::RistRecvTransport`.
 ///
 /// Construct via `RecvTransport.builder().bind_url("rist://@0.0.0.0:8000").build()`.
@@ -468,8 +474,9 @@ pub(crate) struct PyRistRecvTransport {
     /// holds the slot with the GIL released, and `close()` latches the
     /// cancel BEFORE taking it, so the parked recv ends with
     /// `RistError(CLOSED)` within one librist poll window. Snapshot =
-    /// `bind_url()`, so `repr()` never waits behind a parked `recv`.
-    owned: Owned<RistRecvInner, String>,
+    /// `bind_url()` and the transport's source record, so `repr()` and
+    /// `peer_addr()` never wait behind a parked `recv`.
+    owned: Owned<RistRecvInner, RistRecvSnapshot>,
     /// Shared cancel state, wrapping the transport's real `RistCancelHandle`
     /// `close()` and `cancel_handle().cancel()` both latch it
     /// and the poll loop checks it between librist's 100 ms windows.
@@ -550,6 +557,23 @@ impl PyRistRecvTransport {
         Ok(PyBytes::new(py, &bytes).unbind())
     }
 
+    /// `(host, port)` of the sender whose block was delivered last, or
+    /// `None` before the first one. The host is the IP as text; an IPv4
+    /// sender on a dual-stack bind reads as IPv4. The address is the
+    /// source address of the sender's datagrams, which nothing verifies.
+    /// Answered from the transport's shared source record, so it never
+    /// waits behind a `recv()` parked on another thread; raises
+    /// `RistError(CLOSED)` once the transport is closed.
+    fn peer_addr(&self, py: Python<'_>) -> PyResult<Option<crate::util::PyAddr>> {
+        if self.owned.is_closed() {
+            Err(raise(py, &RIST, BindingError::from(HandleState::Closed)))
+        } else {
+            Ok(crate::util::peer_addr_tuple(
+                self.owned.snapshot().source.as_ref(),
+            ))
+        }
+    }
+
     /// Close the receiver. Cancel-first (`Owned::close` latches the shared
     /// cancel before taking the slot), so a `recv()` parked on another
     /// thread ends with `RistError(kind=CLOSED)` within ~100 ms; further
@@ -591,7 +615,7 @@ impl PyRistRecvTransport {
         if self.owned.is_closed() {
             "RecvTransport(closed)".to_string()
         } else {
-            format!("RecvTransport(bind={:?})", self.owned.snapshot())
+            format!("RecvTransport(bind={:?})", self.owned.snapshot().bind_url)
         }
     }
 }
@@ -617,6 +641,19 @@ pub(crate) struct PyRistRecvTransportBuilder {
     buffer_ms: Option<u64>,
     cname: Option<String>,
     session_timeout_ms: Option<u64>,
+    source: Option<SourcePin>,
+}
+
+/// Reads a `source` value through the URL key's own row, so a bad value
+/// fails with the error `?source=` gives.
+fn parse_source(value: &str) -> Result<Option<SourcePin>, UrlError> {
+    let row =
+        lookup(tst_rist::url::URL_KEYS, "source").ok_or_else(|| UrlError::UnknownQueryKey {
+            key: "source".to_string(),
+        })?;
+    let mut scratch = RistUrl::parse("rist://@127.0.0.1:0")?;
+    (row.apply)(&mut scratch, "source", value)?;
+    Ok(scratch.config.source)
 }
 
 #[pymethods]
@@ -663,6 +700,24 @@ impl PyRistRecvTransportBuilder {
         slf
     }
 
+    /// Take blocks from one sender only, as the URL's `source` key does,
+    /// and over it: an IP literal admits that IP on any port; `"first"`
+    /// admits the IP of the first delivered block until the receiver is
+    /// closed. Datagrams from any other IP are dropped and counted in
+    /// `stats().source_rejected`. The source address is unverified.
+    /// Raises `RistError(kind=URL)` for any other value, as the URL key
+    /// does.
+    fn source<'py>(
+        mut slf: PyRefMut<'py, Self>,
+        py: Python<'py>,
+        value: &str,
+    ) -> PyResult<PyRefMut<'py, Self>> {
+        let pin = parse_source(value)
+            .map_err(|e| raise(py, &RIST, BindingError::from(RistError::Url(e))))?;
+        slf.source = pin;
+        Ok(slf)
+    }
+
     /// Build the `RecvTransport`. Raises `RistError(kind=URL)` for a bad bind
     /// URL, `RistError(kind=INVALID_CONFIG)` if the `@` prefix is missing,
     /// and `RistError(kind=CONTEXT_CREATE_FAILED)` / `PEER_CREATE_FAILED` for
@@ -688,10 +743,14 @@ impl PyRistRecvTransportBuilder {
         if let Some(ms) = self.session_timeout_ms {
             b.session_timeout(std::time::Duration::from_millis(ms));
         }
+        if let Some(pin) = self.source {
+            b.source(pin);
+        }
         let t = crate::util::allow_threads_parking(py, || b.listen())
             .map_err(|e| raise(py, &RIST, BindingError::from(e)))?;
         let scratch_len = t.max_payload().max(65_536);
         let bind_url = t.bind_url().to_owned();
+        let source = t.source_handle();
         // Obtain-before-move (see the sender twin).
         let cancel = CancelSource::new(Arc::new(t.cancel_handle()));
         Ok(PyRistRecvTransport {
@@ -701,7 +760,7 @@ impl PyRistRecvTransportBuilder {
                     scratch: vec![0u8; scratch_len],
                 },
                 cancel.as_dyn(),
-                bind_url,
+                RistRecvSnapshot { bind_url, source },
             ),
             cancel,
         })

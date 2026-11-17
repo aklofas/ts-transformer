@@ -186,6 +186,25 @@ class Receiver:
         """The recorded reason, or `None` while the stream is live. Every plain
         receive transport records one."""
     def end_detail(self) -> Optional[str]: ...
+    def peer_addr(self) -> Optional[Tuple[str, int]]:
+        """``(host, port)`` of the sender whose datagram (``udp://``) or
+        block (``rist://``) was delivered last; ``None`` until the first
+        one, and always ``None`` for a transport that keeps no source
+        record (``srt://``, ``tcp://``, ``rtp://``). The host is the IP as
+        text; an IPv4 sender on a dual-stack bind reads as IPv4.
+
+        It is the source address of the datagrams, which nothing verifies:
+        a UDP or RIST sender can forge it. Without a ``source`` key in the
+        URL every sender that reaches the receiver is delivered, and this
+        names whichever delivered last. Never waits behind a call parked
+        on another thread; the last value after ``close()``."""
+    def source_rejected(self) -> int:
+        """Datagrams or blocks the ``source`` key of a ``udp://`` or
+        ``rist://`` URL turned away (``source=<ip>`` admits that IP on any
+        port, ``source=first`` the IP of the first delivery until close);
+        on ``udp://`` they appear in no received counter. 0 for a
+        transport that keeps no source record. Never waits behind a call
+        parked on another thread; the last value after ``close()``."""
     def close(self) -> None: ...
     def is_alive(self) -> bool: ...
     def __enter__(self) -> Receiver: ...
@@ -339,6 +358,25 @@ class DemuxReceiver:
         """The recorded reason, or `None` while the stream is live. Every plain
         receive transport records one."""
     def end_detail(self) -> Optional[str]: ...
+    def peer_addr(self) -> Optional[Tuple[str, int]]:
+        """``(host, port)`` of the sender whose datagram (``udp://``) or
+        block (``rist://``) was delivered last; ``None`` until the first
+        one, and always ``None`` for a transport that keeps no source
+        record (``srt://``, ``tcp://``, ``rtp://``). The host is the IP as
+        text; an IPv4 sender on a dual-stack bind reads as IPv4.
+
+        It is the source address of the datagrams, which nothing verifies:
+        a UDP or RIST sender can forge it. Without a ``source`` key in the
+        URL every sender that reaches the receiver is delivered, and this
+        names whichever delivered last. Never waits behind a call parked
+        on another thread; the last value after ``close()``."""
+    def source_rejected(self) -> int:
+        """Datagrams or blocks the ``source`` key of a ``udp://`` or
+        ``rist://`` URL turned away (``source=<ip>`` admits that IP on any
+        port, ``source=first`` the IP of the first delivery until close);
+        on ``udp://`` they appear in no received counter. 0 for a
+        transport that keeps no source record. Never waits behind a call
+        parked on another thread; the last value after ``close()``."""
     def close(self) -> None: ...
     def is_alive(self) -> bool: ...
     def __enter__(self) -> DemuxReceiver: ...

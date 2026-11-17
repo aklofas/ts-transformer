@@ -18,7 +18,9 @@
 //!   slot), which wakes the parked recv, and only then takes the inner.
 //! - The transport's error domain rides in the snapshot and stays readable
 //!   after `close()`; the transport's end-reason handle is attached to the
-//!   `Owned`, so `end_reason()` keeps answering after `close()`.
+//!   `Owned`, so `end_reason()` keeps answering after `close()`; so do
+//!   `peer_addr()` and `source_rejected()`, which read the transport's
+//!   source record from the snapshot.
 
 #![allow(unsafe_op_in_unsafe_fn, clippy::useless_conversion)]
 
@@ -28,7 +30,7 @@ use pyo3::Py;
 use pyo3::prelude::*;
 use pyo3::types::PyType;
 
-use tst_core::transport::{RecvTransport, TransportCancel};
+use tst_core::transport::{RecvTransport, SourceHandle, TransportCancel};
 use tst_pipeline::binding::view::{BlockingReason, Snapshot};
 use tst_pipeline::binding::{BindingError, BindingErrorKind, Domain, Opened, Owned};
 use tst_pipeline::{
@@ -63,6 +65,13 @@ pub(crate) fn demux_recv_err(py: Python<'_>, domain: &Domain, e: DemuxReceiverEr
     }
 }
 
+/// The shell's construction-time handles, read without the slot.
+struct Handles {
+    ts_bytes: TsBytesDemuxedHandle,
+    /// The transport's source record; `None` for a transport that keeps none.
+    source: Option<SourceHandle>,
+}
+
 /// Python demux receiver over any transport: owns a `Demuxer` and a
 /// transport. Open it with a URL (`srt://:7000?mode=listener`,
 /// `udp://127.0.0.1:5000`, ...) and iterate the emitted `DemuxEvent`s.
@@ -84,7 +93,7 @@ pub(crate) struct PyDemuxReceiver {
     /// `recv_event` holds the slot only inside `with_mut`, under
     /// `py.detach`; `close()` (cancel-first) ends it instead of
     /// waiting behind it.
-    owned: Owned<RustDemuxReceiver<Box<dyn RecvTransport>>, Snapshot<TsBytesDemuxedHandle>>,
+    owned: Owned<RustDemuxReceiver<Box<dyn RecvTransport>>, Snapshot<Handles>>,
     /// Shared cancel state — see `crate::util::CancelSource`.
     cancel: Arc<CancelSource>,
     /// The application-cancel latch of the publish mount this receiver was
@@ -119,6 +128,7 @@ impl PyDemuxReceiver {
         let cancel = cancel_source(&cancel);
         // Taken before the transport moves into the shell.
         let end_reason = transport.end_reason_handle();
+        let source = transport.source_handle();
         let receiver = match opts {
             None => RustDemuxReceiver::new(transport),
             Some(opts) => RustDemuxReceiver::with_demux_options(transport, opts),
@@ -129,7 +139,7 @@ impl PyDemuxReceiver {
             cancel.as_dyn(),
             Snapshot {
                 domain,
-                handles: ts_bytes,
+                handles: Handles { ts_bytes, source },
             },
         );
         if let Some(h) = end_reason {
@@ -263,7 +273,7 @@ impl PyDemuxReceiver {
     /// reads, returns the last value after `close()`, and never waits for
     /// a parked `__next__`.
     fn ts_bytes_demuxed(&self) -> u64 {
-        self.owned.snapshot().handles.get()
+        self.owned.snapshot().handles.ts_bytes.get()
     }
 
     /// Tuple of `(SocketStats, MuxerStats)`. Same shape as
@@ -348,6 +358,26 @@ impl PyDemuxReceiver {
     fn end_detail(&self) -> Option<String> {
         let reason = self.owned.end_reason()?;
         end_detail(&reason).map(str::to_owned)
+    }
+
+    /// `(host, port)` of the sender whose datagram (`udp://`) or block
+    /// (`rist://`) was delivered last; `None` before the first one and for
+    /// a transport that keeps no source record. Never waits behind a
+    /// parked `__next__`; the last value after `close()`.
+    fn peer_addr(&self) -> Option<crate::util::PyAddr> {
+        crate::util::peer_addr_tuple(self.owned.snapshot().handles.source.as_ref())
+    }
+
+    /// Datagrams or blocks the `source` key of a `udp://` or `rist://` URL
+    /// turned away; 0 for a transport that keeps no source record. Never
+    /// waits behind a parked `__next__`; the last value after `close()`.
+    fn source_rejected(&self) -> u64 {
+        self.owned
+            .snapshot()
+            .handles
+            .source
+            .as_ref()
+            .map_or(0, SourceHandle::rejected)
     }
 
     /// Close the receiver. Idempotent. Fires the cancel handle BEFORE

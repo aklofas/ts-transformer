@@ -31,6 +31,10 @@ pub struct SocketStats {
     /// Receive-side I/O errors (receiver only); a would-block or a timeout
     /// is not an error.
     pub recv_errors: u64,
+    /// Datagrams dropped because their source IP did not match the `source`
+    /// pin (receiver only); 0 without a pin. A dropped datagram is in no
+    /// received counter.
+    pub source_rejected: u64,
 }
 
 #[pymethods]
@@ -52,6 +56,7 @@ impl From<&tst_udp::UdpStats> for SocketStats {
             bytes_received: r.bytes_received,
             send_errors: r.send_errors,
             recv_errors: r.recv_errors,
+            source_rejected: r.source_rejected,
         }
     }
 }
