@@ -247,7 +247,9 @@ shape but differ on whether the caller should retry:
 
 `TST_E_INVALID_USAGE` (-9) is the third sibling — used when the handle
 is in the wrong **state** for the call (e.g., a KLV push when the muxer has no KLV stream configured, or a
-consumed source; `finish()` is idempotent and is not an error twice). A
+consumed source; `finish()` is idempotent and is not an error twice,
+unless the handle was cancelled: after `_cancel` every `_finish` is
+`TST_E_CLOSED`). A
 data-plane call (receive, send, flush, finish) after `_cancel`, or a call
 that needs a shell a caught mutator panic retired, is `TST_E_CLOSED` (-7),
 not this code. Getters, statistics and reset entries use ungated accessors
@@ -289,8 +291,10 @@ latch — every clone, and a handle obtained after the cancel, agrees.
 **One outcome.** A cancel that lands while an op is parked ends that op
 with `TransportError::ExplicitClose`, and every later op returns it at
 its entry check, on every transport that has a handle and on the managed
-wrappers — and on the RTSP control plane: a cancelled `RtspClient` call
-(`RtspError::LocalCancel`) projects to the same `Closed` kind
+wrappers. The RTSP control plane reaches the same kind another way: an
+`RtspClient` request made after the cancel still writes its bytes, then
+its reply wait reads the flag and returns `RtspError::LocalCancel`, which
+projects to the same `Closed` kind
 — the normative table lives in the `tst_core::transport` rustdoc
 and `tst_core::transport::conformance` pins it in each crate's
 `tests/*conformance.rs`. Bindings therefore project one kind for a cancel:
@@ -323,8 +327,10 @@ See `docs/reference/srt-cancel-handle.md` for the full pattern.
 
 What may precede or override the CLOSED outcome:
 
-- A `TooLarge` validation runs before the cancel check.
-- A result that was already in flight when the cancel landed may win.
+- A `TooLarge` validation may run before the cancel check (the SRT and
+  RTP senders).
+- A success already in flight when the cancel landed may win; a failure
+  in that window is reported as the cancel.
 - The H.264 receiver drains to end of stream on cancel.
 - The SRT `Listener` iterator maps CLOSED to `StopIteration`.
 - A flushed access unit is delivered before CLOSED (Rust shells).
@@ -392,6 +398,21 @@ a parked call on any family, and a concurrent close is never the supported
 interrupter. `_close` being implemented cancel-first is a defence, not a
 contract. The header's "Threading and lifetime" preamble and the notes on
 each entry point carry the per-family details of this one rule.
+
+**Drop cancels; stop joins.** An owner of a thread or runtime cancels and
+detaches in `Drop`, and joins in its `stop()` / `close()` / `shutdown()`;
+the [Runtime ownership](/docs/reference/architecture.md#runtime-ownership)
+table says what each of those waits for, one phase at a time.
+`WhepServer`, the HLS serving handle and
+`ManagedTransport` follow this today. `RtspServer` is the listed
+exception: its `Drop` still waits up to 5 s for its runtime (the
+`RtspClient` and the RIST transports also join in `Drop`; the same table
+lists them). A Rust `Sender` or `MuxSender` dropped without `close()`
+sends what it still buffers, then closes its transport. The binding layer
+cancels first whenever it retires a shell: on `close()`, after a caught
+panic in a mutator, and when a JVM or Python object is collected without
+`close()`. Buffered output is then abandoned, not sent; `finish()` is the
+call that delivers it.
 
 **One runtime handle has no internal lock: the HLS serving handle.**
 `TstHlsServerHandle` (returned by `tst_hls_publisher_finish_serving`) is

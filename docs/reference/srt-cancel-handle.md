@@ -4,11 +4,13 @@ Every long-lived pipeline shell (`MuxSender`, `Sender`, `RawSender`,
 `DemuxReceiver`, `Receiver`, `RawReceiver`) blocks the calling thread
 inside `send_*` / `recv_*`. The cancel-handle pattern is how a
 *different* thread (a signal-dispatch thread, a lifecycle observer, a
-watchdog) wakes that blocked call so the process can shut down promptly
-without time-sliced polling.
+watchdog) ends that blocked call so the process can shut down, without
+the caller polling a flag of its own.
 
-SRT uses `ResourceCancel`; UDP, TCP, RIST, RTP and RTSP use `FlagCancel`
-(a shared flag their blocking calls poll, from `tst_core::cancel`).
+SRT uses `ResourceCancel`: the cancel closes the socket. UDP, RIST and
+both RTSP handles are a `FlagCancel` from `tst_core::cancel`, and TCP
+(`TcpCancelHandle`) and RTP (`RtpCancelHandle`) wrap one: a shared flag
+their blocking calls poll.
 
 The handle is `Send + Sync`, one-shot, and idempotent — multiple
 `cancel()` calls from any thread are safe and no-op after the first.
@@ -41,9 +43,9 @@ fn cancel_handle(&self) -> Option<Arc<dyn TransportCancel + Send + Sync>>;
 ```
 
 `Option` because a transport may not support cancellation (a pure
-in-memory test mock returns `None`). All real transports — `SrtTransport`
-(implements both `Transport` and `RecvTransport`) and `ManagedTransport`
-decorating it — return `Some`.
+in-memory test mock returns `None`). Every real transport (SRT, UDP, TCP,
+RIST and RTP, send and receive) and the managed wrappers around them
+return `Some`.
 
 `tst-srt`'s `SrtSocket::cancel_handle()` and `SrtListener::cancel_handle()`
 return the concrete `ResourceCancel` struct directly (no `Option`); these
@@ -75,8 +77,8 @@ let cancel: ResourceCancel = socket.cancel_handle();
 
 ## The pattern
 
-The cancel-handle pattern unblocks a thread parked in `send_*` /
-`recv_*` from another thread without time-sliced polling:
+The cancel-handle pattern ends a call parked in `send_*` / `recv_*`
+from another thread, without the caller polling:
 
 ```rust,no_run
 use tst_pipeline::{Sender, SenderConfig, TransportCancel};
@@ -124,10 +126,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-`cancel()` triggers the closer (libsrt's `srt_close` for `SrtTransport`)
-exactly once. The parked syscall returns within one libsrt I/O cycle —
-in practice 3–10 ms, bounded by the transport's `SRTO_RCVTIMEO` /
-`SRTO_SNDTIMEO`. libsrt reports the closed socket as a connection error,
+On SRT, `cancel()` runs the closer (libsrt's `srt_close`) exactly once,
+on the thread that calls it. libsrt wakes the parked call for the close,
+typically within a few milliseconds; the socket's send and receive
+timeouts play no part in it. With linger on (`SrtSocketBuilder::linger`;
+the sender preset sets 5 s) and unsent data queued on a connected socket,
+`srt_close` first waits for that data to leave, for up to the linger
+time, so the `cancel()` call itself can take that long. The other
+transports set a flag and the parked call notices it at its next poll
+tick; see [Cancel coverage by transport](#cancel-coverage-by-transport).
+libsrt reports the closed socket as a connection error,
 but `SrtTransport` reads its own cancel latch afterwards and surfaces
 `TransportError::ExplicitClose` to the caller — the caller asked for the
 close, so it is reported as the close, not as the wire error it provoked.
@@ -140,7 +148,7 @@ is below the transport layer, still reports the libsrt error.
 
 ## Per-language idiom
 
-Bindings should expose `ResourceCancel` as a language-native shutdown
+Bindings expose the shell's cancel handle as a language-native shutdown
 primitive. The shape maps cleanly:
 
 | Language | Idiom |
@@ -151,10 +159,28 @@ primitive. The shape maps cleanly:
 | Python | `threading.Event`-shaped wrapper; `event.set()` triggers the underlying `cancel()` |
 | C (`tst-c`) | no separate handle object: each shell has its own thread-safe `tst_<shell>_cancel(h)` entry point (`tst_mux_sender_cancel`, `tst_demux_receiver_cancel`, `tst_tcp_receiver_cancel`, …) |
 
-The Rust API is the source of truth — every binding crate forwards
-`cancel()` to the same idempotent atomic-swap inside `tst-core`.
+The Rust API is the source of truth — a binding shell's cancel reaches
+the shell's own Rust cancel handle through `tst_pipeline::binding::Owned`.
 
 ## Threading guarantees
+
+**Data calls are exclusive.** A transport's `send_bytes`, `recv_bytes`
+and `close()` take `&mut self`, and so do the send, receive and close
+calls of `Sender`, `RawSender`, `Receiver`, `RawReceiver` and
+`DemuxReceiver`: one caller drives the object at a time. `MuxSender`'s
+calls take `&self`, and an internal mutex runs them one at a time, so a
+second thread's `send_*` waits behind the first. The bindings serialise
+every data call on a handle the same way, on the slot lock of
+`tst_pipeline::binding::Owned`.
+
+**Cancel is the one out-of-band call.** The cancel handle is the only way
+another thread reaches a call in progress. It never takes the lock a
+parked data call holds. How soon the parked call notices depends on the
+transport (see [the table below](#cancel-coverage-by-transport)); the call
+that observes the cancel reports `TransportError::ExplicitClose`, and so
+does every later data call. The cases that may precede or override that
+outcome are listed once, in
+[binding-authors.md](/docs/reference/binding-authors.md#cancel-handles).
 
 - `ResourceCancel: Send + Sync + Clone`. Stash it in any container, move
   it into any thread, clone it freely — every clone shares the same
@@ -178,6 +204,39 @@ The Rust API is the source of truth — every binding crate forwards
   through `close_without_cancel()`, which closes and wakes without
   latching; `SrtSocket::close()` and a cross-thread `cancel()` latch.
 
+**What each close, stop and drop waits for.**
+
+- `cancel()` on a flag transport is one atomic store. On SRT it runs
+  `srt_close` on the calling thread, which with linger on can take up to
+  the linger time (see [The pattern](#the-pattern)). On a managed wrapper
+  it latches, wakes the backoff wait and fires the live inner transport's
+  handle, so it costs what that inner's cancel costs.
+- A transport's own `close()`: SRT runs `srt_close`, linger included;
+  RIST runs `rist_destroy`, which joins librist's protocol thread; UDP,
+  TCP and RTP mark the transport closed and release or shut down their
+  socket.
+- `MuxSender::close()` cancels first, then waits for a send parked on
+  another thread to honour the cancel and release the sender's lock, then
+  closes the transport. `MuxSender::finish()` cancels nothing: it waits
+  behind a parked send, and each of its drain sends can take as long as
+  the transport's send does.
+- `Drop` of a `MuxSender` or a `Sender` sends what is still buffered and
+  then closes the transport, with no cancel first, so it takes as long as
+  that send and close take. The other shells' `Drop` adds nothing to the
+  transport's own.
+- A binding's `close()` (`Owned::close`) cancels, waits for the call
+  parked on the handle to return, then closes and drops the shell.
+- `ManagedTransport::close()` runs the same transition as its cancel, then
+  joins an active reconnect worker, which waits for a `factory()` call in
+  flight; its `Drop` signals the same way and does not join.
+- The servers and the RTSP client own threads or a runtime. The
+  [Runtime ownership](/docs/reference/architecture.md#runtime-ownership)
+  table lists what each one's `stop()`, `shutdown()` and `Drop` wait for;
+  each figure there is the wait of one phase, not a total.
+
+No call promises an absolute shutdown time: a close waits for the active
+operation to honour the cancel.
+
 ## Why this and not `close()`?
 
 A listener's `close(self)` consumes it, and some shell close methods need a
@@ -200,30 +259,34 @@ transport (fallibly, and possibly blocking like `Drop`) before closing.
 
 ## Anti-priorities
 
-`ResourceCancel` is the supported shape for sync-blocking shutdown. The
-API is intentionally synchronous-blocking; when async lands later as a
-separate crate (`tst-srt-async` or feature-gated), it ships
-`Future::poll`-shaped cancellation alongside but doesn't deprecate
-`ResourceCancel` — sync consumers stay on the trait-object pattern
-above. See the **Sync vs. async** section in
+The cancel handle (`TransportCancel`) is the supported shape for
+sync-blocking shutdown. The API is intentionally synchronous-blocking;
+when async lands later as a separate crate (`tst-srt-async` or
+feature-gated), it ships `Future::poll`-shaped cancellation alongside but
+doesn't deprecate the cancel handle — sync consumers stay on the
+trait-object pattern above. See the **Sync vs. async** section in
 [`architecture.md`](./architecture.md) for the long form.
 
 ## Cancel coverage by transport
 
 | Transport | Cancel handle | Notes |
 |-----------|--------------|-------|
-| SRT (`tst-srt`) | `ResourceCancel` | From `SrtSocket::cancel_handle()` or `pipeline_shell.cancel_handle()`. |
-| RTP / RTSP (`tst-rtp`) | `RtpCancelHandle` | From `RtpTransport::cancel_handle()` or the pipeline shell. |
-| TCP / TLS (`tst-tcp`) | `TcpCancelHandle` | From the inherent `TcpTransport::cancel_handle()`, from `Transport::cancel_handle` / `RecvTransport::cancel_handle` on the same transport, or from the pipeline shell (which reads the trait method). All three hand back the same handle. |
+| SRT (`tst-srt`) | `ResourceCancel` | From `SrtSocket::cancel_handle()`, `SrtListener::cancel_handle()` or `pipeline_shell.cancel_handle()`. No poll: `cancel()` closes the socket on the calling thread, and libsrt wakes a parked send, receive or accept for the close, typically within a few milliseconds. With linger on and unsent data queued, that close (and so `cancel()`) can take up to the linger time. |
+| RTP (`tst-rtp`) | `RtpCancelHandle` | From `RtpTransport::cancel_handle()`, `RtpRecvTransport::cancel_handle()`, `H264Receiver::cancel_handle()` or the pipeline shell. A parked send or socket receive notices it at its next 100 ms socket timeout, a receive fed by an RTSP interleaved session at its next 100 ms channel wait, and `H264Receiver::recv_au` at its next 100 ms read timeout. |
+| RTSP client and server (`tst-rtp`) | `RtspCancelHandle`, `RtspServerCancelHandle` | From `RtspClient::cancel_handle()` / `RtspServer::cancel_handle()`. On the client, a request waiting for its reply notices it within 100 ms and returns `RtspError::LocalCancel` (a request made after the cancel is still written first); the keepalive thread notices it within 200 ms. The interleaved pump does not read it: the pump has its own flag, set by the client's `Drop` and when a later SETUP replaces the pump. On the server it is the hard cancel: the listener and a parked `next_publisher` notice it within 100 ms; see `RtspServerCancelHandle` for what follows. |
+| TCP / TLS (`tst-tcp`) | `TcpCancelHandle` | From the inherent `TcpTransport::cancel_handle()`, from `Transport::cancel_handle` / `RecvTransport::cancel_handle` on the same transport, or from the pipeline shell (which reads the trait method). All three hand back the same handle. A parked receive or send notices it at its next 100 ms socket timeout and returns `ExplicitClose`; a parked `TcpListener::accept_blocking` notices it at its next 5 ms poll and returns `TcpError::Closed`. |
 | UDP (`tst-udp`) | `UdpCancelHandle` | From the inherent `UdpTransport::cancel_handle()` / `UdpRecvTransport::cancel_handle()`, the trait forms, or the pipeline shell. A parked `recv_bytes` observes it at its next ~100 ms poll tick and returns `ExplicitClose`; `send_bytes` never parks and checks it at entry. `close()` stays `Closed`. `recv_timeout` (per-call deadline) does not observe it — check `is_cancelled()` between slices. |
 | RIST (`tst-rist`) | `RistCancelHandle` | From the inherent `RistTransport::cancel_handle()` / `RistRecvTransport::cancel_handle()`, the trait forms, or the pipeline shell. Observed when the current 100 ms `rist_receiver_data_read2` tick returns (`ExplicitClose` instead of that tick's `Backpressure`) and at `send_bytes` entry. `close()` (→ `rist_destroy`) stays `Closed`. |
+| Managed wrappers (`tst-pipeline`) | `ManagedCancel`, `ManagedRecvCancel` | From `ManagedTransport` / `ManagedRecvTransport` `cancel_handle()` or the pipeline shell. Latches the wrapper, wakes a backoff wait at once and fires the live inner transport's handle, so a parked inner call notices it as that transport does. A `factory()` call in progress is reached only through a `FactoryCancel` slot (see [Managed receivers in listener mode](#managed-receivers-in-listener-mode)). |
 
 The table covers the byte transports, the ones that implement `Transport`
-/ `RecvTransport`. HLS and WebRTC are not byte transports and have no
-cancel handle; each has its own shutdown call. An `HlsPublisher` ends with
+/ `RecvTransport`, their managed wrappers and the RTSP control plane. HLS
+and WebRTC are not byte transports and have no cancel handle; each has
+its own shutdown call. An `HlsPublisher` ends with
 `Publisher::finish()`, or, to keep serving the finished playlist, with
-`finish_serving()` followed later by `HlsServerHandle::shutdown()`. A `WhepServer` ends
-with `stop()`, which its `Drop` also calls.
+`finish_serving()` followed later by `HlsServerHandle::shutdown()`. A
+`WhepServer` ends with `stop()`, which waits for its two threads; its
+`Drop` cancels the same way and does not wait.
 
 ## See also
 

@@ -314,13 +314,16 @@ Every long-lived pipeline shell exposes
 `cancel_handle() -> Option<Arc<dyn TransportCancel>>` for cross-thread
 cancellation; [`ResourceCancel`](./srt-cancel-handle.md) is the SRT
 transport's implementation of that trait (an integer handle plus a closer);
-UDP, TCP, RIST, RTP and both RTSP handles use `tst_core::cancel::FlagCancel`,
-a shared flag their blocking calls poll. The
+UDP, RIST and both RTSP handles are a `tst_core::cancel::FlagCancel`, and
+TCP and RTP wrap one: a shared flag their blocking calls poll. The
 handle is `Send + Sync`, one-shot, idempotent, and `Clone` — fire it
 from an ordinary thread (a signal-dispatch thread, a lifecycle observer,
 a parent-process watchdog; never a raw OS signal handler, because the SRT
-closer takes a mutex) and the parked `send_*` / `recv_*` on the calling thread
-returns within one libsrt I/O cycle (3–10 ms). Bindings expose this as
+closer takes a mutex) and the parked `send_*` / `recv_*` on the other thread
+returns once its transport observes the cancel: SRT closes the socket, the
+others notice the flag at their next poll tick. How soon that is, per
+transport, is in the
+[cancel coverage table](/docs/reference/srt-cancel-handle.md#cancel-coverage-by-transport). Bindings expose this as
 a language-native shutdown primitive (Kotlin `Job.cancel()` analog,
 Swift `Task.cancel()` analog, Python `threading.Event` analog, and
 per-shell `tst_*_cancel()` entries in the C ABI —
@@ -338,8 +341,8 @@ SRT, the handle is the `SRTSOCKET` and the closer is `srt_close`) and
 is re-exported as `tst_pipeline::ResourceCancel` (and as
 `tst_srt::ResourceCancel`) so binding authors have a single import path.
 The Rust API stays synchronous-blocking; the cancel handle is the
-supported escape hatch for "wake the parked syscall now" without
-time-sliced polling. (When async lands later as a separate crate,
+supported escape hatch for "end the parked call" without the caller
+polling. (When async lands later as a separate crate,
 `ResourceCancel` remains the sync-blocking primitive — see
 **Sync vs. async** below.)
 
@@ -352,7 +355,7 @@ is the runnable companion.
 
 The public API is sync blocking. `SrtSocket::send` and `SrtSocket::recv` block
 the calling thread; `MuxSender::send_video` blocks until the underlying
-SRT socket has accepted the bytes; reconnect inside `ManagedTransport`
+transport has accepted the bytes; reconnect inside `ManagedTransport`
 runs on the caller's thread by default. This isn't an async runtime —
 `ManagedTransport` also offers an opt-in `ReconnectMode::Background`
 where a dedicated per-outage worker thread owns the reconnect loop so
@@ -365,14 +368,16 @@ Two crates own private tokio runtimes today — one per `RtspServer`
 (`tst-rtp`, two worker threads) and one per serving `HlsPublisher`
 (`tst-hls` owns a runtime only when it serves HTTP: one current-thread
 runtime on its named server thread). Each is created in the
-constructor. The explicit calls wait with the documented bounds:
-`RtspServer::stop()`, and on the HLS publisher either `finish()`, or
-`finish_serving()` then `HlsServerHandle::shutdown()`. `RtspServer`'s `Drop`
+constructor. The explicit calls wait for them: `RtspServer::stop()`, and
+on the HLS publisher either `finish()`, or `finish_serving()` then
+`HlsServerHandle::shutdown()`; the table below gives each wait's give-up
+point, one phase at a time, and no total. `RtspServer`'s `Drop`
 waits up to 5 s for its runtime. The HLS
 serving handle's `Drop` only cancels the server thread and does not join
 it; the thread exits on its own after the cancel. Public methods
 that touch a runtime must not be called from inside one. `tst-webrtc`'s
-`WhepServer` uses no async runtime: it runs two named std threads. The rule is
+`WhepServer` uses no async runtime: it runs two named std threads, which
+its `stop()` waits for and its `Drop` does not. The rule is
 §"Runtime ownership" below.
 
 No user code runs on a library thread: the library never calls back into
@@ -404,8 +409,8 @@ registration — better scalability, much bigger surface to design and
 test. The choice is consumer-driven; until then the sync API stays. See
 [`docs/project/deferred-features.md`](/docs/project/deferred-features.md) for the current note.
 
-Note that "sync" applies to the public API surface — internally, the
-`MuxSender` family uses an internal mutex so the data path is safe to
+Note that "sync" applies to the public API surface — internally,
+`MuxSender` uses an internal mutex so the data path is safe to
 call from multiple threads if a consumer wants to fan in NAL and KLV
 inputs on separate producers. The synchronization is invisible to single-
 threaded callers and adds no contention when only one thread is
@@ -423,13 +428,13 @@ today's owners.
 | Crate | Owner | Thread or runtime | Started | Stopped | Exit with it still running |
 |---|---|---|---|---|---|
 | `tst-rtp` | `RtspServer` | private multi-thread tokio runtime with two worker threads named `tst-rtp-server` | the runtime is built by `RtspServerBuilder::build`; `start()` spawns the listener task | `stop()` sends the Notice 5402 ANNOUNCE, cancels every session, waits for every session task to end (at most `graceful_shutdown_drain` plus 500 ms), then shuts each session's write half (500 ms each). `Drop` hard-cancels and waits up to 5 s for the runtime to shut down | no exit hook; the runtime ends with the process and no Notice or TEARDOWN is sent |
-| `tst-rtp` | `RtspClient` | two std threads, `rtsp-keepalive` and `rtsp-interleaved-pump` | the keepalive thread at `RtspClientBuilder::connect` (unless auto keepalive is off); the pump at SETUP when media is TCP-interleaved | the client's cancel flag stops both. `Drop` sets it, sends a TEARDOWN bounded to 500 ms, then joins both threads. There is no `close()` | no exit hook; the threads end with the process |
+| `tst-rtp` | `RtspClient` | two std threads, `rtsp-keepalive` and `rtsp-interleaved-pump` | the keepalive thread at `RtspClientBuilder::connect` (unless auto keepalive is off); the pump at SETUP when media is TCP-interleaved | the client's cancel flag stops the keepalive thread; the pump has its own flag, which `Drop` sets and a later SETUP sets on the pump it replaces. `Drop` sets both, sends a TEARDOWN bounded to 500 ms, then joins both threads. There is no `close()` | no exit hook; the threads end with the process |
 | `tst-rtp` | `RtpRecvTransport` built from an RTSP session | one std thread, `rtsp-rtcp-ingest` | when the transport is built from the interleaved pump's channels | never signalled and never joined; it exits when the pump's RTCP sender drops, which the client's `Drop` causes | no exit hook; the thread ends with the process |
 | `tst-hls` | `HlsPublisher` (only when it serves HTTP) | one std thread named `tst-hls` that owns a current-thread tokio runtime; serving is single-threaded, so a segment read or a cut delays the other connections for its duration | `HlsPublisher::with_config`, which binds the listener (skipped when built with `no_server()`) | `HlsServerHandle::shutdown()` after `finish_serving()`, or `Drop` of the publisher or handle: cancel, then a wait of up to 2 s for the thread to finish when `shutdown()` is called; `Drop` cancels and detaches. EVENT serves the growing playlist while live; VOD answers the playlist with 404 until `finish()`; both write `#EXT-X-ENDLIST` on finish | no exit hook; the thread ends with the process |
 | `tst-pipeline` | `ManagedTransport` with `ReconnectMode::Background` | one std thread per outage, named `tst-reconnect` | the first send that finds the inner transport down spawns it, and so does a send that meets a backlog after a give-up | `close()` latches closed, wakes the backoff wait and the inner transport's cancel handle, then joins; the join waits for an in-flight factory call. `Drop` signals the same way and detaches | no exit hook; a worker still running ends with the process |
-| `tst-srt` | libsrt itself (garbage-collector and queue worker threads); not a Rust object | libsrt's threads, process-wide | the first libsrt use (`srt_startup`) | each `SrtSocket` and `SrtListener` `close()`; `srt_cleanup()` stops the library | guarded: the `atexit` handler in `exit_guard.rs` closes every open socket, waits up to 2 s for operations in flight, then runs `srt_cleanup()` |
+| `tst-srt` | libsrt itself (garbage-collector and queue worker threads); not a Rust object | libsrt's threads, process-wide | the first libsrt use (`srt_startup`) | each `SrtSocket` and `SrtListener` `close()`; `srt_cleanup()` stops the library | guarded: the `atexit` handler in `exit_guard.rs` closes every open socket (each close can take up to that socket's `SRTO_LINGER`), then waits up to 2 s for operations in flight (the 2 s bounds that wait only), then runs `srt_cleanup()` |
 | `tst-rist` | `RistTransport`, `RistRecvTransport` (one librist context each) | librist's protocol thread | `RistCtx::new` calls `rist_start` | `close()` calls `rist_destroy`, which joins the thread. `Drop` calls `close()`, so it waits too | not guarded: there is no exit hook, so keep the owner alive until `close()` returns |
-| `tst-webrtc` | `WhepServer` | two std threads: `tst-webrtc-media` (every viewer session and the shared UDP media socket) and `tst-webrtc-accept` (the signalling listener, one connection at a time) | both by `WhepServer::bind`; there is no separate start | `stop()` marks every mount closed, tells the media thread to stop, wakes the accept thread with a connection of its own, then waits up to 2 s for each thread; a thread that has not exited by then is left to finish on its own. `Drop` calls `stop()`, so it waits too. `stop()` is idempotent | no exit hook; the threads end with the process |
+| `tst-webrtc` | `WhepServer` | two std threads: `tst-webrtc-media` (every viewer session and the shared UDP media socket) and `tst-webrtc-accept` (the signalling listener, one connection at a time) | both by `WhepServer::bind`; there is no separate start | `stop()` marks every mount closed, tells the media thread to stop, wakes the accept thread with a connection of its own, then waits up to 2 s for each thread; a thread that has not exited by then is left to finish on its own. `stop()` is idempotent, and only its first call waits. `Drop` cancels the same way (mounts closed, both threads told to stop, the accept thread woken by a connection bounded at 1 s) and detaches: each thread closes its port when it ends on its own | no exit hook; the threads end with the process |
 
 Where today's code differs from the rule, the difference stays until the
 owner's next structural change:
@@ -444,8 +449,8 @@ owner's next structural change:
 - A WHEP push never waits on a viewer's media queue (bounded,
   `try_send`) but does take the mount's lock, so it serialises with the
   mount's other pushes and with event dispatch.
-- `WhepServer` owns two threads, and its `Drop` joins them (bounded at
-  2 s each); the rule says one thread and detach.
+- `WhepServer` owns two threads; the rule says one. Its `Drop` cancels
+  and detaches as the rule says.
 
 ## Mount lifecycle
 
@@ -459,9 +464,9 @@ Notice 5402 ANNOUNCE. Plain and TLS sessions share one session writer, so
 |---|---|---|---|
 | The application drops its handle | Nothing. `MountHandle` has no `Drop`; the server's table keeps the mount, readers keep playing, and later PLAYs still find it. No ANNOUNCE. | Nothing. The table keeps the mount, and an on-demand mount stays registered until `remove_mount`. A transport already taken from the handle is unaffected. No ANNOUNCE. | Nothing. `MountHandle` has no `Drop`; the server keeps the mount, attached viewers stay connected but receive no new media, and later offers still find it. |
 | `remove_mount(path)` | The entry leaves the table. Every reader session that completed SETUP on the path gets the Notice 5402 ANNOUNCE and is cancelled. A session that has not completed SETUP is left alone. Handles stay valid and `push_*` succeeds with no readers. A multicast mount's sender task keeps running while a handle is alive. | The mount is closed first: the application transport reads `Closed`, the publisher slot is emptied and refuses every later claim (ANNOUNCE `403`, RECORD `455`). Then every reader and publisher session that completed SETUP on the path gets the ANNOUNCE and is cancelled. An on-demand handle still queued for `next_publisher` is not withdrawn; its transport reads `Closed` at once. The on-demand cap slot is freed. | The entry leaves the server's map and is marked closed: every handle's push returns `PushError::Closed`, the mount's viewer gauges read 0, and the media thread drops every viewer session on the mount. Nothing is sent to the browser; it sees the media stop. A later offer to the path is answered `404`. |
-| `RtspServer::stop()` | The queue of on-demand handles is closed, then every session that completed SETUP on any mount gets the ANNOUNCE and is cancelled. The listener stops accepting. The mounts stay in the table, and handles stay valid with no readers. | The same for sessions, publishers included. Also every publish mount is closed: transports read `Closed`, a parked `next_publisher` wakes with `Shutdown`, and an ANNOUNCE that would create an on-demand mount answers `503`. | `WhepServer::stop()`: every mount is marked closed, so every push returns `PushError::Closed`; the media thread stops, which ends every viewer session; a request being read is answered `503` or its connection is closed, the accept thread exits and the signalling port stops accepting, and `add_mount` returns `Shutdown`. The mounts stay in the map. `stop()` waits up to 2 s for each of the server's two threads. |
+| `RtspServer::stop()` | The queue of on-demand handles is closed, then every session that completed SETUP on any mount gets the ANNOUNCE and is cancelled. The listener stops accepting. The mounts stay in the table, and handles stay valid with no readers. | The same for sessions, publishers included. Also every publish mount is closed: transports read `Closed`, a parked `next_publisher` wakes with `Shutdown`, and an ANNOUNCE that would create an on-demand mount answers `503`. | `WhepServer::stop()`: every mount is marked closed, so every push returns `PushError::Closed`; the media thread stops, which ends every viewer session; a request being read is answered `503` or its connection is closed, the accept thread exits and the signalling port stops accepting, and `add_mount` returns `Shutdown`. The mounts stay in the map. `stop()` waits up to 2 s for each of the server's two threads; only the first call waits. |
 | The last reader or publisher session ends | A reader leaving drops only its own fanout subscription. The mount is untouched and `peer_count` falls. No ANNOUNCE (the peer ended it). | A reader leaving changes nothing. A publisher leaving (TEARDOWN, disconnect or drop) flushes its adapter, stops its UDP ingest and empties the publisher slot. By default the application transport stays open and silent for the next publisher. On a mount whose end-on-exit option resolves true (`PublishMountConfig::end_on_publisher_exit`, server default `RtspServerBuilder::end_publish_mount_on_publisher_exit`), a publisher that reached RECORD closes the mount as it leaves: the transport reads `Closed`, later ANNOUNCEs answer `403`, and the mount must be removed and added again. An on-demand mount stays in the table either way, and a closed one counts toward the on-demand cap until it is removed. No ANNOUNCE. | A viewer leaving (DELETE of its session resource, or closed after 10 s without connecting, or 30 s disconnected) ends only its own session and lowers the mount's `viewers` gauge. The mount stays for the next viewer. |
-| `Drop` of the server | The server hard-cancels and its runtime shuts down within 5 s. Sessions end with no ANNOUNCE. Handles outlive the server and `push_*` succeeds with no readers. | The on-demand queue is closed and every publish mount is closed before the runtime shuts down, so transports read `Closed`. Sessions end with no ANNOUNCE. | `Drop` calls `stop()`: the same as the row above. |
+| `Drop` of the server | The server hard-cancels and its runtime shuts down within 5 s. Sessions end with no ANNOUNCE. Handles outlive the server and `push_*` succeeds with no readers. | The on-demand queue is closed and every publish mount is closed before the runtime shuts down, so transports read `Closed`. Sessions end with no ANNOUNCE. | `Drop` cancels as `stop()` does and does not wait: when it returns every mount is marked closed and every push returns `PushError::Closed`. The media thread then ends every viewer session, and each thread closes its port when it ends on its own. |
 
 ## What's deferred
 
