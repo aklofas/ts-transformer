@@ -251,6 +251,12 @@ async fn watch_hard_cancel(
             () = tokio::time::sleep(HARD_CANCEL_POLL) => {}
         }
         if hard_cancel.is_cancelled() {
+            // A fired token means `stop()` or Drop is already ending the
+            // server (Drop fires it before setting the flag): nothing for
+            // this task to end or report.
+            if token.is_cancelled() {
+                return;
+            }
             tracing::info!(target: "tst_rtp::server", "hard cancel observed; ending the server");
             if let Some(state) = state.upgrade() {
                 state.end_on_hard_cancel();
@@ -1511,9 +1517,11 @@ impl Drop for RtspServer {
         // it parked, or reading `Broken` once the last handle drops).
         self.state.shut_down();
         // Hard-cancel path on Drop — graceful shutdown blocks too long
-        // for an implicit Drop.
-        self.state.hard_cancel.cancel();
+        // for an implicit Drop. The token first: the watcher reads the flag
+        // only while the token is unfired, so it does not report a plain
+        // drop as a hard cancel.
         self.state.cancel_token.cancel();
+        self.state.hard_cancel.cancel();
         if let Some(rt) = self.runtime.take() {
             rt.shutdown_timeout(Duration::from_secs(5));
         }
