@@ -100,18 +100,24 @@ fn drop_writes_teardown_on_a_quiet_interleaved_session_with_a_long_read_timeout(
 /// What a [`session_peer`] saw: the requests after SETUP, in order.
 type Seen = Vec<String>;
 
+/// The bound `close` and `Drop` give their TEARDOWN (the client's
+/// `CLOSE_TEARDOWN_BOUND`, not visible here).
+const TEARDOWN_BOUND: std::time::Duration = std::time::Duration::from_millis(500);
+
+/// A [`session_peer`]: its port, the time it read the connection's end,
+/// the time it started writing its TEARDOWN reply, and what it saw.
+struct SessionPeer {
+    port: u16,
+    eof: std::sync::mpsc::Receiver<std::time::Instant>,
+    replied: std::sync::mpsc::Receiver<std::time::Instant>,
+    handle: std::thread::JoinHandle<Seen>,
+}
+
 /// A peer that answers DESCRIBE and an interleaved SETUP (session
 /// `DEADBEEF`), then every later request with `200 OK` except TEARDOWN,
 /// which it answers after `teardown_reply` (never when `None`). It reads
-/// until the client ends the connection and sends the time it read that
-/// end on the returned channel.
-fn session_peer(
-    teardown_reply: Option<std::time::Duration>,
-) -> (
-    u16,
-    std::sync::mpsc::Receiver<std::time::Instant>,
-    std::thread::JoinHandle<Seen>,
-) {
+/// until the client ends the connection.
+fn session_peer(teardown_reply: Option<std::time::Duration>) -> SessionPeer {
     use std::io::{Read, Write};
     use std::net::TcpListener;
     use std::time::{Duration, Instant};
@@ -121,6 +127,7 @@ fn session_peer(
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
     let (eof_tx, eof_rx) = std::sync::mpsc::channel();
+    let (replied_tx, replied_rx) = std::sync::mpsc::channel();
     let peer = std::thread::spawn(move || {
         let (mut sock, _) = listener.accept().unwrap();
         let mut leftover = Vec::new();
@@ -138,7 +145,8 @@ fn session_peer(
             while let Some(pos) = leftover.windows(4).position(|w| w == b"\r\n\r\n") {
                 let req = String::from_utf8_lossy(&leftover[..pos + 4]).into_owned();
                 leftover.drain(..pos + 4);
-                let reply_after = if method_of(&req) == "TEARDOWN" {
+                let teardown = method_of(&req) == "TEARDOWN";
+                let reply_after = if teardown {
                     teardown_reply
                 } else {
                     Some(Duration::ZERO)
@@ -147,11 +155,17 @@ fn session_peer(
                     // The peer is slow on purpose: the reply is what the
                     // client waits for.
                     std::thread::sleep(after);
+                    // Taken before the write, so a client that waited for
+                    // the reply cannot have returned before it.
+                    let replying = Instant::now();
                     let cseq = cseq_of(&req);
                     let _ = sock.write_all(
                         format!("RTSP/1.0 200 OK\r\nCSeq: {cseq}\r\nSession: DEADBEEF\r\n\r\n")
                             .as_bytes(),
                     );
+                    if teardown {
+                        let _ = replied_tx.send(replying);
+                    }
                 }
                 seen.push(req);
             }
@@ -170,7 +184,12 @@ fn session_peer(
         }
         seen
     });
-    (port, eof_rx, peer)
+    SessionPeer {
+        port,
+        eof: eof_rx,
+        replied: replied_rx,
+        handle: peer,
+    }
 }
 
 /// A client with a session open on a [`session_peer`].
@@ -194,21 +213,33 @@ fn close_awaits_the_teardown_reply_and_ends_the_thread() {
 
     use crate::fixtures::raw_rtsp::scaled;
 
-    let (port, eof, peer) = session_peer(Some(Duration::from_millis(150)));
-    let (client, session) = client_with_session(port);
+    // Well inside the bound, so a slow runner still gets the reply in time.
+    let delay = TEARDOWN_BOUND / 10;
+    let peer = session_peer(Some(delay));
+    let (client, session) = client_with_session(peer.port);
 
     let t0 = Instant::now();
     let r = client.close();
-    let elapsed = t0.elapsed();
+    let returned = Instant::now();
 
     assert!(r.is_ok(), "got {r:?}");
     assert!(
-        elapsed >= Duration::from_millis(150),
-        "close returned in {elapsed:?}, before the reply"
+        returned - t0 >= delay,
+        "close returned in {:?}, before the reply",
+        returned - t0
     );
-    eof.recv_timeout(scaled(Duration::from_secs(1)))
+    let replied = peer
+        .replied
+        .recv_timeout(scaled(Duration::from_secs(1)))
+        .expect("the peer wrote its reply");
+    assert!(
+        replied <= returned,
+        "close returned before the reply was written"
+    );
+    peer.eof
+        .recv_timeout(scaled(Duration::from_secs(1)))
         .expect("the peer read the connection's end");
-    let seen = peer.join().unwrap();
+    let seen = peer.handle.join().unwrap();
     assert_eq!(teardowns(&seen), 1, "the peer saw {seen:?}");
     drop(session);
 }
@@ -222,8 +253,8 @@ fn close_against_a_silent_peer_is_timeout_within_its_bound() {
     use crate::fixtures::raw_rtsp::scaled;
     use tst_rtp::RtspError;
 
-    let (port, eof, peer) = session_peer(None);
-    let (client, session) = client_with_session(port);
+    let peer = session_peer(None);
+    let (client, session) = client_with_session(peer.port);
 
     let t0 = Instant::now();
     let r = client.close();
@@ -231,16 +262,17 @@ fn close_against_a_silent_peer_is_timeout_within_its_bound() {
 
     assert!(matches!(r, Err(RtspError::Timeout)), "got {r:?}");
     assert!(
-        elapsed >= Duration::from_millis(400),
+        elapsed >= TEARDOWN_BOUND * 4 / 5,
         "close returned in {elapsed:?}, before its bound"
     );
     assert!(
-        elapsed < scaled(Duration::from_secs(3)),
+        elapsed < scaled(TEARDOWN_BOUND * 6),
         "close took {elapsed:?}"
     );
-    eof.recv_timeout(scaled(Duration::from_secs(1)))
+    peer.eof
+        .recv_timeout(scaled(Duration::from_secs(1)))
         .expect("the peer read the connection's end");
-    let seen = peer.join().unwrap();
+    let seen = peer.handle.join().unwrap();
     assert_eq!(teardowns(&seen), 1, "the peer saw {seen:?}");
     drop(session);
 }
@@ -292,22 +324,28 @@ fn close_on_a_cancelled_client_writes_teardown_and_reports_the_cancel() {
     use crate::fixtures::raw_rtsp::scaled;
     use tst_rtp::RtspError;
 
-    let (port, eof, peer) = session_peer(None);
-    let (client, session) = client_with_session(port);
+    // A reply inside the bound: a close that waited for it would return
+    // after it (and `Ok`).
+    let peer = session_peer(Some(TEARDOWN_BOUND / 2));
+    let (client, session) = client_with_session(peer.port);
     client.cancel_handle().cancel();
 
-    let t0 = Instant::now();
     let r = client.close();
-    let elapsed = t0.elapsed();
+    let returned = Instant::now();
 
     assert!(matches!(r, Err(RtspError::LocalCancel)), "got {r:?}");
+    let replied = peer
+        .replied
+        .recv_timeout(scaled(Duration::from_secs(1)))
+        .expect("the peer wrote its reply");
     assert!(
-        elapsed < scaled(Duration::from_millis(400)),
-        "close waited {elapsed:?}: it waited for the TEARDOWN reply"
+        returned < replied,
+        "close returned after the reply was written: it waited for it"
     );
-    eof.recv_timeout(scaled(Duration::from_secs(1)))
+    peer.eof
+        .recv_timeout(scaled(Duration::from_secs(1)))
         .expect("the peer read the connection's end");
-    let seen = peer.join().unwrap();
+    let seen = peer.handle.join().unwrap();
     assert_eq!(teardowns(&seen), 1, "the peer saw {seen:?}");
     drop(session);
 }
@@ -320,8 +358,8 @@ fn drop_during_a_panic_does_not_abort() {
 
     use crate::fixtures::raw_rtsp::scaled;
 
-    let (port, eof, peer) = session_peer(Some(Duration::ZERO));
-    let (client, session) = client_with_session(port);
+    let peer = session_peer(Some(Duration::ZERO));
+    let (client, session) = client_with_session(peer.port);
 
     let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
         let _client = client;
@@ -329,9 +367,10 @@ fn drop_during_a_panic_does_not_abort() {
     }));
     assert!(r.is_err(), "the closure did not panic");
 
-    eof.recv_timeout(scaled(Duration::from_secs(1)))
+    peer.eof
+        .recv_timeout(scaled(Duration::from_secs(1)))
         .expect("the peer read the connection's end");
-    let seen = peer.join().unwrap();
+    let seen = peer.handle.join().unwrap();
     assert_eq!(teardowns(&seen), 1, "the peer saw {seen:?}");
     drop(session);
 }
@@ -349,25 +388,31 @@ fn drop_with_a_kept_cancel_handle_and_receiver() {
 
     use crate::fixtures::raw_rtsp::scaled;
 
-    let (port, eof, peer) = session_peer(None);
-    let (mut client, session) = client_with_session(port);
+    // A reply inside the bound: a `Drop` that waited for it would return
+    // after it.
+    let peer = session_peer(Some(TEARDOWN_BOUND / 2));
+    let (mut client, session) = client_with_session(peer.port);
     client.play().unwrap();
     let cancel = client.cancel_handle();
     let mut transport = session.into_recv_transport();
     transport.set_recv_timeout(Some(scaled(Duration::from_secs(5))));
 
-    let t0 = Instant::now();
     drop(client);
-    let elapsed = t0.elapsed();
+    let returned = Instant::now();
 
-    assert!(
-        elapsed < scaled(Duration::from_millis(400)),
-        "Drop waited {elapsed:?}"
-    );
     assert!(cancel.is_cancelled(), "Drop did not set the cancel");
-    eof.recv_timeout(scaled(Duration::from_secs(1)))
+    let replied = peer
+        .replied
+        .recv_timeout(scaled(Duration::from_secs(1)))
+        .expect("the peer wrote its reply");
+    assert!(
+        returned < replied,
+        "Drop returned after the reply was written: it waited for it"
+    );
+    peer.eof
+        .recv_timeout(scaled(Duration::from_secs(1)))
         .expect("the peer read the connection's end");
-    let seen = peer.join().unwrap();
+    let seen = peer.handle.join().unwrap();
     assert_eq!(teardowns(&seen), 1, "the peer saw {seen:?}");
 
     let mut buf = vec![0u8; transport.max_payload()];

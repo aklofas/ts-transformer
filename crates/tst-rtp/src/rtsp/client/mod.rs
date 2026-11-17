@@ -480,10 +480,15 @@ impl RtspClient {
     /// a TEARDOWN the server refuses is [`RtspError::Protocol`] with its
     /// status; `Ok(())` when no session is open. The thread is stopped on
     /// every outcome.
-    pub fn close(mut self) -> Result<(), RtspError> {
+    pub fn close(self) -> Result<(), RtspError> {
+        self.close_with(CLOSE_JOIN_BOUND)
+    }
+
+    /// [`Self::close`] with `join_bound` as the wait for the thread.
+    fn close_with(mut self, join_bound: Duration) -> Result<(), RtspError> {
         let r = self.teardown_within(CLOSE_TEARDOWN_BOUND);
         self.driver.stop();
-        let _ = self.driver.join_within(CLOSE_JOIN_BOUND);
+        let _ = self.driver.join_within(join_bound);
         // `Drop` runs next with the session already cleared: it writes no
         // second TEARDOWN.
         r
@@ -709,14 +714,115 @@ mod tests {
         let elapsed = t0.elapsed();
         held.recv_timeout(scaled(Duration::from_secs(5)))
             .expect("the client's thread left its loop");
+        // Unscaled on purpose: `Drop` does microseconds of work, and a join
+        // would take the whole `CLOSE_JOIN_BOUND` with the thread held.
         assert!(
-            elapsed < scaled(Duration::from_secs(1)),
+            elapsed < CLOSE_JOIN_BOUND,
             "Drop waited {elapsed:?} for the client's thread"
         );
         assert!(
             !peer.is_finished(),
             "the held thread closed its socket before it was released"
         );
+
+        release.send(()).unwrap();
+        let deadline = Instant::now() + scaled(Duration::from_secs(1));
+        while !peer.is_finished() {
+            assert!(
+                Instant::now() < deadline,
+                "the released thread did not close its socket"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        peer.join().unwrap();
+    }
+
+    /// A client and a peer that reads until the connection ends, with the
+    /// client's thread held after its loop until `release` is sent (when
+    /// `gate` is set).
+    fn gated_client(
+        gate: Option<(std::sync::mpsc::Sender<()>, std::sync::mpsc::Receiver<()>)>,
+    ) -> (RtspClient, std::thread::JoinHandle<()>) {
+        use std::io::Read;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let peer = std::thread::spawn(move || {
+            let (mut sock, _) = listener.accept().unwrap();
+            // Bounds a client that never hangs up; not reached by a
+            // passing test.
+            sock.set_read_timeout(Some(Duration::from_secs(30))).ok();
+            let _ = sock.read_to_end(&mut Vec::new());
+        });
+        let url = RtspUrl::parse(&format!("rtsp://127.0.0.1:{port}/test")).unwrap();
+        let client = RtspClient::connect_with_params(
+            &url,
+            None,
+            ConnectParams {
+                exit_gate: gate,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        (client, peer)
+    }
+
+    /// `close` waits for the client's thread: when it returns, the thread
+    /// has ended (its copy of the shared state is gone), and it did not
+    /// need the whole join bound to see that.
+    #[test]
+    fn close_returns_after_the_thread_has_ended() {
+        assert_eq!(CLOSE_JOIN_BOUND, Duration::from_secs(2));
+        let (client, peer) = gated_client(None);
+        let session_dead = client.session_dead.clone();
+
+        let t0 = Instant::now();
+        let r = client.close();
+        let elapsed = t0.elapsed();
+
+        assert!(r.is_ok(), "got {r:?}");
+        assert_eq!(
+            Arc::strong_count(&session_dead),
+            1,
+            "the client's thread still runs after close returned"
+        );
+        assert!(
+            elapsed < CLOSE_JOIN_BOUND,
+            "close took {elapsed:?}: the thread did not end at once"
+        );
+        peer.join().unwrap();
+    }
+
+    /// A thread that does not end within the join bound: `close` waits the
+    /// whole bound, returns with the thread still running, and the thread
+    /// ends on its own once it can (the peer then reads the end).
+    #[test]
+    fn close_leaves_a_thread_that_outlives_its_bound_to_finish() {
+        use std::sync::mpsc;
+
+        let (held_tx, held) = mpsc::channel();
+        let (release, release_rx) = mpsc::channel();
+        let (client, peer) = gated_client(Some((held_tx, release_rx)));
+        let session_dead = client.session_dead.clone();
+        let bound = Duration::from_millis(300);
+
+        let t0 = Instant::now();
+        let r = client.close_with(bound);
+        let elapsed = t0.elapsed();
+
+        assert!(r.is_ok(), "got {r:?}");
+        assert!(
+            elapsed >= bound,
+            "close returned in {elapsed:?}, before its bound"
+        );
+        held.recv_timeout(scaled(Duration::from_secs(5)))
+            .expect("the client's thread left its loop");
+        assert_eq!(
+            Arc::strong_count(&session_dead),
+            2,
+            "the held thread ended before it was released"
+        );
+        assert!(!peer.is_finished(), "the held thread closed its socket");
 
         release.send(()).unwrap();
         let deadline = Instant::now() + scaled(Duration::from_secs(1));
