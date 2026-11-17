@@ -4116,7 +4116,9 @@ int tst_managed_demux_receiver_recv_event(struct tst_managed_demux_receiver_t *p
  *
  * Returns 0 when everything reached the transport, or the negative
  * `TST_E_*` code of the first drain failure (the remaining bytes are
- * abandoned; the sender is closed either way). A second call returns 0.
+ * abandoned; the sender is closed either way). A second call returns 0,
+ * unless the sender has been cancelled: after `_cancel` every `_finish`
+ * returns `TST_E_CLOSED`, a repeated one included.
  * Unlike `tst_managed_mux_sender_close`, this does NOT cancel first: a
  * `send_*` parked on another thread — including one waiting out a
  * reconnect backoff — holds the sender and `_finish` waits behind it;
@@ -5727,7 +5729,9 @@ struct TstMuxPublisher *tst_mux_publisher_with_config_hls(struct TstPublisher *h
  *
  * Returns 0 when everything reached the transport, or the negative
  * `TST_E_*` code of the first drain failure (the remaining bytes are
- * abandoned; the sender is closed either way). A second call returns 0.
+ * abandoned; the sender is closed either way). A second call returns 0,
+ * unless the sender has been cancelled: after `_cancel` every `_finish`
+ * returns `TST_E_CLOSED`, a repeated one included.
  * Unlike `tst_mux_sender_close`, this does NOT cancel first: a `send_*`
  * parked on another thread holds the sender and `_finish` waits behind
  * it — call `tst_mux_sender_cancel` first if that is not wanted. The
@@ -7517,7 +7521,9 @@ struct TstRistDemuxReceiver *tst_rist_demux_receiver_open(const char *url,
  *
  * Returns 0 when everything reached the transport, or the negative
  * `TST_E_*` code of the first drain failure (the remaining bytes are
- * abandoned; the sender is closed either way). A second call returns 0.
+ * abandoned; the sender is closed either way). A second call returns 0,
+ * unless the sender has been cancelled: after `_cancel` every `_finish`
+ * returns `TST_E_CLOSED`, a repeated one included.
  * Unlike `tst_rist_mux_sender_close`, this does NOT cancel first: a `push_*`
  * parked on another thread holds the sender and `_finish` waits behind
  * it — call `tst_rist_mux_sender_cancel` first if that is not wanted. The
@@ -8284,8 +8290,9 @@ int tst_rist_receiver_recv_ts(struct TstRistReceiver *p,
  * Close and free a `tst_rtp_demux_receiver_t`.
  *
  * For a receiver from `tst_rtsp_session_into_demux_receiver` this also
- * closes the RTSP control connection, sending TEARDOWN (bounded to
- * 500 ms).
+ * closes the RTSP control connection after the data plane: it writes
+ * TEARDOWN (500 ms bounds the wait for the control stream and the write;
+ * the reply is not awaited), then joins the client's threads.
  *
  * Safe to call with `NULL` (no-op).
  *
@@ -8615,7 +8622,9 @@ struct TstRtpDemuxReceiver *tst_rtp_demux_receiver_open(const char *url,
  *
  * Returns 0 when everything reached the transport, or the negative
  * `TST_E_*` code of the first drain failure (the remaining bytes are
- * abandoned; the sender is closed either way). A second call returns 0.
+ * abandoned; the sender is closed either way). A second call returns 0,
+ * unless the sender has been cancelled: after `_cancel` every `_finish`
+ * returns `TST_E_CLOSED`, a repeated one included.
  * Unlike `tst_rtp_mux_sender_close`, this does NOT cancel first: a `push_*`
  * parked on another thread holds the sender and `_finish` waits behind
  * it — call `tst_rtp_mux_sender_cancel` first if that is not wanted. The
@@ -9700,9 +9709,11 @@ int tst_rtsp_mount_get_stats(const struct TstRtspMountHandle *handle,
  * ADTS or MPEG audio frames concatenated). `pts_90khz` is the presentation
  * timestamp in 90 kHz ticks.
  *
- * Returns `0` on success, `TST_E_CLOSED` after `tst_rtsp_mount_cancel`,
- * `TST_E_RTSP_MOUNT` on muxer or mount errors, `TST_E_INVALID_CONFIG` if
- * `handle` is null.
+ * Returns `0` on success, `TST_E_CLOSED` after `tst_rtsp_mount_cancel` or
+ * once the server has ended (`tst_rtsp_server_stop`,
+ * `tst_rtsp_cancel_handle_cancel` or `tst_rtsp_server_free`),
+ * `TST_E_RTSP_MOUNT` on muxer errors, `TST_E_INVALID_CONFIG` if `handle`
+ * is null.
  *
  * # Safety
  *
@@ -9721,6 +9732,8 @@ int tst_rtsp_mount_push_audio(struct TstRtspMountHandle *handle,
  * Push one audio frame buffer targeting a specific audio elementary stream.
  *
  * On a single-stream mount, prefer `tst_rtsp_mount_push_audio`.
+ *
+ * Returns the codes `tst_rtsp_mount_push_audio` returns.
  *
  * # Safety
  *
@@ -9743,9 +9756,11 @@ int tst_rtsp_mount_push_audio_to(struct TstRtspMountHandle *handle,
  * Pass-through: `data` lands verbatim as one PES packet on `stream_id`
  * 0xBD. PTS is written only for `carries_pts = true` streams.
  *
- * Returns `0` on success, `TST_E_CLOSED` after `tst_rtsp_mount_cancel`,
- * `TST_E_RTSP_MOUNT` on muxer or mount errors, `TST_E_INVALID_CONFIG` if
- * `handle` is null.
+ * Returns `0` on success, `TST_E_CLOSED` after `tst_rtsp_mount_cancel` or
+ * once the server has ended (`tst_rtsp_server_stop`,
+ * `tst_rtsp_cancel_handle_cancel` or `tst_rtsp_server_free`),
+ * `TST_E_RTSP_MOUNT` on muxer errors, `TST_E_INVALID_CONFIG` if `handle`
+ * is null.
  *
  * # Safety
  *
@@ -9764,6 +9779,8 @@ int tst_rtsp_mount_push_data(struct TstRtspMountHandle *handle,
  * Push one data payload targeting a specific data elementary stream.
  *
  * On a single-stream mount, prefer `tst_rtsp_mount_push_data`.
+ *
+ * Returns the codes `tst_rtsp_mount_push_data` returns.
  *
  * # Safety
  *
@@ -9789,9 +9806,11 @@ int tst_rtsp_mount_push_data_to(struct TstRtspMountHandle *handle,
  * **Do not pre-wrap the AU cell on the caller side.** The current API uses
  * `metadata_service_id = 0x00` per ST 1402.2 App. B Table 2.
  *
- * Returns `0` on success, `TST_E_CLOSED` after `tst_rtsp_mount_cancel`,
- * `TST_E_RTSP_MOUNT` on muxer or mount errors, `TST_E_INVALID_CONFIG` if
- * `handle` is null.
+ * Returns `0` on success, `TST_E_CLOSED` after `tst_rtsp_mount_cancel` or
+ * once the server has ended (`tst_rtsp_server_stop`,
+ * `tst_rtsp_cancel_handle_cancel` or `tst_rtsp_server_free`),
+ * `TST_E_RTSP_MOUNT` on muxer errors, `TST_E_INVALID_CONFIG` if `handle`
+ * is null.
  *
  * # Safety
  *
@@ -9815,6 +9834,8 @@ int tst_rtsp_mount_push_klv(struct TstRtspMountHandle *handle,
  *
  * On a single-stream mount, prefer `tst_rtsp_mount_push_klv`.
  *
+ * Returns the codes `tst_rtsp_mount_push_klv` returns.
+ *
  * # Safety
  *
  * `handle` must be a valid non-freed `*mut tst_rtsp_mount_handle_t`.
@@ -9837,9 +9858,11 @@ int tst_rtsp_mount_push_klv_to(struct TstRtspMountHandle *handle,
  * teletext data field, CEA-708 service block, or WebVTT cue). `pts_90khz`
  * is the presentation timestamp in 90 kHz ticks.
  *
- * Returns `0` on success, `TST_E_CLOSED` after `tst_rtsp_mount_cancel`,
- * `TST_E_RTSP_MOUNT` on muxer or mount errors, `TST_E_INVALID_CONFIG` if
- * `handle` is null.
+ * Returns `0` on success, `TST_E_CLOSED` after `tst_rtsp_mount_cancel` or
+ * once the server has ended (`tst_rtsp_server_stop`,
+ * `tst_rtsp_cancel_handle_cancel` or `tst_rtsp_server_free`),
+ * `TST_E_RTSP_MOUNT` on muxer errors, `TST_E_INVALID_CONFIG` if `handle`
+ * is null.
  *
  * # Safety
  *
@@ -9858,6 +9881,8 @@ int tst_rtsp_mount_push_subtitle(struct TstRtspMountHandle *handle,
  * Push one subtitle payload targeting a specific subtitle elementary stream.
  *
  * On a single-stream mount, prefer `tst_rtsp_mount_push_subtitle`.
+ *
+ * Returns the codes `tst_rtsp_mount_push_subtitle` returns.
  *
  * # Safety
  *
@@ -9886,9 +9911,11 @@ int tst_rtsp_mount_push_subtitle_to(struct TstRtspMountHandle *handle,
  * `TST_E_RTSP_MOUNT` (`MuxError::AmbiguousTarget`) if more than one video
  * stream is present — use `tst_rtsp_mount_push_video_to` in that case.
  *
- * Returns `0` on success, `TST_E_CLOSED` after `tst_rtsp_mount_cancel`,
- * `TST_E_RTSP_MOUNT` on muxer or mount errors, `TST_E_INVALID_CONFIG` if
- * `handle` is null.
+ * Returns `0` on success, `TST_E_CLOSED` after `tst_rtsp_mount_cancel` or
+ * once the server has ended (`tst_rtsp_server_stop`,
+ * `tst_rtsp_cancel_handle_cancel` or `tst_rtsp_server_free`),
+ * `TST_E_RTSP_MOUNT` on muxer errors, `TST_E_INVALID_CONFIG` if `handle`
+ * is null.
  *
  * # Safety
  *
@@ -9913,6 +9940,8 @@ int tst_rtsp_mount_push_video(struct TstRtspMountHandle *handle,
  *
  * On a single-stream mount, prefer `tst_rtsp_mount_push_video` — same
  * effect, no handle required.
+ *
+ * Returns the codes `tst_rtsp_mount_push_video` returns.
  *
  * # Safety
  *
@@ -10812,7 +10841,8 @@ int tst_rtsp_server_next_publisher(struct TstRtspServer *server,
  * `TST_E_END_OF_STREAM` once it has drained what was already queued. Its
  * `tst_rtsp_publish_mount_t` handles stay valid for the getters and
  * [`tst_rtsp_publish_mount_free`]. A unicast or multicast mount's handle
- * keeps accepting pushes, which reach nobody.
+ * keeps accepting pushes, which reach nobody, until the server ends; then
+ * they return `TST_E_CLOSED`.
  *
  * This is how an application removes idle on-demand mounts; freeing a
  * handle does not.
@@ -11026,13 +11056,18 @@ struct TstRtpDemuxReceiver *tst_rtsp_session_into_demux_receiver(struct TstRtspS
  * Sends an RTSP TEARDOWN request, then unconditionally drops the session
  * and its `RtspClient` regardless of whether TEARDOWN succeeded (network
  * errors at teardown time are recorded in last-error but do not prevent
- * the handle from being freed). A healthy peer's 200 returns 0; a peer
- * that does not answer within 500 ms ends the TEARDOWN early and the
+ * the handle from being freed). A healthy peer's 200 returns 0. The
+ * TEARDOWN exchange is bounded to 500 ms, covering the wait for the
+ * control stream (another thread may be using it), the request write and
+ * the reply: when the bound passes (a peer that does not answer, or one
+ * that stopped reading) the call returns `TST_E_RTSP_TIMEOUT` and the
  * handle is still freed. A session cancelled with
- * [`tst_rtsp_session_cancel`] before the call returns `TST_E_CLOSED`
- * (the TEARDOWN cannot be sent) and is still freed. If a caught panic
- * had already taken the control pair, there is nothing to tear down: the
- * call returns 0 and frees.
+ * [`tst_rtsp_session_cancel`] before the call still writes the TEARDOWN
+ * but does not wait for the reply: it returns `TST_E_CLOSED`, also when
+ * that write fails, and is still freed. If a caught panic had already
+ * taken the control pair, there is nothing to tear down: the call
+ * returns 0 and frees. The client's threads are joined after the
+ * exchange, outside the 500 ms.
  *
  * The caller guarantees that no `_play`, `_pause` or receive call on this
  * session is in flight: call [`tst_rtsp_session_cancel`], wait for the
@@ -11731,7 +11766,9 @@ struct TstTcpDemuxReceiver *tst_tcp_demux_receiver_open(const char *url,
  *
  * Returns 0 when everything reached the transport, or the negative
  * `TST_E_*` code of the first drain failure (the remaining bytes are
- * abandoned; the sender is closed either way). A second call returns 0.
+ * abandoned; the sender is closed either way). A second call returns 0,
+ * unless the sender has been cancelled: after `_cancel` every `_finish`
+ * returns `TST_E_CLOSED`, a repeated one included.
  * Unlike `tst_tcp_mux_sender_close`, this does NOT cancel first: a `push_*`
  * parked on another thread holds the sender and `_finish` waits behind
  * it — call `tst_tcp_mux_sender_cancel` first if that is not wanted. The
@@ -12740,7 +12777,9 @@ struct TstUdpDemuxReceiver *tst_udp_demux_receiver_open(const char *url,
  *
  * Returns 0 when everything reached the transport, or the negative
  * `TST_E_*` code of the first drain failure (the remaining bytes are
- * abandoned; the sender is closed either way). A second call returns 0.
+ * abandoned; the sender is closed either way). A second call returns 0,
+ * unless the sender has been cancelled: after `_cancel` every `_finish`
+ * returns `TST_E_CLOSED`, a repeated one included.
  * Unlike `tst_udp_mux_sender_close`, this does NOT cancel first: a `push_*`
  * parked on another thread holds the sender and `_finish` waits behind
  * it — call `tst_udp_mux_sender_cancel` first if that is not wanted. The
