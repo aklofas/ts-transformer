@@ -50,6 +50,7 @@ fn drive_with(stream: Stream, write_stall: Duration) -> Harness {
         session_dead: Arc::new(AtomicBool::new(false)),
         end_reason: EndReasonHandle::default(),
         media_dropped: Arc::new(AtomicU64::new(0)),
+        exit_gate: None,
     };
     Harness {
         cancel: shared.cancel.clone(),
@@ -368,6 +369,55 @@ fn rtcp_reaches_the_stats_cell() {
         stats.lock().unwrap().sr_packets_received == 1
     });
     h.stop_and_join();
+}
+
+/// A handle dropped while its thread is busy (here: held in `deliver` on
+/// the RTCP stats lock) still stops the thread: the wake `stop()` sent is
+/// not lost when the handle goes, so the thread ends and closes the socket.
+#[test]
+fn a_handle_dropped_while_its_thread_is_busy_still_stops_it() {
+    let (client, mut peer) = socket_pair();
+    let probe = client.try_clone().unwrap();
+    let h = drive(Stream::from_plain(client).unwrap());
+    let (data_tx, _data_rx) = mpsc::sync_channel(8);
+    let stats = interleaved(&h, data_tx);
+    let mut rest = Vec::new();
+    round_trip(&h, &mut peer, &mut rest);
+
+    let held = stats.lock().unwrap();
+    let sr = crate::rtcp::SenderReport {
+        ssrc: 0x1234_5678,
+        ntp_timestamp: 0xE000_0000_8000_0000,
+        rtp_timestamp: 90_000,
+        sender_packet_count: 10,
+        sender_octet_count: 1_880,
+        report_blocks: vec![],
+    }
+    .encode()
+    .unwrap();
+    let mut frame = vec![b'$', 1];
+    frame.extend_from_slice(&(sr.len() as u16).to_be_bytes());
+    frame.extend_from_slice(&sr);
+    peer.write_all(&frame).unwrap();
+    // The thread has read the frame (the socket shares its non-blocking
+    // mode with the probe): it cannot wait on its poll again before it
+    // takes the lock held here.
+    wait_until(
+        "the frame read",
+        || matches!(probe.peek(&mut [0u8; 1]), Err(e) if e.kind() == io::ErrorKind::WouldBlock),
+    );
+    drop(probe);
+    drop(h);
+    drop(held);
+
+    peer.set_read_timeout(Some(scaled(Duration::from_secs(2))))
+        .unwrap();
+    let mut b = [0u8; 16];
+    assert_eq!(
+        peer.read(&mut b).expect("EOF, not a timeout"),
+        0,
+        "the thread did not end"
+    );
 }
 
 #[test]

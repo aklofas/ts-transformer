@@ -42,17 +42,23 @@ pub(crate) const CONTROL_WRITE_TIMEOUT: Duration = Duration::from_secs(5);
 /// flag and the request deadline.
 pub(crate) const REQUEST_POLL_TICK: Duration = Duration::from_millis(100);
 
-/// How long `Drop` waits for the client's thread to end.
-const DROP_JOIN_BOUND: Duration = Duration::from_secs(2);
+/// How long [`RtspClient::close`] waits for the client's thread to end.
+const CLOSE_JOIN_BOUND: Duration = Duration::from_secs(2);
 
-/// The bound `Drop` gives its TEARDOWN, over getting it to the wire.
-const DROP_TEARDOWN_BOUND: Duration = Duration::from_millis(500);
+/// The bound [`RtspClient::close`] and `Drop` give their TEARDOWN.
+const CLOSE_TEARDOWN_BOUND: Duration = Duration::from_millis(500);
 
 /// Sync RTSP client. One instance per server.
 ///
 /// Construct via [`Self::connect`] / [`Self::connect_with`], then drive
 /// the session: `options` / `describe` / `setup_mp2t_auto` (or the
 /// explicit `setup*` variants) / `play` / `pause` / `teardown`.
+/// End it with [`Self::close`]: with a session open it writes TEARDOWN
+/// and waits for the reply (500 ms at most), then waits for the client's
+/// thread (2 s at most). Dropping the client sets its cancel, writes
+/// TEARDOWN without waiting for the reply, and tells the thread to stop
+/// without waiting for it.
+///
 /// Keepalive pings, when [`RtspClientBuilder`](crate::RtspClientBuilder)
 /// enables them (its default), are written by the client's own thread at
 /// half the session timeout, retuned to the one SETUP learns.
@@ -204,6 +210,9 @@ pub(crate) struct ConnectParams {
     /// takes it, so a test can read or set its options.
     #[cfg(test)]
     pub(crate) socket_probe: Option<std::sync::mpsc::Sender<TcpStream>>,
+    /// Handed to the client's thread: see `driver::Shared::exit_gate`.
+    #[cfg(test)]
+    pub(crate) exit_gate: Option<(std::sync::mpsc::Sender<()>, std::sync::mpsc::Receiver<()>)>,
 }
 
 impl Default for ConnectParams {
@@ -216,6 +225,8 @@ impl Default for ConnectParams {
             auth_schemes: crate::rtsp::auth::AuthSchemes::default(),
             #[cfg(test)]
             socket_probe: None,
+            #[cfg(test)]
+            exit_gate: None,
         }
     }
 }
@@ -390,6 +401,8 @@ impl RtspClient {
                 session_dead: session_dead.clone(),
                 end_reason: end_reason.clone(),
                 media_dropped: Arc::new(AtomicU64::new(0)),
+                #[cfg(test)]
+                exit_gate: params.exit_gate,
             },
         )
         .map_err(|e| RtspError::Io(e.kind()))?;
@@ -445,18 +458,48 @@ impl RtspClient {
     pub fn is_session_alive(&self) -> bool {
         !self.session_dead.load(Ordering::Acquire)
     }
+
+    /// End the session and the client. When a session is open, send
+    /// TEARDOWN with one 500 ms bound over writing it and its reply
+    /// ([`Self::teardown_within`]); then stop the client's thread and wait
+    /// up to 2 s for it to end. When it returns, the thread has closed the
+    /// control connection, unless the 2 s ran out: the thread is then left
+    /// to end on its own.
+    ///
+    /// This does not set the cancel flag, so the reply is awaited. On a
+    /// client whose cancel is set, the TEARDOWN is still written, its reply
+    /// is not awaited and the result is [`RtspError::LocalCancel`].
+    ///
+    /// Dropping the client instead sets the cancel, writes TEARDOWN within
+    /// the same 500 ms bound when a session is open, and tells the thread
+    /// to stop without waiting for it.
+    ///
+    /// # Errors
+    ///
+    /// The TEARDOWN's result, as [`Self::teardown_within`] reports it;
+    /// `Ok(())` when no session is open. The thread is stopped on every
+    /// outcome.
+    pub fn close(mut self) -> Result<(), RtspError> {
+        let r = self.teardown_within(CLOSE_TEARDOWN_BOUND);
+        self.driver.stop();
+        let _ = self.driver.join_within(CLOSE_JOIN_BOUND);
+        // `Drop` runs next with the session already cleared: it writes no
+        // second TEARDOWN.
+        r
+    }
 }
 
 impl Drop for RtspClient {
+    // Drop does not join: the thread, told to stop, closes the socket and
+    // ends on its own. `close` is the call that waits for it.
     fn drop(&mut self) {
         // The cancel first: with it set, the TEARDOWN below waits only for
         // its bytes to reach the kernel, not for the reply.
         self.cancel.cancel();
         if self.session_id.is_some() {
-            let _ = self.teardown_within(DROP_TEARDOWN_BOUND);
+            let _ = self.teardown_within(CLOSE_TEARDOWN_BOUND);
         }
         self.driver.stop();
-        let _ = self.driver.join_within(DROP_JOIN_BOUND);
     }
 }
 
@@ -628,6 +671,62 @@ mod tests {
             "Drop took {:?}",
             t0.elapsed()
         );
+    }
+
+    /// `Drop` does not wait for the client's thread: it returns while the
+    /// thread is held after its loop with the socket still open, and once
+    /// released the thread ends on its own and the peer reads the end.
+    #[test]
+    fn drop_does_not_wait_for_the_thread() {
+        use std::io::Read;
+        use std::sync::mpsc;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let peer = std::thread::spawn(move || {
+            let (mut sock, _) = listener.accept().unwrap();
+            // Bounds a client that never hangs up; not reached by a
+            // passing test.
+            sock.set_read_timeout(Some(Duration::from_secs(30))).ok();
+            let _ = sock.read_to_end(&mut Vec::new());
+        });
+        let (held_tx, held) = mpsc::channel();
+        let (release, release_rx) = mpsc::channel();
+        let url = RtspUrl::parse(&format!("rtsp://127.0.0.1:{port}/test")).unwrap();
+        let client = RtspClient::connect_with_params(
+            &url,
+            None,
+            ConnectParams {
+                exit_gate: Some((held_tx, release_rx)),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+        let t0 = Instant::now();
+        drop(client);
+        let elapsed = t0.elapsed();
+        held.recv_timeout(scaled(Duration::from_secs(5)))
+            .expect("the client's thread left its loop");
+        assert!(
+            elapsed < scaled(Duration::from_secs(1)),
+            "Drop waited {elapsed:?} for the client's thread"
+        );
+        assert!(
+            !peer.is_finished(),
+            "the held thread closed its socket before it was released"
+        );
+
+        release.send(()).unwrap();
+        let deadline = Instant::now() + scaled(Duration::from_secs(1));
+        while !peer.is_finished() {
+            assert!(
+                Instant::now() < deadline,
+                "the released thread did not close its socket"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        peer.join().unwrap();
     }
 
     /// A request when the client's thread has ended is `Io(UnexpectedEof)`

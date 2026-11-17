@@ -37,9 +37,9 @@ impl RtspClient {
 
     /// Send TEARDOWN with one deadline, `bound` from now, over getting the
     /// request to the wire and its reply. Unlike [`Self::teardown`], the
-    /// request timeout does not apply. Dropping the client uses the same
-    /// deadline with a 500 ms bound, after setting the cancel, so it waits
-    /// for the write and not for the reply.
+    /// request timeout does not apply. [`Self::close`] uses it with a
+    /// 500 ms bound. Dropping the client uses the same bound after setting
+    /// the cancel, so it waits for the write and not for the reply.
     ///
     /// This does not set the cancel flag: the reply is awaited up to the
     /// bound. A cancel already set, or set during the call, ends the

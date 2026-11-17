@@ -287,6 +287,8 @@ impl RtspClientBuilder {
             auth_schemes: self.auth_schemes,
             #[cfg(test)]
             socket_probe: None,
+            #[cfg(test)]
+            exit_gate: None,
         };
         #[cfg(feature = "tls")]
         let mut client =

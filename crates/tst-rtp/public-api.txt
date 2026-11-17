@@ -701,6 +701,7 @@ impl core::panic::unwind_safe::UnwindSafe for tst_rtp::rtsp::client::session::Rt
 pub struct tst_rtp::rtsp::client::RtspClient
 impl tst_rtp::rtsp::client::RtspClient
 pub fn tst_rtp::rtsp::client::RtspClient::cancel_handle(&self) -> tst_rtp::rtsp::client::RtspCancelHandle
+pub fn tst_rtp::rtsp::client::RtspClient::close(self) -> core::result::Result<(), tst_rtp::error::RtspError>
 pub fn tst_rtp::rtsp::client::RtspClient::connect(&str) -> core::result::Result<Self, tst_rtp::error::RtspError>
 pub fn tst_rtp::rtsp::client::RtspClient::connect_with(&tst_rtp::url::RtspUrl) -> core::result::Result<Self, tst_rtp::error::RtspError>
 pub fn tst_rtp::rtsp::client::RtspClient::connect_with_roots(&tst_rtp::url::RtspUrl, core::option::Option<rustls::webpki::anchors::RootCertStore>) -> core::result::Result<Self, tst_rtp::error::RtspError>
@@ -2488,6 +2489,7 @@ impl core::panic::unwind_safe::UnwindSafe for tst_rtp::url::RtpUrl
 pub struct tst_rtp::RtspClient
 impl tst_rtp::rtsp::client::RtspClient
 pub fn tst_rtp::rtsp::client::RtspClient::cancel_handle(&self) -> tst_rtp::rtsp::client::RtspCancelHandle
+pub fn tst_rtp::rtsp::client::RtspClient::close(self) -> core::result::Result<(), tst_rtp::error::RtspError>
 pub fn tst_rtp::rtsp::client::RtspClient::connect(&str) -> core::result::Result<Self, tst_rtp::error::RtspError>
 pub fn tst_rtp::rtsp::client::RtspClient::connect_with(&tst_rtp::url::RtspUrl) -> core::result::Result<Self, tst_rtp::error::RtspError>
 pub fn tst_rtp::rtsp::client::RtspClient::connect_with_roots(&tst_rtp::url::RtspUrl, core::option::Option<rustls::webpki::anchors::RootCertStore>) -> core::result::Result<Self, tst_rtp::error::RtspError>
