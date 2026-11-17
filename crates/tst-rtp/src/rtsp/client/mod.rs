@@ -7,6 +7,7 @@
 //! serialize under the mutex (RTSP isn't pipelined).
 
 pub mod builder;
+pub(crate) mod engine;
 pub(crate) mod interleaved_pump;
 pub(crate) mod keepalive;
 pub mod options_describe;
