@@ -538,7 +538,13 @@ fn an_accepted_teardown_closes_the_media_queue_and_keeps_its_reason() {
         Err(RecvTimeoutError::Disconnected)
     ));
     assert_eq!(h.end_reason.get(), Some(EndReason::CleanTeardown));
+    assert!(!h.session_dead.load(Ordering::Acquire));
     drop(peer);
+    // The accepted TEARDOWN did not mark the session dead; the stream's
+    // end does.
+    wait_until("the stream's end", || {
+        h.session_dead.load(Ordering::Acquire)
+    });
     let rx = h.request(options());
     assert_eq!(done_io(next(&rx)), io::ErrorKind::UnexpectedEof);
     assert_eq!(h.stop_and_join().get(), Some(EndReason::CleanTeardown));
@@ -634,17 +640,23 @@ fn huge_request() -> RequestSpec {
     }
 }
 
+/// The write-stall time the stall tests give the driver.
 #[cfg(target_os = "linux")]
-const STALL: Duration = Duration::from_millis(300);
+fn stall() -> Duration {
+    scaled(Duration::from_millis(300))
+}
 
 #[cfg(target_os = "linux")]
 #[test]
 fn bytes_the_peer_does_not_take_end_the_stream_after_the_write_timeout() {
     let (tcp, done_tx, peer) = non_reading_pair();
-    let h = drive_with(Stream::from_plain(tcp).unwrap(), STALL);
+    let h = drive_with(Stream::from_plain(tcp).unwrap(), stall());
+    // Before the request is sent, so before the driver's stall clock starts.
+    let t0 = Instant::now();
     let rx = h.request(huge_request());
     // `Written` would come first, so the first progress is the verdict.
     assert_eq!(done_io(next(&rx)), io::ErrorKind::TimedOut);
+    assert!(t0.elapsed() >= stall(), "stalled after {:?}", t0.elapsed());
     match h.wait_end() {
         EndReason::TransportFailed { msg } => assert!(msg.contains("no progress"), "{msg}"),
         other => panic!("expected TransportFailed, got {other:?}"),
@@ -681,7 +693,7 @@ fn a_slow_peer_that_keeps_taking_bytes_does_not_stall_the_write() {
     let (mut peer, _) = listener.accept().unwrap();
     peer.set_read_timeout(Some(scaled(Duration::from_secs(5))))
         .unwrap();
-    let h = drive_with(Stream::from_plain(client).unwrap(), STALL);
+    let h = drive_with(Stream::from_plain(client).unwrap(), stall());
     let rx = h.request(RequestSpec {
         method: RtspMethod::Options,
         uri: URI.to_string(),
@@ -693,13 +705,13 @@ fn a_slow_peer_that_keeps_taking_bytes_does_not_stall_the_write() {
     while got < LEN {
         // Pacing, not a sync: each read frees a few KiB well inside the
         // stall time.
-        std::thread::sleep(STALL / 15);
+        std::thread::sleep(stall() / 15);
         let n = peer.read(&mut chunk).unwrap();
         assert!(n > 0, "the client closed the stream");
         got += n;
     }
     assert!(
-        t0.elapsed() > STALL * 2,
+        t0.elapsed() > stall() * 2,
         "the write drained in {:?}: too fast to test the clock",
         t0.elapsed()
     );
@@ -715,7 +727,9 @@ fn a_ping_the_peer_does_not_take_records_keepalive_failed() {
     let (port, done_tx, peer) = non_reading_peer();
     let tcp = TcpStream::connect(("127.0.0.1", port)).unwrap();
     fill_send_buffer(&tcp);
-    let h = drive_with(Stream::from_plain(tcp).unwrap(), STALL);
+    let h = drive_with(Stream::from_plain(tcp).unwrap(), stall());
+    // Before the keepalive is enabled, so before any ping is queued.
+    let t0 = Instant::now();
     h.handle
         .send(Command::EnableKeepalive(Some(Duration::from_millis(1))))
         .unwrap();
@@ -723,6 +737,7 @@ fn a_ping_the_peer_does_not_take_records_keepalive_failed() {
         EndReason::KeepaliveFailed { msg } => assert!(msg.contains("no progress"), "{msg}"),
         other => panic!("expected KeepaliveFailed, got {other:?}"),
     }
+    assert!(t0.elapsed() >= stall(), "stalled after {:?}", t0.elapsed());
     assert!(h.session_dead.load(Ordering::Acquire));
     h.stop_and_join();
     let _ = done_tx.send(());
@@ -956,9 +971,13 @@ mod tls {
         // Raw filler after the handshake on a stream the peer never reads
         // again: it is never decrypted.
         fill_send_buffer(&sock);
-        let h = drive_with(Stream::from_tls_parts(conn, sock).unwrap(), STALL);
+        let h = drive_with(Stream::from_tls_parts(conn, sock).unwrap(), stall());
+        // Before the request is sent, so before the driver's stall clock
+        // starts.
+        let t0 = Instant::now();
         let rx = h.request(options());
         assert_eq!(done_io(next(&rx)), io::ErrorKind::TimedOut);
+        assert!(t0.elapsed() >= stall(), "stalled after {:?}", t0.elapsed());
         match h.wait_end() {
             EndReason::TransportFailed { msg } => assert!(msg.contains("no progress"), "{msg}"),
             other => panic!("expected TransportFailed, got {other:?}"),
@@ -969,7 +988,9 @@ mod tls {
     }
 
     /// The peer's `close_notify` rides in its handshake flight, so rustls
-    /// has read it before the driver exists and no socket event follows.
+    /// has read it before the driver exists and the peer sends nothing
+    /// after it. The driver still finds it: its first pass reads, and the
+    /// socket's writable event at registration leads to a read too.
     #[test]
     fn a_close_notify_read_during_the_handshake_ends_the_stream() {
         let (port, roots, peer) = tls_test_peer(

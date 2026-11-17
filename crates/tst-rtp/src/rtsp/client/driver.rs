@@ -55,9 +55,12 @@ pub(crate) enum Command {
     Stop,
 }
 
-/// A caller request's progress: `Written` at most once and before `Done`;
-/// `Done` can come without `Written` (a timeout or an end before every
-/// byte was out).
+/// A caller request's progress. `Written` comes at most once and never
+/// after `Done`; `Done` comes exactly once unless the request is replaced
+/// by a later one (then the channel closes without it). `Done` can come
+/// with no `Written` before it: an early reply, on TLS a request handed to
+/// rustls together with a ping, or a failure before the write. A caller
+/// waiting for `Written` must treat `Done` as the end of that wait.
 #[derive(Debug)]
 pub(crate) enum Progress {
     /// Every byte of the request's first attempt is in the kernel.
@@ -411,7 +414,6 @@ impl Driver {
                         && let Err(mpsc::TrySendError::Full(_)) = tx.try_send(packet)
                     {
                         self.shared.media_dropped.fetch_add(1, Ordering::Relaxed);
-                        tracing::debug!(target: "tst_rtp::client::driver", "media queue full; frame dropped");
                     }
                 }
                 Event::Rtcp(packet) => {
