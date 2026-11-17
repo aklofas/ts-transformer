@@ -282,6 +282,17 @@ tasks.withType<Javadoc>().configureEach {
     }
 }
 
+// org.tstrans.internal is not exported by module-info: leave its files out
+// of the published docs, which would otherwise present it as API. The source
+// path still resolves it for the shells that import it.
+tasks.javadoc {
+    exclude("org/tstrans/internal/**")
+    (options as StandardJavadocDocletOptions).addStringOption(
+        "-source-path",
+        sourceSets.main.get().java.srcDirs.joinToString(File.pathSeparator),
+    )
+}
+
 mavenPublishing {
     // Explicit (do not rely on auto-detection for the plain `java` plugin):
     // publish the java component + real sources and javadoc jars.
