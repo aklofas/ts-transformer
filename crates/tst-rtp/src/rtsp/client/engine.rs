@@ -376,8 +376,11 @@ impl ClientEngine {
             return;
         }
         let Some(cseq) = resp.cseq() else {
-            // A reply with no `CSeq` at all answers the waiting request, as
-            // RTSP is not pipelined; one whose `CSeq` does not parse does not.
+            // A reply with no `CSeq` at all goes to the caller's request, the
+            // only one whose caller is waiting: a server that omits `CSeq`
+            // would otherwise time every request out. Such a reply to a ping
+            // can be taken for the request's. One whose `CSeq` does not parse
+            // answers nothing.
             match self.caller.take() {
                 Some(txn) if !resp.headers.contains_key("cseq") => {
                     self.handle_caller_reply(txn, resp, now);
