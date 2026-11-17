@@ -138,6 +138,19 @@ impl RtpTransport {
     }
 }
 
+/// The error for a hard `send` failure: the cancel when one is latched, else a
+/// `Broken` carrying the OS error.
+fn fatal_send_error(e: &std::io::Error, cancelled: bool) -> TransportError {
+    if cancelled {
+        return TransportError::ExplicitClose;
+    }
+    TransportError::Broken {
+        msg: format!("UDP send failed: {e}"),
+        errno_code: e.raw_os_error(),
+        cause: BrokenCause::Unspecified,
+    }
+}
+
 impl Transport for RtpTransport {
     fn send_bytes(&mut self, msg: &[u8]) -> Result<(), TransportError> {
         if msg.len() + RTP_HEADER_LEN > self.max_payload {
@@ -169,11 +182,7 @@ impl Transport for RtpTransport {
                 Err(e) if classify_send_error(&e) == SendClass::Transient => continue,
                 Err(e) => {
                     self.socket = None;
-                    return Err(TransportError::Broken {
-                        msg: format!("UDP send failed: {e}"),
-                        errno_code: e.raw_os_error(),
-                        cause: BrokenCause::Unspecified,
-                    });
+                    return Err(fatal_send_error(&e, self.cancel.is_cancelled()));
                 }
             }
         }
@@ -213,5 +222,26 @@ impl Transport for RtpTransport {
 impl Drop for RtpTransport {
     fn drop(&mut self) {
         self.close();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fatal_send_error_prefers_the_cancel() {
+        let e = std::io::Error::from_raw_os_error(9);
+        assert!(matches!(
+            fatal_send_error(&e, true),
+            TransportError::ExplicitClose
+        ));
+        assert!(matches!(
+            fatal_send_error(&e, false),
+            TransportError::Broken {
+                errno_code: Some(9),
+                ..
+            }
+        ));
     }
 }
