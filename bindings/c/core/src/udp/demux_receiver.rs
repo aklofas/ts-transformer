@@ -62,6 +62,8 @@ pub struct TstUdpDemuxReceiver {
 ///
 /// For unicast, pass `udp://0.0.0.0:port`. For multicast, pass the group
 /// address with the ffmpeg `@` prefix (`udp://@239.0.0.1:port?iface=<IPv4 literal>`).
+/// `?source=<ip>|first` delivers datagrams from one IP only (any port); see
+/// `tst_udp_demux_receiver_peer_addr`.
 ///
 /// # Safety
 ///
@@ -445,8 +447,9 @@ pub unsafe extern "C" fn tst_udp_demux_receiver_get_stream_stats(
 /// datagram); nothing is written then.
 ///
 /// It reads a record kept beside the receiver, never the handle's slot, so it
-/// answers while `tst_udp_demux_receiver_next_event` runs on another thread,
-/// and after `tst_udp_demux_receiver_cancel` it still answers with the last
+/// answers while `tst_udp_demux_receiver_next_event` runs on another thread.
+/// After `tst_udp_demux_receiver_cancel`, after a receive ended with an error,
+/// and after a caught panic retired the shell it still answers, with the last
 /// address delivered. After `tst_udp_demux_receiver_close` the pointer is
 /// freed, as for every getter.
 ///
@@ -474,7 +477,8 @@ pub unsafe extern "C" fn tst_udp_demux_receiver_peer_addr(
 /// neither sender is told.
 ///
 /// Answers in the same states as `tst_udp_demux_receiver_peer_addr`: while a
-/// receive runs on another thread and after `tst_udp_demux_receiver_cancel`.
+/// receive runs on another thread, after `tst_udp_demux_receiver_cancel`, after
+/// a receive ended with an error and after a caught panic retired the shell.
 /// Returns 0, or `TST_E_INVALID_CONFIG` when `p` or `out` is NULL.
 ///
 /// # Safety

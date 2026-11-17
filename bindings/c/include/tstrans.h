@@ -7201,14 +7201,16 @@ int tst_rist_demux_receiver_get_socket_stats(struct TstRistDemuxReceiver *p,
 
 #if defined(TST_HAS_RIST)
 /**
- * Read into `*out` the count of datagrams and blocks the URL's `source` pin
- * turned away since open; 0 without a pin. The pin compares the IP address
- * only, never the port. Data turned away is counted here and never reaches
- * this handle's `_get_stats` counters; neither sender is told.
+ * Read into `*out` how many times the URL's `source` pin turned data away:
+ * each time librist reported a sender the pin refuses or whose address cannot
+ * be read, and each delivered block it refused, since open; 0 without a pin.
+ * The pin compares the IP address only, never the port. Neither sender is
+ * told.
  *
  * Answers in the same states as `tst_rist_demux_receiver_peer_addr`: while a
- * receive runs on another thread and after `tst_rist_demux_receiver_cancel`.
- * Returns 0, or `TST_E_INVALID_CONFIG` when `p` or `out` is NULL.
+ * receive runs on another thread, after `tst_rist_demux_receiver_cancel`,
+ * after a receive ended with an error and after a caught panic retired the
+ * shell. Returns 0, or `TST_E_INVALID_CONFIG` when `p` or `out` is NULL.
  *
  * # Safety
  *
@@ -7389,6 +7391,8 @@ int tst_rist_demux_receiver_next_event(struct TstRistDemuxReceiver *p,
  * - Query params: `?profile=simple|main`, `?buffer=N` (recovery buffer ms),
  *   `?cname=...`
  * - Encryption: `?aes-type=128|192|256&secret=<psk>` (forces Main Profile)
+ * - `?source=<ip>|first` — deliver data from one IP only (any port); see
+ *   `tst_rist_demux_receiver_peer_addr`.
  *
  * WHY the `?buffer=N` parameter matters:
  *   The RIST recovery buffer determines how long the receiver holds on to
@@ -7422,14 +7426,15 @@ struct TstRistDemuxReceiver *tst_rist_demux_receiver_open(const char *url,
  * delivered, and this names whichever delivered last.
  *
  * Returns the text's length without the NUL; 0, with `""` written, until the
- * first block is delivered. Returns `TST_E_INVALID_CONFIG` when `p` or `buf`
- * is NULL, or with a "buffer too small" message when `buf_len` cannot hold the
- * text plus its NUL (`buf_len == 0` included, even before the first block);
- * nothing is written then.
+ * first block from a known address is delivered. Returns
+ * `TST_E_INVALID_CONFIG` when `p` or `buf` is NULL, or with a "buffer too
+ * small" message when `buf_len` cannot hold the text plus its NUL (`buf_len ==
+ * 0` included, even before the first block); nothing is written then.
  *
  * It reads a record kept beside the receiver, never the handle's slot, so it
- * answers while `tst_rist_demux_receiver_next_event` runs on another thread,
- * and after `tst_rist_demux_receiver_cancel` it still answers with the last
+ * answers while `tst_rist_demux_receiver_next_event` runs on another thread.
+ * After `tst_rist_demux_receiver_cancel`, after a receive ended with an error,
+ * and after a caught panic retired the shell it still answers, with the last
  * address delivered. After `tst_rist_demux_receiver_close` the pointer is
  * freed, as for every getter.
  *
@@ -7903,14 +7908,16 @@ int tst_rist_mux_sender_push_video_to(struct TstRistMuxSender *p,
 
 #if defined(TST_HAS_RIST)
 /**
- * Read into `*out` the count of datagrams and blocks the URL's `source` pin
- * turned away since open; 0 without a pin. The pin compares the IP address
- * only, never the port. Data turned away is counted here and never reaches
- * this handle's `_get_stats` counters; neither sender is told.
+ * Read into `*out` how many times the URL's `source` pin turned data away:
+ * each time librist reported a sender the pin refuses or whose address cannot
+ * be read, and each delivered block it refused, since open; 0 without a pin.
+ * The pin compares the IP address only, never the port. Neither sender is
+ * told.
  *
  * Answers in the same states as `tst_rist_receiver_peer_addr`: while a receive
- * runs on another thread and after `tst_rist_receiver_cancel`. Returns 0, or
- * `TST_E_INVALID_CONFIG` when `p` or `out` is NULL.
+ * runs on another thread, after `tst_rist_receiver_cancel`, after a receive
+ * ended with an error and after a caught panic retired the shell. Returns 0,
+ * or `TST_E_INVALID_CONFIG` when `p` or `out` is NULL.
  *
  * # Safety
  *
@@ -7949,15 +7956,17 @@ int tst_rist_mux_sender_push_video_to(struct TstRistMuxSender *p,
  * delivered, and this names whichever delivered last.
  *
  * Returns the text's length without the NUL; 0, with `""` written, until the
- * first block is delivered. Returns `TST_E_INVALID_CONFIG` when `p` or `buf`
- * is NULL, or with a "buffer too small" message when `buf_len` cannot hold the
- * text plus its NUL (`buf_len == 0` included, even before the first block);
- * nothing is written then.
+ * first block from a known address is delivered. Returns
+ * `TST_E_INVALID_CONFIG` when `p` or `buf` is NULL, or with a "buffer too
+ * small" message when `buf_len` cannot hold the text plus its NUL (`buf_len ==
+ * 0` included, even before the first block); nothing is written then.
  *
  * It reads a record kept beside the receiver, never the handle's slot, so it
- * answers while `tst_rist_receiver_recv_ts` runs on another thread, and after
- * `tst_rist_receiver_cancel` it still answers with the last address delivered.
- * After `tst_rist_receiver_close` the pointer is freed, as for every getter.
+ * answers while `tst_rist_receiver_recv_ts` runs on another thread. After
+ * `tst_rist_receiver_cancel`, after a receive ended with an error, and after a
+ * caught panic retired the shell it still answers, with the last address
+ * delivered. After `tst_rist_receiver_close` the pointer is freed, as for
+ * every getter.
  *
  * # Safety
  *
@@ -8036,6 +8045,8 @@ int tst_rist_receiver_recv_ts(struct TstRistReceiver *p,
  * - `rist://@host:port` — bind on a specific interface address
  * - Query params: `?profile=simple|main`, `?buffer=N` (recovery buffer ms,
  *   controls the retransmission window), `?cname=...`
+ * - `?source=<ip>|first` — deliver data from one IP only (any port); see
+ *   `tst_rist_receiver_peer_addr`.
  *
  * Encryption (requires mbedtls feature, forces Main Profile):
  * - `?aes-type=128|192|256&secret=<psk>` — AES PSK decryption.
@@ -12429,7 +12440,8 @@ int tst_udp_demux_receiver_get_socket_stats(struct TstUdpDemuxReceiver *p,
  * neither sender is told.
  *
  * Answers in the same states as `tst_udp_demux_receiver_peer_addr`: while a
- * receive runs on another thread and after `tst_udp_demux_receiver_cancel`.
+ * receive runs on another thread, after `tst_udp_demux_receiver_cancel`, after
+ * a receive ended with an error and after a caught panic retired the shell.
  * Returns 0, or `TST_E_INVALID_CONFIG` when `p` or `out` is NULL.
  *
  * # Safety
@@ -12604,6 +12616,8 @@ int tst_udp_demux_receiver_next_event(struct TstUdpDemuxReceiver *p,
  *
  * For unicast, pass `udp://0.0.0.0:port`. For multicast, pass the group
  * address with the ffmpeg `@` prefix (`udp://@239.0.0.1:port?iface=<IPv4 literal>`).
+ * `?source=<ip>|first` delivers datagrams from one IP only (any port); see
+ * `tst_udp_demux_receiver_peer_addr`.
  *
  * # Safety
  *
@@ -12635,8 +12649,9 @@ struct TstUdpDemuxReceiver *tst_udp_demux_receiver_open(const char *url,
  * datagram); nothing is written then.
  *
  * It reads a record kept beside the receiver, never the handle's slot, so it
- * answers while `tst_udp_demux_receiver_next_event` runs on another thread,
- * and after `tst_udp_demux_receiver_cancel` it still answers with the last
+ * answers while `tst_udp_demux_receiver_next_event` runs on another thread.
+ * After `tst_udp_demux_receiver_cancel`, after a receive ended with an error,
+ * and after a caught panic retired the shell it still answers, with the last
  * address delivered. After `tst_udp_demux_receiver_close` the pointer is
  * freed, as for every getter.
  *
@@ -13114,8 +13129,9 @@ int tst_udp_mux_sender_push_video_to(struct TstUdpMuxSender *p,
  * neither sender is told.
  *
  * Answers in the same states as `tst_udp_receiver_peer_addr`: while a receive
- * runs on another thread and after `tst_udp_receiver_cancel`. Returns 0, or
- * `TST_E_INVALID_CONFIG` when `p` or `out` is NULL.
+ * runs on another thread, after `tst_udp_receiver_cancel`, after a receive
+ * ended with an error and after a caught panic retired the shell. Returns 0,
+ * or `TST_E_INVALID_CONFIG` when `p` or `out` is NULL.
  *
  * # Safety
  *
@@ -13159,9 +13175,11 @@ int tst_udp_mux_sender_push_video_to(struct TstUdpMuxSender *p,
  * datagram); nothing is written then.
  *
  * It reads a record kept beside the receiver, never the handle's slot, so it
- * answers while `tst_udp_receiver_recv_ts` runs on another thread, and after
- * `tst_udp_receiver_cancel` it still answers with the last address delivered.
- * After `tst_udp_receiver_close` the pointer is freed, as for every getter.
+ * answers while `tst_udp_receiver_recv_ts` runs on another thread. After
+ * `tst_udp_receiver_cancel`, after a receive ended with an error, and after a
+ * caught panic retired the shell it still answers, with the last address
+ * delivered. After `tst_udp_receiver_close` the pointer is freed, as for every
+ * getter.
  *
  * # Safety
  *
@@ -13230,6 +13248,8 @@ int tst_udp_receiver_recv_ts(struct TstUdpReceiver *p,
  * - `udp://@group:port` (`@` prefix is ffmpeg convention) — multicast recv
  * - Query params: `?iface=<IPv4 literal>`, `?rcvbuf=8M`. Interface names are
  *   not resolved; an IPv6 group takes an interface index.
+ * - `?source=<ip>|first` — deliver datagrams from one IP only (any port);
+ *   see `tst_udp_receiver_peer_addr`.
  *
  * Port `0` causes the kernel to assign an ephemeral port.
  *

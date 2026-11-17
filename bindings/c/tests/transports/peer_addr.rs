@@ -14,11 +14,13 @@
 //! two-way UDP relay whose outward socket is bound there. Only a host where
 //! 127.0.0.2 cannot be bound skips those tests, never Linux.
 //!
-//! Every payload is seven TS packets whose byte 1 carries the sending
-//! instance's tag, so a test can tell from the bytes who delivered them.
-//! Every wait is a poll with a deadline; a receive that would park is
-//! guarded by a watchdog that cancels the handle at the deadline, so a
-//! failing test fails instead of hanging.
+//! Every payload is seven null TS packets whose first payload byte carries
+//! the sending instance's tag, so a test can tell from the bytes who
+//! delivered them; the packets stay conformant and a demuxer makes no events
+//! from them. Each test waits under one deadline, 12 s (scaled by
+//! `TST_TEST_TIMEOUT_SCALE`), inside the network group's 20 s kill, so a
+//! failure reports its own message. Waits are polls; a receive that would
+//! park is guarded by a watchdog that cancels the handle at the deadline.
 
 #![cfg(any(feature = "udp", feature = "rist"))]
 
@@ -51,14 +53,19 @@ const SECOND_V4: Ipv4Addr = Ipv4Addr::new(127, 0, 0, 2);
 const TAG_A: u8 = 0xA1;
 const TAG_B: u8 = 0xB2;
 
-fn wait() -> Duration {
-    scaled(Duration::from_secs(15))
+/// The byte of each packet that carries the sender's tag: the first payload
+/// byte of a null packet.
+const TAG_BYTE: usize = 4;
+
+/// The one deadline every wait of a test shares.
+fn deadline() -> Instant {
+    Instant::now() + scaled(Duration::from_secs(12))
 }
 
-/// Seven TS packets whose byte 1 is `tag`.
+/// Seven null TS packets whose first payload byte is `tag`.
 fn tagged_chunk(tag: u8) -> Vec<u8> {
     let mut pkt = ts_null_packet();
-    pkt[1] = tag;
+    pkt[TAG_BYTE] = tag;
     pkt.repeat(7)
 }
 
@@ -122,8 +129,7 @@ fn peer_socket_addr<T>(h: *mut T, f: PeerAddrFn<T>, what: &str) -> SocketAddr {
 }
 
 /// Poll `peer_addr` until it reports an address; panics at the deadline.
-fn wait_for_peer<T>(h: *mut T, f: PeerAddrFn<T>, what: &str) -> SocketAddr {
-    let deadline = Instant::now() + wait();
+fn wait_for_peer<T>(h: *mut T, f: PeerAddrFn<T>, deadline: Instant, what: &str) -> SocketAddr {
     loop {
         let (rc, _) = peer(h, f);
         if rc != 0 {
@@ -150,9 +156,8 @@ fn second_address_socket() -> Option<UdpSocket> {
 /// Cancels the handle at the deadline unless dropped first, so a receive
 /// that would park forever returns `TST_E_CLOSED` instead.
 #[cfg(feature = "udp")]
-fn watchdog<T: 'static>(h: *mut T, cancel: CancelFn<T>) -> Worker {
+fn watchdog<T: 'static>(h: *mut T, cancel: CancelFn<T>, deadline: Instant) -> Worker {
     let p = SendPtr(h);
-    let deadline = Instant::now() + wait();
     Worker::spawn(move |stop| {
         let p = p; // whole-struct capture: SendPtr is Send, its field is not
         while !stop.load(Ordering::Relaxed) {
@@ -275,13 +280,14 @@ mod udp {
     }
 
     /// Read packets until `done(tags so far)` holds; returns the tags. A
-    /// watchdog cancels the handle at the deadline.
+    /// watchdog cancels the handle at `deadline`.
     pub(super) fn read_until(
         rx: *mut TstUdpReceiver,
+        deadline: Instant,
         what: &str,
         mut done: impl FnMut(&[u8]) -> bool,
     ) -> Vec<u8> {
-        let _dog = watchdog(rx, tst_udp_receiver_cancel);
+        let _dog = watchdog(rx, tst_udp_receiver_cancel, deadline);
         let mut buf = [0u8; 188];
         let mut n = 0usize;
         let mut tags = Vec::new();
@@ -295,7 +301,7 @@ mod udp {
                 tags.len()
             );
             assert_eq!(buf[0], 0x47, "{what}: a TS packet");
-            tags.push(buf[1]);
+            tags.push(buf[TAG_BYTE]);
         }
         tags
     }
@@ -327,7 +333,7 @@ fn udp_receiver_peer_addr_is_empty_then_the_sender() {
     assert_eq!(one[0], 0);
 
     let tx = udp::UdpTx::from_localhost(port, TAG_A);
-    udp::read_until(rx, "the first packet", |t| !t.is_empty());
+    udp::read_until(rx, deadline(), "the first packet", |t| !t.is_empty());
     let want = tx.addr.to_string();
     assert_eq!(want, format!("127.0.0.1:{}", tx.addr.port()));
     assert_eq!(
@@ -345,10 +351,15 @@ fn udp_demux_receiver_peer_addr() {
     use tstrans::udp::*;
     let (rx, port) = udp::open_demux_rx();
     assert_empty(rx, tst_udp_demux_receiver_peer_addr, "before any datagram");
-    // Tagged packets yield no events, so the pull parks until the cancel.
+    // Null packets yield no events, so the pull parks until the cancel.
     let pull = reader(rx, udp::next_event);
     let tx = udp::UdpTx::from_localhost(port, TAG_A);
-    let got = wait_for_peer(rx, tst_udp_demux_receiver_peer_addr, "udp demux");
+    let got = wait_for_peer(
+        rx,
+        tst_udp_demux_receiver_peer_addr,
+        deadline(),
+        "udp demux",
+    );
     assert_eq!(got, tx.addr);
     assert_eq!(rejected(rx, tst_udp_demux_receiver_get_source_rejected), 0);
     drop(tx);
@@ -453,10 +464,10 @@ mod rist {
     /// pull is one ~100 ms librist poll, `TST_E_BUFFER_FULL` when empty.
     pub(super) fn read_until(
         rx: *mut TstRistReceiver,
+        deadline: Instant,
         what: &str,
         mut done: impl FnMut(&[u8]) -> bool,
     ) -> Vec<u8> {
-        let deadline = Instant::now() + wait();
         let mut buf = [0u8; 188];
         let mut n = 0usize;
         let mut tags = Vec::new();
@@ -469,7 +480,7 @@ mod rist {
             let rc = unsafe { tst_rist_receiver_recv_ts(rx, buf.as_mut_ptr(), buf.len(), &mut n) };
             if rc == 0 {
                 assert_eq!(buf[0], 0x47, "{what}: a TS packet");
-                tags.push(buf[1]);
+                tags.push(buf[TAG_BYTE]);
             } else {
                 assert_eq!(
                     rc,
@@ -480,12 +491,6 @@ mod rist {
             }
         }
         tags
-    }
-
-    pub(super) fn recv_ts(h: *mut TstRistReceiver) -> i32 {
-        let mut buf = [0u8; 188];
-        let mut n = 0usize;
-        unsafe { tst_rist_receiver_recv_ts(h, buf.as_mut_ptr(), buf.len(), &mut n) }
     }
 
     pub(super) fn next_event(h: *mut TstRistDemuxReceiver) -> i32 {
@@ -502,7 +507,7 @@ fn rist_receiver_peer_addr() {
     let rx = rist::open_rx(PORT, "");
     assert_empty(rx, tst_rist_receiver_peer_addr, "before any block");
     let tx = rist::sender(PORT, TAG_A);
-    let tags = rist::read_until(rx, "the first packet", |t| !t.is_empty());
+    let tags = rist::read_until(rx, deadline(), "the first packet", |t| !t.is_empty());
     assert_eq!(tags[0], TAG_A);
     let got = peer_socket_addr(rx, tst_rist_receiver_peer_addr, "rist");
     assert_eq!(got.ip(), IpAddr::V4(Ipv4Addr::LOCALHOST), "{got}");
@@ -522,7 +527,12 @@ fn rist_demux_receiver_peer_addr() {
     assert_empty(rx, tst_rist_demux_receiver_peer_addr, "before any block");
     let pull = reader(rx, rist::next_event);
     let tx = rist::sender(PORT, TAG_A);
-    let got = wait_for_peer(rx, tst_rist_demux_receiver_peer_addr, "rist demux");
+    let got = wait_for_peer(
+        rx,
+        tst_rist_demux_receiver_peer_addr,
+        deadline(),
+        "rist demux",
+    );
     assert_eq!(got.ip(), IpAddr::V4(Ipv4Addr::LOCALHOST), "{got}");
     assert_ne!(got.port(), 0, "{got}");
     assert_eq!(rejected(rx, tst_rist_demux_receiver_get_source_rejected), 0);
@@ -537,163 +547,197 @@ fn rist_demux_receiver_peer_addr() {
 }
 
 // ---------------------------------------------------------------------------
-// Both families
+// The pin, one test per family
 // ---------------------------------------------------------------------------
+
+/// A stop condition for a pin test: true once `ENOUGH` packets have been read
+/// after the first time `rejected()` was above zero, so every one of them was
+/// read while the pin had already turned the second sender away.
+fn enough_after_first_rejection(mut rejected: impl FnMut() -> u64) -> impl FnMut(&[u8]) -> bool {
+    let mut from = None;
+    move |tags| {
+        if from.is_none() && rejected() > 0 {
+            from = Some(tags.len());
+        }
+        from.is_some_and(|f| tags.len() - f >= ENOUGH)
+    }
+}
+
+fn assert_all_a(tags: &[u8], what: &str) {
+    assert!(
+        tags.iter().all(|&t| t == TAG_A),
+        "{what}: {} of {} packets are not A's",
+        tags.iter().filter(|&&t| t != TAG_A).count(),
+        tags.len()
+    );
+}
 
 /// `?source=first` latches the first sender; a second sender from 127.0.0.2
 /// is turned away and counted, and none of its packets are delivered.
-#[test]
-fn source_rejected_counts_under_a_pin() {
-    #[cfg(feature = "udp")]
-    {
-        use tstrans::udp::*;
-        if let Some(second) = second_address_socket() {
-            let (rx, port) = udp::open_rx("?source=first");
-            let a = udp::UdpTx::from_localhost(port, TAG_A);
-            udp::read_until(rx, "udp: A's first packet", |t| !t.is_empty());
-            let b = udp::UdpTx::start(second, port, TAG_B);
-            let tags = udp::read_until(rx, "udp: B turned away", |t| {
-                t.len() >= ENOUGH && rejected(rx, tst_udp_receiver_get_source_rejected) > 0
-            });
-            assert!(
-                tags.iter().all(|&t| t == TAG_A),
-                "udp: {} of {} packets are not A's",
-                tags.iter().filter(|&&t| t != TAG_A).count(),
-                tags.len()
-            );
-            assert_eq!(
-                peer_socket_addr(rx, tst_udp_receiver_peer_addr, "udp pinned"),
-                a.addr
-            );
-            drop((a, b));
-            unsafe { tst_udp_receiver_close(rx) };
-        }
+#[cfg(feature = "udp")]
+mod udp_pin {
+    use super::*;
+    use tstrans::udp::*;
+
+    #[test]
+    fn source_rejected_counts_under_a_pin() {
+        let Some(second) = second_address_socket() else {
+            return;
+        };
+        let deadline = deadline();
+        let (rx, port) = udp::open_rx("?source=first");
+        let a = udp::UdpTx::from_localhost(port, TAG_A);
+        udp::read_until(rx, deadline, "A's first packet", |t| !t.is_empty());
+        let b = udp::UdpTx::start(second, port, TAG_B);
+        let done =
+            enough_after_first_rejection(|| rejected(rx, tst_udp_receiver_get_source_rejected));
+        let tags = udp::read_until(rx, deadline, "B turned away", done);
+        assert_all_a(&tags, "udp");
+        assert_eq!(
+            peer_socket_addr(rx, tst_udp_receiver_peer_addr, "pinned"),
+            a.addr
+        );
+        drop((a, b));
+        unsafe { tst_udp_receiver_close(rx) };
     }
-    #[cfg(feature = "rist")]
-    {
-        use tstrans::rist::*;
+}
+
+/// As `udp_pin`, over RIST: the second sender is relayed from 127.0.0.2.
+#[cfg(feature = "rist")]
+mod rist_pin {
+    use super::*;
+    use tstrans::rist::*;
+
+    #[test]
+    fn source_rejected_counts_under_a_pin() {
         const PORT: u16 = 33_144;
-        if let Some(back) = second_address_socket() {
-            let rx = rist::open_rx(PORT, "&source=first");
-            let relay = rist::Relay::start(back, SocketAddr::from((Ipv4Addr::LOCALHOST, PORT)));
-            let a = rist::sender(PORT, TAG_A);
-            rist::read_until(rx, "rist: A's first packet", |t| !t.is_empty());
-            let b = rist::sender(relay.front_port, TAG_B);
-            let tags = rist::read_until(rx, "rist: B turned away", |t| {
-                t.len() >= ENOUGH && rejected(rx, tst_rist_receiver_get_source_rejected) > 0
-            });
-            assert!(
-                tags.iter().all(|&t| t == TAG_A),
-                "rist: {} of {} packets are not A's",
-                tags.iter().filter(|&&t| t != TAG_A).count(),
-                tags.len()
-            );
-            let got = peer_socket_addr(rx, tst_rist_receiver_peer_addr, "rist pinned");
-            assert_eq!(got.ip(), IpAddr::V4(Ipv4Addr::LOCALHOST), "{got}");
-            drop((a, b, relay));
-            unsafe { tst_rist_receiver_close(rx) };
+        let Some(back) = second_address_socket() else {
+            return;
+        };
+        let deadline = deadline();
+        let rx = rist::open_rx(PORT, "&source=first");
+        let relay = rist::Relay::start(back, SocketAddr::from((Ipv4Addr::LOCALHOST, PORT)));
+        let a = rist::sender(PORT, TAG_A);
+        rist::read_until(rx, deadline, "A's first packet", |t| !t.is_empty());
+        let b = rist::sender(relay.front_port, TAG_B);
+        let done =
+            enough_after_first_rejection(|| rejected(rx, tst_rist_receiver_get_source_rejected));
+        let tags = rist::read_until(rx, deadline, "B turned away", done);
+        assert_all_a(&tags, "rist");
+        let got = peer_socket_addr(rx, tst_rist_receiver_peer_addr, "pinned");
+        assert_eq!(got.ip(), IpAddr::V4(Ipv4Addr::LOCALHOST), "{got}");
+        drop((a, b, relay));
+        unsafe { tst_rist_receiver_close(rx) };
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Both families
+// ---------------------------------------------------------------------------
+
+/// Run `get` on a helper thread while a receive is parked on `h`. A getter
+/// that waited for the receive's slot would never return, so after 2 s the
+/// handle is cancelled (which ends the receive and frees the slot) and the
+/// test fails with a message instead of hanging until the runner's kill.
+#[cfg(feature = "udp")]
+fn answers_while_parked<T: 'static>(
+    h: *mut T,
+    cancel: CancelFn<T>,
+    get: impl FnOnce(*mut T) + Send + 'static,
+) {
+    let (tx, rx) = std::sync::mpsc::channel::<()>();
+    let p = SendPtr(h);
+    let getter = std::thread::spawn(move || {
+        let p = p; // whole-struct capture: SendPtr is Send, its field is not
+        get(p.0);
+        let _ = tx.send(());
+    });
+    match rx.recv_timeout(scaled(Duration::from_secs(2))) {
+        Ok(()) => getter.join().expect("getter thread"),
+        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+            // The getter's own assertion failed: report it.
+            if let Err(e) = getter.join() {
+                std::panic::resume_unwind(e);
+            }
+        }
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+            unsafe { cancel(h) };
+            let _ = getter.join();
+            panic!("the getter waited for the parked receive");
         }
     }
 }
 
-/// Both getters answer promptly while another thread holds the handle's
-/// slot in a receive, and after `_cancel` they answer as before it.
+/// Both getters answer while another thread is parked in a receive (holding
+/// the handle's slot), and after `_cancel` they answer as before it.
+///
+/// UDP only: a RIST pull does not park. Each is one ~100 ms librist poll that
+/// releases the slot at its end, so a getter that took the slot would still
+/// answer within a tick and no timing bound here could tell it apart. For
+/// RIST the property rests on the forwarders reading the construction-time
+/// snapshot; after `_cancel` it is covered by `rist_demux_receiver_peer_addr`.
+#[cfg(feature = "udp")]
 #[test]
 fn peer_addr_answers_while_recv_is_parked_and_after_cancel() {
-    fn prompt<R>(f: impl FnOnce() -> R) -> R {
-        let started = Instant::now();
-        let r = f();
-        assert!(
-            started.elapsed() < scaled(Duration::from_secs(5)),
-            "the getter waited for the parked receive"
-        );
-        r
-    }
+    use tstrans::udp::*;
+    // A receiver that has delivered: the address survives the cancel.
+    let (rx, port) = udp::open_rx("");
+    let tx = udp::UdpTx::from_localhost(port, TAG_A);
+    udp::read_until(rx, deadline(), "the first packet", |t| !t.is_empty());
+    drop(tx);
+    let want = peer(rx, tst_udp_receiver_peer_addr).1;
+    assert!(!want.is_empty(), "{}", last_error_msg());
+    let expected = want.clone();
+    let rc = parked(
+        rx,
+        |h| loop {
+            // Drain what the sender left queued, then park.
+            let rc = udp::recv_ts(h);
+            if rc != 0 {
+                return rc;
+            }
+        },
+        move |h| {
+            // Let the drain finish so the reader is parked, not reading.
+            std::thread::sleep(Duration::from_millis(300));
+            answers_while_parked(h, tst_udp_receiver_cancel, move |h| {
+                assert_eq!(peer(h, tst_udp_receiver_peer_addr).1, expected);
+                assert_eq!(rejected(h, tst_udp_receiver_get_source_rejected), 0);
+            });
+            unsafe { tst_udp_receiver_cancel(h) }
+        },
+        |h| unsafe { tst_udp_receiver_close(h) },
+    );
+    assert_eq!(rc, TstError::Closed as i32);
+    assert_eq!(peer(rx, tst_udp_receiver_peer_addr).1, want);
+    assert_eq!(rejected(rx, tst_udp_receiver_get_source_rejected), 0);
+    unsafe { tst_udp_receiver_close(rx) };
 
-    #[cfg(feature = "udp")]
-    {
-        use tstrans::udp::*;
-        // A receiver that has delivered: the address survives the cancel.
-        let (rx, port) = udp::open_rx("");
-        let tx = udp::UdpTx::from_localhost(port, TAG_A);
-        udp::read_until(rx, "udp: the first packet", |t| !t.is_empty());
-        drop(tx);
-        let want = tx_addr_text(rx);
-        let rc = parked(
-            rx,
-            |h| loop {
-                // Drain what the sender left queued, then park.
-                let rc = udp::recv_ts(h);
-                if rc != 0 {
-                    return rc;
-                }
-            },
-            |h| {
-                // Let the drain finish so the reader is parked, not reading.
-                std::thread::sleep(Duration::from_millis(300));
-                prompt(|| {
-                    assert_eq!(peer(h, tst_udp_receiver_peer_addr).1, want);
-                    assert_eq!(rejected(h, tst_udp_receiver_get_source_rejected), 0);
-                });
-                unsafe { tst_udp_receiver_cancel(h) }
-            },
-            |h| unsafe { tst_udp_receiver_close(h) },
-        );
-        assert_eq!(rc, TstError::Closed as i32);
-        assert_eq!(peer(rx, tst_udp_receiver_peer_addr).1, want);
-        assert_eq!(rejected(rx, tst_udp_receiver_get_source_rejected), 0);
-        unsafe { tst_udp_receiver_close(rx) };
-
-        // A demux receiver that has delivered nothing: empty throughout,
-        // as its TS byte counter reads zero throughout.
-        let (rx, _) = udp::open_demux_rx();
-        let rc = parked(
-            rx,
-            udp::next_event,
-            |h| {
-                prompt(|| {
-                    assert_empty(h, tst_udp_demux_receiver_peer_addr, "parked");
-                    assert_eq!(rejected(h, tst_udp_demux_receiver_get_source_rejected), 0);
-                });
-                unsafe { tst_udp_demux_receiver_cancel(h) }
-            },
-            |h| unsafe { tst_udp_demux_receiver_close(h) },
-        );
-        assert_eq!(rc, TstError::Closed as i32);
-        assert_empty(rx, tst_udp_demux_receiver_peer_addr, "after cancel");
-        assert_eq!(rejected(rx, tst_udp_demux_receiver_get_source_rejected), 0);
-        let mut n = u64::MAX;
-        assert_eq!(
-            unsafe { tst_udp_demux_receiver_get_ts_bytes_demuxed(rx, &mut n) },
-            0
-        );
-        assert_eq!(n, 0);
-        unsafe { tst_udp_demux_receiver_close(rx) };
-
-        fn tx_addr_text(rx: *mut TstUdpReceiver) -> String {
-            let (rc, text) = peer(rx, tst_udp_receiver_peer_addr);
-            assert!(rc > 0, "{}", last_error_msg());
-            text
-        }
-    }
-    #[cfg(feature = "rist")]
-    {
-        use tstrans::rist::*;
-        // A RIST pull does not park: each is one ~100 ms poll. A reader
-        // loops on it, holding the slot for most of every tick.
-        let rx = rist::open_rx(33_146, "");
-        let pull = reader(rx, rist::recv_ts);
-        std::thread::sleep(Duration::from_millis(200));
-        prompt(|| {
-            assert_empty(rx, tst_rist_receiver_peer_addr, "polling");
-            assert_eq!(rejected(rx, tst_rist_receiver_get_source_rejected), 0);
-        });
-        assert_eq!(unsafe { tst_rist_receiver_cancel(rx) }, 0);
-        assert_eq!(pull.join().expect("reader"), TstError::Closed as i32);
-        assert_empty(rx, tst_rist_receiver_peer_addr, "after cancel");
-        assert_eq!(rejected(rx, tst_rist_receiver_get_source_rejected), 0);
-        unsafe { tst_rist_receiver_close(rx) };
-    }
+    // A demux receiver that has delivered nothing: empty throughout, as its
+    // TS byte counter reads zero throughout.
+    let (rx, _) = udp::open_demux_rx();
+    let rc = parked(
+        rx,
+        udp::next_event,
+        |h| {
+            answers_while_parked(h, tst_udp_demux_receiver_cancel, |h| {
+                assert_empty(h, tst_udp_demux_receiver_peer_addr, "parked");
+                assert_eq!(rejected(h, tst_udp_demux_receiver_get_source_rejected), 0);
+            });
+            unsafe { tst_udp_demux_receiver_cancel(h) }
+        },
+        |h| unsafe { tst_udp_demux_receiver_close(h) },
+    );
+    assert_eq!(rc, TstError::Closed as i32);
+    assert_empty(rx, tst_udp_demux_receiver_peer_addr, "after cancel");
+    assert_eq!(rejected(rx, tst_udp_demux_receiver_get_source_rejected), 0);
+    let mut n = u64::MAX;
+    assert_eq!(
+        unsafe { tst_udp_demux_receiver_get_ts_bytes_demuxed(rx, &mut n) },
+        0
+    );
+    assert_eq!(n, 0);
+    unsafe { tst_udp_demux_receiver_close(rx) };
 }
 
 /// NULL handle, NULL `buf`, NULL `out`, `buf_len` 0 and a buffer one byte
@@ -711,7 +755,7 @@ fn null_and_short_buffers_are_invalid_config() {
             tst_udp_receiver_get_source_rejected,
         );
         let tx = udp::UdpTx::from_localhost(port, TAG_A);
-        udp::read_until(rx, "udp: the first packet", |t| !t.is_empty());
+        udp::read_until(rx, deadline(), "udp: the first packet", |t| !t.is_empty());
         let len = tx.addr.to_string().len();
         assert_short_buffer_refused(rx, tst_udp_receiver_peer_addr, len);
         drop(tx);
