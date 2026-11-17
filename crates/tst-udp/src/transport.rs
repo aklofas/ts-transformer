@@ -84,13 +84,13 @@ impl UdpTransport {
 
     /// Build a `UdpTransport` from an already-parsed `UdpUrl` + config.
     pub fn with_config(url: &UdpUrl, cfg: &UdpConfig) -> Result<Self, UdpError> {
-        if cfg.source.is_some() {
-            return Err(UdpError::Url(crate::url::send_source_rejection()));
-        }
         if url.recv_bind {
             return Err(UdpError::InvalidConfig(
                 "URL has '@' prefix indicating recv-bind; use UdpRecvTransport".into(),
             ));
+        }
+        if cfg.source.is_some() {
+            return Err(UdpError::Url(crate::url::send_source_rejection()));
         }
 
         let local: SocketAddr = match (cfg.localaddr, url.addr) {

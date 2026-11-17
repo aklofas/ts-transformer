@@ -11,9 +11,10 @@ use std::sync::{Arc, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use tst_core::transport::SourcePin;
 use tst_core::transport::{RecvTransport, TransportError};
 use tst_core::url::UrlError;
-use tst_udp::{UdpError, UdpRecvTransport, UdpTransport, UdpTransportBuilder};
+use tst_udp::{UdpConfig, UdpError, UdpRecvTransport, UdpTransport, UdpTransportBuilder, UdpUrl};
 
 /// Longest any wait in these tests lasts before the test fails.
 const BOUND: Duration = Duration::from_secs(20);
@@ -120,7 +121,10 @@ impl Drop for Watchdog {
         if let Some(j) = self.join.take() {
             let _ = j.join();
         }
-        assert!(!self.fired.load(Ordering::SeqCst), "watchdog fired");
+        // A second panic while unwinding would abort the whole test binary.
+        if !thread::panicking() {
+            assert!(!self.fired.load(Ordering::SeqCst), "watchdog fired");
+        }
     }
 }
 
@@ -230,41 +234,76 @@ fn a_zero_length_probe_does_not_take_the_first_lock() {
     rig.send_a(to, b"A2");
     assert_eq!(recv_one(&mut t), b"A2");
     assert_eq!(t.stats().source_rejected, 1);
+    // B's probe (unlatched, allowed), A1 and A2 are received; B1 is not.
+    assert_eq!(t.stats().datagrams_received, 3);
+}
+
+#[test]
+fn a_zero_length_datagram_from_the_wrong_sender_is_rejected_not_received() {
+    let Some(rig) = Rig::new() else { return };
+    let mut t = rig.recv(&format!("?source={}", rig.a_ip()));
+    let _wd = Watchdog::arm(t.cancel_handle());
+    let to = t.local_addr();
+    rig.send_b(to, b"");
+    rig.send_a(to, b"A");
+    assert_eq!(recv_one(&mut t), b"A");
+    let st = t.stats();
+    assert_eq!(st.source_rejected, 1);
+    assert_eq!(st.datagrams_received, 1);
+    assert_eq!(st.bytes_received, 1);
+}
+
+#[test]
+fn recv_timeout_returns_none_at_its_deadline_under_a_flood_of_rejected_datagrams() {
+    let Some(rig) = Rig::new() else { return };
+    let mut t = rig.recv(&format!("?source={}", rig.a_ip()));
+    let to = t.local_addr();
+    let deadline = Duration::from_millis(300);
+    let stop = AtomicBool::new(false);
+    thread::scope(|s| {
+        s.spawn(|| {
+            while !stop.load(Ordering::Relaxed) {
+                rig.send_b(to, b"B");
+            }
+        });
+        let mut buf = vec![0u8; 65535];
+        let began = Instant::now();
+        let r = t.recv_timeout(&mut buf, deadline);
+        let took = began.elapsed();
+        stop.store(true, Ordering::Relaxed);
+        assert_eq!(r.unwrap(), None);
+        assert!(took >= deadline, "returned early: {took:?}");
+        // The documented bound is twice the deadline; the flood keeps the
+        // socket busy, so the call ends at the deadline itself.
+        assert!(took < deadline * 2 + Duration::from_secs(1), "{took:?}");
+        assert!(t.stats().source_rejected > 0);
+    });
 }
 
 #[test]
 fn a_dual_stack_receiver_matches_ipv4_text() {
     let mut t = match UdpRecvTransport::listen("udp://@[::]:0?source=127.0.0.1") {
         Ok(t) => t,
+        Err(e) if cfg!(target_os = "linux") => panic!("no IPv6 wildcard bind on Linux: {e}"),
         Err(e) => {
             eprintln!("skipped: no IPv6 wildcard bind: {e}");
             return;
         }
     };
-    let port = t.local_addr().port();
     let a = UdpSocket::bind("127.0.0.1:0").unwrap();
-    let to: SocketAddr = format!("127.0.0.1:{port}").parse().unwrap();
-    // Measure first: some platforms do not deliver IPv4 to a `[::]` bind.
-    let probe = UdpRecvTransport::listen("udp://@[::]:0").unwrap();
-    let probe_to: SocketAddr = format!("127.0.0.1:{}", probe.local_addr().port())
-        .parse()
+    a.send_to(b"4", ("127.0.0.1", t.local_addr().port()))
         .unwrap();
-    a.send_to(b"p", probe_to).unwrap();
-    let mut probe = probe;
-    let h = probe.cancel_handle();
-    let waiter = thread::spawn(move || {
-        thread::sleep(Duration::from_secs(2));
-        h.cancel();
-    });
-    let delivered = probe.recv_bytes(&mut [0u8; 65535]).is_ok();
-    waiter.join().unwrap();
-    if !delivered {
-        eprintln!("skipped: IPv4 is not delivered to a [::] bind here");
-        return;
+    let mut buf = vec![0u8; 65535];
+    // Returns as soon as the datagram is there; the bound only matters when
+    // the platform does not deliver IPv4 to a `[::]` bind.
+    match t.recv_timeout(&mut buf, BOUND).unwrap() {
+        Some(n) => assert_eq!(&buf[..n], b"4"),
+        None if cfg!(target_os = "linux") => panic!("IPv4 was not delivered to a [::] bind"),
+        None => {
+            eprintln!("skipped: IPv4 is not delivered to a [::] bind here");
+            return;
+        }
     }
-    let _wd = Watchdog::arm(t.cancel_handle());
-    a.send_to(b"4", to).unwrap();
-    assert_eq!(recv_one(&mut t), b"4");
     assert_eq!(t.peer_addr(), Some(a.local_addr().unwrap()));
     assert_eq!(t.stats().source_rejected, 0);
 }
@@ -340,9 +379,64 @@ fn a_sender_url_with_source_is_refused() {
     let err = UdpTransport::connect("udp://127.0.0.1:9?source=127.0.0.1")
         .err()
         .expect("refused");
-    assert!(err.to_string().contains("source"), "{err}");
+    assert!(
+        matches!(&err, UdpError::Url(UrlError::Rejected(m)) if m.contains("source")),
+        "{err:?}"
+    );
     let err = UdpTransportBuilder::from_url("udp://127.0.0.1:9?source=first").expect_err("refused");
-    assert!(err.to_string().contains("source"), "{err}");
+    assert!(
+        matches!(&err, UrlError::Rejected(m) if m.contains("source")),
+        "{err:?}"
+    );
+    // A hand-built config reaches the same refusal.
+    let url = UdpUrl::parse("udp://127.0.0.1:9").unwrap();
+    let mut cfg = UdpConfig::default();
+    cfg.source = Some(SourcePin::First);
+    let err = UdpTransport::with_config(&url, &cfg)
+        .err()
+        .expect("refused");
+    assert!(
+        matches!(&err, UdpError::Url(UrlError::Rejected(m)) if m.contains("source")),
+        "{err:?}"
+    );
+}
+
+#[test]
+fn a_receive_url_given_to_a_sender_is_refused_for_its_at_prefix_first() {
+    let url = "udp://@127.0.0.1:9?source=first";
+    let a = UdpTransport::connect(url).err().expect("refused");
+    let b = UdpTransportBuilder::from_url(url).expect_err("refused");
+    assert!(a.to_string().contains("'@' prefix"), "{a}");
+    assert!(b.to_string().contains("'@' prefix"), "{b}");
+}
+
+#[test]
+fn a_pin_that_can_never_match_is_refused_at_open() {
+    // An IPv6 pin on an IPv4 bind, plain or as the IPv4-mapped form's
+    // opposite, can match nothing.
+    for url in [
+        "udp://@127.0.0.1:0?source=::1",
+        "udp://@127.0.0.1:0?source=fe80::1",
+    ] {
+        let err = UdpRecvTransport::listen(url).err().expect(url);
+        assert!(err.to_string().contains("source"), "{url}: {err}");
+    }
+    // The mapped form of an IPv4 address is that address.
+    UdpRecvTransport::listen("udp://@127.0.0.1:0?source=::ffff:127.0.0.1").expect("mapped pin");
+    // An IPv4 pin on an IPv6 bind stays allowed: a dual-stack bind delivers IPv4.
+    match UdpRecvTransport::listen("udp://@[::]:0?source=127.0.0.1") {
+        Ok(_) => {}
+        Err(UdpError::Io(e)) if !cfg!(target_os = "linux") => eprintln!("no [::] bind: {e}"),
+        Err(e) => panic!("{e}"),
+    }
+}
+
+#[test]
+fn source_handle_shows_whether_a_pin_is_in_force() {
+    let t = UdpRecvTransport::listen("udp://@127.0.0.1:0?sourse=127.0.0.1").unwrap();
+    assert_eq!(t.source_handle().unwrap().pin(), None);
+    let t = UdpRecvTransport::listen("udp://@127.0.0.1:0?source=first").unwrap();
+    assert_eq!(t.source_handle().unwrap().pin(), Some(SourcePin::First));
 }
 
 #[test]
@@ -365,19 +459,29 @@ fn source_handle_answers_while_a_receive_is_parked() {
     let mut t = rig.recv("");
     let to = t.local_addr();
     let handle = t.source_handle().expect("source handle");
-    let cancel = t.cancel_handle();
     assert_eq!(handle.peer_addr(), None);
+    let (entered_tx, entered_rx) = mpsc::channel();
     let (tx, rx) = mpsc::channel();
     let join = thread::spawn(move || {
         let mut buf = vec![0u8; 65535];
-        let first = t.recv_bytes(&mut buf);
-        let _ = tx.send(first);
-        let _ = t.recv_bytes(&mut buf); // parks until cancelled
+        entered_tx.send(()).unwrap();
+        let _ = tx.send(t.recv_bytes(&mut buf));
     });
+    entered_rx
+        .recv_timeout(BOUND)
+        .expect("receive thread started");
+    // Nothing was sent, so the receive stays parked across a poll tick; the
+    // read below happens while it is.
+    assert_eq!(
+        rx.recv_timeout(Duration::from_millis(300)),
+        Err(mpsc::RecvTimeoutError::Timeout),
+        "the receive returned without a datagram"
+    );
+    assert_eq!(handle.peer_addr(), None);
     rig.send_a(to, b"A");
-    let r = rx.recv_timeout(BOUND).expect("first datagram");
-    assert_eq!(r, Ok(1));
+    assert_eq!(rx.recv_timeout(BOUND).expect("first datagram"), Ok(1));
+    // The address is stored before the receive returns, so this read does
+    // not race anything.
     assert_eq!(handle.peer_addr(), Some(rig.a_addr()));
-    cancel.cancel();
     join.join().unwrap();
 }

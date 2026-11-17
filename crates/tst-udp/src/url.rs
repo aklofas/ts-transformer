@@ -158,8 +158,8 @@ pub const URL_KEYS: &[QueryKey<UdpConfig>] = &[
     QueryKey::new(
         "source",
         &[],
-        "Receive only from this sender (receiver only)",
-        "an IP address, or `first` for whichever sender delivers first",
+        "Receive only from one sender IP, port not compared; the source address is unverified, and `first` is taken by the first datagram with a payload from anyone (receiver only)",
+        "an IP address, or `first`",
         set_source,
     ),
 ];
