@@ -138,7 +138,7 @@ wheps = "whep"
 # sequence shows the transport choice: TCP alone is `tcp`, UDP then TCP is no
 # key, UDP alone is `udp`), once answering 401 to a DESCRIBE without
 # credentials (the retry's Basic `Authorization` shows the user name and
-# whether a password was sent).
+# whether a non-empty password was sent).
 #
 # The srt rows bind loopback ports 31101-31177, the tcp callers' peer 31401,
 # the rist receive rows 31650-31651 and a whep row 31801, so another process
@@ -1136,20 +1136,24 @@ case = "credentials"
 url = "rtsp://admin:p%40ss@127.0.0.1:31501/live?transport=udp"
 expect = { scheme = "rtsp", host = "127.0.0.1", port = 31501, path = "/live", username = "admin", password_set = true, keys = { rtsp_version = "1.0", transport = "udp" } }
 
-# The parser keeps a user name without a password, but the client answers a
-# challenge only when the URL also has a password, so nothing reaches the wire.
+# The parser keeps a user name without a password; the client answers a
+# challenge with the user name and an empty password, which the wire cannot
+# show as set.
 [[url]]
 scheme = "rtsp"
 role = "client"
 case = "credentials"
-wire_absent = "username password_set"
+wire_absent = "password_set"
 url = "rtsp://admin@127.0.0.1:31501/live"
 expect = { scheme = "rtsp", host = "127.0.0.1", port = 31501, path = "/live", username = "admin", password_set = false, keys = { rtsp_version = "1.0" } }
 
+# The parser records the empty password as set; the wire cannot show an empty
+# password as set.
 [[url]]
 scheme = "rtsp"
 role = "client"
 case = "credentials"
+wire_absent = "password_set"
 url = "rtsp://admin:@127.0.0.1:31501/live"
 expect = { scheme = "rtsp", host = "127.0.0.1", port = 31501, path = "/live", username = "admin", password_set = true, keys = { rtsp_version = "1.0" } }
 

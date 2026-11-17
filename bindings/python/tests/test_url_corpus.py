@@ -301,10 +301,12 @@ def rtsp_wire_record(plain: list[str], challenged: list[str]) -> dict[str, Any]:
     )
     if basic is not None:
         decoded = base64.b64decode(basic).decode("utf-8", "replace")
-        rec["username"] = decoded.partition(":")[0]
-        # The client sends credentials only with a password (an empty one
-        # counts), so a Basic header at all means one was set.
-        rec["password_set"] = True
+        user, _, password = decoded.partition(":")
+        rec["username"] = user
+        # An empty password reads as not set: the wire cannot tell it from
+        # a URL with no password, which the client also answers with one.
+        if password:
+            rec["password_set"] = True
     rec["keys"] = keys
     return rec
 
