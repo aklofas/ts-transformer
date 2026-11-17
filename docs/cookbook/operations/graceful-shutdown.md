@@ -15,9 +15,11 @@ in a loop — is the wrong shape; the cancel handle is.
 Every long-lived shell exposes `cancel_handle() -> Option<Arc<dyn
 TransportCancel + Send + Sync>>`. The handle is `Send + Sync`,
 one-shot, and idempotent — clone it freely, fire it from any thread.
-On SRT the parked call returns within one libsrt I/O cycle (typically
-3–10 ms). UDP and RIST observe the cancel at their next 100 ms poll
-tick; see the
+On SRT the cancel closes the socket on the cancelling thread, and the
+parked call typically returns within a few milliseconds; with linger on
+and unsent data queued, that close (and so `cancel()` itself) can take
+up to the linger time. UDP, TCP, RIST and RTP notice the cancel at their
+next 100 ms poll tick; see the
 [coverage table](/docs/reference/srt-cancel-handle.md#cancel-coverage-by-transport)
 for every transport.
 

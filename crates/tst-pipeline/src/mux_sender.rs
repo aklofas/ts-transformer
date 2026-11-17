@@ -126,9 +126,9 @@ pub struct MuxSenderStats {
 ///    [`MuxSenderErrorSource::Transport`]`(`[`TransportError::ExplicitClose`]`)`
 ///    once the transport observes the cancel: SRT closes the socket, the
 ///    others notice at their next poll tick; see
-///    [the cancel coverage table](https://github.com/aklofas/ts-transformer/blob/main/docs/reference/srt-cancel-handle.md#cancel-coverage-by-transport). Idempotent. The price of cancelling first is that
-///    `pending_bytes` retained from a prior transient send error are
-///    abandoned.
+///    [the cancel coverage table](https://github.com/aklofas/ts-transformer/blob/main/docs/reference/srt-cancel-handle.md#cancel-coverage-by-transport).
+///    Idempotent. The price of cancelling first is that `pending_bytes`
+///    retained from a prior transient send error are abandoned.
 /// 3. **Graceful finish** — call [`Self::finish`]. Drains
 ///    `pending_bytes` to the still-live transport FIRST (fallible — the
 ///    caller learns whether the tail was delivered), then closes. May
