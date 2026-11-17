@@ -587,7 +587,10 @@ re-creating the sender.
 - `Sender` and `RawSender` are not internally synchronized. Wrap in
   an external `Mutex` if shared across threads, or — simpler — use
   thread-per-connection.
-- `ManagedTransport` itself is internally synchronized.
+- `ManagedTransport` takes `&mut self` for `send_bytes` and `close`, like
+  any `Transport`: one thread drives it. Its internal locks only
+  coordinate that thread with its own reconnect worker. Other threads get
+  its cancel handle and its stats handles.
 
 Don't over-engineer this. The typical deployment has one sender per
 process, or a small fixed number of senders each on its own thread.

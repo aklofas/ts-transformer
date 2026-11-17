@@ -124,19 +124,22 @@ impl TcpListener {
     /// Cancellable: [`Self::cancel_handle`] / [`Self::close`] drop the alive
     /// flag and a parked accept returns [`TcpError::Closed`] at its next
     /// [`ACCEPT_POLL_INTERVAL`] poll (~5 ms); every later call returns it at
-    /// the entry check. A close that lands after a connection has already
-    /// been pulled off the kernel backlog but before this method returns is
-    /// also caught (a re-check right after `accept()` succeeds) — the
-    /// accepted socket is dropped and this still returns
-    /// [`TcpError::Closed`], so a caller never receives a stream after its
-    /// `close()`/`cancel()` call has returned on another thread.
+    /// the entry check. A close that lands after a connection has been
+    /// pulled off the kernel backlog is caught by one re-check right after
+    /// `accept()` succeeds: the accepted socket is dropped and this returns
+    /// [`TcpError::Closed`]. That re-check is not a barrier. A `close()` or
+    /// `cancel()` that lands after it, while the accepted stream is being
+    /// configured, does not stop this call from returning the stream: it is
+    /// a result already in flight, and the next `accept_blocking` returns
+    /// `Closed`. An `accept()` or a setup step that fails after a close or
+    /// cancel reports `Closed` too, not the failure.
     ///
-    /// A cancelled listener's parked/later `accept_blocking` keeps returning
-    /// [`TcpError::Closed`] — the `TcpError` layer carries no cancel variant,
-    /// and a listener is not a `Transport`, so the
-    /// `ExplicitClose` the transports report has no home here. Ask
-    /// [`Self::cancel_handle`] for a handle and read its `is_cancelled()` to
-    /// tell a cancel from a plain close.
+    /// A cancelled or closed listener's parked or later `accept_blocking`
+    /// returns [`TcpError::Closed`]: the `TcpError` layer carries no cancel
+    /// variant and a listener is not a `Transport`. `close()` latches the
+    /// handle's `is_cancelled()` exactly as `cancel()` does (a listener's
+    /// only terminal event is the caller stopping it), so the two cannot be
+    /// told apart.
     ///
     /// **Accept latency ceiling:** unlike `recv_bytes`/`send_bytes`, whose
     /// `SO_RCVTIMEO`/`SO_SNDTIMEO` wake the thread the instant data or
@@ -181,10 +184,9 @@ impl TcpListener {
         // check and `accept()` returning a connection that was already
         // sitting in the kernel's backlog — `accept()` never blocks on a
         // pending connection, so that gap is real, not just theoretical.
-        // Re-check here so a racing close still gets what it promised
-        // (a parked OR a just-unblocked accept never hands out a stream)
-        // instead of silently accepting one more peer after `close()`
-        // returned on another thread. `sock`'s drop closes the fd.
+        // Re-check here so a close that raced the `accept()` call itself is
+        // honoured; one that lands after this line is not (see the method
+        // doc). `sock`'s drop closes the fd.
         if !self.alive.load(Ordering::Acquire) {
             return Err(TcpError::Closed);
         }
