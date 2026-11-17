@@ -2294,6 +2294,13 @@ try (RtspSession session = RtspClient.connect(cfg);
   a blocking control call; flip `cancel()` from another thread to break it out.
   `close()` is a best-effort teardown, not a cross-thread interruptor. The
   interrupted call throws `RtspException(CLOSED)`.
+- **`teardown()` reports what the server answered.** A 2xx reply, or
+  `454 Session Not Found` (the session is already gone), returns normally. A
+  TEARDOWN the server refuses throws `RtspException` of the status's kind:
+  `PROTOCOL`, `NOT_FOUND` for a 404, `AUTH_FAILED` for a 401 the
+  credentials cannot answer. The session counts as torn down either way, so
+  a second `teardown()` is a no-op. `close()` (and so try-with-resources)
+  tears down too and swallows that error.
 - **TLS (`rtsps://`) is supported.** The binding links rustls; an `rtsps://`
   URL negotiates TLS on connect. `tlsRootCertsPem` supplies a PEM bundle of
   custom trust anchors (private-CA cameras) — without it the handshake

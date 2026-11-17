@@ -1145,6 +1145,13 @@ with RtspClient.connect(cfg) as session:
   `session.cancel_handle()` *before* a blocking control call, then flip
   `cancel()` from another thread to break it out. The interrupted call
   raises `RtspError(CLOSED)`.
+- **`teardown()` reports what the server answered.** A 2xx reply, or
+  `454 Session Not Found` (the session is already gone), returns `None`. A
+  TEARDOWN the server refuses raises `RtspError` of the status's kind:
+  `PROTOCOL`, `NOT_FOUND` for a 404, `AUTH_FAILED` for a 401 the
+  credentials cannot answer. The session counts as torn down either way, so
+  a second `teardown()` is a no-op. Leaving the `with` block tears down too
+  and swallows that error.
 - **Why did the stream end?** When `for event in rx` exits or a call
   raises, `rx.end_reason()` (on `DemuxReceiver`, `Receiver`, and
   `H264Receiver` alike) answers with a `tstrans.shells.EndReason` member —
