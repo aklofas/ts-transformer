@@ -342,7 +342,7 @@ It covers every step with rich `// why + how` commentary.
 | Type | Notes |
 |---|---|
 | `H264Depacketizer` | Low-level state machine: `feed(header, payload)` / `next_au()` / `flush()`. Use when you are not going through `H264Receiver`. |
-| `H264Receiver` | High-level shell: `listen("rtp://…?pt=96")` or `session.into_h264_receiver(config)`. `recv_au()` → `Option<H264Au>`: `None` when the peer ended the stream; after a cancel, `Err(TransportError::ExplicitClose)` once the access units it holds are handed out. |
+| `H264Receiver` | High-level shell: `listen("rtp://…?pt=96")` or `session.into_h264_receiver(config)`. `recv_au()` → `Option<H264Au>`: `None` when the server ended the session or accepted a TEARDOWN from a client that was not cancelled (a failed control connection also ends it with `None`; `end_reason()` names it); after a cancel, or once the owning `RtspClient` is dropped without `teardown()` or torn down after its cancel fired, `Err(TransportError::ExplicitClose)` once the access units it holds are handed out. Keep the client alive while receiving and call `teardown()` to end cleanly. |
 | `H264Au` | Output: `annexb` (Annex-B bytes), `pts: Pts90khz` (90 kHz presentation time, delivered in decode order), `key_frame`, `rtp_timestamp`. |
 | `H264DepayConfig` | `payload_type`, `parameter_set_injection: ParameterSetInjection`, `initial_parameter_sets`, `max_au_bytes` (8 MiB default cap). |
 | `ParameterSetInjection` | `None` — pass through as received; `BeforeIdr` (default) — prepend cached SPS/PPS before every IDR frame. |

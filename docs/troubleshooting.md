@@ -516,11 +516,21 @@ for 5 s while a keepalive ping's bytes were the oldest queued
 (`KeepaliveFailed`), a TCP read or write error, or the same 5 s stall
 with a request's bytes oldest (`TransportFailed`), a peer that broke the
 message framing (`ProtocolError`), or the caller's own
-`close()` / cancel-handle fire (`Cancelled`). A cancelled `recv_au()` does
-not return `Ok(None)`: it hands out the access units the receiver holds,
-then returns `Err(TransportError::ExplicitClose)` (the CLOSED kind in the
-bindings), so `Ok(None)` from `recv_au()` always means the peer ended the
-stream.
+`close()` / cancel-handle fire (`Cancelled`).
+
+End of stream (`Ok(None)` from `recv_au()`, `Err(TransportError::Closed)`
+from an interleaved `RtpRecvTransport`, `Ok(None)` / `EndOfStream` from a
+receiver shell; `None` / `StopIteration` in Python, `null` / the end of
+iteration on the JVM, `TST_E_END_OF_STREAM` in C) means the server ended
+the session, or accepted a TEARDOWN from a client that was not cancelled.
+CLOSED (`ExplicitClose`, `RtpError(CLOSED)`, `RtpException(CLOSED)`,
+`TST_E_CLOSED`) means the receiver was cancelled or closed, or its
+`RtspClient` (in Python, the `RtspSession` object) was dropped, or torn
+down after its cancel handle fired. A cancelled `recv_au()` hands out the
+access units the receiver holds before it reports the cancel. One
+exception: when the control connection of an interleaved session fails (a reset, a write stall, a framing
+violation), `recv_au()` also returns `Ok(None)`, while the transport and
+the shells report it as broken; `end_reason()` names it.
 
 Fix: call `end_reason()` on the transport or receiver after a recv
 returns `None`/`EndOfStream` or a terminal error, and match on the
@@ -563,10 +573,14 @@ let mut demux = DemuxReceiver::new(transport);
 match handle.get() { /* same match as above */ }
 ```
 
-Keep the owning `RtspClient` alive, or drain the receiver, until
-end-of-stream is observed: dropping the client races the
-classification, since its `Drop` cancels the pump, which may record
-`Cancelled` before the server's EOF is read.
+Keep the owning `RtspClient` (in Python, the `RtspSession` object) alive
+while you receive, and call `teardown()` to end the stream cleanly: the
+server's reply to the TEARDOWN records `CleanTeardown` and ends an
+interleaved receiver with end of stream before `teardown()` returns, so
+dropping the client afterwards changes nothing. Dropping the client
+without `teardown()` ends that receiver with CLOSED, after the packets
+already queued, however fast the server answers the TEARDOWN the drop
+sends: the drop sets the client's cancel first.
 
 **Python** mirrors this: `tstrans.rtp.RecvTransport`, `tstrans.rtp.H264Receiver`
 and the `tstrans.shells` `Receiver` / `DemuxReceiver` each expose
