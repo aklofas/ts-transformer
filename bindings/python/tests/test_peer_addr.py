@@ -198,6 +198,7 @@ def test_udp_builder_source_first_drops_and_counts() -> None:
             tags.append(data[0])
         assert TAG_B not in tags
         assert rx.stats().source_rejected > 0
+        assert rx.source_rejected() == rx.stats().source_rejected
         assert rx.peer_addr() == pair.a_addr
     finally:
         rx.close()
@@ -410,6 +411,7 @@ def test_rist_builder_source_first() -> None:
                 assert TAG_B not in tags, f"{tags.count(TAG_B)} of {len(tags)} blocks are B's"
                 peer = rx.peer_addr()
                 assert peer is not None and peer[0] == "127.0.0.1"
+                assert rx.source_rejected() > 0
             finally:
                 b.close()
         finally:
@@ -540,6 +542,7 @@ def test_peer_addr_while_recv_parked() -> None:
         time.sleep(0.2)
         assert parked.is_alive()
         assert _finishes(rx.peer_addr) == ("127.0.0.1", tx.getsockname()[1])
+        assert _finishes(rx.source_rejected) == 0
     finally:
         rx.close()
         tx.close()
@@ -572,11 +575,41 @@ def test_closed_raises() -> None:
         rx.peer_addr()
     assert e.value.kind == UdpErrorKind.CLOSED
 
+    with pytest.raises(UdpError) as e:
+        rx.source_rejected()
+    assert e.value.kind == UdpErrorKind.CLOSED
+
     rrx, _ = _open_rist_rx()
     rrx.close()
     with pytest.raises(RistError) as re:
         rrx.peer_addr()
     assert re.value.kind == RistErrorKind.CLOSED
+    with pytest.raises(RistError) as re:
+        rrx.source_rejected()
+    assert re.value.kind == RistErrorKind.CLOSED
+
+
+def test_rist_getters_answer_while_recv_parked() -> None:
+    rx, _ = _open_rist_rx()
+    ended: list[object] = []
+
+    def recv_once() -> None:
+        try:
+            ended.append(rx.recv())
+        except RistError as e:
+            ended.append(e.kind)
+
+    parked = threading.Thread(target=recv_once, daemon=True)
+    parked.start()
+    try:
+        time.sleep(0.2)
+        assert parked.is_alive()
+        assert _finishes(rx.peer_addr) is None
+        assert _finishes(rx.source_rejected) == 0
+    finally:
+        rx.close()
+    parked.join(5)
+    assert ended == [RistErrorKind.CLOSED]
 
 
 def test_shell_getters_answer_after_close() -> None:

@@ -248,6 +248,19 @@ class RecvTransport:
         """
         ...
 
+    def source_rejected(self) -> int:
+        """Datagrams the ``source`` pin turned away: the count
+        ``stats().source_rejected`` also reports, 0 without a pin. Unlike
+        ``stats()``, it never waits behind a ``recv()`` parked on another
+        thread.
+
+        Raises
+        ------
+        UdpError(kind=CLOSED)
+            If the transport has been closed.
+        """
+        ...
+
     def close(self) -> None:
         """Close the receiver. Idempotent; from another thread the
         transport's cancel handle is fired first (``close()`` cancels
