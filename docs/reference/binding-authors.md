@@ -337,7 +337,7 @@ What may precede or override the CLOSED outcome:
   in that window is reported as the cancel.
 - The SRT `Listener` iterator maps CLOSED to `StopIteration`.
 - A flushed access unit is delivered before CLOSED: by the Rust shells,
-  and by the H.264 receiver in every binding (its queued complete access
+  and by the H.264 receiver in Python and the JVM (its queued complete access
   units, then the open one if it completes cleanly).
 
 ## Host naming grammar
