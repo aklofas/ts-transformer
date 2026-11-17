@@ -10,6 +10,7 @@ pub fn tst_rist::builder::RistRecvTransportBuilder::listen(&self) -> core::resul
 pub fn tst_rist::builder::RistRecvTransportBuilder::new(&str) -> core::result::Result<Self, tst_rist::error::RistError>
 pub fn tst_rist::builder::RistRecvTransportBuilder::profile(&mut self, tst_rist::config::RistProfile) -> &mut Self
 pub fn tst_rist::builder::RistRecvTransportBuilder::session_timeout(&mut self, core::time::Duration) -> &mut Self
+pub fn tst_rist::builder::RistRecvTransportBuilder::source(&mut self, tst_core::transport::source::SourcePin) -> &mut Self
 impl core::marker::Freeze for tst_rist::builder::RistRecvTransportBuilder
 impl core::marker::Send for tst_rist::builder::RistRecvTransportBuilder
 impl core::marker::Sync for tst_rist::builder::RistRecvTransportBuilder
@@ -90,6 +91,7 @@ pub tst_rist::config::RistConfig::pkt_size: usize
 pub tst_rist::config::RistConfig::profile: tst_rist::config::RistProfile
 pub tst_rist::config::RistConfig::recovery_maxbitrate_kbps: core::option::Option<u32>
 pub tst_rist::config::RistConfig::session_timeout: core::option::Option<core::time::Duration>
+pub tst_rist::config::RistConfig::source: core::option::Option<tst_core::transport::source::SourcePin>
 impl tst_rist::config::RistConfig
 pub const tst_rist::config::RistConfig::DEFAULT_PKT_SIZE: usize
 pub const tst_rist::config::RistConfig::MAX_PKT_SIZE: usize
@@ -160,6 +162,7 @@ pub fn tst_rist::recv::RistRecvTransport::cancel_handle(&self) -> tst_rist::tran
 pub fn tst_rist::recv::RistRecvTransport::listen(&str) -> core::result::Result<Self, tst_rist::error::RistError>
 pub fn tst_rist::recv::RistRecvTransport::listen_with_config(&tst_rist::url::RistUrl, &tst_rist::config::RistConfig) -> core::result::Result<Self, tst_rist::error::RistError>
 pub fn tst_rist::recv::RistRecvTransport::local_addr(&self) -> core::net::socket_addr::SocketAddr
+pub fn tst_rist::recv::RistRecvTransport::peer_addr(&self) -> core::option::Option<core::net::socket_addr::SocketAddr>
 pub fn tst_rist::recv::RistRecvTransport::stats(&self) -> tst_rist::stats::RistStats
 impl core::marker::Send for tst_rist::recv::RistRecvTransport
 impl core::ops::drop::Drop for tst_rist::recv::RistRecvTransport
@@ -172,6 +175,7 @@ pub fn tst_rist::recv::RistRecvTransport::is_alive(&self) -> bool
 pub fn tst_rist::recv::RistRecvTransport::max_payload(&self) -> usize
 pub fn tst_rist::recv::RistRecvTransport::recv_bytes(&mut self, &mut [u8]) -> core::result::Result<usize, tst_core::transport::TransportError>
 pub fn tst_rist::recv::RistRecvTransport::socket_stats(&self) -> core::option::Option<tst_core::transport::SocketStats>
+pub fn tst_rist::recv::RistRecvTransport::source_handle(&self) -> core::option::Option<tst_core::transport::source::SourceHandle>
 impl core::marker::Freeze for tst_rist::recv::RistRecvTransport
 impl !core::marker::Sync for tst_rist::recv::RistRecvTransport
 impl core::marker::Unpin for tst_rist::recv::RistRecvTransport
@@ -188,6 +192,7 @@ pub tst_rist::stats::RistStats::packets_received: u64
 pub tst_rist::stats::RistStats::packets_retransmitted: u64
 pub tst_rist::stats::RistStats::packets_sent: u64
 pub tst_rist::stats::RistStats::rtt_us: u32
+pub tst_rist::stats::RistStats::source_rejected: u64
 impl tst_rist::stats::RistStats
 pub fn tst_rist::stats::RistStats::to_socket_stats(&self) -> tst_core::transport::SocketStats
 impl core::clone::Clone for tst_rist::stats::RistStats
@@ -325,6 +330,7 @@ pub tst_rist::RistConfig::pkt_size: usize
 pub tst_rist::RistConfig::profile: tst_rist::config::RistProfile
 pub tst_rist::RistConfig::recovery_maxbitrate_kbps: core::option::Option<u32>
 pub tst_rist::RistConfig::session_timeout: core::option::Option<core::time::Duration>
+pub tst_rist::RistConfig::source: core::option::Option<tst_core::transport::source::SourcePin>
 impl tst_rist::config::RistConfig
 pub const tst_rist::config::RistConfig::DEFAULT_PKT_SIZE: usize
 pub const tst_rist::config::RistConfig::MAX_PKT_SIZE: usize
@@ -348,6 +354,7 @@ pub fn tst_rist::recv::RistRecvTransport::cancel_handle(&self) -> tst_rist::tran
 pub fn tst_rist::recv::RistRecvTransport::listen(&str) -> core::result::Result<Self, tst_rist::error::RistError>
 pub fn tst_rist::recv::RistRecvTransport::listen_with_config(&tst_rist::url::RistUrl, &tst_rist::config::RistConfig) -> core::result::Result<Self, tst_rist::error::RistError>
 pub fn tst_rist::recv::RistRecvTransport::local_addr(&self) -> core::net::socket_addr::SocketAddr
+pub fn tst_rist::recv::RistRecvTransport::peer_addr(&self) -> core::option::Option<core::net::socket_addr::SocketAddr>
 pub fn tst_rist::recv::RistRecvTransport::stats(&self) -> tst_rist::stats::RistStats
 impl core::marker::Send for tst_rist::recv::RistRecvTransport
 impl core::ops::drop::Drop for tst_rist::recv::RistRecvTransport
@@ -360,6 +367,7 @@ pub fn tst_rist::recv::RistRecvTransport::is_alive(&self) -> bool
 pub fn tst_rist::recv::RistRecvTransport::max_payload(&self) -> usize
 pub fn tst_rist::recv::RistRecvTransport::recv_bytes(&mut self, &mut [u8]) -> core::result::Result<usize, tst_core::transport::TransportError>
 pub fn tst_rist::recv::RistRecvTransport::socket_stats(&self) -> core::option::Option<tst_core::transport::SocketStats>
+pub fn tst_rist::recv::RistRecvTransport::source_handle(&self) -> core::option::Option<tst_core::transport::source::SourceHandle>
 impl core::marker::Freeze for tst_rist::recv::RistRecvTransport
 impl !core::marker::Sync for tst_rist::recv::RistRecvTransport
 impl core::marker::Unpin for tst_rist::recv::RistRecvTransport
@@ -376,6 +384,7 @@ pub fn tst_rist::builder::RistRecvTransportBuilder::listen(&self) -> core::resul
 pub fn tst_rist::builder::RistRecvTransportBuilder::new(&str) -> core::result::Result<Self, tst_rist::error::RistError>
 pub fn tst_rist::builder::RistRecvTransportBuilder::profile(&mut self, tst_rist::config::RistProfile) -> &mut Self
 pub fn tst_rist::builder::RistRecvTransportBuilder::session_timeout(&mut self, core::time::Duration) -> &mut Self
+pub fn tst_rist::builder::RistRecvTransportBuilder::source(&mut self, tst_core::transport::source::SourcePin) -> &mut Self
 impl core::marker::Freeze for tst_rist::builder::RistRecvTransportBuilder
 impl core::marker::Send for tst_rist::builder::RistRecvTransportBuilder
 impl core::marker::Sync for tst_rist::builder::RistRecvTransportBuilder
@@ -407,6 +416,7 @@ pub tst_rist::RistStats::packets_received: u64
 pub tst_rist::RistStats::packets_retransmitted: u64
 pub tst_rist::RistStats::packets_sent: u64
 pub tst_rist::RistStats::rtt_us: u32
+pub tst_rist::RistStats::source_rejected: u64
 impl tst_rist::stats::RistStats
 pub fn tst_rist::stats::RistStats::to_socket_stats(&self) -> tst_core::transport::SocketStats
 impl core::clone::Clone for tst_rist::stats::RistStats
