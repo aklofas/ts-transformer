@@ -17,7 +17,8 @@ use crate::transport::RistCancelHandle;
 use crate::url::RistUrl;
 
 /// Default per-`recv_bytes` poll interval in milliseconds. Short enough that
-/// `close()` from another thread (via `alive` swap) is observed quickly.
+/// a cancel from another thread (the `RistCancelHandle` flag) is observed
+/// quickly.
 const POLL_TIMEOUT_MS: i32 = 100;
 
 /// What to do with a librist data block once read. Pure decision so it can be

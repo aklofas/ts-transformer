@@ -153,17 +153,18 @@ struct ReconnectEpoch {
 /// `DemuxReceiver` supports three shutdown patterns:
 ///
 /// 1. **Drop** — the [`Drop`] impl emits a tracing event and lets the
-///    inner [`Receiver`] / transport `Drop` chain run, which closes the
-///    libsrt socket. Synchronous; bounded by `SRTO_LINGER` (libsrt
-///    default off, sender preset 5 s, configurable via `SocketBuilder::linger`).
+///    inner [`Receiver`] / transport `Drop` chain run. Synchronous: it
+///    takes as long as the transport's close takes; see its docs.
 /// 2. **Explicit close** — call [`Self::close`]. Closes the underlying
 ///    recv transport; the next `recv_event` flushes the demuxer and
 ///    returns `Ok(None)` once the queue drains. Idempotent.
 /// 3. **Cross-thread cancel** — call [`Self::cancel_handle`] to obtain a
 ///    `Send + Sync` [`tst_core::transport::TransportCancel`] handle,
 ///    then `cancel()` from any thread. Wakes a peer thread parked in
-///    `recv_event`'s underlying `next_packet` call within one libsrt
-///    I/O cycle (~3-10 ms).
+///    `recv_event`'s underlying `next_packet` call; how soon depends on
+///    the transport (SRT closes the socket, the others notice at their
+///    next poll tick); see
+///    [the cancel coverage table](https://github.com/aklofas/ts-transformer/blob/main/docs/reference/srt-cancel-handle.md#cancel-coverage-by-transport).
 ///
 /// C ABI for the receiver surface: `tst_demux_receiver_open` /
 /// `_recv_event` / `_close` / `_cancel` / `_get_stats` and the typed

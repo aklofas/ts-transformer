@@ -26,7 +26,8 @@
 //!
 //! The send-side decorator uses `Arc<dyn Fn() + Send + Sync>` for the
 //! factory and `Arc<Mutex<Option<T>>>` for the inner transport — it must
-//! support concurrent close-from-any-thread on top of `&mut self` sends.
+//! share them with its background reconnect worker on top of `&mut self`
+//! sends.
 //! The receive side has no such requirement: `recv_bytes(&mut self, …)` is
 //! exclusive-mutable, so a `Box<dyn FnMut + Send>` factory and a plain
 //! `Option<R>` inner suffice. This is intentional, not a copy-paste miss.
