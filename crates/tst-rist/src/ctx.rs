@@ -1,6 +1,7 @@
 //! The librist context a sender and a receiver both own: context creation,
-//! the one peer, the stats callback, `rist_start`, and the single destroy
-//! that reclaims the stats reference handed to librist.
+//! the one peer, the stats callback (and, on a receiver, the peer callbacks),
+//! `rist_start`, and the single destroy that reclaims the references handed
+//! to librist.
 
 use std::ffi::CString;
 use std::mem::ManuallyDrop;
@@ -8,9 +9,12 @@ use std::net::{SocketAddr, UdpSocket};
 use std::os::raw::c_void;
 use std::sync::{Arc, Mutex};
 
+use tst_core::transport::SourceHandle;
+
 use crate::config::{RistConfig, RistProfile};
 use crate::error::RistError;
 use crate::init::ensure_init;
+use crate::peers::Peers;
 use crate::stats::{OnDrop, RistStats};
 use crate::transport::{apply_peer_overrides, global_logging_ptr, rist_profile_to_c};
 use crate::url::{RistUrl, native_endpoint};
@@ -32,6 +36,13 @@ pub(crate) struct RistCtx {
     /// callback `arg`. Reclaimed exactly once in [`Self::destroy`] after
     /// `rist_destroy`.
     stats_arg: *mut c_void,
+    /// Which sender each peer is, and the `source` pin: `Some` for
+    /// [`Role::Receiver`], `None` for a sender.
+    pub(crate) peers: Option<Arc<Peers>>,
+    /// Leaked `Arc<Peers>` ref handed to librist as the peer callbacks'
+    /// `arg` (null on a sender). Reclaimed exactly once in [`Self::destroy`]
+    /// after `rist_destroy`.
+    peers_arg: *mut c_void,
     /// The native endpoint the peer was created from (for diagnostics).
     pub(crate) endpoint: String,
     /// The address librist bound, read from its socket: `Some` for
@@ -174,15 +185,27 @@ impl RistCtx {
         // every tick, so registering once that thread is running is a data
         // race that TSan reports. librist's own tools register before start too.
         let (stats, stats_arg) = crate::stats::register_stats_callback(ctx);
+        // The peer callbacks too: librist's protocol thread reads them without
+        // a lock.
+        let (peers, peers_arg) = if bind {
+            let peers = Arc::new(Peers::new(SourceHandle::new(cfg.source)));
+            let arg = Peers::register(ctx, &peers);
+            (Some(peers), arg)
+        } else {
+            (None, std::ptr::null_mut())
+        };
 
         // ===== Start the session =====
         let rc = unsafe { rist_sys::rist_start(ctx) };
         if rc != 0 {
             // Mirror destroy(): rist_destroy first (no protocol thread ever
             // ran, so no callback can be in flight), then reclaim the leaked
-            // Arc ref exactly once — there is no Self to do it.
+            // Arc refs exactly once — there is no Self to do it.
             drop(ctx_guard);
             unsafe { drop(Arc::from_raw(stats_arg as *const Mutex<RistStats>)) };
+            if !peers_arg.is_null() {
+                unsafe { Peers::reclaim(peers_arg) };
+            }
             return Err(RistError::Ffi {
                 code: rc,
                 function: "rist_start",
@@ -195,6 +218,8 @@ impl RistCtx {
             ptr: ctx,
             stats,
             stats_arg,
+            peers,
+            peers_arg,
             endpoint,
             local,
         })
@@ -210,8 +235,9 @@ impl RistCtx {
         self.ptr.is_null()
     }
 
-    /// `rist_destroy` (which joins librist's protocol thread), then reclaim
-    /// the leaked stats reference — exactly once: both steps are
+    /// `rist_destroy` (which joins librist's protocol thread and calls the
+    /// disconnect callback for each remaining peer), then reclaim the leaked
+    /// stats and peers references — exactly once: every step is
     /// null-guarded, so a second call and the drop after an explicit close
     /// are no-ops.
     pub(crate) fn destroy(&mut self) {
@@ -227,6 +253,10 @@ impl RistCtx {
                 drop(Arc::from_raw(self.stats_arg as *const Mutex<RistStats>));
             }
             self.stats_arg = std::ptr::null_mut();
+        }
+        if !self.peers_arg.is_null() {
+            unsafe { Peers::reclaim(self.peers_arg) };
+            self.peers_arg = std::ptr::null_mut();
         }
     }
 }

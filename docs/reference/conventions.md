@@ -405,6 +405,7 @@ rejected by `srt`, `tcps`, `rtp`, `rtsp(s)` and `whep(s)` URLs.
 | `recovery_maxbitrate` (also `recovery-maxbitrate`) | Bandwidth cap (payload plus retransmissions) | kilobits per second | `rist` |
 | `secret` | Encryption passphrase | non-empty text; alone it means AES-256 | `rist` |
 | `session_timeout` (also `session-timeout`) | Session timeout | milliseconds | `rist` |
+| `source` | Accept data only from this sender's IP, or from the first to deliver (receive URLs only) | IPv4 or IPv6 literal, or `first` | `rist` |
 | `congestion` (also `smoother`) | Congestion-control algorithm | `live` or `file` | `srt` |
 | `conntimeo` (also `connect_timeout`) | Deadline for the whole connect, shared across the resolved addresses; polled about once a second | milliseconds | `srt` |
 | `fc` (also `ffs`) | Flow-control window | packets | `srt` |

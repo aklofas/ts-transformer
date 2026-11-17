@@ -73,6 +73,9 @@ tst_core::binding_record! {
         pub bandwidth_kbps: u32,
         /// Smoothed RTT, microseconds.
         pub rtt_us: u32,
+        /// Datagrams or blocks turned away because their sender's IP did not
+        /// match the `source` pin (receiver only); 0 without a pin.
+        pub source_rejected: u64,
     }
 }
 

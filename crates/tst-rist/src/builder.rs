@@ -2,6 +2,8 @@
 
 use std::time::Duration;
 
+use tst_core::transport::SourcePin;
+
 use crate::config::{EncryptionKey, RistConfig, RistProfile};
 use crate::error::RistError;
 use crate::recv::RistRecvTransport;
@@ -183,6 +185,12 @@ impl RistRecvTransportBuilder {
         self
     }
 
+    /// Accept data only from `pin`'s sender (see [`RistConfig::source`]).
+    pub fn source(&mut self, pin: SourcePin) -> &mut Self {
+        self.config.source = Some(pin);
+        self
+    }
+
     /// Borrow the accumulated config.
     pub fn config(&self) -> &RistConfig {
         &self.config
@@ -244,6 +252,9 @@ mod tests {
         assert_eq!(b.config().profile, RistProfile::Main);
         assert_eq!(b.config().buffer, Duration::from_millis(300));
         assert_eq!(b.config().cname.as_deref(), Some("recv-1"));
+        assert_eq!(b.config().source, None);
+        b.source(SourcePin::First);
+        assert_eq!(b.config().source, Some(SourcePin::First));
     }
 
     /// librist udp.c: the Simple profile sends RTP straight to UDP, so a key

@@ -3,6 +3,7 @@
 use std::time::Duration;
 
 use secrecy::{ExposeSecret, SecretString};
+use tst_core::transport::SourcePin;
 
 /// AES pre-shared key. Backed by `secrecy::SecretString` — zeroes the
 /// plaintext on drop and redacts in `Debug`, so it never leaks through a
@@ -118,6 +119,10 @@ pub struct RistConfig {
     /// A sender refuses a value outside `1..=`[`Self::MAX_PKT_SIZE`] at
     /// connect; a receiver ignores it.
     pub pkt_size: usize,
+    /// Receive side: accept data only from this sender's IP, or from the
+    /// first sender to deliver; `None` accepts every sender. A sender
+    /// refuses it at connect.
+    pub source: Option<SourcePin>,
 }
 
 impl Default for RistConfig {
@@ -132,6 +137,7 @@ impl Default for RistConfig {
             session_timeout: None,
             compression: false,
             pkt_size: 7 * 188,
+            source: None,
         }
     }
 }

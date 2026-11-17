@@ -7,13 +7,16 @@
 //! - `rist://239.x.x.x:port` — multicast sender
 //! - Query params: `profile`, `buffer`, `aes-type`, `secret`, `cname`,
 //!   `recovery_maxbitrate` (alias `bandwidth`), `session_timeout`,
-//!   `compression`, `pkt_size`. `bandwidth` and `recovery_maxbitrate` set the same
+//!   `compression`, `pkt_size`, `source`. `bandwidth` and `recovery_maxbitrate` set the same
 //!   librist field (`recovery_maxbitrate`, the cap on payload plus
 //!   retransmissions in kbps); giving both with different values is a parse error.
+//!   `source` (an IP literal or `first`) is a receiver's filter; a sender
+//!   refuses it at connect.
 
 use std::net::IpAddr;
 use std::time::Duration;
 
+use tst_core::transport::SourcePin;
 use tst_core::url::UrlError;
 use tst_core::url::common::{parse_bool, parse_int, parse_size, parse_url};
 use tst_core::url::query::{QueryKey, UnknownKeys, apply_query};
@@ -122,6 +125,17 @@ fn set_pkt_size(u: &mut RistUrl, key: &str, value: &str) -> Applied {
     Ok(())
 }
 
+fn set_source(u: &mut RistUrl, key: &str, value: &str) -> Applied {
+    u.config.source = Some(
+        SourcePin::parse(value).ok_or_else(|| UrlError::BadQueryValue {
+            key: key.to_string(),
+            value: value.to_string(),
+            detail: "expected an IPv4 or IPv6 literal, or `first`".into(),
+        })?,
+    );
+    Ok(())
+}
+
 /// The query keys a `rist://` URL accepts; the parser and the generated key
 /// documentation both read this table.
 #[doc(hidden)]
@@ -183,6 +197,13 @@ pub const URL_KEYS: &[QueryKey<RistUrl>] = &[
         "Largest payload one send accepts (1..=9968)",
         "bytes with the `K`/`M` forms",
         set_pkt_size,
+    ),
+    QueryKey::new(
+        "source",
+        &[],
+        "Accept data only from this sender's IP, or from the first to deliver (receive URLs only)",
+        "IPv4 or IPv6 literal, or `first`",
+        set_source,
     ),
 ];
 
@@ -451,6 +472,19 @@ mod tests {
             let u = RistUrl::parse(&format!("rist://1.2.3.4:8000?{q}")).unwrap();
             assert_eq!(u.config.profile, RistProfile::Main, "{q}");
         }
+    }
+
+    #[test]
+    fn source_reads_an_ip_literal_or_first() {
+        let u = RistUrl::parse("rist://@0.0.0.0:8000?source=::ffff:10.0.0.5").unwrap();
+        assert_eq!(
+            u.config.source,
+            Some(SourcePin::Ip("10.0.0.5".parse().unwrap()))
+        );
+        let u = RistUrl::parse("rist://@0.0.0.0:8000?source=first").unwrap();
+        assert_eq!(u.config.source, Some(SourcePin::First));
+        let u = RistUrl::parse("rist://@0.0.0.0:8000").unwrap();
+        assert_eq!(u.config.source, None);
     }
 
     #[test]
