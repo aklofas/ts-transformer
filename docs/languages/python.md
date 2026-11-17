@@ -1121,6 +1121,9 @@ with RtspClient.connect(cfg) as session:
 - **URL credentials.** With `auth=None` the URL's userinfo answers a
   challenge; a user name without a password (`rtsp://admin@cam/…`) answers
   with an empty password, as `rtsp://admin:@cam/…` does. `auth` overrides it.
+  An empty user name (`BasicAuth("", pw)`, `DigestAuth("", pw)` or
+  `rtsp://:pw@cam/…`) is no credentials: a challenge then raises
+  `RtspError(AUTH_FAILED)`.
 - **Passwords stay Rust-side.** `BasicAuth` / `DigestAuth` hold the
   password in Rust memory (never re-exposed); only `user`, `realm`, and
   `algorithm` are readable. `repr()` redacts the secret.
