@@ -76,6 +76,13 @@ pub struct TstRistDemuxReceiver {
 /// - `?source=<ip>|first` — deliver data from one IP only (any port); see
 ///   `tst_rist_demux_receiver_peer_addr`.
 ///
+/// Port `0`: a Main-profile receiver (the default) binds a port the kernel
+/// picks. A Simple-profile receiver (`?profile=simple`) on port `0` is refused
+/// at open with `TST_E_RIST_CONFIG (-39)`: librist keeps the port the kernel
+/// picked in network byte order and derives its even-port check and the RTCP
+/// port (port + 1) from that wrong value; name an even port, or use the Main
+/// profile.
+///
 /// WHY the `?buffer=N` parameter matters:
 ///   The RIST recovery buffer determines how long the receiver holds on to
 ///   out-of-order / retransmitted packets before surfacing them. Larger
@@ -497,9 +504,9 @@ pub unsafe extern "C" fn tst_rist_demux_receiver_peer_addr(
 
 /// Read into `*out` how many times the URL's `source` pin turned data away:
 /// each time librist reported a sender the pin refuses or whose address cannot
-/// be read, and each delivered block it refused, since open; 0 without a pin.
-/// The pin compares the IP address only, never the port. Neither sender is
-/// told.
+/// be read, and each block it refused before delivery, since open; 0 without a
+/// pin. The pin compares the IP address only, never the port. Neither sender
+/// is told.
 ///
 /// Answers in the same states as `tst_rist_demux_receiver_peer_addr`: while a
 /// receive runs on another thread, after `tst_rist_demux_receiver_cancel`,

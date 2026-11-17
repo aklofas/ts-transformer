@@ -7203,9 +7203,9 @@ int tst_rist_demux_receiver_get_socket_stats(struct TstRistDemuxReceiver *p,
 /**
  * Read into `*out` how many times the URL's `source` pin turned data away:
  * each time librist reported a sender the pin refuses or whose address cannot
- * be read, and each delivered block it refused, since open; 0 without a pin.
- * The pin compares the IP address only, never the port. Neither sender is
- * told.
+ * be read, and each block it refused before delivery, since open; 0 without a
+ * pin. The pin compares the IP address only, never the port. Neither sender
+ * is told.
  *
  * Answers in the same states as `tst_rist_demux_receiver_peer_addr`: while a
  * receive runs on another thread, after `tst_rist_demux_receiver_cancel`,
@@ -7393,6 +7393,13 @@ int tst_rist_demux_receiver_next_event(struct TstRistDemuxReceiver *p,
  * - Encryption: `?aes-type=128|192|256&secret=<psk>` (forces Main Profile)
  * - `?source=<ip>|first` — deliver data from one IP only (any port); see
  *   `tst_rist_demux_receiver_peer_addr`.
+ *
+ * Port `0`: a Main-profile receiver (the default) binds a port the kernel
+ * picks. A Simple-profile receiver (`?profile=simple`) on port `0` is refused
+ * at open with `TST_E_RIST_CONFIG (-39)`: librist keeps the port the kernel
+ * picked in network byte order and derives its even-port check and the RTCP
+ * port (port + 1) from that wrong value; name an even port, or use the Main
+ * profile.
  *
  * WHY the `?buffer=N` parameter matters:
  *   The RIST recovery buffer determines how long the receiver holds on to
@@ -7910,9 +7917,9 @@ int tst_rist_mux_sender_push_video_to(struct TstRistMuxSender *p,
 /**
  * Read into `*out` how many times the URL's `source` pin turned data away:
  * each time librist reported a sender the pin refuses or whose address cannot
- * be read, and each delivered block it refused, since open; 0 without a pin.
- * The pin compares the IP address only, never the port. Neither sender is
- * told.
+ * be read, and each block it refused before delivery, since open; 0 without a
+ * pin. The pin compares the IP address only, never the port. Neither sender
+ * is told.
  *
  * Answers in the same states as `tst_rist_receiver_peer_addr`: while a receive
  * runs on another thread, after `tst_rist_receiver_cancel`, after a receive
@@ -8053,7 +8060,12 @@ int tst_rist_receiver_recv_ts(struct TstRistReceiver *p,
  *   Returns `TST_E_RIST_ENCRYPTION_DISABLED (-41)` if the mbedtls
  *   feature was disabled at build time.
  *
- * Port `0` causes the kernel to assign an ephemeral port.
+ * Port `0`: a Main-profile receiver (the default) binds a port the kernel
+ * picks. A Simple-profile receiver (`?profile=simple`) on port `0` is refused
+ * at open with `TST_E_RIST_CONFIG (-39)`: librist keeps the port the kernel
+ * picked in network byte order and derives its even-port check and the RTCP
+ * port (port + 1) from that wrong value; name an even port, or use the Main
+ * profile.
  *
  * WHY the `@` prefix?
  *   RIST and MPEG-TS-over-UDP share the ffmpeg convention: `@host:port`

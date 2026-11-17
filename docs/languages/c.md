@@ -433,8 +433,8 @@ int tst_udp_receiver_get_source_rejected(struct TstUdpReceiver *p, uint64_t *out
 ```
 
 - **`_peer_addr`** writes the address of the sender of the datagram (UDP) or block (RIST) delivered last, where that address is known, as NUL-terminated `ip:port` (`[v6]:port` for IPv6), and returns its length. It returns 0 and writes `""` until the first one from a known address is delivered. An IPv4 sender on a dual-stack (`[::]`) bind is written in IPv4 form. A buffer too small for the text plus its NUL (`buf_len == 0` included) is `TST_E_INVALID_CONFIG` ("buffer too small") and nothing is written; 64 bytes hold any address.
-- **`_get_source_rejected`** reads what the `source` pin below turned away; 0 without a pin. On UDP it counts datagrams. On RIST it counts each time librist reported a sender the pin refuses and each delivered block it refused.
-- Both read a record kept beside the receiver, so they never wait behind a receive parked on another thread. Like the `_get_ts_bytes_demuxed` counters they still answer after `_cancel`, after a receive ended with an error, and after a caught panic emptied the handle. `_close` frees the handle, as for every getter.
+- **`_get_source_rejected`** reads what the `source` pin below turned away; 0 without a pin. On UDP it counts datagrams. On RIST it counts each time librist reported a sender the pin refuses and each block it refused before delivery.
+- Both read a record kept beside the receiver, so they never wait behind a receive parked on another thread. Like the demux receivers' `_get_ts_bytes_demuxed` counters, they still answer after `_cancel`, after a receive ended with an error, and after a caught panic emptied the handle. `_close` frees the handle, as for every getter.
 
 **The address is not proof.** It is the source address of the datagrams, and nothing proves the sender can receive there: it can be forged. SRT, RTSP and TCP addresses are proven by a handshake; UDP and RIST ones are not, and on RIST a pre-shared key does not prove it either (a recording replayed one way from another address was accepted and delivered). Use it for logging and per-address rules, not as an identity.
 
