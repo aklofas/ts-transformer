@@ -255,7 +255,15 @@ fn main() -> Result<(), Box<dyn Error>> {
     // most) and for the client's thread, so the connection is shut when it
     // returns. Dropping `client` instead would write TEARDOWN without
     // waiting for the reply or the thread.
-    client.close()?;
+    //
+    // Its error is reported, not returned, so the stats below still print:
+    // the receive loop has already ended and the session is gone either
+    // way. A server that ended the stream first makes it
+    // `Io(UnexpectedEof)`, a reply slower than 500 ms makes it `Timeout`.
+    match client.close() {
+        Ok(()) => eprintln!("TEARDOWN answered"),
+        Err(e) => eprintln!("TEARDOWN not confirmed ({e}); the session is closed anyway"),
+    }
 
     // Print final stats from the RFC 6184 depacketizer (AU counts, sequence
     // gaps, parameter-set updates, etc.).

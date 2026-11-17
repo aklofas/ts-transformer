@@ -466,9 +466,11 @@ impl RtspClient {
     /// control connection, unless the 2 s ran out: the thread is then left
     /// to end on its own.
     ///
-    /// This does not set the cancel flag, so the reply is awaited. On a
-    /// client whose cancel is set, the TEARDOWN is still written, its reply
-    /// is not awaited and the result is [`RtspError::LocalCancel`].
+    /// This does not set the cancel flag while it waits, so the reply is
+    /// awaited; the `Drop` that runs as `close` returns sets it, so a cancel
+    /// handle the caller kept reads cancelled afterwards. On a client whose
+    /// cancel is already set, the TEARDOWN is still written, its reply is
+    /// not awaited and the result is [`RtspError::LocalCancel`].
     ///
     /// Dropping the client instead sets the cancel, writes TEARDOWN within
     /// the same 500 ms bound when a session is open, and tells the thread

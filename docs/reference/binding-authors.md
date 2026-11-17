@@ -408,10 +408,10 @@ each entry point carry the per-family details of this one rule.
 detaches in `Drop`, and joins in its `stop()` / `close()` / `shutdown()`;
 the [Runtime ownership](/docs/reference/architecture.md#runtime-ownership)
 table says what each of those waits for, one phase at a time.
-`WhepServer`, the HLS serving handle and
-`ManagedTransport` and `RtspClient` follow this today. `RtspServer` is the
-listed exception: its `Drop` still waits up to 5 s for its runtime (the
-RIST transports also join in `Drop`; the same table lists them). A Rust `Sender` or `MuxSender` dropped without `close()`
+`WhepServer`, the HLS serving handle, `ManagedTransport` and `RtspClient`
+follow this today. `RtspServer` is the listed exception: its `Drop` still
+waits up to 5 s for its runtime (the RIST transports also join in `Drop`;
+the same table lists them). A Rust `Sender` or `MuxSender` dropped without `close()`
 sends what it still buffers, then closes its transport. The binding layer
 cancels first whenever it retires a shell: on `close()`, after a caught
 panic in a mutator, and when a JVM or Python object is collected without
