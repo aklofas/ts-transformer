@@ -45,7 +45,7 @@ pub enum TstStreamEndReason {
     None = 0,
     /// The peer closed the connection in an orderly way, with no
     /// protocol or transport error, or an RTSP server accepted the
-    /// client's TEARDOWN.
+    /// TEARDOWN of a client whose cancel was not set.
     CleanTeardown = 1,
     /// The server no longer honors the session — a keepalive ping was
     /// answered `454 Session Not Found`.
@@ -61,7 +61,9 @@ pub enum TstStreamEndReason {
     /// getter doc.
     ProtocolError = 5,
     /// The caller explicitly cancelled or closed the transport — not a
-    /// wire-level failure.
+    /// wire-level failure. On a receiver fed by an RTSP client, also: the
+    /// client was freed, its cancel had fired before it sent its TEARDOWN,
+    /// or it was closed without an accepted TEARDOWN.
     Cancelled = 6,
 }
 

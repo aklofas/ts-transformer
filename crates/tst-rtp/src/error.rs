@@ -36,7 +36,8 @@ pub enum RtspError {
     Tls(String),
 
     /// 4xx or 5xx server response that doesn't match a more specific
-    /// variant. `code` is the numeric status (e.g., 404 Not Found),
+    /// variant (for TEARDOWN, any status but `2xx` and `454`). `code` is
+    /// the numeric status (e.g., 404 Not Found),
     /// `reason` is the human-readable reason phrase ("Stream Not
     /// Found").
     #[error("RTSP server returned {code} {reason}")]

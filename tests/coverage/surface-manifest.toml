@@ -5767,6 +5767,6 @@ kind = "rust"
 crate = "tst-rtp"
 item = "tst_rtp::rtsp::client::RtspClient::close"
 owning_tests = ["crates/tst-rtp/tests/rtsp_client/teardown.rs"]
-bindings = ["c:deferred(the session free calls teardown_within and drops)", "python:deferred(the bindings' close paths move in a later package)", "java:deferred(the bindings' close paths move in a later package)", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:deferred(the session free calls teardown_within and drops)", "python:deferred(the session's with exit calls teardown and collection drops the client; neither calls close)", "java:deferred(the session's close calls teardown then drops the client; it does not call close)", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"

@@ -518,10 +518,14 @@ pub enum EndReason {
     /// attempts — the peer never came back.
     ReconnectExhausted,
     /// The caller cancelled or closed the receiver — not a wire failure.
+    /// On a receiver fed by an RTSP client, also: the client was dropped,
+    /// its cancel had fired before it sent its TEARDOWN, or its `close()`
+    /// ended it without an accepted TEARDOWN.
     Cancelled,
     /// The peer closed the connection in an orderly way (TCP EOF, or an
     /// RTSP mount closed by its server) with no protocol or transport
-    /// error, or an RTSP server accepted the client's TEARDOWN.
+    /// error, or an RTSP server accepted the TEARDOWN of a client whose
+    /// cancel was not set.
     CleanTeardown,
     /// The server no longer honours the session: a keepalive was answered
     /// `454 Session Not Found`.

@@ -37,6 +37,9 @@ use crate::panic::ffi_catch;
 /// No-op (with last-error set to `TST_E_INVALID_CONFIG`) if `builder`,
 /// `user`, or `pass` is NULL, or if either string is not valid UTF-8.
 ///
+/// An empty `user` (`""`) is no credentials: a challenge then fails with
+/// `TST_E_RTSP_AUTH_FAILED`.
+///
 /// # Safety
 ///
 /// - `builder` must be a non-NULL pointer from `tst_rtsp_client_builder_new`.
@@ -76,6 +79,9 @@ pub unsafe extern "C" fn tst_rtsp_client_builder_auth_basic(
 ///
 /// No-op (with last-error set to `TST_E_INVALID_CONFIG`) if `builder`,
 /// `user`, or `pass` is NULL, or if either string is not valid UTF-8.
+///
+/// An empty `user` (`""`) is no credentials: a challenge then fails with
+/// `TST_E_RTSP_AUTH_FAILED`.
 ///
 /// # Safety
 ///
@@ -117,6 +123,9 @@ pub unsafe extern "C" fn tst_rtsp_client_builder_auth_digest_md5(
 ///
 /// No-op (with last-error set to `TST_E_INVALID_CONFIG`) if `builder`,
 /// `user`, or `pass` is NULL, or if either string is not valid UTF-8.
+///
+/// An empty `user` (`""`) is no credentials: a challenge then fails with
+/// `TST_E_RTSP_AUTH_FAILED`.
 ///
 /// # Safety
 ///

@@ -191,7 +191,7 @@ typedef enum tst_stream_end_reason {
   /**
    * The peer closed the connection in an orderly way, with no
    * protocol or transport error, or an RTSP server accepted the
-   * client's TEARDOWN.
+   * TEARDOWN of a client whose cancel was not set.
    */
   TST_STREAM_END_REASON_CLEAN_TEARDOWN = 1,
   /**
@@ -217,7 +217,9 @@ typedef enum tst_stream_end_reason {
   TST_STREAM_END_REASON_PROTOCOL_ERROR = 5,
   /**
    * The caller explicitly cancelled or closed the transport — not a
-   * wire-level failure.
+   * wire-level failure. On a receiver fed by an RTSP client, also: the
+   * client was freed, its cancel had fired before it sent its TEARDOWN,
+   * or it was closed without an accepted TEARDOWN.
    */
   TST_STREAM_END_REASON_CANCELLED = 6,
 } tst_stream_end_reason;
@@ -9355,6 +9357,9 @@ int tst_rtp_receiver_recv_ts(struct TstRtpReceiver *p,
  * No-op (with last-error set to `TST_E_INVALID_CONFIG`) if `builder`,
  * `user`, or `pass` is NULL, or if either string is not valid UTF-8.
  *
+ * An empty `user` (`""`) is no credentials: a challenge then fails with
+ * `TST_E_RTSP_AUTH_FAILED`.
+ *
  * # Safety
  *
  * - `builder` must be a non-NULL pointer from `tst_rtsp_client_builder_new`.
@@ -9381,6 +9386,9 @@ void tst_rtsp_client_builder_auth_basic(struct tst_rtsp_client_builder_t *builde
  *
  * No-op (with last-error set to `TST_E_INVALID_CONFIG`) if `builder`,
  * `user`, or `pass` is NULL, or if either string is not valid UTF-8.
+ *
+ * An empty `user` (`""`) is no credentials: a challenge then fails with
+ * `TST_E_RTSP_AUTH_FAILED`.
  *
  * # Safety
  *
@@ -9409,6 +9417,9 @@ void tst_rtsp_client_builder_auth_digest_md5(struct tst_rtsp_client_builder_t *b
  *
  * No-op (with last-error set to `TST_E_INVALID_CONFIG`) if `builder`,
  * `user`, or `pass` is NULL, or if either string is not valid UTF-8.
+ *
+ * An empty `user` (`""`) is no credentials: a challenge then fails with
+ * `TST_E_RTSP_AUTH_FAILED`.
  *
  * # Safety
  *

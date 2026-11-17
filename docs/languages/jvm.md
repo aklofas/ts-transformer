@@ -2608,17 +2608,26 @@ throws `RtspException(CLOSED)`): it sends TEARDOWN, waits for the reply (up to
 the request timeout) and frees the session. A live TCP-interleaved
 `DemuxReceiver` on it then ends after the events already queued: with end of
 stream (`endReason()` is `CLEAN_TEARDOWN`) when the server accepted the
-TEARDOWN, and with `RtpException(CLOSED)` when it refused it or did not answer
-in time. Ensure only one
+TEARDOWN on a session whose cancel handle had not fired, and with
+`RtpException(CLOSED)` when it refused it or did not answer in time, or when
+the session's cancel handle had fired before the TEARDOWN was sent. Ensure only one
 `into*` call is made per session.
 
 **End of stream or CLOSED.** On a receiver from an RTSP session, end of stream
-(`null` from `recvAu()` / `recvEvent()`, the end of iteration) means the server
-ended the session, or accepted the TEARDOWN that `teardown()` or `close()` sent;
-`RtpException(CLOSED)` means the receiver was cancelled or closed, or its
-session was closed without the server accepting that TEARDOWN. Keep the `RtspSession`
-open while a `DemuxReceiver` from `intoDemuxReceiver()` receives, and call
-`teardown()` (or `close()`) to end the stream cleanly.
+(`null` from `recvAu()` / `recvEvent()`, the end of iteration) means the peer
+ended the session in an orderly way, or the server accepted (`2xx` or `454`)
+the TEARDOWN that `teardown()` or `close()` sent on a session whose cancel
+handle had not fired. `RtpException(CLOSED)` means a cancel: the receiver was
+cancelled or closed; or its session was closed without the server accepting
+that TEARDOWN; or the session's cancel handle had fired before the TEARDOWN
+was sent, so `teardown()`, `close()` and a failed `intoH264Receiver()` on a
+cancelled session are a cancel whatever the server then does. A session that
+had already ended for its own reason (a keepalive answered `454`, a wire
+failure, the peer's close) keeps that reason and that outcome. A session
+keeps one end reason: open a new session for each stream. A receiver on a
+UDP session has its own socket and is not ended by any of this. Keep the
+`RtspSession` open while a `DemuxReceiver` from `intoDemuxReceiver()`
+receives, and call `teardown()` (or `close()`) to end the stream cleanly.
 
 **`socket_stats()` is not Optional.** `H264Receiver.socketStats()` returns a
 bare `SocketStats` (never null). This matches the Rust
@@ -3145,7 +3154,7 @@ Gotchas:
   Set it in the process environment before the JVM loads `libtstjni`
   (`EnvFilter` syntax, same as `RUST_LOG` — e.g.
   `TSTRANS_LOG=tst_rtp=debug`) to see diagnostics (keepalive failures,
-  pump warnings, …) that otherwise vanish silently — nothing installs a
+  RTSP client warnings, …) that otherwise vanish silently — nothing installs a
   subscriber by default. The bridge installs from `JNI_OnLoad`, the JVM's
   one guaranteed one-time native-library entry point (called during
   `System.load`, before any `org.tstrans.*` native method is reachable).
