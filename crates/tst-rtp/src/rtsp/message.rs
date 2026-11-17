@@ -810,7 +810,6 @@ mod tests {
         ];
         for wire in [req.encode(), resp.encode()] {
             let text = String::from_utf8(wire.to_vec()).unwrap();
-            println!("{text:?}");
             let mut got: Vec<&str> = text
                 .split("\r\n")
                 .skip(1)

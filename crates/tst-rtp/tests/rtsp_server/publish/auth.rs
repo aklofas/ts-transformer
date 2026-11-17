@@ -95,7 +95,7 @@ fn basic_auth_gates_announce_setup_record_and_admits_credentials() {
 }
 
 /// Digest hashes the METHOD into HA2, so this is the test that pins the
-/// `method_token` arms for ANNOUNCE and RECORD.
+/// `RtspMethod::wire_token` arms for ANNOUNCE and RECORD.
 #[test]
 fn digest_md5_auth_hashes_the_announce_and_record_method_tokens() {
     let mut b = RtspServerBuilder::new("rtsp://127.0.0.1:0").unwrap();
