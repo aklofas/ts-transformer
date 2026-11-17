@@ -181,8 +181,13 @@ impl Transport for RtpTransport {
                 // Timeout or EINTR — re-check cancel and retry.
                 Err(e) if classify_send_error(&e) == SendClass::Transient => continue,
                 Err(e) => {
-                    self.socket = None;
-                    return Err(fatal_send_error(&e, self.cancel.is_cancelled()));
+                    let err = fatal_send_error(&e, self.cancel.is_cancelled());
+                    // Under a cancel the socket stays: the next call reports
+                    // the cancel too, and `socket_stats()` keeps answering.
+                    if matches!(err, TransportError::Broken { .. }) {
+                        self.socket = None;
+                    }
+                    return Err(err);
                 }
             }
         }
