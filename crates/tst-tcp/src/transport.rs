@@ -75,6 +75,9 @@ impl InnerStream {
 ///   [`tst_core::transport::TransportError::ExplicitClose`];
 /// - calls started after `cancel()` return `ExplicitClose` on their entry
 ///   check;
+/// - a read or write that FAILS while the cancel is latched (peer EOF, a
+///   reset, a zero-length write) returns `ExplicitClose` instead of
+///   `Broken`, and is not counted as an error;
 /// - a call already past its entry check may still complete its current I/O
 ///   first (a recv that receives data in that window returns it; a send that
 ///   has not yet committed any byte finishes its bounded ≤~100 ms write
@@ -355,7 +358,7 @@ impl TcpTransport {
 /// mid-message.
 ///
 /// Returns `Ok(())` on a full write. On error the `bool` is `true` when the
-/// transport must be marked dead (`Ok(0)` or a hard error) and `false` for a
+/// transport must be marked dead (`Ok(0)` or a hard error, with no cancel latched) and `false` for a
 /// clean zero-progress `Backpressure` the caller may retry, or an
 /// `ExplicitClose` (cancel) / `Closed` (close) after a mid-message wake (the
 /// canceller already dropped the flag).
@@ -368,6 +371,11 @@ fn write_loop<W: FnMut(&[u8]) -> std::io::Result<usize>>(
     let mut written = 0usize;
     while written < msg.len() {
         match write(&msg[written..]) {
+            // The cancel preference below covers this arm too: a peer that
+            // closes as the cancel lands reports the cancel, not `Broken`.
+            Ok(0) if !alive.load(Ordering::Acquire) || cancel.is_cancelled() => {
+                return Err((dead_kind(cancel), false));
+            }
             Ok(0) => {
                 // Peer closed mid-message: stream is now desynced — undefined state.
                 return Err((
@@ -390,12 +398,7 @@ fn write_loop<W: FnMut(&[u8]) -> std::io::Result<usize>>(
             // so a cancel caught between its two stores (latched, still
             // live) wins too.
             Err(_) if !alive.load(Ordering::Acquire) || cancel.is_cancelled() => {
-                let err = if cancel.is_cancelled() {
-                    TransportError::ExplicitClose
-                } else {
-                    TransportError::Closed
-                };
-                return Err((err, false));
+                return Err((dead_kind(cancel), false));
             }
             Err(e) if e.kind() == std::io::ErrorKind::Interrupted => { /* EINTR: retry */ }
             Err(e) if classify_send_error(&e) == SendClass::Transient => {
@@ -427,6 +430,82 @@ fn write_loop<W: FnMut(&[u8]) -> std::io::Result<usize>>(
         }
     }
     Ok(())
+}
+
+/// What a transport that is no longer live reports: the cancel if one
+/// latched, else the plain close.
+fn dead_kind(cancel: &FlagCancel) -> TransportError {
+    if cancel.is_cancelled() {
+        TransportError::ExplicitClose
+    } else {
+        TransportError::Closed
+    }
+}
+
+/// The read loop behind `recv_bytes`, shaped like [`write_loop`]. On error
+/// the `bool` is `true` when the transport must be marked dead (peer EOF or
+/// a hard read error) and `false` for a cancel or close.
+///
+/// A read that fails while the cancel is latched reports the cancel, with the
+/// same read order as `write_loop` (liveness, then the latch). A read that
+/// succeeds returns its data without consulting the latch.
+fn read_loop<R: FnMut(&mut [u8]) -> std::io::Result<usize>>(
+    buf: &mut [u8],
+    alive: &AtomicBool,
+    cancel: &FlagCancel,
+    mut read: R,
+) -> Result<usize, (TransportError, bool)> {
+    loop {
+        if !alive.load(Ordering::Acquire) {
+            return Err((dead_kind(cancel), false));
+        }
+        match read(buf) {
+            Ok(0) | Err(_) if !alive.load(Ordering::Acquire) || cancel.is_cancelled() => {
+                return Err((dead_kind(cancel), false));
+            }
+            Ok(0) => {
+                // Peer EOF is terminal: nothing more will ever arrive on
+                // this stream.
+                return Err((
+                    TransportError::Broken {
+                        msg: "peer closed connection".into(),
+                        errno_code: None,
+                        cause: BrokenCause::CleanEof,
+                    },
+                    true,
+                ));
+            }
+            Ok(n) => return Ok(n),
+            Err(e) if classify_recv_error(e.kind()) == RecvAction::Retry => continue,
+            Err(e) => {
+                // Fatal read (anything `classify_recv_error` does not send
+                // back through the retry arm above).
+                return Err((
+                    TransportError::Broken {
+                        msg: format!("read error: {e}"),
+                        errno_code: e.raw_os_error(),
+                        cause: BrokenCause::Unspecified,
+                    },
+                    true,
+                ));
+            }
+        }
+    }
+}
+
+/// Record why a receive ended from the result of `recv_bytes`.
+fn record_recv_end(h: &EndReasonHandle, r: &Result<usize, TransportError>) {
+    match r {
+        Err(TransportError::ExplicitClose) => record_tcp_end(h, EndReason::Cancelled),
+        Err(TransportError::Broken {
+            cause: BrokenCause::CleanEof,
+            ..
+        }) => record_tcp_end(h, EndReason::CleanTeardown),
+        Err(TransportError::Broken { msg, .. }) => {
+            record_tcp_end(h, EndReason::TransportFailed { msg: msg.clone() });
+        }
+        _ => {}
+    }
 }
 
 impl Transport for TcpTransport {
@@ -534,43 +613,29 @@ impl TcpTransport {
         if buf.is_empty() {
             return Ok(0);
         }
-        loop {
-            if !self.alive.load(Ordering::Acquire) {
-                return Err(self.dead_error());
+        let inner = &mut self.inner;
+        match read_loop(buf, &self.alive, &self.cancel, |b| inner.read(b)) {
+            Ok(n) => {
+                self.stats.recv_calls = self.stats.recv_calls.saturating_add(1);
+                self.stats.bytes_received = self.stats.bytes_received.saturating_add(n as u64);
+                Ok(n)
             }
-            match self.inner.read(buf) {
-                Ok(0) => {
-                    // Peer EOF is terminal: nothing more will ever arrive on
-                    // this stream, so the transport must stop reporting alive
-                    // (the send path already marks dead on its terminal arms).
+            Err((err, mark_dead)) => {
+                if mark_dead {
+                    // Both terminal arms stop reporting alive (the send path
+                    // already marks dead on its terminal arms).
                     self.alive.store(false, Ordering::Release);
-                    return Err(TransportError::Broken {
-                        msg: "peer closed connection".into(),
-                        errno_code: None,
-                        cause: BrokenCause::CleanEof,
-                    });
+                    if !matches!(
+                        err,
+                        TransportError::Broken {
+                            cause: BrokenCause::CleanEof,
+                            ..
+                        }
+                    ) {
+                        self.stats.recv_errors = self.stats.recv_errors.saturating_add(1);
+                    }
                 }
-                Ok(n) => {
-                    self.stats.recv_calls = self.stats.recv_calls.saturating_add(1);
-                    self.stats.bytes_received = self.stats.bytes_received.saturating_add(n as u64);
-                    return Ok(n);
-                }
-                Err(e) if classify_recv_error(e.kind()) == RecvAction::Retry => {
-                    continue;
-                }
-                Err(e) => {
-                    // Fatal read (anything `classify_recv_error` does not send
-                    // back through the retry arm above) — same terminal contract
-                    // as the EOF arm: report Broken *and* mark the transport
-                    // dead so is_alive() cannot claim otherwise.
-                    self.alive.store(false, Ordering::Release);
-                    self.stats.recv_errors = self.stats.recv_errors.saturating_add(1);
-                    return Err(TransportError::Broken {
-                        msg: format!("read error: {e}"),
-                        errno_code: e.raw_os_error(),
-                        cause: BrokenCause::Unspecified,
-                    });
-                }
+                Err(err)
             }
         }
     }
@@ -589,23 +654,12 @@ impl RecvTransport for TcpTransport {
     /// A dead transport reports WHICH death at the loop's entry check (the
     /// private `dead_error` helper): a cancel → `ExplicitClose`, the
     /// transport's own `close()` → `Closed`. A parked receive observes either
-    /// at its next ~100 ms poll boundary.
+    /// at its next ~100 ms poll boundary. A read that fails (peer EOF or a
+    /// hard error) while the cancel is latched reports `ExplicitClose` too,
+    /// and the end reason is then `Cancelled`.
     fn recv_bytes(&mut self, buf: &mut [u8]) -> Result<usize, TransportError> {
         let r = self.recv_once(buf);
-        match &r {
-            Err(TransportError::ExplicitClose) => {
-                record_tcp_end(&self.end_reason, EndReason::Cancelled);
-            }
-            Err(TransportError::Broken {
-                cause: BrokenCause::CleanEof,
-                ..
-            }) => record_tcp_end(&self.end_reason, EndReason::CleanTeardown),
-            Err(TransportError::Broken { msg, .. }) => record_tcp_end(
-                &self.end_reason,
-                EndReason::TransportFailed { msg: msg.clone() },
-            ),
-            _ => {}
-        }
+        record_recv_end(&self.end_reason, &r);
         r
     }
 
@@ -903,6 +957,36 @@ mod write_loop_tests {
     }
 
     #[test]
+    fn write_zero_racing_a_cancel_is_explicit_close() {
+        let alive = AtomicBool::new(true);
+        let cancel = FlagCancel::new();
+        let r = write_loop(&[0u8; 188], &alive, &cancel, |_| {
+            cancel.cancel();
+            alive.store(false, Ordering::Release);
+            Ok(0)
+        });
+        assert!(
+            matches!(r, Err((TransportError::ExplicitClose, false))),
+            "{r:?}"
+        );
+    }
+
+    /// The cancel caught between its two stores (latched, still live).
+    #[test]
+    fn write_zero_with_cancel_latched_but_still_live_is_explicit_close() {
+        let alive = live();
+        let cancel = FlagCancel::new();
+        let r = write_loop(&[0u8; 188], &alive, &cancel, |_| {
+            cancel.cancel();
+            Ok(0)
+        });
+        assert!(
+            matches!(r, Err((TransportError::ExplicitClose, false))),
+            "{r:?}"
+        );
+    }
+
+    #[test]
     fn interrupted_is_retried() {
         let msg = vec![0u8; 188];
         let eintr = io::Error::new(io::ErrorKind::Interrupted, "eintr");
@@ -925,6 +1009,108 @@ mod write_loop_tests {
             Err((TransportError::Broken { .. }, mark_dead)) => assert!(mark_dead),
             other => panic!("expected Broken, got {other:?}"),
         }
+    }
+}
+
+#[cfg(test)]
+mod read_loop_tests {
+    use super::{read_loop, record_recv_end};
+    use std::io;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use tst_core::cancel::FlagCancel;
+    use tst_core::transport::{BrokenCause, EndReason, EndReasonHandle, TransportError};
+
+    /// Run one read whose I/O call cancels the transport, then fails or
+    /// reads EOF.
+    fn cancelled_read(
+        outcome: impl Fn() -> io::Result<usize>,
+        drop_alive: bool,
+    ) -> Result<usize, (TransportError, bool)> {
+        let alive = AtomicBool::new(true);
+        let cancel = FlagCancel::new();
+        read_loop(&mut [0u8; 188], &alive, &cancel, |_| {
+            cancel.cancel();
+            if drop_alive {
+                alive.store(false, Ordering::Release);
+            }
+            outcome()
+        })
+    }
+
+    #[test]
+    fn eof_racing_a_cancel_is_explicit_close() {
+        for drop_alive in [true, false] {
+            let r = cancelled_read(|| Ok(0), drop_alive);
+            assert!(
+                matches!(r, Err((TransportError::ExplicitClose, false))),
+                "{r:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn hard_error_racing_a_cancel_is_explicit_close() {
+        for drop_alive in [true, false] {
+            let r = cancelled_read(|| Err(io::ErrorKind::ConnectionReset.into()), drop_alive);
+            assert!(
+                matches!(r, Err((TransportError::ExplicitClose, false))),
+                "{r:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn data_racing_a_cancel_is_returned() {
+        let r = cancelled_read(|| Ok(188), true);
+        assert!(matches!(r, Ok(188)), "{r:?}");
+    }
+
+    #[test]
+    fn eof_without_cancel_is_clean_eof_and_dead() {
+        let alive = AtomicBool::new(true);
+        let r = read_loop(&mut [0u8; 188], &alive, &FlagCancel::new(), |_| Ok(0));
+        assert!(
+            matches!(
+                r,
+                Err((
+                    TransportError::Broken {
+                        cause: BrokenCause::CleanEof,
+                        ..
+                    },
+                    true
+                ))
+            ),
+            "{r:?}"
+        );
+    }
+
+    #[test]
+    fn hard_error_without_cancel_is_broken_and_dead() {
+        let alive = AtomicBool::new(true);
+        let r = read_loop(&mut [0u8; 188], &alive, &FlagCancel::new(), |_| {
+            Err(io::ErrorKind::ConnectionReset.into())
+        });
+        assert!(
+            matches!(r, Err((TransportError::Broken { .. }, true))),
+            "{r:?}"
+        );
+    }
+
+    #[test]
+    fn closed_transport_reports_closed_at_entry() {
+        let alive = AtomicBool::new(false);
+        let r = read_loop(&mut [0u8; 188], &alive, &FlagCancel::new(), |_| {
+            panic!("a dead transport must not read")
+        });
+        assert!(matches!(r, Err((TransportError::Closed, false))), "{r:?}");
+    }
+
+    #[test]
+    fn a_cancelled_read_ends_the_stream_as_cancelled() {
+        let h = EndReasonHandle::default();
+        let r = cancelled_read(|| Ok(0), true).map_err(|(e, _)| e);
+        record_recv_end(&h, &r);
+        assert_eq!(h.get(), Some(EndReason::Cancelled));
     }
 }
 
