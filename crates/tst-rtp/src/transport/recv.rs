@@ -77,7 +77,8 @@ impl Source {
     ///   shape before copying the TS payload into the caller's buffer.
     ///
     /// - **Returns `Err(TransportError::ExplicitClose)`** when `cancel` is
-    ///   set.
+    ///   set, and in place of a fatal UDP error that arrives while it is
+    ///   set (the failure is reported as the cancel).
     ///
     /// - **Returns `Err(TransportError::Backpressure)`** when `deadline` is
     ///   `Some` and has passed. Checked at the top of each poll iteration
@@ -89,8 +90,8 @@ impl Source {
     /// - **Returns `Err(TransportError::Broken)`** when the underlying
     ///   source reports a hard error:
     ///   - UDP: any `io::Error` the shared receive classifier reports as
-    ///     fatal (`WouldBlock`, `TimedOut` and `Interrupted` are retried) —
-    ///     `errno_code` carries the OS errno.
+    ///     fatal (`WouldBlock`, `TimedOut` and `Interrupted` are retried),
+    ///     unless `cancel` is set — `errno_code` carries the OS errno.
     ///   - Mpsc: `RecvTimeoutError::Disconnected` (the pump's `Sender`
     ///     was dropped) — `errno_code` is `None`.
     ///   - Mpsc: a frame larger than `scratch` — `errno_code` is `None`.

@@ -1,7 +1,8 @@
-//! TCP-interleaved producer thread wiring, client against our server. The
-//! bounded teardown deadline in [`RtspClient::Drop`] keeps the post-PLAY
-//! teardown from hanging on the server's lingering write-half references
-//! after `RtspServer::stop`.
+//! TCP-interleaved producer thread wiring, client against our server.
+//! Dropping the client writes TEARDOWN (500 ms bounds the wait for the
+//! control stream and the write) and does not wait for the reply, so the
+//! post-PLAY teardown cannot hang on the server's lingering write-half
+//! references after `RtspServer::stop`.
 //!
 //! Drives a real in-process `tst_rtp::RtspServer` as the client's peer —
 //! requires the `rtsp-server` feature.

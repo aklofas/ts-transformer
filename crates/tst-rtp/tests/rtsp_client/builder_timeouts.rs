@@ -84,9 +84,8 @@ fn user_agent_is_sent_in_requests() {
 
 /// `request_timeout` bounds the wait for a response. The peer
 /// accepts the TCP connection and never answers — before the fix
-/// `describe()` parked forever (the only deadline in the client was the
-/// 500 ms TEARDOWN bound inside `Drop`) and `RtspError::Timeout` had no
-/// producer at all.
+/// `describe()` parked forever (the client had no request deadline) and
+/// `RtspError::Timeout` had no producer at all.
 ///
 /// Bounded by a watchdog on a pre-obtained cancel handle so the RED cannot
 /// hang CI: without the fix the watchdog fires at 5 s, the call ends

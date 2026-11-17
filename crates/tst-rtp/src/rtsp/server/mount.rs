@@ -321,8 +321,8 @@ impl MountHandle {
     ///   dropped, started or not), whether or not the mount was removed
     ///   first; also if the inner mutex is poisoned (a push panicked while
     ///   holding the lock). An ended server is reported ahead of an invalid
-    ///   frame, and the refused push leaves
-    ///   the muxer and [`Self::stats`] unchanged.
+    ///   frame, and the refused push leaves the muxer and [`Self::stats`]
+    ///   unchanged.
     ///
     /// The push itself always succeeds if the muxer accepts the frame; a
     /// lagging peer's dropped frames are tracked in

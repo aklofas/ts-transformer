@@ -39,8 +39,9 @@
 //!   / [`Owned::with_ref_blocking_unless_cancelled`], which refuse with
 //!   [`HandleState::Cancelled`] once the cancel latch is set, so buffered
 //!   packets or bytes are never delivered or sent after a cancel. Everything
-//!   else (stats, config, the H.264 receiver's drain to end of stream,
-//!   `close`) stays on the ungated entries.
+//!   else (stats, config, the H.264 receiver's receive, which hands out the
+//!   access units it holds before it reports the cancel, `close`) stays on
+//!   the ungated entries.
 //! - **Double close is quiet**: the second `close()` is `Ok(())`.
 //! - **Implicit drop cancels first**: dropping an `Owned` whose slot still
 //!   holds a value (a binding object freed or collected without `close()`)
