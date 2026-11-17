@@ -387,6 +387,45 @@ pub enum RtspMethod {
     GetParameter,
 }
 
+/// Append `Name: value\r\n`, upper-casing the first character of each
+/// dash-separated word of the name.
+fn append_header_line(out: &mut Vec<u8>, name: &str, value: &str) {
+    for (i, segment) in name.split('-').enumerate() {
+        if i > 0 {
+            out.push(b'-');
+        }
+        let mut chars = segment.chars();
+        if let Some(c) = chars.next() {
+            for ch in c.to_uppercase() {
+                out.extend_from_slice(ch.to_string().as_bytes());
+            }
+            for ch in chars {
+                out.extend_from_slice(ch.to_string().as_bytes());
+            }
+        }
+    }
+    out.extend_from_slice(b": ");
+    out.extend_from_slice(value.as_bytes());
+    out.extend_from_slice(b"\r\n");
+}
+
+impl RtspMethod {
+    /// The method's token on the wire (and in the Digest `method:uri` hash).
+    pub(crate) fn wire_token(self) -> &'static str {
+        match self {
+            RtspMethod::Options => "OPTIONS",
+            RtspMethod::Describe => "DESCRIBE",
+            RtspMethod::Announce => "ANNOUNCE",
+            RtspMethod::Setup => "SETUP",
+            RtspMethod::Play => "PLAY",
+            RtspMethod::Record => "RECORD",
+            RtspMethod::Pause => "PAUSE",
+            RtspMethod::Teardown => "TEARDOWN",
+            RtspMethod::GetParameter => "GET_PARAMETER",
+        }
+    }
+}
+
 /// An RTSP response we receive on the client side.
 #[derive(Debug, Clone)]
 pub struct RtspResponse {
@@ -457,43 +496,15 @@ impl RtspRequest {
     /// `encode_checked`, which validates against header injection first. Prefer
     /// that on any path where a header value derives from caller/credential input.
     pub fn encode(&self) -> Bytes {
-        let method_str = match self.method {
-            RtspMethod::Options => "OPTIONS",
-            RtspMethod::Describe => "DESCRIBE",
-            RtspMethod::Announce => "ANNOUNCE",
-            RtspMethod::Setup => "SETUP",
-            RtspMethod::Play => "PLAY",
-            RtspMethod::Record => "RECORD",
-            RtspMethod::Pause => "PAUSE",
-            RtspMethod::Teardown => "TEARDOWN",
-            RtspMethod::GetParameter => "GET_PARAMETER",
-        };
         let mut out = Vec::with_capacity(256 + self.body.len());
-        out.extend_from_slice(method_str.as_bytes());
+        out.extend_from_slice(self.method.wire_token().as_bytes());
         out.push(b' ');
         out.extend_from_slice(self.uri.as_bytes());
         out.push(b' ');
         out.extend_from_slice(self.version.wire_str().as_bytes());
         out.extend_from_slice(b"\r\n");
         for (k, v) in &self.headers {
-            // Capitalize first letter of each dash-separated word for canonicality.
-            for (i, segment) in k.split('-').enumerate() {
-                if i > 0 {
-                    out.push(b'-');
-                }
-                let mut chars = segment.chars();
-                if let Some(c) = chars.next() {
-                    for ch in c.to_uppercase() {
-                        out.extend_from_slice(ch.to_string().as_bytes());
-                    }
-                    for ch in chars {
-                        out.extend_from_slice(ch.to_string().as_bytes());
-                    }
-                }
-            }
-            out.extend_from_slice(b": ");
-            out.extend_from_slice(v.as_bytes());
-            out.extend_from_slice(b"\r\n");
+            append_header_line(&mut out, k, v);
         }
         if !self.body.is_empty() && !self.headers.contains_key("content-length") {
             out.extend_from_slice(b"Content-Length: ");
@@ -638,23 +649,7 @@ impl RtspResponse {
         buf.extend_from_slice(b"\r\n");
         // Headers.
         for (k, v) in &self.headers {
-            for (i, segment) in k.split('-').enumerate() {
-                if i > 0 {
-                    buf.push(b'-');
-                }
-                let mut chars = segment.chars();
-                if let Some(c) = chars.next() {
-                    for ch in c.to_uppercase() {
-                        buf.extend_from_slice(ch.to_string().as_bytes());
-                    }
-                    for ch in chars {
-                        buf.extend_from_slice(ch.to_string().as_bytes());
-                    }
-                }
-            }
-            buf.extend_from_slice(b": ");
-            buf.extend_from_slice(v.as_bytes());
-            buf.extend_from_slice(b"\r\n");
+            append_header_line(&mut buf, k, v);
         }
         buf.extend_from_slice(b"\r\n");
         if !self.body.is_empty() {
@@ -788,6 +783,45 @@ impl RtspRequest {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Request and response serializers share one casing rule for header
+    /// names: the first character of each dash segment is upper-cased.
+    #[test]
+    fn header_names_are_title_cased_per_dash_segment() {
+        let names = ["cseq", "www-authenticate", "x-é-custom", "a--b", "rtp-info"];
+        let mut req = RtspRequest::new(RtspMethod::Options, "rtsp://h/p", RtspVersion::V1_0);
+        let mut resp = RtspResponse {
+            version: RtspVersion::V1_0,
+            status: 200,
+            reason: "OK".into(),
+            headers: HashMap::new(),
+            body: Bytes::new(),
+        };
+        for n in names {
+            req = req.header(n, "v");
+            resp.headers.insert(n.into(), "v".into());
+        }
+        let expect = [
+            "Cseq: v",
+            "Www-Authenticate: v",
+            "X-\u{c9}-Custom: v",
+            "A--B: v",
+            "Rtp-Info: v",
+        ];
+        for wire in [req.encode(), resp.encode()] {
+            let text = String::from_utf8(wire.to_vec()).unwrap();
+            println!("{text:?}");
+            let mut got: Vec<&str> = text
+                .split("\r\n")
+                .skip(1)
+                .filter(|l| !l.is_empty())
+                .collect();
+            got.sort_unstable();
+            let mut want = expect.to_vec();
+            want.sort_unstable();
+            assert_eq!(got, want);
+        }
+    }
 
     /// The framing classifier over one corpus; this table is the contract
     /// each caller keeps.

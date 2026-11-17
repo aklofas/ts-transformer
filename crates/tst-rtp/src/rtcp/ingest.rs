@@ -182,7 +182,7 @@ mod tests {
         // Middle 32 bits of 0x83AA7E80_DEADBEEF = 0x7E80_DEAD
         assert_eq!(anchor.last_sr_ntp_mid, 0x7E80_DEAD);
         assert_eq!(stats.sr_packets_received, 1);
-        // Anchor is also persisted on stats so a later RR ingest can compute RTT.
+        // The anchor is stored on stats; no round-trip time is computed from it.
         assert!(stats.last_sr_anchor.is_some());
         assert_eq!(stats.last_sr_anchor.unwrap().last_sr_ntp_mid, 0x7E80_DEAD);
     }
