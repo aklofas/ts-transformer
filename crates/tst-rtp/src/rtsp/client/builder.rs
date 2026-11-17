@@ -164,8 +164,11 @@ impl RtspClientBuilder {
     }
 
     /// Connect budget, default 10 s: bounds the TCP connect and, for
-    /// `rtsps://`, the TLS handshake together. Expiry is
-    /// `RtspError::Io(TimedOut)`.
+    /// `rtsps://`, the TLS handshake together, each socket read and write
+    /// of the handshake included. Name resolution runs before the budget
+    /// starts, and so does the first load of the OS trust store (once per
+    /// process, only for `rtsps://` without `tls_root_certs`).
+    /// Expiry is `RtspError::Io(TimedOut)`.
     pub fn connect_timeout(mut self, t: Duration) -> Self {
         self.connect_timeout = t;
         self

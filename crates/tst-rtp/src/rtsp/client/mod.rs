@@ -14,6 +14,8 @@ pub mod play;
 pub mod session;
 pub(crate) mod setup;
 pub(crate) mod teardown;
+#[cfg(all(test, target_os = "linux"))]
+mod test_sockets;
 pub(crate) mod tls;
 
 use std::io::{Read, Write};
@@ -476,9 +478,9 @@ impl RtspClient {
     /// Connect with an optional client-side TLS root-cert store.
     ///
     /// `roots = None` falls back to the platform native trust roots
-    /// (loaded via `rustls-native-certs`). `roots = Some(custom)` is
-    /// used by `RtspClientBuilder::tls_root_certs` callers that need
-    /// to trust a self-signed cert (e.g., test fixtures).
+    /// (loaded via `rustls-native-certs`, once per process).
+    /// `roots = Some(custom)` is used by `RtspClientBuilder::tls_root_certs`
+    /// callers that need to trust a self-signed cert (e.g., test fixtures).
     ///
     /// For plain `rtsp://` URLs the roots argument is ignored.
     ///
@@ -516,10 +518,6 @@ impl RtspClient {
             ));
         }
 
-        // One budget for the TCP connect and the TLS handshake together.
-        // `None` (the budget overflowed `Instant`) means unbounded.
-        #[cfg(feature = "tls")]
-        let deadline = std::time::Instant::now().checked_add(params.connect_timeout);
         let host_port = (url.host.as_str(), url.port);
         let mut addrs = host_port
             .to_socket_addrs()
@@ -527,6 +525,18 @@ impl RtspClient {
         let peer = addrs
             .next()
             .ok_or(RtspError::Io(std::io::ErrorKind::AddrNotAvailable))?;
+        // The OS trust store is read before the budget starts (once per
+        // process), so a slow read cannot use up the handshake's time.
+        #[cfg(feature = "tls")]
+        if is_tls && roots.is_none() {
+            let _ = tls::native_roots();
+        }
+        // One budget for the TCP connect and the TLS handshake together,
+        // starting after name resolution: the connect gets all of it (the
+        // deadline was just taken) and the handshake what is left.
+        // `None` (the budget overflowed `Instant`) means unbounded.
+        #[cfg(feature = "tls")]
+        let deadline = std::time::Instant::now().checked_add(params.connect_timeout);
         let tcp = TcpStream::connect_timeout(&peer, params.connect_timeout)
             .map_err(|e| RtspError::Io(e.kind()))?;
         tcp.set_read_timeout(Some(params.read_timeout))

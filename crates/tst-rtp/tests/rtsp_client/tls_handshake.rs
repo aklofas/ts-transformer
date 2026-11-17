@@ -80,9 +80,8 @@ fn rtsps_trickled_handshake_hits_the_connect_timeout() {
     let b = RtspClientBuilder::new(&format!("rtsps://127.0.0.1:{port}/x"))
         .unwrap()
         .no_auto_keepalive(true)
-        // An explicit store: with none, `connect` loads the OS trust store
-        // inside the budget, and on macOS that read alone can outlast
-        // 500 ms, timing out before the ClientHello leaves.
+        // An explicit store keeps the test off the OS trust store, whose
+        // first read can take longer than this whole test on macOS.
         .tls_root_certs(rustls::RootCertStore::empty())
         .connect_timeout(Duration::from_millis(500));
     // Not scaled: a handshake that ignored the 500 ms budget and fell back

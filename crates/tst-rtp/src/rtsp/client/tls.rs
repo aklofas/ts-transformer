@@ -14,9 +14,10 @@
 
 use std::io::{self, Read, Write};
 use std::net::TcpStream;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
+use super::CONTROL_WRITE_TIMEOUT;
 use crate::error::RtspError;
 use crate::url::RtspUrl;
 
@@ -40,19 +41,24 @@ impl std::fmt::Debug for TlsStream {
 impl TlsStream {
     /// Wrap `sock` in rustls and drive the handshake to completion
     /// synchronously. `root_certs` defaults to the OS native trust store
-    /// (via `rustls-native-certs`) when `None`.
+    /// (via `rustls-native-certs`, loaded once per process by
+    /// [`native_roots`]) when `None`.
     ///
     /// The handshake shares the connect budget: it must finish before
-    /// `deadline` (`None` = unbounded, the budget overflowed `Instant`).
+    /// `deadline` (`None` = unbounded, the budget overflowed `Instant`),
+    /// and one that completes on a read made after it is still timed out.
     /// Each socket read is bounded by `read_timeout` or the time left,
     /// whichever is shorter, and a read that times out is a poll tick that
-    /// comes back to the deadline check, not a failure. A peer FIN reaches
-    /// rustls only as `read_tls` returning 0, so that is an error here
+    /// comes back to the deadline check, not a failure. Each socket write
+    /// is bounded by [`CONTROL_WRITE_TIMEOUT`] or the time left, whichever
+    /// is shorter, and a write that times out is a tick too. A peer FIN
+    /// reaches rustls only as `read_tls` returning 0, so that is an error here
     /// rather than another poll. `ClientConnection::complete_io` is not
     /// used: it loops internally until the handshake completes, so a peer
     /// that drips a byte inside every read timeout would hold it past any
-    /// deadline checked between calls. On return the socket's read timeout
-    /// is `read_timeout` again.
+    /// deadline checked between calls. On success the socket's read timeout
+    /// is `read_timeout` again and its write timeout
+    /// [`CONTROL_WRITE_TIMEOUT`].
     ///
     /// # Errors
     ///
@@ -60,7 +66,8 @@ impl TlsStream {
     ///   server-name validation failure, and when the peer closes the
     ///   connection mid-handshake.
     /// - [`RtspError::Io`] with [`io::ErrorKind::TimedOut`] when `deadline`
-    ///   passes first.
+    ///   passes first, including when the handshake completes on a read
+    ///   that ended after it.
     pub fn connect(
         url: &RtspUrl,
         sock: TcpStream,
@@ -68,7 +75,26 @@ impl TlsStream {
         read_timeout: Duration,
         deadline: Option<Instant>,
     ) -> Result<Self, RtspError> {
-        let roots = root_certs.unwrap_or_else(default_roots);
+        Self::connect_with_clock(
+            url,
+            sock,
+            root_certs,
+            read_timeout,
+            deadline,
+            &mut Instant::now,
+        )
+    }
+
+    /// [`Self::connect`] with the clock the deadline is read from.
+    fn connect_with_clock(
+        url: &RtspUrl,
+        sock: TcpStream,
+        root_certs: Option<rustls::RootCertStore>,
+        read_timeout: Duration,
+        deadline: Option<Instant>,
+        now: &mut dyn FnMut() -> Instant,
+    ) -> Result<Self, RtspError> {
+        let roots = root_certs.map_or_else(native_roots, Arc::new);
         let config = rustls::ClientConfig::builder()
             .with_root_certificates(roots)
             .with_no_client_auth();
@@ -85,17 +111,15 @@ impl TlsStream {
             )
         };
         while conn.is_handshaking() {
-            let remaining = match deadline {
-                Some(d) => match d.checked_duration_since(Instant::now()) {
-                    Some(left) if !left.is_zero() => Some(left),
-                    _ => return Err(RtspError::Io(io::ErrorKind::TimedOut)),
-                },
-                None => None,
-            };
+            // `remaining` is recomputed after every write, so each write and
+            // the read below start from a fresh reading of the clock.
+            let mut remaining = time_left(deadline, now)?;
             // Flush everything rustls has queued (ClientHello, Finished, …)
             // before polling for the server's answer.
             let mut flushed = true;
             while conn.wants_write() {
+                sock.set_write_timeout(Some(write_wait(remaining)))
+                    .map_err(|e| RtspError::Io(e.kind()))?;
                 match conn.write_tls(&mut sock) {
                     Ok(_) => {}
                     Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
@@ -105,6 +129,7 @@ impl TlsStream {
                     }
                     Err(e) => return Err(RtspError::Tls(format!("write_tls: {e}"))),
                 }
+                remaining = time_left(deadline, now)?;
             }
             if !flushed || !conn.wants_read() {
                 continue;
@@ -124,8 +149,12 @@ impl TlsStream {
                 Ok(_) => {
                     if let Err(e) = conn.process_new_packets() {
                         // Let the alert rustls queued for the peer go out
-                        // (best effort) before reporting the failure.
-                        let _ = conn.write_tls(&mut sock);
+                        // (best effort, within the budget) before reporting
+                        // the failure.
+                        if let Ok(left) = time_left(deadline, now) {
+                            let _ = sock.set_write_timeout(Some(write_wait(left)));
+                            let _ = conn.write_tls(&mut sock);
+                        }
                         return Err(RtspError::Tls(format!("process: {e}")));
                     }
                 }
@@ -133,7 +162,12 @@ impl TlsStream {
                 Err(e) => return Err(RtspError::Tls(format!("read_tls: {e}"))),
             }
         }
+        // The read that completed the handshake may have ended after the
+        // deadline.
+        time_left(deadline, now)?;
         sock.set_read_timeout(Some(read_timeout))
+            .map_err(|e| RtspError::Io(e.kind()))?;
+        sock.set_write_timeout(Some(CONTROL_WRITE_TIMEOUT))
             .map_err(|e| RtspError::Io(e.kind()))?;
         Ok(Self { conn, sock })
     }
@@ -217,11 +251,41 @@ impl Write for TlsStream {
     }
 }
 
-/// Build a [`rustls::RootCertStore`] from the OS native trust store.
-/// Best-effort: silently skips certs that rustls rejects, which mirrors
-/// the rustls-native-certs README pattern.
-fn default_roots() -> rustls::RootCertStore {
-    roots_from(rustls_native_certs::load_native_certs()).0
+/// The time left before `deadline`: `None` without a deadline, and
+/// `Io(TimedOut)` once it has passed.
+fn time_left(
+    deadline: Option<Instant>,
+    now: &mut dyn FnMut() -> Instant,
+) -> Result<Option<Duration>, RtspError> {
+    match deadline {
+        Some(d) => match d.checked_duration_since(now()) {
+            Some(left) if !left.is_zero() => Ok(Some(left)),
+            _ => Err(RtspError::Io(io::ErrorKind::TimedOut)),
+        },
+        None => Ok(None),
+    }
+}
+
+/// The write timeout for a handshake write with `left` remaining: at most
+/// [`CONTROL_WRITE_TIMEOUT`], floored at 1 ms because a zero timeout is an
+/// error.
+fn write_wait(left: Option<Duration>) -> Duration {
+    left.map_or(CONTROL_WRITE_TIMEOUT, |left| {
+        left.min(CONTROL_WRITE_TIMEOUT)
+            .max(Duration::from_millis(1))
+    })
+}
+
+/// The root store built from the OS native trust store, loaded on the
+/// first call and shared for the rest of the process: certificates added
+/// to the OS store later are not seen. Best-effort: silently skips certs
+/// that rustls rejects, which mirrors the rustls-native-certs README
+/// pattern.
+pub(crate) fn native_roots() -> Arc<rustls::RootCertStore> {
+    static ROOTS: OnceLock<Arc<rustls::RootCertStore>> = OnceLock::new();
+    ROOTS
+        .get_or_init(|| Arc::new(roots_from(rustls_native_certs::load_native_certs()).0))
+        .clone()
 }
 
 /// The root store built from the OS trust store's load result, with the
@@ -240,9 +304,145 @@ fn roots_from(native: rustls_native_certs::CertificateResult) -> (rustls::RootCe
     (roots, errors)
 }
 
+/// A TLS peer for the client's unit tests.
+#[cfg(test)]
+pub(crate) mod test_peer {
+    use std::net::{TcpListener, TcpStream};
+    use std::sync::Arc;
+    use std::thread::JoinHandle;
+    use std::time::Duration;
+
+    /// A TLS server on `127.0.0.1` with a fresh self-signed certificate for
+    /// that address, returned with a root store that trusts it. It reads the
+    /// ClientHello, calls `before_first_write`, completes the handshake and
+    /// hands the stream to `then`. A handshake that fails ends the peer
+    /// without calling `then`.
+    pub(crate) fn tls_test_peer(
+        then: impl FnOnce(rustls::StreamOwned<rustls::ServerConnection, TcpStream>) + Send + 'static,
+        before_first_write: impl FnOnce() + Send + 'static,
+    ) -> (u16, rustls::RootCertStore, JoinHandle<()>) {
+        let cert = rcgen::generate_simple_self_signed(vec!["127.0.0.1".to_string()]).unwrap();
+        let mut roots = rustls::RootCertStore::empty();
+        roots.add(cert.cert.der().clone()).unwrap();
+        let key = rustls::pki_types::PrivateKeyDer::Pkcs8(cert.signing_key.serialize_der().into());
+        let config = Arc::new(
+            rustls::ServerConfig::builder()
+                .with_no_client_auth()
+                .with_single_cert(vec![cert.cert.der().clone()], key)
+                .unwrap(),
+        );
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let peer = std::thread::spawn(move || {
+            let Ok((mut sock, _)) = listener.accept() else {
+                return;
+            };
+            let _ = sock.set_read_timeout(Some(Duration::from_secs(10)));
+            let Ok(mut conn) = rustls::ServerConnection::new(config) else {
+                return;
+            };
+            // The server's first flight is queued once the ClientHello has
+            // been processed.
+            while !conn.wants_write() {
+                match conn.read_tls(&mut sock) {
+                    Ok(0) | Err(_) => return,
+                    Ok(_) => {}
+                }
+                if conn.process_new_packets().is_err() {
+                    return;
+                }
+            }
+            before_first_write();
+            while conn.is_handshaking() {
+                if conn.complete_io(&mut sock).is_err() {
+                    return;
+                }
+            }
+            then(rustls::StreamOwned::new(conn, sock));
+        });
+        (port, roots, peer)
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use super::test_peer::tls_test_peer;
     use super::*;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    #[cfg(target_os = "linux")]
+    use tst_test_helpers::timing::scaled;
+
+    fn url(port: u16) -> RtspUrl {
+        RtspUrl::parse(&format!("rtsps://127.0.0.1:{port}/x")).unwrap()
+    }
+
+    /// A ClientHello write parked on a full send buffer ends at the connect
+    /// deadline, not at the socket's 5 s write timeout. Linux only, like the
+    /// fill recipe.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn handshake_write_is_bounded_by_the_connect_deadline() {
+        use crate::rtsp::client::test_sockets::{fill_send_buffer, non_reading_peer};
+        let (port, done_tx, peer) = non_reading_peer();
+        let sock = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        sock.set_write_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        fill_send_buffer(&sock);
+        let t0 = Instant::now();
+        let r = TlsStream::connect(
+            &url(port),
+            sock,
+            Some(rustls::RootCertStore::empty()),
+            Duration::from_millis(100),
+            Some(t0 + Duration::from_millis(300)),
+        );
+        let elapsed = t0.elapsed();
+        let _ = done_tx.send(());
+        peer.join().unwrap();
+        assert!(
+            matches!(r, Err(RtspError::Io(io::ErrorKind::TimedOut))),
+            "{r:?}"
+        );
+        assert!(elapsed < scaled(Duration::from_secs(2)), "{elapsed:?}");
+    }
+
+    /// A handshake whose last server flight is read after the deadline has
+    /// passed is timed out, not returned as a success.
+    #[test]
+    fn a_handshake_completing_after_the_deadline_is_timed_out() {
+        let late = Arc::new(AtomicBool::new(false));
+        let set_late = late.clone();
+        let (port, roots, peer) =
+            tls_test_peer(drop, move || set_late.store(true, Ordering::SeqCst));
+        let sock = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        let t0 = Instant::now();
+        let mut clock = || {
+            if late.load(Ordering::SeqCst) {
+                t0 + Duration::from_secs(3600)
+            } else {
+                t0
+            }
+        };
+        let r = TlsStream::connect_with_clock(
+            &url(port),
+            sock,
+            Some(roots),
+            Duration::from_millis(100),
+            Some(t0 + Duration::from_secs(10)),
+            &mut clock,
+        );
+        assert!(
+            matches!(r, Err(RtspError::Io(io::ErrorKind::TimedOut))),
+            "{r:?}"
+        );
+        drop(r);
+        peer.join().unwrap();
+    }
+
+    #[test]
+    fn native_roots_are_loaded_once() {
+        assert!(Arc::ptr_eq(&native_roots(), &native_roots()));
+    }
 
     fn load_error() -> rustls_native_certs::Error {
         rustls_native_certs::Error {
