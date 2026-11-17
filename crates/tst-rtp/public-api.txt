@@ -723,7 +723,7 @@ impl core::fmt::Debug for tst_rtp::rtsp::client::RtspClient
 pub fn tst_rtp::rtsp::client::RtspClient::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::ops::drop::Drop for tst_rtp::rtsp::client::RtspClient
 pub fn tst_rtp::rtsp::client::RtspClient::drop(&mut self)
-impl !core::marker::Freeze for tst_rtp::rtsp::client::RtspClient
+impl core::marker::Freeze for tst_rtp::rtsp::client::RtspClient
 impl core::marker::Send for tst_rtp::rtsp::client::RtspClient
 impl !core::marker::Sync for tst_rtp::rtsp::client::RtspClient
 impl core::marker::Unpin for tst_rtp::rtsp::client::RtspClient
@@ -2511,7 +2511,7 @@ impl core::fmt::Debug for tst_rtp::rtsp::client::RtspClient
 pub fn tst_rtp::rtsp::client::RtspClient::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::ops::drop::Drop for tst_rtp::rtsp::client::RtspClient
 pub fn tst_rtp::rtsp::client::RtspClient::drop(&mut self)
-impl !core::marker::Freeze for tst_rtp::rtsp::client::RtspClient
+impl core::marker::Freeze for tst_rtp::rtsp::client::RtspClient
 impl core::marker::Send for tst_rtp::rtsp::client::RtspClient
 impl !core::marker::Sync for tst_rtp::rtsp::client::RtspClient
 impl core::marker::Unpin for tst_rtp::rtsp::client::RtspClient
