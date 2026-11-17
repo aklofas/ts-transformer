@@ -657,9 +657,10 @@ impl RtpRecvTransport {
                     if msg == MPSC_PUMP_DISCONNECTED
                         && matches!(self.end_reason.get(), Some(EndReason::Cancelled)) =>
                 {
-                    // The owning `RtspClient` was dropped or closed: its pump
-                    // ended on the cancel and recorded it before dropping the
-                    // Sender, so this end is the cancel, not a broken wire.
+                    // The owning `RtspClient` was dropped (or stopped) by its
+                    // owner: its pump ended on the cancel and recorded it
+                    // before dropping the Sender, so this end is the cancel,
+                    // not a broken wire.
                     self.source = None;
                     return Err(TransportError::ExplicitClose);
                 }
