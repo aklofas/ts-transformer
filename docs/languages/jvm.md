@@ -1636,7 +1636,7 @@ A server that gives each stream name its own port can let the first
 publisher take the port and then decide whether to keep it. The wait for
 that first publisher needs a limit, as any idle port does, and here it
 matters more: the receive returns only aligned TS packets (four sync bytes
-188 bytes apart), so a first datagram that is not TS (a probe, a stray
+188 bytes apart), so a first datagram with a payload that is not TS (a probe, a stray
 byte) takes the lock and the receive then returns nothing until the
 receiver is closed, unless that sender goes on to send TS. The example
 closes the receiver when its idle limit passes and opens the port again:
@@ -1647,8 +1647,8 @@ import java.net.InetSocketAddress;
 import java.time.Duration;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Predicate;
 import org.tstrans.BindingException;
 import org.tstrans.shells.Receiver;
@@ -1673,22 +1673,29 @@ final class UdpNameIngest implements AutoCloseable {
     byte[] admitFirst(Predicate<InetAddress> allowed, Duration idleLimit)
             throws BindingException {
         // The server's ordinary rule for an idle port. It also ends the wait
-        // when a datagram that is not TS took the lock: the receive returns
-        // only aligned TS packets, so it then returns nothing until the
-        // receiver is closed, unless that sender goes on to send TS.
+        // when a datagram with a payload that is not TS took the lock: the
+        // receive returns only aligned TS packets, so it then returns nothing
+        // until the receiver is closed, unless that sender goes on to send TS.
+        // Whichever sets `decided` first wins: the receive or the limit.
+        AtomicBoolean decided = new AtomicBoolean();
         ScheduledExecutorService timer = Executors.newSingleThreadScheduledExecutor();
-        ScheduledFuture<?> idle =
-            timer.schedule(rx::close, idleLimit.toMillis(), TimeUnit.MILLISECONDS);
+        timer.schedule(() -> {
+            if (decided.compareAndSet(false, true)) rx.close();
+        }, idleLimit.toMillis(), TimeUnit.MILLISECONDS);
         byte[] first;
         try {
             first = rx.recvBytes();              // parks until a packet or close()
         } catch (BindingException | IllegalStateException e) {
-            if (!idle.cancel(false)) return null;  // the limit closed it
+            if (!decided.compareAndSet(false, true)) return null;  // the limit closed it
+            rx.close();
             throw e;
         } finally {
-            timer.shutdown();                    // its thread ends with its task
+            timer.shutdownNow();                 // drops a pending limit: no thread lingers
         }
-        if (!idle.cancel(false)) return null;    // the limit fired as data came
+        if (!decided.compareAndSet(false, true)) {
+            rx.close();                          // the limit fired as data came
+            return null;
+        }
 
         // A packet was delivered, so the sender is known. The address is
         // what the datagrams carry, not proof of who sent them.
