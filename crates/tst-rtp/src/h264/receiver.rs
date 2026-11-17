@@ -66,9 +66,7 @@ use crate::cancel::RtpCancelHandle;
 use crate::h264::depacketizer::{H264Au, H264Depacketizer, H264DepayConfig, H264DepayStats};
 use crate::packet::RtpHeader;
 use crate::transport::record_end;
-use crate::transport::{
-    MPSC_PUMP_DISCONNECTED, RECV_SCRATCH_LEN, RtpConnectError, RtpStats, Source,
-};
+use crate::transport::{MEDIA_QUEUE_CLOSED, RECV_SCRATCH_LEN, RtpConnectError, RtpStats, Source};
 use crate::url::RtpUrl;
 use tst_core::transport::{EndReason, EndReasonHandle};
 
@@ -98,7 +96,7 @@ use tst_core::transport::{EndReason, EndReasonHandle};
 ///      depacketizer, go to step 1.
 ///    - `Err(ExplicitClose)` — a cancel fired mid-recv (also a source end
 ///      or failure with the cancel latched): go to step 1.
-///    - `Err(Broken)` carrying the `MPSC_PUMP_DISCONNECTED` sentinel
+///    - `Err(Broken)` carrying the `MEDIA_QUEUE_CLOSED` sentinel
 ///      (`pub(crate)` const in `transport.rs`) — the media queue closed: if
 ///      the recorded reason is `Cancelled` (recorded by the owning
 ///      `RtspClient`'s `Drop`, or by its thread when stopped), latch the
@@ -400,7 +398,7 @@ impl H264Receiver {
                 Ok(n) => n,
                 // A cancel fired mid-recv: step 2 drains and answers it.
                 Err(TransportError::ExplicitClose) => continue,
-                Err(TransportError::Broken { ref msg, .. }) if msg == MPSC_PUMP_DISCONNECTED => {
+                Err(TransportError::Broken { ref msg, .. }) if msg == MEDIA_QUEUE_CLOSED => {
                     if matches!(self.end_reason.get(), Some(EndReason::Cancelled)) {
                         // `Cancelled` was recorded before the queue closed:
                         // by the owning `RtspClient`'s `Drop`, or by its
@@ -708,7 +706,7 @@ mod tests {
     /// channel; if it lands before the call instead, step 2 answers it, so
     /// both orders give the same result.
     #[test]
-    fn a_cancel_landing_with_the_pump_end_is_the_cancel() {
+    fn a_cancel_landing_with_the_media_queue_end_is_the_cancel() {
         let (tx, rx) = std::sync::mpsc::channel::<bytes::Bytes>();
         let mut r = H264Receiver::from_mpsc(rx, H264DepayConfig::default());
         let cancel = r.cancel_handle();

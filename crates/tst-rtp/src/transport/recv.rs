@@ -40,7 +40,7 @@ pub(crate) const RECV_SCRATCH_LEN: usize = 65535;
 /// later SETUP replaced the queue (a keepalive `454` keeps it open). Consumers that treat this disconnect as EOS — e.g.
 /// `H264Receiver::recv_au` — match against this const, NOT a string
 /// literal, so a wording change can't silently break the EOS contract.
-pub(crate) const MPSC_PUMP_DISCONNECTED: &str = "interleaved pump bridge disconnected";
+pub(crate) const MEDIA_QUEUE_CLOSED: &str = "interleaved media queue closed";
 
 /// Inner data source for [`RtpRecvTransport`].
 ///
@@ -208,7 +208,7 @@ impl Source {
                             return Err(TransportError::ExplicitClose);
                         }
                         return Err(TransportError::Broken {
-                            msg: MPSC_PUMP_DISCONNECTED.to_string(),
+                            msg: MEDIA_QUEUE_CLOSED.to_string(),
                             errno_code: None,
                             cause: BrokenCause::Unspecified,
                         });
@@ -637,7 +637,7 @@ impl RtpRecvTransport {
             let n = match raw_result {
                 Ok(n) => n,
                 Err(TransportError::Broken { ref msg, .. })
-                    if msg == MPSC_PUMP_DISCONNECTED
+                    if msg == MEDIA_QUEUE_CLOSED
                         && matches!(self.end_reason.get(), Some(EndReason::CleanTeardown)) =>
                 {
                     // The client thread's `Sender` drop (Disconnected)
@@ -654,7 +654,7 @@ impl RtpRecvTransport {
                     return Err(TransportError::Closed);
                 }
                 Err(TransportError::Broken { ref msg, .. })
-                    if msg == MPSC_PUMP_DISCONNECTED
+                    if msg == MEDIA_QUEUE_CLOSED
                         && matches!(self.end_reason.get(), Some(EndReason::Cancelled)) =>
                 {
                     // `Cancelled` was recorded before the queue closed: by
@@ -946,7 +946,7 @@ mod mpsc_source_tests {
     }
 
     #[test]
-    fn a_pump_end_under_a_latched_cancel_reports_the_cancel() {
+    fn a_media_queue_end_under_a_latched_cancel_reports_the_cancel() {
         let (tx, rx) = mpsc::channel::<Bytes>();
         let source = Source::Mpsc(rx);
         let cancel = RtpCancelHandle::new();
@@ -998,10 +998,10 @@ mod mpsc_source_tests {
         );
     }
 
-    /// With no cancel, a pump end is still the sentinel the end-of-stream
+    /// With no cancel, a media queue end is still the sentinel the end-of-stream
     /// consumers match on, and an oversize frame is still `Broken`.
     #[test]
-    fn without_a_cancel_the_pump_end_and_an_oversize_frame_stay_broken() {
+    fn without_a_cancel_the_media_queue_end_and_an_oversize_frame_stay_broken() {
         let cancel = RtpCancelHandle::new();
         let mut scratch = vec![0u8; 16];
 
@@ -1010,7 +1010,7 @@ mod mpsc_source_tests {
         let r = Source::Mpsc(rx).recv_raw(&mut scratch, &cancel, None, None);
         assert!(
             matches!(&r, Err(TransportError::Broken { msg, errno_code: None, .. })
-                if msg == MPSC_PUMP_DISCONNECTED),
+                if msg == MEDIA_QUEUE_CLOSED),
             "got {r:?}"
         );
 

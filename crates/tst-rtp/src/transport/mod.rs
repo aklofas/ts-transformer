@@ -20,7 +20,7 @@ mod recv;
 mod rtcp_ingest;
 mod send;
 
-pub(crate) use recv::{MPSC_PUMP_DISCONNECTED, RECV_SCRATCH_LEN, Source, record_end};
+pub(crate) use recv::{MEDIA_QUEUE_CLOSED, RECV_SCRATCH_LEN, Source, record_end};
 // The publisher adapters validate TS payloads with the receiver's rule; the
 // bare plane has no publisher, so the re-export follows the server feature.
 #[cfg(feature = "rtsp-server")]
