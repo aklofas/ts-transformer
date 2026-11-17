@@ -81,9 +81,8 @@ pub struct ReceiverStats {
 /// `Receiver` supports three shutdown patterns:
 ///
 /// 1. **Drop** — the [`Drop`] impl emits a tracing event and lets the
-///    underlying transport's `Drop` close the libsrt socket. Synchronous;
-///    bounded by `SRTO_LINGER` (libsrt default off, sender preset 5 s, configurable via
-///    `SocketBuilder::linger`).
+///    underlying transport's own `Drop` run. Synchronous: it takes as long
+///    as that transport's close takes; see its docs.
 /// 2. **Explicit close** — call [`Self::close`]. Closes the underlying
 ///    transport; subsequent `next_packet` calls return
 ///    [`TransportError::Closed`] once the syncer's internal buffer is
@@ -91,7 +90,9 @@ pub struct ReceiverStats {
 /// 3. **Cross-thread cancel** — call [`Self::cancel_handle`] to obtain a
 ///    `Send + Sync` [`tst_core::transport::TransportCancel`] handle,
 ///    then `cancel()` from any thread. Wakes a peer thread parked in
-///    `next_packet` within one libsrt I/O cycle (~3-10 ms).
+///    `next_packet`; how soon depends on the transport (SRT closes the
+///    socket, the others notice at their next poll tick); see
+///    [the cancel coverage table](https://github.com/aklofas/ts-transformer/blob/main/docs/reference/srt-cancel-handle.md#cancel-coverage-by-transport).
 ///
 /// # C ABI
 ///

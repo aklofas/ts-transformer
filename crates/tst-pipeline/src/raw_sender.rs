@@ -115,15 +115,16 @@ pub struct RawSenderStats {
 ///
 /// 1. **Drop** — the [`Drop`] impl is currently a no-op for the transport
 ///    (the explicit `close()` is the canonical close path). The
-///    underlying transport's own `Drop` runs after this struct's `Drop`,
-///    which closes the libsrt socket; bounded by `SRTO_LINGER` (libsrt
-///    default off, sender preset 5 s, configurable via `SocketBuilder::linger`).
+///    underlying transport's own `Drop` runs after this struct's `Drop`
+///    and takes as long as that transport's close takes; see its docs.
 /// 2. **Explicit close** — call [`Self::close`]. Closes the underlying
 ///    transport. Idempotent.
 /// 3. **Cross-thread cancel** — call [`Self::cancel_handle`] to obtain a
 ///    `Send + Sync` [`tst_core::transport::TransportCancel`] handle,
 ///    then `cancel()` from any thread. Wakes a peer thread parked in
-///    `send` within one libsrt I/O cycle (~3-10 ms).
+///    `send`; how soon depends on the transport (SRT closes the socket,
+///    the others notice at their next poll tick); see
+///    [the cancel coverage table](https://github.com/aklofas/ts-transformer/blob/main/docs/reference/srt-cancel-handle.md#cancel-coverage-by-transport).
 ///
 /// ## Per-language idiom
 ///

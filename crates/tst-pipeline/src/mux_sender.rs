@@ -117,16 +117,18 @@ pub struct MuxSenderStats {
 /// supports four shutdown patterns:
 ///
 /// 1. **Drop** — the [`Drop`] impl best-effort drains `pending_bytes` and
-///    closes the underlying transport. Synchronous; bounded by
-///    `SRTO_LINGER` (libsrt default off, sender preset 5 s, configurable via
-///    `SocketBuilder::linger`).
+///    closes the underlying transport, with no cancel first. Synchronous:
+///    it takes as long as the drain send and the transport's own close
+///    take; see the transport's docs.
 /// 2. **Explicit prompt close** — call [`Self::close`]. Cancels the
 ///    transport *before* taking the inner lock, so a peer thread parked
 ///    in `send_video` / `send_klv` returns
-///    [`MuxSenderErrorSource::Transport`]`(`[`TransportError::ExplicitClose`]`)` within
-///    one libsrt I/O cycle (~3-10 ms). Idempotent. Prompt by
-///    construction — the price is that `pending_bytes` retained from a
-///    prior transient send error are abandoned.
+///    [`MuxSenderErrorSource::Transport`]`(`[`TransportError::ExplicitClose`]`)`
+///    once the transport observes the cancel: SRT closes the socket, the
+///    others notice at their next poll tick; see
+///    [the cancel coverage table](https://github.com/aklofas/ts-transformer/blob/main/docs/reference/srt-cancel-handle.md#cancel-coverage-by-transport). Idempotent. The price of cancelling first is that
+///    `pending_bytes` retained from a prior transient send error are
+///    abandoned.
 /// 3. **Graceful finish** — call [`Self::finish`]. Drains
 ///    `pending_bytes` to the still-live transport FIRST (fallible — the
 ///    caller learns whether the tail was delivered), then closes. May
@@ -1039,9 +1041,10 @@ impl<T: Transport> MuxSender<T> {
     /// Cancels the underlying transport BEFORE acquiring the inner lock,
     /// so a peer thread parked inside `send_video` / `send_klv` /
     /// `send_*_to` (e.g. libsrt's `srt_sendmsg` blocked on a full send
-    /// buffer) returns [`TransportError::ExplicitClose`] within one transport
-    /// I/O cycle (~3-10 ms on SRT) — `close()` never deadlocks against a
-    /// parked send and never waits on a slow network. This is the
+    /// buffer) returns [`TransportError::ExplicitClose`] once the transport
+    /// observes the cancel — `close()` never deadlocks against a parked
+    /// send; it waits for that send to honour the cancel, then for the
+    /// transport's own close. This is the
     /// emergency/prompt shutdown primitive; its price is that
     /// `pending_bytes` retained from a prior transient send error are
     /// ABANDONED (the post-cancel drain attempt finds the transport

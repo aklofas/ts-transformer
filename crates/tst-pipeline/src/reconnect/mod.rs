@@ -551,8 +551,11 @@ impl<T: Transport + 'static> ManagedTransport<T> {
     }
 
     /// Shared handle to the successful-rebuild counter
-    /// ([`ManagedTransportStats::reconnect_successes`]). Same contract as
-    /// [`Self::attempts_handle`]; receive-side twin
+    /// ([`ManagedTransportStats::reconnect_successes`]), lock-free like
+    /// [`Self::attempts_handle`] but read with `.load(Ordering::Acquire)`:
+    /// unlike the attempts counter this one is a publication point (a
+    /// reader that sees the bump also sees the rebuilt transport's payload
+    /// ceiling). Receive-side twin
     /// [`crate::ManagedRecvTransport::reconnects_handle`].
     #[must_use]
     pub fn reconnects_handle(&self) -> Arc<std::sync::atomic::AtomicU64> {

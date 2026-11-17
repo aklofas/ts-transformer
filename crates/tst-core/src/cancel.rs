@@ -33,7 +33,8 @@ use alloc::sync::Arc;
 use core::time::Duration;
 use portable_atomic::{AtomicBool, AtomicI64, Ordering};
 
-/// Standard cancel-poll interval used across all UDP-based transports.
+/// Standard cancel-poll interval of the flag-polled socket transports (UDP,
+/// TCP and RTP).
 /// Receivers/senders set this as the socket read/write timeout so that
 /// close/cancel flags get checked at most this often during a blocking call.
 pub const CANCEL_POLL_INTERVAL: Duration = Duration::from_millis(100);
