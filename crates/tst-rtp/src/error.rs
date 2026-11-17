@@ -79,21 +79,25 @@ pub enum RtspError {
     #[error("RTSP session expired or was closed by server")]
     SessionExpired,
 
-    /// A request's response deadline elapsed
-    /// (`RtspClientBuilder::request_timeout`, default 10 s; also the 500 ms
-    /// bound `Drop` puts on its best-effort TEARDOWN). The request was
-    /// written; whether the server acted on it is unknown, and its late
-    /// response may still be in the socket — treat the control connection
-    /// as indeterminate and build a fresh client. Distinct from
-    /// [`RtspError::SessionExpired`] (a client that is no longer usable).
+    /// A request's deadline elapsed: the response deadline
+    /// (`RtspClientBuilder::request_timeout`, default 10 s), or the bound
+    /// of [`RtspClient::teardown_within`](crate::RtspClient::teardown_within),
+    /// which also covers the wait for the control connection and the
+    /// request write. Unless that bound passed before the write, the
+    /// request was written (perhaps only in part); whether the server
+    /// acted on it is unknown, and its late response may still be in the
+    /// socket — treat the control connection as indeterminate and build a
+    /// fresh client. Distinct from [`RtspError::SessionExpired`] (a client
+    /// that is no longer usable).
     #[error("RTSP request timed out waiting for the server's response")]
     Timeout,
 
-    /// Caller invoked `RtspCancelHandle::cancel` mid-request. The TCP
-    /// write/read returned early; no server state was necessarily mutated,
-    /// so treat the session as indeterminate. Bindings project this as the
-    /// one cancel outcome, `Closed` (`TST_E_CLOSED`, `RtspError(CLOSED)`,
-    /// `RtspException(CLOSED)`).
+    /// The caller's `RtspCancelHandle::cancel` ended the wait for a
+    /// response. The cancel is seen only while the response is awaited:
+    /// the request was still written, and whether the server acted on it
+    /// is unknown, so treat the session as indeterminate. Bindings project
+    /// this as the one cancel outcome, `Closed` (`TST_E_CLOSED`,
+    /// `RtspError(CLOSED)`, `RtspException(CLOSED)`).
     #[error("RTSP request canceled by caller")]
     LocalCancel,
 

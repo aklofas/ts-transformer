@@ -282,7 +282,7 @@ impl RtspClient {
         let deadline = self
             .request_timeout
             .and_then(|t| std::time::Instant::now().checked_add(t));
-        self.send_and_read_with_deadline(request_bytes, deadline)
+        self.send_and_read_with_deadline(request_bytes, deadline, None)
     }
 
     /// Variant of [`Self::send_and_read`] with an optional hard deadline,
@@ -294,17 +294,24 @@ impl RtspClient {
     /// path shortens the socket's read timeout as needed and restores
     /// the configured value before returning. A read interrupted by a
     /// handled signal (`Interrupted`) is retried, never surfaced.
+    ///
+    /// `send_deadline` also bounds the wait for the stream lock and the
+    /// request write (see [`Self::lock_and_write`]); `None` leaves them
+    /// to the lock and the socket's write timeout.
     pub(crate) fn send_and_read_with_deadline(
         &mut self,
         request_bytes: &[u8],
         deadline: Option<std::time::Instant>,
+        send_deadline: Option<std::time::Instant>,
     ) -> Result<RtspResponse, RtspError> {
         if self.pump_state.is_some() {
-            return self.send_and_read_via_pump_with_deadline(request_bytes, deadline);
+            return self.send_and_read_via_pump_with_deadline(
+                request_bytes,
+                deadline,
+                send_deadline,
+            );
         }
-        let mut s = crate::rtsp::client::lock_unpoisoned(&self.stream);
-        s.write_all(request_bytes)
-            .map_err(|e| RtspError::Io(e.kind()))?;
+        let mut s = self.lock_and_write(request_bytes, send_deadline)?;
         let mut applied = self.read_timeout;
         let r = self.read_response(&mut s, deadline, &mut applied);
         if applied != self.read_timeout {
@@ -315,6 +322,33 @@ impl RtspClient {
             let _ = s.set_read_timeout(self.read_timeout);
         }
         r
+    }
+
+    /// Take the stream lock and write `request_bytes`, returning the held
+    /// lock. With `send_deadline`, the lock wait gives up at the deadline
+    /// (`try_lock` in 1 ms steps) and the write is bounded by it too
+    /// ([`write_all_by`](crate::rtsp::client::write_all_by)); expiry in
+    /// either is [`RtspError::Timeout`]. Without it, the lock waits for
+    /// its holder and the write for the socket's write timeout.
+    fn lock_and_write(
+        &self,
+        request_bytes: &[u8],
+        send_deadline: Option<std::time::Instant>,
+    ) -> Result<std::sync::MutexGuard<'_, crate::rtsp::client::Stream>, RtspError> {
+        match send_deadline {
+            Some(d) => {
+                let mut s = crate::rtsp::client::lock_unpoisoned_by(&self.stream, d)
+                    .ok_or(RtspError::Timeout)?;
+                crate::rtsp::client::write_all_by(&mut s, request_bytes, d)?;
+                Ok(s)
+            }
+            None => {
+                let mut s = crate::rtsp::client::lock_unpoisoned(&self.stream);
+                s.write_all(request_bytes)
+                    .map_err(|e| RtspError::Io(e.kind()))?;
+                Ok(s)
+            }
+        }
     }
 
     /// Read loop of the non-pump path of
@@ -436,21 +470,17 @@ impl RtspClient {
         }
     }
 
-    /// Pump-active variant of [`Self::send_and_read`] with an optional
-    /// hard deadline. When `deadline` elapses with no matching response,
-    /// returns [`RtspError::Timeout`].
-    ///
-    /// Used by [`Self::teardown`] from within `Drop`: if the server has
-    /// silently half-closed (no FIN on the wire — e.g. when
-    /// `RtspServer::stop` cancels per-session tasks but leaves the
-    /// write half open via lingering `ActiveSession` Arcs), the
-    /// in-flight TEARDOWN write succeeds into the kernel buffer but
-    /// no response ever arrives. Without a deadline, `Drop` blocks
-    /// the whole test scope.
+    /// Pump-active variant of [`Self::send_and_read_with_deadline`], with
+    /// the same two deadlines: the response comes off the pump's control
+    /// channel, matched by CSeq. When `deadline` elapses with no matching
+    /// response, returns [`RtspError::Timeout`]: a server that silently
+    /// half-closed (no FIN on the wire) takes the request into the kernel
+    /// buffer and never answers.
     pub(crate) fn send_and_read_via_pump_with_deadline(
         &mut self,
         request_bytes: &[u8],
         deadline: Option<std::time::Instant>,
+        send_deadline: Option<std::time::Instant>,
     ) -> Result<RtspResponse, RtspError> {
         let req_cseq = parse_cseq_from_request(request_bytes);
         // Ask the interleaved pump to yield the shared stream lock while we
@@ -476,12 +506,7 @@ impl RtspClient {
         // skip reads forever).
         let write_result = {
             let _gate = crate::rtsp::client::WriteGateGuard::enter(&write_gate);
-            let mut s = crate::rtsp::client::lock_unpoisoned(&self.stream);
-            let r = s
-                .write_all(request_bytes)
-                .map_err(|e| RtspError::Io(e.kind()));
-            drop(s);
-            r
+            self.lock_and_write(request_bytes, send_deadline).map(drop)
         };
         write_result?;
         let pump = self
@@ -1017,6 +1042,7 @@ mod tests {
         let r = client.send_and_read_via_pump_with_deadline(
             b"OPTIONS rtsp://127.0.0.1/test RTSP/1.0\r\nCSeq: 7\r\n\r\n",
             Some(deadline),
+            None,
         );
         assert!(
             matches!(r, Err(RtspError::Timeout)),

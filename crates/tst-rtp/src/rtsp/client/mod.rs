@@ -89,6 +89,73 @@ impl Stream {
             Stream::Tls(s) => s.set_read_timeout(t),
         }
     }
+
+    /// Set the write timeout of the underlying TCP socket, the twin of
+    /// [`Self::set_read_timeout`]. `t` must be non-zero.
+    pub(crate) fn set_write_timeout(&self, t: Duration) -> std::io::Result<()> {
+        match self {
+            Stream::Plain(s) => s.set_write_timeout(Some(t)),
+            #[cfg(feature = "tls")]
+            Stream::Tls(s) => s.set_write_timeout(t),
+        }
+    }
+}
+
+/// Write timeout of the control socket, set at connect: the longest one
+/// stalled socket write of a request or keepalive ping may block.
+pub(crate) const CONTROL_WRITE_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// `write_all` that gives up at `deadline`. Each socket write waits at
+/// most the time left (capped at [`CONTROL_WRITE_TIMEOUT`], floored at
+/// 1 ms because a zero timeout is an error). A write cut short by the
+/// deadline is [`RtspError::Timeout`]; one that stalls the full
+/// [`CONTROL_WRITE_TIMEOUT`] first is `Io`, as without a deadline. The
+/// socket has [`CONTROL_WRITE_TIMEOUT`] again when this returns.
+pub(crate) fn write_all_by(
+    s: &mut Stream,
+    mut buf: &[u8],
+    deadline: std::time::Instant,
+) -> Result<(), RtspError> {
+    let mut applied = CONTROL_WRITE_TIMEOUT;
+    let r = loop {
+        if buf.is_empty() {
+            break Ok(());
+        }
+        let left = deadline.saturating_duration_since(std::time::Instant::now());
+        if left.is_zero() {
+            break Err(RtspError::Timeout);
+        }
+        let wait = left
+            .min(CONTROL_WRITE_TIMEOUT)
+            .max(Duration::from_millis(1));
+        if wait != applied {
+            if let Err(e) = s.set_write_timeout(wait) {
+                break Err(RtspError::Io(e.kind()));
+            }
+            applied = wait;
+        }
+        match s.write(buf) {
+            Ok(0) => break Err(RtspError::Io(std::io::ErrorKind::WriteZero)),
+            Ok(n) => buf = &buf[n..],
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+            // Unix reports a socket timeout as WouldBlock, Windows as TimedOut.
+            Err(e)
+                if matches!(
+                    e.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                ) && wait < CONTROL_WRITE_TIMEOUT =>
+            {
+                break Err(RtspError::Timeout);
+            }
+            Err(e) => break Err(RtspError::Io(e.kind())),
+        }
+    };
+    if applied != CONTROL_WRITE_TIMEOUT {
+        // Best-effort, like the read-timeout restore: this only fails on
+        // a socket that is already unusable.
+        let _ = s.set_write_timeout(CONTROL_WRITE_TIMEOUT);
+    }
+    r
 }
 
 /// Longest a request/response wait blocks before it re-checks the cancel
@@ -286,6 +353,27 @@ pub(crate) fn lock_unpoisoned<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|e| e.into_inner())
 }
 
+/// [`lock_unpoisoned`] that gives up at `deadline`: `try_lock` in 1 ms
+/// steps (the interleaved pump's own yield step), `None` once the
+/// deadline has passed with the lock still held elsewhere.
+pub(crate) fn lock_unpoisoned_by<T>(
+    m: &Mutex<T>,
+    deadline: std::time::Instant,
+) -> Option<std::sync::MutexGuard<'_, T>> {
+    loop {
+        match m.try_lock() {
+            Ok(g) => return Some(g),
+            Err(std::sync::TryLockError::Poisoned(e)) => return Some(e.into_inner()),
+            Err(std::sync::TryLockError::WouldBlock) => {
+                if std::time::Instant::now() >= deadline {
+                    return None;
+                }
+                std::thread::sleep(Duration::from_millis(1));
+            }
+        }
+    }
+}
+
 /// Millisecond count of `d`, saturating at `u64::MAX`. A plain
 /// `as_millis() as u64` cast silently truncates for durations past
 /// ~584 million years — a hostile-but-spec-legal `Session: timeout=`
@@ -443,7 +531,7 @@ impl RtspClient {
             .map_err(|e| RtspError::Io(e.kind()))?;
         tcp.set_read_timeout(Some(params.read_timeout))
             .map_err(|e| RtspError::Io(e.kind()))?;
-        tcp.set_write_timeout(Some(Duration::from_secs(5)))
+        tcp.set_write_timeout(Some(CONTROL_WRITE_TIMEOUT))
             .map_err(|e| RtspError::Io(e.kind()))?;
         tcp.set_nodelay(true).ok();
         // `?tcp_keepalive=` / `RtspClientBuilder::tcp_keepalive`: applied
@@ -694,31 +782,21 @@ impl RtspClient {
 impl Drop for RtspClient {
     fn drop(&mut self) {
         // Signal cancel to the pump + keepalive threads FIRST, before the
-        // best-effort TEARDOWN. The interleaved pump's `SharedStreamReader`
-        // re-acquires the shared `Mutex<Stream>` on every read cycle
-        // (~100 ms); if we attempt TEARDOWN while the pump is running, the
-        // TEARDOWN write-lock acquisition is starved for a variable,
-        // *unbounded* time — `std::sync::Mutex` is unfair and the lock
-        // acquisition happens before (and so is not covered by) the
-        // teardown deadline. That stalls Drop for seconds locally and >60 s
-        // on the slower CI runners (it cancelled linux-aarch64's job and
-        // unmasked on x86_64 once the cdylib-clobber fix let the test run).
-        // Setting cancel first lets the pump exit at its next loop-top check
-        // (within one read cycle) and stop re-locking, so the TEARDOWN write
-        // acquires the lock promptly and Drop stays bounded.
+        // best-effort TEARDOWN. The interleaved pump re-takes the shared
+        // `Mutex<Stream>` on every read cycle (~100 ms); with cancel set it
+        // exits at its next loop-top check and stops re-locking, so the
+        // TEARDOWN normally gets the lock within one read cycle.
         self.cancel.cancel();
         if let Some(pump) = self.pump_state.as_ref() {
             pump.cancel.store(true, Ordering::Relaxed);
         }
-        // Best-effort TEARDOWN if a session is still active, now on the
-        // uncontended stream. Bounded to 500 ms via teardown_with_deadline
-        // so Drop stays fast even when the peer silently half-closed (e.g.
-        // RtspServer::stop cancels per-session tasks but leaves the write
-        // half open via lingering ActiveSession Arcs — TEARDOWN write
-        // succeeds into the kernel buffer but no response ever comes back).
+        // Best-effort TEARDOWN if a session is still active. The 500 ms
+        // bound covers the wait for the stream lock and the request write.
+        // The reply is not awaited: with the cancel flag already set, the
+        // reply wait returns `LocalCancel` at its first check, so Drop
+        // writes the request and moves on.
         if self.session_id.is_some() {
-            let deadline = std::time::Instant::now() + std::time::Duration::from_millis(500);
-            let _ = self.teardown_with_deadline(Some(deadline));
+            let _ = self.teardown_within(std::time::Duration::from_millis(500));
         }
         // Reap the threads (already winding down from the cancel above) so
         // they're joined before the TcpStream FD they hold is closed by the
@@ -921,7 +999,7 @@ mod poison_policy {
         poison_stream_mutex(&client);
         let deadline = Instant::now() + Duration::from_millis(300);
         let r = catch_unwind(AssertUnwindSafe(|| {
-            client.teardown_with_deadline(Some(deadline))
+            client.teardown_with_deadline(Some(deadline), None)
         }));
         let inner = r.expect("request path panicked on a poisoned mutex");
         // The silent peer never replies — an Err is expected; a panic is the bug.

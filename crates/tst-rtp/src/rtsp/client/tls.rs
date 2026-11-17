@@ -143,6 +143,12 @@ impl TlsStream {
     pub(crate) fn set_read_timeout(&self, t: std::time::Duration) -> std::io::Result<()> {
         self.sock.set_read_timeout(Some(t))
     }
+
+    /// Set the write timeout of the TCP socket beneath rustls, where each
+    /// `write_tls` pass blocks.
+    pub(crate) fn set_write_timeout(&self, t: std::time::Duration) -> std::io::Result<()> {
+        self.sock.set_write_timeout(Some(t))
+    }
 }
 
 impl Read for TlsStream {

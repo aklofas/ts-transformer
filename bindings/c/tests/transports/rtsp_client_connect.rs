@@ -611,12 +611,11 @@ fn teardown_of_a_healthy_session_returns_success() {
     }
 }
 
-/// A peer that never answers TEARDOWN cannot hold the call past the reply
-/// bound: the timer cancels the wait, the call reports `TST_E_CLOSED` and
-/// frees the handle. Without the timer it would park for the client's 10 s
-/// request timeout.
+/// A peer that never answers TEARDOWN cannot hold the call past the 500 ms
+/// bound: the call reports `TST_E_RTSP_TIMEOUT` and frees the handle.
+/// Without the bound it would park for the client's 10 s request timeout.
 #[test]
-fn teardown_against_a_silent_peer_is_bounded_by_the_timer() {
+fn teardown_against_a_silent_peer_is_bounded() {
     let (port, reqs, peer) = recording_peer_with(None, false);
     let s = connect_no_keepalive(&format!("rtsp://127.0.0.1:{port}/live"));
     assert!(!s.is_null(), "{}", last_error_msg());
@@ -629,15 +628,33 @@ fn teardown_against_a_silent_peer_is_bounded_by_the_timer() {
     let t0 = Instant::now();
     let rc = unsafe { tst_rtsp_session_teardown_and_free(s) };
     let elapsed = t0.elapsed();
-    assert_eq!(rc, TstError::Closed as i32, "{}", last_error_msg());
+    assert_eq!(rc, TstError::RtspTimeout as i32, "{}", last_error_msg());
     assert!(
         elapsed >= Duration::from_millis(400),
-        "teardown returned in {elapsed:?}, before the 500 ms reply bound"
+        "teardown returned in {elapsed:?}, before the 500 ms bound"
     );
     assert!(
         elapsed < scaled(Duration::from_secs(3)),
         "teardown against a silent peer took {elapsed:?}"
     );
+    peer.join().unwrap();
+    let reqs = reqs.lock().unwrap();
+    assert!(
+        reqs.iter().any(|r| r.starts_with("TEARDOWN ")),
+        "the peer saw no TEARDOWN: {reqs:?}"
+    );
+}
+
+/// A session cancelled before the free still sends its TEARDOWN; the call
+/// does not wait for the reply and reports `TST_E_CLOSED`.
+#[test]
+fn teardown_of_a_cancelled_session_still_sends_teardown() {
+    let (port, reqs, peer) = recording_peer(None);
+    let s = connect_no_keepalive(&format!("rtsp://127.0.0.1:{port}/live"));
+    assert!(!s.is_null(), "{}", last_error_msg());
+    assert_eq!(unsafe { tst_rtsp_session_cancel(s) }, 0);
+    let rc = unsafe { tst_rtsp_session_teardown_and_free(s) };
+    assert_eq!(rc, TstError::Closed as i32, "{}", last_error_msg());
     peer.join().unwrap();
     let reqs = reqs.lock().unwrap();
     assert!(
