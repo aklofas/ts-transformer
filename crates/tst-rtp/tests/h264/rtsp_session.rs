@@ -73,7 +73,7 @@ fn build_play_data(pkts: &[Vec<u8>]) -> Vec<u8> {
 /// Build a minimal RTCP SR payload (28 bytes), routed on channel 1.
 ///
 /// Content is arbitrary — the H.264 receiver discards RTCP frames; this
-/// just needs to be non-empty so the pump routes it to `rtcp_tx`.
+/// just needs to be non-empty so the client routes it as RTCP.
 fn rtcp_sr_frame() -> Vec<u8> {
     // RFC 3550 §6.4.1: 28-byte SR (V=2, RC=0, PT=200, length=6 words, rest zero)
     let sr: [u8; 28] = [

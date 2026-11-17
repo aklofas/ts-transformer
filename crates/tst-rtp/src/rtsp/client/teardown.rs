@@ -120,7 +120,7 @@ mod tests {
     /// (so the client sees neither a response nor an EOF — the exact
     /// shape `teardown_with_deadline`'s deadline exists to bound).
     #[test]
-    fn teardown_with_deadline_bounds_nonpump_silent_peer() {
+    fn teardown_with_deadline_bounds_a_silent_peer() {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
         let (done_tx, done_rx) = std::sync::mpsc::channel::<()>();
@@ -287,39 +287,49 @@ mod tests {
         teardown_within_is_bounded(true, true);
     }
 
-    /// `Drop` sets the cancel and then writes TEARDOWN, so it waits for the
-    /// write and not for a reply that never comes: it returns well inside
-    /// its 500 ms TEARDOWN bound, and the cancel is set afterwards.
+    /// `Drop` sets the cancel and then writes TEARDOWN: the peer sees the
+    /// cancel already set when the TEARDOWN arrives, and Drop waits for the
+    /// write, not for a reply that never comes (it returns well inside its
+    /// 500 ms TEARDOWN bound).
     #[test]
     fn drop_sets_the_cancel_before_its_teardown() {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
+        let (cancel_tx, cancel_rx) = std::sync::mpsc::channel::<crate::RtspCancelHandle>();
         let peer = std::thread::spawn(move || {
+            let cancel = cancel_rx.recv().unwrap();
+            let (mut sock, _) = listener.accept().unwrap();
+            // Never replies; reads until the TEARDOWN head is in.
+            sock.set_read_timeout(Some(Duration::from_secs(10))).ok();
             let mut seen = Vec::new();
-            if let Ok((mut sock, _)) = listener.accept() {
-                // Never replies; reads until the client hangs up.
-                sock.set_read_timeout(Some(Duration::from_secs(10))).ok();
-                let _ = sock.read_to_end(&mut seen);
+            let mut buf = [0u8; 1024];
+            while !String::from_utf8_lossy(&seen).contains("TEARDOWN ") {
+                match sock.read(&mut buf) {
+                    Ok(0) | Err(_) => return None,
+                    Ok(n) => seen.extend_from_slice(&buf[..n]),
+                }
             }
-            String::from_utf8_lossy(&seen).into_owned()
+            let cancelled_at_teardown = cancel.is_cancelled();
+            // Hold the connection until the client hangs up.
+            let _ = sock.read_to_end(&mut Vec::new());
+            Some(cancelled_at_teardown)
         });
 
         let mut client = RtspClient::connect(&format!("rtsp://127.0.0.1:{port}/test")).unwrap();
         client.session_id = Some("silent-drop".into());
-        let cancel = client.cancel_handle();
+        cancel_tx.send(client.cancel_handle()).unwrap();
         let t0 = Instant::now();
         drop(client);
         let elapsed = t0.elapsed();
 
-        assert!(cancel.is_cancelled(), "Drop did not set the cancel");
+        assert_eq!(
+            peer.join().unwrap(),
+            Some(true),
+            "the TEARDOWN must arrive (Some) with the cancel already set (true)"
+        );
         assert!(
             elapsed < tst_test_helpers::timing::scaled(Duration::from_millis(400)),
             "Drop waited {elapsed:?}: it waited for the TEARDOWN reply"
-        );
-        let seen = peer.join().unwrap();
-        assert!(
-            seen.lines().any(|l| l.starts_with("TEARDOWN ")),
-            "the peer saw no TEARDOWN: {seen:?}"
         );
     }
 
@@ -353,10 +363,9 @@ mod tests {
         );
     }
 
-    /// A peer that answers: `teardown_within` returns `Ok` and clears the
-    /// session.
-    #[test]
-    fn teardown_within_a_healthy_peer_returns_ok() {
+    /// A peer that answers: `teardown_within(bound)` returns `Ok` and
+    /// clears the session.
+    fn teardown_within_a_healthy_peer(bound: Duration) {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
         let peer = std::thread::spawn(move || {
@@ -397,9 +406,132 @@ mod tests {
         .unwrap();
         client.session_id = Some("healthy".into());
 
-        let r = client.teardown_within(Duration::from_millis(500));
+        let r = client.teardown_within(bound);
         assert!(r.is_ok(), "got {r:?}");
         assert!(client.session_id.is_none());
+
+        drop(client);
+        peer.join().unwrap();
+    }
+
+    #[test]
+    fn teardown_within_a_healthy_peer_returns_ok() {
+        teardown_within_a_healthy_peer(Duration::from_millis(500));
+    }
+
+    /// A bound too large for an `Instant` does not panic: it is no deadline.
+    #[test]
+    fn teardown_within_duration_max_is_no_deadline() {
+        teardown_within_a_healthy_peer(Duration::MAX);
+    }
+
+    /// `teardown_within` is ONE deadline over the write and the reply: the
+    /// peer takes no bytes for 500 ms (64 KiB is queued ahead of the
+    /// TEARDOWN), then reads everything and never replies. The TEARDOWN
+    /// reaches the peer inside the 1 s bound, so the reply wait gets
+    /// only what is left: the call ends at the bound, not a bound after the
+    /// write. Linux only, for the reason given in `test_sockets`.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn teardown_within_is_one_deadline_over_the_write_and_the_reply() {
+        use crate::rtsp::client::engine::RequestSpec;
+        use crate::rtsp::message::RtspMethod;
+        use socket2::{Domain, Socket, Type};
+
+        const BOUND: Duration = Duration::from_secs(1);
+        const PEER_PAUSE: Duration = Duration::from_millis(500);
+
+        let sock = Socket::new(Domain::IPV4, Type::STREAM, None).unwrap();
+        sock.set_recv_buffer_size(4096).unwrap();
+        sock.bind(
+            &"127.0.0.1:0"
+                .parse::<std::net::SocketAddr>()
+                .unwrap()
+                .into(),
+        )
+        .unwrap();
+        sock.listen(1).unwrap();
+        let listener: TcpListener = sock.into();
+        let port = listener.local_addr().unwrap().port();
+        let (go_tx, go_rx) = mpsc::channel::<()>();
+        let (seen_tx, seen_rx) = mpsc::channel::<Instant>();
+        let peer = std::thread::spawn(move || {
+            let (mut sock, _) = listener.accept().unwrap();
+            go_rx.recv().unwrap();
+            // Pacing, not a sync: the bytes queued ahead wait this long.
+            std::thread::sleep(PEER_PAUSE);
+            sock.set_read_timeout(Some(Duration::from_secs(10))).ok();
+            let mut tail = Vec::new();
+            let mut buf = [0u8; 64 * 1024];
+            loop {
+                match sock.read(&mut buf) {
+                    Ok(0) | Err(_) => return,
+                    Ok(n) => tail.extend_from_slice(&buf[..n]),
+                }
+                if String::from_utf8_lossy(&tail).contains("TEARDOWN ") {
+                    let _ = seen_tx.send(Instant::now());
+                    break;
+                }
+                // Keep only what could start a TEARDOWN split across reads.
+                let keep = tail.len().saturating_sub(16);
+                tail.drain(..keep);
+            }
+            // Never replies; holds the connection until the client hangs up.
+            let _ = sock.read_to_end(&mut Vec::new());
+        });
+
+        let url = crate::url::RtspUrl::parse(&format!("rtsp://127.0.0.1:{port}/test")).unwrap();
+        let (probe, socket) = mpsc::channel();
+        let mut client = RtspClient::connect_with_params(
+            &url,
+            None,
+            crate::rtsp::client::ConnectParams {
+                socket_probe: Some(probe),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        socket2::SockRef::from(&socket.recv().unwrap())
+            .set_send_buffer_size(4096)
+            .unwrap();
+        client.session_id = Some("one-deadline".into());
+        let ahead = Instant::now() + Duration::from_millis(50);
+        let r = client.request(
+            RequestSpec {
+                method: RtspMethod::Options,
+                uri: url.render_no_credentials(),
+                headers: vec![("x-pad", "a".repeat(64 * 1024))],
+            },
+            Some(ahead),
+            Some(ahead),
+        );
+        assert!(matches!(r, Err(RtspError::Timeout)), "got {r:?}");
+
+        go_tx.send(()).unwrap();
+        let t0 = Instant::now();
+        let r = client.teardown_within(BOUND);
+        let returned = Instant::now();
+        let elapsed = returned - t0;
+
+        assert!(matches!(r, Err(RtspError::Timeout)), "got {r:?}");
+        let seen = seen_rx
+            .recv_timeout(Duration::from_secs(10))
+            .expect("the TEARDOWN reached the peer");
+        assert!(
+            seen < returned,
+            "the TEARDOWN reached the peer only {:?} after the call returned: the write did not finish inside the bound",
+            seen - returned
+        );
+        assert!(
+            elapsed >= BOUND,
+            "returned in {elapsed:?}, before the bound"
+        );
+        assert!(
+            elapsed < BOUND + scaled(Duration::from_millis(250)),
+            "returned in {elapsed:?}: the reply wait got a bound of its own after the write \
+             (the TEARDOWN reached the peer {:?} after the call began)",
+            seen - t0
+        );
 
         drop(client);
         peer.join().unwrap();

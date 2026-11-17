@@ -27,14 +27,9 @@ fn interleaved_session_survives_sustained_keepalive_responses() {
     let h = FixtureHandle::spawn(FixtureConfig::default());
     let url = format!("rtsp://127.0.0.1:{}/test?transport=tcp", h.port);
 
-    // Tight read timeout so the pump's stream-lock hold per read cycle is
-    // ~10 ms — the keepalive thread contends on the same mutex for its
-    // writes, and the default 100 ms hold would stretch the effective ping
-    // cadence well past the requested 20 ms.
     let mut client = tst_rtp::RtspClientBuilder::new(&url)
         .unwrap()
         .no_auto_keepalive(true)
-        .read_timeout(Duration::from_millis(10))
         .connect()
         .unwrap();
     let sdp = client.describe().unwrap();
@@ -51,8 +46,8 @@ fn interleaved_session_survives_sustained_keepalive_responses() {
         .unwrap();
 
     // Watchdog: end the (data-less) blocking recv loop after 3 s. By then
-    // ~150 keepalive responses have crossed the pump — 4.5× the queuing
-    // pump's kill threshold of 33.
+    // ~150 keepalive responses have reached the client — 4.5× the old
+    // queuing pump's kill threshold of 33.
     let cancel = recv
         .cancel_handle()
         .expect("recv transport exposes a cancel handle");

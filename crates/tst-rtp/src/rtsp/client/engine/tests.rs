@@ -1613,7 +1613,7 @@ fn engine_skips_a_non_utf8_header_block_after_a_binary_frame() {
     assert!(e.inbuf.is_empty());
 }
 
-/// Mirror of `send_and_read_rejects_non_utf8_headers_with_their_own_detail`:
+/// Mirror of `non_utf8_reply_headers_are_rejected_with_their_own_detail`:
 /// the waiting request gets the detail and the stream goes on.
 #[test]
 fn non_utf8_headers_answer_a_waiting_request_and_the_stream_goes_on() {
@@ -1644,7 +1644,7 @@ fn non_utf8_headers_answer_a_waiting_request_and_the_stream_goes_on() {
     assert_eq!(reply(&mut e, b).unwrap().status, 200);
 }
 
-/// Mirror of `send_and_read_rejects_unterminated_headers`, whole and
+/// Mirror of `unterminated_reply_headers_are_rejected`, whole and
 /// in read-sized slices.
 #[test]
 fn unterminated_headers_answer_a_waiting_request_and_close() {
@@ -1666,7 +1666,7 @@ fn unterminated_headers_answer_a_waiting_request_and_close() {
     }
 }
 
-/// Mirror of `send_and_read_rejects_oversized_declared_body`.
+/// Mirror of `an_oversized_declared_reply_body_is_rejected`.
 #[test]
 fn an_oversized_declared_body_answers_a_waiting_request_and_closes() {
     let t0 = Instant::now();

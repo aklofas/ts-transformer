@@ -25,13 +25,11 @@ fn explicit_teardown_clears_session() {
     drop(h);
 }
 
-/// A dropped interleaved client still writes TEARDOWN when its
-/// `read_timeout` is longer than Drop's base 500 ms bound. The pump holds
-/// the control stream for one whole read; with no media arriving that
-/// read runs its full second, and Drop must wait it out rather than give
-/// up on the lock.
+/// A dropped interleaved client on a quiet session still writes TEARDOWN
+/// when its `read_timeout` is longer than Drop's 500 ms bound: no read in
+/// progress holds the TEARDOWN back.
 #[test]
-fn drop_writes_teardown_while_the_pump_holds_a_long_read() {
+fn drop_writes_teardown_on_a_quiet_interleaved_session_with_a_long_read_timeout() {
     use std::io::{Read, Write};
     use std::net::TcpListener;
     use std::sync::mpsc;
@@ -60,8 +58,8 @@ fn drop_writes_teardown_while_the_pump_holds_a_long_read() {
             format!("RTSP/1.0 200 OK\r\nCSeq: {cseq}\r\nSession: DEADBEEF\r\n\r\n").as_bytes(),
         )
         .unwrap();
-        // Send nothing more: the pump's read runs to its timeout. Record what
-        // the client writes next, until a TEARDOWN or the connection ends.
+        // Send nothing more. Record what the client writes next, until a
+        // TEARDOWN or the connection ends.
         let mut rest = leftover;
         let mut buf = [0u8; 4096];
         while !String::from_utf8_lossy(&rest).contains("TEARDOWN ") {
@@ -82,8 +80,7 @@ fn drop_writes_teardown_while_the_pump_holds_a_long_read() {
         .unwrap();
     let sdp = client.describe().unwrap();
     let session = client.setup_mp2t_auto(&sdp).unwrap();
-    // PLAY's reply comes back through the pump, so the pump is running.
-    // The pause only lets it enter its next one-second read; whichever
+    // The pause leaves the session quiet for a while before Drop; whichever
     // way that goes, Drop must write TEARDOWN.
     client.play().unwrap();
     std::thread::sleep(Duration::from_millis(200));

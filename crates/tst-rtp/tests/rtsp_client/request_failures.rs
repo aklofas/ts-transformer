@@ -17,8 +17,8 @@ use crate::fixtures::wait_for;
 const INTERLEAVED: &str = "RTP/AVP/TCP;unicast;interleaved=0-1";
 
 /// The peer resets the control connection after SETUP; once the reset is
-/// recorded the client sends PLAY, with its cancel set first when
-/// `cancel`. Linux only: the reset-then-request sequence has not been
+/// recorded the client sends PLAY (it meets an ended stream, so nothing is
+/// written), with its cancel set first when `cancel`. Linux only: the reset-then-request sequence has not been
 /// measured on macOS or Windows.
 #[cfg(target_os = "linux")]
 fn play_after_a_reset(cancel: bool) -> Result<tst_rtp::RtpInfo, RtspError> {
@@ -51,14 +51,14 @@ fn play_after_a_reset(cancel: bool) -> Result<tst_rtp::RtpInfo, RtspError> {
 
 #[cfg(target_os = "linux")]
 #[test]
-fn a_write_failure_on_a_cancelled_interleaved_client_reports_the_cancel() {
+fn a_request_after_a_reset_on_a_cancelled_interleaved_client_reports_the_cancel() {
     let r = play_after_a_reset(true);
     assert!(matches!(r, Err(RtspError::LocalCancel)), "got {r:?}");
 }
 
 #[cfg(target_os = "linux")]
 #[test]
-fn a_write_failure_on_an_interleaved_client_without_a_cancel_is_io() {
+fn a_request_after_a_reset_on_an_interleaved_client_without_a_cancel_is_io() {
     let r = play_after_a_reset(false);
     assert!(matches!(r, Err(RtspError::Io(_))), "got {r:?}");
 }

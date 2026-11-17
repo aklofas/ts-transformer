@@ -1,18 +1,15 @@
 //! TLS-side keepalive.
 //!
-//! [`RtspClient`](tst_rtp::RtspClient) shares its stream with the
-//! auto-keepalive thread as an `Arc<Mutex<Stream>>`, so the thread (spawned
-//! by
+//! [`RtspClient`](tst_rtp::RtspClient)'s keepalive pings (enabled by
 //! [`spawn_keepalive_if_needed`](tst_rtp::RtspClient::spawn_keepalive_if_needed)
-//! from the builder) works uniformly across `Stream::Plain` and
-//! `Stream::Tls`. A `TcpStream::try_clone`-based thread would be silently a
-//! no-op for TLS because rustls `ClientConnection` isn't clonable.
+//! from the builder) are written by the client's own thread, which owns
+//! the control connection whether it is plain TCP or TLS.
 //!
 //! Drives a real in-process `rtsps://` server using the
 //! [`SelfSignedCert`](crate::fixtures::tls_certs::SelfSignedCert) rcgen
 //! fixture (cert + key + matching root for the client trust store), so
-//! the keepalive thread is exercised over a live TLS session — verifying
-//! both the client's TLS keepalive (the `Arc<Mutex<Stream>>` share) and
+//! the keepalive pings run over a live TLS session — verifying both the
+//! client's TLS keepalive and
 //! the server's TLS session loop handle periodic GET_PARAMETER pings.
 
 // Drives a real in-process `rtsps://` server via `RtspServerBuilder::tls_cert`
@@ -36,7 +33,7 @@ use tst_rtp::{RtspClientBuilder, RtspServerBuilder};
 /// `spawn_keepalive_if_needed`) because the builder is the public
 /// keepalive-spawn path the public-API consumers will hit.
 #[test]
-fn rtsps_keepalive_thread_spawns_on_connect() {
+fn rtsps_keepalive_pings_keep_the_session_alive() {
     // Fresh self-signed cert (SANs: localhost + 127.0.0.1) from the rcgen
     // fixture; the tempdir lives as long as `certs`.
     let certs = crate::fixtures::tls_certs::SelfSignedCert::generate();
@@ -67,9 +64,7 @@ fn rtsps_keepalive_thread_spawns_on_connect() {
     std::thread::sleep(Duration::from_millis(300));
     assert!(
         client.is_session_alive(),
-        "TLS keepalive thread should hold the rtsps:// session alive; \
-         pre-T21 this assertion would fail because the thread couldn't \
-         clone the TLS stream"
+        "TLS keepalive pings should hold the rtsps:// session alive"
     );
 
     drop(client);

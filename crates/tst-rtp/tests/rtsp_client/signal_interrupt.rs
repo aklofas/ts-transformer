@@ -140,7 +140,7 @@ fn interleaved_recv_survives_a_handled_signal() {
     });
 
     let url = format!("rtsp://127.0.0.1:{port}/test?transport=tcp");
-    let pumps_before = find_threads("tst-rtsp-client");
+    let threads_before = find_threads("tst-rtsp-client");
     let mut client = RtspClient::connect(&url).unwrap();
     let sdp = client.describe().unwrap();
     let session = client.setup_mp2t_auto(&sdp).unwrap();
@@ -151,15 +151,15 @@ fn interleaved_recv_survives_a_handled_signal() {
     let before = DELIVERED.load(Ordering::SeqCst);
     // Client threads of other tests in this process may be alive: signal
     // only the threads this client added.
-    let pumps: Vec<_> = find_threads("tst-rtsp-client")
+    let threads: Vec<_> = find_threads("tst-rtsp-client")
         .into_iter()
-        .filter(|t| !pumps_before.contains(t))
+        .filter(|t| !threads_before.contains(t))
         .collect();
-    assert!(!pumps.is_empty(), "this client's thread not found");
+    assert!(!threads.is_empty(), "this client's thread not found");
     for _ in 0..5 {
         std::thread::sleep(Duration::from_millis(40));
         // SAFETY: the client's thread is alive while the client is.
-        for &tid in &pumps {
+        for &tid in &threads {
             // A thread another test's client started and ended in the
             // meantime may be gone (ESRCH); the delivered-count check below
             // proves this client's thread took signals.

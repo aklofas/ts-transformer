@@ -1,6 +1,6 @@
-//! Verifies the rtsp-keepalive background thread emits OPTIONS pings on
+//! Verifies the client's keepalive emits OPTIONS pings on
 //! the control TCP within `session_timeout / 2` (or the explicit
-//! override), and that drop-cleanup joins the thread cleanly.
+//! override), and that dropping the client then ends cleanly.
 //!
 //! Uses a hand-rolled TCP `accept()` loop instead of a full RTSP server
 //! — we only care about observing the wire format the keepalive emits.
@@ -9,14 +9,13 @@ use std::io::{Read, Write};
 use std::net::TcpListener;
 
 #[test]
-fn keepalive_thread_pings_within_session_timeout() {
+fn keepalive_pings_within_session_timeout() {
     // Bind a loopback listener and capture the port for the URL.
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
 
-    // Background server: accept one connection, expect the keepalive
-    // thread's OPTIONS ping at CSeq 1000001 within ~10 s, then reply
-    // 200 OK so the keepalive's read-loop sees a clean close on drop.
+    // Background server: accept one connection, expect the keepalive's
+    // OPTIONS ping at CSeq 1000001 within ~10 s, then reply 200 OK.
     let h = std::thread::spawn(move || {
         let (mut sock, _) = listener.accept().unwrap();
         sock.set_read_timeout(Some(std::time::Duration::from_millis(500)))
@@ -68,16 +67,15 @@ fn keepalive_thread_pings_within_session_timeout() {
     h.join().unwrap();
 }
 
-/// In non-pump mode (UDP transport / pre-SETUP) nothing drains the
-/// control TCP between requests, so a keepalive ping's 200 OK can sit in
-/// the socket buffer ahead of the next real exchange. The read path must
-/// consume it by its CSeq (≥ 1_000_000 = the keepalive range) and keep
-/// reading — returning it would misattribute it as the response to
-/// whatever request the caller just sent. Here the stale keepalive 200
+/// A 200 OK in the keepalive CSeq range (≥ 1_000_000) that answers no
+/// ping in flight can arrive ahead of a request's reply, on a UDP session
+/// or before SETUP too. It must be dropped by its CSeq — returning it
+/// would misattribute it as the response to whatever request the caller
+/// just sent. Here the stale keepalive 200
 /// carries no `Public:` header, so a misattributing `options()` would return an empty
 /// method list from the wrong response.
 #[test]
-fn stale_keepalive_response_not_misattributed_in_non_pump_mode() {
+fn stale_keepalive_response_not_misattributed_without_interleaving() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
 
