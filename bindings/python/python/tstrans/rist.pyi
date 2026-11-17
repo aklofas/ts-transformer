@@ -353,7 +353,9 @@ class RecvTransportBuilder:
         ``value`` is an IP literal, which admits that IP on any port, or
         ``"first"``, which admits the IP of the first delivered block
         until the receiver is closed; with a pre-shared key only a sender
-        whose data decrypts can take it. Only the IP is compared, never
+        whose data decrypts can take it, and that includes a recording of
+        the publisher's earlier data replayed from any address. Only the IP
+        is compared, never
         the port, so a sender that restarts on a new port continues.
         Datagrams from any other IP are dropped and counted in
         ``stats().source_rejected``; neither sender is told. If the

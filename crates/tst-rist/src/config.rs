@@ -123,10 +123,11 @@ pub struct RistConfig {
     /// sender's. [`SourcePin::Ip`] takes that IP on any port.
     /// [`SourcePin::First`] latches the IP of the first delivered block for
     /// the life of the receiver, any port; with a key, that is the first
-    /// sender whose data decrypted. Both forms judge the datagrams' UDP
-    /// source address, which nothing verifies: without a key, a sender that
-    /// claims the pinned address gets through. A sender refuses this at
-    /// connect.
+    /// sender whose data decrypted, which includes a recording of the
+    /// publisher's earlier data replayed from any address. Both forms judge
+    /// the datagrams' UDP source address, which nothing verifies: without a
+    /// key, a sender that claims the pinned address gets through. A sender
+    /// refuses this at connect.
     pub source: Option<SourcePin>,
 }
 
