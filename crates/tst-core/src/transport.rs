@@ -30,7 +30,10 @@
 //! the local send budget); an EMPTY destination buffer makes `recv_bytes`
 //! return `Ok(0)` without touching the socket or the liveness flag. A cancel
 //! that lands after a successful op is not an error — the NEXT op fails with
-//! `ExplicitClose`. `Broken` after a cancel is impossible by construction.
+//! `ExplicitClose`. An operation that FAILS while the cancel is latched reports
+//! `ExplicitClose`, whatever the failure was; one that succeeds returns its
+//! result and the next operation reports the cancel. A `TooLarge` validation
+//! may be reported ahead of the cancel (the SRT and RTP senders).
 //!
 //! # `is_cancelled()` — the caller's intent, never liveness
 //!
