@@ -41,8 +41,8 @@ impl std::fmt::Debug for TlsStream {
 impl TlsStream {
     /// Wrap `sock` in rustls and drive the handshake to completion
     /// synchronously. `root_certs` defaults to the OS native trust store
-    /// (via `rustls-native-certs`, loaded once per process by
-    /// [`native_roots`]) when `None`.
+    /// (via `rustls-native-certs`, kept for the process by
+    /// [`native_roots`] once a load yields a certificate) when `None`.
     ///
     /// The handshake shares the connect budget: it must finish before
     /// `deadline` (`None` = unbounded, the budget overflowed `Instant`),
@@ -276,16 +276,34 @@ fn write_wait(left: Option<Duration>) -> Duration {
     })
 }
 
-/// The root store built from the OS native trust store, loaded on the
-/// first call and shared for the rest of the process: certificates added
-/// to the OS store later are not seen. Best-effort: silently skips certs
-/// that rustls rejects, which mirrors the rustls-native-certs README
-/// pattern.
+/// The root store built from the OS native trust store. The first load
+/// that yields a certificate is kept for the rest of the process:
+/// certificates added to the OS store later are not seen. A load that
+/// yields none is returned uncached, so the next call loads again.
+/// Best-effort: silently skips certs that rustls rejects, which mirrors
+/// the rustls-native-certs README pattern.
 pub(crate) fn native_roots() -> Arc<rustls::RootCertStore> {
     static ROOTS: OnceLock<Arc<rustls::RootCertStore>> = OnceLock::new();
-    ROOTS
-        .get_or_init(|| Arc::new(roots_from(rustls_native_certs::load_native_certs()).0))
-        .clone()
+    roots_cached(&ROOTS, || {
+        roots_from(rustls_native_certs::load_native_certs()).0
+    })
+}
+
+/// The store kept in `cell`, or a fresh `load` that is kept only if it is
+/// not empty: an empty store would fail every later handshake.
+fn roots_cached(
+    cell: &OnceLock<Arc<rustls::RootCertStore>>,
+    load: impl FnOnce() -> rustls::RootCertStore,
+) -> Arc<rustls::RootCertStore> {
+    if let Some(kept) = cell.get() {
+        return kept.clone();
+    }
+    let roots = Arc::new(load());
+    if roots.is_empty() {
+        return roots;
+    }
+    // A concurrent first load may have been kept meanwhile: share that one.
+    cell.get_or_init(|| roots).clone()
 }
 
 /// The root store built from the OS trust store's load result, with the
@@ -439,9 +457,34 @@ mod tests {
         peer.join().unwrap();
     }
 
+    fn one_cert_store() -> rustls::RootCertStore {
+        let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
+        let mut roots = rustls::RootCertStore::empty();
+        roots.add(cert.cert.der().clone()).unwrap();
+        roots
+    }
+
+    /// A non-empty load is kept: a later call shares it without loading.
+    /// Asserted on a local cell with a non-empty loader, because the
+    /// machine's own store may be empty, and an empty load is not kept.
     #[test]
     fn native_roots_are_loaded_once() {
-        assert!(Arc::ptr_eq(&native_roots(), &native_roots()));
+        let cell = OnceLock::new();
+        let first = roots_cached(&cell, one_cert_store);
+        let second = roots_cached(&cell, || panic!("loaded twice"));
+        assert!(Arc::ptr_eq(&first, &second));
+    }
+
+    /// A load that yields no certificate is not kept: the next call loads
+    /// again, and its non-empty result is the one kept.
+    #[test]
+    fn an_empty_root_load_is_not_cached() {
+        let cell = OnceLock::new();
+        assert!(roots_cached(&cell, rustls::RootCertStore::empty).is_empty());
+        let second = roots_cached(&cell, one_cert_store);
+        assert_eq!(second.len(), 1);
+        let third = roots_cached(&cell, || panic!("loaded after a kept load"));
+        assert!(Arc::ptr_eq(&second, &third));
     }
 
     fn load_error() -> rustls_native_certs::Error {

@@ -478,7 +478,8 @@ impl RtspClient {
     /// Connect with an optional client-side TLS root-cert store.
     ///
     /// `roots = None` falls back to the platform native trust roots
-    /// (loaded via `rustls-native-certs`, once per process).
+    /// (loaded via `rustls-native-certs`; the first load that yields a
+    /// certificate is kept for the process, an empty one is retried).
     /// `roots = Some(custom)` is used by `RtspClientBuilder::tls_root_certs`
     /// callers that need to trust a self-signed cert (e.g., test fixtures).
     ///
@@ -525,8 +526,9 @@ impl RtspClient {
         let peer = addrs
             .next()
             .ok_or(RtspError::Io(std::io::ErrorKind::AddrNotAvailable))?;
-        // The OS trust store is read before the budget starts (once per
-        // process), so a slow read cannot use up the handshake's time.
+        // The OS trust store is read before the budget starts (kept for the
+        // process once a load yields a certificate), so a slow read cannot
+        // use up the handshake's time.
         #[cfg(feature = "tls")]
         if is_tls && roots.is_none() {
             let _ = tls::native_roots();
