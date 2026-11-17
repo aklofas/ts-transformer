@@ -27,6 +27,9 @@ use crate::url::RistUrl;
 /// - a parked `recv_bytes` observes the flag when its current
 ///   `rist_receiver_data_read2` tick (≤ 100 ms, `POLL_TIMEOUT_MS`) returns
 ///   and reports `ExplicitClose` instead of the tick's `Backpressure`;
+///   likewise for a block the tick dropped and for a read or write that
+///   fails while the cancel is latched (`Backpressure` or `Broken` become
+///   `ExplicitClose`);
 /// - calls started after `cancel()` return `ExplicitClose` at their entry
 ///   check (`send_bytes` never parks — `rist_sender_data_write` enqueues —
 ///   so the entry check is its only cancel point);
@@ -169,6 +172,9 @@ impl Transport for RistTransport {
         match classify_write_rc(rc) {
             WriteOutcome::Sent => {}
             WriteOutcome::QueueFull => {
+                if self.cancel.is_cancelled() {
+                    return Err(TransportError::ExplicitClose);
+                }
                 // One packet dropped by librist; the context is healthy. Do
                 // NOT latch `alive` — a latched Broken would make
                 // ManagedTransport rist_destroy + rebuild the context, losing
@@ -181,6 +187,9 @@ impl Transport for RistTransport {
             }
             WriteOutcome::Fatal(rc) => {
                 self.alive.store(false, Ordering::Release);
+                if self.cancel.is_cancelled() {
+                    return Err(TransportError::ExplicitClose);
+                }
                 return Err(TransportError::Broken {
                     msg: format!("rist_sender_data_write returned {rc}"),
                     errno_code: Some(rc),

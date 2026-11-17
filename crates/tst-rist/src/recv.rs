@@ -55,6 +55,29 @@ fn classify_block(payload_len: usize, payload_null: bool, buf_len: usize) -> Blo
     BlockDisposition::Accept(payload_len)
 }
 
+/// The error for `rist_receiver_data_read2` returning `rc < 0`: the cancel
+/// when one is latched, else a `Broken` carrying the code.
+fn read_failure(rc: i32, cancelled: bool) -> TransportError {
+    if cancelled {
+        return TransportError::ExplicitClose;
+    }
+    TransportError::Broken {
+        msg: format!("rist_receiver_data_read2 returned {rc}"),
+        errno_code: Some(rc),
+        cause: BrokenCause::Unspecified,
+    }
+}
+
+/// The error for a block dropped without delivery: the cancel when one is
+/// latched, else the retryable `backpressure`.
+fn drop_outcome(cancelled: bool, backpressure: TransportError) -> TransportError {
+    if cancelled {
+        TransportError::ExplicitClose
+    } else {
+        backpressure
+    }
+}
+
 /// Receive-side RIST transport.
 ///
 /// Wraps a librist `rist_ctx` configured as a receiver. Each `recv_bytes`
@@ -62,7 +85,8 @@ fn classify_block(payload_len: usize, payload_null: bool, buf_len: usize) -> Blo
 /// `TransportError::Backpressure` when nothing arrived; the retry loop lives
 /// in the pipeline shells. A [`RistCancelHandle`] (from
 /// [`RistRecvTransport::cancel_handle`]) fired from another thread ends the
-/// current tick with `TransportError::ExplicitClose`. Drop calls
+/// current tick with `TransportError::ExplicitClose`; a read that fails or
+/// drops a block while the cancel is latched reports it too. Drop calls
 /// `rist_destroy`.
 pub struct RistRecvTransport {
     ctx: crate::ctx::RistCtx,
@@ -217,11 +241,7 @@ impl RistRecvTransport {
 
         if rc < 0 {
             self.alive.store(false, Ordering::Release);
-            return Err(TransportError::Broken {
-                msg: format!("rist_receiver_data_read2 returned {rc}"),
-                errno_code: Some(rc),
-                cause: BrokenCause::Unspecified,
-            });
+            return Err(read_failure(rc, self.cancel.is_cancelled()));
         }
         if rc == 0 || block.is_null() {
             // The tick elapsed with nothing to read. A cancel that landed
@@ -255,12 +275,15 @@ impl RistRecvTransport {
                     rist_sys::rist_receiver_data_block_free2(&mut block);
                 }
                 self.bump_dropped();
-                Err(TransportError::Backpressure {
-                    msg: format!(
-                        "rist recv: dropped malformed block (null payload, len={payload_len})"
-                    ),
-                    errno_code: None,
-                })
+                Err(drop_outcome(
+                    self.cancel.is_cancelled(),
+                    TransportError::Backpressure {
+                        msg: format!(
+                            "rist recv: dropped malformed block (null payload, len={payload_len})"
+                        ),
+                        errno_code: None,
+                    },
+                ))
             }
             BlockDisposition::DropOversize => {
                 // Non-fatal: caller's buffer is smaller than the datagram. Free
@@ -271,13 +294,16 @@ impl RistRecvTransport {
                     rist_sys::rist_receiver_data_block_free2(&mut block);
                 }
                 self.bump_dropped();
-                Err(TransportError::Backpressure {
-                    msg: format!(
-                        "rist recv: dropped oversize datagram (have {}, need {payload_len})",
-                        buf.len()
-                    ),
-                    errno_code: None,
-                })
+                Err(drop_outcome(
+                    self.cancel.is_cancelled(),
+                    TransportError::Backpressure {
+                        msg: format!(
+                            "rist recv: dropped oversize datagram (have {}, need {payload_len})",
+                            buf.len()
+                        ),
+                        errno_code: None,
+                    },
+                ))
             }
             BlockDisposition::SkipEmpty => {
                 // SAFETY: block is non-null (rc > 0); freed exactly once here.
@@ -289,10 +315,13 @@ impl RistRecvTransport {
                 if let Ok(mut s) = self.ctx.stats.lock() {
                     s.packets_received = s.packets_received.wrapping_add(1);
                 }
-                Err(TransportError::Backpressure {
-                    msg: "rist recv: skipped a zero-length block".into(),
-                    errno_code: None,
-                })
+                Err(drop_outcome(
+                    self.cancel.is_cancelled(),
+                    TransportError::Backpressure {
+                        msg: "rist recv: skipped a zero-length block".into(),
+                        errno_code: None,
+                    },
+                ))
             }
             BlockDisposition::Accept(copy_n) => {
                 // A table key only: the peer may be freed, never dereference it.
@@ -301,11 +330,14 @@ impl RistRecvTransport {
                     unsafe {
                         rist_sys::rist_receiver_data_block_free2(&mut block);
                     }
-                    return Err(TransportError::Backpressure {
-                        msg: "rist recv: dropped a block from a sender the source pin refuses"
-                            .into(),
-                        errno_code: None,
-                    });
+                    return Err(drop_outcome(
+                        self.cancel.is_cancelled(),
+                        TransportError::Backpressure {
+                            msg: "rist recv: dropped a block from a sender the source pin refuses"
+                                .into(),
+                            errno_code: None,
+                        },
+                    ));
                 }
                 if copy_n > 0 && !payload_ptr.is_null() {
                     // SAFETY: payload_ptr valid for payload_len bytes until free;
@@ -418,6 +450,37 @@ impl RistRecvTransport {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn read_failure_prefers_the_cancel() {
+        assert!(matches!(
+            read_failure(-3, true),
+            TransportError::ExplicitClose
+        ));
+        assert!(matches!(
+            read_failure(-3, false),
+            TransportError::Broken {
+                errno_code: Some(-3),
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn drop_outcome_prefers_the_cancel() {
+        let bp = || TransportError::Backpressure {
+            msg: "x".into(),
+            errno_code: None,
+        };
+        assert!(matches!(
+            drop_outcome(true, bp()),
+            TransportError::ExplicitClose
+        ));
+        assert!(matches!(
+            drop_outcome(false, bp()),
+            TransportError::Backpressure { .. }
+        ));
+    }
 
     #[test]
     fn classify_block_decisions() {
