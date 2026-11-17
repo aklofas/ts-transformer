@@ -153,13 +153,7 @@ impl Source {
                     Ok(0) => continue, // Zero-byte recv is meaningless on UDP; loop.
                     Ok(n) => return Ok(n),
                     Err(e) if classify_recv_error(e.kind()) == RecvAction::Retry => continue,
-                    Err(e) => {
-                        return Err(TransportError::Broken {
-                            msg: format!("UDP recv failed: {e}"),
-                            errno_code: e.raw_os_error(),
-                            cause: BrokenCause::Unspecified,
-                        });
-                    }
+                    Err(e) => return Err(fatal_recv_error(&e, cancel.is_cancelled())),
                 }
             },
             Source::Mpsc(rx) => loop {
@@ -734,6 +728,19 @@ impl RtpRecvTransport {
     }
 }
 
+/// The error for a hard `recv` failure: the cancel when one is latched, else a
+/// `Broken` carrying the OS error.
+fn fatal_recv_error(e: &std::io::Error, cancelled: bool) -> TransportError {
+    if cancelled {
+        return TransportError::ExplicitClose;
+    }
+    TransportError::Broken {
+        msg: format!("UDP recv failed: {e}"),
+        errno_code: e.raw_os_error(),
+        cause: BrokenCause::Unspecified,
+    }
+}
+
 /// The reasons an RTP or RTSP receive stream can end with (see
 /// `tst_core::transport::EndReason`'s table). Every recording site in this
 /// crate goes through [`record_end`].
@@ -865,4 +872,25 @@ impl Drop for RtpRecvTransport {
 #[inline]
 pub(crate) fn is_valid_mp2t_payload(payload: &[u8]) -> bool {
     !payload.is_empty() && payload.len().is_multiple_of(188) && payload[0] == 0x47
+}
+
+#[cfg(test)]
+mod fatal_error_tests {
+    use super::*;
+
+    #[test]
+    fn fatal_recv_error_prefers_the_cancel() {
+        let e = std::io::Error::from_raw_os_error(9);
+        assert!(matches!(
+            fatal_recv_error(&e, true),
+            TransportError::ExplicitClose
+        ));
+        assert!(matches!(
+            fatal_recv_error(&e, false),
+            TransportError::Broken {
+                errno_code: Some(9),
+                ..
+            }
+        ));
+    }
 }
