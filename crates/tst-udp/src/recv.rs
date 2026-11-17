@@ -68,7 +68,8 @@ pub struct UdpRecvTransport {
 enum Verdict {
     /// Dropped: the sender is not the pinned one (already counted).
     Rejected,
-    /// Zero length from an allowed sender: counted, not delivered.
+    /// Zero length from an allowed sender: counted as received. The stream
+    /// path skips it; `recv_timeout` returns it as `Some(0)`.
     Empty,
     /// A payload to hand to the caller.
     Deliver,

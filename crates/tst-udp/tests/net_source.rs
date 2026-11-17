@@ -309,6 +309,19 @@ fn a_dual_stack_receiver_matches_ipv4_text() {
     }
     assert_eq!(t.peer_addr(), Some(a.local_addr().unwrap()));
     assert_eq!(t.stats().source_rejected, 0);
+    // An empty datagram from the pinned IPv4 sender arrives mapped, and is
+    // counted as received, not rejected.
+    a.send_to(b"", ("127.0.0.1", t.local_addr().port()))
+        .unwrap();
+    a.send_to(b"5", ("127.0.0.1", t.local_addr().port()))
+        .unwrap();
+    let n = t.recv_timeout(&mut buf, BOUND).unwrap().expect("delivered");
+    assert!(n <= 1);
+    if n == 0 {
+        t.recv_timeout(&mut buf, BOUND).unwrap().expect("payload");
+    }
+    assert_eq!(t.stats().source_rejected, 0);
+    assert_eq!(t.stats().datagrams_received, 3);
 }
 
 #[test]

@@ -181,6 +181,18 @@ mod tests {
     }
 
     #[test]
+    fn allows_reads_both_forms_of_a_pinned_or_latched_address() {
+        let h = SourceHandle::new(Some(SourcePin::Ip(ip("10.0.0.5"))));
+        assert!(h.allows(ip("::ffff:10.0.0.5")));
+        assert!(!h.allows(ip("::ffff:10.0.0.6")));
+        let h = SourceHandle::new(Some(SourcePin::First));
+        assert!(h.admit(sa("[::ffff:10.0.0.5]:9")));
+        assert!(h.allows(ip("10.0.0.5")));
+        assert!(h.allows(ip("::ffff:10.0.0.5")));
+        assert!(!h.allows(ip("10.0.0.6")));
+    }
+
+    #[test]
     fn first_latches_on_the_first_admit_only() {
         let h = SourceHandle::new(Some(SourcePin::First));
         let (a, b) = (sa("10.0.0.5:1"), sa("10.0.0.6:1"));
