@@ -103,8 +103,9 @@ impl RtspClient {
     }
 
     /// `method` at `uri` with `headers`, under the request timeout
-    /// ([`crate::RtspClientBuilder::request_timeout`]) for the reply and
-    /// no bound of its own on the write.
+    /// ([`crate::RtspClientBuilder::request_timeout`]). It is the reply
+    /// deadline, which also ends the wait for the write; there is no
+    /// separate send deadline.
     pub(crate) fn exchange(
         &mut self,
         method: RtspMethod,
@@ -130,15 +131,20 @@ impl RtspClient {
     /// Hand `spec` to the client's thread and wait, first for the request
     /// to be written (up to `send_deadline`; without one the thread's own
     /// 5 s write-stall bound applies), then for its reply (up to
-    /// `reply_deadline`). Expiry of either is [`RtspError::Timeout`].
+    /// `reply_deadline`). Expiry of either is [`RtspError::Timeout`]. The
+    /// reply deadline also ends the wait for the write: the client's
+    /// thread times the request out at it, written or not.
     ///
     /// The cancel flag is not checked before the write: a cancelled
     /// client still writes its request (`Drop` relies on this to send
-    /// TEARDOWN). The reply wait ends at once with
-    /// [`RtspError::LocalCancel`] when the cancel is set, and an I/O error
-    /// or a passed deadline while the cancel is set is reported as
-    /// `LocalCancel` too; a reply that arrived is returned. With the
-    /// client's thread gone the result is `Io(UnexpectedEof)`.
+    /// TEARDOWN). The reply wait checks the cancel before it takes a reply,
+    /// at the start and every [`REQUEST_POLL_TICK`]: once it sees the
+    /// cancel set it ends with [`RtspError::LocalCancel`], even when the
+    /// reply is already delivered. A reply taken before that is returned
+    /// whatever the flag says; an I/O error or a passed deadline while the
+    /// cancel is set is reported as `LocalCancel` ([`report_cancel`]). With
+    /// the client's thread gone, or its command queue full, the result is
+    /// `Io(UnexpectedEof)`.
     pub(crate) fn request(
         &mut self,
         spec: RequestSpec,
@@ -154,12 +160,7 @@ impl RtspClient {
                 progress,
             })
             .and_then(|()| self.await_reply(&rx, reply_deadline, send_deadline));
-        r.map_err(|e| match e {
-            RtspError::Io(_) | RtspError::Timeout if self.cancel.is_cancelled() => {
-                RtspError::LocalCancel
-            }
-            e => e,
-        })
+        report_cancel(r, self.cancel.is_cancelled())
     }
 
     fn await_reply(
@@ -201,6 +202,19 @@ impl RtspClient {
                 Err(RecvTimeoutError::Disconnected) => return Err(thread_gone()),
             }
         }
+    }
+}
+
+/// What a request reports given whether the cancel is set when it ends:
+/// an I/O error or a passed deadline is then the cancel; anything else, a
+/// reply above all, is kept.
+fn report_cancel(
+    r: Result<RtspResponse, RtspError>,
+    cancelled: bool,
+) -> Result<RtspResponse, RtspError> {
+    match r {
+        Err(RtspError::Io(_) | RtspError::Timeout) if cancelled => Err(RtspError::LocalCancel),
+        r => r,
     }
 }
 
@@ -362,7 +376,7 @@ mod tests {
     /// returning. Deterministic: the server writes the COMPLETE response, then
     /// closes — no fill/timeout race.
     #[test]
-    fn send_and_read_accepts_valid_body_above_header_cap() {
+    fn a_reply_body_above_the_header_cap_is_accepted() {
         // ~512 KiB body — comfortably above the 64 KiB accumulation cap and
         // below the 1 MiB body cap. Built as valid SDP-ish bytes; only the size
         // and exact echo matter here.
@@ -396,7 +410,7 @@ mod tests {
     /// trips the header cap before EOF on every run — no socket-fill timing
     /// dependence. Asserts ONLY on the error variant.
     #[test]
-    fn send_and_read_rejects_unterminated_headers() {
+    fn unterminated_reply_headers_are_rejected() {
         // 128 KiB of header-junk, never a CRLFCRLF.
         let mut response = b"RTSP/1.0 200 OK\r\nX-Junk: ".to_vec();
         response.extend(std::iter::repeat_n(b'A', 128 * 1024));
@@ -417,7 +431,7 @@ mod tests {
     /// closes; `RtspResponse::parse` rejects the declared length immediately
     /// once the terminator is seen. Asserts ONLY on the error variant.
     #[test]
-    fn send_and_read_rejects_oversized_declared_body() {
+    fn an_oversized_declared_reply_body_is_rejected() {
         let response = format!(
             "RTSP/1.0 200 OK\r\nCSeq: 1\r\nContent-Length: {}\r\n\r\n",
             crate::rtsp::message::MAX_RTSP_BODY_BYTES + 1
@@ -436,7 +450,7 @@ mod tests {
     /// A response whose header block is not UTF-8 is a `BadResponse` carrying
     /// exactly this detail.
     #[test]
-    fn send_and_read_rejects_non_utf8_headers_with_their_own_detail() {
+    fn non_utf8_reply_headers_are_rejected_with_their_own_detail() {
         let (port, h) = serve_then_close(b"RTSP/1.0 200 OK\r\nCSeq: 1\r\nX: \xff\r\n\r\n".to_vec());
         let mut client = RtspClient::connect(&format!("rtsp://127.0.0.1:{}/test", port)).unwrap();
         let err = client.options().unwrap_err();
@@ -481,10 +495,11 @@ mod tests {
     /// A request on a connection the peer has reset: `LocalCancel` when
     /// the client was cancelled before the request, the reset's own `Io`
     /// error otherwise. The client's thread reads the reset before the
-    /// request is made. Linux only: the reset-then-request sequence has
-    /// not been measured on macOS or Windows.
+    /// request is made, so the request meets an ended stream and nothing
+    /// is written. Linux only: the reset-then-request sequence has not
+    /// been measured on macOS or Windows.
     #[cfg(target_os = "linux")]
-    fn failed_write(cancel: bool) -> Result<OptionsResponse, RtspError> {
+    fn request_after_a_reset(cancel: bool) -> Result<OptionsResponse, RtspError> {
         let (port, go, peer) = resetting_peer();
         let mut client = RtspClient::connect(&format!("rtsp://127.0.0.1:{port}/test")).unwrap();
         go.send(()).unwrap();
@@ -502,15 +517,15 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     #[test]
-    fn a_write_failure_on_a_cancelled_client_reports_the_cancel() {
-        let r = failed_write(true);
+    fn a_request_after_a_reset_on_a_cancelled_client_reports_the_cancel() {
+        let r = request_after_a_reset(true);
         assert!(matches!(r, Err(RtspError::LocalCancel)), "got {r:?}");
     }
 
     #[cfg(target_os = "linux")]
     #[test]
-    fn a_write_failure_without_a_cancel_is_io() {
-        let r = failed_write(false);
+    fn a_request_after_a_reset_without_a_cancel_is_io() {
+        let r = request_after_a_reset(false);
         assert!(matches!(r, Err(RtspError::Io(_))), "got {r:?}");
     }
 
@@ -616,5 +631,59 @@ mod tests {
             matches!(r, Err(RtspError::Io(std::io::ErrorKind::UnexpectedEof))),
             "got {r:?}"
         );
+    }
+
+    fn ok_reply() -> RtspResponse {
+        RtspResponse::parse(b"RTSP/1.0 200 OK\r\nCSeq: 1\r\n\r\n")
+            .unwrap()
+            .0
+    }
+
+    #[test]
+    fn a_reply_with_the_cancel_set_is_the_reply() {
+        let r = report_cancel(Ok(ok_reply()), true);
+        assert!(matches!(&r, Ok(resp) if resp.status == 200), "got {r:?}");
+    }
+
+    #[test]
+    fn an_io_error_with_the_cancel_set_is_the_cancel() {
+        let r = report_cancel(
+            Err(RtspError::Io(std::io::ErrorKind::ConnectionReset)),
+            true,
+        );
+        assert!(matches!(r, Err(RtspError::LocalCancel)), "got {r:?}");
+    }
+
+    #[test]
+    fn a_timeout_with_the_cancel_set_is_the_cancel() {
+        let r = report_cancel(Err(RtspError::Timeout), true);
+        assert!(matches!(r, Err(RtspError::LocalCancel)), "got {r:?}");
+    }
+
+    #[test]
+    fn without_the_cancel_an_io_error_and_a_timeout_are_kept() {
+        let r = report_cancel(
+            Err(RtspError::Io(std::io::ErrorKind::ConnectionReset)),
+            false,
+        );
+        assert!(
+            matches!(r, Err(RtspError::Io(std::io::ErrorKind::ConnectionReset))),
+            "got {r:?}"
+        );
+        let r = report_cancel(Err(RtspError::Timeout), false);
+        assert!(matches!(r, Err(RtspError::Timeout)), "got {r:?}");
+        let r = report_cancel(Ok(ok_reply()), false);
+        assert!(r.is_ok(), "got {r:?}");
+    }
+
+    #[test]
+    fn another_error_with_the_cancel_set_is_kept() {
+        let r = report_cancel(Err(RtspError::BadResponse { detail: "x" }), true);
+        assert!(
+            matches!(r, Err(RtspError::BadResponse { detail: "x" })),
+            "got {r:?}"
+        );
+        let r = report_cancel(Err(RtspError::AuthFailed), true);
+        assert!(matches!(r, Err(RtspError::AuthFailed)), "got {r:?}");
     }
 }
