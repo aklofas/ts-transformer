@@ -902,9 +902,12 @@ class H264Receiver:
     (releasing the GIL via `py.allow_threads()`). Returns `H264AccessUnit`
     or `None` at EOS (the RTSP server ended the session). `timeout_ms=N`
     bounds a single call; expiry raises `RtpError(BACKPRESSURE)` — the
-    receiver stays open, call again to retry. After a cancel (or a
-    `close()` from another thread) the AUs already buffered are returned
-    first, then `RtpError(CLOSED)` is raised.
+    receiver stays open, call again to retry. After a cancel the AUs
+    already buffered are returned first, then `RtpError(CLOSED)` is
+    raised. A `close()` from another thread lets a parked call return one
+    held AU if there is one (a queued AU, or the one the cancel flushes);
+    the receiver is then empty, later calls raise `RtpError(CLOSED)` and
+    any further queued AU is discarded.
 
     Acts as its own iterator: `for au in receiver: ...` yields AUs until EOS;
     a cancelled loop raises `RtpError(CLOSED)`.
