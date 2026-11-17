@@ -309,7 +309,7 @@ pub unsafe extern "C" fn tst_rtsp_session_pause(session: *mut TstRtspSession) ->
 
 /// Bound on the whole TEARDOWN exchange: the wait for the control stream
 /// (another thread may be using it), the request write and the reply.
-const TEARDOWN_REPLY_BOUND: Duration = Duration::from_millis(500);
+const TEARDOWN_BOUND: Duration = Duration::from_millis(500);
 
 /// Send TEARDOWN and free the session handle.
 ///
@@ -358,7 +358,7 @@ pub unsafe extern "C" fn tst_rtsp_session_teardown_and_free(
         let rc = match boxed.pair.try_lock() {
             // Nobody holds the session: send TEARDOWN and read the reply,
             // the whole exchange bounded.
-            Ok(mut guard) => teardown(&mut guard, Some(TEARDOWN_REPLY_BOUND)),
+            Ok(mut guard) => teardown(&mut guard, Some(TEARDOWN_BOUND)),
             // Defence only, not a contract (the caller must have waited for
             // any parked call): wake it first, then send TEARDOWN as best
             // effort on the cancelled session.

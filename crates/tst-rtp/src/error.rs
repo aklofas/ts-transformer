@@ -83,13 +83,13 @@ pub enum RtspError {
     /// (`RtspClientBuilder::request_timeout`, default 10 s), or the bound
     /// of [`RtspClient::teardown_within`](crate::RtspClient::teardown_within),
     /// which also covers the wait for the control stream (another thread
-    /// may be using it) and the request write. Unless that bound passed before the write, the
-    /// request was written (perhaps only in part); whether the server
-    /// acted on it is unknown, and its late response may still be in the
-    /// socket — treat the control connection as indeterminate and build a
-    /// fresh client. Distinct from [`RtspError::SessionExpired`] (a client
-    /// that is no longer usable).
-    #[error("RTSP request timed out waiting for the server's response")]
+    /// may be using it) and the request write. Unless that bound passed
+    /// before the write, the request was written (perhaps only in part);
+    /// whether the server acted on it is unknown, and its late response may
+    /// still be in the socket — treat the control connection as
+    /// indeterminate and build a fresh client. Distinct from
+    /// [`RtspError::SessionExpired`] (a client that is no longer usable).
+    #[error("RTSP request deadline elapsed")]
     Timeout,
 
     /// The caller's `RtspCancelHandle::cancel` ended a request: it ended
