@@ -21,7 +21,8 @@ pub(crate) struct Segment {
     pub seq: u64,
     /// Filename relative to [`HlsConfig::output_dir`].
     pub filename: String,
-    /// Wall-clock duration of this segment.
+    /// Media duration when the caller supplied one, else elapsed monotonic
+    /// time since the segment was opened.
     pub duration: Duration,
 }
 

@@ -1,8 +1,8 @@
 //! Basic (RFC 7617) and Digest (RFC 7616 MD5 + SHA-256 + RFC 2617-flavored)
 //! authentication for the RTSP client.
 //!
-//! The client never sends credentials preemptively; auth is always
-//! driven by a 401 Unauthorized response with `WWW-Authenticate` header.
+//! The client learns a challenge from a `401 Unauthorized` response's
+//! `WWW-Authenticate` header and then sends credentials pre-emptively.
 
 use secrecy::{ExposeSecret, SecretString};
 
@@ -340,21 +340,6 @@ fn unescape_quoted_string(s: &str) -> String {
     out
 }
 
-/// ASCII method token used in the Digest HA2 (`method:uri`).
-pub(crate) fn method_token(method: RtspMethod) -> &'static str {
-    match method {
-        RtspMethod::Options => "OPTIONS",
-        RtspMethod::Describe => "DESCRIBE",
-        RtspMethod::Announce => "ANNOUNCE",
-        RtspMethod::Setup => "SETUP",
-        RtspMethod::Play => "PLAY",
-        RtspMethod::Record => "RECORD",
-        RtspMethod::Pause => "PAUSE",
-        RtspMethod::Teardown => "TEARDOWN",
-        RtspMethod::GetParameter => "GET_PARAMETER",
-    }
-}
-
 /// Which `WWW-Authenticate` schemes an [`RtspClient`](crate::RtspClient) may
 /// answer. Set with
 /// [`RtspClientBuilder::auth_schemes`](crate::RtspClientBuilder::auth_schemes).
@@ -438,7 +423,7 @@ pub(crate) fn build_authorization(
             let ctx = DigestContext {
                 username,
                 password,
-                method: method_token(method),
+                method: method.wire_token(),
                 uri,
                 nc,
                 cnonce: &cnonce,

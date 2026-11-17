@@ -189,7 +189,7 @@ impl RtspClientBuilder {
     }
 
     /// Per-request deadline: how long `options()` / `describe()` /
-    /// `setup_*()` / `play()` / `pause()` / `get_parameter()` / `teardown()`
+    /// `setup_*()` / `play()` / `pause()` / `teardown()`
     /// wait for the complete response once the request write returns.
     /// Expiry returns [`RtspError::Timeout`]. `None` disables the deadline
     /// (the pre-`request_timeout` behaviour: a silent server parks the
