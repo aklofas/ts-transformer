@@ -85,6 +85,10 @@ pub(crate) struct Shared {
     pub session_dead: Arc<AtomicBool>,
     pub end_reason: EndReasonHandle,
     pub media_dropped: Arc<AtomicU64>,
+    /// Holds the thread once it has left its loop, before it closes the
+    /// socket: it sends on the first and waits on the second.
+    #[cfg(test)]
+    pub exit_gate: Option<(mpsc::Sender<()>, mpsc::Receiver<()>)>,
 }
 
 #[derive(Debug)]
@@ -190,6 +194,7 @@ pub(crate) fn spawn_with(
         shared,
         commands: command_rx,
         stop: stop.clone(),
+        _waker: waker.clone(),
         write_stall,
         caller: None,
         segments: VecDeque::new(),
@@ -243,6 +248,10 @@ struct Driver {
     shared: Shared,
     commands: mpsc::Receiver<Command>,
     stop: Arc<AtomicBool>,
+    /// Keeps the wake's eventfd open while the thread runs. Closing it
+    /// discards a wake the thread has not read yet, such as the one
+    /// `stop()` sends just before a dropped handle releases its copy.
+    _waker: Arc<Waker>,
     write_stall: Duration,
     caller: Option<Caller>,
     /// Transmits not yet wholly in the kernel, oldest first.
@@ -282,6 +291,11 @@ impl Driver {
                     break;
                 }
             }
+        }
+        #[cfg(test)]
+        if let Some((held, release)) = self.shared.exit_gate.take() {
+            let _ = held.send(());
+            let _ = release.recv();
         }
         self.engine.handle_closed(StreamEnd::Stopped);
         self.deliver();
