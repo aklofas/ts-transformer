@@ -75,6 +75,13 @@ impl RistTransport {
 
     /// Build a sender from a parsed URL + config.
     pub fn connect_with_config(url: &RistUrl, cfg: &RistConfig) -> Result<Self, RistError> {
+        if cfg.source.is_some() {
+            return Err(RistError::InvalidConfig(
+                "source is a receive-side filter (accept data only from that IP, or from the \
+                 first sender) — remove ?source= from sender URLs"
+                    .into(),
+            ));
+        }
         // A larger budget would open fine and then latch the sender dead on the
         // first oversize write, so refuse it before the context exists.
         if cfg.pkt_size == 0 || cfg.pkt_size > RistConfig::MAX_PKT_SIZE {

@@ -24,6 +24,10 @@
 //! - `?cname=...` — RTCP CNAME
 //! - `?session_timeout=N` — receiver session timeout, ms
 //! - `?compression=0|1` — NULL-packet deletion
+//! - `?source=<ip>|first` — receiver only: deliver data from that IP only, or
+//!   from the first sender to deliver; others are dropped and counted in
+//!   [`RistStats::source_rejected`]. [`RistRecvTransport::peer_addr`] names
+//!   the sender of the last block either way.
 
 pub mod builder;
 pub mod config;
@@ -37,6 +41,7 @@ pub mod url;
 
 mod binding_kind;
 mod ctx;
+mod peers;
 
 pub use config::{EncryptionKey, RistConfig, RistProfile, RistSecret};
 pub use error::RistError;

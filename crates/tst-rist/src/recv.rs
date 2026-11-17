@@ -5,11 +5,13 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use tst_core::transport::{
-    BrokenCause, EndReason, EndReasonHandle, RecvTransport, TransportCancel, TransportError,
+    BrokenCause, EndReason, EndReasonHandle, RecvTransport, SourceHandle, TransportCancel,
+    TransportError,
 };
 
 use crate::config::RistConfig;
 use crate::error::RistError;
+use crate::peers::Peers;
 use crate::stats::RistStats;
 use crate::transport::RistCancelHandle;
 use crate::url::RistUrl;
@@ -74,6 +76,16 @@ pub struct RistRecvTransport {
     /// [`RecvTransport::end_reason_handle`]; written first-writer-wins
     /// through [`record_rist_end`].
     end_reason: EndReasonHandle,
+    /// Which sender each librist peer is, and the `source` pin.
+    peers: Arc<Peers>,
+    /// The peer of the last delivered block, the table's generation when it
+    /// was looked up, and the address found for it. A sender's blocks arrive
+    /// in runs from one peer, so the table lock is taken only when the
+    /// pointer or the generation moves, not once per block.
+    last_peer: Option<(usize, u64, Option<SocketAddr>)>,
+    /// The address last stored in the source handle; it is written only when
+    /// the delivering address changes.
+    recorded: Option<SocketAddr>,
 }
 
 /// The reasons a RIST receive stream can end with: a cancel or close, or a
@@ -115,7 +127,7 @@ impl RistRecvTransport {
     /// Build a receiver from a parsed URL + config.
     pub fn listen_with_config(url: &RistUrl, cfg: &RistConfig) -> Result<Self, RistError> {
         let ctx = crate::ctx::RistCtx::open(url, cfg, crate::ctx::Role::Receiver)?;
-        let Some(local) = ctx.local else {
+        let (Some(local), Some(peers)) = (ctx.local, ctx.peers.clone()) else {
             return Err(RistError::Ffi {
                 code: -1,
                 function: "rist_peer_get_socket",
@@ -127,6 +139,9 @@ impl RistRecvTransport {
             alive: Arc::new(AtomicBool::new(true)),
             cancel: RistCancelHandle::new(),
             end_reason: EndReasonHandle::default(),
+            peers,
+            last_peer: None,
+            recorded: None,
         })
     }
 
@@ -134,6 +149,14 @@ impl RistRecvTransport {
     /// when the URL named port 0 (Main profile only).
     pub fn local_addr(&self) -> SocketAddr {
         self.local
+    }
+
+    /// The address (IP and UDP source port) of the sender whose data was
+    /// delivered last; `None` before the first block. An IPv4 sender seen
+    /// on a dual-stack bind is reported as plain IPv4. In the Simple profile
+    /// the port is the sender's data socket's.
+    pub fn peer_addr(&self) -> Option<SocketAddr> {
+        self.peers.source.peer_addr()
     }
 
     /// Bind URL the receiver was built against (for diagnostics).
@@ -148,7 +171,49 @@ impl RistRecvTransport {
 
     /// Current snapshot of cumulative stats.
     pub fn stats(&self) -> RistStats {
-        self.ctx.stats.lock().map(|s| *s).unwrap_or_default()
+        let mut s = self.ctx.stats.lock().map(|s| *s).unwrap_or_default();
+        s.source_rejected = self.peers.source.rejected();
+        s
+    }
+
+    /// The address the table holds for `peer`, through the one-entry cache.
+    fn peer_address(&mut self, peer: usize) -> Option<SocketAddr> {
+        let generation = self.peers.generation();
+        if let Some((p, g, addr)) = self.last_peer
+            && p == peer
+            && g == generation
+        {
+            return addr;
+        }
+        let addr = self.peers.lookup(peer);
+        self.last_peer = Some((peer, generation, addr));
+        addr
+    }
+
+    /// Apply the `source` pin to a block from `peer` about to be delivered,
+    /// and record its sender. False: the block is refused (and counted).
+    fn admit_block(&mut self, peer: usize) -> bool {
+        let addr = self.peer_address(peer);
+        let source = &self.peers.source;
+        match addr {
+            Some(addr) => {
+                if !source.admit(addr) {
+                    return false;
+                }
+                if self.recorded != Some(addr) {
+                    source.record(addr);
+                    self.recorded = Some(addr);
+                }
+                true
+            }
+            // A peer the table does not hold (a full table, or one freed
+            // since): without a pin it is delivered as before, unrecorded.
+            None if source.pin().is_some() => {
+                source.count_rejected();
+                false
+            }
+            None => true,
+        }
     }
 
     /// Count one dropped datagram (oversize / malformed). Centralized so the
@@ -266,6 +331,18 @@ impl RistRecvTransport {
                 })
             }
             BlockDisposition::Accept(copy_n) => {
+                // A table key only: the peer may be freed, never dereference it.
+                let peer = unsafe { (*block).peer } as usize;
+                if !self.admit_block(peer) {
+                    unsafe {
+                        rist_sys::rist_receiver_data_block_free2(&mut block);
+                    }
+                    return Err(TransportError::Backpressure {
+                        msg: "rist recv: dropped a block from a sender the source pin refuses"
+                            .into(),
+                        errno_code: None,
+                    });
+                }
                 if copy_n > 0 && !payload_ptr.is_null() {
                     // SAFETY: payload_ptr valid for payload_len bytes until free;
                     // copy_n <= payload_len and <= buf.len() by classify_block.
@@ -338,6 +415,10 @@ impl RecvTransport for RistRecvTransport {
     fn end_reason_handle(&self) -> Option<EndReasonHandle> {
         Some(self.end_reason.clone())
     }
+
+    fn source_handle(&self) -> Option<SourceHandle> {
+        Some(self.peers.source.clone())
+    }
 }
 
 impl Drop for RistRecvTransport {
@@ -361,6 +442,12 @@ impl RistRecvTransport {
     /// callback's leaked one, 1 once `close()` has reclaimed it.
     pub(crate) fn stats_refs_for_test(&self) -> usize {
         Arc::strong_count(&self.ctx.stats)
+    }
+
+    /// Strong references to the peers table: the context's and this
+    /// transport's, plus librist's leaked one until `close()` reclaims it.
+    pub(crate) fn peers_refs_for_test(&self) -> usize {
+        Arc::strong_count(&self.peers)
     }
 }
 
@@ -457,6 +544,19 @@ mod tests {
         assert_eq!(t.stats_refs_for_test(), 1);
         t.close();
         assert_eq!(t.stats_refs_for_test(), 1);
+    }
+
+    #[test]
+    fn close_reclaims_the_peers_reference_exactly_once() {
+        let mut t = match RistRecvTransport::listen("rist://@127.0.0.1:19020") {
+            Ok(t) => t,
+            Err(_) => return,
+        };
+        assert_eq!(t.peers_refs_for_test(), 3);
+        t.close();
+        assert_eq!(t.peers_refs_for_test(), 2);
+        t.close();
+        assert_eq!(t.peers_refs_for_test(), 2);
     }
 
     /// Without the `mbedtls` feature, a config asking for encryption is
