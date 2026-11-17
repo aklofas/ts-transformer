@@ -92,7 +92,8 @@ use tst_core::transport::{EndReason, EndReasonHandle};
 ///    - `Ok(n)` — tick counters, decode RTP header (malformed → tick +
 ///      continue), check payload type (wrong PT → tick + continue), feed
 ///      depacketizer, go to step 1.
-///    - `Err(ExplicitClose)` — a cancel fired mid-recv: go to step 1.
+///    - `Err(ExplicitClose)` — a cancel fired mid-recv (also a source end
+///      or failure with the cancel latched): go to step 1.
 ///    - `Err(Broken)` carrying the `MPSC_PUMP_DISCONNECTED` sentinel
 ///      (`pub(crate)` const in `transport.rs`) — clean RTSP teardown: set
 ///      EOS, flush depacketizer, return flushed AU if any else `Ok(None)`.
@@ -718,6 +719,34 @@ mod tests {
             matches!(again, Ok(None)),
             "expected Ok(None) again, got {again:?}"
         );
+    }
+
+    /// A cancel that lands together with the pump's end is the cancel, not
+    /// the peer's end: every call reports `ExplicitClose`. The cancel is set
+    /// from the sender's side while `recv_au` is (normally) parked on the
+    /// channel; if it lands before the call instead, step 2 answers it, so
+    /// both orders give the same result.
+    #[test]
+    fn a_cancel_landing_with_the_pump_end_is_the_cancel() {
+        let (tx, rx) = std::sync::mpsc::channel::<bytes::Bytes>();
+        let mut r = H264Receiver::from_mpsc_with_rtcp_drain(rx, None, H264DepayConfig::default());
+        let cancel = r.cancel_handle();
+        let ender = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(50));
+            cancel.cancel();
+            drop(tx);
+        });
+        let first = r.recv_au();
+        assert!(
+            matches!(first, Err(TransportError::ExplicitClose)),
+            "got {first:?}"
+        );
+        let again = r.recv_au();
+        assert!(
+            matches!(again, Err(TransportError::ExplicitClose)),
+            "got {again:?}"
+        );
+        ender.join().unwrap();
     }
 
     /// A stalled source (no packets, no disconnect) must not block

@@ -77,7 +77,7 @@ impl Source {
     ///   shape before copying the TS payload into the caller's buffer.
     ///
     /// - **Returns `Err(TransportError::ExplicitClose)`** when `cancel` is
-    ///   set, and in place of a fatal UDP error that arrives while it is
+    ///   set, and in place of any `Broken` below that arrives while it is
     ///   set (the failure is reported as the cancel).
     ///
     /// - **Returns `Err(TransportError::Backpressure)`** when `deadline` is
@@ -93,8 +93,9 @@ impl Source {
     ///     fatal (`WouldBlock`, `TimedOut` and `Interrupted` are retried),
     ///     unless `cancel` is set — `errno_code` carries the OS errno.
     ///   - Mpsc: `RecvTimeoutError::Disconnected` (the pump's `Sender`
-    ///     was dropped) — `errno_code` is `None`.
-    ///   - Mpsc: a frame larger than `scratch` — `errno_code` is `None`.
+    ///     was dropped), unless `cancel` is set — `errno_code` is `None`.
+    ///   - Mpsc: a frame larger than `scratch`, unless `cancel` is set —
+    ///     `errno_code` is `None`.
     ///     Unreachable when `scratch` is [`RECV_SCRATCH_LEN`] bytes (the
     ///     interleaved u16 frame cap); kept as defence.
     ///
@@ -179,7 +180,10 @@ impl Source {
                             // scratch (interleaved frames are capped by
                             // their u16 length prefix) — kept as defence.
                             // Treat as broken so the recv shell stops the
-                            // demux loop.
+                            // demux loop, unless a cancel is latched.
+                            if cancel.is_cancelled() {
+                                return Err(TransportError::ExplicitClose);
+                            }
                             return Err(TransportError::Broken {
                                 msg: format!(
                                     "interleaved frame ({} B) exceeds scratch buffer ({} B)",
@@ -198,7 +202,11 @@ impl Source {
                     Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
                         // The pump thread dropped its Sender — surface as a
                         // broken transport so the recv shell can stop the
-                        // demux loop.
+                        // demux loop. A cancel latched meanwhile wins: the
+                        // call failed while the caller was cancelling.
+                        if cancel.is_cancelled() {
+                            return Err(TransportError::ExplicitClose);
+                        }
                         return Err(TransportError::Broken {
                             msg: MPSC_PUMP_DISCONNECTED.to_string(),
                             errno_code: None,
@@ -703,7 +711,11 @@ impl RtpRecvTransport {
             if payload.len() > buf.len() {
                 // Caller buf too small. Treat as broken, since the recv shell
                 // is misconfigured (it should have sized buf to at least
-                // max_payload()).
+                // max_payload()), unless a cancel is latched.
+                if self.cancel.is_cancelled() {
+                    record_end(&self.end_reason, EndReason::Cancelled);
+                    return Err(TransportError::ExplicitClose);
+                }
                 return Err(TransportError::Broken {
                     msg: format!("recv buf too small: {} < {}", buf.len(), payload.len()),
                     errno_code: None,
@@ -893,5 +905,104 @@ mod fatal_error_tests {
                 ..
             }
         ));
+    }
+}
+
+#[cfg(test)]
+mod mpsc_source_tests {
+    use super::*;
+    use bytes::Bytes;
+    use std::sync::mpsc;
+
+    /// Sets the cancel, then `end`s the channel, from another thread. The
+    /// short pause lets `recv_raw` pass its entry check and park on the
+    /// channel first, so the end is what wakes it; the cancel must win
+    /// whichever way that goes.
+    fn cancel_then(cancel: &Arc<RtpCancelHandle>, end: impl FnOnce() + Send + 'static) {
+        let cancel = cancel.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(50));
+            cancel.cancel();
+            end();
+        });
+    }
+
+    #[test]
+    fn a_pump_end_under_a_latched_cancel_reports_the_cancel() {
+        let (tx, rx) = mpsc::channel::<Bytes>();
+        let source = Source::Mpsc(rx);
+        let cancel = RtpCancelHandle::new();
+        cancel_then(&cancel, move || drop(tx));
+        let mut scratch = vec![0u8; RECV_SCRATCH_LEN];
+        let r = source.recv_raw(&mut scratch, &cancel, None, None);
+        assert!(matches!(r, Err(TransportError::ExplicitClose)), "got {r:?}");
+    }
+
+    #[test]
+    fn an_oversize_frame_under_a_latched_cancel_reports_the_cancel() {
+        let (tx, rx) = mpsc::channel::<Bytes>();
+        let source = Source::Mpsc(rx);
+        let cancel = RtpCancelHandle::new();
+        cancel_then(&cancel, move || {
+            let _ = tx.send(Bytes::from(vec![0u8; 64]));
+        });
+        let mut scratch = vec![0u8; 16];
+        let r = source.recv_raw(&mut scratch, &cancel, None, None);
+        assert!(matches!(r, Err(TransportError::ExplicitClose)), "got {r:?}");
+    }
+
+    /// A packet too big for the caller's buffer, arriving as the cancel
+    /// lands, is reported as the cancel; with no cancel it stays `Broken`.
+    #[test]
+    fn a_too_small_buffer_under_a_latched_cancel_reports_the_cancel() {
+        let mut pkt = vec![0u8; RTP_HEADER_LEN];
+        RtpHeader::new(1, 0, 0xABCD).encode_into(&mut pkt);
+        pkt.extend_from_slice(&[0x47; 188]);
+        let pkt = Bytes::from(pkt);
+
+        let (tx, rx) = mpsc::channel::<Bytes>();
+        let mut t = RtpRecvTransport::from_packet_channel(rx);
+        let sent = pkt.clone();
+        cancel_then(&t.cancel, move || {
+            let _ = tx.send(sent);
+        });
+        let r = t.recv_bytes(&mut [0u8; 100]);
+        assert!(matches!(r, Err(TransportError::ExplicitClose)), "got {r:?}");
+        assert!(matches!(t.end_reason(), Some(EndReason::Cancelled)));
+
+        let (tx, rx) = mpsc::channel::<Bytes>();
+        let mut t = RtpRecvTransport::from_packet_channel(rx);
+        tx.send(pkt).unwrap();
+        let r = t.recv_bytes(&mut [0u8; 100]);
+        assert!(
+            matches!(&r, Err(TransportError::Broken { msg, .. }) if msg.contains("too small")),
+            "got {r:?}"
+        );
+    }
+
+    /// With no cancel, a pump end is still the sentinel the end-of-stream
+    /// consumers match on, and an oversize frame is still `Broken`.
+    #[test]
+    fn without_a_cancel_the_pump_end_and_an_oversize_frame_stay_broken() {
+        let cancel = RtpCancelHandle::new();
+        let mut scratch = vec![0u8; 16];
+
+        let (tx, rx) = mpsc::channel::<Bytes>();
+        drop(tx);
+        let r = Source::Mpsc(rx).recv_raw(&mut scratch, &cancel, None, None);
+        assert!(
+            matches!(&r, Err(TransportError::Broken { msg, errno_code: None, .. })
+                if msg == MPSC_PUMP_DISCONNECTED),
+            "got {r:?}"
+        );
+
+        let (tx, rx) = mpsc::channel::<Bytes>();
+        tx.send(Bytes::from(vec![0u8; 64])).unwrap();
+        let r = Source::Mpsc(rx).recv_raw(&mut scratch, &cancel, None, None);
+        assert!(
+            matches!(&r, Err(TransportError::Broken { msg, errno_code: None, .. })
+                if msg.contains("exceeds scratch buffer")),
+            "got {r:?}"
+        );
     }
 }
