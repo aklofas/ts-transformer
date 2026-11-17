@@ -574,6 +574,24 @@ impl PyRistRecvTransport {
         }
     }
 
+    /// Datagrams the `source` pin turned away, the count
+    /// `stats().source_rejected` also reports; 0 without a pin. Read from
+    /// the shared source record, so unlike `stats()` it never waits behind
+    /// a `recv()` parked on another thread; raises `RistError(CLOSED)` once
+    /// the transport is closed.
+    fn source_rejected(&self, py: Python<'_>) -> PyResult<u64> {
+        if self.owned.is_closed() {
+            Err(raise(py, &RIST, BindingError::from(HandleState::Closed)))
+        } else {
+            Ok(self
+                .owned
+                .snapshot()
+                .source
+                .as_ref()
+                .map_or(0, SourceHandle::rejected))
+        }
+    }
+
     /// Close the receiver. Cancel-first (`Owned::close` latches the shared
     /// cancel before taking the slot), so a `recv()` parked on another
     /// thread ends with `RistError(kind=CLOSED)` within ~100 ms; further
