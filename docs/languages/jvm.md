@@ -1118,6 +1118,7 @@ falls into two groups.
 | `isAlive()` | `true` — a parked call means the object is open | `false` |
 | `localAddr()` (`srt.Listener`, `H264Receiver`) | the value captured when the object was built | throws `IllegalStateException` |
 | `localPort()` (`Receiver`, `DemuxReceiver`, `tcp.Listener`) | the port captured at open (`tcp.Listener` answers while `accept()` is parked) | throws `IllegalStateException` |
+| `localAddr()`, `peerAddr()`, `sourceRejected()` (`Receiver`, `DemuxReceiver`) | the bound address captured at open; the publisher's address and the count of what the `source` pin turned away, as they stand | throws `IllegalStateException` |
 | `peerAddr()` (`tcp.Transport`) | the address captured at accept | throws `IllegalStateException`, also once the connection is converted into a shell |
 | `videoHandle()` … `dataHandle()` on the three `MuxSender` classes | the handles of the `MuxerConfig` the sender was built from | throws `IllegalStateException` |
 | `reconnectAttempts()`, `reconnectStats()` on the managed shells | live counters kept outside the object | throws `IllegalStateException` |
@@ -1539,11 +1540,13 @@ a warning and those classes reconnect on the caller's thread anyway.
 
 ## UDP, TCP and RIST ingest on your own ports
 
-A server that takes ingest on ports it reserves needs two answers the URL
+A server that takes ingest on ports it reserves needs answers the URL
 alone does not give: which port a receiver bound when it was opened on port
-0, and, on TCP, who connected. The receiving shells of `org.tstrans.shells`
-answer the first with `localPort()`; `org.tstrans.tcp.Listener` accepts TCP
-connections, reports each peer and turns the connection into a shell.
+0, and who is publishing. The receiving shells of `org.tstrans.shells`
+answer the first with `localPort()` and `localAddr()`, and, on `udp://` and
+`rist://`, the second with `peerAddr()`; a `source` key in the URL keeps a
+UDP or RIST receiver to one publisher. `org.tstrans.tcp.Listener` accepts
+TCP connections, reports each peer and turns the connection into a shell.
 
 ### `localPort()` on UDP and RIST receivers
 
@@ -1565,7 +1568,9 @@ the kernel's pick when the URL said port 0. Every other shell answers empty:
 a caller, a shell made from an accepted TCP connection, `rtp://` and
 `srt://`. The value is the one captured at open, so it answers while a
 receive is parked on another thread; after `close()` it throws
-`IllegalStateException`.
+`IllegalStateException`. `localAddr()` returns the bound address as an
+`Optional<InetSocketAddress>`, present exactly where `localPort()` is, with
+the same port.
 
 `recvBytes()` returns aligned TS packets (one 188-byte packet per call),
 whatever datagram size the publisher sends. A receiving shell returns its
@@ -1608,6 +1613,112 @@ receiver on port 0 is refused at open with
 `RistException(INVALID_CONFIG)`, because librist misreads a port the
 kernel picked and would put RTCP on the wrong port. A URL with `?secret=`
 (encryption) uses the Main profile, also when it says `?profile=simple`.
+
+### The publisher's address: `peerAddr()` and the `source` pin
+
+`Receiver.peerAddr()` and `DemuxReceiver.peerAddr()` return an
+`Optional<InetSocketAddress>`: the address of the sender of the datagram
+(`udp://`) or block (`rist://`) the transport delivered last, empty until
+the first one is delivered. A `source` key in the URL keeps the receiver to
+one IP: `source=<ip>`, or `source=first`, which takes the IP of the first
+datagram or block delivered. Neither is proof of who is sending. The
+address is the source address the datagrams carry, and nothing proves the
+sender can receive there: it can be forged (a TCP peer address is proven by
+the handshake, a UDP or RIST one is not). On `udp://`, `source=first` is
+taken by the first datagram with a payload that reaches the port, whoever
+sent it; on a `rist://` receiver with a pre-shared key, only by a sender
+whose data decrypts. Either way it holds until the receiver is closed: there
+is no release. Use the address for logging and per-address rules, not as an
+identity.
+
+A server that gives each stream name its own port can let the first
+publisher take the port and then decide whether to keep it:
+
+```java
+import java.net.InetAddress;
+import java.net.InetSocketAddress;
+import java.util.function.Predicate;
+import org.tstrans.BindingException;
+import org.tstrans.shells.Receiver;
+
+/** One stream name's UDP port: the first publisher to send takes it. */
+final class UdpNameIngest implements AutoCloseable {
+    private final Receiver rx;
+
+    UdpNameIngest(int port) throws BindingException {  // 0: the kernel picks
+        // source=first: the IP of the first datagram with a payload takes
+        // the receiver until close(); any other IP is dropped and counted
+        // in sourceRejected(), and its sender is not told.
+        rx = Receiver.open("udp://0.0.0.0:" + port + "?source=first");
+    }
+
+    int port() { return rx.localPort().getAsInt(); }
+
+    /**
+     * Waits for the first packet and judges its sender. Returns the packet,
+     * or null after a refusal, which closes the receiver.
+     */
+    byte[] admitFirst(Predicate<InetAddress> allowed) throws BindingException {
+        byte[] first = rx.recvBytes();               // blocks until data arrives
+        // A packet was delivered, so the sender is known. The address is
+        // what the datagrams carry, not proof of who sent them.
+        InetSocketAddress publisher = rx.peerAddr().orElseThrow();
+        if (!allowed.test(publisher.getAddress())) {
+            // The lock is released only by closing. A new receiver on this
+            // port is taken by the next datagram, whoever sends it.
+            rx.close();
+            return null;
+        }
+        return first;
+    }
+
+    byte[] next() throws BindingException { return rx.recvBytes(); }
+
+    long turnedAway() { return rx.sourceRejected(); }
+
+    /** From any thread: a recvBytes() parked on another ends with CLOSED. */
+    @Override public void close() { rx.close(); }
+}
+```
+
+```java
+try (UdpNameIngest ingest = new UdpNameIngest(0)) {
+    int port = ingest.port();                    // hand it to the name's publisher
+    byte[] ts = ingest.admitFirst(ip -> !blocked.contains(ip));
+    if (ts == null) return;                      // refused, and closed
+    while (true) {
+        recorder.write(ts);                      // your consumer
+        ts = ingest.next();
+    }
+}
+```
+
+- **Without the key** every sender that reaches the receiver is delivered,
+  interleaved, and `peerAddr()` names whichever delivered last.
+- **The pin compares the IP address, never the port**, so a publisher that
+  restarts, or whose NAT changes its port, continues. If its IP changes,
+  its datagrams are turned away and counted, and the receiver delivers
+  nothing until it is closed and reopened.
+- **`sourceRejected()`** counts what the pin turned away: datagrams on
+  `udp://`; on `rist://`, datagrams from a sender the pin refuses and
+  delivered blocks refused on the read path. Neither sender is told. On
+  `udp://` a datagram turned away is in no received counter of
+  `socketStats()`.
+- **IPv4 on a dual-stack bind.** An IPv4 sender on a `[::]` bind is reported
+  as an `Inet4Address` and compared in IPv4 form. The address is built from
+  its bytes, with no name lookup.
+- **Refusals.** A sender URL with the key is refused at open, and so is a
+  value that is neither an IP literal nor `first`; so is an IPv6 pin on a
+  `udp://` receiver bound to an IPv4 address. A misspelt key (`?sourse=`) is
+  ignored like any unknown key on `udp://` and `rist://`, which leaves the
+  receiver without a pin.
+- **Other transports.** `peerAddr()` is empty and `sourceRejected()` reads 0
+  on every other shell, a shell made from an accepted TCP connection among
+  them (its `tcp.Transport.peerAddr()` names the peer before the
+  conversion). What an `rtp://` URL's own `?source=` pin turns away is not
+  counted by `sourceRejected()`.
+- Both getters never wait behind a receive parked on another thread, and
+  throw `IllegalStateException` after `close()`.
 
 ### TCP: a listener, one publisher at a time
 
@@ -3053,7 +3164,8 @@ Removed in 0.9.0 with no deprecated alias: the per-package `CancelHandle`,
 - **shells** — `Sender` / `Receiver` / `MuxSender` / `DemuxReceiver` over every
   transport URL, with `CancelHandle` / `SocketStats` / `TransportStats` /
   `EndReason`, the `DemuxReceiver.tsBytesDemuxed` counter and the
-  receivers' `localPort()`.
+  receivers' `localPort()`, `localAddr()`, `peerAddr()` and
+  `sourceRejected()`.
 - **tcp** — `Listener` + `Transport`: a `tcp://` / `tcps://` listener whose
   accepted connections become `shells` classes.
 - **srt** — `Builder` / `Socket` / `Listener` / `SrtStats`; the

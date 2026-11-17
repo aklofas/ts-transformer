@@ -275,6 +275,17 @@ sb.latency_ms(120);             // &mut self
 let socket = sb.connect(addr)?; // &self
 ```
 
+**Take a receiver's source record before a shell owns it.**
+`UdpRecvTransport::peer_addr()` and `RistRecvTransport::peer_addr()` name
+the sender of the datagram or block delivered last, and a `?source=<ip>` or
+`?source=first` URL key (or the builders' `source(SourcePin)`) keeps the
+receiver to one IP. Once the transport is inside a `DemuxReceiver`, read
+the same record through the `SourceHandle` that
+`RecvTransport::source_handle()` returned before the move: `peer_addr()`,
+`rejected()` and `pin()`. The address is the datagrams' unverified source
+address; the [UDP recipe](/docs/cookbook/receiving/udp.md#the-publishers-address-and-the-source-pin)
+states the limits.
+
 **Pairing KLV to video.** The demuxer emits KLV and video as independent
 events on the same PTS clock; aligning them is the consumer's job. The
 `Pairer` shell in `tst_pipeline::ext::pairing` is the standard solution —

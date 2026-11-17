@@ -259,16 +259,25 @@ mean **Deferred**. An entry whose feature has shipped must never read
 
 ## Publisher address on UDP and RIST receivers
 
-- **Status:** Deferred. A `udp://` receiver does not report the source
-  address of the datagrams it reads, and a plain `udp://` URL has no key
-  that accepts datagrams from one sender only (`rtp://` has `?source=`). A
-  RIST receiver exposes no sender address either. A TCP connection does
-  report its peer (`TcpTransport::peer`, `org.tstrans.tcp.Transport.peerAddr`).
-- **Why deferred:** neither receiver carries the sender's address out of
-  its read path, and adding it touches each transport's receive call and
-  the binding surfaces that would report it.
-- **Trigger to revisit:** an embedder that must apply per-address rules to
-  UDP or RIST ingest.
+- **Status:** Deferred in part. Shipped: a `udp://` or `rist://@` receiver
+  reports the address of the sender of the datagram or block it delivered
+  last (`peer_addr` in Rust, Python and C, `peerAddr()` on the JVM shells),
+  and a `?source=<ip>` or `?source=first` URL key keeps it to one IP, with
+  what it turned away counted in `source_rejected`. Not built: a release
+  for the `first` lock, which holds until the receiver is closed; the
+  shells' `peer_addr` / `peerAddr()` for SRT, TCP and RTP (empty there: SRT
+  and TCP report their peer on the socket or the accepted connection, and
+  what an `rtp://` URL's own `?source=` pin turns away is counted in
+  `RtpStats::source_rejected`, not by the shells' getter); `first` on
+  `rtp://`; a list or prefix of allowed addresses; verification of the
+  address.
+- **Why deferred:** a UDP or RIST source address is whatever the datagrams
+  carry, and neither protocol has a handshake that proves the sender can
+  receive there, so nothing can verify it. The other items wait for a
+  caller that needs them.
+- **Trigger to revisit:** an embedder that needs a `first` lock to move to
+  a new publisher without reopening, an allow list, or the address through
+  the shells for SRT, TCP or RTP.
 
 ## Nested `#!{…}` access-control form
 

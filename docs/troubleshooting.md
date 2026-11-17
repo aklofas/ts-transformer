@@ -386,6 +386,31 @@ order — check the PIDs, tolerance, and `MetadataKind` distribution
 (`KlvSyncAuCell` vs `KlvAsync` are both treated as KLV candidates, so
 filtering by kind is not the issue).
 
+## UDP / RIST: more than one publisher
+
+**A second encoder's packets appear in my stream**
+
+**Symptom:** a `udp://` or `rist://@` receiver delivers another encoder's
+packets beside the publisher's: a second encoder (a misconfigured one, a
+test sender) is sending to the same port.
+
+**Diagnosis:** the receiver has no `source` pin. Without one, a UDP or RIST
+receiver delivers every sender that reaches it, interleaved, and its
+`peer_addr` (`peerAddr()` on the JVM shells, `_peer_addr` in C) names
+whichever delivered last, so reading it a few times during the fault can
+show more than one address.
+
+**Fix:** add `?source=<ip>` (the publisher's IP, any port) or
+`?source=first` (the IP of the first datagram or block delivered, held until
+the receiver is closed) to the receive URL. What the pin turns away is
+counted in `source_rejected` (`sourceRejected()` on the JVM,
+`_get_source_rejected` in C); neither sender is told. Check the key's
+spelling: a misspelt key (`?sourse=`) is ignored like any unknown key on
+`udp://` and `rist://`, which leaves the receiver without a pin. The pin is
+a filter, not authentication: the source address is unverified, and on UDP
+`source=first` is taken by whichever datagram with a payload arrives first.
+See [the publisher's address and the `source` pin](/docs/cookbook/receiving/udp.md#the-publishers-address-and-the-source-pin).
+
 ## UDP / RIST receive cancellation
 
 **A UDP or RIST `recv` blocks forever and cannot be stopped from another thread (Rust)**

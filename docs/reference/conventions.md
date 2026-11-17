@@ -446,6 +446,12 @@ for `tcp(s)` and `rist`; `srt` accepts only `0` and `1`. An `srt` URL names
 a libsrt option this library does not expose with an error that carries the
 `SRTO_*` name rather than ignoring it.
 
+`source` on a `udp` or `rist` receive URL compares the IP of the datagrams'
+source address, never the port, and that address is not verified; `first`
+takes the IP of the first datagram or block delivered and holds it until
+the receiver is closed. The [UDP recipe](/docs/cookbook/receiving/udp.md#the-publishers-address-and-the-source-pin)
+has the rest. On `rtp` the key takes an IP literal only.
+
 ## Stats getters
 
 - `stats()` is the object's own counters (`MuxSender::stats`,
