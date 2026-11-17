@@ -13,6 +13,8 @@ mod common;
 mod common_net;
 #[path = "transports/hls_publish_smoke.rs"]
 mod hls_publish_smoke;
+#[path = "transports/peer_addr.rs"]
+mod peer_addr;
 #[path = "transports/rist_cancel_from_other_thread.rs"]
 mod rist_cancel_from_other_thread;
 #[path = "transports/rist_open_smoke.rs"]

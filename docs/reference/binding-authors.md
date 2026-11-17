@@ -452,7 +452,7 @@ baseline (by design)" for the full rationale.
   incompatible change to the ABI shape. **0** today.
 - `TST_ABI_VERSION_MINOR` — incremented on additive, source-compatible
   changes (new event kinds, new C entry points, new error codes).
-  **30** today. History (additive bumps only — major stays at 0 pre-1.0):
+  **31** today. History (additive bumps only — major stays at 0 pre-1.0):
     - `1`: receiver-surface initial drop.
     - `2`: `ManagedDemuxReceiver` wired into
       `tst-c`; `TST_EVENT_KIND_RECONNECT_DISCONTINUITY = 6` added; TS-bytes
@@ -769,6 +769,12 @@ baseline (by design)" for the full rationale.
       changed. The muxer's default output changed in the same release (the
       PCR leads by 100 ms where it equalled the PTS); that is a wire change
       of the library, not of the ABI.
+    - `31` — new symbols `tst_udp_receiver_peer_addr`,
+      `tst_udp_demux_receiver_peer_addr`, `tst_rist_receiver_peer_addr`,
+      `tst_rist_demux_receiver_peer_addr` (the address of the sender whose
+      data was delivered last) and the matching
+      `tst_*_get_source_rejected` (what the URL's `source` pin turned
+      away). No existing symbol, layout, enum value or error code changed.
 - `TST_ABI_VERSION_PATCH` — incremented on internal fixes that
   preserve both shape and behaviour.
 

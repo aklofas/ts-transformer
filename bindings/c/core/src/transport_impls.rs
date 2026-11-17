@@ -32,6 +32,8 @@ use tst_core::mpegts::common::TS_PACKET_SIZE;
 use tst_core::mpegts::mux::{
     AudioStreamHandle, KlvStreamHandle, SubtitleStreamHandle, VideoStreamHandle,
 };
+#[cfg(any(feature = "udp", feature = "rist"))]
+use tst_core::transport::SourceHandle;
 use tst_core::transport::{RecvTransport, Transport};
 use tst_pipeline::{DemuxReceiver, MuxSender, Receiver, Sender};
 #[cfg(feature = "srt")]
@@ -148,6 +150,83 @@ pub(crate) unsafe fn read_ts_bytes_demuxed(
         }
         // SAFETY: non-null per the guard above.
         unsafe { *out = counter.get() };
+        0
+    })
+}
+
+/// Body of every udp/rist `tst_*_peer_addr`: `source` is the handle's
+/// construction-time snapshot (`None` for a null handle), never the slot.
+/// Writes the address that delivered last as NUL-terminated text, `""`
+/// before the first, and returns its length.
+///
+/// # Safety
+/// `buf` is NULL or writable for `buf_len` bytes.
+#[cfg(any(feature = "udp", feature = "rist"))]
+pub(crate) unsafe fn read_peer_addr(
+    source: Option<&Option<SourceHandle>>,
+    buf: *mut std::os::raw::c_char,
+    buf_len: usize,
+) -> i32 {
+    crate::panic::ffi_catch(TstError::Internal as i32, || {
+        let Some(source) = source else {
+            set_last_error(TstError::InvalidConfig, "null receiver pointer");
+            return TstError::InvalidConfig as i32;
+        };
+        if buf.is_null() {
+            set_last_error(TstError::InvalidConfig, "null buf pointer");
+            return TstError::InvalidConfig as i32;
+        }
+        let text = source
+            .as_ref()
+            .and_then(SourceHandle::peer_addr)
+            .map(|a| a.to_string())
+            .unwrap_or_default();
+        let bytes = text.as_bytes();
+        // Need room for the text plus the trailing NUL, the empty text too.
+        if buf_len <= bytes.len() {
+            set_last_error(
+                TstError::InvalidConfig,
+                &format!(
+                    "buffer too small: need {} bytes (incl. NUL), have {buf_len}",
+                    bytes.len() + 1
+                ),
+            );
+            return TstError::InvalidConfig as i32;
+        }
+        // SAFETY: `buf` is writable for `buf_len` bytes per the contract,
+        // and `bytes.len() + 1 <= buf_len` from the guard above.
+        let dst = match unsafe { crate::ffi_slice::ffi_slice_mut(buf.cast::<u8>(), buf_len, "buf") }
+        {
+            Ok(d) => d,
+            Err(rc) => return rc,
+        };
+        dst[..bytes.len()].copy_from_slice(bytes);
+        dst[bytes.len()] = 0;
+        bytes.len() as i32
+    })
+}
+
+/// Body of every udp/rist `tst_*_get_source_rejected`: `source` as for
+/// [`read_peer_addr`].
+///
+/// # Safety
+/// `out` is NULL or writable.
+#[cfg(any(feature = "udp", feature = "rist"))]
+pub(crate) unsafe fn read_source_rejected(
+    source: Option<&Option<SourceHandle>>,
+    out: *mut u64,
+) -> i32 {
+    crate::panic::ffi_catch(TstError::Internal as i32, || {
+        let Some(source) = source else {
+            set_last_error(TstError::InvalidConfig, "null receiver pointer");
+            return TstError::InvalidConfig as i32;
+        };
+        if out.is_null() {
+            set_last_error(TstError::InvalidConfig, "null out pointer");
+            return TstError::InvalidConfig as i32;
+        }
+        // SAFETY: non-null per the guard above.
+        unsafe { *out = source.as_ref().map_or(0, SourceHandle::rejected) };
         0
     })
 }

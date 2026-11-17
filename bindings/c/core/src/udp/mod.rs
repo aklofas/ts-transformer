@@ -31,11 +31,12 @@ pub mod demux_receiver;
 
 pub use demux_receiver::{
     TstUdpDemuxReceiver, tst_udp_demux_receiver_cancel, tst_udp_demux_receiver_close,
-    tst_udp_demux_receiver_get_socket_stats, tst_udp_demux_receiver_get_stats,
-    tst_udp_demux_receiver_get_stream_codec_stats,
+    tst_udp_demux_receiver_get_socket_stats, tst_udp_demux_receiver_get_source_rejected,
+    tst_udp_demux_receiver_get_stats, tst_udp_demux_receiver_get_stream_codec_stats,
     tst_udp_demux_receiver_get_stream_last_seen_micros, tst_udp_demux_receiver_get_stream_stats,
     tst_udp_demux_receiver_get_ts_bytes_demuxed, tst_udp_demux_receiver_next_event,
-    tst_udp_demux_receiver_open, tst_udp_demux_receiver_reset_stats,
+    tst_udp_demux_receiver_open, tst_udp_demux_receiver_peer_addr,
+    tst_udp_demux_receiver_reset_stats,
 };
 pub use mux_sender::{
     TstUdpMuxSender, tst_udp_mux_sender_cancel, tst_udp_mux_sender_close,
@@ -48,7 +49,8 @@ pub use mux_sender::{
 };
 pub use receiver::{
     TstUdpReceiver, tst_udp_receiver_cancel, tst_udp_receiver_close,
-    tst_udp_receiver_get_socket_stats, tst_udp_receiver_get_stats, tst_udp_receiver_recv_ts,
+    tst_udp_receiver_get_socket_stats, tst_udp_receiver_get_source_rejected,
+    tst_udp_receiver_get_stats, tst_udp_receiver_peer_addr, tst_udp_receiver_recv_ts,
     tst_udp_receiver_reset_stats, tst_udp_recv_open,
 };
 pub use sender::{

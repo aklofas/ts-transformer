@@ -21,6 +21,7 @@
 use std::os::raw::c_char;
 use std::sync::Mutex;
 
+use tst_core::transport::{RecvTransport, SourceHandle};
 use tst_pipeline::DemuxReceiver;
 use tst_udp::UdpRecvTransport;
 
@@ -40,7 +41,9 @@ use crate::handle::CHandle;
 pub struct TstUdpDemuxReceiver {
     /// Aligned TS bytes fed to the demuxer; read without the slot.
     pub(crate) ts_bytes_demuxed: tst_pipeline::TsBytesDemuxedHandle,
-    pub(crate) inner: CHandle<DemuxReceiver<UdpRecvTransport>>,
+    /// Snapshot: the transport's record of who delivered and what the pin
+    /// turned away, read without the slot.
+    pub(crate) inner: CHandle<DemuxReceiver<UdpRecvTransport>, Option<SourceHandle>>,
     /// Reusable backing storage for `tst_udp_demux_receiver_next_event` output.
     /// Allocated at open time so the data-path call never allocates on the hot path.
     /// Wrapped in Mutex for re-entrant safety within the Handle's closure.
@@ -73,7 +76,12 @@ pub unsafe extern "C" fn tst_udp_demux_receiver_open(
     crate::panic::ffi_catch(std::ptr::null_mut(), || {
         let url = unsafe { crate::c_str::parse_c_str(url, TstError::UdpConfig, "url") };
         match unsafe {
-            crate::transport_impls::open_demux_receiver(url, demux_cfg, super::listen, |_| ())
+            crate::transport_impls::open_demux_receiver(
+                url,
+                demux_cfg,
+                super::listen,
+                RecvTransport::source_handle,
+            )
         } {
             Some((inner, ts_bytes_demuxed)) => Box::into_raw(Box::new(TstUdpDemuxReceiver {
                 inner,
@@ -414,6 +422,76 @@ pub unsafe extern "C" fn tst_udp_demux_receiver_get_stream_stats(
             out_count,
         )
     }
+}
+
+// ---------------------------------------------------------------------------
+// Publisher address and source pin
+// ---------------------------------------------------------------------------
+
+/// Write the address of the sender of the datagram delivered to this receiver
+/// last into `buf` as NUL-terminated text: `ip:port`, `[v6]:port` for IPv6; an
+/// IPv4 sender on a dual-stack (`[::]`) bind is written in IPv4 form. 64 bytes
+/// hold any address.
+///
+/// The address is the source address of the UDP datagrams, which nothing
+/// verifies: a sender can forge it. Without a `source` key in the URL every
+/// sender that reaches the receiver is delivered, and this names whichever
+/// delivered last.
+///
+/// Returns the text's length without the NUL; 0, with `""` written, until the
+/// first datagram is delivered. Returns `TST_E_INVALID_CONFIG` when `p` or
+/// `buf` is NULL, or with a "buffer too small" message when `buf_len` cannot
+/// hold the text plus its NUL (`buf_len == 0` included, even before the first
+/// datagram); nothing is written then.
+///
+/// It reads a record kept beside the receiver, never the handle's slot, so it
+/// answers while `tst_udp_demux_receiver_next_event` runs on another thread,
+/// and after `tst_udp_demux_receiver_cancel` it still answers with the last
+/// address delivered. After `tst_udp_demux_receiver_close` the pointer is
+/// freed, as for every getter.
+///
+/// # Safety
+///
+/// `p` must be NULL or a valid non-freed `*mut TstUdpDemuxReceiver`. `buf` must
+/// be NULL or writable for `buf_len` bytes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tst_udp_demux_receiver_peer_addr(
+    p: *mut TstUdpDemuxReceiver,
+    buf: *mut c_char,
+    buf_len: usize,
+) -> libc::c_int {
+    crate::panic::ffi_catch(TstError::Internal as i32, || {
+        // SAFETY: `p` is NULL or live and `buf` NULL or writable for
+        // `buf_len` bytes, per the contract above.
+        let source = unsafe { p.as_ref() }.map(|h| h.inner.snapshot());
+        unsafe { crate::transport_impls::read_peer_addr(source, buf, buf_len) }
+    })
+}
+
+/// Read into `*out` the count of datagrams the URL's `source` pin turned away
+/// since open; 0 without a pin. The pin compares the IP address only, never the
+/// port. A datagram turned away is counted here and in no received counter, and
+/// neither sender is told.
+///
+/// Answers in the same states as `tst_udp_demux_receiver_peer_addr`: while a
+/// receive runs on another thread and after `tst_udp_demux_receiver_cancel`.
+/// Returns 0, or `TST_E_INVALID_CONFIG` when `p` or `out` is NULL.
+///
+/// # Safety
+///
+/// `p` must be NULL or a valid non-freed `*mut TstUdpDemuxReceiver`. `out` must
+/// be NULL or point to a writable `uint64_t`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tst_udp_demux_receiver_get_source_rejected(
+    p: *mut TstUdpDemuxReceiver,
+    out: *mut u64,
+) -> libc::c_int {
+    crate::panic::ffi_catch(TstError::Internal as i32, || {
+        // SAFETY: `p` is NULL or live and `out` NULL or writable, per the
+        // contract above.
+        let source = unsafe { p.as_ref() }.map(|h| h.inner.snapshot());
+        unsafe { crate::transport_impls::read_source_rejected(source, out) }
+    })
 }
 
 // ---------------------------------------------------------------------------

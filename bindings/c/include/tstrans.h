@@ -64,13 +64,13 @@
  * Minor version of the C ABI contract. See [`TST_ABI_VERSION_MAJOR`]
  * for the bump policy.
  *
- * Cbindgen emits this as `#define TST_ABI_VERSION_MINOR 30` in the
+ * Cbindgen emits this as `#define TST_ABI_VERSION_MINOR 31` in the
  * generated header. Runtime accessor: [`tst_get_abi_version_minor`].
  *
  * What each minor added is recorded once, in the repository's
  * `docs/reference/binding-authors.md` § "Versioning".
  */
-#define TST_ABI_VERSION_MINOR 30
+#define TST_ABI_VERSION_MINOR 31
 
 #define TST_CODEC_KIND_AUDIO 3
 
@@ -7201,6 +7201,25 @@ int tst_rist_demux_receiver_get_socket_stats(struct TstRistDemuxReceiver *p,
 
 #if defined(TST_HAS_RIST)
 /**
+ * Read into `*out` the count of datagrams and blocks the URL's `source` pin
+ * turned away since open; 0 without a pin. The pin compares the IP address
+ * only, never the port. Data turned away is counted here and never reaches
+ * this handle's `_get_stats` counters; neither sender is told.
+ *
+ * Answers in the same states as `tst_rist_demux_receiver_peer_addr`: while a
+ * receive runs on another thread and after `tst_rist_demux_receiver_cancel`.
+ * Returns 0, or `TST_E_INVALID_CONFIG` when `p` or `out` is NULL.
+ *
+ * # Safety
+ *
+ * `p` must be NULL or a valid non-freed `*mut TstRistDemuxReceiver`. `out`
+ * must be NULL or point to a writable `uint64_t`.
+ */
+ int tst_rist_demux_receiver_get_source_rejected(struct TstRistDemuxReceiver *p, uint64_t *out);
+#endif
+
+#if defined(TST_HAS_RIST)
+/**
  * Snapshot aggregate stats for a `tst_rist_demux_receiver_t` into `*out`.
  *
  * Returns 0 on success, `TST_E_INVALID_CONFIG` if either pointer is
@@ -7387,6 +7406,39 @@ int tst_rist_demux_receiver_next_event(struct TstRistDemuxReceiver *p,
 
 struct TstRistDemuxReceiver *tst_rist_demux_receiver_open(const char *url,
                                                           const struct tst_demux_config_t *demux_cfg);
+#endif
+
+#if defined(TST_HAS_RIST)
+/**
+ * Write the address of the sender of the block delivered to this receiver last
+ * into `buf` as NUL-terminated text: `ip:port`, `[v6]:port` for IPv6; an IPv4
+ * sender on a dual-stack (`[::]`) bind is written in IPv4 form. 64 bytes hold
+ * any address. A block whose sender's address the receiver does not know
+ * leaves it unchanged.
+ *
+ * The address is the source address of the RIST datagrams, which nothing
+ * verifies: a sender can forge it. A pre-shared key does not prove it either.
+ * Without a `source` key in the URL every sender that reaches the receiver is
+ * delivered, and this names whichever delivered last.
+ *
+ * Returns the text's length without the NUL; 0, with `""` written, until the
+ * first block is delivered. Returns `TST_E_INVALID_CONFIG` when `p` or `buf`
+ * is NULL, or with a "buffer too small" message when `buf_len` cannot hold the
+ * text plus its NUL (`buf_len == 0` included, even before the first block);
+ * nothing is written then.
+ *
+ * It reads a record kept beside the receiver, never the handle's slot, so it
+ * answers while `tst_rist_demux_receiver_next_event` runs on another thread,
+ * and after `tst_rist_demux_receiver_cancel` it still answers with the last
+ * address delivered. After `tst_rist_demux_receiver_close` the pointer is
+ * freed, as for every getter.
+ *
+ * # Safety
+ *
+ * `p` must be NULL or a valid non-freed `*mut TstRistDemuxReceiver`. `buf`
+ * must be NULL or writable for `buf_len` bytes.
+ */
+ int tst_rist_demux_receiver_peer_addr(struct TstRistDemuxReceiver *p, char *buf, size_t buf_len);
 #endif
 
 #if defined(TST_HAS_RIST)
@@ -7851,6 +7903,25 @@ int tst_rist_mux_sender_push_video_to(struct TstRistMuxSender *p,
 
 #if defined(TST_HAS_RIST)
 /**
+ * Read into `*out` the count of datagrams and blocks the URL's `source` pin
+ * turned away since open; 0 without a pin. The pin compares the IP address
+ * only, never the port. Data turned away is counted here and never reaches
+ * this handle's `_get_stats` counters; neither sender is told.
+ *
+ * Answers in the same states as `tst_rist_receiver_peer_addr`: while a receive
+ * runs on another thread and after `tst_rist_receiver_cancel`. Returns 0, or
+ * `TST_E_INVALID_CONFIG` when `p` or `out` is NULL.
+ *
+ * # Safety
+ *
+ * `p` must be NULL or a valid non-freed `*mut TstRistReceiver`. `out` must be
+ * NULL or point to a writable `uint64_t`.
+ */
+ int tst_rist_receiver_get_source_rejected(struct TstRistReceiver *p, uint64_t *out);
+#endif
+
+#if defined(TST_HAS_RIST)
+/**
  * Snapshot stats for a `tst_rist_receiver_t` into `*out`.
  *
  * Returns 0 on success, `TST_E_INVALID_CONFIG` if either pointer is
@@ -7862,6 +7933,38 @@ int tst_rist_mux_sender_push_video_to(struct TstRistMuxSender *p,
  * `out` must point to a writable `TstReceiverStats`.
  */
  int tst_rist_receiver_get_stats(struct TstRistReceiver *p, struct tst_receiver_stats_t *out);
+#endif
+
+#if defined(TST_HAS_RIST)
+/**
+ * Write the address of the sender of the block delivered to this receiver last
+ * into `buf` as NUL-terminated text: `ip:port`, `[v6]:port` for IPv6; an IPv4
+ * sender on a dual-stack (`[::]`) bind is written in IPv4 form. 64 bytes hold
+ * any address. A block whose sender's address the receiver does not know
+ * leaves it unchanged.
+ *
+ * The address is the source address of the RIST datagrams, which nothing
+ * verifies: a sender can forge it. A pre-shared key does not prove it either.
+ * Without a `source` key in the URL every sender that reaches the receiver is
+ * delivered, and this names whichever delivered last.
+ *
+ * Returns the text's length without the NUL; 0, with `""` written, until the
+ * first block is delivered. Returns `TST_E_INVALID_CONFIG` when `p` or `buf`
+ * is NULL, or with a "buffer too small" message when `buf_len` cannot hold the
+ * text plus its NUL (`buf_len == 0` included, even before the first block);
+ * nothing is written then.
+ *
+ * It reads a record kept beside the receiver, never the handle's slot, so it
+ * answers while `tst_rist_receiver_recv_ts` runs on another thread, and after
+ * `tst_rist_receiver_cancel` it still answers with the last address delivered.
+ * After `tst_rist_receiver_close` the pointer is freed, as for every getter.
+ *
+ * # Safety
+ *
+ * `p` must be NULL or a valid non-freed `*mut TstRistReceiver`. `buf` must be
+ * NULL or writable for `buf_len` bytes.
+ */
+ int tst_rist_receiver_peer_addr(struct TstRistReceiver *p, char *buf, size_t buf_len);
 #endif
 
 #if defined(TST_HAS_RIST)
@@ -12320,6 +12423,25 @@ int tst_udp_demux_receiver_get_socket_stats(struct TstUdpDemuxReceiver *p,
 
 #if defined(TST_HAS_UDP)
 /**
+ * Read into `*out` the count of datagrams the URL's `source` pin turned away
+ * since open; 0 without a pin. The pin compares the IP address only, never the
+ * port. A datagram turned away is counted here and in no received counter, and
+ * neither sender is told.
+ *
+ * Answers in the same states as `tst_udp_demux_receiver_peer_addr`: while a
+ * receive runs on another thread and after `tst_udp_demux_receiver_cancel`.
+ * Returns 0, or `TST_E_INVALID_CONFIG` when `p` or `out` is NULL.
+ *
+ * # Safety
+ *
+ * `p` must be NULL or a valid non-freed `*mut TstUdpDemuxReceiver`. `out` must
+ * be NULL or point to a writable `uint64_t`.
+ */
+ int tst_udp_demux_receiver_get_source_rejected(struct TstUdpDemuxReceiver *p, uint64_t *out);
+#endif
+
+#if defined(TST_HAS_UDP)
+/**
  * Snapshot aggregate stats for a `tst_udp_demux_receiver_t` into `*out`.
  *
  * Returns 0 on success, `TST_E_INVALID_CONFIG` if either pointer is
@@ -12492,6 +12614,38 @@ int tst_udp_demux_receiver_next_event(struct TstUdpDemuxReceiver *p,
 
 struct TstUdpDemuxReceiver *tst_udp_demux_receiver_open(const char *url,
                                                         const struct tst_demux_config_t *demux_cfg);
+#endif
+
+#if defined(TST_HAS_UDP)
+/**
+ * Write the address of the sender of the datagram delivered to this receiver
+ * last into `buf` as NUL-terminated text: `ip:port`, `[v6]:port` for IPv6; an
+ * IPv4 sender on a dual-stack (`[::]`) bind is written in IPv4 form. 64 bytes
+ * hold any address.
+ *
+ * The address is the source address of the UDP datagrams, which nothing
+ * verifies: a sender can forge it. Without a `source` key in the URL every
+ * sender that reaches the receiver is delivered, and this names whichever
+ * delivered last.
+ *
+ * Returns the text's length without the NUL; 0, with `""` written, until the
+ * first datagram is delivered. Returns `TST_E_INVALID_CONFIG` when `p` or
+ * `buf` is NULL, or with a "buffer too small" message when `buf_len` cannot
+ * hold the text plus its NUL (`buf_len == 0` included, even before the first
+ * datagram); nothing is written then.
+ *
+ * It reads a record kept beside the receiver, never the handle's slot, so it
+ * answers while `tst_udp_demux_receiver_next_event` runs on another thread,
+ * and after `tst_udp_demux_receiver_cancel` it still answers with the last
+ * address delivered. After `tst_udp_demux_receiver_close` the pointer is
+ * freed, as for every getter.
+ *
+ * # Safety
+ *
+ * `p` must be NULL or a valid non-freed `*mut TstUdpDemuxReceiver`. `buf` must
+ * be NULL or writable for `buf_len` bytes.
+ */
+ int tst_udp_demux_receiver_peer_addr(struct TstUdpDemuxReceiver *p, char *buf, size_t buf_len);
 #endif
 
 #if defined(TST_HAS_UDP)
@@ -12954,6 +13108,25 @@ int tst_udp_mux_sender_push_video_to(struct TstUdpMuxSender *p,
 
 #if defined(TST_HAS_UDP)
 /**
+ * Read into `*out` the count of datagrams the URL's `source` pin turned away
+ * since open; 0 without a pin. The pin compares the IP address only, never the
+ * port. A datagram turned away is counted here and in no received counter, and
+ * neither sender is told.
+ *
+ * Answers in the same states as `tst_udp_receiver_peer_addr`: while a receive
+ * runs on another thread and after `tst_udp_receiver_cancel`. Returns 0, or
+ * `TST_E_INVALID_CONFIG` when `p` or `out` is NULL.
+ *
+ * # Safety
+ *
+ * `p` must be NULL or a valid non-freed `*mut TstUdpReceiver`. `out` must be
+ * NULL or point to a writable `uint64_t`.
+ */
+ int tst_udp_receiver_get_source_rejected(struct TstUdpReceiver *p, uint64_t *out);
+#endif
+
+#if defined(TST_HAS_UDP)
+/**
  * Snapshot stats for a `tst_udp_receiver_t` into `*out`.
  *
  * Returns 0 on success, `TST_E_INVALID_CONFIG` if either pointer is
@@ -12965,6 +13138,37 @@ int tst_udp_mux_sender_push_video_to(struct TstUdpMuxSender *p,
  * `out` must point to a writable `TstReceiverStats`.
  */
  int tst_udp_receiver_get_stats(struct TstUdpReceiver *p, struct tst_receiver_stats_t *out);
+#endif
+
+#if defined(TST_HAS_UDP)
+/**
+ * Write the address of the sender of the datagram delivered to this receiver
+ * last into `buf` as NUL-terminated text: `ip:port`, `[v6]:port` for IPv6; an
+ * IPv4 sender on a dual-stack (`[::]`) bind is written in IPv4 form. 64 bytes
+ * hold any address.
+ *
+ * The address is the source address of the UDP datagrams, which nothing
+ * verifies: a sender can forge it. Without a `source` key in the URL every
+ * sender that reaches the receiver is delivered, and this names whichever
+ * delivered last.
+ *
+ * Returns the text's length without the NUL; 0, with `""` written, until the
+ * first datagram is delivered. Returns `TST_E_INVALID_CONFIG` when `p` or
+ * `buf` is NULL, or with a "buffer too small" message when `buf_len` cannot
+ * hold the text plus its NUL (`buf_len == 0` included, even before the first
+ * datagram); nothing is written then.
+ *
+ * It reads a record kept beside the receiver, never the handle's slot, so it
+ * answers while `tst_udp_receiver_recv_ts` runs on another thread, and after
+ * `tst_udp_receiver_cancel` it still answers with the last address delivered.
+ * After `tst_udp_receiver_close` the pointer is freed, as for every getter.
+ *
+ * # Safety
+ *
+ * `p` must be NULL or a valid non-freed `*mut TstUdpReceiver`. `buf` must be
+ * NULL or writable for `buf_len` bytes.
+ */
+ int tst_udp_receiver_peer_addr(struct TstUdpReceiver *p, char *buf, size_t buf_len);
 #endif
 
 #if defined(TST_HAS_UDP)
