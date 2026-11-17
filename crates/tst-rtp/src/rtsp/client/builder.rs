@@ -21,8 +21,8 @@ use crate::url::{RtspTransportPref, RtspUrl, RtspVersion};
 /// take just a URL, this builder lets callers pass credentials and
 /// keepalive policy without re-encoding them into the URL query string.
 ///
-/// The builder's [`Self::connect`] always spawns the auto-keepalive
-/// background thread unless [`Self::no_auto_keepalive`] is set.
+/// The builder's [`Self::connect`] starts the keepalive pings on the
+/// client's thread unless [`Self::no_auto_keepalive`] is set.
 #[must_use]
 pub struct RtspClientBuilder {
     url: RtspUrl,
@@ -75,7 +75,7 @@ impl RtspClientBuilder {
         }
     }
 
-    /// Disable the auto-keepalive background thread. Default `false`
+    /// Disable the automatic keepalive pings. Default `false`
     /// (i.e., auto-keepalive is on).
     pub fn no_auto_keepalive(mut self, disabled: bool) -> Self {
         self.no_auto_keepalive = disabled;
@@ -175,18 +175,16 @@ impl RtspClientBuilder {
         self
     }
 
-    /// Per-read socket timeout: the poll interval of the interleaved
-    /// (RTP-over-TCP) read pump, and therefore how quickly that pump
-    /// notices a cancel or yields the connection to a request write.
-    /// Default 100 ms. Must be non-zero.
+    /// Per-read socket timeout of the `rtsps://` TLS handshake: each
+    /// socket read of the handshake waits at most this long, or the time
+    /// left on the [`Self::connect_timeout`] budget when that is shorter.
+    /// Default 100 ms. Must be non-zero: zero fails the connect with
+    /// [`RtspError::Io`].
     ///
-    /// It does not set how long a request waits — that is
-    /// [`Self::request_timeout`]. While a request method waits for its
-    /// response, each read is bounded by the shortest of this value, a
-    /// 100 ms cancel tick and the time left on the request deadline, so
-    /// a `read_timeout` longer than `request_timeout` neither delays the
-    /// `Timeout` nor a cancel. The configured value is put back on the
-    /// socket when the request returns.
+    /// It has no effect on a connected client, nor on a plain `rtsp://`
+    /// connect: the client's thread reads the control connection only
+    /// when it has bytes. How long a request waits is
+    /// [`Self::request_timeout`].
     pub fn read_timeout(mut self, t: Duration) -> Self {
         self.read_timeout = t;
         self
@@ -194,30 +192,26 @@ impl RtspClientBuilder {
 
     /// Per-request deadline: how long `options()` / `describe()` /
     /// `setup_*()` / `play()` / `pause()` / `teardown()`
-    /// wait for the complete response once the request write returns.
+    /// wait for the request to be written and its complete response.
     /// Expiry returns [`RtspError::Timeout`]. `None` disables the deadline
-    /// (the pre-`request_timeout` behaviour: a silent server parks the
-    /// call until the cancel handle fires). Default 10 s, the same as
-    /// [`Self::connect_timeout`].
+    /// (a silent server parks the call until the cancel handle fires).
+    /// Default 10 s, the same as [`Self::connect_timeout`].
     ///
-    /// The deadline holds whatever [`Self::read_timeout`] is set to: no
-    /// read waits past the time left, and a response that completes after
-    /// the deadline is a `Timeout`, not a late success. With `None`, a
-    /// cancel is still seen within ~100 ms.
+    /// The clock starts when the call hands the request to the client's
+    /// thread, so it covers the write too: a request the peer has not
+    /// taken in full by the deadline is a `Timeout`, and its unwritten
+    /// bytes stay queued and may still go out. A response that completes
+    /// after the deadline is a `Timeout`, not a late success. Once the
+    /// request is written, a cancel is seen within ~100 ms, with or
+    /// without a deadline.
     ///
-    /// The clock starts just before the write, so it also covers the
-    /// (normally instant) write itself — but the write is not actively
-    /// bounded by this deadline: it can still block up to the
-    /// connection's own internal write timeout (independent of this
-    /// knob) if the peer stops draining its receive window, in which case
-    /// the error is [`RtspError::Io`]`(TimedOut)`, not `Timeout`. In
-    /// practice an RTSP request is a few hundred bytes and this only
-    /// matters against a peer that has stopped reading entirely.
+    /// Separately, queued bytes the peer takes none of for 5 s end the
+    /// control connection: a request still waiting then fails with
+    /// [`RtspError::Io`]`(TimedOut)`, and so does every later request.
     ///
-    /// After a `Timeout` treat the control connection as indeterminate and
-    /// build a fresh client: the late response, if it ever arrives, is still
-    /// in the socket and the non-interleaved read path does not match
-    /// responses by CSeq.
+    /// Replies are matched to requests by `CSeq`: a reply carrying the
+    /// `CSeq` of a request that already timed out is dropped, so the next
+    /// request is not answered with it.
     ///
     /// A duration too large to form an `Instant` deadline (e.g.
     /// [`Duration::MAX`]) behaves as `None` (no deadline) rather than
@@ -237,8 +231,8 @@ impl RtspClientBuilder {
 
     /// Connect, returning the live client.
     ///
-    /// Unless [`Self::no_auto_keepalive`] was set, the background
-    /// OPTIONS-pinger is spawned here with the
+    /// Unless [`Self::no_auto_keepalive`] was set, the OPTIONS keepalive
+    /// pings are started here, on the client's thread, with the
     /// [`Self::keepalive_interval`] override when one was supplied
     /// (otherwise the cadence derives from the session timeout — the
     /// 60 s default now, retuned when SETUP learns the

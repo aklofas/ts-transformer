@@ -787,7 +787,7 @@ where
         //   contain `\r\n\r\n`) is never parsed as a request.
         //
         // - RTSP direction: body-aware cap, coherent with the client
-        //   `send_and_read` loop and both interleaved pumps (all share
+        //   engine (both share
         //   `rtsp_frame_decision` + the same MAX_RTSP_MESSAGE_BYTES /
         //   MAX_RTSP_BODY_BYTES constants). A blanket "buf.len() > 64 KiB
         //   → 413" cap would wrongly reject a valid request whose body

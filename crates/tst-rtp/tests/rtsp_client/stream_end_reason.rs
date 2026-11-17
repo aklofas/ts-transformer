@@ -433,10 +433,10 @@ fn interleaved_rtp_frame(rtp_pkt: &[u8]) -> Vec<u8> {
     frame
 }
 
-/// Dropping the owning client ends its interleaved pump with `Cancelled`
-/// recorded; the transport reports that as the cancel, not as a broken
-/// wire. The peer keeps the connection open, so nothing but the drop can
-/// end the pump. The transport is then ended like after `close()`: a
+/// Dropping the owning client ends its thread with `Cancelled` recorded;
+/// the transport reports that as the cancel, not as a broken wire. The
+/// peer keeps the connection open, so nothing but the drop can end the
+/// media queue. The transport is then ended like after `close()`: a
 /// second read answers `Closed` and it is no longer alive. The persistent
 /// deadline is a safety net only: a regression fails with `Backpressure`
 /// instead of hanging.
@@ -486,8 +486,8 @@ fn dropping_the_client_ends_an_interleaved_recv_transport_as_a_cancel() {
 /// The peer sends two single-NALU access units after PLAY: AU1 with the
 /// marker bit (complete on its own) and AU2 without it (open until a new
 /// timestamp or a flush). Then the test sends OPTIONS; the peer answers it
-/// after the media on the same connection, and the pump reads that
-/// connection in order, so when `options()` returns both media packets are
+/// after the media on the same connection, and the client's thread reads
+/// that connection in order, so when `options()` returns both media packets are
 /// in the receiver's queue. Nothing has been read from it yet and nothing
 /// else is sent. The client is dropped at that point. Later calls hand out
 /// AU1 (marker), then reach the drained queue's end, whose recorded reason

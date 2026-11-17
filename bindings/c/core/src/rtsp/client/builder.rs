@@ -152,12 +152,12 @@ pub unsafe extern "C" fn tst_rtsp_client_builder_transport_pref(
     });
 }
 
-/// Enable or disable the auto-keepalive background thread.
+/// Enable or disable the automatic keepalive pings.
 ///
 /// When `enabled` is `true` (the default), the builder's connect call
-/// spawns a keepalive thread that sends periodic OPTIONS requests at
-/// `session_timeout / 2` to prevent the server from expiring the
-/// session.  Pass `false` to suppress the keepalive thread — useful
+/// starts periodic OPTIONS requests at `session_timeout / 2`, sent by the
+/// client's own thread, to prevent the server from expiring the
+/// session.  Pass `false` to suppress the pings — useful
 /// for short-lived sessions or when the caller manages keepalives
 /// manually.
 ///

@@ -520,24 +520,28 @@ pub enum EndReason {
     /// The caller cancelled or closed the receiver — not a wire failure.
     Cancelled,
     /// The peer closed the connection in an orderly way (TCP EOF, or an
-    /// RTSP mount closed by its server) with no protocol or transport error.
+    /// RTSP mount closed by its server) with no protocol or transport
+    /// error, or an RTSP server accepted the client's TEARDOWN.
     CleanTeardown,
     /// The server no longer honours the session: a keepalive was answered
     /// `454 Session Not Found`.
     SessionExpired,
-    /// The keepalive thread failed to encode or send a ping.
+    /// An RTSP keepalive ping could not be encoded, or the control
+    /// connection's queued bytes made no progress for 5 s while the oldest
+    /// of them were a ping's.
     KeepaliveFailed {
         /// Detail from the underlying failure.
         msg: String,
     },
-    /// A hard I/O error on the underlying transport (a read failure other
-    /// than a clean EOF).
+    /// A hard I/O error on the underlying transport: a read failure other
+    /// than a clean EOF, or on an RTSP client's control connection a write
+    /// that failed or made no progress for 5 s.
     TransportFailed {
         /// Detail from the underlying failure.
         msg: String,
     },
-    /// The peer violated the wire protocol (oversized or malformed framing,
-    /// a queue flood) and the session was failed.
+    /// The peer violated the wire protocol (oversized or malformed framing)
+    /// and the session was failed.
     ProtocolError {
         /// Detail from the underlying failure.
         msg: String,

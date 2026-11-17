@@ -79,16 +79,15 @@ pub enum RtspError {
     #[error("RTSP session expired or was closed by server")]
     SessionExpired,
 
-    /// A request's deadline elapsed: the response deadline
+    /// A request's deadline elapsed: the request deadline
     /// (`RtspClientBuilder::request_timeout`, default 10 s), or the bound
-    /// of [`RtspClient::teardown_within`](crate::RtspClient::teardown_within),
-    /// which also covers the wait for the control stream (another thread
-    /// may be using it) and the request write. Unless that bound passed
-    /// before the write, the request was written (perhaps only in part);
-    /// whether the server acted on it is unknown, and its late response may
-    /// still be in the socket — treat the control connection as
-    /// indeterminate and build a fresh client. Distinct from
-    /// [`RtspError::SessionExpired`] (a client that is no longer usable).
+    /// of [`RtspClient::teardown_within`](crate::RtspClient::teardown_within).
+    /// Both cover the request write and the reply. The request may be
+    /// written in full, in part or not at all (bytes still queued may go
+    /// out later), so whether the server acted on it is unknown. A late
+    /// reply carrying its `CSeq` is dropped, so the next request is not
+    /// answered with it. Distinct from [`RtspError::SessionExpired`] (a
+    /// client that is no longer usable).
     #[error("RTSP request deadline elapsed")]
     Timeout,
 

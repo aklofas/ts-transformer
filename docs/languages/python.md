@@ -1149,8 +1149,8 @@ with RtspClient.connect(cfg) as session:
   `RtspClient`). `rx.end_detail()` carries the free-text message for
   the three failure variants. Both stay readable after `close()`. Set
   `TSTRANS_LOG=tst_rtp=debug` before `import tstrans` to also see the
-  underlying pump/keepalive `tracing` events on stderr. Full recipe +
-  the Rust-side rationale: [Why did my RTSP stream end?](/docs/troubleshooting.md#why-did-my-rtsp-stream-end).
+  RTSP client's `tracing` events (targets `tst_rtp::client::*`) on
+  stderr. Full recipe + the Rust-side rationale: [Why did my RTSP stream end?](/docs/troubleshooting.md#why-did-my-rtsp-stream-end).
 
 ### RTSP server
 

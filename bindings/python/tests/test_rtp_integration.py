@@ -212,10 +212,8 @@ def test_full_pipeline_rtsp_server_to_rtsp_client() -> None:
 
         client_cfg = RtspClientConfig(
             url=f"rtsp://{host}:{port}/live",
-            # Disable the auto-keepalive thread — the test is short
-            # enough that the default 60 s session timeout won't bite
-            # and we don't want a stray background thread complicating
-            # shutdown ordering.
+            # Disable the automatic keepalive pings — the test is short
+            # enough that the default 60 s session timeout won't bite.
             keepalive=False,
         )
 

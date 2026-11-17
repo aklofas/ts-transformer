@@ -1,20 +1,20 @@
 //! Regression: a long-lived TCP-interleaved receive session must survive
 //! sustained keepalive OPTIONS responses.
 //!
-//! The failure it pins: the keepalive thread never reads responses, and
-//! the interleaved pump used to route EVERY RTSP response into the
-//! bounded ctrl queue (`CTRL_QUEUE_BOUND` = 32). The main thread only
-//! drains that queue while a request of its own is in flight — so on a
-//! receive-only session (SETUP/PLAY then nothing but data), each keepalive
-//! 200 OK accumulated until the 33rd overflowed the queue, which the pump
-//! treats as a hostile control-response flood and answers by failing the
-//! session. At the default 30 s cadence that killed every session at
+//! The failure it pins: the keepalive pinger of the time never read
+//! responses, and the interleaved reader routed EVERY RTSP response into a
+//! bounded control queue of 32. The caller's thread drained that queue
+//! only while a request of its own was in flight — so on a receive-only
+//! session (SETUP/PLAY then nothing but data), each keepalive 200 OK
+//! accumulated until the 33rd overflowed the queue, which the reader
+//! treated as a hostile control-response flood and answered by failing
+//! the session. At the default 30 s cadence that killed every session at
 //! exactly 16.5 minutes, surfacing to callers as a clean EOS.
 //!
 //! This test compresses the timeline: a ~20 ms keepalive cadence pushes
-//! well past 33 responses within the first second, so a queuing pump
-//! dies at ~1 s while the pump that consumes keepalive responses
-//! instead of queuing them survives to the 3 s watchdog.
+//! well past 33 responses within the first second, so a client that
+//! queues them dies at ~1 s while one that consumes keepalive responses
+//! survives to the 3 s watchdog.
 
 use std::time::Duration;
 
@@ -46,8 +46,8 @@ fn interleaved_session_survives_sustained_keepalive_responses() {
         .unwrap();
 
     // Watchdog: end the (data-less) blocking recv loop after 3 s. By then
-    // ~150 keepalive responses have reached the client — 4.5× the old
-    // queuing pump's kill threshold of 33.
+    // ~150 keepalive responses have reached the client — 4.5× a queuing
+    // client's kill threshold of 33.
     let cancel = recv
         .cancel_handle()
         .expect("recv transport exposes a cancel handle");

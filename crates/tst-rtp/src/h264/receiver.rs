@@ -41,8 +41,8 @@
 //!    fired), the terminal value is `Err(TransportError::ExplicitClose)`,
 //!    returned on every later call. After the receiver's own `close()` it
 //!    is the same, without the flush: `close()` discards an open AU.
-//! 3. On a clean disconnect with no cancel (the mpsc pump dropped its
-//!    `Sender`, indicating RTSP teardown), the terminal value is
+//! 3. On a clean disconnect with no cancel (the RTSP client's thread
+//!    dropped its `Sender`, indicating RTSP teardown), the terminal value is
 //!    `Ok(None)`, returned on every later call until a cancel.
 //!
 //! Any other hard I/O error surfaces as `Err(TransportError::Broken {..})`.
@@ -389,7 +389,8 @@ impl H264Receiver {
                 Err(TransportError::Broken { ref msg, .. }) if msg == MPSC_PUMP_DISCONNECTED => {
                     if matches!(self.end_reason.get(), Some(EndReason::Cancelled)) {
                         // The owning `RtspClient` was dropped (or stopped) by
-                        // its owner: its pump ended on the cancel. Latch it
+                        // its owner: its I/O thread recorded the cancel
+                        // before closing the media queue. Latch it
                         // as this receiver's cancel so step 2 answers: the
                         // flush, then `ExplicitClose` on every later call.
                         self.cancel.cancel();
@@ -687,7 +688,7 @@ mod tests {
         );
     }
 
-    /// A cancel that lands together with the pump's end is the cancel, not
+    /// A cancel that lands together with the media queue's end is the cancel, not
     /// the peer's end: every call reports `ExplicitClose`. The cancel is set
     /// from the sender's side while `recv_au` is (normally) parked on the
     /// channel; if it lands before the call instead, step 2 answers it, so

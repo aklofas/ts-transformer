@@ -41,7 +41,7 @@ pub struct TstRtpDemuxReceiver {
     /// `tst_rtsp_session_into_demux_receiver` (the latter captures it AFTER
     /// `RtspSession::into_recv_transport()` has already swapped in the owning
     /// `RtspClient`'s shared slot, so it reflects reasons recorded by the
-    /// RTSP keepalive/pump threads too).
+    /// RTSP client's thread too).
     pub(crate) inner: CHandle<DemuxReceiver<RtpRecvTransport>, RtpRecvSnap>,
     /// Reusable backing storage for `tst_rtp_demux_receiver_next_event` output.
     /// Allocated at open time so the data-path call never allocates on the hot path.
@@ -50,9 +50,10 @@ pub struct TstRtpDemuxReceiver {
     /// Per-stream stats snapshot buffer (borrowed-buffer design §4.5).
     pub(crate) stream_stats_buf: Mutex<Vec<crate::stats::TstStreamStats>>,
     /// The RTSP client of a receiver bridged from an RTSP session; `None`
-    /// on every other receiver. Holding it keeps the control connection,
-    /// its keepalive and (for TCP-interleaved) the pump that feeds this
-    /// receiver alive; dropping it on close sends TEARDOWN.
+    /// on every other receiver. Holding it keeps the control connection
+    /// and the client's thread alive: the thread sends the keepalive pings
+    /// and, for TCP-interleaved, feeds this receiver. Dropping it on close
+    /// sends TEARDOWN.
     pub(crate) rtsp_client: Mutex<Option<tst_rtp::RtspClient>>,
     /// The application-cancel latch of the publish mount this receiver was
     /// bridged from; `None` on every other receiver. The shared binding

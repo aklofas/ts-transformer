@@ -123,8 +123,8 @@ mod tests {
 
     /// Build a minimal valid RTP packet (V=2, P=0, X=0, CC=0, PT=33)
     /// wrapping `payload`. Used by mpsc-path tests that feed whole RTP
-    /// packets into `from_packet_channel`, matching the pump's
-    /// contract (the pump does not strip the header before enqueuing).
+    /// packets into `from_packet_channel`, matching what the RTSP
+    /// client's thread queues (it does not strip the header).
     fn make_rtp_packet(payload: &[u8]) -> bytes::Bytes {
         use crate::packet::RtpHeader;
         let mut pkt = vec![0u8; RTP_HEADER_LEN];
@@ -760,8 +760,9 @@ mod tests {
     // --- MP2T payload shape validation ---
     //
     // These tests drive the recv path via the mpsc seam (from_packet_channel).
-    // The pump pushes whole RTP packets, so tests feed whole packets
-    // (built with make_rtp_packet) rather than raw payload bytes directly.
+    // The RTSP client's thread queues whole RTP packets, so tests feed
+    // whole packets (built with make_rtp_packet) rather than raw payload
+    // bytes directly.
     // The mpsc path is representative because the UDP path shares
     // is_valid_mp2t_payload and the same RTP header decode logic.
 
@@ -1042,8 +1043,9 @@ mod tests {
     /// Transport level: a whole RTP packet with CSRC list
     /// (CC>0), header extension (X=1), and trailing padding (P=1) arriving on
     /// the mpsc path must have ONLY the true TS payload reach the caller —
-    /// CSRC words and extension skipped, padding trimmed. The pump delivers
-    /// the whole packet; stripping is the transport's responsibility.
+    /// CSRC words and extension skipped, padding trimmed. The RTSP client's
+    /// thread delivers the whole packet; stripping is the transport's
+    /// responsibility.
     #[test]
     fn interleaved_rtp_csrc_extension_padding_stripped_at_recv_site() {
         use crate::packet::RTP_PT_MP2T;
@@ -1171,7 +1173,7 @@ mod tests {
     }
 
     /// `RecvTransport::close()` is the ONLY writer for a plain `rtp://`
-    /// transport (no pump, no keepalive) — it must record `Cancelled`.
+    /// transport (no owning RTSP client) — it must record `Cancelled`.
     #[test]
     fn close_records_cancelled_on_plain_udp_transport() {
         let mut t = RtpRecvTransport::listen("rtp://127.0.0.1:0").unwrap();

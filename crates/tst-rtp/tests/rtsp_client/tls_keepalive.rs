@@ -8,9 +8,9 @@
 //! Drives a real in-process `rtsps://` server using the
 //! [`SelfSignedCert`](crate::fixtures::tls_certs::SelfSignedCert) rcgen
 //! fixture (cert + key + matching root for the client trust store), so
-//! the keepalive pings run over a live TLS session — verifying both the
-//! client's TLS keepalive and
-//! the server's TLS session loop handle periodic GET_PARAMETER pings.
+//! the keepalive pings are exercised over a live TLS session — verifying
+//! both the client's TLS keepalive and that the server's TLS session loop
+//! handles periodic OPTIONS pings.
 
 // Drives a real in-process `rtsps://` server via `RtspServerBuilder::tls_cert`
 // — requires the server's TLS acceptor, not just the client's `tls` feature.

@@ -541,7 +541,7 @@ impl PyRtspClient {
             }
         }
 
-        // 3. `keepalive=false` disables the auto-keepalive thread.
+        // 3. `keepalive=false` disables the automatic keepalive pings.
         if !config.keepalive {
             builder = builder.no_auto_keepalive(true);
         }

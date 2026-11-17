@@ -48,7 +48,8 @@ use super::errors::{connect_error, transport_error};
 /// `RtspSession.intoH264Receiver()`. The Java session wrapper is CONSUMED at
 /// conversion (NativeHandle contract item 3), so the receiver becomes the sole
 /// owner of the control plane: retaining the `RtspClient` keeps the TCP control
-/// connection + keepalive thread alive while AUs flow (dropping it would let
+/// connection and the client's thread (keepalive pings and, for
+/// TCP-interleaved, the media) alive while AUs flow (dropping it would let
 /// the server tear the session down mid-stream), and `nClose` performs the
 /// best-effort TEARDOWN the consumed session wrapper can no longer issue.
 pub(super) struct JniRtspControl {

@@ -346,7 +346,7 @@ impl PyRtpRecvTransport {
         // from their own `close()`.
         //
         // GATED on the recorded end reason: `recv_bytes` also answers
-        // `Closed` when the pump's source is gone after a wire break
+        // `Closed` when its source is gone after a wire break
         // (tst-rtp transport.rs:1086/1118/1122), and calling that "peer
         // ended the stream" would be a lie. Only a recorded
         // `CleanTeardown` is a peer EOS; everything else keeps `CLOSED`.

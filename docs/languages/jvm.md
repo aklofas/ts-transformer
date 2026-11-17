@@ -2313,7 +2313,8 @@ try (RtspSession session = RtspClient.connect(cfg);
   `H264Receiver` they answer `null` while a `recvAu()` is in flight. Set
   `TSTRANS_LOG=tst_rtp=debug` before the first `System.load` of the
   native library (i.e. before touching any `org.tstrans.*` class) to
-  also see the underlying pump/keepalive `tracing` events on stderr.
+  also see the RTSP client's `tracing` events (targets
+  `tst_rtp::client::*`) on stderr.
   Full recipe + the Rust-side rationale:
   [Why did my RTSP stream end?](/docs/troubleshooting.md#why-did-my-rtsp-stream-end).
 
