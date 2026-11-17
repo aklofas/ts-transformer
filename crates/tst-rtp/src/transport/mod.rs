@@ -73,7 +73,7 @@ pub enum RtpConnectError {
 }
 
 /// Helper: 4 random bytes from `getrandom`.
-pub(super) fn random_u32() -> u32 {
+pub(crate) fn random_u32() -> u32 {
     u32_from(getrandom::fill)
 }
 
@@ -94,6 +94,7 @@ fn u32_from(fill: impl FnOnce(&mut [u8]) -> Result<(), getrandom::Error>) -> u32
 #[cfg(test)]
 mod tests {
     use std::net::UdpSocket;
+    use std::sync::{Arc, Mutex};
     use std::time::Duration;
 
     use tst_core::transport::{EndReason, RecvTransport, Transport, TransportError};
@@ -101,6 +102,7 @@ mod tests {
     use super::recv::rtp_receiver_can_end_with;
     use super::*;
     use crate::packet::{RTP_HEADER_LEN, RTP_PT_MP2T};
+    use crate::rtcp::stats::RtcpStats;
     use crate::url::RtpUrl;
 
     #[test]
@@ -598,18 +600,27 @@ mod tests {
         accept_recv(recv);
     }
 
-    /// An RR pushed onto the rtcp_rx channel of an `RtpRecvTransport`
-    /// built via `from_mpsc_with_rtcp` reaches the ingest thread,
-    /// populates `RtcpStats.cumulative_lost_send`, and is projected into
+    /// A transport for an interleaved RTSP session built on a stats cell
+    /// and SSRC: one RR ingested into that cell (as the RTSP client's
+    /// thread does for the RTCP channel) is reported by the transport.
+    fn interleaved_transport() -> (RtpRecvTransport, Arc<Mutex<RtcpStats>>, u32) {
+        let (_data_tx, data_rx) = std::sync::mpsc::channel::<bytes::Bytes>();
+        let stats = Arc::new(Mutex::new(RtcpStats::default()));
+        let ssrc = 0x0102_0304;
+        let t = RtpRecvTransport::from_interleaved(data_rx, stats.clone(), ssrc);
+        (t, stats, ssrc)
+    }
+
+    /// An RR counted into the stats cell an interleaved transport adopted,
+    /// against the SSRC it adopted, populates
+    /// `RtcpStats.cumulative_lost_send` and is projected into
     /// `socket_stats().packets_lost_send`.
     #[test]
     fn rr_on_rtcp_rx_populates_packets_lost_send() {
         use crate::rtcp::{ReceiverReport, ReportBlock};
 
-        let (_data_tx, data_rx) = std::sync::mpsc::channel::<bytes::Bytes>();
-        let (rtcp_tx, rtcp_rx) = std::sync::mpsc::channel::<bytes::Bytes>();
-        let t = RtpRecvTransport::from_mpsc_with_rtcp(data_rx, rtcp_rx);
-        let our_ssrc = t.ssrc;
+        let (t, stats, our_ssrc) = interleaved_transport();
+        assert_eq!(t.ssrc, our_ssrc);
 
         // Build an RR whose first report block references our SSRC and
         // reports 2024 cumulative losses.
@@ -626,32 +637,18 @@ mod tests {
             ssrc: 0xDEAD_BEEF,
             report_blocks: vec![rb],
         };
-        let bytes = bytes::Bytes::from(rr.encode().unwrap());
-        rtcp_tx.send(bytes).expect("send RR onto rtcp_rx");
+        ingest_rtcp_packet(&stats, our_ssrc, &rr.encode().unwrap());
 
-        // Spin briefly for the ingest thread to wake + process.
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
-        let mut surfaced = 0u64;
-        while std::time::Instant::now() < deadline {
-            let s = t.socket_stats().expect("alive transport reports stats");
-            if s.packets_lost_send > 0 {
-                surfaced = s.packets_lost_send;
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(20));
-        }
+        let s = t.socket_stats().expect("alive transport reports stats");
         assert_eq!(
-            surfaced, 2024,
+            s.packets_lost_send, 2024,
             "expected RR-derived loss 2024 surfaced as packets_lost_send"
         );
-
         // RTT stays 0 because no SR anchor preceded the RR.
-        let s = t.socket_stats().expect("alive transport reports stats");
         assert_eq!(s.rtt_us, 0);
     }
 
-    /// SR + RR leave `rtt_us` at 0 after the ingest thread processes both
-    /// packets. RTT computation is deferred (see
+    /// SR + RR leave `rtt_us` at 0. RTT computation is deferred (see
     /// `docs/project/deferred-features.md`): a non-zero RTT from SR→RR
     /// here would be wrong, because the anchor NTP comes from the PEER's
     /// SR (wrong clock domain for the formula).
@@ -659,10 +656,7 @@ mod tests {
     fn sr_then_rr_leaves_rtt_us_zero() {
         use crate::rtcp::{ReceiverReport, ReportBlock, SenderReport};
 
-        let (_data_tx, data_rx) = std::sync::mpsc::channel::<bytes::Bytes>();
-        let (rtcp_tx, rtcp_rx) = std::sync::mpsc::channel::<bytes::Bytes>();
-        let t = RtpRecvTransport::from_mpsc_with_rtcp(data_rx, rtcp_rx);
-        let our_ssrc = t.ssrc;
+        let (t, stats, our_ssrc) = interleaved_transport();
 
         // Peer SR — establishes the anchor.
         let sr_ntp_full: u64 = 0xDEAD_BEEF_0000_0000u64; // arbitrary
@@ -674,21 +668,10 @@ mod tests {
             sender_octet_count: 0,
             report_blocks: vec![],
         };
-        rtcp_tx
-            .send(bytes::Bytes::from(sr.encode().unwrap()))
-            .expect("send SR");
-
-        // Deterministic wait: the SR must actually be ingested before we
-        // proceed — otherwise the final rtt_us == 0 assertion would be
+        ingest_rtcp_packet(&stats, our_ssrc, &sr.encode().unwrap());
+        // The SR must have been counted, or the final rtt_us == 0 would be
         // vacuously true (0 is also the never-processed default).
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
-        while t.rtcp_stats().sr_packets_received == 0 {
-            assert!(
-                std::time::Instant::now() < deadline,
-                "timed out waiting for SR ingest"
-            );
-            std::thread::sleep(std::time::Duration::from_millis(5));
-        }
+        assert_eq!(t.rtcp_stats().sr_packets_received, 1);
 
         // Peer RR — RB's `last_sr` mirrors the anchor's mid-32 NTP.
         let last_sr_mid = ((sr_ntp_full >> 16) & 0xFFFF_FFFF) as u32;
@@ -705,20 +688,8 @@ mod tests {
             ssrc: 0xCAFEBABE,
             report_blocks: vec![rb],
         };
-        rtcp_tx
-            .send(bytes::Bytes::from(rr.encode().unwrap()))
-            .expect("send RR");
-
-        // Same deterministic wait for the RR: only after it is provably
-        // ingested does the rtt_us == 0 assertion pin the new behavior.
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
-        while t.rtcp_stats().rr_packets_received == 0 {
-            assert!(
-                std::time::Instant::now() < deadline,
-                "timed out waiting for RR ingest"
-            );
-            std::thread::sleep(std::time::Duration::from_millis(5));
-        }
+        ingest_rtcp_packet(&stats, our_ssrc, &rr.encode().unwrap());
+        assert_eq!(t.rtcp_stats().rr_packets_received, 1);
 
         let s = t.socket_stats().expect("alive transport reports stats");
         assert_eq!(
@@ -733,26 +704,14 @@ mod tests {
     /// or corrupt the other stats.
     #[test]
     fn malformed_rr_increments_parse_error_counter() {
-        let (_data_tx, data_rx) = std::sync::mpsc::channel::<bytes::Bytes>();
-        let (rtcp_tx, rtcp_rx) = std::sync::mpsc::channel::<bytes::Bytes>();
-        let t = RtpRecvTransport::from_mpsc_with_rtcp(data_rx, rtcp_rx);
+        let (t, stats, our_ssrc) = interleaved_transport();
 
         // 2-byte truncated "RR" — PT byte is 201 so the dispatcher
         // attempts to decode but ReceiverReport::decode rejects on
         // length check.
-        let bytes = bytes::Bytes::from(vec![0x80u8, 201]);
-        rtcp_tx.send(bytes).expect("send truncated RR");
+        ingest_rtcp_packet(&stats, our_ssrc, &[0x80u8, 201]);
 
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
-        let mut parse_errs = 0u64;
-        while std::time::Instant::now() < deadline {
-            parse_errs = t.rtcp_stats().rr_parse_errors;
-            if parse_errs > 0 {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(20));
-        }
-        assert_eq!(parse_errs, 1);
+        assert_eq!(t.rtcp_stats().rr_parse_errors, 1);
         // Stats unaffected.
         assert_eq!(t.rtcp_stats().rr_packets_received, 0);
     }

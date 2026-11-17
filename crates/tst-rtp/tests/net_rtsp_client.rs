@@ -32,6 +32,8 @@ mod keepalive_overflow;
 mod keepalive_retune;
 #[path = "rtsp_client/recv_timeout.rs"]
 mod recv_timeout;
+#[path = "rtsp_client/request_failures.rs"]
+mod request_failures;
 #[path = "rtsp_client/setup_play.rs"]
 mod setup_play;
 #[cfg(unix)]

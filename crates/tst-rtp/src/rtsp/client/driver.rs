@@ -2,7 +2,6 @@
 //! engine, and sleeps until the socket can be read or written, a command
 //! arrives or the engine's next deadline, so a request is never queued
 //! behind a blocked read or a stalled write.
-#![allow(dead_code)]
 
 use std::collections::VecDeque;
 use std::io;
@@ -30,6 +29,19 @@ const WAKE: Token = Token(1);
 
 const COMMAND_QUEUE_BOUND: usize = 8;
 
+/// Bounded depth of the media (RTP) queue the facade makes at an
+/// interleaved SETUP.
+///
+/// An interleaved frame body is capped at 65535 bytes by the
+/// `$<ch><len_be16>` framing, but a normal TS bundle is `DEFAULT_PKT_SIZE`
+/// (1316) bytes. A depth of 1024 gives a generous jitter buffer for a
+/// live consumer while bounding retained memory to ~1.3 MiB in the normal
+/// case (and capping the pathological all-max-frames case at ~64 MiB). On
+/// overflow the thread drops the newest frame (live-stream convention) and
+/// counts it in `media_dropped`: it never blocks, so a slow consumer
+/// cannot wedge the control connection.
+pub(crate) const DATA_QUEUE_BOUND: usize = 1024;
+
 const THREAD_NAME: &str = "tst-rtsp-client";
 
 /// Where RTCP reports from the interleaved RTCP channel are counted.
@@ -52,7 +64,6 @@ pub(crate) enum Command {
         rtcp: RtcpSink,
     },
     EnableKeepalive(Option<Duration>),
-    Stop,
 }
 
 /// A caller request's progress. `Written` comes at most once and never
@@ -76,6 +87,7 @@ pub(crate) struct Shared {
     pub media_dropped: Arc<AtomicU64>,
 }
 
+#[derive(Debug)]
 pub(crate) struct DriverHandle {
     commands: mpsc::SyncSender<Command>,
     waker: Arc<Waker>,
@@ -315,7 +327,6 @@ impl Driver {
                 Command::EnableKeepalive(interval) => {
                     self.engine.enable_keepalive(interval, Instant::now());
                 }
-                Command::Stop => return Flow::Stop,
             }
         }
     }

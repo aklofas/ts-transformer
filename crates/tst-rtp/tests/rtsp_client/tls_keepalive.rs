@@ -25,12 +25,10 @@ use crate::fixtures::raw_rtsp::make_muxer_cfg;
 use secrecy::SecretString;
 use tst_rtp::{RtspClientBuilder, RtspServerBuilder};
 
-/// Connect to an `rtsps://` server and verify the keepalive thread spawns
-/// over TLS (a `try_clone`-based thread would silently no-op, `try_clone`
-/// returning `Unsupported`). [`RtspClient::is_session_alive`](tst_rtp::RtspClient::is_session_alive)
-/// returning `true` after the keepalive thread has been running for a
-/// few hundred ms is the observable check — if the thread had failed to
-/// spawn or had immediately errored on a control-TCP write, the
+/// Connect to an `rtsps://` server and verify the keepalive pings run
+/// over TLS. [`RtspClient::is_session_alive`](tst_rtp::RtspClient::is_session_alive)
+/// returning `true` after the pings have run for a few hundred ms is the
+/// observable check — had a ping failed on the control connection, the
 /// `session_dead` flag would have flipped.
 ///
 /// Builds the client through [`RtspClientBuilder`] (rather than
@@ -63,10 +61,8 @@ fn rtsps_keepalive_thread_spawns_on_connect() {
         .unwrap();
 
     // Drive an OPTIONS round trip so the connection is fully live, then
-    // wait a few keepalive cycles. The keepalive thread shares
-    // `Arc<Mutex<Stream>>` with the main client; a TLS
-    // write failure would flip `session_dead` and make
-    // `is_session_alive` return false.
+    // wait a few keepalive cycles. A TLS write failure would flip
+    // `session_dead` and make `is_session_alive` return false.
     client.options().unwrap();
     std::thread::sleep(Duration::from_millis(300));
     assert!(

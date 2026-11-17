@@ -21,8 +21,8 @@ use crate::signal::{DELIVERED, install_handler};
 #[cfg(target_os = "linux")]
 use tst_core::transport::RecvTransport;
 
-// Robust under plain `cargo test` too: the pump is identified by diffing the
-// thread list around this client's setup, and signal counts are compared
+// Robust under plain `cargo test` too: the client's I/O thread is identified by
+// diffing the thread list around this client's connect, and signal counts are compared
 // before/after.
 
 #[test]
@@ -129,7 +129,7 @@ fn interleaved_recv_survives_a_handled_signal() {
             format!("RTSP/1.0 200 OK\r\nCSeq: {cseq}\r\nSession: DEADBEEF\r\n\r\n").as_bytes(),
         )
         .unwrap();
-        // The packet goes out only after the pump thread was signalled.
+        // The packet goes out only after the client's thread was signalled.
         go_rx.recv_timeout(Duration::from_secs(10)).unwrap();
         let pkt = build_rtp_packet(1, 0, 0x1234_5678, 33, false, &[0x47u8; 188]);
         let mut frame = vec![b'$', 0];
@@ -140,7 +140,7 @@ fn interleaved_recv_survives_a_handled_signal() {
     });
 
     let url = format!("rtsp://127.0.0.1:{port}/test?transport=tcp");
-    let pumps_before = find_threads("rtsp-interleave");
+    let pumps_before = find_threads("tst-rtsp-client");
     let mut client = RtspClient::connect(&url).unwrap();
     let sdp = client.describe().unwrap();
     let session = client.setup_mp2t_auto(&sdp).unwrap();
@@ -149,26 +149,26 @@ fn interleaved_recv_survives_a_handled_signal() {
     client.play().unwrap();
 
     let before = DELIVERED.load(Ordering::SeqCst);
-    // Pumps of other tests in this process may be alive: signal only the
-    // threads this client added.
-    let pumps: Vec<_> = find_threads("rtsp-interleave")
+    // Client threads of other tests in this process may be alive: signal
+    // only the threads this client added.
+    let pumps: Vec<_> = find_threads("tst-rtsp-client")
         .into_iter()
         .filter(|t| !pumps_before.contains(t))
         .collect();
-    assert!(!pumps.is_empty(), "this client's pump thread not found");
+    assert!(!pumps.is_empty(), "this client's thread not found");
     for _ in 0..5 {
         std::thread::sleep(Duration::from_millis(40));
-        // SAFETY: the pump thread is alive while the client is.
+        // SAFETY: the client's thread is alive while the client is.
         for &tid in &pumps {
-            // A thread another test's pump started and ended in the
+            // A thread another test's client started and ended in the
             // meantime may be gone (ESRCH); the delivered-count check below
-            // proves this client's pump took signals.
+            // proves this client's thread took signals.
             let _ = unsafe { libc::syscall(libc::SYS_tgkill, libc::getpid(), tid, libc::SIGUSR1) };
         }
     }
     assert!(
         DELIVERED.load(Ordering::SeqCst) > before,
-        "no signal reached the pump thread"
+        "no signal reached the client's thread"
     );
     go_tx.send(()).unwrap();
 

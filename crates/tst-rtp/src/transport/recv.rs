@@ -14,7 +14,6 @@ use tst_core::transport::{
     TransportError,
 };
 
-use super::rtcp_ingest::spawn_rtcp_ingest;
 use super::{RtpConnectError, random_u32, udp_err_to_connect};
 use crate::cancel::RtpCancelHandle;
 use crate::packet::{RTP_HEADER_LEN, RTP_PT_MP2T, RtpHeader};
@@ -253,13 +252,13 @@ pub struct RtpRecvTransport {
     /// Per-recv scratch, sized to [`RECV_SCRATCH_LEN`] — heap allocated
     /// once; holds one whole RTP packet (header + payload) per recv.
     scratch: Vec<u8>,
-    /// RTCP-derived counters. Filled by the interleaved-RTSP ingest thread
-    /// ([`Self::from_mpsc_with_rtcp`]); stay at their defaults on a plain
-    /// `rtp://` receiver, which ingests no RTCP.
+    /// RTCP-derived counters. Filled by the RTSP client's thread on an
+    /// interleaved session ([`Self::from_interleaved`]); stay at their
+    /// defaults on a plain `rtp://` receiver, which ingests no RTCP.
     rtcp_stats: Arc<Mutex<RtcpStats>>,
-    /// Local SSRC: random at bind time unless the URL sets `?ssrc=`. The
-    /// interleaved-RTSP ingest thread matches a peer's report blocks
-    /// against it ([`Self::from_mpsc_with_rtcp`]).
+    /// Local SSRC: random at bind time unless the URL sets `?ssrc=`. On an
+    /// interleaved RTSP session it is the one the client's thread matches
+    /// a peer's report blocks against ([`Self::from_interleaved`]).
     pub(super) ssrc: u32,
     /// Persistent deadline applied by the blocking
     /// [`RecvTransport::recv_bytes`] path. `None` (the default) blocks
@@ -411,13 +410,13 @@ impl RtpRecvTransport {
         })
     }
 
-    /// Construct an `RtpRecvTransport` whose source is an mpsc channel
-    /// fed by the RTSP client's interleaved pump background thread.
+    /// Construct an `RtpRecvTransport` whose source is an mpsc channel,
+    /// such as the one the RTSP client's thread feeds on an interleaved
+    /// session.
     ///
-    /// Used by
-    /// [`crate::rtsp::client::session::RtspSession::into_recv_transport`]
-    /// when SETUP negotiated TCP-interleaved transport. The producer
-    /// (the pump thread inside the RtspClient) parses `$<ch><len><data>`
+    /// Used through [`Self::from_interleaved`] when SETUP negotiated
+    /// TCP-interleaved transport. The producer (the RTSP client's
+    /// thread) parses `$<ch><len><data>`
     /// frames off the RTSP control TCP, validates the RTP header, and
     /// pushes the **whole RTP packet** (header intact) into `rx`'s paired
     /// sender. `recv_bytes` on the resulting transport decodes the header,
@@ -425,8 +424,8 @@ impl RtpRecvTransport {
     /// checks, and copies the TS payload into the caller's buffer —
     /// mirroring the UDP arm end-to-end.
     ///
-    /// `rx` is the consumer side of the bridge; the producer side
-    /// (`Sender<Bytes>`) is held by the pump thread.
+    /// `rx` is the consumer side of the bridge; the producer side is held
+    /// by the RTSP client's thread.
     pub(crate) fn from_packet_channel(rx: std::sync::mpsc::Receiver<bytes::Bytes>) -> Self {
         let ssrc = random_u32();
         Self {
@@ -460,29 +459,23 @@ impl RtpRecvTransport {
         self
     }
 
-    /// Variant of [`Self::from_packet_channel`] that also spawns a
-    /// background `rtsp-rtcp-ingest` thread to drain `rtcp_rx` (the
-    /// RTCP channel demuxed by the RTSP client's interleaved pump) and
-    /// feed each packet into the shared [`RtcpStats`] via [`ingest_rr`]
-    /// or [`ingest_sr`]. Unknown PTs (SDES/BYE/APP/etc.) are counted
-    /// as ignored and skipped.
-    ///
-    /// The `data_rx` channel carries **whole RTP packets** (header
-    /// intact), as pushed by the pump — `recv_bytes` performs header
-    /// decode, PT enforcement, and stripping on each dequeued packet.
+    /// Variant of [`Self::from_packet_channel`] for an interleaved RTSP
+    /// session: it adopts the RTCP statistics cell the RTSP client's
+    /// thread counts the session's RTCP channel into and the SSRC that
+    /// thread matches report blocks against, so `rtcp_stats()` and
+    /// `socket_stats()` report them. It starts no thread.
     ///
     /// Used by
     /// [`crate::rtsp::client::session::RtspSession::into_recv_transport`]
-    /// on the TCP-interleaved path. Without this constructor the RTCP
-    /// channel is silently consumed and `socket_stats().rtt_us` /
-    /// `packets_lost_send` stay at 0. The thread exits when the pump's
-    /// `Sender<Bytes>` is dropped (which produces `mpsc::RecvError`).
-    pub(crate) fn from_mpsc_with_rtcp(
+    /// on the TCP-interleaved path.
+    pub(crate) fn from_interleaved(
         data_rx: std::sync::mpsc::Receiver<bytes::Bytes>,
-        rtcp_rx: std::sync::mpsc::Receiver<bytes::Bytes>,
+        rtcp_stats: Arc<Mutex<RtcpStats>>,
+        ssrc: u32,
     ) -> Self {
-        let t = Self::from_packet_channel(data_rx);
-        spawn_rtcp_ingest(rtcp_rx, t.rtcp_stats.clone(), t.ssrc);
+        let mut t = Self::from_packet_channel(data_rx);
+        t.rtcp_stats = rtcp_stats;
+        t.ssrc = ssrc;
         t
     }
 
@@ -856,8 +849,8 @@ impl RecvTransport for RtpRecvTransport {
         s.bytes_received = self.bytes_received;
         s.packets_received = self.packets_received;
         // Project RTCP-derived fields when ingest has populated them.
-        // Paths without an ingest thread (UDP, `from_packet_channel`)
-        // leave these at 0.
+        // Paths that ingest no RTCP (UDP, `from_packet_channel`) leave
+        // these at 0.
         if let Ok(rtcp) = self.rtcp_stats.lock() {
             s.rtt_us = rtcp.rtt_us;
             s.packets_lost_send = rtcp.cumulative_lost_send as u64;

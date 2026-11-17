@@ -74,11 +74,8 @@ use tst_core::transport::{EndReason, EndReasonHandle};
 /// - [`Self::listen_with`] — same, but from an already-parsed [`RtpUrl`].
 /// - `from_udp_socket_with` (`pub(crate)`) — wrap an already-bound socket;
 ///   used by the RTSP session bridge.
-/// - `from_mpsc_with_rtcp_drain` (`pub(crate)`) — wrap a TCP-interleaved mpsc
-///   channel; used by the RTSP session bridge. Accepts the pump's
-///   RTCP channel so the pump never sees `Disconnected` on it (which would
-///   kill the session at the first server RTCP Sender Report). Pass `None` for
-///   `rtcp_rx` on paths where there is no RTCP channel.
+/// - `from_mpsc` (`pub(crate)`) — wrap a TCP-interleaved mpsc channel;
+///   used by the RTSP session bridge.
 ///
 /// # recv_au loop contract
 ///
@@ -143,18 +140,6 @@ pub struct H264Receiver {
     /// indefinitely. [`Self::recv_au_timeout`] ignores this field — its
     /// explicit argument always wins for that call.
     recv_timeout: Option<Duration>,
-    /// For TCP-interleaved sessions: the pump's RTCP channel (`rtcp_rx` from
-    /// `RtspSession`). RTCP is not processed on the H.264 path (a recorded
-    /// deferral; see `docs/project/deferred-features.md`), but if this receiver is
-    /// dropped the pump's `rtcp_tx.try_send()` returns `Disconnected` and the
-    /// pump exits — which drops `data_tx` — causing `recv_au`'s next
-    /// `recv_raw` to return `MPSC_PUMP_DISCONNECTED` (a clean-EOS sentinel)
-    /// prematurely at the very first server RTCP SR. We keep the receiver here
-    /// and drain it on each `recv_au` iteration (non-blocking, discard-only),
-    /// ensuring the pump always finds its RTCP sender intact.
-    ///
-    /// `None` on UDP and plain-mpsc paths.
-    rtcp_drain: Option<std::sync::mpsc::Receiver<bytes::Bytes>>,
     /// Structured record of why the session ended — see
     /// `RtpRecvTransport::end_reason`'s doc for the same split between
     /// an RTSP-shared slot (set via [`Self::set_end_reason_slot`]) and a
@@ -245,30 +230,18 @@ impl H264Receiver {
             local_addr,
             eos: false,
             recv_timeout: None,
-            rtcp_drain: None,
             end_reason: EndReasonHandle::default(),
         })
     }
 
-    /// Wrap an mpsc channel fed by the RTSP client's TCP-interleaved pump,
-    /// optionally also holding the pump's RTCP channel so it is never
-    /// `Disconnected`.
-    ///
-    /// `rtcp_rx` should be `Some(_)` for TCP-interleaved sessions and `None`
-    /// for the plain-mpsc (non-RTSP) path. When `Some`, each [`recv_au`]
-    /// iteration drains the RTCP channel with `try_recv` (non-blocking,
-    /// discard-only). This keeps the pump's `rtcp_tx.try_send()` from ever
-    /// seeing `TrySendError::Disconnected`, which would cause the pump to exit
-    /// — dropping `data_tx` — and produce a premature clean-EOS at the first
-    /// server RTCP Sender Report.
-    ///
-    /// RTCP frames are discarded here; no RTCP processing is done on the
-    /// H.264 path (a recorded deferral; see `docs/project/deferred-features.md`).
+    /// Wrap an mpsc channel fed by the RTSP client's thread on a
+    /// TCP-interleaved session. That thread counts the session's RTCP
+    /// channel itself; no RTCP processing is done on the H.264 path (a
+    /// recorded deferral; see `docs/project/deferred-features.md`).
     ///
     /// Used by the RTSP session bridge.
-    pub(crate) fn from_mpsc_with_rtcp_drain(
+    pub(crate) fn from_mpsc(
         rx: std::sync::mpsc::Receiver<bytes::Bytes>,
-        rtcp_rx: Option<std::sync::mpsc::Receiver<bytes::Bytes>>,
         config: H264DepayConfig,
     ) -> Self {
         let pt = config.payload_type;
@@ -286,7 +259,6 @@ impl H264Receiver {
             local_addr: None,
             eos: false,
             recv_timeout: None,
-            rtcp_drain: rtcp_rx,
             end_reason: EndReasonHandle::default(),
         }
     }
@@ -375,20 +347,6 @@ impl H264Receiver {
         deadline: Option<Instant>,
     ) -> Result<Option<H264Au>, TransportError> {
         loop {
-            // ── RTCP drain (TCP-interleaved sessions only) ─────────────────
-            // Keep the pump's RTCP sender alive by non-blocking-draining the
-            // channel before each recv_raw. RTCP SR cadence is typically one
-            // packet per few seconds; the CANCEL_POLL_INTERVAL (~100 ms)
-            // drains the 64-deep queue far faster than any legitimate server
-            // fills it. Without this drain the pump sees
-            // `TrySendError::Disconnected` on its first RTCP frame (we dropped
-            // `rtcp_rx` at construction), exits, drops `data_tx`, and
-            // `recv_raw` returns the MPSC_PUMP_DISCONNECTED sentinel — a false
-            // clean-EOS at the very first server Sender Report.
-            if let Some(rx) = &self.rtcp_drain {
-                while rx.try_recv().is_ok() {}
-            }
-
             // ── Step 1: drain the depacketizer's ready queue ──────────────
             if let Some(au) = self.depay.next_au() {
                 return Ok(Some(au));
@@ -673,7 +631,7 @@ mod tests {
         );
     }
 
-    /// `from_mpsc_with_rtcp_drain(rx, None, config)` + send a single IDR packet via the channel.
+    /// `from_mpsc(rx, config)` + send a single IDR packet via the channel.
     #[test]
     fn h264_receiver_mpsc_single_au() {
         use crate::packet::RTP_HEADER_LEN;
@@ -684,7 +642,7 @@ mod tests {
             payload_type: 96,
             ..H264DepayConfig::default()
         };
-        let mut receiver = H264Receiver::from_mpsc_with_rtcp_drain(rx, None, config);
+        let mut receiver = H264Receiver::from_mpsc(rx, config);
 
         // Build a whole RTP packet (header + payload).
         let mut pkt = vec![0u8; RTP_HEADER_LEN];
@@ -709,7 +667,7 @@ mod tests {
             payload_type: 96,
             ..H264DepayConfig::default()
         };
-        let mut receiver = H264Receiver::from_mpsc_with_rtcp_drain(rx, None, config);
+        let mut receiver = H264Receiver::from_mpsc(rx, config);
         drop(tx); // causes Disconnected on recv_raw
         let result = receiver.recv_au().unwrap();
         assert!(result.is_none(), "expected Ok(None) at EOS, got {result:?}");
@@ -729,7 +687,7 @@ mod tests {
     #[test]
     fn a_cancel_landing_with_the_pump_end_is_the_cancel() {
         let (tx, rx) = std::sync::mpsc::channel::<bytes::Bytes>();
-        let mut r = H264Receiver::from_mpsc_with_rtcp_drain(rx, None, H264DepayConfig::default());
+        let mut r = H264Receiver::from_mpsc(rx, H264DepayConfig::default());
         let cancel = r.cancel_handle();
         let ender = std::thread::spawn(move || {
             std::thread::sleep(Duration::from_millis(50));
@@ -758,7 +716,7 @@ mod tests {
     fn recv_au_timeout_returns_backpressure_on_stalled_source() {
         use std::time::{Duration, Instant};
         let (tx, rx) = std::sync::mpsc::channel::<bytes::Bytes>();
-        let mut r = H264Receiver::from_mpsc_with_rtcp_drain(rx, None, H264DepayConfig::default());
+        let mut r = H264Receiver::from_mpsc(rx, H264DepayConfig::default());
         let start = Instant::now();
         let res = r.recv_au_timeout(Duration::from_millis(300));
         assert!(
@@ -787,7 +745,7 @@ mod tests {
     #[test]
     fn recv_au_timeout_extreme_durations_never_panic() {
         let (tx, rx) = std::sync::mpsc::channel::<bytes::Bytes>();
-        let mut r = H264Receiver::from_mpsc_with_rtcp_drain(rx, None, H264DepayConfig::default());
+        let mut r = H264Receiver::from_mpsc(rx, H264DepayConfig::default());
         let res = r.recv_au_timeout(std::time::Duration::ZERO);
         assert!(
             matches!(res, Err(TransportError::Backpressure { .. })),
@@ -813,7 +771,7 @@ mod tests {
         use bytes::Bytes;
 
         let (tx, rx) = std::sync::mpsc::channel::<Bytes>();
-        let mut r = H264Receiver::from_mpsc_with_rtcp_drain(rx, None, H264DepayConfig::default());
+        let mut r = H264Receiver::from_mpsc(rx, H264DepayConfig::default());
         r.set_recv_timeout(Some(Duration::from_millis(150)));
 
         // Silent source: recv_au() (no explicit timeout arg) must honor
@@ -849,7 +807,7 @@ mod tests {
     #[test]
     fn set_recv_timeout_max_saturates_no_deadline() {
         let (tx, rx) = std::sync::mpsc::channel::<bytes::Bytes>();
-        let mut r = H264Receiver::from_mpsc_with_rtcp_drain(rx, None, H264DepayConfig::default());
+        let mut r = H264Receiver::from_mpsc(rx, H264DepayConfig::default());
         r.set_recv_timeout(Some(Duration::MAX));
 
         // Per-call still ignores the knob and expires on its own short
@@ -871,7 +829,7 @@ mod tests {
     #[test]
     fn recv_au_timeout_ignores_knob() {
         let (tx, rx) = std::sync::mpsc::channel::<bytes::Bytes>();
-        let mut r = H264Receiver::from_mpsc_with_rtcp_drain(rx, None, H264DepayConfig::default());
+        let mut r = H264Receiver::from_mpsc(rx, H264DepayConfig::default());
         r.set_recv_timeout(Some(Duration::from_secs(10)));
         let res = r.recv_au_timeout(Duration::from_millis(50));
         assert!(
@@ -887,7 +845,7 @@ mod tests {
     #[test]
     fn end_reason_none_on_fresh_receiver() {
         let (_tx, rx) = std::sync::mpsc::channel::<bytes::Bytes>();
-        let r = H264Receiver::from_mpsc_with_rtcp_drain(rx, None, H264DepayConfig::default());
+        let r = H264Receiver::from_mpsc(rx, H264DepayConfig::default());
         assert!(r.end_reason().is_none());
     }
 
@@ -896,7 +854,7 @@ mod tests {
     #[test]
     fn close_records_cancelled_on_plain_receiver() {
         let (_tx, rx) = std::sync::mpsc::channel::<bytes::Bytes>();
-        let mut r = H264Receiver::from_mpsc_with_rtcp_drain(rx, None, H264DepayConfig::default());
+        let mut r = H264Receiver::from_mpsc(rx, H264DepayConfig::default());
         r.close();
         assert!(
             matches!(r.end_reason(), Some(EndReason::Cancelled)),
@@ -930,7 +888,7 @@ mod tests {
     #[test]
     fn cancel_handle_fire_ends_explicit_close_and_records_cancelled() {
         let (_tx, rx) = std::sync::mpsc::channel::<bytes::Bytes>();
-        let mut r = H264Receiver::from_mpsc_with_rtcp_drain(rx, None, H264DepayConfig::default());
+        let mut r = H264Receiver::from_mpsc(rx, H264DepayConfig::default());
         r.cancel_handle().cancel();
         for call in 1..=3 {
             assert_explicit_close(r.recv_au(), &format!("call {call}"));
@@ -948,7 +906,7 @@ mod tests {
     #[test]
     fn cancel_hands_out_flushed_au_then_explicit_close() {
         let (tx, rx) = std::sync::mpsc::channel::<bytes::Bytes>();
-        let mut r = H264Receiver::from_mpsc_with_rtcp_drain(rx, None, H264DepayConfig::default());
+        let mut r = H264Receiver::from_mpsc(rx, H264DepayConfig::default());
         tx.send(single_nal_packet(1, 0, false, &[0x65, 0x01]))
             .unwrap();
         tx.send(single_nal_packet(2, 3000, false, &[0x41, 0x02]))
@@ -969,7 +927,7 @@ mod tests {
     #[test]
     fn cancel_keeps_queued_complete_au_then_explicit_close() {
         let (tx, rx) = std::sync::mpsc::channel::<bytes::Bytes>();
-        let mut r = H264Receiver::from_mpsc_with_rtcp_drain(rx, None, H264DepayConfig::default());
+        let mut r = H264Receiver::from_mpsc(rx, H264DepayConfig::default());
         tx.send(single_nal_packet(1, 0, false, &[0x65, 0x01]))
             .unwrap();
         // Completes A's AU (timestamp change) and its own (marker).
@@ -988,7 +946,7 @@ mod tests {
     #[test]
     fn cancel_beats_due_deadline() {
         let (_tx, rx) = std::sync::mpsc::channel::<bytes::Bytes>();
-        let mut r = H264Receiver::from_mpsc_with_rtcp_drain(rx, None, H264DepayConfig::default());
+        let mut r = H264Receiver::from_mpsc(rx, H264DepayConfig::default());
         r.cancel_handle().cancel();
         assert_explicit_close(r.recv_au_timeout(Duration::ZERO), "cancel + ZERO deadline");
     }
@@ -998,7 +956,7 @@ mod tests {
     #[test]
     fn recv_after_close_ends_explicit_close() {
         let (tx, rx) = std::sync::mpsc::channel::<bytes::Bytes>();
-        let mut r = H264Receiver::from_mpsc_with_rtcp_drain(rx, None, H264DepayConfig::default());
+        let mut r = H264Receiver::from_mpsc(rx, H264DepayConfig::default());
         tx.send(single_nal_packet(1, 0, false, &[0x65, 0x01]))
             .unwrap();
         tx.send(single_nal_packet(2, 3000, false, &[0x41, 0x02]))
@@ -1014,7 +972,7 @@ mod tests {
     #[test]
     fn cancel_after_peer_end_ends_explicit_close() {
         let (tx, rx) = std::sync::mpsc::channel::<bytes::Bytes>();
-        let mut r = H264Receiver::from_mpsc_with_rtcp_drain(rx, None, H264DepayConfig::default());
+        let mut r = H264Receiver::from_mpsc(rx, H264DepayConfig::default());
         drop(tx);
         assert!(matches!(r.recv_au(), Ok(None)));
         r.cancel_handle().cancel();
@@ -1051,7 +1009,7 @@ mod tests {
     #[test]
     fn drop_records_cancelled() {
         let (_tx, rx) = std::sync::mpsc::channel::<bytes::Bytes>();
-        let r = H264Receiver::from_mpsc_with_rtcp_drain(rx, None, H264DepayConfig::default());
+        let r = H264Receiver::from_mpsc(rx, H264DepayConfig::default());
         let slot = r.end_reason.clone();
         assert!(slot.get().is_none(), "fresh receiver must start unrecorded");
         drop(r);

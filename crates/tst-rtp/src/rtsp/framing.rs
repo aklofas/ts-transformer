@@ -1,5 +1,5 @@
-//! RFC 7826 §14 interleaved-frame rule shared by the client pump
-//! (`rtsp::client::interleaved_pump`) and the server session loop
+//! RFC 7826 §14 interleaved-frame rule shared by the client engine
+//! (`rtsp::client::engine`) and the server session loop
 //! (`rtsp::server::session`, publisher direction). The RTSP-message boundary
 //! rule is `rtsp::message::rtsp_frame_decision`. Pure functions: no socket,
 //! thread or channel.
@@ -8,7 +8,7 @@
 /// interleaved frame (RFC 7826 §14) at the start of `buf`.
 ///
 /// Returns `None` if `buf` doesn't start with `$` or doesn't yet hold
-/// the full `4 + length` bytes (the pump reads more and retries). On
+/// the full `4 + length` bytes (the caller reads more and retries). On
 /// success, returns `(channel, total_len)` — `buf[4..total_len]` is the
 /// frame's payload and `buf[..total_len]` is the whole frame to drain.
 //

@@ -1,7 +1,6 @@
 //! The RTSP client's control stream in non-blocking mode, plain TCP or
 //! rustls over TCP: reads take what the socket has, writes queue and go
 //! out as the kernel takes them. Nothing here ever waits.
-#![allow(dead_code)]
 
 use std::io::{self, Read, Write};
 
@@ -110,6 +109,7 @@ impl Stream {
     }
 
     /// Bytes one `read_available` takes before it returns `More`.
+    #[cfg(test)]
     pub(crate) fn with_read_budget(mut self, budget: usize) -> Self {
         self.read_budget = budget;
         self

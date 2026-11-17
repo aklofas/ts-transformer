@@ -27,11 +27,10 @@ pub(crate) const MAX_RTSP_BODY_BYTES: usize = 1024 * 1024; // 1 MiB
 ///
 /// This is the single coherent cap shared by every code path that buffers raw
 /// RTSP text off a socket: the server session loop, the server interleaved
-/// pump, the client `send_and_read` non-pump loop, and the client interleaved
-/// pump. It guards against a peer that never sends the terminator and dribbles
-/// bytes, forcing the buffer to grow unbounded. It does not bound the body:
-/// once the headers are complete, the declared body is capped separately at
-/// [`MAX_RTSP_BODY_BYTES`] (1 MiB).
+/// pump and the client engine. It guards against a peer that never sends the
+/// terminator and dribbles bytes, forcing the buffer to grow unbounded. It
+/// does not bound the body: once the headers are complete, the declared body
+/// is capped separately at [`MAX_RTSP_BODY_BYTES`] (1 MiB).
 ///
 /// 64 KiB is generous for any legitimate set of RTSP headers (typical
 /// OPTIONS / DESCRIBE / SETUP responses are well under 2 KiB in total).
@@ -81,7 +80,7 @@ fn header_lines(header_text: &str) -> impl Iterator<Item = &str> {
 /// the `Content-Length` value, applying the same strict rules as
 /// [`parse_content_length`] plus duplicate-header rejection.
 ///
-/// Used by the interleaved framing pumps, which scan header lines directly
+/// Used by the client engine's framing, which scans header lines directly
 /// rather than building a [`HashMap`]. Tokenizes via [`header_lines`] so it
 /// agrees byte-for-byte with the HashMap parsers' view. Returns the strict
 /// body length on success, or an error detail string on a
@@ -103,42 +102,10 @@ pub(crate) fn content_length_from_header_text(header_text: &str) -> Result<usize
     parse_content_length(found)
 }
 
-/// Pre-parse accumulation guard for an interleaved pump buffer, which holds at
-/// most one incomplete leading frame (the pump drains every complete frame each
-/// iteration). Returns `true` when that leading frame has provably overrun its
-/// legal bound and the pump must close:
-///
-/// - **Binary `$`-frame** (`buf[0] == b'$'`): inherently bounded — the 2-byte
-///   u16 length permits at most a 65535-byte payload, so a full frame is
-///   ≤ 65539 B. Such a frame can never overrun; return `false` (the
-///   `buf.len() < 4 + length` check in the pump awaits the rest).
-/// - **RTSP text** (any other leading byte): apply the same Phase-1 header cap
-///   as [`rtsp_frame_decision`] / the client `send_and_read` loop — once an
-///   over-long header run (terminated or not) exceeds [`MAX_RTSP_MESSAGE_BYTES`]
-///   (64 KiB), or a
-///   terminated message declares a bad/over-cap `Content-Length`, the peer is
-///   hostile. A legitimate body up to [`MAX_RTSP_BODY_BYTES`] (1 MiB) is *not*
-///   rejected (the pump awaits it). This keeps the header DoS bound
-///   at a tight 64 KiB — coherent with the client response cap — rather than the loose
-///   header+body sum.
-pub(crate) fn pump_accumulation_exceeded(buf: &[u8]) -> bool {
-    if buf.first() == Some(&b'$') {
-        return false; // u16-bounded binary frame
-    }
-    matches!(
-        rtsp_frame_decision(buf),
-        RtspFraming::HeadersTooLong
-            | RtspFraming::NonUtf8Headers { .. }
-            | RtspFraming::BadContentLength(_)
-            | RtspFraming::BodyOffsetOverflow
-    )
-}
-
 /// Two-phase framing decision for a read buffer that begins with an RTSP message
 /// (status/request line + headers + optional body). This is the single shared
-/// implementation of the body-aware cap policy used by the client
-/// `send_and_read` non-pump loop and the server session request loop, so the
-/// two agree byte-for-byte:
+/// implementation of the body-aware cap policy used by the client engine and
+/// the server session request loop, so the two agree byte-for-byte:
 ///
 /// - **Before the terminator** — no `CRLFCRLF` yet: the headers are still
 ///   accumulating. If they have already exceeded [`MAX_RTSP_MESSAGE_BYTES`]
@@ -160,7 +127,7 @@ pub enum RtspFraming {
     /// The header block exceeded [`MAX_RTSP_MESSAGE_BYTES`], terminated or not — reject.
     HeadersTooLong,
     /// The header block (through `CRLFCRLF`) is not UTF-8; it ends `skip`
-    /// bytes in. The client pump resyncs past it; every other caller rejects.
+    /// bytes in. The client engine resyncs past it; every other caller rejects.
     NonUtf8Headers { skip: usize },
     /// A malformed/duplicate/over-cap `Content-Length` — reject.
     BadContentLength(&'static str),
@@ -177,7 +144,7 @@ pub enum RtspFraming {
 //
 // `#[doc(hidden)] pub` (with `RtspFraming`) so the fuzz workspace's
 // `rtsp_server_publish_framing` and `rtsp_client_pump_framing` targets frame
-// bytes the way the server session loop and the client pump do. Not part of
+// bytes the way the server session loop and the client engine do. Not part of
 // the crate's stable public API.
 #[doc(hidden)]
 pub fn rtsp_frame_decision(buf: &[u8]) -> RtspFraming {
@@ -857,15 +824,14 @@ mod tests {
 
     /// The header ceiling holds whether or not the terminator has arrived:
     /// a header block that ends in CRLFCRLF past 64 KiB is refused like an
-    /// unterminated one, and the client pump's accumulation check closes on
-    /// it; a block of exactly 64 KiB plus its terminator frames.
+    /// unterminated one; a block of exactly 64 KiB plus its terminator
+    /// frames.
     #[test]
     fn the_header_ceiling_applies_to_a_terminated_header_block() {
         let mut over = b"OPTIONS rtsp://h/ RTSP/1.0\r\nX: ".to_vec();
         over.resize(MAX_RTSP_MESSAGE_BYTES + 1, b'a');
         over.extend_from_slice(b"\r\n\r\n");
         assert_eq!(rtsp_frame_decision(&over), RtspFraming::HeadersTooLong);
-        assert!(pump_accumulation_exceeded(&over));
 
         let mut at = b"OPTIONS rtsp://h/ RTSP/1.0\r\nX: ".to_vec();
         at.resize(MAX_RTSP_MESSAGE_BYTES, b'a');
@@ -1066,8 +1032,7 @@ mod tests {
         );
     }
 
-    // Every `rtsp_frame_decision` caller (the client pump's cap-check
-    // `pump_accumulation_exceeded` included) reads the body length through
+    // Every `rtsp_frame_decision` caller reads the body length through
     // `content_length_from_header_text`. Lock its behavior across every
     // branch here.
     #[test]

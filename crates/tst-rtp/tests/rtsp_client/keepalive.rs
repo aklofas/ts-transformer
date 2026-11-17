@@ -193,3 +193,92 @@ fn keepalive_honors_sub_200ms_interval() {
          shortest single-ping gap {shortest:?}, gaps {gaps:?}"
     );
 }
+
+/// The pings stop once TEARDOWN is sent: the peer sees pings flowing,
+/// answers the TEARDOWN, and then reads no OPTIONS for three intervals
+/// while the client is still alive.
+#[test]
+fn teardown_ends_the_pings() {
+    use std::sync::mpsc;
+    use std::time::{Duration, Instant};
+
+    use crate::fixtures::raw_rtsp_server::{
+        answer_describe_and_setup, cseq_of, method_of, read_request,
+    };
+
+    const INTERVAL: Duration = Duration::from_millis(50);
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let (pinging_tx, pinging_rx) = mpsc::channel::<()>();
+    let (after_tx, after_rx) = mpsc::channel::<String>();
+    let peer = std::thread::spawn(move || {
+        let (mut sock, _) = listener.accept().unwrap();
+        let mut leftover = Vec::new();
+        answer_describe_and_setup(
+            &mut sock,
+            &mut leftover,
+            "RTP/AVP/TCP;unicast;interleaved=0-1",
+        );
+        let mut pings = 0;
+        loop {
+            let req = read_request(&mut sock, &mut leftover);
+            let cseq = cseq_of(&req);
+            sock.write_all(
+                format!("RTSP/1.0 200 OK\r\nCSeq: {cseq}\r\nSession: DEADBEEF\r\n\r\n").as_bytes(),
+            )
+            .unwrap();
+            match method_of(&req) {
+                "OPTIONS" => {
+                    pings += 1;
+                    if pings == 2 {
+                        let _ = pinging_tx.send(());
+                    }
+                }
+                "TEARDOWN" => break,
+                other => panic!("unexpected request: {other}"),
+            }
+        }
+        // Everything the client writes for three intervals after the reply.
+        let mut after = leftover;
+        let end = Instant::now() + INTERVAL * 3;
+        let mut buf = [0u8; 4096];
+        loop {
+            let left = end.saturating_duration_since(Instant::now());
+            if left.is_zero() {
+                break;
+            }
+            sock.set_read_timeout(Some(left)).unwrap();
+            match sock.read(&mut buf) {
+                Ok(0) => break,
+                Ok(n) => after.extend_from_slice(&buf[..n]),
+                Err(_) => break,
+            }
+        }
+        let _ = after_tx.send(String::from_utf8_lossy(&after).into_owned());
+    });
+
+    let url = format!("rtsp://127.0.0.1:{port}/test?transport=tcp");
+    let mut client = tst_rtp::RtspClientBuilder::new(&url)
+        .unwrap()
+        .no_auto_keepalive(true)
+        .connect()
+        .unwrap();
+    let sdp = client.describe().unwrap();
+    let session = client.setup_mp2t_auto(&sdp).unwrap();
+    client.spawn_keepalive_if_needed(Some(INTERVAL)).unwrap();
+    pinging_rx
+        .recv_timeout(Duration::from_secs(10))
+        .expect("the peer saw two pings");
+    client.teardown().unwrap();
+    let after = after_rx
+        .recv_timeout(Duration::from_secs(10))
+        .expect("the peer's report");
+    assert!(
+        !after.contains("OPTIONS"),
+        "a ping followed the TEARDOWN: {after:?}"
+    );
+
+    drop(session);
+    drop(client);
+    peer.join().unwrap();
+}

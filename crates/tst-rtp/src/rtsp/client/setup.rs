@@ -4,10 +4,14 @@
 //! TCP-interleaved auto-fallback per RFC 7826 §17.4.6.
 
 use std::net::{IpAddr, Ipv4Addr};
+use std::sync::{Arc, Mutex, mpsc};
 
 use crate::error::RtspError;
 use crate::h264::depacketizer::H264DepayConfig;
+use crate::rtcp::stats::RtcpStats;
 use crate::rtsp::client::RtspClient;
+use crate::rtsp::client::driver::{Command, DATA_QUEUE_BOUND, RtcpSink};
+use crate::rtsp::client::engine::InterleavedChannels;
 use crate::rtsp::client::session::RtspSession;
 use crate::rtsp::message::RtspMethod;
 use crate::rtsp::transport_negotiation::{
@@ -120,11 +124,14 @@ impl RtspClient {
         };
         let local_port = local_udp.as_ref().map(|(_, _, p)| *p).unwrap_or(0);
         let transport_hdr = build_transport_request(pref, local_port)?;
-        // SETUP authenticates via the shared path (pre-emptive + reactive),
-        // hashing the digest against the control URI. gortsplib/MediaMTX
-        // require auth on SETUP even after an authenticated DESCRIBE.
-        let resp =
-            self.send_authenticated(RtspMethod::Setup, uri, &[("transport", transport_hdr)])?;
+        // SETUP authenticates like every method, hashing the digest against
+        // the control URI. gortsplib/MediaMTX require auth on SETUP even
+        // after an authenticated DESCRIBE.
+        let resp = self.exchange(
+            RtspMethod::Setup,
+            uri.to_string(),
+            vec![("transport", transport_hdr)],
+        )?;
         self.expect_ok(&resp)?;
         // Server-rewritten Transport: tells us what was actually negotiated.
         let server_transport = resp
@@ -140,34 +147,9 @@ impl RtspClient {
                 detail: "SETUP 200 missing Session: header",
             })?
             .to_string();
-        if let Some(t) = resp.session_timeout_secs() {
-            self.session_timeout = std::time::Duration::from_secs(t);
-        }
+        // The client's thread learned the session from this reply too: its
+        // pings carry the id and follow the advertised timeout.
         self.session_id = Some(sid.clone());
-        // Bind the running keepalive thread (spawned at connect time,
-        // before any of this was known) to the negotiated session:
-        //
-        // - Hand it the session id — its OPTIONS pings must carry
-        //   `Session: <id>` to refresh the server's session timer
-        //   (RFC 7826 §10.5 defines keep-alive in terms of a request
-        //   carrying the session identifier; an un-bound OPTIONS keeps
-        //   nothing alive on a conforming server).
-        // - Retune its cadence to the server-advertised timeout (the
-        //   thread started against the 60 s default, and a server
-        //   advertising `timeout < 60` would otherwise expire the
-        //   session between 30 s pings). A caller-supplied interval
-        //   override outranks the derived cadence. The 100 ms floor
-        //   guards against a degenerate `timeout=0` advertisement
-        //   turning the pinger into a busy loop.
-        if let Some(cell) = &self.session_id_shared {
-            *crate::rtsp::client::lock_unpoisoned(cell) = Some(sid.clone());
-        }
-        if !self.keepalive_interval_overridden
-            && let Some(iv) = &self.keepalive_interval_shared
-        {
-            let ms = crate::rtsp::client::duration_ms_saturating(self.session_timeout / 2).max(100);
-            iv.store(ms, std::sync::atomic::Ordering::Relaxed);
-        }
 
         // Construct RtspSession with the negotiated transport.
         let session = match transport.kind {
@@ -184,27 +166,35 @@ impl RtspClient {
                 )
             }
             RtspTransportKind::TcpInterleaved => {
-                // Spawn the interleaved producer thread NOW (before
-                // PLAY) so we don't miss the leading $-frames that the
-                // server may push immediately after its PLAY response.
-                // The pump also captures subsequent RTSP responses;
-                // `send_and_read` switches to ctrl_rx-polling mode once
-                // `self.pump_state` is `Some`.
+                // The client's thread routes `$` frames from here on, before
+                // PLAY, so the leading frames a server pushes right after
+                // its PLAY reply are not missed.
                 //
                 // Channels: the SETUP request hard-codes `interleaved=0-1`
                 // in `build_transport_request`. The server may echo a
                 // different pair via `Transport: interleaved=N-M` — use
                 // the parsed response when present, else fall back to 0-1.
                 let (rtp_ch, rtcp_ch) = transport.interleaved.unwrap_or((0, 1));
-                let channels = crate::rtsp::client::interleaved_pump::InterleavedChannels {
+                let channels = InterleavedChannels {
                     rtp: rtp_ch,
                     rtcp: rtcp_ch,
                 };
-                let (data_rx, rtcp_rx) = self.activate_interleaved_pump(channels)?;
-                RtspSession::new_interleaved_with_data_rx(
+                let (data_tx, data_rx) = mpsc::sync_channel(DATA_QUEUE_BOUND);
+                let rtcp_stats = Arc::new(Mutex::new(RtcpStats::default()));
+                let ssrc = crate::transport::random_u32();
+                self.driver.send(Command::SetInterleaved {
+                    channels,
+                    data_tx,
+                    rtcp: RtcpSink {
+                        stats: rtcp_stats.clone(),
+                        ssrc,
+                    },
+                })?;
+                RtspSession::new_interleaved(
                     sid,
                     data_rx,
-                    rtcp_rx,
+                    rtcp_stats,
+                    ssrc,
                     self.url.recv_timeout,
                     self.end_reason.clone(),
                 )

@@ -6,10 +6,9 @@
 //!   per-session TCP and shares the `Arc<Mutex<OwnedWriteHalf>>` with
 //!   the per-peer fanout task; `handle_play` for `TcpInterleaved`
 //!   spawns the fanout.
-//! - **Client side** — `RtspClient::activate_interleaved_pump` is
-//!   called at SETUP, so subsequent `send_and_read` requests poll the
-//!   pump's `ctrl_rx` and binary `$`-framed RTP/RTCP demultiplex into
-//!   their own mpsc receivers.
+//! - **Client side** — from SETUP on, the client's I/O thread routes
+//!   binary `$`-framed RTP to the session's media queue and RTCP to its
+//!   statistics, and hands each later request its own reply by CSeq.
 //!
 //! The control-plane test below exercises the handshake. A future test
 //! can push a TS payload through the mount and assert the

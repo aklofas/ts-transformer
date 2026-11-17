@@ -2,7 +2,6 @@
 //! replies, the current time and requests, and hands back the bytes to
 //! write, events and its next deadline. Nothing here reads a clock, opens
 //! a socket or spawns a thread.
-#![allow(dead_code)]
 
 use std::collections::VecDeque;
 use std::io;
@@ -440,6 +439,7 @@ impl ClientEngine {
         self.events.pop_front()
     }
 
+    #[cfg(test)]
     pub(crate) fn counters(&self) -> &EngineCounters {
         &self.counters
     }

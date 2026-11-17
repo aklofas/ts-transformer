@@ -1,15 +1,17 @@
-//! `RtspClient::options` + `RtspClient::describe`. Single-request
-//! synchronous send + recv against the control connection.
+//! `RtspClient::options` + `RtspClient::describe`, and the request path
+//! every method shares: hand the request to the client's thread, wait for
+//! it to be written, then for its reply.
 
 use std::collections::HashMap;
-use std::io::{Read, Write};
+use std::sync::mpsc::{self, RecvTimeoutError};
+use std::time::Instant;
 
 use crate::error::RtspError;
-use crate::rtsp::client::RtspClient;
-use crate::rtsp::client::keepalive::{KEEPALIVE_CSEQ_BASE, handle_keepalive_response};
-use crate::rtsp::message::{RtspFraming, RtspMethod, RtspRequest, RtspResponse};
+use crate::rtsp::client::driver::{Command, Progress};
+use crate::rtsp::client::engine::RequestSpec;
+use crate::rtsp::client::{REQUEST_POLL_TICK, RtspClient};
+use crate::rtsp::message::{RtspMethod, RtspResponse};
 use crate::sdp::Sdp;
-use tst_core::net::io_classify::{RecvAction, classify_recv_error};
 
 /// Response shape returned by [`RtspClient::options`]. Exposes the
 /// server's advertised methods (parsed from the `Public:` header) plus
@@ -25,22 +27,9 @@ pub struct OptionsResponse {
 }
 
 impl RtspClient {
-    /// Build a base RTSP request: bump the CSeq counter, create the
-    /// [`RtspRequest`] for `method` at `uri`, and add the mandatory
-    /// `CSeq:` and `User-Agent:` headers. Callers add method-specific
-    /// headers (e.g., `Session:`, `Transport:`) on the returned value.
-    pub(crate) fn base_request(&mut self, method: RtspMethod, uri: String) -> RtspRequest {
-        let cseq = self.bump_cseq();
-        RtspRequest::new(method, uri, self.url.rtsp_version)
-            .header("cseq", cseq.to_string())
-            .header("user-agent", self.user_agent.as_str())
-    }
-
     /// Check that `resp` carries a 200 OK status.
     ///
-    /// Returns [`RtspError::Protocol`] for any other status. Used as a
-    /// one-liner after every synchronous `send_and_read` call that
-    /// expects a 200.
+    /// Returns [`RtspError::Protocol`] for any other status.
     pub(crate) fn expect_ok(&self, resp: &RtspResponse) -> Result<(), RtspError> {
         if resp.status != 200 {
             return Err(RtspError::Protocol {
@@ -52,9 +41,10 @@ impl RtspClient {
     }
 
     /// Send an OPTIONS request; parse the `Public:` header into the
-    /// list of methods the server supports. Authenticates via the shared
-    /// `send_authenticated` path (pre-emptive + one reactive 401 retry) —
-    /// RFC 7826 servers may challenge any method, OPTIONS included.
+    /// list of methods the server supports. Authenticates like every
+    /// method (pre-emptive once a challenge is cached, and one retry after
+    /// a 401) — RFC 7826 servers may challenge any method, OPTIONS
+    /// included.
     ///
     /// # Errors
     ///
@@ -66,11 +56,11 @@ impl RtspClient {
     ///   mid-read, or was set when the exchange failed.
     pub fn options(&mut self) -> Result<OptionsResponse, RtspError> {
         let uri = self.url.render_no_credentials();
-        let mut extra: Vec<(&str, String)> = Vec::new();
+        let mut headers = Vec::new();
         if let Some(sid) = &self.session_id {
-            extra.push(("session", sid.clone()));
+            headers.push(("session", sid.clone()));
         }
-        let resp = self.send_authenticated(RtspMethod::Options, &uri, &extra)?;
+        let resp = self.exchange(RtspMethod::Options, uri, headers)?;
         self.expect_ok(&resp)?;
         let public_methods = resp
             .headers
@@ -83,9 +73,9 @@ impl RtspClient {
         })
     }
 
-    /// Send a DESCRIBE request and parse the SDP body. Authenticates via the
-    /// shared `send_authenticated` path (pre-emptive + one reactive
-    /// 401 retry).
+    /// Send a DESCRIBE request and parse the SDP body. Authenticates like
+    /// every method (pre-emptive once a challenge is cached, and one retry
+    /// after a 401).
     ///
     /// # Errors
     ///
@@ -98,11 +88,11 @@ impl RtspClient {
     ///   mid-read, or was set when the exchange failed.
     pub fn describe(&mut self) -> Result<Sdp, RtspError> {
         let uri = self.url.render_no_credentials();
-        let mut extra: Vec<(&str, String)> = vec![("accept", "application/sdp".to_string())];
+        let mut headers = vec![("accept", "application/sdp".to_string())];
         if let Some(sid) = &self.session_id {
-            extra.push(("session", sid.clone()));
+            headers.push(("session", sid.clone()));
         }
-        let resp = self.send_authenticated(RtspMethod::Describe, &uri, &extra)?;
+        let resp = self.exchange(RtspMethod::Describe, uri, headers)?;
         if resp.status != 200 {
             return Err(RtspError::Protocol {
                 code: resp.status,
@@ -112,209 +102,58 @@ impl RtspClient {
         Sdp::parse(&resp.body)
     }
 
-    /// Build an `Authorization:` header for `method` at `uri` from a raw
-    /// `WWW-Authenticate` challenge, using the URL credentials and the next
-    /// `qop=auth` nonce-count. Thin wrapper over
-    /// [`crate::rtsp::auth::build_authorization`]. The `uri` MUST be the exact
-    /// request-URI of the target method — gortsplib/MediaMTX hash the Digest
-    /// HA2 against the request URI, so SETUP must pass its control URI
-    /// (`…/trackID=0`), not the base URL.
-    ///
-    /// # Errors
-    ///
-    /// - [`RtspError::AuthFailed`] if the URL carries no credentials.
-    /// - [`RtspError::AuthUnsupported`] if no recognized scheme is present, or
-    ///   the challenge offers no Digest under `AuthSchemes::DigestOnly`.
-    pub(crate) fn authorization_from_challenge(
-        &self,
+    /// `method` at `uri` with `headers`, under the request timeout
+    /// ([`crate::RtspClientBuilder::request_timeout`]) for the reply and
+    /// no bound of its own on the write.
+    pub(crate) fn exchange(
+        &mut self,
         method: RtspMethod,
-        uri: &str,
-        www_auth: &str,
-    ) -> Result<String, RtspError> {
-        let username = self.url.username.as_deref().ok_or(RtspError::AuthFailed)?;
-        let password = self.url.password.as_ref().ok_or(RtspError::AuthFailed)?;
-        // Next nonce-count for qop=auth (ignored by the no-qop form),
-        // allocated under the shared auth lock so no other thread (the
-        // keepalive) can be issued the same `nc` for the same nonce —
-        // a qop=auth server rejects a repeated `nc` as a replay
-        // (RFC 7616 §3.4).
-        let (nc, schemes) = {
-            let mut auth = crate::rtsp::client::lock_unpoisoned(&self.auth);
-            auth.nc += 1;
-            (auth.nc, auth.schemes)
-        };
-        crate::rtsp::auth::build_authorization(
-            method, uri, www_auth, username, password, nc, schemes,
+        uri: String,
+        headers: Vec<(&'static str, String)>,
+    ) -> Result<RtspResponse, RtspError> {
+        // A timeout too large to form an `Instant` (e.g. `Duration::MAX`)
+        // means no deadline rather than a panic.
+        let deadline = self
+            .request_timeout
+            .and_then(|t| Instant::now().checked_add(t));
+        self.request(
+            RequestSpec {
+                method,
+                uri,
+                headers,
+            },
+            deadline,
+            None,
         )
     }
 
-    /// Pre-emptive `Authorization:` header for `method` at `uri`, computed
-    /// from the challenge cached at the first 401 (see
-    /// [`RtspClient::auth`]). Returns `Ok(None)` when no challenge
-    /// has been seen yet or the URL carries no credentials — so
-    /// unauthenticated servers are unaffected.
-    pub(crate) fn preemptive_authorization(
-        &self,
-        method: RtspMethod,
-        uri: &str,
-    ) -> Result<Option<String>, RtspError> {
-        let username = match self.url.username.as_deref() {
-            Some(u) => u,
-            None => return Ok(None),
-        };
-        let password = match self.url.password.as_ref() {
-            Some(p) => p,
-            None => return Ok(None),
-        };
-        // Snapshot the challenge and allocate its nonce-count under ONE
-        // lock acquisition, so the pair can never mix a stale challenge
-        // with a post-rotation count (see `AuthState`).
-        let (www, nc, schemes) = {
-            let mut auth = crate::rtsp::client::lock_unpoisoned(&self.auth);
-            match auth.challenge.clone() {
-                Some(www) => {
-                    auth.nc += 1;
-                    (www, auth.nc, auth.schemes)
-                }
-                None => return Ok(None),
-            }
-        };
-        Ok(Some(crate::rtsp::auth::build_authorization(
-            method, uri, &www, username, password, nc, schemes,
-        )?))
-    }
-
-    /// Cache the `WWW-Authenticate` challenge from a 401 for pre-emptive use
-    /// on later requests. A *changed* challenge (new nonce) resets the
-    /// `qop=auth` nonce-count so it restarts at 1. Challenge and count are
-    /// updated under the same lock the keepalive thread reads them with, so
-    /// the rotation is atomic (see `AuthState`).
-    pub(crate) fn cache_auth_challenge(&mut self, www_auth: String) {
-        crate::rtsp::client::lock_unpoisoned(&self.auth).cache_challenge(www_auth);
-    }
-
-    /// Send `method` at `uri` with `extra_headers`, attaching cached
-    /// credentials pre-emptively and retrying once on a fresh 401 challenge.
-    /// Each attempt is a fresh request (new CSeq). Unauthenticated servers are
-    /// unaffected — pre-emptive auth is a no-op until a challenge is seen.
-    ///
-    /// This is the single auth-aware send path shared by OPTIONS / DESCRIBE / SETUP /
-    /// PLAY / PAUSE, so every method authenticates uniformly (gortsplib /
-    /// MediaMTX challenge them all, not just DESCRIBE).
-    pub(crate) fn send_authenticated(
-        &mut self,
-        method: RtspMethod,
-        uri: &str,
-        extra_headers: &[(&str, String)],
-    ) -> Result<RtspResponse, RtspError> {
-        // Attempt 1 — pre-emptive (no-op until a challenge is cached).
-        let preauth = self.preemptive_authorization(method, uri)?;
-        let mut req = self.base_request(method, uri.to_string());
-        for (k, v) in extra_headers {
-            req = req.header(k, v.as_str());
-        }
-        if let Some(a) = &preauth {
-            req = req.header("authorization", a.as_str());
-        }
-        let resp = self.send_and_read(&req.encode_checked()?)?;
-        if resp.status != 401 {
-            return Ok(resp);
-        }
-        // Attempt 2 — reactive: cache the fresh challenge, retry once with a
-        // new CSeq. Covers servers that challenge this method without having
-        // challenged DESCRIBE, and stale-nonce rotation.
-        let www = resp
-            .headers
-            .get("www-authenticate")
-            .ok_or(RtspError::BadResponse {
-                detail: "401 without WWW-Authenticate header",
-            })?
-            .clone();
-        self.cache_auth_challenge(www.clone());
-        let authorization = self.authorization_from_challenge(method, uri, &www)?;
-        let mut retry = self.base_request(method, uri.to_string());
-        for (k, v) in extra_headers {
-            retry = retry.header(k, v.as_str());
-        }
-        retry = retry.header("authorization", authorization);
-        let retry_resp = self.send_and_read(&retry.encode_checked()?)?;
-        if retry_resp.status == 401 {
-            return Err(RtspError::AuthFailed);
-        }
-        Ok(retry_resp)
-    }
-
-    /// Write a serialized RTSP request, then read one complete response.
-    ///
-    /// Two read paths:
-    ///
-    /// 1. **Pump inactive** (UDP transport or pre-SETUP): writes + reads
-    ///    happen under a single stream-mutex acquisition. The cancel
-    ///    flag is checked between read polls; each read is bounded by
-    ///    the shorter of the configured read timeout and a 100 ms tick
-    ///    (and by the time left on the request deadline), so each
-    ///    `WouldBlock`/`TimedOut` round-trip is a cancel-check
-    ///    opportunity, and a read interrupted by a handled signal
-    ///    (`Interrupted`) is retried the same way. Holding the lock
-    ///    through the whole exchange means the keepalive thread waits
-    ///    if a request is in flight — correct since RTSP isn't
-    ///    pipelined.
-    ///
-    /// 2. **Pump active** (TCP-interleaved post-SETUP): writes happen
-    ///    under the stream mutex (briefly, then released). The response
-    ///    is read from `pump_state.ctrl_rx` matched by CSeq, since the
-    ///    background pump thread owns reads in this mode (reading the
-    ///    stream directly here would race with the pump). Responses
-    ///    with CSeq >= [`KEEPALIVE_CSEQ_BASE`](crate::rtsp::client::keepalive::KEEPALIVE_CSEQ_BASE)
-    ///    never reach `ctrl_rx` — the pump consumes them itself via
-    ///    `keepalive::handle_keepalive_response` (a 401 refreshes the
-    ///    shared auth challenge cache; a 454 marks the session dead).
-    pub(crate) fn send_and_read(
-        &mut self,
-        request_bytes: &[u8],
-    ) -> Result<RtspResponse, RtspError> {
-        // `RtspClientBuilder::request_timeout`: every request
-        // method funnels through here, so this one line is the producer of
-        // `RtspError::Timeout`. `None` waits unbounded.
-        // `checked_add` mirrors `H264Receiver::recv_au`'s idiom: a timeout
-        // too large to represent as an `Instant` (e.g. `Duration::MAX`)
-        // saturates to "no deadline" rather than panicking on overflow.
-        let deadline = self
-            .request_timeout
-            .and_then(|t| std::time::Instant::now().checked_add(t));
-        self.send_and_read_with_deadline(request_bytes, deadline, None)
-    }
-
-    /// Variant of [`Self::send_and_read`] with an optional hard deadline,
-    /// honored on BOTH read paths. When `deadline` elapses with no
-    /// complete response, returns [`RtspError::Timeout`] — also when the
-    /// response completes after the deadline. No read or `ctrl_rx` poll
-    /// is allowed to outlast the time left on the deadline, so the
-    /// configured socket read timeout does not stretch it; the non-pump
-    /// path shortens the socket's read timeout as needed and restores
-    /// the configured value before returning. A read interrupted by a
-    /// handled signal (`Interrupted`) is retried, never surfaced.
-    ///
-    /// `send_deadline` also bounds the wait for the stream lock and the
-    /// request write (see [`Self::lock_and_write`]); `None` leaves them
-    /// to the lock and the socket's write timeout.
+    /// Hand `spec` to the client's thread and wait, first for the request
+    /// to be written (up to `send_deadline`; without one the thread's own
+    /// 5 s write-stall bound applies), then for its reply (up to
+    /// `reply_deadline`). Expiry of either is [`RtspError::Timeout`].
     ///
     /// The cancel flag is not checked before the write: a cancelled
     /// client still writes its request (`Drop` relies on this to send
-    /// TEARDOWN). An exchange that then fails with an I/O error, an EOF
-    /// or a passed deadline while the cancel is set reports
-    /// [`RtspError::LocalCancel`]; a response that arrives is returned.
-    pub(crate) fn send_and_read_with_deadline(
+    /// TEARDOWN). The reply wait ends at once with
+    /// [`RtspError::LocalCancel`] when the cancel is set, and an I/O error
+    /// or a passed deadline while the cancel is set is reported as
+    /// `LocalCancel` too; a reply that arrived is returned. With the
+    /// client's thread gone the result is `Io(UnexpectedEof)`.
+    pub(crate) fn request(
         &mut self,
-        request_bytes: &[u8],
-        deadline: Option<std::time::Instant>,
-        send_deadline: Option<std::time::Instant>,
+        spec: RequestSpec,
+        reply_deadline: Option<Instant>,
+        send_deadline: Option<Instant>,
     ) -> Result<RtspResponse, RtspError> {
-        let r = if self.pump_state.is_some() {
-            self.send_and_read_via_pump_with_deadline(request_bytes, deadline, send_deadline)
-        } else {
-            self.send_and_read_direct(request_bytes, deadline, send_deadline)
-        };
+        let (progress, rx) = mpsc::channel();
+        let r = self
+            .driver
+            .send(Command::Request {
+                spec,
+                reply_deadline,
+                progress,
+            })
+            .and_then(|()| self.await_reply(&rx, reply_deadline, send_deadline));
         r.map_err(|e| match e {
             RtspError::Io(_) | RtspError::Timeout if self.cancel.is_cancelled() => {
                 RtspError::LocalCancel
@@ -323,281 +162,57 @@ impl RtspClient {
         })
     }
 
-    /// Non-pump path of [`Self::send_and_read_with_deadline`]: the reply
-    /// is read from the socket under the held stream lock.
-    fn send_and_read_direct(
-        &mut self,
-        request_bytes: &[u8],
-        deadline: Option<std::time::Instant>,
-        send_deadline: Option<std::time::Instant>,
-    ) -> Result<RtspResponse, RtspError> {
-        let mut s = self.lock_and_write(request_bytes, send_deadline)?;
-        let mut applied = self.read_timeout;
-        let r = self.read_response(&mut s, deadline, &mut applied);
-        if applied != self.read_timeout {
-            // Put the configured read timeout back so later exchanges and
-            // the interleaved pump see what the builder set. Best-effort:
-            // this only fails on a socket that is already unusable, and
-            // that surfaces on the next read.
-            let _ = s.set_read_timeout(self.read_timeout);
-        }
-        r
-    }
-
-    /// Take the stream lock and write `request_bytes`, returning the held
-    /// lock. With `send_deadline`, the lock wait gives up at the deadline
-    /// (`try_lock` in 1 ms steps) and the write is bounded by it too
-    /// ([`write_all_by`](crate::rtsp::client::write_all_by)); expiry in
-    /// either is [`RtspError::Timeout`]. Without it, the lock waits for
-    /// its holder and the write for the socket's write timeout.
-    fn lock_and_write(
+    fn await_reply(
         &self,
-        request_bytes: &[u8],
-        send_deadline: Option<std::time::Instant>,
-    ) -> Result<std::sync::MutexGuard<'_, crate::rtsp::client::Stream>, RtspError> {
-        match send_deadline {
-            Some(d) => {
-                let mut s = crate::rtsp::client::lock_unpoisoned_by(&self.stream, d)
-                    .ok_or(RtspError::Timeout)?;
-                crate::rtsp::client::write_all_by(&mut s, request_bytes, d)?;
-                Ok(s)
-            }
-            None => {
-                let mut s = crate::rtsp::client::lock_unpoisoned(&self.stream);
-                s.write_all(request_bytes)
-                    .map_err(|e| RtspError::Io(e.kind()))?;
-                Ok(s)
-            }
-        }
-    }
-
-    /// Read loop of the non-pump path of
-    /// [`Self::send_and_read_with_deadline`]. `applied` is the read
-    /// timeout currently installed on the socket; it is updated whenever
-    /// this loop changes it so the caller can restore the configured one.
-    fn read_response(
-        &self,
-        s: &mut crate::rtsp::client::Stream,
-        deadline: Option<std::time::Instant>,
-        applied: &mut std::time::Duration,
+        rx: &mpsc::Receiver<Progress>,
+        reply_deadline: Option<Instant>,
+        send_deadline: Option<Instant>,
     ) -> Result<RtspResponse, RtspError> {
-        let mut buf = Vec::with_capacity(4096);
-        let mut chunk = [0u8; 4096];
-        loop {
-            if self.cancel.is_cancelled() {
-                return Err(RtspError::LocalCancel);
-            }
-            // No single read may outlast the cancel tick or the time left
-            // on the deadline — the configured `read_timeout` can be far
-            // longer than either. The socket option is only rewritten when
-            // the bound changes (never, for a default client, until the
-            // last tick before the deadline).
-            let mut tick = self
-                .read_timeout
-                .min(crate::rtsp::client::REQUEST_POLL_TICK);
-            if let Some(d) = deadline {
-                let remaining = d.saturating_duration_since(std::time::Instant::now());
-                if remaining.is_zero() {
-                    return Err(RtspError::Timeout);
-                }
-                tick = tick.min(remaining);
-            }
-            if tick != *applied {
-                s.set_read_timeout(tick)
-                    .map_err(|e| RtspError::Io(e.kind()))?;
-                *applied = tick;
-            }
-            match s.read(&mut chunk) {
-                Ok(0) => return Err(RtspError::Io(std::io::ErrorKind::UnexpectedEof)),
-                Ok(n) => {
-                    buf.extend_from_slice(&chunk[..n]);
-                    // Body-aware accumulation via the shared `rtsp_frame_decision`
-                    // two-phase policy — the SAME helper + constants the server
-                    // session request loop uses, so client and server agree
-                    // byte-for-byte:
-                    //
-                    // Before the terminator (no CRLFCRLF yet): header
-                    // accumulation is capped at MAX_RTSP_MESSAGE_BYTES (64 KiB),
-                    // preserving the unterminated-header DoS bound.
-                    //
-                    // After the terminator: the declared Content-Length is
-                    // parsed up front; a malformed/duplicate/over-cap
-                    // (> MAX_RTSP_BODY_BYTES) value is fatal NOW rather than read
-                    // toward EOF. A legitimate body up to 1 MiB is awaited in
-                    // full (the exact header + 4 + content_length ceiling bounds
-                    // a peer dribbling past its declared body forever).
-                    //
-                    // Inner loop (not a single decision): a keepalive ping's
-                    // response can sit in the buffer AHEAD of this request's
-                    // response — the keepalive thread never reads, and in
-                    // non-pump mode nothing else drains the stream between
-                    // requests. Such a message (CSeq in the keepalive range)
-                    // is consumed here — never surfaced as the caller's
-                    // response — and parsing continues on the bytes already
-                    // buffered rather than waiting for another read.
-                    loop {
-                        match crate::rtsp::message::rtsp_frame_decision(&buf) {
-                            RtspFraming::NeedMore => break, // bounded; read more
-                            RtspFraming::HeadersTooLong => {
-                                return Err(RtspError::BadResponse {
-                                    detail: "RTSP response headers exceed maximum",
-                                });
-                            }
-                            RtspFraming::BadContentLength(detail) => {
-                                return Err(RtspError::BadResponse { detail });
-                            }
-                            RtspFraming::NonUtf8Headers { .. } => {
-                                return Err(RtspError::BadResponse {
-                                    detail: "non-UTF8 RTSP headers",
-                                });
-                            }
-                            RtspFraming::BodyOffsetOverflow => {
-                                return Err(RtspError::BadResponse {
-                                    detail: "RTSP body offset overflow",
-                                });
-                            }
-                            RtspFraming::Complete { total_len } => {
-                                // Full message present — parse. `total_len` is
-                                // the exact byte length of this message.
-                                let (resp, _consumed) = RtspResponse::parse(&buf[..total_len])?;
-                                if resp.cseq().is_some_and(|c| c >= KEEPALIVE_CSEQ_BASE) {
-                                    handle_keepalive_response(
-                                        &resp,
-                                        &self.auth,
-                                        self.session_dead.as_deref(),
-                                        &self.end_reason,
-                                    );
-                                    buf.drain(..total_len);
-                                    continue;
-                                }
-                                // A response completed after the deadline
-                                // is a timeout, not a late success.
-                                if deadline.is_some_and(|d| std::time::Instant::now() >= d) {
-                                    return Err(RtspError::Timeout);
-                                }
-                                return Ok(resp);
-                            }
-                        }
-                    }
-                }
-                Err(e) if classify_recv_error(e.kind()) == RecvAction::Retry => {
-                    // read timeout or a handled signal (EINTR); the
-                    // accumulated buffer is kept, check cancel + retry
-                    continue;
-                }
-                Err(e) => return Err(RtspError::Io(e.kind())),
-            }
-        }
-    }
-
-    /// Pump-active variant of [`Self::send_and_read_with_deadline`], with
-    /// the same two deadlines: the response comes off the pump's control
-    /// channel, matched by CSeq. When `deadline` elapses with no matching
-    /// response, returns [`RtspError::Timeout`]: a server that silently
-    /// half-closed (no FIN on the wire) takes the request into the kernel
-    /// buffer and never answers.
-    pub(crate) fn send_and_read_via_pump_with_deadline(
-        &mut self,
-        request_bytes: &[u8],
-        deadline: Option<std::time::Instant>,
-        send_deadline: Option<std::time::Instant>,
-    ) -> Result<RtspResponse, RtspError> {
-        let req_cseq = parse_cseq_from_request(request_bytes);
-        // Ask the interleaved pump to yield the shared stream lock while we
-        // write this request. `SharedStreamReader::read` holds the mutex
-        // across each blocking ~100 ms socket read, so without this hand-off
-        // the pump monopolizes the lock and this write-lock acquisition can
-        // be starved unboundedly on a contended runner (the in-session
-        // sibling of the teardown starvation bounded in `RtspClient::Drop`).
-        // The pump skips its next read while the gate is set, so we acquire
-        // within at most one in-flight read cycle. The gate is cleared after
-        // the lock is released (including on write error).
-        let write_gate = self
-            .pump_state
-            .as_ref()
-            .expect("pump_state is Some — checked by caller")
-            .write_gate
-            .clone();
-        // RAII guard (not a manual increment/decrement pair): the
-        // decrement must survive any panic while the gate is held (the
-        // stream lock below recovers from poison rather than panicking —
-        // see `lock_unpoisoned` — but e.g. a panic inside `write_all`
-        // would otherwise leave the gate stuck nonzero and the pump would
-        // skip reads forever).
-        let write_result = {
-            let _gate = crate::rtsp::client::WriteGateGuard::enter(&write_gate);
-            self.lock_and_write(request_bytes, send_deadline).map(drop)
+        // The write. A `Done` can come with no `Written` before it (an
+        // early reply, a failure before the write): it ends the request.
+        let first = match send_deadline {
+            Some(d) => rx
+                .recv_timeout(d.saturating_duration_since(Instant::now()))
+                .map_err(|e| match e {
+                    RecvTimeoutError::Timeout => RtspError::Timeout,
+                    RecvTimeoutError::Disconnected => thread_gone(),
+                })?,
+            None => rx.recv().map_err(|_| thread_gone())?,
         };
-        write_result?;
-        let pump = self
-            .pump_state
-            .as_ref()
-            .expect("pump_state is Some — checked by caller");
+        if let Progress::Done(r) = first {
+            return r;
+        }
+        // The reply.
         loop {
             if self.cancel.is_cancelled() {
                 return Err(RtspError::LocalCancel);
             }
-            // The wait is on the pump's channel, not the socket, so the
-            // configured `read_timeout` never enters it; only the time
-            // left on the deadline can shorten the poll.
-            let mut tick = crate::rtsp::client::REQUEST_POLL_TICK;
-            if let Some(d) = deadline {
-                let remaining = d.saturating_duration_since(std::time::Instant::now());
-                if remaining.is_zero() {
+            let mut tick = REQUEST_POLL_TICK;
+            if let Some(d) = reply_deadline {
+                let left = d.saturating_duration_since(Instant::now());
+                if left.is_zero() {
                     return Err(RtspError::Timeout);
                 }
-                tick = tick.min(remaining);
+                tick = tick.min(left);
             }
-            match pump.ctrl_rx.recv_timeout(tick) {
-                Ok(msg_bytes) => {
-                    let (resp, _consumed) = match RtspResponse::parse(&msg_bytes) {
-                        Ok(p) => p,
-                        Err(_) => continue,
-                    };
-                    match (req_cseq, resp.cseq()) {
-                        (Some(req), Some(got)) if req == got => {
-                            // Same rule as the non-pump path: a response
-                            // matched after the deadline is a timeout.
-                            if deadline.is_some_and(|d| std::time::Instant::now() >= d) {
-                                return Err(RtspError::Timeout);
-                            }
-                            return Ok(resp);
-                        }
-                        _ => continue,
-                    }
-                }
-                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
-                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
-                    return Err(RtspError::Io(std::io::ErrorKind::UnexpectedEof));
-                }
+            match rx.recv_timeout(tick) {
+                Ok(Progress::Done(r)) => return r,
+                Ok(Progress::Written) | Err(RecvTimeoutError::Timeout) => {}
+                Err(RecvTimeoutError::Disconnected) => return Err(thread_gone()),
             }
         }
     }
 }
 
-/// Best-effort scan for the `CSeq:` header in a serialized request.
-/// Returns the parsed integer when found. Used only by the pump-active
-/// read path to match responses by CSeq.
-fn parse_cseq_from_request(bytes: &[u8]) -> Option<u32> {
-    // Only look at the header section (up to the first CRLFCRLF).
-    let end = bytes
-        .windows(4)
-        .position(|w| w == b"\r\n\r\n")
-        .unwrap_or(bytes.len());
-    let header_text = std::str::from_utf8(&bytes[..end]).ok()?;
-    for line in header_text.lines() {
-        let lower = line.to_ascii_lowercase();
-        if let Some(v) = lower.strip_prefix("cseq:") {
-            return v.trim().parse().ok();
-        }
-    }
-    None
+/// A request whose progress channel closed: the client's thread ended.
+fn thread_gone() -> RtspError {
+    RtspError::Io(std::io::ErrorKind::UnexpectedEof)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Write;
+    use std::io::{Read, Write};
     use std::net::TcpListener;
     use std::time::Duration;
 
@@ -761,10 +376,10 @@ mod tests {
         let (port, h) = serve_then_close(response);
         let mut client = RtspClient::connect(&format!("rtsp://127.0.0.1:{}/test", port)).unwrap();
         // `options()` parses + returns the response (status 200) without error.
-        // It exercises `send_and_read` directly and proves the >64 KiB body is
-        // accumulated and parsed rather than rejected.
+        // It proves the >64 KiB body is accumulated and parsed rather than
+        // rejected.
         let opts = client.options().expect("valid ≤1 MiB body must parse OK");
-        // Reaching Ok proves `send_and_read` accumulated past the 64 KiB header
+        // Reaching Ok proves the client accumulated past the 64 KiB header
         // cap, awaited the full 512 KiB body, and parsed it. The declared
         // Content-Length is surfaced in the headers.
         assert_eq!(
@@ -837,260 +452,6 @@ mod tests {
         h.join().unwrap();
     }
 
-    // --- Auth applied to every method (SETUP/PLAY/… not just DESCRIBE) ---
-
-    fn md5_hex(s: &str) -> String {
-        use md5::{Digest, Md5};
-        let mut h = Md5::new();
-        h.update(s.as_bytes());
-        h.finalize().iter().fold(String::new(), |mut out, b| {
-            use std::fmt::Write as _;
-            let _ = write!(out, "{b:02x}");
-            out
-        })
-    }
-
-    /// Accept one TCP connection and hold it briefly (enough for `connect`
-    /// to complete). No RTSP bytes are exchanged — these tests drive the
-    /// pure auth-header builder, not the network.
-    fn accept_and_hold() -> (u16, std::thread::JoinHandle<()>) {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let port = listener.local_addr().unwrap().port();
-        let h = std::thread::spawn(move || {
-            if let Ok((sock, _)) = listener.accept() {
-                std::thread::sleep(std::time::Duration::from_millis(200));
-                drop(sock);
-            }
-        });
-        (port, h)
-    }
-
-    /// Regression guard for the SETUP-auth gap: once the DESCRIBE challenge
-    /// is cached, `preemptive_authorization` must produce a correct MD5
-    /// (RFC 2617 no-qop) Digest header whose HA2 hashes the **SETUP control
-    /// URI** (`…/trackID=0`) — the exact shape gortsplib/MediaMTX validate.
-    #[test]
-    fn preemptive_authorization_builds_setup_digest_for_control_uri() {
-        let (port, h) = accept_and_hold();
-        let mut client =
-            RtspClient::connect(&format!("rtsp://user:pass@127.0.0.1:{port}/cam")).unwrap();
-        // The challenge as gortsplib/MediaMTX send it (no algorithm, no qop).
-        client.cache_auth_challenge(r#"Digest realm="tstrans", nonce="abc123""#.to_string());
-
-        let control_uri = format!("rtsp://127.0.0.1:{port}/cam/trackID=0");
-        let hdr = client
-            .preemptive_authorization(RtspMethod::Setup, &control_uri)
-            .unwrap()
-            .expect("cached challenge + URL creds → Some");
-
-        let ha1 = md5_hex("user:tstrans:pass");
-        let ha2 = md5_hex(&format!("SETUP:{control_uri}"));
-        let expected = md5_hex(&format!("{ha1}:abc123:{ha2}"));
-        assert!(
-            hdr.contains(&format!("response=\"{expected}\"")),
-            "SETUP digest must be MD5(HA1:nonce:HA2) over the control URI; got {hdr}"
-        );
-        assert!(hdr.contains(&format!("uri=\"{control_uri}\"")));
-        assert!(hdr.contains(r#"username="user""#));
-        h.join().unwrap();
-    }
-
-    /// Pre-emptive auth stays inert for unauthenticated servers: no header
-    /// until a challenge has been seen, and none when the URL carries no
-    /// credentials.
-    #[test]
-    fn preemptive_authorization_inert_without_challenge_or_creds() {
-        // Creds present, but no challenge cached yet → None.
-        let (p1, h1) = accept_and_hold();
-        let client = RtspClient::connect(&format!("rtsp://user:pass@127.0.0.1:{p1}/cam")).unwrap();
-        assert!(
-            client
-                .preemptive_authorization(RtspMethod::Play, "rtsp://x/cam")
-                .unwrap()
-                .is_none()
-        );
-        h1.join().unwrap();
-
-        // Challenge cached but the URL has no credentials → None.
-        let (p2, h2) = accept_and_hold();
-        let mut client2 = RtspClient::connect(&format!("rtsp://127.0.0.1:{p2}/cam")).unwrap();
-        client2.cache_auth_challenge(r#"Digest realm="R", nonce="n""#.to_string());
-        assert!(
-            client2
-                .preemptive_authorization(RtspMethod::Play, "rtsp://x/cam")
-                .unwrap()
-                .is_none()
-        );
-        h2.join().unwrap();
-    }
-
-    /// Finding-2 regression: reusing one cached nonce across requests must
-    /// emit a strictly increasing `nc` for `qop=auth`, and caching a *new*
-    /// challenge (new nonce) restarts the count at 1 while re-caching the same
-    /// challenge keeps counting.
-    #[test]
-    fn qop_auth_nonce_count_increments_and_resets_on_new_challenge() {
-        let (port, h) = accept_and_hold();
-        let mut client =
-            RtspClient::connect(&format!("rtsp://user:pass@127.0.0.1:{port}/cam")).unwrap();
-
-        let www1 = r#"Digest realm="R", nonce="n1", qop="auth""#.to_string();
-        client.cache_auth_challenge(www1.clone());
-        let a1 = client
-            .authorization_from_challenge(RtspMethod::Describe, "rtsp://x/cam", &www1)
-            .unwrap();
-        let a2 = client
-            .authorization_from_challenge(RtspMethod::Setup, "rtsp://x/cam/trackID=0", &www1)
-            .unwrap();
-        let a3 = client
-            .authorization_from_challenge(RtspMethod::Play, "rtsp://x/cam", &www1)
-            .unwrap();
-        assert!(
-            a1.contains("qop=auth") && a1.contains("nc=00000001"),
-            "{a1}"
-        );
-        assert!(a2.contains("nc=00000002"), "{a2}");
-        assert!(a3.contains("nc=00000003"), "{a3}");
-
-        // A different challenge (new nonce) restarts nc at 1.
-        let www2 = r#"Digest realm="R", nonce="n2", qop="auth""#.to_string();
-        client.cache_auth_challenge(www2.clone());
-        let a4 = client
-            .authorization_from_challenge(RtspMethod::Setup, "rtsp://x/cam", &www2)
-            .unwrap();
-        assert!(
-            a4.contains("nc=00000001"),
-            "new nonce restarts nc; got {a4}"
-        );
-
-        // Re-caching the SAME challenge does NOT reset the count.
-        client.cache_auth_challenge(r#"Digest realm="R", nonce="n2", qop="auth""#.to_string());
-        let a5 = client
-            .authorization_from_challenge(RtspMethod::Play, "rtsp://x/cam", &www2)
-            .unwrap();
-        assert!(
-            a5.contains("nc=00000002"),
-            "same nonce keeps counting; got {a5}"
-        );
-        h.join().unwrap();
-    }
-
-    // --- request deadline vs the configured socket read timeout ---
-
-    /// Accept one connection and hold it open, silent, until `done` fires
-    /// (capped so the thread cannot outlive a failed test for long).
-    fn silent_peer() -> (
-        u16,
-        std::sync::mpsc::Sender<()>,
-        std::thread::JoinHandle<()>,
-    ) {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let port = listener.local_addr().unwrap().port();
-        let (done_tx, done_rx) = std::sync::mpsc::channel::<()>();
-        let h = std::thread::spawn(move || {
-            if let Ok((sock, _)) = listener.accept() {
-                let _ = done_rx.recv_timeout(Duration::from_secs(20));
-                drop(sock);
-            }
-        });
-        (port, done_tx, h)
-    }
-
-    /// The exchange shortens the socket read timeout to honor the
-    /// deadline; afterwards the socket must carry the configured value
-    /// again, or later calls and the interleaved pump would poll at the
-    /// wrong cadence.
-    #[test]
-    fn configured_read_timeout_is_restored_after_a_bounded_exchange() {
-        let (port, done_tx, h) = silent_peer();
-        let url = crate::url::RtspUrl::parse(&format!("rtsp://127.0.0.1:{port}/test")).unwrap();
-        let configured = Duration::from_secs(5);
-        let mut client = RtspClient::connect_with_params(
-            &url,
-            None,
-            crate::rtsp::client::ConnectParams {
-                read_timeout: configured,
-                request_timeout: Some(Duration::from_millis(50)),
-                ..Default::default()
-            },
-        )
-        .unwrap();
-
-        let err = client.options().unwrap_err();
-        assert!(matches!(err, RtspError::Timeout), "got {err:?}");
-
-        let installed = match &*crate::rtsp::client::lock_unpoisoned(&client.stream) {
-            crate::rtsp::client::Stream::Plain(tcp) => tcp.read_timeout().unwrap(),
-            #[cfg(feature = "tls")]
-            crate::rtsp::client::Stream::Tls(_) => {
-                unreachable!("plain rtsp:// connects yield Stream::Plain")
-            }
-        };
-        assert_eq!(installed, Some(configured));
-
-        let _ = done_tx.send(());
-        drop(client);
-        h.join().unwrap();
-    }
-
-    /// Pump-active path: a matching response that reaches `ctrl_rx` after
-    /// the deadline — but inside what used to be one fixed 100 ms poll —
-    /// is a `Timeout`. No elapsed-time assertion: the sender sleeps past
-    /// the deadline before sending, so the response is late by
-    /// construction.
-    #[test]
-    fn pump_path_response_after_the_deadline_is_a_timeout() {
-        let (port, done_tx, h) = silent_peer();
-        let mut client = RtspClient::connect(&format!("rtsp://127.0.0.1:{port}/test")).unwrap();
-        // Stand in for an active interleaved pump: only the control
-        // channel matters to the path under test.
-        let (ctrl_tx, ctrl_rx) = std::sync::mpsc::sync_channel::<bytes::Bytes>(1);
-        client.pump_state = Some(crate::rtsp::client::InterleavedPumpState {
-            cancel: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
-            write_gate: client.write_gate.clone(),
-            ctrl_rx,
-            thread: None,
-        });
-
-        let deadline = std::time::Instant::now() + Duration::from_millis(150);
-        let sender = std::thread::spawn(move || {
-            std::thread::sleep(Duration::from_millis(180));
-            let _ = ctrl_tx.try_send(bytes::Bytes::from_static(
-                b"RTSP/1.0 200 OK\r\nCSeq: 7\r\n\r\n",
-            ));
-        });
-        let r = client.send_and_read_via_pump_with_deadline(
-            b"OPTIONS rtsp://127.0.0.1/test RTSP/1.0\r\nCSeq: 7\r\n\r\n",
-            Some(deadline),
-            None,
-        );
-        assert!(
-            matches!(r, Err(RtspError::Timeout)),
-            "expected Timeout, got {r:?}"
-        );
-
-        sender.join().unwrap();
-        let _ = done_tx.send(());
-        drop(client);
-        h.join().unwrap();
-    }
-
-    const PROBE_REQUEST: &[u8] = b"OPTIONS rtsp://127.0.0.1/test RTSP/1.0\r\nCSeq: 7\r\n\r\n";
-
-    /// Stands in for an active interleaved pump (only the write gate and
-    /// the control channel matter to the request path); returns the
-    /// channel's sender.
-    fn install_stand_in_pump(client: &mut RtspClient) -> std::sync::mpsc::SyncSender<bytes::Bytes> {
-        let (ctrl_tx, ctrl_rx) = std::sync::mpsc::sync_channel::<bytes::Bytes>(1);
-        client.pump_state = Some(crate::rtsp::client::InterleavedPumpState {
-            cancel: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
-            write_gate: client.write_gate.clone(),
-            ctrl_rx,
-            thread: None,
-        });
-        ctrl_tx
-    }
-
     /// A peer that accepts the connection, waits for the go signal (sent
     /// once `connect` has returned, so the reset cannot land while the client
     /// is still setting its socket up), then resets it (`SO_LINGER` 0, then
@@ -1117,72 +478,39 @@ mod tests {
         (port, go_tx, h)
     }
 
-    /// Reads the client's control socket until the peer's reset shows up,
-    /// after which every write on it fails. Puts the configured read
-    /// timeout back.
+    /// A request on a connection the peer has reset: `LocalCancel` when
+    /// the client was cancelled before the request, the reset's own `Io`
+    /// error otherwise. The client's thread reads the reset before the
+    /// request is made. Linux only: the reset-then-request sequence has
+    /// not been measured on macOS or Windows.
     #[cfg(target_os = "linux")]
-    fn wait_for_reset(client: &RtspClient) {
-        let mut s = crate::rtsp::client::lock_unpoisoned(&client.stream);
-        let give_up = std::time::Instant::now() + Duration::from_secs(10);
-        let mut chunk = [0u8; 64];
-        loop {
-            assert!(
-                std::time::Instant::now() < give_up,
-                "the reset never arrived"
-            );
-            match s.read(&mut chunk) {
-                Ok(0) => break,
-                Ok(_) => {}
-                Err(e) if classify_recv_error(e.kind()) == RecvAction::Retry => {}
-                Err(_) => break,
-            }
-        }
-        s.set_read_timeout(client.read_timeout).unwrap();
-    }
-
-    /// The request write fails on a reset connection: `LocalCancel` when
-    /// the client was cancelled before the request, the write's own
-    /// `Io` error otherwise. Linux only: the reset-then-write sequence
-    /// has not been measured on macOS or Windows.
-    #[cfg(target_os = "linux")]
-    fn failed_write(pump: bool, cancel: bool) -> Result<RtspResponse, RtspError> {
+    fn failed_write(cancel: bool) -> Result<OptionsResponse, RtspError> {
         let (port, go, peer) = resetting_peer();
         let mut client = RtspClient::connect(&format!("rtsp://127.0.0.1:{port}/test")).unwrap();
         go.send(()).unwrap();
-        let _ctrl = pump.then(|| install_stand_in_pump(&mut client));
         peer.join().unwrap();
-        wait_for_reset(&client);
+        let give_up = Instant::now() + Duration::from_secs(10);
+        while client.is_session_alive() {
+            assert!(Instant::now() < give_up, "the reset never arrived");
+            std::thread::sleep(Duration::from_millis(5));
+        }
         if cancel {
             client.cancel_handle().cancel();
         }
-        client.send_and_read(PROBE_REQUEST)
+        client.options()
     }
 
     #[cfg(target_os = "linux")]
     #[test]
     fn a_write_failure_on_a_cancelled_client_reports_the_cancel() {
-        let r = failed_write(false, true);
-        assert!(matches!(r, Err(RtspError::LocalCancel)), "got {r:?}");
-    }
-
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn a_write_failure_on_a_cancelled_client_reports_the_cancel_in_pump_mode() {
-        let r = failed_write(true, true);
+        let r = failed_write(true);
         assert!(matches!(r, Err(RtspError::LocalCancel)), "got {r:?}");
     }
 
     #[cfg(target_os = "linux")]
     #[test]
     fn a_write_failure_without_a_cancel_is_io() {
-        let r = failed_write(false, false);
-        assert!(matches!(r, Err(RtspError::Io(_))), "got {r:?}");
-    }
-
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn a_write_failure_without_a_cancel_is_io_in_pump_mode() {
-        let r = failed_write(true, false);
+        let r = failed_write(false);
         assert!(matches!(r, Err(RtspError::Io(_))), "got {r:?}");
     }
 
@@ -1212,68 +540,78 @@ mod tests {
         (port, h)
     }
 
-    /// The request is written, then the reply wait ends without a reply:
-    /// the connection closes (non-pump path, EOF) or the pump's control
-    /// channel goes away (pump path). With `cancel`, the peer fires the
-    /// client's cancel after it has the request and before it ends the
-    /// wait, so the cancel lands during the wait. Whichever of the two
-    /// the client sees first, a cancelled client reports `LocalCancel`;
-    /// otherwise the result is the `Io(UnexpectedEof)` it is without a
-    /// cancel. The two cancelled cases tell the mapping apart only when the
-    /// end of the wait is seen before the wait loop's own cancel check;
-    /// when the cancel is seen first, `LocalCancel` comes from that check.
-    fn ended_reply_wait(pump: bool, cancel: bool) -> Result<RtspResponse, RtspError> {
+    /// The request is written, then the connection closes without a reply.
+    /// With `cancel`, the peer fires the client's cancel after it has the
+    /// request and before it closes, so the cancel lands during the wait.
+    /// Whichever of the two the client sees first, a cancelled client
+    /// reports `LocalCancel`; otherwise the result is the
+    /// `Io(UnexpectedEof)` it is without a cancel.
+    fn ended_reply_wait(cancel: bool) -> Result<OptionsResponse, RtspError> {
         let (handle_tx, handle_rx) =
             std::sync::mpsc::channel::<crate::rtsp::client::RtspCancelHandle>();
-        let (ctrl_slot_tx, ctrl_slot_rx) =
-            std::sync::mpsc::channel::<std::sync::mpsc::SyncSender<bytes::Bytes>>();
         let (port, peer) = peer_ending_after_request(move || {
             if let Ok(h) = handle_rx.recv_timeout(Duration::from_secs(10)) {
                 h.cancel();
             }
-            // Ends the pump's control channel (pump mode only).
-            drop(ctrl_slot_rx.recv_timeout(Duration::from_secs(10)));
         });
         let mut client = RtspClient::connect(&format!("rtsp://127.0.0.1:{port}/test")).unwrap();
-        if pump {
-            ctrl_slot_tx
-                .send(install_stand_in_pump(&mut client))
-                .unwrap();
-        }
-        drop(ctrl_slot_tx);
         if cancel {
             handle_tx.send(client.cancel_handle()).unwrap();
         }
         drop(handle_tx);
-        let r = client.send_and_read(PROBE_REQUEST);
+        let r = client.options();
         peer.join().unwrap();
         r
     }
 
     #[test]
     fn an_eof_on_a_cancelled_client_reports_the_cancel() {
-        let r = ended_reply_wait(false, true);
-        assert!(matches!(r, Err(RtspError::LocalCancel)), "got {r:?}");
-    }
-
-    #[test]
-    fn a_closed_control_channel_on_a_cancelled_client_reports_the_cancel() {
-        let r = ended_reply_wait(true, true);
+        let r = ended_reply_wait(true);
         assert!(matches!(r, Err(RtspError::LocalCancel)), "got {r:?}");
     }
 
     #[test]
     fn an_eof_without_a_cancel_is_io() {
-        let r = ended_reply_wait(false, false);
+        let r = ended_reply_wait(false);
         assert!(
             matches!(r, Err(RtspError::Io(std::io::ErrorKind::UnexpectedEof))),
             "got {r:?}"
         );
     }
 
+    /// A request on a client whose thread has ended: `Io(UnexpectedEof)`,
+    /// or `LocalCancel` with the cancel set.
+    fn request_on_an_ended_driver(cancel: bool) -> Result<OptionsResponse, RtspError> {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let peer = std::thread::spawn(move || {
+            let Ok((mut sock, _)) = listener.accept() else {
+                return;
+            };
+            // Hold the connection until the client hangs up.
+            let _ = sock.read_to_end(&mut Vec::new());
+        });
+        let mut client = RtspClient::connect(&format!("rtsp://127.0.0.1:{port}/test")).unwrap();
+        client.driver.stop();
+        assert!(client.driver.join_within(Duration::from_secs(10)));
+        if cancel {
+            client.cancel_handle().cancel();
+        }
+        let r = client.options();
+        drop(client);
+        peer.join().unwrap();
+        r
+    }
+
     #[test]
-    fn a_closed_control_channel_without_a_cancel_is_io() {
-        let r = ended_reply_wait(true, false);
+    fn a_request_on_an_ended_driver_reports_the_cancel() {
+        let r = request_on_an_ended_driver(true);
+        assert!(matches!(r, Err(RtspError::LocalCancel)), "got {r:?}");
+    }
+
+    #[test]
+    fn a_request_on_an_ended_driver_is_io() {
+        let r = request_on_an_ended_driver(false);
         assert!(
             matches!(r, Err(RtspError::Io(std::io::ErrorKind::UnexpectedEof))),
             "got {r:?}"

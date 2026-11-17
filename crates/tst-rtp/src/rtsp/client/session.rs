@@ -5,18 +5,19 @@
 //! Two internal variants:
 //!
 //! - UDP-backed: holds the already-bound `UdpSocket` pair from SETUP.
-//! - TCP-interleaved-backed: holds the consumer side of the mpsc
-//!   channel fed by `RtspClient`'s pump thread (spawned in SETUP via
-//!   the crate-private `RtspClient::activate_interleaved_pump`).
+//! - TCP-interleaved-backed: holds the consumer side of the media queue
+//!   the client's thread feeds from SETUP on, and the RTCP statistics
+//!   cell that thread counts the interleaved RTCP channel into.
 
 use std::net::UdpSocket;
-use std::sync::mpsc;
+use std::sync::{Arc, Mutex, mpsc};
 use std::time::Duration;
 
 use bytes::Bytes;
 
 use crate::h264::depacketizer::H264DepayConfig;
 use crate::h264::receiver::H264Receiver;
+use crate::rtcp::stats::RtcpStats;
 use crate::rtsp::transport_negotiation::RtspTransportKind;
 use crate::transport::RtpRecvTransport;
 use tst_core::transport::EndReasonHandle;
@@ -32,17 +33,14 @@ pub struct RtspSession {
     pub(crate) session_id: String,
     pub(crate) kind: RtspTransportKind,
     pub(crate) udp_sockets: Option<(UdpSocket, UdpSocket)>,
-    /// For TcpInterleaved: consumer side of the pump's data channel.
-    /// `None` for UDP sessions.
+    /// For TcpInterleaved: consumer side of the media queue the client's
+    /// thread feeds. `None` for UDP sessions.
     pub(crate) data_rx: Option<mpsc::Receiver<Bytes>>,
-    /// For TcpInterleaved: consumer side of the pump's RTCP channel.
-    /// `None` for UDP sessions (UDP carries RTCP on its own dedicated
-    /// socket pair). The pump's RTCP demux feeds this
-    /// `mpsc::Receiver<Bytes>`; [`Self::into_recv_transport`] consumes
-    /// it via `RtpRecvTransport::from_mpsc_with_rtcp`, which spawns the
-    /// ingest thread that feeds each frame into `RtcpStats` for
-    /// receiver-side stats.
-    pub(crate) rtcp_rx: Option<mpsc::Receiver<Bytes>>,
+    /// For TcpInterleaved: the RTCP statistics cell the client's thread
+    /// counts the interleaved RTCP channel into, and the local SSRC it
+    /// matches report blocks against. [`Self::into_recv_transport`] hands
+    /// both to the transport. `None` for UDP sessions.
+    pub(crate) rtcp: Option<(Arc<Mutex<RtcpStats>>, u32)>,
     /// The `?recv_timeout=` value parsed from the `RtspUrl` at connect
     /// time (see `RtspClient::attempt_setup`). Applied to the transport
     /// / receiver built by [`Self::into_recv_transport`] /
@@ -54,8 +52,8 @@ pub struct RtspSession {
     /// [`EndReasonHandle`] — carried forward into
     /// [`Self::into_recv_transport`] / [`Self::into_h264_receiver`] so
     /// the resulting transport/receiver reports the SAME
-    /// [`EndReason`](tst_core::transport::EndReason) the RTSP client's pump / keepalive
-    /// threads record, not a fresh (always-empty) slot.
+    /// [`EndReason`](tst_core::transport::EndReason) the RTSP client's
+    /// thread records, not a fresh (always-empty) slot.
     pub(crate) end_reason: EndReasonHandle,
 }
 
@@ -72,20 +70,20 @@ impl RtspSession {
             kind: RtspTransportKind::Udp,
             udp_sockets: Some((rtp, rtcp)),
             data_rx: None,
-            rtcp_rx: None,
+            rtcp: None,
             recv_timeout,
             end_reason,
         }
     }
 
-    /// Construct a TCP-interleaved session, carrying both the pump's
-    /// data `mpsc::Receiver<Bytes>` and the pump's RTCP
-    /// `mpsc::Receiver<Bytes>`; [`Self::into_recv_transport`] hands both
-    /// to `RtpRecvTransport::from_mpsc_with_rtcp` for the consumer side.
-    pub(crate) fn new_interleaved_with_data_rx(
+    /// Construct a TCP-interleaved session from the media queue the
+    /// client's thread feeds, the RTCP statistics cell it counts into and
+    /// the SSRC it matches report blocks against.
+    pub(crate) fn new_interleaved(
         sid: String,
         data_rx: mpsc::Receiver<Bytes>,
-        rtcp_rx: mpsc::Receiver<Bytes>,
+        rtcp_stats: Arc<Mutex<RtcpStats>>,
+        ssrc: u32,
         recv_timeout: Option<Duration>,
         end_reason: EndReasonHandle,
     ) -> Self {
@@ -94,7 +92,7 @@ impl RtspSession {
             kind: RtspTransportKind::TcpInterleaved,
             udp_sockets: None,
             data_rx: Some(data_rx),
-            rtcp_rx: Some(rtcp_rx),
+            rtcp: Some((rtcp_stats, ssrc)),
             recv_timeout,
             end_reason,
         }
@@ -118,14 +116,10 @@ impl RtspSession {
     /// pre-built `RtpRecvTransport` (avoiding a second `listen()` call).
     ///
     /// For TCP-interleaved: returns an `RtpRecvTransport` fed by the
-    /// `mpsc::Receiver<Bytes>` populated by `RtspClient`'s
-    /// interleaved-pump thread (spawned at SETUP time by the
-    /// crate-private `RtspClient::activate_interleaved_pump`). The
-    /// pump's RTCP `mpsc::Receiver<Bytes>` is also handed in and drives
-    /// the new `rtsp-rtcp-ingest` thread inside the transport — that
-    /// thread populates `socket_stats().packets_lost_send` from RR + SR
-    /// frames arriving
-    /// on RFC 7826 §14 channel 1.
+    /// media queue `RtspClient`'s thread fills from SETUP on. That thread
+    /// also counts the RR + SR frames arriving on the RTCP channel
+    /// (RFC 7826 §14) into the transport's statistics, which
+    /// `socket_stats().packets_lost_send` reports.
     pub fn into_recv_transport(mut self) -> RtpRecvTransport {
         let mut transport = match self.kind {
             RtspTransportKind::Udp => {
@@ -136,12 +130,12 @@ impl RtspSession {
                 let data_rx = self
                     .data_rx
                     .take()
-                    .expect("TcpInterleaved session has a pump data_rx");
-                let rtcp_rx = self
-                    .rtcp_rx
+                    .expect("TcpInterleaved session has a data_rx");
+                let (rtcp_stats, ssrc) = self
+                    .rtcp
                     .take()
-                    .expect("TcpInterleaved session has a pump rtcp_rx");
-                RtpRecvTransport::from_mpsc_with_rtcp(data_rx, rtcp_rx)
+                    .expect("TcpInterleaved session has an RTCP cell");
+                RtpRecvTransport::from_interleaved(data_rx, rtcp_stats, ssrc)
             }
         };
         transport.set_recv_timeout(self.recv_timeout);
@@ -156,11 +150,9 @@ impl RtspSession {
     /// the companion RTCP socket is dropped (RTCP is not implemented on
     /// the H.264 path — a recorded deferral; see `docs/project/deferred-features.md`).
     ///
-    /// For TCP-interleaved: takes both the pump's data channel and its RTCP
-    /// channel. The RTCP channel is kept alive inside the receiver and drained
-    /// (discard-only) on each `recv_au` iteration so the pump's
-    /// `rtcp_tx.try_send()` never sees `Disconnected` — which would otherwise
-    /// kill the session at the first server RTCP Sender Report.
+    /// For TCP-interleaved: takes the media queue. The client's thread
+    /// counts the RTCP channel itself; the H.264 receiver reports no RTCP
+    /// statistics.
     ///
     /// Use the `config` returned by
     /// [`RtspClient::setup_h264_auto`](crate::rtsp::client::RtspClient::setup_h264_auto)
@@ -189,16 +181,8 @@ impl RtspSession {
                 let data_rx = self
                     .data_rx
                     .take()
-                    .expect("TcpInterleaved session has a pump data_rx");
-                let rtcp_rx = self.rtcp_rx.take();
-                // RTCP frames are drained-and-discarded inside H264Receiver
-                // (no RTCP processing on the H.264 path — v1 decision; see
-                // `docs/project/deferred-features.md`). We pass `rtcp_rx`
-                // so the receiver holds the consumer end: if we dropped it
-                // here the pump's `rtcp_tx.try_send()` would return
-                // `Disconnected` at the first server RTCP Sender Report,
-                // causing the pump to exit and triggering a false clean-EOS.
-                H264Receiver::from_mpsc_with_rtcp_drain(data_rx, rtcp_rx, config)
+                    .expect("TcpInterleaved session has a data_rx");
+                H264Receiver::from_mpsc(data_rx, config)
             }
         };
         receiver.set_recv_timeout(self.recv_timeout);
