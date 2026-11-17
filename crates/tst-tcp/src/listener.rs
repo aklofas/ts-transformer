@@ -174,7 +174,7 @@ impl TcpListener {
                     std::thread::sleep(ACCEPT_POLL_INTERVAL);
                 }
                 Err(e) if e.kind() == io::ErrorKind::Interrupted => { /* EINTR: retry */ }
-                Err(e) => return Err(TcpError::Io(e)),
+                Err(e) => return Err(accept_failure(e, self.alive.load(Ordering::Acquire))),
             }
         };
         // A close()/cancel() can land in the gap between the loop's `alive`
@@ -194,14 +194,17 @@ impl TcpListener {
         // every recv/send would spin on WouldBlock. Linux does not inherit
         // O_NONBLOCK across accept(2); BSD/macOS and Windows do — so set it
         // explicitly rather than rely on the platform.
-        sock.set_nonblocking(false).map_err(TcpError::Io)?;
+        sock.set_nonblocking(false)
+            .map_err(|e| accept_failure(e, self.alive.load(Ordering::Acquire)))?;
 
         #[cfg(feature = "tls")]
         if let Some(tls_cfg) = &self.tls_config {
-            return crate::tls::accept_tls(sock, peer, &self.config, tls_cfg.clone());
+            return crate::tls::accept_tls(sock, peer, &self.config, tls_cfg.clone())
+                .map_err(|e| accept_failure(e, self.alive.load(Ordering::Acquire)));
         }
 
         TcpTransport::from_accepted_plain(sock, peer, &self.config)
+            .map_err(|e| accept_failure(e, self.alive.load(Ordering::Acquire)))
     }
 
     /// Cloneable handle that unblocks a parked [`Self::accept_blocking`] from
@@ -227,10 +230,23 @@ impl TcpListener {
     }
 }
 
+/// An accept that fails once the listener is closed or cancelled reports that
+/// (`Closed`), not the failure the teardown provoked.
+fn accept_failure(e: impl Into<TcpError>, alive: bool) -> TcpError {
+    if alive { e.into() } else { TcpError::Closed }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::TcpListener;
+    use super::{TcpListener, accept_failure};
     use crate::error::TcpError;
+
+    #[test]
+    fn accept_failure_reports_closed_when_not_alive_else_the_error() {
+        let e = || std::io::Error::from(std::io::ErrorKind::ConnectionAborted);
+        assert!(matches!(accept_failure(e(), false), TcpError::Closed));
+        assert!(matches!(accept_failure(e(), true), TcpError::Io(_)));
+    }
 
     /// A closed listener answers `Closed`, whatever its config says since.
     #[test]
