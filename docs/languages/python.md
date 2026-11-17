@@ -528,8 +528,8 @@ to call from ANY thread, and a `cancel_handle()` returning the binding's
 one `tstrans.shells.CancelHandle`. Both go through one Rust state machine
 (`tst_pipeline::binding::Owned`): **cancel first, then free**. A call
 parked on another thread (`send_bytes`, `recv_bytes`, `accept`,
-`__next__`, `recv`, `recv_au`, `accept_blocking`) ends promptly and
-`close()` returns without waiting behind it. After a cancel, every
+`__next__`, `recv`, `recv_au`, `accept_blocking`) is cancelled, and
+`close()` returns once that call has returned. After a cancel, every
 receive, send, `flush()` and `finish()` on a shell raises `CLOSED`,
 buffered data included; `tstrans.rtp.H264Receiver` is the exception and
 drains to end of stream.

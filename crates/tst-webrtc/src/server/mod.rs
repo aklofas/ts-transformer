@@ -171,10 +171,10 @@ struct Threads {
 /// later call returns at once, even while the first is still waiting. A
 /// request being read when the server stops is answered with 503 or its
 /// connection is closed; an offer waiting for the media thread is answered
-/// with 503. Both ports are free when `stop` returns, unless a thread has
-/// not exited within that bound (the accept thread still writing a
-/// response to a slow client, up to its 5-second write timeout); it keeps
-/// its socket until it finishes.
+/// with 503. Both ports are free when the first `stop` call returns,
+/// unless a thread has not exited within that bound (the accept thread
+/// still writing a response to a slow client, up to its 5-second write
+/// timeout); it keeps its socket until it finishes.
 ///
 /// [`Drop`] cancels the same way and does not wait: the mounts are closed
 /// when the drop returns, and each thread closes its port when it ends on

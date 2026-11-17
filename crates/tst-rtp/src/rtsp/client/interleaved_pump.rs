@@ -162,8 +162,9 @@ pub(crate) use crate::rtsp::framing::parse_binary_frame_header;
 ///   responses (CSeq ≥ [`KEEPALIVE_CSEQ_BASE`]) never enter this queue —
 ///   the pump consumes them (see `auth` / `session_dead` below).
 /// - `channels`: SETUP-allocated channel pair.
-/// - `cancel`: flipped by `RtspClient::drop` or
-///   [`crate::rtsp::client::RtspCancelHandle::cancel`].
+/// - `cancel`: this pump's own flag, set by `RtspClient::drop` and when a
+///   later SETUP replaces the pump. The public
+///   [`crate::rtsp::client::RtspCancelHandle`] does not set it.
 /// - `write_gate`: count of writers (control-path requests, keepalive
 ///   pings) currently waiting for or holding the stream mutex — see
 ///   [`crate::rtsp::client::RtspClient::write_gate`] for the protocol.
