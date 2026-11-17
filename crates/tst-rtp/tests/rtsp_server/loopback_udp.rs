@@ -10,7 +10,7 @@
 //! Unicast UDP variant runs on the server runtime; this test verifies
 //! the handshake + control-plane wire-up only.
 
-use crate::fixtures::raw_rtsp::make_muxer_cfg;
+use crate::fixtures::raw_rtsp::{make_muxer_cfg, scaled};
 use std::time::Duration;
 use tst_core::mpegts::common::Pts90khz;
 use tst_rtp::{RtspClient, RtspServer};
@@ -109,13 +109,17 @@ fn server_stats_tracks_mounts_and_sessions() {
 
     let port = server.local_addr().unwrap().port();
     let _client = RtspClient::connect(&format!("rtsp://127.0.0.1:{port}/a")).unwrap();
-    // Brief sleep to let the listener accept + spawn the session task.
-    std::thread::sleep(Duration::from_millis(200));
-    assert!(
-        server.stats().active_sessions >= 1,
-        "expected ≥1 active session after client connect, got {}",
-        server.stats().active_sessions
-    );
+    // The listener accepts and spawns the session asynchronously: wait for
+    // the count with a deadline.
+    let deadline = std::time::Instant::now() + scaled(Duration::from_secs(10));
+    while server.stats().active_sessions < 1 {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "expected ≥1 active session after client connect, got {}",
+            server.stats().active_sessions
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
 
     server.stop().ok();
 }
