@@ -712,3 +712,220 @@ fn dropping_the_client_is_a_cancel_even_when_the_server_answers_its_teardown() {
         );
     }
 }
+
+/// What a scripted peer does with the TEARDOWN it reads.
+#[derive(Clone, Copy)]
+enum OnTeardown {
+    /// No reply; the connection stays open until the client closes it.
+    Ignore,
+    /// The `200` and bytes that break the message framing, in one write.
+    AnswerThenGarbage,
+    /// Close the connection without a reply.
+    Close,
+    /// Reset the connection without a reply.
+    Reset,
+    /// Refuse it with `405`; the connection stays open.
+    Refuse,
+}
+
+/// A peer that answers DESCRIBE and an interleaved SETUP, answers every
+/// other request but TEARDOWN with `200`, and handles TEARDOWN as `on`
+/// says. Unless it closed or reset, it reads until the client closes.
+fn spawn_scripted_peer(on: OnTeardown) -> (u16, std::thread::JoinHandle<()>) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let peer = std::thread::spawn(move || {
+        let (mut sock, _): (TcpStream, _) = listener.accept().unwrap();
+        let mut leftover = Vec::new();
+        answer_describe_and_setup(
+            &mut sock,
+            &mut leftover,
+            "RTP/AVP/TCP;unicast;interleaved=0-1",
+        );
+        let mut buf = [0u8; 4096];
+        loop {
+            while let Some(pos) = leftover.windows(4).position(|w| w == b"\r\n\r\n") {
+                let req = String::from_utf8_lossy(&leftover[..pos + 4]).into_owned();
+                leftover.drain(..pos + 4);
+                let cseq = cseq_of(&req);
+                if method_of(&req) != "TEARDOWN" {
+                    sock.write_all(
+                        format!("RTSP/1.0 200 OK\r\nCSeq: {cseq}\r\nSession: DEADBEEF\r\n\r\n")
+                            .as_bytes(),
+                    )
+                    .unwrap();
+                    continue;
+                }
+                match on {
+                    OnTeardown::Ignore => {}
+                    OnTeardown::AnswerThenGarbage => {
+                        let mut out =
+                            format!("RTSP/1.0 200 OK\r\nCSeq: {cseq}\r\nSession: DEADBEEF\r\n\r\n")
+                                .into_bytes();
+                        out.extend_from_slice(
+                            b"RTSP/1.0 200 OK\r\nCSeq: 1\r\nContent-Length: nope\r\n\r\n",
+                        );
+                        // The client may already have closed on the garbage.
+                        let _ = sock.write_all(&out);
+                    }
+                    OnTeardown::Close => return,
+                    OnTeardown::Reset => {
+                        force_reset(sock);
+                        return;
+                    }
+                    OnTeardown::Refuse => {
+                        sock.write_all(
+                            format!("RTSP/1.0 405 Method Not Allowed\r\nCSeq: {cseq}\r\n\r\n")
+                                .as_bytes(),
+                        )
+                        .unwrap();
+                    }
+                }
+            }
+            match sock.read(&mut buf) {
+                Ok(0) | Err(_) => break,
+                Ok(n) => leftover.extend_from_slice(&buf[..n]),
+            }
+        }
+    });
+    (port, peer)
+}
+
+/// A fresh interleaved session against `port`: the client and its
+/// transport, with a scaled safety-net deadline on the transport.
+fn interleaved_session(port: u16) -> (RtspClient, tst_rtp::RtpRecvTransport) {
+    let url = format!("rtsp://127.0.0.1:{port}/test?transport=tcp");
+    let mut client = RtspClient::connect(&url).unwrap();
+    let sdp = client.describe().unwrap();
+    let session = client.setup_mp2t_auto(&sdp).unwrap();
+    let mut transport = session.into_recv_transport();
+    // A safety net only: a regression fails with `Backpressure`.
+    transport.set_recv_timeout(Some(scaled(Duration::from_secs(5))));
+    (client, transport)
+}
+
+/// Drop the client under a live transport, `runs` times against a peer
+/// doing `on`; every run must end the transport as a cancel. Without the
+/// cancel recorded by `Drop` the wrong end shows in a few runs in a
+/// hundred to a few in a thousand, depending on the peer; the counts are
+/// sized to that.
+fn assert_drop_is_a_cancel(on: OnTeardown, runs: usize) {
+    for run in 0..runs {
+        let (port, peer) = spawn_scripted_peer(on);
+        let (client, mut transport) = interleaved_session(port);
+        drop(client);
+        let mut buf = vec![0u8; transport.max_payload()];
+        let result = transport.recv_bytes(&mut buf);
+        assert!(
+            matches!(result, Err(TransportError::ExplicitClose)),
+            "run {run}: a dropped client must end the transport as a cancel, got {result:?}"
+        );
+        assert_eq!(
+            transport.end_reason(),
+            Some(EndReason::Cancelled),
+            "run {run}"
+        );
+        drop(transport);
+        peer.join().unwrap();
+    }
+}
+
+/// The server answers the drop's TEARDOWN with `200` and, in the same
+/// write, bytes that break the framing: still the cancel.
+#[test]
+fn dropping_the_client_is_a_cancel_even_when_the_server_answers_its_teardown_and_then_sends_garbage()
+ {
+    assert_drop_is_a_cancel(OnTeardown::AnswerThenGarbage, 300);
+}
+
+/// The server closes the connection on the drop's TEARDOWN without a
+/// reply: still the cancel, not the peer's clean end.
+#[test]
+fn dropping_the_client_is_a_cancel_even_when_the_server_closes_without_answering_its_teardown() {
+    assert_drop_is_a_cancel(OnTeardown::Close, 600);
+}
+
+/// The server resets the connection on the drop's TEARDOWN: still the
+/// cancel, not a transport failure.
+#[test]
+fn dropping_the_client_is_a_cancel_even_when_the_server_resets_on_its_teardown() {
+    assert_drop_is_a_cancel(OnTeardown::Reset, 1000);
+}
+
+/// The drop records the cancel before it returns: with a peer that never
+/// answers and keeps the connection open, the reason is there at once,
+/// whether or not the client's thread has seen the stop yet.
+#[test]
+fn the_reason_is_recorded_when_drop_returns() {
+    for run in 0..100 {
+        let (port, peer) = spawn_scripted_peer(OnTeardown::Ignore);
+        let (client, transport) = interleaved_session(port);
+        drop(client);
+        assert_eq!(
+            transport.end_reason(),
+            Some(EndReason::Cancelled),
+            "run {run}"
+        );
+        drop(transport);
+        peer.join().unwrap();
+    }
+}
+
+/// `close()` with an accepted TEARDOWN ends both kinds of receiver with
+/// end of stream and `CleanTeardown`. The peer keeps the connection open,
+/// so only the TEARDOWN's reply can end them.
+#[test]
+fn close_ends_both_receivers_with_end_of_stream() {
+    let (port, peer) = spawn_teardown_peer(false);
+    let (client, mut transport) = interleaved_session(port);
+    client.close().unwrap();
+    let mut buf = vec![0u8; transport.max_payload()];
+    let result = transport.recv_bytes(&mut buf);
+    assert!(
+        matches!(result, Err(TransportError::Closed)),
+        "an accepted TEARDOWN through close() must be end of stream, got {result:?}"
+    );
+    assert_eq!(transport.end_reason(), Some(EndReason::CleanTeardown));
+    peer.join().unwrap();
+
+    let (port, peer) = spawn_teardown_peer(false);
+    let url = format!("rtsp://127.0.0.1:{port}/test?transport=tcp");
+    let mut client = RtspClient::connect(&url).unwrap();
+    let sdp = client.describe().unwrap();
+    let session = client.setup_mp2t_auto(&sdp).unwrap();
+    // H264DepayConfig is non-exhaustive — default-and-assign.
+    let mut h264_config = H264DepayConfig::default();
+    h264_config.payload_type = 96;
+    let mut receiver = session.into_h264_receiver(h264_config);
+    receiver.set_recv_timeout(Some(scaled(Duration::from_secs(5))));
+    client.close().unwrap();
+    let result = receiver.recv_au();
+    assert!(
+        matches!(result, Ok(None)),
+        "an accepted TEARDOWN through close() must be end of stream, got {result:?}"
+    );
+    assert_eq!(receiver.end_reason(), Some(EndReason::CleanTeardown));
+    peer.join().unwrap();
+}
+
+/// `close()` against a peer that refuses the TEARDOWN returns the refusal,
+/// then stops the client's thread: the receiver ends as a cancel.
+#[test]
+fn close_against_a_peer_refusing_teardown_ends_the_receiver_as_a_cancel() {
+    let (port, peer) = spawn_scripted_peer(OnTeardown::Refuse);
+    let (client, mut transport) = interleaved_session(port);
+    let r = client.close();
+    assert!(
+        matches!(r, Err(tst_rtp::RtspError::Protocol { .. })),
+        "a refused TEARDOWN is reported, got {r:?}"
+    );
+    let mut buf = vec![0u8; transport.max_payload()];
+    let result = transport.recv_bytes(&mut buf);
+    assert!(
+        matches!(result, Err(TransportError::ExplicitClose)),
+        "a refused TEARDOWN then the stop must end the transport as a cancel, got {result:?}"
+    );
+    assert_eq!(transport.end_reason(), Some(EndReason::Cancelled));
+    drop(transport);
+    peer.join().unwrap();
+}

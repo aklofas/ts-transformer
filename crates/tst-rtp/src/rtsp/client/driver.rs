@@ -361,10 +361,6 @@ impl Driver {
         let r = stream.read_available(&mut self.inbuf);
         if !self.inbuf.is_empty() {
             self.engine.handle_input(&self.inbuf, Instant::now());
-            // Deliver what these bytes produced before a close read with
-            // them ends the stream: a TEARDOWN's reply is then seen with
-            // the engine still open.
-            self.deliver();
         }
         match r {
             Ok(ReadState::Open) => {}
@@ -462,17 +458,6 @@ impl Driver {
                     // A `454` to a ping with the stream still open ends the
                     // session, not the media: the queue stays.
                     let close_media = reason == EndReason::CleanTeardown || self.engine.is_closed();
-                    // A TEARDOWN accepted on a cancelled client (a dropped
-                    // one sends it after setting the cancel) is the cancel;
-                    // the peer's own close, with the engine closed, is not.
-                    let reason = if reason == EndReason::CleanTeardown
-                        && !self.engine.is_closed()
-                        && self.shared.cancel.is_cancelled()
-                    {
-                        EndReason::Cancelled
-                    } else {
-                        reason
-                    };
                     // The reason first: a receiver that sees its queue
                     // close reads it at once.
                     record_end(&self.shared.end_reason, reason);
