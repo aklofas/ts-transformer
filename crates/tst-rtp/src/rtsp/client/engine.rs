@@ -428,7 +428,8 @@ impl ClientEngine {
     }
 
     /// Bytes read from the control stream: interleaved `$` frames and RTSP
-    /// messages, split at any byte. Ignored once the stream has ended.
+    /// messages, split at any byte. Ignored once the engine is closed (by
+    /// `handle_closed` or a framing violation).
     pub(crate) fn handle_input(&mut self, bytes: &[u8], now: Instant) {
         if self.closed.is_some() {
             return;
@@ -1748,7 +1749,7 @@ mod tests {
         }
         assert!(e.poll_transmit().is_none(), "queued bytes are dropped");
         assert_eq!(e.poll_timeout(), None);
-        // C7: a later request is answered at once with the same kind.
+        // A later request is answered at once with the same kind.
         assert!(matches!(
             e.submit(spec(RtspMethod::Teardown, URI), None, Instant::now()),
             Err(RtspError::Io(k)) if k == kind
@@ -2839,6 +2840,8 @@ mod tests {
             b"$\x00\xff\xff",
             b"RTSP/1.0 200 OK\r\nCSeq: 1\r\nContent-Length: nope\r\n\r\n",
             b"RTSP/1.0 401 Unauthorized\r\nCSeq: 1\r\nWWW-Authenticate: Digest\r\n\r\n",
+            b"RTSP/1.0 401 Unauthorized\r\nCSeq: 1000001\r\nWWW-Authenticate: Digest\r\n\r\n",
+            b"RTSP/1.0 454 Session Not Found\r\nCSeq: 1000001\r\n\r\nRTSP/1.0 200 OK\r\n\r\n",
             b"\xff\xfe\r\n\r\n$\x01\x00\x00",
             &flood,
         ] {
