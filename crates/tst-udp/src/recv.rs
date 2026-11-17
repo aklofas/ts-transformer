@@ -82,17 +82,21 @@ fn udp_receiver_can_end_with(r: &EndReason) -> bool {
     matches!(r, EndReason::Cancelled | EndReason::TransportFailed { .. })
 }
 
-/// The error for a fatal `recv_from` failure: the cancel when one is latched,
-/// else a `Broken` carrying the OS error.
-fn fatal_recv_error(e: &std::io::Error, cancelled: bool) -> TransportError {
+/// The error for a fatal `recv_from` failure and whether it counts in
+/// `recv_errors`: the cancel when one is latched, which is not a receive
+/// error; else a `Broken` carrying the OS error, which is.
+fn fatal_recv_error(e: &std::io::Error, cancelled: bool) -> (TransportError, bool) {
     if cancelled {
-        return TransportError::ExplicitClose;
+        return (TransportError::ExplicitClose, false);
     }
-    TransportError::Broken {
-        msg: format!("recv error: {e}"),
-        errno_code: e.raw_os_error(),
-        cause: BrokenCause::Unspecified,
-    }
+    (
+        TransportError::Broken {
+            msg: format!("recv error: {e}"),
+            errno_code: e.raw_os_error(),
+            cause: BrokenCause::Unspecified,
+        },
+        true,
+    )
 }
 
 /// The error for a failed restore of the cancel-poll read timeout: the
@@ -392,9 +396,8 @@ impl UdpRecvTransport {
                     continue;
                 }
                 Err(e) => {
-                    let err = fatal_recv_error(&e, self.cancel.is_cancelled());
-                    // A call reported as the cancel is not a receive error.
-                    if matches!(err, TransportError::Broken { .. }) {
+                    let (err, counts) = fatal_recv_error(&e, self.cancel.is_cancelled());
+                    if counts {
                         self.stats.recv_errors = self.stats.recv_errors.saturating_add(1);
                     }
                     // Either way the receiver latches dead.
@@ -474,19 +477,27 @@ mod tests {
     use std::time::{Duration, Instant};
 
     #[test]
-    fn fatal_recv_error_prefers_the_cancel() {
+    fn fatal_recv_error_prefers_the_cancel_and_counts_only_a_real_failure() {
         let e = std::io::Error::from_raw_os_error(9);
-        assert!(matches!(
-            fatal_recv_error(&e, true),
-            TransportError::ExplicitClose
-        ));
-        assert!(matches!(
-            fatal_recv_error(&e, false),
-            TransportError::Broken {
-                errno_code: Some(9),
-                ..
-            }
-        ));
+        let cancelled = fatal_recv_error(&e, true);
+        assert!(
+            matches!(cancelled, (TransportError::ExplicitClose, false)),
+            "a failure reported as the cancel is not a receive error: {cancelled:?}"
+        );
+        let broken = fatal_recv_error(&e, false);
+        assert!(
+            matches!(
+                broken,
+                (
+                    TransportError::Broken {
+                        errno_code: Some(9),
+                        ..
+                    },
+                    true
+                )
+            ),
+            "a hard failure counts as a receive error: {broken:?}"
+        );
     }
 
     #[test]
