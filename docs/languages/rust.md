@@ -484,6 +484,10 @@ klv`); to push KLV, use GStreamer (`rtpmp2tpay`, or `rtph264pay` plus
   refusal per path and direction; see the [publish-ingest
   recipe](/docs/cookbook/receiving/rtsp-publish-ingest.md#per-name-credentials-and-refusing-a-publisher)).
   A path rule's `Inherit` side uses the table's default rule; the default's `Inherit` uses the server-wide builder setting (`auth_*`).
+- **Client credentials.** URL userinfo (`rtsp://user:pass@host/…`, percent-decoded)
+  answers a challenge unless `RtspClientBuilder::auth` overrides it; a user
+  name without a password (`rtsp://admin@host/…`) answers with an empty
+  password, as `rtsp://admin:@host/…` does.
 - **Client auth schemes.** `RtspClientBuilder::auth_schemes` defaults to
   `AuthSchemes::Automatic` (Digest when offered, else Basic).
   `AuthSchemes::DigestOnly` makes the first challenged request fail when the

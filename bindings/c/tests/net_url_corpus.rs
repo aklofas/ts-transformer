@@ -448,11 +448,11 @@ fn rtsp_wire_record(plain: &[String], challenged: &[String]) -> Record {
     if let Some(b64) = basic {
         let decoded = base64_decode(b64).map(|b| String::from_utf8_lossy(&b).into_owned());
         let decoded = decoded.unwrap_or_else(|| format!("<bad base64 {b64}>"));
-        // The client sends credentials only with a password (an empty one
-        // counts), so a Basic header at all means one was set.
-        let user = decoded.split_once(':').map_or(decoded.as_str(), |(u, _)| u);
+        // An empty password reads as not set: the wire cannot tell it from
+        // a URL with no password, which the client also answers with one.
+        let (user, password) = decoded.split_once(':').unwrap_or((decoded.as_str(), ""));
         rec.username = Some(user.to_string());
-        rec.password_set = Some(true);
+        rec.password_set = (!password.is_empty()).then_some(true);
     }
     rec.keys = Some(keys);
     rec

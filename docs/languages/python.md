@@ -1118,6 +1118,9 @@ with RtspClient.connect(cfg) as session:
   URL's `?transport=` / `?rtsp_version=` when set to a non-default value;
   the defaults (`TransportPref.AUTO`, `RtspVersion.V1_0`) leave the URL in
   charge.
+- **URL credentials.** With `auth=None` the URL's userinfo answers a
+  challenge; a user name without a password (`rtsp://admin@cam/…`) answers
+  with an empty password, as `rtsp://admin:@cam/…` does. `auth` overrides it.
 - **Passwords stay Rust-side.** `BasicAuth` / `DigestAuth` hold the
   password in Rust memory (never re-exposed); only `user`, `realm`, and
   `algorithm` are readable. `repr()` redacts the secret.

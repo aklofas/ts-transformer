@@ -2278,6 +2278,9 @@ try (RtspSession session = RtspClient.connect(cfg);
   whitespace or `, ; . : ) ] }` can be read as the end of a quoted URL, leaving
   the rest of it visible (see [Secrets in string forms](/docs/reference/binding-authors.md#secrets-in-string-forms)).
   The credential is handed to the native connect and wrapped in Rust `secrecy::SecretString`.
+- **URL credentials.** Without `auth` the URL's userinfo answers a challenge;
+  a user name without a password (`rtsp://admin@cam/…`) answers with an empty
+  password, as `rtsp://admin:@cam/…` does. `auth` overrides it.
 - **`auth` is `Object`.** Java has no union type; `RtspClientConfig.auth()` returns
   `Optional<Object>` that is a `BasicAuth` or `DigestAuth` — match with `instanceof`.
 - **`DigestAuth` never falls back to Basic.** A server that offers no Digest

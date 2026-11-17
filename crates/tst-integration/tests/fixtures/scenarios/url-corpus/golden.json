@@ -1825,7 +1825,7 @@
           "role": "client",
           "scheme": "rtsp",
           "url": "rtsp://admin@127.0.0.1:31501/live",
-          "wire_absent": "username password_set"
+          "wire_absent": "password_set"
         },
         {
           "case": "credentials",
@@ -1842,7 +1842,8 @@
           },
           "role": "client",
           "scheme": "rtsp",
-          "url": "rtsp://admin:@127.0.0.1:31501/live"
+          "url": "rtsp://admin:@127.0.0.1:31501/live",
+          "wire_absent": "password_set"
         },
         {
           "case": "conflict",

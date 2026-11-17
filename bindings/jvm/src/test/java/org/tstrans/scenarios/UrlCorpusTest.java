@@ -538,10 +538,13 @@ class UrlCorpusTest {
             if (a != null && a.startsWith("Basic ")) {
                 String decoded = new String(Base64.getDecoder().decode(a.substring("Basic ".length())),
                     StandardCharsets.UTF_8);
-                rec.put("username", decoded.split(":", 2)[0]);
-                // The client sends credentials only with a password (an empty one counts), so a
-                // Basic header at all means one was set.
-                rec.put("password_set", true);
+                String[] pair = decoded.split(":", 2);
+                rec.put("username", pair[0]);
+                // An empty password reads as not set: the wire cannot tell it from a URL with no
+                // password, which the client also answers with one.
+                if (pair.length == 2 && !pair[1].isEmpty()) {
+                    rec.put("password_set", true);
+                }
                 break;
             }
         }
