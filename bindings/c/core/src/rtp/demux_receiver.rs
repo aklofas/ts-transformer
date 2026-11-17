@@ -167,8 +167,9 @@ pub unsafe extern "C" fn tst_rtp_demux_receiver_get_ts_bytes_demuxed(
 /// Close and free a `tst_rtp_demux_receiver_t`.
 ///
 /// For a receiver from `tst_rtsp_session_into_demux_receiver` this also
-/// closes the RTSP control connection, sending TEARDOWN (bounded to
-/// 500 ms).
+/// closes the RTSP control connection after the data plane: it writes
+/// TEARDOWN (500 ms bounds the wait for the control stream and the write;
+/// the reply is not awaited), then joins the client's threads.
 ///
 /// Safe to call with `NULL` (no-op).
 ///

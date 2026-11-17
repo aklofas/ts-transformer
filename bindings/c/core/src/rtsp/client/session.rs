@@ -307,8 +307,8 @@ pub unsafe extern "C" fn tst_rtsp_session_pause(session: *mut TstRtspSession) ->
 // Teardown + free
 // ---------------------------------------------------------------------------
 
-/// Bound on the whole TEARDOWN exchange: the wait for the control
-/// connection, the request write and the reply.
+/// Bound on the whole TEARDOWN exchange: the wait for the control stream
+/// (another thread may be using it), the request write and the reply.
 const TEARDOWN_REPLY_BOUND: Duration = Duration::from_millis(500);
 
 /// Send TEARDOWN and free the session handle.
@@ -318,14 +318,16 @@ const TEARDOWN_REPLY_BOUND: Duration = Duration::from_millis(500);
 /// errors at teardown time are recorded in last-error but do not prevent
 /// the handle from being freed). A healthy peer's 200 returns 0. The
 /// TEARDOWN exchange is bounded to 500 ms, covering the wait for the
-/// control connection, the request write and the reply: when the bound
-/// passes (a peer that does not answer, or one that stopped reading) the
-/// call returns `TST_E_RTSP_TIMEOUT` and the handle is still freed. A
-/// session cancelled with [`tst_rtsp_session_cancel`] before the call
-/// still sends the TEARDOWN but does not wait for the reply: it returns
-/// `TST_E_CLOSED` and is still freed. If a caught panic had already taken
-/// the control pair, there is nothing to tear down: the call returns 0
-/// and frees.
+/// control stream (another thread may be using it), the request write and
+/// the reply: when the bound passes (a peer that does not answer, or one
+/// that stopped reading) the call returns `TST_E_RTSP_TIMEOUT` and the
+/// handle is still freed. A session cancelled with
+/// [`tst_rtsp_session_cancel`] before the call still writes the TEARDOWN
+/// but does not wait for the reply: it returns `TST_E_CLOSED`, also when
+/// that write fails, and is still freed. If a caught panic had already
+/// taken the control pair, there is nothing to tear down: the call
+/// returns 0 and frees. The client's threads are joined after the
+/// exchange, outside the 500 ms.
 ///
 /// The caller guarantees that no `_play`, `_pause` or receive call on this
 /// session is in flight: call [`tst_rtsp_session_cancel`], wait for the

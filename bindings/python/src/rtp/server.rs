@@ -102,7 +102,10 @@ impl PyRtspServerCancelHandle {
 ///
 /// All `push_*` methods release the GIL via `py.detach()` so
 /// concurrent Python threads can run while the muxer/fanout work
-/// proceeds.
+/// proceeds. A push raises `RtspError(MOUNT)` when the muxer refuses the
+/// frame, and `RtspError(CLOSED)` once the server has ended (`stop()`, a
+/// `cancel()` on its `cancel_handle()`, or the server being collected),
+/// whether or not the mount was removed first.
 #[pyclass(name = "MountHandle", module = "tstrans.rtp", frozen)]
 #[derive(Clone)]
 pub struct PyMountHandle {
@@ -148,7 +151,8 @@ impl PyMountHandle {
     /// Accepts any bytes-like input (bytes / bytearray / memoryview /
     /// NumPy uint8). Raises `RtspError(MOUNT)` on muxer rejection or
     /// backpressure, and `RtspError(CLOSED)` once the server has ended
-    /// (`stop()`, its `cancel_handle()`, or the server being collected).
+    /// (`stop()`, a `cancel()` on its `cancel_handle()`, or the server
+    /// being collected).
     #[pyo3(signature = (nal, *, pts, key_frame = false))]
     pub fn push_video(
         &self,
@@ -169,7 +173,8 @@ impl PyMountHandle {
     /// [`Self::push_video`] with an explicit decode timestamp, for a mount
     /// whose config has exactly one video stream. `dts <= pts` is the
     /// caller's invariant and is not enforced. Raises `RtspError(MOUNT)` on
-    /// muxer rejection, including a config with several video streams.
+    /// muxer rejection, including a config with several video streams, and
+    /// `RtspError(CLOSED)` once the server has ended, as `push_video` does.
     #[pyo3(signature = (nal, *, pts, dts, key_frame = false))]
     pub fn push_video_with_dts(
         &self,
@@ -846,8 +851,9 @@ impl PyRtspServer {
     /// publish mount's publisher is sent the Notice 5402 teardown and its
     /// `DemuxReceiver` stops iterating (`StopIteration`); the `PublishMount`
     /// stays usable for `stats()`. A local mount's `MountHandle` keeps
-    /// accepting pushes that reach nobody. Also how idle on-demand mounts
-    /// are removed.
+    /// accepting pushes that reach nobody until the server ends; then they
+    /// raise `RtspError(CLOSED)`. Also how idle on-demand mounts are
+    /// removed.
     ///
     /// Errors:
     /// - `RtspError(MOUNT)` when no mount is registered at `path`.
