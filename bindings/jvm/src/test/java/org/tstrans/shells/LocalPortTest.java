@@ -78,16 +78,7 @@ class LocalPortTest {
             watchdog.setDaemon(true);
             watchdog.start();
             try {
-                byte[] got = null;
-                while (got == null) {
-                    try {
-                        got = rx.recvBytes();
-                    } catch (RistException e) {
-                        // librist ticks BACKPRESSURE every 100 ms while nothing has arrived
-                        if (e.kind() != RistException.Kind.BACKPRESSURE) throw e;
-                    }
-                }
-                assertEquals(188, got.length);
+                assertEquals(188, ShellPeers.recvTolerant(rx).length);
             } finally {
                 done.set(true);
             }

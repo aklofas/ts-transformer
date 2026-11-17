@@ -14,7 +14,8 @@ import org.tstrans.shells.CancelHandle;
  * try (Listener listener = Listener.open("tcp://0.0.0.0:0?listen=1")) {
  *     int port = listener.localPort();
  *     try (Transport conn = listener.accept()) {
- *         System.out.println("publisher at " + conn.peerAddr());
+ *         InetSocketAddress peer = conn.peerAddr();
+ *         System.out.println("publisher at " + peer.getHostString() + " port " + peer.getPort());
  *     }
  * }
  * }</pre>

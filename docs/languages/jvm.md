@@ -1674,7 +1674,8 @@ final class TcpIngest implements AutoCloseable {
                 // This publisher failed, or close() closed its shell:
                 // accept the next.
                 if (!stop.isCancelled()) {
-                    System.err.println(publisher + ": " + e.getMessage());
+                    System.err.println(publisher.getHostString() + " port "
+                        + publisher.getPort() + ": " + e.getMessage());
                 }
             } finally {
                 serving.set(null);

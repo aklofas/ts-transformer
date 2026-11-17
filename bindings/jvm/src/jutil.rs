@@ -488,12 +488,10 @@ pub fn join_host_port(host: &str, port: u16) -> String {
     tst_srt::addr::join_host_port(host, port)
 }
 
-/// A socket address as the `byte[]` that `org.tstrans.internal.NativeAddr`
-/// reads: the address bytes (4, or 16 for IPv6), the port big-endian, and for
-/// IPv6 the scope id big-endian. An IPv4-mapped IPv6 address goes out as IPv4,
-/// so a dual-stack bind reports an IPv4 peer as one. Null with an exception
-/// pending if the array cannot be made.
-pub(crate) fn socket_addr_array(env: &mut Env, addr: SocketAddr) -> jbyteArray {
+/// The address bytes (4, or 16 for IPv6), the port big-endian, and for IPv6
+/// the scope id big-endian. An IPv4-mapped IPv6 address goes out as IPv4, so
+/// a dual-stack bind reports an IPv4 peer as one.
+fn addr_bytes(addr: SocketAddr) -> Vec<u8> {
     let mut out = Vec::with_capacity(22);
     match addr {
         SocketAddr::V4(a) => {
@@ -508,10 +506,24 @@ pub(crate) fn socket_addr_array(env: &mut Env, addr: SocketAddr) -> jbyteArray {
             None => {
                 out.extend_from_slice(&a.ip().octets());
                 out.extend_from_slice(&a.port().to_be_bytes());
-                out.extend_from_slice(&a.scope_id().to_be_bytes());
+                // Java drops a negative scope id silently; one above i32::MAX goes as none.
+                let scope = if i32::try_from(a.scope_id()).is_ok() {
+                    a.scope_id()
+                } else {
+                    0
+                };
+                out.extend_from_slice(&scope.to_be_bytes());
             }
         },
     }
+    out
+}
+
+/// A socket address as the `byte[]` that `org.tstrans.internal.NativeAddr`
+/// reads; see [`addr_bytes`]. Null with an exception pending if the array
+/// cannot be made.
+pub(crate) fn socket_addr_array(env: &mut Env, addr: SocketAddr) -> jbyteArray {
+    let out = addr_bytes(addr);
     match env.byte_array_from_slice(&out) {
         Ok(arr) => arr.into_raw(),
         Err(e) => {
@@ -561,4 +573,43 @@ pub fn enum_const<'local>(
     .map_err(|_| ())?
     .l()
     .map_err(|_| ())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::addr_bytes;
+    use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
+
+    #[test]
+    fn ipv4_is_four_address_bytes_and_the_port() {
+        let a = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 65535));
+        assert_eq!(addr_bytes(a), [127, 0, 0, 1, 0xFF, 0xFF]);
+    }
+
+    #[test]
+    fn an_ipv4_mapped_address_goes_out_as_ipv4() {
+        let mapped = Ipv4Addr::new(10, 0, 0, 5).to_ipv6_mapped();
+        let a = SocketAddr::V6(SocketAddrV6::new(mapped, 5000, 0, 0));
+        assert_eq!(addr_bytes(a), [10, 0, 0, 5, 0x13, 0x88]);
+    }
+
+    #[test]
+    fn ipv6_carries_its_scope_id() {
+        let a = SocketAddr::V6(SocketAddrV6::new(Ipv6Addr::LOCALHOST, 0x8001, 0, 3));
+        let mut want = Ipv6Addr::LOCALHOST.octets().to_vec();
+        want.extend_from_slice(&[0x80, 0x01, 0, 0, 0, 3]);
+        assert_eq!(addr_bytes(a), want);
+    }
+
+    #[test]
+    fn a_scope_id_java_cannot_hold_goes_as_none() {
+        for (scope, sent) in [
+            (i32::MAX as u32, i32::MAX as u32),
+            (1 << 31, 0),
+            (u32::MAX, 0),
+        ] {
+            let a = SocketAddr::V6(SocketAddrV6::new(Ipv6Addr::LOCALHOST, 1, 0, scope));
+            assert_eq!(addr_bytes(a)[18..], sent.to_be_bytes(), "scope {scope}");
+        }
+    }
 }
