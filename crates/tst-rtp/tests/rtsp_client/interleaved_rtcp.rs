@@ -1,6 +1,6 @@
 //! A sender report the server writes on interleaved channel 1 reaches
-//! `RtpRecvTransport::rtcp_stats()`: the client's pump routes the frame to
-//! the RTCP ingest thread, which counts it.
+//! `RtpRecvTransport::rtcp_stats()`: the client's thread counts the frame into
+//! the statistics cell the transport reports.
 
 use std::io::Write;
 use std::net::TcpListener;

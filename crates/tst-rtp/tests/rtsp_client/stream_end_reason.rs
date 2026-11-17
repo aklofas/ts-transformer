@@ -196,8 +196,7 @@ fn a_reset_control_connection_on_a_udp_session_records_transport_failed() {
         )
         .unwrap();
 
-        // Abortive close: the client's next keepalive write hits a reset
-        // connection. Nothing reads again on this socket.
+        // Abortive close. Nothing reads again on this socket.
         ready_rx.recv().unwrap();
         force_reset(sock);
     });
@@ -208,9 +207,6 @@ fn a_reset_control_connection_on_a_udp_session_records_transport_failed() {
     let session = client.setup_mp2t_auto(&sdp).unwrap();
     let transport = session.into_recv_transport();
     ready_tx.send(()).unwrap();
-    client
-        .spawn_keepalive_if_needed(Some(Duration::from_millis(50)))
-        .unwrap();
 
     let reason = wait_for(Duration::from_secs(5), || transport.end_reason());
     assert!(
@@ -226,7 +222,7 @@ fn a_reset_control_connection_on_a_udp_session_records_transport_failed() {
 /// hard read failure on the client's control connection (`TCP read
 /// failed`), without any PLAY data.
 #[test]
-fn pump_read_error_records_transport_failed() {
+fn a_read_error_on_an_interleaved_session_records_transport_failed() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
     // See the ready-signal comment in `a_reset_control_connection_on_a_udp_session_records_transport_failed`
@@ -278,7 +274,7 @@ fn pump_read_error_records_transport_failed() {
 /// `end_reason()` lets the caller tell a genuine wire failure apart from
 /// an orderly teardown, which `Ok(None)` alone cannot.
 #[test]
-fn h264_pump_death_records_transport_failed_and_recv_au_returns_none() {
+fn h264_stream_death_records_transport_failed_and_recv_au_returns_none() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
     // See the ready-signal comment in `a_reset_control_connection_on_a_udp_session_records_transport_failed`
@@ -367,10 +363,13 @@ fn a_peer_close_on_a_udp_session_marks_the_session_dead() {
     assert!(client.is_session_alive());
     ready_tx.send(()).unwrap();
 
-    wait_for(scaled(Duration::from_secs(2)), || {
-        (!client.is_session_alive()).then_some(())
+    // The dead flag is set just before the reason is recorded: wait for both.
+    let reason = wait_for(scaled(Duration::from_secs(2)), || {
+        (!client.is_session_alive())
+            .then(|| transport.end_reason())
+            .flatten()
     });
-    assert_eq!(transport.end_reason(), Some(EndReason::CleanTeardown));
+    assert_eq!(reason, EndReason::CleanTeardown);
 
     server.join().unwrap();
     drop(client);

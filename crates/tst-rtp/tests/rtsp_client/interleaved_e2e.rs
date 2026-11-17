@@ -1,7 +1,6 @@
-//! TCP-interleaved producer thread wiring, client against our server.
-//! Dropping the client writes TEARDOWN (500 ms, or with the pump at least
-//! its `read_timeout` plus 100 ms, bounds the wait for the control stream
-//! and the write) and does not wait for the reply, so the
+//! TCP-interleaved media wiring, client against our server.
+//! Dropping the client writes TEARDOWN (500 ms bounds getting it to the
+//! wire) and does not wait for the reply, so the
 //! post-PLAY teardown cannot hang on the server's lingering write-half
 //! references after `RtspServer::stop`.
 //!
@@ -19,7 +18,7 @@ use tst_pipeline::DemuxReceiver;
 use tst_rtp::{RtspClient, RtspServer};
 
 /// `rtsp:// ?transport=tcp` end-to-end: [`RtspClient::play`] succeeds with
-/// the interleaved pump feeding the underlying
+/// the client's thread feeding the underlying
 /// [`RtpRecvTransport`](tst_rtp::RtpRecvTransport), a frame pushed through
 /// the mount comes back out of a [`DemuxReceiver`] on the client as the
 /// same bytes (the `$`-framed RTP/MP2T path is byte-transparent), and

@@ -203,3 +203,109 @@ impl RtspClient {
         Ok(session)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::sync::mpsc;
+    use std::time::{Duration, Instant};
+
+    use tst_core::transport::RecvTransport;
+    use tst_test_helpers::timing::scaled;
+
+    use crate::rtcp::{ReceiverReport, ReportBlock};
+    use crate::rtsp::client::RtspClient;
+    use crate::sdp::Sdp;
+
+    const SDP: &[u8] = b"v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=x\r\nt=0 0\r\nm=video 0 RTP/AVP 33\r\na=control:trackID=0\r\n";
+
+    /// A receiver report on the interleaved RTCP channel whose block names
+    /// the session's SSRC reaches the stats of the transport the session
+    /// becomes: the client's thread matches against the SSRC the transport
+    /// reports, and counts into the cell the transport reads.
+    #[test]
+    fn a_receiver_report_for_the_session_ssrc_reaches_the_transport() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let (ssrc_tx, ssrc_rx) = mpsc::channel::<u32>();
+        let peer = std::thread::spawn(move || {
+            let (mut sock, _) = listener.accept().unwrap();
+            sock.set_read_timeout(Some(Duration::from_secs(10))).ok();
+            let mut head = Vec::new();
+            let mut chunk = [0u8; 1024];
+            while !head.windows(4).any(|w| w == b"\r\n\r\n") {
+                match sock.read(&mut chunk) {
+                    Ok(0) | Err(_) => return,
+                    Ok(n) => head.extend_from_slice(&chunk[..n]),
+                }
+            }
+            let head = String::from_utf8_lossy(&head).to_ascii_lowercase();
+            let cseq = head
+                .lines()
+                .find_map(|l| l.strip_prefix("cseq:"))
+                .map(str::trim)
+                .unwrap_or("1")
+                .to_owned();
+            sock.write_all(
+                format!(
+                    "RTSP/1.0 200 OK\r\nCSeq: {cseq}\r\nSession: S1;timeout=60\r\n\
+                     Transport: RTP/AVP/TCP;unicast;interleaved=0-1\r\n\r\n"
+                )
+                .as_bytes(),
+            )
+            .unwrap();
+            let Ok(ssrc) = ssrc_rx.recv_timeout(Duration::from_secs(10)) else {
+                return;
+            };
+            let rr = ReceiverReport {
+                ssrc: 0xDEAD_BEEF,
+                report_blocks: vec![ReportBlock {
+                    ssrc,
+                    fraction_lost: 0,
+                    cumulative_lost: 2024,
+                    extended_highest_seq: 0,
+                    jitter: 0,
+                    last_sr: 0,
+                    delay_since_last_sr: 0,
+                }],
+            }
+            .encode()
+            .unwrap();
+            let mut frame = vec![b'$', 1];
+            frame.extend_from_slice(&(rr.len() as u16).to_be_bytes());
+            frame.extend_from_slice(&rr);
+            sock.write_all(&frame).unwrap();
+            // Hold the connection until the client hangs up.
+            let _ = sock.read_to_end(&mut Vec::new());
+        });
+
+        let mut client =
+            RtspClient::connect(&format!("rtsp://127.0.0.1:{port}/x?transport=tcp")).unwrap();
+        let sdp = Sdp::parse(SDP).unwrap();
+        let session = client.setup_mp2t_auto(&sdp).unwrap();
+        let ssrc = session.rtcp.as_ref().expect("an interleaved session").1;
+        let transport = session.into_recv_transport();
+        ssrc_tx.send(ssrc).unwrap();
+
+        let give_up = Instant::now() + scaled(Duration::from_secs(5));
+        loop {
+            let lost = transport
+                .socket_stats()
+                .expect("a live transport reports stats")
+                .packets_lost_send;
+            if lost == 2024 {
+                break;
+            }
+            assert!(
+                Instant::now() < give_up,
+                "the report for the session's SSRC never reached the transport (lost = {lost})"
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        }
+
+        drop(transport);
+        drop(client);
+        peer.join().unwrap();
+    }
+}

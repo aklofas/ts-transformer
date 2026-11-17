@@ -2,7 +2,7 @@
 //! clean `Ok(None)` end-of-stream, not a `TransportBroken` error.
 //!
 //! Companion regression pin to `stream_end_reason.rs`'s
-//! `pump_read_error_records_transport_failed`: that test already checks
+//! `a_read_error_on_an_interleaved_session_records_transport_failed`: that test already checks
 //! the raw `RtpRecvTransport::recv_timeout` shape after a wire reset;
 //! this file checks the SAME two scenarios (clean TEARDOWN vs. abortive
 //! RST) one layer up, through `DemuxReceiver::recv_event`, which is what
@@ -22,7 +22,7 @@ use crate::fixtures::raw_rtsp_server::{answer_describe_and_setup, force_reset};
 use crate::fixtures::rtsp_loopback_server::{FixtureConfig, FixtureHandle};
 
 /// Clean TEARDOWN: `DemuxReceiver::recv_event` must return `Ok(None)`
-/// (clean end-of-stream), not surface the pump's `Broken` disconnect. A
+/// (clean end-of-stream), not surface the media queue's `Broken` disconnect. A
 /// bounded persistent deadline is a safety net only, so a regression
 /// here fails fast (Backpressure/Broken) instead of hanging the test.
 #[test]
@@ -50,15 +50,15 @@ fn clean_teardown_ends_demux_receiver_cleanly() {
 
 /// Regression pin: an abortive RST (not a clean TEARDOWN) must still
 /// surface as `TransportBroken` — the CleanTeardown remap must not
-/// blanket-convert every pump disconnect into a clean end-of-stream.
-/// Mirrors `stream_end_reason.rs`'s `pump_read_error_records_transport_failed`
+/// blanket-convert every media-queue close into a clean end-of-stream.
+/// Mirrors `stream_end_reason.rs`'s `a_read_error_on_an_interleaved_session_records_transport_failed`
 /// one layer up (through `DemuxReceiver` instead of the raw transport).
 #[test]
 fn wire_reset_ends_demux_receiver_as_transport_broken() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
     // Ready-signal handshake — see the identical comment in
-    // `stream_end_reason.rs`'s `pump_read_error_records_transport_failed`:
+    // `stream_end_reason.rs`'s `a_read_error_on_an_interleaved_session_records_transport_failed`:
     // resetting before the client has fully consumed the SETUP response
     // races that read; only reset after `into_recv_transport()` returns.
     let (ready_tx, ready_rx) = mpsc::channel::<()>();
