@@ -438,8 +438,7 @@ fn the_media_queue_closes_after_the_end_reason_is_recorded() {
     h.stop_and_join();
 }
 
-/// The first `Ended` closes the media queue and its reason stays when
-/// the stream ends afterwards.
+/// The next media frame arrives within the wait and has RTP sequence `seq`.
 fn expect_media(data_rx: &mpsc::Receiver<Bytes>, seq: u16) {
     let p = data_rx
         .recv_timeout(scaled(Duration::from_secs(5)))
@@ -516,6 +515,9 @@ fn set_interleaved_after_the_stream_ended_gets_a_closed_queue() {
     h.stop_and_join();
 }
 
+/// The media queue closes on an accepted TEARDOWN (as it does once the
+/// stream has ended), and the TEARDOWN's reason stays when the stream ends
+/// afterwards.
 #[test]
 fn an_accepted_teardown_closes_the_media_queue_and_keeps_its_reason() {
     let (stream, mut peer) = plain_pair();
