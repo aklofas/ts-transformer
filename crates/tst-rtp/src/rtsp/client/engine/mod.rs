@@ -223,6 +223,12 @@ fn whole_ms_at_least(d: Duration, floor_ms: u64) -> Duration {
     Duration::from_millis(duration_ms_saturating(d).max(floor_ms))
 }
 
+/// Whether a TEARDOWN reply with `status` ended the session: a `2xx`, or
+/// `454 Session Not Found` (already gone, which is what was asked for).
+pub(crate) fn teardown_accepted(status: u16) -> bool {
+    (200..300).contains(&status) || status == 454
+}
+
 impl ClientEngine {
     pub(crate) fn new(cfg: EngineConfig) -> Self {
         let auth = AuthState {
@@ -556,7 +562,7 @@ impl ClientEngine {
         }
         match txn.spec.method {
             RtspMethod::Setup if resp.status == 200 => self.learn_session(&resp),
-            RtspMethod::Teardown if (200..300).contains(&resp.status) || resp.status == 454 => {
+            RtspMethod::Teardown if teardown_accepted(resp.status) => {
                 self.events
                     .push_back(Event::Ended(EndReason::CleanTeardown));
             }

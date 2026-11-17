@@ -476,9 +476,10 @@ impl RtspClient {
     ///
     /// # Errors
     ///
-    /// The TEARDOWN's result, as [`Self::teardown_within`] reports it;
-    /// `Ok(())` when no session is open. The thread is stopped on every
-    /// outcome.
+    /// The TEARDOWN's result, as [`Self::teardown_within`] reports it, so
+    /// a TEARDOWN the server refuses is [`RtspError::Protocol`] with its
+    /// status; `Ok(())` when no session is open. The thread is stopped on
+    /// every outcome.
     pub fn close(mut self) -> Result<(), RtspError> {
         let r = self.teardown_within(CLOSE_TEARDOWN_BOUND);
         self.driver.stop();

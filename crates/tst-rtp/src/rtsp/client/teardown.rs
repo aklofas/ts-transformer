@@ -2,7 +2,7 @@
 
 use crate::error::RtspError;
 use crate::rtsp::client::RtspClient;
-use crate::rtsp::client::engine::RequestSpec;
+use crate::rtsp::client::engine::{RequestSpec, teardown_accepted};
 use crate::rtsp::message::RtspMethod;
 
 impl RtspClient {
@@ -10,10 +10,18 @@ impl RtspClient {
     ///
     /// If no session is currently established (no prior successful
     /// SETUP, or [`Self::teardown`] already ran), this is a no-op that
-    /// returns `Ok(())`.
+    /// returns `Ok(())`. A `2xx` reply, or `454 Session Not Found` (the
+    /// session is already gone), is `Ok(())`. The session is cleared on
+    /// every outcome, so a refused TEARDOWN is not retried.
     ///
     /// # Errors
     ///
+    /// - [`RtspError::Protocol`] carrying the status when the server
+    ///   answers anything but a `2xx` or `454`.
+    /// - [`RtspError::AuthFailed`] when the server answers `401` and the
+    ///   client has no credentials, or answers `401` again to the one
+    ///   retry with credentials; [`RtspError::BadResponse`] for a `401`
+    ///   without a `WWW-Authenticate` header.
     /// - [`RtspError::Io`] on socket-level failure writing the request
     ///   or reading the response.
     /// - [`RtspError::BadResponse`] (or another variant) surfaced by
@@ -45,7 +53,8 @@ impl RtspClient {
     /// bound. A cancel already set, or set during the call, ends the
     /// reply wait at once with [`RtspError::LocalCancel`] and turns any
     /// failure of the exchange into it; the request is still written. If
-    /// no session is established, this returns `Ok(())` without I/O.
+    /// no session is established, this returns `Ok(())` without I/O. The
+    /// reply's status is judged as [`Self::teardown`] judges it.
     /// `session_id` is cleared on every outcome, so no later teardown
     /// (nor `Drop`) retries.
     ///
@@ -63,6 +72,8 @@ impl RtspClient {
     /// - [`RtspError::Io`] on another socket failure, and
     ///   [`RtspError::BadResponse`] (or another variant) for a malformed
     ///   reply.
+    /// - [`RtspError::Protocol`] and [`RtspError::AuthFailed`] for a
+    ///   refused TEARDOWN, as for [`Self::teardown`].
     pub fn teardown_within(&mut self, bound: std::time::Duration) -> Result<(), RtspError> {
         // A bound too large to represent as an `Instant` saturates to "no
         // deadline", as in `teardown`.
@@ -94,7 +105,15 @@ impl RtspClient {
         // failed, retrying won't help and we want Drop to skip on a
         // second pass.
         self.session_id = None;
-        r.map(|_| ())
+        let resp = r?;
+        if teardown_accepted(resp.status) {
+            Ok(())
+        } else {
+            Err(RtspError::Protocol {
+                code: resp.status,
+                reason: resp.reason,
+            })
+        }
     }
 }
 
