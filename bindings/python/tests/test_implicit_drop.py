@@ -238,6 +238,47 @@ def test_gc_dropped_rtsp_session_tears_down():
         assert server.stats().active_sessions == 0
 
 
+def test_gc_dropped_session_ends_its_live_receiver_closed():
+    pytest.importorskip("tstrans.rtp", exc_type=ImportError)
+    from tstrans.exceptions import RtpError, RtpErrorKind
+    from tstrans.rtp import RtspClient, RtspClientConfig, RtspServer, RtspServerConfig
+    from tstrans.shells import EndReason
+
+    cfg = RtspServerConfig(bind_addr="127.0.0.1:0", graceful_shutdown_drain_ms=50)
+    with RtspServer.start(cfg) as server:
+        server.add_unicast_mount("/live", _single_video_program())
+        port = server.local_addr().rsplit(":", 1)[1]
+        # The receiver does not own the client: the session object goes away
+        # here, and its RTSP client with it.
+        rx = RtspClient.connect(
+            RtspClientConfig(url=f"rtsp://127.0.0.1:{port}/live?transport=tcp", keepalive=False)
+        ).into_demux_receiver()
+        gc.collect()
+
+        # A deadline that cannot be mistaken for the outcome: the watchdog's
+        # cancel also raises CLOSED, so it records that it fired.
+        done, timed_out = threading.Event(), threading.Event()
+        cancel = rx.cancel_handle()
+
+        def watchdog() -> None:
+            if not done.wait(5.0):
+                timed_out.set()
+                cancel.cancel()
+
+        t = threading.Thread(target=watchdog, daemon=True)
+        t.start()
+        try:
+            with pytest.raises(RtpError) as e:
+                next(rx)
+        finally:
+            done.set()
+            t.join()
+        assert not timed_out.is_set(), "the receiver did not end within 5 s"
+        assert e.value.kind == RtpErrorKind.CLOSED
+        assert rx.end_reason() == EndReason.CANCELLED
+        rx.close()
+
+
 # --------------------------------------------------------------------------- #
 # webrtc.WhepServer                                                           #
 # --------------------------------------------------------------------------- #
