@@ -535,7 +535,8 @@ pub enum EndReason {
     },
     /// A hard I/O error on the underlying transport: a read failure other
     /// than a clean EOF, or on an RTSP client's control connection a write
-    /// that failed or made no progress for 5 s.
+    /// that failed, or that made no progress for 5 s while a request's
+    /// bytes were the oldest queued (a ping's give `KeepaliveFailed`).
     TransportFailed {
         /// Detail from the underlying failure.
         msg: String,

@@ -26,8 +26,8 @@ pub(crate) const MAX_RTSP_BODY_BYTES: usize = 1024 * 1024; // 1 MiB
 /// rejected.
 ///
 /// This is the single coherent cap shared by every code path that buffers raw
-/// RTSP text off a socket: the server session loop, the server interleaved
-/// pump and the client engine. It guards against a peer that never sends the
+/// RTSP text off a socket: the server session loop (which also frames a
+/// publisher's interleaved stream) and the client engine. It guards against a peer that never sends the
 /// terminator and dribbles bytes, forcing the buffer to grow unbounded. It
 /// does not bound the body: once the headers are complete, the declared body
 /// is capped separately at [`MAX_RTSP_BODY_BYTES`] (1 MiB).

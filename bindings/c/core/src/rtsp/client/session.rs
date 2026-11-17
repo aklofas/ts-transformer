@@ -489,7 +489,7 @@ pub unsafe extern "C" fn tst_rtsp_session_cancel(session: *mut TstRtspSession) -
 /// connection stays up until close.
 ///
 /// A session already cancelled with [`tst_rtsp_session_cancel`] is refused:
-/// the call returns NULL with `TST_E_CLOSED`, because the client sends no
+/// the call returns NULL with `TST_E_CLOSED`, because the client starts no
 /// keepalive ping after a cancel and the server would reap the session
 /// after its timeout. The bridge hands the control connection to the
 /// receiver; after a non-NULL return the session handle is spent and the
