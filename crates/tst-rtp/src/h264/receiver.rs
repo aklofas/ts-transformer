@@ -387,6 +387,14 @@ impl H264Receiver {
                 // A cancel fired mid-recv: step 2 drains and answers it.
                 Err(TransportError::ExplicitClose) => continue,
                 Err(TransportError::Broken { ref msg, .. }) if msg == MPSC_PUMP_DISCONNECTED => {
+                    if matches!(self.end_reason.get(), Some(EndReason::Cancelled)) {
+                        // The owning `RtspClient` was dropped or closed: its
+                        // pump ended on the cancel. Latch it as this
+                        // receiver's cancel so step 2 answers: the flush,
+                        // then `ExplicitClose` on every later call.
+                        self.cancel.cancel();
+                        continue;
+                    }
                     // Clean RTSP teardown — same EOS path.
                     self.eos = true;
                     return Ok(self.depay.flush());
