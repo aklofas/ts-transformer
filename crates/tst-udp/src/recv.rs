@@ -240,10 +240,27 @@ impl UdpRecvTransport {
         buf: &mut [u8],
         deadline: std::time::Duration,
     ) -> Result<Option<usize>, crate::error::UdpError> {
-        // An empty destination is a no-op — answer before the
-        // socket is touched, so the caller's queued datagram survives.
         if buf.is_empty() {
             return Ok(Some(0));
+        }
+        Ok(self.recv_from_timeout(buf, deadline)?.map(|(n, _)| n))
+    }
+
+    /// [`Self::recv_timeout`] that also returns each datagram's source
+    /// address, IPv4 on a dual-stack bind in IPv4 form. A zero-length
+    /// datagram comes back as `Some((0, from))`; it still neither takes a
+    /// [`SourcePin::First`] lock nor changes [`Self::peer_addr`]. The
+    /// address is what the datagram claims; nothing verifies it.
+    ///
+    /// An empty `buf` returns `Ok(None)` immediately: no datagram is taken,
+    /// so there is no source to name, and the queued datagram survives.
+    pub fn recv_from_timeout(
+        &mut self,
+        buf: &mut [u8],
+        deadline: std::time::Duration,
+    ) -> Result<Option<(usize, SocketAddr)>, crate::error::UdpError> {
+        if buf.is_empty() {
+            return Ok(None);
         }
         // Only pay the setsockopt cost when the socket needs a different value.
         if self.applied_timeout != deadline {
@@ -261,7 +278,10 @@ impl UdpRecvTransport {
                             return Ok(None);
                         }
                     }
-                    Verdict::Empty | Verdict::Deliver => return Ok(Some(n)),
+                    Verdict::Empty | Verdict::Deliver => {
+                        let from = SocketAddr::new(from.ip().to_canonical(), from.port());
+                        return Ok(Some((n, from)));
+                    }
                 },
                 Err(e)
                     if e.kind() == std::io::ErrorKind::WouldBlock

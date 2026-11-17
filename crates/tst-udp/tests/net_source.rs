@@ -391,6 +391,104 @@ fn recv_timeout_reports_the_source_and_honours_the_pin() {
 }
 
 #[test]
+fn recv_from_timeout_returns_each_datagrams_source_empty_ones_too() {
+    let Some(rig) = Rig::new() else { return };
+    let mut t = rig.recv("");
+    let to = t.local_addr();
+    let mut buf = vec![0u8; 65535];
+    let wait = Duration::from_secs(10);
+    rig.send_a(to, b"A");
+    let got = t.recv_from_timeout(&mut buf, wait).unwrap();
+    assert_eq!(got, Some((1, rig.a_addr())));
+    assert_eq!(&buf[..1], b"A");
+    // An empty datagram names its sender but does not become the peer.
+    rig.send_b(to, b"");
+    let got = t.recv_from_timeout(&mut buf, wait).unwrap();
+    assert_eq!(got, Some((0, canonical(rig.b_addr()))));
+    assert_eq!(t.peer_addr(), Some(rig.a_addr()));
+    assert_eq!(t.stats().datagrams_received, 2);
+}
+
+#[test]
+fn recv_from_timeout_honours_the_pin() {
+    let Some(rig) = Rig::new() else { return };
+    let mut t = rig.recv(&format!("?source={}", rig.a_ip()));
+    let to = t.local_addr();
+    let mut buf = vec![0u8; 65535];
+    rig.send_b(to, b"B");
+    rig.send_a(to, b"");
+    let got = t
+        .recv_from_timeout(&mut buf, Duration::from_secs(10))
+        .unwrap();
+    assert_eq!(got, Some((0, rig.a_addr())));
+    assert_eq!(t.stats().source_rejected, 1);
+    assert_eq!(t.peer_addr(), None);
+    // Only the other sender: None once the deadline passes.
+    rig.send_b(to, b"B");
+    let got = t
+        .recv_from_timeout(&mut buf, Duration::from_millis(300))
+        .unwrap();
+    assert_eq!(got, None);
+    assert_eq!(t.stats().source_rejected, 2);
+}
+
+#[test]
+fn recv_from_timeout_empty_datagram_does_not_take_the_first_lock() {
+    let Some(rig) = Rig::new() else { return };
+    let mut t = rig.recv("?source=first");
+    let to = t.local_addr();
+    let mut buf = vec![0u8; 65535];
+    let wait = Duration::from_secs(10);
+    rig.send_b(to, b"");
+    let got = t.recv_from_timeout(&mut buf, wait).unwrap();
+    assert_eq!(got, Some((0, canonical(rig.b_addr()))));
+    rig.send_a(to, b"A1");
+    assert_eq!(
+        t.recv_from_timeout(&mut buf, wait).unwrap(),
+        Some((2, rig.a_addr()))
+    );
+    rig.send_b(to, b"B1");
+    rig.send_a(to, b"A2");
+    assert_eq!(
+        t.recv_from_timeout(&mut buf, wait).unwrap(),
+        Some((2, rig.a_addr()))
+    );
+    assert_eq!(&buf[..2], b"A2");
+    assert_eq!(t.stats().source_rejected, 1);
+}
+
+#[test]
+fn recv_from_timeout_with_an_empty_buffer_takes_nothing() {
+    let Some(rig) = Rig::new() else { return };
+    let mut t = rig.recv("");
+    let to = t.local_addr();
+    rig.send_a(to, b"A");
+    let began = Instant::now();
+    assert_eq!(
+        t.recv_from_timeout(&mut [], Duration::from_secs(10))
+            .unwrap(),
+        None
+    );
+    assert!(began.elapsed() < Duration::from_secs(5));
+    // The queued datagram is still there.
+    let mut buf = vec![0u8; 65535];
+    assert_eq!(
+        t.recv_from_timeout(&mut buf, Duration::from_secs(10))
+            .unwrap(),
+        Some((1, rig.a_addr()))
+    );
+    // recv_timeout keeps its own answer for an empty buffer.
+    assert_eq!(
+        t.recv_timeout(&mut [], Duration::from_secs(10)).unwrap(),
+        Some(0)
+    );
+}
+
+fn canonical(a: SocketAddr) -> SocketAddr {
+    SocketAddr::new(a.ip().to_canonical(), a.port())
+}
+
+#[test]
 fn a_sender_url_with_source_is_refused() {
     let err = UdpTransport::connect("udp://127.0.0.1:9?source=127.0.0.1")
         .err()
