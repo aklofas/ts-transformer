@@ -26,7 +26,9 @@ crates/tst-pipeline/tests/support/round_trip.rs	synthetic_h264_au	cross-crate tw
 crates/tst-rist/tests/support/round_trip.rs	assert_program_map_round_trip	package-local copy; kept identical by test-support-copies.sh
 crates/tst-rist/tests/support/round_trip.rs	mux_config	package-local copy; kept identical by test-support-copies.sh
 crates/tst-rist/tests/support/round_trip.rs	synthetic_h264_au	package-local copy; kept identical by test-support-copies.sh
+crates/tst-rtp/src/rtsp/client/driver/tests.rs	install_handler	unit-test twin of the integration tests' SIGUSR1 handler; the in-crate test module cannot reach tests/fixtures
 crates/tst-rtp/tests/fixtures/raw_rtsp_publisher.rs	status_of	tst-rtp tests: shared fixture not yet written
+crates/tst-rtp/tests/fixtures/signal.rs	install_handler	integration twin of the driver unit test's SIGUSR1 handler; the integration binary cannot reach a crate's test module
 crates/tst-srt/tests/common/mod.rs	reserve_port	twin of bindings/c/tests/receiving/exit_with_parked_call.rs (Rust crate vs C-binding test crate); no shared crate between them
 crates/tst-srt/tests/pipeline/pipeline_receiver_live.rs	minimal_klv	pipeline and transport tests: shared tests/common not yet written
 crates/tst-srt/tests/pipeline/pipeline_receiver_live_corpus.rs	fixtures_dir	pipeline and transport tests: shared tests/common not yet written
