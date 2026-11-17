@@ -292,9 +292,11 @@ latch — every clone, and a handle obtained after the cancel, agrees.
 with `TransportError::ExplicitClose`, and every later op returns it at
 its entry check, on every transport that has a handle and on the managed
 wrappers. The RTSP control plane reaches the same kind another way: an
-`RtspClient` request made after the cancel still writes its bytes, then
-its reply wait reads the flag and returns `RtspError::LocalCancel`, which
-projects to the same `Closed` kind
+`RtspClient` request made after the cancel still writes its bytes first;
+its reply wait then reads the flag and returns `RtspError::LocalCancel`,
+and so does the request if its write, its reply wait or its deadline
+fails while the cancel is set. `LocalCancel` projects to the same
+`Closed` kind
 — the normative table lives in the `tst_core::transport` rustdoc
 and `tst_core::transport::conformance` pins it in each crate's
 `tests/*conformance.rs`. Bindings therefore project one kind for a cancel:
@@ -302,8 +304,10 @@ and `tst_core::transport::conformance` pins it in each crate's
 `BindingErrorKind`. Bindings refuse a data-plane call (receive, send, flush,
 finish) after a cancel at the `Owned` entry
 (`Owned::with_mut_unless_cancelled` / `with_ref_blocking_unless_cancelled`,
-`HandleState::Cancelled`), buffered output included; the H.264 receiver's
-drain to end of stream is the documented exception. An entry refused at that
+`HandleState::Cancelled`), buffered output included. The H.264 receiver
+is the documented exception: its receive stays on the ungated entry, so
+after a cancel it still hands out the access units it holds, then reports
+CLOSED. An entry refused at that
 gate carries the same detail, `cancelled from another thread`, as a cancel that
 lands while the call is parked. That detail reaches the caller unchanged in the
 Rust binding layer, Python, the JVM, and the C **send** path. The C **receive**
@@ -331,9 +335,10 @@ What may precede or override the CLOSED outcome:
   RTP senders).
 - A success already in flight when the cancel landed may win; a failure
   in that window is reported as the cancel.
-- The H.264 receiver drains to end of stream on cancel.
 - The SRT `Listener` iterator maps CLOSED to `StopIteration`.
-- A flushed access unit is delivered before CLOSED (Rust shells).
+- A flushed access unit is delivered before CLOSED: by the Rust shells,
+  and by the H.264 receiver in every binding (its queued complete access
+  units, then the open one if it completes cleanly).
 
 ## Host naming grammar
 
