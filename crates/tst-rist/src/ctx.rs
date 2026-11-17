@@ -36,8 +36,8 @@ pub(crate) struct RistCtx {
     /// callback `arg`. Reclaimed exactly once in [`Self::destroy`] after
     /// `rist_destroy`.
     stats_arg: *mut c_void,
-    /// Which sender each peer is, and the `source` pin: `Some` for
-    /// [`Role::Receiver`], `None` for a sender.
+    /// Which sender each peer is, and the `source` pin: `Some` for a
+    /// [`Role::Receiver`] until the receiver takes it, `None` for a sender.
     pub(crate) peers: Option<Arc<Peers>>,
     /// Leaked `Arc<Peers>` ref handed to librist as the peer callbacks'
     /// `arg` (null on a sender). Reclaimed exactly once in [`Self::destroy`]

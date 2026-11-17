@@ -17,18 +17,13 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use tst_core::transport::SourceHandle;
 
-/// Most peers remembered at once. librist makes a peer per source port, so
-/// a sender cycling ports cannot grow the table past this.
-pub(crate) const MAX_PEERS: usize = 256;
-
 /// What the connect callback decided for a new peer.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum Verdict {
     /// Accepted and its address remembered.
     Recorded,
-    /// Accepted without remembering it: no pin is set, and the table is full
-    /// or the text is not an address. Its blocks are delivered as before
-    /// this table existed.
+    /// Accepted without remembering it: the address text did not parse and
+    /// no pin is set. Its blocks are delivered as before this table existed.
     Unrecorded,
     /// Declined: librist keeps its data out.
     Declined,
@@ -44,13 +39,12 @@ pub(crate) fn on_connect(
     ip_text: &str,
     port: u16,
 ) -> Verdict {
-    let pinned = source.pin().is_some();
     let Ok(ip) = ip_text.parse::<IpAddr>() else {
-        return if pinned {
-            Verdict::Declined
-        } else {
-            Verdict::Unrecorded
-        };
+        if source.pin().is_some() {
+            source.count_rejected();
+            return Verdict::Declined;
+        }
+        return Verdict::Unrecorded;
     };
     let addr = SocketAddr::new(ip.to_canonical(), port);
     // `allows`, not `admit`: a peer is created before its key is proven, so
@@ -58,13 +52,6 @@ pub(crate) fn on_connect(
     if !source.allows(addr.ip()) {
         source.count_rejected();
         return Verdict::Declined;
-    }
-    if table.len() >= MAX_PEERS && !table.contains_key(&peer) {
-        if pinned {
-            source.count_rejected();
-            return Verdict::Declined;
-        }
-        return Verdict::Unrecorded;
     }
     table.insert(peer, addr);
     Verdict::Recorded
@@ -77,6 +64,11 @@ pub(crate) fn on_disconnect(table: &mut HashMap<usize, SocketAddr>, peer: usize)
 
 /// The table and the pin of one receiver, shared with librist's callbacks.
 pub(crate) struct Peers {
+    /// One entry per peer librist holds: made when the connect callback
+    /// accepts it, removed when the disconnect callback fires. It has no cap
+    /// of its own: librist allocates far more per peer than an entry costs,
+    /// so a cap here bounds nothing librist does not, and a full table would
+    /// let peers that never deliver keep the real sender out.
     table: Mutex<HashMap<usize, SocketAddr>>,
     /// Bumped, under the table lock, at every change of the table. A reader
     /// that cached a (pointer, address) pair re-reads the table when it moves,
@@ -116,17 +108,6 @@ impl Peers {
         }
     }
 
-    /// Read before [`Self::lookup`]: a change after this read leaves the
-    /// pair just looked up with an older generation, so it is re-read next
-    /// time rather than trusted.
-    pub(crate) fn generation(&self) -> u64 {
-        self.generation.load(Ordering::Acquire)
-    }
-
-    pub(crate) fn lookup(&self, peer: usize) -> Option<SocketAddr> {
-        self.lock().get(&peer).copied()
-    }
-
     /// Register the callbacks on `ctx` (a receiver, not yet started) with one
     /// leaked reference to `peers` as their argument. Returns that argument,
     /// to hand to [`Self::reclaim`] exactly once after `rist_destroy`.
@@ -158,6 +139,70 @@ impl Peers {
     }
 }
 
+/// The read path's view of the table: which sender a delivered block came
+/// from, through a one-entry cache, and whether the pin lets it through.
+#[derive(Default)]
+pub(crate) struct Attribution {
+    /// The peer of the last block, the table's generation when it was looked
+    /// up, and the address found. A sender's blocks arrive in runs from one
+    /// peer, so the table lock is taken only when the pointer or the
+    /// generation moves, not once per block.
+    last_peer: Option<(usize, u64, Option<SocketAddr>)>,
+    /// The address last stored in the source handle; it is written only when
+    /// the delivering address changes.
+    recorded: Option<SocketAddr>,
+}
+
+impl Attribution {
+    /// The address the table holds for `peer`.
+    ///
+    /// Known limit, accepted: librist keeps a block's peer pointer after the
+    /// peer is freed, so a block read after its peer's entry was replaced by a
+    /// new peer at the same pointer is attributed to the new peer. That needs
+    /// the reader to stall past librist's session timeout with the old peer's
+    /// blocks still queued.
+    fn address(&mut self, peers: &Peers, peer: usize) -> Option<SocketAddr> {
+        // Read before the lookup: a change landing in between leaves the pair
+        // with an older generation, so it is re-read next time.
+        let generation = peers.generation.load(Ordering::Acquire);
+        if let Some((p, g, addr)) = self.last_peer
+            && p == peer
+            && g == generation
+        {
+            return addr;
+        }
+        let addr = peers.lock().get(&peer).copied();
+        self.last_peer = Some((peer, generation, addr));
+        addr
+    }
+
+    /// Apply the `source` pin to a block from `peer` about to be delivered,
+    /// and record its sender. False: the block is refused (and counted).
+    pub(crate) fn admit_block(&mut self, peers: &Peers, peer: usize) -> bool {
+        let source = &peers.source;
+        match self.address(peers, peer) {
+            Some(addr) => {
+                if !source.admit(addr) {
+                    return false;
+                }
+                if self.recorded != Some(addr) {
+                    source.record(addr);
+                    self.recorded = Some(addr);
+                }
+                true
+            }
+            // A peer the table does not hold (its address text did not parse,
+            // or it was freed since): without a pin it is delivered as
+            // before, unrecorded.
+            None if source.pin().is_some() => {
+                source.count_rejected();
+                false
+            }
+            None => true,
+        }
+    }
+}
+
 /// librist's connect callback, on its protocol thread: 0 accepts the peer,
 /// non-zero declines it. Nothing unwinds out of it.
 unsafe extern "C" fn connect_trampoline(
@@ -168,12 +213,14 @@ unsafe extern "C" fn connect_trampoline(
     _local_port: u16,
     peer: *mut rist_sys::rist_peer,
 ) -> c_int {
+    // Never null (`register` always passes one); with no table there is no
+    // pin to apply either.
+    if arg.is_null() {
+        return 0;
+    }
+    // SAFETY: arg is the live leaked reference from `register`; borrowed.
+    let peers = unsafe { &*(arg as *const Peers) };
     let verdict = catch_unwind(AssertUnwindSafe(|| {
-        if arg.is_null() {
-            return Verdict::Declined;
-        }
-        // SAFETY: arg is the live leaked reference from `register`; borrowed.
-        let peers = unsafe { &*(arg as *const Peers) };
         let text = if conn_ip.is_null() {
             ""
         } else {
@@ -182,7 +229,14 @@ unsafe extern "C" fn connect_trampoline(
         };
         peers.connect(peer as usize, text, conn_port)
     }))
-    .unwrap_or(Verdict::Declined);
+    // A receiver without a pin refuses nothing, even after a panic.
+    .unwrap_or_else(|_| {
+        if peers.source.pin().is_some() {
+            Verdict::Declined
+        } else {
+            Verdict::Unrecorded
+        }
+    });
     if verdict == Verdict::Declined { -1 } else { 0 }
 }
 
@@ -274,6 +328,7 @@ mod tests {
             let h = pinned("127.0.0.1");
             assert_eq!(on_connect(&mut t, &h, 1, text, 5000), Verdict::Declined);
             assert!(t.is_empty(), "{text:?}");
+            assert_eq!(h.rejected(), 1, "{text:?}");
             let first = SourceHandle::new(Some(SourcePin::First));
             assert_eq!(on_connect(&mut t, &first, 1, text, 5000), Verdict::Declined);
             // Without a pin nothing is turned away: the peer is delivered as
@@ -289,45 +344,65 @@ mod tests {
     }
 
     #[test]
-    fn the_table_is_capped_at_256() {
+    fn many_peers_from_one_ip_never_keep_another_out() {
+        const MANY: usize = 10_000;
+        // `first`, not yet latched: every peer of the first IP is recorded,
+        // and a second IP still gets in.
         let mut t = HashMap::new();
-        let h = pinned("127.0.0.1");
-        for peer in 0..MAX_PEERS {
+        let first = SourceHandle::new(Some(SourcePin::First));
+        for peer in 0..MANY {
             assert_eq!(
-                on_connect(&mut t, &h, peer, "127.0.0.1", 1000 + peer as u16),
-                Verdict::Recorded
+                on_connect(&mut t, &first, peer, "127.0.0.2", peer as u16),
+                Verdict::Recorded,
+                "peer {peer}"
             );
         }
-        assert_eq!(t.len(), 256);
         assert_eq!(
-            on_connect(&mut t, &h, 9999, "127.0.0.1", 9999),
-            Verdict::Declined
-        );
-        assert_eq!(h.rejected(), 1);
-        assert_eq!(t.len(), 256);
-        // A peer already in the table is not a new entry.
-        assert_eq!(
-            on_connect(&mut t, &h, 7, "127.0.0.1", 7777),
+            on_connect(&mut t, &first, MANY, "127.0.0.1", 5000),
             Verdict::Recorded
         );
-        assert_eq!(t.get(&7), Some(&sa("127.0.0.1:7777")));
-        // A disconnect frees a place.
-        assert!(on_disconnect(&mut t, 0));
-        assert_eq!(
-            on_connect(&mut t, &h, 9999, "127.0.0.1", 9999),
-            Verdict::Recorded
-        );
-        assert_eq!(h.rejected(), 1);
+        assert_eq!(t.len(), MANY + 1);
+        assert_eq!(first.rejected(), 0);
 
-        // Without a pin a full table accepts the peer and does not record it.
-        let open = SourceHandle::default();
-        assert_eq!(
-            on_connect(&mut t, &open, 12345, "10.0.0.9", 1),
-            Verdict::Unrecorded
-        );
-        assert_eq!(open.rejected(), 0);
-        assert_eq!(t.len(), 256);
-        assert!(!t.contains_key(&12345));
+        // An IP pin: the pinned address is recorded however many peers it has.
+        let mut t = HashMap::new();
+        let ip = pinned("127.0.0.1");
+        for peer in 0..=MANY {
+            assert_eq!(
+                on_connect(&mut t, &ip, peer, "127.0.0.1", peer as u16),
+                Verdict::Recorded,
+                "peer {peer}"
+            );
+        }
+        assert_eq!(t.len(), MANY + 1);
+        assert_eq!(ip.rejected(), 0);
+    }
+
+    #[test]
+    fn an_unknown_peer_is_refused_under_a_pin_and_delivered_without() {
+        let pinned = Peers::new(pinned("127.0.0.1"));
+        assert!(!Attribution::default().admit_block(&pinned, 7));
+        assert_eq!(pinned.source.rejected(), 1);
+        assert_eq!(pinned.source.peer_addr(), None);
+
+        let open = Peers::new(SourceHandle::default());
+        assert!(Attribution::default().admit_block(&open, 7));
+        assert_eq!(open.source.rejected(), 0);
+        assert_eq!(open.source.peer_addr(), None);
+    }
+
+    #[test]
+    fn a_pointer_reused_after_a_disconnect_reports_the_new_address() {
+        let peers = Peers::new(SourceHandle::default());
+        let mut a = Attribution::default();
+        assert_eq!(peers.connect(1, "127.0.0.1", 5000), Verdict::Recorded);
+        assert!(a.admit_block(&peers, 1));
+        assert_eq!(peers.source.peer_addr(), Some(sa("127.0.0.1:5000")));
+        // librist frees the peer and allocates a new one at the same pointer.
+        peers.disconnect(1);
+        assert_eq!(peers.connect(1, "127.0.0.2", 6000), Verdict::Recorded);
+        assert!(a.admit_block(&peers, 1));
+        assert_eq!(peers.source.peer_addr(), Some(sa("127.0.0.2:6000")));
     }
 
     #[test]

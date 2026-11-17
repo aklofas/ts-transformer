@@ -185,7 +185,9 @@ impl RistRecvTransportBuilder {
         self
     }
 
-    /// Accept data only from `pin`'s sender (see [`RistConfig::source`]).
+    /// Deliver data from one sender only: one IP on any port, or the IP of
+    /// the first delivered block for the life of the receiver. The address is
+    /// the unverified UDP source; see [`RistConfig::source`].
     pub fn source(&mut self, pin: SourcePin) -> &mut Self {
         self.config.source = Some(pin);
         self

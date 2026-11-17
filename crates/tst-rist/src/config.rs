@@ -119,9 +119,14 @@ pub struct RistConfig {
     /// A sender refuses a value outside `1..=`[`Self::MAX_PKT_SIZE`] at
     /// connect; a receiver ignores it.
     pub pkt_size: usize,
-    /// Receive side: accept data only from this sender's IP, or from the
-    /// first sender to deliver; `None` accepts every sender. A sender
-    /// refuses it at connect.
+    /// Receive side: deliver data from one sender only; `None` delivers every
+    /// sender's. [`SourcePin::Ip`] takes that IP on any port.
+    /// [`SourcePin::First`] latches the IP of the first delivered block for
+    /// the life of the receiver, any port; with a key, that is the first
+    /// sender whose data decrypted. Both forms judge the datagrams' UDP
+    /// source address, which nothing verifies: without a key, a sender that
+    /// claims the pinned address gets through. A sender refuses this at
+    /// connect.
     pub source: Option<SourcePin>,
 }
 
