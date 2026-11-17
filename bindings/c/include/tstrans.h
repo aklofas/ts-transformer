@@ -8293,10 +8293,9 @@ int tst_rist_receiver_recv_ts(struct TstRistReceiver *p,
  *
  * For a receiver from `tst_rtsp_session_into_demux_receiver` this also
  * closes the RTSP control connection after the data plane: it writes
- * TEARDOWN (500 ms bounds the wait for the control stream and the write;
- * the reply is not awaited), then tells the client's thread to stop. That
- * thread closes the control connection on its own; the call does not wait
- * for it.
+ * TEARDOWN (500 ms bounds the write; the reply is not awaited), then
+ * tells the client's thread to stop. That thread closes the control
+ * connection on its own; the call does not wait for it.
  *
  * Safe to call with `NULL` (no-op).
  *
@@ -11064,8 +11063,7 @@ struct TstRtpDemuxReceiver *tst_rtsp_session_into_demux_receiver(struct TstRtspS
  * and its `RtspClient` regardless of whether TEARDOWN succeeded (network
  * errors at teardown time are recorded in last-error but do not prevent
  * the handle from being freed). A healthy peer's 200 returns 0. The
- * TEARDOWN exchange is bounded to 500 ms, covering the wait for the
- * control stream (another thread may be using it), the request write and
+ * TEARDOWN exchange is bounded to 500 ms, covering the request write and
  * the reply: when the bound passes (a peer that does not answer, or one
  * that stopped reading) the call returns `TST_E_RTSP_TIMEOUT` and the
  * handle is still freed. A session cancelled with

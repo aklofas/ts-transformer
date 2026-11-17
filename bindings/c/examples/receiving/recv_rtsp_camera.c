@@ -617,8 +617,8 @@ int main(int argc, char **argv) {
      * The RTSP control channel lives in the receiver, so closing the
      * receiver also ends the RTSP session: it closes the data plane
      * first (so nothing is left parked in a recv), then writes TEARDOWN.
-     * The write and the wait for the control stream are bounded to
-     * 500 ms, and the camera's reply is not awaited, so a camera that
+     * The write is bounded to 500 ms, and the camera's reply is not
+     * awaited, so a camera that
      * stopped answering cannot hold the TEARDOWN up longer than that.
      * The RTSP client's thread is then told to stop and closes the
      * control connection on its own; the call does not wait for it.
