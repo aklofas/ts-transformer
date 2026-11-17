@@ -632,6 +632,7 @@ impl ClientEngine {
                     target: "tst_rtp::client::keepalive",
                     "keepalive ping got 454 Session Not Found; marking session dead"
                 );
+                self.keepalive = Keepalive::Off;
                 self.events.push_back(Event::SessionDead);
                 self.events
                     .push_back(Event::Ended(EndReason::SessionExpired));

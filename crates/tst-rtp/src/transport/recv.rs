@@ -660,7 +660,9 @@ impl RtpRecvTransport {
                     // `Cancelled` was recorded before the queue closed: by
                     // the owning `RtspClient`'s `Drop`, or by its thread when
                     // stopped. This end is the cancel, not a broken wire.
-                    self.source = None;
+                    // Latched as this transport's own cancel, so every later
+                    // call answers it too.
+                    self.cancel.cancel();
                     return Err(TransportError::ExplicitClose);
                 }
                 Err(e @ TransportError::Broken { .. }) => {
