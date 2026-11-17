@@ -42,7 +42,10 @@ pub struct RtspClientBuilder {
 impl RtspClientBuilder {
     /// New builder for `url`. URL-embedded credentials
     /// (`rtsp://user:pass@host/...`) are picked up as defaults; call
-    /// [`Self::auth`] to override.
+    /// [`Self::auth`] to override. A user name without a password
+    /// (`rtsp://user@host/...`) answers a challenge with an empty password,
+    /// as `rtsp://user:@host/...` does; an empty user name sends no
+    /// credentials.
     ///
     /// # Errors
     ///
@@ -52,10 +55,11 @@ impl RtspClientBuilder {
     }
 
     /// Builder for an already parsed URL; URL userinfo becomes the default
-    /// credentials, which [`Self::auth`] overrides. Every query option the
-    /// URL carries (`?transport=`, `?rtsp_version=`, `?tcp_keepalive=`,
-    /// `?recv_timeout=`) is kept, so a caller holding an [`RtspUrl`] need
-    /// not render it back to a string first.
+    /// credentials, which [`Self::auth`] overrides (a user name without a
+    /// password answers with an empty one, see [`Self::new`]). Every query
+    /// option the URL carries (`?transport=`, `?rtsp_version=`,
+    /// `?tcp_keepalive=`, `?recv_timeout=`) is kept, so a caller holding an
+    /// [`RtspUrl`] need not render it back to a string first.
     pub fn from_url(url: RtspUrl) -> Self {
         let username = url.username.clone();
         let password = url.password.clone();
@@ -107,7 +111,9 @@ impl RtspClientBuilder {
     }
 
     /// Provide explicit credentials. Overrides anything parsed from
-    /// the URL's userinfo component.
+    /// the URL's userinfo component. The password may be empty; an empty
+    /// `username` sends no credentials. A URL user name without a password
+    /// already answers with an empty one, so this call is not needed for it.
     ///
     /// # Example
     /// ```

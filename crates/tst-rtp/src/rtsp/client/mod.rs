@@ -29,6 +29,7 @@ use crate::error::RtspError;
 use crate::url::{RtspScheme, RtspUrl};
 use driver::{Command, DriverHandle};
 use engine::{ClientEngine, Credentials, EngineConfig};
+use secrecy::SecretString;
 use tst_core::cancel::FlagCancel;
 use tst_core::transport::EndReasonHandle;
 
@@ -358,14 +359,19 @@ impl RtspClient {
         }
         .map_err(|e| RtspError::Io(e.kind()))?;
 
-        // An answer to a challenge needs both a user name and a password.
-        let credentials = match (&url.username, &url.password) {
-            (Some(username), Some(password)) => Some(Credentials {
+        // A user name without a password answers a challenge with an empty
+        // one (RFC 7617 allows it), so `u@h` and `u:@h` behave the same.
+        let credentials = url
+            .username
+            .as_ref()
+            .filter(|username| !username.is_empty())
+            .map(|username| Credentials {
                 username: username.clone(),
-                password: password.clone(),
-            }),
-            _ => None,
-        };
+                password: url
+                    .password
+                    .clone()
+                    .unwrap_or_else(|| SecretString::new("".into())),
+            });
         let engine = ClientEngine::new(EngineConfig {
             uri: url.render_no_credentials(),
             version: url.rtsp_version,
