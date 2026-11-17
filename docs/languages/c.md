@@ -75,7 +75,7 @@ Every release exposes two pairs of macros in `tstrans.h` plus matching runtime a
 #define TST_VERSION_MINOR        10
 #define TST_VERSION_PATCH        0
 #define TST_ABI_VERSION_MAJOR    0   // C ABI contract version
-#define TST_ABI_VERSION_MINOR    30
+#define TST_ABI_VERSION_MINOR    31
 ```
 
 The **ABI** pair is what binding consumers should pin against. Minor bumps are additive (new entry points / new enum variants); a future major bump will be breaking (none yet — sitting at `0` pre-1.0). Check at process startup:
@@ -422,6 +422,31 @@ Rules the types do not enforce:
 - **Port 0.** `tst_rtsp_server_local_addr` writes the bound address NUL-terminated and returns the bytes written, so a server built on port 0 can report the port the kernel picked. A buffer too small for the address plus its NUL is `TST_E_INVALID_CONFIG` ("buffer too small") and nothing is written; 64 bytes holds any address. `tst_hls_publisher_local_addr` follows the same convention.
 
 ffmpeg pushes elementary tracks and cannot push KLV over RTSP; GStreamer's `rtspclientsink` can push MPEG-TS or H.264 + KLV. The C example [`recv_rtsp_publish.c`](/bindings/c/examples/receiving/recv_rtsp_publish.c) runs the whole loop, with push commands in its header; the [publisher ingest recipe](/docs/cookbook/receiving/rtsp-publish-ingest.md) covers the same flow from Rust.
+
+## UDP and RIST ingest: the publisher's address (`TST_HAS_UDP`, `TST_HAS_RIST`)
+
+A server that takes UDP or RIST ingest on its own ports can ask each receiver who is publishing to it and keep it to one address (ABI 31). Each of `tst_udp_receiver`, `tst_udp_demux_receiver`, `tst_rist_receiver` and `tst_rist_demux_receiver` has the same two getters:
+
+```c
+int tst_udp_receiver_peer_addr(struct TstUdpReceiver *p, char *buf, size_t buf_len);
+int tst_udp_receiver_get_source_rejected(struct TstUdpReceiver *p, uint64_t *out);
+```
+
+- **`_peer_addr`** writes the address of the sender of the datagram (UDP) or block (RIST) delivered last, where that address is known, as NUL-terminated `ip:port` (`[v6]:port` for IPv6), and returns its length. It returns 0 and writes `""` until the first one is delivered. An IPv4 sender on a dual-stack (`[::]`) bind is written in IPv4 form. A buffer too small for the text plus its NUL (`buf_len == 0` included) is `TST_E_INVALID_CONFIG` ("buffer too small") and nothing is written; 64 bytes hold any address.
+- **`_get_source_rejected`** reads how many datagrams the `source` pin below turned away; 0 without a pin.
+- Both read a record kept beside the receiver, so they never wait behind a receive parked on another thread, and they still answer after `_cancel`. `_close` frees the handle, as for every getter.
+
+**The address is not proof.** It is the source address of the datagrams, and nothing proves the sender can receive there: it can be forged. SRT, RTSP and TCP addresses are proven by a handshake; UDP and RIST ones are not, and on RIST a pre-shared key does not prove it either (a recording replayed one way from another address was accepted and delivered). Use it for logging and per-address rules, not as an identity.
+
+**The `source` key.** A `udp://` or `rist://@…` receiver URL takes `?source=<ip>` or `?source=first`; datagrams from any other IP are dropped and counted in `_get_source_rejected`, in no received counter, and neither sender is told. Without the key a receiver delivers every sender that reaches it, interleaved, and `_peer_addr` names whichever delivered last.
+
+- The pin compares the IP address only, never the port: a sender that restarts, or whose NAT changes its port, continues.
+- `source=first` latches the IP of the first delivered datagram or block and holds it until the receiver is closed; there is no release. On UDP any first datagram with a payload takes it, whoever sent it (an empty datagram does not); on a RIST receiver with a pre-shared key only a sender whose data decrypts can.
+- If the publisher's IP changes under a pin, its datagrams are rejected and counted, and the receiver delivers nothing until it is closed and reopened.
+- An IPv4 sender on a dual-stack bind is compared in IPv4 form.
+- A sender URL with the key is refused, and so is a value that is neither an IP literal nor `first`; an IPv6 pin on a `udp://` receiver bound to an IPv4 address is refused at open. A misspelt key (`?sourse=`) is ignored like any unknown key, which leaves the receiver without a pin.
+
+[`recv_udp.c`](/bindings/c/examples/receiving/recv_udp.c) prints the publisher's address after its first packet.
 
 ## Language-specific gotchas
 

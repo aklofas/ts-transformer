@@ -29,7 +29,8 @@
  *   2. Opening a tst_udp_receiver_t and checking for NULL + last-error.
  *   3. A blocking receive loop driven by tst_udp_receiver_recv_ts.
  *   4. Decoding and logging each TS packet's header fields (sync byte, PID,
- *      payload_unit_start_indicator, continuity counter).
+ *      payload_unit_start_indicator, continuity counter), and the
+ *      publisher's address once, after the first packet.
  *   5. Clean shutdown on reaching a packet cap, and on a transport error.
  *
  * Note on shutdown: tst_udp_receiver_cancel exists and may be called from
@@ -180,6 +181,20 @@ int main(int argc, char **argv) {
         int rc = tst_udp_receiver_recv_ts(rx, buf, sizeof(buf), &n);
 
         if (rc == 0) {
+            if (received == 0) {
+                /*
+                 * Who is publishing: the source address of the datagram just
+                 * delivered. Nothing verifies it, so a sender can forge it;
+                 * treat it as a hint for logging or a per-address rule, not
+                 * as proof of identity. To take one address only, open with
+                 * `?source=<ip>` or `?source=first` in the URL. 64 bytes
+                 * hold any address.
+                 */
+                char peer[64];
+                if (tst_udp_receiver_peer_addr(rx, peer, sizeof(peer)) > 0) {
+                    fprintf(stderr, "Publisher: %s\n", peer);
+                }
+            }
             /* n is always TS_PACKET_SIZE on success; decode + log the header. */
             print_ts_header(received, buf);
             received += 1;
