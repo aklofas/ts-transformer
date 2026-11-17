@@ -50,6 +50,7 @@ use std::thread::JoinHandle;
 use bytes::Bytes;
 
 use crate::rtsp::client::Stream;
+pub(crate) use crate::rtsp::client::engine::InterleavedChannels;
 use crate::rtsp::client::keepalive::KEEPALIVE_CSEQ_BASE;
 use crate::rtsp::message::{
     RtspFraming, RtspResponse, pump_accumulation_exceeded, rtsp_frame_decision,
@@ -123,17 +124,6 @@ pub(crate) struct PumpStats {
     /// [`KEEPALIVE_CSEQ_BASE`](crate::rtsp::client::keepalive::KEEPALIVE_CSEQ_BASE))
     /// consumed by the pump instead of being routed to `ctrl_tx`.
     pub(crate) keepalive_responses: AtomicU64,
-}
-
-/// SETUP-allocated channel pair. The SETUP handler assigns these (the
-/// client requests `interleaved=N-M` in its Transport header; the server
-/// echoes or reassigns).
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct InterleavedChannels {
-    /// Channel number for RTP data frames.
-    pub(crate) rtp: u8,
-    /// Channel number for RTCP frames (conventionally `rtp + 1`).
-    pub(crate) rtcp: u8,
 }
 
 // Framing rules live in `crate::rtsp::framing` (shared with the server's

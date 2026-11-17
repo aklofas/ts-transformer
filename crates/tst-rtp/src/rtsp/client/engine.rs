@@ -13,9 +13,13 @@ use secrecy::SecretString;
 use tst_core::transport::EndReason;
 
 use crate::error::RtspError;
+use crate::packet::RtpHeader;
 use crate::rtsp::auth::{AuthSchemes, build_authorization};
 use crate::rtsp::client::{AuthState, duration_ms_saturating};
-use crate::rtsp::message::{RtspMethod, RtspRequest, RtspResponse};
+use crate::rtsp::framing::parse_binary_frame_header;
+use crate::rtsp::message::{
+    RtspFraming, RtspMethod, RtspRequest, RtspResponse, rtsp_frame_decision,
+};
 use crate::url::RtspVersion;
 
 /// The user name and password the client answers a challenge with.
@@ -97,11 +101,26 @@ pub(crate) enum Event {
     Ended(EndReason),
 }
 
+/// SETUP-allocated channel pair. The SETUP handler assigns these (the
+/// client requests `interleaved=N-M` in its Transport header; the server
+/// echoes or reassigns).
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct InterleavedChannels {
+    /// Channel number for RTP data frames.
+    pub(crate) rtp: u8,
+    /// Channel number for RTCP frames (conventionally `rtp + 1`).
+    pub(crate) rtcp: u8,
+}
+
 #[derive(Debug, Default)]
 pub(crate) struct EngineCounters {
+    /// Complete RTSP messages read, ping replies excepted.
     pub rtsp_messages: u64,
+    /// Frames on the RTP channel, malformed ones included.
     pub rtp_frames: u64,
     pub rtcp_frames: u64,
+    /// Frames dropped (unknown channel, bad RTP header, non-UTF-8 headers)
+    /// and framing violations that closed the stream.
     pub malformed_frames: u64,
     pub keepalive_responses: u64,
     pub unmatched_replies: u64,
@@ -169,6 +188,10 @@ pub(crate) struct ClientEngine {
     transmits: VecDeque<Transmit>,
     events: VecDeque<Event>,
     counters: EngineCounters,
+    /// Control-stream bytes not yet framed: at most one incomplete frame
+    /// between calls to `handle_input`.
+    inbuf: Vec<u8>,
+    channels: Option<InterleavedChannels>,
 }
 
 // By hand: the queued transmits can carry an `Authorization` header.
@@ -186,6 +209,8 @@ impl std::fmt::Debug for ClientEngine {
             .field("transmits", &self.transmits.len())
             .field("events", &self.events.len())
             .field("counters", &self.counters)
+            .field("buffered", &self.inbuf.len())
+            .field("channels", &self.channels)
             .finish_non_exhaustive()
     }
 }
@@ -216,6 +241,8 @@ impl ClientEngine {
             transmits: VecDeque::new(),
             events: VecDeque::new(),
             counters: EngineCounters::default(),
+            inbuf: Vec::new(),
+            channels: None,
         }
     }
 
@@ -364,19 +391,7 @@ impl ClientEngine {
             }
             StreamEnd::Stopped => (io::ErrorKind::UnexpectedEof, EndReason::Cancelled),
         };
-        self.closed = Some(kind);
-        self.keepalive = Keepalive::Off;
-        self.pings.clear();
-        self.transmits.clear();
-        if !stopped {
-            self.events.push_back(Event::SessionDead);
-        }
-        // The end is reported before the reply it causes, so whoever the
-        // reply wakes already sees why the stream ended.
-        self.events.push_back(Event::Ended(reason));
-        if let Some(t) = self.caller.take() {
-            self.reply(t.id, Err(RtspError::Io(kind)));
-        }
+        self.end_stream(kind, reason, !stopped, RtspError::Io(kind));
     }
 
     pub(crate) fn poll_timeout(&self) -> Option<Instant> {
@@ -402,8 +417,166 @@ impl ClientEngine {
         self.events.pop_front()
     }
 
+    /// Bytes read from the control stream: interleaved `$` frames and RTSP
+    /// messages, split at any byte. Ignored once the stream has ended.
+    pub(crate) fn handle_input(&mut self, bytes: &[u8], now: Instant) {
+        if self.closed.is_some() {
+            return;
+        }
+        self.inbuf.extend_from_slice(bytes);
+        // Frames are consumed by offset and the buffer drained once, so a
+        // read holding many small frames costs one copy, not one per frame.
+        let mut at = 0;
+        while self.closed.is_none() {
+            let rest = self.inbuf.get(at..).unwrap_or_default();
+            if rest.is_empty() {
+                break;
+            }
+            let used = if rest.first() == Some(&b'$') {
+                let Some((channel, total_len)) = parse_binary_frame_header(rest) else {
+                    break;
+                };
+                let payload = Bytes::copy_from_slice(rest.get(4..total_len).unwrap_or_default());
+                self.route_frame(channel, payload);
+                total_len
+            } else {
+                match rtsp_frame_decision(rest) {
+                    RtspFraming::NeedMore => break,
+                    RtspFraming::Complete { total_len } => {
+                        let parsed = RtspResponse::parse(rest.get(..total_len).unwrap_or_default());
+                        self.route_message(parsed.map(|(resp, _)| resp), now);
+                        total_len
+                    }
+                    RtspFraming::NonUtf8Headers { skip } => {
+                        self.counters.malformed_frames += 1;
+                        if let Some(t) = self.caller.take() {
+                            self.reply(
+                                t.id,
+                                Err(RtspError::BadResponse {
+                                    detail: "non-UTF8 RTSP headers",
+                                }),
+                            );
+                        }
+                        skip
+                    }
+                    RtspFraming::HeadersTooLong => {
+                        let msg = format!(
+                            "control stream buffer exceeded RTSP header/body caps ({} bytes buffered)",
+                            rest.len()
+                        );
+                        self.framing_violation("RTSP response headers exceed maximum", msg);
+                        break;
+                    }
+                    RtspFraming::BadContentLength(detail) => {
+                        let msg = format!("malformed RTSP Content-Length: {detail}");
+                        self.framing_violation(detail, msg);
+                        break;
+                    }
+                    RtspFraming::BodyOffsetOverflow => {
+                        let detail = "RTSP body offset overflow";
+                        self.framing_violation(detail, detail.to_string());
+                        break;
+                    }
+                }
+            };
+            at += used;
+        }
+        if self.closed.is_none() {
+            self.inbuf.drain(..at.min(self.inbuf.len()));
+        }
+    }
+
+    /// The interleaved channels SETUP agreed; until called, every `$` frame
+    /// is counted as malformed and dropped.
+    pub(crate) fn set_interleaved(&mut self, channels: InterleavedChannels) {
+        self.channels = Some(channels);
+    }
+
     pub(crate) fn counters(&self) -> &EngineCounters {
         &self.counters
+    }
+
+    /// End the stream for good: queued transmits, awaited pings and
+    /// buffered input are dropped, and a waiting request gets `caller_error`
+    /// after the `Ended`, so whoever its reply wakes already sees why.
+    fn end_stream(
+        &mut self,
+        kind: io::ErrorKind,
+        reason: EndReason,
+        session_dead: bool,
+        caller_error: RtspError,
+    ) {
+        self.closed = Some(kind);
+        self.keepalive = Keepalive::Off;
+        self.pings.clear();
+        self.transmits.clear();
+        self.inbuf = Vec::new();
+        if session_dead {
+            self.events.push_back(Event::SessionDead);
+        }
+        self.events.push_back(Event::Ended(reason));
+        if let Some(t) = self.caller.take() {
+            self.reply(t.id, Err(caller_error));
+        }
+    }
+
+    /// The control stream broke a framing rule it cannot be resynced past.
+    fn framing_violation(&mut self, detail: &'static str, msg: String) {
+        tracing::warn!(target: "tst_rtp::client::pump", %msg, "closing the control stream");
+        self.counters.malformed_frames += 1;
+        self.end_stream(
+            io::ErrorKind::InvalidData,
+            EndReason::ProtocolError { msg },
+            true,
+            RtspError::BadResponse { detail },
+        );
+    }
+
+    /// One `$` frame: whole RTP packets on the RTP channel (their header is
+    /// checked, not stripped), payloads on the RTCP channel.
+    fn route_frame(&mut self, channel: u8, payload: Bytes) {
+        match self.channels {
+            Some(c) if channel == c.rtp => {
+                self.counters.rtp_frames += 1;
+                match RtpHeader::decode(&payload) {
+                    Ok(_) => self.events.push_back(Event::Media(payload)),
+                    Err(e) => {
+                        self.counters.malformed_frames += 1;
+                        tracing::debug!(
+                            target: "tst_rtp::client::pump",
+                            error = ?e,
+                            "interleaved RTP frame rejected; counter ticked",
+                        );
+                    }
+                }
+            }
+            Some(c) if channel == c.rtcp => {
+                self.counters.rtcp_frames += 1;
+                self.events.push_back(Event::Rtcp(payload));
+            }
+            _ => {
+                self.counters.malformed_frames += 1;
+                tracing::debug!(
+                    target: "tst_rtp::client::pump",
+                    channel,
+                    "frame on unknown channel; dropping"
+                );
+            }
+        }
+    }
+
+    /// One complete RTSP message. A message that is not a response (a
+    /// server request, a bad status line) answers nothing.
+    fn route_message(&mut self, parsed: Result<RtspResponse, RtspError>, now: Instant) {
+        let Ok(resp) = parsed else {
+            self.counters.rtsp_messages += 1;
+            self.counters.unmatched_replies += 1;
+            return;
+        };
+        if !resp.cseq().is_some_and(|c| self.pings.contains(&c)) {
+            self.counters.rtsp_messages += 1;
+        }
+        self.handle_reply(resp, now);
     }
 
     fn reply(&mut self, txn: TxnId, result: Result<RtspResponse, RtspError>) {
@@ -1892,5 +2065,675 @@ mod tests {
             events(&mut e);
         }
         assert!(seen.len() > 80, "{}", seen.len());
+    }
+
+    // --- the inbound half: framing, media, RTCP, caps ---
+
+    use crate::packet::{RTP_HEADER_LEN, RTP_PT_MP2T, RtpHeader};
+    use crate::rtsp::message::{MAX_RTSP_BODY_BYTES, MAX_RTSP_MESSAGE_BYTES};
+
+    const CHANNELS: InterleavedChannels = InterleavedChannels { rtp: 0, rtcp: 1 };
+
+    /// An engine fed from an interleaved stream on channels 0/1.
+    fn interleaved() -> ClientEngine {
+        let mut e = ClientEngine::new(cfg(None));
+        e.set_interleaved(CHANNELS);
+        e
+    }
+
+    /// A minimal valid fixed RTP header (V=2, PT=33).
+    fn valid_rtp_header() -> [u8; RTP_HEADER_LEN] {
+        let mut h = [0u8; RTP_HEADER_LEN];
+        RtpHeader::new(0, 0, 0).encode_into(&mut h);
+        h
+    }
+
+    /// `body` in one interleaved frame on `channel`.
+    fn interleaved_frame(channel: u8, body: &[u8]) -> Vec<u8> {
+        let mut f = vec![b'$', channel];
+        f.extend_from_slice(&u16::try_from(body.len()).unwrap().to_be_bytes());
+        f.extend_from_slice(body);
+        f
+    }
+
+    fn media(ev: &[Event]) -> Vec<&[u8]> {
+        ev.iter()
+            .filter_map(|e| match e {
+                Event::Media(b) => Some(&b[..]),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// The events of a stream closed by a framing violation: `SessionDead`,
+    /// then `ProtocolError`, then (when one was pending) the request's
+    /// `BadResponse`. Returns the end message and the reply detail.
+    fn protocol_end(ev: &[Event]) -> (String, Option<&'static str>) {
+        match ev {
+            [
+                Event::SessionDead,
+                Event::Ended(EndReason::ProtocolError { msg }),
+            ] => (msg.clone(), None),
+            [
+                Event::SessionDead,
+                Event::Ended(EndReason::ProtocolError { msg }),
+                Event::Reply {
+                    result: Err(RtspError::BadResponse { detail }),
+                    ..
+                },
+            ] => (msg.clone(), Some(*detail)),
+            other => panic!("expected a protocol end, got {other:?}"),
+        }
+    }
+
+    /// The engine is closed: input is ignored and a request is refused.
+    fn assert_closed_by_protocol_error(e: &mut ClientEngine, t0: Instant) {
+        assert!(e.inbuf.is_empty(), "nothing is kept once closed");
+        e.handle_input(&interleaved_frame(0, &valid_rtp_header()), t0);
+        assert!(e.poll_event().is_none(), "input after the end is ignored");
+        assert!(e.inbuf.is_empty());
+        assert!(matches!(
+            e.submit(spec(RtspMethod::Options, URI), None, t0),
+            Err(RtspError::Io(io::ErrorKind::InvalidData))
+        ));
+        assert!(e.poll_transmit().is_none());
+        assert_eq!(e.poll_timeout(), None);
+    }
+
+    /// Port of `rtp_whole_packet_delivered`.
+    #[test]
+    fn rtp_whole_packet_delivered() {
+        let t0 = Instant::now();
+        let header = valid_rtp_header();
+        let mut raw = vec![b'$', 0u8, 0x00, 20];
+        raw.extend_from_slice(&header);
+        raw.extend_from_slice(b"PAYLOAD!");
+        let mut e = interleaved();
+        e.handle_input(&raw, t0);
+        let mut expected = header.to_vec();
+        expected.extend_from_slice(b"PAYLOAD!");
+        let ev = events(&mut e);
+        assert_eq!(ev.len(), 1, "{ev:?}");
+        assert_eq!(media(&ev), [expected.as_slice()]);
+        assert_eq!(e.counters().rtp_frames, 1);
+        assert_eq!(e.counters().malformed_frames, 0);
+        assert!(e.inbuf.is_empty());
+    }
+
+    /// Port of `rtcp_frame_routed_to_rtcp_rx`.
+    #[test]
+    fn rtcp_frame_routed() {
+        let mut raw = vec![b'$', 1u8, 0x00, 4];
+        raw.extend_from_slice(b"\xDE\xAD\xBE\xEF");
+        let mut e = interleaved();
+        e.handle_input(&raw, Instant::now());
+        let ev = events(&mut e);
+        assert!(
+            matches!(ev.as_slice(), [Event::Rtcp(p)] if p[..] == [0xDE, 0xAD, 0xBE, 0xEF]),
+            "{ev:?}"
+        );
+        assert_eq!(e.counters().rtcp_frames, 1);
+    }
+
+    /// Port of `pump_accepts_full_u16_binary_frame`.
+    #[test]
+    fn engine_accepts_full_u16_binary_frame() {
+        let mut raw = vec![b'$', 1u8, 0xFF, 0xFF];
+        raw.extend(std::iter::repeat_n(0xABu8, 65535));
+        let mut e = interleaved();
+        e.handle_input(&raw, Instant::now());
+        let ev = events(&mut e);
+        match ev.as_slice() {
+            [Event::Rtcp(p)] => {
+                assert_eq!(p.len(), 65535, "full payload must round-trip intact");
+                assert!(p.iter().all(|&b| b == 0xAB));
+            }
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(e.counters().rtcp_frames, 1);
+        assert_eq!(e.counters().malformed_frames, 0);
+        assert!(e.poll_event().is_none());
+    }
+
+    /// Port of `rtsp_response_with_body_routed_to_ctrl_rx`: the body is
+    /// awaited before the reply is complete.
+    #[test]
+    fn rtsp_response_with_body() {
+        let t0 = Instant::now();
+        let mut e = interleaved();
+        e.submit(spec(RtspMethod::Options, URI), None, t0).unwrap();
+        let a = e.submit(spec(RtspMethod::Describe, URI), None, t0).unwrap();
+        transmits(&mut e);
+        let raw = b"RTSP/1.0 200 OK\r\nCSeq: 2\r\nContent-Length: 5\r\n\r\nHELLO";
+        e.handle_input(&raw[..raw.len() - 1], t0);
+        assert!(e.poll_event().is_none(), "the body is not complete yet");
+        e.handle_input(&raw[raw.len() - 1..], t0);
+        assert_eq!(&reply(&mut e, a).unwrap().body[..], b"HELLO");
+        assert_eq!(e.counters().rtsp_messages, 1);
+        assert!(e.inbuf.is_empty());
+    }
+
+    /// Port of `keepalive_responses_consumed_not_queued`: more ping replies
+    /// than the old control queue held are consumed, none reaches a caller.
+    #[test]
+    fn keepalive_responses_consumed_not_queued() {
+        let t0 = Instant::now();
+        let mut e = interleaved();
+        e.enable_keepalive(Some(Duration::from_secs(1)), t0);
+        let n = 40u64;
+        for i in 1..=n {
+            e.handle_timeout(ms(t0, 1000 * i), false);
+            let c = cseq(&one(&mut e));
+            e.handle_input(
+                format!("RTSP/1.0 200 OK\r\nCSeq: {c}\r\n\r\n").as_bytes(),
+                ms(t0, 1000 * i + 1),
+            );
+        }
+        assert!(events(&mut e).is_empty());
+        assert_eq!(e.counters().keepalive_responses, n);
+        assert_eq!(e.counters().rtsp_messages, 0);
+        assert_eq!(e.counters().malformed_frames, 0);
+        assert_eq!(e.counters().unmatched_replies, 0);
+    }
+
+    /// Port of `keepalive_401_refreshes_shared_auth_challenge`.
+    #[test]
+    fn keepalive_401_refreshes_shared_auth_challenge() {
+        let t0 = Instant::now();
+        let mut e = interleaved();
+        e.auth.challenge = Some(r#"Digest realm="cam", nonce="old""#.into());
+        e.auth.nc = 41;
+        e.enable_keepalive(Some(Duration::from_secs(1)), t0);
+        e.handle_timeout(ms(t0, 1000), false);
+        let c = cseq(&one(&mut e));
+        e.handle_input(
+            format!(
+                "RTSP/1.0 401 Unauthorized\r\nCSeq: {c}\r\nWWW-Authenticate: \
+                 Digest realm=\"cam\", nonce=\"rotated\", stale=true\r\n\r\n"
+            )
+            .as_bytes(),
+            t0,
+        );
+        assert!(
+            e.auth
+                .challenge
+                .as_deref()
+                .is_some_and(|c| c.contains("rotated")),
+            "the challenge must be refreshed from the ping's 401, got {:?}",
+            e.auth.challenge
+        );
+        assert_eq!(e.auth.nc, 0, "nonce-count must reset for the new challenge");
+        assert_eq!(e.counters().keepalive_responses, 1);
+    }
+
+    /// Port of `keepalive_454_flips_session_dead`.
+    #[test]
+    fn keepalive_454_flips_session_dead() {
+        let t0 = Instant::now();
+        let mut e = interleaved();
+        e.enable_keepalive(Some(Duration::from_secs(1)), t0);
+        e.handle_timeout(ms(t0, 1000), false);
+        let c = cseq(&one(&mut e));
+        e.handle_input(
+            format!("RTSP/1.0 454 Session Not Found\r\nCSeq: {c}\r\n\r\n").as_bytes(),
+            t0,
+        );
+        let ev = events(&mut e);
+        assert!(
+            matches!(
+                ev.as_slice(),
+                [Event::SessionDead, Event::Ended(EndReason::SessionExpired)]
+            ),
+            "{ev:?}"
+        );
+    }
+
+    /// Port of `rtsp_response_closes_pump_on_malformed_content_length`.
+    #[test]
+    fn rtsp_response_closes_engine_on_malformed_content_length() {
+        for header in [
+            "RTSP/1.0 200 OK\r\nCSeq: 2\r\nContent-Length: nope\r\n\r\n",
+            "RTSP/1.0 200 OK\r\nCSeq: 2\r\nContent-Length: 2000000000\r\n\r\n",
+        ] {
+            let t0 = Instant::now();
+            let mut e = interleaved();
+            e.handle_input(header.as_bytes(), t0);
+            let (msg, detail) = protocol_end(&events(&mut e));
+            assert!(
+                msg.starts_with("malformed RTSP Content-Length: "),
+                "{header:?}: {msg}"
+            );
+            assert_eq!(detail, None);
+            assert_eq!(e.counters().malformed_frames, 1);
+            assert_eq!(e.counters().rtsp_messages, 0);
+            assert_closed_by_protocol_error(&mut e, t0);
+        }
+    }
+
+    /// Port of `pump_closes_on_unterminated_header_flood`.
+    #[test]
+    fn engine_closes_on_unterminated_header_flood() {
+        let t0 = Instant::now();
+        let mut e = interleaved();
+        e.handle_input(&vec![b'A'; 128 * 1024], t0);
+        let (msg, detail) = protocol_end(&events(&mut e));
+        assert!(
+            msg.starts_with("control stream buffer exceeded RTSP header/body caps ("),
+            "{msg}"
+        );
+        assert_eq!(detail, None);
+        assert_eq!(e.counters().malformed_frames, 1);
+        assert_eq!(e.counters().rtsp_messages, 0);
+        assert_closed_by_protocol_error(&mut e, t0);
+    }
+
+    /// The same flood dribbled in: the cap holds at 64 KiB of headers.
+    #[test]
+    fn a_dribbled_header_flood_is_refused_at_the_cap() {
+        let t0 = Instant::now();
+        let mut e = interleaved();
+        let chunk = [b'A'; 1024];
+        let mut fed = 0;
+        while e.poll_event().is_none() {
+            assert!(fed <= MAX_RTSP_MESSAGE_BYTES, "no end after {fed} bytes");
+            e.handle_input(&chunk, t0);
+            fed += chunk.len();
+        }
+        assert_eq!(fed, MAX_RTSP_MESSAGE_BYTES + chunk.len());
+        assert!(e.inbuf.is_empty());
+    }
+
+    /// Port of `unknown_channel_frame_counted_and_dropped`.
+    #[test]
+    fn unknown_channel_frame_counted_and_dropped() {
+        let mut e = interleaved();
+        e.handle_input(&[b'$', 7u8, 0x00, 2, 0xAB, 0xCD], Instant::now());
+        assert!(events(&mut e).is_empty());
+        assert_eq!(e.counters().malformed_frames, 1);
+        assert_eq!(e.counters().rtp_frames, 0);
+        assert_eq!(e.counters().rtcp_frames, 0);
+        assert!(e.inbuf.is_empty());
+    }
+
+    #[test]
+    fn a_binary_frame_before_set_interleaved_is_counted_and_dropped() {
+        let t0 = Instant::now();
+        let mut e = ClientEngine::new(cfg(None));
+        let mut raw = interleaved_frame(0, &valid_rtp_header());
+        raw.extend(interleaved_frame(1, b"\xDE\xAD\xBE\xEF"));
+        e.handle_input(&raw, t0);
+        assert!(events(&mut e).is_empty());
+        assert_eq!(e.counters().malformed_frames, 2);
+        assert_eq!(e.counters().rtp_frames, 0);
+        assert_eq!(e.counters().rtcp_frames, 0);
+        // The stream goes on.
+        e.set_interleaved(CHANNELS);
+        e.handle_input(&interleaved_frame(0, &valid_rtp_header()), t0);
+        assert_eq!(media(&events(&mut e)).len(), 1);
+    }
+
+    /// Port of `undersized_rtp_frame_counted_and_dropped`.
+    #[test]
+    fn undersized_rtp_frame_counted_and_dropped() {
+        let mut e = interleaved();
+        e.handle_input(
+            &[b'$', 0u8, 0x00, 4, 0x00, 0x00, 0x00, 0x00],
+            Instant::now(),
+        );
+        assert!(events(&mut e).is_empty());
+        assert_eq!(e.counters().rtp_frames, 1);
+        assert_eq!(e.counters().malformed_frames, 1);
+    }
+
+    /// Port of `pump_skips_a_non_utf8_header_block_after_a_binary_frame`,
+    /// with no request waiting.
+    #[test]
+    fn engine_skips_a_non_utf8_header_block_after_a_binary_frame() {
+        let t0 = Instant::now();
+        let mut e = interleaved();
+        e.enable_keepalive(Some(Duration::from_secs(1)), t0);
+        e.handle_timeout(ms(t0, 1000), false);
+        let c = cseq(&one(&mut e));
+        let mut raw = interleaved_frame(0, &valid_rtp_header());
+        raw.extend_from_slice(b"RTSP/1.0 200 OK\r\nX: \xff\r\n\r\n");
+        raw.extend_from_slice(
+            format!(
+                "RTSP/1.0 454 Session Not Found\r\nCSeq: {c}\r\nContent-Length: 5\r\n\r\nHELLO"
+            )
+            .as_bytes(),
+        );
+        e.handle_input(&raw, t0);
+        let ev = events(&mut e);
+        assert!(
+            matches!(
+                ev.as_slice(),
+                [
+                    Event::Media(_),
+                    Event::SessionDead,
+                    Event::Ended(EndReason::SessionExpired)
+                ]
+            ),
+            "the reply after the skipped block still arrives: {ev:?}"
+        );
+        assert_eq!(e.counters().malformed_frames, 1);
+        assert_eq!(e.counters().keepalive_responses, 1);
+        assert!(e.inbuf.is_empty());
+    }
+
+    /// Mirror of `send_and_read_rejects_non_utf8_headers_with_their_own_detail`:
+    /// the waiting request gets the detail and the stream goes on.
+    #[test]
+    fn non_utf8_headers_answer_a_waiting_request_and_the_stream_goes_on() {
+        let t0 = Instant::now();
+        let mut e = interleaved();
+        let a = e.submit(spec(RtspMethod::Options, URI), None, t0).unwrap();
+        transmits(&mut e);
+        let mut raw = b"RTSP/1.0 200 OK\r\nCSeq: 1\r\nX: \xff\r\n\r\n".to_vec();
+        raw.extend(interleaved_frame(0, &valid_rtp_header()));
+        e.handle_input(&raw, t0);
+        let ev = events(&mut e);
+        match ev.as_slice() {
+            [
+                Event::Reply {
+                    txn,
+                    result:
+                        Err(RtspError::BadResponse {
+                            detail: "non-UTF8 RTSP headers",
+                        }),
+                },
+                Event::Media(_),
+            ] => assert_eq!(*txn, a),
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(e.counters().malformed_frames, 1);
+        let b = e.submit(spec(RtspMethod::Options, URI), None, t0).unwrap();
+        e.handle_input(b"RTSP/1.0 200 OK\r\nCSeq: 2\r\n\r\n", t0);
+        assert_eq!(reply(&mut e, b).unwrap().status, 200);
+    }
+
+    /// Mirror of `send_and_read_rejects_unterminated_headers`, whole and
+    /// in read-sized slices.
+    #[test]
+    fn unterminated_headers_answer_a_waiting_request_and_close() {
+        let mut raw = b"RTSP/1.0 200 OK\r\nX-Junk: ".to_vec();
+        raw.extend(std::iter::repeat_n(b'A', 128 * 1024));
+        for slice in [raw.len(), 4096] {
+            let t0 = Instant::now();
+            let mut e = interleaved();
+            let a = e.submit(spec(RtspMethod::Options, URI), None, t0).unwrap();
+            for c in raw.chunks(slice) {
+                e.handle_input(c, t0);
+            }
+            let ev = events(&mut e);
+            let (msg, detail) = protocol_end(&ev);
+            assert!(msg.starts_with("control stream buffer exceeded"), "{msg}");
+            assert_eq!(detail, Some("RTSP response headers exceed maximum"));
+            assert!(matches!(ev.last(), Some(Event::Reply { txn, .. }) if *txn == a));
+            assert_closed_by_protocol_error(&mut e, t0);
+        }
+    }
+
+    /// Mirror of `send_and_read_rejects_oversized_declared_body`.
+    #[test]
+    fn an_oversized_declared_body_answers_a_waiting_request_and_closes() {
+        let t0 = Instant::now();
+        let mut e = interleaved();
+        e.submit(spec(RtspMethod::Options, URI), None, t0).unwrap();
+        e.handle_input(
+            format!(
+                "RTSP/1.0 200 OK\r\nCSeq: 1\r\nContent-Length: {}\r\n\r\n",
+                MAX_RTSP_BODY_BYTES + 1
+            )
+            .as_bytes(),
+            t0,
+        );
+        let (msg, detail) = protocol_end(&events(&mut e));
+        assert_eq!(
+            msg,
+            "malformed RTSP Content-Length: Content-Length exceeds maximum"
+        );
+        assert_eq!(detail, Some("Content-Length exceeds maximum"));
+        assert_closed_by_protocol_error(&mut e, t0);
+    }
+
+    /// A body as large as the cap allows is awaited, not refused.
+    #[test]
+    fn a_body_at_the_cap_is_awaited_in_full() {
+        let t0 = Instant::now();
+        let mut e = interleaved();
+        let a = e.submit(spec(RtspMethod::Describe, URI), None, t0).unwrap();
+        let mut raw =
+            format!("RTSP/1.0 200 OK\r\nCSeq: 1\r\nContent-Length: {MAX_RTSP_BODY_BYTES}\r\n\r\n")
+                .into_bytes();
+        raw.extend(std::iter::repeat_n(b'v', MAX_RTSP_BODY_BYTES));
+        for c in raw.chunks(64 * 1024) {
+            e.handle_input(c, t0);
+        }
+        assert_eq!(reply(&mut e, a).unwrap().body.len(), MAX_RTSP_BODY_BYTES);
+        assert!(e.inbuf.is_empty());
+    }
+
+    /// Port of `interleaved_rtp_complex_header_delivered_as_whole_packet`.
+    #[test]
+    fn interleaved_rtp_complex_header_delivered_as_whole_packet() {
+        // CC=1, X=1, P=1: CSRC, one extension word, 4 payload bytes and 2
+        // padding bytes.
+        let mut rtp = vec![0xB1, RTP_PT_MP2T];
+        rtp.extend_from_slice(&[0u8; 10]);
+        rtp.extend_from_slice(&[0xAA, 0xBB, 0xCC, 0xDD]);
+        rtp.extend_from_slice(&[0xBE, 0xDE, 0x00, 0x01]);
+        rtp.extend_from_slice(&[0x11, 0x22, 0x33, 0x44]);
+        rtp.extend_from_slice(&[0xDE, 0xAD, 0xBE, 0xEF]);
+        rtp.extend_from_slice(&[0x00, 0x02]);
+        let mut e = interleaved();
+        e.handle_input(&interleaved_frame(0, &rtp), Instant::now());
+        assert_eq!(media(&events(&mut e)), [rtp.as_slice()]);
+        assert_eq!(e.counters().rtp_frames, 1);
+        assert_eq!(e.counters().malformed_frames, 0);
+    }
+
+    /// Port of `interleaved_malformed_rtp_dropped_and_counted`.
+    #[test]
+    fn interleaved_malformed_rtp_dropped_and_counted() {
+        // X=1 but the extension header is missing.
+        let rtp = vec![0x90, RTP_PT_MP2T, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+        let mut e = interleaved();
+        e.handle_input(&interleaved_frame(0, &rtp), Instant::now());
+        assert!(events(&mut e).is_empty());
+        assert_eq!(e.counters().rtp_frames, 1);
+        assert_eq!(e.counters().malformed_frames, 1);
+    }
+
+    #[test]
+    fn a_frame_split_at_any_offset_is_delivered_once() {
+        let mut rtp = valid_rtp_header().to_vec();
+        rtp.extend_from_slice(b"PAYLOAD!");
+        let mut raw = interleaved_frame(0, &rtp);
+        raw.extend_from_slice(b"RTSP/1.0 200 OK\r\nCSeq: 1\r\nContent-Length: 3\r\n\r\nv=0");
+        let check = |e: &mut ClientEngine, a: TxnId, at: &str| {
+            let ev = events(e);
+            match ev.as_slice() {
+                [Event::Media(m), Event::Reply { txn, result: Ok(r) }] => {
+                    assert_eq!(&m[..], rtp.as_slice(), "{at}");
+                    assert_eq!(*txn, a, "{at}");
+                    assert_eq!(&r.body[..], b"v=0", "{at}");
+                }
+                other => panic!("{at}: {other:?}"),
+            }
+            assert_eq!(e.counters().rtp_frames, 1, "{at}");
+            assert_eq!(e.counters().rtsp_messages, 1, "{at}");
+            assert_eq!(e.counters().malformed_frames, 0, "{at}");
+            assert!(e.inbuf.is_empty(), "{at}");
+        };
+        for k in 0..=raw.len() {
+            let t0 = Instant::now();
+            let mut e = interleaved();
+            let a = e.submit(spec(RtspMethod::Describe, URI), None, t0).unwrap();
+            e.handle_input(&raw[..k], t0);
+            e.handle_input(&raw[k..], t0);
+            check(&mut e, a, &format!("split at {k}"));
+        }
+        let t0 = Instant::now();
+        let mut e = interleaved();
+        let a = e.submit(spec(RtspMethod::Describe, URI), None, t0).unwrap();
+        for b in &raw {
+            e.handle_input(std::slice::from_ref(b), t0);
+        }
+        check(&mut e, a, "one byte at a time");
+    }
+
+    #[test]
+    fn ten_thousand_unmatched_replies_are_counted_and_keep_no_memory() {
+        let t0 = Instant::now();
+        let mut e = interleaved();
+        let a = e.submit(spec(RtspMethod::Options, URI), None, t0).unwrap();
+        let one_reply = b"RTSP/1.0 200 OK\r\nCSeq: 7\r\n\r\n";
+        let flood: Vec<u8> = one_reply.repeat(5_000);
+        e.handle_input(&flood, t0);
+        for _ in 0..5_000 {
+            e.handle_input(one_reply, t0);
+        }
+        assert!(events(&mut e).is_empty());
+        assert_eq!(e.counters().unmatched_replies, 10_000);
+        assert_eq!(e.counters().rtsp_messages, 10_000);
+        assert!(e.inbuf.is_empty());
+        // The request is still waiting for its own reply.
+        e.handle_input(b"RTSP/1.0 200 OK\r\nCSeq: 1\r\n\r\n", t0);
+        assert_eq!(reply(&mut e, a).unwrap().status, 200);
+    }
+
+    #[test]
+    fn a_reply_in_the_keepalive_range_with_no_ping_is_dropped() {
+        let t0 = Instant::now();
+        let mut e = interleaved();
+        let a = e.submit(spec(RtspMethod::Options, URI), None, t0).unwrap();
+        e.handle_input(
+            b"RTSP/1.0 454 Session Not Found\r\nCSeq: 1000001\r\n\r\n",
+            t0,
+        );
+        assert!(events(&mut e).is_empty());
+        assert_eq!(e.counters().unmatched_replies, 1);
+        assert_eq!(e.counters().keepalive_responses, 0);
+        e.handle_input(b"RTSP/1.0 200 OK\r\nCSeq: 1\r\n\r\n", t0);
+        assert_eq!(reply(&mut e, a).unwrap().status, 200);
+    }
+
+    #[test]
+    fn a_complete_message_that_is_not_a_response_is_counted_unmatched() {
+        let t0 = Instant::now();
+        let mut e = interleaved();
+        let a = e.submit(spec(RtspMethod::Options, URI), None, t0).unwrap();
+        e.handle_input(b"OPTIONS * RTSP/1.0\r\nCSeq: 1\r\n\r\n", t0);
+        assert!(events(&mut e).is_empty());
+        assert_eq!(e.counters().unmatched_replies, 1);
+        assert_eq!(e.counters().rtsp_messages, 1);
+        e.handle_input(b"RTSP/1.0 200 OK\r\nCSeq: 1\r\n\r\n", t0);
+        assert_eq!(reply(&mut e, a).unwrap().status, 200);
+    }
+
+    /// Answers a SETUP through the input path.
+    fn setup_over_input(e: &mut ClientEngine, session: &str, at: Instant) {
+        let a = e.submit(spec(RtspMethod::Setup, URI), None, at).unwrap();
+        let c = cseq(&one(e));
+        e.handle_input(
+            format!("RTSP/1.0 200 OK\r\nCSeq: {c}\r\nSession: {session}\r\n\r\n").as_bytes(),
+            at,
+        );
+        assert_eq!(reply(e, a).unwrap().status, 200);
+    }
+
+    #[test]
+    fn a_session_timeout_near_u64_max_does_not_wrap_the_interval() {
+        for enable_first in [true, false] {
+            let t0 = Instant::now();
+            let mut e = interleaved();
+            if enable_first {
+                e.enable_keepalive(None, t0);
+            }
+            setup_over_input(&mut e, &format!("abc;timeout={}", u64::MAX), t0);
+            if !enable_first {
+                e.enable_keepalive(None, t0);
+            }
+            let far = t0 + Duration::from_secs(100 * 365 * 24 * 3600);
+            assert!(
+                e.poll_timeout().is_none_or(|d| d > far),
+                "enable first: {enable_first}"
+            );
+            e.handle_timeout(t0 + Duration::from_secs(3600), false);
+            assert!(e.poll_transmit().is_none());
+        }
+    }
+
+    #[test]
+    fn timeout_zero_floors_the_interval_at_100_ms() {
+        for enable_first in [true, false] {
+            let t0 = Instant::now();
+            let mut e = interleaved();
+            if enable_first {
+                e.enable_keepalive(None, t0);
+            }
+            setup_over_input(&mut e, "abc;timeout=0", t0);
+            if !enable_first {
+                e.enable_keepalive(None, t0);
+            }
+            assert_eq!(
+                e.poll_timeout(),
+                Some(ms(t0, 100)),
+                "enable first: {enable_first}"
+            );
+        }
+    }
+
+    #[test]
+    fn input_after_the_stream_ended_is_ignored() {
+        let t0 = Instant::now();
+        let mut e = interleaved();
+        e.handle_input(b"RTSP/1.0 200 OK\r\n", t0);
+        e.handle_closed(StreamEnd::PeerClosed);
+        events(&mut e);
+        assert!(e.inbuf.is_empty());
+        e.handle_input(&interleaved_frame(0, &valid_rtp_header()), t0);
+        assert!(e.poll_event().is_none());
+        assert_eq!(e.counters().rtp_frames, 0);
+        assert!(e.inbuf.is_empty());
+    }
+
+    #[test]
+    fn an_accepted_teardown_does_not_stop_the_input() {
+        let t0 = Instant::now();
+        let mut e = interleaved();
+        let a = e.submit(spec(RtspMethod::Teardown, URI), None, t0).unwrap();
+        let mut raw = b"RTSP/1.0 200 OK\r\nCSeq: 1\r\n\r\n".to_vec();
+        raw.extend(interleaved_frame(0, &valid_rtp_header()));
+        e.handle_input(&raw, t0);
+        let ev = events(&mut e);
+        assert!(
+            matches!(
+                ev.as_slice(),
+                [
+                    Event::Ended(EndReason::CleanTeardown),
+                    Event::Reply { txn, result: Ok(_) },
+                    Event::Media(_)
+                ] if *txn == a
+            ),
+            "{ev:?}"
+        );
+    }
+
+    #[test]
+    fn the_fuzz_hook_returns_on_hostile_input() {
+        let mut flood = vec![b'A'; 70 * 1024];
+        flood.extend_from_slice(b"\r\n\r\n");
+        for data in [
+            &b""[..],
+            b"$",
+            b"$\x00\xff\xff",
+            b"RTSP/1.0 200 OK\r\nCSeq: 1\r\nContent-Length: nope\r\n\r\n",
+            b"RTSP/1.0 401 Unauthorized\r\nCSeq: 1\r\nWWW-Authenticate: Digest\r\n\r\n",
+            b"\xff\xfe\r\n\r\n$\x01\x00\x00",
+            &flood,
+        ] {
+            crate::rtsp::client::fuzz_client_engine_input(data);
+        }
     }
 }
