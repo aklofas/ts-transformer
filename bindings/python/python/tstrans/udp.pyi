@@ -194,9 +194,9 @@ class RecvTransport:
     def recv(self, timeout_ms: int | None = None) -> Tuple[bytes, Tuple[str, int]]:
         """Receive one datagram.
 
-        Returns ``(payload, (host, port))``, the shape of
-        ``socket.recvfrom``: the datagram and its sender's address, the
-        host the IP as text. An IPv4 sender on a dual-stack bind reads as
+        Returns ``(payload, (host, port))``: the datagram and its sender's
+        address, the host the IP as text, a 2-tuple for IPv6 too (the
+        shape ``srt.Socket.peer_addr()`` returns). An IPv4 sender on a dual-stack bind reads as
         IPv4. An empty datagram comes back with its sender too, but it
         does not change ``peer_addr()``. With a ``source`` pin, datagrams
         from another IP are dropped and counted in

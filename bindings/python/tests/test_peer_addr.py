@@ -58,6 +58,33 @@ def _finishes(fn: Callable[[], object], seconds: float = 2.0) -> object:
     return out[0]
 
 
+class _Watchdog:
+    """Cancels a shell through a handle taken beforehand if the block has not
+    finished within `seconds`, so a lost datagram fails the test with `what`
+    instead of waiting for the suite timeout."""
+
+    def __init__(self, rx: object, what: str, seconds: float = WAIT_S) -> None:
+        self.handle = rx.cancel_handle()  # type: ignore[attr-defined]
+        self.what = what
+        self.seconds = seconds
+        self.fired = threading.Event()
+        self.timer = threading.Timer(seconds, self._fire)
+
+    def _fire(self) -> None:
+        self.fired.set()
+        self.handle.cancel()
+
+    def __enter__(self) -> "_Watchdog":
+        self.timer.start()
+        return self
+
+    def __exit__(self, *exc: object) -> bool:
+        self.timer.cancel()
+        if self.fired.is_set():
+            pytest.fail(f"{self.what}: not done within {self.seconds} s")
+        return False
+
+
 class _TwoSenders:
     """Two UDP sockets that reach one receiver from two IP addresses.
 
@@ -184,6 +211,55 @@ def test_udp_builder_source_refuses_a_bad_value_like_the_url() -> None:
         udp.RecvTransport.builder().bind_url("udp://127.0.0.1:0").source("nowhere")
     assert from_builder.value.kind == from_url.value.kind == UdpErrorKind.URL
     assert str(from_builder.value) == str(from_url.value)
+
+
+def test_udp_dual_stack_bind_reports_an_ipv4_sender_in_ipv4_form() -> None:
+    try:
+        rx = udp.RecvTransport.builder().bind_url("udp://[::]:0").build()
+    except UdpError as e:
+        if sys.platform.startswith("linux"):
+            pytest.fail(f"no IPv6 wildcard bind on Linux: {e}")
+        pytest.skip(f"no IPv6 wildcard bind: {e}")
+    tx = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        tx.bind(("127.0.0.1", 0))
+        tx.sendto(b"4", ("127.0.0.1", rx.local_addr_port()))
+        try:
+            got = rx.recv(timeout_ms=5000)
+        except UdpError as e:
+            if e.kind != UdpErrorKind.BACKPRESSURE or sys.platform.startswith("linux"):
+                raise
+            pytest.skip("IPv4 is not delivered to a [::] bind here")
+        sender = ("127.0.0.1", tx.getsockname()[1])
+        assert got == (b"4", sender)
+        assert rx.peer_addr() == sender
+    finally:
+        tx.close()
+        rx.close()
+
+
+def test_udp_builder_source_wins_over_the_url_key() -> None:
+    rx = (
+        udp.RecvTransport.builder()
+        .bind_url("udp://127.0.0.1:0?source=10.9.9.9")
+        .source("127.0.0.1")
+        .build()
+    )
+    tx = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        tx.bind(("127.0.0.1", 0))
+        tx.sendto(b"x", ("127.0.0.1", rx.local_addr_port()))
+        assert rx.recv(timeout_ms=5000)[0] == b"x"
+    finally:
+        tx.close()
+        rx.close()
+
+
+def test_udp_builder_ipv6_pin_on_an_ipv4_bind_is_refused_by_build() -> None:
+    b = udp.RecvTransport.builder().bind_url("udp://127.0.0.1:0").source("::1")
+    with pytest.raises(UdpError) as e:
+        b.build()
+    assert e.value.kind == UdpErrorKind.URL
 
 
 def test_udp_stats_has_source_rejected() -> None:
@@ -366,7 +442,8 @@ def test_shell_receiver_peer_addr_udp() -> None:
             assert rx.peer_addr() is None
             assert rx.source_rejected() == 0
             tx.sendto(_ts_chunk(TAG_A), ("127.0.0.1", port))
-            pkt = rx.recv_bytes()
+            with _Watchdog(rx, "the sender's packet"):
+                pkt = rx.recv_bytes()
             assert pkt[1] == TAG_A
             assert rx.peer_addr() == ("127.0.0.1", tx.getsockname()[1])
     finally:
@@ -419,13 +496,14 @@ def test_shell_source_rejected() -> None:
     try:
         with shells.Receiver.open(f"udp://{pair.bind_host}:{port}?source=127.0.0.1") as rx:
             tags: list[int] = []
-            while len(tags) < ENOUGH:
-                # B's datagram queued before A's, so the pin, not arrival
-                # order, keeps it out.
-                pair.send_b(_ts_chunk(TAG_B), port)
-                pair.send_a(_ts_chunk(TAG_A), port)
-                for _ in range(7):
-                    tags.append(rx.recv_bytes()[1])
+            with _Watchdog(rx, f"{ENOUGH} of A's packets"):
+                while len(tags) < ENOUGH:
+                    # B's datagram queued before A's, so the pin, not
+                    # arrival order, keeps it out.
+                    pair.send_b(_ts_chunk(TAG_B), port)
+                    pair.send_a(_ts_chunk(TAG_A), port)
+                    for _ in range(7):
+                        tags.append(rx.recv_bytes()[1])
             assert TAG_B not in tags
             assert rx.source_rejected() > 0
             assert rx.peer_addr() == pair.a_addr
@@ -510,7 +588,8 @@ def test_shell_getters_answer_after_close() -> None:
     try:
         rx = shells.Receiver.open(f"udp://127.0.0.1:{port}")
         tx.sendto(_ts_chunk(TAG_A), ("127.0.0.1", port))
-        rx.recv_bytes()
+        with _Watchdog(rx, "the sender's packet"):
+            rx.recv_bytes()
         rx.close()
         assert rx.peer_addr() == ("127.0.0.1", tx.getsockname()[1])
         assert rx.source_rejected() == 0
@@ -533,7 +612,8 @@ def test_shell_over_tcp_reports_none() -> None:
     server.start()
     try:
         with shells.Receiver.open(f"tcp://127.0.0.1:{srv.getsockname()[1]}") as rx:
-            assert rx.recv_bytes()[1] == TAG_A
+            with _Watchdog(rx, "the server's packet"):
+                assert rx.recv_bytes()[1] == TAG_A
             assert rx.peer_addr() is None
             assert rx.source_rejected() == 0
     finally:
@@ -541,3 +621,33 @@ def test_shell_over_tcp_reports_none() -> None:
         for c in conns:
             c.close()
         srv.close()
+
+
+def test_shell_over_rist_reports_the_senders_address() -> None:
+    def open_fn(port: int) -> shells.Receiver:
+        return shells.Receiver.open(f"rist://@0.0.0.0:{port}?buffer=100")
+
+    rx, port = bind_even_port_or_skip(open_fn)
+    assert isinstance(rx, shells.Receiver)
+    try:
+        assert rx.peer_addr() is None
+        tx = _RistTx(port, TAG_A)
+        try:
+            with _Watchdog(rx, "the RIST sender's first packet"):
+                while True:
+                    try:
+                        pkt = rx.recv_bytes()
+                        break
+                    except RistError as e:
+                        # Each empty librist poll tick is a retryable refusal.
+                        if e.kind != RistErrorKind.BACKPRESSURE:
+                            raise
+            assert pkt[1] == TAG_A
+            peer = rx.peer_addr()
+            assert peer is not None
+            assert peer[0] == "127.0.0.1" and peer[1] != 0
+            assert rx.source_rejected() == 0
+        finally:
+            tx.close()
+    finally:
+        rx.close()

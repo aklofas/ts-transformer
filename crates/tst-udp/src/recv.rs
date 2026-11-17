@@ -240,6 +240,8 @@ impl UdpRecvTransport {
         buf: &mut [u8],
         deadline: std::time::Duration,
     ) -> Result<Option<usize>, crate::error::UdpError> {
+        // An empty destination is a no-op — answer before the
+        // socket is touched, so the caller's queued datagram survives.
         if buf.is_empty() {
             return Ok(Some(0));
         }
@@ -254,6 +256,8 @@ impl UdpRecvTransport {
     ///
     /// An empty `buf` returns `Ok(None)` immediately: no datagram is taken,
     /// so there is no source to name, and the queued datagram survives.
+    /// That answer is indistinguishable from a timeout, so a caller passes
+    /// a non-empty buffer.
     pub fn recv_from_timeout(
         &mut self,
         buf: &mut [u8],

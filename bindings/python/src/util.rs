@@ -456,7 +456,7 @@ pub(crate) fn redact_url_py(url: &str) -> String {
 }
 
 /// A socket address as Python's `(host, port)`: the IP as text, unbracketed,
-/// the shape `socket.recvfrom` and `tstrans.srt.Socket.peer_addr()` return.
+/// a 2-tuple for IPv6 too; the shape `tstrans.srt.Socket.peer_addr()` returns.
 pub(crate) type PyAddr = (String, u16);
 
 /// `addr` as a [`PyAddr`].
