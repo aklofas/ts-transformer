@@ -688,6 +688,7 @@ mod tests {
             crate::rtsp::server::mount::MountKind::Unicast,
             crate::rtsp::server::test_muxer_cfg(),
             8,
+            st.ended(),
         )
         .unwrap();
         st.mounts
@@ -989,6 +990,7 @@ mod tests {
             crate::rtsp::server::mount::MountKind::Unicast,
             crate::rtsp::server::test_muxer_cfg(),
             8,
+            st.ended(),
         )
         .unwrap();
         st.mounts

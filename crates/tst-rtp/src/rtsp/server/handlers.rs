@@ -1106,7 +1106,7 @@ mod tests {
             publish_counters: Default::default(),
             interleaved_writes: Default::default(),
             started: AtomicBool::new(true),
-            shutdown: AtomicBool::new(false),
+            shutdown: Arc::default(),
             local_addr: std::sync::Mutex::new(Some("127.0.0.1:8554".parse().unwrap())),
             sessions: std::sync::Mutex::new(Vec::new()),
             notice_cseq: AtomicU64::new(1_000_000),
@@ -1201,7 +1201,7 @@ mod tests {
             publish_counters: Default::default(),
             interleaved_writes: Default::default(),
             started: AtomicBool::new(true),
-            shutdown: AtomicBool::new(false),
+            shutdown: Arc::default(),
             local_addr: std::sync::Mutex::new(Some("127.0.0.1:8554".parse().unwrap())),
             sessions: std::sync::Mutex::new(Vec::new()),
             notice_cseq: AtomicU64::new(1_000_000),
@@ -1238,7 +1238,7 @@ mod tests {
             publish_counters: Default::default(),
             interleaved_writes: Default::default(),
             started: AtomicBool::new(true),
-            shutdown: AtomicBool::new(false),
+            shutdown: Arc::default(),
             local_addr: std::sync::Mutex::new(Some("127.0.0.1:8554".parse().unwrap())),
             sessions: std::sync::Mutex::new(Vec::new()),
             notice_cseq: AtomicU64::new(1_000_000),
@@ -1519,8 +1519,14 @@ mod tests {
 
     fn make_state_with_mount() -> Arc<ServerState> {
         let state = make_state();
-        let mount_state = MountState::new("/live", MountKind::Unicast, test_muxer_cfg(), 256)
-            .expect("mount state constructs");
+        let mount_state = MountState::new(
+            "/live",
+            MountKind::Unicast,
+            test_muxer_cfg(),
+            256,
+            state.ended(),
+        )
+        .expect("mount state constructs");
         state
             .mounts
             .lock()
@@ -1544,6 +1550,7 @@ mod tests {
             },
             test_muxer_cfg(),
             256,
+            state.ended(),
         )
         .expect("multicast mount state constructs");
         state

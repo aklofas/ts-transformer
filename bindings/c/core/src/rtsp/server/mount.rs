@@ -326,9 +326,11 @@ pub unsafe extern "C" fn tst_rtsp_mount_handle_free(handle: *mut TstRtspMountHan
 /// `TST_E_RTSP_MOUNT` (`MuxError::AmbiguousTarget`) if more than one video
 /// stream is present — use `tst_rtsp_mount_push_video_to` in that case.
 ///
-/// Returns `0` on success, `TST_E_CLOSED` after `tst_rtsp_mount_cancel`,
-/// `TST_E_RTSP_MOUNT` on muxer or mount errors, `TST_E_INVALID_CONFIG` if
-/// `handle` is null.
+/// Returns `0` on success, `TST_E_CLOSED` after `tst_rtsp_mount_cancel` or
+/// once the server has ended (`tst_rtsp_server_stop`,
+/// `tst_rtsp_cancel_handle_cancel` or `tst_rtsp_server_free`),
+/// `TST_E_RTSP_MOUNT` on muxer errors, `TST_E_INVALID_CONFIG` if `handle`
+/// is null.
 ///
 /// # Safety
 ///
@@ -372,9 +374,11 @@ pub unsafe extern "C" fn tst_rtsp_mount_push_video(
 /// **Do not pre-wrap the AU cell on the caller side.** The current API uses
 /// `metadata_service_id = 0x00` per ST 1402.2 App. B Table 2.
 ///
-/// Returns `0` on success, `TST_E_CLOSED` after `tst_rtsp_mount_cancel`,
-/// `TST_E_RTSP_MOUNT` on muxer or mount errors, `TST_E_INVALID_CONFIG` if
-/// `handle` is null.
+/// Returns `0` on success, `TST_E_CLOSED` after `tst_rtsp_mount_cancel` or
+/// once the server has ended (`tst_rtsp_server_stop`,
+/// `tst_rtsp_cancel_handle_cancel` or `tst_rtsp_server_free`),
+/// `TST_E_RTSP_MOUNT` on muxer errors, `TST_E_INVALID_CONFIG` if `handle`
+/// is null.
 ///
 /// # Safety
 ///
@@ -420,9 +424,11 @@ pub unsafe extern "C" fn tst_rtsp_mount_push_klv(
 /// ADTS or MPEG audio frames concatenated). `pts_90khz` is the presentation
 /// timestamp in 90 kHz ticks.
 ///
-/// Returns `0` on success, `TST_E_CLOSED` after `tst_rtsp_mount_cancel`,
-/// `TST_E_RTSP_MOUNT` on muxer or mount errors, `TST_E_INVALID_CONFIG` if
-/// `handle` is null.
+/// Returns `0` on success, `TST_E_CLOSED` after `tst_rtsp_mount_cancel` or
+/// once the server has ended (`tst_rtsp_server_stop`,
+/// `tst_rtsp_cancel_handle_cancel` or `tst_rtsp_server_free`),
+/// `TST_E_RTSP_MOUNT` on muxer errors, `TST_E_INVALID_CONFIG` if `handle`
+/// is null.
 ///
 /// # Safety
 ///
@@ -463,9 +469,11 @@ pub unsafe extern "C" fn tst_rtsp_mount_push_audio(
 /// teletext data field, CEA-708 service block, or WebVTT cue). `pts_90khz`
 /// is the presentation timestamp in 90 kHz ticks.
 ///
-/// Returns `0` on success, `TST_E_CLOSED` after `tst_rtsp_mount_cancel`,
-/// `TST_E_RTSP_MOUNT` on muxer or mount errors, `TST_E_INVALID_CONFIG` if
-/// `handle` is null.
+/// Returns `0` on success, `TST_E_CLOSED` after `tst_rtsp_mount_cancel` or
+/// once the server has ended (`tst_rtsp_server_stop`,
+/// `tst_rtsp_cancel_handle_cancel` or `tst_rtsp_server_free`),
+/// `TST_E_RTSP_MOUNT` on muxer errors, `TST_E_INVALID_CONFIG` if `handle`
+/// is null.
 ///
 /// # Safety
 ///
@@ -505,9 +513,11 @@ pub unsafe extern "C" fn tst_rtsp_mount_push_subtitle(
 /// Pass-through: `data` lands verbatim as one PES packet on `stream_id`
 /// 0xBD. PTS is written only for `carries_pts = true` streams.
 ///
-/// Returns `0` on success, `TST_E_CLOSED` after `tst_rtsp_mount_cancel`,
-/// `TST_E_RTSP_MOUNT` on muxer or mount errors, `TST_E_INVALID_CONFIG` if
-/// `handle` is null.
+/// Returns `0` on success, `TST_E_CLOSED` after `tst_rtsp_mount_cancel` or
+/// once the server has ended (`tst_rtsp_server_stop`,
+/// `tst_rtsp_cancel_handle_cancel` or `tst_rtsp_server_free`),
+/// `TST_E_RTSP_MOUNT` on muxer errors, `TST_E_INVALID_CONFIG` if `handle`
+/// is null.
 ///
 /// # Safety
 ///
@@ -553,6 +563,8 @@ pub unsafe extern "C" fn tst_rtsp_mount_push_data(
 ///
 /// On a single-stream mount, prefer `tst_rtsp_mount_push_video` — same
 /// effect, no handle required.
+///
+/// Returns the codes `tst_rtsp_mount_push_video` returns.
 ///
 /// # Safety
 ///
@@ -604,6 +616,8 @@ pub unsafe extern "C" fn tst_rtsp_mount_push_video_to(
 ///
 /// On a single-stream mount, prefer `tst_rtsp_mount_push_klv`.
 ///
+/// Returns the codes `tst_rtsp_mount_push_klv` returns.
+///
 /// # Safety
 ///
 /// `handle` must be a valid non-freed `*mut tst_rtsp_mount_handle_t`.
@@ -653,6 +667,8 @@ pub unsafe extern "C" fn tst_rtsp_mount_push_klv_to(
 ///
 /// On a single-stream mount, prefer `tst_rtsp_mount_push_audio`.
 ///
+/// Returns the codes `tst_rtsp_mount_push_audio` returns.
+///
 /// # Safety
 ///
 /// `handle` must be a valid non-freed `*mut tst_rtsp_mount_handle_t`.
@@ -697,6 +713,8 @@ pub unsafe extern "C" fn tst_rtsp_mount_push_audio_to(
 ///
 /// On a single-stream mount, prefer `tst_rtsp_mount_push_subtitle`.
 ///
+/// Returns the codes `tst_rtsp_mount_push_subtitle` returns.
+///
 /// # Safety
 ///
 /// `handle` must be a valid non-freed `*mut tst_rtsp_mount_handle_t`.
@@ -740,6 +758,8 @@ pub unsafe extern "C" fn tst_rtsp_mount_push_subtitle_to(
 /// Push one data payload targeting a specific data elementary stream.
 ///
 /// On a single-stream mount, prefer `tst_rtsp_mount_push_data`.
+///
+/// Returns the codes `tst_rtsp_mount_push_data` returns.
 ///
 /// # Safety
 ///
@@ -1084,6 +1104,22 @@ mod tests {
             rc_push,
             crate::error::TstError::Closed as i32,
             "push after cancel should return TST_E_CLOSED"
+        );
+        unsafe { tst_rtsp_mount_handle_free(mount) };
+        unsafe { crate::rtsp::server::stop::tst_rtsp_server_free(server) };
+    }
+
+    #[test]
+    fn stop_then_push_video_returns_closed() {
+        let (server, mount) = open_unicast_mount();
+        let rc_stop = unsafe { crate::rtsp::server::stop::tst_rtsp_server_stop(server, 0) };
+        assert_eq!(rc_stop, 0, "stop should return 0");
+        let nal = [0x00u8, 0x00, 0x00, 0x01, 0x65, 0xBB];
+        let rc_push = unsafe { tst_rtsp_mount_push_video(mount, nal.as_ptr(), nal.len(), 0, true) };
+        assert_eq!(
+            rc_push,
+            crate::error::TstError::Closed as i32,
+            "push after the server stopped should return TST_E_CLOSED"
         );
         unsafe { tst_rtsp_mount_handle_free(mount) };
         unsafe { crate::rtsp::server::stop::tst_rtsp_server_free(server) };

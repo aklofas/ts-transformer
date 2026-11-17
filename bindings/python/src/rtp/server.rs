@@ -147,7 +147,8 @@ impl PyMountHandle {
     /// Push one video access unit onto the lone configured video stream.
     /// Accepts any bytes-like input (bytes / bytearray / memoryview /
     /// NumPy uint8). Raises `RtspError(MOUNT)` on muxer rejection or
-    /// backpressure.
+    /// backpressure, and `RtspError(CLOSED)` once the server has ended
+    /// (`stop()`, its `cancel_handle()`, or the server being collected).
     #[pyo3(signature = (nal, *, pts, key_frame = false))]
     pub fn push_video(
         &self,

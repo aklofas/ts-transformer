@@ -61,9 +61,9 @@ pub(crate) fn server_error_to_jvm(env: &mut Env, e: RtspServerError) {
     throw_binding(env, Domain::Rtsp, &BindingError::from(e));
 }
 
-/// Mount push errors — the shared `From<MountError>` (`Mux(_)` | `Closed` → `MOUNT`,
-/// as before). NOTE: this DIFFERS from the `MuxSender`, whose `Mux(...)` is a
-/// `MuxException` — `MountHandle` pushes are `MOUNT`.
+/// Mount push errors — the shared `From<MountError>` (`Mux(_)` → `MOUNT`, `Closed`,
+/// the server ended, → `CLOSED`). NOTE: this DIFFERS from the `MuxSender`, whose
+/// `Mux(...)` is a `MuxException` — `MountHandle` muxer rejections are `MOUNT`.
 pub(crate) fn mount_error_to_jvm(env: &mut Env, e: MountError) {
     throw_binding(env, Domain::Rtsp, &BindingError::from(e));
 }
