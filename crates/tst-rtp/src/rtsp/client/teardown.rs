@@ -426,11 +426,11 @@ mod tests {
     }
 
     /// `teardown_within` is ONE deadline over the write and the reply: the
-    /// peer takes no bytes for 500 ms (64 KiB is queued ahead of the
-    /// TEARDOWN), then reads everything and never replies. The TEARDOWN
-    /// reaches the peer inside the 1 s bound, so the reply wait gets
-    /// only what is left: the call ends at the bound, not a bound after the
-    /// write. Linux only, for the reason given in `test_sockets`.
+    /// peer takes no bytes for half the bound (64 KiB is queued ahead of
+    /// the TEARDOWN), then reads everything and never replies. The TEARDOWN
+    /// reaches the peer inside the bound (`scaled(1 s)`), so the reply wait
+    /// gets only what is left: the call ends at the bound, not a bound after
+    /// the write. Linux only, for the reason given in `test_sockets`.
     #[cfg(target_os = "linux")]
     #[test]
     fn teardown_within_is_one_deadline_over_the_write_and_the_reply() {
@@ -438,8 +438,11 @@ mod tests {
         use crate::rtsp::message::RtspMethod;
         use socket2::{Domain, Socket, Type};
 
-        const BOUND: Duration = Duration::from_secs(1);
-        const PEER_PAUSE: Duration = Duration::from_millis(500);
+        // Proportional at every scale: a reply wait with a bound of its own
+        // would end at least `peer_pause + bound` in, past `bound + slack`.
+        let bound = scaled(Duration::from_secs(1));
+        let peer_pause = bound / 2;
+        let slack = bound / 4;
 
         let sock = Socket::new(Domain::IPV4, Type::STREAM, None).unwrap();
         sock.set_recv_buffer_size(4096).unwrap();
@@ -459,7 +462,7 @@ mod tests {
             let (mut sock, _) = listener.accept().unwrap();
             go_rx.recv().unwrap();
             // Pacing, not a sync: the bytes queued ahead wait this long.
-            std::thread::sleep(PEER_PAUSE);
+            std::thread::sleep(peer_pause);
             sock.set_read_timeout(Some(Duration::from_secs(10))).ok();
             let mut tail = Vec::new();
             let mut buf = [0u8; 64 * 1024];
@@ -509,7 +512,7 @@ mod tests {
 
         go_tx.send(()).unwrap();
         let t0 = Instant::now();
-        let r = client.teardown_within(BOUND);
+        let r = client.teardown_within(bound);
         let returned = Instant::now();
         let elapsed = returned - t0;
 
@@ -523,11 +526,11 @@ mod tests {
             seen - returned
         );
         assert!(
-            elapsed >= BOUND,
+            elapsed >= bound,
             "returned in {elapsed:?}, before the bound"
         );
         assert!(
-            elapsed < BOUND + scaled(Duration::from_millis(250)),
+            elapsed < bound + slack,
             "returned in {elapsed:?}: the reply wait got a bound of its own after the write \
              (the TEARDOWN reached the peer {:?} after the call began)",
             seen - t0
