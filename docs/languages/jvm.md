@@ -1628,9 +1628,10 @@ the handshake, a UDP or RIST one is not). On `udp://`, `source=first` is
 taken by the first datagram with a payload that reaches the port, whoever
 sent it; on a `rist://` receiver without a key, by the first block
 delivered, whoever sent it; with a pre-shared key, only by a sender whose
-data decrypts. Either way it holds until the receiver is closed: there is
-no release. Use the address for logging and per-address rules, not as an
-identity.
+data decrypts, and that includes a recording of the publisher's earlier
+data replayed from any address. Either way it holds until the receiver is
+closed: there is no release. Use the address for logging and per-address
+rules, not as an identity.
 
 A server that gives each stream name its own port can let the first
 publisher take the port and then decide whether to keep it. The wait for
@@ -1735,6 +1736,9 @@ After the first packet the data loop has no limit of its own: a `udp://`
 receive blocks until a packet is ready or the shell is closed, so a server
 that must not wait forever closes the receiver from another thread when the
 stream stops progressing.
+
+A refused sender who keeps sending takes every reopened receiver again, so
+refusing by `first` works only against a sender that stops.
 
 - **Without the key** every sender that reaches the receiver is delivered,
   interleaved, and `peerAddr()` names whichever delivered last.

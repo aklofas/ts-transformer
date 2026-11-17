@@ -410,7 +410,8 @@ spelling: a misspelt key (`?sourse=`) is ignored like any unknown key on
 a filter, not authentication: the source address is unverified. On UDP
 `source=first` is taken by whichever datagram with a payload arrives first;
 on RIST without a key, by whichever sender's block is delivered first; with
-a pre-shared key, only by a sender whose data decrypts.
+a pre-shared key, only by a sender whose data decrypts, and that includes a
+recording of the publisher's earlier data replayed from any address.
 See [the publisher's address and the `source` pin](/docs/cookbook/receiving/udp.md#the-publishers-address-and-the-source-pin).
 
 ## UDP / RIST receive cancellation

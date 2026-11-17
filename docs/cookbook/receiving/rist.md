@@ -89,7 +89,8 @@ pinned address gets through; with a key, data replayed from a forged
 address does too. `source=first` latches the IP of the first delivered
 block and holds it until the receiver is closed, with no release. Without a
 key that is the first block delivered, whoever sent it; with a pre-shared
-key only a sender whose data decrypts can take it. Use the address for logging and per-address rules, not as an
+key only a sender whose data decrypts can take it, and that includes a
+recording of the publisher's earlier data replayed from any address. Use the address for logging and per-address rules, not as an
 identity.
 
 ```rust
