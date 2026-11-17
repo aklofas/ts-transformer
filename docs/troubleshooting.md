@@ -500,7 +500,11 @@ server-initiated TEARDOWN (`CleanTeardown`), a keepalive `454 Session
 Not Found` (`SessionExpired`), a keepalive ping that failed to encode
 or write (`KeepaliveFailed`), a hard TCP read error (`TransportFailed`),
 a malformed or flooding peer (`ProtocolError`), or the caller's own
-`close()` / cancel-handle fire (`Cancelled`).
+`close()` / cancel-handle fire (`Cancelled`). A cancelled `recv_au()` does
+not return `Ok(None)`: it hands out the access units the receiver holds,
+then returns `Err(TransportError::ExplicitClose)` (the CLOSED kind in the
+bindings), so `Ok(None)` from `recv_au()` always means the peer ended the
+stream.
 
 Fix: call `end_reason()` on the transport or receiver after a recv
 returns `None`/`EndOfStream` or a terminal error, and match on the

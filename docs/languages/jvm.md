@@ -1073,8 +1073,10 @@ Obtain a `org.tstrans.shells.CancelHandle` from an open `Sender`, `Receiver`,
 `MuxSender` or `DemuxReceiver` (and their `Managed*` twins) and call `cancel()` from another
 thread to unblock a parked `sendBytes` / `send*` / `recvBytes` / `next()` call.
 After a cancel, every receive, send, `flush()` and `finish()` on these shells
-throws `CLOSED`, buffered data included; `org.tstrans.rtp.H264Receiver` is the
-exception and drains to end of stream:
+throws `CLOSED`, buffered data included. `org.tstrans.rtp.H264Receiver` is the
+exception: after a cancel its `recvAu()` still returns the access units it
+holds, and the one it can flush, then throws `RtpException(CLOSED)`; a cancelled
+for-each throws a `RuntimeException` with that cause:
 
 ```java
 var tx = Sender.open("srt://host:9000?mode=caller");
@@ -2359,9 +2361,11 @@ try (RtspServer server = RtspServer.start(cfg);
   `sessionTimeoutSecs`, `fanoutCapacity`, `gracefulShutdownDrainMs`,
   `tlsCert`, `tlsKey`, `acceptUnregisteredPublishers`,
   `endPublishMountOnPublisherExit`, `publishIdleTimeoutMs`.
-- **Mount errors are `RtspException(MOUNT)`.** All `pushVideo`/`pushKlv`/
+- **Mount errors are `RtspException`.** All `pushVideo`/`pushKlv`/
   `pushAudio`/`pushSubtitle`/`pushData` calls on `MountHandle` throw `RtspException` of kind
-  `MOUNT` on failure (e.g. invalid config, server already stopped). This differs
+  `MOUNT` when the muxer refuses the frame (e.g. a stream the config does not
+  have), and of kind `CLOSED` once the server has ended (`stop()`, `close()` or
+  its hard cancel), whether or not the mount was removed first. This differs
   from `MuxSender`, which throws `MuxException`.
 - **`MountHandle` carries private data too.** `pushData` / `pushDataTo`
   have the same pass-through and PTS semantics as `Muxer.pushData`.
@@ -2373,11 +2377,13 @@ try (RtspServer server = RtspServer.start(cfg);
   itself stays live in the server (still accepts new connections and fans out to
   existing ones) until `RtspServer.removeMount(path)`, `RtspServer.close()` or
   `stop()`. `removeMount` sends its sessions the Notice 5402 teardown and frees
-  the path; the `MountHandle` keeps accepting pushes that reach nobody.
+  the path; the `MountHandle` keeps accepting pushes that reach nobody until the
+  server ends.
 - **Hard-cancel.** `server.cancelHandle()` returns a cross-thread
   `RtspServerCancelHandle`; call `cancel()` to tear down the server immediately
   without the Notice 5402 teardown. Like `stop()` and `close()`, it ends
-  publish mounts' receivers and wakes a parked `nextPublisher`.
+  publish mounts' receivers, wakes a parked `nextPublisher` and makes every
+  mount push throw `RtspException(CLOSED)`.
 - **Auth.** Pass `new BasicAuth("user", "pass", "realm")` or
   `new DigestAuth("user", "pass", DigestAlgorithm.SHA256, "realm")` to
   `RtspServerConfig.builder().auth(...)`. The realm is required for server-side
@@ -2558,7 +2564,7 @@ try (RtspSession session = RtspClient.connectH264(cfg)) {
 
 | Type | Notes |
 |---|---|
-| `H264Receiver` | `listen(String url)` / `listen(String url, H264DepayConfig cfg)` for direct UDP. `recvAu()` → `H264AccessUnit \| null`. `implements AutoCloseable, Iterable<H264AccessUnit>`. |
+| `H264Receiver` | `listen(String url)` / `listen(String url, H264DepayConfig cfg)` for direct UDP. `recvAu()` → `H264AccessUnit \| null`; `null` at end of stream; after a cancel it throws `RtpException(CLOSED)` once the access units it holds are handed out. `implements AutoCloseable, Iterable<H264AccessUnit>`. |
 | `H264AccessUnit` | `annexb(): byte[]`, `pts(): long` (90 kHz ticks, i64), `keyFrame(): boolean`, `rtpTimestamp(): long`. |
 | `H264DepayConfig` | Immutable; build with `H264DepayConfig.builder()`. Defaults: `payloadType=96`, `parameterSetInjection=BEFORE_IDR`, `initialParameterSets=[]`, `maxAuBytes=8388608`. |
 | `ParameterSetInjection` | `NONE` — pass through as received; `BEFORE_IDR` (default) — prepend cached SPS/PPS before each IDR. |

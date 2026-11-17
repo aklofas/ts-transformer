@@ -531,8 +531,9 @@ parked on another thread (`send_bytes`, `recv_bytes`, `accept`,
 `__next__`, `recv`, `recv_au`, `accept_blocking`) is cancelled, and
 `close()` returns once that call has returned. After a cancel, every
 receive, send, `flush()` and `finish()` on a shell raises `CLOSED`,
-buffered data included; `tstrans.rtp.H264Receiver` is the exception and
-drains to end of stream.
+buffered data included. `tstrans.rtp.H264Receiver` is the exception: after
+a cancel its `recv_au()` still returns the access units it holds, and the
+one it can flush, then raises `RtpError(CLOSED)`.
 
 ```python
 tx = Sender.open("srt://host:9000?mode=caller")
@@ -543,7 +544,9 @@ cancel.cancel()   # wakes tx.send_bytes() → SrtError(kind=CLOSED)
 
 What the interrupted call raises is the domain's `CLOSED` kind with the
 detail `"cancelled from another thread"` — `SrtError(CLOSED)`,
-`RtpError(CLOSED)` (`H264Receiver.recv_au()` returns `None`),
+`RtpError(CLOSED)` (`H264Receiver.recv_au()` raises it once the access
+units it holds are handed out; its `None` means only that the peer ended
+the stream),
 `UdpError(CLOSED)`, `TcpError(CLOSED)`, `RistError(CLOSED)`. That is the
 same on every `tstrans.srt` shell, plain or managed: the plain shells
 close the underlying libsrt socket and report the cancel they observed,
@@ -570,7 +573,7 @@ Every native-owning class (`srt.Socket`, `rtp.RtspServer`,
 `rtp.RtspSession`, `webrtc.WhepServer`, `hls.MuxPublisher`, the shells and
 transports) closes when collected, with the GIL released, so other threads
 keep running. The collecting thread itself waits for the native close (an
-SRT linger, a TEARDOWN, a server drain, thread joins); use `with` or call
+SRT linger, a TEARDOWN write, a server drain, thread joins); use `with` or call
 `close()` to choose when that wait happens. A `MuxPublisher` collected
 without `finish_into_publisher()` is abortive: bytes a failed push
 retained are discarded and no closing cut is written;
@@ -1158,7 +1161,11 @@ elementary-stream push family (`push_video` / `push_klv` / … / `push_data`,
 plus handle-targeted `push_*_to` variants and per-kind handle accessors).
 Note that `MountHandle` retains the `push_*` naming convention (buffer op),
 while `MuxSender` uses `send_*` (transport-bound op). The `MountHandle` is
-`Arc`-shared, so multiple producer threads may push concurrently.
+`Arc`-shared, so multiple producer threads may push concurrently. A push
+raises `RtspError(MOUNT)` when the muxer refuses the frame, and
+`RtspError(CLOSED)` once the server has ended (`stop()`, the `with` exit,
+`cancel_handle().cancel()`, or the server being collected), whether or not
+the mount was removed first.
 
 ```python
 from tstrans.rtp import RtspServer, RtspServerConfig
@@ -1347,7 +1354,7 @@ with RtspClient.connect_h264(cfg) as session:
 
 | Name | Notes |
 |---|---|
-| `H264Receiver` | `listen(url, config=None)` for direct UDP; `into_h264_receiver()` from an RTSP session. `recv_au()` → `H264AccessUnit \| None`. Also iterable: `for au in rx`. |
+| `H264Receiver` | `listen(url, config=None)` for direct UDP; `into_h264_receiver()` from an RTSP session. `recv_au()` → `H264AccessUnit \| None`; `None` means the peer ended the stream; after a cancel it raises `RtpError(CLOSED)` once the access units it holds are handed out. Also iterable: `for au in rx` (a cancelled loop raises the same error). |
 | `H264AccessUnit` | `annexb: bytes`, `pts: int` (90 kHz ticks, i64), `key_frame: bool`, `rtp_timestamp: int`. |
 | `H264DepayConfig` | `payload_type=96`, `parameter_set_injection=ParameterSetInjection.BEFORE_IDR`, `initial_parameter_sets=[]`, `max_au_bytes=8388608`. All kwargs. |
 | `ParameterSetInjection` | `.NONE` — pass through as received; `.BEFORE_IDR` (default) — prepend cached SPS/PPS before each IDR. |

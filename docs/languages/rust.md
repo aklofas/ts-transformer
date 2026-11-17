@@ -342,7 +342,7 @@ It covers every step with rich `// why + how` commentary.
 | Type | Notes |
 |---|---|
 | `H264Depacketizer` | Low-level state machine: `feed(header, payload)` / `next_au()` / `flush()`. Use when you are not going through `H264Receiver`. |
-| `H264Receiver` | High-level shell: `listen("rtp://…?pt=96")` or `session.into_h264_receiver(config)`. `recv_au()` → `Option<H264Au>`. |
+| `H264Receiver` | High-level shell: `listen("rtp://…?pt=96")` or `session.into_h264_receiver(config)`. `recv_au()` → `Option<H264Au>`: `None` when the peer ended the stream; after a cancel, `Err(TransportError::ExplicitClose)` once the access units it holds are handed out. |
 | `H264Au` | Output: `annexb` (Annex-B bytes), `pts: Pts90khz` (90 kHz presentation time, delivered in decode order), `key_frame`, `rtp_timestamp`. |
 | `H264DepayConfig` | `payload_type`, `parameter_set_injection: ParameterSetInjection`, `initial_parameter_sets`, `max_au_bytes` (8 MiB default cap). |
 | `ParameterSetInjection` | `None` — pass through as received; `BeforeIdr` (default) — prepend cached SPS/PPS before every IDR frame. |
@@ -425,7 +425,7 @@ the cookbook recipe is
 | `RtspServer::add_publish_mount_with(path, PublishMountConfig)` | Registers a mount with its own options; an unset option inherits the server default, an explicit one overrides it. |
 | `RtspServerBuilder::end_publish_mount_on_publisher_exit(bool)` | Off by default. On: a mount closes when a publisher that reached RECORD leaves; on-demand mounts inherit it. |
 | `RtspServerBuilder::publish_idle_timeout(Duration)` | Off by default; zero leaves it unset. Ends a recording publisher's session after this long without a valid RTP packet of an announced payload type. |
-| `RtspServer::next_publisher(timeout)` | Takes the next on-demand mount; `Ok(None)` when the timeout passes; `Err(Shutdown)` after `stop()`. |
+| `RtspServer::next_publisher(timeout)` | Takes the next on-demand mount; `Ok(None)` when the timeout passes; `Err(Shutdown)` after `stop()` or the hard cancel (a parked call returns it within 100 ms of the cancel). |
 | `RtspServer::remove_mount(path)` | Removes a mount of any kind: every session on it gets the server-initiated TEARDOWN notice and is closed, and the path is freed. `MountNotFound` for an unknown path. |
 | `RtspServer::stats()` | `ServerStats` with `active_publishers`, `total_rtp_packets_received`, `total_rtp_bytes_received`. |
 | `PublishMountHandle` | Cheap `Clone`. `mount_path()`, `peer_count()` (PLAY readers), `generation()`, `publisher()`, `stats()`, `cancel()`, `into_recv_transport()`. |
@@ -465,7 +465,8 @@ klv`); to push KLV, use GStreamer (`rtpmp2tpay`, or `rtph264pay` plus
   consuming it if you want `stats()` and `publisher()` afterwards.
 - **How the transport ends.** `PublishMountHandle::cancel()` ends it with
   `TransportError::ExplicitClose` and leaves readers and the publisher
-  alone. `remove_mount` and `stop()` end it with `TransportError::Closed`,
+  alone. `remove_mount`, `stop()` and the server's hard cancel (within
+  100 ms, started or not) end it with `TransportError::Closed`,
   which `DemuxReceiver` reports as end of stream. A publisher leaving does
   neither unless end-on-exit is on; then a publisher that reached RECORD ends
   it with `TransportError::Closed` as it leaves.
