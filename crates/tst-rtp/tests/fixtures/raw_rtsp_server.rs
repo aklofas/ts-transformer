@@ -98,3 +98,17 @@ pub fn force_reset(sock: TcpStream) {
         .ok();
     drop(sock);
 }
+
+/// The value of `key` in a Digest `Authorization`, quotes removed.
+pub fn digest_param<'a>(authorization: &'a str, key: &str) -> &'a str {
+    let at = authorization
+        .find(&format!(" {key}="))
+        .unwrap_or_else(|| panic!("no {key} in {authorization}"))
+        + key.len()
+        + 2;
+    authorization[at..]
+        .split(',')
+        .next()
+        .unwrap()
+        .trim_matches('"')
+}

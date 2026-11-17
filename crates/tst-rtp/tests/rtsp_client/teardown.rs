@@ -1,3 +1,4 @@
+use crate::fixtures::raw_rtsp_server::digest_param;
 use crate::fixtures::rtsp_loopback_server::*;
 
 #[test]
@@ -608,20 +609,6 @@ fn teardown_answered_454_is_ok() {
     let seen = peer.join().unwrap();
     assert_eq!(teardowns(&seen), 1, "the peer saw {seen:?}");
     drop(session);
-}
-
-/// The value of `key` in a Digest `Authorization`, quotes removed.
-fn digest_param<'a>(authorization: &'a str, key: &str) -> &'a str {
-    let at = authorization
-        .find(&format!(" {key}="))
-        .unwrap_or_else(|| panic!("no {key} in {authorization}"))
-        + key.len()
-        + 2;
-    authorization[at..]
-        .split(',')
-        .next()
-        .unwrap()
-        .trim_matches('"')
 }
 
 fn md5_hex(s: &str) -> String {
