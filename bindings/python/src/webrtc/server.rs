@@ -4,8 +4,9 @@
 //! `mod.rs`). `close()` sets the latch and stops the server; a call already
 //! in flight keeps its clone of the `Arc` and finishes on the stopped server.
 //! The native server is freed, and stopped if it was not, when the Python
-//! object is collected (`WhepServer`'s `Drop`), as `tstrans.rtp.RtspServer`
-//! is; a `MountHandle` does not keep it alive.
+//! object is collected (`PyWhepServer`'s `Drop` calls `stop`, which waits
+//! for the threads; the Rust server's own `Drop` would not), as
+//! `tstrans.rtp.RtspServer` is; a `MountHandle` does not keep it alive.
 //!
 //! GIL release: `bind`, `add_mount`, `remove_mount`, `stats` and `stop`
 //! run with the GIL released through `allow_threads_parking` (`stats` asks

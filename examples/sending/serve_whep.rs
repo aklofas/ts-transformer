@@ -345,8 +345,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     // `stop` closes every viewer session (the browser sees the peer
     // connection end), closes the mounts (the server's map keeps them) and
     // joins the server's two threads, waiting at most two seconds for each.
-    // Dropping the server does the same; the explicit call makes the order
-    // clear: the last stats line reads the counters before they are frozen.
+    // Dropping the server only cancels and does not wait for the threads;
+    // the explicit call also makes the order clear: the last stats line
+    // reads the counters before they are frozen.
     print_stats(&server, &mount, &rx);
     println!("{outcome}");
     server.stop();
