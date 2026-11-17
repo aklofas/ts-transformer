@@ -124,10 +124,10 @@ impl TcpListener {
     /// Cancellable: [`Self::cancel_handle`] / [`Self::close`] drop the alive
     /// flag and a parked accept returns [`TcpError::Closed`] at its next
     /// [`ACCEPT_POLL_INTERVAL`] poll (~5 ms); every later call returns it at
-    /// the entry check. A close that lands after a connection has been
-    /// pulled off the kernel backlog is caught by one re-check right after
-    /// `accept()` succeeds: the accepted socket is dropped and this returns
-    /// [`TcpError::Closed`]. That re-check is not a barrier. A `close()` or
+    /// the entry check. A close that lands while `accept()` runs, after the
+    /// loop's last flag check, is caught by one re-check right after
+    /// `accept()` returns a connection: the accepted socket is dropped and
+    /// this returns [`TcpError::Closed`]. That re-check is not a barrier. A `close()` or
     /// `cancel()` that lands after it, while the accepted stream is being
     /// configured, does not stop this call from returning the stream: it is
     /// a result already in flight, and the next `accept_blocking` returns

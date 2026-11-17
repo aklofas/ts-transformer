@@ -206,15 +206,20 @@ outcome are listed once, in
 
 **What each close, stop and drop waits for.**
 
-- `cancel()` on a flag transport is one atomic store. On SRT it runs
+- `cancel()` on a flag transport is one atomic store (two on TCP: the
+  cancel latch, then the liveness flag), never a wait. On SRT it runs
   `srt_close` on the calling thread, which with linger on can take up to
   the linger time (see [The pattern](#the-pattern)). On a managed wrapper
   it latches, wakes the backoff wait and fires the live inner transport's
   handle, so it costs what that inner's cancel costs.
 - A transport's own `close()`: SRT runs `srt_close`, linger included;
-  RIST runs `rist_destroy`, which joins librist's protocol thread; UDP,
-  TCP and RTP mark the transport closed and release or shut down their
-  socket.
+  RIST runs `rist_destroy`, which joins librist's protocol thread. UDP
+  only marks the transport closed: its socket stays open, and its port
+  bound, until the transport is dropped. TCP marks it closed and shuts the
+  stream down (a TLS stream sends its `close_notify` first); the
+  descriptor is released when the transport drops. RTP drops its socket
+  at `close()` (a receiver fed by an RTSP interleaved session drops its
+  channel instead), so the port is free when `close()` returns.
 - `MuxSender::close()` cancels first, then waits for a send parked on
   another thread to honour the cancel and release the sender's lock, then
   closes the transport. `MuxSender::finish()` cancels nothing: it waits
@@ -226,7 +231,8 @@ outcome are listed once, in
   transport's own.
 - A binding's `close()` (`Owned::close`) cancels, waits for the call
   parked on the handle to return, then closes and drops the shell.
-- `ManagedTransport::close()` runs the same transition as its cancel, then
+- `ManagedTransport::close()` runs the same wake-up as its cancel (without
+  latching the cancel, so later sends report `Closed`), then
   joins an active reconnect worker, which waits for a `factory()` call in
   flight; its `Drop` signals the same way and does not join.
 - The servers and the RTSP client own threads or a runtime. The
@@ -277,7 +283,7 @@ trait-object pattern above. See the **Sync vs. async** section in
 | TCP / TLS (`tst-tcp`) | `TcpCancelHandle` | From the inherent `TcpTransport::cancel_handle()`, from `Transport::cancel_handle` / `RecvTransport::cancel_handle` on the same transport, or from the pipeline shell (which reads the trait method). All three hand back the same handle. A parked receive or send notices it at its next 100 ms socket timeout and returns `ExplicitClose`; a parked `TcpListener::accept_blocking` notices it at its next 5 ms poll and returns `TcpError::Closed`. |
 | UDP (`tst-udp`) | `UdpCancelHandle` | From the inherent `UdpTransport::cancel_handle()` / `UdpRecvTransport::cancel_handle()`, the trait forms, or the pipeline shell. A parked `recv_bytes` observes it at its next ~100 ms poll tick and returns `ExplicitClose`; `send_bytes` never parks and checks it at entry. `close()` stays `Closed`. `recv_timeout` (per-call deadline) does not observe it — check `is_cancelled()` between slices. |
 | RIST (`tst-rist`) | `RistCancelHandle` | From the inherent `RistTransport::cancel_handle()` / `RistRecvTransport::cancel_handle()`, the trait forms, or the pipeline shell. Observed when the current 100 ms `rist_receiver_data_read2` tick returns (`ExplicitClose` instead of that tick's `Backpressure`) and at `send_bytes` entry. `close()` (→ `rist_destroy`) stays `Closed`. |
-| Managed wrappers (`tst-pipeline`) | `ManagedCancel`, `ManagedRecvCancel` | From `ManagedTransport` / `ManagedRecvTransport` `cancel_handle()` or the pipeline shell. Latches the wrapper, wakes a backoff wait at once and fires the live inner transport's handle, so a parked inner call notices it as that transport does. A `factory()` call in progress is reached only through a `FactoryCancel` slot (see [Managed receivers in listener mode](#managed-receivers-in-listener-mode)). |
+| Managed wrappers (`tst-pipeline`) | `ManagedCancel`, `ManagedRecvCancel` | From `ManagedTransport` / `ManagedRecvTransport` `cancel_handle()` or the pipeline shell. Latches the wrapper, wakes a backoff wait at once and fires the live inner transport's handle, so a parked inner call notices it as that transport does. A `factory()` call in progress is not reached on the send side (`ManagedTransport::close()` waits for it); on the receive side only through a `FactoryCancel` slot (see [Managed receivers in listener mode](#managed-receivers-in-listener-mode)). |
 
 The table covers the byte transports, the ones that implement `Transport`
 / `RecvTransport`, their managed wrappers and the RTSP control plane. HLS
