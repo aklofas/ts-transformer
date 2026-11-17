@@ -1,8 +1,10 @@
 package org.tstrans.tcp;
 
+import java.net.InetSocketAddress;
 import java.util.Objects;
 import org.tstrans.NativeHandle;
 import org.tstrans.NativeLoader;
+import org.tstrans.internal.NativeAddr;
 import org.tstrans.mpegts.DemuxerConfig;
 import org.tstrans.shells.DemuxReceiver;
 import org.tstrans.shells.Receiver;
@@ -42,20 +44,17 @@ public final class Transport extends NativeHandle {
     Transport(long h) { setHandle(h); }
 
     /**
-     * The peer's address as {@code ip:port}, an IPv6 address in brackets
-     * ({@code [::1]:5000}). It is the TCP source address: behind a proxy, the proxy's.
+     * The peer's address, captured at accept. It is the TCP source address: behind a
+     * proxy, the proxy's. An IPv4 client of a listener bound to {@code [::]} is reported
+     * as an {@link java.net.Inet4Address}. The address is built from its bytes, with no
+     * name lookup.
      *
-     * <p>A listener bound to {@code [::]} that also accepts IPv4 clients (the default on
-     * Linux) reports an IPv4 peer in the IPv4-mapped IPv6 form,
-     * {@code [::ffff:203.0.113.5]:40000}, so a rule written as plain IPv4 text
-     * ({@code 203.0.113.5}) does not match it as a string. A listener bound to an IPv4
-     * address reports the plain form.
-     *
+     * @return the peer's address
      * @throws IllegalStateException if the connection is closed
      */
-    public String peerAddr() {
+    public InetSocketAddress peerAddr() {
         ensureOpen("Transport is closed");
-        return nPeerAddr(peekHandle());
+        return NativeAddr.decode(nPeerAddr(peekHandle()));
     }
 
     /**
@@ -151,7 +150,7 @@ public final class Transport extends NativeHandle {
 
     @Override protected void nativeClose(long h) { nClose(h); }
 
-    private static native String nPeerAddr(long handle);
+    private static native byte[] nPeerAddr(long handle);
 
     private static native void nClose(long handle);
 

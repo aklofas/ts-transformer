@@ -16,7 +16,7 @@ use std::net::SocketAddr;
 use std::sync::{Arc, LazyLock};
 
 use jni::objects::JString;
-use jni::sys::{jboolean, jint, jlong, jstring};
+use jni::sys::{jboolean, jbyteArray, jint, jlong};
 use tst_core::transport::{RecvTransport, Transport, TransportCancel};
 use tst_pipeline::binding::opened::{cancel_of, recv_cancel_of};
 use tst_pipeline::binding::view::BlockingReason;
@@ -26,6 +26,7 @@ use tst_tcp::{TcpListener, TcpListenerBuilder, TcpTransport};
 
 use crate::error::{throw_binding, throw_closed};
 use crate::handle::{HandleRegistry, OwnedRegistry};
+use crate::jutil::socket_addr_array;
 use crate::mpegts::build_demux_config_from_args;
 use crate::shells;
 use crate::shells::open::read_url;
@@ -150,15 +151,12 @@ jni_native! {
         env,
         _class,
         handle: jlong,
-    ) -> jstring = std::ptr::null_mut() => {
+    ) -> jbyteArray = std::ptr::null_mut() => {
         let Some(peer) = REGISTRY_TRANSPORT.with(handle as u64, |a| a.peer) else {
             throw_closed(env, "Transport");
             return std::ptr::null_mut();
         };
-        match env.new_string(peer.to_string()) {
-            Ok(s) => s.into_raw(),
-            Err(_) => std::ptr::null_mut(),
-        }
+        socket_addr_array(env, peer)
     }
 }
 

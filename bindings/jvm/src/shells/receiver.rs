@@ -15,7 +15,7 @@ use std::sync::LazyLock;
 use jni::jni_str;
 use jni::objects::{JObject, JString};
 use jni::sys::{jboolean, jbyteArray, jint, jlong, jstring};
-use tst_core::transport::RecvTransport;
+use tst_core::transport::{RecvTransport, SourceHandle};
 use tst_pipeline::binding::view::{BlockingReason, Snapshot};
 use tst_pipeline::binding::{BindingError, Domain, Opened, Owned};
 use tst_pipeline::{Receiver as PlReceiver, ReceiverConfig};
@@ -28,10 +28,19 @@ use crate::error::{throw_binding, throw_handle_state};
 use crate::generated::stats_shells::build_socket_stats;
 use crate::generated::stats_srt::build_srt_stats;
 use crate::handle::OwnedRegistry;
+use crate::jutil::socket_addr_array;
 
 type Shell = PlReceiver<Box<dyn RecvTransport>>;
 
-static REGISTRY: LazyLock<OwnedRegistry<Shell, Snapshot<Option<SocketAddr>>>> =
+/// The construction-time values the address getters read without the slot.
+struct RxHandles {
+    /// The address the transport bound at open, for the transports that report one.
+    local_addr: Option<SocketAddr>,
+    /// Where the transport's datagrams come from, for the transports that record it.
+    source: Option<SourceHandle>,
+}
+
+static REGISTRY: LazyLock<OwnedRegistry<Shell, Snapshot<RxHandles>>> =
     LazyLock::new(OwnedRegistry::new);
 
 jni_native! {
@@ -62,13 +71,14 @@ pub(crate) fn register(opened: Opened<Box<dyn RecvTransport>>) -> jlong {
     } = opened;
     // Taken before the transport moves into the shell.
     let end_reason = transport.end_reason_handle();
+    let source = transport.source_handle();
     let inner = PlReceiver::new(transport, ReceiverConfig::default());
     let mut owned = Owned::new(
         inner,
         cancel,
         Snapshot {
             domain,
-            handles: local_addr,
+            handles: RxHandles { local_addr, source },
         },
     );
     if let Some(h) = end_reason {
@@ -82,11 +92,56 @@ jni_native! {
     /// shell that has none. Reads the construction-time snapshot only, so it
     /// answers while `recvBytes` is parked.
     fn Java_org_tstrans_shells_Receiver_nLocalPort(env, _class, handle: jlong) -> jint = -1 => {
-        match REGISTRY.snapshot(handle as u64, |s| s.handles) {
+        match REGISTRY.snapshot(handle as u64, |s| s.handles.local_addr) {
             Some(addr) => addr.map_or(-1, |a| jint::from(a.port())),
             None => {
                 crate::error::throw_closed(env, "Receiver");
                 -1
+            }
+        }
+    }
+}
+
+jni_native! {
+    /// The address the transport bound at open, as `NativeAddr` bytes; null for
+    /// a shell that has none. Reads the construction-time snapshot only.
+    fn Java_org_tstrans_shells_Receiver_nLocalAddr(env, _class, handle: jlong) -> jbyteArray = std::ptr::null_mut() => {
+        match REGISTRY.snapshot(handle as u64, |s| s.handles.local_addr) {
+            Some(Some(addr)) => socket_addr_array(env, addr),
+            Some(None) => std::ptr::null_mut(),
+            None => {
+                crate::error::throw_closed(env, "Receiver");
+                std::ptr::null_mut()
+            }
+        }
+    }
+}
+
+jni_native! {
+    /// The sender of the datagram or block delivered last, as `NativeAddr`
+    /// bytes; null before the first one and for a transport that keeps no
+    /// source record. Reads the snapshot's shared record, never the slot.
+    fn Java_org_tstrans_shells_Receiver_nPeerAddr(env, _class, handle: jlong) -> jbyteArray = std::ptr::null_mut() => {
+        match REGISTRY.snapshot(handle as u64, |s| s.handles.source.as_ref().and_then(SourceHandle::peer_addr)) {
+            Some(Some(addr)) => socket_addr_array(env, addr),
+            Some(None) => std::ptr::null_mut(),
+            None => {
+                crate::error::throw_closed(env, "Receiver");
+                std::ptr::null_mut()
+            }
+        }
+    }
+}
+
+jni_native! {
+    /// Datagrams or blocks the source pin turned away; 0 for a transport that
+    /// keeps no source record. Reads the snapshot's shared record, never the slot.
+    fn Java_org_tstrans_shells_Receiver_nSourceRejected(env, _class, handle: jlong) -> jlong = 0 => {
+        match REGISTRY.snapshot(handle as u64, |s| s.handles.source.as_ref().map_or(0, SourceHandle::rejected)) {
+            Some(n) => super::demux_receiver::counter_to_jlong(n),
+            None => {
+                crate::error::throw_closed(env, "Receiver");
+                0
             }
         }
     }

@@ -2,12 +2,15 @@ package org.tstrans.shells;
 
 import java.util.Iterator;
 import java.util.NoSuchElementException;
+import java.net.InetSocketAddress;
+import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.concurrent.atomic.AtomicLong;
 import org.tstrans.BindingException;
 import org.tstrans.DemuxException;
 import org.tstrans.NativeHandle;
 import org.tstrans.NativeLoader;
+import org.tstrans.internal.NativeAddr;
 import org.tstrans.mpegts.DemuxEvent;
 import org.tstrans.mpegts.DemuxerConfig;
 
@@ -402,6 +405,65 @@ public class DemuxReceiver extends NativeHandle implements Iterable<DemuxEvent> 
     }
 
     /**
+     * The address the transport bound when this receiver was opened: present exactly
+     * where {@link #localPort()} is, with the same port. The value is the one captured
+     * at open; it never waits behind a {@code next()} parked on another thread.
+     *
+     * @return the bound address, or empty when the transport reports none
+     * @throws IllegalStateException if the receiver is closed
+     */
+    public Optional<InetSocketAddress> localAddr() {
+        ensureOpen("DemuxReceiver is closed");
+        return Optional.ofNullable(NativeAddr.decode(nLocalAddr(peekHandle())));
+    }
+
+    /**
+     * The address of the sender of the datagram ({@code udp://}) or block
+     * ({@code rist://}) the transport delivered last. Empty until the first one is
+     * delivered, and always empty on every other transport ({@code srt://},
+     * {@code tcp://}, {@code tcps://}, {@code rtp://} among them), which keeps no such
+     * record.
+     *
+     * <p>It is the source address the datagrams carry, and nothing proves the sender can
+     * receive there: a UDP or RIST source address can be forged. Without a
+     * {@code source} key in the URL every sender that reaches the receiver is
+     * delivered, interleaved, and this names whichever delivered last. An IPv4 sender
+     * on a {@code [::]} bind is reported as an {@link java.net.Inet4Address}. The
+     * address is built from its bytes, with no name lookup. It never waits behind a
+     * {@code next()} parked on another thread.
+     *
+     * @return the sender's address, or empty
+     * @throws IllegalStateException if the receiver is closed
+     */
+    public Optional<InetSocketAddress> peerAddr() {
+        ensureOpen("DemuxReceiver is closed");
+        return Optional.ofNullable(NativeAddr.decode(nPeerAddr(peekHandle())));
+    }
+
+    /**
+     * How much the {@code source} key of a {@code udp://} or {@code rist://} receiver
+     * URL turned away: datagrams on {@code udp://}; on {@code rist://}, datagrams from a
+     * sender the pin refuses and delivered blocks refused on the read path.
+     * {@code source=<ip>} admits that IP only; {@code source=first} admits the IP of the
+     * first datagram or block delivered and holds it until the receiver is closed. Either
+     * compares the IP address, never the port. What is turned away is counted here and in
+     * no received counter, and neither sender is told. If the publisher's IP changes
+     * under a pin, its datagrams are counted here and the receiver delivers nothing until
+     * it is closed and reopened.
+     *
+     * <p>0 on a receiver without the key, and on every other transport: an
+     * {@code rtp://} receiver's own {@code source} key is not counted here. It never
+     * waits behind a {@code next()} parked on another thread.
+     *
+     * @return the count of datagrams or blocks turned away
+     * @throws IllegalStateException if the receiver is closed
+     */
+    public long sourceRejected() {
+        ensureOpen("DemuxReceiver is closed");
+        return nSourceRejected(peekHandle());
+    }
+
+    /**
      * Return {@code true} while the receiver owns a live transport.
      *
      * @return liveness state of the underlying transport
@@ -438,5 +500,8 @@ public class DemuxReceiver extends NativeHandle implements Iterable<DemuxEvent> 
     private static native EndReason.Snapshot nClose(long handle, long[] tsBytesOut);
     private static native long nTsBytesDemuxed(long handle);
     private static native int nLocalPort(long handle);
+    private static native byte[] nLocalAddr(long handle);
+    private static native byte[] nPeerAddr(long handle);
+    private static native long nSourceRejected(long handle);
     private static native boolean nIsAlive(long handle);
 }

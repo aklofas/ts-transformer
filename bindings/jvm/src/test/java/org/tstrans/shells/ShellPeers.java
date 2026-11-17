@@ -200,6 +200,9 @@ public final class ShellPeers {
         CancelHandle cancelHandle();
         boolean isAlive();
         java.util.OptionalInt localPort();
+        java.util.Optional<java.net.InetSocketAddress> localAddr();
+        java.util.Optional<java.net.InetSocketAddress> peerAddr();
+        long sourceRejected();
         SocketStats socketStats();
         EndReason endReason();
         @Override void close();
@@ -236,6 +239,9 @@ public final class ShellPeers {
                 @Override public CancelHandle cancelHandle() { return r.cancelHandle(); }
                 @Override public boolean isAlive() { return r.isAlive(); }
                 @Override public java.util.OptionalInt localPort() { return r.localPort(); }
+                @Override public java.util.Optional<java.net.InetSocketAddress> localAddr() { return r.localAddr(); }
+                @Override public java.util.Optional<java.net.InetSocketAddress> peerAddr() { return r.peerAddr(); }
+                @Override public long sourceRejected() { return r.sourceRejected(); }
                 @Override public SocketStats socketStats() { return r.socketStats(); }
                 @Override public EndReason endReason() { return r.endReason(); }
                 @Override public void close() { r.close(); }
@@ -250,6 +256,9 @@ public final class ShellPeers {
             @Override public CancelHandle cancelHandle() { return d.cancelHandle(); }
             @Override public boolean isAlive() { return d.isAlive(); }
             @Override public java.util.OptionalInt localPort() { return d.localPort(); }
+            @Override public java.util.Optional<java.net.InetSocketAddress> localAddr() { return d.localAddr(); }
+            @Override public java.util.Optional<java.net.InetSocketAddress> peerAddr() { return d.peerAddr(); }
+            @Override public long sourceRejected() { return d.sourceRejected(); }
             @Override public SocketStats socketStats() { return d.socketStats(); }
             @Override public EndReason endReason() { return d.endReason(); }
             @Override public void close() { d.close(); }
@@ -320,6 +329,45 @@ public final class ShellPeers {
         }
         c.add(rx);
         return new ReceiverPeer(rx, closePeer);
+    }
+
+    /**
+     * Two UDP sockets with different source IPs that both reach a receiver bound to
+     * {@code receiverHost} (URL host form): {@code a} sends from 127.0.0.1 to {@code aDest},
+     * {@code b} from {@code b.getLocalAddress()} to {@code bDest}.
+     */
+    public record TwoSources(java.net.DatagramSocket a, java.net.InetAddress aDest,
+                             java.net.DatagramSocket b, java.net.InetAddress bDest,
+                             String receiverHost) {}
+
+    /**
+     * {@code b} on 127.0.0.2 where that binds (Linux routes all of 127/8 to loopback),
+     * otherwise on ::1 against a dual-stack {@code [::]} receiver. On Linux neither working is a
+     * failure; elsewhere the test is skipped.
+     */
+    public static TwoSources twoUdpSources(Cleanup c) throws Exception {
+        java.net.InetAddress v4 = java.net.InetAddress.getByAddress(new byte[] {127, 0, 0, 1});
+        java.net.DatagramSocket a = c.add(new java.net.DatagramSocket(new java.net.InetSocketAddress(v4, 0)));
+        String why;
+        try {
+            java.net.InetAddress second = java.net.InetAddress.getByAddress(new byte[] {127, 0, 0, 2});
+            java.net.DatagramSocket b = c.add(new java.net.DatagramSocket(new java.net.InetSocketAddress(second, 0)));
+            return new TwoSources(a, v4, b, v4, "127.0.0.1");
+        } catch (java.io.IOException e) {
+            why = "127.0.0.2: " + e;
+        }
+        try {
+            java.net.InetAddress v6 = java.net.InetAddress.getByAddress(
+                new byte[] {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1});
+            java.net.DatagramSocket b = c.add(new java.net.DatagramSocket(new java.net.InetSocketAddress(v6, 0)));
+            return new TwoSources(a, v4, b, v6, "[::]");
+        } catch (java.io.IOException e) {
+            why += "; ::1: " + e;
+        }
+        if (TestSupport.isLinux()) throw new AssertionError("no second UDP source address: " + why);
+        System.out.println("skipping: no second UDP source address: " + why);
+        assumeTrue(false, "no second UDP source address: " + why);
+        throw new IllegalStateException("unreachable");
     }
 
     /** A sender shell with a live peer draining it, plus a runnable that makes the peer go away. */
