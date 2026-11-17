@@ -332,27 +332,24 @@ public final class ShellPeers {
     }
 
     /**
-     * Two UDP sockets with different source IPs that both reach a receiver bound to
-     * {@code receiverHost} (URL host form): {@code a} sends from 127.0.0.1 to {@code aDest},
-     * {@code b} from {@code b.getLocalAddress()} to {@code bDest}.
+     * A UDP socket on a second source IP: {@code socket} sends to {@code dest}, which reaches a
+     * receiver bound to {@code receiverHost} (URL host form) on the same port.
      */
-    public record TwoSources(java.net.DatagramSocket a, java.net.InetAddress aDest,
-                             java.net.DatagramSocket b, java.net.InetAddress bDest,
-                             String receiverHost) {}
+    public record SecondSource(java.net.DatagramSocket socket, java.net.InetAddress dest,
+                               String receiverHost) {}
 
     /**
-     * {@code b} on 127.0.0.2 where that binds (Linux routes all of 127/8 to loopback),
-     * otherwise on ::1 against a dual-stack {@code [::]} receiver. On Linux neither working is a
-     * failure; elsewhere the test is skipped.
+     * A socket on 127.0.0.2 where that binds (Linux routes all of 127/8 to loopback), with the
+     * receiver on 127.0.0.1; otherwise on ::1 with a dual-stack {@code [::]} receiver. On Linux
+     * neither working is a failure; elsewhere the test is skipped.
      */
-    public static TwoSources twoUdpSources(Cleanup c) throws Exception {
+    public static SecondSource secondSource(Cleanup c) throws Exception {
         java.net.InetAddress v4 = java.net.InetAddress.getByAddress(new byte[] {127, 0, 0, 1});
-        java.net.DatagramSocket a = c.add(new java.net.DatagramSocket(new java.net.InetSocketAddress(v4, 0)));
         String why;
         try {
             java.net.InetAddress second = java.net.InetAddress.getByAddress(new byte[] {127, 0, 0, 2});
             java.net.DatagramSocket b = c.add(new java.net.DatagramSocket(new java.net.InetSocketAddress(second, 0)));
-            return new TwoSources(a, v4, b, v4, "127.0.0.1");
+            return new SecondSource(b, v4, "127.0.0.1");
         } catch (java.io.IOException e) {
             why = "127.0.0.2: " + e;
         }
@@ -360,7 +357,7 @@ public final class ShellPeers {
             java.net.InetAddress v6 = java.net.InetAddress.getByAddress(
                 new byte[] {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1});
             java.net.DatagramSocket b = c.add(new java.net.DatagramSocket(new java.net.InetSocketAddress(v6, 0)));
-            return new TwoSources(a, v4, b, v6, "[::]");
+            return new SecondSource(b, v6, "[::]");
         } catch (java.io.IOException e) {
             why += "; ::1: " + e;
         }
@@ -368,6 +365,107 @@ public final class ShellPeers {
         System.out.println("skipping: no second UDP source address: " + why);
         assumeTrue(false, "no second UDP source address: " + why);
         throw new IllegalStateException("unreachable");
+    }
+
+    /**
+     * Two UDP sockets with different source IPs that both reach a receiver bound to
+     * {@code receiverHost}: {@code a} sends from 127.0.0.1 to {@code aDest}, {@code b} is
+     * {@link #secondSource}'s socket.
+     */
+    public record TwoSources(java.net.DatagramSocket a, java.net.InetAddress aDest,
+                             java.net.DatagramSocket b, java.net.InetAddress bDest,
+                             String receiverHost) {}
+
+    /** {@link #secondSource} plus a first socket on 127.0.0.1; the same skip rule. */
+    public static TwoSources twoUdpSources(Cleanup c) throws Exception {
+        java.net.InetAddress v4 = java.net.InetAddress.getByAddress(new byte[] {127, 0, 0, 1});
+        java.net.DatagramSocket a = c.add(new java.net.DatagramSocket(new java.net.InetSocketAddress(v4, 0)));
+        SecondSource b = secondSource(c);
+        return new TwoSources(a, v4, b.socket(), b.dest(), b.receiverHost());
+    }
+
+    /**
+     * A two-way UDP relay on a daemon thread, for a sender that cannot choose its source
+     * address: it dials {@link #frontPort()} on 127.0.0.1, and the relay forwards each datagram
+     * to {@code to} out of {@code outward}, so the receiver sees {@code outward}'s address, and
+     * sends what comes back on {@code outward} to the sender's last address. Closing stops it.
+     */
+    public static final class UdpRelay implements AutoCloseable {
+        private final java.net.DatagramSocket front;
+        private final java.util.concurrent.atomic.AtomicBoolean stop =
+            new java.util.concurrent.atomic.AtomicBoolean();
+        private final java.util.concurrent.atomic.AtomicLong forwarded =
+            new java.util.concurrent.atomic.AtomicLong();
+        private final Thread thread;
+
+        public UdpRelay(java.net.DatagramSocket outward, java.net.InetSocketAddress to)
+                throws java.io.IOException {
+            front = new java.net.DatagramSocket(new java.net.InetSocketAddress(
+                java.net.InetAddress.getByAddress(new byte[] {127, 0, 0, 1}), 0));
+            front.setSoTimeout(2);
+            outward.setSoTimeout(1);
+            thread = new Thread(() -> run(outward, to), "udp-relay");
+            thread.setDaemon(true);
+            thread.start();
+        }
+
+        private void run(java.net.DatagramSocket outward, java.net.InetSocketAddress to) {
+            byte[] buf = new byte[65536];
+            java.net.SocketAddress sender = null;
+            while (!stop.get()) {
+                try {
+                    java.net.DatagramPacket in = new java.net.DatagramPacket(buf, buf.length);
+                    try {
+                        front.receive(in);
+                        sender = in.getSocketAddress();
+                        outward.send(new java.net.DatagramPacket(buf, in.getLength(), to));
+                        forwarded.incrementAndGet();
+                    } catch (java.net.SocketTimeoutException idle) {
+                        // nothing from the sender this tick
+                    }
+                    while (true) {
+                        java.net.DatagramPacket back = new java.net.DatagramPacket(buf, buf.length);
+                        try {
+                            outward.receive(back);
+                        } catch (java.net.SocketTimeoutException idle) {
+                            break;
+                        }
+                        if (sender != null) {
+                            front.send(new java.net.DatagramPacket(buf, back.getLength(), sender));
+                        }
+                    }
+                } catch (java.io.IOException e) {
+                    // a socket was closed under the relay at teardown, or a send failed
+                    if (front.isClosed() || outward.isClosed()) return;
+                }
+            }
+        }
+
+        public int frontPort() { return front.getLocalPort(); }
+
+        /** Datagrams relayed towards the receiver so far. */
+        public long forwarded() { return forwarded.get(); }
+
+        @Override public void close() {
+            stop.set(true);
+            try {
+                thread.join(5_000);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            front.close();
+        }
+    }
+
+    /** One packet from {@code rx}, retrying librist's BACKPRESSURE tick while nothing has arrived. */
+    public static byte[] recvTolerant(Receiver rx) throws Exception {
+        while (true) {
+            try {
+                return rx.recvBytes();
+            } catch (RistException e) {
+                if (e.kind() != RistException.Kind.BACKPRESSURE) throw e;
+            }
+        }
     }
 
     /** A sender shell with a live peer draining it, plus a runnable that makes the peer go away. */
