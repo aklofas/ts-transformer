@@ -4,6 +4,9 @@
 //! network byte order and derives the even-port check and the RTCP port
 //! (port + 1) from that wrong value.
 
+#[path = "support/even_port.rs"]
+mod even_port;
+
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket};
 use std::time::{Duration, Instant};
 
@@ -54,27 +57,6 @@ fn assert_reachable(rx: &mut RistRecvTransport, query: &str, deadline: Instant) 
     panic!("{local}: nothing arrived before the test's deadline");
 }
 
-/// An even port whose odd companion is free too (the Simple profile binds
-/// both). Another process can take it before librist binds it; callers retry.
-fn free_even_port() -> u16 {
-    for _ in 0..100 {
-        let probe = UdpSocket::bind("127.0.0.1:0").expect("bind probe");
-        let port = probe.local_addr().expect("probe addr").port() & !1;
-        drop(probe);
-        if port == 0 {
-            continue;
-        }
-        let pair = (
-            UdpSocket::bind(("127.0.0.1", port)),
-            UdpSocket::bind(("127.0.0.1", port + 1)),
-        );
-        if let (Ok(_), Ok(_)) = pair {
-            return port;
-        }
-    }
-    panic!("no free even port with a free odd neighbour in 100 tries");
-}
-
 #[test]
 fn main_profile_port_zero_reports_the_port_a_sender_reaches() {
     // One deadline for every bind, inside nextest's 20 s kill for network tests.
@@ -105,7 +87,7 @@ fn a_fixed_port_reads_back() {
     for profile in [RistProfile::Main, RistProfile::Simple] {
         let mut attempts = 0;
         let (rx, port) = loop {
-            let port = free_even_port();
+            let port = even_port::free_even_port();
             match RistRecvTransportBuilder::new(&format!("rist://@127.0.0.1:{port}"))
                 .unwrap()
                 .profile(profile)
