@@ -379,8 +379,9 @@ fn a_peer_close_on_a_udp_session_marks_the_session_dead() {
 
 /// Peer for the dropped-client tests: answer DESCRIBE, an interleaved
 /// SETUP and PLAY, write `media` (already framed), then keep the
-/// connection open, reading and discarding whatever the client writes
-/// (its TEARDOWN goes unanswered) until the client closes it.
+/// connection open until the client closes it: answer every OPTIONS with
+/// 200 and leave every other request (the dropped client's TEARDOWN)
+/// unanswered.
 fn spawn_interleaved_peer(media: Vec<u8>) -> (u16, std::thread::JoinHandle<()>) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
@@ -401,9 +402,22 @@ fn spawn_interleaved_peer(media: Vec<u8>) -> (u16, std::thread::JoinHandle<()>) 
         .unwrap();
         sock.write_all(&media).unwrap();
         let mut buf = [0u8; 4096];
-        while let Ok(n) = sock.read(&mut buf) {
-            if n == 0 {
-                break;
+        loop {
+            while let Some(pos) = leftover.windows(4).position(|w| w == b"\r\n\r\n") {
+                let req = String::from_utf8_lossy(&leftover[..pos + 4]).into_owned();
+                leftover.drain(..pos + 4);
+                if method_of(&req) == "OPTIONS" {
+                    let cseq = cseq_of(&req);
+                    sock.write_all(
+                        format!("RTSP/1.0 200 OK\r\nCSeq: {cseq}\r\nPublic: OPTIONS\r\n\r\n")
+                            .as_bytes(),
+                    )
+                    .unwrap();
+                }
+            }
+            match sock.read(&mut buf) {
+                Ok(0) | Err(_) => break,
+                Ok(n) => leftover.extend_from_slice(&buf[..n]),
             }
         }
     });
@@ -422,8 +436,10 @@ fn interleaved_rtp_frame(rtp_pkt: &[u8]) -> Vec<u8> {
 /// Dropping the owning client ends its interleaved pump with `Cancelled`
 /// recorded; the transport reports that as the cancel, not as a broken
 /// wire. The peer keeps the connection open, so nothing but the drop can
-/// end the pump. The persistent deadline is a safety net only: a
-/// regression fails with `Backpressure` instead of hanging.
+/// end the pump. The transport is then ended like after `close()`: a
+/// second read answers `Closed` and it is no longer alive. The persistent
+/// deadline is a safety net only: a regression fails with `Backpressure`
+/// instead of hanging.
 #[test]
 fn dropping_the_client_ends_an_interleaved_recv_transport_as_a_cancel() {
     let (port, peer) = spawn_interleaved_peer(Vec::new());
@@ -449,31 +465,42 @@ fn dropping_the_client_ends_an_interleaved_recv_transport_as_a_cancel() {
         "expected Cancelled, got {:?}",
         transport.end_reason()
     );
+    let second = transport.recv_bytes(&mut buf);
+    assert!(
+        matches!(second, Err(TransportError::Closed)),
+        "a second read after the cancel must answer Closed, got {second:?}"
+    );
+    assert!(
+        !transport.is_alive(),
+        "the ended transport must not be alive"
+    );
 
     drop(transport);
     peer.join().unwrap();
 }
 
 /// Dropping the owning client ends an H.264 receiver as a cancel, after
-/// the access units it already holds.
+/// the access units it holds: the complete one, then the open one a flush
+/// completes.
 ///
-/// The peer sends two single-NALU access units: AU1 without the marker bit
-/// and AU2 with it. AU1 can only complete when AU2's packet (a new
-/// timestamp) is fed, and that one feed also completes AU2 (marker). So
-/// when the first `recv_au` returns AU1, AU2 is a complete unit queued in
-/// the receiver's depacketizer, whatever the thread timing; nothing else
-/// was sent. The client is dropped at that point. Later calls hand out
-/// AU2 from that queue, then the drained source reports the pump's end,
-/// whose recorded reason is `Cancelled`.
+/// The peer sends two single-NALU access units after PLAY: AU1 with the
+/// marker bit (complete on its own) and AU2 without it (open until a new
+/// timestamp or a flush). Then the test sends OPTIONS; the peer answers it
+/// after the media on the same connection, and the pump reads that
+/// connection in order, so when `options()` returns both media packets are
+/// in the receiver's queue. Nothing has been read from it yet and nothing
+/// else is sent. The client is dropped at that point. Later calls hand out
+/// AU1 (marker), then reach the drained queue's end, whose recorded reason
+/// is `Cancelled`: the flush yields AU2, then every call is the cancel.
 #[test]
 fn dropping_the_client_ends_an_h264_receiver_as_a_cancel_after_its_queued_units() {
     const PT: u8 = 96;
     const SSRC: u32 = 0x5EED_0001;
     let au1 = [0x41u8, 0x01, 0x02];
     let au2 = [0x41u8, 0x03, 0x04];
-    let mut media = interleaved_rtp_frame(&build_rtp_packet(1, 90_000, SSRC, PT, false, &au1));
+    let mut media = interleaved_rtp_frame(&build_rtp_packet(1, 90_000, SSRC, PT, true, &au1));
     media.extend(interleaved_rtp_frame(&build_rtp_packet(
-        2, 93_003, SSRC, PT, true, &au2,
+        2, 93_003, SSRC, PT, false, &au2,
     )));
     let (port, peer) = spawn_interleaved_peer(media);
 
@@ -487,16 +514,16 @@ fn dropping_the_client_ends_an_h264_receiver_as_a_cancel_after_its_queued_units(
     h264_config.payload_type = PT;
     let mut receiver = session.into_h264_receiver(h264_config);
     receiver.set_recv_timeout(Some(scaled(Duration::from_secs(5))));
-
-    let first = receiver.recv_au().expect("AU1").expect("AU1 arrives");
-    assert_eq!(first.annexb, [0, 0, 0, 1, 0x41, 0x01, 0x02], "AU1 mismatch");
+    client.options().unwrap();
 
     drop(client);
 
+    let first = receiver.recv_au().expect("AU1").expect("AU1 is queued");
+    assert_eq!(first.annexb, [0, 0, 0, 1, 0x41, 0x01, 0x02], "AU1 mismatch");
     let second = receiver
         .recv_au()
         .expect("AU2")
-        .expect("AU2 is still queued");
+        .expect("the flush completes AU2");
     assert_eq!(
         second.annexb,
         [0, 0, 0, 1, 0x41, 0x03, 0x04],
@@ -506,7 +533,7 @@ fn dropping_the_client_ends_an_h264_receiver_as_a_cancel_after_its_queued_units(
         let result = receiver.recv_au();
         assert!(
             matches!(result, Err(TransportError::ExplicitClose)),
-            "call {call} after the queued unit must report the cancel, got {result:?}"
+            "call {call} after the flushed unit must report the cancel, got {result:?}"
         );
     }
     assert!(
