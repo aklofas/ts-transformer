@@ -145,6 +145,12 @@ fn udp_mux_sender_finish_cancel_then_finish_returns_closed() {
         "first finish: {}",
         last_error_msg()
     );
+    assert_eq!(
+        unsafe { tst_udp_mux_sender_finish(tx) },
+        0,
+        "second finish before the cancel: {}",
+        last_error_msg()
+    );
     assert_eq!(unsafe { tst_udp_mux_sender_cancel(tx) }, 0, "cancel rc");
     assert_eq!(
         unsafe { tst_udp_mux_sender_finish(tx) },
