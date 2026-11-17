@@ -386,6 +386,51 @@ pub(crate) fn duration_ms_saturating(d: Duration) -> u64 {
     u64::try_from(d.as_millis()).unwrap_or(u64::MAX)
 }
 
+/// Feed `data` to a fresh client engine as bytes read from the control
+/// connection: interleaved channels 0/1 and one OPTIONS waiting for its
+/// reply, once in 7-byte slices and once whole.
+//
+// `#[doc(hidden)] pub` for the fuzz workspace's `rtsp_client_pump_framing`
+// target. Not part of the crate's stable public API.
+#[doc(hidden)]
+pub fn fuzz_client_engine_input(data: &[u8]) {
+    use crate::rtsp::message::RtspMethod;
+    use engine::{ClientEngine, EngineConfig, InterleavedChannels, RequestSpec};
+    let now = std::time::Instant::now();
+    let fresh = || {
+        let mut e = ClientEngine::new(EngineConfig {
+            uri: "rtsp://fuzz.invalid/live".to_string(),
+            version: crate::url::RtspVersion::V1_0,
+            user_agent: "tst-rtp-fuzz".to_string(),
+            credentials: None,
+            schemes: crate::rtsp::auth::AuthSchemes::default(),
+        });
+        e.set_interleaved(InterleavedChannels { rtp: 0, rtcp: 1 });
+        let _ = e.submit(
+            RequestSpec {
+                method: RtspMethod::Options,
+                uri: "rtsp://fuzz.invalid/live".to_string(),
+                headers: Vec::new(),
+            },
+            None,
+            now,
+        );
+        e
+    };
+    let drain = |e: &mut ClientEngine| {
+        while e.poll_event().is_some() {}
+        while e.poll_transmit().is_some() {}
+    };
+    let mut sliced = fresh();
+    for chunk in data.chunks(7) {
+        sliced.handle_input(chunk, now);
+        drain(&mut sliced);
+    }
+    let mut whole = fresh();
+    whole.handle_input(data, now);
+    drain(&mut whole);
+}
+
 /// State the main thread keeps about the interleaved producer thread.
 ///
 /// Owned by [`RtspClient`] (one pump per client, since one TCP control

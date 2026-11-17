@@ -1,42 +1,15 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use tst_rtp::rtsp::framing::parse_binary_frame_header;
-use tst_rtp::rtsp::message::{RtspFraming, rtsp_frame_decision};
 
-// Feed arbitrary bytes through the same `$<ch><len>` / CRLFCRLF+Content-
-// Length framing rules `spawn_client_pump`'s inner loop uses on the wire
-// (RFC 7826 §14). `parse_binary_frame_header` / `rtsp_frame_decision`
-// are `#[doc(hidden)] pub` extractions of that loop's boundary-detection
-// step — pure functions, no socket/thread/channel required — so this
-// exercises the client's real parsing path rather than a standalone
-// reimplementation. We cap the loop at 100 frames so a pathological seed
-// (e.g. zero-length binary frames) can't exhaust memory or wall-clock
-// budget.
+// Feed arbitrary bytes to the RTSP client engine as if read from the control
+// connection: `$<ch><len>` interleaved frames (RFC 7826 §14), RTSP replies
+// framed on CRLFCRLF + Content-Length, the header and body caps, and the
+// replies' path into the request and keepalive state. The engine has no
+// socket, thread or clock, so this drives the client's real input path.
+// `fuzz_client_engine_input` feeds the bytes twice, in 7-byte slices and
+// whole, to an engine with interleaved channels 0/1 and one OPTIONS waiting
+// for its reply.
 fuzz_target!(|data: &[u8]| {
-    let mut buf = data.to_vec();
-    for _ in 0..100 {
-        if buf.is_empty() {
-            break;
-        }
-        if buf[0] == b'$' {
-            match parse_binary_frame_header(&buf) {
-                Some((_channel, total_len)) => buf.drain(..total_len),
-                None => break,
-            };
-        } else {
-            match rtsp_frame_decision(&buf) {
-                RtspFraming::NeedMore | RtspFraming::HeadersTooLong => break,
-                RtspFraming::NonUtf8Headers { skip } => {
-                    buf.drain(..skip);
-                }
-                RtspFraming::BadContentLength(_) | RtspFraming::BodyOffsetOverflow => {
-                    break;
-                }
-                RtspFraming::Complete { total_len } => {
-                    buf.drain(..total_len);
-                }
-            }
-        }
-    }
+    tst_rtp::rtsp::client::fuzz_client_engine_input(data);
 });
