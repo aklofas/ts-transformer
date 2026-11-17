@@ -602,11 +602,11 @@ fn an_accepted_teardown_closes_the_media_queue_and_keeps_its_reason() {
     assert_eq!(h.stop_and_join().get(), Some(EndReason::CleanTeardown));
 }
 
-/// A TEARDOWN accepted while the cancel is set (a dropped client sends one
-/// after setting it) records the cancel, and the media queue closes. The
-/// twin without the cancel is the test above.
+/// The driver records what the engine reports: a TEARDOWN accepted with the
+/// cancel set is still a clean end here. A dropped client's `Cancelled` is
+/// recorded by its `Drop`, before its TEARDOWN.
 #[test]
-fn an_accepted_teardown_on_a_cancelled_client_records_cancelled() {
+fn an_accepted_teardown_on_a_cancelled_client_records_clean_teardown() {
     let (stream, mut peer) = plain_pair();
     let h = drive(stream);
     let (data_tx, data_rx) = mpsc::sync_channel(8);
@@ -627,47 +627,9 @@ fn an_accepted_teardown_on_a_cancelled_client_records_cancelled() {
         data_rx.recv_timeout(scaled(Duration::from_secs(5))),
         Err(RecvTimeoutError::Disconnected)
     ));
-    assert_eq!(h.end_reason.get(), Some(EndReason::Cancelled));
+    assert_eq!(h.end_reason.get(), Some(EndReason::CleanTeardown));
     drop(peer);
-    assert_eq!(h.stop_and_join().get(), Some(EndReason::Cancelled));
-}
-
-/// The same when the peer closes right after its reply, so the reply and
-/// the close are usually read together: the reply's reason is delivered
-/// before the close ends the stream. Fifty runs, as one read holding both
-/// is not certain in any one of them.
-#[test]
-fn a_teardown_reply_read_with_the_close_on_a_cancelled_client_records_cancelled() {
-    for run in 0..50 {
-        let (stream, mut peer) = plain_pair();
-        let h = drive(stream);
-        let mut rest = Vec::new();
-        round_trip(&h, &mut peer, &mut rest);
-        h.cancel.cancel();
-        let rx = h.request(RequestSpec {
-            method: RtspMethod::Teardown,
-            uri: URI.to_string(),
-            headers: Vec::new(),
-        });
-        assert!(matches!(next(&rx), Progress::Written));
-        let head = read_head(&mut peer, &mut rest);
-        peer.write_all(&ok_reply(cseq(&head))).unwrap();
-        drop(peer);
-        assert_eq!(h.wait_end(), EndReason::Cancelled, "run {run}");
-        h.stop_and_join();
-    }
-}
-
-/// The peer's own close is a clean end even on a cancelled client: only a
-/// TEARDOWN the client sent is turned into the cancel.
-#[test]
-fn a_peer_close_on_a_cancelled_client_records_clean_teardown() {
-    let (stream, peer) = plain_pair();
-    let h = drive(stream);
-    h.cancel.cancel();
-    drop(peer);
-    assert_eq!(h.wait_end(), EndReason::CleanTeardown);
-    h.stop_and_join();
+    assert_eq!(h.stop_and_join().get(), Some(EndReason::CleanTeardown));
 }
 
 #[test]

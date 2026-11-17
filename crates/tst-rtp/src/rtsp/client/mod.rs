@@ -31,7 +31,7 @@ use driver::{Command, DriverHandle};
 use engine::{ClientEngine, Credentials, EngineConfig};
 use secrecy::SecretString;
 use tst_core::cancel::FlagCancel;
-use tst_core::transport::EndReasonHandle;
+use tst_core::transport::{EndReason, EndReasonHandle};
 
 /// Queued control-connection bytes the peer takes none of for this long
 /// end the stream (`Io(TimedOut)`); also the write timeout of each socket
@@ -472,9 +472,14 @@ impl RtspClient {
     /// cancel is already set, the TEARDOWN is still written, its reply is
     /// not awaited and the result is [`RtspError::LocalCancel`].
     ///
+    /// On a client that was not cancelled, the end reason it leaves (unless
+    /// one was recorded before) is `CleanTeardown` when the server accepts
+    /// the TEARDOWN (`2xx` or `454`), else `Cancelled`.
+    ///
     /// Dropping the client instead sets the cancel, writes TEARDOWN within
     /// the same 500 ms bound when a session is open, and tells the thread
-    /// to stop without waiting for it.
+    /// to stop without waiting for it. It records `Cancelled` before the
+    /// TEARDOWN unless a reason was recorded before.
     ///
     /// # Errors
     ///
@@ -504,6 +509,9 @@ impl Drop for RtspClient {
         // The cancel first: with it set, the TEARDOWN below waits only for
         // its bytes to reach the kernel, not for the reply.
         self.cancel.cancel();
+        // The reason before the TEARDOWN, so nothing the server does after
+        // the drop (an answer, a close, garbage, a reset) can replace it.
+        crate::transport::record_end(&self.end_reason, EndReason::Cancelled);
         if self.session_id.is_some() {
             let _ = self.teardown_within(CLOSE_TEARDOWN_BOUND);
         }
