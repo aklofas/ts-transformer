@@ -216,9 +216,18 @@ fn a_detached_media_thread_stops_when_its_queue_is_full() {
     let (srv, m) = parked_server(&clock, &parked);
     let media_port = srv.media_addr().port();
     // Fill the media queue so the drop's stop message cannot be queued.
+    // The queue holds 4096 messages, one per push; the cap is a little
+    // above that so a push that stops counting drops fails here.
+    const PUSH_CAP: u32 = 5_000;
     let idr = &h264_gop()[0].0;
     let mut pts = 0;
+    let mut pushes = 0;
     while m.stats().viewer_packets_dropped_queue_full == 0 {
+        assert!(
+            pushes < PUSH_CAP,
+            "{PUSH_CAP} pushes never counted a full media queue"
+        );
+        pushes += 1;
         pts += 3000;
         m.push_video(idr, Pts90khz::new(pts), true).unwrap();
     }
