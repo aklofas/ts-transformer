@@ -2581,7 +2581,7 @@ try (RtspSession session = RtspClient.connectH264(cfg)) {
 
 | Type | Notes |
 |---|---|
-| `H264Receiver` | `listen(String url)` / `listen(String url, H264DepayConfig cfg)` for direct UDP. `recvAu()` → `H264AccessUnit \| null`; `null` at end of stream (the server ended the session or accepted a TEARDOWN; a failed control connection also ends it with `null`, and `endReason()` names it); after a cancel it throws `RtpException(CLOSED)` once the access units it holds are handed out. `implements AutoCloseable, Iterable<H264AccessUnit>`. |
+| `H264Receiver` | `listen(String url)` / `listen(String url, H264DepayConfig cfg)` for direct UDP. `recvAu()` → `H264AccessUnit \| null`; `null` at end of stream (the server ended the session; a failed control connection also ends it with `null`, and `endReason()` names it); after a cancel it throws `RtpException(CLOSED)` once the access units it holds are handed out. `implements AutoCloseable, Iterable<H264AccessUnit>`. |
 | `H264AccessUnit` | `annexb(): byte[]`, `pts(): long` (90 kHz ticks, i64), `keyFrame(): boolean`, `rtpTimestamp(): long`. |
 | `H264DepayConfig` | Immutable; build with `H264DepayConfig.builder()`. Defaults: `payloadType=96`, `parameterSetInjection=BEFORE_IDR`, `initialParameterSets=[]`, `maxAuBytes=8388608`. |
 | `ParameterSetInjection` | `NONE` — pass through as received; `BEFORE_IDR` (default) — prepend cached SPS/PPS before each IDR. |
@@ -2609,15 +2609,14 @@ the request timeout) and frees the session. A live TCP-interleaved
 `DemuxReceiver` on it then ends after the events already queued: with end of
 stream (`endReason()` is `CLEAN_TEARDOWN`) when the server accepted the
 TEARDOWN, and with `RtpException(CLOSED)` when it refused it or did not answer
-in time, or when the session's cancel handle had fired. Ensure only one
+in time. Ensure only one
 `into*` call is made per session.
 
 **End of stream or CLOSED.** On a receiver from an RTSP session, end of stream
 (`null` from `recvAu()` / `recvEvent()`, the end of iteration) means the server
-ended the session, or accepted a TEARDOWN from a session whose cancel handle
-had not fired; `RtpException(CLOSED)` means the receiver was cancelled or
-closed, or its session was closed without the server accepting the TEARDOWN,
-or torn down or closed after its cancel handle fired. Keep the `RtspSession`
+ended the session, or accepted the TEARDOWN that `teardown()` or `close()` sent;
+`RtpException(CLOSED)` means the receiver was cancelled or closed, or its
+session was closed without the server accepting that TEARDOWN. Keep the `RtspSession`
 open while a `DemuxReceiver` from `intoDemuxReceiver()` receives, and call
 `teardown()` (or `close()`) to end the stream cleanly.
 

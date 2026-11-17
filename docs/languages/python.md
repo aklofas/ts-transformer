@@ -1370,7 +1370,7 @@ with RtspClient.connect_h264(cfg) as session:
 
 | Name | Notes |
 |---|---|
-| `H264Receiver` | `listen(url, config=None)` for direct UDP; `into_h264_receiver()` from an RTSP session. `recv_au()` → `H264AccessUnit \| None`; `None` means the server ended the session or accepted a TEARDOWN from a session whose cancel handle had not fired (a failed control connection also ends it with `None`; `end_reason()` names it); after a cancel, or once its `RtspSession` is collected without `teardown()`, it raises `RtpError(CLOSED)` once the access units it holds are handed out. Also iterable: `for au in rx` (a cancelled loop raises the same error). |
+| `H264Receiver` | `listen(url, config=None)` for direct UDP; `into_h264_receiver()` from an RTSP session. `recv_au()` → `H264AccessUnit \| None`; `None` means the server ended the session or accepted the TEARDOWN `teardown()` sent (a failed control connection also ends it with `None`; `end_reason()` names it); after a cancel, or once its `RtspSession` is collected without `teardown()`, it raises `RtpError(CLOSED)` once the access units it holds are handed out. Also iterable: `for au in rx` (a cancelled loop raises the same error). |
 | `H264AccessUnit` | `annexb: bytes`, `pts: int` (90 kHz ticks, i64), `key_frame: bool`, `rtp_timestamp: int`. |
 | `H264DepayConfig` | `payload_type=96`, `parameter_set_injection=ParameterSetInjection.BEFORE_IDR`, `initial_parameter_sets=[]`, `max_au_bytes=8388608`. All kwargs. |
 | `ParameterSetInjection` | `.NONE` — pass through as received; `.BEFORE_IDR` (default) — prepend cached SPS/PPS before each IDR. |
@@ -1394,10 +1394,10 @@ with RtspClient.connect_h264(cfg) as session:
   `into_demux_receiver()` or `into_h264_receiver()` never owns the RTSP client;
   the `RtspSession` object does. Call `teardown()` (or leave its `with` block)
   to end the stream cleanly: a TCP-interleaved receiver then ends with end of
-  stream (`None`, `StopIteration`) once the server accepts the TEARDOWN,
-  unless the session's cancel handle fired first. A
+  stream (`None`, `StopIteration`) once the server accepts the TEARDOWN. A
   session collected without `teardown()` ends that receiver with
-  `RtpError(CLOSED)` after what is already queued, as a cancel does.
+  `RtpError(CLOSED)` after what is already queued, as a cancel does,
+  whatever the server then does.
 
 - **B-frame / DTS limitation.** `au.pts` is derived from the RTP timestamp
   (presentation time; AUs arrive in decode order). Most live cameras do not

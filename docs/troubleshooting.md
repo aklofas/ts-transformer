@@ -522,15 +522,17 @@ End of stream (`Ok(None)` from `recv_au()`, `Err(TransportError::Closed)`
 from an interleaved `RtpRecvTransport`, `Ok(None)` / `EndOfStream` from a
 receiver shell; `None` / `StopIteration` in Python, `null` / the end of
 iteration on the JVM, `TST_E_END_OF_STREAM` in C) means the server ended
-the session, or accepted a TEARDOWN from a client that was not cancelled.
-CLOSED (`ExplicitClose`, `RtpError(CLOSED)`, `RtpException(CLOSED)`,
-`TST_E_CLOSED`) means the receiver was cancelled or closed, or its
-`RtspClient` (in Python, the `RtspSession` object) was dropped, or torn
-down after its cancel handle fired. A cancelled `recv_au()` hands out the
-access units the receiver holds before it reports the cancel. One
-exception: when the control connection of an interleaved session fails (a reset, a write stall, a framing
-violation), `recv_au()` also returns `Ok(None)`, while the transport and
-the shells report it as broken; `end_reason()` names it.
+the session, or accepted (`2xx` or `454`) the TEARDOWN that `teardown()` or
+`close()` sent. CLOSED (`ExplicitClose`, `RtpError(CLOSED)`,
+`RtpException(CLOSED)`, `TST_E_CLOSED`) means the receiver was cancelled or
+closed, or its `RtspClient` (in Python, the `RtspSession` object) was
+dropped, whatever the server then did, or `close()` stopped it after a
+TEARDOWN the server refused or did not answer. A cancelled `recv_au()`
+hands out the access units the receiver holds before it reports the
+cancel. When the control connection of an interleaved session fails (a
+reset, a write stall, a framing violation), `recv_au()` also returns
+`Ok(None)`, while the transport and the shells report it as broken;
+`end_reason()` names it.
 
 Fix: call `end_reason()` on the transport or receiver after a recv
 returns `None`/`EndOfStream` or a terminal error, and match on the
@@ -574,13 +576,14 @@ match handle.get() { /* same match as above */ }
 ```
 
 Keep the owning `RtspClient` (in Python, the `RtspSession` object) alive
-while you receive, and call `teardown()` to end the stream cleanly: the
-server's reply to the TEARDOWN records `CleanTeardown` and ends an
-interleaved receiver with end of stream before `teardown()` returns, so
+while you receive, and call `teardown()` (or `close()`) to end the stream
+cleanly: an accepted reply (`2xx` or `454`) records `CleanTeardown` and
+closes an interleaved receiver's queue before the call returns, and the
+receiver ends with end of stream after the packets already queued;
 dropping the client afterwards changes nothing. Dropping the client
-without `teardown()` ends that receiver with CLOSED, after the packets
-already queued, however fast the server answers the TEARDOWN the drop
-sends: the drop sets the client's cancel first.
+without an accepted TEARDOWN ends that receiver with CLOSED, after the
+packets already queued: the drop records `Cancelled` before it writes its
+own TEARDOWN, so nothing the server does next changes it.
 
 **Python** mirrors this: `tstrans.rtp.RecvTransport`, `tstrans.rtp.H264Receiver`
 and the `tstrans.shells` `Receiver` / `DemuxReceiver` each expose

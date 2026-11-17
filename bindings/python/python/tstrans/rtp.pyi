@@ -359,8 +359,8 @@ class RtspSession:
     the connection on its own. A receiver never owns the client, so keep
     the session object alive while one receives: collecting it ends a live
     TCP-interleaved receiver with `RtpError(CLOSED)` after what is already
-    queued, where `teardown()` ends it with end of stream once the server
-    accepts the TEARDOWN (unless the session's cancel handle fired first).
+    queued, whatever the server then does, where `teardown()` ends it with
+    end of stream once the server accepts the TEARDOWN.
     """
 
     def pause(self) -> None: ...
@@ -916,9 +916,9 @@ class H264Receiver:
 
     `recv_au(timeout_ms=None)` — block until an Access Unit is reassembled
     (releasing the GIL via `py.allow_threads()`). Returns `H264AccessUnit`
-    or `None` at EOS (the RTSP server ended the session or accepted a
-    TEARDOWN from a session whose cancel handle had not fired; a failed
-    control connection also gives `None`, and
+    or `None` at EOS (the RTSP server ended the session or accepted the
+    TEARDOWN `teardown()` sent; a failed control connection also gives
+    `None`, and
     `end_reason()` names it). `timeout_ms=N`
     bounds a single call; expiry raises `RtpError(BACKPRESSURE)` — the
     receiver stays open, call again to retry. After a cancel, or once its
