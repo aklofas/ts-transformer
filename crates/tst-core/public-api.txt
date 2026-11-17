@@ -7275,6 +7275,8 @@ impl core::cmp::PartialEq for tst_core::transport::SourcePin
 pub fn tst_core::transport::SourcePin::eq(&self, &tst_core::transport::SourcePin) -> bool
 impl core::fmt::Debug for tst_core::transport::SourcePin
 pub fn tst_core::transport::SourcePin::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for tst_core::transport::SourcePin
+pub fn tst_core::transport::SourcePin::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::Copy for tst_core::transport::SourcePin
 impl core::marker::StructuralPartialEq for tst_core::transport::SourcePin
 impl core::marker::Freeze for tst_core::transport::SourcePin
@@ -7397,6 +7399,7 @@ pub struct tst_core::transport::SourceHandle(_)
 impl tst_core::transport::SourceHandle
 pub fn tst_core::transport::SourceHandle::admit(&self, core::net::socket_addr::SocketAddr) -> bool
 pub fn tst_core::transport::SourceHandle::allows(&self, core::net::ip_addr::IpAddr) -> bool
+pub fn tst_core::transport::SourceHandle::canonical(core::net::socket_addr::SocketAddr) -> core::net::socket_addr::SocketAddr
 pub fn tst_core::transport::SourceHandle::count_rejected(&self)
 pub fn tst_core::transport::SourceHandle::new(core::option::Option<tst_core::transport::SourcePin>) -> Self
 pub fn tst_core::transport::SourceHandle::peer_addr(&self) -> core::option::Option<core::net::socket_addr::SocketAddr>

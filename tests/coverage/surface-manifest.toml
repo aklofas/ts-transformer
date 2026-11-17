@@ -3641,7 +3641,7 @@ bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred
 scenario_ids = []
 tier = "A"
 
-# capability: A receive opener reports the address it bound (Opened::local_addr, Opened::with_local_addr; the rail files a generic type's fields and methods under the type): Rust; JVM shells.Receiver.localPort and shells.DemuxReceiver.localPort.
+# capability: A receive opener reports the address it bound (Opened::local_addr, Opened::with_local_addr; the rail files a generic type's fields and methods under the type): Rust; JVM shells.Receiver.localPort / localAddr and shells.DemuxReceiver.localPort / localAddr.
 [[surface]]
 kind = "rust"
 crate = "tst-pipeline"
@@ -5578,7 +5578,7 @@ kind = "rust"
 crate = "tst-core"
 item = "tst_core::RecvTransport::source_handle"
 owning_tests = ["crates/tst-udp/tests/net_source.rs", "crates/tst-rist/tests/net_source.rs", "bindings/jvm/src/test/java/org/tstrans/shells/PeerAddrTest.java", "bindings/python/tests/test_peer_addr.py", "bindings/c/tests/transports/peer_addr.rs"]
-bindings = ["c:tst_udp_receiver_peer_addr", "python:tstrans.udp.RecvTransport.peer_addr", "java:org.tstrans.shells.Receiver.peerAddr", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:n/a(the C ABI reads the record through the _peer_addr and _get_source_rejected getters)", "python:n/a(the Python transports and shells read the record through their peer_addr and source_rejected getters)", "java:n/a(the JVM shells read the record through their peerAddr and sourceRejected getters)", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -5587,7 +5587,7 @@ kind = "rust"
 crate = "tst-core"
 item = "tst_core::transport::RecvTransport::source_handle"
 owning_tests = ["crates/tst-udp/tests/net_source.rs", "crates/tst-rist/tests/net_source.rs", "bindings/jvm/src/test/java/org/tstrans/shells/PeerAddrTest.java", "bindings/python/tests/test_peer_addr.py", "bindings/c/tests/transports/peer_addr.rs"]
-bindings = ["c:tst_udp_receiver_peer_addr", "python:tstrans.udp.RecvTransport.peer_addr", "java:org.tstrans.shells.Receiver.peerAddr", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:n/a(the C ABI reads the record through the _peer_addr and _get_source_rejected getters)", "python:n/a(the Python transports and shells read the record through their peer_addr and source_rejected getters)", "java:n/a(the JVM shells read the record through their peerAddr and sourceRejected getters)", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -5631,6 +5631,15 @@ tier = "A"
 kind = "rust"
 crate = "tst-core"
 item = "tst_core::transport::SourceHandle::allows"
+owning_tests = ["crates/tst-core/src/transport/source.rs", "crates/tst-udp/tests/net_source.rs", "crates/tst-rist/tests/net_source.rs"]
+bindings = ["c:n/a(the C ABI has no bridge to this Rust-only item)", "python:n/a(Rust-only building block of the receive transports)", "java:n/a(Rust-only building block of the receive transports)", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-core"
+item = "tst_core::transport::SourceHandle::canonical"
 owning_tests = ["crates/tst-core/src/transport/source.rs", "crates/tst-udp/tests/net_source.rs", "crates/tst-rist/tests/net_source.rs"]
 bindings = ["c:n/a(the C ABI has no bridge to this Rust-only item)", "python:n/a(Rust-only building block of the receive transports)", "java:n/a(Rust-only building block of the receive transports)", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
@@ -5713,7 +5722,7 @@ kind = "rust"
 crate = "tst-udp"
 item = "tst_udp::recv::UdpRecvTransport::source_handle"
 owning_tests = ["crates/tst-udp/tests/net_source.rs", "crates/tst-rist/tests/net_source.rs", "bindings/jvm/src/test/java/org/tstrans/shells/PeerAddrTest.java", "bindings/python/tests/test_peer_addr.py", "bindings/c/tests/transports/peer_addr.rs"]
-bindings = ["c:tst_udp_receiver_get_source_rejected", "python:tstrans.shells.Receiver.peer_addr", "java:org.tstrans.shells.Receiver.peerAddr", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:n/a(the C ABI reads the record through the _peer_addr and _get_source_rejected getters)", "python:n/a(the Python transports and shells read the record through their peer_addr and source_rejected getters)", "java:n/a(the JVM shells read the record through their peerAddr and sourceRejected getters)", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 

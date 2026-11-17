@@ -681,8 +681,9 @@ pub trait RecvTransport: Send {
 
     /// A handle reporting where this transport's datagrams come from and,
     /// when the transport was given a source pin, how many it refused.
-    /// Obtain it before moving the transport into a shell. Defaults to
-    /// `None`.
+    /// The address it reports is the datagrams' source address, which
+    /// nothing verifies. Obtain it before moving the transport into a shell.
+    /// Defaults to `None`.
     #[cfg(feature = "std")]
     fn source_handle(&self) -> Option<SourceHandle> {
         None
