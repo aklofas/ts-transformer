@@ -2,6 +2,8 @@
 
 use std::net::IpAddr;
 
+use tst_core::transport::SourcePin;
+
 /// Per-transport socket knobs.
 ///
 /// All fields have sane OS-default behavior when set to `None`.
@@ -24,6 +26,10 @@ pub struct UdpConfig {
     pub pkt_size: Option<usize>,
     /// Local bind address override (for sending from a specific NIC).
     pub localaddr: Option<IpAddr>,
+    /// Receive side: accept datagrams only from one sender IP (`source=<ip>`)
+    /// or from whichever IP delivers first (`source=first`). A send-side URL
+    /// carrying it is refused.
+    pub source: Option<SourcePin>,
 }
 
 impl UdpConfig {

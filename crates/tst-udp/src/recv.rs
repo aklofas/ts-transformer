@@ -10,8 +10,8 @@ use tst_core::net::udp_socket::{
 };
 use tst_core::net::{RecvAction, classify_recv_error};
 use tst_core::transport::{
-    BrokenCause, EndReason, EndReasonHandle, RecvTransport, SocketStats, TransportCancel,
-    TransportError,
+    BrokenCause, EndReason, EndReasonHandle, RecvTransport, SocketStats, SourceHandle,
+    TransportCancel, TransportError,
 };
 
 use crate::config::UdpConfig;
@@ -55,6 +55,22 @@ pub struct UdpRecvTransport {
     /// [`RecvTransport::end_reason_handle`]; written first-writer-wins
     /// through [`record_udp_end`].
     end_reason: EndReasonHandle,
+    /// The `source` pin, the rejected count and the delivering address,
+    /// shared with every handle from [`RecvTransport::source_handle`].
+    source: SourceHandle,
+    /// The address last stored in `source`; a datagram from the same
+    /// address does not touch the handle's lock.
+    last_from: Option<SocketAddr>,
+}
+
+/// What a received datagram is, once its sender is judged.
+enum Verdict {
+    /// Dropped: the sender is not the pinned one (already counted).
+    Rejected,
+    /// Zero length from an allowed sender: counted, not delivered.
+    Empty,
+    /// A payload to hand to the caller.
+    Deliver,
 }
 
 /// The reasons a UDP receive stream can end with: a cancel or close, or a
@@ -116,7 +132,41 @@ impl UdpRecvTransport {
             // the socket; cache that so the first recv_bytes entry is a no-op.
             applied_timeout: CANCEL_POLL_INTERVAL,
             end_reason: EndReasonHandle::default(),
+            source: SourceHandle::new(cfg.source),
+            last_from: None,
         })
+    }
+
+    /// The address that last delivered a datagram, or `None` before the
+    /// first one. A zero-length datagram is not delivered and does not
+    /// count. With a `source` pin only the pinned sender's address appears.
+    /// Reads shared state, so it answers while a receive is parked.
+    pub fn peer_addr(&self) -> Option<SocketAddr> {
+        self.source.peer_addr()
+    }
+
+    /// Judge one datagram of `n` bytes from `from`: update the counters and
+    /// the source record, and say what to do with it.
+    fn judge(&mut self, n: usize, from: SocketAddr) -> Verdict {
+        if n == 0 {
+            // A probe neither latches a `first` pin nor names a peer.
+            if self.source.allows(from.ip()) {
+                self.stats.datagrams_received = self.stats.datagrams_received.saturating_add(1);
+                return Verdict::Empty;
+            }
+            self.source.count_rejected();
+            return Verdict::Rejected;
+        }
+        if !self.source.admit(from) {
+            return Verdict::Rejected;
+        }
+        if self.last_from != Some(from) {
+            self.source.record(from);
+            self.last_from = Some(from);
+        }
+        self.stats.datagrams_received = self.stats.datagrams_received.saturating_add(1);
+        self.stats.bytes_received = self.stats.bytes_received.saturating_add(n as u64);
+        Verdict::Deliver
     }
 
     /// Local bound address (useful for tests that bind to port 0). For an
@@ -145,7 +195,9 @@ impl UdpRecvTransport {
 
     /// Snapshot of UDP stats.
     pub fn stats(&self) -> UdpStats {
-        self.stats
+        let mut s = self.stats;
+        s.source_rejected = self.source.rejected();
+        s
     }
 
     /// Receive one datagram with a deadline. Returns `None` on timeout
@@ -161,6 +213,12 @@ impl UdpRecvTransport {
     /// this call; a caller polling in slices checks
     /// [`UdpCancelHandle::is_cancelled`] between them. An empty `buf`
     /// returns `Ok(Some(0))` immediately.
+    ///
+    /// With a `source` pin, a datagram from another address is dropped and
+    /// the call keeps waiting while the time since it began is below
+    /// `deadline`, then returns `Ok(None)`. The socket's read timeout is not
+    /// shortened for the remainder, so the call returns no later than twice
+    /// `deadline`.
     pub fn recv_timeout(
         &mut self,
         buf: &mut [u8],
@@ -178,21 +236,27 @@ impl UdpRecvTransport {
                 .map_err(crate::error::UdpError::Io)?;
             self.applied_timeout = deadline;
         }
-        match self.socket.recv(buf) {
-            Ok(n) => {
-                self.stats.datagrams_received = self.stats.datagrams_received.saturating_add(1);
-                self.stats.bytes_received = self.stats.bytes_received.saturating_add(n as u64);
-                Ok(Some(n))
-            }
-            Err(e)
-                if e.kind() == std::io::ErrorKind::WouldBlock
-                    || e.kind() == std::io::ErrorKind::TimedOut =>
-            {
-                Ok(None)
-            }
-            Err(e) => {
-                self.stats.recv_errors = self.stats.recv_errors.saturating_add(1);
-                Err(crate::error::UdpError::Io(e))
+        let began = std::time::Instant::now();
+        loop {
+            match self.socket.recv_from(buf) {
+                Ok((n, from)) => match self.judge(n, from) {
+                    Verdict::Rejected => {
+                        if began.elapsed() >= deadline {
+                            return Ok(None);
+                        }
+                    }
+                    Verdict::Empty | Verdict::Deliver => return Ok(Some(n)),
+                },
+                Err(e)
+                    if e.kind() == std::io::ErrorKind::WouldBlock
+                        || e.kind() == std::io::ErrorKind::TimedOut =>
+                {
+                    return Ok(None);
+                }
+                Err(e) => {
+                    self.stats.recv_errors = self.stats.recv_errors.saturating_add(1);
+                    return Err(crate::error::UdpError::Io(e));
+                }
             }
         }
     }
@@ -248,20 +312,15 @@ impl UdpRecvTransport {
             if !self.alive.load(Ordering::Acquire) {
                 return Err(TransportError::Closed);
             }
-            match self.socket.recv(buf) {
-                Ok(0) => {
+            match self.socket.recv_from(buf) {
+                Ok((n, from)) => match self.judge(n, from) {
                     // A zero-length datagram (a port probe, an empty
                     // keepalive) is not end of stream — UDP has none. The
-                    // shells read `Ok(0)` as "closed", so count it and loop
-                    // back to the flag checks.
-                    self.stats.datagrams_received = self.stats.datagrams_received.saturating_add(1);
-                    continue;
-                }
-                Ok(n) => {
-                    self.stats.datagrams_received = self.stats.datagrams_received.saturating_add(1);
-                    self.stats.bytes_received = self.stats.bytes_received.saturating_add(n as u64);
-                    return Ok(n);
-                }
+                    // shells read `Ok(0)` as "closed", so loop back to the
+                    // flag checks; so for a datagram from the wrong sender.
+                    Verdict::Rejected | Verdict::Empty => continue,
+                    Verdict::Deliver => return Ok(n),
+                },
                 Err(e) if classify_recv_error(e.kind()) == RecvAction::Retry => {
                     // Cancel-poll tick, or EINTR — loop to re-check the flags.
                     // EINTR MUST be retried here: the arm below latches
@@ -338,6 +397,10 @@ impl RecvTransport for UdpRecvTransport {
 
     fn end_reason_handle(&self) -> Option<EndReasonHandle> {
         Some(self.end_reason.clone())
+    }
+
+    fn source_handle(&self) -> Option<SourceHandle> {
+        Some(self.source.clone())
     }
 }
 

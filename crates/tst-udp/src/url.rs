@@ -6,10 +6,11 @@
 //! - `udp://@group:port` — multicast recv (the `@` prefix is the ffmpeg convention)
 //! - `udp://group:port` (group in 224.0.0.0/4 or ff00::/8) — multicast send
 //!
-//! Query parameters: `iface`, `ttl`, `tos`, `rcvbuf`, `sndbuf`, `pkt_size` (send-only), `localaddr`.
+//! Query parameters: `iface`, `ttl`, `tos`, `rcvbuf`, `sndbuf`, `pkt_size` (send-only), `localaddr`, `source` (receive-only).
 
 use std::net::IpAddr;
 
+use tst_core::transport::SourcePin;
 use tst_core::url::UrlError;
 use tst_core::url::common::{parse_int, parse_size, parse_url};
 use tst_core::url::query::{QueryKey, UnknownKeys, apply_query};
@@ -90,6 +91,17 @@ fn set_localaddr(c: &mut UdpConfig, key: &str, value: &str) -> Applied {
     Ok(())
 }
 
+fn set_source(c: &mut UdpConfig, key: &str, value: &str) -> Applied {
+    c.source = Some(
+        SourcePin::parse(value).ok_or_else(|| UrlError::BadQueryValue {
+            key: key.to_string(),
+            value: value.to_string(),
+            detail: "expected an IP address literal or `first`".to_string(),
+        })?,
+    );
+    Ok(())
+}
+
 /// The query keys a `udp://` URL accepts; the parser and the generated
 /// key documentation both read this table.
 #[doc(hidden)]
@@ -143,12 +155,26 @@ pub const URL_KEYS: &[QueryKey<UdpConfig>] = &[
         "bytes with the `K`/`M` forms",
         set_pkt_size,
     ),
+    QueryKey::new(
+        "source",
+        &[],
+        "Receive only from this sender (receiver only)",
+        "an IP address, or `first` for whichever sender delivers first",
+        set_source,
+    ),
 ];
 
 /// The refusal for a receive-side URL that names `?pkt_size=`.
 pub(crate) fn recv_pkt_size_rejection() -> UrlError {
     UrlError::Rejected(
         "pkt_size is a send-side knob; receive buffers size to the transport's deliverable ceiling automatically — remove ?pkt_size= from receiver URLs".into(),
+    )
+}
+
+/// The refusal for a send-side URL that names `?source=`.
+pub(crate) fn send_source_rejection() -> UrlError {
+    UrlError::Rejected(
+        "source is a receive-side filter (accept datagrams only from that IP) — remove ?source= from sender URLs".into(),
     )
 }
 
