@@ -929,3 +929,28 @@ fn close_against_a_peer_refusing_teardown_ends_the_receiver_as_a_cancel() {
     drop(transport);
     peer.join().unwrap();
 }
+
+/// `close()` on a client whose cancel is set is a cancel too, even when
+/// the server answers its TEARDOWN at once: `close` records the cancel
+/// before it writes the TEARDOWN. A thousand fresh sessions against the
+/// loopback server: without that line a few in a thousand end clean.
+#[test]
+fn close_on_a_cancelled_client_ends_the_receiver_as_a_cancel_even_when_the_server_answers() {
+    let h = FixtureHandle::spawn(FixtureConfig::default());
+    for run in 0..1000 {
+        let (client, mut transport) = interleaved_session(h.port);
+        client.cancel_handle().cancel();
+        let _ = client.close();
+        let mut buf = vec![0u8; transport.max_payload()];
+        let result = transport.recv_bytes(&mut buf);
+        assert!(
+            matches!(result, Err(TransportError::ExplicitClose)),
+            "run {run}: close on a cancelled client must end the transport as a cancel, got {result:?}"
+        );
+        assert_eq!(
+            transport.end_reason(),
+            Some(EndReason::Cancelled),
+            "run {run}"
+        );
+    }
+}
