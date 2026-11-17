@@ -42,13 +42,13 @@
 //!    returned on every later call. After the receiver's own `close()` it
 //!    is the same, without the flush: `close()` discards an open AU.
 //! 3. When the media queue of an RTSP interleaved session closes, the
-//!    reason the RTSP client's thread recorded decides. `Cancelled` (the
-//!    owning `RtspClient` was dropped, or its TEARDOWN was accepted after
-//!    its cancel fired) ends the receiver as a cancel: the flush, then
+//!    recorded reason decides. `Cancelled` (the owning `RtspClient` was
+//!    dropped without an accepted TEARDOWN, or `close` stopped it after a
+//!    refused one) ends the receiver as a cancel: the flush, then
 //!    `Err(TransportError::ExplicitClose)` on every later call. Any other
-//!    end (the server accepted a TEARDOWN from a client that was not
-//!    cancelled or closed the connection, the control connection failed,
-//!    or a later SETUP replaced the queue)
+//!    end (the server accepted the TEARDOWN `teardown` or `close` sent, or
+//!    closed the connection, the control connection failed, or a later
+//!    SETUP replaced the queue)
 //!    gives `Ok(None)`, returned on every later call until a cancel;
 //!    [`H264Receiver::end_reason`] tells a clean end from a failure.
 //!
@@ -100,8 +100,9 @@ use tst_core::transport::{EndReason, EndReasonHandle};
 ///      or failure with the cancel latched): go to step 1.
 ///    - `Err(Broken)` carrying the `MPSC_PUMP_DISCONNECTED` sentinel
 ///      (`pub(crate)` const in `transport.rs`) — the media queue closed: if
-///      the recorded reason is `Cancelled` (the owning `RtspClient` was
-///      dropped or stopped), latch the cancel and go to step 1; otherwise
+///      the recorded reason is `Cancelled` (recorded by the owning
+///      `RtspClient`'s `Drop`, or by its thread when stopped), latch the
+///      cancel and go to step 1; otherwise
 ///      set EOS, flush depacketizer, return flushed AU if any else `Ok(None)`.
 ///    - `Err(Broken)` otherwise — clear source, propagate.
 ///
@@ -276,11 +277,11 @@ impl H264Receiver {
     ///
     /// Returns `Ok(Some(au))` when a complete AU is available,
     /// `Err(TransportError::ExplicitClose)` once cancelled or closed, or once
-    /// the owning `RtspClient` was dropped or torn down after its cancel
-    /// fired (after the drain described in the
+    /// the owning `RtspClient` was dropped without an accepted TEARDOWN
+    /// (after the drain described in the
     /// [EOS contract](crate::h264::receiver#eos-contract)), `Ok(None)` at
-    /// end of stream (the server ended the session or accepted a TEARDOWN
-    /// from a client that was not cancelled;
+    /// end of stream (the server ended the session or accepted the TEARDOWN
+    /// `teardown` or `close` sent;
     /// also a failed control connection, which [`Self::end_reason`] names),
     /// and `Err(TransportError::Broken {..})` on a hard I/O error.
     ///
@@ -401,11 +402,11 @@ impl H264Receiver {
                 Err(TransportError::ExplicitClose) => continue,
                 Err(TransportError::Broken { ref msg, .. }) if msg == MPSC_PUMP_DISCONNECTED => {
                     if matches!(self.end_reason.get(), Some(EndReason::Cancelled)) {
-                        // The owning `RtspClient` was dropped (or stopped) by
-                        // its owner: its I/O thread recorded the cancel
-                        // before closing the media queue. Latch it
-                        // as this receiver's cancel so step 2 answers: the
-                        // flush, then `ExplicitClose` on every later call.
+                        // `Cancelled` was recorded before the queue closed:
+                        // by the owning `RtspClient`'s `Drop`, or by its
+                        // thread when stopped. Latch it as this receiver's
+                        // cancel so step 2 answers: the flush, then
+                        // `ExplicitClose` on every later call.
                         self.cancel.cancel();
                         continue;
                     }

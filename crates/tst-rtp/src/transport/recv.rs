@@ -657,10 +657,9 @@ impl RtpRecvTransport {
                     if msg == MPSC_PUMP_DISCONNECTED
                         && matches!(self.end_reason.get(), Some(EndReason::Cancelled)) =>
                 {
-                    // The owning `RtspClient` was dropped (or stopped) by its
-                    // owner: its I/O thread recorded the cancel before
-                    // closing the media queue, so this end is the cancel,
-                    // not a broken wire.
+                    // `Cancelled` was recorded before the queue closed: by
+                    // the owning `RtspClient`'s `Drop`, or by its thread when
+                    // stopped. This end is the cancel, not a broken wire.
                     self.source = None;
                     return Err(TransportError::ExplicitClose);
                 }
@@ -819,11 +818,12 @@ impl RecvTransport for RtpRecvTransport {
     ///
     /// On a transport from an interleaved RTSP session the packets already
     /// queued are returned first; then the reason the RTSP client's thread
-    /// recorded decides. A TEARDOWN the server accepted from a client that
-    /// was not cancelled, or the server's orderly close (`CleanTeardown`), is
-    /// [`TransportError::Closed`], which the receive shells report as end of
-    /// stream. The owning `RtspClient` dropped, or a TEARDOWN accepted after
-    /// its cancel fired (`Cancelled`), is [`TransportError::ExplicitClose`],
+    /// recorded decides. A TEARDOWN the server accepted, sent by
+    /// `RtspClient::teardown` or `close`, or the server's orderly close
+    /// (`CleanTeardown`), is [`TransportError::Closed`], which the receive
+    /// shells report as end of stream. The owning `RtspClient` dropped
+    /// without such a TEARDOWN (`Cancelled`, recorded by its `Drop` before
+    /// anything the server does next) is [`TransportError::ExplicitClose`],
     /// the cancel. Any other end is
     /// [`TransportError::Broken`]; [`RtpRecvTransport::end_reason`] names it.
     fn recv_bytes(&mut self, buf: &mut [u8]) -> Result<usize, TransportError> {
