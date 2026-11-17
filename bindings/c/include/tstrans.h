@@ -9710,8 +9710,8 @@ int tst_rtsp_mount_get_stats(const struct TstRtspMountHandle *handle,
  * timestamp in 90 kHz ticks.
  *
  * Returns `0` on success, `TST_E_CLOSED` after `tst_rtsp_mount_cancel` or
- * once the server has ended (`tst_rtsp_server_stop`,
- * `tst_rtsp_cancel_handle_cancel` or `tst_rtsp_server_free`),
+ * once the server has ended (`tst_rtsp_server_stop`, from the moment it
+ * begins; `tst_rtsp_cancel_handle_cancel`; or `tst_rtsp_server_free`),
  * `TST_E_RTSP_MOUNT` on muxer errors, `TST_E_INVALID_CONFIG` if `handle`
  * is null.
  *
@@ -9757,8 +9757,8 @@ int tst_rtsp_mount_push_audio_to(struct TstRtspMountHandle *handle,
  * 0xBD. PTS is written only for `carries_pts = true` streams.
  *
  * Returns `0` on success, `TST_E_CLOSED` after `tst_rtsp_mount_cancel` or
- * once the server has ended (`tst_rtsp_server_stop`,
- * `tst_rtsp_cancel_handle_cancel` or `tst_rtsp_server_free`),
+ * once the server has ended (`tst_rtsp_server_stop`, from the moment it
+ * begins; `tst_rtsp_cancel_handle_cancel`; or `tst_rtsp_server_free`),
  * `TST_E_RTSP_MOUNT` on muxer errors, `TST_E_INVALID_CONFIG` if `handle`
  * is null.
  *
@@ -9807,8 +9807,8 @@ int tst_rtsp_mount_push_data_to(struct TstRtspMountHandle *handle,
  * `metadata_service_id = 0x00` per ST 1402.2 App. B Table 2.
  *
  * Returns `0` on success, `TST_E_CLOSED` after `tst_rtsp_mount_cancel` or
- * once the server has ended (`tst_rtsp_server_stop`,
- * `tst_rtsp_cancel_handle_cancel` or `tst_rtsp_server_free`),
+ * once the server has ended (`tst_rtsp_server_stop`, from the moment it
+ * begins; `tst_rtsp_cancel_handle_cancel`; or `tst_rtsp_server_free`),
  * `TST_E_RTSP_MOUNT` on muxer errors, `TST_E_INVALID_CONFIG` if `handle`
  * is null.
  *
@@ -9859,8 +9859,8 @@ int tst_rtsp_mount_push_klv_to(struct TstRtspMountHandle *handle,
  * is the presentation timestamp in 90 kHz ticks.
  *
  * Returns `0` on success, `TST_E_CLOSED` after `tst_rtsp_mount_cancel` or
- * once the server has ended (`tst_rtsp_server_stop`,
- * `tst_rtsp_cancel_handle_cancel` or `tst_rtsp_server_free`),
+ * once the server has ended (`tst_rtsp_server_stop`, from the moment it
+ * begins; `tst_rtsp_cancel_handle_cancel`; or `tst_rtsp_server_free`),
  * `TST_E_RTSP_MOUNT` on muxer errors, `TST_E_INVALID_CONFIG` if `handle`
  * is null.
  *
@@ -9912,8 +9912,8 @@ int tst_rtsp_mount_push_subtitle_to(struct TstRtspMountHandle *handle,
  * stream is present — use `tst_rtsp_mount_push_video_to` in that case.
  *
  * Returns `0` on success, `TST_E_CLOSED` after `tst_rtsp_mount_cancel` or
- * once the server has ended (`tst_rtsp_server_stop`,
- * `tst_rtsp_cancel_handle_cancel` or `tst_rtsp_server_free`),
+ * once the server has ended (`tst_rtsp_server_stop`, from the moment it
+ * begins; `tst_rtsp_cancel_handle_cancel`; or `tst_rtsp_server_free`),
  * `TST_E_RTSP_MOUNT` on muxer errors, `TST_E_INVALID_CONFIG` if `handle`
  * is null.
  *

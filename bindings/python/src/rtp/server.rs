@@ -103,8 +103,9 @@ impl PyRtspServerCancelHandle {
 /// All `push_*` methods release the GIL via `py.detach()` so
 /// concurrent Python threads can run while the muxer/fanout work
 /// proceeds. A push raises `RtspError(MOUNT)` when the muxer refuses the
-/// frame, and `RtspError(CLOSED)` once the server has ended (`stop()`, a
-/// `cancel()` on its `cancel_handle()`, or the server being collected),
+/// frame, and `RtspError(CLOSED)` once the server has ended (`stop()`, from
+/// the moment it begins; a `cancel()` on its `cancel_handle()`; or the
+/// server being collected),
 /// whether or not the mount was removed first.
 #[pyclass(name = "MountHandle", module = "tstrans.rtp", frozen)]
 #[derive(Clone)]
@@ -151,8 +152,8 @@ impl PyMountHandle {
     /// Accepts any bytes-like input (bytes / bytearray / memoryview /
     /// NumPy uint8). Raises `RtspError(MOUNT)` on muxer rejection or
     /// backpressure, and `RtspError(CLOSED)` once the server has ended
-    /// (`stop()`, a `cancel()` on its `cancel_handle()`, or the server
-    /// being collected).
+    /// (`stop()`, from the moment it begins; a `cancel()` on its
+    /// `cancel_handle()`; or the server being collected).
     #[pyo3(signature = (nal, *, pts, key_frame = false))]
     pub fn push_video(
         &self,
