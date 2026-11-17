@@ -287,6 +287,42 @@ mod tests {
         teardown_within_is_bounded(true, true);
     }
 
+    /// `Drop` sets the cancel and then writes TEARDOWN, so it waits for the
+    /// write and not for a reply that never comes: it returns well inside
+    /// its 500 ms TEARDOWN bound, and the cancel is set afterwards.
+    #[test]
+    fn drop_sets_the_cancel_before_its_teardown() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let peer = std::thread::spawn(move || {
+            let mut seen = Vec::new();
+            if let Ok((mut sock, _)) = listener.accept() {
+                // Never replies; reads until the client hangs up.
+                sock.set_read_timeout(Some(Duration::from_secs(10))).ok();
+                let _ = sock.read_to_end(&mut seen);
+            }
+            String::from_utf8_lossy(&seen).into_owned()
+        });
+
+        let mut client = RtspClient::connect(&format!("rtsp://127.0.0.1:{port}/test")).unwrap();
+        client.session_id = Some("silent-drop".into());
+        let cancel = client.cancel_handle();
+        let t0 = Instant::now();
+        drop(client);
+        let elapsed = t0.elapsed();
+
+        assert!(cancel.is_cancelled(), "Drop did not set the cancel");
+        assert!(
+            elapsed < tst_test_helpers::timing::scaled(Duration::from_millis(400)),
+            "Drop waited {elapsed:?}: it waited for the TEARDOWN reply"
+        );
+        let seen = peer.join().unwrap();
+        assert!(
+            seen.lines().any(|l| l.starts_with("TEARDOWN ")),
+            "the peer saw no TEARDOWN: {seen:?}"
+        );
+    }
+
     /// A cancelled client still writes its TEARDOWN when dropped: nothing
     /// on the request path refuses a request because the cancel flag is
     /// set, and `Drop` relies on that.
