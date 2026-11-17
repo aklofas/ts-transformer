@@ -204,7 +204,7 @@
         },
         "rist": {
           "aliases": 2,
-          "keys": 10,
+          "keys": 11,
           "no_invalid": [
             "cname"
           ]
@@ -235,7 +235,7 @@
         },
         "udp": {
           "aliases": 0,
-          "keys": 7,
+          "keys": 8,
           "no_invalid": [
             "iface"
           ]
@@ -2181,6 +2181,70 @@
           "url": "udp://127.0.0.1"
         },
         {
+          "case": "explicit",
+          "expect": {
+            "bind": true,
+            "host": "127.0.0.1",
+            "keys": {
+              "source": "10.0.0.5"
+            },
+            "port": 0,
+            "scheme": "udp"
+          },
+          "key": "source",
+          "role": "recv",
+          "scheme": "udp",
+          "url": "udp://@127.0.0.1:0?source=10.0.0.5"
+        },
+        {
+          "case": "explicit",
+          "expect": {
+            "bind": true,
+            "host": "127.0.0.1",
+            "keys": {
+              "source": "first"
+            },
+            "port": 0,
+            "scheme": "udp"
+          },
+          "key": "source",
+          "role": "recv",
+          "scheme": "udp",
+          "url": "udp://@127.0.0.1:0?source=first"
+        },
+        {
+          "case": "invalid",
+          "expect": {
+            "error_kind": "URL"
+          },
+          "key": "source",
+          "role": "recv",
+          "scheme": "udp",
+          "url": "udp://@127.0.0.1:0?source=camera.local"
+        },
+        {
+          "case": "invalid",
+          "expect": {
+            "error_kind": "URL"
+          },
+          "key": "source",
+          "role": "recv",
+          "scheme": "udp",
+          "stage": "open",
+          "url": "udp://@127.0.0.1:0?source=::1"
+        },
+        {
+          "case": "invalid",
+          "expect": {
+            "error_kind": "URL"
+          },
+          "key": "source",
+          "role": "send",
+          "scheme": "udp",
+          "stage": "open",
+          "url": "udp://127.0.0.1:31301?source=10.0.0.5"
+        },
+        {
           "case": "default",
           "expect": {
             "host": "127.0.0.1",
@@ -3282,6 +3346,67 @@
           "role": "send",
           "scheme": "rist",
           "url": "rist://localhost:31601"
+        },
+        {
+          "case": "explicit",
+          "expect": {
+            "bind": true,
+            "host": "127.0.0.1",
+            "keys": {
+              "buffer": "200",
+              "compression": "0",
+              "pkt_size": "1316",
+              "profile": "main",
+              "source": "10.0.0.5"
+            },
+            "port": 31652,
+            "scheme": "rist"
+          },
+          "key": "source",
+          "role": "recv",
+          "scheme": "rist",
+          "url": "rist://@127.0.0.1:31652?source=10.0.0.5"
+        },
+        {
+          "case": "explicit",
+          "expect": {
+            "bind": true,
+            "host": "127.0.0.1",
+            "keys": {
+              "buffer": "200",
+              "compression": "0",
+              "pkt_size": "1316",
+              "profile": "main",
+              "source": "first"
+            },
+            "port": 31653,
+            "scheme": "rist"
+          },
+          "key": "source",
+          "role": "recv",
+          "scheme": "rist",
+          "url": "rist://@127.0.0.1:31653?source=first"
+        },
+        {
+          "case": "invalid",
+          "expect": {
+            "error_kind": "URL"
+          },
+          "key": "source",
+          "role": "recv",
+          "scheme": "rist",
+          "url": "rist://@127.0.0.1:31654?source=camera.local"
+        },
+        {
+          "case": "invalid",
+          "expect": {
+            "error_kind": "INVALID_CONFIG"
+          },
+          "key": "source",
+          "role": "send",
+          "scheme": "rist",
+          "stage": "open",
+          "url": "rist://127.0.0.1:31601?source=10.0.0.5"
         },
         {
           "case": "default",

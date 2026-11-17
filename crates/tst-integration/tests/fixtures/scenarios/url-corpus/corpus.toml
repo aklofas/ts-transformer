@@ -72,7 +72,7 @@ aliases = 0
 no_invalid = []
 
 [schemes.udp]
-keys = 7
+keys = 8
 aliases = 0
 no_invalid = ["iface"]                    # any text names an interface
 
@@ -87,7 +87,7 @@ aliases = 0
 no_invalid = ["output_dir", "auth_user", "auth_pass", "cert", "key"]
 
 [schemes.rist]
-keys = 10
+keys = 11
 aliases = 2
 no_invalid = ["cname"]
 
@@ -1375,6 +1375,48 @@ case = "invalid"
 url = "udp://127.0.0.1"
 expect = { error_kind = "URL" }
 
+[[url]]
+scheme = "udp"
+role = "recv"
+case = "explicit"
+key = "source"
+url = "udp://@127.0.0.1:0?source=10.0.0.5"
+expect = { scheme = "udp", host = "127.0.0.1", port = 0, bind = true, keys = { source = "10.0.0.5" } }
+
+[[url]]
+scheme = "udp"
+role = "recv"
+case = "explicit"
+key = "source"
+url = "udp://@127.0.0.1:0?source=first"
+expect = { scheme = "udp", host = "127.0.0.1", port = 0, bind = true, keys = { source = "first" } }
+
+[[url]]
+scheme = "udp"
+role = "recv"
+case = "invalid"
+key = "source"
+url = "udp://@127.0.0.1:0?source=camera.local"
+expect = { error_kind = "URL" }
+
+[[url]]
+scheme = "udp"
+role = "recv"
+case = "invalid"
+key = "source"
+stage = "open"
+url = "udp://@127.0.0.1:0?source=::1"
+expect = { error_kind = "URL" }
+
+[[url]]
+scheme = "udp"
+role = "send"
+case = "invalid"
+key = "source"
+stage = "open"
+url = "udp://127.0.0.1:31301?source=10.0.0.5"
+expect = { error_kind = "URL" }
+
 # ══ tcp(s) ════════════════════════════════════════════════════════════════════
 # Callers dial a closed loopback port; listeners bind port 0. A tcps listener
 # names both `cert` and `key`: one alone is refused at open by a config rule
@@ -1962,6 +2004,39 @@ role = "send"
 case = "invalid"
 url = "rist://localhost:31601"
 expect = { error_kind = "URL" }
+
+[[url]]
+scheme = "rist"
+role = "recv"
+case = "explicit"
+key = "source"
+url = "rist://@127.0.0.1:31652?source=10.0.0.5"
+expect = { scheme = "rist", host = "127.0.0.1", port = 31652, bind = true, keys = { profile = "main", buffer = "200", compression = "0", pkt_size = "1316", source = "10.0.0.5" } }
+
+[[url]]
+scheme = "rist"
+role = "recv"
+case = "explicit"
+key = "source"
+url = "rist://@127.0.0.1:31653?source=first"
+expect = { scheme = "rist", host = "127.0.0.1", port = 31653, bind = true, keys = { profile = "main", buffer = "200", compression = "0", pkt_size = "1316", source = "first" } }
+
+[[url]]
+scheme = "rist"
+role = "recv"
+case = "invalid"
+key = "source"
+url = "rist://@127.0.0.1:31654?source=camera.local"
+expect = { error_kind = "URL" }
+
+[[url]]
+scheme = "rist"
+role = "send"
+case = "invalid"
+key = "source"
+stage = "open"
+url = "rist://127.0.0.1:31601?source=10.0.0.5"
+expect = { error_kind = "INVALID_CONFIG" }
 
 # ══ whep(s) ═══════════════════════════════════════════════════════════════════
 # Valid rows bind port 0 (the media port follows the URL's port). A wheps URL

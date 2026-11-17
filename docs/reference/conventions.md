@@ -365,6 +365,7 @@ rejected by `srt`, `tcps`, `rtp`, `rtsp(s)` and `whep(s)` URLs.
 | `pkt_size` | Datagram payload size | bytes with the `K`/`M` forms | `udp` |
 | `rcvbuf` | Kernel socket buffer size | bytes; `K` and `M` suffixes are 1024-based; at most 256 MiB | `udp`, `tcp(s)` |
 | `sndbuf` | Kernel socket buffer size | bytes; `K` and `M` suffixes are 1024-based; at most 256 MiB | `udp`, `tcp(s)` |
+| `source` | Receive only from one sender IP, port not compared; the source address is unverified, and `first` is taken by the first datagram with a payload from anyone (receiver only) | an IP address, or `first` | `udp` |
 | `tos` | IP type of service | decimal, or hex with a `0x` prefix, 0 to 255 | `udp` |
 | `ttl` | Multicast hop limit | decimal 0 to 255 | `udp` |
 | `iface` | Multicast interface | interface name or IPv4 literal | `rtp` |
