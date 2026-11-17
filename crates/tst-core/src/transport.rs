@@ -66,6 +66,11 @@ use thiserror::Error;
 #[cfg(feature = "conformance")]
 pub mod conformance;
 
+#[cfg(feature = "std")]
+mod source;
+#[cfg(feature = "std")]
+pub use source::{SourceHandle, SourcePin};
+
 // ============================================================
 // Wire-level socket stats (shared between Transport + RecvTransport)
 // ============================================================
@@ -673,6 +678,15 @@ pub trait RecvTransport: Send {
     fn end_reason_handle(&self) -> Option<EndReasonHandle> {
         None
     }
+
+    /// A handle reporting where this transport's datagrams come from and,
+    /// when the transport was given a source pin, how many it refused.
+    /// Obtain it before moving the transport into a shell. Defaults to
+    /// `None`.
+    #[cfg(feature = "std")]
+    fn source_handle(&self) -> Option<SourceHandle> {
+        None
+    }
 }
 
 // ============================================================
@@ -743,6 +757,10 @@ impl<T: RecvTransport + ?Sized> RecvTransport for Box<T> {
     #[cfg(feature = "std")]
     fn end_reason_handle(&self) -> Option<EndReasonHandle> {
         (**self).end_reason_handle()
+    }
+    #[cfg(feature = "std")]
+    fn source_handle(&self) -> Option<SourceHandle> {
+        (**self).source_handle()
     }
 }
 
@@ -826,6 +844,31 @@ mod end_reason_tests {
         assert!(Silent.end_reason_handle().is_none());
         let boxed: std::boxed::Box<dyn RecvTransport> = std::boxed::Box::new(Silent);
         assert!(boxed.end_reason_handle().is_none());
+    }
+
+    #[test]
+    fn a_boxed_transport_forwards_its_source_handle() {
+        use super::SourceHandle;
+        struct Sourced(SourceHandle);
+        impl RecvTransport for Sourced {
+            fn recv_bytes(&mut self, _: &mut [u8]) -> Result<usize, TransportError> {
+                Ok(0)
+            }
+            fn max_payload(&self) -> usize {
+                1316
+            }
+            fn is_alive(&self) -> bool {
+                true
+            }
+            fn source_handle(&self) -> Option<SourceHandle> {
+                Some(self.0.clone())
+            }
+        }
+        assert!(Silent.source_handle().is_none());
+        let h = SourceHandle::default();
+        let boxed: std::boxed::Box<dyn RecvTransport> = std::boxed::Box::new(Sourced(h.clone()));
+        boxed.source_handle().unwrap().count_rejected();
+        assert_eq!(h.rejected(), 1);
     }
 }
 
