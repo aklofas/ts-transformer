@@ -2,8 +2,8 @@
 
 After `cancel_handle().cancel()` a receive, a sub-bundle send, a flush and a
 finish all raise the transport's `CLOSED`, even with packets or bytes still
-buffered. The H.264 receiver is the documented exception: it drains to end of
-stream.
+buffered. The H.264 receiver hands out the access units it already holds
+first, then raises `CLOSED`.
 """
 
 from __future__ import annotations
@@ -14,6 +14,7 @@ import pytest
 
 import tstrans
 from tstrans import exceptions
+from tstrans.exceptions import RtpError, RtpErrorKind
 from tstrans.shells import MuxSender, Receiver, Sender
 
 from _builders.mux_programs import video_only_program
@@ -70,11 +71,72 @@ def test_mux_sender_cancel_then_finish_raises_closed() -> None:
         tx.close()
 
 
-def test_h264_receiver_drains_to_eos_after_cancel_not_closed() -> None:
-    # The documented exemption: the H.264 receiver drains to end of stream.
+def _h264_pkt(seq: int, ts: int, nal: bytes, marker: bool = False) -> bytes:
+    """One single-NAL-unit RTP packet, PT 96, SSRC 9."""
+    return (
+        bytes([0x80, (0x80 if marker else 0) | 96])
+        + seq.to_bytes(2, "big")
+        + ts.to_bytes(4, "big")
+        + (9).to_bytes(4, "big")
+        + nal
+    )
+
+
+def _h264_rx_and_addr(url: str) -> tuple[tstrans.rtp.H264Receiver, tuple[str, int]]:
+    rx = tstrans.rtp.H264Receiver.listen(url)
+    addr = rx.local_addr()
+    assert addr is not None
+    host, _, port = addr.rpartition(":")
+    return rx, (host, int(port))
+
+
+def test_h264_receiver_ends_closed_after_cancel() -> None:
     rx = tstrans.rtp.H264Receiver.listen("rtp://127.0.0.1:0?pt=96")
     try:
         rx.cancel_handle().cancel()
-        assert rx.recv_au() is None
+        for _ in range(2):
+            with pytest.raises(RtpError) as e:
+                rx.recv_au()
+            assert e.value.kind == RtpErrorKind.CLOSED
+    finally:
+        rx.close()
+
+
+@pytest.mark.timeout(10, method="thread")
+def test_h264_receiver_hands_out_flushed_au_then_ends_closed_after_cancel() -> None:
+    rx, addr = _h264_rx_and_addr("rtp://127.0.0.1:0?pt=96")
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.sendto(_h264_pkt(1, 0, b"\x65\x01"), addr)
+            s.sendto(_h264_pkt(2, 3000, b"\x41\x02"), addr)
+        # The second packet's timestamp completes the first AU and leaves
+        # its own open, so this AU proves both packets were read.
+        first = rx.recv_au(timeout_ms=5000)
+        assert first is not None and first.rtp_timestamp == 0
+        rx.cancel_handle().cancel()
+        flushed = rx.recv_au()
+        assert flushed is not None and flushed.rtp_timestamp == 3000
+        assert bytes(flushed.annexb) == b"\x00\x00\x00\x01\x41\x02"
+        with pytest.raises(RtpError) as e:
+            rx.recv_au()
+        assert e.value.kind == RtpErrorKind.CLOSED
+    finally:
+        rx.close()
+
+
+@pytest.mark.timeout(10, method="thread")
+def test_h264_receiver_iterator_raises_closed_after_cancel() -> None:
+    # The URL deadline turns a lost datagram into a failure instead of a hang.
+    rx, addr = _h264_rx_and_addr("rtp://127.0.0.1:0?pt=96&recv_timeout=5000")
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.sendto(_h264_pkt(1, 0, b"\x65\x01", marker=True), addr)
+        collected: list[object] = []
+        with pytest.raises(RtpError) as e:
+            for au in rx:
+                collected.append(au)
+                rx.cancel_handle().cancel()
+        assert e.value.kind == RtpErrorKind.CLOSED
+        assert len(collected) == 1
     finally:
         rx.close()

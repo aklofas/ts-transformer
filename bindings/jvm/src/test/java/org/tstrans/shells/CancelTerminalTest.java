@@ -7,6 +7,7 @@ import java.net.DatagramSocket;
 import java.net.InetAddress;
 import java.util.Iterator;
 import org.junit.jupiter.api.Test;
+import org.tstrans.RtpException;
 import org.tstrans.TcpException;
 import org.tstrans.TestSupport;
 import org.tstrans.UdpException;
@@ -17,8 +18,8 @@ import org.tstrans.rtp.H264Receiver;
  * A cancel is terminal for a shell's buffered output: after
  * {@code cancelHandle().cancel()} a receive, a sub-bundle send, a flush and a
  * finish all throw the transport's {@code CLOSED}, even with packets or bytes
- * still buffered. The H.264 receiver is the documented exception: it drains to
- * end of stream.
+ * still buffered. The H.264 receiver hands out the access units it already holds
+ * first, then throws {@code CLOSED}.
  */
 class CancelTerminalTest {
     @Test
@@ -82,12 +83,15 @@ class CancelTerminalTest {
         }
     }
 
-    /** The documented exemption: the H.264 receiver drains to EOS on cancel. */
     @Test
-    void h264ReceiverDrainsToEosAfterCancelNotClosed() throws Exception {
+    void h264ReceiverEndsClosedAfterCancel() throws Exception {
         try (H264Receiver rx = H264Receiver.listen("rtp://127.0.0.1:0?pt=96")) {
             rx.cancelHandle().cancel();
-            assertNull(rx.recvAu(), "a cancelled H.264 receiver reports end of stream");
+            for (int call = 0; call < 2; call++) {
+                RtpException e = assertThrows(RtpException.class, rx::recvAu,
+                    "a cancelled H.264 receiver with nothing buffered ends with the cancel");
+                assertEquals("CLOSED", ShellPeers.kindName(e));
+            }
         }
     }
 }

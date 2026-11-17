@@ -26,7 +26,7 @@
 //! another (a `&mut self` receive made PyO3 raise `RuntimeError: Already
 //! borrowed` there). Methods raise `RtpError(CLOSED)` once the slot is
 //! empty. `close()` is cancel-first, so any parked `recv_au` unparks
-//! promptly and returns `None` (EOS); the end reason is snapshotted by
+//! promptly and raises `RtpError(CLOSED)`; the end reason is snapshotted by
 //! `H264Held::close`, the one moment it can be read before the receiver
 //! drops.
 //!
@@ -295,8 +295,9 @@ impl PyH264AccessUnit {
 ///
 /// `recv_au(timeout_ms=None)` blocks until a complete Access Unit is
 /// reassembled or EOS. Returns `H264AccessUnit` on success, `None` at EOS
-/// (clean close or RTSP teardown), or raises `RtpError` on transport
-/// failure. `timeout_ms=N` bounds a single call via the one-shot
+/// (RTSP teardown), or raises `RtpError` on transport failure. A cancel
+/// hands out the AUs already buffered first, then raises
+/// `RtpError(CLOSED)`. `timeout_ms=N` bounds a single call via the one-shot
 /// `recv_au_timeout`; expiry raises `RtpError(BACKPRESSURE)` — the receiver
 /// stays open, call again to keep waiting. `None` return stays EOS-only
 /// and is never used to signal a timeout.
@@ -307,7 +308,8 @@ impl PyH264AccessUnit {
 /// # Iterator protocol
 ///
 /// `H264Receiver` is its own iterator. `__next__` calls `recv_au()` and
-/// raises `StopIteration` at EOS (when `recv_au()` returns `None`).
+/// raises `StopIteration` at EOS (when `recv_au()` returns `None`); a
+/// cancelled loop raises `RtpError(CLOSED)` like `recv_au()`.
 ///
 /// # Lifecycle
 ///
@@ -454,15 +456,16 @@ impl PyH264Receiver {
     ///
     /// Returns:
     /// - `H264AccessUnit` when a complete AU is available.
-    /// - `None` at EOS (clean close, cancel — including a `close()` from
-    ///   another thread — or RTSP teardown); never returned to signal a
-    ///   timeout.
+    /// - `None` at EOS (RTSP teardown); never returned to signal a
+    ///   timeout or a cancel.
     ///
     /// Raises:
     /// - `RtpError(BACKPRESSURE)` if `timeout_ms` was given and no AU
     ///   completed within it — retryable, the receiver stays open.
     /// - `RtpError(BROKEN)` on a hard I/O error.
-    /// - `RtpError(CLOSED)` if the receiver is already closed.
+    /// - `RtpError(CLOSED)` once cancelled (including a `close()` from
+    ///   another thread), after the AUs already buffered, or if the
+    ///   receiver is already closed.
     #[pyo3(signature = (timeout_ms = None))]
     fn recv_au(
         &self,
@@ -489,8 +492,9 @@ impl PyH264Receiver {
         slf
     }
 
-    /// Advance the iterator. Returns the next `H264AccessUnit` or raises
-    /// `StopIteration` at EOS.
+    /// Advance the iterator. Returns the next `H264AccessUnit`, raises
+    /// `StopIteration` at EOS, and raises `RtpError(CLOSED)` once
+    /// cancelled.
     fn __next__(&self, py: Python<'_>) -> PyResult<Py<PyH264AccessUnit>> {
         match self.recv_au(py, None)? {
             Some(au) => Ok(au),
@@ -560,7 +564,8 @@ impl PyH264Receiver {
 
     /// Return a shareable cancel handle. Calling `.cancel()` on the
     /// returned handle wakes any thread parked in `recv_au()` within
-    /// ~100ms; that call returns `None` (EOS) rather than raising.
+    /// ~100ms; after any AUs already buffered, it raises
+    /// `RtpError(CLOSED)`.
     fn cancel_handle(&self, py: Python<'_>) -> PyResult<Py<PyCancelHandle>> {
         Py::new(py, PyCancelHandle::from_source(&self.cancel))
     }
@@ -586,11 +591,11 @@ impl PyH264Receiver {
 
     /// Close the receiver. Idempotent. Fires the cancel handle BEFORE
     /// taking the slot so a thread parked in `recv_au` unparks at the
-    /// next cancel-poll tick (~100 ms) and returns `None`; then calls the
-    /// inner `H264Receiver`'s own idempotent `close()` (records
-    /// `EndReason::Cancelled` unless some earlier signal already
-    /// claimed the slot), snapshots its `end_reason()` into
-    /// `closed_end_reason`, and drops the source.
+    /// next cancel-poll tick (~100 ms) and raises `RtpError(CLOSED)`; then
+    /// calls the inner `H264Receiver`'s own idempotent `close()` (records
+    /// `EndReason::Cancelled` unless some earlier signal already claimed
+    /// the slot), snapshots its `end_reason()` into `closed_end_reason`,
+    /// and drops the source.
     fn close(&self, py: Python<'_>) -> PyResult<()> {
         // `H264Held::close` takes the end-reason snapshot before the
         // receiver drops; `Owned::close` runs it inside a panic boundary.

@@ -782,8 +782,9 @@ def test_rtp_mux_sender_close_from_other_thread_during_send_video() -> None:
 # --------------------------------------------------------------------------- #
 
 
-def test_rtp_h264_receiver_close_from_other_thread_while_recv_au_parked() -> None:
+def test_rtp_h264_receiver_close_from_other_thread_while_recv_au_parked_ends_closed() -> None:
     import tstrans.rtp as rtp
+    from tstrans.exceptions import RtpError, RtpErrorKind
 
     rx = rtp.H264Receiver.listen("rtp://127.0.0.1:0?pt=96")
     # Read the bound address up front (it is a construction-time snapshot,
@@ -818,9 +819,10 @@ def test_rtp_h264_receiver_close_from_other_thread_while_recv_au_parked() -> Non
             w.join(5.0)
         _assert_close_ok(c, errs, "rtp.H264Receiver")
         assert not w.is_alive(), "close() did not end the parked recv_au()"
-        assert "exc" not in outcome, f"parked recv_au raised {outcome['exc']!r}"
-        # Cancel/close is EOS on this shell: recv_au() returns None.
-        assert outcome.get("ret") is None
+        # close() cancels first, so the parked call ends with CLOSED.
+        exc = outcome.get("exc")
+        assert isinstance(exc, RtpError), f"parked recv_au returned {outcome.get('ret')!r}"
+        assert exc.kind == RtpErrorKind.CLOSED, exc.kind
         assert rx.end_reason() is not None  # Cancelled, snapshotted by close()
         assert "closed" in repr(rx)
     finally:

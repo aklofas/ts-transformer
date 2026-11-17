@@ -23,8 +23,10 @@ import org.tstrans.shells.SocketStats;
  * <h3>Receiving</h3>
  *
  * <p>{@link #recvAu()} blocks until a complete H.264 Access Unit is reassembled
- * or EOS. Returns {@link H264AccessUnit} on success, {@code null} at EOS (clean
- * close or RTSP teardown), or throws {@link RtpException} on transport failure.
+ * or EOS. Returns {@link H264AccessUnit} on success, {@code null} at EOS (the
+ * RTSP server ended the session), or throws {@link RtpException} on transport
+ * failure. After a cancel it returns the AUs it already holds, then throws
+ * {@link RtpException} with kind {@code CLOSED}.
  *
  * <h3>Thread safety</h3>
  *
@@ -135,13 +137,14 @@ public final class H264Receiver extends NativeHandle implements Iterable<H264Acc
      * <p>Blocks until a packet arrives or EOS / error. The native call parks the
      * calling thread on kernel I/O; there is no GIL to release on the JVM side.
      *
-     * @return the next {@link H264AccessUnit}, or {@code null} at EOS (clean close
-     *     or RTSP teardown — caller should exit the recv loop). A fired cancel
-     *     returns the depacketizer's final buffered AU if one exists, else
-     *     {@code null}; it does not throw {@code CLOSED}.
-     * @throws RtpException {@code IO} on a hard I/O error; {@code BACKPRESSURE} if
-     *     a configured persistent recv deadline (the {@code ?recv_timeout=<ms>}
-     *     URL knob) expires
+     * @return the next {@link H264AccessUnit}, or {@code null} at EOS (the RTSP
+     *     server ended the session — caller should exit the recv loop). After a
+     *     fired cancel, the AUs already buffered (including the depacketizer's
+     *     final AU, if it completes cleanly) are returned first.
+     * @throws RtpException {@code CLOSED} once a cancel has fired and the
+     *     buffered AUs are handed out; {@code IO} on a hard I/O error;
+     *     {@code BACKPRESSURE} if a configured persistent recv deadline (the
+     *     {@code ?recv_timeout=<ms>} URL knob) expires
      * @throws IllegalStateException if the receiver is already closed
      * @see #recvAu(Integer) for a per-call deadline instead of (or on top of) a
      *     persistent one
@@ -162,13 +165,15 @@ public final class H264Receiver extends NativeHandle implements Iterable<H264Acc
      *     deadline for this one call. A negative value behaves the same as
      *     {@code null} (blocks indefinitely) — there is no separate
      *     "immediate timeout" or rejected-argument case.
-     * @return the next {@link H264AccessUnit}, or {@code null} at EOS (clean
-     *     close or RTSP teardown — caller should exit the recv loop). A fired
-     *     cancel returns the depacketizer's final buffered AU if one exists,
-     *     else {@code null}; it does not throw {@code CLOSED}. A
+     * @return the next {@link H264AccessUnit}, or {@code null} at EOS (the RTSP
+     *     server ended the session — caller should exit the recv loop). After a
+     *     fired cancel, the AUs already buffered (including the depacketizer's
+     *     final AU, if it completes cleanly) are returned first. A
      *     {@code null} return never means the deadline expired — expiry always
      *     throws {@code RtpException(BACKPRESSURE)}.
-     * @throws RtpException {@code IO} on a hard I/O error; {@code BACKPRESSURE} if
+     * @throws RtpException {@code CLOSED} once a cancel has fired and the
+     *     buffered AUs are handed out (a cancel wins over a deadline that is
+     *     also due); {@code IO} on a hard I/O error; {@code BACKPRESSURE} if
      *     {@code timeoutMs} elapses, or (when {@code timeoutMs} is {@code null})
      *     a configured persistent recv deadline expires
      * @throws IllegalStateException if the receiver is already closed
@@ -183,7 +188,8 @@ public final class H264Receiver extends NativeHandle implements Iterable<H264Acc
      * the next {@code recvAu()} until an AU arrives, EOS ({@code null}) is returned,
      * or an error occurs. A {@link RtpException} from the native pull is wrapped in
      * an unchecked {@link RuntimeException} (the {@code Iterator} contract forbids
-     * checked exceptions).
+     * checked exceptions); a cancelled iteration ends that way too, with kind
+     * {@code CLOSED}.
      *
      * <p>For-each shorthand:
      * <pre>{@code
@@ -271,8 +277,8 @@ public final class H264Receiver extends NativeHandle implements Iterable<H264Acc
     /**
      * Obtain a cross-thread cancel handle. Obtain it BEFORE a blocking
      * {@link #recvAu()} call; calling {@link CancelHandle#cancel()} from another
-     * thread wakes the parked recv within ~100&nbsp;ms, causing it to return
-     * {@code null} (EOS) rather than throwing.
+     * thread wakes the parked recv within ~100&nbsp;ms; after any AUs already
+     * buffered, it throws {@link RtpException} with kind {@code CLOSED}.
      *
      * @throws IllegalStateException if the receiver is closed
      */

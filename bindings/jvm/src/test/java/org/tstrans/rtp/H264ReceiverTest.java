@@ -318,9 +318,12 @@ class H264ReceiverTest {
         }
     }
 
-    /** A fired cancel ends a parked {@code recvAu()} with {@code null}; it never throws CLOSED. */
+    /**
+     * A fired cancel ends a parked {@code recvAu()} with {@code RtpException(CLOSED)}.
+     * The answer is the same if the cancel lands before the call parks.
+     */
     @Test @Timeout(30)
-    void cancelledRecvAuReturnsNullNotClosed() throws Exception {
+    void parkedRecvAuEndsClosedAfterCancel() throws Exception {
         try (H264Receiver rx = H264Receiver.listen("rtp://127.0.0.1:0?pt=96")) {
             CancelHandle ch = rx.cancelHandle();
             CompletableFuture<Object> r = CompletableFuture.supplyAsync(() -> {
@@ -328,9 +331,81 @@ class H264ReceiverTest {
             });
             Thread.sleep(300); // let recvAu park
             ch.cancel();
-            assertEquals(java.util.Optional.empty(),
-                r.get(org.tstrans.TestSupport.scaledMs(5_000), TimeUnit.MILLISECONDS));
+            Object got = r.get(org.tstrans.TestSupport.scaledMs(5_000), TimeUnit.MILLISECONDS);
+            RtpException e = assertInstanceOf(RtpException.class, got);
+            assertEquals(RtpException.Kind.CLOSED, e.kind());
         }
+    }
+
+    /**
+     * A cancel hands out the AU the depacketizer still holds before CLOSED. The
+     * second packet's timestamp completes the first AU and leaves its own open, so
+     * reading the first AU proves both packets were fed.
+     */
+    @Test @Timeout(30)
+    void recvAuHandsOutFlushedAuThenEndsClosedAfterCancel() throws Exception {
+        try (H264Receiver rx = H264Receiver.listen("rtp://127.0.0.1:0?pt=96")) {
+            InetSocketAddress dst = loopbackAddr(rx);
+            try (DatagramSocket tx = new DatagramSocket(new InetSocketAddress("127.0.0.1", 0))) {
+                byte[] a = singleNal((short) 1, 0, false, (byte) 0x65, (byte) 0x01);
+                byte[] b = singleNal((short) 2, 3000, false, (byte) 0x41, (byte) 0x02);
+                tx.send(new DatagramPacket(a, a.length, dst));
+                tx.send(new DatagramPacket(b, b.length, dst));
+            }
+            H264AccessUnit first = rx.recvAu(5_000);
+            assertNotNull(first);
+            assertEquals(0L, first.rtpTimestamp());
+
+            rx.cancelHandle().cancel();
+            H264AccessUnit flushed = rx.recvAu();
+            assertNotNull(flushed, "the open AU must be flushed before CLOSED");
+            assertEquals(3000L, flushed.rtpTimestamp());
+            assertArrayEquals(new byte[] {0, 0, 0, 1, 0x41, 0x02}, flushed.annexb());
+            RtpException e = assertThrows(RtpException.class, rx::recvAu);
+            assertEquals(RtpException.Kind.CLOSED, e.kind());
+        }
+    }
+
+    /** A cancelled for-each throws a {@code RuntimeException} caused by {@code RtpException(CLOSED)}. */
+    @Test @Timeout(30)
+    void forEachThrowsClosedAfterCancel() throws Exception {
+        // The URL deadline turns a lost datagram into a failure instead of a hang.
+        try (H264Receiver rx = H264Receiver.listen("rtp://127.0.0.1:0?pt=96&recv_timeout=5000")) {
+            InetSocketAddress dst = loopbackAddr(rx);
+            try (DatagramSocket tx = new DatagramSocket(new InetSocketAddress("127.0.0.1", 0))) {
+                byte[] a = singleNal((short) 1, 0, true, (byte) 0x65, (byte) 0x01);
+                tx.send(new DatagramPacket(a, a.length, dst));
+            }
+            List<H264AccessUnit> collected = new ArrayList<>();
+            RuntimeException e = assertThrows(RuntimeException.class, () -> {
+                for (H264AccessUnit au : rx) {
+                    collected.add(au);
+                    rx.cancelHandle().cancel();
+                }
+            });
+            RtpException cause = assertInstanceOf(RtpException.class, e.getCause());
+            assertEquals(RtpException.Kind.CLOSED, cause.kind());
+            assertEquals(1, collected.size());
+        }
+    }
+
+    private static InetSocketAddress loopbackAddr(H264Receiver rx) {
+        String addr = rx.localAddr();
+        assertNotNull(addr);
+        return new InetSocketAddress("127.0.0.1",
+            Integer.parseInt(addr.substring(addr.lastIndexOf(':') + 1)));
+    }
+
+    /** A single-NAL-unit RTP packet (PT 96, SSRC 9) carrying the two NAL bytes. */
+    private static byte[] singleNal(short seq, int ts, boolean marker, byte nal0, byte nal1) {
+        return new byte[] {
+            (byte) 0x80,
+            (byte) ((marker ? 0x80 : 0) | 96),
+            (byte) (seq >> 8), (byte) seq,
+            (byte) (ts >> 24), (byte) (ts >> 16), (byte) (ts >> 8), (byte) ts,
+            0, 0, 0, 9,
+            nal0, nal1
+        };
     }
 
     // ── Test 6b: endReason()/endDetail() answer while recvAu() is parked ─────

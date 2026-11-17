@@ -240,7 +240,8 @@ jni_native! {
 jni_native! {
     /// `H264Receiver.nRecvAu(handle)` — block until the next H.264 Access Unit is
     /// reassembled. Returns an `H264AccessUnit` Java object on success, `null` at EOS,
-    /// or throws on error. Mirrors tst-py `PyH264Receiver::recv_au`.
+    /// or throws on error (`RtpException(CLOSED)` once cancelled, after the buffered
+    /// AUs). Mirrors tst-py `PyH264Receiver::recv_au`.
     ///
     /// The registry lease holds the slot's resource lock for the duration of the
     /// (possibly parked) `recv_au` call. A concurrent `close()` fires the cancel hook
@@ -269,7 +270,8 @@ jni_native! {
         };
 
         match result {
-            // EOS (cancel / clean RTSP teardown): return null
+            // EOS (clean RTSP teardown): return null. A cancel arrives as
+            // `Err(ExplicitClose)` and throws CLOSED below.
             Ok(None) => JObject::null().into_raw(),
             Ok(Some(au)) => build_h264_access_unit(env, &au),
             Err(e) => {
@@ -325,8 +327,9 @@ jni_native! {
         };
 
         match result {
-            // EOS (cancel / clean RTSP teardown): return null. NEVER reached on
-            // deadline expiry — that's `Err(Backpressure)`, handled below.
+            // EOS (clean RTSP teardown): return null. NEVER reached on a cancel
+            // or on deadline expiry — those are `Err(ExplicitClose)` and
+            // `Err(Backpressure)`, handled below.
             Ok(None) => JObject::null().into_raw(),
             Ok(Some(au)) => build_h264_access_unit(env, &au),
             Err(e) => {
