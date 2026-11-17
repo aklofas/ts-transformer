@@ -351,15 +351,15 @@ fn header<'a>(request: &'a str, name: &str) -> Option<&'a str> {
 /// <b64>` with `401` + `WWW-Authenticate: Basic realm="t"`. It sends no
 /// media, and returns after TEARDOWN or when the client hangs up.
 fn recording_peer(basic: Option<&'static str>) -> (u16, Arc<Mutex<Vec<String>>>, ThreadHandle<()>) {
-    recording_peer_with(basic, true)
+    recording_peer_with(basic, Some("200 OK"))
 }
 
-/// [`recording_peer`]; with `answer_teardown = false` it records the
-/// TEARDOWN, never replies, and holds the socket open until the client
-/// hangs up.
+/// [`recording_peer`], answering TEARDOWN with `teardown_status`; with
+/// `None` it records the TEARDOWN, never replies, and holds the socket open
+/// until the client hangs up.
 fn recording_peer_with(
     basic: Option<&'static str>,
-    answer_teardown: bool,
+    teardown_status: Option<&'static str>,
 ) -> (u16, Arc<Mutex<Vec<String>>>, ThreadHandle<()>) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
@@ -393,7 +393,7 @@ fn recording_peer_with(
             record.lock().unwrap().push(head.clone());
             let request_line = head.lines().next().unwrap_or_default();
             let method = request_line.split(' ').next().unwrap_or_default();
-            if method == "TEARDOWN" && !answer_teardown {
+            if method == "TEARDOWN" && teardown_status.is_none() {
                 continue;
             }
             let version = request_line.rsplit(' ').next().unwrap_or_default();
@@ -426,6 +426,11 @@ fn recording_peer_with(
                         "Session: DEADBEEF;timeout=60\r\nTransport: {}\r\n",
                         header(&head, "transport").unwrap_or_default()
                     ),
+                    "",
+                ),
+                "TEARDOWN" => (
+                    teardown_status.unwrap_or_default(),
+                    "Session: DEADBEEF\r\n".to_owned(),
                     "",
                 ),
                 _ => ("200 OK", "Session: DEADBEEF\r\n".to_owned(), ""),
@@ -617,7 +622,7 @@ fn teardown_of_a_healthy_session_returns_success() {
 /// Without the bound it would park for the client's 10 s request timeout.
 #[test]
 fn teardown_against_a_silent_peer_is_bounded() {
-    let (port, reqs, peer) = recording_peer_with(None, false);
+    let (port, reqs, peer) = recording_peer_with(None, None);
     let s = connect_no_keepalive(&format!("rtsp://127.0.0.1:{port}/live"));
     assert!(!s.is_null(), "{}", last_error_msg());
     assert_eq!(
@@ -643,6 +648,30 @@ fn teardown_against_a_silent_peer_is_bounded() {
     assert!(
         reqs.iter().any(|r| r.starts_with("TEARDOWN ")),
         "the peer saw no TEARDOWN: {reqs:?}"
+    );
+}
+
+/// A TEARDOWN the server refuses with `500` returns the code of that
+/// status, `TST_E_RTSP_PROTOCOL`, and the handle is still freed.
+#[test]
+fn teardown_answered_with_an_error_status_returns_rtsp_protocol_and_frees() {
+    let (port, reqs, peer) = recording_peer_with(None, Some("500 Internal Server Error"));
+    let s = connect_no_keepalive(&format!("rtsp://127.0.0.1:{port}/live"));
+    assert!(!s.is_null(), "{}", last_error_msg());
+    assert_eq!(
+        unsafe { tst_rtsp_session_play(s) },
+        0,
+        "{}",
+        last_error_msg()
+    );
+    let rc = unsafe { tst_rtsp_session_teardown_and_free(s) };
+    assert_eq!(rc, TstError::RtspProtocol as i32, "{}", last_error_msg());
+    peer.join().unwrap();
+    let reqs = reqs.lock().unwrap();
+    assert_eq!(
+        reqs.iter().filter(|r| r.starts_with("TEARDOWN ")).count(),
+        1,
+        "the peer saw {reqs:?}"
     );
 }
 
