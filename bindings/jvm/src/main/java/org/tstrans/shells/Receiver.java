@@ -279,8 +279,9 @@ public class Receiver extends NativeHandle {
      * sender the pin refuses and delivered blocks refused on the read path.
      * {@code source=<ip>} admits that IP only; {@code source=first} admits the IP of the
      * first datagram or block delivered and holds it until the receiver is closed. Either
-     * compares the IP address, never the port. What is turned away is counted here and in
-     * no received counter, and neither sender is told. If the publisher's IP changes
+     * compares the IP address, never the port. What is turned away is counted here, and
+     * neither sender is told; on {@code udp://} it is in no received counter of
+     * {@link #socketStats()}. If the publisher's IP changes
      * under a pin, its datagrams are counted here and the receiver delivers nothing until
      * it is closed and reopened.
      *
