@@ -18,7 +18,8 @@ use crate::rtsp::auth::{AuthSchemes, build_authorization};
 use crate::rtsp::client::{AuthState, duration_ms_saturating};
 use crate::rtsp::framing::parse_binary_frame_header;
 use crate::rtsp::message::{
-    RtspFraming, RtspMethod, RtspRequest, RtspResponse, rtsp_frame_decision,
+    MAX_RTSP_MESSAGE_BYTES, RtspFraming, RtspMethod, RtspRequest, RtspResponse,
+    content_length_from_header_text, rtsp_frame_decision,
 };
 use crate::url::RtspVersion;
 
@@ -124,6 +125,9 @@ pub(crate) struct EngineCounters {
     pub malformed_frames: u64,
     pub keepalive_responses: u64,
     pub unmatched_replies: u64,
+    /// Calls to `rtsp_frame_decision`: a header dribbled in costs a few,
+    /// not one per read.
+    pub frame_decisions: u64,
 }
 
 /// The first ping's CSeq is one above this: far above the caller counter,
@@ -160,6 +164,61 @@ enum Keepalive {
     Off,
 }
 
+/// What is known of the incomplete RTSP message at the front of the input
+/// buffer, so a header or body dribbled in is not searched again per read.
+#[derive(Debug, Clone, Copy)]
+struct FrontScan {
+    /// Buffered bytes of it already searched for a header terminator.
+    scanned: usize,
+    /// Header block, terminator and body, once the header block is in.
+    total_len: Option<usize>,
+}
+
+impl FrontScan {
+    /// `Some` when `rest` (the message at the front, `known` its previous
+    /// scan) is still incomplete in a way the shared decision would answer
+    /// `NeedMore` to; `None` when the decision must be asked.
+    fn still_waiting(rest: &[u8], known: Option<FrontScan>) -> Option<FrontScan> {
+        if let Some(FrontScan {
+            total_len: Some(total_len),
+            ..
+        }) = known
+        {
+            return (rest.len() < total_len).then_some(FrontScan {
+                scanned: rest.len(),
+                total_len: Some(total_len),
+            });
+        }
+        // A terminator can end in the new bytes and start up to three
+        // bytes before them.
+        let from = known.map_or(0, |k| k.scanned.saturating_sub(3));
+        let terminated = rest
+            .get(from..)
+            .unwrap_or_default()
+            .windows(4)
+            .any(|w| w == b"\r\n\r\n");
+        // Past the cap the decision refuses an unterminated buffer.
+        (!terminated && rest.len() <= MAX_RTSP_MESSAGE_BYTES).then_some(FrontScan {
+            scanned: rest.len(),
+            total_len: None,
+        })
+    }
+
+    /// The scan of `rest`, a message whose header block is in and whose
+    /// body the decision is waiting for; `None` if its length cannot be
+    /// read (then the decision is asked at every read).
+    fn awaiting_body(rest: &[u8]) -> Option<FrontScan> {
+        let header_end = rest.windows(4).position(|w| w == b"\r\n\r\n")?;
+        let header_text = std::str::from_utf8(rest.get(..header_end)?).ok()?;
+        let content_length = content_length_from_header_text(header_text).ok()?;
+        let total_len = header_end.checked_add(4)?.checked_add(content_length)?;
+        Some(FrontScan {
+            scanned: rest.len(),
+            total_len: Some(total_len),
+        })
+    }
+}
+
 #[derive(Debug)]
 struct CallerTxn {
     id: TxnId,
@@ -191,6 +250,8 @@ pub(crate) struct ClientEngine {
     /// Control-stream bytes not yet framed: at most one incomplete frame
     /// between calls to `handle_input`.
     inbuf: Vec<u8>,
+    /// The scan of an incomplete RTSP message at the front of `inbuf`.
+    front: Option<FrontScan>,
     channels: Option<InterleavedChannels>,
 }
 
@@ -242,6 +303,7 @@ impl ClientEngine {
             events: VecDeque::new(),
             counters: EngineCounters::default(),
             inbuf: Vec::new(),
+            front: None,
             channels: None,
         }
     }
@@ -438,6 +500,8 @@ impl ClientEngine {
         // Frames are consumed by offset and the buffer drained once, so a
         // read holding many small frames costs one copy, not one per frame.
         let mut at = 0;
+        // Describes the first frame only; whatever is consumed resets it.
+        let mut carried = self.front.take();
         while self.closed.is_none() {
             let rest = self.inbuf.get(at..).unwrap_or_default();
             if rest.is_empty() {
@@ -451,8 +515,16 @@ impl ClientEngine {
                 self.route_frame(channel, payload);
                 total_len
             } else {
+                if let Some(scan) = FrontScan::still_waiting(rest, carried.take()) {
+                    self.front = Some(scan);
+                    break;
+                }
+                self.counters.frame_decisions += 1;
                 match rtsp_frame_decision(rest) {
-                    RtspFraming::NeedMore => break,
+                    RtspFraming::NeedMore => {
+                        self.front = FrontScan::awaiting_body(rest);
+                        break;
+                    }
                     RtspFraming::Complete { total_len } => {
                         let msg = rest.get(..total_len).unwrap_or_default();
                         let response_like = msg.starts_with(b"RTSP/");
@@ -492,6 +564,7 @@ impl ClientEngine {
                     }
                 }
             };
+            carried = None;
             at += used;
         }
         if self.closed.is_none() {
@@ -524,6 +597,7 @@ impl ClientEngine {
         self.pings.clear();
         self.transmits.clear();
         self.inbuf = Vec::new();
+        self.front = None;
         if session_dead {
             self.events.push_back(Event::SessionDead);
         }
@@ -2847,5 +2921,155 @@ mod tests {
         ] {
             crate::rtsp::client::fuzz_client_engine_input(data);
         }
+    }
+
+    // --- the header terminator is looked for in new bytes only ---
+
+    fn same_events(a: &[Event], b: &[Event]) -> bool {
+        fn key(e: &Event) -> String {
+            match e {
+                Event::Reply { txn, result } => match result {
+                    Ok(r) => {
+                        let mut h: Vec<_> = r.headers.iter().collect();
+                        h.sort();
+                        format!("reply {txn:?} {} {h:?} {:?}", r.status, &r.body[..])
+                    }
+                    Err(err) => format!("reply {txn:?} {err:?}"),
+                },
+                Event::Media(m) => format!("media {:?}", &m[..]),
+                Event::Rtcp(m) => format!("rtcp {:?}", &m[..]),
+                other => format!("{other:?}"),
+            }
+        }
+        a.len() == b.len() && a.iter().zip(b).all(|(x, y)| key(x) == key(y))
+    }
+
+    /// Every counter but `frame_decisions`.
+    fn counted(e: &ClientEngine) -> [u64; 6] {
+        let c = e.counters();
+        [
+            c.rtsp_messages,
+            c.rtp_frames,
+            c.rtcp_frames,
+            c.malformed_frames,
+            c.keepalive_responses,
+            c.unmatched_replies,
+        ]
+    }
+
+    #[test]
+    fn a_dribbled_header_is_decided_once() {
+        let t0 = Instant::now();
+        let mut e = interleaved();
+        let a = e.submit(spec(RtspMethod::Options, URI), None, t0).unwrap();
+        let mut head = b"RTSP/1.0 200 OK\r\nCSeq: 1\r\nContent-Length: 300\r\nX-Long: ".to_vec();
+        let value_at = head.len();
+        head.resize(60 * 1024, b'v');
+        for b in &head {
+            e.handle_input(std::slice::from_ref(b), t0);
+        }
+        assert!(e.poll_event().is_none());
+        e.handle_input(b"\r\n\r\n", t0);
+        assert!(e.poll_event().is_none(), "the body is awaited");
+        for _ in 0..300 {
+            e.handle_input(b"b", t0);
+        }
+        let r = reply(&mut e, a).unwrap();
+        assert_eq!(r.body.len(), 300);
+        assert_eq!(r.headers["x-long"].len(), 60 * 1024 - value_at);
+        assert!(
+            e.counters().frame_decisions <= 3,
+            "{}",
+            e.counters().frame_decisions
+        );
+        assert!(e.inbuf.is_empty());
+    }
+
+    #[test]
+    fn split_invariance_holds_below_the_header_cap() {
+        let mut raw = b"RTSP/1.0 200 OK\r\nCSeq: 1\r\nContent-Length: 300\r\nX-Pad: ".to_vec();
+        raw.resize(2048, b'p');
+        raw.extend_from_slice(b"\r\n\r\n");
+        raw.extend(std::iter::repeat_n(b'b', 300));
+        let mut rtp = valid_rtp_header().to_vec();
+        rtp.extend_from_slice(b"PAYLOAD!");
+        raw.extend(interleaved_frame(0, &rtp));
+        let run = |slice: usize| {
+            let t0 = Instant::now();
+            let mut e = interleaved();
+            e.submit(spec(RtspMethod::Options, URI), None, t0).unwrap();
+            for c in raw.chunks(slice) {
+                e.handle_input(c, t0);
+            }
+            let ev = events(&mut e);
+            assert!(e.inbuf.is_empty(), "slice {slice}");
+            (ev, e)
+        };
+        let (whole_ev, whole) = run(raw.len());
+        let (bytes_ev, bytes) = run(1);
+        assert!(
+            matches!(
+                whole_ev.as_slice(),
+                [Event::Reply { result: Ok(_), .. }, Event::Media(_)]
+            ),
+            "{whole_ev:?}"
+        );
+        assert!(
+            same_events(&whole_ev, &bytes_ev),
+            "{whole_ev:?} vs {bytes_ev:?}"
+        );
+        assert_eq!(counted(&whole), counted(&bytes));
+    }
+
+    #[test]
+    fn the_unterminated_header_cap_has_not_moved() {
+        // The largest unterminated length the shared decision still waits on.
+        let need_more = |n: usize| rtsp_frame_decision(&vec![b'A'; n]) == RtspFraming::NeedMore;
+        let (mut lo, mut hi) = (1usize, 4 * MAX_RTSP_MESSAGE_BYTES);
+        assert!(need_more(lo) && !need_more(hi));
+        while hi - lo > 1 {
+            let mid = lo + (hi - lo) / 2;
+            if need_more(mid) { lo = mid } else { hi = mid }
+        }
+        let last_waiting = lo;
+        for slice in [last_waiting, 1024, 1] {
+            let t0 = Instant::now();
+            let mut e = interleaved();
+            for c in vec![b'A'; last_waiting].chunks(slice) {
+                e.handle_input(c, t0);
+            }
+            assert!(e.poll_event().is_none(), "slice {slice}");
+            assert_eq!(e.inbuf.len(), last_waiting);
+            e.handle_input(b"A", t0);
+            let (msg, _) = protocol_end(&events(&mut e));
+            assert_eq!(
+                msg,
+                format!(
+                    "control stream buffer exceeded RTSP header/body caps ({} bytes buffered)",
+                    last_waiting + 1
+                ),
+                "slice {slice}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_partial_header_after_a_complete_message_is_scanned_from_its_own_start() {
+        let t0 = Instant::now();
+        let mut e = interleaved();
+        let a = e.submit(spec(RtspMethod::Options, URI), None, t0).unwrap();
+        // A whole unmatched reply, then the start of the request's reply,
+        // whose terminator straddles the next two reads.
+        e.handle_input(
+            b"RTSP/1.0 200 OK\r\nCSeq: 9\r\n\r\nRTSP/1.0 200 OK\r\nCSeq: 1\r",
+            t0,
+        );
+        assert!(e.poll_event().is_none());
+        e.handle_input(b"\n\r", t0);
+        assert!(e.poll_event().is_none());
+        e.handle_input(b"\n", t0);
+        assert_eq!(reply(&mut e, a).unwrap().status, 200);
+        assert_eq!(e.counters().unmatched_replies, 1);
+        assert!(e.inbuf.is_empty());
     }
 }
