@@ -325,6 +325,31 @@ fn a_dual_stack_receiver_matches_ipv4_text() {
 }
 
 #[test]
+fn recv_from_timeout_returns_an_ipv4_sender_on_a_dual_stack_bind_in_ipv4_form() {
+    let mut t = match UdpRecvTransport::listen("udp://@[::]:0") {
+        Ok(t) => t,
+        Err(e) if cfg!(target_os = "linux") => panic!("no IPv6 wildcard bind on Linux: {e}"),
+        Err(e) => {
+            eprintln!("skipped: no IPv6 wildcard bind: {e}");
+            return;
+        }
+    };
+    let a = UdpSocket::bind("127.0.0.1:0").unwrap();
+    a.send_to(b"4", ("127.0.0.1", t.local_addr().port()))
+        .unwrap();
+    let mut buf = vec![0u8; 65535];
+    match t.recv_from_timeout(&mut buf, BOUND).unwrap() {
+        Some(got) => assert_eq!(got, (1, a.local_addr().unwrap())),
+        None if cfg!(target_os = "linux") => panic!("IPv4 was not delivered to a [::] bind"),
+        None => {
+            eprintln!("skipped: IPv4 is not delivered to a [::] bind here");
+            return;
+        }
+    }
+    assert_eq!(t.peer_addr(), Some(a.local_addr().unwrap()));
+}
+
+#[test]
 fn cancel_is_seen_under_a_flood_of_rejected_datagrams() {
     let Some(rig) = Rig::new() else { return };
     let mut t = rig.recv(&format!("?source={}", rig.a_ip()));

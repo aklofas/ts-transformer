@@ -651,6 +651,8 @@ fn parse_source(value: &str) -> Result<Option<SourcePin>, UrlError> {
         lookup(tst_rist::url::URL_KEYS, "source").ok_or_else(|| UrlError::UnknownQueryKey {
             key: "source".to_string(),
         })?;
+    // Only a config for the key's row to write into: this fixed URL always
+    // parses, so an error here would name a URL the caller never wrote.
     let mut scratch = RistUrl::parse("rist://@127.0.0.1:0")?;
     (row.apply)(&mut scratch, "source", value)?;
     Ok(scratch.config.source)
@@ -700,8 +702,8 @@ impl PyRistRecvTransportBuilder {
         slf
     }
 
-    /// Take blocks from one sender only, as the URL's `source` key does,
-    /// and over it: an IP literal admits that IP on any port; `"first"`
+    /// Take blocks from one sender only, as the URL's `source` key does
+    /// (this setting wins over it): an IP literal admits that IP on any port; `"first"`
     /// admits the IP of the first delivered block until the receiver is
     /// closed. Datagrams from any other IP are dropped and counted in
     /// `stats().source_rejected`. The source address is unverified.

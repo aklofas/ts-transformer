@@ -359,8 +359,9 @@ impl PyUdpRecvTransport {
         )
     }
 
-    /// Receive one datagram. Returns `(payload, (host, port))`, the shape
-    /// of `socket.recvfrom`, for every datagram, an empty one included.
+    /// Receive one datagram. Returns `(payload, (host, port))` for every
+    /// datagram, an empty one included; the address is a 2-tuple for IPv6
+    /// too, the shape `srt.Socket.peer_addr()` returns.
     ///
     /// `timeout_ms`: milliseconds to wait. `None` (default) blocks until a
     /// datagram arrives. On timeout, raises
@@ -566,7 +567,7 @@ impl PyUdpRecvTransportBuilder {
     }
 
     /// Take datagrams from one sender only, as the URL's `source` key
-    /// does, and over it: an IP literal admits that IP on any port;
+    /// does (this setting wins over it): an IP literal admits that IP on any port;
     /// `"first"` admits the IP of the first datagram with a payload, from
     /// anyone, until the receiver is closed. Datagrams from any other IP
     /// are dropped and counted in `stats().source_rejected`. The source
