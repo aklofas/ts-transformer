@@ -387,8 +387,9 @@ pub(crate) fn duration_ms_saturating(d: Duration) -> u64 {
 }
 
 /// Feed `data` to a fresh client engine as bytes read from the control
-/// connection: interleaved channels 0/1 and one OPTIONS waiting for its
-/// reply, once in 7-byte slices and once whole.
+/// connection: interleaved channels 0/1, one OPTIONS waiting for its reply
+/// and one keepalive ping (CSeq 1000001) waiting for its own, once in
+/// 7-byte slices and once whole.
 //
 // `#[doc(hidden)] pub` for the fuzz workspace's `rtsp_client_pump_framing`
 // target. Not part of the crate's stable public API.
@@ -396,7 +397,9 @@ pub(crate) fn duration_ms_saturating(d: Duration) -> u64 {
 pub fn fuzz_client_engine_input(data: &[u8]) {
     use crate::rtsp::message::RtspMethod;
     use engine::{ClientEngine, EngineConfig, InterleavedChannels, RequestSpec};
-    let now = std::time::Instant::now();
+    let start = std::time::Instant::now();
+    let interval = Duration::from_millis(100);
+    let now = start.checked_add(interval).unwrap_or(start);
     let fresh = || {
         let mut e = ClientEngine::new(EngineConfig {
             uri: "rtsp://fuzz.invalid/live".to_string(),
@@ -413,8 +416,10 @@ pub fn fuzz_client_engine_input(data: &[u8]) {
                 headers: Vec::new(),
             },
             None,
-            now,
+            start,
         );
+        e.enable_keepalive(Some(interval), start);
+        e.handle_timeout(now, false);
         e
     };
     let drain = |e: &mut ClientEngine| {
