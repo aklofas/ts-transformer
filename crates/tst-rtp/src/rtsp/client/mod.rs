@@ -1,16 +1,15 @@
 //! `RtspClient` sync facade.
 //!
-//! Holds a single byte stream (plain TCP for `rtsp://`, rustls-wrapped
-//! for `rtsps://`) for the control connection, behind an
-//! `Arc<Mutex<Stream>>` so the main thread and the background
-//! keepalive thread share the SAME stream — request/response exchanges
-//! serialize under the mutex (RTSP isn't pipelined).
+//! The control connection (plain TCP for `rtsp://`, rustls over TCP for
+//! `rtsps://`) belongs to one thread, `tst-rtsp-client` (see [`driver`]),
+//! which reads it all the time, writes requests and keepalive pings, and
+//! hands interleaved media to the receiver. The request methods run on
+//! the caller's thread: they hand a request to that thread and wait for
+//! its reply.
 
 pub mod builder;
 pub(crate) mod driver;
 pub(crate) mod engine;
-pub(crate) mod interleaved_pump;
-pub(crate) mod keepalive;
 pub mod options_describe;
 pub mod play;
 pub mod session;
@@ -21,162 +20,41 @@ pub(crate) mod teardown;
 mod test_sockets;
 pub(crate) mod tls;
 
-use std::io::{Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
-use std::sync::mpsc;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
-
-use bytes::Bytes;
 
 use crate::error::RtspError;
 use crate::url::{RtspScheme, RtspUrl};
+use driver::{Command, DriverHandle};
+use engine::{ClientEngine, Credentials, EngineConfig};
 use tst_core::cancel::FlagCancel;
 use tst_core::transport::EndReasonHandle;
 
-/// The control-plane byte stream — plain TCP for `rtsp://`, or
-/// rustls-wrapped TCP for `rtsps://` when the `tls` cargo feature is
-/// enabled.
-///
-/// Hidden behind the same `Read + Write` shape so per-method code in
-/// `options_describe.rs`, `setup.rs`, etc. is agnostic to which
-/// transport carries the bytes.
-#[derive(Debug)]
-pub(crate) enum Stream {
-    Plain(TcpStream),
-    #[cfg(feature = "tls")]
-    Tls(Box<tls::TlsStream>),
-}
-
-impl Read for Stream {
-    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        match self {
-            Stream::Plain(s) => s.read(buf),
-            #[cfg(feature = "tls")]
-            Stream::Tls(s) => s.read(buf),
-        }
-    }
-}
-
-impl Write for Stream {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        match self {
-            Stream::Plain(s) => s.write(buf),
-            #[cfg(feature = "tls")]
-            Stream::Tls(s) => s.write(buf),
-        }
-    }
-    fn write_all(&mut self, buf: &[u8]) -> std::io::Result<()> {
-        match self {
-            Stream::Plain(s) => s.write_all(buf),
-            #[cfg(feature = "tls")]
-            Stream::Tls(s) => s.write_all(buf),
-        }
-    }
-    fn flush(&mut self) -> std::io::Result<()> {
-        match self {
-            Stream::Plain(s) => s.flush(),
-            #[cfg(feature = "tls")]
-            Stream::Tls(s) => s.flush(),
-        }
-    }
-}
-
-impl Stream {
-    /// Set the read timeout of the underlying TCP socket (for
-    /// `Stream::Tls`, the socket beneath rustls — that is where a TLS
-    /// read actually blocks). `t` must be non-zero.
-    pub(crate) fn set_read_timeout(&self, t: Duration) -> std::io::Result<()> {
-        match self {
-            Stream::Plain(s) => s.set_read_timeout(Some(t)),
-            #[cfg(feature = "tls")]
-            Stream::Tls(s) => s.set_read_timeout(t),
-        }
-    }
-
-    /// Set the write timeout of the underlying TCP socket, the twin of
-    /// [`Self::set_read_timeout`]. `t` must be non-zero.
-    pub(crate) fn set_write_timeout(&self, t: Duration) -> std::io::Result<()> {
-        match self {
-            Stream::Plain(s) => s.set_write_timeout(Some(t)),
-            #[cfg(feature = "tls")]
-            Stream::Tls(s) => s.set_write_timeout(t),
-        }
-    }
-}
-
-/// Write timeout of the control socket, set at connect: the longest one
-/// stalled socket write of a request or keepalive ping may block.
+/// Queued control-connection bytes the peer takes none of for this long
+/// end the stream (`Io(TimedOut)`); also the write timeout of each socket
+/// write of the `rtsps://` handshake.
 pub(crate) const CONTROL_WRITE_TIMEOUT: Duration = Duration::from_secs(5);
 
-/// `write_all` that gives up at `deadline`. Each socket write waits at
-/// most the time left (capped at [`CONTROL_WRITE_TIMEOUT`], floored at
-/// 1 ms because a zero timeout is an error). A write cut short by the
-/// deadline is [`RtspError::Timeout`]; one that stalls the full
-/// [`CONTROL_WRITE_TIMEOUT`] first is `Io`, as without a deadline. The
-/// socket has [`CONTROL_WRITE_TIMEOUT`] again when this returns.
-pub(crate) fn write_all_by(
-    s: &mut Stream,
-    mut buf: &[u8],
-    deadline: std::time::Instant,
-) -> Result<(), RtspError> {
-    let mut applied = CONTROL_WRITE_TIMEOUT;
-    let r = loop {
-        if buf.is_empty() {
-            break Ok(());
-        }
-        let left = deadline.saturating_duration_since(std::time::Instant::now());
-        if left.is_zero() {
-            break Err(RtspError::Timeout);
-        }
-        let wait = left
-            .min(CONTROL_WRITE_TIMEOUT)
-            .max(Duration::from_millis(1));
-        if wait != applied {
-            if let Err(e) = s.set_write_timeout(wait) {
-                break Err(RtspError::Io(e.kind()));
-            }
-            applied = wait;
-        }
-        match s.write(buf) {
-            Ok(0) => break Err(RtspError::Io(std::io::ErrorKind::WriteZero)),
-            Ok(n) => buf = &buf[n..],
-            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
-            // Unix reports a socket timeout as WouldBlock, Windows as TimedOut.
-            Err(e)
-                if matches!(
-                    e.kind(),
-                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
-                ) && wait < CONTROL_WRITE_TIMEOUT =>
-            {
-                break Err(RtspError::Timeout);
-            }
-            Err(e) => break Err(RtspError::Io(e.kind())),
-        }
-    };
-    if applied != CONTROL_WRITE_TIMEOUT {
-        // Best-effort, like the read-timeout restore: this only fails on
-        // a socket that is already unusable.
-        let _ = s.set_write_timeout(CONTROL_WRITE_TIMEOUT);
-    }
-    r
-}
-
-/// Longest a request/response wait blocks before it re-checks the cancel
-/// flag and the request deadline, whatever
-/// [`RtspClientBuilder::read_timeout`](crate::RtspClientBuilder::read_timeout)
-/// is configured to. Equal to the default `read_timeout`, so a default
-/// client never touches the socket option for this.
+/// Longest a request's reply wait sleeps before it re-checks the cancel
+/// flag and the request deadline.
 pub(crate) const REQUEST_POLL_TICK: Duration = Duration::from_millis(100);
+
+/// How long `Drop` waits for the client's thread to end.
+const DROP_JOIN_BOUND: Duration = Duration::from_secs(2);
+
+/// The bound `Drop` gives its TEARDOWN, over getting it to the wire.
+const DROP_TEARDOWN_BOUND: Duration = Duration::from_millis(500);
 
 /// Sync RTSP client. One instance per server.
 ///
 /// Construct via [`Self::connect`] / [`Self::connect_with`], then drive
 /// the session: `options` / `describe` / `setup_mp2t_auto` (or the
 /// explicit `setup*` variants) / `play` / `pause` / `teardown`.
-/// Keepalive pings run automatically on a background thread once SETUP
-/// establishes a session, at the server-advertised `timeout=` cadence.
+/// Keepalive pings, when [`RtspClientBuilder`](crate::RtspClientBuilder)
+/// enables them (its default), are written by the client's own thread at
+/// half the session timeout, retuned to the one SETUP learns.
 ///
 /// # Send
 ///
@@ -185,115 +63,35 @@ pub(crate) const REQUEST_POLL_TICK: Duration = Duration::from_millis(100);
 /// change.
 #[derive(Debug)]
 pub struct RtspClient {
-    /// The control-plane byte stream — plain TCP for `rtsp://`, or
-    /// rustls-wrapped TCP for `rtsps://` (under the `tls` feature).
-    ///
-    /// Wrapped in `Arc<Mutex<...>>` so the main thread + the background
-    /// keepalive thread can share the SAME stream (no `try_clone` —
-    /// rustls `ClientConnection` isn't clonable, so TLS keepalive would
-    /// otherwise be impossible). RTSP isn't pipelined (one in-flight
-    /// request at a time), so holding the lock through each
-    /// request/response exchange is correct and the contention with the
-    /// keepalive thread is negligible.
-    pub(crate) stream: Arc<Mutex<Stream>>,
     /// Negotiated URL — caller can re-parse for re-connects.
     pub(crate) url: RtspUrl,
-    /// Monotonic CSeq counter; every outbound request bumps this.
-    pub(crate) next_cseq: AtomicU32,
     /// Session ID from the most recent SETUP success. None before
     /// SETUP / after TEARDOWN.
     pub(crate) session_id: Option<String>,
-    /// Server's `Session: ...;timeout=N` value (default 60 s if absent).
-    pub(crate) session_timeout: Duration,
-    /// Cancel flag — set by `RtspCancelHandle::cancel` to break out of
-    /// blocking I/O loops.
+    /// Cancel flag — set by `RtspCancelHandle::cancel` to end a request's
+    /// reply wait.
     pub(crate) cancel: FlagCancel,
-    /// Shared flag flipped when a keepalive observes session death: the
-    /// [keepalive](crate::rtsp::client::keepalive) thread sets it when a
-    /// control-TCP write fails, and the read sites (interleaved pump /
-    /// non-pump `send_and_read`) set it when a keepalive ping is answered
-    /// with `454 Session Not Found`. The main thread polls it via
-    /// [`Self::is_session_alive`]. `None` until
-    /// [`Self::spawn_keepalive_if_needed`] runs.
-    pub(crate) session_dead: Option<Arc<AtomicBool>>,
-    /// Shared cell the main thread updates after SETUP so the keepalive
-    /// thread can emit `Session: <id>` headers. `None` until
-    /// [`Self::spawn_keepalive_if_needed`] runs.
-    pub(crate) session_id_shared: Option<Arc<std::sync::Mutex<Option<String>>>>,
-    /// Keepalive ping cadence in milliseconds, shared with the running
-    /// keepalive thread (which re-reads it at every wake). SETUP retunes
-    /// it to the server-advertised `Session: <id>;timeout=N` unless the
-    /// caller supplied an explicit interval override. `None` until
-    /// [`Self::spawn_keepalive_if_needed`] runs.
-    pub(crate) keepalive_interval_shared: Option<Arc<AtomicU64>>,
-    /// True when the keepalive was spawned with a caller-supplied
-    /// interval override ([`crate::RtspClientBuilder::keepalive_interval`])
-    /// — SETUP must not clobber an explicit override with the cadence
-    /// derived from the server-advertised timeout.
-    pub(crate) keepalive_interval_overridden: bool,
-    /// Value sent in the `User-Agent:` header on every outbound request.
-    /// Set at connect time from `RtspClientBuilder::user_agent`; defaults
-    /// to `"tst-rtp/0.1"` when using the bare `connect`/`connect_with`
-    /// entry points.
-    pub(crate) user_agent: String,
-    /// The socket read timeout the caller configured
-    /// ([`crate::RtspClientBuilder::read_timeout`]). A request/response
-    /// exchange may shorten the socket's timeout while it waits; it
-    /// restores this value before returning.
-    pub(crate) read_timeout: Duration,
     /// Per-request response deadline
     /// ([`crate::RtspClientBuilder::request_timeout`]); `None` = unbounded.
-    /// Applied by `send_and_read` and `teardown`.
     pub(crate) request_timeout: Option<Duration>,
-    /// JoinHandle for the rtsp-keepalive thread — joined in [`Drop`].
-    /// `None` when keepalive is disabled or hasn't been spawned yet.
-    pub(crate) keepalive_thread: Option<std::thread::JoinHandle<()>>,
-    /// Interleaved-pump state — `Some` after a successful TCP-interleaved
-    /// SETUP has activated the producer thread that drains the control
-    /// TCP into [`mpsc`] channels (data / rtcp / ctrl). When this is
-    /// `Some`, `send_and_read` writes the outbound request under the
-    /// stream mutex but reads the response from
-    /// [`InterleavedPumpState::ctrl_rx`] (matching by CSeq) — reading the
-    /// stream directly would race against the pump.
-    pub(crate) pump_state: Option<InterleavedPumpState>,
-    /// Cached auth state (challenge + `qop=auth` nonce-count), shared
-    /// with the keepalive thread. Once a challenge is learned (first
-    /// 401, usually at DESCRIBE), SETUP / PLAY / PAUSE / TEARDOWN
-    /// attach an `Authorization` header pre-emptively — servers such as
-    /// gortsplib / MediaMTX require auth on every method and reject an
-    /// unauthenticated SETUP even after an authenticated DESCRIBE.
-    pub(crate) auth: Arc<Mutex<AuthState>>,
-    /// Stream-write hand-off gate, shared by every writer that contends
-    /// with the interleaved pump for the stream mutex: the count of
-    /// writers currently waiting for (or holding) the lock. A writer
-    /// `fetch_add(1)`s before locking and `fetch_sub(1)`s after
-    /// releasing; the pump skips its blocking read while the count is
-    /// nonzero, so a writer acquires within at most one in-flight read
-    /// cycle. A counter (not a bool) because two writers — a control
-    /// request on the main thread and a keepalive ping — can overlap,
-    /// and a bool cleared by whichever finishes first would drop the
-    /// other's yield request. Created at connect time (before the pump
-    /// exists) so the keepalive thread can hold a clone from its spawn;
-    /// gate traffic is harmless while no pump is running.
-    pub(crate) write_gate: Arc<AtomicUsize>,
-    /// Structured record of why the session ended — first-writer-wins,
-    /// written by the interleaved pump's exit sites and the keepalive
-    /// thread's failure sites (see [`EndReason`](tst_core::transport::EndReason)).
-    /// Created unconditionally at connect time (unlike `session_dead`,
-    /// which stays `None` until a keepalive is spawned) so a client that
-    /// never spawns a keepalive or pump still has a slot to clone into
-    /// [`session::RtspSession`] — closed only by that transport's own
-    /// cancel/close path.
+    /// Structured record of why the session ended, first writer wins,
+    /// written by the client's thread. Cloned into
+    /// [`session::RtspSession`] so the receiver reports the same reason.
     pub(crate) end_reason: EndReasonHandle,
+    /// Set by the client's thread when the session is known dead: the
+    /// control connection ended, or a keepalive ping was answered `454` or
+    /// could not be encoded.
+    pub(crate) session_dead: Arc<AtomicBool>,
+    /// The client's I/O thread.
+    pub(crate) driver: DriverHandle,
 }
 
 /// `WWW-Authenticate` challenge cache + `qop=auth` nonce-count pair.
 ///
-/// The two live under ONE mutex — never split them: an `nc` allocation
-/// must pair atomically with the challenge (nonce) it is sent with, or
-/// a challenge rotation racing the keepalive thread could repeat an
-/// `nc` for a reused nonce, which a `qop=auth` server rejects as a
-/// replay (RFC 7616 §3.4).
+/// Never split them: an `nc` allocation must pair with the challenge
+/// (nonce) it is sent with, or a challenge rotation could repeat an `nc`
+/// for a reused nonce, which a `qop=auth` server rejects as a replay
+/// (RFC 7616 §3.4).
 #[derive(Debug, Default)]
 pub(crate) struct AuthState {
     /// Cached challenge from the most recent 401.
@@ -309,73 +107,12 @@ pub(crate) struct AuthState {
 impl AuthState {
     /// Cache `www_auth` as the current challenge, resetting the
     /// nonce-count when the challenge changed (a new nonce restarts the
-    /// count at 1 — RFC 7616 §3.4). Shared by the main-thread 401 path
-    /// ([`RtspClient::cache_auth_challenge`]) and the keepalive-response
-    /// handler ([`keepalive::handle_keepalive_response`]).
+    /// count at 1 — RFC 7616 §3.4).
     pub(crate) fn cache_challenge(&mut self, www_auth: String) {
         if self.challenge.as_deref() != Some(www_auth.as_str()) {
             self.nc = 0;
         }
         self.challenge = Some(www_auth);
-    }
-}
-
-/// RAII participant in [`RtspClient::write_gate`]: increments the
-/// waiting-writers count on construction, decrements on drop — INCLUDING
-/// panic unwind. A writer that panics between increment and decrement
-/// would otherwise leave the gate stuck nonzero, and the pump — which
-/// skips its read while the gate is nonzero — would spin forever without
-/// ever touching the mutex, wedging the session instead of failing it.
-/// (Locking itself can no longer panic on a poisoned mutex — see
-/// [`lock_unpoisoned`] — but the guard still protects any other panic
-/// that might occur while the gate is held, e.g. inside `write_all`.)
-pub(crate) struct WriteGateGuard<'a>(&'a AtomicUsize);
-
-impl<'a> WriteGateGuard<'a> {
-    pub(crate) fn enter(gate: &'a AtomicUsize) -> Self {
-        gate.fetch_add(1, Ordering::Relaxed);
-        Self(gate)
-    }
-}
-
-impl Drop for WriteGateGuard<'_> {
-    fn drop(&mut self) {
-        self.0.fetch_sub(1, Ordering::Relaxed);
-    }
-}
-
-/// Poison-recovering lock for the RTSP client's internal mutexes.
-///
-/// Crate policy (mirrors the tst-pipeline shells): these mutexes guard an
-/// I/O stream and plain state cells with no torn-state invariants — a
-/// panic in a peer thread (e.g. the keepalive pinger) must not cascade
-/// into a panic here. Recovering keeps every path panic-free, including
-/// the best-effort TEARDOWN inside `Drop` (a panic there during an unwind
-/// would be a process abort no consumer `catch_unwind` can contain). A
-/// half-written request left by the panicked thread surfaces as a normal
-/// protocol/timeout error on the next exchange.
-pub(crate) fn lock_unpoisoned<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
-    m.lock().unwrap_or_else(|e| e.into_inner())
-}
-
-/// [`lock_unpoisoned`] that gives up at `deadline`: `try_lock` in 1 ms
-/// steps (the interleaved pump's own yield step), `None` once the
-/// deadline has passed with the lock still held elsewhere.
-pub(crate) fn lock_unpoisoned_by<T>(
-    m: &Mutex<T>,
-    deadline: std::time::Instant,
-) -> Option<std::sync::MutexGuard<'_, T>> {
-    loop {
-        match m.try_lock() {
-            Ok(g) => return Some(g),
-            Err(std::sync::TryLockError::Poisoned(e)) => return Some(e.into_inner()),
-            Err(std::sync::TryLockError::WouldBlock) => {
-                if std::time::Instant::now() >= deadline {
-                    return None;
-                }
-                std::thread::sleep(Duration::from_millis(1));
-            }
-        }
     }
 }
 
@@ -438,29 +175,6 @@ pub fn fuzz_client_engine_input(data: &[u8]) {
     drain(&mut whole);
 }
 
-/// State the main thread keeps about the interleaved producer thread.
-///
-/// Owned by [`RtspClient`] (one pump per client, since one TCP control
-/// connection per client). The pump thread is reaped in `Drop`.
-#[derive(Debug)]
-pub(crate) struct InterleavedPumpState {
-    /// Pump-only cancel flag (separate from `RtspClient::cancel` so we
-    /// can stop the pump without stopping the rest of the client; in
-    /// practice they're flipped together at `Drop`).
-    pub(crate) cancel: Arc<AtomicBool>,
-    /// Control-write hand-off gate — clone of [`RtspClient::write_gate`]
-    /// (see its doc for the counter protocol). Kept here so the pump
-    /// thread and the send path resolve it without reaching back into
-    /// the client.
-    pub(crate) write_gate: Arc<AtomicUsize>,
-    /// Receiver for RTSP responses parsed by the pump. The pump pushes
-    /// each `CRLFCRLF`+body-bounded RTSP response here; `send_and_read`
-    /// polls this matching by CSeq once pump mode is active.
-    pub(crate) ctrl_rx: mpsc::Receiver<Bytes>,
-    /// Pump-thread handle; joined in `Drop` after `cancel` is flipped.
-    pub(crate) thread: Option<std::thread::JoinHandle<()>>,
-}
-
 /// Cancel handle for the RTSP client. Covers the control plane; the
 /// transport plane (post-PLAY RTP data) uses its own
 /// [`crate::RtpCancelHandle`] returned from the
@@ -475,7 +189,8 @@ pub type RtspCancelHandle = tst_core::cancel::FlagCancel;
 pub(crate) struct ConnectParams {
     /// TCP connect timeout.
     pub(crate) connect_timeout: Duration,
-    /// Per-read socket timeout (cancel/interleaved-frame poll interval).
+    /// Socket read timeout during the `rtsps://` handshake (each read is
+    /// bounded by it or the time left on the connect budget).
     pub(crate) read_timeout: Duration,
     /// Per-request response deadline (`RtspClientBuilder::request_timeout`);
     /// `None` = unbounded.
@@ -484,6 +199,10 @@ pub(crate) struct ConnectParams {
     pub(crate) user_agent: String,
     /// Which `WWW-Authenticate` schemes the client may answer.
     pub(crate) auth_schemes: crate::rtsp::auth::AuthSchemes,
+    /// Gets a clone of the control socket before the client's thread
+    /// takes it, so a test can read or set its options.
+    #[cfg(test)]
+    pub(crate) socket_probe: Option<std::sync::mpsc::Sender<TcpStream>>,
 }
 
 impl Default for ConnectParams {
@@ -494,6 +213,8 @@ impl Default for ConnectParams {
             request_timeout: Some(Duration::from_secs(10)),
             user_agent: "tst-rtp/0.1".into(),
             auth_schemes: crate::rtsp::auth::AuthSchemes::default(),
+            #[cfg(test)]
+            socket_probe: None,
         }
     }
 }
@@ -610,21 +331,21 @@ impl RtspClient {
                 .set_tcp_keepalive(&ka)
                 .map_err(|e| RtspError::Io(e.kind()))?;
         }
+        #[cfg(test)]
+        if let Some(probe) = &params.socket_probe {
+            let _ = probe.send(tcp.try_clone().map_err(|e| RtspError::Io(e.kind()))?);
+        }
 
-        // Branch the stream construction. For `rtsps://` we hand the
-        // TCP socket to the rustls handshake; the resulting TlsStream
-        // exposes the same Read+Write shape the rest of the client
-        // expects.
         let stream = if is_tls {
             #[cfg(feature = "tls")]
             {
-                Stream::Tls(Box::new(tls::TlsStream::connect(
+                stream::Stream::from_tls(tls::TlsStream::connect(
                     url,
                     tcp,
                     roots,
                     params.read_timeout,
                     deadline,
-                )?))
+                )?)
             }
             #[cfg(not(feature = "tls"))]
             {
@@ -633,31 +354,48 @@ impl RtspClient {
                 unreachable!("tls feature disabled but rtsps:// reached connect path")
             }
         } else {
-            Stream::Plain(tcp)
+            stream::Stream::from_plain(tcp)
+        }
+        .map_err(|e| RtspError::Io(e.kind()))?;
+
+        // An answer to a challenge needs both a user name and a password.
+        let credentials = match (&url.username, &url.password) {
+            (Some(username), Some(password)) => Some(Credentials {
+                username: username.clone(),
+                password: password.clone(),
+            }),
+            _ => None,
         };
+        let engine = ClientEngine::new(EngineConfig {
+            uri: url.render_no_credentials(),
+            version: url.rtsp_version,
+            user_agent: params.user_agent,
+            credentials,
+            schemes: params.auth_schemes,
+        });
+        let cancel = FlagCancel::new();
+        let session_dead = Arc::new(AtomicBool::new(false));
+        let end_reason = EndReasonHandle::default();
+        let driver = driver::spawn(
+            stream,
+            engine,
+            driver::Shared {
+                cancel: cancel.clone(),
+                session_dead: session_dead.clone(),
+                end_reason: end_reason.clone(),
+                media_dropped: Arc::new(AtomicU64::new(0)),
+            },
+        )
+        .map_err(|e| RtspError::Io(e.kind()))?;
 
         Ok(Self {
-            stream: Arc::new(Mutex::new(stream)),
             url: url.clone(),
-            next_cseq: AtomicU32::new(1),
             session_id: None,
-            session_timeout: Duration::from_secs(60),
-            cancel: FlagCancel::new(),
-            session_dead: None,
-            session_id_shared: None,
-            keepalive_interval_shared: None,
-            keepalive_interval_overridden: false,
-            user_agent: params.user_agent,
-            read_timeout: params.read_timeout,
+            cancel,
             request_timeout: params.request_timeout,
-            keepalive_thread: None,
-            pump_state: None,
-            auth: Arc::new(Mutex::new(AuthState {
-                schemes: params.auth_schemes,
-                ..AuthState::default()
-            })),
-            write_gate: Arc::new(AtomicUsize::new(0)),
-            end_reason: EndReasonHandle::default(),
+            end_reason,
+            session_dead,
+            driver,
         })
     }
 
@@ -666,25 +404,15 @@ impl RtspClient {
         self.cancel.clone()
     }
 
-    /// Internal helper: get the next CSeq value.
-    pub(crate) fn bump_cseq(&self) -> u32 {
-        self.next_cseq.fetch_add(1, Ordering::Relaxed)
-    }
-
-    /// Spawn the background OPTIONS-pinger.
+    /// Start the OPTIONS keepalive pings on the client's thread.
     ///
     /// `override_interval` lets callers force a specific cadence
     /// (typically supplied by `RtspClientBuilder::keepalive_interval`);
-    /// when `None`, the cadence starts at `session_timeout / 2` and is
-    /// retuned in place when SETUP learns the server-advertised timeout
-    /// (the thread re-reads the shared interval cell at every wake, so
-    /// there is never a reason to respawn).
+    /// when `None`, the cadence starts at half the session timeout (60 s
+    /// until SETUP learns one) and is retuned when SETUP learns the
+    /// server-advertised timeout.
     ///
-    /// Idempotent: a no-op once a pinger is running. Spawning another
-    /// thread would NOT stop the first (only close/`Drop` flips the
-    /// shared `cancel` flag), so a second spawn would otherwise leave
-    /// two pingers running — duplicate OPTIONS traffic — until the
-    /// client closes; the first spawn's cadence therefore wins.
+    /// Only the first call acts: a later one keeps the first cadence.
     //
     // Exposed `#[doc(hidden)] pub` so the integration test in
     // `tests/rtsp_client_keepalive.rs` can drive it without going
@@ -692,199 +420,36 @@ impl RtspClient {
     ///
     /// # Errors
     ///
-    /// Returns [`RtspError::Io`] if the OS refuses to spawn the keepalive
-    /// thread (resource exhaustion). The error is propagated rather than
-    /// panicked because this runs on the RTSP connect path and the JVM/C
-    /// bindings do not catch unwinds across the FFI boundary.
+    /// Returns [`RtspError::Io`] if the client's thread has ended.
     #[doc(hidden)]
     pub fn spawn_keepalive_if_needed(
         &mut self,
         override_interval: Option<Duration>,
     ) -> Result<(), RtspError> {
-        if self.keepalive_thread.is_some() {
-            return Ok(());
-        }
-        let interval = override_interval.unwrap_or(self.session_timeout / 2);
-        // The cadence lives in a shared cell the thread re-reads at every
-        // wake: SETUP retunes it to the server-advertised session timeout
-        // (unless `override_interval` pinned it), because at spawn time —
-        // the connect path — only the 60 s default is known.
-        let interval_ms = Arc::new(AtomicU64::new(duration_ms_saturating(interval).max(1)));
-        self.keepalive_interval_shared = Some(interval_ms.clone());
-        self.keepalive_interval_overridden = override_interval.is_some();
-        // Share the same `Arc<Mutex<Stream>>` with the keepalive thread.
-        // Per-ping the thread locks the mutex, writes the OPTIONS bytes,
-        // unlocks. Works uniformly for `Stream::Plain` AND `Stream::Tls`
-        // — a `try_clone`d FD cannot work for TLS because rustls
-        // `ClientConnection` isn't clonable.
-        let write_half = self.stream.clone();
-        let cancel = self.cancel.clone();
-        let session_dead = Arc::new(AtomicBool::new(false));
-        let session_id = Arc::new(Mutex::new(self.session_id.clone()));
-        self.session_dead = Some(session_dead.clone());
-        self.session_id_shared = Some(session_id.clone());
-        // The keepalive thread shares the auth state directly (single
-        // source of truth) plus a credential snapshot, so its OPTIONS
-        // pings authenticate on servers that challenge them. The main
-        // thread populates the state via `cache_auth_challenge` as the
-        // challenge is learned (at DESCRIBE, after this spawn).
-        let handle = keepalive::spawn(
-            write_half,
-            cancel,
-            session_dead,
-            interval_ms,
-            self.url.render_no_credentials(),
-            self.url.rtsp_version,
-            session_id,
-            self.user_agent.clone(),
-            self.auth.clone(),
-            self.url.username.clone(),
-            self.url.password.clone(),
-            self.write_gate.clone(),
-            self.end_reason.clone(),
-        )
-        .map_err(|e| RtspError::Io(e.kind()))?;
-        self.keepalive_thread = Some(handle);
-        Ok(())
+        self.driver
+            .send(Command::EnableKeepalive(override_interval))
     }
 
-    /// Spawn the interleaved producer thread (TCP-interleaved transport).
-    ///
-    /// Called from SETUP after a successful TCP-interleaved negotiation
-    /// (see [`crate::rtsp::client::setup`]). The pump owns reads from
-    /// the control TCP from this point on: it parses `$<ch><len><data>`
-    /// frames, routes RTP payloads to `data_rx` (one of the channels
-    /// returned here — the session hands it to `RtpRecvTransport`),
-    /// routes RTCP payloads to `rtcp_rx` (the other channel returned
-    /// here — the session hands it to `RtpRecvTransport::from_mpsc_with_rtcp`,
-    /// whose ingest thread feeds `RtcpStats`, or on the H.264 path to
-    /// `H264Receiver::from_mpsc_with_rtcp_drain`), and routes
-    /// RTSP responses to `InterleavedPumpState::ctrl_rx` so subsequent
-    /// [`Self::send_and_read`] calls can match by CSeq.
-    ///
-    /// Idempotent in the sense that calling it twice produces a fresh
-    /// pump and drops the previous one (the previous pump's `cancel`
-    /// flips, its `data_rx` becomes unfed and the receiver-transport
-    /// side will see `mpsc::RecvError`).
-    ///
-    /// Returns `(data_rx, rtcp_rx)`.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`RtspError::Io`] if the OS refuses to spawn the pump thread
-    /// (resource exhaustion). Propagated rather than panicked: this runs on
-    /// the RTSP SETUP path and the JVM/C bindings do not catch unwinds
-    /// across the FFI boundary.
-    pub(crate) fn activate_interleaved_pump(
-        &mut self,
-        channels: interleaved_pump::InterleavedChannels,
-    ) -> Result<(mpsc::Receiver<Bytes>, mpsc::Receiver<Bytes>), RtspError> {
-        // Reap any prior pump (replacement semantics — should not
-        // happen in normal SETUP flow, but be defensive).
-        if let Some(prev) = self.pump_state.take() {
-            prev.cancel.store(true, Ordering::Relaxed);
-            if let Some(t) = prev.thread {
-                let _ = t.join();
-            }
-        }
-
-        // Bounded hand-off queues: a fast or malicious
-        // server cannot flood these to OOM the client. Media drops newest +
-        // counters on overflow; RTCP/control fail the session on overflow.
-        // See the per-class `*_QUEUE_BOUND` rationale in `interleaved_pump`.
-        let (data_tx, data_rx) = mpsc::sync_channel::<Bytes>(interleaved_pump::DATA_QUEUE_BOUND);
-        let (rtcp_tx, rtcp_rx) = mpsc::sync_channel::<Bytes>(interleaved_pump::RTCP_QUEUE_BOUND);
-        let (ctrl_tx, ctrl_rx) = mpsc::sync_channel::<Bytes>(interleaved_pump::CTRL_QUEUE_BOUND);
-        let pump_cancel = Arc::new(AtomicBool::new(false));
-        // Shared with the keepalive thread (which got its clone at spawn,
-        // possibly before this pump existed) and the control send path.
-        let write_gate = self.write_gate.clone();
-        let stats = Arc::new(interleaved_pump::PumpStats::default());
-
-        let reader = interleaved_pump::SharedStreamReader::new(self.stream.clone());
-        let thread = interleaved_pump::spawn_client_pump(
-            reader,
-            data_tx,
-            rtcp_tx,
-            ctrl_tx,
-            channels,
-            pump_cancel.clone(),
-            write_gate.clone(),
-            // Shared with the main thread + keepalive thread: the pump
-            // consumes keepalive responses, and a 401 among them must
-            // refresh the same challenge cache the next ping signs with.
-            self.auth.clone(),
-            // `Some` iff the keepalive was spawned (its death flag) — the
-            // pump flips it on a 454 keepalive response.
-            self.session_dead.clone(),
-            stats,
-            self.end_reason.clone(),
-        )
-        .map_err(|e| RtspError::Io(e.kind()))?;
-
-        self.pump_state = Some(InterleavedPumpState {
-            cancel: pump_cancel,
-            write_gate,
-            ctrl_rx,
-            thread: Some(thread),
-        });
-
-        Ok((data_rx, rtcp_rx))
-    }
-
-    /// Returns false once a keepalive has observed session death — a
-    /// control-TCP write failed, or the server answered a keepalive ping
-    /// with `454 Session Not Found`. Returns true when keepalive hasn't
-    /// been started or hasn't observed a failure.
+    /// Returns false once the session is known dead: the control
+    /// connection ended (the peer closed or reset it, a write made no
+    /// progress, or the peer broke the message framing), or a keepalive
+    /// ping was answered `454 Session Not Found` or could not be encoded.
+    /// Returns true until then.
     pub fn is_session_alive(&self) -> bool {
-        match &self.session_dead {
-            Some(flag) => !flag.load(Ordering::Relaxed),
-            None => true,
-        }
+        !self.session_dead.load(Ordering::Acquire)
     }
 }
 
 impl Drop for RtspClient {
     fn drop(&mut self) {
-        // Signal cancel to the pump + keepalive threads FIRST, before the
-        // best-effort TEARDOWN. The interleaved pump re-takes the shared
-        // `Mutex<Stream>` on every read cycle (one `read_timeout`, 100 ms
-        // by default); with cancel set it
-        // exits at its next loop-top check and stops re-locking, so the
-        // TEARDOWN normally gets the lock within one read cycle.
+        // The cancel first: with it set, the TEARDOWN below waits only for
+        // its bytes to reach the kernel, not for the reply.
         self.cancel.cancel();
-        if let Some(pump) = self.pump_state.as_ref() {
-            pump.cancel.store(true, Ordering::Relaxed);
-        }
-        // Best-effort TEARDOWN if a session is still active. The bound
-        // covers the wait for the stream lock and the request write: 500 ms,
-        // or with a pump installed at least one pump read (`read_timeout`)
-        // plus 100 ms, since the pump holds the lock across its in-flight
-        // read. The reply is not awaited: with the cancel flag already set,
-        // the reply wait returns `LocalCancel` at its first check, so Drop
-        // writes the request and moves on.
         if self.session_id.is_some() {
-            let mut bound = Duration::from_millis(500);
-            if self.pump_state.is_some() {
-                bound = bound.max(self.read_timeout.saturating_add(Duration::from_millis(100)));
-            }
-            let _ = self.teardown_within(bound);
+            let _ = self.teardown_within(DROP_TEARDOWN_BOUND);
         }
-        // Reap the threads (already winding down from the cancel above) so
-        // they're joined before the TcpStream FD they hold is closed by the
-        // main thread's `Drop`.
-        if let Some(t) = self.keepalive_thread.take() {
-            let _ = t.join();
-        }
-        if let Some(mut pump) = self.pump_state.take()
-            && let Some(t) = pump.thread.take()
-        {
-            let _ = t.join();
-        }
-        // The pump's RTCP `mpsc::Sender` is dropped along with the
-        // pump thread that just exited; the rtcp_rx end was returned
-        // upward at activate time and consumed by
-        // `RtpRecvTransport::from_mpsc_with_rtcp`.
+        self.driver.stop();
+        let _ = self.driver.join_within(DROP_JOIN_BOUND);
     }
 }
 
@@ -892,6 +457,9 @@ impl Drop for RtspClient {
 mod tests {
     use super::*;
     use std::net::TcpListener;
+    use std::time::Instant;
+
+    use tst_test_helpers::timing::scaled;
 
     #[test]
     fn connect_to_loopback_listener_succeeds() {
@@ -917,14 +485,19 @@ mod tests {
             std::thread::spawn(move || {
                 let _ = listener.accept();
             });
-            let url = format!("rtsp://127.0.0.1:{port}/test{query}");
-            let c = RtspClient::connect(&url).unwrap();
-            let stream = c.stream.lock().unwrap();
-            match &*stream {
-                Stream::Plain(tcp) => socket2::SockRef::from(tcp).keepalive().unwrap(),
-                #[cfg(feature = "tls")]
-                Stream::Tls(_) => unreachable!("plain rtsp:// connects yield Stream::Plain"),
-            }
+            let url = RtspUrl::parse(&format!("rtsp://127.0.0.1:{port}/test{query}")).unwrap();
+            let (probe, socket) = std::sync::mpsc::channel();
+            let _c = RtspClient::connect_with_params(
+                &url,
+                None,
+                ConnectParams {
+                    socket_probe: Some(probe),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+            let socket = socket.recv().unwrap();
+            socket2::SockRef::from(&socket).keepalive().unwrap()
         };
         assert!(
             keepalive_state("?tcp_keepalive=30"),
@@ -955,53 +528,44 @@ mod tests {
         assert_eq!(duration_ms_saturating(Duration::from_secs(30)), 30_000);
     }
 
-    /// The gate decrement must survive a panic between enter and the end
-    /// of the write scope — a stuck-nonzero gate makes the pump skip
-    /// reads forever without ever observing the panic itself, wedging the
-    /// session instead of failing it.
-    #[test]
-    fn write_gate_guard_decrements_on_panic() {
-        let gate = AtomicUsize::new(0);
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let _gate = WriteGateGuard::enter(&gate);
-            assert_eq!(gate.load(Ordering::Relaxed), 1);
-            panic!("simulated poisoned-mutex expect");
-        }));
-        assert!(result.is_err());
-        assert_eq!(
-            gate.load(Ordering::Relaxed),
-            0,
-            "gate must be released on unwind"
-        );
-    }
-
-    /// A second spawn while a pinger is already running must be a no-op —
-    /// replacing the JoinHandle would NOT stop the first thread (only
-    /// close/Drop flips the shared cancel flag), so two pingers would
-    /// run until the client closes. Observable via the interval cell:
-    /// the first spawn's cadence wins.
+    /// Only the first keepalive call acts: a second one with a far longer
+    /// interval does not replace the first cadence, so the pings keep
+    /// coming at the first interval.
     #[test]
     fn spawn_keepalive_if_needed_is_noop_when_already_running() {
+        use std::io::Read;
+
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
-        std::thread::spawn(move || {
-            let _ = listener.accept();
+        let (seen_tx, seen_rx) = std::sync::mpsc::channel::<()>();
+        let peer = std::thread::spawn(move || {
+            let (mut sock, _) = listener.accept().unwrap();
+            let mut seen = Vec::new();
+            let mut buf = [0u8; 1024];
+            loop {
+                match sock.read(&mut buf) {
+                    Ok(0) | Err(_) => return,
+                    Ok(n) => seen.extend_from_slice(&buf[..n]),
+                }
+                if String::from_utf8_lossy(&seen).contains("OPTIONS ") {
+                    let _ = seen_tx.send(());
+                    // Hold the connection until the client hangs up.
+                    let _ = sock.read_to_end(&mut Vec::new());
+                    return;
+                }
+            }
         });
         let url = format!("rtsp://127.0.0.1:{}/test", port);
         let mut c = RtspClient::connect(&url).unwrap();
-        c.spawn_keepalive_if_needed(Some(Duration::from_secs(2)))
+        c.spawn_keepalive_if_needed(Some(Duration::from_millis(20)))
             .unwrap();
-        c.spawn_keepalive_if_needed(Some(Duration::from_secs(5)))
+        c.spawn_keepalive_if_needed(Some(Duration::from_secs(600)))
             .unwrap();
-        let iv = c
-            .keepalive_interval_shared
-            .as_ref()
-            .expect("interval cell set by the first spawn");
-        assert_eq!(
-            iv.load(Ordering::Relaxed),
-            2000,
-            "second spawn must not replace the running pinger or its cadence"
-        );
+        seen_rx
+            .recv_timeout(scaled(Duration::from_secs(2)))
+            .expect("a ping at the first call's 20 ms interval");
+        drop(c);
+        peer.join().unwrap();
     }
 
     #[test]
@@ -1018,21 +582,9 @@ mod tests {
         h.cancel();
         assert!(h.is_cancelled());
     }
-}
-
-#[cfg(test)]
-mod poison_policy {
-    use super::*;
-    use std::panic::{AssertUnwindSafe, catch_unwind};
-    use std::time::{Duration, Instant};
 
     /// Fake peer: accepts one TCP connection, holds it open briefly, never
-    /// replies, then closes. Enough for `connect()`; TEARDOWN writes land
-    /// in the kernel buffer. Both `teardown_with_deadline` read paths
-    /// honor the deadline (`send_and_read_with_deadline`); in this test
-    /// the 200 ms peer close usually races ahead of the deadline — the
-    /// client's next 100 ms-timeout read poll observes EOF — and either
-    /// bound keeps the test prompt.
+    /// replies, then closes.
     fn client_against_silent_peer() -> RtspClient {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
@@ -1044,37 +596,46 @@ mod poison_policy {
         RtspClient::connect(&format!("rtsp://{addr}/s")).unwrap()
     }
 
-    fn poison_stream_mutex(client: &RtspClient) {
-        let stream = client.stream.clone();
-        let _ = std::thread::spawn(move || {
-            let _g = stream.lock().unwrap();
-            panic!("deliberate poison");
-        })
-        .join(); // joins the Err — the mutex is now poisoned
+    /// Ends the client's thread.
+    fn end_the_driver(client: &mut RtspClient) {
+        client.driver.stop();
+        assert!(
+            client.driver.join_within(scaled(Duration::from_secs(5))),
+            "the client's thread did not end"
+        );
     }
 
+    /// `Drop` runs its TEARDOWN path against a thread that has already
+    /// ended, and neither panics nor waits out its bounds.
     #[test]
-    fn drop_does_not_panic_on_poisoned_stream_mutex() {
+    fn drop_does_not_panic_when_the_driver_has_ended() {
         let mut client = client_against_silent_peer();
-        // Make Drop take the best-effort TEARDOWN path (the `mod.rs`
-        // Drop impl gates on `session_id.is_some()`).
+        // Make Drop take the TEARDOWN path.
         client.session_id = Some("12345".into());
-        poison_stream_mutex(&client);
-        let r = catch_unwind(AssertUnwindSafe(move || drop(client)));
-        assert!(r.is_ok(), "Drop panicked on a poisoned stream mutex");
+        end_the_driver(&mut client);
+        let t0 = Instant::now();
+        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || drop(client)));
+        assert!(r.is_ok(), "Drop panicked with the client's thread ended");
+        assert!(
+            t0.elapsed() < scaled(Duration::from_millis(400)),
+            "Drop took {:?}",
+            t0.elapsed()
+        );
     }
 
+    /// A request when the client's thread has ended is `Io(UnexpectedEof)`
+    /// at once, and the session is still cleared.
     #[test]
-    fn request_path_survives_poisoned_stream_mutex() {
+    fn a_request_when_the_driver_has_ended_is_io() {
         let mut client = client_against_silent_peer();
         client.session_id = Some("12345".into());
-        poison_stream_mutex(&client);
+        end_the_driver(&mut client);
         let deadline = Instant::now() + Duration::from_millis(300);
-        let r = catch_unwind(AssertUnwindSafe(|| {
-            client.teardown_with_deadline(Some(deadline), None)
-        }));
-        let inner = r.expect("request path panicked on a poisoned mutex");
-        // The silent peer never replies — an Err is expected; a panic is the bug.
-        assert!(inner.is_err());
+        let r = client.teardown_with_deadline(Some(deadline), None);
+        assert!(
+            matches!(r, Err(RtspError::Io(std::io::ErrorKind::UnexpectedEof))),
+            "got {r:?}"
+        );
+        assert!(client.session_id.is_none());
     }
 }

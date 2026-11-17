@@ -428,3 +428,53 @@ fn request_timeout_is_not_stretched_by_a_longer_read_timeout_over_tls() {
     drop(client);
     server.join().unwrap();
 }
+
+/// A reply that arrives after its request timed out is not taken for the
+/// reply to the next request: the peer answers request 1 only once
+/// request 2 is in, then answers request 2, and request 2 returns its own
+/// reply.
+#[test]
+fn a_late_reply_is_not_handed_to_the_next_request() {
+    use crate::fixtures::raw_rtsp_server::{cseq_of, read_request};
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let server = std::thread::spawn(move || {
+        let (mut sock, _) = listener.accept().unwrap();
+        let mut leftover = Vec::new();
+        let first = cseq_of(&read_request(&mut sock, &mut leftover));
+        // Request 2 is written only after request 1 timed out.
+        let second = cseq_of(&read_request(&mut sock, &mut leftover));
+        for (cseq, n) in [(first, 1), (second, 2)] {
+            sock.write_all(
+                format!("RTSP/1.0 200 OK\r\nCSeq: {cseq}\r\nX-Reply: {n}\r\n\r\n").as_bytes(),
+            )
+            .unwrap();
+        }
+        // Hold the connection until the client hangs up.
+        let _ = sock.read_to_end(&mut Vec::new());
+    });
+
+    let url = format!("rtsp://127.0.0.1:{port}/x");
+    let mut client = tst_rtp::RtspClientBuilder::new(&url)
+        .unwrap()
+        .no_auto_keepalive(true)
+        .request_timeout(Some(Duration::from_millis(200)))
+        .connect()
+        .unwrap();
+
+    let first = client.options();
+    assert!(
+        matches!(first, Err(tst_rtp::RtspError::Timeout)),
+        "request 1 has no reply within its deadline; got {first:?}"
+    );
+    let second = client.options().expect("request 2 gets a reply");
+    assert_eq!(
+        second.headers.get("x-reply").map(String::as_str),
+        Some("2"),
+        "request 2 must get its own reply, not request 1's late one"
+    );
+
+    drop(client);
+    server.join().unwrap();
+}

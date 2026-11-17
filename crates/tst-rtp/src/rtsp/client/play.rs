@@ -45,10 +45,10 @@ impl RtspClient {
             })?
             .clone();
         let uri = self.url.render_no_credentials();
-        let resp = self.send_authenticated(
+        let resp = self.exchange(
             RtspMethod::Play,
-            &uri,
-            &[("session", sid), ("range", "npt=0.000-".to_string())],
+            uri,
+            vec![("session", sid), ("range", "npt=0.000-".to_string())],
         )?;
         self.expect_ok(&resp)?;
         Ok(parse_rtp_info(
@@ -77,7 +77,7 @@ impl RtspClient {
             })?
             .clone();
         let uri = self.url.render_no_credentials();
-        let resp = self.send_authenticated(RtspMethod::Pause, &uri, &[("session", sid)])?;
+        let resp = self.exchange(RtspMethod::Pause, uri, vec![("session", sid)])?;
         self.expect_ok(&resp)
     }
 }

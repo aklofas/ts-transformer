@@ -2,6 +2,7 @@
 
 use crate::error::RtspError;
 use crate::rtsp::client::RtspClient;
+use crate::rtsp::client::engine::RequestSpec;
 use crate::rtsp::message::RtspMethod;
 
 impl RtspClient {
@@ -24,7 +25,7 @@ impl RtspClient {
     ///   the reply arrives, or is set when the exchange fails. The
     ///   request is written even on a cancelled client.
     pub fn teardown(&mut self) -> Result<(), RtspError> {
-        // checked_add: see `send_and_read`'s copy of this idiom — a
+        // checked_add: see `exchange`'s copy of this idiom — a
         // `request_timeout` too large to represent as an `Instant` (e.g.
         // `Duration::MAX`) saturates to "no deadline" rather than panicking,
         // even though (with no session) this deadline is never waited on.
@@ -34,14 +35,11 @@ impl RtspClient {
         self.teardown_with_deadline(deadline, None)
     }
 
-    /// Send TEARDOWN with one deadline, `bound` from now, over the whole
-    /// exchange: the wait for the control stream (another thread, such as
-    /// the keepalive pinger or the interleaved pump, may be using it), the
-    /// request write and the reply. Unlike [`Self::teardown`], the request
-    /// timeout does not apply. Dropping the client uses the same deadline
-    /// with a 500 ms bound (on a TCP-interleaved session at least the
-    /// `read_timeout` plus 100 ms, so the pump's in-flight read can end),
-    /// after setting the cancel, so it does not wait for the reply.
+    /// Send TEARDOWN with one deadline, `bound` from now, over getting the
+    /// request to the wire and its reply. Unlike [`Self::teardown`], the
+    /// request timeout does not apply. Dropping the client uses the same
+    /// deadline with a 500 ms bound, after setting the cancel, so it waits
+    /// for the write and not for the reply.
     ///
     /// This does not set the cancel flag: the reply is awaited up to the
     /// bound. A cancel already set, or set during the call, ends the
@@ -51,23 +49,14 @@ impl RtspClient {
     /// `session_id` is cleared on every outcome, so no later teardown
     /// (nor `Drop`) retries.
     ///
-    /// A single socket write still waits at most 5 s, so with a `bound`
-    /// over 5 s a write that stalls that long is [`RtspError::Io`]. On
-    /// `rtsps://` one write can take several socket writes (TLS record
-    /// passes), each allowed the time that was left when that write
-    /// began, so a peer that drains a little at a time can stretch the
-    /// write past the bound (a TEARDOWN is normally one pass). On a
-    /// TCP-interleaved session the pump holds the control stream for
-    /// one read of up to [`crate::RtspClientBuilder::read_timeout`] (default
-    /// 100 ms); with no data arriving and a `read_timeout` at or above the
-    /// bound, the bound can pass in the wait for the stream, before the
-    /// request is written.
+    /// Bytes the peer takes none of for 5 s end the control connection,
+    /// so with a `bound` over 5 s such a stall is [`RtspError::Io`].
     ///
     /// # Errors
     ///
-    /// - [`RtspError::Timeout`] when the bound passes while waiting for
-    ///   the control stream (the TEARDOWN was not sent), during the write
-    ///   (it may be partly sent) or while waiting for the reply.
+    /// - [`RtspError::Timeout`] when the bound passes before every byte of
+    ///   the request is with the kernel (the rest stays queued and may
+    ///   still go out) or while waiting for the reply.
     /// - [`RtspError::LocalCancel`] when the cancel handle fires before
     ///   the reply arrives, or is set when the exchange fails (also when
     ///   the bound passes).
@@ -84,9 +73,8 @@ impl RtspClient {
     /// Variant of [`Self::teardown`] with an optional response deadline.
     /// When `deadline` elapses with no TEARDOWN response, returns
     /// [`RtspError::Timeout`] but still clears `session_id` (so callers
-    /// know not to retry teardown). `send_deadline` also bounds the wait
-    /// for the stream lock and the request write
-    /// (`send_and_read_with_deadline`).
+    /// know not to retry teardown). `send_deadline` also bounds getting
+    /// the request to the wire ([`Self::request`]).
     pub(crate) fn teardown_with_deadline(
         &mut self,
         deadline: Option<std::time::Instant>,
@@ -96,25 +84,12 @@ impl RtspClient {
             Some(s) => s.clone(),
             None => return Ok(()), // nothing to tear down
         };
-        let uri = self.url.render_no_credentials();
-        // Best-effort: a failure to build the header (e.g. an OS RNG
-        // failure in the cnonce path) degrades to an unauthenticated
-        // TEARDOWN rather than aborting — the wire attempt and the
-        // session_id clearing below must always happen.
-        let preauth = self
-            .preemptive_authorization(RtspMethod::Teardown, &uri)
-            .unwrap_or(None);
-        let mut req = self
-            .base_request(RtspMethod::Teardown, uri)
-            .header("session", sid);
-        if let Some(a) = &preauth {
-            req = req.header("authorization", a.as_str());
-        }
-        let bytes = req.encode_checked()?;
-        // Deadline-aware on BOTH read paths (the non-pump path used to
-        // ignore `deadline`, bounding only via cancel — a silent peer
-        // could stall a deadline-carrying caller that hadn't cancelled).
-        let r = self.send_and_read_with_deadline(&bytes, deadline, send_deadline);
+        let spec = RequestSpec {
+            method: RtspMethod::Teardown,
+            uri: self.url.render_no_credentials(),
+            headers: vec![("session", sid)],
+        };
+        let r = self.request(spec, deadline, send_deadline);
         // Always clear session_id — caller asked us to tear down; if it
         // failed, retrying won't help and we want Drop to skip on a
         // second pass.
@@ -123,22 +98,19 @@ impl RtspClient {
     }
 }
 
-// `Drop for RtspClient` is implemented in `client/mod.rs` (combines
-// teardown + keepalive-thread join). This file holds only the
-// teardown methods themselves.
+// `Drop for RtspClient` is implemented in `client/mod.rs`. This file
+// holds only the teardown methods themselves.
 
 #[cfg(test)]
 mod tests {
     use crate::error::RtspError;
+    use crate::rtsp::client::RtspClient;
     #[cfg(target_os = "linux")]
-    use crate::rtsp::client::test_sockets::{self, non_reading_peer};
-    use crate::rtsp::client::{RtspClient, Stream, lock_unpoisoned};
+    use crate::rtsp::client::test_sockets::non_reading_peer;
     use std::io::{Read, Write};
     use std::net::TcpListener;
     #[cfg(target_os = "linux")]
-    use std::sync::atomic::AtomicBool;
-    #[cfg(target_os = "linux")]
-    use std::sync::{Arc, mpsc};
+    use std::sync::mpsc;
     use std::time::{Duration, Instant};
     #[cfg(target_os = "linux")]
     use tst_test_helpers::timing::scaled;
@@ -193,58 +165,71 @@ mod tests {
         let _ = server.join();
     }
 
-    /// The TCP socket of a plain `rtsp://` client's stream.
-    fn plain_tcp(s: &Stream) -> &std::net::TcpStream {
-        match s {
-            Stream::Plain(tcp) => tcp,
-            #[cfg(feature = "tls")]
-            Stream::Tls(_) => unreachable!("plain rtsp:// connects yield Stream::Plain"),
-        }
-    }
-
-    /// The socket read and write timeouts the client's control socket
-    /// carries now.
-    fn installed_timeouts(client: &RtspClient) -> (Option<Duration>, Option<Duration>) {
-        let s = lock_unpoisoned(&client.stream);
-        let tcp = plain_tcp(&s);
-        (tcp.read_timeout().unwrap(), tcp.write_timeout().unwrap())
-    }
-
-    /// Stands in for an active interleaved pump: only the write gate and
-    /// the control channel matter to the request path. The returned
-    /// sender keeps the channel open.
+    /// A client whose control socket's send buffer is pinned to 4 KiB (no
+    /// autotuning, which could otherwise take a whole 1 MiB request), on a
+    /// peer behind a 4 KiB receive buffer that never reads, with a session
+    /// open (interleaved when `interleaved`) and 1 MiB queued ahead: a
+    /// request with a 1 MiB header and a 50 ms send deadline, which times
+    /// out with its bytes still queued. Linux only, for the reason given in
+    /// `test_sockets`.
     #[cfg(target_os = "linux")]
-    fn stand_in_pump(client: &mut RtspClient) -> mpsc::SyncSender<bytes::Bytes> {
-        let (ctrl_tx, ctrl_rx) = mpsc::sync_channel::<bytes::Bytes>(1);
-        client.pump_state = Some(crate::rtsp::client::InterleavedPumpState {
-            cancel: Arc::new(AtomicBool::new(false)),
-            write_gate: client.write_gate.clone(),
-            ctrl_rx,
-            thread: None,
-        });
-        ctrl_tx
-    }
+    fn client_with_bytes_the_peer_does_not_take(
+        interleaved: bool,
+    ) -> (RtspClient, mpsc::Sender<()>, std::thread::JoinHandle<()>) {
+        use crate::rtsp::client::driver::{Command, RtcpSink};
+        use crate::rtsp::client::engine::{InterleavedChannels, RequestSpec};
+        use crate::rtsp::message::RtspMethod;
 
-    /// Fills the send buffer of a plain `rtsp://` client's control socket.
-    #[cfg(target_os = "linux")]
-    fn fill_send_buffer(client: &RtspClient) {
-        test_sockets::fill_send_buffer(plain_tcp(&lock_unpoisoned(&client.stream)));
-    }
-
-    /// The request write blocks on a full send buffer: the bound ends it
-    /// as a `Timeout`, well before the socket's own 5 s write timeout
-    /// would end it as `Io`. Linux only: the fill latch is tuned to
-    /// Linux TCP (a pinned 4 KiB send buffer, and a delayed ACK of at
-    /// most 200 ms as the last thing that frees space) and has not been
-    /// measured on macOS or Windows. With `cancel` set before the call,
-    /// the same expiry reports the cancel.
-    #[cfg(target_os = "linux")]
-    fn blocked_write_is_bounded(pump: bool, cancel: bool) {
         let (port, done_tx, peer) = non_reading_peer();
-        let mut client = RtspClient::connect(&format!("rtsp://127.0.0.1:{port}/test")).unwrap();
-        let _ctrl = pump.then(|| stand_in_pump(&mut client));
-        client.session_id = Some("blocked-write".into());
-        fill_send_buffer(&client);
+        let url = crate::url::RtspUrl::parse(&format!("rtsp://127.0.0.1:{port}/test")).unwrap();
+        let (probe, socket) = mpsc::channel();
+        let mut client = RtspClient::connect_with_params(
+            &url,
+            None,
+            crate::rtsp::client::ConnectParams {
+                socket_probe: Some(probe),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        socket2::SockRef::from(&socket.recv().unwrap())
+            .set_send_buffer_size(4096)
+            .unwrap();
+        if interleaved {
+            let (data_tx, _data_rx) = mpsc::sync_channel(8);
+            client
+                .driver
+                .send(Command::SetInterleaved {
+                    channels: InterleavedChannels { rtp: 0, rtcp: 1 },
+                    data_tx,
+                    rtcp: RtcpSink {
+                        stats: Default::default(),
+                        ssrc: 1,
+                    },
+                })
+                .unwrap();
+        }
+        client.session_id = Some("blocked".into());
+        let ahead = Instant::now() + Duration::from_millis(50);
+        let r = client.request(
+            RequestSpec {
+                method: RtspMethod::Options,
+                uri: url.render_no_credentials(),
+                headers: vec![("x-pad", "a".repeat(1 << 20))],
+            },
+            Some(ahead),
+            Some(ahead),
+        );
+        assert!(matches!(r, Err(RtspError::Timeout)), "got {r:?}");
+        (client, done_tx, peer)
+    }
+
+    /// The TEARDOWN queues behind bytes the peer does not take: the bound
+    /// ends the call as a `Timeout` (or `LocalCancel` with the cancel set
+    /// first), well before the 5 s write-stall bound would end the stream.
+    #[cfg(target_os = "linux")]
+    fn teardown_within_is_bounded(interleaved: bool, cancel: bool) {
+        let (mut client, done_tx, peer) = client_with_bytes_the_peer_does_not_take(interleaved);
         if cancel {
             client.cancel_handle().cancel();
         }
@@ -259,107 +244,47 @@ mod tests {
             assert!(matches!(r, Err(RtspError::Timeout)), "got {r:?}");
         }
         assert!(
-            elapsed < scaled(Duration::from_secs(2)),
-            "teardown_within took {elapsed:?}"
+            elapsed >= Duration::from_millis(500),
+            "returned in {elapsed:?}, before the bound"
         );
-        assert!(client.session_id.is_none());
-        assert_eq!(installed_timeouts(&client).1, Some(Duration::from_secs(5)));
-
-        let _ = done_tx.send(());
-        drop(client);
-        peer.join().unwrap();
-    }
-
-    /// See [`blocked_write_is_bounded`], which says why this is Linux only.
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn teardown_within_bounds_a_blocked_write() {
-        blocked_write_is_bounded(false, false);
-    }
-
-    /// See [`blocked_write_is_bounded`], which says why this is Linux only.
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn teardown_within_bounds_a_blocked_write_in_pump_mode() {
-        blocked_write_is_bounded(true, false);
-    }
-
-    /// Another thread holds the stream lock while blocked in a write on a
-    /// full send buffer (a keepalive ping's shape): the bound ends the
-    /// lock wait as a `Timeout` instead of waiting out the holder's 5 s
-    /// write timeout. Linux only, for the reason given on
-    /// [`blocked_write_is_bounded`]. With `cancel` set before the call,
-    /// the same expiry reports the cancel.
-    #[cfg(target_os = "linux")]
-    fn held_lock_is_bounded(pump: bool, cancel: bool) {
-        let (port, done_tx, peer) = non_reading_peer();
-        let mut client = RtspClient::connect(&format!("rtsp://127.0.0.1:{port}/test")).unwrap();
-        let _ctrl = pump.then(|| stand_in_pump(&mut client));
-        client.session_id = Some("held-lock".into());
-        fill_send_buffer(&client);
-        if cancel {
-            client.cancel_handle().cancel();
-        }
-
-        let stream = Arc::clone(&client.stream);
-        let (held_tx, held_rx) = mpsc::channel::<()>();
-        let holder = std::thread::spawn(move || {
-            let mut s = lock_unpoisoned(&stream);
-            let _ = held_tx.send(());
-            let _ = s.write_all(b"GET_PARAMETER rtsp://127.0.0.1/test RTSP/1.0\r\n\r\n");
-        });
-        held_rx
-            .recv_timeout(Duration::from_secs(10))
-            .expect("the holder never took the stream lock");
-
-        let t0 = Instant::now();
-        let r = client.teardown_within(Duration::from_millis(500));
-        let elapsed = t0.elapsed();
-
-        if cancel {
-            assert!(matches!(r, Err(RtspError::LocalCancel)), "got {r:?}");
-        } else {
-            assert!(matches!(r, Err(RtspError::Timeout)), "got {r:?}");
-        }
         assert!(
             elapsed < scaled(Duration::from_secs(2)),
             "teardown_within took {elapsed:?}"
         );
         assert!(client.session_id.is_none());
 
-        // Resetting the connection fails the holder's write at once.
         let _ = done_tx.send(());
-        holder.join().unwrap();
         drop(client);
         peer.join().unwrap();
     }
 
-    /// See [`held_lock_is_bounded`], which says why this is Linux only.
+    /// See `client_with_bytes_the_peer_does_not_take` for why this is Linux
+    /// only.
     #[cfg(target_os = "linux")]
     #[test]
-    fn teardown_within_bounds_a_held_stream_lock() {
-        held_lock_is_bounded(false, false);
+    fn teardown_within_is_bounded_when_the_peer_takes_no_bytes() {
+        teardown_within_is_bounded(false, false);
     }
 
-    /// See [`held_lock_is_bounded`], which says why this is Linux only.
+    /// See `client_with_bytes_the_peer_does_not_take`.
     #[cfg(target_os = "linux")]
     #[test]
-    fn teardown_within_bounds_a_held_stream_lock_in_pump_mode() {
-        held_lock_is_bounded(true, false);
+    fn teardown_within_is_bounded_when_the_peer_takes_no_bytes_on_an_interleaved_session() {
+        teardown_within_is_bounded(true, false);
     }
 
-    /// See [`blocked_write_is_bounded`], which says why this is Linux only.
+    /// See `client_with_bytes_the_peer_does_not_take`.
     #[cfg(target_os = "linux")]
     #[test]
-    fn a_blocked_write_on_a_cancelled_client_reports_the_cancel() {
-        blocked_write_is_bounded(false, true);
+    fn a_blocked_teardown_on_a_cancelled_client_reports_the_cancel() {
+        teardown_within_is_bounded(false, true);
     }
 
-    /// See [`held_lock_is_bounded`], which says why this is Linux only.
+    /// See `client_with_bytes_the_peer_does_not_take`.
     #[cfg(target_os = "linux")]
     #[test]
-    fn a_held_stream_lock_on_a_cancelled_client_reports_the_cancel() {
-        held_lock_is_bounded(false, true);
+    fn a_blocked_teardown_on_a_cancelled_interleaved_client_reports_the_cancel() {
+        teardown_within_is_bounded(true, true);
     }
 
     /// A cancelled client still writes its TEARDOWN when dropped: nothing
@@ -392,11 +317,10 @@ mod tests {
         );
     }
 
-    /// A peer that answers: `teardown_within` returns `Ok`, and the
-    /// socket carries the configured read timeout and the 5 s write
-    /// timeout again afterwards.
+    /// A peer that answers: `teardown_within` returns `Ok` and clears the
+    /// session.
     #[test]
-    fn teardown_within_a_healthy_peer_restores_the_socket_timeouts() {
+    fn teardown_within_a_healthy_peer_returns_ok() {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
         let peer = std::thread::spawn(move || {
@@ -440,10 +364,6 @@ mod tests {
         let r = client.teardown_within(Duration::from_millis(500));
         assert!(r.is_ok(), "got {r:?}");
         assert!(client.session_id.is_none());
-        assert_eq!(
-            installed_timeouts(&client),
-            (Some(configured), Some(Duration::from_secs(5)))
-        );
 
         drop(client);
         peer.join().unwrap();

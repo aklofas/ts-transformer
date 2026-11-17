@@ -1,9 +1,8 @@
 //! `rtsps://` integration via sync rustls 0.23 (no tokio-rustls).
 //!
-//! Gated on cargo feature `tls`. The wrapper hides the rustls handshake
-//! behind a [`TlsStream`] that implements `std::io::{Read, Write}` — the
-//! rest of [`super::RtspClient`] talks to the connection through the
-//! internal `Stream` enum (crate-private), so the per-method code stays
+//! Gated on cargo feature `tls`. [`TlsStream`] runs the rustls handshake
+//! on the caller's thread; the connection then goes to the client's thread
+//! as a non-blocking `stream::Stream`, so the per-method code stays
 //! oblivious to whether the bytes go through plain TCP or TLS.
 //!
 //! Why sync rustls (not tokio-rustls): the RTSP client is sync by design
@@ -12,7 +11,7 @@
 
 #![cfg(feature = "tls")]
 
-use std::io::{self, Read, Write};
+use std::io;
 use std::net::TcpStream;
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
@@ -21,9 +20,8 @@ use super::CONTROL_WRITE_TIMEOUT;
 use crate::error::RtspError;
 use crate::url::RtspUrl;
 
-/// Wraps a [`TcpStream`] with rustls. Implements `Read + Write` so it
-/// substitutes for plain `TcpStream` in the crate-internal `Stream`
-/// enum (the `Tls` variant).
+/// A [`TcpStream`] with a completed rustls handshake, handed to the
+/// crate-internal `stream::Stream` through [`Self::into_parts`].
 pub struct TlsStream {
     conn: rustls::ClientConnection,
     sock: TcpStream,
@@ -172,88 +170,10 @@ impl TlsStream {
         Ok(Self { conn, sock })
     }
 
-    /// Set the read timeout of the TCP socket beneath rustls — the only
-    /// place a TLS read blocks.
-    pub(crate) fn set_read_timeout(&self, t: std::time::Duration) -> std::io::Result<()> {
-        self.sock.set_read_timeout(Some(t))
-    }
-
-    /// Set the write timeout of the TCP socket beneath rustls, where each
-    /// `write_tls` pass blocks.
-    pub(crate) fn set_write_timeout(&self, t: std::time::Duration) -> std::io::Result<()> {
-        self.sock.set_write_timeout(Some(t))
-    }
-
     /// The rustls connection, with whatever it has already decrypted or
     /// still has to write, and the socket beneath it.
     pub(crate) fn into_parts(self) -> (rustls::ClientConnection, TcpStream) {
         (self.conn, self.sock)
-    }
-}
-
-impl Read for TlsStream {
-    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        // Pull any pending ciphertext from the wire before handing
-        // plaintext up — post-handshake `wants_read()` toggles as TLS
-        // records arrive out-of-order with application reads.
-        //
-        // At most ONE socket read per call: the socket read timeout
-        // bounds a single `read_tls`, so a call that kept pulling until a
-        // whole record decrypted could be held past the caller's
-        // cancel/deadline check by a peer that dribbles a record a few
-        // bytes at a time. After one pull with still no plaintext, report
-        // `WouldBlock` — every caller treats it as "poll again".
-        let mut pulled = false;
-        loop {
-            // Try to satisfy from the rustls buffered plaintext first;
-            // this lets short application reads succeed without a
-            // syscall when a record was already decrypted.
-            match self.conn.reader().read(buf) {
-                Ok(0) if self.conn.wants_read() => {
-                    // No plaintext + wants more ciphertext: pull from
-                    // the underlying socket and try again.
-                }
-                Ok(n) => return Ok(n),
-                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                    if !self.conn.wants_read() {
-                        return Err(e);
-                    }
-                    // wants more ciphertext; fall through to read_tls
-                }
-                Err(e) => return Err(e),
-            }
-            if pulled {
-                return Err(std::io::ErrorKind::WouldBlock.into());
-            }
-            // Bring more ciphertext in. read_tls forwards the underlying
-            // socket's error (incl. WouldBlock / TimedOut), so callers
-            // get the same cancel-loop behavior they get with plain TCP.
-            self.conn.read_tls(&mut self.sock)?;
-            self.conn
-                .process_new_packets()
-                .map_err(std::io::Error::other)?;
-            pulled = true;
-        }
-    }
-}
-
-impl Write for TlsStream {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        let n = self.conn.writer().write(buf)?;
-        // Flush the freshly-buffered plaintext to the wire — RTSP
-        // requests are write-then-wait-for-response, so we MUST push
-        // bytes out before the caller starts a blocking read.
-        while self.conn.wants_write() {
-            self.conn.write_tls(&mut self.sock)?;
-        }
-        Ok(n)
-    }
-
-    fn flush(&mut self) -> std::io::Result<()> {
-        while self.conn.wants_write() {
-            self.conn.write_tls(&mut self.sock)?;
-        }
-        self.sock.flush()
     }
 }
 
@@ -527,8 +447,8 @@ mod tests {
         assert_eq!(errors, 1);
     }
 
-    /// The stream wrapper moves to the keepalive and pump threads, so it
-    /// must stay `Send`.
+    /// The handshake's result moves to the client's thread, so it must
+    /// stay `Send`.
     #[test]
     fn tls_stream_is_send() {
         fn assert_send<T: Send>() {}
