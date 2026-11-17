@@ -178,12 +178,12 @@ impl RtspClientBuilder {
     /// Per-read socket timeout of the `rtsps://` TLS handshake: each
     /// socket read of the handshake waits at most this long, or the time
     /// left on the [`Self::connect_timeout`] budget when that is shorter.
-    /// Default 100 ms. Must be non-zero: zero fails the connect with
-    /// [`RtspError::Io`].
+    /// Default 100 ms. Must be non-zero: zero fails every connect,
+    /// `rtsp://` included, with [`RtspError::Io`].
     ///
-    /// It has no effect on a connected client, nor on a plain `rtsp://`
-    /// connect: the client's thread reads the control connection only
-    /// when it has bytes. How long a request waits is
+    /// Apart from that check it has no effect on a plain `rtsp://`
+    /// connect, nor on a connected client: the client's thread reads the
+    /// control connection only when it has bytes. How long a request waits is
     /// [`Self::request_timeout`].
     pub fn read_timeout(mut self, t: Duration) -> Self {
         self.read_timeout = t;

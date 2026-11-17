@@ -495,16 +495,27 @@ cancel-handle pattern.
 structured `EndReason` the moment the RTSP client's thread
 (`tst-rtsp-client`) sees the session end. That thread reads the control
 connection all the time, also on a UDP session and before SETUP, so an
-end between requests is recorded when it happens. The reasons tell
-apart a handful of cases that otherwise all look like the same
-disconnect from the caller's side: the server closing the control connection (for
-`rtsps://`, with a `close_notify`) or accepting the client's TEARDOWN
-(`CleanTeardown`), a keepalive `454 Session
-Not Found` (`SessionExpired`), a keepalive ping that failed to encode
-or that the server took none of for 5 s (`KeepaliveFailed`), a TCP read
-or write error, or a request the server took none of for 5 s
-(`TransportFailed`), a peer that broke the message framing
-(`ProtocolError`), or the caller's own
+end between requests is recorded when it happens. When the control
+connection itself ends, an interleaved (TCP) receiver ends with it,
+since its media arrives on that connection (a keepalive `454` records
+`SessionExpired` but leaves it open). A UDP receiver does not end: it
+reads its own socket, keeps returning what arrives there and, with
+nothing arriving, waits as any RTP receive does (up to its receive
+timeout, if one is set). Its `end_reason()` can name the control
+connection's end while it is still receiving, and after a peer close, a
+reset, a write stall, a framing violation or a keepalive `454`,
+`RtspClient::is_session_alive()` returns false. Poll either (or
+`RtpRecvTransport::end_reason_handle()`) if a UDP session must stop with
+its control connection. The reasons tell apart a handful of cases that
+otherwise all look like the same disconnect from the caller's side: the
+server closing the control connection (for `rtsps://`, with a
+`close_notify`) or accepting the client's TEARDOWN (`CleanTeardown`), a
+keepalive `454 Session Not Found` (`SessionExpired`), a keepalive ping
+that failed to encode, or a control connection that took no more bytes
+for 5 s while a keepalive ping's bytes were the oldest queued
+(`KeepaliveFailed`), a TCP read or write error, or the same 5 s stall
+with a request's bytes oldest (`TransportFailed`), a peer that broke the
+message framing (`ProtocolError`), or the caller's own
 `close()` / cancel-handle fire (`Cancelled`). A cancelled `recv_au()` does
 not return `Ok(None)`: it hands out the access units the receiver holds,
 then returns `Err(TransportError::ExplicitClose)` (the CLOSED kind in the

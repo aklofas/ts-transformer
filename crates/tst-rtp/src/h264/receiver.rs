@@ -41,9 +41,11 @@
 //!    fired), the terminal value is `Err(TransportError::ExplicitClose)`,
 //!    returned on every later call. After the receiver's own `close()` it
 //!    is the same, without the flush: `close()` discards an open AU.
-//! 3. On a clean disconnect with no cancel (the RTSP client's thread
-//!    dropped its `Sender`, indicating RTSP teardown), the terminal value is
-//!    `Ok(None)`, returned on every later call until a cancel.
+//! 3. When the media queue closes with no cancel recorded (the RTSP
+//!    client's thread closed it: the control connection ended for any
+//!    reason, a TEARDOWN was accepted, or a later SETUP replaced the
+//!    queue), the terminal value is `Ok(None)`, returned on every later
+//!    call until a cancel.
 //!
 //! Any other hard I/O error surfaces as `Err(TransportError::Broken {..})`.
 

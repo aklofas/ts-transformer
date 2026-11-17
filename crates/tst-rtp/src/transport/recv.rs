@@ -35,8 +35,9 @@ use crate::url::{RtpUrl, RtpUrlError};
 pub(crate) const RECV_SCRATCH_LEN: usize = 65535;
 
 /// Sentinel `TransportError::Broken.msg` emitted by [`Source::recv_raw`]'s
-/// mpsc arm when the RTSP client's thread drops its `Sender` (the session
-/// or the client ended). Consumers that treat this disconnect as EOS — e.g.
+/// mpsc arm when the RTSP client's thread drops its `Sender`: the control
+/// connection ended, a TEARDOWN was accepted, the client was dropped, or a
+/// later SETUP replaced the queue (a keepalive `454` keeps it open). Consumers that treat this disconnect as EOS — e.g.
 /// `H264Receiver::recv_au` — match against this const, NOT a string
 /// literal, so a wording change can't silently break the EOS contract.
 pub(crate) const MPSC_PUMP_DISCONNECTED: &str = "interleaved pump bridge disconnected";

@@ -1314,8 +1314,8 @@ impl RtspServer {
         // this, lingering `SessionWriter` clones (held
         // by `state.sessions`, the fanout task, and any in-flight
         // handler) keep the write half open after the per-session task
-        // returns — the kernel never sends FIN, and clients see no end
-        // of stream until a timeout of their own fires.
+        // returns — the kernel never sends FIN, and clients never see
+        // the end of the stream.
         // Each shutdown is bounded by a 500 ms timeout to keep `stop()`
         // sync-bounded.
         if let Some(rt) = self.runtime.as_ref() {
