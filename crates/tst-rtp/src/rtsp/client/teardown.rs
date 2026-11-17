@@ -18,10 +18,10 @@ impl RtspClient {
     ///
     /// - [`RtspError::Protocol`] carrying the status when the server
     ///   answers anything but a `2xx` or `454`.
-    /// - [`RtspError::AuthFailed`] when the server answers `401` and the
-    ///   client has no credentials, or answers `401` again to the one
-    ///   retry with credentials; [`RtspError::BadResponse`] for a `401`
-    ///   without a `WWW-Authenticate` header.
+    /// - For a `401`: [`RtspError::BadResponse`] when it has no
+    ///   `WWW-Authenticate` header; otherwise [`RtspError::AuthFailed`] when
+    ///   the client has no credentials, or when the one retry with
+    ///   credentials is answered `401` again.
     /// - [`RtspError::Io`] on socket-level failure writing the request
     ///   or reading the response.
     /// - [`RtspError::BadResponse`] (or another variant) surfaced by

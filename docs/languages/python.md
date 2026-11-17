@@ -1148,8 +1148,11 @@ with RtspClient.connect(cfg) as session:
 - **`teardown()` reports what the server answered.** A 2xx reply, or
   `454 Session Not Found` (the session is already gone), returns `None`. A
   TEARDOWN the server refuses raises `RtspError` of the status's kind:
-  `PROTOCOL`, `NOT_FOUND` for a 404, `AUTH_FAILED` for a 401 the
-  credentials cannot answer. The session counts as torn down either way, so
+  `PROTOCOL`, or `NOT_FOUND` for a 404. A first 401 is answered once with
+  the credentials, unless it carries no `WWW-Authenticate` header
+  (`PROTOCOL`), the client has no credentials (`AUTH_FAILED`) or its
+  challenge offers no scheme the client may answer (`AUTH_REQUIRED`); a
+  401 to that retry raises `AUTH_FAILED`. The session counts as torn down either way, so
   a second `teardown()` is a no-op. Leaving the `with` block tears down too
   and swallows that error.
 - **Why did the stream end?** When `for event in rx` exits or a call

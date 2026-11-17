@@ -671,10 +671,12 @@ fn teardown_within_reports_the_status_too() {
     drop(session);
 }
 
-/// Dropping a client whose TEARDOWN the server refuses does not panic, and
-/// the TEARDOWN is written.
+/// Dropping a client whose TEARDOWN the server answers `500`: `Drop` sets
+/// the cancel first, so it never reads the reply and cannot see the status.
+/// What this pins is that it does not panic, writes the TEARDOWN once and
+/// ends the connection.
 #[test]
-fn drop_ignores_the_teardown_status() {
+fn drop_against_a_peer_refusing_teardown_writes_it_and_does_not_panic() {
     use std::time::Duration;
 
     use crate::fixtures::raw_rtsp::scaled;

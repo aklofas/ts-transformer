@@ -42,8 +42,11 @@ public final class RtspSession extends NativeHandle {
      * raise {@link RtspException}. Idempotent on the wrapper (a second call is a no-op).
      * A 2xx reply, or {@code 454 Session Not Found} (the session is already gone), returns
      * normally; a TEARDOWN the server refuses throws {@link RtspException} of the status's
-     * kind ({@code PROTOCOL}, {@code NOT_FOUND} for a 404, {@code AUTH_FAILED} for a 401 the
-     * credentials cannot answer), and the session still counts as torn down.
+     * kind ({@code PROTOCOL}, or {@code NOT_FOUND} for a 404), and the session still counts
+     * as torn down. A first 401 is answered once with the credentials, unless it carries no
+     * {@code WWW-Authenticate} header ({@code PROTOCOL}), the client has no credentials
+     * ({@code AUTH_FAILED}) or its challenge offers no scheme the client may answer
+     * ({@code AUTH_REQUIRED}); a 401 to that retry throws {@code AUTH_FAILED}.
      * {@link #close()} tears down too and swallows that error.
      */
     public void teardown() throws RtspException { ensureOpen("RtspSession is closed"); nTeardown(peekHandle()); }

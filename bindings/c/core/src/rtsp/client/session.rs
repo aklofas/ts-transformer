@@ -320,15 +320,18 @@ const TEARDOWN_BOUND: Duration = Duration::from_millis(500);
 /// the handle from being freed). A healthy peer's 2xx returns 0, and so
 /// does `454 Session Not Found` (the session is already gone). A TEARDOWN
 /// the server refuses with any other status returns that status's code
-/// (`TST_E_RTSP_PROTOCOL`, or `TST_E_RTSP_NOT_FOUND` for a 404); a 401 the
-/// client cannot answer, or answered once and was refused again, returns
-/// `TST_E_RTSP_AUTH_FAILED`. The TEARDOWN exchange is bounded to 500 ms,
-/// covering the request write and the reply: when the bound passes (a peer
-/// that does not answer, or one that stopped reading) the call returns
-/// `TST_E_RTSP_TIMEOUT` and the handle is still freed. A session cancelled with
-/// [`tst_rtsp_session_cancel`] before the call still writes the TEARDOWN
-/// but does not wait for the reply: it returns `TST_E_CLOSED`, also when
-/// that write fails, and is still freed. If a caught panic had already
+/// (`TST_E_RTSP_PROTOCOL`, or `TST_E_RTSP_NOT_FOUND` for a 404). A first
+/// 401 is answered once with the credentials, unless it carries no
+/// `WWW-Authenticate` header (`TST_E_RTSP_PROTOCOL`), the client has no
+/// credentials (`TST_E_RTSP_AUTH_FAILED`) or its challenge offers no scheme
+/// the client may answer (`TST_E_RTSP_AUTH_REQUIRED`); a 401 to that retry
+/// returns `TST_E_RTSP_AUTH_FAILED`. The TEARDOWN exchange is bounded to
+/// 500 ms, covering the request write and the reply: when the bound passes
+/// (a peer that does not answer, or one that stopped reading) the call
+/// returns `TST_E_RTSP_TIMEOUT` and the handle is still freed. A session
+/// cancelled with [`tst_rtsp_session_cancel`] before the call still writes
+/// the TEARDOWN but does not wait for the reply: it returns `TST_E_CLOSED`,
+/// also when that write fails, and is still freed. If a caught panic had already
 /// taken the control pair, there is nothing to tear down: the call
 /// returns 0 and frees. The client's thread is then told to stop and
 /// closes the control connection on its own; the call does not wait for
