@@ -247,9 +247,7 @@ fn setup_h264_auto_mode2_rejected_before_setup() {
 ///
 /// This test interleaves RTCP SR frames (channel 1) between RTP data
 /// frames. The session must deliver all expected AUs despite the RTCP
-/// frames; with `rtcp_rx` dropped it fails, because the pump's
-/// `Err(mpsc::TrySendError::Disconnected(_)) => return` on the RTCP sender
-/// ends it.
+/// frames.
 #[test]
 fn interleaved_rtcp_frames_do_not_kill_session() {
     let sps = sps_nalu();

@@ -190,7 +190,8 @@ typedef enum tst_stream_end_reason {
   TST_STREAM_END_REASON_NONE = 0,
   /**
    * The peer closed the connection in an orderly way, with no
-   * protocol or transport error.
+   * protocol or transport error, or an RTSP server accepted the
+   * client's TEARDOWN.
    */
   TST_STREAM_END_REASON_CLEAN_TEARDOWN = 1,
   /**
@@ -199,8 +200,9 @@ typedef enum tst_stream_end_reason {
    */
   TST_STREAM_END_REASON_SESSION_EXPIRED = 2,
   /**
-   * The keepalive background thread failed to encode or send a ping.
-   * Detail message: see the getter doc.
+   * An RTSP keepalive ping could not be encoded, or the control
+   * connection's queued bytes made no progress for 5 s while the oldest
+   * of them were a ping's. Detail message: see the getter doc.
    */
   TST_STREAM_END_REASON_KEEPALIVE_FAILED = 3,
   /**
@@ -9427,8 +9429,9 @@ void tst_rtsp_client_builder_auth_digest_sha256(struct tst_rtsp_client_builder_t
  *
  * 1. Builds the Rust builder from the URL parsed at `_new`, keeping its
  *    userinfo and query options; explicit setters override them.
- * 2. Calls `.connect()` to open the TCP control channel and spawn the
- *    auto-keepalive thread (unless disabled via `tst_rtsp_client_builder_keepalive`).
+ * 2. Calls `.connect()` to open the TCP control channel and start the
+ *    client's thread, with its keepalive pings unless disabled via
+ *    `tst_rtsp_client_builder_keepalive`.
  * 3. Calls `describe()` to fetch the server's SDP.
  * 4. Calls `setup_mp2t_auto(&sdp)` to select the first MPEG-TS media and
  *    negotiate the transport (UDP or TCP-interleaved).
@@ -9473,12 +9476,12 @@ void tst_rtsp_client_builder_auth_digest_sha256(struct tst_rtsp_client_builder_t
 
 #if defined(TST_HAS_RTP)
 /**
- * Enable or disable the auto-keepalive background thread.
+ * Enable or disable the automatic keepalive pings.
  *
  * When `enabled` is `true` (the default), the builder's connect call
- * spawns a keepalive thread that sends periodic OPTIONS requests at
- * `session_timeout / 2` to prevent the server from expiring the
- * session.  Pass `false` to suppress the keepalive thread — useful
+ * starts periodic OPTIONS requests at `session_timeout / 2`, sent by the
+ * client's own thread, to prevent the server from expiring the
+ * session.  Pass `false` to suppress the pings — useful
  * for short-lived sessions or when the caller manages keepalives
  * manually.
  *
@@ -10969,8 +10972,8 @@ int tst_rtsp_server_next_publisher(struct TstRtspServer *server,
  * 1. Locks the session's pair Mutex, moves out `(RtspClient, RtspSession)`
  *    and frees the session allocation.
  * 2. Calls `RtspSession::into_recv_transport()` to get the `RtpRecvTransport`
- *    (either a bound UDP socket or an mpsc channel fed by the TCP-interleaved
- *    pump thread, depending on what SETUP negotiated).
+ *    (either a bound UDP socket or a queue the RTSP client's thread fills
+ *    from the TCP-interleaved stream, depending on what SETUP negotiated).
  * 3. Wraps the transport in a `DemuxReceiver` using the supplied `demux_cfg`
  *    (or default options if NULL).
  * 4. Returns a `*mut TstRtpDemuxReceiver` using the same opaque type as
@@ -10978,18 +10981,20 @@ int tst_rtsp_server_next_publisher(struct TstRtspServer *server,
  *    `tst_rtp_demux_receiver_next_event` / `_cancel` / `_close` data-path
  *    entry points unchanged.
  *
- * The returned receiver owns the RTSP control connection (`RtspClient`),
- * with its keepalive and, for TCP-interleaved, the pump that feeds the
- * receiver, until `tst_rtp_demux_receiver_close`, which sends TEARDOWN.
+ * The returned receiver owns the RTSP control connection (`RtspClient`)
+ * and the client's thread, which sends the keepalive pings and, for
+ * TCP-interleaved, feeds the receiver, until
+ * `tst_rtp_demux_receiver_close`, which sends TEARDOWN.
  * `tst_rtp_demux_receiver_cancel` stops only the data plane; the control
  * connection stays up until close.
  *
  * A session already cancelled with [`tst_rtsp_session_cancel`] is refused:
- * the call returns NULL with `TST_E_CLOSED`, because its keepalive has
- * exited and the server would reap the session after its timeout. The
- * bridge hands the control connection to the receiver; after a non-NULL
- * return the session handle is spent and the receiver's own cancel,
- * `tst_rtp_demux_receiver_cancel`, is the one that stops the receive side.
+ * the call returns NULL with `TST_E_CLOSED`, because the client sends no
+ * keepalive ping after a cancel and the server would reap the session
+ * after its timeout. The bridge hands the control connection to the
+ * receiver; after a non-NULL return the session handle is spent and the
+ * receiver's own cancel, `tst_rtp_demux_receiver_cancel`, is the one that
+ * stops the receive side.
  *
  * Ownership: a non-NULL return consumes `session` and frees it, so the
  * caller must not use or free it again. A NULL return never frees

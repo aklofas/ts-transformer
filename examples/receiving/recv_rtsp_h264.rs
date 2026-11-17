@@ -148,8 +148,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     //
     // Consumes the session into an `H264Receiver`. For UDP this takes the
     // SETUP-allocated RTP socket. For TCP-interleaved it takes the consumer
-    // side of the pump's mpsc channel (the pump thread was spawned during
-    // SETUP so no early frames are lost). The `depay_config` carries:
+    // side of the media queue the client's thread fills (it routes frames
+    // to it from SETUP on, so no early frames are lost). The `depay_config`
+    // carries:
     //   - `payload_type` — filters out non-H.264 RTP packets by PT.
     //   - `initial_parameter_sets` — SPS/PPS from the SDP (may be empty).
     //   - `parameter_set_injection` — default `BeforeIdr` prepends them.

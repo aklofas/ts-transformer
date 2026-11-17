@@ -445,11 +445,11 @@ int main(int argc, char **argv) {
     tst_rtsp_client_builder_transport_pref(builder, transport);
 
     /* ------------------------------------------------------------------
-     * Step 4 — keepalive thread.
+     * Step 4 — keepalive pings.
      *
-     * The keepalive thread sends periodic OPTIONS requests to keep the
+     * The client's own thread sends periodic OPTIONS requests to keep the
      * server from timing out the session (RFC 7826 §18.43 TIMEOUT).
-     * It is enabled by default.  Disable only for very short-lived
+     * They are enabled by default.  Disable only for very short-lived
      * sessions (sub-second test probes) where the overhead matters.
      * ---------------------------------------------------------------- */
     tst_rtsp_client_builder_keepalive(builder, true);
@@ -499,7 +499,8 @@ int main(int argc, char **argv) {
      *
      * `tst_rtsp_session_into_demux_receiver` consumes the session handle:
      *   1. Extracts the negotiated transport (bound UDP socket OR the
-     *      mpsc channel fed by the TCP-interleaved pump thread).
+     *      queue the client's thread fills from the TCP-interleaved
+     *      stream).
      *   2. Wraps it in a `DemuxReceiver` using default demux config
      *      (NULL = CFI-tolerant mode, lenient PSI reassembly).
      *   3. Returns the same opaque `TstRtpDemuxReceiver*` type used by
@@ -509,10 +510,10 @@ int main(int argc, char **argv) {
      *
      * Ownership — the session's fate depends on the return value:
      *   - non-NULL: the session is consumed AND freed.  The RTSP control
-     *     channel (with its keepalive and, for TCP-interleaved, the pump
-     *     that feeds the receiver) now lives inside the receiver, so the
-     *     camera keeps streaming until we close the receiver.  Never touch
-     *     or free `session` again.
+     *     channel (with the client's thread, which sends the keepalive pings
+     *     and, for TCP-interleaved, feeds the receiver) now lives inside the
+     *     receiver, so the camera keeps streaming until we close the
+     *     receiver.  Never touch or free `session` again.
      *   - NULL: the session is untouched and still ours.  We must free it
      *     with `tst_rtsp_session_teardown_and_free`, which also sends
      *     TEARDOWN, or it leaks (and the camera holds the session open).

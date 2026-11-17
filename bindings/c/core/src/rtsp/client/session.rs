@@ -108,8 +108,9 @@ pub struct TstRtspSession {
 ///
 /// 1. Builds the Rust builder from the URL parsed at `_new`, keeping its
 ///    userinfo and query options; explicit setters override them.
-/// 2. Calls `.connect()` to open the TCP control channel and spawn the
-///    auto-keepalive thread (unless disabled via `tst_rtsp_client_builder_keepalive`).
+/// 2. Calls `.connect()` to open the TCP control channel and start the
+///    client's thread, with its keepalive pings unless disabled via
+///    `tst_rtsp_client_builder_keepalive`.
 /// 3. Calls `describe()` to fetch the server's SDP.
 /// 4. Calls `setup_mp2t_auto(&sdp)` to select the first MPEG-TS media and
 ///    negotiate the transport (UDP or TCP-interleaved).
@@ -172,7 +173,8 @@ pub unsafe extern "C" fn tst_rtsp_client_builder_connect(
             }
         }
 
-        // Step 2: TCP connect + optional keepalive-thread spawn.
+        // Step 2: TCP connect; the client's thread starts the keepalive
+        // pings unless they are disabled.
         let mut client = match rust_builder.connect() {
             Ok(c) => c,
             Err(e) => {
@@ -470,8 +472,8 @@ pub unsafe extern "C" fn tst_rtsp_session_cancel(session: *mut TstRtspSession) -
 /// 1. Locks the session's pair Mutex, moves out `(RtspClient, RtspSession)`
 ///    and frees the session allocation.
 /// 2. Calls `RtspSession::into_recv_transport()` to get the `RtpRecvTransport`
-///    (either a bound UDP socket or an mpsc channel fed by the TCP-interleaved
-///    pump thread, depending on what SETUP negotiated).
+///    (either a bound UDP socket or a queue the RTSP client's thread fills
+///    from the TCP-interleaved stream, depending on what SETUP negotiated).
 /// 3. Wraps the transport in a `DemuxReceiver` using the supplied `demux_cfg`
 ///    (or default options if NULL).
 /// 4. Returns a `*mut TstRtpDemuxReceiver` using the same opaque type as
@@ -479,18 +481,20 @@ pub unsafe extern "C" fn tst_rtsp_session_cancel(session: *mut TstRtspSession) -
 ///    `tst_rtp_demux_receiver_next_event` / `_cancel` / `_close` data-path
 ///    entry points unchanged.
 ///
-/// The returned receiver owns the RTSP control connection (`RtspClient`),
-/// with its keepalive and, for TCP-interleaved, the pump that feeds the
-/// receiver, until `tst_rtp_demux_receiver_close`, which sends TEARDOWN.
+/// The returned receiver owns the RTSP control connection (`RtspClient`)
+/// and the client's thread, which sends the keepalive pings and, for
+/// TCP-interleaved, feeds the receiver, until
+/// `tst_rtp_demux_receiver_close`, which sends TEARDOWN.
 /// `tst_rtp_demux_receiver_cancel` stops only the data plane; the control
 /// connection stays up until close.
 ///
 /// A session already cancelled with [`tst_rtsp_session_cancel`] is refused:
-/// the call returns NULL with `TST_E_CLOSED`, because its keepalive has
-/// exited and the server would reap the session after its timeout. The
-/// bridge hands the control connection to the receiver; after a non-NULL
-/// return the session handle is spent and the receiver's own cancel,
-/// `tst_rtp_demux_receiver_cancel`, is the one that stops the receive side.
+/// the call returns NULL with `TST_E_CLOSED`, because the client sends no
+/// keepalive ping after a cancel and the server would reap the session
+/// after its timeout. The bridge hands the control connection to the
+/// receiver; after a non-NULL return the session handle is spent and the
+/// receiver's own cancel, `tst_rtp_demux_receiver_cancel`, is the one that
+/// stops the receive side.
 ///
 /// Ownership: a non-NULL return consumes `session` and frees it, so the
 /// caller must not use or free it again. A NULL return never frees
@@ -556,11 +560,12 @@ pub unsafe extern "C" fn tst_rtsp_session_into_demux_receiver(
 
         // Step 2: convert RtspSession into RtpRecvTransport.
         // For UDP: wraps the SETUP-allocated UDP socket pair.
-        // For TCP-interleaved: wraps the mpsc::Receiver<Bytes> fed by the pump.
+        // For TCP-interleaved: wraps the mpsc::Receiver<Bytes> the client's
+        // thread fills.
         // into_recv_transport() also swaps in the owning RtspClient's shared
         // end-reason slot (see its doc), so end_reason_handle() below
-        // captures a handle onto reasons recorded by the RTSP
-        // keepalive/pump threads too, not just this transport's own close.
+        // captures a handle onto reasons recorded by the RTSP client's
+        // thread too, not just this transport's own close.
         let transport = rtsp_session.into_recv_transport();
 
         // Step 3: wrap in DemuxReceiver with caller-supplied config. Both

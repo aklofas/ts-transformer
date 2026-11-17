@@ -35,8 +35,8 @@ use crate::url::{RtpUrl, RtpUrlError};
 pub(crate) const RECV_SCRATCH_LEN: usize = 65535;
 
 /// Sentinel `TransportError::Broken.msg` emitted by [`Source::recv_raw`]'s
-/// mpsc arm when the interleaved pump thread drops its `Sender` (clean
-/// RTSP teardown). Consumers that treat this disconnect as EOS — e.g.
+/// mpsc arm when the RTSP client's thread drops its `Sender` (the session
+/// or the client ended). Consumers that treat this disconnect as EOS — e.g.
 /// `H264Receiver::recv_au` — match against this const, NOT a string
 /// literal, so a wording change can't silently break the EOS contract.
 pub(crate) const MPSC_PUMP_DISCONNECTED: &str = "interleaved pump bridge disconnected";
@@ -47,7 +47,7 @@ pub(crate) const MPSC_PUMP_DISCONNECTED: &str = "interleaved pump bridge disconn
 /// and strip the RTP header in `recv_bytes`.
 ///
 /// `Mpsc` — the TCP-interleaved bridge:
-/// the interleaved pump background thread parses `$<ch><len><data>`
+/// the RTSP client's thread parses `$<ch><len><data>`
 /// frames off the RTSP control TCP and pushes **whole RTP packets**
 /// (header intact) through the mpsc channel. `recv_bytes` decodes the
 /// RTP header, enforces PT=33, strips CSRC/extension/padding, and
@@ -91,8 +91,8 @@ impl Source {
     ///   - UDP: any `io::Error` the shared receive classifier reports as
     ///     fatal (`WouldBlock`, `TimedOut` and `Interrupted` are retried),
     ///     unless `cancel` is set — `errno_code` carries the OS errno.
-    ///   - Mpsc: `RecvTimeoutError::Disconnected` (the pump's `Sender`
-    ///     was dropped), unless `cancel` is set — `errno_code` is `None`.
+    ///   - Mpsc: `RecvTimeoutError::Disconnected` (the RTSP client's
+    ///     thread dropped its `Sender`), unless `cancel` is set — `errno_code` is `None`.
     ///   - Mpsc: a frame larger than `scratch`, unless `cancel` is set —
     ///     `errno_code` is `None`.
     ///     Unreachable when `scratch` is [`RECV_SCRATCH_LEN`] bytes (the
@@ -199,7 +199,7 @@ impl Source {
                     }
                     Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
                     Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
-                        // The pump thread dropped its Sender — surface as a
+                        // The client's thread dropped its Sender — surface as a
                         // broken transport so the recv shell can stop the
                         // demux loop. A cancel latched meanwhile wins: the
                         // call failed while the caller was cancelling.
@@ -267,7 +267,7 @@ pub struct RtpRecvTransport {
     /// Structured record of why the session ended. For an RTSP-backed
     /// transport (built via [`crate::rtsp::client::session::RtspSession::into_recv_transport`])
     /// this is a clone of the owning `RtspClient`'s slot — populated by
-    /// the interleaved pump / keepalive threads. For a plain `rtp://`
+    /// the RTSP client's thread. For a plain `rtp://`
     /// transport (`listen*` / `from_udp_socket`) this is a fresh slot
     /// written only by [`Self::close`] / an explicit
     /// [`Self::cancel_handle`] fire — see [`Self::set_end_reason_slot`].
@@ -517,7 +517,7 @@ impl RtpRecvTransport {
     /// Used by [`crate::rtsp::client::session::RtspSession::into_recv_transport`]
     /// to swap in the owning `RtspClient`'s shared slot — so
     /// [`Self::end_reason`] reports the SAME reason the RTSP client's
-    /// interleaved pump / keepalive threads recorded, rather than the
+    /// thread recorded, rather than the
     /// fresh (always-empty) slot every constructor starts with. A plain
     /// `rtp://` transport (built via [`Self::listen`] et al., with no
     /// owning `RtspClient`) never has this called — its slot stays the
@@ -639,12 +639,11 @@ impl RtpRecvTransport {
                     if msg == MPSC_PUMP_DISCONNECTED
                         && matches!(self.end_reason.get(), Some(EndReason::CleanTeardown)) =>
                 {
-                    // The pump's `Sender` drop (Disconnected) looks
-                    // identical whether the peer TEARDOWN'd cleanly or the
-                    // wire broke — the recorded end reason (set by the SAME
-                    // pump thread strictly before it returns and drops the
-                    // Sender, see interleaved_pump.rs's `Ok(0)` arm) tells
-                    // them apart. Only a recorded CleanTeardown remaps this
+                    // The client thread's `Sender` drop (Disconnected)
+                    // looks identical whether the session ended cleanly or
+                    // the wire broke — the recorded end reason (set by the
+                    // SAME thread before it drops the Sender) tells them
+                    // apart. Only a recorded CleanTeardown remaps this
                     // disconnect to `Closed` (→ `EndOfStream` at the
                     // Receiver/DemuxReceiver shells); every other reason —
                     // or a still-empty slot, e.g. a plain `rtp://` source
@@ -658,8 +657,8 @@ impl RtpRecvTransport {
                         && matches!(self.end_reason.get(), Some(EndReason::Cancelled)) =>
                 {
                     // The owning `RtspClient` was dropped (or stopped) by its
-                    // owner: its pump ended on the cancel and recorded it
-                    // before dropping the Sender, so this end is the cancel,
+                    // owner: its I/O thread recorded the cancel before
+                    // closing the media queue, so this end is the cancel,
                     // not a broken wire.
                     self.source = None;
                     return Err(TransportError::ExplicitClose);

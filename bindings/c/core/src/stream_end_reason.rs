@@ -44,13 +44,15 @@ pub enum TstStreamEndReason {
     /// path.
     None = 0,
     /// The peer closed the connection in an orderly way, with no
-    /// protocol or transport error.
+    /// protocol or transport error, or an RTSP server accepted the
+    /// client's TEARDOWN.
     CleanTeardown = 1,
     /// The server no longer honors the session — a keepalive ping was
     /// answered `454 Session Not Found`.
     SessionExpired = 2,
-    /// The keepalive background thread failed to encode or send a ping.
-    /// Detail message: see the getter doc.
+    /// An RTSP keepalive ping could not be encoded, or the control
+    /// connection's queued bytes made no progress for 5 s while the oldest
+    /// of them were a ping's. Detail message: see the getter doc.
     KeepaliveFailed = 3,
     /// A hard I/O error on the underlying transport. Detail message:
     /// see the getter doc.

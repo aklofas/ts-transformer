@@ -131,11 +131,10 @@ pub(crate) struct PublishMountState {
     /// Shared with the `RtpRecvTransport` built from this mount so
     /// [`Self::close`] can record `CleanTeardown` before dropping the
     /// channel's sender — the same first-writer-wins remap
-    /// `recv_bytes_inner` already applies to the RTSP client's
-    /// interleaved pump disconnecting cleanly (see
-    /// `interleaved_pump.rs`'s `Ok(0)` arm). Without this, a dropped
-    /// `SyncSender` is indistinguishable from a wire failure and the
-    /// transport would report `Broken`, not `Closed`.
+    /// `recv_bytes_inner` already applies when the RTSP client's thread
+    /// records `CleanTeardown` before closing its media queue. Without
+    /// this, a dropped `SyncSender` is indistinguishable from a wire
+    /// failure and the transport would report `Broken`, not `Closed`.
     app_end_reason: EndReasonHandle,
     /// `pub(crate)` so the publisher handlers' own test module
     /// (`publish::handlers::tests`, a sibling of this module) can assert

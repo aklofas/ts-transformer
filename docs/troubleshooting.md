@@ -492,14 +492,19 @@ cancel-handle pattern.
 
 `RtpRecvTransport` and `H264Receiver` built from an RTSP session
 (`RtspSession::into_recv_transport` / `into_h264_receiver`) record a
-structured `EndReason` the moment the interleaved pump or the
-keepalive thread observes the session ending, distinguishing a handful
-of cases that otherwise all look like the same disconnect from the
-caller's side: a clean
-server-initiated TEARDOWN (`CleanTeardown`), a keepalive `454 Session
+structured `EndReason` the moment the RTSP client's thread
+(`tst-rtsp-client`) sees the session end. That thread reads the control
+connection all the time, also on a UDP session and before SETUP, so an
+end between requests is recorded when it happens. The reasons tell
+apart a handful of cases that otherwise all look like the same
+disconnect from the caller's side: the server closing the control connection (for
+`rtsps://`, with a `close_notify`) or accepting the client's TEARDOWN
+(`CleanTeardown`), a keepalive `454 Session
 Not Found` (`SessionExpired`), a keepalive ping that failed to encode
-or write (`KeepaliveFailed`), a hard TCP read error (`TransportFailed`),
-a malformed or flooding peer (`ProtocolError`), or the caller's own
+or that the server took none of for 5 s (`KeepaliveFailed`), a TCP read
+or write error, or a request the server took none of for 5 s
+(`TransportFailed`), a peer that broke the message framing
+(`ProtocolError`), or the caller's own
 `close()` / cancel-handle fire (`Cancelled`). A cancelled `recv_au()` does
 not return `Ok(None)`: it hands out the access units the receiver holds,
 then returns `Err(TransportError::ExplicitClose)` (the CLOSED kind in the
@@ -575,8 +580,8 @@ with RtspClient.connect_h264(RtspClientConfig("rtsp://cam.local/h264")) as sessi
 ```
 
 Set `TSTRANS_LOG=tst_rtp=debug` (`EnvFilter` syntax, same as
-`RUST_LOG`) before `import tstrans` to also see the underlying
-pump/keepalive `tracing` events on stderr — the same signal
+`RUST_LOG`) before `import tstrans` to also see the RTSP client's
+`tracing` events (targets `tst_rtp::client::*`) on stderr — the same signal
 `end_reason()` distills into a single enum member.
 
 **JVM** (`org.tstrans.rtp` / `org.tstrans.shells`) mirrors this too: `Receiver`,
@@ -608,7 +613,7 @@ try (RtspSession session = RtspClient.connectH264(cfg);
 Set `TSTRANS_LOG=tst_rtp=debug` (`EnvFilter` syntax, same as
 `RUST_LOG`) in the process environment before the JVM loads
 `libtstjni` (the bridge installs from `JNI_OnLoad`) to also see the
-underlying pump/keepalive `tracing` events on stderr.
+RTSP client's `tracing` events (targets `tst_rtp::client::*`) on stderr.
 
 See the "Python/JVM `tracing` diagnostics bridge + structured
 stream-end reason" entry in

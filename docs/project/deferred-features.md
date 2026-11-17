@@ -2407,9 +2407,9 @@ Shipped 0.3.0: removed from every receive builder and binding; receive URLs reje
 
 Shipped 0.6.0 (C ABI minor 20 for `TstStreamEndReason`): the opt-in `TSTRANS_LOG` bridge and `end_reason()` / `end_detail()` in Python and the JVM; the managed-SRT end-reason mirrors followed in 0.7.0. See [troubleshooting.md](/docs/troubleshooting.md#why-did-my-rtsp-stream-end).
 
-### RTSP keepalive response handling — RESOLVED (TCP-interleaved sessions)
+### RTSP keepalive response handling — RESOLVED
 
-Shipped 0.4.0 for TCP-interleaved sessions: keepalive responses are consumed where reads happen (a 401 refreshes the challenge, a 454 marks the session dead), which also ended the TCP-interleaved session death after `CTRL_QUEUE_BOUND + 1` pings; the cadence retunes to the server's `Session` timeout. A UDP session has no reader on the control connection: a receive-only application never reads the ping replies, so a 401 or 454 goes unseen and the replies accumulate in the control socket's receive buffer until the server's writes block and it closes the connection.
+Shipped 0.4.0 for TCP-interleaved sessions: keepalive responses are consumed where reads happen (a 401 refreshes the challenge, a 454 marks the session dead), which also ended the TCP-interleaved session death after `CTRL_QUEUE_BOUND + 1` pings; the cadence retunes to the server's `Session` timeout. Since 0.11.0 UDP sessions are covered too: the client's thread reads the control connection all the time, on every session and before SETUP, so a 401 or 454 to a ping is handled without a request in flight and the replies no longer accumulate in the control socket.
 
 ### URL parser: strict percent-encoding validation
 

@@ -160,8 +160,8 @@ fn stop_sends_notice_5402_announce_to_active_session() {
 /// Cancelling the per-session task drops only the read half — the write
 /// half stays open through Arc clones held by `state.sessions` and the
 /// fanout task — so without the explicit shutdown loop in `stop()` the
-/// client's pump keeps timing out on reads until its own teardown
-/// deadline. This test pins the EOF-arrives-promptly behavior.
+/// client sees no EOF until its own teardown deadline. This test pins
+/// the EOF-arrives-promptly behavior.
 #[test]
 fn stop_shuts_down_per_session_write_half_so_client_sees_eof_promptly() {
     let server = RtspServer::bind("rtsp://127.0.0.1:0").unwrap();

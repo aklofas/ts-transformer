@@ -146,9 +146,9 @@ rs = rx.rtp_stats()
 
 When UDP is blocked (NAT, strict firewall), append `?transport=tcp` to the
 RTSP URL. The session negotiates RFC 7826 §14 TCP interleaving and the
-pump thread drains the TCP stream, forwarding RTP frames over an mpsc
-channel to the receiver (on this H.264 path the interleaved RTCP frames are
-drained and discarded):
+RTSP client's thread reads the TCP stream, forwarding RTP packets over a
+bounded queue to the receiver (on this H.264 path the interleaved RTCP
+frames are counted into statistics the receiver does not report):
 
 ```python
 cfg = RtspClientConfig("rtsp://cam.local/h264?transport=tcp")

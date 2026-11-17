@@ -276,7 +276,8 @@ fn next_events_until(rx: *mut TstRtpDemuxReceiver, pred: impl Fn(&TstEvent) -> b
 }
 
 /// Media sent AFTER the bridge returns must still arrive: the receiver owns
-/// the RTSP client, its interleaved pump and its keepalive until close.
+/// the RTSP client and its thread, which feeds the receiver and sends the
+/// keepalive pings, until close.
 /// `pref` is the builder's transport preference (1 = force UDP, 2 = force
 /// TCP-interleaved); `transport` is the profile the server's SETUP reply
 /// must name, so a case that negotiated the other transport fails.

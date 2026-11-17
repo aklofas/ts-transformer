@@ -215,8 +215,8 @@ pub struct TstRtspClientBuilder {
     /// Held as a `SecretString` from the setter on: zeroed when the builder
     /// is freed, replaced or consumed by `connect`.
     pub(crate) password: Option<secrecy::SecretString>,
-    /// When `true` (the default), `connect` spawns an auto-keepalive
-    /// thread.  Set to `false` by `tst_rtsp_client_builder_keepalive(b, false)`.
+    /// When `true` (the default), `connect` starts the automatic keepalive
+    /// pings.  Set to `false` by `tst_rtsp_client_builder_keepalive(b, false)`.
     pub(crate) auto_keepalive: bool,
     /// Raw PEM bytes for `rtsps://` connections.  Parsed into a
     /// `rustls::RootCertStore` at connect time.  `None` → system trust store.

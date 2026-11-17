@@ -14,8 +14,8 @@ pub mod rtsp_loopback_server;
 pub mod tls_certs;
 
 /// Poll `f` every 20 ms until it returns `Some`, or panic after `budget`.
-/// For tests that race a background thread (a keepalive pinger, an
-/// interleaved pump, a server reaping a dropped connection) against their
+/// For tests that race a background thread (the RTSP client's thread
+/// pinging or reading, a server reaping a dropped connection) against their
 /// assertion, so a regression fails fast instead of hanging a CI runner.
 pub fn wait_for<T>(budget: Duration, mut f: impl FnMut() -> Option<T>) -> T {
     let deadline = Instant::now() + budget;
