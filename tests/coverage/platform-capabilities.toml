@@ -46,6 +46,18 @@ resolved = "2026-07-26"
 note = "Same librist teardown hang as loopback.rs; fixed in librist 0.2.18."
 
 [[platform_skip]]
+file = "crates/tst-rtp/tests/rtsp_server/multicast.rs"
+platform = "macos-arm64,windows-msvc"
+capability = "loopback_multicast_receive"
+class = "portability"
+note = """
+One test is `#[cfg(target_os = "linux")]`: it joins the mount's group on the
+loopback interface and reads the datagrams the server sends there, to show the
+sender stops after a hard cancel. The receive side was written for and run on
+Linux only. The other multicast tests in the file run on every platform.
+"""
+
+[[platform_skip]]
 file = "crates/tst-webrtc/tests/net_whep/wildcard.rs"
 platform = "macos-arm64,windows-msvc"
 capability = "whep_wildcard_linux_addresses"
