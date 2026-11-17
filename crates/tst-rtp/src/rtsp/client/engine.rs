@@ -50,7 +50,6 @@ pub(crate) struct RequestSpec {
 pub(crate) struct TxnId(u64);
 
 /// Bytes for the driver to write, in order.
-#[derive(Debug)]
 pub(crate) struct Transmit {
     pub bytes: Vec<u8>,
     /// `Some` on a caller request's first attempt (not on its retry after
@@ -58,6 +57,18 @@ pub(crate) struct Transmit {
     pub txn: Option<TxnId>,
     /// The bytes are a keepalive ping.
     pub is_ping: bool,
+}
+
+// By hand: the bytes can carry an `Authorization` header, and a Basic one
+// carries the password.
+impl std::fmt::Debug for Transmit {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Transmit")
+            .field("len", &self.bytes.len())
+            .field("txn", &self.txn)
+            .field("is_ping", &self.is_ping)
+            .finish()
+    }
 }
 
 /// Why the control stream ended.
@@ -109,6 +120,13 @@ const MAX_PINGS_AWAITING_REPLY: usize = 32;
 
 const WRITE_STALLED_MSG: &str = "control TCP write made no progress for the write timeout";
 
+/// The shortest interval the session timeout can set; an interval the
+/// caller chose is floored at 1 ms only.
+const MIN_LEARNED_INTERVAL_MS: u64 = 100;
+
+/// Headers the engine writes itself; a spec must not carry them.
+const ENGINE_HEADERS: [&str; 3] = ["cseq", "user-agent", "authorization"];
+
 #[derive(Debug)]
 enum Keepalive {
     NotEnabled,
@@ -133,7 +151,6 @@ struct CallerTxn {
     retried: bool,
 }
 
-#[derive(Debug)]
 pub(crate) struct ClientEngine {
     cfg: EngineConfig,
     auth: AuthState,
@@ -152,6 +169,25 @@ pub(crate) struct ClientEngine {
     transmits: VecDeque<Transmit>,
     events: VecDeque<Event>,
     counters: EngineCounters,
+}
+
+// By hand: the queued transmits can carry an `Authorization` header.
+impl std::fmt::Debug for ClientEngine {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ClientEngine")
+            .field("cseq", &self.cseq)
+            .field("ping_cseq", &self.ping_cseq)
+            .field("caller", &self.caller.as_ref().map(|t| t.id))
+            .field("pings_awaiting_reply", &self.pings.len())
+            .field("has_session", &self.session_id.is_some())
+            .field("session_timeout", &self.session_timeout)
+            .field("keepalive", &self.keepalive)
+            .field("closed", &self.closed)
+            .field("transmits", &self.transmits.len())
+            .field("events", &self.events.len())
+            .field("counters", &self.counters)
+            .finish_non_exhaustive()
+    }
 }
 
 /// `d` in whole milliseconds, at least `floor_ms`.
@@ -191,6 +227,13 @@ impl ClientEngine {
         reply_deadline: Option<Instant>,
         _now: Instant,
     ) -> Result<TxnId, RtspError> {
+        debug_assert!(
+            !spec
+                .headers
+                .iter()
+                .any(|(n, _)| ENGINE_HEADERS.iter().any(|h| n.eq_ignore_ascii_case(h))),
+            "a request spec carries a header the engine writes itself"
+        );
         if let Some(kind) = self.closed {
             return Err(RtspError::Io(kind));
         }
@@ -227,7 +270,10 @@ impl ClientEngine {
         if !matches!(self.keepalive, Keepalive::NotEnabled) || self.closed.is_some() {
             return;
         }
-        let interval = whole_ms_at_least(interval_override.unwrap_or(self.session_timeout / 2), 1);
+        let interval = match interval_override {
+            Some(d) => whole_ms_at_least(d, 1),
+            None => whole_ms_at_least(self.session_timeout / 2, MIN_LEARNED_INTERVAL_MS),
+        };
         self.keepalive = Keepalive::On {
             interval,
             overridden: interval_override.is_some(),
@@ -488,7 +534,7 @@ impl ClientEngine {
             self.session_timeout = Duration::from_secs(t);
         }
         // The floor keeps a `timeout=0` from turning the pings into a busy loop.
-        let retuned = whole_ms_at_least(self.session_timeout / 2, 100);
+        let retuned = whole_ms_at_least(self.session_timeout / 2, MIN_LEARNED_INTERVAL_MS);
         if let Keepalive::On {
             interval,
             overridden: false,
@@ -761,6 +807,45 @@ mod tests {
                 .bytes
                 .starts_with(b"OPTIONS rtsp://cam.example/live RTSP/2.0\r\n")
         );
+    }
+
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "a header the engine writes itself")]
+    fn a_spec_carrying_an_engine_header_is_a_bug() {
+        let mut bad = spec(RtspMethod::Describe, URI);
+        bad.headers.push(("CSeq", "9".to_string()));
+        let _ = ClientEngine::new(cfg(None)).submit(bad, None, Instant::now());
+    }
+
+    #[test]
+    fn debug_shows_no_request_bytes_and_no_credentials() {
+        let mut e = challenged(Some(("user", "s3cret-pw")), r#"Basic realm="cam""#);
+        e.submit(spec(RtspMethod::Describe, URI), None, Instant::now())
+            .unwrap();
+        // The queued request is authorised.
+        let basic = {
+            use base64::Engine as _;
+            base64::engine::general_purpose::STANDARD.encode("user:s3cret-pw")
+        };
+        let t = e.poll_transmit().unwrap();
+        assert!(
+            String::from_utf8_lossy(&t.bytes).contains(&basic),
+            "the fixture must hold the Basic header"
+        );
+        e.transmits.push_front(t);
+        // A derived `Debug` would print the bytes as a list of numbers.
+        let as_numbers = format!("{:?}", basic.as_bytes());
+        let as_numbers = as_numbers.trim_matches(['[', ']']);
+        for text in [
+            format!("{e:?}"),
+            format!("{e:#?}"),
+            format!("{:?}", e.transmits),
+        ] {
+            assert!(!text.contains("s3cret-pw"), "{text}");
+            assert!(!text.contains(&basic), "{text}");
+            assert!(!text.contains(as_numbers), "{text}");
+        }
     }
 
     #[test]
@@ -1145,6 +1230,24 @@ mod tests {
     }
 
     #[test]
+    fn a_timeout_of_zero_learned_before_enable_floors_at_100_ms_too() {
+        let t0 = Instant::now();
+        let mut e = ClientEngine::new(cfg(None));
+        run_setup(&mut e, "abc;timeout=0", t0);
+        e.enable_keepalive(None, t0);
+        assert_eq!(e.poll_timeout(), Some(ms(t0, 100)));
+    }
+
+    #[test]
+    fn an_interval_override_is_floored_at_1_ms_only() {
+        let t0 = Instant::now();
+        let mut e = ClientEngine::new(cfg(None));
+        run_setup(&mut e, "abc;timeout=0", t0);
+        e.enable_keepalive(Some(Duration::ZERO), t0);
+        assert_eq!(e.poll_timeout(), Some(ms(t0, 1)));
+    }
+
+    #[test]
     fn a_timeout_near_u64_max_saturates_without_panicking() {
         let t0 = Instant::now();
         let mut e = ClientEngine::new(cfg(None));
@@ -1514,6 +1617,29 @@ mod tests {
         );
     }
 
+    #[test]
+    fn replies_and_timeouts_after_the_end_do_nothing() {
+        let t0 = Instant::now();
+        let mut e = ClientEngine::new(cfg(None));
+        e.enable_keepalive(Some(Duration::from_secs(1)), t0);
+        e.submit(spec(RtspMethod::Play, URI), Some(ms(t0, 500)), t0)
+            .unwrap();
+        e.handle_closed(StreamEnd::PeerClosed);
+        events(&mut e);
+        transmits(&mut e);
+        e.handle_reply(resp(b"RTSP/1.0 200 OK\r\nCSeq: 1\r\n\r\n"), t0);
+        e.handle_reply(
+            resp(b"RTSP/1.0 454 Session Not Found\r\nCSeq: 1000001\r\n\r\n"),
+            t0,
+        );
+        e.handle_timeout(t0 + Duration::from_secs(10), false);
+        e.handle_timeout(t0 + Duration::from_secs(20), true);
+        assert!(e.poll_event().is_none());
+        assert!(e.poll_transmit().is_none());
+        assert_eq!(e.counters().unmatched_replies, 0);
+        assert_eq!(e.counters().keepalive_responses, 0);
+    }
+
     // --- an accepted TEARDOWN ---
 
     fn teardown_answered(status_line: &str) -> (Vec<Event>, ClientEngine) {
@@ -1629,6 +1755,46 @@ mod tests {
             [Event::SessionDead, Event::Ended(EndReason::SessionExpired)]
         ));
         assert_eq!(e.counters().keepalive_responses, 2);
+        assert_eq!(e.counters().unmatched_replies, 0);
+    }
+
+    #[test]
+    fn a_ping_reply_between_a_401_and_the_retry_reply_leaves_the_retry_its_own() {
+        let t0 = Instant::now();
+        let mut e = ClientEngine::new(cfg(Some(("user", "pw"))));
+        e.enable_keepalive(Some(Duration::from_secs(1)), t0);
+        let a = e
+            .submit(spec(RtspMethod::Describe, URI), None, ms(t0, 900))
+            .unwrap();
+        let req = cseq(&one(&mut e));
+        e.handle_timeout(ms(t0, 1000), false);
+        let ping = cseq(&one(&mut e));
+        e.handle_reply(
+            resp(
+                String::from_utf8_lossy(BASIC_401)
+                    .replace("CSeq: 1", &format!("CSeq: {req}"))
+                    .as_bytes(),
+            ),
+            ms(t0, 1010),
+        );
+        let retry = cseq(&one(&mut e));
+        e.handle_reply(
+            resp(format!("RTSP/1.0 200 OK\r\nCSeq: {ping}\r\n\r\n").as_bytes()),
+            ms(t0, 1020),
+        );
+        assert!(
+            events(&mut e).is_empty(),
+            "the ping's reply is not the retry's"
+        );
+        e.handle_reply(
+            resp(
+                format!("RTSP/1.0 200 OK\r\nCSeq: {retry}\r\nContent-Length: 3\r\n\r\nv=0")
+                    .as_bytes(),
+            ),
+            ms(t0, 1030),
+        );
+        assert_eq!(&reply(&mut e, a).unwrap().body[..], b"v=0");
+        assert_eq!(e.counters().keepalive_responses, 1);
         assert_eq!(e.counters().unmatched_replies, 0);
     }
 
