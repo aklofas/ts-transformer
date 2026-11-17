@@ -84,6 +84,7 @@ impl SourceHandle {
     /// For a datagram about to be delivered. Not allowed: counts it and
     /// returns false. Allowed: latches a `First` pin to `from`'s IP and
     /// returns true. Lock-free. Does not record the address.
+    #[must_use]
     pub fn admit(&self, from: SocketAddr) -> bool {
         let ip = from.ip().to_canonical();
         if self.0.pin == Some(SourcePin::First) {
@@ -216,6 +217,32 @@ mod tests {
         assert_eq!(h.rejected(), 1);
         c.record(sa("10.0.0.5:1"));
         assert_eq!(h.peer_addr(), Some(sa("10.0.0.5:1")));
+    }
+
+    #[test]
+    fn two_threads_racing_to_latch_agree_on_one_winner() {
+        use std::sync::Barrier;
+        const N: u64 = 1_000;
+        let h = SourceHandle::new(Some(SourcePin::First));
+        let barrier = Barrier::new(2);
+        let run = |addr: SocketAddr| {
+            let h = h.clone();
+            let barrier = &barrier;
+            move || {
+                barrier.wait();
+                (0..N).filter(|_| !h.admit(addr)).count() as u64
+            }
+        };
+        let (a, b) = (sa("10.0.0.5:1"), sa("10.0.0.6:1"));
+        let (refused_a, refused_b) = std::thread::scope(|s| {
+            let ta = s.spawn(run(a));
+            let tb = s.spawn(run(b));
+            (ta.join().unwrap(), tb.join().unwrap())
+        });
+        assert_ne!(h.allows(a.ip()), h.allows(b.ip()));
+        let loser_refusals = refused_a + refused_b;
+        assert_eq!(loser_refusals, N);
+        assert_eq!(h.rejected(), loser_refusals);
     }
 
     #[test]
