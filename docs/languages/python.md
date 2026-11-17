@@ -627,6 +627,7 @@ falls into two groups.
 | `is_alive()` | `True` — a parked call means the object is open | `False` |
 | `repr()` | the open form | the `closed` form |
 | `local_addr()` / `local_port()` / `local_addr_port()`, `tcp.Transport.peer_addr()` | the value captured when the object was built | raises `CLOSED` (`peer_addr()` returns `""`) |
+| `peer_addr()`, `source_rejected()` on the receiving shells, `udp.RecvTransport` and `rist.RecvTransport` | the publisher's address and the count of what the `source` pin turned away, as they stand | the shells keep answering; the two transports raise `CLOSED` |
 | `video_handle()` … `data_handle()` on the three `MuxSender` classes | the handles of the program config the sender was built from | `None` |
 | `reconnect_attempts()`, `reconnect_stats()` on the managed shells | live counters kept outside the object | `reconnect_attempts()` keeps its last value; `reconnect_stats()` raises `CLOSED` |
 | `end_reason()` / `end_detail()` | the recorded reason, or `None`; `H264Receiver` answers `None` while a `recv_au()` is in flight | the reason recorded at close |
@@ -1419,8 +1420,9 @@ with RecvTransport.builder().bind_url("udp://@239.0.0.1:5000").build() as rx:
     payload, _addr = rx.recv(timeout_ms=1000)   # raises UdpError(BACKPRESSURE) on timeout — retryable
 ```
 
-`recv()` returns `(payload, sender_addr)` — the address string is
-currently always `""`. Use `udp://@group:port` (the `@` prefix) on
+`recv()` returns `(payload, (host, port))`, the second element the
+sender's address (see [the publisher's address](#the-publishers-address-and-the-source-pin)
+below). Use `udp://@group:port` (the `@` prefix) on
 `bind_url` for a multicast join; `RecvTransport.local_addr_port()` reads
 back an ephemeral port when you bind `:0`. `close()` from another thread
 ends a parked `recv()` with `UdpError(CLOSED)` within about 100 ms — it
@@ -1509,6 +1511,61 @@ any thread ends the parked `recv()` the same way and makes later `send()`
 afterwards is quiet. `Transport.cancel_handle()` works the same way for
 the sender (a RIST `send()` never parks — `rist_sender_data_write`
 enqueues — so the cancel is observed by the *next* send).
+
+### The publisher's address and the `source` pin
+
+A UDP or RIST receiver reports who is publishing to it, and a `source` key
+in its URL keeps it to one IP: `?source=<ip>`, or `?source=first`, which
+takes the IP of the first datagram (UDP) or block (RIST) delivered. Neither
+is proof of who is sending. The address is the source address the
+datagrams carry, and nothing proves the sender can receive there: it can be
+forged (an SRT, RTSP or TCP peer address is proven by a handshake, a UDP or
+RIST one is not). On UDP, `source=first` is taken by the first datagram with
+a payload that reaches the port, whoever sent it; on a RIST receiver with a
+pre-shared key, only by a sender whose data decrypts. Either way it holds
+until the receiver is closed: there is no release. Use the address for
+logging and per-address rules, not as an identity.
+
+```python
+from tstrans.shells import Receiver
+
+def serve_name(port: int, blocked: set[str]) -> None:
+    # source=first: the first publisher to send takes the port; every
+    # other IP is dropped and counted, and its sender is not told.
+    with Receiver.open(f"udp://0.0.0.0:{port}?source=first") as rx:
+        first = rx.recv_bytes()              # the first TS packet
+        host, _ = rx.peer_addr()             # a packet was delivered: known
+        if host in blocked:
+            return                           # leaving the block closes it
+        recorder.write(first)                # your consumer
+        while True:
+            recorder.write(rx.recv_bytes())
+```
+
+- **Where.** `peer_addr() -> Optional[Tuple[str, int]]` and
+  `source_rejected() -> int` on `shells.Receiver` and `shells.DemuxReceiver`
+  (any `udp://` or `rist://` URL), `udp.RecvTransport` and
+  `rist.RecvTransport`. The host is unbracketed. `peer_addr()` is `None`
+  until the first datagram or block is delivered. The builders set the pin
+  with `udp.RecvTransportBuilder.source(value)` and
+  `rist.RecvTransportBuilder.source(value)` (`"first"` or an IP literal),
+  and `udp.SocketStats` and `rist.RistStats` gain `source_rejected`.
+- **Without the key** every sender that reaches the receiver is delivered,
+  interleaved, and `peer_addr()` names whichever delivered last.
+- **The pin compares the IP address, never the port**, so a publisher that
+  restarts, or whose NAT changes its port, continues. If its IP changes,
+  its datagrams are turned away and counted, and the receiver delivers
+  nothing until it is closed and reopened.
+- **`source_rejected()`** counts what the pin turned away; neither sender
+  is told. On UDP a datagram turned away is in no received counter.
+- An IPv4 sender on a dual-stack (`[::]`) bind is reported and compared in
+  IPv4 form.
+- **Refusals.** A sender URL with the key is refused, and so is a value that
+  is neither an IP literal nor `first`; so is an IPv6 pin on a `udp://`
+  receiver bound to an IPv4 address. A misspelt key (`?sourse=`) is ignored
+  like any unknown key on `udp://` and `rist://`, which leaves the receiver
+  without a pin.
+- Neither getter waits behind a receive parked on another thread.
 
 ## HLS publisher (`tstrans.hls`)
 

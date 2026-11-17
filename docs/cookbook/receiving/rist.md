@@ -76,6 +76,65 @@ loop {
 }
 ```
 
+## The publisher's address and the `source` pin
+
+A RIST receiver records the address of the sender whose block it delivered
+last, and a `source` key in its URL keeps it to one IP. Neither is proof of
+who is sending. The address is the source address of the sender's UDP
+datagrams, and nothing proves the sender can receive there: it can be
+forged, the Simple profile has no handshake at all, and a pre-shared key
+does not prove it either (a recording replayed one way from another
+address was accepted and delivered, with a key). Without a key, a sender
+that claims the pinned address gets through. `source=first` latches the IP
+of the first delivered block and holds it until the receiver is closed,
+with no release; with a pre-shared key only a sender whose data decrypts
+can take it. Use the address for logging and per-address rules, not as an
+identity.
+
+```rust
+use tst_core::transport::RecvTransport;
+use tst_rist::RistRecvTransportBuilder;
+
+let rx = RistRecvTransportBuilder::new("rist://@0.0.0.0:9000?source=first")?.listen()?;
+// The shell will own the transport: take the shared source record first.
+let source = rx.source_handle().expect("a RIST receiver keeps a source record");
+let mut receiver = tst_pipeline::DemuxReceiver::new(rx);
+// ... read events as above; then, from any thread:
+if let Some(publisher) = source.peer_addr() {
+    println!("publishing from {publisher}; {} turned away", source.rejected());
+}
+```
+
+`RistRecvTransportBuilder::source(SourcePin)` sets the same pin without
+the URL key. `RistRecvTransport::peer_addr()` and `RistStats::source_rejected`
+(`stats()`) read the same record as the handle, and the handle never waits
+behind a receive parked on another thread.
+
+- **What is reported.** The address (IP and UDP source port) of the sender
+  whose block was delivered last and whose address is known; `None` before
+  the first such block. In the Simple profile the port is the sender's data
+  socket's. An IPv4 sender on a dual-stack bind is reported as plain IPv4.
+  Without a `source` key every sender that reaches the receiver is
+  delivered, interleaved, and `peer_addr()` names whichever delivered last.
+- **What the pin compares.** The IP address only, never the port, so a
+  sender that restarts, or whose NAT changes its port, continues. If the
+  publisher's IP changes under a pin, its data is rejected and counted, and
+  the receiver delivers nothing until it is closed and reopened.
+- **What `source_rejected` counts.** Datagrams from a new sender whose IP
+  the pin refuses (librist asks again for each one), datagrams whose source
+  address could not be read, and delivered blocks refused on the read path
+  (from an IP other than the one `first` latched, or from a sender the
+  receiver holds no address for). Neither sender is told. A block refused on
+  the read path returns `TransportError::Backpressure`, which the receive
+  loops above already retry.
+- **Refusals.** A sender URL or config with the key is refused at connect
+  with `RistError::InvalidConfig`. A value that is neither an IP literal nor
+  `first` is refused. A misspelt key (`?sourse=`) is ignored like any
+  unknown key on `rist://`, which leaves the receiver without a pin.
+
+The UDP recipe's [section on the same key](/docs/cookbook/receiving/udp.md#the-publishers-address-and-the-source-pin)
+links each binding's getters.
+
 ## Verify with ffmpeg
 
 ```bash
