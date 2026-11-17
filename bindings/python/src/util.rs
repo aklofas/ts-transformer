@@ -454,3 +454,19 @@ impl<'py> IntoPyObject<'py> for HostBytes {
 pub(crate) fn redact_url_py(url: &str) -> String {
     tst_core::url::redact_url(url)
 }
+
+/// A socket address as Python's `(host, port)`: the IP as text, unbracketed,
+/// the shape `socket.recvfrom` and `tstrans.srt.Socket.peer_addr()` return.
+pub(crate) type PyAddr = (String, u16);
+
+/// `addr` as a [`PyAddr`].
+pub(crate) fn addr_tuple(addr: std::net::SocketAddr) -> PyAddr {
+    (addr.ip().to_string(), addr.port())
+}
+
+/// The last delivering sender of a transport's source record, if it keeps one.
+pub(crate) fn peer_addr_tuple(
+    source: Option<&tst_core::transport::SourceHandle>,
+) -> Option<PyAddr> {
+    source.and_then(|s| s.peer_addr()).map(addr_tuple)
+}

@@ -35,6 +35,7 @@
 
 #![allow(unsafe_op_in_unsafe_fn, clippy::useless_conversion)]
 
+use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tst_pipeline::binding::view::BlockingReason;
@@ -43,9 +44,10 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 
-use tst_core::transport::{RecvTransport, Transport, TransportError};
-use tst_core::url::redact_url;
+use tst_core::transport::{RecvTransport, SourceHandle, SourcePin, Transport, TransportError};
+use tst_core::url::{UrlError, query::lookup, redact_url};
 use tst_pipeline::binding::{BindingError, BindingErrorKind, HandleState, Owned, SendHalf};
+use tst_udp::config::UdpConfig;
 use tst_udp::{UdpError, UdpRecvTransport, UdpTransport};
 
 use crate::generated::stats_udp::SocketStats;
@@ -299,10 +301,17 @@ const RECV_POLL_SLICE: Duration = Duration::from_millis(100);
 /// Outcome of the polled receive loop, mapped to a `PyErr` once the GIL
 /// is back (nothing Python-typed may cross `detach`).
 enum UdpRecvOutcome {
-    Data(Vec<u8>),
+    /// The payload and its sender.
+    Data(Vec<u8>, SocketAddr),
     Closed,
     TimedOut,
     Failed(UdpError),
+}
+
+/// What a `RecvTransport` answers without the slot.
+struct UdpRecvSnapshot {
+    local_port: u16,
+    source: Option<SourceHandle>,
 }
 
 /// Raw UDP receiver — wraps `tst_udp::UdpRecvTransport`.
@@ -316,9 +325,10 @@ enum UdpRecvOutcome {
 #[pyclass(name = "RecvTransport", module = "tstrans.udp")]
 pub(crate) struct PyUdpRecvTransport {
     /// The binding layer's handle state machine. Snapshot = the
-    /// bound port read at `build()`, so `local_addr_port()` never waits
-    /// behind a parked `recv`.
-    owned: Owned<UdpRecvInner, u16>,
+    /// bound port read at `build()` and the transport's source record, so
+    /// `local_addr_port()` and `peer_addr()` never wait behind a parked
+    /// `recv`.
+    owned: Owned<UdpRecvInner, UdpRecvSnapshot>,
     /// Shared cancel state, wrapping the transport's real `UdpCancelHandle`
     /// `close()` and `cancel_handle().cancel()` both latch it
     /// and the poll loop checks it between slices, so a parked `recv()`
@@ -349,15 +359,13 @@ impl PyUdpRecvTransport {
         )
     }
 
-    /// Receive one datagram. Returns `(payload_bytes, sender_addr_str)`.
+    /// Receive one datagram. Returns `(payload, (host, port))`, the shape
+    /// of `socket.recvfrom`, for every datagram, an empty one included.
     ///
     /// `timeout_ms`: milliseconds to wait. `None` (default) blocks until a
     /// datagram arrives. On timeout, raises
     /// `UdpError(kind=BACKPRESSURE)` with the message "recv timed out" —
     /// retryable, the receiver stays open (it was `IO` before 0.7.0).
-    ///
-    /// Note: `sender_addr_str` is currently always an empty string; the
-    /// underlying `recv_bytes` API does not expose the sender address.
     ///
     /// Cross-thread `close()` is supported: the kernel wait is sliced into
     /// ≤100 ms polls and a `close()` from another thread ends a parked
@@ -365,7 +373,11 @@ impl PyUdpRecvTransport {
     ///
     /// Releases the GIL while waiting on the kernel.
     #[pyo3(signature = (timeout_ms = None))]
-    fn recv(&self, py: Python<'_>, timeout_ms: Option<u64>) -> PyResult<(Py<PyBytes>, String)> {
+    fn recv(
+        &self,
+        py: Python<'_>,
+        timeout_ms: Option<u64>,
+    ) -> PyResult<(Py<PyBytes>, crate::util::PyAddr)> {
         let cancel = Arc::clone(&self.cancel);
         let deadline = timeout_ms.map(|ms| Instant::now() + Duration::from_millis(ms));
         let outcome = crate::util::allow_threads_parking(py, || {
@@ -386,16 +398,18 @@ impl PyUdpRecvTransport {
                             RECV_POLL_SLICE.min(dl - now).max(Duration::from_millis(1))
                         }
                     };
-                    match s.transport.recv_timeout(&mut s.scratch, slice) {
-                        Ok(Some(n)) => return UdpRecvOutcome::Data(s.scratch[..n].to_vec()),
+                    match s.transport.recv_from_timeout(&mut s.scratch, slice) {
+                        Ok(Some((n, from))) => {
+                            return UdpRecvOutcome::Data(s.scratch[..n].to_vec(), from);
+                        }
                         Ok(None) => continue, // slice elapsed: re-check stop / deadline
                         Err(e) => return UdpRecvOutcome::Failed(e),
                     }
                 }
             })
         });
-        let bytes = match pyok(py, &UDP, outcome)? {
-            UdpRecvOutcome::Data(b) => b,
+        let (bytes, from) = match pyok(py, &UDP, outcome)? {
+            UdpRecvOutcome::Data(b, from) => (b, from),
             UdpRecvOutcome::Closed => {
                 return Err(raise(
                     py,
@@ -414,9 +428,10 @@ impl PyUdpRecvTransport {
             }
             UdpRecvOutcome::Failed(e) => return Err(raise(py, &UDP, BindingError::from(e))),
         };
-        // recv_bytes doesn't expose the sender address; callers that need
-        // the source addr should use a raw socket or filter at the IP layer.
-        Ok((PyBytes::new(py, &bytes).unbind(), String::new()))
+        Ok((
+            PyBytes::new(py, &bytes).unbind(),
+            crate::util::addr_tuple(from),
+        ))
     }
 
     /// Local bound port. Useful when the transport was bound to port 0
@@ -427,7 +442,24 @@ impl PyUdpRecvTransport {
         if self.owned.is_closed() {
             Err(raise(py, &UDP, BindingError::from(HandleState::Closed)))
         } else {
-            Ok(*self.owned.snapshot())
+            Ok(self.owned.snapshot().local_port)
+        }
+    }
+
+    /// `(host, port)` of the sender of the datagram delivered last, or
+    /// `None` before the first one with a payload. The host is the IP as text; an IPv4
+    /// sender on a dual-stack bind reads as IPv4. The address is the
+    /// datagram's source address, which nothing verifies. Answered from
+    /// the transport's shared source record, so it never waits behind a
+    /// `recv()` parked on another thread; raises `UdpError(CLOSED)` once
+    /// the transport is closed.
+    fn peer_addr(&self, py: Python<'_>) -> PyResult<Option<crate::util::PyAddr>> {
+        if self.owned.is_closed() {
+            Err(raise(py, &UDP, BindingError::from(HandleState::Closed)))
+        } else {
+            Ok(crate::util::peer_addr_tuple(
+                self.owned.snapshot().source.as_ref(),
+            ))
         }
     }
 
@@ -497,6 +529,19 @@ pub(crate) struct PyUdpRecvTransportBuilder {
     url: Option<String>,
     rcvbuf: Option<usize>,
     iface: Option<String>,
+    source: Option<SourcePin>,
+}
+
+/// Reads a `source` value through the URL key's own row, so a bad value
+/// fails with the error `?source=` gives.
+fn parse_source(value: &str) -> Result<Option<SourcePin>, UrlError> {
+    let row =
+        lookup(tst_udp::url::URL_KEYS, "source").ok_or_else(|| UrlError::UnknownQueryKey {
+            key: "source".to_string(),
+        })?;
+    let mut cfg = UdpConfig::default();
+    (row.apply)(&mut cfg, "source", value)?;
+    Ok(cfg.source)
 }
 
 #[pymethods]
@@ -520,6 +565,25 @@ impl PyUdpRecvTransportBuilder {
         slf
     }
 
+    /// Take datagrams from one sender only, as the URL's `source` key
+    /// does, and over it: an IP literal admits that IP on any port;
+    /// `"first"` admits the IP of the first datagram with a payload, from
+    /// anyone, until the receiver is closed. Datagrams from any other IP
+    /// are dropped and counted in `stats().source_rejected`. The source
+    /// address is unverified. Raises `UdpError(kind=URL)` for any other
+    /// value, as the URL key does; an IPv6 pin on an IPv4 bind is refused
+    /// by `build()`.
+    fn source<'py>(
+        mut slf: PyRefMut<'py, Self>,
+        py: Python<'py>,
+        value: &str,
+    ) -> PyResult<PyRefMut<'py, Self>> {
+        let pin = parse_source(value)
+            .map_err(|e| raise(py, &UDP, BindingError::from(UdpError::Url(e))))?;
+        slf.source = pin;
+        Ok(slf)
+    }
+
     /// Build the `RecvTransport`. Raises `UdpError(kind=URL)` for a bad
     /// bind URL, `UdpError(kind=IO)` for socket bind failures.
     fn build(&self, py: Python<'_>) -> PyResult<PyUdpRecvTransport> {
@@ -530,6 +594,7 @@ impl PyUdpRecvTransportBuilder {
             .clone();
         let rcvbuf = self.rcvbuf;
         let iface = self.iface.clone();
+        let source = self.source;
 
         // Hostname resolution and the bind can block, so they run without
         // the GIL; errors are raised once it is back.
@@ -542,6 +607,9 @@ impl PyUdpRecvTransportBuilder {
             if let Some(ref s) = iface {
                 b.iface(s.as_str());
             }
+            if let Some(pin) = source {
+                b.source(pin);
+            }
             b.build()
         });
         let t = built.map_err(|e| raise(py, &UDP, BindingError::from(e)))?;
@@ -550,6 +618,7 @@ impl PyUdpRecvTransportBuilder {
         // keeps the historical scratch size.
         let scratch_len = t.max_payload().max(65_536);
         let local_port = t.local_addr().port();
+        let source = t.source_handle();
         // Obtain-before-move (see the sender twin).
         let cancel = CancelSource::new(Arc::new(t.cancel_handle()));
         Ok(PyUdpRecvTransport {
@@ -559,7 +628,7 @@ impl PyUdpRecvTransportBuilder {
                     scratch: vec![0u8; scratch_len],
                 },
                 cancel.as_dyn(),
-                local_port,
+                UdpRecvSnapshot { local_port, source },
             ),
             cancel,
         })

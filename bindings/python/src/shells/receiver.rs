@@ -5,7 +5,8 @@
 //! taken only under `py.detach`, cancel-first `close()`, and the
 //! transport's error domain in the snapshot. The transport's end-reason
 //! handle is attached to the `Owned`, so `end_reason()` keeps answering
-//! after `close()`.
+//! after `close()`; so do `peer_addr()` and `source_rejected()`, which read
+//! the transport's source record from the snapshot.
 
 #![allow(unsafe_op_in_unsafe_fn, clippy::useless_conversion)]
 
@@ -15,7 +16,7 @@ use pyo3::Py;
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyType};
 
-use tst_core::transport::RecvTransport;
+use tst_core::transport::{RecvTransport, SourceHandle};
 use tst_pipeline::binding::view::{BlockingReason, Snapshot};
 use tst_pipeline::binding::{Opened, Owned};
 use tst_pipeline::{Receiver as PlReceiver, ReceiverConfig};
@@ -35,7 +36,9 @@ use crate::util::{CancelSource, close_owned, drop_owned};
 /// ONE peer; the datagram and stream transports open their socket.
 #[pyclass(name = "Receiver", module = "tstrans.shells")]
 pub(crate) struct PyReceiver {
-    owned: Owned<PlReceiver<Box<dyn RecvTransport>>, Snapshot<()>>,
+    /// Snapshot handles = the transport's source record, `None` for a
+    /// transport that keeps none.
+    owned: Owned<PlReceiver<Box<dyn RecvTransport>>, Snapshot<Option<SourceHandle>>>,
     cancel: Arc<CancelSource>,
 }
 
@@ -61,13 +64,14 @@ impl PyReceiver {
         let cancel = cancel_source(&cancel);
         // Taken before the transport moves into the shell.
         let end_reason = transport.end_reason_handle();
+        let source = transport.source_handle();
         let inner = PlReceiver::new(transport, ReceiverConfig::default());
         let mut owned = Owned::new(
             inner,
             cancel.as_dyn(),
             Snapshot {
                 domain,
-                handles: (),
+                handles: source,
             },
         );
         if let Some(h) = end_reason {
@@ -171,6 +175,25 @@ impl PyReceiver {
     fn end_detail(&self) -> Option<String> {
         let reason = self.owned.end_reason()?;
         end_detail(&reason).map(str::to_owned)
+    }
+
+    /// `(host, port)` of the sender whose datagram (`udp://`) or block
+    /// (`rist://`) was delivered last; `None` before the first one and for
+    /// a transport that keeps no source record. Never waits behind a
+    /// parked `recv_bytes()`; the last value after `close()`.
+    fn peer_addr(&self) -> Option<crate::util::PyAddr> {
+        crate::util::peer_addr_tuple(self.owned.snapshot().handles.as_ref())
+    }
+
+    /// Datagrams or blocks the `source` key of a `udp://` or `rist://` URL
+    /// turned away; 0 for a transport that keeps no source record. Never
+    /// waits behind a parked `recv_bytes()`; the last value after `close()`.
+    fn source_rejected(&self) -> u64 {
+        self.owned
+            .snapshot()
+            .handles
+            .as_ref()
+            .map_or(0, SourceHandle::rejected)
     }
 
     /// Close: cancel first, so a `recv_bytes()` parked on another thread
