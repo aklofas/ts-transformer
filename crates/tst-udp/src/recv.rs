@@ -95,6 +95,19 @@ fn fatal_recv_error(e: &std::io::Error, cancelled: bool) -> TransportError {
     }
 }
 
+/// The error for a failed restore of the cancel-poll read timeout: the
+/// cancel when one is latched, else a `Broken` carrying the OS error.
+fn poll_restore_error(e: &std::io::Error, cancelled: bool) -> TransportError {
+    if cancelled {
+        return TransportError::ExplicitClose;
+    }
+    TransportError::Broken {
+        msg: format!("failed to restore cancel-poll timeout: {e}"),
+        errno_code: e.raw_os_error(),
+        cause: BrokenCause::Unspecified,
+    }
+}
+
 /// Record why a UDP receive stream ended (first writer wins).
 fn record_udp_end(h: &EndReasonHandle, r: EndReason) {
     debug_assert!(
@@ -347,13 +360,10 @@ impl UdpRecvTransport {
         if self.applied_timeout != CANCEL_POLL_INTERVAL {
             if let Err(e) = self.socket.set_read_timeout(Some(CANCEL_POLL_INTERVAL)) {
                 // The socket cannot honour the poll contract any more —
-                // without the tick a cancel would never be observed. Latch.
+                // without the tick a cancel would never be observed. Latch,
+                // whether the failure is reported as the cancel or not.
                 self.alive.store(false, Ordering::Release);
-                return Err(TransportError::Broken {
-                    msg: format!("failed to restore cancel-poll timeout: {e}"),
-                    errno_code: e.raw_os_error(),
-                    cause: BrokenCause::Unspecified,
-                });
+                return Err(poll_restore_error(&e, self.cancel.is_cancelled()));
             }
             self.applied_timeout = CANCEL_POLL_INTERVAL;
         }
@@ -472,6 +482,23 @@ mod tests {
         ));
         assert!(matches!(
             fatal_recv_error(&e, false),
+            TransportError::Broken {
+                errno_code: Some(9),
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn poll_restore_error_prefers_the_cancel() {
+        let e = std::io::Error::from_raw_os_error(9);
+        let cancelled = poll_restore_error(&e, true);
+        assert!(
+            matches!(cancelled, TransportError::ExplicitClose),
+            "got {cancelled:?}"
+        );
+        assert!(matches!(
+            poll_restore_error(&e, false),
             TransportError::Broken {
                 errno_code: Some(9),
                 ..
