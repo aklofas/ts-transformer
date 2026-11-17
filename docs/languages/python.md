@@ -545,8 +545,9 @@ cancel.cancel()   # wakes tx.send_bytes() → SrtError(kind=CLOSED)
 What the interrupted call raises is the domain's `CLOSED` kind with the
 detail `"cancelled from another thread"` — `SrtError(CLOSED)`,
 `RtpError(CLOSED)` (`H264Receiver.recv_au()` raises it once the access
-units it holds are handed out; its `None` means only that the peer ended
-the stream),
+units it holds are handed out; its `None` means the stream ended, never a
+cancel: the peer ended it, or the server accepted a TEARDOWN sent by a
+session whose cancel was not set),
 `UdpError(CLOSED)`, `TcpError(CLOSED)`, `RistError(CLOSED)`. That is the
 same on every `tstrans.srt` shell, plain or managed: the plain shells
 close the underlying libsrt socket and report the cancel they observed,
@@ -1370,7 +1371,7 @@ with RtspClient.connect_h264(cfg) as session:
 
 | Name | Notes |
 |---|---|
-| `H264Receiver` | `listen(url, config=None)` for direct UDP; `into_h264_receiver()` from an RTSP session. `recv_au()` → `H264AccessUnit \| None`; `None` means the server ended the session or accepted the TEARDOWN `teardown()` sent (a failed control connection also ends it with `None`; `end_reason()` names it); after a cancel, or once its `RtspSession` is collected without `teardown()`, it raises `RtpError(CLOSED)` once the access units it holds are handed out. Also iterable: `for au in rx` (a cancelled loop raises the same error). |
+| `H264Receiver` | `listen(url, config=None)` for direct UDP; `into_h264_receiver()` from an RTSP session. `recv_au()` → `H264AccessUnit \| None`; `None` means the peer ended the session or the server accepted the TEARDOWN `teardown()` sent on a session whose cancel was not set (a failed control connection also ends it with `None`; `end_reason()` names it); after a cancel, once its `RtspSession` is collected, or after a `teardown()` on a session whose cancel had fired, it raises `RtpError(CLOSED)` once the access units it holds are handed out (unless the session had already ended for its own reason). Also iterable: `for au in rx` (a cancelled loop raises the same error). |
 | `H264AccessUnit` | `annexb: bytes`, `pts: int` (90 kHz ticks, i64), `key_frame: bool`, `rtp_timestamp: int`. |
 | `H264DepayConfig` | `payload_type=96`, `parameter_set_injection=ParameterSetInjection.BEFORE_IDR`, `initial_parameter_sets=[]`, `max_au_bytes=8388608`. All kwargs. |
 | `ParameterSetInjection` | `.NONE` — pass through as received; `.BEFORE_IDR` (default) — prepend cached SPS/PPS before each IDR. |
@@ -1393,11 +1394,19 @@ with RtspClient.connect_h264(cfg) as session:
 - **Keep the session object alive while receiving.** A receiver from
   `into_demux_receiver()` or `into_h264_receiver()` never owns the RTSP client;
   the `RtspSession` object does. Call `teardown()` (or leave its `with` block)
-  to end the stream cleanly: a TCP-interleaved receiver then ends with end of
-  stream (`None`, `StopIteration`) once the server accepts the TEARDOWN. A
-  session collected without `teardown()` ends that receiver with
-  `RtpError(CLOSED)` after what is already queued, as a cancel does,
-  whatever the server then does.
+  to end the stream cleanly: on a session whose cancel was not set, a
+  TCP-interleaved receiver then ends with end of stream (`None`,
+  `StopIteration`) once the server accepts the TEARDOWN; a TEARDOWN the
+  server refuses leaves the receiver running until the session object is
+  collected. On a session whose cancel handle had fired, `teardown()` and
+  the `with` exit are a cancel: the receiver ends with `RtpError(CLOSED)`
+  after what is already queued, whatever the server then does. So does a
+  session collected while its receiver is in use. A session that had
+  already ended for its own reason (a keepalive answered `454`, a wire
+  failure, the peer's close) keeps that reason and that outcome. The
+  session has one end-reason slot: open a new session (a new client) for
+  each stream. A UDP receiver has its own socket and is not ended by any
+  of this.
 
 - **B-frame / DTS limitation.** `au.pts` is derived from the RTP timestamp
   (presentation time; AUs arrive in decode order). Most live cameras do not
@@ -1940,7 +1949,7 @@ counters without touching demuxer stats.
 - **`TSTRANS_LOG` bridges the Rust core's `tracing` events to stderr.**
   Set it before `import tstrans` (`EnvFilter` syntax, same as
   `RUST_LOG` — e.g. `TSTRANS_LOG=tst_rtp=debug`) to see diagnostics
-  (keepalive failures, pump warnings, …) that otherwise vanish silently
+  (keepalive failures, RTSP client warnings, …) that otherwise vanish silently
   — nothing installs a subscriber inside the extension by default.
   Unset means zero overhead beyond the one env lookup at import time;
   if the embedding process already installed its own `tracing`

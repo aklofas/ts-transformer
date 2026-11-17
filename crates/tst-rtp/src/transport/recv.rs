@@ -642,9 +642,11 @@ impl RtpRecvTransport {
                 {
                     // The client thread's `Sender` drop (Disconnected)
                     // looks identical whether the session ended cleanly or
-                    // the wire broke — the recorded end reason (set by the
-                    // SAME thread before it drops the Sender) tells them
-                    // apart. Only a recorded CleanTeardown remaps this
+                    // the wire broke — the recorded end reason (recorded
+                    // before the Sender is dropped: by the client's thread,
+                    // or for `Cancelled` also by the client's `Drop` or a
+                    // TEARDOWN on a cancelled client, on the caller's
+                    // thread) tells them apart. Only a recorded CleanTeardown remaps this
                     // disconnect to `Closed` (→ `EndOfStream` at the
                     // Receiver/DemuxReceiver shells); every other reason —
                     // or a still-empty slot, e.g. a plain `rtp://` source
@@ -658,8 +660,9 @@ impl RtpRecvTransport {
                         && matches!(self.end_reason.get(), Some(EndReason::Cancelled)) =>
                 {
                     // `Cancelled` was recorded before the queue closed: by
-                    // the owning `RtspClient`'s `Drop`, or by its thread when
-                    // stopped. This end is the cancel, not a broken wire.
+                    // the owning `RtspClient`'s `Drop`, by a TEARDOWN sent on
+                    // a cancelled client, or by its thread when stopped.
+                    // This end is the cancel, not a broken wire.
                     // Latched as this transport's own cancel, so every later
                     // call answers it too.
                     self.cancel.cancel();
@@ -819,15 +822,22 @@ impl RecvTransport for RtpRecvTransport {
     /// # End of an RTSP interleaved session
     ///
     /// On a transport from an interleaved RTSP session the packets already
-    /// queued are returned first; then the reason the RTSP client's thread
-    /// recorded decides. A TEARDOWN the server accepted, sent by
-    /// `RtspClient::teardown` or `close`, or the server's orderly close
-    /// (`CleanTeardown`), is [`TransportError::Closed`], which the receive
-    /// shells report as end of stream. The owning `RtspClient` dropped
-    /// without such a TEARDOWN (`Cancelled`, recorded by its `Drop` before
-    /// anything the server does next) is [`TransportError::ExplicitClose`],
-    /// the cancel. Any other end is
-    /// [`TransportError::Broken`]; [`RtpRecvTransport::end_reason`] names it.
+    /// queued are returned first; then the recorded reason decides (first
+    /// writer wins). The server's orderly close, or a TEARDOWN the server
+    /// accepted that `RtspClient::teardown`, `teardown_within` or `close`
+    /// sent on a client whose cancel was not set (`CleanTeardown`), is
+    /// [`TransportError::Closed`], which the receive shells report as end
+    /// of stream. A cancel (`Cancelled`) is [`TransportError::ExplicitClose`]
+    /// on that call and every later one: the owning `RtspClient` dropped
+    /// (its `Drop` records it before its TEARDOWN), a TEARDOWN sent on a
+    /// client whose cancel had fired (recorded before it is written), or
+    /// `close` after a TEARDOWN refused or not answered; nothing the server
+    /// does next changes it. A session that had already ended for its own
+    /// reason keeps it: any other end is [`TransportError::Broken`];
+    /// [`RtpRecvTransport::end_reason`] names it. The client has one reason
+    /// slot, so build a fresh client per session. A transport on a UDP
+    /// session reads its own socket and is not ended by any of this; its
+    /// `end_reason` reads the client's reason while it still receives.
     fn recv_bytes(&mut self, buf: &mut [u8]) -> Result<usize, TransportError> {
         // checked_add mirrors `recv_timeout`'s saturation: a configured
         // timeout too large to represent as an `Instant` (e.g.

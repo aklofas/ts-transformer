@@ -7,7 +7,8 @@ use crate::rtsp::message::RtspMethod;
 use tst_core::transport::EndReason;
 
 impl RtspClient {
-    /// Send TEARDOWN. After this returns, no further methods succeed.
+    /// Send TEARDOWN. After this returns the session is gone; a new SETUP
+    /// starts another.
     ///
     /// If no session is currently established (no prior successful
     /// SETUP, or [`Self::teardown`] already ran), this is a no-op that
@@ -15,14 +16,26 @@ impl RtspClient {
     /// session is already gone), is `Ok(())`. The session is cleared on
     /// every outcome, so a refused TEARDOWN is not retried.
     ///
+    /// On a client whose cancel is not set, a TEARDOWN the server accepts
+    /// records the end reason `CleanTeardown` before this returns, and a
+    /// receiver of an interleaved session ends with end of stream after
+    /// what is queued. On a client whose cancel is set, `Cancelled` is
+    /// recorded before the TEARDOWN is written, so the receiver ends as a
+    /// cancel whatever the server then does. A reason recorded earlier
+    /// stays (first writer wins). The client has one reason slot, so a
+    /// client reused for another session reads this one's reason: build a
+    /// fresh client per session.
+    ///
     /// # Errors
     ///
     /// - [`RtspError::Protocol`] carrying the status when the server
     ///   answers anything but a `2xx` or `454`.
     /// - For a `401`: [`RtspError::BadResponse`] when it has no
     ///   `WWW-Authenticate` header; otherwise [`RtspError::AuthFailed`] when
-    ///   the client has no credentials, or when the one retry with
-    ///   credentials is answered `401` again.
+    ///   the client has no credentials, [`RtspError::AuthUnsupported`] when
+    ///   its challenge offers no scheme the client may answer, or
+    ///   [`RtspError::AuthFailed`] when the one retry with credentials is
+    ///   answered `401` again.
     /// - [`RtspError::Io`] on socket-level failure writing the request
     ///   or reading the response.
     /// - [`RtspError::BadResponse`] (or another variant) surfaced by
@@ -55,7 +68,8 @@ impl RtspClient {
     /// reply wait at once with [`RtspError::LocalCancel`] and turns any
     /// failure of the exchange into it; the request is still written. If
     /// no session is established, this returns `Ok(())` without I/O. The
-    /// reply's status is judged as [`Self::teardown`] judges it.
+    /// reply's status is judged, and the end reason recorded, as
+    /// [`Self::teardown`] does.
     /// `session_id` is cleared on every outcome, so no later teardown
     /// (nor `Drop`) retries.
     ///
@@ -73,8 +87,9 @@ impl RtspClient {
     /// - [`RtspError::Io`] on another socket failure, and
     ///   [`RtspError::BadResponse`] (or another variant) for a malformed
     ///   reply.
-    /// - [`RtspError::Protocol`] and [`RtspError::AuthFailed`] for a
-    ///   refused TEARDOWN, as for [`Self::teardown`].
+    /// - [`RtspError::Protocol`], [`RtspError::AuthFailed`] and
+    ///   [`RtspError::AuthUnsupported`] for a TEARDOWN answered other than
+    ///   `2xx` or `454`, as for [`Self::teardown`].
     pub fn teardown_within(&mut self, bound: std::time::Duration) -> Result<(), RtspError> {
         // A bound too large to represent as an `Instant` saturates to "no
         // deadline", as in `teardown`.

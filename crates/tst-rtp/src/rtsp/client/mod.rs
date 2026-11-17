@@ -82,7 +82,8 @@ pub struct RtspClient {
     /// ([`crate::RtspClientBuilder::request_timeout`]); `None` = unbounded.
     pub(crate) request_timeout: Option<Duration>,
     /// Structured record of why the session ended, first writer wins,
-    /// written by the client's thread. Cloned into
+    /// written by the client's thread, and with `Cancelled` by `Drop` and
+    /// by a TEARDOWN sent on a cancelled client. Cloned into
     /// [`session::RtspSession`] so the receiver reports the same reason.
     pub(crate) end_reason: EndReasonHandle,
     /// Set by the client's thread when the session is known dead: the
@@ -472,10 +473,12 @@ impl RtspClient {
     /// cancel is already set, the TEARDOWN is still written, its reply is
     /// not awaited and the result is [`RtspError::LocalCancel`].
     ///
-    /// The end reason it leaves (unless one was recorded before) is
-    /// `CleanTeardown` when the server accepts the TEARDOWN (`2xx` or
-    /// `454`); `Cancelled` when it refuses or does not answer it, or when
-    /// `close` is called on a cancelled client.
+    /// The end reason it leaves (unless one was recorded before: first
+    /// writer wins) is `CleanTeardown` when the server accepts the TEARDOWN
+    /// (`2xx` or `454`) on a client whose cancel was not set; `Cancelled`
+    /// when it refuses or does not answer it, or when the client's cancel
+    /// was set before the TEARDOWN: that `Cancelled` is recorded before the
+    /// TEARDOWN is written, so the server's answer cannot replace it.
     ///
     /// Dropping the client instead sets the cancel, writes TEARDOWN within
     /// the same 500 ms bound when a session is open, and tells the thread

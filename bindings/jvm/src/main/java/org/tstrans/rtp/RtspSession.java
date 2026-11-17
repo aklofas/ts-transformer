@@ -166,8 +166,11 @@ public final class RtspSession extends NativeHandle {
      * request timeout) and frees the session. A live TCP-interleaved
      * {@link org.tstrans.shells.DemuxReceiver} backed by this session then ends after the
      * events already queued: with end of stream (iteration ends, {@code endReason()} is
-     * {@code CLEAN_TEARDOWN}) when the server accepted the TEARDOWN, and with
-     * {@code RtpException(CLOSED)} when it refused it or did not answer in time.
+     * {@code CLEAN_TEARDOWN}) when the server accepted the TEARDOWN on a session whose
+     * cancel handle had not fired, and with {@code RtpException(CLOSED)} when it refused it
+     * or did not answer in time, or when the session's cancel handle had fired before the
+     * TEARDOWN was sent, whatever the server then does. A session that had already ended
+     * for its own reason keeps that reason and that outcome.
      *
      * @return an {@link H264Receiver} over the post-SETUP RTP data plane
      * @throws RtspException {@code CLOSED} if the data plane has already been
@@ -203,7 +206,11 @@ public final class RtspSession extends NativeHandle {
      * Best-effort teardown, then free the native session. Idempotent. A live
      * TCP-interleaved {@link org.tstrans.shells.DemuxReceiver} from
      * {@link #intoDemuxReceiver()} ends with end of stream when the server accepts the
-     * TEARDOWN, and with {@code RtpException(CLOSED)} when it does not.
+     * TEARDOWN on a session whose cancel handle had not fired, and with
+     * {@code RtpException(CLOSED)} when the server does not accept it or the session's
+     * cancel handle had fired before the TEARDOWN was sent, whatever the server then does.
+     * A session that had already ended for its own reason keeps that reason and that
+     * outcome. A session keeps one end reason: open a new session for each stream.
      */
     @Override public void close() { super.close(); }
 

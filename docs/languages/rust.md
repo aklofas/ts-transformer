@@ -348,12 +348,26 @@ writes TEARDOWN without waiting for the reply, and tells the client's
 thread to stop without waiting for it; the thread closes the connection
 on its own.
 
+A receiver made from an interleaved session ends with end of stream when
+the peer ends the session in an orderly way, or when the server accepts
+(`2xx` or `454`) a TEARDOWN sent by `teardown()`, `teardown_within()` or
+`close()` on a client whose cancel was not set. It ends with the cancel
+(`TransportError::ExplicitClose`) when it was cancelled itself, when its
+client was dropped, or when the client's cancel had fired before it sent
+its TEARDOWN (`teardown()` and `close()` on a cancelled client), whatever
+the server then does. A session that had already ended for its own
+reason (a keepalive answered `454`, a wire failure, a framing violation,
+the peer's close) keeps that reason and that outcome. The client has one
+reason slot, so build a fresh client per session. A receiver on a UDP
+session has its own socket and is not ended by any of this; its
+`end_reason()` reads the client's reason.
+
 ### Key types
 
 | Type | Notes |
 |---|---|
 | `H264Depacketizer` | Low-level state machine: `feed(header, payload)` / `next_au()` / `flush()`. Use when you are not going through `H264Receiver`. |
-| `H264Receiver` | High-level shell: `listen("rtp://…?pt=96")` or `session.into_h264_receiver(config)`. `recv_au()` → `Option<H264Au>`: `None` when the server ended the session or accepted the TEARDOWN that `teardown()` or `close()` sent (a failed control connection also ends it with `None`; `end_reason()` names it); after a cancel, or once the owning `RtspClient` is dropped without such a TEARDOWN, `Err(TransportError::ExplicitClose)` once the access units it holds are handed out. Keep the client alive while receiving and call `teardown()` to end cleanly. |
+| `H264Receiver` | High-level shell: `listen("rtp://…?pt=96")` or `session.into_h264_receiver(config)`. `recv_au()` → `Option<H264Au>`: `None` when the peer ended the session or the server accepted a TEARDOWN that `teardown()` or `close()` sent on a client whose cancel was not set (a failed control connection also ends it with `None`; `end_reason()` names it); after a cancel, once the owning `RtspClient` is dropped, or after a TEARDOWN sent on a client whose cancel had fired, `Err(TransportError::ExplicitClose)` once the access units it holds are handed out (unless the session had already ended for its own reason). Keep the client alive while receiving and call `teardown()` to end cleanly. |
 | `H264Au` | Output: `annexb` (Annex-B bytes), `pts: Pts90khz` (90 kHz presentation time, delivered in decode order), `key_frame`, `rtp_timestamp`. |
 | `H264DepayConfig` | `payload_type`, `parameter_set_injection: ParameterSetInjection`, `initial_parameter_sets`, `max_au_bytes` (8 MiB default cap). |
 | `ParameterSetInjection` | `None` — pass through as received; `BeforeIdr` (default) — prepend cached SPS/PPS before every IDR frame. |

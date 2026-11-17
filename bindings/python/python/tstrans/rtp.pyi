@@ -211,7 +211,9 @@ class BasicAuth:
     reads the realm from the peer's 401.
 
     As a client credential it answers Digest when the server offers it
-    and Basic otherwise; use `DigestAuth` to refuse Basic.
+    and Basic otherwise; use `DigestAuth` to refuse Basic. As a client
+    credential an empty `user` is no credentials: a challenge then raises
+    `RtspError(AUTH_FAILED)`.
     """
 
     def __new__(cls,
@@ -237,7 +239,9 @@ class DigestAuth:
 
     As a client credential it never falls back to Basic: a server that
     offers no Digest challenge fails the request with an auth error and
-    the password is never sent in Basic form.
+    the password is never sent in Basic form. As a client credential an
+    empty `user` is no credentials: a challenge then raises
+    `RtspError(AUTH_FAILED)`.
     """
 
     def __new__(cls,
@@ -359,8 +363,15 @@ class RtspSession:
     the connection on its own. A receiver never owns the client, so keep
     the session object alive while one receives: collecting it ends a live
     TCP-interleaved receiver with `RtpError(CLOSED)` after what is already
-    queued, whatever the server then does, where `teardown()` ends it with
-    end of stream once the server accepts the TEARDOWN.
+    queued, whatever the server then does. `teardown()` (and `__exit__`)
+    ends it with end of stream once the server accepts the TEARDOWN, on a
+    session whose cancel was not set; on a session whose cancel handle had
+    fired it is a cancel, `RtpError(CLOSED)`, whatever the server then
+    does. A refused TEARDOWN leaves the receiver running until the session
+    is collected. A session that had already ended for its own reason
+    keeps that reason and that outcome. One end reason is kept per
+    session: use a new session for each stream. A UDP receiver has its own
+    socket and is not ended by any of this.
     """
 
     def pause(self) -> None: ...
@@ -916,13 +927,14 @@ class H264Receiver:
 
     `recv_au(timeout_ms=None)` — block until an Access Unit is reassembled
     (releasing the GIL via `py.allow_threads()`). Returns `H264AccessUnit`
-    or `None` at EOS (the RTSP server ended the session or accepted the
-    TEARDOWN `teardown()` sent; a failed control connection also gives
-    `None`, and
+    or `None` at EOS (the RTSP server ended the session, or accepted the
+    TEARDOWN `teardown()` sent on a session whose cancel was not set; a
+    failed control connection also gives `None`, and
     `end_reason()` names it). `timeout_ms=N`
     bounds a single call; expiry raises `RtpError(BACKPRESSURE)` — the
-    receiver stays open, call again to retry. After a cancel, or once its
-    `RtspSession` is collected without `teardown()`, the AUs already
+    receiver stays open, call again to retry. After a cancel, once its
+    `RtspSession` is collected, or after a `teardown()` on a session whose
+    cancel had fired, the AUs already
     buffered are returned first, then `RtpError(CLOSED)` is raised. A
     `close()` from another thread lets a parked call return one
     held AU if there is one (a queued AU, or the one the cancel flushes);
