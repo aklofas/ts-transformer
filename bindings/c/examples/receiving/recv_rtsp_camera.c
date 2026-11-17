@@ -610,8 +610,8 @@ int main(int argc, char **argv) {
      * Step 9 — cleanup.
      *
      * `tst_rtp_demux_receiver_close` closes the underlying socket (or
-     * drains the mpsc channel), joins the background threads, and frees
-     * all memory associated with this handle.  Safe to call after cancel.
+     * drains the mpsc channel) and frees all memory associated with this
+     * handle.  Safe to call after cancel.
      * The handle must not be used after this point.
      *
      * The RTSP control channel lives in the receiver, so closing the
@@ -620,6 +620,8 @@ int main(int argc, char **argv) {
      * The write and the wait for the control stream are bounded to
      * 500 ms, and the camera's reply is not awaited, so a camera that
      * stopped answering cannot hold the TEARDOWN up longer than that.
+     * The RTSP client's thread is then told to stop and closes the
+     * control connection on its own; the call does not wait for it.
      * Cancel (above) stops only the data plane; the control channel stays
      * up until this call.
      * ---------------------------------------------------------------- */

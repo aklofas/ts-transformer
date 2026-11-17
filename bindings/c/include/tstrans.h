@@ -8294,7 +8294,9 @@ int tst_rist_receiver_recv_ts(struct TstRistReceiver *p,
  * For a receiver from `tst_rtsp_session_into_demux_receiver` this also
  * closes the RTSP control connection after the data plane: it writes
  * TEARDOWN (500 ms bounds the wait for the control stream and the write;
- * the reply is not awaited), then joins the client's threads.
+ * the reply is not awaited), then tells the client's thread to stop. That
+ * thread closes the control connection on its own; the call does not wait
+ * for it.
  *
  * Safe to call with `NULL` (no-op).
  *
@@ -11071,8 +11073,9 @@ struct TstRtpDemuxReceiver *tst_rtsp_session_into_demux_receiver(struct TstRtspS
  * but does not wait for the reply: it returns `TST_E_CLOSED`, also when
  * that write fails, and is still freed. If a caught panic had already
  * taken the control pair, there is nothing to tear down: the call
- * returns 0 and frees. The client's threads are joined after the
- * exchange, outside the 500 ms.
+ * returns 0 and frees. The client's thread is then told to stop and
+ * closes the control connection on its own; the call does not wait for
+ * it.
  *
  * The caller guarantees that no `_play`, `_pause` or receive call on this
  * session is in flight: call [`tst_rtsp_session_cancel`], wait for the

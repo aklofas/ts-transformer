@@ -2,7 +2,8 @@
 
 A class collected without `close()` / `stop()` / `teardown()` still runs its
 native teardown: an SRT close waiting out the linger, a server drain, an
-RTSP TEARDOWN with thread joins, the WHEP server threads' joins. That
+RTSP TEARDOWN (the RTSP client's thread is told to stop, not joined), the
+WHEP server threads' joins. That
 teardown runs with the GIL released, so other threads keep running while
 the collecting thread waits. An `hls.MuxPublisher` collected unfinished is
 abortive: bytes a failed push retained are discarded.

@@ -369,6 +369,14 @@ while let Some(au) = rx.recv_au()? {
 
 ### Integration notes
 
+- **Ending the session.** Call `client.close()`: with a session open it
+  sends TEARDOWN and waits for the reply (500 ms at most), then stops the
+  client's thread and waits for it to end (2 s at most), and returns the
+  TEARDOWN's result (`Ok(())` with no session open). Dropping the client
+  instead sets its cancel, writes TEARDOWN without waiting for the reply,
+  and tells the client's thread to stop without waiting for it; the thread
+  closes the connection on its own.
+
 - **`sprop-parameter-sets` handled automatically.** `setup_h264_auto` decodes the
   `a=fmtp:N sprop-parameter-sets=…` SDP attribute from base64 into raw NALU
   bytes and stores them in `H264DepayConfig::initial_parameter_sets`. With

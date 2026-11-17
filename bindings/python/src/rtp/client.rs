@@ -756,7 +756,8 @@ pub struct PyRtspSession {
 }
 
 /// A session collected without `teardown()`: the client's own drop sends a
-/// best-effort TEARDOWN and joins its threads, with the GIL released.
+/// best-effort TEARDOWN with the GIL released, then tells the client's
+/// thread to stop; that thread closes the connection on its own.
 impl Drop for PyRtspSession {
     fn drop(&mut self) {
         let client = self.client.lock().unwrap_or_else(|e| e.into_inner()).take();

@@ -1,6 +1,7 @@
 //! TCP-interleaved media wiring, client against our server.
 //! Dropping the client writes TEARDOWN (500 ms bounds getting it to the
-//! wire) and does not wait for the reply, so the
+//! wire), does not wait for the reply and does not wait for the client's
+//! thread, so the
 //! post-PLAY teardown cannot hang on the server's lingering write-half
 //! references after `RtspServer::stop`.
 //!
