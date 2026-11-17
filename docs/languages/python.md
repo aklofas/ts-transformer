@@ -1611,7 +1611,8 @@ refusing by `first` works only against a sender that stops.
 - **Where.** `peer_addr() -> Optional[Tuple[str, int]]` and
   `source_rejected() -> int` on `shells.Receiver` and `shells.DemuxReceiver`
   (any `udp://` or `rist://` URL), `udp.RecvTransport` and
-  `rist.RecvTransport`. The host is the IP as text, unbracketed. `peer_addr()`
+  `rist.RecvTransport`. The host is the IP as text, unbracketed, and without
+  an IPv6 scope id: a link-local sender's interface is not in the tuple. `peer_addr()`
   is `None` until the first datagram or block is delivered. The builders set
   the pin with `udp.RecvTransportBuilder.source(value)` and
   `rist.RecvTransportBuilder.source(value)` (`"first"` or an IP literal).

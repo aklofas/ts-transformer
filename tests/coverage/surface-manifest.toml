@@ -5749,6 +5749,6 @@ kind = "rust"
 crate = "tst-rist"
 item = "tst_rist::recv::RistRecvTransport::source_handle"
 owning_tests = ["crates/tst-udp/tests/net_source.rs", "crates/tst-rist/tests/net_source.rs", "bindings/jvm/src/test/java/org/tstrans/shells/PeerAddrTest.java", "bindings/python/tests/test_peer_addr.py", "bindings/c/tests/transports/peer_addr.rs"]
-bindings = ["c:tst_rist_receiver_get_source_rejected", "python:tstrans.rist.RecvTransport.source_rejected", "java:org.tstrans.shells.Receiver.sourceRejected", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:n/a(the C ABI reads the record through the _peer_addr and _get_source_rejected getters)", "python:n/a(the Python transports and shells read the record through their peer_addr and source_rejected getters)", "java:n/a(the JVM shells read the record through their peerAddr and sourceRejected getters)", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"

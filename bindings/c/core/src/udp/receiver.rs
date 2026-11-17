@@ -255,8 +255,9 @@ pub unsafe extern "C" fn tst_udp_receiver_reset_stats(p: *mut TstUdpReceiver) ->
 
 /// Write the address of the sender of the datagram delivered to this receiver
 /// last into `buf` as NUL-terminated text: `ip:port`, `[v6]:port` for IPv6; an
-/// IPv4 sender on a dual-stack (`[::]`) bind is written in IPv4 form. 64 bytes
-/// hold any address.
+/// IPv4 sender on a dual-stack (`[::]`) bind is written in IPv4 form, and a
+/// link-local IPv6 sender's address carries its interface index inside the
+/// brackets (`[fe80::1%2]:port`). 64 bytes hold any address.
 ///
 /// The address is the source address of the UDP datagrams, which nothing
 /// verifies: a sender can forge it. Without a `source` key in the URL every
