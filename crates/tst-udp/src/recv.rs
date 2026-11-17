@@ -10,9 +10,10 @@ use tst_core::net::udp_socket::{
 };
 use tst_core::net::{RecvAction, classify_recv_error};
 use tst_core::transport::{
-    BrokenCause, EndReason, EndReasonHandle, RecvTransport, SocketStats, SourceHandle,
+    BrokenCause, EndReason, EndReasonHandle, RecvTransport, SocketStats, SourceHandle, SourcePin,
     TransportCancel, TransportError,
 };
+use tst_core::url::UrlError;
 
 use crate::config::UdpConfig;
 use crate::error::UdpError;
@@ -106,6 +107,19 @@ impl UdpRecvTransport {
 
     /// Build from already-parsed `UdpUrl` + config.
     pub fn with_config(url: &UdpUrl, cfg: &UdpConfig) -> Result<Self, UdpError> {
+        // An IPv6 pin on an IPv4 bind could never match: say so now rather
+        // than drop every datagram.
+        if let Some(SourcePin::Ip(pin)) = cfg.source
+            && pin.is_ipv6()
+            && url.addr.is_ipv4()
+        {
+            return Err(UdpError::Url(UrlError::BadQueryValue {
+                key: "source".to_string(),
+                value: pin.to_string(),
+                detail: "an IPv6 address cannot match a receiver bound to an IPv4 address"
+                    .to_string(),
+            }));
+        }
         // A multicast receiver shares group:port with other receivers on the
         // host (SO_REUSEADDR, + SO_REUSEPORT on BSD/macOS) and, where the
         // platform allows, binds the group so it delivers only that group. A
@@ -137,10 +151,11 @@ impl UdpRecvTransport {
         })
     }
 
-    /// The address that last delivered a datagram, or `None` before the
+    /// The source of the datagram delivered last, or `None` before the
     /// first one. A zero-length datagram is not delivered and does not
-    /// count. With a `source` pin only the pinned sender's address appears.
-    /// Reads shared state, so it answers while a receive is parked.
+    /// count. With a `source` pin only a matching address appears. The
+    /// address is what the datagram claims; nothing verifies it. Reads
+    /// shared state, so it answers while a receive is parked.
     pub fn peer_addr(&self) -> Option<SocketAddr> {
         self.source.peer_addr()
     }
@@ -317,7 +332,7 @@ impl UdpRecvTransport {
                     // A zero-length datagram (a port probe, an empty
                     // keepalive) is not end of stream — UDP has none. The
                     // shells read `Ok(0)` as "closed", so loop back to the
-                    // flag checks; so for a datagram from the wrong sender.
+                    // flag checks; likewise for a datagram from the wrong sender.
                     Verdict::Rejected | Verdict::Empty => continue,
                     Verdict::Deliver => return Ok(n),
                 },

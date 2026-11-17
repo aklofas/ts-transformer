@@ -26,9 +26,22 @@ pub struct UdpConfig {
     pub pkt_size: Option<usize>,
     /// Local bind address override (for sending from a specific NIC).
     pub localaddr: Option<IpAddr>,
-    /// Receive side: accept datagrams only from one sender IP (`source=<ip>`)
-    /// or from whichever IP delivers first (`source=first`). A send-side URL
-    /// carrying it is refused.
+    /// Receive side: take datagrams only from one sender IP (`source=<ip>`) or
+    /// from whichever IP delivers first (`source=first`). A send-side URL
+    /// carrying it is refused, and so is a pin that can never match (an IPv6
+    /// address on a receiver bound to an IPv4 address); an IPv4 pin on an
+    /// IPv6 bind is allowed, since a dual-stack bind delivers IPv4.
+    ///
+    /// This is a filter, not authentication: a datagram's source address is
+    /// whatever it claims, and nothing verifies it. The pin compares the IP
+    /// only, never the port. `first` latches on the first datagram with a
+    /// payload from any address (an empty datagram does not latch) and holds
+    /// until the receiver is closed, so a stray datagram that arrives before
+    /// the publisher takes the receiver for itself. A datagram larger than
+    /// the caller's buffer, from any sender, still fails the receive on
+    /// Windows before its source is known. A misspelt URL key is ignored
+    /// like any unknown key and leaves the receiver unpinned;
+    /// `RecvTransport::source_handle` then shows `pin()` as `None`.
     pub source: Option<SourcePin>,
 }
 
