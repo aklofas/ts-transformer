@@ -177,7 +177,7 @@ impl TcpListener {
                     std::thread::sleep(ACCEPT_POLL_INTERVAL);
                 }
                 Err(e) if e.kind() == io::ErrorKind::Interrupted => { /* EINTR: retry */ }
-                Err(e) => return Err(accept_failure(e, self.alive.load(Ordering::Acquire))),
+                Err(e) => return Err(self.accept_error(e)),
             }
         };
         // A close()/cancel() can land in the gap between the loop's `alive`
@@ -197,16 +197,22 @@ impl TcpListener {
         // O_NONBLOCK across accept(2); BSD/macOS and Windows do — so set it
         // explicitly rather than rely on the platform.
         sock.set_nonblocking(false)
-            .map_err(|e| accept_failure(e, self.alive.load(Ordering::Acquire)))?;
+            .map_err(|e| self.accept_error(e))?;
 
         #[cfg(feature = "tls")]
         if let Some(tls_cfg) = &self.tls_config {
             return crate::tls::accept_tls(sock, peer, &self.config, tls_cfg.clone())
-                .map_err(|e| accept_failure(e, self.alive.load(Ordering::Acquire)));
+                .map_err(|e| self.accept_error(e));
         }
 
         TcpTransport::from_accepted_plain(sock, peer, &self.config)
-            .map_err(|e| accept_failure(e, self.alive.load(Ordering::Acquire)))
+            .map_err(|e| self.accept_error(e))
+    }
+
+    /// [`accept_failure`] with this listener's flags, liveness read first.
+    fn accept_error(&self, e: impl Into<TcpError>) -> TcpError {
+        let alive = self.alive.load(Ordering::Acquire);
+        accept_failure(e, alive, self.cancel.is_cancelled())
     }
 
     /// Cloneable handle that unblocks a parked [`Self::accept_blocking`] from
@@ -233,9 +239,16 @@ impl TcpListener {
 }
 
 /// An accept that fails once the listener is closed or cancelled reports that
-/// (`Closed`), not the failure the teardown provoked.
-fn accept_failure(e: impl Into<TcpError>, alive: bool) -> TcpError {
-    if alive { e.into() } else { TcpError::Closed }
+/// (`Closed`), not the failure the teardown provoked. Callers read liveness
+/// before the latch, as the transport's read and write loops do: the
+/// canceller stores the latch first, so either one set means the caller
+/// stopped the listener.
+fn accept_failure(e: impl Into<TcpError>, alive: bool, cancelled: bool) -> TcpError {
+    if alive && !cancelled {
+        e.into()
+    } else {
+        TcpError::Closed
+    }
 }
 
 #[cfg(test)]
@@ -244,10 +257,17 @@ mod tests {
     use crate::error::TcpError;
 
     #[test]
-    fn accept_failure_reports_closed_when_not_alive_else_the_error() {
+    fn accept_failure_reports_closed_when_not_alive_or_cancelled_else_the_error() {
         let e = || std::io::Error::from(std::io::ErrorKind::ConnectionAborted);
-        assert!(matches!(accept_failure(e(), false), TcpError::Closed));
-        assert!(matches!(accept_failure(e(), true), TcpError::Io(_)));
+        assert!(matches!(
+            accept_failure(e(), false, false),
+            TcpError::Closed
+        ));
+        assert!(matches!(accept_failure(e(), false, true), TcpError::Closed));
+        // A cancel caught between its two stores: latched, still live.
+        let r = accept_failure(e(), true, true);
+        assert!(matches!(r, TcpError::Closed), "got {r:?}");
+        assert!(matches!(accept_failure(e(), true, false), TcpError::Io(_)));
     }
 
     /// A closed listener answers `Closed`, whatever its config says since.
