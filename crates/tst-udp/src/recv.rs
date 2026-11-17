@@ -83,6 +83,19 @@ fn udp_receiver_can_end_with(r: &EndReason) -> bool {
 }
 
 /// Record why a UDP receive stream ended (first writer wins).
+/// The error for a fatal `recv_from` failure: the cancel when one is latched,
+/// else a `Broken` carrying the OS error.
+fn fatal_recv_error(e: &std::io::Error, cancelled: bool) -> TransportError {
+    if cancelled {
+        return TransportError::ExplicitClose;
+    }
+    TransportError::Broken {
+        msg: format!("recv error: {e}"),
+        errno_code: e.raw_os_error(),
+        cause: BrokenCause::Unspecified,
+    }
+}
+
 fn record_udp_end(h: &EndReasonHandle, r: EndReason) {
     debug_assert!(
         udp_receiver_can_end_with(&r),
@@ -372,11 +385,7 @@ impl UdpRecvTransport {
                     self.stats.recv_errors = self.stats.recv_errors.saturating_add(1);
                     // A Broken receive latches dead.
                     self.alive.store(false, Ordering::Release);
-                    return Err(TransportError::Broken {
-                        msg: format!("recv error: {e}"),
-                        errno_code: e.raw_os_error(),
-                        cause: BrokenCause::Unspecified,
-                    });
+                    return Err(fatal_recv_error(&e, self.cancel.is_cancelled()));
                 }
             }
         }
@@ -449,6 +458,22 @@ mod tests {
     use super::*;
     use crate::transport::UdpTransport;
     use std::time::{Duration, Instant};
+
+    #[test]
+    fn fatal_recv_error_prefers_the_cancel() {
+        let e = std::io::Error::from_raw_os_error(9);
+        assert!(matches!(
+            fatal_recv_error(&e, true),
+            TransportError::ExplicitClose
+        ));
+        assert!(matches!(
+            fatal_recv_error(&e, false),
+            TransportError::Broken {
+                errno_code: Some(9),
+                ..
+            }
+        ));
+    }
 
     /// Regression test: `recv_timeout` must not permanently disable the
     /// cancel-poll `SO_RCVTIMEO` on the socket.
