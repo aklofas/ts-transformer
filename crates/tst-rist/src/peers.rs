@@ -64,7 +64,7 @@ pub(crate) fn on_disconnect(table: &mut HashMap<usize, SocketAddr>, peer: usize)
 
 /// The table and the pin of one receiver, shared with librist's callbacks.
 pub(crate) struct Peers {
-    /// One entry per peer librist holds: made when the connect callback
+    /// At most one entry per peer librist holds: made when the connect callback
     /// accepts it, removed when the disconnect callback fires. It has no cap
     /// of its own: librist allocates far more per peer than an entry costs,
     /// so a cap here bounds nothing librist does not, and a full table would
@@ -105,6 +105,11 @@ impl Peers {
         let mut table = self.lock();
         if on_disconnect(&mut table, peer) {
             self.generation.fetch_add(1, Ordering::Release);
+            // A map keeps its peak capacity; once a flood of peers has gone,
+            // give it back rather than hold it for the receiver's life.
+            if table.is_empty() {
+                table.shrink_to_fit();
+            }
         }
     }
 
@@ -158,9 +163,13 @@ impl Attribution {
     ///
     /// Known limit, accepted: librist keeps a block's peer pointer after the
     /// peer is freed, so a block read after its peer's entry was replaced by a
-    /// new peer at the same pointer is attributed to the new peer. That needs
-    /// the reader to stall past librist's session timeout with the old peer's
-    /// blocks still queued.
+    /// new peer at the same pointer is attributed to the new peer. librist
+    /// frees a peer only after hearing nothing from it for its liveness
+    /// timeout (the larger of the session timeout and twice the recovery
+    /// buffer) and then holding it dead for 5 s (`rist_timeout_check`), so
+    /// the reader must leave the old peer's blocks queued at least that long.
+    /// Under an unlatched `first`, such a stale block can latch the pin to the
+    /// new peer's address; under an IP pin every entry carries the pinned IP.
     fn address(&mut self, peers: &Peers, peer: usize) -> Option<SocketAddr> {
         // Read before the lookup: a change landing in between leaves the pair
         // with an older generation, so it is re-read next time.
@@ -403,6 +412,24 @@ mod tests {
         assert_eq!(peers.connect(1, "127.0.0.2", 6000), Verdict::Recorded);
         assert!(a.admit_block(&peers, 1));
         assert_eq!(peers.source.peer_addr(), Some(sa("127.0.0.2:6000")));
+    }
+
+    #[test]
+    fn an_emptied_table_gives_its_memory_back() {
+        const MANY: usize = 10_000;
+        let peers = Peers::new(SourceHandle::default());
+        for peer in 0..MANY {
+            assert_eq!(
+                peers.connect(peer, "127.0.0.1", peer as u16),
+                Verdict::Recorded
+            );
+        }
+        assert!(peers.lock().capacity() >= MANY);
+        for peer in 0..MANY {
+            peers.disconnect(peer);
+        }
+        let left = peers.lock().capacity();
+        assert!(left < 64, "capacity {left} kept after the table emptied");
     }
 
     #[test]
