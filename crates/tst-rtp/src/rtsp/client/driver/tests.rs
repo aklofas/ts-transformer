@@ -746,7 +746,7 @@ fn a_ping_the_peer_does_not_take_records_keepalive_failed() {
     peer.join().unwrap();
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(unix)]
 mod signal {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -768,44 +768,25 @@ mod signal {
             assert_eq!(libc::sigaction(libc::SIGUSR1, &sa, std::ptr::null_mut()), 0);
         }
     }
-
-    /// Thread ids of this process named `name`.
-    pub(super) fn threads_named(name: &str) -> Vec<libc::pid_t> {
-        let mut out = Vec::new();
-        for entry in std::fs::read_dir("/proc/self/task").unwrap().flatten() {
-            let comm = std::fs::read_to_string(entry.path().join("comm")).unwrap_or_default();
-            if comm.trim() == name
-                && let Ok(tid) = entry.file_name().to_string_lossy().parse()
-            {
-                out.push(tid);
-            }
-        }
-        out
-    }
 }
 
-#[cfg(target_os = "linux")]
+/// Signals the driver's own thread (through its join handle, so it runs on
+/// every Unix) while it waits: the waits it interrupts are retried and the
+/// stream stays up.
+#[cfg(unix)]
 #[test]
 fn a_signal_does_not_end_the_driver() {
     signal::install_handler();
     let (stream, mut peer) = plain_pair();
-    let before = signal::threads_named(THREAD_NAME);
     let h = drive(stream);
     let mut rest = Vec::new();
-    // The thread exists once it has answered.
     round_trip(&h, &mut peer, &mut rest);
-    let ours: Vec<_> = signal::threads_named(THREAD_NAME)
-        .into_iter()
-        .filter(|t| !before.contains(t))
-        .collect();
-    assert!(!ours.is_empty(), "the driver thread not found");
+    let thread = h.handle.pthread().expect("the driver thread is running");
     let delivered = signal::DELIVERED.load(Ordering::SeqCst);
     wait_until("signals delivered to the driver", || {
-        for &tid in &ours {
-            // SAFETY: tgkill with this process's id; a thread that has
-            // gone meanwhile only makes it fail with ESRCH.
-            let _ = unsafe { libc::syscall(libc::SYS_tgkill, libc::getpid(), tid, libc::SIGUSR1) };
-        }
+        // SAFETY: the thread is joinable (not joined) while `h` lives, so
+        // its id is valid.
+        let _ = unsafe { libc::pthread_kill(thread, libc::SIGUSR1) };
         signal::DELIVERED.load(Ordering::SeqCst) >= delivered + 5
     });
     round_trip(&h, &mut peer, &mut rest);

@@ -420,7 +420,8 @@ impl RtspClient {
     ///
     /// # Errors
     ///
-    /// Returns [`RtspError::Io`] if the client's thread has ended.
+    /// Returns [`RtspError::Io`] if the client's thread has ended or its
+    /// command queue is full.
     #[doc(hidden)]
     pub fn spawn_keepalive_if_needed(
         &mut self,

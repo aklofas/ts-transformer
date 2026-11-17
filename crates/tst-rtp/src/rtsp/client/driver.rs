@@ -132,6 +132,13 @@ impl DriverHandle {
         }
     }
 
+    /// The thread's pthread id, for a test that signals it.
+    #[cfg(all(test, unix))]
+    pub(crate) fn pthread(&self) -> Option<std::os::unix::thread::RawPthread> {
+        use std::os::unix::thread::JoinHandleExt;
+        self.thread.as_ref().map(|t| t.as_pthread_t())
+    }
+
     fn wake(&self) {
         if let Err(e) = self.waker.wake() {
             tracing::warn!(target: "tst_rtp::client::driver", error = %e, "waking the client thread failed");

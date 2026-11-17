@@ -149,9 +149,10 @@ platform = "macos-arm64"
 capability = "per_thread_lookup"
 class = "portability"
 note = """
-The pump-thread test finds the pump by its name under `/proc/self/task` and
-signals it with `tgkill`, both Linux-only; macOS has no per-thread lookup. The
-unit test on the pump's read classification covers macOS.
+The interleaved test finds the client's I/O thread by its name under
+`/proc/self/task` and signals it with `tgkill`, both Linux-only; macOS has no
+per-thread lookup by name. The driver's unit test, which signals that thread
+through its join handle with `pthread_kill`, runs on macOS.
 """
 
 [[platform_skip]]
