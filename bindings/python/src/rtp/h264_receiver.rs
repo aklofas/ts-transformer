@@ -26,9 +26,10 @@
 //! another (a `&mut self` receive made PyO3 raise `RuntimeError: Already
 //! borrowed` there). Methods raise `RtpError(CLOSED)` once the slot is
 //! empty. `close()` is cancel-first, so any parked `recv_au` unparks
-//! promptly and raises `RtpError(CLOSED)`; the end reason is snapshotted by
-//! `H264Held::close`, the one moment it can be read before the receiver
-//! drops.
+//! promptly: it returns the access unit the cancel flushes, if the open one
+//! completes cleanly, and otherwise raises `RtpError(CLOSED)`; the end
+//! reason is snapshotted by `H264Held::close`, the one moment it can be
+//! read before the receiver drops.
 //!
 //! # Error mapping
 //!
@@ -591,7 +592,9 @@ impl PyH264Receiver {
 
     /// Close the receiver. Idempotent. Fires the cancel handle BEFORE
     /// taking the slot so a thread parked in `recv_au` unparks at the
-    /// next cancel-poll tick (~100 ms) and raises `RtpError(CLOSED)`; then
+    /// next cancel-poll tick (~100 ms) and returns the access unit the
+    /// cancel flushes, if the open one completes cleanly, or else raises
+    /// `RtpError(CLOSED)`; then
     /// calls the inner `H264Receiver`'s own idempotent `close()` (records
     /// `EndReason::Cancelled` unless some earlier signal already claimed
     /// the slot), snapshots its `end_reason()` into `closed_end_reason`,

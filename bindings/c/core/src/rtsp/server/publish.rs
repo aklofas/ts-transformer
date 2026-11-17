@@ -294,7 +294,8 @@ pub unsafe extern "C" fn tst_rtsp_server_next_publisher(
 /// `TST_E_END_OF_STREAM` once it has drained what was already queued. Its
 /// `tst_rtsp_publish_mount_t` handles stay valid for the getters and
 /// [`tst_rtsp_publish_mount_free`]. A unicast or multicast mount's handle
-/// keeps accepting pushes, which reach nobody.
+/// keeps accepting pushes, which reach nobody, until the server ends; then
+/// they return `TST_E_CLOSED`.
 ///
 /// This is how an application removes idle on-demand mounts; freeing a
 /// handle does not.

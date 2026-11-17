@@ -243,7 +243,8 @@ public final class RtspServer extends NativeHandle {
      * mount's publisher is sent the RTSP Notice 5402 and disconnected, and its
      * {@link org.tstrans.shells.DemuxReceiver} reads end of stream ({@code recvEvent()} returns {@code
      * null}); the {@link PublishMount} stays usable for {@code stats()}. A local
-     * mount's {@link MountHandle} keeps accepting pushes that reach nobody. This is
+     * mount's {@link MountHandle} keeps accepting pushes that reach nobody until the
+     * server ends; then they throw {@code RtspException(CLOSED)}. This is
      * also how idle on-demand mounts are removed: they stay registered after their
      * publisher leaves. Blocks for the Notice writes (at most 1 s per session), and
      * other calls on this server object wait behind it meanwhile, as they do behind

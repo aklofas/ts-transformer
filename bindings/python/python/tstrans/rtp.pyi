@@ -353,8 +353,9 @@ class RtspSession:
     are guarded — calling the wrong method on a fresh session raises
     `RtspError(PROTOCOL)` and leaves the data plane in place.
 
-    A session collected without `teardown()` sends a best-effort TEARDOWN
-    (500 ms bound) and joins its threads with the GIL released.
+    A session collected without `teardown()` writes a best-effort TEARDOWN
+    (500 ms bounds the wait for the control stream and the write; the reply
+    is not awaited) and joins its threads with the GIL released.
     """
 
     def pause(self) -> None: ...
@@ -442,7 +443,10 @@ class MountHandle:
 
     All `push_*` methods release the GIL via `py.allow_threads()` so
     concurrent Python threads can run while the muxer/fanout work
-    proceeds. `pts` is keyword-only.
+    proceeds. `pts` is keyword-only. A push raises `RtspError(MOUNT)` when
+    the muxer refuses the frame, and `RtspError(CLOSED)` once the server has
+    ended (`stop()`, a `cancel()` on its `cancel_handle()`, or the server
+    being collected), whether or not the mount was removed first.
     """
 
     # Identity / introspection.
