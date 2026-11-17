@@ -58,6 +58,7 @@ mod userinfo {
 
     use crate::fixtures::raw_rtsp::try_header;
     use crate::fixtures::raw_rtsp_server::{SDP_BODY, cseq_of, method_of};
+    use crate::fixtures::wait_for;
 
     #[derive(Clone, Copy, Debug)]
     enum Challenge {
@@ -99,7 +100,17 @@ mod userinfo {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
         let peer = std::thread::spawn(move || {
-            let (mut sock, _) = listener.accept().unwrap();
+            // A client that fails before connecting fails the row here
+            // instead of hanging it.
+            listener.set_nonblocking(true).unwrap();
+            let mut sock = wait_for(scaled(Duration::from_secs(10)), || {
+                match listener.accept() {
+                    Ok((sock, _)) => Some(sock),
+                    Err(e) if e.kind() == ErrorKind::WouldBlock => None,
+                    Err(e) => panic!("peer accept: {e}"),
+                }
+            });
+            sock.set_nonblocking(false).unwrap();
             sock.set_read_timeout(Some(scaled(Duration::from_secs(10))))
                 .unwrap();
             let mut buf = Vec::new();
@@ -129,7 +140,7 @@ mod userinfo {
 
     /// DESCRIBE `rtsp://<userinfo>127.0.0.1:<port>/live` against a peer
     /// challenging with `challenge`, through the builder when `auth` is
-    /// set. Returns the call's result and the DESCRIBE requests sent.
+    /// set. Returns the call's result and every request the peer read.
     fn describe(
         challenge: Challenge,
         userinfo: &str,
@@ -147,13 +158,14 @@ mod userinfo {
             };
             client.describe().map(drop)
         })();
-        let describes = peer
-            .join()
-            .unwrap()
-            .into_iter()
+        (result, peer.join().unwrap())
+    }
+
+    fn describes_of(requests: &[String]) -> Vec<&String> {
+        requests
+            .iter()
             .filter(|r| method_of(r) == "DESCRIBE")
-            .collect();
-        (result, describes)
+            .collect()
     }
 
     fn md5_hex(s: &str) -> String {
@@ -185,15 +197,16 @@ mod userinfo {
         user: &str,
         password: &str,
     ) {
-        let (result, describes) = describe(challenge, userinfo, auth);
+        let (result, requests) = describe(challenge, userinfo, auth);
+        let describes = describes_of(&requests);
         result.unwrap_or_else(|e| panic!("{challenge:?} {userinfo:?}: {e:?}"));
         assert_eq!(
             describes.len(),
             2,
             "one DESCRIBE and its retry: {describes:?}"
         );
-        assert_eq!(try_header(&describes[0], "authorization"), None);
-        let authorization = try_header(&describes[1], "authorization")
+        assert_eq!(try_header(describes[0], "authorization"), None);
+        let authorization = try_header(describes[1], "authorization")
             .unwrap_or_else(|| panic!("the retry has no Authorization: {}", describes[1]));
         match challenge {
             Challenge::Basic => {
@@ -219,13 +232,15 @@ mod userinfo {
 
     /// No request carries `Authorization` and the call ends in `AuthFailed`.
     fn never_answers(challenge: Challenge, userinfo: &str) {
-        let (result, describes) = describe(challenge, userinfo, None);
+        let (result, requests) = describe(challenge, userinfo, None);
         assert!(
             matches!(result, Err(RtspError::AuthFailed)),
             "{challenge:?} {userinfo:?}: {result:?}"
         );
-        assert_eq!(describes.len(), 1, "no retry: {describes:?}");
-        assert_eq!(try_header(&describes[0], "authorization"), None);
+        assert_eq!(describes_of(&requests).len(), 1, "no retry: {requests:?}");
+        for request in &requests {
+            assert_eq!(try_header(request, "authorization"), None, "{request}");
+        }
     }
 
     #[test]
