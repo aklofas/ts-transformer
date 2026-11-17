@@ -57,6 +57,7 @@ mod userinfo {
     use tst_test_helpers::timing::scaled;
 
     use crate::fixtures::raw_rtsp::try_header;
+    use crate::fixtures::raw_rtsp_server::digest_param as param;
     use crate::fixtures::raw_rtsp_server::{SDP_BODY, cseq_of, method_of};
     use crate::fixtures::wait_for;
 
@@ -173,20 +174,6 @@ mod userinfo {
             .iter()
             .map(|b| format!("{b:02x}"))
             .collect()
-    }
-
-    /// The value of `key` in a Digest `Authorization`, quotes removed.
-    fn param<'a>(authorization: &'a str, key: &str) -> &'a str {
-        let at = authorization
-            .find(&format!(" {key}="))
-            .unwrap_or_else(|| panic!("no {key} in {authorization}"))
-            + key.len()
-            + 2;
-        authorization[at..]
-            .split(',')
-            .next()
-            .unwrap()
-            .trim_matches('"')
     }
 
     /// The retry answers the challenge with `user` and `password`.
