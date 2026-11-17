@@ -6,7 +6,7 @@
 //! the raw `RtpRecvTransport::recv_timeout` shape after a wire reset;
 //! this file checks the SAME two scenarios (clean TEARDOWN vs. abortive
 //! RST) one layer up, through `DemuxReceiver::recv_event`, which is what
-//! the `MPSC_PUMP_DISCONNECTED` remap in `transport.rs`'s
+//! the `MEDIA_QUEUE_CLOSED` remap in `transport.rs`'s
 //! `recv_bytes_inner` is actually for — a demux consumer must be able to
 //! tell "the peer politely hung up" apart from "the wire broke" without
 //! reaching for `end_reason()`.

@@ -242,7 +242,7 @@ fn setup_h264_auto_mode2_rejected_before_setup() {
 /// Before the fix, `into_h264_receiver` dropped `rtcp_rx`, so the pump's
 /// `rtcp_tx.try_send()` returned `TrySendError::Disconnected` at the first
 /// RTCP frame. The pump exited, dropping `data_tx`, which caused
-/// `H264Receiver::recv_au` to surface the MPSC_PUMP_DISCONNECTED sentinel —
+/// `H264Receiver::recv_au` to surface the MEDIA_QUEUE_CLOSED sentinel —
 /// a false clean-EOS before any AU was received.
 ///
 /// This test interleaves RTCP SR frames (channel 1) between RTP data
