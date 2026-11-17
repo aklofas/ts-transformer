@@ -314,7 +314,17 @@ impl ClientEngine {
             return;
         }
         let Some(cseq) = resp.cseq() else {
-            self.counters.unmatched_replies += 1;
+            // A reply with no `CSeq` at all answers the waiting request, as
+            // RTSP is not pipelined; one whose `CSeq` does not parse does not.
+            match self.caller.take() {
+                Some(txn) if !resp.headers.contains_key("cseq") => {
+                    self.handle_caller_reply(txn, resp, now);
+                }
+                other => {
+                    self.caller = other;
+                    self.counters.unmatched_replies += 1;
+                }
+            }
             return;
         };
         if let Some(i) = self.pings.iter().position(|&c| c == cseq) {
@@ -443,8 +453,10 @@ impl ClientEngine {
                 match rtsp_frame_decision(rest) {
                     RtspFraming::NeedMore => break,
                     RtspFraming::Complete { total_len } => {
-                        let parsed = RtspResponse::parse(rest.get(..total_len).unwrap_or_default());
-                        self.route_message(parsed.map(|(resp, _)| resp), now);
+                        let msg = rest.get(..total_len).unwrap_or_default();
+                        let response_like = msg.starts_with(b"RTSP/");
+                        let parsed = RtspResponse::parse(msg).map(|(resp, _)| resp);
+                        self.route_message(parsed, response_like, now);
                         total_len
                     }
                     RtspFraming::NonUtf8Headers { skip } => {
@@ -565,13 +577,28 @@ impl ClientEngine {
         }
     }
 
-    /// One complete RTSP message. A message that is not a response (a
-    /// server request, a bad status line) answers nothing.
-    fn route_message(&mut self, parsed: Result<RtspResponse, RtspError>, now: Instant) {
-        let Ok(resp) = parsed else {
-            self.counters.rtsp_messages += 1;
-            self.counters.unmatched_replies += 1;
-            return;
+    /// One complete RTSP message. A response that does not parse fails the
+    /// waiting request with the parse error; a message that is not a
+    /// response (a server request) answers nothing.
+    fn route_message(
+        &mut self,
+        parsed: Result<RtspResponse, RtspError>,
+        response_like: bool,
+        now: Instant,
+    ) {
+        let resp = match parsed {
+            Ok(resp) => resp,
+            Err(e) => {
+                self.counters.rtsp_messages += 1;
+                match self.caller.take() {
+                    Some(t) if response_like => self.reply(t.id, Err(e)),
+                    other => {
+                        self.caller = other;
+                        self.counters.unmatched_replies += 1;
+                    }
+                }
+                return;
+            }
         };
         if !resp.cseq().is_some_and(|c| self.pings.contains(&c)) {
             self.counters.rtsp_messages += 1;
@@ -1666,17 +1693,16 @@ mod tests {
         let a = e.submit(spec(RtspMethod::Options, URI), None, t0).unwrap();
         one(&mut e);
         e.handle_reply(resp(b"RTSP/1.0 200 OK\r\nCSeq: 7\r\n\r\n"), t0);
-        e.handle_reply(resp(b"RTSP/1.0 200 OK\r\n\r\n"), t0);
         e.handle_reply(resp(b"RTSP/1.0 200 OK\r\nCSeq: 1000001\r\n\r\n"), t0);
         assert!(events(&mut e).is_empty());
-        assert_eq!(e.counters().unmatched_replies, 3);
+        assert_eq!(e.counters().unmatched_replies, 2);
         assert_eq!(e.counters().keepalive_responses, 0);
         e.handle_reply(resp(b"RTSP/1.0 200 OK\r\nCSeq: 1\r\n\r\n"), t0);
         assert_eq!(reply(&mut e, a).unwrap().status, 200);
         // A second reply to the answered transaction is unmatched too.
         e.handle_reply(resp(b"RTSP/1.0 200 OK\r\nCSeq: 1\r\n\r\n"), t0);
         assert!(events(&mut e).is_empty());
-        assert_eq!(e.counters().unmatched_replies, 4);
+        assert_eq!(e.counters().unmatched_replies, 3);
     }
 
     // --- the end of the stream ---
@@ -2619,16 +2645,99 @@ mod tests {
     }
 
     #[test]
-    fn a_complete_message_that_is_not_a_response_is_counted_unmatched() {
+    fn a_server_request_never_fails_a_pending_request() {
         let t0 = Instant::now();
         let mut e = interleaved();
         let a = e.submit(spec(RtspMethod::Options, URI), None, t0).unwrap();
-        e.handle_input(b"OPTIONS * RTSP/1.0\r\nCSeq: 1\r\n\r\n", t0);
+        let mut raw =
+            b"ANNOUNCE rtsp://cam.example/live RTSP/1.0\r\nCSeq: 1\r\nContent-Length: 3\r\n\r\nv=0"
+                .to_vec();
+        raw.extend_from_slice(b"OPTIONS * RTSP/1.0\r\n\r\n");
+        raw.extend_from_slice(b"GET_PARAMETER rtsp://cam.example/live RTSP/1.0\r\nCSeq: x\r\n\r\n");
+        e.handle_input(&raw, t0);
         assert!(events(&mut e).is_empty());
-        assert_eq!(e.counters().unmatched_replies, 1);
-        assert_eq!(e.counters().rtsp_messages, 1);
+        assert_eq!(e.counters().unmatched_replies, 3);
+        assert_eq!(e.counters().rtsp_messages, 3);
+        assert!(e.inbuf.is_empty());
         e.handle_input(b"RTSP/1.0 200 OK\r\nCSeq: 1\r\n\r\n", t0);
         assert_eq!(reply(&mut e, a).unwrap().status, 200);
+    }
+
+    #[test]
+    fn a_response_without_a_cseq_goes_to_the_pending_request() {
+        let t0 = Instant::now();
+        let mut e = ClientEngine::new(cfg(Some(("user", "pw"))));
+        e.set_interleaved(CHANNELS);
+        let a = e.submit(spec(RtspMethod::Options, URI), None, t0).unwrap();
+        one(&mut e);
+        // The 401 retry runs for a reply without a CSeq too.
+        e.handle_input(
+            b"RTSP/1.0 401 Unauthorized\r\nWWW-Authenticate: Basic realm=\"cam\"\r\n\r\n",
+            t0,
+        );
+        assert!(events(&mut e).is_empty());
+        let retry = one(&mut e);
+        assert!(authz(&retry).is_some());
+        e.handle_input(b"RTSP/1.0 200 OK\r\nPublic: OPTIONS, DESCRIBE\r\n\r\n", t0);
+        let ok = reply(&mut e, a).unwrap();
+        assert!(ok.headers["public"].contains("DESCRIBE"));
+        assert_eq!(e.counters().unmatched_replies, 0);
+        assert_eq!(e.counters().rtsp_messages, 2);
+    }
+
+    #[test]
+    fn a_response_without_a_cseq_and_nothing_pending_is_counted() {
+        let t0 = Instant::now();
+        let mut e = interleaved();
+        e.handle_input(b"RTSP/1.0 200 OK\r\n\r\n", t0);
+        assert!(events(&mut e).is_empty());
+        assert_eq!(e.counters().unmatched_replies, 1);
+        // A CSeq that is present but matches nothing stays unmatched, and
+        // the waiting request keeps waiting.
+        let a = e.submit(spec(RtspMethod::Options, URI), None, t0).unwrap();
+        e.handle_input(b"RTSP/1.0 200 OK\r\nCSeq: 7\r\n\r\n", t0);
+        e.handle_input(b"RTSP/1.0 200 OK\r\nCSeq: x\r\n\r\n", t0);
+        assert!(events(&mut e).is_empty());
+        assert_eq!(e.counters().unmatched_replies, 3);
+        e.handle_input(b"RTSP/1.0 200 OK\r\nCSeq: 1\r\n\r\n", t0);
+        assert_eq!(reply(&mut e, a).unwrap().status, 200);
+        // Once answered, a reply without a CSeq is unmatched again.
+        e.handle_input(b"RTSP/1.0 200 OK\r\n\r\n", t0);
+        assert!(events(&mut e).is_empty());
+        assert_eq!(e.counters().unmatched_replies, 4);
+    }
+
+    #[test]
+    fn an_unparseable_response_fails_the_pending_request_with_the_parse_error() {
+        let t0 = Instant::now();
+        let mut e = interleaved();
+        let bad = b"RTSP/1.0 abc OK\r\nCSeq: 1\r\n\r\n";
+        let a = e.submit(spec(RtspMethod::Options, URI), None, t0).unwrap();
+        let mut raw = bad.to_vec();
+        raw.extend(interleaved_frame(0, &valid_rtp_header()));
+        e.handle_input(&raw, t0);
+        let ev = events(&mut e);
+        match ev.as_slice() {
+            [
+                Event::Reply {
+                    txn,
+                    result:
+                        Err(RtspError::BadResponse {
+                            detail: "non-numeric status code",
+                        }),
+                },
+                Event::Media(_),
+            ] => assert_eq!(*txn, a),
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(e.counters().unmatched_replies, 0);
+        // With nothing waiting it is counted, and the stream goes on.
+        e.handle_input(bad, t0);
+        assert!(events(&mut e).is_empty());
+        assert_eq!(e.counters().unmatched_replies, 1);
+        let b = e.submit(spec(RtspMethod::Options, URI), None, t0).unwrap();
+        e.handle_input(b"RTSP/1.0 200 OK\r\nCSeq: 2\r\n\r\n", t0);
+        assert_eq!(reply(&mut e, b).unwrap().status, 200);
     }
 
     /// Answers a SETUP through the input path.
