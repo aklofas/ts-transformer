@@ -790,6 +790,26 @@ fn a_ping_454_is_session_expired() {
     );
 }
 
+/// A `454` to a ping stops the pings: the session is gone, so later due
+/// times queue nothing and end nothing a second time.
+#[test]
+fn a_ping_454_stops_the_pings() {
+    let (mut e, t0, c) = pinged(None);
+    e.handle_reply(
+        resp(format!("RTSP/1.0 454 Session Not Found\r\nCSeq: {c}\r\n\r\n").as_bytes()),
+        ms(t0, 1010),
+    );
+    assert_eq!(events(&mut e).len(), 2);
+    for n in 2..=5 {
+        e.handle_timeout(ms(t0, 1000 * n), false);
+        assert!(
+            e.poll_transmit().is_none(),
+            "no ping after a 454 (at {n} s)"
+        );
+        assert!(events(&mut e).is_empty(), "no second end (at {n} s)");
+    }
+}
+
 #[test]
 fn only_the_latest_unanswered_pings_are_remembered() {
     let t0 = Instant::now();

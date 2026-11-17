@@ -68,7 +68,10 @@ pub(crate) enum Command {
 
 /// A caller request's progress. `Written` comes at most once and never
 /// after `Done`; `Done` comes exactly once unless the request is replaced
-/// by a later one (then the channel closes without it). `Done` can come
+/// by a later one or the client's thread ends first (a stop, or a request
+/// still queued when it ends): the channel then closes without it, and the
+/// waiting call returns `RtspError::Io(UnexpectedEof)`, or
+/// `RtspError::LocalCancel` when the cancel is set. `Done` can come
 /// with no `Written` before it: an early reply, on TLS a request handed to
 /// rustls together with a ping, or a failure before the write. A caller
 /// waiting for `Written` must treat `Done` as the end of that wait.

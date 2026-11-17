@@ -4,6 +4,7 @@ use crate::error::RtspError;
 use crate::rtsp::client::RtspClient;
 use crate::rtsp::client::engine::{RequestSpec, teardown_accepted};
 use crate::rtsp::message::RtspMethod;
+use tst_core::transport::EndReason;
 
 impl RtspClient {
     /// Send TEARDOWN. After this returns, no further methods succeed.
@@ -95,6 +96,11 @@ impl RtspClient {
             Some(s) => s.clone(),
             None => return Ok(()), // nothing to tear down
         };
+        // On a cancelled client the reply is not awaited, so the reason
+        // goes first: an accepted reply read later cannot replace it.
+        if self.cancel.is_cancelled() {
+            crate::transport::record_end(&self.end_reason, EndReason::Cancelled);
+        }
         let spec = RequestSpec {
             method: RtspMethod::Teardown,
             uri: self.url.render_no_credentials(),

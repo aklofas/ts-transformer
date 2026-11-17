@@ -98,8 +98,8 @@ fn keepalive_454_records_session_expired() {
         )
         .unwrap();
 
-        // Answer every keepalive ping (the pinger keeps going at its
-        // configured interval regardless of 454s) with 454, until the
+        // Answer every keepalive ping with 454 (the first 454 stops the
+        // pings, but more than one can be in flight by then), until the
         // test's TEARDOWN arrives. A ping and the test's own TEARDOWN can
         // land in the SAME read() back-to-back — `leftover` (reused
         // across every call in this connection, not reset per
@@ -436,8 +436,9 @@ fn interleaved_rtp_frame(rtp_pkt: &[u8]) -> Vec<u8> {
 /// Dropping the owning client ends its thread with `Cancelled` recorded;
 /// the transport reports that as the cancel, not as a broken wire. The
 /// peer keeps the connection open, so nothing but the drop can end the
-/// media queue. The transport is then ended like after `close()`: a
-/// second read answers `Closed` and it is no longer alive. The persistent
+/// media queue. The transport keeps answering the cancel, as after its
+/// own cancel: a second read is the cancel again and it is no longer
+/// alive. The persistent
 /// deadline is a safety net only: a regression fails with `Backpressure`
 /// instead of hanging.
 #[test]
@@ -467,8 +468,8 @@ fn dropping_the_client_ends_an_interleaved_recv_transport_as_a_cancel() {
     );
     let second = transport.recv_bytes(&mut buf);
     assert!(
-        matches!(second, Err(TransportError::Closed)),
-        "a second read after the cancel must answer Closed, got {second:?}"
+        matches!(second, Err(TransportError::ExplicitClose)),
+        "a second read after the cancel must answer the cancel again, got {second:?}"
     );
     assert!(
         !transport.is_alive(),
@@ -952,5 +953,32 @@ fn close_on_a_cancelled_client_ends_the_receiver_as_a_cancel_even_when_the_serve
             Some(EndReason::Cancelled),
             "run {run}"
         );
+    }
+}
+
+/// `teardown()` on a client whose cancel is set is a cancel too, even when
+/// the server answers its TEARDOWN at once and the client stays alive:
+/// the TEARDOWN records the cancel before it is written, so the accepted
+/// reply cannot replace it. A thousand fresh sessions against the loopback
+/// server, the shape of the `close()` test above.
+#[test]
+fn teardown_on_a_cancelled_client_ends_the_receiver_as_a_cancel_even_when_the_server_answers() {
+    let h = FixtureHandle::spawn(FixtureConfig::default());
+    for run in 0..1000 {
+        let (mut client, mut transport) = interleaved_session(h.port);
+        client.cancel_handle().cancel();
+        let _ = client.teardown();
+        let mut buf = vec![0u8; transport.max_payload()];
+        let result = transport.recv_bytes(&mut buf);
+        assert!(
+            matches!(result, Err(TransportError::ExplicitClose)),
+            "run {run}: teardown on a cancelled client must end the transport as a cancel, got {result:?}"
+        );
+        assert_eq!(
+            transport.end_reason(),
+            Some(EndReason::Cancelled),
+            "run {run}"
+        );
+        drop(client);
     }
 }
