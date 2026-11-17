@@ -6,6 +6,7 @@ use crate::config::UdpConfig;
 use crate::error::UdpError;
 use crate::recv::UdpRecvTransport;
 use crate::transport::UdpTransport;
+use tst_core::transport::SourcePin;
 use tst_core::url::UrlError;
 
 use crate::url::UdpUrl;
@@ -101,6 +102,17 @@ impl UdpRecvTransportBuilder {
 
     pub fn rcvbuf(&mut self, n: usize) -> &mut Self {
         self.config.rcvbuf = Some(n);
+        self
+    }
+
+    /// Take datagrams from one sender IP, or from the first one that
+    /// delivers. The source address is unverified, the port is not
+    /// compared, and `SourcePin::First` is taken by the first datagram with
+    /// a payload from anyone; see [`UdpConfig::source`] for the details.
+    /// A pin that can never match (an IPv6 address on an IPv4 bind) is
+    /// refused by `build`.
+    pub fn source(&mut self, pin: SourcePin) -> &mut Self {
+        self.config.source = Some(pin);
         self
     }
 

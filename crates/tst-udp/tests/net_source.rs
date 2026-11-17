@@ -14,7 +14,10 @@ use std::time::{Duration, Instant};
 use tst_core::transport::SourcePin;
 use tst_core::transport::{RecvTransport, TransportError};
 use tst_core::url::UrlError;
-use tst_udp::{UdpConfig, UdpError, UdpRecvTransport, UdpTransport, UdpTransportBuilder, UdpUrl};
+use tst_udp::{
+    UdpConfig, UdpError, UdpRecvTransport, UdpRecvTransportBuilder, UdpTransport,
+    UdpTransportBuilder, UdpUrl,
+};
 
 /// Longest any wait in these tests lasts before the test fails.
 const BOUND: Duration = Duration::from_secs(20);
@@ -484,4 +487,34 @@ fn source_handle_answers_while_a_receive_is_parked() {
     // not race anything.
     assert_eq!(handle.peer_addr(), Some(rig.a_addr()));
     join.join().unwrap();
+}
+
+#[test]
+fn the_builders_source_pin_drops_and_counts_the_second_sender() {
+    let Some(rig) = Rig::new() else { return };
+    let mut t = UdpRecvTransportBuilder::from_url(&format!("udp://@{}:0", rig.bind))
+        .unwrap()
+        .source(SourcePin::First)
+        .build()
+        .expect("bind");
+    let _wd = Watchdog::arm(t.cancel_handle());
+    let to = t.local_addr();
+    rig.send_a(to, b"A1");
+    assert_eq!(recv_one(&mut t), b"A1");
+    rig.send_b(to, b"B1");
+    rig.send_a(to, b"A2");
+    assert_eq!(recv_one(&mut t), b"A2");
+    assert_eq!(t.stats().source_rejected, 1);
+}
+
+#[test]
+fn the_builders_unreachable_pin_is_refused_at_build() {
+    let v6 = SourcePin::parse("::1").unwrap();
+    let err = UdpRecvTransportBuilder::from_url("udp://@127.0.0.1:0")
+        .unwrap()
+        .source(v6)
+        .build()
+        .err()
+        .expect("refused");
+    assert!(err.to_string().contains("source"), "{err}");
 }
