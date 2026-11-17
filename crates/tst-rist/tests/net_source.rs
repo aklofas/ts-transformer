@@ -122,7 +122,8 @@ impl Drop for Tx {
 }
 
 /// A two-way UDP relay: a sender talks to `front_port` on 127.0.0.1; the
-/// receiver sees its datagrams come from 127.0.0.2.
+/// receiver sees its datagrams come from the outward socket's address,
+/// 127.0.0.2 or, where that cannot be bound, `::1` (`Relay::second`).
 struct Relay {
     front_port: u16,
     /// The address the receiver sees the relayed sender at.
