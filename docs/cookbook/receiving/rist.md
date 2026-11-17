@@ -84,11 +84,12 @@ who is sending. The address is the source address of the sender's UDP
 datagrams, and nothing proves the sender can receive there: it can be
 forged, the Simple profile has no handshake at all, and a pre-shared key
 does not prove it either (a recording replayed one way from another
-address was accepted and delivered, with a key). Without a key, a sender
-that claims the pinned address gets through. `source=first` latches the IP
-of the first delivered block and holds it until the receiver is closed,
-with no release; with a pre-shared key only a sender whose data decrypts
-can take it. Use the address for logging and per-address rules, not as an
+address was accepted and delivered, with a key). A sender that claims the
+pinned address gets through; with a key, data replayed from a forged
+address does too. `source=first` latches the IP of the first delivered
+block and holds it until the receiver is closed, with no release. Without a
+key that is the first block delivered, whoever sent it; with a pre-shared
+key only a sender whose data decrypts can take it. Use the address for logging and per-address rules, not as an
 identity.
 
 ```rust
