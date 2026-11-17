@@ -27,6 +27,10 @@ tst_core::binding_record! {
         /// Receive-side I/O errors (receiver only); a would-block or a timeout is
         /// not an error.
         pub recv_errors: u64,
+        /// Datagrams dropped because their source IP did not match the `source`
+        /// pin (receiver only); 0 without a pin. A dropped datagram is in no
+        /// received counter.
+        pub source_rejected: u64,
     }
 }
 
@@ -63,6 +67,7 @@ mod tests {
             bytes_received: 1316 * 5,
             send_errors: 1,
             recv_errors: 2,
+            source_rejected: 0,
         };
         let s = u.to_socket_stats();
         assert_eq!(s.packets_sent, 10);

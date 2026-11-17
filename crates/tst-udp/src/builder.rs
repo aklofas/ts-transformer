@@ -27,6 +27,9 @@ impl UdpTransportBuilder {
                 "URL has '@' prefix → use UdpRecvTransportBuilder instead".into(),
             ));
         }
+        if url.config.source.is_some() {
+            return Err(crate::url::send_source_rejection());
+        }
         let config = url.config.clone();
         Ok(Self { url, config })
     }
