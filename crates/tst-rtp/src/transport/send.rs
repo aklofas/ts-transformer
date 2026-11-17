@@ -138,17 +138,22 @@ impl RtpTransport {
     }
 }
 
-/// The error for a hard `send` failure: the cancel when one is latched, else a
-/// `Broken` carrying the OS error.
-fn fatal_send_error(e: &std::io::Error, cancelled: bool) -> TransportError {
+/// The error for a hard `send` failure and whether the socket is dropped: the
+/// cancel when one is latched, keeping the socket so the next call reports the
+/// cancel too and `socket_stats()` keeps answering; else a `Broken` carrying
+/// the OS error, dropping the socket.
+fn fatal_send_error(e: &std::io::Error, cancelled: bool) -> (TransportError, bool) {
     if cancelled {
-        return TransportError::ExplicitClose;
+        return (TransportError::ExplicitClose, false);
     }
-    TransportError::Broken {
-        msg: format!("UDP send failed: {e}"),
-        errno_code: e.raw_os_error(),
-        cause: BrokenCause::Unspecified,
-    }
+    (
+        TransportError::Broken {
+            msg: format!("UDP send failed: {e}"),
+            errno_code: e.raw_os_error(),
+            cause: BrokenCause::Unspecified,
+        },
+        true,
+    )
 }
 
 impl Transport for RtpTransport {
@@ -181,10 +186,8 @@ impl Transport for RtpTransport {
                 // Timeout or EINTR — re-check cancel and retry.
                 Err(e) if classify_send_error(&e) == SendClass::Transient => continue,
                 Err(e) => {
-                    let err = fatal_send_error(&e, self.cancel.is_cancelled());
-                    // Under a cancel the socket stays: the next call reports
-                    // the cancel too, and `socket_stats()` keeps answering.
-                    if matches!(err, TransportError::Broken { .. }) {
+                    let (err, drop_socket) = fatal_send_error(&e, self.cancel.is_cancelled());
+                    if drop_socket {
                         self.socket = None;
                     }
                     return Err(err);
@@ -235,18 +238,26 @@ mod tests {
     use super::*;
 
     #[test]
-    fn fatal_send_error_prefers_the_cancel() {
+    fn fatal_send_error_prefers_the_cancel_and_keeps_the_socket_for_it() {
         let e = std::io::Error::from_raw_os_error(9);
-        assert!(matches!(
-            fatal_send_error(&e, true),
-            TransportError::ExplicitClose
-        ));
-        assert!(matches!(
-            fatal_send_error(&e, false),
-            TransportError::Broken {
-                errno_code: Some(9),
-                ..
-            }
-        ));
+        let cancelled = fatal_send_error(&e, true);
+        assert!(
+            matches!(cancelled, (TransportError::ExplicitClose, false)),
+            "a failure reported as the cancel keeps the socket: {cancelled:?}"
+        );
+        let broken = fatal_send_error(&e, false);
+        assert!(
+            matches!(
+                broken,
+                (
+                    TransportError::Broken {
+                        errno_code: Some(9),
+                        ..
+                    },
+                    true
+                )
+            ),
+            "a hard failure drops the socket: {broken:?}"
+        );
     }
 }
