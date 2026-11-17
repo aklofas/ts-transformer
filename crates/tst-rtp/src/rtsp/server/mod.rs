@@ -144,8 +144,10 @@ pub(crate) struct ServerState {
 
 /// The server's end signal, held by every local mount so a push can tell
 /// the server ended without a reference to it: the handle outlives the
-/// server.
-#[derive(Clone, Default)]
+/// server. Built only by [`ServerState::ended`]; the test-only `Default`
+/// is a signal no server fires.
+#[derive(Clone)]
+#[cfg_attr(test, derive(Default))]
 pub(crate) struct ServerEnded {
     shutdown: Arc<AtomicBool>,
     hard_cancel: RtspServerCancelHandle,
