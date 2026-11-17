@@ -682,10 +682,10 @@ fn an_accepted_teardown_ends_the_receiver_while_the_peer_keeps_the_connection_op
 }
 
 /// Dropping the client is a cancel even when the server answers the drop's
-/// own TEARDOWN at once: `Drop` sets the cancel before it writes the
-/// TEARDOWN, and an accepted TEARDOWN on a cancelled client records the
-/// cancel. Three hundred fresh sessions against the loopback server, which
-/// answers TEARDOWN as soon as it reads it.
+/// own TEARDOWN at once: `Drop` records `Cancelled` before it writes the
+/// TEARDOWN, and the first recorded reason wins, so the server's `200`
+/// cannot replace it. Three hundred fresh sessions against the loopback
+/// server, which answers TEARDOWN as soon as it reads it.
 #[test]
 fn dropping_the_client_is_a_cancel_even_when_the_server_answers_its_teardown() {
     let h = FixtureHandle::spawn(FixtureConfig::default());
@@ -981,4 +981,110 @@ fn teardown_on_a_cancelled_client_ends_the_receiver_as_a_cancel_even_when_the_se
         );
         drop(client);
     }
+}
+
+/// One MP2T RTP packet: a single null-PID TS packet, PT 33.
+fn mp2t_rtp_packet(seq: u16) -> Vec<u8> {
+    let mut ts = vec![0xFFu8; 188];
+    ts[..4].copy_from_slice(&[0x47, 0x1F, 0xFF, 0x10]);
+    build_rtp_packet(seq, 90_000, 0x1234_5678, 33, false, &ts)
+}
+
+/// The client's cancel stops requests and pings, not media: an RTP frame
+/// the peer sends on an interleaved session after the cancel is set still
+/// reaches the receiver. The peer writes it only once the test has set the
+/// cancel.
+#[test]
+fn media_is_still_delivered_after_the_clients_cancel() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let (go_tx, go_rx) = mpsc::channel::<()>();
+    let peer = std::thread::spawn(move || {
+        let (mut sock, _): (TcpStream, _) = listener.accept().unwrap();
+        let mut leftover = Vec::new();
+        answer_describe_and_setup(
+            &mut sock,
+            &mut leftover,
+            "RTP/AVP/TCP;unicast;interleaved=0-1",
+        );
+        go_rx.recv().unwrap();
+        sock.write_all(&interleaved_rtp_frame(&mp2t_rtp_packet(1)))
+            .unwrap();
+        // Hold the connection until the client hangs up.
+        let _ = sock.read_to_end(&mut Vec::new());
+    });
+
+    let (client, mut transport) = interleaved_session(port);
+    client.cancel_handle().cancel();
+    go_tx.send(()).unwrap();
+
+    let mut buf = vec![0u8; transport.max_payload()];
+    let result = transport.recv_bytes(&mut buf);
+    assert!(
+        matches!(result, Ok(188)),
+        "a frame sent after the client's cancel must be delivered, got {result:?}"
+    );
+    drop(client);
+    drop(transport);
+    peer.join().unwrap();
+}
+
+/// A receiver on a UDP session has its own socket: when the peer closes
+/// the control connection the session is dead and the reason recorded, and
+/// a datagram sent to the client's RTP port afterwards is still received.
+#[test]
+fn a_udp_receiver_outlives_its_control_connection() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let (ready_tx, ready_rx) = mpsc::channel::<()>();
+    let (client_port_tx, client_port_rx) = mpsc::channel::<u16>();
+    let server = std::thread::spawn(move || {
+        let (mut sock, _) = listener.accept().unwrap();
+        let mut leftover = Vec::new();
+        let req = read_request(&mut sock, &mut leftover);
+        assert_eq!(method_of(&req), "SETUP", "unexpected request: {req}");
+        let cseq = cseq_of(&req);
+        let client_port = extract_client_port(&req).expect("SETUP request carries client_port=");
+        sock.write_all(
+            format!(
+                "RTSP/1.0 200 OK\r\nCSeq: {cseq}\r\nSession: DEADBEEF;timeout=60\r\n\
+                 Transport: RTP/AVP;unicast;client_port={client_port}-{};server_port=6970-6971\r\n\r\n",
+                client_port + 1
+            )
+            .as_bytes(),
+        )
+        .unwrap();
+        client_port_tx.send(client_port).unwrap();
+        ready_rx.recv().unwrap();
+        drop(sock);
+    });
+
+    let url = format!("rtsp://127.0.0.1:{port}/test?transport=udp");
+    let mut client = RtspClient::connect(&url).unwrap();
+    let sdp = tst_rtp::Sdp::parse(SDP_BODY).unwrap();
+    let session = client.setup_mp2t_auto(&sdp).unwrap();
+    let mut transport = session.into_recv_transport();
+    let client_port = client_port_rx.recv().unwrap();
+    ready_tx.send(()).unwrap();
+
+    // The dead flag is set just before the reason is recorded: wait for both.
+    let reason = wait_for(scaled(Duration::from_secs(2)), || {
+        (!client.is_session_alive())
+            .then(|| transport.end_reason())
+            .flatten()
+    });
+    assert_eq!(reason, EndReason::CleanTeardown);
+    server.join().unwrap();
+
+    let sender = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+    sender
+        .send_to(&mp2t_rtp_packet(1), ("127.0.0.1", client_port))
+        .unwrap();
+    let mut buf = vec![0u8; transport.max_payload()];
+    let got = transport.recv_timeout(&mut buf, scaled(Duration::from_secs(5)));
+    assert!(
+        matches!(got, Ok(Some(188))),
+        "the UDP receiver must still receive after the control connection ended, got {got:?}"
+    );
+    drop(client);
 }
