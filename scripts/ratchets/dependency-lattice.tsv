@@ -5,8 +5,8 @@ tst-core	--no-default-features	-	serde_json,toml,socket2,rustls,tokio
 tst-core	(default)	serde_json	rustls,tokio
 tst-core	--features tls	rustls	tokio
 tst-pipeline	--no-default-features	-	serde_json,socket2,tokio
-tst-rtp	--no-default-features	-	tokio,tokio-util,rustls
-tst-rtp	--no-default-features --features tls	rustls	tokio,tokio-util,tokio-rustls
+tst-rtp	--no-default-features	mio	tokio,tokio-util,rustls
+tst-rtp	--no-default-features --features tls	rustls,mio	tokio,tokio-util,tokio-rustls
 tst-rtp	(default)	tokio	rustls
 tst-hls	--no-default-features	-	tokio,hyper,rustls
 tst-udp	(default)	-	tokio,rustls

@@ -412,6 +412,11 @@ impl ClientEngine {
         self.end_stream(kind, reason, !stopped, RtspError::Io(kind));
     }
 
+    /// The stream has ended, by `handle_closed` or a framing violation.
+    pub(crate) fn is_closed(&self) -> bool {
+        self.closed.is_some()
+    }
+
     pub(crate) fn poll_timeout(&self) -> Option<Instant> {
         if self.closed.is_some() {
             return None;

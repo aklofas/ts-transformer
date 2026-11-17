@@ -26,6 +26,7 @@ pub(crate) use recv::{MPSC_PUMP_DISCONNECTED, RECV_SCRATCH_LEN, Source, record_e
 #[cfg(feature = "rtsp-server")]
 pub(crate) use recv::is_valid_mp2t_payload;
 pub use recv::{RtpRecvTransport, RtpStats};
+pub(crate) use rtcp_ingest::ingest_rtcp_packet;
 pub use send::RtpTransport;
 
 /// Convert an `io::Error` from the shared UDP socket helpers into a

@@ -38,6 +38,9 @@ tokio        = { version = "1", features = ["rt-multi-thread", "net", "time", "i
 tokio-util   = { version = "0.7", optional = true }
 # Single facade for diagnostics workspace-wide.
 tracing      = { workspace = true, features = ["std"] }
+# Readiness polling for the RTSP client's control socket: one thread waits
+# on the socket, its command queue and its next deadline at once.
+mio          = { version = "1", default-features = false, features = ["os-poll", "net"] }
 
 # Cross-platform setsockopt paths std doesn't expose at the workspace MSRV: SO_KEEPALIVE
 # with an idle time on the RTSP client's control socket (`?tcp_keepalive=`),

@@ -7,6 +7,7 @@
 //! serialize under the mutex (RTSP isn't pipelined).
 
 pub mod builder;
+pub(crate) mod driver;
 pub(crate) mod engine;
 pub(crate) mod interleaved_pump;
 pub(crate) mod keepalive;
@@ -14,6 +15,7 @@ pub mod options_describe;
 pub mod play;
 pub mod session;
 pub(crate) mod setup;
+pub(crate) mod stream;
 pub(crate) mod teardown;
 #[cfg(all(test, target_os = "linux"))]
 mod test_sockets;
