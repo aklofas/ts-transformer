@@ -328,8 +328,9 @@ const TEARDOWN_BOUND: Duration = Duration::from_millis(500);
 /// but does not wait for the reply: it returns `TST_E_CLOSED`, also when
 /// that write fails, and is still freed. If a caught panic had already
 /// taken the control pair, there is nothing to tear down: the call
-/// returns 0 and frees. The client's threads are joined after the
-/// exchange, outside the 500 ms.
+/// returns 0 and frees. The client's thread is then told to stop and
+/// closes the control connection on its own; the call does not wait for
+/// it.
 ///
 /// The caller guarantees that no `_play`, `_pause` or receive call on this
 /// session is in flight: call [`tst_rtsp_session_cancel`], wait for the
@@ -554,9 +555,9 @@ pub unsafe extern "C" fn tst_rtsp_session_into_demux_receiver(
             }
         };
 
-        // The client moves into the receiver: dropping it here would stop its
-        // thread and end an interleaved stream as a cancel (`TST_E_CLOSED`)
-        // after the queued backlog.
+        // The client moves into the receiver: dropping it here would send
+        // TEARDOWN, stop its thread and end an interleaved stream as a cancel
+        // (`TST_E_CLOSED`) after the queued backlog.
         let (client, rtsp_session) = *pair;
 
         // Step 2: convert RtspSession into RtpRecvTransport.

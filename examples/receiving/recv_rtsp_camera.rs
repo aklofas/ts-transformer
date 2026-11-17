@@ -126,9 +126,10 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
     }
 
-    // (7) Drop the client — sends TEARDOWN automatically (best-effort).
-    // The explicit `drop` is for clarity; it would happen at end-of-scope
-    // anyway.
-    drop(client);
+    // (7) Close the client: it sends TEARDOWN, waits for the server's reply
+    // (500 ms at most) and for the client's thread, so the connection is
+    // shut when `close` returns. Dropping the client instead would write
+    // TEARDOWN without waiting for the reply or the thread.
+    client.close()?;
     Ok(())
 }

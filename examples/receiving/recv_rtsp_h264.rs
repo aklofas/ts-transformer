@@ -251,9 +251,11 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     // ── (7) Teardown ──────────────────────────────────────────────────────
     //
-    // Dropping `client` sends RTSP TEARDOWN (best-effort). The explicit
-    // `drop` is for clarity; it happens at end-of-scope anyway.
-    drop(client);
+    // `close` sends RTSP TEARDOWN, waits for the server's reply (500 ms at
+    // most) and for the client's thread, so the connection is shut when it
+    // returns. Dropping `client` instead would write TEARDOWN without
+    // waiting for the reply or the thread.
+    client.close()?;
 
     // Print final stats from the RFC 6184 depacketizer (AU counts, sequence
     // gaps, parameter-set updates, etc.).

@@ -237,7 +237,8 @@ outcome are listed once, in
   flight; its `Drop` signals the same way and does not join.
 - The servers and the RTSP client own threads or a runtime. The
   [Runtime ownership](/docs/reference/architecture.md#runtime-ownership)
-  table lists what each one's `stop()`, `shutdown()` and `Drop` wait for;
+  table lists what each one's `stop()`, `shutdown()`, `close()` and `Drop`
+  wait for;
   each figure there is the wait of one phase, not a total.
 
 No call promises an absolute shutdown time: a close waits for the active
