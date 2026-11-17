@@ -82,8 +82,8 @@ pub enum RtspError {
     /// A request's deadline elapsed: the response deadline
     /// (`RtspClientBuilder::request_timeout`, default 10 s), or the bound
     /// of [`RtspClient::teardown_within`](crate::RtspClient::teardown_within),
-    /// which also covers the wait for the control connection and the
-    /// request write. Unless that bound passed before the write, the
+    /// which also covers the wait for the control stream (another thread
+    /// may be using it) and the request write. Unless that bound passed before the write, the
     /// request was written (perhaps only in part); whether the server
     /// acted on it is unknown, and its late response may still be in the
     /// socket — treat the control connection as indeterminate and build a

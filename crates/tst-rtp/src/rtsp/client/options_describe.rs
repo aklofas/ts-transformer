@@ -1209,7 +1209,9 @@ mod tests {
     /// wait, so the cancel lands during the wait. Whichever of the two
     /// the client sees first, a cancelled client reports `LocalCancel`;
     /// otherwise the result is the `Io(UnexpectedEof)` it is without a
-    /// cancel.
+    /// cancel. The two cancelled cases tell the mapping apart only when the
+    /// end of the wait is seen before the wait loop's own cancel check;
+    /// when the cancel is seen first, `LocalCancel` comes from that check.
     fn ended_reply_wait(pump: bool, cancel: bool) -> Result<RtspResponse, RtspError> {
         let (handle_tx, handle_rx) =
             std::sync::mpsc::channel::<crate::rtsp::client::RtspCancelHandle>();

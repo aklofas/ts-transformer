@@ -35,25 +35,37 @@ impl RtspClient {
     }
 
     /// Send TEARDOWN with one deadline, `bound` from now, over the whole
-    /// exchange: the wait for the control connection (another thread,
-    /// such as the keepalive pinger, may be using it), the request write
-    /// and the reply. Unlike [`Self::teardown`], the request timeout does
-    /// not apply.
+    /// exchange: the wait for the control stream (another thread, such as
+    /// the keepalive pinger or the interleaved pump, may be using it), the
+    /// request write and the reply. Unlike [`Self::teardown`], the request
+    /// timeout does not apply. Dropping the client uses the same deadline
+    /// with a 500 ms bound, after setting the cancel, so it does not wait
+    /// for the reply.
     ///
     /// This does not set the cancel flag: the reply is awaited up to the
     /// bound. A cancel already set, or set during the call, ends the
     /// reply wait at once with [`RtspError::LocalCancel`] and turns any
-    /// failure of the exchange into it; the request is still written. If no session is established, this returns `Ok(())`
-    /// without I/O. `session_id` is cleared on every outcome, so no later
-    /// teardown (nor `Drop`) retries.
+    /// failure of the exchange into it; the request is still written. If
+    /// no session is established, this returns `Ok(())` without I/O.
+    /// `session_id` is cleared on every outcome, so no later teardown
+    /// (nor `Drop`) retries.
     ///
     /// A single socket write still waits at most 5 s, so with a `bound`
-    /// over 5 s a write that stalls that long is [`RtspError::Io`].
+    /// over 5 s a write that stalls that long is [`RtspError::Io`]. On
+    /// `rtsps://` one write can take several socket writes (TLS record
+    /// passes), each allowed the time that was left when that write
+    /// began, so a peer that drains a little at a time can stretch the
+    /// write past the bound (a TEARDOWN is normally one pass). On a
+    /// TCP-interleaved session the pump holds the control stream for
+    /// one read of up to [`crate::RtspClientBuilder::read_timeout`] (default
+    /// 100 ms); with no data arriving and a `read_timeout` at or above the
+    /// bound, the bound can pass in the wait for the stream, before the
+    /// request is written.
     ///
     /// # Errors
     ///
     /// - [`RtspError::Timeout`] when the bound passes while waiting for
-    ///   the connection (the TEARDOWN was not sent), during the write
+    ///   the control stream (the TEARDOWN was not sent), during the write
     ///   (it may be partly sent) or while waiting for the reply.
     /// - [`RtspError::LocalCancel`] when the cancel handle fires before
     ///   the reply arrives, or is set when the exchange fails (also when

@@ -814,8 +814,8 @@ impl RtspServer {
     /// - A local mount's [`crate::rtsp::server::mount::MountHandle`] keeps
     ///   accepting pushes, which reach nobody: no session can find the
     ///   path any more. Once the server ends they return
-    ///   [`crate::error::MountError::Closed`]. A mount added later at the same path is a new
-    ///   mount; the old handle does not feed it.
+    ///   [`crate::error::MountError::Closed`]. A mount added later at the
+    ///   same path is a new mount; the old handle does not feed it.
     ///
     /// This is also how an application removes idle on-demand mounts
     /// (see [`RtspServerBuilder::accept_unregistered_publishers`]),
@@ -1308,9 +1308,8 @@ impl RtspServer {
         // handler) keep the write half open after the per-session task
         // returns — the kernel never sends FIN, and clients block in
         // their pump's `read()` until their own read timeout fires.
-        // `RtspClient::Drop`'s 500 ms `teardown_with_deadline` masks the
-        // symptom but the root cause is here. Each shutdown is bounded
-        // by a 500 ms timeout to keep `stop()` sync-bounded.
+        // Each shutdown is bounded by a 500 ms timeout to keep `stop()`
+        // sync-bounded.
         if let Some(rt) = self.runtime.as_ref() {
             use tokio::io::AsyncWriteExt;
             for s in &sessions {

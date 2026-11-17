@@ -387,7 +387,7 @@ impl UdpRecvTransport {
                     if matches!(err, TransportError::Broken { .. }) {
                         self.stats.recv_errors = self.stats.recv_errors.saturating_add(1);
                     }
-                    // A Broken receive latches dead.
+                    // Either way the receiver latches dead.
                     self.alive.store(false, Ordering::Release);
                     return Err(err);
                 }
