@@ -1,16 +1,18 @@
 //! Stopping the server: bounded with a viewer streaming and a request
-//! half sent, idempotent, and the ports free afterwards.
+//! half sent, idempotent, and the ports free when it returns. Dropping the
+//! server cancels without waiting; the ports free soon after.
 
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc;
-use std::sync::{Arc, Barrier};
+use std::sync::{Arc, Barrier, Condvar, Mutex, PoisonError};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use tst_core::mpegts::common::Pts90khz;
-use tst_webrtc::{MountConfig, PushError, WhepServer, WhepServerError};
+use tst_webrtc::url::WhepUrl;
+use tst_webrtc::{Clock, MountConfig, MountHandle, PushError, WhepServer, WhepServerError};
 
 use crate::fixtures::{STOP_REPORT, TestViewer, eventually, h264_gop, join, parse_response};
 
@@ -88,8 +90,26 @@ fn stop_returns_within_bound_with_a_connected_viewer_and_a_parked_poster() {
     ));
 }
 
+/// Rebinds a server on exactly these two ports.
+fn rebind(http_port: u16, media_port: u16) -> Result<WhepServer, WhepServerError> {
+    WhepServer::bind(&format!(
+        "whep://127.0.0.1:{http_port}?media_port={media_port}"
+    ))
+}
+
 #[test]
-fn drop_stops_and_frees_the_port() {
+fn stop_frees_both_ports() {
+    let srv = WhepServer::bind("whep://127.0.0.1:0").unwrap();
+    let (http_port, media_port) = (srv.local_addr().port(), srv.media_addr().port());
+    srv.stop();
+    assert!(srv.threads_joined_for_test());
+    let again = rebind(http_port, media_port).expect("both ports are free after stop");
+    assert_eq!(again.local_addr().port(), http_port);
+    assert_eq!(again.media_addr().port(), media_port);
+}
+
+#[test]
+fn drop_closes_mounts_at_once_and_frees_the_ports_soon() {
     let srv = WhepServer::bind("whep://127.0.0.1:0").unwrap();
     let m = srv.add_mount("/cam", MountConfig::default()).unwrap();
     let (http_port, media_port) = (srv.local_addr().port(), srv.media_addr().port());
@@ -98,12 +118,119 @@ fn drop_stops_and_frees_the_port() {
         m.push_video(&h264_gop()[0].0, Pts90khz::new(0), true),
         Err(PushError::Closed)
     ));
-    let again = WhepServer::bind(&format!(
-        "whep://127.0.0.1:{http_port}?media_port={media_port}"
-    ))
-    .expect("both ports are free after drop");
-    assert_eq!(again.local_addr().port(), http_port);
-    assert_eq!(again.media_addr().port(), media_port);
+    assert!(
+        eventually(
+            || rebind(http_port, media_port).is_ok(),
+            Duration::from_secs(5)
+        ),
+        "both ports free after drop"
+    );
+}
+
+/// A clock that, once armed, holds the media thread inside `now()` until
+/// the gate opens, and reports on `parked` when it first does.
+struct GatedClock {
+    /// (armed, open)
+    state: Mutex<(bool, bool)>,
+    changed: Condvar,
+    parked: Mutex<Option<mpsc::Sender<()>>>,
+}
+
+impl GatedClock {
+    fn new() -> (Arc<Self>, mpsc::Receiver<()>) {
+        let (tx, rx) = mpsc::channel();
+        let clock = Arc::new(Self {
+            state: Mutex::new((false, false)),
+            changed: Condvar::new(),
+            parked: Mutex::new(Some(tx)),
+        });
+        (clock, rx)
+    }
+
+    fn arm(&self) {
+        self.state.lock().unwrap_or_else(PoisonError::into_inner).0 = true;
+    }
+
+    fn open(&self) {
+        self.state.lock().unwrap_or_else(PoisonError::into_inner).1 = true;
+        self.changed.notify_all();
+    }
+}
+
+impl Clock for GatedClock {
+    fn now(&self) -> Instant {
+        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        if state.0 && !state.1 {
+            if let Some(tx) = self
+                .parked
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .take()
+            {
+                let _ = tx.send(());
+            }
+            while !state.1 {
+                state = self
+                    .changed
+                    .wait(state)
+                    .unwrap_or_else(PoisonError::into_inner);
+            }
+        }
+        Instant::now()
+    }
+}
+
+/// A server on `clock` with one mount whose media thread is held inside
+/// the clock when this returns.
+fn parked_server(
+    clock: &Arc<GatedClock>,
+    parked: &mpsc::Receiver<()>,
+) -> (WhepServer, MountHandle) {
+    let url = WhepUrl::parse("whep://127.0.0.1:0").unwrap();
+    let srv = WhepServer::bind_with_clock(url, clock.clone()).unwrap();
+    let m = srv.add_mount("/cam", MountConfig::default()).unwrap();
+    clock.arm();
+    // The push wakes the media thread, which then reads the clock.
+    m.push_video(&h264_gop()[0].0, Pts90khz::new(0), true)
+        .unwrap();
+    parked
+        .recv_timeout(Duration::from_secs(5))
+        .expect("the media thread parked in the clock");
+    (srv, m)
+}
+
+#[test]
+fn drop_does_not_wait_for_a_thread_that_cannot_exit() {
+    let (clock, parked) = GatedClock::new();
+    let (srv, _m) = parked_server(&clock, &parked);
+    let t0 = Instant::now();
+    drop(srv);
+    let took = t0.elapsed();
+    clock.open();
+    assert!(took < Duration::from_secs(1), "drop took {took:?}");
+}
+
+#[test]
+fn a_detached_media_thread_stops_when_its_queue_is_full() {
+    let (clock, parked) = GatedClock::new();
+    let (srv, m) = parked_server(&clock, &parked);
+    let media_port = srv.media_addr().port();
+    // Fill the media queue so the drop's stop message cannot be queued.
+    let idr = &h264_gop()[0].0;
+    let mut pts = 0;
+    while m.stats().viewer_packets_dropped_queue_full == 0 {
+        pts += 3000;
+        m.push_video(idr, Pts90khz::new(pts), true).unwrap();
+    }
+    drop(srv);
+    clock.open();
+    assert!(
+        eventually(
+            || WhepServer::bind(&format!("whep://127.0.0.1:0?media_port={media_port}")).is_ok(),
+            Duration::from_secs(5)
+        ),
+        "the media port is free once the media thread runs again"
+    );
 }
 
 #[test]

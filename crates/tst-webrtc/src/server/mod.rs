@@ -43,8 +43,8 @@ const CONTROL_REPLY_TIMEOUT: Duration = Duration::from_secs(2);
 /// How long [`WhepServer::stop`] waits for each of its two threads.
 const STOP_JOIN_TIMEOUT: Duration = Duration::from_secs(2);
 
-/// How long `stop` waits for its own connection to the signalling port,
-/// which wakes the accept thread.
+/// How long `stop` and `Drop` wait for their own connection to the
+/// signalling port, which wakes the accept thread.
 const STOP_CONNECT_TIMEOUT: Duration = Duration::from_secs(1);
 
 /// Control requests queued for the media thread at most.
@@ -163,23 +163,29 @@ struct Threads {
 ///
 /// # Closing
 ///
-/// [`stop`](Self::stop) closes the server and is idempotent: a second
-/// call returns at once. It cancels first: every mount is marked closed
-/// (a later push returns [`PushError::Closed`](crate::PushError::Closed)),
-/// the media thread is told to stop and the accept thread is woken, and
-/// only then does it wait, at most 2 seconds for each thread. A request
-/// being read when the server stops is answered with 503 or its connection
-/// is closed; an offer waiting for the media thread is answered with 503.
-/// [`Drop`] calls `stop`, so dropping the server frees both ports once
-/// both threads have exited within that bound. A thread that has not (the
-/// accept thread still writing a response to a slow client, up to its
-/// 5-second write timeout) keeps its socket until it finishes.
+/// [`stop`](Self::stop) closes the server and is idempotent. It cancels
+/// first: every mount is marked closed (a later push returns
+/// [`PushError::Closed`](crate::PushError::Closed)), the media thread is
+/// told to stop and the accept thread is woken, and only then does it
+/// wait, at most 2 seconds for each thread. Only the first call waits: a
+/// later call returns at once, even while the first is still waiting. A
+/// request being read when the server stops is answered with 503 or its
+/// connection is closed; an offer waiting for the media thread is answered
+/// with 503. Both ports are free when `stop` returns, unless a thread has
+/// not exited within that bound (the accept thread still writing a
+/// response to a slow client, up to its 5-second write timeout); it keeps
+/// its socket until it finishes.
+///
+/// [`Drop`] cancels the same way and does not wait: the mounts are closed
+/// when the drop returns, and each thread closes its port when it ends on
+/// its own, normally a moment later. Call `stop` first when the ports must
+/// be free before the next step, a rebind on the same port for instance.
 ///
 /// ## Per-language idiom
 ///
 /// | Language | Idiom |
 /// |----------|-------|
-/// | Rust | `server.stop();` or let the server drop |
+/// | Rust | `server.stop();` to wait for both threads, or let the server drop to cancel without waiting |
 /// | Java | `server.stop()`, or `close()` (try-with-resources) to also free the native server |
 /// | Kotlin | `server.use { … }`, or `server.stop()` |
 /// | Swift | Not exposed in this release |
@@ -425,27 +431,11 @@ impl WhepServer {
     }
 
     /// Stops the server; see the type's `# Closing` section. Idempotent and
-    /// bounded: it waits at most 2 seconds for each of its two threads.
+    /// bounded: the first call waits at most 2 seconds for each of its two
+    /// threads; a later call returns at once.
     pub fn stop(&self) {
-        if self.shared.shutdown.swap(true, Ordering::AcqRel) {
+        if !self.begin_stop() {
             return;
-        }
-        {
-            let mounts = self
-                .shared
-                .mounts
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner);
-            for m in mounts.values() {
-                m.closed.store(true, Ordering::Release);
-            }
-        }
-        let _ = self.shared.media_tx.try_send(MediaMsg::Stop);
-        self.shared.control.waker.wake();
-        // A connection wakes the accept thread out of accept(); it sees the
-        // flag and exits.
-        if let Err(e) = TcpStream::connect_timeout(&reachable(self.local), STOP_CONNECT_TIMEOUT) {
-            warn!(error = %e, "WHEP server stop: could not wake the accept thread");
         }
         let threads = self
             .threads
@@ -464,6 +454,43 @@ impl WhepServer {
             self.threads_joined
                 .store(media_joined && accept_joined, Ordering::Release);
         }
+    }
+
+    /// The cancel half of [`stop`](Self::stop), and all of `Drop`: closes
+    /// every mount and tells both threads to stop, without waiting for
+    /// them. `true` when this call was the first.
+    fn begin_stop(&self) -> bool {
+        if self.shared.shutdown.swap(true, Ordering::AcqRel) {
+            return false;
+        }
+        {
+            let mounts = self
+                .shared
+                .mounts
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            for m in mounts.values() {
+                m.closed.store(true, Ordering::Release);
+            }
+        }
+        let _ = self.shared.media_tx.try_send(MediaMsg::Stop);
+        // The message is lost when the queue is full, and the queue never
+        // disconnects (every mount holds a sender): the thread's own flag
+        // is what stops it.
+        if let Some(threads) = self
+            .threads
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .as_ref()
+        {
+            threads.media.signal();
+        }
+        // A connection wakes the accept thread out of accept(); it sees the
+        // flag and exits.
+        if let Err(e) = TcpStream::connect_timeout(&reachable(self.local), STOP_CONNECT_TIMEOUT) {
+            warn!(error = %e, "WHEP server stop: could not wake the accept thread");
+        }
+        true
     }
 
     /// Wakes the media thread and waits (at most 2 s) until it has run one
@@ -501,9 +528,11 @@ fn remember_newest(last: &Mutex<ServerCounters>, fresh: Option<ServerCounters>) 
     last.clone()
 }
 
+/// Cancels and detaches: the threads end on their own once they see the
+/// stop. After [`stop`](WhepServer::stop) it does nothing.
 impl Drop for WhepServer {
     fn drop(&mut self) {
-        self.stop();
+        self.begin_stop();
     }
 }
 

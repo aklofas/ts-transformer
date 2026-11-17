@@ -360,11 +360,18 @@ impl MediaThread {
         ))
     }
 
+    /// Asks the thread to stop without waiting. The thread reads this flag
+    /// on every pass, so it stops even when a full media queue lost
+    /// `MediaMsg::Stop`.
+    pub(crate) fn signal(&self) {
+        self.shutdown.store(true, Ordering::Release);
+        self.waker.wake();
+    }
+
     /// Asks the thread to stop and waits up to `within` for it. `true`
     /// when it exited in time; otherwise it is left to finish on its own.
     pub(crate) fn join(self, within: Duration) -> bool {
-        self.shutdown.store(true, Ordering::Release);
-        self.waker.wake();
+        self.signal();
         match self.done.recv_timeout(within) {
             Ok(()) | Err(RecvTimeoutError::Disconnected) => {
                 // The thread is past its last statement; a panic was
