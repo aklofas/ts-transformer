@@ -53,8 +53,8 @@ use crate::rtsp::server::types::TstRtspServer;
 ///    `tst_rtp::RtspServerBuilder`.
 /// 2. Calls `RtspServerBuilder::build()` to construct the tokio `Runtime`
 ///    and allocate the `ServerState`.
-/// 3. Calls `RtspServer::start()` to spawn the listener task and spin-wait
-///    up to 1 s for the listener to bind.
+/// 3. Calls `RtspServer::start()` to spawn the listener task and block on
+///    its startup report for up to 5 s (the bind or its error).
 ///
 /// On success the `builder` pointer is consumed (freed). On failure the
 /// builder is also freed; check `tst_get_last_error()` for the negative
@@ -98,7 +98,7 @@ pub unsafe extern "C" fn tst_rtsp_server_builder_start(
         };
 
         // Step 2: start the listener. This spawns the tokio listener task
-        // and spin-waits up to 1 s for the kernel to assign a local address.
+        // and blocks up to 5 s on its startup report (bound, or the bind error).
         // On port-0 binds, local_addr() is authoritative after start().
         if let Err(e) = server.start() {
             crate::error::record_with_context(e, "RTSP server start failed");

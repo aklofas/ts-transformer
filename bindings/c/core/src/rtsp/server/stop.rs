@@ -216,10 +216,16 @@ pub unsafe extern "C" fn tst_rtsp_server_cancel_handle(
 
 /// Fire the hard cancel on a cancel handle.
 ///
-/// Signals the server to break out of all blocking I/O at the next poll.
-/// The listener exits its accept loop within ~100 ms; per-session tasks
-/// exit at their next `tokio::select!` wake. No TEARDOWN is sent to
-/// connected clients (they observe TCP RST or a half-close).
+/// One atomic store, safe from a signal handler. From then on mount
+/// registration and every `tst_rtsp_mount_push_*` are refused at once
+/// with `TST_E_CLOSED`, and a parked `tst_rtsp_server_next_publisher`
+/// returns `TST_E_CLOSED` within 100 ms. Within 100 ms a task on the
+/// server's runtime ends the rest: the listener stops accepting and drains
+/// the sessions for the builder's graceful-shutdown drain, sessions and
+/// multicast senders end, and every publish mount is closed (a bound
+/// receiver reads `TST_E_END_OF_STREAM`). No Notice 5402 or other
+/// TEARDOWN-style message is sent to connected clients; they see the
+/// connection close. A later `tst_rtsp_server_stop` returns 0 at once.
 ///
 /// Idempotent — repeated calls are a no-op. Safe to call on NULL (no-op).
 ///
@@ -329,9 +335,10 @@ pub unsafe extern "C" fn tst_rtsp_server_stop(
 /// Drops the `Box<TstRtspServer>`. `tst_rtsp_server_stop` retires the
 /// server; the runtime shuts down when the last reference drops, which may
 /// be inside `_free` or inside a call that was still parked. If `_free` is
-/// called WITHOUT a prior `_stop`, Drop fires the hard-cancel path: all per-session tasks
-/// abort at their next poll and the tokio Runtime is shut down with a 5 s
-/// budget. No RTSP TEARDOWN is sent to connected clients in this case
+/// called WITHOUT a prior `_stop`, Drop takes the hard-cancel path: it
+/// closes the publish side, fires the sessions' cancel, then shuts the
+/// tokio Runtime down with a 5 s budget, which drops the tasks still
+/// running. No RTSP TEARDOWN is sent to connected clients in this case
 /// (they observe TCP RST or half-close).
 ///
 /// NULL is a no-op. After this call the pointer is invalid.

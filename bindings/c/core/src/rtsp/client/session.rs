@@ -430,11 +430,11 @@ fn poisoned() -> libc::c_int {
 
 /// Cancel any blocking RTSP I/O on the control channel.
 ///
-/// Sets the session's cancel flag so that any thread blocked inside a RTSP
-/// request/response cycle (e.g. a blocking PLAY or PAUSE) will break out
-/// at the next poll interval.  Callable from another thread while a PLAY
-/// or PAUSE on the same session is in flight.  Idempotent.  The interrupted
-/// call returns `TST_E_CLOSED` (-7).
+/// Sets the session's cancel flag: a PLAY or PAUSE on another thread that
+/// is waiting for its reply notices it within 100 ms. A request made after
+/// the cancel is still written first. Callable from another thread while a
+/// PLAY or PAUSE on the same session is in flight.  Idempotent.  The
+/// interrupted call returns `TST_E_CLOSED` (-7).
 ///
 /// Never call this after a successful
 /// [`tst_rtsp_session_into_demux_receiver`] (the session is freed then), nor
