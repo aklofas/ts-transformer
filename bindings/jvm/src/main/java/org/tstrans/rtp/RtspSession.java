@@ -12,8 +12,8 @@ import org.tstrans.mpegts.DemuxerConfig;
  * {@code tstrans.rtp.RtspSession}.
  *
  * <p><b>Thread safety:</b> {@link #cancelHandle()} returns at once from any thread, and
- * {@link #close()} may be called from any thread without waiting for a control call in
- * progress. The control calls ({@link #pause()}, {@link #play()}, {@link #teardown()})
+ * {@link #close()} may be called from any thread: it cancels a control call in progress
+ * there and closes once that call has let go. The control calls ({@link #pause()}, {@link #play()}, {@link #teardown()})
  * run one at a time: a second one waits for the call in progress, up to that call's
  * request timeout (10&nbsp;s). {@link RtspCancelHandle#cancel() cancel} on a handle wakes
  * a control call in progress, which then throws {@link RtspException} of kind
@@ -209,7 +209,8 @@ public final class RtspSession extends NativeHandle {
         // (consume-first — NativeHandle contract item 3, same shape as
         // srt Socket.intoSender()). The native takes the whole session slot out
         // of its registry: success moves the control plane into the H264Receiver;
-        // failure tears the session down best-effort. Either way a subsequent
+        // failure closes the session as close() does (a TEARDOWN bounded at
+        // 500 ms, then the wait for the client's thread). Either way a subsequent
         // close() finds 0 and is a harmless no-op.
         long sessionH = consumeHandle();
         long h = nIntoH264Receiver(sessionH);
