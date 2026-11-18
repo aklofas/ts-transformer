@@ -1157,7 +1157,32 @@ mod tests {
             TstError::Closed as i32,
             "an ended server reports TST_E_CLOSED"
         );
+        // The handle's own "server is stopped or freed" check also records
+        // -7; the prefix shows the refusal came from the server's call.
+        let msg = crate::error::test_last_error_msg();
+        assert!(
+            msg.starts_with("add_unicast_mount failed: "),
+            "refused by the C handle, not by the server: {msg}"
+        );
         unsafe { crate::config::tst_mux_config_free(cfg) };
+        unsafe { crate::rtsp::server::stop::tst_rtsp_cancel_handle_free(cancel) };
+        unsafe { crate::rtsp::server::stop::tst_rtsp_server_free(server) };
+    }
+
+    #[test]
+    fn push_video_after_the_hard_cancel_returns_closed() {
+        let (server, mount) = open_unicast_mount();
+        let cancel = unsafe { crate::rtsp::server::stop::tst_rtsp_server_cancel_handle(server) };
+        assert!(!cancel.is_null());
+        unsafe { crate::rtsp::server::stop::tst_rtsp_cancel_handle_cancel(cancel) };
+        let nal = [0x00u8, 0x00, 0x00, 0x01, 0x65, 0xBB];
+        let rc = unsafe { tst_rtsp_mount_push_video(mount, nal.as_ptr(), nal.len(), 0, true) };
+        assert_eq!(rc, TstError::Closed as i32, "no stop: the cancel alone");
+        assert_eq!(
+            unsafe { crate::error::tst_get_last_error() },
+            TstError::Closed as i32
+        );
+        unsafe { tst_rtsp_mount_handle_free(mount) };
         unsafe { crate::rtsp::server::stop::tst_rtsp_cancel_handle_free(cancel) };
         unsafe { crate::rtsp::server::stop::tst_rtsp_server_free(server) };
     }

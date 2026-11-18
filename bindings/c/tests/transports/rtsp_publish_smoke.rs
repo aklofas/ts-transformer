@@ -576,6 +576,122 @@ fn rtsp_publish_next_publisher_on_demand_and_stop_wakes_parked_call() {
     unsafe { tst_rtsp_server_free(server) };
 }
 
+/// The hard cancel alone, with no stop: a `next_publisher` parked on
+/// another thread wakes with CLOSED, a receiver bound to a publish mount
+/// that a publisher holds ends with END_OF_STREAM, and a
+/// `tst_rtsp_server_stop` after it returns 0 at once.
+#[test]
+fn rtsp_publish_hard_cancel_wakes_parked_calls_and_stop_returns_at_once() {
+    let (server, port) = start_server(false);
+    let path = CString::new("/pub").unwrap();
+    let m = unsafe { tst_rtsp_server_add_publish_mount(server, path.as_ptr()) };
+    assert!(
+        !m.is_null(),
+        "add_publish_mount: {}",
+        test_last_error_code()
+    );
+    let demux = unsafe { tst_rtsp_publish_mount_into_demux_receiver(m, std::ptr::null()) };
+    assert!(
+        !demux.is_null(),
+        "into_demux_receiver: {}",
+        test_last_error_code()
+    );
+    // A publisher holds the mount and sends nothing, so the read waits.
+    let (tcp, _ch) = publish_mp2t(port, "/pub");
+
+    let demux_addr = demux as usize;
+    let (recv_tx, recv_done) = std::sync::mpsc::channel();
+    let (recv_ready_tx, recv_ready) = std::sync::mpsc::channel();
+    let receiver = std::thread::spawn(move || {
+        let mut ev = TstEvent::default();
+        recv_ready_tx.send(()).unwrap();
+        let rc = loop {
+            let rc = unsafe { tst_rtp_demux_receiver_next_event(demux_addr as *mut _, &mut ev) };
+            if rc != 0 {
+                break rc;
+            }
+        };
+        recv_tx.send(rc).unwrap();
+    });
+    let addr = server as usize;
+    let (tx, parked_done) = std::sync::mpsc::channel();
+    let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+    let parked = std::thread::spawn(move || {
+        let mut out: *mut tstrans::TstRtspPublishMount = std::ptr::dangling_mut();
+        ready_tx.send(()).unwrap();
+        let rc = unsafe { tst_rtsp_server_next_publisher(addr as *mut _, 30_000, &mut out) };
+        let returned = Instant::now();
+        let msg = unsafe { CStr::from_ptr(tstrans::error::tst_get_last_error_str()) }
+            .to_string_lossy()
+            .into_owned();
+        tx.send((rc, out.is_null(), msg, returned)).unwrap();
+    });
+    ready_rx
+        .recv_timeout(Duration::from_secs(10))
+        .expect("parked thread started");
+    recv_ready
+        .recv_timeout(Duration::from_secs(10))
+        .expect("receiver thread started");
+    // Ordering aid only: the outcomes asserted below hold whichever thread
+    // reaches its call first.
+    std::thread::sleep(Duration::from_millis(200));
+    assert!(
+        parked_done.try_recv().is_err(),
+        "next_publisher returned before the cancel"
+    );
+
+    let cancel = unsafe { tstrans::tst_rtsp_server_cancel_handle(server) };
+    assert!(!cancel.is_null());
+    let cancelled_at = Instant::now();
+    unsafe { tstrans::tst_rtsp_cancel_handle_cancel(cancel) };
+
+    let (rc, out_null, msg, returned) = parked_done
+        .recv_timeout(Duration::from_secs(10))
+        .expect("the hard cancel must wake a parked next_publisher");
+    parked.join().unwrap();
+    assert_eq!(rc, TstError::Closed as i32, "{msg}");
+    assert!(out_null);
+    assert!(
+        msg.starts_with("next_publisher failed: "),
+        "refused by the C handle, not by the server: {msg}"
+    );
+    // Documented: within 100 ms; the margin is for a loaded box.
+    let woke = returned.saturating_duration_since(cancelled_at);
+    assert!(
+        woke < crate::common::scaled(Duration::from_secs(2)),
+        "a parked next_publisher took {woke:?} to see the hard cancel"
+    );
+
+    let end = match recv_done.recv_timeout(Duration::from_secs(10)) {
+        Ok(rc) => rc,
+        Err(_) => {
+            // Last resort so a regression fails instead of hanging.
+            unsafe { tst_rtp_demux_receiver_cancel(demux) };
+            panic!("the hard cancel did not end the bound receiver");
+        }
+    };
+    receiver.join().unwrap();
+    assert_eq!(
+        end,
+        TstError::EndOfStream as i32,
+        "a hard-cancelled server's publish-mount receiver ends END_OF_STREAM"
+    );
+
+    let t0 = Instant::now();
+    assert_eq!(unsafe { tst_rtsp_server_stop(server, 0) }, 0);
+    let took = t0.elapsed();
+    assert!(
+        took < crate::common::scaled(Duration::from_secs(1)),
+        "stop after the hard cancel took {took:?}"
+    );
+
+    unsafe { tst_rtp_demux_receiver_close(demux) };
+    unsafe { tst_rtsp_publish_mount_free(m) };
+    unsafe { tstrans::tst_rtsp_cancel_handle_free(cancel) };
+    drop(tcp);
+    unsafe { tst_rtsp_server_free(server) };
+}
+
 /// `tst_rtsp_publish_mount_cancel` wakes a demux receiver parked on an idle
 /// mount (no publisher) with CLOSED, the explicit-cancel outcome; the
 /// mount itself stays registered.
