@@ -207,8 +207,14 @@ public final class H264Receiver extends NativeHandle implements Iterable<H264Acc
      * the next {@code recvAu()} until an AU arrives, EOS ({@code null}) is returned,
      * or an error occurs. A {@link RtpException} from the native pull is wrapped in
      * an unchecked {@link RuntimeException} (the {@code Iterator} contract forbids
-     * checked exceptions); a cancelled iteration ends that way too, with kind
-     * {@code CLOSED}.
+     * checked exceptions) and thrown from {@code hasNext()}, or from {@code next()},
+     * which calls it; a cancelled iteration ends that way too, with kind
+     * {@code CLOSED}. A {@link #close()} on another thread also throws out of the
+     * loop: a {@code RuntimeException} whose cause is an {@code RtpException} with
+     * kind {@code CLOSED}, or an unwrapped {@link IllegalStateException} when the
+     * next receive starts after the {@code close()} began (see {@link #recvAu()}).
+     * Iteration ends normally ({@code hasNext()} returns {@code false}) only at the
+     * end of the stream.
      *
      * <p>For-each shorthand:
      * <pre>{@code
