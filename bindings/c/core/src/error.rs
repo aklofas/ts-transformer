@@ -426,8 +426,8 @@ pub unsafe extern "C" fn tst_get_last_error_str() -> *const crate::c_types::c_ch
     // teardown or during a re-entrant borrow. Fall back to a static empty C
     // string so the never-NULL contract above is preserved.
     static EMPTY: &[u8] = b"\0";
-    let fallback = EMPTY.as_ptr() as *const crate::c_types::c_char;
-    crate::panic::ffi_catch(fallback, || {
+    crate::panic::ffi_catch(EMPTY.as_ptr() as *const crate::c_types::c_char, || {
+        let fallback = EMPTY.as_ptr() as *const crate::c_types::c_char;
         with_last_error(|slot| slot.1.as_ptr()).unwrap_or(fallback)
     })
 }

@@ -154,16 +154,18 @@ pub unsafe extern "C" fn tst_demuxer_feed(
     if len == 0 {
         return 0;
     }
-    let slice = match unsafe { crate::ffi_slice::ffi_slice(data, len, "data") } {
-        Ok(s) => s,
-        Err(code) => return code,
-    };
-    handle
-        .inner
-        .with_inner_mut(|st| match st.demuxer.feed(slice) {
-            Ok(()) => 0,
-            Err(e) => record_demux_error(&e),
-        })
+    crate::panic::ffi_catch(TstError::Internal as i32, || {
+        let slice = match unsafe { crate::ffi_slice::ffi_slice(data, len, "data") } {
+            Ok(s) => s,
+            Err(code) => return code,
+        };
+        handle
+            .inner
+            .with_inner_mut(|st| match st.demuxer.feed(slice) {
+                Ok(()) => 0,
+                Err(e) => record_demux_error(&e),
+            })
+    })
 }
 
 /// Flush partial PES still buffered at end-of-stream.
