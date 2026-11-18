@@ -316,12 +316,13 @@ class RtspStats:
 
 @final
 class RtspCancelHandle:
-    """RTSP control-plane cancel handle. Frozen. Flipping `.cancel()`
-    breaks any in-flight `pause` / `play` / `teardown` on its session out
-    of blocking I/O at the call's next poll (a waiting request re-checks
-    the flag at least every 100 ms). The interrupted call raises
-    `RtspError(CLOSED)` — the one cancel outcome every tstrans handle
-    shares. `RtspClient.connect` returns the session only after PLAY, so
+    """RTSP control-plane cancel handle. Frozen. `.cancel()` ends an
+    in-flight `pause` / `play` / `teardown` on its session: a request
+    waiting for its reply notices the cancel within 100 ms; a request
+    whose bytes the server is not taking notices it only when its write
+    completes, its deadline passes or 5 s without progress end the
+    control connection. The interrupted call raises `RtspError(CLOSED)`
+    — the one cancel outcome every tstrans handle shares. `RtspClient.connect` returns the session only after PLAY, so
     no handle reaches a connect in progress.
     """
 
@@ -461,10 +462,12 @@ class RtspServerCancelHandle:
     `.cancel()` sets a flag and returns. From then on mount pushes, mount
     registration and removal, rule edits and a new `next_publisher` raise
     `RtspError(CLOSED)` at once; a parked `next_publisher` raises it within
-    100 ms; and within 100 ms the server ends its sessions, its listener,
-    its multicast senders and every publish mount's receiver (end of
-    stream, as after `stop()`). No Notice 5402 is sent. A `stop()` after it
-    ends what is left without the graceful path.
+    100 ms; and within 100 ms the server notices the cancel and ends its
+    sessions, its listener, its multicast senders and every publish mount's
+    receiver (end of stream, as after `stop()`). No Notice 5402 is sent. A
+    `stop()` after it ends what is left without the graceful path. A
+    `cancel()` while a `stop()` (or the `with` exit) runs does not shorten
+    that call: cancel before it for an end without the Notice.
     """
 
     def cancel(self) -> None: ...

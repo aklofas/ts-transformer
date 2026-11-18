@@ -6,16 +6,23 @@
 /// Cancel handle for an `RtspServer`.
 ///
 /// `cancel()` is the HARD cancel, on a started server or one never
-/// started. Registration, rule edits, mount pushes and `start()` read the
-/// flag and are refused at once, and a parked or later `next_publisher`
-/// returns `Shutdown` (a parked call within 100 ms). Within 100 ms a task
-/// on the server's runtime observes the flag and performs the same
-/// shutdown bookkeeping as `RtspServer::stop` without the Notice 5402: it
-/// fires the session cancel token (the listener stops accepting and drains
-/// sessions for `graceful_shutdown_drain`, sessions and multicast senders
-/// end), drops the on-demand publish queue, and closes publish mounts'
-/// application transports, which then read `Closed`. Clients see the
-/// connection close with no RTSP TEARDOWN-style notification.
+/// started. Registration and removal, rule edits, mount pushes and
+/// `start()` read the flag and are refused at once, and a parked or later
+/// `next_publisher` returns `Shutdown` (a parked call within 100 ms).
+/// Within 100 ms a task on the server's runtime notices the flag and ends
+/// the rest with the same shutdown bookkeeping as `RtspServer::stop`
+/// without the Notice 5402: it fires the session cancel token (the
+/// listener stops accepting and drains sessions for
+/// `graceful_shutdown_drain`, sessions and multicast senders end), drops
+/// the on-demand publish queue, and closes publish mounts' application
+/// transports, which then read `Closed`. Clients see the connection close
+/// with no RTSP TEARDOWN-style notification.
+///
+/// `Closed` is end of stream to a receiver over such a transport, as after
+/// `stop()`; the mount's own cancel still reads as the cancel
+/// (`ExplicitClose`). A cancel fired while `RtspServer::stop` runs closes
+/// the publish side but does not shorten that `stop()`: its Notice writes,
+/// its drain wait and its write-half shutdowns do not read the flag.
 ///
 /// For graceful shutdown with session-end notification + bounded drain,
 /// use `RtspServer::stop` instead.

@@ -84,9 +84,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mount = server.add_mount("/live", cfg)?;
 
     // 4. Start accepting connections. `start()` spawns the internal
-    //    tokio listener task + spin-waits up to 1s for the listener to
-    //    bind. After it returns, `local_addr()` reflects the actual
-    //    bound port.
+    //    tokio listener task and waits (up to 5 s) for the listener to
+    //    report its bind. After it returns, `local_addr()` reflects the
+    //    actual bound port.
     server.start()?;
     let bound = server.local_addr().expect("listener bound");
     eprintln!("RTSP server bound at rtsp://{bound}/live");

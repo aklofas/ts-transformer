@@ -361,8 +361,9 @@ pub(crate) fn unregister_session(state: &Arc<ServerState>, entry: &Arc<ActiveSes
 ///    returns `Shutdown`, every publish mount's application transport
 ///    reads `Closed`, mount registration, rule edits, mount pushes and
 ///    `start()` are refused, and sessions and multicast senders end. No
-///    Notice is sent. What reads the flag itself refuses at once; the rest
-///    ends within 100 ms (see [`Self::cancel_handle`]).
+///    Notice is sent. What reads the flag itself refuses at once; a task on
+///    the server's runtime notices the flag within 100 ms and ends the rest
+///    (see [`Self::cancel_handle`]).
 ///
 /// Dropping the server, [`Self::stop`] and [`Self::remove_mount`] block
 /// the calling thread on the server's internal runtime. Call them from a

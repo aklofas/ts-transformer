@@ -20,7 +20,9 @@ import org.tstrans.mpegts.MuxerConfig;
  * three ({@code stop()}, {@code close()} and the hard cancel) end publish
  * mounts' receivers (end of stream) and wake a parked {@link #nextPublisher(long)}
  * with {@code CLOSED}; only the hard cancel skips the Notice 5402 teardown and the
- * drain, and a {@code stop()} or {@code close()} after it skips them too.
+ * drain, and a {@code stop()} or {@code close()} after it skips them too. A hard
+ * cancel fired while a {@code stop()} or {@code close()} runs does not shorten that
+ * call: for an end without the Notice, cancel before {@code close()}.
  *
  * <p><b>Publisher role:</b> {@link #addPublishMount(String)}, {@link
  * #nextPublisher(long)} and {@link #removeMount(String)} accept encoders that push
@@ -98,10 +100,13 @@ public final class RtspServer extends NativeHandle {
 
     /**
      * Graceful shutdown — fires the Notice 5402 path on each active session, waits
-     * the builder's drain window. Idempotent. {@code drainMs} is accepted for API
+     * up to the builder's drain window. Idempotent. {@code drainMs} is accepted for API
      * stability but the configured {@code gracefulShutdownDrainMs} governs the wait.
      * After the hard cancel ({@link #cancelHandle()}) it sends no Notice, waits for
-     * no drain and returns once the publish side is closed.
+     * no drain and returns once the publish side is closed. A hard cancel fired while
+     * this call runs closes the publish side within about 100 ms but does not shorten
+     * the call: the Notice writes, the drain wait and the shutdown of each session's
+     * connection do not read it.
      */
     public void stop(long drainMs) throws RtspException { ensureOpen(); nStop(peekHandle(), drainMs); }
 
@@ -274,7 +279,13 @@ public final class RtspServer extends NativeHandle {
         return new MountRules(h);
     }
 
-    /** Cross-thread hard-cancel handle. @throws IllegalStateException if closed. */
+    /**
+     * Cross-thread hard-cancel handle.
+     *
+     * @throws IllegalStateException if closed, which includes a {@link #close()} that
+     *     has begun on another thread: take the handle before {@code close()} to cancel
+     *     with it
+     */
     public RtspServerCancelHandle cancelHandle() {
         ensureOpen();
         long h = nCancelHandle(peekHandle());
@@ -292,7 +303,12 @@ public final class RtspServer extends NativeHandle {
      * #cancelHandle()}) it sends no Notice and waits for no drain. If another thread
      * is inside a call on this server, such as {@link #stop()} or {@link
      * #removeMount(String)}, {@code close()} first waits for it to return; a parked
-     * {@link #nextPublisher(long)} does not hold it up.
+     * {@link #nextPublisher(long)} does not hold it up. A hard cancel fired while
+     * {@code close()} runs does not shorten it (see {@link #stop(long)}); for an end
+     * without the Notice and the drain, cancel before {@code close()}, with a handle
+     * taken before it ({@link #cancelHandle()} throws once {@code close()} has begun).
+     * A second {@code close()} made while the first runs returns at once, before the
+     * first has finished.
      */
     @Override public void close() { super.close(); }
 

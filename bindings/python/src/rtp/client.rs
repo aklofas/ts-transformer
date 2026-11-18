@@ -454,10 +454,12 @@ pub struct PyRtspCancelHandle {
 
 #[pymethods]
 impl PyRtspCancelHandle {
-    /// Flip the cancel flag. Any in-flight `pause` / `play` /
-    /// `teardown` call on the originating session breaks out of
-    /// blocking I/O at its next poll (a waiting request re-checks the
-    /// flag at least every 100 ms).
+    /// Flip the cancel flag. An in-flight `pause` / `play` / `teardown`
+    /// on the originating session ends with `RtspError(CLOSED)`: a request
+    /// waiting for its reply notices the flag within 100 ms; a request
+    /// whose bytes the server is not taking notices it only when its write
+    /// completes, its deadline passes or 5 s without progress end the
+    /// control connection.
     fn cancel(&self) {
         self.inner.cancel();
     }
@@ -862,10 +864,9 @@ impl PyRtspSession {
         });
     }
 
-    /// Cancel handle — flipping `cancel()` breaks any in-flight
-    /// `pause` / `play` / `teardown` out of blocking I/O at its next
-    /// poll (a waiting request re-checks the cancel flag at least every
-    /// 100 ms). Answers at once, also while another thread's control
+    /// Cancel handle — its `cancel()` ends an in-flight `pause` / `play` /
+    /// `teardown` (see `RtspCancelHandle.cancel` for how soon). Answers at
+    /// once, also while another thread's control
     /// call is parked. The control calls run one at a time: a second
     /// `pause` / `play` / `teardown` waits, GIL released, until the call in
     /// progress returns or is cancelled.

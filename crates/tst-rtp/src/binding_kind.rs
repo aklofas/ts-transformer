@@ -25,8 +25,8 @@ impl From<RtpConnectError> for BindingError {
 /// 401/404 are `AUTH_REQUIRED`/`NOT_FOUND`, `AuthUnsupported` is
 /// `AUTH_REQUIRED`, the four SDP-media variants are `NOT_FOUND`.
 /// `LocalCancel` is the one-cancel-outcome kind
-/// `Closed`: a cancelled connect/play/pause/teardown is
-/// `TST_E_CLOSED` / `RtspError(CLOSED)` / `RtspException(CLOSED)`,
+/// `Closed`: a cancelled request (OPTIONS, DESCRIBE, SETUP, PLAY, PAUSE,
+/// TEARDOWN) is `TST_E_CLOSED` / `RtspError(CLOSED)` / `RtspException(CLOSED)`,
 /// indistinguishable from no other RTSP failure.
 impl From<RtspError> for BindingError {
     fn from(e: RtspError) -> Self {
