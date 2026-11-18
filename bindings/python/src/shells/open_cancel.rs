@@ -11,7 +11,9 @@ use tst_pipeline::binding::{BindingError, OpenCancel, OpenSlot};
 
 /// A sticky cancel for opens in progress: `cancel()` ends every open
 /// parked in a listener-mode first accept with it, and every open given it
-/// later raises `CLOSED` without opening anything.
+/// later raises `CLOSED` without opening anything. With an
+/// already-cancelled object an open is refused with `CLOSED` before its URL
+/// is parsed; an invalid configuration object may be reported first.
 #[pyclass(frozen, name = "OpenCancel", module = "tstrans.shells")]
 pub(crate) struct PyOpenCancel {
     inner: OpenCancel,

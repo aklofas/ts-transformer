@@ -592,7 +592,9 @@ The rules:
   class; a shell open given a URL whose scheme this build does not support
   still raises `ValueError`, as there is no transport to name. The managed
   `from_url`s are SRT only and raise `SrtError(CLOSED)` whatever the URL
-  says.
+  says. With an already-cancelled object an open is refused with `CLOSED`
+  before its URL is parsed; an invalid configuration object may be
+  reported first.
 - It ends a listener-mode first accept at any time. It does not interrupt
   a caller-mode connect, but an open that finishes after the cancel raises
   `CLOSED` whatever it did, and a connection it had just made is closed
@@ -608,7 +610,9 @@ The rules:
 
 Without the argument (or with `cancel=None`) an open behaves as before.
 The interpreter-exit hook below ends a parked first accept with or without
-it.
+it. Ctrl-C does not interrupt an open parked in a first accept: the
+`KeyboardInterrupt` is raised only when the call returns. Cancel it from
+another thread through `OpenCancel`.
 
 A cancel-first `close()` is abortive by design: for the raw-bytes
 `Sender`, a partial 7-packet bundle still in the framing buffer is not
