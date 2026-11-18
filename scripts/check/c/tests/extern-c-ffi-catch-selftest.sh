@@ -17,19 +17,25 @@ if [ "$rc" != 1 ]; then
     echo "FAIL: the rail exited $rc on the fixture (want 1)"
     fail=1
 fi
-for want in tst_fix_slice_before tst_fix_format_before tst_fix_call_after tst_fix_head_call; do
+for want in tst_fix_slice_before tst_fix_format_before tst_fix_call_after tst_fix_head_call \
+    tst_fix_chain_after tst_fix_arith_tail tst_fix_index_head tst_fix_arith_head tst_fix_bad_default; do
     if grep -q "^OUTSIDE: $want " "$tmp/out"; then echo "ok: $want is flagged"
     else echo "FAIL: $want is not flagged"; fail=1; fi
 done
-if grep -q "tst_fix_clean" "$tmp/out"; then
-    echo "FAIL: the clean function is flagged"
-    fail=1
-else
-    echo "ok: tst_fix_clean passes"
-fi
+if grep -q "^MISSING: tst_fix_comment_only " "$tmp/out"; then echo "ok: tst_fix_comment_only is reported missing"
+else echo "FAIL: tst_fix_comment_only is not reported missing"; fail=1; fi
+for clean in tst_fix_clean tst_fix_literals_clean; do
+    if grep -q "$clean" "$tmp/out"; then
+        echo "FAIL: $clean is flagged"
+        fail=1
+    else
+        echo "ok: $clean passes"
+    fi
+done
+if grep -q '^UNPARSED' "$tmp/out"; then echo "FAIL: a fixture body was not parsed"; fail=1; fi
 got=$(grep -c '^OUTSIDE: ' "$tmp/out")
-if [ "$got" != 4 ]; then
-    echo "FAIL: $got offenders reported (want exactly 4, one per violation function)"
+if [ "$got" != 9 ]; then
+    echo "FAIL: $got offenders reported (want exactly 9, one per violation function)"
     fail=1
 fi
 [ "$fail" = 0 ] || sed 's/^/    /' "$tmp/out"

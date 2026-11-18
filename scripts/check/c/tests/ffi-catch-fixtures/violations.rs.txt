@@ -1,7 +1,7 @@
 // Negative fixture for extern-c-ffi-catch-coverage.sh (not compiled): one
 // function per violation class and one clean function. The self-test
 // expects the rail to name exactly the `tst_fix_*` functions whose name
-// does not end in `_clean`.
+// does not end in `_clean` (OUTSIDE), and reports `tst_fix_comment_only` as MISSING.
 
 pub unsafe extern "C" fn tst_fix_clean(p: *mut Handle, data: *const u8, len: usize) -> c_int {
     // The null guard may run before the boundary.
@@ -61,4 +61,45 @@ pub unsafe extern "C" fn tst_fix_head_call(p: *mut Handle) -> c_int {
         return TstError::InvalidConfig as i32;
     };
     handle.prepare().inner.with_inner_mut(|m| m.flush())
+}
+
+pub unsafe extern "C" fn tst_fix_chain_after(p: *mut Handle) -> c_int {
+    let Some(handle) = (unsafe { p.as_ref() }) else {
+        set_last_error(TstError::InvalidConfig, "null handle pointer");
+        return TstError::InvalidConfig as i32;
+    };
+    handle.inner.with_inner_mut(|m| m.flush()).max(compute_after())
+}
+
+pub unsafe extern "C" fn tst_fix_arith_tail() -> c_int {
+    crate::panic::ffi_catch(0, || flush_all()) + 1
+}
+
+pub unsafe extern "C" fn tst_fix_index_head(i: usize) -> c_int {
+    HANDLES[i].inner.with_inner_mut(|m| m.flush())
+}
+
+pub unsafe extern "C" fn tst_fix_arith_head() -> c_int {
+    1 + crate::panic::ffi_catch(0, || flush_all())
+}
+
+pub unsafe extern "C" fn tst_fix_bad_default(len: usize) -> c_int {
+    crate::panic::ffi_catch(default_for(len), || flush_all())
+}
+
+// The word ffi_catch( in a comment is not a catch.
+pub unsafe extern "C" fn tst_fix_comment_only() -> c_int {
+    // wrap this in crate::panic::ffi_catch( one day
+    flush_all()
+}
+
+// Char literals, block comments and raw strings must not confuse the splitter.
+pub unsafe extern "C" fn tst_fix_literals_clean() -> c_int {
+    crate::panic::ffi_catch(TstError::Internal as i32, || {
+        /* a block comment with "a quote and a ; semicolon */
+        let quote = '"';
+        let brace = '{';
+        let raw = r#"a "raw" string with } and ;"#;
+        flush_all(quote, brace, raw)
+    })
 }

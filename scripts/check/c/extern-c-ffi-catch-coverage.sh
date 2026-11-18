@@ -15,17 +15,17 @@
 # Presence is not enough: everything the body does must happen INSIDE the
 # boundary, or a panic in it unwinds into C. So the statements before the
 # catching statement may only be the null-guard shape (and `static`/`const`
-# items), the catching statement may not compute anything in front of the
-# catch call, and nothing may follow it. The
-# rule is lexical; the check is the python block at the end of this file,
-# exercised on a negative fixture by tests/extern-c-ffi-catch-selftest.sh.
+# items); the catching statement may not compute anything in front of the
+# catch call or after it; and no statement may follow it. The default
+# passed to `ffi_catch` is evaluated before the boundary exists, so it must
+# be a constant (a path, a literal, `path()` or a cast of one). The rule is
+# lexical; the check is the python block at the end of this file, exercised
+# on a negative fixture by tests/extern-c-ffi-catch-selftest.sh.
 #
-# The former
-# lifecycle-only rail covered only `_close` /
-# `_cancel` entries — `tst_demux_config_free` slipped past that
-# ratchet by being a `_free`. This ratchet enumerates *every*
-# `pub unsafe extern "C" fn` in tst-c, so future entry points cannot
-# accidentally bypass the panic-isolation policy.
+# The former lifecycle-only rail covered only `_close` / `_cancel` entries;
+# `tst_demux_config_free` slipped past that ratchet by being a `_free`. This
+# ratchet enumerates *every* `pub unsafe extern "C" fn` in tst-c, so future
+# entry points cannot accidentally bypass the panic-isolation policy.
 #
 # Cross-language unwinding past a C frame is undefined behavior under
 # `panic="unwind"` and an abort with no last-error visibility under
@@ -199,12 +199,12 @@ fi
 #     or a `static` / `const` item;
 #   - in the catching statement: nothing computed in front of the catch call
 #     (a receiver path such as `handle.inner` or an `unsafe {` is fine; a call,
-#     a macro or a branch is not);
-#   - after it: nothing (the catching statement is the body's tail or a
-#     `let`/statement that ends it; relabels and post-processing belong
-#     inside the closure).
-# Arguments inside the catch call (the closure, the default) are inside by
-# construction. An offender is printed as function and file:line.
+#     a macro, an index, an operator or a branch is not) and nothing after the
+#     call's closing paren; for `ffi_catch`, a constant default;
+#   - after the catching statement: nothing (relabels and post-processing
+#     belong inside the closure).
+# The closure is inside by construction. A body the splitter cannot read is
+# reported as UNPARSED, an offender as function and file:line.
 if [[ ${#FIXTURE_FILES[@]} -gt 0 ]]; then
     CONTAIN_FILES=("${FIXTURE_FILES[@]}")
 else
@@ -233,26 +233,104 @@ ALLOWED_PRE = [
     re.compile(r'^(pub )?(static|const) \w+: [^=]+ = [^;{}()]*$'),
 ]
 HEAD_STRIP = re.compile(r'^(let (mut )?\w+ = |return )?(unsafe \{ )?')
+# A default is passed to ffi_catch before the boundary exists, so it must be a
+# constant: a path, a literal, `()`, `path()` or a pointer cast of a path.
+DEFAULT = re.compile(r'^(\(\)|-?\d+|[\w:]+(\(\))?(\.\w+\(\))?( as [\w:*  ]+)?)$')
 BLOCKS = ("if ", "unsafe ", "match ", "for ", "while ", "loop ", "{")
 
 
+CHAR_LIT = re.compile(r"'(?:\\(?:x[0-9a-fA-F]{2}|u\{[0-9a-fA-F]+\}|.)|[^\\'])'")
+RAW_STR = re.compile(r'b?r(#*)"')
+
+
+class CannotParse(Exception):
+    pass
+
+
 def strip_comments(text):
+    """Drop comments; replace char literals and raw strings by placeholders."""
     out, i, n = [], 0, len(text)
     while i < n:
         c = text[i]
         if text.startswith("//", i):
             while i < n and text[i] != "\n":
                 i += 1
+        elif text.startswith("/*", i):
+            depth = 0
+            while i < n:
+                if text.startswith("/*", i):
+                    depth += 1
+                    i += 2
+                elif text.startswith("*/", i):
+                    depth -= 1
+                    i += 2
+                    if depth == 0:
+                        break
+                else:
+                    out.append("\n" if text[i] == "\n" else "")
+                    i += 1
+            else:
+                raise CannotParse("unterminated block comment")
+        elif c == "'" and CHAR_LIT.match(text, i):
+            out.append("0")
+            i = CHAR_LIT.match(text, i).end()
+        elif (c in "rb") and (i == 0 or not (text[i - 1].isalnum() or text[i - 1] == "_")) and RAW_STR.match(text, i):
+            m = RAW_STR.match(text, i)
+            end = text.find('"' + m.group(1), m.end())
+            if end < 0:
+                raise CannotParse("unterminated raw string")
+            raw = text[i:end + 1 + len(m.group(1))]
+            out.append('"R"' + "\n" * raw.count("\n"))
+            i = end + 1 + len(m.group(1))
         elif c == '"':
             j = i + 1
-            while text[j] != '"':
+            while j < n and text[j] != '"':
                 j += 2 if text[j] == "\\" else 1
+            if j >= n:
+                raise CannotParse("unterminated string")
             out.append(text[i:j + 1])
             i = j + 1
         else:
             out.append(c)
             i += 1
     return "".join(out)
+
+
+def call_tail(s, m):
+    """The text after the closing paren of the catch call that `m` matched."""
+    i = s.index("(", m.end() - 1)
+    depth = 0
+    while i < len(s):
+        if s[i] == '"':
+            i += 1
+            while s[i] != '"':
+                i += 2 if s[i] == "\\" else 1
+        elif s[i] == "(":
+            depth += 1
+        elif s[i] == ")":
+            depth -= 1
+            if depth == 0:
+                return s[i + 1:].strip(), s[s.index("(", m.end() - 1) + 1:i]
+        i += 1
+    raise CannotParse("unbalanced parentheses at the catch call")
+
+
+def first_arg(args):
+    depth, i = 0, 0
+    while i < len(args):
+        c = args[i]
+        if c == '"':
+            i += 1
+            while args[i] != '"':
+                i += 2 if args[i] == "\\" else 1
+        elif c in "([{":
+            depth += 1
+        elif c in ")]}":
+            depth -= 1
+        elif c == "," and depth == 0:
+            break
+        i += 1
+    return args[:i].strip()
 
 
 def statements(body, first_line):
@@ -314,21 +392,35 @@ for path in files:
         k = j + 1
         while lines[k] != "}":
             k += 1
-        stmts = statements(strip_comments("\n".join(lines[j + 1:k])), j + 2)
-        idx = next((x for x, (_, s) in enumerate(stmts) if CATCH.search(s)), None)
-        if idx is None:
-            continue  # the presence check above reports it
-        for ln, s in stmts[:idx]:
-            if not any(r.match(s) for r in ALLOWED_PRE):
-                print(f"OUTSIDE: {name} ({path}:{i + 1}) runs `{s[:90]}` at line {ln} before its panic boundary")
+        try:
+            stmts = statements(strip_comments("\n".join(lines[j + 1:k])), j + 2)
+            idx = next((x for x, (_, s) in enumerate(stmts) if CATCH.search(s)), None)
+            if idx is None:
+                print(f"MISSING: {name} ({path}:{i + 1}) has no ffi_catch / with_inner_* call in its code (a comment does not count)")
                 bad += 1
-        ln, s = stmts[idx]
-        head = HEAD_STRIP.sub("", s[:CATCH.search(s).start()])
-        if re.search(r'[(!]|\b(if|match|else|for|while|loop)\b', head):
-            print(f"OUTSIDE: {name} ({path}:{i + 1}) computes `{head.strip()[:90]}` at line {ln} in front of its panic boundary")
-            bad += 1
-        for ln, s in stmts[idx + 1:]:
-            print(f"OUTSIDE: {name} ({path}:{i + 1}) runs `{s[:90]}` at line {ln} after its panic boundary")
+                continue
+            for ln, s in stmts[:idx]:
+                if not any(r.match(s) for r in ALLOWED_PRE):
+                    print(f"OUTSIDE: {name} ({path}:{i + 1}) runs `{s[:90]}` at line {ln} before its panic boundary")
+                    bad += 1
+            ln, s = stmts[idx]
+            cm = CATCH.search(s)
+            head = HEAD_STRIP.sub("", s[:cm.start()])
+            if re.search(r'[(!\[+\-*/%]|\b(if|match|else|for|while|loop)\b', head):
+                print(f"OUTSIDE: {name} ({path}:{i + 1}) computes `{head.strip()[:90]}` at line {ln} in front of its panic boundary")
+                bad += 1
+            tail, args = call_tail(s, cm)
+            if tail.strip("} ") != "":
+                print(f"OUTSIDE: {name} ({path}:{i + 1}) runs `{tail[:90]}` at line {ln} after its panic boundary")
+                bad += 1
+            if cm.group(0).endswith("ffi_catch(") and not DEFAULT.match(first_arg(args)):
+                print(f"OUTSIDE: {name} ({path}:{i + 1}) passes the default `{first_arg(args)[:90]}` at line {ln}, which is evaluated before its panic boundary")
+                bad += 1
+            for ln, s in stmts[idx + 1:]:
+                print(f"OUTSIDE: {name} ({path}:{i + 1}) runs `{s[:90]}` at line {ln} after its panic boundary")
+                bad += 1
+        except (CannotParse, IndexError, ValueError) as e:
+            print(f"UNPARSED: {name} ({path}:{i + 1}): the rail cannot parse this body ({e or 'unexpected syntax'})")
             bad += 1
 sys.exit(1 if bad else 0)
 PY
