@@ -115,6 +115,12 @@ fn insert_receiver(receiver: H264Receiver, rtsp: Option<JniRtspControl>) -> jlon
     REGISTRY.insert(Owned::new(slot, cancel, local_addr)) as jlong
 }
 
+/// Test hook: see [`OwnedRegistry::empty_slot_keep_id`].
+#[cfg(feature = "jni-test-hooks")]
+pub(crate) fn empty_slot_keep_id(handle: jlong) -> bool {
+    REGISTRY.empty_slot_keep_id(handle as u64)
+}
+
 /// The receive natives' entry check, the shells' rule: an id already gone is a
 /// closed Java handle (`IllegalStateException`); a slot a concurrent `close()`
 /// takes after this check is the receive's `RtpException(CLOSED)`.
