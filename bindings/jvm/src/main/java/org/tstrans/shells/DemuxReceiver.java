@@ -120,7 +120,7 @@ public class DemuxReceiver extends NativeHandle implements Iterable<DemuxEvent> 
      */
     public static DemuxReceiver open(String url, DemuxerConfig demuxConfig, OpenCancel cancel)
             throws BindingException {
-        return new DemuxReceiver(openHandle(url, demuxConfig, cancel));
+        return new DemuxReceiver(openWithConfig(url, demuxConfig, cancel));
     }
 
     /**
@@ -148,22 +148,10 @@ public class DemuxReceiver extends NativeHandle implements Iterable<DemuxEvent> 
      */
     protected static long openHandle(String url, DemuxerConfig demuxConfig)
             throws BindingException {
-        return openHandle(url, demuxConfig, null);
+        return openWithConfig(url, demuxConfig, null);
     }
 
-    /**
-     * Open the native receiver with explicit demux options under {@code cancel}
-     * and return its handle, for a subclass's own factory. Same contract as
-     * {@link #open(String, DemuxerConfig, OpenCancel)}.
-     *
-     * @param url         {@code scheme://...} with per-transport query options
-     * @param demuxConfig the demuxer configuration
-     * @param cancel      the open's cancel, or {@code null}
-     * @return the native handle, to pass to the constructor
-     * @throws IllegalArgumentException if the scheme is not supported
-     * @throws BindingException the transport's exception
-     */
-    protected static long openHandle(String url, DemuxerConfig demuxConfig, OpenCancel cancel)
+    private static long openWithConfig(String url, DemuxerConfig demuxConfig, OpenCancel cancel)
             throws BindingException {
         return nOpenWithConfig(
             url,
