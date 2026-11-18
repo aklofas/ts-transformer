@@ -112,10 +112,18 @@ LISTENER_OPENS: dict[str, Callable[[str, OpenCancel], Any]] = {
 
 def _park(open_fn: Callable[[str, OpenCancel], Any], oc: OpenCancel) -> tuple[int, _Open]:
     """Start a listener-mode open with `oc` and return once it is parked:
-    its port is bound and the open has not returned."""
-    port = free_udp_port()
-    o = _Open(lambda: open_fn(f"srt://127.0.0.1:{port}?mode=listener", oc))
-    _wait_for("the open to bind its port", lambda: _udp_port_bound(port) or o.done.is_set())
+    its port is bound and the open has not returned.
+
+    A free port can be taken by another process before the open binds it
+    (the box is shared); that bind failure is retried on a new port, since
+    it is not what any test here is about."""
+    for _ in range(5):
+        port = free_udp_port()
+        o = _Open(lambda: open_fn(f"srt://127.0.0.1:{port}?mode=listener", oc))
+        _wait_for("the open to bind its port", lambda: _udp_port_bound(port) or o.done.is_set())
+        if o.done.is_set() and isinstance(o.error, exceptions.SrtError) and str(o.error).startswith("bind: "):
+            continue
+        break
     assert not o.done.is_set(), f"the open returned instead of parking: {o.error!r}"
     return port, o
 
@@ -262,48 +270,49 @@ def test_a_bad_url_with_a_cancelled_object_is_closed() -> None:
         _assert_closed(raised.value)
 
 
+@pytest.mark.parametrize(
+    "url", ["http://127.0.0.1:1", "udp://127.0.0.1:1", "not a url"], ids=["http", "udp", "garbage"]
+)
+@pytest.mark.parametrize(
+    "call",
+    [
+        lambda url, oc: srt.ManagedSender.from_url(url, cancel=oc),
+        lambda url, oc: srt.ManagedReceiver.from_url(url, cancel=oc),
+        lambda url, oc: srt.ManagedMuxSender.from_url(url, video_only_program(), cancel=oc),
+        lambda url, oc: srt.ManagedDemuxReceiver.from_url(url, cancel=oc),
+    ],
+    ids=["ManagedSender", "ManagedReceiver", "ManagedMuxSender", "ManagedDemuxReceiver"],
+)
+def test_a_managed_open_with_a_cancelled_object_is_srt_closed_whatever_the_url(
+    call: Callable[[str, OpenCancel], Any], url: str
+) -> None:
+    """The managed shells are SRT only: no URL turns the refusal into a
+    `ValueError` or another transport's class."""
+    oc = OpenCancel()
+    oc.cancel()
+    with pytest.raises(exceptions.SrtError) as raised:
+        call(url, oc)
+    _assert_closed(raised.value)
+
+
 def test_an_unsupported_scheme_is_a_value_error_even_with_a_cancelled_object() -> None:
-    """No transport means no `CLOSED` to raise: the one exception to the
-    object being checked first."""
+    """A shell open with no transport for the scheme has no `CLOSED` to
+    raise: the one exception to the object being checked first."""
     oc = OpenCancel()
     oc.cancel()
     with pytest.raises(ValueError, match="unsupported URL scheme"):
         shells.Sender.open("http://127.0.0.1:1", cancel=oc)
     with pytest.raises(ValueError, match="unsupported URL scheme"):
         shells.Receiver.open("http://127.0.0.1:1", cancel=oc)
+    with pytest.raises(ValueError, match="unsupported URL scheme"):
+        shells.MuxSender.open("http://127.0.0.1:1", video_only_program(), cancel=oc)
+    with pytest.raises(ValueError, match="unsupported URL scheme"):
+        shells.DemuxReceiver.open("http://127.0.0.1:1", cancel=oc)
 
 
 # ---------------------------------------------------------------------------
 # The outcome rule: an open that finishes after the cancel reports CLOSED.
 # ---------------------------------------------------------------------------
-
-
-@pytest.mark.parametrize(
-    "name",
-    ["Sender.open", "ManagedSender.from_url", "ManagedDemuxReceiver.from_url"],
-)
-def test_a_dial_that_fails_after_the_cancel_reports_closed(name: str) -> None:
-    """A cancel during a caller-mode dial does not interrupt it; the dial to
-    a port nothing answers then times out, and the open reports the cancel
-    instead. The dial is proven in progress by its first handshake datagram
-    arriving at that port, past the open's check of the object."""
-    dead = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    dead.bind(("127.0.0.1", 0))
-    dead.settimeout(DEADLINE_S)
-    port = dead.getsockname()[1]
-    oc = OpenCancel()
-    o = _Open(lambda: CALLER_OPENS[name](f"srt://127.0.0.1:{port}?mode=caller&conntimeo=3000", oc))
-    try:
-        dead.recvfrom(2048)
-        assert not o.done.is_set()
-        oc.cancel()
-        o.thread.join(DEADLINE_S + 3.0)
-        assert not o.thread.is_alive(), "the dial did not end"
-        _assert_closed(o.error)
-    finally:
-        dead.close()
-        o.thread.join(DEADLINE_S)
-        o.close_result()
 
 
 # An SRT control packet (top bit set) of type 5, SHUTDOWN.
@@ -365,6 +374,37 @@ class _HeldRelay:
                 self.sock.sendto(held, self.target)
                 held = None
             self.sock.sendto(data, self.target)
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["Sender.open", "ManagedSender.from_url", "ManagedDemuxReceiver.from_url"],
+)
+def test_a_dial_that_fails_after_the_cancel_reports_closed(name: str) -> None:
+    """A cancel during a caller-mode dial does not interrupt it; the dial is
+    then refused by the listener, and the open reports the cancel instead
+    of the refusal. The relay holds the dial in progress until the cancel
+    has run, and the connect timeout is far longer than the test, so the
+    dial can only end by the refusal, after the cancel."""
+    lst = srt.Builder("srt://127.0.0.1:0?mode=listener").listen()
+    lst.rules().set_default(srt.ListenRule.reject(srt.RejectReason.FORBIDDEN))
+    relay = _HeldRelay(lst.local_addr()[1])
+    oc = OpenCancel()
+    url = f"srt://127.0.0.1:{relay.port}?mode=caller&conntimeo=60000"
+    o = _Open(lambda: CALLER_OPENS[name](url, oc))
+    try:
+        assert relay.dial_seen.wait(DEADLINE_S), "the caller never dialled"
+        assert not o.done.is_set()
+        oc.cancel()
+        relay.release()
+        o.join(name)
+        _assert_closed(o.error)
+        assert o.result is None
+    finally:
+        relay.close()
+        lst.close()
+        o.thread.join(DEADLINE_S)
+        o.close_result()
 
 
 def test_a_dial_that_succeeds_after_the_cancel_is_closed_again() -> None:
