@@ -633,6 +633,7 @@ impl ClientEngine {
                     "keepalive ping got 454 Session Not Found; marking session dead"
                 );
                 self.keepalive = Keepalive::Off;
+                self.pings.clear();
                 self.events.push_back(Event::SessionDead);
                 self.events
                     .push_back(Event::Ended(EndReason::SessionExpired));

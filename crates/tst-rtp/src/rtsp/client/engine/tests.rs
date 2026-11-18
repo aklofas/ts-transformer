@@ -810,6 +810,31 @@ fn a_ping_454_stops_the_pings() {
     }
 }
 
+/// With two pings in flight both answered `454`, the session ends once: the
+/// first `454` forgets the other ping, whose reply then matches nothing.
+#[test]
+fn a_second_ping_454_ends_nothing_again() {
+    let (mut e, t0, first) = pinged(None);
+    e.handle_timeout(ms(t0, 2000), false);
+    let second = cseq(&one(&mut e));
+    for c in [first, second] {
+        e.handle_reply(
+            resp(format!("RTSP/1.0 454 Session Not Found\r\nCSeq: {c}\r\n\r\n").as_bytes()),
+            ms(t0, 2010),
+        );
+    }
+    let ev = events(&mut e);
+    assert!(
+        matches!(
+            ev.as_slice(),
+            [Event::SessionDead, Event::Ended(EndReason::SessionExpired)]
+        ),
+        "{ev:?}"
+    );
+    assert_eq!(e.counters().keepalive_responses, 1);
+    assert_eq!(e.counters().unmatched_replies, 1);
+}
+
 #[test]
 fn only_the_latest_unanswered_pings_are_remembered() {
     let t0 = Instant::now();
