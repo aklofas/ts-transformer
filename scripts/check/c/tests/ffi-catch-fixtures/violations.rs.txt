@@ -1,0 +1,64 @@
+// Negative fixture for extern-c-ffi-catch-coverage.sh (not compiled): one
+// function per violation class and one clean function. The self-test
+// expects the rail to name exactly the `tst_fix_*` functions whose name
+// does not end in `_clean`.
+
+pub unsafe extern "C" fn tst_fix_clean(p: *mut Handle, data: *const u8, len: usize) -> c_int {
+    // The null guard may run before the boundary.
+    let Some(handle) = (unsafe { p.as_ref() }) else {
+        set_last_error(TstError::InvalidConfig, "null handle pointer");
+        return TstError::InvalidConfig as i32;
+    };
+    if data.is_null() && len > 0 {
+        set_last_error(TstError::InvalidConfig, "null data with non-zero len");
+        return TstError::InvalidConfig as i32;
+    }
+    handle.inner.with_inner_mut(|m| {
+        let slice = match unsafe { ffi_slice(data, len, "data") } {
+            Ok(s) => s,
+            Err(code) => return code,
+        };
+        m.push(slice)
+    })
+}
+
+pub unsafe extern "C" fn tst_fix_slice_before(p: *mut Handle, data: *const u8, len: usize) -> c_int {
+    let Some(handle) = (unsafe { p.as_ref() }) else {
+        set_last_error(TstError::InvalidConfig, "null handle pointer");
+        return TstError::InvalidConfig as i32;
+    };
+    let slice = match unsafe { ffi_slice(data, len, "data") } {
+        Ok(s) => s,
+        Err(code) => return code,
+    };
+    handle.inner.with_inner_mut(|m| m.push(slice))
+}
+
+pub unsafe extern "C" fn tst_fix_format_before(p: *mut Handle, len: usize) -> c_int {
+    let Some(handle) = (unsafe { p.as_ref() }) else {
+        set_last_error(TstError::InvalidConfig, "null handle pointer");
+        return TstError::InvalidConfig as i32;
+    };
+    if len < 188 {
+        set_last_error(TstError::InvalidConfig, &format!("len {len} too small"));
+        return TstError::InvalidConfig as i32;
+    }
+    handle.inner.with_inner_mut(|m| m.push_len(len))
+}
+
+pub unsafe extern "C" fn tst_fix_call_after(p: *mut Handle) -> c_int {
+    let Some(handle) = (unsafe { p.as_ref() }) else {
+        set_last_error(TstError::InvalidConfig, "null handle pointer");
+        return TstError::InvalidConfig as i32;
+    };
+    let rc = handle.inner.with_inner_mut(|m| m.flush());
+    relabel(rc)
+}
+
+pub unsafe extern "C" fn tst_fix_head_call(p: *mut Handle) -> c_int {
+    let Some(handle) = (unsafe { p.as_ref() }) else {
+        set_last_error(TstError::InvalidConfig, "null handle pointer");
+        return TstError::InvalidConfig as i32;
+    };
+    handle.prepare().inner.with_inner_mut(|m| m.flush())
+}
