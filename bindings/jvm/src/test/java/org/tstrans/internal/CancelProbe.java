@@ -13,6 +13,11 @@ public final class CancelProbe {
     public static native long nOpen();
     /** Register a cancel view over the gate; returns the key a {@code CancelHandle} wraps. */
     public static native long nCancelView(long probe);
+    /**
+     * Register one open with {@code cancel} whose wake is the gate, so the object's
+     * {@code cancel()} blocks inside it until {@link #nRelease(long)}.
+     */
+    public static native void nHoldOpen(long probe, org.tstrans.shells.OpenCancel cancel);
     /** Wait up to {@code timeoutMs} for a thread to be inside the gate's {@code cancel()}. */
     public static native boolean nAwaitEntered(long probe, long timeoutMs);
     /** Let every parked {@code cancel()} return. */

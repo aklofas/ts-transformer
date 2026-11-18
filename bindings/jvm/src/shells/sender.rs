@@ -30,6 +30,7 @@ use tst_pipeline::{Sender as PlSender, SenderConfig};
 
 use super::cancel::cancel_view_handle;
 use super::open::{open_send, read_url};
+use super::open_cancel::object_of;
 use super::{domain_or_closed, throw_state};
 use crate::error::{throw_binding, throw_handle_state};
 use crate::generated::stats_shells::build_socket_stats;
@@ -45,11 +46,19 @@ jni_native! {
     /// wrap it in a sender. Throws `IllegalArgumentException` for an unsupported
     /// scheme and the transport's exception for a bad URL or a connect failure;
     /// returns 0 with the exception pending.
-    fn Java_org_tstrans_shells_Sender_nOpen(env, _class, url: JString<'_>) -> jlong = 0 => {
+    fn Java_org_tstrans_shells_Sender_nOpen(
+        env,
+        _class,
+        url: JString<'_>,
+        cancel: JObject<'_>,
+    ) -> jlong = 0 => {
+        let Ok(oc) = object_of(env, &cancel) else {
+            return 0;
+        };
         let Some(url) = read_url(env, &url) else {
             return 0;
         };
-        let Some(opened) = open_send(env, &url) else {
+        let Some(opened) = open_send(env, &url, oc.as_ref()) else {
             return 0;
         };
         register(opened)

@@ -3915,14 +3915,15 @@ tier = "A"
 # yet. Its own module tests use a stand-in open; the real SRT opens (two
 # parked first accepts, the refusals, the registration race, the outcome
 # rule racing the end of a managed open) are in the tst-srt `from_url` tests,
-# and the Python opens that take it in tst-py's `test_open_cancel.py`.
+# the Python opens that take it in tst-py's `test_open_cancel.py`, and the JVM
+# ones in tst-jni's `OpenCancelTest.java`.
 
 [[surface]]
 kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::binding::OpenCancel"
 owning_tests = ["crates/tst-pipeline/src/binding/open_cancel.rs", "crates/tst-srt/tests/pipeline/shells_from_url.rs"]
-bindings = ["c:n/a(the C binding takes no open cancel; its listener opens stay as they are)", "python:tstrans.shells.OpenCancel", "java:deferred(not wrapped yet: org.tstrans.shells.OpenCancel)", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:n/a(the C binding takes no open cancel; its listener opens stay as they are)", "python:tstrans.shells.OpenCancel", "java:org.tstrans.shells.OpenCancel", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -3931,7 +3932,7 @@ kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::binding::open_cancel::OpenCancel"
 owning_tests = ["crates/tst-pipeline/src/binding/open_cancel.rs", "crates/tst-srt/tests/pipeline/shells_from_url.rs"]
-bindings = ["c:n/a(the C binding takes no open cancel; its listener opens stay as they are)", "python:tstrans.shells.OpenCancel", "java:deferred(not wrapped yet: org.tstrans.shells.OpenCancel)", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:n/a(the C binding takes no open cancel; its listener opens stay as they are)", "python:tstrans.shells.OpenCancel", "java:org.tstrans.shells.OpenCancel", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -3940,7 +3941,7 @@ kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::binding::open_cancel::OpenCancel::new"
 owning_tests = ["crates/tst-pipeline/src/binding/open_cancel.rs", "crates/tst-srt/tests/pipeline/shells_from_url.rs"]
-bindings = ["c:n/a(the C binding takes no open cancel; its listener opens stay as they are)", "python:tstrans.shells.OpenCancel", "java:deferred(not wrapped yet: org.tstrans.shells.OpenCancel)", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:n/a(the C binding takes no open cancel; its listener opens stay as they are)", "python:tstrans.shells.OpenCancel", "java:org.tstrans.shells.OpenCancel", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -3958,7 +3959,7 @@ kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::binding::open_cancel::OpenCancel::cancel"
 owning_tests = ["crates/tst-pipeline/src/binding/open_cancel.rs", "crates/tst-srt/tests/pipeline/shells_from_url.rs"]
-bindings = ["c:n/a(the C binding takes no open cancel; its listener opens stay as they are)", "python:tstrans.shells.OpenCancel.cancel", "java:deferred(not wrapped yet: org.tstrans.shells.OpenCancel)", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:n/a(the C binding takes no open cancel; its listener opens stay as they are)", "python:tstrans.shells.OpenCancel.cancel", "java:org.tstrans.shells.OpenCancel.cancel", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -3967,7 +3968,7 @@ kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::binding::open_cancel::OpenCancel::is_cancelled"
 owning_tests = ["crates/tst-pipeline/src/binding/open_cancel.rs", "crates/tst-srt/tests/pipeline/shells_from_url.rs"]
-bindings = ["c:n/a(the C binding takes no open cancel; its listener opens stay as they are)", "python:tstrans.shells.OpenCancel.is_cancelled", "java:deferred(not wrapped yet: org.tstrans.shells.OpenCancel)", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:n/a(the C binding takes no open cancel; its listener opens stay as they are)", "python:tstrans.shells.OpenCancel.is_cancelled", "java:org.tstrans.shells.OpenCancel.isCancelled", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -4104,8 +4105,8 @@ tier = "A"
 kind = "rust"
 crate = "tst-srt"
 item = "tst_srt::shells::managed_receiver_from_url_with_cancel"
-owning_tests = ["bindings/python/tests/test_exit_with_parked_shell.py"]
-bindings = ["c:deferred(the C managed receivers open through managed_*_from_url; their first accept takes no caller cancel slot)", "python:tstrans.srt.ManagedReceiver.from_url", "java:deferred(the JVM managed receivers open through managed_*_from_url; their first accept takes no caller cancel slot)", "swift:deferred", "kotlin:deferred"]
+owning_tests = ["bindings/python/tests/test_exit_with_parked_shell.py", "bindings/jvm/src/test/java/org/tstrans/shells/OpenCancelTest.java"]
+bindings = ["c:deferred(the C managed receivers open through managed_*_from_url; their first accept takes no caller cancel slot)", "python:tstrans.srt.ManagedReceiver.from_url", "java:org.tstrans.srt.ManagedReceiver.fromUrl", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -4115,8 +4116,8 @@ tier = "A"
 kind = "rust"
 crate = "tst-srt"
 item = "tst_srt::shells::managed_demux_receiver_from_url_with_cancel"
-owning_tests = ["bindings/python/tests/test_exit_with_parked_shell.py"]
-bindings = ["c:deferred(the C managed receivers open through managed_*_from_url; their first accept takes no caller cancel slot)", "python:tstrans.srt.ManagedDemuxReceiver.from_url", "java:deferred(the JVM managed receivers open through managed_*_from_url; their first accept takes no caller cancel slot)", "swift:deferred", "kotlin:deferred"]
+owning_tests = ["bindings/python/tests/test_exit_with_parked_shell.py", "bindings/jvm/src/test/java/org/tstrans/shells/OpenCancelTest.java"]
+bindings = ["c:deferred(the C managed receivers open through managed_*_from_url; their first accept takes no caller cancel slot)", "python:tstrans.srt.ManagedDemuxReceiver.from_url", "java:org.tstrans.srt.ManagedDemuxReceiver.fromUrl", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 

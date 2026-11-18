@@ -29,7 +29,8 @@ class SrtReconnectPolicyOrdinalTest {
                     String.class,
                     boolean.class, int.class,
                     int.class, long.class, long.class,
-                    int.class, int.class, int.class);
+                    int.class, int.class, int.class,
+                    org.tstrans.shells.OpenCancel.class);
             N_FROM_URL.setAccessible(true);
         } catch (NoSuchMethodException e) {
             throw new ExceptionInInitializerError(e);
@@ -54,7 +55,8 @@ class SrtReconnectPolicyOrdinalTest {
                     /* backoffMaxMs       */ 10_000L,
                     /* gapBufferCapacity  */ 256,
                     /* overflowPolicy     */ overflowPolicy,
-                    /* mode               */ 0);
+                    /* mode               */ 0,
+                    /* cancel             */ null);
         } catch (InvocationTargetException e) {
             throw e.getCause();
         }

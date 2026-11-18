@@ -17,9 +17,11 @@ import org.tstrans.srt.SrtStats;
  * {@code TcpException}, {@code RistException}), each a {@link BindingException}.
  *
  * <p>An {@code srt://} URL must carry {@code mode=listener}: the open binds,
- * listens and accepts ONE peer, and that first accept is not cancellable because
- * no handle exists until the open returns. For a server that handles many
- * peers, use {@code org.tstrans.srt.Listener}.
+ * listens and accepts ONE peer, and blocks until one connects. No
+ * {@link #cancelHandle()} exists until the open returns; to end that first
+ * accept from another thread, pass an {@link OpenCancel} to
+ * {@link #open(String, OpenCancel)} and cancel it. For a server that handles
+ * many peers, use {@code org.tstrans.srt.Listener}.
  *
  * <p><b>Thread safety:</b> a single {@code Receiver} is NOT thread-safe. Use one
  * receiver per thread, or guard with external synchronisation.
@@ -64,6 +66,25 @@ public class Receiver extends NativeHandle {
     }
 
     /**
+     * Same as {@link #open(String)}, under {@code cancel}: its
+     * {@link OpenCancel#cancel()} from another thread ends an {@code srt://}
+     * first accept, and an object already cancelled refuses the open before the
+     * URL is parsed. Either way the open throws the URL's transport exception
+     * with kind {@code CLOSED} (see {@link OpenCancel} for every rule).
+     *
+     * @param url    {@code scheme://...} with per-transport query options
+     * @param cancel the open's cancel; {@code null} is the same as {@link #open(String)}
+     * @return an open {@code Receiver}
+     * @throws IllegalArgumentException if the scheme is not one of the six above
+     * @throws IllegalStateException if {@code cancel} is closed
+     * @throws BindingException as in {@link #open(String)}; kind {@code CLOSED}
+     *     when {@code cancel} was cancelled by the time the open finished
+     */
+    public static Receiver open(String url, OpenCancel cancel) throws BindingException {
+        return new Receiver(openHandle(url, cancel));
+    }
+
+    /**
      * Open the native receiver and return its handle, for a subclass's own
      * factory. Same contract as {@link #open(String)}.
      *
@@ -73,7 +94,21 @@ public class Receiver extends NativeHandle {
      * @throws BindingException the transport's exception
      */
     protected static long openHandle(String url) throws BindingException {
-        return nOpen(url);
+        return nOpen(url, null);
+    }
+
+    /**
+     * Open the native receiver under {@code cancel} and return its handle, for a
+     * subclass's own factory. Same contract as {@link #open(String, OpenCancel)}.
+     *
+     * @param url    {@code scheme://...} with per-transport query options
+     * @param cancel the open's cancel, or {@code null}
+     * @return the native handle, to pass to the constructor
+     * @throws IllegalArgumentException if the scheme is not supported
+     * @throws BindingException the transport's exception
+     */
+    protected static long openHandle(String url, OpenCancel cancel) throws BindingException {
+        return nOpen(url, cancel);
     }
 
     /**
@@ -317,7 +352,7 @@ public class Receiver extends NativeHandle {
         }
     }
 
-    private static native long    nOpen(String url) throws BindingException;
+    private static native long    nOpen(String url, OpenCancel cancel) throws BindingException;
     private static native byte[]  nRecvBytes(long handle, int maxLen) throws BindingException;
     private static native long    nCancelHandle(long handle);
     private static native SocketStats nSocketStats(long handle);

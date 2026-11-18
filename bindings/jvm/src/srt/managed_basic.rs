@@ -39,7 +39,7 @@ use jni::jni_str;
 use jni::objects::{JByteArray, JObject, JString};
 use jni::strings::JNIString;
 use jni::sys::{jboolean, jbyteArray, jint, jlong};
-use tst_pipeline::binding::{BindingErrorKind, ManagedHandles, Owned};
+use tst_pipeline::binding::{BindingErrorKind, Domain, ManagedHandles, Owned};
 use tst_pipeline::{
     ManagedRecvTransport, ManagedTransport, Receiver as PlReceiver, Sender as PlSender,
     SenderConfig,
@@ -47,10 +47,12 @@ use tst_pipeline::{
 use tst_srt::{SrtTransport, SrtUrl, url::Mode};
 
 use super::ManagedSenderSnapshot;
+use super::closed_srt;
 use super::errors::{throw_data_plane_state, throw_receiver_error, throw_sender_error, throw_srt};
 use crate::generated::stats_shells::build_socket_stats;
 use crate::generated::stats_srt::build_managed_transport_stats;
 use crate::handle::OwnedRegistry;
+use crate::shells::open_cancel::{begin, finish, object_of};
 
 // -----------------------------------------------------------------------
 // ManagedSender  (org.tstrans.srt.ManagedSender)
@@ -86,7 +88,11 @@ jni_native! {
         gap_buffer_capacity: jint,
         overflow_policy: jint,
         mode: jint,
+        cancel: JObject<'_>,
     ) -> jlong = 0 => {
+        let Ok(oc) = object_of(env, &cancel) else {
+            return 0;
+        };
         let url_str: String = match url.try_to_string(env) {
             Ok(s) => s,
             Err(e) => {
@@ -95,6 +101,9 @@ jni_native! {
             }
         };
 
+        let Ok(slot) = begin(env, Domain::Srt, oc.as_ref()) else {
+            return 0;
+        };
         // Validate URL up-front so a malformed URL / wrong mode raises
         // CONFIG_INVALID before we materialize the factory closure (otherwise the
         // same failure would surface as a Broken from the factory, the wrong kind
@@ -132,11 +141,9 @@ jni_native! {
         // One open path: the initial dial, the reconnect
         // factory (`SrtUrl::connect` per attempt), the attempt counter and the
         // cancel/stats/reconnect handles are composed in tst-srt, once.
-        let (inner, handles, stats) = match tst_srt::shells::managed_sender_from_url(
-            &parsed,
-            policy,
-            SenderConfig::default(),
-        ) {
+        let opened =
+            tst_srt::shells::managed_sender_from_url(&parsed, policy, SenderConfig::default());
+        let (inner, handles, stats) = match finish(slot, opened, closed_srt()) {
             Ok(triple) => triple,
             Err(e) => {
                 // Initial connect failure: CONNECT_FAILED (was BROKEN — the
@@ -335,7 +342,11 @@ jni_native! {
         gap_buffer_capacity: jint,
         overflow_policy: jint,
         mode: jint,
+        cancel: JObject<'_>,
     ) -> jlong = 0 => {
+        let Ok(oc) = object_of(env, &cancel) else {
+            return 0;
+        };
         let url_str: String = match url.try_to_string(env) {
             Ok(s) => s,
             Err(e) => {
@@ -344,6 +355,9 @@ jni_native! {
             }
         };
 
+        let Ok(slot) = begin(env, Domain::Srt, oc.as_ref()) else {
+            return 0;
+        };
         let parsed = match SrtUrl::parse(&url_str) {
             Ok(p) => p,
             Err(e) => {
@@ -377,8 +391,18 @@ jni_native! {
         // One open path: the initial bind+accept, the
         // reconnect factory (whose re-accept is reachable through the managed
         // `FactoryCancel` slot), the attempt/success counters and the cancel
-        // handle are composed in tst-srt, once.
-        let (inner, handles) = match tst_srt::shells::managed_receiver_from_url(&parsed, policy) {
+        // handle are composed in tst-srt, once. Given an `OpenCancel`, the open's
+        // slot is the factory's, so the object's `cancel()` reaches the first
+        // accept; the slot stays the re-accepts' after the object lets it go.
+        let opened = match &slot {
+            Some(slot) => tst_srt::shells::managed_receiver_from_url_with_cancel(
+                &parsed,
+                policy,
+                Arc::clone(slot),
+            ),
+            None => tst_srt::shells::managed_receiver_from_url(&parsed, policy),
+        };
+        let (inner, handles) = match finish(slot, opened, closed_srt()) {
             Ok(pair) => pair,
             Err(e) => {
                 super::errors::srt_error(env, e);

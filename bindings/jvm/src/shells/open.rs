@@ -7,10 +7,13 @@ use jni::Env;
 use jni::jni_str;
 use jni::objects::JString;
 use jni::strings::JNIString;
+use std::sync::Arc;
+use tst_core::cancel::CancelSlot;
 use tst_core::transport::{RecvTransport, Transport};
 use tst_core::url::redact_url;
-use tst_pipeline::binding::{BindingError, BindingErrorKind, Domain, Opened};
+use tst_pipeline::binding::{BindingError, BindingErrorKind, Domain, OpenCancel, Opened};
 
+use super::open_cancel::{begin, closed, finish};
 use crate::error::throw_binding;
 
 /// The domain of `url`'s scheme, or `None` for a scheme no shell opens.
@@ -53,12 +56,19 @@ fn unreachable_scheme<T>() -> Result<T, BindingError> {
 }
 
 /// Open a send transport for a shell. `None` with an exception pending on a
-/// bad scheme or a failed open.
-pub(super) fn open_send(env: &mut Env, url: &str) -> Option<Opened<Box<dyn Transport>>> {
+/// bad scheme or a failed open. `oc` is the caller's `OpenCancel`: a sender
+/// dials and takes no slot, so only a cancel before or during the connect is
+/// seen, as `CLOSED` once the connect ends.
+pub(super) fn open_send(
+    env: &mut Env,
+    url: &str,
+    oc: Option<&OpenCancel>,
+) -> Option<Opened<Box<dyn Transport>>> {
     let Some(domain) = domain_of(url) else {
         unsupported(env, url);
         return None;
     };
+    let slot = begin(env, domain, oc).ok()?;
     let opened = match domain {
         Domain::Srt => tst_srt::opener::open_sender(url),
         Domain::Rtp => tst_rtp::opener::open_sender(url),
@@ -67,7 +77,7 @@ pub(super) fn open_send(env: &mut Env, url: &str) -> Option<Opened<Box<dyn Trans
         Domain::Rist => tst_rist::opener::open_sender(url),
         _ => unreachable_scheme(),
     };
-    match opened {
+    match finish(slot, opened, closed()) {
         Ok(o) => Some(o),
         Err(e) => {
             throw_binding(env, domain, &e);
@@ -76,26 +86,32 @@ pub(super) fn open_send(env: &mut Env, url: &str) -> Option<Opened<Box<dyn Trans
     }
 }
 
-/// Open a receive transport for a shell. An `srt://` open takes a fresh,
-/// never-fired accept slot: no cancel handle exists until the shell does, so
-/// the first accept inside a blocking open stays uncancellable.
-pub(super) fn open_recv(env: &mut Env, url: &str) -> Option<Opened<Box<dyn RecvTransport>>> {
+/// Open a receive transport for a shell. An `srt://` open hands its first
+/// accept the slot the caller's `OpenCancel` gave it, so the object's
+/// `cancel()` ends that accept; without an object the slot is a fresh one
+/// nothing fires, and the accept waits for a peer.
+pub(super) fn open_recv(
+    env: &mut Env,
+    url: &str,
+    oc: Option<&OpenCancel>,
+) -> Option<Opened<Box<dyn RecvTransport>>> {
     let Some(domain) = domain_of(url) else {
         unsupported(env, url);
         return None;
     };
+    let slot = begin(env, domain, oc).ok()?;
     let opened = match domain {
-        Domain::Srt => {
-            let slot = std::sync::Arc::new(tst_core::cancel::CancelSlot::new());
-            tst_srt::opener::open_recv(url, &slot)
-        }
+        Domain::Srt => match &slot {
+            Some(slot) => tst_srt::opener::open_recv(url, slot),
+            None => tst_srt::opener::open_recv(url, &Arc::new(CancelSlot::new())),
+        },
         Domain::Rtp => tst_rtp::opener::open_recv(url),
         Domain::Udp => tst_udp::opener::open_recv(url),
         Domain::Tcp => tst_tcp::opener::open_recv(url),
         Domain::Rist => tst_rist::opener::open_recv(url),
         _ => unreachable_scheme(),
     };
-    match opened {
+    match finish(slot, opened, closed()) {
         Ok(o) => Some(o),
         Err(e) => {
             throw_binding(env, domain, &e);

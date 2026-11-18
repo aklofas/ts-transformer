@@ -60,7 +60,7 @@ use tst_core::mpegts::mux::{
     AudioStreamHandle, DataStreamHandle, KlvStreamHandle, SubtitleStreamHandle, VideoStreamHandle,
 };
 use tst_core::transport::EndReasonHandle;
-use tst_pipeline::binding::{BindingErrorKind, HandleState, ManagedHandles, Owned};
+use tst_pipeline::binding::{BindingErrorKind, Domain, HandleState, ManagedHandles, Owned};
 use tst_pipeline::{
     DemuxReceiverError, DemuxReceiverErrorSource, ManagedDemuxReceiver as RustManagedDemuxReceiver,
     ManagedTransport, MuxSender as RustMuxSender, MuxSenderError, MuxSenderErrorSource,
@@ -78,9 +78,11 @@ use crate::mpegts::{build_demux_config_from_args, convert_event, shell_muxer_sta
 use tst_pipeline::binding::view::StreamHandles;
 
 use super::ManagedSenderSnapshot;
+use super::closed_srt;
 use super::errors::{srt_error, throw_data_plane_state, throw_srt, transport_error};
 use crate::generated::stats_srt::build_managed_transport_stats;
 use crate::shells::mux_sender::build_transport_stats;
+use crate::shells::open_cancel::{begin, finish, object_of};
 
 /// Map a `DemuxReceiverError` raised by `recv_event` onto a thrown Java
 /// exception: transport-side errors become `SrtException` (via
@@ -195,6 +197,7 @@ jni_native! {
         gap_buffer_capacity: jint,
         overflow_policy: jint,
         mode: jint,
+        cancel: JObject<'local>,
     ) -> jlong = 0 => {
         // Build the MuxerConfig FIRST — a pending MuxException is thrown on Err(()).
         let muxer_cfg = match build_muxer_config_from_arrays(
@@ -219,6 +222,9 @@ jni_native! {
             Err(()) => return 0,
         };
 
+        let Ok(oc) = object_of(env, &cancel) else {
+            return 0;
+        };
         let url_str: String = match url.try_to_string(env) {
             Ok(s) => s,
             Err(e) => {
@@ -227,6 +233,9 @@ jni_native! {
             }
         };
 
+        let Ok(slot) = begin(env, Domain::Srt, oc.as_ref()) else {
+            return 0;
+        };
         let parsed = match SrtUrl::parse(&url_str) {
             Ok(p) => p,
             Err(e) => {
@@ -260,8 +269,9 @@ jni_native! {
         // One open path: the initial dial, the reconnect
         // factory, the attempt counter and the cancel/stats handles are composed
         // in tst-srt, once. A bad MuxerConfig stays a MuxException, as before.
+        let opened = tst_srt::shells::managed_mux_sender_from_url(&parsed, policy, muxer_cfg);
         let (inner, handles, stats) =
-            match tst_srt::shells::managed_mux_sender_from_url(&parsed, policy, muxer_cfg) {
+            match finish(slot, opened, closed_srt()) {
                 Ok(triple) => triple,
                 Err(tst_srt::SrtError::Mux(m)) => {
                     throw_mux_error(env, &m);
@@ -830,7 +840,11 @@ fn build_demux_from_url(
     gap_buffer_capacity: jint,
     overflow_policy: jint,
     mode: jint,
+    cancel: &JObject,
 ) -> jlong {
+    let Ok(oc) = object_of(env, cancel) else {
+        return 0;
+    };
     let url_str: String = match url.try_to_string(env) {
         Ok(s) => s,
         Err(e) => {
@@ -842,6 +856,9 @@ fn build_demux_from_url(
         }
     };
 
+    let Ok(slot) = begin(env, Domain::Srt, oc.as_ref()) else {
+        return 0;
+    };
     let parsed = match SrtUrl::parse(&url_str) {
         Ok(p) => p,
         Err(e) => {
@@ -865,12 +882,21 @@ fn build_demux_from_url(
 
     // Both modes are the shared `from_url` dispatch: listener ⇒
     // `accept_one` through the FactoryCancel slot (a re-accept parked with no
-    // peer in sight is reachable by cancel), caller ⇒ `connect`.
-    let (inner, handles) = match tst_srt::shells::managed_demux_receiver_from_url(
-        &parsed,
-        policy,
-        opts.unwrap_or_default(),
-    ) {
+    // peer in sight is reachable by cancel), caller ⇒ `connect`. Given an
+    // `OpenCancel`, the open's slot is the factory's, so the object's
+    // `cancel()` reaches the first accept (a caller dial refuses a slot that is
+    // already cancelled).
+    let demux = opts.unwrap_or_default();
+    let opened = match &slot {
+        Some(slot) => tst_srt::shells::managed_demux_receiver_from_url_with_cancel(
+            &parsed,
+            policy,
+            demux,
+            Arc::clone(slot),
+        ),
+        None => tst_srt::shells::managed_demux_receiver_from_url(&parsed, policy, demux),
+    };
+    let (inner, handles) = match finish(slot, opened, closed_srt()) {
         Ok(pair) => pair,
         Err(e) => {
             srt_error(env, e);
@@ -916,6 +942,7 @@ jni_native! {
         gap_buffer_capacity: jint,
         overflow_policy: jint,
         mode: jint,
+        cancel: JObject<'local>,
     ) -> jlong = 0 => {
         build_demux_from_url(
             env,
@@ -929,6 +956,7 @@ jni_native! {
             gap_buffer_capacity,
             overflow_policy,
             mode,
+            &cancel,
         )
     }
 }
@@ -957,6 +985,7 @@ jni_native! {
         lenient_psi: jboolean,
         sync_buf_cap: jlong,
         unwrap_timestamps: jboolean,
+        cancel: JObject<'local>,
     ) -> jlong = 0 => {
         let Some(opts) = build_demux_config_from_args(
             env,
@@ -984,6 +1013,7 @@ jni_native! {
             gap_buffer_capacity,
             overflow_policy,
             mode,
+            &cancel,
         )
     }
 }

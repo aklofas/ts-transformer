@@ -244,6 +244,27 @@ mod cancel_probe {
     }
 
     jni_native! {
+        /// `org.tstrans.internal.CancelProbe.nHoldOpen(long, OpenCancel)` — register
+        /// one open with the `OpenCancel` whose wake is the gate, so the object's
+        /// `cancel()` blocks inside it. The open never finishes: its guard is
+        /// leaked, and only `cancel()` takes its slot from the object.
+        fn Java_org_tstrans_internal_CancelProbe_nHoldOpen<'local>(
+            env,
+            _class,
+            probe: jlong,
+            cancel: jni::objects::JObject<'local>,
+        ) = () => {
+            let Some(g) = gate(probe) else { return };
+            let Ok(Some(oc)) = crate::shells::open_cancel::object_of(env, &cancel) else {
+                return;
+            };
+            let slot = oc.slot();
+            slot.install(g);
+            std::mem::forget(slot);
+        }
+    }
+
+    jni_native! {
         /// `org.tstrans.internal.CancelProbe.nAwaitEntered(long, long)` — wait up to
         /// `timeoutMs` for a thread to be inside the gate's `cancel()`.
         fn Java_org_tstrans_internal_CancelProbe_nAwaitEntered<'local>(

@@ -57,6 +57,25 @@ public class Sender extends NativeHandle {
     }
 
     /**
+     * Same as {@link #open(String)}, under {@code cancel}: an object already
+     * cancelled refuses the open before the URL is parsed, and nothing is
+     * dialled. A cancel while the connect runs does not interrupt it, but the
+     * open then throws {@code CLOSED} and the connection is closed again (see
+     * {@link OpenCancel}).
+     *
+     * @param url    {@code scheme://...} with per-transport query options
+     * @param cancel the open's cancel; {@code null} is the same as {@link #open(String)}
+     * @return a connected {@code Sender}
+     * @throws IllegalArgumentException if the scheme is not one of the six above
+     * @throws IllegalStateException if {@code cancel} is closed
+     * @throws BindingException as in {@link #open(String)}; kind {@code CLOSED}
+     *     when {@code cancel} was cancelled by the time the open finished
+     */
+    public static Sender open(String url, OpenCancel cancel) throws BindingException {
+        return new Sender(openHandle(url, cancel));
+    }
+
+    /**
      * Open the native sender and return its handle, for a subclass's own
      * factory. Same contract as {@link #open(String)}.
      *
@@ -66,7 +85,21 @@ public class Sender extends NativeHandle {
      * @throws BindingException the transport's exception
      */
     protected static long openHandle(String url) throws BindingException {
-        return nOpen(url);
+        return nOpen(url, null);
+    }
+
+    /**
+     * Open the native sender under {@code cancel} and return its handle, for a
+     * subclass's own factory. Same contract as {@link #open(String, OpenCancel)}.
+     *
+     * @param url    {@code scheme://...} with per-transport query options
+     * @param cancel the open's cancel, or {@code null}
+     * @return the native handle, to pass to the constructor
+     * @throws IllegalArgumentException if the scheme is not supported
+     * @throws BindingException the transport's exception
+     */
+    protected static long openHandle(String url, OpenCancel cancel) throws BindingException {
+        return nOpen(url, cancel);
     }
 
     /**
@@ -195,7 +228,7 @@ public class Sender extends NativeHandle {
 
     @Override protected void nativeClose(long h) { nClose(h); }
 
-    private static native long    nOpen(String url) throws BindingException;
+    private static native long    nOpen(String url, OpenCancel cancel) throws BindingException;
     private static native void    nSendBytes(long handle, byte[] data) throws BindingException;
     private static native void    nFlush(long handle) throws BindingException;
     private static native long    nCancelHandle(long handle);

@@ -11,6 +11,7 @@ import org.tstrans.mpegts.DemuxEvent;
 import org.tstrans.mpegts.DemuxerConfig;
 import org.tstrans.shells.CancelHandle;
 import org.tstrans.shells.EndReason;
+import org.tstrans.shells.OpenCancel;
 import org.tstrans.shells.SocketStats;
 
 /**
@@ -32,7 +33,10 @@ import org.tstrans.shells.SocketStats;
  *
  * <p><b>Mode:</b> unlike the plain {@code DemuxReceiver} (listener only), this
  * wrapper accepts {@code mode=caller} too — in caller mode it dials the peer on
- * each (re)connect; in listener mode it re-binds and re-accepts.
+ * each (re)connect; in listener mode it re-binds and re-accepts. A listener-mode
+ * open blocks in its first accept until a peer connects;
+ * {@link #fromUrl(String, DemuxerConfig, ReconnectPolicy, OpenCancel)} takes an
+ * {@link OpenCancel} whose {@code cancel()} ends that accept from another thread.
  *
  * <pre>{@code
  * try (ManagedDemuxReceiver rx = ManagedDemuxReceiver.fromUrl("srt://:7000?mode=listener")) {
@@ -117,7 +121,7 @@ public final class ManagedDemuxReceiver extends NativeHandle implements Iterable
             url,
             p.maxAttemptsPresent(), p.maxAttempts(),
             p.backoffKind(), p.backoffBaseMs(), p.backoffMaxMs(),
-            p.gapBufferCapacity(), p.overflowPolicy(), p.mode());
+            p.gapBufferCapacity(), p.overflowPolicy(), p.mode(), null);
         if (h == 0) {
             throw new SrtException(SrtException.Kind.IO, "nFromUrl returned 0 without throwing");
         }
@@ -150,6 +154,33 @@ public final class ManagedDemuxReceiver extends NativeHandle implements Iterable
      */
     public static ManagedDemuxReceiver fromUrl(String url, DemuxerConfig demuxConfig, ReconnectPolicy policy)
             throws SrtException {
+        return fromUrl(url, demuxConfig, policy, null);
+    }
+
+    /**
+     * Same as {@link #fromUrl(String, DemuxerConfig, ReconnectPolicy)}, under
+     * {@code cancel}: its {@link OpenCancel#cancel()} from another thread ends a
+     * listener-mode first accept, and an object already cancelled refuses the open
+     * before the URL is parsed (nothing is bound or dialled); either way this throws
+     * {@code SrtException(CLOSED)}. A caller-mode dial is not interrupted, but an
+     * open that finishes after the cancel throws {@code CLOSED} and closes the
+     * connection again. Once this returns, {@link #cancelHandle()} is the receiver's
+     * cancel: the {@code OpenCancel} no longer reaches it or its reconnects (see
+     * {@link OpenCancel} for every rule).
+     *
+     * @param url         {@code srt://[host]:port?mode=listener|caller[&...]}
+     * @param demuxConfig the demuxer configuration
+     * @param policy      reconnect tuning; {@code null} applies the defaults
+     * @param cancel      the open's cancel; {@code null} is the same as
+     *                    {@link #fromUrl(String, DemuxerConfig, ReconnectPolicy)}
+     * @return a connected {@code ManagedDemuxReceiver}
+     * @throws IllegalStateException if {@code cancel} is closed
+     * @throws SrtException as in {@link #fromUrl(String)}; {@code CLOSED} when
+     *     {@code cancel} was cancelled by the time the open finished
+     */
+    public static ManagedDemuxReceiver fromUrl(
+            String url, DemuxerConfig demuxConfig, ReconnectPolicy policy, OpenCancel cancel)
+            throws SrtException {
         PolicyArgs p = PolicyArgs.from(policy);
         long h = nFromUrlWithConfig(
             url,
@@ -160,7 +191,7 @@ public final class ManagedDemuxReceiver extends NativeHandle implements Iterable
             demuxConfig.pesCapTotal(), demuxConfig.cfiTolerance(),
             demuxConfig.av1Carriage().ordinal(), demuxConfig.auCellCapPerPid(),
             demuxConfig.lenientPsiReassembly(), demuxConfig.syncBufCap(),
-            demuxConfig.unwrapTimestamps());
+            demuxConfig.unwrapTimestamps(), cancel);
         if (h == 0) {
             throw new SrtException(SrtException.Kind.IO,
                 "nFromUrlWithConfig returned 0 without throwing");
@@ -415,14 +446,15 @@ public final class ManagedDemuxReceiver extends NativeHandle implements Iterable
     private static native long nFromUrl(String url,
         boolean maxAttemptsPresent, int maxAttempts,
         int backoffKind, long backoffBaseMs, long backoffMaxMs,
-        int gapBufferCapacity, int overflowPolicy, int mode) throws SrtException;
+        int gapBufferCapacity, int overflowPolicy, int mode, OpenCancel cancel)
+        throws SrtException;
     private static native long nFromUrlWithConfig(String url,
         boolean maxAttemptsPresent, int maxAttempts,
         int backoffKind, long backoffBaseMs, long backoffMaxMs,
         int gapBufferCapacity, int overflowPolicy, int mode,
         int strict, long pesCapPerPid, long pesCapTotal, boolean cfi,
         int av1, long auCellCap, boolean lenientPsi, long syncBufCap,
-        boolean unwrapTimestamps) throws SrtException;
+        boolean unwrapTimestamps, OpenCancel cancel) throws SrtException;
     private static native DemuxEvent nNext(long handle) throws SrtException, DemuxException;
     private static native void nGateCached(long handle) throws SrtException;
     private static native long nCancelHandle(long handle);
