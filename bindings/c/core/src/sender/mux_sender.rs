@@ -282,17 +282,19 @@ pub unsafe extern "C" fn tst_mux_sender_send_data(
         set_last_error(TstError::InvalidConfig, "null sender pointer");
         return TstError::InvalidConfig as i32;
     };
-    let slice = match unsafe { crate::ffi_slice::ffi_slice(data, len, "data") } {
-        Ok(s) => s,
-        Err(code) => return code,
-    };
-    let pts = Pts90khz::new(pts_90khz);
-    handle
-        .inner
-        .with_inner_ref_unless_cancelled(|s| match s.send_data(slice, pts) {
-            Ok(()) => 0,
-            Err(e) => record_shell_error(e),
-        })
+    crate::panic::ffi_catch(TstError::Internal as i32, || {
+        let slice = match unsafe { crate::ffi_slice::ffi_slice(data, len, "data") } {
+            Ok(s) => s,
+            Err(code) => return code,
+        };
+        let pts = Pts90khz::new(pts_90khz);
+        handle
+            .inner
+            .with_inner_ref_unless_cancelled(|s| match s.send_data(slice, pts) {
+                Ok(()) => 0,
+                Err(e) => record_shell_error(e),
+            })
+    })
 }
 
 /// Send one data payload targeting a specific data elementary stream.
@@ -322,25 +324,27 @@ pub unsafe extern "C" fn tst_mux_sender_send_data_to(
         set_last_error(TstError::InvalidConfig, "null sender pointer");
         return TstError::InvalidConfig as i32;
     };
-    let slice = match unsafe { crate::ffi_slice::ffi_slice(data, len, "data") } {
-        Ok(s) => s,
-        Err(code) => return code,
-    };
-    // Trust-boundary validation — see VideoStreamHandle::try_from_raw rationale
-    // in tst_mux_sender_send_video_to above.
-    let stream = match DataStreamHandle::try_from_raw(stream_handle) {
-        Ok(h) => h,
-        Err(e) => {
-            return crate::error::record_mux_error(&e);
-        }
-    };
-    let pts = Pts90khz::new(pts_90khz);
-    wrapper
-        .inner
-        .with_inner_ref_unless_cancelled(|s| match s.send_data_to(stream, slice, pts) {
-            Ok(()) => 0,
-            Err(e) => record_shell_error(e),
+    crate::panic::ffi_catch(TstError::Internal as i32, || {
+        let slice = match unsafe { crate::ffi_slice::ffi_slice(data, len, "data") } {
+            Ok(s) => s,
+            Err(code) => return code,
+        };
+        // Trust-boundary validation — see VideoStreamHandle::try_from_raw rationale
+        // in tst_mux_sender_send_video_to above.
+        let stream = match DataStreamHandle::try_from_raw(stream_handle) {
+            Ok(h) => h,
+            Err(e) => {
+                return crate::error::record_mux_error(&e);
+            }
+        };
+        let pts = Pts90khz::new(pts_90khz);
+        wrapper.inner.with_inner_ref_unless_cancelled(|s| {
+            match s.send_data_to(stream, slice, pts) {
+                Ok(()) => 0,
+                Err(e) => record_shell_error(e),
+            }
         })
+    })
 }
 
 /// Send one audio frame buffer (single-stream shorthand).
@@ -1134,17 +1138,19 @@ pub unsafe extern "C" fn tst_managed_mux_sender_send_data(
         set_last_error(TstError::InvalidConfig, "null sender pointer");
         return TstError::InvalidConfig as i32;
     };
-    let slice = match unsafe { crate::ffi_slice::ffi_slice(data, len, "data") } {
-        Ok(s) => s,
-        Err(code) => return code,
-    };
-    let pts = Pts90khz::new(pts_90khz);
-    handle
-        .inner
-        .with_inner_ref_unless_cancelled(|s| match s.send_data(slice, pts) {
-            Ok(()) => 0,
-            Err(e) => record_shell_error(e),
-        })
+    crate::panic::ffi_catch(TstError::Internal as i32, || {
+        let slice = match unsafe { crate::ffi_slice::ffi_slice(data, len, "data") } {
+            Ok(s) => s,
+            Err(code) => return code,
+        };
+        let pts = Pts90khz::new(pts_90khz);
+        handle
+            .inner
+            .with_inner_ref_unless_cancelled(|s| match s.send_data(slice, pts) {
+                Ok(()) => 0,
+                Err(e) => record_shell_error(e),
+            })
+    })
 }
 
 /// Send one data payload targeting a specific data elementary stream on a
@@ -1168,23 +1174,25 @@ pub unsafe extern "C" fn tst_managed_mux_sender_send_data_to(
         set_last_error(TstError::InvalidConfig, "null sender pointer");
         return TstError::InvalidConfig as i32;
     };
-    let slice = match unsafe { crate::ffi_slice::ffi_slice(data, len, "data") } {
-        Ok(s) => s,
-        Err(code) => return code,
-    };
-    let stream = match DataStreamHandle::try_from_raw(stream_handle) {
-        Ok(h) => h,
-        Err(e) => {
-            return crate::error::record_mux_error(&e);
-        }
-    };
-    let pts = Pts90khz::new(pts_90khz);
-    wrapper
-        .inner
-        .with_inner_ref_unless_cancelled(|s| match s.send_data_to(stream, slice, pts) {
-            Ok(()) => 0,
-            Err(e) => record_shell_error(e),
+    crate::panic::ffi_catch(TstError::Internal as i32, || {
+        let slice = match unsafe { crate::ffi_slice::ffi_slice(data, len, "data") } {
+            Ok(s) => s,
+            Err(code) => return code,
+        };
+        let stream = match DataStreamHandle::try_from_raw(stream_handle) {
+            Ok(h) => h,
+            Err(e) => {
+                return crate::error::record_mux_error(&e);
+            }
+        };
+        let pts = Pts90khz::new(pts_90khz);
+        wrapper.inner.with_inner_ref_unless_cancelled(|s| {
+            match s.send_data_to(stream, slice, pts) {
+                Ok(()) => 0,
+                Err(e) => record_shell_error(e),
+            }
         })
+    })
 }
 
 /// Snapshot stats for a `tst_managed_mux_sender_t` into `*out`.

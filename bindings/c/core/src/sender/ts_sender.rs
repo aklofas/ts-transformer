@@ -83,16 +83,18 @@ pub unsafe extern "C" fn tst_sender_send_ts(
         set_last_error(TstError::InvalidConfig, "null sender pointer");
         return TstError::InvalidConfig as i32;
     };
-    let slice = match unsafe { crate::ffi_slice::ffi_slice(bytes, len, "bytes") } {
-        Ok(s) => s,
-        Err(code) => return code,
-    };
-    handle
-        .inner
-        .with_inner_mut_unless_cancelled(|s| match s.send_ts(slice) {
-            Ok(()) => 0,
-            Err(e) => record_shell_error(e),
-        })
+    crate::panic::ffi_catch(TstError::Internal as i32, || {
+        let slice = match unsafe { crate::ffi_slice::ffi_slice(bytes, len, "bytes") } {
+            Ok(s) => s,
+            Err(code) => return code,
+        };
+        handle
+            .inner
+            .with_inner_mut_unless_cancelled(|s| match s.send_ts(slice) {
+                Ok(()) => 0,
+                Err(e) => record_shell_error(e),
+            })
+    })
 }
 
 /// After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
@@ -275,16 +277,18 @@ pub unsafe extern "C" fn tst_managed_sender_send_ts(
         set_last_error(TstError::InvalidConfig, "null sender pointer");
         return TstError::InvalidConfig as i32;
     };
-    let slice = match unsafe { crate::ffi_slice::ffi_slice(bytes, len, "bytes") } {
-        Ok(s) => s,
-        Err(code) => return code,
-    };
-    handle
-        .inner
-        .with_inner_mut_unless_cancelled(|s| match s.send_ts(slice) {
-            Ok(()) => 0,
-            Err(e) => record_shell_error(e),
-        })
+    crate::panic::ffi_catch(TstError::Internal as i32, || {
+        let slice = match unsafe { crate::ffi_slice::ffi_slice(bytes, len, "bytes") } {
+            Ok(s) => s,
+            Err(code) => return code,
+        };
+        handle
+            .inner
+            .with_inner_mut_unless_cancelled(|s| match s.send_ts(slice) {
+                Ok(()) => 0,
+                Err(e) => record_shell_error(e),
+            })
+    })
 }
 
 /// After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
