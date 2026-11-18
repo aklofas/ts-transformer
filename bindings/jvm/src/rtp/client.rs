@@ -393,6 +393,9 @@ jni_native! {
             let mut guard = client.lock().map_err(|_| RtspError::SessionExpired)?;
             let r = match guard.as_mut() {
                 Some(c) => c.teardown(),
+                // A concurrent close took and ended the client: the session is torn
+                // down, so this returns normally (pause/play throw CLOSED there; a
+                // teardown has nothing left to do, and the close's result is silent).
                 None => Ok(()),
             };
             torn.store(true, Ordering::Relaxed);
@@ -532,9 +535,9 @@ jni_native! {
 /// call that reports. The client is taken out of its mutex and closed outside it.
 ///
 /// A control call parked on another thread holds the mutex for up to the request
-/// timeout: the stored cancel fires first (that call ends `CLOSED` at its next
-/// ~100 ms poll), then the close runs on the cancelled client, so its TEARDOWN's
-/// reply is not awaited. An idle close does not cancel first, so an accepted
+/// timeout: the stored cancel fires first (a call waiting for its reply ends
+/// `CLOSED` at its next ~100 ms poll), then the close runs on the cancelled client,
+/// so its TEARDOWN's reply is not awaited. An idle close does not cancel first, so an accepted
 /// TEARDOWN still ends a live interleaved receiver with end of stream.
 pub(super) fn close_client(
     client: &Mutex<Option<RustRtspClient>>,

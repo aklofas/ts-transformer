@@ -42,7 +42,7 @@ class RtspSessionCloseTest {
              Drain drain = new Drain(session.intoDemuxReceiver())) {
             drain.awaitLive();
             session.close();
-            assertTrue(peer.awaitTeardown(0), "close() sent TEARDOWN");
+            assertTrue(peer.awaitTeardown(CLOSE_BOUND_MS), "close() sent TEARDOWN");
             assertClosed(drain.awaitEnd(CLOSE_BOUND_MS));
             assertEquals(EndReason.CANCELLED, drain.rx.endReason());
         }
@@ -72,7 +72,7 @@ class RtspSessionCloseTest {
             session.close();
             long ms = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - t0);
             assertTrue(ms < CLOSE_BOUND_MS, "close() took " + ms + " ms");
-            assertTrue(peer.awaitTeardown(0), "close() sent TEARDOWN");
+            assertTrue(peer.awaitTeardown(CLOSE_BOUND_MS), "close() sent TEARDOWN");
             assertClosed(drain.awaitEnd(CLOSE_BOUND_MS));
         }
     }
@@ -137,6 +137,27 @@ class RtspSessionCloseTest {
 
     // ── (v) close() on a peer that accepts the TEARDOWN ─────────────────────
 
+    /**
+     * An idle {@code close()} writes its TEARDOWN before anything sets the cancel, so a
+     * TEARDOWN the server accepts can still give a live receiver end of stream. Checked at
+     * the peer, when it reads the TEARDOWN, so it does not depend on the close's 500 ms
+     * reply bound.
+     */
+    @Test
+    @Timeout(30)
+    void anIdleCloseWritesItsTeardownBeforeAnyCancel() throws Exception {
+        try (RawRtspPeer peer = new RawRtspPeer(RawRtspPeer.MP2T_SDP, false, 200, 200);
+             RtspSession session = RtspClient.connect(peer.config());
+             RtspCancelHandle handle = session.cancelHandle()) {
+            peer.watchCancelAtTeardown(handle);
+            session.close();
+            assertTrue(peer.awaitTeardown(CLOSE_BOUND_MS), "close() sent TEARDOWN");
+            assertEquals(Boolean.FALSE, peer.cancelledAtTeardown.get(),
+                "the session was cancelled before its TEARDOWN was written");
+            assertTrue(handle.isCancelled(), "close() ends the client: its cancel is set");
+        }
+    }
+
     @Test
     @Timeout(30)
     void closeOnAPeerThatAcceptsTheTeardownEndsTheReceiver() throws Exception {
@@ -165,7 +186,7 @@ class RtspSessionCloseTest {
             long ms = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - t0);
             assertEquals(RtspException.Kind.PROTOCOL, e.kind());
             assertTrue(ms < CLOSE_BOUND_MS, "intoH264Receiver() took " + ms + " ms");
-            assertTrue(peer.awaitTeardown(0), "the failed call sent TEARDOWN");
+            assertTrue(peer.awaitTeardown(CLOSE_BOUND_MS), "the failed call sent TEARDOWN");
         }
     }
 
@@ -197,7 +218,7 @@ class RtspSessionCloseTest {
             rx.close();
             long ms = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - t0);
             assertTrue(ms < CLOSE_BOUND_MS, "close() took " + ms + " ms");
-            assertTrue(peer.awaitTeardown(0), "close() sent TEARDOWN");
+            assertTrue(peer.awaitTeardown(CLOSE_BOUND_MS), "close() sent TEARDOWN");
             assertEquals(EndReason.CANCELLED, rx.endReason());
         }
     }

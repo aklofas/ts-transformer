@@ -13,6 +13,7 @@ import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 import org.tstrans.mpegts.Muxer;
 
 /**
@@ -42,6 +43,9 @@ final class RawRtspPeer implements AutoCloseable {
     private volatile Socket conn;
     final CountDownLatch pauseRead = new CountDownLatch(1);
     final CountDownLatch teardownRead = new CountDownLatch(1);
+    private volatile RtspCancelHandle watched;
+    /** The watched handle's {@code isCancelled()} when the peer read the TEARDOWN. */
+    final AtomicReference<Boolean> cancelledAtTeardown = new AtomicReference<>();
 
     /**
      * @param sdp the DESCRIBE body
@@ -134,6 +138,8 @@ final class RawRtspPeer implements AutoCloseable {
                         status = pauseStatus;
                     }
                     case "TEARDOWN" -> {
+                        RtspCancelHandle w = watched;
+                        if (w != null) cancelledAtTeardown.set(w.isCancelled());
                         teardownRead.countDown();
                         if (teardownStatus == null) continue;
                         status = teardownStatus;
@@ -194,6 +200,14 @@ final class RawRtspPeer implements AutoCloseable {
             seq++;
         }
         return wire.toByteArray();
+    }
+
+    /**
+     * Record {@code handle.isCancelled()} at the moment the peer reads the TEARDOWN,
+     * before it replies, in {@link #cancelledAtTeardown}.
+     */
+    void watchCancelAtTeardown(RtspCancelHandle handle) {
+        watched = handle;
     }
 
     /** Wait up to {@code ms} for the peer to read a PAUSE. */

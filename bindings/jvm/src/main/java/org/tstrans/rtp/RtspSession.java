@@ -11,13 +11,19 @@ import org.tstrans.mpegts.DemuxerConfig;
  * data plane via {@link #intoDemuxReceiver()}. Mirrors tst-py
  * {@code tstrans.rtp.RtspSession}.
  *
- * <p><b>Thread safety:</b> call {@link #pause()} / {@link #play()} /
- * {@link #teardown()} from one thread. Two calls may come from any other thread, also
- * while one of those is parked waiting for the server: {@link #cancelHandle()}, which
- * answers at once, and {@link #close()}. {@link RtspCancelHandle#cancel() cancel} on a
- * handle wakes a parked {@code pause}/{@code play}/{@code teardown}, which then throws
- * {@link RtspException} of kind {@code CLOSED}; {@code close()} cancels such a parked
- * call first, with the same outcome for it, and then closes the session.
+ * <p><b>Thread safety:</b> {@link #cancelHandle()} returns at once from any thread, and
+ * {@link #close()} may be called from any thread without waiting for a control call in
+ * progress. The control calls ({@link #pause()}, {@link #play()}, {@link #teardown()})
+ * run one at a time: a second one waits for the call in progress, up to that call's
+ * request timeout (10&nbsp;s). {@link RtspCancelHandle#cancel() cancel} on a handle wakes
+ * a control call in progress, which then throws {@link RtspException} of kind
+ * {@code CLOSED}. A {@code close()} that overlaps a control call in progress on another
+ * thread cancels it (that call throws {@code CLOSED}), so the session then ends as a
+ * cancel, not as a clean teardown: a live receiver ends {@code RtpException(CLOSED)}.
+ * A {@code pause()} / {@code play()} that reached the native session before a
+ * {@code close()} began, and loses it to that close, throws {@code CLOSED}; one that
+ * starts after the close began throws {@link IllegalStateException}. A {@code close()}
+ * made while another {@code close()} is running returns at once without waiting for it.
  *
  * <p><b>{@code teardown()} or {@code close()}:</b> {@link #teardown()} sends TEARDOWN,
  * waits for the reply up to the request timeout (10&nbsp;s) and throws what the server
@@ -56,7 +62,11 @@ public final class RtspSession extends NativeHandle {
      * The reply wait is the request timeout (10&nbsp;s). The session object stays open:
      * call {@link #close()} afterwards, which then sends no second TEARDOWN. A
      * {@code close()} alone waits at most 500&nbsp;ms for the reply and swallows a
-     * refusal.
+     * refusal. A {@code teardown()} that overlaps a {@link #close()} on another thread
+     * throws {@code CLOSED} when the close cancelled it, and returns normally when the
+     * close had already ended the client: the session is torn down, and the close's own
+     * TEARDOWN result is not reported (unlike {@code pause()} / {@code play()}, which
+     * throw {@code CLOSED} there).
      */
     public void teardown() throws RtspException { ensureOpen("RtspSession is closed"); nTeardown(peekHandle()); }
 
@@ -221,10 +231,14 @@ public final class RtspSession extends NativeHandle {
      * bounded: TEARDOWN with at most 500&nbsp;ms for the reply (none is sent after
      * {@link #teardown()}), then up to 2&nbsp;s for the client's thread, which closes the
      * control connection; a refused or unanswered TEARDOWN is not reported
-     * ({@code teardown()} is the call that reports). Idempotent. Called from another
-     * thread while a {@code pause()} / {@code play()} / {@code teardown()} is parked, it
-     * cancels that call first ({@code RtspException(CLOSED)}), then closes. Handles from
-     * {@link #cancelHandle()} read cancelled afterwards.
+     * ({@code teardown()} is the call that reports). Idempotent: a {@code close()} made
+     * while another is running returns at once without waiting for it. Called from
+     * another thread while a {@code pause()} / {@code play()} / {@code teardown()} is in
+     * progress, it cancels that call first ({@code RtspException(CLOSED)}), then closes
+     * the cancelled session: the TEARDOWN's reply is not awaited, and a live receiver
+     * ends {@code RtpException(CLOSED)} whatever the server answers. An idle
+     * {@code close()} does not cancel first. Handles from {@link #cancelHandle()} read
+     * cancelled afterwards.
      *
      * <p>A live TCP-interleaved {@link org.tstrans.shells.DemuxReceiver} from
      * {@link #intoDemuxReceiver()} ends with end of stream when the server accepts the
