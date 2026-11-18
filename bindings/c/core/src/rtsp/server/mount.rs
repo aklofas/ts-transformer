@@ -1230,16 +1230,30 @@ mod tests {
 
     /// An argument error is checked before the server's ended state, so it
     /// still wins once the server has stopped: NULL data with a non-zero
-    /// length, and a stream handle no muxer could have issued.
+    /// length, and a stream handle value outside the handle layout (one no
+    /// muxer issues). A value inside the layout that names no stream of
+    /// the mount reaches the server's check and reads CLOSED.
     #[test]
     fn argument_errors_precede_closed_after_the_server_stopped() {
         let (server, mount) = open_unicast_mount();
         let nal = [0x00u8, 0x00, 0x00, 0x01, 0x65, 0xBB];
-        let forged = u32::MAX;
-        let forged_live = unsafe {
-            tst_rtsp_mount_push_video_to(mount, forged, nal.as_ptr(), nal.len(), 0, true)
+        let outside_layout = u32::MAX;
+        // Program 0, stream 15: inside the layout, no such stream here.
+        let inside_layout = 0x0F;
+        let outside_live = unsafe {
+            tst_rtsp_mount_push_video_to(mount, outside_layout, nal.as_ptr(), nal.len(), 0, true)
         };
-        assert!(forged_live < 0, "a forged stream handle is refused");
+        assert!(
+            outside_live < 0,
+            "a handle value outside the layout is refused"
+        );
+        let inside_live = unsafe {
+            tst_rtsp_mount_push_video_to(mount, inside_layout, nal.as_ptr(), nal.len(), 0, true)
+        };
+        assert!(
+            inside_live < 0 && inside_live != TstError::Closed as i32,
+            "a live server refuses a handle naming no stream: {inside_live}"
+        );
         assert_eq!(
             unsafe { crate::rtsp::server::stop::tst_rtsp_server_stop(server, 0) },
             0
@@ -1249,11 +1263,21 @@ mod tests {
             TstError::InvalidConfig as i32,
             "NULL data with a non-zero length"
         );
-        let forged_after = unsafe {
-            tst_rtsp_mount_push_video_to(mount, forged, nal.as_ptr(), nal.len(), 0, true)
+        let outside_after = unsafe {
+            tst_rtsp_mount_push_video_to(mount, outside_layout, nal.as_ptr(), nal.len(), 0, true)
         };
-        assert_eq!(forged_after, forged_live, "a forged stream handle");
-        assert_ne!(forged_after, TstError::Closed as i32);
+        assert_eq!(
+            outside_after, outside_live,
+            "a handle value outside the layout"
+        );
+        assert_ne!(outside_after, TstError::Closed as i32);
+        assert_eq!(
+            unsafe {
+                tst_rtsp_mount_push_video_to(mount, inside_layout, nal.as_ptr(), nal.len(), 0, true)
+            },
+            TstError::Closed as i32,
+            "a handle value inside the layout reaches the ended server"
+        );
         // A well-formed push reads the ended server.
         assert_eq!(
             unsafe { tst_rtsp_mount_push_video(mount, nal.as_ptr(), nal.len(), 0, true) },
