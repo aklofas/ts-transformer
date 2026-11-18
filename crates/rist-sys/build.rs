@@ -183,6 +183,7 @@ fn main() {
     println!("cargo:rerun-if-changed=vendor/librist/src/crypto/psk.c");
     println!("cargo:rerun-if-changed=vendor/librist/src/crypto/psk.h");
     println!("cargo:rerun-if-changed=vendor/librist/src/rist-common.c");
+    println!("cargo:rerun-if-changed=vendor/librist/compat/msvc/stdatomic.h");
     println!(
         "cargo:rerun-if-changed={}",
         tstrans_mbedtls_src::source_dir()
@@ -604,6 +605,24 @@ const SOURCE_FIXUPS: &[SourceFixup] = &[
         new: "\tkey->last_rekey = 0;\n\
               \tkey->rekey_tat = 0;\n\
               \t_librist_crypto_psk_generate_nonce(key);\n",
+    },
+    SourceFixup {
+        // The MSVC `stdatomic.h` shim asks `__has_include_next` in the same
+        // `#if` as its clang test, so cl.exe, which has no such macro, parses
+        // the call too. MSVC 19.51 accepts that (the header silences warning
+        // C4067 for it); MSVC 19.52 rejects it with error C7780 and no
+        // librist file that includes the shim compiles. Asking only inside
+        // the clang branch keeps the call away from cl.exe; clang-cl sees
+        // the same condition.
+        name: "msvc-stdatomic-has-include-next",
+        file: "compat/msvc/stdatomic.h",
+        old: "#if defined(__clang__) && __has_include_next(<stdatomic.h>)\n",
+        new: "#if defined(__clang__)\n\
+          #  if __has_include_next(<stdatomic.h>)\n\
+          #    define RIST_CLANG_HAS_STDATOMIC 1\n\
+          #  endif\n\
+          #endif\n\
+          #ifdef RIST_CLANG_HAS_STDATOMIC\n",
     },
 ];
 

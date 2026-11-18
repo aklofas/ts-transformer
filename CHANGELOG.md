@@ -174,6 +174,10 @@ Next release: 0.11.0
   - the `TransportError::Broken` an interleaved MPEG-TS transport returns when its session ends for a reason other than a clean end or a cancel carries the message `interleaved media queue closed` (it was `interleaved pump bridge disconnected`).
   A build without the `rtsp-server` feature gains one dependency, `mio`, and still has no tokio.
 
+### Fixed — tstrans-rist-sys
+
+- **The vendored librist builds with MSVC 19.52.** librist 0.2.20's `stdatomic.h` shim for MSVC calls `__has_include_next` in the same `#if` as its clang test; MSVC 19.52 (a Visual Studio 2026 build tools update) rejects that with error C7780, so the `rist` feature did not compile on Windows with that compiler. MSVC 19.51 accepts it. The build now stages the header with the call inside the clang branch; the pinned librist commit is unchanged, and a host librist found through pkg-config is used as it is.
+
 ### Fixed — tst-rtp
 
 - **An RTSP URL with a user name and no password authenticates.** `rtsp://admin@host/…` never answered a challenge, because the client sent credentials only when a password was present. It now answers with the user name and an empty password, as `rtsp://admin:@host/…` does, for Basic and Digest.
