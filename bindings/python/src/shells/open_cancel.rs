@@ -83,6 +83,14 @@ pub(crate) fn finish<T>(slot: OpenSlot, r: Result<T, BindingError>) -> Result<T,
     r
 }
 
+/// A failure of an open before it touched its transport (a URL it cannot
+/// parse, a mode it does not take), reported through [`finish`] like any
+/// other failure of the open. Nothing was opened, so it may run with the
+/// GIL held.
+pub(crate) fn refuse(slot: OpenSlot, e: BindingError) -> BindingError {
+    finish(slot, Err::<(), _>(e)).unwrap_err()
+}
+
 /// `_open_cancel_with_slow_open_for_test(delay_ms)` -> an `OpenCancel` with
 /// one open in progress whose wake takes `delay_ms`, as a listener close
 /// can. Test-only: the open never finishes, so its slot stays registered
