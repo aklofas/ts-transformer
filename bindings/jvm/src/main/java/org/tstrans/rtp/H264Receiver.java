@@ -24,11 +24,15 @@ import org.tstrans.shells.SocketStats;
  *
  * <p>{@link #recvAu()} blocks until a complete H.264 Access Unit is reassembled
  * or EOS. Returns {@link H264AccessUnit} on success, {@code null} at EOS (the
- * RTSP server ended the session in an orderly way, or a {@link #close()} on
- * another thread freed the receiver just as the call began; a failed RTSP control
+ * RTSP server ended the session in an orderly way; a failed RTSP control
  * connection also ends it with {@code null}, and {@link #endReason()} names it), or
  * throws {@link RtpException} on transport failure. After a cancel it returns the
  * AUs it already holds, then throws {@link RtpException} with kind {@code CLOSED}.
+ * A {@link #close()} on another thread cancels first, so a call parked in
+ * {@code recvAu()} ends the same way. A call that reaches the native receiver after
+ * a {@code close()} began throws {@link IllegalStateException}; one that reached it
+ * first but loses it to the {@code close()} before it starts receiving throws
+ * {@code CLOSED}. A {@code close()} never makes {@code recvAu()} return {@code null}.
  *
  * <h3>Thread safety</h3>
  *
@@ -140,15 +144,20 @@ public final class H264Receiver extends NativeHandle implements Iterable<H264Acc
      * calling thread on kernel I/O; there is no GIL to release on the JVM side.
      *
      * @return the next {@link H264AccessUnit}, or {@code null} at EOS (the RTSP
-     *     server ended the session, or a {@link #close()} on another thread freed
-     *     the receiver just as this call began — caller should exit the recv
-     *     loop). After a fired cancel, the AUs already buffered (including the
-     *     depacketizer's final AU, if it completes cleanly) are returned first.
+     *     server ended the session — caller should exit the recv loop; a
+     *     {@link #close()} on another thread never makes this call return
+     *     {@code null}). After a fired cancel, the AUs already buffered
+     *     (including the depacketizer's final AU, if it completes cleanly) are
+     *     returned first.
      * @throws RtpException {@code CLOSED} once a cancel has fired and the
-     *     buffered AUs are handed out; {@code IO} on a hard I/O error;
-     *     {@code BACKPRESSURE} if a configured persistent recv deadline (the
-     *     {@code ?recv_timeout=<ms>} URL knob) expires
-     * @throws IllegalStateException if the receiver is already closed
+     *     buffered AUs are handed out, or when a {@link #close()} on another
+     *     thread takes the receiver after this call reached it but before it
+     *     started receiving; {@code IO} on a hard I/O error; {@code BACKPRESSURE}
+     *     if a configured persistent recv deadline (the {@code ?recv_timeout=<ms>}
+     *     URL knob) expires
+     * @throws IllegalStateException if the receiver is already closed, also when
+     *     a {@link #close()} on another thread began before this call reached the
+     *     receiver
      * @see #recvAu(Integer) for a per-call deadline instead of (or on top of) a
      *     persistent one
      */
@@ -169,18 +178,22 @@ public final class H264Receiver extends NativeHandle implements Iterable<H264Acc
      *     {@code null} (blocks indefinitely) — there is no separate
      *     "immediate timeout" or rejected-argument case.
      * @return the next {@link H264AccessUnit}, or {@code null} at EOS (the RTSP
-     *     server ended the session, or a {@link #close()} on another thread freed
-     *     the receiver just as this call began — caller should exit the recv
-     *     loop). After a fired cancel, the AUs already buffered (including the
-     *     depacketizer's final AU, if it completes cleanly) are returned first. A
-     *     {@code null} return never means the deadline expired — expiry always
-     *     throws {@code RtpException(BACKPRESSURE)}.
+     *     server ended the session — caller should exit the recv loop; a
+     *     {@link #close()} on another thread never makes this call return
+     *     {@code null}). After a fired cancel, the AUs already buffered
+     *     (including the depacketizer's final AU, if it completes cleanly) are
+     *     returned first. A {@code null} return never means the deadline
+     *     expired — expiry always throws {@code RtpException(BACKPRESSURE)}.
      * @throws RtpException {@code CLOSED} once a cancel has fired and the
      *     buffered AUs are handed out (a cancel wins over a deadline that is
-     *     also due); {@code IO} on a hard I/O error; {@code BACKPRESSURE} if
+     *     also due), or when a {@link #close()} on another thread takes the
+     *     receiver after this call reached it but before it started receiving;
+     *     {@code IO} on a hard I/O error; {@code BACKPRESSURE} if
      *     {@code timeoutMs} elapses, or (when {@code timeoutMs} is {@code null})
      *     a configured persistent recv deadline expires
-     * @throws IllegalStateException if the receiver is already closed
+     * @throws IllegalStateException if the receiver is already closed, also when
+     *     a {@link #close()} on another thread began before this call reached the
+     *     receiver
      */
     public H264AccessUnit recvAu(Integer timeoutMs) throws RtpException {
         ensureOpen("H264Receiver is closed");

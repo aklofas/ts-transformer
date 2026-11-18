@@ -2583,7 +2583,7 @@ try (RtspSession session = RtspClient.connectH264(cfg)) {
 
 | Type | Notes |
 |---|---|
-| `H264Receiver` | `listen(String url)` / `listen(String url, H264DepayConfig cfg)` for direct UDP. `recvAu()` → `H264AccessUnit \| null`; `null` at end of stream (the server ended the session; a failed control connection also ends it with `null`, and `endReason()` names it); after a cancel it throws `RtpException(CLOSED)` once the access units it holds are handed out. `implements AutoCloseable, Iterable<H264AccessUnit>`. |
+| `H264Receiver` | `listen(String url)` / `listen(String url, H264DepayConfig cfg)` for direct UDP. `recvAu()` → `H264AccessUnit \| null`; `null` at end of stream (the server ended the session; a failed control connection also ends it with `null`, and `endReason()` names it); after a cancel it throws `RtpException(CLOSED)` once the access units it holds are handed out. A `close()` on another thread never makes it return `null`: a call that reaches the receiver after the `close()` began throws `IllegalStateException`, one that reached it first but loses it to the `close()` before receiving throws `RtpException(CLOSED)`. `implements AutoCloseable, Iterable<H264AccessUnit>`. |
 | `H264AccessUnit` | `annexb(): byte[]`, `pts(): long` (90 kHz ticks, i64), `keyFrame(): boolean`, `rtpTimestamp(): long`. |
 | `H264DepayConfig` | Immutable; build with `H264DepayConfig.builder()`. Defaults: `payloadType=96`, `parameterSetInjection=BEFORE_IDR`, `initialParameterSets=[]`, `maxAuBytes=8388608`. |
 | `ParameterSetInjection` | `NONE` — pass through as received; `BEFORE_IDR` (default) — prepend cached SPS/PPS before each IDR. |
