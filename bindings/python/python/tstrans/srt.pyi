@@ -34,6 +34,7 @@ from tstrans.shells import (
     DemuxReceiver,
     EndReason,
     MuxSender,
+    OpenCancel,
     Receiver,
     Sender,
     SocketStats,
@@ -522,7 +523,12 @@ class ManagedSender:
         url: str,
         *,
         policy: Optional[ReconnectPolicy] = ...,
-    ) -> ManagedSender: ...
+        cancel: Optional[OpenCancel] = ...,
+    ) -> ManagedSender:
+        """`cancel`: an `OpenCancel` already cancelled raises
+        `SrtError(CLOSED)`; one cancelled during the connect does not
+        interrupt it, but the open then raises `SrtError(CLOSED)` and the
+        connection is closed again."""
     def send_bytes(self, data: _BytesLike) -> None:
         """After ``cancel_handle().cancel()`` this raises ``CLOSED``, buffered data included."""
     def flush(self) -> None:
@@ -572,7 +578,11 @@ class ManagedReceiver:
         url: str,
         *,
         policy: Optional[ReconnectPolicy] = ...,
-    ) -> ManagedReceiver: ...
+        cancel: Optional[OpenCancel] = ...,
+    ) -> ManagedReceiver:
+        """Blocks in the first accept. An `OpenCancel` passed as `cancel=`
+        ends it from another thread with `SrtError(CLOSED)`; after this
+        returns, `cancel_handle()` is the receiver's cancel."""
     def recv_bytes(self, max_len: int = ...) -> bytes:
         """After ``cancel_handle().cancel()`` this raises ``CLOSED``, buffered data included."""
     def reconnect_attempts(self) -> int: ...
@@ -618,7 +628,12 @@ class ManagedMuxSender:
         program_config: MuxerProgramConfig,
         *,
         policy: Optional[ReconnectPolicy] = ...,
-    ) -> ManagedMuxSender: ...
+        cancel: Optional[OpenCancel] = ...,
+    ) -> ManagedMuxSender:
+        """`cancel`: an `OpenCancel` already cancelled raises
+        `SrtError(CLOSED)`; one cancelled during the connect does not
+        interrupt it, but the open then raises `SrtError(CLOSED)` and the
+        connection is closed again."""
 
     # Send surface — single stream.
     def send_video(
@@ -752,7 +767,14 @@ class ManagedDemuxReceiver:
         *,
         demux_config: Optional[DemuxerConfig] = ...,
         policy: Optional[ReconnectPolicy] = ...,
-    ) -> ManagedDemuxReceiver: ...
+        cancel: Optional[OpenCancel] = ...,
+    ) -> ManagedDemuxReceiver:
+        """In listener mode this blocks in the first accept. An
+        `OpenCancel` passed as `cancel=` ends it from another thread with
+        `SrtError(CLOSED)`; a caller-mode connect is not interrupted, but an
+        open that ends after the cancel raises `SrtError(CLOSED)` and the
+        connection is closed again. After this returns, `cancel_handle()`
+        is the receiver's cancel."""
     def __iter__(self) -> Iterator[DemuxEvent]: ...
     def __next__(self) -> DemuxEvent:
         """After ``cancel_handle().cancel()`` this raises ``CLOSED``, buffered data included."""

@@ -67,6 +67,7 @@ use crate::generated::stats_shells::SocketStats;
 use crate::generated::stats_srt::{ManagedTransportStats, SrtStats};
 use crate::raise::{SRT, pyok, pyres, raise};
 use crate::shells::cancel::PyCancelHandle;
+use crate::shells::open_cancel::{PyOpenCancel, begin, closed, finish, object_of};
 use crate::srt::policy::PyReconnectPolicy;
 use crate::util::{CancelSource, close_owned, drop_owned};
 
@@ -120,9 +121,21 @@ impl PyManagedSender {
     /// reconnect under the policy. Default `policy = ReconnectPolicy()`
     /// applies the policy defaults (10 attempts, 100ms..=10s exponential
     /// backoff, 256-message gap buffer with DROP_OLDEST).
+    ///
+    /// `cancel`: an `OpenCancel` already cancelled refuses the open with
+    /// `SrtError(CLOSED)` before the URL is parsed; one cancelled while the
+    /// connect runs does not interrupt it, but the open then raises
+    /// `SrtError(CLOSED)` and the connection is closed again.
     #[staticmethod]
-    #[pyo3(signature = (url, *, policy=None))]
-    fn from_url(py: Python<'_>, url: &str, policy: Option<PyReconnectPolicy>) -> PyResult<Self> {
+    #[pyo3(signature = (url, *, policy=None, cancel=None))]
+    fn from_url(
+        py: Python<'_>,
+        url: &str,
+        policy: Option<PyReconnectPolicy>,
+        cancel: Option<&Bound<'_, PyOpenCancel>>,
+    ) -> PyResult<Self> {
+        let oc = object_of(cancel);
+        let slot = begin(py, &oc).ok_or_else(|| raise(py, &SRT, closed()))?;
         // Validate the URL up-front so a malformed one raises
         // CONFIG_INVALID naming the Python method; `tst_srt::shells` would
         // refuse a listener URL too, but with its own message.
@@ -146,9 +159,15 @@ impl PyManagedSender {
         // family dials with `connect()` — the sender preset — matching the
         // C ABI.
         let (inner, handles, stats_handle) = crate::util::allow_threads_parking(py, || {
-            tst_srt::shells::managed_sender_from_url(&parsed, policy_inner, SenderConfig::default())
+            let r = tst_srt::shells::managed_sender_from_url(
+                &parsed,
+                policy_inner,
+                SenderConfig::default(),
+            )
+            .map_err(BindingError::from);
+            finish(slot, r)
         })
-        .map_err(|e| raise(py, &SRT, BindingError::from(e)))?;
+        .map_err(|e| raise(py, &SRT, e))?;
         let cancel = CancelSource::new(handles.cancel);
         Ok(Self {
             owned: Owned::new(inner, cancel.as_dyn(), ()),
@@ -355,11 +374,23 @@ impl PyManagedReceiver {
     /// `ACCEPT_FAILED` / `TIMEOUT` for accept); it now shares
     /// `SrtUrl::accept_one` with the C ABI.
     ///
-    /// No handle exists until this returns, so the caller cannot cancel the
-    /// first accept; interpreter exit still wakes it.
+    /// `cancel`: no handle exists until this returns, so the first accept
+    /// is cancelled through an `OpenCancel` made beforehand: its `cancel()`
+    /// from another thread ends the accept with `SrtError(CLOSED)`, and an
+    /// object already cancelled refuses the open before the URL is parsed.
+    /// Interpreter exit wakes the first accept too, with or without it.
+    /// After this returns, `cancel_handle()` is the receiver's cancel: the
+    /// `OpenCancel` no longer reaches it or its re-accepts.
     #[staticmethod]
-    #[pyo3(signature = (url, *, policy=None))]
-    fn from_url(py: Python<'_>, url: &str, policy: Option<PyReconnectPolicy>) -> PyResult<Self> {
+    #[pyo3(signature = (url, *, policy=None, cancel=None))]
+    fn from_url(
+        py: Python<'_>,
+        url: &str,
+        policy: Option<PyReconnectPolicy>,
+        cancel: Option<&Bound<'_, PyOpenCancel>>,
+    ) -> PyResult<Self> {
+        let oc = object_of(cancel);
+        let slot = begin(py, &oc).ok_or_else(|| raise(py, &SRT, closed()))?;
         let parsed = SrtUrl::parse(url).map_err(|e| raise(py, &SRT, BindingError::from(e)))?;
         if parsed.mode != Mode::Listener {
             return Err(raise(
@@ -376,20 +407,24 @@ impl PyManagedReceiver {
         }
         let policy_inner = policy.map(|p| p.inner.clone()).unwrap_or_default();
         // `tst_srt::shells` owns the bind+accept, the re-accept factory and
-        // the handle snapshots. The slot is ours so it can be registered
-        // with the exit hook before the first accept parks: no caller
-        // handle exists until this constructor returns, so without the
-        // registration an exit joining this thread would hang.
+        // the handle snapshots. The slot is the open's, so `cancel` reaches
+        // the first accept, and it is registered with the exit hook before
+        // the accept parks: no caller handle exists until this constructor
+        // returns, so without the registration an exit joining this thread
+        // would hang.
         let (inner, handles) = crate::util::allow_threads_parking(py, || {
-            let slot = std::sync::Arc::new(tst_pipeline::FactoryCancel::new());
-            let _accept_guard = crate::util::register_accept_slot(&slot);
-            tst_srt::shells::managed_receiver_from_url_with_cancel(
-                &parsed,
-                policy_inner,
-                std::sync::Arc::clone(&slot),
-            )
+            let r = {
+                let _accept_guard = crate::util::register_accept_slot(&slot);
+                tst_srt::shells::managed_receiver_from_url_with_cancel(
+                    &parsed,
+                    policy_inner,
+                    Arc::clone(&slot),
+                )
+                .map_err(BindingError::from)
+            };
+            finish(slot, r)
         })
-        .map_err(|e| raise(py, &SRT, BindingError::from(e)))?;
+        .map_err(|e| raise(py, &SRT, e))?;
         let attempts = handles.attempts.clone();
         let cancel = CancelSource::new(handles.cancel);
         Ok(Self {

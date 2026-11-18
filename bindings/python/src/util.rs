@@ -387,11 +387,12 @@ pub(crate) fn fire_cancel_sources_at_exit(py: Python<'_>) -> usize {
 /// `TransportCancel` impl.
 ///
 /// This exists for ONE purpose: the first accept inside a listener-mode
-/// constructor parks before any Python handle exists (it stays
-/// uncancellable BY THE CALLER, and that is deliberate), so without this
-/// the exit hook has nothing to fire and the process hangs. Wrapping the
-/// slot for the duration of the accept keeps it user-uncancellable while
-/// making it reachable at interpreter exit.
+/// constructor parks before any Python handle exists (only an
+/// `OpenCancel` the caller passed can reach it, and most callers pass
+/// none), so without this the exit hook has nothing to fire and the
+/// process hangs. Wrapping the slot for the duration of the accept makes
+/// it reachable at interpreter exit whether or not an `OpenCancel` was
+/// given.
 pub(crate) struct SlotCancel(pub Arc<tst_core::cancel::CancelSlot>);
 
 impl TransportCancel for SlotCancel {

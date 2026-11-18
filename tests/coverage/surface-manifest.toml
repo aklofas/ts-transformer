@@ -3914,14 +3914,15 @@ tier = "A"
 # `OpenCancel`: the sticky cancel a host hands to opens that have no shell
 # yet. Its own module tests use a stand-in open; the real SRT opens (two
 # parked first accepts, the refusals, the registration race, the outcome
-# rule racing the end of a managed open) are in the tst-srt `from_url` tests.
+# rule racing the end of a managed open) are in the tst-srt `from_url` tests,
+# and the Python opens that take it in tst-py's `test_open_cancel.py`.
 
 [[surface]]
 kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::binding::OpenCancel"
 owning_tests = ["crates/tst-pipeline/src/binding/open_cancel.rs", "crates/tst-srt/tests/pipeline/shells_from_url.rs"]
-bindings = ["c:n/a(the C binding takes no open cancel; its listener opens stay as they are)", "python:deferred(not wrapped yet: tstrans.shells.OpenCancel)", "java:deferred(not wrapped yet: org.tstrans.shells.OpenCancel)", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:n/a(the C binding takes no open cancel; its listener opens stay as they are)", "python:tstrans.shells.OpenCancel", "java:deferred(not wrapped yet: org.tstrans.shells.OpenCancel)", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -3930,7 +3931,7 @@ kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::binding::open_cancel::OpenCancel"
 owning_tests = ["crates/tst-pipeline/src/binding/open_cancel.rs", "crates/tst-srt/tests/pipeline/shells_from_url.rs"]
-bindings = ["c:n/a(the C binding takes no open cancel; its listener opens stay as they are)", "python:deferred(not wrapped yet: tstrans.shells.OpenCancel)", "java:deferred(not wrapped yet: org.tstrans.shells.OpenCancel)", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:n/a(the C binding takes no open cancel; its listener opens stay as they are)", "python:tstrans.shells.OpenCancel", "java:deferred(not wrapped yet: org.tstrans.shells.OpenCancel)", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -3939,7 +3940,7 @@ kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::binding::open_cancel::OpenCancel::new"
 owning_tests = ["crates/tst-pipeline/src/binding/open_cancel.rs", "crates/tst-srt/tests/pipeline/shells_from_url.rs"]
-bindings = ["c:n/a(the C binding takes no open cancel; its listener opens stay as they are)", "python:deferred(not wrapped yet: tstrans.shells.OpenCancel)", "java:deferred(not wrapped yet: org.tstrans.shells.OpenCancel)", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:n/a(the C binding takes no open cancel; its listener opens stay as they are)", "python:tstrans.shells.OpenCancel", "java:deferred(not wrapped yet: org.tstrans.shells.OpenCancel)", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -3957,7 +3958,7 @@ kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::binding::open_cancel::OpenCancel::cancel"
 owning_tests = ["crates/tst-pipeline/src/binding/open_cancel.rs", "crates/tst-srt/tests/pipeline/shells_from_url.rs"]
-bindings = ["c:n/a(the C binding takes no open cancel; its listener opens stay as they are)", "python:deferred(not wrapped yet: tstrans.shells.OpenCancel)", "java:deferred(not wrapped yet: org.tstrans.shells.OpenCancel)", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:n/a(the C binding takes no open cancel; its listener opens stay as they are)", "python:tstrans.shells.OpenCancel.cancel", "java:deferred(not wrapped yet: org.tstrans.shells.OpenCancel)", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -3966,7 +3967,7 @@ kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::binding::open_cancel::OpenCancel::is_cancelled"
 owning_tests = ["crates/tst-pipeline/src/binding/open_cancel.rs", "crates/tst-srt/tests/pipeline/shells_from_url.rs"]
-bindings = ["c:n/a(the C binding takes no open cancel; its listener opens stay as they are)", "python:deferred(not wrapped yet: tstrans.shells.OpenCancel)", "java:deferred(not wrapped yet: org.tstrans.shells.OpenCancel)", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:n/a(the C binding takes no open cancel; its listener opens stay as they are)", "python:tstrans.shells.OpenCancel.is_cancelled", "java:deferred(not wrapped yet: org.tstrans.shells.OpenCancel)", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 

@@ -91,6 +91,8 @@ from tstrans.mpegts import (
 )
 from tstrans.rtp import RtspServer, RtspServerConfig
 
+from _builders.native_hooks import shells_hook
+
 _R = TypeVar("_R")
 
 
@@ -517,6 +519,25 @@ def test_rtsp_stats_release_gil(which: str) -> None:
             _probe_repeatedly(probe, fn, 3 * _MIN_WORKLOAD_MS)
 
     probe.assert_released(which)
+
+
+# ---------------------------------------------------------------------------
+# OpenCancel.cancel(): waking a first accept closes a listening socket.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.timeout(30)
+def test_open_cancel_cancel_releases_gil() -> None:
+    """The test hook's object has one open in progress whose wake takes
+    300 ms, as a listener close can; `cancel()` must let other threads run
+    meanwhile."""
+    oc = shells_hook("_open_cancel_with_slow_open_for_test")(300)
+
+    with _GilProbe() as probe:
+        probe.call(oc.cancel)
+
+    probe.assert_released("OpenCancel.cancel")
+    assert oc.is_cancelled()
 
 
 # ---------------------------------------------------------------------------

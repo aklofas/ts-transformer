@@ -40,6 +40,7 @@ use crate::mux::{
 };
 use crate::raise::{pyok, raise};
 use crate::shells::cancel::{PyCancelHandle, cancel_source};
+use crate::shells::open_cancel::{PyOpenCancel, object_of};
 use crate::util::{CancelSource, close_owned, drop_owned};
 
 /// Mux-sourced failures keep `mux_error_to_pyerr`; everything else is a
@@ -149,14 +150,22 @@ impl PyMuxSender {
     /// Raises `ValueError` for an unsupported scheme; the transport's error
     /// class for a bad URL or a connect failure; `MuxError(CONFIG_INVALID)`
     /// if the muxer rejects the program config.
+    ///
+    /// `cancel`: an `OpenCancel` already cancelled refuses the open with
+    /// the transport's `CLOSED` before the URL is parsed; one cancelled
+    /// while the connect runs does not interrupt it, but the open then
+    /// raises `CLOSED` and the connection is closed again.
     #[classmethod]
+    #[pyo3(signature = (url, program_config, *, cancel = None))]
     fn open(
         _cls: &Bound<'_, PyType>,
         py: Python<'_>,
         url: &str,
         program_config: PyRef<'_, PyMuxerProgramConfig>,
+        cancel: Option<&Bound<'_, PyOpenCancel>>,
     ) -> PyResult<Self> {
-        let opened = crate::shells::open::open_send(py, url)?;
+        let oc = object_of(cancel);
+        let opened = crate::shells::open::open_send(py, url, &oc)?;
         Self::from_opened(py, opened, &program_config)
     }
 

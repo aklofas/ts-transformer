@@ -29,6 +29,7 @@ use crate::generated::stats_shells::SocketStats;
 use crate::raise::raise;
 use crate::raise::{pyok, pyres};
 use crate::shells::cancel::{PyCancelHandle, cancel_source};
+use crate::shells::open_cancel::{PyOpenCancel, object_of};
 use crate::util::{CancelSource, close_owned, drop_owned};
 
 /// Python sender over any transport — wraps
@@ -85,9 +86,21 @@ impl PySender {
     /// Open a sender from `url`. Releases the GIL during the connect.
     /// Raises `ValueError` for an unsupported scheme and the transport's
     /// error class for a bad URL or a connect failure.
+    ///
+    /// `cancel`: an `OpenCancel` already cancelled refuses the open with
+    /// the transport's `CLOSED` before the URL is parsed; one cancelled
+    /// while the connect runs does not interrupt it, but the open then
+    /// raises `CLOSED` and the connection is closed again.
     #[classmethod]
-    fn open(_cls: &Bound<'_, PyType>, py: Python<'_>, url: &str) -> PyResult<Self> {
-        Self::from_opened(py, crate::shells::open::open_send(py, url)?)
+    #[pyo3(signature = (url, *, cancel = None))]
+    fn open(
+        _cls: &Bound<'_, PyType>,
+        py: Python<'_>,
+        url: &str,
+        cancel: Option<&Bound<'_, PyOpenCancel>>,
+    ) -> PyResult<Self> {
+        let oc = object_of(cancel);
+        Self::from_opened(py, crate::shells::open::open_send(py, url, &oc)?)
     }
 
     /// Send one pre-muxed TS chunk (any bytes-like). Releases the GIL

@@ -5,9 +5,10 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use tst_core::transport::{RecvTransport, Transport};
 use tst_core::url::redact_url;
-use tst_pipeline::binding::{BindingError, BindingErrorKind, Domain, Opened};
+use tst_pipeline::binding::{BindingError, BindingErrorKind, Domain, OpenCancel, Opened};
 
 use crate::raise::raise;
+use crate::shells::open_cancel::{begin, closed, finish};
 
 /// The transports this build includes.
 const BUILT: &[Domain] = &[
@@ -43,46 +44,65 @@ fn unreachable_scheme<T>() -> Result<T, BindingError> {
     ))
 }
 
-/// Open a send transport for a shell, with the GIL released.
-pub(crate) fn open_send(py: Python<'_>, url: &str) -> PyResult<Opened<Box<dyn Transport>>> {
+/// Open a send transport for a shell, with the GIL released. `oc` is the
+/// open's cancel object (see [`crate::shells::open_cancel`]): a sender
+/// takes no slot, so only a cancel before or during the connect is seen,
+/// as `CLOSED` once it ends.
+pub(crate) fn open_send(
+    py: Python<'_>,
+    url: &str,
+    oc: &OpenCancel,
+) -> PyResult<Opened<Box<dyn Transport>>> {
     let d = domain_of(url).ok_or_else(|| unsupported(url))?;
-    let r = crate::util::allow_threads_parking(py, || match d {
-        #[cfg(feature = "srt")]
-        Domain::Srt => tst_srt::opener::open_sender(url),
-        #[cfg(feature = "rtp")]
-        Domain::Rtp => tst_rtp::opener::open_sender(url),
-        #[cfg(feature = "udp")]
-        Domain::Udp => tst_udp::opener::open_sender(url),
-        #[cfg(feature = "tcp")]
-        Domain::Tcp => tst_tcp::opener::open_sender(url),
-        #[cfg(feature = "rist")]
-        Domain::Rist => tst_rist::opener::open_sender(url),
-        _ => unreachable_scheme(),
+    let slot = begin(py, oc).ok_or_else(|| raise(py, &d, closed()))?;
+    let r = crate::util::allow_threads_parking(py, || {
+        let r = match d {
+            #[cfg(feature = "srt")]
+            Domain::Srt => tst_srt::opener::open_sender(url),
+            #[cfg(feature = "rtp")]
+            Domain::Rtp => tst_rtp::opener::open_sender(url),
+            #[cfg(feature = "udp")]
+            Domain::Udp => tst_udp::opener::open_sender(url),
+            #[cfg(feature = "tcp")]
+            Domain::Tcp => tst_tcp::opener::open_sender(url),
+            #[cfg(feature = "rist")]
+            Domain::Rist => tst_rist::opener::open_sender(url),
+            _ => unreachable_scheme(),
+        };
+        finish(slot, r)
     });
     r.map_err(|e| raise(py, &d, e))
 }
 
 /// Open a receive transport for a shell, with the GIL released. An `srt://`
-/// open registers its accept slot so the interpreter-exit hook can unpark a
-/// first accept that no caller holds a handle to yet.
-pub(crate) fn open_recv(py: Python<'_>, url: &str) -> PyResult<Opened<Box<dyn RecvTransport>>> {
+/// open hands the slot `oc` gave it to its first accept and registers it,
+/// so both `oc.cancel()` and the interpreter-exit hook end a first accept
+/// that no caller holds a handle to yet.
+pub(crate) fn open_recv(
+    py: Python<'_>,
+    url: &str,
+    oc: &OpenCancel,
+) -> PyResult<Opened<Box<dyn RecvTransport>>> {
     let d = domain_of(url).ok_or_else(|| unsupported(url))?;
-    let r = crate::util::allow_threads_parking(py, || match d {
-        #[cfg(feature = "srt")]
-        Domain::Srt => {
-            let slot = std::sync::Arc::new(tst_core::cancel::CancelSlot::new());
-            let _accept_guard = crate::util::register_accept_slot(&slot);
-            tst_srt::opener::open_recv(url, &slot)
-        }
-        #[cfg(feature = "rtp")]
-        Domain::Rtp => tst_rtp::opener::open_recv(url),
-        #[cfg(feature = "udp")]
-        Domain::Udp => tst_udp::opener::open_recv(url),
-        #[cfg(feature = "tcp")]
-        Domain::Tcp => tst_tcp::opener::open_recv(url),
-        #[cfg(feature = "rist")]
-        Domain::Rist => tst_rist::opener::open_recv(url),
-        _ => unreachable_scheme(),
+    let slot = begin(py, oc).ok_or_else(|| raise(py, &d, closed()))?;
+    let r = crate::util::allow_threads_parking(py, || {
+        let r = match d {
+            #[cfg(feature = "srt")]
+            Domain::Srt => {
+                let _accept_guard = crate::util::register_accept_slot(&slot);
+                tst_srt::opener::open_recv(url, &slot)
+            }
+            #[cfg(feature = "rtp")]
+            Domain::Rtp => tst_rtp::opener::open_recv(url),
+            #[cfg(feature = "udp")]
+            Domain::Udp => tst_udp::opener::open_recv(url),
+            #[cfg(feature = "tcp")]
+            Domain::Tcp => tst_tcp::opener::open_recv(url),
+            #[cfg(feature = "rist")]
+            Domain::Rist => tst_rist::opener::open_recv(url),
+            _ => unreachable_scheme(),
+        };
+        finish(slot, r)
     });
     r.map_err(|e| raise(py, &d, e))
 }
