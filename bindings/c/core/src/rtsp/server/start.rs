@@ -35,7 +35,7 @@
 //!
 //! `RtspServerError` maps through the shared kind table
 //! (`From<RtspServerError>` in `tst-rtp`'s `binding_kind.rs`) via
-//! `crate::error::record_with_context`: lifecycle errors are
+//! `crate::error::record_with_context`: started twice / not started is
 //! `TST_E_RTSP_SERVER` (-24), a TLS failure is `TST_E_RTSP_TLS` (-21), and
 //! I/O, URL and mount errors take their own RTSP kinds. The detail string
 //! from the Rust `Display` impl is forwarded into the thread-local last-error message.
