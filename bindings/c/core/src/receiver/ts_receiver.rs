@@ -154,18 +154,22 @@ pub unsafe extern "C" fn tst_receiver_recv_packet(
     // and drive reconnect. At the plain C ABI boundary a Broken result on a
     // handle nobody cancelled means the peer disconnected, which the caller
     // contract documents as TST_E_END_OF_STREAM.
-    let cancelled = handle.inner.is_cancelled();
-    handle
-        .inner
-        .with_inner_mut_unless_cancelled(|rx| match rx.next_packet() {
-            Ok(pkt) => {
-                // SAFETY: out_packet non-null per guard above. The destination
-                // is documented as a caller-provided uint8_t[188] buffer.
-                unsafe { std::ptr::copy_nonoverlapping(pkt.as_ptr(), out_packet, TS_PACKET_SIZE) };
-                0
-            }
-            Err(e) => record_recv_error(e, cancelled || handle.inner.is_cancelled(), true),
-        })
+    crate::panic::ffi_catch(TstError::Internal as i32, || {
+        let cancelled = handle.inner.is_cancelled();
+        handle
+            .inner
+            .with_inner_mut_unless_cancelled(|rx| match rx.next_packet() {
+                Ok(pkt) => {
+                    // SAFETY: out_packet non-null per guard above. The destination
+                    // is documented as a caller-provided uint8_t[188] buffer.
+                    unsafe {
+                        std::ptr::copy_nonoverlapping(pkt.as_ptr(), out_packet, TS_PACKET_SIZE)
+                    };
+                    0
+                }
+                Err(e) => record_recv_error(e, cancelled || handle.inner.is_cancelled(), true),
+            })
+    })
 }
 
 /// Cancel a `tst_receiver_t`. Unblocks a thread parked in
@@ -388,17 +392,21 @@ pub unsafe extern "C" fn tst_managed_receiver_recv_packet(
     // `broken_is_eos = false`: the decorator already retried on Broken, so a
     // Broken reaching here is a hard transport failure, not a peer close
     // (see the asymmetry note above).
-    let cancelled = handle.inner.is_cancelled();
-    handle
-        .inner
-        .with_inner_mut_unless_cancelled(|rx| match rx.next_packet() {
-            Ok(pkt) => {
-                // SAFETY: out_packet non-null per guard above.
-                unsafe { std::ptr::copy_nonoverlapping(pkt.as_ptr(), out_packet, TS_PACKET_SIZE) };
-                0
-            }
-            Err(e) => record_recv_error(e, cancelled || handle.inner.is_cancelled(), false),
-        })
+    crate::panic::ffi_catch(TstError::Internal as i32, || {
+        let cancelled = handle.inner.is_cancelled();
+        handle
+            .inner
+            .with_inner_mut_unless_cancelled(|rx| match rx.next_packet() {
+                Ok(pkt) => {
+                    // SAFETY: out_packet non-null per guard above.
+                    unsafe {
+                        std::ptr::copy_nonoverlapping(pkt.as_ptr(), out_packet, TS_PACKET_SIZE)
+                    };
+                    0
+                }
+                Err(e) => record_recv_error(e, cancelled || handle.inner.is_cancelled(), false),
+            })
+    })
 }
 
 /// Cancel a `tst_managed_receiver_t`. Unblocks a thread parked in

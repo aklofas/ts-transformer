@@ -165,30 +165,32 @@ pub unsafe extern "C" fn tst_rtp_receiver_recv_ts(
         set_last_error(TstError::InvalidConfig, "null out_n pointer");
         return TstError::InvalidConfig as i32;
     }
-    if buf_len < TS_PACKET_SIZE {
-        set_last_error(
-            TstError::InvalidConfig,
-            &format!("buf_len {buf_len} too small (need at least {TS_PACKET_SIZE})"),
-        );
-        return TstError::InvalidConfig as i32;
-    }
-    // See `tst_receiver_recv_packet`: the latch is read on both sides of the
-    // park, and `broken_is_eos` is `false`: only plain SRT shells fold a
-    // Broken into end of stream, so here it stays a hard transport error.
-    let cancelled = handle.inner.is_cancelled();
-    handle
-        .inner
-        .with_inner_mut_unless_cancelled(|rx| match rx.next_packet() {
-            Ok(pkt) => {
-                // SAFETY: buf non-null + writable for >= TS_PACKET_SIZE bytes per guard.
-                unsafe {
-                    std::ptr::copy_nonoverlapping(pkt.as_ptr(), buf, TS_PACKET_SIZE);
-                    *out_n = TS_PACKET_SIZE;
+    crate::panic::ffi_catch(TstError::Internal as i32, || {
+        if buf_len < TS_PACKET_SIZE {
+            set_last_error(
+                TstError::InvalidConfig,
+                &format!("buf_len {buf_len} too small (need at least {TS_PACKET_SIZE})"),
+            );
+            return TstError::InvalidConfig as i32;
+        }
+        // See `tst_receiver_recv_packet`: the latch is read on both sides of the
+        // park, and `broken_is_eos` is `false`: only plain SRT shells fold a
+        // Broken into end of stream, so here it stays a hard transport error.
+        let cancelled = handle.inner.is_cancelled();
+        handle
+            .inner
+            .with_inner_mut_unless_cancelled(|rx| match rx.next_packet() {
+                Ok(pkt) => {
+                    // SAFETY: buf non-null + writable for >= TS_PACKET_SIZE bytes per guard.
+                    unsafe {
+                        std::ptr::copy_nonoverlapping(pkt.as_ptr(), buf, TS_PACKET_SIZE);
+                        *out_n = TS_PACKET_SIZE;
+                    }
+                    0
                 }
-                0
-            }
-            Err(e) => record_recv_error(e, cancelled || handle.inner.is_cancelled(), false),
-        })
+                Err(e) => record_recv_error(e, cancelled || handle.inner.is_cancelled(), false),
+            })
+    })
 }
 
 /// Cancel a `tst_rtp_receiver_t`. Signals the underlying RTP socket to
