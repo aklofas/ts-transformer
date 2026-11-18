@@ -571,23 +571,46 @@ mod tests {
         use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
         const ROUNDS: usize = 2_000;
         const SPINNERS: usize = 3;
+        // Bounds each round's memory and time on a slow or sanitized run;
+        // a spinner that reaches it stops taking slots for that round.
+        const KEPT_PER_SPINNER: usize = 1_000;
+
+        // Stops and joins the spinners still held, also when an assertion
+        // unwinds, so a failing round leaves no thread taking slots.
+        struct Spinners {
+            stop: Arc<AtomicBool>,
+            threads: Vec<thread::JoinHandle<Vec<OpenSlot>>>,
+        }
+        impl Drop for Spinners {
+            fn drop(&mut self) {
+                self.stop.store(true, Ordering::Release);
+                for t in self.threads.drain(..) {
+                    let _ = t.join();
+                }
+            }
+        }
+
         for round in 0..ROUNDS {
             let oc = OpenCancel::new();
-            let stop = Arc::new(AtomicBool::new(false));
             let started = Arc::new(AtomicUsize::new(0));
-            let spinners: Vec<_> = (0..SPINNERS)
-                .map(|_| {
-                    let (oc, stop, started) = (oc.clone(), Arc::clone(&stop), Arc::clone(&started));
-                    thread::spawn(move || {
-                        let mut kept = vec![oc.slot()];
-                        started.fetch_add(1, Ordering::Release);
-                        while !stop.load(Ordering::Acquire) {
-                            kept.push(oc.slot());
-                        }
-                        kept
+            let stop = Arc::new(AtomicBool::new(false));
+            let mut spinners = Spinners {
+                threads: (0..SPINNERS)
+                    .map(|_| {
+                        let (oc, stop, started) =
+                            (oc.clone(), Arc::clone(&stop), Arc::clone(&started));
+                        thread::spawn(move || {
+                            let mut kept = vec![oc.slot()];
+                            started.fetch_add(1, Ordering::Release);
+                            while !stop.load(Ordering::Acquire) && kept.len() < KEPT_PER_SPINNER {
+                                kept.push(oc.slot());
+                            }
+                            kept
+                        })
                     })
-                })
-                .collect();
+                    .collect(),
+                stop,
+            };
             let deadline = std::time::Instant::now() + DEADLINE;
             while started.load(Ordering::Acquire) < SPINNERS {
                 assert!(
@@ -597,9 +620,9 @@ mod tests {
                 thread::yield_now();
             }
             oc.cancel();
-            stop.store(true, Ordering::Release);
-            for s in spinners {
-                let kept = s.join().unwrap();
+            spinners.stop.store(true, Ordering::Release);
+            while let Some(t) = spinners.threads.pop() {
+                let kept = t.join().unwrap();
                 assert!(
                     kept.iter().all(|slot| slot.is_cancelled()),
                     "round {round}: a slot handed out around the cancel was left live"
