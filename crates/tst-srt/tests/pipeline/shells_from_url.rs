@@ -25,11 +25,12 @@ use tst_core::mpegts::common::Pts90khz;
 use tst_core::mpegts::demux::{DemuxEvent, DemuxerConfig};
 use tst_core::mpegts::mux::{MuxerConfig, MuxerProgramConfigBuilder, VideoCodec as MuxVideoCodec};
 use tst_core::transport::EndReason;
+use tst_pipeline::binding::{BindingErrorKind, OpenCancel};
 use tst_pipeline::{BackoffStrategy, MuxSender, ReconnectPolicy, ShellErrorKind};
 use tst_srt::shells::{
     managed_demux_receiver_from_url, managed_mux_sender_from_url, managed_raw_receiver_from_url,
-    managed_raw_sender_from_url, managed_receiver_from_url, managed_recv_transport_from_url,
-    managed_sender_from_url,
+    managed_raw_sender_from_url, managed_receiver_from_url, managed_receiver_from_url_with_cancel,
+    managed_recv_transport_from_url, managed_sender_from_url,
 };
 use tst_srt::{SrtError, SrtListenerBuilder, SrtTransport, SrtUrl};
 use tst_test_helpers::synthetic_nal;
@@ -767,4 +768,226 @@ fn managed_receiver_from_url_refuses_an_unpaced_unlimited_policy_before_binding(
     let r = managed_receiver_from_url(&url, unpaced_unlimited());
     assert!(matches!(r, Err(SrtError::Option(_))), "got {:?}", r.err());
     assert!(started.elapsed() < scaled(Duration::from_millis(500)));
+}
+
+// ------------------------------------------------------------------------
+// `OpenCancel`: one host object reaching the opens it was given.
+// ------------------------------------------------------------------------
+
+/// A listener-mode plain receive open (the bindings' `Receiver.open`) on a
+/// thread, with a slot of `oc`. The result is the binding kind: `Opened`
+/// is not `Send`.
+fn spawn_listener_open(oc: &OpenCancel, port: u16) -> mpsc::Receiver<Result<(), BindingErrorKind>> {
+    let oc = oc.clone();
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let slot = oc.slot();
+        let url = format!("srt://127.0.0.1:{port}?mode=listener");
+        let r = tst_srt::opener::open_recv(&url, &slot);
+        drop(slot);
+        let _ = tx.send(r.map(drop).map_err(|e| e.kind));
+    });
+    rx
+}
+
+/// Two first accepts parked at once on one object: one `cancel()` ends
+/// both as a cancel. Each open is proven parked first: both are inside a
+/// tst-srt operation (bind plus accept) for the whole of `park_look`, and
+/// neither has returned.
+#[test]
+fn open_cancel_ends_two_parked_first_accepts() {
+    require_loopback!();
+    let oc = OpenCancel::new();
+    let opens = [
+        spawn_listener_open(&oc, crate::common::reserve_port()),
+        spawn_listener_open(&oc, crate::common::reserve_port()),
+    ];
+
+    let deadline = Instant::now() + crate::common::park_deadline();
+    let mut held_since = Instant::now();
+    while held_since.elapsed() < crate::common::park_look() {
+        assert!(Instant::now() < deadline, "the two opens never parked");
+        for open in &opens {
+            if let Ok(r) = open.try_recv() {
+                panic!("an open returned before the cancel: {r:?}");
+            }
+        }
+        if tst_srt::operations_in_flight() < 2 {
+            held_since = Instant::now();
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+
+    oc.cancel();
+    for open in opens {
+        let r = open
+            .recv_timeout(scaled(WATCHDOG))
+            .expect("the cancel ends the parked open");
+        assert_eq!(r, Err(BindingErrorKind::Closed));
+    }
+}
+
+/// An open given an object that is already cancelled is refused before it
+/// binds: the port is free afterwards.
+#[test]
+fn open_cancel_refuses_a_later_open_without_binding() {
+    require_loopback!();
+    let oc = OpenCancel::new();
+    oc.cancel();
+    let port = crate::common::reserve_port();
+    let r = spawn_listener_open(&oc, port)
+        .recv_timeout(scaled(Duration::from_secs(1)))
+        .expect("refused at once");
+    assert_eq!(r, Err(BindingErrorKind::Closed));
+    std::net::UdpSocket::bind(("127.0.0.1", port))
+        .expect("port still bindable: the refused open bound nothing");
+}
+
+/// A caller-mode managed open given a slot of a cancelled object is
+/// refused without dialling (the queue-drain proof of
+/// `managed_recv_transport_from_url_cancelled_slot_refuses_the_first_connect_without_dialling`).
+#[test]
+fn open_cancel_refuses_a_caller_mode_managed_open_without_dialling() {
+    require_loopback!();
+    let lb = crate::common::Loopback::bind();
+    let port = lb.port;
+    let oc = OpenCancel::new();
+    oc.cancel();
+
+    let url = SrtUrl::parse(&format!("srt://127.0.0.1:{port}")).expect("parse");
+    let slot = oc.slot();
+    let err = managed_receiver_from_url_with_cancel(&url, no_reconnect(), Arc::clone(&slot))
+        .expect_err("a cancelled object must refuse the first connect");
+    drop(slot);
+    assert!(
+        matches!(
+            err,
+            SrtError::Transport(tst_pipeline::TransportError::ExplicitClose)
+        ),
+        "{err:?}"
+    );
+
+    let caller = tst_srt::SrtSocketBuilder::new()
+        .connect_timeout(scaled(WATCHDOG))
+        .connect(format!("127.0.0.1:{port}"))
+        .expect("an ordinary connect to the same listener");
+    let caller_port = caller.local_addr().expect("local_addr").port();
+    let mut listener = lb.listener;
+    let mut queued = Vec::new();
+    let mut wait = scaled(WATCHDOG);
+    loop {
+        match listener.accept_timeout(wait) {
+            Ok((_sock, peer)) => queued.push(peer.port()),
+            Err(tst_srt::AcceptError::TimedOut) => break,
+            Err(e) => panic!("accept: {e}"),
+        }
+        wait = Duration::ZERO;
+    }
+    assert_eq!(
+        queued,
+        vec![caller_port],
+        "a second entry is the refused open's dial"
+    );
+    drop(caller);
+}
+
+/// An open started while another thread cancels always ends, whichever
+/// wins: refused before the bind, or woken in its bind or accept. Even
+/// rounds cancel as soon as the opener is released (the cancel mostly
+/// wins); odd rounds cancel once the opener holds its slot, so the cancel
+/// lands somewhere in the open.
+#[test]
+fn open_cancel_racing_an_open_never_leaves_it_parked() {
+    require_loopback!();
+    for round in 0..200 {
+        let oc = OpenCancel::new();
+        let (go_tx, go_rx) = mpsc::channel::<()>();
+        let (registered_tx, registered_rx) = mpsc::channel::<()>();
+        let (tx, rx) = mpsc::channel();
+        {
+            let oc = oc.clone();
+            std::thread::spawn(move || {
+                let _ = go_rx.recv();
+                let slot = oc.slot();
+                let _ = registered_tx.send(());
+                let r = tst_srt::opener::open_recv("srt://127.0.0.1:0?mode=listener", &slot);
+                drop(slot);
+                let _ = tx.send(r.map(drop).map_err(|e| e.kind));
+            });
+        }
+        go_tx.send(()).expect("opener thread");
+        if round % 2 == 1 {
+            registered_rx
+                .recv_timeout(scaled(WATCHDOG))
+                .expect("the opener takes its slot");
+        }
+        oc.cancel();
+        let r = rx
+            .recv_timeout(scaled(WATCHDOG))
+            .unwrap_or_else(|_| panic!("round {round}: the open was left parked"));
+        assert_eq!(r, Err(BindingErrorKind::Closed), "round {round}");
+    }
+}
+
+/// The object is not the opened shell's cancel. A managed caller-mode
+/// receiver keeps its slot for every re-dial, but once the open returned
+/// and its guard was dropped the object no longer holds that slot: a
+/// later `cancel()` leaves the reconnects alone, and the stream reconnects
+/// to a second peer after the first goes away.
+#[test]
+fn open_cancel_after_the_open_returned_leaves_a_managed_receiver_reconnecting() {
+    require_loopback!();
+    let lb = crate::common::Loopback::bind();
+    let port = lb.port;
+    let first_stop = Arc::new(AtomicBool::new(false));
+    let second_stop = Arc::new(AtomicBool::new(false));
+    let peer = {
+        let (first_stop, second_stop) = (Arc::clone(&first_stop), Arc::clone(&second_stop));
+        let mut listener = lb.listener;
+        std::thread::spawn(move || {
+            let (first, _) = listener
+                .accept_timeout(scaled(WATCHDOG))
+                .expect("first peer");
+            send_until(first, null_ts_bundle(), first_stop);
+            if let Ok((second, _)) = listener.accept_timeout(scaled(WATCHDOG)) {
+                send_until(second, null_ts_bundle(), second_stop);
+            }
+        })
+    };
+
+    let url = SrtUrl::parse(&format!(
+        "srt://127.0.0.1:{port}?x-recvtimeout=1000&conntimeo=1000"
+    ))
+    .expect("parse");
+    let policy = ReconnectPolicy::default()
+        .with_max_attempts(Some(3))
+        .with_backoff(BackoffStrategy::Constant(Duration::ZERO));
+    let oc = OpenCancel::new();
+    let slot = oc.slot();
+    let (mut rx, handles) = managed_receiver_from_url_with_cancel(&url, policy, Arc::clone(&slot))
+        .expect("managed_receiver_from_url_with_cancel");
+    drop(slot);
+    rx.next_packet().expect("the stream is live");
+
+    oc.cancel();
+    first_stop.store(true, Ordering::SeqCst);
+
+    let deadline = Instant::now() + scaled(WATCHDOG);
+    while handles.reconnects.load(Ordering::Acquire) == 0 {
+        assert!(Instant::now() < deadline, "the stream never reconnected");
+        match rx.next_packet() {
+            Ok(_) => {}
+            Err(e) if e.kind == ShellErrorKind::Backpressure => {}
+            Err(e) => panic!(
+                "the stream ended instead of reconnecting (attempts={}): {e:?}",
+                handles.attempts.load(Ordering::Acquire)
+            ),
+        }
+    }
+    rx.next_packet()
+        .expect("bytes flow from the second peer after the reconnect");
+
+    second_stop.store(true, Ordering::SeqCst);
+    rx.close();
+    peer.join().expect("peer thread");
 }

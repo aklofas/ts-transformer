@@ -306,6 +306,41 @@ pub fn tst_pipeline::binding::kind::kind_of_klv_decode(&tst_core::error::KlvDeco
 pub fn tst_pipeline::binding::kind::kind_of_klv_encode(&tst_core::error::KlvEncodeError) -> tst_pipeline::binding::kind::BindingErrorKind
 pub fn tst_pipeline::binding::kind::kind_of_klv_field(&tst_core::error::KlvFieldError) -> tst_pipeline::binding::kind::BindingErrorKind
 pub fn tst_pipeline::binding::kind::kind_of_mux(&tst_core::error::MuxError) -> tst_pipeline::binding::kind::BindingErrorKind
+pub mod tst_pipeline::binding::open_cancel
+pub struct tst_pipeline::binding::open_cancel::OpenCancel
+impl tst_pipeline::binding::open_cancel::OpenCancel
+pub fn tst_pipeline::binding::open_cancel::OpenCancel::cancel(&self)
+pub fn tst_pipeline::binding::open_cancel::OpenCancel::is_cancelled(&self) -> bool
+pub fn tst_pipeline::binding::open_cancel::OpenCancel::new() -> Self
+pub fn tst_pipeline::binding::open_cancel::OpenCancel::slot(&self) -> tst_pipeline::binding::open_cancel::OpenSlot
+impl core::clone::Clone for tst_pipeline::binding::open_cancel::OpenCancel
+pub fn tst_pipeline::binding::open_cancel::OpenCancel::clone(&self) -> tst_pipeline::binding::open_cancel::OpenCancel
+impl core::default::Default for tst_pipeline::binding::open_cancel::OpenCancel
+pub fn tst_pipeline::binding::open_cancel::OpenCancel::default() -> tst_pipeline::binding::open_cancel::OpenCancel
+impl core::fmt::Debug for tst_pipeline::binding::open_cancel::OpenCancel
+pub fn tst_pipeline::binding::open_cancel::OpenCancel::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for tst_pipeline::binding::open_cancel::OpenCancel
+impl core::marker::Send for tst_pipeline::binding::open_cancel::OpenCancel
+impl core::marker::Sync for tst_pipeline::binding::open_cancel::OpenCancel
+impl core::marker::Unpin for tst_pipeline::binding::open_cancel::OpenCancel
+impl core::marker::UnsafeUnpin for tst_pipeline::binding::open_cancel::OpenCancel
+impl core::panic::unwind_safe::RefUnwindSafe for tst_pipeline::binding::open_cancel::OpenCancel
+impl core::panic::unwind_safe::UnwindSafe for tst_pipeline::binding::open_cancel::OpenCancel
+pub struct tst_pipeline::binding::open_cancel::OpenSlot
+impl core::fmt::Debug for tst_pipeline::binding::open_cancel::OpenSlot
+pub fn tst_pipeline::binding::open_cancel::OpenSlot::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::ops::deref::Deref for tst_pipeline::binding::open_cancel::OpenSlot
+pub type tst_pipeline::binding::open_cancel::OpenSlot::Target = alloc::sync::Arc<tst_core::cancel::CancelSlot>
+pub fn tst_pipeline::binding::open_cancel::OpenSlot::deref(&self) -> &alloc::sync::Arc<tst_core::cancel::CancelSlot>
+impl core::ops::drop::Drop for tst_pipeline::binding::open_cancel::OpenSlot
+pub fn tst_pipeline::binding::open_cancel::OpenSlot::drop(&mut self)
+impl core::marker::Freeze for tst_pipeline::binding::open_cancel::OpenSlot
+impl core::marker::Send for tst_pipeline::binding::open_cancel::OpenSlot
+impl core::marker::Sync for tst_pipeline::binding::open_cancel::OpenSlot
+impl core::marker::Unpin for tst_pipeline::binding::open_cancel::OpenSlot
+impl core::marker::UnsafeUnpin for tst_pipeline::binding::open_cancel::OpenSlot
+impl core::panic::unwind_safe::RefUnwindSafe for tst_pipeline::binding::open_cancel::OpenSlot
+impl core::panic::unwind_safe::UnwindSafe for tst_pipeline::binding::open_cancel::OpenSlot
 pub mod tst_pipeline::binding::opened
 #[non_exhaustive] pub struct tst_pipeline::binding::opened::Opened<T>
 pub tst_pipeline::binding::opened::Opened::cancel: alloc::sync::Arc<dyn tst_core::transport::TransportCancel>
@@ -848,6 +883,40 @@ impl core::marker::Unpin for tst_pipeline::binding::handles::ManagedHandles
 impl core::marker::UnsafeUnpin for tst_pipeline::binding::handles::ManagedHandles
 impl !core::panic::unwind_safe::RefUnwindSafe for tst_pipeline::binding::handles::ManagedHandles
 impl !core::panic::unwind_safe::UnwindSafe for tst_pipeline::binding::handles::ManagedHandles
+pub struct tst_pipeline::binding::OpenCancel
+impl tst_pipeline::binding::open_cancel::OpenCancel
+pub fn tst_pipeline::binding::open_cancel::OpenCancel::cancel(&self)
+pub fn tst_pipeline::binding::open_cancel::OpenCancel::is_cancelled(&self) -> bool
+pub fn tst_pipeline::binding::open_cancel::OpenCancel::new() -> Self
+pub fn tst_pipeline::binding::open_cancel::OpenCancel::slot(&self) -> tst_pipeline::binding::open_cancel::OpenSlot
+impl core::clone::Clone for tst_pipeline::binding::open_cancel::OpenCancel
+pub fn tst_pipeline::binding::open_cancel::OpenCancel::clone(&self) -> tst_pipeline::binding::open_cancel::OpenCancel
+impl core::default::Default for tst_pipeline::binding::open_cancel::OpenCancel
+pub fn tst_pipeline::binding::open_cancel::OpenCancel::default() -> tst_pipeline::binding::open_cancel::OpenCancel
+impl core::fmt::Debug for tst_pipeline::binding::open_cancel::OpenCancel
+pub fn tst_pipeline::binding::open_cancel::OpenCancel::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for tst_pipeline::binding::open_cancel::OpenCancel
+impl core::marker::Send for tst_pipeline::binding::open_cancel::OpenCancel
+impl core::marker::Sync for tst_pipeline::binding::open_cancel::OpenCancel
+impl core::marker::Unpin for tst_pipeline::binding::open_cancel::OpenCancel
+impl core::marker::UnsafeUnpin for tst_pipeline::binding::open_cancel::OpenCancel
+impl core::panic::unwind_safe::RefUnwindSafe for tst_pipeline::binding::open_cancel::OpenCancel
+impl core::panic::unwind_safe::UnwindSafe for tst_pipeline::binding::open_cancel::OpenCancel
+pub struct tst_pipeline::binding::OpenSlot
+impl core::fmt::Debug for tst_pipeline::binding::open_cancel::OpenSlot
+pub fn tst_pipeline::binding::open_cancel::OpenSlot::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::ops::deref::Deref for tst_pipeline::binding::open_cancel::OpenSlot
+pub type tst_pipeline::binding::open_cancel::OpenSlot::Target = alloc::sync::Arc<tst_core::cancel::CancelSlot>
+pub fn tst_pipeline::binding::open_cancel::OpenSlot::deref(&self) -> &alloc::sync::Arc<tst_core::cancel::CancelSlot>
+impl core::ops::drop::Drop for tst_pipeline::binding::open_cancel::OpenSlot
+pub fn tst_pipeline::binding::open_cancel::OpenSlot::drop(&mut self)
+impl core::marker::Freeze for tst_pipeline::binding::open_cancel::OpenSlot
+impl core::marker::Send for tst_pipeline::binding::open_cancel::OpenSlot
+impl core::marker::Sync for tst_pipeline::binding::open_cancel::OpenSlot
+impl core::marker::Unpin for tst_pipeline::binding::open_cancel::OpenSlot
+impl core::marker::UnsafeUnpin for tst_pipeline::binding::open_cancel::OpenSlot
+impl core::panic::unwind_safe::RefUnwindSafe for tst_pipeline::binding::open_cancel::OpenSlot
+impl core::panic::unwind_safe::UnwindSafe for tst_pipeline::binding::open_cancel::OpenSlot
 #[non_exhaustive] pub struct tst_pipeline::binding::Opened<T>
 pub tst_pipeline::binding::Opened::cancel: alloc::sync::Arc<dyn tst_core::transport::TransportCancel>
 pub tst_pipeline::binding::Opened::domain: tst_pipeline::binding::kind::Domain

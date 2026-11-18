@@ -6,7 +6,8 @@
 //! [API stability reference](https://github.com/aklofas/ts-transformer/blob/main/docs/reference/api-stability.md).
 //!
 //! `no_std` + `alloc`, except [`handles`] (its end-reason cell is a
-//! `std::sync::OnceLock`): the C binding's bare-metal plane drives its
+//! `std::sync::OnceLock`) and [`open_cancel`] (it hands out
+//! `std`-only `CancelSlot`s): the C binding's bare-metal plane drives its
 //! offline handles through the same [`Owned`] and kind table as every
 //! other handle. On a `no_std` target the slot lock is a spin lock and
 //! panics abort — see [`Owned`]'s "`no_std` targets" section.
@@ -15,6 +16,9 @@
 //!   binding collects at open time: cancel, stream-end reason,
 //!   successful rebuilds, factory attempts, reconnect-in-progress. No
 //!   `Option`s — the transport crate's `from_url` family builds it once.
+//! - [`open_cancel`] — [`OpenCancel`]: the sticky cancel a host creates
+//!   before an open and passes to any number of opens; it reaches an open
+//!   that has no shell (and so no cancel handle) yet.
 //! - [`kind`] — [`BindingErrorKind`]: the one error-kind table every
 //!   binding resolves its per-domain kind name from, discriminated by the
 //!   frozen C `TST_E_*` codes, plus [`BindingError`] = kind + detail.
@@ -31,6 +35,8 @@
 #[cfg(feature = "std")]
 pub mod handles;
 pub mod kind;
+#[cfg(feature = "std")]
+pub mod open_cancel;
 pub mod opened;
 pub mod owned;
 pub mod panic;
@@ -40,6 +46,8 @@ pub mod view;
 #[cfg(feature = "std")]
 pub use handles::ManagedHandles;
 pub use kind::{BindingError, BindingErrorKind, DiagValue, Diagnostics, Domain};
+#[cfg(feature = "std")]
+pub use open_cancel::{OpenCancel, OpenSlot};
 pub use opened::Opened;
 pub use owned::{Close, CloseFailure, HandleState, Owned};
 pub use shells::{RecvHalf, SendHalf};
