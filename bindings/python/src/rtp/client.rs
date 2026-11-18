@@ -8,7 +8,8 @@
 //!   underlying `tst_rtp::RtspClient` and returns a Python
 //!   `RtspSession` wrapping the now-PLAYing client.
 //! - `RtspSession` owns the live `RtspClient`. Methods `play` / `pause`
-//!   / `teardown` delegate to it under `py.detach`.
+//!   / `teardown` delegate to it under `py.detach`; `close` (and the
+//!   `with` exit) takes it out and ends it with `RtspClient::close`.
 //! - `into_demux_receiver` converts the session into a demux-capable
 //!   receiver; calling it before the session is playing raises
 //!   `NotImplementedError`.
@@ -19,9 +20,10 @@
 //!
 //! GIL release boundaries:
 //!
-//! - `py.detach`: `connect`, `play`, `pause`, `teardown`.
+//! - `py.detach`: `connect`, `play`, `pause`, `teardown`, `close` (and
+//!   `__exit__`, which calls it).
 //! - **Not** wrapped: `cancel_handle()`, `stats()`, dataclass ctors,
-//!   `__enter__` / `__exit__` (these are non-blocking).
+//!   `__enter__` (these are non-blocking).
 //!
 //! `#![allow(...)]` mirrors `errors.rs` / `mpegts.rs` — PyO3's macro
 //! expansions under Rust 2024 trip these lints. Hand-written code in
@@ -30,7 +32,7 @@
 #![allow(unsafe_op_in_unsafe_fn, clippy::useless_conversion)]
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, TryLockError};
 
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
@@ -452,9 +454,10 @@ pub struct PyRtspCancelHandle {
 
 #[pymethods]
 impl PyRtspCancelHandle {
-    /// Flip the cancel flag. Any in-flight `connect` / `pause` /
-    /// `play` / `teardown` call on the originating session breaks out
-    /// of blocking I/O at the next poll (typically <100ms).
+    /// Flip the cancel flag. Any in-flight `pause` / `play` /
+    /// `teardown` call on the originating session breaks out of
+    /// blocking I/O at its next poll (a waiting request re-checks the
+    /// flag at least every 100 ms).
     fn cancel(&self) {
         self.inner.cancel();
     }
@@ -575,12 +578,7 @@ impl PyRtspClient {
 
         let (client, session) = result.map_err(|e| raise(py, &RTSP, BindingError::from(e)))?;
 
-        Ok(PyRtspSession {
-            client: Arc::new(Mutex::new(Some(client))),
-            session: Arc::new(Mutex::new(Some(session))),
-            torn_down: Arc::new(AtomicBool::new(false)),
-            h264_depay_config: Arc::new(Mutex::new(None)),
-        })
+        Ok(PyRtspSession::new(client, session, None))
     }
 
     /// Connect to `config.url`, run OPTIONS / DESCRIBE / SETUP / PLAY for
@@ -646,12 +644,7 @@ impl PyRtspClient {
         let (client, session, depay_config) =
             result.map_err(|e| raise(py, &RTSP, BindingError::from(e)))?;
 
-        Ok(PyRtspSession {
-            client: Arc::new(Mutex::new(Some(client))),
-            session: Arc::new(Mutex::new(Some(session))),
-            torn_down: Arc::new(AtomicBool::new(false)),
-            h264_depay_config: Arc::new(Mutex::new(Some(depay_config))),
-        })
+        Ok(PyRtspSession::new(client, session, Some(depay_config)))
     }
 }
 
@@ -725,15 +718,23 @@ fn apply_tls_roots(
 /// does NOT consume.
 ///
 /// `__enter__` / `__exit__` make `RtspSession` usable as a context
-/// manager — `__exit__` fires `teardown` best-effort.
-#[pyclass(name = "RtspSession", module = "tstrans.rtp")]
+/// manager — `__exit__` calls `close`.
+///
+/// Frozen: every method takes `&self` and all state is behind a mutex or
+/// an atomic, so a second thread's call is never refused by a borrow
+/// flag while a control call is parked.
+#[pyclass(name = "RtspSession", module = "tstrans.rtp", frozen)]
 pub struct PyRtspSession {
     /// Live `tst_rtp::RtspClient` in PLAY state. `Option` because
-    /// `teardown()` / `__exit__` consume it; `Arc<Mutex>` because
-    /// `cancel_handle()` clones the inner `RtspCancelHandle` (the
-    /// handle owns its own `Arc<AtomicBool>` backing flag — sharing
-    /// with the client doesn't require holding the mutex).
+    /// `close()` / `__exit__` take it out to end it. `pause` / `play` /
+    /// `teardown` hold the mutex across their network exchange.
     client: Arc<Mutex<Option<RustRtspClient>>>,
+    /// A clone of the client's cancel, kept outside the `client` mutex so
+    /// `cancel_handle()` and a contended `close()` never wait behind a
+    /// parked control call.
+    rtsp_cancel: RustRtspCancelHandle,
+    /// Set when `close()` begins: `cancel_handle()` is refused from then.
+    closed: AtomicBool,
     /// The SETUP-time `RtspSession` carrying the UDP socket pair (or
     /// TCP-interleaved mpsc receiver) for the data plane. `Option`
     /// because `into_demux_receiver` / `into_h264_receiver` consumes it
@@ -741,11 +742,10 @@ pub struct PyRtspSession {
     /// `Mutex` mirrors the `client` field's pattern so the two fields
     /// can be accessed under uniform locking discipline.
     session: Arc<Mutex<Option<RustRtspSession>>>,
-    /// Set true by `teardown` / `__exit__` so duplicate teardowns
+    /// Set true by `teardown` / `close` so duplicate teardowns
     /// are a no-op rather than a "session_id is None" surface from
-    /// `RtspClient::teardown`. `Arc<AtomicBool>` so `__exit__` can
-    /// observe it across the GIL boundary inside the
-    /// `py.detach` closure without holding the python ref.
+    /// `RtspClient::teardown`. `Arc<AtomicBool>` so the `py.detach`
+    /// closures can set it without holding the python ref.
     torn_down: Arc<AtomicBool>,
     /// H.264 depacketizer config stashed at `connect_h264` time. `None`
     /// when this session was created via `connect()` (MP2T path) or when
@@ -755,9 +755,11 @@ pub struct PyRtspSession {
     h264_depay_config: Arc<Mutex<Option<H264DepayConfig>>>,
 }
 
-/// A session collected without `teardown()`: the client's own drop sends a
+/// A session collected without `close()`: the client's own drop sends a
 /// best-effort TEARDOWN with the GIL released, then tells the client's
-/// thread to stop; that thread closes the connection on its own.
+/// thread to stop without waiting for it; that thread closes the
+/// connection on its own. Collection must not wait, so it does not call
+/// `RtspClient::close`.
 impl Drop for PyRtspSession {
     fn drop(&mut self) {
         let client = self.client.lock().unwrap_or_else(|e| e.into_inner()).take();
@@ -778,39 +780,29 @@ impl Drop for PyRtspSession {
 #[pymethods]
 impl PyRtspSession {
     /// Send PAUSE. Server stops emitting RTP; session remains valid
-    /// for a subsequent `play()`.
-    fn pause(&mut self, py: Python<'_>) -> PyResult<()> {
-        let client = self.client.clone();
-        let result =
-            crate::util::allow_threads_parking(py, move || -> Result<(), RustRtspError> {
-                let mut guard = client.lock().map_err(|_| RustRtspError::SessionExpired)?;
-                match guard.as_mut() {
-                    Some(c) => c.pause(),
-                    None => Err(RustRtspError::SessionExpired),
-                }
-            });
-        result.map_err(|e| raise(py, &RTSP, BindingError::from(e)))
+    /// for a subsequent `play()`. Raises `RtspError(CLOSED)` after
+    /// `close()`.
+    fn pause(&self, py: Python<'_>) -> PyResult<()> {
+        self.control(py, "RtspSession.pause: the session is closed", |c| {
+            c.pause()
+        })
     }
 
-    /// Send PLAY (resume after `pause()`).
-    fn play(&mut self, py: Python<'_>) -> PyResult<()> {
-        let client = self.client.clone();
-        let result =
-            crate::util::allow_threads_parking(py, move || -> Result<(), RustRtspError> {
-                let mut guard = client.lock().map_err(|_| RustRtspError::SessionExpired)?;
-                match guard.as_mut() {
-                    Some(c) => c.play().map(|_info| ()),
-                    None => Err(RustRtspError::SessionExpired),
-                }
-            });
-        result.map_err(|e| raise(py, &RTSP, BindingError::from(e)))
+    /// Send PLAY (resume after `pause()`). Raises `RtspError(CLOSED)`
+    /// after `close()`.
+    fn play(&self, py: Python<'_>) -> PyResult<()> {
+        self.control(py, "RtspSession.play: the session is closed", |c| {
+            c.play().map(|_info| ())
+        })
     }
 
-    /// Send TEARDOWN. Closes the server session; subsequent
-    /// `pause` / `play` calls raise `RtspError(kind=PROTOCOL, ...)`.
-    /// The Python wrapper considers itself "torn down" so duplicate
-    /// teardowns are a no-op (returns `None`).
-    fn teardown(&mut self, py: Python<'_>) -> PyResult<()> {
+    /// Send TEARDOWN and report the server's answer; the client is kept
+    /// (its thread and the control connection live on until `close()`,
+    /// the `with` exit or collection). Subsequent `pause` / `play` calls
+    /// raise `RtspError(kind=PROTOCOL, ...)`. The Python wrapper considers
+    /// itself "torn down" so duplicate teardowns, and a teardown after
+    /// `close()`, are a no-op (returns `None`).
+    fn teardown(&self, py: Python<'_>) -> PyResult<()> {
         if self.torn_down.load(Ordering::Relaxed) {
             return Ok(());
         }
@@ -829,29 +821,64 @@ impl PyRtspSession {
         result.map_err(|e| raise(py, &RTSP, BindingError::from(e)))
     }
 
+    /// End the session and the client: TEARDOWN with one 500 ms bound
+    /// over writing it and its reply, then the client's thread is stopped
+    /// and waited for up to 2 s; the control connection is closed when
+    /// this returns (unless that wait ran out). Silent: returns `None`
+    /// whatever the server answered (`teardown()` is the call that
+    /// reports). Idempotent.
+    ///
+    /// A control call parked on another thread is cancelled first (it
+    /// raises `RtspError(CLOSED)`); the TEARDOWN then goes out on the
+    /// cancelled client without awaiting the reply. Afterwards `pause` /
+    /// `play` / `cancel_handle` raise `RtspError(CLOSED)` and `teardown`
+    /// returns `None`.
+    fn close(&self, py: Python<'_>) {
+        if self.closed.swap(true, Ordering::AcqRel) {
+            return;
+        }
+        let client = self.client.clone();
+        let cancel = self.rtsp_cancel.clone();
+        let torn = self.torn_down.clone();
+        crate::util::allow_threads_parking(py, move || {
+            let taken = match client.try_lock() {
+                Ok(mut guard) => guard.take(),
+                Err(TryLockError::WouldBlock) => {
+                    cancel.cancel();
+                    client.lock().unwrap_or_else(|e| e.into_inner()).take()
+                }
+                Err(TryLockError::Poisoned(e)) => e.into_inner().take(),
+            };
+            if let Some(c) = taken {
+                let _ = c.close();
+            }
+            torn.store(true, Ordering::Relaxed);
+        });
+    }
+
     /// Cancel handle — flipping `cancel()` breaks any in-flight
-    /// `pause` / `play` / `teardown` out of blocking I/O at the next
-    /// poll (typically <100ms — a waiting request re-checks the
-    /// cancel flag at least every 100ms).
+    /// `pause` / `play` / `teardown` out of blocking I/O at its next
+    /// poll (a waiting request re-checks the cancel flag at least every
+    /// 100 ms). Answers at once, also while another thread's control
+    /// call is parked.
     ///
     /// Returns a fresh `PyRtspCancelHandle` each call; all handles
-    /// share the same backing `Arc<AtomicBool>` flag (cloned from
-    /// `RustRtspCancelHandle`). Raises `RtspError(CLOSED)` once the
-    /// session has been torn down (0.7.0: was `PROTOCOL`).
-    fn cancel_handle(&self) -> PyResult<PyRtspCancelHandle> {
-        let guard = self
-            .client
-            .lock()
-            .map_err(|_| PyValueError::new_err("RtspSession lock poisoned"))?;
-        match guard.as_ref() {
-            Some(c) => Ok(PyRtspCancelHandle {
-                inner: c.cancel_handle(),
-            }),
-            None => Err(rtsp_err_no_gil(
-                BindingErrorKind::Closed,
-                "RtspSession is torn down; cancel_handle unavailable",
-            )),
+    /// share the client's backing flag. Returned after `teardown()` too;
+    /// raises `RtspError(CLOSED)` once `close()` has begun.
+    fn cancel_handle(&self, py: Python<'_>) -> PyResult<PyRtspCancelHandle> {
+        if self.closed.load(Ordering::Acquire) {
+            return Err(raise(
+                py,
+                &RTSP,
+                BindingError::new(
+                    BindingErrorKind::Closed,
+                    "RtspSession is closed; cancel_handle unavailable",
+                ),
+            ));
         }
+        Ok(PyRtspCancelHandle {
+            inner: self.rtsp_cancel.clone(),
+        })
     }
 
     /// RTCP-derived stats snapshot.
@@ -884,7 +911,7 @@ impl PyRtspSession {
     #[pyo3(signature = (demux_config = None))]
     #[allow(clippy::wrong_self_convention)]
     fn into_demux_receiver(
-        &mut self,
+        &self,
         py: Python<'_>,
         demux_config: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<PyDemuxReceiver> {
@@ -954,7 +981,7 @@ impl PyRtspSession {
     /// Handle is zeroed BEFORE the fallible native work (prevents a double
     /// free if the construction raises).
     #[allow(clippy::wrong_self_convention)]
-    fn into_h264_receiver(&mut self, py: Python<'_>) -> PyResult<PyH264Receiver> {
+    fn into_h264_receiver(&self, py: Python<'_>) -> PyResult<PyH264Receiver> {
         // Step 0: a consumed data plane is CLOSED, checked before the
         // config so a consumed MP2T session is not misreported PROTOCOL.
         self.refuse_if_consumed("RtspSession.into_h264_receiver: data plane already consumed")?;
@@ -1007,32 +1034,64 @@ impl PyRtspSession {
         slf
     }
 
-    /// Best-effort teardown on context-manager exit. Errors are
-    /// swallowed (the contract is "ensure session closed", not "fail
-    /// if server is uncooperative") — caller can call `.teardown()`
-    /// explicitly to get the typed error.
+    /// `close()` on context-manager exit: silent (the contract is
+    /// "ensure session closed", not "fail if server is uncooperative") —
+    /// call `.teardown()` first to get the typed error.
     fn __exit__(
-        &mut self,
+        &self,
         py: Python<'_>,
         exc_type: &Bound<'_, PyAny>,
         exc_value: &Bound<'_, PyAny>,
         traceback: &Bound<'_, PyAny>,
     ) -> PyResult<bool> {
         let _ = (exc_type, exc_value, traceback);
-        if !self.torn_down.load(Ordering::Relaxed) {
-            // swallow any error
-            let _ = self.teardown(py);
-        }
+        self.close(py);
         Ok(false) // do not suppress exceptions
     }
 
-    /// Returns true once `teardown` / `__exit__` has fired.
+    /// Returns true once `teardown` / `close` / `__exit__` has fired.
     fn is_torn_down(&self) -> bool {
         self.torn_down.load(Ordering::Relaxed)
     }
 }
 
 impl PyRtspSession {
+    fn new(
+        client: RustRtspClient,
+        session: RustRtspSession,
+        h264_depay_config: Option<H264DepayConfig>,
+    ) -> Self {
+        Self {
+            rtsp_cancel: client.cancel_handle(),
+            client: Arc::new(Mutex::new(Some(client))),
+            closed: AtomicBool::new(false),
+            session: Arc::new(Mutex::new(Some(session))),
+            torn_down: Arc::new(AtomicBool::new(false)),
+            h264_depay_config: Arc::new(Mutex::new(h264_depay_config)),
+        }
+    }
+
+    /// Run a control request on the client with the GIL released; a
+    /// closed session (the client taken) is `RtspError(CLOSED)`.
+    fn control(
+        &self,
+        py: Python<'_>,
+        closed: &'static str,
+        request: impl FnOnce(&mut RustRtspClient) -> Result<(), RustRtspError> + Send,
+    ) -> PyResult<()> {
+        let client = self.client.clone();
+        let result = crate::util::allow_threads_parking(py, move || -> Result<(), BindingError> {
+            let mut guard = client
+                .lock()
+                .map_err(|_| BindingError::from(RustRtspError::SessionExpired))?;
+            match guard.as_mut() {
+                Some(c) => request(c).map_err(BindingError::from),
+                None => Err(BindingError::new(BindingErrorKind::Closed, closed)),
+            }
+        });
+        result.map_err(|e| raise(py, &RTSP, e))
+    }
+
     /// `RtspError(CLOSED)` when the data plane has already been taken —
     /// a non-taking check, so a refusal never consumes anything.
     fn refuse_if_consumed(&self, message: &str) -> PyResult<()> {
@@ -1048,8 +1107,8 @@ impl PyRtspSession {
 }
 
 /// `raise` needs a `Python` token; this helper serves the sites that have
-/// none in scope (e.g. `cancel_handle` returning a typed error inside a
-/// `?` chain before `Python::attach`) by re-acquiring the GIL.
+/// none in scope (e.g. `refuse_if_consumed` returning a typed error inside
+/// a `?` chain before `Python::attach`) by re-acquiring the GIL.
 fn rtsp_err_no_gil(kind: BindingErrorKind, message: &str) -> PyErr {
     Python::attach(|py| raise(py, &RTSP, BindingError::new(kind, message)))
 }

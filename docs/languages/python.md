@@ -1143,10 +1143,11 @@ with RtspClient.connect(cfg) as session:
   Server certificates verify against platform native trust roots by
   default; pass `tls_root_certs_pem=<PEM bytes>` to trust a private CA /
   self-signed camera cert instead.
-- **Cancellation.** Obtain a `RtspCancelHandle` from
-  `session.cancel_handle()` *before* a blocking control call, then flip
-  `cancel()` from another thread to break it out. The interrupted call
-  raises `RtspError(CLOSED)`.
+- **Cancellation.** `session.cancel_handle()` returns a `RtspCancelHandle`
+  at once from any thread, also while a control call is parked; flip
+  `cancel()` to break `pause()` / `play()` / `teardown()` out. The
+  interrupted call raises `RtspError(CLOSED)`. `close()` from another
+  thread cancels a parked call first.
 - **`teardown()` reports what the server answered.** A 2xx reply, or
   `454 Session Not Found` (the session is already gone), returns `None`. A
   TEARDOWN the server refuses raises `RtspError` of the status's kind:
@@ -1155,8 +1156,22 @@ with RtspClient.connect(cfg) as session:
   (`PROTOCOL`), the client has no credentials (`AUTH_FAILED`) or its
   challenge offers no scheme the client may answer (`AUTH_REQUIRED`); a
   401 to that retry raises `AUTH_FAILED`. The session counts as torn down either way, so
-  a second `teardown()` is a no-op. Leaving the `with` block tears down too
-  and swallows that error.
+  a second `teardown()` is a no-op. The reply is awaited up to the request
+  timeout (10 s), and the client, its thread and the control connection
+  stay until `close()`.
+- **`close()` ends the session and its client.** It sends TEARDOWN with
+  one 500 ms bound over writing it and its reply, then waits up to 2 s for
+  the client's thread; the control connection is closed when it returns,
+  unless that wait ran out. It is silent (returns `None` whatever the
+  server answered) and a second call is a no-op. Leaving the `with` block
+  calls it. On a TCP-interleaved session, an accepted TEARDOWN ends the
+  receiver with end of stream (`StopIteration`, `EndReason.CLEAN_TEARDOWN`);
+  a TEARDOWN refused, or not answered within the 500 ms, ends it with
+  `RtpError(CLOSED)` (`EndReason.CANCELLED`). Call `teardown()` first when
+  you want the server's answer or a longer wait. After `close()`,
+  `pause()`, `play()` and `cancel_handle()` raise `RtspError(CLOSED)` and
+  `teardown()` returns `None`. A session collected without `close()`
+  sends a best-effort TEARDOWN and does not wait for the client's thread.
 - **Why did the stream end?** When `for event in rx` exits or a call
   raises, `rx.end_reason()` (on `DemuxReceiver`, `Receiver`, and
   `H264Receiver` alike) answers with a `tstrans.shells.EndReason` member —
@@ -1372,7 +1387,7 @@ with RtspClient.connect_h264(cfg) as session:
 
 | Name | Notes |
 |---|---|
-| `H264Receiver` | `listen(url, config=None)` for direct UDP; `into_h264_receiver()` from an RTSP session. `recv_au()` → `H264AccessUnit \| None`; `None` means the peer ended the session or the server accepted the TEARDOWN `teardown()` sent on a session whose cancel was not set (a failed control connection also ends it with `None`; `end_reason()` names it); after a cancel, once its `RtspSession` is collected, or after a `teardown()` on a session whose cancel had fired, it raises `RtpError(CLOSED)` once the access units it holds are handed out (unless the session had already ended for its own reason). Also iterable: `for au in rx` (a cancelled loop raises the same error). |
+| `H264Receiver` | `listen(url, config=None)` for direct UDP; `into_h264_receiver()` from an RTSP session. `recv_au()` → `H264AccessUnit \| None`; `None` means the peer ended the session or the server accepted the TEARDOWN `teardown()` or `close()` sent on a session whose cancel was not set (a failed control connection also ends it with `None`; `end_reason()` names it); after a cancel, once its `RtspSession` is collected, after a `close()` whose TEARDOWN was refused or not answered, or after a `teardown()` or `close()` on a session whose cancel had fired, it raises `RtpError(CLOSED)` once the access units it holds are handed out (unless the session had already ended for its own reason). Also iterable: `for au in rx` (a cancelled loop raises the same error). |
 | `H264AccessUnit` | `annexb: bytes`, `pts: int` (90 kHz ticks, i64), `key_frame: bool`, `rtp_timestamp: int`. |
 | `H264DepayConfig` | `payload_type=96`, `parameter_set_injection=ParameterSetInjection.BEFORE_IDR`, `initial_parameter_sets=[]`, `max_au_bytes=8388608`. All kwargs. |
 | `ParameterSetInjection` | `.NONE` — pass through as received; `.BEFORE_IDR` (default) — prepend cached SPS/PPS before each IDR. |
@@ -1394,17 +1409,20 @@ with RtspClient.connect_h264(cfg) as session:
 
 - **Keep the session object alive while receiving.** A receiver from
   `into_demux_receiver()` or `into_h264_receiver()` never owns the RTSP client;
-  the `RtspSession` object does. Call `teardown()` (or leave its `with` block)
-  to end the stream cleanly: on a session whose cancel was not set, a
+  the `RtspSession` object does. Call `close()` (or leave its `with` block)
+  to end the stream: on a session whose cancel was not set, a
   TCP-interleaved receiver then ends with end of stream (`None`,
-  `StopIteration`) once the server accepts the TEARDOWN; a TEARDOWN the
-  server refuses leaves the receiver running until the session object is
-  collected. On a session whose cancel handle had fired, `teardown()` and
-  the `with` exit are a cancel: the receiver ends with `RtpError(CLOSED)`
-  after what is already queued, once the server accepts the TEARDOWN or
-  closes the connection or the session object is collected; a TEARDOWN the
-  server refuses leaves the receiver running until then. So does a
-  session collected while its receiver is in use. A session that had
+  `StopIteration`) once the server accepts the TEARDOWN, and with
+  `RtpError(CLOSED)` after what is already queued when the server refuses
+  it or does not answer within 500 ms. `teardown()` gives the same end of
+  stream when the server accepts, but keeps the client: after a TEARDOWN
+  it reports refused, the receiver runs on until `close()` or until the
+  session object is collected. On a session whose cancel handle had
+  fired, `teardown()`, `close()` and the `with` exit are a cancel: the
+  receiver ends with `RtpError(CLOSED)` after what is already queued,
+  whatever the server answers (after `teardown()` alone, once the server
+  accepts the TEARDOWN or closes the connection, or at `close()` or
+  collection). So does a session collected while its receiver is in use. A session that had
   already ended for its own reason (a keepalive answered `454`, a wire
   failure, the peer's close) keeps that reason and that outcome. The
   session has one end-reason slot: open a new session (a new client) for
