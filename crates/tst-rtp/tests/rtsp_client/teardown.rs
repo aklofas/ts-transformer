@@ -205,11 +205,22 @@ fn session_peer(teardown_reply: TeardownReply) -> SessionPeer {
                     let _ = eof_tx.send(Instant::now());
                     break;
                 }
-                Err(e) if e.kind() == std::io::ErrorKind::ConnectionReset => {
+                // A client that closes with this peer's reply unread ends
+                // the connection with a reset, which Windows can also report
+                // as an abort.
+                Err(e)
+                    if matches!(
+                        e.kind(),
+                        std::io::ErrorKind::ConnectionReset | std::io::ErrorKind::ConnectionAborted
+                    ) =>
+                {
                     let _ = eof_tx.send(Instant::now());
                     break;
                 }
-                Err(_) => break,
+                Err(e) => {
+                    eprintln!("session peer: read failed: {e:?}");
+                    break;
+                }
                 Ok(n) => leftover.extend_from_slice(&buf[..n]),
             }
         }
@@ -555,11 +566,20 @@ fn scripted_peer(
                     let _ = eof_tx.send(Instant::now());
                     break;
                 }
-                Err(e) if e.kind() == std::io::ErrorKind::ConnectionReset => {
+                // As in `session_peer`: a reset, or on Windows an abort.
+                Err(e)
+                    if matches!(
+                        e.kind(),
+                        std::io::ErrorKind::ConnectionReset | std::io::ErrorKind::ConnectionAborted
+                    ) =>
+                {
                     let _ = eof_tx.send(Instant::now());
                     break;
                 }
-                Err(_) => break,
+                Err(e) => {
+                    eprintln!("session peer: read failed: {e:?}");
+                    break;
+                }
                 Ok(n) => leftover.extend_from_slice(&buf[..n]),
             }
         }
