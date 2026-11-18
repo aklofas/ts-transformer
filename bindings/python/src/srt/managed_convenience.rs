@@ -153,7 +153,7 @@ impl PyManagedMuxSender {
         let muxer_cfg = cfg_builder.build().map_err(|e| mux_error_to_pyerr(py, e))?;
 
         let oc = object_of(cancel);
-        let slot = begin(py, &oc).ok_or_else(|| raise(py, &SRT, closed()))?;
+        let slot = begin(&oc).ok_or_else(|| raise(py, &SRT, closed()))?;
         let parsed = SrtUrl::parse(url).map_err(|e| raise(py, &SRT, BindingError::from(e)))?;
         if parsed.mode != Mode::Caller {
             return Err(raise(
@@ -714,7 +714,7 @@ impl PyManagedDemuxReceiver {
         cancel: Option<&Bound<'_, PyOpenCancel>>,
     ) -> PyResult<Self> {
         let oc = object_of(cancel);
-        let slot = begin(py, &oc).ok_or_else(|| raise(py, &SRT, closed()))?;
+        let slot = begin(&oc).ok_or_else(|| raise(py, &SRT, closed()))?;
         let parsed = SrtUrl::parse(url).map_err(|e| raise(py, &SRT, BindingError::from(e)))?;
         // Translate the DemuxerConfig dataclass with the GIL held.
         let demux_opts = match demux_config {

@@ -54,7 +54,7 @@ pub(crate) fn open_send(
     oc: &OpenCancel,
 ) -> PyResult<Opened<Box<dyn Transport>>> {
     let d = domain_of(url).ok_or_else(|| unsupported(url))?;
-    let slot = begin(py, oc).ok_or_else(|| raise(py, &d, closed()))?;
+    let slot = begin(oc).ok_or_else(|| raise(py, &d, closed()))?;
     let r = crate::util::allow_threads_parking(py, || {
         let r = match d {
             #[cfg(feature = "srt")]
@@ -84,7 +84,7 @@ pub(crate) fn open_recv(
     oc: &OpenCancel,
 ) -> PyResult<Opened<Box<dyn RecvTransport>>> {
     let d = domain_of(url).ok_or_else(|| unsupported(url))?;
-    let slot = begin(py, oc).ok_or_else(|| raise(py, &d, closed()))?;
+    let slot = begin(oc).ok_or_else(|| raise(py, &d, closed()))?;
     let r = crate::util::allow_threads_parking(py, || {
         let r = match d {
             #[cfg(feature = "srt")]
