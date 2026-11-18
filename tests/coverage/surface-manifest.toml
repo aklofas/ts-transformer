@@ -3911,6 +3911,110 @@ bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred
 scenario_ids = []
 tier = "A"
 
+# `OpenCancel`: the sticky cancel a host hands to opens that have no shell
+# yet. Its own module tests use a stand-in open; the real SRT opens (two
+# parked first accepts, the refusals, the registration race, a managed
+# receiver after the open returned) are in the tst-srt `from_url` tests.
+
+[[surface]]
+kind = "rust"
+crate = "tst-pipeline"
+item = "tst_pipeline::binding::OpenCancel"
+owning_tests = ["crates/tst-pipeline/src/binding/open_cancel.rs", "crates/tst-srt/tests/pipeline/shells_from_url.rs"]
+bindings = ["c:n/a(the C binding takes no open cancel; its listener opens stay as they are)", "python:deferred(not wrapped yet: tstrans.shells.OpenCancel)", "java:deferred(not wrapped yet: org.tstrans.shells.OpenCancel)", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-pipeline"
+item = "tst_pipeline::binding::open_cancel::OpenCancel"
+owning_tests = ["crates/tst-pipeline/src/binding/open_cancel.rs", "crates/tst-srt/tests/pipeline/shells_from_url.rs"]
+bindings = ["c:n/a(the C binding takes no open cancel; its listener opens stay as they are)", "python:deferred(not wrapped yet: tstrans.shells.OpenCancel)", "java:deferred(not wrapped yet: org.tstrans.shells.OpenCancel)", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-pipeline"
+item = "tst_pipeline::binding::open_cancel::OpenCancel::new"
+owning_tests = ["crates/tst-pipeline/src/binding/open_cancel.rs", "crates/tst-srt/tests/pipeline/shells_from_url.rs"]
+bindings = ["c:n/a(the C binding takes no open cancel; its listener opens stay as they are)", "python:deferred(not wrapped yet: tstrans.shells.OpenCancel)", "java:deferred(not wrapped yet: org.tstrans.shells.OpenCancel)", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-pipeline"
+item = "tst_pipeline::binding::open_cancel::OpenCancel::slot"
+owning_tests = ["crates/tst-pipeline/src/binding/open_cancel.rs", "crates/tst-srt/tests/pipeline/shells_from_url.rs"]
+bindings = ["c:n/a(the C binding takes no open cancel; its listener opens stay as they are)", "python:deferred(not wrapped yet: tstrans.shells.OpenCancel)", "java:deferred(not wrapped yet: org.tstrans.shells.OpenCancel)", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-pipeline"
+item = "tst_pipeline::binding::open_cancel::OpenCancel::cancel"
+owning_tests = ["crates/tst-pipeline/src/binding/open_cancel.rs", "crates/tst-srt/tests/pipeline/shells_from_url.rs"]
+bindings = ["c:n/a(the C binding takes no open cancel; its listener opens stay as they are)", "python:deferred(not wrapped yet: tstrans.shells.OpenCancel)", "java:deferred(not wrapped yet: org.tstrans.shells.OpenCancel)", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-pipeline"
+item = "tst_pipeline::binding::open_cancel::OpenCancel::is_cancelled"
+owning_tests = ["crates/tst-pipeline/src/binding/open_cancel.rs", "crates/tst-srt/tests/pipeline/shells_from_url.rs"]
+bindings = ["c:n/a(the C binding takes no open cancel; its listener opens stay as they are)", "python:deferred(not wrapped yet: tstrans.shells.OpenCancel)", "java:deferred(not wrapped yet: org.tstrans.shells.OpenCancel)", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-pipeline"
+item = "tst_pipeline::binding::OpenSlot"
+owning_tests = ["crates/tst-pipeline/src/binding/open_cancel.rs", "crates/tst-srt/tests/pipeline/shells_from_url.rs"]
+bindings = ["c:n/a(the C binding takes no open cancel; its listener opens stay as they are)", "python:deferred(not wrapped yet: tstrans.shells.OpenCancel)", "java:deferred(not wrapped yet: org.tstrans.shells.OpenCancel)", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-pipeline"
+item = "tst_pipeline::binding::open_cancel::OpenSlot"
+owning_tests = ["crates/tst-pipeline/src/binding/open_cancel.rs", "crates/tst-srt/tests/pipeline/shells_from_url.rs"]
+bindings = ["c:n/a(the C binding takes no open cancel; its listener opens stay as they are)", "python:deferred(not wrapped yet: tstrans.shells.OpenCancel)", "java:deferred(not wrapped yet: org.tstrans.shells.OpenCancel)", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-pipeline"
+item = "tst_pipeline::binding::open_cancel::OpenSlot::Target"
+owning_tests = ["crates/tst-pipeline/src/binding/open_cancel.rs", "crates/tst-srt/tests/pipeline/shells_from_url.rs"]
+bindings = ["c:n/a(the C binding takes no open cancel; its listener opens stay as they are)", "python:deferred(not wrapped yet: tstrans.shells.OpenCancel)", "java:deferred(not wrapped yet: org.tstrans.shells.OpenCancel)", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-pipeline"
+item = "tst_pipeline::binding::open_cancel::OpenSlot::deref"
+owning_tests = ["crates/tst-pipeline/src/binding/open_cancel.rs", "crates/tst-srt/tests/pipeline/shells_from_url.rs"]
+bindings = ["c:n/a(the C binding takes no open cancel; its listener opens stay as they are)", "python:deferred(not wrapped yet: tstrans.shells.OpenCancel)", "java:deferred(not wrapped yet: org.tstrans.shells.OpenCancel)", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-pipeline"
+item = "tst_pipeline::binding::open_cancel::OpenSlot::drop"
+owning_tests = ["crates/tst-pipeline/src/binding/open_cancel.rs", "crates/tst-srt/tests/pipeline/shells_from_url.rs"]
+bindings = ["c:n/a(the C binding takes no open cancel; its listener opens stay as they are)", "python:deferred(not wrapped yet: tstrans.shells.OpenCancel)", "java:deferred(not wrapped yet: org.tstrans.shells.OpenCancel)", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
 [[surface]]
 kind = "rust"
 crate = "tst-srt"
