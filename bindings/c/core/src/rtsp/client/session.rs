@@ -366,12 +366,12 @@ pub unsafe extern "C" fn tst_rtsp_session_teardown_and_free(
             // the client's thread.
             Ok(mut guard) => close(guard.take()),
             // Defence only, not a contract (the caller must have waited for
-            // any parked call): wake it first, then send TEARDOWN as best
-            // effort on the cancelled session.
+            // any parked call): wake it first, then close the cancelled
+            // client (its TEARDOWN is written, the reply is not awaited).
             Err(TryLockError::WouldBlock) => {
                 boxed.rtsp_cancel.cancel();
                 match boxed.pair.lock() {
-                    Ok(mut guard) => teardown(&mut guard),
+                    Ok(mut guard) => close(guard.take()),
                     Err(_) => poisoned(),
                 }
             }
@@ -400,14 +400,6 @@ fn close(pair: Option<Box<(RtspClient, RtspSession)>>) -> libc::c_int {
             drop(session);
             teardown_rc(r)
         }
-    }
-}
-
-/// TEARDOWN on the pair under the client's request timeout.
-fn teardown(pair: &mut Option<Box<(RtspClient, RtspSession)>>) -> libc::c_int {
-    match pair.as_mut() {
-        None => 0, // already consumed
-        Some(pair) => teardown_rc(pair.0.teardown()),
     }
 }
 
@@ -668,5 +660,91 @@ mod tests {
             TstError::Closed as i32
         );
         assert_eq!(unsafe { tst_rtsp_session_teardown_and_free(p) }, 0);
+    }
+
+    /// The defence path (a call still holding the session, outside the
+    /// contract): the free fires the cancel first, waits for the holder to
+    /// let go, then closes the cancelled client. Its TEARDOWN is written
+    /// without awaiting the reply, so the code is `TST_E_CLOSED`.
+    #[test]
+    fn teardown_and_free_with_the_pair_held_cancels_first_then_closes() {
+        use std::ffi::{CStr, CString};
+        use std::sync::mpsc;
+        use std::time::{Duration, Instant};
+
+        let b = crate::handle::TstRtspServerBuilder::from_url("rtsp://127.0.0.1:0")
+            .expect("test url parses");
+        let raw_b = crate::handle::TstRtspServerBuilder::into_raw(Box::new(b));
+        let server = unsafe { crate::rtsp::server::start::tst_rtsp_server_builder_start(raw_b) };
+        assert!(!server.is_null());
+        let cfg = unsafe { crate::config::tst_mux_config_new() };
+        let prog = unsafe { crate::config::tst_mux_config_add_program(cfg, 1, 0x1000) };
+        unsafe {
+            crate::config::streams::tst_mux_config_add_video_stream(
+                cfg,
+                prog,
+                0x1011,
+                crate::config::streams::TstVideoCodec::H264 as i32,
+            )
+        };
+        let path = CString::new("/live").unwrap();
+        let mount = unsafe {
+            crate::rtsp::server::mount::tst_rtsp_server_add_unicast_mount(
+                server,
+                path.as_ptr(),
+                cfg as *const _,
+            )
+        };
+        unsafe { crate::config::tst_mux_config_free(cfg) };
+        assert!(!mount.is_null());
+        let mut buf = [0 as std::ffi::c_char; 64];
+        assert!(
+            unsafe {
+                crate::rtsp::server::stop::tst_rtsp_server_local_addr(
+                    server,
+                    buf.as_mut_ptr(),
+                    buf.len(),
+                )
+            } > 0
+        );
+        let addr = unsafe { CStr::from_ptr(buf.as_ptr()) }.to_str().unwrap();
+        let url = CString::new(format!("rtsp://{addr}/live")).unwrap();
+        let cb = unsafe { crate::rtsp::client::builder::tst_rtsp_client_builder_new(url.as_ptr()) };
+        let session = unsafe { tst_rtsp_client_builder_connect(cb) };
+        assert!(
+            !session.is_null(),
+            "{}",
+            crate::error::test_last_error_msg()
+        );
+
+        let cancel = unsafe { (*session).rtsp_cancel.clone() };
+        let session_addr = session as usize;
+        let (held_tx, held_rx) = mpsc::channel();
+        let holder = std::thread::spawn(move || {
+            // Stands in for a PLAY parked on another thread.
+            let s = unsafe { &*(session_addr as *const TstRtspSession) };
+            let guard = s.pair.lock().unwrap();
+            held_tx.send(()).unwrap();
+            let deadline = Instant::now() + Duration::from_secs(30);
+            while !cancel.is_cancelled() {
+                assert!(Instant::now() < deadline, "the free never fired the cancel");
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            drop(guard);
+        });
+        held_rx
+            .recv_timeout(Duration::from_secs(30))
+            .expect("holder took the pair");
+        let rc = unsafe { tst_rtsp_session_teardown_and_free(session) };
+        holder.join().unwrap();
+        assert_eq!(
+            rc,
+            TstError::Closed as i32,
+            "{}",
+            crate::error::test_last_error_msg()
+        );
+
+        unsafe { crate::rtsp::server::mount::tst_rtsp_mount_handle_free(mount) };
+        unsafe { crate::rtsp::server::stop::tst_rtsp_server_free(server) };
     }
 }
