@@ -1028,6 +1028,8 @@ codes of 2000 or more, and `ofCode(int)`. `ListenRule.reject` takes codes of
 passphrase, a reject code above 2147482647 (which libsrt cannot send), or a
 NUL byte in a stream ID or rule key. A stream ID, rule key or passphrase with an unpaired UTF-16 surrogate is refused with `IllegalArgumentException` before the listener is consulted (JNI would otherwise decode it lossily and two distinct strings could share one rule). On a closed listener every other `set`/`setDefault` throws `SrtException(CLOSED)` even when the rule itself is invalid. After `Listener.close()` every `ListenRules` method throws
 `SrtException(CLOSED)` and `Listener.rules()` throws `IllegalStateException`.
+After `cancelHandle().cancel()` without a `close()`, `Listener.rules()` still
+returns a view, and every method of that view throws `SrtException(CLOSED)`.
 A rule installed after `accept` returns does not cover a caller whose
 handshake already completed, so keep your own check after `accept` when it
 matters. A refused caller's connect throws `SrtException(CONNECT_FAILED)`
