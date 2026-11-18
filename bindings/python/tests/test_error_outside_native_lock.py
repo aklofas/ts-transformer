@@ -272,6 +272,40 @@ _CASES = {
         "expect_refusal(session.into_demux_receiver, RtspError, RtspErrorKind.PROTOCOL, state)",
         _RTSP_TEARDOWN,
     ),
+    # The data plane taken from one thread between the consumed check and
+    # the take: reading `demux_config` runs the caller's property, which
+    # consumes it. The take's refusal holds the session mutex; the
+    # sibling's consumed check waits for it.
+    "rtsp-session-data-plane-taken-while-reading-the-config": (
+        _SDP_MP2T
+        + _RTSP_PEER
+        + """
+    from tstrans.mpegts import DemuxerConfig, StrictMode
+
+    session = RtspClient.connect(cfg)
+    taken = []
+    armed = []
+
+    class ConsumingConfig:
+        def __getattr__(self, name):
+            return getattr(DemuxerConfig(), name)
+
+        @property
+        def strict_mode(self):
+            taken.append(session.into_demux_receiver())
+            armed.append(arm(RtspError, quietly(session.into_demux_receiver)))
+            return StrictMode.OFF
+
+    class ArmedState:
+        def __getitem__(self, key):
+            return armed[0][key]
+
+    state = ArmedState()
+""",
+        "expect_refusal(lambda: session.into_demux_receiver(ConsumingConfig()), "
+        "RtspError, RtspErrorKind.CLOSED, state)",
+        "\n    taken[0].close()\n" + _RTSP_TEARDOWN,
+    ),
 }
 
 
