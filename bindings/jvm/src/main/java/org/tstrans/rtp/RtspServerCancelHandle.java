@@ -3,10 +3,17 @@ package org.tstrans.rtp;
 import org.tstrans.NativeHandle;
 
 /**
- * Hard-cancel handle for an {@link RtspServer}. {@link #cancel()} aborts every
- * in-flight session at its next poll boundary, bypassing the graceful Notice-5402
- * path. Mirrors tst-py {@code tstrans.rtp.RtspServerCancelHandle}. All handles
- * obtained from one server share the same backing flag.
+ * Hard-cancel handle for an {@link RtspServer}. {@link #cancel()} sets one flag and
+ * returns; it sends no Notice 5402 and waits for no drain. From that moment the
+ * server refuses new work with {@code RtspException(CLOSED)}: {@link MountHandle}
+ * pushes, mount registration, {@link MountRules} edits and a new {@link
+ * RtspServer#nextPublisher(long)}. What runs is ended within about 100 ms: a parked
+ * {@code nextPublisher} throws {@code CLOSED}, every session's connection is closed,
+ * the listener stops accepting, multicast senders stop, and every publish mount's
+ * receiver reads end of stream. A later {@link RtspServer#stop()} or {@link
+ * RtspServer#close()} is not graceful either. Mirrors tst-py {@code
+ * tstrans.rtp.RtspServerCancelHandle}. All handles obtained from one server share the
+ * same backing flag.
  *
  * <p>The native handle is an {@link java.util.concurrent.atomic.AtomicLong}
  * registry key; {@link #close()} claims it atomically with {@code getAndSet(0)},

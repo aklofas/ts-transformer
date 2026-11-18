@@ -2397,9 +2397,10 @@ try (RtspServer server = RtspServer.start(cfg);
 
     // server.localAddr() returns the bound "ip:port" (useful when port 0 is used).
 }
-// close() performs a graceful Notice 5402 teardown of active sessions, then
-// frees the native server. MountHandle.close() frees only the handle wrapper —
-// the mount continues to serve until the server itself is closed.
+// close() performs a graceful Notice 5402 teardown of active sessions (it takes
+// as long as stop(), the drain included), then frees the native server.
+// MountHandle.close() frees only the handle wrapper — the mount continues to
+// serve until the server itself is closed.
 ```
 
 - **`RtspServerConfig.of(bindAddr)`** is the one-liner constructor (all other
@@ -2413,9 +2414,10 @@ try (RtspServer server = RtspServer.start(cfg);
 - **Mount errors are `RtspException`.** All `pushVideo`/`pushKlv`/
   `pushAudio`/`pushSubtitle`/`pushData` calls on `MountHandle` throw `RtspException` of kind
   `MOUNT` when the muxer refuses the frame (e.g. a stream the config does not
-  have), and of kind `CLOSED` once the server has ended (`stop()`, `close()` or
-  its hard cancel), whether or not the mount was removed first. This differs
-  from `MuxSender`, which throws `MuxException`.
+  have), and of kind `CLOSED` once the server ends (`stop()` or `close()`,
+  from the moment it begins, or its hard cancel), whether or not the mount
+  was removed first; `flush()` and `resetStats()` are not refused after it.
+  This differs from `MuxSender`, which throws `MuxException`.
 - **`MountHandle` carries private data too.** `pushData` / `pushDataTo`
   have the same pass-through and PTS semantics as `Muxer.pushData`.
 - **`MountHandle` is `Arc`-backed and thread-safe** on the push path (`&self`
@@ -2429,10 +2431,13 @@ try (RtspServer server = RtspServer.start(cfg);
   the path; the `MountHandle` keeps accepting pushes that reach nobody until the
   server ends.
 - **Hard-cancel.** `server.cancelHandle()` returns a cross-thread
-  `RtspServerCancelHandle`; call `cancel()` to tear down the server immediately
-  without the Notice 5402 teardown. Like `stop()` and `close()`, it ends
-  publish mounts' receivers, wakes a parked `nextPublisher` and makes every
-  mount push throw `RtspException(CLOSED)`.
+  `RtspServerCancelHandle`; `cancel()` ends the server without the Notice
+  5402 teardown and without the drain. From that moment mount pushes, mount
+  registration, `MountRules` edits and a new `nextPublisher` throw
+  `RtspException(CLOSED)`; within about 100 ms a parked `nextPublisher`
+  throws `CLOSED`, every session's connection is closed and every publish
+  mount's receiver reads end of stream. A `stop()` or `close()` after it is
+  not graceful either.
 - **Auth.** Pass `new BasicAuth("user", "pass", "realm")` or
   `new DigestAuth("user", "pass", DigestAlgorithm.SHA256, "realm")` to
   `RtspServerConfig.builder().auth(...)`. The realm is required for server-side
@@ -2551,8 +2556,9 @@ Rules the types do not enforce:
   discontinuities.
 - **Every shutdown ends the mounts.** `stop()`, `close()` and
   `cancelHandle().cancel()` end every publish mount's receiver and wake a
-  parked `nextPublisher`; only the hard cancel skips the Notice 5402
-  teardown.
+  parked `nextPublisher` with `CLOSED`; only the hard cancel skips the
+  Notice 5402 teardown and the drain (and a `stop()` or `close()` after it
+  skips them too).
 - **`nextPublisher` blocking.** The wait holds no lock on the `RtspServer`
   object, so `stats()`, `close()` and the other methods answer from other
   threads while it is parked. `timeoutMs` must be `>= 0` (`0` polls).

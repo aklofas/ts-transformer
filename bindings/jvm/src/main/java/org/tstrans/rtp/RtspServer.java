@@ -18,8 +18,9 @@ import org.tstrans.mpegts.MuxerConfig;
  * server. Use try-with-resources. {@link #stop(long)} is the explicit graceful
  * shutdown; {@link #cancelHandle()} returns a cross-thread hard-cancel. All
  * three ({@code stop()}, {@code close()} and the hard cancel) end publish
- * mounts' receivers and wake a parked {@link #nextPublisher(long)}; only the
- * hard cancel skips the Notice 5402 teardown.
+ * mounts' receivers (end of stream) and wake a parked {@link #nextPublisher(long)}
+ * with {@code CLOSED}; only the hard cancel skips the Notice 5402 teardown and the
+ * drain, and a {@code stop()} or {@code close()} after it skips them too.
  *
  * <p><b>Publisher role:</b> {@link #addPublishMount(String)}, {@link
  * #nextPublisher(long)} and {@link #removeMount(String)} accept encoders that push
@@ -30,11 +31,10 @@ import org.tstrans.mpegts.MuxerConfig;
  * is invalidated and subsequent server calls throw {@link IllegalStateException}.
  * However, {@link MountHandle} objects already returned by a prior
  * {@code addUnicastMount} / {@code addMulticastMount} call are held in a separate
- * registry and are <em>not</em> immediately invalidated — their next push operation
- * will fail with a closed-channel error rather than throwing at the moment the server
- * is torn down. This is memory-safe; the failure surfaces at the next push call rather
- * than at server-invalidation time. This scenario requires an internal panic
- * mid-mutation, which is rare in normal operation.
+ * registry and are <em>not</em> immediately invalidated: once the server is torn
+ * down their next push throws {@code RtspException(CLOSED)}, as after any server end,
+ * rather than {@link IllegalStateException}. This is memory-safe. This scenario
+ * requires an internal panic mid-mutation, which is rare in normal operation.
  */
 public final class RtspServer extends NativeHandle {
     static { NativeLoader.load(); }
@@ -47,7 +47,8 @@ public final class RtspServer extends NativeHandle {
      * @throws RtspException {@code IO} on bind/start failure, {@code PROTOCOL}
      *     on bind-URL parse failure, {@code TLS} if {@code config.tlsCert()}/{@code
      *     tlsKey()} name a bad PEM path (an {@code rtsps://} bind now works), {@code
-     *     MOUNT} if the server refuses the default mount rule or the auth realm
+     *     MOUNT} if the server refuses the default mount rule, the auth realm or an
+     *     empty auth user name
      * @throws IllegalArgumentException if {@code config.auth()} is set without a realm
      */
     public static RtspServer start(RtspServerConfig config) throws RtspException {
@@ -99,6 +100,8 @@ public final class RtspServer extends NativeHandle {
      * Graceful shutdown — fires the Notice 5402 path on each active session, waits
      * the builder's drain window. Idempotent. {@code drainMs} is accepted for API
      * stability but the configured {@code gracefulShutdownDrainMs} governs the wait.
+     * After the hard cancel ({@link #cancelHandle()}) it sends no Notice, waits for
+     * no drain and returns once the publish side is closed.
      */
     public void stop(long drainMs) throws RtspException { ensureOpen(); nStop(peekHandle(), drainMs); }
 
@@ -280,9 +283,16 @@ public final class RtspServer extends NativeHandle {
     }
 
     /**
-     * Graceful stop (best-effort) then free the native server. Idempotent. The stop
+     * Graceful stop (best-effort, errors ignored), then free the native server.
+     * Idempotent. The stop is {@link #stop()}'s: the Notice 5402 to every session,
+     * then the configured drain, so {@code close()} takes as long as {@code stop()}
+     * (the {@code gracefulShutdownDrainMs} window plus its per-session bounds). It
      * ends every publish mount's receiver (end of stream) and wakes a parked {@link
-     * #nextPublisher(long)} with {@code CLOSED}.
+     * #nextPublisher(long)} with {@code CLOSED}. After the hard cancel ({@link
+     * #cancelHandle()}) it sends no Notice and waits for no drain. If another thread
+     * is inside a call on this server, such as {@link #stop()} or {@link
+     * #removeMount(String)}, {@code close()} first waits for it to return; a parked
+     * {@link #nextPublisher(long)} does not hold it up.
      */
     @Override public void close() { super.close(); }
 
