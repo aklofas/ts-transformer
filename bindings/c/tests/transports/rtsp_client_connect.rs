@@ -365,18 +365,21 @@ fn recording_peer_with(
     (port, requests, peer)
 }
 
-/// [`recording_peer_with`], holding its TEARDOWN reply back for `delay`;
-/// the third value is the instant it started writing that reply.
-fn slow_teardown_peer(
-    basic: Option<&'static str>,
-    teardown_status: Option<&'static str>,
-    delay: Duration,
-) -> (
+/// The port, the recorded requests, the instant the TEARDOWN reply began,
+/// and the peer's thread.
+type SlowTeardownPeer = (
     u16,
     Arc<Mutex<Vec<String>>>,
     Arc<Mutex<Option<Instant>>>,
     ThreadHandle<()>,
-) {
+);
+
+/// [`recording_peer_with`], holding its TEARDOWN reply back for `delay`.
+fn slow_teardown_peer(
+    basic: Option<&'static str>,
+    teardown_status: Option<&'static str>,
+    delay: Duration,
+) -> SlowTeardownPeer {
     let replied = Arc::new(Mutex::new(None));
     let replied_at = Arc::clone(&replied);
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -750,7 +753,7 @@ fn teardown_after_server_stop_returns_promptly() {
 #[test]
 fn bridged_close_awaits_the_teardown_reply() {
     let (port, reqs, replied, peer) =
-        slow_teardown_peer(None, Some("200 OK"), Duration::from_millis(200));
+        slow_teardown_peer(None, Some("200 OK"), Duration::from_millis(100));
     let s = connect_no_keepalive(&format!("rtsp://127.0.0.1:{port}/live?transport=tcp"));
     assert!(!s.is_null(), "{}", last_error_msg());
     assert_eq!(
