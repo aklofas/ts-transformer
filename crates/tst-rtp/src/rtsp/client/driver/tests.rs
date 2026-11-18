@@ -472,20 +472,41 @@ fn a_request_arriving_drops_the_waiting_ones_progress() {
 }
 
 /// A receiver that sees its queue close reads the reason at once.
+///
+/// The two steps are a few instructions apart on the client's thread, so
+/// the receiver spins rather than parks (a parked receiver wakes too late
+/// to see a swapped order in most runs) and the scenario repeats on a
+/// fresh connection each time.
 #[test]
 fn the_media_queue_closes_after_the_end_reason_is_recorded() {
-    let (stream, mut peer) = plain_pair();
-    let h = drive(stream);
-    let (data_tx, data_rx) = mpsc::sync_channel(8);
-    interleaved(&h, data_tx);
-    round_trip(&h, &mut peer, &mut Vec::new());
-    drop(peer);
-    match data_rx.recv_timeout(scaled(Duration::from_secs(5))) {
-        Err(RecvTimeoutError::Disconnected) => {}
-        other => panic!("expected the queue closed, got {other:?}"),
+    for iteration in 0..50 {
+        let (stream, mut peer) = plain_pair();
+        let h = drive(stream);
+        let (data_tx, data_rx) = mpsc::sync_channel(8);
+        interleaved(&h, data_tx);
+        round_trip(&h, &mut peer, &mut Vec::new());
+        drop(peer);
+        let deadline = Instant::now() + scaled(Duration::from_secs(5));
+        loop {
+            match data_rx.try_recv() {
+                Err(mpsc::TryRecvError::Disconnected) => break,
+                Err(mpsc::TryRecvError::Empty) => {
+                    assert!(
+                        Instant::now() < deadline,
+                        "iteration {iteration}: the queue did not close"
+                    );
+                    std::hint::spin_loop();
+                }
+                other => panic!("iteration {iteration}: expected the queue closed, got {other:?}"),
+            }
+        }
+        assert_eq!(
+            h.end_reason.get(),
+            Some(EndReason::CleanTeardown),
+            "iteration {iteration}: the queue closed before the reason was recorded"
+        );
+        h.stop_and_join();
     }
-    assert_eq!(h.end_reason.get(), Some(EndReason::CleanTeardown));
-    h.stop_and_join();
 }
 
 /// The next media frame arrives within the wait and has RTP sequence `seq`.
