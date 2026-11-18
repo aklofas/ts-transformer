@@ -107,11 +107,14 @@ type Seen = Vec<String>;
 const TEARDOWN_BOUND: std::time::Duration = std::time::Duration::from_millis(500);
 
 /// A [`session_peer`]: its port, the time it read the connection's end,
-/// the time it started writing its TEARDOWN reply, and what it saw.
+/// the time it started writing its TEARDOWN reply, whether the cancel
+/// handle of [`TeardownReply::CheckingCancel`] was set when it read the
+/// TEARDOWN, and what it saw.
 struct SessionPeer {
     port: u16,
     eof: std::sync::mpsc::Receiver<std::time::Instant>,
     replied: std::sync::mpsc::Receiver<std::time::Instant>,
+    cancelled_at_teardown: std::sync::mpsc::Receiver<bool>,
     handle: std::thread::JoinHandle<Seen>,
 }
 
@@ -121,8 +124,9 @@ enum TeardownReply {
     After(std::time::Duration),
     /// Never.
     Never,
-    /// When the test sends on the channel (or drops its end).
-    OnRelease(std::sync::mpsc::Receiver<()>),
+    /// At once, after noting whether the client's cancel handle, which the
+    /// test sends on the channel, is set as the TEARDOWN is read.
+    CheckingCancel(std::sync::mpsc::Receiver<tst_rtp::RtspCancelHandle>),
 }
 
 /// A peer that answers DESCRIBE and an interleaved SETUP (session
@@ -140,6 +144,7 @@ fn session_peer(teardown_reply: TeardownReply) -> SessionPeer {
     let port = listener.local_addr().unwrap().port();
     let (eof_tx, eof_rx) = std::sync::mpsc::channel();
     let (replied_tx, replied_rx) = std::sync::mpsc::channel();
+    let (cancelled_tx, cancelled_rx) = std::sync::mpsc::channel();
     let peer = std::thread::spawn(move || {
         let (mut sock, _) = listener.accept().unwrap();
         let mut leftover = Vec::new();
@@ -169,10 +174,13 @@ fn session_peer(teardown_reply: TeardownReply) -> SessionPeer {
                             true
                         }
                         TeardownReply::Never => false,
-                        TeardownReply::OnRelease(release) => {
-                            // Bounds a test that never releases; not
-                            // reached by a passing test.
-                            let _ = release.recv_timeout(Duration::from_secs(30));
+                        TeardownReply::CheckingCancel(handle) => {
+                            // Before the reply: a client that waited for
+                            // it could not have set its cancel since.
+                            let cancelled = handle
+                                .recv_timeout(Duration::from_secs(30))
+                                .is_ok_and(|h| h.is_cancelled());
+                            let _ = cancelled_tx.send(cancelled);
                             true
                         }
                     }
@@ -211,6 +219,7 @@ fn session_peer(teardown_reply: TeardownReply) -> SessionPeer {
         port,
         eof: eof_rx,
         replied: replied_rx,
+        cancelled_at_teardown: cancelled_rx,
         handle: peer,
     }
 }
@@ -357,9 +366,8 @@ fn returns_within<T: Send + 'static>(
 /// A cancelled client's `close` still writes TEARDOWN, does not wait for
 /// the reply, reports the cancel and ends the client's thread.
 ///
-/// The peer holds its reply until `close` has returned, so a `close` that
-/// waited for it would sit out its whole 500 ms bound: the watchdog,
-/// shorter than that bound, reports it.
+/// The peer answers at once with `200`, so a `close` that waited for the
+/// reply would return `Ok`; one that does not wait reports the cancel.
 #[test]
 fn close_on_a_cancelled_client_writes_teardown_and_reports_the_cancel() {
     use std::time::Duration;
@@ -367,22 +375,20 @@ fn close_on_a_cancelled_client_writes_teardown_and_reports_the_cancel() {
     use crate::fixtures::raw_rtsp::scaled;
     use tst_rtp::RtspError;
 
-    let (release, release_rx) = std::sync::mpsc::channel();
-    let peer = session_peer(TeardownReply::OnRelease(release_rx));
+    let peer = session_peer(TeardownReply::After(Duration::ZERO));
     let (client, session) = client_with_session(peer.port);
     client.cancel_handle().cancel();
 
     let r = returns_within(
-        scaled(TEARDOWN_BOUND * 4 / 5),
-        "close on a cancelled client waited for the TEARDOWN reply",
+        scaled(Duration::from_secs(10)),
+        "close on a cancelled client did not return",
         move || client.close(),
     );
-    release.send(()).unwrap();
 
     assert!(matches!(r, Err(RtspError::LocalCancel)), "got {r:?}");
     peer.replied
         .recv_timeout(scaled(Duration::from_secs(1)))
-        .expect("the peer wrote its reply once released");
+        .expect("the peer wrote its reply");
     peer.eof
         .recv_timeout(scaled(Duration::from_secs(1)))
         .expect("the peer read the connection's end");
@@ -417,14 +423,15 @@ fn drop_during_a_panic_does_not_abort() {
 }
 
 /// Dropping a client whose cancel handle and receiver are still held:
-/// `Drop` returns without waiting for a reply, the peer sees TEARDOWN and
-/// the connection's end (nothing the caller still holds keeps the
-/// client's thread alive), the receiver's next read returns, and the kept
-/// handle reads the cancel.
+/// the cancel is set before the TEARDOWN is written, the peer sees
+/// TEARDOWN and the connection's end (nothing the caller still holds keeps
+/// the client's thread alive), the receiver's next read returns, and the
+/// kept handle reads the cancel.
 ///
-/// The peer holds its reply until `Drop` has returned, so a `Drop` that
-/// waited for it would sit out its whole 500 ms bound: the watchdog,
-/// shorter than that bound, reports it.
+/// The peer reads the cancel handle as it reads the TEARDOWN, before it
+/// answers: a `Drop` that set the cancel after its TEARDOWN would still be
+/// waiting for that answer. That a cancelled client does not wait for the
+/// reply is pinned by the `close` test above, which shares the wait.
 #[test]
 fn drop_with_a_kept_cancel_handle_and_receiver() {
     use std::time::{Duration, Instant};
@@ -433,25 +440,33 @@ fn drop_with_a_kept_cancel_handle_and_receiver() {
 
     use crate::fixtures::raw_rtsp::scaled;
 
-    let (release, release_rx) = std::sync::mpsc::channel();
-    let peer = session_peer(TeardownReply::OnRelease(release_rx));
+    let (handle_tx, handle_rx) = std::sync::mpsc::channel();
+    let peer = session_peer(TeardownReply::CheckingCancel(handle_rx));
     let (mut client, session) = client_with_session(peer.port);
     client.play().unwrap();
     let cancel = client.cancel_handle();
+    handle_tx.send(cancel.clone()).unwrap();
     let mut transport = session.into_recv_transport();
     transport.set_recv_timeout(Some(scaled(Duration::from_secs(5))));
 
     returns_within(
-        scaled(TEARDOWN_BOUND * 4 / 5),
-        "Drop waited for the TEARDOWN reply",
+        scaled(Duration::from_secs(10)),
+        "Drop did not return",
         move || drop(client),
     );
-    release.send(()).unwrap();
 
     assert!(cancel.is_cancelled(), "Drop did not set the cancel");
+    let cancelled_at_teardown = peer
+        .cancelled_at_teardown
+        .recv_timeout(scaled(Duration::from_secs(1)))
+        .expect("the peer read a TEARDOWN");
+    assert!(
+        cancelled_at_teardown,
+        "Drop wrote its TEARDOWN before it set the cancel"
+    );
     peer.replied
         .recv_timeout(scaled(Duration::from_secs(1)))
-        .expect("the peer wrote its reply once released");
+        .expect("the peer wrote its reply");
     peer.eof
         .recv_timeout(scaled(Duration::from_secs(1)))
         .expect("the peer read the connection's end");
