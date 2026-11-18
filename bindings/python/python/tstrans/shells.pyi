@@ -5,7 +5,7 @@ Mirrors the public surface exported from
 `bindings/python/python/tstrans/shells.py`. mypy --strict clean.
 
 The PyClass-backed types (Sender, Receiver, MuxSender, DemuxReceiver,
-CancelHandle, SocketStats) live in `_native.shells` (Rust source under
+CancelHandle, OpenCancel, SocketStats) live in `_native.shells` (Rust source under
 `bindings/python/src/shells/`); `EndReason` is pure Python. Each shell
 opens from a URL (`srt://`, `rtp://`, `udp://`, `tcp://`, `tcps://`,
 `rist://`) and raises the transport's exception class.
@@ -47,6 +47,7 @@ __all__: list[str] = [
     "DemuxReceiver",
     "EndReason",
     "MuxSender",
+    "OpenCancel",
     "Receiver",
     "Sender",
     "SocketStats",
@@ -129,6 +130,43 @@ class CancelHandle:
 
 
 @final
+class OpenCancel:
+    """Cancel for opens that have not returned a shell yet.
+
+    Make one before the open and pass it as `cancel=` to `Receiver.open`,
+    `DemuxReceiver.open`, `Sender.open`, `MuxSender.open` or the
+    `from_url` of the four `tstrans.srt` managed shells; call `cancel()`
+    from another thread.
+
+    - One object may be given to any number of opens, one after another
+      or at the same time.
+    - `cancel()` is sticky: every later open given the object raises the
+      transport's error class with kind `CLOSED` before it parses its URL,
+      and opens nothing. A URL whose scheme this build does not support
+      still raises `ValueError`.
+    - `cancel()` ends a listener-mode first accept at any time: the open
+      raises `SrtError(CLOSED)` and the port is released.
+    - It does not interrupt a caller-mode connect, but an open that
+      finishes after the cancel raises `CLOSED` and the connection is
+      closed again: nothing is handed out.
+    - It is not the shell's cancel handle. An open that returned before
+      the cancel is untouched by it, a managed receiver's later
+      reconnects included; from then on use the shell's
+      `cancel_handle()`.
+
+    `cancel()` releases the GIL while it closes listening sockets. Every
+    method is safe from any thread, any number of times. The
+    interpreter-exit hook still ends a parked first accept, with or
+    without this object.
+    """
+
+    def __init__(self) -> None: ...
+    def cancel(self) -> None: ...
+    def is_cancelled(self) -> bool: ...
+    def __repr__(self) -> str: ...
+
+
+@final
 class Sender:
     """TS bytes in, any transport out, opened from the transport's URL.
 
@@ -138,7 +176,10 @@ class Sender:
     """
 
     @classmethod
-    def open(cls, url: str) -> Sender: ...
+    def open(cls, url: str, *, cancel: Optional[OpenCancel] = ...) -> Sender:
+        """`cancel`: an `OpenCancel` already cancelled raises the transport's
+        `CLOSED`; one cancelled during the connect does not interrupt it, but
+        the open then raises `CLOSED` and the connection is closed again."""
     def send_bytes(self, data: _BytesLike) -> None:
         """After ``cancel_handle().cancel()`` this raises ``CLOSED``, buffered data included."""
     def flush(self) -> None:
@@ -166,7 +207,10 @@ class Receiver:
     `Receiver.open("srt://...?mode=listener")` binds the socket, listens
     and blocks on the first incoming handshake; this is a one-shot accept
     (a later peer needs a fresh `open` or the lower-level `Listener`). The
-    datagram and stream transports open their socket.
+    datagram and stream transports open their socket. No handle exists
+    until the open returns, so the first accept is cancelled through an
+    `OpenCancel` passed as `cancel=`: its `cancel()` from another thread
+    ends the accept with `SrtError(CLOSED)`.
 
     Raises:
         SrtError(kind=CONFIG_INVALID): Bad URL, or a non-listener mode.
@@ -175,7 +219,7 @@ class Receiver:
     """
 
     @classmethod
-    def open(cls, url: str) -> Receiver: ...
+    def open(cls, url: str, *, cancel: Optional[OpenCancel] = ...) -> Receiver: ...
     def recv_bytes(self, max_len: int = ...) -> bytes:
         """After ``cancel_handle().cancel()`` this raises ``CLOSED``, buffered data included."""
     def cancel_handle(self) -> CancelHandle: ...
@@ -230,7 +274,16 @@ class MuxSender:
     """
 
     @classmethod
-    def open(cls, url: str, program_config: MuxerProgramConfig) -> MuxSender: ...
+    def open(
+        cls,
+        url: str,
+        program_config: MuxerProgramConfig,
+        *,
+        cancel: Optional[OpenCancel] = ...,
+    ) -> MuxSender:
+        """`cancel`: an `OpenCancel` already cancelled raises the transport's
+        `CLOSED`; one cancelled during the connect does not interrupt it, but
+        the open then raises `CLOSED` and the connection is closed again."""
 
     # Send surface — single stream.
     def send_video(
@@ -338,7 +391,9 @@ class DemuxReceiver:
     accessors identically.
 
     An `srt://` bind or accept fault raises `SrtError(kind=BROKEN)` with
-    the message prefixed `bind: ` or `accept: `.
+    the message prefixed `bind: ` or `accept: `. The `srt://` open blocks
+    in its first accept; an `OpenCancel` passed as `cancel=` ends it from
+    another thread with `SrtError(CLOSED)`.
     """
 
     @classmethod
@@ -346,6 +401,8 @@ class DemuxReceiver:
         cls,
         url: str,
         demux_config: Optional[DemuxerConfig] = ...,
+        *,
+        cancel: Optional[OpenCancel] = ...,
     ) -> DemuxReceiver: ...
     def __iter__(self) -> Iterator[DemuxEvent]: ...
     def __next__(self) -> DemuxEvent:

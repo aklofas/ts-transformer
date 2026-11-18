@@ -44,6 +44,7 @@ use crate::mpegts::demux_error_to_pyerr;
 use crate::raise::{pyok, raise};
 use crate::shells::cancel::{PyCancelHandle, cancel_source};
 use crate::shells::end_reason::{end_detail, end_reason_to_py};
+use crate::shells::open_cancel::{PyOpenCancel, object_of};
 use crate::util::{CancelSource, close_owned, drop_owned};
 
 /// Demux-sourced failures keep `demux_error_to_pyerr` (a `DemuxError`);
@@ -181,12 +182,14 @@ impl PyDemuxReceiver {
         py: Python<'_>,
         url: &str,
         demux_config: Option<&Bound<'_, PyAny>>,
+        cancel: Option<&Bound<'_, PyOpenCancel>>,
     ) -> PyResult<Self> {
         let demux_opts = match demux_config {
             None => None,
             Some(cfg_obj) => Some(crate::mpegts::build_demuxer_config(py, cfg_obj)?),
         };
-        let opened = crate::shells::open::open_recv(py, url)?;
+        let oc = object_of(cancel);
+        let opened = crate::shells::open::open_recv(py, url, &oc)?;
         Self::from_opened(py, opened, demux_opts)
     }
 }
@@ -194,24 +197,32 @@ impl PyDemuxReceiver {
 #[pymethods]
 impl PyDemuxReceiver {
     /// Open a `DemuxReceiver` on `url` (GIL released). For `srt://` the URL
-    /// must carry `?mode=listener`; the first accept is not cancellable.
+    /// must carry `?mode=listener`, and the open blocks in its first accept
+    /// until a peer connects.
     ///
     /// `demux_config` is an optional `tstrans.mpegts.DemuxerConfig`
     /// dataclass; when `None`, defaults are used.
+    ///
+    /// `cancel`: no handle exists until this returns, so the first accept
+    /// is cancelled through an `OpenCancel` made beforehand: its
+    /// `cancel()` from another thread ends the accept with
+    /// `SrtError(CLOSED)`, and an object already cancelled refuses the
+    /// open with the transport's `CLOSED` before the URL is parsed.
     ///
     /// Raises `ValueError` for an unsupported scheme and the transport's
     /// error class for a bad URL. An `srt://` bind or accept fault raises
     /// `SrtError(kind=BROKEN)` with the message prefixed `bind: ` or
     /// `accept: `.
     #[classmethod]
-    #[pyo3(signature = (url, demux_config = None))]
+    #[pyo3(signature = (url, demux_config = None, *, cancel = None))]
     fn open(
         _cls: &Bound<'_, PyType>,
         py: Python<'_>,
         url: &str,
         demux_config: Option<&Bound<'_, PyAny>>,
+        cancel: Option<&Bound<'_, PyOpenCancel>>,
     ) -> PyResult<Self> {
-        Self::open_with(py, url, demux_config)
+        Self::open_with(py, url, demux_config, cancel)
     }
 
     /// Iterator protocol: `iter(rx)` returns `self`.

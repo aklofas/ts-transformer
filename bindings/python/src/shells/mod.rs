@@ -12,6 +12,7 @@ pub(crate) mod demux_receiver;
 pub(crate) mod end_reason;
 pub(crate) mod mux_sender;
 pub(crate) mod open;
+pub(crate) mod open_cancel;
 pub(crate) mod receiver;
 pub(crate) mod sender;
 
@@ -21,6 +22,7 @@ pub(crate) fn register(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     let m = PyModule::new(parent.py(), "shells")?;
     crate::generated::stats_shells::register(&m)?;
     m.add_class::<cancel::PyCancelHandle>()?;
+    m.add_class::<open_cancel::PyOpenCancel>()?;
     m.add_class::<sender::PySender>()?;
     m.add_class::<receiver::PyReceiver>()?;
     m.add_class::<mux_sender::PyMuxSender>()?;
@@ -29,6 +31,11 @@ pub(crate) fn register(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(cancel::slow_cancel_handle_for_test, &m)?)?;
     #[cfg(feature = "py-test-hooks")]
     m.add_function(wrap_pyfunction!(cancel::slow_drop_for_test, &m)?)?;
+    #[cfg(feature = "py-test-hooks")]
+    m.add_function(wrap_pyfunction!(
+        open_cancel::open_cancel_with_slow_open_for_test,
+        &m
+    )?)?;
     parent.add_submodule(&m)?;
     Ok(())
 }

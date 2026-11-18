@@ -101,9 +101,9 @@ PARKED_LISTENER = (
 
 # The ONE shape `util::SlotCancel` / `register_accept_slot` exist for: the
 # FIRST accept happens INSIDE `Receiver.open`, so no Python handle exists
-# yet and nothing the user can hold could cancel it. The binding
-# registers the `CancelSlot` it hands `SrtUrl::accept_one` for the duration of
-# the call, purely so the exit hook can reach it.
+# yet, and without an `OpenCancel` nothing the user holds could cancel it.
+# The binding registers the `CancelSlot` it hands `SrtUrl::accept_one` for
+# the duration of the call, so the exit hook can reach it either way.
 PARKED_IN_FROM_URL = (
     _PARK_LATCH
     + """
@@ -196,8 +196,8 @@ def test_exit_is_clean_with_a_thread_parked_in_the_first_accept() -> None:
     before returning anything the caller could cancel. Without
     `util::register_accept_slot` the exit hook has nothing to fire and
     `srt_cleanup` deadlocks joining `SRT:GC` — this is the hang the exit
-    hook exists to prevent, and the only one no user-visible
-    handle can reach."""
+    hook exists to prevent, and one no user-visible handle reaches
+    unless the open was given an `OpenCancel`."""
     r = _run(PARKED_IN_FROM_URL, what=" with a thread parked in open's first accept")
     assert "PARKED" in r.stdout, r.stderr
     assert r.returncode == 0, f"exit={r.returncode}\n{r.stdout}\n{r.stderr}"
@@ -377,6 +377,52 @@ def test_an_earlier_atexit_join_of_a_managed_first_accept_completes(cls: str) ->
     )
     assert r.returncode == 0, f"exit={r.returncode}\n{r.stdout}\n{r.stderr[-800:]}"
     assert "RAISED SrtError CLOSED" in r.stdout, f"{r.stdout}\n{r.stderr[-800:]}"
+
+
+# The same first accepts, given an `OpenCancel` that nobody cancels: the
+# open's slot is still the one registered with the exit hook, so the hook
+# still ends the accept.
+SCRIPT_EARLIER_ATEXIT_JOINS_FIRST_ACCEPT_WITH_OPEN_CANCEL = """
+    import atexit, threading
+
+    workers = []
+    atexit.register(lambda: [t.join() for t in workers])
+
+    import tstrans.srt as srt
+    from tstrans import shells
+
+    oc = shells.OpenCancel()
+    entered = threading.Event()
+
+    def park():
+        entered.set()
+        try:
+            {call}("srt://127.0.0.1:0?mode=listener", cancel=oc)
+            print("OPENED", flush=True)
+        except Exception as e:
+            print("RAISED", type(e).__name__, e.kind.name, "object cancelled:", oc.is_cancelled(), flush=True)
+
+    t = threading.Thread(target=park, daemon=True)
+    workers.append(t)
+    t.start()
+    entered.wait()
+    for _ in range(20):
+        threading.Event().wait(0.01)  # hand the GIL over so the accept parks
+"""
+
+
+@pytest.mark.parametrize("call", ["shells.Receiver.open", "srt.ManagedDemuxReceiver.from_url"])
+def test_the_exit_hook_ends_a_first_accept_given_an_open_cancel(call: str) -> None:
+    """The exit hook wakes a first accept parked with `cancel=`; an earlier
+    `atexit` handler joins the worker, which saw CLOSED with the object
+    itself never cancelled, and the process exits 0."""
+    r = _run(
+        SCRIPT_EARLIER_ATEXIT_JOINS_FIRST_ACCEPT_WITH_OPEN_CANCEL.replace("{call}", call),
+        timeout=20.0,
+        what=f" with {call} parked in its first accept with cancel=",
+    )
+    assert r.returncode == 0, f"exit={r.returncode}\n{r.stdout}\n{r.stderr[-800:]}"
+    assert "RAISED SrtError CLOSED object cancelled: False" in r.stdout, f"{r.stdout}\n{r.stderr[-800:]}"
 
 
 # The hook drains the registry once. A shell opened after that drain must be

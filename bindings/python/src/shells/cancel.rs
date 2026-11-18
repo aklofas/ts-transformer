@@ -114,6 +114,15 @@ pub(crate) fn slow_cancel_handle_for_test(delay_ms: u64) -> PyCancelHandle {
     PyCancelHandle::from_source(&cancel_source(&inner))
 }
 
+/// A cancel target whose `cancel()` takes `delay_ms`. Test-only.
+#[cfg(feature = "py-test-hooks")]
+pub(crate) fn slow_cancel(delay_ms: u64) -> Arc<dyn TransportCancel + Send + Sync> {
+    Arc::new(SlowCancel {
+        delay: std::time::Duration::from_millis(delay_ms),
+        latched: std::sync::atomic::AtomicBool::new(false),
+    })
+}
+
 /// A class whose implicit drop takes `delay`, like a native teardown
 /// waiting out a linger or a join. Test-only.
 #[cfg(feature = "py-test-hooks")]

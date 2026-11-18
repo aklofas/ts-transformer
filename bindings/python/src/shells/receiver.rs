@@ -27,6 +27,7 @@ use crate::raise::raise;
 use crate::raise::{pyok, pyres};
 use crate::shells::cancel::{PyCancelHandle, cancel_source};
 use crate::shells::end_reason::{end_detail, end_reason_to_py};
+use crate::shells::open_cancel::{PyOpenCancel, object_of};
 use crate::util::{CancelSource, close_owned, drop_owned};
 
 /// Python receiver over any transport — wraps
@@ -84,13 +85,26 @@ impl PyReceiver {
 #[pymethods]
 impl PyReceiver {
     /// Open a receiver from `url` (GIL released). For `srt://` the URL
-    /// must carry `?mode=listener`; the first accept is not cancellable,
-    /// since no handle exists until this returns. An `srt://` bind or accept
-    /// fault raises `SrtError(kind=BROKEN)` with the message prefixed
-    /// `bind: ` or `accept: `.
+    /// must carry `?mode=listener`, and the open blocks in its first accept
+    /// until a peer connects. An `srt://` bind or accept fault raises
+    /// `SrtError(kind=BROKEN)` with the message prefixed `bind: ` or
+    /// `accept: `.
+    ///
+    /// `cancel`: no handle exists until this returns, so the first accept
+    /// is cancelled through an `OpenCancel` made beforehand: its
+    /// `cancel()` from another thread ends the accept with
+    /// `SrtError(CLOSED)`, and an object already cancelled refuses the
+    /// open with the transport's `CLOSED` before the URL is parsed.
     #[classmethod]
-    fn open(_cls: &Bound<'_, PyType>, py: Python<'_>, url: &str) -> PyResult<Self> {
-        Self::from_opened(py, crate::shells::open::open_recv(py, url)?)
+    #[pyo3(signature = (url, *, cancel = None))]
+    fn open(
+        _cls: &Bound<'_, PyType>,
+        py: Python<'_>,
+        url: &str,
+        cancel: Option<&Bound<'_, PyOpenCancel>>,
+    ) -> PyResult<Self> {
+        let oc = object_of(cancel);
+        Self::from_opened(py, crate::shells::open::open_recv(py, url, &oc)?)
     }
 
     /// One 188-byte TS packet per call; `max_len` is accepted for API

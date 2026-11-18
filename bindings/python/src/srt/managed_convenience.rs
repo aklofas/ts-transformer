@@ -54,6 +54,7 @@ use crate::raise::{SRT, pyok, raise};
 use crate::shells::cancel::PyCancelHandle;
 use crate::shells::demux_receiver::demux_recv_err;
 use crate::shells::mux_sender::mux_sender_err;
+use crate::shells::open_cancel::{PyOpenCancel, begin, closed, finish, object_of};
 use crate::srt::policy::PyReconnectPolicy;
 use crate::util::{CancelSource, close_owned, drop_owned};
 
@@ -133,18 +134,26 @@ impl PyManagedMuxSender {
     /// `SrtError(CONNECT_FAILED)` / `SrtError(TIMEOUT)` on handshake
     /// failure; `MuxError(CONFIG_INVALID)` if the muxer construction
     /// rejects the program config.
+    ///
+    /// `cancel`: an `OpenCancel` already cancelled refuses the open with
+    /// `SrtError(CLOSED)` before the URL is parsed; one cancelled while the
+    /// connect runs does not interrupt it, but the open then raises
+    /// `SrtError(CLOSED)` and the connection is closed again.
     #[staticmethod]
-    #[pyo3(signature = (url, program_config, *, policy = None))]
+    #[pyo3(signature = (url, program_config, *, policy = None, cancel = None))]
     fn from_url(
         py: Python<'_>,
         url: &str,
         program_config: PyRef<'_, PyMuxerProgramConfig>,
         policy: Option<PyReconnectPolicy>,
+        cancel: Option<&Bound<'_, PyOpenCancel>>,
     ) -> PyResult<Self> {
         let mut cfg_builder = tst_core::mpegts::mux::MuxerConfig::builder();
         cfg_builder.add_program(program_config.inner.clone());
         let muxer_cfg = cfg_builder.build().map_err(|e| mux_error_to_pyerr(py, e))?;
 
+        let oc = object_of(cancel);
+        let slot = begin(py, &oc).ok_or_else(|| raise(py, &SRT, closed()))?;
         let parsed = SrtUrl::parse(url).map_err(|e| raise(py, &SRT, BindingError::from(e)))?;
         if parsed.mode != Mode::Caller {
             return Err(raise(
@@ -165,9 +174,11 @@ impl PyManagedMuxSender {
         // handle snapshots. The managed family dials with `connect()` —
         // the sender preset — matching the C ABI.
         let (sender, handles, stats_handle) = crate::util::allow_threads_parking(py, || {
-            tst_srt::shells::managed_mux_sender_from_url(&parsed, policy_inner, muxer_cfg)
+            let r = tst_srt::shells::managed_mux_sender_from_url(&parsed, policy_inner, muxer_cfg)
+                .map_err(BindingError::from);
+            finish(slot, r)
         })
-        .map_err(|e| raise(py, &SRT, BindingError::from(e)))?;
+        .map_err(|e| raise(py, &SRT, e))?;
         let cancel = CancelSource::new(handles.cancel);
         // Read before the sender moves into the slot: the handle getters
         // answer from this, never from the slot a parked send holds.
@@ -683,16 +694,27 @@ impl PyManagedDemuxReceiver {
     /// it now shares `SrtUrl::accept_one` with the C ABI, which classifies
     /// both as transport faults.
     ///
-    /// No handle exists until this returns, so the caller cannot cancel the
-    /// first accept; interpreter exit still wakes it.
+    /// `cancel`: no handle exists until this returns, so the first accept
+    /// is cancelled through an `OpenCancel` made beforehand: its `cancel()`
+    /// from another thread ends the accept with `SrtError(CLOSED)`, and an
+    /// object already cancelled refuses the open before the URL is parsed.
+    /// A caller-mode connect is not interrupted by it, but an open that
+    /// ends after the cancel raises `SrtError(CLOSED)` and the connection
+    /// is closed again. Interpreter exit wakes the first accept too, with
+    /// or without it. After this returns, `cancel_handle()` is the
+    /// receiver's cancel: the `OpenCancel` no longer reaches it or its
+    /// reconnects.
     #[staticmethod]
-    #[pyo3(signature = (url, *, demux_config = None, policy = None))]
+    #[pyo3(signature = (url, *, demux_config = None, policy = None, cancel = None))]
     fn from_url(
         py: Python<'_>,
         url: &str,
         demux_config: Option<&Bound<'_, PyAny>>,
         policy: Option<PyReconnectPolicy>,
+        cancel: Option<&Bound<'_, PyOpenCancel>>,
     ) -> PyResult<Self> {
+        let oc = object_of(cancel);
+        let slot = begin(py, &oc).ok_or_else(|| raise(py, &SRT, closed()))?;
         let parsed = SrtUrl::parse(url).map_err(|e| raise(py, &SRT, BindingError::from(e)))?;
         // Translate the DemuxerConfig dataclass with the GIL held.
         let demux_opts = match demux_config {
@@ -702,21 +724,24 @@ impl PyManagedDemuxReceiver {
         let policy_inner = policy.map(|p| p.inner).unwrap_or_default();
         // `tst_srt::shells` dispatches on `url.mode` (both modes are legal
         // here) and snapshots the end-reason handle before the shell move.
-        // The re-accept slot is ours so it can be registered with the exit
-        // hook before the first accept parks: no caller handle exists until
-        // this constructor returns, so without the registration an exit
-        // joining this thread would hang.
+        // The slot is the open's, so `cancel` reaches the first accept, and
+        // it is registered with the exit hook before the accept parks: no
+        // caller handle exists until this constructor returns, so without
+        // the registration an exit joining this thread would hang.
         let (receiver, handles) = crate::util::allow_threads_parking(py, || {
-            let slot = std::sync::Arc::new(tst_pipeline::FactoryCancel::new());
-            let _accept_guard = crate::util::register_accept_slot(&slot);
-            tst_srt::shells::managed_demux_receiver_from_url_with_cancel(
-                &parsed,
-                policy_inner,
-                demux_opts.unwrap_or_default(),
-                std::sync::Arc::clone(&slot),
-            )
+            let r = {
+                let _accept_guard = crate::util::register_accept_slot(&slot);
+                tst_srt::shells::managed_demux_receiver_from_url_with_cancel(
+                    &parsed,
+                    policy_inner,
+                    demux_opts.unwrap_or_default(),
+                    Arc::clone(&slot),
+                )
+                .map_err(BindingError::from)
+            };
+            finish(slot, r)
         })
-        .map_err(|e| raise(py, &SRT, BindingError::from(e)))?;
+        .map_err(|e| raise(py, &SRT, e))?;
         let cancel = CancelSource::new(handles.cancel);
         let ts_bytes = receiver.ts_bytes_demuxed_handle();
         Ok(Self {

@@ -563,6 +563,50 @@ same shell, and the shell's own `close()`, flip it — a watchdog holding
 one clone sees a cancel issued through another. (Before 0.7.0 it was a
 per-clone flag.)
 
+#### Cancelling an open
+
+An open that waits for a peer has no shell, and so no `cancel_handle()`,
+until it returns: a listener-mode `srt://` `Receiver.open`,
+`DemuxReceiver.open`, `ManagedReceiver.from_url` or
+`ManagedDemuxReceiver.from_url` blocks in its first accept until a caller
+connects. To cancel one, make a `tstrans.shells.OpenCancel` first, pass it
+as the keyword-only `cancel=` and call its `cancel()` from another thread:
+
+```python
+from tstrans.shells import OpenCancel, Receiver
+
+oc = OpenCancel()
+# On the opening thread:
+rx = Receiver.open("srt://:9000?mode=listener", cancel=oc)
+# On another thread:
+oc.cancel()   # the open raises SrtError(kind=CLOSED) and releases the port
+```
+
+The rules:
+
+- One object may be given to any number of opens, one after another or at
+  the same time; one `cancel()` ends every open in progress with it.
+- `cancel()` is sticky: every later open given the object raises the
+  transport's error class with kind `CLOSED` before it parses its URL, and
+  opens nothing. (A URL whose scheme this build does not support still
+  raises `ValueError`: there is no transport to name.)
+- It ends a listener-mode first accept at any time. It does not interrupt
+  a caller-mode connect, but an open that finishes after the cancel raises
+  `CLOSED` whatever it did, and a connection it had just made is closed
+  again: nothing is handed out. The senders' opens (`Sender.open`,
+  `MuxSender.open`, `ManagedSender.from_url`,
+  `ManagedMuxSender.from_url`) take the argument for this rule and for the
+  refusal of an object already cancelled.
+- It is not the shell's cancel handle. An open that returned before the
+  cancel is untouched by it, and so are a managed receiver's later
+  reconnects; from then on the shell's `cancel_handle()` is its cancel.
+- `cancel()` and `is_cancelled()` are safe from any thread, any number of
+  times; `cancel()` releases the GIL while it closes listening sockets.
+
+Without the argument (or with `cancel=None`) an open behaves as before.
+The interpreter-exit hook below ends a parked first accept with or without
+it.
+
 A cancel-first `close()` is abortive by design: for the raw-bytes
 `Sender`, a partial 7-packet bundle still in the framing buffer is not
 delivered — call `flush()` first when the tail matters (`MuxSender`
@@ -873,8 +917,9 @@ attempts, and a re-accept parked with no peer in sight (the iterator
 raises `SrtError(CLOSED)` promptly in all three). `ManagedReceiver`, the
 raw-bytes sibling, covers the same three phases — a parked `recv_bytes`
 raises `SrtError(CLOSED)` just as promptly. The first accept, inside
-`from_url`, is reached by the interpreter-exit hook; a user cancel handle
-exists once `from_url` returns.
+`from_url`, is ended by an `OpenCancel` passed as `cancel=` (see
+[Cancelling an open](#cancelling-an-open)) and by the interpreter-exit
+hook; the receiver's own cancel handle exists once `from_url` returns.
 `cancel_handle()` can be obtained at any time, including while another
 thread is parked in `recv_bytes` — every method borrows the object
 immutably — and `close()` from that other thread is equivalent to
