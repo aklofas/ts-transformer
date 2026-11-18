@@ -240,6 +240,25 @@ outcome are listed once, in
   table lists what each one's `stop()`, `shutdown()`, `close()` and `Drop`
   wait for;
   each figure there is the wait of one phase, not a total.
+- Every binding's explicit close of an RTSP client session is
+  `RtspClient::close()`: a TEARDOWN under one 500 ms bound with the reply
+  awaited, then up to 2 s for the client's thread. In C that is
+  `tst_rtsp_session_teardown_and_free` and `tst_rtp_demux_receiver_close`
+  on a receiver from `tst_rtsp_session_into_demux_receiver`; on the JVM,
+  `RtspSession.close()`, the `close()` of an `H264Receiver` made by
+  `intoH264Receiver()` and a failed `intoH264Receiver()`; in Python,
+  `RtspSession.close()` and the `with` exit. A close that finds a control
+  call in progress on another thread cancels it first, so the session
+  ends as a cancel. `teardown()` in Python and the JVM stays the reporting
+  call: it waits up to the request timeout, reports a refused TEARDOWN and
+  keeps the client. A Python session collected without `close()` is a
+  plain drop of the client, which does not wait for the thread.
+- An `RtspServer`'s `stop()`, and every binding call that runs it (the
+  JVM's `close()`, Python's `with` exit, `tst_rtsp_server_stop`), is not
+  shortened by a hard cancel fired while it runs: the cancel closes the
+  publish side within 100 ms, but the Notice writes, the drain wait and
+  the shutdown of each session's connection do not read it. For an end
+  without the Notice, fire the cancel before the stop.
 
 No call promises an absolute shutdown time: a close waits for the active
 operation to honour the cancel.
@@ -280,7 +299,7 @@ trait-object pattern above. See the **Sync vs. async** section in
 |-----------|--------------|-------|
 | SRT (`tst-srt`) | `ResourceCancel` | From `SrtSocket::cancel_handle()`, `SrtListener::cancel_handle()` or `pipeline_shell.cancel_handle()`. No poll: `cancel()` closes the socket on the calling thread, and libsrt wakes a parked send, receive or accept for the close, typically within a few milliseconds. With linger on and unsent data queued, that close (and so `cancel()`) can take up to the linger time. |
 | RTP (`tst-rtp`) | `RtpCancelHandle` | From `RtpTransport::cancel_handle()`, `RtpRecvTransport::cancel_handle()`, `H264Receiver::cancel_handle()` or the pipeline shell. A parked send or socket receive notices it at its next 100 ms socket timeout, a receive fed by an RTSP interleaved session at its next 100 ms channel wait, and `H264Receiver::recv_au` at its next 100 ms read timeout; the H.264 receiver then hands out the complete access units it holds and the one it can flush, and returns `ExplicitClose` on every later call. |
-| RTSP client and server (`tst-rtp`) | `RtspCancelHandle`, `RtspServerCancelHandle` | From `RtspClient::cancel_handle()` / `RtspServer::cancel_handle()`. On the client, a request waiting for its reply notices it within 100 ms and returns `RtspError::LocalCancel`. A request made after the cancel is still written first; if its write, its reply wait or its deadline then fails, it returns `LocalCancel` too. A request whose bytes the peer is not taking does not read the cancel until its write completes, its deadline passes or 5 s without progress end the control connection. The client's thread (`tst-rtsp-client`) reads the flag before each keepalive ping and starts no ping once it is set; it keeps reading the control connection and delivering interleaved media, since the receiver has its own `RtpCancelHandle`. On the server it is the hard cancel, on a started or a never-started server: registration, rule edits, mount pushes and `start()` read it and are refused at once, a parked `next_publisher` notices it within 100 ms, and a task on the server's runtime notices it within 100 ms and ends the sessions, the listener, multicast senders and the publish side; see `RtspServerCancelHandle` for the detail. |
+| RTSP client and server (`tst-rtp`) | `RtspCancelHandle`, `RtspServerCancelHandle` | From `RtspClient::cancel_handle()` / `RtspServer::cancel_handle()`. On the client, a request waiting for its reply notices it within 100 ms and returns `RtspError::LocalCancel`. A request made after the cancel is still written first; if its write, its reply wait or its deadline then fails, it returns `LocalCancel` too. A request whose bytes the peer is not taking does not read the cancel until its write completes, its deadline passes or 5 s without progress end the control connection. The client's thread (`tst-rtsp-client`) reads the flag before each keepalive ping and starts no ping once it is set; it keeps reading the control connection and delivering interleaved media, since the receiver has its own `RtpCancelHandle`. On the server it is the hard cancel, on a started or a never-started server: registration and removal, rule edits, mount pushes and `start()` read it and are refused at once, a parked `next_publisher` notices it within 100 ms, and a task on the server's runtime notices it within 100 ms and ends the sessions, the listener, multicast senders and the publish side. Each publish mount's receiver then reads end of stream, as after `stop()`, in every binding; the receiver's own cancel, or its publish mount's, still reads as the cancel. A hard cancel fired while a `stop()` runs does not shorten that `stop()` (see [What each close, stop and drop waits for](#threading-guarantees)); see `RtspServerCancelHandle` for the detail. |
 | TCP / TLS (`tst-tcp`) | `TcpCancelHandle` | From the inherent `TcpTransport::cancel_handle()`, from `Transport::cancel_handle` / `RecvTransport::cancel_handle` on the same transport, or from the pipeline shell (which reads the trait method). All three hand back the same handle. A parked receive or send notices it at its next 100 ms socket timeout and returns `ExplicitClose`; a parked `TcpListener::accept_blocking` notices it at its next 5 ms poll and returns `TcpError::Closed`. |
 | UDP (`tst-udp`) | `UdpCancelHandle` | From the inherent `UdpTransport::cancel_handle()` / `UdpRecvTransport::cancel_handle()`, the trait forms, or the pipeline shell. A parked `recv_bytes` observes it at its next ~100 ms poll tick and returns `ExplicitClose`; `send_bytes` never parks and checks it at entry. `close()` stays `Closed`. `recv_timeout` (per-call deadline) does not observe it — check `is_cancelled()` between slices. |
 | RIST (`tst-rist`) | `RistCancelHandle` | From the inherent `RistTransport::cancel_handle()` / `RistRecvTransport::cancel_handle()`, the trait forms, or the pipeline shell. Observed when the current 100 ms `rist_receiver_data_read2` tick returns (`ExplicitClose` instead of that tick's `Backpressure`) and at `send_bytes` entry. `close()` (→ `rist_destroy`) stays `Closed`. |
@@ -365,9 +384,20 @@ let managed = ManagedRecvTransport::new_with_factory_cancel(initial, factory, Re
 The C ABI's `tst_managed_*_open_listener` family, both Python managed
 receivers (`ManagedReceiver` and `ManagedDemuxReceiver`) and both JVM
 ones are wired this way internally, so their `_cancel` / `cancel()` /
-`cancelHandle().cancel()` cover the re-accept window. The one accept that
-stays uncancellable is the very first one inside a listener open, before
-any handle exists.
+`cancelHandle().cancel()` cover the re-accept window. The very first
+accept inside a listener open runs before any shell, and so any cancel
+handle, exists. Rust reaches it through a slot the caller makes and
+passes to the open (`tst_srt::opener::open_recv`,
+`tst_srt::shells::managed_recv_transport_from_url` and the two
+`*_with_cancel` opens beside it), or takes from a
+`tst_pipeline::binding::OpenCancel`
+([Cancelling an open](#cancelling-an-open-opencancel)). Python reaches it
+through a `tstrans.shells.OpenCancel` passed as `cancel=` to the open (the
+interpreter-exit hook reaches it too, with or without one), and the JVM
+through an `org.tstrans.shells.OpenCancel` passed as the last argument of
+the open. In C it stays uncancellable: the listener opens take no open
+cancel, and the rule is cancel, wait, free from the moment an open has
+returned its handle.
 
 The bindings do not each hand-roll the sequence above:
 `tst_srt::SrtListener::accept_one_cancellable(&cfg, addr, &slot)` is that
@@ -377,3 +407,25 @@ through it. Reach for it rather than the long form whenever your factory
 binds and accepts exactly once; write the long form only when you need
 something in the middle of it (a different `SrtListenerConfig` per attempt,
 say, or per-phase error mapping).
+
+## Cancelling an open: `OpenCancel`
+
+`tst_pipeline::binding::OpenCancel` is the object behind the Python and
+JVM `OpenCancel` classes: a cancel for opens that have not returned a
+shell yet. One object may be given to any number of opens, one after
+another or at the same time. `cancel()` is sticky: it reaches every open
+in progress that was given the object, and every later open given it is
+refused with CLOSED before it binds or dials. It ends a listener-mode
+first accept at any time; a caller-mode dial is not interrupted.
+
+One outcome rule covers every open given such an object: **the open
+reports CLOSED whenever the object was cancelled by the time the open
+finished, whatever the open itself did.** A shell that had just opened is
+closed again and not handed out, and a failed open reports the cancel
+instead of its own error. An open that finished before the cancel is
+returned whole, and the object never touches it afterwards: from then on
+the shell's own `cancel_handle()` is its cancel, and a managed receiver
+opened with the object keeps reconnecting after a later `cancel()`. This
+is the one place where a cancel beats a success, and nothing handed out
+is lost by it: the open had handed nothing out yet. The C binding has no
+such object.
