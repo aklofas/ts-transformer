@@ -562,6 +562,52 @@ mod tests {
         drop(core::mem::ManuallyDrop::into_inner(guard));
     }
 
+    /// Once `cancel()` has returned, every slot the object handed out and
+    /// that is not finished is cancelled: the latch and the take of the
+    /// registered slots are one step, so a `slot()` racing the cancel is
+    /// either taken and fired or sees the latch.
+    #[test]
+    fn no_slot_taken_during_a_cancel_is_left_live() {
+        use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+        const ROUNDS: usize = 2_000;
+        const SPINNERS: usize = 3;
+        for round in 0..ROUNDS {
+            let oc = OpenCancel::new();
+            let stop = Arc::new(AtomicBool::new(false));
+            let started = Arc::new(AtomicUsize::new(0));
+            let spinners: Vec<_> = (0..SPINNERS)
+                .map(|_| {
+                    let (oc, stop, started) = (oc.clone(), Arc::clone(&stop), Arc::clone(&started));
+                    thread::spawn(move || {
+                        let mut kept = vec![oc.slot()];
+                        started.fetch_add(1, Ordering::Release);
+                        while !stop.load(Ordering::Acquire) {
+                            kept.push(oc.slot());
+                        }
+                        kept
+                    })
+                })
+                .collect();
+            let deadline = std::time::Instant::now() + DEADLINE;
+            while started.load(Ordering::Acquire) < SPINNERS {
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "spinners never started"
+                );
+                thread::yield_now();
+            }
+            oc.cancel();
+            stop.store(true, Ordering::Release);
+            for s in spinners {
+                let kept = s.join().unwrap();
+                assert!(
+                    kept.iter().all(|slot| slot.is_cancelled()),
+                    "round {round}: a slot handed out around the cancel was left live"
+                );
+            }
+        }
+    }
+
     #[test]
     fn cancel_is_idempotent_from_many_threads() {
         let oc = OpenCancel::new();
