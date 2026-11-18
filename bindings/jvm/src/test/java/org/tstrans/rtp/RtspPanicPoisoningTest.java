@@ -117,7 +117,7 @@ class RtspPanicPoisoningTest {
      * A poisoned server mutator drops only the registry's reference; a {@code
      * nextPublisher(Long.MAX_VALUE)} parked on another thread holds its own. The
      * native wait re-leases the server between bounded slices, so the parked call
-     * finds the entry gone and ends with {@link RtspException} {@code SERVER} instead
+     * finds the entry gone and ends with {@link RtspException} {@code CLOSED} instead
      * of waiting forever.
      */
     @Test @Timeout(20)
@@ -165,9 +165,9 @@ class RtspPanicPoisoningTest {
                 "a parked nextPublisher outlived the poisoned server entry");
             Throwable e = error.get();
             assertTrue(e instanceof RtspException,
-                () -> "nextPublisher: expected RtspException(SERVER), got "
+                () -> "nextPublisher: expected RtspException(CLOSED), got "
                     + (e != null ? e : "value " + value.get()));
-            assertEquals(RtspException.Kind.SERVER, ((RtspException) e).kind());
+            assertEquals(RtspException.Kind.CLOSED, ((RtspException) e).kind());
         } finally {
             s.close();
         }

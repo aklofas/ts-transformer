@@ -71,19 +71,6 @@ fn live_server(server: *mut TstRtspServer) -> Result<Arc<tst_rtp::RtspServer>, i
     }
 }
 
-/// Record an error from a server call and return its code. `Shutdown` is
-/// `TST_E_CLOSED`, the code every server entry point documents after
-/// `tst_rtsp_server_stop`: a stop on another thread can land between
-/// [`live_server`] and the call, and the shared kind table would otherwise
-/// report it as `TST_E_RTSP_SERVER`.
-fn record_server_error(e: tst_rtp::RtspServerError, ctx: &str) -> i32 {
-    if matches!(e, tst_rtp::RtspServerError::Shutdown) {
-        set_last_error(TstError::Closed, "server is stopped");
-        return TstError::Closed as i32;
-    }
-    crate::error::record_with_context(e, ctx)
-}
-
 /// Borrow a NUL-terminated UTF-8 path argument.
 fn path_arg<'a>(path: *const c_char) -> Result<&'a str, i32> {
     // SAFETY: caller guarantees a NUL-terminated string valid for this call.
@@ -204,7 +191,7 @@ pub unsafe extern "C" fn tst_rtsp_server_add_publish_mount(
         match s.add_publish_mount(path) {
             Ok(h) => into_c_mount(h),
             Err(e) => {
-                record_server_error(e, "add_publish_mount failed");
+                crate::error::record_with_context(e, "add_publish_mount failed");
                 std::ptr::null_mut()
             }
         }
@@ -281,7 +268,7 @@ pub unsafe extern "C" fn tst_rtsp_server_next_publisher(
                 );
                 TstError::BufferFull as libc::c_int
             }
-            Err(e) => record_server_error(e, "next_publisher failed"),
+            Err(e) => crate::error::record_with_context(e, "next_publisher failed"),
         }
     })
 }
@@ -327,7 +314,7 @@ pub unsafe extern "C" fn tst_rtsp_server_remove_mount(
         };
         match s.remove_mount(path) {
             Ok(()) => TstError::Success as libc::c_int,
-            Err(e) => record_server_error(e, "remove_mount failed"),
+            Err(e) => crate::error::record_with_context(e, "remove_mount failed"),
         }
     })
 }
@@ -710,15 +697,22 @@ mod tests {
     fn server_shutdown_records_closed() {
         // A stop that lands between the handle read and the call surfaces
         // as `Shutdown`; every server entry point reports it as CLOSED.
-        let rc = record_server_error(tst_rtp::RtspServerError::Shutdown, "remove_mount failed");
+        let rc = crate::error::record_with_context(
+            tst_rtp::RtspServerError::Shutdown,
+            "remove_mount failed",
+        );
         assert_eq!(rc, TstError::Closed as i32);
         assert_eq!(
             crate::error::test_last_error_code(),
             TstError::Closed as i32
         );
-        assert_eq!(crate::error::test_last_error_msg(), "server is stopped");
+        assert!(
+            crate::error::test_last_error_msg().starts_with("remove_mount failed: "),
+            "{}",
+            crate::error::test_last_error_msg()
+        );
         // Every other error keeps the shared kind table's code.
-        let rc = record_server_error(
+        let rc = crate::error::record_with_context(
             tst_rtp::RtspServerError::MountNotFound {
                 path: "/x".to_owned(),
             },

@@ -12,7 +12,7 @@ Covers:
   end-of-stream shape); a repeat → `RtspError(MOUNT)`.
 - `PublishMount.cancel()` → the receiver's next read raises `RtpError(CLOSED)`.
 - On-demand mounts through `next_publisher()`; `None` on timeout.
-- The context-manager exit wakes a parked `next_publisher` (`RtspError(SERVER)`)
+- The context-manager exit wakes a parked `next_publisher` (`RtspError(CLOSED)`)
   and ends a parked publish-mount receiver.
 - `next_publisher` releases the GIL while it waits (structural probe).
 
@@ -443,7 +443,7 @@ def test_remove_mount_ends_a_parked_receiver_with_end_of_stream():
             rx.close()
 
 
-def test_methods_after_stop_raise_server_kind():
+def test_methods_after_stop_raise_closed_kind():
     server = _start()
     mount = server.add_publish_mount("/cam")
     server.stop()
@@ -454,7 +454,7 @@ def test_methods_after_stop_raise_server_kind():
     ):
         with pytest.raises(RtspError) as ei:
             call()
-        assert ei.value.kind == RtspErrorKind.SERVER
+        assert ei.value.kind == RtspErrorKind.CLOSED
     assert mount.stats().rtp_packets_received == 0
 
 
@@ -587,7 +587,7 @@ def test_context_exit_wakes_parked_next_publisher_and_receiver():
             pytest.fail("leaving the with-block did not wake the parked calls")
         exc = out.get("exc")
         assert isinstance(exc, RtspError), out
-        assert exc.kind == RtspErrorKind.SERVER
+        assert exc.kind == RtspErrorKind.CLOSED
         # stop() ends the publish mount's receiver with END_OF_STREAM.
         assert isinstance(rout.get("exc"), StopIteration), rout
     finally:

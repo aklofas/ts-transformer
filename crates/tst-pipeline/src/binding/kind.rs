@@ -181,9 +181,9 @@ kinds! {
     RtspIo = -22 => "RTSP_IO", "IO", -22;
     /// RTSP request timeout.
     RtspTimeout = -23 => "RTSP_TIMEOUT", "TIMEOUT", -23;
-    /// RTSP server lifecycle misuse: started twice, not started, or already shut down.
+    /// RTSP server lifecycle misuse: started twice or not started. An ended server is CLOSED.
     ///
-    /// `AlreadyStarted` / `NotStarted` / `Shutdown`.
+    /// `AlreadyStarted` / `NotStarted`.
     RtspServer = -24 => "RTSP_SERVER", "SERVER", -24;
     /// RTSP mount failure: mount path, multicast group, duplicate mount or mount config.
     ///
