@@ -9616,8 +9616,10 @@ void tst_rtsp_client_builder_transport_pref(struct tst_rtsp_client_builder_t *bu
 
 #if defined(TST_HAS_RTP)
 /**
- * Cancel a mount handle. All subsequent `push_*` calls on this handle will
- * return `TST_E_CLOSED` immediately without entering the muxer.
+ * Cancel a mount handle. All subsequent `push_*` and
+ * `tst_rtsp_mount_flush` calls on this handle will return `TST_E_CLOSED`
+ * immediately without entering the muxer. `tst_rtsp_mount_reset_stats`
+ * and the getters still answer.
  *
  * Cancellation is handle-local: it stops pushes through this handle only.
  * A handle names one registration, not a path. While a path is
@@ -9649,7 +9651,10 @@ void tst_rtsp_client_builder_transport_pref(struct tst_rtsp_client_builder_t *bu
  * pending output. Safe to call concurrently with other `push_*` calls on
  * separate threads; each call acquires the inner muxer mutex independently.
  *
- * Returns `0` on success, `TST_E_INVALID_CONFIG` if `handle` is null.
+ * Returns `0` on success, `TST_E_CLOSED` after `tst_rtsp_mount_cancel`,
+ * `TST_E_INVALID_CONFIG` if `handle` is null. Once the server has ended
+ * (stopped, hard-cancelled or freed) it still returns `0`: it does not
+ * read the server's state.
  *
  * # Safety
  *

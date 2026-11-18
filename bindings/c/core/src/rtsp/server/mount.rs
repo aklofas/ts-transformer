@@ -816,7 +816,10 @@ pub unsafe extern "C" fn tst_rtsp_mount_push_data_to(
 /// pending output. Safe to call concurrently with other `push_*` calls on
 /// separate threads; each call acquires the inner muxer mutex independently.
 ///
-/// Returns `0` on success, `TST_E_INVALID_CONFIG` if `handle` is null.
+/// Returns `0` on success, `TST_E_CLOSED` after `tst_rtsp_mount_cancel`,
+/// `TST_E_INVALID_CONFIG` if `handle` is null. Once the server has ended
+/// (stopped, hard-cancelled or freed) it still returns `0`: it does not
+/// read the server's state.
 ///
 /// # Safety
 ///
@@ -828,13 +831,19 @@ pub unsafe extern "C" fn tst_rtsp_mount_flush(handle: *mut TstRtspMountHandle) -
             set_last_error(TstError::InvalidConfig, "null mount handle pointer");
             return TstError::InvalidConfig as i32;
         };
+        if h.cancelled.load(Ordering::Acquire) {
+            set_last_error(TstError::Closed, "mount handle has been cancelled");
+            return TstError::Closed as i32;
+        }
         h.inner.flush();
         0
     })
 }
 
-/// Cancel a mount handle. All subsequent `push_*` calls on this handle will
-/// return `TST_E_CLOSED` immediately without entering the muxer.
+/// Cancel a mount handle. All subsequent `push_*` and
+/// `tst_rtsp_mount_flush` calls on this handle will return `TST_E_CLOSED`
+/// immediately without entering the muxer. `tst_rtsp_mount_reset_stats`
+/// and the getters still answer.
 ///
 /// Cancellation is handle-local: it stops pushes through this handle only.
 /// A handle names one registration, not a path. While a path is
@@ -1150,6 +1159,47 @@ mod tests {
         );
         unsafe { crate::config::tst_mux_config_free(cfg) };
         unsafe { crate::rtsp::server::stop::tst_rtsp_cancel_handle_free(cancel) };
+        unsafe { crate::rtsp::server::stop::tst_rtsp_server_free(server) };
+    }
+
+    /// Flush is a data-plane call: the mount's cancel gates it as it gates
+    /// the pushes. Reset and the getters still answer.
+    #[test]
+    fn cancel_then_flush_returns_closed_and_reset_and_stats_still_answer() {
+        let (server, mount) = open_unicast_mount();
+        assert_eq!(unsafe { tst_rtsp_mount_cancel(mount) }, 0);
+        assert_eq!(
+            unsafe { tst_rtsp_mount_flush(mount) },
+            TstError::Closed as i32,
+            "flush after the mount's cancel"
+        );
+        assert_eq!(
+            unsafe { crate::error::tst_get_last_error() },
+            TstError::Closed as i32
+        );
+        assert_eq!(unsafe { tst_rtsp_mount_reset_stats(mount) }, 0);
+        let mut stats = crate::stats::TstMountStats::default();
+        assert_eq!(
+            unsafe {
+                crate::rtsp::server::mount_getters::tst_rtsp_mount_get_stats(mount, &mut stats)
+            },
+            0
+        );
+        unsafe { tst_rtsp_mount_handle_free(mount) };
+        unsafe { crate::rtsp::server::stop::tst_rtsp_server_free(server) };
+    }
+
+    /// The C side cannot see that the server ended, so flush keeps
+    /// answering 0 there (documented on `tst_rtsp_mount_flush`).
+    #[test]
+    fn stop_then_flush_returns_zero() {
+        let (server, mount) = open_unicast_mount();
+        assert_eq!(
+            unsafe { crate::rtsp::server::stop::tst_rtsp_server_stop(server, 0) },
+            0
+        );
+        assert_eq!(unsafe { tst_rtsp_mount_flush(mount) }, 0);
+        unsafe { tst_rtsp_mount_handle_free(mount) };
         unsafe { crate::rtsp::server::stop::tst_rtsp_server_free(server) };
     }
 
