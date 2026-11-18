@@ -647,6 +647,13 @@ give the receiver a receive deadline (`?recv_timeout=<ms>` on `rtp://` /
 on a cadence. `finish()` and `accept_blocking()` are blocking operations in
 their own right.
 
+**`rtp.RtspSession`** answers `cancel_handle()`, `is_torn_down()` and
+`stats()` at once, and its `close()` cancels a control call in progress on
+another thread before it closes. Its control calls `pause()`, `play()` and
+`teardown()` run one at a time: a second one waits its turn, GIL released,
+until the call in progress returns or is cancelled (up to that call's
+request timeout, 10 s).
+
 **The HLS classes** (`hls.HlsPublisher`, `hls.MuxPublisher`) follow the
 same split, with one difference: nothing in them parks. A push is disk
 work, so the calls in the second group wait for the push in flight to
@@ -1146,8 +1153,11 @@ with RtspClient.connect(cfg) as session:
 - **Cancellation.** `session.cancel_handle()` returns a `RtspCancelHandle`
   at once from any thread, also while a control call is parked; flip
   `cancel()` to break `pause()` / `play()` / `teardown()` out. The
-  interrupted call raises `RtspError(CLOSED)`. `close()` from another
-  thread cancels a parked call first.
+  interrupted call raises `RtspError(CLOSED)`. The control calls run one
+  at a time: a second `pause()` / `play()` / `teardown()` from another
+  thread waits, GIL released, until the call in progress returns or is
+  cancelled. `close()` from another thread cancels a call in progress
+  first.
 - **`teardown()` reports what the server answered.** A 2xx reply, or
   `454 Session Not Found` (the session is already gone), returns `None`. A
   TEARDOWN the server refuses raises `RtspError` of the status's kind:
@@ -1163,14 +1173,19 @@ with RtspClient.connect(cfg) as session:
   one 500 ms bound over writing it and its reply, then waits up to 2 s for
   the client's thread; the control connection is closed when it returns,
   unless that wait ran out. It is silent (returns `None` whatever the
-  server answered) and a second call is a no-op. Leaving the `with` block
-  calls it. On a TCP-interleaved session, an accepted TEARDOWN ends the
+  server answered); a call made while another `close()` is running returns
+  at once without waiting for it, and a later call is a no-op. Leaving the
+  `with` block calls it. A `close()` that overlaps a control call in
+  progress on another thread cancels that call, so the session ends as a
+  cancel (a live receiver ends `RtpError(CLOSED)`), not as a clean
+  teardown. On a TCP-interleaved session, an accepted TEARDOWN ends the
   receiver with end of stream (`StopIteration`, `EndReason.CLEAN_TEARDOWN`);
   a TEARDOWN refused, or not answered within the 500 ms, ends it with
   `RtpError(CLOSED)` (`EndReason.CANCELLED`). Call `teardown()` first when
   you want the server's answer or a longer wait. After `close()`,
-  `pause()`, `play()` and `cancel_handle()` raise `RtspError(CLOSED)` and
-  `teardown()` returns `None`. A session collected without `close()`
+  `pause()`, `play()` and `cancel_handle()` raise `RtspError(CLOSED)`,
+  `teardown()` returns `None`, and a cancel handle taken earlier reads
+  `is_cancelled() == True`. A session collected without `close()`
   sends a best-effort TEARDOWN and does not wait for the client's thread.
 - **Why did the stream end?** When `for event in rx` exits or a call
   raises, `rx.end_reason()` (on `DemuxReceiver`, `Receiver`, and

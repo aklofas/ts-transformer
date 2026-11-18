@@ -829,13 +829,16 @@ impl PyRtspSession {
     /// and waited for up to 2 s; the control connection is closed when
     /// this returns (unless that wait ran out). Silent: returns `None`
     /// whatever the server answered (`teardown()` is the call that
-    /// reports). Idempotent.
+    /// reports). A call made while another `close()` is running returns at
+    /// once without waiting for it; any later call is a no-op.
     ///
-    /// A control call parked on another thread is cancelled first (it
+    /// A control call in progress on another thread is cancelled first (it
     /// raises `RtspError(CLOSED)`); the TEARDOWN then goes out on the
-    /// cancelled client without awaiting the reply. Afterwards `pause` /
-    /// `play` / `cancel_handle` raise `RtspError(CLOSED)` and `teardown`
-    /// returns `None`.
+    /// cancelled client without awaiting the reply, so the session ends as
+    /// a cancel (a live receiver ends `RtpError(CLOSED)`), not as a clean
+    /// teardown. Afterwards `pause` / `play` / `cancel_handle` raise
+    /// `RtspError(CLOSED)`, `teardown` returns `None`, and a cancel handle
+    /// taken earlier reads `is_cancelled() == True`.
     fn close(&self, py: Python<'_>) {
         if self.closed.swap(true, Ordering::AcqRel) {
             return;
@@ -863,7 +866,9 @@ impl PyRtspSession {
     /// `pause` / `play` / `teardown` out of blocking I/O at its next
     /// poll (a waiting request re-checks the cancel flag at least every
     /// 100 ms). Answers at once, also while another thread's control
-    /// call is parked.
+    /// call is parked. The control calls run one at a time: a second
+    /// `pause` / `play` / `teardown` waits, GIL released, until the call in
+    /// progress returns or is cancelled.
     ///
     /// Returns a fresh `PyRtspCancelHandle` each call; all handles
     /// share the client's backing flag. Returned after `teardown()` too;
