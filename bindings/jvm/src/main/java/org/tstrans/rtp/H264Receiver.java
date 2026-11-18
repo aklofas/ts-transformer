@@ -63,8 +63,10 @@ import org.tstrans.shells.SocketStats;
  *
  * <p>{@link #close()} fires the cancel handle and frees the native receiver; for a
  * receiver made by {@link RtspSession#intoH264Receiver()} it also closes the RTSP
- * client (see {@link #close()}). Subsequent {@link #recvAu()} throws
- * {@link IllegalStateException}. Idempotent.
+ * client, and {@link #endReason()} then reads {@code CLEAN_TEARDOWN} only when the
+ * server accepted the TEARDOWN within the close's bound and no {@link #recvAu()} was
+ * in progress, otherwise {@code CANCELLED} (see {@link #close()}). Subsequent
+ * {@link #recvAu()} throws {@link IllegalStateException}. Idempotent.
  *
  * <pre>{@code
  * try (H264Receiver rx = H264Receiver.listen("rtp://0.0.0.0:5004?pt=96")) {
@@ -329,7 +331,10 @@ public final class H264Receiver extends NativeHandle implements Iterable<H264Acc
      * session's RTSP client (the session wrapper was consumed at conversion), and this
      * then closes it as {@link RtspSession#close()} does: TEARDOWN with at most
      * 500&nbsp;ms for the reply, then up to 2&nbsp;s for the client's thread. A refused
-     * or unanswered TEARDOWN is not reported.
+     * or unanswered TEARDOWN is not reported. {@link #endReason()} then reads
+     * {@code CLEAN_TEARDOWN} only when the server accepted the TEARDOWN within those
+     * 500&nbsp;ms and no {@code recvAu()} was in progress; otherwise {@code CANCELLED}
+     * (unless the session had already ended for its own reason).
      */
     @Override public void close() { super.close(); }
 
@@ -337,7 +342,10 @@ public final class H264Receiver extends NativeHandle implements Iterable<H264Acc
      * Why the receive session ended, or {@code null} if it hasn't ended yet
      * (or ended through a path this type doesn't instrument). Still readable
      * after {@link #close()} — the close path snapshots the reason before
-     * the underlying native resource is freed.
+     * the underlying native resource is freed. For a receiver made by
+     * {@link RtspSession#intoH264Receiver()}, the reason after {@code close()} is
+     * {@code CLEAN_TEARDOWN} only when the server accepted the close's TEARDOWN within
+     * 500&nbsp;ms and no {@code recvAu()} was in progress; otherwise {@code CANCELLED}.
      *
      * <p><b>Never blocks.</b> While a {@link #recvAu()} is in flight on
      * another thread the reason is not final, and this answers {@code null}

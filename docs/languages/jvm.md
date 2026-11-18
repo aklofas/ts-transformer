@@ -1118,7 +1118,7 @@ falls into two groups.
 
 | Accessor | While a call is parked | Once closed |
 |---|---|---|
-| `close()`, `cancelHandle()`, `CancelHandle.cancel()` / `isCancelled()` | cancel first, then free | quiet |
+| `close()` (every class but `RtspSession`: see below), `cancelHandle()`, `CancelHandle.cancel()` / `isCancelled()` | cancel first, then free | quiet |
 | `isAlive()` | `true` — a parked call means the object is open | `false` |
 | `localAddr()` (`srt.Listener`, `H264Receiver`) | the value captured when the object was built | throws `IllegalStateException` |
 | `localPort()` (`Receiver`, `DemuxReceiver`, `tcp.Listener`) | the port captured at open (`tcp.Listener` answers while `accept()` is parked) | throws `IllegalStateException` |
@@ -1128,13 +1128,16 @@ falls into two groups.
 | `reconnectAttempts()`, `reconnectStats()` on the managed shells | live counters kept outside the object | throws `IllegalStateException` |
 | `endReason()` / `endDetail()` | the recorded reason, or `null`; `H264Receiver` answers `null` while a `recvAu()` is in flight | the reason recorded at close |
 
-`RtspSession.close()` cancels only a `pause()` / `play()` / `teardown()`
-that is parked (an idle session is not cancelled first, so a TEARDOWN the
-server accepts still ends a live receiver with end of stream). It, and the
-`close()` of an `H264Receiver` made from a session, then end the RTSP
-client: up to 500 ms for the TEARDOWN's reply and up to 2 s for the
+`RtspSession` differs. Its `close()` cancels only a `pause()` / `play()` /
+`teardown()` in progress on another thread (that call throws `CLOSED`, and
+the session then ends as a cancel: a live receiver ends
+`RtpException(CLOSED)`); an idle session is not cancelled first, so a
+TEARDOWN the server accepts still ends a live receiver with end of stream.
+It, and the `close()` of an `H264Receiver` made from a session, then end the
+RTSP client: up to 500 ms for the TEARDOWN's reply and up to 2 s for the
 client's thread (see [RTSP client](#rtsp-client-orgtstransrtp)).
-`RtspSession.cancelHandle()` answers at once while a control call is parked.
+`RtspSession.cancelHandle()` returns at once while a control call is in
+progress; the control calls themselves run one at a time.
 
 **Waits for the parked call to return:** `stats()`, `socketStats()`,
 `srtStats()`, `depayStats()`, `rtpStats()` and `lastSeenMicros()`. These
@@ -2300,12 +2303,21 @@ try (RtspSession session = RtspClient.connect(cfg);
   challenge fails the connect with an auth-unsupported `RtspException` rather
   than receiving the password in Basic form. `BasicAuth` answers Digest when it
   is offered and Basic otherwise.
-- **Cancellation.** `session.cancelHandle()` returns a `RtspCancelHandle` at
-  once from any thread, also while a control call is parked; flip `cancel()`
-  from another thread to break a parked `pause()` / `play()` / `teardown()`
-  out. The interrupted call throws `RtspException(CLOSED)`. `close()` from
-  another thread does the same to a parked call first, then closes the
-  session.
+- **Threads and cancellation.** `session.cancelHandle()` returns a
+  `RtspCancelHandle` at once from any thread, and `close()` may be called
+  from any thread without waiting for a control call in progress. The
+  control calls (`pause()`, `play()`, `teardown()`) run one at a time: a
+  second one waits for the call in progress, up to that call's request
+  timeout (10 s). Flip `cancel()` from another thread to break a control call
+  in progress out; it throws `RtspException(CLOSED)`. A `close()` that
+  overlaps a control call in progress on another thread cancels it the same
+  way, so the session then ends as a cancel, not as a clean teardown: a live
+  receiver ends `RtpException(CLOSED)`. A `pause()` / `play()` that reached the
+  session before a `close()` began and loses it to that close throws
+  `CLOSED`; a `teardown()` in that place returns normally (the session is torn
+  down) unless the close cancelled it; a call that starts after the close
+  began throws `IllegalStateException`. A `close()` made while another
+  `close()` is running returns at once without waiting for it.
 - **`teardown()` reports what the server answered.** A 2xx reply, or
   `454 Session Not Found` (the session is already gone), returns normally. A
   TEARDOWN the server refuses throws `RtspException` of the status's kind:
@@ -2618,7 +2630,9 @@ item 3 — double-free safety). On return — success **or** failure — this
 `RtspSession` wrapper is closed: subsequent `pause()` / `play()` / `teardown()`
 calls throw `IllegalStateException`. The `H264Receiver` takes over the full
 session (control connection, keepalives, and its close on `close()`, as
-`RtspSession.close()` does it). By contrast,
+`RtspSession.close()` does it; `endReason()` then reads `CLEAN_TEARDOWN` only
+when the server accepted the TEARDOWN within the close's 500 ms and no
+`recvAu()` was in progress, otherwise `CANCELLED`). By contrast,
 `intoDemuxReceiver()` leases the session handle (a sanctioned borrow — only the
 data-plane transport moves into the receiver), so the control plane remains
 usable after the call.
