@@ -52,7 +52,23 @@
 #        `fn lock_inner(&self) -> MutexGuard<…>`) is not one of the scanned
 #        spellings and is invisible to this check;
 #      - locks taken through a wrapper (`Owned::with_ref_blocking`) or
-#        inside another crate are not scanned here;
+#        inside another crate are not scanned here. These Python RTSP-server
+#        calls still wait for a tst-rtp lock with the GIL held; no holder of
+#        any of them waits for I/O or the GIL, so each wait is bounded by
+#        the in-memory work below. Re-check this list when a holder changes:
+#          MountHandle.peer_count / __repr__, PublishMount.peer_count /
+#          __repr__: the fanout channel's tail mutex (tokio broadcast),
+#          held O(1) per take (a send pops at most a fixed batch of
+#          waiters, then wakes them after letting go);
+#          RtspServer.local_addr: the bound-address mutex, O(1), written
+#          once by the listener;
+#          RtspServer.__repr__: that mutex, then the mount table's, held
+#          for an insert, a remove, a lookup, a snapshot of the table, or
+#          an on-demand publish mount's creation (a count over the table
+#          and a queue try_send, which never blocks);
+#          MountRules.set / remove / set_default / clear / set_challenge,
+#          len() and __repr__: the rules table's rwlocks, held for one map
+#          operation (clear empties the map);
 #      - parentheses inside string or char literals, and a `//` comment
 #        after code that itself contains ` //` in a string, skew the count
 #        until the next `fn`, where it resets.
