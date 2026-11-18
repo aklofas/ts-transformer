@@ -19,10 +19,13 @@
 //! but nothing exists to fire it with before the function returns — a
 //! caller that needs the FIRST accept reachable from another thread uses
 //! [`managed_recv_transport_from_url`] with its own pre-created slot.
-//! In caller mode that slot is read once, before the dial: a slot already
-//! cancelled refuses the first connect without dialling, but a cancel
-//! that arrives while the connect is in progress is not seen (the slot
-//! holds nothing to fire) and the connect runs to its own timeout.
+//! In caller mode that slot is read before every dial (the first connect
+//! and each re-dial): a slot already cancelled refuses the dial without
+//! dialling. A cancel that arrives during the dial does not interrupt it
+//! (the slot holds nothing to fire): if the dial then succeeds the open
+//! returns a live transport (end it through its own cancel handle; on a
+//! managed receiver the next re-dial is refused), and if it fails the
+//! open returns `ExplicitClose`.
 //!
 //! Senders are caller-only: `?mode=listener` is refused before any
 //! socket is touched (see `docs/project/deferred-features.md`, "SRT URL
@@ -88,15 +91,28 @@ fn policy_refused(e: tst_pipeline::ReconnectPolicyError) -> SrtError {
 /// One open, dispatched on the URL's mode. A slot already cancelled
 /// refuses either mode with `ExplicitClose`, the same answer
 /// [`SrtUrl::accept_one`] gives, so a caller-mode open or re-dial never
-/// starts after its cancel.
+/// starts once the cancel is seen. A dial that fails after a cancel
+/// arrived during it reports the cancel too, as the listener path does
+/// for a failed accept.
 fn open(url: &SrtUrl, slot: &FactoryCancel) -> Result<SrtTransport, SrtError> {
     match url.mode {
         Mode::Caller if slot.is_cancelled() => {
             Err(SrtError::Transport(TransportError::ExplicitClose))
         }
-        Mode::Caller => url.connect(),
+        Mode::Caller => failure_under_cancel(url.connect(), slot),
         Mode::Listener => url.accept_one(slot),
     }
+}
+
+/// A failure while `slot` is cancelled is the cancel; a success wins.
+fn failure_under_cancel<T>(r: Result<T, SrtError>, slot: &FactoryCancel) -> Result<T, SrtError> {
+    r.map_err(|e| {
+        if slot.is_cancelled() {
+            SrtError::Transport(TransportError::ExplicitClose)
+        } else {
+            e
+        }
+    })
 }
 
 /// The receive-side reconnect decorator for `url`, opened now (blocking on
@@ -107,19 +123,21 @@ fn open(url: &SrtUrl, slot: &FactoryCancel) -> Result<SrtTransport, SrtError> {
 /// own — from a thread you control, with the slot shared beforehand — to
 /// keep the FIRST accept cancellable too: a cancel before or during it
 /// returns `Err(SrtError::Transport(TransportError::ExplicitClose))`.
-/// In caller mode only a cancel BEFORE the call is seen: it returns the
-/// same error without dialling. A cancel during the first connect is not
-/// (the slot holds nothing while the connect is in progress), and the
-/// connect runs to its own timeout. Every re-dial checks the slot the same
-/// way, so a slot cancelled directly ends a caller-mode reconnect with
-/// `ExplicitClose` instead of dialling again.
+/// In caller mode a cancel BEFORE the call returns the same error without
+/// dialling. A cancel that arrives during the first connect does not
+/// interrupt it (the slot holds nothing while the connect is in
+/// progress): if the connect then succeeds this returns the live
+/// transport (end it through its own cancel handle; its next re-dial is
+/// refused), and if it fails this returns the same error. Every re-dial
+/// checks the slot the same way, so a slot cancelled directly ends a
+/// caller-mode reconnect with `ExplicitClose` instead of dialling again.
 ///
 /// # Errors
 ///
 /// - [`SrtError::Option`] — the policy is zero backoff with unlimited attempts (refused before connecting).
 /// - [`SrtError::Transport`]`(`[`TransportError::ExplicitClose`]`)` — `factory_cancel`
-///   was cancelled before the call (either mode) or during the first
-///   accept.
+///   was cancelled before the call (either mode), during the first
+///   accept, or during a first connect that then failed.
 /// - Whatever the initial [`SrtUrl::connect`] / [`SrtUrl::accept_one`]
 ///   returned; the managed transport is not built.
 pub fn managed_recv_transport_from_url(
@@ -179,7 +197,9 @@ pub fn managed_demux_receiver_from_url(
 /// then wakes every parked re-accept.
 /// In caller mode a cancel before the call refuses the first connect
 /// with the same error and nothing is dialled; a cancel during the connect
-/// is not seen (see [`managed_recv_transport_from_url`]).
+/// does not interrupt it: a connect that succeeds returns the live shell,
+/// one that fails returns the same error (see
+/// [`managed_recv_transport_from_url`]).
 ///
 /// # Errors
 ///
@@ -224,7 +244,9 @@ pub fn managed_receiver_from_url(
 /// then wakes every parked re-accept.
 /// In caller mode a cancel before the call refuses the first connect
 /// with the same error and nothing is dialled; a cancel during the connect
-/// is not seen (see [`managed_recv_transport_from_url`]).
+/// does not interrupt it: a connect that succeeds returns the live shell,
+/// one that fails returns the same error (see
+/// [`managed_recv_transport_from_url`]).
 ///
 /// # Errors
 ///
@@ -398,4 +420,31 @@ pub fn managed_raw_sender_from_url(
     let managed = managed_transport_from_url(url, policy)?;
     let (handles, stats) = send_handles(&managed);
     Ok((RawSender::new(managed, config), handles, stats))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn timed_out() -> Result<(), SrtError> {
+        Err(SrtError::Connect(crate::SrtConnectError::TimedOut))
+    }
+
+    #[test]
+    fn a_failure_under_a_cancelled_slot_is_the_cancel() {
+        let slot = FactoryCancel::new();
+        assert!(matches!(
+            failure_under_cancel(timed_out(), &slot),
+            Err(SrtError::Connect(_))
+        ));
+        slot.cancel();
+        assert!(matches!(
+            failure_under_cancel(timed_out(), &slot),
+            Err(SrtError::Transport(TransportError::ExplicitClose))
+        ));
+        assert!(
+            failure_under_cancel(Ok(()), &slot).is_ok(),
+            "a success wins"
+        );
+    }
 }

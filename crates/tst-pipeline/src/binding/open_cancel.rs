@@ -20,11 +20,16 @@
 //!   `TransportError::ExplicitClose` (binding kind `CLOSED`) before it
 //!   binds or dials.
 //! - What a cancelled slot reaches is the opener's business: a
-//!   listener-mode first accept at any time; a caller-mode open only
-//!   before it dials (a cancel during the connect is not seen, and the
-//!   connect runs to its own timeout). An opener that takes no slot
-//!   (every sender, every non-SRT scheme) is reached only by the binding
-//!   checking [`OpenCancel::is_cancelled`] before it opens.
+//!   listener-mode first accept at any time; a caller-mode open before
+//!   it dials. A cancel that arrives during a dial does not interrupt it:
+//!   if the dial then succeeds the open returns a live shell (end it
+//!   through its own cancel handle; on a managed receiver the next re-dial
+//!   is refused), and if it fails the open returns `ExplicitClose`.
+//! - An opener that takes no slot (every sender, every non-SRT scheme) is
+//!   reached only through the binding, under the same rule: it checks
+//!   [`OpenCancel::is_cancelled`] before the open and refuses with
+//!   `ExplicitClose`, and it reports an open that failed while the object
+//!   was cancelled as `ExplicitClose` too.
 //! - The object is NOT the opened shell's cancel handle. An open's slot is
 //!   registered only while its [`OpenSlot`] lives; drop that guard as soon
 //!   as the open returns. A later `cancel()` then does nothing to the
