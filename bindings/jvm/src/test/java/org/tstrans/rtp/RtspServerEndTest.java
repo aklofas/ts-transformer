@@ -44,7 +44,10 @@ class RtspServerEndTest {
         RtspServer server = start();
         try (MountHandle mount = server.addUnicastMount("/live", roundtripConfig());
              RawPlayer player = new RawPlayer(port(server), "/live")) {
-            Thread closer = daemon(server::close);
+            // close() on a side thread, so this one reads the wire while close() runs.
+            Thread closer = new Thread(server::close);
+            closer.setDaemon(true);
+            closer.start();
             Wire wire = player.readToEof(END_MS);
             closer.join(END_MS);
             assertFalse(closer.isAlive(), "close() did not return");
@@ -211,13 +214,6 @@ class RtspServerEndTest {
     private static void assertNoNotice(Wire wire) {
         assertFalse(wire.text.contains("ANNOUNCE"),
             () -> "a Notice was sent: " + wire.text);
-    }
-
-    private static Thread daemon(Runnable r) {
-        Thread t = new Thread(r);
-        t.setDaemon(true);
-        t.start();
-        return t;
     }
 
     /** What a reader received after PLAY, and whether the server closed the connection. */
