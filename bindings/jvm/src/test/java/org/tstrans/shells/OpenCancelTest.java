@@ -181,9 +181,11 @@ class OpenCancelTest {
 
     /**
      * Start a listener-mode open with {@code oc}; return once its port is bound and it has not
-     * returned. Another socket can take the probed port between the probe's release and the
-     * open's bind (the open then fails with a {@code bind:} fault before it parks); such a
-     * port is given up for another one.
+     * returned. The open's bind fails with a {@code bind:} fault, before it parks, when
+     * something holds the port at that moment: another socket that took it after
+     * {@code freeUdpPort()} released it, or this loop's own {@code udpPortBound} probe, which
+     * binds the same port every 10 ms while the open is binding. Such a port is given up for
+     * another one, at most four times.
      */
     private static ParkedOpen park(Open open, OpenCancel oc) throws Exception {
         for (int attempt = 1; ; attempt++) {
@@ -299,7 +301,7 @@ class OpenCancelTest {
         }
     }
 
-    /** A URL of each scheme; the cancelled object refuses it before the transport is touched. */
+    /** A URL of each scheme with a cancelled object: every shell open throws that scheme's CLOSED. */
     @ParameterizedTest
     @ValueSource(strings = {"srt", "rtp", "udp", "tcp", "tcps", "rist"})
     void aCancelledObjectThrowsTheSchemesClosed(String scheme) throws Exception {
@@ -329,15 +331,18 @@ class OpenCancelTest {
         try (OpenCancel oc = new OpenCancel()) {
             oc.cancel();
             String bad = "srt://127.0.0.1:notaport?mode=listener&no_such_key=1";
-            List<Callable<?>> calls = List.of(
+            List<Callable<?>> calls = new ArrayList<>(List.of(
                 () -> Receiver.open(bad, oc),
-                () -> Sender.open(bad, oc),
-                () -> ManagedReceiver.fromUrl(bad, null, oc),
-                () -> ManagedSender.fromUrl(bad, null, oc),
-                () -> ManagedDemuxReceiver.fromUrl(bad, DemuxerConfig.builder().build(), null, oc),
-                () -> ManagedMuxSender.fromUrl(bad, roundtripConfig(), null, oc),
-                // The managed shells are SRT only, so even another scheme is SRT's CLOSED.
-                () -> ManagedSender.fromUrl("udp://127.0.0.1:1", null, oc));
+                () -> Sender.open(bad, oc)));
+            // The managed shells are SRT only, so any other URL is SRT's CLOSED too.
+            for (String url : List.of(bad, "udp://127.0.0.1:1", "rtp://127.0.0.1:1",
+                                      "http://127.0.0.1:1")) {
+                calls.add(() -> ManagedReceiver.fromUrl(url, null, oc));
+                calls.add(() -> ManagedSender.fromUrl(url, null, oc));
+                calls.add(() -> ManagedDemuxReceiver.fromUrl(
+                    url, DemuxerConfig.builder().build(), null, oc));
+                calls.add(() -> ManagedMuxSender.fromUrl(url, roundtripConfig(), null, oc));
+            }
             for (Callable<?> call : calls) {
                 assertSrtClosed(assertThrows(Exception.class, call::call));
             }
