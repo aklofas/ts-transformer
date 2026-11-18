@@ -99,8 +99,10 @@ public final class RtspServer extends NativeHandle {
     public String localAddr() { ensureOpen(); return nLocalAddr(peekHandle()); }
 
     /**
-     * Graceful shutdown — fires the Notice 5402 path on each active session, waits
-     * up to the builder's drain window. Idempotent. {@code drainMs} is accepted for API
+     * Graceful shutdown: sends the Notice 5402 to each active session (up to 1&nbsp;s
+     * each), waits for the sessions to end for up to the builder's drain window plus
+     * 500&nbsp;ms, then shuts each session's connection (up to 500&nbsp;ms each).
+     * Idempotent. {@code drainMs} is accepted for API
      * stability but the configured {@code gracefulShutdownDrainMs} governs the wait.
      * After the hard cancel ({@link #cancelHandle()}) it sends no Notice, waits for
      * no drain and returns once the publish side is closed. A hard cancel fired while
