@@ -56,7 +56,8 @@ pub(crate) fn rtsp_error_to_jvm(env: &mut Env, e: RtspError) {
     throw_binding(env, Domain::Rtsp, &BindingError::from(e));
 }
 
-/// RTSP server errors — the shared `From<RtspServerError>` (buckets unchanged).
+/// RTSP server errors — the shared `From<RtspServerError>` (`Shutdown`, the server
+/// ended, → `CLOSED`).
 pub(crate) fn server_error_to_jvm(env: &mut Env, e: RtspServerError) {
     throw_binding(env, Domain::Rtsp, &BindingError::from(e));
 }

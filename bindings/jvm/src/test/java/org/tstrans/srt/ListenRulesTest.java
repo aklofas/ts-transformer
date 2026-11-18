@@ -170,6 +170,20 @@ class ListenRulesTest {
             assertEquals(SrtException.Kind.CLOSED,
                 assertThrows(SrtException.class,
                     () -> rules.setDefault(ListenRule.accept())).kind());
+
+            // rules() itself still returns a view after the cancel; the view refuses.
+            ListenRules late = listener.rules();
+            assertEquals(SrtException.Kind.CLOSED,
+                assertThrows(SrtException.class, late::size).kind());
+            assertEquals(SrtException.Kind.CLOSED,
+                assertThrows(SrtException.class, () -> late.remove("a")).kind());
+            assertEquals(SrtException.Kind.CLOSED,
+                assertThrows(SrtException.class, late::clear).kind());
+            assertEquals(SrtException.Kind.CLOSED,
+                assertThrows(SrtException.class, () -> late.set("b", ListenRule.accept())).kind());
+            assertEquals(SrtException.Kind.CLOSED,
+                assertThrows(SrtException.class,
+                    () -> late.setDefault(ListenRule.accept())).kind());
         }
     }
 
