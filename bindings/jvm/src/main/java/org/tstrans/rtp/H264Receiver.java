@@ -61,8 +61,10 @@ import org.tstrans.shells.SocketStats;
  *
  * <h3>Lifecycle</h3>
  *
- * <p>{@link #close()} fires the cancel handle and frees the native receiver.
- * Subsequent {@link #recvAu()} throws {@link IllegalStateException}. Idempotent.
+ * <p>{@link #close()} fires the cancel handle and frees the native receiver; for a
+ * receiver made by {@link RtspSession#intoH264Receiver()} it also closes the RTSP
+ * client (see {@link #close()}). Subsequent {@link #recvAu()} throws
+ * {@link IllegalStateException}. Idempotent.
  *
  * <pre>{@code
  * try (H264Receiver rx = H264Receiver.listen("rtp://0.0.0.0:5004?pt=96")) {
@@ -310,15 +312,18 @@ public final class H264Receiver extends NativeHandle implements Iterable<H264Acc
      * Cancel any in-progress {@link #recvAu()} and free the underlying receiver.
      * Idempotent. Safe to call from another thread to stop a parked recv.
      *
-     * <p><b>May block briefly:</b> the cancel hook fires first (without taking
-     * the native resource lock), then the close waits for the woken
-     * {@code recvAu()} to release that lock. The parked recv polls its cancel
-     * flag at ~100&nbsp;ms granularity, so a cross-thread {@code close()} can
-     * take up to ~100&nbsp;ms (plus one packet-processing interval) to return.
+     * <p><b>May block:</b> the cancel hook fires first (without taking the native
+     * resource lock), then the close waits for the woken {@code recvAu()} to
+     * release that lock. The parked recv polls its cancel flag at ~100&nbsp;ms
+     * granularity, so for a receiver from {@link #listen(String)} a cross-thread
+     * {@code close()} can take up to ~100&nbsp;ms (plus one packet-processing
+     * interval) to return.
      *
-     * <p>For receivers created via {@link RtspSession#intoH264Receiver()}, this
-     * also issues a best-effort RTSP TEARDOWN — the receiver owns the session's
-     * control plane (the session wrapper was consumed at conversion).
+     * <p>A receiver created via {@link RtspSession#intoH264Receiver()} owns the
+     * session's RTSP client (the session wrapper was consumed at conversion), and this
+     * then closes it as {@link RtspSession#close()} does: TEARDOWN with at most
+     * 500&nbsp;ms for the reply, then up to 2&nbsp;s for the client's thread. A refused
+     * or unanswered TEARDOWN is not reported.
      */
     @Override public void close() { super.close(); }
 

@@ -4,11 +4,12 @@ import org.tstrans.NativeHandle;
 
 /**
  * RTSP control-plane cancel handle. {@link #cancel()} breaks any in-flight
- * {@code connect}/{@code pause}/{@code play}/{@code teardown} on the originating
- * session out of blocking I/O at the next poll (typically &lt;100&nbsp;ms); that
- * call then throws {@link org.tstrans.RtspException}. Mirrors tst-py
- * {@code tstrans.rtp.RtspCancelHandle}. All handles obtained from one session
- * share the same backing flag.
+ * {@code pause}/{@code play}/{@code teardown} on the originating session out of
+ * blocking I/O at the next poll (typically &lt;100&nbsp;ms); that call then throws
+ * {@link org.tstrans.RtspException} of kind {@code CLOSED}. A handle exists only once
+ * {@code RtspClient.connect} has returned the session, so it cannot reach a connect.
+ * Mirrors tst-py {@code tstrans.rtp.RtspCancelHandle}. All handles obtained from one
+ * session share the same backing flag, which {@link RtspSession#close()} also sets.
  *
  * <p>The native handle is an {@link java.util.concurrent.atomic.AtomicLong}
  * registry key; {@link #close()} claims it atomically with {@code getAndSet(0)},
