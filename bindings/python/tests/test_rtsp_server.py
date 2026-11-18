@@ -9,7 +9,7 @@ Covers:
   stream variants accept bytes / bytearray / memoryview.
 - MountHandle stats() returns a frozen ServerStats / MountStats with
   expected fields.
-- cancel_handle round-trip.
+- cancel_handle round-trip, and what the hard cancel refuses with no stop().
 - Notice 5402 graceful shutdown path doesn't panic.
 """
 
@@ -36,6 +36,7 @@ from tstrans.rtp import (
     BasicAuth,
     DigestAuth,
     MountHandle,
+    MountRule,
     MountStats,
     RtspServer,
     RtspServerCancelHandle,
@@ -586,6 +587,63 @@ def test_stop_after_mount_does_not_panic():
     cfg = RtspServerConfig(bind_addr="127.0.0.1:0", graceful_shutdown_drain_ms=50)
     server = RtspServer.start(cfg)
     server.add_unicast_mount("/live", _single_video_program())
+    server.stop()
+
+
+# ---------------------------------------------------------------------------
+# The hard cancel: cancel_handle().cancel() with no stop().
+# ---------------------------------------------------------------------------
+
+
+def test_push_after_the_hard_cancel_is_closed():
+    cfg = RtspServerConfig(bind_addr="127.0.0.1:0", graceful_shutdown_drain_ms=50)
+    with RtspServer.start(cfg) as server:
+        mount = server.add_unicast_mount("/live", _single_video_program())
+        mount.push_video(_IDR_NAL, pts=Pts90khz(0), key_frame=True)
+        before = mount.stats().bytes_pushed
+        server.cancel_handle().cancel()
+        with pytest.raises(RtspError) as ei:
+            mount.push_video(_IDR_NAL, pts=Pts90khz(3000), key_frame=True)
+        assert ei.value.kind == RtspErrorKind.CLOSED
+        # Refused before the muxer is touched.
+        assert mount.stats().bytes_pushed == before
+
+
+def test_registration_after_the_hard_cancel_is_closed():
+    cfg = RtspServerConfig(bind_addr="127.0.0.1:0", graceful_shutdown_drain_ms=50)
+    with RtspServer.start(cfg) as server:
+        server.add_unicast_mount("/live", _single_video_program())
+        server.cancel_handle().cancel()
+        for call in (
+            lambda: server.add_unicast_mount("/other", _single_video_program()),
+            lambda: server.remove_mount("/live"),
+        ):
+            with pytest.raises(RtspError) as ei:
+                call()
+            assert ei.value.kind == RtspErrorKind.CLOSED
+
+
+def test_rule_edits_after_the_hard_cancel_are_closed_but_len_answers():
+    cfg = RtspServerConfig(bind_addr="127.0.0.1:0", graceful_shutdown_drain_ms=50)
+    with RtspServer.start(cfg) as server:
+        rules = server.mount_rules()
+        rules.set("/a", MountRule())
+        server.cancel_handle().cancel()
+        assert rules.is_closed()
+        with pytest.raises(RtspError) as ei:
+            rules.set("/b", MountRule())
+        assert ei.value.kind == RtspErrorKind.CLOSED
+        assert len(rules) == 1
+
+
+def test_stop_after_the_hard_cancel_returns():
+    cfg = RtspServerConfig(bind_addr="127.0.0.1:0", graceful_shutdown_drain_ms=50)
+    server = RtspServer.start(cfg)
+    try:
+        server.add_unicast_mount("/live", _single_video_program())
+        server.cancel_handle().cancel()
+    finally:
+        server.stop()
     server.stop()
 
 

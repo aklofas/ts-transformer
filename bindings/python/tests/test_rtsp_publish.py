@@ -594,6 +594,57 @@ def test_context_exit_wakes_parked_next_publisher_and_receiver():
         rx.close()
 
 
+def test_hard_cancel_wakes_a_parked_next_publisher_with_closed_kind():
+    out: dict[str, Any] = {}
+    entered = threading.Event()
+    returned = threading.Event()
+
+    def park(server: RtspServer) -> None:
+        entered.set()
+        try:
+            out["value"] = server.next_publisher(None)
+        except BaseException as e:  # noqa: BLE001
+            out["exc"] = e
+        finally:
+            returned.set()
+
+    with _start(accept_unregistered=True) as server:
+        t = threading.Thread(target=park, args=(server,), daemon=True)
+        t.start()
+        assert entered.wait(JOIN_S)
+        # The call has not returned: it is parked, not refused at entry.
+        assert not returned.wait(0.2), out
+        server.cancel_handle().cancel()
+        t.join(JOIN_S)
+        if t.is_alive():
+            server.stop()
+            t.join(JOIN_S)
+            pytest.fail("the hard cancel did not wake the parked next_publisher")
+        exc = out.get("exc")
+        assert isinstance(exc, RtspError), out
+        assert exc.kind == RtspErrorKind.CLOSED
+
+
+def test_hard_cancel_ends_a_parked_publish_receiver_with_end_of_stream():
+    with _start() as server:
+        mount = server.add_publish_mount("/cam")
+        rx = mount.into_demux_receiver()
+        try:
+            t, out = _next_in_thread(rx)
+            server.cancel_handle().cancel()
+            t.join(JOIN_S)
+            if t.is_alive():
+                mount.cancel()  # unpark so the suite does not hang
+                t.join(JOIN_S)
+                pytest.fail("the hard cancel did not end the parked receiver")
+            # The server ended, as after stop(): end of stream, not the
+            # application's own cancel.
+            assert isinstance(out.get("exc"), StopIteration), out
+            assert rx.end_reason() == EndReason.CLEAN_TEARDOWN
+        finally:
+            rx.close()
+
+
 def test_next_publisher_none_timeout_is_interruptible():
     """Ctrl-C reaches a `next_publisher(None)` parked on the main thread:
     the wait is sliced and pending signals are handled between slices."""
