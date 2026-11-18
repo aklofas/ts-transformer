@@ -117,12 +117,14 @@ pub unsafe extern "C" fn tst_muxer_push_video(
     pts_90khz: i64,
     key_frame: bool,
 ) -> crate::c_types::c_int {
-    let (h, nal) = match unsafe { borrow(p, nal, len, "nal") } {
-        Ok(v) => v,
-        Err(rc) => return rc,
-    };
-    h.inner
-        .with_inner_mut(|m| finish(m.push_video(nal, Pts90khz::new(pts_90khz), key_frame)))
+    crate::panic::ffi_catch(TstError::Internal as i32, || {
+        let (h, nal) = match unsafe { borrow(p, nal, len, "nal") } {
+            Ok(v) => v,
+            Err(rc) => return rc,
+        };
+        h.inner
+            .with_inner_mut(|m| finish(m.push_video(nal, Pts90khz::new(pts_90khz), key_frame)))
+    })
 }
 
 /// Push one KLV blob onto the muxer's single KLV stream.
@@ -161,18 +163,20 @@ pub unsafe extern "C" fn tst_muxer_push_klv(
     len: usize,
     pts_90khz: i64,
 ) -> crate::c_types::c_int {
-    let (h, klv) = match unsafe { borrow(p, klv, len, "klv") } {
-        Ok(v) => v,
-        Err(rc) => return rc,
-    };
-    h.inner.with_inner_mut(|m| {
-        finish(m.push_klv(
-            klv,
-            Pts90khz::new(pts_90khz),
-            // C ABI receiver-surface plan will expose metadata_service_id;
-            // today defaults to 0x00 per ST 1402.2 App. B Table 2.
-            0x00,
-        ))
+    crate::panic::ffi_catch(TstError::Internal as i32, || {
+        let (h, klv) = match unsafe { borrow(p, klv, len, "klv") } {
+            Ok(v) => v,
+            Err(rc) => return rc,
+        };
+        h.inner.with_inner_mut(|m| {
+            finish(m.push_klv(
+                klv,
+                Pts90khz::new(pts_90khz),
+                // C ABI receiver-surface plan will expose metadata_service_id;
+                // today defaults to 0x00 per ST 1402.2 App. B Table 2.
+                0x00,
+            ))
+        })
     })
 }
 
@@ -194,21 +198,23 @@ pub unsafe extern "C" fn tst_muxer_push_video_to(
     pts_90khz: i64,
     key_frame: bool,
 ) -> crate::c_types::c_int {
-    let (h, nal) = match unsafe { borrow(p, nal, len, "nal") } {
-        Ok(v) => v,
-        Err(rc) => return rc,
-    };
-    // Trust-boundary validation: reject any caller-provided u32 that has
-    // bits set outside the canonical 8-bit packed layout. Without this,
-    // `valid.raw() | 0x100` would mask down to the valid low byte and
-    // alias the wrong elementary stream — the push-time range check
-    // sees only the masked indices and cannot distinguish.
-    let stream = match VideoStreamHandle::try_from_raw(handle) {
-        Ok(s) => s,
-        Err(e) => return record_mux_error(&e),
-    };
-    h.inner.with_inner_mut(|m| {
-        finish(m.push_video_to(stream, nal, Pts90khz::new(pts_90khz), key_frame))
+    crate::panic::ffi_catch(TstError::Internal as i32, || {
+        let (h, nal) = match unsafe { borrow(p, nal, len, "nal") } {
+            Ok(v) => v,
+            Err(rc) => return rc,
+        };
+        // Trust-boundary validation: reject any caller-provided u32 that has
+        // bits set outside the canonical 8-bit packed layout. Without this,
+        // `valid.raw() | 0x100` would mask down to the valid low byte and
+        // alias the wrong elementary stream — the push-time range check
+        // sees only the masked indices and cannot distinguish.
+        let stream = match VideoStreamHandle::try_from_raw(handle) {
+            Ok(s) => s,
+            Err(e) => return record_mux_error(&e),
+        };
+        h.inner.with_inner_mut(|m| {
+            finish(m.push_video_to(stream, nal, Pts90khz::new(pts_90khz), key_frame))
+        })
     })
 }
 
@@ -241,23 +247,25 @@ pub unsafe extern "C" fn tst_muxer_push_video_wire(
     pts_90khz: i64,
     key_frame: bool,
 ) -> crate::c_types::c_int {
-    let (h, wire) = match unsafe { borrow(p, wire, len, "wire") } {
-        Ok(v) => v,
-        Err(rc) => return rc,
-    };
-    h.inner.with_inner_mut(|m| {
-        // Single-stream resolution: same ambiguity contract as push_video.
-        let handles = m.video_handles();
-        let stream = match handles.as_slice() {
-            [single] => *single,
-            _ => {
-                return record_mux_error(&MuxError::AmbiguousTarget {
-                    kind: MuxStreamKind::Video,
-                    count: handles.len(),
-                });
-            }
+    crate::panic::ffi_catch(TstError::Internal as i32, || {
+        let (h, wire) = match unsafe { borrow(p, wire, len, "wire") } {
+            Ok(v) => v,
+            Err(rc) => return rc,
         };
-        finish(m.push_video_wire_to(stream, wire, Pts90khz::new(pts_90khz), key_frame))
+        h.inner.with_inner_mut(|m| {
+            // Single-stream resolution: same ambiguity contract as push_video.
+            let handles = m.video_handles();
+            let stream = match handles.as_slice() {
+                [single] => *single,
+                _ => {
+                    return record_mux_error(&MuxError::AmbiguousTarget {
+                        kind: MuxStreamKind::Video,
+                        count: handles.len(),
+                    });
+                }
+            };
+            finish(m.push_video_wire_to(stream, wire, Pts90khz::new(pts_90khz), key_frame))
+        })
     })
 }
 
@@ -287,17 +295,19 @@ pub unsafe extern "C" fn tst_muxer_push_video_wire_to(
     pts_90khz: i64,
     key_frame: bool,
 ) -> crate::c_types::c_int {
-    let (h, wire) = match unsafe { borrow(p, wire, len, "wire") } {
-        Ok(v) => v,
-        Err(rc) => return rc,
-    };
-    // Trust-boundary handle check — see tst_muxer_push_video_to.
-    let stream = match VideoStreamHandle::try_from_raw(handle) {
-        Ok(s) => s,
-        Err(e) => return record_mux_error(&e),
-    };
-    h.inner.with_inner_mut(|m| {
-        finish(m.push_video_wire_to(stream, wire, Pts90khz::new(pts_90khz), key_frame))
+    crate::panic::ffi_catch(TstError::Internal as i32, || {
+        let (h, wire) = match unsafe { borrow(p, wire, len, "wire") } {
+            Ok(v) => v,
+            Err(rc) => return rc,
+        };
+        // Trust-boundary handle check — see tst_muxer_push_video_to.
+        let stream = match VideoStreamHandle::try_from_raw(handle) {
+            Ok(s) => s,
+            Err(e) => return record_mux_error(&e),
+        };
+        h.inner.with_inner_mut(|m| {
+            finish(m.push_video_wire_to(stream, wire, Pts90khz::new(pts_90khz), key_frame))
+        })
     })
 }
 
@@ -328,23 +338,25 @@ pub unsafe extern "C" fn tst_muxer_push_video_to_with_dts(
     dts_90khz: i64,
     key_frame: bool,
 ) -> crate::c_types::c_int {
-    let (h, nal) = match unsafe { borrow(p, nal, len, "nal") } {
-        Ok(v) => v,
-        Err(rc) => return rc,
-    };
-    // Trust-boundary handle check — see tst_muxer_push_video_to.
-    let stream = match VideoStreamHandle::try_from_raw(handle) {
-        Ok(s) => s,
-        Err(e) => return record_mux_error(&e),
-    };
-    h.inner.with_inner_mut(|m| {
-        finish(m.push_video_to_with_dts(
-            stream,
-            nal,
-            Pts90khz::new(pts_90khz),
-            Pts90khz::new(dts_90khz),
-            key_frame,
-        ))
+    crate::panic::ffi_catch(TstError::Internal as i32, || {
+        let (h, nal) = match unsafe { borrow(p, nal, len, "nal") } {
+            Ok(v) => v,
+            Err(rc) => return rc,
+        };
+        // Trust-boundary handle check — see tst_muxer_push_video_to.
+        let stream = match VideoStreamHandle::try_from_raw(handle) {
+            Ok(s) => s,
+            Err(e) => return record_mux_error(&e),
+        };
+        h.inner.with_inner_mut(|m| {
+            finish(m.push_video_to_with_dts(
+                stream,
+                nal,
+                Pts90khz::new(pts_90khz),
+                Pts90khz::new(dts_90khz),
+                key_frame,
+            ))
+        })
     })
 }
 
@@ -373,21 +385,23 @@ pub unsafe extern "C" fn tst_muxer_push_video_misp_to(
     time_status: u8,
     value: u64,
 ) -> crate::c_types::c_int {
-    let (h, nal) = match unsafe { borrow(p, nal, len, "nal") } {
-        Ok(v) => v,
-        Err(rc) => return rc,
-    };
-    // Trust-boundary handle check — see tst_muxer_push_video_to.
-    let stream = match VideoStreamHandle::try_from_raw(handle) {
-        Ok(s) => s,
-        Err(e) => return record_mux_error(&e),
-    };
-    let misp = match misp(misp_kind, time_status, value) {
-        Ok(t) => t,
-        Err(rc) => return rc,
-    };
-    h.inner.with_inner_mut(|m| {
-        finish(m.push_video_misp_to(stream, nal, Pts90khz::new(pts_90khz), key_frame, &misp))
+    crate::panic::ffi_catch(TstError::Internal as i32, || {
+        let (h, nal) = match unsafe { borrow(p, nal, len, "nal") } {
+            Ok(v) => v,
+            Err(rc) => return rc,
+        };
+        // Trust-boundary handle check — see tst_muxer_push_video_to.
+        let stream = match VideoStreamHandle::try_from_raw(handle) {
+            Ok(s) => s,
+            Err(e) => return record_mux_error(&e),
+        };
+        let misp = match misp(misp_kind, time_status, value) {
+            Ok(t) => t,
+            Err(rc) => return rc,
+        };
+        h.inner.with_inner_mut(|m| {
+            finish(m.push_video_misp_to(stream, nal, Pts90khz::new(pts_90khz), key_frame, &misp))
+        })
     })
 }
 
@@ -416,28 +430,30 @@ pub unsafe extern "C" fn tst_muxer_push_video_misp_to_with_dts(
     time_status: u8,
     value: u64,
 ) -> crate::c_types::c_int {
-    let (h, nal) = match unsafe { borrow(p, nal, len, "nal") } {
-        Ok(v) => v,
-        Err(rc) => return rc,
-    };
-    // Trust-boundary handle check — see tst_muxer_push_video_to.
-    let stream = match VideoStreamHandle::try_from_raw(handle) {
-        Ok(s) => s,
-        Err(e) => return record_mux_error(&e),
-    };
-    let misp = match misp(misp_kind, time_status, value) {
-        Ok(t) => t,
-        Err(rc) => return rc,
-    };
-    h.inner.with_inner_mut(|m| {
-        finish(m.push_video_misp_to_with_dts(
-            stream,
-            nal,
-            Pts90khz::new(pts_90khz),
-            Pts90khz::new(dts_90khz),
-            key_frame,
-            &misp,
-        ))
+    crate::panic::ffi_catch(TstError::Internal as i32, || {
+        let (h, nal) = match unsafe { borrow(p, nal, len, "nal") } {
+            Ok(v) => v,
+            Err(rc) => return rc,
+        };
+        // Trust-boundary handle check — see tst_muxer_push_video_to.
+        let stream = match VideoStreamHandle::try_from_raw(handle) {
+            Ok(s) => s,
+            Err(e) => return record_mux_error(&e),
+        };
+        let misp = match misp(misp_kind, time_status, value) {
+            Ok(t) => t,
+            Err(rc) => return rc,
+        };
+        h.inner.with_inner_mut(|m| {
+            finish(m.push_video_misp_to_with_dts(
+                stream,
+                nal,
+                Pts90khz::new(pts_90khz),
+                Pts90khz::new(dts_90khz),
+                key_frame,
+                &misp,
+            ))
+        })
     })
 }
 
@@ -462,23 +478,25 @@ pub unsafe extern "C" fn tst_muxer_push_video_wire_to_with_dts(
     dts_90khz: i64,
     key_frame: bool,
 ) -> crate::c_types::c_int {
-    let (h, wire) = match unsafe { borrow(p, wire, len, "wire") } {
-        Ok(v) => v,
-        Err(rc) => return rc,
-    };
-    // Trust-boundary handle check — see tst_muxer_push_video_to.
-    let stream = match VideoStreamHandle::try_from_raw(handle) {
-        Ok(s) => s,
-        Err(e) => return record_mux_error(&e),
-    };
-    h.inner.with_inner_mut(|m| {
-        finish(m.push_video_wire_to_with_dts(
-            stream,
-            wire,
-            Pts90khz::new(pts_90khz),
-            Pts90khz::new(dts_90khz),
-            key_frame,
-        ))
+    crate::panic::ffi_catch(TstError::Internal as i32, || {
+        let (h, wire) = match unsafe { borrow(p, wire, len, "wire") } {
+            Ok(v) => v,
+            Err(rc) => return rc,
+        };
+        // Trust-boundary handle check — see tst_muxer_push_video_to.
+        let stream = match VideoStreamHandle::try_from_raw(handle) {
+            Ok(s) => s,
+            Err(e) => return record_mux_error(&e),
+        };
+        h.inner.with_inner_mut(|m| {
+            finish(m.push_video_wire_to_with_dts(
+                stream,
+                wire,
+                Pts90khz::new(pts_90khz),
+                Pts90khz::new(dts_90khz),
+                key_frame,
+            ))
+        })
     })
 }
 
@@ -500,24 +518,26 @@ pub unsafe extern "C" fn tst_muxer_push_klv_to(
     len: usize,
     pts_90khz: i64,
 ) -> crate::c_types::c_int {
-    let (h, klv) = match unsafe { borrow(p, klv, len, "klv") } {
-        Ok(v) => v,
-        Err(rc) => return rc,
-    };
-    // Trust-boundary handle check — see tst_muxer_push_video_to.
-    let stream = match KlvStreamHandle::try_from_raw(handle) {
-        Ok(s) => s,
-        Err(e) => return record_mux_error(&e),
-    };
-    h.inner.with_inner_mut(|m| {
-        finish(m.push_klv_to(
-            stream,
-            klv,
-            Pts90khz::new(pts_90khz),
-            // C ABI receiver-surface plan will expose metadata_service_id;
-            // today defaults to 0x00 per ST 1402.2 App. B Table 2.
-            0x00,
-        ))
+    crate::panic::ffi_catch(TstError::Internal as i32, || {
+        let (h, klv) = match unsafe { borrow(p, klv, len, "klv") } {
+            Ok(v) => v,
+            Err(rc) => return rc,
+        };
+        // Trust-boundary handle check — see tst_muxer_push_video_to.
+        let stream = match KlvStreamHandle::try_from_raw(handle) {
+            Ok(s) => s,
+            Err(e) => return record_mux_error(&e),
+        };
+        h.inner.with_inner_mut(|m| {
+            finish(m.push_klv_to(
+                stream,
+                klv,
+                Pts90khz::new(pts_90khz),
+                // C ABI receiver-surface plan will expose metadata_service_id;
+                // today defaults to 0x00 per ST 1402.2 App. B Table 2.
+                0x00,
+            ))
+        })
     })
 }
 
@@ -560,12 +580,14 @@ pub unsafe extern "C" fn tst_muxer_push_data(
     len: usize,
     pts_90khz: i64,
 ) -> crate::c_types::c_int {
-    let (h, data) = match unsafe { borrow(p, data, len, "data") } {
-        Ok(v) => v,
-        Err(rc) => return rc,
-    };
-    h.inner
-        .with_inner_mut(|m| finish(m.push_data(data, Pts90khz::new(pts_90khz))))
+    crate::panic::ffi_catch(TstError::Internal as i32, || {
+        let (h, data) = match unsafe { borrow(p, data, len, "data") } {
+            Ok(v) => v,
+            Err(rc) => return rc,
+        };
+        h.inner
+            .with_inner_mut(|m| finish(m.push_data(data, Pts90khz::new(pts_90khz))))
+    })
 }
 
 /// Push one data payload targeting a specific data elementary stream.
@@ -581,17 +603,19 @@ pub unsafe extern "C" fn tst_muxer_push_data_to(
     len: usize,
     pts_90khz: i64,
 ) -> crate::c_types::c_int {
-    let (h, data) = match unsafe { borrow(p, data, len, "data") } {
-        Ok(v) => v,
-        Err(rc) => return rc,
-    };
-    // Trust-boundary handle check — see tst_muxer_push_video_to.
-    let stream = match DataStreamHandle::try_from_raw(handle) {
-        Ok(s) => s,
-        Err(e) => return record_mux_error(&e),
-    };
-    h.inner
-        .with_inner_mut(|m| finish(m.push_data_to(stream, data, Pts90khz::new(pts_90khz))))
+    crate::panic::ffi_catch(TstError::Internal as i32, || {
+        let (h, data) = match unsafe { borrow(p, data, len, "data") } {
+            Ok(v) => v,
+            Err(rc) => return rc,
+        };
+        // Trust-boundary handle check — see tst_muxer_push_video_to.
+        let stream = match DataStreamHandle::try_from_raw(handle) {
+            Ok(s) => s,
+            Err(e) => return record_mux_error(&e),
+        };
+        h.inner
+            .with_inner_mut(|m| finish(m.push_data_to(stream, data, Pts90khz::new(pts_90khz))))
+    })
 }
 
 /// Push one audio frame buffer (single-stream shorthand).
@@ -610,12 +634,14 @@ pub unsafe extern "C" fn tst_muxer_push_audio(
     len: usize,
     pts_90khz: i64,
 ) -> crate::c_types::c_int {
-    let (h, frames) = match unsafe { borrow(p, frames, len, "frames") } {
-        Ok(v) => v,
-        Err(rc) => return rc,
-    };
-    h.inner
-        .with_inner_mut(|m| finish(m.push_audio(frames, Pts90khz::new(pts_90khz))))
+    crate::panic::ffi_catch(TstError::Internal as i32, || {
+        let (h, frames) = match unsafe { borrow(p, frames, len, "frames") } {
+            Ok(v) => v,
+            Err(rc) => return rc,
+        };
+        h.inner
+            .with_inner_mut(|m| finish(m.push_audio(frames, Pts90khz::new(pts_90khz))))
+    })
 }
 
 /// Push one audio frame buffer targeting a specific audio elementary stream.
@@ -635,17 +661,19 @@ pub unsafe extern "C" fn tst_muxer_push_audio_to(
     len: usize,
     pts_90khz: i64,
 ) -> crate::c_types::c_int {
-    let (h, frames) = match unsafe { borrow(p, frames, len, "frames") } {
-        Ok(v) => v,
-        Err(rc) => return rc,
-    };
-    // Trust-boundary handle check — see tst_muxer_push_video_to.
-    let stream = match AudioStreamHandle::try_from_raw(handle) {
-        Ok(s) => s,
-        Err(e) => return record_mux_error(&e),
-    };
-    h.inner
-        .with_inner_mut(|m| finish(m.push_audio_to(stream, Pts90khz::new(pts_90khz), frames)))
+    crate::panic::ffi_catch(TstError::Internal as i32, || {
+        let (h, frames) = match unsafe { borrow(p, frames, len, "frames") } {
+            Ok(v) => v,
+            Err(rc) => return rc,
+        };
+        // Trust-boundary handle check — see tst_muxer_push_video_to.
+        let stream = match AudioStreamHandle::try_from_raw(handle) {
+            Ok(s) => s,
+            Err(e) => return record_mux_error(&e),
+        };
+        h.inner
+            .with_inner_mut(|m| finish(m.push_audio_to(stream, Pts90khz::new(pts_90khz), frames)))
+    })
 }
 
 /// Push one subtitle PES unit (single-stream shorthand).
@@ -665,12 +693,14 @@ pub unsafe extern "C" fn tst_muxer_push_subtitle(
     len: usize,
     pts_90khz: i64,
 ) -> crate::c_types::c_int {
-    let (h, payload) = match unsafe { borrow(p, payload, len, "payload") } {
-        Ok(v) => v,
-        Err(rc) => return rc,
-    };
-    h.inner
-        .with_inner_mut(|m| finish(m.push_subtitle(Pts90khz::new(pts_90khz), payload)))
+    crate::panic::ffi_catch(TstError::Internal as i32, || {
+        let (h, payload) = match unsafe { borrow(p, payload, len, "payload") } {
+            Ok(v) => v,
+            Err(rc) => return rc,
+        };
+        h.inner
+            .with_inner_mut(|m| finish(m.push_subtitle(Pts90khz::new(pts_90khz), payload)))
+    })
 }
 
 /// Push one subtitle PES unit targeting a specific subtitle elementary stream.
@@ -690,17 +720,20 @@ pub unsafe extern "C" fn tst_muxer_push_subtitle_to(
     len: usize,
     pts_90khz: i64,
 ) -> crate::c_types::c_int {
-    let (h, payload) = match unsafe { borrow(p, payload, len, "payload") } {
-        Ok(v) => v,
-        Err(rc) => return rc,
-    };
-    // Trust-boundary handle check — see tst_muxer_push_video_to.
-    let stream = match SubtitleStreamHandle::try_from_raw(handle) {
-        Ok(s) => s,
-        Err(e) => return record_mux_error(&e),
-    };
-    h.inner
-        .with_inner_mut(|m| finish(m.push_subtitle_to(stream, Pts90khz::new(pts_90khz), payload)))
+    crate::panic::ffi_catch(TstError::Internal as i32, || {
+        let (h, payload) = match unsafe { borrow(p, payload, len, "payload") } {
+            Ok(v) => v,
+            Err(rc) => return rc,
+        };
+        // Trust-boundary handle check — see tst_muxer_push_video_to.
+        let stream = match SubtitleStreamHandle::try_from_raw(handle) {
+            Ok(s) => s,
+            Err(e) => return record_mux_error(&e),
+        };
+        h.inner.with_inner_mut(|m| {
+            finish(m.push_subtitle_to(stream, Pts90khz::new(pts_90khz), payload))
+        })
+    })
 }
 
 /// Drain TS bytes into `out_buf` (capacity `out_cap`). Returns the number
@@ -720,16 +753,18 @@ pub unsafe extern "C" fn tst_muxer_pull(
     if out_buf.is_null() || out_cap == 0 {
         return 0;
     }
-    let slice = match unsafe { crate::ffi_slice::ffi_slice_mut(out_buf, out_cap, "out_buf") } {
-        Ok(s) => s,
-        Err(_) => return 0,
-    };
-    let mut n = 0usize;
-    let _rc = handle.inner.with_inner_mut(|m| {
-        n = m.pull(slice);
-        0
-    });
-    n
+    crate::panic::ffi_catch(0, || {
+        let slice = match unsafe { crate::ffi_slice::ffi_slice_mut(out_buf, out_cap, "out_buf") } {
+            Ok(s) => s,
+            Err(_) => return 0,
+        };
+        let mut n = 0usize;
+        let _rc = handle.inner.with_inner_mut(|m| {
+            n = m.pull(slice);
+            0
+        });
+        n
+    })
 }
 
 /// Snapshot stats for a `tst_muxer_t` into `*out`.
