@@ -16,11 +16,14 @@ import org.tstrans.NativeLoader;
  * <ul>
  *   <li>One object may be given to any number of opens, one after another or at the same
  *       time; one {@code cancel()} reaches all of them.</li>
- *   <li>{@code cancel()} is sticky. Every open given the object after it throws the URL's
- *       transport exception with kind {@code CLOSED} before the URL is parsed, and opens
- *       nothing: no port is bound, no peer is dialled. The one exception is a URL whose
- *       scheme no shell opens: it still throws {@code IllegalArgumentException}, because
- *       there is no transport whose {@code CLOSED} could be thrown.</li>
+ *   <li>{@code cancel()} is sticky. Every open given the object after it opens nothing:
+ *       no port is bound, no peer is dialled. With an already-cancelled object an open is
+ *       refused with {@code CLOSED} before its URL is parsed; an invalid configuration
+ *       object may be reported first. The shell opens throw the URL's transport exception;
+ *       a URL whose scheme no shell opens still throws {@code IllegalArgumentException},
+ *       because there is no transport whose {@code CLOSED} could be thrown. The managed
+ *       {@code fromUrl}s are SRT only and throw {@code SrtException(CLOSED)} whatever the
+ *       URL.</li>
  *   <li>It ends a listener-mode first accept at any time. It does not interrupt a
  *       caller-mode dial (every sender, and a caller-mode {@code ManagedDemuxReceiver}):
  *       the dial runs to its end, and an open that finishes after the cancel throws

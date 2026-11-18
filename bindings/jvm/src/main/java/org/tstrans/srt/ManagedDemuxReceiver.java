@@ -169,11 +169,13 @@ public final class ManagedDemuxReceiver extends NativeHandle implements Iterable
      * {@link OpenCancel} for every rule).
      *
      * @param url         {@code srt://[host]:port?mode=listener|caller[&...]}
-     * @param demuxConfig the demuxer configuration
+     * @param demuxConfig the demuxer configuration; not {@code null}
+     *                    ({@code DemuxerConfig.builder().build()} gives the defaults)
      * @param policy      reconnect tuning; {@code null} applies the defaults
      * @param cancel      the open's cancel; {@code null} is the same as
      *                    {@link #fromUrl(String, DemuxerConfig, ReconnectPolicy)}
      * @return a connected {@code ManagedDemuxReceiver}
+     * @throws NullPointerException if {@code demuxConfig} is {@code null}
      * @throws IllegalStateException if {@code cancel} is closed
      * @throws SrtException as in {@link #fromUrl(String)}; {@code CLOSED} when
      *     {@code cancel} was cancelled by the time the open finished

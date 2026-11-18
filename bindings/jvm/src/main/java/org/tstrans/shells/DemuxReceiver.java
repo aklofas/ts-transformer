@@ -109,10 +109,12 @@ public class DemuxReceiver extends NativeHandle implements Iterable<DemuxEvent> 
      * with kind {@code CLOSED} (see {@link OpenCancel} for every rule).
      *
      * @param url         {@code scheme://...} with per-transport query options
-     * @param demuxConfig the demuxer configuration
+     * @param demuxConfig the demuxer configuration; not {@code null}
+     *                    ({@code DemuxerConfig.builder().build()} gives the defaults)
      * @param cancel      the open's cancel; {@code null} is the same as
      *                    {@link #open(String, DemuxerConfig)}
      * @return an open {@code DemuxReceiver}
+     * @throws NullPointerException if {@code demuxConfig} is {@code null}
      * @throws IllegalArgumentException if the scheme is not supported
      * @throws IllegalStateException if {@code cancel} is closed
      * @throws BindingException as in {@link #open(String)}; kind {@code CLOSED}
