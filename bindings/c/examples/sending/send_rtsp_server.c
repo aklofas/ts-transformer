@@ -38,8 +38,8 @@
  *   When tst_rtsp_server_stop is called, the server sends an RFC 7826
  *   §13.5.1 "Server-Initiated TEARDOWN" ANNOUNCE over each active session's
  *   TCP control channel, giving clients a heads-up before dropping them.
- *   The drain window (set here to 2000 ms) then waits for in-flight RTP
- *   packets to leave the network stack before closing the runtime.
+ *   It then waits for the sessions to end, for at most the drain window
+ *   (set here to 2000 ms) plus a 500 ms margin.
  *   The drain_ms argument of tst_rtsp_server_stop is ignored: the drain
  *   window is always the one set at build time via
  *   tst_rtsp_server_builder_graceful_shutdown_drain_ms (we pass 0).
@@ -97,7 +97,8 @@
  *     2. Call tst_rtsp_cancel_handle_cancel from the handler — this sets an
  *        AtomicBool flag (async-signal-safe) and is effectively instant.
  *     3. Back on the main thread, detect cancellation when push_video returns
- *        TST_E_CLOSED, then call tst_rtsp_server_stop with a drain window.
+ *        TST_E_CLOSED, then call tst_rtsp_server_stop (its drain_ms argument
+ *        is ignored; the drain window is the one set at build time).
  *
  * WHY volatile sig_atomic_t not the cancel handle directly?
  *   The signal handler also needs to break the main push loop so that
