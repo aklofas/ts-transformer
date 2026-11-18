@@ -579,9 +579,10 @@ fn rtsp_publish_next_publisher_on_demand_and_stop_wakes_parked_call() {
 /// The hard cancel alone, with no stop: a `next_publisher` parked on
 /// another thread wakes with CLOSED, a receiver bound to a publish mount
 /// that a publisher holds ends with END_OF_STREAM, and a
-/// `tst_rtsp_server_stop` after it returns 0 at once.
+/// `tst_rtsp_server_stop` after it returns 0 without the graceful path:
+/// the publisher's connection closes with no Notice 5402 on it.
 #[test]
-fn rtsp_publish_hard_cancel_wakes_parked_calls_and_stop_returns_at_once() {
+fn rtsp_publish_hard_cancel_wakes_parked_calls_and_stop_sends_no_notice() {
     let (server, port) = start_server(false);
     let path = CString::new("/pub").unwrap();
     let m = unsafe { tst_rtsp_server_add_publish_mount(server, path.as_ptr()) };
@@ -597,7 +598,7 @@ fn rtsp_publish_hard_cancel_wakes_parked_calls_and_stop_returns_at_once() {
         test_last_error_code()
     );
     // A publisher holds the mount and sends nothing, so the read waits.
-    let (tcp, _ch) = publish_mp2t(port, "/pub");
+    let (mut tcp, _ch) = publish_mp2t(port, "/pub");
 
     let demux_addr = demux as usize;
     let (recv_tx, recv_done) = std::sync::mpsc::channel();
@@ -677,12 +678,34 @@ fn rtsp_publish_hard_cancel_wakes_parked_calls_and_stop_returns_at_once() {
         "a hard-cancelled server's publish-mount receiver ends END_OF_STREAM"
     );
 
-    let t0 = Instant::now();
     assert_eq!(unsafe { tst_rtsp_server_stop(server, 0) }, 0);
-    let took = t0.elapsed();
+    // A graceful stop would send the publisher a Notice 5402 ANNOUNCE
+    // before closing; after the hard cancel the connection just closes.
+    let mut seen = Vec::new();
+    let mut chunk = [0u8; 1024];
+    let deadline = Instant::now() + crate::common::scaled(Duration::from_secs(10));
+    loop {
+        match tcp.read(&mut chunk) {
+            Ok(0) => break,
+            Ok(n) => seen.extend_from_slice(&chunk[..n]),
+            Err(e)
+                if matches!(
+                    e.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                ) =>
+            {
+                assert!(
+                    Instant::now() < deadline,
+                    "the publisher's connection is still open after the stop"
+                );
+            }
+            Err(_) => break, // a reset is a close too
+        }
+    }
     assert!(
-        took < crate::common::scaled(Duration::from_secs(1)),
-        "stop after the hard cancel took {took:?}"
+        !String::from_utf8_lossy(&seen).contains("ANNOUNCE"),
+        "the publisher got a Notice: {:?}",
+        String::from_utf8_lossy(&seen)
     );
 
     unsafe { tst_rtp_demux_receiver_close(demux) };
