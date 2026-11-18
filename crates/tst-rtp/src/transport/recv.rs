@@ -832,8 +832,10 @@ impl RecvTransport for RtpRecvTransport {
     /// (its `Drop` records it before its TEARDOWN), a TEARDOWN sent on a
     /// client whose cancel had fired (recorded before it is written), or
     /// `close` after a TEARDOWN refused or not answered; nothing the server
-    /// does next changes it. A session that had already ended for its own
-    /// reason keeps it: any other end is [`TransportError::Broken`];
+    /// does next changes it. After such an end the transport's own cancel
+    /// handle reads cancelled and `socket_stats()` keeps answering. A
+    /// session that had already ended for its own reason keeps it: any
+    /// other end is [`TransportError::Broken`];
     /// [`RtpRecvTransport::end_reason`] names it. The client has one reason
     /// slot, so build a fresh client per session. A transport on a UDP
     /// session reads its own socket and is not ended by any of this; its

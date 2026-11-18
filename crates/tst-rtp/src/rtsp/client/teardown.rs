@@ -7,8 +7,10 @@ use crate::rtsp::message::RtspMethod;
 use tst_core::transport::EndReason;
 
 impl RtspClient {
-    /// Send TEARDOWN. After this returns the session is gone; a new SETUP
-    /// starts another.
+    /// Send TEARDOWN. After this returns the session is gone. A new SETUP
+    /// on this client starts another, but without keepalive pings: they
+    /// stop for good once a TEARDOWN is sent, so build a fresh client per
+    /// session.
     ///
     /// If no session is currently established (no prior successful
     /// SETUP, or [`Self::teardown`] already ran), this is a no-op that
@@ -20,8 +22,10 @@ impl RtspClient {
     /// records the end reason `CleanTeardown` before this returns, and a
     /// receiver of an interleaved session ends with end of stream after
     /// what is queued. On a client whose cancel is set, `Cancelled` is
-    /// recorded before the TEARDOWN is written, so the receiver ends as a
-    /// cancel whatever the server then does. A reason recorded earlier
+    /// recorded before the TEARDOWN is written, so when the receiver ends
+    /// (the server accepts the TEARDOWN or closes the connection, or the
+    /// client is closed or dropped) it ends as a cancel; a refused
+    /// TEARDOWN leaves it receiving until then. A reason recorded earlier
     /// stays (first writer wins). The client has one reason slot, so a
     /// client reused for another session reads this one's reason: build a
     /// fresh client per session.

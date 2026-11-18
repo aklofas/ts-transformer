@@ -517,8 +517,9 @@ for 5 s while a keepalive ping's bytes were the oldest queued
 (`KeepaliveFailed`), a TCP read or write error, or the same 5 s stall
 with a request's bytes oldest (`TransportFailed`), a peer that broke the
 message framing (`ProtocolError`), or a cancel (`Cancelled`: the
-receiver's own `close()` or cancel handle, a dropped client, or a
-TEARDOWN sent by a client whose cancel had fired).
+receiver's own `close()` or cancel handle, a dropped client, a TEARDOWN
+sent by a client whose cancel had fired, or `close()` after a TEARDOWN
+the server refused or did not answer).
 
 End of stream (`Ok(None)` from `recv_au()`, `Err(TransportError::Closed)`
 from an interleaved `RtpRecvTransport`, `Ok(None)` / `EndOfStream` from a
@@ -598,7 +599,10 @@ cleanly: on a client whose cancel is not set, an accepted reply (`2xx` or
 before the call returns, and the receiver ends with end of stream after
 the packets already queued; dropping the client afterwards changes
 nothing. On a client whose cancel had fired, the TEARDOWN records
-`Cancelled` before it is written, and the receiver ends with CLOSED.
+`Cancelled` before it is written, so the receiver ends with CLOSED when it
+ends (the server accepts the TEARDOWN or closes the connection, or the
+client is closed or dropped); a refused TEARDOWN leaves it receiving until
+then.
 Dropping the client without an accepted TEARDOWN ends that receiver with
 CLOSED, after the packets already queued: the drop records `Cancelled`
 before it writes its own TEARDOWN, so nothing the server does next

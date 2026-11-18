@@ -546,8 +546,9 @@ What the interrupted call raises is the domain's `CLOSED` kind with the
 detail `"cancelled from another thread"` — `SrtError(CLOSED)`,
 `RtpError(CLOSED)` (`H264Receiver.recv_au()` raises it once the access
 units it holds are handed out; its `None` means the stream ended, never a
-cancel: the peer ended it, or the server accepted a TEARDOWN sent by a
-session whose cancel was not set),
+cancel: the peer ended it, the server accepted a TEARDOWN sent by a
+session whose cancel was not set, or the session ended for its own
+reason, such as a failed control connection, which `end_reason()` names),
 `UdpError(CLOSED)`, `TcpError(CLOSED)`, `RistError(CLOSED)`. That is the
 same on every `tstrans.srt` shell, plain or managed: the plain shells
 close the underlying libsrt socket and report the cancel they observed,
@@ -1400,7 +1401,9 @@ with RtspClient.connect_h264(cfg) as session:
   server refuses leaves the receiver running until the session object is
   collected. On a session whose cancel handle had fired, `teardown()` and
   the `with` exit are a cancel: the receiver ends with `RtpError(CLOSED)`
-  after what is already queued, whatever the server then does. So does a
+  after what is already queued, once the server accepts the TEARDOWN or
+  closes the connection or the session object is collected; a TEARDOWN the
+  server refuses leaves the receiver running until then. So does a
   session collected while its receiver is in use. A session that had
   already ended for its own reason (a keepalive answered `454`, a wire
   failure, the peer's close) keeps that reason and that outcome. The
