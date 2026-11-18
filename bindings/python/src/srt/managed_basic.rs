@@ -135,7 +135,7 @@ impl PyManagedSender {
         cancel: Option<&Bound<'_, PyOpenCancel>>,
     ) -> PyResult<Self> {
         let oc = object_of(cancel);
-        let slot = begin(py, &oc).ok_or_else(|| raise(py, &SRT, closed()))?;
+        let slot = begin(&oc).ok_or_else(|| raise(py, &SRT, closed()))?;
         // Validate the URL up-front so a malformed one raises
         // CONFIG_INVALID naming the Python method; `tst_srt::shells` would
         // refuse a listener URL too, but with its own message.
@@ -390,7 +390,7 @@ impl PyManagedReceiver {
         cancel: Option<&Bound<'_, PyOpenCancel>>,
     ) -> PyResult<Self> {
         let oc = object_of(cancel);
-        let slot = begin(py, &oc).ok_or_else(|| raise(py, &SRT, closed()))?;
+        let slot = begin(&oc).ok_or_else(|| raise(py, &SRT, closed()))?;
         let parsed = SrtUrl::parse(url).map_err(|e| raise(py, &SRT, BindingError::from(e)))?;
         if parsed.mode != Mode::Listener {
             return Err(raise(

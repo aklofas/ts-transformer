@@ -36,13 +36,15 @@ impl PyOpenCancel {
     }
 
     /// `True` once `cancel()` has run.
-    fn is_cancelled(&self, py: Python<'_>) -> bool {
-        // The flag sits under the object's mutex: read it without the GIL.
-        crate::util::allow_threads_parking(py, || self.inner.is_cancelled())
+    // Read with the GIL held: the object's mutex is held only for a flag or
+    // a list edit, never across a slot's cancel or a GIL release. Releasing
+    // the GIL here would cost the exit park after the interpreter-exit hook.
+    fn is_cancelled(&self) -> bool {
+        self.inner.is_cancelled()
     }
 
-    fn __repr__(&self, py: Python<'_>) -> String {
-        format!("OpenCancel(cancelled={})", self.is_cancelled(py))
+    fn __repr__(&self) -> String {
+        format!("OpenCancel(cancelled={})", self.is_cancelled())
     }
 }
 
@@ -52,14 +54,15 @@ pub(crate) fn object_of(cancel: Option<&Bound<'_, PyOpenCancel>>) -> OpenCancel 
     cancel.map_or_else(OpenCancel::new, |c| c.get().inner.clone())
 }
 
-/// Take one open's slot, without the GIL (the object's mutex). `None`: the
-/// object was already cancelled, and the open raises `CLOSED` before it
-/// parses its URL.
-pub(crate) fn begin(py: Python<'_>, oc: &OpenCancel) -> Option<OpenSlot> {
-    crate::util::allow_threads_parking(py, || {
-        let slot = oc.slot();
-        (!slot.is_cancelled()).then_some(slot)
-    })
+/// Take one open's slot. `None`: the object was already cancelled, and the
+/// open raises `CLOSED` before it parses its URL.
+///
+/// Runs with the GIL held, for the reason `is_cancelled` gives: the
+/// object's mutex and the fresh slot's are each held for a flag or a list
+/// edit, never across a cancel's wake or a GIL release.
+pub(crate) fn begin(oc: &OpenCancel) -> Option<OpenSlot> {
+    let slot = oc.slot();
+    (!slot.is_cancelled()).then_some(slot)
 }
 
 /// What an open raises when its object is cancelled: the transport's

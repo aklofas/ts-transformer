@@ -69,6 +69,15 @@
 #          MountRules.set / remove / set_default / clear / set_challenge,
 #          len() and __repr__: the rules table's rwlocks, held for one map
 #          operation (clear empties the map);
+#          shells.OpenCancel.is_cancelled / __repr__, and every open's
+#          check of its `cancel=` object before it parses its URL
+#          (`open_cancel::begin`): tst-pipeline's `OpenCancel` mutex,
+#          held by the object's own methods and each open's slot for a
+#          flag read or one edit of the list of opens in progress
+#          (`cancel()` takes the list and fires the slots after letting
+#          go), and the fresh slot's `CancelSlot` mutex, held for a flag
+#          or for installing / taking its target (fired after letting
+#          go);
 #      - parentheses inside string or char literals, and a `//` comment
 #        after code that itself contains ` //` in a string, skew the count
 #        until the next `fn`, where it resets.
