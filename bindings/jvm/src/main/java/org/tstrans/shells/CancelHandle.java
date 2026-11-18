@@ -5,9 +5,14 @@ import org.tstrans.NativeHandle;
 /**
  * Cancel handle for a {@link Sender} / {@link Receiver} / {@link MuxSender} /
  * {@link DemuxReceiver}. {@link #cancel()} wakes a thread parked in a send,
- * receive or iteration within a few ms; that call then throws the shell's
- * transport exception with kind {@code CLOSED} (message
- * {@code cancelled from another thread}).
+ * receive or iteration; that call then throws the shell's transport exception
+ * with kind {@code CLOSED} (message {@code cancelled from another thread}).
+ * How soon the parked call notices depends on the transport, and no time is
+ * promised: on SRT {@code cancel()} itself runs {@code srt_close}, which with
+ * linger on can take up to the linger time (see
+ * {@code docs/reference/srt-cancel-handle.md}). {@link #isCancelled()} and
+ * {@link #close()} do not wait for a {@code cancel()} still running on another
+ * thread.
  * {@link #isCancelled()} reflects the shell's one cancel state: {@code true}
  * once {@link #cancel()} was called on ANY handle of the shell, or the shell was
  * {@code close()}d (close cancels first). All handles of one shell agree, and a
@@ -27,10 +32,10 @@ public class CancelHandle extends NativeHandle {
     protected CancelHandle(long h) { setHandle(h); }
 
     /** Signal cancellation. Idempotent. */
-    public synchronized void cancel() { nCancel(requireOpen("CancelHandle is closed")); }
+    public void cancel() { nCancel(requireOpen("CancelHandle is closed")); }
 
     /** True once the shell was cancelled, by this or any other handle or by {@code close()}. */
-    public synchronized boolean isCancelled() {
+    public boolean isCancelled() {
         return nIsCancelled(requireOpen("CancelHandle is closed"));
     }
 

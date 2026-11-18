@@ -169,3 +169,117 @@ mod klv_probe {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// Cancel-view probe: a `CancelHandle` over a transport cancel that latches and
+// then blocks until the test releases it, the way SRT's `cancel()` can sit in
+// `srt_close` for the socket's linger. Lets a test call the handle's other
+// methods while one thread is inside `cancel()`.
+// ---------------------------------------------------------------------------
+
+mod cancel_probe {
+    use crate::handle::{CancelView, HandleRegistry};
+    use crate::panic::jni_native;
+    use jni::sys::{jboolean, jlong};
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::{Arc, Condvar, LazyLock, Mutex};
+    use std::time::{Duration, Instant};
+    use tst_core::transport::TransportCancel;
+
+    /// Upper bound on how long `cancel()` stays parked, so a test that never
+    /// releases the gate cannot hang the test JVM.
+    const MAX_PARK: Duration = Duration::from_secs(60);
+
+    #[derive(Default)]
+    struct Gate {
+        cancelled: AtomicBool,
+        /// (a thread is inside `cancel()`, the test released the gate)
+        state: Mutex<(bool, bool)>,
+        cv: Condvar,
+    }
+
+    impl TransportCancel for Gate {
+        fn cancel(&self) {
+            self.cancelled.store(true, Ordering::SeqCst);
+            let mut s = self.state.lock().unwrap_or_else(|e| e.into_inner());
+            s.0 = true;
+            self.cv.notify_all();
+            let _ = self
+                .cv
+                .wait_timeout_while(s, MAX_PARK, |s| !s.1)
+                .unwrap_or_else(|e| e.into_inner());
+        }
+
+        fn is_cancelled(&self) -> bool {
+            self.cancelled.load(Ordering::SeqCst)
+        }
+    }
+
+    static GATES: LazyLock<HandleRegistry<Arc<Gate>>> = LazyLock::new(HandleRegistry::new);
+
+    fn gate(probe: jlong) -> Option<Arc<Gate>> {
+        GATES.with(probe as u64, |g| Arc::clone(g))
+    }
+
+    jni_native! {
+        /// `org.tstrans.internal.CancelProbe.nOpen()` — a new blocking gate; returns its probe key.
+        fn Java_org_tstrans_internal_CancelProbe_nOpen<'local>(_env, _class) -> jlong = 0 => {
+            GATES.insert(Arc::new(Gate::default())) as jlong
+        }
+    }
+
+    jni_native! {
+        /// `org.tstrans.internal.CancelProbe.nCancelView(long)` — register a cancel
+        /// view over the gate; returns the key an `org.tstrans.shells.CancelHandle` wraps.
+        fn Java_org_tstrans_internal_CancelProbe_nCancelView<'local>(
+            _env,
+            _class,
+            probe: jlong,
+        ) -> jlong = 0 => {
+            match gate(probe) {
+                Some(g) => crate::shells::cancel::cancel_view_handle(CancelView(g)),
+                None => 0,
+            }
+        }
+    }
+
+    jni_native! {
+        /// `org.tstrans.internal.CancelProbe.nAwaitEntered(long, long)` — wait up to
+        /// `timeoutMs` for a thread to be inside the gate's `cancel()`.
+        fn Java_org_tstrans_internal_CancelProbe_nAwaitEntered<'local>(
+            _env,
+            _class,
+            probe: jlong,
+            timeout_ms: jlong,
+        ) -> jboolean = false => {
+            let Some(g) = gate(probe) else { return false };
+            let deadline = Instant::now() + Duration::from_millis(timeout_ms.max(0) as u64);
+            let mut s = g.state.lock().unwrap_or_else(|e| e.into_inner());
+            while !s.0 {
+                let left = deadline.saturating_duration_since(Instant::now());
+                if left.is_zero() {
+                    return false;
+                }
+                s = g.cv.wait_timeout(s, left).unwrap_or_else(|e| e.into_inner()).0;
+            }
+            true
+        }
+    }
+
+    jni_native! {
+        /// `org.tstrans.internal.CancelProbe.nRelease(long)` — let every parked `cancel()` return.
+        fn Java_org_tstrans_internal_CancelProbe_nRelease<'local>(_env, _class, probe: jlong) = () => {
+            if let Some(g) = gate(probe) {
+                g.state.lock().unwrap_or_else(|e| e.into_inner()).1 = true;
+                g.cv.notify_all();
+            }
+        }
+    }
+
+    jni_native! {
+        /// `org.tstrans.internal.CancelProbe.nClose(long)` — drop the probe key; idempotent.
+        fn Java_org_tstrans_internal_CancelProbe_nClose<'local>(_env, _class, probe: jlong) = () => {
+            GATES.close(probe as u64);
+        }
+    }
+}

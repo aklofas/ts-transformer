@@ -5,9 +5,14 @@
 //! every handle on a shell, and a handle that outlives the shell's
 //! `close()`, agree. Per-type plain registry: the view has no parked op of
 //! its own.
+//!
+//! The natives clone the view's `Arc` out of the entry and call it after the
+//! entry lock is released: an SRT `cancel()` runs `srt_close`, which can
+//! linger, and `isCancelled()` / `close()` on the same handle must not wait
+//! for it.
 
 use crate::panic::jni_native;
-use std::sync::LazyLock;
+use std::sync::{Arc, LazyLock};
 
 use jni::sys::{jboolean, jlong};
 
@@ -22,11 +27,9 @@ pub(crate) fn cancel_view_handle(view: CancelView) -> jlong {
 
 jni_native! {
     fn Java_org_tstrans_shells_CancelHandle_nCancel(env, _class, handle: jlong) = () => {
-        if REGISTRY_CANCEL
-            .with(handle as u64, |c| c.0.cancel())
-            .is_none()
-        {
-            crate::error::throw_closed(env, "CancelHandle");
+        match REGISTRY_CANCEL.with(handle as u64, |c| Arc::clone(&c.0)) {
+            Some(view) => view.cancel(),
+            None => crate::error::throw_closed(env, "CancelHandle"),
         }
     }
 }
@@ -37,8 +40,8 @@ jni_native! {
         _class,
         handle: jlong,
     ) -> jboolean = false => {
-        match REGISTRY_CANCEL.with(handle as u64, |c| c.0.is_cancelled()) {
-            Some(v) => v,
+        match REGISTRY_CANCEL.with(handle as u64, |c| Arc::clone(&c.0)) {
+            Some(view) => view.is_cancelled(),
             None => {
                 crate::error::throw_closed(env, "CancelHandle");
                 false
