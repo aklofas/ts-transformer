@@ -37,10 +37,11 @@ use jni::sys::{jboolean, jint, jlong, jobject};
 use tst_rtp::rtsp::client::RtspClient as RustRtspClient;
 use tst_rtp::{H264Au, H264DepayConfig, H264Receiver, ParameterSetInjection};
 
-use tst_pipeline::binding::{HandleState, Owned};
+use tst_pipeline::binding::{Domain, Owned};
 
 use crate::generated::stats_shells::build_socket_stats;
 use crate::handle::OwnedRegistry;
+use crate::shells::throw_state;
 
 use super::errors::{connect_error, transport_error};
 
@@ -109,6 +110,17 @@ fn insert_receiver(receiver: H264Receiver, rtsp: Option<JniRtspControl>) -> jlon
         rtsp,
     };
     REGISTRY.insert(Owned::new(slot, cancel, local_addr)) as jlong
+}
+
+/// The receive natives' entry check, the shells' rule: an id already gone is a
+/// closed Java handle (`IllegalStateException`); a slot a concurrent `close()`
+/// takes after this check is the receive's `RtpException(CLOSED)`.
+fn receiver_open(env: &mut Env, handle: jlong) -> bool {
+    let open = REGISTRY.snapshot(handle as u64, |_| ()).is_some();
+    if !open {
+        crate::error::throw_closed(env, "H264Receiver");
+    }
+    open
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -242,7 +254,8 @@ jni_native! {
     /// `H264Receiver.nRecvAu(handle)` — block until the next H.264 Access Unit is
     /// reassembled. Returns an `H264AccessUnit` Java object on success, `null` at EOS,
     /// or throws on error (`RtpException(CLOSED)` once cancelled, after the buffered
-    /// AUs). Mirrors tst-py `PyH264Receiver::recv_au`.
+    /// AUs, or once a `close()` has taken the slot). Mirrors tst-py
+    /// `PyH264Receiver::recv_au`.
     ///
     /// The registry lease holds the slot's resource lock for the duration of the
     /// (possibly parked) `recv_au` call. A concurrent `close()` fires the cancel hook
@@ -253,19 +266,19 @@ jni_native! {
         _class,
         handle: jlong,
     ) -> jobject = std::ptr::null_mut() => {
+        if !receiver_open(env, handle) {
+            return JObject::null().into_raw();
+        }
         // `with_mut` holds the slot while recv_au runs (which may park the
         // calling thread). A concurrent `close()` cancels first, so this call
         // returns promptly and the slot is then taken.
         let result = match REGISTRY.with_mut(handle as u64, |jdr| jdr.inner.recv_au()) {
             Ok(r) => r,
-            // Closed/absent — clean EOS: null (the Java side returns null from
-            // recvAu(), which the caller treats as end of stream).
-            Err(HandleState::Closed) => return JObject::null().into_raw(),
-            // A PANIC or a poisoned slot is NOT an end of stream: it must reach
-            // Java as the panic RuntimeException, never be folded into the
-            // documented null. (`rtp/transport.rs` does the same.)
+            // A slot taken by a concurrent `close()` is CLOSED, never the `null`
+            // that means the peer ended; a panic or a poisoned slot keeps the
+            // handle-state mapping.
             Err(state) => {
-                crate::error::throw_handle_state(env, "H264Receiver", &state);
+                throw_state(env, Domain::Rtp, "H264Receiver", &state);
                 return JObject::null().into_raw();
             }
         };
@@ -306,6 +319,9 @@ jni_native! {
         handle: jlong,
         timeout_ms: jlong,
     ) -> jobject = std::ptr::null_mut() => {
+        if !receiver_open(env, handle) {
+            return JObject::null().into_raw();
+        }
         let result = match REGISTRY.with_mut(handle as u64, |jdr| {
             if timeout_ms < 0 {
                 jdr.inner.recv_au()
@@ -315,14 +331,11 @@ jni_native! {
             }
         }) {
             Ok(r) => r,
-            // Closed/absent — clean EOS: null (the Java side returns null from
-            // recvAu(), which the caller treats as end of stream).
-            Err(HandleState::Closed) => return JObject::null().into_raw(),
-            // A PANIC or a poisoned slot is NOT an end of stream: it must reach
-            // Java as the panic RuntimeException, never be folded into the
-            // documented null. (`rtp/transport.rs` does the same.)
+            // A slot taken by a concurrent `close()` is CLOSED, never the `null`
+            // that means the peer ended; a panic or a poisoned slot keeps the
+            // handle-state mapping.
             Err(state) => {
-                crate::error::throw_handle_state(env, "H264Receiver", &state);
+                throw_state(env, Domain::Rtp, "H264Receiver", &state);
                 return JObject::null().into_raw();
             }
         };

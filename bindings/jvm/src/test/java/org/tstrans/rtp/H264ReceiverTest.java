@@ -4,6 +4,8 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 import static org.tstrans.TestSupport.isLinux;
 
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
 import java.net.DatagramPacket;
 import java.net.DatagramSocket;
 import java.net.InetSocketAddress;
@@ -15,6 +17,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
+import org.tstrans.NativeHandle;
 import org.tstrans.RtpException;
 import org.tstrans.RtspException;
 import org.tstrans.mpegts.MuxerConfig;
@@ -238,6 +241,47 @@ class H264ReceiverTest {
             "recvAu() on closed receiver must throw IllegalStateException");
         // Idempotent close.
         rx.close();
+    }
+
+    /**
+     * A {@code close()} can land between {@code recvAu()}'s open check and its native
+     * lookup. The natives are driven directly with the closed receiver's key, which no
+     * other receiver reuses, so that window is hit every time: the receive throws as a
+     * closed handle and never returns the {@code null} that means the peer ended.
+     */
+    @Test
+    void recvAuOnAReceiverClosedUnderneathThrows() throws Exception {
+        long key = closedReceiverKey();
+        Method recv = H264Receiver.class.getDeclaredMethod("nRecvAu", long.class);
+        recv.setAccessible(true);
+        InvocationTargetException ite = assertThrows(InvocationTargetException.class,
+            () -> recv.invoke(null, key), "nRecvAu on a closed receiver must not return null");
+        assertInstanceOf(IllegalStateException.class, ite.getCause());
+    }
+
+    /** {@link #recvAuOnAReceiverClosedUnderneathThrows()} for the per-call-deadline native. */
+    @Test
+    void recvAuWithTimeoutOnAReceiverClosedUnderneathThrows() throws Exception {
+        long key = closedReceiverKey();
+        Method recv =
+            H264Receiver.class.getDeclaredMethod("nRecvAuTimeout", long.class, long.class);
+        recv.setAccessible(true);
+        for (long timeoutMs : new long[] {-1L, 0L}) {
+            InvocationTargetException ite = assertThrows(InvocationTargetException.class,
+                () -> recv.invoke(null, key, timeoutMs),
+                "nRecvAuTimeout(" + timeoutMs + ") on a closed receiver must not return null");
+            assertInstanceOf(IllegalStateException.class, ite.getCause());
+        }
+    }
+
+    /** The native key of a receiver that was opened and then closed. */
+    private static long closedReceiverKey() throws Exception {
+        H264Receiver rx = H264Receiver.listen("rtp://127.0.0.1:0?pt=96");
+        Method peek = NativeHandle.class.getDeclaredMethod("peekHandle");
+        peek.setAccessible(true);
+        long key = (long) peek.invoke(rx);
+        rx.close();
+        return key;
     }
 
     // ── Test 3: config defaults observable from Java ──────────────────────────
