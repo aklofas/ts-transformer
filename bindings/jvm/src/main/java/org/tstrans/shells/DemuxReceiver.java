@@ -70,8 +70,10 @@ public class DemuxReceiver extends NativeHandle implements Iterable<DemuxEvent> 
     /**
      * Open a receiver on the transport named by {@code url}'s scheme and demux
      * the stream with default options. An {@code srt://} URL must carry
-     * {@code mode=listener}: the open accepts ONE peer, and that first accept is
-     * not cancellable because no handle exists until the open returns.
+     * {@code mode=listener}: the open accepts ONE peer and blocks until one
+     * connects. No {@link #cancelHandle()} exists until the open returns; to end
+     * that first accept from another thread, pass an {@link OpenCancel} to
+     * {@link #open(String, DemuxerConfig, OpenCancel)} and cancel it.
      *
      * @param url {@code scheme://...} with per-transport query options
      * @return an open {@code DemuxReceiver}
@@ -100,6 +102,28 @@ public class DemuxReceiver extends NativeHandle implements Iterable<DemuxEvent> 
     }
 
     /**
+     * Same as {@link #open(String, DemuxerConfig)}, under {@code cancel}: its
+     * {@link OpenCancel#cancel()} from another thread ends an {@code srt://}
+     * first accept, and an object already cancelled refuses the open before the
+     * URL is parsed. Either way the open throws the URL's transport exception
+     * with kind {@code CLOSED} (see {@link OpenCancel} for every rule).
+     *
+     * @param url         {@code scheme://...} with per-transport query options
+     * @param demuxConfig the demuxer configuration
+     * @param cancel      the open's cancel; {@code null} is the same as
+     *                    {@link #open(String, DemuxerConfig)}
+     * @return an open {@code DemuxReceiver}
+     * @throws IllegalArgumentException if the scheme is not supported
+     * @throws IllegalStateException if {@code cancel} is closed
+     * @throws BindingException as in {@link #open(String)}; kind {@code CLOSED}
+     *     when {@code cancel} was cancelled by the time the open finished
+     */
+    public static DemuxReceiver open(String url, DemuxerConfig demuxConfig, OpenCancel cancel)
+            throws BindingException {
+        return new DemuxReceiver(openHandle(url, demuxConfig, cancel));
+    }
+
+    /**
      * Open the native receiver (default demux options) and return its handle,
      * for a subclass's own factory. Same contract as {@link #open(String)}.
      *
@@ -109,7 +133,7 @@ public class DemuxReceiver extends NativeHandle implements Iterable<DemuxEvent> 
      * @throws BindingException the transport's exception
      */
     protected static long openHandle(String url) throws BindingException {
-        return nOpen(url);
+        return nOpen(url, null);
     }
 
     /**
@@ -124,13 +148,30 @@ public class DemuxReceiver extends NativeHandle implements Iterable<DemuxEvent> 
      */
     protected static long openHandle(String url, DemuxerConfig demuxConfig)
             throws BindingException {
+        return openHandle(url, demuxConfig, null);
+    }
+
+    /**
+     * Open the native receiver with explicit demux options under {@code cancel}
+     * and return its handle, for a subclass's own factory. Same contract as
+     * {@link #open(String, DemuxerConfig, OpenCancel)}.
+     *
+     * @param url         {@code scheme://...} with per-transport query options
+     * @param demuxConfig the demuxer configuration
+     * @param cancel      the open's cancel, or {@code null}
+     * @return the native handle, to pass to the constructor
+     * @throws IllegalArgumentException if the scheme is not supported
+     * @throws BindingException the transport's exception
+     */
+    protected static long openHandle(String url, DemuxerConfig demuxConfig, OpenCancel cancel)
+            throws BindingException {
         return nOpenWithConfig(
             url,
             demuxConfig.strictMode().ordinal(), demuxConfig.pesCapPerPid(),
             demuxConfig.pesCapTotal(), demuxConfig.cfiTolerance(),
             demuxConfig.av1Carriage().ordinal(), demuxConfig.auCellCapPerPid(),
             demuxConfig.lenientPsiReassembly(), demuxConfig.syncBufCap(),
-            demuxConfig.unwrapTimestamps());
+            demuxConfig.unwrapTimestamps(), cancel);
     }
 
     /**
@@ -487,10 +528,10 @@ public class DemuxReceiver extends NativeHandle implements Iterable<DemuxEvent> 
 
     // --- Natives ---
 
-    private static native long nOpen(String url) throws BindingException;
+    private static native long nOpen(String url, OpenCancel cancel) throws BindingException;
     private static native long nOpenWithConfig(String url, int strict, long pesCapPerPid,
         long pesCapTotal, boolean cfi, int av1, long auCellCap, boolean lenientPsi,
-        long syncBufCap, boolean unwrapTimestamps) throws BindingException;
+        long syncBufCap, boolean unwrapTimestamps, OpenCancel cancel) throws BindingException;
     private static native DemuxEvent nNext(long handle) throws BindingException;
     private static native void nGateCached(long handle) throws BindingException;
     private static native long nCancelHandle(long handle);

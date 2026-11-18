@@ -1108,6 +1108,55 @@ answers `true` rather than `false`. Before 0.7.0 each handle carried a private
 flag, so a second handle read `false` after the first cancelled and `close()`
 set nothing.
 
+#### Cancelling an open
+
+An open that waits for a peer has no shell, and so no `cancelHandle()`, until
+it returns: a listener-mode `srt://` `Receiver.open`, `DemuxReceiver.open`,
+`ManagedReceiver.fromUrl` or `ManagedDemuxReceiver.fromUrl` blocks in its
+first accept until a caller connects. To cancel one, make an
+`org.tstrans.shells.OpenCancel` first, pass it as the last argument of the
+open and call its `cancel()` from another thread:
+
+```java
+try (var oc = new OpenCancel()) {
+    // On the opening thread:
+    var rx = Receiver.open("srt://:9000?mode=listener", oc);
+    // On another thread:
+    oc.cancel();  // the open throws SrtException(CLOSED) and releases the port
+}
+```
+
+The overloads are `Receiver.open(url, cancel)`, `Sender.open(url, cancel)`,
+`DemuxReceiver.open(url, demuxConfig, cancel)`,
+`MuxSender.open(url, programConfig, cancel)`,
+`ManagedReceiver.fromUrl(url, policy, cancel)`,
+`ManagedSender.fromUrl(url, policy, cancel)`,
+`ManagedDemuxReceiver.fromUrl(url, demuxConfig, policy, cancel)` and
+`ManagedMuxSender.fromUrl(url, programConfig, policy, cancel)`. The rules:
+
+- One object may be given to any number of opens, one after another or at the
+  same time; one `cancel()` ends every open in progress with it.
+- `cancel()` is sticky: every later open given the object throws the URL's
+  transport exception with kind `CLOSED` before it parses its URL, and opens
+  nothing. (A URL whose scheme no shell opens still throws
+  `IllegalArgumentException`: there is no transport to name.)
+- It ends a listener-mode first accept at any time. It does not interrupt a
+  caller-mode connect, but an open that finishes after the cancel throws
+  `CLOSED` whatever it did, and a connection it had just made is closed
+  again: nothing is handed out. The senders' opens take the object for this
+  rule and for the refusal of an object already cancelled.
+- It is not the shell's cancel handle. An open that returned before the
+  cancel is untouched by it, and so are a managed receiver's later
+  reconnects; from then on the shell's `cancelHandle()` is its cancel.
+- `close()` frees the Java object only: an open parked with it keeps waiting
+  for its peer. After `close()`, `cancel()`, `isCancelled()` and an open
+  given the object throw `IllegalStateException`.
+- `cancel()` and `isCancelled()` are safe from any thread, any number of
+  times; `isCancelled()` and `close()` do not wait for a `cancel()` that is
+  still closing listening sockets on another thread.
+
+A `null` object is the same as the open without it.
+
 ### What answers while another thread is parked
 
 A blocking call holds its object for as long as it is parked, so what a
@@ -1173,11 +1222,13 @@ sender that still has unsent data takes up to that socket's linger time
 closes the open sockets one after the other before the wait starts.
 
 This matters most for the listener-mode opens — `DemuxReceiver.open`,
-`Receiver.open` and `ManagedDemuxReceiver.fromUrl` with `?mode=listener`
-block in their first accept BEFORE returning an object, so there is nothing
-to `close()` or cancel while they wait for a peer. The unparked thread does
-not get to observe an exception: the JVM is already past the point where Java
-code runs. A program that closed everything pays nothing at exit.
+`Receiver.open`, `ManagedReceiver.fromUrl` and `ManagedDemuxReceiver.fromUrl`
+with `?mode=listener` block in their first accept BEFORE returning an object,
+so there is no shell to `close()` while they wait for a peer (an
+`OpenCancel` given to the open can end that wait: see
+[Cancelling an open](#cancelling-an-open)). The unparked thread does not get
+to observe an exception: the JVM is already past the point where Java code
+runs. A program that closed everything pays nothing at exit.
 
 **Lifetimes are explicit.** The JVM binding releases native resources only on
 `close()` (try-with-resources): there is no `Cleaner` and no finalizer. A

@@ -4,6 +4,7 @@ import org.tstrans.NativeHandle;
 import org.tstrans.NativeLoader;
 import org.tstrans.SrtException;
 import org.tstrans.shells.CancelHandle;
+import org.tstrans.shells.OpenCancel;
 import org.tstrans.shells.SocketStats;
 
 /**
@@ -13,7 +14,10 @@ import org.tstrans.shells.SocketStats;
  * and resumes delivering bytes from the new connection.
  *
  * <p>Constructed via {@link #fromUrl(String)} or {@link #fromUrl(String, ReconnectPolicy)}
- * with a {@code srt://[host]:port?mode=listener} URL.
+ * with a {@code srt://[host]:port?mode=listener} URL. The open blocks in its first
+ * accept until a peer connects; {@link #fromUrl(String, ReconnectPolicy, OpenCancel)}
+ * takes an {@link OpenCancel} whose {@code cancel()} ends that accept from another
+ * thread.
  *
  * <p>{@link #reconnectAttempts()} exposes the total reconnect ATTEMPT count
  * (does NOT include the initial bind+accept).
@@ -74,12 +78,34 @@ public final class ManagedReceiver extends NativeHandle {
      *     accept timeout)
      */
     public static ManagedReceiver fromUrl(String url, ReconnectPolicy policy) throws SrtException {
+        return fromUrl(url, policy, null);
+    }
+
+    /**
+     * Same as {@link #fromUrl(String, ReconnectPolicy)}, under {@code cancel}: its
+     * {@link OpenCancel#cancel()} from another thread ends the first accept, and an
+     * object already cancelled refuses the open before the URL is parsed; either
+     * way this throws {@code SrtException(CLOSED)}. Once this returns,
+     * {@link #cancelHandle()} is the receiver's cancel: the {@code OpenCancel} no
+     * longer reaches it or its re-accepts (see {@link OpenCancel} for every rule).
+     *
+     * @param url    {@code srt://[host]:port?mode=listener[&key=value&...]}
+     * @param policy reconnect tuning; {@code null} applies the defaults
+     * @param cancel the open's cancel; {@code null} is the same as
+     *               {@link #fromUrl(String, ReconnectPolicy)}
+     * @return a connected {@code ManagedReceiver}
+     * @throws IllegalStateException if {@code cancel} is closed
+     * @throws SrtException as in {@link #fromUrl(String, ReconnectPolicy)};
+     *     {@code CLOSED} when {@code cancel} was cancelled by the time the open finished
+     */
+    public static ManagedReceiver fromUrl(String url, ReconnectPolicy policy, OpenCancel cancel)
+            throws SrtException {
         PolicyArgs p = PolicyArgs.from(policy);
         long h = nFromUrl(
             url,
             p.maxAttemptsPresent(), p.maxAttempts(),
             p.backoffKind(), p.backoffBaseMs(), p.backoffMaxMs(),
-            p.gapBufferCapacity(), p.overflowPolicy(), p.mode());
+            p.gapBufferCapacity(), p.overflowPolicy(), p.mode(), cancel);
         if (h == 0) {
             throw new SrtException(SrtException.Kind.IO, "nFromUrl returned 0 without throwing");
         }
@@ -220,7 +246,8 @@ public final class ManagedReceiver extends NativeHandle {
         String url,
         boolean maxAttemptsPresent, int maxAttempts,
         int backoffKind, long backoffBaseMs, long backoffMaxMs,
-        int gapBufferCapacity, int overflowPolicy, int mode) throws SrtException;
+        int gapBufferCapacity, int overflowPolicy, int mode, OpenCancel cancel)
+        throws SrtException;
     private static native byte[]  nRecvBytes(long handle, int maxLen) throws SrtException;
     private static native long    nReconnectAttempts(long handle);
     private static native long    nCancelHandle(long handle);

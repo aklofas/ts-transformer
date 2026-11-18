@@ -4,6 +4,7 @@ import org.tstrans.NativeHandle;
 import org.tstrans.NativeLoader;
 import org.tstrans.SrtException;
 import org.tstrans.shells.CancelHandle;
+import org.tstrans.shells.OpenCancel;
 import org.tstrans.shells.SocketStats;
 
 /**
@@ -64,12 +65,34 @@ public final class ManagedSender extends NativeHandle {
      *     initial-connect failure
      */
     public static ManagedSender fromUrl(String url, ReconnectPolicy policy) throws SrtException {
+        return fromUrl(url, policy, null);
+    }
+
+    /**
+     * Same as {@link #fromUrl(String, ReconnectPolicy)}, under {@code cancel}: an
+     * object already cancelled refuses the open with {@code SrtException(CLOSED)}
+     * before the URL is parsed, and nothing is dialled. A cancel while the
+     * initial connect runs does not interrupt it, but the open then throws
+     * {@code SrtException(CLOSED)} and the connection is closed again (see
+     * {@link OpenCancel}).
+     *
+     * @param url    {@code srt://host:port[?key=value&...]} with {@code mode=caller}
+     * @param policy reconnect tuning; {@code null} applies the defaults
+     * @param cancel the open's cancel; {@code null} is the same as
+     *               {@link #fromUrl(String, ReconnectPolicy)}
+     * @return a connected {@code ManagedSender}
+     * @throws IllegalStateException if {@code cancel} is closed
+     * @throws SrtException as in {@link #fromUrl(String, ReconnectPolicy)};
+     *     {@code CLOSED} when {@code cancel} was cancelled by the time the open finished
+     */
+    public static ManagedSender fromUrl(String url, ReconnectPolicy policy, OpenCancel cancel)
+            throws SrtException {
         PolicyArgs p = PolicyArgs.from(policy);
         long h = nFromUrl(
             url,
             p.maxAttemptsPresent(), p.maxAttempts(),
             p.backoffKind(), p.backoffBaseMs(), p.backoffMaxMs(),
-            p.gapBufferCapacity(), p.overflowPolicy(), p.mode());
+            p.gapBufferCapacity(), p.overflowPolicy(), p.mode(), cancel);
         if (h == 0) {
             // nFromUrl throws a pending SrtException; JNI framework re-raises it.
             // This line is unreachable in practice, but satisfies the compiler.
@@ -192,7 +215,8 @@ public final class ManagedSender extends NativeHandle {
         String url,
         boolean maxAttemptsPresent, int maxAttempts,
         int backoffKind, long backoffBaseMs, long backoffMaxMs,
-        int gapBufferCapacity, int overflowPolicy, int mode) throws SrtException;
+        int gapBufferCapacity, int overflowPolicy, int mode, OpenCancel cancel)
+        throws SrtException;
     private static native void    nSendBytes(long handle, byte[] data) throws SrtException;
     private static native void    nFlush(long handle) throws SrtException;
     private static native long    nCancelHandle(long handle);

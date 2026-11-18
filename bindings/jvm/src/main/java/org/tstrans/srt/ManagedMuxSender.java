@@ -12,6 +12,7 @@ import org.tstrans.mpegts.MuxerConfig;
 import org.tstrans.mpegts.SubtitleStreamHandle;
 import org.tstrans.mpegts.VideoStreamHandle;
 import org.tstrans.shells.CancelHandle;
+import org.tstrans.shells.OpenCancel;
 import org.tstrans.shells.TransportStats;
 
 /**
@@ -93,6 +94,33 @@ public final class ManagedMuxSender extends NativeHandle {
      */
     public static ManagedMuxSender fromUrl(String url, MuxerConfig programConfig, ReconnectPolicy policy)
             throws SrtException, MuxException {
+        return fromUrl(url, programConfig, policy, null);
+    }
+
+    /**
+     * Same as {@link #fromUrl(String, MuxerConfig, ReconnectPolicy)}, under
+     * {@code cancel}: an object already cancelled refuses the open with
+     * {@code SrtException(CLOSED)} before the URL is parsed, and nothing is
+     * dialled. A cancel while the initial connect runs does not interrupt it, but
+     * the open then throws {@code SrtException(CLOSED)} and the connection is
+     * closed again (see {@link OpenCancel}). The program configuration is built
+     * first: one the muxer refuses there throws {@code MuxException} even when
+     * {@code cancel} is already cancelled.
+     *
+     * @param url           {@code srt://host:port[?key=value&...]} with {@code mode=caller}
+     * @param programConfig the muxer program configuration
+     * @param policy        reconnect tuning; {@code null} applies the defaults
+     * @param cancel        the open's cancel; {@code null} is the same as
+     *                      {@link #fromUrl(String, MuxerConfig, ReconnectPolicy)}
+     * @return a connected {@code ManagedMuxSender}
+     * @throws IllegalStateException if {@code cancel} is closed
+     * @throws SrtException as in {@link #fromUrl(String, MuxerConfig, ReconnectPolicy)};
+     *     {@code CLOSED} when {@code cancel} was cancelled by the time the open finished
+     * @throws MuxException {@code CONFIG_INVALID} if the muxer config is rejected
+     */
+    public static ManagedMuxSender fromUrl(
+            String url, MuxerConfig programConfig, ReconnectPolicy policy, OpenCancel cancel)
+            throws SrtException, MuxException {
         PolicyArgs p = PolicyArgs.from(policy);
         long h = nFromUrl(
             url,
@@ -106,7 +134,7 @@ public final class ManagedMuxSender extends NativeHandle {
             programConfig.dataDescBytes(), programConfig.dataDescLens(),
             p.maxAttemptsPresent(), p.maxAttempts(),
             p.backoffKind(), p.backoffBaseMs(), p.backoffMaxMs(),
-            p.gapBufferCapacity(), p.overflowPolicy(), p.mode());
+            p.gapBufferCapacity(), p.overflowPolicy(), p.mode(), cancel);
         if (h == 0) {
             // nFromUrl throws a pending SrtException/MuxException; JNI re-raises.
             // Unreachable in practice, but satisfies the compiler.
@@ -511,7 +539,8 @@ public final class ManagedMuxSender extends NativeHandle {
         byte[] dataDescBytes, int[] dataDescLens,
         boolean maxAttemptsPresent, int maxAttempts,
         int backoffKind, long backoffBaseMs, long backoffMaxMs,
-        int gapBufferCapacity, int overflowPolicy, int mode) throws SrtException, MuxException;
+        int gapBufferCapacity, int overflowPolicy, int mode, OpenCancel cancel)
+        throws SrtException, MuxException;
 
     private static native void nSendVideo(long handle, byte[] nal, long pts, boolean keyFrame)
         throws MuxException, SrtException;

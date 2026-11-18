@@ -36,6 +36,7 @@ use super::cancel::cancel_view_handle;
 use super::end_reason::{build_close_snapshot, detail, wire_value};
 use super::mux_sender::build_transport_stats;
 use super::open::{open_recv, read_url};
+use super::open_cancel::object_of;
 use super::{domain_or_closed, throw_state};
 use crate::error::{throw_binding, throw_handle_state};
 use crate::generated::stats_mpegts::build_muxer_stats;
@@ -125,11 +126,15 @@ fn open_with(
     env: &mut Env,
     url: &JString,
     opts: Option<tst_core::mpegts::demux::DemuxerConfig>,
+    cancel: &JObject,
 ) -> jlong {
+    let Ok(oc) = object_of(env, cancel) else {
+        return 0;
+    };
     let Some(url) = read_url(env, url) else {
         return 0;
     };
-    let Some(opened) = open_recv(env, &url) else {
+    let Some(opened) = open_recv(env, &url, oc.as_ref()) else {
         return 0;
     };
     register(opened, opts)
@@ -196,14 +201,16 @@ fn register_with(
 }
 
 jni_native! {
-    /// `DemuxReceiver.nOpen(url)` — default demux options. For `srt://` the URL
-    /// must carry `?mode=listener`; the open accepts one peer (not cancellable).
+    /// `DemuxReceiver.nOpen(url, cancel)` — default demux options. For `srt://`
+    /// the URL must carry `?mode=listener`; the open accepts one peer, and a
+    /// non-null `OpenCancel` ends that accept (`CLOSED`).
     fn Java_org_tstrans_shells_DemuxReceiver_nOpen<'local>(
         env,
         _class,
         url: JString<'local>,
+        cancel: JObject<'local>,
     ) -> jlong = 0 => {
-        open_with(env, &url, None)
+        open_with(env, &url, None, &cancel)
     }
 }
 
@@ -225,6 +232,7 @@ jni_native! {
         lenient_psi: jboolean,
         sync_buf_cap: jlong,
         unwrap_timestamps: jboolean,
+        cancel: JObject<'local>,
     ) -> jlong = 0 => {
         let Some(opts) = build_demux_config_from_args(
             env,
@@ -240,7 +248,7 @@ jni_native! {
         ) else {
             return 0;
         };
-        open_with(env, &url, Some(opts))
+        open_with(env, &url, Some(opts), &cancel)
     }
 }
 

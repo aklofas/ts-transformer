@@ -40,6 +40,7 @@ use tst_pipeline::{MuxSender as RustMuxSender, MuxSenderError, MuxSenderErrorSou
 
 use super::cancel::cancel_view_handle;
 use super::open::{open_send, read_url};
+use super::open_cancel::object_of;
 use super::{domain_or_closed, throw_state};
 use crate::error::{throw_binding, throw_handle_state};
 use crate::generated::stats_mpegts::build_muxer_stats;
@@ -125,6 +126,7 @@ jni_native! {
         stream_carries_pts: JBooleanArray<'local>,
         data_desc_bytes: JByteArray<'local>,
         data_desc_lens: JIntArray<'local>,
+        cancel: JObject<'local>,
     ) -> jlong = 0 => {
         // Build the MuxerConfig FIRST — a pending MuxException is thrown on Err(()).
         let cfg = match build_muxer_config_from_arrays(
@@ -148,10 +150,13 @@ jni_native! {
             Ok(c) => c,
             Err(()) => return 0,
         };
+        let Ok(oc) = object_of(env, &cancel) else {
+            return 0;
+        };
         let Some(url) = read_url(env, &url) else {
             return 0;
         };
-        let Some(opened) = open_send(env, &url) else {
+        let Some(opened) = open_send(env, &url, oc.as_ref()) else {
             return 0;
         };
         register(env, opened, cfg)

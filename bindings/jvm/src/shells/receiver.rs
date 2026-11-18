@@ -23,6 +23,7 @@ use tst_pipeline::{Receiver as PlReceiver, ReceiverConfig};
 use super::cancel::cancel_view_handle;
 use super::end_reason::{build_close_snapshot, detail, wire_value};
 use super::open::{open_recv, read_url};
+use super::open_cancel::object_of;
 use super::{domain_or_closed, throw_state};
 use crate::error::{throw_binding, throw_handle_state};
 use crate::generated::stats_shells::build_socket_stats;
@@ -44,15 +45,24 @@ static REGISTRY: LazyLock<OwnedRegistry<Shell, Snapshot<RxHandles>>> =
     LazyLock::new(OwnedRegistry::new);
 
 jni_native! {
-    /// `Receiver.nOpen(url)` — for `srt://` the URL must carry `?mode=listener`;
-    /// the open binds, listens and accepts ONE peer (not cancellable: no handle
-    /// exists until it returns). Throws `IllegalArgumentException` for an
-    /// unsupported scheme and the transport's exception otherwise.
-    fn Java_org_tstrans_shells_Receiver_nOpen(env, _class, url: JString<'_>) -> jlong = 0 => {
+    /// `Receiver.nOpen(url, cancel)` — for `srt://` the URL must carry
+    /// `?mode=listener`; the open binds, listens and accepts ONE peer, and a
+    /// non-null `OpenCancel` ends that accept (`CLOSED`). Throws
+    /// `IllegalArgumentException` for an unsupported scheme and the
+    /// transport's exception otherwise.
+    fn Java_org_tstrans_shells_Receiver_nOpen(
+        env,
+        _class,
+        url: JString<'_>,
+        cancel: JObject<'_>,
+    ) -> jlong = 0 => {
+        let Ok(oc) = object_of(env, &cancel) else {
+            return 0;
+        };
         let Some(url) = read_url(env, &url) else {
             return 0;
         };
-        let Some(opened) = open_recv(env, &url) else {
+        let Some(opened) = open_recv(env, &url, oc.as_ref()) else {
             return 0;
         };
         register(opened)

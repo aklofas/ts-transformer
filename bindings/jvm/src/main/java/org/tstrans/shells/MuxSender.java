@@ -73,6 +73,32 @@ public class MuxSender extends NativeHandle {
     }
 
     /**
+     * Same as {@link #open(String, MuxerConfig)}, under {@code cancel}: an object
+     * already cancelled refuses the open before the URL is parsed, and nothing
+     * is dialled. A cancel while the connect runs does not interrupt it, but the
+     * open then throws {@code CLOSED} and the connection is closed again (see
+     * {@link OpenCancel}). The program configuration is built first, as in
+     * {@link #open(String, MuxerConfig)}: one the muxer refuses there throws
+     * {@code MuxException} even when {@code cancel} is already cancelled.
+     *
+     * @param url           {@code scheme://...} with per-transport query options
+     * @param programConfig the muxer program configuration
+     * @param cancel        the open's cancel; {@code null} is the same as
+     *                      {@link #open(String, MuxerConfig)}
+     * @return a connected {@code MuxSender}
+     * @throws IllegalArgumentException if the scheme is not one of the six above
+     * @throws IllegalStateException if {@code cancel} is closed
+     * @throws BindingException as in {@link #open(String, MuxerConfig)}; kind
+     *     {@code CLOSED} when {@code cancel} was cancelled by the time the open finished
+     * @throws MuxException {@code CONFIG_INVALID} if the muxer rejects the
+     *     program configuration
+     */
+    public static MuxSender open(String url, MuxerConfig programConfig, OpenCancel cancel)
+            throws BindingException, MuxException {
+        return new MuxSender(openHandle(url, programConfig, cancel));
+    }
+
+    /**
      * Open the native sender and return its handle, for a subclass's own
      * factory. Same contract as {@link #open(String, MuxerConfig)}.
      *
@@ -85,6 +111,24 @@ public class MuxSender extends NativeHandle {
      */
     protected static long openHandle(String url, MuxerConfig programConfig)
             throws BindingException, MuxException {
+        return openHandle(url, programConfig, null);
+    }
+
+    /**
+     * Open the native sender under {@code cancel} and return its handle, for a
+     * subclass's own factory. Same contract as
+     * {@link #open(String, MuxerConfig, OpenCancel)}.
+     *
+     * @param url           {@code scheme://...} with per-transport query options
+     * @param programConfig the muxer program configuration
+     * @param cancel        the open's cancel, or {@code null}
+     * @return the native handle, to pass to the constructor
+     * @throws IllegalArgumentException if the scheme is not supported
+     * @throws BindingException the transport's exception
+     * @throws MuxException if the muxer rejects the configuration
+     */
+    protected static long openHandle(String url, MuxerConfig programConfig, OpenCancel cancel)
+            throws BindingException, MuxException {
         return nOpen(
             url,
             programConfig.programNumber(), programConfig.pmtPid(), programConfig.pcrPid(),
@@ -94,7 +138,7 @@ public class MuxSender extends NativeHandle {
             programConfig.streamPids(), programConfig.streamKinds(),
             programConfig.streamCodecs(), programConfig.streamTypeCodes(),
             programConfig.streamCarriesPts(),
-            programConfig.dataDescBytes(), programConfig.dataDescLens());
+            programConfig.dataDescBytes(), programConfig.dataDescLens(), cancel);
     }
 
     // ── Send family — single-stream variants ──────────────────────────────
@@ -460,7 +504,8 @@ public class MuxSender extends NativeHandle {
         int pcrIntervalMs, int pcrLeadMs, int psiIntervalMs, int bufferPackets, int av1Carriage,
         int[] streamPids, int[] streamKinds, int[] streamCodecs, int[] streamTypeCodes,
         boolean[] streamCarriesPts,
-        byte[] dataDescBytes, int[] dataDescLens) throws BindingException, MuxException;
+        byte[] dataDescBytes, int[] dataDescLens, OpenCancel cancel)
+        throws BindingException, MuxException;
 
     private static native void nSendVideo(long handle, byte[] nal, long pts, boolean keyFrame)
         throws MuxException, BindingException;

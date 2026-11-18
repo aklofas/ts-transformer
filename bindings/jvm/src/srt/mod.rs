@@ -19,6 +19,12 @@ pub(crate) struct ManagedSenderSnapshot {
     pub stats: tst_pipeline::ManagedStatsHandle,
 }
 
+/// What a managed open reports when its `OpenCancel` was cancelled by the
+/// time it finished: `SrtException(CLOSED)` through the usual `SrtError` path.
+pub(crate) fn closed_srt() -> tst_srt::SrtError {
+    tst_srt::SrtError::Transport(tst_core::transport::TransportError::ExplicitClose)
+}
+
 /// Reconstruct a `tst_pipeline::ReconnectPolicy` from the primitive args the
 /// JVM `Managed*.nFromUrl` natives marshal (see `org.tstrans.srt.PolicyArgs`).
 /// `backoff_kind`: 0 = Constant, 1 = Exponential — throws `CONFIG_INVALID` on

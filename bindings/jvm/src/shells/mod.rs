@@ -19,6 +19,7 @@ pub(crate) mod demux_receiver;
 pub(crate) mod end_reason;
 pub(crate) mod mux_sender;
 pub(crate) mod open;
+pub(crate) mod open_cancel;
 pub(crate) mod receiver;
 pub(crate) mod sender;
 
