@@ -3,10 +3,12 @@ package org.tstrans.rtp;
 import org.tstrans.NativeHandle;
 
 /**
- * RTSP control-plane cancel handle. {@link #cancel()} breaks any in-flight
- * {@code pause}/{@code play}/{@code teardown} on the originating session out of
- * blocking I/O at the next poll (typically &lt;100&nbsp;ms); that call then throws
- * {@link org.tstrans.RtspException} of kind {@code CLOSED}. A handle exists only once
+ * RTSP control-plane cancel handle. {@link #cancel()} ends an in-flight
+ * {@code pause}/{@code play}/{@code teardown} on the originating session, which then
+ * throws {@link org.tstrans.RtspException} of kind {@code CLOSED}: a request waiting
+ * for its reply notices the cancel within 100&nbsp;ms; a request whose bytes the
+ * server is not taking notices it only when its write completes, its deadline passes
+ * or 5&nbsp;s without progress end the control connection. A handle exists only once
  * {@code RtspClient.connect} has returned the session, so it cannot reach a connect.
  * Mirrors tst-py {@code tstrans.rtp.RtspCancelHandle}. All handles obtained from one
  * session share the same backing flag, which {@link RtspSession#close()} also sets.

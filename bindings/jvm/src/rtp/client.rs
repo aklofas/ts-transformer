@@ -99,8 +99,10 @@ impl JniRtspCancel {
 }
 
 jni_native! {
-    /// Flip the cancel flag. Wakes a parked pause/play/teardown at the next
-    /// ~100 ms poll. Guards a closed (zero) handle.
+    /// Flip the cancel flag. A pause/play/teardown waiting for its reply
+    /// notices it within 100 ms; one stalled in its write only when the write
+    /// completes, its deadline passes or the 5 s write stall ends the
+    /// connection. Guards a closed (zero) handle.
     fn Java_org_tstrans_rtp_RtspCancelHandle_nCancel(env, _class, handle: jlong) = () => {
         if REGISTRY_CANCEL
             .with(handle as u64, |c| c.inner.cancel())

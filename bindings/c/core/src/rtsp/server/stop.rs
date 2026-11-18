@@ -220,15 +220,20 @@ pub unsafe extern "C" fn tst_rtsp_server_cancel_handle(
 /// registration and every `tst_rtsp_mount_push_*` are refused at once
 /// with `TST_E_CLOSED`, and a parked `tst_rtsp_server_next_publisher`
 /// returns `TST_E_CLOSED` within 100 ms. Within 100 ms a task on the
-/// server's runtime ends the rest: the listener stops accepting and drains
-/// the sessions for the builder's graceful-shutdown drain, sessions and
-/// multicast senders end, and every publish mount is closed (a bound
-/// receiver reads `TST_E_END_OF_STREAM`). No Notice 5402 or other
-/// TEARDOWN-style message is sent to connected clients; they see the
-/// connection close. A later `tst_rtsp_server_stop` returns 0 without the
-/// Notice and without the drain wait; like every stop it releases the
-/// server's runtime, whose shutdown may take up to 5 s when that is the
-/// last reference.
+/// server's runtime notices the cancel and ends the rest: the listener
+/// stops accepting and drains the sessions for the builder's
+/// graceful-shutdown drain, sessions and multicast senders end, and every
+/// publish mount is closed (a bound receiver reads `TST_E_END_OF_STREAM`).
+/// No Notice 5402 or other TEARDOWN-style message is sent to connected
+/// clients; they see the connection close. A later `tst_rtsp_server_stop`
+/// returns 0 without the Notice and without the drain wait; like every
+/// stop it releases the server's runtime, whose shutdown may take up to
+/// 5 s when that is the last reference.
+///
+/// A cancel fired while a `tst_rtsp_server_stop` runs closes the publish
+/// mounts but does not shorten that stop: its Notice writes, its drain wait
+/// and its write-half shutdowns do not read it. For an end without the
+/// Notice, cancel before the stop.
 ///
 /// Idempotent — repeated calls are a no-op. Safe to call on NULL (no-op).
 ///

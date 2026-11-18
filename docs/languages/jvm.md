@@ -2433,11 +2433,17 @@ try (RtspServer server = RtspServer.start(cfg);
 - **Hard-cancel.** `server.cancelHandle()` returns a cross-thread
   `RtspServerCancelHandle`; `cancel()` ends the server without the Notice
   5402 teardown and without the drain. From that moment mount pushes, mount
-  registration, `MountRules` edits and a new `nextPublisher` throw
-  `RtspException(CLOSED)`; within about 100 ms a parked `nextPublisher`
-  throws `CLOSED`, every session's connection is closed and every publish
-  mount's receiver reads end of stream. A `stop()` or `close()` after it is
-  not graceful either.
+  registration, `removeMount`, `MountRules` edits and a new `nextPublisher`
+  throw `RtspException(CLOSED)`; within about 100 ms the server notices the
+  cancel: a parked `nextPublisher` throws `CLOSED`, every session's
+  connection is closed and every publish mount's receiver reads end of
+  stream. A `stop()` or `close()` after it is not graceful either. A cancel
+  fired while a `stop()` or `close()` runs does not shorten that call (its
+  Notice writes, its drain wait and its connection shutdowns do not read
+  the cancel), and `cancelHandle()` throws `IllegalStateException` once
+  `close()` has begun: for an end without the Notice, take the handle and
+  cancel before `close()`. A second `close()` made while the first runs
+  returns at once, before the first has finished.
 - **Auth.** Pass `new BasicAuth("user", "pass", "realm")` or
   `new DigestAuth("user", "pass", DigestAlgorithm.SHA256, "realm")` to
   `RtspServerConfig.builder().auth(...)`. The realm is required for server-side
@@ -2516,7 +2522,8 @@ The surface:
   `RtspException` of kind `MOUNT`; `MountPolicy.require()` with no credentials
   throws `IllegalArgumentException` before the server is consulted; a
   credential with an empty username is refused by the server with kind
-  `MOUNT`. An edit after the server stopped throws kind `CLOSED`. A server nobody edits behaves as before; see the
+  `MOUNT`. From the moment `stop()` or `close()` begins, and after the hard
+  cancel, an edit throws kind `CLOSED`; `size()` still answers. A server nobody edits behaves as before; see the
   [publish-ingest recipe](/docs/cookbook/receiving/rtsp-publish-ingest.md#per-name-credentials-and-refusing-a-publisher)
   for when a change takes effect.
 - `RtspServer.removeMount(path)` removes a mount of any kind. A live
@@ -2542,10 +2549,10 @@ How each call ends:
 | Call | Outcome | Meaning |
 |---|---|---|
 | `nextPublisher(timeoutMs)` | `Optional.empty()` | No mount arrived in time. Always the result when on-demand publishers are off. |
-| `nextPublisher`, `addPublishMount`, `removeMount` | `RtspException(CLOSED)` | The server is stopped. A `nextPublisher` parked on another thread wakes with it when `stop()` or `close()` runs. After `close()` the object itself refuses calls with `IllegalStateException`. |
+| `nextPublisher`, `addPublishMount`, `removeMount` | `RtspException(CLOSED)` | The server is stopped (from the moment `stop()` or `close()` begins) or hard-cancelled. A `nextPublisher` parked on another thread wakes with it when `stop()` or `close()` runs. After `close()` the object itself refuses calls with `IllegalStateException`. |
 | `addPublishMount`, `removeMount` | `RtspException(MOUNT)` | Duplicate or invalid path, or no mount registered at the path. |
 | `intoDemuxReceiver` | `RtspException(CLOSED)` | The mount's transport was already taken, through this or any other handle to the mount. |
-| `DemuxReceiver.recvEvent()` | `null` | End of stream: the mount was removed, the server stopped, or its recording publisher left with end-on-exit on. What was already queued is delivered first. `endReason()` reads `CLEAN_TEARDOWN`. |
+| `DemuxReceiver.recvEvent()` | `null` | End of stream: the mount was removed, the server stopped or was hard-cancelled, or its recording publisher left with end-on-exit on. What was already queued is delivered first. `endReason()` reads `CLEAN_TEARDOWN`. |
 | `DemuxReceiver.recvEvent()` | `RtpException(CLOSED)` | The application cancelled it: `PublishMount.cancel()` or `DemuxReceiver.close()`. `endReason()` reads `CANCELLED`. |
 
 Rules the types do not enforce:

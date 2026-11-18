@@ -68,9 +68,12 @@ pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
 /// pushes, mount registration and removal, rule edits and a new
 /// `next_publisher` raise `RtspError(CLOSED)` at once; a parked
 /// `next_publisher` raises it within 100 ms; and within 100 ms the server
-/// ends its sessions, its listener, its multicast senders and every publish
-/// mount's receiver (end of stream, as after `stop()`). No Notice 5402 is
-/// sent. A `stop()` after it ends what is left without the graceful path.
+/// notices the cancel and ends its sessions, its listener, its multicast
+/// senders and every publish mount's receiver (end of stream, as after
+/// `stop()`). No Notice 5402 is sent. A `stop()` after it ends what is left
+/// without the graceful path. A `cancel()` while a `stop()` (or the `with`
+/// exit) runs does not shorten that call: cancel before it for an end
+/// without the Notice.
 ///
 /// This is the server's own cancel handle; the `CancelHandle` of
 /// `Sender` / `Receiver` is a distinct type.
@@ -896,8 +899,8 @@ impl PyRtspServer {
     /// `DemuxReceiver` stops iterating (`StopIteration`); the `PublishMount`
     /// stays usable for `stats()`. A local mount's `MountHandle` keeps
     /// accepting pushes that reach nobody until the server ends (`stop()`
-    /// begins, a hard cancel, or collection); then they raise `RtspError(CLOSED)`. Also how idle on-demand mounts are
-    /// removed.
+    /// begins, a hard cancel, or collection); then they raise
+    /// `RtspError(CLOSED)`. Also how idle on-demand mounts are removed.
     ///
     /// Errors:
     /// - `RtspError(MOUNT)` when no mount is registered at `path`.
@@ -939,7 +942,10 @@ impl PyRtspServer {
     /// session's Notice write (1 s) and closing shutdown (500 ms) have
     /// bounds of their own. `drain_ms` is ignored. After a hard cancel it
     /// sends no Notice and does not wait: it ends what the cancel ends and
-    /// returns.
+    /// returns. A hard cancel fired while this call runs closes the publish
+    /// side within 100 ms but does not shorten the call: the Notice writes,
+    /// the drain wait and the shutdown of each session's connection do not
+    /// read it. For an end without the Notice, cancel before `stop()`.
     ///
     /// Idempotent: a second call is a no-op.
     #[pyo3(signature = (*, drain_ms = 1000))]
@@ -966,7 +972,8 @@ impl PyRtspServer {
         slf
     }
 
-    /// `__exit__` calls `stop()` for graceful shutdown. Suppresses no
+    /// `__exit__` calls `stop()` for graceful shutdown, so a hard cancel
+    /// fired while it runs does not shorten it either. Suppresses no
     /// exceptions (returns `None` / falsy so any in-block exception
     /// re-raises after cleanup).
     #[pyo3(signature = (exc_type=None, exc_value=None, traceback=None))]

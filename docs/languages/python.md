@@ -1219,7 +1219,10 @@ with RtspClient.connect(cfg) as session:
 - **Cancellation.** `session.cancel_handle()` returns a `RtspCancelHandle`
   at once from any thread, also while a control call is parked; flip
   `cancel()` to break `pause()` / `play()` / `teardown()` out. The
-  interrupted call raises `RtspError(CLOSED)`. The control calls run one
+  interrupted call raises `RtspError(CLOSED)`: a request waiting for its
+  reply within 100 ms, a request whose bytes the server is not taking
+  only when its write completes, its deadline passes or 5 s without
+  progress end the control connection. The control calls run one
   at a time: a second `pause()` / `play()` / `teardown()` from another
   thread waits, GIL released, until the call in progress returns or is
   cancelled. `close()` from another thread cancels a call in progress
@@ -1314,8 +1317,12 @@ for a hard teardown: no Notice 5402 and no drain window. Its `cancel()`
 sets a flag and returns. Mount pushes, mount registration and removal,
 rule edits and a new `next_publisher` raise `RtspError(CLOSED)` at once; a
 parked `next_publisher` raises it within 100 ms, and within 100 ms the
-server ends its sessions, its listener, its multicast senders and the
-publish side. A `stop()` after the cancel does not run the graceful path.
+server notices the cancel and ends its sessions, its listener, its
+multicast senders and the publish side. A `stop()` after the cancel does
+not run the graceful path. A `cancel()` while a `stop()` or the `with`
+exit runs closes the publish side but does not shorten that call (its
+Notice writes, its drain wait and its connection shutdowns do not read
+the cancel): for an end without the Notice, cancel before it.
 
 ### RTSP publisher ingest
 
@@ -1377,8 +1384,9 @@ The surface:
   guards the first ANNOUNCE. A path rule's `Inherit` side uses the table's default rule; the default's `Inherit` uses the server-wide builder setting (`auth_*`). A bad path raises
   `RtspError(MOUNT)`; `MountPolicy.require()` with no credentials raises
   `ValueError` before the server is consulted; a credential with an empty
-  username is refused by the server with `RtspError(MOUNT)`. An edit after
-  the server stopped raises `RtspError(CLOSED)`. A server nobody edits behaves as before; see the
+  username is refused by the server with `RtspError(MOUNT)`. From the moment
+  `stop()` begins (also the `with` exit), and after a hard cancel, an edit
+  raises `RtspError(CLOSED)`; `len(rules)` still answers. A server nobody edits behaves as before; see the
   [publish-ingest recipe](/docs/cookbook/receiving/rtsp-publish-ingest.md#per-name-credentials-and-refusing-a-publisher)
   for when a change takes effect.
 - `RtspServer.remove_mount(path)` removes a mount of any kind. A live
