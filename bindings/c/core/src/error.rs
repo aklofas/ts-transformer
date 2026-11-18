@@ -102,8 +102,8 @@ pub enum TstError {
     RtspIo = -22,
     /// (-23) keepalive or request timeout on an RTSP connection.
     RtspTimeout = -23,
-    /// (-24) RtspServerError variants (lifecycle, config — bind in use,
-    /// duplicate mount path, max sessions reached, etc.).
+    /// (-24) RTSP server lifecycle misuse: started twice or not started. An
+    /// ended server (stopped or hard-cancelled) is `TST_E_CLOSED`.
     RtspServer = -24,
     /// (-25) MountError variants from RtspServer mount surface
     /// (underlying MuxError, backpressure, closed).

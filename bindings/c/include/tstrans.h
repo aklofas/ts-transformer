@@ -534,8 +534,8 @@ enum tst_e
    */
   TST_E_RTSP_TIMEOUT = -23,
   /**
-   * (-24) RtspServerError variants (lifecycle, config — bind in use,
-   * duplicate mount path, max sessions reached, etc.).
+   * (-24) RTSP server lifecycle misuse: started twice or not started. An
+   * ended server (stopped or hard-cancelled) is `TST_E_CLOSED`.
    */
   TST_E_RTSP_SERVER = -24,
   /**
@@ -10216,8 +10216,8 @@ int tst_rtsp_publish_mount_publisher_info(const struct tst_rtsp_publish_mount_t 
  * `mux_cfg` is borrowed — the caller retains ownership and must free it.
  *
  * Returns a non-NULL `tst_rtsp_mount_handle_t*` on success, NULL on failure
- * with last-error set. NULL for `iface_name` is valid (no interface
- * override).
+ * with last-error set (`TST_E_CLOSED` once the server is stopped or
+ * hard-cancelled). NULL for `iface_name` is valid (no interface override).
  *
  * # Safety
  *
@@ -10287,7 +10287,8 @@ struct tst_rtsp_publish_mount_t *tst_rtsp_server_add_publish_mount(struct TstRts
  * of the config after this call.
  *
  * Returns a non-NULL `tst_rtsp_mount_handle_t*` on success, NULL on
- * failure with last-error set. The handle must eventually be freed with
+ * failure with last-error set (`TST_E_CLOSED` once the server is stopped
+ * or hard-cancelled). The handle must eventually be freed with
  * `tst_rtsp_mount_handle_free`.
  *
  * # Safety

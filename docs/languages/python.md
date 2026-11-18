@@ -1277,7 +1277,7 @@ The surface:
   `RtspError(MOUNT)`; `MountPolicy.require()` with no credentials raises
   `ValueError` before the server is consulted; a credential with an empty
   username is refused by the server with `RtspError(MOUNT)`. An edit after
-  the server stopped raises `RtspError(SERVER)`. A server nobody edits behaves as before; see the
+  the server stopped raises `RtspError(CLOSED)`. A server nobody edits behaves as before; see the
   [publish-ingest recipe](/docs/cookbook/receiving/rtsp-publish-ingest.md#per-name-credentials-and-refusing-a-publisher)
   for when a change takes effect.
 - `RtspServer.remove_mount(path)` removes a mount of any kind. A live
@@ -1302,7 +1302,7 @@ How each call ends:
 | Call | Outcome | Meaning |
 |---|---|---|
 | `next_publisher(timeout)` | `None` | No mount arrived in time. Always the result when on-demand publishers are off. |
-| `next_publisher`, `add_publish_mount`, `remove_mount` | `RtspError(SERVER)` | The server is stopped. A `next_publisher` parked on another thread wakes with it when `stop()` or the `with` exit runs. |
+| `next_publisher`, `add_publish_mount`, `remove_mount` | `RtspError(CLOSED)` | The server is stopped. A `next_publisher` parked on another thread wakes with it when `stop()` or the `with` exit runs. |
 | `add_publish_mount`, `remove_mount` | `RtspError(MOUNT)` | Duplicate or invalid path, or no mount registered at the path. |
 | `into_demux_receiver` | `RtspError(CLOSED)` | The mount's transport was already taken, through this or any other handle to the mount. |
 | iterating the receiver | `StopIteration` | End of stream: the mount was removed, the server stopped, or its recording publisher left with end-on-exit on. What was already queued is delivered first. |
@@ -1316,7 +1316,7 @@ Rules the types do not enforce:
   discontinuities.
 - **Every shutdown ends the mounts.** `stop()`, the `with` exit and
   `cancel_handle().cancel()` end every publish mount's receiver and wake a
-  parked `next_publisher` with `RtspError(SERVER)`; only the hard cancel
+  parked `next_publisher` with `RtspError(CLOSED)`; only the hard cancel
   skips the Notice 5402 teardown. At interpreter exit a server left open is
   hard-cancelled, so a daemon thread parked in `next_publisher` ends.
 - **`next_publisher` blocking.** It releases the GIL while it waits. With

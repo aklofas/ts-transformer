@@ -339,7 +339,7 @@ fn with_server<R>(env: &mut Env, handle: jlong, f: impl FnOnce(&ServerInner) -> 
 /// mutator drops the registry's `Arc` without a double-panic-in-Drop hazard (a
 /// `nNextPublisher` still parked holds its own clone until its current wait
 /// slice ends; it then finds the entry gone, drops the clone, which runs
-/// `Drop`, and ends with `RtspException(SERVER)`).
+/// `Drop`, and ends with `RtspException(CLOSED)`).
 ///
 /// # Mixed-use poisoning contract
 ///
@@ -437,7 +437,7 @@ jni_native! {
     /// runtime shutdown). Mirrors tst-py `__exit__`. The `stop()` is load-bearing
     /// for the publisher role: it ends every publish mount's application transport
     /// (a bound `DemuxReceiver` reads end of stream) and wakes a parked
-    /// `nextPublisher` with `SERVER`, which the hard cancel alone does not.
+    /// `nextPublisher` with `CLOSED`, which the hard cancel alone does not.
     fn Java_org_tstrans_rtp_RtspServer_nClose(_env, _class, handle: jlong) = () => {
         // Atomic + idempotent: the cancel hook fires a HARD cancel first (waking any
         // racing server op), then only the winning close gets the server back for a
@@ -688,7 +688,7 @@ fn read_path(env: &mut Env, path: &JString) -> Option<String> {
 jni_native! {
     /// `RtspServer.nAddPublishMount(serverHandle, path)` → `PublishMount` handle, or
     /// 0 with a pending `RtspException` (`MOUNT` for an invalid or duplicate path,
-    /// `SERVER` once stopped).
+    /// `CLOSED` once stopped).
     fn Java_org_tstrans_rtp_RtspServer_nAddPublishMount<'local>(
         env,
         _class,
@@ -753,7 +753,7 @@ const NEXT_PUBLISHER_SLICE: Duration = Duration::from_secs(1);
 jni_native! {
     /// `RtspServer.nNextPublisher(serverHandle, timeoutMs)` → the next on-demand
     /// `PublishMount` handle, `0` on a timeout, or 0 with a pending
-    /// `RtspException(SERVER)` once the server stops (including while it waited).
+    /// `RtspException(CLOSED)` once the server stops (including while it waited).
     ///
     /// The wait runs WITHOUT the registry lease: the server's `Arc` is cloned out
     /// under a short lease and the lease is released before `next_publisher`
@@ -764,7 +764,7 @@ jni_native! {
     /// The wait runs in slices of at most [`NEXT_PUBLISHER_SLICE`], dropping the
     /// clone and re-leasing the server between slices. A registry entry that went
     /// away without a `stop()` (a poisoned mutator drops only the registry's
-    /// `Arc`) therefore ends the call with `RtspException(SERVER)` within one
+    /// `Arc`) therefore ends the call with `RtspException(CLOSED)` within one
     /// slice, instead of the clone keeping the server alive for the whole
     /// timeout.
     fn Java_org_tstrans_rtp_RtspServer_nNextPublisher(
@@ -814,7 +814,7 @@ jni_native! {
 
 jni_native! {
     /// `RtspServer.nRemoveMount(serverHandle, path)` — remove a mount of any kind.
-    /// `RtspException(MOUNT)` when no mount is registered at `path`, `SERVER` once
+    /// `RtspException(MOUNT)` when no mount is registered at `path`, `CLOSED` once
     /// stopped. Blocks for the Notice 5402 writes to the mount's sessions (bounded
     /// at 1 s per session).
     fn Java_org_tstrans_rtp_RtspServer_nRemoveMount<'local>(

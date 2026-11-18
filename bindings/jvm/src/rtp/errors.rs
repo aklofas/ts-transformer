@@ -69,7 +69,7 @@ pub(crate) fn mount_error_to_jvm(env: &mut Env, e: MountError) {
 }
 
 /// Mount-rule edit errors — the shared `From<MountRuleError>`: an invalid path,
-/// empty credentials or a repeated username → `MOUNT`, a shut-down server → `SERVER`.
+/// empty credentials or a repeated username → `MOUNT`, a shut-down server → `CLOSED`.
 pub(crate) fn mount_rule_error_to_jvm(env: &mut Env, e: MountRuleError) {
     throw_binding(env, Domain::Rtsp, &BindingError::from(e));
 }
