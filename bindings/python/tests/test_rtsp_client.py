@@ -717,20 +717,27 @@ def test_a_second_control_call_waits_for_the_one_in_progress():
     session = RtspClient.connect(_tcp_config(port))
     handle = session.cancel_handle()
     outcome: dict = {}
+    entering = threading.Event()
 
-    def call(name: str) -> None:
+    def call(name: str, entering: threading.Event | None = None) -> None:
+        method = getattr(session, name)
+        if entering is not None:
+            entering.set()
         try:
-            getattr(session, name)()
+            method()
             outcome[name] = None
         except BaseException as exc:  # noqa: BLE001
             outcome[name] = exc
 
     paused = threading.Thread(target=call, args=("pause",), daemon=True)
-    torn = threading.Thread(target=call, args=("teardown",), daemon=True)
+    torn = threading.Thread(target=call, args=("teardown", entering), daemon=True)
     paused.start()
     try:
         assert got_pause.wait(5.0), "PAUSE never reached the peer"
         torn.start()
+        # Set right before the call, so the join below times the call
+        # itself, not the thread's start.
+        assert entering.wait(5.0), "the teardown() thread never started"
         torn.join(1.0)
         assert torn.is_alive(), f"teardown() did not wait for the parked pause(): {outcome}"
         assert not session.is_torn_down()

@@ -114,9 +114,10 @@ def _park(open_fn: Callable[[str, OpenCancel], Any], oc: OpenCancel) -> tuple[in
     """Start a listener-mode open with `oc` and return once it is parked:
     its port is bound and the open has not returned.
 
-    A free port can be taken by another process before the open binds it
-    (the box is shared); that bind failure is retried on a new port, since
-    it is not what any test here is about."""
+    A free port can be taken before the open binds it, by another process
+    (the box is shared) or by this wait's own probe, which binds the port
+    to see whether it is taken; that bind failure is retried on a new port,
+    since it is not what any test here is about."""
     for _ in range(5):
         port = free_udp_port()
         o = _Open(lambda: open_fn(f"srt://127.0.0.1:{port}?mode=listener", oc))
