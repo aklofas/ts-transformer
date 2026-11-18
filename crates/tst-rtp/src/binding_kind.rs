@@ -68,9 +68,11 @@ impl From<RtspServerError> for BindingError {
             | RtspServerError::DuplicateMount { .. }
             | RtspServerError::MountNotFound { .. }
             | RtspServerError::InvalidConfig { .. } => K::RtspMount,
-            RtspServerError::AlreadyStarted
-            | RtspServerError::NotStarted
-            | RtspServerError::Shutdown => K::RtspServer,
+            RtspServerError::AlreadyStarted | RtspServerError::NotStarted => K::RtspServer,
+            // An ended server (stopped, hard-cancelled or dropped) is the
+            // closed-handle outcome every binding reports for a call after
+            // close or cancel.
+            RtspServerError::Shutdown => K::Closed,
             // Same one-cancel-outcome kind as `RtspError::LocalCancel`: a
             // publish mount's application transport was already taken by
             // another clone of the handle, not a wire failure.
@@ -89,7 +91,7 @@ impl From<crate::rtsp::server::mount_rules::MountRuleError> for BindingError {
             | E::EmptyCredentials
             | E::DuplicateUsername { .. }
             | E::InvalidRealm { .. } => K::RtspMount,
-            E::Closed => K::RtspServer,
+            E::Closed => K::Closed,
         };
         BindingError::new(kind, e.to_string())
     }
@@ -247,10 +249,6 @@ mod tests {
             K::RtspServer
         );
         assert_eq!(
-            BindingError::from(RtspServerError::Shutdown).kind,
-            K::RtspServer
-        );
-        assert_eq!(
             BindingError::from(RtspServerError::TransportTaken).kind,
             K::Closed
         );
@@ -259,5 +257,26 @@ mod tests {
             BindingError::from(MountError::Mux(tst_core::error::MuxError::InvalidNal)).kind,
             K::RtspMount
         );
+    }
+
+    #[test]
+    fn an_ended_server_and_its_mount_rules_are_closed() {
+        assert_eq!(
+            BindingError::from(RtspServerError::Shutdown).kind,
+            K::Closed
+        );
+        assert_eq!(
+            BindingError::from(RtspServerError::NotStarted).kind,
+            K::RtspServer
+        );
+        #[cfg(feature = "rtsp-server")]
+        {
+            use crate::rtsp::server::mount_rules::MountRuleError;
+            assert_eq!(BindingError::from(MountRuleError::Closed).kind, K::Closed);
+            assert_eq!(
+                BindingError::from(MountRuleError::EmptyCredentials).kind,
+                K::RtspMount
+            );
+        }
     }
 }

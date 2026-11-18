@@ -35,9 +35,11 @@
 //!
 //! # Error mapping
 //!
-//! - `RtspServerError` variants → `TST_E_RTSP_SERVER` (-24) via
-//!   [`crate::error::record_with_context`] (the shared `From<RtspServerError>`
-//!   row of the binding kind table).
+//! - `RtspServerError` variants → their codes in the shared
+//!   `From<RtspServerError>` row of the binding kind table, via
+//!   [`crate::error::record_with_context`]: a bad or duplicate path or
+//!   mount config is `TST_E_RTSP_MOUNT` (-25), an ended server (stopped or
+//!   hard-cancelled) is `TST_E_CLOSED`.
 //! - `MuxError` from config validation → mapped via
 //!   [`crate::error::record_mux_error`].
 
@@ -77,7 +79,8 @@ use crate::rtsp::server::types::{TstRtspMountHandle, TstRtspServer};
 /// of the config after this call.
 ///
 /// Returns a non-NULL `tst_rtsp_mount_handle_t*` on success, NULL on
-/// failure with last-error set. The handle must eventually be freed with
+/// failure with last-error set (`TST_E_CLOSED` once the server is stopped
+/// or hard-cancelled). The handle must eventually be freed with
 /// `tst_rtsp_mount_handle_free`.
 ///
 /// # Safety
@@ -176,8 +179,8 @@ pub unsafe extern "C" fn tst_rtsp_server_add_unicast_mount(
 /// `mux_cfg` is borrowed — the caller retains ownership and must free it.
 ///
 /// Returns a non-NULL `tst_rtsp_mount_handle_t*` on success, NULL on failure
-/// with last-error set. NULL for `iface_name` is valid (no interface
-/// override).
+/// with last-error set (`TST_E_CLOSED` once the server is stopped or
+/// hard-cancelled). NULL for `iface_name` is valid (no interface override).
 ///
 /// # Safety
 ///
@@ -1126,6 +1129,31 @@ mod tests {
     }
 
     #[test]
+    fn add_unicast_mount_after_the_hard_cancel_returns_closed() {
+        let server = start_test_server();
+        assert!(!server.is_null());
+        let cancel = unsafe { crate::rtsp::server::stop::tst_rtsp_server_cancel_handle(server) };
+        assert!(!cancel.is_null());
+        unsafe { crate::rtsp::server::stop::tst_rtsp_cancel_handle_cancel(cancel) };
+        let cfg = make_mux_cfg();
+        let path = std::ffi::CString::new("/late").unwrap();
+        let mount =
+            unsafe { tst_rtsp_server_add_unicast_mount(server, path.as_ptr(), cfg as *const _) };
+        assert!(
+            mount.is_null(),
+            "a hard-cancelled server takes no new mount"
+        );
+        assert_eq!(
+            unsafe { crate::error::tst_get_last_error() },
+            TstError::Closed as i32,
+            "an ended server reports TST_E_CLOSED"
+        );
+        unsafe { crate::config::tst_mux_config_free(cfg) };
+        unsafe { crate::rtsp::server::stop::tst_rtsp_cancel_handle_free(cancel) };
+        unsafe { crate::rtsp::server::stop::tst_rtsp_server_free(server) };
+    }
+
+    #[test]
     fn flush_on_valid_mount_returns_zero() {
         let (server, mount) = open_unicast_mount();
         let rc = unsafe { tst_rtsp_mount_flush(mount) };
@@ -1163,8 +1191,8 @@ mod tests {
         // `InvalidConfig`.
         // (`Io`/`BindAddrInUse` → -22, `Tls` → -21 — pinned by
         // `start::tests::tls_cert_pem_on_plaintext_bind_fails_start` —,
-        // `UrlParse` → -16; only `AlreadyStarted`/`NotStarted`/`Shutdown`
-        // stay -24.)
+        // `UrlParse` → -16, `Shutdown` → `TST_E_CLOSED`; only
+        // `AlreadyStarted`/`NotStarted` stay -24.)
         assert_eq!(
             unsafe { crate::error::tst_get_last_error() },
             TstError::RtspMount as i32,

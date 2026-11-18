@@ -277,16 +277,16 @@ class RtspPublishMountTest {
 
     @Test
     @Timeout(30)
-    void methodsAfterStopThrowServer() throws Exception {
+    void methodsAfterStopThrowClosed() throws Exception {
         assumeLinux();
         try (RtspServer server = start(false);
              PublishMount mount = server.addPublishMount("/cam")) {
             server.stop();
-            assertEquals(RtspException.Kind.SERVER,
+            assertEquals(RtspException.Kind.CLOSED,
                 assertThrows(RtspException.class, () -> server.nextPublisher(100)).kind());
-            assertEquals(RtspException.Kind.SERVER,
+            assertEquals(RtspException.Kind.CLOSED,
                 assertThrows(RtspException.class, () -> server.addPublishMount("/x")).kind());
-            assertEquals(RtspException.Kind.SERVER,
+            assertEquals(RtspException.Kind.CLOSED,
                 assertThrows(RtspException.class, () -> server.removeMount("/cam")).kind());
             // The mount wrapper still answers.
             assertEquals(0L, mount.stats().rtpPacketsReceived());
@@ -443,12 +443,12 @@ class RtspPublishMountTest {
                 recv.join();
                 fail("close() did not wake the parked calls");
             }
-            // close() runs stop(): the parked nextPublisher wakes with SERVER ...
+            // close() runs stop(): the parked nextPublisher wakes with CLOSED ...
             Throwable e = next.error.get();
             assertTrue(e instanceof RtspException,
-                () -> "nextPublisher: expected RtspException(SERVER), got "
+                () -> "nextPublisher: expected RtspException(CLOSED), got "
                     + (e != null ? e : "value " + next.value.get()));
-            assertEquals(RtspException.Kind.SERVER, ((RtspException) e).kind());
+            assertEquals(RtspException.Kind.CLOSED, ((RtspException) e).kind());
             // ... and the publish mount's receiver reads end of stream.
             assertNull(recv.error.get(), () -> "receiver: unexpected " + recv.error.get());
             assertNull(recv.value.get());
@@ -478,8 +478,8 @@ class RtspPublishMountTest {
             assertNotNull(stats.value.get());
             assertTrue(closed, "close() did not complete while nextPublisher was parked");
             assertTrue(next.error.get() instanceof RtspException,
-                () -> "nextPublisher: expected RtspException(SERVER), got " + next.value.get());
-            assertEquals(RtspException.Kind.SERVER, ((RtspException) next.error.get()).kind());
+                () -> "nextPublisher: expected RtspException(CLOSED), got " + next.value.get());
+            assertEquals(RtspException.Kind.CLOSED, ((RtspException) next.error.get()).kind());
         } finally {
             server.close();
         }

@@ -357,8 +357,9 @@ class RtspErrorKind(enum.IntEnum):
     operations (connect, play, pause, teardown, start, stop, add_mount).
 
     `CLOSED` (0.7.0) is the shared closed-handle kind: a call on a client,
-    session or mount whose handle was already closed, or one cancelled from
-    another thread.
+    session or mount whose handle was already closed, one cancelled from
+    another thread, or an `RtspServer` or `MountRules` call after the server
+    was stopped or cancelled.
 
     Available only when tstrans was built with the `rtp` cargo
     feature (default-on in published wheels).
@@ -382,8 +383,8 @@ class RtspErrorKind(enum.IntEnum):
     IO = 7
     # RTSP request timeout.
     TIMEOUT = 8
-    # RTSP server lifecycle misuse: started twice, not started, or already
-    # shut down.
+    # RTSP server lifecycle misuse: started twice or not started. An ended
+    # server is CLOSED.
     SERVER = 9
     # RTSP mount failure: mount path, multicast group, duplicate mount or
     # mount config.

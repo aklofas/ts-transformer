@@ -101,7 +101,7 @@ class MountRulesTest {
 
     @Test
     @Timeout(30)
-    void rulesSurviveServerCloseAndThrowServerAfterStop() throws Exception {
+    void rulesSurviveServerCloseAndThrowClosedAfterStop() throws Exception {
         assumeLinux();
         RtspServer server = start(RtspServerConfig.builder().bindAddr("127.0.0.1:0")
             .gracefulShutdownDrainMs(50).build());
@@ -111,7 +111,7 @@ class MountRulesTest {
         server.stop();
         RtspException stopped = assertThrows(RtspException.class,
             () -> rules.set("/b", MountRule.both(MountPolicy.open())));
-        assertEquals(RtspException.Kind.SERVER, stopped.kind());
+        assertEquals(RtspException.Kind.CLOSED, stopped.kind());
         assertTrue(rules.isClosed());
         server.close();
         assertEquals(1, rules.size());

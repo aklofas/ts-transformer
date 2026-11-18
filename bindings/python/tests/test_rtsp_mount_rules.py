@@ -131,7 +131,7 @@ def test_invalid_path_is_mount_kind_and_empty_require_is_value_error():
             MountPolicy.refuse(200)  # type: ignore[arg-type]
 
 
-def test_edits_after_stop_raise_server_kind_but_len_answers():
+def test_edits_after_stop_raise_closed_kind_but_len_answers():
     server = _start()
     rules = server.mount_rules()
     rules.set("/a", MountRule(publish=MountPolicy.open()))
@@ -149,7 +149,7 @@ def test_edits_after_stop_raise_server_kind_but_len_answers():
     for edit in edits:
         with pytest.raises(RtspError) as ei:
             edit()
-        assert ei.value.kind is RtspErrorKind.SERVER
+        assert ei.value.kind is RtspErrorKind.CLOSED
     assert len(rules) == 1
 
 

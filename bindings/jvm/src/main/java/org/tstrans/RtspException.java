@@ -37,8 +37,8 @@ public final class RtspException extends BindingException {
         /** RTSP request timeout. */
         TIMEOUT,
         /**
-         * RTSP server lifecycle misuse: started twice, not started, or already
-         * shut down.
+         * RTSP server lifecycle misuse: started twice or not started. An ended
+         * server is CLOSED.
          */
         SERVER,
         /**

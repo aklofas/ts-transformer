@@ -533,12 +533,12 @@ fn rtsp_publish_next_publisher_on_demand_and_stop_wakes_parked_call() {
     parked.join().unwrap();
     assert_eq!(rc, TstError::Closed as i32);
     assert!(out_null);
-    // A call that entered before the stop reads "server is stopped"; one
-    // that only reached the handle after the stop reads "server is stopped
-    // or freed" and never parked.
-    assert_eq!(
-        msg, "server is stopped",
-        "next_publisher returned through the already-stopped check, not the wake"
+    // A call that entered before the stop fails in the server call itself;
+    // one that only reached the handle after the stop reads "server is
+    // stopped or freed" and never parked.
+    assert!(
+        msg.starts_with("next_publisher failed: "),
+        "next_publisher returned through the already-stopped check, not the wake: {msg}"
     );
 
     // The stop ends the on-demand mount's receiver with END_OF_STREAM.
