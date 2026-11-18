@@ -51,7 +51,7 @@ use tst_core::transport::{RecvTransport, Transport, TransportCancel};
 use tst_core::url::redact_url;
 use tst_pipeline::binding::{BindingError, BindingErrorKind, Domain, HandleState, Opened, Owned};
 
-use super::listen_rules::PyListenRules;
+use super::listen_rules::{PyListenRules, listener_closed};
 use crate::errors::make_kinded_error;
 use crate::raise::{SRT, pyres, raise};
 use crate::shells::cancel::PyCancelHandle;
@@ -825,12 +825,13 @@ impl PyListener {
     /// This listener's per-stream-ID `ListenRules`. Answered from the
     /// construction-time snapshot, so it never waits behind a parked
     /// `accept()`; obtain it before the accept loop starts. Raises
-    /// `SrtError(CLOSED)` once the listener is closed.
+    /// `SrtError(CLOSED)` once the listener is closed, while `close()` runs,
+    /// and after `cancel_handle().cancel()`.
     fn rules(&self, py: Python<'_>) -> PyResult<PyListenRules> {
-        if self.owned.is_closed() {
+        let s = self.owned.snapshot();
+        if self.owned.is_closed() || listener_closed(&s.closed, &self.cancel) {
             return Err(raise(py, &SRT, BindingError::from(HandleState::Closed)));
         }
-        let s = self.owned.snapshot();
         Ok(PyListenRules::new(
             s.rules.clone(),
             s.closed.clone(),

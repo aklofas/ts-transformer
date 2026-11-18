@@ -130,6 +130,12 @@ pub(crate) struct PyListenRules {
     cancel: Arc<CancelSource>,
 }
 
+/// The listener is closed (`close()` has begun) or cancelled: the one
+/// predicate `Listener.rules()` and every view method answer CLOSED by.
+pub(crate) fn listener_closed(closed: &AtomicBool, cancel: &CancelSource) -> bool {
+    closed.load(Ordering::Acquire) || cancel.is_cancelled()
+}
+
 impl PyListenRules {
     pub(crate) fn new(
         rules: ListenRules,
@@ -144,7 +150,7 @@ impl PyListenRules {
     }
 
     fn is_closed(&self) -> bool {
-        self.closed.load(Ordering::Acquire) || self.cancel.is_cancelled()
+        listener_closed(&self.closed, &self.cancel)
     }
 
     /// `SrtError(CLOSED)` once the listener is closed or cancelled: the Rust

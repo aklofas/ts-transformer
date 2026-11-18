@@ -79,7 +79,9 @@ public final class Listener extends NativeHandle implements Iterable<Socket> {
      * be edited while an accept loop runs. Once the listener is closed this method
      * throws {@link IllegalStateException}, like every other {@code Listener}
      * method, and a view obtained earlier throws {@link SrtException} with
-     * {@code Kind.CLOSED}.
+     * {@code Kind.CLOSED}. After {@code cancelHandle().cancel()} without a
+     * {@code close()} this method still returns a view, and every method of
+     * that view throws {@link SrtException} with {@code Kind.CLOSED}.
      */
     public ListenRules rules() {
         ensureOpen("Listener is closed");

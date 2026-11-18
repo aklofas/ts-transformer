@@ -498,7 +498,7 @@ takes a code of 1000 or more (`ValueError` below that);
 `user_defined(code)` builds an application code of 2000 or more. `set` and
 `set_default` raise `SrtError(CONFIG_INVALID)` for a bad passphrase, a reject
 code above 2147482647 (which libsrt cannot send), or a NUL byte in a stream
-ID or rule key. Every `ListenRules` method raises `SrtError(CLOSED)` once the listener is closed. A rule installed after
+ID or rule key. Every `ListenRules` method raises `SrtError(CLOSED)` once the listener is closed or cancelled, and so does `listener.rules()` itself (also while `close()` runs). A rule installed after
 `accept()` returns does not cover a caller whose handshake already
 completed, so keep your own check after `accept()` when it matters. A
 refused caller's connect fails with `SrtError(CONNECT_FAILED)`, with the

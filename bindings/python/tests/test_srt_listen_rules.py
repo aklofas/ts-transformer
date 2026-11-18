@@ -184,6 +184,18 @@ def test_cancelled_listener() -> None:
         lst.close()
 
 
+
+def test_rules_after_cancel_raises_closed() -> None:
+    # The same rule as the views: a cancelled listener hands out no view.
+    lst, _port = _listen()
+    try:
+        lst.cancel_handle().cancel()
+        with pytest.raises(SrtError) as ei:
+            lst.rules()
+        assert ei.value.kind == SrtErrorKind.CLOSED
+    finally:
+        lst.close()
+
 def test_validation() -> None:
     with pytest.raises(ValueError):
         ListenRule.reject(10)
