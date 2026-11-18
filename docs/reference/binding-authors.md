@@ -340,7 +340,10 @@ What may precede or override the CLOSED outcome:
   the argument error. A value inside the layout that names no stream of
   the mount reaches the server's check and returns CLOSED.
 - A success already in flight when the cancel landed may win; a failure
-  in that window is reported as the cancel.
+  in that window is reported as the cancel. An open given an
+  `OpenCancel` is the one exception: it reports CLOSED whenever the object
+  was cancelled by the time the open finished, success included
+  (`docs/reference/srt-cancel-handle.md`, "Cancelling an open").
 - The SRT `Listener` iterator maps CLOSED to `StopIteration`.
 - A flushed access unit is delivered before CLOSED: by the Rust shells,
   and by the H.264 receiver in Python and the JVM (its queued complete access
@@ -415,7 +418,9 @@ detaches in `Drop`, and joins in its `stop()` / `close()` / `shutdown()`;
 the [Runtime ownership](/docs/reference/architecture.md#runtime-ownership)
 table says what each of those waits for, one phase at a time.
 `WhepServer`, the HLS serving handle, `ManagedTransport` and `RtspClient`
-follow this today. `RtspServer` is the listed exception: its `Drop` still
+follow this today; every binding's explicit close of an RTSP session is
+`RtspClient::close()`, and a Python session collected without `close()`
+takes the drop. `RtspServer` is the listed exception: its `Drop` still
 waits up to 5 s for its runtime (the RIST transports also join in `Drop`;
 the same table lists them). A Rust `Sender` or `MuxSender` dropped without `close()`
 sends what it still buffers, then closes its transport. The binding layer
