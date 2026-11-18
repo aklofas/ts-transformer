@@ -9329,7 +9329,10 @@ int tst_rtp_receiver_recv_ts(struct TstRtpReceiver *p,
  * multicast senders end, and every publish mount is closed (a bound
  * receiver reads `TST_E_END_OF_STREAM`). No Notice 5402 or other
  * TEARDOWN-style message is sent to connected clients; they see the
- * connection close. A later `tst_rtsp_server_stop` returns 0 at once.
+ * connection close. A later `tst_rtsp_server_stop` returns 0 without the
+ * Notice and without the drain wait; like every stop it releases the
+ * server's runtime, whose shutdown may take up to 5 s when that is the
+ * last reference.
  *
  * Idempotent — repeated calls are a no-op. Safe to call on NULL (no-op).
  *

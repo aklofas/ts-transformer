@@ -423,7 +423,7 @@ int main(int argc, char **argv) {
      * does not send Notice 5402; stop sends Notice 5402 and waits for drain.
      * We use cancel from the signal handler to wake up the push loop quickly,
      * then call stop from the main thread, which after the cancel sends no
-     * Notice and returns at once: the server is already down.
+     * Notice and skips the drain wait: the server is already down.
      */
     g_cancel_handle = tst_rtsp_server_cancel_handle(server);
     if (!g_cancel_handle) {
