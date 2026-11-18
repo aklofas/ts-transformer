@@ -36,15 +36,16 @@ import org.tstrans.mpegts.VideoStreamHandle;
  * from {@link org.tstrans.shells.MuxSender}, whose muxer errors are {@code MuxException} —
  * and of kind {@code CLOSED} once the server has ended ({@link RtspServer#stop()}, from the
  * moment it begins; its hard cancel; or {@link RtspServer#close()}), whether or not the mount
- * was removed first.
+ * was removed first. {@link #flush()} and {@link #resetStats()} are not refused after the
+ * server ended: they return normally.
  *
  * <p><b>Server failure isolation (rare):</b> {@code MountHandle} objects live in their
  * own registry, independent of their originating {@link RtspServer}. If the server is
  * internally invalidated by a panic in a mutating server operation, previously obtained
- * {@code MountHandle} objects are not immediately closed — their next push operation
- * will fail with a closed-channel error rather than throwing at the moment the server is
- * torn down. This is memory-safe; close retained handles when done to ensure timely
- * cleanup.
+ * {@code MountHandle} objects are not immediately closed: once the server is torn down
+ * their next push throws {@code RtspException(CLOSED)}, as after any server end, rather
+ * than {@link IllegalStateException}. This is memory-safe; close retained handles when
+ * done to ensure timely cleanup.
  */
 public final class MountHandle extends NativeHandle {
     static { NativeLoader.load(); }

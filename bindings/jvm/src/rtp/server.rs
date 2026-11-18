@@ -107,11 +107,12 @@ type ServerInner = Arc<RustRtspServer>;
 
 /// Per-type leased-handle registry for `org.tstrans.rtp.RtspServer`. Registered
 /// with a cancel hook (a HARD cancel via the server's own independent
-/// `RtspServerCancelHandle`) so a `close` racing any server op wakes it before
-/// the resource is taken for teardown. On a running server the listener runs
-/// the publish-side shutdown when it observes the hard cancel (publish mounts'
-/// application transports end and a parked `next_publisher` wakes); `nClose`
-/// runs `stop()` after it for the explicit teardown.
+/// `RtspServerCancelHandle`) that the registry's `close` fires before it takes
+/// the resource. `nClose` runs the graceful `stop()` under a lease first, so
+/// the hook reaches an already-stopped server; on its own the hard cancel ends
+/// the server through the watcher task the server spawned at build (sessions,
+/// listener, publish mounts' application transports, a parked
+/// `next_publisher`), with no Notice 5402.
 static REGISTRY_SERVER: LazyLock<HandleRegistry<ServerInner>> = LazyLock::new(HandleRegistry::new);
 
 /// Read a JString, returning "" for null/error (auth fields).
@@ -346,9 +347,10 @@ fn with_server<R>(env: &mut Env, handle: jlong, f: impl FnOnce(&ServerInner) -> 
 /// Poisoning the server drops its `REGISTRY_SERVER` entry and shuts down its tokio
 /// runtime via `Drop`. [`MountHandle`](super::server)s already created from this
 /// server live in the **separate** `REGISTRY_MOUNT` and are **not** poisoned at
-/// that point. After a server-side panic, those handles remain leasable — their
-/// next `push*` / `flush` / `reset_stats` call will no-op or surface a closed-channel
-/// error (e.g. `MountError::Closed`) rather than throwing an `IllegalStateException`
+/// that point. After a server-side panic, those handles remain leasable: once the
+/// server is dropped their next `push*` returns `MountError::Closed`
+/// (`RtspException(CLOSED)`, as after any server end) and `flush` /
+/// `reset_stats` still run, rather than throwing an `IllegalStateException`
 /// at server-invalidation time. This is **memory-safe** (no use-after-free; the
 /// `Arc`-shared mount wrapper outlives the server's runtime). The failure surfaces at
 /// the next mount operation rather than at poison time. This scenario requires an
@@ -432,19 +434,25 @@ jni_native! {
 }
 
 jni_native! {
-    /// `RtspServer.nClose(handle)` — best-effort graceful stop (swallow NotStarted),
-    /// then drop the registry's `Arc` (the last one runs `Drop`: hard-cancel +
-    /// runtime shutdown). Mirrors tst-py `__exit__`. The `stop()` is load-bearing
-    /// for the publisher role: it ends every publish mount's application transport
-    /// (a bound `DemuxReceiver` reads end of stream) and wakes a parked
-    /// `nextPublisher` with `CLOSED`, which the hard cancel alone does not.
+    /// `RtspServer.nClose(handle)` — the graceful `stop()` `nStop` runs (Notice
+    /// 5402 to every session, the configured drain; errors swallowed), then the
+    /// registry close: its hook fires the hard cancel, the resource is taken,
+    /// and dropping the last `Arc` runs `Drop` (runtime shutdown). Mirrors
+    /// tst-py `__exit__`. After an explicit hard cancel the `stop()` takes its
+    /// hard-cancel branch: no Notice, no drain.
+    ///
+    /// The stop runs under a lease, before the hook: a stop after the hook
+    /// would find the hard cancel fired and send no Notice. It cannot deadlock
+    /// against a parked `nNextPublisher`, which waits on its own `Arc` clone
+    /// with no lease held; the stop wakes it (the publish queue's sender is
+    /// dropped) and never waits for it.
     fn Java_org_tstrans_rtp_RtspServer_nClose(_env, _class, handle: jlong) = () => {
-        // Atomic + idempotent: the cancel hook fires a HARD cancel first (waking any
-        // racing server op), then only the winning close gets the server back for a
-        // best-effort graceful stop (NotStarted/Shutdown swallowed). Dropping it fires
-        // its Drop (runtime shutdown). A second close finds the id gone → no-op.
+        let _ = REGISTRY_SERVER.with_poisoning(handle as u64, |server| server.stop());
+        // Atomic + idempotent: only the winning close gets the server back. The
+        // second `stop()` is the hard-cancel branch, so the publish side is
+        // closed when this returns even if the graceful stop above failed.
         if let Some(server) = REGISTRY_SERVER.close(handle as u64) {
-            let _ = server.stop(); // best-effort
+            let _ = server.stop();
             drop(server);
         }
     }
@@ -757,9 +765,10 @@ jni_native! {
     ///
     /// The wait runs WITHOUT the registry lease: the server's `Arc` is cloned out
     /// under a short lease and the lease is released before `next_publisher`
-    /// parks. Holding it would block `close()` (which must take the resource) and
-    /// every other server native for the whole wait, and `close()` could then
-    /// never run the `stop()` that wakes this call.
+    /// parks. Holding it would block `stop()` and `close()` (which must take
+    /// the resource) and every other server native for the whole wait. The
+    /// wake itself needs no lease: `next_publisher` sees a stop or the hard
+    /// cancel within 100 ms.
     ///
     /// The wait runs in slices of at most [`NEXT_PUBLISHER_SLICE`], dropping the
     /// clone and re-leasing the server between slices. A registry entry that went

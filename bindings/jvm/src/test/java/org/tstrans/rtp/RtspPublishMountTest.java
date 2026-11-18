@@ -62,6 +62,13 @@ class RtspPublishMountTest {
      */
     private static final long PARK_MS = TimeUnit.SECONDS.toMillis(8);
 
+    /**
+     * How long a hard cancel may take to wake a parked call. The cancel is seen within
+     * 100 ms; the margin is for a loaded host, and stays under {@link #PARK_MS} so a
+     * call the cancel never woke cannot pass by timing out on its own.
+     */
+    private static final long WAKE_MS = TimeUnit.SECONDS.toMillis(5);
+
     // ── Mount lifecycle without a publisher ──────────────────────────────────
 
     @Test
@@ -481,6 +488,64 @@ class RtspPublishMountTest {
                 () -> "nextPublisher: expected RtspException(CLOSED), got " + next.value.get());
             assertEquals(RtspException.Kind.CLOSED, ((RtspException) next.error.get()).kind());
         } finally {
+            server.close();
+        }
+    }
+
+    @Test
+    @Timeout(40)
+    void hardCancelWakesAParkedNextPublisherWithClosed() throws Exception {
+        assumeLinux();
+        RtspServer server = start(true);
+        try (RtspServerCancelHandle cancel = server.cancelHandle()) {
+            Parked<Optional<PublishMount>> next = park(() -> server.nextPublisher(PARK_MS));
+            awaitNative(next, "nNextPublisher");
+            cancel.cancel();
+            if (!next.join(WAKE_MS)) {
+                server.close();
+                next.join();
+                fail("the hard cancel did not wake the parked nextPublisher");
+            }
+            Throwable e = next.error.get();
+            assertTrue(e instanceof RtspException,
+                () -> "nextPublisher: expected RtspException(CLOSED), got "
+                    + (e != null ? e : "value " + next.value.get()));
+            assertEquals(RtspException.Kind.CLOSED, ((RtspException) e).kind());
+            // A later call is refused at once.
+            assertEquals(RtspException.Kind.CLOSED,
+                assertThrows(RtspException.class, () -> server.nextPublisher(PARK_MS)).kind());
+        } finally {
+            server.close();
+        }
+    }
+
+    @Test
+    @Timeout(40)
+    void hardCancelEndsAPublishMountsReceiver() throws Exception {
+        assumeLinux();
+        RtspServer server = start(false);
+        PublishMount mount = server.addPublishMount("/cam");
+        DemuxReceiver rx = mount.intoDemuxReceiver();
+        try (RtspServerCancelHandle cancel = server.cancelHandle()) {
+            Parked<DemuxEvent> recv = park(rx::recvEvent);
+            awaitNative(recv, "nNext");
+            cancel.cancel();
+            if (!recv.join(WAKE_MS)) {
+                server.close();
+                mount.cancel();
+                recv.join();
+                fail("the hard cancel did not end the parked receiver");
+            }
+            // End of stream, as after stop(): the server ended the mount, not this
+            // receiver's own cancel.
+            assertNull(recv.error.get(), () -> "receiver: unexpected " + recv.error.get());
+            assertNull(recv.value.get());
+            assertEquals(EndReason.CLEAN_TEARDOWN, rx.endReason());
+            assertNull(rx.recvEvent());
+            assertFalse(rx.iterator().hasNext());
+        } finally {
+            rx.close();
+            mount.close();
             server.close();
         }
     }
