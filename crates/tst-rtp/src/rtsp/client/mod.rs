@@ -781,6 +781,28 @@ mod tests {
         (client, peer)
     }
 
+    /// On a client without a session `Drop` records the cancel itself: no
+    /// TEARDOWN runs, and the client's thread, held before it records its
+    /// own end, has recorded nothing when the slot is read.
+    #[test]
+    fn drop_records_the_cancel_on_a_client_without_a_session() {
+        use std::sync::mpsc;
+
+        let (held_tx, held) = mpsc::channel();
+        let (release, release_rx) = mpsc::channel();
+        let (client, peer) = gated_client(Some((held_tx, release_rx)));
+        assert!(client.session_id.is_none());
+        let end_reason = client.end_reason.clone();
+
+        drop(client);
+        assert_eq!(end_reason.get(), Some(EndReason::Cancelled));
+
+        held.recv_timeout(scaled(Duration::from_secs(5)))
+            .expect("the client's thread left its loop");
+        release.send(()).unwrap();
+        peer.join().unwrap();
+    }
+
     /// `close` waits for the client's thread: when it returns, the thread
     /// has ended (its copy of the shared state is gone), and it did not
     /// need the whole join bound to see that.
