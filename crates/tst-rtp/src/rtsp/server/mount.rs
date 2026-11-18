@@ -206,7 +206,9 @@ tst_core::binding_record! {
 /// `push_subtitle` / `push_data`, plus the `*_to` targeted variants and
 /// `push_video_to_with_dts`) mirrors `tst_pipeline::MuxSender`'s `send_*`
 /// signatures; accessors are `mount_path`, `peer_count`, `stats`,
-/// `mount_kind`, and the `*_handles()` family.
+/// `mount_kind`, and the `*_handles()` family. A mount's programs do not
+/// change after it is added, so a binding may read the `*_handles()` once
+/// then; a change that lets them change must revisit those bindings.
 #[derive(Clone)]
 pub struct MountHandle {
     pub(crate) state: Arc<MountState>,
