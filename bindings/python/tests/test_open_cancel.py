@@ -24,6 +24,7 @@ from tstrans import exceptions, shells
 from tstrans.shells import OpenCancel
 
 from _builders.mux_programs import video_only_program
+from _builders.native_hooks import shells_hook
 from _builders.ports import free_udp_port
 
 # Far longer than any healthy wake takes: a test fails, it does not hang.
@@ -432,6 +433,54 @@ def test_a_dial_that_succeeds_after_the_cancel_is_closed_again() -> None:
         o.close_result()
         relay.close()
         lst.close()
+
+
+# Longer than a loopback connect takes even on a loaded box; the test
+# fails, rather than passing, if the accept ends after the wake.
+_HELD_WAKE_MS = 5000
+
+
+@pytest.mark.parametrize("name", ["ManagedReceiver.from_url", "ManagedDemuxReceiver.from_url"])
+def test_an_accept_that_succeeds_after_the_cancel_is_closed_again(name: str) -> None:
+    """The object's `cancel()` sets the latch, then spends `_HELD_WAKE_MS`
+    in an earlier open's wake before it reaches the managed receiver's
+    accept. A peer connects meanwhile and the accept succeeds, but the open
+    raises CLOSED and closes the connection again: the peer sees it end."""
+    # Its one open in progress was registered first, so cancel() wakes it first.
+    oc = shells_hook("_open_cancel_with_slow_open_for_test")(_HELD_WAKE_MS)
+    port, o = _park(LISTENER_OPENS[name], oc)
+    canceller = threading.Thread(target=oc.cancel, daemon=True)
+    peer = None
+    try:
+        canceller.start()
+        _wait_for("the latch", oc.is_cancelled)
+        assert not o.done.is_set(), "the accept ended before a peer connected"
+
+        def dial_and_recv() -> Any:
+            dial = srt.Builder(f"srt://127.0.0.1:{port}").caller().connect_timeout_ms(3000)
+            rx = dial.connect().into_receiver()
+            try:
+                return rx.recv_bytes()
+            finally:
+                rx.close()
+
+        peer = _Open(dial_and_recv)
+        o.join(name)
+        # Still inside the held wake: only the peer can have ended the accept.
+        assert canceller.is_alive(), "cancel() reached the accept before the open returned"
+        _assert_closed(o.error)
+        assert o.result is None
+        peer.join("the peer")
+        assert isinstance(peer.error, exceptions.SrtError), (
+            f"the peer's connection did not end: {peer.error!r}"
+        )
+    finally:
+        canceller.join(_HELD_WAKE_MS / 1000 + DEADLINE_S)
+        _rescue(port, [o])
+        o.close_result()
+        if peer is not None:
+            peer.thread.join(DEADLINE_S)
+    assert not canceller.is_alive(), "cancel() did not return after the held wake"
 
 
 def test_a_cancel_after_the_open_returned_leaves_the_shells_working() -> None:
