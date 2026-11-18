@@ -380,9 +380,13 @@ class RtspSession:
     kept per session: use a new session for each stream. A UDP receiver
     has its own socket and is not ended by any of this.
 
-    The methods answer from any thread: while a control call is parked,
-    `cancel_handle()` returns at once and `close()` cancels the parked call
-    first (it raises `RtspError(CLOSED)`).
+    `cancel_handle()`, `is_torn_down()` and `stats()` answer at once from
+    any thread, also while a control call is parked; `close()` cancels a
+    control call in progress on another thread first (it raises
+    `RtspError(CLOSED)`), then closes. The control calls (`pause()`,
+    `play()`, `teardown()`) run one at a time: a second one waits, GIL
+    released, until the call in progress returns or is cancelled (up to its
+    request timeout).
     """
 
     def pause(self) -> None:
@@ -409,10 +413,14 @@ class RtspSession:
         over writing it and its reply, then up to 2 s for the client's
         thread; the control connection is closed on return unless that
         wait ran out. Returns `None` whatever the server answered (call
-        `teardown()` first for the answer) and is a no-op when called
-        again. A control call parked on another thread is cancelled
-        first. Afterwards `pause()`, `play()` and `cancel_handle()` raise
-        `RtspError(CLOSED)` and `teardown()` returns `None`; the data
+        `teardown()` first for the answer). A call made while another
+        `close()` is running returns at once without waiting for it; any
+        later call is a no-op. A control call in progress on another
+        thread is cancelled first, so the session then ends as a cancel (a
+        live receiver ends `RtpError(CLOSED)`), not as a clean teardown.
+        Afterwards `pause()`, `play()` and `cancel_handle()` raise
+        `RtspError(CLOSED)`, `teardown()` returns `None` and a cancel handle
+        taken earlier reads `is_cancelled() == True`; the data
         plane can still be taken once, and a TCP-interleaved receiver
         taken from it ends at once with the end reason the close left. The
         `with` exit calls this."""

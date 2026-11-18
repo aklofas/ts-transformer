@@ -339,7 +339,11 @@ def _silent_on_pause_peer(got_pause: threading.Event | None = None):
     return port, done, server
 
 
-def _recording_peer(teardown_status: int | None = 200, after_play: bytes = b""):
+def _recording_peer(
+    teardown_status: int | None = 200,
+    after_play: bytes = b"",
+    on_teardown=None,
+):
     """A hand-rolled RTSP peer that answers OPTIONS / DESCRIBE (one MP2T
     track) / SETUP (echoes the requested Transport) / PLAY / TEARDOWN in the
     request's own RTSP version, and records every request head.
@@ -347,8 +351,9 @@ def _recording_peer(teardown_status: int | None = 200, after_play: bytes = b""):
     `after_play` is written right after the PLAY reply (interleaved `$`
     frames). TEARDOWN is answered with `teardown_status`; a 200 ends the
     peer, any other status keeps it reading, and `None` leaves TEARDOWN
-    unanswered. The peer ends when the client closes the connection.
-    Returns (port, requests, server thread)."""
+    unanswered. `on_teardown()`, when given, runs on the peer's thread as
+    soon as TEARDOWN is read, before the answer. The peer ends when the
+    client closes the connection. Returns (port, requests, server thread)."""
     listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     listener.bind(("127.0.0.1", 0))
     listener.listen(1)
@@ -396,6 +401,8 @@ def _recording_peer(teardown_status: int | None = 200, after_play: bytes = b""):
                         extra = "Session: DEADBEEF\r\n"
                     status = "200 OK"
                     if method == "TEARDOWN":
+                        if on_teardown is not None:
+                            on_teardown()
                         if teardown_status is None:
                             continue
                         if teardown_status != 200:
@@ -631,8 +638,7 @@ def test_close_is_silent_bounded_and_idempotent(teardown_status):
         assert not server.is_alive()
 
 
-@pytest.mark.parametrize("ending", ["teardown_then_close", "with_exit"])
-def test_accepted_teardown_ends_the_live_receiver_with_end_of_stream(ending):
+def test_accepted_teardown_then_close_ends_the_live_receiver_with_end_of_stream():
     from tstrans.rtp import RtspServer, RtspServerConfig
 
     stop = threading.Event()
@@ -662,12 +668,8 @@ def test_accepted_teardown_ends_the_live_receiver_with_end_of_stream(ending):
             consumer = threading.Thread(target=_consume, args=(rx, first, outcome), daemon=True)
             consumer.start()
             assert first.wait(5.0), "no event reached the receiver"
-            if ending == "with_exit":
-                with session:
-                    pass
-            else:
-                session.teardown()
-                session.close()
+            session.teardown()
+            session.close()
             rescued = _join_or_rescue(consumer, rescue.cancel, 5.0)
             assert not rescued, "the receiver did not end"
             assert outcome["end"] == "stop", outcome
@@ -679,6 +681,70 @@ def test_accepted_teardown_ends_the_live_receiver_with_end_of_stream(ending):
             stop.set()
             pusher.join(5)
             assert not pusher.is_alive()
+
+
+def test_with_exit_on_an_idle_session_sends_teardown_before_any_cancel():
+    # The peer answers TEARDOWN at once from its own thread; what it sees
+    # when the TEARDOWN arrives proves the exit did not cancel first.
+    cancelled_at_teardown: list[bool] = []
+    handle = None
+
+    def on_teardown() -> None:
+        cancelled_at_teardown.append(handle.is_cancelled())
+
+    port, requests, server = _recording_peer(on_teardown=on_teardown)
+    try:
+        with RtspClient.connect(_tcp_config(port)) as session:
+            handle = session.cancel_handle()
+        assert cancelled_at_teardown == [False], cancelled_at_teardown
+        assert handle.is_cancelled()
+        assert any(r.startswith("TEARDOWN ") for r in requests), requests
+    finally:
+        server.join(10)
+        assert not server.is_alive()
+
+
+def test_a_second_control_call_waits_for_the_one_in_progress():
+    got_pause = threading.Event()
+    port, done, server = _silent_on_pause_peer(got_pause)
+    session = RtspClient.connect(_tcp_config(port))
+    handle = session.cancel_handle()
+    outcome: dict = {}
+
+    def call(name: str) -> None:
+        try:
+            getattr(session, name)()
+            outcome[name] = None
+        except BaseException as exc:  # noqa: BLE001
+            outcome[name] = exc
+
+    paused = threading.Thread(target=call, args=("pause",), daemon=True)
+    torn = threading.Thread(target=call, args=("teardown",), daemon=True)
+    paused.start()
+    try:
+        assert got_pause.wait(5.0), "PAUSE never reached the peer"
+        torn.start()
+        torn.join(1.0)
+        assert torn.is_alive(), f"teardown() did not wait for the parked pause(): {outcome}"
+        assert not session.is_torn_down()
+
+        handle.cancel()
+        paused.join(5)
+        torn.join(5)
+        assert not paused.is_alive() and not torn.is_alive(), "the cancel did not end both calls"
+        for name in ("pause", "teardown"):
+            assert isinstance(outcome[name], RtspError), outcome
+            assert outcome[name].kind == RtspErrorKind.CLOSED, outcome
+    finally:
+        handle.cancel()
+        done.set()
+        session.close()
+        paused.join(10)
+        if torn.ident is not None:
+            torn.join(10)
+        server.join(10)
+        assert not paused.is_alive() and not torn.is_alive()
+        assert not server.is_alive()
 
 
 def test_second_thread_cancel_handle_and_close_while_pause_is_parked():
