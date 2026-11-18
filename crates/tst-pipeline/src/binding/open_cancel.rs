@@ -123,7 +123,8 @@ impl OpenCancel {
     /// slots are taken in one critical section; the slots are cancelled
     /// after the object's lock is released (an SRT slot's cancel closes
     /// the listening socket and can block). If one slot's cancel panics,
-    /// the rest are still cancelled while the panic unwinds.
+    /// the rest are still cancelled while the panic unwinds; a panic among
+    /// those is swallowed, and the first one propagates.
     ///
     /// A second `cancel()` that runs while the first is still cancelling
     /// slots returns at once: it may return before every open has been
@@ -172,7 +173,9 @@ struct FireOnUnwind(std::vec::IntoIter<Arc<CancelSlot>>);
 impl Drop for FireOnUnwind {
     fn drop(&mut self) {
         for slot in self.0.by_ref() {
-            slot.cancel();
+            // A second panic while the first unwinds would abort the
+            // process: swallow it and keep firing.
+            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| slot.cancel()));
         }
     }
 }
@@ -491,8 +494,9 @@ mod tests {
         assert!(!kept.is_cancelled());
     }
 
-    /// A slot whose cancel panics does not leave the slots taken after it
-    /// unfired.
+    /// Slots whose cancel panics do not leave the slots taken after them
+    /// unfired, and a second panic, raised while the first unwinds, does
+    /// not abort the process.
     #[test]
     fn a_panicking_slot_cancel_still_fires_the_rest() {
         struct Panics;
@@ -505,15 +509,25 @@ mod tests {
             }
         }
         let oc = OpenCancel::new();
-        let first = oc.slot();
-        first.install(Arc::new(Panics));
-        let second = oc.slot();
-        let (tx, rx) = mpsc::channel();
-        second.install(Arc::new(Wake(Mutex::new(tx))));
+        let mut slots = Vec::new();
+        let mut woken = Vec::new();
+        for i in 0..5 {
+            let slot = oc.slot();
+            if i % 2 == 0 && i < 4 {
+                slot.install(Arc::new(Panics));
+            } else {
+                let (tx, rx) = mpsc::channel();
+                slot.install(Arc::new(Wake(Mutex::new(tx))));
+                woken.push(rx);
+            }
+            slots.push(slot);
+        }
         let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| oc.cancel()));
-        assert!(r.is_err(), "the panic propagates");
-        assert!(rx.try_recv().is_ok(), "the second slot was fired");
-        assert!(second.is_cancelled());
+        assert!(r.is_err(), "the first panic propagates");
+        for (i, rx) in woken.iter().enumerate() {
+            assert!(rx.try_recv().is_ok(), "waking slot {i} was fired");
+        }
+        assert!(slots.iter().all(|s| s.is_cancelled()));
     }
 
     /// The slots are cancelled with the object's lock released: a target
