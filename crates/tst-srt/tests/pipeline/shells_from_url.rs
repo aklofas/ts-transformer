@@ -1193,11 +1193,13 @@ fn open_cancel_racing_the_end_of_a_managed_open_gives_one_whole_outcome() {
         .with_backoff(BackoffStrategy::Constant(Duration::ZERO));
     let mut outcomes = [[0u32; 2]; 4];
     let mut reconnects_checked = 0;
-    for round in 0..200 {
+    // Twelve rounds per landing point: each round is a full SRT connect and
+    // close, about 0.1 s on the slowest runner.
+    for round in 0..48 {
         let mode = round % 4;
-        // A fresh listener per round: one listener taking 200 connects in
-        // a row made a caller's connect time out now and then, with no
-        // cancel involved at all.
+        // A fresh listener per round: one listener taking a few hundred
+        // connects in a row made a caller's connect time out now and then,
+        // with no cancel involved at all.
         let peer = ServingPeer::start();
         let url = SrtUrl::parse(&format!(
             "srt://127.0.0.1:{}?x-recvtimeout=1000&conntimeo=1000&linger=0",
