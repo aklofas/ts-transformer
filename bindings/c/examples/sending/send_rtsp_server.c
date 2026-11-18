@@ -38,10 +38,11 @@
  *   When tst_rtsp_server_stop is called, the server sends an RFC 7826
  *   §13.5.1 "Server-Initiated TEARDOWN" ANNOUNCE over each active session's
  *   TCP control channel, giving clients a heads-up before dropping them.
- *   The drain_ms window (set here to 2000 ms) then waits for in-flight RTP
+ *   The drain window (set here to 2000 ms) then waits for in-flight RTP
  *   packets to leave the network stack before closing the runtime.
- *   Passing drain_ms=0 to tst_rtsp_server_stop uses the drain window that
- *   was set at build time via tst_rtsp_server_builder_graceful_shutdown_drain_ms.
+ *   The drain_ms argument of tst_rtsp_server_stop is ignored: the drain
+ *   window is always the one set at build time via
+ *   tst_rtsp_server_builder_graceful_shutdown_drain_ms (we pass 0).
  *
  * Build (from the ts-transformer workspace root). The committed header's
  * config declares no transport, so including bindings/c/include directly
@@ -337,10 +338,9 @@ int main(int argc, char **argv) {
      *   fanout_capacity(512)        — broadcast channel depth per mount.
      *                                 A lagging client drops frames at 512+1
      *                                 rather than back-pressuring the producer.
-     *   graceful_shutdown_drain_ms  — pre-shutdown drain window; we set it here
-     *                                 and pass drain_ms=0 to _stop so it uses
-     *                                 this value.  Could also pass 2000 directly
-     *                                 to _stop and skip this setter.
+     *   graceful_shutdown_drain_ms  — pre-shutdown drain window.  This setter
+     *                                 is the only way to choose it: _stop
+     *                                 ignores its drain_ms argument (we pass 0).
      */
     struct TstRtspServerBuilder *builder =
         tst_rtsp_server_builder_new(bind_url);
