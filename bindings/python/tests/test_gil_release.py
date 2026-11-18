@@ -88,6 +88,7 @@ from tstrans.mpegts import (
     VideoCodec,
     WebVttInTsConfig,
 )
+from tstrans.rtp import RtspServer, RtspServerConfig
 
 _R = TypeVar("_R")
 
@@ -460,6 +461,52 @@ def test_iter_mpeg2_audio_frames_with_resync_releases_gil() -> None:
             probe.call(iter_mpeg2_audio_frames_with_resync, buf)
 
     probe.assert_released("iter_mpeg2_audio_frames_with_resync")
+
+
+# ---------------------------------------------------------------------------
+# RTSP server stats: short calls, released because they wait for tables
+# other threads hold.
+# ---------------------------------------------------------------------------
+
+
+def _probe_repeatedly(probe: _GilProbe, fn: Callable[[], Any], window_ms: float) -> None:
+    """Call `fn` through the probe until the calls add up to `window_ms`.
+
+    Each call is microseconds long, so one probed window makes a thousand
+    of them; the loop between them only runs bytecode, which gives up the
+    GIL to no one while the switch interval is pinned.
+    """
+
+    def batch() -> None:
+        for _ in range(1000):
+            fn()
+
+    total = 0.0
+    while total < window_ms / 1000.0:
+        probe.call(batch)
+        t0, t1 = probe.windows[-1]
+        total += t1 - t0
+
+
+@pytest.mark.timeout(30)
+@pytest.mark.parametrize("which", ["MountHandle.stats", "RtspServer.stats"])
+def test_rtsp_stats_release_gil(which: str) -> None:
+    """MountHandle.stats() and RtspServer.stats() must let other threads run."""
+    cfg = RtspServerConfig(bind_addr="127.0.0.1:0", graceful_shutdown_drain_ms=50)
+    with RtspServer.start(cfg) as server:
+        prog = (
+            MuxerProgramConfigBuilder(1, 0x100)
+            .add_video(0x101, VideoCodec.H264)
+            .build()
+        )
+        mount = server.add_unicast_mount("/live", prog)
+        mount.push_video(b"\x00\x00\x00\x01\x65\xbb", pts=Pts90khz(0), key_frame=True)
+        fn = mount.stats if which == "MountHandle.stats" else server.stats
+
+        with _GilProbe() as probe:
+            _probe_repeatedly(probe, fn, 3 * _MIN_WORKLOAD_MS)
+
+    probe.assert_released(which)
 
 
 # ---------------------------------------------------------------------------
