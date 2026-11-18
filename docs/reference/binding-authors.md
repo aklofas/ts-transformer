@@ -263,7 +263,8 @@ return depends on the function: an `int`-returning entry returns
 `TST_E_INTERNAL` (-10) from its outer panic guard, an entry that projects a
 handle-state panic returns -11, and a pointer-returning entry returns NULL.
 Read the function's return contract and last-error separately. A caught
-panic in a mutator retires the shell; a panic in a reader keeps it.
+panic while a mutator works on the shell retires it; a panic in a reader, or in
+the call's own argument handling before it reaches the shell, keeps it.
 
 When designing your binding's retry policy, key the decision off the
 TST_E code, not the message string (the message is a debug aid and is
