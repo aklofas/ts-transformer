@@ -19,28 +19,42 @@
 //!   already cancelled, so an opener that takes the slot refuses it with
 //!   `TransportError::ExplicitClose` (binding kind `CLOSED`) before it
 //!   binds or dials.
-//! - What a cancelled slot reaches is the opener's business: a
-//!   listener-mode first accept at any time; a caller-mode open before
-//!   it dials. A cancel that arrives during a dial does not interrupt it:
-//!   if the dial then succeeds the open returns a live shell (end it
-//!   through its own cancel handle; on a managed receiver the next re-dial
-//!   is refused), and if it fails the open returns `ExplicitClose`.
-//! - An opener that takes no slot (every sender, every non-SRT scheme) is
-//!   reached only through the binding, under the same rule: it checks
-//!   [`OpenCancel::is_cancelled`] before the open and refuses with
-//!   `ExplicitClose`, and it reports an open that failed while the object
-//!   was cancelled as `ExplicitClose` too.
-//! - The object is NOT the opened shell's cancel handle. An open's slot is
-//!   registered only while its [`OpenSlot`] lives; drop that guard as soon
-//!   as the open returns. A later `cancel()` then does nothing to the
-//!   shell, a managed receiver included: the managed receiver keeps the
-//!   slot for its re-accepts and re-dials, but the object no longer holds
-//!   it, so its reconnects go on. The shell's own `cancel_handle()` is its
-//!   cancel from then on.
-//! - A cancel that lands after the open has finished but before its guard
-//!   is dropped does not undo the open (a success wins). The slot stays
-//!   cancelled, though, so a managed receiver opened that way ends with
-//!   `ExplicitClose` at its next reconnect instead of reconnecting.
+//! - What a cancelled slot wakes is the opener's business: a listener-mode
+//!   first accept at any time; a caller-mode dial is not interrupted (the
+//!   dial runs on, and the outcome rule below decides what the host sees).
+//! - **One outcome rule for every open: an open reports `CLOSED` whenever
+//!   the object was cancelled by the time the open finished, whatever the
+//!   open itself did.** The open ends by calling [`OpenSlot::finish`],
+//!   which unregisters its slot and reads the latch in one step under the
+//!   object's lock. `true`: the binding closes whatever the open returned
+//!   (a transport or shell that had just opened is dropped; a failed
+//!   open's own error is replaced) and reports `ExplicitClose` / `CLOSED`.
+//!   `false`: the open is returned whole, and the object never touches its
+//!   slot again. This is the one place where a cancel beats a success, and
+//!   nothing is lost by it: the open has handed nothing out yet.
+//! - So the object is NOT the opened shell's cancel handle. After an open
+//!   returned, `cancel()` does nothing to its shell, a managed receiver
+//!   included (it keeps the slot for its re-accepts and re-dials, but the
+//!   object no longer holds it, so its reconnects go on); the shell's own
+//!   `cancel_handle()` is its cancel from then on.
+//! - An opener that takes no slot (every sender, every non-SRT scheme)
+//!   follows the same steps: the binding takes a slot all the same, checks
+//!   it before the open and calls `finish()` after it.
+//!
+//! A binding's open, for every kind:
+//!
+//! ```ignore
+//! let slot = open_cancel.slot();
+//! if slot.is_cancelled() {
+//!     return Err(closed()); // before the URL is even parsed
+//! }
+//! let r = open(url, &slot); // `&slot` only where the opener takes one
+//! if slot.finish() {
+//!     drop(r);
+//!     return Err(closed());
+//! }
+//! r
+//! ```
 //!
 //! `std`-only, like [`CancelSlot`].
 
@@ -74,10 +88,10 @@ impl OpenCancel {
         Self::default()
     }
 
-    /// Register a fresh slot for one open and return it in a guard that
-    /// unregisters it on drop. Pass the slot to the opener
-    /// (`&*guard` is the `&Arc<CancelSlot>` the openers take) and drop the
-    /// guard when the open returns.
+    /// Register a fresh slot for one open and return it in a guard. Pass
+    /// the slot to the opener (`&*guard` is the `&Arc<CancelSlot>` the
+    /// openers take) and end the open with [`OpenSlot::finish`]. A guard
+    /// that is only dropped (a panic, an early return) unregisters too.
     ///
     /// Once the object is cancelled the slot comes back already cancelled
     /// and is not registered, so the opener refuses the open. The latch is
@@ -105,16 +119,25 @@ impl OpenCancel {
     }
 
     /// Latch the object and cancel the slot of every open in progress.
-    /// Later calls do nothing more. The slots are cancelled after the
-    /// object's lock is released: an SRT slot's cancel closes the
-    /// listening socket and can block.
+    /// Later calls do nothing more. The latch is set and the registered
+    /// slots are taken in one critical section; the slots are cancelled
+    /// after the object's lock is released (an SRT slot's cancel closes
+    /// the listening socket and can block). If one slot's cancel panics,
+    /// the rest are still cancelled while the panic unwinds.
+    ///
+    /// A second `cancel()` that runs while the first is still cancelling
+    /// slots returns at once: it may return before every open has been
+    /// reached. Do not free anything an open uses because `cancel()`
+    /// returned; an open's own result (through [`OpenSlot::finish`]) is
+    /// the answer.
     pub fn cancel(&self) {
-        let open = {
+        let taken = {
             let mut s = self.lock();
             s.cancelled = true;
             core::mem::take(&mut s.open)
         };
-        for slot in open {
+        let mut rest = FireOnUnwind(taken.into_iter());
+        for slot in rest.0.by_ref() {
             slot.cancel();
         }
     }
@@ -142,11 +165,51 @@ impl core::fmt::Debug for OpenCancel {
     }
 }
 
-/// One open's slot, registered with its [`OpenCancel`] until this guard
-/// is dropped. Dereferences to the `Arc<CancelSlot>` the openers take.
+/// Cancels the slots a panicking slot cancel left behind, as the panic
+/// unwinds out of [`OpenCancel::cancel`]; empty on the normal path.
+struct FireOnUnwind(std::vec::IntoIter<Arc<CancelSlot>>);
+
+impl Drop for FireOnUnwind {
+    fn drop(&mut self) {
+        for slot in self.0.by_ref() {
+            slot.cancel();
+        }
+    }
+}
+
+/// One open's slot, registered with its [`OpenCancel`] until
+/// [`finish`](Self::finish) (or a drop). Dereferences to the
+/// `Arc<CancelSlot>` the openers take.
 pub struct OpenSlot {
     owner: OpenCancel,
     slot: Arc<CancelSlot>,
+}
+
+impl OpenSlot {
+    /// End the open: unregister the slot and say whether the object was
+    /// cancelled by now. `true`: report `ExplicitClose` / `CLOSED` and drop
+    /// whatever the open returned. `false`: return the open whole.
+    ///
+    /// Both happen under the object's lock, and `cancel()` sets the latch
+    /// and takes the registered slots under the same lock in one step. So
+    /// `false` means no `cancel()` had taken the slot (it would have set
+    /// the latch first) and none ever will (the slot is no longer
+    /// registered): the object never touches this slot again, however a
+    /// concurrent `cancel()` is scheduled.
+    #[must_use = "true means the open must be closed and reported as CLOSED"]
+    pub fn finish(self) -> bool {
+        self.unregister()
+    }
+
+    /// Remove the slot from the registry (if still there) and read the
+    /// latch, in one critical section.
+    fn unregister(&self) -> bool {
+        let mut s = self.owner.lock();
+        if let Some(i) = s.open.iter().position(|o| Arc::ptr_eq(o, &self.slot)) {
+            s.open.swap_remove(i);
+        }
+        s.cancelled
+    }
 }
 
 impl core::ops::Deref for OpenSlot {
@@ -159,10 +222,8 @@ impl core::ops::Deref for OpenSlot {
 
 impl Drop for OpenSlot {
     fn drop(&mut self) {
-        let mut s = self.owner.lock();
-        if let Some(i) = s.open.iter().position(|o| Arc::ptr_eq(o, &self.slot)) {
-            s.open.swap_remove(i);
-        }
+        // After `finish` this finds nothing to remove.
+        let _ = self.unregister();
     }
 }
 
@@ -325,17 +386,134 @@ mod tests {
         assert_eq!(registered(&oc), 0);
     }
 
-    /// After the guard is dropped the object no longer reaches the slot,
-    /// though an opener (a managed receiver) may still hold it.
+    /// An open that finished before the cancel: `finish()` is false, and the
+    /// object no longer reaches the slot, though an opener (a managed
+    /// receiver) may still hold it.
     #[test]
-    fn a_cancel_after_the_open_returned_leaves_its_slot_alone() {
+    fn a_cancel_after_the_open_finished_leaves_its_slot_alone() {
         let oc = OpenCancel::new();
         let guard = oc.slot();
         let kept: Arc<CancelSlot> = Arc::clone(&guard);
-        drop(guard);
+        assert!(!guard.finish());
         oc.cancel();
         assert!(oc.is_cancelled());
         assert!(!kept.is_cancelled());
+    }
+
+    /// An open that finishes after the cancel (it had opened, or failed,
+    /// or was refused): `finish()` is true.
+    #[test]
+    fn finish_after_the_cancel_is_true() {
+        let oc = OpenCancel::new();
+        let in_progress = oc.slot();
+        oc.cancel();
+        let refused = oc.slot();
+        assert!(in_progress.finish());
+        assert!(refused.finish());
+    }
+
+    /// The target of the first registered slot blocks inside `cancel()`'s
+    /// fire loop until released: `cancel()` has set the latch and taken
+    /// every slot, and has not fired the second one yet.
+    struct Hold {
+        firing: Mutex<mpsc::Sender<()>>,
+        release: Mutex<mpsc::Receiver<()>>,
+    }
+
+    impl TransportCancel for Hold {
+        fn cancel(&self) {
+            let _ = self.firing.lock().unwrap().send(());
+            let _ = self.release.lock().unwrap().recv_timeout(DEADLINE);
+        }
+        fn is_cancelled(&self) -> bool {
+            false
+        }
+    }
+
+    /// Register a slot whose target holds `cancel()`'s fire loop until
+    /// released: slots registered after it are fired after it.
+    fn hold_slot(oc: &OpenCancel) -> (OpenSlot, mpsc::Receiver<()>, mpsc::Sender<()>) {
+        let held = oc.slot();
+        let (firing_tx, firing_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        held.install(Arc::new(Hold {
+            firing: Mutex::new(firing_tx),
+            release: Mutex::new(release_rx),
+        }));
+        (held, firing_rx, release_tx)
+    }
+
+    /// `finish()` false means no `cancel()` ever touches the slot, however
+    /// the cancel is scheduled.
+    #[test]
+    fn finish_false_means_no_cancel_ever_touches_the_slot() {
+        // The open finishes while a cancel has set the latch and taken the
+        // slots, and has not fired this one yet: true, never a whole open
+        // whose slot is latched afterwards.
+        let oc = OpenCancel::new();
+        let (held, firing, release) = hold_slot(&oc);
+        let open = oc.slot();
+        let kept = Arc::clone(&open);
+        let canceller = {
+            let oc = oc.clone();
+            thread::spawn(move || oc.cancel())
+        };
+        firing
+            .recv_timeout(DEADLINE)
+            .expect("cancel() reached the held slot");
+        let finished = open.finish();
+        release.send(()).unwrap();
+        canceller.join().unwrap();
+        drop(held);
+        assert!(
+            finished || !kept.is_cancelled(),
+            "finish() said the open was whole, then the cancel latched its slot"
+        );
+        assert!(finished, "the latch was set before the open finished");
+
+        // The open finishes before the cancel: false, and the cancel that
+        // follows never reaches its slot.
+        let oc = OpenCancel::new();
+        let (held, firing, release) = hold_slot(&oc);
+        let open = oc.slot();
+        let kept = Arc::clone(&open);
+        assert!(!open.finish());
+        let canceller = {
+            let oc = oc.clone();
+            thread::spawn(move || oc.cancel())
+        };
+        firing
+            .recv_timeout(DEADLINE)
+            .expect("cancel() reached the held slot");
+        release.send(()).unwrap();
+        canceller.join().unwrap();
+        drop(held);
+        assert!(!kept.is_cancelled());
+    }
+
+    /// A slot whose cancel panics does not leave the slots taken after it
+    /// unfired.
+    #[test]
+    fn a_panicking_slot_cancel_still_fires_the_rest() {
+        struct Panics;
+        impl TransportCancel for Panics {
+            fn cancel(&self) {
+                panic!("a target that panics");
+            }
+            fn is_cancelled(&self) -> bool {
+                false
+            }
+        }
+        let oc = OpenCancel::new();
+        let first = oc.slot();
+        first.install(Arc::new(Panics));
+        let second = oc.slot();
+        let (tx, rx) = mpsc::channel();
+        second.install(Arc::new(Wake(Mutex::new(tx))));
+        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| oc.cancel()));
+        assert!(r.is_err(), "the panic propagates");
+        assert!(rx.try_recv().is_ok(), "the second slot was fired");
+        assert!(second.is_cancelled());
     }
 
     /// The slots are cancelled with the object's lock released: a target
