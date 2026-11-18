@@ -7,11 +7,17 @@
 //! `RtspServerBuilder`, and returns a PyRtspServer.
 //!
 //! GIL release boundaries:
-//! - `start`, `stop`, `add_unicast_mount`, `add_multicast_mount`,
+//! - `start`, `stop`, `__exit__`, `add_unicast_mount`, `add_multicast_mount`,
 //!   `add_publish_mount`, `next_publisher`, `remove_mount`, every
-//!   `MountHandle.push_*` — wrap Rust work in `py.detach`.
-//! - Dataclass construction, `__enter__`/`__exit__`, `cancel_handle`,
-//!   `stats`, handle getters — no release (pure Python or sub-microsecond).
+//!   `MountHandle.push_*`, `flush`, `reset_stats` and both `stats` — wrap
+//!   Rust work in `py.detach`.
+//! - Handle getters — no release and no lock: they answer from the stream
+//!   handles read when the mount was added, never from the mount's muxer.
+//! - `peer_count`, `local_addr`, the `__repr__`s — no release: each waits
+//!   for a lock whose holders do short in-memory work (listed in
+//!   `scripts/check/c/snapshot-getters.sh`).
+//! - Dataclass construction, `__enter__`, `cancel_handle`, `mount_rules` —
+//!   no lock.
 
 #![allow(unsafe_op_in_unsafe_fn, clippy::useless_conversion)]
 
