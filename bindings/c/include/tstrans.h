@@ -1172,7 +1172,8 @@ typedef struct TstHlsPublisherBuilder TstHlsPublisherBuilder;
  * Returned by [`tst_hls_publisher_finish_serving`]. Query the bound
  * address with [`tst_hls_server_handle_local_addr`], stop serving with
  * [`tst_hls_server_handle_shutdown`], and release with
- * [`tst_hls_server_handle_free`] (which also stops serving if still live).
+ * [`tst_hls_server_handle_free`] (which also stops serving if still live,
+ * without waiting).
  *
  * Unlike the slot-backed handles, a serving handle has no internal lock.
  * [`tst_hls_server_handle_local_addr`], [`tst_hls_server_handle_shutdown`]
@@ -3640,8 +3641,10 @@ int tst_hls_publisher_render_playlist(struct TstPublisher *p,
 /**
  * Free a `TstHlsServerHandle`.
  *
- * If the handle is still live, dropping it stops serving (same effect as
- * [`tst_hls_server_handle_shutdown`]). Safe to call with `NULL` (no-op).
+ * If the handle is still live, freeing it cancels the server and returns
+ * at once; the listener closes a moment later. Unlike
+ * [`tst_hls_server_handle_shutdown`], it does not wait for the server's
+ * thread. Safe to call with `NULL` (no-op).
  * After this call the pointer is invalid; passing the same non-null
  * pointer twice is undefined behavior (use-after-free on the consumed
  * `Box`).
@@ -3680,7 +3683,8 @@ int tst_hls_publisher_render_playlist(struct TstPublisher *p,
 
 #if defined(TST_HAS_HLS)
 /**
- * Stop serving and drain the runtime for a [`TstHlsServerHandle`].
+ * Stop serving and drain the runtime for a [`TstHlsServerHandle`]: cancel
+ * the server, then wait up to 2 s for its thread to finish.
  *
  * Idempotent: takes the inner handle, so calling it a second time (or
  * after the server was already dropped) is a no-op that returns 0. The
