@@ -511,6 +511,61 @@ class OpenCancelTest {
         }
     }
 
+    /**
+     * The object's cancel() sets the latch, then blocks in an earlier open's wake before it
+     * reaches the managed receiver's accept. A peer connects meanwhile and the accept
+     * succeeds, but the open throws CLOSED and closes the connection again: the peer sees
+     * it end.
+     */
+    @ParameterizedTest
+    @ValueSource(strings = {"ManagedReceiver.fromUrl", "ManagedDemuxReceiver.fromUrl"})
+    @EnabledIfSystemProperty(named = "tst.jniTestHooks", matches = "true")
+    @Timeout(60)
+    void anAcceptThatSucceedsAfterTheCancelIsClosedAgain(String name) throws Exception {
+        long probe = CancelProbe.nOpen();
+        OpenCancel oc = new OpenCancel();
+        try {
+            // Registered first, so cancel() wakes it first.
+            CancelProbe.nHoldOpen(probe, oc);
+            ParkedOpen p = park(listenerOpen(name), oc);
+            Thread canceller = new Thread(oc::cancel, "open-cancel-held-cancel");
+            canceller.setDaemon(true);
+            Opening peer = null;
+            try {
+                canceller.start();
+                assertTrue(CancelProbe.nAwaitEntered(probe, DEADLINE_MS), "cancel() never reached the held wake");
+                assertTrue(oc.isCancelled());
+                assertFalse(p.opening().result.isDone(), "the accept ended before a peer connected");
+                peer = new Opening(() -> {
+                    Builder dial = new Builder("srt://127.0.0.1:" + p.port()).caller().connectTimeoutMs(3000);
+                    try (Receiver rx = dial.connect().intoReceiver()) {
+                        return rx.recvBytes();
+                    }
+                });
+                // Joined while cancel() is still held: only the peer can have ended the accept.
+                p.opening().join(name);
+                assertTrue(canceller.isAlive(), "cancel() was released before the open returned");
+                assertSrtClosed(p.opening().error());
+                assertNull(p.opening().value());
+                peer.join("the peer");
+                assertInstanceOf(SrtException.class, peer.error(),
+                    "the peer's connection did not end: " + peer.error());
+            } finally {
+                CancelProbe.nRelease(probe);
+                canceller.join(DEADLINE_MS);
+                rescue(p.port(), p.opening());
+                if (peer != null) {
+                    peer.thread.join(DEADLINE_MS);
+                    peer.closeResult();
+                }
+            }
+            assertFalse(canceller.isAlive(), "cancel() did not return after the wake was released");
+        } finally {
+            oc.close();
+            CancelProbe.nClose(probe);
+        }
+    }
+
     // ----------------------------------------------------------------------------------------
     // A cancel after the open returned: the shell is untouched
     // ----------------------------------------------------------------------------------------
