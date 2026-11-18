@@ -561,6 +561,44 @@ fn caller_mode_redial_after_a_direct_slot_cancel_ends_as_a_cancel() {
     );
 }
 
+/// A cancel that arrives while the first connect is in progress does not
+/// interrupt it, but a connect that then FAILS reports the cancel, not its
+/// own error: the same answer the listener path gives. Nothing listens on
+/// the port, so the dial can only time out; the slot is cancelled only
+/// once the dial is proven in progress (past the open's pre-dial check).
+#[test]
+fn caller_mode_dial_that_fails_after_its_slot_was_cancelled_reports_the_cancel() {
+    require_loopback!();
+    let port = crate::common::reserve_port();
+    let url = SrtUrl::parse(&format!("srt://127.0.0.1:{port}?conntimeo=3000")).expect("parse");
+    let slot = Arc::new(tst_pipeline::FactoryCancel::new());
+    let latch = crate::common::ParkLatch::default();
+    let open = {
+        let slot = Arc::clone(&slot);
+        latch.park(move || {
+            managed_recv_transport_from_url(&url, no_reconnect(), slot)
+                .map(drop)
+                .map_err(|e| format!("{e:?}"))
+        })
+    };
+    latch.assert_parked();
+    slot.cancel();
+
+    let deadline = Instant::now() + scaled(WATCHDOG);
+    while !open.is_finished() {
+        assert!(Instant::now() < deadline, "the dial never ended");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let r = open.join().expect("open thread");
+    assert_eq!(
+        r,
+        Err(format!(
+            "{:?}",
+            SrtError::Transport(tst_pipeline::TransportError::ExplicitClose)
+        ))
+    );
+}
+
 /// The wiring a recv-side getter can get wrong by copying `successes`
 /// into `reconnect_attempts`: [`ManagedHandles::attempts`] is the factory-CALL counter, and on a
 /// stream whose peer is gone for good the two must diverge — attempts
