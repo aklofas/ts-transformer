@@ -95,7 +95,7 @@ public class MuxSender extends NativeHandle {
      */
     public static MuxSender open(String url, MuxerConfig programConfig, OpenCancel cancel)
             throws BindingException, MuxException {
-        return new MuxSender(openHandle(url, programConfig, cancel));
+        return new MuxSender(openWithConfig(url, programConfig, cancel));
     }
 
     /**
@@ -111,23 +111,10 @@ public class MuxSender extends NativeHandle {
      */
     protected static long openHandle(String url, MuxerConfig programConfig)
             throws BindingException, MuxException {
-        return openHandle(url, programConfig, null);
+        return openWithConfig(url, programConfig, null);
     }
 
-    /**
-     * Open the native sender under {@code cancel} and return its handle, for a
-     * subclass's own factory. Same contract as
-     * {@link #open(String, MuxerConfig, OpenCancel)}.
-     *
-     * @param url           {@code scheme://...} with per-transport query options
-     * @param programConfig the muxer program configuration
-     * @param cancel        the open's cancel, or {@code null}
-     * @return the native handle, to pass to the constructor
-     * @throws IllegalArgumentException if the scheme is not supported
-     * @throws BindingException the transport's exception
-     * @throws MuxException if the muxer rejects the configuration
-     */
-    protected static long openHandle(String url, MuxerConfig programConfig, OpenCancel cancel)
+    private static long openWithConfig(String url, MuxerConfig programConfig, OpenCancel cancel)
             throws BindingException, MuxException {
         return nOpen(
             url,
