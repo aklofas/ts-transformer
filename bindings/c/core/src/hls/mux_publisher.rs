@@ -486,12 +486,10 @@ mod tests {
         };
     }
 
-    /// A panic inside a stats read is caught and keeps the publisher: the
-    /// next stats read and the next cut still work.
-    #[test]
-    fn a_panic_in_a_stats_read_keeps_the_publisher() {
-        let dir =
-            std::env::temp_dir().join(format!("tst-c-hls-stats-panic-{}", std::process::id()));
+    /// A one-video HLS mux publisher on a loopback port, writing into a
+    /// fresh temp directory named after `label`.
+    fn loopback_mux_publisher(label: &str) -> (*mut TstMuxPublisher, std::path::PathBuf) {
+        let dir = std::env::temp_dir().join(format!("tst-c-hls-{label}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let mut b = tst_hls::HlsPublisherBuilder::new();
         b.bind("127.0.0.1:0".parse().unwrap()).output_dir(&dir);
@@ -510,7 +508,36 @@ mod tests {
             unsafe { tst_mux_publisher_with_config_hls(Box::into_raw(Box::new(publisher)), cfg) };
         unsafe { crate::config::tst_mux_config_free(cfg) };
         assert!(!mp.is_null(), "with_config_hls failed");
+        (mp, dir)
+    }
 
+    /// The reader path keeps the documented finished code: once a panic in
+    /// a mutating call has retired the publisher, both stats getters return
+    /// `TST_E_HLS_FINISHED`, not the handle's generic `TST_E_CLOSED`.
+    #[test]
+    fn stats_on_a_retired_publisher_return_hls_finished() {
+        let (mp, dir) = loopback_mux_publisher("stats-retired");
+        let rc = unsafe { with_mux_publisher(mp, |_| panic!("send panic")) };
+        assert_eq!(rc, TstError::PanicCaught as i32);
+        let mut stats = TstMuxPublisherStats::default();
+        assert_eq!(
+            unsafe { tst_mux_publisher_get_stats(mp, &mut stats) },
+            TstError::HlsFinished as i32
+        );
+        let mut pstats = TstPublisherStats::default();
+        assert_eq!(
+            unsafe { tst_mux_publisher_get_publisher_stats(mp, &mut pstats) },
+            TstError::HlsFinished as i32
+        );
+        unsafe { tst_mux_publisher_free(mp) };
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A panic inside a stats read is caught and keeps the publisher: the
+    /// next stats read and the next cut still work.
+    #[test]
+    fn a_panic_in_a_stats_read_keeps_the_publisher() {
+        let (mp, dir) = loopback_mux_publisher("stats-panic");
         let rc = unsafe { with_mux_publisher_ref(mp, |_| panic!("stats read panic")) };
         assert_eq!(rc, TstError::PanicCaught as i32);
         let mut stats = TstMuxPublisherStats::default();
