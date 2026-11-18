@@ -1203,6 +1203,41 @@ mod tests {
         unsafe { crate::rtsp::server::stop::tst_rtsp_server_free(server) };
     }
 
+    /// An argument error is checked before the server's ended state, so it
+    /// still wins once the server has stopped: NULL data with a non-zero
+    /// length, and a stream handle no muxer could have issued.
+    #[test]
+    fn argument_errors_precede_closed_after_the_server_stopped() {
+        let (server, mount) = open_unicast_mount();
+        let nal = [0x00u8, 0x00, 0x00, 0x01, 0x65, 0xBB];
+        let forged = u32::MAX;
+        let forged_live = unsafe {
+            tst_rtsp_mount_push_video_to(mount, forged, nal.as_ptr(), nal.len(), 0, true)
+        };
+        assert!(forged_live < 0, "a forged stream handle is refused");
+        assert_eq!(
+            unsafe { crate::rtsp::server::stop::tst_rtsp_server_stop(server, 0) },
+            0
+        );
+        assert_eq!(
+            unsafe { tst_rtsp_mount_push_video(mount, std::ptr::null(), 6, 0, true) },
+            TstError::InvalidConfig as i32,
+            "NULL data with a non-zero length"
+        );
+        let forged_after = unsafe {
+            tst_rtsp_mount_push_video_to(mount, forged, nal.as_ptr(), nal.len(), 0, true)
+        };
+        assert_eq!(forged_after, forged_live, "a forged stream handle");
+        assert_ne!(forged_after, TstError::Closed as i32);
+        // A well-formed push reads the ended server.
+        assert_eq!(
+            unsafe { tst_rtsp_mount_push_video(mount, nal.as_ptr(), nal.len(), 0, true) },
+            TstError::Closed as i32
+        );
+        unsafe { tst_rtsp_mount_handle_free(mount) };
+        unsafe { crate::rtsp::server::stop::tst_rtsp_server_free(server) };
+    }
+
     #[test]
     fn flush_on_valid_mount_returns_zero() {
         let (server, mount) = open_unicast_mount();

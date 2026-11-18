@@ -333,6 +333,9 @@ What may precede or override the CLOSED outcome:
 
 - A `TooLarge` validation may run before the cancel check (the SRT and
   RTP senders).
+- An argument error may precede CLOSED: a C RTSP mount push given NULL
+  data with a non-zero length, or a forged stream handle, after the
+  server has ended returns the argument error.
 - A success already in flight when the cancel landed may win; a failure
   in that window is reported as the cancel.
 - The SRT `Listener` iterator maps CLOSED to `StopIteration`.
