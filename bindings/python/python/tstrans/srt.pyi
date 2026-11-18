@@ -631,7 +631,8 @@ class ManagedMuxSender:
         cancel: Optional[OpenCancel] = ...,
     ) -> ManagedMuxSender:
         """`cancel`: an `OpenCancel` already cancelled raises
-        `SrtError(CLOSED)`; one cancelled during the connect does not
+        `SrtError(CLOSED)` (a program configuration the muxer refuses is
+        reported first); one cancelled during the connect does not
         interrupt it, but the open then raises `SrtError(CLOSED)` and the
         connection is closed again."""
 

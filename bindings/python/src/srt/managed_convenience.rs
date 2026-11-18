@@ -136,7 +136,8 @@ impl PyManagedMuxSender {
     /// rejects the program config.
     ///
     /// `cancel`: an `OpenCancel` already cancelled refuses the open with
-    /// `SrtError(CLOSED)` before the URL is parsed; one cancelled while the
+    /// `SrtError(CLOSED)` before the URL is parsed (a program configuration
+    /// the muxer refuses is reported first); one cancelled while the
     /// connect runs does not interrupt it, but the open then raises
     /// `SrtError(CLOSED)` and the connection is closed again.
     #[staticmethod]

@@ -147,7 +147,9 @@ class OpenCancel:
       `TcpError`, `RistError`); a shell open given a URL whose scheme
       this build does not support still raises `ValueError`. The managed
       `from_url`s are SRT only and raise `SrtError(CLOSED)` whatever the
-      URL says.
+      URL says. With an already-cancelled object an open is refused with
+      `CLOSED` before its URL is parsed; an invalid configuration object
+      may be reported first.
     - `cancel()` ends a listener-mode first accept at any time: the open
       raises `SrtError(CLOSED)` and the port is released.
     - It does not interrupt a caller-mode connect, but an open that
