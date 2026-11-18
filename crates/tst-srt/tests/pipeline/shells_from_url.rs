@@ -444,6 +444,122 @@ fn managed_recv_transport_from_url_first_accept_runs_through_the_caller_slot() {
         .expect("port still bindable — the cancelled open left no listening socket");
 }
 
+/// The caller-mode twin: a slot cancelled before the call refuses the
+/// first connect, and nothing is dialled. The listener is live, so a dial
+/// would connect; the proof that none happened is that the only connection
+/// in the listener's accept queue, once an ordinary caller has connected
+/// after the refused open, is that caller's (matched by its local port).
+#[test]
+fn managed_recv_transport_from_url_cancelled_slot_refuses_the_first_connect_without_dialling() {
+    require_loopback!();
+    let lb = crate::common::Loopback::bind();
+    let port = lb.port;
+
+    let url = SrtUrl::parse(&format!("srt://127.0.0.1:{port}")).expect("parse");
+    let slot = Arc::new(tst_pipeline::FactoryCancel::new());
+    slot.cancel();
+    let err = managed_recv_transport_from_url(&url, no_reconnect(), Arc::clone(&slot))
+        .err()
+        .expect("a pre-cancelled slot must refuse the first connect");
+    assert!(
+        matches!(
+            err,
+            SrtError::Transport(tst_pipeline::TransportError::ExplicitClose)
+        ),
+        "{err:?}"
+    );
+
+    let caller = tst_srt::SrtSocketBuilder::new()
+        .connect_timeout(scaled(WATCHDOG))
+        .connect(format!("127.0.0.1:{port}"))
+        .expect("an ordinary connect to the same listener");
+    let caller_port = caller.local_addr().expect("local_addr").port();
+
+    // Once that connect has returned, any dial the open made is queued
+    // too. libsrt hands queued connections out by socket id, not in
+    // arrival order, so drain the queue instead of reading one entry.
+    let mut listener = lb.listener;
+    let mut queued = Vec::new();
+    let mut wait = scaled(WATCHDOG);
+    loop {
+        match listener.accept_timeout(wait) {
+            Ok((_sock, peer)) => queued.push(peer.port()),
+            Err(tst_srt::AcceptError::TimedOut) => break,
+            Err(e) => panic!("accept: {e}"),
+        }
+        wait = Duration::ZERO;
+    }
+    assert_eq!(
+        queued,
+        vec![caller_port],
+        "the listener must have seen only the ordinary caller: \
+         a second entry is the cancelled open's dial"
+    );
+    drop(caller);
+}
+
+/// Every re-dial reads the slot too. A caller-mode stream whose slot was
+/// cancelled directly (not through the managed cancel handle, which would
+/// end the stream on its own) loses its peer: the reconnect's first
+/// factory call refuses without dialling and the stream ends as a cancel,
+/// instead of spending the budget on re-dials and ending as `Closed`.
+#[test]
+fn caller_mode_redial_after_a_direct_slot_cancel_ends_as_a_cancel() {
+    use tst_core::transport::RecvTransport;
+    use tst_pipeline::TransportError;
+
+    require_loopback!();
+    let lb = crate::common::Loopback::bind();
+    let port = lb.port;
+    let stop = Arc::new(AtomicBool::new(false));
+    let peer_stop = Arc::clone(&stop);
+    let accept = lb.spawn_accept(move |sock| send_until(sock, null_ts_bundle(), peer_stop));
+    accept.wait_ready();
+
+    // `?conntimeo=300` keeps a re-dial into the closed port short if the
+    // slot is not honoured, so the test fails on the outcome, not by
+    // timing out.
+    let url = SrtUrl::parse(&format!(
+        "srt://127.0.0.1:{port}?x-recvtimeout=1000&conntimeo=300"
+    ))
+    .expect("parse");
+    let policy = ReconnectPolicy::default()
+        .with_max_attempts(Some(3))
+        .with_backoff(BackoffStrategy::Constant(Duration::ZERO));
+    let slot = Arc::new(tst_pipeline::FactoryCancel::new());
+    let mut rx = managed_recv_transport_from_url(&url, policy, Arc::clone(&slot))
+        .expect("managed_recv_transport_from_url");
+    let attempts = rx.attempts_handle();
+    let mut buf = vec![0u8; 1500];
+    rx.recv_bytes(&mut buf)
+        .expect("the stream is live before the cancel");
+
+    slot.cancel();
+    // Cut the peer AND its listener (the accept thread owns both).
+    stop.store(true, Ordering::SeqCst);
+    accept.join();
+
+    let deadline = Instant::now() + WATCHDOG;
+    let err = loop {
+        assert!(
+            Instant::now() < deadline,
+            "the stream never ended (attempts={})",
+            attempts.load(Ordering::Acquire)
+        );
+        match rx.recv_bytes(&mut buf) {
+            // Bytes still in flight, or `?x-recvtimeout` expiry: not the end.
+            Ok(_) | Err(TransportError::Backpressure { .. }) => {}
+            Err(e) => break e,
+        }
+    };
+    assert!(matches!(err, TransportError::ExplicitClose), "{err:?}");
+    assert_eq!(
+        attempts.load(Ordering::Acquire),
+        1,
+        "one factory call, refused by the slot, ends the reconnect"
+    );
+}
+
 /// The wiring a recv-side getter can get wrong by copying `successes`
 /// into `reconnect_attempts`: [`ManagedHandles::attempts`] is the factory-CALL counter, and on a
 /// stream whose peer is gone for good the two must diverge — attempts

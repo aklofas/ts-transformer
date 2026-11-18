@@ -19,6 +19,10 @@
 //! but nothing exists to fire it with before the function returns — a
 //! caller that needs the FIRST accept reachable from another thread uses
 //! [`managed_recv_transport_from_url`] with its own pre-created slot.
+//! In caller mode that slot is read once, before the dial: a slot already
+//! cancelled refuses the first connect without dialling, but a cancel
+//! that arrives while the connect is in progress is not seen (the slot
+//! holds nothing to fire) and the connect runs to its own timeout.
 //!
 //! Senders are caller-only: `?mode=listener` is refused before any
 //! socket is touched (see `docs/project/deferred-features.md`, "SRT URL
@@ -81,9 +85,15 @@ fn policy_refused(e: tst_pipeline::ReconnectPolicyError) -> SrtError {
     SrtError::Option(OptionError::OutOfRange(e.to_string()))
 }
 
-/// One open, dispatched on the URL's mode.
+/// One open, dispatched on the URL's mode. A slot already cancelled
+/// refuses either mode with `ExplicitClose`, the same answer
+/// [`SrtUrl::accept_one`] gives, so a caller-mode open or re-dial never
+/// starts after its cancel.
 fn open(url: &SrtUrl, slot: &FactoryCancel) -> Result<SrtTransport, SrtError> {
     match url.mode {
+        Mode::Caller if slot.is_cancelled() => {
+            Err(SrtError::Transport(TransportError::ExplicitClose))
+        }
         Mode::Caller => url.connect(),
         Mode::Listener => url.accept_one(slot),
     }
@@ -97,10 +107,19 @@ fn open(url: &SrtUrl, slot: &FactoryCancel) -> Result<SrtTransport, SrtError> {
 /// own — from a thread you control, with the slot shared beforehand — to
 /// keep the FIRST accept cancellable too: a cancel before or during it
 /// returns `Err(SrtError::Transport(TransportError::ExplicitClose))`.
+/// In caller mode only a cancel BEFORE the call is seen: it returns the
+/// same error without dialling. A cancel during the first connect is not
+/// (the slot holds nothing while the connect is in progress), and the
+/// connect runs to its own timeout. Every re-dial checks the slot the same
+/// way, so a slot cancelled directly ends a caller-mode reconnect with
+/// `ExplicitClose` instead of dialling again.
 ///
 /// # Errors
 ///
 /// - [`SrtError::Option`] — the policy is zero backoff with unlimited attempts (refused before connecting).
+/// - [`SrtError::Transport`]`(`[`TransportError::ExplicitClose`]`)` — `factory_cancel`
+///   was cancelled before the call (either mode) or during the first
+///   accept.
 /// - Whatever the initial [`SrtUrl::connect`] / [`SrtUrl::accept_one`]
 ///   returned; the managed transport is not built.
 pub fn managed_recv_transport_from_url(
@@ -158,6 +177,9 @@ pub fn managed_demux_receiver_from_url(
 /// cancel of `factory_cancel` before or during the first accept returns
 /// `Err(SrtError::Transport(TransportError::ExplicitClose))`. The same slot
 /// then wakes every parked re-accept.
+/// In caller mode a cancel before the call refuses the first connect
+/// with the same error and nothing is dialled; a cancel during the connect
+/// is not seen (see [`managed_recv_transport_from_url`]).
 ///
 /// # Errors
 ///
@@ -200,6 +222,9 @@ pub fn managed_receiver_from_url(
 /// `factory_cancel` before or during the first accept returns
 /// `Err(SrtError::Transport(TransportError::ExplicitClose))`. The same slot
 /// then wakes every parked re-accept.
+/// In caller mode a cancel before the call refuses the first connect
+/// with the same error and nothing is dialled; a cancel during the connect
+/// is not seen (see [`managed_recv_transport_from_url`]).
 ///
 /// # Errors
 ///
