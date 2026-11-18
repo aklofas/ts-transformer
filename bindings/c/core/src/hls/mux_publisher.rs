@@ -227,17 +227,19 @@ pub unsafe extern "C" fn tst_mux_publisher_send_video(
     pts: i64,
     key_frame: bool,
 ) -> libc::c_int {
-    let slice = match unsafe { crate::ffi_slice::ffi_slice(nal, len, "nal") } {
-        Ok(s) => s,
-        Err(code) => return code,
-    };
-    let pts = Pts90khz::new(pts);
-    unsafe {
-        with_mux_publisher(p, |mp| match mp.push_video(slice, pts, key_frame) {
-            Ok(()) => 0,
-            Err(e) => record_mux_publisher_error(e),
-        })
-    }
+    crate::panic::ffi_catch(TstError::Internal as i32, || {
+        let slice = match unsafe { crate::ffi_slice::ffi_slice(nal, len, "nal") } {
+            Ok(s) => s,
+            Err(code) => return code,
+        };
+        let pts = Pts90khz::new(pts);
+        unsafe {
+            with_mux_publisher(p, |mp| match mp.push_video(slice, pts, key_frame) {
+                Ok(()) => 0,
+                Err(e) => record_mux_publisher_error(e),
+            })
+        }
+    })
 }
 
 /// Push one raw MISB KLV Local Set blob through a KLV stream.
@@ -263,17 +265,19 @@ pub unsafe extern "C" fn tst_mux_publisher_send_klv(
     pts: i64,
     stream_index: u8,
 ) -> libc::c_int {
-    let slice = match unsafe { crate::ffi_slice::ffi_slice(klv, len, "klv") } {
-        Ok(s) => s,
-        Err(code) => return code,
-    };
-    let pts = Pts90khz::new(pts);
-    unsafe {
-        with_mux_publisher(p, |mp| match mp.push_klv(slice, pts, stream_index) {
-            Ok(()) => 0,
-            Err(e) => record_mux_publisher_error(e),
-        })
-    }
+    crate::panic::ffi_catch(TstError::Internal as i32, || {
+        let slice = match unsafe { crate::ffi_slice::ffi_slice(klv, len, "klv") } {
+            Ok(s) => s,
+            Err(code) => return code,
+        };
+        let pts = Pts90khz::new(pts);
+        unsafe {
+            with_mux_publisher(p, |mp| match mp.push_klv(slice, pts, stream_index) {
+                Ok(()) => 0,
+                Err(e) => record_mux_publisher_error(e),
+            })
+        }
+    })
 }
 
 /// Push one audio frame buffer through the muxer's single audio stream.
@@ -294,17 +298,19 @@ pub unsafe extern "C" fn tst_mux_publisher_send_audio(
     len: usize,
     pts: i64,
 ) -> libc::c_int {
-    let slice = match unsafe { crate::ffi_slice::ffi_slice(payload, len, "payload") } {
-        Ok(s) => s,
-        Err(code) => return code,
-    };
-    let pts = Pts90khz::new(pts);
-    unsafe {
-        with_mux_publisher(p, |mp| match mp.push_audio(slice, pts) {
-            Ok(()) => 0,
-            Err(e) => record_mux_publisher_error(e),
-        })
-    }
+    crate::panic::ffi_catch(TstError::Internal as i32, || {
+        let slice = match unsafe { crate::ffi_slice::ffi_slice(payload, len, "payload") } {
+            Ok(s) => s,
+            Err(code) => return code,
+        };
+        let pts = Pts90khz::new(pts);
+        unsafe {
+            with_mux_publisher(p, |mp| match mp.push_audio(slice, pts) {
+                Ok(()) => 0,
+                Err(e) => record_mux_publisher_error(e),
+            })
+        }
+    })
 }
 
 /// Push one subtitle PES unit through the muxer's single subtitle stream.
@@ -325,17 +331,19 @@ pub unsafe extern "C" fn tst_mux_publisher_send_subtitle(
     len: usize,
     pts: i64,
 ) -> libc::c_int {
-    let slice = match unsafe { crate::ffi_slice::ffi_slice(payload, len, "payload") } {
-        Ok(s) => s,
-        Err(code) => return code,
-    };
-    let pts = Pts90khz::new(pts);
-    unsafe {
-        with_mux_publisher(p, |mp| match mp.push_subtitle(slice, pts) {
-            Ok(()) => 0,
-            Err(e) => record_mux_publisher_error(e),
-        })
-    }
+    crate::panic::ffi_catch(TstError::Internal as i32, || {
+        let slice = match unsafe { crate::ffi_slice::ffi_slice(payload, len, "payload") } {
+            Ok(s) => s,
+            Err(code) => return code,
+        };
+        let pts = Pts90khz::new(pts);
+        unsafe {
+            with_mux_publisher(p, |mp| match mp.push_subtitle(slice, pts) {
+                Ok(()) => 0,
+                Err(e) => record_mux_publisher_error(e),
+            })
+        }
+    })
 }
 
 /// Explicit segment-cut hint — start a new HLS segment on the next push.
