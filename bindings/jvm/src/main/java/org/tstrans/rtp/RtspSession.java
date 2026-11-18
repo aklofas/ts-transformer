@@ -11,14 +11,20 @@ import org.tstrans.mpegts.DemuxerConfig;
  * data plane via {@link #intoDemuxReceiver()}. Mirrors tst-py
  * {@code tstrans.rtp.RtspSession}.
  *
- * <p><b>Thread safety:</b> the control methods are single-threaded — call them
- * from one thread. The one sanctioned cross-thread operation is {@link
- * RtspCancelHandle#cancel() cancel} on a {@link RtspCancelHandle} obtained from
- * {@link #cancelHandle()} BEFORE issuing a (potentially blocking) control call;
- * flipping it wakes a parked {@code pause}/{@code play}/{@code teardown} (which
- * then throws {@link RtspException}). {@link #close()} performs a best-effort
- * teardown; the cross-thread interrupt routes through {@link RtspCancelHandle}
- * (exactly like srt {@code Sender}/{@code Receiver}), not through {@code close()}.
+ * <p><b>Thread safety:</b> call {@link #pause()} / {@link #play()} /
+ * {@link #teardown()} from one thread. Two calls may come from any other thread, also
+ * while one of those is parked waiting for the server: {@link #cancelHandle()}, which
+ * answers at once, and {@link #close()}. {@link RtspCancelHandle#cancel() cancel} on a
+ * handle wakes a parked {@code pause}/{@code play}/{@code teardown}, which then throws
+ * {@link RtspException} of kind {@code CLOSED}; {@code close()} cancels such a parked
+ * call first, with the same outcome for it, and then closes the session.
+ *
+ * <p><b>{@code teardown()} or {@code close()}:</b> {@link #teardown()} sends TEARDOWN,
+ * waits for the reply up to the request timeout (10&nbsp;s) and throws what the server
+ * refused; the session object stays open for {@code close()}. {@link #close()} is silent
+ * and bounded: TEARDOWN with at most 500&nbsp;ms for the reply (none is sent after
+ * {@code teardown()}), then up to 2&nbsp;s for the client's thread to end. A caller who
+ * needs a slow server's reply awaited calls {@code teardown()} first.
  *
  * <p>The native handle is an {@link java.util.concurrent.atomic.AtomicLong}
  * registry key. {@code close()} claims it atomically with {@code getAndSet(0)};
@@ -47,21 +53,27 @@ public final class RtspSession extends NativeHandle {
      * {@code WWW-Authenticate} header ({@code PROTOCOL}), the client has no credentials
      * ({@code AUTH_FAILED}) or its challenge offers no scheme the client may answer
      * ({@code AUTH_REQUIRED}); a 401 to that retry throws {@code AUTH_FAILED}.
-     * {@link #close()} tears down too and swallows that error.
+     * The reply wait is the request timeout (10&nbsp;s). The session object stays open:
+     * call {@link #close()} afterwards, which then sends no second TEARDOWN. A
+     * {@code close()} alone waits at most 500&nbsp;ms for the reply and swallows a
+     * refusal.
      */
     public void teardown() throws RtspException { ensureOpen("RtspSession is closed"); nTeardown(peekHandle()); }
 
     /**
-     * Obtain a cross-thread cancel handle. Obtain it BEFORE a blocking control call;
-     * flipping {@link RtspCancelHandle#cancel()} from another thread breaks that call
-     * out of blocking I/O.
+     * Obtain a cross-thread cancel handle. Answers at once from any thread, also while
+     * a control call is parked on another one; flipping
+     * {@link RtspCancelHandle#cancel()} breaks that call out of blocking I/O, and it
+     * throws {@link RtspException} of kind {@code CLOSED}. A handle is returned after
+     * {@link #teardown()} too. All handles of one session share one flag, which
+     * {@link #close()} sets.
      *
-     * @throws IllegalStateException if the session is closed or already torn down
+     * @throws IllegalStateException if the session is closed
      */
     public RtspCancelHandle cancelHandle() {
         ensureOpen("RtspSession is closed");
         long h = nCancelHandle(peekHandle());
-        if (h == 0) throw new IllegalStateException("RtspSession is torn down");
+        if (h == 0) throw new IllegalStateException("RtspSession is closed");
         return new RtspCancelHandle(h);
     }
 
@@ -148,8 +160,8 @@ public final class RtspSession extends NativeHandle {
      * {@link IllegalStateException} while {@link #close()} becomes a no-op. On
      * success the returned {@link H264Receiver} takes over the whole session:
      * the RTSP control connection (and keepalive) stays alive inside the
-     * receiver, and {@link H264Receiver#close()} performs the best-effort
-     * TEARDOWN. On failure the native tears the session down best-effort.
+     * receiver, and {@link H264Receiver#close()} closes the client as
+     * {@link #close()} does. On failure the session is closed the same way.
      *
      * <p><b>pause() / play() unavailable after conversion.</b> Because this method
      * consumes the session, {@link #pause()} and {@link #play()} are no longer
@@ -162,15 +174,17 @@ public final class RtspSession extends NativeHandle {
      *
      * <p><b>Failure with a live DemuxReceiver.</b> If {@link #intoDemuxReceiver()}
      * previously consumed the data plane, this call still consumes the session before
-     * throwing {@link RtspException}: it sends TEARDOWN, waits for the reply (up to the
-     * request timeout) and frees the session. A live TCP-interleaved
+     * throwing {@link RtspException}: it closes the session as {@link #close()} does
+     * (TEARDOWN with at most 500&nbsp;ms for the reply, then up to 2&nbsp;s for the
+     * client's thread). A live TCP-interleaved
      * {@link org.tstrans.shells.DemuxReceiver} backed by this session then ends after the
      * events already queued: with end of stream (iteration ends, {@code endReason()} is
-     * {@code CLEAN_TEARDOWN}) when the server accepted the TEARDOWN on a session whose
-     * cancel handle had not fired, and with {@code RtpException(CLOSED)} when it refused it
-     * or did not answer in time, or when the session's cancel handle had fired before the
-     * TEARDOWN was sent, whatever the server then does. A session that had already ended
-     * for its own reason keeps that reason and that outcome.
+     * {@code CLEAN_TEARDOWN}) when the server accepted the TEARDOWN within those
+     * 500&nbsp;ms on a session whose cancel handle had not fired, and with
+     * {@code RtpException(CLOSED)} when it refused it or did not answer in time, or when
+     * the session's cancel handle had fired before the TEARDOWN was sent, whatever the
+     * server then does. A session that had already ended for its own reason keeps that
+     * reason and that outcome.
      *
      * @return an {@link H264Receiver} over the post-SETUP RTP data plane
      * @throws RtspException {@code CLOSED} if the data plane has already been
@@ -203,13 +217,22 @@ public final class RtspSession extends NativeHandle {
     }
 
     /**
-     * Best-effort teardown, then free the native session. Idempotent. A live
-     * TCP-interleaved {@link org.tstrans.shells.DemuxReceiver} from
+     * End the session and its client, then free the native session. Silent and
+     * bounded: TEARDOWN with at most 500&nbsp;ms for the reply (none is sent after
+     * {@link #teardown()}), then up to 2&nbsp;s for the client's thread, which closes the
+     * control connection; a refused or unanswered TEARDOWN is not reported
+     * ({@code teardown()} is the call that reports). Idempotent. Called from another
+     * thread while a {@code pause()} / {@code play()} / {@code teardown()} is parked, it
+     * cancels that call first ({@code RtspException(CLOSED)}), then closes. Handles from
+     * {@link #cancelHandle()} read cancelled afterwards.
+     *
+     * <p>A live TCP-interleaved {@link org.tstrans.shells.DemuxReceiver} from
      * {@link #intoDemuxReceiver()} ends with end of stream when the server accepts the
-     * TEARDOWN on a session whose cancel handle had not fired, and with
-     * {@code RtpException(CLOSED)} when the server does not accept it or the session's
-     * cancel handle had fired before the TEARDOWN was sent, whatever the server then does.
-     * A session that had already ended for its own reason keeps that reason and that
+     * TEARDOWN within those 500&nbsp;ms on a session whose cancel handle had not fired,
+     * and with {@code RtpException(CLOSED)} when the server refuses it or does not answer
+     * in time (call {@code teardown()} first to wait longer), or the session's cancel
+     * handle had fired before the TEARDOWN was sent, whatever the server then does. A
+     * session that had already ended for its own reason keeps that reason and that
      * outcome. A session keeps one end reason: open a new session for each stream.
      */
     @Override public void close() { super.close(); }

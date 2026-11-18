@@ -7,7 +7,7 @@ use crate::jutil::FindClass;
 use crate::panic::jni_native;
 use std::sync::LazyLock;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, PoisonError, TryLockError};
 
 use jni::Env;
 use jni::jni_str;
@@ -87,8 +87,8 @@ static REGISTRY_CANCEL: LazyLock<HandleRegistry<JniRtspCancel>> =
     LazyLock::new(HandleRegistry::new);
 
 /// Per-type leased-handle registry for `org.tstrans.rtp.RtspSession`. No registry
-/// cancel hook (teardown is the session's own `torn_down` flag); the cross-thread
-/// stop routes through `RtspCancelHandle`, not `close()`.
+/// cancel hook: `nClose` fires the session's stored cancel itself, and only when
+/// a control call holds the client (see [`close_client`]).
 static REGISTRY_SESSION: LazyLock<HandleRegistry<JniRtspSession>> =
     LazyLock::new(HandleRegistry::new);
 
@@ -99,7 +99,7 @@ impl JniRtspCancel {
 }
 
 jni_native! {
-    /// Flip the cancel flag. Wakes a parked connect/pause/play/teardown at the next
+    /// Flip the cancel flag. Wakes a parked pause/play/teardown at the next
     /// ~100 ms poll. Guards a closed (zero) handle.
     fn Java_org_tstrans_rtp_RtspCancelHandle_nCancel(env, _class, handle: jlong) = () => {
         if REGISTRY_CANCEL
@@ -138,9 +138,9 @@ jni_native! {
 
 /// Native backing for `org.tstrans.rtp.RtspSession`. Faithful port of tst-py's
 /// `PyRtspSession`: `client` + `session` behind `Arc<Mutex<Option<..>>>` (so the
-/// control natives clone the Arc and lock, never holding a `&mut` to the box;
-/// `cancel_handle` clones a self-contained handle out from under the lock);
-/// `torn_down` so a duplicate teardown is a no-op.
+/// control natives clone the Arc and lock, never holding a `&mut` to the box);
+/// `torn_down` so a duplicate teardown is a no-op. The client is `None` once a
+/// close has taken it.
 ///
 /// `h264_depay_config` is stashed only when created via `nConnectH264` (the H.264
 /// path — it carries the SDP-negotiated payload type and out-of-band SPS/PPS).
@@ -148,6 +148,10 @@ jni_native! {
 /// the session was created via plain `nConnect` (MP2T path) or after consumption.
 struct JniRtspSession {
     client: Arc<Mutex<Option<RustRtspClient>>>,
+    /// A clone of the client's cancel, taken at connect and kept outside the
+    /// client mutex, which a parked control call holds for up to the request
+    /// timeout: `nCancelHandle` and the close read it without that wait.
+    rtsp_cancel: RustRtspCancel,
     session: Arc<Mutex<Option<RustRtspSession>>>,
     torn_down: Arc<AtomicBool>,
     /// `Some(_)` only for `nConnectH264`-created sessions. `None` for
@@ -246,6 +250,7 @@ jni_native! {
         };
 
         REGISTRY_SESSION.insert(JniRtspSession {
+            rtsp_cancel: client.cancel_handle(),
             client: Arc::new(Mutex::new(Some(client))),
             session: Arc::new(Mutex::new(Some(session))),
             torn_down: Arc::new(AtomicBool::new(false)),
@@ -342,6 +347,7 @@ jni_native! {
         // Stash the H264DepayConfig in the session slot alongside the data-plane
         // RtspSession. `nIntoH264Receiver` takes both atomically.
         REGISTRY_SESSION.insert(JniRtspSession {
+            rtsp_cancel: client.cancel_handle(),
             client: Arc::new(Mutex::new(Some(client))),
             session: Arc::new(Mutex::new(Some(session))),
             torn_down: Arc::new(AtomicBool::new(false)),
@@ -366,8 +372,9 @@ jni_native! {
 }
 
 jni_native! {
-    /// `RtspSession.nTeardown` — no-op if already torn down, else `teardown()` and set
-    /// the flag. Ports `PyRtspSession::teardown`.
+    /// `RtspSession.nTeardown` — no-op if already torn down, else `teardown()` (the
+    /// request timeout bounds the reply wait) and set the flag; the client is kept
+    /// for the close. Ports `PyRtspSession::teardown`.
     fn Java_org_tstrans_rtp_RtspSession_nTeardown(env, _class, handle: jlong) = () => {
         // Lease the session and clone the `client`/`torn_down` Arcs out. The registry
         // lease keeps a racing close from freeing the client during the call;
@@ -398,7 +405,9 @@ jni_native! {
 }
 
 /// Shared control-call helper for pause/play. Clones the client Arc, locks, and
-/// runs `op`; maps any RtspError.
+/// runs `op`; maps any RtspError. A client a concurrent close took while this
+/// call waited for the lock is `CLOSED`, the kind the close gives a call it
+/// cancels.
 fn session_control(
     env: &mut Env,
     handle: jlong,
@@ -412,7 +421,7 @@ fn session_control(
         let mut guard = client.lock().map_err(|_| RtspError::SessionExpired)?;
         match guard.as_mut() {
             Some(c) => op(c),
-            None => Err(RtspError::SessionExpired),
+            None => Err(RtspError::LocalCancel),
         }
     })();
     if let Err(e) = res {
@@ -421,25 +430,14 @@ fn session_control(
 }
 
 jni_native! {
-    /// `RtspSession.nCancelHandle` — clone a self-contained cancel handle out of the
-    /// client. Returns 0 (no throw) when torn down (the Java side converts that to
-    /// IllegalStateException). Ports `PyRtspSession::cancel_handle`.
+    /// `RtspSession.nCancelHandle` — a handle on the session's stored cancel, read
+    /// under the registry lease only, so it answers while a control call holds the
+    /// client. A handle after `teardown()` too; 0 (the Java side throws
+    /// IllegalStateException) only for a closed session. Ports
+    /// `PyRtspSession::cancel_handle`.
     fn Java_org_tstrans_rtp_RtspSession_nCancelHandle(_env, _class, handle: jlong) -> jlong = 0 => {
-        // Lease the session and clone the `client` Arc out. `None` (absent/closed) →
-        // 0 (the Java side converts that to IllegalStateException), matching the
-        // torn-down → 0 contract.
-        let Some(client) = REGISTRY_SESSION.with(handle as u64, |s| s.client.clone()) else {
-            return 0;
-        };
-        let guard = match client.lock() {
-            Ok(g) => g,
-            Err(_) => return 0,
-        };
-        match guard.as_ref() {
-            Some(c) => JniRtspCancel {
-                inner: c.cancel_handle(),
-            }
-            .into_handle(),
+        match REGISTRY_SESSION.with(handle as u64, |s| s.rtsp_cancel.clone()) {
+            Some(inner) => JniRtspCancel { inner }.into_handle(),
             None => 0,
         }
     }
@@ -526,19 +524,35 @@ jni_native! {
     }
 }
 
-/// Best-effort TEARDOWN + `torn_down` latch for a session slot already taken
-/// out of `REGISTRY_SESSION`. Errors swallowed (the tst-py `__exit__` contract:
-/// "ensure closed", not "fail if the server is uncooperative"). Used by the
-/// consuming `nIntoH264Receiver` failure paths.
-fn teardown_best_effort(slot: &JniRtspSession) {
-    if !slot.torn_down.load(Ordering::Relaxed) {
-        if let Ok(mut guard) = slot.client.lock()
-            && let Some(c) = guard.as_mut()
-        {
-            let _ = c.teardown();
+/// End a session's client with `RtspClient::close()`: TEARDOWN when a session is
+/// open, under one 500 ms bound with the reply awaited, then up to 2 s for the
+/// client's thread, which closes the control connection. Runs whether or not
+/// `teardown()` ran before (then it writes nothing and only waits for the
+/// thread). The result is discarded: every close is silent, `teardown()` is the
+/// call that reports. The client is taken out of its mutex and closed outside it.
+///
+/// A control call parked on another thread holds the mutex for up to the request
+/// timeout: the stored cancel fires first (that call ends `CLOSED` at its next
+/// ~100 ms poll), then the close runs on the cancelled client, so its TEARDOWN's
+/// reply is not awaited. An idle close does not cancel first, so an accepted
+/// TEARDOWN still ends a live interleaved receiver with end of stream.
+pub(super) fn close_client(
+    client: &Mutex<Option<RustRtspClient>>,
+    cancel: &RustRtspCancel,
+    torn_down: &AtomicBool,
+) {
+    let taken = match client.try_lock() {
+        Ok(mut guard) => guard.take(),
+        Err(TryLockError::WouldBlock) => {
+            cancel.cancel();
+            client.lock().unwrap_or_else(PoisonError::into_inner).take()
         }
-        slot.torn_down.store(true, Ordering::Relaxed);
+        Err(TryLockError::Poisoned(p)) => p.into_inner().take(),
+    };
+    if let Some(c) = taken {
+        let _ = c.close();
     }
+    torn_down.store(true, Ordering::Relaxed);
 }
 
 jni_native! {
@@ -551,8 +565,9 @@ jni_native! {
     /// - success: converts the data plane into an `H264Receiver` and moves the
     ///   control plane (`RtspClient` + `torn_down` flag) into the receiver's slot
     ///   so the RTSP control connection + keepalive stay alive while AUs flow;
-    ///   `H264Receiver.nClose` then performs the best-effort TEARDOWN.
-    /// - failure → the session tears down best-effort and is consumed either way
+    ///   `H264Receiver.nClose` then closes the client ([`close_client`]).
+    /// - failure → the client is closed ([`close_client`]) and the session is
+    ///   consumed either way
     ///   (mirrors `Socket`'s "consumed even if the config is rejected"
     ///   semantics): a data plane already consumed by `nIntoDemuxReceiver` is
     ///   `RtspException(CLOSED)` — checked FIRST, so it is CLOSED on both session
@@ -595,7 +610,7 @@ jni_native! {
             match taken {
                 Some(sess) => sess,
                 None => {
-                    teardown_best_effort(&slot);
+                    close_client(&slot.client, &slot.rtsp_cancel, &slot.torn_down);
                     throw_rtsp(
                         env,
                         BindingErrorKind::Closed,
@@ -607,8 +622,8 @@ jni_native! {
         };
 
         // Step 3: take the H264DepayConfig. None = wrong path (plain connect).
-        // The session is consumed even on failure: tear it down best-effort
-        // before throwing (dropping `slot` then closes the control connection).
+        // The session is consumed even on failure: close its client before
+        // throwing.
         let depay_config = {
             let taken = match slot.h264_depay_config.lock() {
                 Ok(mut g) => g.take(),
@@ -624,7 +639,7 @@ jni_native! {
             match taken {
                 Some(cfg) => cfg,
                 None => {
-                    teardown_best_effort(&slot);
+                    close_client(&slot.client, &slot.rtsp_cancel, &slot.torn_down);
                     throw_rtsp(
                         env,
                         BindingErrorKind::RtspProtocol,
@@ -645,6 +660,7 @@ jni_native! {
             receiver,
             super::h264_receiver::JniRtspControl {
                 client: slot.client,
+                rtsp_cancel: slot.rtsp_cancel,
                 torn_down: slot.torn_down,
             },
         )
@@ -668,22 +684,13 @@ jni_native! {
 }
 
 jni_native! {
-    /// `RtspSession.nClose` — best-effort teardown (swallow errors, like tst-py's
-    /// `__exit__`), then free the box.
+    /// `RtspSession.nClose` — close the client ([`close_client`]: silent, bounded),
+    /// then free the box.
     fn Java_org_tstrans_rtp_RtspSession_nClose(_env, _class, handle: jlong) = () => {
-        // Atomic + idempotent: only the winning close gets the session back for
-        // best-effort teardown (errors swallowed, like tst-py's `__exit__`). A second
-        // close finds the id gone → no-op. No registry cancel hook (the cross-thread
-        // stop routes through RtspCancelHandle, not close).
+        // Atomic + idempotent: only the winning close gets the session back; a
+        // second close finds the id gone → no-op.
         if let Some(b) = REGISTRY_SESSION.close(handle as u64) {
-            if !b.torn_down.load(Ordering::Relaxed) {
-                if let Ok(mut guard) = b.client.lock()
-                    && let Some(c) = guard.as_mut() {
-                        let _ = c.teardown(); // best-effort
-                    }
-                b.torn_down.store(true, Ordering::Relaxed);
-            }
-            drop(b);
+            close_client(&b.client, &b.rtsp_cancel, &b.torn_down);
         }
     }
 }

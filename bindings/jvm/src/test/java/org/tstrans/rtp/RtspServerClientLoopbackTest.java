@@ -81,11 +81,13 @@ class RtspServerClientLoopbackTest {
             // published to rxRef the moment it is obtained so the watchdog/cleanup
             // can close() it cross-thread on the failure path.
             AtomicReference<DemuxReceiver> rxRef = new AtomicReference<>();
+            AtomicReference<RtspSession> sessionRef = new AtomicReference<>();
             CompletableFuture<String> shaFuture = new CompletableFuture<>();
             String url = "rtsp://127.0.0.1:" + port + "/live";
             Thread client = new Thread(() -> {
                 try {
                     RtspSession session = RtspClient.connect(RtspClientConfig.of(url));
+                    sessionRef.set(session);
                     DemuxReceiver rx = session.intoDemuxReceiver();
                     rxRef.set(rx);
                     // The data plane is a consumable handle: a second take is
@@ -180,6 +182,11 @@ class RtspServerClientLoopbackTest {
                         rx.close();
                     }
                 }
+                // A no-op once intoH264Receiver() consumed it; frees it on an earlier failure.
+                RtspSession session = sessionRef.get();
+                if (session != null && !client.isAlive()) {
+                    session.close();
+                }
             }
 
             assertEquals(offlineSha, liveSha,
@@ -244,6 +251,7 @@ class RtspServerClientLoopbackTest {
                 done.countDown();
                 watchdog.interrupt();
                 producer.join(TimeUnit.SECONDS.toMillis(2));
+                session.close();
                 rx.close();
                 mount.close();
             }
@@ -251,9 +259,11 @@ class RtspServerClientLoopbackTest {
     }
 
     /**
-     * {@code session.close()} sends TEARDOWN and waits for the server's reply; the
-     * accepted TEARDOWN ends the live interleaved receiver with end of stream: its
-     * iteration drains what is queued and ends without throwing.
+     * {@code session.teardown()} sends TEARDOWN and waits for the server's reply (up to
+     * the request timeout); the accepted TEARDOWN ends the live interleaved receiver with
+     * end of stream: its iteration drains what is queued and ends without throwing, and
+     * the {@code close()} after it does not change that. A bare {@code close()} bounds the
+     * reply wait to 500 ms, so on a slow host it could end the receiver CLOSED instead.
      */
     @Test
     @Timeout(TIMEOUT_SEC + 10)
@@ -308,6 +318,7 @@ class RtspServerClientLoopbackTest {
                 }
                 assertTrue(sawVideo, "the receiver is live before the session closes");
 
+                session.teardown();
                 session.close();
 
                 for (DemuxEvent ignored : rx) {

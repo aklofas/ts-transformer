@@ -1128,6 +1128,14 @@ falls into two groups.
 | `reconnectAttempts()`, `reconnectStats()` on the managed shells | live counters kept outside the object | throws `IllegalStateException` |
 | `endReason()` / `endDetail()` | the recorded reason, or `null`; `H264Receiver` answers `null` while a `recvAu()` is in flight | the reason recorded at close |
 
+`RtspSession.close()` cancels only a `pause()` / `play()` / `teardown()`
+that is parked (an idle session is not cancelled first, so a TEARDOWN the
+server accepts still ends a live receiver with end of stream). It, and the
+`close()` of an `H264Receiver` made from a session, then end the RTSP
+client: up to 500 ms for the TEARDOWN's reply and up to 2 s for the
+client's thread (see [RTSP client](#rtsp-client-orgtstransrtp)).
+`RtspSession.cancelHandle()` answers at once while a control call is parked.
+
 **Waits for the parked call to return:** `stats()`, `socketStats()`,
 `srtStats()`, `depayStats()`, `rtpStats()` and `lastSeenMicros()`. These
 read counters that live inside the object and have nothing to report
@@ -2292,10 +2300,12 @@ try (RtspSession session = RtspClient.connect(cfg);
   challenge fails the connect with an auth-unsupported `RtspException` rather
   than receiving the password in Basic form. `BasicAuth` answers Digest when it
   is offered and Basic otherwise.
-- **Cancellation.** Obtain a `RtspCancelHandle` from `session.cancelHandle()` BEFORE
-  a blocking control call; flip `cancel()` from another thread to break it out.
-  `close()` is a best-effort teardown, not a cross-thread interruptor. The
-  interrupted call throws `RtspException(CLOSED)`.
+- **Cancellation.** `session.cancelHandle()` returns a `RtspCancelHandle` at
+  once from any thread, also while a control call is parked; flip `cancel()`
+  from another thread to break a parked `pause()` / `play()` / `teardown()`
+  out. The interrupted call throws `RtspException(CLOSED)`. `close()` from
+  another thread does the same to a parked call first, then closes the
+  session.
 - **`teardown()` reports what the server answered.** A 2xx reply, or
   `454 Session Not Found` (the session is already gone), returns normally. A
   TEARDOWN the server refuses throws `RtspException` of the status's kind:
@@ -2304,8 +2314,16 @@ try (RtspSession session = RtspClient.connect(cfg);
   (`PROTOCOL`), the client has no credentials (`AUTH_FAILED`) or its
   challenge offers no scheme the client may answer (`AUTH_REQUIRED`); a
   401 to that retry throws `AUTH_FAILED`. The session counts as torn down either way, so
-  a second `teardown()` is a no-op. `close()` (and so try-with-resources)
-  tears down too and swallows that error.
+  a second `teardown()` is a no-op.
+- **`teardown()` or `close()`.** `teardown()` waits for the reply up to the
+  request timeout (10 s), reports it, and keeps the session object for
+  `close()`. `close()` (and so try-with-resources) is silent and bounded: it
+  sends TEARDOWN with at most 500 ms for the reply (none after `teardown()`),
+  then waits up to 2 s for the client's thread, which closes the control
+  connection; a refused or unanswered TEARDOWN is not reported. A caller who
+  needs a slow server's reply awaited calls `teardown()` first.
+  `cancelHandle()` returns a handle after `teardown()`; after `close()` it
+  throws `IllegalStateException`, and handles taken before read cancelled.
 - **TLS (`rtsps://`) is supported.** The binding links rustls; an `rtsps://`
   URL negotiates TLS on connect. `tlsRootCertsPem` supplies a PEM bundle of
   custom trust anchors (private-CA cameras) — without it the handshake
@@ -2599,18 +2617,20 @@ via `consumeHandle()` before the fallible native call (NativeHandle contract
 item 3 — double-free safety). On return — success **or** failure — this
 `RtspSession` wrapper is closed: subsequent `pause()` / `play()` / `teardown()`
 calls throw `IllegalStateException`. The `H264Receiver` takes over the full
-session (control connection, keepalives, teardown on `close()`). By contrast,
+session (control connection, keepalives, and its close on `close()`, as
+`RtspSession.close()` does it). By contrast,
 `intoDemuxReceiver()` leases the session handle (a sanctioned borrow — only the
 data-plane transport moves into the receiver), so the control plane remains
 usable after the call.
 
 **Failure path note.** If `intoDemuxReceiver()` previously consumed the data
 plane, a subsequent `intoH264Receiver()` still consumes the session (the native
-throws `RtspException(CLOSED)`): it sends TEARDOWN, waits for the reply (up to
-the request timeout) and frees the session. A live TCP-interleaved
+throws `RtspException(CLOSED)`): it closes the session as `close()` does
+(TEARDOWN with at most 500 ms for the reply, then up to 2 s for the client's
+thread). A live TCP-interleaved
 `DemuxReceiver` on it then ends after the events already queued: with end of
 stream (`endReason()` is `CLEAN_TEARDOWN`) when the server accepted the
-TEARDOWN on a session whose cancel handle had not fired, and with
+TEARDOWN within those 500 ms on a session whose cancel handle had not fired, and with
 `RtpException(CLOSED)` when it refused it or did not answer in time, or when
 the session's cancel handle had fired before the TEARDOWN was sent. Ensure only one
 `into*` call is made per session.
@@ -2619,9 +2639,10 @@ the session's cancel handle had fired before the TEARDOWN was sent. Ensure only 
 (`null` from `recvAu()` / `recvEvent()`, the end of iteration) means the peer
 ended the session in an orderly way, or the server accepted (`2xx` or `454`)
 the TEARDOWN that `teardown()` or `close()` sent on a session whose cancel
-handle had not fired. `RtpException(CLOSED)` means a cancel: the receiver was
+handle had not fired (`close()` waits 500 ms for that answer, `teardown()`
+the request timeout). `RtpException(CLOSED)` means a cancel: the receiver was
 cancelled or closed; or its session was closed without the server accepting
-that TEARDOWN; or the session's cancel handle had fired before the TEARDOWN
+that TEARDOWN in time; or the session's cancel handle had fired before the TEARDOWN
 was sent, so `teardown()`, `close()` and a failed `intoH264Receiver()` on a
 cancelled session are a cancel whatever the server then does. A session that
 had already ended for its own reason (a keepalive answered `454`, a wire
@@ -2629,7 +2650,8 @@ failure, the peer's close) keeps that reason and that outcome. A session
 keeps one end reason: open a new session for each stream. A receiver on a
 UDP session has its own socket and is not ended by any of this. Keep the
 `RtspSession` open while a `DemuxReceiver` from `intoDemuxReceiver()`
-receives, and call `teardown()` (or `close()`) to end the stream cleanly.
+receives, and call `teardown()` then `close()` to end the stream cleanly
+(`close()` alone waits at most 500 ms for the server's answer).
 
 **`socket_stats()` is not Optional.** `H264Receiver.socketStats()` returns a
 bare `SocketStats` (never null). This matches the Rust

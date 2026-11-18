@@ -22,7 +22,7 @@
 
 use crate::jutil::FindClass;
 use crate::panic::jni_native;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, LazyLock, Mutex};
 use std::time::Duration;
 use tst_pipeline::binding::view::BlockingReason;
@@ -34,6 +34,7 @@ use jni::objects::{JByteArray, JObject, JObjectArray, JString, JValue};
 use jni::strings::JNIString;
 use jni::sys::{jboolean, jint, jlong, jobject};
 
+use tst_rtp::rtsp::client::RtspCancelHandle as RustRtspCancel;
 use tst_rtp::rtsp::client::RtspClient as RustRtspClient;
 use tst_rtp::{H264Au, H264DepayConfig, H264Receiver, ParameterSetInjection};
 
@@ -51,10 +52,12 @@ use super::errors::{connect_error, transport_error};
 /// owner of the control plane: retaining the `RtspClient` keeps the TCP control
 /// connection and the client's thread (keepalive pings and, for
 /// TCP-interleaved, the media) alive while AUs flow (dropping it would let
-/// the server tear the session down mid-stream), and `nClose` performs the
-/// best-effort TEARDOWN the consumed session wrapper can no longer issue.
+/// the server tear the session down mid-stream), and `nClose` closes the client
+/// the consumed session wrapper can no longer close (`client::close_client`).
 pub(super) struct JniRtspControl {
     pub(super) client: Arc<Mutex<Option<RustRtspClient>>>,
+    /// The session's stored cancel, carried over from the session.
+    pub(super) rtsp_cancel: RustRtspCancel,
     pub(super) torn_down: Arc<AtomicBool>,
 }
 
@@ -614,9 +617,9 @@ jni_native! {
     /// + close the inner receiver and free the box. Atomic + idempotent.
     ///
     /// For RTSP-created receivers the slot also owns the session control plane
-    /// (see [`JniRtspControl`]): best-effort TEARDOWN fires first (so the server
-    /// stops streaming), then the data plane closes — mirroring
-    /// `RtspSession.nClose`'s teardown contract.
+    /// (see [`JniRtspControl`]): its client is closed first (TEARDOWN under a
+    /// 500 ms bound, then up to 2 s for the client's thread; silent), then the
+    /// data plane closes — `RtspSession.nClose`'s close.
     ///
     /// Returns the close-time `EndReasonSnapshot` (see `end_reason`'s module
     /// doc) — read here, right after `slot.inner.close()` records `Cancelled`
@@ -634,14 +637,9 @@ jni_native! {
         // lock (blocking briefly until the woken recv releases it). Atomic +
         // idempotent: a double close finds the id gone → no-op.
         let reason = if let Some(mut slot) = REGISTRY.close(handle as u64) {
-            if let Some(ctrl) = slot.rtsp.take()
-                && !ctrl.torn_down.load(Ordering::Relaxed) {
-                    if let Ok(mut guard) = ctrl.client.lock()
-                        && let Some(c) = guard.as_mut() {
-                            let _ = c.teardown(); // best-effort
-                        }
-                    ctrl.torn_down.store(true, Ordering::Relaxed);
-                }
+            if let Some(ctrl) = slot.rtsp.take() {
+                super::client::close_client(&ctrl.client, &ctrl.rtsp_cancel, &ctrl.torn_down);
+            }
             slot.inner.close();
             slot.inner.end_reason()
         } else {
