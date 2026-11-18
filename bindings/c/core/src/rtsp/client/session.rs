@@ -53,7 +53,6 @@
 //! `TstRtpDemuxReceiver` governs data-plane shutdown.
 
 use std::sync::{Mutex, TryLockError};
-use std::time::Duration;
 
 use tst_core::RecvTransport;
 use tst_pipeline::DemuxReceiver;
@@ -309,15 +308,12 @@ pub unsafe extern "C" fn tst_rtsp_session_pause(session: *mut TstRtspSession) ->
 // Teardown + free
 // ---------------------------------------------------------------------------
 
-/// Bound on the whole TEARDOWN exchange: the request write and the reply.
-const TEARDOWN_BOUND: Duration = Duration::from_millis(500);
-
 /// Send TEARDOWN and free the session handle.
 ///
-/// Sends an RTSP TEARDOWN request, then unconditionally drops the session
-/// and its `RtspClient` regardless of whether TEARDOWN succeeded (network
-/// errors at teardown time are recorded in last-error but do not prevent
-/// the handle from being freed). A healthy peer's 2xx returns 0, and so
+/// Sends an RTSP TEARDOWN request, then ends the client and frees the
+/// session regardless of whether TEARDOWN succeeded (network errors at
+/// teardown time are recorded in last-error but do not prevent the handle
+/// from being freed). A healthy peer's 2xx returns 0, and so
 /// does `454 Session Not Found` (the session is already gone). A TEARDOWN
 /// the server refuses with any other status returns that status's code
 /// (`TST_E_RTSP_PROTOCOL`, or `TST_E_RTSP_NOT_FOUND` for a 404). A first
@@ -333,9 +329,10 @@ const TEARDOWN_BOUND: Duration = Duration::from_millis(500);
 /// the TEARDOWN but does not wait for the reply: it returns `TST_E_CLOSED`,
 /// also when that write fails, and is still freed. If a caught panic had already
 /// taken the control pair, there is nothing to tear down: the call
-/// returns 0 and frees. The client's thread is then told to stop and
-/// closes the control connection on its own; the call does not wait for
-/// it.
+/// returns 0 and frees. After the TEARDOWN the call stops the client's
+/// thread and waits up to 2 s for it, so it can take up to about 2.5 s;
+/// when it returns the thread has closed the control connection, unless
+/// those 2 s ran out (the thread then ends on its own).
 ///
 /// The caller guarantees that no `_play`, `_pause` or receive call on this
 /// session is in flight: call [`tst_rtsp_session_cancel`], wait for the
@@ -364,16 +361,17 @@ pub unsafe extern "C" fn tst_rtsp_session_teardown_and_free(
         // SAFETY: caller guarantees valid, unaliased, un-freed pointer.
         let boxed = unsafe { Box::from_raw(session) };
         let rc = match boxed.pair.try_lock() {
-            // Nobody holds the session: send TEARDOWN and read the reply,
-            // the whole exchange bounded.
-            Ok(mut guard) => teardown(&mut guard, Some(TEARDOWN_BOUND)),
+            // Nobody holds the session: `RtspClient::close` sends TEARDOWN
+            // and reads the reply under its 500 ms bound, then waits for
+            // the client's thread.
+            Ok(mut guard) => close(guard.take()),
             // Defence only, not a contract (the caller must have waited for
             // any parked call): wake it first, then send TEARDOWN as best
             // effort on the cancelled session.
             Err(TryLockError::WouldBlock) => {
                 boxed.rtsp_cancel.cancel();
                 match boxed.pair.lock() {
-                    Ok(mut guard) => teardown(&mut guard, None),
+                    Ok(mut guard) => teardown(&mut guard),
                     Err(_) => poisoned(),
                 }
             }
@@ -391,27 +389,32 @@ pub unsafe extern "C" fn tst_rtsp_session_teardown_and_free(
     })
 }
 
-/// TEARDOWN on the pair, with the whole exchange inside `bound`, or under
-/// the client's request timeout when `bound` is `None`.
-fn teardown(
-    pair: &mut Option<Box<(RtspClient, RtspSession)>>,
-    bound: Option<Duration>,
-) -> libc::c_int {
-    match pair.as_mut() {
+/// `RtspClient::close` on the pair: TEARDOWN, then the wait for the
+/// client's thread.
+fn close(pair: Option<Box<(RtspClient, RtspSession)>>) -> libc::c_int {
+    match pair {
         None => 0, // already consumed
         Some(pair) => {
-            let (client, _session) = pair.as_mut();
-            let r = match bound {
-                Some(b) => client.teardown_within(b),
-                None => client.teardown(),
-            };
-            match r {
-                Ok(()) => 0,
-                Err(e) => {
-                    crate::error::record_with_context(e, "RTSP TEARDOWN failed (continuing free)")
-                }
-            }
+            let (client, session) = *pair;
+            let r = client.close();
+            drop(session);
+            teardown_rc(r)
         }
+    }
+}
+
+/// TEARDOWN on the pair under the client's request timeout.
+fn teardown(pair: &mut Option<Box<(RtspClient, RtspSession)>>) -> libc::c_int {
+    match pair.as_mut() {
+        None => 0, // already consumed
+        Some(pair) => teardown_rc(pair.0.teardown()),
+    }
+}
+
+fn teardown_rc(r: Result<(), tst_rtp::RtspError>) -> libc::c_int {
+    match r {
+        Ok(()) => 0,
+        Err(e) => crate::error::record_with_context(e, "RTSP TEARDOWN failed (continuing free)"),
     }
 }
 

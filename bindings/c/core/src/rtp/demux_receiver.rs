@@ -169,9 +169,11 @@ pub unsafe extern "C" fn tst_rtp_demux_receiver_get_ts_bytes_demuxed(
 ///
 /// For a receiver from `tst_rtsp_session_into_demux_receiver` this also
 /// closes the RTSP control connection after the data plane: it writes
-/// TEARDOWN (500 ms bounds the write; the reply is not awaited), then
-/// tells the client's thread to stop. That thread closes the control
-/// connection on its own; the call does not wait for it.
+/// TEARDOWN and waits for the reply, both under one 500 ms bound, then
+/// stops the client's thread and waits up to 2 s for it, so the call can
+/// take up to about 2.5 s. When it returns the thread has closed the
+/// control connection, unless those 2 s ran out (the thread then ends on
+/// its own). A TEARDOWN error is not reported.
 ///
 /// Safe to call with `NULL` (no-op).
 ///
@@ -192,7 +194,9 @@ pub unsafe extern "C" fn tst_rtp_demux_receiver_close(p: *mut TstRtpDemuxReceive
         boxed.inner.close();
         // The RTSP client goes only after the data plane is closed, so its
         // TEARDOWN never waits behind a parked recv.
-        drop(boxed.rtsp_client.lock().ok().and_then(|mut g| g.take()));
+        if let Some(client) = boxed.rtsp_client.lock().ok().and_then(|mut g| g.take()) {
+            let _ = client.close();
+        }
         drop(boxed);
     });
 }
