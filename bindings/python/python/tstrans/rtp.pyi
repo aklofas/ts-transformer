@@ -356,7 +356,8 @@ class RtspSession:
     `into_h264_receiver()` — consume the data plane for H.264 AU iteration
     (created by `RtspClient.connect_h264()`).
     The data plane is taken once: any `into_*` call after it has been
-    consumed (by either method) raises `RtspError(CLOSED)`. Both directions
+    consumed (by either method), or once `close()` has begun, raises
+    `RtspError(CLOSED)`; take it before closing. Both directions
     are guarded — calling the wrong method on a fresh session raises
     `RtspError(PROTOCOL)` and leaves the data plane in place.
 
@@ -419,12 +420,11 @@ class RtspSession:
         later call is a no-op. A control call in progress on another
         thread is cancelled first, so the session then ends as a cancel (a
         live receiver ends `RtpError(CLOSED)`), not as a clean teardown.
-        Afterwards `pause()`, `play()` and `cancel_handle()` raise
-        `RtspError(CLOSED)`, `teardown()` returns `None` and a cancel handle
-        taken earlier reads `is_cancelled() == True`; the data
-        plane can still be taken once, and a TCP-interleaved receiver
-        taken from it ends at once with the end reason the close left. The
-        `with` exit calls this."""
+        Afterwards `pause()`, `play()`, `cancel_handle()`,
+        `into_demux_receiver()` and `into_h264_receiver()` raise
+        `RtspError(CLOSED)` (take the data plane before closing),
+        `teardown()` returns `None` and a cancel handle taken earlier reads
+        `is_cancelled() == True`. The `with` exit calls this."""
         ...
     def cancel_handle(self) -> RtspCancelHandle:
         """A handle on the session's cancel; answers at once, also while

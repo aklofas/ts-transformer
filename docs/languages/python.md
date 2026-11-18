@@ -1252,10 +1252,12 @@ with RtspClient.connect(cfg) as session:
   a TEARDOWN refused, or not answered within the 500 ms, ends it with
   `RtpError(CLOSED)` (`EndReason.CANCELLED`). Call `teardown()` first when
   you want the server's answer or a longer wait. After `close()`,
-  `pause()`, `play()` and `cancel_handle()` raise `RtspError(CLOSED)`,
-  `teardown()` returns `None`, and a cancel handle taken earlier reads
-  `is_cancelled() == True`. A session collected without `close()`
-  sends a best-effort TEARDOWN and does not wait for the client's thread.
+  `pause()`, `play()`, `cancel_handle()`, `into_demux_receiver()` and
+  `into_h264_receiver()` raise `RtspError(CLOSED)` (take the data plane
+  before closing), `teardown()` returns `None`, and a cancel handle taken
+  earlier reads `is_cancelled() == True`. A session collected without
+  `close()` sends a best-effort TEARDOWN and does not wait for the
+  client's thread.
 - **Why did the stream end?** When `for event in rx` exits or a call
   raises, `rx.end_reason()` (on `DemuxReceiver`, `Receiver`, and
   `H264Receiver` alike) answers with a `tstrans.shells.EndReason` member —
