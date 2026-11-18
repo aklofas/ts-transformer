@@ -1136,10 +1136,13 @@ The overloads are `Receiver.open(url, cancel)`, `Sender.open(url, cancel)`,
 
 - One object may be given to any number of opens, one after another or at the
   same time; one `cancel()` ends every open in progress with it.
-- `cancel()` is sticky: every later open given the object throws the URL's
-  transport exception with kind `CLOSED` before it parses its URL, and opens
-  nothing. (A URL whose scheme no shell opens still throws
-  `IllegalArgumentException`: there is no transport to name.)
+- `cancel()` is sticky: every later open given the object opens nothing. With
+  an already-cancelled object an open is refused with `CLOSED` before its URL
+  is parsed; an invalid configuration object may be reported first. The shell
+  opens throw the URL's transport exception (a URL whose scheme no shell opens
+  still throws `IllegalArgumentException`: there is no transport to name). The
+  managed `fromUrl`s are SRT only and throw `SrtException(CLOSED)` whatever
+  the URL.
 - It ends a listener-mode first accept at any time. It does not interrupt a
   caller-mode connect, but an open that finishes after the cancel throws
   `CLOSED` whatever it did, and a connection it had just made is closed
@@ -1167,7 +1170,7 @@ falls into two groups.
 
 | Accessor | While a call is parked | Once closed |
 |---|---|---|
-| `close()` (every class but `RtspSession`: see below), `cancelHandle()`, `CancelHandle.cancel()` / `isCancelled()` | cancel first, then free | quiet |
+| `close()` (every class but `RtspSession`, `RtspServer` and `OpenCancel`: see below), `cancelHandle()`, `CancelHandle.cancel()` / `isCancelled()` | cancel first, then free | quiet |
 | `isAlive()` | `true` — a parked call means the object is open | `false` |
 | `localAddr()` (`srt.Listener`, `H264Receiver`) | the value captured when the object was built | throws `IllegalStateException` |
 | `localPort()` (`Receiver`, `DemuxReceiver`, `tcp.Listener`) | the port captured at open (`tcp.Listener` answers while `accept()` is parked) | throws `IllegalStateException` |
@@ -1176,6 +1179,10 @@ falls into two groups.
 | `videoHandle()` … `dataHandle()` on the three `MuxSender` classes | the handles of the `MuxerConfig` the sender was built from | throws `IllegalStateException` |
 | `reconnectAttempts()`, `reconnectStats()` on the managed shells | live counters kept outside the object | throws `IllegalStateException` |
 | `endReason()` / `endDetail()` | the recorded reason, or `null`; `H264Receiver` answers `null` while a `recvAu()` is in flight | the reason recorded at close |
+
+`RtspServer.close()` runs the graceful `stop()` before it frees the server,
+so it takes as long as `stop()` (a parked `nextPublisher` does not hold it
+up). `OpenCancel.close()` frees the object only.
 
 `RtspSession` differs. Its `close()` cancels only a `pause()` / `play()` /
 `teardown()` in progress on another thread (that call throws `CLOSED`, and
@@ -2356,10 +2363,10 @@ try (RtspSession session = RtspClient.connect(cfg);
   is offered and Basic otherwise.
 - **Threads and cancellation.** `session.cancelHandle()` returns a
   `RtspCancelHandle` at once from any thread, and `close()` may be called
-  from any thread without waiting for a control call in progress. The
-  control calls (`pause()`, `play()`, `teardown()`) run one at a time: a
-  second one waits for the call in progress, up to that call's request
-  timeout (10 s). Flip `cancel()` from another thread to break a control call
+  from any thread: it cancels a control call in progress there and closes
+  once that call has let go. The control calls (`pause()`, `play()`,
+  `teardown()`) run one at a time: a second one waits for the call in
+  progress, up to that call's request timeout (10 s). Flip `cancel()` from another thread to break a control call
   in progress out; it throws `RtspException(CLOSED)`. A `close()` that
   overlaps a control call in progress on another thread cancels it the same
   way, so the session then ends as a cancel, not as a clean teardown: a live
@@ -2486,12 +2493,12 @@ try (RtspServer server = RtspServer.start(cfg);
   5402 teardown and without the drain. From that moment mount pushes, mount
   registration, `removeMount`, `MountRules` edits and a new `nextPublisher`
   throw `RtspException(CLOSED)`; within about 100 ms the server notices the
-  cancel: a parked `nextPublisher` throws `CLOSED`, every session's
-  connection is closed and every publish mount's receiver reads end of
-  stream. A `stop()` or `close()` after it is not graceful either. A cancel
-  fired while a `stop()` or `close()` runs does not shorten that call (its
-  Notice writes, its drain wait and its connection shutdowns do not read
-  the cancel), and `cancelHandle()` throws `IllegalStateException` once
+  cancel and ends what runs: a parked `nextPublisher` throws `CLOSED`,
+  every session's connection is closed and every publish mount's receiver
+  reads end of stream. A `stop()` or `close()` after it is not graceful
+  either. A cancel fired while a `stop()` or `close()` runs does not shorten
+  that call (its Notice writes, its drain wait and its connection shutdowns
+  do not read the cancel), and `cancelHandle()` throws `IllegalStateException` once
   `close()` has begun: for an end without the Notice, take the handle and
   cancel before `close()`. A second `close()` made while the first runs
   returns at once, before the first has finished.
