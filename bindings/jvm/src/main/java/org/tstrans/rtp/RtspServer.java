@@ -44,9 +44,10 @@ public final class RtspServer extends NativeHandle {
     /**
      * Build, bind, and start a server from {@code config}.
      *
-     * @throws RtspException {@code SERVER} on bind/start failure, {@code PROTOCOL}
+     * @throws RtspException {@code IO} on bind/start failure, {@code PROTOCOL}
      *     on bind-URL parse failure, {@code TLS} if {@code config.tlsCert()}/{@code
-     *     tlsKey()} name a bad PEM path (an {@code rtsps://} bind now works)
+     *     tlsKey()} name a bad PEM path (an {@code rtsps://} bind now works), {@code
+     *     MOUNT} if the server refuses the default mount rule or the auth realm
      * @throws IllegalArgumentException if {@code config.auth()} is set without a realm
      */
     public static RtspServer start(RtspServerConfig config) throws RtspException {
@@ -98,8 +99,6 @@ public final class RtspServer extends NativeHandle {
      * Graceful shutdown — fires the Notice 5402 path on each active session, waits
      * the builder's drain window. Idempotent. {@code drainMs} is accepted for API
      * stability but the configured {@code gracefulShutdownDrainMs} governs the wait.
-     *
-     * @throws RtspException {@code SERVER} if the server was never started
      */
     public void stop(long drainMs) throws RtspException { ensureOpen(); nStop(peekHandle(), drainMs); }
 
@@ -110,7 +109,7 @@ public final class RtspServer extends NativeHandle {
      * Register a unicast mount under {@code path}. The returned {@link MountHandle}
      * is the push surface; it is shareable across producer threads.
      *
-     * @throws RtspException {@code MOUNT} for an invalid/duplicate mount path; {@code SERVER}
+     * @throws RtspException {@code MOUNT} for an invalid/duplicate mount path; {@code CLOSED}
      *     if the server is stopped
      * @throws MuxException if the muxer rejects {@code programConfig}
      */
@@ -146,7 +145,7 @@ public final class RtspServer extends NativeHandle {
      * name), or {@code null}.
      *
      * @throws RtspException {@code MOUNT} for an invalid/duplicate mount path or invalid
-     *     group/address; {@code SERVER} if the server is stopped
+     *     group/address; {@code CLOSED} if the server is stopped
      * @throws MuxException if the muxer rejects {@code programConfig}
      */
     public MountHandle addMulticastMount(String path, String group, int port, int ttl,
@@ -176,7 +175,7 @@ public final class RtspServer extends NativeHandle {
      * readers on the same path are re-served from it.
      *
      * @throws RtspException {@code MOUNT} for an invalid or duplicate path; {@code
-     *     SERVER} if the server is stopped
+     *     CLOSED} if the server is stopped
      */
     public PublishMount addPublishMount(String path) throws RtspException {
         ensureOpen();
@@ -217,7 +216,7 @@ public final class RtspServer extends NativeHandle {
      * <p>Returns empty when the timeout passes, and always does when on-demand
      * publishers are off. The wait holds no lock on this object: {@link #stats()},
      * {@link #close()} and every other method answer while it is parked, and {@link
-     * #stop()} or {@link #close()} from another thread wakes it with {@code SERVER}.
+     * #stop()} or {@link #close()} from another thread wakes it with {@code CLOSED}.
      *
      * <p>Concurrent callers are served one at a time, so a call made while another
      * waits can return later than its own {@code timeoutMs}. The returned mount can
@@ -226,7 +225,7 @@ public final class RtspServer extends NativeHandle {
      *
      * @param timeoutMs how long to wait, in milliseconds ({@code 0} polls)
      * @throws IllegalArgumentException if {@code timeoutMs} is negative
-     * @throws RtspException {@code SERVER} once the server has stopped, including
+     * @throws RtspException {@code CLOSED} once the server has stopped, including
      *     while this call waited
      */
     public Optional<PublishMount> nextPublisher(long timeoutMs) throws RtspException {
@@ -251,7 +250,7 @@ public final class RtspServer extends NativeHandle {
      * {@link #stop()}.
      *
      * @throws RtspException {@code MOUNT} when no mount is registered at {@code
-     *     path}; {@code SERVER} if the server is stopped
+     *     path}; {@code CLOSED} if the server is stopped
      */
     public void removeMount(String path) throws RtspException {
         ensureOpen();
@@ -261,7 +260,7 @@ public final class RtspServer extends NativeHandle {
     /**
      * The live per-path rules table. Every call returns a new handle to the same table;
      * close each one you open. The handle outlives this server: after {@link #stop()} its
-     * edits throw {@code SERVER}.
+     * edits throw {@code CLOSED}.
      *
      * @throws IllegalStateException if closed
      */
@@ -283,7 +282,7 @@ public final class RtspServer extends NativeHandle {
     /**
      * Graceful stop (best-effort) then free the native server. Idempotent. The stop
      * ends every publish mount's receiver (end of stream) and wakes a parked {@link
-     * #nextPublisher(long)} with {@code SERVER}.
+     * #nextPublisher(long)} with {@code CLOSED}.
      */
     @Override public void close() { super.close(); }
 

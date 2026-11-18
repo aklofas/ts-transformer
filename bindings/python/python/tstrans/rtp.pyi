@@ -420,7 +420,7 @@ class RtspServerCancelHandle:
     Calling `.cancel()` aborts every in-flight session at its next poll
     boundary, bypassing the graceful Notice-5402 path. Like `stop()`, it
     ends every publish mount's receiver and wakes a parked `next_publisher`
-    with `RtspError(SERVER)`.
+    with `RtspError(CLOSED)`.
     """
 
     def cancel(self) -> None: ...
@@ -799,7 +799,7 @@ class RtspServer:
     def mount_rules(self) -> MountRules: ...
     # Releases the GIL; `None` timeout waits until a mount arrives or the
     # server stops (Ctrl-C interrupts). Concurrent callers are served one
-    # at a time. Raises RtspError(SERVER) once the server has stopped.
+    # at a time. Raises RtspError(CLOSED) once the server has stopped.
     def next_publisher(
         self, timeout: Optional[float] = ...
     ) -> Optional[PublishMount]: ...

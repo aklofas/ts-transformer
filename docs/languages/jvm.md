@@ -2479,7 +2479,7 @@ The surface:
   `RtspException` of kind `MOUNT`; `MountPolicy.require()` with no credentials
   throws `IllegalArgumentException` before the server is consulted; a
   credential with an empty username is refused by the server with kind
-  `MOUNT`. An edit after the server stopped throws kind `SERVER`. A server nobody edits behaves as before; see the
+  `MOUNT`. An edit after the server stopped throws kind `CLOSED`. A server nobody edits behaves as before; see the
   [publish-ingest recipe](/docs/cookbook/receiving/rtsp-publish-ingest.md#per-name-credentials-and-refusing-a-publisher)
   for when a change takes effect.
 - `RtspServer.removeMount(path)` removes a mount of any kind. A live
@@ -2505,7 +2505,7 @@ How each call ends:
 | Call | Outcome | Meaning |
 |---|---|---|
 | `nextPublisher(timeoutMs)` | `Optional.empty()` | No mount arrived in time. Always the result when on-demand publishers are off. |
-| `nextPublisher`, `addPublishMount`, `removeMount` | `RtspException(SERVER)` | The server is stopped. A `nextPublisher` parked on another thread wakes with it when `stop()` or `close()` runs. After `close()` the object itself refuses calls with `IllegalStateException`. |
+| `nextPublisher`, `addPublishMount`, `removeMount` | `RtspException(CLOSED)` | The server is stopped. A `nextPublisher` parked on another thread wakes with it when `stop()` or `close()` runs. After `close()` the object itself refuses calls with `IllegalStateException`. |
 | `addPublishMount`, `removeMount` | `RtspException(MOUNT)` | Duplicate or invalid path, or no mount registered at the path. |
 | `intoDemuxReceiver` | `RtspException(CLOSED)` | The mount's transport was already taken, through this or any other handle to the mount. |
 | `DemuxReceiver.recvEvent()` | `null` | End of stream: the mount was removed, the server stopped, or its recording publisher left with end-on-exit on. What was already queued is delivered first. `endReason()` reads `CLEAN_TEARDOWN`. |

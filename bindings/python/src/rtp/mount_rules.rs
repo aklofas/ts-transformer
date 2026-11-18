@@ -143,7 +143,7 @@ impl PyMountRule {
 /// One server's per-mount-path rules, from `RtspServer.mount_rules()`. An
 /// edit applies to the next request and is safe while the server runs. Once
 /// the server is stopped, cancelled or garbage-collected every edit raises
-/// `RtspError(SERVER)`; `len()` and `is_closed()` keep answering.
+/// `RtspError(CLOSED)`; `len()` and `is_closed()` keep answering.
 #[pyclass(name = "MountRules", module = "tstrans.rtp", frozen)]
 pub(crate) struct PyMountRules {
     rules: MountRules,
@@ -161,7 +161,7 @@ impl PyMountRules {
     /// must be canonical (`/amber`, never `/amber/`); `set` refuses anything
     /// else. Raises
     /// `RtspError(MOUNT)` for an invalid path, a credential with an empty
-    /// username or a username listed twice, `RtspError(SERVER)` once the server is stopped.
+    /// username or a username listed twice, `RtspError(CLOSED)` once the server is stopped.
     fn set(&self, py: Python<'_>, path: &str, rule: &PyMountRule) -> PyResult<()> {
         self.rules
             .set(path, rule.rule.clone())

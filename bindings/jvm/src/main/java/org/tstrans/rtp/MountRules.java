@@ -18,7 +18,7 @@ import org.tstrans.RtspException;
  * <p><b>Lifetime.</b> This object shares the server's table but not its lifetime: closing
  * the server does not close it. Once the server has stopped, been cancelled or been
  * closed, the editing methods throw
- * {@link RtspException} with {@code Kind.SERVER}, while {@link #size()} and {@link
+ * {@link RtspException} with {@code Kind.CLOSED}, while {@link #size()} and {@link
  * #isClosed()} keep answering. Close it to free its native handle.
  */
 public final class MountRules extends NativeHandle {
@@ -31,7 +31,7 @@ public final class MountRules extends NativeHandle {
      *
      * @throws RtspException {@code MOUNT} for an invalid path, or a {@link
      *     MountPolicy#require} credential with an empty username or a username listed
-     *     twice; {@code SERVER} once
+     *     twice; {@code CLOSED} once
      *     the server has stopped
      */
     public void set(String path, MountRule rule) throws RtspException {
@@ -48,7 +48,7 @@ public final class MountRules extends NativeHandle {
      *
      * @return {@code true} if a rule was installed for it; a path that is not a valid
      *     mount path never has one, so it returns {@code false}
-     * @throws RtspException {@code SERVER} once the server has stopped
+     * @throws RtspException {@code CLOSED} once the server has stopped
      */
     public boolean remove(String path) throws RtspException {
         Objects.requireNonNull(path, "path");
@@ -72,7 +72,7 @@ public final class MountRules extends NativeHandle {
     /**
      * Remove every path rule; the default rule stays.
      *
-     * @throws RtspException {@code SERVER} once the server has stopped
+     * @throws RtspException {@code CLOSED} once the server has stopped
      */
     public void clear() throws RtspException {
         ensureOpen("MountRules is closed");
@@ -82,7 +82,7 @@ public final class MountRules extends NativeHandle {
     /**
      * Choose the challenge a {@link MountPolicy#require} policy sends.
      *
-     * @throws RtspException {@code SERVER} once the server has stopped
+     * @throws RtspException {@code CLOSED} once the server has stopped
      */
     public void setChallenge(AuthScheme scheme, String realm) throws RtspException {
         Objects.requireNonNull(scheme, "scheme");
@@ -97,7 +97,7 @@ public final class MountRules extends NativeHandle {
         return nSize(peekHandle());
     }
 
-    /** Whether the server has shut down, so that edits throw {@code Kind.SERVER}. */
+    /** Whether the server has shut down, so that edits throw {@code Kind.CLOSED}. */
     public boolean isClosed() {
         ensureOpen("MountRules is closed");
         return nIsClosed(peekHandle());
