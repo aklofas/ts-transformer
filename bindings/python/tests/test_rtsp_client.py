@@ -263,6 +263,12 @@ _SDP = (
     b"a=control:*\r\nm=video 0 RTP/AVP 33\r\na=control:trackID=0\r\n"
 )
 
+_SDP_H264 = (
+    b"v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=tst test\r\nt=0 0\r\n"
+    b"a=control:*\r\nm=video 0 RTP/AVP 96\r\na=rtpmap:96 H264/90000\r\n"
+    b"a=fmtp:96 packetization-mode=1\r\na=control:trackID=0\r\n"
+)
+
 
 def _header(request: str, name: str) -> str:
     for line in request.split("\r\n")[1:]:
@@ -343,9 +349,10 @@ def _recording_peer(
     teardown_status: int | None = 200,
     after_play: bytes = b"",
     on_teardown=None,
+    sdp: bytes = _SDP,
 ):
-    """A hand-rolled RTSP peer that answers OPTIONS / DESCRIBE (one MP2T
-    track) / SETUP (echoes the requested Transport) / PLAY / TEARDOWN in the
+    """A hand-rolled RTSP peer that answers OPTIONS / DESCRIBE (`sdp`, one
+    MP2T track by default) / SETUP (echoes the requested Transport) / PLAY / TEARDOWN in the
     request's own RTSP version, and records every request head.
 
     `after_play` is written right after the PLAY reply (interleaved `$`
@@ -387,7 +394,7 @@ def _recording_peer(
                     if method == "OPTIONS":
                         extra = "Public: OPTIONS, DESCRIBE, SETUP, PLAY, PAUSE, TEARDOWN\r\n"
                     elif method == "DESCRIBE":
-                        body = _SDP
+                        body = sdp
                         extra = (
                             "Content-Type: application/sdp\r\n"
                             f"Content-Length: {len(body)}\r\n"
@@ -805,25 +812,44 @@ def test_cancel_handle_after_teardown_and_after_close():
         assert not server.is_alive()
 
 
-def test_data_plane_taken_after_close_ends_at_once():
-    port, _requests, server = _recording_peer()
+@pytest.mark.parametrize("ending", ["close", "with_exit"])
+@pytest.mark.parametrize("h264", [False, True], ids=["mp2t", "h264"])
+def test_data_plane_after_close_is_closed(h264, ending):
+    # The session's own take, then the other codec's: a closed session is
+    # CLOSED before the wrong-constructor check could say PROTOCOL.
+    port, _requests, server = _recording_peer(sdp=_SDP_H264 if h264 else _SDP)
+    connect = RtspClient.connect_h264 if h264 else RtspClient.connect
     try:
-        session = RtspClient.connect(_tcp_config(port))
-        session.close()
-        rx = session.into_demux_receiver()
-        try:
-            blocked, got = call_with_hang_deadline(lambda: next(rx), 5.0)
-            assert not blocked, "the receiver of a closed session did not end"
-            assert isinstance(got.get("exc"), StopIteration), got
-            assert rx.end_reason() == EndReason.CLEAN_TEARDOWN
-        finally:
-            rx.close()
-        with pytest.raises(RtspError) as exc_info:
-            session.into_demux_receiver()
-        assert exc_info.value.kind == RtspErrorKind.CLOSED
+        if ending == "close":
+            session = connect(_tcp_config(port))
+            session.close()
+        else:
+            with connect(_tcp_config(port)) as session:
+                pass
+        takes = [session.into_demux_receiver, session.into_h264_receiver]
+        for take in reversed(takes) if h264 else takes:
+            with pytest.raises(RtspError) as exc_info:
+                take()
+            assert exc_info.value.kind == RtspErrorKind.CLOSED, take
     finally:
         server.join(10)
         assert not server.is_alive()
+
+
+def test_data_plane_after_close_is_closed_over_udp():
+    from tstrans.rtp import RtspServer, RtspServerConfig
+
+    cfg = RtspServerConfig(bind_addr="127.0.0.1:0", graceful_shutdown_drain_ms=50)
+    with RtspServer.start(cfg) as server:
+        server.add_unicast_mount("/live", video_only_program())
+        port = server.local_addr().rsplit(":", 1)[1]
+        session = RtspClient.connect(
+            RtspClientConfig(url=f"rtsp://127.0.0.1:{port}/live", keepalive=False)
+        )
+        session.close()
+        with pytest.raises(RtspError) as exc_info:
+            session.into_demux_receiver()
+        assert exc_info.value.kind == RtspErrorKind.CLOSED
 
 
 def _recv_exact(sock: socket.socket, n: int) -> bytes:
