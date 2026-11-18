@@ -327,6 +327,8 @@ impl core::marker::UnsafeUnpin for tst_pipeline::binding::open_cancel::OpenCance
 impl core::panic::unwind_safe::RefUnwindSafe for tst_pipeline::binding::open_cancel::OpenCancel
 impl core::panic::unwind_safe::UnwindSafe for tst_pipeline::binding::open_cancel::OpenCancel
 pub struct tst_pipeline::binding::open_cancel::OpenSlot
+impl tst_pipeline::binding::open_cancel::OpenSlot
+pub fn tst_pipeline::binding::open_cancel::OpenSlot::finish(self) -> bool
 impl core::fmt::Debug for tst_pipeline::binding::open_cancel::OpenSlot
 pub fn tst_pipeline::binding::open_cancel::OpenSlot::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::ops::deref::Deref for tst_pipeline::binding::open_cancel::OpenSlot
@@ -903,6 +905,8 @@ impl core::marker::UnsafeUnpin for tst_pipeline::binding::open_cancel::OpenCance
 impl core::panic::unwind_safe::RefUnwindSafe for tst_pipeline::binding::open_cancel::OpenCancel
 impl core::panic::unwind_safe::UnwindSafe for tst_pipeline::binding::open_cancel::OpenCancel
 pub struct tst_pipeline::binding::OpenSlot
+impl tst_pipeline::binding::open_cancel::OpenSlot
+pub fn tst_pipeline::binding::open_cancel::OpenSlot::finish(self) -> bool
 impl core::fmt::Debug for tst_pipeline::binding::open_cancel::OpenSlot
 pub fn tst_pipeline::binding::open_cancel::OpenSlot::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::ops::deref::Deref for tst_pipeline::binding::open_cancel::OpenSlot
