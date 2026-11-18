@@ -203,6 +203,7 @@ pub use rtsp::server::mount::{
 pub use rtsp::server::start::tst_rtsp_server_builder_start;
 #[cfg(feature = "rtp")]
 pub use rtsp::server::stop::{
+    tst_rtsp_cancel_handle_cancel, tst_rtsp_cancel_handle_free, tst_rtsp_server_cancel_handle,
     tst_rtsp_server_free, tst_rtsp_server_get_stats, tst_rtsp_server_local_addr,
     tst_rtsp_server_stop,
 };
