@@ -1,5 +1,6 @@
 package org.tstrans.shells;
 
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
@@ -56,6 +57,7 @@ class CancelHandleLockScopeTest {
                 CancelProbe.nRelease(probe);
                 canceller.join(DEADLINE_MS);
             }
+            assertFalse(canceller.isAlive(), "cancel() did not return after its transport's cancel was released");
         } finally {
             CancelProbe.nClose(probe);
         }
