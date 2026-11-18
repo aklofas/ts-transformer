@@ -109,9 +109,11 @@ for entry in "${ENTRIES[@]}"; do
     ' "$file")
 
     # Step 3: scan body for one of the panic-isolation patterns. The
-    # `with_mux_publisher(` HLS helper (bindings/c/core/src/hls/mux_publisher.rs)
-    # wraps its closure in crate::panic::ffi_catch internally — same contract
-    # as CHandle::with_inner_mut — so callers delegating through it are isolated.
+    # `with_mux_publisher(` HLS helper and its reader twin `with_mux_publisher_ref(`
+    # (bindings/c/core/src/hls/mux_publisher.rs) wrap their closure in
+    # crate::panic::ffi_catch internally — same contract as
+    # CHandle::with_inner_mut / with_inner_ref — so callers delegating through
+    # them are isolated.
     # `crate::transport_impls::` calls (WP18 genericization) forward directly
     # to generic bodies in transport_impls.rs, which route through with_inner_mut
     # / with_inner_ref internally; the isolation guarantee is preserved
@@ -121,7 +123,7 @@ for entry in "${ENTRIES[@]}"; do
     # that turns a MATCH into a pipeline failure → a bogus MISSING. The race is
     # timing-dependent (flaky; surfaced on the macOS runner). A here-string has
     # no pipe, so there is no SIGPIPE to mask the match.
-    if grep -qE 'crate::panic::ffi_catch\(|^\s*ffi_catch\(|\.with_inner_(mut|ref)(_unless_cancelled)?\(|with_mux_publisher\(|crate::transport_impls::' <<<"$body"; then
+    if grep -qE 'crate::panic::ffi_catch\(|^\s*ffi_catch\(|\.with_inner_(mut|ref)(_unless_cancelled)?\(|with_mux_publisher(_ref)?\(|crate::transport_impls::' <<<"$body"; then
         checked=$((checked + 1))
         continue
     fi
