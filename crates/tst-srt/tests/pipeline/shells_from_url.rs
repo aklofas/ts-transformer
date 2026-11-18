@@ -967,6 +967,43 @@ fn open_cancel_racing_an_open_never_leaves_it_parked() {
     }
 }
 
+/// `cancel()` while a caller-mode managed open (the bindings'
+/// `from_url`) dials a dead port: the dial is not interrupted, and when it
+/// fails the open reports the cancel. Cancelled only once the dial is
+/// proven in progress, past the open's pre-dial check.
+#[test]
+fn open_cancel_during_a_failing_caller_mode_dial_reports_the_cancel() {
+    require_loopback!();
+    let port = crate::common::reserve_port();
+    let url = SrtUrl::parse(&format!("srt://127.0.0.1:{port}?conntimeo=3000")).expect("parse");
+    let oc = OpenCancel::new();
+    let latch = crate::common::ParkLatch::default();
+    let open = {
+        let oc = oc.clone();
+        latch.park(move || {
+            let slot = oc.slot();
+            let r = managed_receiver_from_url_with_cancel(&url, no_reconnect(), Arc::clone(&slot));
+            drop(slot);
+            r.map(drop).map_err(|e| format!("{e:?}"))
+        })
+    };
+    latch.assert_parked();
+    oc.cancel();
+
+    let deadline = Instant::now() + scaled(WATCHDOG);
+    while !open.is_finished() {
+        assert!(Instant::now() < deadline, "the dial never ended");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert_eq!(
+        open.join().expect("open thread"),
+        Err(format!(
+            "{:?}",
+            SrtError::Transport(tst_pipeline::TransportError::ExplicitClose)
+        ))
+    );
+}
+
 /// The object is not the opened shell's cancel. A managed caller-mode
 /// receiver keeps its slot for every re-dial, but once the open returned
 /// and its guard was dropped the object no longer holds that slot: a
