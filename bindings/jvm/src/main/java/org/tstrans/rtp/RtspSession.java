@@ -210,7 +210,8 @@ public final class RtspSession extends NativeHandle {
         // srt Socket.intoSender()). The native takes the whole session slot out
         // of its registry: success moves the control plane into the H264Receiver;
         // failure closes the session as close() does (a TEARDOWN bounded at
-        // 500 ms, then the wait for the client's thread). Either way a subsequent
+        // 500 ms, then the wait for the client's thread), except on a poisoned
+        // lock, where the client is only dropped. Either way a subsequent
         // close() finds 0 and is a harmless no-op.
         long sessionH = consumeHandle();
         long h = nIntoH264Receiver(sessionH);
