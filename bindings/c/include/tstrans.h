@@ -8303,9 +8303,11 @@ int tst_rist_receiver_recv_ts(struct TstRistReceiver *p,
  *
  * For a receiver from `tst_rtsp_session_into_demux_receiver` this also
  * closes the RTSP control connection after the data plane: it writes
- * TEARDOWN (500 ms bounds the write; the reply is not awaited), then
- * tells the client's thread to stop. That thread closes the control
- * connection on its own; the call does not wait for it.
+ * TEARDOWN and waits for the reply, both under one 500 ms bound, then
+ * stops the client's thread and waits up to 2 s for it, so the call can
+ * take up to about 2.5 s. When it returns the thread has closed the
+ * control connection, unless those 2 s ran out (the thread then ends on
+ * its own). A TEARDOWN error is not reported.
  *
  * Safe to call with `NULL` (no-op).
  *
@@ -11084,10 +11086,10 @@ struct TstRtpDemuxReceiver *tst_rtsp_session_into_demux_receiver(struct TstRtspS
 /**
  * Send TEARDOWN and free the session handle.
  *
- * Sends an RTSP TEARDOWN request, then unconditionally drops the session
- * and its `RtspClient` regardless of whether TEARDOWN succeeded (network
- * errors at teardown time are recorded in last-error but do not prevent
- * the handle from being freed). A healthy peer's 2xx returns 0, and so
+ * Sends an RTSP TEARDOWN request, then ends the client and frees the
+ * session regardless of whether TEARDOWN succeeded (network errors at
+ * teardown time are recorded in last-error but do not prevent the handle
+ * from being freed). A healthy peer's 2xx returns 0, and so
  * does `454 Session Not Found` (the session is already gone). A TEARDOWN
  * the server refuses with any other status returns that status's code
  * (`TST_E_RTSP_PROTOCOL`, or `TST_E_RTSP_NOT_FOUND` for a 404). A first
@@ -11103,9 +11105,10 @@ struct TstRtpDemuxReceiver *tst_rtsp_session_into_demux_receiver(struct TstRtspS
  * the TEARDOWN but does not wait for the reply: it returns `TST_E_CLOSED`,
  * also when that write fails, and is still freed. If a caught panic had already
  * taken the control pair, there is nothing to tear down: the call
- * returns 0 and frees. The client's thread is then told to stop and
- * closes the control connection on its own; the call does not wait for
- * it.
+ * returns 0 and frees. After the TEARDOWN the call stops the client's
+ * thread and waits up to 2 s for it, so it can take up to about 2.5 s;
+ * when it returns the thread has closed the control connection, unless
+ * those 2 s ran out (the thread then ends on its own).
  *
  * The caller guarantees that no `_play`, `_pause` or receive call on this
  * session is in flight: call [`tst_rtsp_session_cancel`], wait for the

@@ -361,6 +361,24 @@ fn recording_peer_with(
     basic: Option<&'static str>,
     teardown_status: Option<&'static str>,
 ) -> (u16, Arc<Mutex<Vec<String>>>, ThreadHandle<()>) {
+    let (port, requests, _, peer) = slow_teardown_peer(basic, teardown_status, Duration::ZERO);
+    (port, requests, peer)
+}
+
+/// [`recording_peer_with`], holding its TEARDOWN reply back for `delay`;
+/// the third value is the instant it started writing that reply.
+fn slow_teardown_peer(
+    basic: Option<&'static str>,
+    teardown_status: Option<&'static str>,
+    delay: Duration,
+) -> (
+    u16,
+    Arc<Mutex<Vec<String>>>,
+    Arc<Mutex<Option<Instant>>>,
+    ThreadHandle<()>,
+) {
+    let replied = Arc::new(Mutex::new(None));
+    let replied_at = Arc::clone(&replied);
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
     let requests = Arc::new(Mutex::new(Vec::new()));
@@ -436,12 +454,16 @@ fn recording_peer_with(
                 _ => ("200 OK", "Session: DEADBEEF\r\n".to_owned(), ""),
             };
             let reply = format!("{version} {status}\r\nCSeq: {cseq}\r\n{extra}\r\n{body}");
+            if method == "TEARDOWN" {
+                std::thread::sleep(delay);
+                *replied_at.lock().unwrap() = Some(Instant::now());
+            }
             if out.write_all(reply.as_bytes()).is_err() || method == "TEARDOWN" {
                 return;
             }
         }
     });
-    (port, requests, peer)
+    (port, requests, replied, peer)
 }
 
 /// Connects `b` with the RTSP-level keepalive off, so the recorded requests
@@ -720,6 +742,42 @@ fn teardown_after_server_stop_returns_promptly() {
         tst_rtsp_mount_handle_free(mount);
         tst_rtsp_server_free(server);
     }
+}
+
+/// Closing a bridged receiver awaits the server's TEARDOWN reply (within
+/// 500 ms) before it returns: the close cannot return before the peer has
+/// started writing that reply.
+#[test]
+fn bridged_close_awaits_the_teardown_reply() {
+    let (port, reqs, replied, peer) =
+        slow_teardown_peer(None, Some("200 OK"), Duration::from_millis(200));
+    let s = connect_no_keepalive(&format!("rtsp://127.0.0.1:{port}/live?transport=tcp"));
+    assert!(!s.is_null(), "{}", last_error_msg());
+    assert_eq!(
+        unsafe { tst_rtsp_session_play(s) },
+        0,
+        "{}",
+        last_error_msg()
+    );
+    let rx = unsafe { tst_rtsp_session_into_demux_receiver(s, std::ptr::null()) };
+    assert!(!rx.is_null(), "{}", last_error_msg());
+    unsafe { tst_rtp_demux_receiver_close(rx) };
+    let returned = Instant::now();
+    peer.join().unwrap();
+    let replied = replied
+        .lock()
+        .unwrap()
+        .expect("the peer never got to reply to a TEARDOWN");
+    assert!(
+        replied <= returned,
+        "the close returned {:?} before the peer replied",
+        replied - returned
+    );
+    let reqs = reqs.lock().unwrap();
+    assert!(
+        reqs.iter().any(|r| r.starts_with("TEARDOWN ")),
+        "the peer saw no TEARDOWN: {reqs:?}"
+    );
 }
 
 /// A cancel before the first receive ends a bridged session's receiver with
