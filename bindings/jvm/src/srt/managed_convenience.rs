@@ -77,9 +77,9 @@ use crate::mpegts::muxer::{build_muxer_config_from_arrays, throw_mux_error};
 use crate::mpegts::{build_demux_config_from_args, convert_event, shell_muxer_stats};
 use tst_pipeline::binding::view::StreamHandles;
 
+use super::ManagedOpenError;
 use super::ManagedSenderSnapshot;
-use super::closed_srt;
-use super::errors::{srt_error, throw_data_plane_state, throw_srt, transport_error};
+use super::errors::{throw_data_plane_state, throw_srt, transport_error};
 use crate::generated::stats_srt::build_managed_transport_stats;
 use crate::shells::mux_sender::build_transport_stats;
 use crate::shells::open_cancel::{begin, finish, object_of};
@@ -236,51 +236,43 @@ jni_native! {
         let Ok(slot) = begin(env, Domain::Srt, oc.as_ref()) else {
             return 0;
         };
-        let parsed = match SrtUrl::parse(&url_str) {
-            Ok(p) => p,
-            Err(e) => {
-                super::errors::url_error(env, &e);
-                return 0;
+        // Everything after `begin` is the open, its checks included: a
+        // failure goes through `finish` like the dial's own.
+        let opened = (|| -> Result<_, ManagedOpenError> {
+            let parsed = SrtUrl::parse(&url_str).map_err(|e| ManagedOpenError::Refused(e.into()))?;
+            if parsed.mode != Mode::Caller {
+                return Err(ManagedOpenError::config(format!(
+                    "ManagedMuxSender.fromUrl requires mode=caller (default); got mode={:?}",
+                    parsed.mode
+                )));
             }
-        };
-        if parsed.mode != Mode::Caller {
-            let msg = format!(
-                "ManagedMuxSender.fromUrl requires mode=caller (default); got mode={:?}",
-                parsed.mode
-            );
-            throw_srt(env, BindingErrorKind::ConfigInvalid, &msg);
-            return 0;
-        }
-
-        let Some(policy) = super::build_reconnect_policy(
-            env,
-            max_attempts_present,
-            max_attempts,
-            backoff_kind,
-            backoff_base_ms,
-            backoff_max_ms,
-            gap_buffer_capacity,
-            overflow_policy,
-            mode,
-        ) else {
-            return 0;
-        };
-
-        // One open path: the initial dial, the reconnect
-        // factory, the attempt counter and the cancel/stats handles are composed
-        // in tst-srt, once. A bad MuxerConfig stays a MuxException, as before.
-        let opened = tst_srt::shells::managed_mux_sender_from_url(&parsed, policy, muxer_cfg);
+            let policy = super::build_reconnect_policy(
+                max_attempts_present,
+                max_attempts,
+                backoff_kind,
+                backoff_base_ms,
+                backoff_max_ms,
+                gap_buffer_capacity,
+                overflow_policy,
+                mode,
+            )?;
+            // One open path: the initial dial, the reconnect
+            // factory, the attempt counter and the cancel/stats handles are composed
+            // in tst-srt, once. A bad MuxerConfig stays a MuxException, as before.
+            tst_srt::shells::managed_mux_sender_from_url(&parsed, policy, muxer_cfg)
+                .map_err(ManagedOpenError::Open)
+        })();
         let (inner, handles, stats) =
-            match finish(slot, opened, closed_srt()) {
+            match finish(slot, opened, ManagedOpenError::closed()) {
                 Ok(triple) => triple,
-                Err(tst_srt::SrtError::Mux(m)) => {
+                Err(ManagedOpenError::Open(tst_srt::SrtError::Mux(m))) => {
                     throw_mux_error(env, &m);
                     return 0;
                 }
                 Err(e) => {
                     // Initial connect failure → CONNECT_FAILED, through the
                     // shared `From<SrtError>` mapping.
-                    srt_error(env, e);
+                    e.throw(env);
                     return 0;
                 }
             };
@@ -859,47 +851,42 @@ fn build_demux_from_url(
     let Ok(slot) = begin(env, Domain::Srt, oc.as_ref()) else {
         return 0;
     };
-    let parsed = match SrtUrl::parse(&url_str) {
-        Ok(p) => p,
-        Err(e) => {
-            super::errors::url_error(env, &e);
-            return 0;
+    // Everything after `begin` is the open, its checks included: a failure
+    // goes through `finish` like the open's own.
+    let opened = (|| -> Result<_, ManagedOpenError> {
+        let parsed = SrtUrl::parse(&url_str).map_err(|e| ManagedOpenError::Refused(e.into()))?;
+        let policy = super::build_reconnect_policy(
+            max_attempts_present,
+            max_attempts,
+            backoff_kind,
+            backoff_base_ms,
+            backoff_max_ms,
+            gap_buffer_capacity,
+            overflow_policy,
+            mode,
+        )?;
+        // Both modes are the shared `from_url` dispatch: listener ⇒
+        // `accept_one` through the FactoryCancel slot (a re-accept parked with no
+        // peer in sight is reachable by cancel), caller ⇒ `connect`. Given an
+        // `OpenCancel`, the open's slot is the factory's, so the object's
+        // `cancel()` reaches the first accept (a caller dial refuses a slot that is
+        // already cancelled).
+        let demux = opts.unwrap_or_default();
+        match &slot {
+            Some(slot) => tst_srt::shells::managed_demux_receiver_from_url_with_cancel(
+                &parsed,
+                policy,
+                demux,
+                Arc::clone(slot),
+            ),
+            None => tst_srt::shells::managed_demux_receiver_from_url(&parsed, policy, demux),
         }
-    };
-    let Some(policy) = super::build_reconnect_policy(
-        env,
-        max_attempts_present,
-        max_attempts,
-        backoff_kind,
-        backoff_base_ms,
-        backoff_max_ms,
-        gap_buffer_capacity,
-        overflow_policy,
-        mode,
-    ) else {
-        return 0;
-    };
-
-    // Both modes are the shared `from_url` dispatch: listener ⇒
-    // `accept_one` through the FactoryCancel slot (a re-accept parked with no
-    // peer in sight is reachable by cancel), caller ⇒ `connect`. Given an
-    // `OpenCancel`, the open's slot is the factory's, so the object's
-    // `cancel()` reaches the first accept (a caller dial refuses a slot that is
-    // already cancelled).
-    let demux = opts.unwrap_or_default();
-    let opened = match &slot {
-        Some(slot) => tst_srt::shells::managed_demux_receiver_from_url_with_cancel(
-            &parsed,
-            policy,
-            demux,
-            Arc::clone(slot),
-        ),
-        None => tst_srt::shells::managed_demux_receiver_from_url(&parsed, policy, demux),
-    };
-    let (inner, handles) = match finish(slot, opened, closed_srt()) {
+        .map_err(ManagedOpenError::Open)
+    })();
+    let (inner, handles) = match finish(slot, opened, ManagedOpenError::closed()) {
         Ok(pair) => pair,
         Err(e) => {
-            srt_error(env, e);
+            e.throw(env);
             return 0;
         }
     };

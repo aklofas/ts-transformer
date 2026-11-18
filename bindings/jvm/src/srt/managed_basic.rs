@@ -46,8 +46,8 @@ use tst_pipeline::{
 };
 use tst_srt::{SrtTransport, SrtUrl, url::Mode};
 
+use super::ManagedOpenError;
 use super::ManagedSenderSnapshot;
-use super::closed_srt;
 use super::errors::{throw_data_plane_state, throw_receiver_error, throw_sender_error, throw_srt};
 use crate::generated::stats_shells::build_socket_stats;
 use crate::generated::stats_srt::build_managed_transport_stats;
@@ -104,52 +104,44 @@ jni_native! {
         let Ok(slot) = begin(env, Domain::Srt, oc.as_ref()) else {
             return 0;
         };
-        // Validate URL up-front so a malformed URL / wrong mode raises
-        // CONFIG_INVALID before we materialize the factory closure (otherwise the
-        // same failure would surface as a Broken from the factory, the wrong kind
-        // for a caller-misconfigured URL).
-        let parsed = match SrtUrl::parse(&url_str) {
-            Ok(p) => p,
-            Err(e) => {
-                super::errors::url_error(env, &e);
-                return 0;
+        // Everything after `begin` is the open, its checks included: a
+        // failure goes through `finish` like the dial's own.
+        let opened = (|| -> Result<_, ManagedOpenError> {
+            // Validate URL up-front so a malformed URL / wrong mode raises
+            // CONFIG_INVALID before we materialize the factory closure (otherwise the
+            // same failure would surface as a Broken from the factory, the wrong kind
+            // for a caller-misconfigured URL).
+            let parsed = SrtUrl::parse(&url_str).map_err(|e| ManagedOpenError::Refused(e.into()))?;
+            if parsed.mode != Mode::Caller {
+                return Err(ManagedOpenError::config(format!(
+                    "ManagedSender.fromUrl requires mode=caller (default); got mode={:?}",
+                    parsed.mode
+                )));
             }
-        };
-        if parsed.mode != Mode::Caller {
-            let msg = format!(
-                "ManagedSender.fromUrl requires mode=caller (default); got mode={:?}",
-                parsed.mode
-            );
-            throw_srt(env, BindingErrorKind::ConfigInvalid, &msg);
-            return 0;
-        }
-
-        let Some(policy) = super::build_reconnect_policy(
-            env,
-            max_attempts_present,
-            max_attempts,
-            backoff_kind,
-            backoff_base_ms,
-            backoff_max_ms,
-            gap_buffer_capacity,
-            overflow_policy,
-            mode,
-        ) else {
-            return 0;
-        };
-
-        // One open path: the initial dial, the reconnect
-        // factory (`SrtUrl::connect` per attempt), the attempt counter and the
-        // cancel/stats/reconnect handles are composed in tst-srt, once.
-        let opened =
-            tst_srt::shells::managed_sender_from_url(&parsed, policy, SenderConfig::default());
-        let (inner, handles, stats) = match finish(slot, opened, closed_srt()) {
+            let policy = super::build_reconnect_policy(
+                max_attempts_present,
+                max_attempts,
+                backoff_kind,
+                backoff_base_ms,
+                backoff_max_ms,
+                gap_buffer_capacity,
+                overflow_policy,
+                mode,
+            )?;
+            // One open path: the initial dial, the reconnect
+            // factory (`SrtUrl::connect` per attempt), the attempt counter and the
+            // cancel/stats/reconnect handles are composed in tst-srt, once.
+            tst_srt::shells::managed_sender_from_url(&parsed, policy, SenderConfig::default())
+                .map_err(ManagedOpenError::Open)
+        })();
+        let (inner, handles, stats) = match finish(slot, opened, ManagedOpenError::closed()) {
             Ok(triple) => triple,
             Err(e) => {
-                // Initial connect failure: CONNECT_FAILED (was BROKEN — the
-                // old factory relabelled it; now the same kind the other
-                // three managed shells already reported).
-                super::errors::srt_error(env, e);
+                // A failed check: CONFIG_INVALID. Initial connect failure:
+                // CONNECT_FAILED (was BROKEN — the old factory relabelled it;
+                // now the same kind the other three managed shells already
+                // reported).
+                e.throw(env);
                 return 0;
             }
         };
@@ -358,54 +350,46 @@ jni_native! {
         let Ok(slot) = begin(env, Domain::Srt, oc.as_ref()) else {
             return 0;
         };
-        let parsed = match SrtUrl::parse(&url_str) {
-            Ok(p) => p,
-            Err(e) => {
-                super::errors::url_error(env, &e);
-                return 0;
+        // Everything after `begin` is the open, its checks included: a
+        // failure goes through `finish` like the accept's own.
+        let opened = (|| -> Result<_, ManagedOpenError> {
+            let parsed = SrtUrl::parse(&url_str).map_err(|e| ManagedOpenError::Refused(e.into()))?;
+            if parsed.mode != Mode::Listener {
+                return Err(ManagedOpenError::config(format!(
+                    "ManagedReceiver.fromUrl requires mode=listener; got mode={:?}",
+                    parsed.mode
+                )));
             }
-        };
-        if parsed.mode != Mode::Listener {
-            let msg = format!(
-                "ManagedReceiver.fromUrl requires mode=listener; got mode={:?}",
-                parsed.mode
-            );
-            throw_srt(env, BindingErrorKind::ConfigInvalid, &msg);
-            return 0;
-        }
-
-        let Some(policy) = super::build_reconnect_policy(
-            env,
-            max_attempts_present,
-            max_attempts,
-            backoff_kind,
-            backoff_base_ms,
-            backoff_max_ms,
-            gap_buffer_capacity,
-            overflow_policy,
-            mode,
-        ) else {
-            return 0;
-        };
-
-        // One open path: the initial bind+accept, the
-        // reconnect factory (whose re-accept is reachable through the managed
-        // `FactoryCancel` slot), the attempt/success counters and the cancel
-        // handle are composed in tst-srt, once. Given an `OpenCancel`, the open's
-        // slot is the factory's, so the object's `cancel()` reaches the first
-        // accept; the slot stays the re-accepts' after the object lets it go.
-        let opened = match &slot {
-            Some(slot) => tst_srt::shells::managed_receiver_from_url_with_cancel(
-                &parsed,
-                policy,
-                Arc::clone(slot),
-            ),
-            None => tst_srt::shells::managed_receiver_from_url(&parsed, policy),
-        };
-        let (inner, handles) = match finish(slot, opened, closed_srt()) {
+            let policy = super::build_reconnect_policy(
+                max_attempts_present,
+                max_attempts,
+                backoff_kind,
+                backoff_base_ms,
+                backoff_max_ms,
+                gap_buffer_capacity,
+                overflow_policy,
+                mode,
+            )?;
+            // One open path: the initial bind+accept, the
+            // reconnect factory (whose re-accept is reachable through the managed
+            // `FactoryCancel` slot), the attempt/success counters and the cancel
+            // handle are composed in tst-srt, once. Given an `OpenCancel`, the open's
+            // slot is the factory's, so the object's `cancel()` reaches the first
+            // accept; the slot stays the re-accepts' after the object lets it go.
+            match &slot {
+                Some(slot) => tst_srt::shells::managed_receiver_from_url_with_cancel(
+                    &parsed,
+                    policy,
+                    Arc::clone(slot),
+                ),
+                None => tst_srt::shells::managed_receiver_from_url(&parsed, policy),
+            }
+            .map_err(ManagedOpenError::Open)
+        })();
+        let (inner, handles) = match finish(slot, opened, ManagedOpenError::closed()) {
             Ok(pair) => pair,
             Err(e) => {
-                super::errors::srt_error(env, e);
+                e.throw(env);
                 return 0;
             }
         };
