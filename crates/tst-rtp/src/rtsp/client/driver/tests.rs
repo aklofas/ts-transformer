@@ -376,10 +376,9 @@ fn rtcp_reaches_the_stats_cell() {
 /// not lost when the handle goes, so the thread ends and closes the socket.
 #[test]
 fn a_handle_dropped_while_its_thread_is_busy_still_stops_it() {
-    let (client, mut peer) = socket_pair();
-    let probe = client.try_clone().unwrap();
-    let h = drive(Stream::from_plain(client).unwrap());
-    let (data_tx, _data_rx) = mpsc::sync_channel(8);
+    let (stream, mut peer) = plain_pair();
+    let h = drive(stream);
+    let (data_tx, data_rx) = mpsc::sync_channel(8);
     let stats = interleaved(&h, data_tx);
     let mut rest = Vec::new();
     round_trip(&h, &mut peer, &mut rest);
@@ -395,18 +394,16 @@ fn a_handle_dropped_while_its_thread_is_busy_still_stops_it() {
     }
     .encode()
     .unwrap();
-    let mut frame = vec![b'$', 1];
-    frame.extend_from_slice(&(sr.len() as u16).to_be_bytes());
-    frame.extend_from_slice(&sr);
-    peer.write_all(&frame).unwrap();
-    // The thread has read the frame (the socket shares its non-blocking
-    // mode with the probe): it cannot wait on its poll again before it
-    // takes the lock held here.
-    wait_until(
-        "the frame read",
-        || matches!(probe.peek(&mut [0u8; 1]), Err(e) if e.kind() == io::ErrorKind::WouldBlock),
-    );
-    drop(probe);
+    // One write: a media frame, then the sender report. The thread hands
+    // the media frame on and next needs the lock held here for the report,
+    // so once the media frame has come out it has read both and cannot
+    // wait on its poll again before it takes that lock.
+    let mut frames = rtp_frame(7, 16);
+    frames.extend_from_slice(&[b'$', 1]);
+    frames.extend_from_slice(&(sr.len() as u16).to_be_bytes());
+    frames.extend_from_slice(&sr);
+    peer.write_all(&frames).unwrap();
+    expect_media(&data_rx, 7);
     drop(h);
     drop(held);
 
