@@ -25,8 +25,10 @@ use tst_core::mpegts::common::Pts90khz;
 use tst_core::mpegts::demux::{DemuxEvent, DemuxerConfig};
 use tst_core::mpegts::mux::{MuxerConfig, MuxerProgramConfigBuilder, VideoCodec as MuxVideoCodec};
 use tst_core::transport::EndReason;
-use tst_pipeline::binding::{BindingErrorKind, OpenCancel};
-use tst_pipeline::{BackoffStrategy, MuxSender, ReconnectPolicy, ShellErrorKind};
+use tst_pipeline::binding::{BindingErrorKind, ManagedHandles, OpenCancel};
+use tst_pipeline::{
+    BackoffStrategy, ManagedRecvTransport, MuxSender, Receiver, ReconnectPolicy, ShellErrorKind,
+};
 use tst_srt::shells::{
     managed_demux_receiver_from_url, managed_mux_sender_from_url, managed_raw_receiver_from_url,
     managed_raw_sender_from_url, managed_receiver_from_url, managed_receiver_from_url_with_cancel,
@@ -561,6 +563,22 @@ fn caller_mode_redial_after_a_direct_slot_cancel_ends_as_a_cancel() {
     );
 }
 
+/// A port nothing will answer a dial on for as long as the returned socket
+/// lives: a plain UDP socket never replies to an SRT handshake, so a dial
+/// to it runs to its connect timeout.
+fn dead_port() -> (std::net::UdpSocket, u16) {
+    let sock = std::net::UdpSocket::bind("127.0.0.1:0").expect("bind a dead port");
+    let port = sock.local_addr().expect("local_addr").port();
+    (sock, port)
+}
+
+/// A dial budget that outlasts `ParkLatch::assert_parked`'s look on a
+/// loaded box (both are scaled).
+fn dead_dial_url(port: u16) -> SrtUrl {
+    let ms = scaled(Duration::from_secs(3)).as_millis();
+    SrtUrl::parse(&format!("srt://127.0.0.1:{port}?conntimeo={ms}")).expect("parse")
+}
+
 /// A cancel that arrives while the first connect is in progress does not
 /// interrupt it, but a connect that then FAILS reports the cancel, not its
 /// own error: the same answer the listener path gives. Nothing listens on
@@ -569,8 +587,8 @@ fn caller_mode_redial_after_a_direct_slot_cancel_ends_as_a_cancel() {
 #[test]
 fn caller_mode_dial_that_fails_after_its_slot_was_cancelled_reports_the_cancel() {
     require_loopback!();
-    let port = crate::common::reserve_port();
-    let url = SrtUrl::parse(&format!("srt://127.0.0.1:{port}?conntimeo=3000")).expect("parse");
+    let (_dead, port) = dead_port();
+    let url = dead_dial_url(port);
     let slot = Arc::new(tst_pipeline::FactoryCancel::new());
     let latch = crate::common::ParkLatch::default();
     let open = {
@@ -812,18 +830,21 @@ fn managed_receiver_from_url_refuses_an_unpaced_unlimited_policy_before_binding(
 // `OpenCancel`: one host object reaching the opens it was given.
 // ------------------------------------------------------------------------
 
+/// The outcome of one open: the opener's result as a binding kind
+/// (`Opened` is not `Send`) and what `OpenSlot::finish` said.
+type OpenOutcome = (Result<(), BindingErrorKind>, bool);
+
 /// A listener-mode plain receive open (the bindings' `Receiver.open`) on a
-/// thread, with a slot of `oc`. The result is the binding kind: `Opened`
-/// is not `Send`.
-fn spawn_listener_open(oc: &OpenCancel, port: u16) -> mpsc::Receiver<Result<(), BindingErrorKind>> {
+/// thread, with a slot of `oc`.
+fn spawn_listener_open(oc: &OpenCancel, port: u16) -> mpsc::Receiver<OpenOutcome> {
     let oc = oc.clone();
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
         let slot = oc.slot();
         let url = format!("srt://127.0.0.1:{port}?mode=listener");
         let r = tst_srt::opener::open_recv(&url, &slot);
-        drop(slot);
-        let _ = tx.send(r.map(drop).map_err(|e| e.kind));
+        let finished = slot.finish();
+        let _ = tx.send((r.map(drop).map_err(|e| e.kind), finished));
     });
     rx
 }
@@ -836,10 +857,14 @@ fn spawn_listener_open(oc: &OpenCancel, port: u16) -> mpsc::Receiver<Result<(), 
 fn open_cancel_ends_two_parked_first_accepts() {
     require_loopback!();
     let oc = OpenCancel::new();
-    let opens = [
-        spawn_listener_open(&oc, crate::common::reserve_port()),
-        spawn_listener_open(&oc, crate::common::reserve_port()),
+    // Both probes are bound before either is released, so the two ports
+    // differ.
+    let probes = [
+        std::net::UdpSocket::bind("127.0.0.1:0").expect("probe"),
+        std::net::UdpSocket::bind("127.0.0.1:0").expect("probe"),
     ];
+    let ports = probes.map(|p| p.local_addr().expect("local_addr").port());
+    let opens = ports.map(|port| spawn_listener_open(&oc, port));
 
     let deadline = Instant::now() + crate::common::park_deadline();
     let mut held_since = Instant::now();
@@ -861,7 +886,7 @@ fn open_cancel_ends_two_parked_first_accepts() {
         let r = open
             .recv_timeout(scaled(WATCHDOG))
             .expect("the cancel ends the parked open");
-        assert_eq!(r, Err(BindingErrorKind::Closed));
+        assert_eq!(r, (Err(BindingErrorKind::Closed), true));
     }
 }
 
@@ -876,7 +901,7 @@ fn open_cancel_refuses_a_later_open_without_binding() {
     let r = spawn_listener_open(&oc, port)
         .recv_timeout(scaled(Duration::from_secs(1)))
         .expect("refused at once");
-    assert_eq!(r, Err(BindingErrorKind::Closed));
+    assert_eq!(r, (Err(BindingErrorKind::Closed), true));
     std::net::UdpSocket::bind(("127.0.0.1", port))
         .expect("port still bindable: the refused open bound nothing");
 }
@@ -896,7 +921,7 @@ fn open_cancel_refuses_a_caller_mode_managed_open_without_dialling() {
     let slot = oc.slot();
     let err = managed_receiver_from_url_with_cancel(&url, no_reconnect(), Arc::clone(&slot))
         .expect_err("a cancelled object must refuse the first connect");
-    drop(slot);
+    assert!(slot.finish());
     assert!(
         matches!(
             err,
@@ -949,8 +974,8 @@ fn open_cancel_racing_an_open_never_leaves_it_parked() {
                 let slot = oc.slot();
                 let _ = registered_tx.send(());
                 let r = tst_srt::opener::open_recv("srt://127.0.0.1:0?mode=listener", &slot);
-                drop(slot);
-                let _ = tx.send(r.map(drop).map_err(|e| e.kind));
+                let finished = slot.finish();
+                let _ = tx.send((r.map(drop).map_err(|e| e.kind), finished));
             });
         }
         go_tx.send(()).expect("opener thread");
@@ -963,7 +988,7 @@ fn open_cancel_racing_an_open_never_leaves_it_parked() {
         let r = rx
             .recv_timeout(scaled(WATCHDOG))
             .unwrap_or_else(|_| panic!("round {round}: the open was left parked"));
-        assert_eq!(r, Err(BindingErrorKind::Closed), "round {round}");
+        assert_eq!(r, (Err(BindingErrorKind::Closed), true), "round {round}");
     }
 }
 
@@ -974,8 +999,8 @@ fn open_cancel_racing_an_open_never_leaves_it_parked() {
 #[test]
 fn open_cancel_during_a_failing_caller_mode_dial_reports_the_cancel() {
     require_loopback!();
-    let port = crate::common::reserve_port();
-    let url = SrtUrl::parse(&format!("srt://127.0.0.1:{port}?conntimeo=3000")).expect("parse");
+    let (_dead, port) = dead_port();
+    let url = dead_dial_url(port);
     let oc = OpenCancel::new();
     let latch = crate::common::ParkLatch::default();
     let open = {
@@ -983,7 +1008,7 @@ fn open_cancel_during_a_failing_caller_mode_dial_reports_the_cancel() {
         latch.park(move || {
             let slot = oc.slot();
             let r = managed_receiver_from_url_with_cancel(&url, no_reconnect(), Arc::clone(&slot));
-            drop(slot);
+            assert!(slot.finish(), "the cancel came before the open finished");
             r.map(drop).map_err(|e| format!("{e:?}"))
         })
     };
@@ -1005,12 +1030,12 @@ fn open_cancel_during_a_failing_caller_mode_dial_reports_the_cancel() {
 }
 
 /// The object is not the opened shell's cancel. A managed caller-mode
-/// receiver keeps its slot for every re-dial, but once the open returned
-/// and its guard was dropped the object no longer holds that slot: a
-/// later `cancel()` leaves the reconnects alone, and the stream reconnects
-/// to a second peer after the first goes away.
+/// receiver keeps its slot for every re-dial, but once the open finished
+/// whole (`finish()` false) the object no longer holds that slot: a later
+/// `cancel()` leaves the reconnects alone, and the stream reconnects to a
+/// second peer after the first goes away.
 #[test]
-fn open_cancel_after_the_open_returned_leaves_a_managed_receiver_reconnecting() {
+fn open_cancel_after_the_open_finished_leaves_a_managed_receiver_reconnecting() {
     require_loopback!();
     let lb = crate::common::Loopback::bind();
     let port = lb.port;
@@ -1041,7 +1066,7 @@ fn open_cancel_after_the_open_returned_leaves_a_managed_receiver_reconnecting() 
     let slot = oc.slot();
     let (mut rx, handles) = managed_receiver_from_url_with_cancel(&url, policy, Arc::clone(&slot))
         .expect("managed_receiver_from_url_with_cancel");
-    drop(slot);
+    assert!(!slot.finish(), "nothing cancelled the object yet");
     rx.next_packet().expect("the stream is live");
 
     oc.cancel();
@@ -1065,4 +1090,200 @@ fn open_cancel_after_the_open_returned_leaves_a_managed_receiver_reconnecting() 
     second_stop.store(true, Ordering::SeqCst);
     rx.close();
     peer.join().expect("peer thread");
+}
+
+/// A listener that streams null-TS bundles to every caller it accepts,
+/// each on its own thread, until that caller goes away, [`cut`](Self::cut)
+/// ends the newest connection, or the peer is dropped.
+struct ServingPeer {
+    port: u16,
+    newest: Arc<std::sync::Mutex<Option<Arc<AtomicBool>>>>,
+    stop: Arc<AtomicBool>,
+    listener_cancel: tst_srt::ResourceCancel,
+    accept: Option<std::thread::JoinHandle<()>>,
+}
+
+impl ServingPeer {
+    fn start() -> Self {
+        let lb = crate::common::Loopback::bind();
+        let port = lb.port;
+        let newest = Arc::new(std::sync::Mutex::new(None));
+        let stop = Arc::new(AtomicBool::new(false));
+        let listener_cancel = lb.listener.cancel_handle();
+        let accept = {
+            let (newest, stop) = (Arc::clone(&newest), Arc::clone(&stop));
+            let mut listener = lb.listener;
+            std::thread::spawn(move || {
+                let mut conns = Vec::new();
+                while !stop.load(Ordering::SeqCst) {
+                    match listener.accept_timeout(Duration::from_millis(50)) {
+                        Ok((mut sock, _)) => {
+                            let cut = Arc::new(AtomicBool::new(false));
+                            *newest.lock().unwrap() = Some(Arc::clone(&cut));
+                            let stop = Arc::clone(&stop);
+                            conns.push(std::thread::spawn(move || {
+                                let bundle = null_ts_bundle();
+                                while !stop.load(Ordering::SeqCst) && !cut.load(Ordering::SeqCst) {
+                                    if sock.send(&bundle).is_err() {
+                                        break;
+                                    }
+                                    std::thread::sleep(PEER_TICK);
+                                }
+                            }));
+                        }
+                        Err(tst_srt::AcceptError::TimedOut) => {}
+                        Err(_) => break,
+                    }
+                }
+                for c in conns {
+                    let _ = c.join();
+                }
+            })
+        };
+        Self {
+            port,
+            newest,
+            stop,
+            listener_cancel,
+            accept: Some(accept),
+        }
+    }
+
+    /// End the newest connection (the peer goes away).
+    fn cut(&self) {
+        if let Some(c) = self.newest.lock().unwrap().as_ref() {
+            c.store(true, Ordering::SeqCst);
+        }
+    }
+}
+
+impl Drop for ServingPeer {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::SeqCst);
+        // Wakes the accept at once instead of at its next poll.
+        self.listener_cancel.cancel();
+        if let Some(a) = self.accept.take() {
+            let _ = a.join();
+        }
+    }
+}
+
+/// What one racing open hands back: the shell (or the open's error), what
+/// `finish()` said, and the slot the shell keeps.
+type RacedOpen = (
+    Result<(Receiver<ManagedRecvTransport<SrtTransport>>, ManagedHandles), SrtError>,
+    bool,
+    Arc<tst_pipeline::FactoryCancel>,
+);
+
+/// `cancel()` racing the end of a managed caller-mode open that succeeds:
+/// every round is one of the two whole outcomes. `finish()` true: the
+/// receiver is dropped (the binding reports CLOSED). `finish()` false: the
+/// object never touches the receiver's slot, so the receiver is whole;
+/// for a few such rounds the peer goes away and the receiver must
+/// reconnect. Never a receiver that was handed out and then refuses to
+/// reconnect. Rounds rotate where the cancel lands: at once, once the
+/// open holds its slot, the moment the open returned (racing `finish()`),
+/// and after `finish()`.
+#[test]
+fn open_cancel_racing_the_end_of_a_managed_open_gives_one_whole_outcome() {
+    require_loopback!();
+    let policy = ReconnectPolicy::default()
+        .with_max_attempts(Some(3))
+        .with_backoff(BackoffStrategy::Constant(Duration::ZERO));
+    let mut outcomes = [[0u32; 2]; 4];
+    let mut reconnects_checked = 0;
+    for round in 0..200 {
+        let mode = round % 4;
+        // A fresh listener per round: one listener taking 200 connects in
+        // a row made a caller's connect time out now and then, with no
+        // cancel involved at all.
+        let peer = ServingPeer::start();
+        let url = SrtUrl::parse(&format!(
+            "srt://127.0.0.1:{}?x-recvtimeout=1000&conntimeo=1000&linger=0",
+            peer.port
+        ))
+        .expect("parse");
+        let oc = OpenCancel::new();
+        let (registered_tx, registered_rx) = mpsc::channel::<()>();
+        let (returned_tx, returned_rx) = mpsc::channel::<()>();
+        let (done_tx, done_rx) = mpsc::channel::<RacedOpen>();
+        let opener = {
+            let (oc, url, policy) = (oc.clone(), url.clone(), policy.clone());
+            std::thread::spawn(move || {
+                let slot = oc.slot();
+                let _ = registered_tx.send(());
+                let r = managed_receiver_from_url_with_cancel(&url, policy, Arc::clone(&slot));
+                let kept = Arc::clone(&slot);
+                let _ = returned_tx.send(());
+                let finished = slot.finish();
+                let _ = done_tx.send((r, finished, kept));
+            })
+        };
+        let wait = |rx: &mpsc::Receiver<()>, what: &str| {
+            rx.recv_timeout(scaled(WATCHDOG))
+                .unwrap_or_else(|_| panic!("round {round}: {what}"));
+        };
+        let mut done = None;
+        match mode {
+            0 => {}
+            1 => wait(&registered_rx, "the open never took its slot"),
+            2 => wait(&returned_rx, "the open never returned"),
+            _ => {
+                done = Some(
+                    done_rx
+                        .recv_timeout(scaled(WATCHDOG))
+                        .unwrap_or_else(|_| panic!("round {round}: the open never finished")),
+                );
+            }
+        }
+        oc.cancel();
+        let (r, finished, kept) = done.unwrap_or_else(|| {
+            done_rx
+                .recv_timeout(scaled(WATCHDOG))
+                .unwrap_or_else(|_| panic!("round {round}: the open never finished"))
+        });
+        opener.join().expect("opener thread");
+        outcomes[mode][usize::from(finished)] += 1;
+        if mode == 3 {
+            assert!(!finished, "round {round}: the cancel came after finish()");
+        }
+
+        if finished {
+            // The binding reports CLOSED and closes what the open returned.
+            drop(r);
+            continue;
+        }
+        let (mut rx, handles) =
+            r.unwrap_or_else(|e| panic!("round {round}: a whole open failed: {e:?}"));
+        assert!(
+            !kept.is_cancelled(),
+            "round {round}: finish() said whole, then the cancel latched the receiver's slot"
+        );
+        if reconnects_checked < 3 {
+            reconnects_checked += 1;
+            rx.next_packet()
+                .unwrap_or_else(|e| panic!("round {round}: the stream is not live: {e:?}"));
+            peer.cut();
+            let deadline = Instant::now() + scaled(WATCHDOG);
+            while handles.reconnects.load(Ordering::Acquire) == 0 {
+                assert!(
+                    Instant::now() < deadline,
+                    "round {round}: the receiver never reconnected"
+                );
+                match rx.next_packet() {
+                    Ok(_) => {}
+                    Err(e) if e.kind == ShellErrorKind::Backpressure => {}
+                    Err(e) => {
+                        panic!("round {round}: the receiver ended instead of reconnecting: {e:?}")
+                    }
+                }
+            }
+            rx.next_packet()
+                .unwrap_or_else(|e| panic!("round {round}: no bytes after the reconnect: {e:?}"));
+        }
+        rx.close();
+    }
+    assert_eq!(reconnects_checked, 3, "too few whole rounds: {outcomes:?}");
+    eprintln!("outcomes per mode, [finish false, finish true]: {outcomes:?}");
 }
