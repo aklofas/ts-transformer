@@ -586,10 +586,13 @@ The rules:
 
 - One object may be given to any number of opens, one after another or at
   the same time; one `cancel()` ends every open in progress with it.
-- `cancel()` is sticky: every later open given the object raises the
-  transport's error class with kind `CLOSED` before it parses its URL, and
-  opens nothing. (A URL whose scheme this build does not support still
-  raises `ValueError`: there is no transport to name.)
+- `cancel()` is sticky: every later open given the object raises `CLOSED`
+  before it parses its URL (so a bad URL is reported as `CLOSED` too) and
+  opens nothing. The four shell opens raise the URL's transport error
+  class; a shell open given a URL whose scheme this build does not support
+  still raises `ValueError`, as there is no transport to name. The managed
+  `from_url`s are SRT only and raise `SrtError(CLOSED)` whatever the URL
+  says.
 - It ends a listener-mode first accept at any time. It does not interrupt
   a caller-mode connect, but an open that finishes after the cancel raises
   `CLOSED` whatever it did, and a connection it had just made is closed

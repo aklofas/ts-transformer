@@ -140,10 +140,14 @@ class OpenCancel:
 
     - One object may be given to any number of opens, one after another
       or at the same time.
-    - `cancel()` is sticky: every later open given the object raises the
-      transport's error class with kind `CLOSED` before it parses its URL,
-      and opens nothing. A URL whose scheme this build does not support
-      still raises `ValueError`.
+    - `cancel()` is sticky: every later open given the object raises
+      `CLOSED` before it parses its URL (so a bad URL is reported as
+      `CLOSED` too) and opens nothing. The four shell opens raise the
+      URL's transport error class (`SrtError`, `RtpError`, `UdpError`,
+      `TcpError`, `RistError`); a shell open given a URL whose scheme
+      this build does not support still raises `ValueError`. The managed
+      `from_url`s are SRT only and raise `SrtError(CLOSED)` whatever the
+      URL says.
     - `cancel()` ends a listener-mode first accept at any time: the open
       raises `SrtError(CLOSED)` and the port is released.
     - It does not interrupt a caller-mode connect, but an open that
