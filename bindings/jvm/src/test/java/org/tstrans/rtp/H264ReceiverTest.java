@@ -17,9 +17,12 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
+import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
+import org.junit.jupiter.api.function.Executable;
 import org.tstrans.NativeHandle;
 import org.tstrans.RtpException;
 import org.tstrans.RtspException;
+import org.tstrans.internal.SlotProbe;
 import org.tstrans.mpegts.MuxerConfig;
 import org.tstrans.mpegts.VideoCodec;
 import org.tstrans.shells.DemuxReceiver;
@@ -274,6 +277,45 @@ class H264ReceiverTest {
         }
     }
 
+    /**
+     * A {@code close()} can take the receiver after a receive has looked its handle up
+     * and before that receive takes the receiver: the receive finds the handle registered
+     * and the receiver gone. A probe puts the receiver into exactly that state, so the
+     * receive natives are driven through it every time and must throw {@code CLOSED}.
+     */
+    @Test
+    @EnabledIfSystemProperty(named = "tst.jniTestHooks", matches = "true")
+    void recvAuWhoseReceiverAClosedTookThrowsClosed() throws Exception {
+        H264Receiver rx = H264Receiver.listen("rtp://127.0.0.1:0?pt=96");
+        try {
+            Method peek = NativeHandle.class.getDeclaredMethod("peekHandle");
+            peek.setAccessible(true);
+            long key = (long) peek.invoke(rx);
+            assertTrue(SlotProbe.nEmptyH264ReceiverSlot(key), "the probe took no receiver");
+
+            Method recv = H264Receiver.class.getDeclaredMethod("nRecvAu", long.class);
+            recv.setAccessible(true);
+            assertClosed(() -> recv.invoke(null, key), "nRecvAu");
+
+            Method recvTimeout =
+                H264Receiver.class.getDeclaredMethod("nRecvAuTimeout", long.class, long.class);
+            recvTimeout.setAccessible(true);
+            for (long timeoutMs : new long[] {-1L, 0L}) {
+                assertClosed(() -> recvTimeout.invoke(null, key, timeoutMs),
+                    "nRecvAuTimeout(" + timeoutMs + ")");
+            }
+        } finally {
+            rx.close();
+        }
+    }
+
+    private static void assertClosed(Executable call, String what) {
+        InvocationTargetException ite = assertThrows(InvocationTargetException.class, call,
+            what + " on a receiver a close() took must not return null");
+        RtpException e = assertInstanceOf(RtpException.class, ite.getCause(), what);
+        assertEquals(RtpException.Kind.CLOSED, e.kind(), what);
+    }
+
     /** The native key of a receiver that was opened and then closed. */
     private static long closedReceiverKey() throws Exception {
         H264Receiver rx = H264Receiver.listen("rtp://127.0.0.1:0?pt=96");
@@ -502,7 +544,10 @@ class H264ReceiverTest {
         } finally {
             rx.close();
         }
-        returned.get(5, TimeUnit.SECONDS);
+        Object outcome = returned.get(5, TimeUnit.SECONDS);
+        RtpException ended = assertInstanceOf(RtpException.class, outcome,
+            "close() ends a parked recvAu() as a cancel, never as the end of the stream");
+        assertEquals(RtpException.Kind.CLOSED, ended.kind());
         assertEquals(EndReason.CANCELLED, rx.endReason(),
             "close() records the end reason and it stays readable");
     }

@@ -283,3 +283,21 @@ mod cancel_probe {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// org.tstrans.internal.SlotProbe — puts an `H264Receiver` into the state a
+// racing `close()` leaves between taking the receiver and a receive that had
+// already leased its id: the slot empty, the id still registered.
+// ---------------------------------------------------------------------------
+
+jni_native! {
+    /// `org.tstrans.internal.SlotProbe.nEmptyH264ReceiverSlot(long)` — empty the
+    /// receiver's slot, keep its id; `true` if a receiver was taken.
+    fn Java_org_tstrans_internal_SlotProbe_nEmptyH264ReceiverSlot<'local>(
+        _env,
+        _class,
+        handle: jlong,
+    ) -> jni::sys::jboolean = false => {
+        crate::rtp::h264_receiver::empty_slot_keep_id(handle)
+    }
+}

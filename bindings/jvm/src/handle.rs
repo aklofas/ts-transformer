@@ -433,6 +433,14 @@ impl<T: Send + 'static, S: Send + Sync + 'static> OwnedRegistry<T, S> {
         self.inner.lock().unwrap_or_else(|e| e.into_inner()).get(id)
     }
 
+    /// Test hook: empty `id`'s slot and keep the id registered, the state a
+    /// concurrent `close()` leaves for a call that leased the id before the
+    /// close took the resource. `false` for an absent id or an empty slot.
+    #[cfg(feature = "jni-test-hooks")]
+    pub(crate) fn empty_slot_keep_id(&self, id: u64) -> bool {
+        self.lease(id).and_then(|e| e.owned.take()).is_some()
+    }
+
     /// Mutator path (push / send / recv / next / flush): [`Owned::with_mut`]
     /// — refuses a poisoned slot, isolates a panic without poisoning.
     ///
