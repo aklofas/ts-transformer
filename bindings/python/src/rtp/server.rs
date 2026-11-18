@@ -171,8 +171,12 @@ impl PyMountHandle {
     }
 
     /// Snapshot of cumulative + live mount stats.
-    pub fn stats(&self) -> MountStats {
-        MountStats::from(&self.inner.stats())
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "copies counters under short in-memory mutexes"
+    )]
+    pub fn stats(&self, py: Python<'_>) -> MountStats {
+        MountStats::from(&py.detach(|| self.inner.stats()))
     }
 
     // ── Push surface — single stream variants ──────────────────────────────
@@ -893,8 +897,13 @@ impl PyRtspServer {
     }
 
     /// Snapshot of aggregate server stats.
-    pub fn stats(&self) -> ServerStats {
-        ServerStats::from(&self.inner.stats())
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "reads counters and the mount table's size under a short in-memory mutex"
+    )]
+    pub fn stats(&self, py: Python<'_>) -> ServerStats {
+        let server: &RustRtspServer = &self.inner;
+        ServerStats::from(&py.detach(|| server.stats()))
     }
 
     /// The server's live per-mount-path rules table. Every call returns a
