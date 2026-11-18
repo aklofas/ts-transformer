@@ -15,6 +15,9 @@ Covers:
 
 from __future__ import annotations
 
+import sys
+import threading
+
 import pytest
 
 from tstrans.exceptions import RtspError, RtspErrorKind
@@ -22,9 +25,12 @@ from tstrans.mpegts import (
     AudioCodec,
     DataStreamHandle,
     KlvStreamType,
+    Muxer,
+    MuxerConfigBuilder,
     MuxerProgramConfigBuilder,
     Pts90khz,
     VideoCodec,
+    WebVttInTsConfig,
 )
 from tstrans.rtp import (
     BasicAuth,
@@ -684,3 +690,129 @@ def test_push_data_accepts_bytearray():
     with RtspServer.start(cfg) as server:
         mount = server.add_unicast_mount("/live", _video_data_program())
         mount.push_data(bytearray(_DATA_RECORD), pts=Pts90khz(0))
+
+
+# ---------------------------------------------------------------------------
+# Handle getters answer without the mount's muxer.
+# ---------------------------------------------------------------------------
+
+
+def _every_kind_program():
+    return (
+        MuxerProgramConfigBuilder(1, 0x1000)
+        .add_video(0x1011, VideoCodec.H264)
+        .add_video(0x1012, VideoCodec.H264)
+        .add_klv(0x1013, KlvStreamType.SYNCHRONOUS_METADATA, carries_pts=True)
+        .add_audio(0x1014, AudioCodec.AAC)
+        .add_subtitle(0x1015, WebVttInTsConfig())
+        .add_data(0x1016, 0xF0, carries_pts=True)
+        .build()
+    )
+
+
+def _handle_getters(mount):
+    """Raw values of all ten handle getters, keyed by getter name."""
+    out = {}
+    for kind in ("video", "klv", "audio", "subtitle", "data"):
+        one = getattr(mount, f"{kind}_handle")()
+        out[f"{kind}_handle"] = None if one is None else one.raw
+        out[f"{kind}_handles"] = [h.raw for h in getattr(mount, f"{kind}_handles")()]
+    return out
+
+
+def test_handle_getters_match_a_muxer_of_the_same_program():
+    program = _every_kind_program()
+    muxer = Muxer(MuxerConfigBuilder().add_program(program).build())
+    expected = {}
+    for kind in ("video", "klv", "audio", "subtitle", "data"):
+        raws = [h.raw for h in getattr(muxer, f"{kind}_handles")()]
+        expected[f"{kind}_handle"] = raws[0] if raws else None
+        expected[f"{kind}_handles"] = raws
+    assert len(expected["video_handles"]) == 2
+    cfg = RtspServerConfig(bind_addr="127.0.0.1:0", graceful_shutdown_drain_ms=50)
+    with RtspServer.start(cfg) as server:
+        mount = server.add_unicast_mount("/live", program)
+        assert _handle_getters(mount) == expected
+        mount.push_video_to(
+            mount.video_handles()[1], _IDR_NAL, pts=Pts90khz(0), key_frame=True
+        )
+        assert _handle_getters(mount) == expected
+        multicast = server.add_multicast_mount(
+            "/mc", "239.0.0.1", 5004, program_config=program
+        )
+        assert _handle_getters(multicast) == expected
+        server.remove_mount("/live")
+        assert _handle_getters(mount) == expected
+    assert _handle_getters(mount) == expected
+
+
+@pytest.mark.timeout(60)
+def test_handle_getters_do_not_wait_for_a_push_in_progress():
+    # Each round starts one push on a second thread and, as soon as that
+    # push has released the GIL, calls all ten handle getters, then reads
+    # `bytes_pushed`, which a push updates at the end of its work while it
+    # still holds the mount's muxer lock. A getter that waits for that lock
+    # can only return once the push's count is in, so an unchanged count
+    # proves the getters did not wait for the push.
+    #
+    # With the switch interval pinned, the pushing thread gives up the GIL
+    # only inside the push, so when `in_push.wait()` returns the push has
+    # begun. What this cannot show alone: a round on a loaded host where
+    # this thread is held up for longer than a whole push (about 1 to 3 ms
+    # here) also reads a changed count, hence the majority over the rounds.
+    rounds = 40
+    frame = b"\x00\x00\x01\x0c\xff" * (300 * 1024)
+    go = threading.Event()
+    in_push = threading.Event()
+    done = threading.Event()
+    stop = False
+    errors = []
+    unchanged = 0
+    cfg = RtspServerConfig(bind_addr="127.0.0.1:0", graceful_shutdown_drain_ms=50)
+    with RtspServer.start(cfg) as server:
+        mount = server.add_unicast_mount("/live", _single_video_program())
+        expected = _handle_getters(mount)
+
+        def pusher():
+            i = 0
+            while True:
+                go.wait()
+                go.clear()
+                if stop:
+                    return
+                in_push.set()
+                try:
+                    mount.push_video(frame, pts=Pts90khz(i * 3000), key_frame=True)
+                except Exception as e:  # noqa: BLE001 - reported below
+                    errors.append(e)
+                i += 1
+                done.set()
+
+        t = threading.Thread(target=pusher, daemon=True)
+        t.start()
+        prev = sys.getswitchinterval()
+        sys.setswitchinterval(3600.0)
+        try:
+            for _ in range(rounds):
+                before = mount.stats().bytes_pushed
+                in_push.clear()
+                done.clear()
+                go.set()
+                assert in_push.wait(10.0)
+                got = _handle_getters(mount)
+                after = mount.stats().bytes_pushed
+                assert got == expected
+                if after == before:
+                    unchanged += 1
+                assert done.wait(10.0)
+        finally:
+            sys.setswitchinterval(prev)
+            stop = True
+            go.set()
+            t.join(10.0)
+    assert not errors, errors
+    assert mount.stats().bytes_pushed > 0
+    assert unchanged > rounds // 2, (
+        f"the handle getters returned before the push finished in only "
+        f"{unchanged} of {rounds} rounds: they wait for the muxer lock"
+    )

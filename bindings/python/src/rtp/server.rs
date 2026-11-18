@@ -111,6 +111,39 @@ impl PyRtspServerCancelHandle {
 #[derive(Clone)]
 pub struct PyMountHandle {
     inner: RustMountHandle,
+    /// Read once when the mount is added. A mount's muxer is never
+    /// reconfigured, so its handles cannot change, and the getters never
+    /// wait for a push holding the muxer with the GIL held.
+    streams: MountStreams,
+}
+
+#[derive(Clone)]
+struct MountStreams {
+    video: Vec<tst_core::mpegts::mux::VideoStreamHandle>,
+    klv: Vec<tst_core::mpegts::mux::KlvStreamHandle>,
+    audio: Vec<tst_core::mpegts::mux::AudioStreamHandle>,
+    subtitle: Vec<tst_core::mpegts::mux::SubtitleStreamHandle>,
+    data: Vec<tst_core::mpegts::mux::DataStreamHandle>,
+}
+
+impl MountStreams {
+    fn of(mount: &RustMountHandle) -> Self {
+        Self {
+            video: mount.video_handles(),
+            klv: mount.klv_handles(),
+            audio: mount.audio_handles(),
+            subtitle: mount.subtitle_handles(),
+            data: mount.data_handles(),
+        }
+    }
+}
+
+impl PyMountHandle {
+    /// Call with the GIL released: the snapshot takes the mount's muxer lock.
+    fn new(inner: RustMountHandle) -> Self {
+        let streams = MountStreams::of(&inner);
+        Self { inner, streams }
+    }
 }
 
 #[pymethods]
@@ -381,94 +414,83 @@ impl PyMountHandle {
     /// Get the first configured video stream handle, or `None` if none
     /// declared.
     pub fn video_handle(&self) -> Option<PyVideoStreamHandle> {
-        self.inner
-            .video_handles()
-            .into_iter()
-            .next()
-            .map(PyVideoStreamHandle)
+        self.streams.video.first().copied().map(PyVideoStreamHandle)
     }
 
     /// Get the first configured KLV stream handle, or `None` if none
     /// declared.
     pub fn klv_handle(&self) -> Option<PyKlvStreamHandle> {
-        self.inner
-            .klv_handles()
-            .into_iter()
-            .next()
-            .map(PyKlvStreamHandle)
+        self.streams.klv.first().copied().map(PyKlvStreamHandle)
     }
 
     /// Get the first configured audio stream handle, or `None` if none
     /// declared.
     pub fn audio_handle(&self) -> Option<PyAudioStreamHandle> {
-        self.inner
-            .audio_handles()
-            .into_iter()
-            .next()
-            .map(PyAudioStreamHandle)
+        self.streams.audio.first().copied().map(PyAudioStreamHandle)
     }
 
     /// Get the first configured subtitle stream handle, or `None` if
     /// none declared.
     pub fn subtitle_handle(&self) -> Option<PySubtitleStreamHandle> {
-        self.inner
-            .subtitle_handles()
-            .into_iter()
-            .next()
+        self.streams
+            .subtitle
+            .first()
+            .copied()
             .map(PySubtitleStreamHandle)
     }
 
     /// Get the first configured data stream handle, or `None` if none
     /// declared.
     pub fn data_handle(&self) -> Option<PyDataStreamHandle> {
-        self.inner
-            .data_handles()
-            .into_iter()
-            .next()
-            .map(PyDataStreamHandle)
+        self.streams.data.first().copied().map(PyDataStreamHandle)
     }
 
     /// All configured video stream handles.
     pub fn video_handles(&self) -> Vec<PyVideoStreamHandle> {
-        self.inner
-            .video_handles()
-            .into_iter()
+        self.streams
+            .video
+            .iter()
+            .copied()
             .map(PyVideoStreamHandle)
             .collect()
     }
 
     /// All configured KLV stream handles.
     pub fn klv_handles(&self) -> Vec<PyKlvStreamHandle> {
-        self.inner
-            .klv_handles()
-            .into_iter()
+        self.streams
+            .klv
+            .iter()
+            .copied()
             .map(PyKlvStreamHandle)
             .collect()
     }
 
     /// All configured audio stream handles.
     pub fn audio_handles(&self) -> Vec<PyAudioStreamHandle> {
-        self.inner
-            .audio_handles()
-            .into_iter()
+        self.streams
+            .audio
+            .iter()
+            .copied()
             .map(PyAudioStreamHandle)
             .collect()
     }
 
     /// All configured subtitle stream handles.
     pub fn subtitle_handles(&self) -> Vec<PySubtitleStreamHandle> {
-        self.inner
-            .subtitle_handles()
-            .into_iter()
+        self.streams
+            .subtitle
+            .iter()
+            .copied()
             .map(PySubtitleStreamHandle)
             .collect()
     }
 
     /// All configured data stream handles.
     pub fn data_handles(&self) -> Vec<PyDataStreamHandle> {
-        self.inner
-            .data_handles()
-            .into_iter()
+        self.streams
+            .data
+            .iter()
+            .copied()
             .map(PyDataStreamHandle)
             .collect()
     }
@@ -716,11 +738,12 @@ impl PyRtspServer {
         let muxer_cfg = build_single_program_muxer_config(&program_config)?;
         let server = self.server();
         let path_owned = path.to_string();
-        let res = crate::util::allow_threads_parking(py, move || {
-            server.add_mount(&path_owned, muxer_cfg)
+        crate::util::allow_threads_parking(py, move || {
+            server
+                .add_mount(&path_owned, muxer_cfg)
+                .map(PyMountHandle::new)
         })
-        .map_err(|e| raise(py, &RTSP, BindingError::from(e)))?;
-        Ok(PyMountHandle { inner: res })
+        .map_err(|e| raise(py, &RTSP, BindingError::from(e)))
     }
 
     /// Register a multicast mount. `group` is a literal multicast IP
@@ -750,11 +773,12 @@ impl PyRtspServer {
         }
         let server = self.server();
         let path_owned = path.to_string();
-        let res = crate::util::allow_threads_parking(py, move || {
-            server.add_multicast_mount(&path_owned, muxer_cfg, &url)
+        crate::util::allow_threads_parking(py, move || {
+            server
+                .add_multicast_mount(&path_owned, muxer_cfg, &url)
+                .map(PyMountHandle::new)
         })
-        .map_err(|e| raise(py, &RTSP, BindingError::from(e)))?;
-        Ok(PyMountHandle { inner: res })
+        .map_err(|e| raise(py, &RTSP, BindingError::from(e)))
     }
 
     /// Register a publish mount under `path`: the server accepts
