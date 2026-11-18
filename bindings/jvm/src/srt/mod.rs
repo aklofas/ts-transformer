@@ -37,12 +37,6 @@ pub(crate) enum ManagedOpenError {
     Open(tst_srt::SrtError),
 }
 
-impl From<tst_srt::SrtError> for ManagedOpenError {
-    fn from(e: tst_srt::SrtError) -> Self {
-        Self::Open(e)
-    }
-}
-
 impl ManagedOpenError {
     /// `CONFIG_INVALID` with `message`.
     pub(crate) fn config(message: String) -> Self {
