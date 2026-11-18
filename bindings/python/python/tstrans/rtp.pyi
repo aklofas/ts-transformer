@@ -317,10 +317,12 @@ class RtspStats:
 @final
 class RtspCancelHandle:
     """RTSP control-plane cancel handle. Frozen. Flipping `.cancel()`
-    breaks any in-flight `connect` / `pause` / `play` / `teardown` out
-    of blocking I/O at the next poll (typically <100 ms). The interrupted
-    call raises `RtspError(CLOSED)` — the one cancel outcome every tstrans
-    handle shares.
+    breaks any in-flight `pause` / `play` / `teardown` on its session out
+    of blocking I/O at the call's next poll (a waiting request re-checks
+    the flag at least every 100 ms). The interrupted call raises
+    `RtspError(CLOSED)` — the one cancel outcome every tstrans handle
+    shares. `RtspClient.connect` returns the session only after PLAY, so
+    no handle reaches a connect in progress.
     """
 
     def cancel(self) -> None: ...
@@ -357,25 +359,38 @@ class RtspSession:
     are guarded — calling the wrong method on a fresh session raises
     `RtspError(PROTOCOL)` and leaves the data plane in place.
 
-    A session collected without `teardown()` writes a best-effort TEARDOWN
-    with the GIL released (500 ms bounds the write; the reply is not
-    awaited), then tells the client's thread to stop; that thread closes
-    the connection on its own. A receiver never owns the client, so keep
-    the session object alive while one receives: collecting it ends a live
-    TCP-interleaved receiver with `RtpError(CLOSED)` after what is already
-    queued, whatever the server then does. `teardown()` (and `__exit__`)
-    ends it with end of stream once the server accepts the TEARDOWN, on a
-    session whose cancel was not set; on a session whose cancel handle had
-    fired it is a cancel, `RtpError(CLOSED)`, whatever the server then
-    does. A refused TEARDOWN leaves the receiver running until the session
-    is collected. A session that had already ended for its own reason
-    keeps that reason and that outcome. One end reason is kept per
-    session: use a new session for each stream. A UDP receiver has its own
-    socket and is not ended by any of this.
+    `close()` (and the `with` exit, which calls it) ends the session and
+    its client; `teardown()` reports what the server answered and keeps
+    the client until then. A session collected without `close()` writes a
+    best-effort TEARDOWN with the GIL released (500 ms bounds the write;
+    the reply is not awaited), then tells the client's thread to stop
+    without waiting for it; that thread closes the connection on its own.
+
+    A receiver never owns the client, so keep the session object alive
+    while one receives: collecting it ends a live TCP-interleaved receiver
+    with `RtpError(CLOSED)` after what is already queued, whatever the
+    server then does. `teardown()` or `close()` ends it with end of stream
+    once the server accepts the TEARDOWN, on a session whose cancel was
+    not set; on a session whose cancel handle had fired it is a cancel,
+    `RtpError(CLOSED)`, whatever the server then does. A TEARDOWN the
+    server refuses leaves the receiver running until `close()`, which ends
+    it with `RtpError(CLOSED)`, as it does when its own TEARDOWN is refused
+    or not answered within its bound. A session that had already ended for
+    its own reason keeps that reason and that outcome. One end reason is
+    kept per session: use a new session for each stream. A UDP receiver
+    has its own socket and is not ended by any of this.
+
+    The methods answer from any thread: while a control call is parked,
+    `cancel_handle()` returns at once and `close()` cancels the parked call
+    first (it raises `RtspError(CLOSED)`).
     """
 
-    def pause(self) -> None: ...
-    def play(self) -> None: ...
+    def pause(self) -> None:
+        """Send PAUSE. Raises `RtspError(CLOSED)` after `close()`."""
+        ...
+    def play(self) -> None:
+        """Send PLAY (resume). Raises `RtspError(CLOSED)` after `close()`."""
+        ...
     def teardown(self) -> None:
         """Send TEARDOWN. A 2xx reply, or `454 Session Not Found` (the
         session is already gone), returns `None`; a TEARDOWN the server
@@ -385,10 +400,28 @@ class RtspSession:
         (`PROTOCOL`), the client has no credentials (`AUTH_FAILED`) or its
         challenge offers no scheme the client may answer (`AUTH_REQUIRED`);
         a 401 to that retry raises `AUTH_FAILED`. The session counts as torn down either way: a
-        second call is a no-op. `__exit__` tears down too and swallows the
-        error."""
+        second call, or a call after `close()`, is a no-op. The reply is
+        awaited up to the request timeout (10 s). The client, its thread
+        and the control connection stay until `close()`."""
         ...
-    def cancel_handle(self) -> RtspCancelHandle: ...
+    def close(self) -> None:
+        """End the session and its client: TEARDOWN with one 500 ms bound
+        over writing it and its reply, then up to 2 s for the client's
+        thread; the control connection is closed on return unless that
+        wait ran out. Returns `None` whatever the server answered (call
+        `teardown()` first for the answer) and is a no-op when called
+        again. A control call parked on another thread is cancelled
+        first. Afterwards `pause()`, `play()` and `cancel_handle()` raise
+        `RtspError(CLOSED)` and `teardown()` returns `None`; the data
+        plane can still be taken once, and a TCP-interleaved receiver
+        taken from it ends at once with the end reason the close left. The
+        `with` exit calls this."""
+        ...
+    def cancel_handle(self) -> RtspCancelHandle:
+        """A handle on the session's cancel; answers at once, also while
+        another thread's call is parked, and after `teardown()`. Raises
+        `RtspError(CLOSED)` once `close()` has begun."""
+        ...
     def stats(self) -> RtspStats: ...
     def into_demux_receiver(
         self,
