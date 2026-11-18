@@ -363,15 +363,24 @@ pub unsafe extern "C" fn tst_rtsp_session_teardown_and_free(
         let rc = match boxed.pair.try_lock() {
             // Nobody holds the session: `RtspClient::close` sends TEARDOWN
             // and reads the reply under its 500 ms bound, then waits for
-            // the client's thread.
-            Ok(mut guard) => close(guard.take()),
+            // the client's thread. The guard is dropped first: no lock is
+            // held across the close.
+            Ok(mut guard) => {
+                let pair = guard.take();
+                drop(guard);
+                close(pair)
+            }
             // Defence only, not a contract (the caller must have waited for
             // any parked call): wake it first, then close the cancelled
             // client (its TEARDOWN is written, the reply is not awaited).
             Err(TryLockError::WouldBlock) => {
                 boxed.rtsp_cancel.cancel();
                 match boxed.pair.lock() {
-                    Ok(mut guard) => close(guard.take()),
+                    Ok(mut guard) => {
+                        let pair = guard.take();
+                        drop(guard);
+                        close(pair)
+                    }
                     Err(_) => poisoned(),
                 }
             }
