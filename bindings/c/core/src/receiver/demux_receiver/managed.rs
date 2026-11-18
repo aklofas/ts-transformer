@@ -295,23 +295,25 @@ pub unsafe extern "C" fn tst_managed_demux_receiver_recv_event(
     // `broken_is_eos = false` — the decorator already retried on Broken, so
     // a Broken reaching here is a hard transport failure (see the asymmetry
     // note above). The latch is read on both sides of the park.
-    let cancelled = handle.inner.is_cancelled();
-    handle
-        .inner
-        .with_inner_mut_unless_cancelled(|rx| match rx.recv_event() {
-            Ok(Some(ev)) => {
-                // Poison = a panic mid-write on another call; the arena is
-                // rewritten before it is read, so recover (binding poison
-                // policy: readers recover).
-                let mut arena = handle.arena.lock().unwrap_or_else(|e| e.into_inner());
-                unsafe {
-                    crate::event::convert(&mut arena, &ev, &mut *out_event);
+    crate::panic::ffi_catch(TstError::Internal as i32, || {
+        let cancelled = handle.inner.is_cancelled();
+        handle
+            .inner
+            .with_inner_mut_unless_cancelled(|rx| match rx.recv_event() {
+                Ok(Some(ev)) => {
+                    // Poison = a panic mid-write on another call; the arena is
+                    // rewritten before it is read, so recover (binding poison
+                    // policy: readers recover).
+                    let mut arena = handle.arena.lock().unwrap_or_else(|e| e.into_inner());
+                    unsafe {
+                        crate::event::convert(&mut arena, &ev, &mut *out_event);
+                    }
+                    0
                 }
-                0
-            }
-            Ok(None) => record_recv_closed(cancelled || handle.inner.is_cancelled()),
-            Err(e) => record_recv_error(e, cancelled || handle.inner.is_cancelled(), false),
-        })
+                Ok(None) => record_recv_closed(cancelled || handle.inner.is_cancelled()),
+                Err(e) => record_recv_error(e, cancelled || handle.inner.is_cancelled(), false),
+            })
+    })
 }
 
 /// Cancel a `tst_managed_demux_receiver_t`. Same shape as the plain

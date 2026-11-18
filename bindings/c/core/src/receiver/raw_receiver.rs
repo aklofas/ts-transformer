@@ -219,24 +219,26 @@ pub unsafe extern "C" fn tst_raw_receiver_recv(
     }
     // See `tst_receiver_recv_packet` for why the latch is read on both sides
     // of the park and why `broken_is_eos` is `true` on a plain shell.
-    let cancelled = handle.inner.is_cancelled();
-    handle.inner.with_inner_mut(|rx| match rx.recv_one() {
-        Ok(v) => {
-            if v.len() > len {
-                set_last_error(
-                    TstError::TooLarge,
-                    &format!("message {} bytes exceeds buf cap {}", v.len(), len),
-                );
-                return TstError::TooLarge as i32;
+    crate::panic::ffi_catch(TstError::Internal as i32, || {
+        let cancelled = handle.inner.is_cancelled();
+        handle.inner.with_inner_mut(|rx| match rx.recv_one() {
+            Ok(v) => {
+                if v.len() > len {
+                    set_last_error(
+                        TstError::TooLarge,
+                        &format!("message {} bytes exceeds buf cap {}", v.len(), len),
+                    );
+                    return TstError::TooLarge as i32;
+                }
+                if !v.is_empty() {
+                    unsafe { std::ptr::copy_nonoverlapping(v.as_ptr(), buf, v.len()) };
+                }
+                // SAFETY: out_len non-null per guard above.
+                unsafe { *out_len = v.len() };
+                0
             }
-            if !v.is_empty() {
-                unsafe { std::ptr::copy_nonoverlapping(v.as_ptr(), buf, v.len()) };
-            }
-            // SAFETY: out_len non-null per guard above.
-            unsafe { *out_len = v.len() };
-            0
-        }
-        Err(e) => record_recv_error(e, cancelled || handle.inner.is_cancelled(), true),
+            Err(e) => record_recv_error(e, cancelled || handle.inner.is_cancelled(), true),
+        })
     })
 }
 
@@ -376,24 +378,26 @@ pub unsafe extern "C" fn tst_managed_raw_receiver_recv(
         return TstError::InvalidConfig as i32;
     }
     // `broken_is_eos = false` — see the asymmetry note above.
-    let cancelled = handle.inner.is_cancelled();
-    handle.inner.with_inner_mut(|rx| match rx.recv_one() {
-        Ok(v) => {
-            if v.len() > len {
-                set_last_error(
-                    TstError::TooLarge,
-                    &format!("message {} bytes exceeds buf cap {}", v.len(), len),
-                );
-                return TstError::TooLarge as i32;
+    crate::panic::ffi_catch(TstError::Internal as i32, || {
+        let cancelled = handle.inner.is_cancelled();
+        handle.inner.with_inner_mut(|rx| match rx.recv_one() {
+            Ok(v) => {
+                if v.len() > len {
+                    set_last_error(
+                        TstError::TooLarge,
+                        &format!("message {} bytes exceeds buf cap {}", v.len(), len),
+                    );
+                    return TstError::TooLarge as i32;
+                }
+                if !v.is_empty() {
+                    unsafe { std::ptr::copy_nonoverlapping(v.as_ptr(), buf, v.len()) };
+                }
+                // SAFETY: out_len non-null per guard above.
+                unsafe { *out_len = v.len() };
+                0
             }
-            if !v.is_empty() {
-                unsafe { std::ptr::copy_nonoverlapping(v.as_ptr(), buf, v.len()) };
-            }
-            // SAFETY: out_len non-null per guard above.
-            unsafe { *out_len = v.len() };
-            0
-        }
-        Err(e) => record_recv_error(e, cancelled || handle.inner.is_cancelled(), false),
+            Err(e) => record_recv_error(e, cancelled || handle.inner.is_cancelled(), false),
+        })
     })
 }
 

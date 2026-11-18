@@ -251,13 +251,19 @@ pub unsafe extern "C" fn tst_rtp_demux_receiver_next_event(
         set_last_error(TstError::InvalidConfig, "null rtp demux receiver pointer");
         return TstError::InvalidConfig as i32;
     };
-    handle.observe_mount_cancel();
-    // The generic body owns the null-check on `out_event`, the cancel-aware
-    // relabel (it reads the latch off the `CHandle` itself) and the arena
-    // borrow. `broken_is_eos = false`: only plain SRT shells fold Broken into EOS.
-    unsafe {
-        crate::transport_impls::demux_receiver_next_event(&handle.inner, &handle.arena, out_event)
-    }
+    crate::panic::ffi_catch(TstError::Internal as i32, || {
+        handle.observe_mount_cancel();
+        // The generic body owns the null-check on `out_event`, the cancel-aware
+        // relabel (it reads the latch off the `CHandle` itself) and the arena
+        // borrow. `broken_is_eos = false`: only plain SRT shells fold Broken into EOS.
+        unsafe {
+            crate::transport_impls::demux_receiver_next_event(
+                &handle.inner,
+                &handle.arena,
+                out_event,
+            )
+        }
+    })
 }
 
 /// Cancel a `tst_rtp_demux_receiver_t`. Signals the underlying RTP socket
