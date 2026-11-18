@@ -70,6 +70,7 @@ at the input-size constant to scale up).
 
 from __future__ import annotations
 
+import gc
 import sys
 import threading
 from time import perf_counter
@@ -481,11 +482,20 @@ def _probe_repeatedly(probe: _GilProbe, fn: Callable[[], Any], window_ms: float)
         for _ in range(1000):
             fn()
 
-    total = 0.0
-    while total < window_ms / 1000.0:
-        probe.call(batch)
-        t0, t1 = probe.windows[-1]
-        total += t1 - t0
+    # A collection inside a window could run a finalizer that releases the
+    # GIL, which would pass the probe on a call that holds it.
+    gc.collect()
+    was_enabled = gc.isenabled()
+    gc.disable()
+    try:
+        total = 0.0
+        while total < window_ms / 1000.0:
+            probe.call(batch)
+            t0, t1 = probe.windows[-1]
+            total += t1 - t0
+    finally:
+        if was_enabled:
+            gc.enable()
 
 
 @pytest.mark.timeout(30)
