@@ -1858,6 +1858,29 @@ fn ten_thousand_unmatched_replies_are_counted_and_keep_no_memory() {
     assert_eq!(reply(&mut e, a).unwrap().status, 200);
 }
 
+/// An RTCP flood ends nothing and keeps nothing back: every frame is
+/// counted and handed on, and the waiting request still gets its reply.
+#[test]
+fn ten_thousand_rtcp_frames_are_counted_and_end_nothing() {
+    let t0 = Instant::now();
+    let mut e = interleaved();
+    let a = e.submit(spec(RtspMethod::Options, URI), None, t0).unwrap();
+    let one_frame = interleaved_frame(CHANNELS.rtcp, b"\xDE\xAD\xBE\xEF");
+    e.handle_input(&one_frame.repeat(5_000), t0);
+    for _ in 0..5_000 {
+        e.handle_input(&one_frame, t0);
+    }
+    let ev = events(&mut e);
+    assert_eq!(ev.len(), 10_000);
+    assert!(ev.iter().all(|e| matches!(e, Event::Rtcp(_))));
+    assert_eq!(e.counters().rtcp_frames, 10_000);
+    assert!(e.inbuf.is_empty());
+    assert!(!e.is_closed());
+    // The request is still waiting for its own reply.
+    e.handle_input(b"RTSP/1.0 200 OK\r\nCSeq: 1\r\n\r\n", t0);
+    assert_eq!(reply(&mut e, a).unwrap().status, 200);
+}
+
 #[test]
 fn a_reply_in_the_keepalive_range_with_no_ping_is_dropped() {
     let t0 = Instant::now();
