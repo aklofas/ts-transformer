@@ -64,14 +64,16 @@ pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
 ///
 /// Returned by [`RtspServer.cancel_handle()`][PyRtspServer::cancel_handle].
 /// Cloning is cheap (`Arc`); multiple holders can race the cancel call
-/// (idempotent). Calling `.cancel()` aborts every in-flight session at
-/// its next poll boundary, bypassing the graceful Notice-5402 path. Like
-/// `stop()`, it ends every publish mount's receiver and wakes a parked
-/// `next_publisher` with `RtspError(CLOSED)`.
+/// (idempotent). `.cancel()` sets a flag and returns. From then on mount
+/// pushes, mount registration and removal, rule edits and a new
+/// `next_publisher` raise `RtspError(CLOSED)` at once; a parked
+/// `next_publisher` raises it within 100 ms; and within 100 ms the server
+/// ends its sessions, its listener, its multicast senders and every publish
+/// mount's receiver (end of stream, as after `stop()`). No Notice 5402 is
+/// sent. A `stop()` after it ends what is left without the graceful path.
 ///
-/// Note: this is the server-flavoured cancel handle. The `CancelHandle` for
-/// `Sender` / `Receiver` is a distinct type (the server token is
-/// tokio-aware; the transport one is thread-only).
+/// This is the server's own cancel handle; the `CancelHandle` of
+/// `Sender` / `Receiver` is a distinct type.
 #[pyclass(name = "RtspServerCancelHandle", module = "tstrans.rtp", frozen)]
 #[derive(Clone)]
 pub struct PyRtspServerCancelHandle {
@@ -601,11 +603,13 @@ impl PyRtspServer {
     /// then `build()` + `start()` are called. Errors during any of those
     /// surface as `RtspError(IO)` (bind or listener start failures),
     /// `RtspError(TLS)` (cert/key parse failures), `RtspError(PROTOCOL)`
-    /// (URL parse), or `RtspError(MOUNT)` (an invalid default mount rule or
-    /// auth realm).
+    /// (URL parse), or `RtspError(MOUNT)` (an invalid default mount rule,
+    /// an invalid auth realm or an empty auth user name).
     ///
-    /// GIL is released for the build + bind + spin-wait. Returns once the
-    /// listener is bound (i.e. `local_addr()` is populated).
+    /// The GIL is released while the server is built and started. Returns
+    /// once the listener reports its bind (i.e. `local_addr()` is
+    /// populated); a report that has not come within 5 s raises
+    /// `RtspError(IO)`.
     #[staticmethod]
     pub fn start(py: Python<'_>, config: &Bound<'_, PyAny>) -> PyResult<Self> {
         let cfg = ServerConfigExtract::from_pyobj(config)?;
@@ -738,7 +742,8 @@ impl PyRtspServer {
     /// - `RtspError(MOUNT)` for invalid path (empty, missing leading
     ///   slash, URL-reserved characters), duplicate path, or invalid
     ///   `program_config`.
-    /// - `RtspError(CLOSED)` if the server has been stopped.
+    /// - `RtspError(CLOSED)` if the server has been stopped or
+    ///   hard-cancelled.
     pub fn add_unicast_mount(
         &self,
         py: Python<'_>,
@@ -798,7 +803,8 @@ impl PyRtspServer {
     ///
     /// Errors:
     /// - `RtspError(MOUNT)` for an invalid or duplicate path.
-    /// - `RtspError(CLOSED)` if the server has been stopped.
+    /// - `RtspError(CLOSED)` if the server has been stopped or
+    ///   hard-cancelled.
     ///
     /// `end_on_publisher_exit` overrides the config's
     /// `end_publish_mount_on_publisher_exit` for this mount (`None`
@@ -843,8 +849,9 @@ impl PyRtspServer {
     /// `DemuxReceiver` then ends at once.
     ///
     /// Errors:
-    /// - `RtspError(CLOSED)` once the server has stopped, including while
-    ///   this call waited.
+    /// - `RtspError(CLOSED)` once the server has stopped or been
+    ///   hard-cancelled, including while this call waited (within 100 ms
+    ///   of a hard cancel).
     /// - `ValueError` for a negative or NaN `timeout`.
     #[pyo3(signature = (timeout = None))]
     pub fn next_publisher(
@@ -888,13 +895,14 @@ impl PyRtspServer {
     /// publish mount's publisher is sent the Notice 5402 teardown and its
     /// `DemuxReceiver` stops iterating (`StopIteration`); the `PublishMount`
     /// stays usable for `stats()`. A local mount's `MountHandle` keeps
-    /// accepting pushes that reach nobody until the server ends; then they
-    /// raise `RtspError(CLOSED)`. Also how idle on-demand mounts are
+    /// accepting pushes that reach nobody until the server ends (`stop()`
+    /// begins, a hard cancel, or collection); then they raise `RtspError(CLOSED)`. Also how idle on-demand mounts are
     /// removed.
     ///
     /// Errors:
     /// - `RtspError(MOUNT)` when no mount is registered at `path`.
-    /// - `RtspError(CLOSED)` if the server has been stopped.
+    /// - `RtspError(CLOSED)` if the server has been stopped or
+    ///   hard-cancelled.
     pub fn remove_mount(&self, py: Python<'_>, path: &str) -> PyResult<()> {
         let server = self.server();
         let path_owned = path.to_string();
@@ -913,8 +921,9 @@ impl PyRtspServer {
     }
 
     /// The server's live per-mount-path rules table. Every call returns a
-    /// handle to the same table; an edit applies to the next request. After
-    /// `stop()` edits raise `RtspError(CLOSED)`.
+    /// handle to the same table; an edit applies to the next request. From
+    /// the moment `stop()` begins, and after a hard cancel, edits raise
+    /// `RtspError(CLOSED)`; `len()` still answers.
     pub(crate) fn mount_rules(&self) -> PyMountRules {
         PyMountRules::new(self.inner.mount_rules())
     }
@@ -924,19 +933,18 @@ impl PyRtspServer {
         self.inner.local_addr().map(|a| a.to_string())
     }
 
-    /// Graceful shutdown — fires the Notice 5402 path on each active
-    /// session, then waits `drain_ms` for in-flight RTP to drain.
+    /// Graceful shutdown: sends the Notice 5402 teardown to each active
+    /// session, then waits for the sessions to end, up to
+    /// `RtspServerConfig.graceful_shutdown_drain_ms` plus 500 ms; each
+    /// session's Notice write (1 s) and closing shutdown (500 ms) have
+    /// bounds of their own. `drain_ms` is ignored. After a hard cancel it
+    /// sends no Notice and does not wait: it ends what the cancel ends and
+    /// returns.
     ///
     /// Idempotent: a second call is a no-op.
     #[pyo3(signature = (*, drain_ms = 1000))]
     pub fn stop(&self, py: Python<'_>, drain_ms: u64) -> PyResult<()> {
-        // The Rust API's drain window is set on the builder; `drain_ms`
-        // here is an additional Python-side sleep cap (forward-looking;
-        // the current builder default is 100 ms + a fixed 1 s in stop()
-        // itself). We pass through to `stop()` and rely on the builder's
-        // `graceful_shutdown_drain` for the actual wait window. The
-        // `drain_ms` arg is accepted for API stability — future Rust
-        // additions will route it through.
+        // Kept for the signature; the drain window is the builder's.
         let _ = drain_ms;
         let server = self.server();
         crate::util::allow_threads_parking(py, move || server.stop())

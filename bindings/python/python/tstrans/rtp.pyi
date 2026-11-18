@@ -458,10 +458,13 @@ class RtspSession:
 class RtspServerCancelHandle:
     """Cross-thread hard-cancel handle for an `RtspServer`. Frozen.
 
-    Calling `.cancel()` aborts every in-flight session at its next poll
-    boundary, bypassing the graceful Notice-5402 path. Like `stop()`, it
-    ends every publish mount's receiver and wakes a parked `next_publisher`
-    with `RtspError(CLOSED)`.
+    `.cancel()` sets a flag and returns. From then on mount pushes, mount
+    registration and removal, rule edits and a new `next_publisher` raise
+    `RtspError(CLOSED)` at once; a parked `next_publisher` raises it within
+    100 ms; and within 100 ms the server ends its sessions, its listener,
+    its multicast senders and every publish mount's receiver (end of
+    stream, as after `stop()`). No Notice 5402 is sent. A `stop()` after it
+    ends what is left without the graceful path.
     """
 
     def cancel(self) -> None: ...
@@ -840,7 +843,8 @@ class RtspServer:
     def mount_rules(self) -> MountRules: ...
     # Releases the GIL; `None` timeout waits until a mount arrives or the
     # server stops (Ctrl-C interrupts). Concurrent callers are served one
-    # at a time. Raises RtspError(CLOSED) once the server has stopped.
+    # at a time. Raises RtspError(CLOSED) once the server has stopped or
+    # been hard-cancelled (a parked call within 100 ms of the cancel).
     def next_publisher(
         self, timeout: Optional[float] = ...
     ) -> Optional[PublishMount]: ...
