@@ -188,6 +188,24 @@ unsafe fn with_mux_publisher(
     })
 }
 
+/// Reader twin of [`with_mux_publisher`] for the stats getters: a caught
+/// panic in `f` leaves the publisher in place. It takes the same slot lock
+/// as a send, so it still waits for a send in progress.
+///
+/// SAFETY: as [`with_mux_publisher`].
+unsafe fn with_mux_publisher_ref(
+    p: *mut TstMuxPublisher,
+    f: impl FnOnce(&MuxPublisher<HlsPublisher>) -> libc::c_int,
+) -> libc::c_int {
+    crate::panic::ffi_catch(TstError::Internal as i32, || {
+        let Some(handle) = (unsafe { p.as_ref() }) else {
+            set_last_error(TstError::InvalidConfig, "null mux publisher pointer");
+            return TstError::InvalidConfig as i32;
+        };
+        finished(handle.inner.with_inner_ref(|mp| f(mp)))
+    })
+}
+
 /// Push one Annex-B NAL through the muxer's single video stream.
 ///
 /// `pts` is the presentation timestamp in 90 kHz ticks. `key_frame` is
@@ -388,7 +406,9 @@ pub unsafe extern "C" fn tst_mux_publisher_finish_into_publisher(
 /// Snapshot the mux-publisher cumulative stats into `*out`.
 ///
 /// Returns 0 on success, `TST_E_INVALID_CONFIG` if either pointer is null,
-/// or `TST_E_HLS_FINISHED` if the mux publisher was finished.
+/// or `TST_E_HLS_FINISHED` if the mux publisher was finished. A read waits
+/// for a send in progress on another thread. A panic caught inside it
+/// returns `TST_E_PANIC_CAUGHT` and leaves the publisher usable.
 ///
 /// # Safety
 ///
@@ -404,7 +424,7 @@ pub unsafe extern "C" fn tst_mux_publisher_get_stats(
         return TstError::InvalidConfig as i32;
     }
     unsafe {
-        with_mux_publisher(p, |mp| {
+        with_mux_publisher_ref(p, |mp| {
             *out = TstMuxPublisherStats::from(&mp.stats());
             0
         })
@@ -414,7 +434,9 @@ pub unsafe extern "C" fn tst_mux_publisher_get_stats(
 /// Snapshot the universal publisher-side stats into `*out`.
 ///
 /// Returns 0 on success, `TST_E_INVALID_CONFIG` if either pointer is null,
-/// or `TST_E_HLS_FINISHED` if the mux publisher was finished.
+/// or `TST_E_HLS_FINISHED` if the mux publisher was finished. A read waits
+/// for a send in progress on another thread. A panic caught inside it
+/// returns `TST_E_PANIC_CAUGHT` and leaves the publisher usable.
 ///
 /// # Safety
 ///
@@ -430,7 +452,7 @@ pub unsafe extern "C" fn tst_mux_publisher_get_publisher_stats(
         return TstError::InvalidConfig as i32;
     }
     unsafe {
-        with_mux_publisher(p, |mp| {
+        with_mux_publisher_ref(p, |mp| {
             *out = TstPublisherStats::from(&mp.publisher_stats());
             0
         })
@@ -462,6 +484,45 @@ mod tests {
             let mut stats = TstMuxPublisherStats::default();
             tst_mux_publisher_get_stats(std::ptr::null_mut(), &mut stats)
         };
+    }
+
+    /// A panic inside a stats read is caught and keeps the publisher: the
+    /// next stats read and the next cut still work.
+    #[test]
+    fn a_panic_in_a_stats_read_keeps_the_publisher() {
+        let dir =
+            std::env::temp_dir().join(format!("tst-c-hls-stats-panic-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut b = tst_hls::HlsPublisherBuilder::new();
+        b.bind("127.0.0.1:0".parse().unwrap()).output_dir(&dir);
+        let publisher = TstPublisher::new(PublisherImpl::Hls(b.build().unwrap()));
+        let cfg = unsafe { crate::config::tst_mux_config_new() };
+        let prog = unsafe { crate::config::tst_mux_config_add_program(cfg, 1, 0x1000) };
+        unsafe {
+            crate::config::streams::tst_mux_config_add_video_stream(
+                cfg,
+                prog,
+                0x100,
+                crate::config::streams::TstVideoCodec::H264 as i32,
+            )
+        };
+        let mp =
+            unsafe { tst_mux_publisher_with_config_hls(Box::into_raw(Box::new(publisher)), cfg) };
+        unsafe { crate::config::tst_mux_config_free(cfg) };
+        assert!(!mp.is_null(), "with_config_hls failed");
+
+        let rc = unsafe { with_mux_publisher_ref(mp, |_| panic!("stats read panic")) };
+        assert_eq!(rc, TstError::PanicCaught as i32);
+        let mut stats = TstMuxPublisherStats::default();
+        assert_eq!(unsafe { tst_mux_publisher_get_stats(mp, &mut stats) }, 0);
+        let mut pstats = TstPublisherStats::default();
+        assert_eq!(
+            unsafe { tst_mux_publisher_get_publisher_stats(mp, &mut pstats) },
+            0
+        );
+        assert_eq!(unsafe { tst_mux_publisher_cut_segment(mp) }, 0);
+        unsafe { tst_mux_publisher_free(mp) };
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

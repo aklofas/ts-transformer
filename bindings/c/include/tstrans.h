@@ -5552,7 +5552,9 @@ int tst_mux_config_set_stream_descriptors_for_video(struct tst_mux_config_t *cfg
  * Snapshot the universal publisher-side stats into `*out`.
  *
  * Returns 0 on success, `TST_E_INVALID_CONFIG` if either pointer is null,
- * or `TST_E_HLS_FINISHED` if the mux publisher was finished.
+ * or `TST_E_HLS_FINISHED` if the mux publisher was finished. A read waits
+ * for a send in progress on another thread. A panic caught inside it
+ * returns `TST_E_PANIC_CAUGHT` and leaves the publisher usable.
  *
  * # Safety
  *
@@ -5569,7 +5571,9 @@ int tst_mux_publisher_get_publisher_stats(struct TstMuxPublisher *p,
  * Snapshot the mux-publisher cumulative stats into `*out`.
  *
  * Returns 0 on success, `TST_E_INVALID_CONFIG` if either pointer is null,
- * or `TST_E_HLS_FINISHED` if the mux publisher was finished.
+ * or `TST_E_HLS_FINISHED` if the mux publisher was finished. A read waits
+ * for a send in progress on another thread. A panic caught inside it
+ * returns `TST_E_PANIC_CAUGHT` and leaves the publisher usable.
  *
  * # Safety
  *
