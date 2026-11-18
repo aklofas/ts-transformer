@@ -215,7 +215,8 @@ pub enum RtspServerError {
     #[error("RTSP server not started")]
     NotStarted,
 
-    /// Public method invoked after `stop()` completed (or after `cancel()`).
+    /// Public method invoked from the moment `stop()` begins (or after the
+    /// hard cancel or the drop).
     #[error("RTSP server has been shut down")]
     Shutdown,
 
