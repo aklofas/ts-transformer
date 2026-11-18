@@ -819,6 +819,26 @@ def test_cancel_handle_after_teardown_and_after_close():
         assert not server.is_alive()
 
 
+def test_data_plane_after_teardown_then_closed_after_close():
+    # teardown() reports the TEARDOWN's outcome but keeps the client and
+    # the data plane; only close() refuses the takes.
+    port, _requests, server = _recording_peer()
+    try:
+        session = RtspClient.connect(_tcp_config(port))
+        session.teardown()
+        rx = session.into_demux_receiver()
+        assert rx is not None
+        session.close()
+        for take in (session.into_demux_receiver, session.into_h264_receiver):
+            with pytest.raises(RtspError) as exc_info:
+                take()
+            assert exc_info.value.kind == RtspErrorKind.CLOSED, take
+        rx.close()
+    finally:
+        server.join(10)
+        assert not server.is_alive()
+
+
 @pytest.mark.parametrize("ending", ["close", "with_exit"])
 @pytest.mark.parametrize("h264", [False, True], ids=["mp2t", "h264"])
 def test_data_plane_after_close_is_closed(h264, ending):
@@ -850,8 +870,14 @@ def test_data_plane_after_close_is_closed_over_udp():
     with RtspServer.start(cfg) as server:
         server.add_unicast_mount("/live", video_only_program())
         port = server.local_addr().rsplit(":", 1)[1]
+        # UDP is forced (no TCP fallback), so a connect that succeeds
+        # negotiated UDP; the session has no getter for its transport.
         session = RtspClient.connect(
-            RtspClientConfig(url=f"rtsp://127.0.0.1:{port}/live", keepalive=False)
+            RtspClientConfig(
+                url=f"rtsp://127.0.0.1:{port}/live",
+                transport_pref=TransportPref.UDP,
+                keepalive=False,
+            )
         )
         session.close()
         with pytest.raises(RtspError) as exc_info:
