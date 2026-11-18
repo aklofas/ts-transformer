@@ -583,7 +583,11 @@ retained are discarded and no closing cut is written;
 path.
 
 **Supported teardown is plain process exit.** The binding does not support
-`Py_FinalizeEx` followed by re-initialisation, nor sub-interpreters.
+`Py_FinalizeEx` followed by re-initialisation, nor sub-interpreters. The
+exit handling below assumes the main interpreter exiting once per process:
+the flags it sets are never reset. Its 3 s park of a woken worker is a
+bound on how long that worker is held, not a promise that the worker's
+call or cleanup completes.
 
 **Exit with a shell still open.** You should still `close()` (or use
 `with`) every shell, but forgetting to is no longer fatal: at interpreter
@@ -617,6 +621,20 @@ when the worker has cleanup of its own to do. The exception is an `atexit`
 handler registered before `import tstrans` (it runs after the tstrans
 hook) that joins such a worker: after the 3 s the worker returns, its call
 raises like any cancelled call, its `finally` runs, and the join completes.
+
+**An `rtp.RtspSession` is not reached by the exit hook.** The hook cancels
+shells; it does not cancel an RTSP client or send its TEARDOWN, so
+`close()` the session (or leave its `with` block) before exit. A session
+left open sends its best-effort TEARDOWN only if the interpreter collects it
+while finalising, as when it is collected earlier; CPython 3.12 did so for a
+module-level session and for one held only by a reference cycle, but
+CPython does not promise to collect every object at exit. A receiver taken
+from the session (`into_demux_receiver()`, `into_h264_receiver()`) is a
+shell, which the hook does cancel. A thread parked in `pause()`, `play()`
+or `teardown()` at exit is not woken: a non-daemon thread holds the exit
+until its request ends (up to the 10 s request timeout against a server
+that does not answer), and a daemon thread is left parked while the process
+exits.
 
 ### What answers while another thread is parked
 
@@ -1211,9 +1229,9 @@ Note that `MountHandle` retains the `push_*` naming convention (buffer op),
 while `MuxSender` uses `send_*` (transport-bound op). The `MountHandle` is
 `Arc`-shared, so multiple producer threads may push concurrently. A push
 raises `RtspError(MOUNT)` when the muxer refuses the frame, and
-`RtspError(CLOSED)` once the server has ended (`stop()`, the `with` exit,
-`cancel_handle().cancel()`, or the server being collected), whether or not
-the mount was removed first.
+`RtspError(CLOSED)` from the moment `stop()` begins (also the `with` exit),
+and after `cancel_handle().cancel()` or the server being collected, whether
+or not the mount was removed first.
 
 ```python
 from tstrans.rtp import RtspServer, RtspServerConfig
@@ -1244,7 +1262,12 @@ together, or `__post_init__` raises `ValueError`; unreadable paths raise
 `RtspError(TLS)` at `start()`). For a credentialed server pass
 `auth=BasicAuth("user", "pass", "realm")` — the realm is required
 server-side. `server.cancel_handle()` returns an `RtspServerCancelHandle`
-for an immediate hard teardown that bypasses the drain window.
+for a hard teardown: no Notice 5402 and no drain window. Its `cancel()`
+sets a flag and returns. Mount pushes, mount registration and removal,
+rule edits and a new `next_publisher` raise `RtspError(CLOSED)` at once; a
+parked `next_publisher` raises it within 100 ms, and within 100 ms the
+server ends its sessions, its listener, its multicast senders and the
+publish side. A `stop()` after the cancel does not run the graceful path.
 
 ### RTSP publisher ingest
 
@@ -1332,10 +1355,10 @@ How each call ends:
 | Call | Outcome | Meaning |
 |---|---|---|
 | `next_publisher(timeout)` | `None` | No mount arrived in time. Always the result when on-demand publishers are off. |
-| `next_publisher`, `add_publish_mount`, `remove_mount` | `RtspError(CLOSED)` | The server is stopped. A `next_publisher` parked on another thread wakes with it when `stop()` or the `with` exit runs. |
+| `next_publisher`, `add_publish_mount`, `remove_mount` | `RtspError(CLOSED)` | The server is stopped (from the moment `stop()` begins) or hard-cancelled. A `next_publisher` parked on another thread wakes with it when `stop()` or the `with` exit runs, and within 100 ms of a hard cancel. |
 | `add_publish_mount`, `remove_mount` | `RtspError(MOUNT)` | Duplicate or invalid path, or no mount registered at the path. |
 | `into_demux_receiver` | `RtspError(CLOSED)` | The mount's transport was already taken, through this or any other handle to the mount. |
-| iterating the receiver | `StopIteration` | End of stream: the mount was removed, the server stopped, or its recording publisher left with end-on-exit on. What was already queued is delivered first. |
+| iterating the receiver | `StopIteration` | End of stream: the mount was removed, the server stopped or was hard-cancelled, or its recording publisher left with end-on-exit on. What was already queued is delivered first. |
 | iterating the receiver | `RtpError(CLOSED)` | The application cancelled it: `PublishMount.cancel()` or `DemuxReceiver.close()`. |
 
 Rules the types do not enforce:
@@ -1346,8 +1369,9 @@ Rules the types do not enforce:
   discontinuities.
 - **Every shutdown ends the mounts.** `stop()`, the `with` exit and
   `cancel_handle().cancel()` end every publish mount's receiver and wake a
-  parked `next_publisher` with `RtspError(CLOSED)`; only the hard cancel
-  skips the Notice 5402 teardown. At interpreter exit a server left open is
+  parked `next_publisher` with `RtspError(CLOSED)` (the hard cancel within
+  100 ms); only the hard cancel skips the Notice 5402 teardown. At
+  interpreter exit a server left open is
   hard-cancelled, so a daemon thread parked in `next_publisher` ends.
 - **`next_publisher` blocking.** It releases the GIL while it waits. With
   `timeout=None` it waits until a mount arrives or the server stops, in 1 s
