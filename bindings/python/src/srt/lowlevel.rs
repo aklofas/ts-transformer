@@ -488,7 +488,9 @@ pub(crate) struct PySocket {
     /// method holds this guard across a GIL release — nothing ever holds
     /// this lock across a park (`close()`'s native call releases the GIL
     /// only after the guard is already dropped). `Option` so the `into_*`
-    /// promotions and `close()` can take the handle.
+    /// promotions and `close()` can take the handle. A refusal builds its
+    /// exception only after the guard drops: the exception's `__init__` is
+    /// Python and can hand the GIL to a thread waiting for this lock.
     inner: Mutex<Option<SrtSocket>>,
 }
 
@@ -518,13 +520,10 @@ impl PySocket {
     /// Take the libsrt handle for a consuming promotion; `CLOSED` once
     /// it has been consumed or closed.
     fn take_socket(&self, py: Python<'_>) -> PyResult<SrtSocket> {
-        self.inner
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .take()
-            .ok_or_else(|| {
-                make_kinded_error(py, "SrtError", "SrtErrorKind", "CLOSED", "socket is closed")
-            })
+        let taken = self.inner.lock().unwrap_or_else(|e| e.into_inner()).take();
+        taken.ok_or_else(|| {
+            make_kinded_error(py, "SrtError", "SrtErrorKind", "CLOSED", "socket is closed")
+        })
     }
 }
 
@@ -587,12 +586,16 @@ impl PySocket {
     /// Local bound address as `(host, port)`. Useful when the URL
     /// requested port 0 (kernel-pick).
     fn local_addr(&self, py: Python<'_>) -> PyResult<(String, u16)> {
-        let guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-        let socket = guard.as_ref().ok_or_else(|| {
-            make_kinded_error(py, "SrtError", "SrtErrorKind", "CLOSED", "socket is closed")
-        })?;
-        let addr = socket
-            .local_addr()
+        let addr = self
+            .inner
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_ref()
+            .map(|socket| socket.local_addr());
+        let addr = addr
+            .ok_or_else(|| {
+                make_kinded_error(py, "SrtError", "SrtErrorKind", "CLOSED", "socket is closed")
+            })?
             .map_err(|e| raise(py, &SRT, BindingError::from(e)))?;
         Ok((addr.ip().to_string(), addr.port()))
     }
@@ -600,12 +603,16 @@ impl PySocket {
     /// Peer address as `(host, port)`. Errors if the socket isn't
     /// connected (e.g., a fresh bind without accept).
     fn peer_addr(&self, py: Python<'_>) -> PyResult<(String, u16)> {
-        let guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-        let socket = guard.as_ref().ok_or_else(|| {
-            make_kinded_error(py, "SrtError", "SrtErrorKind", "CLOSED", "socket is closed")
-        })?;
-        let addr = socket
-            .peer_addr()
+        let addr = self
+            .inner
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_ref()
+            .map(|socket| socket.peer_addr());
+        let addr = addr
+            .ok_or_else(|| {
+                make_kinded_error(py, "SrtError", "SrtErrorKind", "CLOSED", "socket is closed")
+            })?
             .map_err(|e| raise(py, &SRT, BindingError::from(e)))?;
         Ok((addr.ip().to_string(), addr.port()))
     }

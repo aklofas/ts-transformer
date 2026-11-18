@@ -740,7 +740,10 @@ pub struct PyRtspSession {
     /// because `into_demux_receiver` / `into_h264_receiver` consumes it
     /// — any take after the first raises `RtspError(CLOSED)`. The
     /// `Mutex` mirrors the `client` field's pattern so the two fields
-    /// can be accessed under uniform locking discipline.
+    /// can be accessed under uniform locking discipline. A refusal on this
+    /// slot or `h264_depay_config` builds its exception only after the
+    /// guard drops: the exception's `__init__` is Python and can hand the
+    /// GIL to a thread waiting for the same lock.
     session: Arc<Mutex<Option<RustRtspSession>>>,
     /// Set true by `teardown` / `close` so duplicate teardowns
     /// are a no-op rather than a "session_id is None" surface from
@@ -920,22 +923,21 @@ impl PyRtspSession {
         self.refuse_if_consumed("RtspSession.into_demux_receiver: already consumed")?;
         // Guard: reject if this session was created by connect_h264() — the
         // H264DepayConfig slot being Some signals an H.264 session.
-        {
-            let guard = self
-                .h264_depay_config
-                .lock()
-                .map_err(|_| PyValueError::new_err("RtspSession lock poisoned"))?;
-            if guard.is_some() {
-                return Err(raise(
-                    py,
-                    &RTSP,
-                    BindingError::new(
-                        BindingErrorKind::RtspProtocol,
-                        "RtspSession.into_demux_receiver: this session was negotiated \
-                         for H.264 elementary ingest — use into_h264_receiver() instead",
-                    ),
-                ));
-            }
+        let is_h264 = self
+            .h264_depay_config
+            .lock()
+            .map_err(|_| PyValueError::new_err("RtspSession lock poisoned"))?
+            .is_some();
+        if is_h264 {
+            return Err(raise(
+                py,
+                &RTSP,
+                BindingError::new(
+                    BindingErrorKind::RtspProtocol,
+                    "RtspSession.into_demux_receiver: this session was negotiated \
+                     for H.264 elementary ingest — use into_h264_receiver() instead",
+                ),
+            ));
         }
         // Validate before the take: a refused config must not consume the
         // data plane.
@@ -944,18 +946,17 @@ impl PyRtspSession {
             Some(cfg) => Some(crate::mpegts::build_demuxer_config(py, cfg)?),
         };
         // Take the SETUP-time RtspSession; double-consume = CLOSED.
-        let session = {
-            let mut guard = self
-                .session
-                .lock()
-                .map_err(|_| PyValueError::new_err("RtspSession lock poisoned"))?;
-            guard.take().ok_or_else(|| {
-                rtsp_err_no_gil(
-                    BindingErrorKind::Closed,
-                    "RtspSession.into_demux_receiver: already consumed",
-                )
-            })?
-        };
+        let session = self
+            .session
+            .lock()
+            .map_err(|_| PyValueError::new_err("RtspSession lock poisoned"))?
+            .take();
+        let session = session.ok_or_else(|| {
+            rtsp_err_no_gil(
+                BindingErrorKind::Closed,
+                "RtspSession.into_demux_receiver: already consumed",
+            )
+        })?;
         // Convert to RtpRecvTransport. The session's `into_recv_transport`
         // panics only on internal-state-corruption shapes that can't
         // happen on a SETUP-succeeded path; we don't catch_unwind here
@@ -987,43 +988,41 @@ impl PyRtspSession {
         self.refuse_if_consumed("RtspSession.into_h264_receiver: data plane already consumed")?;
         // Step 1: take the H264DepayConfig stashed at connect_h264 time.
         // None = session was created by connect() (wrong path).
-        let depay_config = {
-            let mut guard = self
-                .h264_depay_config
-                .lock()
-                .map_err(|_| PyValueError::new_err("RtspSession lock poisoned"))?;
-            guard.take().ok_or_else(|| {
-                raise(
-                    py,
-                    &RTSP,
-                    BindingError::new(
-                        BindingErrorKind::RtspProtocol,
-                        "RtspSession.into_h264_receiver: session was not created by \
-                         connect_h264()",
-                    ),
-                )
-            })?
-        };
+        let depay_config = self
+            .h264_depay_config
+            .lock()
+            .map_err(|_| PyValueError::new_err("RtspSession lock poisoned"))?
+            .take();
+        let depay_config = depay_config.ok_or_else(|| {
+            raise(
+                py,
+                &RTSP,
+                BindingError::new(
+                    BindingErrorKind::RtspProtocol,
+                    "RtspSession.into_h264_receiver: session was not created by \
+                     connect_h264()",
+                ),
+            )
+        })?;
 
         // Step 2: take the SETUP-time RtspSession.
         // Zero this BEFORE the fallible into_h264_receiver call (prevents a
         // double free if it raises).
-        let session = {
-            let mut guard = self
-                .session
-                .lock()
-                .map_err(|_| PyValueError::new_err("RtspSession lock poisoned"))?;
-            guard.take().ok_or_else(|| {
-                raise(
-                    py,
-                    &RTSP,
-                    BindingError::new(
-                        BindingErrorKind::Closed,
-                        "RtspSession.into_h264_receiver: data plane already consumed",
-                    ),
-                )
-            })?
-        };
+        let session = self
+            .session
+            .lock()
+            .map_err(|_| PyValueError::new_err("RtspSession lock poisoned"))?
+            .take();
+        let session = session.ok_or_else(|| {
+            raise(
+                py,
+                &RTSP,
+                BindingError::new(
+                    BindingErrorKind::Closed,
+                    "RtspSession.into_h264_receiver: data plane already consumed",
+                ),
+            )
+        })?;
 
         // Step 3: convert the RTSP session into an H264Receiver.
         let receiver = session.into_h264_receiver(depay_config);
@@ -1095,11 +1094,12 @@ impl PyRtspSession {
     /// `RtspError(CLOSED)` when the data plane has already been taken —
     /// a non-taking check, so a refusal never consumes anything.
     fn refuse_if_consumed(&self, message: &str) -> PyResult<()> {
-        let guard = self
+        let consumed = self
             .session
             .lock()
-            .map_err(|_| PyValueError::new_err("RtspSession lock poisoned"))?;
-        if guard.is_none() {
+            .map_err(|_| PyValueError::new_err("RtspSession lock poisoned"))?
+            .is_none();
+        if consumed {
             return Err(rtsp_err_no_gil(BindingErrorKind::Closed, message));
         }
         Ok(())

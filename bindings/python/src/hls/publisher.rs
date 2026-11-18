@@ -462,7 +462,9 @@ pub(crate) struct PyHlsServerHandle {
     /// addressable; `Mutex` to allow the `&self` methods plus a `take()` on
     /// shutdown. Locked with the GIL held, which is sound because no
     /// method keeps the guard across `py.detach` (`shutdown` moves
-    /// the handle out and drops the guard first).
+    /// the handle out and drops the guard first). A refusal builds its
+    /// exception only after the guard drops: the exception's `__init__` is
+    /// Python and can hand the GIL to a thread waiting for this lock.
     inner: Mutex<Option<HlsServerHandle>>,
 }
 
@@ -479,35 +481,37 @@ impl PyHlsServerHandle {
     /// Local socket address the HTTP server is bound to, as `"ip:port"`.
     /// Raises `HlsError(FINISHED)` if the server has already been shut down.
     fn local_addr(&self, py: Python<'_>) -> PyResult<String> {
-        let guard = self
+        let value = self
             .inner
             .lock()
-            .map_err(|_| PyRuntimeError::new_err("HlsServerHandle mutex poisoned"))?;
-        let handle = guard.as_ref().ok_or_else(|| {
+            .map_err(|_| PyRuntimeError::new_err("HlsServerHandle mutex poisoned"))?
+            .as_ref()
+            .map(|handle| handle.local_addr().to_string());
+        value.ok_or_else(|| {
             raise(
                 py,
                 &HLS,
                 BindingError::new(BindingErrorKind::HlsFinished, "HlsServerHandle shut down"),
             )
-        })?;
-        Ok(handle.local_addr().to_string())
+        })
     }
 
     /// Convenience: the bound TCP port. Raises `HlsError(FINISHED)` if the
     /// server has already been shut down.
     fn local_port(&self, py: Python<'_>) -> PyResult<u16> {
-        let guard = self
+        let value = self
             .inner
             .lock()
-            .map_err(|_| PyRuntimeError::new_err("HlsServerHandle mutex poisoned"))?;
-        let handle = guard.as_ref().ok_or_else(|| {
+            .map_err(|_| PyRuntimeError::new_err("HlsServerHandle mutex poisoned"))?
+            .as_ref()
+            .map(|handle| handle.local_addr().port());
+        value.ok_or_else(|| {
             raise(
                 py,
                 &HLS,
                 BindingError::new(BindingErrorKind::HlsFinished, "HlsServerHandle shut down"),
             )
-        })?;
-        Ok(handle.local_addr().port())
+        })
     }
 
     /// Stop serving and wait up to 2 s for the `tst-hls` thread. Idempotent:
