@@ -12,6 +12,12 @@
 # the lock and says why that cannot happen; re-check every row that shares the
 # lock when a holder changes.
 #
+# A listed function also builds no exception (`raise`, `make_kinded_error`,
+# `rtsp_err_no_gil`, ...) while it holds the guard: an exception's
+# `__init__` is Python and can hand the GIL to a thread that then waits for
+# the same lock with the GIL held. Take the value out, let the guard drop,
+# then build the error. The scan does not check this; review does.
+#
 # Not a candidate for this list — fix the function instead:
 #   - the lock is held across `py.detach` anywhere (a push, a send, a
 #     recv): take it inside `detach` and raise after the GIL is back;
