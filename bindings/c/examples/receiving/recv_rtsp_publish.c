@@ -103,9 +103,10 @@
  * stores an atomic flag (the same pattern as send_rtsp_server.c).
  *
  * WHY the hard cancel here:
- *   The hard cancel makes the listener stop accepting within ~100 ms, so
- *   no new publisher slips in while the process is shutting down, and it
- *   aborts every RTSP session at its next poll.  It is terminal for the
+ *   Within 100 ms of the hard cancel a task on the server's runtime makes
+ *   the listener stop accepting, so no new publisher slips in while the
+ *   process is shutting down, and ends every RTSP session (after the
+ *   builder's graceful-shutdown drain).  It is terminal for the
  *   publish side, as `tst_rtsp_server_stop` is: every publish mount is
  *   closed (each demux thread's receiver reads TST_E_END_OF_STREAM) and a
  *   call parked in `tst_rtsp_server_next_publisher` wakes with

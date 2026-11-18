@@ -412,15 +412,18 @@ int main(int argc, char **argv) {
 
     /* ── Step 4: Obtain a cancel handle for signal-safe shutdown ────────────
      *
-     * The cancel handle wraps an Arc<AtomicBool> shared with the server.
+     * The cancel handle shares one atomic flag with the server.
      * tst_rtsp_cancel_handle_cancel sets that flag — safe to call from a
-     * signal handler.  The server's internal tasks observe the flag and stop
-     * accepting new frames; active sessions see TST_E_CLOSED on the next push.
+     * signal handler.  From then on every mount push is refused at once
+     * with TST_E_CLOSED, which is how the push loop below notices it.
+     * Within 100 ms the server's own tasks see the flag too: the listener
+     * stops accepting and the client sessions end.
      *
      * This is NOT the same as tst_rtsp_server_stop: cancel is instant and
      * does not send Notice 5402; stop sends Notice 5402 and waits for drain.
      * We use cancel from the signal handler to wake up the push loop quickly,
-     * then call stop from the main thread for a clean shutdown.
+     * then call stop from the main thread, which after the cancel sends no
+     * Notice and returns at once: the server is already down.
      */
     g_cancel_handle = tst_rtsp_server_cancel_handle(server);
     if (!g_cancel_handle) {
