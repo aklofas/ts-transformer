@@ -54,7 +54,7 @@ use crate::raise::{SRT, pyok, raise};
 use crate::shells::cancel::PyCancelHandle;
 use crate::shells::demux_receiver::demux_recv_err;
 use crate::shells::mux_sender::mux_sender_err;
-use crate::shells::open_cancel::{PyOpenCancel, begin, closed, finish, object_of};
+use crate::shells::open_cancel::{PyOpenCancel, begin, closed, finish, object_of, refuse};
 use crate::srt::policy::PyReconnectPolicy;
 use crate::util::{CancelSource, close_owned, drop_owned};
 
@@ -154,16 +154,22 @@ impl PyManagedMuxSender {
 
         let oc = object_of(cancel);
         let slot = begin(&oc).ok_or_else(|| raise(py, &SRT, closed()))?;
-        let parsed = SrtUrl::parse(url).map_err(|e| raise(py, &SRT, BindingError::from(e)))?;
+        let parsed = match SrtUrl::parse(url) {
+            Ok(parsed) => parsed,
+            Err(e) => return Err(raise(py, &SRT, refuse(slot, BindingError::from(e)))),
+        };
         if parsed.mode != Mode::Caller {
             return Err(raise(
                 py,
                 &SRT,
-                BindingError::new(
-                    BindingErrorKind::ConfigInvalid,
-                    format!(
-                        "ManagedMuxSender.from_url requires ?mode=caller (default); got mode={:?}",
-                        parsed.mode
+                refuse(
+                    slot,
+                    BindingError::new(
+                        BindingErrorKind::ConfigInvalid,
+                        format!(
+                            "ManagedMuxSender.from_url requires ?mode=caller (default); got mode={:?}",
+                            parsed.mode
+                        ),
                     ),
                 ),
             ));
@@ -715,7 +721,10 @@ impl PyManagedDemuxReceiver {
     ) -> PyResult<Self> {
         let oc = object_of(cancel);
         let slot = begin(&oc).ok_or_else(|| raise(py, &SRT, closed()))?;
-        let parsed = SrtUrl::parse(url).map_err(|e| raise(py, &SRT, BindingError::from(e)))?;
+        let parsed = match SrtUrl::parse(url) {
+            Ok(parsed) => parsed,
+            Err(e) => return Err(raise(py, &SRT, refuse(slot, BindingError::from(e)))),
+        };
         // Translate the DemuxerConfig dataclass with the GIL held.
         let demux_opts = match demux_config {
             None => None,

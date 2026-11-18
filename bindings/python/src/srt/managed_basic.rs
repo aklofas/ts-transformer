@@ -67,7 +67,7 @@ use crate::generated::stats_shells::SocketStats;
 use crate::generated::stats_srt::{ManagedTransportStats, SrtStats};
 use crate::raise::{SRT, pyok, pyres, raise};
 use crate::shells::cancel::PyCancelHandle;
-use crate::shells::open_cancel::{PyOpenCancel, begin, closed, finish, object_of};
+use crate::shells::open_cancel::{PyOpenCancel, begin, closed, finish, object_of, refuse};
 use crate::srt::policy::PyReconnectPolicy;
 use crate::util::{CancelSource, close_owned, drop_owned};
 
@@ -139,16 +139,22 @@ impl PyManagedSender {
         // Validate the URL up-front so a malformed one raises
         // CONFIG_INVALID naming the Python method; `tst_srt::shells` would
         // refuse a listener URL too, but with its own message.
-        let parsed = SrtUrl::parse(url).map_err(|e| raise(py, &SRT, BindingError::from(e)))?;
+        let parsed = match SrtUrl::parse(url) {
+            Ok(parsed) => parsed,
+            Err(e) => return Err(raise(py, &SRT, refuse(slot, BindingError::from(e)))),
+        };
         if parsed.mode != Mode::Caller {
             return Err(raise(
                 py,
                 &SRT,
-                BindingError::new(
-                    BindingErrorKind::ConfigInvalid,
-                    format!(
-                        "ManagedSender.from_url requires ?mode=caller (default); got mode={:?}",
-                        parsed.mode
+                refuse(
+                    slot,
+                    BindingError::new(
+                        BindingErrorKind::ConfigInvalid,
+                        format!(
+                            "ManagedSender.from_url requires ?mode=caller (default); got mode={:?}",
+                            parsed.mode
+                        ),
                     ),
                 ),
             ));
@@ -391,16 +397,22 @@ impl PyManagedReceiver {
     ) -> PyResult<Self> {
         let oc = object_of(cancel);
         let slot = begin(&oc).ok_or_else(|| raise(py, &SRT, closed()))?;
-        let parsed = SrtUrl::parse(url).map_err(|e| raise(py, &SRT, BindingError::from(e)))?;
+        let parsed = match SrtUrl::parse(url) {
+            Ok(parsed) => parsed,
+            Err(e) => return Err(raise(py, &SRT, refuse(slot, BindingError::from(e)))),
+        };
         if parsed.mode != Mode::Listener {
             return Err(raise(
                 py,
                 &SRT,
-                BindingError::new(
-                    BindingErrorKind::ConfigInvalid,
-                    format!(
-                        "ManagedReceiver.from_url requires ?mode=listener; got mode={:?}",
-                        parsed.mode
+                refuse(
+                    slot,
+                    BindingError::new(
+                        BindingErrorKind::ConfigInvalid,
+                        format!(
+                            "ManagedReceiver.from_url requires ?mode=listener; got mode={:?}",
+                            parsed.mode
+                        ),
                     ),
                 ),
             ));
