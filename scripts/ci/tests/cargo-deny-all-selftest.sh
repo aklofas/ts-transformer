@@ -124,6 +124,14 @@ grep -q "advisory-db at $REV" "$TMP/out" || fail "set pin: the log does not name
   || fail "set pin: the pinned config differs from deny.toml in more than the yanked key: $(sort -u "$TMP/config-diff.log")"
 n=$((n + 1))
 
+# 4a. The pinned config is a temp file the script removes at exit.
+mkdir "$TMP/tmpdir"
+pin "$REV"; echo "$REV" > "$TMP/head"; TMPDIR="$TMP/tmpdir" run
+[ "$rc" = 0 ] || fail "temp config: exit $rc"
+[ -s "$TMP/yanked.log" ] || fail "temp config: no check read a config"
+[ -z "$(ls -A "$TMP/tmpdir")" ] || fail "temp config: left behind in TMPDIR: $(ls -A "$TMP/tmpdir")"
+n=$((n + 1))
+
 # 4b. A cargo fetch that fails twice is retried and the run passes; one that
 # fails three times fails its workspace only, and the others still run.
 pin "$REV"; echo "$REV" > "$TMP/head"; echo 'crates/tst-srt/fuzz/Cargo.toml 2' > "$TMP/fetch-fails"; run
