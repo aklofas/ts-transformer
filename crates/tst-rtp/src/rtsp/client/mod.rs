@@ -813,11 +813,18 @@ impl RtspClient {
 
     /// [`Self::close`] with `join_bound` as the wait for the thread.
     fn close_with(mut self, join_bound: Duration) -> Result<(), RtspError> {
+        self.end_within(join_bound)
+        // `Drop` runs next with the session already cleared: it writes no
+        // second TEARDOWN.
+    }
+
+    /// What [`Self::close`] does, on a client its caller still holds: the
+    /// TEARDOWN, then the stop of the thread and the wait for it. The
+    /// client's drop, which sets the cancel, is left to the caller.
+    pub(crate) fn end_within(&mut self, join_bound: Duration) -> Result<(), RtspError> {
         let r = self.teardown_within(CLOSE_TEARDOWN_BOUND);
         self.driver.stop();
         let _ = self.driver.join_within(join_bound);
-        // `Drop` runs next with the session already cleared: it writes no
-        // second TEARDOWN.
         r
     }
 }

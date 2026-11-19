@@ -21,7 +21,7 @@ use crate::rtcp::sender::{
 };
 use crate::rtsp::client::builder::RtspClientBuilder;
 use crate::rtsp::client::media_queue::{MEDIA_QUEUE_BOUND, MediaWaitEnd};
-use crate::rtsp::client::{CLOSE_TEARDOWN_BOUND, RtspCancelHandle, RtspClient};
+use crate::rtsp::client::{CLOSE_JOIN_BOUND, CLOSE_TEARDOWN_BOUND, RtspCancelHandle, RtspClient};
 use crate::rtsp::message::RtspMethod;
 use crate::transport::{random_u32, record_end};
 
@@ -461,15 +461,15 @@ impl RtspPush {
     /// `Ok(())` means the queued media was written and the server accepted
     /// the TEARDOWN. A wait ended by the cancel or by the session's end
     /// goes straight on to the TEARDOWN, and what was still queued is
-    /// dropped. The result is then an error: after a cancel,
-    /// [`RtspError::LocalCancel`]; after the connection ended,
-    /// [`RtspError::Io`], as the TEARDOWN cannot be written; on a session
-    /// the server forgot, with RTP packets among what was dropped,
-    /// [`RtspError::Protocol`] with code `454`, whatever the TEARDOWN is
-    /// answered. One such end is not an error in itself: a session the
-    /// server forgot from which only sender reports were dropped lost no
-    /// media, and the result is the TEARDOWN's own, `Ok(())` when the
-    /// server accepts it.
+    /// dropped. The result is then an error, the first of these that
+    /// applies: on a push whose cancel has fired,
+    /// [`RtspError::LocalCancel`]; on a session the server forgot, with
+    /// RTP packets among what was dropped, [`RtspError::Protocol`] with
+    /// code `454`, whatever the TEARDOWN is answered; after the connection
+    /// ended, [`RtspError::Io`], as the TEARDOWN cannot be written. One
+    /// such end is not an error in itself: a session the server forgot
+    /// from which only sender reports were dropped lost no media, and the
+    /// result is the TEARDOWN's own, `Ok(())` when the server accepts it.
     ///
     /// The end reason it leaves, unless one was recorded before, is
     /// `CleanTeardown` when the server accepts the TEARDOWN (`2xx` or
@@ -482,6 +482,13 @@ impl RtspPush {
     ///
     /// # Errors
     ///
+    /// In this order:
+    ///
+    /// - [`RtspError::LocalCancel`] on a cancelled push (the TEARDOWN is
+    ///   still written): the cancel was set before the close, or fired
+    ///   during it and the close did not succeed. It comes before the
+    ///   loss below: a close that lost media and whose cancel has fired
+    ///   by the time it returns reports the cancel.
     /// - [`RtspError::Protocol`] with code `454` when the server had
     ///   forgotten the session (the end reason is `SessionExpired`) and
     ///   media was lost: RTP packets the push's earlier data calls had
@@ -497,8 +504,6 @@ impl RtspPush {
     ///   it: a refusal is [`RtspError::Protocol`] with its status, an
     ///   unanswered one [`RtspError::Timeout`], one on a connection that
     ///   has ended [`RtspError::Io`].
-    /// - [`RtspError::LocalCancel`] on a cancelled push (the TEARDOWN is
-    ///   still written).
     ///
     /// The client's thread is stopped on every outcome.
     pub fn close(mut self) -> Result<(), RtspError> {
@@ -511,16 +516,22 @@ impl RtspPush {
             &self.queued,
             self.client.driver.frames_dropped_at_close(),
         );
-        let torn_down = self.client.close();
+        let torn_down = self.client.end_within(CLOSE_JOIN_BOUND);
+        // Read before the client is dropped: its drop sets the cancel.
+        let cancelled = self.client.cancel.is_cancelled();
         // The loss, whatever the TEARDOWN came to: a caller that reads any
-        // other result takes every queued packet as written.
-        if lost {
-            return Err(RtspError::Protocol {
-                code: 454,
-                reason: "Session Not Found".into(),
-            });
+        // other result takes every queued packet as written. A cancel that
+        // has fired comes before it, as for every call that fails.
+        if !lost {
+            return torn_down;
         }
-        torn_down
+        if cancelled {
+            return Err(RtspError::LocalCancel);
+        }
+        Err(RtspError::Protocol {
+            code: 454,
+            reason: "Session Not Found".into(),
+        })
     }
 
     /// A handle that ends a waiting data call, `pause` or `close` from

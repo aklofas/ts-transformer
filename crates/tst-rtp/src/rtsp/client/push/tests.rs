@@ -17,9 +17,9 @@ use super::{PUSH_MP2T_MAX_PAYLOAD, PushDescription, PushError, RtspPush, VideoTr
 use crate::error::RtspError;
 use crate::packet::RtpHeader;
 use crate::rtcp::{ReceiverReport, ReportBlock, SenderReport};
-use crate::rtsp::client::RtspClient;
 use crate::rtsp::client::builder::RtspClientBuilder;
 use crate::rtsp::client::media_queue::MEDIA_QUEUE_BOUND;
+use crate::rtsp::client::{RtspCancelHandle, RtspClient};
 use crate::rtsp::message::{RtspMethod, RtspRequest};
 
 /// The session id the scripted server names.
@@ -1889,10 +1889,15 @@ fn close_delivers_every_queued_frame_then_teardown() {
 
 /// `close` on a session the server forgot while media was queued: a ping
 /// is answered `454` with the queue full, the frames are dropped, and the
-/// TEARDOWN that `close` still writes is answered `teardown_status`.
-fn close_after_expiry_dropped_media(teardown_status: &'static str) -> Result<(), RtspError> {
+/// TEARDOWN that `close` still writes is answered `teardown_status`. With
+/// no status the server answers nothing: it fires the push's cancel when
+/// it reads the TEARDOWN, so the cancel lands after the close's wait for
+/// the queue has ended, and hangs up.
+fn close_after_expiry_dropped_media(
+    teardown_status: Option<&'static str>,
+) -> Result<(), RtspError> {
     let (held, holding) = mpsc::channel::<()>();
-    let (open, gate) = mpsc::channel::<()>();
+    let (open, gate) = mpsc::channel::<RtspCancelHandle>();
     let (port, peer) = serve(move |peer| {
         peer.accept_push();
         // A ping is held unanswered while the client fills its queue
@@ -1900,7 +1905,8 @@ fn close_after_expiry_dropped_media(teardown_status: &'static str) -> Result<(),
         let ping = peer.request();
         assert_eq!(ping.method, RtspMethod::Options);
         held.send(()).unwrap();
-        gate.recv_timeout(scaled(Duration::from_secs(20)))
+        let cancel = gate
+            .recv_timeout(scaled(Duration::from_secs(20)))
             .expect("the test opens the gate");
         // From here on the server knows no session: the held ping and
         // every later one are answered so.
@@ -1911,7 +1917,10 @@ fn close_after_expiry_dropped_media(teardown_status: &'static str) -> Result<(),
                 continue;
             };
             if request.method == RtspMethod::Teardown {
-                peer.answer(&request, teardown_status, "");
+                match teardown_status {
+                    Some(status) => peer.answer(&request, status, ""),
+                    None => cancel.cancel(),
+                }
                 return;
             }
             peer.answer(&request, "454 Session Not Found", "");
@@ -1924,7 +1933,7 @@ fn close_after_expiry_dropped_media(teardown_status: &'static str) -> Result<(),
         .expect("a ping reaches the server");
     fill_the_queue(&mut push);
     let queue = push.client().driver.media_queue();
-    open.send(()).unwrap();
+    open.send(push.cancel_handle()).unwrap();
     eventually("the ping's answer recorded", || {
         push.end_reason() == Some(EndReason::SessionExpired)
     });
@@ -1946,7 +1955,7 @@ fn close_after_expiry_dropped_media(teardown_status: &'static str) -> Result<(),
 /// the session as asked, and `close` does not report that as success.
 #[test]
 fn close_after_a_ping_454_dropped_queued_media_is_an_error() {
-    let r = close_after_expiry_dropped_media("454 Session Not Found");
+    let r = close_after_expiry_dropped_media(Some("454 Session Not Found"));
     assert!(
         matches!(&r, Err(RtspError::Protocol { code: 454, .. })),
         "{r:?}"
@@ -1957,11 +1966,21 @@ fn close_after_a_ping_454_dropped_queued_media_is_an_error() {
 /// the TEARDOWN: a refusal with another status does not take its place.
 #[test]
 fn close_reports_the_lost_media_whatever_the_teardown_is_answered() {
-    let r = close_after_expiry_dropped_media("501 Not Implemented");
+    let r = close_after_expiry_dropped_media(Some("501 Not Implemented"));
     assert!(
         matches!(&r, Err(RtspError::Protocol { code: 454, .. })),
         "{r:?}"
     );
+}
+
+/// The cancel comes first: a close that lost media and whose cancel has
+/// fired by the time it returns reports the cancel, not the loss. Here the
+/// cancel fires once the wait for the queue is over, while the TEARDOWN
+/// waits for its reply.
+#[test]
+fn a_cancelled_close_that_lost_media_reports_the_cancel() {
+    let r = close_after_expiry_dropped_media(None);
+    assert!(matches!(&r, Err(RtspError::LocalCancel)), "{r:?}");
 }
 
 /// A frame announces its length in 16 bits: what does not fit is refused,
