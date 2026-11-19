@@ -870,6 +870,10 @@ class RenderTests(unittest.TestCase):
             self.assertEqual(rec["abi"]["previous_source"], how)
             self.assertIn("compared with v0.8.0 (%s): abidiff exit 0" % how, q.render_block(rec))
 
+    def test_abi_line_prints_the_recorded_exit_and_verdict(self):
+        rec = collect(lambda f: f["abi.json"].update(abidiff_exit=12, verdict="incompatible"))
+        self.assertIn("abidiff exit 12, incompatible", q.render_block(rec))
+
     def test_bench_ir_missing_or_failing_is_no_go(self):
         rec = collect(lambda f: f.__setitem__("bench-ir.json", None))
         self.assertEqual(leg(rec, "bench-ir")["conclusion"], "missing")
