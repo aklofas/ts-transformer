@@ -34,6 +34,7 @@ on:
   # tag) applies to the other two triggers.
   pull_request:
     paths:
+      # The rehearsal's own files only: ci.yml runs the install scripts on every pull request.
       - ".github/workflows/release-qualify.yml"
       - ".github/workflows/fuzz.yml"
       - "scripts/ci/fuzz*"

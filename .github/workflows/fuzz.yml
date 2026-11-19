@@ -183,8 +183,9 @@ jobs:
     name: fuzz result
     needs: [plan, shard]
     # Runs whatever the shards did: a failed or missing shard is a line in the
-    # result and a failure of this job, not a missing job.
-    if: always()
+    # result and a failure of this job, not a missing job. A cancelled run
+    # (a newer push to the pull request) stops it too.
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:

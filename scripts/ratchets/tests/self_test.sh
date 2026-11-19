@@ -1177,6 +1177,18 @@ expect_out "roster-sync: job if without the guard" "ci.yml deny: its job-level i
 rs_copy; printf '\n  late-job:\n    runs-on: ubuntu-24.04\n    steps:\n      - run: "true"\n' >> "$tmp/rs/.github/workflows/ci.yml"
                                                                                  expect "roster-sync: a job added without the guard" 1 rsync_
 expect_out "roster-sync: new job without the guard" "ci.yml late-job does not need dispatch-sha"
+# A job key with a trailing comment is still a job: walked, and its text read.
+rs_copy; printf '\n  late-job: # added later\n    runs-on: ubuntu-24.04\n    steps:\n      - run: "true"\n' >> "$tmp/rs/.github/workflows/ci.yml"
+                                                                                 expect "roster-sync: a job added with a commented key" 1 rsync_
+expect_out "roster-sync: commented key" "ci.yml late-job does not need dispatch-sha"
+rs_copy; plant "$tmp/rs/.github/workflows/ci.yml" '^  test-linux-musl:$' '  test-linux-musl:  # the musl build'
+                                                                                 expect "roster-sync: a guarded job whose key carries a comment" 0 rsync_
+# The guard runs a job only after the check passed or was skipped: a job that
+# also runs when the check job was cancelled or lost fails.
+rs_copy; awk '/^  [A-Za-z0-9_-]+:$/ {f = ($0 == "  deny:")} f && /^    if:/ {sub(/\(needs\.dispatch-sha\.result == .success. [|][|] needs\.dispatch-sha\.result == .skipped.\)/, "needs.dispatch-sha.result != '"'"'failure'"'"'")} {print}' "$tmp/rs/.github/workflows/ci.yml" > "$tmp/rs/ci.new" && mv "$tmp/rs/ci.new" "$tmp/rs/.github/workflows/ci.yml"
+grep -q "^    if: .*result != 'failure'" "$tmp/rs/.github/workflows/ci.yml" || { echo "FAIL: roster-sync: the guard plant did not apply"; fail=1; }
+                                                                                 expect "roster-sync: a guard that also runs after a cancelled check" 1 rsync_
+expect_out "roster-sync: guard without the result check" "ci.yml deny: its job-level if: is not one line opening with the dispatch-sha guard"
 rs_copy; rm "$tmp/rs/embedded/baremetal-qemu/Cargo.toml"
                                                                                  expect "roster-sync: a deny manifest gone from the checked tree" 1 rsync_
 expect_out "roster-sync: deny manifest gone" "ci.yml deny job names a manifest-path that does not exist: embedded/baremetal-qemu/Cargo.toml"
