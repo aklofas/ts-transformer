@@ -58,14 +58,16 @@ rvc="$(sed -nE 's/^RVC_DEP_TOMLS="\$\{RVC_DEP_TOMLS:-(.*)\}"$/\1/p' "$F/scripts/
 [ "$rvc" = "$(bash "$R" dep-tomls | sort)" ] || bad "release-version-consistency.sh RVC_DEP_TOMLS != roster dep-tomls"
 
 CI="$F/.github/workflows/ci.yml"
+# A job key may carry trailing spaces or a comment (`  late-job: # x`).
+job_key='^  [A-Za-z0-9_-]+:[[:space:]]*(#.*)?$'
 job_text() { # <job> : the text of that ci.yml job, up to the next top-level job
-  awk -v j="  $1:" '$0 == j {f = 1; next} /^  [A-Za-z0-9_-]+:$/ {f = 0} f' "$CI"
+  awk -v j="$1" -v k="$job_key" '$0 ~ k {id = $0; sub(/^  /, "", id); sub(/:.*/, "", id); f = (id == j); next} f' "$CI"
 }
 # Every job but dispatch-sha needs it and opens its job-level if: with this
 # guard, so a dispatch whose sha is not the tip runs nothing; a job added
 # without them would run anyway.
-guard="if: \${{ !cancelled() && needs.dispatch-sha.result != 'failure' && ("
-for j in $(awk '/^jobs:$/ {f = 1; next} /^[^ #]/ {f = 0} f && /^  [A-Za-z0-9_-]+:$/ {sub(/^  /, ""); sub(/:$/, ""); print}' "$CI"); do
+guard="if: \${{ !cancelled() && (needs.dispatch-sha.result == 'success' || needs.dispatch-sha.result == 'skipped') && ("
+for j in $(awk -v k="$job_key" '/^jobs:$/ {f = 1; next} /^[^ #]/ {f = 0} f && $0 ~ k {sub(/^  /, ""); sub(/:.*/, ""); print}' "$CI"); do
   [ "$j" != dispatch-sha ] || continue
   t="$(job_text "$j")"
   grep -qE '^    needs: (dispatch-sha|\[(.*, *)?dispatch-sha(, *.*)?\])[[:space:]]*$' <<<"$t" || bad "ci.yml $j does not need dispatch-sha"

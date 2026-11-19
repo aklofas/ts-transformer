@@ -702,7 +702,8 @@ CENSUS_COUNTS = ("total", "pass", "fail", "expected_unsupported", "skipped", "st
 
 def _arm_census(art):
     """The linux-aarch64 subset census, or None when that job left none. It is
-    recorded beside the x86_64 census; the verdict reads only the x86_64 one."""
+    recorded beside the x86_64 census; the verdict reads only the x86_64 one,
+    but a failed aarch64 job fails the interop leg."""
     c = read_json(os.path.join(art, "interop-census-aarch64.json"))
     if c is None:
         return None
