@@ -90,11 +90,6 @@ jobs:
           # libsrt/librist/mbedTLS trees.
           submodules: recursive
 
-      - name: Assert version consistency
-        # Same rail ci/python-wheels/jvm-jar run (internal dep `version`
-        # keys == workspace version).
-        run: bash scripts/check/repo/release-version-consistency.sh
-
       - name: Install build prerequisites
         # librist's vendored build is meson-driven (meson from the hashed pip
         # file); libsrt + mbedTLS use cmake (pre-installed on GitHub runners).
@@ -102,6 +97,12 @@ jobs:
         run: bash scripts/ci/install-build-tools.sh
 
       - uses: ./.github/actions/rust-setup
+
+      - name: Assert version consistency
+        # Same rail ci/python-wheels/jvm-jar run (internal dep `version`
+        # keys == workspace version).
+        # After the toolchain: the rail reads cargo metadata.
+        run: bash scripts/check/repo/release-version-consistency.sh
 
       - name: Point registry deps at the tree
         # `cargo publish --dry-run` rewrites path deps to registry
@@ -146,14 +147,6 @@ jobs:
           submodules: recursive
           fetch-depth: 0
 
-      - name: Assert version consistency
-        # On a v* tag push this also forces source version == tag. Re-asserted
-        # at publish time because it is the specific guard against stranding
-        # the ordered publish mid-sequence (internal dep `version` keys ==
-        # workspace version).
-        # A tag that is not `vMAJOR.MINOR.PATCH` fails here.
-        run: bash scripts/check/repo/release-version-consistency.sh
-
       # The publish workflows do not wait for the tag's own qualification run
       # (releasing.md §6), so each one checks the committed record itself.
       - name: The committed record is release-eligible for this tag
@@ -171,6 +164,15 @@ jobs:
         run: bash scripts/ci/install-build-tools.sh
 
       - uses: ./.github/actions/rust-setup
+
+      - name: Assert version consistency
+        # On a v* tag push this also forces source version == tag. Re-asserted
+        # at publish time because it is the specific guard against stranding
+        # the ordered publish mid-sequence (internal dep `version` keys ==
+        # workspace version).
+        # A tag that is not `vMAJOR.MINOR.PATCH` fails here.
+        # After the toolchain: the rail reads cargo metadata.
+        run: bash scripts/check/repo/release-version-consistency.sh
 
       # Each layer step's argument list is the layer: the rehearsal reads
       # these lines, and the roster rail checks them against the roster.

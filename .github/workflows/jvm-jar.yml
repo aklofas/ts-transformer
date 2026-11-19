@@ -163,6 +163,13 @@ jobs:
           echo "Staged native libs:"
           find staging/native -type f | sort
 
+      # The publish job's version-rail pair, run here too: this job runs on
+      # every push to main and in a release rehearsal, the publish only on a tag.
+      - uses: ./.github/actions/rust-setup
+
+      - name: Assert version consistency
+        run: bash scripts/check/repo/release-version-consistency.sh
+
       - name: Assemble fat JAR
         working-directory: bindings/jvm
         shell: bash
@@ -267,6 +274,9 @@ jobs:
           path: staging
           pattern: native-*
           merge-multiple: true
+
+      # The rail reads cargo metadata: the pinned toolchain first, no cache.
+      - uses: ./.github/actions/rust-setup
 
       - name: Assert version consistency (tag == source version)
         run: bash scripts/check/repo/release-version-consistency.sh
