@@ -5885,3 +5885,275 @@ owning_tests = ["crates/tst-rtp/tests/rtsp_client/teardown.rs", "bindings/python
 bindings = ["c:tst_rtsp_session_teardown_and_free", "python:n/a(Python has no client object: the RtspSession holds the client, and RtspSession.close() and the with exit call this)", "java:org.tstrans.rtp.RtspSession.close", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
+
+# RTSP push client (ANNOUNCE / SETUP mode=record / RECORD over TCP-interleaved
+# RTP). Unit tests against a scripted server in push/tests.rs; the
+# integration tests against the library's RtspServer in tests/rtsp_push/;
+# the Python and JVM twins in test_rtsp_push.py and RtspPushTest.java. The
+# bindings push in one call (RtspClient.push), so the stepwise announce /
+# setup_record / record have no twin there. The Transport impl of RtspPush
+# is reached in the bindings through RtspPushSession.into_sender /
+# into_mux_sender: the shell's sends, liveness and socket stats call it.
+
+[[surface]]
+kind = "rust"
+crate = "tst-rtp"
+item = "tst_rtp::rtsp::client::RtspClient::announce"
+owning_tests = ["crates/tst-rtp/src/rtsp/client/push/tests.rs", "crates/tst-rtp/tests/rtsp_push/refusals.rs"]
+bindings = ["c:deferred(the RTSP push client in the C API: docs/project/deferred-features.md)", "python:n/a(the bindings push in one call: RtspClient.push runs ANNOUNCE, SETUP and RECORD)", "java:n/a(the bindings push in one call: RtspClient.push runs ANNOUNCE, SETUP and RECORD)", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-rtp"
+item = "tst_rtp::rtsp::client::RtspClient::setup_record"
+owning_tests = ["crates/tst-rtp/src/rtsp/client/push/tests.rs"]
+bindings = ["c:deferred(the RTSP push client in the C API: docs/project/deferred-features.md)", "python:n/a(the bindings push in one call: RtspClient.push runs ANNOUNCE, SETUP and RECORD)", "java:n/a(the bindings push in one call: RtspClient.push runs ANNOUNCE, SETUP and RECORD)", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-rtp"
+item = "tst_rtp::rtsp::client::RtspClient::record"
+owning_tests = ["crates/tst-rtp/src/rtsp/client/push/tests.rs"]
+bindings = ["c:deferred(the RTSP push client in the C API: docs/project/deferred-features.md)", "python:n/a(the bindings push in one call: RtspClient.push runs ANNOUNCE, SETUP and RECORD)", "java:n/a(the bindings push in one call: RtspClient.push runs ANNOUNCE, SETUP and RECORD)", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-rtp"
+item = "tst_rtp::RtspPush"
+owning_tests = ["crates/tst-rtp/src/rtsp/client/push/tests.rs", "crates/tst-rtp/tests/rtsp_push/mp2t.rs", "crates/tst-rtp/tests/rtsp_push/es_h264.rs", "bindings/python/tests/test_rtsp_push.py", "bindings/jvm/src/test/java/org/tstrans/rtp/RtspPushTest.java"]
+bindings = ["c:deferred(the RTSP push client in the C API: docs/project/deferred-features.md)", "python:tstrans.rtp.RtspPushSession", "java:org.tstrans.rtp.RtspPushSession", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-rtp"
+item = "tst_rtp::rtsp::client::push::RtspPush"
+owning_tests = ["crates/tst-rtp/src/rtsp/client/push/tests.rs", "crates/tst-rtp/tests/rtsp_push/mp2t.rs", "crates/tst-rtp/tests/rtsp_push/es_h264.rs", "bindings/python/tests/test_rtsp_push.py", "bindings/jvm/src/test/java/org/tstrans/rtp/RtspPushTest.java"]
+bindings = ["c:deferred(the RTSP push client in the C API: docs/project/deferred-features.md)", "python:tstrans.rtp.RtspPushSession", "java:org.tstrans.rtp.RtspPushSession", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-rtp"
+item = "tst_rtp::RtspPush::as_any"
+owning_tests = ["crates/tst-rtp/src/rtsp/client/push/tests.rs"]
+bindings = ["c:deferred(the RTSP push client in the C API: docs/project/deferred-features.md)", "python:n/a(a Rust downcast seam of the Transport impl)", "java:n/a(a Rust downcast seam of the Transport impl)", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-rtp"
+item = "tst_rtp::RtspPush::cancel_handle"
+owning_tests = ["crates/tst-rtp/src/rtsp/client/push/tests.rs", "crates/tst-rtp/tests/rtsp_push/ends.rs", "crates/tst-rtp/tests/rtsp_push/shells.rs", "bindings/python/tests/test_rtsp_push.py", "bindings/jvm/src/test/java/org/tstrans/rtp/RtspPushTest.java"]
+bindings = ["c:deferred(the RTSP push client in the C API: docs/project/deferred-features.md)", "python:tstrans.rtp.RtspPushSession.cancel_handle", "java:org.tstrans.rtp.RtspPushSession.cancelHandle", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-rtp"
+item = "tst_rtp::RtspPush::close"
+owning_tests = ["crates/tst-rtp/src/rtsp/client/push/tests.rs", "crates/tst-rtp/tests/rtsp_push/ends.rs", "bindings/python/tests/test_rtsp_push.py", "bindings/jvm/src/test/java/org/tstrans/rtp/RtspPushTest.java"]
+bindings = ["c:deferred(the RTSP push client in the C API: docs/project/deferred-features.md)", "python:tstrans.rtp.RtspPushSession.close", "java:org.tstrans.rtp.RtspPushSession.close", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-rtp"
+item = "tst_rtp::RtspPush::connect"
+owning_tests = ["crates/tst-rtp/src/rtsp/client/push/tests.rs", "crates/tst-rtp/tests/rtsp_push/auth.rs", "crates/tst-rtp/tests/rtsp_push/tls.rs", "crates/tst-rtp/tests/rtsp_push/refusals.rs", "bindings/python/tests/test_rtsp_push.py", "bindings/jvm/src/test/java/org/tstrans/rtp/RtspPushTest.java"]
+bindings = ["c:deferred(the RTSP push client in the C API: docs/project/deferred-features.md)", "python:tstrans.rtp.RtspClient.push", "java:org.tstrans.rtp.RtspClient.push", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-rtp"
+item = "tst_rtp::RtspPush::end_reason"
+owning_tests = ["crates/tst-rtp/src/rtsp/client/push/tests.rs", "crates/tst-rtp/tests/rtsp_push/ends.rs", "crates/tst-rtp/tests/rtsp_push/refusals.rs"]
+bindings = ["c:deferred(the RTSP push client in the C API: docs/project/deferred-features.md)", "python:deferred(RtspPushSession has no end-reason getter)", "java:deferred(RtspPushSession has no end-reason getter)", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-rtp"
+item = "tst_rtp::RtspPush::is_alive"
+owning_tests = ["crates/tst-rtp/src/rtsp/client/push/tests.rs", "crates/tst-rtp/tests/rtsp_push/shells.rs"]
+bindings = ["c:deferred(the RTSP push client in the C API: docs/project/deferred-features.md)", "python:tstrans.rtp.RtspPushSession.into_sender", "java:org.tstrans.rtp.RtspPushSession.intoSender", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-rtp"
+item = "tst_rtp::RtspPush::is_session_alive"
+owning_tests = ["crates/tst-rtp/src/rtsp/client/push/tests.rs", "crates/tst-rtp/tests/rtsp_push/ends.rs"]
+bindings = ["c:deferred(the RTSP push client in the C API: docs/project/deferred-features.md)", "python:tstrans.rtp.RtspPushSession.is_session_alive", "java:org.tstrans.rtp.RtspPushSession.isSessionAlive", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-rtp"
+item = "tst_rtp::RtspPush::max_payload"
+owning_tests = ["crates/tst-rtp/src/rtsp/client/push/tests.rs", "crates/tst-rtp/tests/rtsp_push/shells.rs"]
+bindings = ["c:deferred(the RTSP push client in the C API: docs/project/deferred-features.md)", "python:tstrans.rtp.RtspPushSession.into_sender", "java:org.tstrans.rtp.RtspPushSession.intoSender", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-rtp"
+item = "tst_rtp::RtspPush::pause"
+owning_tests = ["crates/tst-rtp/src/rtsp/client/push/tests.rs", "crates/tst-rtp/tests/rtsp_push/ends.rs", "bindings/python/tests/test_rtsp_push.py", "bindings/jvm/src/test/java/org/tstrans/rtp/RtspPushTest.java"]
+bindings = ["c:deferred(the RTSP push client in the C API: docs/project/deferred-features.md)", "python:tstrans.rtp.RtspPushSession.pause", "java:org.tstrans.rtp.RtspPushSession.pause", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-rtp"
+item = "tst_rtp::RtspPush::resume"
+owning_tests = ["crates/tst-rtp/src/rtsp/client/push/tests.rs", "bindings/python/tests/test_rtsp_push.py", "bindings/jvm/src/test/java/org/tstrans/rtp/RtspPushTest.java"]
+bindings = ["c:deferred(the RTSP push client in the C API: docs/project/deferred-features.md)", "python:tstrans.rtp.RtspPushSession.resume", "java:org.tstrans.rtp.RtspPushSession.resume", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-rtp"
+item = "tst_rtp::RtspPush::send_bytes"
+owning_tests = ["crates/tst-rtp/src/rtsp/client/push/tests.rs", "crates/tst-rtp/tests/rtsp_push/shells.rs", "bindings/python/tests/test_rtsp_push.py", "bindings/jvm/src/test/java/org/tstrans/rtp/RtspPushTest.java"]
+bindings = ["c:deferred(the RTSP push client in the C API: docs/project/deferred-features.md)", "python:tstrans.rtp.RtspPushSession.into_sender", "java:org.tstrans.rtp.RtspPushSession.intoSender", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-rtp"
+item = "tst_rtp::RtspPush::send_klv"
+owning_tests = ["crates/tst-rtp/src/rtsp/client/push/tests.rs", "crates/tst-rtp/tests/rtsp_push/es_h264_klv.rs", "bindings/python/tests/test_rtsp_push.py", "bindings/jvm/src/test/java/org/tstrans/rtp/RtspPushTest.java"]
+bindings = ["c:deferred(the RTSP push client in the C API: docs/project/deferred-features.md)", "python:tstrans.rtp.RtspPushSession.send_klv", "java:org.tstrans.rtp.RtspPushSession.sendKlv", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-rtp"
+item = "tst_rtp::RtspPush::send_ts"
+owning_tests = ["crates/tst-rtp/src/rtsp/client/push/tests.rs", "crates/tst-rtp/tests/rtsp_push/mp2t.rs", "bindings/python/tests/test_rtsp_push.py", "bindings/jvm/src/test/java/org/tstrans/rtp/RtspPushTest.java"]
+bindings = ["c:deferred(the RTSP push client in the C API: docs/project/deferred-features.md)", "python:tstrans.rtp.RtspPushSession.send_ts", "java:org.tstrans.rtp.RtspPushSession.sendTs", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-rtp"
+item = "tst_rtp::RtspPush::send_video"
+owning_tests = ["crates/tst-rtp/src/rtsp/client/push/tests.rs", "crates/tst-rtp/tests/rtsp_push/es_h264.rs", "bindings/python/tests/test_rtsp_push.py", "bindings/jvm/src/test/java/org/tstrans/rtp/RtspPushTest.java"]
+bindings = ["c:deferred(the RTSP push client in the C API: docs/project/deferred-features.md)", "python:tstrans.rtp.RtspPushSession.send_video", "java:org.tstrans.rtp.RtspPushSession.sendVideo", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-rtp"
+item = "tst_rtp::RtspPush::session_id"
+owning_tests = ["crates/tst-rtp/src/rtsp/client/push/tests.rs", "bindings/python/tests/test_rtsp_push.py"]
+bindings = ["c:deferred(the RTSP push client in the C API: docs/project/deferred-features.md)", "python:tstrans.rtp.RtspPushSession.session_id", "java:org.tstrans.rtp.RtspPushSession.sessionId", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-rtp"
+item = "tst_rtp::RtspPush::socket_stats"
+owning_tests = ["crates/tst-rtp/src/rtsp/client/push/tests.rs", "crates/tst-rtp/tests/rtsp_push/shells.rs"]
+bindings = ["c:deferred(the RTSP push client in the C API: docs/project/deferred-features.md)", "python:tstrans.rtp.RtspPushSession.into_sender", "java:org.tstrans.rtp.RtspPushSession.intoSender", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-rtp"
+item = "tst_rtp::RtspPush::stats"
+owning_tests = ["crates/tst-rtp/src/rtsp/client/push/tests.rs", "crates/tst-rtp/tests/rtsp_push/mp2t.rs", "bindings/python/tests/test_rtsp_push.py", "bindings/jvm/src/test/java/org/tstrans/rtp/RtspPushTest.java"]
+bindings = ["c:deferred(the RTSP push client in the C API: docs/project/deferred-features.md)", "python:tstrans.rtp.RtspPushSession.stats", "java:org.tstrans.rtp.RtspPushSession.stats", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-rtp"
+item = "tst_rtp::PUSH_MP2T_MAX_PAYLOAD"
+owning_tests = ["crates/tst-rtp/src/rtsp/client/push/tests.rs", "crates/tst-rtp/tests/rtsp_push/tls.rs"]
+bindings = ["c:deferred(the RTSP push client in the C API: docs/project/deferred-features.md)", "python:n/a(send_ts documents the 1316-byte limit and refuses a larger payload as TOO_LARGE)", "java:n/a(send_ts documents the 1316-byte limit and refuses a larger payload as TOO_LARGE)", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-rtp"
+item = "tst_rtp::rtsp::client::push::PUSH_MP2T_MAX_PAYLOAD"
+owning_tests = ["crates/tst-rtp/src/rtsp/client/push/tests.rs", "crates/tst-rtp/tests/rtsp_push/tls.rs"]
+bindings = ["c:deferred(the RTSP push client in the C API: docs/project/deferred-features.md)", "python:n/a(send_ts documents the 1316-byte limit and refuses a larger payload as TOO_LARGE)", "java:n/a(send_ts documents the 1316-byte limit and refuses a larger payload as TOO_LARGE)", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-rtp"
+item = "tst_rtp::rtsp::client::push::VideoTrack::h264_from_key_frame"
+owning_tests = ["crates/tst-rtp/src/rtsp/client/push/tests.rs", "bindings/python/tests/test_rtsp_push.py", "bindings/jvm/src/test/java/org/tstrans/rtp/RtspPushTest.java"]
+bindings = ["c:deferred(the RTSP push client in the C API: docs/project/deferred-features.md)", "python:tstrans.rtp.PushDescription.h264_from_key_frame", "java:org.tstrans.rtp.PushDescription.h264FromKeyFrame", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-rtp"
+item = "tst_rtp::rtsp::client::push::VideoTrack::h265_from_key_frame"
+owning_tests = ["crates/tst-rtp/src/rtsp/client/push/tests.rs", "bindings/python/tests/test_rtsp_push.py", "bindings/jvm/src/test/java/org/tstrans/rtp/RtspPushTest.java"]
+bindings = ["c:deferred(the RTSP push client in the C API: docs/project/deferred-features.md)", "python:tstrans.rtp.PushDescription.h265_from_key_frame", "java:org.tstrans.rtp.PushDescription.h265FromKeyFrame", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[exempt]]
+item = "tst_rtp::rtsp::client::push::PushError::from"
+reason = "From<TransportError> impl introduced by thiserror #[from] on PushError::Transport; error-enum trait method"
+
+[[exempt]]
+item = "tst_rtp::rtsp::client::push::PushError::source"
+reason = "Error::source impl introduced by thiserror #[from] on PushError::Transport; error-enum trait method"
+
+# RFC 6597 KLV packetizer: unit tests and a round trip through the server's
+# depacketizer in klv/packetizer.rs; the push client sends through it.
+
+[[surface]]
+kind = "rust"
+crate = "tst-rtp"
+item = "tst_rtp::klv::packetize"
+owning_tests = ["crates/tst-rtp/src/klv/packetizer.rs"]
+bindings = ["c:deferred(no C consumer yet)", "python:n/a(the push session packetizes KLV inside send_klv)", "java:n/a(the push session packetizes KLV inside sendKlv)", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-rtp"
+item = "tst_rtp::klv::MIN_MAX_PAYLOAD"
+owning_tests = ["crates/tst-rtp/src/klv/packetizer.rs"]
+bindings = ["c:deferred(no C consumer yet)", "python:n/a(the push session packetizes KLV inside send_klv)", "java:n/a(the push session packetizes KLV inside sendKlv)", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"

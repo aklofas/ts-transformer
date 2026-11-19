@@ -143,6 +143,8 @@ pub tst_rtp::error::RtspError::MultipleMp2tMedia
 pub tst_rtp::error::RtspError::MultipleMp2tMedia::count: usize
 pub tst_rtp::error::RtspError::NoH264Media
 pub tst_rtp::error::RtspError::NoMp2tMedia
+pub tst_rtp::error::RtspError::NotAllowed
+pub tst_rtp::error::RtspError::NotAllowed::detail: &'static str
 pub tst_rtp::error::RtspError::Protocol
 pub tst_rtp::error::RtspError::Protocol::code: u16
 pub tst_rtp::error::RtspError::Protocol::reason: alloc::string::String
@@ -348,6 +350,9 @@ impl core::marker::Unpin for tst_rtp::h265::depacketizer::H265Depacketizer
 impl core::marker::UnsafeUnpin for tst_rtp::h265::depacketizer::H265Depacketizer
 impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::h265::depacketizer::H265Depacketizer
 impl core::panic::unwind_safe::UnwindSafe for tst_rtp::h265::depacketizer::H265Depacketizer
+pub mod tst_rtp::klv
+pub const tst_rtp::klv::MIN_MAX_PAYLOAD: usize
+pub fn tst_rtp::klv::packetize(&[u8], usize) -> alloc::vec::Vec<tst_rtp::packet::Chunk>
 pub mod tst_rtp::opener
 pub fn tst_rtp::opener::open_recv(&str) -> core::result::Result<tst_pipeline::binding::opened::Opened<alloc::boxed::Box<dyn tst_core::transport::RecvTransport>>, tst_pipeline::binding::kind::BindingError>
 pub fn tst_rtp::opener::open_sender(&str) -> core::result::Result<tst_pipeline::binding::opened::Opened<alloc::boxed::Box<dyn tst_core::transport::Transport>>, tst_pipeline::binding::kind::BindingError>
@@ -684,6 +689,117 @@ impl core::marker::Unpin for tst_rtp::rtsp::client::play::RtpInfo
 impl core::marker::UnsafeUnpin for tst_rtp::rtsp::client::play::RtpInfo
 impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::rtsp::client::play::RtpInfo
 impl core::panic::unwind_safe::UnwindSafe for tst_rtp::rtsp::client::play::RtpInfo
+pub mod tst_rtp::rtsp::client::push
+#[non_exhaustive] pub enum tst_rtp::rtsp::client::push::PushDescription
+pub tst_rtp::rtsp::client::push::PushDescription::Elementary
+pub tst_rtp::rtsp::client::push::PushDescription::Elementary::klv: bool
+pub tst_rtp::rtsp::client::push::PushDescription::Elementary::video: tst_rtp::rtsp::client::push::VideoTrack
+pub tst_rtp::rtsp::client::push::PushDescription::Mp2t
+impl core::clone::Clone for tst_rtp::rtsp::client::push::PushDescription
+pub fn tst_rtp::rtsp::client::push::PushDescription::clone(&self) -> tst_rtp::rtsp::client::push::PushDescription
+impl core::fmt::Debug for tst_rtp::rtsp::client::push::PushDescription
+pub fn tst_rtp::rtsp::client::push::PushDescription::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for tst_rtp::rtsp::client::push::PushDescription
+impl core::marker::Send for tst_rtp::rtsp::client::push::PushDescription
+impl core::marker::Sync for tst_rtp::rtsp::client::push::PushDescription
+impl core::marker::Unpin for tst_rtp::rtsp::client::push::PushDescription
+impl core::marker::UnsafeUnpin for tst_rtp::rtsp::client::push::PushDescription
+impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::rtsp::client::push::PushDescription
+impl core::panic::unwind_safe::UnwindSafe for tst_rtp::rtsp::client::push::PushDescription
+#[non_exhaustive] pub enum tst_rtp::rtsp::client::push::PushError
+pub tst_rtp::rtsp::client::push::PushError::Empty(&'static str)
+pub tst_rtp::rtsp::client::push::PushError::NoSuchTrack(&'static str)
+pub tst_rtp::rtsp::client::push::PushError::Transport(tst_core::transport::TransportError)
+impl core::convert::From<tst_core::transport::TransportError> for tst_rtp::rtsp::client::push::PushError
+pub fn tst_rtp::rtsp::client::push::PushError::from(tst_core::transport::TransportError) -> Self
+impl core::error::Error for tst_rtp::rtsp::client::push::PushError
+pub fn tst_rtp::rtsp::client::push::PushError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
+impl core::fmt::Debug for tst_rtp::rtsp::client::push::PushError
+pub fn tst_rtp::rtsp::client::push::PushError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for tst_rtp::rtsp::client::push::PushError
+pub fn tst_rtp::rtsp::client::push::PushError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for tst_rtp::rtsp::client::push::PushError
+impl core::marker::Send for tst_rtp::rtsp::client::push::PushError
+impl core::marker::Sync for tst_rtp::rtsp::client::push::PushError
+impl core::marker::Unpin for tst_rtp::rtsp::client::push::PushError
+impl core::marker::UnsafeUnpin for tst_rtp::rtsp::client::push::PushError
+impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::rtsp::client::push::PushError
+impl core::panic::unwind_safe::UnwindSafe for tst_rtp::rtsp::client::push::PushError
+#[non_exhaustive] pub enum tst_rtp::rtsp::client::push::VideoTrack
+pub tst_rtp::rtsp::client::push::VideoTrack::H264
+pub tst_rtp::rtsp::client::push::VideoTrack::H264::parameter_sets: alloc::vec::Vec<alloc::vec::Vec<u8>>
+pub tst_rtp::rtsp::client::push::VideoTrack::H265
+pub tst_rtp::rtsp::client::push::VideoTrack::H265::pps: alloc::vec::Vec<u8>
+pub tst_rtp::rtsp::client::push::VideoTrack::H265::sps: alloc::vec::Vec<u8>
+pub tst_rtp::rtsp::client::push::VideoTrack::H265::vps: alloc::vec::Vec<u8>
+impl tst_rtp::rtsp::client::push::VideoTrack
+pub fn tst_rtp::rtsp::client::push::VideoTrack::h264_from_key_frame(&[u8]) -> core::result::Result<Self, tst_rtp::error::RtspError>
+pub fn tst_rtp::rtsp::client::push::VideoTrack::h265_from_key_frame(&[u8]) -> core::result::Result<Self, tst_rtp::error::RtspError>
+impl core::clone::Clone for tst_rtp::rtsp::client::push::VideoTrack
+pub fn tst_rtp::rtsp::client::push::VideoTrack::clone(&self) -> tst_rtp::rtsp::client::push::VideoTrack
+impl core::fmt::Debug for tst_rtp::rtsp::client::push::VideoTrack
+pub fn tst_rtp::rtsp::client::push::VideoTrack::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for tst_rtp::rtsp::client::push::VideoTrack
+impl core::marker::Send for tst_rtp::rtsp::client::push::VideoTrack
+impl core::marker::Sync for tst_rtp::rtsp::client::push::VideoTrack
+impl core::marker::Unpin for tst_rtp::rtsp::client::push::VideoTrack
+impl core::marker::UnsafeUnpin for tst_rtp::rtsp::client::push::VideoTrack
+impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::rtsp::client::push::VideoTrack
+impl core::panic::unwind_safe::UnwindSafe for tst_rtp::rtsp::client::push::VideoTrack
+#[non_exhaustive] pub struct tst_rtp::rtsp::client::push::PushStats
+pub tst_rtp::rtsp::client::push::PushStats::bytes_sent: u64
+pub tst_rtp::rtsp::client::push::PushStats::cumulative_lost: u32
+pub tst_rtp::rtsp::client::push::PushStats::fraction_lost_q8: u8
+pub tst_rtp::rtsp::client::push::PushStats::frames_dropped_at_close: u64
+pub tst_rtp::rtsp::client::push::PushStats::frames_dropped_inbound: u64
+pub tst_rtp::rtsp::client::push::PushStats::packets_sent: u64
+pub tst_rtp::rtsp::client::push::PushStats::receiver_reports: u64
+pub tst_rtp::rtsp::client::push::PushStats::sender_reports_sent: u64
+impl core::clone::Clone for tst_rtp::rtsp::client::push::PushStats
+pub fn tst_rtp::rtsp::client::push::PushStats::clone(&self) -> tst_rtp::rtsp::client::push::PushStats
+impl core::default::Default for tst_rtp::rtsp::client::push::PushStats
+pub fn tst_rtp::rtsp::client::push::PushStats::default() -> tst_rtp::rtsp::client::push::PushStats
+impl core::fmt::Debug for tst_rtp::rtsp::client::push::PushStats
+pub fn tst_rtp::rtsp::client::push::PushStats::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for tst_rtp::rtsp::client::push::PushStats
+impl core::marker::Send for tst_rtp::rtsp::client::push::PushStats
+impl core::marker::Sync for tst_rtp::rtsp::client::push::PushStats
+impl core::marker::Unpin for tst_rtp::rtsp::client::push::PushStats
+impl core::marker::UnsafeUnpin for tst_rtp::rtsp::client::push::PushStats
+impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::rtsp::client::push::PushStats
+impl core::panic::unwind_safe::UnwindSafe for tst_rtp::rtsp::client::push::PushStats
+pub struct tst_rtp::rtsp::client::push::RtspPush
+impl tst_rtp::RtspPush
+pub fn tst_rtp::RtspPush::cancel_handle(&self) -> tst_rtp::rtsp::client::RtspCancelHandle
+pub fn tst_rtp::RtspPush::close(self) -> core::result::Result<(), tst_rtp::error::RtspError>
+pub fn tst_rtp::RtspPush::connect(tst_rtp::rtsp::client::builder::RtspClientBuilder, &tst_rtp::rtsp::client::push::PushDescription) -> core::result::Result<Self, tst_rtp::error::RtspError>
+pub fn tst_rtp::RtspPush::end_reason(&self) -> core::option::Option<tst_core::transport::EndReason>
+pub fn tst_rtp::RtspPush::is_session_alive(&self) -> bool
+pub fn tst_rtp::RtspPush::pause(&mut self) -> core::result::Result<(), tst_rtp::error::RtspError>
+pub fn tst_rtp::RtspPush::resume(&mut self) -> core::result::Result<(), tst_rtp::error::RtspError>
+pub fn tst_rtp::RtspPush::send_klv(&mut self, &[u8], tst_core::mpegts::common::Pts90khz) -> core::result::Result<(), tst_rtp::rtsp::client::push::PushError>
+pub fn tst_rtp::RtspPush::send_ts(&mut self, &[u8]) -> core::result::Result<(), tst_core::transport::TransportError>
+pub fn tst_rtp::RtspPush::send_video(&mut self, &[u8], tst_core::mpegts::common::Pts90khz) -> core::result::Result<(), tst_rtp::rtsp::client::push::PushError>
+pub fn tst_rtp::RtspPush::session_id(&self) -> &str
+pub fn tst_rtp::RtspPush::stats(&self) -> tst_rtp::rtsp::client::push::PushStats
+impl core::fmt::Debug for tst_rtp::RtspPush
+pub fn tst_rtp::RtspPush::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl tst_core::transport::Transport for tst_rtp::RtspPush
+pub fn tst_rtp::RtspPush::as_any(&self) -> core::option::Option<&dyn core::any::Any>
+pub fn tst_rtp::RtspPush::cancel_handle(&self) -> core::option::Option<alloc::sync::Arc<(dyn tst_core::transport::TransportCancel + core::marker::Send + core::marker::Sync)>>
+pub fn tst_rtp::RtspPush::close(&mut self)
+pub fn tst_rtp::RtspPush::is_alive(&self) -> bool
+pub fn tst_rtp::RtspPush::max_payload(&self) -> usize
+pub fn tst_rtp::RtspPush::send_bytes(&mut self, &[u8]) -> core::result::Result<(), tst_core::transport::TransportError>
+pub fn tst_rtp::RtspPush::socket_stats(&self) -> core::option::Option<tst_core::transport::SocketStats>
+impl core::marker::Freeze for tst_rtp::RtspPush
+impl core::marker::Send for tst_rtp::RtspPush
+impl !core::marker::Sync for tst_rtp::RtspPush
+impl core::marker::Unpin for tst_rtp::RtspPush
+impl core::marker::UnsafeUnpin for tst_rtp::RtspPush
+impl !core::panic::unwind_safe::RefUnwindSafe for tst_rtp::RtspPush
+impl !core::panic::unwind_safe::UnwindSafe for tst_rtp::RtspPush
+pub const tst_rtp::rtsp::client::push::PUSH_MP2T_MAX_PAYLOAD: usize
 pub mod tst_rtp::rtsp::client::session
 pub struct tst_rtp::rtsp::client::session::RtspSession
 impl tst_rtp::rtsp::client::session::RtspSession
@@ -699,6 +815,10 @@ impl core::marker::UnsafeUnpin for tst_rtp::rtsp::client::session::RtspSession
 impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::rtsp::client::session::RtspSession
 impl core::panic::unwind_safe::UnwindSafe for tst_rtp::rtsp::client::session::RtspSession
 pub struct tst_rtp::rtsp::client::RtspClient
+impl tst_rtp::rtsp::client::RtspClient
+pub fn tst_rtp::rtsp::client::RtspClient::announce(&mut self, &tst_rtp::rtsp::client::push::PushDescription) -> core::result::Result<(), tst_rtp::error::RtspError>
+pub fn tst_rtp::rtsp::client::RtspClient::record(self) -> core::result::Result<tst_rtp::RtspPush, tst_rtp::error::RtspError>
+pub fn tst_rtp::rtsp::client::RtspClient::setup_record(&mut self) -> core::result::Result<(), tst_rtp::error::RtspError>
 impl tst_rtp::rtsp::client::RtspClient
 pub fn tst_rtp::rtsp::client::RtspClient::cancel_handle(&self) -> tst_rtp::rtsp::client::RtspCancelHandle
 pub fn tst_rtp::rtsp::client::RtspClient::close(self) -> core::result::Result<(), tst_rtp::error::RtspError>
@@ -1657,6 +1777,41 @@ impl core::marker::Unpin for tst_rtp::rtsp::server::publish::PublishShape
 impl core::marker::UnsafeUnpin for tst_rtp::rtsp::server::publish::PublishShape
 impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::rtsp::server::publish::PublishShape
 impl core::panic::unwind_safe::UnwindSafe for tst_rtp::rtsp::server::publish::PublishShape
+#[non_exhaustive] pub enum tst_rtp::PushDescription
+pub tst_rtp::PushDescription::Elementary
+pub tst_rtp::PushDescription::Elementary::klv: bool
+pub tst_rtp::PushDescription::Elementary::video: tst_rtp::rtsp::client::push::VideoTrack
+pub tst_rtp::PushDescription::Mp2t
+impl core::clone::Clone for tst_rtp::rtsp::client::push::PushDescription
+pub fn tst_rtp::rtsp::client::push::PushDescription::clone(&self) -> tst_rtp::rtsp::client::push::PushDescription
+impl core::fmt::Debug for tst_rtp::rtsp::client::push::PushDescription
+pub fn tst_rtp::rtsp::client::push::PushDescription::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for tst_rtp::rtsp::client::push::PushDescription
+impl core::marker::Send for tst_rtp::rtsp::client::push::PushDescription
+impl core::marker::Sync for tst_rtp::rtsp::client::push::PushDescription
+impl core::marker::Unpin for tst_rtp::rtsp::client::push::PushDescription
+impl core::marker::UnsafeUnpin for tst_rtp::rtsp::client::push::PushDescription
+impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::rtsp::client::push::PushDescription
+impl core::panic::unwind_safe::UnwindSafe for tst_rtp::rtsp::client::push::PushDescription
+#[non_exhaustive] pub enum tst_rtp::PushError
+pub tst_rtp::PushError::Empty(&'static str)
+pub tst_rtp::PushError::NoSuchTrack(&'static str)
+pub tst_rtp::PushError::Transport(tst_core::transport::TransportError)
+impl core::convert::From<tst_core::transport::TransportError> for tst_rtp::rtsp::client::push::PushError
+pub fn tst_rtp::rtsp::client::push::PushError::from(tst_core::transport::TransportError) -> Self
+impl core::error::Error for tst_rtp::rtsp::client::push::PushError
+pub fn tst_rtp::rtsp::client::push::PushError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
+impl core::fmt::Debug for tst_rtp::rtsp::client::push::PushError
+pub fn tst_rtp::rtsp::client::push::PushError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for tst_rtp::rtsp::client::push::PushError
+pub fn tst_rtp::rtsp::client::push::PushError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for tst_rtp::rtsp::client::push::PushError
+impl core::marker::Send for tst_rtp::rtsp::client::push::PushError
+impl core::marker::Sync for tst_rtp::rtsp::client::push::PushError
+impl core::marker::Unpin for tst_rtp::rtsp::client::push::PushError
+impl core::marker::UnsafeUnpin for tst_rtp::rtsp::client::push::PushError
+impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::rtsp::client::push::PushError
+impl core::panic::unwind_safe::UnwindSafe for tst_rtp::rtsp::client::push::PushError
 #[non_exhaustive] pub enum tst_rtp::RefuseStatus
 pub tst_rtp::RefuseStatus::Forbidden
 pub tst_rtp::RefuseStatus::NotEnoughBandwidth
@@ -1841,6 +1996,8 @@ pub tst_rtp::RtspError::MultipleMp2tMedia
 pub tst_rtp::RtspError::MultipleMp2tMedia::count: usize
 pub tst_rtp::RtspError::NoH264Media
 pub tst_rtp::RtspError::NoMp2tMedia
+pub tst_rtp::RtspError::NotAllowed
+pub tst_rtp::RtspError::NotAllowed::detail: &'static str
 pub tst_rtp::RtspError::Protocol
 pub tst_rtp::RtspError::Protocol::code: u16
 pub tst_rtp::RtspError::Protocol::reason: alloc::string::String
@@ -1983,6 +2140,27 @@ impl core::marker::Unpin for tst_rtp::url::RtspVersion
 impl core::marker::UnsafeUnpin for tst_rtp::url::RtspVersion
 impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::url::RtspVersion
 impl core::panic::unwind_safe::UnwindSafe for tst_rtp::url::RtspVersion
+#[non_exhaustive] pub enum tst_rtp::VideoTrack
+pub tst_rtp::VideoTrack::H264
+pub tst_rtp::VideoTrack::H264::parameter_sets: alloc::vec::Vec<alloc::vec::Vec<u8>>
+pub tst_rtp::VideoTrack::H265
+pub tst_rtp::VideoTrack::H265::pps: alloc::vec::Vec<u8>
+pub tst_rtp::VideoTrack::H265::sps: alloc::vec::Vec<u8>
+pub tst_rtp::VideoTrack::H265::vps: alloc::vec::Vec<u8>
+impl tst_rtp::rtsp::client::push::VideoTrack
+pub fn tst_rtp::rtsp::client::push::VideoTrack::h264_from_key_frame(&[u8]) -> core::result::Result<Self, tst_rtp::error::RtspError>
+pub fn tst_rtp::rtsp::client::push::VideoTrack::h265_from_key_frame(&[u8]) -> core::result::Result<Self, tst_rtp::error::RtspError>
+impl core::clone::Clone for tst_rtp::rtsp::client::push::VideoTrack
+pub fn tst_rtp::rtsp::client::push::VideoTrack::clone(&self) -> tst_rtp::rtsp::client::push::VideoTrack
+impl core::fmt::Debug for tst_rtp::rtsp::client::push::VideoTrack
+pub fn tst_rtp::rtsp::client::push::VideoTrack::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for tst_rtp::rtsp::client::push::VideoTrack
+impl core::marker::Send for tst_rtp::rtsp::client::push::VideoTrack
+impl core::marker::Sync for tst_rtp::rtsp::client::push::VideoTrack
+impl core::marker::Unpin for tst_rtp::rtsp::client::push::VideoTrack
+impl core::marker::UnsafeUnpin for tst_rtp::rtsp::client::push::VideoTrack
+impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::rtsp::client::push::VideoTrack
+impl core::panic::unwind_safe::UnwindSafe for tst_rtp::rtsp::client::push::VideoTrack
 pub struct tst_rtp::H264Depacketizer
 impl tst_rtp::h264::depacketizer::H264Depacketizer
 pub fn tst_rtp::h264::depacketizer::H264Depacketizer::feed(&mut self, &tst_rtp::packet::RtpHeader, &[u8])
@@ -2250,6 +2428,28 @@ impl core::marker::Unpin for tst_rtp::PublisherInfo
 impl core::marker::UnsafeUnpin for tst_rtp::PublisherInfo
 impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::PublisherInfo
 impl core::panic::unwind_safe::UnwindSafe for tst_rtp::PublisherInfo
+#[non_exhaustive] pub struct tst_rtp::PushStats
+pub tst_rtp::PushStats::bytes_sent: u64
+pub tst_rtp::PushStats::cumulative_lost: u32
+pub tst_rtp::PushStats::fraction_lost_q8: u8
+pub tst_rtp::PushStats::frames_dropped_at_close: u64
+pub tst_rtp::PushStats::frames_dropped_inbound: u64
+pub tst_rtp::PushStats::packets_sent: u64
+pub tst_rtp::PushStats::receiver_reports: u64
+pub tst_rtp::PushStats::sender_reports_sent: u64
+impl core::clone::Clone for tst_rtp::rtsp::client::push::PushStats
+pub fn tst_rtp::rtsp::client::push::PushStats::clone(&self) -> tst_rtp::rtsp::client::push::PushStats
+impl core::default::Default for tst_rtp::rtsp::client::push::PushStats
+pub fn tst_rtp::rtsp::client::push::PushStats::default() -> tst_rtp::rtsp::client::push::PushStats
+impl core::fmt::Debug for tst_rtp::rtsp::client::push::PushStats
+pub fn tst_rtp::rtsp::client::push::PushStats::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for tst_rtp::rtsp::client::push::PushStats
+impl core::marker::Send for tst_rtp::rtsp::client::push::PushStats
+impl core::marker::Sync for tst_rtp::rtsp::client::push::PushStats
+impl core::marker::Unpin for tst_rtp::rtsp::client::push::PushStats
+impl core::marker::UnsafeUnpin for tst_rtp::rtsp::client::push::PushStats
+impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::rtsp::client::push::PushStats
+impl core::panic::unwind_safe::UnwindSafe for tst_rtp::rtsp::client::push::PushStats
 pub struct tst_rtp::ReceiverReport
 pub tst_rtp::ReceiverReport::report_blocks: alloc::vec::Vec<tst_rtp::rtcp::ReportBlock>
 pub tst_rtp::ReceiverReport::ssrc: u32
@@ -2488,6 +2688,10 @@ impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::url::RtpUrl
 impl core::panic::unwind_safe::UnwindSafe for tst_rtp::url::RtpUrl
 pub struct tst_rtp::RtspClient
 impl tst_rtp::rtsp::client::RtspClient
+pub fn tst_rtp::rtsp::client::RtspClient::announce(&mut self, &tst_rtp::rtsp::client::push::PushDescription) -> core::result::Result<(), tst_rtp::error::RtspError>
+pub fn tst_rtp::rtsp::client::RtspClient::record(self) -> core::result::Result<tst_rtp::RtspPush, tst_rtp::error::RtspError>
+pub fn tst_rtp::rtsp::client::RtspClient::setup_record(&mut self) -> core::result::Result<(), tst_rtp::error::RtspError>
+impl tst_rtp::rtsp::client::RtspClient
 pub fn tst_rtp::rtsp::client::RtspClient::cancel_handle(&self) -> tst_rtp::rtsp::client::RtspCancelHandle
 pub fn tst_rtp::rtsp::client::RtspClient::close(self) -> core::result::Result<(), tst_rtp::error::RtspError>
 pub fn tst_rtp::rtsp::client::RtspClient::connect(&str) -> core::result::Result<Self, tst_rtp::error::RtspError>
@@ -2542,6 +2746,37 @@ impl core::marker::Unpin for tst_rtp::rtsp::client::builder::RtspClientBuilder
 impl core::marker::UnsafeUnpin for tst_rtp::rtsp::client::builder::RtspClientBuilder
 impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::rtsp::client::builder::RtspClientBuilder
 impl core::panic::unwind_safe::UnwindSafe for tst_rtp::rtsp::client::builder::RtspClientBuilder
+pub struct tst_rtp::RtspPush
+impl tst_rtp::RtspPush
+pub fn tst_rtp::RtspPush::cancel_handle(&self) -> tst_rtp::rtsp::client::RtspCancelHandle
+pub fn tst_rtp::RtspPush::close(self) -> core::result::Result<(), tst_rtp::error::RtspError>
+pub fn tst_rtp::RtspPush::connect(tst_rtp::rtsp::client::builder::RtspClientBuilder, &tst_rtp::rtsp::client::push::PushDescription) -> core::result::Result<Self, tst_rtp::error::RtspError>
+pub fn tst_rtp::RtspPush::end_reason(&self) -> core::option::Option<tst_core::transport::EndReason>
+pub fn tst_rtp::RtspPush::is_session_alive(&self) -> bool
+pub fn tst_rtp::RtspPush::pause(&mut self) -> core::result::Result<(), tst_rtp::error::RtspError>
+pub fn tst_rtp::RtspPush::resume(&mut self) -> core::result::Result<(), tst_rtp::error::RtspError>
+pub fn tst_rtp::RtspPush::send_klv(&mut self, &[u8], tst_core::mpegts::common::Pts90khz) -> core::result::Result<(), tst_rtp::rtsp::client::push::PushError>
+pub fn tst_rtp::RtspPush::send_ts(&mut self, &[u8]) -> core::result::Result<(), tst_core::transport::TransportError>
+pub fn tst_rtp::RtspPush::send_video(&mut self, &[u8], tst_core::mpegts::common::Pts90khz) -> core::result::Result<(), tst_rtp::rtsp::client::push::PushError>
+pub fn tst_rtp::RtspPush::session_id(&self) -> &str
+pub fn tst_rtp::RtspPush::stats(&self) -> tst_rtp::rtsp::client::push::PushStats
+impl core::fmt::Debug for tst_rtp::RtspPush
+pub fn tst_rtp::RtspPush::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl tst_core::transport::Transport for tst_rtp::RtspPush
+pub fn tst_rtp::RtspPush::as_any(&self) -> core::option::Option<&dyn core::any::Any>
+pub fn tst_rtp::RtspPush::cancel_handle(&self) -> core::option::Option<alloc::sync::Arc<(dyn tst_core::transport::TransportCancel + core::marker::Send + core::marker::Sync)>>
+pub fn tst_rtp::RtspPush::close(&mut self)
+pub fn tst_rtp::RtspPush::is_alive(&self) -> bool
+pub fn tst_rtp::RtspPush::max_payload(&self) -> usize
+pub fn tst_rtp::RtspPush::send_bytes(&mut self, &[u8]) -> core::result::Result<(), tst_core::transport::TransportError>
+pub fn tst_rtp::RtspPush::socket_stats(&self) -> core::option::Option<tst_core::transport::SocketStats>
+impl core::marker::Freeze for tst_rtp::RtspPush
+impl core::marker::Send for tst_rtp::RtspPush
+impl !core::marker::Sync for tst_rtp::RtspPush
+impl core::marker::Unpin for tst_rtp::RtspPush
+impl core::marker::UnsafeUnpin for tst_rtp::RtspPush
+impl !core::panic::unwind_safe::RefUnwindSafe for tst_rtp::RtspPush
+impl !core::panic::unwind_safe::UnwindSafe for tst_rtp::RtspPush
 pub struct tst_rtp::RtspServer
 impl tst_rtp::rtsp::server::RtspServer
 pub fn tst_rtp::rtsp::server::RtspServer::add_mount(&self, &str, tst_core::mpegts::mux::config::MuxerConfig) -> core::result::Result<tst_rtp::rtsp::server::mount::MountHandle, tst_rtp::error::RtspServerError>
@@ -2759,6 +2994,7 @@ impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::rtcp::ingest::SrAnchor
 impl core::panic::unwind_safe::UnwindSafe for tst_rtp::rtcp::ingest::SrAnchor
 pub const tst_rtp::DEFAULT_PKT_SIZE: usize
 pub const tst_rtp::MAX_PKT_SIZE: usize
+pub const tst_rtp::PUSH_MP2T_MAX_PAYLOAD: usize
 pub const tst_rtp::RTP_HEADER_LEN: usize
 pub type tst_rtp::H264Au = tst_rtp::depay::AccessUnit
 pub type tst_rtp::H264DepayConfig = tst_rtp::depay::DepayConfig
