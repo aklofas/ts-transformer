@@ -52,6 +52,11 @@ on:
       - "Cargo.lock"
       - "crates/**/Cargo.toml"
       - "bindings/**/Cargo.toml"
+      # A submodule bump changes what the sys crates package (and so their
+      # size against the registry's limit): the gitlink paths it changes.
+      - "crates/srt-sys/vendor/srt"
+      - "crates/rist-sys/vendor/librist"
+      - "crates/mbedtls-src/vendor/mbedtls"
       - "scripts/release/**"
       - "scripts/ci/install-build-tools.sh"
       - "scripts/ci/requirements-build-tools.txt"
