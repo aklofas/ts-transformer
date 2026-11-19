@@ -465,8 +465,9 @@ jobs:
     name: qualification record
     needs: [resolve, interop, sanitizers, jvm-jar, python-wheels, fuzz, abi, bench-ir, ci-lookup, sbom]
     # Runs after every leg whatever its result: a failed leg is a line in the
-    # record and a NO-GO, not a missing record.
-    if: always() && needs.resolve.result == 'success'
+    # record and a NO-GO, not a missing record. A cancelled run (a newer push
+    # to the pull request replaced it) writes no record.
+    if: ${{ !cancelled() && needs.resolve.result == 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
