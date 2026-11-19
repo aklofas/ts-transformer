@@ -51,13 +51,7 @@ impl RtspClient {
     ///   the reply arrives, or is set when the exchange fails. The
     ///   request is written even on a cancelled client.
     pub fn teardown(&mut self) -> Result<(), RtspError> {
-        // checked_add: see `exchange`'s copy of this idiom — a
-        // `request_timeout` too large to represent as an `Instant` (e.g.
-        // `Duration::MAX`) saturates to "no deadline" rather than panicking,
-        // even though (with no session) this deadline is never waited on.
-        let deadline = self
-            .request_timeout
-            .and_then(|t| std::time::Instant::now().checked_add(t));
+        let deadline = self.request_deadline();
         self.teardown_with_deadline(deadline, None)
     }
 

@@ -20,7 +20,8 @@ use crate::rtcp::sender::TrackState;
 use crate::rtcp::stats::RtcpStats;
 use crate::rtsp::client::driver::{RouteSpec, RtcpSink};
 use crate::rtsp::client::engine::{
-    RequestBody, RequestSpec, RouteId, RouteKind, SetupAccepted, SetupRoute,
+    RECORD_BEFORE_SETUP, RequestBody, RequestSpec, RouteId, RouteKind, SETUP_BEFORE_ANNOUNCE,
+    SetupAccepted, SetupRoute,
 };
 use crate::rtsp::client::{CLOSE_JOIN_BOUND, CLOSE_TEARDOWN_BOUND, RtspClient};
 use crate::rtsp::message::RtspMethod;
@@ -39,7 +40,9 @@ pub const PUSH_MP2T_MAX_PAYLOAD: usize = 1316;
 #[non_exhaustive]
 pub enum PushDescription {
     /// One MPEG-TS track (RFC 2250, payload type 33): send with
-    /// [`RtspPush::send_ts`], or put a sender shell over the push.
+    /// [`RtspPush::send_ts`], or put a sender shell over the push. KLV
+    /// travels inside the transport stream: the push has no KLV track,
+    /// and [`RtspPush::send_klv`] on it is [`PushError::NoSuchTrack`].
     Mp2t,
     /// One video track and, with `klv`, one KLV track (RFC 6597): send
     /// with [`RtspPush::send_video`] and [`RtspPush::send_klv`].
@@ -245,9 +248,7 @@ fn origin_address(local: Option<IpAddr>, peer: IpAddr) -> IpAddr {
     })
 }
 
-const SETUP_BEFORE_ANNOUNCE: &str = "SETUP for recording before ANNOUNCE";
 const SETUP_WITHOUT_SESSION: &str = "SETUP reply for recording names no session";
-const RECORD_BEFORE_SETUP: &str = "RECORD before every track is set up";
 
 impl RtspClient {
     /// Send ANNOUNCE with `desc` as an SDP body at the client's URL: the

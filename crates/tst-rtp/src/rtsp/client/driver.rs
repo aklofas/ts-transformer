@@ -32,8 +32,8 @@ const WAKE: Token = Token(1);
 
 const COMMAND_QUEUE_BOUND: usize = 8;
 
-/// Bounded depth of the media (RTP) queue the facade makes at an
-/// interleaved SETUP.
+/// Bounded depth of the media (RTP) queue the facade makes at every
+/// SETUP of a receiving session: an interleaved reply puts it to use.
 ///
 /// An interleaved frame body is capped at 65535 bytes by the
 /// `$<ch><len_be16>` framing, but a normal TS bundle is `DEFAULT_PKT_SIZE`

@@ -201,6 +201,11 @@ const ROUTE_CHANNEL_IN_USE: &str = "SETUP reply names an interleaved channel ano
 const SETUP_OTHER_SESSION: &str = "SETUP reply names a session other than the first SETUP's";
 const SETUP_RECORD_NOT_INTERLEAVED: &str = "SETUP reply for recording is not interleaved";
 
+/// Two refusals the publish facade also gives itself, before it makes the
+/// request.
+pub(crate) const SETUP_BEFORE_ANNOUNCE: &str = "SETUP for recording before ANNOUNCE";
+pub(crate) const RECORD_BEFORE_SETUP: &str = "RECORD before every track is set up";
+
 #[derive(Debug, Default)]
 pub(crate) struct EngineCounters {
     /// Complete RTSP messages read, ping replies excepted.
@@ -623,7 +628,7 @@ impl ClientEngine {
                 }
                 M::Announce if self.pulled => Some("ANNOUNCE on a client that has a play session"),
                 M::Announce if !tracks_ok => Some("ANNOUNCE without a track count of 1 to 4"),
-                M::Setup if record_setup.is_some() => Some("SETUP for recording before ANNOUNCE"),
+                M::Setup if record_setup.is_some() => Some(SETUP_BEFORE_ANNOUNCE),
                 M::Record => Some("RECORD before ANNOUNCE"),
                 _ => None,
             };
@@ -649,7 +654,7 @@ impl ClientEngine {
             (M::Setup, _) => Some("SETUP for playing in a publish session"),
             (M::Record, PushPhase::Ready | PushPhase::Paused) => None,
             (M::Record, PushPhase::Recording) => Some("RECORD while recording"),
-            (M::Record, _) => Some("RECORD before every track is set up"),
+            (M::Record, _) => Some(RECORD_BEFORE_SETUP),
             (M::Pause, PushPhase::Recording) => None,
             (M::Pause, _) => Some("PAUSE while not recording"),
             (M::Announce, _) => Some("a second ANNOUNCE"),

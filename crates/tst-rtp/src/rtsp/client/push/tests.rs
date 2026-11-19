@@ -1804,6 +1804,38 @@ fn a_ping_answered_454_gives_broken_and_session_expired() {
     joined(peer);
 }
 
+/// On a session the server forgot, its connection still open, the client
+/// refuses a pause and a resume itself: neither is written.
+#[test]
+fn pause_and_resume_on_an_expired_session_are_not_allowed() {
+    let (port, peer) = serve(|peer| {
+        peer.accept_push();
+        let ping = peer.request();
+        assert_eq!(ping.method, RtspMethod::Options);
+        peer.answer(&ping, "454 Session Not Found", "");
+        peer.until_hangup()
+    });
+    let pinging = builder(port, "/live").keepalive_interval(Duration::from_millis(40));
+    let mut push = RtspPush::connect(pinging, &PushDescription::Mp2t).unwrap();
+    eventually("the ping's answer recorded", || {
+        push.end_reason() == Some(EndReason::SessionExpired)
+    });
+    let r = push.pause();
+    assert!(matches!(r, Err(RtspError::NotAllowed { .. })), "{r:?}");
+    let r = push.resume();
+    assert!(matches!(r, Err(RtspError::NotAllowed { .. })), "{r:?}");
+    drop(push);
+    // Only the TEARDOWN of the drop followed the ping.
+    let methods: Vec<RtspMethod> = joined(peer)
+        .iter()
+        .filter_map(|unit| match unit {
+            Unit::Request(request) => Some(request.method),
+            Unit::Frame(..) => None,
+        })
+        .collect();
+    assert_eq!(methods, [RtspMethod::Teardown]);
+}
+
 #[test]
 fn a_send_after_a_cancel_and_a_peer_close_is_explicit_close() {
     // The server closes first, then the caller cancels.

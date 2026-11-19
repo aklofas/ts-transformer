@@ -71,20 +71,27 @@ const TS_SYNC_BYTE: u8 = 0x47;
 /// server that reads slowly a data call waits for room. The wait ends when
 /// room frees, within about 100 ms of a cancel
 /// ([`Self::cancel_handle`], from any thread), when the session ends, and
-/// when the server has taken no byte for 5 s, which ends the connection.
-/// That is not a bound on the whole wait: a server that keeps taking a few
-/// bytes within every 5 s holds the call for as long as it does so, and
-/// the cancel handle is the way out.
+/// when this machine's kernel has taken no byte of the connection for 5 s,
+/// which ends the connection. The kernel goes on taking bytes until its
+/// own buffers and the server's are full, so the 5 s start only some time
+/// after a server stops reading. Nor is it a bound on the whole wait: a
+/// server that keeps taking a few bytes within every 5 s holds the call
+/// for as long as it does so, and the cancel handle is the way out.
 ///
 /// [`Self::close`] and [`Transport::close`] wait for the queued media to
 /// be written before they send TEARDOWN, and that wait has the same three
 /// ends and, like a data call's, no total bound; so has the wait of
 /// [`Self::pause`]. A sender shell over a push closes its transport when
 /// it is finished and also when it is dropped unfinished, so both wait
-/// that way.
-/// Dropping the push itself does not wait: it sets the cancel, discards
-/// what is queued, writes TEARDOWN without waiting for its reply and
-/// leaves the thread to end on its own.
+/// that way. `MuxSender::close` does not: it sets the cancel first, so
+/// over a push it drops what is queued and waits for nothing. End a push
+/// under a `MuxSender` without loss with `MuxSender::finish`. A plain
+/// `Sender` has no such pair: in Rust its `close` sets no cancel and
+/// waits as its drop does.
+/// Dropping the push itself does not wait for the queue: it sets the
+/// cancel, discards what is queued, writes TEARDOWN, waiting up to 500 ms
+/// for the kernel to take its bytes and not for its reply, and leaves the
+/// thread to end on its own.
 ///
 /// # Keepalive
 ///
@@ -115,9 +122,12 @@ const TS_SYNC_BYTE: u8 = 0x47;
 /// - [`TransportError::Broken`] with [`BrokenCause::CleanEof`] when the
 ///   server closed the connection (`CleanTeardown`).
 /// - [`TransportError::Broken`] with [`BrokenCause::Unspecified`] when the
-///   connection failed or took no byte for 5 s (`TransportFailed`), the
-///   server answered a keepalive ping `454` (`SessionExpired`), or the
-///   server broke the message framing (`ProtocolError`).
+///   connection failed, or this machine's kernel took no byte of it for
+///   5 s (`TransportFailed`; `KeepaliveFailed` when the bytes it did not
+///   take begin with a keepalive ping, and when a ping could not be
+///   built), the server answered a keepalive ping `454`
+///   (`SessionExpired`), or the server broke the message framing
+///   (`ProtocolError`).
 ///
 /// The `errno_code` of a `Broken` from a push is always `None`: a failed
 /// connection is named in the error's text only.
@@ -403,7 +413,10 @@ impl RtspPush {
     ///   during the wait or before the reply; PAUSE is not sent once the
     ///   wait has seen it.
     /// - [`RtspError::NotAllowed`], with nothing written, on a push that
-    ///   is already paused, and after [`Transport::close`].
+    ///   is already paused, after [`Transport::close`], and on a session
+    ///   that has ended with its connection still open: the server
+    ///   answered a keepalive ping `454` ([`Self::end_reason`] is
+    ///   `SessionExpired`).
     /// - [`RtspError::Protocol`] with the status when the server answers
     ///   anything but a `2xx`; the session is left as it is.
     /// - [`RtspError::Io`], [`RtspError::Timeout`] and the other errors of
@@ -425,7 +438,9 @@ impl RtspPush {
     /// # Errors
     ///
     /// - [`RtspError::NotAllowed`], with nothing written, on a push that
-    ///   is not paused, and after [`Transport::close`].
+    ///   is not paused, after [`Transport::close`], and on a session that
+    ///   has ended with its connection still open: the server answered a
+    ///   keepalive ping `454` ([`Self::end_reason`] is `SessionExpired`).
     /// - [`RtspError::Protocol`] with the status when the server answers
     ///   anything but a `2xx`; the session is left as it is.
     /// - [`RtspError::LocalCancel`], [`RtspError::Io`],
@@ -451,6 +466,11 @@ impl RtspPush {
     /// The end reason it leaves, unless one was recorded before, is
     /// `CleanTeardown` when the server accepts the TEARDOWN (`2xx` or
     /// `454`) on a push that was not cancelled, and `Cancelled` otherwise.
+    ///
+    /// This `close` takes the push by value. On a `&mut RtspPush` with
+    /// [`Transport`] in scope, `push.close()` is [`Transport::close`],
+    /// which reports nothing and does not wait for the thread; to call
+    /// this one, name it: `RtspPush::close(push)`.
     ///
     /// # Errors
     ///

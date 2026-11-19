@@ -67,7 +67,10 @@ pub enum RtspError {
 
     /// Server returned 461 Unsupported Transport on both UDP and TCP
     /// attempts, or `?transport=` URL query forced a transport the
-    /// server refused.
+    /// server refused. Also what
+    /// [`RtspClient::setup_record`](crate::RtspClient::setup_record)
+    /// returns, with nothing written, on a `?transport=udp` URL
+    /// (publishing over UDP is not implemented).
     #[error("RTSP server does not support a transport we accept")]
     UnsupportedTransport,
 
@@ -149,10 +152,22 @@ pub enum RtspError {
 
     /// The client refused a request before writing it: the request is out
     /// of order for the session (a RECORD before every track is set up, a
-    /// second ANNOUNCE, a PLAY on a client that announced), or the client
-    /// cannot send it at all (ANNOUNCE on an RTSP/2.0 client). Nothing
-    /// reached the wire and the session is unchanged. `detail` names the
-    /// refusal.
+    /// second ANNOUNCE, a PLAY on a client that announced, a
+    /// [`RtspPush::pause`](crate::RtspPush::pause) on a paused push or a
+    /// [`RtspPush::resume`](crate::RtspPush::resume) on one that is not),
+    /// the client cannot send it at all (ANNOUNCE on an RTSP/2.0 client),
+    /// or the publish session is over (a `pause` or `resume` after
+    /// [`Transport::close`](tst_core::transport::Transport::close), or
+    /// once the server has forgotten the session). Nothing reached the
+    /// wire and the session is unchanged. `detail` names the refusal.
+    ///
+    /// Also returned where no request is involved: by
+    /// [`VideoTrack::h264_from_key_frame`](crate::VideoTrack::h264_from_key_frame)
+    /// and
+    /// [`VideoTrack::h265_from_key_frame`](crate::VideoTrack::h265_from_key_frame)
+    /// for an access unit without its parameter sets, and by
+    /// [`RtspClient::announce`](crate::RtspClient::announce) for a
+    /// description that lacks one.
     #[error("not allowed: {detail}")]
     NotAllowed { detail: &'static str },
 
