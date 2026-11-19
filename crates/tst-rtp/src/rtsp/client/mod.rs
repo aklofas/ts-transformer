@@ -10,6 +10,7 @@
 pub mod builder;
 pub(crate) mod driver;
 pub(crate) mod engine;
+pub(crate) mod media_queue;
 pub mod options_describe;
 pub mod play;
 pub mod session;

@@ -18,8 +18,10 @@ use tst_core::transport::{EndReason, EndReasonHandle};
 
 use super::CONTROL_WRITE_TIMEOUT;
 use super::engine::{
-    ClientEngine, Event, MAX_ROUTES, ReplyOutcome, RequestSpec, RouteId, StreamEnd, TxnId,
+    ClientEngine, Event, MAX_ROUTES, PushPhase, ReplyOutcome, RequestSpec, RouteId, StreamEnd,
+    TxnId,
 };
+use super::media_queue::{MEDIA_WATERMARK, MediaQueue, MediaWaitEnd};
 use super::stream::{ReadState, Stream};
 use crate::error::RtspError;
 use crate::rtcp::stats::RtcpStats;
@@ -116,6 +118,7 @@ pub(crate) struct DriverHandle {
     commands: mpsc::SyncSender<Command>,
     waker: Arc<Waker>,
     stop: Arc<AtomicBool>,
+    media: Arc<MediaQueue>,
     done: mpsc::Receiver<()>,
     thread: Option<JoinHandle<()>>,
 }
@@ -129,6 +132,42 @@ impl DriverHandle {
             .map_err(|_| RtspError::Io(io::ErrorKind::UnexpectedEof))?;
         self.wake();
         Ok(())
+    }
+
+    /// Queue one whole `$` frame for the thread to write behind the frames
+    /// queued before. Parks in 100 ms slices while the queue is full,
+    /// re-checking, in this order, the cancel, the end of the session, and
+    /// space. `Ended`: the thread closed the queue, and the client's
+    /// end-reason slot names the cause when there is one.
+    // Called by the publish direction.
+    #[cfg_attr(not(test), expect(dead_code))]
+    pub(crate) fn send_media(&self, frame: Bytes, cancel: &FlagCancel) -> Result<(), MediaWaitEnd> {
+        self.media.push(frame, cancel)?;
+        self.wake();
+        Ok(())
+    }
+
+    /// Wait until the media queue is empty and the stream has no unsent
+    /// byte, with the checks and the ends of [`Self::send_media`].
+    // Called by the publish direction.
+    #[cfg_attr(not(test), expect(dead_code))]
+    pub(crate) fn drain_media(&self, cancel: &FlagCancel) -> Result<(), MediaWaitEnd> {
+        self.media.wait_drained(cancel)
+    }
+
+    /// Frames that were queued and never written: the session or the
+    /// stream ended first.
+    // Called by the publish direction.
+    #[cfg_attr(not(test), expect(dead_code))]
+    pub(crate) fn frames_dropped_at_close(&self) -> u64 {
+        self.media.dropped_at_close()
+    }
+
+    /// The media queue itself, for a test that watches it from a thread
+    /// the handle is not on.
+    #[cfg(test)]
+    pub(crate) fn media_queue(&self) -> Arc<MediaQueue> {
+        self.media.clone()
     }
 
     /// Ask the thread to end the stream and return. Never blocks: the
@@ -206,6 +245,7 @@ pub(crate) fn spawn_with(
     let (commands, command_rx) = mpsc::sync_channel(COMMAND_QUEUE_BOUND);
     let (done_tx, done) = mpsc::channel();
     let stop = Arc::new(AtomicBool::new(false));
+    let media = Arc::new(MediaQueue::default());
     let driver = Driver {
         poll,
         events: Events::with_capacity(8),
@@ -214,6 +254,7 @@ pub(crate) fn spawn_with(
         shared,
         commands: command_rx,
         stop: stop.clone(),
+        media: media.clone(),
         _waker: waker.clone(),
         write_stall,
         caller: None,
@@ -222,6 +263,7 @@ pub(crate) fn spawn_with(
         stall_from: None,
         routes: Default::default(),
         read_more: false,
+        media_more: false,
         inbuf: Vec::new(),
     };
     let thread = std::thread::Builder::new()
@@ -234,6 +276,7 @@ pub(crate) fn spawn_with(
         commands,
         waker,
         stop,
+        media,
         done,
         thread: Some(thread),
     })
@@ -276,6 +319,9 @@ struct Driver {
     shared: Shared,
     commands: mpsc::Receiver<Command>,
     stop: Arc<AtomicBool>,
+    /// Whole `$` frames a publishing caller queued, written behind the
+    /// engine's own requests.
+    media: Arc<MediaQueue>,
     /// Keeps the wake's eventfd open while the thread runs. Closing it
     /// discards a wake the thread has not read yet, such as the one
     /// `stop()` sends just before a dropped handle releases its copy.
@@ -291,7 +337,19 @@ struct Driver {
     routes: [Option<RouteSinks>; MAX_ROUTES],
     /// The last read stopped at its budget with bytes perhaps left.
     read_more: bool,
+    /// The last write stopped moving media at the watermark and then
+    /// wrote the stream below it again: frames may be waiting, and no
+    /// event will say so.
+    media_more: bool,
     inbuf: Vec<u8>,
+}
+
+// However the thread ends, by any way out of `run` or by a panic, no
+// sender stays parked on the media queue.
+impl Drop for Driver {
+    fn drop(&mut self) {
+        self.media.close();
+    }
 }
 
 impl Driver {
@@ -310,6 +368,7 @@ impl Driver {
             }
             self.write();
             self.deliver();
+            self.close_media_once_over();
             match self.wait() {
                 Ok(r) => readable = r,
                 Err(e) => {
@@ -327,6 +386,19 @@ impl Driver {
         self.engine.handle_closed(StreamEnd::Stopped);
         self.deliver();
         self.drop_stream();
+        // `self` is dropped here, with the reason recorded: its `Drop`
+        // closes the media queue.
+    }
+
+    /// Close the media queue once no frame can be written any more: the
+    /// publish session has ended (a TEARDOWN was submitted, the session
+    /// expired) or the stream has. Called with the engine's events
+    /// delivered, so the end reason is recorded before the queue closes: a
+    /// sender that sees the close reads the reason at once.
+    fn close_media_once_over(&mut self) {
+        if self.engine.is_closed() || self.engine.push_phase() == Some(PushPhase::Ended) {
+            self.media.close();
+        }
     }
 
     fn drain_commands(&mut self) -> Flow {
@@ -404,6 +476,7 @@ impl Driver {
     }
 
     fn write(&mut self) {
+        self.media_more = false;
         let Some(stream) = self.stream.as_mut() else {
             // A closed engine queues nothing; drained all the same.
             while self.engine.poll_transmit().is_some() {}
@@ -418,10 +491,41 @@ impl Driver {
                 is_ping: t.is_ping,
             });
         }
+        // Media goes behind the engine's own bytes, one whole frame at a
+        // time, and only while the stream holds little: a request or a
+        // ping queued later waits behind the watermark and one frame at
+        // most, however many frames wait in the queue.
+        let mut at_watermark = false;
+        if self.engine.media_allowed() {
+            loop {
+                if self.queued - stream.written() >= MEDIA_WATERMARK {
+                    at_watermark = true;
+                    break;
+                }
+                let Some(frame) = self.media.pop() else {
+                    break;
+                };
+                stream.queue(&frame);
+                self.queued += frame.len() as u64;
+                // A segment of its own: the stall rule reads the oldest
+                // unwritten one, and a ping queued behind media that stalls
+                // is not what stalled.
+                self.segments.push_back(Segment {
+                    end: self.queued,
+                    txn: None,
+                    is_ping: false,
+                });
+            }
+        }
         let wire_before = stream.wire_bytes();
         let flushed = stream.flush();
         let progressed = stream.wire_bytes() != wire_before;
         let written = stream.written();
+        let unsent = self.queued - written;
+        // After the flush, so a drain cannot end while bytes are unwritten.
+        self.media.publish_unsent(unsent);
+        // The kernel took enough to make room and will not report it again.
+        self.media_more = at_watermark && unsent < MEDIA_WATERMARK;
         while self.segments.front().is_some_and(|s| s.end <= written) {
             if let Some(Segment { txn: Some(txn), .. }) = self.segments.pop_front() {
                 self.mark_written(txn);
@@ -535,6 +639,7 @@ impl Driver {
         self.segments.clear();
         self.stall_from = None;
         self.read_more = false;
+        self.media_more = false;
         self.inbuf = Vec::new();
     }
 
@@ -542,7 +647,7 @@ impl Driver {
     /// had one.
     fn wait(&mut self) -> io::Result<bool> {
         loop {
-            let timeout = if self.read_more {
+            let timeout = if self.read_more || self.media_more {
                 Some(Duration::ZERO)
             } else {
                 let stall = self

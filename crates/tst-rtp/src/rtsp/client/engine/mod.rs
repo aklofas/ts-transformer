@@ -574,20 +574,12 @@ impl ClientEngine {
     }
 
     /// `None` on a client that has not published.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "no caller outside the tests yet")
-    )]
     pub(crate) fn push_phase(&self) -> Option<PushPhase> {
         self.push
     }
 
     /// Media may be written: a publish session recording or paused, its
     /// stream open and no TEARDOWN submitted.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "no caller outside the tests yet")
-    )]
     pub(crate) fn media_allowed(&self) -> bool {
         matches!(self.push, Some(PushPhase::Recording | PushPhase::Paused))
             && self.closed.is_none()

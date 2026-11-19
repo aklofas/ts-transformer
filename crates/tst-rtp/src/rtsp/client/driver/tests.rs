@@ -42,6 +42,8 @@ struct Harness {
     end_reason: EndReasonHandle,
     media_dropped: Arc<AtomicU64>,
     frames_dropped_inbound: Arc<AtomicU64>,
+    /// The queue of outbound frames `handle` sends through.
+    media: Arc<MediaQueue>,
 }
 
 fn drive(stream: Stream) -> Harness {
@@ -57,13 +59,20 @@ fn drive_with(stream: Stream, write_stall: Duration) -> Harness {
         frames_dropped_inbound: Arc::new(AtomicU64::new(0)),
         exit_gate: None,
     };
+    let cancel = shared.cancel.clone();
+    let session_dead = shared.session_dead.clone();
+    let end_reason = shared.end_reason.clone();
+    let media_dropped = shared.media_dropped.clone();
+    let frames_dropped_inbound = shared.frames_dropped_inbound.clone();
+    let handle = spawn_with(stream, engine(), shared, write_stall).unwrap();
     Harness {
-        cancel: shared.cancel.clone(),
-        session_dead: shared.session_dead.clone(),
-        end_reason: shared.end_reason.clone(),
-        media_dropped: shared.media_dropped.clone(),
-        frames_dropped_inbound: shared.frames_dropped_inbound.clone(),
-        handle: spawn_with(stream, engine(), shared, write_stall).unwrap(),
+        cancel,
+        session_dead,
+        end_reason,
+        media_dropped,
+        frames_dropped_inbound,
+        media: handle.media_queue(),
+        handle,
     }
 }
 
@@ -1103,7 +1112,6 @@ fn huge_request() -> RequestSpec {
 }
 
 /// The write-stall time the stall tests give the driver.
-#[cfg(target_os = "linux")]
 fn stall() -> Duration {
     scaled(Duration::from_millis(300))
 }
@@ -1256,6 +1264,8 @@ fn a_signal_does_not_end_the_driver() {
     assert_eq!(h.end_reason.get(), None);
     h.stop_and_join();
 }
+
+mod media;
 
 #[cfg(feature = "tls")]
 mod tls {
