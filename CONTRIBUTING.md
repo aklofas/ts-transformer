@@ -91,3 +91,12 @@ timeouts in the Windows loopback group, a vendor-fetch 5xx). Three
 failures are real regressions and are never rerun: the RTSP max-sessions
 burst cap assert, the interop `transparent_relay` loss test, and the HTTP
 `oom_guard` tests.
+
+A newer push to a pull request cancels that pull request's older runs of
+the same workflow; push, dispatch and scheduled runs are never cancelled. The packages the jobs install come through
+`scripts/ci/` (`apt-install.sh`, `install-build-tools.sh`,
+`install-ripgrep.sh`, `gradle-resolve.sh`), each with bounded, retried
+attempts. The PyPI tools of the build and test jobs are in the hashed files
+`scripts/ci/requirements-build-tools.txt`, `requirements-test-tools.txt` and
+`requirements-test-tools-pandas.txt`; the header of each gives the command
+that regenerates it.

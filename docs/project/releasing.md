@@ -409,6 +409,12 @@ step 3).
     count). A real leg failure is a finding to fix, not a rerun; rerun
     only a failure that belongs to a ledgered flake class.
 
+    Two dispatches of one workflow on the same ref run side by side; neither
+    cancels the other. A sanitizer, fuzz or interop job shown as `cancelled`
+    was cut by its own job cap: read its failing step, and if that is an
+    install step, no test ran and the job is rerun alone (the runner-setup
+    class in `docs/project/ci-flakes.md`).
+
     The semver leg (`scripts/dev/semver-checks.sh`, cargo-semver-checks per
     public crate against the previous release tag) gates a release candidate.
     A candidate is a release qualification, or any tree whose workspace
