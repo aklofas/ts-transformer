@@ -120,6 +120,12 @@ step 3).
    the CHANGELOG: the `[Unreleased]` section is retitled `[X.Y.Z]` with a
    date placeholder, and a fresh `[Unreleased]` stub opens above it. The
    "Release highlights" block is the seed for the GitHub Release notes.
+   Then run `bash scripts/gen/known-issues.sh --write` and read the list it
+   writes: the "Known issues" block (between its generated markers) moves from
+   `[Unreleased]` into the section that carries the date marker, and lists the
+   open rows of `docs/project/release-findings.md`. Run it again in the PR
+   that removes the marker, and whenever the ledger changes before the tag;
+   the `ci` step `known-issues.sh --check` fails until it has been run.
 
    The number `X.Y.Z` is settled before this PR, in the CHANGELOG itself.
    Directly under the `## [Unreleased]` heading one paragraph may say
