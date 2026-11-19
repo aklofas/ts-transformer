@@ -117,9 +117,9 @@ step 3).
    Then run `bash scripts/gen/known-issues.sh --write` and read the list it
    writes: the "Known issues" block (between its generated markers) moves from
    `[Unreleased]` into the section that carries the date marker, and lists the
-   open rows of `docs/project/release-findings.md`. Run it again in the PR
-   that removes the marker, and whenever the ledger changes before the tag;
-   the `ci` step `known-issues.sh --check` fails until it has been run.
+   open rows of `docs/project/release-findings.md`. Run it again whenever the
+   ledger changes before the date commit (step 9), which runs it twice; the
+   `ci` step `known-issues.sh --check` fails until it has been run.
 
    The number `X.Y.Z` is settled before this PR, in the CHANGELOG itself.
    Directly under the `## [Unreleased]` heading one paragraph may say
@@ -257,7 +257,7 @@ step 3).
      freeze, as it is a release document to the gate. The PR's description
      names the captures added or removed, as the sweep's accept list has them.
      The first PR after the tag moves `expected_baseline_manifest_sha256` to
-     the released set's digest. Rows before 0.11.0 carry no `manifest_sha256`. A failure
+     the released set's digest (Release procedure, step 8). Rows before 0.11.0 carry no `manifest_sha256`. A failure
      stops the checklist here; it is a finding to fix, and the fix restarts
      at step 2. A reviewed change is accepted with
      `--accept <sha256> --because <text>`.
@@ -338,9 +338,18 @@ step 3).
    - the soak, with the `expected_duration_s` the run's `soak-config.json` declares
      (at least `[soak] required_duration_s`) and `legs = [...]`
      copied from the `legs=…` list on the last line `report soak` printed, with `arch = "x86_64"`;
-   - the corpus run, with the counts and the `baseline_manifest_sha256` its archive row carries. Its `files`
+   - the corpus run, copied key by key from the `archive-row.json` that
+     `release-vm-corpus.sh` wrote into the run directory (and printed): the
+     counts, `new_explained` (the new captures the sweep accepted with
+     `--accept`), `baseline_manifest_sha256` (the digest of the baseline's
+     `manifest.txt`) and `manifest_sha256` (the digest of the
+     `digests/manifest.txt` this sweep wrote). A row without
+     `manifest_sha256` is NO-GO in release mode, and one without
+     `new_explained` is judged by the weaker count rule (its counts may add
+     up to less than `files`). Its `files`
      must equal `expected_files` in the file's `[corpus]` table. When the
-     corpus has changed, the same PR updates `expected_files`;
+     corpus has changed, the same PR updates `expected_files` and
+     `expected_manifest_sha256` (step 6);
    - the arm64 soak, with `arch = "aarch64"` and `legs` as printed, and the
      arm64 stress run, with `arch = "aarch64"`. A soak or stress row dated
      2026-11-04 or later must carry `arch`; the validator refuses one without it, and an older row
@@ -379,9 +388,22 @@ step 3).
      -target=aws_instance.stress_vm -target=aws_instance.stress_vm_arm \
      -target=aws_security_group.stress_access
    ```
-9. **The date commit.** Replace the CHANGELOG date placeholder with the
-   release date. The commit touches the CHANGELOG only, so the frozen tree
-   still stands for it.
+9. **The date commit.** First bring the
+   [release findings ledger](/docs/project/release-findings.md) up to date:
+   one row per defect found during this release-candidate cycle, with the
+   class of test that now covers it, and `open` in `Fixed in` for one that
+   ships with a workaround. Then, in one commit:
+   ```bash
+   bash scripts/gen/known-issues.sh --write   # the marker is still there: the list goes into [X.Y.Z]
+   # replace the date placeholder with the release date and delete the <!-- TODO(release) line
+   bash scripts/gen/known-issues.sh --write   # the new [Unreleased] stub gets the open issues carried over
+   bash scripts/gen/known-issues.sh --check
+   ```
+   The dated section keeps the block the first run wrote; without the marker
+   the generator writes into `[Unreleased]` only, so a row recorded after
+   this commit reaches the next release's list, not this one's. The commit
+   touches `CHANGELOG.md` and the ledger under `docs/` only, both release
+   documents, so the frozen tree still stands for it.
 10. **Qualify the candidate.** Once `ci` is green on the date commit, dispatch
     the qualification run on that exact commit, in release mode:
     ```bash
@@ -549,19 +571,8 @@ step 3).
     ```bash
     bash scripts/gen/qualification.sh --write
     ```
-    The same PR updates the
-    [release findings ledger](/docs/project/release-findings.md): one row
-    per defect found during this release-candidate cycle, with the class of
-    test that now covers it. The same PR adds the release's row to
-    `tests/coverage/api-churn.toml` and renders the break table of the
-    [API stability page](/docs/reference/api-stability.md):
-    ```bash
-    python3 scripts/gen/api_churn.py tally <run's semver-checks.json> --release X.Y.Z
-    bash scripts/gen/api-churn.sh --write
-    ```
-    `tally` prints the four tier counts of the row; it stops, naming the line,
-    at a break line no classification row covers, and at a crate whose parsed
-    lines differ in number from the report's item count.
+    Keep the run's bundle: its `semver-checks.json` feeds the API break
+    table after the tag (Release procedure, step 8).
 12. **Maintainer-local checks.** Some validation needs inputs that are not on a
     CI runner, so the record lists them as `maintainer_local` and they stay
     with you. Run each and note the result before tagging:
@@ -676,7 +687,7 @@ Release; the committed record stays the one step 10 collected.
      dir.
    - Every crate page at `https://crates.io/crates/<pkg>` shows X.Y.Z and
      the docs.rs builds are green (see the crates.io section below).
-   Only **after** all three verify, announce the release.
+   Only **after** both checks pass, announce the release.
 5. **Promote the corpus baseline.** The corpus run pushed its digests as the
    soaked commit's unreleased baseline; the next release compares with them
    under the tag's name:
@@ -705,9 +716,27 @@ Release; the committed record stays the one step 10 collected.
    `target/` as the next release's wall-clock comparison base:
    `CRITERION_HOME=<dir> cargo bench -p tst-core --bench '*' -- --save-baseline main`.
    Note the commit, the toolchain and the machine beside it.
-8. **Clear the advisory-db pin.** The first PR after the tag sets `rev = ""`
-   in `tests/coverage/advisory-db-pin.toml` again, so `ci` checks the live
-   database until the next release prep.
+8. **The first PR after the tag.** A change to any of these files between
+   the record and the tag makes `release-eligible` refuse the tag (checklist
+   step 13), so they wait until the tag has been pushed:
+   - Clear the advisory-db pin: set `rev = ""` in
+     `tests/coverage/advisory-db-pin.toml` again, so `ci` checks the live
+     database until the next release prep.
+   - Move `[corpus] expected_baseline_manifest_sha256` in
+     `tests/coverage/evidence-archives.toml` to the released set's digest,
+     the `manifest_sha256` of the release's corpus row (the digests step 5
+     promoted), so the next release's sweep must compare with them.
+   - Add the release's row to `tests/coverage/api-churn.toml` and render the
+     break table of the [API stability page](/docs/reference/api-stability.md),
+     from the `semver-checks.json` in the bundle of the step 10 qualification:
+     ```bash
+     python3 scripts/gen/api_churn.py tally <the bundle's semver-checks.json> --release X.Y.Z
+     bash scripts/gen/api-churn.sh --write
+     ```
+     `tally` prints the four tier counts of the row; it stops, naming the
+     line, at a break line no classification row covers, and at a crate
+     whose parsed lines differ in number from the report's item count. The
+     table therefore shows a release from the first commit after its tag.
 
 ## crates.io publish (Rust crates)
 
