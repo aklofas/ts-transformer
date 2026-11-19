@@ -86,6 +86,10 @@ jq -s '[.[] | .workflow_runs[]] | map(select(.status == "completed"))
 
 runs="$(jq 'length' "$tmp/runs.json")"
 first_try_green="$(jq '[.[] | select(.run_attempt == 1 and .conclusion == "success")] | length' "$tmp/runs.json")"
+# A newer push to a pull request cancels its older runs (the workflows'
+# concurrency rule): such a run is neither green nor failed, so it is counted
+# apart and left out of the first-try-green share.
+superseded="$(jq '[.[] | select(.event == "pull_request" and .run_attempt == 1 and .conclusion == "cancelled")] | length' "$tmp/runs.json")"
 rerun_runs="$(jq '[.[] | select(.run_attempt > 1)] | length' "$tmp/runs.json")"
 wedges="$(jq --argjson m "$WEDGE_MIN" '[.[] | select(.minutes > $m)] | length' "$tmp/runs.json")"
 unrecovered="$(jq '[.[] | select(.conclusion == "failure")] | length' "$tmp/runs.json")"
@@ -122,7 +126,8 @@ fi
 {
   echo "CI health — $REPO — last $DAYS days (since $since, snapshot $now)"
   echo "  completed runs:        $runs"
-  echo "  green on first try:    $first_try_green"
+  echo "  green on first try:    $first_try_green of $((runs - superseded)) (superseded runs left out)"
+  echo "  superseded:            $superseded (pull-request runs cancelled on attempt 1)"
   echo "  rerun runs (attempt>1): $rerun_runs"
   echo "  wedges (> ${WEDGE_MIN} min):  $wedges"
   echo "  unrecovered failures:  $unrecovered"
@@ -146,8 +151,8 @@ sort "$tmp/rerun-jobs.txt" | uniq -c | while read -r count name; do
   fi
 done
 
-csv_row="$now,$DAYS,$runs,$first_try_green,$rerun_runs,$wedges,$unrecovered,\"$rerun_jobs\""
-header="snapshot_utc,window_days,runs,first_try_green,rerun_runs,wedges_over_${WEDGE_MIN}m,unrecovered_failures,rerun_jobs"
+csv_row="$now,$DAYS,$runs,$first_try_green,$rerun_runs,$wedges,$unrecovered,\"$rerun_jobs\",$superseded"
+header="snapshot_utc,window_days,runs,first_try_green,rerun_runs,wedges_over_${WEDGE_MIN}m,unrecovered_failures,rerun_jobs,superseded"
 echo "csv: $csv_row"
 
 if [ -n "$APPEND" ]; then
