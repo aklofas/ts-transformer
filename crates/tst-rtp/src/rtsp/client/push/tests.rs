@@ -627,8 +627,14 @@ struct RefusedSetup {
 }
 
 /// `setup_record` of a video and a KLV track against a server that answers
-/// the SETUP of track `bad` with `headers` and the ones before it as asked.
+/// the SETUP of track `bad` `200` with `headers` and the ones before it as
+/// asked.
 fn setup_answered(bad: usize, headers: &'static str) -> RefusedSetup {
+    setup_answered_with(bad, "200 OK", headers)
+}
+
+/// [`setup_answered`] with `status` on the SETUP of track `bad`.
+fn setup_answered_with(bad: usize, status: &'static str, headers: &'static str) -> RefusedSetup {
     let (noted, notes) = mpsc::channel();
     let (hung_up, hang_up) = mpsc::channel();
     let (port, peer) = serve(move |peer| {
@@ -640,7 +646,7 @@ fn setup_answered(bad: usize, headers: &'static str) -> RefusedSetup {
             peer.answer(&setup, "200 OK", &usable_setup(&channels));
         }
         let setup = peer.request();
-        peer.answer(&setup, "200 OK", headers);
+        peer.answer(&setup, status, headers);
         while let Some(Unit::Request(request)) = peer.read_unit() {
             // Noted before it is answered: the client reads the note once
             // it has the answer.
@@ -668,17 +674,23 @@ fn setup_answered(bad: usize, headers: &'static str) -> RefusedSetup {
     }
 }
 
-/// The client is finished: its reason is the server's fault, and a later
-/// call finds no connection.
+/// The client is finished: its reason is the server's fault, its session
+/// reads dead, a request that would be written finds no connection, and
+/// there is no session left to tear down.
 fn assert_finished(mut client: RtspClient) {
     let reason = client.end_reason.get();
     assert!(
         matches!(reason, Some(EndReason::ProtocolError { .. })),
         "{reason:?}"
     );
+    assert!(!client.is_session_alive());
     assert!(client.session_id.is_none());
     let r = client.options();
     assert!(matches!(&r, Err(RtspError::Io(_))), "{r:?}");
+    let r = client.setup_record();
+    assert!(matches!(&r, Err(RtspError::Io(_))), "{r:?}");
+    client.teardown().unwrap();
+    client.close().unwrap();
 }
 
 const UDP_REPLY: &str =
@@ -720,6 +732,20 @@ fn a_second_setup_reply_that_reuses_a_channel_is_bad_response_and_tears_down() {
         1,
         "Session: abc\r\nTransport: RTP/AVP/TCP;unicast;interleaved=1-2\r\n",
     );
+    assert!(
+        matches!(&seen.result, Err(RtspError::BadResponse { .. })),
+        "{:?}",
+        seen.result
+    );
+    assert_eq!(seen.after.len(), 1, "one request follows the reply");
+    assert_eq!(seen.after[0].method, RtspMethod::Teardown);
+    assert_finished(seen.client);
+}
+
+/// A `401` with no challenge to answer is an unusable reply as well.
+#[test]
+fn a_401_without_a_challenge_to_a_record_setup_ends_the_connection_too() {
+    let seen = setup_answered_with(1, "401 Unauthorized", "");
     assert!(
         matches!(&seen.result, Err(RtspError::BadResponse { .. })),
         "{:?}",

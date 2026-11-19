@@ -9,6 +9,7 @@ mod tests;
 pub use session::RtspPush;
 
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 
 use bytes::Bytes;
@@ -322,18 +323,23 @@ impl RtspClient {
     /// - [`RtspError::Protocol`] with the status when the server answers a
     ///   SETUP with anything but a `2xx`.
     /// - [`RtspError::BadResponse`] or [`RtspError::UnsupportedTransport`]
-    ///   for a `2xx` reply the client cannot use: no session, a transport
-    ///   that is not interleaved or does not parse, one channel for both
-    ///   RTP and RTCP, a channel another track uses, or another session
-    ///   than the first SETUP's. The server may have made a session for
-    ///   that reply, so the client gives the session up before it returns
-    ///   the error. If it knows the session's id it sends TEARDOWN (500 ms
-    ///   at most); it knows the id only from a SETUP reply it accepted, so
-    ///   not when the first track's reply is the one it refuses. In every
-    ///   case it then ends its connection and waits up to 2 s for its
-    ///   thread, so the server's session ends with the connection at the
-    ///   latest. The client is finished after that: every later request
-    ///   on it is [`RtspError::Io`].
+    ///   for a reply the client cannot use: a `2xx` with no session, a
+    ///   transport that is not interleaved or does not parse, one channel
+    ///   for both RTP and RTCP, a channel another track uses, or another
+    ///   session than the first SETUP's; also a `401` with no challenge.
+    ///   The server may have made a session for that reply, so the client
+    ///   gives the session up before it returns the error. If it knows the
+    ///   session's id it sends TEARDOWN (500 ms at most); it knows the id
+    ///   only from a SETUP reply it accepted, so not when the first track's
+    ///   reply is the one it refuses. In every case it then ends its
+    ///   connection and waits up to 2 s for its thread, so the server's
+    ///   session ends with the connection at the latest. The client is
+    ///   finished after that: [`RtspClient::is_session_alive`] is false, a
+    ///   later request that would be written (`options`, `describe`,
+    ///   `announce`, `setup_record`) is [`RtspError::Io`], [`Self::record`]
+    ///   is [`RtspError::NotAllowed`], and [`RtspClient::teardown`] and
+    ///   [`RtspClient::close`] have no session left to end and return
+    ///   `Ok(())`.
     /// - The other errors of [`Self::announce`].
     pub fn setup_record(&mut self) -> Result<(), RtspError> {
         if self.url.transport_preference == RtspTransportPref::ForceUdp {
@@ -448,6 +454,8 @@ impl RtspClient {
         let _ = self.teardown_within(CLOSE_TEARDOWN_BOUND);
         self.driver.stop();
         let _ = self.driver.join_within(CLOSE_JOIN_BOUND);
+        // A stopped thread reports no end of the session itself.
+        self.session_dead.store(true, Ordering::Release);
     }
 
     /// Send RECORD: the server starts taking media, and the client becomes
