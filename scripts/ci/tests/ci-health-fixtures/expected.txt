@@ -1,0 +1,13 @@
+CI health — aklofas/ts-transformer — last 7 days (since DAY, snapshot NOW)
+  completed runs:        3
+  green on first try:    1
+  rerun runs (attempt>1): 2
+  wedges (> 60 min):  0
+  unrecovered failures:  1
+  rerun jobs:            build (linux):2;test (windows):1;soak:1
+
+  per-workflow:
+    ci: 2 runs, 1 reruns, 0 failures, max 40 min
+    interop: 1 runs, 1 reruns, 1 failures, max 20 min
+ALERT: job 'build (linux)' was rerun 2 times in 7 days — a rerun class, not weather (harvest before the next rerun)
+csv: NOW,7,3,1,2,0,1,"build (linux):2;test (windows):1;soak:1"

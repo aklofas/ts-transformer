@@ -40,6 +40,29 @@ done
 
 command -v jq >/dev/null || { echo "FAIL: jq not installed" >&2; exit 2; }
 
+# `gh api --paginate`, retried: GitHub answers 502 when a page takes too long
+# to build, and gh then writes the error body to stdout, so its output goes on
+# only after gh exited 0. Waits (seconds) between the three attempts.
+api() {
+  local path="$1" i=0 out last
+  local -a waits
+  read -r -a waits <<< "${CI_HEALTH_RETRY_SLEEPS:-2 5}"
+  while :; do
+    if out="$(gh api --paginate "$path" 2>"$tmp/api.err")"; then
+      printf '%s\n' "$out"
+      return 0
+    fi
+    last="$(tail -n 1 "$tmp/api.err")"
+    [ -n "$last" ] || last="$(printf '%s\n' "$out" | tail -n 1)"
+    i=$((i + 1))
+    if [ "$i" -ge 3 ]; then
+      echo "ci-health: $path: gh api failed ($last)" >&2
+      return 1
+    fi
+    sleep "${waits[$((i - 1))]:-5}"
+  done
+}
+
 # Window start (GNU date, BSD fallback).
 since="$(date -u -d "-${DAYS} days" +%Y-%m-%d 2>/dev/null || date -u -v-"${DAYS}"d +%Y-%m-%d)"
 now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -53,7 +76,7 @@ if [ -n "${CI_HEALTH_RUNS_JSON:-}" ]; then
 else
   command -v gh >/dev/null || { echo "FAIL: gh not installed" >&2; exit 2; }
   # `created=>=DATE` is GitHub's documented filter; `>=` is sent URL-encoded.
-  gh api --paginate "repos/$REPO/actions/runs?created=%3E%3D$since&per_page=100" > "$tmp/runs.raw"
+  api "repos/$REPO/actions/runs?created=%3E%3D$since&per_page=100" > "$tmp/runs.raw"
 fi
 # --paginate concatenates JSON documents; jq -s merges them.
 jq -s '[.[] | .workflow_runs[]] | map(select(.status == "completed"))
@@ -69,11 +92,17 @@ unrecovered="$(jq '[.[] | select(.conclusion == "failure")] | length' "$tmp/runs
 
 # ---- 2. which JOBS were rerun (attempt-1 failures inside rerun runs) ------
 : > "$tmp/rerun-jobs.txt"
+: > "$tmp/unread-runs.txt"
 if [ -z "${CI_HEALTH_RUNS_JSON:-}" ]; then
   for id in $(jq -r '.[] | select(.run_attempt > 1) | .id' "$tmp/runs.json"); do
-    gh api --paginate "repos/$REPO/actions/runs/$id/jobs?filter=all&per_page=100" \
-      | jq -r '.jobs[] | select(.run_attempt == 1 and (.conclusion == "failure" or .conclusion == "cancelled" or .conclusion == "timed_out")) | .name' \
-      >> "$tmp/rerun-jobs.txt"
+    # A listing of a rerun `ci` run holds 90 or more jobs with their steps;
+    # a page of 100 takes about ten seconds to build, a page of 30 under two.
+    if ! api "repos/$REPO/actions/runs/$id/jobs?filter=all&per_page=30" > "$tmp/jobs.json"; then
+      echo "$id" >> "$tmp/unread-runs.txt"
+      continue
+    fi
+    jq -r '.jobs[] | select(.run_attempt == 1 and (.conclusion == "failure" or .conclusion == "cancelled" or .conclusion == "timed_out")) | .name' \
+      "$tmp/jobs.json" >> "$tmp/rerun-jobs.txt"
   done
 fi
 # "name:count;name:count" sorted by count desc — the per-job rerun table.
@@ -107,6 +136,10 @@ fi
   jq -r 'sort_by(.name) | group_by(.name) | .[] | "    \(.[0].name): \(length) runs, \([.[] | select(.run_attempt > 1)] | length) reruns, \([.[] | select(.conclusion == "failure")] | length) failures, max \(map(.minutes) | max) min"' "$tmp/runs.json"
 } | tee "$tmp/report.txt"
 
+if [ -s "$tmp/unread-runs.txt" ]; then
+  echo "Runs whose jobs could not be read (left out of the rerun jobs): $(paste -sd' ' "$tmp/unread-runs.txt")"
+fi
+
 sort "$tmp/rerun-jobs.txt" | uniq -c | while read -r count name; do
   if [ "$count" -ge "$ALERT_RERUNS" ]; then
     echo "ALERT: job '$name' was rerun $count times in $DAYS days — a rerun class, not weather (harvest before the next rerun)"
@@ -134,5 +167,11 @@ if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
     echo "\`$header\`"
     echo
     echo "\`$csv_row\`"
+    if [ -s "$tmp/unread-runs.txt" ]; then
+      echo
+      echo "### Runs whose jobs could not be read"
+      echo
+      sed 's/^/- run /' "$tmp/unread-runs.txt"
+    fi
   } >> "$GITHUB_STEP_SUMMARY"
 fi
