@@ -8,9 +8,10 @@
 # retried, a broken build file included: about four minutes more.
 # Maven Central has answered "not found" for an existing file through all
 # three attempts twice: about 90 s with waits of 20 s and 60 s, about five
-# minutes with the present 60 s and 180 s. The retry has outlasted neither; it
-# is kept for the failures it can outlast (a reset, a 5xx, a timeout). After
-# each failed attempt the probe below prints what the repository answered.
+# minutes with the present 60 s and 180 s. The retry has outlasted none so
+# far; it is kept because a reset, a 5xx or a timeout may be shorter than its
+# waits. After each failed attempt the probe below prints what the repository
+# answers a HEAD request from this runner.
 #
 # Usage: gradle-resolve.sh [--no-test] [gradle arguments...] (added to the
 # resolveAll call). --no-test leaves out the configurations only the tests use
@@ -31,41 +32,47 @@ waits="60 180"
 bound=()
 if timeout --version 2>/dev/null | grep -q GNU; then bound=(timeout -k 10 180); fi
 
-# After a failed attempt: what the repository answers, now, for the first
-# three URLs Gradle searched (the status and the cache and proxy headers). It
-# prints and never changes the exit status or the retry. A URL that carries
-# userinfo is neither requested nor printed.
+# After a failed attempt: what the repository answers a HEAD request now, for
+# the first three URLs Gradle searched ("Searched in the following locations:")
+# or was refused ("Could not GET '<url>'"): the status and the cache and proxy
+# headers. It prints and never changes the exit status or the retry. A URL
+# that carries userinfo is neither requested nor printed.
+# Every line goes through say: only printable ASCII, and `##[` broken up,
+# because the runner reads that legacy command form anywhere in a line. A `::`
+# command must start its line, and every line starts with "probe: ".
+say() { printf '%s\n' "probe: $1" | LC_ALL=C tr -cd '\11\12\40-\176' | sed 's/##\[/# #[/g'; }
 probe() { # <the attempt's output>
   local urls u st hdr line h v n=0
   urls="$(awk '/Searched in the following locations:/ {f = 1; next}
     f && /^[[:space:]]*- https?:\/\// {sub(/^[[:space:]]*- /, ""); sub(/[[:space:]]+$/, ""); print; next}
-    {f = 0}' "$1" | awk '!seen[$0]++')"
+    {f = 0}
+    /Could not (GET|HEAD) '"'"'https?:\/\// {u = $0; sub(/.*Could not (GET|HEAD) '"'"'/, "", u); sub(/'"'"'.*/, "", u); print u}' "$1" | awk '!seen[$0]++')"
   if [ -z "$urls" ]; then
-    echo 'probe: no URL under "Searched in the following locations:" in this attempt'"'"'s output'
+    say 'no URL under "Searched in the following locations:" or "Could not GET" in this attempt'"'"'s output'
     return 0
   fi
   if ! command -v curl >/dev/null 2>&1; then
-    echo "probe: curl is not installed; nothing requested"
+    say "curl is not installed; nothing requested"
     return 0
   fi
   while IFS= read -r u; do
     case "${u#*://}" in */*) h="${u#*://}"; h="${h%%/*}" ;; *) h="${u#*://}" ;; esac
-    case "$h" in *@*) echo "probe: a URL with credentials was not requested"; continue ;; esac
+    case "$h" in *@*) say "a URL with credentials was not requested"; continue ;; esac
     [ "$n" -lt 3 ] || break
     n=$((n + 1))
     st=0
     hdr="$(curl -sS -I --max-time 15 "$u" 2>&1)" || st=$?
     if [ "$st" -ne 0 ]; then
-      echo "probe: $u -> no answer (curl exit $st)"
+      say "$u -> no answer (curl exit $st)"
       continue
     fi
     hdr="$(printf '%s\n' "$hdr" | tr -d '\r')"
-    line="probe: $u -> $(printf '%s\n' "$hdr" | awk 'NR == 1 {print $2}')"
+    line="$u -> $(printf '%s\n' "$hdr" | awk 'NR == 1 {print $2}')"
     for h in age cf-cache-status cf-ray retry-after x-cache x-served-by server; do
       v="$(printf '%s\n' "$hdr" | awk -v k="$h" 'tolower($0) ~ "^" k ":" {sub(/^[^:]*:[[:space:]]*/, ""); print; exit}')"
       [ -z "$v" ] || line="$line $h=$v"
     done
-    printf '%s\n' "$line" | LC_ALL=C tr -cd '\11\12\40-\176'
+    say "$line"
   done <<<"$urls"
 }
 
@@ -83,7 +90,7 @@ while :; do
   [ "$rc" -ne 0 ] || exit 0
   echo "::notice::Gradle attempt $attempt of 3 failed with status $rc"
   echo "::group::gradle-resolve: what the repository answered (attempt $attempt)"
-  (probe "$out") || echo "probe: failed; ignored"
+  (probe "$out") || say "failed; ignored"
   echo "::endgroup::"
   [ "$attempt" -lt 3 ] || { echo "gradle-resolve.sh: dependency resolution failed 3 times" >&2; exit 1; }
   w="$(echo "$waits" | awk -v i="$attempt" '{print $i}')"
