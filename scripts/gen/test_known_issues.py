@@ -82,12 +82,27 @@ class Sections(unittest.TestCase):
         self.assertTrue(head.rstrip().endswith("---"))
         self.assertIn("- Something.\n\n" + ki.BEGIN, head)
 
+    # The shape the release-prep change gives the file (the rail
+    # scripts/check/repo/changelog-breaking-version.sh and its self-test fixtures use
+    # it): a fresh stub above a dated section whose marker is the line under the heading.
+    PREP = (CHANGELOG.replace("Next release: 0.11.0\n\n", "")
+            .replace("## [Unreleased]\n\n### Changed", "## [Unreleased]\n\n---\n\n## [0.11.0] — 2026-11-30\n"
+                     "<!-- TODO(release): set the release date -->\n\n### Changed"))
+
     def test_a_section_in_preparation_takes_it_instead(self):
-        prep = "## [0.11.0] — 2026-11-30 <!-- TODO(release): date -->"
-        text = CHANGELOG.replace("## [0.10.0] — 2026-11-12", prep)
-        out = ki.apply(text, LEDGER)
-        self.assertNotIn(ki.BEGIN, out.split("## [0.11.0]")[0])
-        self.assertIn(ki.BEGIN, out.split("## [0.11.0]")[1])
+        out = ki.apply(self.PREP, LEDGER)
+        stub, rest = out.split("## [0.11.0]")
+        self.assertNotIn(ki.BEGIN, stub)
+        self.assertIn(ki.BEGIN, rest.split("## [0.10.0]")[0])
+
+    def test_the_block_already_in_the_section_in_preparation_is_current(self):
+        once = ki.apply(self.PREP, LEDGER)
+        self.assertEqual(ki.apply(once, LEDGER), once)
+        self.assertNotIn(ki.BEGIN, once.split("## [0.11.0]")[0])
+
+    def test_a_dated_section_without_the_marker_is_not_in_preparation(self):
+        out = ki.apply(CHANGELOG, LEDGER)
+        self.assertLess(out.index(ki.BEGIN), out.index("## [0.10.0]"))
 
     def test_rewrite_is_idempotent_and_replaces_a_stale_block(self):
         once = ki.apply(CHANGELOG, LEDGER)

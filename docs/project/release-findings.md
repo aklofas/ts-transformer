@@ -10,6 +10,10 @@ A finding is a defect in the library, its packaging, or the harness that
 judges it. Flaky CI failures are not findings; they live in the
 [CI flake ledger](/docs/project/ci-flakes.md) until their fix lands.
 
+An open row's Finding is worded in the present tense and its Workaround says
+what a user can do about it; `scripts/gen/known-issues.sh` prints both into
+the CHANGELOG's Known issues list. A fixed row's Workaround is a dash.
+
 ## Test classes
 
 Each finding belongs to one of these classes. The list says where each class
