@@ -414,6 +414,106 @@ fn a_request_overtakes_queued_media() {
     assert!(units.ended_between_units());
 }
 
+/// A TEARDOWN ends the publish session when it is submitted, not when it
+/// is answered: the queue closes at once and for good, whatever the reply
+/// and without one. The thread records no reason for it, so a sender that
+/// sees the close reads what the TEARDOWN's submitter recorded before
+/// submitting, which may be nothing; only an accepted reply records the
+/// clean end.
+#[test]
+fn the_queue_closes_at_teardown_submission_whatever_its_reply() {
+    // The peer's answer, and the reason the submitter records first.
+    let cases: [(Option<u16>, Option<EndReason>); 3] = [
+        (Some(200), None),
+        (Some(501), None),
+        (None, Some(EndReason::Cancelled)),
+    ];
+    for (reply, recorded) in cases {
+        let (stream, mut peer) = plain_pair();
+        let h = drive(stream);
+        let _unhang = unhang(&h.cancel);
+        let mut rest = Vec::new();
+        recording(&h, &mut peer, &mut rest);
+        // From a second thread, once the sender is parked on a full queue.
+        // The peer has read nothing by then.
+        let submitter = std::thread::spawn({
+            let (commands, waker) = (h.handle.commands.clone(), h.handle.waker.clone());
+            let (media, end_reason) = (h.media.clone(), h.end_reason.clone());
+            let recorded = recorded.clone();
+            move || {
+                wait_until("the media queue full", || media.len() == MEDIA_QUEUE_BOUND);
+                // Pacing: the sender is parked by now, not between two sends.
+                std::thread::sleep(Duration::from_millis(20));
+                if let Some(reason) = recorded {
+                    record_end(&end_reason, reason);
+                }
+                let (progress, rx) = mpsc::channel();
+                commands
+                    .try_send(Command::Request {
+                        spec: RequestSpec {
+                            method: RtspMethod::Teardown,
+                            ..options()
+                        },
+                        route: None,
+                        reply_deadline: None,
+                        progress,
+                    })
+                    .unwrap();
+                waker.wake().unwrap();
+                rx
+            }
+        });
+        let frame = media_frame(0, BIG);
+        let mut queued = 0u64;
+        let end = loop {
+            match send(&h, frame.clone()) {
+                Ok(()) => queued += 1,
+                Err(end) => break end,
+            }
+        };
+        // At once: only the submission has happened.
+        let seen = h.end_reason.get();
+        assert_eq!(end, MediaWaitEnd::Ended, "reply {reply:?}");
+        assert_eq!(seen, recorded, "reply {reply:?}");
+        let rx = submitter.join().unwrap();
+
+        // The frames already on the stream go out ahead of the TEARDOWN;
+        // the ones in the queue were dropped and counted.
+        let mut units = Units::new(rest);
+        let mut before = 0u64;
+        let head = loop {
+            match units.next(&mut peer).expect("the stream is open") {
+                Unit::Request(head) => break head,
+                frame => {
+                    assert_media(&frame, 0, BIG);
+                    before += 1;
+                }
+            }
+        };
+        assert_eq!(whole_request(&head).method, RtspMethod::Teardown);
+        let dropped = h.handle.frames_dropped_at_close();
+        assert!(dropped > 0, "reply {reply:?}");
+        assert_eq!(dropped, queued - before, "reply {reply:?}");
+
+        assert!(matches!(next(&rx), Progress::Written));
+        if let Some(status) = reply {
+            let line = format!("RTSP/1.0 {status} Reply\r\nCSeq: {}\r\n\r\n", cseq(&head));
+            peer.write_all(line.as_bytes()).unwrap();
+            assert_eq!(done_ok(next(&rx)).status, status);
+        }
+        let after = if reply == Some(200) {
+            Some(EndReason::CleanTeardown)
+        } else {
+            recorded
+        };
+        assert_eq!(h.end_reason.get(), after, "reply {reply:?}");
+        // Closed for good, with nothing more counted.
+        assert_eq!(send(&h, frame), Err(MediaWaitEnd::Ended), "reply {reply:?}");
+        assert_eq!(h.handle.frames_dropped_at_close(), dropped);
+        h.stop_and_join();
+    }
+}
+
 #[cfg(target_os = "linux")]
 #[test]
 fn drain_returns_when_the_peer_has_every_frame() {

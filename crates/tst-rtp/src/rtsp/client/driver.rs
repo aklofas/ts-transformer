@@ -157,8 +157,9 @@ impl DriverHandle {
         self.media.wait_drained(cancel)
     }
 
-    /// Frames that were queued and never written: the session or the
-    /// stream ended first.
+    /// Frames that were still in the queue when it closed. Bytes of a frame
+    /// the thread had already handed to the stream are not in this count,
+    /// written or not.
     // Called by the publish direction.
     #[cfg_attr(not(test), expect(dead_code))]
     pub(crate) fn frames_dropped_at_close(&self) -> u64 {
@@ -398,10 +399,17 @@ impl Driver {
     }
 
     /// Close the media queue once no frame can be written any more: the
-    /// publish session has ended (a TEARDOWN was submitted, the session
-    /// expired) or the stream has. Called with the engine's events
-    /// delivered, so the end reason is recorded before the queue closes: a
-    /// sender that sees the close reads the reason at once.
+    /// stream has ended, or the publish session has (it expired, a ping
+    /// could not be built, a TEARDOWN was submitted).
+    ///
+    /// Called with the engine's events delivered, so an end the engine
+    /// reports has its reason recorded before the queue closes: a sender
+    /// that sees the close reads the reason at once. A TEARDOWN is the
+    /// exception. The queue closes at once when one is submitted, whatever
+    /// its reply and with no reply at all, and the thread records nothing
+    /// for it then: the reason is whatever its submitter recorded before
+    /// submitting, possibly none yet. Only a reply that accepts the
+    /// TEARDOWN records the clean end.
     fn close_media_once_over(&mut self) {
         if self.engine.is_closed() || self.engine.push_phase() == Some(PushPhase::Ended) {
             self.media.close();
