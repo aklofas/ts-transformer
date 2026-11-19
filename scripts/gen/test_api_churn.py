@@ -260,9 +260,11 @@ class Render(unittest.TestCase):
             ac.main(["render", "--root", d, "--check"])
         self.assertEqual(e.exception.code, 1)
         self.assertIn("stale", err.getvalue())
-        ac.main(["render", "--root", d, "--write"])
-        ac.main(["render", "--root", d, "--check"])
-        text = open(page).read()
+        with contextlib.redirect_stdout(io.StringIO()):
+            ac.main(["render", "--root", d, "--write"])
+            ac.main(["render", "--root", d, "--check"])
+        with open(page) as f:
+            text = f.read()
         self.assertTrue(text.endswith("\nafter\n") and text.startswith("# Page\n\nintro"))
         with open(os.path.join(d, "tests", "coverage", "api-churn.toml"), "w") as f:
             f.write(CHURN.replace("stable = 2", "stable = 3"))
@@ -282,7 +284,8 @@ class Render(unittest.TestCase):
         with contextlib.redirect_stdout(io.StringIO()) as out:
             ac.main(["render", "--root", d, "--write"])
         self.assertEqual(out.getvalue(), "api-churn: wrote the table in docs/reference/api-stability.md\n")
-        before = open(page, "rb").read()
+        with open(page, "rb") as f:
+            before = f.read()
         os.chmod(page, 0o444)
         try:
             with contextlib.redirect_stdout(io.StringIO()) as out:
@@ -290,7 +293,8 @@ class Render(unittest.TestCase):
         finally:
             os.chmod(page, 0o644)
         self.assertEqual(out.getvalue(), "api-churn: OK\n")
-        self.assertEqual(open(page, "rb").read(), before)
+        with open(page, "rb") as f:
+            self.assertEqual(f.read(), before)
 
     def test_a_page_without_the_markers_is_an_error(self):
         d = tempfile.mkdtemp()

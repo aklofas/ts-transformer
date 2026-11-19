@@ -485,7 +485,8 @@ step 3).
 
     The run's bundle holds `qualification.json`, the rendered
     `qualification.md`, `TREE-EQUIVALENCE.txt`, the SBOMs, `SHA256SUMS`, the
-    build attestations and the C package. Download it from the run's
+    build attestations, the C package and the cargo-semver-checks report
+    (`semver-checks.json` and one `semver-<crate>.txt` per crate). Download it from the run's
     artefacts. `TREE-EQUIVALENCE.txt` states the collector's decision: the
     qualified commit (and the tag on a tag push), then one block for the
     x86_64 soak and one for the aarch64 soak, each with the commit that soak

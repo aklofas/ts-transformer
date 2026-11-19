@@ -511,7 +511,9 @@ jobs:
           subs="$( { sub crates/srt-sys/vendor/srt; sub crates/rist-sys/vendor/librist; sub crates/mbedtls-src/vendor/mbedtls; } | jq -s add)"
           # The public-api pin is one line of its own file (ci.yml reads it too).
           nightly="$(head -n1 scripts/lib/public-api-toolchain 2>/dev/null || true)"
-          [ -n "$nightly" ] || { echo "::error::scripts/lib/public-api-toolchain gives no public-api nightly pin"; exit 1; }
+          # A commit from before the pin file kept the pin in ci.yml's public-api step.
+          [ -n "$nightly" ] || nightly="$(sed -n 's/.*rustup toolchain install \(nightly-[0-9-]*\).*/\1/p' .github/workflows/ci.yml 2>/dev/null | head -1 || true)"
+          [ -n "$nightly" ] || { echo "::error::no public-api nightly pin in scripts/lib/public-api-toolchain or ci.yml"; exit 1; }
           cbindgen="$(awk '/^name = "cbindgen"$/ {getline; gsub(/[^0-9.]/, "", $0); print; exit}' Cargo.lock)"
           . /etc/os-release
           jq -n --arg label "$LABEL" --arg sha "$(git rev-parse HEAD)" --arg ref "$REF" --arg wsha "$WORKFLOW_SHA" \
