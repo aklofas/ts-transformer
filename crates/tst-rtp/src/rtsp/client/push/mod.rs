@@ -472,6 +472,9 @@ impl RtspClient {
     /// - The other errors of [`Self::announce`].
     pub fn record(mut self) -> Result<RtspPush, RtspError> {
         match (self.push.take(), self.session_id.clone()) {
+            // The engine holds the rule: it refuses a RECORD before every
+            // track is set up, with nothing written. This guard gives the
+            // same answer without a request.
             (Some(announced), Some(sid)) if announced.tracks.iter().all(|t| t.set_up) => {
                 let uri = self.url.render_no_credentials();
                 let headers = vec![("session", sid.clone())];

@@ -296,7 +296,8 @@ pub(crate) struct ClientEngine {
     push: Option<PushPhase>,
     /// The track count of the accepted ANNOUNCE.
     push_tracks: u8,
-    /// A TEARDOWN was submitted on a publish session.
+    /// A TEARDOWN was submitted on a publish session: no request follows
+    /// it. A session ended another way still takes its one TEARDOWN.
     push_torn_down: bool,
     /// A pull SETUP has named a session: the client cannot publish.
     pulled: bool,
@@ -599,11 +600,10 @@ impl ClientEngine {
     }
 
     /// Media may be written: a publish session recording or paused, its
-    /// stream open and no TEARDOWN submitted.
+    /// stream open. A submitted TEARDOWN has moved the phase to `Ended`,
+    /// and nothing moves it on from there.
     pub(crate) fn media_allowed(&self) -> bool {
-        matches!(self.push, Some(PushPhase::Recording | PushPhase::Paused))
-            && self.closed.is_none()
-            && !self.push_torn_down
+        matches!(self.push, Some(PushPhase::Recording | PushPhase::Paused)) && self.closed.is_none()
     }
 
     /// Why `spec` may not be sent now, if it may not. A publish session

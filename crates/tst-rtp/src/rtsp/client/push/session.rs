@@ -771,6 +771,8 @@ impl Transport for RtspPush {
     /// [`PushStats::frames_dropped_at_close`], and why the session ended
     /// in [`RtspPush::end_reason`].
     fn close(&mut self) {
+        // A second close would queue its reports for a thread that has
+        // been told to stop, and wait for it to stop.
         if self.closed {
             return;
         }
