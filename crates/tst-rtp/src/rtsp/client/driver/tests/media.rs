@@ -168,6 +168,31 @@ impl Units {
     }
 }
 
+/// The peer's socket, whose read timing out is the end once `done` is set.
+/// After the test has stopped and joined the client's thread nothing is
+/// left to check, and how soon the peer learns of the close is up to the
+/// kernels: Linux resets a socket closed with input unread, macOS does not.
+struct UntilDone<'a> {
+    peer: &'a mut TcpStream,
+    done: &'a AtomicBool,
+}
+
+impl Read for UntilDone<'_> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        match self.peer.read(buf) {
+            Err(e)
+                if matches!(
+                    e.kind(),
+                    io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+                ) && self.done.load(Ordering::Acquire) =>
+            {
+                Ok(0)
+            }
+            r => r,
+        }
+    }
+}
+
 /// `unit` is `frame`, whole and unchanged.
 fn is_frame(unit: &Unit, frame: &[u8]) -> bool {
     matches!(unit, Unit::Frame { channel: 0, payload } if payload[..] == frame[4..])
@@ -800,12 +825,16 @@ fn a_saturating_media_load_does_not_starve_the_pings() {
     // One large frame again and again: a send costs far less than writing
     // and reading the frame, so the queue fills and stays full.
     let frame = media_frame(0, BIG);
+    let done = Arc::new(AtomicBool::new(false));
     // The peer reads as fast as it can and answers every ping.
     let reader = std::thread::spawn({
-        let (pings, frame) = (pings.clone(), frame.clone());
+        let (pings, frame, done) = (pings.clone(), frame.clone(), done.clone());
         move || {
             let mut units = Units::new(rest);
-            while let Some(unit) = units.next(&mut peer) {
+            while let Some(unit) = units.next(&mut UntilDone {
+                peer: &mut peer,
+                done: &done,
+            }) {
                 match unit {
                     Unit::Request(head) => {
                         assert_eq!(whole_request(&head).method, RtspMethod::Options);
@@ -833,6 +862,7 @@ fn a_saturating_media_load_does_not_starve_the_pings() {
         MEDIA_QUEUE_BOUND,
         "the load did not fill the queue"
     );
+    done.store(true, Ordering::Release);
     h.stop_and_join();
     reader.join().unwrap();
 }
