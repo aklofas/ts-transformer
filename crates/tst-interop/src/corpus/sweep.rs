@@ -65,11 +65,6 @@ pub struct Accepted {
     pub because: String,
 }
 
-/// The value of `manifest_sha256` in a record written before the field.
-pub(super) fn no_manifest_sha256() -> Sha256Hex {
-    Sha256Hex(String::new())
-}
-
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SweepSummary {
     pub schema_version: u32,
@@ -94,9 +89,9 @@ pub struct SweepSummary {
     #[serde(default)]
     pub baseline_manifest_sha256: Option<Sha256Hex>,
     /// SHA-256 of the `manifest.txt` this sweep wrote: names the capture
-    /// set it swept. Empty in a `sweep.json` written before the field.
-    #[serde(default = "no_manifest_sha256")]
-    pub manifest_sha256: Sha256Hex,
+    /// set it swept. Absent in a `sweep.json` written before the field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub manifest_sha256: Option<Sha256Hex>,
     /// ST 0601 field errors over every capture's `default` configuration,
     /// one per field the lenient decoder could not read in a record it
     /// kept. No absolute threshold; against a baseline a changed count marks the
@@ -435,7 +430,7 @@ pub fn run(args: &SweepArgs) -> Result<SweepSummary, String> {
         unused_accepts: Vec::new(),
         baseline_matched: None,
         baseline_manifest_sha256,
-        manifest_sha256: no_manifest_sha256(),
+        manifest_sha256: None,
         klv_field_errors: 0,
         files_with_klv_field_errors: 0,
         new_explained: 0,
@@ -542,7 +537,10 @@ pub fn run(args: &SweepArgs) -> Result<SweepSummary, String> {
             summary.baseline_only.push(sha.clone());
         }
     }
-    summary.manifest_sha256 = write_manifest_lines(&args.run.root.join("digests"), &digested)?;
+    summary.manifest_sha256 = Some(write_manifest_lines(
+        &args.run.root.join("digests"),
+        &digested,
+    )?);
     for (u, (sha, _)) in used.iter().zip(&args.accepts) {
         if !u && !summary.unused_accepts.contains(sha) {
             summary.unused_accepts.push(sha.clone());

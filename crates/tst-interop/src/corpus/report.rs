@@ -12,7 +12,7 @@ use super::PATHS;
 use super::RunDir;
 use super::Sha256Hex;
 use super::replay::ReplaySummary;
-use super::sweep::{Acceptance, SweepSummary, digests_fingerprint, no_manifest_sha256};
+use super::sweep::{Acceptance, SweepSummary, digests_fingerprint};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ArchiveRow {
@@ -39,9 +39,9 @@ pub struct ArchiveRow {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub baseline_manifest_sha256: Option<Sha256Hex>,
     /// SHA-256 of the `manifest.txt` the sweep wrote: which capture set it
-    /// swept. Empty in a row written before the field.
-    #[serde(default = "no_manifest_sha256")]
-    pub manifest_sha256: Sha256Hex,
+    /// swept. Absent in a row written before the field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub manifest_sha256: Option<Sha256Hex>,
     pub note: String,
 }
 
