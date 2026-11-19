@@ -242,12 +242,15 @@ step 3).
      `tests/coverage/evidence-archives.toml` and a row whose baseline digest is
      not `expected_baseline_manifest_sha256` there: they prove which captures
      were swept and which capture set the baseline covered, not whose decoded
-     results the baseline holds. The release-prep PR moves
-     `expected_manifest_sha256` (and `expected_files`) when the corpus gained
-     or lost a capture (`sha256sum digests/manifest.txt` of the new sweep, with
-     the accepted additions and removals named in the archive row's PR); after
-     a release, `expected_baseline_manifest_sha256` becomes the released set's
-     digest. Rows before 0.11.0 carry no `manifest_sha256`. A failure
+     results the baseline holds. When the corpus
+     gained or lost a capture since the last release, the pull request that
+     adds the corpus archive row also moves `expected_manifest_sha256` (and
+     `expected_files`) to the digest of the new sweep
+     (`sha256sum digests/manifest.txt`); that file may change after the
+     freeze, as it is a release document to the gate. The PR's description
+     names the captures added or removed, as the sweep's accept list has them.
+     The first PR after the tag moves `expected_baseline_manifest_sha256` to
+     the released set's digest. Rows before 0.11.0 carry no `manifest_sha256`. A failure
      stops the checklist here; it is a finding to fix, and the fix restarts
      at step 2. A reviewed change is accepted with
      `--accept <sha256> --because <text>`.
