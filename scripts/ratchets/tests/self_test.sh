@@ -678,7 +678,7 @@ rvc_fixtures() { # <version>
     rm -rf "$tmp/rvc/ws"; mkdir -p "$tmp/rvc/ws/core/src" "$tmp/rvc/ws/pipe/src" "$tmp/rvc/ws/mbed/src"
     printf '[workspace]\nresolver = "2"\nmembers = ["core", "pipe", "mbed"]\n\n[workspace.package]\nversion      = "%s"\n' "$ver" > "$tmp/rvc/ws/Cargo.toml"
     printf '[package]\nname = "tst-core"\nversion.workspace = true\n' > "$tmp/rvc/ws/core/Cargo.toml"
-    printf '[package]\nname = "tst-pipeline"\nversion.workspace = true\n\n[dependencies]\ntst-core = { path = "../core", version = "%s" }\n' "$ver" > "$tmp/rvc/ws/pipe/Cargo.toml"
+    printf '[package]\nname = "tst-pipeline"\nversion.workspace = true\n\n[dependencies]\ntst-core = { path = "../core", version = "%s" }\n\n[dev-dependencies]\ntst-core = { path = "../core" }\n' "$ver" > "$tmp/rvc/ws/pipe/Cargo.toml"
     printf '[package]\nname = "tstrans-mbedtls-src"\nversion = "%s+3.6.7"\n' "$ver" > "$tmp/rvc/ws/mbed/Cargo.toml"
     : > "$tmp/rvc/ws/core/src/lib.rs"; : > "$tmp/rvc/ws/pipe/src/lib.rs"; : > "$tmp/rvc/ws/mbed/src/lib.rs"
     printf '[project]\nname    = "tstrans"\nversion = "%s"\n' "$ver" > "$tmp/rvc/pyproject.toml"
@@ -744,7 +744,7 @@ expect "release version: internal dep version key restored" 0 rvc
 rvc_no_cargo() { # the rail with a PATH that holds bash and jq but no cargo
     local nb="$tmp/rvc/nocargo"; mkdir -p "$nb"
     ln -sf "$(command -v jq)" "$nb/jq"; ln -sf "$(command -v bash)" "$nb/bash"
-    for t in dirname grep sed head cat; do ln -sf "$(command -v $t)" "$nb/$t"; done
+    for t in dirname grep sed head cat python3; do ln -sf "$(command -v $t)" "$nb/$t"; done
     PATH="$nb" rvc
 }
 expect "release version: no cargo on PATH fails" 1 rvc_no_cargo

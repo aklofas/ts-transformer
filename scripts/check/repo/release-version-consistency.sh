@@ -196,6 +196,7 @@ run_check() { # [EXPECTED_VERSION]
   local missing=""
   command -v cargo >/dev/null 2>&1 || missing="cargo"
   command -v jq >/dev/null 2>&1 || missing="${missing:+$missing and }jq"
+  command -v python3 >/dev/null 2>&1 || missing="${missing:+$missing and }python3"
   if [ -n "$missing" ]; then
     echo "FAIL: $missing not found on PATH; the rail reads package versions and internal pins from cargo metadata" >&2
     return 1
