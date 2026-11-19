@@ -12,7 +12,7 @@ use super::PATHS;
 use super::RunDir;
 use super::Sha256Hex;
 use super::replay::ReplaySummary;
-use super::sweep::{Acceptance, SweepSummary, digests_fingerprint};
+use super::sweep::{Acceptance, SweepSummary, digests_fingerprint, no_manifest_sha256};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ArchiveRow {
@@ -33,6 +33,10 @@ pub struct ArchiveRow {
     /// release gate refuses a corpus row without it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub baseline_manifest_sha256: Option<Sha256Hex>,
+    /// SHA-256 of the `manifest.txt` the sweep wrote: which capture set it
+    /// swept. Empty in a row written before the field.
+    #[serde(default = "no_manifest_sha256")]
+    pub manifest_sha256: Sha256Hex,
     pub note: String,
 }
 
@@ -86,6 +90,7 @@ pub fn archive_row(sweep: &SweepSummary, replay: Option<&ReplaySummary>) -> Arch
         replay_paths,
         replay_failed,
         baseline_manifest_sha256: sweep.baseline_manifest_sha256.clone(),
+        manifest_sha256: sweep.manifest_sha256.clone(),
         note,
     }
 }

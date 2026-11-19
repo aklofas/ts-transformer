@@ -65,6 +65,37 @@ fn sweep_without_a_baseline_passes_and_writes_one_digest_per_file() {
     assert_eq!(json(&run.join("sweep.json"))["new_no_baseline"], 2);
 }
 
+/// The summary carries the SHA-256 of the manifest the sweep wrote, whether
+/// or not it compared with a baseline.
+#[test]
+fn the_summary_records_the_digest_of_the_manifest_it_wrote() {
+    use sha2::{Digest, Sha256};
+    let (dir, _) = two_files("sw-own-manifest");
+    let run = temp_dir_named("sw-own-manifest-run");
+    assert_eq!(sweep(&dir, &run, &[]).status.code(), Some(0));
+    let manifest = std::fs::read(run.join("digests").join("manifest.txt")).unwrap();
+    let want: String = Sha256::digest(&manifest)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    assert_eq!(
+        json(&run.join("sweep.json"))["manifest_sha256"],
+        want.as_str()
+    );
+    let second = temp_dir_named("sw-own-manifest-second");
+    let base = run.join("digests");
+    assert_eq!(
+        sweep(&dir, &second, &["--baseline", base.to_str().unwrap()])
+            .status
+            .code(),
+        Some(0)
+    );
+    assert_eq!(
+        json(&second.join("sweep.json"))["manifest_sha256"],
+        want.as_str()
+    );
+}
+
 #[test]
 fn sweep_against_its_own_output_is_identical() {
     let (dir, _) = two_files("sw-self");
