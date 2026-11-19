@@ -460,8 +460,16 @@ impl RtspPush {
     ///
     /// `Ok(())` means the queued media was written and the server accepted
     /// the TEARDOWN. A wait ended by the cancel or by the session's end
-    /// goes straight on to the TEARDOWN, what was still queued is dropped,
-    /// and the result is an error.
+    /// goes straight on to the TEARDOWN, and what was still queued is
+    /// dropped. The result is then an error: after a cancel,
+    /// [`RtspError::LocalCancel`]; after the connection ended,
+    /// [`RtspError::Io`], as the TEARDOWN cannot be written; on a session
+    /// the server forgot, with RTP packets among what was dropped,
+    /// [`RtspError::Protocol`] with code `454`, whatever the TEARDOWN is
+    /// answered. One such end is not an error in itself: a session the
+    /// server forgot from which only sender reports were dropped lost no
+    /// media, and the result is the TEARDOWN's own, `Ok(())` when the
+    /// server accepts it.
     ///
     /// The end reason it leaves, unless one was recorded before, is
     /// `CleanTeardown` when the server accepts the TEARDOWN (`2xx` or
