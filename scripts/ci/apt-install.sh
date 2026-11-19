@@ -4,13 +4,17 @@
 #
 # Usage: apt-install.sh [--timeout SECONDS] [--no-recommends] [--] <packages or apt-get install arguments...>
 # Exit 0 when one attempt installed everything, else the last attempt's status
-# (124 = a step hit its bound).
+# (124 = a step hit its bound, or 137 when the kill after 10 s was needed).
 #
 # Environment (all optional): APT_INSTALL_ATTEMPTS (3), APT_INSTALL_WAITS
-# ("20 60": seconds before attempts 2 and 3), APT_INSTALL_TIMEOUT (240, the
-# bound of update and of the download), APT_INSTALL_UNPACK_TIMEOUT (900),
-# APT_INSTALL_MIRRORS_FILE (/etc/apt/apt-mirrors.txt), APT_INSTALL_SUDO (sudo;
-# empty runs apt-get directly).
+# ("20 60": seconds before attempts 2 and 3), APT_INSTALL_UPDATE_TIMEOUT (120,
+# the bound of the index fetch), APT_INSTALL_TIMEOUT (180, the bound of the
+# download; --timeout sets the same), APT_INSTALL_UNPACK_TIMEOUT (900),
+# APT_INSTALL_MIRRORS_FILE (/etc/apt/apt-mirrors.txt), APT_INSTALL_SOURCES
+# (the apt sources files or directories that may name the mirror list),
+# APT_INSTALL_SUDO (sudo; empty runs apt-get directly).
+# Worst case with the defaults: 3 x (120 + 180) + 80 s of waits, about 16
+# minutes, plus the unpack.
 #
 # Why Acquire::Retries is 1: apt spends every retry on one mirror before it
 # tries the next one in the mirror list, so a high count only delays the
@@ -28,15 +32,25 @@ set -euo pipefail
 
 attempts="${APT_INSTALL_ATTEMPTS:-3}"
 waits="${APT_INSTALL_WAITS:-20 60}"
-bound="${APT_INSTALL_TIMEOUT:-240}"
+update_bound="${APT_INSTALL_UPDATE_TIMEOUT:-120}"
+bound="${APT_INSTALL_TIMEOUT:-180}"
 unpack_bound="${APT_INSTALL_UNPACK_TIMEOUT:-900}"
 mirrors="${APT_INSTALL_MIRRORS_FILE:-/etc/apt/apt-mirrors.txt}"
+sources="${APT_INSTALL_SOURCES:-/etc/apt/sources.list /etc/apt/sources.list.d}"
 sudo_cmd="${APT_INSTALL_SUDO-sudo}"
 recommends=()
 
+case "$attempts" in
+  '' | *[!0-9]* | 0) echo "apt-install.sh: APT_INSTALL_ATTEMPTS must be a positive integer" >&2; exit 2 ;;
+esac
+
 while [ $# -gt 0 ]; do
   case "$1" in
-    --timeout) bound="$2"; shift 2 ;;
+    --timeout)
+      case "${2:-}" in
+        '' | *[!0-9]*) echo "apt-install.sh: --timeout needs a number of seconds" >&2; exit 2 ;;
+      esac
+      bound="$2"; shift 2 ;;
     --no-recommends) recommends=(--no-install-recommends); shift ;;
     --) shift; break ;;
     *) break ;;
@@ -53,17 +67,24 @@ step() {
   $sudo_cmd timeout -k 10 "$t" apt-get "${opts[@]}" "$@"
 }
 
+# Sets failed_step to the step that failed: update, download or unpack.
 attempt_once() {
-  step "$bound" update || return $?
+  failed_step=update
+  step "$update_bound" update || return $?
+  failed_step=download
   step "$bound" install -y --download-only ${recommends[@]+"${recommends[@]}"} "$@" || return $?
+  failed_step=unpack
   step "$unpack_bound" install -y ${recommends[@]+"${recommends[@]}"} "$@"
 }
 
 # Drop the mirror the image ranks first (a mirror that is down is the usual
-# reason an attempt failed); the list then falls through to the next one.
+# reason an attempt failed); the list then falls through to the next one. Only
+# when apt reads the list at all (the arm64 image uses ports.ubuntu.com).
 drop_first_mirror() {
   [ -f "$mirrors" ] || return 0
-  [ "$(wc -l < "$mirrors" | tr -d ' ')" -gt 1 ] || return 0
+  # shellcheck disable=SC2086 # sources is a list of paths
+  grep -rqsF "mirror+file:$mirrors" $sources || return 0
+  [ "$(grep -c '[^[:space:]]' "$mirrors")" -gt 1 ] || return 0
   head -n 1 "$mirrors" | grep -q 'priority:1' || return 0
   local host
   host="$(head -n 1 "$mirrors" | cut -f1)"
@@ -85,7 +106,13 @@ while [ "$n" -le "$attempts" ]; do
   else
     rc=$?
   fi
-  echo "::notice::apt install attempt $n of $attempts failed with status $rc"
+  echo "::notice::apt install attempt $n of $attempts: $failed_step failed with status $rc"
+  if [ "$failed_step" = unpack ]; then
+    # An interrupted dpkg makes every later apt-get install fail until it is finished.
+    echo "::notice::the unpack was interrupted; running dpkg --configure -a"
+    # shellcheck disable=SC2086
+    $sudo_cmd timeout -k 10 "$unpack_bound" dpkg --configure -a || true
+  fi
   n=$((n + 1))
 done
 exit "$rc"
