@@ -31,12 +31,14 @@ test "$(printf '%s\n' $pairs | grep -c .)" -eq 11 || { echo "public-api roster i
 # Each crate's declared feature envelope ([package.metadata.public-api] in its
 # Cargo.toml), so optional surfaces such as TLS are ratcheted.
 feats="$(bash scripts/lib/roster.sh public-api-features)"
+checked=0
 for pair in $pairs; do
   pkg="${pair%%:*}"
   dir="${pair##*:}"
   if [ -n "${PUBLIC_API_ONLY:-}" ]; then
     case " $PUBLIC_API_ONLY " in *" $pkg "*) ;; *) continue ;; esac
   fi
+  checked=$((checked + 1))
   feat="$(printf '%s\n' "$feats" | awk -F'\t' -v p="$pkg" '$1 == p {print $2}')"
   test -n "$feat" || { echo "no public-api-features row for $pkg" >&2; exit 1; }
   fargs=()
@@ -47,6 +49,7 @@ for pair in $pairs; do
     exit 1
   fi
 done
+test -z "${PUBLIC_API_ONLY:-}" || test "$checked" -gt 0 || { echo "PUBLIC_API_ONLY names no baselined crate: $PUBLIC_API_ONLY" >&2; exit 1; }
 # The optional TLS items must be in the baselines, not only in a render.
 rg -q 'pub mod tst_core::net::tls' crates/tst-core/public-api.txt || { echo "tst-core baseline lacks the tls surface" >&2; exit 1; }
 rg -q 'tls_root_certs' crates/tst-rtp/public-api.txt || { echo "tst-rtp baseline lacks the rtsp-server-tls surface" >&2; exit 1; }

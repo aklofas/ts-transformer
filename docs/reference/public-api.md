@@ -138,8 +138,9 @@ contract and the Python/JVM/Swift binding-shape conventions.
 ## Regenerating baselines
 
 Baselines are rendered by `cargo public-api` on the **pinned nightly toolchain**
-declared in the CI public-api step (see `.github/workflows/ci.yml`, currently
-`nightly-2026-07-03`). Nightly rustdoc occasionally changes how re-exported
+recorded in `scripts/lib/public-api-toolchain` (currently
+`nightly-2026-07-03`), which the CI public-api step and
+`scripts/dev/public-api-diff.sh` both read. Nightly rustdoc occasionally changes how re-exported
 `std`/`core` paths render, which shows up as spurious whole-baseline drift, so
 an unpinned nightly cannot be trusted for rendering. Each crate renders
 with its declared feature envelope, the `features` list under

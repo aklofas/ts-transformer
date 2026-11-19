@@ -60,7 +60,8 @@ Three ratchets need a deliberate update when your change is intentional:
 
 - **Public API** — `cargo public-api` baselines for eleven crates at
   `crates/<dir>/public-api.txt`. Re-render with the nightly PINNED in
-  `ci.yml` (search `nightly-2026-07-03`) and the crate's declared feature
+  `scripts/lib/public-api-toolchain` (currently `nightly-2026-07-03`; CI and
+  `bash scripts/dev/public-api-diff.sh` read the same file) and the crate's declared feature
   envelope (`[package.metadata.public-api] features`; tst-core `tls`,
   tst-rtp `rtsp-server-tls`; `bash scripts/lib/roster.sh public-api-features`
   lists them):
