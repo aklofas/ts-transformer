@@ -1697,27 +1697,42 @@ fn a_closed_queue_with_no_reason_recorded_is_closed() {
 }
 
 /// A push whose server took the handshake and then did `ending` to the
-/// connection, once the client's thread has seen it.
+/// connection, once the client's thread has recorded the end.
 fn ended_by(ending: impl FnOnce(&mut Peer) + Send + 'static) -> (RtspPush, JoinHandle<()>) {
     let (port, peer) = serve(move |peer| {
         peer.accept_push();
         ending(peer);
     });
     let push = RtspPush::connect(builder(port, "/live"), &PushDescription::Mp2t).unwrap();
-    eventually("the client's thread saw the end", || {
-        !push.is_session_alive()
+    eventually("the client's thread recorded the end", || {
+        push.end_reason().is_some()
     });
     (push, peer)
+}
+
+/// What `send_ts` returns once the end has reached the media queue. The
+/// client's thread records the end before it closes the queue, so a send
+/// in between is still taken; a refused one counts nothing.
+fn refused_send(push: &mut RtspPush) -> TransportError {
+    let give_up = Instant::now() + scaled(Duration::from_secs(5));
+    loop {
+        let before = push.stats().packets_sent;
+        if let Err(e) = push.send_ts(&ts(7, 0)) {
+            assert_eq!(push.stats().packets_sent, before, "a refused send counted");
+            return e;
+        }
+        assert!(Instant::now() < give_up, "sends were still taken");
+        std::thread::sleep(Duration::from_millis(1));
+    }
 }
 
 #[test]
 fn the_peer_closing_gives_broken_clean_eof() {
     let (mut push, peer) = ended_by(|_| {});
-    let e = push.send_ts(&ts(7, 0)).unwrap_err();
+    let e = refused_send(&mut push);
     assert_eq!(broken_cause(&e), Some(BrokenCause::CleanEof), "{e:?}");
     assert_eq!(push.end_reason(), Some(EndReason::CleanTeardown));
     assert!(!Transport::is_alive(&push));
-    assert_eq!(push.stats().packets_sent, 0);
     joined(peer);
 }
 
@@ -1736,10 +1751,10 @@ fn a_reset_gives_broken_unspecified() {
     });
     let mut push = RtspPush::connect(builder(port, "/live"), &PushDescription::Mp2t).unwrap();
     push.send_ts(&ts(7, 0)).unwrap();
-    eventually("the client's thread saw the reset", || {
-        !push.is_session_alive()
+    eventually("the client's thread recorded the reset", || {
+        push.end_reason().is_some()
     });
-    let e = push.send_ts(&ts(7, 0)).unwrap_err();
+    let e = refused_send(&mut push);
     assert_eq!(broken_cause(&e), Some(BrokenCause::Unspecified), "{e:?}");
     assert!(
         matches!(push.end_reason(), Some(EndReason::TransportFailed { .. })),
@@ -1756,7 +1771,7 @@ fn a_framing_violation_gives_broken_and_protocol_error() {
         peer.sock.write_all(garbage).unwrap();
         peer.until_hangup();
     });
-    let e = push.send_ts(&ts(7, 0)).unwrap_err();
+    let e = refused_send(&mut push);
     assert_eq!(broken_cause(&e), Some(BrokenCause::Unspecified), "{e:?}");
     assert!(
         matches!(push.end_reason(), Some(EndReason::ProtocolError { .. })),
@@ -1778,8 +1793,9 @@ fn a_ping_answered_454_gives_broken_and_session_expired() {
     });
     let pinging = builder(port, "/live").keepalive_interval(Duration::from_millis(40));
     let mut push = RtspPush::connect(pinging, &PushDescription::Mp2t).unwrap();
-    eventually("the ping's answer", || !push.is_session_alive());
-    let e = push.send_ts(&ts(7, 0)).unwrap_err();
+    eventually("the ping's answer recorded", || push.end_reason().is_some());
+    assert!(!push.is_session_alive());
+    let e = refused_send(&mut push);
     assert_eq!(broken_cause(&e), Some(BrokenCause::Unspecified), "{e:?}");
     assert_eq!(push.end_reason(), Some(EndReason::SessionExpired));
     drop(push);
@@ -1805,9 +1821,10 @@ fn a_send_after_a_cancel_and_a_peer_close_is_explicit_close() {
     let mut push = RtspPush::connect(builder(port, "/live"), &PushDescription::Mp2t).unwrap();
     push.cancel_handle().cancel();
     close.send(()).unwrap();
-    eventually("the client's thread saw the close", || {
-        !push.is_session_alive()
+    eventually("the client's thread recorded the close", || {
+        push.end_reason().is_some()
     });
+    assert!(!push.is_session_alive());
     assert_eq!(push.send_ts(&ts(7, 0)), Err(TransportError::ExplicitClose));
     joined(peer);
 }
@@ -1870,8 +1887,10 @@ fn close_after_a_ping_454_dropped_queued_media_is_an_error() {
     fill_the_queue(&mut push);
     let queue = push.client().driver.media_queue();
     open.send(()).unwrap();
-    eventually("the ping's answer", || !push.is_session_alive());
-    assert_eq!(push.end_reason(), Some(EndReason::SessionExpired));
+    eventually("the ping's answer recorded", || {
+        push.end_reason() == Some(EndReason::SessionExpired)
+    });
+    assert!(!push.is_session_alive());
     // The queue closes a moment after the session is marked dead.
     eventually("the queued frames dropped", || {
         push.stats().frames_dropped_at_close > 0
