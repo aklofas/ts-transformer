@@ -43,21 +43,21 @@ setup() {
 run() { set +e; PATH="$TMP/bin:$PATH" bash "$SCRIPT" "$@" > "$TMP/out" 2>&1; RC=$?; set -e; }
 calls() { wc -l < "$TMP/gradle.log" | tr -d ' '; }
 
-# 1: the resolution fails once, then succeeds after a 20 s wait
+# 1: the resolution fails once, then succeeds after a 60 s wait
 setup 1
 run
 [ "$RC" = 0 ] || fail "case 1 rc=$RC"
 [ "$(calls)" = 2 ] || fail "case 1 calls=$(calls)"
-[ "$(cat "$TMP/sleep.log")" = "sleep 20" ] || fail "case 1 wait"
+[ "$(cat "$TMP/sleep.log")" = "sleep 60" ] || fail "case 1 wait"
 [ "$(grep -c '::notice::' "$TMP/out")" = 1 ] || fail "case 1 notices"
-grep -qx '::notice::Gradle attempt 1 of 3 failed with status 1; the next asks the repositories again (--refresh-dependencies)' "$TMP/out" || fail "case 1 notice text"
+grep -qx '::notice::Gradle attempt 1 of 3 failed with status 1' "$TMP/out" || fail "case 1 notice text"
 
-# 2: every attempt fails: three calls, waits of 20 s and 60 s, exit 1
+# 2: every attempt fails: three calls, waits of 60 s and 180 s, exit 1
 setup 9
 run
 [ "$RC" = 1 ] || fail "case 2 rc=$RC"
 [ "$(calls)" = 3 ] || fail "case 2 calls=$(calls)"
-[ "$(tr '\n' ' ' < "$TMP/sleep.log")" = "sleep 20 sleep 60 " ] || fail "case 2 waits: $(cat "$TMP/sleep.log")"
+[ "$(tr '\n' ' ' < "$TMP/sleep.log")" = "sleep 60 sleep 180 " ] || fail "case 2 waits: $(cat "$TMP/sleep.log")"
 [ "$(grep -c '::notice::' "$TMP/out")" = 3 ] || fail "case 2 notices"
 grep -q 'failed 3 times' "$TMP/out" || fail "case 2 final message"
 
@@ -91,16 +91,14 @@ case "$(head -n 1 "$TMP/timeout.log")" in
   *) fail "case 5 bound: $(cat "$TMP/timeout.log")" ;;
 esac
 
-# 6: a retry asks the repositories again: Gradle caches a module's absence,
-# so the second and third calls carry --refresh-dependencies, the first not
+# 6: every retry repeats the first call's arguments exactly
 setup 9
 run -PjniTestHooks=true
 [ "$RC" = 1 ] || fail "case 6 rc=$RC"
 [ "$(calls)" = 3 ] || fail "case 6 calls=$(calls)"
 args() { sed -n "${1}p" "$TMP/gradle.log" | cut -d'|' -f2; }
-case " $(args 1) " in *" --refresh-dependencies "*) fail "case 6 the first call refreshes: $(args 1)" ;; esac
-for i in 2 3; do
-  [ "$(args "$i")" = "--no-daemon --init-script ../../scripts/ci/gradle-resolve-all.init.gradle resolveAll --refresh-dependencies -PjniTestHooks=true" ] \
+for i in 1 2 3; do
+  [ "$(args "$i")" = "--no-daemon --init-script ../../scripts/ci/gradle-resolve-all.init.gradle resolveAll -PjniTestHooks=true" ] \
     || fail "case 6 call $i: $(args "$i")"
 done
 grep -qx '::notice::Gradle attempt 3 of 3 failed with status 1' "$TMP/out" || fail "case 6 last notice"
