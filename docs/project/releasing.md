@@ -79,18 +79,12 @@ step 3).
    same rail on the tag and also requires the tag to be `vMAJOR.MINOR.PATCH`
    and equal to the source version.
 
-   The rail does **not** cover everything the version sweep must touch —
-   also update by hand:
-   - **every internal path-dependency's pinned `version = "X.Y.Z"` key** —
-     `crates/{srt-sys,rist-sys,tst-pipeline,tst-srt,tst-rist,tst-udp,tst-tcp,
-     tst-hls,tst-rtp,tst-webrtc}/Cargo.toml` (21 keys at 0.9.0,
-     dev-dependencies included; the rail's OK line prints the number it
-     compared). Miss one of these and the crates.io ordered publish below
-     fails at layer 2 — after
-     the irreversible layer-1 publish already landed. `release-version-
-     consistency.sh` now asserts these match the workspace version (see
-     `RVC_DEP_TOMLS` in the script), so this step is CI-enforced, not just
-     convention;
+   The rail reads `cargo metadata`, so it also asserts every publishable
+   crate's own version and every internal path-dependency's version
+   requirement (whatever the manifest spelling; the OK line prints the number
+   it compared). A stale one would fail the crates.io ordered publish below
+   at layer 2, after the irreversible layer-1 publish already landed. It does
+   **not** cover everything the version sweep must touch; also update by hand:
    - the workspace `Cargo.lock` **and the embedded sub-project lockfiles**
      (`embedded/baremetal-qemu{,-c}/Cargo.lock`,
      `embedded/freertos-srt/example/host/Cargo.lock`) — all record workspace
