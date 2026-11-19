@@ -799,6 +799,29 @@ fn a_ping_that_fails_to_encode_ends_the_session() {
     assert_eq!(e.poll_timeout(), None);
 }
 
+/// Like a caller request, a ping that never reaches the wire takes no
+/// CSeq: the next request carries the number the ping would have had.
+#[test]
+fn a_ping_refused_at_encoding_uses_no_cseq() {
+    let t0 = Instant::now();
+    let mut e = ClientEngine::new(cfg(None));
+    // The peer's session id carries a control byte the ping cannot echo.
+    setup_over_input(&mut e, "abc\x01", t0);
+    e.enable_keepalive(Some(Duration::from_secs(1)), t0);
+    e.handle_timeout(ms(t0, 1000), false);
+    assert!(e.poll_transmit().is_none());
+    assert!(matches!(
+        events(&mut e).as_slice(),
+        [
+            Event::SessionDead,
+            Event::Ended(EndReason::KeepaliveFailed { .. })
+        ]
+    ));
+    e.submit(spec(RtspMethod::Options, URI), None, ms(t0, 1000))
+        .unwrap();
+    assert_eq!(cseq(&one(&mut e)), 2);
+}
+
 fn pinged(creds: Option<(&str, &str)>) -> (ClientEngine, Instant, u32) {
     let t0 = Instant::now();
     let mut e = ClientEngine::new(cfg(creds));
@@ -993,7 +1016,7 @@ fn a_reply_matching_nothing_live_is_counted_and_dropped() {
     let a = e.submit(spec(RtspMethod::Options, URI), None, t0).unwrap();
     one(&mut e);
     e.handle_reply(resp(b"RTSP/1.0 200 OK\r\nCSeq: 7\r\n\r\n"), t0);
-    e.handle_reply(resp(b"RTSP/1.0 200 OK\r\nCSeq: 1000001\r\n\r\n"), t0);
+    e.handle_reply(resp(b"RTSP/1.0 200 OK\r\nCSeq: 777\r\n\r\n"), t0);
     assert!(events(&mut e).is_empty());
     assert_eq!(e.counters().unmatched_replies, 2);
     assert_eq!(e.counters().keepalive_responses, 0);
@@ -1128,7 +1151,7 @@ fn replies_and_timeouts_after_the_end_do_nothing() {
     transmits(&mut e);
     e.handle_reply(resp(b"RTSP/1.0 200 OK\r\nCSeq: 1\r\n\r\n"), t0);
     e.handle_reply(
-        resp(b"RTSP/1.0 454 Session Not Found\r\nCSeq: 1000001\r\n\r\n"),
+        resp(b"RTSP/1.0 454 Session Not Found\r\nCSeq: 777\r\n\r\n"),
         t0,
     );
     e.handle_timeout(t0 + Duration::from_secs(10), false);
@@ -2853,6 +2876,15 @@ fn a_spec_carrying_content_type_trips_the_debug_assert() {
     let _ = ClientEngine::new(cfg(None)).submit(bad, None, Instant::now());
 }
 
+#[test]
+#[cfg(debug_assertions)]
+#[should_panic(expected = "a header the engine writes itself")]
+fn a_spec_carrying_content_length_trips_the_debug_assert() {
+    let mut bad = with_sdp(RtspMethod::Announce, b"v=0");
+    bad.headers.push(("Content-Length", "3".to_string()));
+    let _ = ClientEngine::new(cfg(None)).submit(bad, None, Instant::now());
+}
+
 // --- interim (1xx) replies ---
 
 #[test]
@@ -2999,6 +3031,91 @@ fn a_1xx_with_an_unknown_cseq_is_unmatched() {
         t0,
     );
     assert_eq!(reply(&mut e, a).unwrap().status, 200);
+}
+
+/// An OPTIONS answered `401` and retried under the next CSeq.
+fn retried_options(t0: Instant) -> (ClientEngine, TxnId, u32) {
+    let mut e = ClientEngine::new(cfg(Some(("user", "pass"))));
+    let a = e.submit(spec(RtspMethod::Options, URI), None, t0).unwrap();
+    let c = cseq(&one(&mut e));
+    e.handle_reply(
+        resp(
+            format!(
+                "RTSP/1.0 401 Unauthorized\r\nCSeq: {c}\r\nWWW-Authenticate: Basic realm=\"cam\"\r\n\r\n"
+            )
+            .as_bytes(),
+        ),
+        t0,
+    );
+    let retry = cseq(&one(&mut e));
+    assert_eq!(retry, c + 1);
+    assert!(events(&mut e).is_empty());
+    (e, a, retry)
+}
+
+#[test]
+fn a_100_to_the_retry_after_a_401_is_ignored() {
+    let t0 = Instant::now();
+    let (mut e, a, retry) = retried_options(t0);
+    e.handle_reply(
+        resp(format!("RTSP/1.0 100 Continue\r\nCSeq: {retry}\r\n\r\n").as_bytes()),
+        t0,
+    );
+    assert!(events(&mut e).is_empty());
+    assert_eq!(e.counters().interim_replies, 1);
+    e.handle_reply(
+        resp(format!("RTSP/1.0 200 OK\r\nCSeq: {retry}\r\n\r\n").as_bytes()),
+        t0,
+    );
+    assert_eq!(reply(&mut e, a).unwrap().status, 200);
+    assert_eq!(e.counters().unmatched_replies, 0);
+}
+
+/// Once the retry is out the first attempt's CSeq is waited on by
+/// nothing: a `100` under it is unmatched, as its final reply would be.
+#[test]
+fn a_100_under_the_first_attempts_cseq_after_the_retry_is_unmatched_or_ignored_consistently() {
+    let t0 = Instant::now();
+    let (mut e, a, retry) = retried_options(t0);
+    let first = retry - 1;
+    e.handle_reply(
+        resp(format!("RTSP/1.0 100 Continue\r\nCSeq: {first}\r\n\r\n").as_bytes()),
+        t0,
+    );
+    assert!(events(&mut e).is_empty());
+    assert_eq!(e.counters().unmatched_replies, 1);
+    assert_eq!(e.counters().interim_replies, 0);
+    e.handle_reply(
+        resp(format!("RTSP/1.0 200 OK\r\nCSeq: {first}\r\n\r\n").as_bytes()),
+        t0,
+    );
+    assert!(events(&mut e).is_empty());
+    assert_eq!(e.counters().unmatched_replies, 2);
+    e.handle_reply(
+        resp(format!("RTSP/1.0 200 OK\r\nCSeq: {retry}\r\n\r\n").as_bytes()),
+        t0,
+    );
+    assert_eq!(reply(&mut e, a).unwrap().status, 200);
+}
+
+#[test]
+fn a_100_after_the_final_reply_is_unmatched() {
+    let t0 = Instant::now();
+    let mut e = ClientEngine::new(cfg(None));
+    let a = e.submit(spec(RtspMethod::Options, URI), None, t0).unwrap();
+    let c = cseq(&one(&mut e));
+    e.handle_reply(
+        resp(format!("RTSP/1.0 200 OK\r\nCSeq: {c}\r\n\r\n").as_bytes()),
+        t0,
+    );
+    assert_eq!(reply(&mut e, a).unwrap().status, 200);
+    e.handle_reply(
+        resp(format!("RTSP/1.0 100 Continue\r\nCSeq: {c}\r\n\r\n").as_bytes()),
+        t0,
+    );
+    assert!(events(&mut e).is_empty());
+    assert_eq!(e.counters().unmatched_replies, 1);
+    assert_eq!(e.counters().interim_replies, 0);
 }
 
 // --- one CSeq counter ---

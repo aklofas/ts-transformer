@@ -834,10 +834,11 @@ impl ClientEngine {
     }
 
     fn send_ping(&mut self, now: Instant) {
-        self.cseq = self.cseq.wrapping_add(1);
+        // Taken only once the ping encodes, as for a caller request.
+        let cseq = self.cseq.wrapping_add(1);
         let uri = self.cfg.uri.clone();
         let mut req = RtspRequest::new(RtspMethod::Options, uri.as_str(), self.cfg.version)
-            .header("cseq", self.cseq.to_string())
+            .header("cseq", cseq.to_string())
             .header("user-agent", self.cfg.user_agent.as_str());
         if let Some(sid) = &self.session_id {
             req = req.header("session", sid.as_str());
@@ -848,10 +849,11 @@ impl ClientEngine {
         }
         match req.encode_checked() {
             Ok(bytes) => {
+                self.cseq = cseq;
                 if self.pings.len() == MAX_PINGS_AWAITING_REPLY {
                     self.pings.pop_front();
                 }
-                self.pings.push_back(self.cseq);
+                self.pings.push_back(cseq);
                 if let Keepalive::On {
                     interval,
                     anchor,
