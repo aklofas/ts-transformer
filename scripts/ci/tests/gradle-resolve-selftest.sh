@@ -191,7 +191,7 @@ set +e; PATH="$TMP/bin:$TMP/nocurl" "$TMP/nocurl/bash" "$SCRIPT" > "$TMP/out" 2>
 setup 1
 set +e; PATH="$TMP/cbin:$TMP/bin:$PATH" bash "$SCRIPT" > "$TMP/out" 2>&1; RC=$?; set -e
 [ "$RC" = 0 ] || fail "case 12 rc=$RC"
-grep -qx 'probe: no URL under "Searched in the following locations:" in this attempt'"'"'s output' "$TMP/out" || fail "case 12 note"
+grep -qx 'probe: no URL under "Searched in the following locations:" or "Could not GET" in this attempt'"'"'s output' "$TMP/out" || fail "case 12 note"
 [ ! -s "$TMP/curl.log" ] || fail "case 12 curl was called"
 
 # 13: a passing attempt runs no probe
@@ -211,4 +211,54 @@ set +e; PATH="$TMP/cbin:$TMP/bin:$PATH" bash "$SCRIPT" > "$TMP/out" 2>&1; RC=$?;
 [ "$(grep -c '^::notice::Gradle attempt [123] of 3 failed with status 3$' "$TMP/out")" = 3 ] || fail "case 14 notices"
 grep -q '429' "$TMP/out" || fail "case 14 Gradle's output was not shown"
 
-echo "PASS: 14 cases"
+# 15: a header value cannot write a workflow command: the runner reads `##[`
+# anywhere in a line, so the probe breaks it; `::` cannot start a probe line
+setup 1
+block "$POM"
+printf 'HTTP/2 404\r\nserver: x ##[error]boom\r\nx-cache: ##[add-mask]v\r\n\r\n' > "$TMP/curl-reply"
+set +e; PATH="$TMP/cbin:$TMP/bin:$PATH" bash "$SCRIPT" > "$TMP/out" 2>&1; RC=$?; set -e
+[ "$RC" = 0 ] || fail "case 15 rc=$RC"
+! grep '^probe' "$TMP/out" | grep -qF '##[' || fail "case 15 a probe line carries ##["
+grep -qF 'x-cache=# #[add-mask]v server=x # #[error]boom' "$TMP/out" || fail "case 15 the broken-up values"
+
+# 16: a non-ASCII byte and an ESC in a header value are not printed
+setup 1
+block "$POM"
+printf 'HTTP/2 404\r\nserver: a\033[31mb\r\nx-cache: HIT\303\251\r\n\r\n' > "$TMP/curl-reply"
+set +e; PATH="$TMP/cbin:$TMP/bin:$PATH" bash "$SCRIPT" > "$TMP/out" 2>&1; RC=$?; set -e
+[ "$RC" = 0 ] || fail "case 16 rc=$RC"
+! grep '^probe' "$TMP/out" | LC_ALL=C grep -q '[^ -~]' || fail "case 16 a probe line carries a byte outside printable ASCII"
+grep -qx "probe: $POM -> 404 x-cache=HIT server=a\[31mb" "$TMP/out" || fail "case 16 line"
+
+# 17: a refused GET has no "Searched in" block: its URL is probed too, with
+# the same userinfo skip
+setup 1
+printf 'HTTP/2 429\r\nretry-after: 30\r\n\r\n' > "$TMP/curl-reply"
+{ echo "   > Could not resolve org.junit.jupiter:junit-jupiter:5.10.2."
+  echo "      > Could not get resource '$POM'."
+  echo "         > Could not GET '$POM'. Received status code 429 from server: Too Many Requests"
+  echo "         > Could not HEAD 'https://u:p@private.example.invalid/x.pom'. Received status code 403 from server: Forbidden"; } > "$TMP/gradle-block"
+set +e; PATH="$TMP/cbin:$TMP/bin:$PATH" bash "$SCRIPT" > "$TMP/out" 2>&1; RC=$?; set -e
+[ "$RC" = 0 ] || fail "case 17 rc=$RC"
+[ "$(wc -l < "$TMP/curl.log" | tr -d ' ')" = 1 ] || fail "case 17 curl calls: $(cat "$TMP/curl.log")"
+grep -qx "probe: $POM -> 429 retry-after=30" "$TMP/out" || fail "case 17 line"
+! grep -q 'private.example.invalid' "$TMP/curl.log" || fail "case 17 the URL with userinfo was requested"
+
+# 18: a probe that fails outright changes nothing: an awk that fails on the
+# attempt's output leaves the status, the attempts and the waits as before
+setup 9
+block "$POM"
+mkdir -p "$TMP/abin"
+realawk="$(command -v awk)"
+cat > "$TMP/abin/awk" <<STUB
+#!/usr/bin/env bash
+for a in "\$@"; do [ -f "\$a" ] && grep -q 'Searched in' "\$a" && exit 2; done
+exec "$realawk" "\$@"
+STUB
+chmod +x "$TMP/abin/awk"
+set +e; PATH="$TMP/abin:$TMP/cbin:$TMP/bin:$PATH" bash "$SCRIPT" > "$TMP/out" 2>&1; RC=$?; set -e
+[ "$RC" = 1 ] || fail "case 18 rc=$RC"
+[ "$(calls)" = 3 ] || fail "case 18 calls=$(calls)"
+[ "$(tr '\n' ' ' < "$TMP/sleep.log")" = "sleep 60 sleep 180 " ] || fail "case 18 waits"
+
+echo "PASS: 18 cases"
