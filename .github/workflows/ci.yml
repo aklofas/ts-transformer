@@ -1228,9 +1228,14 @@ jobs:
           cache-key: cargo-musl-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
           cache-restore-key: cargo-musl-${{ runner.os }}-
 
+      - name: musl C compiler (criterion's alloca shim in the test build)
+        # First, so a failed install fails the job in its first minute.
+        run: bash scripts/ci/apt-install.sh musl-tools
+
       # tst-core + tst-pipeline are pure Rust crates (no libsrt link),
       # so their library build needs only rust-std-musl + rust-lld — the
-      # build step below runs with no C compiler for the target. The test
+      # build step below runs with no C compiler for the target (CC for the
+      # target is `false`, so musl-gcc, installed above, is not used). The test
       # step builds dev-dependencies too, and criterion 0.8 pulls alloca,
       # whose build script compiles a C shim for every unix target; that
       # step gets musl-gcc. This job proves the no-libsrt build, not a
@@ -1241,10 +1246,9 @@ jobs:
       # a musl rail; libsrt-bound crates wait for musl-native libsrt support
       # if that is ever requested.
       - name: cargo build (tst-core + tst-pipeline, musl)
+        env:
+          CC_x86_64_unknown_linux_musl: "false"
         run: cargo build -p tst-core -p tst-pipeline --target x86_64-unknown-linux-musl
-
-      - name: musl C compiler (criterion's alloca shim in the test build)
-        run: bash scripts/ci/apt-install.sh musl-tools
 
       - name: cargo test (tst-core + tst-pipeline, musl)
         env:
@@ -1391,9 +1395,9 @@ jobs:
       # separate qemu-system-arm package, installed alongside it here).
       # No apt-package cache: the repository's Actions cache quota is
       # smaller than its cargo caches alone, so an apt entry is evicted
-      # before the next run. A slow mirror is bounded instead: each download
-      # attempt gets five minutes (a healthy mirror needs under one), and the
-      # script drops the first mirror before its second attempt.
+      # before the next run. A slow mirror is bounded instead: a download is cut
+      # at five minutes, and the next attempt, from the next mirror, resumes
+      # with the files apt already fetched.
       # --no-recommends skips the GUI and audio libraries qemu-system-* recommends.
       - name: Install QEMU + ARM C cross-toolchain
         run: bash scripts/ci/apt-install.sh --timeout 300 --no-recommends qemu-system-arm qemu-system-misc gcc-arm-none-eabi libnewlib-arm-none-eabi libstdc++-arm-none-eabi-newlib
@@ -1591,9 +1595,8 @@ jobs:
   python-core:
     name: tst-py default tests
     runs-on: ubuntu-24.04
-    # The gdb install below may wait out a slow runner mirror's retries
-    # (about 10 min before the job goes on without it); 30 min keeps that
-    # from cutting pytest.
+    # gdb is installed only by the backtrace step after a failure, so no
+    # package mirror sits on the passing path.
     timeout-minutes: 30
     # The default (non-pandas) pytest suite exercises Demuxer, Muxer, KLV
     # typed decode/encode, codec parsers, and io helpers. Python kinds come
@@ -1663,8 +1666,6 @@ jobs:
         run: |
           ulimit -c unlimited
           echo "${{ github.workspace }}/core.%p" | sudo tee /proc/sys/kernel/core_pattern
-          # gdb only serves the backtrace step after a crash: without it pytest still runs.
-          APT_INSTALL_ATTEMPTS=2 bash scripts/ci/apt-install.sh gdb || echo "::warning::gdb is not installed; a crash in this job will have no backtrace"
 
       - name: pytest default (non-pandas)
         # pyproject.toml sets `addopts = "-m 'not pandas'"` so this runs
@@ -1686,7 +1687,12 @@ jobs:
         if: failure()
         run: |
           shopt -s nullglob
-          for c in ${{ github.workspace }}/core.*; do
+          cores=(${{ github.workspace }}/core.*)
+          # gdb is fetched only here, when there is a core to read.
+          if [ "${#cores[@]}" -gt 0 ]; then
+            APT_INSTALL_ATTEMPTS=2 bash scripts/ci/apt-install.sh gdb || echo "::warning::gdb is not installed; no backtrace"
+          fi
+          for c in "${cores[@]}"; do
             echo "== $c"
             gdb -batch -ex 'thread apply all bt' "$(readlink -f bindings/python/.venv/bin/python)" "$c" | head -200
           done
