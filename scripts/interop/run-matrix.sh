@@ -1454,15 +1454,20 @@ rtsp_push_mediamtx_mp2t() {
     --hold "$RTSP_PUSH_HOLD" \
     >>"$log" 2>&1 &
   local send_pid=$!
-  local gst_rc=0
+  local gst_rc=0 attach_gap=never
   if wait_for_line "$log" '^send: RTSP push recording' "$RTSP_PUSH_READY_WAIT" "$send_pid"; then
+    RTSP_PUSH_RECORDED_AT=$(date +%s.%N)
     echo "--- peer: gst-launch-1.0 pulls $url -> $out ---" >>"$log"
     # -e: the server's close after our TEARDOWN ends the run with EOS, so
     # the file is flushed.
     timeout --kill-after=5 "${budget}s" \
       gst-launch-1.0 -f -e rtspsrc "location=$url" protocols=tcp latency=0 ! \
       rtpmp2tdepay ! filesink "location=$out" \
-      >>"$log" 2>&1 || gst_rc=$?
+      >>"$log" 2>&1 &
+    local reader_pid=$!
+    attach_gap=$(reader_attach "$log" "$reader_pid")
+    echo "--- reader attached ${attach_gap} s after the push's recording line (start delay ${RTSP_PUSH_START_DELAY} s) ---" >>"$log"
+    wait "$reader_pid" || gst_rc=$?
   else
     echo "--- the push never reported recording; no reader started ---" >>"$log"
   fi
@@ -1475,9 +1480,11 @@ rtsp_push_mediamtx_mp2t() {
     emit_fail "$id" "$peer" send "$tier" "$log" - "our send --push failed (exit $send_rc) — see log"
     return 0
   fi
+  local late
+  late=$(late_reader_reason "$attach_gap")
   if [[ ! -s "$out" ]]; then
     emit_fail "$id" "$peer" send "$tier" "$log" - \
-      "gst-launch-1.0 produced no (or empty) capture (exit $gst_rc)"
+      "gst-launch-1.0 produced no (or empty) capture (exit $gst_rc)" ${late:+"$late"}
     return 0
   fi
   local vjson="$WORK/$(slug "$id")-verify.json" vrc=0
@@ -1500,6 +1507,7 @@ rtsp_push_mediamtx_mp2t() {
   if [[ -z "$sent_hash" || -z "$got_hash" || "$sent_hash" != "$got_hash" ]]; then
     reasons+=("byte-transparent tier: stream_sha256 mismatch (sent ${sent_hash:-<unparseable>}, pulled ${got_hash:-<unparseable>})")
   fi
+  [[ ${#reasons[@]} -eq 0 || -z "$late" ]] || reasons+=("$late")
   local mjson="$WORK/$(slug "$id")-metrics.json"
   metrics_only "$vjson" "$mjson"
   if [[ ${#reasons[@]} -eq 0 ]]; then

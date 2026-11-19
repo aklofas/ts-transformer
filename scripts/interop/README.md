@@ -81,8 +81,8 @@ DIR/
 Exit code is `report merge`'s: 0 iff every produced cell exactly matches
 `inventory.json`'s declared multiset (see "Inventory and shape" below) AND
 every `FAIL` matched a row in `expectations.toml`. That file now carries a
-real row for every genuine gap this matrix has surfaced (65 so far,
-see "Known, already-evidenced gaps" below) — running the full matrix exits
+real row for every genuine gap this matrix has surfaced (one `[[expect]]`
+block each; see "Known, already-evidenced gaps" below) — running the full matrix exits
 0. Any *new* `FAIL` an expectations row doesn't already cover still exits
 nonzero: see `report/mod.rs`'s module doc for why an unmatched `FAIL` must
 never be silently absorbed. Two more ways `report merge` now fails
@@ -1802,7 +1802,7 @@ offline from an archived capture plus its log
 (`verify::verify_bytes_with_corruption`).
 
 **Corruption is a soak and offline-test feature: no matrix cell injects.**
-`run-matrix.sh` never passes `--corrupt`, so all 162 cells run a pristine
+`run-matrix.sh` never passes `--corrupt`, so every matrix cell runs a pristine
 stream and the census is unaffected by anything in this section.
 
 ### Grammar
@@ -2129,7 +2129,7 @@ configuration nuisance: it means the records on the wire are not the ones the
 sender was supposed to emit.
 
 **The matrix stays compact: no cell sends rich records.** `--klv-set` defaults
-to `compact` everywhere and `run-matrix.sh` never passes it, so all 162 cells
+to `compact` everywhere and `run-matrix.sh` never passes it, so every matrix cell
 carry the byte-identical 4-tag, 50-byte record their expectations were
 validated against. That matters most for the `KLV records: got 0` expectation
 rows above: they document third-party peers dropping or mangling KLV carriage

@@ -172,6 +172,9 @@ pub fn make_send(url: &str) -> Result<Box<dyn Transport>, String> {
                 inner: tst_srt::SrtTransport::new(s),
             }) as Box<dyn Transport>
         }),
+        // The close slot here is a throwaway: a caller of this generic path
+        // cannot read how the push's close ended (it is printed, not
+        // returned). `send --push` builds its own slot to judge it.
         "rtsp" | "rtsps" => rtsp_push_connect(url, &tst_rtp::PushDescription::Mp2t, Duration::ZERO)
             .map(|push| {
                 Box::new(RtspPushClose::new(
