@@ -19,6 +19,10 @@
 # 2026-11-04 or later must, and an older row without it is x86_64. The release gate judges
 # each architecture's soak rows on their own; from 0.11.0 a release needs a passing
 # release soak on both (in 0.10.0 the aarch64 soak row was recorded beside the x86_64 one).
+# A corpus row may also carry `manifest_sha256`, the SHA-256 of the digests/manifest.txt its sweep
+# wrote (the capture set it swept); the release gate refuses a chosen corpus row whose value is
+# absent or is not `[corpus] expected_manifest_sha256`, and a baseline that is not the previous
+# corpus row's. Rows before 0.11.0 carry none.
 # Rendered into the qualification block by scripts/gen/qualification.sh.
 schema_version = 0
 
@@ -27,6 +31,11 @@ schema_version = 0
 # swept exactly this many files.
 [corpus]
 expected_files = 251
+
+# The SHA-256 of the sorted per-capture digest manifest of those captures (`sha256sum` of a
+# sweep's digests/manifest.txt). Both 0.10.0 runs' own manifests hash to it, and it is the
+# baseline digest the 0.10.0 row records.
+expected_manifest_sha256 = "e56aa6f57282b92271a56bdedc3b2eed7f555958eb2a3d6bca898949b4d8770b"
 
 # The release soak's required length in seconds. A soak row qualifies as a release soak
 # when its expected_duration_s is at least this; the gate judges the newest such row that

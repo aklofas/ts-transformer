@@ -75,6 +75,7 @@ schema_version = 0
 
 [corpus]
 expected_files = 260
+expected_manifest_sha256 = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
 
 [soak]
 required_duration_s = 172800
@@ -1050,11 +1051,12 @@ COUNTS = dict(files=260, identical=258, changed_explained=2, invariant_failures=
 
 
 BASELINE = "b" * 64
+PIN = "c" * 64
 _DEFAULT = object()
 
 
 def archive_row(id, kind, tree, overall_pass=True, date="2026-10-18", duration=259200, counts=None, legs=None, arch=None,
-                baseline=_DEFAULT):
+                baseline=_DEFAULT, manifest=_DEFAULT):
     row = ('\n[[archive]]\nid = "%s"\nkind = "%s"\ntree = "%s"\noverall_pass = %s\n'
            'note = "n"\ndate = "%s"\n' % (id, kind, tree, "true" if overall_pass else "false", date))
     if kind == "soak":
@@ -1067,6 +1069,10 @@ def archive_row(id, kind, tree, overall_pass=True, date="2026-10-18", duration=2
         baseline = BASELINE if kind == "corpus" else None
     if baseline is not None:
         row += 'baseline_manifest_sha256 = "%s"\n' % baseline
+    if manifest is _DEFAULT:
+        manifest = PIN if kind == "corpus" else None
+    if manifest is not None:
+        row += 'manifest_sha256 = "%s"\n' % manifest
     for k, v in (counts or {}).items():
         row += "%s = %s\n" % (k, str(v).lower() if isinstance(v, bool) else v)
     return row
@@ -1077,8 +1083,8 @@ ARM_OK = archive_row("soak-arm-ok", "soak", SHA, legs=FIVE, arch="aarch64")
 
 
 def archives_toml(*rows):
-    return ("schema_version = 0\n\n[corpus]\nexpected_files = %d\n\n[soak]\nrequired_duration_s = 172800\n"
-            % COUNTS["files"] + "".join(rows))
+    return ("schema_version = 0\n\n[corpus]\nexpected_files = %d\nexpected_manifest_sha256 = \"%s\"\n\n"
+            "[soak]\nrequired_duration_s = 172800\n" % (COUNTS["files"], PIN) + "".join(rows))
 
 
 NO_SOAK = archives_toml(archive_row("corpus-rel", "corpus", SHA))
@@ -1189,7 +1195,7 @@ class SoakRequirementTests(unittest.TestCase):
             return q.load_archives(d)
 
     def test_load_archives_returns_the_required_duration(self):
-        rows, expected_files, required = self.load(RELEASE_OK)
+        rows, expected_files, required, pin = self.load(RELEASE_OK)
         self.assertEqual(required, 172800)
 
     def test_parse_soak_requirement_is_none_without_the_table(self):
@@ -1643,6 +1649,47 @@ class ReleaseModeTests(unittest.TestCase):
                              archive_row("corpus-rel", "corpus", SHA))
         self.assertFalse([r for r in collect(release=True, archives=bare)["verdict_reasons"] if "explained" in r])
 
+    def _manifest_reasons(self, *corpus_rows, release=True):
+        rows = archives_toml(archive_row("soak-rel", "soak", SHA, legs=FIVE), *corpus_rows)
+        rec = collect(release=release, archives=rows)
+        return [r for r in rec["verdict_reasons"] if "manifest_sha256" in r or "capture set" in r or "baseline" in r]
+
+    def test_a_corpus_row_with_the_pinned_manifest_digest_is_accepted(self):
+        self.assertEqual(self._manifest_reasons(archive_row("corpus-rel", "corpus", SHA, counts=COUNTS)), [])
+
+    def test_a_corpus_row_that_swept_another_capture_set_is_refused(self):
+        got = self._manifest_reasons(archive_row("corpus-rel", "corpus", SHA, counts=COUNTS, manifest="d" * 64))
+        self.assertEqual(got, ["corpus: archive corpus-rel swept the capture set %s, not the pinned %s"
+                               % ("d" * 64, PIN)])
+
+    def test_release_mode_refuses_a_corpus_row_without_a_manifest_digest(self):
+        got = self._manifest_reasons(archive_row("corpus-rel", "corpus", SHA, counts=COUNTS, manifest=None))
+        self.assertEqual(got, ["corpus: archive corpus-rel records no manifest_sha256; a release corpus row "
+                               "names the capture set it swept"])
+
+    def test_a_corpus_row_without_a_manifest_digest_is_accepted_outside_release_mode(self):
+        rows = archives_toml(archive_row("soak-rel", "soak", SHA, legs=FIVE),
+                             archive_row("corpus-rel", "corpus", SHA, counts=COUNTS, manifest=None))
+        rec = collect(archives=rows)
+        self.assertEqual(rec["verdict"], "GO", rec["verdict_reasons"])
+
+    def test_a_baseline_that_is_not_the_previous_release_rows_manifest_is_refused(self):
+        prev = archive_row("corpus-prev", "corpus", "d" * 40, date="2026-10-01", counts=COUNTS, manifest="e" * 64)
+        ok = archive_row("corpus-rel", "corpus", SHA, counts=COUNTS, baseline="e" * 64)
+        bad = archive_row("corpus-rel", "corpus", SHA, counts=COUNTS, baseline="f" * 64)
+        # The previous release's tree differs from this one by a source file: not equivalent.
+        with mock.patch.object(q, "changed_paths", return_value=["crates/x.rs"]):
+            self._chain(prev, ok, bad)
+
+    def _chain(self, prev, ok, bad):
+        self.assertEqual(self._manifest_reasons(prev, ok), [])
+        self.assertEqual(self._manifest_reasons(prev, bad),
+                         ["corpus: archive corpus-rel compared with the baseline %s; the previous corpus row "
+                          "corpus-prev swept %s" % ("f" * 64, "e" * 64)])
+        # A previous row that carries no digest (before 0.11.0) leaves the chain unchecked.
+        old = archive_row("corpus-prev", "corpus", "d" * 40, date="2026-10-01", counts=COUNTS, manifest=None)
+        self.assertEqual(self._manifest_reasons(old, bad), [])
+
     def test_a_longer_than_required_row_qualifies_as_the_release_soak(self):
         rows = archives_toml(archive_row("soak-72", "soak", SHA, duration=259200, legs=FIVE),
                              archive_row("corpus-rel", "corpus", SHA, counts=COUNTS))
@@ -1850,6 +1897,20 @@ class ReleaseModeTests(unittest.TestCase):
             with self.assertRaises(SystemExit) as e:
                 q.load_archives(d)
             self.assertEqual(e.exception.code, 1)
+
+    def test_archives_require_the_pin_and_validate_the_manifest_key(self):
+        pin_line = 'expected_manifest_sha256 = "%s"\n' % PIN
+        cases = [(RELEASE_OK.replace(pin_line, ""), "expected_manifest_sha256 is required"),
+                 (RELEASE_OK.replace(PIN, "xyz", 1), "expected_manifest_sha256 is required"),
+                 (RELEASE_OK + '\n[[archive]]\nid = "s"\nkind = "soak"\ntree = "%s"\n'
+                  'overall_pass = true\nnote = "n"\ndate = "2026-10-18"\nexpected_duration_s = 1\n'
+                  'manifest_sha256 = "%s"\n' % (SHA, PIN), "belongs to corpus rows only")]
+        for text, want in cases:
+            with tempfile.TemporaryDirectory() as d:
+                put(os.path.join(d, "tests/coverage/evidence-archives.toml"), text)
+                with self.assertRaises(SystemExit), contextlib.redirect_stderr(io.StringIO()) as err:
+                    q.load_archives(d)
+                self.assertIn(want, err.getvalue())
 
     def test_archives_rejects_a_malformed_corpus_expectation(self):
         for bad in ("0", "true", "2.5", '"253"'):
@@ -2066,7 +2127,8 @@ ROW = {"id": "soak-x", "kind": "soak", "tree": SHA, "overall_pass": True, "note"
 SOAK72 = dict(ROW, id="soak-rel", expected_duration_s=259200, legs=list(FIVE))
 ARM72 = dict(SOAK72, id="soak-arm-rel", arch="aarch64")
 CORPUS = dict(ROW, id="corpus-rel", kind="corpus", expected_duration_s=None,
-              baseline_manifest_sha256=BASELINE, **dict(COUNTS, files=251, identical=249))
+              baseline_manifest_sha256=BASELINE, manifest_sha256=PIN,
+              **dict(COUNTS, files=251, identical=249))
 
 
 class WaiverTests(unittest.TestCase):
