@@ -650,8 +650,17 @@ Release; the committed record stays the one step 10 collected.
    inspect the staged `org.tstrans:tstrans-jvm:X.Y.Z` bundle (validation must
    pass), then click **Publish**. It appears on Maven Central shortly after.
 4. **Verify BEFORE advertising:**
-   - `pip install tstrans==X.Y.Z` resolves and imports.
-   - A Gradle / Maven resolve of `org.tstrans:tstrans-jvm:X.Y.Z` succeeds.
+   - Run `bash scripts/release/post-publish-consumers.sh X.Y.Z` once the
+     registries list the release. It builds a consumer from each registry in
+     a temp dir, retrying while the indexes catch up: a fresh venv with
+     `pip install tstrans==X.Y.Z` that imports the package and checks its
+     version; a Cargo project on exact-version dependencies of the library
+     crates with no `[patch]` (the vendored C libraries build from the
+     published packages, about ten minutes cold); and a Gradle project on
+     `mavenCentral()` that runs the module-path consumer against
+     `org.tstrans:tstrans-jvm:X.Y.Z`. Each part prints `PART <name>: rc=N`;
+     any non-zero part blocks the announcement. It runs on this host's
+     platform only.
    - Every crate page at `https://crates.io/crates/<pkg>` shows X.Y.Z and
      the docs.rs builds are green (see the crates.io section below).
    Only **after** all three verify, announce the release.
