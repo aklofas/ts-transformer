@@ -196,6 +196,7 @@ const ROUTE_ID_OUT_OF_RANGE: &str = "SETUP names more interleaved routes than a 
 const ROUTE_CHANNELS_EQUAL: &str = "SETUP reply names one interleaved channel for RTP and RTCP";
 const ROUTE_CHANNEL_IN_USE: &str = "SETUP reply names an interleaved channel another stream uses";
 const SETUP_OTHER_SESSION: &str = "SETUP reply names a session other than the first SETUP's";
+const SETUP_RECORD_NOT_INTERLEAVED: &str = "SETUP reply for recording is not interleaved";
 
 #[derive(Debug, Default)]
 pub(crate) struct EngineCounters {
@@ -624,6 +625,8 @@ impl ClientEngine {
             _ => None,
         };
         match (spec.method, phase) {
+            // Above `Ended`: a session that expired is still closed with a
+            // TEARDOWN on the open connection.
             (M::Teardown, _) => None,
             (_, PushPhase::Ended) => Some("request after the publish session ended"),
             (M::Options, _) => None,
@@ -821,51 +824,23 @@ impl ClientEngine {
             return;
         }
         let mut setup = None;
-        let accepted = (200..300).contains(&resp.status);
+        let is_2xx = (200..300).contains(&resp.status);
         let record_setup = txn.spec.setup.is_some_and(|r| r.kind == RouteKind::Push);
         match txn.spec.method {
-            RtspMethod::Setup if accepted => {
-                // A publish session is one session: a broken server that
-                // names another is not followed.
-                if record_setup
-                    && let (Some(known), Some(named)) = (&self.session_id, resp.session_id())
-                    && known != named
-                {
-                    self.reply(
-                        txn.id,
-                        Err(RtspError::BadResponse {
-                            detail: SETUP_OTHER_SESSION,
-                        }),
-                    );
+            RtspMethod::Setup if is_2xx => match self.take_setup_reply(&txn.spec, &resp) {
+                Ok(accepted) => setup = accepted,
+                Err(e) => {
+                    self.reply(txn.id, Err(e));
                     return;
                 }
-                self.pulled |= !record_setup && resp.session_id().is_some();
-                self.learn_session(&resp);
-                // The pull facade refuses any other reply; a refused SETUP
-                // must not move a live session's route.
-                let installs = |route: &SetupRoute| match route.kind {
-                    RouteKind::Push => true,
-                    RouteKind::Pull => resp.status == 200 && resp.session_id().is_some(),
-                };
-                if let Some(route) = txn.spec.setup.filter(installs) {
-                    // Here, not by a later call: frames can follow the reply
-                    // in the same read, and they are routed next.
-                    match self.accept_setup(route, &resp) {
-                        Ok(accepted) => setup = accepted,
-                        Err(e) => {
-                            self.reply(txn.id, Err(e));
-                            return;
-                        }
-                    }
-                }
-            }
+            },
             RtspMethod::Teardown if teardown_accepted(resp.status) => {
                 self.events
                     .push_back(Event::Ended(EndReason::CleanTeardown));
             }
             _ => {}
         }
-        if accepted && (record_setup || txn.spec.method != RtspMethod::Setup) {
+        if is_2xx && (record_setup || txn.spec.method != RtspMethod::Setup) {
             self.advance_push(&txn.spec);
         }
         self.reply(
@@ -875,6 +850,51 @@ impl ClientEngine {
                 setup,
             }),
         );
+    }
+
+    /// Take a `2xx` SETUP reply, or refuse it. The pull side takes exactly
+    /// `200` (its facade refuses any other); a publish session takes any
+    /// `2xx` that names no other session than its first SETUP's and whose
+    /// interleaved route installs. Only a reply taken installs a route or
+    /// teaches the session (its id, its timeout); one not taken changes
+    /// nothing.
+    fn take_setup_reply(
+        &mut self,
+        spec: &RequestSpec,
+        resp: &RtspResponse,
+    ) -> Result<Option<SetupAccepted>, RtspError> {
+        let record = spec.setup.is_some_and(|r| r.kind == RouteKind::Push);
+        if !record && resp.status != 200 {
+            return Ok(None);
+        }
+        // A publish session is one session: a broken server that names
+        // another is not followed.
+        if record
+            && let (Some(known), Some(named)) = (&self.session_id, resp.session_id())
+            && known != named
+        {
+            return Err(RtspError::BadResponse {
+                detail: SETUP_OTHER_SESSION,
+            });
+        }
+        // A pull reply without a session keeps no route either.
+        let route = spec
+            .setup
+            .filter(|r| r.kind == RouteKind::Push || resp.session_id().is_some());
+        // Here, not by a later call: frames can follow the reply in the
+        // same read, and they are routed next.
+        let accepted = match route {
+            Some(r) => self.accept_setup(r, resp)?,
+            None => None,
+        };
+        if record && accepted.is_none() {
+            return Err(RtspError::BadResponse {
+                detail: SETUP_RECORD_NOT_INTERLEAVED,
+            });
+        }
+        self.pulled |= !record && resp.session_id().is_some();
+        self.learn_session(resp);
+        Ok(accepted)
     }
 
     /// Install `route` from an accepted SETUP reply's `Transport`: its

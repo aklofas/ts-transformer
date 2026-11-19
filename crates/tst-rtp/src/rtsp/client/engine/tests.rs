@@ -3682,7 +3682,8 @@ fn a_3xx_to_announce_is_protocol_and_not_followed() {
 fn a_second_setup_reply_naming_another_session_is_refused_and_the_first_id_kept() {
     let t0 = Instant::now();
     let mut e = announced(2);
-    e.enable_keepalive(Some(Duration::from_secs(1)), t0);
+    // No override: a learned timeout would retune the interval.
+    e.enable_keepalive(None, t0);
     set_up(&mut e, 0).unwrap();
     let r = exchange(
         &mut e,
@@ -3695,9 +3696,10 @@ fn a_second_setup_reply_naming_another_session_is_refused_and_the_first_id_kept(
     let before = e.counters().malformed_frames;
     assert!(rtcp_on(&mut e, 3).is_empty(), "no route is installed");
     assert_eq!(e.counters().malformed_frames, before + 1);
-    // Neither the id nor its timeout was learned.
-    assert_eq!(e.poll_timeout(), Some(ms(t0, 1000)));
-    e.handle_timeout(ms(t0, 1000), false);
+    // Neither the id nor its timeout was learned: the interval is still
+    // half the default 60 s, not half of 4 s.
+    assert_eq!(e.poll_timeout(), Some(ms(t0, 30_000)));
+    e.handle_timeout(ms(t0, 30_000), false);
     assert_eq!(sent(&one(&mut e)).headers["session"], "P1");
     // The same id, with or without a timeout, is the same session.
     let o = exchange(
@@ -3708,6 +3710,104 @@ fn a_second_setup_reply_naming_another_session_is_refused_and_the_first_id_kept(
     )
     .unwrap();
     assert_eq!(o.setup, accepted(1, 2, 3));
+    assert_eq!(e.push_phase(), Some(PushPhase::Ready));
+}
+
+/// A pull SETUP reply the pull facade refuses (any `2xx` but `200`)
+/// changes nothing: not the id, not the ping interval, not whether the
+/// client may publish.
+#[test]
+fn a_pull_setup_201_changes_no_session_state() {
+    let t0 = Instant::now();
+    let mut e = ClientEngine::new(cfg(None));
+    e.enable_keepalive(None, t0);
+    setup_route(&mut e, pull(0), "RTP/AVP/TCP;unicast;interleaved=0-1", t0).unwrap();
+    let o = exchange(
+        &mut e,
+        RequestSpec {
+            setup: Some(pull(0)),
+            ..spec(RtspMethod::Setup, URI)
+        },
+        "201 Created",
+        "Transport: RTP/AVP/TCP;unicast;interleaved=0-1\r\nSession: S2;timeout=4\r\n",
+    )
+    .unwrap();
+    assert_eq!((o.response.status, o.setup), (201, None));
+    assert_eq!(e.poll_timeout(), Some(ms(t0, 30_000)), "not retuned to 2 s");
+    e.handle_timeout(ms(t0, 30_000), false);
+    assert_eq!(sent(&one(&mut e)).headers["session"], "S1");
+    // A client whose only SETUP was such a reply may still publish.
+    let mut e = ClientEngine::new(cfg(None));
+    exchange(
+        &mut e,
+        spec(RtspMethod::Setup, URI),
+        "201 Created",
+        "Transport: RTP/AVP;unicast;client_port=5004-5005\r\nSession: S2\r\n",
+    )
+    .unwrap();
+    assert!(e.session_id.is_none());
+    exchange(&mut e, announce(1), "200 OK", "").unwrap();
+    assert_eq!(e.push_phase(), Some(PushPhase::Announced));
+}
+
+/// A push SETUP the client refuses for its channel pair pins no session:
+/// the retry, which a server answers with a new session, is taken.
+#[test]
+fn a_setup_the_install_refused_does_not_pin_its_session_id() {
+    for (pair, held) in [("0-0", None), ("6-7", Some((6, 7)))] {
+        let t0 = Instant::now();
+        let mut e = announced(2);
+        e.enable_keepalive(None, t0);
+        if let Some((rtp, rtcp)) = held {
+            // A pair another stream holds.
+            e.install_route(pull(3), rtp, rtcp).unwrap();
+        }
+        let r = exchange(
+            &mut e,
+            record_setup(0),
+            "200 OK",
+            &format!(
+                "Transport: RTP/AVP/TCP;unicast;interleaved={pair};mode=record\r\nSession: X;timeout=4\r\n"
+            ),
+        );
+        assert!(
+            matches!(r, Err(RtspError::BadResponse { .. })),
+            "{pair}: {r:?}"
+        );
+        assert_eq!(e.push_phase(), Some(PushPhase::Announced), "{pair}");
+        assert!(e.session_id.is_none(), "{pair}");
+        assert_eq!(e.poll_timeout(), Some(ms(t0, 30_000)), "{pair}");
+        let o = exchange(
+            &mut e,
+            record_setup(0),
+            "200 OK",
+            "Transport: RTP/AVP/TCP;unicast;interleaved=0-1;mode=record\r\nSession: Y\r\n",
+        )
+        .unwrap();
+        assert_eq!(o.setup, accepted(0, 0, 1), "{pair}");
+        assert_eq!(e.push_phase(), Some(PushPhase::SetUp { done: 1, total: 2 }));
+        e.handle_timeout(ms(t0, 30_000), false);
+        assert_eq!(sent(&one(&mut e)).headers["session"], "Y", "{pair}");
+    }
+}
+
+/// A publish session sends its media interleaved: a SETUP reply that
+/// names another transport is refused and the track stays to be set up.
+#[test]
+fn a_push_setup_2xx_that_is_not_interleaved_is_bad_response_and_the_phase_stays() {
+    let mut e = announced(1);
+    let r = exchange(
+        &mut e,
+        record_setup(0),
+        "200 OK",
+        "Transport: RTP/AVP;unicast;client_port=5004-5005;server_port=6000-6001\r\nSession: U\r\n",
+    );
+    assert!(matches!(r, Err(RtspError::BadResponse { .. })), "{r:?}");
+    assert_eq!(e.push_phase(), Some(PushPhase::Announced));
+    assert!(e.session_id.is_none());
+    assert!(!e.media_allowed());
+    let o = set_up(&mut e, 0).unwrap();
+    assert_eq!(o.setup, accepted(0, 0, 1));
     assert_eq!(e.push_phase(), Some(PushPhase::Ready));
 }
 
