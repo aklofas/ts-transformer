@@ -653,6 +653,9 @@ def release_vm(root, sha, archives, release, expected_files, required_s):
                 if c["files"] != expected_files:
                     reasons.append("corpus: archive %s swept %d files; the release corpus has %d"
                                    % (c["id"], c["files"], expected_files))
+                if c["identical"] + c["changed_explained"] != c["files"]:
+                    reasons.append("corpus: archive %s: %d identical + %d explained != %d files"
+                                   % (c["id"], c["identical"], c["changed_explained"], c["files"]))
                 if not c["replay_files"] > 0:
                     reasons.append("corpus: archive %s replayed no files" % c["id"])
                 for k in ("parse_failures", "invariant_failures"):
