@@ -260,10 +260,11 @@ fn a_request_is_written_ahead_of_media_moved_in_the_same_pass() {
     h.stop_and_join();
 }
 
-/// The stream would stall only after `CONTROL_WRITE_TIMEOUT`, five times
-/// the bound here, so within it nothing but the cancel ends the send. How
-/// soon a parked wait sees a cancel is pinned on the queue itself, where
-/// the wait's phase is known.
+/// The cancel fires a moment after the queue fills, long before the
+/// stream's stall time (`CONTROL_WRITE_TIMEOUT`), so it is the cancel that
+/// ends the send: a stall would end it `Ended`. How soon a parked wait
+/// sees a cancel is pinned on the queue itself, where the wait's phase is
+/// known.
 #[test]
 fn a_peer_that_reads_nothing_parks_send_and_a_cancel_releases_it_promptly() {
     let (stream, mut peer) = plain_pair();
@@ -671,8 +672,8 @@ fn drain_returns_when_the_peer_has_every_frame() {
     h.stop_and_join();
 }
 
-/// As for the parked send: within the bound only the cancel ends the
-/// drain, the stall time being five times as long.
+/// As for the parked send: the cancel fires long before the stream's
+/// stall time, so it is the cancel that ends the drain.
 #[test]
 fn drain_ends_on_a_cancel_promptly_against_a_one_byte_a_second_reader() {
     let (stream, mut peer) = plain_pair();
@@ -722,7 +723,7 @@ fn drain_ends_on_a_cancel_promptly_against_a_one_byte_a_second_reader() {
 /// has seen eight (1.6 s of pings at one every 200 ms); only a deadline
 /// far beyond that fails the test.
 #[test]
-fn pings_keep_their_cadence_under_a_saturating_load() {
+fn a_saturating_media_load_does_not_starve_the_pings() {
     const PINGS: u64 = 8;
     let (stream, mut peer) = plain_pair();
     let h = drive(stream);

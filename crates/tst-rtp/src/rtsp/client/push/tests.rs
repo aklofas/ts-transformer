@@ -718,7 +718,7 @@ fn a_refused_first_setup_reply_ends_the_connection_without_a_teardown() {
 }
 
 #[test]
-fn a_udp_reply_to_a_record_setup_is_bad_response_and_tears_down() {
+fn a_udp_reply_to_a_second_record_setup_is_bad_response_and_tears_down() {
     let seen = setup_answered(1, UDP_REPLY);
     assert!(
         matches!(&seen.result, Err(RtspError::BadResponse { .. })),
