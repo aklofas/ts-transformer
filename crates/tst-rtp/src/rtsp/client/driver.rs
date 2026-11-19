@@ -262,6 +262,7 @@ pub(crate) fn spawn_with(
         write_stall,
         caller: None,
         segments: VecDeque::new(),
+        pings_unwritten: 0,
         queued: 0,
         stall_from: None,
         routes: Default::default(),
@@ -333,6 +334,8 @@ struct Driver {
     caller: Option<Caller>,
     /// Transmits not yet wholly in the kernel, oldest first.
     segments: VecDeque<Segment>,
+    /// The pings among `segments`.
+    pings_unwritten: usize,
     /// Bytes queued on the stream, counted from the start.
     queued: u64,
     /// Since when queued bytes have made no progress.
@@ -369,8 +372,15 @@ impl Driver {
             if matches!(self.drain_commands(), Flow::Stop) {
                 break;
             }
+            let now = Instant::now();
+            // One ping on the stream at a time: a peer that takes bytes
+            // slowly, without ever stalling the write, would otherwise have
+            // the pings pile up behind each other for as long as it likes.
+            if self.pings_unwritten > 0 {
+                self.engine.defer_ping(now);
+            }
             self.engine
-                .handle_timeout(Instant::now(), self.shared.cancel.is_cancelled());
+                .handle_timeout(now, self.shared.cancel.is_cancelled());
             if readable || self.read_more {
                 self.read();
             }
@@ -507,6 +517,7 @@ impl Driver {
         while let Some(t) = self.engine.poll_transmit() {
             stream.queue(&t.bytes);
             self.queued += t.bytes.len() as u64;
+            self.pings_unwritten += usize::from(t.is_ping);
             self.segments.push_back(Segment {
                 end: self.queued,
                 txn: t.txn,
@@ -549,7 +560,13 @@ impl Driver {
         // The kernel took enough to make room and will not report it again.
         self.media_more = at_watermark && unsent < MEDIA_WATERMARK;
         while self.segments.front().is_some_and(|s| s.end <= written) {
-            if let Some(Segment { txn: Some(txn), .. }) = self.segments.pop_front() {
+            let Some(segment) = self.segments.pop_front() else {
+                break;
+            };
+            if segment.is_ping {
+                self.pings_unwritten = self.pings_unwritten.saturating_sub(1);
+            }
+            if let Some(txn) = segment.txn {
                 self.mark_written(txn);
             }
         }
@@ -659,6 +676,7 @@ impl Driver {
             let _ = self.poll.registry().deregister(stream.source());
         }
         self.segments.clear();
+        self.pings_unwritten = 0;
         self.stall_from = None;
         self.read_more = false;
         self.media_more = false;

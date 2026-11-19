@@ -5,7 +5,7 @@
 use super::*;
 use std::net::Shutdown;
 
-use crate::rtsp::client::media_queue::MEDIA_QUEUE_BOUND;
+use crate::rtsp::client::media_queue::{MEDIA_QUEUE_BOUND, MEDIA_WATERMARK};
 
 /// A frame the size of an RTP packet that carries seven TS packets.
 const SMALL: usize = 4 + 12 + 1316;
@@ -368,6 +368,82 @@ fn a_slow_reader_bounds_the_queue_and_requests_still_complete() {
     );
     h.stop_and_join();
     assert!(reader.join().unwrap() > 0);
+}
+
+/// Against a peer that takes bytes slowly without ever stalling the write,
+/// what waits on the stream stays bounded however many pings fall due: the
+/// media watermark and one frame, one request and one ping.
+#[cfg(target_os = "linux")]
+#[test]
+fn pings_do_not_pile_up_behind_a_slow_reader() {
+    const FRAMES: u32 = 1000;
+    const LEN: usize = 200;
+    /// More than a request or a ping of this client takes.
+    const REQUEST_MAX: usize = 128;
+    const PING_INTERVAL: Duration = Duration::from_millis(5);
+    let (client, mut peer) = small_buffer_pair();
+    // The peer never stops reading, so the stall rule stays out of this:
+    // its time is far past the test's.
+    let h = drive_with(
+        Stream::from_plain(client).unwrap(),
+        scaled(Duration::from_secs(60)),
+    );
+    let _unhang = unhang(&h.cancel);
+    let mut rest = Vec::new();
+    recording(&h, &mut peer, &mut rest);
+    // The peer reads 64 bytes every 20 ms until it is told to read fast,
+    // and ends once it has read the request and a ping.
+    let fast = Arc::new(AtomicBool::new(false));
+    let reader = std::thread::spawn({
+        let fast = fast.clone();
+        move || {
+            let mut units = Units::paced(rest, 64, Duration::from_millis(20));
+            let (mut frames, mut requests) = (0, 0);
+            while requests < 2 {
+                if fast.load(Ordering::Acquire) && !units.pause.is_zero() {
+                    units.pause = Duration::ZERO;
+                    units.chunk = vec![0; 64 * 1024];
+                }
+                match units.next(&mut peer).expect("the stream is open") {
+                    Unit::Request(head) => {
+                        assert_eq!(whole_request(&head).method, RtspMethod::Options);
+                        assert!(head.len() <= REQUEST_MAX, "{} bytes", head.len());
+                        requests += 1;
+                    }
+                    frame => {
+                        assert_media(&frame, frames, LEN);
+                        frames += 1;
+                    }
+                }
+            }
+            peer
+        }
+    });
+    // More than the kernel and the stream hold: the rest waits in the
+    // queue, below its bound.
+    for seq in 0..FRAMES {
+        send(&h, media_frame(seq, LEN)).unwrap();
+    }
+    wait_until("the stream at its watermark", || {
+        h.media.unsent_high_water() >= MEDIA_WATERMARK
+    });
+    h.handle
+        .send(Command::EnableKeepalive(Some(PING_INTERVAL)))
+        .unwrap();
+    let _rx = h.request(options());
+    // A hundred pings fall due while the first is still behind the media.
+    // The sleep decides nothing: the bound holds at any time.
+    std::thread::sleep(PING_INTERVAL * 100);
+    let held = h.media.unsent_high_water();
+    let bound = MEDIA_WATERMARK + (LEN + 2 * REQUEST_MAX) as u64;
+    assert!(
+        held <= bound,
+        "{held} bytes waited on the stream, more than {bound}"
+    );
+    assert_eq!(h.end_reason.get(), None);
+    fast.store(true, Ordering::Release);
+    let _peer = reader.join().unwrap();
+    h.stop_and_join();
 }
 
 #[test]

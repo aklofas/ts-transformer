@@ -927,6 +927,39 @@ fn a_second_ping_454_ends_nothing_again() {
     assert_eq!(e.counters().unmatched_replies, 1);
 }
 
+/// One ping at a time: while one is still unwritten, a due ping takes no
+/// CSeq and queues nothing, and the next falls due one interval later.
+#[test]
+fn a_deferred_ping_queues_nothing_and_is_due_one_interval_later() {
+    let t0 = Instant::now();
+    let mut e = ClientEngine::new(cfg(None));
+    e.enable_keepalive(Some(Duration::from_secs(1)), t0);
+    // Not due yet: nothing to defer.
+    e.defer_ping(ms(t0, 500));
+    assert_eq!(e.poll_timeout(), Some(ms(t0, 1000)));
+    e.handle_timeout(ms(t0, 1000), false);
+    let first = cseq(&one(&mut e));
+    // Its bytes are still unwritten when the second is due, a little late.
+    e.defer_ping(ms(t0, 2010));
+    e.handle_timeout(ms(t0, 2010), false);
+    assert!(transmits(&mut e).is_empty());
+    assert!(events(&mut e).is_empty());
+    assert_eq!(e.poll_timeout(), Some(ms(t0, 3010)));
+    // Written by then: the ping goes out, under the next CSeq.
+    e.handle_timeout(ms(t0, 3010), false);
+    let second = one(&mut e);
+    assert!(second.is_ping);
+    assert_eq!(cseq(&second), first + 1);
+    assert_eq!(e.poll_timeout(), Some(ms(t0, 4010)));
+    // The first ping is still awaited: its reply is a ping's.
+    e.handle_reply(
+        resp(format!("RTSP/1.0 200 OK\r\nCSeq: {first}\r\n\r\n").as_bytes()),
+        ms(t0, 3020),
+    );
+    assert_eq!(e.counters().keepalive_responses, 1);
+    assert_eq!(e.counters().unmatched_replies, 0);
+}
+
 #[test]
 fn only_the_latest_unanswered_pings_are_remembered() {
     let t0 = Instant::now();

@@ -246,7 +246,7 @@ enum Keepalive {
     On {
         interval: Duration,
         overridden: bool,
-        /// Enable time, then the time of the last ping.
+        /// Enable time, then the time of the last ping, sent or deferred.
         anchor: Instant,
         /// `None` when `anchor + interval` is not representable.
         next_due: Option<Instant>,
@@ -509,6 +509,23 @@ impl ClientEngine {
             && now >= due
         {
             self.send_ping(now);
+        }
+    }
+
+    /// An earlier ping is not wholly written yet: a ping due at `now` is
+    /// not sent, and the next is due one interval from `now`. Called ahead
+    /// of [`Self::handle_timeout`].
+    pub(crate) fn defer_ping(&mut self, now: Instant) {
+        if let Keepalive::On {
+            interval,
+            anchor,
+            next_due,
+            ..
+        } = &mut self.keepalive
+            && next_due.is_some_and(|due| now >= due)
+        {
+            *anchor = now;
+            *next_due = now.checked_add(*interval);
         }
     }
 
