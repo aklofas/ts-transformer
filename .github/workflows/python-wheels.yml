@@ -91,6 +91,8 @@ jobs:
         with:
           ref: ${{ inputs.ref }}
           fetch-depth: 0
+      # The rail reads cargo metadata: the pinned toolchain first, no cache.
+      - uses: ./.github/actions/rust-setup
       - name: Assert version consistency (and tag == source version on tag builds)
         # On a v* tag push GITHUB_REF_NAME (e.g. v0.2.0) forces the source
         # version to equal the tag, so a tag can never build/publish a
