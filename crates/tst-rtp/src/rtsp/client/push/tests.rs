@@ -1928,6 +1928,36 @@ fn close_reports_the_lost_media_whatever_the_teardown_is_answered() {
     );
 }
 
+/// A frame announces its length in 16 bits: what does not fit is refused,
+/// not cut.
+#[test]
+fn a_frame_over_the_16_bit_length_is_too_large() {
+    use super::session::frame;
+    let most = vec![0xA5u8; usize::from(u16::MAX) - 12];
+    let whole = frame(7, &[&[1u8; 12], &most]).unwrap();
+    assert_eq!(whole.len(), 4 + 65_535);
+    assert_eq!(whole[..4], [b'$', 7, 0xFF, 0xFF]);
+    assert_eq!(whole[4..16], [1u8; 12]);
+    assert_eq!(whole[16..], most[..]);
+    // One byte more, wherever it is.
+    for parts in [
+        [&[1u8; 13][..], &most[..]],
+        [&[1u8; 12][..], &[most.as_slice(), &[0]].concat()[..]],
+    ] {
+        let r = frame(7, &parts);
+        assert!(
+            matches!(
+                r,
+                Err(TransportError::TooLarge {
+                    len: 65_536,
+                    max: 65_535
+                })
+            ),
+            "{r:?}"
+        );
+    }
+}
+
 // ---- what close calls lost media -------------------------------------
 
 mod lost {

@@ -161,17 +161,22 @@ impl std::fmt::Debug for RtspPush {
 }
 
 /// A whole `$` frame on `channel`: `parts`, one after the other.
-fn frame(channel: u8, parts: &[&[u8]]) -> Bytes {
+/// [`TransportError::TooLarge`] when they are more than the frame's 16-bit
+/// length can announce.
+pub(super) fn frame(channel: u8, parts: &[&[u8]]) -> Result<Bytes, TransportError> {
     let len: usize = parts.iter().map(|p| p.len()).sum();
-    debug_assert!(len <= usize::from(u16::MAX), "a frame of {len} bytes");
+    let announced = u16::try_from(len).map_err(|_| TransportError::TooLarge {
+        len,
+        max: usize::from(u16::MAX),
+    })?;
     let mut out = Vec::with_capacity(4 + len);
     out.push(b'$');
     out.push(channel);
-    out.extend_from_slice(&(len as u16).to_be_bytes());
+    out.extend_from_slice(&announced.to_be_bytes());
     for part in parts {
         out.extend_from_slice(part);
     }
-    Bytes::from(out)
+    Ok(Bytes::from(out))
 }
 
 fn broken(msg: impl Into<String>, cause: BrokenCause) -> TransportError {
@@ -639,7 +644,7 @@ impl RtspPush {
     }
 
     /// A sender report of track `at` that pairs `ntp` with `rtp`.
-    fn report(&self, at: usize, ntp: u64, rtp: u32) -> Bytes {
+    fn report(&self, at: usize, ntp: u64, rtp: u32) -> Result<Bytes, TransportError> {
         let track = &self.tracks[at];
         let (packets, octets) = track.state.counts();
         let report =
@@ -684,7 +689,7 @@ impl RtspPush {
         // track's first unit from it, and some drop every packet before it.
         let now = self.now();
         if self.tracks[at].state.report_due(now) {
-            let report = self.report(at, ntp, rtp);
+            let report = self.report(at, ntp, rtp)?;
             self.queue(report, Queued::Report)?;
             self.sender_reports_sent += 1;
             self.tracks[at].state.mark_reported(now);
@@ -694,7 +699,8 @@ impl RtspPush {
             let header = track.state.next_header(rtp, marker, payload.len());
             track.last_sent = Some((ntp, rtp));
             let channel = track.channels.0;
-            self.queue(frame(channel, &[header.as_slice(), payload]), Queued::Media)?;
+            let packet = frame(channel, &[header.as_slice(), payload])?;
+            self.queue(packet, Queued::Media)?;
             self.packets_sent += 1;
             self.bytes_sent += (RTP_HEADER_LEN + payload.len()) as u64;
         }
@@ -710,7 +716,10 @@ impl RtspPush {
                 let Some((ntp, rtp)) = self.tracks[at].last_sent else {
                     continue;
                 };
-                let report = self.report(at, ntp, rtp);
+                // A report is a few dozen bytes: it fits a frame.
+                let Ok(report) = self.report(at, ntp, rtp) else {
+                    continue;
+                };
                 self.enqueue(report, Queued::Report)?;
                 self.sender_reports_sent += 1;
             }
