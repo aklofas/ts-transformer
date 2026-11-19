@@ -20,6 +20,7 @@ use tst_core::mpegts::common::Pts90khz;
 use tst_core::mpegts::demux::{
     DemuxEvent, Demuxer, DemuxerConfig, SamplePayload, VideoCodec as DemuxVideoCodec,
 };
+use tst_core::url::redact_url;
 
 use crate::schedule::PTS_HZ;
 use crate::transport;
@@ -273,7 +274,10 @@ pub fn run(opts: &PushEs) -> Result<PushEsSummary, String> {
     eprintln!("{}", transport::push_close_line("push-es", &result));
     if !transport::push_close_finished(&result) {
         let why = result.err().map_or_else(String::new, |e| e.to_string());
-        return Err(format!("RTSP push to {}: close: {why}", opts.url));
+        return Err(format!(
+            "RTSP push to {}: close: {why}",
+            redact_url(&opts.url)
+        ));
     }
     Ok(summary)
 }

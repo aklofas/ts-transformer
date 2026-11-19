@@ -18,6 +18,7 @@ use sha2::{Digest, Sha256};
 use tst_core::codec::misp_time::MispTimestamp;
 use tst_core::mpegts::common::Pts90khz;
 use tst_core::transport::{BrokenCause, Transport, TransportError};
+use tst_core::url::redact_url;
 use tst_pipeline::{
     ManagedStatsHandle, ManagedTransport, MuxSender, OverflowPolicy, ReconnectMode, ReconnectPolicy,
 };
@@ -153,11 +154,11 @@ pub fn run_push(
     )?;
     let closed = outcome.lock().unwrap_or_else(|e| e.into_inner()).take();
     let Some(result) = closed else {
-        return Err(format!("RTSP push to {url} was never closed"));
+        return Err(format!("RTSP push to {} was never closed", redact_url(url)));
     };
     if !transport::push_close_finished(&result) {
         let why = result.err().map_or_else(String::new, |e| e.to_string());
-        return Err(format!("RTSP push to {url}: close: {why}"));
+        return Err(format!("RTSP push to {}: close: {why}", redact_url(url)));
     }
     if let Some(target) = json_out {
         write_json(target, &metrics)?;

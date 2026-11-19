@@ -2,6 +2,7 @@ use std::env;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 
+use tst_core::url::redact_url;
 use tst_interop::cli;
 use tst_interop::fixtures::{AuSizeMode, KlvSet};
 use tst_interop::r#gen;
@@ -789,7 +790,10 @@ fn run_send(args: &[String]) -> ! {
     }
     if push {
         if !matches!(serve::serve_scheme_of(&url), Some(serve::ServeScheme::Rtsp)) {
-            eprintln!("send: --push needs an rtsp:// or rtsps:// URL, got {url}");
+            eprintln!(
+                "send: --push needs an rtsp:// or rtsps:// URL, got {}",
+                redact_url(&url)
+            );
             std::process::exit(2);
         }
         if managed {
@@ -818,8 +822,10 @@ fn run_send(args: &[String]) -> ! {
             std::process::exit(2);
         });
         eprintln!(
-            "send: pushed {} video AUs, {} klv records to {url}",
-            metrics.video_aus, metrics.klv_records
+            "send: pushed {} video AUs, {} klv records to {}",
+            metrics.video_aus,
+            metrics.klv_records,
+            redact_url(&url)
         );
         std::process::exit(0);
     }
@@ -973,7 +979,11 @@ fn run_push_es(args: &[String]) -> ! {
         Ok(s) => {
             eprintln!(
                 "push-es: pushed {} video AUs ({} bytes), {} KLV units ({} bytes) to {}",
-                s.video_aus, s.video_bytes, s.klv_units, s.klv_bytes, opts.url
+                s.video_aus,
+                s.video_bytes,
+                s.klv_units,
+                s.klv_bytes,
+                redact_url(&opts.url)
             );
             std::process::exit(0);
         }

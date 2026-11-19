@@ -86,6 +86,7 @@ use sha2::{Digest, Sha256};
 use tst_core::transport::{
     BrokenCause, RecvTransport, SocketStats, Transport, TransportCancel, TransportError,
 };
+use tst_core::url::redact_url;
 
 use crate::report_types::PublishMountReport;
 
@@ -191,15 +192,17 @@ pub fn make_send(url: &str) -> Result<Box<dyn Transport>, String> {
 const REFUSED_RETRY_STEP: Duration = Duration::from_millis(50);
 
 /// The line a push prints once the server has answered RECORD:
-/// `<tool>: RTSP push recording to <url> at <unix seconds>`. A cell starts
-/// its reader on the line and measures the reader's attach time from the
-/// push's own clock reading, not from when its poll found the line.
+/// `<tool>: RTSP push recording to <url> at <unix seconds>`, the URL with
+/// its credentials redacted. A cell starts its reader on the line and
+/// measures the reader's attach time from the push's own clock reading,
+/// not from when its poll found the line.
 pub fn recording_line(tool: &str, url: &str) -> String {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default();
     format!(
-        "{tool}: RTSP push recording to {url} at {:.6}",
+        "{tool}: RTSP push recording to {} at {:.6}",
+        redact_url(url),
         now.as_secs_f64()
     )
 }
@@ -220,8 +223,8 @@ pub fn rtsp_push_connect(
 ) -> Result<tst_rtp::RtspPush, String> {
     let deadline = std::time::Instant::now() + refused_for;
     loop {
-        let builder =
-            tst_rtp::RtspClientBuilder::new(url).map_err(|e| format!("rtsp url {url}: {e}"))?;
+        let builder = tst_rtp::RtspClientBuilder::new(url)
+            .map_err(|e| format!("rtsp url {}: {e}", redact_url(url)))?;
         match tst_rtp::RtspPush::connect(builder, desc) {
             Ok(push) => return Ok(push),
             Err(tst_rtp::RtspError::Io(std::io::ErrorKind::ConnectionRefused))
@@ -229,7 +232,7 @@ pub fn rtsp_push_connect(
             {
                 std::thread::sleep(REFUSED_RETRY_STEP);
             }
-            Err(e) => return Err(format!("rtsp push to {url}: {e}")),
+            Err(e) => return Err(format!("rtsp push to {}: {e}", redact_url(url))),
         }
     }
 }
@@ -1419,6 +1422,37 @@ mod tests {
             .err()
             .expect("ftp is no send scheme");
         assert_eq!(err, "unsupported scheme for send: ftp://");
+    }
+
+    /// What the matrix script's `recorded_at` reads from the line: the
+    /// tool, the fixed words, and seconds with a fractional part at the end.
+    fn recorded_at(line: &str) -> Option<f64> {
+        let rest = line.strip_prefix("send: RTSP push recording to ")?;
+        let (_, secs) = rest.rsplit_once(" at ")?;
+        let (whole, frac) = secs.split_once('.')?;
+        let digits = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
+        (digits(whole) && digits(frac)).then(|| secs.parse().ok())?
+    }
+
+    #[test]
+    fn the_recording_line_hides_the_urls_credentials() {
+        let line = recording_line("send", "rtsp://user:secret@127.0.0.1:8554/live");
+        assert!(!line.contains("secret"), "{line}");
+        assert!(
+            line.contains("rtsp://user:<redacted>@127.0.0.1:8554/live"),
+            "{line}"
+        );
+        assert!(recorded_at(&line).is_some_and(|t| t > 0.0), "{line}");
+    }
+
+    #[test]
+    fn a_push_connect_error_hides_the_urls_credentials() {
+        let port = closed_tcp_port();
+        let url = format!("rtsp://user:secret@127.0.0.1:{port}/live");
+        let err = rtsp_push_connect(&url, &tst_rtp::PushDescription::Mp2t, Duration::ZERO)
+            .expect_err("nothing listens there");
+        assert!(err.contains("rtsp push to"), "{err}");
+        assert!(!err.contains("secret"), "{err}");
     }
 
     #[test]

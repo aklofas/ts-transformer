@@ -103,6 +103,7 @@ use std::time::{Duration, Instant};
 use tst_core::klv::st0601::{UasDatalinkLs, encode_to_vec};
 use tst_core::mpegts::common::Pts90khz;
 use tst_core::mpegts::mux::{KlvStreamType, MuxerConfig, MuxerProgramConfigBuilder, VideoCodec};
+use tst_core::url::redact_url;
 use tst_pipeline::MuxSender;
 use tst_rtp::{PushDescription, RtspClientBuilder, RtspError, RtspPush, VideoTrack};
 
@@ -158,7 +159,13 @@ fn push_mpeg_ts(builder: RtspClientBuilder, url: &str) -> Result<(), Box<dyn Err
     // connection is closed. `RtspClient::announce`, `setup_record` and
     // `record` are the same steps one at a time.
     let push = RtspPush::connect(builder, &PushDescription::Mp2t)?;
-    println!("recording on {url} (session {})", push.session_id());
+    // `redact_url` hides the URL's password (and any secret query value),
+    // so the line is safe to log.
+    println!(
+        "recording on {} (session {})",
+        redact_url(url),
+        push.session_id()
+    );
 
     // ── (3) A muxer that owns the push ───────────────────────────────────
     //
@@ -237,7 +244,11 @@ fn push_elementary(builder: RtspClientBuilder, url: &str) -> Result<(), Box<dyn 
     let video = VideoTrack::h264_from_key_frame(&access_unit(0))?;
     let description = PushDescription::Elementary { video, klv: true };
     let mut push = RtspPush::connect(builder, &description)?;
-    println!("recording on {url} (session {})", push.session_id());
+    println!(
+        "recording on {} (session {})",
+        redact_url(url),
+        push.session_id()
+    );
 
     // ── (3) Send frames in real time ─────────────────────────────────────
     //
