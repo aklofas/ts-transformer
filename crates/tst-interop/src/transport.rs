@@ -220,21 +220,35 @@ pub fn rtsp_push_connect(
 /// What [`RtspPushClose`]'s `close` returned; `None` until it has run.
 pub type PushCloseSlot = Arc<Mutex<Option<Result<(), tst_rtp::RtspError>>>>;
 
+/// The status [`tst_rtp::RtspPush::close`] reports when the session had
+/// expired and queued media was dropped.
+const SESSION_EXPIRED: u16 = 454;
+
 /// Whether a push's [`tst_rtp::RtspPush::close`] result counts as a
-/// finished push: an accepted TEARDOWN, or one the server refused with a
-/// status. `close` writes every queued frame before it sends TEARDOWN, so a
-/// server that answers the TEARDOWN at all has been handed the whole
-/// stream; ffmpeg's RTSP listener answers every TEARDOWN `501` and ends
-/// only when the connection closes. Anything else (no answer within the
-/// bound, a broken connection) means the tail may not have arrived.
+/// finished push: `Ok` (the queued media written and TEARDOWN accepted), or
+/// a TEARDOWN the server refused with a status other than `454`. `close`
+/// writes every queued frame before it sends TEARDOWN, so such a refusal
+/// still means the whole stream was handed over; ffmpeg's RTSP listener
+/// answers every TEARDOWN `501` and ends only when the connection closes.
+/// `454` is the session having expired with queued media dropped, and
+/// anything else (no answer within the bound, a broken connection) means
+/// the tail may not have arrived.
 pub fn push_close_finished(result: &Result<(), tst_rtp::RtspError>) -> bool {
-    matches!(result, Ok(()) | Err(tst_rtp::RtspError::Protocol { .. }))
+    match result {
+        Ok(()) => true,
+        Err(tst_rtp::RtspError::Protocol { code, .. }) => *code != SESSION_EXPIRED,
+        Err(_) => false,
+    }
 }
 
 /// One stderr line naming how a push's `close` ended, prefixed `context:`.
 pub fn push_close_line(context: &str, result: &Result<(), tst_rtp::RtspError>) -> String {
     match result {
         Ok(()) => format!("{context}: RTSP TEARDOWN accepted"),
+        Err(tst_rtp::RtspError::Protocol { code, reason }) if *code == SESSION_EXPIRED => format!(
+            "{context}: RTSP close failed: the session had expired ({code} {reason}); \
+             queued media was lost"
+        ),
         Err(tst_rtp::RtspError::Protocol { code, reason }) => format!(
             "{context}: warning: the server refused TEARDOWN ({code} {reason}); \
              every queued frame was written before it"
@@ -1404,6 +1418,21 @@ mod tests {
             started.elapsed()
         );
         assert!(err.contains("rtsp push to"), "{err}");
+    }
+
+    #[test]
+    fn a_push_close_that_lost_media_to_an_expired_session_is_not_finished() {
+        let expired = Err(tst_rtp::RtspError::Protocol {
+            code: 454,
+            reason: "Session Not Found".into(),
+        });
+        assert!(!push_close_finished(&expired));
+        let line = push_close_line("send", &expired);
+        assert!(
+            line.contains("close failed") && line.contains("queued media was lost"),
+            "{line}"
+        );
+        assert!(!line.contains("warning"), "{line}");
     }
 
     #[test]
