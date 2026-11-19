@@ -79,12 +79,15 @@
 //! — run it explicitly to fail on regression. PR CI runs
 //! `cargo test --workspace`, which executes default-pass tests with
 //! all tools optional via runtime `which`-style detection. Missing
-//! tools yield `skip`, never failure.
+//! tools yield `skip`, never failure. The strict guard runs in the
+//! interop workflow (step `Subtitle interop guard`).
 //!
 //! The strict guard also counts the cells each tool measured (neither
 //! `skip` nor `unrelated-fail`) and fails when a tool that is on PATH
 //! measured none, so a probe that stopped seeing anything cannot pass
-//! by saying nothing. With `TSTRANS_REQUIRE_INTEROP_TOOLS=1` (set by the
+//! by saying nothing (`ffprobe`, `tsduck-psi` and `tsanalyze` count a cell
+//! only when their output lists the fixture's PID; `gst-tsdemux` is
+//! reported but not counted, see `PRESENCE_ONLY`). With `TSTRANS_REQUIRE_INTEROP_TOOLS=1` (set by the
 //! interop workflow) a tool that is missing fails the guard too.
 
 use std::collections::BTreeMap;
@@ -170,8 +173,38 @@ fn subtitle_pid(fixture: &str) -> Option<u16> {
     }
 }
 
-/// The tools the matrix probes, as `ProbeResult::tool` names them.
-const TOOLS: &[&str] = &["ffprobe", "tsduck-psi", "tsanalyze", "gst-tsdemux"];
+/// The tools whose cells count toward the census, as `ProbeResult::tool`
+/// names them: each success cell shows the fixture's PID in the tool's own
+/// output.
+const TOOLS: &[&str] = &["ffprobe", "tsduck-psi", "tsanalyze"];
+
+/// `gst-tsdemux` is probed and printed but not counted: on these tiny
+/// fixtures it ends in "No program activated before EOS" or a kill at the
+/// timeout, and only some runs print a pad for the video stream, never the
+/// subtitle one, so no cell of it can show the PID. Under
+/// `TSTRANS_REQUIRE_INTEROP_TOOLS=1` it must still be on PATH.
+const PRESENCE_ONLY: &[&str] = &["gst-tsdemux"];
+
+/// ffprobe `-show_streams` lists the stream as an `id=0x<pid>` line.
+fn ffprobe_lists_pid(stdout: &str, pid: u16) -> bool {
+    stdout.lines().any(|l| l == format!("id=0x{pid:x}"))
+}
+
+/// tsp's psi plugin lists it as `Elementary stream: type 0x06 (...), PID: 0x0200 (512)`.
+fn tsduck_psi_lists_pid(stdout: &str, pid: u16) -> bool {
+    let want = format!("PID: 0x{pid:04X} (");
+    stdout
+        .lines()
+        .any(|l| l.contains("Elementary stream:") && l.contains(&want))
+}
+
+/// tsanalyze's per-PID section starts with `PID: 0x0200 (512)`.
+fn tsanalyze_lists_pid(stdout: &str, pid: u16) -> bool {
+    let want = format!("PID: 0x{pid:04X} (");
+    stdout
+        .lines()
+        .any(|l| l.trim_start_matches(['|', ' ']).starts_with(&want))
+}
 
 /// What is wrong with the matrix as a measurement, one line each: a tool on
 /// PATH (it has a row that is not `skip`) that measured nothing, and, when
@@ -193,6 +226,16 @@ fn census_failures(rows: &[ProbeResult], require_tools: bool) -> Vec<String> {
             failures.push(format!(
                 "  - {tool}: on PATH but measured none of its {} cells",
                 cells.len()
+            ));
+        }
+    }
+    for tool in PRESENCE_ONLY {
+        let present = rows
+            .iter()
+            .any(|r| r.tool == *tool && r.action != Action::Skip);
+        if !present && require_tools {
+            failures.push(format!(
+                "  - {tool}: not on PATH, and the tools are required"
             ));
         }
     }
@@ -271,7 +314,7 @@ fn probe_ffprobe(fixture_path: &Path) -> ProbeResult {
             // Exit 0 alone proves nothing: the fixture's subtitle PID must
             // be listed, or ffprobe parsed a stream without it.
             let pid = subtitle_pid(&fixture);
-            let listed = pid.is_some_and(|p| stdout.lines().any(|l| l == format!("id=0x{p:x}")));
+            let listed = pid.is_some_and(|p| ffprobe_lists_pid(&stdout, p));
             ProbeResult {
                 tool: "ffprobe",
                 fixture,
@@ -354,8 +397,11 @@ fn probe_tsduck_psi(fixture_path: &Path) -> ProbeResult {
             let saw_vttc = stdout.contains("(\"VTTC\")");
             let saw_ga94 = stdout.contains("(\"GA94\")");
             let saw_pmt = stdout.contains("PMT");
+            // Exit 0 alone proves nothing: the PMT must list the fixture's
+            // subtitle PID.
+            let listed = subtitle_pid(&fixture).is_some_and(|p| tsduck_psi_lists_pid(&stdout, p));
             let note = format!(
-                "pmt={pmt} vttc={vttc} ga94={ga94}",
+                "pmt={pmt} vttc={vttc} ga94={ga94} pid_listed={listed}",
                 pmt = saw_pmt,
                 vttc = saw_vttc,
                 ga94 = saw_ga94
@@ -364,7 +410,11 @@ fn probe_tsduck_psi(fixture_path: &Path) -> ProbeResult {
                 tool: "tsduck-psi",
                 fixture,
                 exit: Some(0),
-                action: Action::Ignore,
+                action: if listed {
+                    Action::Ignore
+                } else {
+                    Action::Reject
+                },
                 notes: note,
             }
         }
@@ -411,7 +461,10 @@ fn probe_tsanalyze(fixture_path: &Path) -> ProbeResult {
             let bad_transport = stdout
                 .lines()
                 .any(|l| parse_counter_after(l, "With transport error:").is_some_and(|n| n != 0));
-            let action = if bad_sync || bad_transport {
+            // Exit 0 alone proves nothing: the report must have a section
+            // for the fixture's subtitle PID.
+            let listed = subtitle_pid(&fixture).is_some_and(|p| tsanalyze_lists_pid(&stdout, p));
+            let action = if bad_sync || bad_transport || !listed {
                 Action::Reject
             } else {
                 Action::Ignore
@@ -421,7 +474,9 @@ fn probe_tsanalyze(fixture_path: &Path) -> ProbeResult {
                 fixture,
                 exit: Some(0),
                 action,
-                notes: format!("sync_errs={bad_sync} transport_errs={bad_transport}"),
+                notes: format!(
+                    "sync_errs={bad_sync} transport_errs={bad_transport} pid_listed={listed}"
+                ),
             }
         }
         Ok(o) => ProbeResult {
@@ -627,6 +682,11 @@ fn wave_i1_matrix_informational() {
 #[test]
 #[ignore = "Strict — run explicitly before release; PR CI uses informational variant"]
 fn wave_i1_matrix_no_regression() {
+    let missing: Vec<&&str> = FIXTURES
+        .iter()
+        .filter(|f| !fixtures_dir().join(f).exists())
+        .collect();
+    assert!(missing.is_empty(), "fixtures missing: {missing:?}");
     let rows = run_matrix();
     print_matrix(&rows);
     let vttc_ga94_fixtures = [
@@ -651,6 +711,7 @@ fn wave_i1_matrix_no_regression() {
         "Measured cells per tool: {:?}",
         TOOLS
             .iter()
+            .chain(PRESENCE_ONLY)
             .map(|t| (
                 *t,
                 rows.iter()
@@ -685,7 +746,11 @@ fn cell(tool: &'static str, action: Action) -> ProbeResult {
 }
 
 fn all_tools(action: Action) -> Vec<ProbeResult> {
-    TOOLS.iter().map(|t| cell(t, action)).collect()
+    TOOLS
+        .iter()
+        .chain(PRESENCE_ONLY)
+        .map(|t| cell(t, action))
+        .collect()
 }
 
 #[test]
@@ -719,8 +784,25 @@ fn a_matrix_of_only_skips_fails_the_census_when_tools_are_required() {
     assert!(census_failures(&all_tools(Action::Skip), false).is_empty());
     assert_eq!(
         census_failures(&all_tools(Action::Skip), true).len(),
-        TOOLS.len()
+        TOOLS.len() + PRESENCE_ONLY.len()
     );
+}
+
+#[test]
+fn a_cell_counts_only_when_the_tools_output_lists_the_pid() {
+    let ffprobe = "[STREAM]\nindex=1\nid=0x200\n[/STREAM]\n";
+    assert!(ffprobe_lists_pid(ffprobe, 0x200));
+    assert!(!ffprobe_lists_pid(ffprobe, 0x400));
+    assert!(!ffprobe_lists_pid("", 0x200));
+    let psi = "    Elementary stream: type 0x06 (MPEG-2 PES private data), PID: 0x0200 (512)\n";
+    assert!(tsduck_psi_lists_pid(psi, 0x200));
+    assert!(!tsduck_psi_lists_pid(psi, 0x400));
+    assert!(!tsduck_psi_lists_pid("PMT, PID: 0x0200 (512)\n", 0x200));
+    let analyze =
+        "|  PID: 0x0200 (512)                                 MPEG-2 PES private data  |\n";
+    assert!(tsanalyze_lists_pid(analyze, 0x200));
+    assert!(!tsanalyze_lists_pid(analyze, 0x400));
+    assert!(!tsanalyze_lists_pid("", 0x200));
 }
 
 #[test]
