@@ -29,20 +29,17 @@ struct TlsServed {
 impl TlsServed {
     fn with(configure: impl FnOnce(&mut RtspServerBuilder), mount: PublishMountConfig) -> Self {
         let cert = SelfSignedCert::generate();
-        let mut b = RtspServerBuilder::new("rtsps://127.0.0.1:0").unwrap();
-        b.tls_cert(cert.cert_path.clone(), cert.key_path.clone());
-        configure(&mut b);
-        let server = b.build().unwrap();
-        let mount = server.add_publish_mount_with(PATH, mount).unwrap();
-        server.start().unwrap();
-        let port = server.local_addr().unwrap().port();
+        let served = Served::at(
+            "rtsps://127.0.0.1:0",
+            |b| {
+                b.tls_cert(cert.cert_path.clone(), cert.key_path.clone());
+                configure(b);
+            },
+            mount,
+        );
         let roots = load_root_store(cert.root_pem.as_bytes()).expect("trust bundle");
         Self {
-            served: Served {
-                server,
-                mount,
-                port,
-            },
+            served,
             roots,
             _cert: cert,
         }
@@ -111,6 +108,7 @@ fn an_rtsps_h264_klv_push_aligns() {
     let events = demux_to_end(app);
     let stats = s.served.mount.stats();
     assert_eq!(stats.alignment, ClockAlignment::SenderReport);
+    assert_eq!(stats.alignment_steps, 0);
     assert_eq!(stats.klv_units_emitted, AUS as u64);
     assert_eq!(stats.klv_units_dropped, 0);
     assert_eq!(stats.malformed_packets, 0);

@@ -306,7 +306,8 @@ mod fuzz_engines {
                     request(RtspMethod::Options, Vec::new())
                 }
             };
-            let _ = e.submit(waiting, None, start);
+            e.submit(waiting, None, start)
+                .expect("the request that waits");
             e.enable_keepalive(Some(PING_INTERVAL), start);
             e.handle_timeout(now, false);
             e
@@ -442,11 +443,15 @@ mod fuzz_engines {
         }
 
         /// The committed seeds of `rtsp_client_pump_framing` run through
-        /// the entry.
+        /// the entry. A packaged crate carries no fuzz directory: there
+        /// the test has nothing to read.
         #[test]
         fn the_fuzz_seeds_keep_the_rules() {
             let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
                 .join("fuzz/seeds/rtsp_client_pump_framing");
+            if !dir.exists() {
+                return;
+            }
             let mut seeds = 0;
             for entry in std::fs::read_dir(&dir).unwrap() {
                 let data = std::fs::read(entry.unwrap().path()).unwrap();

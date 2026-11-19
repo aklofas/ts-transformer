@@ -41,7 +41,16 @@ impl Served {
 
     /// A server `configure` set up, with a publish mount made with `mount`.
     pub fn with(configure: impl FnOnce(&mut RtspServerBuilder), mount: PublishMountConfig) -> Self {
-        let mut b = RtspServerBuilder::new("rtsp://127.0.0.1:0").unwrap();
+        Self::at("rtsp://127.0.0.1:0", configure, mount)
+    }
+
+    /// [`Self::with`] for a server that listens at `url`.
+    pub fn at(
+        url: &str,
+        configure: impl FnOnce(&mut RtspServerBuilder),
+        mount: PublishMountConfig,
+    ) -> Self {
+        let mut b = RtspServerBuilder::new(url).unwrap();
         configure(&mut b);
         let server = b.build().unwrap();
         let mount = server.add_publish_mount_with(PATH, mount).unwrap();
