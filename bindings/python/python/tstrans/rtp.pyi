@@ -603,7 +603,8 @@ class RtspPushSession:
         """The push's counters now. Waits, GIL released, while a send,
         `pause()` or `resume()` on another thread is in progress: a parked
         send can stay parked for as long as the server takes a byte now and
-        then. `cancel_handle()` never waits and is the way to end it."""
+        then. `cancel_handle()` never waits, and firing it is how to end a
+        parked send."""
         ...
     @property
     def session_id(self) -> str:
@@ -611,9 +612,11 @@ class RtspPushSession:
         ...
     def is_session_alive(self) -> bool:
         """False once the session is known dead: the control connection
-        ended, or a keepalive ping was answered `454`. Waits as `stats()`
-        does while a send, `pause()` or `resume()` on another thread is in
-        progress; `cancel_handle()` never waits."""
+        ended, or a keepalive ping was answered `454`. Waits, GIL released,
+        while a send, `pause()` or `resume()` on another thread is in
+        progress; a parked send can stay parked for as long as the server
+        takes a byte now and then. `cancel_handle()` never waits, and firing
+        it is how to end a parked send."""
         ...
     def into_mux_sender(self, program_config: MuxerProgramConfig) -> MuxSender:
         """Move an MPEG-TS push into a `MuxSender`. Raises `ValueError` on

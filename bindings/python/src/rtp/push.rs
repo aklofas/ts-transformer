@@ -426,15 +426,21 @@ impl PyRtspPushSession {
             return None;
         }
         allow_threads_parking(py, || {
-            let taken = match self.live.try_lock() {
-                Ok(mut guard) => guard.take(),
-                Err(TryLockError::WouldBlock) => {
-                    if self.blocking.load(Ordering::SeqCst) > 0 {
-                        self.cancel.cancel();
+            // A held mutex with no call that can park counted is a getter,
+            // which lets go at once: retry, reading the count every round,
+            // and cancel as soon as one is counted.
+            let taken = loop {
+                match self.live.try_lock() {
+                    Ok(mut guard) => break guard.take(),
+                    Err(TryLockError::WouldBlock) => {
+                        if self.blocking.load(Ordering::SeqCst) > 0 {
+                            self.cancel.cancel();
+                            break self.live.lock().unwrap_or_else(|e| e.into_inner()).take();
+                        }
+                        std::thread::park_timeout(std::time::Duration::from_millis(1));
                     }
-                    self.live.lock().unwrap_or_else(|e| e.into_inner()).take()
+                    Err(TryLockError::Poisoned(e)) => break e.into_inner().take(),
                 }
-                Err(TryLockError::Poisoned(e)) => e.into_inner().take(),
             };
             // The exit registration stays alive across the close, which can
             // wait for a slow server.
@@ -576,9 +582,10 @@ impl PyRtspPushSession {
     }
 
     /// The push's counters now. Waits, GIL released, while a send,
-    /// `pause()` or `resume()` on another thread is in progress (a parked
+    /// `pause()` or `resume()` on another thread is in progress; a parked
     /// send can stay parked for as long as the server takes a byte now and
-    /// then); `cancel_handle()` never waits and is the way to end it.
+    /// then. `cancel_handle()` never waits, and firing it is how to end a
+    /// parked send.
     fn stats(&self, py: Python<'_>) -> PyResult<PyRtspPushStats> {
         self.read(py, "stats", RustRtspPush::stats)
             .map(PyRtspPushStats::from)
@@ -590,8 +597,11 @@ impl PyRtspPushSession {
         &self.session_id
     }
 
-    /// False once the session is known dead. Waits as `stats()` does while
-    /// a call on another thread is in progress.
+    /// False once the session is known dead. Waits, GIL released, while a
+    /// send, `pause()` or `resume()` on another thread is in progress; a
+    /// parked send can stay parked for as long as the server takes a byte
+    /// now and then. `cancel_handle()` never waits, and firing it is how to
+    /// end a parked send.
     fn is_session_alive(&self, py: Python<'_>) -> PyResult<bool> {
         self.read(py, "is_session_alive", RustRtspPush::is_session_alive)
     }

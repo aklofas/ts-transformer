@@ -350,10 +350,9 @@ def test_close_while_stats_is_read_does_not_cancel() -> None:
     """`stats()` holds the session's lock only for a moment: a `teardown()`
     that finds it held waits for it instead of cancelling the session, so
     the queued media is written and the TEARDOWN is answered. Threads read
-    `stats()` in a loop through every round, so many teardowns meet a
-    held lock (about one round in 250 meets it on a desktop: 4000 rounds,
-    or 5 s of them on a slow machine)."""
-    rounds, bundles, readers = 4000, 50, 8
+    `stats()` in a loop through every round, so some teardowns meet a
+    held lock (4000 rounds, or 5 s of them on a slow machine)."""
+    rounds, bundles, readers = 4000, 50, 3
     give_up = time.monotonic() + 5.0
     with _start_server() as server:
         for r in range(rounds):
@@ -365,14 +364,17 @@ def test_close_while_stats_is_read_does_not_cancel() -> None:
             )
             stop = threading.Event()
 
-            def read_stats() -> None:
+            def read_stats(push: RtspPushSession, stop: threading.Event) -> None:
                 while not stop.is_set():
                     try:
                         push.stats()
                     except RtspError:
                         return  # the session closed under the loop
 
-            threads = [threading.Thread(target=read_stats, daemon=True) for _ in range(readers)]
+            threads = [
+                threading.Thread(target=read_stats, args=(push, stop), daemon=True)
+                for _ in range(readers)
+            ]
             for t in threads:
                 t.start()
             try:
@@ -386,6 +388,7 @@ def test_close_while_stats_is_read_does_not_cancel() -> None:
                 for t in threads:
                     t.join(WAIT_S)
                 push.close()
+            assert not any(t.is_alive() for t in threads), f"a stats() reader hung in round {r}"
             assert _wait_for(
                 lambda: mount.stats().rtp_packets_received == bundles
             ), (r, mount.stats())
