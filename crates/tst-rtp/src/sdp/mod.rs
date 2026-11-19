@@ -8,6 +8,7 @@ use crate::error::RtspError;
 use std::net::SocketAddr;
 
 pub(crate) mod pick;
+mod write;
 
 /// A parsed SDP document.
 #[derive(Debug, Clone)]
