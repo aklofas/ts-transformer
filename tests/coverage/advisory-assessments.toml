@@ -11,7 +11,7 @@
 #   reason     what was checked, in a sentence
 #
 # A row naming a submodule or advisory the live query no longer returns fails
-# the run: a stale assessment must not hide a finding.
+# the run, before any issue is filed: a stale assessment must not hide a finding.
 #
 # [[assessment]]
 # submodule = "freertos-posix"

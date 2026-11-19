@@ -2,9 +2,12 @@
 
 Run:  python3 -m unittest scripts/dev/test_deps_advisory.py
 """
+import contextlib
+import io
 import os
 import sys
 import unittest
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import deps_advisory as da  # noqa: E402
@@ -294,6 +297,35 @@ class Findings(unittest.TestCase):
     def test_an_untagged_pin_with_a_cpe_does_not_list_nvd(self):
         # Untagged pins are checked against GHSA only; NVD CVEs are not evaluated.
         self.assertEqual(da.advisory_sources(MBEDTLS_DEP, tagged=False), ["GHSA"])
+
+
+class Main(unittest.TestCase):
+    """main() with every network call replaced: the stale-row check is part of the run."""
+
+    def _run(self, rows):
+        patches = {
+            "pins_from_tree": lambda: {d["path"]: "0123456789abcdef" for d in da.DEPS},
+            "fetch_tags": lambda dep: [],
+            "fetch_release_tags": lambda dep: [],
+            "fetch_commit_date": lambda dep, sha: "2026-01-01T00:00:00Z",
+            "fetch_advisories": lambda dep: [],
+            "fetch_cves": lambda cpe: [],
+            "fetch_commits_ahead": lambda dep, sha: 0,
+            "load_assessments": lambda: rows,
+        }
+        with contextlib.ExitStack() as st:
+            for name, fn in patches.items():
+                st.enter_context(mock.patch.object(da, name, fn))
+            st.enter_context(contextlib.redirect_stdout(io.StringIO()))
+            return da.main(["--dry-run"])
+
+    def test_a_run_with_no_rows_succeeds(self):
+        self.assertEqual(self._run([]), 0)
+
+    def test_a_row_naming_an_advisory_the_query_no_longer_returns_fails_the_run(self):
+        row = {"submodule": "freertos-posix", "advisory": "GHSA-gone", "assessed": "not-affected", "reason": "r"}
+        with self.assertRaisesRegex(ValueError, "GHSA-gone"):
+            self._run([row])
 
 
 class Dedupe(unittest.TestCase):
