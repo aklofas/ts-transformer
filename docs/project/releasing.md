@@ -410,8 +410,8 @@ step 3).
     only a failure that belongs to a ledgered flake class.
 
     Two dispatches of one workflow on the same ref run side by side; neither
-    cancels the other. A sanitizer, fuzz or interop job shown as `cancelled`
-    was cut by its own job cap: read its failing step, and if that is an
+    cancels the other. In a dispatched run, a sanitizer, fuzz or interop job shown as
+    `cancelled` that nobody cancelled was cut by its own job cap: read its failing step, and if that is an
     install step, no test ran and the job is rerun alone (the runner-setup
     class in `docs/project/ci-flakes.md`).
 

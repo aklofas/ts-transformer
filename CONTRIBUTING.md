@@ -93,10 +93,14 @@ burst cap assert, the interop `transparent_relay` loss test, and the HTTP
 `oom_guard` tests.
 
 A newer push to a pull request cancels that pull request's older runs of
-the same workflow; push, dispatch and scheduled runs are never cancelled. The packages the jobs install come through
-`scripts/ci/` (`apt-install.sh`, `install-build-tools.sh`,
-`install-ripgrep.sh`, `gradle-resolve.sh`), each with bounded, retried
-attempts. The PyPI tools of the build and test jobs are in the hashed files
+`ci`, `jvm-jar`, `python-wheels`, `interop`, `sanitizers`,
+`release-qualify` and `crates-io`; push, dispatch and scheduled runs are never
+cancelled by that rule. The nightly dispatcher queues one run at a time and
+waits on a nightly run already pending for the same commit. The Linux jobs'
+packages, ripgrep and the JVM dependencies come through `scripts/ci/`
+(`apt-install.sh`, `install-build-tools.sh`, `install-ripgrep.sh`,
+`gradle-resolve.sh`), each with three bounded attempts. The PyPI tools of the
+build and test jobs are in the hashed files
 `scripts/ci/requirements-build-tools.txt`, `requirements-test-tools.txt` and
 `requirements-test-tools-pandas.txt`; the header of each gives the command
 that regenerates it.

@@ -44,7 +44,9 @@ GStreamer, every profile over SRT, RTP over RTSP, the publisher role in
 both its MPEG-TS and elementary shapes, and TSDuck's analyzers. The
 browser, VLC, mpv and HLS cells are left out. That job's census is recorded
 in the qualification record beside the x86_64 one, and the release verdict
-reads the x86_64 census. A peer tool missing from the arm runner skips its
+reads the x86_64 census. In a qualification run the arm64 subset gates too: a failing cell there fails
+the interop leg, and a peer tool the arm runner lacks counts as a skipped cell,
+not a failure. A peer tool missing from the arm runner skips its
 cells, and the job's step summary names them. `soak.sh` runs on
 linux-x86_64. `soak.sh`'s SRT and RIST legs need no third-party
 media tools, being `tst-interop` talking to itself through its own
