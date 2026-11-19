@@ -187,8 +187,7 @@ public final class RtspPushSession extends NativeHandle {
      *
      * @throws RtspException with the kind of the status for a TEARDOWN the server refuses
      *     ({@code PROTOCOL}, or {@code NOT_FOUND} for a 404); {@code PROTOCOL} with
-     *     status 454 when the server had forgotten the session and queued media was
-     *     dropped; {@code CLOSED} on a cancelled session (the TEARDOWN is still written); {@code TIMEOUT} when no
+     *     status 454 when queued media was lost to an expired session; {@code CLOSED} on a cancelled session (the TEARDOWN is still written); {@code TIMEOUT} when no
      *     reply came within the bound; {@code IO} when the connection failed
      * @throws IllegalStateException if the session is closed
      */

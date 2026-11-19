@@ -101,11 +101,20 @@ public final class RtspClient {
      * @param description what the session announces
      * @return the recording session
      * @throws RtspException {@code UNSUPPORTED_TRANSPORT} for a UDP transport preference
-     *     or a SETUP reply that is not interleaved; {@code PROTOCOL} for RTSP 2.0, a
-     *     description that lacks a parameter set, and a reply other than {@code 2xx} (a
-     *     server that does not take the codec answers {@code 415}); and the errors of
-     *     {@link #connect(RtspClientConfig)} ({@code AUTH_REQUIRED}, {@code NOT_FOUND},
-     *     {@code TLS}, {@code IO}, {@code TIMEOUT}, ...)
+     *     ({@link TransportPref#UDP} or {@code ?transport=udp}, refused before any SETUP
+     *     is written) and for a SETUP reply whose {@code Transport} header does not
+     *     parse; {@code PROTOCOL} for RTSP 2.0 (no ANNOUNCE written), a URL that does not
+     *     parse, a description that lacks a parameter set, a SETUP reply the client
+     *     cannot use (no {@code Transport} header, a transport that is not interleaved,
+     *     no session, another session, or a channel pair it cannot take), and a refused
+     *     status other than {@code 404} and {@code 401} (a server that does not take the
+     *     codec answers {@code 415}); {@code NOT_FOUND} for a {@code 404}; for a
+     *     {@code 401}, which the client answers once with the configured credential:
+     *     {@code PROTOCOL} when it carries no {@code WWW-Authenticate} header,
+     *     {@code AUTH_FAILED} when no credential is configured or the retry is answered
+     *     {@code 401} again, and {@code AUTH_REQUIRED} when the challenge offers no scheme
+     *     the credential may answer; {@code IO}, {@code TLS} and {@code TIMEOUT} for the
+     *     connection, its TLS handshake and a request left unanswered
      * @throws NullPointerException if an argument is {@code null}
      */
     public static RtspPushSession push(RtspClientConfig config, PushDescription description)
