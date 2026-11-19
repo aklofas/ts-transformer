@@ -23,6 +23,11 @@ pub struct ArchiveRow {
     pub files: u64,
     pub identical: u64,
     pub changed_explained: u64,
+    /// Captures new against the baseline and accepted with a reason; with
+    /// `identical` and `changed_explained` they add up to `files` in a
+    /// passing sweep.
+    #[serde(default)]
+    pub new_explained: u64,
     pub invariant_failures: u64,
     pub parse_failures: u64,
     pub replay_files: u64,
@@ -84,6 +89,7 @@ pub fn archive_row(sweep: &SweepSummary, replay: Option<&ReplaySummary>) -> Arch
         files: sweep.files,
         identical: sweep.identical,
         changed_explained: sweep.changed_explained,
+        new_explained: sweep.new_explained,
         invariant_failures: sweep.invariant_failures,
         parse_failures: sweep.parse_failures,
         replay_files,
