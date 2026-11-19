@@ -114,7 +114,7 @@ class ExtractTests(unittest.TestCase):
 
     def test_marker_typos_are_errors(self):
         for marker in ("<!-- compile java-class -->", "<!-- Compile: c-file -->",
-                       " <!-- compile: c-file -->", "<!-- compile-prelude: rust"):
+                       " <!-- compile: c-file -->", "<!-- compile-prelude: rust\n-->"):
             p, out = page(marker + "\n```c\nint a;\n```\n")
             with self.assertRaises(ds.SnippetError, msg=marker):
                 ds.extract([p], out)
@@ -137,7 +137,7 @@ class ExtractTests(unittest.TestCase):
         self.assertNotIn("pragma", whole)
 
     def test_four_backtick_fence_hides_a_marker_example(self):
-        p, out = page("````md\n<!-- compile: c-file -->\n```c\nint a;\n```\n````\n")
+        p, out = page("````md\n```\n<!-- compile: c-file -->\n```c\nint a;\n```\n````\n")
         self.assertEqual(ds.extract([p], out), [])
 
     def test_java_class_named_after_public_type(self):
