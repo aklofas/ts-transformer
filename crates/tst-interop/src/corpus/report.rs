@@ -72,12 +72,13 @@ pub fn archive_row(sweep: &SweepSummary, replay: Option<&ReplaySummary>) -> Arch
         String::new()
     };
     let note = format!(
-        "Sweep {} files: {} identical, {} changed and explained, {} invariant failures, \
-         {} parse failures; replay {replay_files} files over {replay_paths} paths, \
-         {replay_failed} failed{exits_note}. {}",
+        "Sweep {} files: {} identical, {} changed and explained, {} new and accepted, \
+         {} invariant failures, {} parse failures; replay {replay_files} files over \
+         {replay_paths} paths, {replay_failed} failed{exits_note}. {}",
         sweep.files,
         sweep.identical,
         sweep.changed_explained,
+        sweep.new_explained,
         sweep.invariant_failures,
         sweep.parse_failures,
         baseline_sentence(sweep),
