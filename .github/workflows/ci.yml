@@ -397,6 +397,16 @@ jobs:
         if: matrix.name == 'linux-x86_64'
         run: bash scripts/release/tests/post-publish-consumers-selftest.sh
 
+      - name: cargo-deny-all self-test (live and pinned modes, bounded retried fetches)
+        # Runs scripts/dev/cargo-deny-all.sh against a stub cargo, git, timeout and sleep.
+        if: matrix.name == 'linux-x86_64'
+        run: bash scripts/ci/tests/cargo-deny-all-selftest.sh
+
+      - name: rustsec-report self-test (the weekly issue is opened or commented)
+        # Runs scripts/dev/rustsec-report.sh against a stub cargo and gh.
+        if: matrix.name == 'linux-x86_64'
+        run: bash scripts/ci/tests/rustsec-report-selftest.sh
+
       - name: fuzz-shard self-test (one shard of the fuzz leg against a stub cargo)
         # Runs scripts/ci/fuzz-shard.sh with stub `cargo` and `rustc`, then
         # merges its results. Gated to linux-x86_64: the fuzz leg runs there only.
@@ -537,6 +547,10 @@ jobs:
       - name: check-roster-sync (workflow and rail lists agree with cargo metadata)
         if: matrix.name == 'linux-x86_64'
         run: bash scripts/check/repo/roster-sync.sh
+
+      - name: check-advisory-db-pin (the advisory-db pin is empty or one 40-hex commit)
+        if: matrix.name == 'linux-x86_64'
+        run: bash scripts/check/repo/advisory-db-pin.sh
 
       - name: check-net-test-binaries (socket-using test binaries are net_*)
         if: matrix.name == 'linux-x86_64'
