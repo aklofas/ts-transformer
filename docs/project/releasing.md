@@ -237,13 +237,17 @@ step 3).
      names it too), or says none was compared. The release gate refuses a
      corpus row without the digest, so the release run is the `--baseline`
      one. The row also carries `manifest_sha256`, the digest of the
-     `digests/manifest.txt` its own sweep wrote, which names the capture set;
-     the gate refuses a row whose value is not `expected_manifest_sha256` in
-     `tests/coverage/evidence-archives.toml`, and a row whose baseline digest
-     is not the `manifest_sha256` of the previous release's corpus row (rows
-     before 0.11.0 carry none, and leave that link unchecked). When the
-     capture set changes on purpose, the same change moves the pin and
-     `expected_files`. A failure
+     `digests/manifest.txt` its own sweep wrote. The gate refuses a row whose
+     `manifest_sha256` is not `[corpus] expected_manifest_sha256` in
+     `tests/coverage/evidence-archives.toml` and a row whose baseline digest is
+     not `expected_baseline_manifest_sha256` there: they prove which captures
+     were swept and which capture set the baseline covered, not whose decoded
+     results the baseline holds. The release-prep PR moves
+     `expected_manifest_sha256` (and `expected_files`) when the corpus gained
+     or lost a capture (`sha256sum digests/manifest.txt` of the new sweep, with
+     the accepted additions and removals named in the archive row's PR); after
+     a release, `expected_baseline_manifest_sha256` becomes the released set's
+     digest. Rows before 0.11.0 carry no `manifest_sha256`. A failure
      stops the checklist here; it is a finding to fix, and the fix restarts
      at step 2. A reviewed change is accepted with
      `--accept <sha256> --because <text>`.
