@@ -2,6 +2,7 @@
 
 pub(crate) mod errors;
 mod client;
+mod push;
 pub(crate) mod h264_receiver;
 mod mount_rules;
 pub(crate) mod publish;

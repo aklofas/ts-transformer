@@ -1,12 +1,14 @@
 package org.tstrans.rtp;
 
+import java.util.Objects;
 import org.tstrans.NativeLoader;
 import org.tstrans.RtspException;
 
 /**
  * Static facade for RTSP client connections. {@link #connect(RtspClientConfig)}
  * runs the full OPTIONS / DESCRIBE / SETUP / PLAY exchange against the server and
- * returns a live {@link RtspSession} in PLAY state. Mirrors tst-py
+ * returns a live {@link RtspSession} in PLAY state; {@link #push} publishes instead
+ * (ANNOUNCE / SETUP / RECORD) and returns an {@link RtspPushSession}. Mirrors tst-py
  * {@code tstrans.rtp.RtspClient}.
  *
  * <p><b>{@code rtsps://} is supported.</b> {@code RtspClientConfig.tlsRootCertsPem},
@@ -83,6 +85,45 @@ public final class RtspClient {
     }
 
     /**
+     * Publish to the server: connect, ANNOUNCE {@code description} as an SDP body at the
+     * config's URL, SETUP each of its tracks for recording interleaved on the control
+     * connection ({@code RTP/AVP/TCP}, {@code mode=record}), and RECORD. Returns the
+     * recording session that sends the media.
+     *
+     * <p>The config is read as by {@link #connect(RtspClientConfig)}: the URL, the
+     * credential, {@code rtsps://} trust roots and keepalive pings. Publishing over UDP is
+     * not implemented: {@link TransportPref#UDP} (or {@code ?transport=udp}) is refused.
+     * RTSP 2.0 has no ANNOUNCE: {@link RtspVersion#V2_0} is refused. Both are refused
+     * before the request concerned is written. On any failure the connection is closed;
+     * with a session open, TEARDOWN is written first.
+     *
+     * @param config the connection configuration
+     * @param description what the session announces
+     * @return the recording session
+     * @throws RtspException {@code UNSUPPORTED_TRANSPORT} for a UDP transport preference
+     *     or a SETUP reply that is not interleaved; {@code PROTOCOL} for RTSP 2.0, a
+     *     description that lacks a parameter set, and a reply other than {@code 2xx} (a
+     *     server that does not take the codec answers {@code 415}); and the errors of
+     *     {@link #connect(RtspClientConfig)} ({@code AUTH_REQUIRED}, {@code NOT_FOUND},
+     *     {@code TLS}, {@code IO}, {@code TIMEOUT}, ...)
+     * @throws NullPointerException if an argument is {@code null}
+     */
+    public static RtspPushSession push(RtspClientConfig config, PushDescription description)
+            throws RtspException {
+        Objects.requireNonNull(config, "config");
+        Objects.requireNonNull(description, "description");
+        ClientAuth auth = ClientAuth.of(config);
+        byte[] tlsRoots = config.tlsRootCertsPem().orElse(null);
+        long h = nPush(effectiveUrl(config), auth.user(), auth.password(), auth.digestOnly(),
+            config.keepalive(), tlsRoots, description.kind(), description.klv(),
+            description.parameterSets());
+        if (h == 0) {
+            throw new RtspException(RtspException.Kind.PROTOCOL, "nPush returned 0 without throwing");
+        }
+        return new RtspPushSession(h);
+    }
+
+    /**
      * The credential fields the native factories take: {@code null} user and password
      * without a credential; {@code digestOnly} for a {@link DigestAuth}, which refuses a
      * challenge that offers no Digest.
@@ -128,4 +169,9 @@ public final class RtspClient {
 
     private static native long nConnectH264(String url, String authUser, String authPassword,
         boolean digestOnly, boolean keepalive, byte[] tlsRootCertsPem) throws RtspException;
+
+    // kind is a PushDescription.KIND_* code; parameterSets as PushDescription keeps them.
+    private static native long nPush(String url, String authUser, String authPassword,
+        boolean digestOnly, boolean keepalive, byte[] tlsRootCertsPem, int kind, boolean klv,
+        byte[][] parameterSets) throws RtspException;
 }

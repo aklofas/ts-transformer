@@ -2,6 +2,8 @@ package org.tstrans.rtp;
 
 import org.tstrans.shells.CancelHandle;
 import org.tstrans.shells.DemuxReceiver;
+import org.tstrans.shells.MuxSender;
+import org.tstrans.shells.Sender;
 
 /**
  * Wraps the native keys the {@code org.tstrans.rtp} classes obtain into the
@@ -12,6 +14,10 @@ final class ShellAdapters {
     private ShellAdapters() {}
 
     static CancelHandle cancelHandle(long key) { return new CancelHandle(key) {}; }
+
+    static Sender sender(long handle) { return new Sender(handle) {}; }
+
+    static MuxSender muxSender(long handle) { return new MuxSender(handle) {}; }
 
     static DemuxReceiver demuxReceiver(long handle) { return new DemuxReceiver(handle) {}; }
 }
