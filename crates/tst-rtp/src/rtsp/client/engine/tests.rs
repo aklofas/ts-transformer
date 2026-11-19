@@ -3423,10 +3423,9 @@ fn a_refused_setup_leaves_the_track_count() {
 
 #[test]
 fn announce_twice() {
-    let mut e = announced(1);
-    assert_refused(&mut e, announce(1));
-    let mut e = recording();
-    assert_refused(&mut e, announce(1));
+    for mut e in every_live_phase() {
+        assert_refused(&mut e, announce(1));
+    }
 }
 
 #[test]
@@ -3510,8 +3509,10 @@ fn setup_record_out_of_track_order() {
     // Every announced track is set up.
     assert_refused(&mut e, record_setup(2));
     assert_refused(&mut e, record_setup(1));
-    let mut e = recording();
-    assert_refused(&mut e, record_setup(1));
+    for mut e in [recording(), paused()] {
+        assert_refused(&mut e, record_setup(0));
+        assert_refused(&mut e, record_setup(1));
+    }
 }
 
 #[test]
@@ -3615,6 +3616,14 @@ fn nothing_is_accepted_after_a_teardown_was_submitted() {
         spec(RtspMethod::Teardown, URI),
         announce(1),
         record_setup(1),
+        spec(RtspMethod::Describe, URI),
+        spec(RtspMethod::Play, URI),
+        spec(RtspMethod::GetParameter, URI),
+        spec(RtspMethod::Setup, URI),
+        RequestSpec {
+            setup: Some(pull(0)),
+            ..spec(RtspMethod::Setup, URI)
+        },
     ] {
         let what = format!("{:?}", s.method);
         let r = e.submit(s, None, Instant::now());
@@ -3661,7 +3670,7 @@ fn record_201_with_location_is_accepted_and_location_ignored() {
 /// The engine hands the `3xx` to the caller as the reply (the facade
 /// reports it as `Protocol`) and writes nothing to the new location.
 #[test]
-fn a_3xx_to_announce_is_protocol_and_not_followed() {
+fn a_3xx_to_announce_is_returned_unfollowed_and_moves_no_phase() {
     for status in ["301 Moved Permanently", "302 Moved Temporarily"] {
         let mut e = ClientEngine::new(cfg(None));
         let o = exchange(
@@ -4087,4 +4096,118 @@ fn a_zero_or_huge_session_timeout_keeps_the_ping_floor_on_a_push() {
         e.handle_timeout(t0 + Duration::from_secs(3600), false);
         assert!(e.poll_transmit().is_none());
     }
+}
+
+#[test]
+fn a_refused_pause_leaves_recording() {
+    let mut e = recording();
+    let o = exchange(
+        &mut e,
+        spec(RtspMethod::Pause, URI),
+        "455 Method Not Valid in This State",
+        "",
+    )
+    .unwrap();
+    assert_eq!(o.response.status, 455);
+    assert_eq!(e.push_phase(), Some(PushPhase::Recording));
+    assert!(e.media_allowed());
+    exchange(&mut e, spec(RtspMethod::Pause, URI), "200 OK", "").unwrap();
+    assert_eq!(e.push_phase(), Some(PushPhase::Paused));
+}
+
+/// Submits `s`, answers it `401` and its retry `200` with `headers`; the
+/// phase moves once, at the retry's reply.
+fn exchange_after_a_401(
+    e: &mut ClientEngine,
+    s: RequestSpec,
+    headers: &str,
+) -> Result<ReplyOutcome, RtspError> {
+    let t0 = Instant::now();
+    let before = e.push_phase();
+    let a = e.submit(s, None, t0).unwrap();
+    let c = cseq(&one(e));
+    e.handle_input(
+        format!(
+            "RTSP/1.0 401 Unauthorized\r\nCSeq: {c}\r\nWWW-Authenticate: Basic realm=\"cam\"\r\n\r\n"
+        )
+        .as_bytes(),
+        t0,
+    );
+    assert!(events(e).is_empty());
+    assert_eq!(e.push_phase(), before, "a 401 moves nothing");
+    let retry = cseq(&one(e));
+    assert_eq!(retry, c + 1);
+    e.handle_input(
+        format!("RTSP/1.0 200 OK\r\nCSeq: {retry}\r\n{headers}\r\n").as_bytes(),
+        t0,
+    );
+    outcome(e, a)
+}
+
+#[test]
+fn a_401_retry_moves_the_phase_once_at_the_final_reply() {
+    let mut e = ClientEngine::new(cfg(Some(("user", "pw"))));
+    exchange_after_a_401(&mut e, announce(1), "").unwrap();
+    assert_eq!(e.push_phase(), Some(PushPhase::Announced));
+    let o = exchange_after_a_401(&mut e, record_setup(0), &record_setup_headers(0)).unwrap();
+    assert_eq!(o.setup, accepted(0, 0, 1));
+    assert_eq!(e.push_phase(), Some(PushPhase::Ready));
+    exchange_after_a_401(&mut e, spec(RtspMethod::Record, URI), "").unwrap();
+    assert_eq!(e.push_phase(), Some(PushPhase::Recording));
+    exchange_after_a_401(&mut e, spec(RtspMethod::Pause, URI), "").unwrap();
+    assert_eq!(e.push_phase(), Some(PushPhase::Paused));
+}
+
+#[test]
+fn a_record_setup_reply_after_its_deadline_moves_nothing() {
+    let t0 = Instant::now();
+    let mut e = announced(1);
+    let a = e.submit(record_setup(0), Some(ms(t0, 500)), t0).unwrap();
+    let c = cseq(&one(&mut e));
+    let mut raw = format!(
+        "RTSP/1.0 200 OK\r\nCSeq: {c}\r\n{}\r\n",
+        record_setup_headers(0)
+    )
+    .into_bytes();
+    raw.extend(interleaved_frame(1, b"\xDE\xAD\xBE\xEF"));
+    e.handle_input(&raw, ms(t0, 500));
+    let ev = events(&mut e);
+    assert!(
+        matches!(
+            ev.as_slice(),
+            [Event::Reply { txn, result: Err(RtspError::Timeout) }] if *txn == a
+        ),
+        "{ev:?}"
+    );
+    assert_eq!(e.push_phase(), Some(PushPhase::Announced));
+    assert!(e.session_id.is_none());
+    assert_eq!(e.counters().malformed_frames, 1, "no route was installed");
+}
+
+/// Only a SETUP reply teaches the session: a `Session` naming another id on
+/// a RECORD or PAUSE reply is not followed.
+#[test]
+fn a_session_named_by_a_record_or_pause_reply_is_ignored() {
+    let t0 = Instant::now();
+    let mut e = ready(1);
+    e.enable_keepalive(None, t0);
+    exchange(
+        &mut e,
+        spec(RtspMethod::Record, URI),
+        "200 OK",
+        "Session: Q1;timeout=4\r\n",
+    )
+    .unwrap();
+    assert_eq!(e.push_phase(), Some(PushPhase::Recording));
+    exchange(
+        &mut e,
+        spec(RtspMethod::Pause, URI),
+        "200 OK",
+        "Session: Q2;timeout=4\r\n",
+    )
+    .unwrap();
+    assert_eq!(e.push_phase(), Some(PushPhase::Paused));
+    assert_eq!(e.poll_timeout(), Some(ms(t0, 30_000)));
+    e.handle_timeout(ms(t0, 30_000), false);
+    assert_eq!(sent(&one(&mut e)).headers["session"], "P1");
 }
