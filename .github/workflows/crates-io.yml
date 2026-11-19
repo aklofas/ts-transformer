@@ -50,6 +50,14 @@ on:
       - "rust-toolchain.toml"
       - "scripts/release/**"
 
+concurrency:
+  # A newer push to a pull request replaces its older run. Every other run
+  # (push, dispatch, schedule, a tag) has a group of its own and is never
+  # cancelled or queued. The group starts with this file's name because a
+  # called workflow sees its caller's github.workflow.
+  group: crates-io-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 env:
   # Vendored native builds for the sys crates' verify step, in both jobs.
   SRT_FORCE_VENDORED: "1"
