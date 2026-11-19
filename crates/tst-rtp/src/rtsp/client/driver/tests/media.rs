@@ -542,7 +542,10 @@ fn a_ping_due_behind_unwritten_media_is_queued_ahead_of_the_rest() {
 fn a_request_overtakes_queued_media() {
     const FRAMES: u32 = 1000;
     let (stream, mut peer) = plain_pair();
-    let h = drive(stream);
+    // The stall rule is not under test: the peer reads nothing while the
+    // loop below queues the frames, and under a sanitizer that loop alone
+    // can take seconds, so the bound is far past any run of it.
+    let h = drive_with(stream, scaled(Duration::from_secs(60)));
     let _unhang = unhang(&h.cancel);
     let mut rest = Vec::new();
     recording(&h, &mut peer, &mut rest);
