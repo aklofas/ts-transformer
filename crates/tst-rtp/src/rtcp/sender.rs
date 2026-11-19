@@ -27,6 +27,10 @@ pub(crate) fn ntp_from_system_time(t: SystemTime) -> u64 {
 
 /// An SR followed by an SDES CNAME, as one compound packet. The SR comes
 /// first: a receiver reads the first packet of a compound as the report.
+///
+/// # Panics
+///
+/// If `cname` is longer than 255 bytes.
 pub(crate) fn sender_report_compound(
     ssrc: u32,
     ntp: u64,
@@ -259,12 +263,25 @@ mod tests {
     #[test]
     fn a_pts_that_wraps_33_bits_keeps_rtp_timestamps_continuous_mod_2_32() {
         let t = TrackState::new(96);
-        let wrap = 1i64 << 33;
         assert_eq!(
-            t.rtp_timestamp(wrap - 3000),
-            t.rtp_base.wrapping_add((wrap - 3000) as u32)
+            t.rtp_timestamp(600)
+                .wrapping_sub(t.rtp_timestamp((1 << 33) - 3000)),
+            3600
         );
-        assert_eq!(t.rtp_timestamp(600), t.rtp_base.wrapping_add(600));
+    }
+
+    #[test]
+    fn a_time_before_1970_reads_as_the_epoch() {
+        assert_eq!(
+            ntp_from_system_time(UNIX_EPOCH - Duration::from_secs(5)),
+            ntp_from_system_time(UNIX_EPOCH)
+        );
+    }
+
+    #[test]
+    fn ntp_seconds_wrap_after_2036_02_07() {
+        // 2^32 - 2208988800 = 2085978496 is the unix second the field wraps at.
+        assert_eq!(ntp_from_system_time(at(2_085_978_496 + 10, 0)), 10u64 << 32);
     }
 
     #[test]
