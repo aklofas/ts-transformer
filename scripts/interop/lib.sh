@@ -402,10 +402,13 @@ _tsanalyze_wrapped() {
 # own error exit) after the pipeline logged `Got EOS` is a send failure while
 # closing a stream whose media was already delivered (rtspclientsink's final
 # message hitting a closed connection): it is logged and counted as a clean
-# end. Any other nonzero status still fails, EOS or not: a timeout kill (124
-# or 137) means the generation overran, and a signal death or a crash is not a
-# send failure. The delivery itself is judged by the receiver's generation
-# count.
+# end, provided the log's first `ERROR:` line comes after `Got EOS`. An error
+# before EOS fails the generation; which error follows EOS is not matched (the
+# wording is GStreamer's, and a different message there is not told apart from
+# the send failure), because the receiver's generation count judges whether the
+# media arrived. Any other nonzero status still fails, EOS or not: a timeout
+# kill (124 or 137) means the generation overran, and a signal death or a
+# crash is not a send failure.
 publish_generation() {
   local k=$1 log=$2 rc=0 last
   shift 2
@@ -416,7 +419,8 @@ publish_generation() {
   PUBLISH_GEN_PID=""
   cat "$log"
   echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) publisher: generation $k ended rc=$rc"
-  if [[ "$rc" -eq 1 ]] && grep -q 'Got EOS' "$log"; then
+  if [[ "$rc" -eq 1 ]] && awk '/Got EOS/ && !eos { eos = NR } /ERROR:/ && !err { err = NR }
+      END { exit !(eos && (!err || err > eos)) }' "$log"; then
     last=$(grep -v '^[[:space:]]*$' "$log" | tail -1)
     echo "generation $k: post-EOS send failure ($last), counted as a clean end"
     rc=0
