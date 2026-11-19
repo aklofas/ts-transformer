@@ -10,6 +10,7 @@
 #      the test jobs give every platform all three feature passes between them,
 #      test-main-extra runs only off pull requests, test-linux and
 #      test-platforms run on every event and give every platform all-features,
+#      every job but dispatch-sha needs it and opens its if: with its guard,
 #      each job's shard axis, /N and --partition agree, each include entry's
 #      flags match its pass, none continue-on-error;
 #   5. every member manifest inherits the lint table;
@@ -58,8 +59,22 @@ rvc="$(sed -nE 's/^RVC_DEP_TOMLS="\$\{RVC_DEP_TOMLS:-(.*)\}"$/\1/p' "$F/scripts/
 
 CI="$F/.github/workflows/ci.yml"
 job_text() { # <job> : the text of that ci.yml job, up to the next top-level job
-  awk -v j="  $1:" '$0 == j {f = 1; next} /^  [a-z-]+:$/ {f = 0} f' "$CI"
+  awk -v j="  $1:" '$0 == j {f = 1; next} /^  [A-Za-z0-9_-]+:$/ {f = 0} f' "$CI"
 }
+# Every job but dispatch-sha needs it and opens its job-level if: with this
+# guard, so a dispatch whose sha is not the tip runs nothing; a job added
+# without them would run anyway.
+guard="if: \${{ !cancelled() && needs.dispatch-sha.result != 'failure' && ("
+for j in $(awk '/^jobs:$/ {f = 1; next} /^[^ #]/ {f = 0} f && /^  [A-Za-z0-9_-]+:$/ {sub(/^  /, ""); sub(/:$/, ""); print}' "$CI"); do
+  [ "$j" != dispatch-sha ] || continue
+  t="$(job_text "$j")"
+  grep -qE '^    needs: (dispatch-sha|\[(.*, *)?dispatch-sha(, *.*)?\])[[:space:]]*$' <<<"$t" || bad "ci.yml $j does not need dispatch-sha"
+  ifs="$(grep -E '^    if:' <<<"$t" || true)"
+  case "$ifs" in
+    "    $guard"*") }}") ;;
+    *) bad "ci.yml $j: its job-level if: is not one line opening with the dispatch-sha guard" ;;
+  esac
+done
 build_job="$(job_text build)"
 legs="$(awk '/- name: /{n = $3} /continue: false/ {print n}' <<<"$build_job" | sort | tr '\n' ' ')"
 [ "$legs" = "linux-aarch64 linux-x86_64 macos-arm64 windows-msvc windows-msvc-features " ] || bad "ci.yml build legs with continue: false are [$legs], want the five gating legs"
@@ -79,11 +94,15 @@ for platform in linux-x86_64 linux-aarch64 macos-arm64 windows-msvc; do
   got="$(awk -v p="$platform" '/- name: /{n = $3} /^[[:space:]]+pass:[[:space:]]+[a-z-]+[[:space:]]*$/ {if (n == p) print $2}' <<<"$all_tests" | sort -u | tr '\n' ' ')"
   [ "$got" = "all-features default no-default " ] || bad "ci.yml test jobs give platform $platform the passes [$got], want all-features default no-default"
 done
-grep -qE "^[[:space:]]*if:[[:space:]]*github\.event_name != 'pull_request'[[:space:]]*$" <<<"$(job_text test-main-extra)" || bad "ci.yml test-main-extra no longer runs only off pull requests"
-# The PR jobs run on every event, and give every platform the all-features pass.
+main_if="    ${guard}github.event_name != 'pull_request') }}"
+grep -qxF "$main_if" <<<"$(job_text test-main-extra)" || bad "ci.yml test-main-extra no longer runs only off pull requests"
+# The PR jobs run on every event (their if: is the guard alone), and give
+# every platform the all-features pass.
+pr_if="    ${guard}true) }}"
 pr_tests=""
 for j in test-linux test-platforms; do
-  if grep -qE '^    if:' <<<"$(job_text "$j")"; then bad "ci.yml $j has a job-level if:"; fi
+  ifs="$(grep -E '^    if:' <<<"$(job_text "$j")" || true)"
+  if [ -n "$ifs" ] && grep -qvxF "$pr_if" <<<"$ifs"; then bad "ci.yml $j has a job-level if: other than the dispatch-sha guard"; fi
   pr_tests="$pr_tests$(job_text "$j")
 "
 done

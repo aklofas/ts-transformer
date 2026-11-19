@@ -39,7 +39,9 @@ jobs:
   # A run is recorded under the dispatched ref's tip (release-qualify reads ci
   # runs by head_sha), so a dispatch must test exactly that commit: the sha
   # input is the full 40-hex form and equals the tip. This job fails the run
-  # otherwise; it is skipped on push and pull_request.
+  # otherwise; it is skipped on push and pull_request. Every other job needs it,
+  # so a wrong sha runs nothing; their `if` starts with `!cancelled()`, not
+  # `always()`, so they still run when it is skipped and stop with a cancelled run.
   dispatch-sha:
     name: the sha input is the full tip commit
     if: github.event_name == 'workflow_dispatch'
@@ -55,6 +57,8 @@ jobs:
 
   build:
     name: build (${{ matrix.name }})
+    needs: dispatch-sha
+    if: ${{ !cancelled() && needs.dispatch-sha.result != 'failure' && (true) }}
     runs-on: ${{ matrix.runner }}
     continue-on-error: ${{ matrix.continue }}
     # Backstop against a hung step. The job builds, lints and runs the rails;
@@ -907,6 +911,8 @@ jobs:
 
   test-linux:
     name: test (${{ matrix.name }}, ${{ matrix.pass }}, ${{ matrix.shard }}/3)
+    needs: dispatch-sha
+    if: ${{ !cancelled() && needs.dispatch-sha.result != 'failure' && (true) }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     env:
@@ -1010,6 +1016,8 @@ jobs:
 
   test-platforms:
     name: test (${{ matrix.name }}, ${{ matrix.pass }}, ${{ matrix.shard }}/2)
+    needs: dispatch-sha
+    if: ${{ !cancelled() && needs.dispatch-sha.result != 'failure' && (true) }}
     runs-on: ${{ matrix.runner }}
     # Each shard compiles the workspace cold (the restored cargo cache holds
     # no target/deps), so the Windows all-features shards run 18-32 min:
@@ -1113,9 +1121,10 @@ jobs:
 
   test-main-extra:
     name: test (${{ matrix.name }}, ${{ matrix.pass }}, ${{ matrix.shard }}/2)
+    needs: dispatch-sha
     # Push to main, the nightly dispatch and any workflow_dispatch run the
     # passes the PR set leaves out.
-    if: github.event_name != 'pull_request'
+    if: ${{ !cancelled() && needs.dispatch-sha.result != 'failure' && (github.event_name != 'pull_request') }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     env:
@@ -1227,6 +1236,8 @@ jobs:
 
   test-linux-musl:
     name: test (linux-musl-x86_64, no-libsrt crates)
+    needs: dispatch-sha
+    if: ${{ !cancelled() && needs.dispatch-sha.result != 'failure' && (true) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -1272,6 +1283,8 @@ jobs:
 
   tst-rtp-client-only:
     name: test (transport bare planes + dependency lattice, linux-x86_64)
+    needs: dispatch-sha
+    if: ${{ !cancelled() && needs.dispatch-sha.result != 'failure' && (true) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     # Three bare planes: the tokio-free client-only tst-rtp plane
@@ -1327,6 +1340,8 @@ jobs:
 
   no-std-baremetal:
     name: no_std bare-metal (compile + QEMU runtime)
+    needs: dispatch-sha
+    if: ${{ !cancelled() && needs.dispatch-sha.result != 'failure' && (true) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     steps:
@@ -1527,6 +1542,8 @@ jobs:
 
   fuzz-smoke:
     name: fuzz smoke (nightly, compile only)
+    needs: dispatch-sha
+    if: ${{ !cancelled() && needs.dispatch-sha.result != 'failure' && (true) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -1608,6 +1625,8 @@ jobs:
 
   python-core:
     name: tst-py default tests
+    needs: dispatch-sha
+    if: ${{ !cancelled() && needs.dispatch-sha.result != 'failure' && (true) }}
     runs-on: ubuntu-24.04
     # gdb is installed only by the backtrace step after a failure, so no
     # package mirror sits on the passing path.
@@ -1713,6 +1732,8 @@ jobs:
 
   python-pandas-extra:
     name: tst-py with [pandas] extra
+    needs: dispatch-sha
+    if: ${{ !cancelled() && needs.dispatch-sha.result != 'failure' && (true) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     # Sibling to `python-core`: same venv recipe, plus numpy + pandas to
@@ -1770,6 +1791,8 @@ jobs:
 
   tst-c-feature-matrix:
     name: tst-c feature matrix (linux-x86_64)
+    needs: dispatch-sha
+    if: ${{ !cancelled() && needs.dispatch-sha.result != 'failure' && (true) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     # Builds tst-c in all four feature-flag combinations and runs the
@@ -1830,6 +1853,8 @@ jobs:
 
   c-abi:
     name: C ABI vs previous tag (linux-x86_64)
+    needs: dispatch-sha
+    if: ${{ !cancelled() && needs.dispatch-sha.result != 'failure' && (true) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     permissions:
@@ -1913,6 +1938,8 @@ jobs:
 
   bench-ir:
     name: instruction counts vs previous tag (linux-x86_64)
+    needs: dispatch-sha
+    if: ${{ !cancelled() && needs.dispatch-sha.result != 'failure' && (true) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     # tst-core's fixed workloads, built at the previous release tag and at
@@ -1951,6 +1978,8 @@ jobs:
 
   deny:
     name: cargo-deny (advisories + licenses)
+    needs: dispatch-sha
+    if: ${{ !cancelled() && needs.dispatch-sha.result != 'failure' && (true) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     # Dependency-advisory + license gate. Reads

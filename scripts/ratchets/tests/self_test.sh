@@ -1155,14 +1155,28 @@ rs_copy; plant "$tmp/rs/.github/workflows/ci.yml" 'manifest-path: crates/tst-cor
                                                                                  expect "roster-sync: the deny job names a manifest that does not exist" 1 rsync_
 expect_out "roster-sync: bogus manifest-path" "ci.yml deny job names a manifest-path that does not exist: crates/tst-gone/fuzz/Cargo.toml"
 rs_copy; plant "$tmp/rs/.github/workflows/ci.yml" 'pass: no-default' 'pass: no-defaults';  expect "roster-sync: a test pass renamed away loses the union" 1 rsync_
-rs_copy; plant "$tmp/rs/.github/workflows/ci.yml" "if: github.event_name != 'pull_request'" 'if: true'; expect "roster-sync: the main-only test job runs on PRs" 1 rsync_
+rs_copy; plant "$tmp/rs/.github/workflows/ci.yml" "(github.event_name != 'pull_request')" '(true)'; expect "roster-sync: the main-only test job runs on PRs" 1 rsync_
+expect_out "roster-sync: main-only job on PRs" "ci.yml test-main-extra no longer runs only off pull requests"
 rs_copy; plant "$tmp/rs/.github/workflows/ci.yml" 'hash:\${{ matrix.shard }}/3' 'hash:\${{ matrix.shard }}/4'; expect "roster-sync: a partition denominator off the shard count" 1 rsync_
-# The job key line is the one line that occurs once and only in test-platforms;
-# plant's sed cannot insert a line portably, so awk adds the job-level if:.
-rs_copy; awk '{print} $0 == "  test-platforms:" {print "    if: github.event_name != '"'"'pull_request'"'"'"}' "$tmp/rs/.github/workflows/ci.yml" > "$tmp/rs/ci.new" && mv "$tmp/rs/ci.new" "$tmp/rs/.github/workflows/ci.yml"
+# Every job's if: carries the same guard, so awk edits test-platforms' own:
+# its condition becomes the main-only one.
+rs_copy; awk '/^  [A-Za-z0-9_-]+:$/ {f = ($0 == "  test-platforms:")} f && /^    if:/ {sub(/\(true\)/, "(github.event_name != '"'"'pull_request'"'"')")} {print}' "$tmp/rs/.github/workflows/ci.yml" > "$tmp/rs/ci.new" && mv "$tmp/rs/ci.new" "$tmp/rs/.github/workflows/ci.yml"
                                                                                  expect "roster-sync: a PR test job made main-only" 1 rsync_
+expect_out "roster-sync: PR test job made main-only" "ci.yml test-platforms has a job-level if: other than the dispatch-sha guard"
 rs_copy; plant "$tmp/rs/.github/workflows/ci.yml" 'flags: --no-default-features' 'flags: --all-features'; expect "roster-sync: an include entry whose flags do not match its pass" 1 rsync_
-rs_copy; plant "$tmp/rs/.github/workflows/ci.yml" "if: github.event_name != 'pull_request'" "# if: github.event_name != 'pull_request'"; expect "roster-sync: the main-only if: commented out" 1 rsync_
+rs_copy; plant "$tmp/rs/.github/workflows/ci.yml" "^\(    \)\(if: .*(github.event_name != .pull_request.) }}\)$" '\1# \2'; expect "roster-sync: the main-only if: commented out" 1 rsync_
+expect_out "roster-sync: main-only if: commented out" "ci.yml test-main-extra no longer runs only off pull requests"
+# The dispatch-sha guard: a job without the need, a job whose if: drops the
+# guard, and a job added at the end without either.
+rs_copy; awk '/^  [A-Za-z0-9_-]+:$/ {f = ($0 == "  deny:")} f && $0 == "    needs: dispatch-sha" {next} {print}' "$tmp/rs/.github/workflows/ci.yml" > "$tmp/rs/ci.new" && mv "$tmp/rs/ci.new" "$tmp/rs/.github/workflows/ci.yml"
+                                                                                 expect "roster-sync: a job without needs: dispatch-sha" 1 rsync_
+expect_out "roster-sync: job without the need" "ci.yml deny does not need dispatch-sha"
+rs_copy; awk '/^  [A-Za-z0-9_-]+:$/ {f = ($0 == "  deny:")} f && /^    if:/ {$0 = "    if: true"} {print}' "$tmp/rs/.github/workflows/ci.yml" > "$tmp/rs/ci.new" && mv "$tmp/rs/ci.new" "$tmp/rs/.github/workflows/ci.yml"
+                                                                                 expect "roster-sync: a job whose if: drops the guard" 1 rsync_
+expect_out "roster-sync: job if without the guard" "ci.yml deny: its job-level if: is not one line opening with the dispatch-sha guard"
+rs_copy; printf '\n  late-job:\n    runs-on: ubuntu-24.04\n    steps:\n      - run: "true"\n' >> "$tmp/rs/.github/workflows/ci.yml"
+                                                                                 expect "roster-sync: a job added without the guard" 1 rsync_
+expect_out "roster-sync: new job without the guard" "ci.yml late-job does not need dispatch-sha"
 rs_copy; rm "$tmp/rs/embedded/baremetal-qemu/Cargo.toml"
                                                                                  expect "roster-sync: a deny manifest gone from the checked tree" 1 rsync_
 expect_out "roster-sync: deny manifest gone" "ci.yml deny job names a manifest-path that does not exist: embedded/baremetal-qemu/Cargo.toml"
