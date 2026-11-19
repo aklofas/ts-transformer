@@ -391,11 +391,12 @@ step 3).
      -target=aws_instance.stress_vm -target=aws_instance.stress_vm_arm \
      -target=aws_security_group.stress_access
    ```
-9. **The date commit.** First bring the
-   [release findings ledger](/docs/project/release-findings.md) up to date:
-   one row per defect found during this release-candidate cycle, with the
+9. **The date commit.** One commit: bring the
+   [release findings ledger](/docs/project/release-findings.md) up to date
+   (one row per defect found during this release-candidate cycle, with the
    class of test that now covers it, and `open` in `Fixed in` for one that
-   ships with a workaround. Then, in one commit:
+   ships with a workaround), then set the date around two runs of the
+   generator:
    ```bash
    bash scripts/gen/known-issues.sh --write   # the marker is still there: the list goes into [X.Y.Z]
    # replace the date placeholder with the release date and delete the <!-- TODO(release) line
