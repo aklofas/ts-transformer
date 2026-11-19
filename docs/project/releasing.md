@@ -464,6 +464,18 @@ step 3).
     count). A real leg failure is a finding to fix, not a rerun; rerun
     only a failure that belongs to a ledgered flake class.
 
+    The `ci` leg is the newest `push` or `workflow_dispatch` run of `ci.yml`
+    whose head commit is the qualified one, ordered by creation time and
+    then run id, whatever its conclusion (`scripts/ci/ci-run-select.jq`).
+    A `ci` dispatch whose `sha` input is not the full tip of the dispatched
+    ref fails at its first job (`dispatch-sha`), skips the rest, and is
+    still recorded under the ref's tip. When that tip is the commit you
+    qualify, the red run is the newest one and the qualification reads `ci`
+    as failed. Dispatch `ci` again on that ref with the tip's full sha
+    (`git rev-parse <ref>`) and let it finish before qualifying; a rerun of
+    the older push run keeps its creation time, so the failed dispatch would
+    still be the newest.
+
     Two dispatches of one workflow on the same ref run side by side; neither
     cancels the other. In a dispatched run, a sanitizer, fuzz or interop job shown as
     `cancelled` that nobody cancelled was cut by its own job cap: read its failing step, and if that is an
