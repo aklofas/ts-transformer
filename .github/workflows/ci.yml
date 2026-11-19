@@ -2029,8 +2029,8 @@ jobs:
     # Policy lives in deny.toml; `bans`/`sources` are intentionally off.
     # During a release freeze the advisories come from the advisory-db commit
     # in tests/coverage/advisory-db-pin.toml, so an advisory published after
-    # the freeze does not turn ci red on the frozen commit; deps-advisory.yml
-    # reports it weekly.
+    # the freeze does not turn ci red on the frozen commit, and a crate yanked
+    # after it is a warning; deps-advisory.yml reports both weekly.
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

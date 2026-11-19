@@ -16,7 +16,12 @@
 # timeout, when present) and tried three times, 20 s and 60 s apart: at most
 # 3 x 130 + 80 = 470 s per step. The offline checks then run behind a proxy on a
 # closed port: a check that tried to fetch anything would fail instead of
-# reading the live database.
+# reading the live database. A yanked crate is a warning there, not an error:
+# cargo-deny reads yanks from the crates index that `cargo fetch` has just
+# refreshed, so a yank published during the freeze would otherwise turn the
+# frozen commit red; the live check (and the weekly report) still fails on it.
+# The checks read a copy of deny.toml in a temp dir with that one key changed
+# (its only path, db-path, is under $CARGO_HOME, so the copy finds the clone).
 # There is no fixture-database test: cargo-deny 0.20.2 refuses a database URL
 # without a domain name, file:// included.
 set -euo pipefail
@@ -83,6 +88,7 @@ fetch_db() {
 }
 
 deny=()
+config="$ROOT/deny.toml"
 if [ -n "$rev" ]; then
   # cargo-deny names its clone after a hash of the URL, so it makes the clone
   # itself and the clone is then moved to the pin (as its own fetch does).
@@ -99,6 +105,11 @@ if [ -n "$rev" ]; then
   dead=http://127.0.0.1:9
   deny=(env "https_proxy=$dead" "HTTPS_PROXY=$dead" "http_proxy=$dead" "HTTP_PROXY=$dead"
            "ALL_PROXY=$dead" "all_proxy=$dead" no_proxy= NO_PROXY= cargo deny --offline)
+  tmp="$(mktemp -d)"
+  trap 'rm -rf "$tmp"' EXIT
+  config="$tmp/deny.toml"
+  sed -e 's/^yanked = "deny"$/yanked = "warn"/' "$ROOT/deny.toml" > "$config"
+  echo "cargo-deny-all: a yanked crate is a warning against the pinned database"
 else
   deny=(cargo deny)
   echo "cargo-deny-all: the advisory-db pin is empty; checking against the live database"
@@ -112,7 +123,7 @@ for m in "${WORKSPACES[@]}"; do
   if [ -n "$rev" ] && ! retry cargo fetch --locked --manifest-path "$ROOT/$m"; then
     failed+=("$m"); continue
   fi
-  "${deny[@]}" --manifest-path "$ROOT/$m" --config "$ROOT/deny.toml" --locked \
+  "${deny[@]}" --manifest-path "$ROOT/$m" --config "$config" --locked \
     check advisories licenses || failed+=("$m")
 done
 
