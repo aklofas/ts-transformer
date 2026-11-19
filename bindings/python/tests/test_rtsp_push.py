@@ -771,6 +771,28 @@ def test_a_teardown_behind_a_query_does_not_cancel_for_a_send_waiting_for_the_se
         push.close()
 
 
+def test_push_description_constructors_take_bytes_like() -> None:
+    au = _access_unit(0)
+    for wrap in (memoryview, bytearray):
+        assert isinstance(PushDescription.h264_from_key_frame(wrap(au)), PushDescription)
+        assert isinstance(
+            PushDescription.h265(wrap(b"\x40\x01\x0c"), wrap(b"\x42\x01\x01"), wrap(b"\x44\x01\xc0")),
+            PushDescription,
+        )
+    h265_au = b"".join(
+        START + n for n in (b"\x40\x01\x0c", b"\x42\x01\x01", b"\x44\x01\xc0", b"\x26\x01\x00")
+    )
+    assert isinstance(PushDescription.h265_from_key_frame(memoryview(h265_au)), PushDescription)
+    # The parameter sets are read from the buffers, not only accepted: the
+    # library's server takes the SPS and PPS.
+    with _start_server() as server:
+        mount = server.add_publish_mount("/cam")
+        desc = PushDescription.h264([memoryview(SPS), bytearray(PPS)])
+        with RtspClient.push(RtspClientConfig(_url(server, "/cam")), desc):
+            info = mount.publisher()
+            assert info is not None and info.shape is PublishShape.ELEMENTARY
+
+
 def test_interpreter_exit_cancels_an_open_session() -> None:
     """The exit hook (`_fire_cancel_sources_at_exit`, run by `atexit`)
     fires the cancel of a session left open, so a send parked in it ends

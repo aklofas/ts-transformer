@@ -82,13 +82,17 @@ impl PyPushDescription {
 
     /// An H.264 track described by `parameter_sets`: at least one SPS and
     /// one PPS, each one NAL unit without a start code (a NAL unit of
-    /// another type is ignored). A set lacking one is refused by
-    /// `RtspClient.push` with `RtspError(PROTOCOL)`. `klv` announces a KLV
-    /// track beside the video.
+    /// another type is ignored), each any bytes-like object. A set lacking
+    /// one is refused by `RtspClient.push` with `RtspError(PROTOCOL)`.
+    /// `klv` announces a KLV track beside the video.
     #[staticmethod]
     #[pyo3(signature = (parameter_sets, *, klv = false))]
-    fn h264(parameter_sets: Vec<Vec<u8>>, klv: bool) -> Self {
-        Self::elementary(VideoTrack::H264 { parameter_sets }, klv)
+    fn h264(py: Python<'_>, parameter_sets: Vec<Bound<'_, PyAny>>, klv: bool) -> PyResult<Self> {
+        let parameter_sets = parameter_sets
+            .iter()
+            .map(|set| owned_bytes(py, set))
+            .collect::<PyResult<_>>()?;
+        Ok(Self::elementary(VideoTrack::H264 { parameter_sets }, klv))
     }
 
     /// An H.264 track described by every SPS and PPS of `annexb`, one
@@ -96,19 +100,31 @@ impl PyPushDescription {
     /// Raises `ValueError` when it carries no SPS or no PPS.
     #[staticmethod]
     #[pyo3(signature = (annexb, *, klv = false))]
-    fn h264_from_key_frame(annexb: &[u8], klv: bool) -> PyResult<Self> {
-        let video = VideoTrack::h264_from_key_frame(annexb).map_err(|e| {
+    fn h264_from_key_frame(py: Python<'_>, annexb: &Bound<'_, PyAny>, klv: bool) -> PyResult<Self> {
+        let coerced = coerce_bytes_like(py, annexb)?;
+        let video = VideoTrack::h264_from_key_frame(coerced.as_bytes()).map_err(|e| {
             PyValueError::new_err(format!("PushDescription.h264_from_key_frame: {e}"))
         })?;
         Ok(Self::elementary(video, klv))
     }
 
     /// An H.265 track described by its VPS, SPS and PPS, each one NAL unit
-    /// without a start code.
+    /// without a start code, each any bytes-like object.
     #[staticmethod]
     #[pyo3(signature = (vps, sps, pps, *, klv = false))]
-    fn h265(vps: Vec<u8>, sps: Vec<u8>, pps: Vec<u8>, klv: bool) -> Self {
-        Self::elementary(VideoTrack::H265 { vps, sps, pps }, klv)
+    fn h265(
+        py: Python<'_>,
+        vps: &Bound<'_, PyAny>,
+        sps: &Bound<'_, PyAny>,
+        pps: &Bound<'_, PyAny>,
+        klv: bool,
+    ) -> PyResult<Self> {
+        let track = VideoTrack::H265 {
+            vps: owned_bytes(py, vps)?,
+            sps: owned_bytes(py, sps)?,
+            pps: owned_bytes(py, pps)?,
+        };
+        Ok(Self::elementary(track, klv))
     }
 
     /// An H.265 track described by the first VPS, SPS and PPS of `annexb`,
@@ -116,12 +132,18 @@ impl PyPushDescription {
     /// one of the three.
     #[staticmethod]
     #[pyo3(signature = (annexb, *, klv = false))]
-    fn h265_from_key_frame(annexb: &[u8], klv: bool) -> PyResult<Self> {
-        let video = VideoTrack::h265_from_key_frame(annexb).map_err(|e| {
+    fn h265_from_key_frame(py: Python<'_>, annexb: &Bound<'_, PyAny>, klv: bool) -> PyResult<Self> {
+        let coerced = coerce_bytes_like(py, annexb)?;
+        let video = VideoTrack::h265_from_key_frame(coerced.as_bytes()).map_err(|e| {
             PyValueError::new_err(format!("PushDescription.h265_from_key_frame: {e}"))
         })?;
         Ok(Self::elementary(video, klv))
     }
+}
+
+/// A copy of a bytes-like argument, as the send methods take one.
+fn owned_bytes(py: Python<'_>, arg: &Bound<'_, PyAny>) -> PyResult<Vec<u8>> {
+    Ok(coerce_bytes_like(py, arg)?.as_bytes().to_vec())
 }
 
 // ---------------------------------------------------------------------------

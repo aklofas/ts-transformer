@@ -21,6 +21,7 @@ from typing import (
     List,
     Literal,
     Optional,
+    Sequence,
     Tuple,
     Type,
     Union,
@@ -487,23 +488,27 @@ class PushDescription:
         convert the session with `into_mux_sender` / `into_sender`."""
         ...
     @staticmethod
-    def h264(parameter_sets: list[bytes], *, klv: bool = False) -> PushDescription:
+    def h264(parameter_sets: Sequence[_BytesLike], *, klv: bool = False) -> PushDescription:
         """An H.264 track: at least one SPS and one PPS (a NAL unit of
-        another type is ignored). A list lacking one is refused by
-        `RtspClient.push` with `RtspError(PROTOCOL)`."""
+        another type is ignored), each any bytes-like object. A list
+        lacking one is refused by `RtspClient.push` with
+        `RtspError(PROTOCOL)`."""
         ...
     @staticmethod
-    def h264_from_key_frame(annexb: bytes, *, klv: bool = False) -> PushDescription:
+    def h264_from_key_frame(annexb: _BytesLike, *, klv: bool = False) -> PushDescription:
         """An H.264 track described by every SPS and PPS of one access unit
         in Annex B form (a key frame as an encoder emits it). Raises
         `ValueError` when it carries no SPS or no PPS."""
         ...
     @staticmethod
-    def h265(vps: bytes, sps: bytes, pps: bytes, *, klv: bool = False) -> PushDescription:
-        """An H.265 track described by its VPS, SPS and PPS."""
+    def h265(
+        vps: _BytesLike, sps: _BytesLike, pps: _BytesLike, *, klv: bool = False
+    ) -> PushDescription:
+        """An H.265 track described by its VPS, SPS and PPS, each any
+        bytes-like object."""
         ...
     @staticmethod
-    def h265_from_key_frame(annexb: bytes, *, klv: bool = False) -> PushDescription:
+    def h265_from_key_frame(annexb: _BytesLike, *, klv: bool = False) -> PushDescription:
         """An H.265 track described by the first VPS, SPS and PPS of one
         access unit in Annex B form. Raises `ValueError` when it lacks one
         of the three."""
