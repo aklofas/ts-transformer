@@ -147,6 +147,15 @@ pub enum RtspError {
     #[error("invalid RTSP header: {detail}")]
     InvalidHeader { detail: &'static str },
 
+    /// The client refused a request before writing it: the request is out
+    /// of order for the session (a RECORD before every track is set up, a
+    /// second ANNOUNCE, a PLAY on a client that announced), or the client
+    /// cannot send it at all (ANNOUNCE on an RTSP/2.0 client). Nothing
+    /// reached the wire and the session is unchanged. `detail` names the
+    /// refusal.
+    #[error("not allowed: {detail}")]
+    NotAllowed { detail: &'static str },
+
     /// URL parsing failed before any RTSP exchange. Wraps the
     /// underlying [`crate::RtpUrlError`].
     #[error("RTSP URL parse error: {0}")]

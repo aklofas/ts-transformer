@@ -141,6 +141,7 @@ impl RtspClient {
                 uri: uri.to_string(),
                 headers: vec![("transport", transport_hdr)],
                 body: None,
+                announce_tracks: None,
                 setup: Some(SetupRoute {
                     id: route,
                     kind: RouteKind::Pull,

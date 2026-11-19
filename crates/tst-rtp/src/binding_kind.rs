@@ -50,6 +50,7 @@ impl From<RtspError> for BindingError {
             RtspError::MultipleH264Media { .. } => K::RtspNotFound,
             RtspError::UnsupportedPacketizationMode(_) => K::RtspUnsupportedTransport,
             RtspError::InvalidHeader { .. } => K::RtspProtocol,
+            RtspError::NotAllowed { .. } => K::RtspProtocol,
             RtspError::Url(_) => K::RtspProtocol,
         };
         BindingError::new(kind, e.to_string())
@@ -222,6 +223,17 @@ mod tests {
         );
         assert_eq!(
             BindingError::from(RtspError::InvalidHeader { detail: "CR" }).kind,
+            K::RtspProtocol
+        );
+    }
+
+    #[test]
+    fn not_allowed_maps_to_rtsp_protocol() {
+        assert_eq!(
+            BindingError::from(RtspError::NotAllowed {
+                detail: "RECORD while recording"
+            })
+            .kind,
             K::RtspProtocol
         );
     }

@@ -21,17 +21,20 @@ fn spec(method: RtspMethod, uri: &str) -> RequestSpec {
         uri: uri.to_string(),
         headers: Vec::new(),
         body: None,
+        announce_tracks: None,
         setup: None,
     }
 }
 
-/// `method` at `URI` carrying `body` as `application/sdp`.
+/// `method` at `URI` carrying `body` as `application/sdp`; an ANNOUNCE
+/// announces one track.
 fn with_sdp(method: RtspMethod, body: &[u8]) -> RequestSpec {
     RequestSpec {
         body: Some(RequestBody {
             content_type: "application/sdp",
             bytes: Bytes::copy_from_slice(body),
         }),
+        announce_tracks: (method == RtspMethod::Announce).then_some(1),
         ..spec(method, URI)
     }
 }
@@ -1900,7 +1903,7 @@ fn a_setup_reply_with_equal_channels_is_bad_response() {
     let mut e = ClientEngine::new(cfg(None));
     let first = setup_route(&mut e, pull(0), "RTP/AVP/TCP;unicast;interleaved=2-3", t0);
     assert_eq!(first.unwrap().setup, accepted(0, 2, 3));
-    let r = setup_route(&mut e, push(1), "RTP/AVP/TCP;unicast;interleaved=5-5", t0);
+    let r = setup_route(&mut e, pull(1), "RTP/AVP/TCP;unicast;interleaved=5-5", t0);
     assert!(matches!(r, Err(RtspError::BadResponse { .. })), "{r:?}");
     assert_only_route_0_on_2_3(&mut e, &[5]);
     // A route's own pair is checked too.
@@ -1919,7 +1922,7 @@ fn a_setup_reply_with_a_colliding_pair_is_bad_response() {
         let first = setup_route(&mut e, pull(0), "RTP/AVP/TCP;unicast;interleaved=2-3", t0);
         assert_eq!(first.unwrap().setup, accepted(0, 2, 3));
         let transport = format!("RTP/AVP/TCP;unicast;interleaved={pair}");
-        let r = setup_route(&mut e, push(1), &transport, t0);
+        let r = setup_route(&mut e, pull(1), &transport, t0);
         assert!(
             matches!(r, Err(RtspError::BadResponse { .. })),
             "{pair}: {r:?}"
@@ -2001,8 +2004,9 @@ fn a_setup_without_a_route_installs_nothing() {
 #[test]
 fn a_frame_on_a_push_rtp_channel_is_counted_and_dropped() {
     let t0 = Instant::now();
-    let mut e = ClientEngine::new(cfg(None));
-    let o = setup_route(&mut e, push(1), "RTP/AVP/TCP;unicast;interleaved=2-3", t0).unwrap();
+    let mut e = announced(2);
+    set_up(&mut e, 0).unwrap();
+    let o = set_up(&mut e, 1).unwrap();
     assert_eq!(o.setup, accepted(1, 2, 3));
     let ev = rtp_on(&mut e, 2);
     assert!(matches!(ev.as_slice(), [Event::InboundDropped]), "{ev:?}");
@@ -2028,10 +2032,10 @@ fn a_fifth_route_is_refused() {
     let mut e = ClientEngine::new(cfg(None));
     for id in 0..4u8 {
         let transport = format!("RTP/AVP/TCP;unicast;interleaved={}-{}", 2 * id, 2 * id + 1);
-        let o = setup_route(&mut e, push(id), &transport, t0).unwrap();
+        let o = setup_route(&mut e, pull(id), &transport, t0).unwrap();
         assert_eq!(o.setup, accepted(id, 2 * id, 2 * id + 1));
     }
-    let r = setup_route(&mut e, push(4), "RTP/AVP/TCP;unicast;interleaved=8-9", t0);
+    let r = setup_route(&mut e, pull(4), "RTP/AVP/TCP;unicast;interleaved=8-9", t0);
     assert!(matches!(r, Err(RtspError::BadResponse { .. })), "{r:?}");
     assert!(e.install_route(push(4), 8, 9).is_err());
     assert!(e.install_route(pull(u8::MAX), 8, 9).is_err());
@@ -2106,7 +2110,7 @@ fn a_setup_retried_after_a_401_installs_its_route() {
 #[test]
 fn a_setup_reply_of_any_2xx_is_accepted() {
     let t0 = Instant::now();
-    let mut e = ClientEngine::new(cfg(None));
+    let mut e = announced(1);
     let (a, c) = submit_setup(&mut e, push(0), t0);
     e.handle_input(
         format!(
@@ -2896,7 +2900,11 @@ fn a_100_then_a_200_completes_the_request_once() {
         RtspMethod::Teardown,
     ] {
         let t0 = Instant::now();
-        let mut e = ClientEngine::new(cfg(None));
+        let mut e = if method == RtspMethod::Record {
+            ready(1)
+        } else {
+            ClientEngine::new(cfg(None))
+        };
         let s = if method == RtspMethod::Announce {
             with_sdp(method, b"v=0\r\n")
         } else {
@@ -2954,7 +2962,7 @@ fn a_100_to_a_ping_keeps_the_ping_awaited() {
 #[test]
 fn a_100_alone_times_out_at_the_deadline() {
     let t0 = Instant::now();
-    let mut e = ClientEngine::new(cfg(None));
+    let mut e = ready(1);
     let a = e
         .submit(spec(RtspMethod::Record, URI), Some(ms(t0, 500)), t0)
         .unwrap();
@@ -2976,9 +2984,7 @@ fn a_flood_of_100s_does_not_extend_the_deadline() {
     let t0 = Instant::now();
     let mut e = ClientEngine::new(cfg(None));
     let deadline = ms(t0, 2000);
-    let a = e
-        .submit(spec(RtspMethod::Announce, URI), Some(deadline), t0)
-        .unwrap();
+    let a = e.submit(announce(1), Some(deadline), t0).unwrap();
     let c = cseq(&one(&mut e));
     for i in 0..1000 {
         e.handle_reply(
@@ -3186,4 +3192,799 @@ fn a_reply_body_over_the_cap_to_announce_ends_the_stream_as_protocol_error() {
     );
     assert_eq!(detail, Some("Content-Length exceeds maximum"));
     assert_closed_by_protocol_error(&mut e, t0);
+}
+
+// --- the publish session ---
+
+fn announce(tracks: u8) -> RequestSpec {
+    RequestSpec {
+        announce_tracks: Some(tracks),
+        ..with_sdp(RtspMethod::Announce, b"v=0\r\n")
+    }
+}
+
+fn record_setup(id: u8) -> RequestSpec {
+    RequestSpec {
+        setup: Some(push(id)),
+        ..spec(RtspMethod::Setup, URI)
+    }
+}
+
+/// The headers of an accepted SETUP for track `id`: its pair `2id-2id+1`
+/// and session `P1`.
+fn record_setup_headers(id: u8) -> String {
+    format!(
+        "Transport: RTP/AVP/TCP;unicast;interleaved={}-{};mode=record\r\nSession: P1\r\n",
+        2 * id,
+        2 * id + 1
+    )
+}
+
+/// Submits `s` and answers it `status` with `headers` under its CSeq;
+/// returns the reply's outcome.
+fn exchange(
+    e: &mut ClientEngine,
+    s: RequestSpec,
+    status: &str,
+    headers: &str,
+) -> Result<ReplyOutcome, RtspError> {
+    let t0 = Instant::now();
+    let a = e.submit(s, None, t0).unwrap();
+    let c = cseq(&one(e));
+    e.handle_input(
+        format!("RTSP/1.0 {status}\r\nCSeq: {c}\r\n{headers}\r\n").as_bytes(),
+        t0,
+    );
+    outcome(e, a)
+}
+
+fn announced(tracks: u8) -> ClientEngine {
+    let mut e = ClientEngine::new(cfg(None));
+    exchange(&mut e, announce(tracks), "200 OK", "").unwrap();
+    assert_eq!(e.push_phase(), Some(PushPhase::Announced));
+    e
+}
+
+fn set_up(e: &mut ClientEngine, id: u8) -> Result<ReplyOutcome, RtspError> {
+    exchange(e, record_setup(id), "200 OK", &record_setup_headers(id))
+}
+
+fn ready(tracks: u8) -> ClientEngine {
+    let mut e = announced(tracks);
+    for id in 0..tracks {
+        set_up(&mut e, id).unwrap();
+    }
+    assert_eq!(e.push_phase(), Some(PushPhase::Ready));
+    e
+}
+
+fn recording() -> ClientEngine {
+    let mut e = ready(1);
+    exchange(
+        &mut e,
+        spec(RtspMethod::Record, URI),
+        "200 OK",
+        "Session: P1\r\n",
+    )
+    .unwrap();
+    assert_eq!(e.push_phase(), Some(PushPhase::Recording));
+    e
+}
+
+fn paused() -> ClientEngine {
+    let mut e = recording();
+    exchange(
+        &mut e,
+        spec(RtspMethod::Pause, URI),
+        "200 OK",
+        "Session: P1\r\n",
+    )
+    .unwrap();
+    assert_eq!(e.push_phase(), Some(PushPhase::Paused));
+    e
+}
+
+/// `s` is refused before it is written: `NotAllowed`, nothing queued, the
+/// phase unchanged, and the next request carries the next CSeq.
+fn assert_refused(e: &mut ClientEngine, s: RequestSpec) {
+    let next = e.cseq.wrapping_add(1);
+    let phase = e.push_phase();
+    let what = format!("{:?}", s.method);
+    let r = e.submit(s, None, Instant::now());
+    assert!(
+        matches!(r, Err(RtspError::NotAllowed { .. })),
+        "{what} in {phase:?}: {r:?}"
+    );
+    assert!(e.poll_transmit().is_none(), "{what} in {phase:?}");
+    assert!(e.poll_event().is_none(), "{what} in {phase:?}");
+    assert_eq!(e.push_phase(), phase, "{what}");
+    e.submit(spec(RtspMethod::Options, URI), None, Instant::now())
+        .unwrap();
+    assert_eq!(cseq(&one(e)), next, "{what} in {phase:?}");
+}
+
+#[test]
+fn announce_2xx_moves_to_announced() {
+    for status in ["200 OK", "201 Created", "204 No Content"] {
+        let t0 = Instant::now();
+        let mut e = ClientEngine::new(cfg(None));
+        let a = e.submit(announce(2), None, t0).unwrap();
+        let c = cseq(&one(&mut e));
+        assert_eq!(e.push_phase(), None, "{status}: moved before the reply");
+        e.handle_reply(
+            resp(format!("RTSP/1.0 {status}\r\nCSeq: {c}\r\n\r\n").as_bytes()),
+            t0,
+        );
+        assert!(outcome(&mut e, a).is_ok());
+        assert_eq!(e.push_phase(), Some(PushPhase::Announced), "{status}");
+        assert!(!e.media_allowed());
+    }
+}
+
+#[test]
+fn each_record_setup_2xx_advances_and_the_last_reaches_ready() {
+    let mut e = announced(3);
+    let o = set_up(&mut e, 0).unwrap();
+    assert_eq!(o.setup, accepted(0, 0, 1));
+    assert_eq!(e.push_phase(), Some(PushPhase::SetUp { done: 1, total: 3 }));
+    let o = exchange(
+        &mut e,
+        record_setup(1),
+        "201 Created",
+        &record_setup_headers(1),
+    )
+    .unwrap();
+    assert_eq!(o.setup, accepted(1, 2, 3));
+    assert_eq!(e.push_phase(), Some(PushPhase::SetUp { done: 2, total: 3 }));
+    let o = set_up(&mut e, 2).unwrap();
+    assert_eq!(o.setup, accepted(2, 4, 5));
+    assert_eq!(e.push_phase(), Some(PushPhase::Ready));
+    assert!(!e.media_allowed());
+    // One track: its SETUP reaches Ready at once.
+    let mut e = announced(1);
+    set_up(&mut e, 0).unwrap();
+    assert_eq!(e.push_phase(), Some(PushPhase::Ready));
+}
+
+#[test]
+fn record_2xx_moves_to_recording() {
+    for status in ["200 OK", "201 Created"] {
+        let mut e = ready(2);
+        let o = exchange(&mut e, spec(RtspMethod::Record, URI), status, "").unwrap();
+        assert_eq!(o.setup, None);
+        assert_eq!(e.push_phase(), Some(PushPhase::Recording), "{status}");
+        assert!(e.media_allowed());
+    }
+}
+
+#[test]
+fn pause_2xx_moves_to_paused() {
+    let mut e = recording();
+    exchange(&mut e, spec(RtspMethod::Pause, URI), "200 OK", "").unwrap();
+    assert_eq!(e.push_phase(), Some(PushPhase::Paused));
+}
+
+#[test]
+fn record_in_paused_moves_back_to_recording() {
+    let mut e = paused();
+    exchange(&mut e, spec(RtspMethod::Record, URI), "200 OK", "").unwrap();
+    assert_eq!(e.push_phase(), Some(PushPhase::Recording));
+    assert!(e.media_allowed());
+}
+
+/// A `1xx` and a refusal move nothing; the RECORD can be sent again.
+#[test]
+fn a_refused_record_leaves_ready_and_can_be_retried() {
+    let t0 = Instant::now();
+    let mut e = ready(1);
+    let a = e.submit(spec(RtspMethod::Record, URI), None, t0).unwrap();
+    let c = cseq(&one(&mut e));
+    e.handle_reply(
+        resp(format!("RTSP/1.0 100 Continue\r\nCSeq: {c}\r\n\r\n").as_bytes()),
+        t0,
+    );
+    assert!(events(&mut e).is_empty());
+    assert_eq!(
+        e.push_phase(),
+        Some(PushPhase::Ready),
+        "a 1xx moves nothing"
+    );
+    e.handle_reply(
+        resp(
+            format!("RTSP/1.0 455 Method Not Valid in This State\r\nCSeq: {c}\r\n\r\n").as_bytes(),
+        ),
+        t0,
+    );
+    assert_eq!(outcome(&mut e, a).unwrap().response.status, 455);
+    assert_eq!(e.push_phase(), Some(PushPhase::Ready));
+    assert!(!e.media_allowed());
+    exchange(&mut e, spec(RtspMethod::Record, URI), "200 OK", "").unwrap();
+    assert_eq!(e.push_phase(), Some(PushPhase::Recording));
+}
+
+#[test]
+fn a_refused_setup_leaves_the_track_count() {
+    let mut e = announced(2);
+    set_up(&mut e, 0).unwrap();
+    let o = exchange(
+        &mut e,
+        record_setup(1),
+        "461 Unsupported Transport",
+        &record_setup_headers(1),
+    )
+    .unwrap();
+    assert_eq!((o.response.status, o.setup), (461, None));
+    assert_eq!(e.push_phase(), Some(PushPhase::SetUp { done: 1, total: 2 }));
+    assert!(rtcp_on(&mut e, 3).is_empty(), "a refusal installs nothing");
+    let o = set_up(&mut e, 1).unwrap();
+    assert_eq!(o.setup, accepted(1, 2, 3));
+    assert_eq!(e.push_phase(), Some(PushPhase::Ready));
+}
+
+#[test]
+fn announce_twice() {
+    let mut e = announced(1);
+    assert_refused(&mut e, announce(1));
+    let mut e = recording();
+    assert_refused(&mut e, announce(1));
+}
+
+#[test]
+fn announce_on_an_rtsp_2_0_client() {
+    let mut c = cfg(None);
+    c.version = RtspVersion::V2_0;
+    let mut e = ClientEngine::new(c);
+    assert_refused(&mut e, announce(1));
+    assert_eq!(e.push_phase(), None);
+}
+
+#[test]
+fn an_announce_without_a_track_count_of_1_to_4_is_refused() {
+    let mut e = ClientEngine::new(cfg(None));
+    for tracks in [None, Some(0), Some(5), Some(u8::MAX)] {
+        assert_refused(
+            &mut e,
+            RequestSpec {
+                announce_tracks: tracks,
+                ..announce(1)
+            },
+        );
+    }
+    exchange(&mut e, announce(4), "200 OK", "").unwrap();
+    assert_eq!(e.push_phase(), Some(PushPhase::Announced));
+}
+
+#[test]
+fn announce_after_a_pull_setup() {
+    let t0 = Instant::now();
+    let mut e = ClientEngine::new(cfg(None));
+    setup_route(&mut e, pull(0), "RTP/AVP/TCP;unicast;interleaved=0-1", t0).unwrap();
+    assert_refused(&mut e, announce(1));
+    // Still refused once the pull session is torn down.
+    e.submit(spec(RtspMethod::Teardown, URI), None, t0).unwrap();
+    let c = cseq(&one(&mut e));
+    e.handle_reply(
+        resp(format!("RTSP/1.0 200 OK\r\nCSeq: {c}\r\n\r\n").as_bytes()),
+        t0,
+    );
+    events(&mut e);
+    assert_refused(&mut e, announce(1));
+    // A SETUP that named no session left the client free to publish.
+    let mut e = ClientEngine::new(cfg(None));
+    exchange(
+        &mut e,
+        spec(RtspMethod::Setup, URI),
+        "461 Unsupported Transport",
+        "",
+    )
+    .unwrap();
+    exchange(&mut e, announce(1), "200 OK", "").unwrap();
+    assert_eq!(e.push_phase(), Some(PushPhase::Announced));
+}
+
+#[test]
+fn setup_record_before_announce() {
+    let mut e = ClientEngine::new(cfg(None));
+    assert_refused(&mut e, record_setup(0));
+    assert_refused(&mut e, spec(RtspMethod::Record, URI));
+    // Not while the ANNOUNCE waits for its reply either.
+    e.submit(announce(1), None, Instant::now()).unwrap();
+    one(&mut e);
+    let next = e.cseq.wrapping_add(1);
+    assert!(matches!(
+        e.submit(record_setup(0), None, Instant::now()),
+        Err(RtspError::NotAllowed { .. })
+    ));
+    assert!(e.poll_transmit().is_none());
+    assert_eq!(e.cseq.wrapping_add(1), next);
+}
+
+#[test]
+fn setup_record_out_of_track_order() {
+    let mut e = announced(2);
+    assert_refused(&mut e, record_setup(1));
+    set_up(&mut e, 0).unwrap();
+    assert_refused(&mut e, record_setup(0));
+    assert_refused(&mut e, record_setup(2));
+    set_up(&mut e, 1).unwrap();
+    // Every announced track is set up.
+    assert_refused(&mut e, record_setup(2));
+    assert_refused(&mut e, record_setup(1));
+    let mut e = recording();
+    assert_refused(&mut e, record_setup(1));
+}
+
+#[test]
+fn record_before_every_track_is_set_up() {
+    let mut e = announced(2);
+    assert_refused(&mut e, spec(RtspMethod::Record, URI));
+    set_up(&mut e, 0).unwrap();
+    assert_refused(&mut e, spec(RtspMethod::Record, URI));
+    assert_eq!(e.push_phase(), Some(PushPhase::SetUp { done: 1, total: 2 }));
+}
+
+#[test]
+fn record_while_recording() {
+    let mut e = recording();
+    assert_refused(&mut e, spec(RtspMethod::Record, URI));
+    assert!(e.media_allowed());
+}
+
+#[test]
+fn pause_before_recording() {
+    let mut e = ClientEngine::new(cfg(None));
+    exchange(&mut e, announce(2), "200 OK", "").unwrap();
+    assert_refused(&mut e, spec(RtspMethod::Pause, URI));
+    set_up(&mut e, 0).unwrap();
+    assert_refused(&mut e, spec(RtspMethod::Pause, URI));
+    set_up(&mut e, 1).unwrap();
+    assert_refused(&mut e, spec(RtspMethod::Pause, URI));
+    let mut e = paused();
+    assert_refused(&mut e, spec(RtspMethod::Pause, URI));
+}
+
+/// Every phase from the ANNOUNCE's reply to the end, each on its own
+/// engine.
+fn every_live_phase() -> Vec<ClientEngine> {
+    let mut partly = announced(2);
+    set_up(&mut partly, 0).unwrap();
+    vec![announced(1), partly, ready(1), recording(), paused()]
+}
+
+#[test]
+fn describe_after_announce() {
+    for mut e in every_live_phase() {
+        assert_refused(&mut e, spec(RtspMethod::Describe, URI));
+    }
+}
+
+#[test]
+fn play_after_announce() {
+    for mut e in every_live_phase() {
+        assert_refused(&mut e, spec(RtspMethod::Play, URI));
+    }
+}
+
+#[test]
+fn a_pull_setup_after_announce() {
+    for mut e in every_live_phase() {
+        assert_refused(
+            &mut e,
+            RequestSpec {
+                setup: Some(pull(0)),
+                ..spec(RtspMethod::Setup, URI)
+            },
+        );
+        assert_refused(&mut e, spec(RtspMethod::Setup, URI));
+    }
+}
+
+#[test]
+fn get_parameter_after_announce() {
+    for mut e in every_live_phase() {
+        assert_refused(&mut e, spec(RtspMethod::GetParameter, URI));
+    }
+}
+
+/// OPTIONS changes no phase; TEARDOWN ends the session from any phase.
+#[test]
+fn options_and_teardown_are_accepted_in_every_live_phase() {
+    for mut e in every_live_phase() {
+        let phase = e.push_phase();
+        let o = exchange(&mut e, spec(RtspMethod::Options, URI), "200 OK", "").unwrap();
+        assert_eq!(o.response.status, 200);
+        assert_eq!(e.push_phase(), phase);
+        e.submit(spec(RtspMethod::Teardown, URI), None, Instant::now())
+            .unwrap();
+        assert_eq!(cseq(&one(&mut e)), e.cseq, "{phase:?}");
+        assert_eq!(e.push_phase(), Some(PushPhase::Ended), "{phase:?}");
+    }
+}
+
+#[test]
+fn nothing_is_accepted_after_a_teardown_was_submitted() {
+    let mut e = recording();
+    let a = e
+        .submit(spec(RtspMethod::Teardown, URI), None, Instant::now())
+        .unwrap();
+    let c = cseq(&one(&mut e));
+    for s in [
+        spec(RtspMethod::Options, URI),
+        spec(RtspMethod::Record, URI),
+        spec(RtspMethod::Pause, URI),
+        spec(RtspMethod::Teardown, URI),
+        announce(1),
+        record_setup(1),
+    ] {
+        let what = format!("{:?}", s.method);
+        let r = e.submit(s, None, Instant::now());
+        assert!(
+            matches!(r, Err(RtspError::NotAllowed { .. })),
+            "{what}: {r:?}"
+        );
+        assert!(e.poll_transmit().is_none(), "{what}");
+    }
+    assert_eq!(e.cseq, c, "no number is taken");
+    // The TEARDOWN is still the transaction waiting.
+    e.handle_reply(
+        resp(format!("RTSP/1.0 200 OK\r\nCSeq: {c}\r\n\r\n").as_bytes()),
+        Instant::now(),
+    );
+    let ev = events(&mut e);
+    assert!(
+        matches!(
+            ev.as_slice(),
+            [Event::Ended(EndReason::CleanTeardown), Event::Reply { txn, result: Ok(_) }]
+                if *txn == a
+        ),
+        "{ev:?}"
+    );
+    assert_eq!(e.push_phase(), Some(PushPhase::Ended));
+}
+
+#[test]
+fn record_201_with_location_is_accepted_and_location_ignored() {
+    let mut e = ready(1);
+    let o = exchange(
+        &mut e,
+        spec(RtspMethod::Record, URI),
+        "201 Created",
+        "Location: rtsp://elsewhere.example/other\r\n",
+    )
+    .unwrap();
+    assert_eq!(o.response.status, 201);
+    assert_eq!(e.push_phase(), Some(PushPhase::Recording));
+    assert!(e.poll_transmit().is_none(), "nothing goes to the Location");
+    assert!(e.poll_event().is_none());
+}
+
+/// The engine hands the `3xx` to the caller as the reply (the facade
+/// reports it as `Protocol`) and writes nothing to the new location.
+#[test]
+fn a_3xx_to_announce_is_protocol_and_not_followed() {
+    for status in ["301 Moved Permanently", "302 Moved Temporarily"] {
+        let mut e = ClientEngine::new(cfg(None));
+        let o = exchange(
+            &mut e,
+            announce(1),
+            status,
+            "Location: rtsp://elsewhere.example/live\r\n",
+        )
+        .unwrap();
+        assert!((300..400).contains(&o.response.status), "{status}");
+        assert_eq!(e.push_phase(), None, "{status}");
+        assert!(e.poll_transmit().is_none(), "{status}: not followed");
+        assert!(e.poll_event().is_none());
+    }
+}
+
+#[test]
+fn a_second_setup_reply_naming_another_session_is_refused_and_the_first_id_kept() {
+    let t0 = Instant::now();
+    let mut e = announced(2);
+    e.enable_keepalive(Some(Duration::from_secs(1)), t0);
+    set_up(&mut e, 0).unwrap();
+    let r = exchange(
+        &mut e,
+        record_setup(1),
+        "200 OK",
+        "Transport: RTP/AVP/TCP;unicast;interleaved=2-3;mode=record\r\nSession: P2;timeout=4\r\n",
+    );
+    assert!(matches!(r, Err(RtspError::BadResponse { .. })), "{r:?}");
+    assert_eq!(e.push_phase(), Some(PushPhase::SetUp { done: 1, total: 2 }));
+    let before = e.counters().malformed_frames;
+    assert!(rtcp_on(&mut e, 3).is_empty(), "no route is installed");
+    assert_eq!(e.counters().malformed_frames, before + 1);
+    // Neither the id nor its timeout was learned.
+    assert_eq!(e.poll_timeout(), Some(ms(t0, 1000)));
+    e.handle_timeout(ms(t0, 1000), false);
+    assert_eq!(sent(&one(&mut e)).headers["session"], "P1");
+    // The same id, with or without a timeout, is the same session.
+    let o = exchange(
+        &mut e,
+        record_setup(1),
+        "200 OK",
+        "Transport: RTP/AVP/TCP;unicast;interleaved=2-3;mode=record\r\nSession: P1;timeout=60\r\n",
+    )
+    .unwrap();
+    assert_eq!(o.setup, accepted(1, 2, 3));
+    assert_eq!(e.push_phase(), Some(PushPhase::Ready));
+}
+
+/// The pull side still takes the id of the latest SETUP reply.
+#[test]
+fn a_second_pull_setup_reply_naming_another_session_replaces_it() {
+    let t0 = Instant::now();
+    let mut e = ClientEngine::new(cfg(None));
+    e.enable_keepalive(Some(Duration::from_secs(1)), t0);
+    run_setup(&mut e, "S1", t0);
+    run_setup(&mut e, "S2", t0);
+    e.handle_timeout(ms(t0, 1000), false);
+    assert_eq!(sent(&one(&mut e)).headers["session"], "S2");
+}
+
+#[test]
+fn media_is_allowed_only_in_recording_and_paused() {
+    let mut e = ClientEngine::new(cfg(None));
+    assert!(!e.media_allowed());
+    exchange(&mut e, announce(2), "200 OK", "").unwrap();
+    assert!(!e.media_allowed());
+    set_up(&mut e, 0).unwrap();
+    assert!(!e.media_allowed());
+    set_up(&mut e, 1).unwrap();
+    assert!(!e.media_allowed());
+    exchange(&mut e, spec(RtspMethod::Record, URI), "200 OK", "").unwrap();
+    assert!(e.media_allowed());
+    exchange(&mut e, spec(RtspMethod::Pause, URI), "200 OK", "").unwrap();
+    assert!(e.media_allowed());
+    exchange(&mut e, spec(RtspMethod::Record, URI), "200 OK", "").unwrap();
+    assert!(e.media_allowed());
+    // A pull client never sends media.
+    let t0 = Instant::now();
+    let mut e = ClientEngine::new(cfg(None));
+    setup_route(&mut e, pull(0), "RTP/AVP/TCP;unicast;interleaved=0-1", t0).unwrap();
+    exchange(&mut e, spec(RtspMethod::Play, URI), "200 OK", "").unwrap();
+    assert!(!e.media_allowed());
+}
+
+#[test]
+fn teardown_submitted_ends_media_at_once() {
+    for mut e in [recording(), paused()] {
+        e.submit(spec(RtspMethod::Teardown, URI), None, Instant::now())
+            .unwrap();
+        assert!(!e.media_allowed(), "before the TEARDOWN is even written");
+        assert_eq!(e.push_phase(), Some(PushPhase::Ended));
+        let c = cseq(&one(&mut e));
+        // Not even a refusal brings it back.
+        e.handle_reply(
+            resp(format!("RTSP/1.0 500 Internal Server Error\r\nCSeq: {c}\r\n\r\n").as_bytes()),
+            Instant::now(),
+        );
+        events(&mut e);
+        assert!(!e.media_allowed());
+        assert_eq!(e.push_phase(), Some(PushPhase::Ended));
+    }
+}
+
+#[test]
+fn a_record_reply_after_teardown_was_submitted_does_not_reopen_media() {
+    for mut e in [ready(1), paused()] {
+        let t0 = Instant::now();
+        e.submit(spec(RtspMethod::Record, URI), None, t0).unwrap();
+        let record = cseq(&one(&mut e));
+        let td = e.submit(spec(RtspMethod::Teardown, URI), None, t0).unwrap();
+        one(&mut e);
+        e.handle_reply(
+            resp(format!("RTSP/1.0 200 OK\r\nCSeq: {record}\r\n\r\n").as_bytes()),
+            t0,
+        );
+        assert!(events(&mut e).is_empty());
+        assert_eq!(e.counters().unmatched_replies, 1);
+        assert!(!e.media_allowed());
+        assert_eq!(e.push_phase(), Some(PushPhase::Ended));
+        // A RECORD reply without a CSeq is taken as the TEARDOWN's.
+        e.handle_reply(resp(b"RTSP/1.0 200 OK\r\nSession: P1\r\n\r\n"), t0);
+        let ev = events(&mut e);
+        assert!(
+            ev.iter()
+                .any(|ev| matches!(ev, Event::Reply { txn, .. } if *txn == td)),
+            "{ev:?}"
+        );
+        assert!(!e.media_allowed());
+        assert_eq!(e.push_phase(), Some(PushPhase::Ended));
+    }
+}
+
+/// A reply for a request the caller replaced moves nothing.
+#[test]
+fn a_reply_to_a_replaced_record_moves_nothing() {
+    let t0 = Instant::now();
+    let mut e = ready(1);
+    e.submit(spec(RtspMethod::Record, URI), None, t0).unwrap();
+    let record = cseq(&one(&mut e));
+    e.submit(spec(RtspMethod::Options, URI), None, t0).unwrap();
+    one(&mut e);
+    e.handle_reply(
+        resp(format!("RTSP/1.0 200 OK\r\nCSeq: {record}\r\n\r\n").as_bytes()),
+        t0,
+    );
+    assert!(events(&mut e).is_empty());
+    assert_eq!(e.push_phase(), Some(PushPhase::Ready));
+    assert!(!e.media_allowed());
+}
+
+/// A record reply past its deadline is a timeout and moves nothing.
+#[test]
+fn a_record_reply_after_its_deadline_moves_nothing() {
+    let t0 = Instant::now();
+    let mut e = ready(1);
+    let a = e
+        .submit(spec(RtspMethod::Record, URI), Some(ms(t0, 500)), t0)
+        .unwrap();
+    let c = cseq(&one(&mut e));
+    e.handle_reply(
+        resp(format!("RTSP/1.0 200 OK\r\nCSeq: {c}\r\n\r\n").as_bytes()),
+        ms(t0, 500),
+    );
+    assert!(matches!(reply(&mut e, a), Err(RtspError::Timeout)));
+    assert_eq!(e.push_phase(), Some(PushPhase::Ready));
+}
+
+/// A ping answered `454` ends the session: media stops, and only the
+/// TEARDOWN that closes the client is still written.
+#[test]
+fn a_ping_454_ends_media() {
+    let t0 = Instant::now();
+    let mut e = recording();
+    e.enable_keepalive(Some(Duration::from_secs(1)), t0);
+    e.handle_timeout(ms(t0, 1000), false);
+    let c = cseq(&one(&mut e));
+    e.handle_reply(
+        resp(format!("RTSP/1.0 454 Session Not Found\r\nCSeq: {c}\r\n\r\n").as_bytes()),
+        t0,
+    );
+    let ev = events(&mut e);
+    assert!(
+        matches!(
+            ev.as_slice(),
+            [Event::SessionDead, Event::Ended(EndReason::SessionExpired)]
+        ),
+        "{ev:?}"
+    );
+    assert_eq!(e.push_phase(), Some(PushPhase::Ended));
+    assert!(!e.media_allowed());
+    for s in [
+        spec(RtspMethod::Record, URI),
+        spec(RtspMethod::Pause, URI),
+        spec(RtspMethod::Options, URI),
+    ] {
+        let r = e.submit(s, None, t0);
+        assert!(matches!(r, Err(RtspError::NotAllowed { .. })), "{r:?}");
+        assert!(e.poll_transmit().is_none());
+    }
+    e.submit(spec(RtspMethod::Teardown, URI), None, t0).unwrap();
+    assert_eq!(cseq(&one(&mut e)), c + 1);
+    assert!(matches!(
+        e.submit(spec(RtspMethod::Teardown, URI), None, t0),
+        Err(RtspError::NotAllowed { .. })
+    ));
+}
+
+/// A ping that cannot be encoded ends the session as a `454` does.
+#[test]
+fn a_ping_refused_at_encoding_ends_media() {
+    let t0 = Instant::now();
+    let mut e = announced(1);
+    e.enable_keepalive(Some(Duration::from_secs(1)), t0);
+    exchange(
+        &mut e,
+        record_setup(0),
+        "200 OK",
+        "Transport: RTP/AVP/TCP;unicast;interleaved=0-1;mode=record\r\nSession: P\x01\r\n",
+    )
+    .unwrap();
+    exchange(&mut e, spec(RtspMethod::Record, URI), "200 OK", "").unwrap();
+    assert!(e.media_allowed());
+    e.handle_timeout(ms(t0, 1000), false);
+    assert!(e.poll_transmit().is_none());
+    events(&mut e);
+    assert_eq!(e.push_phase(), Some(PushPhase::Ended));
+    assert!(!e.media_allowed());
+}
+
+#[test]
+fn a_stream_end_moves_to_ended() {
+    let mut e = recording();
+    e.handle_closed(StreamEnd::PeerClosed);
+    events(&mut e);
+    assert_eq!(e.push_phase(), Some(PushPhase::Ended));
+    assert!(!e.media_allowed());
+    assert!(matches!(
+        e.submit(spec(RtspMethod::Teardown, URI), None, Instant::now()),
+        Err(RtspError::Io(io::ErrorKind::UnexpectedEof))
+    ));
+    // A framing violation ends it too.
+    let t0 = Instant::now();
+    let mut e = paused();
+    e.handle_input(
+        b"RTSP/1.0 200 OK\r\nCSeq: 9\r\nContent-Length: x\r\n\r\n",
+        t0,
+    );
+    events(&mut e);
+    assert!(e.is_closed());
+    assert_eq!(e.push_phase(), Some(PushPhase::Ended));
+    assert!(!e.media_allowed());
+    // So does a stop.
+    let mut e = recording();
+    e.handle_closed(StreamEnd::Stopped);
+    assert_eq!(e.push_phase(), Some(PushPhase::Ended));
+    assert!(!e.media_allowed());
+}
+
+#[test]
+fn a_server_request_during_record_is_counted_and_answers_nothing() {
+    let t0 = Instant::now();
+    let mut e = recording();
+    let before = (e.counters().unmatched_replies, e.counters().rtsp_messages);
+    let mut raw = b"GET_PARAMETER rtsp://cam.example/live RTSP/1.0\r\nCSeq: 5\r\n\r\n".to_vec();
+    raw.extend_from_slice(b"OPTIONS * RTSP/1.0\r\nCSeq: 6\r\n\r\n");
+    raw.extend_from_slice(b"TEARDOWN rtsp://cam.example/live RTSP/1.0\r\nCSeq: 7\r\n\r\n");
+    e.handle_input(&raw, t0);
+    assert!(e.poll_event().is_none());
+    assert!(e.poll_transmit().is_none(), "nothing is answered");
+    assert_eq!(e.counters().unmatched_replies, before.0 + 3);
+    assert_eq!(e.counters().rtsp_messages, before.1 + 3);
+    assert_eq!(e.push_phase(), Some(PushPhase::Recording));
+    assert!(e.media_allowed());
+}
+
+#[test]
+fn a_zero_or_huge_session_timeout_keeps_the_ping_floor_on_a_push() {
+    for enable_first in [true, false] {
+        let t0 = Instant::now();
+        let mut e = announced(1);
+        if enable_first {
+            e.enable_keepalive(None, t0);
+        }
+        exchange(
+            &mut e,
+            record_setup(0),
+            "200 OK",
+            "Transport: RTP/AVP/TCP;unicast;interleaved=0-1;mode=record\r\nSession: P1;timeout=0\r\n",
+        )
+        .unwrap();
+        if !enable_first {
+            e.enable_keepalive(None, t0);
+        }
+        assert_eq!(
+            e.poll_timeout(),
+            Some(ms(t0, 100)),
+            "enable first: {enable_first}"
+        );
+
+        let mut e = announced(1);
+        if enable_first {
+            e.enable_keepalive(None, t0);
+        }
+        exchange(
+            &mut e,
+            record_setup(0),
+            "200 OK",
+            &format!(
+                "Transport: RTP/AVP/TCP;unicast;interleaved=0-1;mode=record\r\nSession: P1;timeout={}\r\n",
+                u64::MAX
+            ),
+        )
+        .unwrap();
+        if !enable_first {
+            e.enable_keepalive(None, t0);
+        }
+        let far = t0 + Duration::from_secs(100 * 365 * 24 * 3600);
+        assert!(
+            e.poll_timeout().is_none_or(|d| d > far),
+            "enable first: {enable_first}"
+        );
+        e.handle_timeout(t0 + Duration::from_secs(3600), false);
+        assert!(e.poll_transmit().is_none());
+    }
 }

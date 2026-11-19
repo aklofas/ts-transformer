@@ -29,6 +29,7 @@ fn options() -> RequestSpec {
         uri: URI.to_string(),
         headers: Vec::new(),
         body: None,
+        announce_tracks: None,
         setup: None,
     }
 }
@@ -103,6 +104,7 @@ impl Harness {
                 uri: URI.to_string(),
                 headers: Vec::new(),
                 body: None,
+                announce_tracks: None,
                 setup: Some(SetupRoute {
                     id: RouteId(id),
                     kind,
@@ -350,6 +352,21 @@ fn route(
     stats
 }
 
+/// An ANNOUNCE of `tracks` tracks answered `200`: the client publishes,
+/// and a `Push` route is set up for track 0 first.
+fn announced(h: &Harness, peer: &mut impl ReadWrite, rest: &mut Vec<u8>, tracks: u8) {
+    let rx = h.request(RequestSpec {
+        method: RtspMethod::Announce,
+        announce_tracks: Some(tracks),
+        ..options()
+    });
+    assert!(matches!(next(&rx), Progress::Written));
+    let head = read_head(peer, rest);
+    peer.write_all(format!("RTSP/1.0 200 OK\r\nCSeq: {}\r\n\r\n", cseq(&head)).as_bytes())
+        .unwrap();
+    assert_eq!(done_ok(next(&rx)).status, 200);
+}
+
 /// The receiving side's route, on channels 0/1, feeding `data_tx`.
 fn interleaved(
     h: &Harness,
@@ -577,7 +594,8 @@ fn a_frame_on_a_push_rtp_channel_adds_to_frames_dropped_inbound() {
     let (stream, mut peer) = plain_pair();
     let h = drive(stream);
     let mut rest = Vec::new();
-    let stats = route(&h, &mut peer, &mut rest, (1, RouteKind::Push), (2, 3), None);
+    announced(&h, &mut peer, &mut rest, 1);
+    let stats = route(&h, &mut peer, &mut rest, (0, RouteKind::Push), (2, 3), None);
     let mut bytes = frame(2, &rtp_packet(1, 8));
     bytes.extend(frame(2, b"not RTP"));
     bytes.extend(frame(3, &receiver_report(OUR_SSRC, 5)));
@@ -598,7 +616,8 @@ fn a_receiver_report_for_another_ssrc_changes_no_loss_figure() {
     let (stream, mut peer) = plain_pair();
     let h = drive(stream);
     let mut rest = Vec::new();
-    let stats = route(&h, &mut peer, &mut rest, (1, RouteKind::Push), (2, 3), None);
+    announced(&h, &mut peer, &mut rest, 1);
+    let stats = route(&h, &mut peer, &mut rest, (0, RouteKind::Push), (2, 3), None);
     peer.write_all(&frame(3, &receiver_report(OUR_SSRC ^ 1, 2024)))
         .unwrap();
     wait_until("the first report counted", || {
@@ -792,6 +811,7 @@ fn a_request_arriving_drops_the_waiting_ones_progress() {
         uri: URI.to_string(),
         headers: vec![("x-bad", "a\r\nb".to_string())],
         body: None,
+        announce_tracks: None,
         setup: None,
     });
     assert!(matches!(
@@ -883,6 +903,7 @@ fn a_setup_after_an_accepted_teardown_delivers_media_again() {
         uri: URI.to_string(),
         headers: Vec::new(),
         body: None,
+        announce_tracks: None,
         setup: None,
     });
     assert!(matches!(next(&rx), Progress::Written));
@@ -931,6 +952,7 @@ fn an_accepted_teardown_closes_the_media_queue_and_keeps_its_reason() {
         uri: URI.to_string(),
         headers: Vec::new(),
         body: None,
+        announce_tracks: None,
         setup: None,
     });
     assert!(matches!(next(&rx), Progress::Written));
@@ -970,6 +992,7 @@ fn an_accepted_teardown_on_a_cancelled_client_records_clean_teardown() {
         uri: URI.to_string(),
         headers: Vec::new(),
         body: None,
+        announce_tracks: None,
         setup: None,
     });
     assert!(matches!(next(&rx), Progress::Written));
@@ -1074,6 +1097,7 @@ fn huge_request() -> RequestSpec {
         uri: URI.to_string(),
         headers: vec![("x-pad", "a".repeat(1 << 20))],
         body: None,
+        announce_tracks: None,
         setup: None,
     }
 }
@@ -1137,6 +1161,7 @@ fn a_slow_peer_that_keeps_taking_bytes_does_not_stall_the_write() {
         uri: URI.to_string(),
         headers: vec![("x-pad", "a".repeat(LEN))],
         body: None,
+        announce_tracks: None,
         setup: None,
     });
     let t0 = Instant::now();

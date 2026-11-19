@@ -47,6 +47,9 @@ pub(crate) struct RequestSpec {
     pub uri: String,
     pub headers: Vec<(&'static str, String)>,
     pub body: Option<RequestBody>,
+    /// On an ANNOUNCE: the number of tracks its description holds,
+    /// `1..=MAX_ROUTES`; each is set up in turn, as route `0..n`.
+    pub announce_tracks: Option<u8>,
     /// On a SETUP: the route its reply's interleaved channel pair is
     /// installed under.
     pub setup: Option<SetupRoute>,
@@ -80,6 +83,23 @@ pub(crate) enum RouteKind {
 pub(crate) struct SetupRoute {
     pub id: RouteId,
     pub kind: RouteKind,
+}
+
+/// Where a publish session (ANNOUNCE, a SETUP per track, RECORD) stands.
+/// It moves when the engine accepts a request's final `2xx` reply, and to
+/// `Ended` when a TEARDOWN is submitted or the session or stream ends.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PushPhase {
+    Announced,
+    /// `done` of the `total` announced tracks are set up, `0 < done < total`.
+    SetUp {
+        done: u8,
+        total: u8,
+    },
+    Ready,
+    Recording,
+    Paused,
+    Ended,
 }
 
 /// The channel pair a SETUP reply installed.
@@ -175,6 +195,7 @@ const SETUP_WITHOUT_TRANSPORT: &str = "SETUP 200 missing Transport: header";
 const ROUTE_ID_OUT_OF_RANGE: &str = "SETUP names more interleaved routes than a connection holds";
 const ROUTE_CHANNELS_EQUAL: &str = "SETUP reply names one interleaved channel for RTP and RTCP";
 const ROUTE_CHANNEL_IN_USE: &str = "SETUP reply names an interleaved channel another stream uses";
+const SETUP_OTHER_SESSION: &str = "SETUP reply names a session other than the first SETUP's";
 
 #[derive(Debug, Default)]
 pub(crate) struct EngineCounters {
@@ -267,6 +288,14 @@ pub(crate) struct ClientEngine {
     /// Installed interleaved routes, by `RouteId`; until one is installed
     /// every `$` frame is counted as malformed and dropped.
     routes: [Option<Route>; MAX_ROUTES],
+    /// `None` until an ANNOUNCE is accepted: a pull client.
+    push: Option<PushPhase>,
+    /// The track count of the accepted ANNOUNCE.
+    push_tracks: u8,
+    /// A TEARDOWN was submitted on a publish session.
+    push_torn_down: bool,
+    /// A pull SETUP has named a session: the client cannot publish.
+    pulled: bool,
 }
 
 // By hand: the queued transmits can carry an `Authorization` header.
@@ -285,7 +314,18 @@ impl std::fmt::Debug for ClientEngine {
             .field("counters", &self.counters)
             .field("buffered", &self.inbuf.len())
             .field("routes", &self.routes)
+            .field("push", &self.push)
             .finish_non_exhaustive()
+    }
+}
+
+/// The phase after track `done` of `total` is set up.
+fn after_track_setup(done: u8, total: u8) -> PushPhase {
+    let done = done.saturating_add(1);
+    if done >= total {
+        PushPhase::Ready
+    } else {
+        PushPhase::SetUp { done, total }
     }
 }
 
@@ -323,6 +363,10 @@ impl ClientEngine {
             inbuf: Vec::new(),
             front: None,
             routes: [None; MAX_ROUTES],
+            push: None,
+            push_tracks: 0,
+            push_torn_down: false,
+            pulled: false,
         }
     }
 
@@ -344,6 +388,10 @@ impl ClientEngine {
         if let Some(kind) = self.closed {
             return Err(RtspError::Io(kind));
         }
+        // Before anything is encoded, so a refused request takes no CSeq.
+        if let Some(detail) = self.refusal(&spec) {
+            return Err(RtspError::NotAllowed { detail });
+        }
         let authorization = match self.preemptive_authorization(spec.method, &spec.uri) {
             Ok(a) => a,
             // A TEARDOWN goes out unauthenticated rather than not at all.
@@ -354,6 +402,11 @@ impl ClientEngine {
         if spec.method == RtspMethod::Teardown {
             self.session_id = None;
             self.keepalive = Keepalive::Off;
+            if self.push.is_some() {
+                // Media stops now, not at the reply.
+                self.push = Some(PushPhase::Ended);
+                self.push_torn_down = true;
+            }
         }
         self.next_txn += 1;
         let id = TxnId(self.next_txn);
@@ -519,6 +572,109 @@ impl ClientEngine {
         self.events.pop_front()
     }
 
+    /// `None` on a client that has not published.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "no caller outside the tests yet")
+    )]
+    pub(crate) fn push_phase(&self) -> Option<PushPhase> {
+        self.push
+    }
+
+    /// Media may be written: a publish session recording or paused, its
+    /// stream open and no TEARDOWN submitted.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "no caller outside the tests yet")
+    )]
+    pub(crate) fn media_allowed(&self) -> bool {
+        matches!(self.push, Some(PushPhase::Recording | PushPhase::Paused))
+            && self.closed.is_none()
+            && !self.push_torn_down
+    }
+
+    /// Why `spec` may not be sent now, if it may not. A publish session
+    /// sends its requests in order, one role per connection: some servers
+    /// answer an out-of-order request by closing the connection.
+    fn refusal(&self, spec: &RequestSpec) -> Option<&'static str> {
+        use RtspMethod as M;
+        let record_setup = spec.setup.filter(|r| r.kind == RouteKind::Push);
+        let Some(phase) = self.push else {
+            let tracks_ok = spec
+                .announce_tracks
+                .is_some_and(|n| (1..=MAX_ROUTES).contains(&usize::from(n)));
+            return match spec.method {
+                // RTSP 2.0 has no ANNOUNCE or RECORD.
+                M::Announce if self.cfg.version == RtspVersion::V2_0 => {
+                    Some("ANNOUNCE on an RTSP/2.0 client")
+                }
+                M::Announce if self.pulled => Some("ANNOUNCE on a client that has a play session"),
+                M::Announce if !tracks_ok => Some("ANNOUNCE without a track count of 1 to 4"),
+                M::Setup if record_setup.is_some() => Some("SETUP for recording before ANNOUNCE"),
+                M::Record => Some("RECORD before ANNOUNCE"),
+                _ => None,
+            };
+        };
+        if self.push_torn_down {
+            return Some("request after TEARDOWN");
+        }
+        let next_track = match phase {
+            PushPhase::Announced => Some(0),
+            PushPhase::SetUp { done, .. } => Some(done),
+            _ => None,
+        };
+        match (spec.method, phase) {
+            (M::Teardown, _) => None,
+            (_, PushPhase::Ended) => Some("request after the publish session ended"),
+            (M::Options, _) => None,
+            (M::Setup, _) if record_setup.is_some_and(|r| Some(r.id.0) == next_track) => None,
+            (M::Setup, _) if record_setup.is_some() => {
+                Some("SETUP for recording out of track order")
+            }
+            (M::Setup, _) => Some("SETUP for playing in a publish session"),
+            (M::Record, PushPhase::Ready | PushPhase::Paused) => None,
+            (M::Record, PushPhase::Recording) => Some("RECORD while recording"),
+            (M::Record, _) => Some("RECORD before every track is set up"),
+            (M::Pause, PushPhase::Recording) => None,
+            (M::Pause, _) => Some("PAUSE while not recording"),
+            (M::Announce, _) => Some("a second ANNOUNCE"),
+            (M::Describe, _) => Some("DESCRIBE in a publish session"),
+            (M::Play, _) => Some("PLAY in a publish session"),
+            (M::GetParameter, _) => Some("GET_PARAMETER in a publish session"),
+        }
+    }
+
+    /// A publish session ends for good: media stops.
+    fn end_push(&mut self) {
+        if self.push.is_some() {
+            self.push = Some(PushPhase::Ended);
+        }
+    }
+
+    /// The accepted final reply to `method` moves the publish session on;
+    /// a reply that finds the session elsewhere (ended, say) moves nothing.
+    fn advance_push(&mut self, spec: &RequestSpec) {
+        let total = self.push_tracks;
+        let track = spec.setup.map(|r| r.id.0);
+        self.push = match (spec.method, self.push) {
+            (RtspMethod::Announce, None) => {
+                self.push_tracks = spec.announce_tracks.unwrap_or(0);
+                Some(PushPhase::Announced)
+            }
+            (RtspMethod::Setup, Some(PushPhase::Announced)) if track == Some(0) => {
+                Some(after_track_setup(0, total))
+            }
+            (RtspMethod::Setup, Some(PushPhase::SetUp { done, total })) if track == Some(done) => {
+                Some(after_track_setup(done, total))
+            }
+            (RtspMethod::Record, Some(PushPhase::Ready | PushPhase::Paused)) => {
+                Some(PushPhase::Recording)
+            }
+            (RtspMethod::Pause, Some(PushPhase::Recording)) => Some(PushPhase::Paused),
+            (_, unchanged) => unchanged,
+        };
+    }
+
     #[cfg(test)]
     pub(crate) fn counters(&self) -> &EngineCounters {
         &self.counters
@@ -556,6 +712,7 @@ impl ClientEngine {
         caller_error: RtspError,
     ) {
         self.closed = Some(kind);
+        self.end_push();
         self.keepalive = Keepalive::Off;
         self.pings.clear();
         self.transmits.clear();
@@ -664,8 +821,25 @@ impl ClientEngine {
             return;
         }
         let mut setup = None;
+        let accepted = (200..300).contains(&resp.status);
+        let record_setup = txn.spec.setup.is_some_and(|r| r.kind == RouteKind::Push);
         match txn.spec.method {
-            RtspMethod::Setup if (200..300).contains(&resp.status) => {
+            RtspMethod::Setup if accepted => {
+                // A publish session is one session: a broken server that
+                // names another is not followed.
+                if record_setup
+                    && let (Some(known), Some(named)) = (&self.session_id, resp.session_id())
+                    && known != named
+                {
+                    self.reply(
+                        txn.id,
+                        Err(RtspError::BadResponse {
+                            detail: SETUP_OTHER_SESSION,
+                        }),
+                    );
+                    return;
+                }
+                self.pulled |= !record_setup && resp.session_id().is_some();
                 self.learn_session(&resp);
                 // The pull facade refuses any other reply; a refused SETUP
                 // must not move a live session's route.
@@ -690,6 +864,9 @@ impl ClientEngine {
                     .push_back(Event::Ended(EndReason::CleanTeardown));
             }
             _ => {}
+        }
+        if accepted && (record_setup || txn.spec.method != RtspMethod::Setup) {
+            self.advance_push(&txn.spec);
         }
         self.reply(
             txn.id,
@@ -825,6 +1002,7 @@ impl ClientEngine {
                 );
                 self.keepalive = Keepalive::Off;
                 self.pings.clear();
+                self.end_push();
                 self.events.push_back(Event::SessionDead);
                 self.events
                     .push_back(Event::Ended(EndReason::SessionExpired));
@@ -877,6 +1055,7 @@ impl ClientEngine {
                     "keepalive ping failed the header-injection guard; marking session dead"
                 );
                 self.keepalive = Keepalive::Off;
+                self.end_push();
                 self.events.push_back(Event::SessionDead);
                 self.events
                     .push_back(Event::Ended(EndReason::KeepaliveFailed {

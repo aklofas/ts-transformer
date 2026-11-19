@@ -166,6 +166,7 @@ pub fn fuzz_client_engine_input(data: &[u8]) {
                 uri: "rtsp://fuzz.invalid/live".to_string(),
                 headers: Vec::new(),
                 body: None,
+                announce_tracks: None,
                 setup: None,
             },
             None,

@@ -119,6 +119,7 @@ impl RtspClient {
                 uri,
                 headers,
                 body: None,
+                announce_tracks: None,
                 setup: None,
             },
             deadline,

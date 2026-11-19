@@ -125,6 +125,7 @@ impl RtspClient {
             uri: self.url.render_no_credentials(),
             headers: vec![("session", sid)],
             body: None,
+            announce_tracks: None,
             setup: None,
         };
         let r = self.request(spec, deadline, send_deadline);
@@ -269,6 +270,7 @@ mod tests {
                         uri: url.render_no_credentials(),
                         headers: Vec::new(),
                         body: None,
+                        announce_tracks: None,
                         setup: Some(SetupRoute {
                             id: route,
                             kind: RouteKind::Pull,
@@ -296,6 +298,7 @@ mod tests {
                 uri: url.render_no_credentials(),
                 headers: vec![("x-pad", "a".repeat(1 << 20))],
                 body: None,
+                announce_tracks: None,
                 setup: None,
             },
             Some(ahead),
@@ -586,6 +589,7 @@ mod tests {
                 uri: url.render_no_credentials(),
                 headers: vec![("x-pad", "a".repeat(64 * 1024))],
                 body: None,
+                announce_tracks: None,
                 setup: None,
             },
             Some(ahead),
