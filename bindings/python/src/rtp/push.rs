@@ -21,7 +21,7 @@
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, TryLockError};
 
-use pyo3::exceptions::PyValueError;
+use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 
 use tst_core::transport::{Transport, TransportCancel};
@@ -224,12 +224,14 @@ struct Live {
     _exit: Arc<CancelSource>,
 }
 
-/// Why a data call failed: a binding error raised as `RtpError`, or a
-/// caller's mistake raised as `ValueError`. Built into a Python exception
-/// only after the session's guard has dropped.
+/// Why a data call failed: a binding error raised as `RtpError`, a
+/// caller's mistake raised as `ValueError`, or a refusal this binding does
+/// not know raised as `RuntimeError`. Built into a Python exception only
+/// after the session's guard has dropped.
 enum DataError {
     Binding(BindingError),
     Value(String),
+    Runtime(String),
 }
 
 impl DataError {
@@ -237,14 +239,20 @@ impl DataError {
         match self {
             Self::Binding(e) => raise(py, &RTP, e),
             Self::Value(m) => PyValueError::new_err(m),
+            Self::Runtime(m) => PyRuntimeError::new_err(m),
         }
     }
 
     fn from_push(op: &str, e: PushError) -> Self {
         match e {
             PushError::Transport(t) => Self::Binding(BindingError::from(t)),
-            // No such track, an empty unit: nothing was sent.
-            other => Self::Value(format!("RtspPushSession.{op}: {other}")),
+            // The caller's mistakes: nothing was sent.
+            e @ (PushError::NoSuchTrack(_) | PushError::Empty(_)) => {
+                Self::Value(format!("RtspPushSession.{op}: {e}"))
+            }
+            // A refusal added to the Rust push later: not the caller's
+            // mistake as far as this binding knows.
+            other => Self::Runtime(format!("RtspPushSession.{op}: {other}")),
         }
     }
 }

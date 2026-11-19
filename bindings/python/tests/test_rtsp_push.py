@@ -392,6 +392,28 @@ def test_close_while_stats_is_read_does_not_cancel() -> None:
             assert _wait_for(lambda: mount.publisher() is None), r
 
 
+def test_pause_then_resume_against_the_library_server() -> None:
+    with _start_server() as server:
+        mount = server.add_publish_mount("/cam")
+        with RtspClient.push(
+            RtspClientConfig(_url(server, "/cam")), PushDescription.mp2t()
+        ) as push:
+            push.send_ts(TS_BUNDLE)
+            push.pause()
+            # The pause wrote the queued media first.
+            assert _wait_for(lambda: mount.stats().rtp_packets_received == 1), mount.stats()
+            with pytest.raises(RtspError) as ei:
+                push.pause()  # already paused: refused locally
+            assert ei.value.kind is RtspErrorKind.PROTOCOL
+            push.resume()
+            with pytest.raises(RtspError) as ei:
+                push.resume()  # not paused
+            assert ei.value.kind is RtspErrorKind.PROTOCOL
+            push.send_ts(TS_BUNDLE)
+            assert _wait_for(lambda: mount.stats().rtp_packets_received == 2), mount.stats()
+            assert push.is_session_alive()
+
+
 def test_calls_after_close_raise_closed() -> None:
     with _start_server() as server:
         server.add_publish_mount("/cam")
@@ -524,7 +546,10 @@ def test_rtsp_version_2_is_refused_locally() -> None:
         with pytest.raises(RtspError) as ei:
             RtspClient.push(cfg, PushDescription.mp2t())
         assert ei.value.kind is RtspErrorKind.PROTOCOL
-        # Refused before a request was written.
+        # Refused before a request was written: the server's thread has read
+        # the connection to its end, so a late request would be counted.
+        server.thread.join(WAIT_S)
+        assert not server.thread.is_alive(), "the client kept the connection"
         assert server.methods == []
     finally:
         server.close()
