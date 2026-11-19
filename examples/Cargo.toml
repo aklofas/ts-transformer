@@ -44,6 +44,10 @@ name = "send_rtsp_server"
 path = "sending/send_rtsp_server.rs"
 
 [[example]]
+name = "send_rtsp_push"
+path = "sending/send_rtsp_push.rs"
+
+[[example]]
 name = "sender_from_url"
 path = "sending/sender_from_url.rs"
 

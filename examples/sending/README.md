@@ -1,7 +1,7 @@
 # Sending
 
 Senders that push pre-muxed TS bytes (or muxed-on-the-fly TS) over a
-transport. Twelve examples, in read-order:
+transport. Thirteen examples, in read-order:
 
 ## 1. `send_pipeline_to_socket.rs` — basic SRT sender
 
@@ -159,3 +159,23 @@ stats every 2 s. Browsers play it with the reference player under
 `klv` data channel. Press Enter to stop.
 
 Cookbook: [Serve a live stream to a browser over WebRTC (WHEP)](../../docs/cookbook/sending/whep-browser-playback.md).
+
+## 13. `send_rtsp_push.rs` — publish to an RTSP server (ANNOUNCE / RECORD)
+
+```sh
+cargo run -p tst-examples --example send_rtsp_push -- rtsp://127.0.0.1:8554/cam-ts ts
+cargo run -p tst-examples --example send_rtsp_push -- rtsp://127.0.0.1:8554/cam-es es
+```
+
+Diff from §10: the application is the RTSP client and the server
+receives. `RtspPush::connect` runs ANNOUNCE / SETUP `mode=record` /
+RECORD, and the media goes to the server interleaved on the RTSP
+connection. The `ts` form puts a `MuxSender` over the push (it is a
+`Transport`) and ends with `finish()`; the `es` form sends H.264 and KLV
+as two RTP tracks through `send_video` / `send_klv` and ends with
+`close()`, which reports the server's answer to TEARDOWN. Push to
+[`../receiving/recv_rtsp_publish.rs`](../receiving/recv_rtsp_publish.rs)
+(this library's server) or to mediamtx; the file's header has the
+commands for both and for ffmpeg in listen mode.
+
+Cookbook: [Push to an RTSP server (ANNOUNCE / RECORD)](../../docs/cookbook/sending/rtsp-push.md).

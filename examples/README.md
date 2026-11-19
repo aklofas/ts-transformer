@@ -18,6 +18,7 @@ available examples).
 |---|---|
 | See the smallest possible thing this library does | [`getting-started/hello_world.rs`](getting-started/hello_world.rs) |
 | Send video + KLV over an SRT link | [`sending/send_pipeline_to_socket.rs`](sending/send_pipeline_to_socket.rs) |
+| Publish video + KLV to an RTSP server (mediamtx, this library's `RtspServer`) | [`sending/send_rtsp_push.rs`](sending/send_rtsp_push.rs) |
 | Write an MPEG-TS file from scratch | [`muxing/mux_to_file.rs`](muxing/mux_to_file.rs) |
 | Decode KLV from a `.ts` capture | [`receiving/demux_to_events.rs`](receiving/demux_to_events.rs) → [`klv-metadata/extract_klv.rs`](klv-metadata/extract_klv.rs) → [`klv-metadata/klv_decode_file.rs`](klv-metadata/klv_decode_file.rs) |
 | Pair video AUs with KLV records | [`pairing/pair_klv_pipeline.rs`](pairing/pair_klv_pipeline.rs) |
