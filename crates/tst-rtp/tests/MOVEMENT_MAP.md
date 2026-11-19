@@ -145,6 +145,7 @@ shared helpers in `rtsp_push/common.rs`. Filter with
 | `rtsp_push/auth.rs` | Basic, Digest MD5 and SHA-256 through the builder credential, a mount rule's credential, each refusing a push without credentials, Digest-only against a Basic challenge (through a relay), a wrong password |
 | `rtsp_push/ends.rs` | `stop()` (Notice, then `Broken { CleanEof }`), the hard cancel, the publish idle timeout (pings and a pause do not keep a push), a mount ending with its publisher, a cancel ending a close that waits on a server that reads slowly |
 | `rtsp_push/shells.rs` | `MuxSender` and `Sender` over a push, byte for byte; a dropped `MuxSender` closes the push, which writes its queue |
+| `rtsp_push/tls.rs` | pushes over `rtsps://` (included only with `rtsp-server-tls`): MPEG-TS byte for byte, H.264 + KLV aligned from the sender reports, a server whose certificate the client does not trust sees no request; the `#[ignore]`d measurement `tls_push_throughput` (Linux) |
 
 `rtsp_server/publish/push_client.rs` is gone: its two tests moved to
 `rtsp_push/mp2t.rs` and `rtsp_push/es_h264_klv.rs` under their names. The
