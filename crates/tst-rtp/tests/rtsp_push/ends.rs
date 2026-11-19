@@ -1,10 +1,10 @@
 //! How a push ends: the server stopping, its hard cancel and its publish
 //! idle timeout end it from the other side; a closed push ends a mount
 //! that ends with its publisher; and a cancel ends a close that waits on a
-//! server that stopped reading.
+//! server that reads slowly.
 
 use std::sync::mpsc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use tst_core::transport::{BrokenCause, EndReason, Transport, TransportError};
 use tst_rtp::{PushDescription, RtspError, RtspPush};
@@ -12,7 +12,7 @@ use tst_rtp::{PushDescription, RtspError, RtspPush};
 use crate::common::*;
 use crate::fixtures::raw_rtsp::scaled;
 use crate::fixtures::raw_rtsp_publisher::ts_fixture_packets;
-use crate::fixtures::tcp_relay::TcpRelay;
+use crate::fixtures::tcp_relay::{SLOW_READ, TcpRelay};
 
 fn clean_eof(e: &TransportError) -> bool {
     matches!(
@@ -119,6 +119,7 @@ fn close_ends_the_mounts_receiver_with_end_of_stream() {
 
 /// KLV units far larger, together, than the connection holds.
 static UNIT: [u8; 60_000] = [0xAB; 60_000];
+const UNITS: usize = 1000;
 
 /// A server that reads slowly, with tens of megabytes queued: the close
 /// would wait minutes for the queue, and since the connection keeps taking
@@ -133,8 +134,8 @@ fn a_cancel_ends_a_close_waiting_on_a_server_that_reads_slowly() {
     let mut push = RtspPush::connect(builder_via(&relay), &elementary(true)).unwrap();
     relay.slow_down();
     // Fewer frames than the queue holds, so no send waits.
-    for i in 0..1000 {
-        push.send_klv(&UNIT, pts(i)).unwrap();
+    for i in 0..UNITS {
+        push.send_klv(&UNIT, pts(i as i64)).unwrap();
     }
     let cancel = push.cancel_handle();
     let (began, beginning) = mpsc::channel();
@@ -146,10 +147,24 @@ fn a_cancel_ends_a_close_waiting_on_a_server_that_reads_slowly() {
     beginning
         .recv_timeout(scaled(Duration::from_secs(5)))
         .expect("the close began");
+    // The cancel finds the close waiting, not on its way in: the relay
+    // passes two more of its slow reads first.
+    let passed_at_the_start = relay.upstream().len();
+    let give_up = Instant::now() + scaled(Duration::from_secs(5));
+    while relay.upstream().len() < passed_at_the_start + 2 * SLOW_READ {
+        assert!(Instant::now() < give_up, "the relay stopped passing bytes");
+        std::thread::sleep(Duration::from_millis(20));
+    }
     cancel.cancel();
-    // A bound for a failure only.
+    // A bound for a failure only, inside the test's time budget.
     let r = results
-        .recv_timeout(scaled(Duration::from_secs(20)))
+        .recv_timeout(scaled(Duration::from_secs(10)))
         .expect("the cancelled close returned");
     assert!(matches!(&r, Err(RtspError::LocalCancel)), "{r:?}");
+    // The close did not return because the queue ran empty.
+    let passed = relay.upstream().len();
+    assert!(
+        passed < UNITS * UNIT.len() / 2,
+        "{passed} bytes reached the server"
+    );
 }
