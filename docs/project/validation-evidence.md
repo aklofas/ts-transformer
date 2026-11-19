@@ -33,6 +33,16 @@ bash scripts/interop/run-matrix.sh --outdir /tmp/interop-run --seconds 8
 SRT_RECONNECT_MODE=background bash scripts/interop/soak.sh --outdir /tmp/interop-soak-smoke --hours 1 --seed 11
 ```
 
+For a reviewer who wants one command instead of the full qualification run,
+`bash scripts/review-qualification.sh` runs the subset that fits in hours on a
+Linux box: the unit tests, the arm64 interop subset, a ten-second fuzz pass
+over every target, the timing oracles (the TSDuck analyzer cells and the muxer
+clock tests), the C ABI symbol check, the public-API and stability checks, and
+the instruction-count comparison with the previous release. `--list` prints the
+parts and their commands without running anything. Each part ends in `PART
+<name>: rc=N` or `PART <name>: NOT RUN (missing <tool>)`; a missing tool is
+never a pass, and the exit status is non-zero when a part failed or none ran.
+
 `run-matrix.sh` requires `jq` and `python3` on `PATH`, plus whichever peer
 tools (`ffmpeg`, TSDuck's `tsp`, `gst-launch-1.0`, `vlc`, `mpv`) you want
 exercised — a missing tool degrades its cells to `SKIPPED`, never a fake
