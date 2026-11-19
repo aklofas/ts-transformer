@@ -3,7 +3,7 @@
 
   api_churn.py paths REPORT.txt
       The lines of the "Failed in:" blocks of one cargo-semver-checks text report, as a
-      JSON list of {"line", "file", "span_line", "path"} (scripts/dev/semver-checks.sh writes them into
+      JSON list of {"line", "lint", "file", "span_line", "name", "path"} (scripts/dev/semver-checks.sh writes them into
       semver-checks.json as "breaks"). `file` is the source file the line's span names,
       `path` the crate-qualified item path when the line prints one; either may be null.
   api_churn.py tally SEMVER_CHECKS.json --release X.Y.Z [--root DIR]
@@ -13,7 +13,7 @@
       prints {"release", "stable", "provisional", "experimental", "internal"}: the numbers
       of a tests/coverage/api-churn.toml row. A line no row covers is an error naming it,
       and so is a crate whose parsed lines differ in number from its `items`. A removed
-      item printed once per importable path counts once (same file and line).
+      item printed once per importable path counts once (same lint, file, line and name).
   api_churn.py render [--root DIR] (--write | --check)
       The table between `<!-- BEGIN GENERATED: api-churn -->` and
       `<!-- END GENERATED: api-churn -->` in docs/reference/api-stability.md,
@@ -46,31 +46,42 @@ _QUALIFIED = re.compile(r"[A-Za-z_][\w]*(?:::[\w]+)+")
 
 
 def failed_lines(text):
-    """One entry per non-blank line under every `Failed in:` block, in report order."""
-    out, inside = [], False
+    """One entry per non-blank line under every `Failed in:` block, in report order.
+
+    `lint` is the name in the `--- failure <lint>:` header above the block; `name` the last
+    identifier of the line's item part, which tells two items on one span apart."""
+    out, inside, lint = [], False, None
     for line in text.splitlines():
+        head_m = re.match(r"--- failure (\S+):", line)
+        if head_m:
+            lint = head_m.group(1)
         if line.startswith("Failed in:"):
             inside = True
         elif not line.strip():
             inside = False
         elif inside:
             span = _SPAN.search(line)
-            head = line.strip().split(", previously in")[0].split(" in file ")[0]
+            head = re.split(r", previously in| in file | in /|, in | now takes| takes | is no longer",
+                            line.strip())[0]
             path = _QUALIFIED.search(head)
-            out.append({"line": line.strip(), "file": span.group(1) if span else None,
-                        "span_line": int(span.group(2)) if span else None, "path": path.group(0) if path else None})
+            idents = re.findall(r"\w+", head)
+            out.append({"line": line.strip(), "lint": lint, "file": span.group(1) if span else None,
+                        "span_line": int(span.group(2)) if span else None,
+                        "name": idents[-1] if idents else None, "path": path.group(0) if path else None})
     return out
 
 
-def file_module(path):
-    """The module segments a source file defines: src/a/b.rs and src/a/b/mod.rs are (a, b); lib.rs is ()."""
-    m = re.search(r"(?:^|/)src/(.+)\.rs$", path)
+def split_source(path):
+    """(crate directory or None, module segments) of a source file: crates/<dir>/src/a/b.rs and
+    .../a/b/mod.rs are (<dir>, (a, b)); lib.rs is the crate root (); no `crates/` gives None."""
+    m = (re.match(r"^(?:.*/)?crates/([^/]+)/src/(.+)\.rs$", path)
+         or re.match(r"^(?:.*/)?()src/(.+)\.rs$", path))
     if not m:
         return None
-    segs = m.group(1).split("/")
+    segs = m.group(2).split("/")
     if segs[-1] in ("lib", "mod", "main"):
         segs = segs[:-1]
-    return tuple(segs)
+    return m.group(1) or None, tuple(segs)
 
 
 # ---- tiers -----------------------------------------------------------------
@@ -97,13 +108,23 @@ def _lookup(rows, package, segs):
     return best[1] if best else None
 
 
+def _package_of_dir(rows, d):
+    for name in (d, "tstrans-" + d):
+        if name in rows:
+            return name
+    return None
+
+
 def tier_of(rows, package, entry):
-    """Tier of one `failed_lines` entry: by its span file, else by its item path."""
+    """Tier of one `failed_lines` entry: by the module its span file defines (looked up in the
+    rows of the crate the file belongs to), else by its item path."""
     if entry["file"]:
-        mod = file_module(entry["file"])
-        tier = _lookup(rows, package, mod) if mod is not None else None
-        if tier:
-            return tier
+        src = split_source(entry["file"])
+        if src:
+            owner = _package_of_dir(rows, src[0]) if src[0] else package
+            tier = _lookup(rows, owner, src[1]) if owner else None
+            if tier:
+                return tier
     if entry["path"]:
         segs = tuple(entry["path"].split("::")[1:])  # drop the crate
         tier = _lookup(rows, package, segs)
@@ -126,7 +147,7 @@ def tally(report, rows, release):
                              % (c["crate"], c.get("items"), len(c["breaks"])))
         seen = {}
         for e in c["breaks"]:
-            key = (e["file"], e["span_line"]) if e["file"] else e["line"]
+            key = (e.get("lint"), e["file"], e["span_line"], e.get("name")) if e["file"] else e["line"]
             seen.setdefault(key, e)
         for e in seen.values():
             counts[tier_of(rows, c["crate"], e)] += 1

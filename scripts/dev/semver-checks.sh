@@ -19,7 +19,7 @@
 #   failed_checks = the "N fail" of the tool's "M checks: P pass, N fail" line
 #   items         = listed entries under every "Failed in:" block (raw lines, so
 #                   an item the tool prints twice counts twice)
-#   breaks        = those entries parsed ({"line","file","span_line","path"}, scripts/gen/api_churn.py
+#   breaks        = those entries parsed ({"line","lint","file","span_line","name","path"}, scripts/gen/api_churn.py
 #                   `paths`), which `api_churn.py tally` maps to a stability tier by the file
 #   analysed      = the tool ended 0 (no break) or 100 (breaks); any other exit
 #                   means the crate was not compared

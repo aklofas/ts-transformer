@@ -38,7 +38,7 @@ def fixture(name):
 
 
 def line(**kw):
-    return dict({"line": "x", "file": None, "span_line": None, "path": None}, **kw)
+    return dict({"line": "x", "lint": None, "file": None, "span_line": None, "name": None, "path": None}, **kw)
 
 
 class Parser(unittest.TestCase):
@@ -64,8 +64,14 @@ class Parser(unittest.TestCase):
 
     def test_a_line_without_a_span_keeps_its_path(self):
         got = ac.failed_lines("Failed in:\n  function tst_core::mpegts::gone\n")
-        self.assertEqual(got, [{"line": "function tst_core::mpegts::gone", "file": None, "span_line": None,
-                                "path": "tst_core::mpegts::gone"}])
+        self.assertEqual(got, [{"line": "function tst_core::mpegts::gone", "lint": None, "file": None,
+                                "span_line": None, "name": "gone", "path": "tst_core::mpegts::gone"}])
+
+    def test_a_line_carries_its_lint_and_item_name(self):
+        got = {e["name"]: e for e in self.lines()}
+        self.assertEqual(got["push_klv"]["lint"], "function_parameter_count_changed")
+        self.assertEqual(got["Reset"]["lint"], "enum_variant_added")
+        self.assertEqual(got["RawSendStats"]["lint"], "struct_missing")
 
     def test_no_failed_block_no_lines(self):
         self.assertEqual(ac.failed_lines("Checked 3 checks: 3 pass, 0 fail\n"), [])
@@ -81,12 +87,16 @@ class Parser(unittest.TestCase):
 
 
 class FileModules(unittest.TestCase):
-    def test_source_files_name_their_module(self):
-        self.assertEqual(ac.file_module("/w/crates/tst-core/src/mpegts/mux.rs"), ("mpegts", "mux"))
-        self.assertEqual(ac.file_module("/w/crates/tst-core/src/klv/st0102/mod.rs"), ("klv", "st0102"))
-        self.assertEqual(ac.file_module("crates/tst-core/src/lib.rs"), ())
-        self.assertEqual(ac.file_module("src/transport.rs"), ("transport",))
-        self.assertIsNone(ac.file_module("/w/build.rs"))
+    def test_source_files_name_their_crate_and_module(self):
+        self.assertEqual(ac.split_source("/w/crates/tst-core/src/mpegts/mux.rs"), ("tst-core", ("mpegts", "mux")))
+        self.assertEqual(ac.split_source("/w/crates/tst-core/src/klv/st0102/mod.rs"), ("tst-core", ("klv", "st0102")))
+        self.assertEqual(ac.split_source("crates/tst-core/src/lib.rs"), ("tst-core", ()))
+        self.assertEqual(ac.split_source("src/transport.rs"), (None, ("transport",)))
+        self.assertIsNone(ac.split_source("/w/build.rs"))
+
+    def test_the_last_crates_directory_and_src_win(self):
+        self.assertEqual(ac.split_source("/home/src/x/crates/tst-rtp/src/a.rs"), ("tst-rtp", ("a",)))
+        self.assertEqual(ac.split_source("/home/src/x/src/a.rs"), (None, ("a",)))
 
 
 class Tiers(unittest.TestCase):
@@ -144,6 +154,32 @@ class Tally(unittest.TestCase):
     def test_counts_per_tier_and_an_item_printed_per_importable_path_counts_once(self):
         self.assertEqual(ac.tally(self.crate(), ac.classification(TABLE), "0.11.0"),
                          {"release": "0.11.0", "stable": 2, "provisional": 1, "experimental": 0, "internal": 1})
+
+    def tally_of(self, *breaks):
+        rep = [{"crate": "tst-core", "exit": 100, "items": len(breaks), "breaks": list(breaks)}]
+        return ac.tally(rep, ac.classification(TABLE), "x")
+
+    SRC = "/w/crates/tst-core/src/transport.rs"
+
+    def test_two_lints_on_one_item_count_twice(self):
+        a = line(line="a", lint="function_parameter_count_changed", file=self.SRC, span_line=5, name="f")
+        b = dict(a, lint="function_missing")
+        self.assertEqual(self.tally_of(a, b)["stable"], 2)
+
+    def test_two_variants_on_one_line_count_twice(self):
+        a = line(line="variant K:A", lint="enum_variant_added", file=self.SRC, span_line=5, name="A")
+        self.assertEqual(self.tally_of(a, dict(a, line="variant K:B", name="B"))["stable"], 2)
+
+    def test_the_importable_path_lines_of_one_removed_item_count_once(self):
+        a = line(line="struct tst_core::transport::S", lint="struct_missing", file=self.SRC, span_line=5, name="S")
+        self.assertEqual(self.tally_of(a, dict(a, line="struct tst_core::S"))["stable"], 1)
+
+    def test_a_span_in_another_crate_is_placed_by_that_crates_rows(self):
+        rep = [{"crate": "tst-srt", "exit": 100, "items": 1, "breaks": [line(
+            line="struct tst_srt::Moved, previously in file /w/crates/tst-core/src/klv/st0102.rs:7",
+            file="/w/crates/tst-core/src/klv/st0102.rs", span_line=7, name="Moved")]}]
+        # tst-srt's own (crate) row says Stable; the defining crate's row says Provisional.
+        self.assertEqual(ac.tally(rep, ac.classification(TABLE), "x")["provisional"], 1)
 
     def test_a_crate_whose_lines_differ_in_number_from_its_items_is_an_error(self):
         with self.assertRaises(ac.ChurnError) as e:
