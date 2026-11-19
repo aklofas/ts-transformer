@@ -134,8 +134,8 @@ pub(crate) fn duration_ms_saturating(d: Duration) -> u64 {
 }
 
 /// Feed `data` to a fresh client engine as bytes read from the control
-/// connection: interleaved channels 0/1, one OPTIONS waiting for its reply
-/// and one keepalive ping (CSeq 1000001) waiting for its own, once in
+/// connection: interleaved channels 0/1, one OPTIONS (CSeq 1) waiting for
+/// its reply and one keepalive ping (CSeq 2) waiting for its own, once in
 /// 7-byte slices and once whole.
 //
 // `#[doc(hidden)] pub` for the fuzz workspace's `rtsp_client_pump_framing`
@@ -161,6 +161,7 @@ pub fn fuzz_client_engine_input(data: &[u8]) {
                 method: RtspMethod::Options,
                 uri: "rtsp://fuzz.invalid/live".to_string(),
                 headers: Vec::new(),
+                body: None,
             },
             None,
             start,

@@ -122,6 +122,7 @@ impl RtspClient {
                 method,
                 uri,
                 headers,
+                body: None,
             },
             deadline,
             None,

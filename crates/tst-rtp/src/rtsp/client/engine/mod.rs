@@ -39,12 +39,20 @@ pub(crate) struct EngineConfig {
 }
 
 /// A caller's request: the engine adds `CSeq`, `User-Agent` and
-/// `Authorization`.
+/// `Authorization`, and `Content-Type` and `Content-Length` for a body.
 #[derive(Debug)]
 pub(crate) struct RequestSpec {
     pub method: RtspMethod,
     pub uri: String,
     pub headers: Vec<(&'static str, String)>,
+    pub body: Option<RequestBody>,
+}
+
+/// A request's body and its `Content-Type`.
+#[derive(Debug)]
+pub(crate) struct RequestBody {
+    pub content_type: &'static str,
+    pub bytes: Bytes,
 }
 
 /// Names one caller transaction, from `submit` to its `Reply`.
@@ -122,14 +130,12 @@ pub(crate) struct EngineCounters {
     pub malformed_frames: u64,
     pub keepalive_responses: u64,
     pub unmatched_replies: u64,
+    /// `1xx` replies to a request or ping still waiting for its final one.
+    pub interim_replies: u64,
     /// Calls to `rtsp_frame_decision`: a header dribbled in costs a few,
     /// not one per read.
     pub frame_decisions: u64,
 }
-
-/// The first ping's CSeq is one above this: far above the caller counter,
-/// which starts at 1.
-const PING_CSEQ_BASE: u32 = 1_000_000;
 
 /// Session timeout until a SETUP reply names one.
 const DEFAULT_SESSION_TIMEOUT: Duration = Duration::from_secs(60);
@@ -145,7 +151,13 @@ const WRITE_STALLED_MSG: &str = "control TCP write made no progress for the writ
 const MIN_LEARNED_INTERVAL_MS: u64 = 100;
 
 /// Headers the engine writes itself; a spec must not carry them.
-const ENGINE_HEADERS: [&str; 3] = ["cseq", "user-agent", "authorization"];
+const ENGINE_HEADERS: [&str; 5] = [
+    "cseq",
+    "user-agent",
+    "authorization",
+    "content-type",
+    "content-length",
+];
 
 #[derive(Debug)]
 enum Keepalive {
@@ -174,10 +186,10 @@ struct CallerTxn {
 pub(crate) struct ClientEngine {
     cfg: EngineConfig,
     auth: AuthState,
-    /// Last caller CSeq used.
+    /// Last CSeq used, by a caller request or a ping: one counter, because
+    /// some servers end the connection unless each request's CSeq is one
+    /// above the last.
     cseq: u32,
-    /// Last ping CSeq used.
-    ping_cseq: u32,
     next_txn: u64,
     caller: Option<CallerTxn>,
     pings: VecDeque<u32>,
@@ -202,7 +214,6 @@ impl std::fmt::Debug for ClientEngine {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ClientEngine")
             .field("cseq", &self.cseq)
-            .field("ping_cseq", &self.ping_cseq)
             .field("caller", &self.caller.as_ref().map(|t| t.id))
             .field("pings_awaiting_reply", &self.pings.len())
             .field("has_session", &self.session_id.is_some())
@@ -239,7 +250,6 @@ impl ClientEngine {
             cfg,
             auth,
             cseq: 0,
-            ping_cseq: PING_CSEQ_BASE,
             next_txn: 0,
             caller: None,
             pings: VecDeque::new(),
@@ -321,6 +331,10 @@ impl ClientEngine {
 
     pub(crate) fn handle_reply(&mut self, resp: RtspResponse, now: Instant) {
         if self.closed.is_some() {
+            return;
+        }
+        if (100..=199).contains(&resp.status) {
+            self.handle_interim_reply(&resp);
             return;
         }
         let Some(cseq) = resp.cseq() else {
@@ -450,6 +464,27 @@ impl ClientEngine {
         &self.counters
     }
 
+    /// The next request or ping carries `n`.
+    #[cfg(test)]
+    pub(crate) fn set_next_cseq(&mut self, n: u32) {
+        self.cseq = n.wrapping_sub(1);
+    }
+
+    /// A `1xx` says the final reply is still to come: it answers nothing
+    /// and moves no deadline. One without a `CSeq` header is taken as the
+    /// waiting caller's, as a final reply would be.
+    fn handle_interim_reply(&mut self, resp: &RtspResponse) {
+        let awaited = match resp.cseq() {
+            Some(c) => self.pings.contains(&c) || self.caller.as_ref().is_some_and(|t| t.cseq == c),
+            None => self.caller.is_some() && !resp.headers.contains_key("cseq"),
+        };
+        if awaited {
+            self.counters.interim_replies += 1;
+        } else {
+            self.counters.unmatched_replies += 1;
+        }
+    }
+
     /// End the stream for good: queued transmits, awaited pings and
     /// buffered input are dropped, and a waiting request gets `caller_error`
     /// after the `Ended`, so whoever its reply wakes already sees why.
@@ -516,8 +551,8 @@ impl ClientEngine {
         self.authorization(method, uri, &www).map(Some)
     }
 
-    /// `spec` under the next caller CSeq, with `User-Agent` and
-    /// `authorization`, encoded. The CSeq is used even when encoding fails.
+    /// `spec` under the next CSeq, with `User-Agent`, `authorization` and
+    /// the body, encoded. The CSeq is used even when encoding fails.
     fn encode_caller_request(
         &mut self,
         spec: &RequestSpec,
@@ -532,6 +567,11 @@ impl ClientEngine {
         }
         if let Some(a) = authorization {
             req = req.header("authorization", a);
+        }
+        if let Some(body) = &spec.body {
+            req = req
+                .header("content-type", body.content_type)
+                .body(body.bytes.clone());
         }
         Ok((req.encode_checked()?, self.cseq))
     }
@@ -643,10 +683,10 @@ impl ClientEngine {
     }
 
     fn send_ping(&mut self, now: Instant) {
-        self.ping_cseq = self.ping_cseq.wrapping_add(1);
+        self.cseq = self.cseq.wrapping_add(1);
         let uri = self.cfg.uri.clone();
         let mut req = RtspRequest::new(RtspMethod::Options, uri.as_str(), self.cfg.version)
-            .header("cseq", self.ping_cseq.to_string())
+            .header("cseq", self.cseq.to_string())
             .header("user-agent", self.cfg.user_agent.as_str());
         if let Some(sid) = &self.session_id {
             req = req.header("session", sid.as_str());
@@ -660,7 +700,7 @@ impl ClientEngine {
                 if self.pings.len() == MAX_PINGS_AWAITING_REPLY {
                     self.pings.pop_front();
                 }
-                self.pings.push_back(self.ping_cseq);
+                self.pings.push_back(self.cseq);
                 if let Keepalive::On {
                     interval,
                     anchor,

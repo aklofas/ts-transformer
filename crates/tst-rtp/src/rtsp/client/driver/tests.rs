@@ -28,6 +28,7 @@ fn options() -> RequestSpec {
         method: RtspMethod::Options,
         uri: URI.to_string(),
         headers: Vec::new(),
+        body: None,
     }
 }
 
@@ -459,6 +460,7 @@ fn a_request_arriving_drops_the_waiting_ones_progress() {
         method: RtspMethod::Options,
         uri: URI.to_string(),
         headers: vec![("x-bad", "a\r\nb".to_string())],
+        body: None,
     });
     assert!(matches!(
         next(&refused),
@@ -528,7 +530,7 @@ fn a_ping_answered_454_keeps_the_media_queue_open() {
         .unwrap();
     let head = read_head(&mut peer, &mut rest);
     let ping = cseq(&head);
-    assert!(ping > 1_000_000, "a ping's CSeq");
+    assert_eq!(ping, 2, "the ping takes the CSeq after the request's");
     peer.write_all(format!("RTSP/1.0 454 Session Not Found\r\nCSeq: {ping}\r\n\r\n").as_bytes())
         .unwrap();
     assert_eq!(h.wait_end(), EndReason::SessionExpired);
@@ -551,6 +553,7 @@ fn set_interleaved_after_an_accepted_teardown_delivers_media_again() {
         method: RtspMethod::Teardown,
         uri: URI.to_string(),
         headers: Vec::new(),
+        body: None,
     });
     assert!(matches!(next(&rx), Progress::Written));
     let head = read_head(&mut peer, &mut rest);
@@ -598,6 +601,7 @@ fn an_accepted_teardown_closes_the_media_queue_and_keeps_its_reason() {
         method: RtspMethod::Teardown,
         uri: URI.to_string(),
         headers: Vec::new(),
+        body: None,
     });
     assert!(matches!(next(&rx), Progress::Written));
     let head = read_head(&mut peer, &mut rest);
@@ -636,6 +640,7 @@ fn an_accepted_teardown_on_a_cancelled_client_records_clean_teardown() {
         method: RtspMethod::Teardown,
         uri: URI.to_string(),
         headers: Vec::new(),
+        body: None,
     });
     assert!(matches!(next(&rx), Progress::Written));
     let head = read_head(&mut peer, &mut rest);
@@ -714,7 +719,8 @@ fn a_due_ping_is_written() {
         .send(Command::EnableKeepalive(Some(Duration::from_millis(1))))
         .unwrap();
     let head = read_head(&mut peer, &mut Vec::new());
-    assert!(cseq(&head) > 1_000_000, "a ping's CSeq");
+    assert!(head.starts_with(b"OPTIONS "), "a ping is an OPTIONS");
+    assert_eq!(cseq(&head), 1, "nothing was sent before the ping");
     h.stop_and_join();
 }
 
@@ -737,6 +743,7 @@ fn huge_request() -> RequestSpec {
         method: RtspMethod::Options,
         uri: URI.to_string(),
         headers: vec![("x-pad", "a".repeat(1 << 20))],
+        body: None,
     }
 }
 
@@ -798,6 +805,7 @@ fn a_slow_peer_that_keeps_taking_bytes_does_not_stall_the_write() {
         method: RtspMethod::Options,
         uri: URI.to_string(),
         headers: vec![("x-pad", "a".repeat(LEN))],
+        body: None,
     });
     let t0 = Instant::now();
     let mut got = 0;

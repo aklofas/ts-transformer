@@ -8,8 +8,8 @@ use libfuzzer_sys::fuzz_target;
 // replies' path into the request and keepalive state. The engine has no
 // socket, thread or clock, so this drives the client's real input path.
 // `fuzz_client_engine_input` feeds the bytes twice, in 7-byte slices and
-// whole, to an engine with interleaved channels 0/1, one OPTIONS waiting
-// for its reply and one keepalive ping (CSeq 1000001) waiting for its own.
+// whole, to an engine with interleaved channels 0/1, one OPTIONS (CSeq 1)
+// waiting for its reply and one keepalive ping (CSeq 2) waiting for its own.
 fuzz_target!(|data: &[u8]| {
     tst_rtp::rtsp::client::fuzz_client_engine_input(data);
 });

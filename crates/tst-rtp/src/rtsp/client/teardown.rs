@@ -124,6 +124,7 @@ impl RtspClient {
             method: RtspMethod::Teardown,
             uri: self.url.render_no_credentials(),
             headers: vec![("session", sid)],
+            body: None,
         };
         let r = self.request(spec, deadline, send_deadline);
         // Always clear session_id — caller asked us to tear down; if it
@@ -260,6 +261,7 @@ mod tests {
                 method: RtspMethod::Options,
                 uri: url.render_no_credentials(),
                 headers: vec![("x-pad", "a".repeat(1 << 20))],
+                body: None,
             },
             Some(ahead),
             Some(ahead),
@@ -548,6 +550,7 @@ mod tests {
                 method: RtspMethod::Options,
                 uri: url.render_no_credentials(),
                 headers: vec![("x-pad", "a".repeat(64 * 1024))],
+                body: None,
             },
             Some(ahead),
             Some(ahead),
