@@ -154,7 +154,7 @@ pub struct PyBasicAuth {
     /// already accepted it as a `str` (it lives in Python memory
     /// before we get it). `secrecy::SecretString` adoption happens at
     /// the `RtspClientBuilder::auth` call boundary in
-    /// `PyRtspClient::connect`.
+    /// `builder_from_config`.
     pub(crate) password: String,
     /// Optional auth realm. Set when this credential is used to
     /// configure server-side authentication (the realm is what the
@@ -491,6 +491,51 @@ fn apply_transport_and_version(
     builder
 }
 
+/// The `RtspClientBuilder` a config describes: the URL (a parse error is
+/// `RtspError`), the credentials, `keepalive`, `transport_pref` /
+/// `rtsp_version` and the TLS trust roots. Every factory of `RtspClient`
+/// starts from it.
+fn builder_from_config(py: Python<'_>, config: &PyRtspClientConfig) -> PyResult<RtspClientBuilder> {
+    // URL parse, under the GIL so the error maps through `raise`.
+    let mut builder =
+        RtspClientBuilder::new(&config.url).map_err(|e| raise(py, &RTSP, BindingError::from(e)))?;
+
+    // Credentials. SecretString wrapping happens at this boundary: Python
+    // sees `str`, Rust sees SecretString.
+    if let Some(auth_obj) = &config.auth {
+        let auth_bound = auth_obj.bind(py);
+        if let Ok(basic) = auth_bound.extract::<PyRef<'_, PyBasicAuth>>() {
+            let pw = SecretString::from(basic.password.clone());
+            builder = builder.auth(basic.user.clone(), pw);
+        } else if let Ok(digest) = auth_bound.extract::<PyRef<'_, PyDigestAuth>>() {
+            // tst-rtp's RtspClientBuilder::auth doesn't (yet) take an
+            // algorithm hint — the challenge handler in
+            // `options_describe::handle_auth_challenge_and_retry`
+            // picks the algorithm from the server's
+            // WWW-Authenticate header. We still capture the
+            // algorithm on the Python side for caller introspection
+            // through DigestAuth.algorithm.
+            let pw = SecretString::from(digest.password.clone());
+            builder = builder
+                .auth(digest.user.clone(), pw)
+                .auth_schemes(AuthSchemes::DigestOnly);
+        }
+    }
+
+    // `keepalive=false` disables the automatic keepalive pings.
+    if !config.keepalive {
+        builder = builder.no_auto_keepalive(true);
+    }
+
+    // `transport_pref` / `rtsp_version` (non-default values override the
+    // URL query).
+    builder = apply_transport_and_version(builder, config);
+
+    // Custom trust roots for `rtsps://` (private-CA cameras): without them
+    // the handshake verifies against platform native trust roots.
+    apply_tls_roots(py, builder, config)
+}
+
 // ---------------------------------------------------------------------------
 // PyRtspClient — static facade exposing connect()
 // ---------------------------------------------------------------------------
@@ -516,56 +561,12 @@ impl PyRtspClient {
     /// Python threads continue to run while we wait on TCP I/O.
     #[staticmethod]
     fn connect(py: Python<'_>, config: &PyRtspClientConfig) -> PyResult<PyRtspSession> {
-        // 1. Build the RtspClientBuilder from config. Builder
-        //    construction is synchronous (URL parse) and the only
-        //    operation here that can yield a typed RtspError; do it
-        //    eagerly under the GIL so the error mapping has access to
-        //    the Python interpreter handle.
-        let mut builder = RtspClientBuilder::new(&config.url)
-            .map_err(|e| raise(py, &RTSP, BindingError::from(e)))?;
+        let builder = builder_from_config(py, config)?;
 
-        // 2. Wire credentials. SecretString wrapping happens at this
-        //    boundary — Python sees `str`, Rust sees SecretString.
-        if let Some(auth_obj) = &config.auth {
-            let auth_bound = auth_obj.bind(py);
-            if let Ok(basic) = auth_bound.extract::<PyRef<'_, PyBasicAuth>>() {
-                let pw = SecretString::from(basic.password.clone());
-                builder = builder.auth(basic.user.clone(), pw);
-            } else if let Ok(digest) = auth_bound.extract::<PyRef<'_, PyDigestAuth>>() {
-                // tst-rtp's RtspClientBuilder::auth doesn't (yet) take an
-                // algorithm hint — the challenge handler in
-                // `options_describe::handle_auth_challenge_and_retry`
-                // picks the algorithm from the server's
-                // WWW-Authenticate header. We still capture the
-                // algorithm on the Python side for caller introspection
-                // through DigestAuth.algorithm.
-                let pw = SecretString::from(digest.password.clone());
-                builder = builder
-                    .auth(digest.user.clone(), pw)
-                    .auth_schemes(AuthSchemes::DigestOnly);
-            }
-        }
-
-        // 3. `keepalive=false` disables the automatic keepalive pings.
-        if !config.keepalive {
-            builder = builder.no_auto_keepalive(true);
-        }
-
-        // 4. `transport_pref` / `rtsp_version` (non-default values override
-        //    the URL query).
-        builder = apply_transport_and_version(builder, config);
-
-        // 5. Custom trust roots for `rtsps://` (private-CA cameras):
-        //    parse the PEM bundle into a RootCertStore and hand it to
-        //    the builder; without it the handshake verifies against
-        //    platform native trust roots.
-        builder = apply_tls_roots(py, builder, config)?;
-
-        // 6. Drive the RTSP state machine to PLAY. Wrap in
-        //    py.detach for the full network exchange.
-        //    Retain the `RtspSession` so
-        //    `RtspSession.into_demux_receiver` can consume its
-        //    UDP-socket-pair (or TCP-interleaved mpsc rx) downstream.
+        // Drive the RTSP state machine to PLAY. Wrap in py.detach for the
+        // full network exchange. Retain the `RtspSession` so
+        // `RtspSession.into_demux_receiver` can consume its
+        // UDP-socket-pair (or TCP-interleaved mpsc rx) downstream.
         let result = crate::util::allow_threads_parking(
             py,
             || -> Result<(RustRtspClient, RustRtspSession), RustRtspError> {
@@ -600,36 +601,7 @@ impl PyRtspClient {
     /// Raises `RtspError(UNSUPPORTED_TRANSPORT)` for packetization mode 2.
     #[staticmethod]
     fn connect_h264(py: Python<'_>, config: &PyRtspClientConfig) -> PyResult<PyRtspSession> {
-        let mut builder = RtspClientBuilder::new(&config.url)
-            .map_err(|e| raise(py, &RTSP, BindingError::from(e)))?;
-
-        if let Some(auth_obj) = &config.auth {
-            let auth_bound = auth_obj.bind(py);
-            if let Ok(basic) = auth_bound.extract::<PyRef<'_, PyBasicAuth>>() {
-                let pw = SecretString::from(basic.password.clone());
-                builder = builder.auth(basic.user.clone(), pw);
-            } else if let Ok(digest) = auth_bound.extract::<PyRef<'_, PyDigestAuth>>() {
-                // tst-rtp's RtspClientBuilder::auth doesn't (yet) take an
-                // algorithm hint — the challenge handler in
-                // `options_describe::handle_auth_challenge_and_retry`
-                // picks the algorithm from the server's
-                // WWW-Authenticate header. We still capture the
-                // algorithm on the Python side for caller introspection
-                // through DigestAuth.algorithm.
-                let pw = SecretString::from(digest.password.clone());
-                builder = builder
-                    .auth(digest.user.clone(), pw)
-                    .auth_schemes(AuthSchemes::DigestOnly);
-            }
-        }
-
-        if !config.keepalive {
-            builder = builder.no_auto_keepalive(true);
-        }
-
-        builder = apply_transport_and_version(builder, config);
-
-        builder = apply_tls_roots(py, builder, config)?;
+        let builder = builder_from_config(py, config)?;
 
         let result = crate::util::allow_threads_parking(
             py,
