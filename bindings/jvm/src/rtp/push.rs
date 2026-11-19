@@ -48,6 +48,10 @@ const CLOSE_RETRY: std::time::Duration = std::time::Duration::from_millis(1);
 /// waited for it.
 const TAKEN: &str = "the session was closed during the call";
 
+/// What a conversion reports when another thread's call holds the push.
+const IN_PROGRESS: &str =
+    "another thread's call on this RtspPushSession is in progress; nothing was converted";
+
 /// What the calls on one session share: the push and what a close reads to decide
 /// whether to cancel the call holding it.
 struct Shared {
@@ -82,6 +86,13 @@ static REGISTRY_PUSH: LazyLock<HandleRegistry<JniRtspPush>> = LazyLock::new(Hand
 fn throw_illegal_argument(env: &mut Env, msg: &str) {
     let _ = env.throw_new(
         FindClass(jni_str!("java/lang/IllegalArgumentException")),
+        JNIString::from(msg),
+    );
+}
+
+fn throw_illegal_state(env: &mut Env, msg: &str) {
+    let _ = env.throw_new(
+        FindClass(jni_str!("java/lang/IllegalStateException")),
         JNIString::from(msg),
     );
 }
@@ -638,21 +649,37 @@ fn convertible(env: &mut Env, handle: jlong) -> bool {
 }
 
 /// Take the whole session out of its registry for a conversion: the push as an
-/// opened send transport. Waits for a call that holds the push; does not cancel it.
-/// `None` with an `IllegalStateException` pending when a close won the session.
+/// opened send transport. Never waits: when another thread's call holds the push it
+/// takes nothing and leaves an `IllegalStateException` saying so (the session stays
+/// usable). `None` with an `IllegalStateException` pending also when a close won the
+/// session.
 fn take_opened(env: &mut Env, handle: jlong) -> Option<Opened<Box<dyn Transport>>> {
-    let push = REGISTRY_PUSH.close(handle as u64).and_then(|entry| {
-        entry
-            .shared
-            .push
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .take()
-    });
-    let Some(push) = push else {
+    let Some(shared) = REGISTRY_PUSH.with(handle as u64, |s| s.shared.clone()) else {
         crate::error::throw_closed(env, WHAT);
         return None;
     };
+    let mut guard = match shared.push.try_lock() {
+        Ok(guard) => guard,
+        Err(TryLockError::Poisoned(p)) => p.into_inner(),
+        Err(TryLockError::WouldBlock) => {
+            throw_illegal_state(env, IN_PROGRESS);
+            return None;
+        }
+    };
+    // Claimed while the push is held: a close that won the entry first is waiting
+    // for this mutex, and takes the push once it is free.
+    if REGISTRY_PUSH.close(handle as u64).is_none() {
+        drop(guard);
+        crate::error::throw_closed(env, WHAT);
+        return None;
+    }
+    // As a close does: a blocking call that gets the mutex from here on runs nothing.
+    shared.closing.store(true, Ordering::SeqCst);
+    let Some(push) = guard.take() else {
+        crate::error::throw_closed(env, WHAT);
+        return None;
+    };
+    drop(guard);
     let cancel: Arc<dyn TransportCancel> = Arc::new(push.cancel_handle());
     Some(Opened::new(Box::new(push), cancel, Domain::Rtp))
 }

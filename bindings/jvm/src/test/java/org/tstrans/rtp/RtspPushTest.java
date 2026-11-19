@@ -480,6 +480,37 @@ class RtspPushTest {
 
     @Test
     @Timeout(30)
+    void aConversionWhileACallHoldsTheSessionIsRefusedAndConsumesNothing() throws Exception {
+        try (ScriptedRecordServer peer = new ScriptedRecordServer(200, true)) {
+            RtspPushSession push = RtspClient.push(peer.config(), PushDescription.mp2t());
+            try {
+                Sending sending = Sending.start(push);
+                sending.awaitParked();
+                // A send parked on the server holds the session: each conversion refuses
+                // at once instead of waiting for it.
+                for (Call convert : List.<Call>of(push::intoSender, () -> push.intoMuxSender(roundtripConfig()))) {
+                    Side converting = Side.start("converting", convert);
+                    converting.thread.join(scaledMs(1_000));
+                    assertFalse(converting.thread.isAlive(), "the conversion waited for the parked send");
+                    IllegalStateException e = assertInstanceOf(IllegalStateException.class, converting.error.get());
+                    assertTrue(e.getMessage().contains("in progress"), e.getMessage());
+                }
+                // Nothing was consumed: the session still answers, and its close cancels
+                // the parked send.
+                assertTrue(push.isSessionAlive());
+                push.cancelHandle().close();
+                push.close();
+                assertTrue(sending.join(scaledMs(1_000)), "the parked send did not end");
+                RtpException e = assertInstanceOf(RtpException.class, sending.error.get());
+                assertEquals(RtpException.Kind.CLOSED, e.kind());
+            } finally {
+                push.close();
+            }
+        }
+    }
+
+    @Test
+    @Timeout(30)
     void pauseAndResume() throws Exception {
         try (ScriptedRecordServer peer = new ScriptedRecordServer(200, false);
              RtspPushSession push = RtspClient.push(peer.config(), PushDescription.mp2t())) {
