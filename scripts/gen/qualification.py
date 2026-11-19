@@ -663,6 +663,8 @@ def release_vm(root, sha, archives, release, expected_files, required_s, expecte
             corpus = {"id": c["id"], "tree": c["tree"], "date": c["date"], "overall_pass": c["overall_pass"],
                       "note": c["note"], "waiver": c.get("waiver"), "disposition": disposition(c)}
             corpus.update({k: c[k] for k in CORPUS_COUNTS if k in c})
+            if NEW_KEY in c:
+                corpus[NEW_KEY] = c[NEW_KEY]
             corpus[BASELINE_KEY] = c.get(BASELINE_KEY)
             corpus[MANIFEST_KEY] = c.get(MANIFEST_KEY)
             if expected_pins is not None:
@@ -1174,9 +1176,11 @@ def _release_only(gate):
     c = gate["corpus"]
     line = "real-capture corpus: %s" % c["note"]
     if all(k in c for k in CORPUS_COUNTS):
-        line += (" (files %(files)d, identical %(identical)d, changed+explained %(changed_explained)d, "
-                 "invariant failures %(invariant_failures)d, parse failures %(parse_failures)d; "
-                 "replay %(replay_files)d files \u00d7 %(replay_paths)d paths, %(replay_failed)d failed)" % c)
+        new = ", new+explained %d" % c[NEW_KEY] if NEW_KEY in c else ""
+        line += (" (files %(files)d, identical %(identical)d, changed+explained %(changed_explained)d"
+                 "%(new)s, invariant failures %(invariant_failures)d, parse failures %(parse_failures)d; "
+                 "replay %(replay_files)d files \u00d7 %(replay_paths)d paths, %(replay_failed)d failed)"
+                 % dict(c, new=new))
     return ["", "Release-only checks", "", line]
 
 

@@ -104,6 +104,13 @@ class Sections(unittest.TestCase):
         out = ki.apply(CHANGELOG, LEDGER)
         self.assertLess(out.index(ki.BEGIN), out.index("## [0.10.0]"))
 
+    def test_the_marker_search_stops_at_the_next_heading(self):
+        # A marker under a LATER section does not make the first dated section "in preparation".
+        # the marker sits in [0.9.0]'s body (below [0.10.0]'s heading, after the next heading)
+        text = (CHANGELOG + "\n## [0.9.0] — 2026-10-01\n<!-- TODO(release): set the release date -->\n")
+        out = ki.apply(text, LEDGER)
+        self.assertLess(out.index(ki.BEGIN), out.index("## [0.10.0]"))
+
     def test_rewrite_is_idempotent_and_replaces_a_stale_block(self):
         once = ki.apply(CHANGELOG, LEDGER)
         self.assertEqual(ki.apply(once, LEDGER), once)

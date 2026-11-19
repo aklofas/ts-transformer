@@ -1147,6 +1147,18 @@ class CorpusCountTests(unittest.TestCase):
         self.assertIn("real-capture corpus: n (files 260, identical 258, changed+explained 2, "
                       "invariant failures 0, parse failures 0; replay 12 files \u00d7 5 paths, 0 failed)", text)
 
+    def test_new_explained_is_recorded_and_rendered_when_the_row_has_it(self):
+        row = archive_row("corpus-rel", "corpus", SHA, counts=dict(COUNTS, identical=257)) + "new_explained = 1\n"
+        rec = collect(release=True, archives=archives_toml(archive_row("soak-rel", "soak", SHA, legs=FIVE), row))
+        self.assertEqual(rec["release_vm"]["corpus"]["new_explained"], 1)
+        self.assertIn("changed+explained 2, new+explained 1, invariant failures 0", q.render_block(rec))
+
+    def test_a_row_without_new_explained_records_and_renders_none(self):
+        rec = collect(release=True, archives=archives_toml(archive_row("soak-rel", "soak", SHA, legs=FIVE),
+                                                           archive_row("corpus-rel", "corpus", SHA, counts=COUNTS)))
+        self.assertNotIn("new_explained", rec["release_vm"]["corpus"])
+        self.assertNotIn("new+explained", q.render_block(rec))
+
     def test_non_release_record_prints_neither(self):
         text = q.render_block(collect())
         self.assertNotIn("Release-only checks", text)
