@@ -1,4 +1,25 @@
 # JVM bindings (`org.tstrans`)
+<!-- compile-prelude: java
+static byte[] annexBNal, klvBytes, bodyBytes, wireBytes, adtsBytes, tsBytes, miisIdBytes;
+static byte[] rbsp;
+static org.tstrans.klv.UasDatalinkLs ls;
+static org.tstrans.klv.VmtiLs.Builder vmtiLsBuilder;
+static org.tstrans.mpegts.Demuxer demuxer;
+static long generatedUs, pts;
+static int port;
+static java.util.Set<String> blocked;
+static java.util.List<byte[]> accessUnits, klvUnits;
+static byte[] firstKeyFrame;
+static String path;
+static org.tstrans.srt.ReconnectPolicy policy;
+static org.tstrans.mpegts.MuxerConfig program;
+static java.util.Map<Integer, Object> caches;
+static java.io.OutputStream recorder;
+static org.tstrans.mpegts.DemuxEvent e;
+static byte[] st0601Record, annexBAccessUnit;
+static org.tstrans.mpegts.MuxerConfig cfg;
+-->
+
 
 > **Who this is for:** You write Java (or any JVM language — Kotlin, Scala,
 > Clojure) and want to demux MPEG-TS + KLV streams into typed events — or mux
@@ -101,6 +122,7 @@ builds, on each platform.
 The smallest thing that proves the native library loads and the JNI bridge
 works — print the version string:
 
+<!-- compile: java-statements -->
 ```java
 import org.tstrans.Version;
 
@@ -118,6 +140,7 @@ Supply `annexBNal` as a `byte[]` containing one complete Annex-B H.264
 access unit from your encoder. Put the executable statements below in a
 method that handles or declares the resulting exceptions.
 
+<!-- compile: java-statements -->
 ```java
 import org.tstrans.mpegts.*;
 
@@ -212,6 +235,7 @@ Demux a `.ts` file and dispatch on typed events. The JVM binding's
 baseline is **JDK 17**, where `instanceof` pattern matching is the portable
 idiom for a sealed hierarchy:
 
+<!-- compile: java-statements -->
 ```java
 import org.tstrans.mpegts.*;
 
@@ -262,6 +286,7 @@ Pass a `DemuxerConfig` built with the fluent builder to tighten parsing
 behavior — for example, enable full strict mode and turn off CFI
 tolerance:
 
+<!-- compile: java-statements -->
 ```java
 import org.tstrans.mpegts.*;
 
@@ -356,6 +381,7 @@ Pass the raw `ByteBuffer` payload bytes from a `DemuxEvent.Metadata` event
 directly to `Klv.decodeUasDatalink`. The buffer includes the 16-byte SMPTE
 Universal Label — the decoder reads it as part of its verification.
 
+<!-- compile: java-statements -->
 ```java
 import org.tstrans.klv.*;
 
@@ -408,6 +434,7 @@ then call `Klv.encodeUasDatalink`. Encoding is lenient (no mandatory-tag
 enforcement); use `encodeUasDatalinkStrictCompliance` to enforce the full
 compliance rules.
 
+<!-- compile: java-statements -->
 ```java
 import org.tstrans.klv.*;
 
@@ -434,6 +461,7 @@ routes to the correct typed decoder. It returns `Optional<KlvSet>` — empty
 for an unrecognised UL, or a concrete `KlvSet` implementer for a known one.
 Use `instanceof` on JDK 17 to dispatch:
 
+<!-- compile: java-statements -->
 ```java
 import org.tstrans.klv.*;
 import java.util.Optional;
@@ -463,6 +491,7 @@ and the outer BER length before calling the per-set decoder. For the others
 
 **ST 0102 — Security Metadata LS** (body-only — no UL / outer BER wrapper):
 
+<!-- compile: java-statements -->
 ```java
 // Decode body bytes (no UL / outer BER).
 SecurityLs secLenient = Klv.decodeSecurity(bodyBytes);        // lenient
@@ -478,6 +507,7 @@ secLenient.securityClassificationCode();     // Integer (raw code, or null if ta
 
 **ST 0605 — Precision Time Stamp Pack** (full 26-byte framing):
 
+<!-- compile: java-statements -->
 ```java
 PrecisionTimeStampPack pack = Klv.decodePrecisionTimestamp(wireBytes);  // throws KlvDecodeException
 System.out.println(pack.timestampUs() + " µs, locked=" + pack.timeStatus().isLocked());
@@ -487,6 +517,7 @@ byte[] wire = Klv.encodePrecisionTimestamp(pack);  // infallible; always 26 byte
 
 **ST 0903 — VMTI LS** (body-only for decode; two encode forms):
 
+<!-- compile: java-statements -->
 ```java
 VmtiLs vmtiLenient = Klv.decodeVmti(bodyBytes);        // lenient
 VmtiLs vmtiStrict = Klv.decodeVmti(bodyBytes, true);   // strict
@@ -500,6 +531,7 @@ byte[] framed = Klv.encodeVmtiStandalone(vmtiLenient);   // full [UL][BER][body]
 **ST 0806 — RVT (Remote Video Terminal) Local Set** (body bytes carried in
 `UasDatalinkLs.rvt()`, ST 0601 Tag 73):
 
+<!-- compile: java-statements -->
 ```java
 ByteBuffer rvtBytes = ls.rvt();
 if (rvtBytes != null) {
@@ -522,6 +554,7 @@ carry it.
 **ST 0805 — KLV → Cursor-on-Target (CoT) conversion** (one-way; not a KLV
 wire format):
 
+<!-- compile: java-statements -->
 ```java
 String platformXml = Klv.platformPositionXml(ls, generatedUs);         // CotConfig.defaults()
 String spiXml = Klv.sensorPointOfInterestXml(ls, generatedUs);
@@ -542,6 +575,7 @@ nor escaped, so an invalid value produces malformed XML.
 **ST 1010 — SDCC-FLP error covariance** (general-purpose; carried inside
 ST 0601 Tag 102, but not ST 0601-specific):
 
+<!-- compile: java-statements -->
 ```java
 for (SdccFlpField f : ls.sdccFlps()) {
     ByteBuffer view = f.bytes().duplicate();
@@ -562,6 +596,7 @@ codepoint, …) are collected in the set's `fieldErrors()` list as
 `KlvFieldError(KlvFieldErrorKind, long tag, String message)`. Tags that fail
 are skipped; all other tags decode normally.
 
+<!-- compile: java-statements -->
 ```java
 UasDatalinkLs ls = Klv.decodeUasDatalink(klvBytes);
 for (KlvFieldError fe : ls.fieldErrors()) {
@@ -584,6 +619,7 @@ offered on this baseline; safe zero-copy is deferred to a JDK-22+ Foreign
 Function & Memory API path. When hand-constructing a `ByteBuffer` to pass to
 a builder setter, always use `ByteBuffer.wrap(byte[])`:
 
+<!-- compile: java-statements -->
 ```java
 // Correct: heap copy, safe on JDK 17.
 vmtiLsBuilder.miisId(java.nio.ByteBuffer.wrap(miisIdBytes));
@@ -600,6 +636,7 @@ parsers for H.264 / H.265 / H.266 / AV1 / AAC / MPEG-2 audio. The static
 and returns an immutable record (or a `List` of them), throwing
 `CodecParseException` on malformed input.
 
+<!-- compile: java-statements -->
 ```java
 import org.tstrans.codec.Codec;
 import org.tstrans.codec.H264Sps;
@@ -640,6 +677,7 @@ parsing the raw ES bytes only when the caller opts in. The `codec()` accessor on
 each event tags the discriminant (`VideoCodec` / `AudioCodec`). Downcast with
 `instanceof`:
 
+<!-- compile: java-statements -->
 ```java
 // parse() throws the checked DemuxException — declare it on the
 // enclosing method (as nextEvent()-driven code usually already does).
@@ -675,6 +713,7 @@ you don't inspect.
 parsing isn't implemented yet, so `parse()` returns an **empty list** in both
 modes — read `raw()` directly for the encoded bytes.
 
+<!-- compile: java-statements -->
 ```java
 // parse() throws checked CodecParseException (strict mode) and DemuxException
 // (internal failure) — declare both on the enclosing method (or catch them).
@@ -704,6 +743,7 @@ and yields `DemuxEvent` items lazily as a `Stream`. The stream is
 `AutoCloseable` — always wrap it in try-with-resources so the backing demuxer
 and file handle are released:
 
+<!-- compile: java-statements -->
 ```java
 import org.tstrans.io.Io;
 import org.tstrans.mpegts.*;
@@ -758,6 +798,7 @@ Truncation is a clean end — the stream terminates normally with no error.
 `Io.probe` scans the first 5 MiB and returns a `ProbeResult` record
 summarising what the file contains — without reading the entire file:
 
+<!-- compile: java-statements -->
 ```java
 import org.tstrans.io.Io;
 import org.tstrans.io.ProbeResult;
@@ -799,6 +840,7 @@ For any file that has samples within the probe window the results are equivalent
 `Io.extractKlv` streams only the KLV payloads from a file, optionally
 attaching 90 kHz timestamps and dispatching through the typed-KLV decoder:
 
+<!-- compile: java-statements -->
 ```java
 import org.tstrans.io.Io;
 import org.tstrans.io.ExtractKlvOptions;
@@ -857,6 +899,7 @@ packets to disk after each `push*` call and on `close`. The muxer is
 
 **Non-atomic write** (normal case):
 
+<!-- compile: java-statements -->
 ```java
 import org.tstrans.mpegts.*;
 import java.nio.file.Path;
@@ -879,6 +922,7 @@ try (Muxer m = new Muxer(cfg);
 **Atomic write** — the destination is only promoted from a `.partial` temp
 on explicit success:
 
+<!-- compile: java-statements -->
 ```java
 try (Muxer m = new Muxer(cfg);
      var sink = m.writeFile(Path.of("out.ts"), /*atomic=*/ true)) {
@@ -920,6 +964,7 @@ The simplest sender: connect to a peer in caller mode and stream bytes. A
 passphrase must be 10 to 80 bytes, and the receiver must be configured
 with the same one (`example-shared-secret` here).
 
+<!-- compile: java-statements -->
 ```java
 import org.tstrans.shells.Sender;
 import org.tstrans.SrtException;
@@ -941,6 +986,7 @@ to emit any partial bundle.
 The simplest receiver: bind in listener mode, accept one connection, and drain
 packets.
 
+<!-- compile: java-statements -->
 ```java
 import org.tstrans.shells.Receiver;
 import org.tstrans.SrtException;
@@ -971,6 +1017,7 @@ Use the `Builder` → `Listener` → `accept` → `Socket` → `intoReceiver()` 
 when you need the listener's bound port (for example, when binding to an
 ephemeral `:0` port and reporting it to the sender):
 
+<!-- compile: java-statements -->
 ```java
 import org.tstrans.srt.*;
 import org.tstrans.shells.Receiver;
@@ -1002,6 +1049,7 @@ during the SRT handshake, keyed by the exact stream ID. The default rule is
 accept, so a listener you never touch behaves as before. Edits are safe from
 any thread, including while another thread is parked in `accept`.
 
+<!-- compile: java-statements -->
 ```java
 import org.tstrans.srt.*;
 
@@ -1047,7 +1095,11 @@ sender from an accepted socket use `sock.intoSender()` instead.
 
 `Builder` also exposes `connect()` for the caller side:
 
+<!-- compile: java-statements -->
 ```java
+import org.tstrans.srt.Builder;
+import org.tstrans.srt.Socket;
+
 try (Socket sock = new Builder("srt://host:9000")
         .caller()
         .latencyMs(200)
@@ -1080,7 +1132,10 @@ exception: after a cancel its `recvAu()` still returns the access units it
 holds, and the one it can flush, then throws `RtpException(CLOSED)`; a cancelled
 for-each throws a `RuntimeException` with that cause:
 
+<!-- compile: java-statements -->
 ```java
+import org.tstrans.shells.Sender;
+
 var tx = Sender.open("srt://host:9000?mode=caller");
 var cancel = tx.cancelHandle();
 
@@ -1117,7 +1172,11 @@ first accept until a caller connects. To cancel one, make an
 `org.tstrans.shells.OpenCancel` first, pass it as the last argument of the
 open and call its `cancel()` from another thread:
 
+<!-- compile: java-statements -->
 ```java
+import org.tstrans.shells.OpenCancel;
+import org.tstrans.shells.Receiver;
+
 try (var oc = new OpenCancel()) {
     // On the opening thread:
     var rx = Receiver.open("srt://:9000?mode=listener", oc);
@@ -1313,6 +1372,7 @@ call raises.
 
 Build a `MuxerConfig`, connect in caller mode, and send elementary streams:
 
+<!-- compile: java-statements -->
 ```java
 import org.tstrans.shells.MuxSender;
 import org.tstrans.mpegts.MuxerConfig;
@@ -1359,6 +1419,7 @@ address a specific stream in a multi-stream program.
 Bind in listener mode and iterate the same sealed `DemuxEvent` hierarchy the
 offline `org.tstrans.mpegts.Demuxer` produces:
 
+<!-- compile: java-statements -->
 ```java
 import org.tstrans.shells.DemuxReceiver;
 import org.tstrans.mpegts.DemuxEvent;
@@ -1386,9 +1447,11 @@ close.
 To record or forward the raw packets, pull them from a `Receiver` and feed a
 `Demuxer` yourself. Each chunk is a whole number of 188-byte packets:
 
+<!-- compile: java-statements -->
 ```java
-// import org.tstrans.TcpException; org.tstrans.mpegts.{Demuxer, DemuxEvent};
-// org.tstrans.shells.Receiver
+import org.tstrans.TcpException;
+import org.tstrans.shells.Receiver;
+
 try (Receiver rx = Receiver.open("tcp://127.0.0.1:9000");
      Demuxer demux = new Demuxer()) {
     try {
@@ -1448,6 +1511,7 @@ wrap `tst_pipeline`'s `ManagedTransport` / `ManagedRecvTransport`.
 
 ### The reconnect policy
 
+<!-- compile: java-statements -->
 ```java
 import org.tstrans.srt.ReconnectPolicy;
 import org.tstrans.srt.BackoffStrategy;
@@ -1472,6 +1536,7 @@ policy argument.
 Same `send*` API as the plain `MuxSender`, but the transport silently
 rebuilds on a peer drop:
 
+<!-- compile: java-statements -->
 ```java
 import org.tstrans.srt.ManagedMuxSender;
 import org.tstrans.mpegts.MuxerConfig;
@@ -1505,6 +1570,7 @@ exactly one `DemuxEvent.ReconnectDiscontinuity` before the post-reconnect events
 — **drop your per-stream caches on receipt** and rebuild from the next
 `DemuxEvent.ProgramMap`:
 
+<!-- compile: java-statements -->
 ```java
 import org.tstrans.srt.ManagedDemuxReceiver;
 import org.tstrans.mpegts.DemuxEvent;
@@ -1584,6 +1650,7 @@ backlog) `send`/`sendVideo`/… enqueue into the gap buffer under
 `overflowPolicy` instead of blocking. With no worker and an empty gap buffer
 a send goes straight to the transport and can still block on network I/O:
 
+<!-- compile: java-statements -->
 ```java
 import org.tstrans.srt.ManagedMuxSender;
 import org.tstrans.srt.ReconnectPolicy;
@@ -1625,6 +1692,7 @@ TCP connections, reports each peer and turns the connection into a shell.
 
 ### `localPort()` on UDP and RIST receivers
 
+<!-- compile: java-statements -->
 ```java
 import org.tstrans.shells.DemuxReceiver;
 import org.tstrans.shells.Receiver;
@@ -1656,8 +1724,10 @@ shell is cancelled or closed. A `rist://` receive throws
 `RistException(BACKPRESSURE)` about every 100 ms while nothing arrives; the
 receiver stays open, so call it again:
 
+<!-- compile: java-statements -->
 ```java
 import org.tstrans.RistException;
+import org.tstrans.shells.Receiver;
 
 try (Receiver rx = Receiver.open("rist://@0.0.0.0:0")) {
     while (true) {
@@ -1717,6 +1787,7 @@ byte) takes the lock and the receive then returns nothing until the
 receiver is closed, unless that sender goes on to send TS. The example
 closes the receiver when its idle limit passes and opens the port again:
 
+<!-- compile: java-class -->
 ```java
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
@@ -1794,6 +1865,7 @@ final class UdpNameIngest implements AutoCloseable {
 }
 ```
 
+<!-- compile: java-statements -->
 ```java
 while (true) {
     try (UdpNameIngest ingest = new UdpNameIngest(port)) {  // the name's port
@@ -1851,6 +1923,7 @@ refusing by `first` works only against a sender that stops.
 A small class serves one publisher at a time on its own thread until
 `close()`:
 
+<!-- compile: java-class -->
 ```java
 import java.net.InetSocketAddress;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -1941,6 +2014,7 @@ final class TcpIngest implements AutoCloseable {
 }
 ```
 
+<!-- compile: java-statements -->
 ```java
 TcpIngest ingest = new TcpIngest("tcp://0.0.0.0:0?listen=1");
 int port = ingest.port();          // hand it to the publisher
@@ -2094,6 +2168,7 @@ RTP is default-on — no feature flag is needed.
 The simplest sender: bind to a destination and push TS bytes. Each call sends
 one datagram.
 
+<!-- compile: java-statements -->
 ```java
 import org.tstrans.rtp.Transport;
 import org.tstrans.RtpException;
@@ -2114,6 +2189,7 @@ payload that exceeds the cap throws `RtpException(TOO_LARGE)`.
 The simplest receiver: bind to the same group/port and read one datagram per
 `recv()` call. For multicast URLs the group is joined automatically.
 
+<!-- compile: java-statements -->
 ```java
 import org.tstrans.rtp.RecvTransport;
 import org.tstrans.RtpException;
@@ -2136,7 +2212,10 @@ in a loop and concatenate.
 Obtain a `org.tstrans.shells.CancelHandle` from an open `Transport` or `RecvTransport` and call `cancel()`
 from another thread to unblock a parked `send` / `recv` call:
 
+<!-- compile: java-statements -->
 ```java
+import org.tstrans.rtp.RecvTransport;
+
 var rx = RecvTransport.fromUrl("rtp://127.0.0.1:5004");
 var cancel = rx.cancelHandle();
 
@@ -2179,7 +2258,11 @@ MPEG-TS and sends over RTP/UDP in one call: the per-kind `send*` shorthands
 `org.tstrans.shells.DemuxReceiver` bundles a `Demuxer` + an RTP recv transport
 and iterates `DemuxEvent`s.
 
+<!-- compile: java-statements -->
 ```java
+import org.tstrans.shells.DemuxReceiver;
+import org.tstrans.shells.MuxSender;
+
 MuxerConfig program = MuxerConfig.builder()
     .programNumber(1).pmtPid(0x1000)
     .addVideo(0x1011, VideoCodec.H264)
@@ -2262,6 +2345,7 @@ would otherwise block forever instead throws `RtpException(BACKPRESSURE)` after
 `<ms>` milliseconds of silence, and the receiver stays open — call again to
 keep waiting:
 
+<!-- compile: java-statements -->
 ```java
 import org.tstrans.RtpException;
 import org.tstrans.shells.DemuxReceiver;
@@ -2324,6 +2408,7 @@ An `rtp://` receive URL also takes `?rcvbuf=` (kernel receive buffer, e.g. `8M` 
 Connect to an RTSP server, drive OPTIONS/DESCRIBE/SETUP/PLAY, and demux the RTP
 data plane. Mirrors tst-py's `tstrans.rtp` RTSP-client surface.
 
+<!-- compile: java-statements -->
 ```java
 import org.tstrans.rtp.*;
 import org.tstrans.shells.DemuxReceiver;
@@ -2430,6 +2515,7 @@ Host an RTSP server, register unicast or multicast mounts, and push elementary
 streams to all connected clients via the `MountHandle` push family. Mirrors
 tst-py's `tstrans.rtp.RtspServer`.
 
+<!-- compile: java-statements -->
 ```java
 import org.tstrans.rtp.*;
 import org.tstrans.RtspException;
@@ -2526,6 +2612,7 @@ one publisher at a time, in one of two shapes (`PublishShape`):
 - `ELEMENTARY`: H.264 with an optional KLV track. The server re-muxes them
   into one program (video PID 0x100, KLV PID 0x101).
 
+<!-- compile: java-statements -->
 ```java
 import org.tstrans.mpegts.DemuxEvent;
 import org.tstrans.rtp.*;
@@ -2647,6 +2734,7 @@ control connection. The server may be mediamtx, this library's
 `RtspServer` (the [publisher ingest](#rtsp-publisher-ingest-orgtstransrtp)
 above) or any server that takes RTSP 1.0 RECORD over TCP.
 
+<!-- compile: java-statements -->
 ```java
 import org.tstrans.rtp.*;
 
@@ -2753,6 +2841,7 @@ and ffmpeg do with a push.
 RTP/RTSP (RFC 6184 — single-NALU, STAP-A, FU-A; packetization modes 0 and 1).
 The canonical path for an RTSP camera uses `RtspClient.connectH264`:
 
+<!-- compile: java-statements -->
 ```java
 import org.tstrans.rtp.*;
 import org.tstrans.mpegts.MuxerConfig;
@@ -2880,6 +2969,7 @@ no "no socket" code path once constructed.
 `MuxPublisher` owns a muxer and an `HlsPublisher` so you push elementary
 streams instead of TS bytes. Mirrors `tstrans.hls`.
 
+<!-- compile: java-statements -->
 ```java
 import org.tstrans.hls.HlsMode;
 import org.tstrans.hls.HlsPublisher;
@@ -2931,6 +3021,7 @@ offer to the mount's path (WHEP) and gets H.264 or H.265 video with the KLV
 frame-locked to it, in an SEI message inside each access unit and on a `klv`
 data channel. Mirrors the Rust `tst_webrtc::WhepServer`.
 
+<!-- compile: java-statements -->
 ```java
 import org.tstrans.WebrtcException;
 import org.tstrans.webrtc.*;
@@ -3002,6 +3093,7 @@ Ctrl-C. The source is `bindings/jvm/src/examples/java/ServeWhep.java`; the
 Gradle build compiles it before the tests run, and runs it with
 `./gradlew runServeWhep --args='input.ts'` from `bindings/jvm`.
 
+<!-- compile: java-class -->
 ```java
 // ServeWhep: play an MPEG-TS file in a browser over WebRTC (WHEP).
 //
@@ -3276,6 +3368,7 @@ the window becomes `PairerOutput.UnpairedVideo` or `PairerOutput.UnpairedKlv`;
 every other demux event — PMT, off-PID samples, discontinuity notices — surfaces as
 `PairerOutput.PassThrough`.
 
+<!-- compile: java-statements -->
 ```java
 import java.time.Duration;
 import java.util.ArrayList;
@@ -3292,7 +3385,7 @@ int videoPid = 0x101, klvPid = 0x102;
 
 // Realtime nearest-PTS pairing, 100 ms tolerance. Pass null for demuxer defaults.
 PairingDemuxerConfig cfg = new PairingDemuxerConfig(
-    new PairerConfig(new PairerMode.Realtime(), Duration.ofMillis(100), 32, 32, true),
+    new PairerConfig(new PairerMode.Realtime(), Duration.ofMillis(100), 32, 32),
     null);
 
 try (Pairer pairer = new Pairer(videoPid, klvPid, cfg)) {
