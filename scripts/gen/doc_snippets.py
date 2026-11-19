@@ -33,16 +33,13 @@ line of its own: one that lists imports gets exactly those. A snippet that uses 
 `rtp`, `shells` or `webrtc` types carries its own `import` lines, as a
 reader's code must.
 
-Adding ` continues` before the closing `-->` of a `-statements` marker appends
-the block to the statements of the previous marked block (same wrapper, so its
-variables are in scope). `import` lines inside a Java `-statements` block are
+`import` lines inside a Java `-statements` block are
 hoisted above the class. An unmarked fence is ignored; a marker that is not
-followed by a fence of the matching language, or `continues` with nothing to
-continue, is an error.
+followed by a fence of the matching language, or any other HTML comment that
+starts with `compile`, is an error.
 
 Output: for each marked block `<out>/<page>-<n>.java|.c`, `n` counting the
-marked blocks of that page from 1 (a `continues` block shares its parent's
-file). A `java-class` block whose public type is named is written as
+marked blocks of that page from 1. A `java-class` block whose public type is named is written as
 `<out>/<page>-<n>/<Type>.java` so javac accepts it.
 
 Usage:  doc_snippets.py extract --out DIR PAGE.md [PAGE.md ...]
@@ -55,7 +52,7 @@ import sys
 
 MARKER = re.compile(
     r"^<!--\s*compile:\s*(java-statements|java-class|c-statements|c-file)"
-    r"(\s+continues)?\s*-->\s*$"
+    r"\s*-->\s*$"
 )
 MARKER_ANY = re.compile(r"^\s*<!--\s*compile\b", re.I)
 PRELUDE = re.compile(r"^<!--\s*compile-prelude:\s*(java|c)\s*$")
@@ -83,7 +80,7 @@ class SnippetError(Exception):
 
 
 def blocks(path):
-    """Yield (kind, continues, code, line_no) for each marked block of a page."""
+    """Yield (kind, code, line_no) for each marked block of a page."""
     with open(path, encoding="utf-8") as fh:
         lines = fh.read().split("\n")
     i = 0
@@ -102,16 +99,14 @@ def blocks(path):
                 j += 1
             if j >= len(lines):
                 raise SnippetError(f"{path}:{i + 1}: prelude comment is never closed")
-            yield "prelude-" + pm.group(1), False, "\n".join(lines[i + 1 : j]) + "\n", i + 1
+            yield "prelude-" + pm.group(1), "\n".join(lines[i + 1 : j]) + "\n", i + 1
             i = j + 1
             continue
         if MARKER_ANY.match(line):
             m = MARKER.match(line)
             if not m:
                 raise SnippetError(f"{path}:{i + 1}: unknown compile marker: {line}")
-            kind, cont = m.group(1), bool(m.group(2))
-            if cont and not kind.endswith("statements"):
-                raise SnippetError(f"{path}:{i + 1}: `continues` needs a -statements marker")
+            kind = m.group(1)
             f = FENCE.match(lines[i + 1]) if i + 1 < len(lines) else None
             if not f or f.group(1) != LANG[kind]:
                 raise SnippetError(
@@ -122,7 +117,7 @@ def blocks(path):
                 j += 1
             if j >= len(lines):
                 raise SnippetError(f"{path}:{i + 1}: fence is never closed")
-            yield kind, cont, "\n".join(lines[i + 2 : j]) + "\n", i + 1
+            yield kind, "\n".join(lines[i + 2 : j]) + "\n", i + 1
             i = j + 1
             continue
         opened = re.match(r"^(`{3,})", line)
@@ -171,14 +166,9 @@ def extract(pages, out):
             written.append(path)
             pending = None
 
-        for kind, cont, code, line_no in blocks(page):
+        for kind, code, line_no in blocks(page):
             if kind.startswith("prelude-"):
                 prelude[kind[8:]] += code
-                continue
-            if cont:
-                if pending is None or pending[0] != kind:
-                    raise SnippetError(f"{page}:{line_no}: `continues` has no previous {kind} block")
-                pending[2] += code
                 continue
             flush()
             n += 1

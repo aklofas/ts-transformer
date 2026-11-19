@@ -78,16 +78,7 @@ class ExtractTests(unittest.TestCase):
         self.assertTrue(t.startswith('#include "tstrans.h"'))
         self.assertIn("int snippet_demo_1(void) {\nint a = 1;\n    return 0;\n}", t)
 
-    def test_continues_joins_previous_statements(self):
-        p, out = page(
-            "<!-- compile: java-statements -->\n```java\nint a = 1;\n```\n"
-            "<!-- compile: java-statements continues -->\n```java\nint b = a;\n```\n"
-        )
-        w = ds.extract([p], out)
-        self.assertEqual(len(w), 1)
-        self.assertIn("int b = a;", read(w[0]))
-
-    def test_continues_without_parent_is_error(self):
+    def test_continues_form_is_an_unknown_marker(self):
         p, out = page("<!-- compile: java-statements continues -->\n```java\nint b;\n```\n")
         with self.assertRaises(ds.SnippetError):
             ds.extract([p], out)
