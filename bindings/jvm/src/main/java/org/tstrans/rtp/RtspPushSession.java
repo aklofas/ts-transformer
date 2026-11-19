@@ -22,9 +22,12 @@ import org.tstrans.mpegts.MuxerConfig;
  * thread, not once they are on the wire. The queue is bounded: against a server that
  * reads slowly a data call waits for room. The wait ends when room frees, within about
  * 100&nbsp;ms of a cancel ({@link #cancelHandle()}, from any thread), when the session
- * ends, and at the latest when the server has taken no byte for 5&nbsp;s, which ends
- * the connection. {@link #pause()}, {@link #teardown()} and {@link #close()} first wait
- * the same way for the queued media to be written.
+ * ends, and when the local socket has taken no byte for 5&nbsp;s (the server reads
+ * nothing), which ends the connection. That is not a bound on the whole wait: a server
+ * that keeps reading a few bytes within every 5&nbsp;s holds the call for as long as it
+ * does so, and the cancel handle is the way out. {@link #pause()}, {@link #teardown()}
+ * and {@link #close()} first wait the same way, with no total bound either, for the
+ * queued media to be written.
  *
  * <p><b>Thread safety.</b> The data, control and {@link #stats()} calls run one at a
  * time: a call made while another is in progress on another thread waits for it.
@@ -58,8 +61,18 @@ import org.tstrans.mpegts.MuxerConfig;
  * packets; some servers end the session on a packet sent while it is paused.
  *
  * <p><b>Keepalive.</b> A server may end a session it reads nothing from for its own
- * timeout. With {@link RtspClientConfig#keepalive()} (the default) the client sends
- * keepalive pings; without it, a push that can stay silent that long may be ended.
+ * timeout, which can be shorter than the session timeout it advertises (10&nbsp;s on
+ * some servers). With {@link RtspClientConfig#keepalive()} (the default) the client
+ * sends keepalive pings at half the advertised session timeout (60&nbsp;s when the
+ * server names none), and the config has no interval: the pings do not protect a push
+ * that goes silent against a server whose own timeout is shorter than that, so keep
+ * media flowing. Without keepalive, a push that can stay silent for the server's
+ * timeout may be ended.
+ *
+ * <p><b>Not closing.</b> A session that is never closed keeps its connection, the
+ * client's thread and its keepalive pings, and the server keeps the recording
+ * session, until the process ends: nothing closes it when it is collected. Close it,
+ * for example in a try-with-resources block.
  */
 public final class RtspPushSession extends NativeHandle {
     static { NativeLoader.load(); }
@@ -168,12 +181,14 @@ public final class RtspPushSession extends NativeHandle {
      * nothing. (The play session's {@link RtspSession#teardown()} keeps its session open
      * instead.) Like {@code close()}, it cancels a send, {@code pause()} or
      * {@code resume()} running on another thread first, and waits without cancelling
-     * for a {@link #stats()} and for a call only waiting for the session (which then
-     * runs nothing and throws {@code CLOSED}).
+     * for a {@link #stats()} in progress. A send, {@code pause()} or {@code resume()}
+     * only waiting for the session is not cancelled, and the teardown does not wait for
+     * it to run: it runs nothing and throws {@code CLOSED}.
      *
      * @throws RtspException with the kind of the status for a TEARDOWN the server refuses
-     *     ({@code PROTOCOL}, or {@code NOT_FOUND} for a 404); {@code CLOSED} on a
-     *     cancelled session (the TEARDOWN is still written); {@code TIMEOUT} when no
+     *     ({@code PROTOCOL}, or {@code NOT_FOUND} for a 404); {@code PROTOCOL} with
+     *     status 454 when the server had forgotten the session and queued media was
+     *     dropped; {@code CLOSED} on a cancelled session (the TEARDOWN is still written); {@code TIMEOUT} when no
      *     reply came within the bound; {@code IO} when the connection failed
      * @throws IllegalStateException if the session is closed
      */
@@ -329,8 +344,10 @@ public final class RtspPushSession extends NativeHandle {
      * return at once. Called while a send, {@code pause()} or {@code resume()} is
      * running on another thread, it fires the cancel first: that call throws
      * {@code CLOSED}, what is still queued is dropped, and the TEARDOWN is written
-     * without the wait. A {@link #stats()} in progress is waited for instead, and so is a call only waiting for the session (it then runs
-     * nothing and throws {@code CLOSED}); the session then closes as an idle one does.
+     * without the wait. A {@link #stats()} in progress is waited for instead, and the
+     * session then closes as an idle one does. A send, {@code pause()} or
+     * {@code resume()} only waiting for the session is not cancelled, and the close does
+     * not wait for it to run: it runs nothing and throws {@code CLOSED}.
      */
     @Override public void close() { super.close(); }
 

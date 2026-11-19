@@ -17,7 +17,10 @@ package org.tstrans.rtp;
  * @param framesDroppedInbound frames the server sent on a channel this side sends
  *     media on, read and dropped
  * @param framesDroppedAtClose frames still queued, not yet handed to the connection,
- *     when the session ended: they were never written
+ *     when the session ended: they were never written. It can be read only while the
+ *     session is open (one the server ended, for example): {@code stats()} throws once
+ *     the session is closed. {@link RtspPushSession#teardown()} is the call that reports
+ *     a loss: it throws when queued media was dropped.
  */
 public record RtspPushStats(
         long packetsSent,
