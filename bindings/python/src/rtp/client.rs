@@ -629,12 +629,20 @@ impl PyRtspClient {
     /// SETUP every track (`mode=record`, interleaved on the control
     /// connection) and RECORD. Returns the recording `RtspPushSession`.
     ///
-    /// Raises `RtspError` on any failure of the four steps; the connection
-    /// is closed then (after a TEARDOWN once a session is open). A
-    /// `transport_pref` of `UDP` raises `UNSUPPORTED_TRANSPORT` before any
-    /// SETUP is written, and `rtsp_version` 2.0 `PROTOCOL` before the
-    /// ANNOUNCE is (RTSP 2.0 has no ANNOUNCE). GIL released for the network
-    /// exchange.
+    /// Raises `RtspError` when any of the four steps fails; the connection
+    /// is closed then (after a TEARDOWN once a session is open).
+    /// `transport_pref=TransportPref.UDP`, or a URL carrying
+    /// `?transport=udp`, raises `UNSUPPORTED_TRANSPORT` before any SETUP is
+    /// written (publishing over UDP is not implemented), and
+    /// `rtsp_version=V2_0` raises `PROTOCOL` before the ANNOUNCE is written
+    /// (RTSP 2.0 has no ANNOUNCE). GIL released for the network exchange.
+    ///
+    /// `keepalive=True` (the default) sends keepalive pings at half the
+    /// session timeout the server advertises; the config has no interval.
+    /// The pings do not keep alive a push that goes silent for less than
+    /// that: a server may end a publisher it reads nothing from sooner
+    /// (mediamtx 1.21.4 after 10 s, while it advertises 55 s), so keep
+    /// media flowing.
     #[staticmethod]
     fn push(
         py: Python<'_>,

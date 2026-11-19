@@ -215,7 +215,12 @@ impl PyRtspPushStats {
     fn frames_dropped_inbound(&self) -> u64 {
         self.frames_dropped_inbound
     }
-    /// Frames still queued, never written, when the session ended.
+    /// Frames still queued, never written, when the session ended or its
+    /// TEARDOWN was sent. Readable only while the session object is open (a
+    /// session the server ended): `stats()` raises `CLOSED` after `close()`
+    /// and `teardown()`. `teardown()` is the call that reports a loss at
+    /// the end: it raises unless the queued media was written and the
+    /// server accepted the TEARDOWN.
     #[getter]
     fn frames_dropped_at_close(&self) -> u64 {
         self.frames_dropped_at_close

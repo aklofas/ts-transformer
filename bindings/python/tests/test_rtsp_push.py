@@ -571,6 +571,16 @@ def test_transport_udp_is_unsupported_transport() -> None:
         assert _wait_for(lambda: mount.publisher() is None)
 
 
+def test_a_transport_udp_url_is_unsupported_transport() -> None:
+    with _start_server() as server:
+        mount = server.add_publish_mount("/cam")
+        cfg = RtspClientConfig(_url(server, "/cam?transport=udp"))
+        with pytest.raises(RtspError) as ei:
+            RtspClient.push(cfg, PushDescription.mp2t())
+        assert ei.value.kind is RtspErrorKind.UNSUPPORTED_TRANSPORT
+        assert _wait_for(lambda: mount.publisher() is None)
+
+
 def test_rtsp_version_2_is_refused_locally() -> None:
     server = ScriptedRecordServer()
     try:
