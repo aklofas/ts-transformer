@@ -93,13 +93,21 @@ fn throw_runtime(env: &mut Env, msg: String) {
     );
 }
 
+/// [`throw_runtime`] unless an exception is already pending (a JNI failure such as an
+/// out-of-memory error leaves one, and JNI allows only one).
+fn throw_runtime_unless_pending(env: &mut Env, msg: String) {
+    if !env.exception_check() {
+        throw_runtime(env, msg);
+    }
+}
+
 /// A copy of a Java `byte[]`; `None` with a `RuntimeException` pending when JNI
 /// cannot read it.
 fn read_bytes(env: &mut Env, arr: &JByteArray<'_>) -> Option<Vec<u8>> {
     match env.convert_byte_array(arr) {
         Ok(b) => Some(b),
         Err(e) => {
-            throw_runtime(env, e.to_string());
+            throw_runtime_unless_pending(env, e.to_string());
             None
         }
     }
@@ -114,7 +122,7 @@ fn read_byte_arrays(env: &mut Env, arr: &JObjectArray<'_>) -> Option<Vec<Vec<u8>
     let len = match arr.len(env) {
         Ok(n) => n,
         Err(e) => {
-            throw_runtime(env, e.to_string());
+            throw_runtime_unless_pending(env, e.to_string());
             return None;
         }
     };
@@ -139,7 +147,7 @@ fn read_byte_arrays(env: &mut Env, arr: &JObjectArray<'_>) -> Option<Vec<Vec<u8>
                 return None;
             }
             Err(e) => {
-                throw_runtime(env, e.to_string());
+                throw_runtime_unless_pending(env, e.to_string());
                 return None;
             }
         }
