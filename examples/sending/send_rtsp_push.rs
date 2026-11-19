@@ -83,8 +83,9 @@
 //! A `recording` line once the server has accepted ANNOUNCE, SETUP and
 //! RECORD, a progress line every second, the push's counters, and how the
 //! session ended. The `es` form's counters include the sender reports
-//! sent and the receiver reports the server sent back; neither mediamtx
-//! 1.21.4 nor ffmpeg 6.1 sends any to a TCP publisher, so that one reads 0.
+//! sent and the receiver reports the server sent back. This library's
+//! server, mediamtx 1.21.4 and ffmpeg 6.1 send none to a TCP publisher, so
+//! that one reads 0 against all three.
 //!
 //! # Compile gate (not run in CI)
 //!
@@ -187,9 +188,11 @@ fn push_mpeg_ts(builder: RtspClientBuilder, url: &str) -> Result<(), Box<dyn Err
         wait_until(start + FRAME_INTERVAL * i as u32);
         let pts = Pts90khz::new(i * FRAME_TICKS);
         let key_frame = i % KEY_FRAME_EVERY == 0;
-        // An error here ends the push: the server closed the connection
-        // (`TransportError::Broken` inside the `MuxSenderError`), the
-        // connection failed, or it took no byte for 5 s.
+        // A `MuxSenderError` whose source is the transport ends the push:
+        // `TransportError::Broken` when the server closed the connection,
+        // the connection failed or took no byte for 5 s, and
+        // `ExplicitClose` after a cancel. One whose source is the muxer (a
+        // frame it refuses) leaves the push open. This loop stops on either.
         sender.send_video(&access_unit(i), pts, key_frame)?;
         sender.send_klv(&klv_record(i)?, pts, 0)?;
         if key_frame && i > 0 {
@@ -257,7 +260,8 @@ fn push_elementary(builder: RtspClientBuilder, url: &str) -> Result<(), Box<dyn 
     // A send waits when the server reads slower than the push sends. To
     // end such a wait from another thread, take `push.cancel_handle()`
     // before the loop and call `cancel()` on it: the send returns
-    // `TransportError::ExplicitClose` within about 100 ms.
+    // `PushError::Transport(TransportError::ExplicitClose)` within about
+    // 100 ms.
     let start = Instant::now();
     for i in 0..FRAMES {
         wait_until(start + FRAME_INTERVAL * i as u32);

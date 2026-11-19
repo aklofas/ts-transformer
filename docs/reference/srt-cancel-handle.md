@@ -376,8 +376,10 @@ dropped; one that finds only a `stats()` or `is_session_alive()` in
 progress waits for it and closes as an idle session does. A Python session
 collected without `close()` is the `Drop` row.
 
-**One exception to "`Broken` means the end".** Every other `Broken` from a
-push follows the session's end (the server closed the connection, the
+**One exception to "`Broken` means the end".** `TransportError::Broken`
+reads "Transport is dead. Caller must rebuild it (or rely on a managed
+wrapper to do so)". Every other `Broken` from a push follows the session's
+end (the server closed the connection, the
 connection failed or stalled for 5 s, a keepalive ping was answered `454`,
 the server broke the framing). A payload `send_ts` refuses is reported
 `Broken` while the push stays alive: an empty payload, one that is not

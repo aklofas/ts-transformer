@@ -25,7 +25,7 @@ recording session.
 | What you announce | You send | The server receives |
 |---|---|---|
 | One MPEG-TS track (RFC 2250, payload type 33) | whole TS packets, at most 1 316 bytes (seven packets) per call, or a `MuxSender` / `Sender` over the push | your TS bytes |
-| One H.264 track (RFC 6184, packetization mode 1) or one H.265 track (RFC 7798), and optionally one KLV track (RFC 6597) | one access unit per `send_video`, one KLV unit per `send_klv` | two RTP tracks; KLV placed on the video's clock by the sender reports |
+| One H.264 track (RFC 6184, packetization mode 1) or one H.265 track (RFC 7798), and optionally one KLV track (RFC 6597) | one access unit per `send_video`, one KLV unit per `send_klv` | the video track, and the KLV track when announced, placed on the video's clock by the sender reports |
 
 ---
 
@@ -36,7 +36,7 @@ The MPEG-TS form: the push is a `Transport`, so a `MuxSender` owns it.
 ```rust,no_run
 use std::time::Duration;
 use tst_core::mpegts::common::Pts90khz;
-use tst_core::mpegts::mux::MuxerConfig;
+use tst_core::mpegts::mux::{KlvStreamType, MuxerConfig, MuxerProgramConfigBuilder, VideoCodec};
 use tst_pipeline::MuxSender;
 use tst_rtp::{PushDescription, RtspClientBuilder, RtspPush};
 
@@ -46,12 +46,18 @@ let builder = RtspClientBuilder::new("rtsp://127.0.0.1:8554/cam")?
     // (mediamtx: 10 s without a byte). Only a builder-made client pings.
     .keepalive_interval(Duration::from_secs(5));
 let push = RtspPush::connect(builder, &PushDescription::Mp2t)?; // ANNOUNCE, SETUP, RECORD
-let sender = MuxSender::new(push, MuxerConfig::default())?;
+// H.264 and KLV, each KLV record with a PTS so a receiver can pair it.
+let mut program = MuxerProgramConfigBuilder::new(1, 0x1000);
+program.add_video(0x1011, VideoCodec::H264);
+program.add_klv(0x1031, KlvStreamType::PrivateData, true);
+let mut config = MuxerConfig::builder();
+config.add_program(program.build());
+let sender = MuxSender::new(push, config.build()?)?;
 for (au, klv, pts, key_frame) in frames() {
     sender.send_video(&au, pts, key_frame)?;
     sender.send_klv(&klv, pts, 0)?;
 }
-sender.finish()?; // no cancel: queue written, then TEARDOWN (unreported)
+sender.finish()?; // no cancel; cannot report a lost tail (see "Ending a push")
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
@@ -102,7 +108,7 @@ with push.into_mux_sender(program) as sender:  # the sender now owns the push
         pts = Pts90khz.from_raw(i * 3000)
         sender.send_video(au, pts=pts, key_frame=(i % 30 == 0))
         sender.send_klv(klv, pts=pts)
-    sender.finish()  # no cancel: queue written, then TEARDOWN (unreported)
+    sender.finish()  # no cancel; cannot report a lost tail (see "Ending a push")
 # The with exit frees the sender; without finish() it would cancel first.
 
 # H.264 + KLV through the session itself.
@@ -203,11 +209,10 @@ what was still queued, up to 1 024 frames, and `finish()` still returns
 without an error. When you must know, send through the session itself
 (`send_ts`) and read the result of its close: `RtspPush::close()` returns
 `Ok(())` only when the queued media was written and the server accepted the
-TEARDOWN; in Python and on the JVM, `teardown()` raises otherwise. A shell's
-`close()` fires the push's cancel first (the library's
-contract for every transport), so it can drop packets queued a moment
-before; in Python and on the JVM that holds for both `MuxSender.close()` and
-`Sender.close()`. In Rust, `Sender::close()` and a dropped `MuxSender` or
+TEARDOWN; in Python and on the JVM, `teardown()` raises otherwise.
+`MuxSender::close()` fires the push's cancel first, and in Python and on the
+JVM so does the `close()` of either shell (`MuxSender` or `Sender`), so it
+can drop packets queued a moment before. In Rust, `Sender::close()` and a dropped `MuxSender` or
 `Sender` close the push without a cancel, with the same limit as `finish()`.
 
 `close()` in Python and on the JVM, called while a send is waiting on another
@@ -261,7 +266,7 @@ both tracks by arrival.
 | Credentials | Basic, Digest MD5 or SHA-256; per mount through mount rules | Basic by default; Digest (MD5) when `rtspAuthMethods` lists it | none |
 | `rtsps://` | with the `rtsp-server-tls` feature | with `rtspEncryption: optional` or `strict` | no (measured on a GnuTLS build) |
 | Receiver reports to a TCP publisher | none | none | none |
-| TEARDOWN | accepted | `200` | `501`: `close()` reports a refused TEARDOWN; the listener keeps recording until the connection closes, then writes its output |
+| TEARDOWN | accepted; refused `403` after a mount rule withdrew the publish right | `200` | `501`: `close()` reports a refused TEARDOWN; the listener keeps recording until the connection closes, then writes its output |
 | A silent publisher | ended by its session timeout, and by `publish_idle_timeout` when set | ended after 10 s without a byte | never ended |
 | Notes | the [ingest recipe](/docs/cookbook/receiving/rtsp-publish-ingest.md) | drops an MPEG-TS RTP payload above 1 440 bytes (the push sends 1 316) | its MPEG-TS output misses the last access unit |
 
@@ -279,11 +284,11 @@ ffmpeg's listener (MPEG-TS); see
 
 ### Not built
 
-UDP RECORD (`?transport=udp`, `transport_pref=TransportPref.UDP` in Python
-or `TransportPref.UDP` on the JVM is refused before any SETUP is written),
-audio tracks, RTSP 2.0 (it has no ANNOUNCE or RECORD: refused before the
-ANNOUNCE), answering requests the server sends, and a C API for the push. The C binding still
-receives from and serves RTSP. See
+UDP RECORD (`?transport=udp`, `transport_pref=TransportPref.UDP` in Python or
+`TransportPref.UDP` on the JVM is refused before any SETUP is written), audio
+tracks, RTSP 2.0 (it has no ANNOUNCE or RECORD: refused before the ANNOUNCE),
+answering requests the server sends, and a C API for the push. The C binding
+still receives from and serves RTSP. See
 [deferred features](/docs/project/deferred-features.md).
 
 ---

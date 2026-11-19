@@ -742,9 +742,9 @@ was dropped.
 nothing is published.
 
 **Diagnosis:** the server does not take a track the description announces.
-This library's `RtspServer` takes one MPEG-TS track, one H.264 track, or
-H.264 with one KLV track; it answers `415` to an H.265 track. mediamtx 1.21.4 takes MPEG-TS, and H.264 or H.265 with or
-without KLV.
+This library's `RtspServer` takes one MPEG-TS track, one H.264 track, or H.264
+with one KLV track; it answers `415` to an H.265 track. mediamtx 1.21.4 takes
+MPEG-TS, and H.264 or H.265 with or without KLV.
 
 **Fix:** announce a shape the server takes. To carry H.265 (or audio) to
 this library's server, mux it into MPEG-TS and push `PushDescription::Mp2t`

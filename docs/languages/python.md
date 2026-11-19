@@ -1501,10 +1501,10 @@ How each call ends:
 |---|---|---|
 | `RtspClient.push` | `RtspError` | A step failed; the connection is closed. The kind: `UNSUPPORTED_TRANSPORT` for `transport_pref=TransportPref.UDP` (no SETUP written) or a SETUP reply that is not interleaved; `NOT_FOUND` for a `404` (no such path); `AUTH_REQUIRED` for a `401` and for a challenge that offers no scheme the credential may answer; `AUTH_FAILED` when the server refused the credential, or challenged a client that has none; `PROTOCOL` for `rtsp_version=RtspVersion.V2_0` (no ANNOUNCE written), a description that lacks a parameter set, any other refused status (a server that does not take the codec answers `415`) and a reply the client cannot use; `IO`, `TLS` and `TIMEOUT` for the connection, its TLS handshake and an unanswered request. |
 | a data call | `RtpError(CLOSED)` | The cancel handle fired, or the session was closed. |
-| a data call | `RtpError(BROKEN)` | The server closed the connection, the connection failed or took no byte for 5 s, or a keepalive ping was answered `454`. Also a TS payload that is not whole packets, which leaves the session open. |
+| a data call | `RtpError(BROKEN)` | The server closed the connection, the connection failed or took no byte for 5 s, a keepalive ping was answered `454`, or the server broke the framing. Also a TS payload that is not whole packets, which leaves the session open. |
 | `send_ts` | `RtpError(TOO_LARGE)` | More than 1316 bytes; nothing sent. |
 | a data call | `ValueError` | A track the push did not announce (`send_klv` without `klv=True`, `send_video` / `send_klv` on an MPEG-TS push, `send_ts` on an elementary one) or an empty unit; nothing sent. |
-| `teardown()` | `RtspError` | The server refused the TEARDOWN (`PROTOCOL`, or `NOT_FOUND` for a 404), or `CLOSED` on a cancelled push. The session is closed either way. |
+| `teardown()` | `RtspError` | The server refused the TEARDOWN (`PROTOCOL`, or `NOT_FOUND` for a 404), or had forgotten the session and queued media was dropped (`PROTOCOL`, status `454`); `TIMEOUT` when no reply came within the 500 ms; `IO` when the connection had ended; `CLOSED` on a cancelled push. The session is closed either way. |
 | `close()`, the `with` exit | `None` | Whatever the server answered. |
 
 Rules the types do not enforce:

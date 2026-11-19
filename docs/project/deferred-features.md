@@ -1505,9 +1505,11 @@ mean **Deferred**. An entry whose feature has shipped must never read
   shape — mux video + KLV + audio into MPEG-TS, then send over RTP —
   is sufficient for all current deployments; bare H.264 RTP output is a
   camera-side concern.
-- **Trigger to revisit:** A consumer needs to push bare H.264 or H.265 RTP
-  to an ONVIF recorder or a gateway that does not accept MPEG-TS (the
-  WebRTC crate packetizes for its own sessions).
+- **Trigger to revisit:** A consumer needs to send bare H.264 or H.265 RTP
+  without RTSP (plain RTP over UDP, outside an RTSP RECORD session) to a
+  recorder or gateway that does not accept MPEG-TS (the WebRTC crate
+  packetizes for its own sessions; a gateway that takes RTSP RECORD is
+  served by `RtspPush`).
 
 ## RTP interleaved mode 2 (STAP-B / MTAP / FU-B / DON)
 
