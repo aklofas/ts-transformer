@@ -62,6 +62,7 @@ echo '[{"number":41}]' > "$TMP/open.json"
 : > "$TMP/gh.log"
 bash "$SCRIPT" close-if-open abc1234def5678 https://example.invalid/runs/2
 [ "$(grep -c '^issue close \[41\]' "$TMP/gh.log")" = 1 ] || { echo "FAIL: expected one issue close on 41"; cat "$TMP/gh.log"; exit 1; }
+grep -q '^issue list.*\[--label\] \[ci-nightly\].*\[--state\] \[open\]' "$TMP/gh.log" || { echo "FAIL: close-if-open lists other issues"; cat "$TMP/gh.log"; exit 1; }
 grep -q '^issue close \[41\].*\[--comment\].*https://example.invalid/runs/2' "$TMP/gh.log" || { echo "FAIL: close comment lacks the run URL"; cat "$TMP/gh.log"; exit 1; }
 ! grep -q '^issue create\|^issue comment' "$TMP/gh.log" || { echo "FAIL: close-if-open opened or commented"; exit 1; }
 

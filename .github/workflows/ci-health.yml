@@ -29,6 +29,7 @@ jobs:
         # No submodules: the script reads the REST API and jq only.
 
       - name: Aggregate runs + reruns
+        timeout-minutes: 10
         env:
           GH_TOKEN: ${{ github.token }}
         run: bash scripts/dev/ci-health.sh --append ci-health-week.csv

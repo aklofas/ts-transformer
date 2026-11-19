@@ -7,7 +7,7 @@
 # is read once. A tip that already has a nightly run is not dispatched again:
 # one still queued or running is waited on, a completed one skips the night,
 # and when that run ended red and no open ci-nightly issue names the tip, the
-# job reports it. A green run closes the open ci-nightly issue.
+# job reports it. A green run it waited on closes the open ci-nightly issue.
 #
 # The dispatched run executes the full set because test-main-extra runs on
 # every event except pull_request.
@@ -53,6 +53,7 @@ jobs:
               echo "skip=true" >> "$GITHUB_OUTPUT"
               echo "pending_run_id=$id" >> "$GITHUB_OUTPUT"
               ;;
+            dispatch) ;;
             skip)
               echo "tip $tip already has a nightly run; nothing to dispatch" >> "$GITHUB_STEP_SUMMARY"
               echo "skip=true" >> "$GITHUB_OUTPUT"
@@ -66,6 +67,7 @@ jobs:
                 fi
               fi
               ;;
+            *) echo "unexpected verdict: $verdict" >&2; exit 1 ;;
           esac
 
       - name: Dispatch ci on the tip

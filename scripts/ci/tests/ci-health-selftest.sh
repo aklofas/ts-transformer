@@ -68,11 +68,20 @@ norm "$TMP/c2.out" | diff -u "$FX/expected.txt" - || fail "case 2: output differ
 [ "$(grep -c 'runs/101/jobs' "$TMP/gh.log")" = 2 ] || fail "case 2: expected two jobs calls for run 101"
 rm "$TMP/fail-jobs-101"
 
+# 2b: two failures, then the third attempt answers: three calls in all.
+echo 2 > "$TMP/fail-jobs-101"
+run_case c2b
+rc_is c2b 0
+norm "$TMP/c2b.out" | diff -u "$FX/expected.txt" - || fail "case 2b: output differs after two failed calls"
+[ "$(grep -c 'runs/101/jobs' "$TMP/gh.log")" = 3 ] || fail "case 2b: expected three jobs calls for run 101"
+rm "$TMP/fail-jobs-101"
+
 # 3: run 102's jobs never come: left out and listed, the rest aggregated.
 echo 3 > "$TMP/fail-jobs-102"
 run_case c3
 rc_is c3 0
 grep -q 'Runs whose jobs could not be read' "$TMP/c3.sum" || fail "case 3: summary lacks the heading"
+[ "$(grep -c 'runs/102/jobs' "$TMP/gh.log")" = 3 ] || fail "case 3: expected three jobs calls for run 102"
 grep -q '102' "$TMP/c3.sum" || fail "case 3: summary does not name run 102"
 grep -q 'repos/.*/runs/102/jobs.*gh api failed (gh: Server Error (HTTP 502))' "$TMP/c3.err" || { cat "$TMP/c3.err"; fail "case 3: stderr lacks the failure line"; }
 grep -q '^csv: .*"test (windows):1;build (linux):1"' "$TMP/c3.out" || { grep '^csv' "$TMP/c3.out"; fail "case 3: the other runs were not aggregated"; }
@@ -98,4 +107,4 @@ run_case c6
 ! grep 'runs/.*/jobs' "$TMP/gh.log" | grep -q 'per_page=100' || fail "case 6: a jobs request carries per_page=100"
 grep -q 'runs/.*/jobs.*per_page=30' "$TMP/gh.log" || fail "case 6: no jobs request carries per_page=30"
 
-echo "PASS: 6 cases"
+echo "PASS: 7 cases"
