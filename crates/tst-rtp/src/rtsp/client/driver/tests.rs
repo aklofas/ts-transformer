@@ -7,8 +7,8 @@ use tst_core::transport::EndReason;
 use tst_test_helpers::timing::scaled;
 
 use crate::rtsp::auth::AuthSchemes;
-use crate::rtsp::client::engine::EngineConfig;
-use crate::rtsp::message::{RtspMethod, RtspRequest};
+use crate::rtsp::client::engine::{EngineConfig, RouteKind, SetupAccepted, SetupRoute};
+use crate::rtsp::message::{RtspMethod, RtspRequest, RtspResponse};
 use crate::url::RtspVersion;
 
 const URI: &str = "rtsp://127.0.0.1/x";
@@ -29,6 +29,7 @@ fn options() -> RequestSpec {
         uri: URI.to_string(),
         headers: Vec::new(),
         body: None,
+        setup: None,
     }
 }
 
@@ -39,6 +40,7 @@ struct Harness {
     session_dead: Arc<AtomicBool>,
     end_reason: EndReasonHandle,
     media_dropped: Arc<AtomicU64>,
+    frames_dropped_inbound: Arc<AtomicU64>,
 }
 
 fn drive(stream: Stream) -> Harness {
@@ -51,6 +53,7 @@ fn drive_with(stream: Stream, write_stall: Duration) -> Harness {
         session_dead: Arc::new(AtomicBool::new(false)),
         end_reason: EndReasonHandle::default(),
         media_dropped: Arc::new(AtomicU64::new(0)),
+        frames_dropped_inbound: Arc::new(AtomicU64::new(0)),
         exit_gate: None,
     };
     Harness {
@@ -58,21 +61,63 @@ fn drive_with(stream: Stream, write_stall: Duration) -> Harness {
         session_dead: shared.session_dead.clone(),
         end_reason: shared.end_reason.clone(),
         media_dropped: shared.media_dropped.clone(),
+        frames_dropped_inbound: shared.frames_dropped_inbound.clone(),
         handle: spawn_with(stream, engine(), shared, write_stall).unwrap(),
     }
 }
 
 impl Harness {
     fn request(&self, spec: RequestSpec) -> mpsc::Receiver<Progress> {
+        self.request_routed(spec, None)
+    }
+
+    fn request_routed(
+        &self,
+        spec: RequestSpec,
+        route: Option<RouteSpec>,
+    ) -> mpsc::Receiver<Progress> {
         let (progress, rx) = mpsc::channel();
         self.handle
             .send(Command::Request {
                 spec,
+                route,
                 reply_deadline: None,
                 progress,
             })
             .unwrap();
         rx
+    }
+
+    /// Send a SETUP for route `id` whose sinks are `media` and a fresh
+    /// stats cell (reports are matched against SSRC `0x0102_0304`).
+    fn setup(
+        &self,
+        id: u8,
+        kind: RouteKind,
+        media: Option<mpsc::SyncSender<Bytes>>,
+    ) -> (mpsc::Receiver<Progress>, Arc<Mutex<RtcpStats>>) {
+        let stats = Arc::new(Mutex::new(RtcpStats::default()));
+        let rx = self.request_routed(
+            RequestSpec {
+                method: RtspMethod::Setup,
+                uri: URI.to_string(),
+                headers: Vec::new(),
+                body: None,
+                setup: Some(SetupRoute {
+                    id: RouteId(id),
+                    kind,
+                }),
+            },
+            Some(RouteSpec {
+                id: RouteId(id),
+                inbound_media: media,
+                inbound_rtcp: RtcpSink {
+                    stats: stats.clone(),
+                    ssrc: OUR_SSRC,
+                },
+            }),
+        );
+        (rx, stats)
     }
 
     fn wait_end(&self) -> EndReason {
@@ -108,11 +153,15 @@ fn assert_no_more(rx: &mpsc::Receiver<Progress>) {
     }
 }
 
-fn done_ok(p: Progress) -> RtspResponse {
+fn done_outcome(p: Progress) -> ReplyOutcome {
     match p {
-        Progress::Done(Ok(r)) => r,
+        Progress::Done(Ok(o)) => o,
         other => panic!("expected Done(Ok), got {other:?}"),
     }
+}
+
+fn done_ok(p: Progress) -> RtspResponse {
+    done_outcome(p).response
 }
 
 fn done_io(p: Progress) -> io::ErrorKind {
@@ -266,29 +315,315 @@ fn stop_after_eof_keeps_the_first_reason() {
     assert_eq!(h.stop_and_join().get(), Some(EndReason::CleanTeardown));
 }
 
-fn interleaved(h: &Harness, data_tx: mpsc::SyncSender<Bytes>) -> Arc<Mutex<RtcpStats>> {
-    let stats = Arc::new(Mutex::new(RtcpStats::default()));
-    h.handle
-        .send(Command::SetInterleaved {
-            channels: InterleavedChannels { rtp: 0, rtcp: 1 },
-            data_tx,
-            rtcp: RtcpSink {
-                stats: stats.clone(),
-                ssrc: 0x0102_0304,
-            },
-        })
+/// The SSRC the routes' RTCP sinks match report blocks against.
+const OUR_SSRC: u32 = 0x0102_0304;
+
+fn setup_reply(cseq: u32, transport: &str) -> Vec<u8> {
+    format!("RTSP/1.0 200 OK\r\nCSeq: {cseq}\r\nSession: S1\r\nTransport: {transport}\r\n\r\n")
+        .into_bytes()
+}
+
+/// One SETUP answered with the channel pair `rtp`/`rtcp`: the route is
+/// installed and everything sent to the driver before it has been handled.
+fn route(
+    h: &Harness,
+    peer: &mut impl ReadWrite,
+    rest: &mut Vec<u8>,
+    (id, kind): (u8, RouteKind),
+    (rtp, rtcp): (u8, u8),
+    media: Option<mpsc::SyncSender<Bytes>>,
+) -> Arc<Mutex<RtcpStats>> {
+    let (rx, stats) = h.setup(id, kind, media);
+    assert!(matches!(next(&rx), Progress::Written));
+    let head = read_head(peer, rest);
+    let transport = format!("RTP/AVP/TCP;unicast;interleaved={rtp}-{rtcp}");
+    peer.write_all(&setup_reply(cseq(&head), &transport))
         .unwrap();
+    assert_eq!(
+        done_outcome(next(&rx)).setup,
+        Some(SetupAccepted {
+            route: RouteId(id),
+            rtp_channel: rtp,
+            rtcp_channel: rtcp,
+        })
+    );
     stats
 }
 
-fn rtp_frame(seq: u16, payload_len: usize) -> Vec<u8> {
+/// The receiving side's route, on channels 0/1, feeding `data_tx`.
+fn interleaved(
+    h: &Harness,
+    peer: &mut impl ReadWrite,
+    rest: &mut Vec<u8>,
+    data_tx: mpsc::SyncSender<Bytes>,
+) -> Arc<Mutex<RtcpStats>> {
+    route(h, peer, rest, (0, RouteKind::Pull), (0, 1), Some(data_tx))
+}
+
+fn frame(channel: u8, payload: &[u8]) -> Vec<u8> {
+    let mut f = vec![b'$', channel];
+    f.extend_from_slice(&(payload.len() as u16).to_be_bytes());
+    f.extend_from_slice(payload);
+    f
+}
+
+fn rtp_packet(seq: u16, payload_len: usize) -> Vec<u8> {
     let mut rtp = vec![0u8; crate::packet::RTP_HEADER_LEN];
     crate::packet::RtpHeader::new(seq, 0, 0).encode_into(&mut rtp);
     rtp.extend(std::iter::repeat_n(0xAB, payload_len));
-    let mut f = vec![b'$', 0];
-    f.extend_from_slice(&(rtp.len() as u16).to_be_bytes());
-    f.extend_from_slice(&rtp);
-    f
+    rtp
+}
+
+fn rtp_frame(seq: u16, payload_len: usize) -> Vec<u8> {
+    frame(0, &rtp_packet(seq, payload_len))
+}
+
+fn sender_report() -> Vec<u8> {
+    crate::rtcp::SenderReport {
+        ssrc: 0x1234_5678,
+        ntp_timestamp: 0xE000_0000_8000_0000,
+        rtp_timestamp: 90_000,
+        sender_packet_count: 10,
+        sender_octet_count: 1_880,
+        report_blocks: vec![],
+    }
+    .encode()
+    .unwrap()
+}
+
+/// A receiver report with one block, about `ssrc`, reporting `lost`.
+fn receiver_report(ssrc: u32, lost: i32) -> Vec<u8> {
+    crate::rtcp::ReceiverReport {
+        ssrc: 0xDEAD_BEEF,
+        report_blocks: vec![crate::rtcp::ReportBlock {
+            ssrc,
+            fraction_lost: 77,
+            cumulative_lost: lost,
+            extended_highest_seq: 0,
+            jitter: 900,
+            last_sr: 0,
+            delay_since_last_sr: 0,
+        }],
+    }
+    .encode()
+    .unwrap()
+}
+
+fn assert_queue_closed(data_rx: &mpsc::Receiver<Bytes>) {
+    assert!(matches!(
+        data_rx.recv_timeout(scaled(Duration::from_secs(5))),
+        Err(RecvTimeoutError::Disconnected)
+    ));
+}
+
+/// The frames a server sends right behind its SETUP reply are delivered:
+/// the sinks are with the client's thread before the reply can arrive, and
+/// the channel pair is in place when the reply is accepted.
+#[test]
+fn a_setup_reply_and_frames_in_one_write_reach_the_pull_receiver() {
+    let (stream, mut peer) = plain_pair();
+    let h = drive(stream);
+    let (data_tx, data_rx) = mpsc::sync_channel(8);
+    let (rx, stats) = h.setup(0, RouteKind::Pull, Some(data_tx));
+    assert!(matches!(next(&rx), Progress::Written));
+    let head = read_head(&mut peer, &mut Vec::new());
+    let mut bytes = setup_reply(cseq(&head), "RTP/AVP/TCP;unicast;interleaved=4-5");
+    bytes.extend(frame(4, &rtp_packet(7, 16)));
+    bytes.extend(frame(5, &sender_report()));
+    peer.write_all(&bytes).unwrap();
+    assert_eq!(
+        done_outcome(next(&rx)).setup,
+        Some(SetupAccepted {
+            route: RouteId(0),
+            rtp_channel: 4,
+            rtcp_channel: 5,
+        })
+    );
+    expect_media(&data_rx, 7);
+    wait_until("the sender report counted", || {
+        stats.lock().unwrap().sr_packets_received == 1
+    });
+    assert_eq!(h.media_dropped.load(Ordering::Relaxed), 0);
+    h.stop_and_join();
+}
+
+/// A SETUP whose reply installs no channel pair leaves the route as it
+/// was: its own queue closes and the installed one keeps delivering.
+#[test]
+fn a_setup_that_installs_nothing_drops_its_sinks_and_keeps_the_route() {
+    let (stream, mut peer) = plain_pair();
+    let h = drive(stream);
+    let mut rest = Vec::new();
+    let (first_tx, first_rx) = mpsc::sync_channel(8);
+    interleaved(&h, &mut peer, &mut rest, first_tx);
+    let mut seq = 0;
+    let mut still_delivers = |peer: &mut TcpStream| {
+        seq += 1;
+        peer.write_all(&rtp_frame(seq, 8)).unwrap();
+        expect_media(&first_rx, seq);
+    };
+
+    // A refusal.
+    let (data_tx, data_rx) = mpsc::sync_channel(8);
+    let (rx, _stats) = h.setup(0, RouteKind::Pull, Some(data_tx));
+    let head = read_head(&mut peer, &mut rest);
+    peer.write_all(
+        format!(
+            "RTSP/1.0 461 Unsupported Transport\r\nCSeq: {}\r\n\r\n",
+            cseq(&head)
+        )
+        .as_bytes(),
+    )
+    .unwrap();
+    assert!(matches!(next(&rx), Progress::Written));
+    let outcome = done_outcome(next(&rx));
+    assert_eq!((outcome.response.status, outcome.setup), (461, None));
+    assert_queue_closed(&data_rx);
+    still_delivers(&mut peer);
+
+    // A reply that is not interleaved.
+    let (data_tx, data_rx) = mpsc::sync_channel(8);
+    let (rx, _stats) = h.setup(0, RouteKind::Pull, Some(data_tx));
+    let head = read_head(&mut peer, &mut rest);
+    peer.write_all(&setup_reply(
+        cseq(&head),
+        "RTP/AVP;unicast;client_port=5004-5005;server_port=6000-6001",
+    ))
+    .unwrap();
+    assert!(matches!(next(&rx), Progress::Written));
+    assert_eq!(done_outcome(next(&rx)).setup, None);
+    assert_queue_closed(&data_rx);
+    still_delivers(&mut peer);
+
+    // A channel pair the engine refuses.
+    let (data_tx, data_rx) = mpsc::sync_channel(8);
+    let (rx, _stats) = h.setup(0, RouteKind::Pull, Some(data_tx));
+    let head = read_head(&mut peer, &mut rest);
+    peer.write_all(&setup_reply(
+        cseq(&head),
+        "RTP/AVP/TCP;unicast;interleaved=4-4",
+    ))
+    .unwrap();
+    assert!(matches!(next(&rx), Progress::Written));
+    assert!(matches!(
+        next(&rx),
+        Progress::Done(Err(RtspError::BadResponse { .. }))
+    ));
+    assert_queue_closed(&data_rx);
+    still_delivers(&mut peer);
+
+    // A SETUP replaced before its reply.
+    let (data_tx, data_rx) = mpsc::sync_channel(8);
+    let (replaced, _stats) = h.setup(0, RouteKind::Pull, Some(data_tx));
+    assert!(matches!(next(&replaced), Progress::Written));
+    let late = cseq(&read_head(&mut peer, &mut rest));
+    round_trip(&h, &mut peer, &mut rest);
+    assert_no_more(&replaced);
+    assert_queue_closed(&data_rx);
+    // Its late reply installs nothing either.
+    peer.write_all(&setup_reply(late, "RTP/AVP/TCP;unicast;interleaved=2-3"))
+        .unwrap();
+    still_delivers(&mut peer);
+    h.stop_and_join();
+}
+
+/// A second SETUP of the receiving route takes the route over when its
+/// reply is accepted: the first queue closes, the second gets the frames.
+#[test]
+fn a_new_pull_setup_takes_the_route_over_at_its_reply() {
+    let (stream, mut peer) = plain_pair();
+    let h = drive(stream);
+    let mut rest = Vec::new();
+    let (first_tx, first_rx) = mpsc::sync_channel(8);
+    interleaved(&h, &mut peer, &mut rest, first_tx);
+    let (second_tx, second_rx) = mpsc::sync_channel(8);
+    let (rx, _stats) = h.setup(0, RouteKind::Pull, Some(second_tx));
+    assert!(matches!(next(&rx), Progress::Written));
+    let head = read_head(&mut peer, &mut rest);
+    // Until the reply the first queue is the route's.
+    peer.write_all(&rtp_frame(1, 8)).unwrap();
+    expect_media(&first_rx, 1);
+    let mut bytes = setup_reply(cseq(&head), "RTP/AVP/TCP;unicast;interleaved=2-3");
+    bytes.extend(frame(2, &rtp_packet(2, 8)));
+    peer.write_all(&bytes).unwrap();
+    assert!(done_outcome(next(&rx)).setup.is_some());
+    expect_media(&second_rx, 2);
+    assert_queue_closed(&first_rx);
+    h.stop_and_join();
+}
+
+/// A SETUP the stream's end cuts off: its queue closes, and whoever sees
+/// that reads the reason.
+#[test]
+fn a_setup_cut_off_by_the_streams_end_closes_its_queue() {
+    let (stream, mut peer) = plain_pair();
+    let h = drive(stream);
+    let (data_tx, data_rx) = mpsc::sync_channel(8);
+    let (rx, _stats) = h.setup(0, RouteKind::Pull, Some(data_tx));
+    assert!(matches!(next(&rx), Progress::Written));
+    read_head(&mut peer, &mut Vec::new());
+    drop(peer);
+    assert_queue_closed(&data_rx);
+    assert_eq!(h.end_reason.get(), Some(EndReason::CleanTeardown));
+    assert_eq!(done_io(next(&rx)), io::ErrorKind::UnexpectedEof);
+    h.stop_and_join();
+}
+
+/// On a route this side sends on, what the peer sends on the RTP channel
+/// is counted and dropped, and its receiver reports reach the route's
+/// stats.
+#[test]
+fn a_frame_on_a_push_rtp_channel_adds_to_frames_dropped_inbound() {
+    let (stream, mut peer) = plain_pair();
+    let h = drive(stream);
+    let mut rest = Vec::new();
+    let stats = route(&h, &mut peer, &mut rest, (1, RouteKind::Push), (2, 3), None);
+    let mut bytes = frame(2, &rtp_packet(1, 8));
+    bytes.extend(frame(2, b"not RTP"));
+    bytes.extend(frame(3, &receiver_report(OUR_SSRC, 5)));
+    peer.write_all(&bytes).unwrap();
+    wait_until("the receiver report counted", || {
+        stats.lock().unwrap().rr_packets_received == 1
+    });
+    assert_eq!(h.frames_dropped_inbound.load(Ordering::Relaxed), 2);
+    assert_eq!(h.media_dropped.load(Ordering::Relaxed), 0);
+    assert_eq!(stats.lock().unwrap().cumulative_lost_send, 5);
+    h.stop_and_join();
+}
+
+/// A report block about another source says nothing of this route's
+/// stream: it is counted as a report and moves no loss figure.
+#[test]
+fn a_receiver_report_for_another_ssrc_changes_no_loss_figure() {
+    let (stream, mut peer) = plain_pair();
+    let h = drive(stream);
+    let mut rest = Vec::new();
+    let stats = route(&h, &mut peer, &mut rest, (1, RouteKind::Push), (2, 3), None);
+    peer.write_all(&frame(3, &receiver_report(OUR_SSRC ^ 1, 2024)))
+        .unwrap();
+    wait_until("the first report counted", || {
+        stats.lock().unwrap().rr_packets_received == 1
+    });
+    {
+        let s = stats.lock().unwrap();
+        assert_eq!(
+            (
+                s.cumulative_lost_send,
+                s.fraction_lost_q8,
+                s.interarrival_jitter_us
+            ),
+            (0, 0, 0)
+        );
+    }
+    // A block about this route's own source does move them.
+    peer.write_all(&frame(3, &receiver_report(OUR_SSRC, 5)))
+        .unwrap();
+    wait_until("the second report counted", || {
+        stats.lock().unwrap().rr_packets_received == 2
+    });
+    let s = stats.lock().unwrap();
+    assert_eq!((s.cumulative_lost_send, s.fraction_lost_q8), (5, 77));
+    assert_eq!(s.interarrival_jitter_us, 10_000);
 }
 
 fn seq_of(packet: &[u8]) -> u16 {
@@ -302,9 +637,8 @@ fn media_is_delivered_and_a_full_queue_drops_the_newest() {
     let (stream, mut peer) = plain_pair();
     let h = drive(stream);
     let (data_tx, data_rx) = mpsc::sync_channel(QUEUE);
-    interleaved(&h, data_tx);
     let mut rest = Vec::new();
-    round_trip(&h, &mut peer, &mut rest);
+    interleaved(&h, &mut peer, &mut rest, data_tx);
     let mut burst = Vec::new();
     for seq in 0..(QUEUE + EXTRA) as u16 {
         burst.extend(rtp_frame(seq, 8));
@@ -327,9 +661,8 @@ fn a_burst_larger_than_one_read_is_all_delivered() {
     let (client, mut peer) = socket_pair();
     let h = drive(Stream::from_plain(client).unwrap().with_read_budget(1024));
     let (data_tx, data_rx) = mpsc::sync_channel(FRAMES);
-    interleaved(&h, data_tx);
     let mut rest = Vec::new();
-    round_trip(&h, &mut peer, &mut rest);
+    interleaved(&h, &mut peer, &mut rest, data_tx);
     let mut burst = Vec::new();
     for seq in 0..FRAMES {
         burst.extend(rtp_frame(seq as u16, 20));
@@ -349,9 +682,8 @@ fn rtcp_reaches_the_stats_cell() {
     let (stream, mut peer) = plain_pair();
     let h = drive(stream);
     let (data_tx, _data_rx) = mpsc::sync_channel(8);
-    let stats = interleaved(&h, data_tx);
     let mut rest = Vec::new();
-    round_trip(&h, &mut peer, &mut rest);
+    let stats = interleaved(&h, &mut peer, &mut rest, data_tx);
     let sr = crate::rtcp::SenderReport {
         ssrc: 0x1234_5678,
         ntp_timestamp: 0xE000_0000_8000_0000,
@@ -380,9 +712,8 @@ fn a_handle_dropped_while_its_thread_is_busy_still_stops_it() {
     let (stream, mut peer) = plain_pair();
     let h = drive(stream);
     let (data_tx, data_rx) = mpsc::sync_channel(8);
-    let stats = interleaved(&h, data_tx);
     let mut rest = Vec::new();
-    round_trip(&h, &mut peer, &mut rest);
+    let stats = interleaved(&h, &mut peer, &mut rest, data_tx);
 
     let held = stats.lock().unwrap();
     let sr = crate::rtcp::SenderReport {
@@ -461,6 +792,7 @@ fn a_request_arriving_drops_the_waiting_ones_progress() {
         uri: URI.to_string(),
         headers: vec![("x-bad", "a\r\nb".to_string())],
         body: None,
+        setup: None,
     });
     assert!(matches!(
         next(&refused),
@@ -482,8 +814,7 @@ fn the_media_queue_closes_after_the_end_reason_is_recorded() {
         let (stream, mut peer) = plain_pair();
         let h = drive(stream);
         let (data_tx, data_rx) = mpsc::sync_channel(8);
-        interleaved(&h, data_tx);
-        round_trip(&h, &mut peer, &mut Vec::new());
+        interleaved(&h, &mut peer, &mut Vec::new(), data_tx);
         drop(peer);
         let deadline = Instant::now() + scaled(Duration::from_secs(5));
         loop {
@@ -522,9 +853,8 @@ fn a_ping_answered_454_keeps_the_media_queue_open() {
     let (stream, mut peer) = plain_pair();
     let h = drive(stream);
     let (data_tx, data_rx) = mpsc::sync_channel(8);
-    interleaved(&h, data_tx);
     let mut rest = Vec::new();
-    round_trip(&h, &mut peer, &mut rest);
+    interleaved(&h, &mut peer, &mut rest, data_tx);
     h.handle
         .send(Command::EnableKeepalive(Some(Duration::from_millis(50))))
         .unwrap();
@@ -542,18 +872,18 @@ fn a_ping_answered_454_keeps_the_media_queue_open() {
 
 /// The closed queue is not sticky: a later SETUP's queue gets media.
 #[test]
-fn set_interleaved_after_an_accepted_teardown_delivers_media_again() {
+fn a_setup_after_an_accepted_teardown_delivers_media_again() {
     let (stream, mut peer) = plain_pair();
     let h = drive(stream);
     let (first_tx, first_rx) = mpsc::sync_channel(8);
-    interleaved(&h, first_tx);
     let mut rest = Vec::new();
-    round_trip(&h, &mut peer, &mut rest);
+    interleaved(&h, &mut peer, &mut rest, first_tx);
     let rx = h.request(RequestSpec {
         method: RtspMethod::Teardown,
         uri: URI.to_string(),
         headers: Vec::new(),
         body: None,
+        setup: None,
     });
     assert!(matches!(next(&rx), Progress::Written));
     let head = read_head(&mut peer, &mut rest);
@@ -564,21 +894,21 @@ fn set_interleaved_after_an_accepted_teardown_delivers_media_again() {
         Err(RecvTimeoutError::Disconnected)
     ));
     let (second_tx, second_rx) = mpsc::sync_channel(8);
-    interleaved(&h, second_tx);
-    round_trip(&h, &mut peer, &mut rest);
+    interleaved(&h, &mut peer, &mut rest, second_tx);
     peer.write_all(&rtp_frame(9, 8)).unwrap();
     expect_media(&second_rx, 9);
     assert_eq!(h.stop_and_join().get(), Some(EndReason::CleanTeardown));
 }
 
 #[test]
-fn set_interleaved_after_the_stream_ended_gets_a_closed_queue() {
+fn a_setup_after_the_stream_ended_fails_and_its_queue_is_closed() {
     let (stream, peer) = plain_pair();
     let h = drive(stream);
     drop(peer);
     assert_eq!(h.wait_end(), EndReason::CleanTeardown);
     let (data_tx, data_rx) = mpsc::sync_channel(8);
-    interleaved(&h, data_tx);
+    let (rx, _stats) = h.setup(0, RouteKind::Pull, Some(data_tx));
+    assert_eq!(done_io(next(&rx)), io::ErrorKind::UnexpectedEof);
     assert!(matches!(
         data_rx.recv_timeout(scaled(Duration::from_secs(5))),
         Err(RecvTimeoutError::Disconnected)
@@ -594,14 +924,14 @@ fn an_accepted_teardown_closes_the_media_queue_and_keeps_its_reason() {
     let (stream, mut peer) = plain_pair();
     let h = drive(stream);
     let (data_tx, data_rx) = mpsc::sync_channel(8);
-    interleaved(&h, data_tx);
     let mut rest = Vec::new();
-    round_trip(&h, &mut peer, &mut rest);
+    interleaved(&h, &mut peer, &mut rest, data_tx);
     let rx = h.request(RequestSpec {
         method: RtspMethod::Teardown,
         uri: URI.to_string(),
         headers: Vec::new(),
         body: None,
+        setup: None,
     });
     assert!(matches!(next(&rx), Progress::Written));
     let head = read_head(&mut peer, &mut rest);
@@ -632,15 +962,15 @@ fn an_accepted_teardown_on_a_cancelled_client_records_clean_teardown() {
     let (stream, mut peer) = plain_pair();
     let h = drive(stream);
     let (data_tx, data_rx) = mpsc::sync_channel(8);
-    interleaved(&h, data_tx);
     let mut rest = Vec::new();
-    round_trip(&h, &mut peer, &mut rest);
+    interleaved(&h, &mut peer, &mut rest, data_tx);
     h.cancel.cancel();
     let rx = h.request(RequestSpec {
         method: RtspMethod::Teardown,
         uri: URI.to_string(),
         headers: Vec::new(),
         body: None,
+        setup: None,
     });
     assert!(matches!(next(&rx), Progress::Written));
     let head = read_head(&mut peer, &mut rest);
@@ -744,6 +1074,7 @@ fn huge_request() -> RequestSpec {
         uri: URI.to_string(),
         headers: vec![("x-pad", "a".repeat(1 << 20))],
         body: None,
+        setup: None,
     }
 }
 
@@ -806,6 +1137,7 @@ fn a_slow_peer_that_keeps_taking_bytes_does_not_stall_the_write() {
         uri: URI.to_string(),
         headers: vec![("x-pad", "a".repeat(LEN))],
         body: None,
+        setup: None,
     });
     let t0 = Instant::now();
     let mut got = 0;

@@ -125,6 +125,7 @@ impl RtspClient {
             uri: self.url.render_no_credentials(),
             headers: vec![("session", sid)],
             body: None,
+            setup: None,
         };
         let r = self.request(spec, deadline, send_deadline);
         // Always clear session_id — caller asked us to tear down; if it
@@ -151,7 +152,7 @@ mod tests {
     use crate::error::RtspError;
     use crate::rtsp::client::RtspClient;
     #[cfg(target_os = "linux")]
-    use crate::rtsp::client::test_sockets::non_reading_peer;
+    use crate::rtsp::client::test_sockets::{non_reading_peer, non_reading_peer_after};
     use std::io::{Read, Write};
     use std::net::TcpListener;
     #[cfg(target_os = "linux")]
@@ -212,8 +213,9 @@ mod tests {
 
     /// A client whose control socket's send buffer is pinned to 4 KiB (no
     /// autotuning, which could otherwise take a whole 1 MiB request), on a
-    /// peer behind a 4 KiB receive buffer that never reads, with a session
-    /// open (interleaved when `interleaved`) and 1 MiB queued ahead: a
+    /// peer behind a 4 KiB receive buffer that never reads (when
+    /// `interleaved`, not past the SETUP it answers with a channel pair),
+    /// with a session open and 1 MiB queued ahead: a
     /// request with a 1 MiB header and a 50 ms send deadline, which times
     /// out with its bytes still queued. Linux only, for the reason given in
     /// `test_sockets`.
@@ -221,11 +223,28 @@ mod tests {
     fn client_with_bytes_the_peer_does_not_take(
         interleaved: bool,
     ) -> (RtspClient, mpsc::Sender<()>, std::thread::JoinHandle<()>) {
-        use crate::rtsp::client::driver::{Command, RtcpSink};
-        use crate::rtsp::client::engine::{InterleavedChannels, RequestSpec};
+        use crate::rtsp::client::driver::{RouteSpec, RtcpSink};
+        use crate::rtsp::client::engine::{RequestSpec, RouteId, RouteKind, SetupRoute};
         use crate::rtsp::message::RtspMethod;
 
-        let (port, done_tx, peer) = non_reading_peer();
+        let (port, done_tx, peer) = if interleaved {
+            // The SETUP is the client's first request: CSeq 1.
+            non_reading_peer_after(|sock| {
+                let mut head = Vec::new();
+                let mut byte = [0u8; 1];
+                while !head.ends_with(b"\r\n\r\n") {
+                    sock.read_exact(&mut byte).unwrap();
+                    head.push(byte[0]);
+                }
+                sock.write_all(
+                    b"RTSP/1.0 200 OK\r\nCSeq: 1\r\nSession: blocked\r\n\
+                      Transport: RTP/AVP/TCP;unicast;interleaved=0-1\r\n\r\n",
+                )
+                .unwrap();
+            })
+        } else {
+            non_reading_peer()
+        };
         let url = crate::url::RtspUrl::parse(&format!("rtsp://127.0.0.1:{port}/test")).unwrap();
         let (probe, socket) = mpsc::channel();
         let mut client = RtspClient::connect_with_params(
@@ -242,17 +261,32 @@ mod tests {
             .unwrap();
         if interleaved {
             let (data_tx, _data_rx) = mpsc::sync_channel(8);
-            client
-                .driver
-                .send(Command::SetInterleaved {
-                    channels: InterleavedChannels { rtp: 0, rtcp: 1 },
-                    data_tx,
-                    rtcp: RtcpSink {
-                        stats: Default::default(),
-                        ssrc: 1,
+            let route = RouteId(0);
+            let outcome = client
+                .request_routed(
+                    RequestSpec {
+                        method: RtspMethod::Setup,
+                        uri: url.render_no_credentials(),
+                        headers: Vec::new(),
+                        body: None,
+                        setup: Some(SetupRoute {
+                            id: route,
+                            kind: RouteKind::Pull,
+                        }),
                     },
-                })
+                    Some(RouteSpec {
+                        id: route,
+                        inbound_media: Some(data_tx),
+                        inbound_rtcp: RtcpSink {
+                            stats: Default::default(),
+                            ssrc: 1,
+                        },
+                    }),
+                    Some(Instant::now() + scaled(Duration::from_secs(5))),
+                    None,
+                )
                 .unwrap();
+            assert!(outcome.setup.is_some(), "the reply installs the pair");
         }
         client.session_id = Some("blocked".into());
         let ahead = Instant::now() + Duration::from_millis(50);
@@ -262,6 +296,7 @@ mod tests {
                 uri: url.render_no_credentials(),
                 headers: vec![("x-pad", "a".repeat(1 << 20))],
                 body: None,
+                setup: None,
             },
             Some(ahead),
             Some(ahead),
@@ -551,6 +586,7 @@ mod tests {
                 uri: url.render_no_credentials(),
                 headers: vec![("x-pad", "a".repeat(64 * 1024))],
                 body: None,
+                setup: None,
             },
             Some(ahead),
             Some(ahead),

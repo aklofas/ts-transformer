@@ -144,12 +144,6 @@ impl ClientEngine {
         }
     }
 
-    /// The interleaved channels SETUP agreed; until called, every `$` frame
-    /// is counted as malformed and dropped.
-    pub(crate) fn set_interleaved(&mut self, channels: InterleavedChannels) {
-        self.channels = Some(channels);
-    }
-
     /// The control stream broke a framing rule it cannot be resynced past.
     fn framing_violation(&mut self, detail: &'static str, msg: String) {
         tracing::warn!(target: "tst_rtp::client::pump", %msg, "closing the control stream");
@@ -162,14 +156,25 @@ impl ClientEngine {
         );
     }
 
-    /// One `$` frame: whole RTP packets on the RTP channel (their header is
-    /// checked, not stripped), payloads on the RTCP channel.
+    /// One `$` frame: whole RTP packets on a route's RTP channel (their
+    /// header is checked, not stripped), payloads on its RTCP channel.
     fn route_frame(&mut self, channel: u8, payload: Bytes) {
-        match self.channels {
-            Some(c) if channel == c.rtp => {
+        let hit = (0u8..).zip(&self.routes).find_map(|(id, route)| {
+            let route = (*route)?;
+            (channel == route.rtp || channel == route.rtcp).then_some((RouteId(id), route))
+        });
+        match hit {
+            Some((_, route)) if channel == route.rtp && route.kind == RouteKind::Push => {
+                self.counters.rtp_frames += 1;
+                self.events.push_back(Event::InboundDropped);
+            }
+            Some((id, route)) if channel == route.rtp => {
                 self.counters.rtp_frames += 1;
                 match RtpHeader::decode(&payload) {
-                    Ok(_) => self.events.push_back(Event::Media(payload)),
+                    Ok(_) => self.events.push_back(Event::Media {
+                        route: id,
+                        bytes: payload,
+                    }),
                     Err(e) => {
                         self.counters.malformed_frames += 1;
                         tracing::debug!(
@@ -180,11 +185,14 @@ impl ClientEngine {
                     }
                 }
             }
-            Some(c) if channel == c.rtcp => {
+            Some((id, _)) => {
                 self.counters.rtcp_frames += 1;
-                self.events.push_back(Event::Rtcp(payload));
+                self.events.push_back(Event::Rtcp {
+                    route: id,
+                    bytes: payload,
+                });
             }
-            _ => {
+            None => {
                 self.counters.malformed_frames += 1;
                 tracing::debug!(
                     target: "tst_rtp::client::pump",

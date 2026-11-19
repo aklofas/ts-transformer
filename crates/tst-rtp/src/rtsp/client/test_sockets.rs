@@ -14,6 +14,14 @@ use std::time::{Duration, Instant};
 /// drops the connection when `done` is signalled, which resets it
 /// and fails any write still blocked on it.
 pub(crate) fn non_reading_peer() -> (u16, mpsc::Sender<()>, JoinHandle<()>) {
+    non_reading_peer_after(|_| {})
+}
+
+/// [`non_reading_peer`] that first runs `opening` on the accepted
+/// connection; it reads nothing after that.
+pub(crate) fn non_reading_peer_after(
+    opening: impl FnOnce(&mut TcpStream) + Send + 'static,
+) -> (u16, mpsc::Sender<()>, JoinHandle<()>) {
     use socket2::{Domain, Socket, Type};
     let sock = Socket::new(Domain::IPV4, Type::STREAM, None).unwrap();
     sock.set_recv_buffer_size(4096).unwrap();
@@ -29,7 +37,8 @@ pub(crate) fn non_reading_peer() -> (u16, mpsc::Sender<()>, JoinHandle<()>) {
     let port = listener.local_addr().unwrap().port();
     let (done_tx, done_rx) = mpsc::channel::<()>();
     let h = std::thread::spawn(move || {
-        if let Ok((sock, _)) = listener.accept() {
+        if let Ok((mut sock, _)) = listener.accept() {
+            opening(&mut sock);
             let _ = done_rx.recv_timeout(Duration::from_secs(30));
             drop(sock);
         }

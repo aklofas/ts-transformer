@@ -15,6 +15,7 @@ use crate::error::RtspError;
 use crate::rtsp::auth::{AuthSchemes, build_authorization};
 use crate::rtsp::client::{AuthState, duration_ms_saturating};
 use crate::rtsp::message::{RtspMethod, RtspRequest, RtspResponse};
+use crate::rtsp::transport_negotiation::{RtspTransportKind, parse_transport_response};
 use crate::url::RtspVersion;
 
 mod inbound;
@@ -46,6 +47,9 @@ pub(crate) struct RequestSpec {
     pub uri: String,
     pub headers: Vec<(&'static str, String)>,
     pub body: Option<RequestBody>,
+    /// On a SETUP: the route its reply's interleaved channel pair is
+    /// installed under.
+    pub setup: Option<SetupRoute>,
 }
 
 /// A request's body and its `Content-Type`.
@@ -53,6 +57,45 @@ pub(crate) struct RequestSpec {
 pub(crate) struct RequestBody {
     pub content_type: &'static str,
     pub bytes: Bytes,
+}
+
+/// Interleaved routes one connection can hold.
+pub(crate) const MAX_ROUTES: usize = 4;
+
+/// Names one interleaved route: `0..MAX_ROUTES`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct RouteId(pub u8);
+
+/// Which way a route's media flows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RouteKind {
+    /// The peer sends RTP on the route's RTP channel.
+    Pull,
+    /// This side sends the RTP: a frame arriving on the RTP channel is
+    /// dropped.
+    Push,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct SetupRoute {
+    pub id: RouteId,
+    pub kind: RouteKind,
+}
+
+/// The channel pair a SETUP reply installed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct SetupAccepted {
+    pub route: RouteId,
+    pub rtp_channel: u8,
+    pub rtcp_channel: u8,
+}
+
+/// A request's final reply and, for a SETUP that named a route, what the
+/// reply installed (`None` for a reply that is not interleaved).
+#[derive(Debug)]
+pub(crate) struct ReplyOutcome {
+    pub response: RtspResponse,
+    pub setup: Option<SetupAccepted>,
 }
 
 /// Names one caller transaction, from `submit` to its `Reply`.
@@ -99,30 +142,45 @@ pub(crate) enum StreamEnd {
 pub(crate) enum Event {
     Reply {
         txn: TxnId,
-        result: Result<RtspResponse, RtspError>,
+        result: Result<ReplyOutcome, RtspError>,
     },
-    Media(Bytes),
-    Rtcp(Bytes),
+    /// A whole RTP packet from a `Pull` route's RTP channel.
+    Media {
+        route: RouteId,
+        bytes: Bytes,
+    },
+    /// An RTCP packet from a route's RTCP channel.
+    Rtcp {
+        route: RouteId,
+        bytes: Bytes,
+    },
+    /// A frame on a `Push` route's RTP channel, dropped.
+    InboundDropped,
     SessionDead,
     Ended(EndReason),
 }
 
-/// SETUP-allocated channel pair. The SETUP handler assigns these (the
-/// client requests `interleaved=N-M` in its Transport header; the server
-/// echoes or reassigns).
+/// An installed route: the channel pair a SETUP reply named (the client
+/// asks for `interleaved=N-M`; the server echoes or reassigns).
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct InterleavedChannels {
+struct Route {
+    kind: RouteKind,
     /// Channel number for RTP data frames.
-    pub(crate) rtp: u8,
+    rtp: u8,
     /// Channel number for RTCP frames (conventionally `rtp + 1`).
-    pub(crate) rtcp: u8,
+    rtcp: u8,
 }
+
+const SETUP_WITHOUT_TRANSPORT: &str = "SETUP 200 missing Transport: header";
+const ROUTE_ID_OUT_OF_RANGE: &str = "SETUP names more interleaved routes than a connection holds";
+const ROUTE_CHANNELS_EQUAL: &str = "SETUP reply names one interleaved channel for RTP and RTCP";
+const ROUTE_CHANNEL_IN_USE: &str = "SETUP reply names an interleaved channel another stream uses";
 
 #[derive(Debug, Default)]
 pub(crate) struct EngineCounters {
     /// Complete RTSP messages read, ping replies excepted.
     pub rtsp_messages: u64,
-    /// Frames on the RTP channel, malformed ones included.
+    /// Frames on an RTP channel, malformed and dropped ones included.
     pub rtp_frames: u64,
     pub rtcp_frames: u64,
     /// Frames dropped (unknown channel, bad RTP header, non-UTF-8 headers)
@@ -206,7 +264,9 @@ pub(crate) struct ClientEngine {
     inbuf: Vec<u8>,
     /// The scan of an incomplete RTSP message at the front of `inbuf`.
     front: Option<FrontScan>,
-    channels: Option<InterleavedChannels>,
+    /// Installed interleaved routes, by `RouteId`; until one is installed
+    /// every `$` frame is counted as malformed and dropped.
+    routes: [Option<Route>; MAX_ROUTES],
 }
 
 // By hand: the queued transmits can carry an `Authorization` header.
@@ -224,7 +284,7 @@ impl std::fmt::Debug for ClientEngine {
             .field("events", &self.events.len())
             .field("counters", &self.counters)
             .field("buffered", &self.inbuf.len())
-            .field("channels", &self.channels)
+            .field("routes", &self.routes)
             .finish_non_exhaustive()
     }
 }
@@ -262,7 +322,7 @@ impl ClientEngine {
             counters: EngineCounters::default(),
             inbuf: Vec::new(),
             front: None,
-            channels: None,
+            routes: [None; MAX_ROUTES],
         }
     }
 
@@ -510,7 +570,7 @@ impl ClientEngine {
         }
     }
 
-    fn reply(&mut self, txn: TxnId, result: Result<RtspResponse, RtspError>) {
+    fn reply(&mut self, txn: TxnId, result: Result<ReplyOutcome, RtspError>) {
         self.events.push_back(Event::Reply { txn, result });
     }
 
@@ -603,15 +663,97 @@ impl ClientEngine {
             }
             return;
         }
+        let mut setup = None;
         match txn.spec.method {
-            RtspMethod::Setup if resp.status == 200 => self.learn_session(&resp),
+            RtspMethod::Setup if (200..300).contains(&resp.status) => {
+                self.learn_session(&resp);
+                if let Some(route) = txn.spec.setup {
+                    // Here, not by a later call: frames can follow the reply
+                    // in the same read, and they are routed next.
+                    match self.accept_setup(route, &resp) {
+                        Ok(accepted) => setup = accepted,
+                        Err(e) => {
+                            self.reply(txn.id, Err(e));
+                            return;
+                        }
+                    }
+                }
+            }
             RtspMethod::Teardown if teardown_accepted(resp.status) => {
                 self.events
                     .push_back(Event::Ended(EndReason::CleanTeardown));
             }
             _ => {}
         }
-        self.reply(txn.id, Ok(resp));
+        self.reply(
+            txn.id,
+            Ok(ReplyOutcome {
+                response: resp,
+                setup,
+            }),
+        );
+    }
+
+    /// Install `route` from an accepted SETUP reply's `Transport`: its
+    /// `interleaved=` pair, or `0-1` when a TCP reply names none. A reply
+    /// that is not interleaved installs nothing.
+    fn accept_setup(
+        &mut self,
+        route: SetupRoute,
+        resp: &RtspResponse,
+    ) -> Result<Option<SetupAccepted>, RtspError> {
+        let header = resp
+            .headers
+            .get("transport")
+            .ok_or(RtspError::BadResponse {
+                detail: SETUP_WITHOUT_TRANSPORT,
+            })?;
+        let transport = parse_transport_response(header)?;
+        if transport.kind != RtspTransportKind::TcpInterleaved {
+            return Ok(None);
+        }
+        let (rtp, rtcp) = transport.interleaved.unwrap_or((0, 1));
+        self.install_route(route, rtp, rtcp)
+            .map_err(|detail| RtspError::BadResponse { detail })?;
+        Ok(Some(SetupAccepted {
+            route: route.id,
+            rtp_channel: rtp,
+            rtcp_channel: rtcp,
+        }))
+    }
+
+    /// Route `$` frames on `rtp` and `rtcp` to `route`, in place of the
+    /// pair installed under the same id. Refused, with nothing changed: an
+    /// id past `MAX_ROUTES`, one channel for both, or a channel another
+    /// installed route uses.
+    pub(crate) fn install_route(
+        &mut self,
+        route: SetupRoute,
+        rtp: u8,
+        rtcp: u8,
+    ) -> Result<(), &'static str> {
+        let at = usize::from(route.id.0);
+        if at >= MAX_ROUTES {
+            return Err(ROUTE_ID_OUT_OF_RANGE);
+        }
+        if rtp == rtcp {
+            return Err(ROUTE_CHANNELS_EQUAL);
+        }
+        let taken = self.routes.iter().enumerate().any(|(i, other)| {
+            i != at
+                && other.is_some_and(|o| [o.rtp, o.rtcp].iter().any(|c| *c == rtp || *c == rtcp))
+        });
+        if taken {
+            return Err(ROUTE_CHANNEL_IN_USE);
+        }
+        if let Some(slot) = self.routes.get_mut(at) {
+            *slot = Some(Route {
+                kind: route.kind,
+                rtp,
+                rtcp,
+            });
+        }
+        Ok(())
     }
 
     /// Cache the `401`'s challenge and encode `txn`'s second attempt.

@@ -21,6 +21,7 @@ fn spec(method: RtspMethod, uri: &str) -> RequestSpec {
         uri: uri.to_string(),
         headers: Vec::new(),
         body: None,
+        setup: None,
     }
 }
 
@@ -83,7 +84,7 @@ fn one(e: &mut ClientEngine) -> Transmit {
 }
 
 /// The only event is the reply to `txn`; returns its result.
-fn reply(e: &mut ClientEngine, txn: TxnId) -> Result<RtspResponse, RtspError> {
+fn outcome(e: &mut ClientEngine, txn: TxnId) -> Result<ReplyOutcome, RtspError> {
     let mut ev = events(e);
     assert_eq!(ev.len(), 1, "expected one event, got {ev:?}");
     match ev.remove(0) {
@@ -93,6 +94,11 @@ fn reply(e: &mut ClientEngine, txn: TxnId) -> Result<RtspResponse, RtspError> {
         }
         other => panic!("expected a reply, got {other:?}"),
     }
+}
+
+/// [`outcome`], the response alone.
+fn reply(e: &mut ClientEngine, txn: TxnId) -> Result<RtspResponse, RtspError> {
+    outcome(e, txn).map(|o| o.response)
 }
 
 const BASIC_401: &[u8] =
@@ -1390,12 +1396,24 @@ use crate::rtsp::message::{
     MAX_RTSP_BODY_BYTES, MAX_RTSP_MESSAGE_BYTES, RtspFraming, rtsp_frame_decision,
 };
 
-const CHANNELS: InterleavedChannels = InterleavedChannels { rtp: 0, rtcp: 1 };
+fn pull(id: u8) -> SetupRoute {
+    SetupRoute {
+        id: RouteId(id),
+        kind: RouteKind::Pull,
+    }
+}
+
+fn push(id: u8) -> SetupRoute {
+    SetupRoute {
+        id: RouteId(id),
+        kind: RouteKind::Push,
+    }
+}
 
 /// An engine fed from an interleaved stream on channels 0/1.
 fn interleaved() -> ClientEngine {
     let mut e = ClientEngine::new(cfg(None));
-    e.set_interleaved(CHANNELS);
+    e.install_route(pull(0), 0, 1).unwrap();
     e
 }
 
@@ -1417,7 +1435,7 @@ fn interleaved_frame(channel: u8, body: &[u8]) -> Vec<u8> {
 fn media(ev: &[Event]) -> Vec<&[u8]> {
     ev.iter()
         .filter_map(|e| match e {
-            Event::Media(b) => Some(&b[..]),
+            Event::Media { bytes, .. } => Some(&bytes[..]),
             _ => None,
         })
         .collect()
@@ -1487,7 +1505,7 @@ fn rtcp_frame_routed() {
     e.handle_input(&raw, Instant::now());
     let ev = events(&mut e);
     assert!(
-        matches!(ev.as_slice(), [Event::Rtcp(p)] if p[..] == [0xDE, 0xAD, 0xBE, 0xEF]),
+        matches!(ev.as_slice(), [Event::Rtcp { bytes, .. }] if bytes[..] == [0xDE, 0xAD, 0xBE, 0xEF]),
         "{ev:?}"
     );
     assert_eq!(e.counters().rtcp_frames, 1);
@@ -1502,7 +1520,7 @@ fn engine_accepts_full_u16_binary_frame() {
     e.handle_input(&raw, Instant::now());
     let ev = events(&mut e);
     match ev.as_slice() {
-        [Event::Rtcp(p)] => {
+        [Event::Rtcp { bytes: p, .. }] => {
             assert_eq!(p.len(), 65535, "full payload must round-trip intact");
             assert!(p.iter().all(|&b| b == 0xAB));
         }
@@ -1673,8 +1691,125 @@ fn unknown_channel_frame_counted_and_dropped() {
     assert!(e.inbuf.is_empty());
 }
 
+/// A SETUP for `route`, submitted and taken off the transmit queue;
+/// returns its transaction and CSeq.
+fn submit_setup(e: &mut ClientEngine, route: SetupRoute, at: Instant) -> (TxnId, u32) {
+    let spec = RequestSpec {
+        setup: Some(route),
+        ..spec(RtspMethod::Setup, URI)
+    };
+    let a = e.submit(spec, None, at).unwrap();
+    (a, cseq(&one(e)))
+}
+
+fn setup_ok(cseq: u32, transport: &str) -> Vec<u8> {
+    format!("RTSP/1.0 200 OK\r\nCSeq: {cseq}\r\nSession: S1\r\nTransport: {transport}\r\n\r\n")
+        .into_bytes()
+}
+
+/// A SETUP for `route` answered `200` with `transport`; the reply's outcome.
+fn setup_route(
+    e: &mut ClientEngine,
+    route: SetupRoute,
+    transport: &str,
+    at: Instant,
+) -> Result<ReplyOutcome, RtspError> {
+    let (a, c) = submit_setup(e, route, at);
+    e.handle_input(&setup_ok(c, transport), at);
+    outcome(e, a)
+}
+
+fn accepted(route: u8, rtp_channel: u8, rtcp_channel: u8) -> Option<SetupAccepted> {
+    Some(SetupAccepted {
+        route: RouteId(route),
+        rtp_channel,
+        rtcp_channel,
+    })
+}
+
+/// `ev` is one media packet on route `id`.
+fn one_media_on(ev: &[Event], id: u8) -> bool {
+    matches!(ev, [Event::Media { route, .. }] if *route == RouteId(id))
+}
+
+/// `ev` is one RTCP packet on route `id`.
+fn one_rtcp_on(ev: &[Event], id: u8) -> bool {
+    matches!(ev, [Event::Rtcp { route, .. }] if *route == RouteId(id))
+}
+
+/// The events of one valid RTP frame on `channel`.
+fn rtp_on(e: &mut ClientEngine, channel: u8) -> Vec<Event> {
+    e.handle_input(
+        &interleaved_frame(channel, &valid_rtp_header()),
+        Instant::now(),
+    );
+    events(e)
+}
+
+/// The events of one RTCP frame on `channel`.
+fn rtcp_on(e: &mut ClientEngine, channel: u8) -> Vec<Event> {
+    e.handle_input(
+        &interleaved_frame(channel, b"\xDE\xAD\xBE\xEF"),
+        Instant::now(),
+    );
+    events(e)
+}
+
+/// The channel pair is in place before the bytes behind the reply are
+/// framed: frames a server sends with its SETUP reply are delivered,
+/// wherever a read splits them.
 #[test]
-fn a_binary_frame_before_set_interleaved_is_counted_and_dropped() {
+fn a_setup_reply_and_its_frames_in_one_buffer_are_all_delivered() {
+    let mut rtp = valid_rtp_header().to_vec();
+    rtp.extend_from_slice(b"PAYLOAD!");
+    let check = |e: &mut ClientEngine, a: TxnId, at: &str| {
+        let ev = events(e);
+        match ev.as_slice() {
+            [
+                Event::Reply { txn, result: Ok(o) },
+                Event::Media {
+                    route: RouteId(0),
+                    bytes: media,
+                },
+                Event::Rtcp {
+                    route: RouteId(0),
+                    bytes: rtcp,
+                },
+            ] => {
+                assert_eq!(*txn, a, "{at}");
+                assert_eq!(o.setup, accepted(0, 4, 5), "{at}");
+                assert_eq!(&media[..], rtp.as_slice(), "{at}");
+                assert_eq!(&rtcp[..], b"\xDE\xAD\xBE\xEF", "{at}");
+            }
+            other => panic!("{at}: {other:?}"),
+        }
+        assert_eq!(e.counters().malformed_frames, 0, "{at}");
+        assert_eq!(e.counters().rtp_frames, 1, "{at}");
+        assert_eq!(e.counters().rtcp_frames, 1, "{at}");
+        assert!(e.inbuf.is_empty(), "{at}");
+    };
+    let fresh = || {
+        let t0 = Instant::now();
+        let mut e = ClientEngine::new(cfg(None));
+        let (a, c) = submit_setup(&mut e, pull(0), t0);
+        let mut raw = setup_ok(c, "RTP/AVP/TCP;unicast;interleaved=4-5");
+        raw.extend(interleaved_frame(4, &rtp));
+        raw.extend(interleaved_frame(5, b"\xDE\xAD\xBE\xEF"));
+        (e, a, raw, t0)
+    };
+    let (mut e, a, raw, t0) = fresh();
+    e.handle_input(&raw, t0);
+    check(&mut e, a, "one buffer");
+    for k in 1..raw.len() {
+        let (mut e, a, raw, t0) = fresh();
+        e.handle_input(&raw[..k], t0);
+        e.handle_input(&raw[k..], t0);
+        check(&mut e, a, &format!("split at {k}"));
+    }
+}
+
+#[test]
+fn a_frame_before_any_setup_reply_is_counted_and_dropped() {
     let t0 = Instant::now();
     let mut e = ClientEngine::new(cfg(None));
     let mut raw = interleaved_frame(0, &valid_rtp_header());
@@ -1684,10 +1819,298 @@ fn a_binary_frame_before_set_interleaved_is_counted_and_dropped() {
     assert_eq!(e.counters().malformed_frames, 2);
     assert_eq!(e.counters().rtp_frames, 0);
     assert_eq!(e.counters().rtcp_frames, 0);
-    // The stream goes on.
-    e.set_interleaved(CHANNELS);
-    e.handle_input(&interleaved_frame(0, &valid_rtp_header()), t0);
-    assert_eq!(media(&events(&mut e)).len(), 1);
+    // The stream goes on. A request waiting for its reply installs nothing:
+    // the frame ahead of the reply is dropped, the one behind it delivered.
+    let (a, c) = submit_setup(&mut e, pull(0), t0);
+    let mut raw = interleaved_frame(0, &valid_rtp_header());
+    raw.extend(setup_ok(c, "RTP/AVP/TCP;unicast;interleaved=0-1"));
+    raw.extend(interleaved_frame(0, &valid_rtp_header()));
+    e.handle_input(&raw, t0);
+    let ev = events(&mut e);
+    assert!(
+        matches!(
+            ev.as_slice(),
+            [
+                Event::Reply { txn, result: Ok(_) },
+                Event::Media { route: RouteId(0), .. }
+            ] if *txn == a
+        ),
+        "{ev:?}"
+    );
+    assert_eq!(e.counters().malformed_frames, 3);
+    assert_eq!(e.counters().rtp_frames, 1);
+}
+
+#[test]
+fn a_setup_reply_without_interleaved_installs_0_1() {
+    let t0 = Instant::now();
+    let mut e = ClientEngine::new(cfg(None));
+    let o = setup_route(&mut e, pull(0), "RTP/AVP/TCP;unicast", t0).unwrap();
+    assert_eq!(o.setup, accepted(0, 0, 1));
+    let ev = rtp_on(&mut e, 0);
+    assert!(one_media_on(&ev, 0), "{ev:?}");
+    let ev = rtcp_on(&mut e, 1);
+    assert!(one_rtcp_on(&ev, 0), "{ev:?}");
+    assert_eq!(e.counters().malformed_frames, 0);
+}
+
+/// The first route delivers on 2/3 and nothing else is routed.
+fn assert_only_route_0_on_2_3(e: &mut ClientEngine, unrouted: &[u8]) {
+    let before = e.counters().malformed_frames;
+    for (n, channel) in (1u64..).zip(unrouted) {
+        assert!(rtp_on(e, *channel).is_empty(), "channel {channel}");
+        assert_eq!(
+            e.counters().malformed_frames,
+            before + n,
+            "channel {channel}"
+        );
+    }
+    let ev = rtp_on(e, 2);
+    assert!(one_media_on(&ev, 0), "{ev:?}");
+    let ev = rtcp_on(e, 3);
+    assert!(one_rtcp_on(&ev, 0), "{ev:?}");
+}
+
+#[test]
+fn a_setup_reply_with_equal_channels_is_bad_response() {
+    let t0 = Instant::now();
+    let mut e = ClientEngine::new(cfg(None));
+    let first = setup_route(&mut e, pull(0), "RTP/AVP/TCP;unicast;interleaved=2-3", t0);
+    assert_eq!(first.unwrap().setup, accepted(0, 2, 3));
+    let r = setup_route(&mut e, push(1), "RTP/AVP/TCP;unicast;interleaved=5-5", t0);
+    assert!(matches!(r, Err(RtspError::BadResponse { .. })), "{r:?}");
+    assert_only_route_0_on_2_3(&mut e, &[5]);
+    // A route's own pair is checked too.
+    let r = setup_route(&mut e, pull(0), "RTP/AVP/TCP;unicast;interleaved=3-3", t0);
+    assert!(matches!(r, Err(RtspError::BadResponse { .. })), "{r:?}");
+    assert_only_route_0_on_2_3(&mut e, &[5]);
+}
+
+#[test]
+fn a_setup_reply_with_a_colliding_pair_is_bad_response() {
+    // The second route's RTCP on the first's RTP, its RTP on the first's
+    // RTCP, and the same pair.
+    for (pair, free) in [("1-2", Some(1)), ("3-4", Some(4)), ("2-3", None)] {
+        let t0 = Instant::now();
+        let mut e = ClientEngine::new(cfg(None));
+        let first = setup_route(&mut e, pull(0), "RTP/AVP/TCP;unicast;interleaved=2-3", t0);
+        assert_eq!(first.unwrap().setup, accepted(0, 2, 3));
+        let transport = format!("RTP/AVP/TCP;unicast;interleaved={pair}");
+        let r = setup_route(&mut e, push(1), &transport, t0);
+        assert!(
+            matches!(r, Err(RtspError::BadResponse { .. })),
+            "{pair}: {r:?}"
+        );
+        // Nothing of the refused pair is installed.
+        assert_only_route_0_on_2_3(&mut e, free.as_slice());
+    }
+}
+
+#[test]
+fn a_setup_reply_without_transport_is_bad_response() {
+    let t0 = Instant::now();
+    let mut e = ClientEngine::new(cfg(None));
+    let (a, c) = submit_setup(&mut e, pull(0), t0);
+    e.handle_input(
+        format!("RTSP/1.0 200 OK\r\nCSeq: {c}\r\nSession: S1\r\n\r\n").as_bytes(),
+        t0,
+    );
+    let r = outcome(&mut e, a);
+    assert!(
+        matches!(
+            r,
+            Err(RtspError::BadResponse {
+                detail: "SETUP 200 missing Transport: header"
+            })
+        ),
+        "{r:?}"
+    );
+    assert!(rtp_on(&mut e, 0).is_empty());
+    assert_eq!(e.counters().malformed_frames, 1);
+}
+
+/// A channel pair that does not parse is refused as the transport parser
+/// refuses it.
+#[test]
+fn a_setup_reply_with_an_unparseable_pair_installs_nothing() {
+    let t0 = Instant::now();
+    let mut e = ClientEngine::new(cfg(None));
+    let r = setup_route(&mut e, pull(0), "RTP/AVP/TCP;unicast;interleaved=1-0", t0);
+    assert!(matches!(r, Err(RtspError::UnsupportedTransport)), "{r:?}");
+    assert!(rtp_on(&mut e, 1).is_empty());
+    assert!(rtp_on(&mut e, 0).is_empty());
+    assert_eq!(e.counters().malformed_frames, 2);
+}
+
+#[test]
+fn a_udp_setup_reply_installs_nothing() {
+    let t0 = Instant::now();
+    let mut e = ClientEngine::new(cfg(None));
+    let o = setup_route(
+        &mut e,
+        pull(0),
+        "RTP/AVP;unicast;client_port=5004-5005;server_port=6000-6001",
+        t0,
+    )
+    .unwrap();
+    assert_eq!(o.setup, None);
+    assert_eq!(o.response.status, 200);
+    assert!(rtp_on(&mut e, 0).is_empty());
+    assert_eq!(e.counters().malformed_frames, 1);
+}
+
+/// A SETUP that names no route is not read for a channel pair.
+#[test]
+fn a_setup_without_a_route_installs_nothing() {
+    let t0 = Instant::now();
+    let mut e = ClientEngine::new(cfg(None));
+    let a = e.submit(spec(RtspMethod::Setup, URI), None, t0).unwrap();
+    let c = cseq(&one(&mut e));
+    e.handle_input(&setup_ok(c, "RTP/AVP/TCP;unicast;interleaved=0-1"), t0);
+    assert_eq!(outcome(&mut e, a).unwrap().setup, None);
+    assert!(rtp_on(&mut e, 0).is_empty());
+    assert_eq!(e.counters().malformed_frames, 1);
+}
+
+/// On a route this side sends on, a frame the peer sends on the RTP
+/// channel is dropped whatever it holds; the RTCP channel carries the
+/// peer's reports.
+#[test]
+fn a_frame_on_a_push_rtp_channel_is_counted_and_dropped() {
+    let t0 = Instant::now();
+    let mut e = ClientEngine::new(cfg(None));
+    let o = setup_route(&mut e, push(1), "RTP/AVP/TCP;unicast;interleaved=2-3", t0).unwrap();
+    assert_eq!(o.setup, accepted(1, 2, 3));
+    let ev = rtp_on(&mut e, 2);
+    assert!(matches!(ev.as_slice(), [Event::InboundDropped]), "{ev:?}");
+    e.handle_input(&interleaved_frame(2, b"not RTP"), t0);
+    let ev = events(&mut e);
+    assert!(matches!(ev.as_slice(), [Event::InboundDropped]), "{ev:?}");
+    assert_eq!(e.counters().rtp_frames, 2);
+    assert_eq!(e.counters().malformed_frames, 0);
+    let ev = rtcp_on(&mut e, 3);
+    assert!(
+        matches!(
+            ev.as_slice(),
+            [Event::Rtcp { route: RouteId(1), bytes }] if bytes[..] == [0xDE, 0xAD, 0xBE, 0xEF]
+        ),
+        "{ev:?}"
+    );
+    assert_eq!(e.counters().rtcp_frames, 1);
+}
+
+#[test]
+fn a_fifth_route_is_refused() {
+    let t0 = Instant::now();
+    let mut e = ClientEngine::new(cfg(None));
+    for id in 0..4u8 {
+        let transport = format!("RTP/AVP/TCP;unicast;interleaved={}-{}", 2 * id, 2 * id + 1);
+        let o = setup_route(&mut e, push(id), &transport, t0).unwrap();
+        assert_eq!(o.setup, accepted(id, 2 * id, 2 * id + 1));
+    }
+    let r = setup_route(&mut e, push(4), "RTP/AVP/TCP;unicast;interleaved=8-9", t0);
+    assert!(matches!(r, Err(RtspError::BadResponse { .. })), "{r:?}");
+    assert!(e.install_route(push(4), 8, 9).is_err());
+    assert!(e.install_route(pull(u8::MAX), 8, 9).is_err());
+    assert!(rtcp_on(&mut e, 9).is_empty(), "nothing is installed");
+    assert_eq!(e.counters().malformed_frames, 1);
+    // The four routes are untouched.
+    for id in 0..4u8 {
+        let ev = rtcp_on(&mut e, 2 * id + 1);
+        assert!(one_rtcp_on(&ev, id), "{ev:?}");
+    }
+}
+
+#[test]
+fn a_new_pull_setup_replaces_route_0() {
+    let t0 = Instant::now();
+    let mut e = ClientEngine::new(cfg(None));
+    let o = setup_route(&mut e, pull(0), "RTP/AVP/TCP;unicast;interleaved=0-1", t0).unwrap();
+    assert_eq!(o.setup, accepted(0, 0, 1));
+    let o = setup_route(&mut e, pull(0), "RTP/AVP/TCP;unicast;interleaved=2-3", t0).unwrap();
+    assert_eq!(o.setup, accepted(0, 2, 3));
+    let ev = rtp_on(&mut e, 2);
+    assert!(one_media_on(&ev, 0), "{ev:?}");
+    // The first pair is gone.
+    assert!(rtp_on(&mut e, 0).is_empty());
+    assert!(rtcp_on(&mut e, 1).is_empty());
+    assert_eq!(e.counters().malformed_frames, 2);
+    // A route may take channels of its own previous pair.
+    let o = setup_route(&mut e, pull(0), "RTP/AVP/TCP;unicast;interleaved=3-4", t0).unwrap();
+    assert_eq!(o.setup, accepted(0, 3, 4));
+    let o = setup_route(&mut e, pull(0), "RTP/AVP/TCP;unicast;interleaved=3-4", t0).unwrap();
+    assert_eq!(o.setup, accepted(0, 3, 4));
+    let ev = rtp_on(&mut e, 3);
+    assert!(one_media_on(&ev, 0), "{ev:?}");
+}
+
+/// The retry after a `401` is the same SETUP: its `200` installs the route.
+#[test]
+fn a_setup_retried_after_a_401_installs_its_route() {
+    let t0 = Instant::now();
+    let mut e = ClientEngine::new(cfg(Some(("user", "pw"))));
+    let (a, c) = submit_setup(&mut e, pull(0), t0);
+    e.handle_input(
+        format!(
+            "RTSP/1.0 401 Unauthorized\r\nCSeq: {c}\r\nWWW-Authenticate: Basic realm=\"cam\"\r\n\r\n"
+        )
+        .as_bytes(),
+        t0,
+    );
+    assert!(events(&mut e).is_empty());
+    assert!(rtp_on(&mut e, 0).is_empty(), "a 401 installs nothing");
+    let retry = cseq(&one(&mut e));
+    let mut raw = setup_ok(retry, "RTP/AVP/TCP;unicast;interleaved=0-1");
+    raw.extend(interleaved_frame(0, &valid_rtp_header()));
+    e.handle_input(&raw, t0);
+    let ev = events(&mut e);
+    match ev.as_slice() {
+        [
+            Event::Reply { txn, result: Ok(o) },
+            Event::Media {
+                route: RouteId(0), ..
+            },
+        ] => {
+            assert_eq!(*txn, a);
+            assert_eq!(o.setup, accepted(0, 0, 1));
+        }
+        other => panic!("{other:?}"),
+    }
+}
+
+/// Any `2xx` to a SETUP is an accepted SETUP: the session is learned and
+/// the route installed. A refusal does neither.
+#[test]
+fn a_setup_reply_of_any_2xx_is_accepted() {
+    let t0 = Instant::now();
+    let mut e = ClientEngine::new(cfg(None));
+    let (a, c) = submit_setup(&mut e, pull(0), t0);
+    e.handle_input(
+        format!(
+            "RTSP/1.0 461 Unsupported Transport\r\nCSeq: {c}\r\nSession: refused\r\n\
+             Transport: RTP/AVP/TCP;unicast;interleaved=0-1\r\n\r\n"
+        )
+        .as_bytes(),
+        t0,
+    );
+    let o = outcome(&mut e, a).unwrap();
+    assert_eq!((o.response.status, o.setup), (461, None));
+    assert!(rtp_on(&mut e, 0).is_empty(), "a refusal installs nothing");
+
+    let (a, c) = submit_setup(&mut e, pull(0), t0);
+    e.handle_input(
+        format!(
+            "RTSP/1.0 201 Created\r\nCSeq: {c}\r\nSession: made\r\n\
+             Transport: RTP/AVP/TCP;unicast;interleaved=0-1\r\n\r\n"
+        )
+        .as_bytes(),
+        t0,
+    );
+    let o = outcome(&mut e, a).unwrap();
+    assert_eq!((o.response.status, o.setup), (201, accepted(0, 0, 1)));
+    e.enable_keepalive(Some(Duration::from_secs(1)), t0);
+    e.handle_timeout(ms(t0, 1000), false);
+    assert_eq!(sent(&one(&mut e)).headers["session"], "made");
 }
 
 /// Port of `undersized_rtp_frame_counted_and_dropped`.
@@ -1724,7 +2147,7 @@ fn engine_skips_a_non_utf8_header_block_after_a_binary_frame() {
         matches!(
             ev.as_slice(),
             [
-                Event::Media(_),
+                Event::Media { .. },
                 Event::SessionDead,
                 Event::Ended(EndReason::SessionExpired)
             ]
@@ -1757,7 +2180,7 @@ fn non_utf8_headers_answer_a_waiting_request_and_the_stream_goes_on() {
                         detail: "non-UTF8 RTSP headers",
                     }),
             },
-            Event::Media(_),
+            Event::Media { .. },
         ] => assert_eq!(*txn, a),
         other => panic!("{other:?}"),
     }
@@ -1869,10 +2292,13 @@ fn a_frame_split_at_any_offset_is_delivered_once() {
     let check = |e: &mut ClientEngine, a: TxnId, at: &str| {
         let ev = events(e);
         match ev.as_slice() {
-            [Event::Media(m), Event::Reply { txn, result: Ok(r) }] => {
-                assert_eq!(&m[..], rtp.as_slice(), "{at}");
+            [
+                Event::Media { bytes, .. },
+                Event::Reply { txn, result: Ok(r) },
+            ] => {
+                assert_eq!(&bytes[..], rtp.as_slice(), "{at}");
                 assert_eq!(*txn, a, "{at}");
-                assert_eq!(&r.body[..], b"v=0", "{at}");
+                assert_eq!(&r.response.body[..], b"v=0", "{at}");
             }
             other => panic!("{at}: {other:?}"),
         }
@@ -1925,14 +2351,14 @@ fn ten_thousand_rtcp_frames_are_counted_and_end_nothing() {
     let t0 = Instant::now();
     let mut e = interleaved();
     let a = e.submit(spec(RtspMethod::Options, URI), None, t0).unwrap();
-    let one_frame = interleaved_frame(CHANNELS.rtcp, b"\xDE\xAD\xBE\xEF");
+    let one_frame = interleaved_frame(1, b"\xDE\xAD\xBE\xEF");
     e.handle_input(&one_frame.repeat(5_000), t0);
     for _ in 0..5_000 {
         e.handle_input(&one_frame, t0);
     }
     let ev = events(&mut e);
     assert_eq!(ev.len(), 10_000);
-    assert!(ev.iter().all(|e| matches!(e, Event::Rtcp(_))));
+    assert!(ev.iter().all(|e| matches!(e, Event::Rtcp { .. })));
     assert_eq!(e.counters().rtcp_frames, 10_000);
     assert!(e.inbuf.is_empty());
     assert!(!e.is_closed());
@@ -1979,7 +2405,7 @@ fn a_server_request_never_fails_a_pending_request() {
 fn a_response_without_a_cseq_goes_to_the_pending_request() {
     let t0 = Instant::now();
     let mut e = ClientEngine::new(cfg(Some(("user", "pw"))));
-    e.set_interleaved(CHANNELS);
+    e.install_route(pull(0), 0, 1).unwrap();
     let a = e.submit(spec(RtspMethod::Options, URI), None, t0).unwrap();
     one(&mut e);
     // The 401 retry runs for a reply without a CSeq too.
@@ -2038,7 +2464,7 @@ fn an_unparseable_response_fails_the_pending_request_with_the_parse_error() {
                         detail: "non-numeric status code",
                     }),
             },
-            Event::Media(_),
+            Event::Media { .. },
         ] => assert_eq!(*txn, a),
         other => panic!("{other:?}"),
     }
@@ -2134,7 +2560,7 @@ fn an_accepted_teardown_does_not_stop_the_input() {
             [
                 Event::Ended(EndReason::CleanTeardown),
                 Event::Reply { txn, result: Ok(_) },
-                Event::Media(_)
+                Event::Media { .. }
             ] if *txn == a
         ),
         "{ev:?}"
@@ -2167,15 +2593,21 @@ fn same_events(a: &[Event], b: &[Event]) -> bool {
     fn key(e: &Event) -> String {
         match e {
             Event::Reply { txn, result } => match result {
-                Ok(r) => {
+                Ok(o) => {
+                    let r = &o.response;
                     let mut h: Vec<_> = r.headers.iter().collect();
                     h.sort();
-                    format!("reply {txn:?} {} {h:?} {:?}", r.status, &r.body[..])
+                    format!(
+                        "reply {txn:?} {} {h:?} {:?} {:?}",
+                        r.status,
+                        &r.body[..],
+                        o.setup
+                    )
                 }
                 Err(err) => format!("reply {txn:?} {err:?}"),
             },
-            Event::Media(m) => format!("media {:?}", &m[..]),
-            Event::Rtcp(m) => format!("rtcp {:?}", &m[..]),
+            Event::Media { route, bytes } => format!("media {route:?} {:?}", &bytes[..]),
+            Event::Rtcp { route, bytes } => format!("rtcp {route:?} {:?}", &bytes[..]),
             other => format!("{other:?}"),
         }
     }
@@ -2248,7 +2680,7 @@ fn split_invariance_holds_below_the_header_cap() {
     assert!(
         matches!(
             whole_ev.as_slice(),
-            [Event::Reply { result: Ok(_), .. }, Event::Media(_)]
+            [Event::Reply { result: Ok(_), .. }, Event::Media { .. }]
         ),
         "{whole_ev:?}"
     );
@@ -2416,7 +2848,11 @@ fn a_100_then_a_200_completes_the_request_once() {
             .collect();
         assert_eq!(replies.len(), 1, "{method:?}: {replies:?}");
         assert_eq!(replies[0].0, a);
-        assert_eq!(replies[0].1.as_ref().unwrap().status, 200, "{method:?}");
+        assert_eq!(
+            replies[0].1.as_ref().unwrap().response.status,
+            200,
+            "{method:?}"
+        );
         assert_eq!(e.counters().unmatched_replies, 0, "{method:?}");
     }
 }

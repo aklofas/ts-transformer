@@ -7,8 +7,8 @@ use std::sync::mpsc::{self, RecvTimeoutError};
 use std::time::Instant;
 
 use crate::error::RtspError;
-use crate::rtsp::client::driver::{Command, Progress};
-use crate::rtsp::client::engine::RequestSpec;
+use crate::rtsp::client::driver::{Command, Progress, RouteSpec};
+use crate::rtsp::client::engine::{ReplyOutcome, RequestSpec};
 use crate::rtsp::client::{REQUEST_POLL_TICK, RtspClient};
 use crate::rtsp::message::{RtspMethod, RtspResponse};
 use crate::sdp::Sdp;
@@ -112,21 +112,26 @@ impl RtspClient {
         uri: String,
         headers: Vec<(&'static str, String)>,
     ) -> Result<RtspResponse, RtspError> {
-        // A timeout too large to form an `Instant` (e.g. `Duration::MAX`)
-        // means no deadline rather than a panic.
-        let deadline = self
-            .request_timeout
-            .and_then(|t| Instant::now().checked_add(t));
+        let deadline = self.request_deadline();
         self.request(
             RequestSpec {
                 method,
                 uri,
                 headers,
                 body: None,
+                setup: None,
             },
             deadline,
             None,
         )
+    }
+
+    /// The reply deadline of a request sent now under the request timeout.
+    pub(crate) fn request_deadline(&self) -> Option<Instant> {
+        // A timeout too large to form an `Instant` (e.g. `Duration::MAX`)
+        // means no deadline rather than a panic.
+        self.request_timeout
+            .and_then(|t| Instant::now().checked_add(t))
     }
 
     /// Hand `spec` to the client's thread and wait, first for the request
@@ -152,11 +157,26 @@ impl RtspClient {
         reply_deadline: Option<Instant>,
         send_deadline: Option<Instant>,
     ) -> Result<RtspResponse, RtspError> {
+        self.request_routed(spec, None, reply_deadline, send_deadline)
+            .map(|outcome| outcome.response)
+    }
+
+    /// [`Self::request`] for a SETUP that names a route: `route` carries
+    /// the route's sinks to the client's thread with the request, and the
+    /// outcome says which channel pair the reply installed.
+    pub(crate) fn request_routed(
+        &mut self,
+        spec: RequestSpec,
+        route: Option<RouteSpec>,
+        reply_deadline: Option<Instant>,
+        send_deadline: Option<Instant>,
+    ) -> Result<ReplyOutcome, RtspError> {
         let (progress, rx) = mpsc::channel();
         let r = self
             .driver
             .send(Command::Request {
                 spec,
+                route,
                 reply_deadline,
                 progress,
             })
@@ -169,7 +189,7 @@ impl RtspClient {
         rx: &mpsc::Receiver<Progress>,
         reply_deadline: Option<Instant>,
         send_deadline: Option<Instant>,
-    ) -> Result<RtspResponse, RtspError> {
+    ) -> Result<ReplyOutcome, RtspError> {
         // The write. A `Done` can come with no `Written` before it (an
         // early reply, a failure before the write): it ends the request.
         let first = match send_deadline {
@@ -210,9 +230,9 @@ impl RtspClient {
 /// an I/O error or a passed deadline is then the cancel; anything else, a
 /// reply above all, is kept.
 fn report_cancel(
-    r: Result<RtspResponse, RtspError>,
+    r: Result<ReplyOutcome, RtspError>,
     cancelled: bool,
-) -> Result<RtspResponse, RtspError> {
+) -> Result<ReplyOutcome, RtspError> {
     match r {
         Err(RtspError::Io(_) | RtspError::Timeout) if cancelled => Err(RtspError::LocalCancel),
         r => r,
@@ -634,16 +654,19 @@ mod tests {
         );
     }
 
-    fn ok_reply() -> RtspResponse {
-        RtspResponse::parse(b"RTSP/1.0 200 OK\r\nCSeq: 1\r\n\r\n")
-            .unwrap()
-            .0
+    fn ok_reply() -> ReplyOutcome {
+        ReplyOutcome {
+            response: RtspResponse::parse(b"RTSP/1.0 200 OK\r\nCSeq: 1\r\n\r\n")
+                .unwrap()
+                .0,
+            setup: None,
+        }
     }
 
     #[test]
     fn a_reply_with_the_cancel_set_is_the_reply() {
         let r = report_cancel(Ok(ok_reply()), true);
-        assert!(matches!(&r, Ok(resp) if resp.status == 200), "got {r:?}");
+        assert!(matches!(&r, Ok(o) if o.response.status == 200), "got {r:?}");
     }
 
     #[test]

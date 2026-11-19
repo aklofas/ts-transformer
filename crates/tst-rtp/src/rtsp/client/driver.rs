@@ -17,11 +17,12 @@ use tst_core::cancel::FlagCancel;
 use tst_core::transport::{EndReason, EndReasonHandle};
 
 use super::CONTROL_WRITE_TIMEOUT;
-use super::engine::{ClientEngine, Event, InterleavedChannels, RequestSpec, StreamEnd, TxnId};
+use super::engine::{
+    ClientEngine, Event, MAX_ROUTES, ReplyOutcome, RequestSpec, RouteId, StreamEnd, TxnId,
+};
 use super::stream::{ReadState, Stream};
 use crate::error::RtspError;
 use crate::rtcp::stats::RtcpStats;
-use crate::rtsp::message::RtspResponse;
 use crate::transport::{ingest_rtcp_packet, record_end};
 
 const SOCKET: Token = Token(0);
@@ -44,24 +45,37 @@ pub(crate) const DATA_QUEUE_BOUND: usize = 1024;
 
 const THREAD_NAME: &str = "tst-rtsp-client";
 
-/// Where RTCP reports from the interleaved RTCP channel are counted.
+/// Where RTCP reports from a route's interleaved RTCP channel are counted.
 pub(crate) struct RtcpSink {
     pub stats: Arc<Mutex<RtcpStats>>,
     pub ssrc: u32,
 }
 
+/// Where the frames of the route a SETUP asks for go once its reply
+/// installs the channel pair.
+pub(crate) struct RouteSpec {
+    pub id: RouteId,
+    /// The queue for whole RTP packets; `None` for a route this side
+    /// sends on.
+    pub inbound_media: Option<mpsc::SyncSender<Bytes>>,
+    pub inbound_rtcp: RtcpSink,
+}
+
 pub(crate) enum Command {
     /// A caller request. It replaces a request still waiting, whose
     /// `progress` is dropped without a `Done`.
+    ///
+    /// `route` goes with a SETUP whose spec names the same route: the
+    /// thread holds it with the request, so it is in place before the reply
+    /// can be read, and frames that arrive with the reply reach it. It
+    /// replaces the route's earlier sinks when the reply installs a channel
+    /// pair; a reply that installs none, an error and a replaced request
+    /// drop it.
     Request {
         spec: RequestSpec,
+        route: Option<RouteSpec>,
         reply_deadline: Option<Instant>,
         progress: mpsc::Sender<Progress>,
-    },
-    SetInterleaved {
-        channels: InterleavedChannels,
-        data_tx: mpsc::SyncSender<Bytes>,
-        rtcp: RtcpSink,
     },
     EnableKeepalive(Option<Duration>),
 }
@@ -79,7 +93,7 @@ pub(crate) enum Command {
 pub(crate) enum Progress {
     /// Every byte of the request's first attempt is in the kernel.
     Written,
-    Done(Result<RtspResponse, RtspError>),
+    Done(Result<ReplyOutcome, RtspError>),
 }
 
 /// State the thread shares with the client and its receiver.
@@ -88,6 +102,9 @@ pub(crate) struct Shared {
     pub session_dead: Arc<AtomicBool>,
     pub end_reason: EndReasonHandle,
     pub media_dropped: Arc<AtomicU64>,
+    /// Frames the peer sent on the RTP channel of a route this side sends
+    /// on.
+    pub frames_dropped_inbound: Arc<AtomicU64>,
     /// Holds the thread once it has left its loop, before it closes the
     /// socket: it sends on the first and waits on the second.
     #[cfg(test)]
@@ -203,8 +220,7 @@ pub(crate) fn spawn_with(
         segments: VecDeque::new(),
         queued: 0,
         stall_from: None,
-        media: None,
-        rtcp: None,
+        routes: Default::default(),
         read_more: false,
         inbuf: Vec::new(),
     };
@@ -227,6 +243,15 @@ struct Caller {
     txn: TxnId,
     progress: mpsc::Sender<Progress>,
     written: bool,
+    /// The sinks of the route this request sets up.
+    route: Option<RouteSpec>,
+}
+
+/// An installed route's sinks.
+struct RouteSinks {
+    /// `None` on a route this side sends on, and once the media has ended.
+    media: Option<mpsc::SyncSender<Bytes>>,
+    rtcp: RtcpSink,
 }
 
 /// One transmit's place in the write queue.
@@ -263,8 +288,7 @@ struct Driver {
     queued: u64,
     /// Since when queued bytes have made no progress.
     stall_from: Option<Instant>,
-    media: Option<mpsc::SyncSender<Bytes>>,
-    rtcp: Option<RtcpSink>,
+    routes: [Option<RouteSinks>; MAX_ROUTES],
     /// The last read stopped at its budget with bytes perhaps left.
     read_more: bool,
     inbuf: Vec<u8>,
@@ -318,9 +342,15 @@ impl Driver {
             match cmd {
                 Command::Request {
                     spec,
+                    route,
                     reply_deadline,
                     progress,
                 } => {
+                    debug_assert_eq!(
+                        spec.setup.map(|s| s.id),
+                        route.as_ref().map(|r| r.id),
+                        "a request's sinks and its spec name different routes"
+                    );
                     // The engine forgets a replaced request: its caller
                     // sees the channel close.
                     self.caller = None;
@@ -330,23 +360,16 @@ impl Driver {
                                 txn,
                                 progress,
                                 written: false,
+                                route,
                             });
                         }
+                        // `route` is dropped: after the stream's end a
+                        // receiver sees its queue close at once, with the
+                        // reason already recorded.
                         Err(e) => {
                             let _ = progress.send(Progress::Done(Err(e)));
                         }
                     }
-                }
-                Command::SetInterleaved {
-                    channels,
-                    data_tx,
-                    rtcp,
-                } => {
-                    self.engine.set_interleaved(channels);
-                    // After the stream's end the receiver sees its queue
-                    // close at once; the reason is already recorded.
-                    self.media = (!self.engine.is_closed()).then_some(data_tx);
-                    self.rtcp = Some(rtcp);
                 }
                 Command::EnableKeepalive(interval) => {
                     self.engine.enable_keepalive(interval, Instant::now());
@@ -441,20 +464,32 @@ impl Driver {
                     if self.caller.as_ref().is_some_and(|c| c.txn == txn)
                         && let Some(c) = self.caller.take()
                     {
+                        // Before the events of the frames that followed the
+                        // reply, which are next in the engine's queue.
+                        if let (Ok(ReplyOutcome { setup: Some(_), .. }), Some(route)) =
+                            (&result, c.route)
+                        {
+                            self.install_sinks(route);
+                        }
                         let _ = c.progress.send(Progress::Done(result));
                     }
                 }
-                Event::Media(packet) => {
-                    if let Some(tx) = &self.media
-                        && let Err(mpsc::TrySendError::Full(_)) = tx.try_send(packet)
+                Event::Media { route, bytes } => {
+                    if let Some(tx) = self.sinks(route).and_then(|s| s.media.as_ref())
+                        && let Err(mpsc::TrySendError::Full(_)) = tx.try_send(bytes)
                     {
                         self.shared.media_dropped.fetch_add(1, Ordering::Relaxed);
                     }
                 }
-                Event::Rtcp(packet) => {
-                    if let Some(sink) = &self.rtcp {
-                        ingest_rtcp_packet(&sink.stats, sink.ssrc, &packet);
+                Event::Rtcp { route, bytes } => {
+                    if let Some(sink) = self.sinks(route).map(|s| &s.rtcp) {
+                        ingest_rtcp_packet(&sink.stats, sink.ssrc, &bytes);
                     }
+                }
+                Event::InboundDropped => {
+                    self.shared
+                        .frames_dropped_inbound
+                        .fetch_add(1, Ordering::Relaxed);
                 }
                 Event::SessionDead => self.shared.session_dead.store(true, Ordering::Release),
                 Event::Ended(reason) => {
@@ -465,10 +500,26 @@ impl Driver {
                     // close reads it at once.
                     record_end(&self.shared.end_reason, reason);
                     if close_media {
-                        self.media = None;
+                        for sinks in self.routes.iter_mut().flatten() {
+                            sinks.media = None;
+                        }
                     }
                 }
             }
+        }
+    }
+
+    fn sinks(&self, route: RouteId) -> Option<&RouteSinks> {
+        self.routes.get(usize::from(route.0))?.as_ref()
+    }
+
+    /// `route`'s sinks take the place of the ones installed under its id.
+    fn install_sinks(&mut self, route: RouteSpec) {
+        if let Some(slot) = self.routes.get_mut(usize::from(route.id.0)) {
+            *slot = Some(RouteSinks {
+                media: route.inbound_media,
+                rtcp: route.inbound_rtcp,
+            });
         }
     }
 

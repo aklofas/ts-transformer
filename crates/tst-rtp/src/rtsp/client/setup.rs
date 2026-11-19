@@ -10,13 +10,11 @@ use crate::error::RtspError;
 use crate::h264::depacketizer::H264DepayConfig;
 use crate::rtcp::stats::RtcpStats;
 use crate::rtsp::client::RtspClient;
-use crate::rtsp::client::driver::{Command, DATA_QUEUE_BOUND, RtcpSink};
-use crate::rtsp::client::engine::InterleavedChannels;
+use crate::rtsp::client::driver::{DATA_QUEUE_BOUND, RouteSpec, RtcpSink};
+use crate::rtsp::client::engine::{RequestSpec, RouteId, RouteKind, SetupRoute};
 use crate::rtsp::client::session::RtspSession;
 use crate::rtsp::message::RtspMethod;
-use crate::rtsp::transport_negotiation::{
-    RtspTransportKind, bind_udp_pair, build_transport_request, parse_transport_response,
-};
+use crate::rtsp::transport_negotiation::{bind_udp_pair, build_transport_request};
 use crate::sdp::pick::{pick_h264, pick_mp2t};
 use crate::sdp::{Sdp, SdpMedia};
 use crate::url::RtspTransportPref;
@@ -124,23 +122,43 @@ impl RtspClient {
         };
         let local_port = local_udp.as_ref().map(|(_, _, p)| *p).unwrap_or(0);
         let transport_hdr = build_transport_request(pref, local_port)?;
+        // The receiving side's one route. Its sinks go with the request,
+        // whichever transport it asks for: the client's thread installs
+        // them when it accepts an interleaved reply, so `$` frames a server
+        // sends right behind that reply are not missed, and forgets them
+        // otherwise.
+        let route = RouteId(0);
+        let (data_tx, data_rx) = mpsc::sync_channel(DATA_QUEUE_BOUND);
+        let rtcp_stats = Arc::new(Mutex::new(RtcpStats::default()));
+        let ssrc = crate::transport::random_u32();
         // SETUP authenticates like every method, hashing the digest against
         // the control URI. gortsplib/MediaMTX require auth on SETUP even
         // after an authenticated DESCRIBE.
-        let resp = self.exchange(
-            RtspMethod::Setup,
-            uri.to_string(),
-            vec![("transport", transport_hdr)],
+        let deadline = self.request_deadline();
+        let outcome = self.request_routed(
+            RequestSpec {
+                method: RtspMethod::Setup,
+                uri: uri.to_string(),
+                headers: vec![("transport", transport_hdr)],
+                body: None,
+                setup: Some(SetupRoute {
+                    id: route,
+                    kind: RouteKind::Pull,
+                }),
+            },
+            Some(RouteSpec {
+                id: route,
+                inbound_media: Some(data_tx),
+                inbound_rtcp: RtcpSink {
+                    stats: rtcp_stats.clone(),
+                    ssrc,
+                },
+            }),
+            deadline,
+            None,
         )?;
+        let resp = outcome.response;
         self.expect_ok(&resp)?;
-        // Server-rewritten Transport: tells us what was actually negotiated.
-        let server_transport = resp
-            .headers
-            .get("transport")
-            .ok_or(RtspError::BadResponse {
-                detail: "SETUP 200 missing Transport: header",
-            })?;
-        let transport = parse_transport_response(server_transport)?;
         let sid = resp
             .session_id()
             .ok_or(RtspError::BadResponse {
@@ -151,9 +169,12 @@ impl RtspClient {
         // pings carry the id and follow the advertised timeout.
         self.session_id = Some(sid.clone());
 
-        // Construct RtspSession with the negotiated transport.
-        let session = match transport.kind {
-            RtspTransportKind::Udp => {
+        // The transport the server's rewritten `Transport:` negotiated: the
+        // client's thread read it, and installed the channel pair of an
+        // interleaved one (the request asks for `interleaved=0-1`; the
+        // server may name another pair).
+        let session = match outcome.setup {
+            None => {
                 let (rtp, rtcp, _port) = local_udp.ok_or(RtspError::BadResponse {
                     detail: "server replied UDP but we sent TCP-interleaved",
                 })?;
@@ -165,40 +186,14 @@ impl RtspClient {
                     self.end_reason.clone(),
                 )
             }
-            RtspTransportKind::TcpInterleaved => {
-                // The client's thread routes `$` frames from here on, before
-                // PLAY, so the leading frames a server pushes right after
-                // its PLAY reply are not missed.
-                //
-                // Channels: the SETUP request hard-codes `interleaved=0-1`
-                // in `build_transport_request`. The server may echo a
-                // different pair via `Transport: interleaved=N-M` — use
-                // the parsed response when present, else fall back to 0-1.
-                let (rtp_ch, rtcp_ch) = transport.interleaved.unwrap_or((0, 1));
-                let channels = InterleavedChannels {
-                    rtp: rtp_ch,
-                    rtcp: rtcp_ch,
-                };
-                let (data_tx, data_rx) = mpsc::sync_channel(DATA_QUEUE_BOUND);
-                let rtcp_stats = Arc::new(Mutex::new(RtcpStats::default()));
-                let ssrc = crate::transport::random_u32();
-                self.driver.send(Command::SetInterleaved {
-                    channels,
-                    data_tx,
-                    rtcp: RtcpSink {
-                        stats: rtcp_stats.clone(),
-                        ssrc,
-                    },
-                })?;
-                RtspSession::new_interleaved(
-                    sid,
-                    data_rx,
-                    rtcp_stats,
-                    ssrc,
-                    self.url.recv_timeout,
-                    self.end_reason.clone(),
-                )
-            }
+            Some(_) => RtspSession::new_interleaved(
+                sid,
+                data_rx,
+                rtcp_stats,
+                ssrc,
+                self.url.recv_timeout,
+                self.end_reason.clone(),
+            ),
         };
         Ok(session)
     }

@@ -143,7 +143,7 @@ pub(crate) fn duration_ms_saturating(d: Duration) -> u64 {
 #[doc(hidden)]
 pub fn fuzz_client_engine_input(data: &[u8]) {
     use crate::rtsp::message::RtspMethod;
-    use engine::{ClientEngine, EngineConfig, InterleavedChannels, RequestSpec};
+    use engine::{ClientEngine, EngineConfig, RequestSpec, RouteId, RouteKind, SetupRoute};
     let start = std::time::Instant::now();
     let interval = Duration::from_millis(100);
     let now = start.checked_add(interval).unwrap_or(start);
@@ -155,13 +155,18 @@ pub fn fuzz_client_engine_input(data: &[u8]) {
             credentials: None,
             schemes: crate::rtsp::auth::AuthSchemes::default(),
         });
-        e.set_interleaved(InterleavedChannels { rtp: 0, rtcp: 1 });
+        let pull = SetupRoute {
+            id: RouteId(0),
+            kind: RouteKind::Pull,
+        };
+        let _ = e.install_route(pull, 0, 1);
         let _ = e.submit(
             RequestSpec {
                 method: RtspMethod::Options,
                 uri: "rtsp://fuzz.invalid/live".to_string(),
                 headers: Vec::new(),
                 body: None,
+                setup: None,
             },
             None,
             start,
@@ -403,6 +408,7 @@ impl RtspClient {
                 session_dead: session_dead.clone(),
                 end_reason: end_reason.clone(),
                 media_dropped: Arc::new(AtomicU64::new(0)),
+                frames_dropped_inbound: Arc::new(AtomicU64::new(0)),
                 #[cfg(test)]
                 exit_gate: params.exit_gate,
             },
