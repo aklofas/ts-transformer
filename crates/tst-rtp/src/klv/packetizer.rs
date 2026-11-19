@@ -21,7 +21,7 @@ pub const MIN_MAX_PAYLOAD: usize = 1;
 /// # Example
 ///
 /// ```
-/// use tst_rtp::klv::packetize;
+/// use tst_rtp::klv::packetizer::packetize;
 ///
 /// let chunks = packetize(&[1, 2, 3, 4, 5], 2);
 /// assert_eq!(chunks.len(), 3);

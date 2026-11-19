@@ -383,7 +383,7 @@ impl RtspPush {
         if klv.is_empty() {
             return Err(PushError::Empty("KLV unit"));
         }
-        let chunks = crate::klv::packetize(klv, KLV_MAX_PAYLOAD);
+        let chunks = crate::klv::packetizer::packetize(klv, KLV_MAX_PAYLOAD);
         Ok(self.send_unit(at, pts, &chunks)?)
     }
 
