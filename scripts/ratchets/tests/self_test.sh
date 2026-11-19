@@ -1973,6 +1973,8 @@ if command -v javac >/dev/null 2>&1; then
     printf '<!-- compile: java-statements -->\n```java\nint a = Nope.call();\n```\n' > "$tmp/ds/bad-j.md"
     expect "doc-snippets: a marked Java snippet that compiles passes" 0 env DOC_SNIPPETS_PAGE="$tmp/ds/good-j.md" bash "$DS" java "$tmp/ds/cp"
     expect "doc-snippets: a marked Java snippet with a missing class fails" 1 env DOC_SNIPPETS_PAGE="$tmp/ds/bad-j.md" bash "$DS" java "$tmp/ds/cp"
+else
+    echo "skip: doc-snippets java cases (no javac)"
 fi
 
 if [[ "$fail" == 0 ]]; then echo "self-test: ALL OK"; fi

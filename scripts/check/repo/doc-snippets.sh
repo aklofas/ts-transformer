@@ -44,11 +44,9 @@ if [ "${#files[@]}" -eq 0 ]; then
 fi
 
 if [ "$lang" = c ]; then
-  # The snippets are excerpts: a variable declared for the reader and used in
-  # the lines after the excerpt is not a defect.
   rc=0
   for f in "${files[@]}"; do
-    cc -fsyntax-only -Wall -Werror -Wno-unused-variable -Wno-unused-but-set-variable \
+    cc -fsyntax-only -Wall -Werror \
       -I "$input" "$f" || { echo "doc-snippets: FAIL: $f (from $page)" >&2; rc=1; }
   done
   [ "$rc" = 0 ] || exit 1
