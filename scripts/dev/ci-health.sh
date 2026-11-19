@@ -88,8 +88,13 @@ runs="$(jq 'length' "$tmp/runs.json")"
 first_try_green="$(jq '[.[] | select(.run_attempt == 1 and .conclusion == "success")] | length' "$tmp/runs.json")"
 # A newer push to a pull request cancels its older runs (the workflows'
 # concurrency rule): such a run is neither green nor failed, so it is counted
-# apart and left out of the first-try-green share.
-superseded="$(jq '[.[] | select(.event == "pull_request" and .run_attempt == 1 and .conclusion == "cancelled")] | length' "$tmp/runs.json")"
+# apart and left out of the first-try-green share. A run cut by a job cap ends
+# cancelled too, so only a run with a newer pull-request run of its workflow on
+# its branch counts; that run may still be in progress, so the raw list is read.
+superseded="$(jq -s '[.[] | .workflow_runs[]] as $all
+  | [$all[] | select(.status == "completed" and .event == "pull_request" and .run_attempt == 1 and .conclusion == "cancelled") as $r
+     | select(any($all[]; .event == "pull_request" and .workflow_id == $r.workflow_id and .head_branch == $r.head_branch and .created_at > $r.created_at))
+     | $r] | length' "$tmp/runs.raw")"
 rerun_runs="$(jq '[.[] | select(.run_attempt > 1)] | length' "$tmp/runs.json")"
 wedges="$(jq --argjson m "$WEDGE_MIN" '[.[] | select(.minutes > $m)] | length' "$tmp/runs.json")"
 unrecovered="$(jq '[.[] | select(.conclusion == "failure")] | length' "$tmp/runs.json")"
@@ -127,7 +132,7 @@ fi
   echo "CI health — $REPO — last $DAYS days (since $since, snapshot $now)"
   echo "  completed runs:        $runs"
   echo "  green on first try:    $first_try_green of $((runs - superseded)) (superseded runs left out)"
-  echo "  superseded:            $superseded (pull-request runs cancelled on attempt 1)"
+  echo "  superseded:            $superseded (pull-request runs cancelled on attempt 1 by a newer run)"
   echo "  rerun runs (attempt>1): $rerun_runs"
   echo "  wedges (> ${WEDGE_MIN} min):  $wedges"
   echo "  unrecovered failures:  $unrecovered"

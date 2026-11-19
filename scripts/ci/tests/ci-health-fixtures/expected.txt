@@ -1,7 +1,7 @@
 CI health — aklofas/ts-transformer — last 7 days (since DAY, snapshot NOW)
   completed runs:        3
   green on first try:    1 of 3 (superseded runs left out)
-  superseded:            0 (pull-request runs cancelled on attempt 1)
+  superseded:            0 (pull-request runs cancelled on attempt 1 by a newer run)
   rerun runs (attempt>1): 2
   wedges (> 60 min):  0
   unrecovered failures:  1
