@@ -13,6 +13,8 @@ import static org.tstrans.TestSupport.isLinux;
 import static org.tstrans.TestSupport.roundtripConfig;
 import static org.tstrans.TestSupport.scaledMs;
 import static org.tstrans.TestSupport.syntheticH264Idr;
+import static org.tstrans.rtp.RtspTestSupport.nullBundle;
+import static org.tstrans.rtp.RtspTestSupport.startServer;
 
 import java.io.ByteArrayOutputStream;
 import java.io.DataInputStream;
@@ -597,13 +599,6 @@ class RtspPushTest {
         assumeTrue(isLinux(), "RTSP publish mounts gated to Linux (real sockets + tokio runtime)");
     }
 
-    private static RtspServer startServer() throws RtspException {
-        return RtspServer.start(RtspServerConfig.builder()
-            .bindAddr("127.0.0.1:0")
-            .gracefulShutdownDrainMs(50)
-            .build());
-    }
-
     private static RtspClientConfig serverConfig(RtspServer server) {
         String addr = server.localAddr();
         String port = addr.substring(addr.lastIndexOf(':') + 1);
@@ -685,16 +680,6 @@ class RtspPushTest {
             au.writeBytes(nal);
         }
         return au.toByteArray();
-    }
-
-    private static byte[] nullBundle() {
-        byte[] b = new byte[7 * 188];
-        for (int p = 0; p < 7; p++) {
-            int o = p * 188;
-            b[o] = 0x47; b[o + 1] = 0x1F; b[o + 2] = (byte) 0xFF; b[o + 3] = 0x10;
-            for (int i = 4; i < 188; i++) b[o + i] = (byte) 0xFF;
-        }
-        return b;
     }
 
     /** A thread that sends {@link #NULL_BUNDLE} until a send throws. */

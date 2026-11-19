@@ -6,6 +6,7 @@ import static org.tstrans.TestSupport.isLinux;
 import static org.tstrans.TestSupport.rtspHeader;
 import static org.tstrans.TestSupport.roundtripConfig;
 import static org.tstrans.TestSupport.sha256Units;
+import static org.tstrans.rtp.RtspTestSupport.nullBundle;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -601,16 +602,6 @@ class RtspPublishMountTest {
             Thread.sleep(20);
         }
         return cond.getAsBoolean();
-    }
-
-    private static byte[] nullBundle() {
-        byte[] b = new byte[7 * 188];
-        for (int p = 0; p < 7; p++) {
-            int o = p * 188;
-            b[o] = 0x47; b[o + 1] = 0x1F; b[o + 2] = (byte) 0xFF; b[o + 3] = 0x10;
-            for (int i = 4; i < 188; i++) b[o + i] = (byte) 0xFF;
-        }
-        return b;
     }
 
     private static byte[] idr(int i) {

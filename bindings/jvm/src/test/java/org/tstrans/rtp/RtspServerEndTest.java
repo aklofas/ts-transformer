@@ -6,6 +6,7 @@ import static org.tstrans.TestSupport.isLinux;
 import static org.tstrans.TestSupport.rtspHeader;
 import static org.tstrans.TestSupport.roundtripConfig;
 import static org.tstrans.TestSupport.syntheticH264Idr;
+import static org.tstrans.rtp.RtspTestSupport.startServer;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -41,7 +42,7 @@ class RtspServerEndTest {
     @Timeout(40)
     void closeWithoutStopSendsTheNotice5402ToAPlayingSession() throws Exception {
         assumeLinux();
-        RtspServer server = start();
+        RtspServer server = startServer();
         try (MountHandle mount = server.addUnicastMount("/live", roundtripConfig());
              RawPlayer player = new RawPlayer(port(server), "/live")) {
             // close() on a side thread, so this one reads the wire while close() runs.
@@ -62,7 +63,7 @@ class RtspServerEndTest {
     @Timeout(40)
     void stopSendsTheNotice5402ToAPlayingSession() throws Exception {
         assumeLinux();
-        RtspServer server = start();
+        RtspServer server = startServer();
         try (MountHandle mount = server.addUnicastMount("/live", roundtripConfig());
              RawPlayer player = new RawPlayer(port(server), "/live")) {
             server.stop();
@@ -79,7 +80,7 @@ class RtspServerEndTest {
     @Timeout(40)
     void hardCancelClosesAPlayingSessionWithoutANotice() throws Exception {
         assumeLinux();
-        RtspServer server = start();
+        RtspServer server = startServer();
         try (MountHandle mount = server.addUnicastMount("/live", roundtripConfig());
              RawPlayer player = new RawPlayer(port(server), "/live");
              RtspServerCancelHandle cancel = server.cancelHandle()) {
@@ -97,7 +98,7 @@ class RtspServerEndTest {
     @Timeout(40)
     void stopAfterAHardCancelReturnsAndSendsNoNotice() throws Exception {
         assumeLinux();
-        RtspServer server = start();
+        RtspServer server = startServer();
         try (MountHandle mount = server.addUnicastMount("/live", roundtripConfig());
              RawPlayer player = new RawPlayer(port(server), "/live");
              RtspServerCancelHandle cancel = server.cancelHandle()) {
@@ -115,7 +116,7 @@ class RtspServerEndTest {
     @Timeout(40)
     void closeAfterAHardCancelSendsNoNotice() throws Exception {
         assumeLinux();
-        RtspServer server = start();
+        RtspServer server = startServer();
         try (MountHandle mount = server.addUnicastMount("/live", roundtripConfig());
              RawPlayer player = new RawPlayer(port(server), "/live");
              RtspServerCancelHandle cancel = server.cancelHandle()) {
@@ -133,7 +134,7 @@ class RtspServerEndTest {
     @Timeout(30)
     void pushAfterAHardCancelThrowsClosed() throws Exception {
         assumeLinux();
-        RtspServer server = start();
+        RtspServer server = startServer();
         try (MountHandle mount = server.addUnicastMount("/live", roundtripConfig());
              RtspServerCancelHandle cancel = server.cancelHandle()) {
             mount.pushVideo(syntheticH264Idr(), 0L, true);
@@ -153,7 +154,7 @@ class RtspServerEndTest {
     @Timeout(30)
     void addUnicastMountAfterAHardCancelThrowsClosed() throws Exception {
         assumeLinux();
-        RtspServer server = start();
+        RtspServer server = startServer();
         try (RtspServerCancelHandle cancel = server.cancelHandle()) {
             cancel.cancel();
             RtspException e = assertThrows(RtspException.class,
@@ -168,7 +169,7 @@ class RtspServerEndTest {
     @Timeout(30)
     void mountRulesEditAfterAHardCancelThrowsClosed() throws Exception {
         assumeLinux();
-        RtspServer server = start();
+        RtspServer server = startServer();
         try (MountRules rules = server.mountRules();
              RtspServerCancelHandle cancel = server.cancelHandle()) {
             rules.set("/a", MountRule.both(MountPolicy.open()));
@@ -187,13 +188,6 @@ class RtspServerEndTest {
 
     private static void assumeLinux() {
         assumeTrue(isLinux(), "RTSP live server gated to Linux (real sockets + tokio runtime)");
-    }
-
-    private static RtspServer start() throws RtspException {
-        return RtspServer.start(RtspServerConfig.builder()
-            .bindAddr("127.0.0.1:0")
-            .gracefulShutdownDrainMs(50)
-            .build());
     }
 
     private static int port(RtspServer server) {
