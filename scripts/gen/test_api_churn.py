@@ -192,6 +192,13 @@ class Tally(unittest.TestCase):
         with self.assertRaises(ac.ChurnError):
             ac.tally(rep, ac.classification(TABLE), "0.11.0")
 
+    def test_a_broken_crate_with_no_break_line_parsed_is_an_error(self):
+        # A styled report: the tool said "broke", yet neither count read a line.
+        for kw in ({"exit": 100, "failed_checks": 0}, {"exit": 0, "failed_checks": 3}):
+            with self.assertRaises(ac.ChurnError) as e:
+                ac.tally(self.crate(items=0, breaks=[], **kw), ac.classification(TABLE), "0.11.0")
+            self.assertIn("tst-core", str(e.exception))
+
     def test_a_clean_report_counts_nothing(self):
         rep = self.crate(exit=0, failed_checks=0, items=0, breaks=[])
         self.assertEqual(ac.tally(rep, ac.classification(TABLE), "0.11.0")["stable"], 0)

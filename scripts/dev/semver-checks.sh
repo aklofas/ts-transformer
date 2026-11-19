@@ -30,6 +30,9 @@
 # --release-type minor: for a 0.x crate the tool otherwise assumes a patch bump
 #   or only reports what the declared bump forbids; "minor" makes it list every
 #   break since the tag.
+# --color never (and CARGO_TERM_COLOR=never for cargo's own lines): the report is
+#   parsed as text, and a styled "Failed in:" line reads as no break; the flag
+#   overrides the CARGO_TERM_COLOR=always a workflow may set.
 # +stable: cargo-semver-checks 0.51 needs rustdoc JSON newer than the pinned
 #   toolchain produces, so it runs under the stable toolchain (the tag's
 #   tree is compiled with it too, so the two sides are documented alike).
@@ -78,8 +81,8 @@ for pair in $pairs; do
     feat="$(printf '%s\n' "$feats" | awk -F'\t' -v p="$pkg" '$1 == p {print $2}')"
     fargs=()
     [ -z "$feat" ] || [ "$feat" = "-" ] || fargs=(--features "$feat")
-    SRT_FORCE_VENDORED=1 RIST_FORCE_VENDORED=1 cargo +stable semver-checks check-release \
-        -p "$pkg" "${fargs[@]}" --baseline-root "$base" --release-type minor >"$report" 2>&1
+    SRT_FORCE_VENDORED=1 RIST_FORCE_VENDORED=1 CARGO_TERM_COLOR=never cargo +stable semver-checks check-release \
+        -p "$pkg" "${fargs[@]}" --baseline-root "$base" --release-type minor --color never >"$report" 2>&1
     rc=$?
     failed="$(sed -n 's/.* checks: .*, \([0-9][0-9]*\) fail.*/\1/p' "$report" | head -1)"
     items="$(awk '/^Failed in:/{f=1;next} /^$/{f=0} f' "$report" | grep -c .)"

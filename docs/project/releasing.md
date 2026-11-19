@@ -734,9 +734,10 @@ Release; the committed record stays the one step 10 collected.
      bash scripts/gen/api-churn.sh --write
      ```
      `tally` prints the four tier counts of the row; it stops, naming the
-     line, at a break line no classification row covers, and at a crate
-     whose parsed lines differ in number from the report's item count. The
-     table therefore shows a release from the first commit after its tag.
+     line, at a break line no classification row covers, at a crate whose
+     parsed lines differ in number from the report's item count, and at a
+     crate the tool reported broken with no break line parsed. The table
+     therefore shows a release from the first commit after its tag.
 
 ## crates.io publish (Rust crates)
 
