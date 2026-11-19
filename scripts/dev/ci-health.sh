@@ -96,7 +96,7 @@ unrecovered="$(jq '[.[] | select(.conclusion == "failure")] | length' "$tmp/runs
 if [ -z "${CI_HEALTH_RUNS_JSON:-}" ]; then
   for id in $(jq -r '.[] | select(.run_attempt > 1) | .id' "$tmp/runs.json"); do
     # A listing of a rerun `ci` run holds 90 or more jobs with their steps;
-    # a page of 100 takes about ten seconds to build, a page of 30 under two.
+    # a page of 100 takes about ten seconds to build, a page of 30 two to six.
     if ! api "repos/$REPO/actions/runs/$id/jobs?filter=all&per_page=30" > "$tmp/jobs.json"; then
       echo "$id" >> "$tmp/unread-runs.txt"
       continue
