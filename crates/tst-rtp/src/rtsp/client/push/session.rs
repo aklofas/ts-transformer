@@ -389,20 +389,23 @@ impl RtspPush {
     /// - [`RtspError::LocalCancel`] on a cancelled push (the TEARDOWN is
     ///   still written).
     /// - [`RtspError::Protocol`] with code `454` when the server had
-    ///   forgotten the session (the end reason is `SessionExpired`): the
-    ///   media still queued then was dropped, and the TEARDOWN's own
-    ///   answer, which a server gives as `454` too, does not make that a
-    ///   success.
+    ///   forgotten the session (the end reason is `SessionExpired`) while
+    ///   media was still queued: that media was dropped, and the
+    ///   TEARDOWN's own answer, which a server gives as `454` too, does not
+    ///   make that a success. A session the server forgot after every
+    ///   frame was written reports the TEARDOWN's result.
     ///
     /// The client's thread is stopped on every outcome.
     pub fn close(mut self) -> Result<(), RtspError> {
         let drained = if self.closed { Ok(()) } else { self.flush() };
         // A session that expired leaves its connection open: the TEARDOWN
-        // below is written and accepted, with media dropped before it.
-        let expired = drained == Err(MediaWaitEnd::Ended)
-            && self.client.end_reason.get() == Some(EndReason::SessionExpired);
+        // below is written and accepted, perhaps with media dropped before
+        // it. The queue counts what it held when it closed.
+        let lost = drained == Err(MediaWaitEnd::Ended)
+            && self.client.end_reason.get() == Some(EndReason::SessionExpired)
+            && self.client.driver.frames_dropped_at_close() > 0;
         let torn_down = self.client.close();
-        if expired && torn_down.is_ok() {
+        if lost && torn_down.is_ok() {
             return Err(RtspError::Protocol {
                 code: 454,
                 reason: "Session Not Found".into(),

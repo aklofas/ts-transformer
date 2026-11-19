@@ -1861,6 +1861,50 @@ fn close_after_a_ping_454_dropped_queued_media_is_an_error() {
     joined(peer);
 }
 
+/// A session the server forgot after every frame was written: nothing was
+/// lost, so `close` reports the TEARDOWN's answer, which accepts the end.
+#[test]
+fn close_after_a_ping_454_with_nothing_queued_is_the_teardowns_result() {
+    let (port, peer) = serve(|peer| {
+        peer.accept_push();
+        // Pings are held until both frames of the one send were read, so
+        // the session ends with nothing left to write.
+        let mut frames = 0;
+        let mut held = Vec::new();
+        while frames < 2 || held.is_empty() {
+            match peer.read_unit().expect("frames and a ping") {
+                Unit::Frame(..) => frames += 1,
+                Unit::Request(ping) => {
+                    assert_eq!(ping.method, RtspMethod::Options);
+                    held.push(ping);
+                }
+            }
+        }
+        for ping in &held {
+            peer.answer(ping, "454 Session Not Found", "");
+        }
+        loop {
+            let unit = peer.read_unit().expect("a TEARDOWN before the hang-up");
+            let Unit::Request(request) = unit else {
+                panic!("a frame after the session ended");
+            };
+            peer.answer(&request, "454 Session Not Found", "");
+            if request.method == RtspMethod::Teardown {
+                return;
+            }
+        }
+    });
+    let pinging = builder(port, "/live").keepalive_interval(Duration::from_millis(40));
+    let mut push = RtspPush::connect(pinging, &PushDescription::Mp2t).unwrap();
+    push.send_ts(&ts(7, 0)).unwrap();
+    eventually("the ping's answer recorded", || {
+        push.end_reason() == Some(EndReason::SessionExpired)
+    });
+    assert_eq!(push.stats().frames_dropped_at_close, 0);
+    push.close().unwrap();
+    joined(peer);
+}
+
 #[test]
 fn transport_close_delivers_the_queue_tears_down_once_and_later_sends_are_closed() {
     let (mut push, open, peer) = recording_gated(&elementary(true), |peer| peer.until_teardown());
