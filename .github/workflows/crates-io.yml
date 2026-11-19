@@ -48,7 +48,13 @@ on:
       - ".github/workflows/crates-io.yml"
       - ".github/actions/rust-setup/**"
       - "rust-toolchain.toml"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "crates/**/Cargo.toml"
+      - "bindings/**/Cargo.toml"
       - "scripts/release/**"
+      - "scripts/ci/install-build-tools.sh"
+      - "scripts/ci/requirements-build-tools.txt"
 
 concurrency:
   # A newer push to a pull request replaces its older run. Every other run

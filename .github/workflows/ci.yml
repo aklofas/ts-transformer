@@ -329,6 +329,12 @@ jobs:
         if: matrix.name == 'linux-x86_64'
         run: bash scripts/check/repo/ratchet-self-test.sh
 
+      - name: check-jvm-ordinal-sites (every .ordinal() in the JVM binding is pinned)
+        # A text rail (grep/sed/sort/comm, no JVM), so it runs here on every
+        # pull request, whatever jvm-jar.yml's path filter selects.
+        if: matrix.name == 'linux-x86_64'
+        run: bash scripts/check/jvm/ordinal-sites.sh
+
       - name: nightly-issue self-test (the issue script creates or comments)
         # Runs scripts/ci/nightly-issue.sh against a stub gh. Gated to
         # linux-x86_64: platform-independent, no signal from other runners.

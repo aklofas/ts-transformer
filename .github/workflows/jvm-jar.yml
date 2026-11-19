@@ -24,6 +24,12 @@ on:
       - ".github/actions/rust-setup/**"
       - ".github/actions/jvm-build/**"
       - "scripts/check/jvm/**"
+      - "scripts/ratchets/ordinal-sites.tsv"
+      - "scripts/ci/requirements-build-tools.txt"
+      - "scripts/ci/install-build-tools.sh"
+      - "scripts/ci/gradle-resolve.sh"
+      - "scripts/ci/gradle-resolve-all.init.gradle"
+      - ".github/actions/free-disk/**"
       - ".github/workflows/jvm-jar.yml"
 
 permissions:
