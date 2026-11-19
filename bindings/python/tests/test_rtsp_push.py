@@ -116,11 +116,19 @@ class ScriptedRecordServer:
     answered `200`, TEARDOWN with `teardown_status`, anything else `200`.
     Interleaved frames are read and dropped; `rtp_frames` counts those on
     an even (RTP) channel. With `stop_reading`, nothing more is read after
-    the RECORD reply, so the client's writes back up."""
+    the RECORD reply, so the client's writes back up. With `answer_pause`
+    false a PAUSE is read and never answered."""
 
-    def __init__(self, *, teardown_status: int = 200, stop_reading: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        teardown_status: int = 200,
+        stop_reading: bool = False,
+        answer_pause: bool = True,
+    ) -> None:
         self.teardown_status = teardown_status
         self.stop_reading = stop_reading
+        self.answer_pause = answer_pause
         self.methods: list[str] = []
         self.rtp_frames = 0
         self.done = threading.Event()
@@ -189,6 +197,8 @@ class ScriptedRecordServer:
             buf = buf[end + 4 + length :]
             method = head.split(" ", 1)[0]
             self.methods.append(method)
+            if method == "PAUSE" and not self.answer_pause:
+                continue
             status = self.teardown_status if method == "TEARDOWN" else 200
             reply = f"RTSP/1.0 {status} X\r\nCSeq: {headers.get('cseq', '0')}\r\nSession: 1234ABCD\r\n"
             if method == "SETUP":
@@ -775,6 +785,26 @@ def test_a_conversion_behind_a_query_waits_for_it_and_converts() -> None:
         push.close()
 
 
+def test_close_during_a_pause_awaiting_its_reply_cancels_first() -> None:
+    server = ScriptedRecordServer(answer_pause=False)
+    push = RtspClient.push(RtspClientConfig(server.url), PushDescription.mp2t())
+    try:
+        push.send_ts(TS_BUNDLE)
+        pausing = _Side(push.pause)
+        # The PAUSE is on the wire and its reply never comes: the call
+        # waits for its request timeout unless the close cancels it.
+        assert _wait_for(lambda: "PAUSE" in server.methods), "the PAUSE was never written"
+        close_at = time.monotonic()
+        push.close()
+        assert time.monotonic() - close_at < 4.0
+        exc = pausing.outcome()
+        assert isinstance(exc, RtspError), exc
+        assert exc.kind is RtspErrorKind.CLOSED
+    finally:
+        server.close()
+        push.close()
+
+
 def test_a_teardown_behind_a_query_does_not_cancel_for_a_send_waiting_for_the_session() -> None:
     """A query holds the session, a send waits for it, then `teardown()`
     begins: neither holder can park on the network, so nothing is
@@ -855,9 +885,8 @@ def test_an_h264_description_without_parameter_sets_is_refused_by_push() -> None
 
 def test_interpreter_exit_cancels_an_open_session() -> None:
     """The exit hook (`_fire_cancel_sources_at_exit`, run by `atexit`)
-    fires the cancel of a session left open, so a send parked in it ends
-    before the interpreter finalises. Run in a child interpreter: the hook
-    marks the process as exiting."""
+    fires the cancel of a session left open. Run in a child interpreter:
+    the hook marks the process as exiting."""
     script = textwrap.dedent(
         """
         from tstrans._native import _fire_cancel_sources_at_exit
