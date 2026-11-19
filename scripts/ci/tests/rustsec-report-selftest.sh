@@ -118,4 +118,26 @@ printf 'Cargo.toml broken\n' > "$TMP/advisories"; echo '[]' > "$TMP/open.json"; 
 grep -q 'could not be checked' "$TMP/out" || fail "only broken: no summary of the unchecked workspaces"
 n=$((n + 1))
 
+# 8-10. A pin left set after its release: with `rev` set and the tag
+# v<workspace version> present the run warns; not without the tag, and not
+# with the pin empty. RUSTSEC_TAGS stands in for the tag lookup.
+ver="$(sed -nE '/^\[workspace\.package\]/,/^\[/ s/^version[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' "$ROOT/Cargo.toml" | head -1)"
+[ -n "$ver" ] || fail "no workspace version in Cargo.toml"
+printf 'rev = "%s"\n' 0123456789abcdef0123456789abcdef01234567 > "$TMP/pin-set.toml"
+printf 'rev = ""\n' > "$TMP/pin-empty.toml"
+: > "$TMP/advisories"; echo '[]' > "$TMP/open.json"
+RUSTSEC_PIN_FILE="$TMP/pin-set.toml" RUSTSEC_TAGS="v0.0.1
+v$ver" run
+[ "$rc" = 0 ] || fail "stale pin: exit $rc"
+grep -q "^::warning::.*advisory-db pin.*still set.*v$ver.*Clear the advisory-db pin" "$TMP/out" || fail "stale pin: no warning naming the tag and the step"
+n=$((n + 1))
+RUSTSEC_PIN_FILE="$TMP/pin-set.toml" RUSTSEC_TAGS="v0.0.1" run
+[ "$rc" = 0 ] || fail "pin before its release: exit $rc"
+! grep -q '::warning::' "$TMP/out" || fail "pin before its release: warned"
+n=$((n + 1))
+RUSTSEC_PIN_FILE="$TMP/pin-empty.toml" RUSTSEC_TAGS="v$ver" run
+[ "$rc" = 0 ] || fail "empty pin: exit $rc"
+! grep -q '::warning::' "$TMP/out" || fail "empty pin: warned"
+n=$((n + 1))
+
 echo "PASS: $n cases"

@@ -8,6 +8,9 @@
 # title below gets the list as a comment, or is opened with it; --dry-run only
 # prints the list. An advisory never fails the script; a workspace cargo-deny
 # could not check does. GH_REPO and GH_TOKEN come from the environment.
+# It also warns when the advisory-db pin is still set although the tag of the
+# workspace version exists (the release it was set for is out).
+# RUSTSEC_PIN_FILE and RUSTSEC_TAGS (the tag list) stand in for the self-test.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -19,6 +22,18 @@ case "${1:-}" in
   "") ;;
   *) echo "usage: $0 [--dry-run]" >&2; exit 2 ;;
 esac
+
+# The pin is cleared by the first pull request after the tag; a pin still set
+# then would keep ci on a database that no longer moves.
+pin_file="${RUSTSEC_PIN_FILE:-$ROOT/tests/coverage/advisory-db-pin.toml}"
+pin="$(sed -nE 's/^rev[[:space:]]*=[[:space:]]*"([^"]*)".*/\1/p' "$pin_file" | head -1)"
+if [ -n "$pin" ]; then
+  ver="$(sed -nE '/^\[workspace\.package\]/,/^\[/ s/^version[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' "$ROOT/Cargo.toml" | head -1)"
+  tags="${RUSTSEC_TAGS-$(git -C "$ROOT" ls-remote --tags --refs origin "refs/tags/v$ver" 2>/dev/null | sed 's|.*refs/tags/||' || true)}"
+  if [ -n "$ver" ] && printf '%s\n' "$tags" | grep -qx "v$ver"; then
+    echo "::warning::the advisory-db pin in tests/coverage/advisory-db-pin.toml is still set although v$ver is tagged: clear it (docs/project/releasing.md, release step 8 \"Clear the advisory-db pin\")"
+  fi
+fi
 
 report=""
 broken=()
