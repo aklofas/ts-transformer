@@ -1908,6 +1908,126 @@ fn close_after_a_ping_454_dropped_queued_media_is_an_error() {
     joined(peer);
 }
 
+// ---- what close calls lost media -------------------------------------
+
+mod lost {
+    use super::super::session::{Queued, QueuedKinds, media_lost};
+    use crate::rtsp::client::media_queue::{MEDIA_QUEUE_BOUND, MediaWaitEnd};
+    use tst_core::transport::EndReason;
+
+    use Queued::{Media, Report};
+
+    fn noted(kinds: &[Queued]) -> QueuedKinds {
+        let mut q = QueuedKinds::default();
+        for k in kinds {
+            q.note(*k);
+        }
+        q
+    }
+
+    /// `media_lost` for a session that expired while the close waited.
+    fn expired(kinds: &[Queued], dropped: u64) -> bool {
+        media_lost(
+            Err(MediaWaitEnd::Ended),
+            Some(EndReason::SessionExpired),
+            &noted(kinds),
+            dropped,
+        )
+    }
+
+    #[test]
+    fn nothing_dropped_is_nothing_lost() {
+        assert!(!expired(&[Report, Media, Media, Report], 0));
+    }
+
+    #[test]
+    fn only_the_closes_own_reports_dropped_is_nothing_lost() {
+        // Two tracks: media, then the last report of each.
+        assert!(!expired(&[Report, Media, Report, Media, Report, Report], 2));
+    }
+
+    #[test]
+    fn media_dropped_with_the_reports_behind_it_is_lost() {
+        assert!(expired(&[Report, Media, Media, Report], 2));
+        assert!(expired(&[Report, Media, Media, Report], 4));
+    }
+
+    /// A paused push queues no last report at its close; the reports its
+    /// pause queued are not media.
+    #[test]
+    fn only_a_pauses_reports_dropped_is_nothing_lost() {
+        assert!(!expired(&[Report, Media, Media, Report, Report], 2));
+    }
+
+    /// A send queued its leading report and the queue then refused the
+    /// packet: the caller saw that send fail, and the report is not media.
+    #[test]
+    fn the_report_of_a_refused_send_dropped_is_nothing_lost() {
+        assert!(!expired(&[Report, Media, Report], 1));
+    }
+
+    #[test]
+    fn a_close_ended_by_its_cancel_or_drained_reports_no_loss() {
+        let q = noted(&[Report, Media, Media]);
+        let expired = Some(EndReason::SessionExpired);
+        assert!(!media_lost(
+            Err(MediaWaitEnd::Cancelled),
+            expired.clone(),
+            &q,
+            2
+        ));
+        assert!(!media_lost(Ok(()), expired, &q, 0));
+    }
+
+    /// Media dropped for another end is reported by the TEARDOWN that
+    /// cannot be written, not as an expired session.
+    #[test]
+    fn media_dropped_for_another_end_is_not_an_expired_session() {
+        let q = noted(&[Report, Media, Media]);
+        for reason in [
+            None,
+            Some(EndReason::CleanTeardown),
+            Some(EndReason::Cancelled),
+        ] {
+            assert!(!media_lost(Err(MediaWaitEnd::Ended), reason, &q, 2));
+        }
+    }
+
+    /// The note keeps as many frames as the queue holds, so every frame
+    /// the queue can drop is among them, and none older.
+    #[test]
+    fn the_note_keeps_as_many_frames_as_the_queue_holds() {
+        let mut q = QueuedKinds::default();
+        q.note(Media);
+        for _ in 0..MEDIA_QUEUE_BOUND {
+            q.note(Report);
+        }
+        assert_eq!(q.len(), MEDIA_QUEUE_BOUND);
+        // The media frame fell out: the queue could not still hold it.
+        assert!(!q.media_among_last(u64::MAX));
+        q.note(Media);
+        assert!(q.media_among_last(1));
+        assert!(!q.media_among_last(0));
+    }
+}
+
+/// The push notes each frame it queues as a report or media, also the
+/// last reports of its close, and nothing for a call it refuses.
+#[test]
+fn the_push_notes_what_it_queues() {
+    use super::session::Queued::{Media, Report};
+    let (mut push, peer) = recording(&PushDescription::Mp2t);
+    push.send_ts(&ts(7, 0)).unwrap();
+    push.send_ts(&ts(7, 1)).unwrap();
+    // Refused before anything is queued.
+    assert!(push.send_ts(&ts(1, 0)[..100]).is_err());
+    assert_eq!(push.queued.kinds(), [Report, Media, Media]);
+    Transport::close(&mut push);
+    assert_eq!(push.queued.kinds(), [Report, Media, Media, Report]);
+    drop(push);
+    joined(peer);
+}
+
 /// A session the server forgot after every frame was written: nothing was
 /// lost, so `close` reports the TEARDOWN's answer, which accepts the end.
 #[test]

@@ -1,5 +1,6 @@
 //! [`RtspPush`]: a recording session and its data calls.
 
+use std::collections::VecDeque;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::{Instant, SystemTime};
@@ -19,7 +20,7 @@ use crate::rtcp::sender::{
     PushTimeline, ntp_from_system_time, random_cname, sender_report_compound,
 };
 use crate::rtsp::client::builder::RtspClientBuilder;
-use crate::rtsp::client::media_queue::MediaWaitEnd;
+use crate::rtsp::client::media_queue::{MEDIA_QUEUE_BOUND, MediaWaitEnd};
 use crate::rtsp::client::{CLOSE_TEARDOWN_BOUND, RtspCancelHandle, RtspClient};
 use crate::rtsp::message::RtspMethod;
 use crate::transport::{random_u32, record_end};
@@ -138,6 +139,8 @@ pub struct RtspPush {
     packets_sent: u64,
     bytes_sent: u64,
     sender_reports_sent: u64,
+    /// What the frames last handed to the media queue carry.
+    pub(super) queued: QueuedKinds,
     paused: bool,
     /// [`Transport::close`] has run.
     closed: bool,
@@ -179,6 +182,69 @@ fn broken(msg: impl Into<String>, cause: BrokenCause) -> TransportError {
     }
 }
 
+/// What a frame handed to the media queue carries.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Queued {
+    /// An RTP packet of a data call.
+    Media,
+    /// A sender report.
+    Report,
+}
+
+/// What the frames last handed to the media queue carry, newest last: as
+/// many as the queue holds. The queue's close drops the frames it still
+/// holds, which are the newest ones, so its count of dropped frames names
+/// the last frames noted here.
+#[derive(Debug, Default)]
+pub(super) struct QueuedKinds(VecDeque<Queued>);
+
+impl QueuedKinds {
+    /// The queue took a frame of `kind`.
+    pub(super) fn note(&mut self, kind: Queued) {
+        if self.0.len() == MEDIA_QUEUE_BOUND {
+            self.0.pop_front();
+        }
+        self.0.push_back(kind);
+    }
+
+    /// Whether an RTP packet is among the last `frames` frames noted.
+    pub(super) fn media_among_last(&self, frames: u64) -> bool {
+        let frames = usize::try_from(frames).unwrap_or(usize::MAX);
+        self.0
+            .iter()
+            .rev()
+            .take(frames)
+            .any(|k| *k == Queued::Media)
+    }
+
+    #[cfg(test)]
+    pub(super) fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    #[cfg(test)]
+    pub(super) fn kinds(&self) -> Vec<Queued> {
+        self.0.iter().copied().collect()
+    }
+}
+
+/// Whether [`RtspPush::close`] lost media: its wait for the queue ended on
+/// the queue's close, the session had expired, and among the `dropped`
+/// frames the queue's close discarded is an RTP packet an earlier data
+/// call had queued. Sender reports dropped (the close's own, a pause's, or
+/// the one ahead of a packet the queue then refused) are not media; a
+/// refused packet was never queued.
+pub(super) fn media_lost(
+    drained: Result<(), MediaWaitEnd>,
+    reason: Option<EndReason>,
+    queued: &QueuedKinds,
+    dropped: u64,
+) -> bool {
+    drained == Err(MediaWaitEnd::Ended)
+        && reason == Some(EndReason::SessionExpired)
+        && queued.media_among_last(dropped)
+}
+
 impl RtspPush {
     pub(super) fn new(client: RtspClient, session_id: String, tracks: Vec<Track>) -> Self {
         Self {
@@ -191,6 +257,7 @@ impl RtspPush {
             packets_sent: 0,
             bytes_sent: 0,
             sender_reports_sent: 0,
+            queued: QueuedKinds::default(),
             paused: false,
             closed: false,
             #[cfg(test)]
@@ -389,24 +456,26 @@ impl RtspPush {
     /// - [`RtspError::LocalCancel`] on a cancelled push (the TEARDOWN is
     ///   still written).
     /// - [`RtspError::Protocol`] with code `454` when the server had
-    ///   forgotten the session (the end reason is `SessionExpired`) while
-    ///   media was still queued: that media was dropped, and the
-    ///   TEARDOWN's own answer, which a server gives as `454` too, does not
-    ///   make that a success. A session the server forgot after every
-    ///   frame was written reports the TEARDOWN's result.
+    ///   forgotten the session (the end reason is `SessionExpired`) and
+    ///   media was lost: RTP packets the push's earlier data calls had
+    ///   queued were dropped before being written. The TEARDOWN's own
+    ///   answer, which a server gives as `454` too, does not make that a
+    ///   success. A session the server forgot with no such packet dropped
+    ///   (every packet written, or only sender reports left in the queue)
+    ///   reports the TEARDOWN's result.
     ///
     /// The client's thread is stopped on every outcome.
     pub fn close(mut self) -> Result<(), RtspError> {
-        let reports_before = self.sender_reports_sent;
         let drained = if self.closed { Ok(()) } else { self.flush() };
         // A session that expired leaves its connection open: the TEARDOWN
         // below is written and accepted, perhaps with media dropped before
-        // it. The queue counts what it held when it closed; the last
-        // reports queued just now are at its tail and are not media.
-        let last_reports = self.sender_reports_sent - reports_before;
-        let lost = drained == Err(MediaWaitEnd::Ended)
-            && self.client.end_reason.get() == Some(EndReason::SessionExpired)
-            && self.client.driver.frames_dropped_at_close() > last_reports;
+        // it.
+        let lost = media_lost(
+            drained,
+            self.client.end_reason.get(),
+            &self.queued,
+            self.client.driver.frames_dropped_at_close(),
+        );
         let torn_down = self.client.close();
         if lost && torn_down.is_ok() {
             return Err(RtspError::Protocol {
@@ -551,13 +620,17 @@ impl RtspPush {
         }
     }
 
-    /// Hand one frame to the client's thread, waiting while its queue is
-    /// full.
-    fn queue(&self, frame: Bytes) -> Result<(), TransportError> {
-        self.client
-            .driver
-            .send_media(frame, &self.client.cancel)
-            .map_err(|end| self.refusal(end))
+    /// Hand one frame of `kind` to the client's thread, waiting while its
+    /// queue is full, and note what it carries.
+    fn enqueue(&mut self, frame: Bytes, kind: Queued) -> Result<(), MediaWaitEnd> {
+        self.client.driver.send_media(frame, &self.client.cancel)?;
+        self.queued.note(kind);
+        Ok(())
+    }
+
+    /// [`Self::enqueue`] for a data call.
+    fn queue(&mut self, frame: Bytes, kind: Queued) -> Result<(), TransportError> {
+        self.enqueue(frame, kind).map_err(|end| self.refusal(end))
     }
 
     /// A sender report of track `at` that pairs `ntp` with `rtp`.
@@ -606,7 +679,8 @@ impl RtspPush {
         // track's first unit from it, and some drop every packet before it.
         let now = self.now();
         if self.tracks[at].state.report_due(now) {
-            self.queue(self.report(at, ntp, rtp))?;
+            let report = self.report(at, ntp, rtp);
+            self.queue(report, Queued::Report)?;
             self.sender_reports_sent += 1;
             self.tracks[at].state.mark_reported(now);
         }
@@ -615,7 +689,7 @@ impl RtspPush {
             let header = track.state.next_header(rtp, marker, payload.len());
             track.last_sent = Some((ntp, rtp));
             let channel = track.channels.0;
-            self.queue(frame(channel, &[header.as_slice(), payload]))?;
+            self.queue(frame(channel, &[header.as_slice(), payload]), Queued::Media)?;
             self.packets_sent += 1;
             self.bytes_sent += (RTP_HEADER_LEN + payload.len()) as u64;
         }
@@ -631,9 +705,8 @@ impl RtspPush {
                 let Some((ntp, rtp)) = self.tracks[at].last_sent else {
                     continue;
                 };
-                self.client
-                    .driver
-                    .send_media(self.report(at, ntp, rtp), &self.client.cancel)?;
+                let report = self.report(at, ntp, rtp);
+                self.enqueue(report, Queued::Report)?;
                 self.sender_reports_sent += 1;
             }
         }
