@@ -8,44 +8,18 @@ use std::net::UdpSocket;
 use std::time::{Duration, Instant};
 
 use base64::Engine as _;
-use tst_core::mpegts::demux::{DemuxEvent, SamplePayload};
 use tst_pipeline::DemuxReceiver;
 use tst_rtp::{ClockAlignment, RtspClient, RtspServer};
 
+use crate::fixtures::publish_mount::{VideoSample, video_samples};
 use crate::fixtures::raw_rtsp::scaled;
 use crate::fixtures::raw_rtsp_publisher::*;
 
-const VIDEO_PID: u16 = 0x100;
 const PT: u8 = 96;
 const SSRC: u32 = 0x0F0F_1234;
 const TS0: u32 = 1_000_000;
 /// 28 AUs: a 3-fragment IDR plus 27 single-packet P slices = 30 packets.
 const AUS: usize = 28;
-
-/// A demuxed video sample: `(pts ticks, Annex-B bytes, random access)`.
-type VideoSample = (i64, Vec<u8>, bool);
-
-fn video_samples(events: &[DemuxEvent]) -> Vec<VideoSample> {
-    events
-        .iter()
-        .filter_map(|ev| match ev {
-            DemuxEvent::Sample {
-                stream,
-                pts,
-                payload:
-                    SamplePayload::Video {
-                        raw,
-                        random_access_indicator,
-                        ..
-                    },
-                ..
-            } if stream.pid == VIDEO_PID => {
-                Some((pts.as_ticks(), raw.to_vec(), *random_access_indicator))
-            }
-            _ => None,
-        })
-        .collect()
-}
 
 fn contains(hay: &[u8], needle: &[u8]) -> bool {
     hay.windows(needle.len()).any(|w| w == needle)

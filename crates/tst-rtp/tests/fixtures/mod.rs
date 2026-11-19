@@ -4,11 +4,13 @@
 
 use std::time::{Duration, Instant};
 
+pub mod publish_mount;
 pub mod rtp_packets;
 pub mod raw_rtsp;
 pub mod raw_rtsp_publisher;
 pub mod raw_rtsp_server;
 pub mod rtsp_loopback_server;
+pub mod tcp_relay;
 
 #[cfg(feature = "tls")]
 pub mod tls_certs;

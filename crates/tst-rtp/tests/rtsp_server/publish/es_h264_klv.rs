@@ -15,11 +15,10 @@ use tst_rtp::{
     RtspServerError,
 };
 
+use crate::fixtures::publish_mount::{VIDEO_PID, klv_events};
 use crate::fixtures::raw_rtsp::scaled;
 use crate::fixtures::raw_rtsp_publisher::*;
 
-const VIDEO_PID: u16 = 0x100;
-const KLV_PID: u16 = 0x101;
 const VIDEO_PT: u8 = 99;
 const KLV_PT: u8 = 96;
 const VIDEO_SSRC: u32 = 0x1111_0001;
@@ -69,22 +68,6 @@ fn video_pts(events: &[DemuxEvent]) -> Vec<i64> {
                 payload: SamplePayload::Video { .. },
                 ..
             } if stream.pid == VIDEO_PID => Some(pts.as_ticks()),
-            _ => None,
-        })
-        .collect()
-}
-
-/// `(pts ticks, payload)` of every KLV `Metadata` event on PID 0x101.
-fn klv_events(events: &[DemuxEvent]) -> Vec<(i64, Vec<u8>)> {
-    events
-        .iter()
-        .filter_map(|ev| match ev {
-            DemuxEvent::Metadata {
-                stream,
-                pts,
-                payload,
-                ..
-            } if stream.pid == KLV_PID => Some((pts.as_ticks(), payload.clone())),
             _ => None,
         })
         .collect()

@@ -18,6 +18,7 @@ authority.
 - `net_h264`
 - `net_rtp`
 - `net_rtsp_client`
+- `net_rtsp_push`
 - `net_rtsp_server`
 - `net_rtsp_server_runtime`
 
@@ -124,3 +125,28 @@ root as `#[path = "rtsp_server/publish/<file>.rs"] mod publish_<file>;` — one
 | `fixtures/raw_rtsp_server.rs` | hand-rolled blocking RTSP server peer for client tests (`read_request` with a persistent `leftover` buffer, `answer_describe_and_setup`, `force_reset` RST close, `SDP_BODY`) |
 | `fixtures/ports.rs` | `free_rtp_port_base`, `#[path]`-included by the `rtp` and `conformance` binaries |
 | `fixtures/mod.rs` | `wait_for` (poll-with-budget) beside the module declarations |
+| `fixtures/publish_mount.rs` | what a test reads back from a publish mount: `video_samples`, `klv_events` and the video / KLV PIDs (lifted from `publish/es_h264.rs` and `publish/es_h264_klv.rs`, which use them from here) |
+| `fixtures/tcp_relay.rs` | `TcpRelay`: a one-connection relay that keeps both directions' bytes and can stop reading from the client (a server that stopped reading) |
+
+### `rtsp_push/` — the RTSP push client (`RtspPush`) against `RtspServer`'s publisher role
+
+Binary `net_rtsp_push` (`#![cfg(feature = "rtsp-server")]`: empty under
+`--no-default-features`), members `#[path]`-included as `rtsp_push/<file>.rs`,
+shared helpers in `rtsp_push/common.rs`. Filter with
+`cargo nextest run -p tst-rtp -E 'binary(=net_rtsp_push)'`.
+
+| file | covers |
+| --- | --- |
+| `rtsp_push/common.rs` | `Served` (a started server with a publish mount on `/pub`, stopped on drop), the elementary fixtures, reading the mount back, `assert_same_bytes` (length and SHA-256) |
+| `rtsp_push/mp2t.rs` | `send_ts` reaches the mount byte for byte; `close` frees the mount (moved from `rtsp_server/publish/push_client.rs`) |
+| `rtsp_push/es_h264.rs` | an H.264 push: every access unit, its slices and PTS step, the description's parameter sets before the key frame |
+| `rtsp_push/es_h264_klv.rs` | H.264 + KLV: sender-report alignment, KLV PTS on the video line (also with KLV sent first), a 60 000-byte KLV unit whole; the access-unit and KLV-unit counts (moved from `rtsp_server/publish/push_client.rs`) |
+| `rtsp_push/refusals.rs` | `415` H.265, `403` second publisher and mount rule, `404` no mount, `461` local mount, no server after `stop()`, a rule set during RECORD refusing the TEARDOWN |
+| `rtsp_push/auth.rs` | Basic, Digest MD5 and SHA-256 through the builder credential, a mount rule's credential, Digest-only against a Basic challenge (through a relay), a wrong password |
+| `rtsp_push/ends.rs` | `stop()` (Notice, then `Broken { CleanEof }`), the hard cancel, the publish idle timeout, a mount ending with its publisher, a cancelled close against a server that stopped reading |
+| `rtsp_push/shells.rs` | `MuxSender` and `Sender` over a push, byte for byte; a dropped `MuxSender` closes the push, which writes its queue |
+
+`rtsp_server/publish/push_client.rs` is gone: its two tests moved to
+`rtsp_push/mp2t.rs` and `rtsp_push/es_h264_klv.rs` under their names. The
+transport conformance kit runs an MPEG-TS push in `net_conformance.rs`
+(`rtsp_push_send_contract`).
