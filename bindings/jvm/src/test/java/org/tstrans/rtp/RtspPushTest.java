@@ -341,30 +341,24 @@ class RtspPushTest {
     void aTeardownWaitsForAQueryCallWithoutCancelling() throws Exception {
         try (ScriptedRecordServer peer = new ScriptedRecordServer(200, false)) {
             RtspPushSession push = RtspClient.push(peer.config(), PushDescription.mp2t());
-            push.sendTs(NULL_BUNDLE);
-            long handle = push.nativeHandleForTest();
-            AtomicReference<Throwable> holderError = new AtomicReference<>();
-            Thread holder = new Thread(() -> {
-                try {
-                    PushProbe.nHoldAsReader(handle, 400);
-                } catch (Throwable t) {
-                    holderError.set(t);
-                }
-            }, "query-holder");
-            holder.setDaemon(true);
-            holder.start();
-            assertTrue(waitFor(PushProbe::nReaderHolds), "the probe never held the session");
-            long t0 = System.nanoTime();
-            // A query call holding the session is not a call to cancel: teardown()
-            // throws CLOSED on a cancelled session, and returns here because the
-            // TEARDOWN was accepted on a session nobody cancelled.
-            push.teardown();
-            long tookMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - t0);
-            assertTrue(tookMs >= 200, "teardown() did not wait for the query: " + tookMs + " ms");
-            holder.join(scaledMs(5_000));
-            assertEquals(null, holderError.get());
+            for (int i = 0; i < 5; i++) push.sendTs(NULL_BUNDLE);
+            Side holder = Side.start("query-holder", () -> PushProbe.nHoldAsReader(push.nativeHandleForTest()));
+            try {
+                assertTrue(waitFor(PushProbe::nReaderHolds), "the probe never held the session");
+                Side tearing = Side.start("tearing-down", push::teardown);
+                // The teardown has begun while the query holds the session; only then
+                // does the query let go.
+                awaitInNative(tearing.thread, "nTeardown");
+                PushProbe.nRelease();
+                // A query holding the session is not a call to cancel: the TEARDOWN is
+                // accepted (a cancelled session's teardown() throws CLOSED).
+                tearing.assertEndedNormally();
+            } finally {
+                PushProbe.nRelease();
+            }
+            holder.assertEndedNormally();
             assertTrue(peer.awaitMethod("TEARDOWN"));
-            assertEquals(1L, peer.rtpFramesRead.get(), "the queued media was not written");
+            assertEquals(5L, peer.rtpFramesRead.get(), "the queued media was not all written");
         }
     }
 
@@ -375,44 +369,52 @@ class RtspPushTest {
         try (ScriptedRecordServer peer = new ScriptedRecordServer(200, false)) {
             RtspPushSession push = RtspClient.push(peer.config(), PushDescription.mp2t());
             for (int i = 0; i < 3; i++) push.sendTs(NULL_BUNDLE);
-            assertTrue(waitFor(() -> peer.rtpFramesRead.get() == 3), "RTP frames read: " + peer.rtpFramesRead.get());
-            long handle = push.nativeHandleForTest();
-            AtomicReference<Throwable> holderError = new AtomicReference<>();
-            Thread holder = new Thread(() -> {
-                try {
-                    PushProbe.nHoldAsReader(handle, 2_000);
-                } catch (Throwable t) {
-                    holderError.set(t);
-                }
-            }, "query-holder");
-            holder.setDaemon(true);
-            holder.start();
-            assertTrue(waitFor(PushProbe::nReaderHolds), "the probe never held the session");
-            // A send that waits for the session behind the query: it does not hold it.
-            AtomicReference<Throwable> sendError = new AtomicReference<>();
-            Thread sender = new Thread(() -> {
-                try {
-                    push.sendTs(NULL_BUNDLE);
-                } catch (Throwable t) {
-                    sendError.set(t);
-                }
-            }, "waiting-sender");
-            sender.setDaemon(true);
-            sender.start();
-            awaitInNative(sender, "nSendTs");
-            // Neither holder can park on the network, so nothing is cancelled: the
-            // TEARDOWN is accepted (a cancelled session's teardown() throws CLOSED).
-            push.teardown();
-            sender.join(scaledMs(5_000));
-            assertFalse(sender.isAlive(), "the waiting send did not end");
-            RtpException e = assertInstanceOf(RtpException.class, sendError.get());
-            assertEquals(RtpException.Kind.CLOSED, e.kind());
-            holder.join(scaledMs(5_000));
-            assertFalse(holder.isAlive(), "the probe did not end");
-            assertEquals(null, holderError.get());
+            Side holder = Side.start("query-holder", () -> PushProbe.nHoldAsReader(push.nativeHandleForTest()));
+            try {
+                assertTrue(waitFor(PushProbe::nReaderHolds), "the probe never held the session");
+                // A send that waits for the session behind the query: it does not hold it.
+                Side sender = Side.start("waiting-sender", () -> push.sendTs(NULL_BUNDLE));
+                awaitInNative(sender.thread, "nSendTs");
+                Side tearing = Side.start("tearing-down", push::teardown);
+                awaitInNative(tearing.thread, "nTeardown");
+                PushProbe.nRelease();
+                // Neither holder can park on the network, so nothing is cancelled: the
+                // TEARDOWN is accepted, and the waiting send runs nothing.
+                tearing.assertEndedNormally();
+                RtpException e = assertInstanceOf(RtpException.class, sender.endedWith());
+                assertEquals(RtpException.Kind.CLOSED, e.kind());
+            } finally {
+                PushProbe.nRelease();
+            }
+            holder.assertEndedNormally();
             assertTrue(peer.awaitMethod("TEARDOWN"));
-            // The waiting send ran nothing.
-            assertEquals(3L, peer.rtpFramesRead.get());
+            assertEquals(3L, peer.rtpFramesRead.get(), "the waiting send wrote a frame");
+        }
+    }
+
+    @Test
+    @Timeout(30)
+    @EnabledIfSystemProperty(named = "tst.jniTestHooks", matches = "true")
+    void aBlockingCallThatGetsTheSessionAfterACloseBeganRunsNothing() throws Exception {
+        try (ScriptedRecordServer peer = new ScriptedRecordServer(200, false)) {
+            RtspPushSession push = RtspClient.push(peer.config(), PushDescription.mp2t());
+            push.sendTs(NULL_BUNDLE);
+            assertTrue(waitFor(() -> peer.rtpFramesRead.get() == 1), "RTP frames read: " + peer.rtpFramesRead.get());
+            // The flag a close sets before it takes the session; the session is free.
+            PushProbe.nMarkClosing(push.nativeHandleForTest());
+            RtpException send = assertThrows(RtpException.class, () -> push.sendTs(NULL_BUNDLE));
+            assertEquals(RtpException.Kind.CLOSED, send.kind());
+            RtspException pause = assertThrows(RtspException.class, push::pause);
+            assertEquals(RtspException.Kind.CLOSED, pause.kind());
+            RtspException resume = assertThrows(RtspException.class, push::resume);
+            assertEquals(RtspException.Kind.CLOSED, resume.kind());
+            // A query still answers.
+            assertEquals(1L, push.stats().packetsSent());
+            push.close();
+            assertTrue(peer.awaitMethod("TEARDOWN"));
+            assertEquals(1L, peer.rtpFramesRead.get(), "a call after the close began sent a frame");
+            assertFalse(peer.methods.contains("PAUSE"), "a PAUSE was written: " + peer.methods);
+            assertEquals(1L, peer.methods.stream().filter("RECORD"::equals).count(), "a RECORD was written again");
         }
     }
 
@@ -606,6 +608,44 @@ class RtspPushTest {
         String addr = server.localAddr();
         String port = addr.substring(addr.lastIndexOf(':') + 1);
         return RtspClientConfig.builder("rtsp://127.0.0.1:" + port + "/pub").keepalive(false).build();
+    }
+
+    @FunctionalInterface
+    private interface Call { void run() throws Exception; }
+
+    /** A call on a daemon thread; the assertions join it with a deadline. */
+    private static final class Side {
+        final Thread thread;
+        final AtomicReference<Throwable> error = new AtomicReference<>();
+
+        private Side(String name, Call call) {
+            thread = new Thread(() -> {
+                try {
+                    call.run();
+                } catch (Throwable t) {
+                    error.set(t);
+                }
+            }, name);
+            thread.setDaemon(true);
+        }
+
+        static Side start(String name, Call call) {
+            Side s = new Side(name, call);
+            s.thread.start();
+            return s;
+        }
+
+        /** Join (up to 5 s, scaled) and return what the call threw, or null. */
+        Throwable endedWith() throws InterruptedException {
+            thread.join(scaledMs(5_000));
+            assertFalse(thread.isAlive(), thread.getName() + " did not end");
+            return error.get();
+        }
+
+        void assertEndedNormally() throws InterruptedException {
+            Throwable t = endedWith();
+            if (t != null) throw new AssertionError(thread.getName() + " threw", t);
+        }
     }
 
     /** Wait (up to 5 s, scaled) until {@code t}'s top frame is the native {@code method}. */

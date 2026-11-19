@@ -717,22 +717,35 @@ jni_native! {
 
 // ---------------------------------------------------------------------------
 // Test-only probes (feature = "jni-test-hooks"), never in the shipped JAR: hold a
-// real session's lock the way a query call does, so a test can close the session
-// while a non-blocking holder has it.
+// real session's lock the way a query call does until the test releases it, and
+// mark a session as closing without taking it, so a test can order a close against
+// other calls without a timing race.
 // ---------------------------------------------------------------------------
 
 #[cfg(feature = "jni-test-hooks")]
 static PROBE_READER_HOLDS: AtomicBool = AtomicBool::new(false);
 
+#[cfg(feature = "jni-test-hooks")]
+static PROBE_RELEASE: AtomicBool = AtomicBool::new(false);
+
+/// The longest a probe holds the lock unreleased: a test that never releases ends
+/// instead of hanging the suite.
+#[cfg(feature = "jni-test-hooks")]
+const PROBE_HOLD_CAP: std::time::Duration = std::time::Duration::from_secs(30);
+
 jni_native! {
-    /// `org.tstrans.internal.PushProbe.nHoldAsReader(handle, ms)`: hold the push's
-    /// lock through the query path for `ms` milliseconds.
+    /// `org.tstrans.internal.PushProbe.nHoldAsReader(handle)`: hold the push's lock
+    /// through the query path until `nRelease()` (at most 30 s).
     #[cfg(feature = "jni-test-hooks")]
-    fn Java_org_tstrans_internal_PushProbe_nHoldAsReader(env, _class, handle: jlong, ms: jlong) = () => {
+    fn Java_org_tstrans_internal_PushProbe_nHoldAsReader(env, _class, handle: jlong) = () => {
+        PROBE_RELEASE.store(false, Ordering::SeqCst);
         let Some((slot, _)) = lease(env, handle) else { return };
         let held = run(&slot, |_| {
             PROBE_READER_HOLDS.store(true, Ordering::SeqCst);
-            std::thread::sleep(std::time::Duration::from_millis(ms.max(0) as u64));
+            let start = std::time::Instant::now();
+            while !PROBE_RELEASE.load(Ordering::SeqCst) && start.elapsed() < PROBE_HOLD_CAP {
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
             PROBE_READER_HOLDS.store(false, Ordering::SeqCst);
         });
         if held.is_none() {
@@ -742,9 +755,28 @@ jni_native! {
 }
 
 jni_native! {
+    /// `org.tstrans.internal.PushProbe.nRelease()`: end the hold of `nHoldAsReader`.
+    #[cfg(feature = "jni-test-hooks")]
+    fn Java_org_tstrans_internal_PushProbe_nRelease(_env, _class) = () => {
+        PROBE_RELEASE.store(true, Ordering::SeqCst);
+    }
+}
+
+jni_native! {
     /// `org.tstrans.internal.PushProbe.nReaderHolds()`.
     #[cfg(feature = "jni-test-hooks")]
     fn Java_org_tstrans_internal_PushProbe_nReaderHolds(_env, _class) -> jboolean = false => {
         PROBE_READER_HOLDS.load(Ordering::SeqCst)
+    }
+}
+
+jni_native! {
+    /// `org.tstrans.internal.PushProbe.nMarkClosing(handle)`: set the session's
+    /// `closing` flag as a close does first, without taking the push, so the next
+    /// blocking call meets a close that has begun.
+    #[cfg(feature = "jni-test-hooks")]
+    fn Java_org_tstrans_internal_PushProbe_nMarkClosing(env, _class, handle: jlong) = () => {
+        let Some((slot, _)) = lease(env, handle) else { return };
+        slot.closing.store(true, Ordering::SeqCst);
     }
 }
