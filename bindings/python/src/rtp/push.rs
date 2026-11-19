@@ -25,8 +25,9 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, TryLockError};
 
-use pyo3::exceptions::{PyRuntimeError, PyValueError};
+use pyo3::exceptions::{PyRuntimeError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
+use pyo3::types::PyInt;
 
 use tst_core::transport::{Transport, TransportCancel};
 use tst_pipeline::binding::{BindingError, BindingErrorKind, Domain, Opened};
@@ -141,8 +142,16 @@ impl PyPushDescription {
     }
 }
 
-/// A copy of a bytes-like argument, as the send methods take one.
+/// A copy of a bytes-like argument. An `int` is refused with `TypeError`:
+/// `bytes()` would read it as that many zero bytes, and a `bytes` object
+/// passed where the list of parameter sets goes arrives here as its ints.
 fn owned_bytes(py: Python<'_>, arg: &Bound<'_, PyAny>) -> PyResult<Vec<u8>> {
+    if arg.is_instance_of::<PyInt>() {
+        return Err(PyTypeError::new_err(format!(
+            "a parameter set must be a bytes-like object, not {}",
+            arg.get_type().name()?
+        )));
+    }
     Ok(coerce_bytes_like(py, arg)?.as_bytes().to_vec())
 }
 
@@ -645,15 +654,15 @@ impl PyRtspPushSession {
         self.control(py, "resume", RustRtspPush::resume)
     }
 
-    /// End the session as `close()` does and raise what it reports:
-    /// `RtspError(PROTOCOL)` with status 454 when queued media was lost to
-    /// an expired session; for the TEARDOWN itself `PROTOCOL` (or
-    /// `NOT_FOUND` for a 404) when the server refused it, `TIMEOUT` when no
-    /// reply came within the 500 ms and `IO` when the connection had ended;
-    /// `CLOSED` on a cancelled push and on a session already closed.
-    /// Returns `None` only when the queued media was written and the server
-    /// accepted the TEARDOWN. The session is closed after it, whatever the
-    /// outcome.
+    /// End the session as `close()` does and raise what it reports, in this
+    /// order: `RtspError(CLOSED)` on a cancelled push (and on a session
+    /// already closed); otherwise `PROTOCOL` with status 454 when queued
+    /// media was lost to an expired session; otherwise the TEARDOWN's own
+    /// result: `PROTOCOL` (or `NOT_FOUND` for a 404) when the server
+    /// refused it, `TIMEOUT` when no reply came within the 500 ms and `IO`
+    /// when the connection had ended. Returns `None` only when the queued
+    /// media was written and the server accepted the TEARDOWN. The session
+    /// is closed after it, whatever the outcome.
     fn teardown(&self, py: Python<'_>) -> PyResult<()> {
         match self.end(py) {
             None => Err(raise(py, &RTSP, closed_error("teardown"))),
@@ -739,8 +748,8 @@ impl PyRtspPushSession {
     /// `RuntimeError` while a send, `pause()` or `resume()` on another
     /// thread holds the session, both leaving the session as it was; a
     /// `stats()` or `is_session_alive()` holding it is waited for. The
-    /// sender's `close()` cancels first, and a `Sender` has no lossless end: for one, send with
-    /// `send_ts` and call `teardown()`.
+    /// sender's `close()` cancels first, and a `Sender` has no lossless
+    /// end: for one, send with `send_ts` and call `teardown()`.
     #[allow(clippy::wrong_self_convention)]
     fn into_sender(&self, py: Python<'_>) -> PyResult<PySender> {
         self.refuse_conversion(py, "into_sender")?;

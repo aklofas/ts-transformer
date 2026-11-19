@@ -532,16 +532,17 @@ class RtspPushSession:
     packets are queued, not once they are on the wire. The queue is
     bounded: against a server that reads slowly a data call waits, GIL
     released, until room frees, the cancel handle fires (within about
-    100 ms), the session ends, or the server has taken no byte for 5 s
-    (the connection then ends). Data calls raise `RtpError`: `CLOSED` after
-    a cancel or `close()`, `BROKEN` once the server closed or the
-    connection failed, `TOO_LARGE` for a TS payload over 1316 bytes; a TS
-    payload that is not whole TS packets is `BROKEN` and leaves the session
-    open. A call naming a track the push did not announce (`send_klv`
-    without `klv=True`, `send_video` / `send_klv` on an MPEG-TS push,
-    `send_ts` on an elementary one) or an empty unit raises `ValueError`
-    and sends nothing. Video and KLV share one timeline: `pts` is the
-    presentation time, and successive access units are in decoding order.
+    100 ms), the session ends, or this machine's kernel has taken no byte
+    of the connection for 5 s (the connection then ends). Data calls raise
+    `RtpError`: `CLOSED` after a cancel or `close()`, `BROKEN` once the
+    server closed or the connection failed, `TOO_LARGE` for a TS payload
+    over 1316 bytes; an empty or not-whole TS payload is `BROKEN` and
+    leaves the session open. A call naming a track the push did not
+    announce (`send_klv` without `klv=True`, `send_video` / `send_klv` on
+    an MPEG-TS push, `send_ts` on an elementary one) or an empty access
+    unit or KLV unit raises `ValueError` and sends nothing. Video and KLV
+    share one timeline: `pts` is the presentation time, and successive
+    access units are in decoding order.
 
     Control calls (`pause`, `resume`, `teardown`) raise `RtspError`.
     `pause()` and `close()` first wait for the queued media to be written,
@@ -612,15 +613,15 @@ class RtspPushSession:
         on a push that is not paused."""
         ...
     def teardown(self) -> None:
-        """End the session as `close()` does and raise what it reports:
-        `RtspError(PROTOCOL)` with status 454 when queued media was lost
-        to an expired session; for the TEARDOWN itself `PROTOCOL` (or
-        `NOT_FOUND` for a 404) when the server refused it, `TIMEOUT` when
-        no reply came within the 500 ms and `IO` when the connection had
-        ended; `CLOSED` on a cancelled push and on a session already
-        closed. Returns `None` only when the queued media was written and
-        the server accepted the TEARDOWN. The session is closed after it,
-        whatever the outcome."""
+        """End the session as `close()` does and raise what it reports,
+        in this order: `RtspError(CLOSED)` on a cancelled push (and on a
+        session already closed); otherwise `PROTOCOL` with status 454 when
+        queued media was lost to an expired session; otherwise the
+        TEARDOWN's own result: `PROTOCOL` (or `NOT_FOUND` for a 404) when
+        the server refused it, `TIMEOUT` when no reply came within the
+        500 ms and `IO` when the connection had ended. Returns `None` only
+        when the queued media was written and the server accepted the
+        TEARDOWN. The session is closed after it, whatever the outcome."""
         ...
     def close(self) -> None:
         """End the session; returns `None` whatever the server answered.
@@ -665,8 +666,8 @@ class RtspPushSession:
         `RuntimeError` while a send, `pause()` or `resume()` on another
         thread holds the session, both leaving the session as it was; a
         `stats()` or `is_session_alive()` holding it is waited for. The
-        sender's `close()` cancels first, and a `Sender` has no lossless end: for one, send with
-        `send_ts` and call `teardown()`."""
+        sender's `close()` cancels first, and a `Sender` has no lossless
+        end: for one, send with `send_ts` and call `teardown()`."""
         ...
     def __enter__(self) -> RtspPushSession: ...
     def __exit__(

@@ -651,6 +651,23 @@ def test_teardown_reports_a_refused_teardown() -> None:
         server.close()
 
 
+def test_close_is_silent_about_a_refused_teardown() -> None:
+    # The situation in which `teardown()` raises PROTOCOL: `close()`
+    # returns `None` and raises nothing.
+    server = ScriptedRecordServer(teardown_status=501)
+    try:
+        push = RtspClient.push(RtspClientConfig(server.url), PushDescription.mp2t())
+        push.send_ts(TS_BUNDLE)
+        assert push.close() is None
+        assert "TEARDOWN" in server.methods
+        assert server.rtp_frames == 1, "the RTP frame before the TEARDOWN"
+        with pytest.raises(RtpError) as ei:
+            push.send_ts(TS_BUNDLE)
+        assert ei.value.kind is RtpErrorKind.CLOSED
+    finally:
+        server.close()
+
+
 def test_cancel_from_a_second_thread_releases_a_parked_send_as_closed() -> None:
     server = ScriptedRecordServer(stop_reading=True)
     push = RtspClient.push(RtspClientConfig(server.url), PushDescription.mp2t())
@@ -731,10 +748,11 @@ def test_a_conversion_while_a_send_is_parked_refuses_and_consumes_nothing() -> N
     push = RtspClient.push(RtspClientConfig(server.url), PushDescription.mp2t())
     handle = push.cancel_handle()
     # Ends a conversion that waits for the parked send instead of refusing.
+    # Started once the send is parked: it bounds the conversions, not the fill.
     watchdog = threading.Timer(3.0, handle.cancel)
-    watchdog.start()
     try:
         state = _push_until_parked(push)
+        watchdog.start()
         for convert in (push.into_sender, lambda: push.into_mux_sender(video_only_program())):
             with pytest.raises(RuntimeError, match="in progress"):
                 convert()
@@ -866,6 +884,18 @@ def test_push_description_constructors_take_bytes_like() -> None:
         with RtspClient.push(RtspClientConfig(_url(server, "/cam")), desc):
             info = mount.publisher()
             assert info is not None and info.shape is PublishShape.ELEMENTARY
+
+
+def test_push_description_constructors_refuse_an_int_where_bytes_belong() -> None:
+    # An int is not read as that many zero bytes: it is refused at the call.
+    blob: Any = SPS + PPS
+    with pytest.raises(TypeError):
+        PushDescription.h264([SPS, 0])  # type: ignore[list-item]
+    # A bytes object where the list goes is a sequence of ints.
+    with pytest.raises(TypeError):
+        PushDescription.h264(blob)
+    with pytest.raises(TypeError):
+        PushDescription.h265(3, SPS, PPS)  # type: ignore[arg-type]
 
 
 def test_an_h264_description_without_parameter_sets_is_refused_by_push() -> None:
