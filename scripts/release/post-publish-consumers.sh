@@ -13,7 +13,7 @@
 #           pushes one access unit, `cargo build` with no [patch] and no path
 #           dependency: the vendored libsrt, mbedTLS and librist build from the
 #           published packages, so this is the check that those are complete.
-#   maven   a throwaway Gradle project with mavenCentral() only, depending on
+#   maven   a throwaway Gradle project (fresh Gradle home) with mavenCentral() only, depending on
 #           org.tstrans:tstrans-jvm:X.Y.Z, running the module-path consumer
 #           from bindings/jvm/src/moduleSmoke (loads the native library out of
 #           the published jar on this host's platform).
@@ -64,7 +64,12 @@ retry() {
 part_pypi() {
   local dir="$WORK/pypi"; mkdir -p "$dir"
   python3 -m venv "$dir/venv" || { echo "could not create a venv (python3 -m venv)" >&2; return 1; }
-  retry "pip install tstrans==$VERSION" "$dir/venv/bin/pip" install --no-cache-dir "tstrans==$VERSION" || return 1
+  # Wheels only: a source build from the sdist would pass without testing a
+  # wheel, and the part must fail on a platform that has none.
+  retry "pip install tstrans==$VERSION" "$dir/venv/bin/pip" install --no-cache-dir --only-binary=:all: "tstrans==$VERSION" || {
+    echo "no wheel for tstrans==$VERSION installed (no wheel for this platform or Python, or the index has not caught up)" >&2
+    return 1
+  }
   if [[ -n "${PPC_PY_SNIPPET:-}" ]]; then
     cp "$PPC_PY_SNIPPET" "$dir/check.py"
   else
@@ -111,9 +116,17 @@ RS
   fi
   (
     cd "$dir"
+    # Build the vendored C libraries from the published packages even where a
+    # host libsrt or librist is installed.
+    export SRT_FORCE_VENDORED=1 RIST_FORCE_VENDORED=1
     retry "cargo fetch (exact versions $VERSION)" cargo fetch || exit 1
     cargo build || exit 1
     cargo run -q || exit 1
+    # Every library crate came from the registry: a [patch] or [source] in a
+    # cargo config would otherwise be obeyed silently.
+    cargo metadata --format-version 1 | jq -e '[.packages[] | select(.name | test("^(tst-|tstrans-)")) | .source]
+        | length > 0 and all(. == "registry+https://github.com/rust-lang/crates.io-index")' > /dev/null \
+      || { echo "a tst-* or tstrans-* crate did not come from crates.io (a [patch] or [source] replacement?)" >&2; exit 1; }
   )
 }
 
@@ -127,6 +140,7 @@ part_maven() {
 plugins { application }
 repositories { mavenCentral() }
 dependencies { implementation("org.tstrans:tstrans-jvm:$VERSION") }
+tasks.register("resolveDeps") { doLast { configurations.runtimeClasspath.get().resolve() } }
 tasks.withType<JavaCompile>().configureEach { options.release.set(17) }
 application {
     mainModule.set("org.tstrans.smoke")
@@ -135,8 +149,13 @@ application {
 KTS
   (
     cd "$dir"
-    retry "gradle resolve org.tstrans:tstrans-jvm:$VERSION" gradle --no-daemon -q --refresh-dependencies classes || exit 1
-    gradle --no-daemon -q run || exit 1
+    # A fresh Gradle home: no cached artefact and no init script (mavenLocal)
+    # of the maintainer's can answer for Maven Central.
+    export GRADLE_USER_HOME="$dir/gradle-home"
+    # Only the resolve is retried: a compile error is not index lag.
+    retry "gradle resolve org.tstrans:tstrans-jvm:$VERSION" gradle --no-daemon -q --refresh-dependencies resolveDeps || exit 1
+    gradle --no-daemon -q run | tee "$dir/run.out" || exit 1
+    grep -qx "version=$VERSION" "$dir/run.out" || { echo "the consumer did not print version=$VERSION" >&2; exit 1; }
   )
 }
 

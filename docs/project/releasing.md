@@ -654,7 +654,12 @@ Release; the committed record stays the one step 10 collected.
      `mavenCentral()` that runs the module-path consumer against
      `org.tstrans:tstrans-jvm:X.Y.Z`. Each part prints `PART <name>: rc=N`;
      any non-zero part blocks the announcement. It runs on this host's
-     platform only.
+     platform only, from the tagged checkout (the module-path consumer is that
+     checkout's `bindings/jvm/src/moduleSmoke`), and needs `python3` with
+     `venv`, `cargo` and `jq`, `gradle` and a JDK 17 or newer. The Python part
+     takes wheels only, so it fails on a platform or Python with no wheel;
+     unset `CARGO_TARGET_DIR` first, or the consumer builds outside its temp
+     dir.
    - Every crate page at `https://crates.io/crates/<pkg>` shows X.Y.Z and
      the docs.rs builds are green (see the crates.io section below).
    Only **after** all three verify, announce the release.
