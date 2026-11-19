@@ -77,6 +77,8 @@ mod publish_mp2t_interleaved;
 mod publish_mp2t_udp;
 #[path = "rtsp_server/publish/on_demand.rs"]
 mod publish_on_demand;
+#[path = "rtsp_server/publish/push_client.rs"]
+mod publish_push_client;
 #[path = "rtsp_server/publish/republish.rs"]
 mod publish_republish;
 #[path = "rtsp_server/publish/rtsps_record.rs"]
