@@ -44,8 +44,10 @@ set. A set is decoded and re-encoded in the encoder's tag order, so a
 producer's tag order never changes the hash; a pack has one shape and is
 hashed as it is. A payload with an item that does not split, decode or
 re-encode is hashed as it is and counted as undecoded, with the first failing
-item's reason. Because packs decode, a capture that carries them changes
-digest once against a baseline written before they did. The item split is
+item's reason. The digest decodes no other set: a standalone ST 0102 or
+ST 0903 set is counted as undecoded, with a reason that says so. Because
+packs decode, a capture that carries them changes digest once against a
+baseline written before they did. The item split is
 also stricter than the earlier rule, which decoded a payload when any label
 in it did, so it can mark as changed a capture the earlier sweep accepted.
 A field added to the digest is taken from the current run when the baseline

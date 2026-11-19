@@ -551,6 +551,25 @@ fn an_unregistered_ul_is_still_unknown_and_names_the_item() {
 }
 
 #[test]
+fn a_standalone_st0102_set_is_undecoded_and_the_reason_names_the_decoded_sets() {
+    let mut item = tst_core::klv::UniversalLabel::SECURITY_LS_UL.0.to_vec();
+    item.push(0x00);
+    let rec = klv_record_digest(0x1001, 0, &item);
+    assert!(!rec.decoded);
+    let why = rec.unknown_reason.as_deref().unwrap();
+    assert!(
+        why.starts_with("item 0 (060e2b34020301010e01030302"),
+        "{why}"
+    );
+    assert!(
+        why.ends_with(
+            "not an ST 0601 local set or an ST 0605 pack (the digest decodes no other set)"
+        ),
+        "{why}"
+    );
+}
+
+#[test]
 fn a_payload_that_ends_inside_an_item_is_unknown_not_partially_decoded() {
     let ls = klv_record_for(KlvSet::Compact, 0, 0).unwrap();
     let rec = klv_record_digest(0x1001, 0, &ls[..ls.len() - 3]);
