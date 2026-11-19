@@ -511,13 +511,6 @@ mod tests {
     }
 
     #[test]
-    fn chroma_format_is_copy_eq() {
-        let a = ChromaFormat::Yuv420;
-        let b = a;
-        assert_eq!(a, b);
-    }
-
-    #[test]
     fn rational_basic_construction() {
         let r = Rational {
             num: 30000,

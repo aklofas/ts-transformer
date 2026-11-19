@@ -136,7 +136,7 @@ test = "wave_i1_matrix_no_regression"
 crate = "tst-core"
 path = "crates/tst-core/tests/regression/subtitle_interop.rs"
 class = "diagnostic"
-note = "Strict subtitle-interop regression guard; run explicitly before tagging a release."
+note = "Strict subtitle-interop regression guard. The interop-matrix job of interop.yml runs it with TSTRANS_REQUIRE_INTEROP_TOOLS=1 in the step 'Subtitle interop guard'."
 
 [[skip]]
 test = "wave_i1_matrix_informational"
