@@ -15,10 +15,12 @@
 #                      reads it to tell a candidate from a development tree,
 #                      so it must exist even when the rest of the run fails
 # then <out-dir>/<crate>.txt per crate and <out-dir>/semver-checks.json:
-#   [{"crate","exit","failed_checks","items","report","analysed"}]
+#   [{"crate","exit","failed_checks","items","paths","report","analysed"}]
 #   failed_checks = the "N fail" of the tool's "M checks: P pass, N fail" line
 #   items         = listed entries under every "Failed in:" block (raw lines, so
 #                   an item the tool prints twice counts twice)
+#   paths         = the item path of each of those entries (scripts/gen/api_churn.py
+#                   `paths`), which `api_churn.py tally` maps to a stability tier
 #   analysed      = the tool ended 0 (no break) or 100 (breaks); any other exit
 #                   means the crate was not compared
 #
@@ -86,13 +88,17 @@ for pair in $pairs; do
     printf '%s:%s/%s%s ' "$pkg" "${failed:-0}" "$items" "$mark"
 done
 echo "(crate:failed-checks/items vs $prev)"
-python3 - "$rows" "$OUT/semver-checks.json" <<'P'
+python3 - "$rows" "$OUT/semver-checks.json" "$ROOT/scripts/gen" <<'P'
 import json, sys
+sys.path.insert(0, sys.argv[3])
+import api_churn
 out = []
 for l in open(sys.argv[1]):
     c, rc, f, i, r = l.rstrip("\n").split("\t")
-    out.append({"crate": c, "exit": int(rc), "failed_checks": int(f), "items": int(i), "report": r,
-                "analysed": int(rc) in (0, 100)})
+    with open(r, encoding="utf-8", errors="replace") as rf:
+        paths = api_churn.failed_paths(rf.read())
+    out.append({"crate": c, "exit": int(rc), "failed_checks": int(f), "items": int(i), "paths": paths,
+                "report": r, "analysed": int(rc) in (0, 100)})
 json.dump(out, open(sys.argv[2], "w"), indent=1)
 P
 exit 0
