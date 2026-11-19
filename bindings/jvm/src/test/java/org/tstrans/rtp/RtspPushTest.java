@@ -221,7 +221,11 @@ class RtspPushTest {
             Sending sending = Sending.start(push);
             sending.awaitParked();
             // The handle answers while the send holds the session.
+            long asked = System.nanoTime();
             try (RtspCancelHandle cancel = push.cancelHandle()) {
+                long handleMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - asked);
+                assertTrue(handleMs < scaledMs(500), "cancelHandle() waited " + handleMs + " ms");
+                assertTrue(sending.thread.isAlive(), "the send ended before the cancel");
                 long t0 = System.nanoTime();
                 cancel.cancel();
                 assertTrue(sending.join(scaledMs(1_000)), "the parked send outlived the cancel by 1 s");
