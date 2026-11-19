@@ -1253,16 +1253,17 @@ jobs:
           ref: ${{ inputs.sha }}
           submodules: recursive
 
+      - name: musl C compiler (criterion's alloca shim in the test build)
+        # Before the toolchain and the cache, so an outage ends the job inside
+        # its cap with the script's own message.
+        run: bash scripts/ci/apt-install.sh musl-tools
+
       - name: Rust toolchain + musl target, cargo cache
         uses: ./.github/actions/rust-setup
         with:
           targets: x86_64-unknown-linux-musl
           cache-key: cargo-musl-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
           cache-restore-key: cargo-musl-${{ runner.os }}-
-
-      - name: musl C compiler (criterion's alloca shim in the test build)
-        # First, so a failed install fails the job in its first minute.
-        run: bash scripts/ci/apt-install.sh musl-tools
 
       # tst-core + tst-pipeline are pure Rust crates (no libsrt link),
       # so their library build needs only rust-std-musl + rust-lld — the
