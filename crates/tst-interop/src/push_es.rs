@@ -222,7 +222,7 @@ pub fn run(opts: &PushEs) -> Result<PushEsSummary, String> {
         klv: opts.klv,
     };
     let mut push = transport::rtsp_push_connect(&opts.url, &desc, opts.refused_for)?;
-    eprintln!("push-es: RTSP push recording to {}", opts.url);
+    eprintln!("{}", transport::recording_line("push-es", &opts.url));
     thread::sleep(opts.start_delay);
 
     let first_pts = units[0].pts().as_ticks();

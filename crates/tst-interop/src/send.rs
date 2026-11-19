@@ -132,7 +132,7 @@ pub fn run_push(
 ) -> Result<CellMetrics, String> {
     let push =
         transport::rtsp_push_connect(url, &tst_rtp::PushDescription::Mp2t, start.refused_for)?;
-    eprintln!("send: RTSP push recording to {url}");
+    eprintln!("{}", transport::recording_line("send", url));
     thread::sleep(start.start_delay);
     let outcome = transport::PushCloseSlot::default();
     let transport = Box::new(transport::RtspPushClose::new(

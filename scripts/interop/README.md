@@ -718,10 +718,10 @@ Things these cells depend on, each measured with mediamtx v1.21.4, ffmpeg
 - **A relay reader must attach between RECORD and the first packet.**
   mediamtx answers a reader's DESCRIBE `404` until a publisher records, and
   forwards only what arrives after the reader's PLAY. Both push paths take
-  `--start-delay SECS` (3 here) and print a `… RTSP push recording` line
-  when RECORD is answered; the cell starts the reader on that line, so it
+  `--start-delay SECS` (3 here) and print a `… RTSP push recording to URL at T` line
+  (T = the push's own clock, unix seconds) when RECORD is answered; the cell starts the reader on that line, so it
   sees the stream from its first packet. mediamtx closes a publisher that
-  sends nothing for 10 s. The cell logs how long after the `recording` line
+  sends nothing for 10 s. The cell logs how long after that time
   mediamtx saw the reader, and a failing cell whose reader came after the
   delay says so.
 - **…and keep the session open a moment after the last packet.** mediamtx
@@ -2130,7 +2130,7 @@ sender was supposed to emit.
 
 **The matrix stays compact: no cell sends rich records.** `--klv-set` defaults
 to `compact` everywhere and `run-matrix.sh` never passes it, so every matrix cell
-carry the byte-identical 4-tag, 50-byte record their expectations were
+carries the byte-identical 4-tag, 50-byte record their expectations were
 validated against. That matters most for the `KLV records: got 0` expectation
 rows above: they document third-party peers dropping or mangling KLV carriage
 FOR THAT EXACT RECORD, with byte-level evidence pinned to its bytes, so moving

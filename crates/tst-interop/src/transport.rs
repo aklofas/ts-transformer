@@ -190,6 +190,20 @@ pub fn make_send(url: &str) -> Result<Box<dyn Transport>, String> {
 /// How often [`rtsp_push_connect`] retries a refused connect.
 const REFUSED_RETRY_STEP: Duration = Duration::from_millis(50);
 
+/// The line a push prints once the server has answered RECORD:
+/// `<tool>: RTSP push recording to <url> at <unix seconds>`. A cell starts
+/// its reader on the line and measures the reader's attach time from the
+/// push's own clock reading, not from when its poll found the line.
+pub fn recording_line(tool: &str, url: &str) -> String {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default();
+    format!(
+        "{tool}: RTSP push recording to {url} at {:.6}",
+        now.as_secs_f64()
+    )
+}
+
 /// Publish to the RTSP server at `url` (`rtsp://` or `rtsps://`): connect,
 /// ANNOUNCE `desc`, SETUP every track with `mode=record` and RECORD.
 ///

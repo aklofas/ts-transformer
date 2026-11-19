@@ -432,8 +432,8 @@ run_send_peer_recv() {
     sent_aus=$(jq -r '.video_aus // empty' "$send_json" 2>/dev/null) || sent_aus=""
     got_aus=$(jq -r '.metrics.video_aus // empty' "$vjson" 2>/dev/null) || got_aus=""
     echo "--- video AUs: sent ${sent_aus:-<unparseable>}, in the capture ${got_aus:-<unparseable>} ---" >>"$log"
-    if [[ ! "$sent_aus" =~ ^[0-9]+$ || ! "$got_aus" =~ ^[0-9]+$ ]] || ((got_aus < sent_aus - 1)); then
-      reasons+=("short capture: ${got_aus:-<unparseable>} video AUs, want >= $((${sent_aus:-1} - 1)) (the send pushed ${sent_aus:-<unparseable>}; only the last may be missing)")
+    if [[ ! "$sent_aus" =~ ^[0-9]+$ || ! "$got_aus" =~ ^[0-9]+$ ]] || ((sent_aus == 0)) || ((got_aus < sent_aus - 1)); then
+      reasons+=("short capture: ${got_aus:-<unparseable>} video AUs, want >= $((${sent_aus:-1} - 1)) and at least one (the send pushed ${sent_aus:-<unparseable>}; only the last may be missing)")
     fi
   fi
 
@@ -1293,10 +1293,19 @@ RTSP_PUSH_HOLD=1
 # reader_attach <log> <reader_pid> — wait for mediamtx to log a reader on
 # the path (or for the reader to exit) and print how long after the push's
 # "recording" line that was: seconds, or "never". RTSP_PUSH_RECORDED_AT
-# holds the time that line was seen. Logged in the cell, and named in a
+# holds the push's own time for that line. Logged in the cell, and named in a
 # failure, so a reader that attached after the start delay (and so missed
 # the first packets) is told apart from a push that lost them.
 RTSP_PUSH_RECORDED_AT=""
+# recorded_at <log> — the push's own wall-clock time (epoch seconds) from
+# its "RTSP push recording to URL at T" line, so the attach gap does not
+# start at the cell's next poll of the log; this script's clock when the
+# line carries none.
+recorded_at() {
+  local t
+  t=$(sed -n 's/^\(send\|push-es\): RTSP push recording to .* at \([0-9][0-9]*\.[0-9][0-9]*\)$/\2/p' "$1" | head -n 1)
+  echo "${t:-$(date +%s.%N)}"
+}
 reader_attach() {
   local log=$1 pid=$2
   if wait_for_line "$log" "is reading from path" \
@@ -1456,7 +1465,7 @@ rtsp_push_mediamtx_mp2t() {
   local send_pid=$!
   local gst_rc=0 attach_gap=never
   if wait_for_line "$log" '^send: RTSP push recording' "$RTSP_PUSH_READY_WAIT" "$send_pid"; then
-    RTSP_PUSH_RECORDED_AT=$(date +%s.%N)
+    RTSP_PUSH_RECORDED_AT=$(recorded_at "$log")
     echo "--- peer: gst-launch-1.0 pulls $url -> $out ---" >>"$log"
     # -e: the server's close after our TEARDOWN ends the run with EOS, so
     # the file is flushed.
@@ -1513,6 +1522,7 @@ rtsp_push_mediamtx_mp2t() {
   if [[ ${#reasons[@]} -eq 0 ]]; then
     emit_pass "$id" "$peer" send "$tier" "$log" "$mjson"
   else
+    [[ $gst_rc -eq 0 ]] || reasons+=("the reader (gst-launch-1.0) exited $gst_rc: a short capture may be its crash, not a push that lost its tail")
     emit_fail "$id" "$peer" send "$tier" "$log" "$mjson" "${reasons[@]}"
   fi
 }
@@ -1566,7 +1576,7 @@ rtsp_push_mediamtx_es_klv() {
   local url="rtsp://127.0.0.1:$port/live"
   local pushed="$WORK/$(slug "$id")-pushed" pulled="$WORK/$(slug "$id")-pulled"
   rm -f "$pushed.h264" "$pushed.klv" "$pulled.h264" "$pulled.klv"
-  echo "--- us: push-es --klv ($url, start delay ${RTSP_PUSH_START_DELAY}s) ---" >>"$log"
+  echo "--- us: push-es --klv ($url, start delay ${RTSP_PUSH_START_DELAY}s, hold ${RTSP_PUSH_HOLD}s) ---" >>"$log"
   timeout --kill-after=3 "${budget}s" \
     "$BIN" push-es --url "$url" --file "$src" --out "$pushed" --klv \
     --start-delay "$RTSP_PUSH_START_DELAY" --hold "$RTSP_PUSH_HOLD" \
@@ -1574,7 +1584,7 @@ rtsp_push_mediamtx_es_klv() {
   local push_pid=$!
   local gst_rc=0 attach_gap=never
   if wait_for_line "$log" '^push-es: RTSP push recording' "$RTSP_PUSH_READY_WAIT" "$push_pid"; then
-    RTSP_PUSH_RECORDED_AT=$(date +%s.%N)
+    RTSP_PUSH_RECORDED_AT=$(recorded_at "$log")
     echo "--- peer: gst-launch-1.0 pulls $url -> $pulled.{h264,klv} ---" >>"$log"
     # A queue per branch, and caps on encoding-name: without them the
     # second track's pad finds no branch to link and rtspsrc stops with
@@ -1628,9 +1638,11 @@ rtsp_push_mediamtx_es_klv() {
     emit_pass "$id" "$peer" send "$tier" "$log" -
   else
     local why
+    local crashed=""
+    [[ $gst_rc -eq 0 ]] || crashed="the reader (gst-launch-1.0) exited $gst_rc: a missing tail may be its crash, not a push that lost it"
     why=$(grep '^verify-es: FAIL' "$log" | sed 's/^verify-es: FAIL //' | tr '\n' ';') || why=""
     emit_fail "$id" "$peer" send "$tier" "$log" - \
-      "verify-es FAILed (exit $vrc): ${why:-see log}" ${late:+"$late"}
+      "verify-es FAILed (exit $vrc): ${why:-see log}" ${late:+"$late"} ${crashed:+"$crashed"}
   fi
 }
 

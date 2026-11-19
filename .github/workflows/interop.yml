@@ -46,11 +46,15 @@ on:
       # The rtsp-publish/* cells are the only real-tool check of the RTSP
       # server's publish path (ANNOUNCE/RECORD, the re-muxer, SDP parsing,
       # the H.264 depacketizer and the sender-report parsing that feeds
-      # alignment).
+      # alignment). The rtsp-push/* cells (us-to-mediamtx-mp2t,
+      # us-to-mediamtx-es-klv, us-to-ffmpeg-listen) check the push client
+      # under rtsp/**, and rtsp-push/us-to-mediamtx-es-klv is the only
+      # real-tool check of the KLV packetizer.
       - 'crates/tst-rtp/src/rtsp/**'
       - 'crates/tst-rtp/src/sdp/**'
       - 'crates/tst-rtp/src/h264/**'
       - 'crates/tst-rtp/src/rtcp/**'
+      - 'crates/tst-rtp/src/klv/**'
       # The WebRTC server runs the interop matrix on its changes too, and so
       # does the reference player the whep/* cells load in headless Chrome.
       - 'crates/tst-webrtc/**'
