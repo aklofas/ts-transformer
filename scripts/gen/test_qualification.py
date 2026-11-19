@@ -3,6 +3,7 @@
 Run:  python3 -m unittest scripts/gen/test_qualification.py
 """
 import contextlib
+import hashlib
 import io
 import json
 import os
@@ -48,7 +49,7 @@ INVENTORY = {"tools": {"ffmpeg": "7.1", "tsp": "3.40", "gst-launch-1.0": "1.24",
 # the rule (ReleaseFuzzTests) set their own seconds.
 FUZZ = {"targets_run": 37, "seconds_per_target": q.RELEASE_FUZZ_SECONDS, "crashes": 0}
 ABI = {"major": 0, "minor": 25, "symbols": 505, "previous_tag": "v0.8.0",
-       "previous_source": "built: no package for v0.8.0", "abidiff_exit": 4, "verdict": "compatible"}
+       "previous_source": "built: no package for v0.8.0", "abidiff_exit": 0, "verdict": "compatible"}
 BENCH_IR = {"old": {"ref": "v0.8.0", "sha": "a" * 40}, "new": {"ref": "HEAD", "sha": SHA},
             "threshold_percent": 3.0, "tool": "valgrind-3.22.0", "verdict": "pass",
             "workloads": [
@@ -835,9 +836,19 @@ class HoleTests(unittest.TestCase):
         self.assertEqual(rec["verdict"], "NO-GO")
         self.assertTrue(any("breaking" in r for r in rec["verdict_reasons"]))
 
-    def test_abi_exit_zero_and_four_are_both_go(self):
-        for code in (0, 4):
-            self.assertEqual(collect(lambda f: f["abi.json"].update(abidiff_exit=code))["verdict"], "GO")
+    def test_abi_exit_zero_is_go(self):
+        self.assertEqual(collect(lambda f: f["abi.json"].update(abidiff_exit=0))["verdict"], "GO")
+
+    def test_a_changed_abi_report_before_1_0_cannot_be_compatible(self):
+        rec = collect(lambda f: f["abi.json"].update(abidiff_exit=4, verdict="compatible"))
+        self.assertEqual(rec["verdict"], "NO-GO")
+        self.assertTrue(any("abidiff exit 4" in r and "compatible" in r for r in rec["verdict_reasons"]))
+
+    def test_a_failed_abi_leg_is_no_go_whatever_abi_json_says(self):
+        def m(f):
+            f["legs.json"]["c-abi"]["conclusion"] = "failure"
+            f["abi.json"].update(abidiff_exit=0, verdict="compatible")
+        self.assertEqual(collect(m)["verdict"], "NO-GO")
 
 
 class RenderTests(unittest.TestCase):
@@ -856,7 +867,7 @@ class RenderTests(unittest.TestCase):
         for how in ("attested", "built: attestation verify failed", "built: no package for v0.8.0"):
             rec = collect(lambda f: f["abi.json"].update(previous_source=how))
             self.assertEqual(rec["abi"]["previous_source"], how)
-            self.assertIn("compared with v0.8.0 (%s): abidiff exit 4" % how, q.render_block(rec))
+            self.assertIn("compared with v0.8.0 (%s): abidiff exit 0" % how, q.render_block(rec))
 
     def test_bench_ir_missing_or_failing_is_no_go(self):
         rec = collect(lambda f: f.__setitem__("bench-ir.json", None))
@@ -2973,13 +2984,18 @@ class ReleaseEligibleArchiveTableTests(unittest.TestCase):
 class ChecksumTests(unittest.TestCase):
     def test_checksums_cover_the_files_not_the_sums_file(self):
         tmp = tempfile.mkdtemp()
-        put(os.path.join(tmp, "a.txt"), "hello")
+        path = os.path.join(tmp, "a.txt")
+        put(path, "hello\n")
         q.write_checksums(tmp)
         lines = slurp(os.path.join(tmp, "SHA256SUMS")).splitlines()
         self.assertEqual(len(lines), 1)
-        self.assertTrue(lines[0].endswith("  a.txt"))
+        self.assertEqual(lines[0], "5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03  a.txt")
         q.write_checksums(tmp)  # rerun: SHA256SUMS itself is never listed
         self.assertEqual(len(slurp(os.path.join(tmp, "SHA256SUMS")).splitlines()), 1)
+        put(path, "goodbye\n")
+        q.write_checksums(tmp)
+        changed = slurp(os.path.join(tmp, "SHA256SUMS")).splitlines()
+        self.assertEqual(changed, [hashlib.sha256(b"goodbye\n").hexdigest() + "  a.txt"])
 
 
 if __name__ == "__main__":

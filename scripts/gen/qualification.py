@@ -743,6 +743,13 @@ def verdict(legs, interop, fuzz, dirty=False, abi=None, release_vm=None, source_
     reasons = []
     if abi is not None and abi.get("verdict") != "compatible":
         reasons.append("c-abi: abi.json verdict is %r, not 'compatible'" % abi.get("verdict"))
+    # A pre-1.0 comparison admits no change: the producer fails on any abidiff
+    # difference, so a changed report next to "compatible" was not made by it.
+    code = abi.get("abidiff_exit") if abi is not None else None
+    if (abi is not None and abi.get("verdict") == "compatible" and abi.get("major") == 0
+            and isinstance(code, int) and not isinstance(code, bool) and code != 0):
+        reasons.append("c-abi: abi.json says abidiff exit %d but verdict 'compatible' while the major is 0"
+                       " (a contradiction)" % code)
     if dirty:
         reasons.append("source: the qualified tree had uncommitted changes")
     for l in legs:
