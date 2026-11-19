@@ -1,4 +1,5 @@
 import os
+import shutil
 import sys
 import tempfile
 import unittest
@@ -7,8 +8,17 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import doc_snippets as ds  # noqa: E402
 
 
+_DIRS = []
+
+
+def tearDownModule():
+    for d in _DIRS:
+        shutil.rmtree(d, ignore_errors=True)
+
+
 def page(text):
     d = tempfile.mkdtemp()
+    _DIRS.append(d)
     p = os.path.join(d, "demo.md")
     with open(p, "w") as fh:
         fh.write(text)
@@ -104,6 +114,40 @@ class ExtractTests(unittest.TestCase):
         p, out = page("<!-- compile-prelude: java\nint a;\n")
         with self.assertRaises(ds.SnippetError):
             ds.extract([p], out)
+
+    def test_unclosed_fence_after_marker_is_error(self):
+        p, out = page("<!-- compile: c-file -->\n```c\nint a;\n")
+        with self.assertRaises(ds.SnippetError) as cm:
+            ds.extract([p], out)
+        self.assertIn("never closed", str(cm.exception))
+
+    def test_marker_typos_are_errors(self):
+        for marker in ("<!-- compile java-class -->", "<!-- Compile: c-file -->",
+                       " <!-- compile: c-file -->", "<!-- compile-prelude: rust"):
+            p, out = page(marker + "\n```c\nint a;\n```\n")
+            with self.assertRaises(ds.SnippetError, msg=marker):
+                ds.extract([p], out)
+
+    def test_block_with_own_imports_gets_no_default_imports(self):
+        p, out = page(
+            "<!-- compile: java-statements -->\n```java\nimport java.util.Map;\nint a;\n```\n"
+            "<!-- compile: java-statements -->\n```java\nint b;\n```\n"
+        )
+        own, bare = [read(f) for f in ds.extract([p], out)]
+        self.assertNotIn("import org.tstrans.codec.*;", own)
+        self.assertIn("import java.util.Map;", own)
+        self.assertIn("import org.tstrans.codec.*;", bare)
+
+    def test_c_statements_silence_unused_variable_only_in_wrapper(self):
+        p, out = page("<!-- compile: c-statements -->\n```c\nint a;\n```\n"
+                      "<!-- compile: c-file -->\n```c\nint b;\n```\n")
+        st, whole = [read(f) for f in ds.extract([p], out)]
+        self.assertIn("-Wunused-variable", st)
+        self.assertNotIn("pragma", whole)
+
+    def test_four_backtick_fence_hides_a_marker_example(self):
+        p, out = page("````md\n<!-- compile: c-file -->\n```c\nint a;\n```\n````\n")
+        self.assertEqual(ds.extract([p], out), [])
 
     def test_java_class_named_after_public_type(self):
         p, out = page("<!-- compile: java-class -->\n```java\npublic final class Foo {}\n```\n")

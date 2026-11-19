@@ -25,10 +25,11 @@ in an invisible comment, one per language:
 For Java the lines are members of the wrapper class, so write `static byte[]
 klvBytes;` and a snippet may still declare its own local of the same name (an
 `import` line is hoisted above the class); for C they go at file scope, after
-the includes, as non-static globals so an unused one is not a warning. The default Java imports are the
-wildcard of the `org.tstrans` packages that share no type name with another
+the includes, as non-static globals so an unused one is not a warning. The
+default Java imports are the wildcard of the `org.tstrans` packages that share no type name with another
 (`org.tstrans`, `codec`, `hls`, `io`, `klv`, `mpegts`, `pipeline`) plus
-`java.nio`, `java.time` and `java.util`. A snippet that uses `srt`, `tcp`,
+`java.nio`, `java.time` and `java.util`, but only for a snippet with no `import`
+line of its own: one that lists imports gets exactly those. A snippet that uses `srt`, `tcp`,
 `rtp`, `shells` or `webrtc` types carries its own `import` lines, as a
 reader's code must.
 
@@ -56,7 +57,7 @@ MARKER = re.compile(
     r"^<!--\s*compile:\s*(java-statements|java-class|c-statements|c-file)"
     r"(\s+continues)?\s*-->\s*$"
 )
-MARKER_ANY = re.compile(r"^<!--\s*compile:")
+MARKER_ANY = re.compile(r"^\s*<!--\s*compile\b", re.I)
 PRELUDE = re.compile(r"^<!--\s*compile-prelude:\s*(java|c)\s*$")
 FENCE = re.compile(r"^```(\w*)\s*$")
 LANG = {"java-statements": "java", "java-class": "java", "c-statements": "c", "c-file": "c"}
@@ -65,6 +66,11 @@ JAVA_PACKAGES = ["", ".codec", ".hls", ".io", ".klv", ".mpegts", ".pipeline"]
 JAVA_IMPORTS = "".join(f"import org.tstrans{p}.*;\n" for p in JAVA_PACKAGES) + (
     "import java.nio.*;\nimport java.nio.file.*;\nimport java.time.*;\n"
     "import java.util.*;\n"
+)
+# An excerpt may declare a variable for the reader and use it in elided lines.
+C_EXCERPT_PRAGMAS = (
+    '#pragma GCC diagnostic ignored "-Wunused-variable"\n'
+    '#pragma GCC diagnostic ignored "-Wunused-but-set-variable"\n'
 )
 C_INCLUDES = (
     '#include "tstrans.h"\n#include <stdbool.h>\n#include <stdint.h>\n'
@@ -81,12 +87,12 @@ def blocks(path):
     with open(path, encoding="utf-8") as fh:
         lines = fh.read().split("\n")
     i = 0
-    in_fence = False
+    fence_run = 0  # backticks of the open unmarked fence, 0 outside one
     while i < len(lines):
         line = lines[i]
-        if in_fence:
-            if line.startswith("```"):
-                in_fence = False
+        if fence_run:
+            if re.match(r"^`{%d,}\s*$" % fence_run, line):
+                fence_run = 0
             i += 1
             continue
         pm = PRELUDE.match(line)
@@ -112,15 +118,16 @@ def blocks(path):
                     f"{path}:{i + 1}: marker `{kind}` is not followed by a ```{LANG[kind]} fence"
                 )
             j = i + 2
-            while j < len(lines) and not lines[j].startswith("```"):
+            while j < len(lines) and not re.match(r"^```\s*$", lines[j]):
                 j += 1
             if j >= len(lines):
                 raise SnippetError(f"{path}:{i + 1}: fence is never closed")
             yield kind, cont, "\n".join(lines[i + 2 : j]) + "\n", i + 1
             i = j + 1
             continue
-        if line.startswith("```"):
-            in_fence = True
+        opened = re.match(r"^(`{3,})", line)
+        if opened:
+            fence_run = len(opened.group(1))
         i += 1
 
 
@@ -130,8 +137,9 @@ def wrap_java(name, code, prelude=""):
         (imports if ln.startswith("import ") else members).append(ln)
     for ln in code.split("\n"):
         (imports if ln.startswith("import ") else body).append(ln)
+    own = any(ln.startswith("import ") for ln in code.split("\n"))
     return (
-        JAVA_IMPORTS + "\n".join(imports) + ("\n" if imports else "")
+        ("" if own else JAVA_IMPORTS) + "\n".join(imports) + ("\n" if imports else "")
         + f"class {name} {{\n" + "\n".join(members) + "\n"
         + "    static void run() throws Exception {\n"
         + "\n".join(body) + "    }\n}\n"
@@ -139,7 +147,7 @@ def wrap_java(name, code, prelude=""):
 
 
 def wrap_c(name, code, prelude=""):
-    return C_INCLUDES + prelude + f"int {name}(void) {{\n{code}    return 0;\n}}\n"
+    return C_INCLUDES + C_EXCERPT_PRAGMAS + prelude + f"int {name}(void) {{\n{code}    return 0;\n}}\n"
 
 
 def extract(pages, out):

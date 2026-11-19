@@ -10,7 +10,6 @@ static int port;
 static java.util.Set<String> blocked;
 static java.util.List<byte[]> accessUnits, klvUnits;
 static byte[] firstKeyFrame;
-static String path;
 static org.tstrans.srt.ReconnectPolicy policy;
 static org.tstrans.mpegts.MuxerConfig program;
 static java.util.Map<Integer, Object> caches;
@@ -384,6 +383,7 @@ Universal Label — the decoder reads it as part of its verification.
 <!-- compile: java-statements -->
 ```java
 import org.tstrans.klv.*;
+import org.tstrans.mpegts.DemuxEvent;
 
 // Inside a demux loop where `e` is a DemuxEvent.Metadata:
 if (e instanceof DemuxEvent.Metadata m) {
@@ -642,6 +642,7 @@ import org.tstrans.codec.Codec;
 import org.tstrans.codec.H264Sps;
 import org.tstrans.codec.AdtsFrame;
 import org.tstrans.CodecParseException;
+import java.util.List;
 
 // Parse an H.264 sequence parameter set from its RBSP body
 // (Annex-B start code already stripped).
@@ -1423,6 +1424,8 @@ offline `org.tstrans.mpegts.Demuxer` produces:
 ```java
 import org.tstrans.shells.DemuxReceiver;
 import org.tstrans.mpegts.DemuxEvent;
+import org.tstrans.codec.VideoUnit;
+import java.util.List;
 
 try (DemuxReceiver rx = DemuxReceiver.open("srt://:9000?mode=listener")) {
     for (DemuxEvent e : rx) {
@@ -1450,6 +1453,8 @@ To record or forward the raw packets, pull them from a `Receiver` and feed a
 <!-- compile: java-statements -->
 ```java
 import org.tstrans.TcpException;
+import org.tstrans.mpegts.DemuxEvent;
+import org.tstrans.mpegts.Demuxer;
 import org.tstrans.shells.Receiver;
 
 try (Receiver rx = Receiver.open("tcp://127.0.0.1:9000");
@@ -1574,6 +1579,8 @@ exactly one `DemuxEvent.ReconnectDiscontinuity` before the post-reconnect events
 ```java
 import org.tstrans.srt.ManagedDemuxReceiver;
 import org.tstrans.mpegts.DemuxEvent;
+import org.tstrans.codec.VideoUnit;
+import java.util.List;
 
 try (ManagedDemuxReceiver rx = ManagedDemuxReceiver.fromUrl(
         "srt://host:9000?mode=caller&latency=120", policy)) {
@@ -2260,6 +2267,9 @@ and iterates `DemuxEvent`s.
 
 <!-- compile: java-statements -->
 ```java
+import org.tstrans.mpegts.DemuxEvent;
+import org.tstrans.mpegts.MuxerConfig;
+import org.tstrans.mpegts.VideoCodec;
 import org.tstrans.shells.DemuxReceiver;
 import org.tstrans.shells.MuxSender;
 
@@ -3405,7 +3415,7 @@ try (Pairer pairer = new Pairer(videoPid, klvPid, cfg)) {
 ```
 
 The simplest form — `new Pairer(videoPid, klvPid)` — uses `PairerConfig.defaults()`
-(Realtime mode, 300 ms tolerance, 32/32 buffers, `linkKlvToVideo = true`) with
+(Realtime mode, 300 ms tolerance, 32/32 buffers) with
 demuxer defaults. To tolerate arrival skew, switch to Buffered mode: pass
 `new PairerMode.Buffered(Duration.ofMillis(200))` as the mode. Buffered mode
 holds samples until the lag window closes; call `flush()` at end-of-stream
