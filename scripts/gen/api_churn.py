@@ -2,15 +2,18 @@
 """Break counts per release and stability tier.
 
   api_churn.py paths REPORT.txt
-      The item paths of the "Failed in:" blocks of one cargo-semver-checks text
-      report, as a JSON list (scripts/dev/semver-checks.sh writes them into
-      semver-checks.json as "paths").
+      The lines of the "Failed in:" blocks of one cargo-semver-checks text report, as a
+      JSON list of {"line", "file", "span_line", "path"} (scripts/dev/semver-checks.sh writes them into
+      semver-checks.json as "breaks"). `file` is the source file the line's span names,
+      `path` the crate-qualified item path when the line prints one; either may be null.
   api_churn.py tally SEMVER_CHECKS.json --release X.Y.Z [--root DIR]
-      Maps each distinct item path to the tier of the most specific row of the
-      classification table in docs/reference/api-stability.md and prints
-      {"release", "stable", "provisional", "experimental", "internal"}: the
-      numbers of a tests/coverage/api-churn.toml row. A path no row covers is
-      an error naming it.
+      Places each line in the tier of the most specific row of the classification table
+      in docs/reference/api-stability.md, by the module its span file defines (a root
+      re-export is thus counted where the item is defined), else by its item path, and
+      prints {"release", "stable", "provisional", "experimental", "internal"}: the numbers
+      of a tests/coverage/api-churn.toml row. A line no row covers is an error naming it,
+      and so is a crate whose parsed lines differ in number from its `items`. A removed
+      item printed once per importable path counts once (same file and line).
   api_churn.py render [--root DIR] (--write | --check)
       The table between `<!-- BEGIN GENERATED: api-churn -->` and
       `<!-- END GENERATED: api-churn -->` in docs/reference/api-stability.md,
@@ -25,12 +28,6 @@ import os
 import re
 import sys
 
-try:
-    import tomllib
-except ImportError:  # Python < 3.11
-    print("api-churn: api_churn.py needs Python >= 3.11 (tomllib)", file=sys.stderr)
-    sys.exit(1)
-
 PAGE = os.path.join("docs", "reference", "api-stability.md")
 DATA = os.path.join("tests", "coverage", "api-churn.toml")
 BEGIN = "<!-- BEGIN GENERATED: api-churn -->"
@@ -44,11 +41,12 @@ class ChurnError(Exception):
 
 # ---- the semver report -----------------------------------------------------
 
-_ITEM = re.compile(r"^\s*\w+\s+(.+?)(?:,\s*previously in\b.*| in (?:file )?\S+:\d+.*)?$")
+_SPAN = re.compile(r"(\S+\.rs):(\d+)")
+_QUALIFIED = re.compile(r"[A-Za-z_][\w]*(?:::[\w]+)+")
 
 
-def failed_paths(text):
-    """Item paths listed under every `Failed in:` block, in report order."""
+def failed_lines(text):
+    """One entry per non-blank line under every `Failed in:` block, in report order."""
     out, inside = [], False
     for line in text.splitlines():
         if line.startswith("Failed in:"):
@@ -56,10 +54,23 @@ def failed_paths(text):
         elif not line.strip():
             inside = False
         elif inside:
-            m = _ITEM.match(line)
-            if m:
-                out.append(m.group(1).strip())
+            span = _SPAN.search(line)
+            head = line.strip().split(", previously in")[0].split(" in file ")[0]
+            path = _QUALIFIED.search(head)
+            out.append({"line": line.strip(), "file": span.group(1) if span else None,
+                        "span_line": int(span.group(2)) if span else None, "path": path.group(0) if path else None})
     return out
+
+
+def file_module(path):
+    """The module segments a source file defines: src/a/b.rs and src/a/b/mod.rs are (a, b); lib.rs is ()."""
+    m = re.search(r"(?:^|/)src/(.+)\.rs$", path)
+    if not m:
+        return None
+    segs = m.group(1).split("/")
+    if segs[-1] in ("lib", "mod", "main"):
+        segs = segs[:-1]
+    return tuple(segs)
 
 
 # ---- tiers -----------------------------------------------------------------
@@ -78,35 +89,54 @@ def classification(page_text):
     return rows
 
 
-def tier_of(rows, package, path):
-    segs = path.split("::")
-    if len(segs) < 2:
-        raise ChurnError("item path %r names no module" % path)
-    segs = tuple(segs[1:])  # drop the crate
+def _lookup(rows, package, segs):
     best = None
     for mod, tier in rows.get(package, []):
         if segs[:len(mod)] == mod and (best is None or len(mod) > len(best[0])):
             best = (mod, tier)
-    if best is None:
-        raise ChurnError("item path %r (crate %s) is covered by no row of the classification table" % (path, package))
-    return best[1]
+    return best[1] if best else None
+
+
+def tier_of(rows, package, entry):
+    """Tier of one `failed_lines` entry: by its span file, else by its item path."""
+    if entry["file"]:
+        mod = file_module(entry["file"])
+        tier = _lookup(rows, package, mod) if mod is not None else None
+        if tier:
+            return tier
+    if entry["path"]:
+        segs = tuple(entry["path"].split("::")[1:])  # drop the crate
+        tier = _lookup(rows, package, segs)
+        if tier:
+            return tier
+    raise ChurnError("the line %r (crate %s) is covered by no row of the classification table"
+                     % (entry["line"], package))
 
 
 def tally(report, rows, release):
     counts = dict.fromkeys(TIERS, 0)
     for c in report:
-        if "paths" not in c:
+        if "breaks" not in c:
             if c.get("exit") == 100 or c.get("items"):
-                raise ChurnError("the report row of %s has no item paths; rerun scripts/dev/semver-checks.sh" % c.get("crate"))
+                raise ChurnError("the report row of %s has no break lines; rerun scripts/dev/semver-checks.sh"
+                                 % c.get("crate"))
             continue
-        for path in sorted(set(c["paths"])):
-            counts[tier_of(rows, c["crate"], path)] += 1
+        if len(c["breaks"]) != c.get("items", 0):
+            raise ChurnError("the report of %s lists %s lines under Failed in: but %d were parsed"
+                             % (c["crate"], c.get("items"), len(c["breaks"])))
+        seen = {}
+        for e in c["breaks"]:
+            key = (e["file"], e["span_line"]) if e["file"] else e["line"]
+            seen.setdefault(key, e)
+        for e in seen.values():
+            counts[tier_of(rows, c["crate"], e)] += 1
     return dict({"release": release}, **counts)
 
 
 # ---- the table -------------------------------------------------------------
 
 def parse_churn(text):
+    import tomllib  # Python 3.11; the report parser above needs only the older standard library
     rows = []
     for r in tomllib.loads(text).get("release", []):
         if "version" not in r:
@@ -116,6 +146,8 @@ def parse_churn(text):
             raise ChurnError("release %s: the four tier counts are all-or-none" % r["version"])
         if not all(has_counts) and "note" not in r:
             raise ChurnError("release %s has neither tier counts nor a note" % r["version"])
+        if "|" in str(r.get("note", "")):
+            raise ChurnError("release %s: a note may not contain `|`" % r["version"])
         rows.append(r)
     return rows
 
@@ -164,7 +196,7 @@ def main(argv=None):
     try:
         if args.cmd == "paths":
             with open(args.report, encoding="utf-8", errors="replace") as f:
-                print(json.dumps(failed_paths(f.read())))
+                print(json.dumps(failed_lines(f.read())))
         elif args.cmd == "tally":
             with open(os.path.join(_root(args), PAGE), encoding="utf-8") as f:
                 rows = classification(f.read())
