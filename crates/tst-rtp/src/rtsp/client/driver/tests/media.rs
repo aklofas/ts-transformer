@@ -225,6 +225,41 @@ fn frames_arrive_whole_and_in_order_between_rtsp_messages() {
     assert_eq!(media.dropped_at_close(), 0);
 }
 
+/// Within one write pass the client's own request goes ahead of the media
+/// moved onto the stream in that pass: a request submitted with frames
+/// already queued does not wait behind them.
+#[test]
+fn a_request_is_written_ahead_of_media_moved_in_the_same_pass() {
+    const FRAMES: u32 = 8;
+    let (stream, mut peer) = plain_pair();
+    let h = drive(stream);
+    let _unhang = unhang(&h.cancel);
+    let mut rest = Vec::new();
+    recording(&h, &mut peer, &mut rest);
+    // Straight onto the queue, without the wake a send gives: the thread
+    // sleeps on with the stream idle, and finds the frames (well under the
+    // watermark) and the request together when the request wakes it.
+    for seq in 0..FRAMES {
+        h.media.push(media_frame(seq, SMALL), &h.cancel).unwrap();
+    }
+    let rx = h.request(options());
+    let mut units = Units::new(rest);
+    match units.next(&mut peer).expect("the stream is open") {
+        Unit::Request(head) => {
+            assert_eq!(whole_request(&head).method, RtspMethod::Options);
+            peer.write_all(&ok_reply(cseq(&head))).unwrap();
+        }
+        frame => panic!("media was written ahead of the request: {frame:?}"),
+    }
+    for seq in 0..FRAMES {
+        let unit = units.next(&mut peer).expect("the stream is open");
+        assert_media(&unit, seq, SMALL);
+    }
+    assert!(matches!(next(&rx), Progress::Written));
+    assert_eq!(done_ok(next(&rx)).status, 200);
+    h.stop_and_join();
+}
+
 /// The stream would stall only after `CONTROL_WRITE_TIMEOUT`, five times
 /// the bound here, so within it nothing but the cancel ends the send. How
 /// soon a parked wait sees a cancel is pinned on the queue itself, where
