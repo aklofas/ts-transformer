@@ -1472,16 +1472,11 @@ mod tests {
         let tcp_bad = "tcp://127.0.0.1:99999?passphrase=secret-phrase-1";
         let tcp_listen_bad = "tcp://127.0.0.1:99999?listen=1&passphrase=secret-phrase-1";
         let p = &crate::profiles::all()[0];
-        let serve = |url: &str,
-                     f: fn(
-            &crate::profiles::Profile,
-            &str,
-            f64,
-            KlvSet,
-            u64,
-            AuSizeMode,
-        ) -> Result<(), String>| {
-            f(p, url, 0.1, KlvSet::Compact, 0, AuSizeMode::Compact)
+        let serve_hls = |url: &str| {
+            crate::serve::run_hls_url(p, url, 0.1, KlvSet::Compact, 0, AuSizeMode::Compact)
+        };
+        let serve_rtsp = |url: &str| {
+            crate::serve::run_rtsp_url(p, url, 0.1, KlvSet::Compact, 0, AuSizeMode::Compact)
         };
         let errors: Vec<(String, String)> = vec![
             refused("make_send srt", make_send(srt)),
@@ -1511,28 +1506,19 @@ mod tests {
             ),
             refused(
                 "run_hls_url parse",
-                serve(
-                    "hls://127.0.0.1:99999?auth_pass=secret-phrase-1",
-                    crate::serve::run_hls_url,
-                ),
+                serve_hls("hls://127.0.0.1:99999?auth_pass=secret-phrase-1"),
             ),
             refused(
                 "run_rtsp_url parse",
-                serve(
-                    "rtsp://user:pw-2@127.0.0.1:99999/x",
-                    crate::serve::run_rtsp_url,
-                ),
+                serve_rtsp("rtsp://user:pw-2@127.0.0.1:99999/x"),
             ),
             refused(
                 "run_rtsp_url no mount",
-                serve("rtsp://user:pw-2@127.0.0.1:1", crate::serve::run_rtsp_url),
+                serve_rtsp("rtsp://user:pw-2@127.0.0.1:1"),
             ),
             refused(
                 "run_rtsp_url host",
-                serve(
-                    "rtsp://user:pw-2@example.invalid:554/x",
-                    crate::serve::run_rtsp_url,
-                ),
+                serve_rtsp("rtsp://user:pw-2@example.invalid:554/x"),
             ),
         ];
         for (what, err) in errors {
