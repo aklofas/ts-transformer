@@ -203,16 +203,23 @@ fn push_mpeg_ts(builder: RtspClientBuilder, url: &str) -> Result<(), Box<dyn Err
         );
     }
 
-    // ── (5) End without loss ─────────────────────────────────────────────
+    // ── (5) End without a cancel ─────────────────────────────────────────
     //
     // `finish()` sends what the sender still holds, then closes the push,
-    // which waits until every queued packet is written and then sends
-    // TEARDOWN. `close()` on a `MuxSender` cancels first, by design, and
-    // can drop packets queued a moment before: use it to stop at once, not
-    // to end a stream. The shell does not report the TEARDOWN's answer;
-    // the `es` form below, which closes the push itself, does.
+    // which, while the session is up, waits until every queued packet is
+    // written and then sends TEARDOWN. `close()` on a `MuxSender` cancels
+    // first, by design, and can drop packets queued a moment before: use it
+    // to stop at once, not to end a stream.
+    //
+    // What `finish()` cannot do is report the push's end. The push's
+    // `Transport::close` returns nothing, so if the session ended first
+    // (the server closed it, the connection failed or took no byte for
+    // 5 s) the frames still queued are dropped and `finish()` returns
+    // `Ok(())` all the same; the TEARDOWN's answer is not reported either.
+    // To know, send through the push itself and read `RtspPush::close()`,
+    // as the `es` form below does.
     sender.finish()?;
-    println!("finished: every queued packet written, TEARDOWN sent");
+    println!("finished: every frame handed to the push; push closed, its end not reported");
     Ok(())
 }
 
