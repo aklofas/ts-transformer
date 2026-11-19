@@ -44,8 +44,10 @@ cat > "$TMP/bin/sleep" <<'STUB'
 #!/usr/bin/env bash
 printf 'sleep %s\n' "$*" >> "$TMP/sleep.log"
 STUB
-chmod +x "$TMP/bin/gh" "$TMP/bin/uname" "$TMP/bin/sleep"
-export TMP PATH="$TMP/bin:$PATH" GH_TOKEN=stub CI_INSTALL_WAITS="20 60"
+# A host-independent rg for the Windows case, whose archive holds only rg.exe.
+printf '#!/bin/sh\necho "ripgrep stub-on-path"\n' > "$TMP/bin/rg"
+chmod +x "$TMP/bin/rg" "$TMP/bin/gh" "$TMP/bin/uname" "$TMP/bin/sleep"
+export TMP PATH="$TMP/bin:$PATH" GH_TOKEN=stub
 
 # setup <failures>: fresh logs, fresh RUNNER_TEMP and path file.
 setup() {
@@ -54,7 +56,7 @@ setup() {
   rm -rf "$TMP/rt"; mkdir "$TMP/rt"
   : > "$TMP/path"
   export RUNNER_TEMP="$TMP/rt" GITHUB_PATH="$TMP/path" FAKE_S=Linux FAKE_M=x86_64
-  unset RIPGREP_SHA256_OVERRIDE || true
+  unset RIPGREP_SHA256_OVERRIDE GITHUB_ACTIONS || true
 }
 run() { set +e; bash "$SCRIPT" > "$TMP/out" 2>&1; RC=$?; set -e; }
 
@@ -66,7 +68,7 @@ RIPGREP_SHA256_OVERRIDE="$LINUX_SHA" run
 grep -q 'release download 15.2.0 -R BurntSushi/ripgrep' "$TMP/gh.log" || fail "case 1 gh arguments"
 grep -q 'ripgrep-15.2.0-x86_64-unknown-linux-musl.tar.gz' "$TMP/gh.log" || fail "case 1 asset name"
 [ "$(cat "$TMP/path")" = "$TMP/rt/ripgrep/ripgrep-15.2.0-x86_64-unknown-linux-musl" ] || fail "case 1 path line: $(cat "$TMP/path")"
-grep -q 'ripgrep 15.2.0' "$TMP/out" || fail "case 1 version line"
+grep -q 'ripgrep 15.2.0 (stub)' "$TMP/out" || fail "case 1 the unpacked rg was not the one run"
 [ "$(cat "$TMP/sleep.log")" = "sleep 20" ] || fail "case 1 wait"
 
 # 2: a wrong checksum fails, names the asset, adds nothing to the path file
@@ -109,5 +111,20 @@ FAKE_S=MINGW64_NT-10.0-26100 FAKE_M=x86_64 RIPGREP_SHA256_OVERRIDE="$WIN_SHA" ru
 [ "$RC" = 0 ] || fail "case 7 rc=$RC"
 grep -q 'ripgrep-15.2.0-x86_64-pc-windows-msvc.zip' "$TMP/gh.log" || fail "case 7 asset"
 [ -f "$TMP/rt/ripgrep/ripgrep-15.2.0-x86_64-pc-windows-msvc/rg.exe" ] || fail "case 7 not unpacked"
+grep -q 'stub-on-path' "$TMP/out" || fail "case 7 version line"
 
-echo "PASS: 7 cases"
+# 8: a RUNNER_TEMP with backslashes (Windows) still checks out
+setup 0
+BS="$TMP/"'D:\a\_temp'
+mkdir -p "$BS"
+RUNNER_TEMP="$BS" FAKE_S=MINGW64_NT-10.0-26100 RIPGREP_SHA256_OVERRIDE="$WIN_SHA" run
+[ "$RC" = 0 ] || fail "case 8 rc=$RC"
+[ -f "$BS/ripgrep/ripgrep-15.2.0-x86_64-pc-windows-msvc/rg.exe" ] || fail "case 8 not unpacked"
+
+# 9: the override is ignored under GitHub Actions
+setup 0
+GITHUB_ACTIONS=true RIPGREP_SHA256_OVERRIDE="$LINUX_SHA" run
+[ "$RC" = 1 ] || fail "case 9 rc=$RC (the table's sum must apply)"
+grep -q 'checksum mismatch' "$TMP/out" || fail "case 9 message"
+
+echo "PASS: 9 cases"

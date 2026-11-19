@@ -5,25 +5,29 @@
 # pkg-config from shadowing the image's.
 #
 # Environment: RUNNER_TEMP (default /tmp) holds the venv and the bin directory;
-# GITHUB_PATH, when set, receives the bin directory; CI_INSTALL_WAITS ("20 60")
-# is the pause in seconds before the second and third pip attempt.
+# GITHUB_PATH, when set, receives the bin directory. Three pip attempts, 20 s
+# and 60 s apart, each bounded to 300 s.
 set -euo pipefail
 
 tmp="${RUNNER_TEMP:-/tmp}"
 venv="$tmp/build-tools"
 bindir="$tmp/build-tools-bin"
-waits="${CI_INSTALL_WAITS:-20 60}"
+waits="20 60"
+# A wall-clock bound for one network call, when GNU timeout is available (not
+# on macOS; Windows' own timeout.exe is a different tool).
+bound=()
+if timeout --version 2>/dev/null | grep -q GNU; then bound=(timeout -k 10 300); fi
 
 for tool in ninja cmake pkg-config; do
   command -v "$tool" >/dev/null 2>&1 || { echo "install-build-tools.sh: '$tool' is not on PATH" >&2; exit 1; }
 done
 
-here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+here="$(CDPATH='' cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 python3 -m venv "$venv"
 
 attempt=1
 while :; do
-  if "$venv/bin/pip" install --require-hashes -r "$here/requirements-build-tools.txt"; then
+  if ${bound[@]+"${bound[@]}"} "$venv/bin/pip" install --require-hashes -r "$here/requirements-build-tools.txt"; then
     break
   fi
   [ "$attempt" -lt 3 ] || { echo "install-build-tools.sh: pip failed 3 times" >&2; exit 1; }
