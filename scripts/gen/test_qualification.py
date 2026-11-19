@@ -1630,6 +1630,19 @@ class ReleaseModeTests(unittest.TestCase):
             self.assertEqual(rec["verdict"], "NO-GO", bad)
             self.assertTrue(any(r.startswith("corpus: archive corpus-rel") for r in rec["verdict_reasons"]), bad)
 
+    def test_release_mode_requires_a_corpus_rows_parts_to_cover_its_files(self):
+        def reasons(counts):
+            rows = archives_toml(archive_row("soak-rel", "soak", SHA, legs=FIVE),
+                                 archive_row("corpus-rel", "corpus", SHA, counts=counts))
+            return collect(release=True, archives=rows)["verdict_reasons"]
+        self.assertFalse([r for r in reasons(COUNTS) if "explained" in r])
+        short = [r for r in reasons(dict(COUNTS, identical=257)) if "explained" in r]
+        self.assertEqual(short, ["corpus: archive corpus-rel: 257 identical + 2 explained != 260 files"])
+        # A row without the keys keeps the missing-counts reason and gains no sum reason.
+        bare = archives_toml(archive_row("soak-rel", "soak", SHA, legs=FIVE),
+                             archive_row("corpus-rel", "corpus", SHA))
+        self.assertFalse([r for r in collect(release=True, archives=bare)["verdict_reasons"] if "explained" in r])
+
     def test_a_longer_than_required_row_qualifies_as_the_release_soak(self):
         rows = archives_toml(archive_row("soak-72", "soak", SHA, duration=259200, legs=FIVE),
                              archive_row("corpus-rel", "corpus", SHA, counts=COUNTS))
@@ -2053,7 +2066,7 @@ ROW = {"id": "soak-x", "kind": "soak", "tree": SHA, "overall_pass": True, "note"
 SOAK72 = dict(ROW, id="soak-rel", expected_duration_s=259200, legs=list(FIVE))
 ARM72 = dict(SOAK72, id="soak-arm-rel", arch="aarch64")
 CORPUS = dict(ROW, id="corpus-rel", kind="corpus", expected_duration_s=None,
-              baseline_manifest_sha256=BASELINE, **dict(COUNTS, files=251))
+              baseline_manifest_sha256=BASELINE, **dict(COUNTS, files=251, identical=249))
 
 
 class WaiverTests(unittest.TestCase):
