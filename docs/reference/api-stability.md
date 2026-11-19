@@ -180,10 +180,12 @@ tier is whatever the module row that defines it says.**
 ## Breaks per release and tier
 
 Every break is announced under a `(BREAKING)` heading of the CHANGELOG; this table counts them per release and tier.
-Each count is a distinct item path of the release's `cargo-semver-checks` report
-against the previous tag, placed in the tier of the most specific row of the
-classification table above. A release whose report kept only per-crate counts
-says so in its Basis cell and has no tier counts.
+Each count is one broken item of the release's `cargo-semver-checks` report
+against the previous tag (an item printed once per importable path counts
+once, and an item broken by two lints counts twice), placed in the tier of the
+row of the module that defines it (the classification table above). A release whose
+report kept only per-crate counts says so in its Basis cell and has no tier
+counts.
 
 <!-- BEGIN GENERATED: api-churn -->
 | Release | Basis | Items | Stable | Provisional | Experimental | Internal |
