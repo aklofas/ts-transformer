@@ -37,16 +37,17 @@ Subcommands:
   verify    Verify interop test results (--klv-placement N judges KLV
             placement against the video)
   push-es   --url rtsp://HOST:PORT/PATH --file GEN.ts --out PREFIX [--klv]
-            [--connect-retry SECS] [--start-delay SECS]
+            [--connect-retry SECS] [--start-delay SECS] [--hold SECS]
             Publish the file's H.264 (and with --klv its KLV) to an RTSP
             server as elementary RTP streams, paced by PTS; writes what it
             pushed to PREFIX.h264 (Annex B) and PREFIX.klv (the units back
-            to back). Exits 0 only once the server answered TEARDOWN
+            to back); --hold SECS holds TEARDOWN after the last unit. Exits
+            0 only once the server answered TEARDOWN with the media written
   verify-es --pushed-h264 F --pushed-klv F --pulled-h264 F --pulled-klv F
             Judge a reader's copy of a push-es stream: the pulled video is
-            the pushed NAL units from the first on, short at most by the
-            last access unit; the pulled KLV is a prefix of the pushed
-            bytes holding at least 90 % of them. Exit 0 pass, 1 fail
+            every pushed NAL unit in order (copies of the pushed parameter
+            sets ahead of the first allowed), the pulled KLV bytes equal
+            the pushed ones. Exit 0 pass, 1 fail
   serve-whep --url whep://HOST:PORT --mount /PATH --seconds N [--json OUT]
             [--profile NAME] [--mount-kind mp2t|elementary] [--opus]
             [--wait-viewer SECS] | serve-whep --profile NAME --validate-profile
@@ -622,6 +623,7 @@ fn run_send(args: &[String]) -> ! {
             "--connect-retry" => {
                 connect_retry = Some(parse_push_seconds(
                     &require_value(args, i, "send: --connect-retry"),
+                    "send",
                     "--connect-retry",
                 ));
                 i += 2;
@@ -629,6 +631,7 @@ fn run_send(args: &[String]) -> ! {
             "--start-delay" => {
                 start_delay = Some(parse_push_seconds(
                     &require_value(args, i, "send: --start-delay"),
+                    "send",
                     "--start-delay",
                 ));
                 i += 2;
@@ -636,6 +639,7 @@ fn run_send(args: &[String]) -> ! {
             "--hold" => {
                 hold = Some(parse_push_seconds(
                     &require_value(args, i, "send: --hold"),
+                    "send",
                     "--hold",
                 ));
                 i += 2;
@@ -892,8 +896,8 @@ fn run_send(args: &[String]) -> ! {
 }
 
 /// `push-es --url URL --file FILE --out PREFIX [--klv]
-/// [--connect-retry SECS] [--start-delay SECS]`: see `push_es::run` and
-/// `push_es::PushEs` for the timing flags.
+/// [--connect-retry SECS] [--start-delay SECS] [--hold SECS]`: see
+/// `push_es::run` and `push_es::PushEs` for the timing flags.
 /// Exits 0 on a finished push, 2 on any error.
 fn run_push_es(args: &[String]) -> ! {
     let mut url: Option<String> = None;
@@ -902,9 +906,18 @@ fn run_push_es(args: &[String]) -> ! {
     let mut klv = false;
     let mut connect_retry = 0.0;
     let mut start_delay = 0.0;
+    let mut hold = 0.0;
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
+            "--hold" => {
+                hold = parse_push_seconds(
+                    &require_value(args, i, "push-es: --hold"),
+                    "push-es",
+                    "--hold",
+                );
+                i += 2;
+            }
             "--url" => {
                 url = Some(require_value(args, i, "push-es: --url"));
                 i += 2;
@@ -924,6 +937,7 @@ fn run_push_es(args: &[String]) -> ! {
             "--connect-retry" => {
                 connect_retry = parse_push_seconds(
                     &require_value(args, i, "push-es: --connect-retry"),
+                    "push-es",
                     "--connect-retry",
                 );
                 i += 2;
@@ -931,6 +945,7 @@ fn run_push_es(args: &[String]) -> ! {
             "--start-delay" => {
                 start_delay = parse_push_seconds(
                     &require_value(args, i, "push-es: --start-delay"),
+                    "push-es",
                     "--start-delay",
                 );
                 i += 2;
@@ -952,6 +967,7 @@ fn run_push_es(args: &[String]) -> ! {
         out,
         refused_for: std::time::Duration::from_secs_f64(connect_retry),
         start_delay: std::time::Duration::from_secs_f64(start_delay),
+        hold: std::time::Duration::from_secs_f64(hold),
     };
     match tst_interop::push_es::run(&opts) {
         Ok(s) => {
@@ -1020,13 +1036,22 @@ fn run_verify_es(args: &[String]) -> ! {
     std::process::exit(if pass { 0 } else { 1 });
 }
 
-/// A `--push` timing flag's value: a finite, non-negative number of
-/// seconds, or exit 2 naming `flag`.
-fn parse_push_seconds(raw: &str, flag: &str) -> f64 {
+/// The largest value a push timing flag takes, in seconds. Far above any
+/// use (a relay ends an idle publisher after seconds), and small enough
+/// that `Duration::from_secs_f64` cannot overflow.
+const MAX_PUSH_SECONDS: f64 = 3600.0;
+
+/// A push timing flag's value (`--connect-retry`, `--start-delay`,
+/// `--hold`): a number of seconds from 0 to [`MAX_PUSH_SECONDS`], or exit 2
+/// naming `context` (the subcommand) and `flag`.
+fn parse_push_seconds(raw: &str, context: &str, flag: &str) -> f64 {
     match raw.parse::<f64>() {
-        Ok(v) if v.is_finite() && v >= 0.0 => v,
+        Ok(v) if (0.0..=MAX_PUSH_SECONDS).contains(&v) => v,
         _ => {
-            eprintln!("send: {flag} must be a non-negative number of seconds, got '{raw}'");
+            eprintln!(
+                "{context}: {flag} must be a number of seconds from 0 to {MAX_PUSH_SECONDS}, \
+                 got '{raw}'"
+            );
             std::process::exit(2);
         }
     }

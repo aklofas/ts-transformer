@@ -719,13 +719,17 @@ Things these cells depend on, each measured with mediamtx v1.21.4, ffmpeg
   `--start-delay SECS` (3 here) and print a `… RTSP push recording` line
   when RECORD is answered; the cell starts the reader on that line, so it
   sees the stream from its first packet. mediamtx closes a publisher that
-  sends nothing for 10 s.
+  sends nothing for 10 s. The cell logs how long after the `recording` line
+  mediamtx saw the reader, and a failing cell whose reader came after the
+  delay says so.
 - **…and keep the session open a moment after the last packet.** mediamtx
   ends its readers as soon as the publisher's TEARDOWN arrives, its last
-  packets to them observed 3 ms earlier. `send --push --hold 1` waits 1 s
-  after the last packet before TEARDOWN, so the transparent reader has the
-  tail before that end (it had the whole stream in 15 of 15 runs without the
-  hold too; the hold removes the dependence on that margin).
+  packets to them observed 3 ms earlier. `send --push --hold 1` and
+  `push-es --hold 1` wait 1 s after the last packet before TEARDOWN, so the
+  reader has the tail before that end (without it the MPEG-TS reader had the
+  whole stream in 15 of 15 runs, the elementary one lost its last access unit
+  once in 10). The hold counts from the last send call, not from the last
+  byte on the wire; on loopback the queue empties in milliseconds.
 - **ffmpeg's listener serves one connection and binds a moment after it
   starts**, so it cannot be probed for readiness (the probe would be its one
   connection). `send --push --connect-retry 10` retries a refused connect
@@ -737,13 +741,15 @@ Things these cells depend on, each measured with mediamtx v1.21.4, ffmpeg
   nothing, the same limit as gap item 10. The elementary cell's reader is
   GStreamer, whose `rtph264depay` writes the SDP's parameter sets ahead of
   the first access unit; `verify-es` accepts copies of pushed parameter
-  sets there and nowhere else. The pulled video must be the pushed NAL
-  units from the first on, short at most by the last access unit, and the
-  pulled KLV a prefix of the pushed bytes holding at least 90 % of them.
+  sets there and nowhere else. The pulled video must be every pushed NAL
+  unit in order, none missing, and the pulled KLV bytes equal to the pushed
+  ones. `push-es` checks the units it read from the file against the raw TS
+  reader's PES count per PID before it pushes, so the sidecar files are not
+  their own only witness.
 - **GStreamer's readers run with `latency=0`.** With the default 2000 ms
   both tracks' pads appear at once on two threads and gst-launch's
   delayed-link bookkeeping races: a SIGSEGV in its "Delayed linking
-  failed" warning before any byte is written, in 8 of about 50 local runs.
+  failed" warning before any byte is written, in 8 of 50 local runs.
   With `latency=0`, 0 of 54.
 - **mediamtx relays an MPEG-TS track untouched**, so its MP2T cell is
   transparent: GStreamer's `rtpmp2tdepay` writes the relayed TS packets as

@@ -8,10 +8,10 @@
 //! 10 s), and writes what it pushed to two sidecar files: `<out>.h264`
 //! (the access units, Annex B, back to back) and `<out>.klv` (the KLV units
 //! back to back). `verify-es` compares those with the reader's two files:
-//! the reader's copy must be a prefix of what was pushed, short at most by
-//! what a reader loses at the end of a stream (see [`judge_video`] and
-//! [`judge_klv`]).
+//! the reader's copy must be the whole pushed stream (see [`judge_video`]
+//! and [`judge_klv`]).
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -23,6 +23,7 @@ use tst_core::mpegts::demux::{
 
 use crate::schedule::PTS_HZ;
 use crate::transport;
+use tst_test_helpers::rawts;
 
 /// One unit of a generated file, in the order it is pushed.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -43,16 +44,31 @@ impl Unit {
 
 /// Demux `path` into its H.264 access units and KLV units, sorted by PTS
 /// (the sort is stable, so units with one PTS keep the file's order).
+/// Sorting by PTS is decode order only for a stream without reordered
+/// pictures, as the generator's is (no B-frames); a source with B-frames
+/// would need its video kept in file order.
 ///
 /// The default demuxer config is enough here: it differs from a profile's
 /// own only in AV1 carriage, and this path takes H.264 only.
+///
+/// The units are counted a second time, by an independent path: the raw
+/// TS reader the harness's wire oracles use counts PES starts per PID
+/// straight off the bytes. Every PID must carry as many units as PES
+/// starts (the generator puts one access unit or one KLV unit in each
+/// PES), and no PID may have PES starts the demuxer gave nothing for, so
+/// a unit the demuxer lost or split fails here, before anything is pushed,
+/// instead of agreeing with itself in the sidecar files.
 pub fn read_units(path: &Path) -> Result<Vec<Unit>, String> {
     let bytes = std::fs::read(path).map_err(|e| format!("reading {}: {e}", path.display()))?;
     let mut demux = Demuxer::with_config(DemuxerConfig::default());
     let mut units = Vec::new();
+    // Units per PID, every PID the demuxer emitted a sample or metadata
+    // for (0 for one whose kind this path does not push).
+    let mut per_pid: BTreeMap<u16, u64> = BTreeMap::new();
     let mut take = |ev: DemuxEvent| -> Result<(), String> {
         match ev {
             DemuxEvent::Sample {
+                stream,
                 pts,
                 payload: SamplePayload::Video { codec, raw, .. },
                 ..
@@ -63,12 +79,22 @@ pub fn read_units(path: &Path) -> Result<Vec<Unit>, String> {
                         path.display()
                     ));
                 }
+                *per_pid.entry(stream.pid).or_default() += 1;
                 units.push(Unit::Video {
                     pts,
                     au: raw.to_vec(),
                 });
             }
-            DemuxEvent::Metadata { pts, payload, .. } => {
+            DemuxEvent::Sample { stream, .. } => {
+                per_pid.entry(stream.pid).or_default();
+            }
+            DemuxEvent::Metadata {
+                stream,
+                pts,
+                payload,
+                ..
+            } => {
+                *per_pid.entry(stream.pid).or_default() += 1;
                 units.push(Unit::Klv { pts, unit: payload });
             }
             _ => {}
@@ -87,8 +113,49 @@ pub fn read_units(path: &Path) -> Result<Vec<Unit>, String> {
     while let Some(ev) = demux.next_event() {
         take(ev)?;
     }
+    check_unit_counts(&per_pid, &raw_pes_starts(&bytes)?)
+        .map_err(|e| format!("{}: {e}", path.display()))?;
     units.sort_by_key(|u| u.pts().as_ticks());
     Ok(units)
+}
+
+/// PES starts per PID, read by the raw TS reader (no demuxer involved).
+fn raw_pes_starts(bytes: &[u8]) -> Result<BTreeMap<u16, u64>, String> {
+    let mut reader = rawts::Reader::new();
+    reader
+        .feed(bytes)
+        .map_err(|e| format!("raw TS reader: {e}"))?;
+    let wire = reader.finish().map_err(|e| format!("raw TS reader: {e}"))?;
+    Ok(wire.pes_starts_per_pid)
+}
+
+/// Compare the demuxer's units per PID with the raw reader's PES starts:
+/// equal on every PID that carries pushed units, and no PES PID the
+/// demuxer emitted nothing for. A PID whose units this path does not push
+/// (counted 0, e.g. audio) is not compared.
+fn check_unit_counts(
+    units_per_pid: &BTreeMap<u16, u64>,
+    pes_starts: &BTreeMap<u16, u64>,
+) -> Result<(), String> {
+    for (&pid, &units) in units_per_pid {
+        let starts = pes_starts.get(&pid).copied().unwrap_or(0);
+        if units > 0 && units != starts {
+            return Err(format!(
+                "PID {pid:#06x}: the demuxer gave {units} units, the raw TS reader counts \
+                 {starts} PES starts"
+            ));
+        }
+    }
+    if let Some((pid, starts)) = pes_starts
+        .iter()
+        .find(|(pid, n)| **n > 0 && !units_per_pid.contains_key(pid))
+    {
+        return Err(format!(
+            "PID {pid:#06x}: the raw TS reader counts {starts} PES starts, the demuxer gave \
+             nothing"
+        ));
+    }
+    Ok(())
 }
 
 /// What [`run`] pushes and where.
@@ -109,6 +176,9 @@ pub struct PushEs {
     /// Quiet time after RECORD before the first unit (see
     /// [`crate::send::PushStart::start_delay`]).
     pub start_delay: Duration,
+    /// Time the session stays open after the last unit, before TEARDOWN
+    /// (see [`crate::send::PushStart::hold`]).
+    pub hold: Duration,
 }
 
 /// What [`run`] pushed.
@@ -193,6 +263,7 @@ pub fn run(opts: &PushEs) -> Result<PushEsSummary, String> {
         std::fs::write(&path, bytes).map_err(|e| format!("writing {}: {e}", path.display()))?;
     }
 
+    thread::sleep(opts.hold);
     let stats = push.stats();
     eprintln!(
         "push-es: {} RTP packets, {} bytes, {} sender reports, {} receiver reports received",
@@ -249,10 +320,9 @@ fn is_parameter_set(nal: &[u8]) -> bool {
 
 /// Judge the pulled video against the pushed one, NAL unit by NAL unit
 /// (start code lengths are the depacketizer's choice, so they are not
-/// compared). The pulled units must be the pushed ones from the first on,
-/// with at least one picture, and what is missing at the end may hold at
-/// most one picture: a reader that ends with the stream does not write
-/// the last access unit (ffmpeg 6.1 does not).
+/// compared). The pulled units must be every pushed one, in order, none
+/// missing at the end: the push holds its session open after the last
+/// unit, so a reader that stays to the end has the whole stream.
 ///
 /// One addition is allowed: copies of the pushed parameter sets ahead of
 /// the first pushed unit. A depacketizer that writes a byte stream puts
@@ -299,30 +369,25 @@ pub fn judge_video(pushed: &[u8], pulled: &[u8]) -> Result<String, String> {
             pushed[at].first().map_or(0, |b| b & 0x1F),
         ));
     }
-    let missing_pictures = pushed[rest.len()..].iter().filter(|n| is_vcl(n)).count();
-    if missing_pictures > 1 {
+    if rest.len() < pushed.len() {
+        let missing_pictures = pushed[rest.len()..].iter().filter(|n| is_vcl(n)).count();
         return Err(format!(
-            "video: {} of {} NAL units pulled; the {missing_pictures} pictures missing at the \
-             end are more than the last access unit",
+            "video: {} of {} NAL units pulled; the last {} are missing ({missing_pictures} \
+             pictures)",
             rest.len(),
-            pushed.len()
+            pushed.len(),
+            pushed.len() - rest.len()
         ));
     }
     Ok(format!(
-        "video: {} of {} NAL units pulled in order ({inserted} parameter sets added ahead), \
-         {missing_pictures} picture missing at the end",
-        rest.len(),
+        "video: all {} NAL units pulled in order ({inserted} parameter sets added ahead)",
         pushed.len()
     ))
 }
 
-/// The share of the pushed KLV bytes the pulled copy must hold.
-pub const KLV_MIN_SHARE: f64 = 0.9;
-
-/// Judge the pulled KLV bytes against the pushed ones: a non-empty prefix
-/// of them holding at least [`KLV_MIN_SHARE`] of their length. The reader
-/// writes units in arrival order and can miss those that arrive after it
-/// stopped reading, never one in the middle. `Ok` carries a summary.
+/// Judge the pulled KLV bytes against the pushed ones: they must be equal.
+/// A short capture is told apart from a diverging one in the failure. `Ok`
+/// carries a summary.
 pub fn judge_klv(pushed: &[u8], pulled: &[u8]) -> Result<String, String> {
     if pushed.is_empty() {
         return Err("klv: nothing was pushed".to_string());
@@ -346,22 +411,15 @@ pub fn judge_klv(pushed: &[u8], pulled: &[u8]) -> Result<String, String> {
             pushed.len()
         ));
     }
-    let share = pulled.len() as f64 / pushed.len() as f64;
-    if share < KLV_MIN_SHARE {
+    if pulled.len() < pushed.len() {
         return Err(format!(
-            "klv: {} of {} bytes pulled ({:.1} %), under {:.0} %",
+            "klv: {} of {} bytes pulled; the last {} are missing",
             pulled.len(),
             pushed.len(),
-            share * 100.0,
-            KLV_MIN_SHARE * 100.0
+            pushed.len() - pulled.len()
         ));
     }
-    Ok(format!(
-        "klv: {} of {} bytes pulled ({:.1} %), a prefix",
-        pulled.len(),
-        pushed.len(),
-        share * 100.0
-    ))
+    Ok(format!("klv: all {} bytes pulled", pushed.len()))
 }
 
 #[cfg(test)]
@@ -407,7 +465,7 @@ mod tests {
     fn video_equal_passes() {
         let s = pushed();
         let ok = judge_video(&s, &s).expect("equal");
-        assert!(ok.contains("8 of 8"), "{ok}");
+        assert!(ok.contains("all 8 NAL units"), "{ok}");
     }
 
     #[test]
@@ -421,17 +479,21 @@ mod tests {
     }
 
     #[test]
-    fn video_short_by_the_last_access_unit_passes() {
-        // The last access unit (SPS, PPS, IDR) is missing whole or in part.
-        judge_video(&pushed(), &annexb(&[SPS, PPS, IDR, P1, P2])).expect("last AU missing");
-        judge_video(&pushed(), &annexb(&[SPS, PPS, IDR, P1, P2, SPS]))
-            .expect("the last key frame missing after its SPS");
+    fn video_short_by_the_last_access_unit_fails() {
+        // The last access unit (SPS, PPS, IDR) missing whole, or in part.
+        let err = judge_video(&pushed(), &annexb(&[SPS, PPS, IDR, P1, P2])).unwrap_err();
+        assert!(
+            err.contains("5 of 8 NAL units") && err.contains("(1 pictures)"),
+            "{err}"
+        );
+        let err = judge_video(&pushed(), &annexb(&[SPS, PPS, IDR, P1, P2, SPS, PPS])).unwrap_err();
+        assert!(err.contains("the last 1 are missing"), "{err}");
     }
 
     #[test]
     fn video_short_by_more_than_one_access_unit_fails() {
         let err = judge_video(&pushed(), &annexb(&[SPS, PPS, IDR, P1])).unwrap_err();
-        assert!(err.contains("the 2 pictures missing"), "{err}");
+        assert!(err.contains("(2 pictures)"), "{err}");
     }
 
     #[test]
@@ -456,7 +518,7 @@ mod tests {
         pulled.extend_from_slice(&pushed());
         let ok = judge_video(&pushed(), &pulled).expect("sprop copies ahead");
         assert!(
-            ok.contains("8 of 8") && ok.contains("2 parameter sets added"),
+            ok.contains("all 8 NAL units") && ok.contains("2 parameter sets added"),
             "{ok}"
         );
     }
@@ -484,20 +546,19 @@ mod tests {
     fn klv_equal_passes() {
         let pushed: Vec<u8> = (0..200u8).collect();
         let ok = judge_klv(&pushed, &pushed).expect("equal");
-        assert!(ok.contains("100.0 %"), "{ok}");
-    }
-
-    #[test]
-    fn klv_prefix_of_at_least_ninety_percent_passes() {
-        let pushed: Vec<u8> = (0..200u8).collect();
-        judge_klv(&pushed, &pushed[..180]).expect("90 %");
+        assert!(ok.contains("all 200 bytes"), "{ok}");
     }
 
     #[test]
     fn klv_short_fails() {
         let pushed: Vec<u8> = (0..200u8).collect();
-        let err = judge_klv(&pushed, &pushed[..179]).unwrap_err();
-        assert!(err.contains("under 90 %"), "{err}");
+        let err = judge_klv(&pushed, &pushed[..199]).unwrap_err();
+        assert!(
+            err.contains("199 of 200 bytes") && err.contains("last 1"),
+            "{err}"
+        );
+        let err = judge_klv(&pushed, &pushed[..180]).unwrap_err();
+        assert!(err.contains("last 20 are missing"), "{err}");
         let err = judge_klv(&pushed, &[]).unwrap_err();
         assert!(err.contains("nothing pulled"), "{err}");
     }
@@ -512,6 +573,27 @@ mod tests {
         let mut longer = pushed.clone();
         longer.push(0);
         assert!(judge_klv(&pushed, &longer).is_err());
+    }
+
+    #[test]
+    fn unit_counts_agree_with_the_raw_pes_starts() {
+        let starts = BTreeMap::from([(0x100, 300), (0x101, 100), (0x102, 50)]);
+        // 0x102 is a stream this path does not push (e.g. audio): counted 0.
+        let units = BTreeMap::from([(0x100, 300), (0x101, 100), (0x102, 0)]);
+        check_unit_counts(&units, &starts).expect("equal");
+        let short = BTreeMap::from([(0x100, 299), (0x101, 100), (0x102, 0)]);
+        let err = check_unit_counts(&short, &starts).unwrap_err();
+        assert!(
+            err.contains("PID 0x0100") && err.contains("299 units"),
+            "{err}"
+        );
+        // A PES PID the demuxer emitted nothing for.
+        let missing = BTreeMap::from([(0x100, 300), (0x102, 0)]);
+        let err = check_unit_counts(&missing, &starts).unwrap_err();
+        assert!(
+            err.contains("PID 0x0101") && err.contains("gave nothing"),
+            "{err}"
+        );
     }
 
     #[test]

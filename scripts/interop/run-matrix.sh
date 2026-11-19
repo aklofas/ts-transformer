@@ -1265,6 +1265,37 @@ RTSP_PUSH_START_DELAY=3
 # How long a cell waits for mediamtx's listener line, and for the push's
 # "recording" line.
 RTSP_PUSH_READY_WAIT=10
+# How long the push keeps its session open after the last packet, before
+# TEARDOWN: mediamtx ends its readers as soon as the publisher's TEARDOWN
+# arrives (its last packets to them observed only 3 ms earlier), so a
+# reader that must have the stream's tail gets it in this time.
+RTSP_PUSH_HOLD=1
+
+# reader_attach <log> <reader_pid> — wait for mediamtx to log a reader on
+# the path (or for the reader to exit) and print how long after the push's
+# "recording" line that was: seconds, or "never". RTSP_PUSH_RECORDED_AT
+# holds the time that line was seen. Logged in the cell, and named in a
+# failure, so a reader that attached after the start delay (and so missed
+# the first packets) is told apart from a push that lost them.
+RTSP_PUSH_RECORDED_AT=""
+reader_attach() {
+  local log=$1 pid=$2
+  if wait_for_line "$log" "is reading from path" \
+    $((RTSP_PUSH_START_DELAY + RTSP_PUSH_READY_WAIT)) "$pid"; then
+    awk -v a="$RTSP_PUSH_RECORDED_AT" -v b="$(date +%s.%N)" 'BEGIN { printf "%.2f", b - a }'
+  else
+    echo never
+  fi
+}
+
+# late_reader_reason <gap> — a failure line when the reader attached after
+# the start delay (or never), nothing otherwise.
+late_reader_reason() {
+  local gap=$1
+  if [[ "$gap" == never ]] || awk -v g="$gap" -v d="$RTSP_PUSH_START_DELAY" 'BEGIN { exit !(g >= d) }'; then
+    echo "the reader attached ${gap} s after RECORD, not inside the ${RTSP_PUSH_START_DELAY} s start delay: it missed the first packets"
+  fi
+}
 
 # wait_for_line <file> <pattern> <seconds> [pid] — 0 once <file> holds a
 # line matching the extended regex <pattern>; 1 after <seconds>, or as
@@ -1367,15 +1398,12 @@ rtsp_push_cells() {
 # pulled file's SHA-256 must equal the sent stream's, and `verify --file`
 # must pass on it. The reader attaches during the push's start delay, so
 # it has the first packet; the push holds its session RTSP_PUSH_HOLD after
-# the last packet before TEARDOWN, because mediamtx ends its readers as
-# soon as the publisher's TEARDOWN arrives (its last packets to them
-# observed only 3 ms earlier), so the reader has the tail before that. The
+# the last packet before TEARDOWN, so the reader has the tail. The
 # reader runs with latency=0 and -f, as in the elementary cell below; with
 # one track the pad race described there cannot happen, but a loopback
 # reader needs no jitter delay either way. ffmpeg is not the reader here:
 # its re-mux drops this profile's KLV (gap item 1), which would leave the
 # cell judging ffmpeg instead of the push.
-RTSP_PUSH_HOLD=1
 rtsp_push_mediamtx_mp2t() {
   local id="rtsp-push/us-to-mediamtx-mp2t" peer="mediamtx+gst-launch-1.0" tier=transparent
   cell_selected "$id" || return 0
@@ -1462,15 +1490,18 @@ rtsp_push_mediamtx_mp2t() {
 
 # rtsp-push/us-to-mediamtx-es-klv: `push-es --klv` publishes a klv-sync
 # file's H.264 (RFC 6184) and KLV (RFC 6597, one RTP packet per unit) as
-# two elementary tracks, paced by PTS, and keeps what it pushed as
-# sidecar files. GStreamer pulls both tracks back from mediamtx
+# two elementary tracks, paced by PTS, holds its session RTSP_PUSH_HOLD
+# after the last unit (as the MPEG-TS cell above), and keeps what it pushed
+# as sidecar files. GStreamer pulls both tracks back from mediamtx
 # (`rtph264depay`, `rtpklvdepay`) into two files; ffmpeg 6.1 cannot be the
 # reader here (it finds no picture size in the generator's minimal SPS:
 # "dimensions not set"). `verify-es` judges them against the sidecars:
-# the pulled video is the pushed NAL units from the first on, short at
-# most by the last access unit (copies of the pushed parameter sets ahead
-# of the first unit allowed: rtph264depay writes the SDP's), and the
-# pulled KLV is a prefix of the pushed bytes holding at least 90 % of them.
+# the pulled video is every pushed NAL unit in order, none missing
+# (copies of the pushed parameter sets ahead of the first unit allowed:
+# rtph264depay writes the SDP's), and the pulled KLV bytes equal the
+# pushed ones. push-es first checks the units it read from the file
+# against the raw TS reader's PES count, so the sidecars are not their
+# own only witness.
 # The file is klv-sync rather than baseline because a KLV unit over RTP
 # needs a PTS, which baseline's asynchronous KLV does not carry (as for
 # rtsp-publish/gst-push-es-klv); the cell is still recorded on the
@@ -1509,11 +1540,12 @@ rtsp_push_mediamtx_es_klv() {
   echo "--- us: push-es --klv ($url, start delay ${RTSP_PUSH_START_DELAY}s) ---" >>"$log"
   timeout --kill-after=3 "${budget}s" \
     "$BIN" push-es --url "$url" --file "$src" --out "$pushed" --klv \
-    --start-delay "$RTSP_PUSH_START_DELAY" \
+    --start-delay "$RTSP_PUSH_START_DELAY" --hold "$RTSP_PUSH_HOLD" \
     >>"$log" 2>&1 &
   local push_pid=$!
-  local gst_rc=0
+  local gst_rc=0 attach_gap=never
   if wait_for_line "$log" '^push-es: RTSP push recording' "$RTSP_PUSH_READY_WAIT" "$push_pid"; then
+    RTSP_PUSH_RECORDED_AT=$(date +%s.%N)
     echo "--- peer: gst-launch-1.0 pulls $url -> $pulled.{h264,klv} ---" >>"$log"
     # A queue per branch, and caps on encoding-name: without them the
     # second track's pad finds no branch to link and rtspsrc stops with
@@ -1521,7 +1553,8 @@ rtsp_push_mediamtx_es_klv() {
     # jitter buffers release their first packet on the same timer tick,
     # the two pads appear at once on two threads, and gst-launch's
     # delayed-link bookkeeping races (GStreamer 1.24.2: SIGSEGV in its
-    # "Delayed linking failed" warning, about 1 run in 10); a loopback
+    # "Delayed linking failed" warning, 8 of 50 runs; 0 of 54 with
+    # latency=0); a loopback
     # reader needs no jitter buffer delay. -f: no fault handler, so a
     # crash ends the process instead of spinning until the timeout. -e:
     # the server's close after our TEARDOWN ends the run with EOS, so
@@ -1532,7 +1565,11 @@ rtsp_push_mediamtx_es_klv() {
       video/x-h264,stream-format=byte-stream ! filesink "location=$pulled.h264" \
       s. ! queue ! application/x-rtp,encoding-name=SMPTE336M ! rtpklvdepay ! \
       filesink "location=$pulled.klv" \
-      >>"$log" 2>&1 || gst_rc=$?
+      >>"$log" 2>&1 &
+    local reader_pid=$!
+    attach_gap=$(reader_attach "$log" "$reader_pid")
+    echo "--- reader attached ${attach_gap} s after the push's recording line (start delay ${RTSP_PUSH_START_DELAY} s) ---" >>"$log"
+    wait "$reader_pid" || gst_rc=$?
   else
     echo "--- the push never reported recording; no reader started ---" >>"$log"
   fi
@@ -1545,9 +1582,11 @@ rtsp_push_mediamtx_es_klv() {
     emit_fail "$id" "$peer" send "$tier" "$log" - "our push-es failed (exit $push_rc) — see log"
     return 0
   fi
+  local late
+  late=$(late_reader_reason "$attach_gap")
   if [[ ! -s "$pulled.h264" || ! -s "$pulled.klv" ]]; then
     emit_fail "$id" "$peer" send "$tier" "$log" - \
-      "gst-launch-1.0 wrote no (or empty) video and/or KLV file (exit $gst_rc)"
+      "gst-launch-1.0 wrote no (or empty) video and/or KLV file (exit $gst_rc)" ${late:+"$late"}
     return 0
   fi
   local vrc=0
@@ -1562,7 +1601,7 @@ rtsp_push_mediamtx_es_klv() {
     local why
     why=$(grep '^verify-es: FAIL' "$log" | sed 's/^verify-es: FAIL //' | tr '\n' ';') || why=""
     emit_fail "$id" "$peer" send "$tier" "$log" - \
-      "verify-es FAILed (exit $vrc): ${why:-see log}"
+      "verify-es FAILed (exit $vrc): ${why:-see log}" ${late:+"$late"}
   fi
 }
 
