@@ -238,7 +238,7 @@ class RtspPushTest {
             assertTrue(e.getMessage().contains("501"), e.getMessage());
             assertTrue(peer.awaitMethod("TEARDOWN"));
             // The media went out before the TEARDOWN.
-            assertTrue(peer.framesRead.get() >= 1, "no frame before the TEARDOWN");
+            assertEquals(1L, peer.rtpFramesRead.get(), "the RTP frame before the TEARDOWN");
             // teardown() closed the session.
             assertThrows(IllegalStateException.class, () -> push.sendTs(NULL_BUNDLE));
             push.close();
@@ -364,7 +364,7 @@ class RtspPushTest {
             holder.join(scaledMs(5_000));
             assertEquals(null, holderError.get());
             assertTrue(peer.awaitMethod("TEARDOWN"));
-            assertTrue(peer.framesRead.get() >= 1, "the queued media was not written");
+            assertEquals(1L, peer.rtpFramesRead.get(), "the queued media was not written");
         }
     }
 
@@ -433,12 +433,15 @@ class RtspPushTest {
             MuxException e = assertThrows(MuxException.class, () -> push.intoMuxSender(refused));
             assertEquals(MuxException.Kind.CONFIG_INVALID, e.kind());
             push.sendTs(NULL_BUNDLE);
+            assertTrue(waitFor(() -> peer.rtpFramesRead.get() == 1), "RTP frames read: " + peer.rtpFramesRead.get());
             try (Sender tx = push.intoSender()) {
                 assertThrows(IllegalStateException.class, () -> push.sendTs(NULL_BUNDLE));
                 tx.sendBytes(NULL_BUNDLE);
+                // Read before the close: a sender's close() cancels the session first
+                // and drops media still queued.
+                assertTrue(waitFor(() -> peer.rtpFramesRead.get() == 2), "RTP frames read: " + peer.rtpFramesRead.get());
             }
             assertTrue(peer.awaitMethod("TEARDOWN"));
-            assertTrue(waitFor(() -> peer.framesRead.get() >= 2), "frames read: " + peer.framesRead.get());
         }
     }
 
@@ -668,6 +671,8 @@ class RtspPushTest {
         final List<String> methods = new CopyOnWriteArrayList<>();
         /** Interleaved frames read. */
         final AtomicLong framesRead = new AtomicLong();
+        /** Interleaved frames read on an even (RTP) channel. */
+        final AtomicLong rtpFramesRead = new AtomicLong();
 
         ScriptedRecordServer(int teardownStatus, boolean stopReadingAfterRecord) throws IOException {
             this(teardownStatus, stopReadingAfterRecord, true);
@@ -725,9 +730,10 @@ class RtspPushTest {
                     int first = in.read();
                     if (first == -1) return;
                     if (first == '$') {
-                        in.readUnsignedByte();
+                        int channel = in.readUnsignedByte();
                         in.skipNBytes(in.readUnsignedShort());
                         framesRead.incrementAndGet();
+                        if (channel % 2 == 0) rtpFramesRead.incrementAndGet();
                         continue;
                     }
                     String req = (char) first + readHead(in);
