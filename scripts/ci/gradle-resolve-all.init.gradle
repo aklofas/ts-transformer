@@ -1,0 +1,17 @@
+// Adds one task, resolveAll, to every project: it resolves each resolvable
+// configuration, which downloads every dependency the build's tasks use.
+// scripts/ci/gradle-resolve.sh runs it in a retried step before the build.
+// It changes nothing else: no repository, dependency or task of the build.
+allprojects { p ->
+    p.tasks.register('resolveAll') { t ->
+        t.description = 'Resolves every resolvable configuration (fetches all dependencies).'
+        def configs = p.configurations
+        t.doLast {
+            configs.each { c ->
+                if (c.canBeResolved) {
+                    logger.lifecycle("resolveAll: ${c.name} (${c.resolve().size()} files)")
+                }
+            }
+        }
+    }
+}

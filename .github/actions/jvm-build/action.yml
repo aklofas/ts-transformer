@@ -56,6 +56,13 @@ runs:
           command -v "$tool" >/dev/null 2>&1 || { echo "FAIL: '$tool' not on PATH after prereq install"; exit 1; }
         done
 
+    # Maven Central has answered a test dependency's POM with 429 and with
+    # "not found": fetch everything in a retried call before the cargo build,
+    # so a refused fetch is retried instead of failing the build minutes in.
+    - name: Resolve Gradle dependencies (retried)
+      shell: bash
+      run: bash scripts/ci/gradle-resolve.sh -PjniTestHooks=true
+
     - name: Build + test JVM binding
       working-directory: bindings/jvm
       shell: bash

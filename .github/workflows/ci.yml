@@ -357,6 +357,11 @@ jobs:
         if: matrix.name == 'linux-x86_64'
         run: bash scripts/ci/tests/manylinux-retry-selftest.sh
 
+      - name: gradle-resolve self-test (the JVM jobs' retried dependency fetch)
+        # Runs scripts/ci/gradle-resolve.sh against a stub Gradle wrapper.
+        if: matrix.name == 'linux-x86_64'
+        run: bash scripts/ci/tests/gradle-resolve-selftest.sh
+
       - name: fuzz-shard self-test (one shard of the fuzz leg against a stub cargo)
         # Runs scripts/ci/fuzz-shard.sh with stub `cargo` and `rustc`, then
         # merges its results. Gated to linux-x86_64: the fuzz leg runs there only.

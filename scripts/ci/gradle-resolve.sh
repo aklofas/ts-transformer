@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# Fetches everything the JVM build downloads (the Gradle distribution, the
+# plugins, and every resolvable configuration through the resolveAll task of
+# gradle-resolve-all.init.gradle) in a retried call before the build, so a
+# fetch Maven Central fails once (a 429, or "not found" for a file it has) is
+# retried instead of failing the build minutes later. The later Gradle calls
+# of the job find it all in the Gradle user home.
+#
+# Usage: gradle-resolve.sh [gradle arguments...] (added to the resolveAll call)
+# Runs from bindings/jvm. Environment: GRADLEW (default ./gradlew, the wrapper
+# to call). Three attempts, 20 s and 60 s apart, each bounded to 180 s when GNU
+# timeout is available.
+set -euo pipefail
+
+here="$(CDPATH='' cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$here/../../bindings/jvm"
+waits="20 60"
+# A wall-clock bound for one call, when GNU timeout is available (not on
+# macOS; Windows' own timeout.exe is a different tool).
+bound=()
+if timeout --version 2>/dev/null | grep -q GNU; then bound=(timeout -k 10 180); fi
+
+attempt=1
+while :; do
+  # The init script path is relative: Gradle on Windows gets no MSYS path.
+  if ${bound[@]+"${bound[@]}"} "${GRADLEW:-./gradlew}" --no-daemon --init-script ../../scripts/ci/gradle-resolve-all.init.gradle resolveAll "$@"; then
+    exit 0
+  else
+    rc=$?
+  fi
+  echo "::notice::Gradle dependency resolution attempt $attempt of 3 failed with status $rc"
+  [ "$attempt" -lt 3 ] || { echo "gradle-resolve.sh: dependency resolution failed 3 times" >&2; exit 1; }
+  w="$(echo "$waits" | awk -v i="$attempt" '{print $i}')"
+  [ -z "$w" ] || sleep "$w"
+  attempt=$((attempt + 1))
+done
