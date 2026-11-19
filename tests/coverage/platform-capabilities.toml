@@ -156,6 +156,19 @@ through its join handle with `pthread_kill`, runs on macOS.
 """
 
 [[platform_skip]]
+file = "crates/tst-rtp/tests/rtsp_push/tls.rs"
+platform = "macos-arm64,windows-msvc"
+capability = "per_thread_cpu_time"
+class = "portability"
+note = """
+Only the `#[ignore]`d measurement `tls_push_throughput` and its helpers are
+`#[cfg(target_os = "linux")]`: it finds the client's I/O thread by its name
+under `/proc/self/task` and reads that thread's CPU time from its `stat`
+file, which macOS and Windows do not have. The `rtsps://` push tests in the
+file run on every platform.
+"""
+
+[[platform_skip]]
 file = "crates/tst-rtp/tests/rtsp_client/request_failures.rs"
 platform = "macos-arm64,windows-msvc"
 capability = "tcp_reset_then_request"

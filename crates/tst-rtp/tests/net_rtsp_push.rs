@@ -28,3 +28,6 @@ mod mp2t;
 mod refusals;
 #[path = "rtsp_push/shells.rs"]
 mod shells;
+#[cfg(feature = "rtsp-server-tls")]
+#[path = "rtsp_push/tls.rs"]
+mod tls;
