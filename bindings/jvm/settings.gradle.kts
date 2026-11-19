@@ -10,6 +10,17 @@ pluginManagement {
         // so either repository alone can satisfy the build's plugins.
         gradlePluginPortal()
         mavenCentral()
+        // Google's mirror of Maven Central, last: Maven Central has answered
+        // "not found" for a file it holds, and on a "not found" Gradle tries
+        // the next repository. (A 429, a 5xx or a reset instead disables
+        // Maven Central for the rest of the build and fails it; the CI
+        // resolve step, scripts/ci/gradle-resolve.sh, retries those.) Every
+        // file is pinned by SHA-256 in gradle/verification-metadata.xml, so
+        // the mirror is trusted for availability only.
+        maven {
+            name = "GoogleMavenCentralMirror"
+            url = uri("https://maven-central.storage-download.googleapis.com/maven2/")
+        }
     }
 }
 
