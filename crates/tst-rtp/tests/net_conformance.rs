@@ -1,7 +1,8 @@
-//! The tst-core transport conformance kit over tst-rtp's three
-//! receive/send shapes: plain `rtp://` sender, plain `rtp://` receiver, and
-//! the receiver an `RtspClient` session hands out (`into_recv_transport`)
-//! against the in-crate `RtspServer`.
+//! The tst-core transport conformance kit over tst-rtp's four
+//! receive/send shapes: plain `rtp://` sender, plain `rtp://` receiver, the
+//! receiver an `RtspClient` session hands out (`into_recv_transport`)
+//! against the in-crate `RtspServer`, and an MPEG-TS `RtspPush` into that
+//! server's publish mount.
 //!
 //! Port discovery is `free_rtp_port_base` from `fixtures/ports.rs`, the
 //! discover-then-release helper the `rtp` binary also uses: an OS-assigned pair
@@ -173,4 +174,45 @@ fn rtsp_client_recv_contract() {
     kit::assert_recv_contract(factory, feed, BrokenSource::NotProducible);
     kit::recv_max_payload_ge_ceiling(&factory(), RTP_RECV_CEILING);
     server.stop().ok();
+}
+
+/// An MPEG-TS push into a publish mount of the in-crate server, one server
+/// per push: the broken row ends the server under the row's push (a hard
+/// cancel closes its connection). A payload `send_ts` refuses is `Broken`
+/// with the push still alive, so the row is driven by the wire, not by a
+/// refused payload.
+#[cfg(feature = "rtsp-server")]
+#[test]
+fn rtsp_push_send_contract() {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+    use tst_rtp::{PushDescription, RtspClientBuilder, RtspPush, RtspServer};
+
+    let servers: Rc<RefCell<Vec<RtspServer>>> = Rc::default();
+    let factory = {
+        let servers = servers.clone();
+        move || {
+            let server = RtspServer::bind("rtsp://127.0.0.1:0").unwrap();
+            server.add_publish_mount("/pub").unwrap();
+            server.start().unwrap();
+            let port = server.local_addr().unwrap().port();
+            let url = format!("rtsp://127.0.0.1:{port}/pub");
+            let builder = RtspClientBuilder::new(&url).unwrap();
+            let push = RtspPush::connect(builder, &PushDescription::Mp2t).unwrap();
+            servers.borrow_mut().push(server);
+            push
+        }
+    };
+    let induce: Box<dyn Fn(&mut RtspPush)> = {
+        let servers = servers.clone();
+        Box::new(move |_| {
+            let servers = servers.borrow();
+            let under_this_push = servers.last().expect("a server per push");
+            under_this_push.cancel_handle().cancel();
+        })
+    };
+    kit::assert_send_contract(factory, BrokenSource::Induce(induce));
+    for server in servers.borrow().iter() {
+        let _ = server.stop();
+    }
 }
