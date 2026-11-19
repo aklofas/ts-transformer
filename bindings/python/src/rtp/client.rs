@@ -44,10 +44,14 @@ use tst_rtp::rtsp::client::session::RtspSession as RustRtspSession;
 use tst_rtp::rtsp::client::{
     RtspCancelHandle as RustRtspCancelHandle, RtspClient as RustRtspClient,
 };
-use tst_rtp::{AuthSchemes, H264DepayConfig, RtspClientBuilder, RtspTransportPref, RtspVersion};
+use tst_rtp::{
+    AuthSchemes, H264DepayConfig, RtspClientBuilder, RtspPush as RustRtspPush, RtspTransportPref,
+    RtspVersion,
+};
 
 use crate::raise::{RTSP, raise};
 use crate::rtp::h264_receiver::PyH264Receiver;
+use crate::rtp::push::{PyPushDescription, PyRtspPushSession};
 use crate::shells::demux_receiver::PyDemuxReceiver;
 use tst_pipeline::binding::{BindingError, BindingErrorKind};
 
@@ -449,7 +453,7 @@ impl PyRtspStats {
 /// names to keep the contracts honest.
 #[pyclass(name = "RtspCancelHandle", module = "tstrans.rtp", frozen)]
 pub struct PyRtspCancelHandle {
-    inner: RustRtspCancelHandle,
+    pub(crate) inner: RustRtspCancelHandle,
 }
 
 #[pymethods]
@@ -619,6 +623,31 @@ impl PyRtspClient {
             result.map_err(|e| raise(py, &RTSP, BindingError::from(e)))?;
 
         Ok(PyRtspSession::new(client, session, Some(depay_config)))
+    }
+
+    /// Connect to `config.url` and publish to it: ANNOUNCE `description`,
+    /// SETUP every track (`mode=record`, interleaved on the control
+    /// connection) and RECORD. Returns the recording `RtspPushSession`.
+    ///
+    /// Raises `RtspError` on any failure of the four steps; the connection
+    /// is closed then (after a TEARDOWN once a session is open). A
+    /// `transport_pref` of `UDP` raises `UNSUPPORTED_TRANSPORT` before any
+    /// SETUP is written, and `rtsp_version` 2.0 `PROTOCOL` before the
+    /// ANNOUNCE is (RTSP 2.0 has no ANNOUNCE). GIL released for the network
+    /// exchange.
+    #[staticmethod]
+    fn push(
+        py: Python<'_>,
+        config: &PyRtspClientConfig,
+        description: PyRef<'_, PyPushDescription>,
+    ) -> PyResult<PyRtspPushSession> {
+        let builder = builder_from_config(py, config)?;
+        let desc = description.inner.clone();
+        let mp2t = description.is_mp2t();
+        let push =
+            crate::util::allow_threads_parking(py, move || RustRtspPush::connect(builder, &desc))
+                .map_err(|e| raise(py, &RTSP, BindingError::from(e)))?;
+        Ok(PyRtspPushSession::new(push, mp2t))
     }
 }
 

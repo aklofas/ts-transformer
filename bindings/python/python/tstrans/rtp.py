@@ -116,6 +116,11 @@ DigestAlgorithm = _rtp.DigestAlgorithm
 TransportPref = _rtp.TransportPref
 RtspVersion = _rtp.RtspVersion
 
+# Publishing to an RTSP server (RtspClient.push).
+PushDescription = _rtp.PushDescription
+RtspPushSession = _rtp.RtspPushSession
+RtspPushStats = _rtp.RtspPushStats
+
 # RtspServer + MountHandle + server-side stats.
 RtspServer = _rtp.RtspServer
 MountHandle = _rtp.MountHandle
@@ -310,6 +315,9 @@ __all__: list[str] = [
     "DigestAlgorithm",
     "TransportPref",
     "RtspVersion",
+    "PushDescription",
+    "RtspPushSession",
+    "RtspPushStats",
     # RTSP server
     "RtspServer",
     "MountHandle",

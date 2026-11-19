@@ -33,6 +33,8 @@ from tstrans.shells import (
     CancelHandle,
     DemuxReceiver,
     EndReason,
+    MuxSender,
+    Sender,
     SocketStats,
 )
 from tstrans.mpegts import (
@@ -58,6 +60,9 @@ __all__: list[str] = [
     "RecvTransport",
     "RtspClient",
     "RtspSession",
+    "PushDescription",
+    "RtspPushSession",
+    "RtspPushStats",
     "RtspClientConfig",
     "RtspStats",
     "RtspCancelHandle",
@@ -344,6 +349,19 @@ class RtspClient:
     def connect(config: RtspClientConfig) -> RtspSession: ...
     @staticmethod
     def connect_h264(config: RtspClientConfig) -> RtspSession: ...
+    @staticmethod
+    def push(config: RtspClientConfig, description: PushDescription) -> RtspPushSession:
+        """Connect to `config.url` and publish to it: ANNOUNCE
+        `description`, SETUP every track (`mode=record`, interleaved on the
+        control connection) and RECORD. Returns the recording session.
+
+        Raises `RtspError` when any of the four steps fails; the connection
+        is closed then. `transport_pref=UDP` raises `UNSUPPORTED_TRANSPORT`
+        before any SETUP is written (publishing over UDP is not
+        implemented) and `rtsp_version=V2_0` raises `PROTOCOL` before the
+        ANNOUNCE is written (RTSP 2.0 has no ANNOUNCE). `keepalive=True` (the default) sends keepalive
+        pings, which a server that times out a silent publisher needs."""
+        ...
 
 
 @final
@@ -448,6 +466,203 @@ class RtspSession:
         exc_value: Optional[BaseException],
         traceback: Optional[Any],
     ) -> bool: ...
+
+
+# ---------------------------------------------------------------------------
+# Publishing to an RTSP server (RtspClient.push)
+# ---------------------------------------------------------------------------
+
+
+@final
+class PushDescription:
+    """What a push announces: one MPEG-TS track, or one video track (H.264
+    or H.265) and, with `klv=True`, one KLV track (RFC 6597). Frozen; built
+    by the static constructors. Parameter sets are NAL units with their
+    header and without a start code."""
+
+    @staticmethod
+    def mp2t() -> PushDescription:
+        """One MPEG-TS track (payload type 33): send with `send_ts`, or
+        convert the session with `into_mux_sender` / `into_sender`."""
+        ...
+    @staticmethod
+    def h264(parameter_sets: list[bytes], *, klv: bool = False) -> PushDescription:
+        """An H.264 track: at least one SPS and one PPS (a NAL unit of
+        another type is ignored). A list lacking one is refused by
+        `RtspClient.push` with `RtspError(PROTOCOL)`."""
+        ...
+    @staticmethod
+    def h264_from_key_frame(annexb: bytes, *, klv: bool = False) -> PushDescription:
+        """An H.264 track described by every SPS and PPS of one access unit
+        in Annex B form (a key frame as an encoder emits it). Raises
+        `ValueError` when it carries no SPS or no PPS."""
+        ...
+    @staticmethod
+    def h265(vps: bytes, sps: bytes, pps: bytes, *, klv: bool = False) -> PushDescription:
+        """An H.265 track described by its VPS, SPS and PPS."""
+        ...
+    @staticmethod
+    def h265_from_key_frame(annexb: bytes, *, klv: bool = False) -> PushDescription:
+        """An H.265 track described by the first VPS, SPS and PPS of one
+        access unit in Annex B form. Raises `ValueError` when it lacks one
+        of the three."""
+        ...
+
+
+@final
+class RtspPushSession:
+    """A recording RTSP session: what `RtspClient.push` returns. Media goes
+    to the server interleaved on the control connection.
+
+    A data call (`send_ts`, `send_video`, `send_klv`) returns once its
+    packets are queued, not once they are on the wire. The queue is
+    bounded: against a server that reads slowly a data call waits, GIL
+    released, until room frees, the cancel handle fires (within about
+    100 ms), the session ends, or the server has taken no byte for 5 s
+    (the connection then ends). Data calls raise `RtpError`: `CLOSED` after
+    a cancel or `close()`, `BROKEN` once the server closed or the
+    connection failed, `TOO_LARGE` for a TS payload over 1316 bytes; a TS
+    payload that is not whole TS packets is `BROKEN` and leaves the session
+    open. A call naming a track the push did not announce (`send_klv`
+    without `klv=True`, `send_video` / `send_klv` on an MPEG-TS push,
+    `send_ts` on an elementary one) or an empty unit raises `ValueError`
+    and sends nothing. Video and KLV share one timeline: `pts` is the
+    presentation time, and successive access units are in decoding order.
+
+    Control calls (`pause`, `resume`, `teardown`) raise `RtspError`.
+    `pause()` and `close()` first wait for the queued media to be written,
+    with the same ends as a data call.
+
+    The calls that use the push run one at a time: a second thread's call
+    waits, GIL released, for the one in progress. `cancel_handle()` answers
+    at once, also while a send is parked on another thread, and `close()`
+    from another thread fires the cancel first so a parked send ends
+    `RtpError(CLOSED)`.
+
+    `close()` (and the `with` exit) ends the session: a last sender report
+    per track, the queued media written, TEARDOWN with one 500 ms bound
+    over writing it and its reply, then up to 2 s for the client's thread.
+    `teardown()` does the same and raises what the TEARDOWN returned;
+    unlike `RtspSession.teardown()`, the session is closed after it. After
+    either, every call raises `CLOSED` (`RtpError` for the data calls,
+    `RtspError` for the rest); `session_id` stays readable. A session
+    collected without `close()` sets its cancel, discards what is queued
+    and writes TEARDOWN without waiting for the reply. Interpreter exit
+    cancels a call parked in a session left open.
+
+    `into_mux_sender` / `into_sender` move an MPEG-TS push into a sender
+    shell (the shell's `close()` ends the push); the session is closed
+    afterwards.
+    """
+
+    def send_ts(self, ts: bytes) -> None:
+        """Send whole TS packets as one RTP packet on an MPEG-TS push: a
+        multiple of 188 bytes, at most 1316, each starting with 0x47."""
+        ...
+    def send_video(self, annexb: bytes, *, pts: Pts90khz) -> None:
+        """Send one video access unit in Annex B form. A cancel or the
+        session's end during the call can leave it sent in part."""
+        ...
+    def send_klv(self, klv: bytes, *, pts: Pts90khz) -> None:
+        """Send one KLV unit (a whole local or universal set, without a
+        metadata access unit header) on a push announced with `klv=True`."""
+        ...
+    def pause(self) -> None:
+        """Write the queued media, then send PAUSE. Raises
+        `RtspError(PROTOCOL)` on a push already paused. Data calls still
+        send while paused; some servers end the session on such a packet."""
+        ...
+    def resume(self) -> None:
+        """Send RECORD again on a paused push. Raises `RtspError(PROTOCOL)`
+        on a push that is not paused."""
+        ...
+    def teardown(self) -> None:
+        """End the session as `close()` does and raise what the TEARDOWN
+        returned: `RtspError(PROTOCOL)` (or `NOT_FOUND` for a 404) for a
+        refusal, `RtspError(CLOSED)` on a cancelled push or a session
+        already closed. The session is closed after it, whatever the
+        outcome."""
+        ...
+    def close(self) -> None:
+        """End the session; returns `None` whatever the server answered.
+        Idempotent: a later call, or one made while another `close()` runs,
+        returns at once."""
+        ...
+    def cancel_handle(self) -> RtspCancelHandle:
+        """A handle on the push's cancel: `cancel()` ends a waiting data
+        call, `pause` or `close` from any thread, and the push sends nothing
+        more. Raises `RtspError(CLOSED)` once the session is closed."""
+        ...
+    def stats(self) -> RtspPushStats:
+        """The push's counters now."""
+        ...
+    @property
+    def session_id(self) -> str:
+        """The session id the server named at SETUP."""
+        ...
+    def is_session_alive(self) -> bool:
+        """False once the session is known dead: the control connection
+        ended, or a keepalive ping was answered `454`."""
+        ...
+    def into_mux_sender(self, program_config: MuxerProgramConfig) -> MuxSender:
+        """Move an MPEG-TS push into a `MuxSender`. Raises `ValueError` on
+        an elementary push and `MuxError(CONFIG_INVALID)` for a refused
+        config, both leaving the session as it was."""
+        ...
+    def into_sender(self) -> Sender:
+        """Move an MPEG-TS push into a `Sender`. Raises `ValueError` on an
+        elementary push, leaving the session as it was."""
+        ...
+    def __enter__(self) -> RtspPushSession: ...
+    def __exit__(
+        self,
+        exc_type: Optional[Type[BaseException]],
+        exc_value: Optional[BaseException],
+        traceback: Optional[Any],
+    ) -> bool: ...
+
+
+@final
+class RtspPushStats:
+    """Counters of a push, over all its tracks. Frozen snapshot."""
+
+    @property
+    def packets_sent(self) -> int:
+        """RTP packets handed to the client's thread."""
+        ...
+    @property
+    def bytes_sent(self) -> int:
+        """Bytes of those packets, RTP header included."""
+        ...
+    @property
+    def sender_reports_sent(self) -> int:
+        """RTCP sender reports handed to the client's thread."""
+        ...
+    @property
+    def receiver_reports(self) -> int:
+        """RTCP receiver reports the server sent; a server that sends none
+        leaves this and the two loss figures at 0."""
+        ...
+    @property
+    def fraction_lost_q8(self) -> int:
+        """The fraction lost since the report before, in 1/256, from the
+        last receiver report."""
+        ...
+    @property
+    def cumulative_lost(self) -> int:
+        """The packets lost since the start, from the same report."""
+        ...
+    @property
+    def frames_dropped_inbound(self) -> int:
+        """Frames the server sent on a channel this side sends media on,
+        read and dropped."""
+        ...
+    @property
+    def frames_dropped_at_close(self) -> int:
+        """Frames still queued, never written, when the session ended or
+        its TEARDOWN was sent."""
+        ...
+    def __repr__(self) -> str: ...
 
 
 # ---------------------------------------------------------------------------

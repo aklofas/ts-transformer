@@ -7,6 +7,8 @@
 //! - `mount_rules`    — `MountRules` + `MountRule` / `MountPolicy` / `MountCredential`
 //! - `publish`         — `PublishMount` + `PublishMountStats` +
 //!   `PublisherInfo` (the RTSP publisher role)
+//! - `push`            — `PushDescription` + `RtspPushSession` +
+//!   `RtspPushStats` (publishing to an RTSP server; `RtspClient.push`)
 //! - `h264_receiver`   — RFC 6184 H.264 receiver + depacketizer config/stats
 //!
 //! All submodules are fully implemented.
@@ -17,6 +19,7 @@ pub(crate) mod client;
 pub(crate) mod h264_receiver;
 pub(crate) mod mount_rules;
 pub(crate) mod publish;
+pub(crate) mod push;
 pub(crate) mod server;
 pub(crate) mod transport;
 
@@ -27,6 +30,7 @@ pub(crate) fn register(parent: &Bound<'_, PyModule>) -> PyResult<()> {
     server::register(&m)?;
     mount_rules::register(&m)?;
     publish::register(&m)?;
+    push::register(&m)?;
     h264_receiver::register(&m)?;
     crate::generated::stats_rtp::register(&m)?;
     parent.add_submodule(&m)?;
