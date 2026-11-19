@@ -301,6 +301,21 @@ jobs:
           fi
           echo "census complete: $shape declared and produced at realistic AU sizes, 0 skips, 0 stale rows"
 
+      - name: Subtitle interop guard
+        # The subtitle fixtures through ffprobe, TSDuck's psi and analyze
+        # plugins and GStreamer's tsdemux (tst-core's regression suite,
+        # ignored outside this job): with TSTRANS_REQUIRE_INTEROP_TOOLS a
+        # tool missing from PATH, or one that measured no cell, fails it.
+        # Runs after the matrix and its census check whatever their result:
+        # a debug test build of tst-core, then about 2 s.
+        if: ${{ !cancelled() }}
+        timeout-minutes: 20
+        env:
+          SRT_FORCE_VENDORED: "1"
+          RIST_FORCE_VENDORED: "1"
+          TSTRANS_REQUIRE_INTEROP_TOOLS: "1"
+        run: cargo test -p tst-core --test regression subtitle_interop::wave_i1_matrix_no_regression -- --ignored --nocapture
+
       - name: Publish step summary
         # Re-render with --github-summary so the verdict table appears
         # directly on the workflow run's summary page, not only inside the
