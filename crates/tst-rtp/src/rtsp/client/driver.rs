@@ -144,6 +144,12 @@ impl DriverHandle {
     // Called by the publish direction.
     #[cfg_attr(not(test), expect(dead_code))]
     pub(crate) fn send_media(&self, frame: Bytes, cancel: &FlagCancel) -> Result<(), MediaWaitEnd> {
+        // The 4-byte `$` header and what its 16-bit length can announce.
+        debug_assert!(
+            (4..=4 + 65_535).contains(&frame.len()),
+            "a {}-byte buffer is not one interleaved frame",
+            frame.len()
+        );
         self.media.push(frame, cancel)?;
         self.wake();
         Ok(())

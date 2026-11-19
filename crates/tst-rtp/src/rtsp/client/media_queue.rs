@@ -156,13 +156,16 @@ impl MediaQueue {
             return;
         }
         st.closed = true;
-        let dropped = st.frames.len() as u64;
-        st.frames = VecDeque::new();
+        let dropped = std::mem::take(&mut st.frames);
         // Before the lock is released: whoever sees the close sees the
         // count.
-        self.dropped_at_close.fetch_add(dropped, Ordering::Release);
+        self.dropped_at_close
+            .fetch_add(dropped.len() as u64, Ordering::Release);
         drop(st);
         self.changed.notify_all();
+        // Freed here, outside the lock: a full queue of large frames takes
+        // a while, and a sender that sees the close does not wait for it.
+        drop(dropped);
     }
 
     /// Frames that were still queued when the queue closed.
