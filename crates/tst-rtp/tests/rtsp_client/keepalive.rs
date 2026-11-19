@@ -15,7 +15,8 @@ fn keepalive_pings_within_session_timeout() {
     let port = listener.local_addr().unwrap().port();
 
     // Background server: accept one connection, expect the keepalive's
-    // OPTIONS ping at CSeq 1000001 within ~10 s, then reply 200 OK.
+    // OPTIONS ping within ~10 s, then reply 200 OK under its CSeq. The
+    // client sends nothing else, so any OPTIONS is the ping.
     let h = std::thread::spawn(move || {
         let (mut sock, _) = listener.accept().unwrap();
         sock.set_read_timeout(Some(std::time::Duration::from_millis(500)))
@@ -43,9 +44,14 @@ fn keepalive_pings_within_session_timeout() {
             // (not `CSeq:`). Match either spelling case-insensitively
             // since RTSP headers are case-insensitive per RFC 2326 §12.
             let lower = total.to_ascii_lowercase();
-            if lower.contains("options") && lower.contains("cseq: 1000001") {
-                // Reply 200 OK and return.
-                let _ = sock.write_all(b"RTSP/1.0 200 OK\r\nCSeq: 1000001\r\n\r\n");
+            if lower.starts_with("options") && lower.contains("\r\n\r\n") {
+                let cseq = lower
+                    .lines()
+                    .find_map(|l| l.strip_prefix("cseq:").map(|v| v.trim().to_string()))
+                    .expect("the ping carries a CSeq header");
+                // Reply 200 OK under the ping's CSeq and return.
+                let _ =
+                    sock.write_all(format!("RTSP/1.0 200 OK\r\nCSeq: {cseq}\r\n\r\n").as_bytes());
                 return;
             }
         }
@@ -67,8 +73,8 @@ fn keepalive_pings_within_session_timeout() {
     h.join().unwrap();
 }
 
-/// A 200 OK in the keepalive CSeq range (≥ 1_000_000) that answers no
-/// ping in flight can arrive ahead of a request's reply, on a UDP session
+/// A 200 OK whose CSeq answers no request and no ping in flight can
+/// arrive ahead of a request's reply, on a UDP session
 /// or before SETUP too. It must be dropped by its CSeq — returning it
 /// would misattribute it as the response to whatever request the caller
 /// just sent. Here the stale keepalive 200
@@ -81,8 +87,9 @@ fn stale_keepalive_response_not_misattributed_without_interleaving() {
 
     let h = std::thread::spawn(move || {
         let (mut sock, _) = listener.accept().unwrap();
-        // Unsolicited keepalive-CSeq 200 — lands in the client's socket
-        // buffer before its OPTIONS request's real response.
+        // Unsolicited 200 under a CSeq the client never sent — lands in
+        // the client's socket buffer before its OPTIONS request's real
+        // response.
         sock.write_all(b"RTSP/1.0 200 OK\r\nCseq: 1000005\r\n\r\n")
             .unwrap();
         // Read the client's OPTIONS request, echo its CSeq back.
