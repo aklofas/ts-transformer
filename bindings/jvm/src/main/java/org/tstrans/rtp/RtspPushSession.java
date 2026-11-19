@@ -31,10 +31,11 @@ import org.tstrans.mpegts.MuxerConfig;
  * {@link #cancelHandle()} answers at once from any thread, also while a send is
  * waiting, and is the way to end a waiting send. {@link #close()} and
  * {@link #teardown()} may be called from any thread: when a send, {@code pause()} or
- * {@code resume()} is in progress or waiting on another thread they fire the cancel
- * first (that call throws {@code CLOSED}), then close; a {@link #stats()} or
+ * {@code resume()} is running on another thread they fire the cancel first (that
+ * call throws {@code CLOSED}), then close. A {@link #stats()} or
  * {@link #isSessionAlive()} in progress is waited for and does not cancel the
- * session.
+ * session; nor does a send, {@code pause()} or {@code resume()} still waiting for the
+ * session behind one, which then runs nothing and throws {@code CLOSED}.
  *
  * <p><b>How it ends.</b> Once the cancel handle has fired, every data call throws
  * {@link RtpException} of kind {@code CLOSED} (the session stays open until it is
@@ -42,7 +43,14 @@ import org.tstrans.mpegts.MuxerConfig;
  * byte for 5&nbsp;s, a keepalive ping was answered {@code 454}, or the server broke the
  * framing, a data call throws kind {@code BROKEN}. A call on a closed session throws
  * {@link IllegalStateException}; a send that was waiting for the session when a
- * {@code close()} on another thread took it throws {@code RtpException(CLOSED)}.
+ * {@code close()} on another thread began throws {@code RtpException(CLOSED)} and
+ * sends nothing.
+ *
+ * <p><b>Ending without loss.</b> {@link #close()} and {@link #teardown()} write the
+ * queued media before the TEARDOWN, and so does {@code MuxSender.finish()} after
+ * {@link #intoMuxSender}. A plain {@code Sender} from {@link #intoSender} has no
+ * lossless end: its {@code close()} cancels first and can drop frames queued a moment
+ * before.
  *
  * <p><b>Pause.</b> After {@link #pause()} the data calls still queue and write their
  * packets; some servers end the session on a packet sent while it is paused.
@@ -157,8 +165,9 @@ public final class RtspPushSession extends NativeHandle {
      * outcome: later calls throw {@link IllegalStateException} and {@code close()} does
      * nothing. (The play session's {@link RtspSession#teardown()} keeps its session open
      * instead.) Like {@code close()}, it cancels a send, {@code pause()} or
-     * {@code resume()} in progress on another thread first, and waits for a
-     * {@link #stats()} or {@link #isSessionAlive()} without cancelling.
+     * {@code resume()} running on another thread first, and waits without cancelling
+     * for a {@link #stats()} or {@link #isSessionAlive()} and for a call only waiting
+     * for the session (which then runs nothing and throws {@code CLOSED}).
      *
      * @throws RtspException with the kind of the status for a TEARDOWN the server refuses
      *     ({@code PROTOCOL}, or {@code NOT_FOUND} for a 404); {@code CLOSED} on a
@@ -175,10 +184,10 @@ public final class RtspPushSession extends NativeHandle {
 
     /**
      * A handle that ends a waiting data call, {@link #pause()} or a close from any
-     * thread; the call then throws {@code CLOSED}. Never waits: it answers at once, also
-     * while a send is waiting, and is the way to end that send. A cancelled session sends nothing more; closing it still writes
-     * TEARDOWN. Every handle of one session shares one flag, which a {@link #close()}
-     * that finds a call in progress sets.
+     * thread; the call then throws {@code CLOSED}. Never waits: it answers at once,
+     * also while a send is waiting, and is the way to end that send. A cancelled
+     * session sends nothing more; closing it still writes TEARDOWN. Every handle of one
+     * session shares one flag, which every close sets.
      *
      * @return a new cancel handle; close it when done
      * @throws IllegalStateException if the session is closed
@@ -277,6 +286,10 @@ public final class RtspPushSession extends NativeHandle {
      * first, as it does for every transport, then ends it: media still queued for the
      * server is dropped and TEARDOWN is written without that wait.
      *
+     * <p>A plain {@code Sender} over a push has no lossless end: to end a pre-muxed push
+     * without loss, send with {@link #sendTs} and close this session, or use
+     * {@link #intoMuxSender} and {@code MuxSender.finish()}.
+     *
      * <p>A session announced with a video track is left open and unconsumed. On success
      * this session is closed.
      *
@@ -302,11 +315,12 @@ public final class RtspPushSession extends NativeHandle {
      * TEARDOWN is not reported ({@link #teardown()} is the call that reports).
      *
      * <p>Idempotent: a second call, and a call made while another close is running,
-     * return at once. Called while a send, {@code pause()} or {@code resume()} is in
-     * progress or waiting on another thread, it fires the cancel first: that call
-     * throws {@code CLOSED}, what is still queued is dropped, and the TEARDOWN is
-     * written without the wait. A {@link #stats()} or {@link #isSessionAlive()} in
-     * progress is waited for instead, and the session then closes as an idle one does.
+     * return at once. Called while a send, {@code pause()} or {@code resume()} is
+     * running on another thread, it fires the cancel first: that call throws
+     * {@code CLOSED}, what is still queued is dropped, and the TEARDOWN is written
+     * without the wait. A {@link #stats()} or {@link #isSessionAlive()} in progress is
+     * waited for instead, and so is a call only waiting for the session (it then runs
+     * nothing and throws {@code CLOSED}); the session then closes as an idle one does.
      */
     @Override public void close() { super.close(); }
 

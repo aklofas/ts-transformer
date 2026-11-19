@@ -7,12 +7,12 @@
 //! and a clone of the push's cancel kept outside that mutex, so `nCancelHandle` and a
 //! close answer while a send is parked. The registry has no cancel hook: `nClose`
 //! fires the stored cancel itself, and only when a call that can park on the network
-//! holds or awaits the push ([`take_for_close`]); a query call holding it for a
-//! moment is waited for.
+//! holds the push ([`take_for_close`]); a query call holding it for a moment, and a
+//! call only waiting for it, are not cancelled.
 
 use crate::jutil::FindClass;
 use crate::panic::jni_native;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, LazyLock, Mutex, PoisonError, TryLockError};
 
 use jni::objects::{JBooleanArray, JByteArray, JIntArray, JObject, JObjectArray, JString, JValue};
@@ -40,6 +40,10 @@ const KIND_H265: jint = 2;
 
 const WHAT: &str = "RtspPushSession";
 
+/// How long a close waits between two looks at a push held by a call it does not
+/// cancel.
+const CLOSE_RETRY: std::time::Duration = std::time::Duration::from_millis(1);
+
 /// What a call reports when a close on another thread took the push while the call
 /// waited for it.
 const TAKEN: &str = "the session was closed during the call";
@@ -49,11 +53,13 @@ const TAKEN: &str = "the session was closed during the call";
 struct Shared {
     /// `None` once a close or a conversion has taken the push.
     push: Mutex<Option<RtspPush>>,
-    /// Calls that can park on the network (a send, `pause`, `resume`) running or
-    /// waiting for `push`. Query calls are not counted.
-    blocking: AtomicUsize,
-    /// Set by a close before it reads `blocking`: a blocking call that gets `push`
-    /// afterwards runs nothing, so the close never waits for a call it did not see.
+    /// Set while a call that can park on the network (a send, `pause`, `resume`)
+    /// holds `push` and runs: raised after it has the mutex and has found `closing`
+    /// clear, lowered before it lets go. Query calls and calls only waiting for the
+    /// mutex never set it.
+    parking_holder: AtomicBool,
+    /// Set by a close before it looks at the mutex: a blocking call that gets `push`
+    /// afterwards runs nothing.
     closing: AtomicBool,
 }
 
@@ -299,7 +305,7 @@ jni_native! {
             mp2t: matches!(desc, PushDescription::Mp2t),
             shared: Arc::new(Shared {
                 push: Mutex::new(Some(push)),
-                blocking: AtomicUsize::new(0),
+                parking_holder: AtomicBool::new(false),
                 closing: AtomicBool::new(false),
             }),
         }) as jlong
@@ -325,25 +331,27 @@ fn run<R>(shared: &Shared, op: impl FnOnce(&mut RtspPush) -> R) -> Option<R> {
     guard.as_mut().map(op)
 }
 
-/// Lowers [`Shared::blocking`] when a blocking call ends, however it ends.
-struct BlockingCall<'a>(&'a AtomicUsize);
+/// Lowers [`Shared::parking_holder`] when a blocking call ends, however it ends.
+/// Declared after the mutex guard, so it drops first: the marker is down before the
+/// mutex is released.
+struct ParkingHolder<'a>(&'a AtomicBool);
 
-impl Drop for BlockingCall<'_> {
+impl Drop for ParkingHolder<'_> {
     fn drop(&mut self) {
-        self.0.fetch_sub(1, Ordering::SeqCst);
+        self.0.store(false, Ordering::SeqCst);
     }
 }
 
-/// [`run`] for a call that can park on the network: counted in
-/// [`Shared::blocking`] from before it waits for the mutex, so a close cancels it,
-/// and `None` (nothing run) when it gets the mutex after a close began.
+/// [`run`] for a call that can park on the network: `None` (nothing run) when it
+/// gets the mutex after a close began; otherwise it marks itself in
+/// [`Shared::parking_holder`] for as long as it runs, so a close cancels it.
 fn run_blocking<R>(shared: &Shared, op: impl FnOnce(&mut RtspPush) -> R) -> Option<R> {
-    shared.blocking.fetch_add(1, Ordering::SeqCst);
-    let _counted = BlockingCall(&shared.blocking);
     let mut guard = shared.push.lock().unwrap_or_else(PoisonError::into_inner);
     if shared.closing.load(Ordering::SeqCst) {
         return None;
     }
+    shared.parking_holder.store(true, Ordering::SeqCst);
+    let _holding = ParkingHolder(&shared.parking_holder);
     guard.as_mut().map(op)
 }
 
@@ -455,29 +463,33 @@ jni_native! {
 }
 
 /// Take the push out of a session the registry has handed over, for its close. A
-/// call that can park on the network and holds or awaits the push (a send on a
-/// slow server, a pause draining the queue) is cancelled first, so the close waits
-/// only for it to notice (about 100 ms). A query call holding the push for a moment
-/// is waited for, not cancelled: like an idle push, the session's queued media is
-/// then written and an accepted TEARDOWN ends it cleanly.
+/// call that holds the push and can park on the network (a send on a slow server, a
+/// pause draining the queue or awaiting its reply) is cancelled first, so the close
+/// waits only for it to notice (about 100 ms). Anything else holding the push (a
+/// query call, a blocking call that has just found `closing` set) is waited for
+/// without a cancel: like an idle push, the session's queued media is then written
+/// and an accepted TEARDOWN ends it cleanly. The wait re-reads the marker every
+/// round, so a call that starts to run while the close waits is still cancelled.
 fn take_for_close(entry: &JniRtspPush) -> Option<RtspPush> {
     let shared = &entry.shared;
-    // Before `blocking` is read: a blocking call counted after that read finds
-    // `closing` once it has the mutex and runs nothing.
+    // A blocking call that gets the mutex from here on runs nothing.
     shared.closing.store(true, Ordering::SeqCst);
-    match shared.push.try_lock() {
-        Ok(mut guard) => guard.take(),
-        Err(TryLockError::WouldBlock) => {
-            if shared.blocking.load(Ordering::SeqCst) > 0 {
-                entry.cancel.cancel();
+    loop {
+        match shared.push.try_lock() {
+            Ok(mut guard) => return guard.take(),
+            Err(TryLockError::Poisoned(p)) => return p.into_inner().take(),
+            Err(TryLockError::WouldBlock) => {
+                if shared.parking_holder.load(Ordering::SeqCst) {
+                    entry.cancel.cancel();
+                    return shared
+                        .push
+                        .lock()
+                        .unwrap_or_else(PoisonError::into_inner)
+                        .take();
+                }
+                std::thread::sleep(CLOSE_RETRY);
             }
-            shared
-                .push
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .take()
         }
-        Err(TryLockError::Poisoned(p)) => p.into_inner().take(),
     }
 }
 

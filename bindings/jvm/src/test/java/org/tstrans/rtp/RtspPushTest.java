@@ -370,6 +370,54 @@ class RtspPushTest {
 
     @Test
     @Timeout(30)
+    @EnabledIfSystemProperty(named = "tst.jniTestHooks", matches = "true")
+    void aTeardownBehindAQueryDoesNotCancelForASendWaitingForTheSession() throws Exception {
+        try (ScriptedRecordServer peer = new ScriptedRecordServer(200, false)) {
+            RtspPushSession push = RtspClient.push(peer.config(), PushDescription.mp2t());
+            for (int i = 0; i < 3; i++) push.sendTs(NULL_BUNDLE);
+            assertTrue(waitFor(() -> peer.rtpFramesRead.get() == 3), "RTP frames read: " + peer.rtpFramesRead.get());
+            long handle = push.nativeHandleForTest();
+            AtomicReference<Throwable> holderError = new AtomicReference<>();
+            Thread holder = new Thread(() -> {
+                try {
+                    PushProbe.nHoldAsReader(handle, 2_000);
+                } catch (Throwable t) {
+                    holderError.set(t);
+                }
+            }, "query-holder");
+            holder.setDaemon(true);
+            holder.start();
+            assertTrue(waitFor(PushProbe::nReaderHolds), "the probe never held the session");
+            // A send that waits for the session behind the query: it does not hold it.
+            AtomicReference<Throwable> sendError = new AtomicReference<>();
+            Thread sender = new Thread(() -> {
+                try {
+                    push.sendTs(NULL_BUNDLE);
+                } catch (Throwable t) {
+                    sendError.set(t);
+                }
+            }, "waiting-sender");
+            sender.setDaemon(true);
+            sender.start();
+            awaitInNative(sender, "nSendTs");
+            // Neither holder can park on the network, so nothing is cancelled: the
+            // TEARDOWN is accepted (a cancelled session's teardown() throws CLOSED).
+            push.teardown();
+            sender.join(scaledMs(5_000));
+            assertFalse(sender.isAlive(), "the waiting send did not end");
+            RtpException e = assertInstanceOf(RtpException.class, sendError.get());
+            assertEquals(RtpException.Kind.CLOSED, e.kind());
+            holder.join(scaledMs(5_000));
+            assertFalse(holder.isAlive(), "the probe did not end");
+            assertEquals(null, holderError.get());
+            assertTrue(peer.awaitMethod("TEARDOWN"));
+            // The waiting send ran nothing.
+            assertEquals(3L, peer.rtpFramesRead.get());
+        }
+    }
+
+    @Test
+    @Timeout(30)
     void callsAfterCloseThrowIllegalState() throws Exception {
         try (ScriptedRecordServer peer = new ScriptedRecordServer(200, false)) {
             RtspPushSession push = RtspClient.push(peer.config(), PushDescription.mp2t());
@@ -558,6 +606,18 @@ class RtspPushTest {
         String addr = server.localAddr();
         String port = addr.substring(addr.lastIndexOf(':') + 1);
         return RtspClientConfig.builder("rtsp://127.0.0.1:" + port + "/pub").keepalive(false).build();
+    }
+
+    /** Wait (up to 5 s, scaled) until {@code t}'s top frame is the native {@code method}. */
+    private static void awaitInNative(Thread t, String method) throws InterruptedException {
+        long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(scaledMs(5_000));
+        while (System.nanoTime() < deadline) {
+            StackTraceElement[] st = t.getStackTrace();
+            if (st.length > 0 && st[0].isNativeMethod() && st[0].getMethodName().equals(method)) return;
+            if (!t.isAlive()) fail(t.getName() + " ended before it reached " + method);
+            Thread.sleep(2);
+        }
+        fail(t.getName() + " never reached " + method);
     }
 
     /** Poll {@code cond} every 20 ms for up to 5 s (scaled). */
