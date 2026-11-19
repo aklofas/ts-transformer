@@ -7,8 +7,9 @@
 # of the job find it all in the Gradle user home. Any failure of that call is
 # retried, a broken build file included: about four minutes more.
 # The waits are long because Maven Central has answered "not found" for an
-# existing file through a window of about 90 seconds; earlier refusals cleared
-# within minutes.
+# existing file on all three attempts of a run whose waits were 20 s and 60 s,
+# a refusal lasting at least those 90 seconds. A refusal that outlasts these
+# waits still fails the job.
 #
 # Usage: gradle-resolve.sh [--no-test] [gradle arguments...] (added to the
 # resolveAll call). --no-test leaves out the configurations only the tests use
