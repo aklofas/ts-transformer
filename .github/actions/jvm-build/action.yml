@@ -110,6 +110,21 @@ runs:
       shell: bash
       run: bash scripts/check/jvm/ordinal-sites.sh
 
+    # The marked Java blocks of docs/languages/jvm.md compile against this
+    # leg's jar (the module-path smoke above built it; javac only, nothing
+    # loads the native library). The rail SKIPs without an input; here a SKIP
+    # fails the step.
+    - name: check-jvm-guide-snippets
+      if: inputs.triple == 'linux-x86_64'
+      shell: bash
+      run: |
+        set -euo pipefail
+        jars=(bindings/jvm/build/libs/tstrans-jvm*.jar)
+        [ "${#jars[@]}" -eq 1 ] && [ -f "${jars[0]}" ] || { echo "::error::want one jar under bindings/jvm/build/libs, found: ${jars[*]}"; exit 1; }
+        out="$(bash scripts/check/repo/doc-snippets.sh java "${jars[0]}")"
+        printf '%s\n' "$out"
+        case "$out" in *SKIP*) echo "::error::doc-snippets did not compile the JVM guide's snippets"; exit 1 ;; esac
+
     # The dev-mode `test` task stages the cdylib into resources/native/<triple>/
     # already renamed to libtstjni.<ext>. Lay it out under native/ for upload.
     - name: Stage native lib for upload
