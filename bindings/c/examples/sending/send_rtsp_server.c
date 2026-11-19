@@ -240,6 +240,29 @@ static long parse_long(int argc, char **argv, const char *key, long dflt) {
     return v ? atol(v) : dflt;
 }
 
+/* -------------------------------------------------------------------------
+ * url_shown — the URL without what can carry a credential, for printing
+ *
+ * An RTSP URL's user info (`rtsp://admin:pw@cam/live`) is a login (the RTSP
+ * client sends it), and its query can hold a secret too, so neither is echoed:
+ * this writes the scheme, host[:port] and path into `out` (cut to `cap`).
+ * The user info ends at the last `@` before the path; the query starts at `?`.
+ * ---------------------------------------------------------------------- */
+static const char *url_shown(const char *url, char *out, size_t cap) {
+    const char *sep = strstr(url, "://");
+    size_t scheme = sep ? (size_t) (sep + 3 - url) : 0;
+    const char *rest = url + scheme;
+    size_t authority = strcspn(rest, "/?");
+    for (size_t i = authority; i > 0; i--) {
+        if (rest[i - 1] == '@') {
+            rest += i;
+            break;
+        }
+    }
+    snprintf(out, cap, "%.*s%.*s", (int) scheme, url, (int) strcspn(rest, "?"), rest);
+    return out;
+}
+
 /* ── main ───────────────────────────────────────────────────────────────────*/
 
 int main(int argc, char **argv) {
@@ -272,12 +295,12 @@ int main(int argc, char **argv) {
     long max_frames        = parse_long(argc, argv, "--frames", 0);
     /* max_frames == 0 means "run until SIGINT" */
 
-    /* The query can carry a secret (`passphrase=`, `token=`), so only the part
-     * before the `?` is printed: `%.*s` with strcspn stops there. */
+    char shown[512];
+    url_shown(bind_url, shown, sizeof(shown));
     fprintf(stderr,
-            "send_rtsp_server: binding to %.*s, mount %s\n"
+            "send_rtsp_server: binding to %s, mount %s\n"
             "  (--bind <url>  --mount <path>  --frames <n>  to override)\n",
-            (int) strcspn(bind_url, "?"), bind_url, mount_path);
+            shown, mount_path);
 
     /* ── Step 1: Build the mux config ───────────────────────────────────────
      *
@@ -381,7 +404,7 @@ int main(int argc, char **argv) {
         return 4;
     }
 
-    fprintf(stderr, "server listening on %.*s\n", (int) strcspn(bind_url, "?"), bind_url);
+    fprintf(stderr, "server listening on %s\n", shown);
 
     /* ── Step 3: Register a unicast mount ───────────────────────────────────
      *
@@ -410,8 +433,7 @@ int main(int argc, char **argv) {
         return 5;
     }
 
-    fprintf(stderr, "mount registered: %.*s%s\n", (int) strcspn(bind_url, "?"), bind_url,
-            mount_path);
+    fprintf(stderr, "mount registered: %s%s\n", shown, mount_path);
     fprintf(stderr, "waiting for clients… (Ctrl-C to stop)\n");
 
     /* ── Step 4: Obtain a cancel handle for signal-safe shutdown ────────────

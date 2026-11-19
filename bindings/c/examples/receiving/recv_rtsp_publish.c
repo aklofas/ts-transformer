@@ -295,6 +295,29 @@ static void print_stats(TstRtspServer *server, mount_slot *slots, size_t n) {
     fflush(stdout);
 }
 
+/* -------------------------------------------------------------------------
+ * url_shown — the URL without what can carry a credential, for printing
+ *
+ * An RTSP URL's user info (`rtsp://admin:pw@cam/live`) is a login (the RTSP
+ * client sends it), and its query can hold a secret too, so neither is echoed:
+ * this writes the scheme, host[:port] and path into `out` (cut to `cap`).
+ * The user info ends at the last `@` before the path; the query starts at `?`.
+ * ---------------------------------------------------------------------- */
+static const char *url_shown(const char *url, char *out, size_t cap) {
+    const char *sep = strstr(url, "://");
+    size_t scheme = sep ? (size_t) (sep + 3 - url) : 0;
+    const char *rest = url + scheme;
+    size_t authority = strcspn(rest, "/?");
+    for (size_t i = authority; i > 0; i--) {
+        if (rest[i - 1] == '@') {
+            rest += i;
+            break;
+        }
+    }
+    snprintf(out, cap, "%.*s%.*s", (int) scheme, url, (int) strcspn(rest, "?"), rest);
+    return out;
+}
+
 static double now_s(void) {
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
@@ -348,10 +371,9 @@ int main(int argc, char **argv) {
      * `tst_rtsp_server_builder_start` consumes the builder whether it
      * succeeds or not. */
     TstRtspServerBuilder *builder = tst_rtsp_server_builder_new(url);
-    /* The query can carry a secret (`passphrase=`, `token=`), so only the part
-     * before the `?` is printed: `%.*s` with strcspn stops there. */
+    char shown[512];
     if (builder == NULL) {
-        fprintf(stderr, "builder_new(%.*s): %s\n", (int) strcspn(url, "?"), url,
+        fprintf(stderr, "builder_new(%s): %s\n", url_shown(url, shown, sizeof(shown)),
                 tst_get_last_error_str());
         return 1;
     }
@@ -359,7 +381,7 @@ int main(int argc, char **argv) {
     TstRtspServer *server = tst_rtsp_server_builder_start(builder);
     builder = NULL; /* consumed */
     if (server == NULL) {
-        fprintf(stderr, "start(%.*s): %s\n", (int) strcspn(url, "?"), url,
+        fprintf(stderr, "start(%s): %s\n", url_shown(url, shown, sizeof(shown)),
                 tst_get_last_error_str());
         return 1;
     }
