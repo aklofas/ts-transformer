@@ -1586,8 +1586,9 @@ jobs:
   python-core:
     name: tst-py default tests
     runs-on: ubuntu-24.04
-    # The gdb install below goes through a slow runner mirror's retries
-    # (about 16 min before it gives up); 30 min keeps that from cutting pytest.
+    # The gdb install below may wait out a slow runner mirror's retries
+    # (about 10 min before the job goes on without it); 30 min keeps that
+    # from cutting pytest.
     timeout-minutes: 30
     # The default (non-pandas) pytest suite exercises Demuxer, Muxer, KLV
     # typed decode/encode, codec parsers, and io helpers. Python kinds come
@@ -1657,7 +1658,8 @@ jobs:
         run: |
           ulimit -c unlimited
           echo "${{ github.workspace }}/core.%p" | sudo tee /proc/sys/kernel/core_pattern
-          bash scripts/ci/apt-install.sh gdb
+          # gdb only serves the backtrace step after a crash: without it pytest still runs.
+          APT_INSTALL_ATTEMPTS=2 bash scripts/ci/apt-install.sh gdb || echo "::warning::gdb is not installed; a crash in this job will have no backtrace"
 
       - name: pytest default (non-pandas)
         # pyproject.toml sets `addopts = "-m 'not pandas'"` so this runs
