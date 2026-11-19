@@ -386,6 +386,11 @@ jobs:
         if: matrix.name == 'linux-x86_64'
         run: bash scripts/ci/tests/fuzz-shard-selftest.sh
 
+      - name: free-disk self-test (the 30 GiB threshold, bounded removals)
+        # Runs scripts/ci/free-disk.sh against stub df, sudo and timeout.
+        if: matrix.name == 'linux-x86_64'
+        run: bash scripts/ci/tests/free-disk-selftest.sh
+
       - name: No duplicate test helpers
         # A Rust fn / Python def / Java private static body identical in two
         # or more test files fails unless listed, with a reason, in
