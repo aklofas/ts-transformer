@@ -35,9 +35,14 @@ cat > "$TMP/bin/sleep" <<'STUB'
 #!/usr/bin/env bash
 printf 'sleep %s\n' "$*" >> "$TMP/sleep.log"
 STUB
+# $TMP/dpkg-plan: empty succeeds, `fail` exits 1, `hang` sleeps 30 s.
 cat > "$TMP/bin/dpkg" <<'STUB'
 #!/usr/bin/env bash
 printf 'dpkg %s\n' "$*" >> "$TMP/apt.log"
+case "$(cat "$TMP/dpkg-plan" 2>/dev/null || true)" in
+  fail) exit 1 ;;
+  hang) exec /bin/sleep 30 ;;
+esac
 STUB
 # A sudo that records how it was called, then runs the rest as given.
 cat > "$TMP/bin/sudo" <<'STUB'
@@ -56,7 +61,7 @@ fail() { echo "FAIL: $*"; echo "--- apt.log"; cat "$TMP/apt.log"; echo "--- out"
 
 # setup <plan lines...>: fresh logs, a three-line mirrors file, the plan.
 setup() {
-  : > "$TMP/apt.log"; : > "$TMP/sleep.log"; : > "$TMP/out"; : > "$TMP/sudo.log"
+  : > "$TMP/apt.log"; : > "$TMP/sleep.log"; : > "$TMP/out"; : > "$TMP/sudo.log"; rm -f "$TMP/dpkg-plan"
   mkdir -p "$TMP/sources"
   printf 'URIs: mirror+file:%s\n' "$TMP/mirrors.txt" > "$TMP/sources/ubuntu.sources"
   printf 'http://a.example.invalid/ubuntu/\tpriority:1\nhttps://b.example.invalid/ubuntu/\tpriority:2\nhttps://c.example.invalid/ubuntu/\tpriority:3\n' > "$TMP/mirrors.txt"
@@ -185,10 +190,15 @@ run pkg-a
 [ "$RC" = 0 ] || fail "case 12 rc=$RC"
 grep -q '^dpkg --configure -a' "$TMP/apt.log" || fail "case 12 dpkg not run"
 grep -q 'attempt 1 of 3: unpack failed with status 1' "$TMP/out" || fail "case 12 notice"
-grep -q 'unpack was interrupted' "$TMP/out" || fail "case 12 interrupted notice"
+grep -q '^::notice::the unpack failed (status 1); running dpkg --configure -a$' "$TMP/out" || fail "case 12 failed notice"
+! grep -q 'interrupted' "$TMP/out" || fail "case 12 a plain failure called interrupted"
 setup 1
 run pkg-a
 ! grep -q '^dpkg' "$TMP/apt.log" || fail "case 12 dpkg run after an update failure"
+setup 0 1
+run pkg-a
+[ "$RC" = 0 ] || fail "case 12 download rc=$RC"
+! grep -q '^dpkg' "$TMP/apt.log" || fail "case 12 dpkg run after a download failure"
 
 # 13: a bad attempt count is refused, not a silent success
 for v in 0 abc 1x; do
@@ -221,4 +231,42 @@ printf 'http://a.example.invalid/ubuntu/\tpriority:1\n\n' > "$TMP/mirrors.txt"
 run pkg-a
 grep -q 'a.example.invalid' "$TMP/mirrors.txt" || fail "case 16 emptied the list"
 
-echo "PASS: 16 cases"
+# 17: the first mirror is dropped once in all, not before every retry: with
+# two priority:1 lines and three failed attempts, one line of four is gone
+setup 100 100 100
+printf 'http://a.example.invalid/ubuntu/\tpriority:1\nhttp://d.example.invalid/ubuntu/\tpriority:1\nhttps://b.example.invalid/ubuntu/\tpriority:2\nhttps://c.example.invalid/ubuntu/\tpriority:3\n' > "$TMP/mirrors.txt"
+run pkg-a
+[ "$RC" = 100 ] || fail "case 17 rc=$RC"
+[ "$(wc -l < "$TMP/mirrors.txt" | tr -d ' ')" = 3 ] || fail "case 17 want one line of four gone, have $(wc -l < "$TMP/mirrors.txt" | tr -d ' ')"
+grep -q 'd.example.invalid' "$TMP/mirrors.txt" || fail "case 17 the second mirror was dropped too"
+
+# 18: --timeout bounds the download only; the index fetch keeps its own bound
+setup slow
+APT_INSTALL_UPDATE_TIMEOUT=30 run --timeout 1 pkg-a
+[ "$RC" = 0 ] || fail "case 18 rc=$RC"
+[ "$(count ' update')" = 1 ] || fail "case 18 the update was cut by the --timeout bound"
+
+# 19: a dpkg --configure -a that fails does not end the script
+setup 0 0 1
+echo fail > "$TMP/dpkg-plan"
+run pkg-a
+[ "$RC" = 0 ] || fail "case 19 rc=$RC"
+[ "$(count ' update')" = 2 ] || fail "case 19 attempt 2 did not run"
+grep -q '^dpkg --configure -a' "$TMP/apt.log" || fail "case 19 dpkg not run"
+
+# 20: dpkg --configure -a runs under the unpack bound, inside sudo
+setup 0 0 1
+echo hang > "$TMP/dpkg-plan"
+START=$(date +%s)
+APT_INSTALL_UNPACK_TIMEOUT=1 APT_INSTALL_SUDO=sudo run pkg-a
+[ "$RC" = 0 ] || fail "case 20 rc=$RC"
+[ $(( $(date +%s) - START )) -lt 15 ] || fail "case 20 a hung dpkg was not cut by its bound"
+grep -qx 'timeout -k 10 1 dpkg --configure -a' "$TMP/sudo.log" || fail "case 20 dpkg call: $(cat "$TMP/sudo.log")"
+
+# 21: an unpack cut by its bound is called interrupted
+setup 0 0 hang
+APT_INSTALL_UNPACK_TIMEOUT=1 run pkg-a
+[ "$RC" = 0 ] || fail "case 21 rc=$RC"
+grep -q '^::notice::the unpack was interrupted (status 124); running dpkg --configure -a$' "$TMP/out" || fail "case 21 interrupted notice"
+
+echo "PASS: 21 cases"
