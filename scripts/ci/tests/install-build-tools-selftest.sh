@@ -34,7 +34,7 @@ printf 'sleep %s\n' "$*" >> "$TMP/sleep.log"
 STUB
 for t in ninja cmake pkg-config; do printf '#!/bin/sh\nexit 0\n' > "$TMP/tools/$t"; done
 chmod +x "$TMP/bin/python3" "$TMP/bin/sleep" "$TMP/tools/"*
-export TMP CI_INSTALL_WAITS="20 60"
+export TMP
 
 # setup <pip failures>: fresh logs and RUNNER_TEMP.
 setup() {
