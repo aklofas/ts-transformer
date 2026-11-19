@@ -50,7 +50,15 @@ runs:
     - if: runner.os == 'Linux'
       shell: bash
       name: Remove unused preinstalled toolsets
+      env:
+        BEFORE: ${{ steps.free-disk-before.outputs.avail_before }}
       run: |
+        # Runners with room to spare keep their toolsets: the removal costs
+        # minutes and only pays when the disk is short (30 GiB).
+        if [ "$BEFORE" -ge 32212254720 ]; then
+          awk -v b="$BEFORE" 'BEGIN{printf "free-disk: %.1f GiB free, removal skipped (runs below 30 GiB)\n", b/1073741824}'
+          exit 0
+        fi
         # Every removal is bounded and timed: this step prints nothing on its
         # own, so a wedged runner here looked like a slow rm (45 min to the job
         # cap, once). A bounded removal that times out costs the space it would
@@ -71,6 +79,12 @@ runs:
         BEFORE: ${{ steps.free-disk-before.outputs.avail_before }}
       run: |
         df -h /
+        if [ "$BEFORE" -ge 32212254720 ]; then
+          line="$(awk -v b="$BEFORE" 'BEGIN{printf "free-disk: %.1f GiB free, removal skipped (runs below 30 GiB)", b/1073741824}')"
+          echo "$line"
+          echo "$line" >> "$GITHUB_STEP_SUMMARY"
+          exit 0
+        fi
         after="$(df -B1 --output=avail / | tail -1 | tr -d ' ')"
         line="$(awk -v b="$BEFORE" -v a="$after" 'BEGIN{g=1073741824; printf "free-disk: %.1f GiB → %.1f GiB (+%.1f GiB)", b/g, a/g, (a-b)/g}')"
         echo "$line"
