@@ -164,9 +164,10 @@ def parse_corpus_expectation(text):
     return tomllib.loads(text).get("corpus", {}).get("expected_files")
 
 
-def parse_corpus_pin(text):
-    """The pinned manifest digest of the release corpus, or None when the file has none."""
-    return tomllib.loads(text).get("corpus", {}).get("expected_manifest_sha256")
+def parse_corpus_pins(text):
+    """(manifest digest, baseline manifest digest) the release corpus is pinned to; None for a missing one."""
+    t = tomllib.loads(text).get("corpus", {})
+    return t.get("expected_manifest_sha256"), t.get("expected_baseline_manifest_sha256")
 
 
 WAIVER_KEYS = ("verdicts", "reason", "reviewer", "date", "fixed_in")
@@ -275,15 +276,16 @@ def load_archives(root):
         text = f.read()
     rows = parse_archives(text)
     expected = parse_corpus_expectation(text)
-    pin = parse_corpus_pin(text)
+    pins = parse_corpus_pins(text)
     required = parse_soak_requirement(text)
     probs = validate_archives(rows)
     if isinstance(required, bool) or not isinstance(required, int) or required <= 0:
         probs.append("[soak] required_duration_s is required, an integer above 0")
     if isinstance(expected, bool) or not isinstance(expected, int) or expected <= 0:
         probs.append("[corpus] expected_files is required, an integer above 0")
-    if not isinstance(pin, str) or not re.fullmatch(r"[0-9a-f]{64}", pin):
-        probs.append("[corpus] expected_manifest_sha256 is required, 64 lowercase hex characters")
+    for name, pin in zip(("expected_manifest_sha256", "expected_baseline_manifest_sha256"), pins):
+        if not isinstance(pin, str) or not re.fullmatch(r"[0-9a-f]{64}", pin):
+            probs.append("[corpus] %s is required, 64 lowercase hex characters" % name)
     if probs:
         die("evidence-archives.toml: " + "; ".join(probs), 1)
     out = []
@@ -304,7 +306,7 @@ def load_archives(root):
             row[NEW_KEY] = r[NEW_KEY]
         row.update({k: r[k] for k in CORPUS_COUNTS if k in r})
         out.append(row)
-    return out, expected, required, pin
+    return out, expected, required, pins
 
 
 # ---- release mode ----------------------------------------------------------
@@ -619,7 +621,7 @@ def _judge_soak(root, sha, soaks, memo, required_s, kind):
     return soak, reasons
 
 
-def release_vm(root, sha, archives, release, expected_files, required_s, expected_manifest=None):
+def release_vm(root, sha, archives, release, expected_files, required_s, expected_pins=None):
     """The release gate: on each architecture the chosen soak archive (see _judge_soak)
     must stand for `sha`, have passed and declared at least the required duration, and a
     passing corpus archive must exist for the qualified tree. "Stands for" means the
@@ -663,26 +665,22 @@ def release_vm(root, sha, archives, release, expected_files, required_s, expecte
             corpus.update({k: c[k] for k in CORPUS_COUNTS if k in c})
             corpus[BASELINE_KEY] = c.get(BASELINE_KEY)
             corpus[MANIFEST_KEY] = c.get(MANIFEST_KEY)
-            if expected_manifest is not None:
+            if expected_pins is not None:
+                pin, base_pin = expected_pins
                 if not c.get(MANIFEST_KEY):
                     reasons.append("corpus: archive %s records no %s; a release corpus row names the "
                                    "capture set it swept" % (c["id"], MANIFEST_KEY))
-                elif c[MANIFEST_KEY] != expected_manifest:
-                    reasons.append("corpus: archive %s swept the capture set %s, not the pinned %s"
-                                   % (c["id"], c[MANIFEST_KEY], expected_manifest))
-            # The baseline is the previous release's own sweep: the newest earlier
-            # passing corpus row of another tree, when it records its digest (rows
-            # before 0.11.0 do not). A rerun on this release's tree is not it.
-            same = {id(a) for a in candidates + unresolved}
-            order = sorted((a for a in archives if a["kind"] == "corpus" and id(a) not in same
-                            and a["overall_pass"] is True),
-                           key=lambda a: (a["date"], cpos[id(a)]))
-            earlier = [a for a in order if (a["date"], cpos[id(a)]) < (c["date"], cpos[id(c)])]
-            if earlier and earlier[-1].get(MANIFEST_KEY) and c.get(BASELINE_KEY) \
-                    and c[BASELINE_KEY] != earlier[-1][MANIFEST_KEY]:
-                reasons.append("corpus: archive %s compared with the baseline %s; the previous corpus row "
-                               "%s swept %s" % (c["id"], c[BASELINE_KEY], earlier[-1]["id"],
-                                                earlier[-1][MANIFEST_KEY]))
+                elif c[MANIFEST_KEY] != pin:
+                    reasons.append("corpus: archive %s swept the capture set %s, not the pinned %s; a "
+                                   "deliberate change of the capture set moves `[corpus] "
+                                   "expected_manifest_sha256` and `expected_files` in "
+                                   "tests/coverage/evidence-archives.toml"
+                                   % (c["id"], c[MANIFEST_KEY], pin))
+                if c.get(BASELINE_KEY) and c[BASELINE_KEY] != base_pin:
+                    reasons.append("corpus: archive %s compared with the baseline %s, not the pinned %s; "
+                                   "after a release `[corpus] expected_baseline_manifest_sha256` in "
+                                   "tests/coverage/evidence-archives.toml becomes the released set's digest"
+                                   % (c["id"], c[BASELINE_KEY], base_pin))
             # A sweep with no baseline compares nothing: a release corpus
             # run is judged against the previous release's digests.
             if not c.get(BASELINE_KEY):
@@ -1071,10 +1069,10 @@ def collect(art, root, release=False, tag=None):
     natives = {"libsrt": native("crates/srt-sys/vendor/srt", "v"),
                "librist": native("crates/rist-sys/vendor/librist", "v"),
                "mbedtls": native("crates/mbedtls-src/vendor/mbedtls", "mbedtls-", "v")}
-    archives, expected_files, required_soak_s, corpus_pin = load_archives(root)
+    archives, expected_files, required_soak_s, corpus_pins = load_archives(root)
     try:
         gate = release_vm(root, ctx.get("source", {}).get("sha", ""), archives, release, expected_files,
-                          required_soak_s, corpus_pin)
+                          required_soak_s, corpus_pins)
     except QualificationError as e:
         die(str(e))
     workflow_sha = ctx["source"]["workflow_sha"]

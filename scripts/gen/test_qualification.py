@@ -76,6 +76,7 @@ schema_version = 0
 [corpus]
 expected_files = 260
 expected_manifest_sha256 = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+expected_baseline_manifest_sha256 = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 
 [soak]
 required_duration_s = 172800
@@ -1087,8 +1088,9 @@ ARM_OK = archive_row("soak-arm-ok", "soak", SHA, legs=FIVE, arch="aarch64")
 
 
 def archives_toml(*rows):
-    return ("schema_version = 0\n\n[corpus]\nexpected_files = %d\nexpected_manifest_sha256 = \"%s\"\n\n"
-            "[soak]\nrequired_duration_s = 172800\n" % (COUNTS["files"], PIN) + "".join(rows))
+    return ("schema_version = 0\n\n[corpus]\nexpected_files = %d\nexpected_manifest_sha256 = \"%s\"\n"
+            "expected_baseline_manifest_sha256 = \"%s\"\n\n"
+            "[soak]\nrequired_duration_s = 172800\n" % (COUNTS["files"], PIN, BASELINE) + "".join(rows))
 
 
 NO_SOAK = archives_toml(archive_row("corpus-rel", "corpus", SHA))
@@ -1690,8 +1692,9 @@ class ReleaseModeTests(unittest.TestCase):
 
     def test_a_corpus_row_that_swept_another_capture_set_is_refused(self):
         got = self._manifest_reasons(archive_row("corpus-rel", "corpus", SHA, counts=COUNTS, manifest="d" * 64))
-        self.assertEqual(got, ["corpus: archive corpus-rel swept the capture set %s, not the pinned %s"
-                               % ("d" * 64, PIN)])
+        self.assertEqual(len(got), 1)
+        self.assertTrue(got[0].startswith("corpus: archive corpus-rel swept the capture set %s, not the pinned %s;"
+                                          % ("d" * 64, PIN)))
 
     def test_release_mode_refuses_a_corpus_row_without_a_manifest_digest(self):
         got = self._manifest_reasons(archive_row("corpus-rel", "corpus", SHA, counts=COUNTS, manifest=None))
@@ -1704,22 +1707,29 @@ class ReleaseModeTests(unittest.TestCase):
         rec = collect(archives=rows)
         self.assertEqual(rec["verdict"], "GO", rec["verdict_reasons"])
 
-    def test_a_baseline_that_is_not_the_previous_release_rows_manifest_is_refused(self):
-        prev = archive_row("corpus-prev", "corpus", "d" * 40, date="2026-10-01", counts=COUNTS, manifest="e" * 64)
-        ok = archive_row("corpus-rel", "corpus", SHA, counts=COUNTS, baseline="e" * 64)
-        bad = archive_row("corpus-rel", "corpus", SHA, counts=COUNTS, baseline="f" * 64)
-        # The previous release's tree differs from this one by a source file: not equivalent.
-        with mock.patch.object(q, "changed_paths", return_value=["crates/x.rs"]):
-            self._chain(prev, ok, bad)
+    def test_a_baseline_that_is_not_the_pinned_set_is_refused(self):
+        got = self._manifest_reasons(archive_row("corpus-rel", "corpus", SHA, counts=COUNTS, baseline="f" * 64))
+        self.assertEqual(len(got), 1)
+        self.assertIn("compared with the baseline %s, not the pinned %s" % ("f" * 64, BASELINE), got[0])
+        self.assertIn("expected_baseline_manifest_sha256", got[0])
+        self.assertEqual(self._manifest_reasons(archive_row("corpus-rel", "corpus", SHA, counts=COUNTS)), [])
 
-    def _chain(self, prev, ok, bad):
-        self.assertEqual(self._manifest_reasons(prev, ok), [])
-        self.assertEqual(self._manifest_reasons(prev, bad),
-                         ["corpus: archive corpus-rel compared with the baseline %s; the previous corpus row "
-                          "corpus-prev swept %s" % ("f" * 64, "e" * 64)])
-        # A previous row that carries no digest (before 0.11.0) leaves the chain unchecked.
-        old = archive_row("corpus-prev", "corpus", "d" * 40, date="2026-10-01", counts=COUNTS, manifest=None)
-        self.assertEqual(self._manifest_reasons(old, bad), [])
+    def test_a_baseline_that_differs_is_accepted_outside_release_mode(self):
+        rows = archives_toml(archive_row("soak-rel", "soak", SHA, legs=FIVE),
+                             archive_row("corpus-rel", "corpus", SHA, counts=COUNTS, baseline="f" * 64))
+        self.assertEqual(collect(archives=rows)["verdict"], "GO")
+
+    def test_the_two_refusals_name_the_key_to_update(self):
+        got = self._manifest_reasons(archive_row("corpus-rel", "corpus", SHA, counts=COUNTS, manifest="d" * 64))
+        self.assertIn("expected_manifest_sha256", got[0])
+        self.assertIn("expected_files", got[0])
+
+    def test_a_row_without_a_baseline_digest_is_refused_by_the_existing_rule_alone(self):
+        rows = archives_toml(archive_row("soak-rel", "soak", SHA, legs=FIVE),
+                             archive_row("corpus-rel", "corpus", SHA, counts=COUNTS, baseline=None))
+        reasons = collect(release=True, archives=rows)["verdict_reasons"]
+        self.assertEqual([r for r in reasons if "baseline" in r and "pinned" in r], [])
+        self.assertTrue(any("names no baseline" in r for r in reasons))
 
     def test_a_longer_than_required_row_qualifies_as_the_release_soak(self):
         rows = archives_toml(archive_row("soak-72", "soak", SHA, duration=259200, legs=FIVE),
@@ -1929,10 +1939,13 @@ class ReleaseModeTests(unittest.TestCase):
                 q.load_archives(d)
             self.assertEqual(e.exception.code, 1)
 
-    def test_archives_require_the_pin_and_validate_the_manifest_key(self):
+    def test_archives_require_the_pins_and_validate_the_manifest_key(self):
         pin_line = 'expected_manifest_sha256 = "%s"\n' % PIN
+        base_line = 'expected_baseline_manifest_sha256 = "%s"\n' % BASELINE
         cases = [(RELEASE_OK.replace(pin_line, ""), "expected_manifest_sha256 is required"),
                  (RELEASE_OK.replace(PIN, "xyz", 1), "expected_manifest_sha256 is required"),
+                 (RELEASE_OK.replace(base_line, ""), "expected_baseline_manifest_sha256 is required"),
+                 (RELEASE_OK.replace(BASELINE, "xyz", 1), "expected_baseline_manifest_sha256 is required"),
                  (RELEASE_OK + '\n[[archive]]\nid = "s"\nkind = "soak"\ntree = "%s"\n'
                   'overall_pass = true\nnote = "n"\ndate = "2026-10-18"\nexpected_duration_s = 1\n'
                   'manifest_sha256 = "%s"\n' % (SHA, PIN), "belongs to corpus rows only")]
