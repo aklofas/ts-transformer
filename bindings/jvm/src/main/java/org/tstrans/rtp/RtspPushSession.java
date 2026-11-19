@@ -29,8 +29,12 @@ import org.tstrans.mpegts.MuxerConfig;
  * <p><b>Thread safety.</b> The data, control and query calls run one at a time: a call
  * made while another is in progress on another thread waits for it.
  * {@link #cancelHandle()} answers at once from any thread, also while a send is
- * waiting. {@link #close()} may be called from any thread: when another call is in
- * progress it fires the cancel first (that call throws {@code CLOSED}), then closes.
+ * waiting, and is the way to end a waiting send. {@link #close()} and
+ * {@link #teardown()} may be called from any thread: when a send, {@code pause()} or
+ * {@code resume()} is in progress or waiting on another thread they fire the cancel
+ * first (that call throws {@code CLOSED}), then close; a {@link #stats()} or
+ * {@link #isSessionAlive()} in progress is waited for and does not cancel the
+ * session.
  *
  * <p><b>How it ends.</b> Once the cancel handle has fired, every data call throws
  * {@link RtpException} of kind {@code CLOSED} (the session stays open until it is
@@ -152,7 +156,9 @@ public final class RtspPushSession extends NativeHandle {
      * thread is given up to 2&nbsp;s to end. The session is closed afterwards, on every
      * outcome: later calls throw {@link IllegalStateException} and {@code close()} does
      * nothing. (The play session's {@link RtspSession#teardown()} keeps its session open
-     * instead.)
+     * instead.) Like {@code close()}, it cancels a send, {@code pause()} or
+     * {@code resume()} in progress on another thread first, and waits for a
+     * {@link #stats()} or {@link #isSessionAlive()} without cancelling.
      *
      * @throws RtspException with the kind of the status for a TEARDOWN the server refuses
      *     ({@code PROTOCOL}, or {@code NOT_FOUND} for a 404); {@code CLOSED} on a
@@ -169,8 +175,8 @@ public final class RtspPushSession extends NativeHandle {
 
     /**
      * A handle that ends a waiting data call, {@link #pause()} or a close from any
-     * thread; the call then throws {@code CLOSED}. Answers at once, also while a send
-     * is waiting. A cancelled session sends nothing more; closing it still writes
+     * thread; the call then throws {@code CLOSED}. Never waits: it answers at once, also
+     * while a send is waiting, and is the way to end that send. A cancelled session sends nothing more; closing it still writes
      * TEARDOWN. Every handle of one session shares one flag, which a {@link #close()}
      * that finds a call in progress sets.
      *
@@ -185,7 +191,12 @@ public final class RtspPushSession extends NativeHandle {
     }
 
     /**
-     * The session's counters now. Waits for a call in progress on another thread.
+     * The session's counters now.
+     *
+     * <p>Waits for a call in progress on another thread: a send waiting for a slow
+     * server holds the session until it ends, which against a server that keeps taking
+     * a byte now and then has no bound. {@link #cancelHandle()} never waits and is the
+     * way to end such a send.
      *
      * @return a snapshot of the counters
      * @throws IllegalStateException if the session is closed
@@ -208,7 +219,12 @@ public final class RtspPushSession extends NativeHandle {
 
     /**
      * False once the session is known dead: the control connection ended, or a keepalive
-     * ping was answered {@code 454}. Waits for a call in progress on another thread.
+     * ping was answered {@code 454}.
+     *
+     * <p>Waits for a call in progress on another thread: a send waiting for a slow
+     * server holds the session until it ends, which against a server that keeps taking
+     * a byte now and then has no bound. {@link #cancelHandle()} never waits and is the
+     * way to end such a send.
      *
      * @return whether the session is still alive
      * @throws IllegalStateException if the session is closed
@@ -286,13 +302,18 @@ public final class RtspPushSession extends NativeHandle {
      * TEARDOWN is not reported ({@link #teardown()} is the call that reports).
      *
      * <p>Idempotent: a second call, and a call made while another close is running,
-     * return at once. Called while another call is in progress on another thread, it
-     * fires the cancel first: that call throws {@code CLOSED}, what is still queued is
-     * dropped, and the TEARDOWN is written without the wait.
+     * return at once. Called while a send, {@code pause()} or {@code resume()} is in
+     * progress or waiting on another thread, it fires the cancel first: that call
+     * throws {@code CLOSED}, what is still queued is dropped, and the TEARDOWN is
+     * written without the wait. A {@link #stats()} or {@link #isSessionAlive()} in
+     * progress is waited for instead, and the session then closes as an idle one does.
      */
     @Override public void close() { super.close(); }
 
     @Override protected void nativeClose(long h) { nClose(h); }
+
+    // Test-only: the raw registry key, for the jni-test-hooks probes.
+    long nativeHandleForTest() { return peekHandle(); }
 
     private static native void nSendTs(long handle, byte[] ts) throws RtpException;
     private static native void nSendVideo(long handle, byte[] annexB, long pts) throws RtpException;

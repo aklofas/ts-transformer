@@ -34,9 +34,11 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
+import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 import org.tstrans.MuxException;
 import org.tstrans.RtpException;
 import org.tstrans.RtspException;
+import org.tstrans.internal.PushProbe;
 import org.tstrans.mpegts.DemuxEvent;
 import org.tstrans.mpegts.MuxerConfig;
 import org.tstrans.mpegts.VideoCodec;
@@ -163,6 +165,50 @@ class RtspPushTest {
     }
 
     @Test
+    @Timeout(60)
+    void aTeardownRacingAStatsReaderEndsCleanly() throws Exception {
+        assumeLinux();
+        final int bundles = 50;
+        try (RtspServer server = startServer();
+             PublishMount mount = server.addPublishMount("/pub")) {
+            // Several rounds, so the TEARDOWN meets the reader inside stats() at least once.
+            for (int round = 0; round < 10; round++) {
+                long before = mount.stats().rtpPacketsReceived();
+                RtspPushSession push = RtspClient.push(serverConfig(server), PushDescription.mp2t());
+                AtomicReference<Throwable> readerError = new AtomicReference<>();
+                AtomicLong reads = new AtomicLong();
+                Thread reader = new Thread(() -> {
+                    try {
+                        while (true) {
+                            push.stats();
+                            reads.incrementAndGet();
+                        }
+                    } catch (IllegalStateException closed) {
+                        // The session closed: the reader is done.
+                    } catch (Throwable t) {
+                        readerError.set(t);
+                    }
+                }, "stats-reader");
+                reader.setDaemon(true);
+                reader.start();
+                for (int i = 0; i < bundles; i++) push.sendTs(NULL_BUNDLE);
+                assertTrue(waitFor(() -> reads.get() > 0), "the reader never read");
+                // A reader holding the session for a moment is not a call to cancel: the
+                // TEARDOWN is accepted, so nothing is thrown.
+                push.teardown();
+                reader.join(scaledMs(5_000));
+                assertFalse(reader.isAlive(), "the stats reader did not end");
+                assertEquals(null, readerError.get());
+                final int r = round;
+                assertTrue(waitFor(() -> mount.stats().rtpPacketsReceived() - before == bundles),
+                    () -> "round " + r + ": the mount counted "
+                        + (mount.stats().rtpPacketsReceived() - before) + " of " + bundles);
+                assertTrue(waitFor(() -> mount.publisher().isEmpty()), "the torn-down push kept the mount");
+            }
+        }
+    }
+
+    @Test
     @Timeout(30)
     void h265PushIsRefused415ByTheLibraryServer() throws Exception {
         assumeLinux();
@@ -245,20 +291,50 @@ class RtspPushTest {
     void closeDuringAParkedSendCancelsFirst() throws Exception {
         try (ScriptedRecordServer peer = new ScriptedRecordServer(200, true)) {
             RtspPushSession push = RtspClient.push(peer.config(), PushDescription.mp2t());
-            try (RtspCancelHandle cancel = push.cancelHandle()) {
-                Sending sending = Sending.start(push);
-                sending.awaitParked();
-                long t0 = System.nanoTime();
-                push.close();
-                long tookMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - t0);
-                // The cancel releases the send at once; the TEARDOWN is bounded at
-                // 500 ms and the client's thread at 2 s.
-                assertTrue(tookMs < scaledMs(4_000), "close() took " + tookMs + " ms");
-                assertTrue(sending.join(scaledMs(1_000)), "the parked send did not end");
-                RtpException e = assertInstanceOf(RtpException.class, sending.error.get());
-                assertEquals(RtpException.Kind.CLOSED, e.kind());
-                assertTrue(cancel.isCancelled(), "close() did not fire the cancel");
-            }
+            Sending sending = Sending.start(push);
+            sending.awaitParked();
+            long t0 = System.nanoTime();
+            push.close();
+            long tookMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - t0);
+            // The cancel releases the send at once; the TEARDOWN is bounded at
+            // 500 ms and the client's thread at 2 s.
+            assertTrue(tookMs < scaledMs(4_000), "close() took " + tookMs + " ms");
+            assertTrue(sending.join(scaledMs(1_000)), "the parked send did not end");
+            RtpException e = assertInstanceOf(RtpException.class, sending.error.get());
+            assertEquals(RtpException.Kind.CLOSED, e.kind());
+        }
+    }
+
+    @Test
+    @Timeout(30)
+    @EnabledIfSystemProperty(named = "tst.jniTestHooks", matches = "true")
+    void aTeardownWaitsForAQueryCallWithoutCancelling() throws Exception {
+        try (ScriptedRecordServer peer = new ScriptedRecordServer(200, false)) {
+            RtspPushSession push = RtspClient.push(peer.config(), PushDescription.mp2t());
+            push.sendTs(NULL_BUNDLE);
+            long handle = push.nativeHandleForTest();
+            AtomicReference<Throwable> holderError = new AtomicReference<>();
+            Thread holder = new Thread(() -> {
+                try {
+                    PushProbe.nHoldAsReader(handle, 400);
+                } catch (Throwable t) {
+                    holderError.set(t);
+                }
+            }, "query-holder");
+            holder.setDaemon(true);
+            holder.start();
+            assertTrue(waitFor(PushProbe::nReaderHolds), "the probe never held the session");
+            long t0 = System.nanoTime();
+            // A query call holding the session is not a call to cancel: teardown()
+            // throws CLOSED on a cancelled session, and returns here because the
+            // TEARDOWN was accepted on a session nobody cancelled.
+            push.teardown();
+            long tookMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - t0);
+            assertTrue(tookMs >= 200, "teardown() did not wait for the query: " + tookMs + " ms");
+            holder.join(scaledMs(5_000));
+            assertEquals(null, holderError.get());
+            assertTrue(peer.awaitMethod("TEARDOWN"));
+            assertTrue(peer.framesRead.get() >= 1, "the queued media was not written");
         }
     }
 
