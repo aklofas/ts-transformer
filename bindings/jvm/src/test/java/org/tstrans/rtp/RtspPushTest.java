@@ -307,6 +307,36 @@ class RtspPushTest {
 
     @Test
     @Timeout(30)
+    void closeDuringAPauseAwaitingItsReplyCancelsFirst() throws Exception {
+        try (ScriptedRecordServer peer = new ScriptedRecordServer(200, false, false)) {
+            RtspPushSession push = RtspClient.push(peer.config(), PushDescription.mp2t());
+            push.sendTs(NULL_BUNDLE);
+            AtomicReference<Throwable> pauseError = new AtomicReference<>();
+            Thread pausing = new Thread(() -> {
+                try {
+                    push.pause();
+                } catch (Throwable t) {
+                    pauseError.set(t);
+                }
+            }, "pausing");
+            pausing.setDaemon(true);
+            pausing.start();
+            // The PAUSE is on the wire and its reply never comes: the call waits up to
+            // its 10 s request timeout unless the close cancels it.
+            assertTrue(peer.awaitMethod("PAUSE"), "the PAUSE was never written");
+            long t0 = System.nanoTime();
+            push.close();
+            long tookMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - t0);
+            assertTrue(tookMs < scaledMs(4_000), "close() took " + tookMs + " ms");
+            pausing.join(scaledMs(1_000));
+            assertFalse(pausing.isAlive(), "the pause did not end");
+            RtspException e = assertInstanceOf(RtspException.class, pauseError.get());
+            assertEquals(RtspException.Kind.CLOSED, e.kind());
+        }
+    }
+
+    @Test
+    @Timeout(30)
     @EnabledIfSystemProperty(named = "tst.jniTestHooks", matches = "true")
     void aTeardownWaitsForAQueryCallWithoutCancelling() throws Exception {
         try (ScriptedRecordServer peer = new ScriptedRecordServer(200, false)) {
@@ -631,6 +661,7 @@ class RtspPushTest {
         private final Thread thread;
         private final int teardownStatus;
         private final boolean stopReadingAfterRecord;
+        private final boolean answerPause;
         private final CountDownLatch release = new CountDownLatch(1);
         private volatile Socket conn;
         /** The methods of the requests read, in order. */
@@ -639,8 +670,15 @@ class RtspPushTest {
         final AtomicLong framesRead = new AtomicLong();
 
         ScriptedRecordServer(int teardownStatus, boolean stopReadingAfterRecord) throws IOException {
+            this(teardownStatus, stopReadingAfterRecord, true);
+        }
+
+        /** As above; with {@code answerPause} false a PAUSE is read and never answered. */
+        ScriptedRecordServer(int teardownStatus, boolean stopReadingAfterRecord, boolean answerPause)
+                throws IOException {
             this.teardownStatus = teardownStatus;
             this.stopReadingAfterRecord = stopReadingAfterRecord;
+            this.answerPause = answerPause;
             this.listener = new ServerSocket();
             // A small receive buffer: a server that stops reading backs the client up sooner.
             listener.setReceiveBufferSize(4096);
@@ -706,6 +744,7 @@ class RtspPushTest {
                         case "TEARDOWN" -> status = teardownStatus;
                         default -> { }
                     }
+                    if (method.equals("PAUSE") && !answerPause) continue;
                     String cseq = RawRtspPeer.header(req, "CSeq");
                     out.write(("RTSP/1.0 " + status + " " + (status == 200 ? "OK" : "Refused")
                         + "\r\nCSeq: " + cseq + "\r\n" + extra + "\r\n").getBytes(StandardCharsets.US_ASCII));
