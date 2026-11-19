@@ -46,6 +46,9 @@ on:
       # saw it (Monday cron). ~25 min warm; the
       # census assert (165 declared cells, 0 skips) now gates those PRs too.
       - 'crates/tst-core/src/mpegts/**'
+      # The job's "Subtitle interop guard" step: its test and its fixtures.
+      - 'crates/tst-core/tests/regression/subtitle_interop.rs'
+      - 'crates/tst-core/tests/fixtures/subtitles/**'
       # The rtsp-publish/* cells are the only real-tool check of the RTSP
       # server's publish path (ANNOUNCE/RECORD, the re-muxer, SDP parsing,
       # the H.264 depacketizer and the sender-report parsing that feeds
