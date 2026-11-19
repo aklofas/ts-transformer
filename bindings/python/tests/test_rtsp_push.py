@@ -509,8 +509,10 @@ def test_a_refused_program_config_keeps_the_session() -> None:
         sender = push.into_sender()
         assert isinstance(sender, Sender)
         sender.send_bytes(TS_BUNDLE)
-        sender.close()
+        # The sender's close() cancels first and may drop a packet queued a
+        # moment before: wait for it to arrive.
         assert _wait_for(lambda: mount.stats().rtp_packets_received == 2), mount.stats()
+        sender.close()
         assert _wait_for(lambda: mount.publisher() is None)
         push.close()  # nothing left to close
 
@@ -801,6 +803,21 @@ def test_push_description_constructors_take_bytes_like() -> None:
         with RtspClient.push(RtspClientConfig(_url(server, "/cam")), desc):
             info = mount.publisher()
             assert info is not None and info.shape is PublishShape.ELEMENTARY
+
+
+def test_an_h264_description_without_parameter_sets_is_refused_by_push() -> None:
+    server = ScriptedRecordServer()
+    try:
+        with pytest.raises(RtspError) as ei:
+            RtspClient.push(RtspClientConfig(server.url), PushDescription.h264([]))
+        assert ei.value.kind is RtspErrorKind.PROTOCOL
+        # Refused before a request was written: the server's thread has read
+        # the connection to its end, so a late request would be counted.
+        server.thread.join(WAIT_S)
+        assert not server.thread.is_alive(), "the client kept the connection"
+        assert server.methods == []
+    finally:
+        server.close()
 
 
 def test_interpreter_exit_cancels_an_open_session() -> None:
