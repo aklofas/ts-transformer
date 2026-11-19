@@ -75,6 +75,80 @@ fn apply_tls_roots(
     }
 }
 
+/// The `RtspClientBuilder` every client factory starts from (`RtspClient.nConnect`,
+/// `nConnectH264` and `nPush`): the URL parsed, the credentials when `auth_user` is
+/// not null, keepalive pings unless `keepalive` is false, and the custom trust
+/// roots of a non-null `tls_root_certs_pem`. `None` with a pending exception:
+/// `RtspException` for a URL the builder refuses or a PEM bundle `apply_tls_roots`
+/// refuses, `RuntimeException` for a Java string JNI cannot read.
+///
+/// A null `auth_password` is the empty password. The Digest algorithm is not
+/// passed: the client picks it from the server's `WWW-Authenticate` header.
+/// `digest_only` (a `DigestAuth` credential) refuses a challenge that offers no
+/// Digest.
+pub(super) fn client_builder(
+    env: &mut Env,
+    url: &JString<'_>,
+    auth_user: &JString<'_>,
+    auth_password: &JString<'_>,
+    digest_only: jboolean,
+    keepalive: jboolean,
+    tls_root_certs_pem: &JByteArray<'_>,
+) -> Option<RtspClientBuilder> {
+    let url_str: String = match url.try_to_string(env) {
+        Ok(s) => s,
+        Err(e) => {
+            let _ = env.throw_new(
+                FindClass(jni_str!("java/lang/RuntimeException")),
+                JNIString::from(e.to_string()),
+            );
+            return None;
+        }
+    };
+    let mut builder = match RtspClientBuilder::new(&url_str) {
+        Ok(b) => b,
+        Err(e) => {
+            rtsp_error_to_jvm(env, e);
+            return None;
+        }
+    };
+    if !auth_user.is_null() {
+        let user: String = match auth_user.try_to_string(env) {
+            Ok(s) => s,
+            Err(e) => {
+                let _ = env.throw_new(
+                    FindClass(jni_str!("java/lang/RuntimeException")),
+                    JNIString::from(e.to_string()),
+                );
+                return None;
+            }
+        };
+        let pw: String = if auth_password.is_null() {
+            String::new()
+        } else {
+            match auth_password.try_to_string(env) {
+                Ok(s) => s,
+                Err(e) => {
+                    let _ = env.throw_new(
+                        FindClass(jni_str!("java/lang/RuntimeException")),
+                        JNIString::from(e.to_string()),
+                    );
+                    return None;
+                }
+            }
+        };
+        builder = builder.auth(user, SecretString::from(pw));
+        if digest_only {
+            builder = builder.auth_schemes(AuthSchemes::DigestOnly);
+        }
+    }
+    if !keepalive {
+        builder = builder.no_auto_keepalive(true);
+    }
+    // Before any connect I/O.
+    apply_tls_roots(env, builder, tls_root_certs_pem)
+}
+
 /// Boxed behind `org.tstrans.rtp.RtspCancelHandle.handle`. Wraps tst-rtp's
 /// self-contained `RtspCancelHandle` (owns its own `Arc<AtomicBool>` flag).
 pub(super) struct JniRtspCancel {
@@ -175,65 +249,20 @@ jni_native! {
         keepalive: jboolean,
         tls_root_certs_pem: JByteArray<'_>,
     ) -> jlong = 0 => {
-        let url_str: String = match url.try_to_string(env) {
-            Ok(s) => s,
-            Err(e) => {
-                let _ = env.throw_new(FindClass(jni_str!("java/lang/RuntimeException")), JNIString::from(e.to_string()));
-                return 0;
-            }
+        let Some(builder) = client_builder(
+            env,
+            &url,
+            &auth_user,
+            &auth_password,
+            digest_only,
+            keepalive,
+            &tls_root_certs_pem,
+        ) else {
+            return 0; // exception pending
         };
 
-        // 1. Builder construction (URL parse) — the only eager typed RtspError.
-        let mut builder = match RtspClientBuilder::new(&url_str) {
-            Ok(b) => b,
-            Err(e) => {
-                rtsp_error_to_jvm(env, e);
-                return 0;
-            }
-        };
-
-        // 2. Wire credentials when present. SecretString wrapping happens here.
-        //    A null Java String arrives as a null JString (is_null()). The algorithm
-        //    is NOT passed: tst-rtp's challenge handler picks it from the server's
-        //    WWW-Authenticate header (matches tst-py).
-        if !auth_user.is_null() {
-            let user: String = match auth_user.try_to_string(env) {
-                Ok(s) => s,
-                Err(e) => {
-                    let _ = env.throw_new(FindClass(jni_str!("java/lang/RuntimeException")), JNIString::from(e.to_string()));
-                    return 0;
-                }
-            };
-            let pw: String = if auth_password.is_null() {
-                String::new()
-            } else {
-                match auth_password.try_to_string(env) {
-                    Ok(s) => s,
-                    Err(e) => {
-                        let _ = env.throw_new(FindClass(jni_str!("java/lang/RuntimeException")), JNIString::from(e.to_string()));
-                        return 0;
-                    }
-                }
-            };
-            builder = builder.auth(user, SecretString::from(pw));
-            if digest_only {
-                builder = builder.auth_schemes(AuthSchemes::DigestOnly);
-            }
-        }
-
-        // 3. keepalive=false disables the automatic keepalive pings.
-        if !keepalive {
-            builder = builder.no_auto_keepalive(true);
-        }
-
-        // 4. Custom-CA trust roots, if supplied. Must land before any connect I/O.
-        let builder = match apply_tls_roots(env, builder, &tls_root_certs_pem) {
-            Some(b) => b,
-            None => return 0, // exception pending
-        };
-
-        // 5. Drive the control-plane to PLAY (network I/O). Ports tst-py's
-        //    allow_threads closure — JNI has no GIL to release.
+        // Drive the control-plane to PLAY (network I/O). Ports tst-py's
+        // allow_threads closure — JNI has no GIL to release.
         let result: Result<(RustRtspClient, RustRtspSession), RtspError> = (|| {
             let mut client = builder.connect()?;
             let _opts = client.options()?;
@@ -276,55 +305,16 @@ jni_native! {
         keepalive: jboolean,
         tls_root_certs_pem: JByteArray<'_>,
     ) -> jlong = 0 => {
-        let url_str: String = match url.try_to_string(env) {
-            Ok(s) => s,
-            Err(e) => {
-                let _ = env.throw_new(FindClass(jni_str!("java/lang/RuntimeException")), JNIString::from(e.to_string()));
-                return 0;
-            }
-        };
-
-        let mut builder = match RtspClientBuilder::new(&url_str) {
-            Ok(b) => b,
-            Err(e) => {
-                rtsp_error_to_jvm(env, e);
-                return 0;
-            }
-        };
-
-        if !auth_user.is_null() {
-            let user: String = match auth_user.try_to_string(env) {
-                Ok(s) => s,
-                Err(e) => {
-                    let _ = env.throw_new(FindClass(jni_str!("java/lang/RuntimeException")), JNIString::from(e.to_string()));
-                    return 0;
-                }
-            };
-            let pw: String = if auth_password.is_null() {
-                String::new()
-            } else {
-                match auth_password.try_to_string(env) {
-                    Ok(s) => s,
-                    Err(e) => {
-                        let _ = env.throw_new(FindClass(jni_str!("java/lang/RuntimeException")), JNIString::from(e.to_string()));
-                        return 0;
-                    }
-                }
-            };
-            builder = builder.auth(user, SecretString::from(pw));
-            if digest_only {
-                builder = builder.auth_schemes(AuthSchemes::DigestOnly);
-            }
-        }
-
-        if !keepalive {
-            builder = builder.no_auto_keepalive(true);
-        }
-
-        // Custom-CA trust roots, if supplied. Must land before any connect I/O.
-        let builder = match apply_tls_roots(env, builder, &tls_root_certs_pem) {
-            Some(b) => b,
-            None => return 0, // exception pending
+        let Some(builder) = client_builder(
+            env,
+            &url,
+            &auth_user,
+            &auth_password,
+            digest_only,
+            keepalive,
+            &tls_root_certs_pem,
+        ) else {
+            return 0; // exception pending
         };
 
         // Drive OPTIONS / DESCRIBE / SETUP (H.264 path) / PLAY.

@@ -34,16 +34,10 @@ public final class RtspClient {
      *     {@code IO}/{@code TIMEOUT}; 401/404 → {@code AUTH_REQUIRED}/{@code NOT_FOUND}; …)
      */
     public static RtspSession connect(RtspClientConfig config) throws RtspException {
-        String authUser = null, authPassword = null;
-        boolean digestOnly = false;
-        Object a = config.auth().orElse(null);
-        if (a instanceof BasicAuth b) {
-            authUser = b.user(); authPassword = b.password();
-        } else if (a instanceof DigestAuth d) {
-            authUser = d.user(); authPassword = d.password(); digestOnly = true;
-        }
+        ClientAuth auth = ClientAuth.of(config);
         byte[] tlsRoots = config.tlsRootCertsPem().orElse(null);
-        long h = nConnect(effectiveUrl(config), authUser, authPassword, digestOnly, config.keepalive(), tlsRoots);
+        long h = nConnect(effectiveUrl(config), auth.user(), auth.password(), auth.digestOnly(),
+            config.keepalive(), tlsRoots);
         if (h == 0) {
             throw new RtspException(RtspException.Kind.PROTOCOL,
                 "nConnect returned 0 without throwing");
@@ -77,21 +71,29 @@ public final class RtspClient {
      *     control-plane failures as in {@link #connect(RtspClientConfig)}
      */
     public static RtspSession connectH264(RtspClientConfig config) throws RtspException {
-        String authUser = null, authPassword = null;
-        boolean digestOnly = false;
-        Object a = config.auth().orElse(null);
-        if (a instanceof BasicAuth b) {
-            authUser = b.user(); authPassword = b.password();
-        } else if (a instanceof DigestAuth d) {
-            authUser = d.user(); authPassword = d.password(); digestOnly = true;
-        }
+        ClientAuth auth = ClientAuth.of(config);
         byte[] tlsRoots = config.tlsRootCertsPem().orElse(null);
-        long h = nConnectH264(effectiveUrl(config), authUser, authPassword, digestOnly, config.keepalive(), tlsRoots);
+        long h = nConnectH264(effectiveUrl(config), auth.user(), auth.password(), auth.digestOnly(),
+            config.keepalive(), tlsRoots);
         if (h == 0) {
             throw new RtspException(RtspException.Kind.PROTOCOL,
                 "nConnectH264 returned 0 without throwing");
         }
         return new RtspSession(h);
+    }
+
+    /**
+     * The credential fields the native factories take: {@code null} user and password
+     * without a credential; {@code digestOnly} for a {@link DigestAuth}, which refuses a
+     * challenge that offers no Digest.
+     */
+    private record ClientAuth(String user, String password, boolean digestOnly) {
+        static ClientAuth of(RtspClientConfig config) {
+            Object a = config.auth().orElse(null);
+            if (a instanceof BasicAuth b) return new ClientAuth(b.user(), b.password(), false);
+            if (a instanceof DigestAuth d) return new ClientAuth(d.user(), d.password(), true);
+            return new ClientAuth(null, null, false);
+        }
     }
 
     /**
