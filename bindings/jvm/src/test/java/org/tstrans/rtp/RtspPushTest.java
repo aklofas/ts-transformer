@@ -167,7 +167,7 @@ class RtspPushTest {
     }
 
     @Test
-    @Timeout(60)
+    @Timeout(30)
     void aTeardownRacingAStatsReaderEndsCleanly() throws Exception {
         assumeLinux();
         final int bundles = 50;
@@ -343,24 +343,29 @@ class RtspPushTest {
     void aTeardownWaitsForAQueryCallWithoutCancelling() throws Exception {
         try (ScriptedRecordServer peer = new ScriptedRecordServer(200, false)) {
             RtspPushSession push = RtspClient.push(peer.config(), PushDescription.mp2t());
-            for (int i = 0; i < 5; i++) push.sendTs(NULL_BUNDLE);
-            Side holder = Side.start("query-holder", () -> PushProbe.nHoldAsReader(push.nativeHandleForTest()));
             try {
-                assertTrue(waitFor(PushProbe::nReaderHolds), "the probe never held the session");
-                Side tearing = Side.start("tearing-down", push::teardown);
-                // The teardown has begun while the query holds the session; only then
-                // does the query let go.
-                awaitInNative(tearing.thread, "nTeardown");
-                PushProbe.nRelease();
-                // A query holding the session is not a call to cancel: the TEARDOWN is
-                // accepted (a cancelled session's teardown() throws CLOSED).
-                tearing.assertEndedNormally();
+                for (int i = 0; i < 5; i++) push.sendTs(NULL_BUNDLE);
+                Side holder = Side.start("query-holder", () -> PushProbe.nHoldAsReader(push.nativeHandleForTest()));
+                try {
+                    assertTrue(waitFor(PushProbe::nReaderHolds), "the probe never held the session");
+                    long rounds = PushProbe.nCloseRetries();
+                    Side tearing = Side.start("tearing-down", push::teardown);
+                    // The teardown has met the session held by the query; only then does
+                    // the query let go.
+                    awaitCloseRetry(tearing.thread, rounds);
+                    PushProbe.nRelease();
+                    // A query holding the session is not a call to cancel: the TEARDOWN is
+                    // accepted (a cancelled session's teardown() throws CLOSED).
+                    tearing.assertEndedNormally();
+                } finally {
+                    PushProbe.nRelease();
+                }
+                holder.assertEndedNormally();
+                assertTrue(peer.awaitMethod("TEARDOWN"));
+                assertEquals(5L, peer.rtpFramesRead.get(), "the queued media was not all written");
             } finally {
-                PushProbe.nRelease();
+                push.close();
             }
-            holder.assertEndedNormally();
-            assertTrue(peer.awaitMethod("TEARDOWN"));
-            assertEquals(5L, peer.rtpFramesRead.get(), "the queued media was not all written");
         }
     }
 
@@ -370,27 +375,32 @@ class RtspPushTest {
     void aTeardownBehindAQueryDoesNotCancelForASendWaitingForTheSession() throws Exception {
         try (ScriptedRecordServer peer = new ScriptedRecordServer(200, false)) {
             RtspPushSession push = RtspClient.push(peer.config(), PushDescription.mp2t());
-            for (int i = 0; i < 3; i++) push.sendTs(NULL_BUNDLE);
-            Side holder = Side.start("query-holder", () -> PushProbe.nHoldAsReader(push.nativeHandleForTest()));
             try {
-                assertTrue(waitFor(PushProbe::nReaderHolds), "the probe never held the session");
-                // A send that waits for the session behind the query: it does not hold it.
-                Side sender = Side.start("waiting-sender", () -> push.sendTs(NULL_BUNDLE));
-                awaitInNative(sender.thread, "nSendTs");
-                Side tearing = Side.start("tearing-down", push::teardown);
-                awaitInNative(tearing.thread, "nTeardown");
-                PushProbe.nRelease();
-                // Neither holder can park on the network, so nothing is cancelled: the
-                // TEARDOWN is accepted, and the waiting send runs nothing.
-                tearing.assertEndedNormally();
-                RtpException e = assertInstanceOf(RtpException.class, sender.endedWith());
-                assertEquals(RtpException.Kind.CLOSED, e.kind());
+                for (int i = 0; i < 3; i++) push.sendTs(NULL_BUNDLE);
+                Side holder = Side.start("query-holder", () -> PushProbe.nHoldAsReader(push.nativeHandleForTest()));
+                try {
+                    assertTrue(waitFor(PushProbe::nReaderHolds), "the probe never held the session");
+                    // A send that waits for the session behind the query: it does not hold it.
+                    Side sender = Side.start("waiting-sender", () -> push.sendTs(NULL_BUNDLE));
+                    awaitInNative(sender.thread, "nSendTs");
+                    long rounds = PushProbe.nCloseRetries();
+                    Side tearing = Side.start("tearing-down", push::teardown);
+                    awaitCloseRetry(tearing.thread, rounds);
+                    PushProbe.nRelease();
+                    // Neither holder can park on the network, so nothing is cancelled: the
+                    // TEARDOWN is accepted, and the waiting send runs nothing.
+                    tearing.assertEndedNormally();
+                    RtpException e = assertInstanceOf(RtpException.class, sender.endedWith());
+                    assertEquals(RtpException.Kind.CLOSED, e.kind());
+                } finally {
+                    PushProbe.nRelease();
+                }
+                holder.assertEndedNormally();
+                assertTrue(peer.awaitMethod("TEARDOWN"));
+                assertEquals(3L, peer.rtpFramesRead.get(), "the waiting send wrote a frame");
             } finally {
-                PushProbe.nRelease();
+                push.close();
             }
-            holder.assertEndedNormally();
-            assertTrue(peer.awaitMethod("TEARDOWN"));
-            assertEquals(3L, peer.rtpFramesRead.get(), "the waiting send wrote a frame");
         }
     }
 
@@ -400,19 +410,22 @@ class RtspPushTest {
     void aBlockingCallThatGetsTheSessionAfterACloseBeganRunsNothing() throws Exception {
         try (ScriptedRecordServer peer = new ScriptedRecordServer(200, false)) {
             RtspPushSession push = RtspClient.push(peer.config(), PushDescription.mp2t());
-            push.sendTs(NULL_BUNDLE);
-            assertTrue(waitFor(() -> peer.rtpFramesRead.get() == 1), "RTP frames read: " + peer.rtpFramesRead.get());
-            // The flag a close sets before it takes the session; the session is free.
-            PushProbe.nMarkClosing(push.nativeHandleForTest());
-            RtpException send = assertThrows(RtpException.class, () -> push.sendTs(NULL_BUNDLE));
-            assertEquals(RtpException.Kind.CLOSED, send.kind());
-            RtspException pause = assertThrows(RtspException.class, push::pause);
-            assertEquals(RtspException.Kind.CLOSED, pause.kind());
-            RtspException resume = assertThrows(RtspException.class, push::resume);
-            assertEquals(RtspException.Kind.CLOSED, resume.kind());
-            // A query still answers.
-            assertEquals(1L, push.stats().packetsSent());
-            push.close();
+            try {
+                push.sendTs(NULL_BUNDLE);
+                assertTrue(waitFor(() -> peer.rtpFramesRead.get() == 1), "RTP frames read: " + peer.rtpFramesRead.get());
+                // The flag a close sets before it takes the session; the session is free.
+                PushProbe.nMarkClosing(push.nativeHandleForTest());
+                RtpException send = assertThrows(RtpException.class, () -> push.sendTs(NULL_BUNDLE));
+                assertEquals(RtpException.Kind.CLOSED, send.kind());
+                RtspException pause = assertThrows(RtspException.class, push::pause);
+                assertEquals(RtspException.Kind.CLOSED, pause.kind());
+                RtspException resume = assertThrows(RtspException.class, push::resume);
+                assertEquals(RtspException.Kind.CLOSED, resume.kind());
+                // A query still answers.
+                assertEquals(1L, push.stats().packetsSent());
+            } finally {
+                push.close();
+            }
             assertTrue(peer.awaitMethod("TEARDOWN"));
             assertEquals(1L, peer.rtpFramesRead.get(), "a call after the close began sent a frame");
             assertFalse(peer.methods.contains("PAUSE"), "a PAUSE was written: " + peer.methods);
@@ -624,6 +637,17 @@ class RtspPushTest {
 
     @Test
     @Timeout(30)
+    void anH264DescriptionWithoutParameterSetsIsRefusedAsProtocol() throws Exception {
+        try (ScriptedRecordServer peer = new ScriptedRecordServer(200, false)) {
+            RtspException e = assertThrows(RtspException.class,
+                () -> RtspClient.push(peer.config(), PushDescription.h264(List.of(), false)));
+            assertEquals(RtspException.Kind.PROTOCOL, e.kind());
+            assertFalse(peer.methods.contains("ANNOUNCE"), "an ANNOUNCE was written: " + peer.methods);
+        }
+    }
+
+    @Test
+    @Timeout(30)
     void statsCountsPacketsAndReports() throws Exception {
         final int bundles = 10;
         try (ScriptedRecordServer peer = new ScriptedRecordServer(200, false);
@@ -719,6 +743,20 @@ class RtspPushTest {
             Thread.sleep(2);
         }
         fail(t.getName() + " never reached " + method);
+    }
+
+    /**
+     * Wait (up to 5 s, scaled) until a close on {@code t} has met a held session: the
+     * close-retry count has passed {@code before}.
+     */
+    private static void awaitCloseRetry(Thread t, long before) throws InterruptedException {
+        long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(scaledMs(5_000));
+        while (System.nanoTime() < deadline) {
+            if (PushProbe.nCloseRetries() > before) return;
+            if (!t.isAlive()) fail(t.getName() + " ended before its close met the held session");
+            Thread.sleep(2);
+        }
+        fail(t.getName() + "'s close never met the held session");
     }
 
     /** Poll {@code cond} every 20 ms for up to 5 s (scaled). */

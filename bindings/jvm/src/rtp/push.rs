@@ -498,6 +498,8 @@ fn take_for_close(entry: &JniRtspPush) -> Option<RtspPush> {
                         .unwrap_or_else(PoisonError::into_inner)
                         .take();
                 }
+                #[cfg(feature = "jni-test-hooks")]
+                PROBE_CLOSE_RETRIES.fetch_add(1, Ordering::SeqCst);
                 std::thread::sleep(CLOSE_RETRY);
             }
         }
@@ -744,9 +746,10 @@ jni_native! {
 
 // ---------------------------------------------------------------------------
 // Test-only probes (feature = "jni-test-hooks"), never in the shipped JAR: hold a
-// real session's lock the way a query call does until the test releases it, and
-// mark a session as closing without taking it, so a test can order a close against
-// other calls without a timing race.
+// real session's lock the way a query call does until the test releases it, count
+// the rounds a close waits for a call holding a push, and mark a session as closing
+// without taking it, so a test can order a close against other calls without a
+// timing race.
 // ---------------------------------------------------------------------------
 
 #[cfg(feature = "jni-test-hooks")]
@@ -754,6 +757,10 @@ static PROBE_READER_HOLDS: AtomicBool = AtomicBool::new(false);
 
 #[cfg(feature = "jni-test-hooks")]
 static PROBE_RELEASE: AtomicBool = AtomicBool::new(false);
+
+/// The rounds every close has waited, without a cancel, for a call holding a push.
+#[cfg(feature = "jni-test-hooks")]
+static PROBE_CLOSE_RETRIES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 /// The longest a probe holds the lock unreleased: a test that never releases ends
 /// instead of hanging the suite.
@@ -794,6 +801,15 @@ jni_native! {
     #[cfg(feature = "jni-test-hooks")]
     fn Java_org_tstrans_internal_PushProbe_nReaderHolds(_env, _class) -> jboolean = false => {
         PROBE_READER_HOLDS.load(Ordering::SeqCst)
+    }
+}
+
+jni_native! {
+    /// `org.tstrans.internal.PushProbe.nCloseRetries()`: the rounds every close has
+    /// waited, without a cancel, for a call holding a push.
+    #[cfg(feature = "jni-test-hooks")]
+    fn Java_org_tstrans_internal_PushProbe_nCloseRetries(_env, _class) -> jlong = 0 => {
+        PROBE_CLOSE_RETRIES.load(Ordering::SeqCst) as jlong
     }
 }
 
