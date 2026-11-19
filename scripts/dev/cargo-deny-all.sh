@@ -12,10 +12,13 @@
 # Pinned mode: cargo-deny 0.20.2's only switch that stops the database fetch is
 # the global `--offline`, and it also runs `cargo metadata` offline, so each
 # workspace's crates are fetched first (`cargo fetch --locked`). Every network
-# step is bounded (GNU timeout, when present) and tried three times, 20 s and
-# 60 s apart. The offline checks then run behind a proxy on a closed port: a
-# check that tried to fetch anything would fail instead of reading the live
-# database.
+# step (in live mode the first fetch of the database) is bounded at 120 s (GNU
+# timeout, when present) and tried three times, 20 s and 60 s apart: at most
+# 3 x 130 + 80 = 470 s per step. The offline checks then run behind a proxy on a
+# closed port: a check that tried to fetch anything would fail instead of
+# reading the live database.
+# There is no fixture-database test: cargo-deny 0.20.2 refuses a database URL
+# without a domain name, file:// included.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -46,7 +49,7 @@ if [ -n "$rev" ] && ! printf '%s' "$rev" | grep -qE '^[0-9a-f]{40}$'; then
 fi
 
 bound=()
-if timeout --version 2>/dev/null | grep -q GNU; then bound=(timeout -k 10 300); fi
+if timeout --version 2>/dev/null | grep -q GNU; then bound=(timeout -k 10 120); fi
 # retry <command...>: three bounded attempts.
 retry() {
   local attempt=1 w
@@ -59,13 +62,18 @@ retry() {
   done
 }
 
+fetch_db() {
+  retry cargo deny --manifest-path "$ROOT/Cargo.toml" --config "$ROOT/deny.toml" fetch db \
+    || { echo "cargo-deny-all: could not fetch the advisory-db" >&2; exit 1; }
+}
+
 deny=()
 if [ -n "$rev" ]; then
   # cargo-deny names its clone after a hash of the URL, so it makes the clone
   # itself and the clone is then moved to the pin (as its own fetch does).
   grep -qxF 'db-path = "$CARGO_HOME/advisory-db"' "$ROOT/deny.toml" \
     || { echo "cargo-deny-all: deny.toml's db-path is not \$CARGO_HOME/advisory-db" >&2; exit 2; }
-  retry cargo deny --manifest-path "$ROOT/Cargo.toml" --config "$ROOT/deny.toml" fetch db
+  fetch_db
   dbs=("${CARGO_HOME:-$HOME/.cargo}"/advisory-db/advisory-db-*)
   [ ${#dbs[@]} -eq 1 ] && [ -d "${dbs[0]}/.git" ] \
     || { echo "cargo-deny-all: want one advisory-db clone, found: ${dbs[*]}" >&2; exit 2; }
@@ -81,6 +89,8 @@ if [ -n "$rev" ]; then
 else
   deny=(cargo deny)
   echo "cargo-deny-all: the advisory-db pin is empty; checking against the live database"
+  # The clone, retried here; each check then only updates it.
+  fetch_db
 fi
 
 failed=()

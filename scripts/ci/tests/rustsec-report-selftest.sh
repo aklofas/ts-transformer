@@ -102,4 +102,20 @@ grep -q 'crates/tst-srt/fuzz/Cargo.toml' "$TMP/out" || fail "broken workspace: n
 [ ! -s "$TMP/gh.log" ] || fail "broken workspace: gh was called"
 n=$((n + 1))
 
+# 6. An advisory in one workspace and another cargo-deny could not check: the
+# issue lists the advisory, the run names the broken workspace and fails.
+printf 'Cargo.toml error\ncrates/tst-srt/fuzz/Cargo.toml broken\n' > "$TMP/advisories"; echo '[]' > "$TMP/open.json"; run
+[ "$rc" != 0 ] || fail "advisory and broken: exit 0"
+[ "$(grep -c '^issue create' "$TMP/gh.log")" = 1 ] || fail "advisory and broken: not one issue create"
+grep -q 'RUSTSEC-2099-0001' "$TMP/gh.log" || fail "advisory and broken: the issue lacks the advisory"
+grep -q 'could not check crates/tst-srt/fuzz/Cargo.toml' "$TMP/out" || fail "advisory and broken: the broken workspace is not named"
+n=$((n + 1))
+
+# 7. Every workspace broken: no issue, and the run does not say "no advisories".
+printf 'Cargo.toml broken\n' > "$TMP/advisories"; echo '[]' > "$TMP/open.json"; run
+[ "$rc" != 0 ] || fail "only broken: exit 0"
+! grep -q 'no advisories in any workspace' "$TMP/out" || fail "only broken: the run claims no advisories"
+grep -q 'could not be checked' "$TMP/out" || fail "only broken: no summary of the unchecked workspaces"
+n=$((n + 1))
+
 echo "PASS: $n cases"

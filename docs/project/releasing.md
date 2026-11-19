@@ -165,7 +165,9 @@ step 3).
    An advisory published during the freeze does not turn `ci` red on the
    frozen commit, because the `deny` job reads the pinned database; the
    weekly `deps-advisory` workflow reports it against the live one, and the
-   maintainer decides whether it stops the release.
+   maintainer decides whether it stops the release. A freeze need not hold a
+   scheduled run: before the tag, dispatch `deps-advisory` with `dry_run` and
+   read its `rustsec` job.
 4. **`main` is green** — `ci`, `jvm-jar`, and `python-wheels` all passing on
    the frozen commit. Every rerun on that commit matches a row of
    the [CI flake ledger](/docs/project/ci-flakes.md), and the latest

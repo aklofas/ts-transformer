@@ -1235,8 +1235,12 @@ class AdvisoryDbPinTests(unittest.TestCase):
         rec = collect(release=True, archives=RELEASE_OK, pin='rev = "abc123"\n')
         self.assertEqual(rec["verdict_reasons"], ["advisory-db pin 'abc123' is not a 40-hex commit"])
 
+    def test_a_pin_file_that_is_not_toml_is_no_go_in_release_mode(self):
+        rec = collect(release=True, archives=RELEASE_OK, pin='rev = "\n')
+        self.assertEqual(rec["verdict_reasons"], ["advisory-db pin file is not valid TOML"])
+
     def test_outside_release_mode_the_pin_is_not_read(self):
-        for pin in (PIN_EMPTY, None, 'rev = "abc123"\n'):
+        for pin in (PIN_EMPTY, None, 'rev = "abc123"\n', 'rev = "\n'):
             rec = collect(pin=pin)
             self.assertEqual(rec["verdict"], "GO", (pin, rec["verdict_reasons"]))
 

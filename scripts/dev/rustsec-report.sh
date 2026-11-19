@@ -39,9 +39,12 @@ done < <(bash "$ROOT/scripts/dev/cargo-deny-all.sh" --list)
 for m in ${broken[@]+"${broken[@]}"}; do echo "rustsec-report: cargo-deny could not check $m"; done
 
 if [ -z "$report" ]; then
-  echo "rustsec-report: no advisories in any workspace"
-  [ ${#broken[@]} -eq 0 ]
-  exit
+  if [ ${#broken[@]} -eq 0 ]; then
+    echo "rustsec-report: no advisories in any workspace"
+    exit 0
+  fi
+  echo "rustsec-report: no advisory found, but ${#broken[@]} workspace(s) could not be checked"
+  exit 1
 fi
 
 run_url=""
