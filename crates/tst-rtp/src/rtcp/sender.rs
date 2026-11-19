@@ -1,8 +1,5 @@
 //! Sender-side RTCP and RTP header state for a track the client sends.
 
-// Used by the RTSP client's publish direction.
-#![allow(dead_code)]
-
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crate::packet::RtpHeader;

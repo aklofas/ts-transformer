@@ -66,6 +66,9 @@ pub use rtsp::auth::AuthSchemes;
 pub use rtsp::client::builder::RtspClientBuilder;
 pub use rtsp::client::options_describe::OptionsResponse;
 pub use rtsp::client::play::RtpInfo;
+pub use rtsp::client::push::{
+    PUSH_MP2T_MAX_PAYLOAD, PushDescription, PushError, PushStats, RtspPush, VideoTrack,
+};
 pub use rtsp::client::session::RtspSession;
 pub use rtsp::client::{RtspCancelHandle, RtspClient};
 pub use rtsp::transport_negotiation::RtspTransportKind;
@@ -108,7 +111,7 @@ pub use rtsp::server::{RtspServer, ServerStats};
 
 #[cfg(test)]
 mod tests {
-    /// `RtspClient` / `RtspSession` / `H264Receiver` are documented as
+    /// `RtspClient` / `RtspSession` / `RtspPush` / `H264Receiver` are documented as
     /// `Send` (see each type's rustdoc) — this is the compile-time guard:
     /// a change that drops `Send` here fails to compile, so the guarantee
     /// can't regress silently.
@@ -117,6 +120,7 @@ mod tests {
         fn assert_send<T: Send>() {}
         assert_send::<crate::RtspClient>();
         assert_send::<crate::RtspSession>();
+        assert_send::<crate::RtspPush>();
         assert_send::<crate::H264Receiver>();
     }
 }

@@ -1,9 +1,6 @@
 //! The SDP an RTSP client announces. Rendered from typed values only: no
 //! caller string reaches the text.
 
-// Used by the RTSP client's publish direction.
-#![allow(dead_code)]
-
 use std::net::IpAddr;
 
 use base64::Engine as _;

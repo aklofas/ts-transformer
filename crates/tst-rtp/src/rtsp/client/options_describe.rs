@@ -40,6 +40,20 @@ impl RtspClient {
         Ok(())
     }
 
+    /// Check that `resp` carries a `2xx` status, which is what a publish
+    /// session's requests take as success.
+    ///
+    /// Returns [`RtspError::Protocol`] for any other status.
+    pub(crate) fn expect_2xx(&self, resp: &RtspResponse) -> Result<(), RtspError> {
+        if !(200..300).contains(&resp.status) {
+            return Err(RtspError::Protocol {
+                code: resp.status,
+                reason: resp.reason.clone(),
+            });
+        }
+        Ok(())
+    }
+
     /// Send an OPTIONS request; parse the `Public:` header into the
     /// list of methods the server supports. Authenticates like every
     /// method (pre-emptive once a challenge is cached, and one retry after

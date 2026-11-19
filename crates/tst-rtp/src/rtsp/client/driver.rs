@@ -141,8 +141,6 @@ impl DriverHandle {
     /// re-checking, in this order, the cancel, the end of the session, and
     /// space. `Ended`: the thread closed the queue, and the client's
     /// end-reason slot names the cause when there is one.
-    // Called by the publish direction.
-    #[cfg_attr(not(test), expect(dead_code))]
     pub(crate) fn send_media(&self, frame: Bytes, cancel: &FlagCancel) -> Result<(), MediaWaitEnd> {
         // The 4-byte `$` header and what its 16-bit length can announce.
         debug_assert!(
@@ -157,8 +155,6 @@ impl DriverHandle {
 
     /// Wait until the media queue is empty and the stream has no unsent
     /// byte, with the checks and the ends of [`Self::send_media`].
-    // Called by the publish direction.
-    #[cfg_attr(not(test), expect(dead_code))]
     pub(crate) fn drain_media(&self, cancel: &FlagCancel) -> Result<(), MediaWaitEnd> {
         self.media.wait_drained(cancel)
     }
@@ -166,8 +162,6 @@ impl DriverHandle {
     /// Frames that were still in the queue when it closed. Bytes of a frame
     /// the thread had already handed to the stream are not in this count,
     /// written or not.
-    // Called by the publish direction.
-    #[cfg_attr(not(test), expect(dead_code))]
     pub(crate) fn frames_dropped_at_close(&self) -> u64 {
         self.media.dropped_at_close()
     }

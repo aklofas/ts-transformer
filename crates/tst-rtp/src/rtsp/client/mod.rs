@@ -13,6 +13,7 @@ pub(crate) mod engine;
 pub(crate) mod media_queue;
 pub mod options_describe;
 pub mod play;
+pub mod push;
 pub mod session;
 pub(crate) mod setup;
 pub(crate) mod stream;
@@ -21,7 +22,7 @@ pub(crate) mod teardown;
 mod test_sockets;
 pub(crate) mod tls;
 
-use std::net::{TcpStream, ToSocketAddrs};
+use std::net::{IpAddr, TcpStream, ToSocketAddrs};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
@@ -93,6 +94,15 @@ pub struct RtspClient {
     pub(crate) session_dead: Arc<AtomicBool>,
     /// The client's I/O thread.
     pub(crate) driver: DriverHandle,
+    /// The control socket's local address, which an announced description
+    /// names as its origin.
+    pub(crate) local_ip: IpAddr,
+    /// Frames the peer sent on the RTP channel of a track this side sends
+    /// on, counted by the client's thread.
+    pub(crate) frames_dropped_inbound: Arc<AtomicU64>,
+    /// The tracks of an accepted ANNOUNCE, until RECORD hands them to the
+    /// [`push::RtspPush`].
+    pub(crate) push: Option<push::Announced>,
 }
 
 /// `WWW-Authenticate` challenge cache + `qop=auth` nonce-count pair.
@@ -341,6 +351,11 @@ impl RtspClient {
         tcp.set_write_timeout(Some(CONTROL_WRITE_TIMEOUT))
             .map_err(|e| RtspError::Io(e.kind()))?;
         tcp.set_nodelay(true).ok();
+        let local_ip = tcp
+            .local_addr()
+            .map_err(|e| RtspError::Io(e.kind()))?
+            .ip()
+            .to_canonical();
         // `?tcp_keepalive=` / `RtspClientBuilder::tcp_keepalive`: applied
         // to the raw TCP socket before any TLS wrap so it covers rtsps://
         // too. Unlike nodelay above this propagates failure — the caller
@@ -402,6 +417,7 @@ impl RtspClient {
         let cancel = FlagCancel::new();
         let session_dead = Arc::new(AtomicBool::new(false));
         let end_reason = EndReasonHandle::default();
+        let frames_dropped_inbound = Arc::new(AtomicU64::new(0));
         let driver = driver::spawn(
             stream,
             engine,
@@ -410,7 +426,7 @@ impl RtspClient {
                 session_dead: session_dead.clone(),
                 end_reason: end_reason.clone(),
                 media_dropped: Arc::new(AtomicU64::new(0)),
-                frames_dropped_inbound: Arc::new(AtomicU64::new(0)),
+                frames_dropped_inbound: frames_dropped_inbound.clone(),
                 #[cfg(test)]
                 exit_gate: params.exit_gate,
             },
@@ -425,6 +441,9 @@ impl RtspClient {
             end_reason,
             session_dead,
             driver,
+            local_ip,
+            frames_dropped_inbound,
+            push: None,
         })
     }
 
