@@ -65,7 +65,8 @@ struct Shared {
     /// clear, lowered before it lets go. Query calls and calls only waiting for the
     /// mutex never set it.
     parking_holder: AtomicBool,
-    /// Set by a close before it looks at the mutex: a blocking call that gets `push`
+    /// Set by a close before it looks at the mutex, and by a conversion once it holds
+    /// the mutex and has claimed the session: a blocking call that gets `push`
     /// afterwards runs nothing.
     closing: AtomicBool,
 }
@@ -603,8 +604,8 @@ jni_native! {
 
 jni_native! {
     /// `RtspPushSession.nIsSessionAlive(handle)`: never waits and never throws. A call
-    /// holding the push counts as live (the shells' `isAlive` rule); a closed,
-    /// converted or unknown key is `false`.
+    /// holding the push counts as live (the shells' `isAlive` rule) unless a close has
+    /// begun; a closed, converted or unknown key is `false`.
     fn Java_org_tstrans_rtp_RtspPushSession_nIsSessionAlive(_env, _class, handle: jlong) -> jboolean = false => {
         let Some(shared) = REGISTRY_PUSH.with(handle as u64, |s| s.shared.clone()) else {
             return false;
@@ -614,7 +615,7 @@ jni_native! {
             Err(TryLockError::Poisoned(p)) => {
                 p.into_inner().as_ref().is_some_and(RtspPush::is_session_alive)
             }
-            Err(TryLockError::WouldBlock) => true,
+            Err(TryLockError::WouldBlock) => !shared.closing.load(Ordering::SeqCst),
         }
     }
 }
@@ -644,7 +645,7 @@ fn convertible(env: &mut Env, handle: jlong) -> bool {
 /// or `resume` holds the push it takes nothing, marks nothing and leaves an
 /// `IllegalStateException` saying so (the session stays usable). A query call holding
 /// the push for a moment is waited for, as a close waits for it. `None` with an
-/// `IllegalStateException` pending also when a close won the session.
+/// `IllegalStateException` pending also when a close won the session or has begun.
 fn take_opened(env: &mut Env, handle: jlong) -> Option<Opened<Box<dyn Transport>>> {
     let Some(shared) = REGISTRY_PUSH.with(handle as u64, |s| s.shared.clone()) else {
         crate::error::throw_closed(env, WHAT);
@@ -655,6 +656,11 @@ fn take_opened(env: &mut Env, handle: jlong) -> Option<Opened<Box<dyn Transport>
             Ok(guard) => break guard,
             Err(TryLockError::Poisoned(p)) => break p.into_inner(),
             Err(TryLockError::WouldBlock) => {
+                // A close has begun: the session is closed, not usable.
+                if shared.closing.load(Ordering::SeqCst) {
+                    crate::error::throw_closed(env, WHAT);
+                    return None;
+                }
                 if shared.parking_holder.load(Ordering::SeqCst) {
                     throw_illegal_state(env, IN_PROGRESS);
                     return None;

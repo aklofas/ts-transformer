@@ -186,10 +186,12 @@ public final class RtspPushSession extends NativeHandle {
      * only waiting for the session is not cancelled, and the teardown does not wait for
      * it to run: it runs nothing and throws {@code CLOSED}.
      *
-     * @throws RtspException with the kind of the status for a TEARDOWN the server refuses
-     *     ({@code PROTOCOL}, or {@code NOT_FOUND} for a 404); {@code PROTOCOL} with
-     *     status 454 when queued media was lost to an expired session; {@code CLOSED} on a cancelled session (the TEARDOWN is still written); {@code TIMEOUT} when no
-     *     reply came within the bound; {@code IO} when the connection failed
+     * @throws RtspException in this order: {@code CLOSED} on a cancelled session (the
+     *     TEARDOWN is still written); otherwise {@code PROTOCOL} with status 454 when
+     *     queued media was lost to an expired session; otherwise the TEARDOWN's own
+     *     result: the kind of the status for a TEARDOWN the server refuses
+     *     ({@code PROTOCOL}, or {@code NOT_FOUND} for a 404), {@code TIMEOUT} when no
+     *     reply came within the bound, {@code IO} when the connection failed
      * @throws IllegalStateException if the session is closed
      */
     public void teardown() throws RtspException {
@@ -250,7 +252,7 @@ public final class RtspPushSession extends NativeHandle {
      *
      * <p>Never waits and never throws: a call in progress on another thread (a send
      * waiting for a slow server, for example) counts as live, and the answer is
-     * {@code true} while it runs.
+     * {@code true} while it runs, unless a close of this session has begun.
      *
      * @return whether the session is still alive
      */
@@ -270,7 +272,8 @@ public final class RtspPushSession extends NativeHandle {
      *
      * <p>Called while a send, {@code pause()} or {@code resume()} is running on another
      * thread (a send waiting for a slow server, for example), it does not wait: it throws
-     * {@link IllegalStateException} and consumes nothing, and the session stays usable. A
+     * {@link IllegalStateException} and consumes nothing, and the session stays usable
+     * (once a close of the session has begun it throws as on a closed session). A
      * {@link #stats()} in progress is waited for. A refused muxer configuration, and a
      * session announced with a video track, also leave this session open and
      * unconsumed. On success this session is closed, and a send, {@code pause()} or
@@ -315,10 +318,11 @@ public final class RtspPushSession extends NativeHandle {
      *
      * <p>Called while a send, {@code pause()} or {@code resume()} is running on another
      * thread, it does not wait: it throws {@link IllegalStateException} and consumes
-     * nothing, and the session stays usable. A {@link #stats()} in progress is waited
-     * for. A session announced with a video track is also left open and unconsumed. On success this session is closed,
-     * and a send, {@code pause()} or {@code resume()} on another thread that was waiting
-     * for it runs nothing and throws {@code CLOSED}.
+     * nothing, and the session stays usable (once a close of the session has begun it
+     * throws as on a closed session). A {@link #stats()} in progress is waited for. A
+     * session announced with a video track is also left open and unconsumed. On success
+     * this session is closed, and a send, {@code pause()} or {@code resume()} on another
+     * thread that was waiting for it runs nothing and throws {@code CLOSED}.
      *
      * @return a {@code Sender} that owns the session
      * @throws RtspException not thrown today; kept so a later conversion failure needs no

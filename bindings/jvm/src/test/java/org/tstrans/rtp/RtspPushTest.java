@@ -251,6 +251,20 @@ class RtspPushTest {
 
     @Test
     @Timeout(30)
+    void closeIsSilentAboutARefusedTeardown() throws Exception {
+        try (ScriptedRecordServer peer = new ScriptedRecordServer(501, false)) {
+            RtspPushSession push = RtspClient.push(peer.config(), PushDescription.mp2t());
+            push.sendTs(NULL_BUNDLE);
+            // The situation in which teardown() throws PROTOCOL: close() reports nothing.
+            push.close();
+            assertTrue(peer.awaitMethod("TEARDOWN"));
+            assertEquals(1L, peer.rtpFramesRead.get(), "the RTP frame before the TEARDOWN");
+            assertThrows(IllegalStateException.class, () -> push.sendTs(NULL_BUNDLE));
+        }
+    }
+
+    @Test
+    @Timeout(30)
     void teardownAcceptedReturnsAndClosesTheSession() throws Exception {
         try (ScriptedRecordServer peer = new ScriptedRecordServer(200, false)) {
             RtspPushSession push = RtspClient.push(peer.config(), PushDescription.mp2t());
@@ -557,6 +571,75 @@ class RtspPushTest {
                 assertTrue(sending.join(scaledMs(1_000)), "the parked send did not end");
                 RtpException e = assertInstanceOf(RtpException.class, sending.error.get());
                 assertEquals(RtpException.Kind.CLOSED, e.kind());
+            } finally {
+                push.close();
+            }
+        }
+    }
+
+    @Test
+    @Timeout(30)
+    void aRefusedConversionLeavesTheSessionUsableOnceTheParkedSendHasEnded() throws Exception {
+        try (ScriptedRecordServer peer = new ScriptedRecordServer(200, true)) {
+            RtspPushSession push = RtspClient.push(peer.config(), PushDescription.mp2t());
+            try {
+                Sending sending = Sending.start(push);
+                sending.awaitParked();
+                Side converting = Side.start("converting", push::intoSender);
+                converting.thread.join(scaledMs(1_000));
+                assertFalse(converting.thread.isAlive(), "the conversion waited for the parked send");
+                assertInstanceOf(IllegalStateException.class, converting.error.get());
+                // The server reads again: the parked send returns, and the sends after it
+                // and a pause do their work on the same session.
+                long parkedAt = sending.sent.get();
+                peer.resumeReading();
+                assertTrue(waitFor(() -> sending.sent.get() > parkedAt + 10 || !sending.thread.isAlive()),
+                    "the sends did not go on");
+                assertTrue(sending.thread.isAlive(), "a send after the refusal threw: " + sending.error.get());
+                push.pause();
+                assertTrue(peer.awaitMethod("PAUSE"));
+                // The close then ends the session and the sending thread.
+                push.close();
+                assertTrue(sending.join(scaledMs(5_000)), "the sending thread did not end");
+                Throwable t = sending.error.get();
+                assertTrue(t instanceof IllegalStateException
+                        || (t instanceof RtpException r && r.kind() == RtpException.Kind.CLOSED),
+                    "the send after the close: " + t);
+                assertTrue(peer.awaitMethod("TEARDOWN"));
+            } finally {
+                push.close();
+            }
+        }
+    }
+
+    @Test
+    @Timeout(30)
+    @EnabledIfSystemProperty(named = "tst.jniTestHooks", matches = "true")
+    void aConversionAndTheLivenessProbeThatMeetABegunCloseReportItClosed() throws Exception {
+        try (ScriptedRecordServer peer = new ScriptedRecordServer(200, false)) {
+            RtspPushSession push = RtspClient.push(peer.config(), PushDescription.mp2t());
+            try {
+                Side holder = Side.start("query-holder", () -> PushProbe.nHoldAsReader(push.nativeHandleForTest()));
+                try {
+                    assertTrue(waitFor(PushProbe::nReaderHolds), "the probe never held the session");
+                    // A call holds the session: live.
+                    assertTrue(push.isSessionAlive());
+                    // The flag a close sets before it waits for the session.
+                    PushProbe.nMarkClosing(push.nativeHandleForTest());
+                    assertFalse(push.isSessionAlive(), "a session whose close has begun read live");
+                    // Each conversion reports the session closed at once, without waiting
+                    // for the call that holds it.
+                    for (Call convert : List.<Call>of(push::intoSender, () -> push.intoMuxSender(roundtripConfig()))) {
+                        Side converting = Side.start("converting", convert);
+                        converting.thread.join(scaledMs(1_000));
+                        assertFalse(converting.thread.isAlive(), "the conversion waited for the held session");
+                        IllegalStateException e = assertInstanceOf(IllegalStateException.class, converting.error.get());
+                        assertTrue(e.getMessage().contains("closed"), e.getMessage());
+                    }
+                } finally {
+                    PushProbe.nRelease();
+                }
+                holder.assertEndedNormally();
             } finally {
                 push.close();
             }
@@ -898,6 +981,8 @@ class RtspPushTest {
         private final boolean stopReadingAfterRecord;
         private final boolean answerPause;
         private final CountDownLatch release = new CountDownLatch(1);
+        /** Set by {@link #resumeReading()}: the server reads on once released. */
+        private volatile boolean resume;
         private volatile Socket conn;
         /** The methods of the requests read, in order. */
         final List<String> methods = new CopyOnWriteArrayList<>();
@@ -941,6 +1026,12 @@ class RtspPushTest {
         /** Wait up to 5 s (scaled) until {@code method} has been read {@code count} times. */
         boolean awaitMethod(String method, int count) throws InterruptedException {
             return waitFor(() -> methods.stream().filter(method::equals).count() >= count);
+        }
+
+        /** A server that stopped reading after RECORD reads and answers again. */
+        void resumeReading() {
+            resume = true;
+            release.countDown();
         }
 
         @Override public void close() throws Exception {
@@ -989,7 +1080,7 @@ class RtspPushTest {
                     out.flush();
                     if (method.equals("RECORD") && stopReadingAfterRecord) {
                         release.await();
-                        return;
+                        if (!resume) return;
                     }
                 }
             } catch (Exception ignored) {
