@@ -50,6 +50,7 @@ run
 [ "$(calls)" = 2 ] || fail "case 1 calls=$(calls)"
 [ "$(cat "$TMP/sleep.log")" = "sleep 20" ] || fail "case 1 wait"
 [ "$(grep -c '::notice::' "$TMP/out")" = 1 ] || fail "case 1 notices"
+grep -qx '::notice::Gradle attempt 1 of 3 failed with status 1' "$TMP/out" || fail "case 1 notice text"
 
 # 2: every attempt fails: three calls, waits of 20 s and 60 s, exit 1
 setup 9

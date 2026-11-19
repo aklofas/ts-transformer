@@ -2,6 +2,8 @@
 // configuration, which downloads every dependency the build's tasks use.
 // scripts/ci/gradle-resolve.sh runs it in a retried step before the build.
 // It changes nothing else: no repository, dependency or task of the build.
+// It resolves at execution time, so it is not for a build with the
+// configuration cache on.
 allprojects { p ->
     p.tasks.register('resolveAll') { t ->
         t.description = 'Resolves every resolvable configuration (fetches all dependencies).'

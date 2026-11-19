@@ -1410,8 +1410,8 @@ jobs:
       # No apt-package cache: the repository's Actions cache quota is
       # smaller than its cargo caches alone, so an apt entry is evicted
       # before the next run. A slow mirror is bounded instead: a download is cut
-      # at five minutes, and the next attempt, from the next mirror, resumes
-      # with the files apt already fetched.
+      # at five minutes, and the next attempt (after the first, from the next
+      # mirror) resumes with the files apt already fetched.
       # --no-recommends skips the GUI and audio libraries qemu-system-* recommends.
       - name: Install QEMU + ARM C cross-toolchain
         run: bash scripts/ci/apt-install.sh --timeout 300 --no-recommends qemu-system-arm qemu-system-misc gcc-arm-none-eabi libnewlib-arm-none-eabi libstdc++-arm-none-eabi-newlib
@@ -1704,7 +1704,7 @@ jobs:
           cores=(${{ github.workspace }}/core.*)
           # gdb is fetched only here, when there is a core to read.
           if [ "${#cores[@]}" -gt 0 ]; then
-            APT_INSTALL_ATTEMPTS=2 bash scripts/ci/apt-install.sh gdb || echo "::warning::gdb is not installed; no backtrace"
+            APT_INSTALL_ATTEMPTS=2 APT_INSTALL_TIMEOUT=120 bash scripts/ci/apt-install.sh gdb || echo "::warning::gdb is not installed; no backtrace"
           fi
           for c in "${cores[@]}"; do
             echo "== $c"
