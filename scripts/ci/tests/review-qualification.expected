@@ -3,18 +3,20 @@ PART unit: needs cargo cargo-nextest
   SRT_FORCE_VENDORED=1 RIST_FORCE_VENDORED=1 cargo test --doc --workspace
 PART interop: needs cargo jq python3
   SRT_FORCE_VENDORED=1 RIST_FORCE_VENDORED=1 cargo build --release -p tst-interop
-  bash scripts/interop/run-matrix.sh --outdir @OUT@/interop --seconds 8 --only-subset arm64
-PART fuzz: needs cargo cargo-fuzz toolchain:nightly
-  bash scripts/ci/fuzz-shard.sh 1 1 @FUZZ@ @OUT@/fuzz
-PART oracles: needs cargo cargo-nextest jq python3 tsp ffprobe
+  bash scripts/interop/run-matrix.sh --outdir "@OUT@/interop" --seconds 8 --only-subset arm64
+  jq -e '.cells | length > 0' "@OUT@/interop/inventory.json" >/dev/null || { echo 'run-matrix selected no cell' >&2; exit 1; }
+PART fuzz: needs cargo cargo-fuzz python3 jq toolchain:nightly
+  bash scripts/ci/fuzz-shard.sh 1 1 @FUZZ@ "@OUT@/fuzz"
+PART oracles: needs cargo cargo-nextest jq python3 tsp tsanalyze ffprobe
   SRT_FORCE_VENDORED=1 RIST_FORCE_VENDORED=1 cargo build --release -p tst-interop
-  bash scripts/interop/run-matrix.sh --outdir @OUT@/oracles --seconds 8 --cells 'analyze/*'
+  bash scripts/interop/run-matrix.sh --outdir "@OUT@/oracles" --seconds 8 --cells 'analyze/*'
+  jq -e '.cells | length > 0' "@OUT@/oracles/inventory.json" >/dev/null || { echo 'run-matrix selected no cell' >&2; exit 1; }
   SRT_FORCE_VENDORED=1 RIST_FORCE_VENDORED=1 cargo nextest run -p tst-core -E 'binary(mpegts)'
-PART abi: needs cargo nm
+PART abi: needs os:Linux cargo nm python3 git jq
   bash scripts/check/c/abi-symbols.sh
-PART api: needs cargo cargo-public-api rg toolchain:@PIN@
+PART api: needs cargo cargo-public-api rg python3 toolchain:@PIN@
   bash scripts/dev/public-api-diff.sh @PIN@
   bash scripts/check/rust/api-stability-coverage.sh
   bash scripts/check/repo/deprecations.sh
-PART bench-ir: needs valgrind git
-  bash scripts/dev/bench-ir.sh "$(bash scripts/dev/prev-tag.sh)" HEAD --out @OUT@/bench-ir
+PART bench-ir: needs cargo python3 valgrind git tag:prev
+  bash scripts/dev/bench-ir.sh "$(bash scripts/dev/prev-tag.sh)" HEAD --out "@OUT@/bench-ir"
