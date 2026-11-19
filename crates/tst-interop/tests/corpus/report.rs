@@ -536,3 +536,18 @@ fn a_failed_replay_retry_leaves_no_pass_behind() {
     }
     assert!(!report_of(&run).overall_pass);
 }
+
+#[test]
+fn the_row_counts_accepted_new_captures_so_the_three_counts_add_up() {
+    let mut s = sweep(true);
+    s.files = 12;
+    s.identical = 9;
+    s.changed_explained = 2;
+    s.new_explained = 1;
+    let row = report::archive_row(&s, Some(&replay(true)));
+    assert_eq!(row.new_explained, 1);
+    assert_eq!(
+        row.identical + row.changed_explained + row.new_explained,
+        row.files
+    );
+}
