@@ -55,6 +55,9 @@ const CLOSE_TEARDOWN_BOUND: Duration = Duration::from_millis(500);
 /// Construct via [`Self::connect`] / [`Self::connect_with`], then drive
 /// the session: `options` / `describe` / `setup_mp2t_auto` (or the
 /// explicit `setup*` variants) / `play` / `pause` / `teardown`.
+/// To publish instead, call [`Self::announce`], [`Self::setup_record`]
+/// and [`Self::record`], which turns the client into the
+/// [`RtspPush`](push::RtspPush) that sends.
 /// End it with [`Self::close`]: with a session open it writes TEARDOWN
 /// and waits for the reply (500 ms at most), then waits for the client's
 /// thread (2 s at most). Dropping the client sets its cancel, writes
