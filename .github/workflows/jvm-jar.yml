@@ -150,7 +150,8 @@ jobs:
       # Before the first Gradle call: a fetch Maven Central refuses once is retried.
       - name: Resolve Gradle dependencies (retried)
         shell: bash
-        run: bash scripts/ci/gradle-resolve.sh
+        # --no-test: this job runs no test, so the test dependencies are not fetched.
+        run: bash scripts/ci/gradle-resolve.sh --no-test
 
       # merge-multiple flattens all native-* artifacts into one tree:
       # staging/native/<triple>/libtstjni.<ext> for every uploaded platform.
@@ -269,7 +270,8 @@ jobs:
       # Before the first Gradle call: a fetch Maven Central refuses once is retried.
       - name: Resolve Gradle dependencies (retried)
         shell: bash
-        run: bash scripts/ci/gradle-resolve.sh
+        # --no-test: this job runs no test, so the test dependencies are not fetched.
+        run: bash scripts/ci/gradle-resolve.sh --no-test
 
       - name: Download native libs
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8

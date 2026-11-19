@@ -50,7 +50,7 @@ run
 [ "$(calls)" = 2 ] || fail "case 1 calls=$(calls)"
 [ "$(cat "$TMP/sleep.log")" = "sleep 20" ] || fail "case 1 wait"
 [ "$(grep -c '::notice::' "$TMP/out")" = 1 ] || fail "case 1 notices"
-grep -qx '::notice::Gradle attempt 1 of 3 failed with status 1' "$TMP/out" || fail "case 1 notice text"
+grep -qx '::notice::Gradle attempt 1 of 3 failed with status 1; the next asks the repositories again (--refresh-dependencies)' "$TMP/out" || fail "case 1 notice text"
 
 # 2: every attempt fails: three calls, waits of 20 s and 60 s, exit 1
 setup 9
@@ -91,4 +91,25 @@ case "$(head -n 1 "$TMP/timeout.log")" in
   *) fail "case 5 bound: $(cat "$TMP/timeout.log")" ;;
 esac
 
-echo "PASS: 5 cases"
+# 6: a retry asks the repositories again: Gradle caches a module's absence,
+# so the second and third calls carry --refresh-dependencies, the first not
+setup 9
+run -PjniTestHooks=true
+[ "$RC" = 1 ] || fail "case 6 rc=$RC"
+[ "$(calls)" = 3 ] || fail "case 6 calls=$(calls)"
+args() { sed -n "${1}p" "$TMP/gradle.log" | cut -d'|' -f2; }
+case " $(args 1) " in *" --refresh-dependencies "*) fail "case 6 the first call refreshes: $(args 1)" ;; esac
+for i in 2 3; do
+  [ "$(args "$i")" = "--no-daemon --init-script ../../scripts/ci/gradle-resolve-all.init.gradle resolveAll --refresh-dependencies -PjniTestHooks=true" ] \
+    || fail "case 6 call $i: $(args "$i")"
+done
+grep -qx '::notice::Gradle attempt 3 of 3 failed with status 1' "$TMP/out" || fail "case 6 last notice"
+
+# 7: --no-test becomes the property the init script reads; the other
+# arguments still pass through, and --no-test itself never reaches Gradle
+setup 0
+run --no-test -PnativeStagingDir=x
+[ "$RC" = 0 ] || fail "case 7 rc=$RC"
+[ "$(args 1)" = "--no-daemon --init-script ../../scripts/ci/gradle-resolve-all.init.gradle resolveAll -PresolveAllNoTest=true -PnativeStagingDir=x" ] || fail "case 7 arguments: $(args 1)"
+
+echo "PASS: 7 cases"
