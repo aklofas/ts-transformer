@@ -111,8 +111,14 @@ def put(path, obj):
             json.dump(obj, f)
 
 
-def build(tmp, mutate=None, archives=ARCHIVES):
-    """A complete artefact directory + repo root; `mutate(files)` edits the dict first."""
+# A pin set at the freeze; PIN_EMPTY is the file between releases.
+PIN_SET = 'rev = "%s"\n' % ("ab" * 20)
+PIN_EMPTY = 'rev = ""\n'
+
+
+def build(tmp, mutate=None, archives=ARCHIVES, pin=PIN_SET):
+    """A complete artefact directory + repo root; `mutate(files)` edits the dict first;
+    `pin` is tests/coverage/advisory-db-pin.toml (None: no file)."""
     files = {
         "context.json": dict(CONTEXT),
         "legs.json": json.loads(json.dumps(LEGS)),
@@ -136,6 +142,8 @@ def build(tmp, mutate=None, archives=ARCHIVES):
     root = os.path.join(tmp, "root")
     put(os.path.join(root, "tests/coverage/fuzz-targets.toml"), FUZZ_TOML)
     put(os.path.join(root, "tests/coverage/evidence-archives.toml"), archives)
+    if pin is not None:
+        put(os.path.join(root, "tests/coverage/advisory-db-pin.toml"), pin)
     return art, root
 
 
@@ -148,7 +156,8 @@ def at_version(version=VERSION, roster=ROSTER):
         yield
 
 
-def collect(mutate=None, release=False, archives=ARCHIVES, version=VERSION, arm=True, roster=ROSTER):
+def collect(mutate=None, release=False, archives=ARCHIVES, version=VERSION, arm=True, roster=ROSTER,
+            pin=PIN_SET):
     """One collected record. A release needs a soak on both architectures, so a release
     fixture that names no aarch64 row gets a passing one on the qualified commit (ARM_OK)
     and a test about the x86_64 soak or the corpus stays about that; `arm=False` leaves
@@ -156,7 +165,7 @@ def collect(mutate=None, release=False, archives=ARCHIVES, version=VERSION, arm=
     if release and arm and 'arch = "aarch64"' not in archives:
         archives += ARM_OK
     tmp = tempfile.mkdtemp()
-    art, root = build(tmp, mutate, archives)
+    art, root = build(tmp, mutate, archives, pin)
     with at_version(version, roster):
         return q.collect(art, root, release=release)
 
@@ -1204,6 +1213,32 @@ class CorpusBaselineTests(unittest.TestCase):
         rec = collect(release=True, archives=RELEASE_OK)
         self.assertEqual(rec["verdict"], "GO", rec["verdict_reasons"])
         self.assertEqual(rec["release_vm"]["corpus"]["baseline_manifest_sha256"], BASELINE)
+
+
+class AdvisoryDbPinTests(unittest.TestCase):
+    REASON = "advisory-db pin not set at the freeze"
+
+    def test_an_empty_pin_is_no_go_in_release_mode(self):
+        rec = collect(release=True, archives=RELEASE_OK, pin=PIN_EMPTY)
+        self.assertEqual(rec["verdict"], "NO-GO")
+        self.assertEqual(rec["verdict_reasons"], [self.REASON])
+
+    def test_a_missing_pin_file_is_not_set(self):
+        rec = collect(release=True, archives=RELEASE_OK, pin=None)
+        self.assertEqual(rec["verdict_reasons"], [self.REASON])
+
+    def test_a_set_pin_gives_no_such_reason(self):
+        rec = collect(release=True, archives=RELEASE_OK, pin=PIN_SET)
+        self.assertEqual(rec["verdict"], "GO", rec["verdict_reasons"])
+
+    def test_a_pin_that_is_not_40_hex_is_no_go_in_release_mode(self):
+        rec = collect(release=True, archives=RELEASE_OK, pin='rev = "abc123"\n')
+        self.assertEqual(rec["verdict_reasons"], ["advisory-db pin 'abc123' is not a 40-hex commit"])
+
+    def test_outside_release_mode_the_pin_is_not_read(self):
+        for pin in (PIN_EMPTY, None, 'rev = "abc123"\n'):
+            rec = collect(pin=pin)
+            self.assertEqual(rec["verdict"], "GO", (pin, rec["verdict_reasons"]))
 
 
 class SoakRequirementTests(unittest.TestCase):
@@ -2435,6 +2470,7 @@ class TagAndEquivalenceTests(unittest.TestCase):
                 f["ci.json"]["head_sha"] = qualified
             art, _ = build(os.path.join(d, "a"), mutate)
             put(os.path.join(root, "tests/coverage/fuzz-targets.toml"), FUZZ_TOML)
+            put(os.path.join(root, "tests/coverage/advisory-db-pin.toml"), PIN_SET)
             put(os.path.join(root, "tests/coverage/evidence-archives.toml"), archives_toml(
                 archive_row("soak-rel", "soak", soaked, legs=FIVE),
                 archive_row("soak-arm-rel", "soak", soaked, legs=FIVE, arch="aarch64"),

@@ -108,6 +108,10 @@ GENERATOR_PATHS = ("scripts/gen/",)
 # What a release's fuzz leg must have given every declared target. Any other
 # qualification records the seconds its run had and is not judged on them.
 RELEASE_FUZZ_SECONDS = 600
+# The advisory-db commit ci's cargo-deny job checks during a freeze; the
+# release-prep pull request sets it, so a release with it empty was judged
+# against a database that kept moving.
+ADVISORY_DB_PIN = "tests/coverage/advisory-db-pin.toml"
 MAINTAINER_LOCAL = [
     "wall-clock bench comparison (a report, no threshold)",
     "mux 3 600 s of synthetic frames to a file (unpaced)",
@@ -310,6 +314,20 @@ def load_archives(root):
 
 
 # ---- release mode ----------------------------------------------------------
+
+def advisory_db_pin_reasons(root):
+    """Why the tree's advisory-db pin cannot stand for a release: [] for a 40-hex commit."""
+    path = os.path.join(root, ADVISORY_DB_PIN)
+    rev = ""
+    if os.path.isfile(path):
+        with open(path) as f:
+            rev = tomllib.loads(f.read()).get("rev", "")
+    if not rev:
+        return ["advisory-db pin not set at the freeze"]
+    if not isinstance(rev, str) or not re.fullmatch(r"[0-9a-f]{40}", rev):
+        return ["advisory-db pin %r is not a 40-hex commit" % (rev,)]
+    return []
+
 
 def _diff_names(root, tree, sha):
     cmd = ["git", "-C", root, "diff", "--name-only", "--no-renames", tree, sha]
@@ -1091,6 +1109,8 @@ def collect(art, root, release=False, tag=None):
                 source_reasons.append(
                     "source: workflow definitions at %s differ from the qualified commit "
                     "(%d path(s) under .github/ or scripts/gen/)" % (workflow_sha[:12], len(changed)))
+    if release:
+        source_reasons.extend(advisory_db_pin_reasons(root))
     v, reasons = verdict(legs, interop, fuzz, bool(ctx.get("source", {}).get("dirty")), abi_in, gate,
                          source_reasons, semver)
     source, label = dict(ctx.get("source", {})), ctx.get("label", "unlabelled")
