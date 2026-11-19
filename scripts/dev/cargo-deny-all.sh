@@ -50,31 +50,44 @@ fi
 
 bound=()
 if timeout --version 2>/dev/null | grep -q GNU; then bound=(timeout -k 10 120); fi
-# retry <command...>: three bounded attempts.
+# retry <command...>: three bounded attempts; before_retry, when set, runs
+# between them.
+before_retry=()
 retry() {
   local attempt=1 w
   until ${bound[@]+"${bound[@]}"} "$@"; do
     echo "::notice::attempt $attempt of 3 failed: $*"
     [ "$attempt" -lt 3 ] || return 1
+    ${before_retry[@]+"${before_retry[@]}"}
     w="$(echo "20 60" | awk -v i="$attempt" '{print $i}')"
     sleep "$w"
     attempt=$((attempt + 1))
   done
 }
 
+# deny.toml's db-path, where cargo-deny keeps its clones.
+grep -qxF 'db-path = "$CARGO_HOME/advisory-db"' "$ROOT/deny.toml" \
+  || { echo "cargo-deny-all: deny.toml's db-path is not \$CARGO_HOME/advisory-db" >&2; exit 2; }
+DB_ROOT="${CARGO_HOME:-$HOME/.cargo}/advisory-db"
+drop_new_clone() { rm -rf "$DB_ROOT"/advisory-db-*; }
+
 fetch_db() {
+  # An attempt cut off by the bound leaves a half-written clone that cargo-deny
+  # would fetch into on the retry. A clone this run started is removed before
+  # each retry; one that was under db-path before the run is never touched.
+  before_retry=()
+  compgen -G "$DB_ROOT/advisory-db-*" >/dev/null || before_retry=(drop_new_clone)
   retry cargo deny --manifest-path "$ROOT/Cargo.toml" --config "$ROOT/deny.toml" fetch db \
     || { echo "cargo-deny-all: could not fetch the advisory-db" >&2; exit 1; }
+  before_retry=()
 }
 
 deny=()
 if [ -n "$rev" ]; then
   # cargo-deny names its clone after a hash of the URL, so it makes the clone
   # itself and the clone is then moved to the pin (as its own fetch does).
-  grep -qxF 'db-path = "$CARGO_HOME/advisory-db"' "$ROOT/deny.toml" \
-    || { echo "cargo-deny-all: deny.toml's db-path is not \$CARGO_HOME/advisory-db" >&2; exit 2; }
   fetch_db
-  dbs=("${CARGO_HOME:-$HOME/.cargo}"/advisory-db/advisory-db-*)
+  dbs=("$DB_ROOT"/advisory-db-*)
   [ ${#dbs[@]} -eq 1 ] && [ -d "${dbs[0]}/.git" ] \
     || { echo "cargo-deny-all: want one advisory-db clone, found: ${dbs[*]}" >&2; exit 2; }
   db="${dbs[0]}"
