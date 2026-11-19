@@ -321,7 +321,10 @@ def advisory_db_pin_reasons(root):
     rev = ""
     if os.path.isfile(path):
         with open(path) as f:
-            rev = tomllib.loads(f.read()).get("rev", "")
+            try:
+                rev = tomllib.loads(f.read()).get("rev", "")
+            except tomllib.TOMLDecodeError:
+                return ["advisory-db pin file is not valid TOML"]
     if not rev:
         return ["advisory-db pin not set at the freeze"]
     if not isinstance(rev, str) or not re.fullmatch(r"[0-9a-f]{40}", rev):
