@@ -39,6 +39,9 @@ on:
       - '.github/workflows/interop.yml'
       - '.github/actions/rust-setup/**'
       - 'rust-toolchain.toml'
+      - 'scripts/ci/apt-install.sh'
+      - 'scripts/ci/install-build-tools.sh'
+      - 'scripts/ci/requirements-build-tools.txt'
       # A demux/mux change used to reach main before ffmpeg/tsduck/GStreamer
       # saw it (Monday cron). ~25 min warm; the
       # census assert (165 declared cells, 0 skips) now gates those PRs too.
