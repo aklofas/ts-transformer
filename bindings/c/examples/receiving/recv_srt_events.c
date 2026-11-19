@@ -622,9 +622,12 @@ int main(int argc, char **argv) {
      * separate `_open_listener` branch here.
      */
     tst_managed_demux_receiver_t *rx = tst_managed_demux_receiver_open(url_buf, NULL);
+    /* The query can carry `passphrase=`, so only the part before the `?` is
+     * printed: `%.*s` with strcspn stops there. */
     if (!rx) {
         fprintf(stderr,
-                "tst_managed_demux_receiver_open(\"%s\") failed: %s\n",
+                "tst_managed_demux_receiver_open(\"%.*s\") failed: %s\n",
+                (int) strcspn(url_buf, "?"),
                 url_buf,
                 tst_get_last_error_str());
         free(url_buf);
@@ -632,7 +635,7 @@ int main(int argc, char **argv) {
     }
     free(url_buf);
 
-    fprintf(stderr, "opened: %s\n", url);
+    fprintf(stderr, "opened: %.*s\n", (int) strcspn(url, "?"), url);
     fprintf(stderr, "waiting for events. Press Ctrl-C to stop.\n");
 
     /* Zero-init so any union field a given kind doesn't touch reads as

@@ -272,10 +272,12 @@ int main(int argc, char **argv) {
     long max_frames        = parse_long(argc, argv, "--frames", 0);
     /* max_frames == 0 means "run until SIGINT" */
 
+    /* The query can carry a secret (`passphrase=`, `token=`), so only the part
+     * before the `?` is printed: `%.*s` with strcspn stops there. */
     fprintf(stderr,
-            "send_rtsp_server: binding to %s, mount %s\n"
+            "send_rtsp_server: binding to %.*s, mount %s\n"
             "  (--bind <url>  --mount <path>  --frames <n>  to override)\n",
-            bind_url, mount_path);
+            (int) strcspn(bind_url, "?"), bind_url, mount_path);
 
     /* ── Step 1: Build the mux config ───────────────────────────────────────
      *
@@ -379,7 +381,7 @@ int main(int argc, char **argv) {
         return 4;
     }
 
-    fprintf(stderr, "server listening on %s\n", bind_url);
+    fprintf(stderr, "server listening on %.*s\n", (int) strcspn(bind_url, "?"), bind_url);
 
     /* ── Step 3: Register a unicast mount ───────────────────────────────────
      *
@@ -408,7 +410,8 @@ int main(int argc, char **argv) {
         return 5;
     }
 
-    fprintf(stderr, "mount registered: %s%s\n", bind_url, mount_path);
+    fprintf(stderr, "mount registered: %.*s%s\n", (int) strcspn(bind_url, "?"), bind_url,
+            mount_path);
     fprintf(stderr, "waiting for clients… (Ctrl-C to stop)\n");
 
     /* ── Step 4: Obtain a cancel handle for signal-safe shutdown ────────────

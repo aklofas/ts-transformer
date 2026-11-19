@@ -70,6 +70,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 /* ── Constants ─────────────────────────────────────────────────────────── */
 
@@ -151,14 +152,16 @@ int main(int argc, char **argv) {
      * ephemeral port. Returns NULL on failure with the last-error set.
      */
     TstUdpReceiver *rx = tst_udp_recv_open(url);
+    /* The query can carry a secret (`passphrase=`, `token=`), so only the part
+     * before the `?` is printed: `%.*s` with strcspn stops there. */
     if (!rx) {
         fprintf(stderr,
-                "tst_udp_recv_open(\"%s\") failed: %s\n",
-                url, tst_get_last_error_str());
+                "tst_udp_recv_open(\"%.*s\") failed: %s\n",
+                (int) strcspn(url, "?"), url, tst_get_last_error_str());
         return 1;
     }
 
-    fprintf(stderr, "Opened: %s\n", url);
+    fprintf(stderr, "Opened: %.*s\n", (int) strcspn(url, "?"), url);
     fprintf(stderr, "Waiting for MPEG-TS packets (up to %d)...\n", MAX_PACKETS);
 
     /*

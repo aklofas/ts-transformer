@@ -348,15 +348,19 @@ int main(int argc, char **argv) {
      * `tst_rtsp_server_builder_start` consumes the builder whether it
      * succeeds or not. */
     TstRtspServerBuilder *builder = tst_rtsp_server_builder_new(url);
+    /* The query can carry a secret (`passphrase=`, `token=`), so only the part
+     * before the `?` is printed: `%.*s` with strcspn stops there. */
     if (builder == NULL) {
-        fprintf(stderr, "builder_new(%s): %s\n", url, tst_get_last_error_str());
+        fprintf(stderr, "builder_new(%.*s): %s\n", (int) strcspn(url, "?"), url,
+                tst_get_last_error_str());
         return 1;
     }
     tst_rtsp_server_builder_accept_unregistered_publishers(builder, true);
     TstRtspServer *server = tst_rtsp_server_builder_start(builder);
     builder = NULL; /* consumed */
     if (server == NULL) {
-        fprintf(stderr, "start(%s): %s\n", url, tst_get_last_error_str());
+        fprintf(stderr, "start(%.*s): %s\n", (int) strcspn(url, "?"), url,
+                tst_get_last_error_str());
         return 1;
     }
 
