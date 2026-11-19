@@ -11,11 +11,13 @@
 # line: `PART <name>: rc=N`, `PART <name>: NOT RUN (<why>)`, or, when a command
 # printed a `SKIP:` line, `PART <name>: rc=0, partly run (<the SKIP reason>)`
 # (a part of several commands is NOT RUN only when every command skipped).
-# A part whose tool, platform or input is missing is never a pass. A closing
-# line lists the skipped checks. The exit status is non-zero when any part
-# failed or none ran. A missing peer tool (ffmpeg, tsp, gst-launch-1.0 ...)
-# makes interop and oracles FAIL with an undeclared skip, not NOT RUN. The full qualification is release-qualify.yml; this
-# is the part that fits in hours on one Linux box with the peer tools
+# A part whose tool, platform or input is missing is never a pass. The very
+# last line is always `REVIEW QUALIFICATION: <p> passed, <q> partly run, <n> not
+# run, <f> failed`, followed by the partly run and not run parts with their
+# reasons. The exit status is non-zero when any part failed or none ran. A
+# missing peer tool (ffmpeg, tsp, gst-launch-1.0 ...) makes interop and oracles
+# FAIL with an undeclared skip, not NOT RUN. The full qualification is
+# release-qualify.yml; this is the part that fits in hours on one Linux box with the peer tools
 # (ffmpeg, TSDuck's tsp, gst-launch-1.0) installed.
 #
 # Env: RQ_FUZZ_SECONDS  seconds per fuzz target (default 10; about 7 minutes plus builds)
@@ -87,7 +89,7 @@ missing_tool() {
   return 1
 }
 
-ran=0 failed=0 skipnotes=""
+passed=0 partly=0 notrun=0 failed=0 partnotes="" runnotes=""
 while IFS='^' read -r name tools cmds; do
   [ -n "$name" ] || continue
   if [ -n "$only" ]; then
@@ -96,6 +98,7 @@ while IFS='^' read -r name tools cmds; do
   tools="${tools//@PIN@/$pin}"
   if miss="$(missing_tool "$tools")"; then
     echo "PART $name: NOT RUN ($miss)"
+    notrun=$((notrun + 1)); runnotes="$runnotes $name ($miss),"
     continue
   fi
   cmds="${cmds//@OUT@/$out}"; cmds="${cmds//@FUZZ@/$FUZZ_SECONDS}"; cmds="${cmds//@PIN@/$pin}"
@@ -112,16 +115,24 @@ while IFS='^' read -r name tools cmds; do
     if [ -n "$line" ]; then skipped=$((skipped + 1)); reason="${line#SKIP: }"; fi
   done <<< "${cmds//;;/$'\n'}"
   if [ "$rc" -ne 0 ]; then
-    failed=1; ran=$((ran + 1)); echo "PART $name: rc=$rc"
+    failed=$((failed + 1)); echo "PART $name: rc=$rc"
   elif [ "$skipped" -gt 0 ] && [ "$skipped" -eq "$total" ] && [ "$total" -gt 1 ]; then
-    echo "PART $name: NOT RUN ($reason)"; skipnotes="$skipnotes $name ($reason);"
+    echo "PART $name: NOT RUN ($reason)"
+    notrun=$((notrun + 1)); runnotes="$runnotes $name ($reason),"
   elif [ "$skipped" -gt 0 ]; then
-    ran=$((ran + 1)); echo "PART $name: rc=0, partly run ($reason)"; skipnotes="$skipnotes $name ($reason);"
+    echo "PART $name: rc=0, partly run ($reason)"
+    partly=$((partly + 1)); partnotes="$partnotes $name ($reason),"
   else
-    ran=$((ran + 1)); echo "PART $name: rc=0"
+    echo "PART $name: rc=0"; passed=$((passed + 1))
   fi
 done <<< "$PARTS"
 
-[ -z "$skipnotes" ] || echo "review-qualification: skipped checks:${skipnotes%;}"
-[ "$ran" -gt 0 ] || { echo "review-qualification: no part ran" >&2; exit 1; }
-exit "$failed"
+rm -f "$out/.cmd.out"
+verdict="REVIEW QUALIFICATION: $passed passed, $partly partly run, $notrun not run, $failed failed"
+[ -z "$partnotes" ] || verdict="$verdict; partly run:${partnotes%,}"
+[ -z "$runnotes" ] || verdict="$verdict; not run:${runnotes%,}"
+status=0
+if [ $((passed + partly + failed)) -eq 0 ]; then echo "review-qualification: no part ran" >&2; status=1; fi
+[ "$failed" -eq 0 ] || status=1
+echo "$verdict"
+exit "$status"

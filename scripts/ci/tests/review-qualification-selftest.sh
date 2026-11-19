@@ -49,8 +49,9 @@ run() { # <STUB_FAIL> <PATH dirs> [args]: sets rc and $TMP/out
 # A PATH of basic utilities only, so a tool the host happens to have (valgrind)
 # does not count as installed.
 mkdir "$TMP/sys"
-for t in bash env head mktemp mkdir awk grep tr cat dirname uname; do ln -s "$(command -v "$t")" "$TMP/sys/$t"; done
+for t in bash env head mktemp mkdir awk grep tr cat dirname uname rm; do ln -s "$(command -v "$t")" "$TMP/sys/$t"; done
 SYS="$TMP/sys"
+last_is() { [ "$(tail -n1 "$TMP/out")" = "$1" ] || fail "the last line is not: $1"; pass; }
 has() { grep -qF -- "$1" "$TMP/out" || fail "output lacks: $1"; pass; }
 
 run "" "$TMP/bin:$SYS"
@@ -58,9 +59,13 @@ run "" "$TMP/bin:$SYS"
 for p in unit interop fuzz oracles abi api bench-ir; do has "PART $p: rc=0"; done
 hasnt() { ! grep -qF -- "$1" "$TMP/out" || fail "output has: $1"; pass; }
 hasnt "skipped checks"
+last_is "REVIEW QUALIFICATION: 7 passed, 0 partly run, 0 not run, 0 failed"
+[ ! -e "$TMP/o/.cmd.out" ] || fail "a scratch file was left in the outdir"; pass
 grep -q 'public-api-diff nightly-2000-01-01' "$TMP/calls.log" || fail "the pin is not passed to public-api-diff"; pass
 grep -q 'fuzz-shard 1 1 10 ' "$TMP/calls.log" || fail "fuzz seconds default is not 10"; pass
 
+run "abi-symbols" "$TMP/bin:$SYS" --only abi,api
+last_is "REVIEW QUALIFICATION: 1 passed, 0 partly run, 0 not run, 1 failed"
 run "abi-symbols" "$TMP/bin:$SYS" --only abi,api
 [ "$rc" = 1 ] || fail "a failing part: rc $rc, want 1"; pass
 has "PART abi: rc=3"; has "PART api: rc=0"
@@ -90,9 +95,11 @@ grep -q "selected no cell" "$TMP/o/interop.log" || fail "the part log does not s
 # A command that printed SKIP is never a plain pass.
 STUB_SKIP="abi-symbols" run "" "$TMP/bin:$SYS" --only abi
 [ "$rc" = 0 ] || fail "a partly run part is not a failure: rc $rc"; pass
-has "PART abi: rc=0, partly run (abi-symbols skipped on purpose)"; has "skipped checks: abi (abi-symbols skipped on purpose)"
+has "PART abi: rc=0, partly run (abi-symbols skipped on purpose)"; last_is "REVIEW QUALIFICATION: 0 passed, 1 partly run, 0 not run, 0 failed; partly run: abi (abi-symbols skipped on purpose)"
 STUB_SKIP="public-api-diff api-stability-coverage deprecations" run "" "$TMP/bin:$SYS" --only api
 has "PART api: NOT RUN (deprecations skipped on purpose)"
+[ "$rc" = 1 ] || fail "an all-skipped part is not a part that ran: rc $rc"; pass
+last_is "REVIEW QUALIFICATION: 0 passed, 0 partly run, 1 not run, 0 failed; not run: api (deprecations skipped on purpose)"
 STUB_SKIP="deprecations" run "" "$TMP/bin:$SYS" --only api
 has "PART api: rc=0, partly run (deprecations skipped on purpose)"
 
@@ -113,11 +120,13 @@ rm "$TMP/bin/valgrind"
 run "" "$TMP/bin:$SYS"
 [ "$rc" = 0 ] || fail "one part not run, the rest pass: rc $rc"; pass
 has "PART bench-ir: NOT RUN (missing valgrind)"
+last_is "REVIEW QUALIFICATION: 6 passed, 0 partly run, 1 not run, 0 failed; not run: bench-ir (missing valgrind)"
 
 # Nothing ran: every tool missing.
 run "" "$SYS" --only bench-ir
 [ "$rc" = 1 ] || fail "nothing ran: rc $rc, want 1"; pass
 has "PART bench-ir: NOT RUN (missing cargo)"; has "no part ran"
+last_is "REVIEW QUALIFICATION: 0 passed, 0 partly run, 1 not run, 0 failed; not run: bench-ir (missing cargo)"
 
 run "" "$TMP/bin:$SYS" --only nope
 [ "$rc" = 2 ] || fail "an unknown part: rc $rc, want 2"; pass
