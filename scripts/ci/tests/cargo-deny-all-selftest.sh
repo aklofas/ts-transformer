@@ -16,14 +16,20 @@ cat > "$TMP/bin/cargo" <<'STUB'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$TMP/cargo.log"
 case " $* " in
-  *" fetch db "*) mkdir -p "$CARGO_HOME/advisory-db/advisory-db-0123456789abcdef/.git" ;;
+  *" fetch db "*) # $TMP/db-fails attempts leave a half-written clone and fail;
+                  # an attempt that finds one fails as cargo-deny would.
+                  d="$CARGO_HOME/advisory-db/advisory-db-0123456789abcdef"
+                  [ ! -e "$d/partial" ] || { echo "stub: fetching into a half-written clone" >&2; exit 1; }
+                  c="$(cat "$TMP/db-count" 2>/dev/null || echo 0)"; echo $((c + 1)) > "$TMP/db-count"
+                  mkdir -p "$d/.git"
+                  [ "$c" -ge "$(cat "$TMP/db-fails" 2>/dev/null || echo 0)" ] || { touch "$d/partial"; exit 1; } ;;
   " fetch "*) # $TMP/fetch-fails: "<manifest> <failures before a success>"
              while read -r m k; do
                case " $* " in *"/$m "*) ;; *) continue ;; esac
                c="$(cat "$TMP/fetch-count" 2>/dev/null || echo 0)"; echo $((c + 1)) > "$TMP/fetch-count"
                [ "$c" -ge "$k" ] || exit 1
              done < <(cat "$TMP/fetch-fails" 2>/dev/null) ;;
-  *" check "*) echo "proxy=${https_proxy:-} ${HTTPS_PROXY:-} ${http_proxy:-} ${ALL_PROXY:-}" >> "$TMP/check-env.log"
+  *" check "*) echo "proxy=${https_proxy-} ${HTTPS_PROXY-} ${http_proxy-} ${HTTP_PROXY-} ${ALL_PROXY-} ${all_proxy-} no_proxy=[${no_proxy-unset}] NO_PROXY=[${NO_PROXY-unset}]" >> "$TMP/check-env.log"
                for m in $(cat "$TMP/deny-fails" 2>/dev/null); do
                  case " $* " in *"/$m "*) exit 1 ;; esac
                done ;;
@@ -35,6 +41,8 @@ cat > "$TMP/bin/git" <<'STUB'
 printf '%s\n' "$*" >> "$TMP/git.log"
 case " $* " in
   *" rev-parse HEAD "*) cat "$TMP/head" ;;
+  *" fetch "*) c="$(cat "$TMP/git-count" 2>/dev/null || echo 0)"; echo $((c + 1)) > "$TMP/git-count"
+               [ "$c" -ge "$(cat "$TMP/git-fails" 2>/dev/null || echo 0)" ] || exit 1 ;;
   *" show "*) echo 2026-01-02T03:04:05+00:00 ;;
 esac
 exit 0
@@ -52,11 +60,13 @@ shift 3
 exec "$@"
 STUB
 chmod +x "$TMP/bin/cargo" "$TMP/bin/git" "$TMP/bin/sleep" "$TMP/bin/timeout"
+export no_proxy=example.invalid NO_PROXY=example.invalid  # the script must empty both
 export TMP PATH="$TMP/bin:$PATH" CARGO_HOME="$TMP/cargo-home" ADVISORY_DB_PIN="$TMP/pin.toml"
 
 REV=0123456789abcdef0123456789abcdef01234567
 pin() { printf '# header\nrev = "%s"\n' "$1" > "$TMP/pin.toml"; }
-run() { : > "$TMP/cargo.log"; : > "$TMP/git.log"; : > "$TMP/sleep.log"; : > "$TMP/timeout.log"; : > "$TMP/check-env.log"; rm -f "$TMP/fetch-count"; rm -rf "$CARGO_HOME"; rc=0; bash "$SCRIPT" > "$TMP/out" 2>&1 || rc=$?; }
+run() { : > "$TMP/cargo.log"; : > "$TMP/git.log"; : > "$TMP/sleep.log"; : > "$TMP/timeout.log"; : > "$TMP/check-env.log"; rm -f "$TMP/fetch-count" "$TMP/db-count" "$TMP/git-count"; rm -rf "$CARGO_HOME"; ${PRE:-:}; rc=0; bash "$SCRIPT" > "$TMP/out" 2>&1 || rc=$?; }
+DEAD=http://127.0.0.1:9
 count() { grep -c -e "$1" "$2" || true; }
 n=0
 
@@ -101,7 +111,7 @@ grep -q "advisory-db-0123456789abcdef reset -q --hard FETCH_HEAD" "$TMP/git.log"
 [ "$(count '--offline .* check advisories licenses' "$TMP/cargo.log")" = 8 ] || fail "set pin: not eight offline checks"
 grep -q "advisory-db at $REV" "$TMP/out" || fail "set pin: the log does not name the commit"
 [ "$(count '^-k 10 120 cargo fetch --locked' "$TMP/timeout.log")" = 8 ] || fail "set pin: a cargo fetch without its bound"
-[ "$(grep -c '^proxy=http://127.0.0.1:9 http://127.0.0.1:9 http://127.0.0.1:9 http://127.0.0.1:9$' "$TMP/check-env.log")" = 8 ] \
+[ "$(grep -cxF "proxy=$DEAD $DEAD $DEAD $DEAD $DEAD $DEAD no_proxy=[] NO_PROXY=[]" "$TMP/check-env.log")" = 8 ] \
   || fail "set pin: an offline check that could still reach the network"
 n=$((n + 1))
 
@@ -137,6 +147,35 @@ n=$((n + 1))
 echo '# nothing' > "$TMP/pin.toml"; run
 [ "$rc" != 0 ] || fail "no rev line: exit 0"
 [ ! -s "$TMP/cargo.log" ] || fail "no rev line: cargo was called"
+n=$((n + 1))
+
+# 8. The database fetch and the git fetch of the pin are bounded and retried,
+# 20 s then 60 s apart.
+pin "$REV"; echo "$REV" > "$TMP/head"; echo 0 > "$TMP/db-fails"; echo 2 > "$TMP/git-fails"; run
+rm "$TMP/git-fails"
+[ "$rc" = 0 ] || fail "git fetch retried: exit $rc"
+[ "$(count " fetch -q --depth=1 origin $REV" "$TMP/git.log")" = 3 ] || fail "git fetch retried: not three attempts"
+[ "$(count "^-k 10 120 git -C .* fetch -q --depth=1 origin $REV" "$TMP/timeout.log")" = 3 ] || fail "git fetch retried: an attempt without its bound"
+[ "$(tr '\n' ' ' < "$TMP/sleep.log")" = "20 60 " ] || fail "git fetch retried: the waits were '$(tr '\n' ' ' < "$TMP/sleep.log")', want '20 60 '"
+n=$((n + 1))
+
+# 9. A database fetch cut off twice: each retry starts from no clone (the one
+# the cut attempt left half-written is removed), three bounded attempts.
+pin "$REV"; echo "$REV" > "$TMP/head"; echo 2 > "$TMP/db-fails"; run
+[ "$rc" = 0 ] || fail "db fetch retried: exit $rc"
+[ "$(count ' fetch db' "$TMP/cargo.log")" = 3 ] || fail "db fetch retried: not three attempts"
+[ "$(count '^-k 10 120 cargo deny .* fetch db' "$TMP/timeout.log")" = 3 ] || fail "db fetch retried: an attempt without its bound"
+[ "$(tr '\n' ' ' < "$TMP/sleep.log")" = "20 60 " ] || fail "db fetch retried: the waits were not 20 s and 60 s"
+n=$((n + 1))
+
+# 10. A clone that was there before the run is never removed: the failed
+# attempt leaves it half-written, every retry fails on it, the run fails.
+pin "$REV"; echo "$REV" > "$TMP/head"; echo 1 > "$TMP/db-fails"
+PRE='eval mkdir -p "$CARGO_HOME/advisory-db/advisory-db-0123456789abcdef/.git" && touch "$CARGO_HOME/advisory-db/advisory-db-0123456789abcdef/keep"'; run; PRE=
+rm "$TMP/db-fails"
+[ "$rc" != 0 ] || fail "existing clone: exit 0"
+[ -e "$CARGO_HOME/advisory-db/advisory-db-0123456789abcdef/keep" ] || fail "existing clone: removed"
+grep -q 'could not fetch the advisory-db' "$TMP/out" || fail "existing clone: no reason given"
 n=$((n + 1))
 
 echo "PASS: $n cases"
