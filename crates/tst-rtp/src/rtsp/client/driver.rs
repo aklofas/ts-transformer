@@ -113,7 +113,17 @@ pub(crate) struct Shared {
     /// socket: it sends on the first and waits on the second.
     #[cfg(test)]
     pub exit_gate: Option<(mpsc::Sender<()>, mpsc::Receiver<()>)>,
+    /// Holds the thread at the top of its loop, before it takes commands:
+    /// a test puts a pair here while the thread runs, and the thread sends
+    /// on the first and waits on the second.
+    #[cfg(test)]
+    pub pass_gate: PassGate,
 }
+
+/// Where a test puts the pair that holds the thread at the top of its loop
+/// (see `Shared::pass_gate`).
+#[cfg(test)]
+pub(crate) type PassGate = Arc<Mutex<Option<(mpsc::Sender<()>, mpsc::Receiver<()>)>>>;
 
 #[derive(Debug)]
 pub(crate) struct DriverHandle {
@@ -365,6 +375,19 @@ impl Driver {
         // plaintext it decrypted during the handshake.
         let mut readable = true;
         loop {
+            #[cfg(test)]
+            {
+                let gate = self
+                    .shared
+                    .pass_gate
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .take();
+                if let Some((held, release)) = gate {
+                    let _ = held.send(());
+                    let _ = release.recv();
+                }
+            }
             // Commands are taken only here, after the round before has
             // delivered every event the engine had: no `Reply` is still
             // waiting when a new request takes the place of `caller`, so a

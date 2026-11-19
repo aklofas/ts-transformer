@@ -716,6 +716,8 @@ impl RtspClient {
                 frames_dropped_inbound: frames_dropped_inbound.clone(),
                 #[cfg(test)]
                 exit_gate: params.exit_gate,
+                #[cfg(test)]
+                pass_gate: Default::default(),
             },
         )
         .map_err(|e| RtspError::Io(e.kind()))?;

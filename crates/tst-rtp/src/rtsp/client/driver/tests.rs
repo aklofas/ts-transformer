@@ -44,6 +44,8 @@ struct Harness {
     frames_dropped_inbound: Arc<AtomicU64>,
     /// The queue of outbound frames `handle` sends through.
     media: Arc<MediaQueue>,
+    /// The thread's `Shared::pass_gate`.
+    pass_gate: PassGate,
 }
 
 fn drive(stream: Stream) -> Harness {
@@ -58,8 +60,10 @@ fn drive_with(stream: Stream, write_stall: Duration) -> Harness {
         media_dropped: Arc::new(AtomicU64::new(0)),
         frames_dropped_inbound: Arc::new(AtomicU64::new(0)),
         exit_gate: None,
+        pass_gate: Arc::default(),
     };
     let cancel = shared.cancel.clone();
+    let pass_gate = shared.pass_gate.clone();
     let session_dead = shared.session_dead.clone();
     let end_reason = shared.end_reason.clone();
     let media_dropped = shared.media_dropped.clone();
@@ -72,6 +76,7 @@ fn drive_with(stream: Stream, write_stall: Duration) -> Harness {
         media_dropped,
         frames_dropped_inbound,
         media: handle.media_queue(),
+        pass_gate,
         handle,
     }
 }
@@ -129,6 +134,20 @@ impl Harness {
             }),
         );
         (rx, stats)
+    }
+
+    /// Parks the client's thread at the top of its loop, whatever passes it
+    /// ran before, and returns what lets it go: until then it runs no pass.
+    /// Dropping the sender lets it go too, so a failing test does not leave
+    /// the thread held.
+    fn hold_between_passes(&self) -> mpsc::Sender<()> {
+        let (held_tx, held) = mpsc::channel();
+        let (release, release_rx) = mpsc::channel();
+        *self.pass_gate.lock().unwrap() = Some((held_tx, release_rx));
+        self.handle.wake();
+        held.recv_timeout(scaled(Duration::from_secs(5)))
+            .expect("the client's thread reached the top of its loop");
+        release
     }
 
     fn wait_end(&self) -> EndReason {

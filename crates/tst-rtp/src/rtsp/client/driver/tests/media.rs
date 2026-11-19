@@ -238,13 +238,15 @@ fn a_request_is_written_ahead_of_media_moved_in_the_same_pass() {
     let _unhang = unhang(&h.cancel);
     let mut rest = Vec::new();
     recording(&h, &mut peer, &mut rest);
-    // Straight onto the queue, without the wake a send gives: the thread
-    // sleeps on with the stream idle, and finds the frames (well under the
-    // watermark) and the request together when the request wakes it.
+    // The thread is held at the top of its loop while the frames (well
+    // under the watermark) are queued and the request is submitted, so the
+    // pass it runs next finds both together, whatever passes it ran before.
+    let release = h.hold_between_passes();
     for seq in 0..FRAMES {
         h.media.push(media_frame(seq, SMALL), &h.cancel).unwrap();
     }
     let rx = h.request(options());
+    release.send(()).unwrap();
     let mut units = Units::new(rest);
     match units.next(&mut peer).expect("the stream is open") {
         Unit::Request(head) => {
