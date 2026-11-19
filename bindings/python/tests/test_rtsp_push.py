@@ -346,6 +346,52 @@ def test_stats_counts_packets_and_reports() -> None:
             assert push.is_session_alive()
 
 
+def test_close_while_stats_is_read_does_not_cancel() -> None:
+    """`stats()` holds the session's lock only for a moment: a `teardown()`
+    that finds it held waits for it instead of cancelling the session, so
+    the queued media is written and the TEARDOWN is answered. Threads read
+    `stats()` in a loop through every round, so many teardowns meet a
+    held lock (about one round in 250 meets it on a desktop: 4000 rounds,
+    or 5 s of them on a slow machine)."""
+    rounds, bundles, readers = 4000, 50, 8
+    give_up = time.monotonic() + 5.0
+    with _start_server() as server:
+        for r in range(rounds):
+            if time.monotonic() > give_up:
+                break
+            mount = server.add_publish_mount(f"/cam{r}")
+            push = RtspClient.push(
+                RtspClientConfig(_url(server, f"/cam{r}")), PushDescription.mp2t()
+            )
+            stop = threading.Event()
+
+            def read_stats() -> None:
+                while not stop.is_set():
+                    try:
+                        push.stats()
+                    except RtspError:
+                        return  # the session closed under the loop
+
+            threads = [threading.Thread(target=read_stats, daemon=True) for _ in range(readers)]
+            for t in threads:
+                t.start()
+            try:
+                for _ in range(bundles):
+                    push.send_ts(TS_BUNDLE)
+                # Returns only when the server answered the TEARDOWN `2xx`
+                # on a push that was not cancelled.
+                push.teardown()
+            finally:
+                stop.set()
+                for t in threads:
+                    t.join(WAIT_S)
+                push.close()
+            assert _wait_for(
+                lambda: mount.stats().rtp_packets_received == bundles
+            ), (r, mount.stats())
+            assert _wait_for(lambda: mount.publisher() is None), r
+
+
 def test_calls_after_close_raise_closed() -> None:
     with _start_server() as server:
         server.add_publish_mount("/cam")

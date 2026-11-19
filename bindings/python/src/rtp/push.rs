@@ -11,13 +11,14 @@
 //! (a data call against a slow server, `pause` / `resume`, the end of the
 //! session) takes the mutex only with the GIL released, and builds its
 //! exception after the guard has dropped. A data call holds the mutex while
-//! it waits for room in the push's queue; `cancel_handle()` and a
-//! contended `close()` never wait for it, and that `close()` fires the
-//! cancel first so the waiting call ends.
+//! it waits for room in the push's queue; `cancel_handle()` never waits
+//! for it, and a `close()` that finds such a call in progress fires the
+//! cancel first so the waiting call ends. A getter holds the mutex only for
+//! a moment: a `close()` that finds only a getter waits for it.
 
 #![allow(unsafe_op_in_unsafe_fn, clippy::useless_conversion)]
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, TryLockError};
 
 use pyo3::exceptions::PyValueError;
@@ -248,6 +249,17 @@ impl DataError {
     }
 }
 
+/// One call that can park in the push (a data call, `pause`, `resume`),
+/// counted in [`PyRtspPushSession::blocking`] from before it checks
+/// `closed` until it has released the mutex.
+struct Blocking<'a>(&'a AtomicUsize);
+
+impl Drop for Blocking<'_> {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
 fn closed_error(op: &str) -> BindingError {
     BindingError::new(
         BindingErrorKind::Closed,
@@ -272,6 +284,13 @@ pub struct PyRtspPushSession {
     /// Set when `close()` / `teardown()` begins or a conversion takes the
     /// push: every later call is refused as CLOSED.
     closed: AtomicBool,
+    /// Calls that can park in the push, in progress or waiting for the
+    /// mutex. A `close()` that finds the mutex held fires the cancel first
+    /// only when this is not 0; otherwise the holder is a getter, which
+    /// lets go at once. Raised before such a call reads `closed`, and
+    /// `close()` sets `closed` before it reads this (both `SeqCst`): a call
+    /// that `close()` does not count sees `closed` and is refused.
+    blocking: AtomicUsize,
     /// The session id the server named; it cannot change.
     session_id: String,
     /// Whether the push announced the MPEG-TS track.
@@ -304,6 +323,7 @@ impl PyRtspPushSession {
             session_id: push.session_id().to_owned(),
             cancel,
             closed: AtomicBool::new(false),
+            blocking: AtomicUsize::new(0),
             mp2t,
             live: Mutex::new(Some(Live { push, _exit: exit })),
         }
@@ -317,10 +337,11 @@ impl PyRtspPushSession {
         op: &'static str,
         call: impl FnOnce(&mut RustRtspPush) -> Result<(), DataError> + Send,
     ) -> PyResult<()> {
-        if self.closed.load(Ordering::Acquire) {
-            return Err(raise(py, &RTP, closed_error(op)));
-        }
-        let result = allow_threads_parking(py, || {
+        let blocking = self.enter_blocking(py, &RTP, op)?;
+        let result = allow_threads_parking(py, move || {
+            // Declared first, dropped last: the count falls only after the
+            // guard has released the mutex.
+            let _blocking = blocking;
             let mut guard = self.live.lock().unwrap_or_else(|e| e.into_inner());
             match guard.as_mut() {
                 Some(live) => call(&mut live.push),
@@ -338,10 +359,9 @@ impl PyRtspPushSession {
         op: &'static str,
         request: impl FnOnce(&mut RustRtspPush) -> Result<(), RustRtspError> + Send,
     ) -> PyResult<()> {
-        if self.closed.load(Ordering::Acquire) {
-            return Err(raise(py, &RTSP, closed_error(op)));
-        }
-        let result = allow_threads_parking(py, || {
+        let blocking = self.enter_blocking(py, &RTSP, op)?;
+        let result = allow_threads_parking(py, move || {
+            let _blocking = blocking;
             let mut guard = self.live.lock().unwrap_or_else(|e| e.into_inner());
             match guard.as_mut() {
                 Some(live) => request(&mut live.push).map_err(BindingError::from),
@@ -351,9 +371,26 @@ impl PyRtspPushSession {
         result.map_err(|e| raise(py, &RTSP, e))
     }
 
-    /// Read from the push with the GIL released (the guard can be held by a
-    /// data call parked on another thread). A closed session is
-    /// `RtspError(CLOSED)`.
+    /// Count a call that can park, then refuse it as CLOSED in `domain` if
+    /// the session is closed (the count is taken back first).
+    fn enter_blocking(
+        &self,
+        py: Python<'_>,
+        domain: &crate::raise::Domain,
+        op: &'static str,
+    ) -> PyResult<Blocking<'_>> {
+        self.blocking.fetch_add(1, Ordering::SeqCst);
+        let blocking = Blocking(&self.blocking);
+        if self.closed.load(Ordering::SeqCst) {
+            drop(blocking);
+            return Err(raise(py, domain, closed_error(op)));
+        }
+        Ok(blocking)
+    }
+
+    /// Read from the push with the GIL released: the mutex can be held by a
+    /// data call parked on another thread, and this waits for it. A closed
+    /// session is `RtspError(CLOSED)`.
     fn read<T: Send>(
         &self,
         py: Python<'_>,
@@ -373,17 +410,20 @@ impl PyRtspPushSession {
     /// End the session: `RtspPush::close` (a last sender report per track,
     /// the queued media written, TEARDOWN under 500 ms, the client's thread
     /// stopped). `None` when the session was already closed, ended or
-    /// converted. A call parked in the push on another thread is cancelled
-    /// first, so the close never waits behind it for long.
+    /// converted. A call that can park, in progress on another thread, is
+    /// cancelled first, so the close never waits behind it for long; a
+    /// getter holding the mutex is waited for, and the close stays clean.
     fn end(&self, py: Python<'_>) -> Option<Result<(), RustRtspError>> {
-        if self.closed.swap(true, Ordering::AcqRel) {
+        if self.closed.swap(true, Ordering::SeqCst) {
             return None;
         }
         allow_threads_parking(py, || {
             let taken = match self.live.try_lock() {
                 Ok(mut guard) => guard.take(),
                 Err(TryLockError::WouldBlock) => {
-                    self.cancel.cancel();
+                    if self.blocking.load(Ordering::SeqCst) > 0 {
+                        self.cancel.cancel();
+                    }
                     self.live.lock().unwrap_or_else(|e| e.into_inner()).take()
                 }
                 Err(TryLockError::Poisoned(e)) => e.into_inner().take(),
@@ -527,7 +567,10 @@ impl PyRtspPushSession {
         })
     }
 
-    /// The push's counters now.
+    /// The push's counters now. Waits, GIL released, while a send,
+    /// `pause()` or `resume()` on another thread is in progress (a parked
+    /// send can stay parked for as long as the server takes a byte now and
+    /// then); `cancel_handle()` never waits and is the way to end it.
     fn stats(&self, py: Python<'_>) -> PyResult<PyRtspPushStats> {
         self.read(py, "stats", RustRtspPush::stats)
             .map(PyRtspPushStats::from)
@@ -539,7 +582,8 @@ impl PyRtspPushSession {
         &self.session_id
     }
 
-    /// False once the session is known dead.
+    /// False once the session is known dead. Waits as `stats()` does while
+    /// a call on another thread is in progress.
     fn is_session_alive(&self, py: Python<'_>) -> PyResult<bool> {
         self.read(py, "is_session_alive", RustRtspPush::is_session_alive)
     }

@@ -535,10 +535,15 @@ class RtspPushSession:
     with the same ends as a data call.
 
     The calls that use the push run one at a time: a second thread's call
-    waits, GIL released, for the one in progress. `cancel_handle()` answers
-    at once, also while a send is parked on another thread, and `close()`
-    from another thread fires the cancel first so a parked send ends
-    `RtpError(CLOSED)`.
+    waits, GIL released, for the one in progress; `stats()` and
+    `is_session_alive()` too wait while a send, `pause()` or `resume()` is
+    in progress on another thread. `cancel_handle()` answers at once, also
+    while a send is parked on another thread, and is the way to end a
+    parked send. A `close()` or `teardown()` from another thread while a
+    send, `pause()` or `resume()` is in progress fires the cancel first, so
+    that call ends `CLOSED` and the session ends as a cancel; one that
+    finds only `stats()` or `is_session_alive()` running waits for it and
+    closes cleanly.
 
     `close()` (and the `with` exit) ends the session: a last sender report
     per track, the queued media written, TEARDOWN with one 500 ms bound
@@ -595,7 +600,10 @@ class RtspPushSession:
         more. Raises `RtspError(CLOSED)` once the session is closed."""
         ...
     def stats(self) -> RtspPushStats:
-        """The push's counters now."""
+        """The push's counters now. Waits, GIL released, while a send,
+        `pause()` or `resume()` on another thread is in progress: a parked
+        send can stay parked for as long as the server takes a byte now and
+        then. `cancel_handle()` never waits and is the way to end it."""
         ...
     @property
     def session_id(self) -> str:
@@ -603,7 +611,9 @@ class RtspPushSession:
         ...
     def is_session_alive(self) -> bool:
         """False once the session is known dead: the control connection
-        ended, or a keepalive ping was answered `454`."""
+        ended, or a keepalive ping was answered `454`. Waits as `stats()`
+        does while a send, `pause()` or `resume()` on another thread is in
+        progress; `cancel_handle()` never waits."""
         ...
     def into_mux_sender(self, program_config: MuxerProgramConfig) -> MuxSender:
         """Move an MPEG-TS push into a `MuxSender`. Raises `ValueError` on
