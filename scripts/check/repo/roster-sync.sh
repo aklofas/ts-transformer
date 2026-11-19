@@ -12,8 +12,8 @@
 #      each job's shard axis, /N and --partition agree, each include entry's
 #      flags match its pass, none continue-on-error;
 #   4. every member manifest inherits the lint table;
-#   5. ci.yml's deny job checks every fuzz workspace (crates/*/fuzz), and each
-#      manifest-path it names exists in this tree.
+#   5. scripts/dev/cargo-deny-all.sh (ci.yml's deny job) checks every fuzz
+#      workspace (crates/*/fuzz), and each manifest it lists exists in this tree.
 # RSYNC_FILES_ROOT points 1-3 and 5 at copies of those files (self_test.sh).
 # Linux/bash 3.2-portable: no mapfile, no sed -i; runs on the linux-x86_64 leg.
 set -euo pipefail
@@ -134,13 +134,12 @@ while IFS= read -r toml; do
   awk '/^\[lints\]/ {f = 1; next} /^\[/ {f = 0} f && /^workspace[[:space:]]*=[[:space:]]*true/ {ok = 1} END {exit !ok}' "$toml" || bad "$toml does not inherit [workspace.lints]"
 done < <(bash "$R" manifests)
 
-deny_paths="$(awk '/^  deny:$/ {f = 1; next} /^  [a-z-]+:$/ {f = 0} f' "$F/.github/workflows/ci.yml" \
-  | sed -nE 's/^[[:space:]]*manifest-path:[[:space:]]*([^[:space:]]+).*/\1/p' | sort)"
+deny_paths="$(bash "$F/scripts/dev/cargo-deny-all.sh" --list | sort)"
 for m in $(cd "$F" && find crates -path '*/fuzz/Cargo.toml' | sort); do
-  printf '%s\n' "$deny_paths" | grep -qxF -- "$m" || bad "ci.yml deny job does not check the fuzz workspace $m"
+  printf '%s\n' "$deny_paths" | grep -qxF -- "$m" || bad "cargo-deny-all.sh does not check the fuzz workspace $m"
 done
 for m in $deny_paths; do
-  [ -f "$F/$m" ] || bad "ci.yml deny job names a manifest-path that does not exist: $m"
+  [ -f "$F/$m" ] || bad "cargo-deny-all.sh lists a manifest that does not exist: $m"
 done
 
 [ "$fail" -eq 0 ] && echo "roster-sync: OK"

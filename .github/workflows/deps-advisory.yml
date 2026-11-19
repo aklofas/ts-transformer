@@ -10,6 +10,13 @@ name: deps-advisory
 # ("stay on the 3.6 LTS line") and it is never reopened. A quiet week writes
 # only the step summary.
 #
+# The `rustsec` job checks every Cargo workspace's lockfile against the LIVE
+# RustSec advisory-db (scripts/dev/rustsec-report.sh). During a release freeze
+# ci.yml's deny job reads the commit pinned in tests/coverage/advisory-db-pin.toml,
+# so an advisory published since shows here, as ONE open issue labelled
+# `dependency-advisory` that each week with an advisory comments on; it never
+# fails ci.
+#
 # Its one write scope is `issues: write`, for opening the finding issues; it
 # never commits.
 
@@ -47,4 +54,30 @@ jobs:
           NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
         run: |
           python3 scripts/dev/deps_advisory.py \
+            ${{ (github.event_name == 'workflow_dispatch' && inputs.dry_run) && '--dry-run' || '' }}
+
+  rustsec:
+    name: RustSec advisories in the lockfiles
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # cargo-deny runs `cargo metadata` on the runner, so it needs the toolchain.
+      - uses: ./.github/actions/rust-setup
+
+      - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2
+        with:
+          tool: cargo-deny@0.20.2
+
+      - name: Self-test of the report
+        run: bash scripts/ci/tests/rustsec-report-selftest.sh
+
+      - name: Check every workspace against the live advisory-db
+        timeout-minutes: 20
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          bash scripts/dev/rustsec-report.sh \
             ${{ (github.event_name == 'workflow_dispatch' && inputs.dry_run) && '--dry-run' || '' }}

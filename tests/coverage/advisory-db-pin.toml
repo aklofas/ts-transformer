@@ -1,0 +1,5 @@
+# The RustSec advisory-db commit ci.yml's deny job checks against (scripts/dev/cargo-deny-all.sh).
+# Empty between releases: the job checks the live database.
+# The release-prep pull request, merged before the freeze, sets it to the database's head commit.
+# The first pull request after the tag empties it again (docs/project/releasing.md).
+rev = ""
