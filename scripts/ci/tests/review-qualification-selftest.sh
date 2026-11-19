@@ -23,7 +23,7 @@ mkdir -p "$TMP/tree/scripts/lib" "$TMP/tree/scripts/ci" "$TMP/tree/scripts/dev" 
 echo nightly-2000-01-01 > "$TMP/tree/scripts/lib/public-api-toolchain"
 for s in ci/fuzz-shard dev/public-api-diff dev/bench-ir dev/prev-tag check/c/abi-symbols check/rust/api-stability-coverage \
          check/repo/deprecations interop/run-matrix; do
-  printf '#!/usr/bin/env bash\necho "%s $*" >> "$TMP/calls.log"\ncase " $STUB_FAIL " in *" %s "*) exit 3 ;; esac\n[ -z "${STUB_SKIP:-}" ] || case " $STUB_SKIP " in *" %s "*) echo "SKIP: %s skipped on purpose"; exit 0 ;; esac\necho v0.0.0\n' "$s" "$(basename "$s")" "$(basename "$s")" "$(basename "$s")" > "$TMP/tree/scripts/$s.sh"
+  printf '#!/usr/bin/env bash\necho "%s $*" >> "$TMP/calls.log"\ncase " $STUB_FAIL " in *" %s "*) exit 3 ;; esac\n[ -z "${STUB_SKIP:-}" ] || case " $STUB_SKIP " in *" %s "*) echo "SKIP: %s skipped on purpose"; exit 0 ;; esac\n[ -z "${STUB_SKIPNAMED:-}" ] || case " $STUB_SKIPNAMED " in *" %s "*) echo "%s: SKIP (linux-only)"; exit 0 ;; esac\n[ -z "${STUB_NOISE:-}" ] || echo "cells: 3 SKIPPED_TOOL_MISSING; skip this line"\necho v0.0.0\n' "$s" "$(basename "$s")" "$(basename "$s")" "$(basename "$s")" "$(basename "$s")" "$(basename "$s")" > "$TMP/tree/scripts/$s.sh"
 done
 # run-matrix also writes the inventory its caller reads: STUB_CELLS cells.
 cat >> "$TMP/tree/scripts/interop/run-matrix.sh" <<'RM'
@@ -100,6 +100,16 @@ STUB_SKIP="public-api-diff api-stability-coverage deprecations" run "" "$TMP/bin
 has "PART api: NOT RUN (deprecations skipped on purpose)"
 [ "$rc" = 1 ] || fail "an all-skipped part is not a part that ran: rc $rc"; pass
 last_is "REVIEW QUALIFICATION: 0 passed, 0 partly run, 1 not run, 0 failed; not run: api (deprecations skipped on purpose)"
+STUB_SKIPNAMED="api-stability-coverage" run "" "$TMP/bin:$SYS" --only api
+has "PART api: rc=0, partly run (api-stability-coverage skipped (linux-only))"
+last_is "REVIEW QUALIFICATION: 0 passed, 1 partly run, 0 not run, 0 failed; partly run: api (api-stability-coverage skipped (linux-only))"
+STUB_SKIPNAMED="public-api-diff api-stability-coverage deprecations" run "" "$TMP/bin:$SYS" --only api
+has "PART api: NOT RUN (deprecations skipped (linux-only))"
+[ "$rc" = 1 ] || fail "named skips of every command: nothing ran, rc $rc"; pass
+STUB_SKIPNAMED="abi-symbols" run "" "$TMP/bin:$SYS" --only abi
+has "PART abi: rc=0, partly run (abi-symbols skipped (linux-only))"
+STUB_NOISE=1 run "" "$TMP/bin:$SYS" --only api
+has "PART api: rc=0"; hasnt "partly run ("
 STUB_SKIP="deprecations" run "" "$TMP/bin:$SYS" --only api
 has "PART api: rc=0, partly run (deprecations skipped on purpose)"
 

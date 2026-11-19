@@ -9,7 +9,7 @@
 #
 # Parts: unit, interop, fuzz, oracles, abi, api, bench-ir. Each prints one
 # line: `PART <name>: rc=N`, `PART <name>: NOT RUN (<why>)`, or, when a command
-# printed a `SKIP:` line, `PART <name>: rc=0, partly run (<the SKIP reason>)`
+# printed a `SKIP:` or `<name>: SKIP` line, `PART <name>: rc=0, partly run (<the SKIP reason>)`
 # (a part of several commands is NOT RUN only when every command skipped).
 # A part whose tool, platform or input is missing is never a pass. The very
 # last line is always `REVIEW QUALIFICATION: <p> passed, <q> partly run, <n> not
@@ -111,8 +111,16 @@ while IFS='^' read -r name tools cmds; do
     (cd "$ROOT" && eval "$c") </dev/null > "$out/.cmd.out" 2>&1 || rc=$?
     cat "$out/.cmd.out" >> "$out/$name.log"
     [ "$rc" -eq 0 ] || break
-    line="$(grep -m1 '^SKIP:' "$out/.cmd.out" || true)"
-    if [ -n "$line" ]; then skipped=$((skipped + 1)); reason="${line#SKIP: }"; fi
+    # A skip line is `SKIP: <why>` or a helper's own `<name>: SKIP[ (<why>)]`;
+    # prose that merely contains "skip" and the census's SKIPPED_TOOL_MISSING do not match.
+    line="$(grep -m1 -E '^(SKIP:|[A-Za-z0-9_.-]+: SKIP([ (]|$))' "$out/.cmd.out" || true)"
+    if [ -n "$line" ]; then
+      skipped=$((skipped + 1))
+      case "$line" in
+        SKIP:*) reason="${line#SKIP: }" ;;
+        *) reason="${line%%: SKIP*} skipped${line#*: SKIP}" ;;
+      esac
+    fi
   done <<< "${cmds//;;/$'\n'}"
   if [ "$rc" -ne 0 ]; then
     failed=$((failed + 1)); echo "PART $name: rc=$rc"
