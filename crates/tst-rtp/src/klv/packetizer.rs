@@ -96,7 +96,6 @@ mod tests {
         packetize(&[1], 0);
     }
 
-    // The crate's other property tests use proptest (a dev-dependency).
     #[cfg(feature = "rtsp-server")]
     mod round_trip {
         use super::*;
