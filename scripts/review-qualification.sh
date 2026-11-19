@@ -53,7 +53,8 @@ done
 names="$(printf '%s\n' "$PARTS" | awk -F'^' 'NF {print $1}')"
 if [ -n "$only" ]; then
   for o in $(printf '%s' "$only" | tr ',' ' '); do
-    printf '%s\n' "$names" | grep -qx -- "$o" || { echo "unknown part '$o' (parts: $(echo $names))" >&2; exit 2; }
+    # A case match, not `printf | grep -q`: under pipefail grep's early exit can fail the pipeline.
+    case $'\n'"$names"$'\n' in *$'\n'"$o"$'\n'*) ;; *) echo "unknown part '$o' (parts: $(echo $names))" >&2; exit 2 ;; esac
   done
 fi
 
