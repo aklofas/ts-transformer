@@ -6,7 +6,7 @@
 #
 # Environment: RUNNER_TEMP (default /tmp) holds the venv and the bin directory;
 # GITHUB_PATH, when set, receives the bin directory. Three pip attempts, 20 s
-# and 60 s apart, each bounded to 300 s.
+# and 60 s apart, each bounded to 120 s (a few MB; worst case about 7 minutes).
 set -euo pipefail
 
 tmp="${RUNNER_TEMP:-/tmp}"
@@ -16,7 +16,7 @@ waits="20 60"
 # A wall-clock bound for one network call, when GNU timeout is available (not
 # on macOS; Windows' own timeout.exe is a different tool).
 bound=()
-if timeout --version 2>/dev/null | grep -q GNU; then bound=(timeout -k 10 300); fi
+if timeout --version 2>/dev/null | grep -q GNU; then bound=(timeout -k 10 120); fi
 
 for tool in ninja cmake pkg-config; do
   command -v "$tool" >/dev/null 2>&1 || { echo "install-build-tools.sh: '$tool' is not on PATH" >&2; exit 1; }

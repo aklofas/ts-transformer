@@ -127,4 +127,24 @@ GITHUB_ACTIONS=true RIPGREP_SHA256_OVERRIDE="$LINUX_SHA" run
 [ "$RC" = 1 ] || fail "case 9 rc=$RC (the table's sum must apply)"
 grep -q 'checksum mismatch' "$TMP/out" || fail "case 9 message"
 
-echo "PASS: 9 cases"
+# 10: each download runs under a two-minute wall-clock bound (stub GNU timeout)
+setup 0
+mkdir -p "$TMP/tbin"
+cat > "$TMP/tbin/timeout" <<'STUB'
+#!/usr/bin/env bash
+if [ "${1:-}" = --version ]; then echo "timeout (GNU coreutils) 9.4"; exit 0; fi
+printf '%s\n' "$*" >> "$TMP/timeout.log"
+if [ "$1" = -k ]; then shift 2; fi
+shift
+exec "$@"
+STUB
+chmod +x "$TMP/tbin/timeout"
+: > "$TMP/timeout.log"
+PATH="$TMP/tbin:$PATH" RIPGREP_SHA256_OVERRIDE="$LINUX_SHA" run
+[ "$RC" = 0 ] || fail "case 10 rc=$RC"
+case "$(head -n 1 "$TMP/timeout.log")" in
+  "-k 10 120 gh release download "*) ;;
+  *) fail "case 10 bound: $(cat "$TMP/timeout.log")" ;;
+esac
+
+echo "PASS: 10 cases"
