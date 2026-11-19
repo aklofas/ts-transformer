@@ -28,7 +28,7 @@ fn sweep(pass: bool) -> SweepSummary {
         invariant_failures: 0,
         unused_accepts: vec![],
         baseline_matched: Some(12),
-        manifest_sha256: sha('o'),
+        manifest_sha256: Some(sha('o')),
         baseline_manifest_sha256: Some(sha('m')),
         klv_field_errors: 0,
         files_with_klv_field_errors: 0,
@@ -110,7 +110,7 @@ fn passing_sweep_and_replay_give_a_passing_row_with_the_counts() {
         (3, 5, 0)
     );
     assert_eq!(row.baseline_manifest_sha256, Some(sha('m')));
-    assert_eq!(row.manifest_sha256, sha('o'));
+    assert_eq!(row.manifest_sha256, Some(sha('o')));
 }
 
 #[test]
@@ -550,4 +550,19 @@ fn the_row_counts_accepted_new_captures_so_the_three_counts_add_up() {
         row.identical + row.changed_explained + row.new_explained,
         row.files
     );
+}
+
+/// A row written before `manifest_sha256` and `new_explained` existed reads
+/// with neither, and a row without a manifest digest writes no key for it.
+#[test]
+fn an_archive_row_without_the_manifest_digest_and_new_count_still_reads() {
+    let mut s = sweep(true);
+    s.manifest_sha256 = None;
+    let row = report::archive_row(&s, None);
+    let mut v = serde_json::to_value(&row).unwrap();
+    let o = v.as_object_mut().unwrap();
+    assert!(!o.contains_key("manifest_sha256"));
+    assert!(o.remove("new_explained").is_some());
+    let back: report::ArchiveRow = serde_json::from_value(v).unwrap();
+    assert_eq!((back.manifest_sha256, back.new_explained), (None, 0));
 }

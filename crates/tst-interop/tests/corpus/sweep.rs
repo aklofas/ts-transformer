@@ -700,6 +700,7 @@ fn a_sweep_summary_without_the_field_error_counts_reads_as_zero() {
         "new_unexplained",
         "baseline_only",
         "baseline_only_explained",
+        "manifest_sha256",
     ] {
         assert!(o.remove(key).is_some(), "{key}");
     }
@@ -713,6 +714,7 @@ fn a_sweep_summary_without_the_field_error_counts_reads_as_zero() {
     assert_eq!((s.klv_field_errors, s.files_with_klv_field_errors), (0, 0));
     assert!(s.accepted.is_empty() && s.baseline_only.is_empty());
     assert_eq!((s.new_explained, s.new_unexplained), (0, 0));
+    assert_eq!(s.manifest_sha256, None);
 }
 
 fn stdout(out: &Output) -> String {
