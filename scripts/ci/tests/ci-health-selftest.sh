@@ -6,7 +6,8 @@
 # first print a page, so a half answer must never reach jq). Cases: all calls succeed; a failing
 # first call and a failing later page are retried; a run whose jobs never
 # come is listed and the rest aggregated; a runs listing that never comes
-# fails the script; no jobs request asks for 100 to a page.
+# fails the script; no jobs request asks for 100 to a page; superseded runs
+# are counted apart.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
@@ -83,6 +84,7 @@ rc_is c3 0
 grep -q 'Runs whose jobs could not be read' "$TMP/c3.sum" || fail "case 3: summary lacks the heading"
 [ "$(grep -c 'runs/102/jobs' "$TMP/gh.log")" = 3 ] || fail "case 3: expected three jobs calls for run 102"
 grep -q '102' "$TMP/c3.sum" || fail "case 3: summary does not name run 102"
+grep -qx 'Runs whose jobs could not be read (left out of the rerun jobs): 102' "$TMP/c3.out" || fail "case 3: stdout does not name run 102"
 grep -q 'repos/.*/runs/102/jobs.*gh api failed (gh: Server Error (HTTP 502))' "$TMP/c3.err" || { cat "$TMP/c3.err"; fail "case 3: stderr lacks the failure line"; }
 grep -q '^csv: .*"test (windows):1;build (linux):1"' "$TMP/c3.out" || { grep '^csv' "$TMP/c3.out"; fail "case 3: the other runs were not aggregated"; }
 rm "$TMP/fail-jobs-102"
@@ -107,4 +109,18 @@ run_case c6
 ! grep 'runs/.*/jobs' "$TMP/gh.log" | grep -q 'per_page=100' || fail "case 6: a jobs request carries per_page=100"
 grep -q 'runs/.*/jobs.*per_page=30' "$TMP/gh.log" || fail "case 6: no jobs request carries per_page=30"
 
-echo "PASS: 7 cases"
+# 7: a week with two superseded pull-request runs (cancelled on attempt 1):
+# counted apart, neither green nor failed, and the last CSV column. A
+# cancelled dispatch run and a cancelled second attempt are not superseded.
+CI_HEALTH_RUNS_JSON="$FX/runs-superseded.json" run_case c7
+rc_is c7 0
+grep -qx '  green on first try:    1 of 4 (superseded runs left out)' "$TMP/c7.out" || { cat "$TMP/c7.out"; fail "case 7: green line"; }
+grep -qx '  superseded:            2 (pull-request runs cancelled on attempt 1)' "$TMP/c7.out" || { cat "$TMP/c7.out"; fail "case 7: superseded line"; }
+grep -qx '  unrecovered failures:  1' "$TMP/c7.out" || fail "case 7: a superseded run counted as a failure"
+grep -qE '^csv: [0-9T:Z-]+,7,6,1,1,0,1,"",2$' "$TMP/c7.out" || { grep '^csv' "$TMP/c7.out"; fail "case 7: csv row"; }
+CSV="$TMP/c7.csv"
+CI_HEALTH_RUNS_JSON="$FX/runs-superseded.json" bash "$SCRIPT" --append "$CSV" > /dev/null
+[ "$(head -n 1 "$CSV")" = "snapshot_utc,window_days,runs,first_try_green,rerun_runs,wedges_over_60m,unrecovered_failures,rerun_jobs,superseded" ] || { cat "$CSV"; fail "case 7: csv header"; }
+grep -qE ',"",2$' "$CSV" || { cat "$CSV"; fail "case 7: appended row"; }
+
+echo "PASS: 8 cases"

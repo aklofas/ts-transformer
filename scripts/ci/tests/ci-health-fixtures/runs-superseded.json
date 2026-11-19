@@ -1,0 +1,8 @@
+{"total_count":6,"workflow_runs":[
+{"id":200,"name":"ci","run_attempt":1,"conclusion":"success","status":"completed","event":"pull_request","run_started_at":"2026-01-05T10:00:00Z","updated_at":"2026-01-05T10:30:00Z"},
+{"id":201,"name":"ci","run_attempt":1,"conclusion":"cancelled","status":"completed","event":"pull_request","run_started_at":"2026-01-05T11:00:00Z","updated_at":"2026-01-05T11:05:00Z"},
+{"id":202,"name":"jvm-jar","run_attempt":1,"conclusion":"cancelled","status":"completed","event":"pull_request","run_started_at":"2026-01-05T11:00:00Z","updated_at":"2026-01-05T11:04:00Z"},
+{"id":203,"name":"ci","run_attempt":1,"conclusion":"cancelled","status":"completed","event":"workflow_dispatch","run_started_at":"2026-01-05T12:00:00Z","updated_at":"2026-01-05T12:50:00Z"},
+{"id":205,"name":"ci","run_attempt":2,"conclusion":"cancelled","status":"completed","event":"pull_request","run_started_at":"2026-01-05T14:00:00Z","updated_at":"2026-01-05T14:10:00Z"},
+{"id":204,"name":"interop","run_attempt":1,"conclusion":"failure","status":"completed","event":"schedule","run_started_at":"2026-01-05T13:00:00Z","updated_at":"2026-01-05T13:20:00Z"}
+]}
