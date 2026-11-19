@@ -8,6 +8,14 @@
 # advisory published during the freeze does not change the verdict on the
 # frozen commit; with `rev = ""` from the live database. Every workspace runs;
 # the script fails when any failed and names each one.
+#
+# Pinned mode: cargo-deny 0.20.2's only switch that stops the database fetch is
+# the global `--offline`, and it also runs `cargo metadata` offline, so each
+# workspace's crates are fetched first (`cargo fetch --locked`). Every network
+# step is bounded (GNU timeout, when present) and tried three times, 20 s and
+# 60 s apart. The offline checks then run behind a proxy on a closed port: a
+# check that tried to fetch anything would fail instead of reading the live
+# database.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -37,35 +45,51 @@ if [ -n "$rev" ] && ! printf '%s' "$rev" | grep -qE '^[0-9a-f]{40}$'; then
   exit 2
 fi
 
-offline=()
+bound=()
+if timeout --version 2>/dev/null | grep -q GNU; then bound=(timeout -k 10 300); fi
+# retry <command...>: three bounded attempts.
+retry() {
+  local attempt=1 w
+  until ${bound[@]+"${bound[@]}"} "$@"; do
+    echo "::notice::attempt $attempt of 3 failed: $*"
+    [ "$attempt" -lt 3 ] || return 1
+    w="$(echo "20 60" | awk -v i="$attempt" '{print $i}')"
+    sleep "$w"
+    attempt=$((attempt + 1))
+  done
+}
+
+deny=()
 if [ -n "$rev" ]; then
   # cargo-deny names its clone after a hash of the URL, so it makes the clone
   # itself and the clone is then moved to the pin (as its own fetch does).
   grep -qxF 'db-path = "$CARGO_HOME/advisory-db"' "$ROOT/deny.toml" \
     || { echo "cargo-deny-all: deny.toml's db-path is not \$CARGO_HOME/advisory-db" >&2; exit 2; }
-  cargo deny --manifest-path "$ROOT/Cargo.toml" --config "$ROOT/deny.toml" fetch db
+  retry cargo deny --manifest-path "$ROOT/Cargo.toml" --config "$ROOT/deny.toml" fetch db
   dbs=("${CARGO_HOME:-$HOME/.cargo}"/advisory-db/advisory-db-*)
   [ ${#dbs[@]} -eq 1 ] && [ -d "${dbs[0]}/.git" ] \
     || { echo "cargo-deny-all: want one advisory-db clone, found: ${dbs[*]}" >&2; exit 2; }
   db="${dbs[0]}"
-  git -C "$db" fetch -q --depth=1 origin "$rev"
+  retry git -C "$db" fetch -q --depth=1 origin "$rev"
   git -C "$db" reset -q --hard FETCH_HEAD
   head="$(git -C "$db" rev-parse HEAD)"
   [ "$head" = "$rev" ] || { echo "cargo-deny-all: the advisory-db clone is at $head, not $rev" >&2; exit 2; }
   echo "cargo-deny-all: advisory-db at $rev ($(git -C "$db" show -s --format=%cI HEAD)), fetching disabled"
-  offline=(--offline)
+  dead=http://127.0.0.1:9
+  deny=(env "https_proxy=$dead" "HTTPS_PROXY=$dead" "http_proxy=$dead" "HTTP_PROXY=$dead"
+           "ALL_PROXY=$dead" "all_proxy=$dead" no_proxy= NO_PROXY= cargo deny --offline)
 else
+  deny=(cargo deny)
   echo "cargo-deny-all: the advisory-db pin is empty; checking against the live database"
 fi
 
 failed=()
 for m in "${WORKSPACES[@]}"; do
   echo "== cargo-deny: $m"
-  # --offline also keeps cargo metadata off the network: fetch the crates first.
-  if [ -n "$rev" ] && ! cargo fetch --locked --manifest-path "$ROOT/$m"; then
+  if [ -n "$rev" ] && ! retry cargo fetch --locked --manifest-path "$ROOT/$m"; then
     failed+=("$m"); continue
   fi
-  cargo deny ${offline[@]+"${offline[@]}"} --manifest-path "$ROOT/$m" --config "$ROOT/deny.toml" --locked \
+  "${deny[@]}" --manifest-path "$ROOT/$m" --config "$ROOT/deny.toml" --locked \
     check advisories licenses || failed+=("$m")
 done
 
