@@ -1,1 +1,3 @@
 *.bin binary
+# SDP seeds keep the CRLF line ends the client writes, on every platform.
+*.sdp -text

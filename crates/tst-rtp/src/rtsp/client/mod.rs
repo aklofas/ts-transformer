@@ -149,61 +149,312 @@ pub(crate) fn duration_ms_saturating(d: Duration) -> u64 {
     u64::try_from(d.as_millis()).unwrap_or(u64::MAX)
 }
 
-/// Feed `data` to a fresh client engine as bytes read from the control
-/// connection: interleaved channels 0/1, one OPTIONS (CSeq 1) waiting for
-/// its reply and one keepalive ping (CSeq 2) waiting for its own, once in
-/// 7-byte slices and once whole.
+/// Feed `data` as bytes read from the control connection, once in 7-byte
+/// slices and once whole, to each of three fresh client engines:
+///
+/// - a pull client with interleaved channels 0/1 installed, one OPTIONS
+///   (CSeq 1) waiting for its reply and one keepalive ping (CSeq 2)
+///   waiting for its own;
+/// - a pull client with a SETUP (CSeq 1) waiting for the reply that
+///   installs its route, and a ping (CSeq 2): a `200` with an interleaved
+///   `Transport` and a `Session` installs it, and frames behind the reply
+///   are media;
+/// - a publish client recording two tracks (channels 0/1 and 2/3, session
+///   `fuzz`) after scripted `200` replies to ANNOUNCE, two SETUPs and
+///   RECORD (CSeq 1 to 4), with an OPTIONS (CSeq 5) and a ping (CSeq 6)
+///   waiting.
+///
+/// Besides not panicking, the engines keep three rules: media comes only
+/// from a route a SETUP reply or the setup installed, a publish client
+/// hands out no media, and it stays recording, with media allowed, until
+/// its session or stream ends.
 //
 // `#[doc(hidden)] pub` for the fuzz workspace's `rtsp_client_pump_framing`
 // target. Not part of the crate's stable public API.
 #[doc(hidden)]
 pub fn fuzz_client_engine_input(data: &[u8]) {
-    use crate::rtsp::message::RtspMethod;
-    use engine::{ClientEngine, EngineConfig, RequestSpec, RouteId, RouteKind, SetupRoute};
     let start = std::time::Instant::now();
-    let interval = Duration::from_millis(100);
-    let now = start.checked_add(interval).unwrap_or(start);
-    let fresh = || {
-        let mut e = ClientEngine::new(EngineConfig {
-            uri: "rtsp://fuzz.invalid/live".to_string(),
-            version: crate::url::RtspVersion::V1_0,
-            user_agent: "tst-rtp-fuzz".to_string(),
-            credentials: None,
-            schemes: crate::rtsp::auth::AuthSchemes::default(),
-        });
-        let pull = SetupRoute {
-            id: RouteId(0),
-            kind: RouteKind::Pull,
-        };
-        let _ = e.install_route(pull, 0, 1);
-        let _ = e.submit(
-            RequestSpec {
-                method: RtspMethod::Options,
-                uri: "rtsp://fuzz.invalid/live".to_string(),
-                headers: Vec::new(),
-                body: None,
-                announce_tracks: None,
-                setup: None,
-            },
-            None,
-            start,
-        );
-        e.enable_keepalive(Some(interval), start);
-        e.handle_timeout(now, false);
-        e
-    };
-    let drain = |e: &mut ClientEngine| {
-        while e.poll_event().is_some() {}
-        while e.poll_transmit().is_some() {}
-    };
-    let mut sliced = fresh();
-    for chunk in data.chunks(7) {
-        sliced.handle_input(chunk, now);
-        drain(&mut sliced);
+    let now = start
+        .checked_add(fuzz_engines::PING_INTERVAL)
+        .unwrap_or(start);
+    for kind in fuzz_engines::KINDS {
+        let mut sliced = kind.build(start, now);
+        let mut watch = fuzz_engines::Watch::default();
+        for chunk in data.chunks(7) {
+            sliced.handle_input(chunk, now);
+            watch.drain(kind, &mut sliced);
+        }
+        let mut whole = kind.build(start, now);
+        whole.handle_input(data, now);
+        fuzz_engines::Watch::default().drain(kind, &mut whole);
     }
-    let mut whole = fresh();
-    whole.handle_input(data, now);
-    drain(&mut whole);
+}
+
+/// The engines [`fuzz_client_engine_input`] feeds, and the rules it checks.
+mod fuzz_engines {
+    use std::time::{Duration, Instant};
+
+    use crate::rtsp::message::RtspMethod;
+
+    use super::engine::{
+        ClientEngine, EngineConfig, Event, PushPhase, ReplyOutcome, RequestSpec, RouteId,
+        RouteKind, SetupRoute,
+    };
+
+    pub(super) const PING_INTERVAL: Duration = Duration::from_millis(100);
+
+    const URI: &str = "rtsp://fuzz.invalid/live";
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub(super) enum Kind {
+        OptionsWaiting,
+        SetupWaiting,
+        Recording,
+    }
+
+    pub(super) const KINDS: [Kind; 3] = [Kind::OptionsWaiting, Kind::SetupWaiting, Kind::Recording];
+
+    /// The replies that take a publish client to recording, in order, for
+    /// the requests of [`record_requests`]: CSeq 1 to 4.
+    const RECORD_REPLIES: [&[u8]; 4] = [
+        b"RTSP/1.0 200 OK\r\nCSeq: 1\r\n\r\n",
+        b"RTSP/1.0 200 OK\r\nCSeq: 2\r\nSession: fuzz;timeout=60\r\n\
+          Transport: RTP/AVP/TCP;unicast;interleaved=0-1;mode=record\r\n\r\n",
+        b"RTSP/1.0 200 OK\r\nCSeq: 3\r\nSession: fuzz;timeout=60\r\n\
+          Transport: RTP/AVP/TCP;unicast;interleaved=2-3;mode=record\r\n\r\n",
+        b"RTSP/1.0 200 OK\r\nCSeq: 4\r\nSession: fuzz\r\n\r\n",
+    ];
+
+    fn request(method: RtspMethod, headers: Vec<(&'static str, String)>) -> RequestSpec {
+        RequestSpec {
+            method,
+            uri: URI.to_string(),
+            headers,
+            body: None,
+            announce_tracks: None,
+            setup: None,
+        }
+    }
+
+    /// A SETUP asking for `channels` interleaved, installed under `route`.
+    fn setup(route: SetupRoute, channels: &str) -> RequestSpec {
+        let mode = if route.kind == RouteKind::Push {
+            ";mode=record"
+        } else {
+            ""
+        };
+        RequestSpec {
+            setup: Some(route),
+            ..request(
+                RtspMethod::Setup,
+                vec![(
+                    "transport",
+                    format!("RTP/AVP/TCP;unicast;interleaved={channels}{mode}"),
+                )],
+            )
+        }
+    }
+
+    /// ANNOUNCE of two tracks, a recording SETUP of each, RECORD.
+    fn record_requests() -> [RequestSpec; 4] {
+        let push = |id| SetupRoute {
+            id: RouteId(id),
+            kind: RouteKind::Push,
+        };
+        [
+            RequestSpec {
+                announce_tracks: Some(2),
+                ..request(RtspMethod::Announce, Vec::new())
+            },
+            setup(push(0), "0-1"),
+            setup(push(1), "2-3"),
+            request(RtspMethod::Record, vec![("session", "fuzz".to_string())]),
+        ]
+    }
+
+    impl Kind {
+        pub(super) fn build(self, start: Instant, now: Instant) -> ClientEngine {
+            let mut e = ClientEngine::new(EngineConfig {
+                uri: URI.to_string(),
+                version: crate::url::RtspVersion::V1_0,
+                user_agent: "tst-rtp-fuzz".to_string(),
+                credentials: None,
+                schemes: crate::rtsp::auth::AuthSchemes::default(),
+            });
+            let pull = SetupRoute {
+                id: RouteId(0),
+                kind: RouteKind::Pull,
+            };
+            let waiting = match self {
+                Kind::OptionsWaiting => {
+                    let _ = e.install_route(pull, 0, 1);
+                    request(RtspMethod::Options, Vec::new())
+                }
+                Kind::SetupWaiting => setup(pull, "0-1"),
+                Kind::Recording => {
+                    for (spec, reply) in record_requests().into_iter().zip(RECORD_REPLIES) {
+                        let txn = e.submit(spec, None, start).expect("a publish request");
+                        e.handle_input(reply, start);
+                        let taken = std::iter::from_fn(|| e.poll_event()).any(
+                            |ev| matches!(ev, Event::Reply { txn: t, result: Ok(_) } if t == txn),
+                        );
+                        assert!(taken, "a scripted publish reply was not taken: {e:?}");
+                    }
+                    while e.poll_transmit().is_some() {}
+                    assert_eq!(e.push_phase(), Some(PushPhase::Recording));
+                    request(RtspMethod::Options, Vec::new())
+                }
+            };
+            let _ = e.submit(waiting, None, start);
+            e.enable_keepalive(Some(PING_INTERVAL), start);
+            e.handle_timeout(now, false);
+            e
+        }
+    }
+
+    /// What one engine has handed out so far.
+    #[derive(Default)]
+    pub(super) struct Watch {
+        /// A SETUP reply installed a route.
+        installed: bool,
+    }
+
+    impl Watch {
+        /// Take every event and transmit `e` holds, checking the rules.
+        pub(super) fn drain(&mut self, kind: Kind, e: &mut ClientEngine) {
+            while let Some(ev) = e.poll_event() {
+                match ev {
+                    Event::Reply {
+                        result: Ok(ReplyOutcome { setup: Some(_), .. }),
+                        ..
+                    } => self.installed = true,
+                    Event::Media { .. } => assert!(
+                        match kind {
+                            Kind::OptionsWaiting => true,
+                            Kind::SetupWaiting => self.installed,
+                            Kind::Recording => false,
+                        },
+                        "{kind:?}: media from a route that was not installed for pulling"
+                    ),
+                    _ => {}
+                }
+            }
+            while e.poll_transmit().is_some() {}
+            if kind == Kind::Recording {
+                let phase = e.push_phase();
+                assert!(
+                    matches!(phase, Some(PushPhase::Recording | PushPhase::Ended)),
+                    "a recording publish client moved to {phase:?}"
+                );
+                assert_eq!(e.media_allowed(), phase == Some(PushPhase::Recording));
+            }
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use crate::rtsp::client::engine::SetupAccepted;
+
+        fn events(e: &mut ClientEngine) -> Vec<Event> {
+            std::iter::from_fn(|| e.poll_event()).collect()
+        }
+
+        fn rtp_frame(channel: u8) -> Vec<u8> {
+            let mut f = vec![b'$', channel, 0, 16];
+            f.extend_from_slice(&[0x80, 33, 0, 1, 0, 0, 0, 9, 0, 0, 0, 7]);
+            f.extend_from_slice(&[0x47, 1, 2, 3]);
+            f
+        }
+
+        fn rtcp_frame(channel: u8) -> Vec<u8> {
+            let mut f = vec![b'$', channel, 0, 8];
+            f.extend_from_slice(&[0x80, 201, 0, 1, 0, 0, 0, 5]);
+            f
+        }
+
+        #[test]
+        fn the_recording_engine_records_with_two_push_routes() {
+            let t = Instant::now();
+            let mut e = Kind::Recording.build(t, t + PING_INTERVAL);
+            assert_eq!(e.push_phase(), Some(PushPhase::Recording));
+            assert!(e.media_allowed());
+            // RTP on either route's RTP channel is dropped, RTCP on either
+            // RTCP channel is the route's.
+            let input = [rtp_frame(0), rtp_frame(2), rtcp_frame(1), rtcp_frame(3)].concat();
+            e.handle_input(&input, t);
+            let ev = events(&mut e);
+            assert!(
+                matches!(
+                    ev.as_slice(),
+                    [
+                        Event::InboundDropped,
+                        Event::InboundDropped,
+                        Event::Rtcp {
+                            route: RouteId(0),
+                            ..
+                        },
+                        Event::Rtcp {
+                            route: RouteId(1),
+                            ..
+                        },
+                    ]
+                ),
+                "{ev:?}"
+            );
+        }
+
+        #[test]
+        fn the_setup_engine_installs_its_route_from_the_reply() {
+            let t = Instant::now();
+            let mut e = Kind::SetupWaiting.build(t, t + PING_INTERVAL);
+            // Before the reply, a frame on channel 0 has no route.
+            e.handle_input(&rtp_frame(0), t);
+            assert!(events(&mut e).is_empty());
+            let reply = b"RTSP/1.0 200 OK\r\nCSeq: 1\r\nSession: s1\r\n\
+                Transport: RTP/AVP/TCP;unicast;interleaved=0-1\r\n\r\n";
+            e.handle_input(&[&reply[..], &rtp_frame(0)].concat(), t);
+            let ev = events(&mut e);
+            assert!(
+                matches!(
+                    ev.as_slice(),
+                    [
+                        Event::Reply {
+                            result: Ok(ReplyOutcome {
+                                setup: Some(SetupAccepted {
+                                    route: RouteId(0),
+                                    rtp_channel: 0,
+                                    rtcp_channel: 1,
+                                }),
+                                ..
+                            }),
+                            ..
+                        },
+                        Event::Media {
+                            route: RouteId(0),
+                            ..
+                        },
+                    ]
+                ),
+                "{ev:?}"
+            );
+        }
+
+        /// The committed seeds of `rtsp_client_pump_framing` run through
+        /// the entry.
+        #[test]
+        fn the_fuzz_seeds_keep_the_rules() {
+            let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("fuzz/seeds/rtsp_client_pump_framing");
+            let mut seeds = 0;
+            for entry in std::fs::read_dir(&dir).unwrap() {
+                let data = std::fs::read(entry.unwrap().path()).unwrap();
+                crate::rtsp::client::fuzz_client_engine_input(&data);
+                seeds += 1;
+            }
+            assert!(seeds > 0, "no seed in {}", dir.display());
+        }
+    }
 }
 
 /// Cancel handle for the RTSP client. Covers the control plane; the

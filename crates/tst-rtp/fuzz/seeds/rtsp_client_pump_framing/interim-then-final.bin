@@ -1,0 +1,12 @@
+RTSP/1.0 100 Continue
+CSeq: 1
+
+RTSP/1.0 200 OK
+CSeq: 1
+
+RTSP/1.0 100 Continue
+CSeq: 5
+
+RTSP/1.0 200 OK
+CSeq: 5
+

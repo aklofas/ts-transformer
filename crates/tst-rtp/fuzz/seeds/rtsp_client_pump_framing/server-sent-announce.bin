@@ -1,0 +1,11 @@
+ANNOUNCE rtsp://fuzz.invalid/live RTSP/1.0
+CSeq: 9
+Content-Type: application/sdp
+Content-Length: 89
+
+v=0
+o=- 1 1 IN IP4 127.0.0.1
+s=x
+t=0 0
+m=video 0 RTP/AVP 33
+a=rtpmap:33 MP2T/90000
