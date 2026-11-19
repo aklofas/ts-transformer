@@ -330,6 +330,10 @@ jobs:
           for f in semver-baseline.json semver-checks.json; do
             [ ! -f "$RUNNER_TEMP/semver/$f" ] || cp "$RUNNER_TEMP/semver/$f" "$RUNNER_TEMP/abi-record/"
           done
+          # Each crate's report text, for the bundle beside semver-checks.json.
+          for f in "$RUNNER_TEMP"/semver/*.txt; do
+            [ ! -f "$f" ] || cp "$f" "$RUNNER_TEMP/abi-record/semver-$(basename "$f")"
+          done
           [ "$rc" -eq 0 ] || exit "$rc"
           jq -n --arg v "$(cargo +stable semver-checks --version | sed 's/^cargo-semver-checks *//')" '{version:$v}' > "$RUNNER_TEMP/abi-record/semver-checks-tool.json"
 
@@ -505,7 +509,9 @@ jobs:
               '{($p): {sha:$sha, describe:$d}}'
           }
           subs="$( { sub crates/srt-sys/vendor/srt; sub crates/rist-sys/vendor/librist; sub crates/mbedtls-src/vendor/mbedtls; } | jq -s add)"
-          nightly="$(sed -n 's/.*rustup toolchain install \(nightly-[0-9-]*\).*/\1/p' .github/workflows/ci.yml | head -1)"
+          # The public-api pin is one line of its own file (ci.yml reads it too).
+          nightly="$(head -n1 scripts/lib/public-api-toolchain 2>/dev/null || true)"
+          [ -n "$nightly" ] || { echo "::error::scripts/lib/public-api-toolchain gives no public-api nightly pin"; exit 1; }
           cbindgen="$(awk '/^name = "cbindgen"$/ {getline; gsub(/[^0-9.]/, "", $0); print; exit}' Cargo.lock)"
           . /etc/os-release
           jq -n --arg label "$LABEL" --arg sha "$(git rev-parse HEAD)" --arg ref "$REF" --arg wsha "$WORKFLOW_SHA" \
@@ -624,6 +630,11 @@ jobs:
               "$RUNNER_TEMP/downloaded/sbom/$f.cdx.json" > "$B/$f.cdx.json"
           done
           cp "$RUNNER_TEMP"/downloaded/c-package/*.tar.gz "$B/" || echo "::warning::no C package was produced"
+          # The cargo-semver-checks report: semver-checks.json (what the break
+          # counts are tallied from) and each crate's text beside it.
+          for f in "$RUNNER_TEMP"/downloaded/abi-record/semver-checks.json "$RUNNER_TEMP"/downloaded/abi-record/semver-*.txt; do
+            [ ! -f "$f" ] || cp "$f" "$B/"
+          done
           # The tree-equivalence proof: the soaks ran on an earlier commit than the
           # one qualified, so the bundle states the collector's decision in words,
           # for the x86_64 soak and for the aarch64 soak: the paths that supersede
