@@ -109,7 +109,8 @@ while [ "$n" -le "$attempts" ]; do
   echo "::notice::apt install attempt $n of $attempts: $failed_step failed with status $rc"
   if [ "$failed_step" = unpack ]; then
     # An interrupted dpkg makes every later apt-get install fail until it is finished.
-    echo "::notice::the unpack was interrupted; running dpkg --configure -a"
+    case "$rc" in 124 | 137) how="was interrupted" ;; *) how=failed ;; esac
+    echo "::notice::the unpack $how (status $rc); running dpkg --configure -a"
     # shellcheck disable=SC2086
     $sudo_cmd timeout -k 10 "$unpack_bound" dpkg --configure -a || true
   fi
