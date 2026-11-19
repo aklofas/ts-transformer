@@ -25,7 +25,8 @@ REDACT_SCAN_DIRS="${REDACT_SCAN_DIRS:-$ROOT/crates/tst-interop/src $ROOT/example
 
 found=0
 for dir in $REDACT_SCAN_DIRS; do
-  [ -d "$dir" ] || continue
+  # A dir that moved would leave nothing scanned and the rail green.
+  [ -d "$dir" ] || { echo "FAIL: no-unredacted-url: $dir does not exist" >&2; exit 1; }
   while IFS= read -r -d '' f; do
     hits=$(awk '
       /\{(url|uri)(:[^}]*)?\}/ || /(format|println|eprintln|print|eprint|panic)!\("[^"]*"(,[^,()]*)*,[ ]*&?(url|uri)[ ]*[,)]/ {
