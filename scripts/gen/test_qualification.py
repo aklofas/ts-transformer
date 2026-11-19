@@ -1636,18 +1636,45 @@ class ReleaseModeTests(unittest.TestCase):
             self.assertEqual(rec["verdict"], "NO-GO", bad)
             self.assertTrue(any(r.startswith("corpus: archive corpus-rel") for r in rec["verdict_reasons"]), bad)
 
-    def test_release_mode_requires_a_corpus_rows_parts_to_cover_its_files(self):
-        def reasons(counts):
-            rows = archives_toml(archive_row("soak-rel", "soak", SHA, legs=FIVE),
-                                 archive_row("corpus-rel", "corpus", SHA, counts=counts))
-            return collect(release=True, archives=rows)["verdict_reasons"]
-        self.assertFalse([r for r in reasons(COUNTS) if "explained" in r])
-        short = [r for r in reasons(dict(COUNTS, identical=257)) if "explained" in r]
-        self.assertEqual(short, ["corpus: archive corpus-rel: 257 identical + 2 explained != 260 files"])
-        # A row without the keys keeps the missing-counts reason and gains no sum reason.
+    def _parts_reasons(self, counts, new=None):
+        row = archive_row("corpus-rel", "corpus", SHA, counts=counts)
+        if new is not None:
+            row += "new_explained = %d\n" % new
+        rows = archives_toml(archive_row("soak-rel", "soak", SHA, legs=FIVE), row)
+        return [r for r in collect(release=True, archives=rows)["verdict_reasons"] if "explained" in r]
+
+    def test_a_corpus_row_whose_parts_cover_its_files_passes(self):
+        self.assertEqual(self._parts_reasons(COUNTS), [])
+        self.assertEqual(self._parts_reasons(COUNTS, new=0), [])
+
+    def test_an_accepted_new_capture_counts_toward_the_files(self):
+        self.assertEqual(self._parts_reasons(dict(COUNTS, identical=257), new=1), [])
+
+    def test_a_row_with_new_explained_and_a_short_sum_is_refused(self):
+        self.assertEqual(self._parts_reasons(dict(COUNTS, identical=256), new=1),
+                         ["corpus: archive corpus-rel: 256 identical + 2 explained + 1 new != 260 files"])
+
+    def test_a_row_without_new_explained_may_fall_short_but_not_overshoot(self):
+        # Rows written before the key existed cannot say how many captures were accepted as new.
+        self.assertEqual(self._parts_reasons(dict(COUNTS, identical=257)), [])
+        self.assertEqual(self._parts_reasons(dict(COUNTS, identical=259)),
+                         ["corpus: archive corpus-rel: 259 identical + 2 explained + 0 new != 260 files"])
+
+    def test_the_parts_may_not_overshoot_the_files_with_the_key_either(self):
+        self.assertEqual(len(self._parts_reasons(dict(COUNTS, identical=259), new=1)), 1)
+
+    def test_a_row_without_any_counts_gains_no_sum_reason(self):
         bare = archives_toml(archive_row("soak-rel", "soak", SHA, legs=FIVE),
                              archive_row("corpus-rel", "corpus", SHA))
         self.assertFalse([r for r in collect(release=True, archives=bare)["verdict_reasons"] if "explained" in r])
+
+    def test_new_explained_is_a_non_negative_integer_on_corpus_rows_only(self):
+        for tail, want in (("new_explained = -1\n", "new_explained must be an integer, 0 or more"),
+                           ('new_explained = "1"\n', "new_explained must be an integer, 0 or more")):
+            text = archives_toml(archive_row("corpus-rel", "corpus", SHA, counts=COUNTS)) + tail
+            self.assertTrue(any(want in p for p in q.validate_archives(q.parse_archives(text))), tail)
+        soak = archives_toml(archive_row("soak-rel", "soak", SHA, legs=FIVE)) + "new_explained = 1\n"
+        self.assertTrue(any("belongs to corpus rows only" in p for p in q.validate_archives(q.parse_archives(soak))))
 
     def _manifest_reasons(self, *corpus_rows, release=True):
         rows = archives_toml(archive_row("soak-rel", "soak", SHA, legs=FIVE), *corpus_rows)

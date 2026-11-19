@@ -145,6 +145,9 @@ BASELINE_KEY = "baseline_manifest_sha256"
 # The SHA-256 of the digests/manifest.txt a corpus sweep wrote: which capture set it swept.
 # Rows before 0.11.0 carry none.
 MANIFEST_KEY = "manifest_sha256"
+# Captures accepted as new since the baseline; a ninth count that older rows lack, so it is
+# not part of the all-or-none eight.
+NEW_KEY = "new_explained"
 
 
 def parse_archives(text):
@@ -244,6 +247,11 @@ def validate_archives(rows):
                 problems.append("%s: %s belongs to corpus rows only" % (i, MANIFEST_KEY))
             elif not re.fullmatch(r"[0-9a-f]{64}", str(r[MANIFEST_KEY])):
                 problems.append("%s: %s must be 64 lowercase hex characters" % (i, MANIFEST_KEY))
+        if NEW_KEY in r:
+            if r.get("kind") != "corpus":
+                problems.append("%s: %s belongs to corpus rows only" % (i, NEW_KEY))
+            elif isinstance(r[NEW_KEY], bool) or not isinstance(r[NEW_KEY], int) or r[NEW_KEY] < 0:
+                problems.append("%s: %s must be an integer, 0 or more" % (i, NEW_KEY))
         present = [k for k in CORPUS_COUNTS if k in r]
         if present and r.get("kind") != "corpus":
             problems.append("%s: %s: belongs to corpus rows only" % (i, ", ".join(present)))
@@ -292,6 +300,8 @@ def load_archives(root):
             row[BASELINE_KEY] = r[BASELINE_KEY]
         if MANIFEST_KEY in r:
             row[MANIFEST_KEY] = r[MANIFEST_KEY]
+        if NEW_KEY in r:
+            row[NEW_KEY] = r[NEW_KEY]
         row.update({k: r[k] for k in CORPUS_COUNTS if k in r})
         out.append(row)
     return out, expected, required, pin
@@ -692,9 +702,13 @@ def release_vm(root, sha, archives, release, expected_files, required_s, expecte
                 if c["files"] != expected_files:
                     reasons.append("corpus: archive %s swept %d files; the release corpus has %d"
                                    % (c["id"], c["files"], expected_files))
-                if c["identical"] + c["changed_explained"] != c["files"]:
-                    reasons.append("corpus: archive %s: %d identical + %d explained != %d files"
-                                   % (c["id"], c["identical"], c["changed_explained"], c["files"]))
+                # A row that predates `new_explained` cannot say how many captures were
+                # accepted as new, so only an over-count is certain.
+                parts = c["identical"] + c["changed_explained"] + c.get(NEW_KEY, 0)
+                if parts > c["files"] or (NEW_KEY in c and parts != c["files"]):
+                    reasons.append("corpus: archive %s: %d identical + %d explained + %d new != %d files"
+                                   % (c["id"], c["identical"], c["changed_explained"], c.get(NEW_KEY, 0),
+                                      c["files"]))
                 if not c["replay_files"] > 0:
                     reasons.append("corpus: archive %s replayed no files" % c["id"])
                 for k in ("parse_failures", "invariant_failures"):
