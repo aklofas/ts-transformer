@@ -9,6 +9,7 @@
 //! scope.
 
 pub mod ingest;
+pub(crate) mod sender;
 pub mod stats;
 
 use bytes::{Buf, BufMut};
