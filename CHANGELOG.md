@@ -225,7 +225,7 @@ Next release: 0.11.0
 
 ### Changed — examples
 
-- The receiving and sending examples that print the URL they were given (`recv_rtsp_camera`, `recv_rtsp_h264`, `recv_rtp`, `recv_udp`, `send_tcp`, `send_udp`) print it through `redact_url`, so a password or a `passphrase=` in the argument is not echoed. The C examples `send_srt.c`, `poll_socket_stats.c`, `recv_srt_events.c`, `recv_udp.c`, `recv_rtp.c`, `recv_tcp.c`, `recv_rtsp_publish.c` and `send_rtsp_server.c` print the URL they were given without its query, where an SRT URL carries `passphrase=`.
+- The receiving and sending examples that print the URL they were given (`recv_rtsp_camera`, `recv_rtsp_h264`, `recv_rtp`, `recv_udp`, `send_tcp`, `send_udp`) print it through `redact_url`, so a password or a `passphrase=` in the argument is not echoed. The C examples `send_srt.c`, `poll_socket_stats.c`, `recv_srt_events.c`, `recv_udp.c`, `recv_rtp.c` and `recv_tcp.c` print the URL they were given without its query, where an SRT URL carries `passphrase=`; `recv_rtsp_camera.c`, `recv_rtsp_publish.c` and `send_rtsp_server.c` print it without its query and its user info (`rtsp://user:pass@…`), which the RTSP client sends as its login.
 
 ### Removed — tst-core (BREAKING)
 
