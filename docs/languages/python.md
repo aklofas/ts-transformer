@@ -1504,7 +1504,7 @@ How each call ends:
 | a data call | `RtpError(BROKEN)` | The server closed the connection, the connection failed or took no byte for 5 s, a keepalive ping was answered `454`, or the server broke the framing. Also a TS payload that is not whole packets, which leaves the session open. |
 | `send_ts` | `RtpError(TOO_LARGE)` | More than 1316 bytes; nothing sent. |
 | a data call | `ValueError` | A track the push did not announce (`send_klv` without `klv=True`, `send_video` / `send_klv` on an MPEG-TS push, `send_ts` on an elementary one) or an empty unit; nothing sent. |
-| `teardown()` | `RtspError` | The server refused the TEARDOWN (`PROTOCOL`, or `NOT_FOUND` for a 404), or had forgotten the session and queued media was dropped (`PROTOCOL`, status `454`); `TIMEOUT` when no reply came within the 500 ms; `IO` when the connection had ended; `CLOSED` on a cancelled push. The session is closed either way. |
+| `teardown()` | `RtspError` | The server refused the TEARDOWN (`PROTOCOL`, or `NOT_FOUND` for a 404), or had forgotten the session and queued media was dropped (`PROTOCOL`, status `454`); `TIMEOUT` when no reply came within the 500 ms; `IO` when the connection had ended; `CLOSED` on a cancelled push and on a session already closed. The session is closed either way. |
 | `close()`, the `with` exit | `None` | Whatever the server answered. |
 
 Rules the types do not enforce:
