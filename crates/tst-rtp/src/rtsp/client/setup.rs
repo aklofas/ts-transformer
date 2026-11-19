@@ -203,7 +203,7 @@ impl RtspClient {
 #[cfg(test)]
 mod tests {
     use std::io::{Read, Write};
-    use std::net::TcpListener;
+    use std::net::{TcpListener, TcpStream};
     use std::sync::mpsc;
     use std::time::{Duration, Instant};
 
@@ -217,6 +217,27 @@ mod tests {
 
     const SDP: &[u8] = b"v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=x\r\nt=0 0\r\nm=video 0 RTP/AVP 33\r\na=control:trackID=0\r\n";
 
+    /// Reads one request head from `sock`; its `CSeq`, or `None` when the
+    /// client hung up first.
+    fn request_cseq(sock: &mut TcpStream) -> Option<String> {
+        let mut head = Vec::new();
+        let mut chunk = [0u8; 1024];
+        while !head.windows(4).any(|w| w == b"\r\n\r\n") {
+            match sock.read(&mut chunk) {
+                Ok(0) | Err(_) => return None,
+                Ok(n) => head.extend_from_slice(&chunk[..n]),
+            }
+        }
+        let head = String::from_utf8_lossy(&head).to_ascii_lowercase();
+        let cseq = head
+            .lines()
+            .find_map(|l| l.strip_prefix("cseq:"))
+            .map(str::trim)
+            .unwrap_or("1")
+            .to_owned();
+        Some(cseq)
+    }
+
     /// A receiver report on the interleaved RTCP channel whose block names
     /// the session's SSRC reaches the stats of the transport the session
     /// becomes: the client's thread matches against the SSRC the transport
@@ -229,21 +250,9 @@ mod tests {
         let peer = std::thread::spawn(move || {
             let (mut sock, _) = listener.accept().unwrap();
             sock.set_read_timeout(Some(Duration::from_secs(10))).ok();
-            let mut head = Vec::new();
-            let mut chunk = [0u8; 1024];
-            while !head.windows(4).any(|w| w == b"\r\n\r\n") {
-                match sock.read(&mut chunk) {
-                    Ok(0) | Err(_) => return,
-                    Ok(n) => head.extend_from_slice(&chunk[..n]),
-                }
-            }
-            let head = String::from_utf8_lossy(&head).to_ascii_lowercase();
-            let cseq = head
-                .lines()
-                .find_map(|l| l.strip_prefix("cseq:"))
-                .map(str::trim)
-                .unwrap_or("1")
-                .to_owned();
+            let Some(cseq) = request_cseq(&mut sock) else {
+                return;
+            };
             sock.write_all(
                 format!(
                     "RTSP/1.0 200 OK\r\nCSeq: {cseq}\r\nSession: S1;timeout=60\r\n\
@@ -317,21 +326,9 @@ mod tests {
         let peer = std::thread::spawn(move || {
             let (mut sock, _) = listener.accept().unwrap();
             sock.set_read_timeout(Some(Duration::from_secs(10))).ok();
-            let mut head = Vec::new();
-            let mut chunk = [0u8; 1024];
-            while !head.windows(4).any(|w| w == b"\r\n\r\n") {
-                match sock.read(&mut chunk) {
-                    Ok(0) | Err(_) => return,
-                    Ok(n) => head.extend_from_slice(&chunk[..n]),
-                }
-            }
-            let head = String::from_utf8_lossy(&head).to_ascii_lowercase();
-            let cseq = head
-                .lines()
-                .find_map(|l| l.strip_prefix("cseq:"))
-                .map(str::trim)
-                .unwrap_or("1")
-                .to_owned();
+            let Some(cseq) = request_cseq(&mut sock) else {
+                return;
+            };
             let mut out = format!(
                 "RTSP/1.0 200 OK\r\nCSeq: {cseq}\r\nSession: S1;timeout=60\r\n\
                  Transport: RTP/AVP/TCP;unicast;interleaved=3-3\r\n\r\n"
