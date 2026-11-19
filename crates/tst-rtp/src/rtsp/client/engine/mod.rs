@@ -187,7 +187,8 @@ struct Route {
     kind: RouteKind,
     /// Channel number for RTP data frames.
     rtp: u8,
-    /// Channel number for RTCP frames (conventionally `rtp + 1`).
+    /// Channel number for RTCP frames (conventionally `rtp + 1`). On a
+    /// `Pull` route it can equal `rtp`: the channel is then RTP only.
     rtcp: u8,
 }
 
@@ -919,8 +920,9 @@ impl ClientEngine {
 
     /// Route `$` frames on `rtp` and `rtcp` to `route`, in place of the
     /// pair installed under the same id. Refused, with nothing changed: an
-    /// id past `MAX_ROUTES`, one channel for both, or a channel another
-    /// installed route uses.
+    /// id past `MAX_ROUTES`, a channel another installed route uses, or,
+    /// on a route this side sends on, one channel for both. A receiving
+    /// route takes one channel for both: its frames are all read as RTP.
     pub(crate) fn install_route(
         &mut self,
         route: SetupRoute,
@@ -931,7 +933,10 @@ impl ClientEngine {
         if at >= MAX_ROUTES {
             return Err(ROUTE_ID_OUT_OF_RANGE);
         }
-        if rtp == rtcp {
+        // A server that names one channel twice in a play SETUP reply
+        // sends media on it; a publisher needs the second channel for the
+        // server's reports.
+        if rtp == rtcp && route.kind == RouteKind::Push {
             return Err(ROUTE_CHANNELS_EQUAL);
         }
         let taken = self.routes.iter().enumerate().any(|(i, other)| {

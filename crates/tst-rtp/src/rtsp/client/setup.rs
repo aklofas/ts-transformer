@@ -210,6 +210,7 @@ mod tests {
     use tst_core::transport::RecvTransport;
     use tst_test_helpers::timing::scaled;
 
+    use crate::packet::{RTP_HEADER_LEN, RtpHeader};
     use crate::rtcp::{ReceiverReport, ReportBlock};
     use crate::rtsp::client::RtspClient;
     use crate::sdp::Sdp;
@@ -299,6 +300,64 @@ mod tests {
             );
             std::thread::sleep(Duration::from_millis(5));
         }
+
+        drop(transport);
+        drop(client);
+        peer.join().unwrap();
+    }
+
+    /// A server that names one interleaved channel for RTP and RTCP is
+    /// played: the session is set up and a packet on that channel is
+    /// received as RTP.
+    #[test]
+    fn a_setup_reply_naming_one_channel_twice_is_played_as_rtp() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let ts = [0x47u8; 188];
+        let peer = std::thread::spawn(move || {
+            let (mut sock, _) = listener.accept().unwrap();
+            sock.set_read_timeout(Some(Duration::from_secs(10))).ok();
+            let mut head = Vec::new();
+            let mut chunk = [0u8; 1024];
+            while !head.windows(4).any(|w| w == b"\r\n\r\n") {
+                match sock.read(&mut chunk) {
+                    Ok(0) | Err(_) => return,
+                    Ok(n) => head.extend_from_slice(&chunk[..n]),
+                }
+            }
+            let head = String::from_utf8_lossy(&head).to_ascii_lowercase();
+            let cseq = head
+                .lines()
+                .find_map(|l| l.strip_prefix("cseq:"))
+                .map(str::trim)
+                .unwrap_or("1")
+                .to_owned();
+            let mut out = format!(
+                "RTSP/1.0 200 OK\r\nCSeq: {cseq}\r\nSession: S1;timeout=60\r\n\
+                 Transport: RTP/AVP/TCP;unicast;interleaved=3-3\r\n\r\n"
+            )
+            .into_bytes();
+            let mut packet = [0u8; RTP_HEADER_LEN].to_vec();
+            RtpHeader::new(7, 90_000, 0x1234_5678).encode_into(&mut packet);
+            packet.extend_from_slice(&ts);
+            out.extend_from_slice(&[b'$', 3]);
+            out.extend_from_slice(&(packet.len() as u16).to_be_bytes());
+            out.extend_from_slice(&packet);
+            sock.write_all(&out).unwrap();
+            // Hold the connection until the client hangs up.
+            let _ = sock.read_to_end(&mut Vec::new());
+        });
+
+        let mut client = RtspClient::connect(&format!(
+            "rtsp://127.0.0.1:{port}/x?transport=tcp&recv_timeout=10000"
+        ))
+        .unwrap();
+        let sdp = Sdp::parse(SDP).unwrap();
+        let session = client.setup_mp2t_auto(&sdp).unwrap();
+        let mut transport = session.into_recv_transport();
+        let mut buf = vec![0u8; transport.max_payload()];
+        let n = transport.recv_bytes(&mut buf).unwrap();
+        assert_eq!(&buf[..n], &ts[..]);
 
         drop(transport);
         drop(client);

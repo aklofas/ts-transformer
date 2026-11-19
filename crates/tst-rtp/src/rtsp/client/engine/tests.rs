@@ -1897,19 +1897,62 @@ fn assert_only_route_0_on_2_3(e: &mut ClientEngine, unrouted: &[u8]) {
     assert!(one_rtcp_on(&ev, 0), "{ev:?}");
 }
 
+/// A server that names one channel for RTP and RTCP in a pull SETUP reply
+/// is played all the same: the route installs, and every frame on that
+/// channel is taken as RTP.
 #[test]
-fn a_setup_reply_with_equal_channels_is_bad_response() {
+fn a_pull_setup_reply_naming_one_channel_twice_delivers_its_frames_as_rtp() {
     let t0 = Instant::now();
     let mut e = ClientEngine::new(cfg(None));
-    let first = setup_route(&mut e, pull(0), "RTP/AVP/TCP;unicast;interleaved=2-3", t0);
-    assert_eq!(first.unwrap().setup, accepted(0, 2, 3));
-    let r = setup_route(&mut e, pull(1), "RTP/AVP/TCP;unicast;interleaved=5-5", t0);
-    assert!(matches!(r, Err(RtspError::BadResponse { .. })), "{r:?}");
-    assert_only_route_0_on_2_3(&mut e, &[5]);
-    // A route's own pair is checked too.
-    let r = setup_route(&mut e, pull(0), "RTP/AVP/TCP;unicast;interleaved=3-3", t0);
-    assert!(matches!(r, Err(RtspError::BadResponse { .. })), "{r:?}");
-    assert_only_route_0_on_2_3(&mut e, &[5]);
+    let o = setup_route(&mut e, pull(0), "RTP/AVP/TCP;unicast;interleaved=3-3", t0).unwrap();
+    assert_eq!(o.setup, accepted(0, 3, 3));
+    let ev = rtp_on(&mut e, 3);
+    assert!(one_media_on(&ev, 0), "{ev:?}");
+    // A report on that channel is read as RTP too, and dropped as a
+    // malformed packet: there is no RTCP channel.
+    assert!(rtcp_on(&mut e, 3).is_empty());
+    assert_eq!(e.counters().rtp_frames, 2);
+    assert_eq!(e.counters().rtcp_frames, 0);
+    assert_eq!(e.counters().malformed_frames, 1);
+    // The one channel is held like any other: a second route cannot name
+    // it.
+    for pair in ["3-3", "3-4", "2-3"] {
+        let transport = format!("RTP/AVP/TCP;unicast;interleaved={pair}");
+        let r = setup_route(&mut e, pull(1), &transport, t0);
+        assert!(
+            matches!(r, Err(RtspError::BadResponse { .. })),
+            "{pair}: {r:?}"
+        );
+    }
+    let ev = rtp_on(&mut e, 3);
+    assert!(one_media_on(&ev, 0), "{ev:?}");
+}
+
+/// A route this side sends on needs its two channels: the RTP channel is
+/// written, the RTCP channel is read.
+#[test]
+fn a_push_setup_reply_with_equal_channels_is_bad_response() {
+    let mut e = announced(1);
+    let r = exchange(
+        &mut e,
+        record_setup(0),
+        "200 OK",
+        "Transport: RTP/AVP/TCP;unicast;interleaved=5-5;mode=record\r\nSession: X\r\n",
+    );
+    assert!(
+        matches!(
+            r,
+            Err(RtspError::BadResponse {
+                detail: "SETUP reply names one interleaved channel for RTP and RTCP"
+            })
+        ),
+        "{r:?}"
+    );
+    assert_eq!(e.push_phase(), Some(PushPhase::Announced));
+    // Nothing is installed.
+    assert!(rtcp_on(&mut e, 5).is_empty());
+    assert_eq!(e.counters().malformed_frames, 1);
+    assert!(e.install_route(push(0), 5, 5).is_err());
 }
 
 #[test]
