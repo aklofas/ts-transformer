@@ -68,6 +68,15 @@ class Rows(unittest.TestCase):
         with self.assertRaises(ki.KnownIssuesError):
             ki.bullets(LEDGER.replace("| Workaround |", "|"))
 
+    def test_a_table_whose_rows_also_lack_the_column_is_an_error(self):
+        # Header and rows agree in length, so only the column check can catch it.
+        no_wa = "".join(l.rsplit("|", 2)[0] + "|\n" if l.startswith("|") else l + "\n"
+                        for l in LEDGER.splitlines())
+        self.assertNotIn("Workaround", no_wa)
+        with self.assertRaises(ki.KnownIssuesError) as e:
+            ki.bullets(no_wa)
+        self.assertIn("columns", str(e.exception))
+
     def test_a_ragged_row_is_an_error(self):
         with self.assertRaises(ki.KnownIssuesError):
             ki.bullets(LEDGER + "| a | b |\n")

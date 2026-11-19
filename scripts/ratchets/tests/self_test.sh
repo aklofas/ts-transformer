@@ -2007,6 +2007,10 @@ expect "advisory-db pin: a 40-hex pin passes" 0 adp
 printf '# header\nrev = "0123456"\n' > "$tmp/adp/pin.toml"
 expect "advisory-db pin: a short commit fails" 1 adp
 expect_out "advisory-db pin: the bad value is named" "'0123456'"
+printf '# header\nrev = "0123456789abcdef0123456789abcdef0123456"\n' > "$tmp/adp/pin.toml"
+expect "advisory-db pin: a 39-hex commit fails" 1 adp
+printf '# header\nrev = "0123456789abcdef0123456789abcdef012345678"\n' > "$tmp/adp/pin.toml"
+expect "advisory-db pin: a 41-hex commit fails" 1 adp
 printf '# header\nrev = "0123456789ABCDEF0123456789ABCDEF01234567"\n' > "$tmp/adp/pin.toml"
 expect "advisory-db pin: an upper-case commit fails" 1 adp
 printf '# header\nrev = "main"\n' > "$tmp/adp/pin.toml"
