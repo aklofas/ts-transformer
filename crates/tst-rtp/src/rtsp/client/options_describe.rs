@@ -148,10 +148,10 @@ impl RtspClient {
     /// at the start and every [`REQUEST_POLL_TICK`]: once it sees the
     /// cancel set it ends with [`RtspError::LocalCancel`], even when the
     /// reply is already delivered. A reply taken before that is returned
-    /// whatever the flag says; an I/O error or a passed deadline while the
-    /// cancel is set is reported as `LocalCancel` ([`report_cancel`]). With
-    /// the client's thread gone, or its command queue full, the result is
-    /// `Io(UnexpectedEof)`.
+    /// whatever the flag says; an I/O error, a passed deadline or a request
+    /// refused before it was written, while the cancel is set, is reported
+    /// as `LocalCancel` ([`report_cancel`]). With the client's thread gone,
+    /// or its command queue full, the result is `Io(UnexpectedEof)`.
     pub(crate) fn request(
         &mut self,
         spec: RequestSpec,
@@ -228,14 +228,16 @@ impl RtspClient {
 }
 
 /// What a request reports given whether the cancel is set when it ends:
-/// an I/O error or a passed deadline is then the cancel; anything else, a
-/// reply above all, is kept.
+/// an I/O error, a passed deadline or a request refused before it was
+/// written is then the cancel; anything else, a reply above all, is kept.
 fn report_cancel(
     r: Result<ReplyOutcome, RtspError>,
     cancelled: bool,
 ) -> Result<ReplyOutcome, RtspError> {
     match r {
-        Err(RtspError::Io(_) | RtspError::Timeout) if cancelled => Err(RtspError::LocalCancel),
+        Err(RtspError::Io(_) | RtspError::Timeout | RtspError::NotAllowed { .. }) if cancelled => {
+            Err(RtspError::LocalCancel)
+        }
         r => r,
     }
 }
@@ -683,6 +685,18 @@ mod tests {
     fn a_timeout_with_the_cancel_set_is_the_cancel() {
         let r = report_cancel(Err(RtspError::Timeout), true);
         assert!(matches!(r, Err(RtspError::LocalCancel)), "got {r:?}");
+    }
+
+    #[test]
+    fn a_refused_request_with_the_cancel_set_is_the_cancel() {
+        let refused = || Err(RtspError::NotAllowed { detail: "x" });
+        let r = report_cancel(refused(), true);
+        assert!(matches!(r, Err(RtspError::LocalCancel)), "got {r:?}");
+        let r = report_cancel(refused(), false);
+        assert!(
+            matches!(r, Err(RtspError::NotAllowed { detail: "x" })),
+            "got {r:?}"
+        );
     }
 
     #[test]
