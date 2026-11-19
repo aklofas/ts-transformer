@@ -160,14 +160,15 @@ const CLOSE_DRAIN: Duration = Duration::from_millis(300);
 
 /// Build the sending (caller/push) half of `url`'s scheme.
 pub fn make_send(url: &str) -> Result<Box<dyn Transport>, String> {
+    let shown = redact_url(url);
     match scheme_of(url)? {
         "udp" => tst_udp::UdpTransport::connect(url)
             .map(|t| Box::new(t) as Box<dyn Transport>)
-            .map_err(|e| format!("udp connect {url}: {e}")),
+            .map_err(|e| format!("udp connect {shown}: {e}")),
         "tcp" | "tcps" => tcp_transport(url).map(|t| Box::new(t) as Box<dyn Transport>),
         "rist" => tst_rist::RistTransport::connect(url)
             .map(|t| Box::new(GracefulRistClose { inner: t }) as Box<dyn Transport>)
-            .map_err(|e| format!("rist connect {url}: {e}")),
+            .map_err(|e| format!("rist connect {shown}: {e}")),
         "srt" => srt_socket(url).map(|s| {
             Box::new(GracefulSrtClose {
                 inner: tst_srt::SrtTransport::new(s),
@@ -437,10 +438,11 @@ impl BoundRecv {
 /// port 0. The caller-mode forms of tcp and srt are refused; they have
 /// nothing to bind.
 pub fn make_recv_bound(url: &str) -> Result<BoundRecv, String> {
+    let shown = redact_url(url);
     match scheme_of(url)? {
         "udp" => {
             let t = tst_udp::UdpRecvTransport::listen(url)
-                .map_err(|e| format!("udp listen {url}: {e}"))?;
+                .map_err(|e| format!("udp listen {shown}: {e}"))?;
             let addr = t.local_addr();
             let recv_buffer = t.recv_buffer_size().ok().map(|n| n as u64);
             Ok(BoundRecv {
@@ -452,7 +454,7 @@ pub fn make_recv_bound(url: &str) -> Result<BoundRecv, String> {
         }
         "tcp" => {
             let l = tst_tcp::TcpListener::from_url(url)
-                .map_err(|e| format!("tcp listen {url}: {e}"))?;
+                .map_err(|e| format!("tcp listen {shown}: {e}"))?;
             let addr = l
                 .local_addr()
                 .map_err(|e| format!("tcp local address: {e}"))?;
@@ -464,9 +466,10 @@ pub fn make_recv_bound(url: &str) -> Result<BoundRecv, String> {
             })
         }
         "srt" => {
-            let parsed = tst_srt::SrtUrl::parse(url).map_err(|e| format!("srt url {url}: {e}"))?;
+            let parsed =
+                tst_srt::SrtUrl::parse(url).map_err(|e| format!("srt url {shown}: {e}"))?;
             if !matches!(parsed.mode, tst_srt::url::Mode::Listener) {
-                return Err(format!("srt url {url}: only mode=listener can be bound"));
+                return Err(format!("srt url {shown}: only mode=listener can be bound"));
             }
             let (l, timeout) = srt_listener(&parsed, url)?;
             let addr = l
@@ -519,14 +522,15 @@ pub fn make_recv_bound(url: &str) -> Result<BoundRecv, String> {
 /// `rist://@host:0...` with its port replaced by a free even one, and the
 /// address that port is on.
 fn rist_with_free_port(url: &str) -> Result<(String, SocketAddr), String> {
+    let shown = redact_url(url);
     let rest = url
         .strip_prefix("rist://@")
-        .ok_or_else(|| format!("rist recv url needs the '@' bind form: {url}"))?;
+        .ok_or_else(|| format!("rist recv url needs the '@' bind form: {shown}"))?;
     let (authority, query) = rest.split_once('?').map_or((rest, ""), |(a, q)| (a, q));
     let host = authority
         .rsplit_once(':')
         .map(|(h, _)| h)
-        .ok_or_else(|| format!("rist recv url needs host:port: {url}"))?;
+        .ok_or_else(|| format!("rist recv url needs host:port: {shown}"))?;
     for _ in 0..50 {
         let probe = std::net::UdpSocket::bind((host, 0))
             .map_err(|e| format!("rist port probe on {host}: {e}"))?;
@@ -548,14 +552,15 @@ fn rist_with_free_port(url: &str) -> Result<(String, SocketAddr), String> {
 
 /// Build the receiving (listener/pull) half of `url`'s scheme.
 pub fn make_recv(url: &str) -> Result<Box<dyn RecvTransport>, String> {
+    let shown = redact_url(url);
     match scheme_of(url)? {
         "udp" => tst_udp::UdpRecvTransport::listen(url)
             .map(|t| Box::new(BoundedUdpRecv { inner: t }) as Box<dyn RecvTransport>)
-            .map_err(|e| format!("udp listen {url}: {e}")),
+            .map_err(|e| format!("udp listen {shown}: {e}")),
         "tcp" | "tcps" => tcp_transport(url).map(|t| Box::new(t) as Box<dyn RecvTransport>),
         "rist" => tst_rist::RistRecvTransport::listen(url)
             .map(|t| Box::new(t) as Box<dyn RecvTransport>)
-            .map_err(|e| format!("rist listen {url}: {e}")),
+            .map_err(|e| format!("rist listen {shown}: {e}")),
         "srt" => srt_socket(url)
             .map(|s| Box::new(tst_srt::SrtTransport::new(s)) as Box<dyn RecvTransport>),
         "rtsp-publish" => RtspPublishListener::start(url, PublishMountProbe::default())
@@ -571,9 +576,10 @@ pub fn is_tcp(url: &str) -> Result<bool, String> {
 
 /// Scheme prefix of a `scheme://...` URL (e.g. `"udp"`, `"tcps"`).
 fn scheme_of(url: &str) -> Result<&str, String> {
+    let shown = redact_url(url);
     url.split_once("://")
         .map(|(scheme, _)| scheme)
-        .ok_or_else(|| format!("not a URL (missing '://'): {url}"))
+        .ok_or_else(|| format!("not a URL (missing '://'): {shown}"))
 }
 
 /// Build a connected/accepted `TcpTransport` for either mode described
@@ -633,19 +639,20 @@ impl Watch {
 /// `watch`. A `?listen=1` URL prints `tcp: listening on <addr>` to stderr
 /// once bound, so a `:0` port can be read back.
 pub fn tcp_transport_with(url: &str, watch: &Watch) -> Result<tst_tcp::TcpTransport, String> {
-    let parsed = tst_tcp::url::TcpUrl::parse(url).map_err(|e| format!("tcp url {url}: {e}"))?;
+    let shown = redact_url(url);
+    let parsed = tst_tcp::url::TcpUrl::parse(url).map_err(|e| format!("tcp url {shown}: {e}"))?;
     let transport = if parsed.listen {
         let listener =
-            tst_tcp::TcpListener::from_url(url).map_err(|e| format!("tcp listen {url}: {e}"))?;
+            tst_tcp::TcpListener::from_url(url).map_err(|e| format!("tcp listen {shown}: {e}"))?;
         if let Ok(addr) = listener.local_addr() {
             eprintln!("tcp: listening on {addr}");
         }
         watch.hold(listener.cancel_handle());
         listener
             .accept_blocking()
-            .map_err(|e| format!("tcp accept {url}: {e}"))?
+            .map_err(|e| format!("tcp accept {shown}: {e}"))?
     } else {
-        tst_tcp::TcpTransport::connect(url).map_err(|e| format!("tcp connect {url}: {e}"))?
+        tst_tcp::TcpTransport::connect(url).map_err(|e| format!("tcp connect {shown}: {e}"))?
     };
     watch.hold(transport.cancel_handle());
     Ok(transport)
@@ -695,7 +702,8 @@ pub fn tcp_transport_with(url: &str, watch: &Watch) -> Result<tst_tcp::TcpTransp
 /// explicitly (rather than trusting whatever libsrt's compiled default
 /// is) so [`GracefulSrtClose`]'s drain wait knows it's exceeding it.
 fn srt_socket(url: &str) -> Result<tst_srt::SrtSocket, String> {
-    let parsed = tst_srt::SrtUrl::parse(url).map_err(|e| format!("srt url {url}: {e}"))?;
+    let shown = redact_url(url);
+    let parsed = tst_srt::SrtUrl::parse(url).map_err(|e| format!("srt url {shown}: {e}"))?;
     match parsed.mode {
         tst_srt::url::Mode::Caller => {
             let mut b = tst_srt::SrtSocketBuilder::new();
@@ -706,13 +714,13 @@ fn srt_socket(url: &str) -> Result<tst_srt::SrtSocket, String> {
             let mut cfg = b.config();
             cfg.merge_from(&parsed.config);
             tst_srt::SrtSocket::connect_with(&cfg, (parsed.host.as_str(), parsed.port))
-                .map_err(|e| format!("srt connect {url}: {e}"))
+                .map_err(|e| format!("srt connect {shown}: {e}"))
         }
         tst_srt::url::Mode::Listener => {
             let (mut listener, accept_timeout) = srt_listener(&parsed, url)?;
             let (socket, _peer) = listener
                 .accept_timeout(accept_timeout)
-                .map_err(|e| format!("srt accept {url}: {e}"))?;
+                .map_err(|e| format!("srt accept {shown}: {e}"))?;
             Ok(socket)
         }
     }
@@ -726,6 +734,7 @@ fn srt_listener(
     parsed: &tst_srt::SrtUrl,
     url: &str,
 ) -> Result<(tst_srt::SrtListener, Duration), String> {
+    let shown = redact_url(url);
     let mut b = tst_srt::SrtListenerBuilder::new();
     b.recv_timeout(DEFAULT_SRT_RECV_TIMEOUT);
     // `SrtListenerConfig`'s `linger` is a libsrt PRE option: set on
@@ -749,7 +758,7 @@ fn srt_listener(
     };
     let bind_addr = format!("{bind_host}:{}", parsed.port);
     let listener = tst_srt::SrtListener::bind_with(&cfg, bind_addr.as_str())
-        .map_err(|e| format!("srt bind {url}: {e}"))?;
+        .map_err(|e| format!("srt bind {shown}: {e}"))?;
     // `accept_timeout` (not plain `accept`, which blocks
     // forever — see `SRT_ACCEPT_TIMEOUT`'s doc comment) so a
     // sender that never connects fails cleanly instead of
@@ -854,27 +863,28 @@ impl RtspPublishListener {
     }
 
     fn start(url: &str, probe: PublishMountProbe) -> Result<Self, String> {
+        let shown = redact_url(url);
         let rest = url
             .strip_prefix("rtsp-publish://")
-            .ok_or_else(|| format!("not an rtsp-publish:// URL: {url}"))?;
+            .ok_or_else(|| format!("not an rtsp-publish:// URL: {shown}"))?;
         let (authority, mount) = rest
             .split_once('/')
             .filter(|(_, m)| !m.is_empty())
             .ok_or_else(|| {
-                format!("rtsp-publish URL needs a mount path (host:port/mount): {url}")
+                format!("rtsp-publish URL needs a mount path (host:port/mount): {shown}")
             })?;
         let server = tst_rtp::RtspServer::bind(&format!("rtsp://{authority}"))
-            .map_err(|e| format!("rtsp-publish bind {url}: {e}"))?;
+            .map_err(|e| format!("rtsp-publish bind {shown}: {e}"))?;
         let handle = server
             .add_publish_mount(&format!("/{mount}"))
-            .map_err(|e| format!("rtsp-publish mount {url}: {e}"))?;
+            .map_err(|e| format!("rtsp-publish mount {shown}: {e}"))?;
         server
             .start()
-            .map_err(|e| format!("rtsp-publish start {url}: {e}"))?;
+            .map_err(|e| format!("rtsp-publish start {shown}: {e}"))?;
         let mount = handle.clone();
         let mut inner = handle
             .into_recv_transport()
-            .map_err(|e| format!("rtsp-publish transport {url}: {e}"))?;
+            .map_err(|e| format!("rtsp-publish transport {shown}: {e}"))?;
         inner.set_recv_timeout(Some(UDP_RECV_POLL));
         Ok(Self {
             inner,
@@ -1422,6 +1432,51 @@ mod tests {
             .err()
             .expect("ftp is no send scheme");
         assert_eq!(err, "unsupported scheme for send: ftp://");
+    }
+
+    /// A secret in a caller's URL reaches no error text: the SRT
+    /// passphrase and the RTSP password each go through every open path
+    /// that can refuse them without a network round trip.
+    #[test]
+    fn a_failing_open_does_not_print_the_urls_secrets() {
+        let port = closed_tcp_port();
+        let srt = "srt://127.0.0.1:9?mode=bogus&passphrase=secret-phrase-1";
+        let srt_caller = "srt://127.0.0.1:9?mode=caller&passphrase=secret-phrase-1";
+        let rtsp = format!("rtsp://user:pw-2@127.0.0.1:{port}/live");
+        let publish = "rtsp-publish://user:pw-2@127.0.0.1:0";
+        let rist = "rist://@127.0.0.1?passphrase=secret-phrase-1";
+        let tcp = format!("tcp://127.0.0.1:{port}?passphrase=secret-phrase-1");
+        let errors: Vec<(&str, String)> = vec![
+            ("make_send srt", make_send(srt).err().expect("bad mode")),
+            ("make_recv srt", make_recv(srt).err().expect("bad mode")),
+            (
+                "make_recv_bound srt",
+                make_recv_bound(srt).err().expect("bad mode"),
+            ),
+            (
+                "make_recv_bound srt caller",
+                make_recv_bound(srt_caller).err().expect("not a listener"),
+            ),
+            ("make_send rtsp", make_send(&rtsp).err().expect("refused")),
+            (
+                "make_recv rtsp-publish",
+                make_recv(publish).err().expect("no mount path"),
+            ),
+            (
+                "rist_with_free_port",
+                rist_with_free_port(rist).expect_err("no port"),
+            ),
+            ("make_send tcp", make_send(&tcp).err().expect("refused")),
+            ("make_recv tcp", make_recv(&tcp).err().expect("refused")),
+            (
+                "scheme_of",
+                scheme_of("no-scheme?passphrase=secret-phrase-1").expect_err("not a URL"),
+            ),
+        ];
+        for (what, err) in errors {
+            assert!(!err.contains("secret-phrase-1"), "{what}: {err}");
+            assert!(!err.contains("pw-2"), "{what}: {err}");
+        }
     }
 
     /// What the matrix script's `recorded_at` reads from the line: the

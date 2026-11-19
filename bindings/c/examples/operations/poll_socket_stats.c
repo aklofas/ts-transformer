@@ -53,7 +53,9 @@ int main(int argc, char **argv) {
         return 1;
     }
     const char *url = argv[1];
-    fprintf(stderr, "sending to %s\n", url);
+    /* The query can carry `passphrase=`, so only the part before the `?` is
+     * printed: `%.*s` with strcspn stops there. */
+    fprintf(stderr, "sending to %.*s\n", (int) strcspn(url, "?"), url);
 
     /* Single H.264 video stream. Minimal mux topology — the point of
      * this example is the poll loop, not the muxing. */

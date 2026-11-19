@@ -60,6 +60,7 @@ use std::fs::File;
 use std::io::Write;
 
 use tst_core::mpegts::mux::{Muxer, MuxerConfig};
+use tst_core::url::redact_url;
 use tst_rtp::RtspClient;
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -85,7 +86,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         .map(std::path::PathBuf::from)
         .unwrap_or(default_out);
 
-    eprintln!("Connecting to {url}");
+    // A URL can carry a password or a secret query value, so it is printed
+    // through `redact_url`.
+    eprintln!("Connecting to {}", redact_url(url));
     eprintln!("Output: {}", out_path.display());
 
     // ── (1) Connect ───────────────────────────────────────────────────────

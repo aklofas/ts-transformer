@@ -833,16 +833,17 @@ fn run_send(args: &[String]) -> ! {
     // hls:// / rtsp:// (+ TLS variants) are serve (bind) modes — branch
     // out before the connect-side transport path below.
     if let Some(scheme) = serve::serve_scheme_of(&url) {
+        let shown = redact_url(&url);
         if corrupt.is_some() {
             eprintln!(
-                "send: --corrupt is not supported for {url} (hls/rtsp serve their own sessions \
+                "send: --corrupt is not supported for {shown} (hls/rtsp serve their own sessions \
                  — there is no Transport for the tap to wrap)"
             );
             std::process::exit(2);
         }
         if managed {
             eprintln!(
-                "send: --managed is not meaningful for {url} (hls/rtsp are serve/bind modes, \
+                "send: --managed is not meaningful for {shown} (hls/rtsp are serve/bind modes, \
                  not connect modes — nothing to reconnect)"
             );
             std::process::exit(2);
@@ -859,7 +860,7 @@ fn run_send(args: &[String]) -> ! {
             eprintln!("send: {e}");
             std::process::exit(2);
         }
-        eprintln!("send: served {seconds}s of {profile_name} at {url}");
+        eprintln!("send: served {seconds}s of {profile_name} at {shown}");
         std::process::exit(0);
     }
 
@@ -895,8 +896,10 @@ fn run_send(args: &[String]) -> ! {
     });
 
     eprintln!(
-        "send: pushed {} video AUs, {} klv records to {url}",
-        metrics.video_aus, metrics.klv_records
+        "send: pushed {} video AUs, {} klv records to {}",
+        metrics.video_aus,
+        metrics.klv_records,
+        redact_url(&url)
     );
     std::process::exit(0);
 }

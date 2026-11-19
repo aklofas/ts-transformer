@@ -186,7 +186,9 @@ int main(int argc, char **argv) {
      *                          or what `tst_managed_sender_t` retries for
      *                          you (see ../operations/managed_reconnect.c).
      */
-    fprintf(stderr, "[send_srt] opening %s\n", url);
+    /* The query can carry `passphrase=`, so only the part before the `?` is
+     * printed: `%.*s` with strcspn stops there. */
+    fprintf(stderr, "[send_srt] opening %.*s\n", (int) strcspn(url, "?"), url);
     tst_sender_t *sender = tst_sender_open(url, scfg);
     tst_sender_config_free(scfg);
     scfg = NULL;
