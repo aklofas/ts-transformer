@@ -2078,13 +2078,13 @@ fn a_setup_retried_after_a_401_installs_its_route() {
     }
 }
 
-/// Any `2xx` to a SETUP is an accepted SETUP: the session is learned and
-/// the route installed. A refusal does neither.
+/// Any `2xx` to a push SETUP is an accepted SETUP: the session is learned
+/// and the route installed. A refusal does neither.
 #[test]
 fn a_setup_reply_of_any_2xx_is_accepted() {
     let t0 = Instant::now();
     let mut e = ClientEngine::new(cfg(None));
-    let (a, c) = submit_setup(&mut e, pull(0), t0);
+    let (a, c) = submit_setup(&mut e, push(0), t0);
     e.handle_input(
         format!(
             "RTSP/1.0 461 Unsupported Transport\r\nCSeq: {c}\r\nSession: refused\r\n\
@@ -2097,7 +2097,7 @@ fn a_setup_reply_of_any_2xx_is_accepted() {
     assert_eq!((o.response.status, o.setup), (461, None));
     assert!(rtp_on(&mut e, 0).is_empty(), "a refusal installs nothing");
 
-    let (a, c) = submit_setup(&mut e, pull(0), t0);
+    let (a, c) = submit_setup(&mut e, push(0), t0);
     e.handle_input(
         format!(
             "RTSP/1.0 201 Created\r\nCSeq: {c}\r\nSession: made\r\n\
@@ -2111,6 +2111,49 @@ fn a_setup_reply_of_any_2xx_is_accepted() {
     e.enable_keepalive(Some(Duration::from_secs(1)), t0);
     e.handle_timeout(ms(t0, 1000), false);
     assert_eq!(sent(&one(&mut e)).headers["session"], "made");
+}
+
+/// The pull side takes exactly `200` with a `Session`: a later pull SETUP
+/// it refuses must not move the live session's route.
+#[test]
+fn a_pull_setup_reply_of_201_installs_nothing_and_leaves_route_0() {
+    let t0 = Instant::now();
+    let mut e = ClientEngine::new(cfg(None));
+    let o = setup_route(&mut e, pull(0), "RTP/AVP/TCP;unicast;interleaved=0-1", t0).unwrap();
+    assert_eq!(o.setup, accepted(0, 0, 1));
+    let (a, c) = submit_setup(&mut e, pull(0), t0);
+    e.handle_input(
+        format!(
+            "RTSP/1.0 201 Created\r\nCSeq: {c}\r\nSession: S2\r\n\
+             Transport: RTP/AVP/TCP;unicast;interleaved=2-3\r\n\r\n"
+        )
+        .as_bytes(),
+        t0,
+    );
+    let o = outcome(&mut e, a).unwrap();
+    assert_eq!((o.response.status, o.setup), (201, None));
+    let ev = rtp_on(&mut e, 0);
+    assert!(one_media_on(&ev, 0), "{ev:?}");
+    assert!(rtp_on(&mut e, 2).is_empty());
+    assert_eq!(e.counters().malformed_frames, 1);
+}
+
+#[test]
+fn a_pull_setup_200_without_a_session_header_installs_nothing() {
+    let t0 = Instant::now();
+    let mut e = ClientEngine::new(cfg(None));
+    let (a, c) = submit_setup(&mut e, pull(0), t0);
+    e.handle_input(
+        format!(
+            "RTSP/1.0 200 OK\r\nCSeq: {c}\r\nTransport: RTP/AVP/TCP;unicast;interleaved=0-1\r\n\r\n"
+        )
+        .as_bytes(),
+        t0,
+    );
+    let o = outcome(&mut e, a).unwrap();
+    assert_eq!((o.response.status, o.setup), (200, None));
+    assert!(rtp_on(&mut e, 0).is_empty());
+    assert_eq!(e.counters().malformed_frames, 1);
 }
 
 /// Port of `undersized_rtp_frame_counted_and_dropped`.

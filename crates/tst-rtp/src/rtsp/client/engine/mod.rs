@@ -667,7 +667,13 @@ impl ClientEngine {
         match txn.spec.method {
             RtspMethod::Setup if (200..300).contains(&resp.status) => {
                 self.learn_session(&resp);
-                if let Some(route) = txn.spec.setup {
+                // The pull facade refuses any other reply; a refused SETUP
+                // must not move a live session's route.
+                let installs = |route: &SetupRoute| match route.kind {
+                    RouteKind::Push => true,
+                    RouteKind::Pull => resp.status == 200 && resp.session_id().is_some(),
+                };
+                if let Some(route) = txn.spec.setup.filter(installs) {
                     // Here, not by a later call: frames can follow the reply
                     // in the same read, and they are routed next.
                     match self.accept_setup(route, &resp) {
