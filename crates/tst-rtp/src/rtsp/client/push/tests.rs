@@ -1606,6 +1606,50 @@ fn close_delivers_every_queued_frame_then_teardown() {
     assert!(matches!(units.last(), Some(Unit::Request(r)) if r.method == RtspMethod::Teardown));
 }
 
+/// A session the server forgot while media was queued: the frames are
+/// dropped, the TEARDOWN is still written and answered `454`, which ends
+/// the session as asked, and `close` does not report that as success.
+#[test]
+fn close_after_a_ping_454_dropped_queued_media_is_an_error() {
+    let (open, gate) = mpsc::channel::<()>();
+    let (port, peer) = serve(move |peer| {
+        peer.accept_push();
+        gate.recv_timeout(scaled(Duration::from_secs(20)))
+            .expect("the test opens the gate");
+        // From here on the server knows no session: every ping and the
+        // TEARDOWN are answered so.
+        let mut methods = Vec::new();
+        while methods.last() != Some(&RtspMethod::Teardown) {
+            match peer.read_unit().expect("a TEARDOWN before the hang-up") {
+                Unit::Request(request) => {
+                    peer.answer(&request, "454 Session Not Found", "");
+                    methods.push(request.method);
+                }
+                Unit::Frame(..) => {}
+            }
+        }
+        methods
+    });
+    let pinging = builder(port, "/live").keepalive_interval(Duration::from_millis(40));
+    let mut push = RtspPush::connect(pinging, &elementary(true)).unwrap();
+    fill_the_queue(&mut push);
+    let queue = push.client().driver.media_queue();
+    open.send(()).unwrap();
+    eventually("a ping's answer", || !push.is_session_alive());
+    assert_eq!(push.end_reason(), Some(EndReason::SessionExpired));
+    let r = push.close();
+    assert!(
+        matches!(&r, Err(RtspError::Protocol { code: 454, .. })),
+        "{r:?}"
+    );
+    assert!(queue.dropped_at_close() > 0, "nothing was dropped");
+    let methods = joined(peer);
+    assert!(
+        methods.len() > 1,
+        "no ping before the TEARDOWN: {methods:?}"
+    );
+}
+
 #[test]
 fn transport_close_delivers_the_queue_tears_down_once_and_later_sends_are_closed() {
     let (mut push, open, peer) = recording_gated(&elementary(true), |peer| peer.until_teardown());

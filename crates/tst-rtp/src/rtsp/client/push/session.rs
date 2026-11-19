@@ -356,8 +356,10 @@ impl RtspPush {
     /// bound over writing it and its reply, then up to 2 s for the
     /// client's thread to end.
     ///
-    /// A wait ended by the cancel or by the session's end goes straight on
-    /// to the TEARDOWN, and what was still queued is dropped.
+    /// `Ok(())` means the queued media was written and the server accepted
+    /// the TEARDOWN. A wait ended by the cancel or by the session's end
+    /// goes straight on to the TEARDOWN, what was still queued is dropped,
+    /// and the result is an error.
     ///
     /// The end reason it leaves, unless one was recorded before, is
     /// `CleanTeardown` when the server accepts the TEARDOWN (`2xx` or
@@ -365,15 +367,33 @@ impl RtspPush {
     ///
     /// # Errors
     ///
-    /// The TEARDOWN's result, as [`RtspClient::close`] reports it: a
-    /// refusal is [`RtspError::Protocol`] with its status, a cancelled
-    /// push [`RtspError::LocalCancel`] (the TEARDOWN is still written).
+    /// - The TEARDOWN's result, as [`RtspClient::close`] reports it: a
+    ///   refusal is [`RtspError::Protocol`] with its status, an unanswered
+    ///   one [`RtspError::Timeout`], one on a connection that has ended
+    ///   [`RtspError::Io`].
+    /// - [`RtspError::LocalCancel`] on a cancelled push (the TEARDOWN is
+    ///   still written).
+    /// - [`RtspError::Protocol`] with code `454` when the server had
+    ///   forgotten the session (the end reason is `SessionExpired`): the
+    ///   media still queued then was dropped, and the TEARDOWN's own
+    ///   answer, which a server gives as `454` too, does not make that a
+    ///   success.
+    ///
     /// The client's thread is stopped on every outcome.
     pub fn close(mut self) -> Result<(), RtspError> {
-        if !self.closed {
-            let _ = self.flush();
+        let drained = if self.closed { Ok(()) } else { self.flush() };
+        // A session that expired leaves its connection open: the TEARDOWN
+        // below is written and accepted, with media dropped before it.
+        let expired = drained == Err(MediaWaitEnd::Ended)
+            && self.client.end_reason.get() == Some(EndReason::SessionExpired);
+        let torn_down = self.client.close();
+        if expired && torn_down.is_ok() {
+            return Err(RtspError::Protocol {
+                code: 454,
+                reason: "Session Not Found".into(),
+            });
         }
-        self.client.close()
+        torn_down
     }
 
     /// A handle that ends a waiting data call, `pause` or `close` from
@@ -623,6 +643,11 @@ impl Transport for RtspPush {
     /// tell the client's thread to stop without waiting for it. Later
     /// data calls return [`TransportError::Closed`]. A second call does
     /// nothing.
+    ///
+    /// It reports nothing: whether media was dropped (the wait ended on a
+    /// cancel or on the session's end) is in
+    /// [`PushStats::frames_dropped_at_close`], and why the session ended
+    /// in [`RtspPush::end_reason`].
     fn close(&mut self) {
         if self.closed {
             return;
