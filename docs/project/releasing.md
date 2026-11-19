@@ -368,7 +368,9 @@ step 3).
     `release-eligible` refuses at tag time, because it accepts only
     `refs/heads/main` or a release tag): `resolve` and the collector refuse a commit whose
     `.github/` or `scripts/gen/` differs from the workflow definitions that
-    ran. One run calls the wheels, JVM, interop,
+    ran. The workflow files come from the dispatched ref and the scripts their
+    jobs run from the qualified commit, so only a commit that carries the
+    workflow's scripts can be qualified. One run calls the wheels, JVM, interop,
     sanitizer, fuzz, ABI, instruction-count and semver legs in rehearsal mode (nothing is
     published) and writes a record. The run must end **GO**: every leg
     succeeded on that commit, the tree was clean, the `ci` result came from a

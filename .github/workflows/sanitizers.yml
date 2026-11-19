@@ -57,6 +57,8 @@ on:
       - '.sanitizer-suppressions/**'
       - '.github/workflows/sanitizers.yml'
       - '.github/actions/rust-setup/**'
+      - 'scripts/ci/install-build-tools.sh'
+      - 'scripts/ci/requirements-build-tools.txt'
       - 'rust-toolchain.toml'
 
 permissions:
