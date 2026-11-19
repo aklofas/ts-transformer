@@ -12,7 +12,8 @@
       re-export is thus counted where the item is defined), else by its item path, and
       prints {"release", "stable", "provisional", "experimental", "internal"}: the numbers
       of a tests/coverage/api-churn.toml row. A line no row covers is an error naming it,
-      and so is a crate whose parsed lines differ in number from its `items`. A removed
+      and so is a crate whose parsed lines differ in number from its `items`, and a crate
+      the tool reported broken (`exit` 100 or `failed_checks` > 0) with no line parsed. A removed
       item printed once per importable path counts once (same lint, file, line and name).
   api_churn.py render [--root DIR] (--write | --check)
       The table between `<!-- BEGIN GENERATED: api-churn -->` and
@@ -142,6 +143,10 @@ def tally(report, rows, release):
                 raise ChurnError("the report row of %s has no break lines; rerun scripts/dev/semver-checks.sh"
                                  % c.get("crate"))
             continue
+        if not c["breaks"] and (c.get("exit") == 100 or c.get("failed_checks", 0) > 0):
+            raise ChurnError("the report of %s says it broke (exit %s, %s failed checks) but no break "
+                             "line was parsed; is the report coloured?"
+                             % (c["crate"], c.get("exit"), c.get("failed_checks", 0)))
         if len(c["breaks"]) != c.get("items", 0):
             raise ChurnError("the report of %s lists %s lines under Failed in: but %d were parsed"
                              % (c["crate"], c.get("items"), len(c["breaks"])))
