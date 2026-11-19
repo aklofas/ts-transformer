@@ -230,27 +230,67 @@ mod tests {
         q
     }
 
-    /// `trigger` ends a parked `wait` at once, not at the end of the
-    /// wait's 100 ms slice. Scheduling can hold one wake back past the
-    /// bound, not five in a row.
-    fn wakes_at_once<T: Send + 'static>(
+    /// `trigger` ends a parked `wait` with `end`, within `bound`.
+    /// Scheduling can hold one return back past the bound, not five in a
+    /// row: the first round inside it passes.
+    fn ends_within<T: PartialEq + std::fmt::Debug + Send + 'static>(
+        bound: Duration,
+        end: T,
         arrange: impl Fn() -> Arc<MediaQueue>,
         wait: impl Fn(&MediaQueue, &FlagCancel) -> T + Send + Copy + 'static,
-        trigger: impl Fn(&MediaQueue),
+        trigger: impl Fn(&MediaQueue, &FlagCancel),
     ) -> bool {
         (0..5).any(|_| {
             let q = arrange();
+            let cancel = FlagCancel::new();
             let (started, done) = waiter({
-                let q = q.clone();
-                move || wait(&q, &FlagCancel::new())
+                let (q, cancel) = (q.clone(), cancel.clone());
+                move || wait(&q, &cancel)
             });
             within(&started);
             let_it_park();
             let triggered = Instant::now();
-            trigger(&q);
-            let (_, returned) = within(&done);
-            returned.saturating_duration_since(triggered) < CANCEL_POLL_INTERVAL * 2 / 5
+            trigger(&q, &cancel);
+            let (ended, returned) = within(&done);
+            assert_eq!(ended, end);
+            returned.saturating_duration_since(triggered) < bound
         })
+    }
+
+    /// `trigger` ends a parked `wait` at once, not at the end of the
+    /// wait's 100 ms slice.
+    fn wakes_at_once<T: PartialEq + std::fmt::Debug + Send + 'static>(
+        end: T,
+        arrange: impl Fn() -> Arc<MediaQueue>,
+        wait: impl Fn(&MediaQueue, &FlagCancel) -> T + Send + Copy + 'static,
+        trigger: impl Fn(&MediaQueue),
+    ) -> bool {
+        ends_within(CANCEL_POLL_INTERVAL * 2 / 5, end, arrange, wait, |q, _| {
+            trigger(q)
+        })
+    }
+
+    /// The cancel signals nothing: a parked wait sees it when its slice
+    /// ends, so one slice after the cancel at the latest. The bound is the
+    /// slice and room for the wake.
+    fn a_cancel_ends_it_within_one_slice(
+        arrange: impl Fn() -> Arc<MediaQueue>,
+        wait: impl Fn(&MediaQueue, &FlagCancel) -> Result<(), MediaWaitEnd> + Send + Copy + 'static,
+    ) -> bool {
+        ends_within(
+            CANCEL_POLL_INTERVAL + Duration::from_millis(50),
+            Err(MediaWaitEnd::Cancelled),
+            arrange,
+            wait,
+            |_, cancel| cancel.cancel(),
+        )
+    }
+
+    /// A queue the stream has not finished writing for.
+    fn undrained() -> Arc<MediaQueue> {
+        let q = Arc::new(MediaQueue::default());
+        q.publish_unsent(40);
+        q
     }
 
     #[test]
@@ -305,6 +345,7 @@ mod tests {
             move || q.push(frame(2), &cancel)
         });
         within(&started);
+        let_it_park();
         // The frame is queued only once one has left: a push that did not
         // wait would have made the queue longer than its bound.
         assert!(q.pop().is_some());
@@ -360,6 +401,7 @@ mod tests {
     #[test]
     fn a_frame_leaving_wakes_a_parked_push_at_once() {
         assert!(wakes_at_once(
+            Ok(()),
             full,
             |q, cancel| q.push(frame(2), cancel),
             |q| assert!(q.pop().is_some()),
@@ -367,13 +409,24 @@ mod tests {
     }
 
     #[test]
+    fn a_cancel_ends_a_parked_push_within_one_slice() {
+        assert!(a_cancel_ends_it_within_one_slice(full, |q, cancel| {
+            q.push(frame(2), cancel)
+        }));
+    }
+
+    #[test]
+    fn a_cancel_ends_a_parked_drain_within_one_slice() {
+        assert!(a_cancel_ends_it_within_one_slice(undrained, |q, cancel| {
+            q.wait_drained(cancel)
+        }));
+    }
+
+    #[test]
     fn the_stream_running_empty_wakes_a_parked_drain_at_once() {
         assert!(wakes_at_once(
-            || {
-                let q = Arc::new(MediaQueue::default());
-                q.publish_unsent(40);
-                q
-            },
+            Ok(()),
+            undrained,
             |q, cancel| q.wait_drained(cancel),
             |q| q.publish_unsent(0),
         ));
@@ -382,6 +435,7 @@ mod tests {
     #[test]
     fn a_close_wakes_a_parked_push_at_once() {
         assert!(wakes_at_once(
+            Err(MediaWaitEnd::Ended),
             full,
             |q, cancel| q.push(frame(2), cancel),
             |q| q.close(),
