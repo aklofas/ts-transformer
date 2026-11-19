@@ -215,12 +215,12 @@ impl PyRtspPushStats {
     fn frames_dropped_inbound(&self) -> u64 {
         self.frames_dropped_inbound
     }
-    /// Frames still queued, never written, when the session ended or its
-    /// TEARDOWN was sent. Readable only while the session object is open (a
-    /// session the server ended): `stats()` raises `CLOSED` after `close()`
-    /// and `teardown()`. `teardown()` is the call that reports a loss at
-    /// the end: it raises unless the queued media was written and the
-    /// server accepted the TEARDOWN.
+    /// Frames still queued, never written, when the session ended.
+    /// Readable on a session that ended while still open (the server ended
+    /// it): `close()` and `teardown()` end the session before it could be
+    /// read, and `stats()` raises `CLOSED` after them. `teardown()` is the
+    /// call that reports a loss at the end: it raises unless the queued
+    /// media was written and the server accepted the TEARDOWN.
     #[getter]
     fn frames_dropped_at_close(&self) -> u64 {
         self.frames_dropped_at_close
@@ -645,8 +645,15 @@ impl PyRtspPushSession {
         self.control(py, "resume", RustRtspPush::resume)
     }
 
-    /// End the session as `close()` does and raise what the TEARDOWN
-    /// returned. The session is closed afterwards whatever the outcome.
+    /// End the session as `close()` does and raise what it reports:
+    /// `RtspError(PROTOCOL)` with status 454 when queued media was lost to
+    /// an expired session; for the TEARDOWN itself `PROTOCOL` (or
+    /// `NOT_FOUND` for a 404) when the server refused it, `TIMEOUT` when no
+    /// reply came within the 500 ms and `IO` when the connection had ended;
+    /// `CLOSED` on a cancelled push and on a session already closed.
+    /// Returns `None` only when the queued media was written and the server
+    /// accepted the TEARDOWN. The session is closed after it, whatever the
+    /// outcome.
     fn teardown(&self, py: Python<'_>) -> PyResult<()> {
         match self.end(py) {
             None => Err(raise(py, &RTSP, closed_error("teardown"))),

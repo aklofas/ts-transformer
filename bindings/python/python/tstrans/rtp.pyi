@@ -612,11 +612,15 @@ class RtspPushSession:
         on a push that is not paused."""
         ...
     def teardown(self) -> None:
-        """End the session as `close()` does and raise what the TEARDOWN
-        returned: `RtspError(PROTOCOL)` (or `NOT_FOUND` for a 404) for a
-        refusal, `RtspError(CLOSED)` on a cancelled push or a session
-        already closed. The session is closed after it, whatever the
-        outcome."""
+        """End the session as `close()` does and raise what it reports:
+        `RtspError(PROTOCOL)` with status 454 when queued media was lost
+        to an expired session; for the TEARDOWN itself `PROTOCOL` (or
+        `NOT_FOUND` for a 404) when the server refused it, `TIMEOUT` when
+        no reply came within the 500 ms and `IO` when the connection had
+        ended; `CLOSED` on a cancelled push and on a session already
+        closed. Returns `None` only when the queued media was written and
+        the server accepted the TEARDOWN. The session is closed after it,
+        whatever the outcome."""
         ...
     def close(self) -> None:
         """End the session; returns `None` whatever the server answered.
@@ -710,12 +714,13 @@ class RtspPushStats:
         ...
     @property
     def frames_dropped_at_close(self) -> int:
-        """Frames still queued, never written, when the session ended or
-        its TEARDOWN was sent. Readable only while the session object is
-        open (a session the server ended): `stats()` raises `CLOSED` after
-        `close()` and `teardown()`. `teardown()` is the call that reports a
-        loss at the end: it raises unless the queued media was written and
-        the server accepted the TEARDOWN."""
+        """Frames still queued, never written, when the session ended.
+        Readable on a session that ended while still open (the server
+        ended it): `close()` and `teardown()` end the session before it
+        could be read, and `stats()` raises `CLOSED` after them.
+        `teardown()` is the call that reports a loss at the end: it raises
+        unless the queued media was written and the server accepted the
+        TEARDOWN."""
         ...
     def __repr__(self) -> str: ...
 
