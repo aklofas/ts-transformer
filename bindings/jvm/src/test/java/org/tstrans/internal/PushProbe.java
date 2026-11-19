@@ -5,7 +5,8 @@ package org.tstrans.internal;
  * under the {@code jni-test-hooks} cargo feature. {@link #nHoldAsReader} holds the
  * session's lock the way a query call ({@code stats()}) does until {@link #nRelease}
  * ends it, so a test can start a close while a query holds the session and only then
- * let it go; {@link #nCloseRetries} counts the rounds a close has waited for it.
+ * let it go; {@link #nWaitRounds} counts the rounds a close or a conversion has waited
+ * for it.
  * {@link #nMarkClosing} sets the flag a close sets first, without taking the session,
  * so the next blocking call meets a close that has begun.
  */
@@ -27,10 +28,11 @@ public final class PushProbe {
     public static native boolean nReaderHolds();
 
     /**
-     * The rounds every close has waited, without a cancel, for a call holding a push
-     * session, since the library loaded: a close that met a held lock raises it.
+     * The rounds every close or conversion has waited, without a cancel or a refusal,
+     * for a query call holding a push session, since the library loaded: a close or a
+     * conversion that met a session held by a query raises it.
      */
-    public static native long nCloseRetries();
+    public static native long nWaitRounds();
 
     /** Mark the session as closing, as a close does before it takes the session. */
     public static native void nMarkClosing(long sessionHandle);

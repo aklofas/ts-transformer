@@ -50,12 +50,13 @@ const CLOSE_RETRY: std::time::Duration = std::time::Duration::from_millis(1);
 /// waited for it.
 const TAKEN: &str = "the session was closed during the call";
 
-/// What a conversion reports when another thread's call holds the push.
-const IN_PROGRESS: &str =
-    "another thread's call on this RtspPushSession is in progress; nothing was converted";
+/// What a conversion reports when a send, `pause` or `resume` on another thread holds
+/// the push.
+const IN_PROGRESS: &str = "a send, pause or resume on another thread is in progress on this \
+     RtspPushSession; nothing was converted";
 
-/// What the calls on one session share: the push and what a close reads to decide
-/// whether to cancel the call holding it.
+/// What the calls on one session share: the push and what a close or a conversion
+/// reads to decide whether the call holding it can park.
 struct Shared {
     /// `None` once a close or a conversion has taken the push.
     push: Mutex<Option<RtspPush>>,
@@ -499,7 +500,7 @@ fn take_for_close(entry: &JniRtspPush) -> Option<RtspPush> {
                         .take();
                 }
                 #[cfg(feature = "jni-test-hooks")]
-                PROBE_CLOSE_RETRIES.fetch_add(1, Ordering::SeqCst);
+                PROBE_WAIT_ROUNDS.fetch_add(1, Ordering::SeqCst);
                 std::thread::sleep(CLOSE_RETRY);
             }
         }
@@ -639,21 +640,29 @@ fn convertible(env: &mut Env, handle: jlong) -> bool {
 }
 
 /// Take the whole session out of its registry for a conversion: the push as an
-/// opened send transport. Never waits: when another thread's call holds the push it
-/// takes nothing and leaves an `IllegalStateException` saying so (the session stays
-/// usable). `None` with an `IllegalStateException` pending also when a close won the
-/// session.
+/// opened send transport. Never waits for a call that can park: when a send, `pause`
+/// or `resume` holds the push it takes nothing, marks nothing and leaves an
+/// `IllegalStateException` saying so (the session stays usable). A query call holding
+/// the push for a moment is waited for, as a close waits for it. `None` with an
+/// `IllegalStateException` pending also when a close won the session.
 fn take_opened(env: &mut Env, handle: jlong) -> Option<Opened<Box<dyn Transport>>> {
     let Some(shared) = REGISTRY_PUSH.with(handle as u64, |s| s.shared.clone()) else {
         crate::error::throw_closed(env, WHAT);
         return None;
     };
-    let mut guard = match shared.push.try_lock() {
-        Ok(guard) => guard,
-        Err(TryLockError::Poisoned(p)) => p.into_inner(),
-        Err(TryLockError::WouldBlock) => {
-            throw_illegal_state(env, IN_PROGRESS);
-            return None;
+    let mut guard = loop {
+        match shared.push.try_lock() {
+            Ok(guard) => break guard,
+            Err(TryLockError::Poisoned(p)) => break p.into_inner(),
+            Err(TryLockError::WouldBlock) => {
+                if shared.parking_holder.load(Ordering::SeqCst) {
+                    throw_illegal_state(env, IN_PROGRESS);
+                    return None;
+                }
+                #[cfg(feature = "jni-test-hooks")]
+                PROBE_WAIT_ROUNDS.fetch_add(1, Ordering::SeqCst);
+                std::thread::sleep(CLOSE_RETRY);
+            }
         }
     };
     // Claimed while the push is held: a close that won the entry first is waiting
@@ -747,7 +756,7 @@ jni_native! {
 // ---------------------------------------------------------------------------
 // Test-only probes (feature = "jni-test-hooks"), never in the shipped JAR: hold a
 // real session's lock the way a query call does until the test releases it, count
-// the rounds a close waits for a call holding a push, and mark a session as closing
+// the rounds a close or a conversion waits for it, and mark a session as closing
 // without taking it, so a test can order a close against other calls without a
 // timing race.
 // ---------------------------------------------------------------------------
@@ -758,9 +767,10 @@ static PROBE_READER_HOLDS: AtomicBool = AtomicBool::new(false);
 #[cfg(feature = "jni-test-hooks")]
 static PROBE_RELEASE: AtomicBool = AtomicBool::new(false);
 
-/// The rounds every close has waited, without a cancel, for a call holding a push.
+/// The rounds every close or conversion has waited, without a cancel or a refusal,
+/// for a query call holding a push.
 #[cfg(feature = "jni-test-hooks")]
-static PROBE_CLOSE_RETRIES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static PROBE_WAIT_ROUNDS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 /// The longest a probe holds the lock unreleased: a test that never releases ends
 /// instead of hanging the suite.
@@ -805,11 +815,12 @@ jni_native! {
 }
 
 jni_native! {
-    /// `org.tstrans.internal.PushProbe.nCloseRetries()`: the rounds every close has
-    /// waited, without a cancel, for a call holding a push.
+    /// `org.tstrans.internal.PushProbe.nWaitRounds()`: the rounds every close or
+    /// conversion has waited, without a cancel or a refusal, for a query call holding
+    /// a push.
     #[cfg(feature = "jni-test-hooks")]
-    fn Java_org_tstrans_internal_PushProbe_nCloseRetries(_env, _class) -> jlong = 0 => {
-        PROBE_CLOSE_RETRIES.load(Ordering::SeqCst) as jlong
+    fn Java_org_tstrans_internal_PushProbe_nWaitRounds(_env, _class) -> jlong = 0 => {
+        PROBE_WAIT_ROUNDS.load(Ordering::SeqCst) as jlong
     }
 }
 

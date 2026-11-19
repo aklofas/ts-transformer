@@ -33,9 +33,10 @@ import org.tstrans.mpegts.MuxerConfig;
  * time: a call made while another is in progress on another thread waits for it.
  * {@link #cancelHandle()}, {@link #isSessionAlive()} and {@link #sessionId()} answer at
  * once from any thread, also while a send is waiting; the cancel handle is the way to
- * end a waiting send. {@link #intoMuxSender} and {@link #intoSender} never wait: while
- * a call on another thread holds the session they throw {@link IllegalStateException}
- * and consume nothing. {@link #close()} and {@link #teardown()} may be called from any
+ * end a waiting send. {@link #intoMuxSender} and {@link #intoSender} never wait for a
+ * send, {@code pause()} or {@code resume()} running on another thread: they throw
+ * {@link IllegalStateException} and consume nothing; a {@link #stats()} in progress
+ * they wait for. {@link #close()} and {@link #teardown()} may be called from any
  * thread: when a send, {@code pause()} or {@code resume()} is running on another
  * thread they fire the cancel first (that call throws {@code CLOSED}), then close. A
  * {@link #stats()} in progress is waited for and does not cancel the session; nor does
@@ -267,10 +268,11 @@ public final class RtspPushSession extends NativeHandle {
      * dropped and TEARDOWN is written without that wait. Call {@code finish()} before
      * {@code close()} for a lossless end.
      *
-     * <p>Never waits: called while a call on another thread holds this session (a send
-     * waiting for a slow server, a {@link #stats()} in progress), it throws
-     * {@link IllegalStateException} and consumes nothing. A refused muxer configuration,
-     * and a session announced with a video track, also leave this session open and
+     * <p>Called while a send, {@code pause()} or {@code resume()} is running on another
+     * thread (a send waiting for a slow server, for example), it does not wait: it throws
+     * {@link IllegalStateException} and consumes nothing, and the session stays usable. A
+     * {@link #stats()} in progress is waited for. A refused muxer configuration, and a
+     * session announced with a video track, also leave this session open and
      * unconsumed. On success this session is closed, and a send, {@code pause()} or
      * {@code resume()} on another thread that was waiting for it runs nothing and throws
      * {@code CLOSED}.
@@ -281,8 +283,8 @@ public final class RtspPushSession extends NativeHandle {
      * @throws RtspException not thrown today; kept so a later conversion failure needs no
      *     signature change
      * @throws IllegalArgumentException on a session announced with a video track
-     * @throws IllegalStateException if the session is closed, or while a call on another
-     *     thread holds it
+     * @throws IllegalStateException if the session is closed, or while a send,
+     *     {@code pause()} or {@code resume()} is running on another thread
      * @throws NullPointerException if {@code config} is {@code null}
      */
     public org.tstrans.shells.MuxSender intoMuxSender(MuxerConfig config)
@@ -311,9 +313,10 @@ public final class RtspPushSession extends NativeHandle {
      * without loss, send with {@link #sendTs} and close this session, or use
      * {@link #intoMuxSender} and {@code MuxSender.finish()}.
      *
-     * <p>Never waits: called while a call on another thread holds this session, it throws
-     * {@link IllegalStateException} and consumes nothing. A session announced with a
-     * video track is also left open and unconsumed. On success this session is closed,
+     * <p>Called while a send, {@code pause()} or {@code resume()} is running on another
+     * thread, it does not wait: it throws {@link IllegalStateException} and consumes
+     * nothing, and the session stays usable. A {@link #stats()} in progress is waited
+     * for. A session announced with a video track is also left open and unconsumed. On success this session is closed,
      * and a send, {@code pause()} or {@code resume()} on another thread that was waiting
      * for it runs nothing and throws {@code CLOSED}.
      *
@@ -321,8 +324,8 @@ public final class RtspPushSession extends NativeHandle {
      * @throws RtspException not thrown today; kept so a later conversion failure needs no
      *     signature change
      * @throws IllegalArgumentException on a session announced with a video track
-     * @throws IllegalStateException if the session is closed, or while a call on another
-     *     thread holds it
+     * @throws IllegalStateException if the session is closed, or while a send,
+     *     {@code pause()} or {@code resume()} is running on another thread
      */
     public org.tstrans.shells.Sender intoSender() throws RtspException {
         ensureOpen(CLOSED);

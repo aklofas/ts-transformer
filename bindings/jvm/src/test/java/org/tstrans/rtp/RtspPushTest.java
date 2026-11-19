@@ -348,11 +348,11 @@ class RtspPushTest {
                 Side holder = Side.start("query-holder", () -> PushProbe.nHoldAsReader(push.nativeHandleForTest()));
                 try {
                     assertTrue(waitFor(PushProbe::nReaderHolds), "the probe never held the session");
-                    long rounds = PushProbe.nCloseRetries();
+                    long rounds = PushProbe.nWaitRounds();
                     Side tearing = Side.start("tearing-down", push::teardown);
                     // The teardown has met the session held by the query; only then does
                     // the query let go.
-                    awaitCloseRetry(tearing.thread, rounds);
+                    awaitWaitRound(tearing, rounds);
                     PushProbe.nRelease();
                     // A query holding the session is not a call to cancel: the TEARDOWN is
                     // accepted (a cancelled session's teardown() throws CLOSED).
@@ -383,9 +383,9 @@ class RtspPushTest {
                     // A send that waits for the session behind the query: it does not hold it.
                     Side sender = Side.start("waiting-sender", () -> push.sendTs(NULL_BUNDLE));
                     awaitInNative(sender.thread, "nSendTs");
-                    long rounds = PushProbe.nCloseRetries();
+                    long rounds = PushProbe.nWaitRounds();
                     Side tearing = Side.start("tearing-down", push::teardown);
-                    awaitCloseRetry(tearing.thread, rounds);
+                    awaitWaitRound(tearing, rounds);
                     PushProbe.nRelease();
                     // Neither holder can park on the network, so nothing is cancelled: the
                     // TEARDOWN is accepted, and the waiting send runs nothing.
@@ -493,7 +493,46 @@ class RtspPushTest {
 
     @Test
     @Timeout(30)
-    void aConversionWhileACallHoldsTheSessionIsRefusedAndConsumesNothing() throws Exception {
+    @EnabledIfSystemProperty(named = "tst.jniTestHooks", matches = "true")
+    void aConversionWaitsForAQueryCallAndThenConverts() throws Exception {
+        for (boolean mux : new boolean[] {false, true}) {
+            try (ScriptedRecordServer peer = new ScriptedRecordServer(200, false)) {
+                RtspPushSession push = RtspClient.push(peer.config(), PushDescription.mp2t());
+                AtomicReference<AutoCloseable> shell = new AtomicReference<>();
+                try {
+                    Side holder = Side.start("query-holder", () -> PushProbe.nHoldAsReader(push.nativeHandleForTest()));
+                    try {
+                        assertTrue(waitFor(PushProbe::nReaderHolds), "the probe never held the session");
+                        long rounds = PushProbe.nWaitRounds();
+                        Side converting = Side.start("converting", () -> shell.set(
+                            mux ? push.intoMuxSender(roundtripConfig()) : push.intoSender()));
+                        // The conversion has met the session held by the query; only then
+                        // does the query let go.
+                        awaitWaitRound(converting, rounds);
+                        PushProbe.nRelease();
+                        // A query holding the session is not a reason to refuse.
+                        converting.assertEndedNormally();
+                    } finally {
+                        PushProbe.nRelease();
+                    }
+                    holder.assertEndedNormally();
+                    assertNotNull(shell.get(), "no shell came back");
+                    // The session moved into the shell.
+                    assertThrows(IllegalStateException.class, () -> push.sendTs(NULL_BUNDLE));
+                    assertFalse(push.isSessionAlive());
+                } finally {
+                    AutoCloseable tx = shell.get();
+                    if (tx != null) tx.close();
+                    push.close();
+                }
+                assertTrue(peer.awaitMethod("TEARDOWN"), "the shell's close wrote no TEARDOWN: " + peer.methods);
+            }
+        }
+    }
+
+    @Test
+    @Timeout(30)
+    void aConversionWhileASendIsParkedIsRefusedAndConsumesNothing() throws Exception {
         try (ScriptedRecordServer peer = new ScriptedRecordServer(200, true)) {
             RtspPushSession push = RtspClient.push(peer.config(), PushDescription.mp2t());
             try {
@@ -746,17 +785,20 @@ class RtspPushTest {
     }
 
     /**
-     * Wait (up to 5 s, scaled) until a close on {@code t} has met a held session: the
-     * close-retry count has passed {@code before}.
+     * Wait (up to 5 s, scaled) until the close or conversion on {@code side} has met the
+     * session held by the probe: the probe's wait-round count has passed {@code before}.
      */
-    private static void awaitCloseRetry(Thread t, long before) throws InterruptedException {
+    private static void awaitWaitRound(Side side, long before) throws InterruptedException {
+        Thread t = side.thread;
         long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(scaledMs(5_000));
         while (System.nanoTime() < deadline) {
-            if (PushProbe.nCloseRetries() > before) return;
-            if (!t.isAlive()) fail(t.getName() + " ended before its close met the held session");
+            if (PushProbe.nWaitRounds() > before) return;
+            if (!t.isAlive()) {
+                throw new AssertionError(t.getName() + " ended before it met the held session", side.error.get());
+            }
             Thread.sleep(2);
         }
-        fail(t.getName() + "'s close never met the held session");
+        fail(t.getName() + " never met the held session");
     }
 
     /** Poll {@code cond} every 20 ms for up to 5 s (scaled). */
