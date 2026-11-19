@@ -4,13 +4,22 @@
 // It changes nothing else: no repository, dependency or task of the build.
 // It resolves at execution time, so it is not for a build with the
 // configuration cache on.
+// With -PresolveAllNoTest=true it leaves out the configurations of the test
+// and examples source sets: only the test task compiles and runs them, so a
+// job that runs no test (the jar assembly, the publish) has no use for them.
 allprojects { p ->
     p.tasks.register('resolveAll') { t ->
         t.description = 'Resolves every resolvable configuration (fetches all dependencies).'
         def configs = p.configurations
+        def noTest = p.findProperty('resolveAllNoTest') == 'true'
         t.doLast {
             configs.each { c ->
-                if (c.canBeResolved) {
+                if (!c.canBeResolved) {
+                    return
+                }
+                if (noTest && (c.name.startsWith('test') || c.name.startsWith('examples'))) {
+                    logger.lifecycle("resolveAll: ${c.name} skipped (-PresolveAllNoTest)")
+                } else {
                     logger.lifecycle("resolveAll: ${c.name} (${c.resolve().size()} files)")
                 }
             }
