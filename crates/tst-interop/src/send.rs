@@ -101,6 +101,11 @@ pub struct PushStart {
     /// its start). Keep it under the server's idle timeout (mediamtx closes
     /// a publisher that sends nothing for 10 s).
     pub start_delay: Duration,
+    /// Time the session stays open after the last packet, before
+    /// TEARDOWN (see [`transport::RtspPushClose`]): a relay's reader then
+    /// has the tail before the relay ends it. Under the server's idle
+    /// timeout too.
+    pub hold: Duration,
 }
 
 /// [`run`] for an `rtsp://` / `rtsps://` server that takes a publish:
@@ -130,7 +135,11 @@ pub fn run_push(
     eprintln!("send: RTSP push recording to {url}");
     thread::sleep(start.start_delay);
     let outcome = transport::PushCloseSlot::default();
-    let transport = Box::new(transport::RtspPushClose::new(push, outcome.clone()));
+    let transport = Box::new(transport::RtspPushClose::new(
+        push,
+        outcome.clone(),
+        start.hold,
+    ));
     let metrics = send_over_transport(
         p,
         transport,

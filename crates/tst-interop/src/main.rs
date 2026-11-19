@@ -26,7 +26,7 @@ Subcommands:
             --push publishes to an rtsp:// server instead (ANNOUNCE, RECORD,
             MPEG-TS over TCP-interleaved RTP), --connect-retry SECS retries
             a refused connect, --start-delay SECS holds the first packet
-            after RECORD;
+            after RECORD, --hold SECS holds TEARDOWN after the last;
             --corrupt rate=N[,min_gap=N][,classes=a+b] --corruption-log PATH
             [--seed N] turn on the seeded TS corruption tap; --au-sizes
             realistic [--au-scale N] scales the realistic AU payload sizes)
@@ -585,7 +585,9 @@ fn run_gen(args: &[String]) -> ! {
 /// SECS (for a server that binds a moment after it starts and serves one
 /// connection, which a probe would spend); `--start-delay SECS` holds the
 /// first packet for SECS after RECORD so a reader of a relay can attach
-/// first. Both need `--push`; `--managed` is refused with it.
+/// first; `--hold SECS` keeps the session open SECS after the last packet
+/// before TEARDOWN, so that reader has the tail before the relay ends it.
+/// All three need `--push`; `--managed` is refused with it.
 fn run_send(args: &[String]) -> ! {
     let mut profile: Option<String> = None;
     let mut url: Option<String> = None;
@@ -608,6 +610,7 @@ fn run_send(args: &[String]) -> ! {
     let mut push = false;
     let mut connect_retry: Option<f64> = None;
     let mut start_delay: Option<f64> = None;
+    let mut hold: Option<f64> = None;
 
     let mut i = 0;
     while i < args.len() {
@@ -627,6 +630,13 @@ fn run_send(args: &[String]) -> ! {
                 start_delay = Some(parse_push_seconds(
                     &require_value(args, i, "send: --start-delay"),
                     "--start-delay",
+                ));
+                i += 2;
+            }
+            "--hold" => {
+                hold = Some(parse_push_seconds(
+                    &require_value(args, i, "send: --hold"),
+                    "--hold",
                 ));
                 i += 2;
             }
@@ -767,8 +777,10 @@ fn run_send(args: &[String]) -> ! {
         (None, None) => None,
     };
 
-    if !push && (connect_retry.is_some() || start_delay.is_some()) {
-        eprintln!("send: --connect-retry and --start-delay are meaningful only with --push");
+    if !push && (connect_retry.is_some() || start_delay.is_some() || hold.is_some()) {
+        eprintln!(
+            "send: --connect-retry, --start-delay and --hold are meaningful only with --push"
+        );
         std::process::exit(2);
     }
     if push {
@@ -783,6 +795,7 @@ fn run_send(args: &[String]) -> ! {
         let start = send::PushStart {
             refused_for: std::time::Duration::from_secs_f64(connect_retry.unwrap_or(0.0)),
             start_delay: std::time::Duration::from_secs_f64(start_delay.unwrap_or(0.0)),
+            hold: std::time::Duration::from_secs_f64(hold.unwrap_or(0.0)),
         };
         let metrics = send::run_push(
             p,

@@ -1361,15 +1361,27 @@ rtsp_push_cells() {
 }
 
 # rtsp-push/us-to-mediamtx-mp2t: `send --push` publishes the profile's
-# MPEG-TS (RFC 2250, 7 TS packets per RTP packet) to mediamtx; ffmpeg
-# pulls it back and re-muxes it to a file, judged by `verify --file` at
-# the re-mux tier, as rtsp-serve/ffmpeg-pull is.
+# MPEG-TS (RFC 2250, 7 TS packets per RTP packet) to mediamtx, which relays
+# an MPEG-TS track unchanged; GStreamer pulls it back and `rtpmp2tdepay`
+# writes the TS packets as they came, so the cell is transparent: the
+# pulled file's SHA-256 must equal the sent stream's, and `verify --file`
+# must pass on it. The reader attaches during the push's start delay, so
+# it has the first packet; the push holds its session RTSP_PUSH_HOLD after
+# the last packet before TEARDOWN, because mediamtx ends its readers as
+# soon as the publisher's TEARDOWN arrives (its last packets to them
+# observed only 3 ms earlier), so the reader has the tail before that. The
+# reader runs with latency=0 and -f, as in the elementary cell below; with
+# one track the pad race described there cannot happen, but a loopback
+# reader needs no jitter delay either way. ffmpeg is not the reader here:
+# its re-mux drops this profile's KLV (gap item 1), which would leave the
+# cell judging ffmpeg instead of the push.
+RTSP_PUSH_HOLD=1
 rtsp_push_mediamtx_mp2t() {
-  local id="rtsp-push/us-to-mediamtx-mp2t" peer="mediamtx+ffmpeg" tier=remux
+  local id="rtsp-push/us-to-mediamtx-mp2t" peer="mediamtx+gst-launch-1.0" tier=transparent
   cell_selected "$id" || return 0
   if [[ -n "${DECLARE_ONLY:-}" ]]; then declare_cell "$id"; return 0; fi
-  if ! have mediamtx || ! have ffmpeg; then
-    emit_skipped "$id" "$peer" send "$tier" "mediamtx and/or ffmpeg not installed on this box"
+  if ! have mediamtx || ! have gst-launch-1.0; then
+    emit_skipped "$id" "$peer" send "$tier" "mediamtx and/or gst-launch-1.0 not installed on this box"
     return 0
   fi
   local port log budget
@@ -1385,26 +1397,30 @@ rtsp_push_mediamtx_mp2t() {
 
   local url="rtsp://127.0.0.1:$port/live"
   local out="$WORK/$(slug "$id").ts" send_json="$WORK/$(slug "$id")-send.json"
-  echo "--- us: send --push ($url, start delay ${RTSP_PUSH_START_DELAY}s) ---" >>"$log"
+  rm -f "$out" "$send_json"
+  echo "--- us: send --push ($url, start delay ${RTSP_PUSH_START_DELAY}s, hold ${RTSP_PUSH_HOLD}s) ---" >>"$log"
   timeout --kill-after=3 "${budget}s" \
     "$BIN" send --push --profile "$PROFILE" --url "$url" --seconds "$SECONDS_ARG" \
     --json "$send_json" --au-sizes "$AU_SIZES" --start-delay "$RTSP_PUSH_START_DELAY" \
+    --hold "$RTSP_PUSH_HOLD" \
     >>"$log" 2>&1 &
   local send_pid=$!
-  local ff_rc=0
+  local gst_rc=0
   if wait_for_line "$log" '^send: RTSP push recording' "$RTSP_PUSH_READY_WAIT" "$send_pid"; then
-    echo "--- peer: ffmpeg pulls $url -> $out ---" >>"$log"
+    echo "--- peer: gst-launch-1.0 pulls $url -> $out ---" >>"$log"
+    # -e: the server's close after our TEARDOWN ends the run with EOS, so
+    # the file is flushed.
     timeout --kill-after=5 "${budget}s" \
-      ffmpeg -y -loglevel warning -rtsp_transport tcp -i "$url" \
-      -map 0 -c copy -copy_unknown -f mpegts "$out" \
-      >>"$log" 2>&1 || ff_rc=$?
+      gst-launch-1.0 -f -e rtspsrc "location=$url" protocols=tcp latency=0 ! \
+      rtpmp2tdepay ! filesink "location=$out" \
+      >>"$log" 2>&1 || gst_rc=$?
   else
     echo "--- the push never reported recording; no reader started ---" >>"$log"
   fi
   local send_rc=0
   wait "$send_pid" || send_rc=$?
   stop_mediamtx
-  echo "--- exit codes: send=$send_rc ffmpeg=$ff_rc ---" >>"$log"
+  echo "--- exit codes: send=$send_rc gst-launch-1.0=$gst_rc ---" >>"$log"
 
   if [[ $send_rc -ne 0 ]]; then
     emit_fail "$id" "$peer" send "$tier" "$log" - "our send --push failed (exit $send_rc) — see log"
@@ -1412,23 +1428,35 @@ rtsp_push_mediamtx_mp2t() {
   fi
   if [[ ! -s "$out" ]]; then
     emit_fail "$id" "$peer" send "$tier" "$log" - \
-      "ffmpeg produced no (or empty) capture (ffmpeg exit $ff_rc)"
+      "gst-launch-1.0 produced no (or empty) capture (exit $gst_rc)"
     return 0
   fi
   local vjson="$WORK/$(slug "$id")-verify.json" vrc=0
   timeout --kill-after=5 "${budget}s" \
     "$BIN" verify --file "$out" --expect "$PROFILE" --seconds "$SECONDS_ARG" --json "$vjson" \
     >>"$log" 2>&1 || vrc=$?
-  local mjson="$WORK/$(slug "$id")-metrics.json"
-  metrics_only "$vjson" "$mjson"
-  if [[ $vrc -eq 0 ]]; then
-    emit_pass "$id" "$peer" send "$tier" "$log" "$mjson"
-  else
-    # Guarded: $vjson can be truncated if `verify` was killed mid-write.
+  # Guarded jq reads, as in run_send_peer_recv: a truncated JSON file must
+  # be a failure reason, never an abort of the whole matrix, and two
+  # unreadable hashes must never compare equal.
+  local -a reasons=()
+  if [[ $vrc -ne 0 ]]; then
     local verify_failures
     verify_failures=$(jq -r '.failures | join("; ")' "$vjson" 2>/dev/null) || verify_failures="(unparseable failures list)"
-    emit_fail "$id" "$peer" send "$tier" "$log" "$mjson" \
-      "verify FAILed against ffmpeg's captured file: $verify_failures"
+    reasons+=("verify FAILed against the pulled file: $verify_failures")
+  fi
+  local sent_hash got_hash
+  sent_hash=$(jq -r '.stream_sha256' "$send_json" 2>/dev/null) || sent_hash=""
+  got_hash=$(jq -r '.metrics.stream_sha256' "$vjson" 2>/dev/null) || got_hash=""
+  echo "--- stream SHA-256: sent ${sent_hash:-<unparseable>}, pulled ${got_hash:-<unparseable>} ---" >>"$log"
+  if [[ -z "$sent_hash" || -z "$got_hash" || "$sent_hash" != "$got_hash" ]]; then
+    reasons+=("byte-transparent tier: stream_sha256 mismatch (sent ${sent_hash:-<unparseable>}, pulled ${got_hash:-<unparseable>})")
+  fi
+  local mjson="$WORK/$(slug "$id")-metrics.json"
+  metrics_only "$vjson" "$mjson"
+  if [[ ${#reasons[@]} -eq 0 ]]; then
+    emit_pass "$id" "$peer" send "$tier" "$log" "$mjson"
+  else
+    emit_fail "$id" "$peer" send "$tier" "$log" "$mjson" "${reasons[@]}"
   fi
 }
 

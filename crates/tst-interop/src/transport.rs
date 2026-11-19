@@ -174,7 +174,11 @@ pub fn make_send(url: &str) -> Result<Box<dyn Transport>, String> {
         }),
         "rtsp" | "rtsps" => rtsp_push_connect(url, &tst_rtp::PushDescription::Mp2t, Duration::ZERO)
             .map(|push| {
-                Box::new(RtspPushClose::new(push, PushCloseSlot::default())) as Box<dyn Transport>
+                Box::new(RtspPushClose::new(
+                    push,
+                    PushCloseSlot::default(),
+                    Duration::ZERO,
+                )) as Box<dyn Transport>
             }),
         other => Err(format!("unsupported scheme for send: {other}://")),
     }
@@ -244,16 +248,24 @@ pub fn push_close_line(context: &str, result: &Result<(), tst_rtp::RtspError>) -
 /// reply awaited, then wait for the client's thread), so the outcome can be
 /// reported: `close` prints [`push_close_line`] and stores the result in the
 /// slot given at construction.
+///
+/// `hold` is slept at the start of `close`, with the session still open
+/// (the queue keeps draining meanwhile). A relay ends its readers as soon as
+/// the publisher's TEARDOWN arrives (mediamtx: within a millisecond, with its
+/// last packets to them 3 ms earlier), so a reader that must have the
+/// stream's tail gets it in this time instead of racing that end.
 pub struct RtspPushClose {
     inner: Option<tst_rtp::RtspPush>,
     outcome: PushCloseSlot,
+    hold: Duration,
 }
 
 impl RtspPushClose {
-    pub fn new(push: tst_rtp::RtspPush, outcome: PushCloseSlot) -> Self {
+    pub fn new(push: tst_rtp::RtspPush, outcome: PushCloseSlot, hold: Duration) -> Self {
         Self {
             inner: Some(push),
             outcome,
+            hold,
         }
     }
 }
@@ -278,6 +290,7 @@ impl Transport for RtspPushClose {
         let Some(push) = self.inner.take() else {
             return;
         };
+        std::thread::sleep(self.hold);
         let result = push.close();
         eprintln!("{}", push_close_line("send", &result));
         *self.outcome.lock().unwrap_or_else(|e| e.into_inner()) = Some(result);

@@ -701,7 +701,7 @@ before it.
 | Cell | Server | Reader | Tier | Judged |
 |---|---|---|---|---|
 | `rtsp-push/us-to-ffmpeg-listen` | `ffmpeg -rtsp_flags listen` (writes the file) | — | remux | `verify --file`, `baseline` |
-| `rtsp-push/us-to-mediamtx-mp2t` | mediamtx (relay) | ffmpeg `-rtsp_transport tcp … -f mpegts` | remux | `verify --file`, `baseline` |
+| `rtsp-push/us-to-mediamtx-mp2t` | mediamtx (relay) | GStreamer `rtspsrc ! rtpmp2tdepay ! filesink` | transparent | pulled SHA-256 = sent `stream_sha256`, and `verify --file`, `baseline` |
 | `rtsp-push/us-to-mediamtx-es-klv` | mediamtx (relay) | GStreamer `rtspsrc ! rtph264depay` / `rtpklvdepay` | remux | `verify-es` against the push's sidecars (a `klv-sync` file) |
 
 mediamtx is not in Ubuntu's archive: `interop.yml` installs a pinned release
@@ -720,6 +720,12 @@ Things these cells depend on, each measured with mediamtx v1.21.4, ffmpeg
   when RECORD is answered; the cell starts the reader on that line, so it
   sees the stream from its first packet. mediamtx closes a publisher that
   sends nothing for 10 s.
+- **…and keep the session open a moment after the last packet.** mediamtx
+  ends its readers as soon as the publisher's TEARDOWN arrives, its last
+  packets to them observed 3 ms earlier. `send --push --hold 1` waits 1 s
+  after the last packet before TEARDOWN, so the transparent reader has the
+  tail before that end (it had the whole stream in 15 of 15 runs without the
+  hold too; the hold removes the dependence on that margin).
 - **ffmpeg's listener serves one connection and binds a moment after it
   starts**, so it cannot be probed for readiness (the probe would be its one
   connection). `send --push --connect-retry 10` retries a refused connect
@@ -734,16 +740,19 @@ Things these cells depend on, each measured with mediamtx v1.21.4, ffmpeg
   sets there and nowhere else. The pulled video must be the pushed NAL
   units from the first on, short at most by the last access unit, and the
   pulled KLV a prefix of the pushed bytes holding at least 90 % of them.
-- **GStreamer's reader runs with `latency=0`.** With the default 2000 ms
+- **GStreamer's readers run with `latency=0`.** With the default 2000 ms
   both tracks' pads appear at once on two threads and gst-launch's
   delayed-link bookkeeping races: a SIGSEGV in its "Delayed linking
   failed" warning before any byte is written, in 8 of about 50 local runs.
   With `latency=0`, 0 of 54.
-- **The MP2T cells are re-mux cells**, judged as `rtsp-serve/ffmpeg-pull`
-  is, so ffmpeg 6.1's KLV truncation (gap item 1) and its PID renumbering
-  apply to them as to every ffmpeg `-c copy` cell. mediamtx itself relays
-  the MPEG-TS untouched: a raw reader (`rtspsrc ! rtpmp2tdepay ! filesink`)
-  writes a file whose SHA-256 equals the sent `stream_sha256`.
+- **mediamtx relays an MPEG-TS track untouched**, so its MP2T cell is
+  transparent: GStreamer's `rtpmp2tdepay` writes the relayed TS packets as
+  they came. ffmpeg as that reader would re-mux them and drop this profile's
+  KLV (gap item 1), judging ffmpeg instead of the push.
+- **`us-to-ffmpeg-listen` is a re-mux cell** (ffmpeg is the server and
+  writes the file), so ffmpeg 6.1's KLV truncation (gap item 1) and its PID
+  renumbering apply to it as to every ffmpeg `-c copy` cell; it carries the
+  same expected-unsupported row.
 
 ### Transport axis: the WHEP browser cells
 
