@@ -239,11 +239,50 @@ class Findings(unittest.TestCase):
         self.assertEqual([x.kind for x in f], ["advisory"])
         self.assertEqual(f[0].title, "deps: GHSA-x may affect untagged freertos-posix pin 01234567 (high)")
 
-    def test_an_untagged_pin_skips_advisories_older_than_its_commit(self):
-        adv = {"ghsa_id": "GHSA-x", "severity": "high", "published_at": "2025-09-01T00:00:00Z",
+    OLD_ADV = {"ghsa_id": "GHSA-x", "severity": "high", "published_at": "2025-09-01T00:00:00Z",
                "vulnerabilities": [{"vulnerable_version_range": "< 2.0"}]}
-        f = da.build_findings(POSIX_DEP, None, None, ["v1.0"], [adv], [], pin_date="2026-01-01T00:00:00Z")
-        self.assertEqual(f, [])
+
+    def _older(self, assessments=()):
+        return da.build_findings(POSIX_DEP, None, None, ["v1.0"], [self.OLD_ADV], [],
+                                 pin_date="2026-01-01T00:00:00Z", pin_sha="0123456789abcdef",
+                                 assessments=assessments)
+
+    def test_an_untagged_pin_reports_older_advisories_as_unassessed(self):
+        f = self._older()
+        self.assertEqual([x.kind for x in f], ["unassessed"])
+        self.assertEqual(f[0].title, "deps: GHSA-x is older than untagged freertos-posix pin 01234567 and unassessed (high)")
+        self.assertIn("published before the pinned commit; whether the pin carries the fix is not established", f[0].body)
+
+    def test_an_assessment_fixed_in_pin_silences_the_older_advisory(self):
+        row = {"submodule": "freertos-posix", "advisory": "GHSA-x", "assessed": "fixed-in-pin", "reason": "the fix is an ancestor"}
+        self.assertEqual(self._older([row]), [])
+
+    def test_an_assessment_not_affected_silences_the_older_advisory(self):
+        row = {"submodule": "freertos-posix", "advisory": "GHSA-x", "assessed": "not-affected", "reason": "the code is not built"}
+        self.assertEqual(self._older([row]), [])
+
+    def test_an_assessment_for_another_submodule_does_not_silence_it(self):
+        row = {"submodule": "lwip", "advisory": "GHSA-x", "assessed": "not-affected", "reason": "r"}
+        self.assertEqual([x.kind for x in self._older([row])], ["unassessed"])
+
+    def test_an_assessment_naming_an_unknown_advisory_is_an_error(self):
+        row = {"submodule": "freertos-posix", "advisory": "GHSA-gone", "assessed": "not-affected", "reason": "r"}
+        with self.assertRaisesRegex(ValueError, "GHSA-gone"):
+            da.check_assessments([row], {"freertos-posix": [self.OLD_ADV]})
+
+    def test_an_assessment_naming_an_unknown_submodule_is_an_error(self):
+        row = {"submodule": "nope", "advisory": "GHSA-x", "assessed": "not-affected", "reason": "r"}
+        with self.assertRaisesRegex(ValueError, "nope"):
+            da.check_assessments([row], {"freertos-posix": [self.OLD_ADV]})
+
+    def test_an_assessment_with_a_bad_value_or_no_reason_is_an_error(self):
+        for row in ({"submodule": "freertos-posix", "advisory": "GHSA-x", "assessed": "ignored", "reason": "r"},
+                    {"submodule": "freertos-posix", "advisory": "GHSA-x", "assessed": "fixed-in-pin", "reason": " "}):
+            with self.assertRaises(ValueError):
+                da.check_assessments([row], {"freertos-posix": [self.OLD_ADV]})
+
+    def test_the_committed_assessments_file_loads(self):
+        self.assertIsInstance(da.load_assessments(), list)
 
     def test_a_dependency_with_no_advisory_source_is_unassessed(self):
         self.assertEqual(da.advisory_sources(LIBRIST_DEP), [])

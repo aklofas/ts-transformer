@@ -1,0 +1,20 @@
+# Advisories published before the pinned commit of an UNTAGGED submodule.
+#
+# scripts/dev/deps_advisory.py cannot place such a pin in an advisory's version
+# range, and an advisory older than the commit may or may not be fixed in it.
+# Each one is reported as unassessed until a row here records a decision.
+#
+#   submodule  the dependency's name in deps_advisory.py (e.g. "freertos-posix")
+#   advisory   the GHSA id
+#   assessed   "fixed-in-pin" (the fix is an ancestor of the pinned commit) or
+#              "not-affected" (the vulnerable code is not built or not reachable)
+#   reason     what was checked, in a sentence
+#
+# A row naming a submodule or advisory the live query no longer returns fails
+# the run: a stale assessment must not hide a finding.
+#
+# [[assessment]]
+# submodule = "freertos-posix"
+# advisory  = "GHSA-xxxx-xxxx-xxxx"
+# assessed  = "fixed-in-pin"
+# reason    = "..."
