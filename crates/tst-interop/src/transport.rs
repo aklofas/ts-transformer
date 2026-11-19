@@ -576,10 +576,9 @@ pub fn is_tcp(url: &str) -> Result<bool, String> {
 
 /// Scheme prefix of a `scheme://...` URL (e.g. `"udp"`, `"tcps"`).
 fn scheme_of(url: &str) -> Result<&str, String> {
-    let shown = redact_url(url);
     url.split_once("://")
         .map(|(scheme, _)| scheme)
-        .ok_or_else(|| format!("not a URL (missing '://'): {shown}"))
+        .ok_or_else(|| format!("not a URL (missing '://'): {}", redact_url(url)))
 }
 
 /// Build a connected/accepted `TcpTransport` for either mode described
@@ -1434,43 +1433,106 @@ mod tests {
         assert_eq!(err, "unsupported scheme for send: ftp://");
     }
 
-    /// A secret in a caller's URL reaches no error text: the SRT
-    /// passphrase and the RTSP password each go through every open path
-    /// that can refuse them without a network round trip.
+    /// The error text of a refused open, whatever the Ok type.
+    fn refused<T>(what: &str, r: Result<T, String>) -> (String, String) {
+        match r {
+            Err(e) => (what.to_string(), e),
+            Ok(_) => panic!("{what}: the open was expected to fail"),
+        }
+    }
+
+    /// A secret in a caller's URL reaches no error text: the SRT and RIST
+    /// keys and the RTSP password go through the open paths that can refuse
+    /// them without a peer (a bad value, a port already bound, a refused
+    /// connection) in this module and in the serve modes. Not reached, as
+    /// they fail only against a live peer: the SRT connect and accept
+    /// sites, the TCP accept site and the RTSP publish mount, start and
+    /// transport sites.
     #[test]
     fn a_failing_open_does_not_print_the_urls_secrets() {
+        use crate::fixtures::{AuSizeMode, KlvSet};
         let port = closed_tcp_port();
+        // Ports that are bound for the whole test, so a bind on them fails.
+        let tcp_held = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let held = tcp_held.local_addr().unwrap().port();
+        let udp_held = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+        let held_udp = udp_held.local_addr().unwrap().port();
         let srt = "srt://127.0.0.1:9?mode=bogus&passphrase=secret-phrase-1";
         let srt_caller = "srt://127.0.0.1:9?mode=caller&passphrase=secret-phrase-1";
+        let srt_bind =
+            format!("srt://127.0.0.1:{held_udp}?mode=listener&passphrase=secret-phrase-1");
         let rtsp = format!("rtsp://user:pw-2@127.0.0.1:{port}/live");
         let publish = "rtsp-publish://user:pw-2@127.0.0.1:0";
-        let rist = "rist://@127.0.0.1?passphrase=secret-phrase-1";
+        let publish_bind = format!("rtsp-publish://user:pw-2@127.0.0.1:{held}/mount");
+        let rist_bind_form = "rist://127.0.0.1:0?secret=secret-phrase-1";
+        let rist_bad = "rist://127.0.0.1:9000?aes-type=99&secret=secret-phrase-1";
+        let rist_recv_bad = "rist://@127.0.0.1:9000?aes-type=99&secret=secret-phrase-1";
+        let udp_bad = "udp://@127.0.0.1:99999?passphrase=secret-phrase-1";
         let tcp = format!("tcp://127.0.0.1:{port}?passphrase=secret-phrase-1");
-        let errors: Vec<(&str, String)> = vec![
-            ("make_send srt", make_send(srt).err().expect("bad mode")),
-            ("make_recv srt", make_recv(srt).err().expect("bad mode")),
-            (
-                "make_recv_bound srt",
-                make_recv_bound(srt).err().expect("bad mode"),
+        let tcp_bad = "tcp://127.0.0.1:99999?passphrase=secret-phrase-1";
+        let tcp_listen_bad = "tcp://127.0.0.1:99999?listen=1&passphrase=secret-phrase-1";
+        let p = &crate::profiles::all()[0];
+        let serve = |url: &str,
+                     f: fn(
+            &crate::profiles::Profile,
+            &str,
+            f64,
+            KlvSet,
+            u64,
+            AuSizeMode,
+        ) -> Result<(), String>| {
+            f(p, url, 0.1, KlvSet::Compact, 0, AuSizeMode::Compact)
+        };
+        let errors: Vec<(String, String)> = vec![
+            refused("make_send srt", make_send(srt)),
+            refused("make_recv srt", make_recv(srt)),
+            refused("make_recv_bound srt", make_recv_bound(srt)),
+            refused("make_recv_bound srt caller", make_recv_bound(srt_caller)),
+            refused("make_recv_bound srt bind", make_recv_bound(&srt_bind)),
+            refused("make_send rtsp", make_send(&rtsp)),
+            refused("make_recv rtsp-publish", make_recv(publish)),
+            refused("make_recv rtsp-publish bind", make_recv(&publish_bind)),
+            refused("rist_with_free_port", rist_with_free_port(rist_bind_form)),
+            refused("make_send rist", make_send(rist_bad)),
+            refused("make_recv rist", make_recv(rist_recv_bad)),
+            refused("make_send udp", make_send(udp_bad)),
+            refused("make_recv udp", make_recv(udp_bad)),
+            refused("make_recv_bound udp", make_recv_bound(udp_bad)),
+            refused("make_send tcp refused", make_send(&tcp)),
+            refused("make_recv tcp refused", make_recv(&tcp)),
+            refused("make_send tcp url", make_send(tcp_bad)),
+            refused(
+                "make_recv_bound tcp listen",
+                make_recv_bound(tcp_listen_bad),
             ),
-            (
-                "make_recv_bound srt caller",
-                make_recv_bound(srt_caller).err().expect("not a listener"),
-            ),
-            ("make_send rtsp", make_send(&rtsp).err().expect("refused")),
-            (
-                "make_recv rtsp-publish",
-                make_recv(publish).err().expect("no mount path"),
-            ),
-            (
-                "rist_with_free_port",
-                rist_with_free_port(rist).expect_err("no port"),
-            ),
-            ("make_send tcp", make_send(&tcp).err().expect("refused")),
-            ("make_recv tcp", make_recv(&tcp).err().expect("refused")),
-            (
+            refused(
                 "scheme_of",
-                scheme_of("no-scheme?passphrase=secret-phrase-1").expect_err("not a URL"),
+                scheme_of("no-scheme?passphrase=secret-phrase-1"),
+            ),
+            refused(
+                "run_hls_url parse",
+                serve(
+                    "hls://127.0.0.1:99999?auth_pass=secret-phrase-1",
+                    crate::serve::run_hls_url,
+                ),
+            ),
+            refused(
+                "run_rtsp_url parse",
+                serve(
+                    "rtsp://user:pw-2@127.0.0.1:99999/x",
+                    crate::serve::run_rtsp_url,
+                ),
+            ),
+            refused(
+                "run_rtsp_url no mount",
+                serve("rtsp://user:pw-2@127.0.0.1:1", crate::serve::run_rtsp_url),
+            ),
+            refused(
+                "run_rtsp_url host",
+                serve(
+                    "rtsp://user:pw-2@example.invalid:554/x",
+                    crate::serve::run_rtsp_url,
+                ),
             ),
         ];
         for (what, err) in errors {

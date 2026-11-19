@@ -1988,8 +1988,10 @@ expect "unredacted urls: an inline {url} fails" 1 nru
 expect_out "unredacted urls: the site is named" "a.rs:2:"
 printf 'fn f(url: &str) {\n    eprintln!("open {}", url);\n}\n' > "$tmp/nru/a.rs"
 expect "unredacted urls: a positional url argument fails" 1 nru
-printf 'fn f(url: &str) {\n    // redact_url(url) is called by the caller\n    eprintln!("open {url}");\n}\n' > "$tmp/nru/a.rs"
-expect "unredacted urls: a redact_url on the line above excuses the site" 0 nru
+printf 'fn f(url: &str) {\n    let shown = redact_url(url);\n    eprintln!("open {url}");\n}\n' > "$tmp/nru/a.rs"
+expect "unredacted urls: a redact_url on the line above does not excuse an inline {url}" 1 nru
+printf 'fn f(url: &str) {\n    eprintln!("open {url}", url = redact_url(url));\n}\n' > "$tmp/nru/a.rs"
+expect "unredacted urls: a redact_url on the same line excuses the site" 0 nru
 
 if [[ "$fail" == 0 ]]; then echo "self-test: ALL OK"; fi
 exit "$fail"

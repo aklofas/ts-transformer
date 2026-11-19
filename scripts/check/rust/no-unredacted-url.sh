@@ -3,14 +3,18 @@
 # examples print it through `tst_core::url::redact_url`, never as given.
 #
 # Fails on a line of a Rust file under crates/tst-interop/src or examples/
-# that formats a variable named `url` or `uri` (`{url}`, `{uri:?}`, or
-# `, url` as a plain argument of a formatting macro on the same line) unless that
-# line or the one above names `redact_url`.
+# that formats a variable named `url` or `uri`: `{url}` or `{uri:?}` inline,
+# or `, url` as a plain argument after the format string of format!, println!,
+# eprintln!, print!, eprint! or panic!, unless THAT SAME LINE names
+# `redact_url` (e.g. `format!("{url}", url = redact_url(url))`). A line under a
+# `let shown = redact_url(url);` is not excused: print `{shown}`.
 #
-# Does not catch: a macro whose argument sits on a later line than its
-# format string, a URL held in another name or a field (`opts.url`), a
-# struct printed with `{:?}` that holds one, or an argument that is a call
-# (`f(url)`, whose own formatting this does not read).
+# Does not catch: a named argument (`"{u}", u = url`), `write!`/`writeln!`
+# (their first argument is not a string literal, so they are not matched at
+# all), a macro whose arguments sit on a later line than its format string, a
+# URL held under another name or a field (`opts.url`, `push_url`, `url.as_str()`),
+# a struct printed with `{:?}` that holds one, an argument that is a call
+# (`f(url)`), or a line that redacts one value and prints `{url}` raw beside it.
 #
 # Overridable (scripts/ratchets/tests/self_test.sh points it at a fixture):
 #   REDACT_SCAN_DIRS   space-separated dirs scanned
@@ -24,10 +28,10 @@ for dir in $REDACT_SCAN_DIRS; do
   [ -d "$dir" ] || continue
   while IFS= read -r -d '' f; do
     hits=$(awk '
-      /\{(url|uri)(:[^}]*)?\}/ || /(format|println|eprintln|print|eprint|write|writeln|panic)!\("[^"]*"(,[^,()]*)*,[ ]*&?(url|uri)[ ]*[,)]/ {
-        if ($0 !~ /redact_url/ && prev !~ /redact_url/) printf "%s:%d: %s\n", FILENAME, NR, $0
+      /\{(url|uri)(:[^}]*)?\}/ || /(format|println|eprintln|print|eprint|panic)!\("[^"]*"(,[^,()]*)*,[ ]*&?(url|uri)[ ]*[,)]/ {
+        if ($0 !~ /redact_url/) printf "%s:%d: %s\n", FILENAME, NR, $0
       }
-      { prev = $0 }' "$f")
+      ' "$f")
     if [ -n "$hits" ]; then
       echo "$hits"
       found=1
