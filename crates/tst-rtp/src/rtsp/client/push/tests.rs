@@ -428,15 +428,24 @@ fn an_ipv4_mapped_local_address_is_announced_as_ipv4() {
     let (port, peer) = serve(|peer| (peer.accept_push(), peer.until_teardown()));
     let mapped = RtspClientBuilder::new(&format!("rtsp://[::ffff:127.0.0.1]:{port}/live")).unwrap();
     let push = RtspPush::connect(mapped, &PushDescription::Mp2t).unwrap();
-    assert!(
-        push.client().local_ip.is_ipv4(),
-        "{}",
-        push.client().local_ip
-    );
+    let local = push.client().local_ip;
+    assert!(local.is_some_and(|ip| ip.is_ipv4()), "{local:?}");
     let (handshake, _) = closed(push, peer);
     let body = String::from_utf8(handshake[0].body.to_vec()).unwrap();
     assert!(body.contains(" 1 IN IP4 127.0.0.1\r\n"), "{body}");
     assert!(body.contains("c=IN IP4 0.0.0.0\r\n"), "{body}");
+}
+
+/// A socket that does not tell its local address: the description names
+/// the unspecified address of the family the client is connected over.
+#[test]
+fn an_unknown_local_address_is_announced_as_the_unspecified_one() {
+    use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+    let v4: IpAddr = Ipv4Addr::new(192, 0, 2, 7).into();
+    let v6: IpAddr = Ipv6Addr::LOCALHOST.into();
+    assert_eq!(super::origin_address(Some(v4), v6), v4);
+    assert_eq!(super::origin_address(None, v4), Ipv4Addr::UNSPECIFIED);
+    assert_eq!(super::origin_address(None, v6), Ipv6Addr::UNSPECIFIED);
 }
 
 #[test]
@@ -717,6 +726,49 @@ fn a_first_setup_2xx_without_a_session_header_is_bad_response_and_ends_the_conne
     );
     assert!(seen.after.is_empty(), "{:?}", seen.after);
     assert_finished(seen.client);
+}
+
+/// `record` looks at the client's own state first: without a session and
+/// every track set up it asks nothing of its thread or its connection.
+#[test]
+fn record_on_a_client_that_is_not_set_up_is_refused_by_the_client_itself() {
+    // No session: the first SETUP reply named none, and the client ended
+    // its connection over it.
+    let seen = setup_answered(0, "Transport: RTP/AVP/TCP;unicast;interleaved=0-1\r\n");
+    let r = seen.client.record();
+    assert!(
+        matches!(
+            &r,
+            Err(RtspError::NotAllowed {
+                detail: "RECORD before every track is set up"
+            })
+        ),
+        "{r:?}"
+    );
+    // A session, and one track of two set up.
+    let (port, peer) = serve(|peer| {
+        let announce = peer.request();
+        peer.answer(&announce, "200 OK", "");
+        let first = peer.request();
+        peer.answer(&first, "200 OK", &usable_setup("0-1"));
+        let second = peer.request();
+        peer.answer(&second, "461 Unsupported Transport", "");
+        requests(&peer.until_hangup())
+            .iter()
+            .map(|r| r.method)
+            .collect::<Vec<_>>()
+    });
+    let mut client = builder(port, "/live").connect().unwrap();
+    client.announce(&elementary(true)).unwrap();
+    let r = client.setup_record();
+    assert!(
+        matches!(&r, Err(RtspError::Protocol { code: 461, .. })),
+        "{r:?}"
+    );
+    let r = client.record();
+    assert!(matches!(&r, Err(RtspError::NotAllowed { .. })), "{r:?}");
+    // No RECORD: only the TEARDOWN of the dropped client's session.
+    assert_eq!(joined(peer), [RtspMethod::Teardown]);
 }
 
 #[test]
@@ -1380,6 +1432,9 @@ fn transport_close_with_a_refused_teardown_records_cancelled() {
     let mut push = RtspPush::connect(builder(port, "/live"), &PushDescription::Mp2t).unwrap();
     Transport::close(&mut push);
     assert_eq!(push.end_reason(), Some(EndReason::Cancelled));
+    // Closed is not alive, also while the server still holds the
+    // connection.
+    assert!(!push.is_session_alive());
     assert_eq!(push.send_ts(&ts(7, 0)), Err(TransportError::Closed));
     drop(push);
     assert_eq!(joined(peer), 0, "one TEARDOWN, and none from the drop");
@@ -1668,6 +1723,25 @@ fn transport_close_delivers_the_queue_tears_down_once_and_later_sends_are_closed
     open.send(()).unwrap();
     Transport::close(&mut push);
     assert_eq!(push.end_reason(), Some(EndReason::CleanTeardown));
+    assert!(!push.is_session_alive());
+    // One answer from the control calls too, whether or not the stopped
+    // thread has ended yet.
+    for _ in 0..2 {
+        let closed = "the push is closed";
+        let r = push.pause();
+        assert!(
+            matches!(&r, Err(RtspError::NotAllowed { detail }) if *detail == closed),
+            "{r:?}"
+        );
+        let r = push.resume();
+        assert!(
+            matches!(&r, Err(RtspError::NotAllowed { detail }) if *detail == closed),
+            "{r:?}"
+        );
+        eventually("the client's thread ended", || {
+            Arc::strong_count(&push.client().session_dead) == 1
+        });
+    }
     let closed = Err(PushError::Transport(TransportError::Closed));
     assert_eq!(push.send_klv(&[1, 2, 3], pts(0)), closed);
     assert_eq!(push.send_ts(&ts(7, 0)), Err(TransportError::Closed));

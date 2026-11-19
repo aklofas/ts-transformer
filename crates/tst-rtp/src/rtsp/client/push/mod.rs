@@ -8,6 +8,7 @@ mod tests;
 
 pub use session::RtspPush;
 
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::sync::{Arc, Mutex};
 
 use bytes::Bytes;
@@ -135,11 +136,13 @@ pub struct PushStats {
     /// RTCP receiver reports the server sent. A server that sends none
     /// leaves this and the two loss figures at 0.
     pub receiver_reports: u64,
-    /// The fraction of packets lost since the report before, in 1/256, as
-    /// the server reported it for the track whose receiver report came
-    /// last.
+    /// The fraction of packets lost since the report before, in 1/256.
+    /// This and [`Self::cumulative_lost`] are the figures of one track:
+    /// the one whose RTCP channel carried the last receiver report, as
+    /// the last report that named that track gave them. With two tracks
+    /// reporting, the pair therefore changes between the tracks' values.
     pub fraction_lost_q8: u8,
-    /// The packets lost since the start, from the same report.
+    /// The packets lost since the start, for the same track.
     pub cumulative_lost: u32,
     /// Frames the server sent on a channel this side sends media on, read
     /// and dropped.
@@ -170,6 +173,8 @@ pub(crate) struct Track {
     /// The NTP and RTP times of the last packet sent, which the track's
     /// last sender report repeats.
     last_sent: Option<(u64, u32)>,
+    /// The track's SETUP was answered with a reply the client took.
+    set_up: bool,
 }
 
 impl Track {
@@ -185,6 +190,7 @@ impl Track {
             rtcp: Arc::default(),
             channels: (2 * index, 2 * index + 1),
             last_sent: None,
+            set_up: false,
         }
     }
 }
@@ -228,6 +234,16 @@ impl PushDescription {
     }
 }
 
+/// The address a description names as its origin: the control socket's
+/// local one, or the unspecified address of the peer's family when the
+/// socket did not tell.
+fn origin_address(local: Option<IpAddr>, peer: IpAddr) -> IpAddr {
+    local.unwrap_or(match peer {
+        IpAddr::V4(_) => Ipv4Addr::UNSPECIFIED.into(),
+        IpAddr::V6(_) => Ipv6Addr::UNSPECIFIED.into(),
+    })
+}
+
 const SETUP_BEFORE_ANNOUNCE: &str = "SETUP for recording before ANNOUNCE";
 const SETUP_WITHOUT_SESSION: &str = "SETUP reply for recording names no session";
 const RECORD_BEFORE_SETUP: &str = "RECORD before every track is set up";
@@ -259,7 +275,8 @@ impl RtspClient {
     ///   reply arrives, or is set when the call fails.
     pub fn announce(&mut self, desc: &PushDescription) -> Result<(), RtspError> {
         let (sdp_tracks, kinds) = desc.tracks();
-        let sdp = write_announce(&sdp_tracks, self.local_ip, random_u32())
+        let origin = origin_address(self.local_ip, self.peer_ip);
+        let sdp = write_announce(&sdp_tracks, origin, random_u32())
             .map_err(|detail| self.refused(RtspError::NotAllowed { detail }))?;
         let tracks: Vec<Track> = (0u8..)
             .zip(kinds)
@@ -350,6 +367,7 @@ impl RtspClient {
             if let Some(accepted) = taken? {
                 track.channels = (accepted.rtp_channel, accepted.rtcp_channel);
             }
+            track.set_up = true;
         }
         Ok(())
     }
@@ -438,24 +456,23 @@ impl RtspClient {
     ///
     /// # Errors
     ///
-    /// - [`RtspError::NotAllowed`], with nothing written, before every
-    ///   announced track is set up.
+    /// - [`RtspError::NotAllowed`], with nothing written, on a client
+    ///   without a session or with an announced track that is not set up.
     /// - [`RtspError::Protocol`] with the status when the server answers
     ///   anything but a `2xx`.
     /// - The other errors of [`Self::announce`].
     pub fn record(mut self) -> Result<RtspPush, RtspError> {
-        let mut headers = Vec::new();
-        if let Some(sid) = &self.session_id {
-            headers.push(("session", sid.clone()));
-        }
-        let uri = self.url.render_no_credentials();
-        let resp = self.exchange(RtspMethod::Record, uri, headers)?;
-        self.expect_2xx(&resp)?;
         match (self.push.take(), self.session_id.clone()) {
-            (Some(announced), Some(sid)) => Ok(RtspPush::new(self, sid, announced.tracks)),
-            _ => Err(RtspError::NotAllowed {
+            (Some(announced), Some(sid)) if announced.tracks.iter().all(|t| t.set_up) => {
+                let uri = self.url.render_no_credentials();
+                let headers = vec![("session", sid.clone())];
+                let resp = self.exchange(RtspMethod::Record, uri, headers)?;
+                self.expect_2xx(&resp)?;
+                Ok(RtspPush::new(self, sid, announced.tracks))
+            }
+            _ => Err(self.refused(RtspError::NotAllowed {
                 detail: RECORD_BEFORE_SETUP,
-            }),
+            })),
         }
     }
 

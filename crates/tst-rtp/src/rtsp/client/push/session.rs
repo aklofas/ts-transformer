@@ -70,13 +70,17 @@ const TS_SYNC_BYTE: u8 = 0x47;
 /// server that reads slowly a data call waits for room. The wait ends when
 /// room frees, within about 100 ms of a cancel
 /// ([`Self::cancel_handle`], from any thread), when the session ends, and
-/// at the latest when the server has taken no byte for 5 s, which ends the
-/// connection.
+/// when the server has taken no byte for 5 s, which ends the connection.
+/// That is not a bound on the whole wait: a server that keeps taking a few
+/// bytes within every 5 s holds the call for as long as it does so, and
+/// the cancel handle is the way out.
 ///
 /// [`Self::close`] and [`Transport::close`] wait for the queued media to
 /// be written before they send TEARDOWN, and that wait has the same three
-/// ends. A sender shell over a push closes its transport when it is
-/// finished and also when it is dropped unfinished, so both wait that way.
+/// ends and, like a data call's, no total bound; so has the wait of
+/// [`Self::pause`]. A sender shell over a push closes its transport when
+/// it is finished and also when it is dropped unfinished, so both wait
+/// that way.
 /// Dropping the push itself does not wait: it sets the cancel, discards
 /// what is queued, writes TEARDOWN without waiting for its reply and
 /// leaves the thread to end on its own.
@@ -113,6 +117,9 @@ const TS_SYNC_BYTE: u8 = 0x47;
 ///   connection failed or took no byte for 5 s (`TransportFailed`), the
 ///   server answered a keepalive ping `454` (`SessionExpired`), or the
 ///   server broke the message framing (`ProtocolError`).
+///
+/// The `errno_code` of a `Broken` from a push is always `None`: a failed
+/// connection is named in the error's text only.
 ///
 /// # Send
 ///
@@ -258,6 +265,11 @@ impl RtspPush {
     /// order. A NAL unit over 1400 bytes is fragmented. The parameter sets
     /// travel only where the access unit carries them.
     ///
+    /// `pts` is taken as given: pass one that keeps counting and does not
+    /// wrap at 33 bits as a timestamp read from MPEG-TS does. The clock of
+    /// the sender reports follows it, so a value that jumps back moves
+    /// that clock back with it.
+    ///
     /// # Errors
     ///
     /// - [`PushError::Transport`] once the push is closed, cancelled or
@@ -285,8 +297,9 @@ impl RtspPush {
     /// Send one KLV unit on an elementary push announced with KLV. `klv`
     /// is the whole unit (a local or universal set, without a metadata
     /// access unit header) and `pts` its presentation time, on the
-    /// timeline of the video's. A unit up to 65 523 bytes is one RTP
-    /// packet; a larger one is split.
+    /// timeline of the video's and, like it, one that does not wrap (see
+    /// [`Self::send_video`]). A unit up to 65 523 bytes is one RTP packet;
+    /// a larger one is split.
     ///
     /// # Errors
     ///
@@ -318,12 +331,13 @@ impl RtspPush {
     ///   during the wait or before the reply; PAUSE is not sent once the
     ///   wait has seen it.
     /// - [`RtspError::NotAllowed`], with nothing written, on a push that
-    ///   is already paused.
+    ///   is already paused, and after [`Transport::close`].
     /// - [`RtspError::Protocol`] with the status when the server answers
     ///   anything but a `2xx`; the session is left as it is.
     /// - [`RtspError::Io`], [`RtspError::Timeout`] and the other errors of
     ///   a request.
     pub fn pause(&mut self) -> Result<(), RtspError> {
+        self.check_not_closed()?;
         // Before the request: some servers close the connection on a frame
         // that follows a PAUSE.
         if self.flush() == Err(MediaWaitEnd::Cancelled) {
@@ -339,12 +353,13 @@ impl RtspPush {
     /// # Errors
     ///
     /// - [`RtspError::NotAllowed`], with nothing written, on a push that
-    ///   is not paused.
+    ///   is not paused, and after [`Transport::close`].
     /// - [`RtspError::Protocol`] with the status when the server answers
     ///   anything but a `2xx`; the session is left as it is.
     /// - [`RtspError::LocalCancel`], [`RtspError::Io`],
     ///   [`RtspError::Timeout`] and the other errors of a request.
     pub fn resume(&mut self) -> Result<(), RtspError> {
+        self.check_not_closed()?;
         self.request(RtspMethod::Record)?;
         self.paused = false;
         Ok(())
@@ -397,16 +412,18 @@ impl RtspPush {
     }
 
     /// A handle that ends a waiting data call, `pause` or `close` from
-    /// any thread. A cancelled push sends nothing more; closing or
-    /// dropping it still writes TEARDOWN.
+    /// any thread. A cancelled push queues no more media. Its requests
+    /// are still written: a `resume`, and the TEARDOWN of closing or
+    /// dropping it.
     pub fn cancel_handle(&self) -> RtspCancelHandle {
         self.client.cancel_handle()
     }
 
     /// False once the session is known dead: the control connection
-    /// ended, or a keepalive ping was answered `454`.
+    /// ended, a keepalive ping was answered `454`, or [`Transport::close`]
+    /// has run.
     pub fn is_session_alive(&self) -> bool {
-        self.client.is_session_alive()
+        !self.closed && self.client.is_session_alive()
     }
 
     /// Why the session ended, once it has; the first reason recorded
@@ -468,6 +485,18 @@ impl RtspPush {
         Instant::now() + self.clock_skew
     }
 
+    /// Refuse a control call after [`Transport::close`], whose stopped
+    /// thread would answer one way while it still runs and another once
+    /// it has ended.
+    fn check_not_closed(&self) -> Result<(), RtspError> {
+        if self.closed {
+            return Err(RtspError::NotAllowed {
+                detail: "the push is closed",
+            });
+        }
+        Ok(())
+    }
+
     /// Refuse a data call on a push the caller has closed or cancelled.
     fn check_open(&self) -> Result<(), TransportError> {
         if self.closed {
@@ -488,7 +517,7 @@ impl RtspPush {
 
     /// What a data call reports when the media queue did not take its
     /// frame.
-    fn refusal(&self, end: MediaWaitEnd) -> TransportError {
+    pub(super) fn refusal(&self, end: MediaWaitEnd) -> TransportError {
         if end == MediaWaitEnd::Cancelled || self.client.cancel.is_cancelled() {
             return self.cancelled();
         }
@@ -634,7 +663,7 @@ impl Transport for RtspPush {
     /// False after `close`, after a cancel, and once the session is known
     /// dead.
     fn is_alive(&self) -> bool {
-        !self.closed && !self.client.cancel.is_cancelled() && self.client.is_session_alive()
+        !self.client.cancel.is_cancelled() && self.is_session_alive()
     }
 
     /// End the session: queue a last sender report per track, wait for the
@@ -663,6 +692,10 @@ impl Transport for RtspPush {
 
     fn cancel_handle(&self) -> Option<Arc<dyn TransportCancel + Send + Sync>> {
         Some(Arc::new(self.client.cancel.clone()))
+    }
+
+    fn as_any(&self) -> Option<&dyn core::any::Any> {
+        Some(self)
     }
 
     fn socket_stats(&self) -> Option<SocketStats> {

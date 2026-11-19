@@ -98,8 +98,10 @@ pub struct RtspClient {
     /// The client's I/O thread.
     pub(crate) driver: DriverHandle,
     /// The control socket's local address, which an announced description
-    /// names as its origin.
-    pub(crate) local_ip: IpAddr,
+    /// names as its origin; `None` when the socket did not tell.
+    pub(crate) local_ip: Option<IpAddr>,
+    /// The address the control socket is connected to.
+    pub(crate) peer_ip: IpAddr,
     /// Frames the peer sent on the RTP channel of a track this side sends
     /// on, counted by the client's thread.
     pub(crate) frames_dropped_inbound: Arc<AtomicU64>,
@@ -354,11 +356,9 @@ impl RtspClient {
         tcp.set_write_timeout(Some(CONTROL_WRITE_TIMEOUT))
             .map_err(|e| RtspError::Io(e.kind()))?;
         tcp.set_nodelay(true).ok();
-        let local_ip = tcp
-            .local_addr()
-            .map_err(|e| RtspError::Io(e.kind()))?
-            .ip()
-            .to_canonical();
+        // An IPv4 address stays one when the socket holds it mapped into
+        // IPv6.
+        let local_ip = tcp.local_addr().ok().map(|a| a.ip().to_canonical());
         // `?tcp_keepalive=` / `RtspClientBuilder::tcp_keepalive`: applied
         // to the raw TCP socket before any TLS wrap so it covers rtsps://
         // too. Unlike nodelay above this propagates failure — the caller
@@ -445,6 +445,7 @@ impl RtspClient {
             session_dead,
             driver,
             local_ip,
+            peer_ip: peer.ip().to_canonical(),
             frames_dropped_inbound,
             push: None,
         })
