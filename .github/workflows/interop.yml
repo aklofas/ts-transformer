@@ -41,7 +41,7 @@ on:
       - 'rust-toolchain.toml'
       # A demux/mux change used to reach main before ffmpeg/tsduck/GStreamer
       # saw it (Monday cron). ~25 min warm; the
-      # census assert (162 declared cells, 0 skips) now gates those PRs too.
+      # census assert (165 declared cells, 0 skips) now gates those PRs too.
       - 'crates/tst-core/src/mpegts/**'
       # The rtsp-publish/* cells are the only real-tool check of the RTSP
       # server's publish path (ANNOUNCE/RECORD, the re-muxer, SDP parsing,
@@ -66,7 +66,7 @@ jobs:
   interop-matrix:
     name: interop matrix (linux-x86_64)
     runs-on: ubuntu-24.04
-    # Worst-case budget: 162 cells at the run-matrix.sh default of 10s
+    # Worst-case budget: 165 cells at the run-matrix.sh default of 10s
     # each, plus per-cell settle/timeout margin (lib.sh's cell_timeout)
     # and a --release build of tst-interop's native-linking dependency
     # chain (tst-srt + tst-rist, i.e. vendored libsrt/librist/mbedTLS).
@@ -175,6 +175,26 @@ jobs:
           rm -f /tmp/tsduck.deb
           tsp --version
 
+      - name: Install mediamtx
+        # The rtsp-push/us-to-mediamtx-* cells publish to mediamtx, an RTSP
+        # relay that is not in Ubuntu's apt repos: the pinned upstream
+        # release tarball, verified by sha256 before it is unpacked, as
+        # TSDuck above. The value equals the release's own
+        # checksums.sha256 entry for this asset. A version bump is a
+        # deliberate PR that re-pins URL and hash together. Only this job
+        # installs it: the cells are not in the arm64 subset.
+        env:
+          MEDIAMTX_TGZ_URL: "https://github.com/bluenviron/mediamtx/releases/download/v1.21.4/mediamtx_v1.21.4_linux_amd64.tar.gz"
+          MEDIAMTX_TGZ_SHA256: "be0c05d9c8af8338116977e7f1c3fcb409fbf882075e5ab075cf8baad76a59d2"
+        run: |
+          curl -sL --retry 5 -o /tmp/mediamtx.tar.gz "$MEDIAMTX_TGZ_URL"
+          echo "$MEDIAMTX_TGZ_SHA256  /tmp/mediamtx.tar.gz" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/mediamtx"
+          tar -xzf /tmp/mediamtx.tar.gz -C "$RUNNER_TEMP/mediamtx" mediamtx
+          rm -f /tmp/mediamtx.tar.gz
+          echo "$RUNNER_TEMP/mediamtx" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/mediamtx/mediamtx" --version
+
       - name: Rust toolchain, cargo cache
         # Own key prefix (cargo-interop-): this is a --release build of a
         # crate no other workflow builds. Never let a differently-built
@@ -190,7 +210,7 @@ jobs:
 
       - name: cargo build --release -p tst-interop
         # --release: run-matrix.sh's $BIN points at target/release/tst-interop
-        # (a live 162-cell matrix needs the muxer/demuxer at real speed, not
+        # (a live 165-cell matrix needs the muxer/demuxer at real speed, not
         # a debug build). SRT/RIST_FORCE_VENDORED: this runner has no
         # system libsrt/librist, so pkg-config would already fall through
         # to vendored — set explicitly anyway, matching every other
