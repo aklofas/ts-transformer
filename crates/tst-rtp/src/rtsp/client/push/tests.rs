@@ -59,23 +59,28 @@ fn split_unit(buf: &[u8]) -> Option<(Unit, usize)> {
 /// The server's end of one connection, driven by a test's script.
 struct Peer {
     sock: TcpStream,
-    /// Read and not yet handed out as a unit.
+    /// What was read; the bytes from `at` on are not yet handed out.
     pending: Vec<u8>,
+    at: usize,
+    /// Where a read lands.
+    chunk: Vec<u8>,
 }
 
 impl Peer {
     /// The next whole unit; `None` once the client has closed or reset the
     /// connection.
     fn read_unit(&mut self) -> Option<Unit> {
-        let mut chunk = vec![0u8; 256 * 1024];
         loop {
-            if let Some((unit, used)) = split_unit(&self.pending) {
-                self.pending.drain(..used);
+            if let Some((unit, used)) = split_unit(&self.pending[self.at..]) {
+                self.at += used;
                 return Some(unit);
             }
-            match self.sock.read(&mut chunk) {
+            // What was handed out goes, once per read and not per unit.
+            self.pending.drain(..self.at);
+            self.at = 0;
+            match self.sock.read(&mut self.chunk) {
                 Ok(0) => return None,
-                Ok(n) => self.pending.extend_from_slice(&chunk[..n]),
+                Ok(n) => self.pending.extend_from_slice(&self.chunk[..n]),
                 // How a hang-up with bytes unread shows, by platform.
                 Err(e)
                     if matches!(
@@ -183,6 +188,8 @@ fn serve<T: Send + 'static>(
             let mut peer = Peer {
                 sock,
                 pending: Vec::new(),
+                at: 0,
+                chunk: vec![0; 256 * 1024],
             };
             script(&mut peer)
         })
@@ -346,6 +353,10 @@ fn eventually(what: &str, mut cond: impl FnMut() -> bool) {
         assert!(Instant::now() < give_up, "never happened: {what}");
         std::thread::sleep(Duration::from_millis(1));
     }
+}
+
+fn is_explicit_close(e: &PushError) -> bool {
+    matches!(e, PushError::Transport(TransportError::ExplicitClose))
 }
 
 fn broken_cause(e: &TransportError) -> Option<BrokenCause> {
@@ -641,6 +652,9 @@ fn setup_answered(bad: usize, headers: &'static str) -> RefusedSetup {
     let mut client = builder(port, "/live").connect().unwrap();
     client.announce(&elementary(true)).unwrap();
     let result = client.setup_record();
+    // The call waited for the client's thread to end.
+    let thread_holds = Arc::strong_count(&client.session_dead) - 1;
+    assert_eq!(thread_holds, 0, "the client's thread still runs");
     // With the client still here: its drop would end the connection too.
     hang_up
         .recv_timeout(scaled(Duration::from_secs(2)))
@@ -769,6 +783,76 @@ fn record_on_a_client_that_is_not_set_up_is_refused_by_the_client_itself() {
     assert!(matches!(&r, Err(RtspError::NotAllowed { .. })), "{r:?}");
     // No RECORD: only the TEARDOWN of the dropped client's session.
     assert_eq!(joined(peer), [RtspMethod::Teardown]);
+}
+
+#[test]
+fn a_setup_reply_whose_transport_does_not_parse_ends_the_connection_too() {
+    let seen = setup_answered(
+        0,
+        "Session: abc\r\nTransport: RTP/AVP/TCP;unicast;interleaved=one-two\r\n",
+    );
+    assert!(
+        matches!(&seen.result, Err(RtspError::UnsupportedTransport)),
+        "{:?}",
+        seen.result
+    );
+    assert!(seen.after.is_empty(), "{:?}", seen.after);
+    assert_finished(seen.client);
+}
+
+/// A SETUP the server refuses changes nothing: the same call again sets
+/// the track up.
+#[test]
+fn a_refused_setup_is_protocol_and_the_call_can_be_made_again() {
+    let (port, peer) = serve(|peer| {
+        let announce = peer.request();
+        peer.answer(&announce, "200 OK", "");
+        let refused = peer.request();
+        peer.answer(&refused, "503 Service Unavailable", "");
+        let mut seen = vec![refused];
+        seen.extend(peer.accept_push());
+        (seen, peer.until_teardown())
+    });
+    let mut client = builder(port, "/live").connect().unwrap();
+    client.announce(&PushDescription::Mp2t).unwrap();
+    let r = client.setup_record();
+    assert!(
+        matches!(&r, Err(RtspError::Protocol { code: 503, .. })),
+        "{r:?}"
+    );
+    client.setup_record().unwrap();
+    let push = client.record().unwrap();
+    let (handshake, _) = closed(push, peer);
+    let methods: Vec<RtspMethod> = handshake.iter().map(|r| r.method).collect();
+    use RtspMethod::{Record, Setup};
+    assert_eq!(methods, [Setup, Setup, Record]);
+    assert_eq!(handshake[0].uri, handshake[1].uri);
+}
+
+/// `record` consumes the client, so a refused RECORD ends it: the drop
+/// tears the session down.
+#[test]
+fn a_refused_record_is_protocol_and_the_dropped_client_tears_down() {
+    let (port, peer) = serve(|peer| {
+        let announce = peer.request();
+        peer.answer(&announce, "200 OK", "");
+        let setup = peer.request();
+        peer.answer(&setup, "200 OK", &usable_setup("0-1"));
+        let record = peer.request();
+        assert_eq!(record.method, RtspMethod::Record);
+        peer.answer(&record, "403 Forbidden", "");
+        peer.until_hangup()
+    });
+    let r = RtspPush::connect(builder(port, "/live"), &PushDescription::Mp2t);
+    assert!(
+        matches!(&r, Err(RtspError::Protocol { code: 403, .. })),
+        "{r:?}"
+    );
+    let after = joined(peer);
+    let after = requests(&after);
+    assert_eq!(after.len(), 1);
+    assert_eq!(after[0].method, RtspMethod::Teardown);
+    assert_eq!(after[0].headers["session"], SESSION);
 }
 
 #[test]
@@ -1140,9 +1224,9 @@ fn send_ts_refuses_a_misaligned_payload_as_broken() {
 fn send_video_on_an_mp2t_push_is_no_such_track() {
     nothing_is_sent_by(&PushDescription::Mp2t, |push| {
         let r = push.send_video(&annexb(&[&nal(&[0x65], 20)]), pts(0));
-        assert_eq!(r, Err(PushError::NoSuchTrack("video")));
+        assert!(matches!(r, Err(PushError::NoSuchTrack("video"))), "{r:?}");
         let r = push.send_klv(&[1, 2, 3], pts(0));
-        assert_eq!(r, Err(PushError::NoSuchTrack("KLV")));
+        assert!(matches!(r, Err(PushError::NoSuchTrack("KLV"))), "{r:?}");
     });
 }
 
@@ -1150,7 +1234,7 @@ fn send_video_on_an_mp2t_push_is_no_such_track() {
 fn send_klv_without_a_klv_track_is_no_such_track() {
     nothing_is_sent_by(&elementary(false), |push| {
         let r = push.send_klv(&[1, 2, 3], pts(0));
-        assert_eq!(r, Err(PushError::NoSuchTrack("KLV")));
+        assert!(matches!(r, Err(PushError::NoSuchTrack("KLV"))), "{r:?}");
     });
 }
 
@@ -1159,10 +1243,13 @@ fn an_access_unit_with_no_nal_is_empty() {
     nothing_is_sent_by(&elementary(true), |push| {
         for no_nal in [&[][..], &[0, 0, 0, 1][..], &[9, 9, 9][..]] {
             let r = push.send_video(no_nal, pts(0));
-            assert_eq!(r, Err(PushError::Empty("access unit")), "{no_nal:?}");
+            assert!(
+                matches!(r, Err(PushError::Empty("access unit"))),
+                "{no_nal:?}: {r:?}"
+            );
         }
         let r = push.send_klv(&[], pts(0));
-        assert_eq!(r, Err(PushError::Empty("KLV unit")));
+        assert!(matches!(r, Err(PushError::Empty("KLV unit"))), "{r:?}");
     });
 }
 
@@ -1211,15 +1298,16 @@ fn the_first_sender_report_precedes_the_first_rtp_packet_on_each_track() {
 fn a_sender_report_follows_every_five_seconds_of_wall_time() {
     let (mut push, peer) = recording(&PushDescription::Mp2t);
     push.send_ts(&ts(1, 0)).unwrap();
-    // A second inside the interval, on a clock four seconds ahead.
-    push.clock_skew = Duration::from_secs(4);
+    // Inside the interval, on a clock one second ahead: the seam adds to
+    // the real clock, so the edge is kept four real seconds away.
+    push.clock_skew = Duration::from_secs(1);
     push.send_ts(&ts(1, 0)).unwrap();
     assert_eq!(push.stats().sender_reports_sent, 1);
     push.clock_skew = Duration::from_secs(5);
     push.send_ts(&ts(1, 0)).unwrap();
     assert_eq!(push.stats().sender_reports_sent, 2);
     // The interval starts again at that report.
-    push.clock_skew = Duration::from_secs(9);
+    push.clock_skew = Duration::from_secs(6);
     push.send_ts(&ts(1, 0)).unwrap();
     assert_eq!(push.stats().sender_reports_sent, 2);
     push.clock_skew = Duration::from_secs(10);
@@ -1258,6 +1346,28 @@ fn video_and_klv_reports_share_one_ntp_base() {
     // The base is the wall clock: within a minute of now.
     let now = crate::rtcp::sender::ntp_from_system_time(std::time::SystemTime::now());
     assert!(now.abs_diff(video.ntp_timestamp) >> 32 < 60);
+}
+
+/// The timeline starts at the first data call, whichever track it is on.
+#[test]
+fn the_first_data_call_can_be_send_klv() {
+    let (mut push, peer) = recording(&elementary(true));
+    let (klv_pts, video_pts): (i64, i64) = (900_000, 904_500);
+    push.send_klv(&[7; 30], pts(klv_pts)).unwrap();
+    push.send_video(&annexb(&[&nal(&[0x65], 100)]), pts(video_pts))
+        .unwrap();
+    let (_, units) = closed(push, peer);
+    let channels: Vec<u8> = frames(&units).iter().map(|(c, _)| *c).collect();
+    // The KLV's report and packet, the video's, and the two last reports
+    // in track order.
+    assert_eq!(channels, [3, 2, 1, 0, 1, 3]);
+    let klv = sender_report(on_channel(&units, 3)[0]);
+    let video = sender_report(on_channel(&units, 1)[0]);
+    assert_eq!(klv.rtp_timestamp, rtp(on_channel(&units, 2)[0]).0.timestamp);
+    let fifty_ms = (((video_pts - klv_pts) as u64) << 32) / 90_000;
+    assert_eq!(video.ntp_timestamp - klv.ntp_timestamp, fifty_ms);
+    let now = crate::rtcp::sender::ntp_from_system_time(std::time::SystemTime::now());
+    assert!(now.abs_diff(klv.ntp_timestamp) >> 32 < 60);
 }
 
 #[test]
@@ -1447,6 +1557,11 @@ static BIG_UNIT: [u8; 60_000] = [0xAB; 60_000];
 /// Send [`BIG_UNIT`]s until the queue is full, against a server that reads
 /// nothing: whatever the connection still takes, most of them stay
 /// queued. Returns the number sent.
+///
+/// The server has to read again within five seconds of the connection
+/// taking its last byte, or the client ends the connection as stalled:
+/// a test fills (some 60 MB of copies) and opens its gate well inside
+/// that, also many times slower than natively.
 fn fill_the_queue(push: &mut RtspPush) -> usize {
     let queue = push.client().driver.media_queue();
     let mut sent = 0;
@@ -1479,7 +1594,7 @@ fn a_cancel_makes_a_parked_send_explicit_close_promptly() {
         }
     };
     let returned = Instant::now();
-    assert_eq!(refused, PushError::Transport(TransportError::ExplicitClose));
+    assert!(is_explicit_close(&refused), "{refused:?}");
     let cancelled = canceller.join().unwrap();
     let took = returned.saturating_duration_since(cancelled);
     assert!(
@@ -1491,12 +1606,18 @@ fn a_cancel_makes_a_parked_send_explicit_close_promptly() {
     assert!(push.is_session_alive());
     assert!(!Transport::is_alive(&push));
     let r = push.send_video(&annexb(&[&nal(&[0x65], 20)]), pts(0));
-    assert_eq!(r, Err(PushError::Transport(TransportError::ExplicitClose)));
+    assert!(r.as_ref().is_err_and(is_explicit_close), "{r:?}");
     // The cancel is reported ahead of a call the push would refuse anyway.
     assert_eq!(push.send_ts(&ts(7, 0)), Err(TransportError::ExplicitClose));
     let r = push.pause();
     assert!(matches!(&r, Err(RtspError::LocalCancel)), "{r:?}");
+    // The drop gives its TEARDOWN half a second to be written: the server
+    // is reading again before it starts.
+    let queue = push.client().driver.media_queue();
     open.send(()).unwrap();
+    eventually("the server reading again", || {
+        queue.len() < MEDIA_QUEUE_BOUND
+    });
     drop(push);
     // The cancelled pause wrote no PAUSE; the drop wrote its TEARDOWN.
     let units = joined(peer);
@@ -1535,6 +1656,20 @@ fn drop_drops_the_queue_and_writes_teardown() {
     assert_eq!(requests(&units).len(), 1);
 }
 
+/// The media queue can close with no reason recorded (the client's
+/// thread is gone without having said why): a data call then reports the
+/// push closed.
+#[test]
+fn a_closed_queue_with_no_reason_recorded_is_closed() {
+    use crate::rtsp::client::media_queue::MediaWaitEnd;
+    let (push, peer) = recording(&PushDescription::Mp2t);
+    assert_eq!(push.end_reason(), None);
+    assert_eq!(push.refusal(MediaWaitEnd::Ended), TransportError::Closed);
+    // Reporting it recorded nothing.
+    assert_eq!(push.end_reason(), None);
+    closed(push, peer);
+}
+
 /// A push whose server took the handshake and then did `ending` to the
 /// connection, once the client's thread has seen it.
 fn ended_by(ending: impl FnOnce(&mut Peer) + Send + 'static) -> (RtspPush, JoinHandle<()>) {
@@ -1560,13 +1695,23 @@ fn the_peer_closing_gives_broken_clean_eof() {
     joined(peer);
 }
 
+/// The server resets only after it has read something the client sent
+/// behind the handshake: a reset can discard what the other side has not
+/// read yet, the RECORD's answer included.
 #[test]
 fn a_reset_gives_broken_unspecified() {
-    let (mut push, peer) = ended_by(|peer| {
+    let (port, peer) = serve(|peer| {
+        peer.accept_push();
+        peer.read_unit().expect("the client's first frame");
         // Closing with no linger time resets the connection.
         socket2::SockRef::from(&peer.sock)
             .set_linger(Some(Duration::ZERO))
             .unwrap();
+    });
+    let mut push = RtspPush::connect(builder(port, "/live"), &PushDescription::Mp2t).unwrap();
+    push.send_ts(&ts(7, 0)).unwrap();
+    eventually("the client's thread saw the reset", || {
+        !push.is_session_alive()
     });
     let e = push.send_ts(&ts(7, 0)).unwrap_err();
     assert_eq!(broken_cause(&e), Some(BrokenCause::Unspecified), "{e:?}");
@@ -1742,8 +1887,11 @@ fn transport_close_delivers_the_queue_tears_down_once_and_later_sends_are_closed
             Arc::strong_count(&push.client().session_dead) == 1
         });
     }
-    let closed = Err(PushError::Transport(TransportError::Closed));
-    assert_eq!(push.send_klv(&[1, 2, 3], pts(0)), closed);
+    let r = push.send_klv(&[1, 2, 3], pts(0));
+    assert!(
+        matches!(r, Err(PushError::Transport(TransportError::Closed))),
+        "{r:?}"
+    );
     assert_eq!(push.send_ts(&ts(7, 0)), Err(TransportError::Closed));
     let r = Transport::send_bytes(&mut push, &ts(7, 0));
     assert_eq!(r, Err(TransportError::Closed));
@@ -1850,6 +1998,12 @@ fn the_transport_impl_reports_max_payload_1316_and_is_alive() {
     assert_eq!(PUSH_MP2T_MAX_PAYLOAD, 1316);
     assert_eq!(Transport::max_payload(&push), 1316);
     assert!(Transport::is_alive(&push));
+    // The owner of a type-erased shell reaches the push itself.
+    let any = Transport::as_any(&push).expect("the push opts in");
+    assert_eq!(
+        any.downcast_ref::<RtspPush>().map(RtspPush::session_id),
+        Some(SESSION)
+    );
     Transport::send_bytes(&mut push, &ts(7, 9)).unwrap();
     let handle = Transport::cancel_handle(&push).expect("a cancel handle");
     assert!(!handle.is_cancelled());

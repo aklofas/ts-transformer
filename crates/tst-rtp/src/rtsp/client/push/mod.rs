@@ -105,7 +105,7 @@ impl VideoTrack {
 
 /// Why [`RtspPush::send_video`] or [`RtspPush::send_klv`] sent nothing, or
 /// not everything.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum PushError {
     /// The push is closed, cancelled or has ended: what
