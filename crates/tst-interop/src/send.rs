@@ -87,6 +87,75 @@ pub fn run(
     Ok(metrics)
 }
 
+/// How [`run_push`] starts its publish.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct PushStart {
+    /// How long a refused connect is retried: see
+    /// [`transport::rtsp_push_connect`].
+    pub refused_for: Duration,
+    /// Quiet time between the server's answer to RECORD and the first
+    /// packet. A relay such as mediamtx only lets a reader attach once the
+    /// publisher is recording, and forwards only what arrives after that,
+    /// so a reader that must see the stream from its first packet attaches
+    /// in this window (the `send: RTSP push recording` line on stderr marks
+    /// its start). Keep it under the server's idle timeout (mediamtx closes
+    /// a publisher that sends nothing for 10 s).
+    pub start_delay: Duration,
+}
+
+/// [`run`] for an `rtsp://` / `rtsps://` server that takes a publish:
+/// connect, ANNOUNCE an MPEG-TS stream, SETUP and RECORD, then push the
+/// profile's traffic over the TCP-interleaved session (the `send`
+/// subcommand's `--push`). Plain `send` treats those schemes as a serve
+/// (bind) instead.
+///
+/// Fails unless the push's `close` reports a finished push
+/// ([`transport::push_close_finished`]): TEARDOWN accepted, or refused with
+/// a status after every frame was written.
+#[allow(clippy::too_many_arguments)]
+pub fn run_push(
+    p: &Profile,
+    url: &str,
+    seconds: f64,
+    json_out: Option<&str>,
+    no_klv_digest: bool,
+    au_sizes: AuSizeMode,
+    klv: KlvSet,
+    klv_seed: u64,
+    corrupt: Option<(CorruptConfig, PathBuf)>,
+    start: PushStart,
+) -> Result<CellMetrics, String> {
+    let push =
+        transport::rtsp_push_connect(url, &tst_rtp::PushDescription::Mp2t, start.refused_for)?;
+    eprintln!("send: RTSP push recording to {url}");
+    thread::sleep(start.start_delay);
+    let outcome = transport::PushCloseSlot::default();
+    let transport = Box::new(transport::RtspPushClose::new(push, outcome.clone()));
+    let metrics = send_over_transport(
+        p,
+        transport,
+        seconds,
+        no_klv_digest,
+        au_sizes,
+        klv,
+        klv_seed,
+        corrupt,
+        None,
+    )?;
+    let closed = outcome.lock().unwrap_or_else(|e| e.into_inner()).take();
+    let Some(result) = closed else {
+        return Err(format!("RTSP push to {url} was never closed"));
+    };
+    if !transport::push_close_finished(&result) {
+        let why = result.err().map_or_else(String::new, |e| e.to_string());
+        return Err(format!("RTSP push to {url}: close: {why}"));
+    }
+    if let Some(target) = json_out {
+        write_json(target, &metrics)?;
+    }
+    Ok(metrics)
+}
+
 /// One progress heartbeat line (stderr → the soak/stress per-process
 /// log). The six legacy counters are always present; a managed sender
 /// appends its live `reconnects=` (successes) and `gap_len=` so the

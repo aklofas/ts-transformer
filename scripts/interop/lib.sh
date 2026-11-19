@@ -44,7 +44,7 @@ _tool_version_line() {
 tool_versions_json() {
   local json='{}'
   local spec name flag v
-  for spec in ffmpeg:-version tsp:--version gst-launch-1.0:--version vlc:--version mpv:--version google-chrome:--version chromium:--version; do
+  for spec in ffmpeg:-version tsp:--version gst-launch-1.0:--version vlc:--version mpv:--version mediamtx:--version google-chrome:--version chromium:--version; do
     name=${spec%%:*}
     flag=${spec##*:}
     if have "$name"; then

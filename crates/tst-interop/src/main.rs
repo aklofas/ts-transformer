@@ -23,6 +23,10 @@ Subcommands:
             [--au-scale N] scales the realistic AU payload sizes)
   send      Send test data to endpoint (hls:// and rtsp:// URLs BIND and
             serve instead of connecting — see `send`'s own doc comment;
+            --push publishes to an rtsp:// server instead (ANNOUNCE, RECORD,
+            MPEG-TS over TCP-interleaved RTP), --connect-retry SECS retries
+            a refused connect, --start-delay SECS holds the first packet
+            after RECORD;
             --corrupt rate=N[,min_gap=N][,classes=a+b] --corruption-log PATH
             [--seed N] turn on the seeded TS corruption tap; --au-sizes
             realistic [--au-scale N] scales the realistic AU payload sizes)
@@ -32,6 +36,17 @@ Subcommands:
             --klv-placement N judges KLV placement against the video)
   verify    Verify interop test results (--klv-placement N judges KLV
             placement against the video)
+  push-es   --url rtsp://HOST:PORT/PATH --file GEN.ts --out PREFIX [--klv]
+            [--connect-retry SECS] [--start-delay SECS]
+            Publish the file's H.264 (and with --klv its KLV) to an RTSP
+            server as elementary RTP streams, paced by PTS; writes what it
+            pushed to PREFIX.h264 (Annex B) and PREFIX.klv (the units back
+            to back). Exits 0 only once the server answered TEARDOWN
+  verify-es --pushed-h264 F --pushed-klv F --pulled-h264 F --pulled-klv F
+            Judge a reader's copy of a push-es stream: the pulled video is
+            the pushed NAL units from the first on, short at most by the
+            last access unit; the pulled KLV is a prefix of the pushed
+            bytes holding at least 90 % of them. Exit 0 pass, 1 fail
   serve-whep --url whep://HOST:PORT --mount /PATH --seconds N [--json OUT]
             [--profile NAME] [--mount-kind mp2t|elementary] [--opus]
             [--wait-viewer SECS] | serve-whep --profile NAME --validate-profile
@@ -221,6 +236,8 @@ fn main() {
         "send" => run_send(&args[2..]),
         "recv" => run_recv(&args[2..]),
         "verify" => run_verify(&args[2..]),
+        "push-es" => run_push_es(&args[2..]),
+        "verify-es" => run_verify_es(&args[2..]),
         "proxy" => run_proxy(&args[2..]),
         "serve-whep" => run_serve_whep(&args[2..]),
         "report" => run_report(&args[2..]),
@@ -558,6 +575,17 @@ fn run_gen(args: &[String]) -> ! {
 /// its stream is independent of every other seeded component sharing the
 /// same number. The same seed, config and input bytes produce a
 /// byte-identical wire and a byte-identical log.
+///
+/// `--push` (only with `rtsp://` / `rtsps://`) publishes to an RTSP server
+/// instead of serving: connect, ANNOUNCE an MPEG-TS stream, SETUP with
+/// `mode=record`, RECORD, then the profile's TS over TCP-interleaved RTP
+/// (see `send::run_push`). It exits 2 unless the server answered the
+/// TEARDOWN (a refusal such as ffmpeg's `501` is a warning line, not a
+/// failure). `--connect-retry SECS` retries a refused connect for up to
+/// SECS (for a server that binds a moment after it starts and serves one
+/// connection, which a probe would spend); `--start-delay SECS` holds the
+/// first packet for SECS after RECORD so a reader of a relay can attach
+/// first. Both need `--push`; `--managed` is refused with it.
 fn run_send(args: &[String]) -> ! {
     let mut profile: Option<String> = None;
     let mut url: Option<String> = None;
@@ -577,10 +605,31 @@ fn run_send(args: &[String]) -> ! {
     let mut corrupt_spec: Option<String> = None;
     let mut corruption_log: Option<PathBuf> = None;
     let mut seed: u64 = 0;
+    let mut push = false;
+    let mut connect_retry: Option<f64> = None;
+    let mut start_delay: Option<f64> = None;
 
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
+            "--push" => {
+                push = true;
+                i += 1;
+            }
+            "--connect-retry" => {
+                connect_retry = Some(parse_push_seconds(
+                    &require_value(args, i, "send: --connect-retry"),
+                    "--connect-retry",
+                ));
+                i += 2;
+            }
+            "--start-delay" => {
+                start_delay = Some(parse_push_seconds(
+                    &require_value(args, i, "send: --start-delay"),
+                    "--start-delay",
+                ));
+                i += 2;
+            }
             "--profile" => {
                 profile = Some(require_value(args, i, "send: --profile"));
                 i += 2;
@@ -718,6 +767,46 @@ fn run_send(args: &[String]) -> ! {
         (None, None) => None,
     };
 
+    if !push && (connect_retry.is_some() || start_delay.is_some()) {
+        eprintln!("send: --connect-retry and --start-delay are meaningful only with --push");
+        std::process::exit(2);
+    }
+    if push {
+        if !matches!(serve::serve_scheme_of(&url), Some(serve::ServeScheme::Rtsp)) {
+            eprintln!("send: --push needs an rtsp:// or rtsps:// URL, got {url}");
+            std::process::exit(2);
+        }
+        if managed {
+            eprintln!("send: --managed is not supported with --push");
+            std::process::exit(2);
+        }
+        let start = send::PushStart {
+            refused_for: std::time::Duration::from_secs_f64(connect_retry.unwrap_or(0.0)),
+            start_delay: std::time::Duration::from_secs_f64(start_delay.unwrap_or(0.0)),
+        };
+        let metrics = send::run_push(
+            p,
+            &url,
+            seconds,
+            json_out.as_deref(),
+            no_klv_digest,
+            au_sizes,
+            klv_set,
+            klv_seed,
+            corrupt,
+            start,
+        )
+        .unwrap_or_else(|e| {
+            eprintln!("send: {e}");
+            std::process::exit(2);
+        });
+        eprintln!(
+            "send: pushed {} video AUs, {} klv records to {url}",
+            metrics.video_aus, metrics.klv_records
+        );
+        std::process::exit(0);
+    }
+
     // hls:// / rtsp:// (+ TLS variants) are serve (bind) modes — branch
     // out before the connect-side transport path below.
     if let Some(scheme) = serve::serve_scheme_of(&url) {
@@ -787,6 +876,147 @@ fn run_send(args: &[String]) -> ! {
         metrics.video_aus, metrics.klv_records
     );
     std::process::exit(0);
+}
+
+/// `push-es --url URL --file FILE --out PREFIX [--klv]
+/// [--connect-retry SECS] [--start-delay SECS]`: see `push_es::run` and
+/// `push_es::PushEs` for the timing flags.
+/// Exits 0 on a finished push, 2 on any error.
+fn run_push_es(args: &[String]) -> ! {
+    let mut url: Option<String> = None;
+    let mut file: Option<PathBuf> = None;
+    let mut out: Option<PathBuf> = None;
+    let mut klv = false;
+    let mut connect_retry = 0.0;
+    let mut start_delay = 0.0;
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--url" => {
+                url = Some(require_value(args, i, "push-es: --url"));
+                i += 2;
+            }
+            "--file" => {
+                file = Some(PathBuf::from(require_value(args, i, "push-es: --file")));
+                i += 2;
+            }
+            "--out" => {
+                out = Some(PathBuf::from(require_value(args, i, "push-es: --out")));
+                i += 2;
+            }
+            "--klv" => {
+                klv = true;
+                i += 1;
+            }
+            "--connect-retry" => {
+                connect_retry = parse_push_seconds(
+                    &require_value(args, i, "push-es: --connect-retry"),
+                    "--connect-retry",
+                );
+                i += 2;
+            }
+            "--start-delay" => {
+                start_delay = parse_push_seconds(
+                    &require_value(args, i, "push-es: --start-delay"),
+                    "--start-delay",
+                );
+                i += 2;
+            }
+            other => {
+                eprintln!("push-es: unknown argument: {other}");
+                std::process::exit(2);
+            }
+        }
+    }
+    let (Some(url), Some(file), Some(out)) = (url, file, out) else {
+        eprintln!("push-es: --url, --file and --out are required");
+        std::process::exit(2);
+    };
+    let opts = tst_interop::push_es::PushEs {
+        url,
+        file,
+        klv,
+        out,
+        refused_for: std::time::Duration::from_secs_f64(connect_retry),
+        start_delay: std::time::Duration::from_secs_f64(start_delay),
+    };
+    match tst_interop::push_es::run(&opts) {
+        Ok(s) => {
+            eprintln!(
+                "push-es: pushed {} video AUs ({} bytes), {} KLV units ({} bytes) to {}",
+                s.video_aus, s.video_bytes, s.klv_units, s.klv_bytes, opts.url
+            );
+            std::process::exit(0);
+        }
+        Err(e) => {
+            eprintln!("push-es: {e}");
+            std::process::exit(2);
+        }
+    }
+}
+
+/// `verify-es --pushed-h264 F --pushed-klv F --pulled-h264 F --pulled-klv F`:
+/// see `push_es::judge_video` and `push_es::judge_klv`. Prints one line per
+/// judgement; exits 0 when both pass, 1 when one fails, 2 on a usage or
+/// read error.
+fn run_verify_es(args: &[String]) -> ! {
+    let mut files: [Option<PathBuf>; 4] = [None, None, None, None];
+    const FLAGS: [&str; 4] = [
+        "--pushed-h264",
+        "--pushed-klv",
+        "--pulled-h264",
+        "--pulled-klv",
+    ];
+    let mut i = 0;
+    while i < args.len() {
+        let Some(slot) = FLAGS.iter().position(|f| *f == args[i]) else {
+            eprintln!("verify-es: unknown argument: {}", args[i]);
+            std::process::exit(2);
+        };
+        files[slot] = Some(PathBuf::from(require_value(
+            args,
+            i,
+            &format!("verify-es: {}", FLAGS[slot]),
+        )));
+        i += 2;
+    }
+    let read = |slot: usize| -> Vec<u8> {
+        let Some(path) = &files[slot] else {
+            eprintln!("verify-es: {} is required", FLAGS[slot]);
+            std::process::exit(2);
+        };
+        std::fs::read(path).unwrap_or_else(|e| {
+            eprintln!("verify-es: reading {}: {e}", path.display());
+            std::process::exit(2);
+        })
+    };
+    let (pushed_h264, pushed_klv, pulled_h264, pulled_klv) = (read(0), read(1), read(2), read(3));
+    let mut pass = true;
+    for verdict in [
+        tst_interop::push_es::judge_video(&pushed_h264, &pulled_h264),
+        tst_interop::push_es::judge_klv(&pushed_klv, &pulled_klv),
+    ] {
+        match verdict {
+            Ok(line) => eprintln!("verify-es: PASS {line}"),
+            Err(line) => {
+                eprintln!("verify-es: FAIL {line}");
+                pass = false;
+            }
+        }
+    }
+    std::process::exit(if pass { 0 } else { 1 });
+}
+
+/// A `--push` timing flag's value: a finite, non-negative number of
+/// seconds, or exit 2 naming `flag`.
+fn parse_push_seconds(raw: &str, flag: &str) -> f64 {
+    match raw.parse::<f64>() {
+        Ok(v) if v.is_finite() && v >= 0.0 => v,
+        _ => {
+            eprintln!("send: {flag} must be a non-negative number of seconds, got '{raw}'");
+            std::process::exit(2);
+        }
+    }
 }
 
 /// `recv --url URL --expect PROFILE --seconds N [--json OUT]

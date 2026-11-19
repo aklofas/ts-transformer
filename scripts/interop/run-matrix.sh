@@ -4,8 +4,8 @@
 # `tsp`, GStreamer, VLC, mpv) over live SRT/RIST/UDP/TCP/HLS/RTSP
 # sessions AND local per-profile analyzer/decode probes on this box,
 # and write one evidence JSON file per cell, across two axes:
-#   - transport axis: 30 cells, pinned to the "baseline" profile
-#     (srt/udp/rist/tcp/hls/rtsp/rtsp-publish/whep — the transport-axis
+#   - transport axis: 33 cells, pinned to the "baseline" profile
+#     (srt/udp/rist/tcp/hls/rtsp/rtsp-publish/rtsp-push/whep — the transport-axis
 #     inventory).
 #   - format axis: analyze/{ffprobe,tsanalyze,tsp-analyze}/<profile>,
 #     decode/{ffplay,vlc,mpv,gst-play}/<profile>, and
@@ -35,7 +35,7 @@
 #                      scales off this (see lib.sh's cell_timeout).
 #   --cells GLOB       bash-glob filter over cell ids (default "*", i.e.
 #                      every cell). Cell ids look like
-#                      "<transport>/<direction>-<peer>[-encrypted]" (30
+#                      "<transport>/<direction>-<peer>[-encrypted]" (33
 #                      transport-axis cells, e.g. "srt/us-to-ffmpeg") or
 #                      "<axis>/<peer>/<profile>" (format-axis cells, e.g.
 #                      "decode/mpv/h266-klv") — pass 'srt/*' to run just
@@ -52,7 +52,7 @@
 #                      Only the format axis scales with this list — the
 #                      transport axis always runs against "baseline"
 #                      regardless of what's listed (see the per-profile
-#                      loop below for why: the 30-cell transport-axis
+#                      loop below for why: the 33-cell transport-axis
 #                      inventory was designed and evidenced against "baseline"
 #                      only; scaling it by profile too would multiply
 #                      that count for no new signal the format axis
@@ -322,16 +322,30 @@ jq -n \
 # (`send` = we push/serve, `recv` = we pull/listen) — matches
 # crates/tst-interop/src/report/matrix.rs's own test fixtures.
 
-# run_send_peer_recv <id> <peer> <tier> <our_url> <out_file> -- <peer_cmd...>
+# run_send_peer_recv <id> <peer> <tier> <our_url> <out_file> [--send-flag F]... -- <peer_cmd...>
 #
 # We push (caller/connect) over <our_url>; the peer listens/receives
 # and writes <out_file>. Verdict: our send must exit 0, <out_file> must
 # be nonempty, and `verify --file <out_file>` must pass; a "transparent"
 # tier additionally requires the sent-side stream_sha256 to equal
-# <out_file>'s.
+# <out_file>'s. Each --send-flag F adds one argument to our `send`
+# command line (e.g. `--push` for an RTSP server that takes a publish).
 run_send_peer_recv() {
   local id=$1 peer=$2 tier=$3 our_url=$4 out_file=$5
   shift 5
+  local -a send_extra=()
+  while [[ $# -gt 0 && "$1" != "--" ]]; do
+    case "$1" in
+      --send-flag)
+        send_extra+=("$2")
+        shift 2
+        ;;
+      *)
+        echo "run_send_peer_recv: unknown option: $1" >&2
+        exit 2
+        ;;
+    esac
+  done
   [[ "${1:-}" == "--" ]] && shift
   local -a peer_cmd=("$@")
 
@@ -360,11 +374,11 @@ run_send_peer_recv() {
   sleep "$SETTLE"
 
   local send_json="$WORK/$(slug "$id")-send.json"
-  echo "--- us: send ($our_url) ---" >>"$log"
+  echo "--- us: send ($our_url${send_extra[*]:+ ${send_extra[*]}}) ---" >>"$log"
   local send_rc=0
   timeout --kill-after=3 "${budget}s" \
     "$BIN" send --profile "$PROFILE" --url "$our_url" --seconds "$SECONDS_ARG" --json "$send_json" \
-    --au-sizes "$AU_SIZES" \
+    --au-sizes "$AU_SIZES" "${send_extra[@]}" \
     >>"$log" 2>&1 || send_rc=$?
 
   local peer_rc=0
@@ -1234,6 +1248,296 @@ rtsp_publish_cells() {
     rtspclientsink name=s "location=rtsp://127.0.0.1:$port/mount" protocols=tcp
 }
 
+# The rtsp-push/* cells: OUR client publishes (ANNOUNCE, SETUP
+# mode=record, RECORD, RTP over TCP-interleaved) to a third-party RTSP
+# server. mediamtx is a relay, so its cells have three parties: mediamtx,
+# our push, and a reader that pulls the stream back from mediamtx and
+# writes the file the cell judges.
+#
+# A reader can attach only once the publisher is recording (before that
+# mediamtx answers its DESCRIBE 404), and mediamtx forwards only what
+# arrives after the reader's PLAY. So the push holds its first packet
+# for RTSP_PUSH_START_DELAY after RECORD, prints its "RTSP push recording"
+# line, and the cell starts the reader on that line: the reader sees the
+# stream from its first packet. mediamtx closes a publisher that sends
+# nothing for 10 s, so the delay stays well under that.
+RTSP_PUSH_START_DELAY=3
+# How long a cell waits for mediamtx's listener line, and for the push's
+# "recording" line.
+RTSP_PUSH_READY_WAIT=10
+
+# wait_for_line <file> <pattern> <seconds> [pid] — 0 once <file> holds a
+# line matching the extended regex <pattern>; 1 after <seconds>, or as
+# soon as process <pid> (when given) has exited without writing it.
+wait_for_line() {
+  local file=$1 pattern=$2 secs=$3 pid=${4:-}
+  local deadline=$((SECONDS + secs))
+  while ((SECONDS < deadline)); do
+    grep -Eq "$pattern" "$file" 2>/dev/null && return 0
+    if [[ -n "$pid" ]] && ! kill -0 "$pid" 2>/dev/null; then
+      grep -Eq "$pattern" "$file" 2>/dev/null
+      return
+    fi
+    sleep 0.1
+  done
+  return 1
+}
+
+# start_mediamtx <port> <log> <budget> — write a config with RTSP on
+# 127.0.0.1:<port> over TCP only and every other protocol and listener
+# off, start mediamtx under `timeout <budget>` with its log appended to
+# <log>, and wait for its listener line. Sets MTX_PID (the `timeout`
+# process; killing it stops mediamtx). Returns 1, with mediamtx stopped,
+# when no listener line came in RTSP_PUSH_READY_WAIT seconds.
+#
+# The default path config lets anyone publish and relays an MPEG-TS
+# track as it arrives (`rtspDemuxMpegts` stays off). mediamtx reloads a
+# config file that changes, so each cell writes its own.
+MTX_PID=""
+start_mediamtx() {
+  local port=$1 log=$2 budget=$3
+  local cfg="$WORK/mediamtx-$port.yml"
+  cat >"$cfg" <<EOF
+logLevel: info
+logDestinations: [stdout]
+api: false
+metrics: false
+pprof: false
+playback: false
+rtsp: true
+rtspTransports: [tcp]
+rtspAddress: 127.0.0.1:$port
+rtmp: false
+hls: false
+webrtc: false
+srt: false
+moq: false
+paths:
+  all_others:
+EOF
+  echo "--- peer: mediamtx on 127.0.0.1:$port ($cfg) ---" >>"$log"
+  timeout --kill-after=5 "${budget}s" mediamtx "$cfg" >>"$log" 2>&1 &
+  MTX_PID=$!
+  # v1.21.4 logs "[RTSP] started with listeners on 127.0.0.1:PORT (TCP/RTSP)";
+  # matching the address keeps the wait independent of that wording.
+  if ! wait_for_line "$log" "RTSP\\].*127\\.0\\.0\\.1:$port" "$RTSP_PUSH_READY_WAIT" "$MTX_PID"; then
+    stop_mediamtx
+    return 1
+  fi
+}
+
+# stop_mediamtx — stop the mediamtx start_mediamtx started (SIGTERM via
+# its `timeout`, which the timeout's own --kill-after backs up) and reap
+# it.
+stop_mediamtx() {
+  [[ -n "$MTX_PID" ]] || return 0
+  kill "$MTX_PID" 2>/dev/null || true
+  wait "$MTX_PID" 2>/dev/null || true
+  MTX_PID=""
+}
+
+rtsp_push_cells() {
+  local port
+
+  # ffmpeg as the server: `-rtsp_flags listen` takes one publish and
+  # writes it out. Its listener binds a moment after it starts and serves
+  # exactly one connection, so it cannot be probed for readiness (a probe
+  # would spend that connection): our push retries a refused connect
+  # instead. It answers TEARDOWN 501 and keeps recording until the
+  # connection closes, so `send --push` reports that refusal as a warning
+  # and closes; it has no idle timeout of its own, so the run_send_peer_recv
+  # `timeout` around it is the watchdog. Its exit status is 0 whatever
+  # happened: the file is the verdict, judged at ffmpeg's re-mux tier.
+  port=$(free_port tcp)
+  run_send_peer_recv "rtsp-push/us-to-ffmpeg-listen" ffmpeg remux \
+    "rtsp://127.0.0.1:$port/live" "$WORK/rtsp-push_us-to-ffmpeg-listen.ts" \
+    --send-flag --push --send-flag --connect-retry --send-flag 10 -- \
+    ffmpeg -y -loglevel warning -rtsp_flags listen -rtsp_transport tcp \
+    -i "rtsp://127.0.0.1:$port/live" \
+    -map 0 -c copy -copy_unknown -f mpegts "$WORK/rtsp-push_us-to-ffmpeg-listen.ts"
+
+  rtsp_push_mediamtx_mp2t
+  rtsp_push_mediamtx_es_klv
+}
+
+# rtsp-push/us-to-mediamtx-mp2t: `send --push` publishes the profile's
+# MPEG-TS (RFC 2250, 7 TS packets per RTP packet) to mediamtx; ffmpeg
+# pulls it back and re-muxes it to a file, judged by `verify --file` at
+# the re-mux tier, as rtsp-serve/ffmpeg-pull is.
+rtsp_push_mediamtx_mp2t() {
+  local id="rtsp-push/us-to-mediamtx-mp2t" peer="mediamtx+ffmpeg" tier=remux
+  cell_selected "$id" || return 0
+  if [[ -n "${DECLARE_ONLY:-}" ]]; then declare_cell "$id"; return 0; fi
+  if ! have mediamtx || ! have ffmpeg; then
+    emit_skipped "$id" "$peer" send "$tier" "mediamtx and/or ffmpeg not installed on this box"
+    return 0
+  fi
+  local port log budget
+  port=$(free_port tcp)
+  log="$LOGS_DIR/$(slug "$id").log"
+  : >"$log"
+  budget=$(cell_timeout "$SECONDS_ARG")
+  echo "=== cell: $id (tier=$tier, profile=$PROFILE) ===" >>"$log"
+  if ! start_mediamtx "$port" "$log" "$budget"; then
+    emit_fail "$id" "$peer" send "$tier" "$log" - "mediamtx did not open its RTSP listener"
+    return 0
+  fi
+
+  local url="rtsp://127.0.0.1:$port/live"
+  local out="$WORK/$(slug "$id").ts" send_json="$WORK/$(slug "$id")-send.json"
+  echo "--- us: send --push ($url, start delay ${RTSP_PUSH_START_DELAY}s) ---" >>"$log"
+  timeout --kill-after=3 "${budget}s" \
+    "$BIN" send --push --profile "$PROFILE" --url "$url" --seconds "$SECONDS_ARG" \
+    --json "$send_json" --au-sizes "$AU_SIZES" --start-delay "$RTSP_PUSH_START_DELAY" \
+    >>"$log" 2>&1 &
+  local send_pid=$!
+  local ff_rc=0
+  if wait_for_line "$log" '^send: RTSP push recording' "$RTSP_PUSH_READY_WAIT" "$send_pid"; then
+    echo "--- peer: ffmpeg pulls $url -> $out ---" >>"$log"
+    timeout --kill-after=5 "${budget}s" \
+      ffmpeg -y -loglevel warning -rtsp_transport tcp -i "$url" \
+      -map 0 -c copy -copy_unknown -f mpegts "$out" \
+      >>"$log" 2>&1 || ff_rc=$?
+  else
+    echo "--- the push never reported recording; no reader started ---" >>"$log"
+  fi
+  local send_rc=0
+  wait "$send_pid" || send_rc=$?
+  stop_mediamtx
+  echo "--- exit codes: send=$send_rc ffmpeg=$ff_rc ---" >>"$log"
+
+  if [[ $send_rc -ne 0 ]]; then
+    emit_fail "$id" "$peer" send "$tier" "$log" - "our send --push failed (exit $send_rc) — see log"
+    return 0
+  fi
+  if [[ ! -s "$out" ]]; then
+    emit_fail "$id" "$peer" send "$tier" "$log" - \
+      "ffmpeg produced no (or empty) capture (ffmpeg exit $ff_rc)"
+    return 0
+  fi
+  local vjson="$WORK/$(slug "$id")-verify.json" vrc=0
+  timeout --kill-after=5 "${budget}s" \
+    "$BIN" verify --file "$out" --expect "$PROFILE" --seconds "$SECONDS_ARG" --json "$vjson" \
+    >>"$log" 2>&1 || vrc=$?
+  local mjson="$WORK/$(slug "$id")-metrics.json"
+  metrics_only "$vjson" "$mjson"
+  if [[ $vrc -eq 0 ]]; then
+    emit_pass "$id" "$peer" send "$tier" "$log" "$mjson"
+  else
+    # Guarded: $vjson can be truncated if `verify` was killed mid-write.
+    local verify_failures
+    verify_failures=$(jq -r '.failures | join("; ")' "$vjson" 2>/dev/null) || verify_failures="(unparseable failures list)"
+    emit_fail "$id" "$peer" send "$tier" "$log" "$mjson" \
+      "verify FAILed against ffmpeg's captured file: $verify_failures"
+  fi
+}
+
+# rtsp-push/us-to-mediamtx-es-klv: `push-es --klv` publishes a klv-sync
+# file's H.264 (RFC 6184) and KLV (RFC 6597, one RTP packet per unit) as
+# two elementary tracks, paced by PTS, and keeps what it pushed as
+# sidecar files. GStreamer pulls both tracks back from mediamtx
+# (`rtph264depay`, `rtpklvdepay`) into two files; ffmpeg 6.1 cannot be the
+# reader here (it finds no picture size in the generator's minimal SPS:
+# "dimensions not set"). `verify-es` judges them against the sidecars:
+# the pulled video is the pushed NAL units from the first on, short at
+# most by the last access unit (copies of the pushed parameter sets ahead
+# of the first unit allowed: rtph264depay writes the SDP's), and the
+# pulled KLV is a prefix of the pushed bytes holding at least 90 % of them.
+# The file is klv-sync rather than baseline because a KLV unit over RTP
+# needs a PTS, which baseline's asynchronous KLV does not carry (as for
+# rtsp-publish/gst-push-es-klv); the cell is still recorded on the
+# baseline axis.
+rtsp_push_mediamtx_es_klv() {
+  local id="rtsp-push/us-to-mediamtx-es-klv" peer="mediamtx+gst-launch-1.0" tier=remux
+  cell_selected "$id" || return 0
+  if [[ -n "${DECLARE_ONLY:-}" ]]; then declare_cell "$id"; return 0; fi
+  if ! have mediamtx || ! have gst-launch-1.0; then
+    emit_skipped "$id" "$peer" send "$tier" "mediamtx and/or gst-launch-1.0 not installed on this box"
+    return 0
+  fi
+  local port log budget
+  port=$(free_port tcp)
+  log="$LOGS_DIR/$(slug "$id").log"
+  : >"$log"
+  budget=$(cell_timeout "$SECONDS_ARG")
+  echo "=== cell: $id (tier=$tier, profile=$PROFILE, pushes klv-sync) ===" >>"$log"
+  local src="$WORK/$(slug "$id")-src.ts"
+  local gen_rc=0
+  timeout --kill-after=5 "${budget}s" \
+    "$BIN" gen --profile klv-sync --seconds "$SECONDS_ARG" --out "$src" --au-sizes "$AU_SIZES" \
+    >>"$log" 2>&1 || gen_rc=$?
+  if [[ $gen_rc -ne 0 ]]; then
+    emit_fail "$id" "$peer" send "$tier" "$log" - "gen of the klv-sync source failed (exit $gen_rc)"
+    return 0
+  fi
+  if ! start_mediamtx "$port" "$log" "$budget"; then
+    emit_fail "$id" "$peer" send "$tier" "$log" - "mediamtx did not open its RTSP listener"
+    return 0
+  fi
+
+  local url="rtsp://127.0.0.1:$port/live"
+  local pushed="$WORK/$(slug "$id")-pushed" pulled="$WORK/$(slug "$id")-pulled"
+  rm -f "$pushed.h264" "$pushed.klv" "$pulled.h264" "$pulled.klv"
+  echo "--- us: push-es --klv ($url, start delay ${RTSP_PUSH_START_DELAY}s) ---" >>"$log"
+  timeout --kill-after=3 "${budget}s" \
+    "$BIN" push-es --url "$url" --file "$src" --out "$pushed" --klv \
+    --start-delay "$RTSP_PUSH_START_DELAY" \
+    >>"$log" 2>&1 &
+  local push_pid=$!
+  local gst_rc=0
+  if wait_for_line "$log" '^push-es: RTSP push recording' "$RTSP_PUSH_READY_WAIT" "$push_pid"; then
+    echo "--- peer: gst-launch-1.0 pulls $url -> $pulled.{h264,klv} ---" >>"$log"
+    # A queue per branch, and caps on encoding-name: without them the
+    # second track's pad finds no branch to link and rtspsrc stops with
+    # not-linked. latency=0: with rtspsrc's default 2000 ms both tracks'
+    # jitter buffers release their first packet on the same timer tick,
+    # the two pads appear at once on two threads, and gst-launch's
+    # delayed-link bookkeeping races (GStreamer 1.24.2: SIGSEGV in its
+    # "Delayed linking failed" warning, about 1 run in 10); a loopback
+    # reader needs no jitter buffer delay. -f: no fault handler, so a
+    # crash ends the process instead of spinning until the timeout. -e:
+    # the server's close after our TEARDOWN ends the run with EOS, so
+    # both files are flushed.
+    timeout --kill-after=5 "${budget}s" \
+      gst-launch-1.0 -f -e rtspsrc "location=$url" protocols=tcp latency=0 name=s \
+      s. ! queue ! application/x-rtp,encoding-name=H264 ! rtph264depay ! \
+      video/x-h264,stream-format=byte-stream ! filesink "location=$pulled.h264" \
+      s. ! queue ! application/x-rtp,encoding-name=SMPTE336M ! rtpklvdepay ! \
+      filesink "location=$pulled.klv" \
+      >>"$log" 2>&1 || gst_rc=$?
+  else
+    echo "--- the push never reported recording; no reader started ---" >>"$log"
+  fi
+  local push_rc=0
+  wait "$push_pid" || push_rc=$?
+  stop_mediamtx
+  echo "--- exit codes: push-es=$push_rc gst-launch-1.0=$gst_rc ---" >>"$log"
+
+  if [[ $push_rc -ne 0 ]]; then
+    emit_fail "$id" "$peer" send "$tier" "$log" - "our push-es failed (exit $push_rc) — see log"
+    return 0
+  fi
+  if [[ ! -s "$pulled.h264" || ! -s "$pulled.klv" ]]; then
+    emit_fail "$id" "$peer" send "$tier" "$log" - \
+      "gst-launch-1.0 wrote no (or empty) video and/or KLV file (exit $gst_rc)"
+    return 0
+  fi
+  local vrc=0
+  echo "--- us: verify-es ---" >>"$log"
+  timeout --kill-after=5 "${budget}s" \
+    "$BIN" verify-es --pushed-h264 "$pushed.h264" --pushed-klv "$pushed.klv" \
+    --pulled-h264 "$pulled.h264" --pulled-klv "$pulled.klv" \
+    >>"$log" 2>&1 || vrc=$?
+  if [[ $vrc -eq 0 ]]; then
+    emit_pass "$id" "$peer" send "$tier" "$log" -
+  else
+    local why
+    why=$(grep '^verify-es: FAIL' "$log" | sed 's/^verify-es: FAIL //' | tr '\n' ';') || why=""
+    emit_fail "$id" "$peer" send "$tier" "$log" - \
+      "verify-es FAILed (exit $vrc): ${why:-see log}"
+  fi
+}
+
 # whep_stderr_span <chrome_err> — one line placing the page's FRAMES
 # lines on the browser's own clock: "FRAMES lines from A s to B s of a
 # C s browser log". Chrome prefixes every stderr line with
@@ -1604,15 +1908,17 @@ srt_live_cells_for_profile() {
 # different one.
 run_axes_for_profile() {
   # Transport axis stays pinned to "baseline" regardless of how many
-  # profiles --profiles lists — matches the 30-cell transport-axis
+  # profiles --profiles lists — matches the 33-cell transport-axis
   # inventory (the original 25 built and verified at 8 PASS/17 FAIL/0
-  # SKIPPED, plus the two rtsp-publish cells and the three whep cells);
+  # SKIPPED, plus the two rtsp-publish cells, the three rtsp-push cells
+  # and the three whep cells);
   # scaling it by profile too would multiply that count by up to 12x
   # for no new signal the format axis below doesn't already cover more
   # precisely (analyze/decode/srt-live are the per-profile probes).
   if [[ "$PROFILE" == "baseline" ]]; then
     srt_cells; udp_cells; rist_cells; tcp_cells; hls_cells; rtsp_cells
     rtsp_publish_cells
+    rtsp_push_cells
     whep_cells
   fi
 

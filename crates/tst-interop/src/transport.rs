@@ -14,6 +14,10 @@
 //! URL-overlay pattern `srt_socket` follows from
 //! `sending/sender_from_url.rs`.
 //!
+//! `make_send` also takes `rtsp://` / `rtsps://`: it publishes an MPEG-TS
+//! stream to an RTSP server (ANNOUNCE, SETUP `mode=record`, RECORD) through
+//! [`tst_rtp::RtspPush`], wrapped in [`RtspPushClose`].
+//!
 //! `make_recv` also takes the harness-only `rtsp-publish://host:port/mount`
 //! scheme: it stands up an RTSP server with one publish mount so an
 //! external publisher can RECORD into `recv` (see `RtspPublishListener`).
@@ -168,7 +172,123 @@ pub fn make_send(url: &str) -> Result<Box<dyn Transport>, String> {
                 inner: tst_srt::SrtTransport::new(s),
             }) as Box<dyn Transport>
         }),
+        "rtsp" | "rtsps" => rtsp_push_connect(url, &tst_rtp::PushDescription::Mp2t, Duration::ZERO)
+            .map(|push| {
+                Box::new(RtspPushClose::new(push, PushCloseSlot::default())) as Box<dyn Transport>
+            }),
         other => Err(format!("unsupported scheme for send: {other}://")),
+    }
+}
+
+/// How often [`rtsp_push_connect`] retries a refused connect.
+const REFUSED_RETRY_STEP: Duration = Duration::from_millis(50);
+
+/// Publish to the RTSP server at `url` (`rtsp://` or `rtsps://`): connect,
+/// ANNOUNCE `desc`, SETUP every track with `mode=record` and RECORD.
+///
+/// A connect the server refuses (`ECONNREFUSED`) is tried again every
+/// 50 ms until `refused_for` has passed (`Duration::ZERO`: one try). A
+/// server that binds a moment after its process starts and accepts one
+/// connection only, as `ffmpeg -rtsp_flags listen` does, cannot be probed
+/// for readiness: the probe would spend its one accept. Every other error
+/// is returned at once.
+pub fn rtsp_push_connect(
+    url: &str,
+    desc: &tst_rtp::PushDescription,
+    refused_for: Duration,
+) -> Result<tst_rtp::RtspPush, String> {
+    let deadline = std::time::Instant::now() + refused_for;
+    loop {
+        let builder =
+            tst_rtp::RtspClientBuilder::new(url).map_err(|e| format!("rtsp url {url}: {e}"))?;
+        match tst_rtp::RtspPush::connect(builder, desc) {
+            Ok(push) => return Ok(push),
+            Err(tst_rtp::RtspError::Io(std::io::ErrorKind::ConnectionRefused))
+                if std::time::Instant::now() < deadline =>
+            {
+                std::thread::sleep(REFUSED_RETRY_STEP);
+            }
+            Err(e) => return Err(format!("rtsp push to {url}: {e}")),
+        }
+    }
+}
+
+/// What [`RtspPushClose`]'s `close` returned; `None` until it has run.
+pub type PushCloseSlot = Arc<Mutex<Option<Result<(), tst_rtp::RtspError>>>>;
+
+/// Whether a push's [`tst_rtp::RtspPush::close`] result counts as a
+/// finished push: an accepted TEARDOWN, or one the server refused with a
+/// status. `close` writes every queued frame before it sends TEARDOWN, so a
+/// server that answers the TEARDOWN at all has been handed the whole
+/// stream; ffmpeg's RTSP listener answers every TEARDOWN `501` and ends
+/// only when the connection closes. Anything else (no answer within the
+/// bound, a broken connection) means the tail may not have arrived.
+pub fn push_close_finished(result: &Result<(), tst_rtp::RtspError>) -> bool {
+    matches!(result, Ok(()) | Err(tst_rtp::RtspError::Protocol { .. }))
+}
+
+/// One stderr line naming how a push's `close` ended, prefixed `context:`.
+pub fn push_close_line(context: &str, result: &Result<(), tst_rtp::RtspError>) -> String {
+    match result {
+        Ok(()) => format!("{context}: RTSP TEARDOWN accepted"),
+        Err(tst_rtp::RtspError::Protocol { code, reason }) => format!(
+            "{context}: warning: the server refused TEARDOWN ({code} {reason}); \
+             every queued frame was written before it"
+        ),
+        Err(e) => format!("{context}: RTSP close failed: {e}"),
+    }
+}
+
+/// An MPEG-TS [`tst_rtp::RtspPush`] as a send-side transport whose `close`
+/// is the push's own consuming `close` (drain the queue, TEARDOWN with its
+/// reply awaited, then wait for the client's thread), so the outcome can be
+/// reported: `close` prints [`push_close_line`] and stores the result in the
+/// slot given at construction.
+pub struct RtspPushClose {
+    inner: Option<tst_rtp::RtspPush>,
+    outcome: PushCloseSlot,
+}
+
+impl RtspPushClose {
+    pub fn new(push: tst_rtp::RtspPush, outcome: PushCloseSlot) -> Self {
+        Self {
+            inner: Some(push),
+            outcome,
+        }
+    }
+}
+
+impl Transport for RtspPushClose {
+    fn send_bytes(&mut self, msg: &[u8]) -> Result<(), TransportError> {
+        match self.inner.as_mut() {
+            Some(push) => push.send_ts(msg),
+            None => Err(TransportError::Closed),
+        }
+    }
+
+    fn max_payload(&self) -> usize {
+        tst_rtp::PUSH_MP2T_MAX_PAYLOAD
+    }
+
+    fn is_alive(&self) -> bool {
+        self.inner.as_ref().is_some_and(Transport::is_alive)
+    }
+
+    fn close(&mut self) {
+        let Some(push) = self.inner.take() else {
+            return;
+        };
+        let result = push.close();
+        eprintln!("{}", push_close_line("send", &result));
+        *self.outcome.lock().unwrap_or_else(|e| e.into_inner()) = Some(result);
+    }
+
+    fn cancel_handle(&self) -> Option<Arc<dyn TransportCancel + Send + Sync>> {
+        self.inner.as_ref().and_then(Transport::cancel_handle)
+    }
+
+    fn socket_stats(&self) -> Option<SocketStats> {
+        self.inner.as_ref().and_then(Transport::socket_stats)
     }
 }
 
@@ -1228,4 +1348,63 @@ pub(crate) fn tee_tally(
         state.reader.finish(),
         state.reader_error,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A loopback port nothing listens on: bound by the kernel, then
+    /// released.
+    fn closed_tcp_port() -> u16 {
+        let l = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        l.local_addr().expect("local address").port()
+    }
+
+    #[test]
+    fn make_send_takes_rtsp_and_still_refuses_an_unknown_scheme() {
+        let port = closed_tcp_port();
+        for scheme in ["rtsp", "rtsps"] {
+            let err = make_send(&format!("{scheme}://127.0.0.1:{port}/live"))
+                .err()
+                .expect("nothing listens there");
+            assert!(err.starts_with("rtsp push to "), "{scheme}: {err}");
+            assert!(!err.contains("unsupported scheme"), "{scheme}: {err}");
+        }
+        let err = make_send("ftp://127.0.0.1:21/x")
+            .err()
+            .expect("ftp is no send scheme");
+        assert_eq!(err, "unsupported scheme for send: ftp://");
+    }
+
+    #[test]
+    fn a_refused_push_connect_is_retried_until_its_window_ends() {
+        let port = closed_tcp_port();
+        let url = format!("rtsp://127.0.0.1:{port}/live");
+        let window = Duration::from_millis(300);
+        let started = std::time::Instant::now();
+        let err = rtsp_push_connect(&url, &tst_rtp::PushDescription::Mp2t, window)
+            .expect_err("nothing listens there");
+        assert!(
+            started.elapsed() >= window,
+            "gave up after {:?}",
+            started.elapsed()
+        );
+        assert!(err.contains("rtsp push to"), "{err}");
+    }
+
+    #[test]
+    fn a_push_close_is_finished_when_teardown_was_answered() {
+        assert!(push_close_finished(&Ok(())));
+        let refused = Err(tst_rtp::RtspError::Protocol {
+            code: 501,
+            reason: "Not Implemented".into(),
+        });
+        assert!(push_close_finished(&refused));
+        assert!(push_close_line("send", &refused).contains("refused TEARDOWN (501"));
+        assert!(!push_close_finished(&Err(tst_rtp::RtspError::Timeout)));
+        assert!(!push_close_finished(&Err(tst_rtp::RtspError::Io(
+            std::io::ErrorKind::ConnectionReset
+        ))));
+    }
 }

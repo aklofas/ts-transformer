@@ -2,9 +2,9 @@
 
 `run-matrix.sh` exchanges the `tst-interop` driver's synthetic MPEG-TS/KLV
 traffic with real third-party tools (ffmpeg, TSDuck's `tsp`, GStreamer, VLC,
-mpv) over live network sessions AND local per-profile analyzer/decode
+mpv, mediamtx) over live network sessions AND local per-profile analyzer/decode
 probes on this box, across every transport this crate supports (SRT, RIST,
-UDP, TCP, HLS, RTSP, including the RTSP publisher role) and every one of the 12 canonical stream profiles
+UDP, TCP, HLS, RTSP, including the RTSP publisher role and the RTSP push client) and every one of the 12 canonical stream profiles
 (`crates/tst-interop/src/profiles.rs`), and writes one evidence JSON file
 per "cell" (one peer, one direction, one transport-or-local-probe, one
 optional variant like encryption or profile).
@@ -684,6 +684,66 @@ these cells with the role's fuzz targets and the soak's `rtsp-publish` leg
     cookbook recipe), and ffmpeg's captured ANNOUNCE SDP, which the
     `tst-rtp` publisher tests replay (`SDP_H264` in
     `crates/tst-rtp/tests/fixtures/raw_rtsp_publisher.rs`).
+
+### Transport axis: the RTSP push cells
+
+The three `rtsp-push/*` cells point this library's RTSP push client
+(`tst_rtp::RtspPush`: ANNOUNCE, SETUP with `mode=record`, RECORD, RTP over
+TCP-interleaved) at third-party servers. Two harness paths publish:
+`tst-interop send --push --url rtsp://…` (the profile's MPEG-TS, RFC 2250,
+through the same `MuxSender` as every other `send`) and `tst-interop push-es`
+(a generated file's H.264 and KLV as two elementary tracks, RFC 6184 + RFC
+6597, paced by PTS, writing what it pushed to `<out>.h264` / `<out>.klv`).
+Both exit 0 only once the server answered TEARDOWN; a refusal with a status
+(ffmpeg's `501`) is a warning line, since every queued frame was written
+before it.
+
+| Cell | Server | Reader | Tier | Judged |
+|---|---|---|---|---|
+| `rtsp-push/us-to-ffmpeg-listen` | `ffmpeg -rtsp_flags listen` (writes the file) | — | remux | `verify --file`, `baseline` |
+| `rtsp-push/us-to-mediamtx-mp2t` | mediamtx (relay) | ffmpeg `-rtsp_transport tcp … -f mpegts` | remux | `verify --file`, `baseline` |
+| `rtsp-push/us-to-mediamtx-es-klv` | mediamtx (relay) | GStreamer `rtspsrc ! rtph264depay` / `rtpklvdepay` | remux | `verify-es` against the push's sidecars (a `klv-sync` file) |
+
+mediamtx is not in Ubuntu's archive: `interop.yml` installs a pinned release
+tarball (sha256-checked) on the x86_64 job only, and the cells are not in
+`[arm64_subset]`. Each mediamtx cell writes its own config (RTSP on a free
+loopback port, TCP only, every other protocol off; the default path lets
+anyone publish and relays an MPEG-TS track unchanged).
+
+Things these cells depend on, each measured with mediamtx v1.21.4, ffmpeg
+6.1.1 and GStreamer 1.24.2:
+
+- **A relay reader must attach between RECORD and the first packet.**
+  mediamtx answers a reader's DESCRIBE `404` until a publisher records, and
+  forwards only what arrives after the reader's PLAY. Both push paths take
+  `--start-delay SECS` (3 here) and print a `… RTSP push recording` line
+  when RECORD is answered; the cell starts the reader on that line, so it
+  sees the stream from its first packet. mediamtx closes a publisher that
+  sends nothing for 10 s.
+- **ffmpeg's listener serves one connection and binds a moment after it
+  starts**, so it cannot be probed for readiness (the probe would be its one
+  connection). `send --push --connect-retry 10` retries a refused connect
+  instead. The listener has no idle timeout (the cell's `timeout` is its
+  watchdog) and exits 0 whatever happened, so the file is the verdict.
+- **ffmpeg cannot read the generator's H.264 as an elementary RTP track**:
+  it finds no picture size in the minimal SPS (`Could not find codec
+  parameters … unspecified size`, then `dimensions not set`) and writes
+  nothing, the same limit as gap item 10. The elementary cell's reader is
+  GStreamer, whose `rtph264depay` writes the SDP's parameter sets ahead of
+  the first access unit; `verify-es` accepts copies of pushed parameter
+  sets there and nowhere else. The pulled video must be the pushed NAL
+  units from the first on, short at most by the last access unit, and the
+  pulled KLV a prefix of the pushed bytes holding at least 90 % of them.
+- **GStreamer's reader runs with `latency=0`.** With the default 2000 ms
+  both tracks' pads appear at once on two threads and gst-launch's
+  delayed-link bookkeeping races: a SIGSEGV in its "Delayed linking
+  failed" warning before any byte is written, in 8 of about 50 local runs.
+  With `latency=0`, 0 of 54.
+- **The MP2T cells are re-mux cells**, judged as `rtsp-serve/ffmpeg-pull`
+  is, so ffmpeg 6.1's KLV truncation (gap item 1) and its PID renumbering
+  apply to them as to every ffmpeg `-c copy` cell. mediamtx itself relays
+  the MPEG-TS untouched: a raw reader (`rtspsrc ! rtpmp2tdepay ! filesink`)
+  writes a file whose SHA-256 equals the sent `stream_sha256`.
 
 ### Transport axis: the WHEP browser cells
 
