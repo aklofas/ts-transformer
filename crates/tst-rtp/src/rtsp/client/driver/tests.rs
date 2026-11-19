@@ -317,6 +317,62 @@ fn stop_records_cancelled_and_closes_the_socket() {
     assert_eq!(peer.read(&mut b).expect("EOF, not a timeout"), 0);
 }
 
+/// Whoever reads the session dead finds its end reason recorded. In each
+/// of many short sessions an observer spins on the flag and reads the
+/// reason the moment the flag turns.
+#[test]
+fn the_end_reason_is_recorded_before_the_session_reads_dead() {
+    for round in 0..200 {
+        let (stream, peer) = plain_pair();
+        let h = drive(stream);
+        let (spinning_tx, spinning_rx) = mpsc::channel();
+        let observer = std::thread::spawn({
+            let (dead, reason) = (h.session_dead.clone(), h.end_reason.clone());
+            move || {
+                let _ = spinning_tx.send(());
+                let give_up = Instant::now() + scaled(Duration::from_secs(5));
+                loop {
+                    // The clock is read rarely: the spin stays tight.
+                    for _ in 0..4096 {
+                        if dead.load(Ordering::Acquire) {
+                            return Some(reason.get());
+                        }
+                        std::hint::spin_loop();
+                    }
+                    if Instant::now() >= give_up {
+                        return None;
+                    }
+                }
+            }
+        });
+        spinning_rx.recv().unwrap();
+        drop(peer);
+        let seen = observer
+            .join()
+            .unwrap()
+            .unwrap_or_else(|| panic!("round {round}: the session never read dead"));
+        assert_eq!(
+            seen,
+            Some(EndReason::CleanTeardown),
+            "round {round}: the session read dead before its reason was recorded"
+        );
+        h.stop_and_join();
+    }
+}
+
+/// Once the client's thread is gone the session reads dead, whichever way
+/// the thread went: a stop reports no end of the session.
+#[test]
+fn a_thread_that_has_ended_leaves_the_session_dead() {
+    let (stream, _peer) = plain_pair();
+    let h = drive(stream);
+    let dead = h.session_dead.clone();
+    assert!(!dead.load(Ordering::Acquire));
+    let reasons = h.stop_and_join();
+    assert!(dead.load(Ordering::Acquire));
+    assert_eq!(reasons.get(), Some(EndReason::Cancelled));
+}
+
 #[test]
 fn stop_after_eof_keeps_the_first_reason() {
     let (stream, peer) = plain_pair();

@@ -176,6 +176,8 @@ pub(crate) enum Event {
     },
     /// A frame on a `Push` route's RTP channel, dropped.
     InboundDropped,
+    /// The session is known dead. The `Ended` that names why follows at
+    /// once.
     SessionDead,
     Ended(EndReason),
 }

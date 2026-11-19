@@ -496,7 +496,8 @@ impl RtspPush {
 
     /// False once the session is known dead: the control connection
     /// ended, a keepalive ping was answered `454`, or [`Transport::close`]
-    /// has run.
+    /// has run. When it turns false for one of the first two,
+    /// [`Self::end_reason`] already names the end.
     pub fn is_session_alive(&self) -> bool {
         !self.closed && self.client.is_session_alive()
     }

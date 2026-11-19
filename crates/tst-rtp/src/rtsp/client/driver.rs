@@ -350,10 +350,11 @@ struct Driver {
     inbuf: Vec<u8>,
 }
 
-// However the thread ends, by any way out of `run` or by a panic, no
-// sender stays parked on the media queue.
+// However the thread ends, by any way out of `run` or by a panic, the
+// session reads dead and no sender stays parked on the media queue.
 impl Drop for Driver {
     fn drop(&mut self) {
+        self.shared.session_dead.store(true, Ordering::Release);
         self.media.close();
     }
 }
@@ -601,6 +602,10 @@ impl Driver {
     }
 
     fn deliver(&mut self) {
+        // The engine reports a dead session just ahead of the `Ended` that
+        // names why. The flag is stored behind that reason: whoever reads
+        // the session dead finds the reason recorded.
+        let mut dead = false;
         while let Some(event) = self.engine.poll_event() {
             match event {
                 Event::Reply { txn, result } => {
@@ -634,7 +639,7 @@ impl Driver {
                         .frames_dropped_inbound
                         .fetch_add(1, Ordering::Relaxed);
                 }
-                Event::SessionDead => self.shared.session_dead.store(true, Ordering::Release),
+                Event::SessionDead => dead = true,
                 Event::Ended(reason) => {
                     // A `454` to a ping with the stream still open ends the
                     // session, not the media: the queue stays.
@@ -642,6 +647,9 @@ impl Driver {
                     // The reason first: a receiver that sees its queue
                     // close reads it at once.
                     record_end(&self.shared.end_reason, reason);
+                    if std::mem::take(&mut dead) {
+                        self.shared.session_dead.store(true, Ordering::Release);
+                    }
                     if close_media {
                         for sinks in self.routes.iter_mut().flatten() {
                             sinks.media = None;
@@ -649,6 +657,9 @@ impl Driver {
                     }
                 }
             }
+        }
+        if dead {
+            self.shared.session_dead.store(true, Ordering::Release);
         }
     }
 

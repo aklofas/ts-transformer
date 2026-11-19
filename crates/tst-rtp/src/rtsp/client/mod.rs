@@ -93,7 +93,8 @@ pub struct RtspClient {
     pub(crate) end_reason: EndReasonHandle,
     /// Set by the client's thread when the session is known dead: the
     /// control connection ended, or a keepalive ping was answered `454` or
-    /// could not be encoded.
+    /// could not be encoded. The end reason is recorded first. Also set
+    /// when the thread itself ends, however it ends.
     pub(crate) session_dead: Arc<AtomicBool>,
     /// The client's I/O thread.
     pub(crate) driver: DriverHandle,
