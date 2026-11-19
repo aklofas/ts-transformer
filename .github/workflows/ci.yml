@@ -265,6 +265,10 @@ jobs:
         if: matrix.name == 'linux-x86_64'
         run: bash scripts/check/rust/no-public-usize.sh
 
+      - name: check-no-unredacted-url
+        if: matrix.name == 'linux-x86_64'
+        run: bash scripts/check/rust/no-unredacted-url.sh
+
       - name: Kind-equivalence rail (C ≡ Python ≡ JVM per BindingErrorKind)
         # Generated == committed: the TSV and both hosts' kind-enum blocks are rendered from kind.rs by print-kinds --check.
         if: matrix.name == 'linux-x86_64'
@@ -381,6 +385,17 @@ jobs:
         # Runs scripts/ci/gradle-resolve.sh against a stub Gradle wrapper.
         if: matrix.name == 'linux-x86_64'
         run: bash scripts/ci/tests/gradle-resolve-selftest.sh
+
+      - name: review-qualification self-test (the reviewer entry point matches its committed listing)
+        # Diffs `--list` with scripts/ci/tests/review-qualification.expected and
+        # runs the part runner against stub tools and a stub tree.
+        if: matrix.name == 'linux-x86_64'
+        run: bash scripts/ci/tests/review-qualification-selftest.sh
+
+      - name: post-publish-consumers self-test (the consumer builds against stub registries)
+        # Runs scripts/release/post-publish-consumers.sh with pip, cargo and gradle stubbed.
+        if: matrix.name == 'linux-x86_64'
+        run: bash scripts/release/tests/post-publish-consumers-selftest.sh
 
       - name: fuzz-shard self-test (one shard of the fuzz leg against a stub cargo)
         # Runs scripts/ci/fuzz-shard.sh with stub `cargo` and `rustc`, then
@@ -503,6 +518,16 @@ jobs:
         if: matrix.name == 'linux-x86_64'
         run: bash scripts/check/repo/qualification.sh
 
+      - name: check-known-issues (the CHANGELOG's Known issues block matches docs/project/release-findings.md)
+        # Written by scripts/gen/known-issues.sh from the open rows of the findings ledger.
+        if: matrix.name == 'linux-x86_64'
+        run: bash scripts/gen/known-issues.sh --check
+
+      - name: check-api-churn (the break-count table of docs/reference/api-stability.md matches tests/coverage/api-churn.toml)
+        # Written by scripts/gen/api-churn.sh.
+        if: matrix.name == 'linux-x86_64'
+        run: bash scripts/gen/api-churn.sh --check
+
       - name: check-publish-guards (callable workflows keep publish jobs behind dry_run; callers pass dry_run true)
         # The rail defaults to .github/workflows/*.yml; its self-test runs on
         # fixtures only, so this step is what enforces the rule on the real files.
@@ -517,12 +542,13 @@ jobs:
         if: matrix.name == 'linux-x86_64'
         run: bash scripts/check/repo/net-test-binaries.sh
 
-      - name: scripts/gen, bench-ir and fuzz-shard unit tests
+      - name: scripts/gen, bench-ir, deps-advisory and fuzz-shard unit tests
         # The generators' stdlib unittest suites and their committed fixtures,
-        # the instruction-count judge's and the fuzz leg's shard layout and
-        # merge; nothing else runs them. Stdlib only, no pip install.
+        # the instruction-count judge's, the advisory check's and the fuzz
+        # leg's shard layout and merge; nothing else runs them. Stdlib only,
+        # no pip install.
         if: matrix.name == 'linux-x86_64'
-        run: python3 -m unittest scripts/gen/test_*.py scripts/dev/test_bench_ir.py scripts/ci/tests/test_fuzz_shards.py
+        run: python3 -m unittest scripts/gen/test_*.py scripts/dev/test_bench_ir.py scripts/dev/test_deps_advisory.py scripts/ci/tests/test_fuzz_shards.py
 
       - name: check-no-unreachable-expect-in-bindings
         # Binding production code never aborts on a #[non_exhaustive]
@@ -772,6 +798,19 @@ jobs:
         if: matrix.name == 'linux-x86_64'
         run: bash scripts/check/c/examples-compile.sh
 
+      - name: C guide snippets compile (doc-snippets c)
+        # The marked C blocks of docs/languages/c.md compile against the
+        # header of an all-features package. examples-compile.sh deletes the
+        # package it stages, so this stages the same one again (a warm no-op
+        # build after the step above). The rail SKIPs without an input; here
+        # a SKIP fails the step.
+        if: matrix.name == 'linux-x86_64'
+        run: |
+          bash scripts/dev/c-package.sh --all-features --out "$RUNNER_TEMP/doc-snippets-c"
+          out="$(bash scripts/check/repo/doc-snippets.sh c "$RUNNER_TEMP/doc-snippets-c/include")"
+          printf '%s\n' "$out"
+          case "$out" in *SKIP*) echo "::error::doc-snippets did not compile the C guide's snippets"; exit 1 ;; esac
+
       - name: C package staging self-test (scripts/dev/c-package.sh)
         # Stages two packages (srt,rtp and all features) and checks each
         # one's header, config, libraries and hashes come from one build.
@@ -810,36 +849,16 @@ jobs:
           # PINNED nightly: cargo-public-api renders rustdoc JSON with this
           # toolchain; an unpinned `nightly` caused 4 false std::io<->core::io
           # baseline-drift incidents (2026-06/07) when the channel moved or a
-          # local install rolled back. The explicit +nightly-2026-07-03 on the invocation below is what pins
-          # cargo-public-api's internal rustdoc render — this job also carries a
-          # rolling nightly (doc lints), so a bare +nightly would silently unpin.
-          # To bump: pick a new date,
-          # re-render all 11 baselines with it, and land both together.
-          rustup toolchain install nightly-2026-07-03 --profile minimal --no-self-update
+          # local install rolled back. The pin is the one line of
+          # scripts/lib/public-api-toolchain; the script passes it as `+<pin>`
+          # on every render, since this job also carries a rolling nightly (doc
+          # lints) and a bare +nightly would silently unpin.
+          # To bump: pick a new date, re-render all 11 baselines with it, and
+          # land both together. The script refuses a roster of other than 11.
+          pin="$(head -n1 scripts/lib/public-api-toolchain)"
+          rustup toolchain install "$pin" --profile minimal --no-self-update
           cargo +stable install cargo-public-api --locked --quiet
-          # Assigned first: a roster.sh failure inside the loop's command
-          # substitution would otherwise leave an empty loop and a green step.
-          pairs="$(bash scripts/lib/roster.sh public-api)"
-          test "$(printf '%s\n' $pairs | grep -c .)" -eq 11 || { echo "public-api roster is not the 11 baselined crates: $pairs" >&2; exit 1; }
-          # Each crate's declared feature envelope ([package.metadata.public-api]
-          # in its Cargo.toml), so optional surfaces such as TLS are ratcheted.
-          feats="$(bash scripts/lib/roster.sh public-api-features)"
-          for pair in $pairs; do
-            pkg="${pair%%:*}"
-            dir="${pair##*:}"
-            feat="$(printf '%s\n' "$feats" | awk -F'\t' -v p="$pkg" '$1 == p {print $2}')"
-            test -n "$feat" || { echo "no public-api-features row for $pkg" >&2; exit 1; }
-            fargs=()
-            [ "$feat" = "-" ] || fargs=(--features "$feat")
-            SRT_FORCE_VENDORED=1 RIST_FORCE_VENDORED=1 cargo +nightly-2026-07-03 public-api -p $pkg "${fargs[@]}" --simplified > /tmp/public-api-current-$pkg.txt
-            if ! diff -u $dir/public-api.txt /tmp/public-api-current-$pkg.txt; then
-              echo "Public API drift in $pkg. Update $dir/public-api.txt or revert the change." >&2
-              exit 1
-            fi
-          done
-          # The optional TLS items must be in the baselines, not only in a render.
-          rg -q 'pub mod tst_core::net::tls' crates/tst-core/public-api.txt || { echo "tst-core baseline lacks the tls surface" >&2; exit 1; }
-          rg -q 'tls_root_certs' crates/tst-rtp/public-api.txt || { echo "tst-rtp baseline lacks the rtsp-server-tls surface" >&2; exit 1; }
+          bash scripts/dev/public-api-diff.sh "$pin"
 
       - name: non_exhaustive sweep guard
         # This CI step asserts the count of every #[non_exhaustive] attribute
