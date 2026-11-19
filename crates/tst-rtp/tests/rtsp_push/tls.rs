@@ -6,10 +6,13 @@
 use std::time::Duration;
 
 use tst_core::net::tls::load_root_store;
+#[cfg(target_os = "linux")]
 use tst_core::transport::{RecvTransport as _, TransportError};
+#[cfg(target_os = "linux")]
+use tst_rtp::PUSH_MP2T_MAX_PAYLOAD;
 use tst_rtp::{
-    ClockAlignment, PUSH_MP2T_MAX_PAYLOAD, PublishMountConfig, PushDescription, RtspClientBuilder,
-    RtspError, RtspPush, RtspServerBuilder,
+    ClockAlignment, PublishMountConfig, PushDescription, RtspClientBuilder, RtspError, RtspPush,
+    RtspServerBuilder,
 };
 
 use crate::common::*;

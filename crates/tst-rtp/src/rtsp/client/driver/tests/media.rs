@@ -5,7 +5,9 @@
 use super::*;
 use std::net::Shutdown;
 
-use crate::rtsp::client::media_queue::{MEDIA_QUEUE_BOUND, MEDIA_WATERMARK};
+use crate::rtsp::client::media_queue::MEDIA_QUEUE_BOUND;
+#[cfg(target_os = "linux")]
+use crate::rtsp::client::media_queue::MEDIA_WATERMARK;
 
 /// A frame the size of an RTP packet that carries seven TS packets.
 const SMALL: usize = 4 + 12 + 1316;

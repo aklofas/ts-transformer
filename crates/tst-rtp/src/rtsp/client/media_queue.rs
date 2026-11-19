@@ -38,8 +38,9 @@ struct State {
     unsent: u64,
     #[cfg(test)]
     high_water: usize,
-    /// The most unsent bytes the thread has published.
-    #[cfg(test)]
+    /// The most unsent bytes the thread has published (read only by tests
+    /// that run on Linux).
+    #[cfg(all(test, target_os = "linux"))]
     unsent_high_water: u64,
 }
 
@@ -141,7 +142,7 @@ impl MediaQueue {
     /// The thread reports the stream's unsent bytes after a write.
     pub(crate) fn publish_unsent(&self, unsent: u64) {
         let mut st = self.lock();
-        #[cfg(test)]
+        #[cfg(all(test, target_os = "linux"))]
         {
             st.unsent_high_water = st.unsent_high_water.max(unsent);
         }
@@ -192,7 +193,7 @@ impl MediaQueue {
     }
 
     /// The most unsent bytes the stream has held after a write.
-    #[cfg(test)]
+    #[cfg(all(test, target_os = "linux"))]
     pub(crate) fn unsent_high_water(&self) -> u64 {
         self.lock().unsent_high_water
     }
