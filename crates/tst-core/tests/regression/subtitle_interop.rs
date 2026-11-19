@@ -80,6 +80,12 @@
 //! `cargo test --workspace`, which executes default-pass tests with
 //! all tools optional via runtime `which`-style detection. Missing
 //! tools yield `skip`, never failure.
+//!
+//! The strict guard also counts the cells each tool measured (neither
+//! `skip` nor `unrelated-fail`) and fails when a tool that is on PATH
+//! measured none, so a probe that stopped seeing anything cannot pass
+//! by saying nothing. With `TSTRANS_REQUIRE_INTEROP_TOOLS=1` (set by the
+//! interop workflow) a tool that is missing fails the guard too.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -147,6 +153,51 @@ const FIXTURES: &[&str] = &[
     "dvb_subtitling_multi_lang.ts",
     "dvb_teletext_eng.ts",
 ];
+
+/// The PID of each fixture's subtitle (or marker-carrying) stream, as the
+/// fixture generator lays it out.
+fn subtitle_pid(fixture: &str) -> Option<u16> {
+    match fixture {
+        "subtitle_with_klv_same_program.ts" => Some(0x400),
+        "webvtt_in_ts_simple.ts"
+        | "webvtt_in_ts_multi_cue.ts"
+        | "cea708_standalone.ts"
+        | "webvtt_multi_program_with_klv.ts"
+        | "dvb_subtitling_eng.ts"
+        | "dvb_subtitling_multi_lang.ts"
+        | "dvb_teletext_eng.ts" => Some(0x200),
+        _ => None,
+    }
+}
+
+/// The tools the matrix probes, as `ProbeResult::tool` names them.
+const TOOLS: &[&str] = &["ffprobe", "tsduck-psi", "tsanalyze", "gst-tsdemux"];
+
+/// What is wrong with the matrix as a measurement, one line each: a tool on
+/// PATH (it has a row that is not `skip`) that measured nothing, and, when
+/// `require_tools`, a tool that is not on PATH at all.
+fn census_failures(rows: &[ProbeResult], require_tools: bool) -> Vec<String> {
+    let mut failures = Vec::new();
+    for tool in TOOLS {
+        let cells: Vec<&ProbeResult> = rows.iter().filter(|r| r.tool == *tool).collect();
+        let present = cells.iter().any(|r| r.action != Action::Skip);
+        let measured = cells
+            .iter()
+            .filter(|r| !matches!(r.action, Action::Skip | Action::UnrelatedFailure))
+            .count();
+        if !present && require_tools {
+            failures.push(format!(
+                "  - {tool}: not on PATH, and the tools are required"
+            ));
+        } else if present && measured == 0 {
+            failures.push(format!(
+                "  - {tool}: on PATH but measured none of its {} cells",
+                cells.len()
+            ));
+        }
+    }
+    failures
+}
 
 fn fixtures_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/subtitles")
@@ -217,12 +268,28 @@ fn probe_ffprobe(fixture_path: &Path) -> ProbeResult {
                 .lines()
                 .filter(|l| l.starts_with("codec_name="))
                 .collect();
+            // Exit 0 alone proves nothing: the fixture's subtitle PID must
+            // be listed, or ffprobe parsed a stream without it.
+            let pid = subtitle_pid(&fixture);
+            let listed = pid.is_some_and(|p| stdout.lines().any(|l| l == format!("id=0x{p:x}")));
             ProbeResult {
                 tool: "ffprobe",
                 fixture,
                 exit: Some(0),
-                action: Action::Ignore,
-                notes: codecs.join(", "),
+                action: if listed {
+                    Action::Ignore
+                } else {
+                    Action::Reject
+                },
+                notes: if listed {
+                    codecs.join(", ")
+                } else {
+                    format!(
+                        "PID {} is not in ffprobe's stream list ({})",
+                        pid.map_or("?".to_string(), |p| format!("0x{p:x}")),
+                        codecs.join(", ")
+                    )
+                },
             }
         }
         Ok(o) => {
@@ -549,8 +616,9 @@ fn wave_i1_matrix_informational() {
 }
 
 /// Strict regression-guard. Fails if any cell where a tool was
-/// actually run reports `Reject` for a VTTC/GA94 fixture.
-/// `UnrelatedFailure` and `Skip` are tolerated. Marked `#[ignore]`
+/// actually run reports `Reject` for a VTTC/GA94 fixture, or if a tool
+/// that is on PATH measured no cell at all. `UnrelatedFailure` and `Skip`
+/// cells are tolerated one by one. Marked `#[ignore]`
 /// so PR CI doesn't break when ffmpeg builds drift behavior, but
 /// run explicitly before tagging a release.
 ///
@@ -577,6 +645,26 @@ fn wave_i1_matrix_no_regression() {
             ));
         }
     }
+    let require_tools = std::env::var("TSTRANS_REQUIRE_INTEROP_TOOLS").is_ok_and(|v| v == "1");
+    let census = census_failures(&rows, require_tools);
+    eprintln!(
+        "Measured cells per tool: {:?}",
+        TOOLS
+            .iter()
+            .map(|t| (
+                *t,
+                rows.iter()
+                    .filter(|r| r.tool == *t
+                        && !matches!(r.action, Action::Skip | Action::UnrelatedFailure))
+                    .count()
+            ))
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        census.is_empty(),
+        "the interop matrix measured too little to guard anything:\n{}",
+        census.join("\n")
+    );
     assert!(
         rejections.is_empty(),
         "external receiver rejected VTTC/GA94 marker stream(s):\n{}\n\
@@ -584,4 +672,60 @@ fn wave_i1_matrix_no_regression() {
          Consider removing the auto-emit or changing the marker.",
         rejections.join("\n")
     );
+}
+
+fn cell(tool: &'static str, action: Action) -> ProbeResult {
+    ProbeResult {
+        tool,
+        fixture: "webvtt_in_ts_simple.ts".to_string(),
+        exit: None,
+        action,
+        notes: String::new(),
+    }
+}
+
+fn all_tools(action: Action) -> Vec<ProbeResult> {
+    TOOLS.iter().map(|t| cell(t, action)).collect()
+}
+
+#[test]
+fn a_matrix_where_every_tool_measured_something_has_no_census_failure() {
+    assert!(census_failures(&all_tools(Action::Ignore), true).is_empty());
+}
+
+#[test]
+fn a_tool_on_path_that_measured_nothing_fails_the_census() {
+    let mut rows = all_tools(Action::Ignore);
+    rows.push(cell("ffprobe", Action::UnrelatedFailure));
+    rows.retain(|r| !(r.tool == "ffprobe" && r.action == Action::Ignore));
+    let failures = census_failures(&rows, false);
+    assert_eq!(failures.len(), 1, "{failures:?}");
+    assert!(failures[0].contains("ffprobe"), "{failures:?}");
+}
+
+#[test]
+fn a_missing_tool_fails_the_census_only_when_tools_are_required() {
+    let mut rows = all_tools(Action::Ignore);
+    rows.retain(|r| r.tool != "gst-tsdemux");
+    rows.push(cell("gst-tsdemux", Action::Skip));
+    assert!(census_failures(&rows, false).is_empty());
+    let failures = census_failures(&rows, true);
+    assert_eq!(failures.len(), 1, "{failures:?}");
+    assert!(failures[0].contains("gst-tsdemux"), "{failures:?}");
+}
+
+#[test]
+fn a_matrix_of_only_skips_fails_the_census_when_tools_are_required() {
+    assert!(census_failures(&all_tools(Action::Skip), false).is_empty());
+    assert_eq!(
+        census_failures(&all_tools(Action::Skip), true).len(),
+        TOOLS.len()
+    );
+}
+
+#[test]
+fn every_fixture_in_the_matrix_has_a_known_subtitle_pid() {
+    for f in FIXTURES {
+        assert!(subtitle_pid(f).is_some(), "{f}");
+    }
 }
