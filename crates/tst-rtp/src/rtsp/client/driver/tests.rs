@@ -521,13 +521,22 @@ fn a_setup_that_installs_nothing_drops_its_sinks_and_keeps_the_route() {
     assert_queue_closed(&data_rx);
     still_delivers(&mut peer);
 
-    // A channel pair the engine refuses.
+    // A channel pair the engine refuses: another route holds it.
+    let (other_tx, _other_rx) = mpsc::sync_channel(8);
+    route(
+        &h,
+        &mut peer,
+        &mut rest,
+        (1, RouteKind::Pull),
+        (6, 7),
+        Some(other_tx),
+    );
     let (data_tx, data_rx) = mpsc::sync_channel(8);
     let (rx, _stats) = h.setup(0, RouteKind::Pull, Some(data_tx));
     let head = read_head(&mut peer, &mut rest);
     peer.write_all(&setup_reply(
         cseq(&head),
-        "RTP/AVP/TCP;unicast;interleaved=4-4",
+        "RTP/AVP/TCP;unicast;interleaved=6-7",
     ))
     .unwrap();
     assert!(matches!(next(&rx), Progress::Written));
