@@ -15,7 +15,8 @@ pub(crate) const PT_VIDEO: u8 = 96;
 pub(crate) const PT_KLV: u8 = 97;
 
 /// The video of an elementary announce, with its parameter sets (NAL units
-/// without start codes).
+/// without start codes). For H.264 a NAL that is neither an SPS nor a PPS is
+/// ignored, and `profile-level-id` comes from the first SPS.
 pub(crate) enum SdpVideo<'a> {
     H264 {
         parameter_sets: &'a [Vec<u8>],
@@ -183,6 +184,82 @@ mod tests {
     }
 
     #[test]
+    fn sprop_lists_every_sps_then_every_pps_whatever_the_input_order() {
+        let (sps2, pps2) = (vec![0x67, 0x42, 0xC0, 0x1F, 0xBB], vec![0x68, 0x01]);
+        let sets = vec![PPS.to_vec(), sps2.clone(), pps2.clone(), SPS.to_vec()];
+        let t = SdpTracks::Elementary {
+            video: SdpVideo::H264 {
+                parameter_sets: &sets,
+            },
+            klv: false,
+        };
+        let got = write_announce(&t, V4, 7).unwrap();
+        let want: Vec<String> = [&sps2[..], &SPS[..], &PPS[..], &pps2[..]]
+            .iter()
+            .map(|p| STANDARD.encode(p))
+            .collect();
+        assert!(got.contains(&format!("sprop-parameter-sets={}\r\n", want.join(","))));
+        let swapped = vec![PPS.to_vec(), SPS.to_vec()];
+        let t = SdpTracks::Elementary {
+            video: SdpVideo::H264 {
+                parameter_sets: &swapped,
+            },
+            klv: false,
+        };
+        let got = write_announce(&t, V4, 7).unwrap();
+        assert!(got.contains(&format!(
+            "sprop-parameter-sets={},{}\r\n",
+            STANDARD.encode(SPS),
+            STANDARD.encode(PPS)
+        )));
+    }
+
+    #[test]
+    fn the_h264_klv_sdp_is_exactly_this_text() {
+        let sets = h264();
+        let t = SdpTracks::Elementary {
+            video: SdpVideo::H264 {
+                parameter_sets: &sets,
+            },
+            klv: true,
+        };
+        let want = format!(
+            "v=0\r\no=- 7 1 IN IP4 127.0.0.1\r\ns=tstrans\r\nc=IN IP4 0.0.0.0\r\nt=0 0\r\n\
+             a=tool:tstrans {}\r\nm=video 0 RTP/AVP 96\r\na=rtpmap:96 H264/90000\r\n\
+             a=fmtp:96 packetization-mode=1;profile-level-id=42C01F;sprop-parameter-sets={},{}\r\n\
+             a=control:streamid=0\r\nm=application 0 RTP/AVP 97\r\n\
+             a=rtpmap:97 smpte336m/90000\r\na=control:streamid=1\r\n",
+            env!("CARGO_PKG_VERSION"),
+            STANDARD.encode(SPS),
+            STANDARD.encode(PPS)
+        );
+        assert_eq!(write_announce(&t, V4, 7).unwrap(), want);
+    }
+
+    #[test]
+    fn the_h265_sdp_is_exactly_this_text() {
+        let (vps, sps, pps) = ([0x40, 1, 2], [0x42, 1, 3, 4], [0x44, 1]);
+        let t = SdpTracks::Elementary {
+            video: SdpVideo::H265 {
+                vps: &vps,
+                sps: &sps,
+                pps: &pps,
+            },
+            klv: false,
+        };
+        let want = format!(
+            "v=0\r\no=- 7 1 IN IP4 127.0.0.1\r\ns=tstrans\r\nc=IN IP4 0.0.0.0\r\nt=0 0\r\n\
+             a=tool:tstrans {}\r\nm=video 0 RTP/AVP 96\r\na=rtpmap:96 H265/90000\r\n\
+             a=fmtp:96 sprop-vps={};sprop-sps={};sprop-pps={}\r\na=control:streamid=0\r\n",
+            env!("CARGO_PKG_VERSION"),
+            STANDARD.encode(vps),
+            STANDARD.encode(sps),
+            STANDARD.encode(pps)
+        );
+        assert_eq!(write_announce(&t, V4, 7).unwrap(), want);
+    }
+
+    #[test]
     fn h265_sdp_carries_sprop_vps_sps_pps() {
         let (vps, sps, pps) = ([0x40, 1, 2], [0x42, 1, 3, 4], [0x44, 1]);
         let t = SdpTracks::Elementary {
@@ -259,11 +336,13 @@ mod tests {
     fn every_generated_sdp_parses_back() {
         let sets = h264();
         let h265 = ([0x40, 1, 2], [0x42, 1, 3, 4], [0x44, 1]);
+        let want: [&[u8]; 4] = [&[33], &[96], &[96, 97], &[96]];
         for origin in [V4, IpAddr::V6(Ipv6Addr::LOCALHOST)] {
-            for t in all_shapes(&sets, &h265) {
-                let text = write_announce(&t, origin, 7).unwrap();
+            for (t, pts) in all_shapes(&sets, &h265).iter().zip(want) {
+                let text = write_announce(t, origin, 7).unwrap();
                 let sdp = Sdp::parse(text.as_bytes()).expect("parses");
-                assert!(!sdp.media.is_empty());
+                let got: Vec<u8> = sdp.media.iter().map(|m| m.payload_types[0]).collect();
+                assert_eq!(got, pts);
                 assert!(sdp.media.iter().all(|m| m.control.is_some()));
             }
         }
