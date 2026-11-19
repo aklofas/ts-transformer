@@ -20,7 +20,10 @@ Pre-release tags are ignored. A pin that is not a tag (FreeRTOS-POSIX) has no
 version to place in a range, so it gets no release or major-line finding, and
 every GitHub advisory published after the pinned commit is a "may affect"
 finding — "deps: GHSA-… may affect untagged freertos-posix pin 1a2b3c4d
-(high)"; the summary adds a commits-ahead note. A dependency with no advisory
+(high)"; the summary adds a commits-ahead note. An advisory published BEFORE
+the pinned commit is an "unassessed" finding until tests/coverage/
+advisory-assessments.toml records it as fixed-in-pin or not-affected (a row
+whose advisory the live query no longer returns is an error). A dependency with no advisory
 source (librist: GitLab-hosted, no NVD product) is printed as UNASSESSED.
 
 Findings become GitHub issues labelled `dependency-advisory`, deduplicated by
@@ -48,9 +51,14 @@ import re
 import subprocess
 import sys
 import time
+import tomllib
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
+
+ASSESSMENTS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..",
+                                "tests", "coverage", "advisory-assessments.toml")
+ASSESSED_VALUES = ("fixed-in-pin", "not-affected")
 
 LABEL = "dependency-advisory"
 LABEL_DESCRIPTION = "Opened by deps-advisory.yml: a vendored native dependency fell behind or has an advisory"
@@ -79,7 +87,7 @@ DEPS = [
 
 @dataclass
 class Finding:
-    kind: str   # release | major-line | advisory
+    kind: str   # release | major-line | advisory | unassessed
     title: str  # the dedupe key — deterministic per (dependency, version/id)
     body: str
 
@@ -293,17 +301,57 @@ def advisory_sources(dep: dict, tagged: bool = True) -> list[str]:
     return out
 
 
-def _untagged_findings(dep: dict, advisories, pin_date, pin_sha) -> list[Finding]:
+def load_assessments(path: str = ASSESSMENTS_PATH) -> list[dict]:
+    with open(path, "rb") as fh:
+        rows = tomllib.load(fh).get("assessment", [])
+    check_assessments(rows, None)
+    return rows
+
+
+def check_assessments(rows, advisories_by_submodule) -> None:
+    """Raise ValueError for a malformed row, and, given the live advisories per
+    submodule, for a row naming a submodule or advisory that is not among them."""
+    names = {d["name"] for d in DEPS}
+    for row in rows:
+        where = f"{row.get('submodule')}/{row.get('advisory')}"
+        if row.get("submodule") not in names:
+            raise ValueError(f"advisory assessment {where}: unknown submodule {row.get('submodule')!r}")
+        if not row.get("advisory"):
+            raise ValueError(f"advisory assessment {where}: no advisory id")
+        if row.get("assessed") not in ASSESSED_VALUES:
+            raise ValueError(f"advisory assessment {where}: assessed must be one of {ASSESSED_VALUES}")
+        if not str(row.get("reason", "")).strip():
+            raise ValueError(f"advisory assessment {where}: a reason is required")
+        if advisories_by_submodule is not None:
+            live = {a.get("ghsa_id") for a in advisories_by_submodule.get(row["submodule"], [])}
+            if row["advisory"] not in live:
+                raise ValueError(f"advisory assessment {where}: {row['advisory']} is not an advisory "
+                                 f"of {row['submodule']} any more; remove the row")
+
+
+def _untagged_findings(dep: dict, advisories, pin_date, pin_sha, assessments=()) -> list[Finding]:
     """Advisories for a pin that is not a tag: a range cannot be placed without
-    a version, so an advisory counts when it was published after the commit."""
+    a version, so an advisory published after the commit "may affect" the pin,
+    and one published before it is unassessed until a row records a decision."""
     out: list[Finding] = []
     name, path, url = dep["name"], dep["path"], dep["url"]
     short = pin_sha[:8] if pin_sha else "?"
+    assessed = {(r["submodule"], r["advisory"]) for r in assessments}
     for adv in advisories:
-        if not _after(adv.get("published_at"), pin_date):
-            continue
         gid = adv.get("ghsa_id", "GHSA-?")
         sev = adv.get("severity") or "unrated"
+        if not _after(adv.get("published_at"), pin_date):
+            if (name, gid) in assessed:
+                continue
+            out.append(Finding("unassessed", f"deps: {gid} is older than untagged {name} pin {short} and unassessed ({sev})",
+                               f"**{adv.get('summary', '')}**\n\n{gid}" + (f" / {adv['cve_id']}" if adv.get("cve_id") else "")
+                               + f"\nSeverity: {sev}\nPublished: {adv.get('published_at')}\n"
+                               f"Advisory: {adv.get('html_url', url + '/security/advisories')}\n\n"
+                               f"Submodule `{path}` is pinned at commit `{pin_sha or '?'}` (committed {pin_date or '?'}), "
+                               f"which is not a tag. The advisory was published before the pinned commit; "
+                               f"whether the pin carries the fix is not established. Record the answer in "
+                               f"`tests/coverage/advisory-assessments.toml` (`fixed-in-pin` or `not-affected`)."))
+            continue
         out.append(Finding("advisory", f"deps: {gid} may affect untagged {name} pin {short} ({sev})",
                            f"**{adv.get('summary', '')}**\n\n{gid}" + (f" / {adv['cve_id']}" if adv.get("cve_id") else "")
                            + f"\nSeverity: {sev}\nPublished: {adv.get('published_at')}\n"
@@ -315,10 +363,10 @@ def _untagged_findings(dep: dict, advisories, pin_date, pin_sha) -> list[Finding
 
 
 def build_findings(dep: dict, pin_tag, pin_version, tags, advisories, cves, pin_date=None,
-                   pin_sha=None) -> list[Finding]:
+                   pin_sha=None, assessments=()) -> list[Finding]:
     out: list[Finding] = []
     if pin_version is None:
-        return _untagged_findings(dep, advisories, pin_date, pin_sha)
+        return _untagged_findings(dep, advisories, pin_date, pin_sha, assessments)
     name, path, url = dep["name"], dep["path"], dep["url"]
     pinned = f"(pinned {pin_tag})"
     newest = newest_in_line(tags, pin_version)
@@ -511,7 +559,8 @@ def main(argv=None) -> int:
     repo = os.environ.get("DEPS_ADVISORY_REPO", "aklofas/ts-transformer")
 
     pins = pins_from_tree()
-    rows, findings = [], []
+    assessments = load_assessments()
+    rows, findings, advisories_by_name = [], [], {}
     for dep in DEPS:
         sha = pins[dep["path"]]
         tags = fetch_tags(dep)
@@ -522,8 +571,10 @@ def main(argv=None) -> int:
         pin_version = parsed[0] if parsed else None
         pin_date = next((d for t, _, d in tags if t == pin_tag and d), None) or fetch_commit_date(dep, sha)
         advisories = fetch_advisories(dep)
+        advisories_by_name[dep["name"]] = advisories
         cves = fetch_cves(dep["cpe"]) if dep.get("cpe") else []
-        found = build_findings(dep, pin_tag, pin_version, versions, advisories, cves, pin_date, sha)
+        found = build_findings(dep, pin_tag, pin_version, versions, advisories, cves, pin_date, sha,
+                               assessments)
         findings += found
         ahead = fetch_commits_ahead(dep, sha) if pin_version is None else None
         newest = newest_in_line(versions, pin_version) if pin_version else None
@@ -531,6 +582,8 @@ def main(argv=None) -> int:
                      newest[1] if newest else ("current" if pin_version else f"{ahead} commit(s) ahead upstream"),
                      ", ".join(advisory_sources(dep, pin_version is not None)) or "UNASSESSED",
                      len(advisories), len(cves), len(found)))
+
+    check_assessments(assessments, advisories_by_name)
 
     existing = set() if args.dry_run else existing_issue_titles(repo)
     fresh = new_findings(findings, existing)
