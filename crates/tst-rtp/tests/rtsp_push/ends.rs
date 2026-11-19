@@ -85,8 +85,7 @@ fn pings_and_a_pause_do_not_keep_a_push_past_the_publish_idle_timeout() {
     push.send_ts(&ts_packets(7, 0x66)).unwrap();
     push.pause().unwrap();
 
-    assert_eq!(end_reason_of(&push), EndReason::CleanTeardown);
-    assert!(!push.is_session_alive());
+    assert_eq!(end_reason_once_dead(&push), EndReason::CleanTeardown);
     s.until_no_publisher();
     assert_eq!(s.mount.stats().rtp_packets_received, 1);
     let sent = String::from_utf8_lossy(&relay.upstream()).into_owned();

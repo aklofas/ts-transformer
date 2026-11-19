@@ -26,8 +26,8 @@ default = ["rtp", "srt", "udp", "tcp", "rist", "pipeline", "hls", "tls", "webrtc
 # auth password wrapping). The `MuxSender<RtpTransport>` /
 # `DemuxReceiver<RtpRecvTransport>` convenience wrappers come from
 # tst-pipeline, which is an unconditional dependency (see `pipeline` below).
-# `tst-rtp?/rtsp-server` — tst-py ships the RTSP push server (mounts), so
-# this forwards tst-rtp's default-on server feature explicitly (tst-py
+# `tst-rtp?/rtsp-server` — tst-py ships the RTSP server (publisher ingest
+# included; mounts), so this forwards tst-rtp's default-on server feature explicitly (tst-py
 # itself sets `default-features = false` on tst-rtp below).
 rtp     = ["dep:tst-rtp", "dep:secrecy", "tst-rtp?/rtsp-server"]
 # `srt` pulls tst-srt + secrecy

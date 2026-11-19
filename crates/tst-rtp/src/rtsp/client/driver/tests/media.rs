@@ -482,6 +482,62 @@ fn pings_do_not_pile_up_behind_a_slow_reader() {
     h.stop_and_join();
 }
 
+/// Only an unwritten ping holds the next one back: a ping that falls due
+/// while media, and no ping, waits on the stream is queued behind that
+/// media, ahead of what is still in the queue. The peer's pace decides
+/// nothing: whenever the client's thread first runs after the ping is due,
+/// frames are still waiting to be moved, since moving them takes rounds of
+/// that thread and the peer's sleeps make the reading far slower than the
+/// ping interval.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_ping_due_behind_unwritten_media_is_queued_ahead_of_the_rest() {
+    const FRAMES: u32 = 1000;
+    const LEN: usize = 200;
+    const PING_INTERVAL: Duration = Duration::from_millis(5);
+    let (client, mut peer) = small_buffer_pair();
+    // The peer never stops reading, so the stall rule stays out of this.
+    let h = drive_with(
+        Stream::from_plain(client).unwrap(),
+        scaled(Duration::from_secs(60)),
+    );
+    let _unhang = unhang(&h.cancel);
+    let mut rest = Vec::new();
+    recording(&h, &mut peer, &mut rest);
+    // The peer reads nothing yet: the stream fills to its watermark and
+    // the rest waits in the queue, below its bound.
+    for seq in 0..FRAMES {
+        send(&h, media_frame(seq, LEN)).unwrap();
+    }
+    wait_until("the stream at its watermark", || {
+        h.media.unsent_high_water() >= MEDIA_WATERMARK
+    });
+    h.handle
+        .send(Command::EnableKeepalive(Some(PING_INTERVAL)))
+        .unwrap();
+    // 1 KiB every 5 ms: about a second for the 200 kB.
+    let mut units = Units::paced(rest, 1024, Duration::from_millis(5));
+    let mut frames = 0;
+    loop {
+        match units.next(&mut peer).expect("the stream is open") {
+            Unit::Request(head) => {
+                assert_eq!(whole_request(&head).method, RtspMethod::Options);
+                break;
+            }
+            frame => {
+                assert_media(&frame, frames, LEN);
+                frames += 1;
+            }
+        }
+    }
+    assert!(
+        frames < FRAMES,
+        "the ping came behind all {frames} frames: it waited for the stream to empty"
+    );
+    assert_eq!(h.end_reason.get(), None);
+    h.stop_and_join();
+}
+
 #[test]
 fn a_request_overtakes_queued_media() {
     const FRAMES: u32 = 1000;

@@ -1009,8 +1009,11 @@ fn a_ping_answered_454_keeps_the_media_queue_open() {
     assert_eq!(ping, 2, "the ping takes the CSeq after the request's");
     peer.write_all(format!("RTSP/1.0 454 Session Not Found\r\nCSeq: {ping}\r\n\r\n").as_bytes())
         .unwrap();
-    assert_eq!(h.wait_end(), EndReason::SessionExpired);
-    assert!(h.session_dead.load(Ordering::Acquire));
+    // The flag is stored after the reason: wait on the flag, then read it.
+    wait_until("the session dead", || {
+        h.session_dead.load(Ordering::Acquire)
+    });
+    assert_eq!(h.end_reason.get(), Some(EndReason::SessionExpired));
     peer.write_all(&rtp_frame(7, 8)).unwrap();
     expect_media(&data_rx, 7);
     h.stop_and_join();
@@ -1323,12 +1326,15 @@ fn a_ping_the_peer_does_not_take_records_keepalive_failed() {
     h.handle
         .send(Command::EnableKeepalive(Some(Duration::from_millis(1))))
         .unwrap();
-    match h.wait_end() {
-        EndReason::KeepaliveFailed { msg } => assert!(msg.contains("no progress"), "{msg}"),
+    // The flag is stored after the reason: wait on the flag, then read it.
+    wait_until("the session dead", || {
+        h.session_dead.load(Ordering::Acquire)
+    });
+    match h.end_reason.get() {
+        Some(EndReason::KeepaliveFailed { msg }) => assert!(msg.contains("no progress"), "{msg}"),
         other => panic!("expected KeepaliveFailed, got {other:?}"),
     }
     assert!(t0.elapsed() >= stall(), "stalled after {:?}", t0.elapsed());
-    assert!(h.session_dead.load(Ordering::Acquire));
     h.stop_and_join();
     let _ = done_tx.send(());
     peer.join().unwrap();

@@ -43,7 +43,7 @@ Runtime behind its own sync facade, and that Runtime is what the
 
 | Feature | Default | Pulls in | Enables |
 | --- | --- | --- | --- |
-| `rtsp-server` | **on** | `tokio`, `tokio-util` | `RtspServer` + mounts (the RTSP push server) |
+| `rtsp-server` | **on** | `tokio`, `tokio-util` | `RtspServer` + mounts (the RTSP server, publisher ingest included) |
 | `tls` | off | sync `rustls` | Client `rtsps://` (`RtspClient`) — no tokio |
 | `rtsp-server-tls` | off | `rtsp-server` + `tls` + `tokio-rustls` | The server's `rtsps://` TLS acceptor |
 

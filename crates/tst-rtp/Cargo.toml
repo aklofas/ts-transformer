@@ -56,14 +56,15 @@ socket2      = { workspace = true }
 libc       = { workspace = true }
 
 [features]
-# rtsp-server is default-ON: most consumers want the push server available.
+# rtsp-server is default-ON: most consumers want the RTSP server (publisher
+# ingest included) available.
 # It pulls tokio + tokio-util — the ONLY thing that puts tokio in the tree.
 # Client-only consumers (e.g. tst-uniffi mobile: RTP/RTSP client only) build
 # with `default-features = false` (+ "tls" for rtsps://) for a tokio-free
 # dependency tree.
 default = ["rtsp-server"]
-# RTSP push server (RtspServer + mounts). Runs an internal tokio Runtime
-# behind the sync facade.
+# RTSP server, publisher ingest included (RtspServer + mounts). Runs an
+# internal tokio Runtime behind the sync facade.
 rtsp-server = ["dep:tokio", "dep:tokio-util"]
 # Enable client `rtsps://` support — sync rustls 0.23 directly (no
 # tokio-rustls), since the client is a sync facade. Tokio-free

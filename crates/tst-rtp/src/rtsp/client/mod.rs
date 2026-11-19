@@ -770,8 +770,9 @@ impl RtspClient {
     /// Returns false once the session is known dead: the control
     /// connection ended (the peer closed or reset it, a write made no
     /// progress, or the peer broke the message framing), or a keepalive
-    /// ping was answered `454 Session Not Found` or could not be encoded.
-    /// Returns true until then.
+    /// ping was answered `454 Session Not Found` or could not be encoded;
+    /// also false once the client's thread has ended. Returns true until
+    /// then.
     pub fn is_session_alive(&self) -> bool {
         !self.session_dead.load(Ordering::Acquire)
     }

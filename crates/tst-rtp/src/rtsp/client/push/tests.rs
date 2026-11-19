@@ -1799,8 +1799,9 @@ fn a_ping_answered_454_gives_broken_and_session_expired() {
     });
     let pinging = builder(port, "/live").keepalive_interval(Duration::from_millis(40));
     let mut push = RtspPush::connect(pinging, &PushDescription::Mp2t).unwrap();
-    eventually("the ping's answer recorded", || push.end_reason().is_some());
-    assert!(!push.is_session_alive());
+    // The flag is stored after the reason: wait on the flag, then read it.
+    eventually("the session dead", || !push.is_session_alive());
+    assert_eq!(push.end_reason(), Some(EndReason::SessionExpired));
     let e = refused_send(&mut push);
     assert_eq!(broken_cause(&e), Some(BrokenCause::Unspecified), "{e:?}");
     assert_eq!(push.end_reason(), Some(EndReason::SessionExpired));
@@ -1859,10 +1860,8 @@ fn a_send_after_a_cancel_and_a_peer_close_is_explicit_close() {
     let mut push = RtspPush::connect(builder(port, "/live"), &PushDescription::Mp2t).unwrap();
     push.cancel_handle().cancel();
     close.send(()).unwrap();
-    eventually("the client's thread recorded the close", || {
-        push.end_reason().is_some()
-    });
-    assert!(!push.is_session_alive());
+    eventually("the session dead", || !push.is_session_alive());
+    assert!(push.end_reason().is_some());
     assert_eq!(push.send_ts(&ts(7, 0)), Err(TransportError::ExplicitClose));
     joined(peer);
 }
@@ -1934,10 +1933,9 @@ fn close_after_expiry_dropped_media(
     fill_the_queue(&mut push);
     let queue = push.client().driver.media_queue();
     open.send(push.cancel_handle()).unwrap();
-    eventually("the ping's answer recorded", || {
-        push.end_reason() == Some(EndReason::SessionExpired)
-    });
-    assert!(!push.is_session_alive());
+    // The flag is stored after the reason: wait on the flag, then read it.
+    eventually("the session dead", || !push.is_session_alive());
+    assert_eq!(push.end_reason(), Some(EndReason::SessionExpired));
     // The queue closes a moment after the session is marked dead.
     eventually("the queued frames dropped", || {
         push.stats().frames_dropped_at_close > 0

@@ -269,14 +269,16 @@ pub fn refused_send(push: &mut RtspPush) -> TransportError {
     }
 }
 
-/// Wait until the push has recorded why it ended; fails after five seconds.
-pub fn end_reason_of(push: &RtspPush) -> EndReason {
+/// Wait until the push's session reads dead, then say why it ended: the
+/// client's thread records the reason before it marks the session dead.
+/// Fails after five seconds.
+pub fn end_reason_once_dead(push: &RtspPush) -> EndReason {
     let give_up = Instant::now() + scaled(Duration::from_secs(5));
     loop {
-        if let Some(reason) = push.end_reason() {
-            return reason;
+        if !push.is_session_alive() {
+            return push.end_reason().expect("a dead session has its reason");
         }
-        assert!(Instant::now() < give_up, "the push never ended");
+        assert!(Instant::now() < give_up, "the session never read dead");
         std::thread::sleep(Duration::from_millis(5));
     }
 }

@@ -365,7 +365,7 @@ fn a_peer_close_on_a_udp_session_marks_the_session_dead() {
     assert!(client.is_session_alive());
     ready_tx.send(()).unwrap();
 
-    // The dead flag is set just before the reason is recorded: wait for both.
+    // The reason is recorded just before the dead flag is set: wait for both.
     let reason = wait_for(scaled(Duration::from_secs(2)), || {
         (!client.is_session_alive())
             .then(|| transport.end_reason())
@@ -1067,7 +1067,7 @@ fn a_udp_receiver_outlives_its_control_connection() {
     let client_port = client_port_rx.recv().unwrap();
     ready_tx.send(()).unwrap();
 
-    // The dead flag is set just before the reason is recorded: wait for both.
+    // The reason is recorded just before the dead flag is set: wait for both.
     let reason = wait_for(scaled(Duration::from_secs(2)), || {
         (!client.is_session_alive())
             .then(|| transport.end_reason())

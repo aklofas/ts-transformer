@@ -1941,8 +1941,10 @@ fn a_pull_setup_reply_naming_one_channel_twice_delivers_its_frames_as_rtp() {
     assert_eq!(o.setup, accepted(0, 3, 3));
     let ev = rtp_on(&mut e, 3);
     assert!(one_media_on(&ev, 0), "{ev:?}");
-    // A report on that channel is read as RTP too, and dropped as a
-    // malformed packet: there is no RTCP channel.
+    // A report on that channel is read as RTP too: there is no RTCP
+    // channel. One too short for an RTP header, as this one is, counts as
+    // malformed; a whole sender report passes the header and is handed
+    // on, and the receiver drops it by its payload type.
     assert!(rtcp_on(&mut e, 3).is_empty());
     assert_eq!(e.counters().rtp_frames, 2);
     assert_eq!(e.counters().rtcp_frames, 0);
