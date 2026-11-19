@@ -4,7 +4,8 @@ RTP-over-UDP carrying MPEG-TS (RFC 2250) or a bare H.264 elementary
 stream (RFC 6184), with an RTSP/1.0 + RTSP/2.0 client and server for
 session negotiation. The server serves PLAY readers from mounts the
 application pushes into and, since 0.8.0, accepts ANNOUNCE / RECORD
-publishers. Pure Rust, no native dependencies.
+publishers. The client plays a session, and also publishes one with
+ANNOUNCE / RECORD (`RtspPush`). Pure Rust, no native dependencies.
 
 Built on `tst-core`'s transport traits; pair with `tst-pipeline`'s
 `MuxSender`/`DemuxReceiver` shells for the MPEG-TS-over-RTP path. See
@@ -28,7 +29,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 ```
 
 **Stability:** RTP transports and H.264 packetization are **Stable**;
-`h265`, `opener` and `rtsp` are **Provisional**, and
+`h265`, `klv`, `opener` and `rtsp` are **Provisional**, and
 `rtsp::server::mount_rules` is **Experimental**. See the [API
 stability
 reference](https://github.com/aklofas/ts-transformer/blob/main/docs/reference/api-stability.md).

@@ -12,14 +12,20 @@
 //!   RTSP path [`RtspClient::setup_h264_auto`] → [`RtspSession::into_h264_receiver`].
 //!
 //! Both shapes share the RTSP/1.0 client and server for
-//! negotiated unicast / multicast / TCP-interleaved sessions. RTSP/2.0 (RFC 7826)
+//! negotiated unicast / multicast / TCP-interleaved sessions. The client
+//! also publishes: [`RtspClient::announce`], [`RtspClient::setup_record`]
+//! and [`RtspClient::record`] (or [`RtspPush::connect`] for all three) give
+//! an [`RtspPush`], which sends MPEG-TS, or an H.264 or H.265 track and
+//! an optional KLV track (RFC 6597), to a server on the RTSP connection.
+//! RTSP/2.0 (RFC 7826)
 //! requests are handled on the RFC 7826-compatible subset shared with RTSP/1.0;
 //! the server does not implement RTSP/2.0-only features (e.g. pipelining,
 //! REDIRECT, per-request timeouts). RTCP RR/SR ingest is wired on the
 //! TCP-interleaved (RFC 7826 §14) client path: peer RR populates
 //! `socket_stats().packets_lost_send` from the cumulative-lost field;
-//! `socket_stats().rtt_us` stays 0. No transport sends RTCP, and RTCP on the
-//! UDP transports is not received.
+//! `socket_stats().rtt_us` stays 0. An [`RtspPush`] sends RTCP sender
+//! reports for each of its tracks; no other transport sends RTCP, and RTCP
+//! on the UDP transports is not received.
 //!
 //! This crate provides the RTP-specific concrete types. The
 //! [`Transport`](tst_core::transport::Transport) /
