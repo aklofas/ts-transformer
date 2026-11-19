@@ -449,27 +449,29 @@ impl RtspPush {
     ///
     /// # Errors
     ///
-    /// - The TEARDOWN's result, as [`RtspClient::close`] reports it: a
-    ///   refusal is [`RtspError::Protocol`] with its status, an unanswered
-    ///   one [`RtspError::Timeout`], one on a connection that has ended
-    ///   [`RtspError::Io`].
-    /// - [`RtspError::LocalCancel`] on a cancelled push (the TEARDOWN is
-    ///   still written).
     /// - [`RtspError::Protocol`] with code `454` when the server had
     ///   forgotten the session (the end reason is `SessionExpired`) and
     ///   media was lost: RTP packets the push's earlier data calls had
-    ///   queued were dropped before being written. The TEARDOWN's own
-    ///   answer, which a server gives as `454` too, does not make that a
-    ///   success. A session the server forgot with no such packet dropped
-    ///   (every packet written, or only sender reports left in the queue)
-    ///   reports the TEARDOWN's result.
+    ///   queued were dropped before being written. The TEARDOWN is still
+    ///   sent, and the loss is reported whatever becomes of it: a server
+    ///   that accepts it (it answers `454` too) does not make the close a
+    ///   success, and a refusal with another status, a timeout or a failed
+    ///   connection does not take the place of the `454`. A session the
+    ///   server forgot with no such packet dropped (every packet written,
+    ///   or only sender reports left in the queue) reports the TEARDOWN's
+    ///   result.
+    /// - Otherwise the TEARDOWN's result, as [`RtspClient::close`] reports
+    ///   it: a refusal is [`RtspError::Protocol`] with its status, an
+    ///   unanswered one [`RtspError::Timeout`], one on a connection that
+    ///   has ended [`RtspError::Io`].
+    /// - [`RtspError::LocalCancel`] on a cancelled push (the TEARDOWN is
+    ///   still written).
     ///
     /// The client's thread is stopped on every outcome.
     pub fn close(mut self) -> Result<(), RtspError> {
         let drained = if self.closed { Ok(()) } else { self.flush() };
         // A session that expired leaves its connection open: the TEARDOWN
-        // below is written and accepted, perhaps with media dropped before
-        // it.
+        // below is written, perhaps with media dropped before it.
         let lost = media_lost(
             drained,
             self.client.end_reason.get(),
@@ -477,7 +479,9 @@ impl RtspPush {
             self.client.driver.frames_dropped_at_close(),
         );
         let torn_down = self.client.close();
-        if lost && torn_down.is_ok() {
+        // The loss, whatever the TEARDOWN came to: a caller that reads any
+        // other result takes every queued packet as written.
+        if lost {
             return Err(RtspError::Protocol {
                 code: 454,
                 reason: "Session Not Found".into(),

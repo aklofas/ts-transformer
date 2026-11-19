@@ -1851,11 +1851,10 @@ fn close_delivers_every_queued_frame_then_teardown() {
     assert!(matches!(units.last(), Some(Unit::Request(r)) if r.method == RtspMethod::Teardown));
 }
 
-/// A session the server forgot while media was queued: the frames are
-/// dropped, the TEARDOWN is still written and answered `454`, which ends
-/// the session as asked, and `close` does not report that as success.
-#[test]
-fn close_after_a_ping_454_dropped_queued_media_is_an_error() {
+/// `close` on a session the server forgot while media was queued: a ping
+/// is answered `454` with the queue full, the frames are dropped, and the
+/// TEARDOWN that `close` still writes is answered `teardown_status`.
+fn close_after_expiry_dropped_media(teardown_status: &'static str) -> Result<(), RtspError> {
     let (held, holding) = mpsc::channel::<()>();
     let (open, gate) = mpsc::channel::<()>();
     let (port, peer) = serve(move |peer| {
@@ -1867,18 +1866,19 @@ fn close_after_a_ping_454_dropped_queued_media_is_an_error() {
         held.send(()).unwrap();
         gate.recv_timeout(scaled(Duration::from_secs(20)))
             .expect("the test opens the gate");
-        // From here on the server knows no session: the held ping, every
-        // later one and the TEARDOWN are answered so.
+        // From here on the server knows no session: the held ping and
+        // every later one are answered so.
         peer.answer(&ping, "454 Session Not Found", "");
         loop {
             let unit = peer.read_unit().expect("a TEARDOWN before the hang-up");
             let Unit::Request(request) = unit else {
                 continue;
             };
-            peer.answer(&request, "454 Session Not Found", "");
             if request.method == RtspMethod::Teardown {
+                peer.answer(&request, teardown_status, "");
                 return;
             }
+            peer.answer(&request, "454 Session Not Found", "");
         }
     });
     let pinging = builder(port, "/live").keepalive_interval(Duration::from_millis(40));
@@ -1899,13 +1899,33 @@ fn close_after_a_ping_454_dropped_queued_media_is_an_error() {
     });
     let dropped = push.stats().frames_dropped_at_close;
     let r = push.close();
+    assert_eq!(queue.dropped_at_close(), dropped);
+    // The server read the TEARDOWN: its script ends there.
+    joined(peer);
+    r
+}
+
+/// A session the server forgot while media was queued: the frames are
+/// dropped, the TEARDOWN is still written and answered `454`, which ends
+/// the session as asked, and `close` does not report that as success.
+#[test]
+fn close_after_a_ping_454_dropped_queued_media_is_an_error() {
+    let r = close_after_expiry_dropped_media("454 Session Not Found");
     assert!(
         matches!(&r, Err(RtspError::Protocol { code: 454, .. })),
         "{r:?}"
     );
-    assert_eq!(queue.dropped_at_close(), dropped);
-    // The server read the TEARDOWN: its script ends there.
-    joined(peer);
+}
+
+/// The loss is what `close` reports, whatever the server then makes of
+/// the TEARDOWN: a refusal with another status does not take its place.
+#[test]
+fn close_reports_the_lost_media_whatever_the_teardown_is_answered() {
+    let r = close_after_expiry_dropped_media("501 Not Implemented");
+    assert!(
+        matches!(&r, Err(RtspError::Protocol { code: 454, .. })),
+        "{r:?}"
+    );
 }
 
 // ---- what close calls lost media -------------------------------------
