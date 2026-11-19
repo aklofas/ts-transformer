@@ -1477,7 +1477,8 @@ The surface:
 
 - `PushDescription.mp2t()`, `h264(parameter_sets, *, klv=False)`,
   `h264_from_key_frame(annexb, *, klv=False)`, `h265(vps, sps, pps, *,
-  klv=False)`, `h265_from_key_frame(annexb, *, klv=False)`. The
+  klv=False)`, `h265_from_key_frame(annexb, *, klv=False)`, each taking
+  any bytes-like object (`bytes`, `bytearray`, `memoryview`). The
   `*_from_key_frame` forms raise `ValueError` when the access unit lacks a
   parameter set; `h264()` given a list without an SPS and a PPS is refused
   by `push` with `RtspError(PROTOCOL)`.
@@ -1490,7 +1491,10 @@ The surface:
   Sender` move an MPEG-TS push into a sender shell; the session is closed
   afterwards. Both raise `ValueError` on an elementary push, and
   `into_mux_sender` raises `MuxError(CONFIG_INVALID)` for a refused config,
-  each leaving the session as it was.
+  each leaving the session as it was. Neither waits for a send, `pause()`
+  or `resume()` running on another thread: they raise `RuntimeError`,
+  consume nothing and leave the session open; a `stats()` in progress they
+  wait for.
 - `RtspPushStats`: `packets_sent`, `bytes_sent`, `sender_reports_sent`,
   `receiver_reports`, `fraction_lost_q8`, `cumulative_lost`,
   `frames_dropped_inbound`, `frames_dropped_at_close`.
@@ -1499,12 +1503,12 @@ How each call ends:
 
 | Call | Outcome | Meaning |
 |---|---|---|
-| `RtspClient.push` | `RtspError` | A step failed; the connection is closed. The kind, in the order a push meets them: `UNSUPPORTED_TRANSPORT` for `transport_pref=TransportPref.UDP` (refused before any SETUP is written); `PROTOCOL` for `rtsp_version=RtspVersion.V2_0` (no ANNOUNCE written), for a URL that does not parse and for a description that lacks a parameter set; `IO`, `TLS` and `TIMEOUT` for the connection, its TLS handshake and a request left unanswered; for a `401`, which the client answers once with the configured credential: `PROTOCOL` when the `401` carries no `WWW-Authenticate` header, `AUTH_FAILED` when no credential is configured or the retry is answered `401` again (the credential was refused), and `AUTH_REQUIRED` when the challenge offers no scheme the credential may answer (a Basic-only challenge under `DigestAuth`); `NOT_FOUND` for a `404` (no such path) and `PROTOCOL` for any other refused status (a server that does not take the codec answers `415`); for a SETUP reply the client cannot use, `PROTOCOL` (no `Transport` header, a transport that is not interleaved, no session, another session, or a channel pair it cannot take) and `UNSUPPORTED_TRANSPORT` (a `Transport` header whose port or channel pair does not parse). |
-| a data call | `RtpError(CLOSED)` | The cancel handle fired, or the session was closed. |
-| a data call | `RtpError(BROKEN)` | The server closed the connection, the connection failed or took no byte for 5 s, a keepalive ping was answered `454`, or the server broke the framing. Also a TS payload that is not whole packets, which leaves the session open. |
+| `RtspClient.push` | `RtspError` | A step failed; the connection is closed. The kind, in the order a push meets them: `UNSUPPORTED_TRANSPORT` for `transport_pref=TransportPref.UDP` or a URL carrying `?transport=udp` (refused before any SETUP is written); `PROTOCOL` for `rtsp_version=RtspVersion.V2_0` (no ANNOUNCE written), for a URL that does not parse and for a description that lacks a parameter set; `IO`, `TLS` and `TIMEOUT` for the connection, its TLS handshake and a request left unanswered; for a `401`, which the client answers once with the configured credential: `PROTOCOL` when the `401` carries no `WWW-Authenticate` header, `AUTH_FAILED` when no credential is configured or the retry is answered `401` again (the credential was refused), and `AUTH_REQUIRED` when the challenge offers no scheme the credential may answer (a Basic-only challenge under `DigestAuth`); `NOT_FOUND` for a `404` (no such path) and `PROTOCOL` for any other refused status (a server that does not take the codec answers `415`); for a SETUP reply the client cannot use, `PROTOCOL` (no `Transport` header, a transport that is not interleaved, no session, another session, or a channel pair it cannot take) and `UNSUPPORTED_TRANSPORT` (a `Transport` header whose port or channel pair does not parse). |
+| a data call | `RtpError(CLOSED)` | The cancel handle fired, or the session was closed; also a call that was waiting for the session when a `close()`, `teardown()` or conversion on another thread took it (it sends nothing). |
+| a data call | `RtpError(BROKEN)` | The server closed the connection, the connection failed or this machine's kernel took no byte of it for 5 s, a keepalive ping was answered `454`, or the server broke the framing. Also a TS payload that is empty or not whole packets, which leaves the session open. |
 | `send_ts` | `RtpError(TOO_LARGE)` | More than 1316 bytes; nothing sent. |
-| a data call | `ValueError` | A track the push did not announce (`send_klv` without `klv=True`, `send_video` / `send_klv` on an MPEG-TS push, `send_ts` on an elementary one) or an empty unit; nothing sent. |
-| `teardown()` | `RtspError` | The server refused the TEARDOWN (`PROTOCOL`, or `NOT_FOUND` for a 404), or had forgotten the session and queued media was dropped (`PROTOCOL`, status `454`); `TIMEOUT` when no reply came within the 500 ms; `IO` when the connection had ended; `CLOSED` on a cancelled push and on a session already closed. The session is closed either way. |
+| a data call | `ValueError` | A track the push did not announce (`send_klv` without `klv=True`, `send_video` / `send_klv` on an MPEG-TS push, `send_ts` on an elementary one) or an empty access unit or KLV unit; nothing sent. |
+| `teardown()` | `RtspError` | The first of these that applies: `CLOSED` on a cancelled push (and on a session already closed); `PROTOCOL` with status `454` when the server had forgotten the session and queued media was dropped, whatever the TEARDOWN is answered; for the TEARDOWN itself, `PROTOCOL` (or `NOT_FOUND` for a 404) when the server refused it, `TIMEOUT` when no reply came within the 500 ms and `IO` when the connection had ended. `None` only when the queued media was written and the server accepted the TEARDOWN. The session is closed either way. |
 | `close()`, the `with` exit | `None` | Whatever the server answered. |
 
 Rules the types do not enforce:
@@ -1513,14 +1517,21 @@ Rules the types do not enforce:
   queued for the client's thread. Against a server that reads slowly it
   waits, GIL released, until room frees, the cancel handle fires (within
   about 100 ms), the session ends, or the server has taken no byte for 5 s.
+  Keepalive pings go out one at a time, so what waits on such a server's
+  connection stays bounded.
   `pause()` and `close()` first wait for the queue the same way.
 - **One call at a time.** A second thread's call waits for the one in
-  progress; `stats()` and `is_session_alive()` wait while a send, `pause()`
-  or `resume()` runs. `cancel_handle()` answers at once and is the way to
-  end a waiting send. A `close()` or `teardown()` from another thread while
-  a send, `pause()` or `resume()` is in progress fires the cancel first:
-  that call raises `CLOSED`, what is queued is dropped, and the session
-  ends as a cancel.
+  progress; `stats()` too waits while a send, `pause()` or `resume()` runs.
+  `cancel_handle()` answers at once and is the way to end a waiting send.
+  `is_session_alive()` never waits and never raises: a call in progress on
+  another thread counts as live, and it reads `False` once the session is
+  closed or converted. A `close()` or `teardown()` fires the cancel first
+  only when a send, `pause()` or `resume()` on another thread holds the
+  session: that call raises `CLOSED`, what is queued is dropped, and the
+  session ends as a cancel. A send, `pause()` or `resume()` still waiting
+  for the session is not cancelled: it runs nothing and raises `CLOSED`,
+  and the close stays clean. A close that finds only a `stats()` holding
+  the session waits for it.
 - **Ending a push through a shell.** `MuxSender.finish()` cancels nothing:
   it writes what the sender holds and closes the push, which, while the
   session is up, writes its queue and then sends TEARDOWN. It cannot tell

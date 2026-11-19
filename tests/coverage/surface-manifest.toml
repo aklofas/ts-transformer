@@ -6098,7 +6098,7 @@ kind = "rust"
 crate = "tst-rtp"
 item = "tst_rtp::PUSH_MP2T_MAX_PAYLOAD"
 owning_tests = ["crates/tst-rtp/src/rtsp/client/push/tests.rs", "crates/tst-rtp/tests/rtsp_push/tls.rs"]
-bindings = ["c:deferred(the RTSP push client in the C API: docs/project/deferred-features.md)", "python:n/a(send_ts documents the 1316-byte limit and refuses a larger payload as TOO_LARGE)", "java:n/a(send_ts documents the 1316-byte limit and refuses a larger payload as TOO_LARGE)", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:deferred(the RTSP push client in the C API: docs/project/deferred-features.md)", "python:n/a(send_ts documents the 1316-byte limit and refuses a larger payload as TOO_LARGE)", "java:n/a(sendTs documents the 1316-byte limit and refuses a larger payload as TOO_LARGE)", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -6107,7 +6107,7 @@ kind = "rust"
 crate = "tst-rtp"
 item = "tst_rtp::rtsp::client::push::PUSH_MP2T_MAX_PAYLOAD"
 owning_tests = ["crates/tst-rtp/src/rtsp/client/push/tests.rs", "crates/tst-rtp/tests/rtsp_push/tls.rs"]
-bindings = ["c:deferred(the RTSP push client in the C API: docs/project/deferred-features.md)", "python:n/a(send_ts documents the 1316-byte limit and refuses a larger payload as TOO_LARGE)", "java:n/a(send_ts documents the 1316-byte limit and refuses a larger payload as TOO_LARGE)", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:deferred(the RTSP push client in the C API: docs/project/deferred-features.md)", "python:n/a(send_ts documents the 1316-byte limit and refuses a larger payload as TOO_LARGE)", "java:n/a(sendTs documents the 1316-byte limit and refuses a larger payload as TOO_LARGE)", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 

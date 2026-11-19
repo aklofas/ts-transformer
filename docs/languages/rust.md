@@ -588,22 +588,28 @@ the cookbook recipe, with what mediamtx and ffmpeg do with a push, is
 - **A send waits for the queue, not the wire.** The queue is bounded; a send
   waits for room until room frees, a cancel (`cancel_handle()`, from any
   thread, noticed within about 100 ms), the session's end, or 5 s in which
-  the connection took no byte. A server that keeps taking a few bytes within
-  every 5 s holds the send for as long as it does so: the cancel handle is
-  the way out. `close()`, `Transport::close` and `pause()` wait for the
-  queue the same way.
+  this machine's kernel took no byte of the connection (the 5 s start only
+  once its buffers and the server's are full). A server that keeps taking a
+  few bytes within every 5 s holds the send for as long as it does so: the
+  cancel handle is the way out. `close()`, `Transport::close` and `pause()`
+  wait for the queue the same way.
 - **How a push ends.** `end_reason()` names the end; the first reason stays.
   A data call after the end returns `ExplicitClose` once the cancel handle
   has fired (the session stays open until the push is closed or dropped),
   `Closed` after `Transport::close`, `Broken` with `BrokenCause::CleanEof`
   when the server closed the connection, and `Broken` with
-  `BrokenCause::Unspecified` when the connection failed or took no byte for
-  5 s, a keepalive ping was answered `454`, or the server broke the framing.
+  `BrokenCause::Unspecified` when the connection failed or this machine's
+  kernel took no byte of it for 5 s, a keepalive ping was answered `454`, or
+  the server broke the framing.
   A push's `Broken` never carries an `errno_code`.
 - **`close()` and the rest.** `close()` reports: `Ok(())` means the media
-  was written and the server accepted the TEARDOWN; `Protocol { code: 454 }`
-  means the server had forgotten the session and queued media was dropped;
-  another `Protocol` is a refused TEARDOWN. `Transport::close` (what a
+  was written and the server accepted the TEARDOWN. Otherwise it returns the
+  first of these that applies: `LocalCancel` once the cancel has fired;
+  `Protocol { code: 454 }` when the server had forgotten the session and
+  queued media was dropped, whatever the TEARDOWN is answered; the
+  TEARDOWN's own result (another `Protocol` is a refused TEARDOWN). With
+  `Transport` in scope, `push.close()` on a `&mut RtspPush` is
+  `Transport::close`; call this one as `RtspPush::close(push)`. `Transport::close` (what a
   shell's close and `finish()` call) waits the same way but does not wait
   for the thread and reports nothing. Dropping the push discards the queue
   and writes TEARDOWN without waiting. See

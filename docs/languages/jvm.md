@@ -2648,7 +2648,6 @@ control connection. The server may be mediamtx, this library's
 above) or any server that takes RTSP 1.0 RECORD over TCP.
 
 ```java
-import java.util.List;
 import org.tstrans.rtp.*;
 
 var cfg = RtspClientConfig.builder("rtsp://media.example:8554/cam1")
@@ -2683,7 +2682,9 @@ The surface:
   afterwards. A session announced with a video track throws
   `IllegalArgumentException`, and `intoMuxSender` throws
   `MuxException(CONFIG_INVALID)` for a refused config, each leaving the
-  session open.
+  session open. Neither waits for a send, `pause()` or `resume()` running on
+  another thread: they throw `IllegalStateException`, consume nothing and
+  leave the session usable; a `stats()` in progress they wait for.
 - `RtspPushStats` record: `packetsSent`, `bytesSent`, `senderReportsSent`,
   `receiverReports`, `fractionLostQ8`, `cumulativeLost`,
   `framesDroppedInbound`, `framesDroppedAtClose`.
@@ -2692,13 +2693,13 @@ How each call ends:
 
 | Call | Outcome | Meaning |
 |---|---|---|
-| `RtspClient.push` | `RtspException` | A step failed; the connection is closed. The kind, in the order a push meets them: `UNSUPPORTED_TRANSPORT` for `TransportPref.UDP` (refused before any SETUP is written); `PROTOCOL` for `RtspVersion.V2_0` (no ANNOUNCE written), for a URL that does not parse and for a description that lacks a parameter set; `IO`, `TLS` and `TIMEOUT` for the connection, its TLS handshake and a request left unanswered; for a `401`, which the client answers once with the configured credential: `PROTOCOL` when the `401` carries no `WWW-Authenticate` header, `AUTH_FAILED` when no credential is configured or the retry is answered `401` again (the credential was refused), and `AUTH_REQUIRED` when the challenge offers no scheme the credential may answer (a Basic-only challenge under `DigestAuth`); `NOT_FOUND` for a `404` (no such path) and `PROTOCOL` for any other refused status (a server that does not take the codec answers `415`); for a SETUP reply the client cannot use, `PROTOCOL` (no `Transport` header, a transport that is not interleaved, no session, another session, or a channel pair it cannot take) and `UNSUPPORTED_TRANSPORT` (a `Transport` header whose port or channel pair does not parse). |
-| a data call | `RtpException(CLOSED)` | The cancel handle fired. |
-| a data call | `RtpException(BROKEN)` | The server closed the connection, the connection failed or took no byte for 5 s, a keepalive ping was answered `454`, or the server broke the framing. Also a TS payload that is not whole packets, which leaves the session open. |
+| `RtspClient.push` | `RtspException` | A step failed; the connection is closed. The kind, in the order a push meets them: `UNSUPPORTED_TRANSPORT` for `TransportPref.UDP` or a URL carrying `?transport=udp` (refused before any SETUP is written); `PROTOCOL` for `RtspVersion.V2_0` (no ANNOUNCE written), for a URL that does not parse and for a description that lacks a parameter set; `IO`, `TLS` and `TIMEOUT` for the connection, its TLS handshake and a request left unanswered; for a `401`, which the client answers once with the configured credential: `PROTOCOL` when the `401` carries no `WWW-Authenticate` header, `AUTH_FAILED` when no credential is configured or the retry is answered `401` again (the credential was refused), and `AUTH_REQUIRED` when the challenge offers no scheme the credential may answer (a Basic-only challenge under `DigestAuth`); `NOT_FOUND` for a `404` (no such path) and `PROTOCOL` for any other refused status (a server that does not take the codec answers `415`); for a SETUP reply the client cannot use, `PROTOCOL` (no `Transport` header, a transport that is not interleaved, no session, another session, or a channel pair it cannot take) and `UNSUPPORTED_TRANSPORT` (a `Transport` header whose port or channel pair does not parse). |
+| a data call | `RtpException(CLOSED)` | The cancel handle fired; also a call that was waiting for the session when a `close()`, `teardown()` or conversion on another thread took it (it sends nothing). |
+| a data call | `RtpException(BROKEN)` | The server closed the connection, the connection failed or this machine's kernel took no byte of it for 5 s, a keepalive ping was answered `454`, or the server broke the framing. Also a TS payload that is empty or not whole packets, which leaves the session open. |
 | `sendTs` | `RtpException(TOO_LARGE)` | More than 1 316 bytes; nothing sent. |
-| a data call | `IllegalArgumentException` | A track the session did not announce, or an empty unit; nothing sent. |
-| any call | `IllegalStateException` | The session is closed. |
-| `teardown()` | `RtspException` | The server refused the TEARDOWN (`PROTOCOL`, or `NOT_FOUND` for a 404), or had forgotten the session and queued media was dropped (`PROTOCOL`, status `454`); `TIMEOUT` when no reply came within the 500 ms; `IO` when the connection had ended; `CLOSED` on a cancelled session. The session is closed on every outcome. |
+| a data call | `IllegalArgumentException` | A track the session did not announce, or an empty access unit or KLV unit; nothing sent. |
+| any call but `isSessionAlive()` | `IllegalStateException` | The session is closed. Also `intoMuxSender` / `intoSender` while a send, `pause()` or `resume()` runs on another thread (nothing consumed). |
+| `teardown()` | `RtspException` | The first of these that applies: `CLOSED` on a cancelled session; `PROTOCOL` with status `454` when the server had forgotten the session and queued media was dropped, whatever the TEARDOWN is answered; for the TEARDOWN itself, `PROTOCOL` (or `NOT_FOUND` for a 404) when the server refused it, `TIMEOUT` when no reply came within the 500 ms and `IO` when the connection had ended. A normal return means the queued media was written and the server accepted the TEARDOWN. The session is closed on every outcome. |
 | `close()`, try-with-resources | returns | Whatever the server answered. |
 
 Rules the types do not enforce:
@@ -2708,12 +2709,19 @@ Rules the types do not enforce:
   waits until room frees, the cancel handle fires (within about 100 ms),
   the session ends, or the server has taken no byte for 5 s. `pause()`,
   `teardown()` and `close()` first wait for the queue the same way.
+  Keepalive pings go out one at a time, so what waits on such a server's
+  connection stays bounded.
 - **One call at a time.** A call made while another is in progress on
-  another thread waits for it. `cancelHandle()` answers at once and is the
-  way to end a waiting send. `close()` and `teardown()` from another thread
-  while a send, `pause()` or `resume()` is in progress fire the cancel
-  first: that call throws `CLOSED`, what is queued is dropped, and the
-  TEARDOWN is written without the wait. Each `cancelHandle()` is a new
+  another thread waits for it. `cancelHandle()`, `isSessionAlive()` and
+  `sessionId()` answer at once; `cancelHandle()` is the way to end a
+  waiting send. `isSessionAlive()` never throws: a call in progress counts
+  as live, and it reads `false` once the session is closed, torn down or
+  converted. `close()` and `teardown()` fire the cancel first only when a
+  send, `pause()` or `resume()` is running on another thread: that call
+  throws `CLOSED`, what is queued is dropped, and the TEARDOWN is written
+  without the wait. A send, `pause()` or `resume()` only waiting for the
+  session is not cancelled: it runs nothing and throws `CLOSED`. A
+  `stats()` in progress is waited for. Each `cancelHandle()` is a new
   handle to close when done.
 - **Ending a push through a shell.** `MuxSender.finish()` cancels nothing:
   it writes what the sender holds, then, while the session is up, the

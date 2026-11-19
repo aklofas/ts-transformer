@@ -197,7 +197,7 @@ shipping RTP/RTSP client + SRT) get a tokio-free dependency tree.
 
 | Feature | Default | Enables |
 | --- | --- | --- |
-| `rtsp-server` | ✅ on | `RtspServer` + mounts (the RTSP push server and publisher ingest: ANNOUNCE / RECORD into publish mounts); pulls `tokio` + `tokio-util`. |
+| `rtsp-server` | ✅ on | `RtspServer` + mounts (the RTSP server, publisher ingest included: ANNOUNCE / RECORD into publish mounts); pulls `tokio` + `tokio-util`. |
 | `tls` | ❌ off | Client `rtsps://` (`RtspClient`, and the push client `RtspPush`) via sync rustls — no tokio either way. |
 | `rtsp-server-tls` | ❌ off | The server's `rtsps://` TLS acceptor (`tokio-rustls`); implies both `rtsp-server` and `tls` — Cargo has no other way to express "`tls` AND `rtsp-server`". |
 
@@ -732,13 +732,13 @@ RECORD, then RTP interleaved on the control connection. The recipe is
 | MPEG-TS track (RFC 2250) | ✅ | Whole TS packets, at most 1 316 bytes per RTP packet. |
 | H.264 (RFC 6184, mode 1) / H.265 (RFC 7798) track | ✅ | One access unit per call; NAL units over 1 400 bytes fragmented. |
 | KLV track (RFC 6597) | ✅ | Beside a video track; one RTP packet per unit up to 65 523 bytes. RTCP sender reports pair both tracks with one clock. |
-| Audio tracks | ❌ | Deferred. |
+| Audio tracks | ❌ | Deferred; audio travels inside an MPEG-TS push. See [deferred features](/docs/project/deferred-features.md#audio-tracks-in-the-rtsp-push-client). |
 | TCP-interleaved | ✅ | The only transport. |
 | UDP RECORD | ❌ | `?transport=udp` is refused; see [deferred features](/docs/project/deferred-features.md#udp-record-for-the-rtsp-push-client). |
 | RTSP 2.0 | ❌ | RTSP 2.0 has no ANNOUNCE or RECORD; refused before the ANNOUNCE is written. |
 | `rtsps://` | ✅ | Rust with `tls`; the Python and JVM bindings build with it. |
 | This library's `RtspServer` | ✅ | MPEG-TS, H.264, H.264 + KLV; an H.265 track or KLV without video answers `415`. |
-| mediamtx 1.21.4 | ✅ | In the interop matrix (MPEG-TS, and H.264 + KLV, read back by a reader). Sends no receiver reports to a TCP publisher; closes a recording publisher after 10 s without a byte, and the connection on any frame after PAUSE. |
+| mediamtx 1.21.4 | ✅ | In the interop matrix (MPEG-TS, and H.264 + KLV, read back by GStreamer). Sends no receiver reports to a TCP publisher; closes a recording publisher after 10 s without a byte, and the connection on any frame after PAUSE. |
 | ffmpeg 6.1, `-rtsp_flags listen` | ⚠️ | In the interop matrix (MPEG-TS). Answers TEARDOWN `501`, which `close()` reports as a refused TEARDOWN; no credentials, no TLS in listen mode; its MPEG-TS output misses the last access unit. |
 
 **Intentional per-language conveniences.** A small set of APIs exist only in

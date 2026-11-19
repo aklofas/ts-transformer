@@ -1692,6 +1692,19 @@ mean **Deferred**. An entry whose feature has shipped must never read
   link where head-of-line blocking on TCP costs more latency than a
   consumer can accept.
 
+## Audio tracks in the RTSP push client
+
+- **Status:** Deferred. A `PushDescription` announces one MPEG-TS track, or
+  one H.264 or H.265 track with an optional KLV track; it has no audio
+  track. Audio reaches a server inside an MPEG-TS push (`PushDescription::Mp2t`
+  under a `MuxSender` that muxes the audio stream).
+- **Why deferred:** No consumer has asked for it. Each audio codec needs its
+  own RTP payload format and SDP lines, and this library's `RtspServer`
+  takes no audio track from a publisher either (see "Audio and H.265
+  elementary RTSP publishers" above).
+- **Trigger to revisit:** A consumer that must publish audio as an
+  elementary track to a server that does not take MPEG-TS over RTP.
+
 ## The RTSP push client in the C API
 
 - **Status:** Deferred. Rust (`RtspPush`), Python (`RtspClient.push`,

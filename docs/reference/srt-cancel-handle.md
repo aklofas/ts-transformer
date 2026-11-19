@@ -261,7 +261,8 @@ outcome are listed once, in
   sets the cancel, discards the queue and writes TEARDOWN without waiting
   for its reply. Python's and the JVM's `close()` (and the `with` exit,
   try-with-resources) run `close()`, and fire the cancel first when a send,
-  `pause()` or `resume()` is in progress on another thread. See
+  `pause()` or `resume()` is running on another thread (a call only waiting
+  for the session is not cancelled: it runs nothing and ends `CLOSED`). See
   [RTSP push](#rtsp-push-what-a-cancel-and-each-close-do).
 - An `RtspServer`'s `stop()`, and every binding call that runs it (the
   JVM's `close()`, Python's `with` exit, `tst_rtsp_server_stop`), is not
@@ -337,6 +338,11 @@ connection has taken no byte for 5 s, which ends it. The 5 s count from
 when the operating system stops taking bytes, not from when the server
 stops reading; a server that keeps taking a few bytes within every 5 s
 holds the wait for as long as it does so, and the cancel is the way out.
+Keepalive pings go out one at a time: one still waiting for the connection
+to take its bytes is not followed by another, which falls due one interval
+later. However long such a server holds the connection, what waits on it
+stays bounded: at most 64 KiB of media and one frame, one request and one
+ping.
 
 **The cancel.** It ends a waiting data call, `pause()` or `close()`, and
 the push queues no more media: every data call from then on returns
@@ -350,7 +356,7 @@ on a cancelled push writes its TEARDOWN, drops what was queued and returns
 
 | Call | Waits for | Then | Reports |
 |---|---|---|---|
-| `RtspPush::close()` | the queue to be written (a last sender report per track queued first) | TEARDOWN, one 500 ms bound over writing it and its reply; up to 2 s for the client's thread | the TEARDOWN's result; `Protocol { code: 454 }` when the server had forgotten the session and queued media was dropped |
+| `RtspPush::close()` | the queue to be written (a last sender report per track queued first) | TEARDOWN, one 500 ms bound over writing it and its reply; up to 2 s for the client's thread | `Ok(())` when the queued media was written and the server accepted the TEARDOWN; otherwise the first of: `LocalCancel` once the cancel has fired; `Protocol { code: 454 }` when the server had forgotten the session and queued media was dropped, whatever the TEARDOWN is answered; the TEARDOWN's result |
 | `Transport::close` | the same | TEARDOWN under the same bound; tells the thread to stop without waiting | nothing (`stats().frames_dropped_at_close`, `end_reason()`) |
 | `Drop` | nothing | sets the cancel, discards the queue, writes TEARDOWN without waiting for its reply | nothing |
 
@@ -369,12 +375,19 @@ the JVM), so a caller who must know sends through the session's `send_ts`.
 
 **Python and the JVM.** `RtspPushSession.close()` (the `with` exit,
 try-with-resources) runs `RtspPush::close()` and reports nothing;
-`teardown()` runs it and raises the TEARDOWN's result. Either one called
-while a send, `pause()` or `resume()` is in progress on another thread
-fires the cancel first, so that call ends with `CLOSED` and the queue is
-dropped; one that finds only a `stats()` or `is_session_alive()` in
-progress waits for it and closes as an idle session does. A Python session
-collected without `close()` is the `Drop` row.
+`teardown()` runs it and raises what it reports (`CLOSED` for the cancel).
+Either one fires the cancel first only when a send, `pause()` or `resume()`
+holds the session on another thread: that call ends with `CLOSED` and the
+queue is dropped. A send, `pause()` or `resume()` still waiting for the
+session is not cancelled and not waited for: it gets the session after the
+close began, runs nothing and ends with `CLOSED`. A close that finds only
+a `stats()` in progress waits for it and closes as an idle session does.
+`is_session_alive()` (`isSessionAlive()`) and the cancel handle never wait.
+The conversions into a sender shell (`into_mux_sender` / `into_sender`,
+`intoMuxSender` / `intoSender`) do not wait for a send, `pause()` or
+`resume()`: they raise `RuntimeError` (throw `IllegalStateException`),
+consume nothing and leave the session usable; a `stats()` in progress they
+wait for. A Python session collected without `close()` is the `Drop` row.
 
 **One exception to "`Broken` means the end".** `TransportError::Broken`
 reads "Transport is dead. Caller must rebuild it (or rely on a managed

@@ -12,7 +12,7 @@
 > - [`/docs/languages/rust.md#rtsp-push-client`](/docs/languages/rust.md#rtsp-push-client), [Python](/docs/languages/python.md#rtsp-push-client), [JVM](/docs/languages/jvm.md#rtsp-push-client-orgtstransrtp): the API lists
 > - [Cross-thread cancellation](/docs/reference/srt-cancel-handle.md#rtsp-push-what-a-cancel-and-each-close-do): what a cancel, each close and a drop do to a push
 > - [Troubleshooting: RTSP push](/docs/troubleshooting.md#rtsp-push)
-> - [Deferred features](/docs/project/deferred-features.md): UDP RECORD, the push in the C API
+> - [Deferred features](/docs/project/deferred-features.md): UDP RECORD, audio tracks, the push in the C API
 
 The RTSP client publishes with the steps of RFC 2326 §10.3 and §10.11: it
 connects, sends ANNOUNCE with an SDP description of its tracks, sets each
@@ -128,7 +128,6 @@ raises the refusal. Data calls raise `RtpError`, control calls `RtspError`.
 ## Java
 
 ```java
-import java.util.List;
 import org.tstrans.mpegts.KlvStreamType;
 import org.tstrans.mpegts.MuxerConfig;
 import org.tstrans.mpegts.VideoCodec;
@@ -142,8 +141,10 @@ var program = MuxerConfig.builder()
     .addVideo(0x1011, VideoCodec.H264)
     .addKlv(0x1031, KlvStreamType.PRIVATE_DATA, true)
     .build();
-RtspPushSession push = RtspClient.push(cfg, PushDescription.mp2t());
-try (MuxSender tx = push.intoMuxSender(program)) { // consumes the session
+// The session is a resource too: a refused config leaves it open, and the
+// try closes it then; once the conversion succeeds its close does nothing.
+try (RtspPushSession push = RtspClient.push(cfg, PushDescription.mp2t());
+     MuxSender tx = push.intoMuxSender(program)) { // consumes the session
     for (int i = 0; i < frames.size(); i++) {
         long pts = i * 3000L;
         tx.sendVideo(frames.get(i), pts, i % 30 == 0);
@@ -186,6 +187,12 @@ reading, one measured send ended about 9.7 s after it first waited. A
 server that keeps taking a few bytes within every 5 s holds a send for as
 long as it does so; the cancel handle is the way out.
 
+Keepalive pings go out one at a time: while one still waits for the
+connection to take its bytes, the next is not queued behind it but falls
+due one interval later. So however long a server that reads slowly holds
+the connection, what waits on it stays bounded: at most 64 KiB of media and
+one frame, one request and one ping; the rest waits in the bounded queue.
+
 Pace your sends as an encoder does. mediamtx in its default configuration
 times what it relays by arrival (measured on 1.21.4), so a push that sends
 ten seconds of media in a burst reaches its readers as a burst.
@@ -194,7 +201,7 @@ ten seconds of media in a burst reaches its readers as a burst.
 
 | Call | Waits for | Writes | Reports |
 |---|---|---|---|
-| `RtspPush::close()` (Rust), `teardown()` (Python, JVM) | the queued media to be written, then up to 500 ms for TEARDOWN and its reply, then up to 2 s for the I/O thread | a last sender report per track, TEARDOWN | the TEARDOWN's answer: a refusal is `Protocol` with its status; `454` means the server had forgotten the session and queued media was dropped |
+| `RtspPush::close()` (Rust), `teardown()` (Python, JVM) | the queued media to be written, then up to 500 ms for TEARDOWN and its reply, then up to 2 s for the I/O thread | a last sender report per track, TEARDOWN | success only when the queued media was written and the server accepted the TEARDOWN; otherwise the first of: the cancel, once it has fired (`LocalCancel`; `CLOSED` in the bindings); `Protocol` with status `454` when the server had forgotten the session and queued media was dropped, whatever the TEARDOWN is answered; the TEARDOWN's own result (a refusal is `Protocol` with its status) |
 | `close()` (Python, JVM), the `with` exit, try-with-resources | the same | the same | nothing |
 | `Transport::close` (Rust; what a shell's close and `finish()` call) | the queued media, then up to 500 ms for TEARDOWN and its reply; does not wait for the thread | the same | nothing; `stats().frames_dropped_at_close` and `end_reason()` say what happened |
 | Drop of an `RtspPush`, collection of a Python session | nothing | TEARDOWN, without waiting for its reply | nothing; what was queued is discarded |
@@ -215,9 +222,18 @@ JVM so does the `close()` of either shell (`MuxSender` or `Sender`), so it
 can drop packets queued a moment before. In Rust, `Sender::close()` and a dropped `MuxSender` or
 `Sender` close the push without a cancel, with the same limit as `finish()`.
 
-`close()` in Python and on the JVM, called while a send is waiting on another
-thread, fires the cancel first: that send ends with `CLOSED` and what was
-queued is dropped. Called while nothing is in progress, it writes the queue.
+`close()` and `teardown()` in Python and on the JVM, called while a send,
+`pause()` or `resume()` is running on another thread, fire the cancel first:
+that call ends with `CLOSED` and what was queued is dropped. A call that is
+only waiting for the session is not cancelled: it runs nothing and ends with
+`CLOSED`. A `stats()` in progress is waited for, and called while nothing is
+in progress, the close writes the queue. `is_session_alive()`
+(`isSessionAlive()`) never waits: a call in progress counts as live, and it
+reads false once the session is closed or converted. The conversions
+(`into_mux_sender` / `into_sender`, `intoMuxSender` / `intoSender`) do not
+wait for a send, `pause()` or `resume()` running on another thread: they
+raise `RuntimeError` (throw `IllegalStateException`) and consume nothing,
+and the session stays usable; a `stats()` in progress they wait for.
 
 ### Keepalive and silence
 
@@ -279,7 +295,12 @@ recording. A credential given as `.auth(...)` (Rust) or `BasicAuth`
 which is mediamtx's default, without sending the password.
 
 The interop matrix pushes to mediamtx (MPEG-TS, and H.264 + KLV) and to
-ffmpeg's listener (MPEG-TS); see
+ffmpeg's listener (MPEG-TS). GStreamer reads each mediamtx stream back: the
+MPEG-TS capture must be byte-identical to what was sent, and the elementary
+one must hold every pushed NAL unit in order and the pushed KLV bytes.
+ffmpeg writes what it receives as its own re-mux, which drops the KLV; that
+cell checks the video access units and that the push's close found its
+queue written. See
 [validation evidence](/docs/project/validation-evidence.md).
 
 ### Not built
