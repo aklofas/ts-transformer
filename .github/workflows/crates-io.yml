@@ -77,12 +77,10 @@ jobs:
         run: bash scripts/check/repo/release-version-consistency.sh
 
       - name: Install build prerequisites
-        # librist's vendored build is meson-driven; libsrt + mbedTLS use
-        # cmake (pre-installed on GitHub runners). Needed by the verify
-        # builds of tstrans-{srt,rist}-sys / tst-srt / tst-rist.
-        run: |
-          sudo apt-get -o Acquire::Retries=5 update
-          sudo apt-get -o Acquire::Retries=5 install -y build-essential cmake pkg-config meson ninja-build
+        # librist's vendored build is meson-driven (meson from the hashed pip
+        # file); libsrt + mbedTLS use cmake (pre-installed on GitHub runners).
+        # Needed by the verify builds of tstrans-{srt,rist}-sys / tst-srt / tst-rist.
+        run: bash scripts/ci/install-build-tools.sh
 
       - uses: ./.github/actions/rust-setup
 
@@ -150,9 +148,8 @@ jobs:
             --cert-identity-regex "^https://github\.com/$GITHUB_REPOSITORY/\.github/workflows/release-qualify\.yml@refs/(heads/main|tags/v[0-9]+\.[0-9]+\.[0-9]+)$"
 
       - name: Install build prerequisites
-        run: |
-          sudo apt-get -o Acquire::Retries=5 update
-          sudo apt-get -o Acquire::Retries=5 install -y build-essential cmake pkg-config meson ninja-build
+        # meson from the hashed pip file; cmake, ninja and pkg-config are on the runner image.
+        run: bash scripts/ci/install-build-tools.sh
 
       - uses: ./.github/actions/rust-setup
 

@@ -84,14 +84,12 @@ jobs:
           submodules: recursive
 
       - name: Install build prerequisites
-        # build-essential/cmake/pkg-config: vendored libsrt + mbedTLS
-        # (cmake-driven, mirrors ci.yml's Linux prereqs). meson/ninja-build:
-        # vendored librist (meson-driven). Both native builds run as part
+        # cmake/pkg-config/C toolchain (on the runner image): vendored libsrt +
+        # mbedTLS (cmake-driven). meson (from the hashed pip file) + ninja (on
+        # the image): vendored librist (meson-driven). Both native builds run as part
         # of the `cargo build --release -p tst-interop` step below, since
         # tst-interop depends on tst-srt + tst-rist directly.
-        run: |
-          sudo apt-get -o Acquire::Retries=5 update
-          sudo apt-get -o Acquire::Retries=5 install -y build-essential cmake pkg-config meson ninja-build
+        run: bash scripts/ci/install-build-tools.sh
 
       - name: Install peer tools
         # Real third-party tools this matrix exchanges traffic with (see
@@ -150,8 +148,7 @@ jobs:
         #     (Google Chrome 155 at the time of writing); lib.sh's
         #     `whep_browser` also accepts a `chromium` binary. Each whep cell
         #     log records the version it ran.
-        run: |
-          sudo apt-get -o Acquire::Retries=5 install -y ffmpeg vlc mpv gstreamer1.0-tools gstreamer1.0-plugins-bad gstreamer1.0-plugins-base-apps gstreamer1.0-libav gstreamer1.0-rtsp jq
+        run: bash scripts/ci/apt-install.sh ffmpeg vlc mpv gstreamer1.0-tools gstreamer1.0-plugins-bad gstreamer1.0-plugins-base-apps gstreamer1.0-libav gstreamer1.0-rtsp jq
 
       - name: Install TSDuck
         # Not in Ubuntu's apt repos — install the pinned upstream .deb
@@ -175,7 +172,7 @@ jobs:
         run: |
           curl -sL --retry 5 -o /tmp/tsduck.deb "$TSDUCK_DEB_URL"
           echo "$TSDUCK_DEB_SHA256  /tmp/tsduck.deb" | sha256sum -c -
-          sudo dpkg -i /tmp/tsduck.deb || sudo apt-get -o Acquire::Retries=5 install -y -f
+          sudo dpkg -i /tmp/tsduck.deb || bash scripts/ci/apt-install.sh -f
           rm -f /tmp/tsduck.deb
           tsp --version
 
@@ -358,17 +355,15 @@ jobs:
           submodules: recursive
 
       - name: Install build prerequisites
-        run: |
-          sudo apt-get -o Acquire::Retries=5 update
-          sudo apt-get -o Acquire::Retries=5 install -y build-essential cmake pkg-config meson ninja-build
+        # meson from the hashed pip file; cmake, ninja and pkg-config are on the runner image.
+        run: bash scripts/ci/install-build-tools.sh
 
       - name: Install peer tools
         # The x86_64 job's list minus the players the subset leaves out
         # (vlc, mpv, gst-play-1.0) and Chrome. A package missing from the arm
         # index fails this step, and a tool missing from PATH skips its
         # cells (see the skip step below).
-        run: |
-          sudo apt-get -o Acquire::Retries=5 install -y ffmpeg gstreamer1.0-tools gstreamer1.0-plugins-bad gstreamer1.0-libav gstreamer1.0-rtsp jq
+        run: bash scripts/ci/apt-install.sh ffmpeg gstreamer1.0-tools gstreamer1.0-plugins-bad gstreamer1.0-libav gstreamer1.0-rtsp jq
 
       - name: Install TSDuck
         # The arm64 asset of the release the x86_64 job pins, its sha256
@@ -379,7 +374,7 @@ jobs:
         run: |
           curl -sL --retry 5 -o /tmp/tsduck.deb "$TSDUCK_DEB_URL"
           echo "$TSDUCK_DEB_SHA256  /tmp/tsduck.deb" | sha256sum -c -
-          sudo dpkg -i /tmp/tsduck.deb || sudo apt-get -o Acquire::Retries=5 install -y -f
+          sudo dpkg -i /tmp/tsduck.deb || bash scripts/ci/apt-install.sh -f
           rm -f /tmp/tsduck.deb
           tsp --version
 

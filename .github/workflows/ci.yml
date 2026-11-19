@@ -327,6 +327,36 @@ jobs:
         if: matrix.name == 'linux-x86_64'
         run: bash scripts/ci/tests/nightly-issue-selftest.sh
 
+      - name: apt-install self-test (retries, bounds, mirror drop)
+        # Runs scripts/ci/apt-install.sh against a stubbed apt.
+        if: matrix.name == 'linux-x86_64'
+        run: bash scripts/ci/tests/apt-install-selftest.sh
+
+      - name: install-build-tools self-test (meson from the hashed pip file)
+        # Runs scripts/ci/install-build-tools.sh against a stub python3 and pip.
+        if: matrix.name == 'linux-x86_64'
+        run: bash scripts/ci/tests/install-build-tools-selftest.sh
+
+      - name: install-ripgrep self-test (pinned release, checksum, retries)
+        # Runs scripts/ci/install-ripgrep.sh against a stub gh and uname.
+        if: matrix.name == 'linux-x86_64'
+        run: bash scripts/ci/tests/install-ripgrep-selftest.sh
+
+      - name: ci-health self-test (paged, retried job listing)
+        # Runs scripts/dev/ci-health.sh against a stub gh serving fixtures.
+        if: matrix.name == 'linux-x86_64'
+        run: bash scripts/ci/tests/ci-health-selftest.sh
+
+      - name: nightly-dedup self-test (one nightly run per sha)
+        # Runs scripts/ci/nightly-dedup.sh against a stub gh.
+        if: matrix.name == 'linux-x86_64'
+        run: bash scripts/ci/tests/nightly-dedup-selftest.sh
+
+      - name: manylinux-retry self-test (the wheel containers' install retry)
+        # Runs the retry helper of scripts/ci/manylinux-before-build.sh against a stub command.
+        if: matrix.name == 'linux-x86_64'
+        run: bash scripts/ci/tests/manylinux-retry-selftest.sh
+
       - name: fuzz-shard self-test (one shard of the fuzz leg against a stub cargo)
         # Runs scripts/ci/fuzz-shard.sh with stub `cargo` and `rustc`, then
         # merges its results. Gated to linux-x86_64: the fuzz leg runs there only.
@@ -1179,7 +1209,7 @@ jobs:
   test-linux-musl:
     name: test (linux-musl-x86_64, no-libsrt crates)
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -1209,7 +1239,7 @@ jobs:
         run: cargo build -p tst-core -p tst-pipeline --target x86_64-unknown-linux-musl
 
       - name: musl C compiler (criterion's alloca shim in the test build)
-        run: sudo apt-get -o Acquire::Retries=5 update && sudo apt-get -o Acquire::Retries=5 install -y musl-tools
+        run: bash scripts/ci/apt-install.sh musl-tools
 
       - name: cargo test (tst-core + tst-pipeline, musl)
         env:
@@ -1275,7 +1305,7 @@ jobs:
   no-std-baremetal:
     name: no_std bare-metal (compile + QEMU runtime)
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -1356,25 +1386,12 @@ jobs:
       # separate qemu-system-arm package, installed alongside it here).
       # No apt-package cache: the repository's Actions cache quota is
       # smaller than its cargo caches alone, so an apt entry is evicted
-      # before the next run. A slow `azure.archive.ubuntu.com` (tens of KB/s)
-      # is bounded instead: the first attempt gets ten minutes, then the
-      # sources switch to `archive.ubuntu.com` for one more attempt.
+      # before the next run. A slow mirror is bounded instead: each download
+      # attempt gets five minutes (a healthy mirror needs under one), and the
+      # script drops the first mirror before its second attempt.
+      # --no-recommends skips the GUI and audio libraries qemu-system-* recommends.
       - name: Install QEMU + ARM C cross-toolchain
-        timeout-minutes: 25
-        run: |
-          pkgs="qemu-system-arm qemu-system-misc gcc-arm-none-eabi libnewlib-arm-none-eabi libstdc++-arm-none-eabi-newlib"
-          install() {
-            sudo timeout 600 bash -c "apt-get -o Acquire::Retries=5 update && apt-get -o Acquire::Retries=5 install -y $pkgs"
-          }
-          if ! install; then
-            echo "::notice::apt install failed or timed out; retrying through archive.ubuntu.com"
-            for f in /etc/apt/sources.list.d/ubuntu.sources /etc/apt/sources.list; do
-              if [ -f "$f" ]; then
-                sudo sed -i 's#//azure\.archive\.ubuntu\.com#//archive.ubuntu.com#g' "$f"
-              fi
-            done
-            install
-          fi
+        run: bash scripts/ci/apt-install.sh --timeout 300 --no-recommends qemu-system-arm qemu-system-misc gcc-arm-none-eabi libnewlib-arm-none-eabi libstdc++-arm-none-eabi-newlib
 
       # Runtime gate: run the tst-core muxer + tst-pipeline shells on both a
       # Cortex-M4 (QEMU mps2-an386) and RISC-V (QEMU virt) core and assert
@@ -1501,9 +1518,8 @@ jobs:
           components: rustfmt
 
       - name: Install build prerequisites
-        run: |
-          sudo apt-get -o Acquire::Retries=5 update
-          sudo apt-get -o Acquire::Retries=5 install -y build-essential cmake pkg-config meson ninja-build
+        # meson from the hashed pip file; cmake, ninja and pkg-config are on the runner image.
+        run: bash scripts/ci/install-build-tools.sh
 
       - name: Install nightly + cargo-fuzz
         run: |
@@ -1570,8 +1586,8 @@ jobs:
   python-core:
     name: tst-py default tests
     runs-on: ubuntu-24.04
-    # The apt installs below (build prerequisites, gdb) have taken 5-7 min
-    # each on a slow runner mirror; 30 min keeps that from cutting pytest.
+    # The gdb install below goes through a slow runner mirror's retries
+    # (about 16 min before it gives up); 30 min keeps that from cutting pytest.
     timeout-minutes: 30
     # The default (non-pandas) pytest suite exercises Demuxer, Muxer, KLV
     # typed decode/encode, codec parsers, and io helpers. Python kinds come
@@ -1596,9 +1612,8 @@ jobs:
         run: bash scripts/check/python/publisher-class-mirror.sh
 
       - name: Install build prerequisites
-        run: |
-          sudo apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=60 update
-          sudo apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=60 install -y build-essential cmake pkg-config meson ninja-build
+        # meson from the hashed pip file; cmake, ninja and pkg-config are on the runner image.
+        run: bash scripts/ci/install-build-tools.sh
 
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
@@ -1618,8 +1633,7 @@ jobs:
         run: |
           cd bindings/python
           python -m venv .venv
-          .venv/bin/pip install --upgrade pip
-          .venv/bin/pip install maturin pytest pytest-timeout mypy
+          .venv/bin/pip install --require-hashes -r ../../scripts/ci/requirements-test-tools.txt
 
       - name: Build tst-py (maturin develop --release)
         # `py-test-hooks` adds the WebRTC loopback viewer probe that
@@ -1643,7 +1657,7 @@ jobs:
         run: |
           ulimit -c unlimited
           echo "${{ github.workspace }}/core.%p" | sudo tee /proc/sys/kernel/core_pattern
-          sudo apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=60 install -y gdb
+          bash scripts/ci/apt-install.sh gdb
 
       - name: pytest default (non-pandas)
         # pyproject.toml sets `addopts = "-m 'not pandas'"` so this runs
@@ -1686,9 +1700,8 @@ jobs:
           submodules: recursive
 
       - name: Install build prerequisites
-        run: |
-          sudo apt-get -o Acquire::Retries=5 update
-          sudo apt-get -o Acquire::Retries=5 install -y build-essential cmake pkg-config meson ninja-build
+        # meson from the hashed pip file; cmake, ninja and pkg-config are on the runner image.
+        run: bash scripts/ci/install-build-tools.sh
 
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
@@ -1707,8 +1720,7 @@ jobs:
         run: |
           cd bindings/python
           python -m venv .venv
-          .venv/bin/pip install --upgrade pip
-          .venv/bin/pip install maturin pytest pytest-timeout 'numpy>=1.24' 'pandas>=2.0'
+          .venv/bin/pip install --require-hashes -r ../../scripts/ci/requirements-test-tools-pandas.txt
 
       - name: Build tst-py (maturin develop --release)
         run: |
@@ -1765,9 +1777,8 @@ jobs:
           submodules: recursive
 
       - name: Install build prerequisites
-        run: |
-          sudo apt-get -o Acquire::Retries=5 update
-          sudo apt-get -o Acquire::Retries=5 install -y build-essential cmake pkg-config meson ninja-build
+        # meson from the hashed pip file; cmake, ninja and pkg-config are on the runner image.
+        run: bash scripts/ci/install-build-tools.sh
 
       - name: Rust toolchain, cargo cache
         uses: ./.github/actions/rust-setup
@@ -1813,11 +1824,12 @@ jobs:
           submodules: recursive
 
       - name: Install build prerequisites and abigail-tools
-        # abigail-tools is pinned to the version on the ubuntu-24.04 image;
-        # a runner image move makes the pin fail loudly, then re-pin.
+        # meson from the hashed pip file; abigail-tools (not on the runner
+        # image) is pinned to the ubuntu-24.04 archive's version; a runner
+        # image move makes the pin fail loudly, then re-pin.
         run: |
-          sudo apt-get -o Acquire::Retries=5 update
-          sudo apt-get -o Acquire::Retries=5 install -y build-essential cmake pkg-config meson ninja-build binutils abigail-tools=2.4-3build1
+          bash scripts/ci/install-build-tools.sh
+          bash scripts/ci/apt-install.sh binutils abigail-tools=2.4-3build1
 
       - name: Rust toolchain, cargo cache
         uses: ./.github/actions/rust-setup
@@ -1890,9 +1902,7 @@ jobs:
           fetch-depth: 0
 
       - name: Install valgrind
-        run: |
-          sudo apt-get -o Acquire::Retries=5 update
-          sudo apt-get -o Acquire::Retries=5 install -y valgrind
+        run: bash scripts/ci/apt-install.sh valgrind
 
       - name: Rust toolchain
         uses: ./.github/actions/rust-setup
