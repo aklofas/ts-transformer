@@ -47,6 +47,8 @@ pub(crate) const DATA_QUEUE_BOUND: usize = 1024;
 
 const THREAD_NAME: &str = "tst-rtsp-client";
 
+const ROUTE_MISMATCH: &str = "a request's sinks and its SETUP name different routes";
+
 /// Where RTCP reports from a route's interleaved RTCP channel are counted.
 pub(crate) struct RtcpSink {
     pub stats: Arc<Mutex<RtcpStats>>,
@@ -358,6 +360,11 @@ impl Driver {
         // plaintext it decrypted during the handshake.
         let mut readable = true;
         loop {
+            // Commands are taken only here, after the round before has
+            // delivered every event the engine had: no `Reply` is still
+            // waiting when a new request takes the place of `caller`, so a
+            // reply never misses its waiting caller or the sinks kept with
+            // it.
             if matches!(self.drain_commands(), Flow::Stop) {
                 break;
             }
@@ -418,11 +425,18 @@ impl Driver {
                     reply_deadline,
                     progress,
                 } => {
-                    debug_assert_eq!(
-                        spec.setup.map(|s| s.id),
-                        route.as_ref().map(|r| r.id),
-                        "a request's sinks and its spec name different routes"
-                    );
+                    // The reply installs the engine's route under the
+                    // spec's id and the sinks under their own: sinks that
+                    // name another route would take that route's frames,
+                    // and a route without sinks would lose its own. Such a
+                    // request is refused with nothing changed, the request
+                    // that is waiting included.
+                    if spec.setup.map(|s| s.id) != route.as_ref().map(|r| r.id) {
+                        let _ = progress.send(Progress::Done(Err(RtspError::NotAllowed {
+                            detail: ROUTE_MISMATCH,
+                        })));
+                        continue;
+                    }
                     // The engine forgets a replaced request: its caller
                     // sees the channel close.
                     self.caller = None;

@@ -1983,6 +1983,10 @@ fn a_udp_setup_reply_installs_nothing() {
     assert_eq!(o.response.status, 200);
     assert!(rtp_on(&mut e, 0).is_empty());
     assert_eq!(e.counters().malformed_frames, 1);
+    // The reply is taken all the same: the next ping names its session.
+    e.enable_keepalive(Some(Duration::from_secs(1)), t0);
+    e.handle_timeout(ms(t0, 1000), false);
+    assert_eq!(sent(&one(&mut e)).headers["session"], "S1");
 }
 
 /// A SETUP that names no route is not read for a channel pair.

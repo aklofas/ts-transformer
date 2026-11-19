@@ -595,6 +595,58 @@ fn a_setup_cut_off_by_the_streams_end_closes_its_queue() {
     h.stop_and_join();
 }
 
+/// Sinks that name another route than their request's SETUP, sinks with
+/// no SETUP route and a SETUP route with no sinks are refused before the
+/// engine sees the request: the sinks are dropped, nothing is written, and
+/// the request that was waiting still gets its reply.
+#[test]
+fn a_request_whose_sinks_and_setup_name_different_routes_is_refused() {
+    let (stream, mut peer) = plain_pair();
+    let h = drive(stream);
+    let mut rest = Vec::new();
+    let waiting = h.request(options());
+    assert!(matches!(next(&waiting), Progress::Written));
+    let head = read_head(&mut peer, &mut rest);
+
+    let setup_of = |id: u8| RequestSpec {
+        method: RtspMethod::Setup,
+        setup: Some(SetupRoute {
+            id: RouteId(id),
+            kind: RouteKind::Pull,
+        }),
+        ..options()
+    };
+    let sinks_of = |id: u8, media: Option<mpsc::SyncSender<Bytes>>| RouteSpec {
+        id: RouteId(id),
+        inbound_media: media,
+        inbound_rtcp: RtcpSink {
+            stats: Arc::new(Mutex::new(RtcpStats::default())),
+            ssrc: OUR_SSRC,
+        },
+    };
+    let refused = |spec: RequestSpec, route: Option<RouteSpec>| {
+        let rx = h.request_routed(spec, route);
+        match next(&rx) {
+            Progress::Done(Err(RtspError::NotAllowed { .. })) => {}
+            other => panic!("expected Done(Err(NotAllowed)), got {other:?}"),
+        }
+    };
+    let (data_tx, data_rx) = mpsc::sync_channel(8);
+    refused(setup_of(0), Some(sinks_of(1, Some(data_tx))));
+    assert_queue_closed(&data_rx);
+    refused(options(), Some(sinks_of(0, None)));
+    refused(setup_of(0), None);
+
+    peer.write_all(&ok_reply(cseq(&head))).unwrap();
+    assert_eq!(done_ok(next(&waiting)).status, 200);
+    // The refused requests took no CSeq and left no byte on the wire.
+    let rx = h.request(options());
+    assert!(matches!(next(&rx), Progress::Written));
+    assert_eq!(cseq(&read_head(&mut peer, &mut rest)), 2);
+    assert!(rest.is_empty(), "bytes behind the request");
+    h.stop_and_join();
+}
+
 /// On a route this side sends on, what the peer sends on the RTP channel
 /// is counted and dropped, and its receiver reports reach the route's
 /// stats.
