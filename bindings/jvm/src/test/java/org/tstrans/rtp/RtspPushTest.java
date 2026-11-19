@@ -168,12 +168,14 @@ class RtspPushTest {
 
     @Test
     @Timeout(30)
-    void aTeardownRacingAStatsReaderEndsCleanly() throws Exception {
+    void aTeardownWithAStatsReaderRunningEndsCleanly() throws Exception {
         assumeLinux();
         final int bundles = 50;
         try (RtspServer server = startServer();
              PublishMount mount = server.addPublishMount("/pub")) {
-            // Several rounds, so the TEARDOWN meets the reader inside stats() at least once.
+            // Nothing here shows the TEARDOWN met the reader inside stats(): the hooks-only
+            // probe tests below pin that case. This one checks the outcome with a real
+            // reader looping on another thread, over several rounds.
             for (int round = 0; round < 10; round++) {
                 long before = mount.stats().rtpPacketsReceived();
                 RtspPushSession push = RtspClient.push(serverConfig(server), PushDescription.mp2t());
@@ -853,13 +855,13 @@ class RtspPushTest {
 
         /**
          * Wait until a send is parked: no send has returned for 300 ms and the thread is
-         * inside the native send. Fails after 4 s, before the client's 5 s write stall.
+         * inside the native send. Fails if the sender ends first (the client's 5 s write
+         * stall ends it); otherwise the test's own timeout bounds the wait.
          */
         void awaitParked() throws InterruptedException {
-            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(4);
             long last = -1;
             long stillSince = System.nanoTime();
-            while (System.nanoTime() < deadline) {
+            while (true) {
                 if (!thread.isAlive()) fail("the sender ended before it parked: " + error.get());
                 long now = sent.get();
                 if (now != last) {
@@ -873,7 +875,6 @@ class RtspPushTest {
                 }
                 Thread.sleep(10);
             }
-            fail("the send never parked; " + sent.get() + " sends returned");
         }
 
         boolean join(long ms) throws InterruptedException {
