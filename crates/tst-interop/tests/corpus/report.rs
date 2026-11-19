@@ -28,6 +28,7 @@ fn sweep(pass: bool) -> SweepSummary {
         invariant_failures: 0,
         unused_accepts: vec![],
         baseline_matched: Some(12),
+        manifest_sha256: sha('o'),
         baseline_manifest_sha256: Some(sha('m')),
         klv_field_errors: 0,
         files_with_klv_field_errors: 0,
@@ -109,6 +110,7 @@ fn passing_sweep_and_replay_give_a_passing_row_with_the_counts() {
         (3, 5, 0)
     );
     assert_eq!(row.baseline_manifest_sha256, Some(sha('m')));
+    assert_eq!(row.manifest_sha256, sha('o'));
 }
 
 #[test]

@@ -65,6 +65,11 @@ pub struct Accepted {
     pub because: String,
 }
 
+/// The value of `manifest_sha256` in a record written before the field.
+pub(super) fn no_manifest_sha256() -> Sha256Hex {
+    Sha256Hex(String::new())
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SweepSummary {
     pub schema_version: u32,
@@ -88,6 +93,10 @@ pub struct SweepSummary {
     /// baseline the sweep compared with; `None` when it compared with none.
     #[serde(default)]
     pub baseline_manifest_sha256: Option<Sha256Hex>,
+    /// SHA-256 of the `manifest.txt` this sweep wrote: names the capture
+    /// set it swept. Empty in a `sweep.json` written before the field.
+    #[serde(default = "no_manifest_sha256")]
+    pub manifest_sha256: Sha256Hex,
     /// ST 0601 field errors over every capture's `default` configuration,
     /// one per field the lenient decoder could not read in a record it
     /// kept. No absolute threshold; against a baseline a changed count marks the
@@ -193,12 +202,21 @@ fn is_sha256(s: &str) -> bool {
     s.len() == 64 && s.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
 }
 
-fn write_manifest_lines(digests_dir: &Path, shas: &BTreeSet<Sha256Hex>) -> Result<(), String> {
+fn write_manifest_lines(
+    digests_dir: &Path,
+    shas: &BTreeSet<Sha256Hex>,
+) -> Result<Sha256Hex, String> {
     std::fs::create_dir_all(digests_dir)
         .map_err(|e| format!("cannot create the digests directory: {}", e.kind()))?;
     let text: String = shas.iter().map(|s| format!("{s}\n")).collect();
-    std::fs::write(digests_dir.join(BASELINE_MANIFEST), text)
-        .map_err(|e| format!("cannot write {BASELINE_MANIFEST}: {}", e.kind()))
+    std::fs::write(digests_dir.join(BASELINE_MANIFEST), &text)
+        .map_err(|e| format!("cannot write {BASELINE_MANIFEST}: {}", e.kind()))?;
+    Ok(Sha256Hex(
+        Sha256::digest(text.as_bytes())
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect(),
+    ))
 }
 
 /// Writes the manifest of a digests directory that has none: the
@@ -417,6 +435,7 @@ pub fn run(args: &SweepArgs) -> Result<SweepSummary, String> {
         unused_accepts: Vec::new(),
         baseline_matched: None,
         baseline_manifest_sha256,
+        manifest_sha256: no_manifest_sha256(),
         klv_field_errors: 0,
         files_with_klv_field_errors: 0,
         new_explained: 0,
@@ -523,7 +542,7 @@ pub fn run(args: &SweepArgs) -> Result<SweepSummary, String> {
             summary.baseline_only.push(sha.clone());
         }
     }
-    write_manifest_lines(&args.run.root.join("digests"), &digested)?;
+    summary.manifest_sha256 = write_manifest_lines(&args.run.root.join("digests"), &digested)?;
     for (u, (sha, _)) in used.iter().zip(&args.accepts) {
         if !u && !summary.unused_accepts.contains(sha) {
             summary.unused_accepts.push(sha.clone());
