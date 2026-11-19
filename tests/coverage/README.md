@@ -67,6 +67,12 @@ adapters run in these places:
   live database). Read by `scripts/dev/cargo-deny-all.sh` and, in release
   mode, by `scripts/gen/qualification.py`; `scripts/check/repo/advisory-db-pin.sh`
   keeps it empty or 40 hex.
+- **`api-churn.toml`** — one row per release: its breaks per stability tier
+  (from `scripts/gen/api_churn.py tally` over the release's
+  `cargo-semver-checks` report), or a note saying why there are none. Rendered
+  into `docs/reference/api-stability.md` by `scripts/gen/api-churn.sh`, which
+  `ci` runs with `--check`; a release's row lands in the first pull request
+  after its tag.
 - **`bench-accepted.toml`** — instruction-count growth accepted between two
   releases, one row per workload with the comparison base and what the
   instructions buy. Read by `scripts/dev/bench-ir.sh`, which fails CI when a
