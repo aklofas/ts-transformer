@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Self-test of scripts/dev/cargo-deny-all.sh against a stub `cargo` and a stub
 # `git` that log their arguments. An empty pin checks every workspace against
-# the live database; a set pin moves cargo-deny's own clone to that commit and
-# checks offline; a failing workspace is named and the others still run.
+# the live database with deny.toml as it is; a set pin moves cargo-deny's own
+# clone to that commit and checks offline, with a yanked crate a warning; a
+# failing workspace is named and the others still run.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
@@ -29,7 +30,10 @@ case " $* " in
                c="$(cat "$TMP/fetch-count" 2>/dev/null || echo 0)"; echo $((c + 1)) > "$TMP/fetch-count"
                [ "$c" -ge "$k" ] || exit 1
              done < <(cat "$TMP/fetch-fails" 2>/dev/null) ;;
-  *" check "*) echo "proxy=${https_proxy-} ${HTTPS_PROXY-} ${http_proxy-} ${HTTP_PROXY-} ${ALL_PROXY-} ${all_proxy-} no_proxy=[${no_proxy-unset}] NO_PROXY=[${NO_PROXY-unset}]" >> "$TMP/check-env.log"
+  *" check "*) cfg="$(printf '%s\n' "$@" | grep -A1 -x -e --config | tail -1)"
+               { grep '^yanked' "$cfg" || echo "no yanked line"; } >> "$TMP/yanked.log"
+               diff "$ROOT/deny.toml" "$cfg" | grep '^[<>]' >> "$TMP/config-diff.log" || true
+               echo "proxy=${https_proxy-} ${HTTPS_PROXY-} ${http_proxy-} ${HTTP_PROXY-} ${ALL_PROXY-} ${all_proxy-} no_proxy=[${no_proxy-unset}] NO_PROXY=[${NO_PROXY-unset}]" >> "$TMP/check-env.log"
                for m in $(cat "$TMP/deny-fails" 2>/dev/null); do
                  case " $* " in *"/$m "*) exit 1 ;; esac
                done ;;
@@ -61,11 +65,11 @@ exec "$@"
 STUB
 chmod +x "$TMP/bin/cargo" "$TMP/bin/git" "$TMP/bin/sleep" "$TMP/bin/timeout"
 export no_proxy=example.invalid NO_PROXY=example.invalid  # the script must empty both
-export TMP PATH="$TMP/bin:$PATH" CARGO_HOME="$TMP/cargo-home" ADVISORY_DB_PIN="$TMP/pin.toml"
+export ROOT TMP PATH="$TMP/bin:$PATH" CARGO_HOME="$TMP/cargo-home" ADVISORY_DB_PIN="$TMP/pin.toml"
 
 REV=0123456789abcdef0123456789abcdef01234567
 pin() { printf '# header\nrev = "%s"\n' "$1" > "$TMP/pin.toml"; }
-run() { : > "$TMP/cargo.log"; : > "$TMP/git.log"; : > "$TMP/sleep.log"; : > "$TMP/timeout.log"; : > "$TMP/check-env.log"; rm -f "$TMP/fetch-count" "$TMP/db-count" "$TMP/git-count"; rm -rf "$CARGO_HOME"; ${PRE:-:}; rc=0; bash "$SCRIPT" > "$TMP/out" 2>&1 || rc=$?; }
+run() { : > "$TMP/yanked.log"; : > "$TMP/config-diff.log"; : > "$TMP/cargo.log"; : > "$TMP/git.log"; : > "$TMP/sleep.log"; : > "$TMP/timeout.log"; : > "$TMP/check-env.log"; rm -f "$TMP/fetch-count" "$TMP/db-count" "$TMP/git-count"; rm -rf "$CARGO_HOME"; ${PRE:-:}; rc=0; bash "$SCRIPT" > "$TMP/out" 2>&1 || rc=$?; }
 DEAD=http://127.0.0.1:9
 count() { grep -c -e "$1" "$2" || true; }
 n=0
@@ -89,6 +93,8 @@ pin ""; run
 [ ! -s "$TMP/git.log" ] || fail "empty pin: git was called"
 grep -q 'proxy=http' "$TMP/check-env.log" && fail "empty pin: a live check was cut off the network"
 grep -q 'live' "$TMP/out" || fail "empty pin: the log does not say the database is live"
+[ "$(grep -cxF 'yanked = "deny"' "$TMP/yanked.log")" = 8 ] || fail "empty pin: a live check that does not deny a yanked crate: $(sort -u "$TMP/yanked.log")"
+[ ! -s "$TMP/config-diff.log" ] || fail "empty pin: a live check that does not read deny.toml as it is"
 n=$((n + 1))
 
 # 3. A failing workspace: exit 1, named, and the other seven still checked.
@@ -113,6 +119,9 @@ grep -q "advisory-db at $REV" "$TMP/out" || fail "set pin: the log does not name
 [ "$(count '^-k 10 120 cargo fetch --locked' "$TMP/timeout.log")" = 8 ] || fail "set pin: a cargo fetch without its bound"
 [ "$(grep -cxF "proxy=$DEAD $DEAD $DEAD $DEAD $DEAD $DEAD no_proxy=[] NO_PROXY=[]" "$TMP/check-env.log")" = 8 ] \
   || fail "set pin: an offline check that could still reach the network"
+[ "$(grep -cxF 'yanked = "warn"' "$TMP/yanked.log")" = 8 ] || fail "set pin: a pinned check that fails on a yanked crate: $(sort -u "$TMP/yanked.log")"
+[ "$(sort -u "$TMP/config-diff.log" | tr '\n' '|')" = '< yanked = "deny"|> yanked = "warn"|' ] \
+  || fail "set pin: the pinned config differs from deny.toml in more than the yanked key: $(sort -u "$TMP/config-diff.log")"
 n=$((n + 1))
 
 # 4b. A cargo fetch that fails twice is retried and the run passes; one that

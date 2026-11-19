@@ -165,7 +165,10 @@ step 3).
    An advisory published during the freeze does not turn `ci` red on the
    frozen commit, because the `deny` job reads the pinned database; the
    weekly `deps-advisory` workflow reports it against the live one, and the
-   maintainer decides whether it stops the release. A freeze need not hold a
+   maintainer decides whether it stops the release. A crate yanked during
+   the freeze is a warning in that pinned check, not an error (cargo-deny
+   reads yanks from the crates index, which the check refreshes); the weekly
+   run's live check fails on it. A freeze need not hold a
    scheduled run: before the tag, dispatch `deps-advisory` with `dry_run` and
    read its `rustsec` job.
 4. **`main` is green** — `ci`, `jvm-jar`, and `python-wheels` all passing on
