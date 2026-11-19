@@ -135,8 +135,8 @@ fn the_note_is_the_fixed_sentence() {
     assert_eq!(
         row.note,
         format!(
-            "Sweep 12 files: 10 identical, 2 changed and explained, 0 invariant failures, \
-             0 parse failures; replay 3 files over 5 paths, 0 failed. Compared with the \
+            "Sweep 12 files: 10 identical, 2 changed and explained, 0 new and accepted, \
+             0 invariant failures, 0 parse failures; replay 3 files over 5 paths, 0 failed. Compared with the \
              baseline whose manifest has SHA-256 {}: 12 captures matched.",
             sha('m')
         )
@@ -549,6 +549,13 @@ fn the_row_counts_accepted_new_captures_so_the_three_counts_add_up() {
     assert_eq!(
         row.identical + row.changed_explained + row.new_explained,
         row.files
+    );
+    assert!(
+        row.note.starts_with(
+            "Sweep 12 files: 9 identical, 2 changed and explained, 1 new and accepted,"
+        ),
+        "{}",
+        row.note
     );
 }
 

@@ -266,9 +266,10 @@ flag.
 
 ## How results are cited
 
-The archive row holds eight counts: files, identical, changed and explained,
-invariant failures, parse failures, replayed files, transport paths and failed
-replays. A run without a replay is not a pass, and neither is a run whose
+The archive row holds nine counts: files, identical, changed and explained,
+new and accepted, invariant failures, parse failures, replayed files, transport
+paths and failed replays (a row written before 0.11.0 has no new and accepted
+count). A run without a replay is not a pass, and neither is a run whose
 replay belongs to an earlier sweep: a new sweep removes the old replay's
 results, and the report accepts a replay only when it recorded the sweep's
 tree and the digests it ran against. The row is added to the archive
@@ -276,5 +277,5 @@ list that the release qualification reads.
 
 A release qualification run requires a passing corpus archive for the exact
 tree that was soaked, and its record carries a release-only line with those
-eight counts. See [validation evidence](/docs/project/validation-evidence.md)
+counts. See [validation evidence](/docs/project/validation-evidence.md)
 for how the record is published.
