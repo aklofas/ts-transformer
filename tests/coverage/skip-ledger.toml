@@ -145,6 +145,13 @@ path = "crates/tst-core/tests/regression/subtitle_interop.rs"
 class = "diagnostic"
 note = "Prints the subtitle-interop tool matrix for a human; asserts nothing. Run on demand with --ignored --nocapture."
 
+[[skip]]
+test = "tls_push_throughput"
+crate = "tst-rtp"
+path = "crates/tst-rtp/tests/rtsp_push/tls.rs"
+class = "diagnostic"
+note = "A measurement (Linux only): pushes 20 Mb/s for 30 s over rtsp:// and again over rtsps://, and prints the sends that waited, the widest gap between sends and the client thread's CPU time; no figure is asserted. Run on demand with --ignored --nocapture."
+
 # --- Environmental / live-resource unit tests -------------------------------
 
 [[skip]]
