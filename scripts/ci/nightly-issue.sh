@@ -1,9 +1,19 @@
 #!/usr/bin/env bash
 # Usage: nightly-issue.sh <sha> <run_url> <failed_jobs_csv>
+#        nightly-issue.sh close-if-open <sha> <run_url>
 # Opens an issue for a red nightly ci run, or comments on the open issue that
-# already carries the ci-nightly label. GH_REPO and GH_TOKEN come from the
-# environment.
+# already carries the ci-nightly label. close-if-open, after a green run,
+# closes that issue with a comment naming the run and does nothing when none is
+# open. GH_REPO and GH_TOKEN come from the environment.
 set -euo pipefail
+
+if [ "$1" = close-if-open ]; then
+  open="$(gh issue list --label ci-nightly --state open --json number --jq '.[0].number // empty')"
+  if [ -n "$open" ]; then
+    gh issue close "$open" --comment "The nightly \`ci\` run on \`$2\` passed: $3"
+  fi
+  exit 0
+fi
 
 sha="$1"
 run_url="$2"
