@@ -707,18 +707,22 @@ fn wave_i1_matrix_no_regression() {
     }
     let require_tools = std::env::var("TSTRANS_REQUIRE_INTEROP_TOOLS").is_ok_and(|v| v == "1");
     let census = census_failures(&rows, require_tools);
+    let ran = |t: &&str| {
+        rows.iter()
+            .filter(|r| {
+                r.tool == *t && !matches!(r.action, Action::Skip | Action::UnrelatedFailure)
+            })
+            .count()
+    };
     eprintln!(
         "Measured cells per tool: {:?}",
-        TOOLS
+        TOOLS.iter().map(|t| (*t, ran(t))).collect::<Vec<_>>()
+    );
+    eprintln!(
+        "Presence only, not counted: {:?}",
+        PRESENCE_ONLY
             .iter()
-            .chain(PRESENCE_ONLY)
-            .map(|t| (
-                *t,
-                rows.iter()
-                    .filter(|r| r.tool == *t
-                        && !matches!(r.action, Action::Skip | Action::UnrelatedFailure))
-                    .count()
-            ))
+            .map(|t| (*t, ran(t)))
             .collect::<Vec<_>>()
     );
     assert!(

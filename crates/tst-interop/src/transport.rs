@@ -1444,10 +1444,10 @@ mod tests {
     /// A secret in a caller's URL reaches no error text: the SRT and RIST
     /// keys and the RTSP password go through the open paths that can refuse
     /// them without a peer (a bad value, a port already bound, a refused
-    /// connection) in this module and in the serve modes. Not reached, as
-    /// they fail only against a live peer: the SRT connect and accept
-    /// sites, the TCP accept site and the RTSP publish mount, start and
-    /// transport sites.
+    /// connection, a 500 ms connect or accept timeout) in this module and in
+    /// the serve modes. Not reached, as they fail only against a live peer
+    /// or a cancel: the TCP accept site and the RTSP publish mount, start
+    /// and transport sites.
     #[test]
     fn a_failing_open_does_not_print_the_urls_secrets() {
         use crate::fixtures::{AuSizeMode, KlvSet};
@@ -1458,6 +1458,17 @@ mod tests {
         let udp_held = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
         let held_udp = udp_held.local_addr().unwrap().port();
         let srt = "srt://127.0.0.1:9?mode=bogus&passphrase=secret-phrase-1";
+        let free_udp = std::net::UdpSocket::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        let srt_connect = format!(
+            "srt://127.0.0.1:{free_udp}?mode=caller&connect_timeout=500&passphrase=secret-phrase-1"
+        );
+        let srt_accept = format!(
+            "srt://127.0.0.1:{free_udp}?mode=listener&connect_timeout=500&passphrase=secret-phrase-1"
+        );
         let srt_caller = "srt://127.0.0.1:9?mode=caller&passphrase=secret-phrase-1";
         let srt_bind =
             format!("srt://127.0.0.1:{held_udp}?mode=listener&passphrase=secret-phrase-1");
@@ -1484,6 +1495,8 @@ mod tests {
             refused("make_recv_bound srt", make_recv_bound(srt)),
             refused("make_recv_bound srt caller", make_recv_bound(srt_caller)),
             refused("make_recv_bound srt bind", make_recv_bound(&srt_bind)),
+            refused("make_send srt connect", make_send(&srt_connect)),
+            refused("make_recv srt accept", make_recv(&srt_accept)),
             refused("make_send rtsp", make_send(&rtsp)),
             refused("make_recv rtsp-publish", make_recv(publish)),
             refused("make_recv rtsp-publish bind", make_recv(&publish_bind)),
