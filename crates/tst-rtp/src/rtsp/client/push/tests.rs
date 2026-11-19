@@ -17,6 +17,7 @@ use super::{PUSH_MP2T_MAX_PAYLOAD, PushDescription, PushError, RtspPush, VideoTr
 use crate::error::RtspError;
 use crate::packet::RtpHeader;
 use crate::rtcp::{ReceiverReport, ReportBlock, SenderReport};
+use crate::rtsp::client::RtspClient;
 use crate::rtsp::client::builder::RtspClientBuilder;
 use crate::rtsp::client::media_queue::MEDIA_QUEUE_BOUND;
 use crate::rtsp::message::{RtspMethod, RtspRequest};
@@ -589,87 +590,133 @@ fn frames_use_the_channels_the_server_assigned() {
     assert_eq!(channels, [7, 6, 7]);
 }
 
-/// `setup_record` against a server that takes the first track and answers
-/// the second SETUP with `transport`: its result, and what the server read
-/// behind that reply while the client was still there.
-fn second_setup_answered(transport: &'static str) -> (Result<(), RtspError>, Vec<RtspRequest>) {
-    let (read, reading) = mpsc::channel();
+/// The reply headers of a SETUP the client can use, on `channels`.
+fn usable_setup(channels: &str) -> String {
+    format!("Session: {SESSION}\r\nTransport: RTP/AVP/TCP;unicast;interleaved={channels}\r\n")
+}
+
+/// What a server saw of a client whose `setup_record` it answered with a
+/// reply the client cannot use.
+struct RefusedSetup {
+    result: Result<(), RtspError>,
+    /// The requests the server read behind that reply, each answered `200`.
+    after: Vec<RtspRequest>,
+    /// The client, alive: the server has seen its connection end all the
+    /// same.
+    client: RtspClient,
+}
+
+/// `setup_record` of a video and a KLV track against a server that answers
+/// the SETUP of track `bad` with `headers` and the ones before it as asked.
+fn setup_answered(bad: usize, headers: &'static str) -> RefusedSetup {
+    let (noted, notes) = mpsc::channel();
+    let (hung_up, hang_up) = mpsc::channel();
     let (port, peer) = serve(move |peer| {
         let announce = peer.request();
         peer.answer(&announce, "200 OK", "");
-        let first = peer.request();
-        let headers = "Session: abc\r\nTransport: RTP/AVP/TCP;unicast;interleaved=0-1\r\n";
-        peer.answer(&first, "200 OK", headers);
-        let second = peer.request();
-        let headers = format!("Session: abc\r\nTransport: {transport}\r\n");
-        peer.answer(&second, "200 OK", &headers);
+        for track in 0..bad {
+            let setup = peer.request();
+            let channels = format!("{}-{}", 2 * track, 2 * track + 1);
+            peer.answer(&setup, "200 OK", &usable_setup(&channels));
+        }
+        let setup = peer.request();
+        peer.answer(&setup, "200 OK", headers);
         while let Some(Unit::Request(request)) = peer.read_unit() {
             // Noted before it is answered: the client reads the note once
             // it has the answer.
-            read.send(request.clone()).unwrap();
+            noted.send(request.clone()).unwrap();
             peer.answer(&request, "200 OK", "");
         }
+        hung_up.send(()).unwrap();
     });
     let mut client = builder(port, "/live").connect().unwrap();
     client.announce(&elementary(true)).unwrap();
-    let r = client.setup_record();
-    // Before the client is dropped: its drop would tear a session down too.
-    let after: Vec<RtspRequest> = reading.try_iter().collect();
-    assert!(client.session_id.is_none(), "the session was not given up");
-    drop(client);
+    let result = client.setup_record();
+    // With the client still here: its drop would end the connection too.
+    hang_up
+        .recv_timeout(scaled(Duration::from_secs(2)))
+        .expect("the refused reply did not end the connection");
     joined(peer);
-    assert_eq!(reading.try_iter().count(), 0, "the drop wrote a request");
-    (r, after)
+    let after = notes.try_iter().collect();
+    RefusedSetup {
+        result,
+        after,
+        client,
+    }
+}
+
+/// The client is finished: its reason is the server's fault, and a later
+/// call finds no connection.
+fn assert_finished(mut client: RtspClient) {
+    let reason = client.end_reason.get();
+    assert!(
+        matches!(reason, Some(EndReason::ProtocolError { .. })),
+        "{reason:?}"
+    );
+    assert!(client.session_id.is_none());
+    let r = client.options();
+    assert!(matches!(&r, Err(RtspError::Io(_))), "{r:?}");
+}
+
+const UDP_REPLY: &str =
+    "Session: abc\r\nTransport: RTP/AVP;unicast;client_port=5000-5001;server_port=6000-6001\r\n";
+
+/// The client takes no session from a reply it refuses, so on the first
+/// track it has none to tear down: ending the connection is what tells the
+/// server.
+#[test]
+fn a_refused_first_setup_reply_ends_the_connection_without_a_teardown() {
+    let seen = setup_answered(0, UDP_REPLY);
+    assert!(
+        matches!(&seen.result, Err(RtspError::BadResponse { .. })),
+        "{:?}",
+        seen.result
+    );
+    assert!(seen.after.is_empty(), "{:?}", seen.after);
+    assert_finished(seen.client);
 }
 
 #[test]
 fn a_udp_reply_to_a_record_setup_is_bad_response_and_tears_down() {
-    let (r, after) =
-        second_setup_answered("RTP/AVP;unicast;client_port=5000-5001;server_port=6000-6001");
-    assert!(matches!(&r, Err(RtspError::BadResponse { .. })), "{r:?}");
-    assert_eq!(after.len(), 1, "one request follows the reply");
-    assert_eq!(after[0].method, RtspMethod::Teardown);
-    assert_eq!(after[0].headers["session"], SESSION);
+    let seen = setup_answered(1, UDP_REPLY);
+    assert!(
+        matches!(&seen.result, Err(RtspError::BadResponse { .. })),
+        "{:?}",
+        seen.result
+    );
+    // The TEARDOWN, then the end of the connection.
+    assert_eq!(seen.after.len(), 1, "one request follows the reply");
+    assert_eq!(seen.after[0].method, RtspMethod::Teardown);
+    assert_eq!(seen.after[0].headers["session"], SESSION);
+    assert_finished(seen.client);
 }
 
 #[test]
 fn a_second_setup_reply_that_reuses_a_channel_is_bad_response_and_tears_down() {
-    let (r, after) = second_setup_answered("RTP/AVP/TCP;unicast;interleaved=1-2");
-    assert!(matches!(&r, Err(RtspError::BadResponse { .. })), "{r:?}");
-    assert_eq!(after.len(), 1, "one request follows the reply");
-    assert_eq!(after[0].method, RtspMethod::Teardown);
+    let seen = setup_answered(
+        1,
+        "Session: abc\r\nTransport: RTP/AVP/TCP;unicast;interleaved=1-2\r\n",
+    );
+    assert!(
+        matches!(&seen.result, Err(RtspError::BadResponse { .. })),
+        "{:?}",
+        seen.result
+    );
+    assert_eq!(seen.after.len(), 1, "one request follows the reply");
+    assert_eq!(seen.after[0].method, RtspMethod::Teardown);
+    assert_finished(seen.client);
 }
 
 #[test]
-fn a_first_setup_reply_without_a_session_is_bad_response() {
-    let (port, peer) = serve(|peer| {
-        let announce = peer.request();
-        peer.answer(&announce, "200 OK", "");
-        let setup = peer.request();
-        let headers = "Transport: RTP/AVP/TCP;unicast;interleaved=0-1\r\n";
-        peer.answer(&setup, "200 OK", headers);
-        peer.until_hangup().len()
-    });
-    let r = RtspPush::connect(builder(port, "/live"), &PushDescription::Mp2t);
-    assert!(matches!(&r, Err(RtspError::BadResponse { .. })), "{r:?}");
-    assert_eq!(joined(peer), 0, "no RECORD follows");
-}
-
-/// The client does not take a session from a reply it refuses, so it has
-/// none to tear down: closing the connection is what ends it.
-#[test]
-fn a_udp_reply_to_the_first_record_setup_is_bad_response_and_the_connection_closes() {
-    let (port, peer) = serve(|peer| {
-        let announce = peer.request();
-        peer.answer(&announce, "200 OK", "");
-        let setup = peer.request();
-        let headers = "Session: abc\r\nTransport: RTP/AVP;unicast;client_port=5000-5001\r\n";
-        peer.answer(&setup, "200 OK", headers);
-        peer.until_hangup().len()
-    });
-    let r = RtspPush::connect(builder(port, "/live"), &PushDescription::Mp2t);
-    assert!(matches!(&r, Err(RtspError::BadResponse { .. })), "{r:?}");
-    assert_eq!(joined(peer), 0);
+fn a_first_setup_2xx_without_a_session_header_is_bad_response_and_ends_the_connection() {
+    let seen = setup_answered(0, "Transport: RTP/AVP/TCP;unicast;interleaved=0-1\r\n");
+    assert!(
+        matches!(&seen.result, Err(RtspError::BadResponse { .. })),
+        "{:?}",
+        seen.result
+    );
+    assert!(seen.after.is_empty(), "{:?}", seen.after);
+    assert_finished(seen.client);
 }
 
 #[test]

@@ -11,22 +11,22 @@ pub use session::RtspPush;
 use std::sync::{Arc, Mutex};
 
 use bytes::Bytes;
-use tst_core::transport::TransportError;
+use tst_core::transport::{EndReason, TransportError};
 
 use crate::error::RtspError;
 use crate::rtcp::sender::TrackState;
 use crate::rtcp::stats::RtcpStats;
 use crate::rtsp::client::driver::{RouteSpec, RtcpSink};
 use crate::rtsp::client::engine::{
-    ReplyOutcome, RequestBody, RequestSpec, RouteId, RouteKind, SetupAccepted, SetupRoute,
+    RequestBody, RequestSpec, RouteId, RouteKind, SetupAccepted, SetupRoute,
 };
-use crate::rtsp::client::{CLOSE_TEARDOWN_BOUND, RtspClient};
+use crate::rtsp::client::{CLOSE_JOIN_BOUND, CLOSE_TEARDOWN_BOUND, RtspClient};
 use crate::rtsp::message::RtspMethod;
 use crate::sdp::write::{
     PT_KLV, PT_MP2T, PT_VIDEO, SdpTracks, SdpVideo, h264_parameter_sets, h265_parameter_sets,
     write_announce,
 };
-use crate::transport::random_u32;
+use crate::transport::{random_u32, record_end};
 use crate::url::RtspTransportPref;
 
 /// The largest payload [`RtspPush::send_ts`] takes: seven TS packets.
@@ -230,7 +230,6 @@ impl PushDescription {
 
 const SETUP_BEFORE_ANNOUNCE: &str = "SETUP for recording before ANNOUNCE";
 const SETUP_WITHOUT_SESSION: &str = "SETUP reply for recording names no session";
-const SETUP_NOT_INTERLEAVED: &str = "SETUP reply for recording is not interleaved";
 const RECORD_BEFORE_SETUP: &str = "RECORD before every track is set up";
 
 impl RtspClient {
@@ -309,27 +308,46 @@ impl RtspClient {
     ///   for a `2xx` reply the client cannot use: no session, a transport
     ///   that is not interleaved or does not parse, one channel for both
     ///   RTP and RTCP, a channel another track uses, or another session
-    ///   than the first SETUP's. With a session open the client then sends
-    ///   TEARDOWN (500 ms at most) before it returns the error.
+    ///   than the first SETUP's. The server may have made a session for
+    ///   that reply, so the client gives the session up before it returns
+    ///   the error. If it knows the session's id it sends TEARDOWN (500 ms
+    ///   at most); it knows the id only from a SETUP reply it accepted, so
+    ///   not when the first track's reply is the one it refuses. In every
+    ///   case it then ends its connection and waits up to 2 s for its
+    ///   thread, so the server's session ends with the connection at the
+    ///   latest. The client is finished after that: every later request
+    ///   on it is [`RtspError::Io`].
     /// - The other errors of [`Self::announce`].
     pub fn setup_record(&mut self) -> Result<(), RtspError> {
         if self.url.transport_preference == RtspTransportPref::ForceUdp {
             return Err(self.refused(RtspError::UnsupportedTransport));
         }
-        let count = self.push.as_ref().map_or(0, |p| p.tracks.len());
-        if count == 0 {
+        // Out of the client for the loop, which borrows the client for
+        // each request and a track beside it.
+        let Some(mut announced) = self.push.take() else {
             return Err(self.refused(RtspError::NotAllowed {
                 detail: SETUP_BEFORE_ANNOUNCE,
             }));
-        }
+        };
+        let r = self.setup_record_tracks(&mut announced.tracks);
+        self.push = Some(announced);
+        r
+    }
+
+    fn setup_record_tracks(&mut self, tracks: &mut [Track]) -> Result<(), RtspError> {
         let base = self.url.render_no_credentials();
         // Some servers take a track's URL only in exactly this form.
         let base = base.strip_suffix('/').unwrap_or(&base);
-        for index in 0..count {
-            let accepted = self.setup_record_track(index, format!("{base}/streamid={index}"))?;
+        for (index, track) in (0u8..).zip(tracks) {
+            let taken = self.setup_record_track(index, track, format!("{base}/streamid={index}"));
+            if let Err(e @ (RtspError::BadResponse { .. } | RtspError::UnsupportedTransport)) =
+                &taken
+            {
+                self.give_up_after(e);
+            }
             // Media goes out on the pair the server named, which need not
             // be the pair asked for.
-            if let Some(track) = self.push.as_mut().and_then(|p| p.tracks.get_mut(index)) {
+            if let Some(accepted) = taken? {
                 track.channels = (accepted.rtp_channel, accepted.rtcp_channel);
             }
         }
@@ -339,18 +357,12 @@ impl RtspClient {
     /// One track's SETUP: the route its reply installed.
     fn setup_record_track(
         &mut self,
-        index: usize,
+        index: u8,
+        track: &Track,
         uri: String,
-    ) -> Result<SetupAccepted, RtspError> {
-        let track =
-            self.push
-                .as_ref()
-                .and_then(|p| p.tracks.get(index))
-                .ok_or(RtspError::NotAllowed {
-                    detail: SETUP_BEFORE_ANNOUNCE,
-                })?;
+    ) -> Result<Option<SetupAccepted>, RtspError> {
         let (rtp, rtcp) = track.channels;
-        let id = RouteId(index as u8);
+        let id = RouteId(index);
         // The server's receiver reports for this track arrive on its RTCP
         // channel; no media does.
         let route = RouteSpec {
@@ -371,39 +383,24 @@ impl RtspClient {
             headers.push(("session", sid.clone()));
         }
         let deadline = self.request_deadline();
-        let taken = self
-            .request_routed(
-                RequestSpec {
-                    method: RtspMethod::Setup,
-                    uri,
-                    headers,
-                    body: None,
-                    announce_tracks: None,
-                    setup: Some(SetupRoute {
-                        id,
-                        kind: RouteKind::Push,
-                    }),
-                },
-                Some(route),
-                deadline,
-                None,
-            )
-            .and_then(|outcome| self.take_record_setup(outcome));
-        if let Err(RtspError::BadResponse { .. } | RtspError::UnsupportedTransport) = &taken {
-            // The server may hold a session for a reply this side cannot
-            // use: it is told the session is over.
-            let _ = self.teardown_within(CLOSE_TEARDOWN_BOUND);
-        }
-        taken
-    }
-
-    /// Judge an answered record-mode SETUP and learn the session from the
-    /// first one.
-    fn take_record_setup(&mut self, outcome: ReplyOutcome) -> Result<SetupAccepted, RtspError> {
+        let outcome = self.request_routed(
+            RequestSpec {
+                method: RtspMethod::Setup,
+                uri,
+                headers,
+                body: None,
+                announce_tracks: None,
+                setup: Some(SetupRoute {
+                    id,
+                    kind: RouteKind::Push,
+                }),
+            },
+            Some(route),
+            deadline,
+            None,
+        )?;
         self.expect_2xx(&outcome.response)?;
-        let accepted = outcome.setup.ok_or(RtspError::BadResponse {
-            detail: SETUP_NOT_INTERLEAVED,
-        })?;
+        // The session is the first SETUP reply's.
         if self.session_id.is_none() {
             let sid = outcome
                 .response
@@ -413,7 +410,26 @@ impl RtspClient {
                 })?;
             self.session_id = Some(sid.to_string());
         }
-        Ok(accepted)
+        Ok(outcome.setup)
+    }
+
+    /// The server answered a SETUP `2xx` with a reply this side cannot
+    /// use, and may hold a session for it. With the session's id known it
+    /// is told so; the id of a refused first reply is not known, so in
+    /// every case the connection is ended, which ends the server's session
+    /// with it.
+    fn give_up_after(&mut self, e: &RtspError) {
+        // First, so that neither the TEARDOWN's answer nor the stop below
+        // names another reason.
+        record_end(
+            &self.end_reason,
+            EndReason::ProtocolError {
+                msg: format!("unusable SETUP reply: {e}"),
+            },
+        );
+        let _ = self.teardown_within(CLOSE_TEARDOWN_BOUND);
+        self.driver.stop();
+        let _ = self.driver.join_within(CLOSE_JOIN_BOUND);
     }
 
     /// Send RECORD: the server starts taking media, and the client becomes
