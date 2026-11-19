@@ -10,9 +10,9 @@ name: ci-health
 
 on:
   schedule:
-    # Mondays 06:00 UTC — after the interop cron (05:00) has queued, so the
-    # snapshot's window boundary does not split a Monday run.
-    - cron: '0 6 * * 1'
+    # Mondays, off the hour (GitHub delays runs queued at the top of it); the
+    # snapshot covers the last seven days.
+    - cron: '17 6 * * 1'
   workflow_dispatch:
 
 permissions:
