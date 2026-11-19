@@ -326,9 +326,12 @@ int main(int argc, char **argv) {
      * simply binds the socket.
      */
     TstRtpDemuxReceiver *rx = tst_rtp_demux_receiver_open(url, NULL);
+    /* The query can carry a secret (`passphrase=`, `token=`), so only the part
+     * before the `?` is printed: `%.*s` with strcspn stops there. */
     if (!rx) {
         fprintf(stderr,
-                "tst_rtp_demux_receiver_open(\"%s\") failed: %s\n",
+                "tst_rtp_demux_receiver_open(\"%.*s\") failed: %s\n",
+                (int) strcspn(url, "?"),
                 url,
                 tst_get_last_error_str());
         return 1;
@@ -347,7 +350,7 @@ int main(int argc, char **argv) {
      * and the library's threads exist (they keep the blocked mask). */
     pthread_sigmask(SIG_UNBLOCK, &sigs, NULL);
 
-    fprintf(stderr, "Opened: %s\n", url);
+    fprintf(stderr, "Opened: %.*s\n", (int) strcspn(url, "?"), url);
     fprintf(stderr, "Waiting for MPEG-TS events. Press Ctrl-C to stop.\n");
 
     /*

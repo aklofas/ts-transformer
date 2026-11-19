@@ -167,13 +167,15 @@ int main(int argc, char **argv) {
      * where you don't care which port is used).
      */
     TstTcpListener *listener = tst_tcp_listener_from_url(url);
+    /* The query can carry a secret (`passphrase=`, `token=`), so only the part
+     * before the `?` is printed: `%.*s` with strcspn stops there. */
     if (!listener) {
         fprintf(stderr,
-                "tst_tcp_listener_from_url(\"%s\") failed: %s\n",
-                url, tst_get_last_error_str());
+                "tst_tcp_listener_from_url(\"%.*s\") failed: %s\n",
+                (int) strcspn(url, "?"), url, tst_get_last_error_str());
         return 1;
     }
-    fprintf(stderr, "[tcp_recv] listener bound: %s\n", url);
+    fprintf(stderr, "[tcp_recv] listener bound: %.*s\n", (int) strcspn(url, "?"), url);
 
     /*
      * ── Step 2: Accept one connection ────────────────────────────────────
