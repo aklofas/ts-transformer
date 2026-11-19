@@ -125,8 +125,8 @@ root as `#[path = "rtsp_server/publish/<file>.rs"] mod publish_<file>;` — one
 | `fixtures/raw_rtsp_server.rs` | hand-rolled blocking RTSP server peer for client tests (`read_request` with a persistent `leftover` buffer, `answer_describe_and_setup`, `force_reset` RST close, `SDP_BODY`) |
 | `fixtures/ports.rs` | `free_rtp_port_base`, `#[path]`-included by the `rtp` and `conformance` binaries |
 | `fixtures/mod.rs` | `wait_for` (poll-with-budget) beside the module declarations |
-| `fixtures/publish_mount.rs` | what a test reads back from a publish mount: `video_samples`, `klv_events` and the video / KLV PIDs (lifted from `publish/es_h264.rs` and `publish/es_h264_klv.rs`, which use them from here) |
-| `fixtures/tcp_relay.rs` | `TcpRelay`: a one-connection relay that keeps both directions' bytes and can stop reading from the client (a server that stopped reading) |
+| `fixtures/publish_mount.rs` | what a test reads back from a publish mount: `video_samples`, `klv_events`, `contains` and the video / KLV PIDs (lifted from `publish/es_h264.rs` and `publish/es_h264_klv.rs`, which use them from here) |
+| `fixtures/tcp_relay.rs` | `TcpRelay`: a one-connection relay that keeps both directions' bytes and can read from the client slowly (a server that reads slowly but never stalls) |
 
 ### `rtsp_push/` — the RTSP push client (`RtspPush`) against `RtspServer`'s publisher role
 
@@ -142,8 +142,8 @@ shared helpers in `rtsp_push/common.rs`. Filter with
 | `rtsp_push/es_h264.rs` | an H.264 push: every access unit, its slices and PTS step, the description's parameter sets before the key frame |
 | `rtsp_push/es_h264_klv.rs` | H.264 + KLV: sender-report alignment, KLV PTS on the video line (also with KLV sent first), a 60 000-byte KLV unit whole; the access-unit and KLV-unit counts (moved from `rtsp_server/publish/push_client.rs`) |
 | `rtsp_push/refusals.rs` | `415` H.265, `403` second publisher and mount rule, `404` no mount, `461` local mount, no server after `stop()`, a rule set during RECORD refusing the TEARDOWN |
-| `rtsp_push/auth.rs` | Basic, Digest MD5 and SHA-256 through the builder credential, a mount rule's credential, Digest-only against a Basic challenge (through a relay), a wrong password |
-| `rtsp_push/ends.rs` | `stop()` (Notice, then `Broken { CleanEof }`), the hard cancel, the publish idle timeout, a mount ending with its publisher, a cancelled close against a server that stopped reading |
+| `rtsp_push/auth.rs` | Basic, Digest MD5 and SHA-256 through the builder credential, a mount rule's credential, each refusing a push without credentials, Digest-only against a Basic challenge (through a relay), a wrong password |
+| `rtsp_push/ends.rs` | `stop()` (Notice, then `Broken { CleanEof }`), the hard cancel, the publish idle timeout (pings and a pause do not keep a push), a mount ending with its publisher, a cancel ending a close that waits on a server that reads slowly |
 | `rtsp_push/shells.rs` | `MuxSender` and `Sender` over a push, byte for byte; a dropped `MuxSender` closes the push, which writes its queue |
 
 `rtsp_server/publish/push_client.rs` is gone: its two tests moved to

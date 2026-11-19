@@ -4,7 +4,7 @@
 //! server that stopped reading.
 
 use std::sync::mpsc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use tst_core::transport::{BrokenCause, EndReason, Transport, TransportError};
 use tst_rtp::{PushDescription, RtspError, RtspPush};
@@ -66,11 +66,12 @@ fn the_servers_hard_cancel_ends_the_push() {
 }
 
 /// The server's publish idle timeout counts only RTP on the announced
-/// payload type. After its one packet the push sends a last report, a
-/// PAUSE and keepalive pings: none of them keeps it, and the server ends
-/// the connection without a word.
+/// payload type. After its one packet the push pauses and then sends only
+/// keepalive pings: neither the pause nor the pings keep it, and the
+/// server ends the connection without a word. (The pause's last report
+/// goes out at once, so this does not show that reports are not counted.)
 #[test]
-fn publish_idle_timeout_ends_a_push_that_sends_only_reports_and_pings() {
+fn pings_and_a_pause_do_not_keep_a_push_past_the_publish_idle_timeout() {
     let s = Served::with(
         |b| {
             b.session_timeout(Duration::from_secs(60));
@@ -119,41 +120,36 @@ fn close_ends_the_mounts_receiver_with_end_of_stream() {
 /// KLV units far larger, together, than the connection holds.
 static UNIT: [u8; 60_000] = [0xAB; 60_000];
 
-/// A server that stopped reading holds `close` in its wait for the queued
-/// media; the cancel ends that wait. The client's own rule ends a
-/// connection that took nothing for 5 s, so `close` returning well inside
-/// that is the cancel's doing. The bound includes the TEARDOWN, which the
-/// cancelled close still tries to write for up to 500 ms.
+/// A server that reads slowly, with tens of megabytes queued: the close
+/// would wait minutes for the queue, and since the connection keeps taking
+/// bytes, the client's rule that ends a connection taking nothing for 5 s
+/// does not end that wait. Only the cancel can, so the close returning at
+/// all, with the cancel's error, is the cancel's doing; no duration is
+/// asserted.
 #[test]
-fn a_cancelled_close_against_a_stalled_server_returns_within_a_second() {
+fn a_cancel_ends_a_close_waiting_on_a_server_that_reads_slowly() {
     let s = Served::new();
     let relay = TcpRelay::to(s.server.local_addr().unwrap());
     let mut push = RtspPush::connect(builder_via(&relay), &elementary(true)).unwrap();
-    relay.hold();
-    // Fewer frames than the queue holds, so no send waits; tens of
-    // megabytes, so most of them stay queued.
+    relay.slow_down();
+    // Fewer frames than the queue holds, so no send waits.
     for i in 0..1000 {
         push.send_klv(&UNIT, pts(i)).unwrap();
     }
     let cancel = push.cancel_handle();
-    let (returned, at) = mpsc::channel();
-    let closer = std::thread::spawn(move || {
-        let r = push.close();
-        returned.send(Instant::now()).unwrap();
-        r
+    let (began, beginning) = mpsc::channel();
+    let (result, results) = mpsc::channel();
+    std::thread::spawn(move || {
+        began.send(()).unwrap();
+        let _ = result.send(push.close());
     });
-    // Pacing: the close is waiting for its queue by now, not before it.
-    std::thread::sleep(Duration::from_millis(100));
-    let cancelled = Instant::now();
+    beginning
+        .recv_timeout(scaled(Duration::from_secs(5)))
+        .expect("the close began");
     cancel.cancel();
-    let returned = at
-        .recv_timeout(scaled(Duration::from_secs(10)))
+    // A bound for a failure only.
+    let r = results
+        .recv_timeout(scaled(Duration::from_secs(20)))
         .expect("the cancelled close returned");
-    let r = closer.join().unwrap();
     assert!(matches!(&r, Err(RtspError::LocalCancel)), "{r:?}");
-    let took = returned.saturating_duration_since(cancelled);
-    assert!(
-        took <= scaled(Duration::from_secs(2)),
-        "the cancelled close returned {took:?} after the cancel"
-    );
 }

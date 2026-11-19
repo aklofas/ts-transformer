@@ -222,10 +222,6 @@ pub fn slices(annexb: &[u8]) -> Vec<Vec<u8>> {
         .collect()
 }
 
-pub fn contains(hay: &[u8], needle: &[u8]) -> bool {
-    hay.windows(needle.len()).any(|w| w == needle)
-}
-
 /// `got` is `want`, byte for byte: same length and same SHA-256.
 pub fn assert_same_bytes(got: &[u8], want: &[u8], what: &str) {
     use sha2::{Digest as _, Sha256};

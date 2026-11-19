@@ -30,36 +30,38 @@ fn push_and_close(s: &Served, builder: RtspClientBuilder) {
     s.until_no_publisher();
 }
 
-#[test]
-fn basic_through_the_builder_credential() {
-    let s = Served::with(
+/// A server whose builder credential, of `scheme`, every request must
+/// answer.
+fn served_with_a_credential(scheme: AuthScheme) -> Served {
+    Served::with(
         |b| {
-            b.auth_basic("push", USER, password(PASSWORD));
+            let realm = "push";
+            match scheme {
+                AuthScheme::Basic => b.auth_basic(realm, USER, password(PASSWORD)),
+                AuthScheme::DigestMd5 => b.auth_digest_md5(realm, USER, password(PASSWORD)),
+                AuthScheme::DigestSha256 => b.auth_digest_sha256(realm, USER, password(PASSWORD)),
+                other => panic!("no test server for {other:?}"),
+            };
         },
         Default::default(),
-    );
+    )
+}
+
+#[test]
+fn basic_through_the_builder_credential() {
+    let s = served_with_a_credential(AuthScheme::Basic);
     push_and_close(&s, s.builder().auth(USER, password(PASSWORD)));
 }
 
 #[test]
 fn digest_md5_through_the_builder_credential() {
-    let s = Served::with(
-        |b| {
-            b.auth_digest_md5("push", USER, password(PASSWORD));
-        },
-        Default::default(),
-    );
+    let s = served_with_a_credential(AuthScheme::DigestMd5);
     push_and_close(&s, s.builder().auth(USER, password(PASSWORD)));
 }
 
 #[test]
 fn digest_sha256_through_the_builder_credential() {
-    let s = Served::with(
-        |b| {
-            b.auth_digest_sha256("push", USER, password(PASSWORD));
-        },
-        Default::default(),
-    );
+    let s = served_with_a_credential(AuthScheme::DigestSha256);
     let digest_only = s
         .builder()
         .auth(USER, password(PASSWORD))
@@ -120,12 +122,7 @@ fn digest_only_sends_no_password_to_a_basic_only_rule() {
 
 #[test]
 fn a_wrong_password_is_auth_failed() {
-    let s = Served::with(
-        |b| {
-            b.auth_digest_md5("push", USER, password(PASSWORD));
-        },
-        Default::default(),
-    );
+    let s = served_with_a_credential(AuthScheme::DigestMd5);
     let wrong = s.builder().auth(USER, password("not-the-password"));
     let r = RtspPush::connect(wrong, &PushDescription::Mp2t);
     assert!(
@@ -134,4 +131,32 @@ fn a_wrong_password_is_auth_failed() {
         r.map(|_| "a push")
     );
     assert!(s.mount.publisher().is_none());
+}
+
+/// Every server the tests above push to refuses a push that brings no
+/// credential, so their pushes pass because they answered the challenge.
+/// A client without credentials reports the challenge as `AuthFailed`.
+#[test]
+fn a_push_without_credentials_is_refused() {
+    let servers = [
+        ("Basic", served_with_a_credential(AuthScheme::Basic)),
+        (
+            "Digest MD5",
+            served_with_a_credential(AuthScheme::DigestMd5),
+        ),
+        (
+            "Digest SHA-256",
+            served_with_a_credential(AuthScheme::DigestSha256),
+        ),
+        ("the mount rule", served_with_a_publish_rule()),
+    ];
+    for (which, s) in &servers {
+        let r = RtspPush::connect(s.builder(), &PushDescription::Mp2t);
+        assert!(
+            matches!(&r, Err(RtspError::AuthFailed)),
+            "{which}: {:?}",
+            r.map(|_| "a push")
+        );
+        assert!(s.mount.publisher().is_none(), "{which}");
+    }
 }

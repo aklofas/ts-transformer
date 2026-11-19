@@ -49,3 +49,8 @@ pub fn klv_events(events: &[DemuxEvent]) -> Vec<(i64, Vec<u8>)> {
         })
         .collect()
 }
+
+/// Whether `needle` occurs in `hay`, as a parameter set in a video sample.
+pub fn contains(hay: &[u8], needle: &[u8]) -> bool {
+    hay.windows(needle.len()).any(|w| w == needle)
+}

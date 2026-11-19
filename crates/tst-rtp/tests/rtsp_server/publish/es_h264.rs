@@ -11,7 +11,7 @@ use base64::Engine as _;
 use tst_pipeline::DemuxReceiver;
 use tst_rtp::{ClockAlignment, RtspClient, RtspServer};
 
-use crate::fixtures::publish_mount::{VideoSample, video_samples};
+use crate::fixtures::publish_mount::{VideoSample, contains, video_samples};
 use crate::fixtures::raw_rtsp::scaled;
 use crate::fixtures::raw_rtsp_publisher::*;
 
@@ -20,10 +20,6 @@ const SSRC: u32 = 0x0F0F_1234;
 const TS0: u32 = 1_000_000;
 /// 28 AUs: a 3-fragment IDR plus 27 single-packet P slices = 30 packets.
 const AUS: usize = 28;
-
-fn contains(hay: &[u8], needle: &[u8]) -> bool {
-    hay.windows(needle.len()).any(|w| w == needle)
-}
 
 /// The checks every delivery of the 28-AU fixture must pass: at least 10
 /// samples, the first a random-access IDR carrying the SDP's SPS and PPS

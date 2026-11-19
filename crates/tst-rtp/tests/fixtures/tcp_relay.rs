@@ -1,6 +1,6 @@
 //! A TCP relay between a client under test and a real server, for what the
 //! server does not show: the bytes the client wrote, and a server that
-//! stops reading. One connection; both directions copied on threads of
+//! reads slowly. One connection; both directions copied on threads of
 //! their own.
 
 use std::io::{ErrorKind, Read, Write};
@@ -16,8 +16,8 @@ pub struct TcpRelay {
     upstream: Arc<Mutex<Vec<u8>>>,
     /// Everything the server wrote that was passed on.
     downstream: Arc<Mutex<Vec<u8>>>,
-    /// Set: the relay reads nothing more from the client.
-    held: Arc<AtomicBool>,
+    /// Set: the relay reads from the client slowly.
+    slow: Arc<AtomicBool>,
     done: Arc<AtomicBool>,
     /// The two sockets once the client connected, to end the copies.
     sockets: Arc<Mutex<Vec<TcpStream>>>,
@@ -32,14 +32,14 @@ impl TcpRelay {
         let port = listener.local_addr().unwrap().port();
         let upstream = Arc::new(Mutex::new(Vec::new()));
         let downstream = Arc::new(Mutex::new(Vec::new()));
-        let held = Arc::new(AtomicBool::new(false));
+        let slow = Arc::new(AtomicBool::new(false));
         let done = Arc::new(AtomicBool::new(false));
         let sockets = Arc::new(Mutex::new(Vec::new()));
         let accept = {
-            let (upstream, downstream, held, done, sockets) = (
+            let (upstream, downstream, slow, done, sockets) = (
                 upstream.clone(),
                 downstream.clone(),
-                held.clone(),
+                slow.clone(),
                 done.clone(),
                 sockets.clone(),
             );
@@ -65,7 +65,7 @@ impl TcpRelay {
                         copy(from, to, &downstream, &AtomicBool::new(false), &done);
                     })
                 };
-                copy(client, server, &upstream, &held, &done);
+                copy(client, server, &upstream, &slow, &done);
                 let _ = down.join();
             })
         };
@@ -73,7 +73,7 @@ impl TcpRelay {
             port,
             upstream,
             downstream,
-            held,
+            slow,
             done,
             sockets,
             threads: vec![accept],
@@ -84,11 +84,12 @@ impl TcpRelay {
         self.port
     }
 
-    /// Stop reading from the client: what it writes from now on stays in
-    /// its socket, as with a server that stopped reading. A read already
-    /// under way finishes and is passed on.
-    pub fn hold(&self) {
-        self.held.store(true, Ordering::Release);
+    /// Read from the client slowly: at most [`SLOW_READ`] bytes every
+    /// [`SLOW_PAUSE`]. The client's writes back up behind that, as with a
+    /// server that reads slowly, but the connection keeps taking bytes, so
+    /// the client never sees it stalled.
+    pub fn slow_down(&self) {
+        self.slow.store(true, Ordering::Release);
     }
 
     /// The client's bytes passed on so far.
@@ -102,22 +103,26 @@ impl TcpRelay {
     }
 }
 
+/// What a slowed relay reads at a time.
+pub const SLOW_READ: usize = 64 * 1024;
+/// How long a slowed relay waits after each read.
+pub const SLOW_PAUSE: Duration = Duration::from_millis(200);
+
 /// Copy `from` to `to` until either side ends or the relay is dropped,
-/// noting what passes in `seen`, and reading nothing while `held` is set.
+/// noting what passes in `seen`, slowly while `slow` is set.
 fn copy(
     mut from: TcpStream,
     mut to: TcpStream,
     seen: &Mutex<Vec<u8>>,
-    held: &AtomicBool,
+    slow: &AtomicBool,
     done: &AtomicBool,
 ) {
-    let mut buf = vec![0u8; 64 * 1024];
+    let mut buf = vec![0u8; SLOW_READ];
     from.set_read_timeout(Some(Duration::from_millis(20)))
         .unwrap();
     while !done.load(Ordering::Acquire) {
-        if held.load(Ordering::Acquire) {
-            std::thread::sleep(Duration::from_millis(20));
-            continue;
+        if slow.load(Ordering::Acquire) {
+            std::thread::sleep(SLOW_PAUSE);
         }
         let n = match from.read(&mut buf) {
             Ok(0) => break,

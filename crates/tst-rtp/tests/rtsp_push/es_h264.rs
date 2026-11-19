@@ -3,7 +3,7 @@
 //! behind the parameter sets of the description.
 
 use crate::common::*;
-use crate::fixtures::publish_mount::video_samples;
+use crate::fixtures::publish_mount::{contains, video_samples};
 
 #[test]
 fn h264_alone_arrives_with_every_access_unit() {
