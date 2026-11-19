@@ -51,7 +51,7 @@ for (au, klv, pts, key_frame) in frames() {
     sender.send_video(&au, pts, key_frame)?;
     sender.send_klv(&klv, pts, 0)?;
 }
-sender.finish()?; // writes everything queued, then TEARDOWN
+sender.finish()?; // no cancel: queue written, then TEARDOWN (unreported)
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
@@ -102,7 +102,7 @@ with push.into_mux_sender(program) as sender:  # the sender now owns the push
         pts = Pts90khz.from_raw(i * 3000)
         sender.send_video(au, pts=pts, key_frame=(i % 30 == 0))
         sender.send_klv(klv, pts=pts)
-    sender.finish()  # lossless end: writes everything queued, then TEARDOWN
+    sender.finish()  # no cancel: queue written, then TEARDOWN (unreported)
 # The with exit frees the sender; without finish() it would cancel first.
 
 # H.264 + KLV through the session itself.
@@ -143,7 +143,7 @@ try (MuxSender tx = push.intoMuxSender(program)) { // consumes the session
         tx.sendVideo(frames.get(i), pts, i % 30 == 0);
         tx.sendKlv(klv.get(i), pts, 0);
     }
-    tx.finish(); // lossless end; close() alone cancels first
+    tx.finish(); // no cancel, unlike close(); cannot report a lost tail
 }
 
 // H.264 + KLV through the session itself.
@@ -193,16 +193,22 @@ ten seconds of media in a burst reaches its readers as a burst.
 | `Transport::close` (Rust; what a shell's close and `finish()` call) | the queued media, then up to 500 ms for TEARDOWN and its reply; does not wait for the thread | the same | nothing; `stats().frames_dropped_at_close` and `end_reason()` say what happened |
 | Drop of an `RtspPush`, collection of a Python session | nothing | TEARDOWN, without waiting for its reply | nothing; what was queued is discarded |
 
-Over a sender shell, use `finish()` to end a stream: it sends what the shell
-holds and closes the push, which writes everything queued before its
-TEARDOWN. A shell's `close()` fires the push's cancel first (the library's
+Over a sender shell, end a stream with `finish()`: it cancels nothing, sends
+what the shell holds and closes the push, which, while the session is up,
+writes everything queued and then sends TEARDOWN. `finish()` cannot tell you
+whether that happened. The push's own close reports nothing through the
+shell, so a session that ended first (the server closed it, the connection
+failed or took no byte for 5 s, a keepalive ping was answered `454`) drops
+what was still queued, up to 1 024 frames, and `finish()` still returns
+without an error. When you must know, send through the session itself
+(`send_ts`) and read the result of its close: `RtspPush::close()` returns
+`Ok(())` only when the queued media was written and the server accepted the
+TEARDOWN; in Python and on the JVM, `teardown()` raises otherwise. A shell's
+`close()` fires the push's cancel first (the library's
 contract for every transport), so it can drop packets queued a moment
 before; in Python and on the JVM that holds for both `MuxSender.close()` and
-`Sender.close()`. The plain `Sender` shell has no lossless end in the
-bindings: to end a pre-muxed push without loss there, send through the
-session's own `send_ts` and close the session. In Rust, `Sender::close()` and
-a dropped `MuxSender` or `Sender` close the push without a cancel, so they
-write the queue too.
+`Sender.close()`. In Rust, `Sender::close()` and a dropped `MuxSender` or
+`Sender` close the push without a cancel, with the same limit as `finish()`.
 
 `close()` in Python and on the JVM, called while a send is waiting on another
 thread, fires the cancel first: that send ends with `CLOSED` and what was

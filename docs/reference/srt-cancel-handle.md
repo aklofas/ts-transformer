@@ -358,12 +358,14 @@ on a cancelled push writes its TEARDOWN, drops what was queued and returns
 page's contract, so the push's close finds its queue wait cancelled: media
 queued a moment before can be dropped, and the TEARDOWN is written.
 `MuxSender::finish()` cancels nothing: it sends what the shell holds and
-closes the push, which writes its queue before the TEARDOWN. In Rust,
-`Sender::close()` and the `Drop` of a `MuxSender` or a `Sender` close the
-push without a cancel too. A binding's `close()` of either shell cancels
-first, so in Python and on the JVM `finish()` is the lossless end of a
-`MuxSender`, and a pre-muxed push ends without loss only through the
-session's own `send_ts` and the session's close.
+closes the push, which, while the session is up, writes its queue before the
+TEARDOWN. In Rust, `Sender::close()` and the `Drop` of a `MuxSender` or a
+`Sender` close the push without a cancel too. A binding's `close()` of either
+shell cancels first. No shell reports whether the push's queue was written:
+`Transport::close` returns nothing, so a session that ended first drops the
+queue and the shell's close or `finish()` still succeeds. Only the session's
+own close reports it (`RtspPush::close()`; `teardown()` in Python and on
+the JVM), so a caller who must know sends through the session's `send_ts`.
 
 **Python and the JVM.** `RtspPushSession.close()` (the `with` exit,
 try-with-resources) runs `RtspPush::close()` and reports nothing;

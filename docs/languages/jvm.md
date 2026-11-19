@@ -2692,7 +2692,7 @@ How each call ends:
 
 | Call | Outcome | Meaning |
 |---|---|---|
-| `RtspClient.push` | `RtspException` | A step failed; the connection is closed. `UNSUPPORTED_TRANSPORT` for `TransportPref.UDP` (no SETUP written), `PROTOCOL` for `RtspVersion.V2_0` (no ANNOUNCE written) and for a status the server refused with (a server that does not take the codec answers `415`). |
+| `RtspClient.push` | `RtspException` | A step failed; the connection is closed. The kind: `UNSUPPORTED_TRANSPORT` for `TransportPref.UDP` (no SETUP written) or a SETUP reply that is not interleaved; `NOT_FOUND` for a `404` (no such path); `AUTH_REQUIRED` for a `401` and for a challenge that offers no scheme the credential may answer; `AUTH_FAILED` when the server refused the credential, or challenged a client that has none; `PROTOCOL` for `RtspVersion.V2_0` (no ANNOUNCE written), a description that lacks a parameter set, any other refused status (a server that does not take the codec answers `415`) and a reply the client cannot use; `IO`, `TLS` and `TIMEOUT` for the connection, its TLS handshake and an unanswered request. |
 | a data call | `RtpException(CLOSED)` | The cancel handle fired. |
 | a data call | `RtpException(BROKEN)` | The server closed the connection, the connection failed or took no byte for 5 s, a keepalive ping was answered `454`, or the server broke the framing. Also a TS payload that is not whole packets, which leaves the session open. |
 | `sendTs` | `RtpException(TOO_LARGE)` | More than 1 316 bytes; nothing sent. |
@@ -2715,12 +2715,16 @@ Rules the types do not enforce:
   first: that call throws `CLOSED`, what is queued is dropped, and the
   TEARDOWN is written without the wait. Each `cancelHandle()` is a new
   handle to close when done.
-- **Ending a push through a shell.** `MuxSender.finish()` writes what the
-  sender holds, then the session writes its queue and sends TEARDOWN; the
-  handle still needs its `close()` afterwards (try-with-resources does it).
-  `close()` alone cancels first and can drop media still queued. `Sender`'s
-  `close()` cancels too and it has no lossless end over a push: to end a
-  pre-muxed stream without loss, send through `sendTs` and close the session.
+- **Ending a push through a shell.** `MuxSender.finish()` cancels nothing:
+  it writes what the sender holds, then, while the session is up, the
+  session writes its queue and sends TEARDOWN; the handle still needs its
+  `close()` afterwards (try-with-resources does it). `finish()` cannot tell
+  you whether the queue was written: a session that ended first drops it
+  and `finish()` still returns normally. `close()` alone cancels first and
+  can drop media still queued, and so does `Sender`'s `close()`. When you
+  must know that everything was written, send through `sendTs` and call
+  `teardown()`, which throws unless the queued media was written and the
+  server accepted the TEARDOWN.
 - **Keepalive is on or off.** `RtspClientConfig.builder(url).keepalive(...)`
   (on by default) sends OPTIONS pings at half the session timeout the server
   advertises; there is no interval setting. mediamtx 1.21.4 ends a recording

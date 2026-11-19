@@ -610,7 +610,12 @@ the cookbook recipe, with what mediamtx and ffmpeg do with a push, is
   [the cancel and close contract](/docs/reference/srt-cancel-handle.md#rtsp-push-what-a-cancel-and-each-close-do).
 - **Shells over a push.** End a `MuxSender` with `finish()`: `close()`
   cancels first and can drop packets queued a moment before. `Sender::close()`
-  and dropping either shell close the push without a cancel.
+  and dropping either shell close the push without a cancel. None of them
+  can report whether the push's queue was written: a session that ended
+  first drops it and the shell still returns without an error. When that
+  matters, send through `RtspPush::send_ts` and call `RtspPush::close()`,
+  which returns `Ok(())` only when the queued media was written and the
+  server accepted the TEARDOWN.
 - **Keepalive comes from the builder.** A client made by
   `RtspClientBuilder::connect` sends OPTIONS pings at half the advertised
   session timeout unless `keepalive_interval` sets another cadence; one made
