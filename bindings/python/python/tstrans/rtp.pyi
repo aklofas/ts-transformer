@@ -535,15 +535,21 @@ class RtspPushSession:
     with the same ends as a data call.
 
     The calls that use the push run one at a time: a second thread's call
-    waits, GIL released, for the one in progress; `stats()` and
-    `is_session_alive()` too wait while a send, `pause()` or `resume()` is
-    in progress on another thread. `cancel_handle()` answers at once, also
-    while a send is parked on another thread, and is the way to end a
-    parked send. A `close()` or `teardown()` from another thread while a
-    send, `pause()` or `resume()` is in progress fires the cancel first, so
-    that call ends `CLOSED` and the session ends as a cancel; one that
-    finds only `stats()` or `is_session_alive()` running waits for it and
-    closes cleanly.
+    waits, GIL released, for the one in progress; `stats()` too waits while
+    a send, `pause()` or `resume()` is in progress on another thread.
+    `is_session_alive()` never waits: a call in progress on another thread
+    counts as live. `cancel_handle()` answers at once, also while a send is
+    parked on another thread, and is the way to end a parked send.
+
+    A `close()` or `teardown()` fires the cancel first only when a send,
+    `pause()` or `resume()` on another thread holds the session: that call
+    raises `CLOSED`, what is queued is dropped, and the session ends as a
+    cancel. One that finds only `stats()` or `is_session_alive()` holding
+    the session waits for it and closes cleanly. A send, `pause()` or
+    `resume()` still waiting for the session is neither cancelled nor
+    waited for: it gets the session after the close began, runs nothing
+    and raises `CLOSED`. So does one that gets the session after a
+    conversion.
 
     `close()` (and the `with` exit) ends the session: a last sender report
     per track, the queued media written, TEARDOWN with one 500 ms bound
@@ -557,8 +563,15 @@ class RtspPushSession:
     cancels a call parked in a session left open.
 
     `into_mux_sender` / `into_sender` move an MPEG-TS push into a sender
-    shell (the shell's `close()` ends the push); the session is closed
-    afterwards.
+    shell; the session is closed afterwards. They never wait: while
+    another thread's call holds the session they raise `RuntimeError` and
+    consume nothing. The shell's `close()` cancels first, so it can drop
+    packets queued a moment before. `MuxSender.finish()` cancels nothing:
+    it writes what the sender holds and closes the push, which, while the
+    session is up, writes its queue and then sends TEARDOWN (it cannot
+    report whether that happened). A plain `Sender` has no such end: when
+    you must know that everything was written, send with `send_ts` and end
+    the session with `teardown()`.
     """
 
     def send_ts(self, ts: bytes) -> None:
@@ -611,21 +624,27 @@ class RtspPushSession:
         """The session id the server named at SETUP."""
         ...
     def is_session_alive(self) -> bool:
-        """False once the session is known dead: the control connection
-        ended, or a keepalive ping was answered `454`. Waits, GIL released,
-        while a send, `pause()` or `resume()` on another thread is in
-        progress; a parked send can stay parked for as long as the server
-        takes a byte now and then. `cancel_handle()` never waits, and firing
-        it is how to end a parked send."""
+        """False once the session is known dead (the control connection
+        ended, or a keepalive ping was answered `454`) and once it is
+        closed or converted. Never waits and never raises: a send,
+        `pause()` or `resume()` in progress on another thread counts as
+        live."""
         ...
     def into_mux_sender(self, program_config: MuxerProgramConfig) -> MuxSender:
-        """Move an MPEG-TS push into a `MuxSender`. Raises `ValueError` on
-        an elementary push and `MuxError(CONFIG_INVALID)` for a refused
-        config, both leaving the session as it was."""
+        """Move an MPEG-TS push into a `MuxSender`; the session is closed
+        afterwards. Raises `ValueError` on an elementary push,
+        `MuxError(CONFIG_INVALID)` for a refused config and `RuntimeError`
+        while another thread's call holds the session, each leaving the
+        session as it was. The sender's `close()` cancels first;
+        `finish()` cancels nothing."""
         ...
     def into_sender(self) -> Sender:
-        """Move an MPEG-TS push into a `Sender`. Raises `ValueError` on an
-        elementary push, leaving the session as it was."""
+        """Move an MPEG-TS push into a `Sender`; the session is closed
+        afterwards. Raises `ValueError` on an elementary push and
+        `RuntimeError` while another thread's call holds the session, both
+        leaving the session as it was. The sender's `close()` cancels
+        first, and a `Sender` has no lossless end: for one, send with
+        `send_ts` and call `teardown()`."""
         ...
     def __enter__(self) -> RtspPushSession: ...
     def __exit__(

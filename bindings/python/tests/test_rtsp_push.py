@@ -58,6 +58,7 @@ from tstrans.rtp import (
 from tstrans.shells import MuxSender, Sender
 
 from _builders.mux_programs import masquerade_program, video_only_program
+from _builders.native_hooks import rtp_hook
 import tstrans
 
 TS_PACKET = bytes([0x47, 0x1F, 0xFF, 0x10]) + b"\xff" * 184
@@ -113,13 +114,15 @@ def _access_unit(i: int) -> bytes:
 class ScriptedRecordServer:
     """One connection, RTSP spoken by hand: ANNOUNCE, SETUP and RECORD are
     answered `200`, TEARDOWN with `teardown_status`, anything else `200`.
-    Interleaved frames are read and dropped. With `stop_reading`, nothing
-    more is read after the RECORD reply, so the client's writes back up."""
+    Interleaved frames are read and dropped; `rtp_frames` counts those on
+    an even (RTP) channel. With `stop_reading`, nothing more is read after
+    the RECORD reply, so the client's writes back up."""
 
     def __init__(self, *, teardown_status: int = 200, stop_reading: bool = False) -> None:
         self.teardown_status = teardown_status
         self.stop_reading = stop_reading
         self.methods: list[str] = []
+        self.rtp_frames = 0
         self.done = threading.Event()
         self.lsock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         if stop_reading:
@@ -167,6 +170,8 @@ class ScriptedRecordServer:
                 size = 4 + int.from_bytes(buf[2:4], "big")
                 if len(buf) < size:
                     return buf
+                if buf[1] % 2 == 0:
+                    self.rtp_frames += 1
                 buf = buf[size:]
                 continue
             end = buf.find(b"\r\n\r\n")
@@ -195,6 +200,29 @@ class ScriptedRecordServer:
         self.done.set()
         self.thread.join(WAIT_S)
         self.lsock.close()
+
+
+class _Side:
+    """A call run on a daemon thread; `outcome()` waits for it (bounded) and
+    returns the exception it raised, or `None`."""
+
+    def __init__(self, call: Callable[[], Any]) -> None:
+        self.exc: Optional[BaseException] = None
+        self.returned: Any = None
+
+        def run() -> None:
+            try:
+                self.returned = call()
+            except BaseException as e:  # noqa: BLE001
+                self.exc = e
+
+        self.thread = threading.Thread(target=run, daemon=True)
+        self.thread.start()
+
+    def outcome(self) -> Optional[BaseException]:
+        self.thread.join(WAIT_S)
+        assert not self.thread.is_alive(), "the call did not return"
+        return self.exc
 
 
 def _push_until_parked(push: RtspPushSession) -> dict[str, Any]:
@@ -428,6 +456,8 @@ def test_calls_after_close_raise_closed() -> None:
         push.close()
         push.close()  # idempotent
         assert push.session_id == sid
+        # The liveness probe answers, as every probe does on a closed object.
+        assert push.is_session_alive() is False
         for send in (
             lambda: push.send_ts(TS_BUNDLE),
             lambda: push.send_video(START + b"\x65\x00", pts=Pts90khz.from_raw(0)),
@@ -441,7 +471,6 @@ def test_calls_after_close_raise_closed() -> None:
             push.resume,
             push.teardown,
             push.stats,
-            push.is_session_alive,
             push.cancel_handle,
             push.into_sender,
             lambda: push.into_mux_sender(video_only_program()),
@@ -643,6 +672,101 @@ def test_close_during_a_parked_send_cancels_first() -> None:
         # the client's thread 2 s).
         assert closed.wait(WAIT_S), "close() did not return"
     finally:
+        server.close()
+        push.close()
+
+
+def test_is_session_alive_answers_at_once_while_a_send_is_parked() -> None:
+    """A parked send holds the session: the probe counts it as live and
+    does not wait for it. Once closed or converted it reads `False`."""
+    server = ScriptedRecordServer(stop_reading=True)
+    push = RtspClient.push(RtspClientConfig(server.url), PushDescription.mp2t())
+    try:
+        state = _push_until_parked(push)
+        asked_at = time.monotonic()
+        assert push.is_session_alive() is True
+        # The parked send stays parked until the 5 s no-byte rule ends it;
+        # an answer that waited for it would come only then.
+        assert time.monotonic() - asked_at < 2.5
+        push.close()
+        assert state["ended"].wait(WAIT_S), "the parked send did not end"
+        assert push.is_session_alive() is False
+    finally:
+        server.close()
+        push.close()
+    server = ScriptedRecordServer()
+    try:
+        push = RtspClient.push(RtspClientConfig(server.url), PushDescription.mp2t())
+        sender = push.into_sender()
+        assert push.is_session_alive() is False
+        sender.close()
+    finally:
+        server.close()
+
+
+def test_a_conversion_while_a_send_is_parked_refuses_and_consumes_nothing() -> None:
+    server = ScriptedRecordServer(stop_reading=True)
+    push = RtspClient.push(RtspClientConfig(server.url), PushDescription.mp2t())
+    handle = push.cancel_handle()
+    # Ends a conversion that waits for the parked send instead of refusing.
+    watchdog = threading.Timer(3.0, handle.cancel)
+    watchdog.start()
+    try:
+        state = _push_until_parked(push)
+        for convert in (push.into_sender, lambda: push.into_mux_sender(video_only_program())):
+            with pytest.raises(RuntimeError, match="in progress"):
+                convert()
+        assert not handle.is_cancelled(), "a conversion waited for the parked send"
+        # Nothing was consumed: the session is still open and closes as usual.
+        assert push.cancel_handle() is not None
+        push.close()
+        assert state["ended"].wait(WAIT_S), "the parked send did not end"
+        exc = state["exc"]
+        assert isinstance(exc, RtpError), exc
+        assert exc.kind is RtpErrorKind.CLOSED
+    finally:
+        watchdog.cancel()
+        server.close()
+        push.close()
+
+
+def test_a_teardown_behind_a_query_does_not_cancel_for_a_send_waiting_for_the_session() -> None:
+    """A query holds the session, a send waits for it, then `teardown()`
+    begins: neither holder can park on the network, so nothing is
+    cancelled. The teardown waits out the query, writes the queue and
+    returns; the waiting send gets the session after the close began, runs
+    nothing and raises CLOSED."""
+    hold = rtp_hook("_push_hold_as_reader_for_test")
+    release = rtp_hook("_push_release_for_test")
+    reader_holds = rtp_hook("_push_reader_holds_for_test")
+    parking_waiters = rtp_hook("_push_parking_waiters_for_test")
+    close_rounds = rtp_hook("_push_close_rounds_for_test")
+    server = ScriptedRecordServer()
+    push = RtspClient.push(RtspClientConfig(server.url), PushDescription.mp2t())
+    try:
+        for _ in range(3):
+            push.send_ts(TS_BUNDLE)
+        holder = _Side(lambda: hold(push))
+        try:
+            assert _wait_for(reader_holds), "the probe never held the session"
+            # A call in flight counts as live, and the probe does not wait.
+            assert push.is_session_alive() is True
+            sender = _Side(lambda: push.send_ts(TS_BUNDLE))
+            assert _wait_for(lambda: parking_waiters() == 1), "the send never waited"
+            tearing = _Side(push.teardown)
+            assert _wait_for(lambda: close_rounds() >= 1), "the teardown never met the hold"
+            release()
+            assert tearing.outcome() is None, tearing.exc
+            exc = sender.outcome()
+            assert isinstance(exc, RtpError), exc
+            assert exc.kind is RtpErrorKind.CLOSED
+        finally:
+            release()
+        assert holder.outcome() is None, holder.exc
+        assert "TEARDOWN" in server.methods
+        assert server.rtp_frames == 3, "the waiting send wrote a frame, or the queue was dropped"
+    finally:
+        release()
         server.close()
         push.close()
 
