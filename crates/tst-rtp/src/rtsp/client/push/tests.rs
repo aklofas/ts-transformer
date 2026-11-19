@@ -689,6 +689,8 @@ fn assert_finished(mut client: RtspClient) {
     assert!(matches!(&r, Err(RtspError::Io(_))), "{r:?}");
     let r = client.setup_record();
     assert!(matches!(&r, Err(RtspError::Io(_))), "{r:?}");
+    let r = client.play();
+    assert!(matches!(&r, Err(RtspError::BadResponse { .. })), "{r:?}");
     client.teardown().unwrap();
     client.close().unwrap();
 }

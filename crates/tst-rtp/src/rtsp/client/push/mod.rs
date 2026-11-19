@@ -337,8 +337,9 @@ impl RtspClient {
     ///   finished after that: [`RtspClient::is_session_alive`] is false, a
     ///   later request that would be written (`options`, `describe`,
     ///   `announce`, `setup_record`) is [`RtspError::Io`], [`Self::record`]
-    ///   is [`RtspError::NotAllowed`], and [`RtspClient::teardown`] and
-    ///   [`RtspClient::close`] have no session left to end and return
+    ///   is [`RtspError::NotAllowed`], `play` is refused as before any
+    ///   SETUP ([`RtspError::BadResponse`]), and [`RtspClient::teardown`]
+    ///   and [`RtspClient::close`] have no session left to end and return
     ///   `Ok(())`.
     /// - The other errors of [`Self::announce`].
     pub fn setup_record(&mut self) -> Result<(), RtspError> {
