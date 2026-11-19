@@ -310,8 +310,9 @@ fn closed_error(op: &str) -> BindingError {
 ///
 /// Frozen: every method takes `&self`; the push is behind a mutex, so the
 /// calls that need it run one at a time and a second thread's call waits,
-/// GIL released, for the one in progress. `is_session_alive()`,
-/// `cancel_handle()` and the conversions never wait. A `close()` or
+/// GIL released, for the one in progress. `is_session_alive()` and
+/// `cancel_handle()` never wait, and the conversions never wait for a send,
+/// `pause()` or `resume()` (they raise `RuntimeError`). A `close()` or
 /// `teardown()` fires the cancel first only when a send, `pause()` or
 /// `resume()` holds the session; one still waiting for the session runs
 /// nothing after the close began and raises `CLOSED`.
@@ -504,27 +505,39 @@ impl PyRtspPushSession {
         })
     }
 
-    /// Take the push for a conversion into a sender shell, never waiting:
-    /// while another thread's call holds the session it raises
-    /// `RuntimeError` and consumes nothing. With the mutex held it marks
-    /// the session closed before the take, so a call that gets the mutex
-    /// after it runs nothing and a concurrent `close()` does not cancel the
-    /// push the shell is about to own.
+    /// Take the push for a conversion into a sender shell. Never waits for
+    /// a call that may park: while a send, `pause` or `resume` holds the
+    /// session (the close's marker) it raises `RuntimeError` and consumes
+    /// nothing. A query holding the mutex lets go at once, so it is waited
+    /// for in 1 ms rounds that re-read the marker, as a close does. Only
+    /// with the mutex held does it mark the session closed, before the
+    /// take, so a refused conversion leaves the session as it was, a call
+    /// that gets the mutex after it runs nothing, and a concurrent
+    /// `close()` does not cancel the push the shell is about to own.
     fn take_for_conversion(&self, py: Python<'_>, op: &'static str) -> PyResult<RustRtspPush> {
         enum Refused {
             Closed,
             Busy,
         }
         let taken = allow_threads_parking(py, || {
-            let mut guard = match self.live.try_lock() {
-                Ok(guard) => guard,
-                Err(TryLockError::Poisoned(e)) => e.into_inner(),
-                // A close that began holds no lock until the holder lets go:
-                // report it as the close it is.
-                Err(TryLockError::WouldBlock) if self.closed.load(Ordering::SeqCst) => {
-                    return Err(Refused::Closed);
+            let mut guard = loop {
+                match self.live.try_lock() {
+                    Ok(guard) => break guard,
+                    Err(TryLockError::Poisoned(e)) => break e.into_inner(),
+                    Err(TryLockError::WouldBlock) => {
+                        #[cfg(feature = "py-test-hooks")]
+                        probe::CONVERSION_ROUNDS.fetch_add(1, Ordering::SeqCst);
+                        // A close that began holds no lock until the holder
+                        // lets go: report it as the close it is.
+                        if self.closed.load(Ordering::SeqCst) {
+                            return Err(Refused::Closed);
+                        }
+                        if self.parking_holder.load(Ordering::SeqCst) {
+                            return Err(Refused::Busy);
+                        }
+                        std::thread::park_timeout(std::time::Duration::from_millis(1));
+                    }
                 }
-                Err(TryLockError::WouldBlock) => return Err(Refused::Busy),
             };
             if self.closed.swap(true, Ordering::SeqCst) {
                 return Err(Refused::Closed);
@@ -535,8 +548,8 @@ impl PyRtspPushSession {
             Ok(Live { push, .. }) => Ok(push),
             Err(Refused::Closed) => Err(raise(py, &RTSP, closed_error(op))),
             Err(Refused::Busy) => Err(PyRuntimeError::new_err(format!(
-                "RtspPushSession.{op}: another thread's call on the session is in \
-                 progress; nothing was consumed"
+                "RtspPushSession.{op}: a send, pause() or resume() on another thread \
+                 is in progress; nothing was consumed"
             ))),
         }
     }
@@ -697,9 +710,10 @@ impl PyRtspPushSession {
     /// Move an MPEG-TS push into a `MuxSender`; the session is closed
     /// afterwards. Raises `ValueError` on an elementary push,
     /// `MuxError(CONFIG_INVALID)` for a refused config and `RuntimeError`
-    /// while another thread's call holds the session, each leaving the
-    /// session as it was. The sender's `close()` cancels first; `finish()`
-    /// cancels nothing.
+    /// while a send, `pause()` or `resume()` on another thread holds the
+    /// session, each leaving the session as it was; a `stats()` or
+    /// `is_session_alive()` holding it is waited for. The sender's `close()`
+    /// cancels first; `finish()` cancels nothing.
     #[allow(clippy::wrong_self_convention)]
     fn into_mux_sender(
         &self,
@@ -715,9 +729,10 @@ impl PyRtspPushSession {
 
     /// Move an MPEG-TS push into a `Sender`; the session is closed
     /// afterwards. Raises `ValueError` on an elementary push and
-    /// `RuntimeError` while another thread's call holds the session, both
-    /// leaving the session as it was. The sender's `close()` cancels
-    /// first, and a `Sender` has no lossless end: for one, send with
+    /// `RuntimeError` while a send, `pause()` or `resume()` on another
+    /// thread holds the session, both leaving the session as it was; a
+    /// `stats()` or `is_session_alive()` holding it is waited for. The
+    /// sender's `close()` cancels first, and a `Sender` has no lossless end: for one, send with
     /// `send_ts` and call `teardown()`.
     #[allow(clippy::wrong_self_convention)]
     fn into_sender(&self, py: Python<'_>) -> PyResult<PySender> {
@@ -758,8 +773,9 @@ pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
 // Test-only probes (feature = "py-test-hooks"), never in a published wheel and
 // not re-exported by `tstrans.rtp`: hold a real session's lock the way a query
 // call does until the test releases it, and count what a test must wait for
-// (a send waiting for the lock; a close's rounds against a held lock), so a
-// test can order a close against other calls without a timing race.
+// (a send waiting for the lock; a close's or a conversion's rounds against a
+// held lock), so a test can order a close or a conversion against other calls
+// without a timing race.
 // ---------------------------------------------------------------------------
 
 #[cfg(feature = "py-test-hooks")]
@@ -775,6 +791,8 @@ mod probe {
     pub(super) static PARKING_WAITERS: AtomicUsize = AtomicUsize::new(0);
     /// Rounds in which a close found the session's lock held.
     pub(super) static CLOSE_ROUNDS: AtomicUsize = AtomicUsize::new(0);
+    /// Rounds in which a conversion found the session's lock held.
+    pub(super) static CONVERSION_ROUNDS: AtomicUsize = AtomicUsize::new(0);
     static READER_HOLDS: AtomicBool = AtomicBool::new(false);
     static RELEASE: AtomicBool = AtomicBool::new(false);
 
@@ -784,13 +802,14 @@ mod probe {
 
     /// `_push_hold_as_reader_for_test(session)`: hold the session's lock
     /// through the query path (as `stats()` does) until
-    /// `_push_release_for_test()`, at most 30 s; resets the close-round
-    /// count first. Raises `RtspError(CLOSED)` for a closed session.
+    /// `_push_release_for_test()`, at most 30 s; resets the close and
+    /// conversion round counts first. Raises `RtspError(CLOSED)` for a closed session.
     #[pyfunction]
     #[pyo3(name = "_push_hold_as_reader_for_test")]
     fn hold_as_reader(py: Python<'_>, session: &Bound<'_, PyRtspPushSession>) -> PyResult<()> {
         RELEASE.store(false, Ordering::SeqCst);
         CLOSE_ROUNDS.store(0, Ordering::SeqCst);
+        CONVERSION_ROUNDS.store(0, Ordering::SeqCst);
         session
             .get()
             .read(py, "_push_hold_as_reader_for_test", |_| {
@@ -831,12 +850,20 @@ mod probe {
         CLOSE_ROUNDS.load(Ordering::SeqCst)
     }
 
+    /// `_push_conversion_rounds_for_test()`.
+    #[pyfunction]
+    #[pyo3(name = "_push_conversion_rounds_for_test")]
+    fn conversion_rounds() -> usize {
+        CONVERSION_ROUNDS.load(Ordering::SeqCst)
+    }
+
     pub(super) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
         m.add_function(wrap_pyfunction!(hold_as_reader, m)?)?;
         m.add_function(wrap_pyfunction!(release, m)?)?;
         m.add_function(wrap_pyfunction!(reader_holds, m)?)?;
         m.add_function(wrap_pyfunction!(parking_waiters, m)?)?;
         m.add_function(wrap_pyfunction!(close_rounds, m)?)?;
+        m.add_function(wrap_pyfunction!(conversion_rounds, m)?)?;
         Ok(())
     }
 }

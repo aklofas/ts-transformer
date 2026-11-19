@@ -731,6 +731,7 @@ def test_a_conversion_while_a_send_is_parked_refuses_and_consumes_nothing() -> N
         assert not handle.is_cancelled(), "a conversion waited for the parked send"
         # Nothing was consumed: the session is still open and closes as usual.
         assert push.cancel_handle() is not None
+        assert push.is_session_alive() is True
         push.close()
         assert state["ended"].wait(WAIT_S), "the parked send did not end"
         exc = state["exc"]
@@ -738,6 +739,38 @@ def test_a_conversion_while_a_send_is_parked_refuses_and_consumes_nothing() -> N
         assert exc.kind is RtpErrorKind.CLOSED
     finally:
         watchdog.cancel()
+        server.close()
+        push.close()
+
+
+def test_a_conversion_behind_a_query_waits_for_it_and_converts() -> None:
+    """Only a query holds the session: a conversion waits for it (it is
+    not a call that may park) and converts once the query lets go."""
+    hold = rtp_hook("_push_hold_as_reader_for_test")
+    release = rtp_hook("_push_release_for_test")
+    reader_holds = rtp_hook("_push_reader_holds_for_test")
+    conversion_rounds = rtp_hook("_push_conversion_rounds_for_test")
+    server = ScriptedRecordServer()
+    push = RtspClient.push(RtspClientConfig(server.url), PushDescription.mp2t())
+    try:
+        holder = _Side(lambda: hold(push))
+        try:
+            assert _wait_for(reader_holds), "the probe never held the session"
+            converting = _Side(push.into_sender)
+            assert _wait_for(lambda: conversion_rounds() >= 1), "the conversion never met the hold"
+            release()
+            assert converting.outcome() is None, converting.exc
+        finally:
+            release()
+        assert holder.outcome() is None, holder.exc
+        sender = converting.returned
+        assert isinstance(sender, Sender)
+        assert push.is_session_alive() is False
+        sender.send_bytes(TS_BUNDLE)
+        assert _wait_for(lambda: server.rtp_frames == 1), server.rtp_frames
+        sender.close()
+    finally:
+        release()
         server.close()
         push.close()
 

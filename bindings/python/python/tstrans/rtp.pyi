@@ -576,9 +576,12 @@ class RtspPushSession:
     cancels a call parked in a session left open.
 
     `into_mux_sender` / `into_sender` move an MPEG-TS push into a sender
-    shell; the session is closed afterwards. They never wait: while
-    another thread's call holds the session they raise `RuntimeError` and
-    consume nothing. The shell's `close()` cancels first, so it can drop
+    shell; the session is closed afterwards. They never wait for a call
+    that may park: while a send, `pause()` or `resume()` on another thread
+    holds the session they raise `RuntimeError`, consume nothing and leave
+    the session open. One that finds only `stats()` or
+    `is_session_alive()` holding the session waits for it and converts.
+    The shell's `close()` cancels first, so it can drop
     packets queued a moment before. `MuxSender.finish()` cancels nothing:
     it writes what the sender holds and closes the push, which, while the
     session is up, writes its queue and then sends TEARDOWN (it cannot
@@ -647,16 +650,18 @@ class RtspPushSession:
         """Move an MPEG-TS push into a `MuxSender`; the session is closed
         afterwards. Raises `ValueError` on an elementary push,
         `MuxError(CONFIG_INVALID)` for a refused config and `RuntimeError`
-        while another thread's call holds the session, each leaving the
-        session as it was. The sender's `close()` cancels first;
-        `finish()` cancels nothing."""
+        while a send, `pause()` or `resume()` on another thread holds the
+        session, each leaving the session as it was; a `stats()` or
+        `is_session_alive()` holding it is waited for. The sender's
+        `close()` cancels first; `finish()` cancels nothing."""
         ...
     def into_sender(self) -> Sender:
         """Move an MPEG-TS push into a `Sender`; the session is closed
         afterwards. Raises `ValueError` on an elementary push and
-        `RuntimeError` while another thread's call holds the session, both
-        leaving the session as it was. The sender's `close()` cancels
-        first, and a `Sender` has no lossless end: for one, send with
+        `RuntimeError` while a send, `pause()` or `resume()` on another
+        thread holds the session, both leaving the session as it was; a
+        `stats()` or `is_session_alive()` holding it is waited for. The
+        sender's `close()` cancels first, and a `Sender` has no lossless end: for one, send with
         `send_ts` and call `teardown()`."""
         ...
     def __enter__(self) -> RtspPushSession: ...
