@@ -66,7 +66,9 @@ const CLOSE_TEARDOWN_BOUND: Duration = Duration::from_millis(500);
 ///
 /// Keepalive pings, when [`RtspClientBuilder`](crate::RtspClientBuilder)
 /// enables them (its default), are written by the client's own thread at
-/// half the session timeout, retuned to the one SETUP learns.
+/// half the session timeout, retuned to the one SETUP learns. They go out
+/// one at a time: while a ping is still waiting for the connection to take
+/// its bytes, the next one is not queued behind it.
 ///
 /// # Send
 ///
