@@ -17,7 +17,14 @@ cat > "$TMP/bin/cargo" <<'STUB'
 printf '%s\n' "$*" >> "$TMP/cargo.log"
 case " $* " in
   *" fetch db "*) mkdir -p "$CARGO_HOME/advisory-db/advisory-db-0123456789abcdef/.git" ;;
-  *" check "*) for m in $(cat "$TMP/deny-fails" 2>/dev/null); do
+  " fetch "*) # $TMP/fetch-fails: "<manifest> <failures before a success>"
+             while read -r m k; do
+               case " $* " in *"/$m "*) ;; *) continue ;; esac
+               c="$(cat "$TMP/fetch-count" 2>/dev/null || echo 0)"; echo $((c + 1)) > "$TMP/fetch-count"
+               [ "$c" -ge "$k" ] || exit 1
+             done < <(cat "$TMP/fetch-fails" 2>/dev/null) ;;
+  *" check "*) echo "proxy=${https_proxy:-} ${HTTPS_PROXY:-} ${http_proxy:-} ${ALL_PROXY:-}" >> "$TMP/check-env.log"
+               for m in $(cat "$TMP/deny-fails" 2>/dev/null); do
                  case " $* " in *"/$m "*) exit 1 ;; esac
                done ;;
 esac
@@ -32,12 +39,24 @@ case " $* " in
 esac
 exit 0
 STUB
-chmod +x "$TMP/bin/cargo" "$TMP/bin/git"
+# The retry waits and the wall-clock bound, observed instead of spent.
+cat > "$TMP/bin/sleep" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$TMP/sleep.log"
+STUB
+cat > "$TMP/bin/timeout" <<'STUB'
+#!/usr/bin/env bash
+[ "$1" = --version ] && { echo "timeout (GNU coreutils) 9.4"; exit 0; }
+printf '%s\n' "$*" >> "$TMP/timeout.log"
+shift 3
+exec "$@"
+STUB
+chmod +x "$TMP/bin/cargo" "$TMP/bin/git" "$TMP/bin/sleep" "$TMP/bin/timeout"
 export TMP PATH="$TMP/bin:$PATH" CARGO_HOME="$TMP/cargo-home" ADVISORY_DB_PIN="$TMP/pin.toml"
 
 REV=0123456789abcdef0123456789abcdef01234567
 pin() { printf '# header\nrev = "%s"\n' "$1" > "$TMP/pin.toml"; }
-run() { : > "$TMP/cargo.log"; : > "$TMP/git.log"; rm -rf "$CARGO_HOME"; rc=0; bash "$SCRIPT" > "$TMP/out" 2>&1 || rc=$?; }
+run() { : > "$TMP/cargo.log"; : > "$TMP/git.log"; : > "$TMP/sleep.log"; : > "$TMP/timeout.log"; : > "$TMP/check-env.log"; rm -f "$TMP/fetch-count"; rm -rf "$CARGO_HOME"; rc=0; bash "$SCRIPT" > "$TMP/out" 2>&1 || rc=$?; }
 count() { grep -c -e "$1" "$2" || true; }
 n=0
 
@@ -56,6 +75,7 @@ pin ""; run
 [ "$(count '--offline' "$TMP/cargo.log")" = 0 ] || fail "empty pin: an offline check"
 [ "$(count 'fetch' "$TMP/cargo.log")" = 0 ] || fail "empty pin: a fetch"
 [ ! -s "$TMP/git.log" ] || fail "empty pin: git was called"
+grep -q 'proxy=http' "$TMP/check-env.log" && fail "empty pin: a live check was cut off the network"
 grep -q 'live' "$TMP/out" || fail "empty pin: the log does not say the database is live"
 n=$((n + 1))
 
@@ -78,6 +98,24 @@ grep -q "advisory-db-0123456789abcdef reset -q --hard FETCH_HEAD" "$TMP/git.log"
 [ "$(count '^fetch --locked --manifest-path' "$TMP/cargo.log")" = 8 ] || fail "set pin: not eight cargo fetches"
 [ "$(count '--offline .* check advisories licenses' "$TMP/cargo.log")" = 8 ] || fail "set pin: not eight offline checks"
 grep -q "advisory-db at $REV" "$TMP/out" || fail "set pin: the log does not name the commit"
+[ "$(count '^-k 10 [0-9]* cargo fetch --locked' "$TMP/timeout.log")" = 8 ] || fail "set pin: a cargo fetch without its bound"
+[ "$(grep -c '^proxy=http://127.0.0.1:9 http://127.0.0.1:9 http://127.0.0.1:9 http://127.0.0.1:9$' "$TMP/check-env.log")" = 8 ] \
+  || fail "set pin: an offline check that could still reach the network"
+n=$((n + 1))
+
+# 4b. A cargo fetch that fails twice is retried and the run passes; one that
+# fails three times fails its workspace only, and the others still run.
+pin "$REV"; echo "$REV" > "$TMP/head"; echo 'crates/tst-srt/fuzz/Cargo.toml 2' > "$TMP/fetch-fails"; run
+[ "$rc" = 0 ] || fail "fetch retried: exit $rc"
+[ "$(count 'tst-srt/fuzz/Cargo.toml' "$TMP/cargo.log" | head -1)" = 4 ] || fail "fetch retried: not three fetches and one check"
+[ "$(wc -l < "$TMP/sleep.log" | tr -d ' ')" = 2 ] || fail "fetch retried: not two waits"
+n=$((n + 1))
+echo 'crates/tst-srt/fuzz/Cargo.toml 3' > "$TMP/fetch-fails"; run
+rm "$TMP/fetch-fails"
+[ "$rc" = 1 ] || fail "fetch failing: exit $rc, want 1"
+grep -q 'FAILED.*crates/tst-srt/fuzz/Cargo.toml' "$TMP/out" || fail "fetch failing: the workspace is not named"
+[ "$(count '^fetch --locked.*tst-srt/fuzz' "$TMP/cargo.log")" = 3 ] || fail "fetch failing: not three attempts"
+[ "$(count ' check advisories licenses' "$TMP/cargo.log")" = 7 ] || fail "fetch failing: the other seven were not checked"
 n=$((n + 1))
 
 # 5. The clone did not land on the pin: fail before any check.
