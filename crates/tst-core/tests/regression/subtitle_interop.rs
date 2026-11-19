@@ -82,8 +82,8 @@
 //! tools yield `skip`, never failure. The strict guard runs in the
 //! interop workflow (step `Subtitle interop guard`).
 //!
-//! The strict guard also counts the cells each tool measured (neither
-//! `skip` nor `unrelated-fail`) and fails when a tool that is on PATH
+//! The strict guard also counts the cells each tool measured (`ignore`
+//! cells only) and fails when a tool that is on PATH
 //! measured none, so a probe that stopped seeing anything cannot pass
 //! by saying nothing (`ffprobe`, `tsduck-psi` and `tsanalyze` count a cell
 //! only when their output lists the fixture's PID; `gst-tsdemux` is
@@ -206,6 +206,26 @@ fn tsanalyze_lists_pid(stdout: &str, pid: u16) -> bool {
         .any(|l| l.trim_start_matches(['|', ' ']).starts_with(&want))
 }
 
+/// A cell a tool measured: it accepted the stream and, for a counted tool,
+/// its output listed the fixture's PID. A `Reject` is not a measurement but
+/// a rejection, on a control fixture too.
+fn measured(r: &ProbeResult) -> bool {
+    r.action == Action::Ignore
+}
+
+/// Every `Reject` cell, one line each, whatever the fixture.
+fn rejections(rows: &[ProbeResult]) -> Vec<String> {
+    rows.iter()
+        .filter(|r| r.action == Action::Reject)
+        .map(|r| {
+            format!(
+                "  - {} on {}: exit={:?} notes={}",
+                r.tool, r.fixture, r.exit, r.notes
+            )
+        })
+        .collect()
+}
+
 /// What is wrong with the matrix as a measurement, one line each: a tool on
 /// PATH (it has a row that is not `skip`) that measured nothing, and, when
 /// `require_tools`, a tool that is not on PATH at all.
@@ -214,10 +234,7 @@ fn census_failures(rows: &[ProbeResult], require_tools: bool) -> Vec<String> {
     for tool in TOOLS {
         let cells: Vec<&ProbeResult> = rows.iter().filter(|r| r.tool == *tool).collect();
         let present = cells.iter().any(|r| r.action != Action::Skip);
-        let measured = cells
-            .iter()
-            .filter(|r| !matches!(r.action, Action::Skip | Action::UnrelatedFailure))
-            .count();
+        let measured = cells.iter().filter(|r| measured(r)).count();
         if !present && require_tools {
             failures.push(format!(
                 "  - {tool}: not on PATH, and the tools are required"
@@ -671,8 +688,9 @@ fn wave_i1_matrix_informational() {
 }
 
 /// Strict regression-guard. Fails if any cell where a tool was
-/// actually run reports `Reject` for a VTTC/GA94 fixture, or if a tool
-/// that is on PATH measured no cell at all. `UnrelatedFailure` and `Skip`
+/// actually run reports `Reject` (on a DVB control the tool or the fixture
+/// changed, not the markers, but the cell is no longer measured), or if a
+/// tool that is on PATH measured no cell at all. `UnrelatedFailure` and `Skip`
 /// cells are tolerated one by one. Marked `#[ignore]`
 /// so PR CI doesn't break when ffmpeg builds drift behavior, but
 /// run explicitly before tagging a release.
@@ -689,31 +707,10 @@ fn wave_i1_matrix_no_regression() {
     assert!(missing.is_empty(), "fixtures missing: {missing:?}");
     let rows = run_matrix();
     print_matrix(&rows);
-    let vttc_ga94_fixtures = [
-        "webvtt_in_ts_simple.ts",
-        "webvtt_in_ts_multi_cue.ts",
-        "cea708_standalone.ts",
-        "subtitle_with_klv_same_program.ts",
-        "webvtt_multi_program_with_klv.ts",
-    ];
-    let mut rejections = Vec::new();
-    for r in &rows {
-        if r.action == Action::Reject && vttc_ga94_fixtures.contains(&r.fixture.as_str()) {
-            rejections.push(format!(
-                "  - {} on {}: exit={:?} notes={}",
-                r.tool, r.fixture, r.exit, r.notes
-            ));
-        }
-    }
+    let rejections = rejections(&rows);
     let require_tools = std::env::var("TSTRANS_REQUIRE_INTEROP_TOOLS").is_ok_and(|v| v == "1");
     let census = census_failures(&rows, require_tools);
-    let ran = |t: &&str| {
-        rows.iter()
-            .filter(|r| {
-                r.tool == *t && !matches!(r.action, Action::Skip | Action::UnrelatedFailure)
-            })
-            .count()
-    };
+    let ran = |t: &&str| rows.iter().filter(|r| r.tool == *t && measured(r)).count();
     eprintln!(
         "Measured cells per tool: {:?}",
         TOOLS.iter().map(|t| (*t, ran(t))).collect::<Vec<_>>()
@@ -732,9 +729,10 @@ fn wave_i1_matrix_no_regression() {
     );
     assert!(
         rejections.is_empty(),
-        "external receiver rejected VTTC/GA94 marker stream(s):\n{}\n\
-         the documented claim that external receivers tolerate the markers does NOT hold for these cells. \
-         Consider removing the auto-emit or changing the marker.",
+        "external receiver rejected the stream or did not list its subtitle PID:\n{}\n\
+         on a VTTC/GA94 fixture the documented claim that external receivers tolerate the markers \
+         does NOT hold for that cell (consider removing the auto-emit or changing the marker); \
+         on a DVB control the tool or the fixture changed.",
         rejections.join("\n")
     );
 }
@@ -814,4 +812,36 @@ fn every_fixture_in_the_matrix_has_a_known_subtitle_pid() {
     for f in FIXTURES {
         assert!(subtitle_pid(f).is_some(), "{f}");
     }
+}
+
+#[test]
+fn a_reject_cell_is_not_measured_and_is_a_rejection() {
+    // A tool whose only cell is a reject (here: its output did not list the
+    // PID of a DVB control) measured nothing, whatever the fixture.
+    let mut rows = all_tools(Action::Ignore);
+    rows.retain(|r| r.tool != "ffprobe");
+    rows.push(ProbeResult {
+        fixture: "dvb_subtitling_eng.ts".to_string(),
+        ..cell("ffprobe", Action::Reject)
+    });
+    let failures = census_failures(&rows, false);
+    assert_eq!(failures.len(), 1, "{failures:?}");
+    assert!(failures[0].contains("ffprobe"), "{failures:?}");
+    let rejected = rejections(&rows);
+    assert_eq!(rejected.len(), 1, "{rejected:?}");
+    assert!(
+        rejected[0].contains("ffprobe on dvb_subtitling_eng.ts"),
+        "{rejected:?}"
+    );
+}
+
+#[test]
+fn every_fixture_in_the_matrix_exists() {
+    // The strict guard refuses a missing fixture, but it runs only in the
+    // interop workflow; a renamed fixture shows here first.
+    let missing: Vec<&&str> = FIXTURES
+        .iter()
+        .filter(|f| !fixtures_dir().join(f).exists())
+        .collect();
+    assert!(missing.is_empty(), "fixtures missing: {missing:?}");
 }
