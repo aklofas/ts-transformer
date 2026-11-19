@@ -1,4 +1,13 @@
 # C bindings
+<!-- compile-prelude: c
+tst_mux_config_t *cfg;
+tst_program_handle_t prog;
+struct tst_mux_sender_t *snd;
+const uint8_t *nal, *payload;
+size_t len, payload_len;
+int64_t pts, pts_90khz;
+tst_event_t ev;
+-->
 
 > **Who this is for:** You write C (or any language that links against C) and want to embed ts-transformer in your application via a stable C ABI — for an embedded Linux target, a third-language wrapper (Go, Lua, C#, Erlang NIF), or a host application where Rust is not on the table.
 
@@ -70,6 +79,7 @@ gcc -Wall -Werror -o myapp myapp.c $(pkg-config --cflags --libs tstrans)
 
 Every release exposes two pairs of macros in `tstrans.h` plus matching runtime accessors:
 
+<!-- compile: c-statements -->
 ```c
 #define TST_VERSION_MAJOR        0   // package (Cargo.toml) version
 #define TST_VERSION_MINOR        10
@@ -80,6 +90,7 @@ Every release exposes two pairs of macros in `tstrans.h` plus matching runtime a
 
 The **ABI** pair is what binding consumers should pin against. Minor bumps are additive (new entry points / new enum variants); a future major bump will be breaking (none yet — sitting at `0` pre-1.0). Check at process startup:
 
+<!-- compile: c-statements -->
 ```c
 if (tst_get_abi_version_major() != TST_ABI_VERSION_MAJOR) {
     fprintf(stderr, "tstrans ABI major mismatch\n");
@@ -105,6 +116,7 @@ playable video or valid ST 0601 metadata. Save the code below as `hello.c`.
 The full example, including error checks, is at
 [`hello_world.c`](../../bindings/c/examples/getting-started/hello_world.c).
 
+<!-- compile: c-file -->
 ```c
 #include "tstrans.h"
 #include <stdio.h>
@@ -148,6 +160,7 @@ The Rust twin is [`hello_world.rs`](../../examples/getting-started/hello_world.r
 
 The C twin of [Quickstart](/docs/start/quickstart.md). Connect an SRT sender, push one access unit + one KLV record, close cleanly:
 
+<!-- compile: c-file -->
 ```c
 #include "tstrans.h"
 #include <stdio.h>
@@ -203,6 +216,7 @@ For B-frame-reordered streams you need to write both a presentation timestamp
 (PTS) and a decode timestamp (DTS) into each PES header. Use the targeted
 `_with_dts` variants on the offline `tst_muxer_t` to pass both:
 
+<!-- compile: c-statements -->
 ```c
 // Annex-B NAL with explicit DTS (handle-targeted):
 int tst_muxer_push_video_to_with_dts(struct tst_muxer_t *p,
@@ -245,6 +259,7 @@ sets another lead (`0..=1000`; **ABI 30**).
 
 For opaque payloads the demuxer would surface as `TST_STREAM_KIND_UNKNOWN` (vendor telemetry, application sidecar data), declare a data stream and push raw bytes:
 
+<!-- compile: c-statements -->
 ```c
 tst_data_stream_handle_t ds = tst_mux_config_add_data_stream(
     cfg, prog, 0x102, /*stream_type=*/0xF0, /*carries_pts=*/true);
@@ -263,6 +278,7 @@ The config entry points and the offline `tst_muxer_push_data` / `tst_muxer_push_
 
 Bind an SRT listener, walk typed demux events. C has no listen rules yet (see [deferred features](/docs/project/deferred-features.md)).
 
+<!-- compile: c-file -->
 ```c
 #include "tstrans.h"
 #include <inttypes.h>
@@ -361,6 +377,7 @@ C has no mount rules yet (see [deferred features](/docs/project/deferred-feature
 
 Server entry points:
 
+<!-- compile: c-statements -->
 ```c
 void tst_rtsp_server_builder_accept_unregistered_publishers(struct TstRtspServerBuilder *builder, bool accept);
 void tst_rtsp_server_builder_end_publish_mount_on_publisher_exit(struct TstRtspServerBuilder *builder, bool end);
@@ -385,6 +402,7 @@ type, never by RTSP keepalives or RTCP.
 
 Publish-mount handle:
 
+<!-- compile: c-statements -->
 ```c
 const char *tst_rtsp_publish_mount_path(const struct tst_rtsp_publish_mount_t *mount);
 int tst_rtsp_publish_mount_peer_count(const struct tst_rtsp_publish_mount_t *mount, uint64_t *out);
@@ -429,6 +447,7 @@ The other direction, publishing to an RTSP server with ANNOUNCE / RECORD, is not
 
 A server that takes UDP or RIST ingest on its own ports can ask each receiver who is publishing to it and keep it to one address (ABI 31). Each of `tst_udp_receiver`, `tst_udp_demux_receiver`, `tst_rist_receiver` and `tst_rist_demux_receiver` has the same two getters:
 
+<!-- compile: c-statements -->
 ```c
 int tst_udp_receiver_peer_addr(struct TstUdpReceiver *p, char *buf, size_t buf_len);
 int tst_udp_receiver_get_source_rejected(struct TstUdpReceiver *p, uint64_t *out);
@@ -470,6 +489,7 @@ Treat handles as moved-into the close call: set your local variable to `NULL` im
 
 **Error surface.** Errors are flat negative `TST_E_*` integers returned directly by the function. The most recent error is also written to a thread-local slot:
 
+<!-- compile: c-statements -->
 ```c
 int rc = tst_mux_sender_send_video(snd, nal, len, pts, true);
 if (rc != 0) {
@@ -492,6 +512,7 @@ See [Binding-authors guide](/docs/reference/binding-authors.md#transient-vs-pers
 
 **No `#[non_exhaustive]` on C enums.** Enums are stable `int32_t` constants; new variants get assigned the next integer. Write switches with a safe `default:` arm for forward-compat:
 
+<!-- compile: c-statements -->
 ```c
 switch (ev.kind) {
     case TST_EVENT_KIND_PROGRAM_MAP:  /* ... */ break;

@@ -1947,5 +1947,33 @@ rm -r "$tmp/dep/bindings/jvm"
 expect "deprecations: a tree whose Java sources were not found fails" 1 dep
 expect_out "deprecations: what was not read" "no java source file was read under bindings/jvm/src/main: its deprecations were not checked"
 
+# ---- doc-snippets: a marked snippet that does not compile fails -------------
+DS="$DIR/../check/repo/doc-snippets.sh"
+mkdir -p "$tmp/ds/inc"
+printf 'int tst_ok(void);\n' > "$tmp/ds/inc/tstrans.h"
+printf '<!-- compile: c-statements -->\n```c\nint a = tst_ok();\n```\n' > "$tmp/ds/good.md"
+printf '<!-- compile: c-statements -->\n```c\nint a = tst_gone();\n```\n' > "$tmp/ds/bad.md"
+printf '```c\nint a = tst_gone();\n```\n' > "$tmp/ds/unmarked.md"
+printf '<!-- compile: c-statements -->\n\n```c\nint a;\n```\n' > "$tmp/ds/nofence.md"
+expect "doc-snippets: no input is a SKIP, not a failure" 0 bash "$DS"
+expect_out "doc-snippets: the skip is stated" "doc-snippets: SKIP"
+expect "doc-snippets: a marked C snippet that compiles passes" 0 env DOC_SNIPPETS_PAGE="$tmp/ds/good.md" bash "$DS" c "$tmp/ds/inc"
+expect "doc-snippets: a marked C snippet that calls a missing function fails" 1 env DOC_SNIPPETS_PAGE="$tmp/ds/bad.md" bash "$DS" c "$tmp/ds/inc"
+expect "doc-snippets: a page with no marked snippet fails (nothing compiled)" 1 env DOC_SNIPPETS_PAGE="$tmp/ds/unmarked.md" bash "$DS" c "$tmp/ds/inc"
+expect_out "doc-snippets: the empty page is named" "no marked c snippet found"
+expect "doc-snippets: a marker without its fence fails" 1 env DOC_SNIPPETS_PAGE="$tmp/ds/nofence.md" bash "$DS" c "$tmp/ds/inc"
+if command -v javac >/dev/null 2>&1; then
+    # the wrapper imports every org.tstrans package it names: stand-ins make them exist
+    mkdir -p "$tmp/ds/stub" "$tmp/ds/cp"
+    for pkg in "" .codec .hls .io .klv .mpegts .pipeline; do
+        printf 'package org.tstrans%s;\nclass Stub {}\n' "$pkg" > "$tmp/ds/stub/Stub${pkg//./_}.java"
+    done
+    javac -d "$tmp/ds/cp" "$tmp/ds"/stub/*.java
+    printf '<!-- compile: java-statements -->\n```java\nint a = 1;\n```\n' > "$tmp/ds/good-j.md"
+    printf '<!-- compile: java-statements -->\n```java\nint a = Nope.call();\n```\n' > "$tmp/ds/bad-j.md"
+    expect "doc-snippets: a marked Java snippet that compiles passes" 0 env DOC_SNIPPETS_PAGE="$tmp/ds/good-j.md" bash "$DS" java "$tmp/ds/cp"
+    expect "doc-snippets: a marked Java snippet with a missing class fails" 1 env DOC_SNIPPETS_PAGE="$tmp/ds/bad-j.md" bash "$DS" java "$tmp/ds/cp"
+fi
+
 if [[ "$fail" == 0 ]]; then echo "self-test: ALL OK"; fi
 exit "$fail"
