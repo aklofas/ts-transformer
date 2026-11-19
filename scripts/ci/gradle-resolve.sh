@@ -4,7 +4,8 @@
 # gradle-resolve-all.init.gradle) in a retried call before the build, so a
 # fetch Maven Central fails once (a 429, or "not found" for a file it has) is
 # retried instead of failing the build minutes later. The later Gradle calls
-# of the job find it all in the Gradle user home.
+# of the job find it all in the Gradle user home. Any failure of that call is
+# retried, a broken build file included: about two and a half minutes more.
 #
 # Usage: gradle-resolve.sh [gradle arguments...] (added to the resolveAll call)
 # Runs from bindings/jvm. Environment: GRADLEW (default ./gradlew, the wrapper
@@ -28,7 +29,7 @@ while :; do
   else
     rc=$?
   fi
-  echo "::notice::Gradle dependency resolution attempt $attempt of 3 failed with status $rc"
+  echo "::notice::Gradle attempt $attempt of 3 failed with status $rc"
   [ "$attempt" -lt 3 ] || { echo "gradle-resolve.sh: dependency resolution failed 3 times" >&2; exit 1; }
   w="$(echo "$waits" | awk -v i="$attempt" '{print $i}')"
   [ -z "$w" ] || sleep "$w"
