@@ -694,15 +694,17 @@ TCP-interleaved) at third-party servers. Two harness paths publish:
 through the same `MuxSender` as every other `send`) and `tst-interop push-es`
 (a generated file's H.264 and KLV as two elementary tracks, RFC 6184 + RFC
 6597, paced by PTS, writing what it pushed to `<out>.h264` / `<out>.klv`).
-Both exit 0 only once the server answered TEARDOWN; a refusal with a status
-(ffmpeg's `501`) is a warning line, since every queued frame was written
-before it.
+Both exit 0 only when the push client's `close()` reports the queued media
+written and a TEARDOWN answer: `Ok`, or a refusal with a status (ffmpeg's
+`501`), which is a warning line. They exit 2 when `close()` reports
+`Protocol { code: 454 }` (the server had forgotten the session and queued
+media was dropped), and on an unanswered TEARDOWN or a broken connection.
 
 | Cell | Server | Reader | Tier | Judged |
 |---|---|---|---|---|
-| `rtsp-push/us-to-ffmpeg-listen` | `ffmpeg -rtsp_flags listen` (writes the file) | — | remux | `verify --file`, `baseline` |
+| `rtsp-push/us-to-ffmpeg-listen` | `ffmpeg -rtsp_flags listen` (writes the file) | — | remux | `verify --file`, `baseline`; video AUs at least the pushed count minus one, on a line of its own |
 | `rtsp-push/us-to-mediamtx-mp2t` | mediamtx (relay) | GStreamer `rtspsrc ! rtpmp2tdepay ! filesink` | transparent | pulled SHA-256 = sent `stream_sha256`, and `verify --file`, `baseline` |
-| `rtsp-push/us-to-mediamtx-es-klv` | mediamtx (relay) | GStreamer `rtspsrc ! rtph264depay` / `rtpklvdepay` | remux | `verify-es` against the push's sidecars (a `klv-sync` file) |
+| `rtsp-push/us-to-mediamtx-es-klv` | mediamtx (relay) | GStreamer `rtspsrc ! rtph264depay` / `rtpklvdepay` | remux | `verify-es` against the push's sidecars (a `klv-sync` file): the whole stream |
 
 mediamtx is not in Ubuntu's archive: `interop.yml` installs a pinned release
 tarball (sha256-checked) on the x86_64 job only, and the cells are not in
@@ -758,7 +760,10 @@ Things these cells depend on, each measured with mediamtx v1.21.4, ffmpeg
 - **`us-to-ffmpeg-listen` is a re-mux cell** (ffmpeg is the server and
   writes the file), so ffmpeg 6.1's KLV truncation (gap item 1) and its PID
   renumbering apply to it as to every ffmpeg `-c copy` cell; it carries the
-  same expected-unsupported row.
+  same expected-unsupported row. The video count is checked on a separate
+  failure line the row cannot excuse: the capture must hold at least the
+  pushed access units minus one (ffmpeg never writes the last), so a short
+  capture still FAILs the cell.
 
 ### Transport axis: the WHEP browser cells
 

@@ -322,7 +322,7 @@ jq -n \
 # (`send` = we push/serve, `recv` = we pull/listen) — matches
 # crates/tst-interop/src/report/matrix.rs's own test fixtures.
 
-# run_send_peer_recv <id> <peer> <tier> <our_url> <out_file> [--send-flag F]... -- <peer_cmd...>
+# run_send_peer_recv <id> <peer> <tier> <our_url> <out_file> [--send-flag F]... [--video-floor-from-send] -- <peer_cmd...>
 #
 # We push (caller/connect) over <our_url>; the peer listens/receives
 # and writes <out_file>. Verdict: our send must exit 0, <out_file> must
@@ -330,15 +330,25 @@ jq -n \
 # tier additionally requires the sent-side stream_sha256 to equal
 # <out_file>'s. Each --send-flag F adds one argument to our `send`
 # command line (e.g. `--push` for an RTSP server that takes a publish).
+# --video-floor-from-send adds a failure line of its own when the capture
+# holds fewer video access units than the send pushed, minus one (a peer
+# that writes until the stream ends may lose the last): kept apart from
+# the verify line, an expectations row that excuses a known verify gap on
+# that line cannot excuse a short capture too.
 run_send_peer_recv() {
   local id=$1 peer=$2 tier=$3 our_url=$4 out_file=$5
   shift 5
   local -a send_extra=()
+  local video_floor=""
   while [[ $# -gt 0 && "$1" != "--" ]]; do
     case "$1" in
       --send-flag)
         send_extra+=("$2")
         shift 2
+        ;;
+      --video-floor-from-send)
+        video_floor=1
+        shift
         ;;
       *)
         echo "run_send_peer_recv: unknown option: $1" >&2
@@ -415,6 +425,15 @@ run_send_peer_recv() {
     got_hash=$(jq -r '.metrics.stream_sha256' "$vjson" 2>/dev/null) || got_hash=""
     if [[ -z "$sent_hash" || -z "$got_hash" || "$sent_hash" != "$got_hash" ]]; then
       reasons+=("byte-transparent tier: stream_sha256 mismatch (sent ${sent_hash:-<unparseable>}, peer capture ${got_hash:-<unparseable>})")
+    fi
+  fi
+  if [[ -n "$video_floor" ]]; then
+    local sent_aus got_aus
+    sent_aus=$(jq -r '.video_aus // empty' "$send_json" 2>/dev/null) || sent_aus=""
+    got_aus=$(jq -r '.metrics.video_aus // empty' "$vjson" 2>/dev/null) || got_aus=""
+    echo "--- video AUs: sent ${sent_aus:-<unparseable>}, in the capture ${got_aus:-<unparseable>} ---" >>"$log"
+    if [[ ! "$sent_aus" =~ ^[0-9]+$ || ! "$got_aus" =~ ^[0-9]+$ ]] || ((got_aus < sent_aus - 1)); then
+      reasons+=("short capture: ${got_aus:-<unparseable>} video AUs, want >= $((${sent_aus:-1} - 1)) (the send pushed ${sent_aus:-<unparseable>}; only the last may be missing)")
     fi
   fi
 
@@ -1378,11 +1397,13 @@ rtsp_push_cells() {
   # connection closes, so `send --push` reports that refusal as a warning
   # and closes; it has no idle timeout of its own, so the run_send_peer_recv
   # `timeout` around it is the watchdog. Its exit status is 0 whatever
-  # happened: the file is the verdict, judged at ffmpeg's re-mux tier.
+  # happened: the file is the verdict, judged at ffmpeg's re-mux tier. Its
+  # re-mux drops this profile's KLV (an expectations row excuses that
+  # verify line), so the video count is gated on a line of its own.
   port=$(free_port tcp)
   run_send_peer_recv "rtsp-push/us-to-ffmpeg-listen" ffmpeg remux \
     "rtsp://127.0.0.1:$port/live" "$WORK/rtsp-push_us-to-ffmpeg-listen.ts" \
-    --send-flag --push --send-flag --connect-retry --send-flag 10 -- \
+    --send-flag --push --send-flag --connect-retry --send-flag 10 --video-floor-from-send -- \
     ffmpeg -y -loglevel warning -rtsp_flags listen -rtsp_transport tcp \
     -i "rtsp://127.0.0.1:$port/live" \
     -map 0 -c copy -copy_unknown -f mpegts "$WORK/rtsp-push_us-to-ffmpeg-listen.ts"
