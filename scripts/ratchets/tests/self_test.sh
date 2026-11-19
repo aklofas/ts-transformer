@@ -673,7 +673,14 @@ mkdir -p "$tmp/rvc"
 rvc_fixtures() { # <version>
     local ver="$1" maj rest min pat
     maj="${ver%%.*}"; rest="${ver#*.}"; min="${rest%%.*}"; pat="${rest#*.}"
-    printf '[workspace.package]\nversion      = "%s"\n' "$ver" > "$tmp/rvc/Cargo.toml"
+    # A real three-member workspace: the rail reads the resolved packages with
+    # `cargo metadata`, so the manifests are the fixtures.
+    rm -rf "$tmp/rvc/ws"; mkdir -p "$tmp/rvc/ws/core/src" "$tmp/rvc/ws/pipe/src" "$tmp/rvc/ws/mbed/src"
+    printf '[workspace]\nresolver = "2"\nmembers = ["core", "pipe", "mbed"]\n\n[workspace.package]\nversion      = "%s"\n' "$ver" > "$tmp/rvc/ws/Cargo.toml"
+    printf '[package]\nname = "tst-core"\nversion.workspace = true\n' > "$tmp/rvc/ws/core/Cargo.toml"
+    printf '[package]\nname = "tst-pipeline"\nversion.workspace = true\n\n[dependencies]\ntst-core = { path = "../core", version = "%s" }\n' "$ver" > "$tmp/rvc/ws/pipe/Cargo.toml"
+    printf '[package]\nname = "tstrans-mbedtls-src"\nversion = "%s+3.6.7"\n' "$ver" > "$tmp/rvc/ws/mbed/Cargo.toml"
+    : > "$tmp/rvc/ws/core/src/lib.rs"; : > "$tmp/rvc/ws/pipe/src/lib.rs"; : > "$tmp/rvc/ws/mbed/src/lib.rs"
     printf '[project]\nname    = "tstrans"\nversion = "%s"\n' "$ver" > "$tmp/rvc/pyproject.toml"
     printf '[package]\nname    = "tst-py"\nversion = "%s"\n' "$ver" > "$tmp/rvc/py-cargo.toml"
     # An ABI line proves the TST_VERSION_ anchor skips TST_ABI_VERSION_.
@@ -690,15 +697,12 @@ rvc_fixtures() { # <version>
         printf '#define TST_VERSION_PATCH %s\n' "$pat"
     } > "$tmp/rvc/tstrans.h"
     printf '    assert tstrans.__version__ == "%s"\n' "$ver" > "$tmp/rvc/test_version.py"
-    # A single-line inline-table internal path-dependency, mirroring the real
-    # `crates/*/Cargo.toml` shape the dep-version check scans.
-    printf '[dependencies]\ntst-core = { path = "../tst-core", version = "%s" }\n' "$ver" > "$tmp/rvc/dep-crate.toml"
 }
 rvc() {
-    RVC_CARGO_TOML="$tmp/rvc/Cargo.toml" RVC_PYPROJECT="$tmp/rvc/pyproject.toml" \
+    RVC_CARGO_TOML="$tmp/rvc/ws/Cargo.toml" RVC_WORKSPACE="$tmp/rvc/ws" RVC_PYPROJECT="$tmp/rvc/pyproject.toml" \
     RVC_PY_CARGO="$tmp/rvc/py-cargo.toml" RVC_C_LIB="$tmp/rvc/lib.rs" \
     RVC_C_HEADER="$tmp/rvc/tstrans.h" RVC_PY_TEST="$tmp/rvc/test_version.py" \
-    RVC_DEP_TOMLS="$tmp/rvc/dep-crate.toml" GITHUB_REF_NAME="${rvc_ref_name-}" bash "$R_RVC" "$@"
+    GITHUB_REF_NAME="${rvc_ref_name-}" bash "$R_RVC" "$@"
 }
 # rvc_ref <ref_type|-> <ref_name>: run the rail as that ref; "-" leaves GITHUB_REF_TYPE unset.
 rvc_ref() {
@@ -716,10 +720,35 @@ rvc_fixtures "0.2.0"
 expect "release version: expected arg 0.2.0 matches" 0 rvc 0.2.0
 expect "release version: expected arg 9.9.9 mismatches" 1 rvc 9.9.9
 rvc_fixtures "0.2.0"
-printf '[dependencies]\ntst-core = { path = "../tst-core", version = "0.1.0" }\n' > "$tmp/rvc/dep-crate.toml"
+printf '[package]\nname = "tst-pipeline"\nversion.workspace = true\n\n[dependencies]\ntst-core = { path = "../core", version = "0.1.0" }\n' > "$tmp/rvc/ws/pipe/Cargo.toml"
 expect "release version: internal dep version key flipped to 0.1.0" 1 rvc
+expect_out "release version: internal dep version key flipped to 0.1.0" "tst-pipeline"
+rvc_fixtures "0.2.0"
+printf '[package]\nname = "tst-pipeline"\nversion.workspace = true\n\n[dependencies]\ntst-core = { version = "0.1.0", path = "../core" }\n' > "$tmp/rvc/ws/pipe/Cargo.toml"
+expect "release version: a stale pin written version-before-path" 1 rvc
+rvc_fixtures "0.2.0"
+printf '[package]\nname = "tst-pipeline"\nversion.workspace = true\n\n[dependencies.tst-core]\npath = "../core"\nversion = "0.1.0"\n' > "$tmp/rvc/ws/pipe/Cargo.toml"
+expect "release version: a stale pin written as a dependency table" 1 rvc
+rvc_fixtures "0.2.0"
+printf '[package]\nname = "tst-pipeline"\nversion.workspace = true\n\n[dependencies.tst-core]\npath = "../core"\nversion = "=0.2.0"\n' > "$tmp/rvc/ws/pipe/Cargo.toml"
+expect "release version: an exact pin at the workspace version passes" 0 rvc
+rvc_fixtures "0.2.0"
+printf '[package]\nname = "tst-core"\nversion = "0.1.0"\n' > "$tmp/rvc/ws/core/Cargo.toml"
+expect "release version: a package with an explicit stale version" 1 rvc
+expect_out "release version: a package with an explicit stale version" "tst-core"
+rvc_fixtures "0.2.0"
+printf '[package]\nname = "tstrans-mbedtls-src"\nversion = "0.1.0+3.6.7"\n' > "$tmp/rvc/ws/mbed/Cargo.toml"
+expect "release version: a stale mbedtls-src version" 1 rvc
 rvc_fixtures "0.2.0"
 expect "release version: internal dep version key restored" 0 rvc
+rvc_no_cargo() { # the rail with a PATH that holds bash and jq but no cargo
+    local nb="$tmp/rvc/nocargo"; mkdir -p "$nb"
+    ln -sf "$(command -v jq)" "$nb/jq"; ln -sf "$(command -v bash)" "$nb/bash"
+    for t in dirname grep sed head cat; do ln -sf "$(command -v $t)" "$nb/$t"; done
+    PATH="$nb" rvc
+}
+expect "release version: no cargo on PATH fails" 1 rvc_no_cargo
+expect_out "release version: no cargo on PATH fails" "cargo not found on PATH"
 expect "release version: tag v0.2.0 matches" 0 rvc_ref tag v0.2.0
 expect_out "release version: tag v0.2.0 matches" "OK"
 expect "release version: tag vnext is refused" 1 rvc_ref tag vnext
@@ -1141,7 +1170,6 @@ REPO="$(cd "$DIR/../.." && pwd)"
 rs_copy() { # a copy of the real files roster-sync reads, for planting
     rm -rf "$tmp/rs"; mkdir -p "$tmp/rs/.github/workflows" "$tmp/rs/scripts/check/repo"
     cp "$REPO/.github/workflows/ci.yml" "$REPO/.github/workflows/sanitizers.yml" "$REPO/.github/workflows/crates-io.yml" "$tmp/rs/.github/workflows/"
-    cp "$REPO/scripts/check/repo/release-version-consistency.sh" "$tmp/rs/scripts/check/repo/"
     # Every fuzz workspace, and every manifest the deny job names.
     for m in $(cd "$REPO" && find crates -path '*/fuzz/Cargo.toml') \
              $(sed -nE 's/^[[:space:]]*manifest-path:[[:space:]]*([^[:space:]]+).*/\1/p' "$REPO/.github/workflows/ci.yml"); do
@@ -1158,7 +1186,6 @@ rs_copy; plant "$tmp/rs/.github/workflows/ci.yml" 'name: macos-arm64' 'name: mac
 rs_copy; plant "$tmp/rs/.github/workflows/ci.yml" 'continue: false' 'continue: true';          expect "roster-sync: a build leg made non-gating" 1 rsync_
 rs_copy; plant "$tmp/rs/.github/workflows/ci.yml" 'continue-on-error: \${{ matrix.continue }}' 'continue-on-error: true'; expect "roster-sync: the build job made continue-on-error: true" 1 rsync_
 rs_copy; plant "$tmp/rs/.github/workflows/ci.yml" 'name: windows-msvc-features' 'name: windows-msvc-features-gone'; expect "roster-sync: the windows features leg renamed away" 1 rsync_
-rs_copy; plant "$tmp/rs/scripts/check/repo/release-version-consistency.sh" ' \$ROOT/crates/tst-udp/Cargo.toml' ''; expect "roster-sync: a manifest dropped from the version rail" 1 rsync_
 rs_copy; mkdir -p "$tmp/rs/crates/tst-new/fuzz"; printf '[package]\nname = "tst-new-fuzz"\n' > "$tmp/rs/crates/tst-new/fuzz/Cargo.toml"
                                                                                  expect "roster-sync: a fuzz workspace the deny job does not check" 1 rsync_
 expect_out "roster-sync: unchecked fuzz workspace" "crates/tst-new/fuzz/Cargo.toml"
