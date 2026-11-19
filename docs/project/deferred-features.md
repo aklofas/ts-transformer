@@ -1698,10 +1698,11 @@ mean **Deferred**. An entry whose feature has shipped must never read
   one H.264 or H.265 track with an optional KLV track; it has no audio
   track. Audio reaches a server inside an MPEG-TS push (`PushDescription::Mp2t`
   under a `MuxSender` that muxes the audio stream).
-- **Why deferred:** No consumer has asked for it. Each audio codec needs its
-  own RTP payload format and SDP lines, and this library's `RtspServer`
-  takes no audio track from a publisher either (see "Audio and H.265
-  elementary RTSP publishers" above).
+- **Why deferred:** Audio already reaches a server inside an MPEG-TS push.
+  An elementary audio track needs its own RTP payload format and SDP lines
+  for each codec, and this library's `RtspServer` takes no audio track from
+  a publisher either (see "Audio and H.265 elementary RTSP publishers"
+  above).
 - **Trigger to revisit:** A consumer that must publish audio as an
   elementary track to a server that does not take MPEG-TS over RTP.
 

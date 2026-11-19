@@ -180,8 +180,8 @@ push) returns once its packets are queued for the client's I/O thread, not
 once they are on the wire. The queue is bounded, so against a server that
 reads slowly a send waits for room. The wait ends when room frees, within
 about 100 ms of a cancel from another thread (`cancel_handle()`), when the
-session ends, or when the server has taken no byte for 5 s, which ends the
-connection. The 5 s start when the operating system stops taking bytes,
+session ends, or when this machine's kernel has taken no byte of the
+connection for 5 s, which ends the connection. The 5 s start when the operating system stops taking bytes,
 not when the server stops reading: against a server that had stopped
 reading, one measured send ended about 9.7 s after it first waited. A
 server that keeps taking a few bytes within every 5 s holds a send for as

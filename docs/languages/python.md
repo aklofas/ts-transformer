@@ -1516,7 +1516,8 @@ Rules the types do not enforce:
 - **A send waits only for the queue.** It returns once its packets are
   queued for the client's thread. Against a server that reads slowly it
   waits, GIL released, until room frees, the cancel handle fires (within
-  about 100 ms), the session ends, or the server has taken no byte for 5 s.
+  about 100 ms), the session ends, or this machine's kernel has taken no
+  byte of the connection for 5 s.
   Keepalive pings go out one at a time, so what waits on such a server's
   connection stays bounded.
   `pause()` and `close()` first wait for the queue the same way.
