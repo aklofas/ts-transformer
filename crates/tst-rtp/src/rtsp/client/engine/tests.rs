@@ -255,6 +255,52 @@ fn an_injected_header_is_refused_and_nothing_is_queued() {
     assert!(e.poll_transmit().is_none());
 }
 
+/// Some servers end the connection unless each request's CSeq is one above
+/// the last, so a request that never reaches the wire takes no CSeq.
+#[test]
+fn a_request_refused_at_encoding_uses_no_cseq() {
+    let t0 = Instant::now();
+    let mut e = ClientEngine::new(cfg(None));
+    e.submit(spec(RtspMethod::Options, URI), None, t0).unwrap();
+    assert_eq!(cseq(&one(&mut e)), 1);
+    assert!(matches!(
+        e.submit(
+            spec(RtspMethod::Setup, "rtsp://cam.example/live\x01"),
+            None,
+            t0
+        ),
+        Err(RtspError::InvalidHeader { .. })
+    ));
+    assert!(e.poll_transmit().is_none());
+    e.submit(spec(RtspMethod::Setup, URI), None, t0).unwrap();
+    assert_eq!(cseq(&one(&mut e)), 2);
+}
+
+/// The `401` retry of a request that cannot be encoded takes no CSeq
+/// either: the next request carries the one the retry would have had.
+#[test]
+fn a_retry_refused_at_encoding_uses_no_cseq() {
+    let t0 = Instant::now();
+    let mut e = ClientEngine::new(cfg(Some(("user", "pass"))));
+    let a = e.submit(spec(RtspMethod::Options, URI), None, t0).unwrap();
+    assert_eq!(cseq(&one(&mut e)), 1);
+    // A challenge whose realm carries a control byte cannot be echoed in
+    // the retry's `Authorization` header.
+    e.handle_reply(
+        resp(b"RTSP/1.0 401 Unauthorized\r\nCSeq: 1\r\nWWW-Authenticate: Digest realm=\"R\x01\", nonce=\"n\"\r\n\r\n"),
+        t0,
+    );
+    assert!(matches!(
+        reply(&mut e, a),
+        Err(RtspError::InvalidHeader { .. })
+    ));
+    assert!(e.poll_transmit().is_none());
+    // The cached challenge would refuse every later request too.
+    e.auth.challenge = None;
+    e.submit(spec(RtspMethod::Options, URI), None, t0).unwrap();
+    assert_eq!(cseq(&one(&mut e)), 2);
+}
+
 #[test]
 fn a_new_submit_forgets_an_unanswered_transaction() {
     let t0 = Instant::now();

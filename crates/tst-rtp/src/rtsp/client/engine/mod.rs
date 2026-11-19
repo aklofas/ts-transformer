@@ -552,15 +552,16 @@ impl ClientEngine {
     }
 
     /// `spec` under the next CSeq, with `User-Agent`, `authorization` and
-    /// the body, encoded. The CSeq is used even when encoding fails.
+    /// the body, encoded. A request refused here never reaches the wire, so
+    /// it takes no CSeq.
     fn encode_caller_request(
         &mut self,
         spec: &RequestSpec,
         authorization: Option<String>,
     ) -> Result<(Bytes, u32), RtspError> {
-        self.cseq = self.cseq.wrapping_add(1);
+        let cseq = self.cseq.wrapping_add(1);
         let mut req = RtspRequest::new(spec.method, spec.uri.as_str(), self.cfg.version)
-            .header("cseq", self.cseq.to_string())
+            .header("cseq", cseq.to_string())
             .header("user-agent", self.cfg.user_agent.as_str());
         for (name, value) in &spec.headers {
             req = req.header(name, value.as_str());
@@ -573,7 +574,9 @@ impl ClientEngine {
                 .header("content-type", body.content_type)
                 .body(body.bytes.clone());
         }
-        Ok((req.encode_checked()?, self.cseq))
+        let bytes = req.encode_checked()?;
+        self.cseq = cseq;
+        Ok((bytes, cseq))
     }
 
     fn handle_caller_reply(&mut self, mut txn: CallerTxn, resp: RtspResponse, now: Instant) {
