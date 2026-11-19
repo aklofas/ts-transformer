@@ -35,6 +35,8 @@ fake clean 0 "Setting pipeline to PLAYING ..." "$EOS" "Freeing pipeline ..."
 fake post_eos 1 "Setting pipeline to PLAYING ..." "$EOS" "$SEND"
 fake err_then_eos 1 "Setting pipeline to PLAYING ..." "$SEND" "$EOS"
 fake other_err_post_eos 1 "Setting pipeline to PLAYING ..." "$EOS" "ERROR: from element /GstPipeline:pipeline0/GstH264Parse:h264parse0: Internal data stream error."
+fake eos_no_error 1 "Setting pipeline to PLAYING ..." "$EOS" "Freeing pipeline ..."
+fake err_eos_err 1 "Setting pipeline to PLAYING ..." "$SEND" "$EOS" "$SEND"
 fake pre_eos 1 "Setting pipeline to PLAYING ..." "$SEND"
 fake timed_out 124 "Setting pipeline to PLAYING ..." "$EOS"
 fake terminated 143 "Setting pipeline to PLAYING ..." "$EOS"
@@ -64,6 +66,8 @@ check "a send failure after EOS is a clean end" 0 \
   "generation 7: post-EOS send failure ($SEND), counted as a clean end" post_eos
 check "an error before EOS fails the generation even when EOS follows" 1 "publisher: generation 7 ended rc=1" err_then_eos
 check "an unrelated error after EOS is still a clean end" 0 "generation 7: post-EOS send failure" other_err_post_eos
+check "an exit 1 after EOS with no error line is a clean end" 0 "post-EOS send failure" eos_no_error
+check "an error before EOS fails even when another follows EOS" 1 "publisher: generation 7 ended rc=1" err_eos_err
 check "a failure before EOS fails the generation" 1 "publisher: generation 7 ended rc=1" pre_eos
 check "a timeout kill after EOS fails the generation" 124 "publisher: generation 7 ended rc=124" timed_out
 check "a signal death after EOS fails the generation" 143 "publisher: generation 7 ended rc=143" terminated
