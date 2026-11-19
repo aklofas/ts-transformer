@@ -444,6 +444,31 @@ mod fuzz_engines {
             );
         }
 
+        /// Each engine waits on the request and the ping its description
+        /// names, under those CSeq values: the seeds answer them by number.
+        #[test]
+        fn each_engine_waits_on_its_request_and_its_ping() {
+            for (kind, request, ping) in [
+                (Kind::OptionsWaiting, 1, 2),
+                (Kind::SetupWaiting, 1, 2),
+                (Kind::Recording, 5, 6),
+            ] {
+                let t = Instant::now();
+                let mut e = kind.build(t, t + PING_INTERVAL);
+                let ok = |cseq: u32| format!("RTSP/1.0 200 OK\r\nCSeq: {cseq}\r\n\r\n");
+                e.handle_input(ok(ping).as_bytes(), t);
+                assert!(events(&mut e).is_empty(), "{kind:?}");
+                assert_eq!(e.counters().keepalive_responses, 1, "{kind:?}");
+                e.handle_input(ok(request).as_bytes(), t);
+                let ev = events(&mut e);
+                assert!(
+                    matches!(ev.as_slice(), [Event::Reply { .. }]),
+                    "{kind:?}: {ev:?}"
+                );
+                assert_eq!(e.counters().unmatched_replies, 0, "{kind:?}");
+            }
+        }
+
         /// The committed seeds of `rtsp_client_pump_framing` run through
         /// the entry. A packaged crate carries no fuzz directory: there
         /// the test has nothing to read.
