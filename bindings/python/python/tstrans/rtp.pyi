@@ -359,8 +359,9 @@ class RtspClient:
         is closed then. `transport_pref=UDP` raises `UNSUPPORTED_TRANSPORT`
         before any SETUP is written (publishing over UDP is not
         implemented) and `rtsp_version=V2_0` raises `PROTOCOL` before the
-        ANNOUNCE is written (RTSP 2.0 has no ANNOUNCE). `keepalive=True` (the default) sends keepalive
-        pings, which a server that times out a silent publisher needs."""
+        ANNOUNCE is written (RTSP 2.0 has no ANNOUNCE). `keepalive=True`
+        (the default) sends keepalive pings, which a server that times out
+        a silent publisher needs."""
         ...
 
 
