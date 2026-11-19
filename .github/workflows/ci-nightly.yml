@@ -3,10 +3,11 @@
 #
 # Why a dispatcher and not a schedule trigger on ci.yml: release-qualify's
 # ci-lookup reads the latest ci run on a sha, so a frozen release sha must
-# collect at most one nightly, and ci.yml's job graph stays untouched. The
-# check step skips a tip that already has a completed nightly run; when that
-# run ended red and no open ci-nightly issue names the tip, the job reports it
-# instead of dispatching a second run.
+# collect at most one nightly, and ci.yml's job graph stays untouched. The tip
+# is read once. A tip that already has a nightly run is not dispatched again:
+# one still queued or running is waited on, a completed one skips the night,
+# and when that run ended red and no open ci-nightly issue names the tip, the
+# job reports it. A green run closes the open ci-nightly issue.
 #
 # The dispatched run executes the full set because test-main-extra runs on
 # every event except pull_request.
@@ -42,23 +43,30 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          tip=$(git rev-parse HEAD)
+          tip=$(git ls-remote origin refs/heads/main | cut -f1)
           echo "tip=$tip" >> "$GITHUB_OUTPUT"
-          last=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$tip&event=workflow_dispatch&actor=github-actions%5Bbot%5D&per_page=5" \
-            --jq '[.workflow_runs[] | select(.status=="completed")] | sort_by(.created_at) | last | if . == null then empty else "\(.id) \(.conclusion)" end')
-          if [ -n "$last" ]; then
-            echo "tip $tip already has a nightly run; nothing to dispatch" >> "$GITHUB_STEP_SUMMARY"
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-            read -r id conclusion <<<"$last"
-            if [ "$conclusion" != success ]; then
-              open=$(gh issue list --label ci-nightly --state open --search "$tip" --json number --jq 'length')
-              # A red run that no open issue names was never reported (the
-              # job that waited on it died first): report it now.
-              if [ "$open" = 0 ]; then
-                echo "stale_run_id=$id" >> "$GITHUB_OUTPUT"
+          verdict=$(bash scripts/ci/nightly-dedup.sh "$tip")
+          read -r decision id <<<"$verdict"
+          case "$decision" in
+            wait)
+              echo "tip $tip already has a nightly run in progress ($id); waiting on it" >> "$GITHUB_STEP_SUMMARY"
+              echo "skip=true" >> "$GITHUB_OUTPUT"
+              echo "pending_run_id=$id" >> "$GITHUB_OUTPUT"
+              ;;
+            skip)
+              echo "tip $tip already has a nightly run; nothing to dispatch" >> "$GITHUB_STEP_SUMMARY"
+              echo "skip=true" >> "$GITHUB_OUTPUT"
+              conclusion=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$id" --jq .conclusion)
+              if [ "$conclusion" != success ]; then
+                open=$(gh issue list --label ci-nightly --state open --search "$tip" --json number --jq 'length')
+                # A red run that no open issue names was never reported (the
+                # job that waited on it died first): report it now.
+                if [ "$open" = 0 ]; then
+                  echo "stale_run_id=$id" >> "$GITHUB_OUTPUT"
+                fi
               fi
-            fi
-          fi
+              ;;
+          esac
 
       - name: Dispatch ci on the tip
         id: dispatch
@@ -66,9 +74,8 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          tip: ${{ steps.check.outputs.tip }}
         run: |
-          tip=$(git ls-remote origin refs/heads/main | cut -f1)
-          echo "tip=$tip" >> "$GITHUB_OUTPUT"
           runs="repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$tip&event=workflow_dispatch&per_page=100"
           known=$(gh api "$runs" --jq '[.workflow_runs[].id]')
           gh workflow run ci.yml --ref main -f sha="$tip"
@@ -86,11 +93,11 @@ jobs:
 
       - name: Wait for the run
         id: wait
-        if: steps.dispatch.outputs.run_id != '' || steps.check.outputs.stale_run_id != ''
+        if: steps.dispatch.outputs.run_id != '' || steps.check.outputs.pending_run_id != '' || steps.check.outputs.stale_run_id != ''
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          RUN_ID: ${{ steps.dispatch.outputs.run_id || steps.check.outputs.stale_run_id }}
+          RUN_ID: ${{ steps.dispatch.outputs.run_id || steps.check.outputs.pending_run_id || steps.check.outputs.stale_run_id }}
         run: |
           while true; do
             # A transient gh failure retries; the job's timeout bounds the loop.
@@ -115,9 +122,19 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          TIP: ${{ steps.dispatch.outputs.tip || steps.check.outputs.tip }}
+          TIP: ${{ steps.check.outputs.tip }}
           RUN_URL: ${{ steps.wait.outputs.url }}
           FAILED: ${{ steps.wait.outputs.failed }}
         run: |
           bash scripts/ci/nightly-issue.sh "$TIP" "$RUN_URL" "$FAILED"
           exit 1
+
+      - name: Close the issue after a green run
+        if: steps.wait.outputs.conclusion == 'success'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TIP: ${{ steps.check.outputs.tip }}
+          RUN_URL: ${{ steps.wait.outputs.url }}
+        run: bash scripts/ci/nightly-issue.sh close-if-open "$TIP" "$RUN_URL"

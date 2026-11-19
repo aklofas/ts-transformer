@@ -26,6 +26,7 @@ case "$sub" in
     printf '%s\n' "$n" | sed '/^$/d' ;;
   "issue create") echo "https://example.invalid/issues/99" ;;
   "issue comment") : ;;
+  "issue close") : ;;
   *) echo "stub gh: unexpected call" >&2; exit 2 ;;
 esac
 STUB
@@ -54,5 +55,20 @@ run_case
 [ "$(grep -c '^issue comment \[41\]' "$TMP/gh.log")" = 1 ] || { echo "FAIL: expected one issue comment on 41"; cat "$TMP/gh.log"; exit 1; }
 grep -q '^issue comment \[41\].*https://example.invalid/runs/1' "$TMP/gh.log" || { echo "FAIL: comment body lacks the run URL"; cat "$TMP/gh.log"; exit 1; }
 ! grep -q '^issue create' "$TMP/gh.log" || { echo "FAIL: unexpected issue create"; exit 1; }
+
+# Case 3: close-if-open with an open issue 41 -> one close, with a comment that
+# names the green run
+echo '[{"number":41}]' > "$TMP/open.json"
+: > "$TMP/gh.log"
+bash "$SCRIPT" close-if-open abc1234def5678 https://example.invalid/runs/2
+[ "$(grep -c '^issue close \[41\]' "$TMP/gh.log")" = 1 ] || { echo "FAIL: expected one issue close on 41"; cat "$TMP/gh.log"; exit 1; }
+grep -q '^issue close \[41\].*\[--comment\].*https://example.invalid/runs/2' "$TMP/gh.log" || { echo "FAIL: close comment lacks the run URL"; cat "$TMP/gh.log"; exit 1; }
+! grep -q '^issue create\|^issue comment' "$TMP/gh.log" || { echo "FAIL: close-if-open opened or commented"; exit 1; }
+
+# Case 4: close-if-open with none open -> no close
+echo '[]' > "$TMP/open.json"
+: > "$TMP/gh.log"
+bash "$SCRIPT" close-if-open abc1234def5678 https://example.invalid/runs/2
+! grep -q '^issue close' "$TMP/gh.log" || { echo "FAIL: closed with none open"; cat "$TMP/gh.log"; exit 1; }
 
 echo "nightly-issue self-test: OK"
