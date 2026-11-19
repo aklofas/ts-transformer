@@ -4,8 +4,9 @@
 # it ended cleanly. A fake gst-launch-1.0 stands in for the real one:
 # gst-launch's own error exit (status 1) after `Got EOS` is a send failure
 # while closing a stream whose media was delivered, a clean end; a nonzero
-# exit before it, and any other status after it (a timeout kill, a signal, a
-# crash), is still a failed generation.
+# exit before it, any other status after it (a timeout kill, a signal, a
+# crash), and an exit-1 log whose first ERROR line comes before `Got EOS`, are
+# still a failed generation.
 #
 # Run it:   bash scripts/check/repo/interop-publish-generation.sh
 set -euo pipefail
@@ -32,6 +33,8 @@ EOS='Got EOS from element "pipeline0".'
 SEND='ERROR: from element /GstPipeline:pipeline0/GstRTSPClientSink:rtspclientsink0: Could not write to resource.'
 fake clean 0 "Setting pipeline to PLAYING ..." "$EOS" "Freeing pipeline ..."
 fake post_eos 1 "Setting pipeline to PLAYING ..." "$EOS" "$SEND"
+fake err_then_eos 1 "Setting pipeline to PLAYING ..." "$SEND" "$EOS"
+fake other_err_post_eos 1 "Setting pipeline to PLAYING ..." "$EOS" "ERROR: from element /GstPipeline:pipeline0/GstH264Parse:h264parse0: Internal data stream error."
 fake pre_eos 1 "Setting pipeline to PLAYING ..." "$SEND"
 fake timed_out 124 "Setting pipeline to PLAYING ..." "$EOS"
 fake terminated 143 "Setting pipeline to PLAYING ..." "$EOS"
@@ -59,6 +62,8 @@ check() { # <name> <want rc> <want substring of the output, or ""> <fake>
 check "a clean end" 0 "publisher: generation 7 ended rc=0" clean
 check "a send failure after EOS is a clean end" 0 \
   "generation 7: post-EOS send failure ($SEND), counted as a clean end" post_eos
+check "an error before EOS fails the generation even when EOS follows" 1 "publisher: generation 7 ended rc=1" err_then_eos
+check "an unrelated error after EOS is still a clean end" 0 "generation 7: post-EOS send failure" other_err_post_eos
 check "a failure before EOS fails the generation" 1 "publisher: generation 7 ended rc=1" pre_eos
 check "a timeout kill after EOS fails the generation" 124 "publisher: generation 7 ended rc=124" timed_out
 check "a signal death after EOS fails the generation" 143 "publisher: generation 7 ended rc=143" terminated
