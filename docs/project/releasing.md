@@ -138,6 +138,13 @@ step 3).
    sweep and the retitle land together. While
    `[Unreleased]` is the newest section, the workspace version is the
    previous release's or the one the line names.
+
+   The same PR pins the RustSec advisory database: set `rev` in
+   `tests/coverage/advisory-db-pin.toml` to the head commit that
+   `git ls-remote https://github.com/rustsec/advisory-db HEAD` prints. From
+   its merge, `ci`'s `deny` job checks every workspace against that commit
+   with fetching disabled, and a release-mode qualification with the pin
+   empty is NO-GO ("advisory-db pin not set at the freeze").
 3. **Freeze.** The release-prep merge commit is the soaked commit. Nothing
    outside `CHANGELOG.md`, `docs/` and
    `tests/coverage/evidence-archives.toml` changes after it until the tag,
@@ -155,6 +162,10 @@ step 3).
    only in the version of a workspace package, of a path dependency or of
    pyproject's `[project]`. A third-party package that happens to share the
    version, a comment, or any other line counts as a change.
+   An advisory published during the freeze does not turn `ci` red on the
+   frozen commit, because the `deny` job reads the pinned database; the
+   weekly `deps-advisory` workflow reports it against the live one, and the
+   maintainer decides whether it stops the release.
 4. **`main` is green** — `ci`, `jvm-jar`, and `python-wheels` all passing on
    the frozen commit. Every rerun on that commit matches a row of
    the [CI flake ledger](/docs/project/ci-flakes.md), and the latest
@@ -691,6 +702,9 @@ Release; the committed record stays the one step 10 collected.
    `target/` as the next release's wall-clock comparison base:
    `CRITERION_HOME=<dir> cargo bench -p tst-core --bench '*' -- --save-baseline main`.
    Note the commit, the toolchain and the machine beside it.
+8. **Clear the advisory-db pin.** The first PR after the tag sets `rev = ""`
+   in `tests/coverage/advisory-db-pin.toml` again, so `ci` checks the live
+   database until the next release prep.
 
 ## crates.io publish (Rust crates)
 
