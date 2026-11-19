@@ -13,7 +13,7 @@ retry3() {
   local n=1 delay
   while true; do
     timeout 300 "$@" && return 0
-    [ "$n" -ge 3 ] && return 1
+    if [ "$n" -ge 3 ]; then echo "retry3: ${1##*/} failed 3 times" >&2; return 1; fi
     case "$n" in 1) delay=${RETRY3_DELAYS_1:-20} ;; *) delay=${RETRY3_DELAYS_2:-60} ;; esac
     echo "retry3: attempt $n of '$*' failed; next in ${delay} s" >&2
     sleep "$delay"
