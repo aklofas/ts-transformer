@@ -12,7 +12,16 @@ java {
     toolchain { languageVersion.set(JavaLanguageVersion.of(17)) }
 }
 
-repositories { mavenCentral() }
+repositories {
+    mavenCentral()
+    // The same mirror as settings.gradle.kts, for the same reason: tried when
+    // Maven Central answers "not found"; content is pinned by SHA-256 in
+    // gradle/verification-metadata.xml, so it is trusted for availability only.
+    maven {
+        name = "GoogleMavenCentralMirror"
+        url = uri("https://maven-central.storage-download.googleapis.com/maven2/")
+    }
+}
 
 dependencies {
     testImplementation("org.junit.jupiter:junit-jupiter:5.10.2")
