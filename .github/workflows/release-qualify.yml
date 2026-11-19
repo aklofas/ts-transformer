@@ -193,11 +193,14 @@ jobs:
           submodules: recursive
 
       - name: Install build prerequisites and abigail-tools
-        # Pinned to the version on the ubuntu-24.04 image; an image move makes
-        # the pin fail loudly, then re-pin.
+        # meson from the hashed pip file; jq is on the runner image (checked
+        # here, the later steps need it). abigail-tools is pinned to the
+        # ubuntu-24.04 archive's version; an image move makes the pin fail
+        # loudly, then re-pin.
         run: |
-          sudo apt-get -o Acquire::Retries=5 update
-          sudo apt-get -o Acquire::Retries=5 install -y build-essential cmake pkg-config meson ninja-build binutils jq abigail-tools=2.4-3build1
+          command -v jq >/dev/null 2>&1 || { echo "::error::jq is not on the runner image"; exit 1; }
+          bash scripts/ci/install-build-tools.sh
+          bash scripts/ci/apt-install.sh binutils abigail-tools=2.4-3build1
 
       - name: Rust toolchain, cargo cache
         uses: ./.github/actions/rust-setup
@@ -349,9 +352,7 @@ jobs:
           fetch-depth: 0
 
       - name: Install valgrind
-        run: |
-          sudo apt-get -o Acquire::Retries=5 update
-          sudo apt-get -o Acquire::Retries=5 install -y valgrind
+        run: bash scripts/ci/apt-install.sh valgrind
 
       - name: Rust toolchain
         uses: ./.github/actions/rust-setup

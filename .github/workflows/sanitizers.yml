@@ -78,13 +78,16 @@ jobs:
           ref: ${{ inputs.ref }}
           submodules: recursive
 
-      - name: Install symbolizer
-        # llvm for the unversioned llvm-symbolizer the sanitizer runtime looks
-        # for on PATH; the suppressions are matched on symbolised function
-        # names (see .sanitizer-suppressions/README.md).
+      - name: Put llvm-symbolizer on PATH
+        # The sanitizer runtime looks for an unversioned llvm-symbolizer on
+        # PATH; the suppressions are matched on symbolised function names
+        # (see .sanitizer-suppressions/README.md).
+        # The runner image ships LLVM 18 but no unversioned llvm-symbolizer
+        # on PATH, so its bin directory goes on PATH.
         run: |
-          sudo apt-get -o Acquire::Retries=5 update
-          sudo apt-get -o Acquire::Retries=5 install -y llvm
+          sym=/usr/lib/llvm-18/bin/llvm-symbolizer
+          [ -x "$sym" ] || { echo "::error::$sym is not on the runner image: the sanitizer reports would not be symbolised"; exit 1; }
+          echo /usr/lib/llvm-18/bin >> "$GITHUB_PATH"
 
       - name: Install nightly + rust-src
         # rust-src is required by -Z build-std so the sanitizer can
@@ -157,17 +160,26 @@ jobs:
           ref: ${{ inputs.ref }}
           submodules: recursive
 
-      - name: Install native build tools + symbolizer
-        # meson + ninja: librist's vendored build (mirrors ci.yml). llvm:
-        # provides /usr/bin/llvm-symbolizer, which the sanitizer runtime
-        # needs to symbolize C/C++ frames in reports — without it findings
-        # arrive as bare module+offset addresses (clang alone doesn't ship
-        # the unversioned binary). clang: preinstalled on today's
-        # ubuntu-latest, listed explicitly so runner-image drift can't
-        # silently remove the compiler CC/CXX point at.
+      - name: Put llvm-symbolizer on PATH
+        # The sanitizer runtime needs an unversioned llvm-symbolizer on PATH
+        # to symbolize C/C++ frames in reports — without it findings arrive
+        # as bare module+offset addresses. The runner image ships LLVM 18
+        # but no unversioned llvm-symbolizer on PATH (clang alone doesn't
+        # ship one), so LLVM 18's bin directory goes on PATH.
         run: |
-          sudo apt-get -o Acquire::Retries=5 update
-          sudo apt-get -o Acquire::Retries=5 install -y meson ninja-build llvm clang
+          sym=/usr/lib/llvm-18/bin/llvm-symbolizer
+          [ -x "$sym" ] || { echo "::error::$sym is not on the runner image: the sanitizer reports would not be symbolised"; exit 1; }
+          echo /usr/lib/llvm-18/bin >> "$GITHUB_PATH"
+
+      - name: Install native build tools
+        # meson for librist's vendored build (mirrors ci.yml; ninja is on the
+        # runner image). clang is on the image too; it is checked here so
+        # runner-image drift can't silently remove the compiler CC/CXX point at.
+        run: |
+          bash scripts/ci/install-build-tools.sh
+          for tool in clang clang++; do
+            command -v "$tool" >/dev/null 2>&1 || { echo "::error::'$tool' is not on PATH (CC/CXX point at it)"; exit 1; }
+          done
 
       - name: Install nightly + rust-src
         run: |
@@ -247,7 +259,7 @@ jobs:
     # consecutive job-level-green nightlies from the 2026-09-04 tst-rist
     # stats-callback fix onward). Treat a red here as a sanitizer finding
     # or a new native race to harvest — scope-check the log before any
-    # rerun; only an infra failure (apt outage, cache error, GitHub
+    # rerun; only an infra failure (package fetch outage, cache error, GitHub
     # incident) is a rerun case.
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -255,13 +267,22 @@ jobs:
           ref: ${{ inputs.ref }}
           submodules: recursive
 
-      - name: Install native build tools + symbolizer
-        # Same toolchain rationale as asan-native: meson+ninja for librist,
-        # llvm for the unversioned llvm-symbolizer the TSan runtime needs,
-        # clang pinned explicitly against runner-image drift.
+      - name: Put llvm-symbolizer on PATH
+        # Same rationale as asan-native: the TSan runtime needs an
+        # unversioned llvm-symbolizer on PATH.
         run: |
-          sudo apt-get -o Acquire::Retries=5 update
-          sudo apt-get -o Acquire::Retries=5 install -y meson ninja-build llvm clang
+          sym=/usr/lib/llvm-18/bin/llvm-symbolizer
+          [ -x "$sym" ] || { echo "::error::$sym is not on the runner image: the sanitizer reports would not be symbolised"; exit 1; }
+          echo /usr/lib/llvm-18/bin >> "$GITHUB_PATH"
+
+      - name: Install native build tools
+        # Same rationale as asan-native: meson for librist, clang checked
+        # against runner-image drift.
+        run: |
+          bash scripts/ci/install-build-tools.sh
+          for tool in clang clang++; do
+            command -v "$tool" >/dev/null 2>&1 || { echo "::error::'$tool' is not on PATH (CC/CXX point at it)"; exit 1; }
+          done
 
       - name: Install nightly + rust-src
         run: |
@@ -332,16 +353,19 @@ jobs:
           ref: ${{ inputs.ref }}
           submodules: recursive
 
-      - name: Install symbolizer
-        # llvm for the unversioned llvm-symbolizer the TSan runtime looks for
-        # on PATH (the native jobs install it too). Without it the runtime
+      - name: Put llvm-symbolizer on PATH
+        # The TSan runtime looks for an unversioned llvm-symbolizer on PATH
+        # (the native jobs put it there too). Without it the runtime
         # falls back to addr2line, and every suppressed report is symbolised
         # through a fresh addr2line process per test process before the
         # suppression can match: multi-second stalls inside the loopback
         # tests' read windows (ci-flakes "TSan rtsp_server test margins").
+        # The runner image ships LLVM 18 but no unversioned llvm-symbolizer
+        # on PATH, so its bin directory goes on PATH.
         run: |
-          sudo apt-get -o Acquire::Retries=5 update
-          sudo apt-get -o Acquire::Retries=5 install -y llvm
+          sym=/usr/lib/llvm-18/bin/llvm-symbolizer
+          [ -x "$sym" ] || { echo "::error::$sym is not on the runner image: the sanitizer reports would not be symbolised"; exit 1; }
+          echo /usr/lib/llvm-18/bin >> "$GITHUB_PATH"
 
       - name: Install nightly + rust-src
         run: |

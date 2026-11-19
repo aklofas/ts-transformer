@@ -15,31 +15,38 @@ runs:
   using: composite
   steps:
     - name: Install build prerequisites (Linux)
-      # apt-get is Linux-only; macOS / Windows runners come with cmake +
-      # perl pre-installed (macos-15, windows-latest) and pkg-config is
-      # absent on both but the build falls through to vendored via
+      # The runner image ships cmake, ninja, pkg-config and a C toolchain;
+      # meson comes from the hashed pip file, ripgrep from its pinned
+      # release. macOS / Windows runners come with cmake + perl
+      # pre-installed (macos-15, windows-latest) and pkg-config is absent on
+      # both but the build falls through to vendored via
       # SRT_FORCE_VENDORED=1.
       if: startsWith(inputs.platform, 'linux-')
       shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
       run: |
-        # -o Acquire::Retries=5: ride out transient mirror outages (the
-        # ports.ubuntu.com linux-aarch64 class, 2026-07-16) instead of
-        # failing the job on the first fetch error.
-        sudo apt-get -o Acquire::Retries=5 update
+        set -euo pipefail
+        bash scripts/ci/install-build-tools.sh
         # ripgrep (`rg`) backs the two scrub-guard steps, which run later in
-        # the ci.yml build job; the GHA ubuntu image no longer ships it
-        # preinstalled, so install it explicitly (a missing `rg` made the
-        # denylist guard fail closed and silently no-op'd the pre-rename
-        # guard).
-        sudo apt-get -o Acquire::Retries=5 install -y build-essential cmake pkg-config meson ninja-build ripgrep
+        # the ci.yml build job; the GHA ubuntu image does not ship it (a
+        # missing `rg` made the denylist guard fail closed and silently
+        # no-op'd the pre-rename guard).
+        bash scripts/ci/install-ripgrep.sh
+        # The scripts add their bin directories to GITHUB_PATH for the later
+        # steps; read them back so this step finds each tool the same way.
+        while IFS= read -r dir; do PATH="$dir:$PATH"; done < "$GITHUB_PATH"
+        for tool in rg meson ninja cmake pkg-config; do
+          command -v "$tool" >/dev/null 2>&1 || { echo "FAIL: '$tool' not on PATH after prereq install"; exit 1; }
+        done
 
     - name: Install abigail-tools (linux-x86_64)
       # abidiff + nm back the abi-compat self-test, which runs later in the
       # ci.yml build job and fails under CI without abidiff by design.
-      # Pinned to the ubuntu-24.04 version.
+      # Pinned to the ubuntu-24.04 version; not on the runner image.
       if: inputs.platform == 'linux-x86_64' && inputs.abigail == 'true'
       shell: bash
-      run: sudo apt-get -o Acquire::Retries=5 install -y binutils abigail-tools=2.4-3build1
+      run: bash scripts/ci/apt-install.sh binutils abigail-tools=2.4-3build1
 
     - name: Install build prerequisites (macOS)
       # librist's vendored build is meson-driven and needs `meson` + `ninja`
@@ -99,18 +106,10 @@ runs:
         # external single point of failure removed.
         python -m pip install --require-hashes -r scripts/ci/requirements-build-tools.txt
         # ripgrep: the pinned upstream release, checksum-verified. `gh` and
-        # GITHUB_TOKEN are present on every hosted runner.
-        RG_VERSION=15.2.0
-        RG_SHA256=71b2fef860abe467217a538ff31de02f5258807c0129f771846f87bd029aafc5
-        RG_DIR="$RUNNER_TEMP/ripgrep"
-        mkdir -p "$RG_DIR"
-        gh release download "$RG_VERSION" -R BurntSushi/ripgrep \
-          -p "ripgrep-$RG_VERSION-x86_64-pc-windows-msvc.zip" -D "$RG_DIR" --clobber
-        echo "$RG_SHA256 *$RG_DIR/ripgrep-$RG_VERSION-x86_64-pc-windows-msvc.zip" | sha256sum -c -
-        python -c "import sys, zipfile; zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])" \
-          "$RG_DIR/ripgrep-$RG_VERSION-x86_64-pc-windows-msvc.zip" "$RG_DIR"
-        echo "$RG_DIR/ripgrep-$RG_VERSION-x86_64-pc-windows-msvc" >> "$GITHUB_PATH"
-        export PATH="$RG_DIR/ripgrep-$RG_VERSION-x86_64-pc-windows-msvc:$PATH"
+        # GITHUB_TOKEN are present on every hosted runner. The script adds
+        # its directory to GITHUB_PATH; read it back for the check below.
+        bash scripts/ci/install-ripgrep.sh
+        while IFS= read -r dir; do PATH="$dir:$PATH"; done < "$GITHUB_PATH"
         # Verify each prerequisite is actually on PATH — a silently-missing
         # tool must red THIS step, not a confusing later one.
         for tool in rg ninja meson pkg-config; do
