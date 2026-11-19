@@ -43,6 +43,8 @@ on:
       - ".github/workflows/python-wheels.yml"
       - ".github/actions/rust-setup/**"
       - "rust-toolchain.toml"
+      - "Cargo.toml"
+      - "Cargo.lock"
       - "scripts/ci/manylinux-before-build.sh"
       - "scripts/ci/requirements-build-tools.txt"
       - "bindings/python/**"
@@ -61,7 +63,8 @@ on:
       - "crates/tst-tcp/**"
       - "crates/tst-udp/**"
       - "crates/tst-webrtc/**"
-      - "vendor/**"
+      - "crates/mbedtls-src/**"
+      - "crates/tst-test-helpers/**"
 
 permissions:
   contents: read
