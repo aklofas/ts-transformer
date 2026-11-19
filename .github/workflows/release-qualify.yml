@@ -37,7 +37,6 @@ on:
       - ".github/workflows/release-qualify.yml"
       - ".github/workflows/fuzz.yml"
       - "scripts/ci/fuzz*"
-      - "scripts/ci/apt-install.sh"
       - "scripts/gen/qualification*"
 
 permissions:
