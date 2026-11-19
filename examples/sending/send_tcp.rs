@@ -20,6 +20,7 @@ use std::fs::File;
 use std::io::Read;
 
 use tst_core::transport::Transport;
+use tst_core::url::redact_url;
 use tst_tcp::TcpTransport;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -54,9 +55,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let stats = tx.stats();
+    // A URL can carry a password or a secret query value, so it is printed
+    // through `redact_url`.
     eprintln!(
-        "sent {} bytes ({} send calls) to {url}",
-        total, stats.send_calls
+        "sent {} bytes ({} send calls) to {}",
+        total,
+        stats.send_calls,
+        redact_url(&url)
     );
     Ok(())
 }

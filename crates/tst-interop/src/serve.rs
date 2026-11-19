@@ -34,6 +34,7 @@ use std::time::{Duration, Instant};
 
 use tst_core::codec::misp_time::MispTimestamp;
 use tst_core::mpegts::common::Pts90khz;
+use tst_core::url::redact_url;
 use tst_hls::{HlsMode, HlsPublisherBuilder};
 use tst_pipeline::MuxPublisher;
 use tst_rtp::RtspServer;
@@ -332,7 +333,8 @@ pub fn run_hls_url(
     klv_seed: u64,
     au_sizes: AuSizeMode,
 ) -> Result<(), String> {
-    let parsed = tst_hls::HlsUrl::parse(url).map_err(|e| format!("hls url {url}: {e}"))?;
+    let shown = redact_url(url);
+    let parsed = tst_hls::HlsUrl::parse(url).map_err(|e| format!("hls url {shown}: {e}"))?;
     if parsed.config.tls {
         return Err(
             "hlss:// (TLS) is not implemented by tst-interop's serve mode; use hls://".to_string(),
@@ -354,7 +356,8 @@ pub fn run_rtsp_url(
     klv_seed: u64,
     au_sizes: AuSizeMode,
 ) -> Result<(), String> {
-    let parsed = tst_rtp::RtspUrl::parse(url).map_err(|e| format!("rtsp url {url}: {e}"))?;
+    let shown = redact_url(url);
+    let parsed = tst_rtp::RtspUrl::parse(url).map_err(|e| format!("rtsp url {shown}: {e}"))?;
     if parsed.scheme() == tst_rtp::RtspScheme::Rtsps {
         return Err(
             "rtsps:// (TLS) is not implemented by tst-interop's serve mode; use rtsp://"
@@ -363,7 +366,7 @@ pub fn run_rtsp_url(
     }
     if parsed.path.is_empty() {
         return Err(format!(
-            "rtsp url {url}: serve mode requires a mount path (e.g. rtsp://host:port/mount)"
+            "rtsp url {shown}: serve mode requires a mount path (e.g. rtsp://host:port/mount)"
         ));
     }
     let host = if parsed.host.is_empty() {
@@ -373,7 +376,7 @@ pub fn run_rtsp_url(
     };
     let ip: std::net::IpAddr = host
         .parse()
-        .map_err(|e| format!("rtsp url {url}: host '{host}' is not a literal IP: {e}"))?;
+        .map_err(|e| format!("rtsp url {shown}: host '{host}' is not a literal IP: {e}"))?;
     let bind_addr = SocketAddr::new(ip, parsed.port);
     run_rtsp(p, bind_addr, &parsed.path, seconds, klv, klv_seed, au_sizes)
 }

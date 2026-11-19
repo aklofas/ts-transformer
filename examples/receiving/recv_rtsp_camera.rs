@@ -38,6 +38,7 @@
 use std::env;
 use std::error::Error;
 
+use tst_core::url::redact_url;
 use tst_pipeline::DemuxReceiver;
 use tst_rtp::RtspClient;
 
@@ -51,7 +52,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         .get(1)
         .map(|s| s.as_str())
         .unwrap_or("rtsp://admin:secret@cam.local/h264");
-    eprintln!("Connecting to {url}");
+    // A URL can carry a password or a secret query value, so it is printed
+    // through `redact_url`.
+    eprintln!("Connecting to {}", redact_url(url));
 
     // (1) Connect — opens the TCP control connection. For `rtsps://`
     // this would go through rustls (requires the `tls` cargo feature on

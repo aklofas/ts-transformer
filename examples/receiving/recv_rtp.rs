@@ -19,6 +19,7 @@ use std::error::Error;
 use std::time::{Duration, Instant};
 
 use tst_core::transport::RecvTransport;
+use tst_core::url::redact_url;
 use tst_rtp::RtpRecvTransport;
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -27,7 +28,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     //    the join to the loopback interface (useful for single-host tests).
     let url = "rtp://239.55.55.1:5004?iface=127.0.0.1";
     let mut rx = RtpRecvTransport::listen(url)?;
-    println!("listening on {url}");
+    // A URL can carry a password or a secret query value, so it is printed
+    // through `redact_url`.
+    println!("listening on {}", redact_url(url));
 
     // 2. recv loop. RtpRecvTransport already strips the 12-byte RTP
     //    header; `recv_bytes` returns the TS payload directly. Cap the

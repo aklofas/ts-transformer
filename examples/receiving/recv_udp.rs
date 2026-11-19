@@ -18,6 +18,7 @@ use std::fs::File;
 use std::io::Write;
 
 use tst_core::transport::RecvTransport;
+use tst_core::url::redact_url;
 use tst_udp::UdpRecvTransport;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -34,7 +35,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut buf = vec![0u8; rx.max_payload()];
     let mut total = 0u64;
 
-    eprintln!("listening on {url} → writing to {out_path}");
+    // A URL can carry a password or a secret query value, so it is printed
+    // through `redact_url`.
+    eprintln!("listening on {} → writing to {out_path}", redact_url(&url));
 
     loop {
         match rx.recv_bytes(&mut buf) {
