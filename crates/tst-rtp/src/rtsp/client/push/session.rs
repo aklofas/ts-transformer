@@ -397,13 +397,16 @@ impl RtspPush {
     ///
     /// The client's thread is stopped on every outcome.
     pub fn close(mut self) -> Result<(), RtspError> {
+        let reports_before = self.sender_reports_sent;
         let drained = if self.closed { Ok(()) } else { self.flush() };
         // A session that expired leaves its connection open: the TEARDOWN
         // below is written and accepted, perhaps with media dropped before
-        // it. The queue counts what it held when it closed.
+        // it. The queue counts what it held when it closed; the last
+        // reports queued just now are at its tail and are not media.
+        let last_reports = self.sender_reports_sent - reports_before;
         let lost = drained == Err(MediaWaitEnd::Ended)
             && self.client.end_reason.get() == Some(EndReason::SessionExpired)
-            && self.client.driver.frames_dropped_at_close() > 0;
+            && self.client.driver.frames_dropped_at_close() > last_reports;
         let torn_down = self.client.close();
         if lost && torn_down.is_ok() {
             return Err(RtspError::Protocol {
