@@ -748,3 +748,64 @@ fn the_outbound_queue_closes_after_the_end_reason_is_recorded() {
         h.stop_and_join();
     }
 }
+
+#[cfg(feature = "tls")]
+mod tls {
+    use super::super::tls::{PeerStream, connect, hold};
+    use super::*;
+    use crate::rtsp::client::tls::test_peer::tls_test_peer;
+
+    /// Over TLS a byte counts as written only once rustls has passed on
+    /// everything it was given, so the unsent count falls in steps. Frames
+    /// worth many times the watermark still all go out, in order, and the
+    /// drain ends.
+    #[test]
+    fn tls_media_past_the_watermark_all_reaches_the_peer() {
+        const FRAMES: u32 = 400;
+        let (port, roots, peer) = tls_test_peer(
+            |mut s: PeerStream| {
+                let mut rest = Vec::new();
+                // ANNOUNCE, SETUP and RECORD.
+                for _ in 0..3 {
+                    let head = read_head(&mut s, &mut rest);
+                    let reply = if head.starts_with(b"SETUP ") {
+                        setup_reply(cseq(&head), "RTP/AVP/TCP;unicast;interleaved=0-1")
+                    } else {
+                        ok_reply(cseq(&head))
+                    };
+                    s.write_all(&reply).unwrap();
+                    s.flush().unwrap();
+                }
+                let mut units = Units::new(rest);
+                for seq in 0..FRAMES {
+                    assert_media(&units.next(&mut s).expect("a frame"), seq, SMALL);
+                }
+                hold(&mut s);
+            },
+            |_| {},
+        );
+        let h = drive(Stream::from_tls(connect(port, roots)).unwrap());
+        let _unhang = unhang(&h.cancel);
+        let done = |rx: mpsc::Receiver<Progress>| loop {
+            if let Progress::Done(result) = next(&rx) {
+                break result.unwrap();
+            }
+        };
+        done(h.request(RequestSpec {
+            method: RtspMethod::Announce,
+            announce_tracks: Some(1),
+            ..options()
+        }));
+        assert!(done(h.setup(0, RouteKind::Push, None).0).setup.is_some());
+        done(h.request(RequestSpec {
+            method: RtspMethod::Record,
+            ..options()
+        }));
+        for seq in 0..FRAMES {
+            send(&h, media_frame(seq, SMALL)).unwrap();
+        }
+        assert_eq!(h.handle.drain_media(&h.cancel), Ok(()));
+        h.stop_and_join();
+        peer.join().unwrap();
+    }
+}

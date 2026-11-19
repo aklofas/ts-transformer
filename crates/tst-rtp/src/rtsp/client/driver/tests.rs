@@ -1326,9 +1326,9 @@ mod tls {
     use crate::rtsp::client::tls::test_peer::tls_test_peer;
     use crate::url::RtspUrl;
 
-    type PeerStream = rustls::StreamOwned<rustls::ServerConnection, TcpStream>;
+    pub(super) type PeerStream = rustls::StreamOwned<rustls::ServerConnection, TcpStream>;
 
-    fn connect(port: u16, roots: rustls::RootCertStore) -> TlsStream {
+    pub(super) fn connect(port: u16, roots: rustls::RootCertStore) -> TlsStream {
         let sock = TcpStream::connect(("127.0.0.1", port)).unwrap();
         let url = RtspUrl::parse(&format!("rtsps://127.0.0.1:{port}/x")).unwrap();
         TlsStream::connect(
@@ -1342,7 +1342,7 @@ mod tls {
     }
 
     /// Keep the connection until the client closes it.
-    fn hold(s: &mut PeerStream) {
+    pub(super) fn hold(s: &mut PeerStream) {
         let mut b = [0u8; 256];
         while matches!(s.read(&mut b), Ok(n) if n > 0) {}
     }
