@@ -1168,11 +1168,12 @@ REPO="$(cd "$DIR/../.." && pwd)"
 # One cargo metadata call, shared by every roster-sync row below.
 (cd "$REPO" && cargo metadata --no-deps --format-version 1) > "$tmp/ro/meta.json"
 rs_copy() { # a copy of the real files roster-sync reads, for planting
-    rm -rf "$tmp/rs"; mkdir -p "$tmp/rs/.github/workflows" "$tmp/rs/scripts/check/repo"
+    rm -rf "$tmp/rs"; mkdir -p "$tmp/rs/.github/workflows" "$tmp/rs/scripts/check/repo" "$tmp/rs/scripts/dev"
     cp "$REPO/.github/workflows/ci.yml" "$REPO/.github/workflows/sanitizers.yml" "$REPO/.github/workflows/crates-io.yml" "$tmp/rs/.github/workflows/"
-    # Every fuzz workspace, and every manifest the deny job names.
+    cp "$REPO/scripts/dev/cargo-deny-all.sh" "$tmp/rs/scripts/dev/"
+    # Every fuzz workspace, and every manifest the deny job's script lists.
     for m in $(cd "$REPO" && find crates -path '*/fuzz/Cargo.toml') \
-             $(sed -nE 's/^[[:space:]]*manifest-path:[[:space:]]*([^[:space:]]+).*/\1/p' "$REPO/.github/workflows/ci.yml"); do
+             $(bash "$REPO/scripts/dev/cargo-deny-all.sh" --list); do
         mkdir -p "$tmp/rs/$(dirname "$m")"; cp "$REPO/$m" "$tmp/rs/$m"
     done
 }
@@ -1189,9 +1190,9 @@ rs_copy; plant "$tmp/rs/.github/workflows/ci.yml" 'name: windows-msvc-features' 
 rs_copy; mkdir -p "$tmp/rs/crates/tst-new/fuzz"; printf '[package]\nname = "tst-new-fuzz"\n' > "$tmp/rs/crates/tst-new/fuzz/Cargo.toml"
                                                                                  expect "roster-sync: a fuzz workspace the deny job does not check" 1 rsync_
 expect_out "roster-sync: unchecked fuzz workspace" "crates/tst-new/fuzz/Cargo.toml"
-rs_copy; plant "$tmp/rs/.github/workflows/ci.yml" 'manifest-path: crates/tst-core/fuzz/Cargo.toml' 'manifest-path: crates/tst-gone/fuzz/Cargo.toml'
+rs_copy; plant "$tmp/rs/scripts/dev/cargo-deny-all.sh" 'crates/tst-core/fuzz/Cargo.toml' 'crates/tst-gone/fuzz/Cargo.toml'
                                                                                  expect "roster-sync: the deny job names a manifest that does not exist" 1 rsync_
-expect_out "roster-sync: bogus manifest-path" "ci.yml deny job names a manifest-path that does not exist: crates/tst-gone/fuzz/Cargo.toml"
+expect_out "roster-sync: bogus manifest-path" "cargo-deny-all.sh lists a manifest that does not exist: crates/tst-gone/fuzz/Cargo.toml"
 rs_copy; plant "$tmp/rs/.github/workflows/ci.yml" 'pass: no-default' 'pass: no-defaults';  expect "roster-sync: a test pass renamed away loses the union" 1 rsync_
 rs_copy; plant "$tmp/rs/.github/workflows/ci.yml" "(github.event_name != 'pull_request')" '(true)'; expect "roster-sync: the main-only test job runs on PRs" 1 rsync_
 expect_out "roster-sync: main-only job on PRs" "ci.yml test-main-extra no longer runs only off pull requests"
@@ -1229,7 +1230,7 @@ grep -q "^    if: .*result != 'failure'" "$tmp/rs/.github/workflows/ci.yml" || {
 expect_out "roster-sync: guard without the result check" "ci.yml deny: its job-level if: is not one line opening with the dispatch-sha guard"
 rs_copy; rm "$tmp/rs/embedded/baremetal-qemu/Cargo.toml"
                                                                                  expect "roster-sync: a deny manifest gone from the checked tree" 1 rsync_
-expect_out "roster-sync: deny manifest gone" "ci.yml deny job names a manifest-path that does not exist: embedded/baremetal-qemu/Cargo.toml"
+expect_out "roster-sync: deny manifest gone" "cargo-deny-all.sh lists a manifest that does not exist: embedded/baremetal-qemu/Cargo.toml"
 
 # ---- network test binaries (scripts/check/repo/net-test-binaries.sh) ----
 NTB="$DIR/../check/repo/net-test-binaries.sh"
@@ -1992,6 +1993,30 @@ printf 'fn f(url: &str) {\n    let shown = redact_url(url);\n    eprintln!("open
 expect "unredacted urls: a redact_url on the line above does not excuse an inline {url}" 1 nru
 printf 'fn f(url: &str) {\n    eprintln!("open {url}", url = redact_url(url));\n}\n' > "$tmp/nru/a.rs"
 expect "unredacted urls: a redact_url on the same line excuses the site" 0 nru
+
+# ---- the advisory-db pin (scripts/check/repo/advisory-db-pin.sh) ----
+# Empty or one 40-hex commit; a set pin passes (a freeze sets it on main).
+R_ADP="$DIR/../check/repo/advisory-db-pin.sh"
+mkdir -p "$tmp/adp"
+adp() { ADVISORY_DB_PIN="$tmp/adp/pin.toml" bash "$R_ADP"; }
+expect "advisory-db pin: this tree's pin file passes" 0 bash "$R_ADP"
+printf '# header\nrev = ""\n' > "$tmp/adp/pin.toml"
+expect "advisory-db pin: an empty pin passes" 0 adp
+printf '# header\nrev = "0123456789abcdef0123456789abcdef01234567"\n' > "$tmp/adp/pin.toml"
+expect "advisory-db pin: a 40-hex pin passes" 0 adp
+printf '# header\nrev = "0123456"\n' > "$tmp/adp/pin.toml"
+expect "advisory-db pin: a short commit fails" 1 adp
+expect_out "advisory-db pin: the bad value is named" "'0123456'"
+printf '# header\nrev = "0123456789ABCDEF0123456789ABCDEF01234567"\n' > "$tmp/adp/pin.toml"
+expect "advisory-db pin: an upper-case commit fails" 1 adp
+printf '# header\nrev = "main"\n' > "$tmp/adp/pin.toml"
+expect "advisory-db pin: a branch name fails" 1 adp
+printf '# header\n' > "$tmp/adp/pin.toml"
+expect "advisory-db pin: a file without a rev line fails" 1 adp
+printf 'rev = ""\nrev = ""\n' > "$tmp/adp/pin.toml"
+expect "advisory-db pin: two rev lines fail" 1 adp
+rm "$tmp/adp/pin.toml"
+expect "advisory-db pin: a missing pin file fails" 1 adp
 
 if [[ "$fail" == 0 ]]; then echo "self-test: ALL OK"; fi
 exit "$fail"
