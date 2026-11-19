@@ -270,6 +270,28 @@ class Render(unittest.TestCase):
             with contextlib.redirect_stderr(io.StringIO()):
                 ac.main(["render", "--root", d, "--check"])
 
+    def test_check_says_ok_and_writes_nothing_while_write_says_it_wrote(self):
+        d = tempfile.mkdtemp()
+        os.makedirs(os.path.join(d, "tests", "coverage"))
+        os.makedirs(os.path.join(d, "docs", "reference"))
+        with open(os.path.join(d, "tests", "coverage", "api-churn.toml"), "w") as f:
+            f.write(CHURN)
+        page = os.path.join(d, "docs", "reference", "api-stability.md")
+        with open(page, "w") as f:
+            f.write(PAGE)
+        with contextlib.redirect_stdout(io.StringIO()) as out:
+            ac.main(["render", "--root", d, "--write"])
+        self.assertEqual(out.getvalue(), "api-churn: wrote the table in docs/reference/api-stability.md\n")
+        before = open(page, "rb").read()
+        os.chmod(page, 0o444)
+        try:
+            with contextlib.redirect_stdout(io.StringIO()) as out:
+                ac.main(["render", "--root", d, "--check"])
+        finally:
+            os.chmod(page, 0o644)
+        self.assertEqual(out.getvalue(), "api-churn: OK\n")
+        self.assertEqual(open(page, "rb").read(), before)
+
     def test_a_page_without_the_markers_is_an_error(self):
         d = tempfile.mkdtemp()
         os.makedirs(os.path.join(d, "tests", "coverage"))
