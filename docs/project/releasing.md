@@ -541,7 +541,16 @@ step 3).
     The same PR updates the
     [release findings ledger](/docs/project/release-findings.md): one row
     per defect found during this release-candidate cycle, with the class of
-    test that now covers it.
+    test that now covers it. The same PR adds the release's row to
+    `tests/coverage/api-churn.toml` and renders the break table of the
+    [API stability page](/docs/reference/api-stability.md):
+    ```bash
+    python3 scripts/gen/api_churn.py tally <run's semver-checks.json> --release X.Y.Z
+    bash scripts/gen/api-churn.sh --write
+    ```
+    `tally` prints the four tier counts of the row; it stops, naming the line,
+    at a break line no classification row covers, and at a crate whose parsed
+    lines differ in number from the report's item count.
 12. **Maintainer-local checks.** Some validation needs inputs that are not on a
     CI runner, so the record lists them as `maintainer_local` and they stay
     with you. Run each and note the result before tagging:

@@ -1,19 +1,70 @@
+# Each "Failed in:" block below imitates the output of one cargo-semver-checks 0.51.0 lint,
+# line by line from its `per_result_error_template` (src/lints/<lint>.ron at that tag):
+#   function_parameter_count_changed, inherent_method_missing, method_parameter_count_changed,
+#   struct_pub_field_missing, enum_variant_added, trait_method_added, struct_missing (an item
+#   removed from its module and from the crate root prints once per importable path).
+# The paths and file names are made up. The lines starting with `#` are not part of the tool's
+# output and are outside every block.
      Parsing tst-core v0.10.0 (current)
       Parsed [   0.012s] (current)
      Parsing tst-core v0.10.0 (baseline)
       Parsed [   0.011s] (baseline)
     Checking tst-core v0.10.0 -> v0.10.0 (assume minor change)
-     Checked [   0.101s] 196 checks: 193 pass, 2 fail, 0 warn, 1 skip
+     Checked [   0.101s] 196 checks: 189 pass, 7 fail, 0 warn, 1 skip
 
---- failure function_missing: pub fn removed or renamed ---
+--- failure function_parameter_count_changed: pub fn parameter count changed ---
 
 Description:
-A publicly-visible function cannot be imported by its prior path.
+A publicly-visible function now takes a different number of parameters.
+        ref: https://doc.rust-lang.org/cargo/reference/semver.html#fn-change
+
+Failed in:
+  tst_core::mpegts::mux::push_klv now takes 3 parameters instead of 2, in /work/crates/tst-core/src/mpegts/mux.rs:210
+
+--- failure inherent_method_missing: pub method removed or renamed ---
+
+Description:
+A publicly-visible method or associated fn pub is no longer available.
         ref: https://doc.rust-lang.org/cargo/reference/semver.html#item-remove
 
 Failed in:
-  function tst_core::mpegts::mux::old_name, previously in file /work/baseline/crates/tst-core/src/mpegts/mux.rs:10
-  function tst_core::klv::st0102::gone, previously in file /work/baseline/crates/tst-core/src/klv/st0102.rs:7
+  Transport::old_method, previously in file /work/baseline/crates/tst-core/src/transport.rs:88
+
+--- failure method_parameter_count_changed: pub method parameter count changed ---
+
+Description:
+A publicly-visible method now takes a different number of parameters.
+        ref: https://doc.rust-lang.org/cargo/reference/semver.html#fn-change
+
+Failed in:
+  tst_core::klv::st0102::Set::encode takes 1 parameters in /work/baseline/crates/tst-core/src/klv/st0102/mod.rs:40, but now takes 2 parameters in /work/crates/tst-core/src/klv/st0102/mod.rs:41
+
+--- failure struct_pub_field_missing: pub struct's pub field removed or renamed ---
+
+Description:
+A pub field of a pub struct is no longer available.
+        ref: https://doc.rust-lang.org/cargo/reference/semver.html#struct-pub-field-remove
+
+Failed in:
+  field depth of struct Stats, previously in file /work/baseline/crates/tst-core/src/mpegts/demux/stats.rs:12
+
+--- failure enum_variant_added: enum variant added on exhaustive enum ---
+
+Description:
+A new variant was added to an exhaustive enum.
+        ref: https://doc.rust-lang.org/cargo/reference/semver.html#enum-variant-new
+
+Failed in:
+  variant EndReason:Reset in /work/crates/tst-core/src/transport.rs:30
+
+--- failure trait_method_added: non-sealed public trait added new method without default implementation ---
+
+Description:
+A non-sealed trait gained a method without a default implementation.
+        ref: https://doc.rust-lang.org/cargo/reference/semver.html#trait-new-item-no-default
+
+Failed in:
+  trait method tst_core::transport::Transport::flush in file /work/crates/tst-core/src/transport.rs:55
 
 --- failure struct_missing: pub struct removed or renamed ---
 
@@ -22,7 +73,7 @@ A publicly-visible struct cannot be imported by its prior path.
         ref: https://doc.rust-lang.org/cargo/reference/semver.html#item-remove
 
 Failed in:
-  struct tst_core::transport::OldStats, previously in file /work/baseline/crates/tst-core/src/transport.rs:42
-  struct tst_core::Loose, previously in file /work/baseline/crates/tst-core/src/lib.rs:3
+  struct tst_core::mpegts::raw::RawSendStats, previously in file /work/baseline/crates/tst-core/src/mpegts/raw.rs:5
+  struct tst_core::RawSendStats, previously in file /work/baseline/crates/tst-core/src/mpegts/raw.rs:5
 
-     Summary semver requires new minor version: 0.10.0 -> 0.11.0 (cargo-semver-checks: 2 failed)
+     Summary semver requires new minor version: 0.10.0 -> 0.11.0 (cargo-semver-checks: 7 failed)

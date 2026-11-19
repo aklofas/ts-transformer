@@ -37,72 +37,136 @@ def fixture(name):
         return f.read()
 
 
+def line(**kw):
+    return dict({"line": "x", "file": None, "span_line": None, "path": None}, **kw)
+
+
 class Parser(unittest.TestCase):
-    def test_failed_in_blocks_give_item_paths(self):
-        self.assertEqual(ac.failed_paths(fixture("semver-report-tst-core.txt")), [
-            "tst_core::mpegts::mux::old_name",
-            "tst_core::klv::st0102::gone",
-            "tst_core::transport::OldStats",
-            "tst_core::Loose"])
+    def lines(self):
+        return ac.failed_lines(fixture("semver-report-tst-core.txt"))
 
-    def test_other_line_shapes(self):
-        text = "Failed in:\n  variant Foo:Bar in /w/src/lib.rs:5\n  field Foo.x in file /w/a.rs:1\n\nDescription:\n  not an item\n"
-        self.assertEqual(ac.failed_paths(text), ["Foo:Bar", "Foo.x"])
+    def test_every_line_of_every_block_is_kept(self):
+        got = self.lines()
+        self.assertEqual(len(got), 8)
+        self.assertTrue(all(e["file"] for e in got))
 
-    def test_no_failed_block_no_paths(self):
-        self.assertEqual(ac.failed_paths("Checked 3 checks: 3 pass, 0 fail\n"), [])
+    def test_each_template_shape_gives_its_span_file_and_path(self):
+        got = {e["line"].split()[0] + ":" + e["line"].split()[1]: e for e in self.lines()}
+        self.assertEqual(got["tst_core::mpegts::mux::push_klv:now"]["file"], "/work/crates/tst-core/src/mpegts/mux.rs")
+        self.assertEqual(got["tst_core::mpegts::mux::push_klv:now"]["path"], "tst_core::mpegts::mux::push_klv")
+        self.assertEqual(got["Transport::old_method,:previously"]["path"], "Transport::old_method")
+        self.assertEqual(got["Transport::old_method,:previously"]["span_line"], 88)
+        self.assertEqual(got["tst_core::klv::st0102::Set::encode:takes"]["file"],
+                         "/work/baseline/crates/tst-core/src/klv/st0102/mod.rs")
+        self.assertEqual(got["field:depth"]["path"], None)
+        self.assertEqual(got["variant:EndReason:Reset"]["file"], "/work/crates/tst-core/src/transport.rs")
+        self.assertEqual(got["trait:method"]["path"], "tst_core::transport::Transport::flush")
+
+    def test_a_line_without_a_span_keeps_its_path(self):
+        got = ac.failed_lines("Failed in:\n  function tst_core::mpegts::gone\n")
+        self.assertEqual(got, [{"line": "function tst_core::mpegts::gone", "file": None, "span_line": None,
+                                "path": "tst_core::mpegts::gone"}])
+
+    def test_no_failed_block_no_lines(self):
+        self.assertEqual(ac.failed_lines("Checked 3 checks: 3 pass, 0 fail\n"), [])
+
+    def test_the_comment_lines_of_the_fixture_are_outside_every_block(self):
+        self.assertFalse(any(e["line"].startswith("#") for e in self.lines()))
 
     def test_paths_command_prints_json(self):
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
             ac.main(["paths", os.path.join(HERE, "fixtures", "semver-report-tst-core.txt")])
-        self.assertEqual(len(json.loads(out.getvalue())), 4)
+        self.assertEqual(len(json.loads(out.getvalue())), 8)
+
+
+class FileModules(unittest.TestCase):
+    def test_source_files_name_their_module(self):
+        self.assertEqual(ac.file_module("/w/crates/tst-core/src/mpegts/mux.rs"), ("mpegts", "mux"))
+        self.assertEqual(ac.file_module("/w/crates/tst-core/src/klv/st0102/mod.rs"), ("klv", "st0102"))
+        self.assertEqual(ac.file_module("crates/tst-core/src/lib.rs"), ())
+        self.assertEqual(ac.file_module("src/transport.rs"), ("transport",))
+        self.assertIsNone(ac.file_module("/w/build.rs"))
 
 
 class Tiers(unittest.TestCase):
     def setUp(self):
         self.rows = ac.classification(TABLE)
 
-    def test_the_most_specific_row_wins(self):
-        self.assertEqual(ac.tier_of(self.rows, "tst-core", "tst_core::mpegts::mux::old_name"), "stable")
-        self.assertEqual(ac.tier_of(self.rows, "tst-core", "tst_core::mpegts::demux::low_level::X"), "internal")
-        self.assertEqual(ac.tier_of(self.rows, "tst-rtp", "tst_rtp::rtsp::server::mount_rules::R"), "experimental")
-        self.assertEqual(ac.tier_of(self.rows, "tst-rtp", "tst_rtp::rtsp::client::C"), "provisional")
+    def tier(self, package, **kw):
+        return ac.tier_of(self.rows, package, line(**kw))
 
-    def test_a_crate_row_covers_every_module_but_a_named_one_beats_it(self):
-        self.assertEqual(ac.tier_of(self.rows, "tst-srt", "tst_srt::socket::S"), "stable")
-        self.assertEqual(ac.tier_of(self.rows, "tst-srt", "tst_srt::shells::open"), "provisional")
+    def test_the_span_file_decides_and_the_most_specific_row_wins(self):
+        self.assertEqual(self.tier("tst-core", file="/w/crates/tst-core/src/mpegts/mux.rs"), "stable")
+        self.assertEqual(self.tier("tst-core", file="/w/crates/tst-core/src/mpegts/demux/low_level/x.rs"), "internal")
+        self.assertEqual(self.tier("tst-core", file="/w/crates/tst-core/src/klv/st0102/mod.rs"), "provisional")
+        self.assertEqual(self.tier("tst-rtp", file="/w/crates/tst-rtp/src/rtsp/server/mount_rules.rs"), "experimental")
+        self.assertEqual(self.tier("tst-rtp", file="/w/crates/tst-rtp/src/rtsp/client.rs"), "provisional")
 
-    def test_a_module_name_is_matched_by_whole_segments(self):
+    def test_a_name_only_line_is_placed_by_its_file(self):
+        self.assertEqual(self.tier("tst-core", line="Transport::old_method", path=None,
+                                   file="/w/crates/tst-core/src/transport.rs"), "stable")
+
+    def test_a_crate_row_covers_every_file_but_a_named_module_beats_it(self):
+        self.assertEqual(self.tier("tst-srt", file="/w/crates/tst-srt/src/socket.rs"), "stable")
+        self.assertEqual(self.tier("tst-srt", file="/w/crates/tst-srt/src/lib.rs"), "stable")
+        self.assertEqual(self.tier("tst-srt", file="/w/crates/tst-srt/src/shells.rs"), "provisional")
+
+    def test_a_module_is_matched_by_whole_segments(self):
         with self.assertRaises(ac.ChurnError):
-            ac.tier_of(self.rows, "tst-core", "tst_core::mpegtsx::Y")
+            self.tier("tst-core", file="/w/crates/tst-core/src/mpegtsx.rs")
 
-    def test_an_unmapped_path_is_an_error_naming_it(self):
-        for path in ("tst_core::nowhere::Z", "tst_core::Loose", "Foo:Bar"):
+    def test_the_item_path_is_the_fallback_when_there_is_no_file(self):
+        self.assertEqual(self.tier("tst-core", path="tst_core::mpegts::mux::f"), "stable")
+        self.assertEqual(self.tier("tst-core", file="/w/crates/tst-core/src/lib.rs", path="tst_core::klv::st0102::f"),
+                         "provisional")
+
+    def test_a_line_neither_maps_is_an_error_naming_it(self):
+        for kw in (dict(line="field x of struct S", file="/w/crates/tst-core/src/lib.rs"),
+                   dict(line="function tst_core::nowhere::f", path="tst_core::nowhere::f"),
+                   dict(line="bare line")):
             with self.assertRaises(ac.ChurnError) as e:
-                ac.tier_of(self.rows, "tst-core", path)
-            self.assertIn(path, str(e.exception))
+                self.tier("tst-core", **kw)
+            self.assertIn(kw["line"], str(e.exception))
 
 
 class Tally(unittest.TestCase):
-    def report(self, **crate):
-        return [dict({"crate": "tst-core", "exit": 100, "failed_checks": 2, "items": 4, "report": "r",
-                      "analysed": True, "paths": ["tst_core::mpegts::a", "tst_core::mpegts::a",
-                                                  "tst_core::klv::st0102::b", "tst_core::transport::c"]}, **crate)]
+    def crate(self, **kw):
+        base = "/w/crates/tst-core/src/"
+        breaks = [line(line="a", file=base + "mpegts/mux.rs", span_line=1),
+                  line(line="b", file=base + "mpegts/mux.rs", span_line=1),  # the root re-export of a
+                  line(line="c", file=base + "klv/st0102.rs", span_line=2),
+                  line(line="d", file=base + "transport.rs", span_line=3),
+                  line(line="e", file=base + "mpegts/demux/low_level/q.rs", span_line=4)]
+        return [dict({"crate": "tst-core", "exit": 100, "failed_checks": 4, "items": 5, "report": "r",
+                      "analysed": True, "breaks": breaks}, **kw)]
 
-    def test_counts_distinct_paths_per_tier(self):
-        self.assertEqual(ac.tally(self.report(), ac.classification(TABLE), "0.11.0"),
-                         {"release": "0.11.0", "stable": 2, "provisional": 1, "experimental": 0, "internal": 0})
+    def test_counts_per_tier_and_an_item_printed_per_importable_path_counts_once(self):
+        self.assertEqual(ac.tally(self.crate(), ac.classification(TABLE), "0.11.0"),
+                         {"release": "0.11.0", "stable": 2, "provisional": 1, "experimental": 0, "internal": 1})
 
-    def test_a_break_report_without_paths_is_an_error(self):
-        rep = self.report()
-        del rep[0]["paths"]
+    def test_a_crate_whose_lines_differ_in_number_from_its_items_is_an_error(self):
+        with self.assertRaises(ac.ChurnError) as e:
+            ac.tally(self.crate(items=6), ac.classification(TABLE), "0.11.0")
+        self.assertIn("tst-core", str(e.exception))
+
+    def test_a_break_report_without_lines_is_an_error(self):
+        rep = self.crate()
+        del rep[0]["breaks"]
         with self.assertRaises(ac.ChurnError):
             ac.tally(rep, ac.classification(TABLE), "0.11.0")
 
     def test_a_clean_report_counts_nothing(self):
-        rep = self.report(exit=0, failed_checks=0, items=0, paths=[])
+        rep = self.crate(exit=0, failed_checks=0, items=0, breaks=[])
         self.assertEqual(ac.tally(rep, ac.classification(TABLE), "0.11.0")["stable"], 0)
+
+    def test_the_fixture_report_maps_end_to_end(self):
+        rows = ac.classification(TABLE.replace("| tst-core | transport |", "| tst-core | transport |")
+                                 + "| tst-core | klv::st0102 | Provisional | w | one minor |\n")
+        lines = ac.failed_lines(fixture("semver-report-tst-core.txt"))
+        got = ac.tally([{"crate": "tst-core", "exit": 100, "items": len(lines), "breaks": lines}], rows, "x")
+        self.assertEqual((got["stable"], got["provisional"]), (6, 1))
+        self.assertEqual(sum(got[t] for t in ac.TIERS), 7)  # the two RawSendStats lines count once
 
 
 CHURN = """\
@@ -134,6 +198,18 @@ class Render(unittest.TestCase):
     def test_a_row_with_neither_counts_nor_note_is_an_error(self):
         with self.assertRaises(ac.ChurnError):
             ac.parse_churn('[[release]]\nversion = "0.9.0"\n')
+
+    def test_the_items_cell_sums_all_four_tiers(self):
+        text = CHURN.replace("internal = 0", "internal = 4")
+        self.assertEqual(ac.render_table(ac.parse_churn(text)).splitlines()[3], "| 0.11.0 | items | 7 | 2 | 1 | 0 | 4 |")
+
+    def test_the_tier_counts_are_all_or_none(self):
+        with self.assertRaises(ac.ChurnError):
+            ac.parse_churn('[[release]]\nversion = "0.9.0"\nstable = 1\nnote = "n"\n')
+
+    def test_a_note_may_not_contain_a_pipe(self):
+        with self.assertRaises(ac.ChurnError):
+            ac.parse_churn('[[release]]\nversion = "0.9.0"\nnote = "a | b"\n')
 
     def test_write_then_check_round_trips_and_drift_is_found(self):
         d = tempfile.mkdtemp()
