@@ -6137,13 +6137,14 @@ reason = "From<TransportError> impl introduced by thiserror #[from] on PushError
 item = "tst_rtp::rtsp::client::push::PushError::source"
 reason = "Error::source impl introduced by thiserror #[from] on PushError::Transport; error-enum trait method"
 
-# RFC 6597 KLV packetizer: unit tests and a round trip through the server's
-# depacketizer in klv/packetizer.rs; the push client sends through it.
+# RFC 6597 KLV packetizer (tst_rtp::klv::packetizer): unit tests and a round
+# trip through the server's depacketizer in klv/packetizer.rs; the push client
+# sends through it.
 
 [[surface]]
 kind = "rust"
 crate = "tst-rtp"
-item = "tst_rtp::klv::packetize"
+item = "tst_rtp::klv::packetizer::packetize"
 owning_tests = ["crates/tst-rtp/src/klv/packetizer.rs"]
 bindings = ["c:deferred(no C consumer yet)", "python:n/a(the push session packetizes KLV inside send_klv)", "java:n/a(the push session packetizes KLV inside sendKlv)", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
@@ -6152,7 +6153,7 @@ tier = "A"
 [[surface]]
 kind = "rust"
 crate = "tst-rtp"
-item = "tst_rtp::klv::MIN_MAX_PAYLOAD"
+item = "tst_rtp::klv::packetizer::MIN_MAX_PAYLOAD"
 owning_tests = ["crates/tst-rtp/src/klv/packetizer.rs"]
 bindings = ["c:deferred(no C consumer yet)", "python:n/a(the push session packetizes KLV inside send_klv)", "java:n/a(the push session packetizes KLV inside sendKlv)", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []

@@ -351,8 +351,9 @@ impl core::marker::UnsafeUnpin for tst_rtp::h265::depacketizer::H265Depacketizer
 impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::h265::depacketizer::H265Depacketizer
 impl core::panic::unwind_safe::UnwindSafe for tst_rtp::h265::depacketizer::H265Depacketizer
 pub mod tst_rtp::klv
-pub const tst_rtp::klv::MIN_MAX_PAYLOAD: usize
-pub fn tst_rtp::klv::packetize(&[u8], usize) -> alloc::vec::Vec<tst_rtp::packet::Chunk>
+pub mod tst_rtp::klv::packetizer
+pub const tst_rtp::klv::packetizer::MIN_MAX_PAYLOAD: usize
+pub fn tst_rtp::klv::packetizer::packetize(&[u8], usize) -> alloc::vec::Vec<tst_rtp::packet::Chunk>
 pub mod tst_rtp::opener
 pub fn tst_rtp::opener::open_recv(&str) -> core::result::Result<tst_pipeline::binding::opened::Opened<alloc::boxed::Box<dyn tst_core::transport::RecvTransport>>, tst_pipeline::binding::kind::BindingError>
 pub fn tst_rtp::opener::open_sender(&str) -> core::result::Result<tst_pipeline::binding::opened::Opened<alloc::boxed::Box<dyn tst_core::transport::Transport>>, tst_pipeline::binding::kind::BindingError>

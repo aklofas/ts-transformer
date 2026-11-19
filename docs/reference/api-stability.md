@@ -141,7 +141,7 @@ needs is in the [1.0 exit criteria](/docs/project/1.0-exit-criteria.md).
 | tst-rtp | error | Stable | RTP error taxonomy | — |
 | tst-rtp | h264 | Stable | RFC 6184 H.264 packetizer, depacketizer and receiver; `H264Receiver::set_recv_timeout` and `end_reason()` are Provisional — same divergence shape as `transport`'s row below | — |
 | tst-rtp | h265 | Provisional | RFC 7798 H.265 packetizer and depacketizer; new surface | H.265 RTP from an outside sender depacketized with no signature change |
-| tst-rtp | klv | Stable | RFC 6597 KLV packetizer (`packetize`, `MIN_MAX_PAYLOAD`), which the RTSP push client sends KLV with; returns the same `packet::Chunk` list as the `h264` packetizer | — |
+| tst-rtp | klv | Provisional | RFC 6597 KLV packetizer (`klv::packetizer::{packetize, MIN_MAX_PAYLOAD}`), which the RTSP push client sends KLV with; returns the same `packet::Chunk` list as the `h264` packetizer; new surface | one release with no signature change |
 | tst-rtp | opener | Provisional | URL opener for the language bindings' shells (type-erased transport + cancel + domain) | the opener signature unchanged while a second binding family adopts it |
 | tst-rtp | packet | Stable | RTP packet parse/build | — |
 | tst-rtp | rtcp | Stable | RTCP SR/RR/SDES packet codecs and `RtcpStats` | — |
