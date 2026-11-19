@@ -109,15 +109,21 @@ run_case c6
 ! grep 'runs/.*/jobs' "$TMP/gh.log" | grep -q 'per_page=100' || fail "case 6: a jobs request carries per_page=100"
 grep -q 'runs/.*/jobs.*per_page=30' "$TMP/gh.log" || fail "case 6: no jobs request carries per_page=30"
 
-# 7: a week with two superseded pull-request runs (cancelled on attempt 1):
-# counted apart, neither green nor failed, and the last CSV column. A
-# cancelled dispatch run and a cancelled second attempt are not superseded.
+# 7: a cancelled first attempt of a pull-request run is superseded only when a
+# newer pull-request run of the same workflow exists on its branch, finished
+# or not: 201 (a newer ci run on topic-a) and 202 (a newer jvm-jar run still in
+# progress) are; 208 (cut by its cap: the newer runs on topic-c are another
+# workflow or a push, its ci run there is older, and topic-a's newer ci run is
+# another branch) is not, so
+# it stays in the share's denominator and is not green. A cancelled dispatch
+# run and a cancelled second attempt are not superseded either.
 CI_HEALTH_RUNS_JSON="$FX/runs-superseded.json" run_case c7
 rc_is c7 0
-grep -qx '  green on first try:    1 of 4 (superseded runs left out)' "$TMP/c7.out" || { cat "$TMP/c7.out"; fail "case 7: green line"; }
-grep -qx '  superseded:            2 (pull-request runs cancelled on attempt 1)' "$TMP/c7.out" || { cat "$TMP/c7.out"; fail "case 7: superseded line"; }
+grep -qx '  completed runs:        10' "$TMP/c7.out" || { cat "$TMP/c7.out"; fail "case 7: completed runs"; }
+grep -qx '  green on first try:    4 of 8 (superseded runs left out)' "$TMP/c7.out" || { cat "$TMP/c7.out"; fail "case 7: green line"; }
+grep -qx '  superseded:            2 (pull-request runs cancelled on attempt 1 by a newer run)' "$TMP/c7.out" || { cat "$TMP/c7.out"; fail "case 7: superseded line"; }
 grep -qx '  unrecovered failures:  1' "$TMP/c7.out" || fail "case 7: a superseded run counted as a failure"
-grep -qE '^csv: [0-9T:Z-]+,7,6,1,1,0,1,"",2$' "$TMP/c7.out" || { grep '^csv' "$TMP/c7.out"; fail "case 7: csv row"; }
+grep -qE '^csv: [0-9T:Z-]+,7,10,4,1,0,1,"",2$' "$TMP/c7.out" || { grep '^csv' "$TMP/c7.out"; fail "case 7: csv row"; }
 CSV="$TMP/c7.csv"
 CI_HEALTH_RUNS_JSON="$FX/runs-superseded.json" bash "$SCRIPT" --append "$CSV" > /dev/null
 [ "$(head -n 1 "$CSV")" = "snapshot_utc,window_days,runs,first_try_green,rerun_runs,wedges_over_60m,unrecovered_failures,rerun_jobs,superseded" ] || { cat "$CSV"; fail "case 7: csv header"; }
