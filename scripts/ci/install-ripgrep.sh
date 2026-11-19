@@ -8,7 +8,7 @@
 #
 # Environment: RUNNER_TEMP (default /tmp); GITHUB_PATH, when set, receives the
 # install directory. Three download attempts, 20 s and 60 s apart, each bounded
-# to 300 s. RIPGREP_SHA256_OVERRIDE replaces the table entry; it is honoured
+# to 120 s (2 MB). RIPGREP_SHA256_OVERRIDE replaces the table entry; it is honoured
 # only outside GitHub Actions (for the self-test).
 set -euo pipefail
 
@@ -17,7 +17,7 @@ waits="20 60"
 # A wall-clock bound for one network call, when GNU timeout is available (not
 # on macOS; Windows' own timeout.exe is a different tool).
 bound=()
-if timeout --version 2>/dev/null | grep -q GNU; then bound=(timeout -k 10 300); fi
+if timeout --version 2>/dev/null | grep -q GNU; then bound=(timeout -k 10 120); fi
 dest="${RUNNER_TEMP:-/tmp}/ripgrep"
 
 os="$(uname -s)"

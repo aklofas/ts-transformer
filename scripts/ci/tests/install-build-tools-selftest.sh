@@ -82,4 +82,24 @@ run "$TMP/tools:$BASH_DIR:/usr/bin:/bin"
 [ "$RC" != 0 ] || fail "case 5 passed"
 [ "$(wc -l < "$TMP/pip.log" | tr -d ' ')" = 3 ] || fail "case 5 attempts"
 
-echo "PASS: 5 cases"
+# 6: each pip attempt runs under a two-minute wall-clock bound (stub GNU timeout)
+setup 0
+mkdir -p "$TMP/tbin"
+cat > "$TMP/tbin/timeout" <<'STUB'
+#!/usr/bin/env bash
+if [ "${1:-}" = --version ]; then echo "timeout (GNU coreutils) 9.4"; exit 0; fi
+printf '%s\n' "$*" >> "$TMP/timeout.log"
+if [ "$1" = -k ]; then shift 2; fi
+shift
+exec "$@"
+STUB
+chmod +x "$TMP/tbin/timeout"
+: > "$TMP/timeout.log"
+run "$TMP/tbin:$TMP/tools:$BASH_DIR:/usr/bin:/bin"
+[ "$RC" = 0 ] || fail "case 6 rc=$RC"
+case "$(head -n 1 "$TMP/timeout.log")" in
+  "-k 10 120 "*/pip\ install*) ;;
+  *) fail "case 6 bound: $(cat "$TMP/timeout.log")" ;;
+esac
+
+echo "PASS: 6 cases"
