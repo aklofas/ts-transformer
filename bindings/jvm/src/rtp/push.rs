@@ -31,7 +31,9 @@ use crate::mpegts::muxer::build_muxer_config_from_arrays;
 use crate::shells;
 
 use super::client::{JniRtspCancel, client_builder};
-use super::errors::{rtsp_error_to_jvm, throw_rtp, throw_rtsp, transport_error};
+use super::errors::{
+    rtsp_error_to_jvm, throw_rtp, throw_rtsp, throw_runtime_unless_pending, transport_error,
+};
 
 /// `PushDescription.KIND_*`: the description's kind as the Java side passes it.
 const KIND_MP2T: jint = 0;
@@ -102,14 +104,6 @@ fn throw_runtime(env: &mut Env, msg: String) {
         FindClass(jni_str!("java/lang/RuntimeException")),
         JNIString::from(msg),
     );
-}
-
-/// [`throw_runtime`] unless an exception is already pending (a JNI failure such as an
-/// out-of-memory error leaves one, and JNI allows only one).
-fn throw_runtime_unless_pending(env: &mut Env, msg: String) {
-    if !env.exception_check() {
-        throw_runtime(env, msg);
-    }
 }
 
 /// A copy of a Java `byte[]`; `None` with a `RuntimeException` pending when JNI
@@ -185,9 +179,7 @@ fn byte_arrays(env: &mut Env, sets: &[&[u8]]) -> jobjectArray {
     match build(env) {
         Ok(a) => a,
         Err(e) => {
-            if !env.exception_check() {
-                throw_runtime(env, e.to_string());
-            }
+            throw_runtime_unless_pending(env, e.to_string());
             std::ptr::null_mut()
         }
     }
@@ -582,9 +574,7 @@ jni_native! {
         match build_stats(env, &stats) {
             Ok(o) => o.into_raw(),
             Err(e) => {
-                if !env.exception_check() {
-                    throw_runtime(env, e.to_string());
-                }
+                throw_runtime_unless_pending(env, e.to_string());
                 std::ptr::null_mut()
             }
         }
@@ -601,9 +591,7 @@ jni_native! {
         match env.new_string(id) {
             Ok(s) => s.into_raw(),
             Err(e) => {
-                if !env.exception_check() {
-                    throw_runtime(env, e.to_string());
-                }
+                throw_runtime_unless_pending(env, e.to_string());
                 std::ptr::null_mut()
             }
         }

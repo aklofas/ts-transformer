@@ -30,7 +30,7 @@ use crate::handle::{HandleRegistry, TryWith};
 use crate::mpegts::build_demux_config_from_args;
 
 use super::demux_receiver_handle_from_transport;
-use super::errors::{rtsp_error_to_jvm, throw_rtsp};
+use super::errors::{rtsp_error_to_jvm, throw_rtsp, throw_runtime_unless_pending};
 
 /// Parse `RtspClientConfig.tlsRootCertsPem` (a PEM bundle) into a
 /// `rustls::RootCertStore` and hand it to the builder — `rtsps://`
@@ -50,10 +50,7 @@ fn apply_tls_roots(
     let bytes = match env.convert_byte_array(pem) {
         Ok(b) => b,
         Err(e) => {
-            let _ = env.throw_new(
-                FindClass(jni_str!("java/lang/RuntimeException")),
-                JNIString::from(e.to_string()),
-            );
+            throw_runtime_unless_pending(env, e.to_string());
             return None;
         }
     };
@@ -98,10 +95,7 @@ pub(super) fn client_builder(
     let url_str: String = match url.try_to_string(env) {
         Ok(s) => s,
         Err(e) => {
-            let _ = env.throw_new(
-                FindClass(jni_str!("java/lang/RuntimeException")),
-                JNIString::from(e.to_string()),
-            );
+            throw_runtime_unless_pending(env, e.to_string());
             return None;
         }
     };
@@ -116,10 +110,7 @@ pub(super) fn client_builder(
         let user: String = match auth_user.try_to_string(env) {
             Ok(s) => s,
             Err(e) => {
-                let _ = env.throw_new(
-                    FindClass(jni_str!("java/lang/RuntimeException")),
-                    JNIString::from(e.to_string()),
-                );
+                throw_runtime_unless_pending(env, e.to_string());
                 return None;
             }
         };
@@ -129,10 +120,7 @@ pub(super) fn client_builder(
             match auth_password.try_to_string(env) {
                 Ok(s) => s,
                 Err(e) => {
-                    let _ = env.throw_new(
-                        FindClass(jni_str!("java/lang/RuntimeException")),
-                        JNIString::from(e.to_string()),
-                    );
+                    throw_runtime_unless_pending(env, e.to_string());
                     return None;
                 }
             }

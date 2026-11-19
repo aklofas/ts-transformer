@@ -7,12 +7,27 @@
 //! rtsp buckets are the shared `From` impls in `crates/tst-rtp/src/binding_kind.rs`.
 
 use jni::Env;
+use jni::jni_str;
+use jni::strings::JNIString;
 use tst_core::transport::TransportError;
 use tst_pipeline::binding::{BindingError, BindingErrorKind};
 use tst_rtp::error::{MountError, RtspServerError};
 use tst_rtp::{MountRuleError, RtspError};
 
 use crate::error::{Domain, throw_binding};
+use crate::jutil::FindClass;
+
+/// `java.lang.RuntimeException(msg)` for a JNI call that failed, unless an exception
+/// is already pending (a JNI failure such as an out-of-memory error leaves one, and
+/// JNI allows only one).
+pub(crate) fn throw_runtime_unless_pending(env: &mut Env, msg: String) {
+    if !env.exception_check() {
+        let _ = env.throw_new(
+            FindClass(jni_str!("java/lang/RuntimeException")),
+            JNIString::from(msg),
+        );
+    }
+}
 
 /// `org.tstrans.RtpException(Kind.<kind.name()>, message)`.
 pub(crate) fn throw_rtp(env: &mut Env, kind: BindingErrorKind, message: &str) {
