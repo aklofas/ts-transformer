@@ -600,15 +600,19 @@ jni_native! {
 }
 
 jni_native! {
-    /// `RtspPushSession.nIsSessionAlive(handle)`: waits for a call that holds the push.
-    fn Java_org_tstrans_rtp_RtspPushSession_nIsSessionAlive(env, _class, handle: jlong) -> jboolean = false => {
-        let Some((slot, _)) = lease(env, handle) else { return false };
-        match run(&slot, |p| p.is_session_alive()) {
-            Some(alive) => alive,
-            None => {
-                crate::error::throw_closed(env, WHAT);
-                false
+    /// `RtspPushSession.nIsSessionAlive(handle)`: never waits and never throws. A call
+    /// holding the push counts as live (the shells' `isAlive` rule); a closed,
+    /// converted or unknown key is `false`.
+    fn Java_org_tstrans_rtp_RtspPushSession_nIsSessionAlive(_env, _class, handle: jlong) -> jboolean = false => {
+        let Some(shared) = REGISTRY_PUSH.with(handle as u64, |s| s.shared.clone()) else {
+            return false;
+        };
+        match shared.push.try_lock() {
+            Ok(guard) => guard.as_ref().is_some_and(RtspPush::is_session_alive),
+            Err(TryLockError::Poisoned(p)) => {
+                p.into_inner().as_ref().is_some_and(RtspPush::is_session_alive)
             }
+            Err(TryLockError::WouldBlock) => true,
         }
     }
 }

@@ -436,10 +436,45 @@ class RtspPushTest {
             assertThrows(IllegalStateException.class, push::cancelHandle);
             assertThrows(IllegalStateException.class, push::stats);
             assertThrows(IllegalStateException.class, push::sessionId);
-            assertThrows(IllegalStateException.class, push::isSessionAlive);
+            assertFalse(push.isSessionAlive());
             assertThrows(IllegalStateException.class, push::intoSender);
             assertThrows(IllegalStateException.class, () -> push.intoMuxSender(roundtripConfig()));
             assertTrue(peer.awaitMethod("TEARDOWN"));
+        }
+    }
+
+    @Test
+    @Timeout(30)
+    void isSessionAliveNeverWaitsAndIsFalseOnceClosedOrConverted() throws Exception {
+        try (ScriptedRecordServer peer = new ScriptedRecordServer(200, true)) {
+            RtspPushSession push = RtspClient.push(peer.config(), PushDescription.mp2t());
+            try {
+                Sending sending = Sending.start(push);
+                sending.awaitParked();
+                // A send parked on the server holds the session: the probe answers at
+                // once, and a call in flight counts as live.
+                AtomicReference<Boolean> alive = new AtomicReference<>();
+                Side probing = Side.start("probing", () -> alive.set(push.isSessionAlive()));
+                probing.thread.join(scaledMs(1_000));
+                assertFalse(probing.thread.isAlive(), "isSessionAlive() waited for the parked send");
+                assertEquals(Boolean.TRUE, alive.get());
+                push.close();
+                assertTrue(sending.join(scaledMs(1_000)), "the parked send did not end");
+                assertFalse(push.isSessionAlive());
+            } finally {
+                push.close();
+            }
+        }
+        try (ScriptedRecordServer peer = new ScriptedRecordServer(200, false)) {
+            RtspPushSession push = RtspClient.push(peer.config(), PushDescription.mp2t());
+            try (Sender tx = push.intoSender()) {
+                assertFalse(push.isSessionAlive());
+            }
+        }
+        try (ScriptedRecordServer peer = new ScriptedRecordServer(200, false)) {
+            RtspPushSession push = RtspClient.push(peer.config(), PushDescription.mp2t());
+            push.teardown();
+            assertFalse(push.isSessionAlive());
         }
     }
 

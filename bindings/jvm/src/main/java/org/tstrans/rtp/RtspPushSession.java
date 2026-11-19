@@ -26,16 +26,16 @@ import org.tstrans.mpegts.MuxerConfig;
  * the connection. {@link #pause()}, {@link #teardown()} and {@link #close()} first wait
  * the same way for the queued media to be written.
  *
- * <p><b>Thread safety.</b> The data, control and query calls run one at a time: a call
- * made while another is in progress on another thread waits for it.
- * {@link #cancelHandle()} answers at once from any thread, also while a send is
- * waiting, and is the way to end a waiting send. {@link #close()} and
- * {@link #teardown()} may be called from any thread: when a send, {@code pause()} or
- * {@code resume()} is running on another thread they fire the cancel first (that
- * call throws {@code CLOSED}), then close. A {@link #stats()} or
- * {@link #isSessionAlive()} in progress is waited for and does not cancel the
- * session; nor does a send, {@code pause()} or {@code resume()} still waiting for the
- * session behind one, which then runs nothing and throws {@code CLOSED}.
+ * <p><b>Thread safety.</b> The data, control and {@link #stats()} calls run one at a
+ * time: a call made while another is in progress on another thread waits for it.
+ * {@link #cancelHandle()}, {@link #isSessionAlive()} and {@link #sessionId()} answer at
+ * once from any thread, also while a send is waiting; the cancel handle is the way to
+ * end a waiting send. {@link #close()} and {@link #teardown()} may be called from any
+ * thread: when a send, {@code pause()} or {@code resume()} is running on another
+ * thread they fire the cancel first (that call throws {@code CLOSED}), then close. A
+ * {@link #stats()} in progress is waited for and does not cancel the session; nor does
+ * a send, {@code pause()} or {@code resume()} still waiting for the session behind
+ * one, which then runs nothing and throws {@code CLOSED}.
  *
  * <p><b>How it ends.</b> Once the cancel handle has fired, every data call throws
  * {@link RtpException} of kind {@code CLOSED} (the session stays open until it is
@@ -166,8 +166,8 @@ public final class RtspPushSession extends NativeHandle {
      * nothing. (The play session's {@link RtspSession#teardown()} keeps its session open
      * instead.) Like {@code close()}, it cancels a send, {@code pause()} or
      * {@code resume()} running on another thread first, and waits without cancelling
-     * for a {@link #stats()} or {@link #isSessionAlive()} and for a call only waiting
-     * for the session (which then runs nothing and throws {@code CLOSED}).
+     * for a {@link #stats()} and for a call only waiting for the session (which then
+     * runs nothing and throws {@code CLOSED}).
      *
      * @throws RtspException with the kind of the status for a TEARDOWN the server refuses
      *     ({@code PROTOCOL}, or {@code NOT_FOUND} for a 404); {@code CLOSED} on a
@@ -228,19 +228,18 @@ public final class RtspPushSession extends NativeHandle {
 
     /**
      * False once the session is known dead: the control connection ended, or a keepalive
-     * ping was answered {@code 454}.
+     * ping was answered {@code 454}; also false once this session is closed, torn down or
+     * converted into a sender shell.
      *
-     * <p>Waits for a call in progress on another thread: a send waiting for a slow
-     * server holds the session until it ends, which against a server that keeps taking
-     * a byte now and then has no bound. {@link #cancelHandle()} never waits and is the
-     * way to end such a send.
+     * <p>Never waits and never throws: a call in progress on another thread (a send
+     * waiting for a slow server, for example) counts as live, and the answer is
+     * {@code true} while it runs.
      *
      * @return whether the session is still alive
-     * @throws IllegalStateException if the session is closed
      */
     public boolean isSessionAlive() {
-        ensureOpen(CLOSED);
-        return nIsSessionAlive(peekHandle());
+        long h = peekHandle();
+        return h != 0 && nIsSessionAlive(h);
     }
 
     /**
@@ -318,8 +317,7 @@ public final class RtspPushSession extends NativeHandle {
      * return at once. Called while a send, {@code pause()} or {@code resume()} is
      * running on another thread, it fires the cancel first: that call throws
      * {@code CLOSED}, what is still queued is dropped, and the TEARDOWN is written
-     * without the wait. A {@link #stats()} or {@link #isSessionAlive()} in progress is
-     * waited for instead, and so is a call only waiting for the session (it then runs
+     * without the wait. A {@link #stats()} in progress is waited for instead, and so is a call only waiting for the session (it then runs
      * nothing and throws {@code CLOSED}); the session then closes as an idle one does.
      */
     @Override public void close() { super.close(); }
