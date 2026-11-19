@@ -6,7 +6,8 @@
 # Run it after a tag publish, once the registries show the release. Each part
 # works in its own temp dir outside the checkout and fetches in a retry loop
 # (index and CDN lag):
-#   pypi    fresh venv, `pip install --no-cache-dir tstrans==X.Y.Z`, import
+#   pypi    fresh venv, `pip install --no-cache-dir --only-binary=:all:
+#           tstrans==X.Y.Z` (a wheel, never an sdist build), import
 #           tstrans, tstrans.srt and tstrans.webrtc, check tstrans.__version__.
 #   crates  `cargo new` with exact-version dependencies on every library crate
 #           of the publish roster, a main.rs that builds a MuxerConfig and

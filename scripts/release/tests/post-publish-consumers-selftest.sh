@@ -30,7 +30,7 @@ case "\$1" in
   fetch) n=\$(cat "$T/fetch.count" 2>/dev/null || echo 0); n=\$((n + 1)); echo \$n > "$T/fetch.count"; [ \$n -gt \${STUB_FETCH_FAILS:-0} ]; exit ;;
   build) [ "\${STUB_BUILD_FAIL:-0}" = 0 ]; exit ;;
   run) [ "\${STUB_RUN_FAIL:-0}" = 0 ]; exit ;;
-  metadata) printf '{"packages":[{"name":"tst-core","source":"%s"},{"name":"serde","source":"registry+x"}]}\n' "\${STUB_SOURCE:-registry+https://github.com/rust-lang/crates.io-index}"; exit 0 ;;
+  metadata) [ -z "\${STUB_EMPTY:-}" ] || { echo '{"packages":[]}'; exit 0; }; printf '{"packages":[{"name":"tst-core","source":"%s"},{"name":"serde","source":"registry+x"}]}\n' "\${STUB_SOURCE:-registry+https://github.com/rust-lang/crates.io-index}"; exit 0 ;;
 esac
 exit 0
 STUB
@@ -119,6 +119,9 @@ has "a failed run" "PART crates: rc=1" out
 
 expect_rc "a crate not from crates.io fails the part" 1 STUB_SOURCE=path+file:///x -- 0.10.0 crates
 has "a patched source" "did not come from crates.io" out
+
+expect_rc "an empty package listing fails the crates part" 1 STUB_EMPTY=1 -- 0.10.0 crates
+has "an empty listing" "PART crates: rc=1" out
 
 expect_rc "gradle resolve lag is retried" 0 STUB_GRADLE_FAILS=2 -- 0.10.0 maven
 [ "$(grep -c '^gradle .*resolveDeps' "$T/calls.log")" = 3 ] || no "gradle lag: want 3 resolve attempts"; ok
