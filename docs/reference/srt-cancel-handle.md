@@ -253,6 +253,16 @@ outcome are listed once, in
   call: it waits up to the request timeout, reports a refused TEARDOWN and
   keeps the client. A Python session collected without `close()` is a
   plain drop of the client, which does not wait for the thread.
+- An `RtspPush` (the RTSP push client) waits for its queued media before
+  its TEARDOWN, and that wait has no total bound: it ends early only on the
+  cancel or the session's end. `close()` then sends TEARDOWN under one
+  500 ms bound and waits up to 2 s for the client's thread;
+  `Transport::close` does the same without the wait for the thread; `Drop`
+  sets the cancel, discards the queue and writes TEARDOWN without waiting
+  for its reply. Python's and the JVM's `close()` (and the `with` exit,
+  try-with-resources) run `close()`, and fire the cancel first when a send,
+  `pause()` or `resume()` is in progress on another thread. See
+  [RTSP push](#rtsp-push-what-a-cancel-and-each-close-do).
 - An `RtspServer`'s `stop()`, and every binding call that runs it (the
   JVM's `close()`, Python's `with` exit, `tst_rtsp_server_stop`), is not
   shortened by a hard cancel fired while it runs: the cancel closes the
@@ -300,6 +310,7 @@ trait-object pattern above. See the **Sync vs. async** section in
 | SRT (`tst-srt`) | `ResourceCancel` | From `SrtSocket::cancel_handle()`, `SrtListener::cancel_handle()` or `pipeline_shell.cancel_handle()`. No poll: `cancel()` closes the socket on the calling thread, and libsrt wakes a parked send, receive or accept for the close, typically within a few milliseconds. With linger on and unsent data queued, that close (and so `cancel()`) can take up to the linger time. |
 | RTP (`tst-rtp`) | `RtpCancelHandle` | From `RtpTransport::cancel_handle()`, `RtpRecvTransport::cancel_handle()`, `H264Receiver::cancel_handle()` or the pipeline shell. A parked send or socket receive notices it at its next 100 ms socket timeout, a receive fed by an RTSP interleaved session at its next 100 ms channel wait, and `H264Receiver::recv_au` at its next 100 ms read timeout; the H.264 receiver then hands out the complete access units it holds and the one it can flush, and returns `ExplicitClose` on every later call. |
 | RTSP client and server (`tst-rtp`) | `RtspCancelHandle`, `RtspServerCancelHandle` | From `RtspClient::cancel_handle()` / `RtspServer::cancel_handle()`. On the client, a request waiting for its reply notices it within 100 ms and returns `RtspError::LocalCancel`. A request made after the cancel is still written first; if its write, its reply wait or its deadline then fails, it returns `LocalCancel` too. A request whose bytes the peer is not taking does not read the cancel until its write completes, its deadline passes or 5 s without progress end the control connection. The client's thread (`tst-rtsp-client`) reads the flag before each keepalive ping and starts no ping once it is set; it keeps reading the control connection and delivering interleaved media, since the receiver has its own `RtpCancelHandle`. On the server it is the hard cancel, on a started or a never-started server: registration and removal, rule edits, mount pushes and `start()` read it and are refused at once, a parked `next_publisher` notices it within 100 ms, and a task on the server's runtime notices it within 100 ms and ends the sessions, the listener, multicast senders and the publish side. Each publish mount's receiver then reads end of stream, as after `stop()`, in every binding; the receiver's own cancel, or its publish mount's, still reads as the cancel. A hard cancel fired while a `stop()` runs does not shorten that `stop()` (see [What each close, stop and drop waits for](#threading-guarantees)); see `RtspServerCancelHandle` for the detail. |
+| RTSP push (`tst-rtp`) | `RtspCancelHandle` | From `RtspPush::cancel_handle()` (`cancel_handle()` in Python, `cancelHandle()` on the JVM) or a sender shell over the push. A send waiting for room in the push's queue, `pause()` and `close()` waiting for the queue notice it within about 100 ms; the send returns `ExplicitClose`, as does every later data call. The session stays open until the push is closed or dropped. See [RTSP push](#rtsp-push-what-a-cancel-and-each-close-do). |
 | TCP / TLS (`tst-tcp`) | `TcpCancelHandle` | From the inherent `TcpTransport::cancel_handle()`, from `Transport::cancel_handle` / `RecvTransport::cancel_handle` on the same transport, or from the pipeline shell (which reads the trait method). All three hand back the same handle. A parked receive or send notices it at its next 100 ms socket timeout and returns `ExplicitClose`; a parked `TcpListener::accept_blocking` notices it at its next 5 ms poll and returns `TcpError::Closed`. |
 | UDP (`tst-udp`) | `UdpCancelHandle` | From the inherent `UdpTransport::cancel_handle()` / `UdpRecvTransport::cancel_handle()`, the trait forms, or the pipeline shell. A parked `recv_bytes` observes it at its next ~100 ms poll tick and returns `ExplicitClose`; `send_bytes` never parks and checks it at entry. `close()` stays `Closed`. `recv_timeout` (per-call deadline) does not observe it — check `is_cancelled()` between slices. |
 | RIST (`tst-rist`) | `RistCancelHandle` | From the inherent `RistTransport::cancel_handle()` / `RistRecvTransport::cancel_handle()`, the trait forms, or the pipeline shell. Observed when the current 100 ms `rist_receiver_data_read2` tick returns (`ExplicitClose` instead of that tick's `Backpressure`) and at `send_bytes` entry. `close()` (→ `rist_destroy`) stays `Closed`. |
@@ -313,6 +324,66 @@ its own shutdown call. An `HlsPublisher` ends with
 `finish_serving()` followed later by `HlsServerHandle::shutdown()`. A
 `WhepServer` ends with `stop()`, which waits for its two threads; its
 `Drop` cancels the same way and does not wait.
+
+## RTSP push: what a cancel and each close do
+
+An `RtspPush` hands each RTP packet to the client's I/O thread through a
+bounded queue. A data call (`send_ts`, `send_video`, `send_klv`, a shell's
+send over the push) returns once its packets are queued and waits only when
+the queue is full. That wait, and the queue wait of `pause()`, `close()`
+and `Transport::close`, ends when room frees (or the queue is written),
+within about 100 ms of a cancel, when the session ends, or when the
+connection has taken no byte for 5 s, which ends it. The 5 s count from
+when the operating system stops taking bytes, not from when the server
+stops reading; a server that keeps taking a few bytes within every 5 s
+holds the wait for as long as it does so, and the cancel is the way out.
+
+**The cancel.** It ends a waiting data call, `pause()` or `close()`, and
+the push queues no more media: every data call from then on returns
+`ExplicitClose` (`RtpError(CLOSED)` in Python, `RtpException(CLOSED)` on
+the JVM). It does not end the session. Requests are still written: a
+`resume()`, and the TEARDOWN of closing or dropping the push. A `close()`
+on a cancelled push writes its TEARDOWN, drops what was queued and returns
+`RtspError::LocalCancel`.
+
+**The three ends.**
+
+| Call | Waits for | Then | Reports |
+|---|---|---|---|
+| `RtspPush::close()` | the queue to be written (a last sender report per track queued first) | TEARDOWN, one 500 ms bound over writing it and its reply; up to 2 s for the client's thread | the TEARDOWN's result; `Protocol { code: 454 }` when the server had forgotten the session and queued media was dropped |
+| `Transport::close` | the same | TEARDOWN under the same bound; tells the thread to stop without waiting | nothing (`stats().frames_dropped_at_close`, `end_reason()`) |
+| `Drop` | nothing | sets the cancel, discards the queue, writes TEARDOWN without waiting for its reply | nothing |
+
+**The shells over a push.** `MuxSender::close()` cancels first, by this
+page's contract, so the push's close finds its queue wait cancelled: media
+queued a moment before can be dropped, and the TEARDOWN is written.
+`MuxSender::finish()` cancels nothing: it sends what the shell holds and
+closes the push, which writes its queue before the TEARDOWN. In Rust,
+`Sender::close()` and the `Drop` of a `MuxSender` or a `Sender` close the
+push without a cancel too. A binding's `close()` of either shell cancels
+first, so in Python and on the JVM `finish()` is the lossless end of a
+`MuxSender`, and a pre-muxed push ends without loss only through the
+session's own `send_ts` and the session's close.
+
+**Python and the JVM.** `RtspPushSession.close()` (the `with` exit,
+try-with-resources) runs `RtspPush::close()` and reports nothing;
+`teardown()` runs it and raises the TEARDOWN's result. Either one called
+while a send, `pause()` or `resume()` is in progress on another thread
+fires the cancel first, so that call ends with `CLOSED` and the queue is
+dropped; one that finds only a `stats()` or `is_session_alive()` in
+progress waits for it and closes as an idle session does. A Python session
+collected without `close()` is the `Drop` row.
+
+**One exception to "`Broken` means the end".** Every other `Broken` from a
+push follows the session's end (the server closed the connection, the
+connection failed or stalled for 5 s, a keepalive ping was answered `454`,
+the server broke the framing). A payload `send_ts` refuses is reported
+`Broken` while the push stays alive: an empty payload, one that is not
+whole 188-byte packets starting `0x47`, and, in Rust, any payload on a push
+that announced elementary streams (Python raises `ValueError` and the JVM
+`IllegalArgumentException` for that one). Nothing is sent and the next
+call goes through; `is_alive()` still reads true. More than 1 316 bytes is
+`TooLarge`, which also leaves the push open.
 
 ## See also
 

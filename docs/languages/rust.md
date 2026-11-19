@@ -549,6 +549,85 @@ for B-frames) is listed in
 
 The library never runs your code on its threads, with three Rust-only exceptions: your own `RecvTransport` / `Transport` / `Publisher` implementation or reconnect factory runs where the shell calls it (the managed reconnect worker included), your `tracing` subscriber is reached by the libsrt and librist log bridges on their native threads, and the `Clock` passed to the test-only `WhepServer::bind_with_clock` runs on the WHEP media thread. See [Architecture](/docs/reference/architecture.md) for the rule.
 
+## RTSP push client
+
+`RtspPush` publishes to an RTSP server: the client connects, sends ANNOUNCE
+with an SDP description, SETUP `mode=record` for each track and RECORD
+(RFC 2326 §10.3, §10.11), then sends RTP interleaved on the control
+connection with RTCP sender reports beside it. It is part of `tst-rtp`'s
+client and needs no feature (`rtsps://` needs `tls`). Push to the example
+server, or to mediamtx:
+
+```bash
+cargo run -p tst-examples --example recv_rtsp_publish
+cargo run -p tst-examples --example send_rtsp_push -- rtsp://127.0.0.1:8554/cam-ts ts
+```
+
+The example is at
+[`examples/sending/send_rtsp_push.rs`](/examples/sending/send_rtsp_push.rs);
+the cookbook recipe, with what mediamtx and ffmpeg do with a push, is
+[Push to an RTSP server](/docs/cookbook/sending/rtsp-push.md).
+
+### API
+
+| Item | Notes |
+|---|---|
+| `RtspPush::connect(builder, &PushDescription)` | `RtspClientBuilder::connect`, `announce`, `setup_record` and `record` in one call; the first error of the four, with the connection closed (TEARDOWN first when a session was open). |
+| `RtspClient::announce(&desc)`, `setup_record()`, `record(self)` | The same steps one at a time. A client that has announced publishes only: `describe`, `setup*`, `play` and a second `announce` are refused. `record` consumes the client and returns the `RtspPush`. |
+| `PushDescription` | `Mp2t` (one MPEG-TS track, payload type 33) or `Elementary { video, klv }` (a `VideoTrack` and, with `klv`, a KLV track). |
+| `VideoTrack` | `H264 { parameter_sets }` (at least one SPS and one PPS), `H265 { vps, sps, pps }`; `h264_from_key_frame(annexb)` / `h265_from_key_frame(annexb)` read them from a key frame and return `RtspError::NotAllowed` when one is missing; `announce` refuses a description that lacks one the same way, with nothing written. |
+| `RtspPush::send_ts(&[u8])` | Whole TS packets, at most `PUSH_MP2T_MAX_PAYLOAD` (1 316) bytes, each starting `0x47`. More is `TooLarge`; an empty or misaligned payload, or any payload on an elementary push, is `Broken` and leaves the session open. |
+| `send_video(annexb, pts)`, `send_klv(klv, pts)` | One access unit in Annex B form (decoding order; NAL units over 1 400 bytes fragmented), one whole KLV unit (one RTP packet up to 65 523 bytes). `PushError::Transport` once the push is closed, cancelled or has ended; `NoSuchTrack` or `Empty` with nothing sent. |
+| `pause()`, `resume()` | PAUSE after the queued media is written; RECORD again. |
+| `close(self)` | Writes the queue, TEARDOWN (500 ms bound), waits up to 2 s for the client's thread; returns the TEARDOWN's result. |
+| `cancel_handle()`, `is_session_alive()`, `end_reason()`, `stats()`, `session_id()` | `stats()` returns `PushStats`: packets, bytes and sender reports handed to the client's thread, receiver reports the server sent and their loss figures, frames dropped inbound and at close. |
+| `impl Transport for RtspPush` | `send_bytes` is `send_ts`, `max_payload` is 1 316, so `MuxSender` and `Sender` run over an MPEG-TS push. `socket_stats` reports bytes and packets sent and `packets_lost_send`. |
+
+### Rules worth knowing
+
+- **A send waits for the queue, not the wire.** The queue is bounded; a send
+  waits for room until room frees, a cancel (`cancel_handle()`, from any
+  thread, noticed within about 100 ms), the session's end, or 5 s in which
+  the connection took no byte. A server that keeps taking a few bytes within
+  every 5 s holds the send for as long as it does so: the cancel handle is
+  the way out. `close()`, `Transport::close` and `pause()` wait for the
+  queue the same way.
+- **How a push ends.** `end_reason()` names the end; the first reason stays.
+  A data call after the end returns `ExplicitClose` once the cancel handle
+  has fired (the session stays open until the push is closed or dropped),
+  `Closed` after `Transport::close`, `Broken` with `BrokenCause::CleanEof`
+  when the server closed the connection, and `Broken` with
+  `BrokenCause::Unspecified` when the connection failed or took no byte for
+  5 s, a keepalive ping was answered `454`, or the server broke the framing.
+  A push's `Broken` never carries an `errno_code`.
+- **`close()` and the rest.** `close()` reports: `Ok(())` means the media
+  was written and the server accepted the TEARDOWN; `Protocol { code: 454 }`
+  means the server had forgotten the session and queued media was dropped;
+  another `Protocol` is a refused TEARDOWN. `Transport::close` (what a
+  shell's close and `finish()` call) waits the same way but does not wait
+  for the thread and reports nothing. Dropping the push discards the queue
+  and writes TEARDOWN without waiting. See
+  [the cancel and close contract](/docs/reference/srt-cancel-handle.md#rtsp-push-what-a-cancel-and-each-close-do).
+- **Shells over a push.** End a `MuxSender` with `finish()`: `close()`
+  cancels first and can drop packets queued a moment before. `Sender::close()`
+  and dropping either shell close the push without a cancel.
+- **Keepalive comes from the builder.** A client made by
+  `RtspClientBuilder::connect` sends OPTIONS pings at half the advertised
+  session timeout unless `keepalive_interval` sets another cadence; one made
+  by `RtspClient::connect` sends none. mediamtx 1.21.4 ends a recording
+  publisher after 10 s without a byte while it advertises 55 s, so a push
+  that can go quiet sets `keepalive_interval` below 10 s.
+- **After `pause()` the data calls still send.** Some servers end the
+  session for a packet sent while paused (mediamtx 1.21.4 does).
+- **Pass an unwrapped PTS.** `send_video` and `send_klv` take the PTS as
+  given and the sender reports follow it: a PTS read from MPEG-TS wraps at
+  33 bits and must be unwrapped first.
+- **TCP only.** A `?transport=udp` URL is `UnsupportedTransport` with no
+  SETUP written; an RTSP 2.0 client is refused at `announce` (RTSP 2.0 has no
+  ANNOUNCE).
+- **`Send`, not `Sync`.** One thread sends; another ends a waiting send
+  through the cancel handle.
+
 ## Where to go next
 
 - [`/docs/start/concepts.md`](/docs/start/concepts.md) — the conceptual

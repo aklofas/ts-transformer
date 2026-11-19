@@ -423,6 +423,8 @@ Rules the types do not enforce:
 
 ffmpeg pushes elementary tracks and cannot push KLV over RTSP; GStreamer's `rtspclientsink` can push MPEG-TS or H.264 + KLV. The C example [`recv_rtsp_publish.c`](/bindings/c/examples/receiving/recv_rtsp_publish.c) runs the whole loop, with push commands in its header; the [publisher ingest recipe](/docs/cookbook/receiving/rtsp-publish-ingest.md) covers the same flow from Rust.
 
+The other direction, publishing to an RTSP server with ANNOUNCE / RECORD, is not in the C API yet: Rust, Python and the JVM have the push client ([Push to an RTSP server](/docs/cookbook/sending/rtsp-push.md); [deferred features](/docs/project/deferred-features.md#the-rtsp-push-client-in-the-c-api)).
+
 ## UDP and RIST ingest: the publisher's address (`TST_HAS_UDP`, `TST_HAS_RIST`)
 
 A server that takes UDP or RIST ingest on its own ports can ask each receiver who is publishing to it and keep it to one address (ABI 31). Each of `tst_udp_receiver`, `tst_udp_demux_receiver`, `tst_rist_receiver` and `tst_rist_demux_receiver` has the same two getters:

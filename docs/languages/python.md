@@ -1449,6 +1449,98 @@ ffmpeg pushes elementary tracks and cannot push KLV over RTSP; GStreamer's
 [publisher ingest recipe](/docs/cookbook/receiving/rtsp-publish-ingest.md)
 covers the same flow from Rust.
 
+### RTSP push client
+
+`RtspClient.push(config, description)` publishes to an RTSP server: it
+connects, sends ANNOUNCE, SETUP `mode=record` for each track and RECORD,
+and returns an `RtspPushSession` that sends the media interleaved on the
+control connection. The server may be mediamtx, this library's `RtspServer`
+(the [publisher ingest](#rtsp-publisher-ingest) above) or any server that
+takes RTSP 1.0 RECORD over TCP.
+
+```python
+from tstrans.mpegts import Pts90khz
+from tstrans.rtp import BasicAuth, PushDescription, RtspClient, RtspClientConfig
+
+cfg = RtspClientConfig("rtsp://media.example:8554/cam1",
+                       auth=BasicAuth("publisher", "secret"))
+desc = PushDescription.h264_from_key_frame(first_key_frame, klv=True)
+with RtspClient.push(cfg, desc) as push:
+    for i, (access_unit, klv) in enumerate(frames):
+        pts = Pts90khz.from_raw(i * 3000)
+        push.send_video(access_unit, pts=pts)   # Annex B, decoding order
+        push.send_klv(klv, pts=pts)             # one whole KLV unit
+# The with exit writes what is queued, then TEARDOWN.
+```
+
+The surface:
+
+- `PushDescription.mp2t()`, `h264(parameter_sets, *, klv=False)`,
+  `h264_from_key_frame(annexb, *, klv=False)`, `h265(vps, sps, pps, *,
+  klv=False)`, `h265_from_key_frame(annexb, *, klv=False)`. The
+  `*_from_key_frame` forms raise `ValueError` when the access unit lacks a
+  parameter set; `h264()` given a list without an SPS and a PPS is refused
+  by `push` with `RtspError(PROTOCOL)`.
+- `RtspPushSession.send_ts(ts)` (whole TS packets, at most 1316 bytes, on an
+  MPEG-TS push), `send_video(annexb, *, pts)`, `send_klv(klv, *, pts)`.
+- `pause()`, `resume()`, `teardown()`, `close()`, `cancel_handle()`,
+  `stats() -> RtspPushStats`, `is_session_alive()`, the `session_id`
+  property, and the context manager.
+- `into_mux_sender(program_config) -> MuxSender` and `into_sender() ->
+  Sender` move an MPEG-TS push into a sender shell; the session is closed
+  afterwards. Both raise `ValueError` on an elementary push, and
+  `into_mux_sender` raises `MuxError(CONFIG_INVALID)` for a refused config,
+  each leaving the session as it was.
+- `RtspPushStats`: `packets_sent`, `bytes_sent`, `sender_reports_sent`,
+  `receiver_reports`, `fraction_lost_q8`, `cumulative_lost`,
+  `frames_dropped_inbound`, `frames_dropped_at_close`.
+
+How each call ends:
+
+| Call | Outcome | Meaning |
+|---|---|---|
+| `RtspClient.push` | `RtspError` | A step failed; the connection is closed. `UNSUPPORTED_TRANSPORT` for `transport_pref=TransportPref.UDP` (no SETUP written), `PROTOCOL` for `rtsp_version=RtspVersion.V2_0` (no ANNOUNCE written) and for a status the server refused with (a server that does not take the codec answers `415`). |
+| a data call | `RtpError(CLOSED)` | The cancel handle fired, or the session was closed. |
+| a data call | `RtpError(BROKEN)` | The server closed the connection, the connection failed or took no byte for 5 s, or a keepalive ping was answered `454`. Also a TS payload that is not whole packets, which leaves the session open. |
+| `send_ts` | `RtpError(TOO_LARGE)` | More than 1316 bytes; nothing sent. |
+| a data call | `ValueError` | A track the push did not announce (`send_klv` without `klv=True`, `send_video` / `send_klv` on an MPEG-TS push, `send_ts` on an elementary one) or an empty unit; nothing sent. |
+| `teardown()` | `RtspError` | The server refused the TEARDOWN (`PROTOCOL`, or `NOT_FOUND` for a 404), or `CLOSED` on a cancelled push. The session is closed either way. |
+| `close()`, the `with` exit | `None` | Whatever the server answered. |
+
+Rules the types do not enforce:
+
+- **A send waits only for the queue.** It returns once its packets are
+  queued for the client's thread. Against a server that reads slowly it
+  waits, GIL released, until room frees, the cancel handle fires (within
+  about 100 ms), the session ends, or the server has taken no byte for 5 s.
+  `pause()` and `close()` first wait for the queue the same way.
+- **One call at a time.** A second thread's call waits for the one in
+  progress; `stats()` and `is_session_alive()` wait while a send, `pause()`
+  or `resume()` runs. `cancel_handle()` answers at once and is the way to
+  end a waiting send. A `close()` or `teardown()` from another thread while
+  a send, `pause()` or `resume()` is in progress fires the cancel first:
+  that call raises `CLOSED`, what is queued is dropped, and the session
+  ends as a cancel.
+- **Ending a push through a shell.** `MuxSender.finish()` writes what the
+  sender holds and closes the push, which writes its queue before the
+  TEARDOWN. A shell's `close()` cancels first, so it can drop packets
+  queued a moment before; `Sender` has no lossless end over a push. To end
+  a pre-muxed stream without loss, send through `send_ts` and close the
+  session.
+- **Keepalive is on or off.** `keepalive=True` (the default) sends OPTIONS
+  pings at half the session timeout the server advertises; the config has
+  no interval. mediamtx 1.21.4 ends a recording publisher after 10 s
+  without a byte while it advertises 55 s, so keep media flowing.
+- **After `pause()` the data calls still send**, and some servers end the
+  session for that (mediamtx 1.21.4 closes the connection).
+- **Collection.** A session collected without `close()` sets its cancel,
+  discards what is queued and writes TEARDOWN without waiting for the
+  reply. Interpreter exit cancels a call parked in a session left open.
+
+The [push recipe](/docs/cookbook/sending/rtsp-push.md) has the MPEG-TS
+form through `into_mux_sender`, the Rust and Java twins, and what mediamtx
+and ffmpeg do with a push.
+
 ### H.264-over-RTP ingest (RFC 6184)
 
 `tstrans.rtp` ships `H264Receiver` and its companions for ingesting bare

@@ -198,7 +198,7 @@ shipping RTP/RTSP client + SRT) get a tokio-free dependency tree.
 | Feature | Default | Enables |
 | --- | --- | --- |
 | `rtsp-server` | ✅ on | `RtspServer` + mounts (the RTSP push server and publisher ingest: ANNOUNCE / RECORD into publish mounts); pulls `tokio` + `tokio-util`. |
-| `tls` | ❌ off | Client `rtsps://` (`RtspClient`) via sync rustls — no tokio either way. |
+| `tls` | ❌ off | Client `rtsps://` (`RtspClient`, and the push client `RtspPush`) via sync rustls — no tokio either way. |
 | `rtsp-server-tls` | ❌ off | The server's `rtsps://` TLS acceptor (`tokio-rustls`); implies both `rtsp-server` and `tls` — Cargo has no other way to express "`tls` AND `rtsp-server`". |
 
 `cargo build -p tst-rtp --no-default-features --features tls` is the
@@ -713,6 +713,33 @@ can write to without the sticky bit is unsupported; on such a host, point
 | Python (`tstrans.rtp`) | ✅ Full | `H264Receiver`, `H264AccessUnit`, `H264DepayConfig`, `ParameterSetInjection`, `H264DepayStats`, `RtpStats`. RTSP path via `RtspClient.connect_h264` → `session.into_h264_receiver()`. Ships in published wheels. |
 | JVM (`org.tstrans.rtp`) | ✅ Full | `H264Receiver`, `H264AccessUnit`, `H264DepayConfig`, `ParameterSetInjection`, `H264DepayStats`, `RtpStats`. RTSP path via `RtspClient.connectH264` → `session.intoH264Receiver()`. Note: `intoH264Receiver()` consumes the session (differs from Python). Ships in the published JAR. |
 | C (`tst-c`) | ❌ Deferred | No C-ABI `H264Receiver` family yet. Would be the next additive ABI minor bump. Trigger: a C/embedded consumer asks. See [`/docs/project/deferred-features.md`](/docs/project/deferred-features.md). |
+
+### RTSP push client (ANNOUNCE / RECORD) — per-binding status
+
+Publishing to an RTSP server: ANNOUNCE, SETUP `mode=record` per track,
+RECORD, then RTP interleaved on the control connection. The recipe is
+[Push to an RTSP server](/docs/cookbook/sending/rtsp-push.md).
+
+| Binding | Status | Notes |
+|---|---|---|
+| Rust (`tst-rtp`) | ✅ Full | `RtspPush` (`connect`, `send_ts` / `send_video` / `send_klv`, `pause` / `resume`, `close`, `cancel_handle`, `stats`), `PushDescription`, `VideoTrack`, `PushStats`; `RtspClient::announce` / `setup_record` / `record`. `RtspPush` is a `Transport`, so `MuxSender` and `Sender` run over an MPEG-TS push. No feature needed; `rtsps://` needs `tls`. |
+| Python (`tstrans.rtp`) | ✅ Full | `RtspClient.push`, `PushDescription`, `RtspPushSession` (`into_mux_sender`, `into_sender`), `RtspPushStats`. |
+| JVM (`org.tstrans.rtp`) | ✅ Full | `RtspClient.push`, `PushDescription`, `RtspPushSession` (`intoMuxSender`, `intoSender`), `RtspPushStats`. |
+| C (`tst-c`) | ❌ Deferred | No C-ABI push surface. The C binding pulls from and serves RTSP. See [`/docs/project/deferred-features.md`](/docs/project/deferred-features.md#the-rtsp-push-client-in-the-c-api). |
+
+| Feature / Peer | Status | Notes |
+|---|---|---|
+| MPEG-TS track (RFC 2250) | ✅ | Whole TS packets, at most 1 316 bytes per RTP packet. |
+| H.264 (RFC 6184, mode 1) / H.265 (RFC 7798) track | ✅ | One access unit per call; NAL units over 1 400 bytes fragmented. |
+| KLV track (RFC 6597) | ✅ | Beside a video track; one RTP packet per unit up to 65 523 bytes. RTCP sender reports pair both tracks with one clock. |
+| Audio tracks | ❌ | Deferred. |
+| TCP-interleaved | ✅ | The only transport. |
+| UDP RECORD | ❌ | `?transport=udp` is refused; see [deferred features](/docs/project/deferred-features.md#udp-record-for-the-rtsp-push-client). |
+| RTSP 2.0 | ❌ | RTSP 2.0 has no ANNOUNCE or RECORD; refused before the ANNOUNCE is written. |
+| `rtsps://` | ✅ | Rust with `tls`; the Python and JVM bindings build with it. |
+| This library's `RtspServer` | ✅ | MPEG-TS, H.264, H.264 + KLV; an H.265 track or KLV without video answers `415`. |
+| mediamtx 1.21.4 | ✅ | In the interop matrix (MPEG-TS, and H.264 + KLV, read back by a reader). Sends no receiver reports to a TCP publisher; closes a recording publisher after 10 s without a byte, and the connection on any frame after PAUSE. |
+| ffmpeg 6.1, `-rtsp_flags listen` | ⚠️ | In the interop matrix (MPEG-TS). Answers TEARDOWN `501`, which `close()` reports as a refused TEARDOWN; no credentials, no TLS in listen mode; its MPEG-TS output misses the last access unit. |
 
 **Intentional per-language conveniences.** A small set of APIs exist only in
 one binding by design: `transmux` (Python-only convenience that bridges a

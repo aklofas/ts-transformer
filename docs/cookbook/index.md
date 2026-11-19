@@ -36,6 +36,7 @@ Start here if your job is producing MPEG-TS bytes: files, fixtures, multi-stream
 - **[Send MPEG-TS over UDP](/docs/cookbook/sending/udp.md)** — Raw UDP unicast/multicast — lowest-common-denominator for ffmpeg, VLC, and STANAG 4609 receivers.
 - **[Send MPEG-TS over TCP](/docs/cookbook/sending/tcp.md)** — Reliable-bytestream sibling of UDP, optional TLS via rustls.
 - **[Send MPEG-TS over RIST](/docs/cookbook/sending/rist.md)** — ARQ-recovered UDP; Simple + Main profiles; AES PSK encryption.
+- **[Push to an RTSP server (ANNOUNCE / RECORD)](/docs/cookbook/sending/rtsp-push.md)** — Publish to mediamtx or an `RtspServer` publish mount: MPEG-TS through a `MuxSender`, or H.264 / H.265 with a KLV track; Rust, Python and Java.
 - **[Publish MPEG-TS as an HLS stream](/docs/cookbook/sending/hls.md)** — `.ts` segments + rolling `.m3u8`; LIVE/EVENT/VOD + `finish_serving`; optional built-in HTTP server.
 - **[Send KLV over HLS to a browser (hls.js)](/docs/cookbook/sending/hls-klv-to-web.md)** — MISB KLV inside HLS segments; hls.js pulls it via the native `misbklv` path or a UL-anchored fallback.
 - **[Serve a live stream to a browser over WebRTC (WHEP)](/docs/cookbook/sending/whep-browser-playback.md)** — A `WhepServer` mount fed with MPEG-TS; the reference player shows the video with each KLV record locked to its frame.
@@ -104,5 +105,6 @@ Only examples explicitly invoked via `cargo run -p tst-examples --example <name>
 | `parse_audio_frames` | [Pull sample rate and channel count](/docs/cookbook/codecs/extract-audio-format.md) |
 | `recv_rtsp_h264` | [Ingest H.264 from an RTSP camera](/docs/cookbook/receiving/recv-rtsp-h264-to-ts.md) |
 | `recv_rtsp_publish` | [Accept RTSP publishers](/docs/cookbook/receiving/rtsp-publish-ingest.md) |
+| `send_rtsp_push` | [Push to an RTSP server](/docs/cookbook/sending/rtsp-push.md) |
 | `send_tcp` | [Send MPEG-TS over TCP](/docs/cookbook/sending/tcp.md) |
 | `serve_whep` | [Serve a live stream to a browser over WebRTC (WHEP)](/docs/cookbook/sending/whep-browser-playback.md) |

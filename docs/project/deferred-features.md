@@ -930,7 +930,7 @@ mean **Deferred**. An entry whose feature has shipped must never read
   `crates/tst-interop`'s synthetic profile set with `scripts/interop/
   run-matrix.sh` cells (ffmpeg `-c:s webvtt` extraction, hls.js /
   mediamtx playback; `ccextractor` / ffmpeg closed-caption decode) — the
-  matrix has 12 profiles and 162 cells, none carrying a subtitle or
+  matrix has 12 profiles and 165 cells, none carrying a subtitle or
   caption stream; a consumer emits WebVTT-in-TS to a third-party player;
   an ATSC-ecosystem consumer asks (also the trigger for the ST 334-2 CDP
   variant); or a consumer reports a real-world bug the synthetic suite
@@ -1496,8 +1496,11 @@ mean **Deferred**. An entry whose feature has shipped must never read
 
 - **Status:** Deferred. `tst_rtp::h264::packetizer` (RFC 6184) and
   `tst_rtp::h265::packetizer` (RFC 7798) turn an access unit into RTP
-  payloads, but no transport sends them: `MuxSender<RtpTransport>` and the
-  RTSP mounts send MPEG-TS over RTP (RFC 2250, PT 33).
+  payloads. The RTSP push client sends them inside an RTSP RECORD session
+  (`RtspPush::send_video`, interleaved on the TCP control connection; see
+  [Push to an RTSP server](/docs/cookbook/sending/rtsp-push.md)), but no
+  plain RTP sender does: `MuxSender<RtpTransport>` and the RTSP mounts send
+  MPEG-TS over RTP (RFC 2250, PT 33).
 - **Why deferred:** No consumer has asked for it. The STANAG 4609 pipeline
   shape — mux video + KLV + audio into MPEG-TS, then send over RTP —
   is sufficient for all current deployments; bare H.264 RTP output is a
@@ -1627,7 +1630,11 @@ mean **Deferred**. An entry whose feature has shipped must never read
   TCP-interleaved push has no packet loss to report, and the publishers
   tested (ffmpeg) stream without them.
 - **Trigger to revisit:** A publisher that adapts its bitrate from
-  receiver reports, or one that ends a session when it receives none.
+  receiver reports, or one that ends a session when it receives none. This
+  library's own push client (`RtspPush`) counts receiver reports when a
+  server sends them (`PushStats::receiver_reports`) and streams without
+  them; mediamtx 1.21.4 and ffmpeg 6.1 send none to a TCP publisher
+  either.
 
 ## Audio and H.265 elementary RTSP publishers
 
@@ -1644,7 +1651,10 @@ mean **Deferred**. An entry whose feature has shipped must never read
   video beside the KLV one. H.264 plus KLV is the shape camera and
   gimbal-payload encoders push, and MPEG-TS over RTP covers the rest.
 - **Trigger to revisit:** A publisher that can push only H.265 or audio
-  as elementary tracks and cannot be switched to MPEG-TS over RTP.
+  as elementary tracks and cannot be switched to MPEG-TS over RTP. This
+  library's push client can announce H.265 (`VideoTrack::H265`), which
+  this server answers `415`; push it to a server that takes H.265
+  (mediamtx does), or push MPEG-TS.
 
 ## Mount rules and listen rules in the C ABI
 
@@ -1663,6 +1673,38 @@ mean **Deferred**. An entry whose feature has shipped must never read
   before their signatures settle.
 - **Trigger to revisit:** A C consumer that needs either table, or the first
   stable minor of the tables.
+
+## UDP RECORD for the RTSP push client
+
+- **Status:** Deferred. The push client (`RtspPush`, `RtspClient.push` in
+  Python and on the JVM) sets every track up as `RTP/AVP/TCP` with
+  `mode=record` and sends its media interleaved on the RTSP control
+  connection. A `?transport=udp` URL (`TransportPref.UDP` in the bindings)
+  is refused with `UnsupportedTransport` before any SETUP is written.
+- **Why deferred:** One TCP connection carries the requests and the media,
+  so a push needs no other port. UDP RECORD needs a pair of local ports per
+  track and RTCP on its own socket. Every server the client was run
+  against takes TCP-interleaved RECORD: mediamtx 1.21.4, ffmpeg 6.1 in
+  listen mode and this library's `RtspServer`.
+- **Trigger to revisit:** A server that takes RECORD only over UDP, or a
+  link where head-of-line blocking on TCP costs more latency than a
+  consumer can accept.
+
+## The RTSP push client in the C API
+
+- **Status:** Deferred. Rust (`RtspPush`), Python (`RtspClient.push`,
+  `RtspPushSession`) and the JVM (`org.tstrans.rtp.RtspClient.push`,
+  `RtspPushSession`) can publish to an RTSP server with ANNOUNCE / RECORD.
+  The C ABI cannot: it has no `PushDescription`, no push session and no
+  conversion of a push into a C sender shell. The C binding still pulls from
+  an RTSP server and serves RTSP, publisher ingest included.
+- **Why deferred:** The push adds a description type (MPEG-TS, or H.264 /
+  H.265 with their parameter sets and an optional KLV track), a session
+  with blocking sends, a cancel and three ways to end, and a conversion into
+  the sender shells: a C surface of its own, with its own error mapping and
+  free rules, that no C consumer has asked for.
+- **Trigger to revisit:** A C or embedded consumer that must publish to an
+  RTSP server and cannot send over SRT, RIST, UDP or TCP instead.
 
 ## `rcvbuf` on publisher UDP sockets
 

@@ -670,3 +670,82 @@ See the "Python/JVM `tracing` diagnostics bridge + structured
 stream-end reason" entry in
 [deferred-features.md](/docs/project/deferred-features.md) for the
 bindings-parity history.
+
+## RTSP push
+
+These entries are about publishing to an RTSP server with `RtspPush`
+(`RtspClient.push` in Python and on the JVM). The
+[push recipe](/docs/cookbook/sending/rtsp-push.md) has the servers' behaviour
+side by side.
+
+**A push ends with a clean end of stream after about 10 s of sending nothing**
+
+**Symptom:** a push that stopped sending media for a while (the encoder
+stalled, the application paused its loop) fails on its next send with
+`TransportError::Broken` and `BrokenCause::CleanEof` (`RtpError(BROKEN)` in
+Python, `RtpException(BROKEN)` on the JVM); `end_reason()` reads
+`CleanTeardown`. The server sent no RTSP message first.
+
+**Diagnosis:** the server ended a publisher it heard nothing from. mediamtx
+1.21.4 closes a recording publisher after 10 s without a byte (its
+`readTimeout`), although its replies advertise `timeout=55`. The client's
+default keepalive cadence is half the advertised timeout, 27.5 s there, so
+the first ping would come after the close. A client made by
+`RtspClient::connect` sends no pings at all.
+
+**Fix:** keep media flowing; any byte resets that server's clock. In Rust,
+build the client with `RtspClientBuilder::keepalive_interval` below the
+server's timeout (`Duration::from_secs(5)` for mediamtx's 10 s); pings come
+only from a builder-made client. Python's and the JVM's configs have pings on
+or off (on by default) and no interval: there, keep sending media.
+
+**The session ends right after `pause()`**
+
+**Symptom:** `pause()` returns `Ok` (the server answered `200`), and the
+next send, or `resume()`, finds the session ended: the server closed the
+connection without an RTSP message.
+
+**Diagnosis:** a packet reached the server while the push was paused. Data
+calls still queue and write their packets after `pause()`, and mediamtx
+1.21.4 closes a publisher's connection on any interleaved frame (RTP or RTCP)
+between PAUSE and the reply to the next RECORD. `pause()` itself writes the
+queue, and a last sender report, before it sends PAUSE, so only sends made
+after `pause()` returned can do this.
+
+**Fix:** stop calling `send_*` before `pause()`, and start again after
+`resume()` returns. mediamtx also takes the path offline at PAUSE, so its
+readers must reconnect after the resume.
+
+**`close()` returns `Protocol { code: 501, .. }` after a push that worked**
+
+**Symptom:** every send succeeded, and `RtspPush::close()` returns
+`RtspError::Protocol { code: 501, reason: "Not Implemented" }`
+(`teardown()` raises `RtspError(PROTOCOL)` in Python, throws
+`RtspException(PROTOCOL)` on the JVM).
+
+**Diagnosis:** the server does not implement TEARDOWN. ffmpeg 6.1 in listen
+mode (`-rtsp_flags listen`) answers every TEARDOWN `501` and keeps
+recording until the connection closes, which `close()` does after the
+TEARDOWN; then the listener writes its output. `close()` had written the
+queued media before it sent the TEARDOWN. A `454` from `close()` is
+different: it means the server had forgotten the session and queued media
+was dropped.
+
+**Fix:** treat a refused TEARDOWN from such a server as the end of the push.
+`close()` without the report (Python's and the JVM's `close()`, a
+`MuxSender::finish()`) does not surface it.
+
+**ANNOUNCE is refused with `415 Unsupported Media Type`**
+
+**Symptom:** `RtspPush::connect` (`RtspClient.push`) fails with
+`RtspError::Protocol { code: 415, .. }` (`PROTOCOL` in the bindings) and
+nothing is published.
+
+**Diagnosis:** the server does not take a track the description announces.
+This library's `RtspServer` takes one MPEG-TS track, one H.264 track, or
+H.264 with one KLV track; it answers `415` to an H.265 track. mediamtx 1.21.4 takes MPEG-TS, and H.264 or H.265 with or
+without KLV.
+
+**Fix:** announce a shape the server takes. To carry H.265 (or audio) to
+this library's server, mux it into MPEG-TS and push `PushDescription::Mp2t`
+through a `MuxSender`.
