@@ -269,7 +269,10 @@ pub fn klv_record_digest(pid: u16, pts: i64, payload: &[u8]) -> KlvRecordDigest 
             field_errors += rec.field_errors.len() as u64;
             kinds.push("st0601-ls".to_string());
         } else {
-            return failed("not a registered MISB item".to_string());
+            return failed(
+                "not an ST 0601 local set or an ST 0605 pack (the digest decodes no other set)"
+                    .to_string(),
+            );
         }
     }
     KlvRecordDigest {
