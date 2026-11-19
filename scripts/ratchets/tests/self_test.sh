@@ -1193,6 +1193,9 @@ expect_out "roster-sync: unchecked fuzz workspace" "crates/tst-new/fuzz/Cargo.to
 rs_copy; plant "$tmp/rs/scripts/dev/cargo-deny-all.sh" 'crates/tst-core/fuzz/Cargo.toml' 'crates/tst-gone/fuzz/Cargo.toml'
                                                                                  expect "roster-sync: the deny job names a manifest that does not exist" 1 rsync_
 expect_out "roster-sync: bogus manifest-path" "cargo-deny-all.sh lists a manifest that does not exist: crates/tst-gone/fuzz/Cargo.toml"
+rs_copy; plant "$tmp/rs/.github/workflows/ci.yml" '^        run: bash scripts/dev/cargo-deny-all.sh$' '        run: echo skipped'
+                                                                                 expect "roster-sync: the deny job no longer runs cargo-deny-all.sh" 1 rsync_
+expect_out "roster-sync: deny job without the script" "ci.yml's deny job does not run scripts/dev/cargo-deny-all.sh"
 rs_copy; plant "$tmp/rs/.github/workflows/ci.yml" 'pass: no-default' 'pass: no-defaults';  expect "roster-sync: a test pass renamed away loses the union" 1 rsync_
 rs_copy; plant "$tmp/rs/.github/workflows/ci.yml" "(github.event_name != 'pull_request')" '(true)'; expect "roster-sync: the main-only test job runs on PRs" 1 rsync_
 expect_out "roster-sync: main-only job on PRs" "ci.yml test-main-extra no longer runs only off pull requests"
@@ -1993,6 +1996,8 @@ printf 'fn f(url: &str) {\n    let shown = redact_url(url);\n    eprintln!("open
 expect "unredacted urls: a redact_url on the line above does not excuse an inline {url}" 1 nru
 printf 'fn f(url: &str) {\n    eprintln!("open {url}", url = redact_url(url));\n}\n' > "$tmp/nru/a.rs"
 expect "unredacted urls: a redact_url on the same line excuses the site" 0 nru
+expect "unredacted urls: a scan dir that does not exist fails" 1 env REDACT_SCAN_DIRS="$tmp/nru $tmp/nru-gone" bash "$R_NRU"
+expect_out "unredacted urls: the missing dir is named" "nru-gone"
 
 # ---- the advisory-db pin (scripts/check/repo/advisory-db-pin.sh) ----
 # Empty or one 40-hex commit; a set pin passes (a freeze sets it on main).
