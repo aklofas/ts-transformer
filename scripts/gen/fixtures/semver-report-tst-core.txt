@@ -1,0 +1,28 @@
+     Parsing tst-core v0.10.0 (current)
+      Parsed [   0.012s] (current)
+     Parsing tst-core v0.10.0 (baseline)
+      Parsed [   0.011s] (baseline)
+    Checking tst-core v0.10.0 -> v0.10.0 (assume minor change)
+     Checked [   0.101s] 196 checks: 193 pass, 2 fail, 0 warn, 1 skip
+
+--- failure function_missing: pub fn removed or renamed ---
+
+Description:
+A publicly-visible function cannot be imported by its prior path.
+        ref: https://doc.rust-lang.org/cargo/reference/semver.html#item-remove
+
+Failed in:
+  function tst_core::mpegts::mux::old_name, previously in file /work/baseline/crates/tst-core/src/mpegts/mux.rs:10
+  function tst_core::klv::st0102::gone, previously in file /work/baseline/crates/tst-core/src/klv/st0102.rs:7
+
+--- failure struct_missing: pub struct removed or renamed ---
+
+Description:
+A publicly-visible struct cannot be imported by its prior path.
+        ref: https://doc.rust-lang.org/cargo/reference/semver.html#item-remove
+
+Failed in:
+  struct tst_core::transport::OldStats, previously in file /work/baseline/crates/tst-core/src/transport.rs:42
+  struct tst_core::Loose, previously in file /work/baseline/crates/tst-core/src/lib.rs:3
+
+     Summary semver requires new minor version: 0.10.0 -> 0.11.0 (cargo-semver-checks: 2 failed)

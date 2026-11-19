@@ -177,6 +177,20 @@ functions at the crate root for ergonomics — for example
 These root items do not get their own table rows: **a root-level item's
 tier is whatever the module row that defines it says.**
 
+## Breaks per release and tier
+
+Every break is announced under a `(BREAKING)` heading of the CHANGELOG; this table counts them per release and tier.
+Each count is a distinct item path of the release's `cargo-semver-checks` report
+against the previous tag, placed in the tier of the most specific row of the
+classification table above. A release whose report kept only per-crate counts
+says so in its Basis cell and has no tier counts.
+
+<!-- BEGIN GENERATED: api-churn -->
+| Release | Basis | Items | Stable | Provisional | Experimental | Internal |
+|---|---|---|---|---|---|---|
+| 0.10.0 | per-crate failed checks only (tst-core 2, tst-hls 1, tst-pipeline 3, tst-rtp 1, tst-webrtc 1); that record kept no item paths, so no tier is known | — | — | — | — | — |
+<!-- END GENERATED: api-churn -->
+
 ## Bindings
 
 The Python (`tstrans`), JVM (`tstrans-jvm`), and C (`tst-c`) binding

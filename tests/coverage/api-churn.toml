@@ -1,0 +1,11 @@
+# Breaking changes per release and stability tier, rendered into
+# docs/reference/api-stability.md by scripts/gen/api-churn.sh. One [[release]] row per
+# release: `version` and either the four tier counts (`stable`, `provisional`,
+# `experimental`, `internal`: distinct broken item paths of that release's
+# cargo-semver-checks report, from `scripts/gen/api_churn.py tally`) or a `note` saying
+# why there are none. A counted row may also carry a `note` that replaces the Basis cell.
+schema_version = 0
+
+[[release]]
+version = "0.10.0"
+note = "per-crate failed checks only (tst-core 2, tst-hls 1, tst-pipeline 3, tst-rtp 1, tst-webrtc 1); that record kept no item paths, so no tier is known"
