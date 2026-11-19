@@ -21,15 +21,14 @@
 # unrelated C ABI version (`TST_ABI_VERSION_*`, currently 0.19) — a different
 # number that must be ignored.
 #
-# ADDITIONALLY: every internal path-dependency's pinned `version = "X.Y.Z"`
-# key (e.g. `tst-core = { path = "../tst-core", version = "0.3.0" }`, required
-# by crates.io publishing — a path dep with no `version` key can't resolve
-# once the crate is fetched from the registry instead of the path) must equal
-# the agreed workspace version too. Missed at a version-sweep bump this means
-# a stale `^0.3.0` requirement forever: the crates.io ordered publish would
-# fail at layer 2 (first dependent crate) AFTER the irreversible layer-1
-# publish already landed, and a coincidentally-same-length stale version could
-# fail silently/skewed instead of loudly. Scanned via RVC_DEP_TOMLS below.
+# ADDITIONALLY, read from `cargo metadata --no-deps --offline` (so every TOML
+# spelling is covered): every package on the publish roster
+# (scripts/lib/roster.sh) has the workspace version (`tstrans-mbedtls-src`:
+# the part before `+`), and every dependency on a path inside the workspace
+# that carries a version requirement (`=X.Y.Z` or `X.Y.Z`) names that version.
+# A stale one fails the ordered crates.io publish AFTER the irreversible
+# layer-1 publish, or lets a layer skip a crate as "already live". The rail
+# needs `cargo` and `jq` on PATH.
 #
 # Run it:    bash scripts/check/repo/release-version-consistency.sh
 # Tag check: bash scripts/check/repo/release-version-consistency.sh 0.2.0
@@ -46,8 +45,7 @@
 #   RVC_C_LIB        bindings/c/core/src/lib.rs
 #   RVC_C_HEADER     bindings/c/include/tstrans.h
 #   RVC_PY_TEST      bindings/python/tests/test_version.py
-#   RVC_DEP_TOMLS    space-separated list of Cargo.toml files to scan for
-#                    internal path-dependency `version` keys
+#   RVC_WORKSPACE    workspace root `cargo metadata` and the roster read
 #
 # Bash 3.2-portable (macOS CI is a gating platform): no
 # `mapfile`/`readarray`/`declare -A`/`declare -a`, and `mktemp` is always given
@@ -62,13 +60,7 @@ RVC_PY_CARGO="${RVC_PY_CARGO:-$ROOT/bindings/python/Cargo.toml}"
 RVC_C_LIB="${RVC_C_LIB:-$ROOT/bindings/c/core/src/lib.rs}"
 RVC_C_HEADER="${RVC_C_HEADER:-$ROOT/bindings/c/include/tstrans.h}"
 RVC_PY_TEST="${RVC_PY_TEST:-$ROOT/bindings/python/tests/test_version.py}"
-
-# The 10 Cargo.toml files that carry an internal path-dependency `version =`
-# key. The number of keys is not written down here: it moves whenever a crate
-# gains a dependency (dev-dependencies count), so the check counts what it
-# compared and the OK line prints it. Not every crates/*/Cargo.toml has one —
-# e.g. tst-core has no internal path deps with a `version` key.
-RVC_DEP_TOMLS="${RVC_DEP_TOMLS:-$ROOT/crates/srt-sys/Cargo.toml $ROOT/crates/rist-sys/Cargo.toml $ROOT/crates/tst-pipeline/Cargo.toml $ROOT/crates/tst-srt/Cargo.toml $ROOT/crates/tst-rist/Cargo.toml $ROOT/crates/tst-udp/Cargo.toml $ROOT/crates/tst-tcp/Cargo.toml $ROOT/crates/tst-hls/Cargo.toml $ROOT/crates/tst-rtp/Cargo.toml $ROOT/crates/tst-webrtc/Cargo.toml}"
+RVC_WORKSPACE="${RVC_WORKSPACE:-$ROOT}"
 
 # ---------------------------------------------------------------------------
 # extractors — each echoes the version (or empty on no-match)
@@ -106,13 +98,23 @@ pytest_version() { # <file>
     | sed -nE 's/.*==[[:space:]]*"([^"]*)".*/\1/p'
 }
 
-# Every `<crate> = { ... path = "../..." ... version = "X.Y.Z" ... }` internal
-# dependency line in <file> -> one "<file>:<line><TAB><version>" row per hit.
-# These are always single-line inline tables in this workspace (verified by
-# grep across crates/*/Cargo.toml), so a per-line regex is sufficient.
-internal_dep_versions() { # <file>
-  grep -nE 'path[[:space:]]*=[[:space:]]*"\.\./.*version[[:space:]]*=[[:space:]]*"[^"]+"' "$1" 2>/dev/null \
-    | sed -nE "s#^([0-9]+):.*version[[:space:]]*=[[:space:]]*\"([^\"]*)\".*#$1:\1\t\2#p"
+# One "FAIL: ..." line per roster package whose version differs from <version>
+# or whose workspace path dependency requires another one, then a final
+# "KEYS <n>" line counting the requirements compared.
+internal_version_problems() { # <version> <roster names, one per line>
+  local names
+  names="$(printf '%s\n' "$2" | jq -R . | jq -s .)"
+  (cd "$RVC_WORKSPACE" && cargo metadata --no-deps --offline --format-version 1) \
+    | jq -r --arg v "$1" --argjson names "$names" '
+        .workspace_root as $root
+        | [.packages[] | select(.name as $n | $names | index($n))] as $pk
+        | ($pk[] | select((.version | split("+")[0]) != $v)
+            | "FAIL: package \(.name) has version \(.version) (workspace is \($v))"),
+          ($pk[] | .name as $n | .dependencies[]
+            | select(.path != null and (.path | startswith($root + "/")) and .req != "*")
+            | select((.req | ltrimstr("^") | ltrimstr("=")) != $v)
+            | "FAIL: \($n) requires \(.name) \(.req) (workspace is \($v))"),
+          "KEYS \([$pk[] | .dependencies[] | select(.path != null and (.path | startswith($root + "/")) and .req != "*")] | length)"'
 }
 
 # ---------------------------------------------------------------------------
@@ -189,20 +191,24 @@ run_check() { # [EXPECTED_VERSION]
     return 1
   fi
 
-  # (2.5) every internal path-dependency `version` key must equal $first too
-  # (see the ADDITIONALLY note in the file header for why this matters).
-  local dep_mismatch=0 dep_keys=0 dep_toml dep_site dep_ver
-  for dep_toml in $RVC_DEP_TOMLS; do
-    [ -f "$dep_toml" ] || continue
-    while IFS=$'\t' read -r dep_site dep_ver; do
-      [ -n "$dep_site" ] || continue
-      dep_keys=$((dep_keys + 1))
-      if [ "$dep_ver" != "$first" ]; then
-        echo "FAIL: internal dep version key at $dep_site = \"$dep_ver\" (workspace is $first)" >&2
-        dep_mismatch=1
-      fi
-    done < <(internal_dep_versions "$dep_toml" || true)
-  done
+  # (2.5) every roster package and internal path-dependency requirement must
+  # equal $first too (see the ADDITIONALLY note in the file header).
+  local missing=""
+  command -v cargo >/dev/null 2>&1 || missing="cargo"
+  command -v jq >/dev/null 2>&1 || missing="${missing:+$missing and }jq"
+  if [ -n "$missing" ]; then
+    echo "FAIL: $missing not found on PATH; the rail reads package versions and internal pins from cargo metadata" >&2
+    return 1
+  fi
+  local roster problems dep_keys=0 dep_mismatch=0 line
+  roster="$(ROSTER_ROOT="$RVC_WORKSPACE" bash "$ROOT/scripts/lib/roster.sh" publishable)"
+  problems="$(internal_version_problems "$first" "$roster")"
+  while IFS= read -r line; do
+    case "$line" in
+      "KEYS "*) dep_keys="${line#KEYS }" ;;
+      FAIL:*) echo "$line" >&2; dep_mismatch=1 ;;
+    esac
+  done <<< "$problems"
   [ "$dep_mismatch" -eq 0 ] || return 1
 
   # (3) optional expected/tag version must match the agreed version.
@@ -214,9 +220,9 @@ run_check() { # [EXPECTED_VERSION]
 
   # (4) success.
   if [ -n "$expected" ]; then
-    echo "release-version-consistency: OK — all sources and $dep_keys internal dep version keys agree at $first (matches expected $expected)"
+    echo "release-version-consistency: OK — all sources and $dep_keys internal dep version requirements agree at $first (matches expected $expected)"
   else
-    echo "release-version-consistency: OK — all sources and $dep_keys internal dep version keys agree at $first"
+    echo "release-version-consistency: OK — all sources and $dep_keys internal dep version requirements agree at $first"
   fi
 }
 

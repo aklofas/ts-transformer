@@ -1,11 +1,9 @@
 #!/usr/bin/env bash
-# The lists that must stay literal (workflow YAML, and the version rail, which
-# runs in jobs with no Rust toolchain) agree with scripts/lib/roster.sh:
+# The lists that must stay literal (workflow YAML) agree with scripts/lib/roster.sh:
 #   1. every member has a sanitizer class; sanitizers.yml's `-p` lists match;
 #   2. crates-io.yml publishes every publishable crate once, after its deps
 #      (a layer step publishes in argument order);
-#   3. release-version-consistency.sh's RVC_DEP_TOMLS == roster dep-tomls;
-#   4. ci.yml's build matrix is the five gating legs, none continue-on-error
+#   3. ci.yml's build matrix is the five gating legs, none continue-on-error
 #      (the job's continue-on-error stays the matrix value, never literal true);
 #      the test jobs give every platform all three feature passes between them,
 #      test-main-extra runs only off pull requests, test-linux and
@@ -13,10 +11,10 @@
 #      every job but dispatch-sha needs it and opens its if: with its guard,
 #      each job's shard axis, /N and --partition agree, each include entry's
 #      flags match its pass, none continue-on-error;
-#   5. every member manifest inherits the lint table;
-#   6. ci.yml's deny job checks every fuzz workspace (crates/*/fuzz), and each
+#   4. every member manifest inherits the lint table;
+#   5. ci.yml's deny job checks every fuzz workspace (crates/*/fuzz), and each
 #      manifest-path it names exists in this tree.
-# RSYNC_FILES_ROOT points 1-4 and 6 at copies of those files (self_test.sh).
+# RSYNC_FILES_ROOT points 1-3 and 5 at copies of those files (self_test.sh).
 # Linux/bash 3.2-portable: no mapfile, no sed -i; runs on the linux-x86_64 leg.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
@@ -53,9 +51,6 @@ while read -r pkg deps; do
     [ -n "$lp" ] && [ -n "$ld" ] && [ "$ld" -lt "$lp" ] || bad "crates-io.yml publishes $pkg (position ${lp:-?}) before or with its dependency $d (position ${ld:-?})"
   done
 done < <(bash "$R" publish-deps)
-
-rvc="$(sed -nE 's/^RVC_DEP_TOMLS="\$\{RVC_DEP_TOMLS:-(.*)\}"$/\1/p' "$F/scripts/check/repo/release-version-consistency.sh" | tr ' ' '\n' | sed "s|^\$ROOT|$ROOT|" | sort)"
-[ "$rvc" = "$(bash "$R" dep-tomls | sort)" ] || bad "release-version-consistency.sh RVC_DEP_TOMLS != roster dep-tomls"
 
 CI="$F/.github/workflows/ci.yml"
 # A job key may carry trailing spaces or a comment (`  late-job: # x`).
