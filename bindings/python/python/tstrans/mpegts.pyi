@@ -683,8 +683,10 @@ class Muxer:
 
         Raises ``MuxError(CONFIG_INVALID)``, leaving the running config and
         every handle as they were, when a PID moved to another program or
-        changed its stream type or codec, a surviving program's PMT PID or
-        PCR PID changed, or a muxer-wide setting differs.
+        changed its stream type or codec, a surviving program's PMT PID
+        changed, or its PCR PID changed while the old PCR stream stays in the
+        program (removing that stream in the same call lets the PCR move),
+        or a muxer-wide setting differs.
         """
         ...
     def pull(self, out: bytearray) -> int: ...

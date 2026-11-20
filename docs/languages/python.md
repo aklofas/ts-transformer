@@ -155,9 +155,11 @@ type and codec are unchanged keeps its handle, continuity counter and
 timers, and the next push carries the new PAT and PMTs. A removed stream's
 handle raises `MuxError(INVALID_USAGE)` until a later `reconfigure` reuses
 its slot, so re-read handles after each call. A config the call refuses (a PID
-that moved program or changed codec, a moved PMT or PCR PID, a different
-muxer-wide setting) raises `MuxError(CONFIG_INVALID)` and leaves the
-running config and every handle unchanged. The shells (`MuxSender` and its
+that moved program or changed codec, a moved PMT PID, a moved PCR PID while
+the old PCR stream stays in the program, a different muxer-wide setting)
+raises `MuxError(CONFIG_INVALID)` and leaves the running config and every
+handle unchanged. Removing the PCR stream in the same call lets the PCR move
+to another stream of the program; its clock carries on. The shells (`MuxSender` and its
 managed and push forms) have no `reconfigure`.
 
 ## First receive
