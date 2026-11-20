@@ -914,32 +914,34 @@ def _run_demux_receiver_stats(
         server.listen(1)
         port = server.getsockname()[1]
         receiver = shells.DemuxReceiver.open(f"tcp://127.0.0.1:{port}")
-        handle = receiver.cancel_handle()
-        conn, _ = server.accept()
-        with conn:
-            conn.sendall(input_bytes)
-
-    outcome: dict[str, Any] = {}
-
-    def recv_worker() -> None:
         try:
-            for _ in receiver:
-                pass
-            outcome["end"] = "end of stream"
-        except BaseException as exc:  # noqa: BLE001
-            outcome["end"] = repr(exc)
+            handle = receiver.cancel_handle()
+            conn, _ = server.accept()
+            with conn:
+                conn.sendall(input_bytes)
 
-    w = threading.Thread(target=recv_worker, daemon=True, name="demux-stats-recv")
-    w.start()
-    if not wait_until(lambda: not w.is_alive(), deadline):
-        handle.cancel()
-        w.join(timeout=5.0)
-        pytest.fail(f"[{scenario_id}] the receive did not end within {deadline} s of the FIN")
-    assert outcome.get("end") == "end of stream", (
-        f"[{scenario_id}] the receive did not end at the end of the stream: {outcome}"
-    )
-    s = receiver.stats()
-    receiver.close()
+            outcome: dict[str, Any] = {}
+
+            def recv_worker() -> None:
+                try:
+                    for _ in receiver:
+                        pass
+                    outcome["end"] = "end of stream"
+                except BaseException as exc:  # noqa: BLE001
+                    outcome["end"] = repr(exc)
+
+            w = threading.Thread(target=recv_worker, daemon=True, name="demux-stats-recv")
+            w.start()
+            if not wait_until(lambda: not w.is_alive(), deadline):
+                handle.cancel()
+                w.join(timeout=5.0)
+                pytest.fail(f"[{scenario_id}] the receive did not end within {deadline} s of the FIN")
+            assert outcome.get("end") == "end of stream", (
+                f"[{scenario_id}] the receive did not end at the end of the stream: {outcome}"
+            )
+            s = receiver.stats()
+        finally:
+            receiver.close()
     stats = {
         "bytes_received": s.bytes_received,
         "packets_received": s.packets_received,
