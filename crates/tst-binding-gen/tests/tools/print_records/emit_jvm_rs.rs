@@ -444,10 +444,8 @@ pub fn file(reg: &[Entry], family: &str) -> Result<String, String> {
     }
     let body = body.join("\n");
     let mut out = String::from(HEADER);
-    // `dead_code`: a builder exists from the moment its record is
-    // registered, which can be before a native returns the record. A
-    // builder no native calls is therefore found only by review.
-    out.push_str("\n#![allow(unsafe_op_in_unsafe_fn, clippy::useless_conversion, dead_code)]\n\n");
+    // No `dead_code` allow: a builder no native calls is a compile warning.
+    out.push_str("\n#![allow(unsafe_op_in_unsafe_fn, clippy::useless_conversion)]\n\n");
     out.push_str("use jni::{Env, jni_sig, jni_str};\n");
     if body.contains("JValue::") {
         out.push_str("use jni::objects::{JObject, JValue};\n");
