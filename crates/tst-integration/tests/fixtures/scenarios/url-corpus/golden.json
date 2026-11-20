@@ -135,7 +135,7 @@
           },
           "tcp": {
             "caller": "shells.Sender.open",
-            "listener": "absent",
+            "listener": "tcp.Listener.open",
             "probe": "open-refused"
           },
           "udp": {

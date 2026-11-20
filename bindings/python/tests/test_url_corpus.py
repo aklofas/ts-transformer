@@ -2,10 +2,10 @@
 
 Every row of ``crates/tst-integration/tests/fixtures/scenarios/url-corpus/corpus.toml``
 goes through the Python entry point the corpus header names for its scheme and
-role. Python exposes no parsed URL, so only the outcome is compared: a refused
-row must raise the scheme's error class with the expected ``kind.name``; an
-accepted row must not raise one of the scheme's URL kinds (a refused connect is
-fine). For the wire schemes (rtsp) a valid row is also connected to a
+role, with its ``{port}`` and ``{dir}`` placeholders filled. Python exposes no
+parsed URL, so only the outcome is compared with the one the row states for
+this leg: ``ok`` (the open returned) or the ``kind.name`` of the scheme's error
+class. For the wire schemes (rtsp) a valid row is also connected to a
 recording peer, and the request heads must show the record's credentials and
 keys.
 """
@@ -13,18 +13,26 @@ keys.
 from __future__ import annotations
 
 import base64
+import contextlib
+import shutil
 import socket
+import tempfile
 import threading
 import urllib.parse
-from typing import Any, Callable
+from pathlib import Path
+from typing import Any, Callable, Iterator
 
 import pytest
 
 import tomllib
 
 from conftest import scenarios_dir
-from tstrans import exceptions, hls, rtp, srt, webrtc
+from tstrans import exceptions, hls, rtp, srt, tcp, webrtc
 from tstrans.shells import Receiver, Sender
+
+LEG = "python"
+
+TLS_FIXTURES = Path(__file__).parent / "fixtures" / "tls"
 
 
 def load_corpus() -> dict[str, Any]:
@@ -70,6 +78,64 @@ ERROR_CLASS: dict[str, type[Exception]] = {
 }
 
 
+_drop_peer_port: int | None = None
+
+
+def drop_peer_port() -> int:
+    """The port of a loopback TCP listener that accepts and closes every
+    connection, started once. A tcp caller row dials it: a closed port is
+    refused at once on Linux but only after seconds of SYN retries on
+    Windows."""
+    global _drop_peer_port
+    if _drop_peer_port is None:
+        listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        listener.bind(("127.0.0.1", 0))
+        listener.listen(16)
+
+        def serve() -> None:
+            while True:
+                try:
+                    conn, _ = listener.accept()
+                except OSError:
+                    return
+                conn.close()
+
+        threading.Thread(target=serve, daemon=True).start()
+        _drop_peer_port = listener.getsockname()[1]
+    return _drop_peer_port
+
+
+def free_udp_port(url: str) -> int:
+    """A UDP port free on ``url``'s loopback host when this returns."""
+    family, host = (socket.AF_INET6, "::1") if "[::1]" in url else (socket.AF_INET, "127.0.0.1")
+    with socket.socket(family, socket.SOCK_DGRAM) as s:
+        s.bind((host, 0))
+        return s.getsockname()[1]
+
+
+@contextlib.contextmanager
+def filled(row: dict[str, Any]) -> Iterator[dict[str, Any]]:
+    """``row`` with its URL's placeholders filled, as the corpus header says:
+    ``{port}`` by the drop peer's port for a tcp caller, else by a free UDP
+    port the open or its srt peer binds; ``{dir}`` by a directory holding the
+    suite's self-signed pair as ``server.crt`` and ``server.key``, removed on
+    exit."""
+    url = row["url"]
+    with contextlib.ExitStack() as stack:
+        if "{port}" in url:
+            if FAMILY[row["scheme"]] == "tcp" and row["role"] == "caller":
+                port = drop_peer_port()
+            else:
+                port = free_udp_port(url)
+            url = url.replace("{port}", str(port))
+        if "{dir}" in url:
+            tls_dir = stack.enter_context(tempfile.TemporaryDirectory())
+            shutil.copyfile(TLS_FIXTURES / "cert.pem", Path(tls_dir, "server.crt"))
+            shutil.copyfile(TLS_FIXTURES / "key.pem", Path(tls_dir, "server.key"))
+            url = url.replace("{dir}", tls_dir)
+        yield {**row, "url": url}
+
+
 def srt_peer_url(url: str) -> str | None:
     """The loopback address of an srt URL, as a bare ``srt://`` URL.
 
@@ -93,13 +159,28 @@ def open_close(open_: Callable[[], Any]) -> None:
     handle.close()
 
 
+def srt_listener_peer(peer_url: str, url: str) -> Any:
+    """A loopback SRT listener on ``peer_url`` with the passphrase ``url``
+    names, so an encrypted caller connects; without it when the passphrase is
+    one the builder refuses (the open under test refuses it too, before it
+    dials)."""
+    query = urllib.parse.parse_qs(urllib.parse.urlsplit(url).query)
+    passphrase = query.get("passphrase", [None])[-1]
+    if passphrase is not None:
+        try:
+            return srt.Builder(
+                f"{peer_url}?mode=listener&passphrase={urllib.parse.quote(passphrase)}"
+            ).listen()
+        except exceptions.SrtError:
+            pass
+    return srt.Builder(f"{peer_url}?mode=listener").listen()
+
+
 def open_srt_caller(url: str) -> None:
     # An SRT caller would wait out its connect timeout against a closed port,
-    # so the URL's address gets a loopback listener. The peer sets no options:
-    # a handshake it rejects (a passphrase it lacks) still returns at once, as
-    # a connect failure.
+    # so the URL's address gets a loopback listener.
     peer_url = srt_peer_url(url)
-    peer = srt.Builder(f"{peer_url}?mode=listener").listen() if peer_url else None
+    peer = srt_listener_peer(peer_url, url) if peer_url else None
     try:
         open_close(lambda: Sender.open(url))
     finally:
@@ -140,6 +221,7 @@ ENTRIES: dict[str, Callable[[str], None]] = {
     ),
     "hls.HlsPublisherBuilder.from_url": lambda url: hls.HlsPublisherBuilder().from_url(url),
     "webrtc.WhepServer.bind": lambda url: open_close(lambda: webrtc.WhepServer.bind(url)),
+    "tcp.Listener.open": lambda url: open_close(lambda: tcp.Listener.open(url)),
 }
 
 
@@ -335,38 +417,41 @@ def check_wire(row: dict[str, Any], fields: list[str]) -> None:
     assert not mismatches, f"{label(row)} on the wire: " + "; ".join(mismatches)
 
 
+def outcomes(row: dict[str, Any]) -> list[str]:
+    """The outcomes this leg may observe for ``row``: its ``open`` entry for
+    the leg, else the record's error kind, else ``ok``."""
+    stated = (row.get("open") or {}).get(LEG)
+    if stated is not None:
+        return stated.split()
+    kind = row["expect"].get("error_kind")
+    return ["ok"] if kind is None else [kind]
+
+
 def check_outcome(row: dict[str, Any]) -> bool:
-    """Assert the row's outcome through Python matches its record; False when
-    the corpus declares no Python entry point for the row's role."""
-    family = FAMILY[row["scheme"]]
-    entry = CORPUS["legs"]["python"][family][row["role"]]
+    """Assert the outcome of ``row`` (placeholders filled) through Python is
+    one the row states; False when the corpus declares no Python entry point
+    for the row's role."""
+    entry = CORPUS["legs"][LEG][FAMILY[row["scheme"]]][row["role"]]
     if entry == "absent":
         return False
-    observed = probe(entry, row)
-    expected = row["expect"].get("error_kind")
-    if expected is not None:
-        assert observed == expected, f"{label(row)} via {entry}: expected {expected}, observed {observed}"
-    else:
-        url_kinds = {
-            r["expect"]["error_kind"]
-            for r in CORPUS["url"]
-            if FAMILY[r["scheme"]] == family and "error_kind" in r["expect"]
-        }
-        assert observed not in url_kinds, (
-            f"{label(row)} via {entry}: expected the URL to be accepted, observed {observed}"
-        )
+    observed = probe(entry, row) or "ok"
+    allowed = outcomes(row)
+    assert observed in allowed, (
+        f"{label(row)} via {entry}: expected {' or '.join(allowed)}, observed {observed}"
+    )
     return True
 
 
 def check_row(row: dict[str, Any]) -> bool:
-    """Assert the row's outcome through Python matches its record (and, for
+    """Assert the row's outcome through Python is the one it states (and, for
     a valid row of a wire scheme, what reached the wire); False when the
     corpus declares no Python entry point for the row's role."""
-    fields = wire_fields(row)
-    if fields is not None and "error_kind" not in row["expect"]:
-        check_wire(row, fields)
-        return True
-    return check_outcome(row)
+    with filled(row) as row:
+        fields = wire_fields(row)
+        if fields is not None and "error_kind" not in row["expect"]:
+            check_wire(row, fields)
+            return True
+        return check_outcome(row)
 
 
 def test_a_scheme_missing_from_the_header_families_table_is_refused() -> None:
@@ -380,3 +465,37 @@ def test_a_scheme_missing_from_the_header_families_table_is_refused() -> None:
 def test_url_corpus_row_matches_its_record(row: dict[str, Any]) -> None:
     if not check_row(row):
         pytest.skip(f"no Python entry point for {FAMILY[row['scheme']]} {row['role']}")
+
+
+def _udp_send_default() -> dict[str, Any]:
+    return next(
+        r for r in CORPUS["url"] if r["scheme"] == "udp" and r["role"] == "send" and r["case"] == "default"
+    )
+
+
+def test_a_valid_row_reporting_invalid_config_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setitem(globals(), "probe", lambda entry, row: "INVALID_CONFIG")
+    with pytest.raises(AssertionError, match="expected ok, observed INVALID_CONFIG"):
+        check_outcome(_udp_send_default())
+
+
+def test_a_row_stating_another_outcome_for_this_leg_is_held_to_it(monkeypatch: pytest.MonkeyPatch) -> None:
+    row = {**_udp_send_default(), "open": {LEG: "IO"}}
+    monkeypatch.setitem(globals(), "probe", lambda entry, row: None)
+    with pytest.raises(AssertionError, match="expected IO, observed ok"):
+        check_outcome(row)
+
+
+def test_placeholders_are_filled_and_the_certificate_directory_is_removed() -> None:
+    caller = next(r for r in CORPUS["url"] if r["url"].startswith("tcp://127.0.0.1:{port}"))
+    with filled(caller) as row:
+        assert row["url"] == caller["url"].replace("{port}", str(drop_peer_port()))
+    listener = next(r for r in CORPUS["url"] if r["scheme"] == "tcps" and "{dir}" in r["url"] and r["role"] == "listener")
+    with filled(listener) as row:
+        assert "{" not in row["url"]
+        query = urllib.parse.parse_qs(urllib.parse.urlsplit(row["url"]).query)
+        cert, key = Path(query["cert"][0]), Path(query["key"][0])
+        assert cert.name == "server.crt" and key.name == "server.key"
+        assert cert.read_bytes() == (TLS_FIXTURES / "cert.pem").read_bytes()
+        assert key.read_bytes() == (TLS_FIXTURES / "key.pem").read_bytes()
+    assert not cert.parent.exists()
