@@ -6,8 +6,15 @@
 //! unless the row's `open` table states other outcomes for the `c` leg.
 //! The rows state a `tls` build's outcomes; in a build without `tls` every
 //! `tcps://` row must be refused with `TST_E_TCP_TLS` and say TLS is not
-//! built in ([`tls_absent_outcome`]). The `rtsps://` and `hlss://` rows go
-//! through builders that only parse, so their outcome is the same either way.
+//! built in ([`tls_absent_outcome`]). Every `tcps://` row is valid today;
+//! both tcp entry points read the URL (and a listener binds) before they look
+//! at TLS, so a refused `tcps://` row would answer its own kind in either
+//! build and needs this rule narrowed to valid rows. The `rtsps://` and
+//! `hlss://` rows go through builders that only parse, so their outcome is
+//! the same either way. The leg also needs `mbedtls`: without it a valid rist
+//! row with a secret is refused and the srt peer cannot take a passphrase, so
+//! neither can be judged. No CI job builds the six transports without it; a
+//! per-build rule for encryption, as for `tls`, is the answer if one does.
 //! For the wire schemes (rtsp) a valid row is also connected to a recording
 //! peer, and the request heads must show the record's credentials and keys.
 
@@ -17,7 +24,8 @@
     feature = "udp",
     feature = "tcp",
     feature = "hls",
-    feature = "rist"
+    feature = "rist",
+    feature = "mbedtls"
 ))]
 
 #[allow(dead_code)]
