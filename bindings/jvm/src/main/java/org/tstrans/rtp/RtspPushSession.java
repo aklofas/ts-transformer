@@ -1,12 +1,16 @@
 package org.tstrans.rtp;
 
 import java.util.Objects;
+import java.util.Optional;
+import java.util.concurrent.atomic.AtomicLong;
 import org.tstrans.MuxException;
 import org.tstrans.NativeHandle;
 import org.tstrans.NativeLoader;
 import org.tstrans.RtpException;
 import org.tstrans.RtspException;
+import org.tstrans.internal.EndReasonSnapshot;
 import org.tstrans.mpegts.MuxerConfig;
+import org.tstrans.shells.EndReason;
 
 /**
  * A recording RTSP session: what {@link RtspClient#push} returns once the server has
@@ -29,28 +33,34 @@ import org.tstrans.mpegts.MuxerConfig;
  * and {@link #close()} first wait the same way, with no total bound either, for the
  * queued media to be written.
  *
- * <p><b>Thread safety.</b> The data, control and {@link #stats()} calls run one at a
- * time: a call made while another is in progress on another thread waits for it.
- * {@link #cancelHandle()}, {@link #isSessionAlive()} and {@link #sessionId()} answer at
- * once from any thread, also while a send is waiting; the cancel handle is the way to
- * end a waiting send. {@link #intoMuxSender} and {@link #intoSender} never wait for a
- * send, {@code pause()} or {@code resume()} running on another thread: they throw
- * {@link IllegalStateException} and consume nothing; a {@link #stats()} in progress
- * they wait for. {@link #close()} and {@link #teardown()} may be called from any
- * thread: when a send, {@code pause()} or {@code resume()} is running on another
- * thread they fire the cancel first (that call throws {@code CLOSED}), then close. A
- * {@link #stats()} in progress is waited for and does not cancel the session; nor does
- * a send, {@code pause()} or {@code resume()} still waiting for the session behind
- * one, which then runs nothing and throws {@code CLOSED}.
+ * <p><b>Thread safety.</b> The data and control calls run one at a time: a call made
+ * while another is in progress on another thread waits for it. {@link #cancelHandle()},
+ * {@link #isSessionAlive()}, {@link #sessionId()}, {@link #stats()},
+ * {@link #endReason()} and {@link #endDetail()} answer at once from any thread, also
+ * while a send is waiting; the cancel handle is the way to end a waiting send.
+ * {@link #intoMuxSender} and {@link #intoSender} never wait for a send, {@code pause()}
+ * or {@code resume()} running on another thread: they throw
+ * {@link IllegalStateException} and consume nothing. {@link #close()} and
+ * {@link #teardown()} may be called from any thread: when a send, {@code pause()} or
+ * {@code resume()} is running on another thread they fire the cancel first (that call
+ * throws {@code CLOSED}), then close. A send, {@code pause()} or {@code resume()} only
+ * waiting for the session behind another call is not cancelled; it then runs nothing
+ * and throws {@code CLOSED}.
  *
  * <p><b>How it ends.</b> Once the cancel handle has fired, every data call throws
  * {@link RtpException} of kind {@code CLOSED} (the session stays open until it is
  * closed). When the server closed the connection, the connection failed or took no
  * byte for 5&nbsp;s, a keepalive ping was answered {@code 454}, or the server broke the
  * framing, a data call throws kind {@code BROKEN}. A call on a closed session throws
- * {@link IllegalStateException}; a send that was waiting for the session when a
- * {@code close()} on another thread began throws {@code RtpException(CLOSED)} and
- * sends nothing.
+ * {@link IllegalStateException}, except {@link #stats()}, {@link #endReason()},
+ * {@link #endDetail()} and {@link #isSessionAlive()}, which answer; a send that was
+ * waiting for the session when a {@code close()} on another thread began throws
+ * {@code RtpException(CLOSED)} and sends nothing.
+ *
+ * <p><b>A panic.</b> A panic inside a call (a bug in the library) poisons the session:
+ * every later call that takes it, the data and control calls and the conversions,
+ * throws {@code RtspException(CLOSED)}, {@link #isSessionAlive()} reads {@code false},
+ * and {@link #close()} and {@link #teardown()} still end the push.
  *
  * <p><b>Ending without loss.</b> {@link #close()} and {@link #teardown()} write the
  * queued media before the TEARDOWN, and so does {@code MuxSender.finish()} after
@@ -65,10 +75,11 @@ import org.tstrans.mpegts.MuxerConfig;
  * timeout, which can be shorter than the session timeout it advertises (10&nbsp;s on
  * some servers). With {@link RtspClientConfig#keepalive()} (the default) the client
  * sends keepalive pings at half the advertised session timeout (60&nbsp;s when the
- * server names none), and the config has no interval: the pings do not protect a push
- * that goes silent against a server whose own timeout is shorter than that, so keep
- * media flowing. Without keepalive, a push that can stay silent for the server's
- * timeout may be ended.
+ * server names none), or at {@link RtspClientConfig.Builder#keepaliveIntervalMs} when
+ * set: pings at the default cadence do not protect a push that goes silent against a
+ * server whose own timeout is shorter, so keep media flowing or set an interval below
+ * it. Without keepalive, a push that can stay silent for the server's timeout may be
+ * ended.
  *
  * <p><b>Not closing.</b> A session that is never closed keeps its connection, the
  * client's thread and its keepalive pings, and the server keeps the recording
@@ -80,7 +91,17 @@ public final class RtspPushSession extends NativeHandle {
 
     private static final String CLOSED = "RtspPushSession is closed";
 
-    RtspPushSession(long h) { setHandle(h); }
+    // The key of this object's reader of the push's counters and end reason: kept past
+    // a close or a conversion until close(), so stats() answers after both. 0 once freed.
+    private final AtomicLong statsKey = new AtomicLong();
+    // What the reader said last before it was freed.
+    private volatile RtspPushStats lastStats;
+    private volatile EndReasonSnapshot lastEnd;
+
+    RtspPushSession(long h) {
+        setHandle(h);
+        statsKey.set(nStatsKey(h));
+    }
 
     /**
      * Send whole TS packets as one RTP packet on an MPEG-TS session: {@code ts} is a
@@ -94,9 +115,10 @@ public final class RtspPushSession extends NativeHandle {
      *     ended, as the class describes
      * @throws IllegalArgumentException on a session announced with a video track; nothing
      *     is sent
+     * @throws RtspException {@code CLOSED} on a session a panic poisoned (see the class)
      * @throws IllegalStateException if the session is closed
      */
-    public void sendTs(byte[] ts) throws RtpException {
+    public void sendTs(byte[] ts) throws RtpException, RtspException {
         ensureOpen(CLOSED);
         Objects.requireNonNull(ts, "ts");
         nSendTs(peekHandle(), ts);
@@ -115,9 +137,10 @@ public final class RtspPushSession extends NativeHandle {
      *     unit sent in part
      * @throws IllegalArgumentException on an MPEG-TS session, or for an access unit with
      *     no NAL unit; nothing is sent
+     * @throws RtspException {@code CLOSED} on a session a panic poisoned (see the class)
      * @throws IllegalStateException if the session is closed
      */
-    public void sendVideo(byte[] annexB, long pts) throws RtpException {
+    public void sendVideo(byte[] annexB, long pts) throws RtpException, RtspException {
         ensureOpen(CLOSED);
         Objects.requireNonNull(annexB, "annexB");
         nSendVideo(peekHandle(), annexB, pts);
@@ -134,9 +157,10 @@ public final class RtspPushSession extends NativeHandle {
      *     describes
      * @throws IllegalArgumentException on a session without a KLV track, or for an empty
      *     unit; nothing is sent
+     * @throws RtspException {@code CLOSED} on a session a panic poisoned (see the class)
      * @throws IllegalStateException if the session is closed
      */
-    public void sendKlv(byte[] klv, long pts) throws RtpException {
+    public void sendKlv(byte[] klv, long pts) throws RtpException, RtspException {
         ensureOpen(CLOSED);
         Objects.requireNonNull(klv, "klv");
         nSendKlv(peekHandle(), klv, pts);
@@ -179,12 +203,14 @@ public final class RtspPushSession extends NativeHandle {
      * sent with one 500&nbsp;ms bound over writing it and its reply, and the client's
      * thread is given up to 2&nbsp;s to end. The session is closed afterwards, on every
      * outcome: later calls throw {@link IllegalStateException} and {@code close()} does
-     * nothing. (The play session's {@link RtspSession#teardown()} keeps its session open
-     * instead.) Like {@code close()}, it cancels a send, {@code pause()} or
-     * {@code resume()} running on another thread first, and waits without cancelling
-     * for a {@link #stats()} in progress. A send, {@code pause()} or {@code resume()}
-     * only waiting for the session is not cancelled, and the teardown does not wait for
-     * it to run: it runs nothing and throws {@code CLOSED}.
+     * nothing; {@link #stats()} and {@link #endReason()} still answer. (The play
+     * session's {@link RtspSession#teardown()} keeps its session open instead.) Like
+     * {@code close()}, it cancels a send, {@code pause()} or {@code resume()} running on
+     * another thread first. A send, {@code pause()} or {@code resume()} only waiting for
+     * the session is not cancelled, and the teardown does not wait for it to run: it
+     * runs nothing and throws {@code CLOSED}. Media the close had to discard is counted
+     * in {@link RtspPushStats#framesDroppedAtClose()}; this is the call that reports such
+     * a loss.
      *
      * @throws RtspException in this order: {@code CLOSED} on a cancelled session (the
      *     TEARDOWN is still written); otherwise {@code PROTOCOL} with status 454 when
@@ -198,7 +224,11 @@ public final class RtspPushSession extends NativeHandle {
         ensureOpen(CLOSED);
         long h = consumeHandle();
         if (h == 0) throw new IllegalStateException(CLOSED);
-        nTeardown(h);
+        try {
+            nTeardown(h);
+        } finally {
+            releaseStats();
+        }
     }
 
     /**
@@ -219,19 +249,62 @@ public final class RtspPushSession extends NativeHandle {
     }
 
     /**
-     * The session's counters now.
-     *
-     * <p>Waits for a call in progress on another thread: a send waiting for a slow
-     * server holds the session until it ends, which against a server that keeps taking
-     * a byte now and then has no bound. {@link #cancelHandle()} never waits and is the
-     * way to end such a send.
+     * The session's counters now. Never waits and never throws: it answers while a send
+     * is waiting on another thread, and after {@link #close()} or {@link #teardown()}
+     * with the counters as the session ended. After {@link #intoSender} or
+     * {@link #intoMuxSender} it follows the push the sender now owns, until this
+     * object's {@code close()}, which keeps the counters as they stood then.
+     * {@link RtspPushStats#framesDroppedAtClose()} counts media a close discarded;
+     * {@link #teardown()} is the call that reports such a loss.
      *
      * @return a snapshot of the counters
-     * @throws IllegalStateException if the session is closed
      */
     public RtspPushStats stats() {
-        ensureOpen(CLOSED);
-        return nStats(peekHandle());
+        long k = statsKey.get();
+        RtspPushStats s = k == 0 ? null : nStatsOf(k);
+        return s != null ? s : lastStats;
+    }
+
+    /**
+     * Why the session ended; empty while it has not. Same rule as {@link #stats()}: it
+     * never waits and answers after a close, a teardown and a conversion.
+     * {@code CLEAN_TEARDOWN} after a TEARDOWN the server accepted and after a server
+     * that closed the connection; {@code CANCELLED} after the cancel handle fired (a
+     * converted sender's {@code close()} cancels first).
+     *
+     * @return the end reason, or empty
+     */
+    public Optional<EndReason> endReason() {
+        return Optional.ofNullable(end().reason());
+    }
+
+    /**
+     * Free-text detail for {@link #endReason()}: the message carried by
+     * {@code KEEPALIVE_FAILED}, {@code TRANSPORT_FAILED} and {@code PROTOCOL_ERROR};
+     * empty otherwise. Same rule as {@link #stats()}.
+     *
+     * @return the detail, or empty
+     */
+    public Optional<String> endDetail() {
+        return Optional.ofNullable(end().detail());
+    }
+
+    private EndReasonSnapshot end() {
+        long k = statsKey.get();
+        EndReasonSnapshot e = k == 0 ? null : nEndOf(k);
+        return e != null ? e : lastEnd;
+    }
+
+    // Keep what the reader says now, then free it; a reader racing this answers with
+    // the kept values once the key is gone.
+    private void releaseStats() {
+        long k = statsKey.get();
+        if (k == 0) return;
+        RtspPushStats s = nStatsOf(k);
+        if (s != null) lastStats = s;
+        EndReasonSnapshot e = nEndOf(k);
+        if (e != null) lastEnd = e;
+        if (statsKey.compareAndSet(k, 0)) nFreeStats(k);
     }
 
     /**
@@ -276,11 +349,11 @@ public final class RtspPushSession extends NativeHandle {
      * thread (a send waiting for a slow server, for example), it does not wait: it throws
      * {@link IllegalStateException} and consumes nothing, and the session stays usable
      * (once a close of the session has begun it throws as on a closed session). A
-     * {@link #stats()} in progress is waited for. A refused muxer configuration, and a
-     * session announced with a video track, also leave this session open and
-     * unconsumed. On success this session is closed, and a send, {@code pause()} or
-     * {@code resume()} on another thread that was waiting for it runs nothing and throws
-     * {@code CLOSED}.
+     * refused muxer configuration, and a session announced with a video track, also
+     * leave this session open and unconsumed. On success this session is closed, and a
+     * send, {@code pause()} or {@code resume()} on another thread that was waiting for it
+     * runs nothing and throws {@code CLOSED}; {@link #stats()} and {@link #endReason()}
+     * then follow the push the sender owns.
      *
      * @param config the muxer program configuration
      * @return a {@code MuxSender} that owns the session
@@ -321,10 +394,11 @@ public final class RtspPushSession extends NativeHandle {
      * <p>Called while a send, {@code pause()} or {@code resume()} is running on another
      * thread, it does not wait: it throws {@link IllegalStateException} and consumes
      * nothing, and the session stays usable (once a close of the session has begun it
-     * throws as on a closed session). A {@link #stats()} in progress is waited for. A
-     * session announced with a video track is also left open and unconsumed. On success
-     * this session is closed, and a send, {@code pause()} or {@code resume()} on another
-     * thread that was waiting for it runs nothing and throws {@code CLOSED}.
+     * throws as on a closed session). A session announced with a video track is also
+     * left open and unconsumed. On success this session is closed, and a send,
+     * {@code pause()} or {@code resume()} on another thread that was waiting for it runs
+     * nothing and throws {@code CLOSED}; {@link #stats()} and {@link #endReason()} then
+     * follow the push the sender owns.
      *
      * @return a {@code Sender} that owns the session
      * @throws RtspException not thrown today; kept so a later conversion failure needs no
@@ -352,26 +426,33 @@ public final class RtspPushSession extends NativeHandle {
      * return at once. Called while a send, {@code pause()} or {@code resume()} is
      * running on another thread, it fires the cancel first: that call throws
      * {@code CLOSED}, what is still queued is dropped, and the TEARDOWN is written
-     * without the wait. A {@link #stats()} in progress is waited for instead, and the
-     * session then closes as an idle one does. A send, {@code pause()} or
-     * {@code resume()} only waiting for the session is not cancelled, and the close does
-     * not wait for it to run: it runs nothing and throws {@code CLOSED}.
+     * without the wait. A send, {@code pause()} or {@code resume()} only waiting for the
+     * session is not cancelled, and the close does not wait for it to run: it runs
+     * nothing and throws {@code CLOSED}. Afterwards {@link #stats()} and
+     * {@link #endReason()} keep the values the session ended with; on a session already
+     * converted into a sender, this call only fixes those values.
      */
-    @Override public void close() { super.close(); }
+    @Override public void close() {
+        super.close();
+        releaseStats();
+    }
 
     @Override protected void nativeClose(long h) { nClose(h); }
 
     // Test-only: the raw registry key, for the jni-test-hooks probes.
     long nativeHandleForTest() { return peekHandle(); }
 
-    private static native void nSendTs(long handle, byte[] ts) throws RtpException;
-    private static native void nSendVideo(long handle, byte[] annexB, long pts) throws RtpException;
-    private static native void nSendKlv(long handle, byte[] klv, long pts) throws RtpException;
+    private static native void nSendTs(long handle, byte[] ts) throws RtpException, RtspException;
+    private static native void nSendVideo(long handle, byte[] annexB, long pts) throws RtpException, RtspException;
+    private static native void nSendKlv(long handle, byte[] klv, long pts) throws RtpException, RtspException;
     private static native void nPause(long handle) throws RtspException;
     private static native void nResume(long handle) throws RtspException;
     private static native void nTeardown(long handle) throws RtspException;
     private static native long nCancelHandle(long handle);
-    private static native RtspPushStats nStats(long handle);
+    private static native long nStatsKey(long handle);
+    private static native RtspPushStats nStatsOf(long statsKey);
+    private static native EndReasonSnapshot nEndOf(long statsKey);
+    private static native void nFreeStats(long statsKey);
     private static native String nSessionId(long handle);
     private static native boolean nIsSessionAlive(long handle);
     private static native long nIntoMuxSender(long handle, int programNumber, int pmtPid,

@@ -255,6 +255,9 @@ public final class RtspSession extends NativeHandle {
 
     @Override protected void nativeClose(long h) { nClose(h); }
 
+    // Test-only: the raw registry key, for the jni-test-hooks probes.
+    long nativeHandleForTest() { return peekHandle(); }
+
     private static native void nPause(long handle) throws RtspException;
     private static native void nPlay(long handle) throws RtspException;
     private static native void nTeardown(long handle) throws RtspException;

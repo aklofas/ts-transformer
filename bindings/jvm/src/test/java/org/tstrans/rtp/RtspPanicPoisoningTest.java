@@ -5,14 +5,17 @@ import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
+import static org.tstrans.TestSupport.scaledMs;
 import static org.tstrans.TestSupport.syntheticH264Idr;
 
+import java.util.List;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
+import org.junit.jupiter.api.function.Executable;
 import org.tstrans.RtspException;
 import org.tstrans.internal.PanicProbe;
 import org.tstrans.mpegts.MuxerConfig;
@@ -170,6 +173,36 @@ class RtspPanicPoisoningTest {
             assertEquals(RtspException.Kind.CLOSED, ((RtspException) e).kind());
         } finally {
             s.close();
+        }
+    }
+
+    /**
+     * A panic while a pull session's locks are held poisons them: every call that
+     * takes the session throws {@code RtspException(CLOSED)}, and {@code close()} still
+     * ends it (the TEARDOWN is written).
+     */
+    @Test @Timeout(30)
+    void aPoisonedPullSessionIsClosed() throws Exception {
+        try (RawRtspPeer peer = new RawRtspPeer(RawRtspPeer.MP2T_SDP, false, 200, 200)) {
+            RtspSession session = RtspClient.connect(peer.config());
+            PanicProbe.nPoisonRtspSession(session.nativeHandleForTest());
+            for (Executable call : List.<Executable>of(session::pause, session::play,
+                    session::teardown, session::intoDemuxReceiver)) {
+                RtspException e = assertThrows(RtspException.class, call);
+                assertEquals(RtspException.Kind.CLOSED, e.kind());
+                assertTrue(e.getMessage().contains("poisoned"), e.getMessage());
+            }
+            session.close();
+            assertTrue(peer.awaitTeardown(scaledMs(5_000)), "the close of a poisoned session wrote no TEARDOWN");
+        }
+        // intoH264Receiver consumes the session: its client is ended before the throw.
+        try (RawRtspPeer peer = new RawRtspPeer(RawRtspPeer.H264_SDP, false, 200, 200)) {
+            RtspSession session = RtspClient.connectH264(peer.config());
+            PanicProbe.nPoisonRtspSession(session.nativeHandleForTest());
+            RtspException e = assertThrows(RtspException.class, session::intoH264Receiver);
+            assertEquals(RtspException.Kind.CLOSED, e.kind());
+            assertTrue(peer.awaitTeardown(scaledMs(5_000)), "the consumed session's client was not ended");
+            session.close();
         }
     }
 }

@@ -49,4 +49,10 @@ public final class PanicProbe {
      * per-native routing is verified in {@code rtp/server.rs}.
      */
     public static native void nForcePanicThroughServer(long serverHandle);
+
+    /**
+     * Panic while holding an {@code RtspSession}'s client and data-plane locks, as a
+     * bug in a call would, so they are poisoned; the panic is caught inside the native.
+     */
+    public static native void nPoisonRtspSession(long sessionHandle);
 }

@@ -1245,6 +1245,7 @@ falls into two groups.
 | `peerAddr()` (`tcp.Transport`) | the address captured at accept | throws `IllegalStateException`, also once the connection is converted into a shell |
 | `videoHandle()` … `dataHandle()` on the three `MuxSender` classes | the handles of the `MuxerConfig` the sender was built from | throws `IllegalStateException` |
 | `reconnectAttempts()`, `reconnectStats()` on the managed shells | live counters kept outside the object | throws `IllegalStateException` |
+| `stats()`, `endReason()`, `endDetail()` (`RtspPushSession`) | read outside the session, so a waiting send does not hold them up | the values the session ended with |
 | `endReason()` / `endDetail()` | the recorded reason, or empty; `H264Receiver` answers empty while a `recvAu()` is in flight | the reason recorded at close |
 
 `RtspServer.close()` runs the graceful `stop()` before it frees the server,
@@ -1269,7 +1270,8 @@ client's thread (see [RTSP client](#rtsp-client-orgtstransrtp)).
 `RtspSession.cancelHandle()` returns at once while a control call is in
 progress; the control calls themselves run one at a time.
 
-**Waits for the parked call to return:** `stats()`, `socketStats()`,
+**Waits for the parked call to return:** `stats()` (but not
+`RtspPushSession.stats()`), `socketStats()`,
 `srtStats()`, `depayStats()`, `H264Receiver.rtpStats()` and `lastSeen()`. These
 read counters that live inside the object and have nothing to report
 without it. Poll them from the thread that drives the send or receive
@@ -2513,6 +2515,10 @@ try (RtspSession session = RtspClient.connect(cfg);
   needs a slow server's reply awaited calls `teardown()` first.
   `cancelHandle()` returns a handle after `teardown()`; after `close()` it
   throws `IllegalStateException`, and handles taken before read cancelled.
+- **A panic poisons the session.** After a panic inside an earlier call (a
+  bug in the library), `pause()`, `play()`, `teardown()`,
+  `intoDemuxReceiver()` and `intoH264Receiver()` throw
+  `RtspException(CLOSED)`; `close()` still ends the session.
 - **TLS (`rtsps://`) is supported.** The binding links rustls; an `rtsps://`
   URL negotiates TLS on connect. `tlsRootCertsPem` supplies a PEM bundle of
   custom trust anchors (private-CA cameras) — without it the handshake
@@ -2799,7 +2805,8 @@ The surface:
   on an MPEG-TS session), `sendVideo(byte[] annexB, long pts)`,
   `sendKlv(byte[] klv, long pts)`, with `pts` in 90 kHz ticks.
 - `pause()`, `resume()`, `teardown()`, `close()`, `cancelHandle()`,
-  `stats() -> RtspPushStats`, `isSessionAlive()`, `sessionId()`.
+  `stats() -> RtspPushStats`, `endReason() -> Optional<EndReason>`,
+  `endDetail() -> Optional<String>`, `isSessionAlive()`, `sessionId()`.
 - `intoMuxSender(MuxerConfig)` and `intoSender()` move an MPEG-TS session
   into a `org.tstrans.shells.MuxSender` or `Sender`; this session is closed
   afterwards. A session announced with a video track throws
@@ -2807,10 +2814,15 @@ The surface:
   `MuxException(CONFIG_INVALID)` for a refused config, each leaving the
   session open. Neither waits for a send, `pause()` or `resume()` running on
   another thread: they throw `IllegalStateException`, consume nothing and
-  leave the session usable; a `stats()` in progress they wait for.
+  leave the session usable.
 - `RtspPushStats` record: `packetsSent`, `bytesSent`, `senderReportsSent`,
   `receiverReports`, `fractionLostQ8`, `cumulativeLost`,
-  `framesDroppedInbound`, `framesDroppedAtClose`.
+  `framesDroppedInbound`, `framesDroppedAtClose` (media a close
+  discarded; `teardown()` is the call that reports such a loss).
+  `stats()`, `endReason()` and `endDetail()` never wait and never throw:
+  they answer while a send is waiting, after `close()` and `teardown()`
+  with the values the session ended with, and after a conversion they
+  follow the push the sender owns until this session's `close()`.
 
 How each call ends:
 
@@ -2821,7 +2833,8 @@ How each call ends:
 | a data call | `RtpException(BROKEN)` | The server closed the connection, the connection failed or this machine's kernel took no byte of it for 5 s, a keepalive ping was answered `454`, or the server broke the framing. Also a TS payload that is empty or not whole packets, which leaves the session open. |
 | `sendTs` | `RtpException(TOO_LARGE)` | More than 1 316 bytes; nothing sent. |
 | a data call | `IllegalArgumentException` | A track the session did not announce, or an empty access unit or KLV unit; nothing sent. |
-| any call but `isSessionAlive()` | `IllegalStateException` | The session is closed. Also `intoMuxSender` / `intoSender` while a send, `pause()` or `resume()` runs on another thread (nothing consumed). |
+| any call but `isSessionAlive()`, `stats()`, `endReason()`, `endDetail()` | `IllegalStateException` | The session is closed. Also `intoMuxSender` / `intoSender` while a send, `pause()` or `resume()` runs on another thread (nothing consumed). |
+| a data, control or conversion call | `RtspException(CLOSED)` | A panic inside an earlier call (a bug in the library) poisoned the session; `close()` and `teardown()` still end it, and `isSessionAlive()` reads `false`. |
 | `teardown()` | `RtspException` | The first of these that applies: `CLOSED` on a cancelled session; `PROTOCOL` with status `454` when the server had forgotten the session and queued media was dropped, whatever the TEARDOWN is answered; for the TEARDOWN itself, `PROTOCOL` (or `NOT_FOUND` for a 404) when the server refused it, `TIMEOUT` when no reply came within the 500 ms and `IO` when the connection had ended. A normal return means the queued media was written and the server accepted the TEARDOWN. The session is closed on every outcome. |
 | `close()`, try-with-resources | returns | Whatever the server answered. |
 
@@ -2836,17 +2849,17 @@ Rules the types do not enforce:
   Keepalive pings go out one at a time, so what waits on such a server's
   connection stays bounded.
 - **One call at a time.** A call made while another is in progress on
-  another thread waits for it. `cancelHandle()`, `isSessionAlive()` and
-  `sessionId()` answer at once; `cancelHandle()` is the way to end a
+  another thread waits for it. `cancelHandle()`, `isSessionAlive()`,
+  `sessionId()`, `stats()`, `endReason()` and `endDetail()` answer at
+  once; `cancelHandle()` is the way to end a
   waiting send. `isSessionAlive()` never throws: a call in progress counts
   as live, and it reads `false` once the session is closed, torn down or
   converted. `close()` and `teardown()` fire the cancel first only when a
   send, `pause()` or `resume()` is running on another thread: that call
   throws `CLOSED`, what is queued is dropped, and the TEARDOWN is written
   without the wait. A send, `pause()` or `resume()` only waiting for the
-  session is not cancelled: it runs nothing and throws `CLOSED`. A
-  `stats()` in progress is waited for. Each `cancelHandle()` is a new
-  handle to close when done.
+  session is not cancelled: it runs nothing and throws `CLOSED`. Each
+  `cancelHandle()` is a new handle to close when done.
 - **Ending a push through a shell.** `MuxSender.finish()` cancels nothing:
   it writes what the sender holds, then, while the session is up, the
   session writes its queue and sends TEARDOWN; the handle still needs its

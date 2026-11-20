@@ -33,6 +33,15 @@ use crate::mpegts::build_demux_config_from_args;
 use super::demux_receiver_handle_from_transport;
 use super::errors::{rtsp_error_to_jvm, throw_rtsp, throw_runtime_unless_pending};
 
+/// What every call that takes a session's client or data plane reports once a panic
+/// poisoned that lock: the session is unusable from then on, and `close()` still ends
+/// it.
+const POISONED: &str = "RtspSession: the session's lock was poisoned by a panic in an earlier call";
+
+fn throw_poisoned(env: &mut Env) {
+    throw_rtsp(env, BindingErrorKind::Closed, POISONED);
+}
+
 /// Parse `RtspClientConfig.tlsRootCertsPem` (a PEM bundle) into a
 /// `rustls::RootCertStore` and hand it to the builder — `rtsps://`
 /// verification against a private CA. Port of tst-py's `apply_tls_roots`
@@ -434,18 +443,19 @@ jni_native! {
         if torn.load(Ordering::Relaxed) {
             return;
         }
-        let res = (|| -> Result<(), RtspError> {
-            let mut guard = client.lock().map_err(|_| RtspError::SessionExpired)?;
-            let r = match guard.as_mut() {
-                Some(c) => c.teardown(),
-                // A concurrent close took and ended the client: the session is torn
-                // down, so this returns normally (pause/play throw CLOSED there; a
-                // teardown has nothing left to do, and the close's result is silent).
-                None => Ok(()),
-            };
-            torn.store(true, Ordering::Relaxed);
-            r
-        })();
+        let Ok(mut guard) = client.lock() else {
+            throw_poisoned(env);
+            return;
+        };
+        let res = match guard.as_mut() {
+            Some(c) => c.teardown(),
+            // A concurrent close took and ended the client: the session is torn
+            // down, so this returns normally (pause/play throw CLOSED there; a
+            // teardown has nothing left to do, and the close's result is silent).
+            None => Ok(()),
+        };
+        torn.store(true, Ordering::Relaxed);
+        drop(guard);
         if let Err(e) = res {
             rtsp_error_to_jvm(env, e);
         }
@@ -465,13 +475,15 @@ fn session_control(
         crate::error::throw_closed(env, "RtspSession");
         return;
     };
-    let res = (|| -> Result<(), RtspError> {
-        let mut guard = client.lock().map_err(|_| RtspError::SessionExpired)?;
-        match guard.as_mut() {
-            Some(c) => op(c),
-            None => Err(RtspError::LocalCancel),
-        }
-    })();
+    let Ok(mut guard) = client.lock() else {
+        throw_poisoned(env);
+        return;
+    };
+    let res = match guard.as_mut() {
+        Some(c) => op(c),
+        None => Err(RtspError::LocalCancel),
+    };
+    drop(guard);
     if let Err(e) = res {
         rtsp_error_to_jvm(env, e);
     }
@@ -519,16 +531,9 @@ jni_native! {
         };
         // Take the data-plane RtspSession; double-consume = CLOSED.
         let session = {
-            let mut guard = match session_slot.lock() {
-                Ok(g) => g,
-                Err(_) => {
-                    throw_rtsp(
-                        env,
-                        BindingErrorKind::RtspProtocol,
-                        "RtspSession lock poisoned",
-                    );
-                    return 0;
-                }
+            let Ok(mut guard) = session_slot.lock() else {
+                throw_poisoned(env);
+                return 0;
             };
             match guard.take() {
                 Some(sess) => sess,
@@ -584,6 +589,11 @@ jni_native! {
 /// `CLOSED` at its next ~100 ms poll), then the close runs on the cancelled client,
 /// so its TEARDOWN's reply is not awaited. An idle close does not cancel first, so an accepted
 /// TEARDOWN still ends a live interleaved receiver with end of stream.
+///
+/// This is not the push session's rule (a cancel only for a call that may park):
+/// every call that holds a pull client can wait on the network, and the pull
+/// session's getters (`cancelHandle`, `isTornDown`) read the registry, never this
+/// lock. A poisoned client is still taken and closed.
 pub(super) fn close_client(
     client: &Mutex<Option<RustRtspClient>>,
     cancel: &RustRtspCancel,
@@ -647,11 +657,9 @@ jni_native! {
             let taken = match slot.session.lock() {
                 Ok(mut g) => g.take(),
                 Err(_) => {
-                    throw_rtsp(
-                        env,
-                        BindingErrorKind::RtspProtocol,
-                        "RtspSession data-plane lock poisoned",
-                    );
+                    // The session is consumed: end its client before throwing.
+                    close_client(&slot.client, &slot.rtsp_cancel, &slot.torn_down);
+                    throw_poisoned(env);
                     return 0;
                 }
             };
@@ -676,11 +684,8 @@ jni_native! {
             let taken = match slot.h264_depay_config.lock() {
                 Ok(mut g) => g.take(),
                 Err(_) => {
-                    throw_rtsp(
-                        env,
-                        BindingErrorKind::RtspProtocol,
-                        "RtspSession H264DepayConfig lock poisoned",
-                    );
+                    close_client(&slot.client, &slot.rtsp_cancel, &slot.torn_down);
+                    throw_poisoned(env);
                     return 0;
                 }
             };
@@ -740,5 +745,26 @@ jni_native! {
         if let Some(b) = REGISTRY_SESSION.close(handle as u64) {
             close_client(&b.client, &b.rtsp_cancel, &b.torn_down);
         }
+    }
+}
+
+jni_native! {
+    /// `org.tstrans.internal.PanicProbe.nPoisonRtspSession(long)`: panic while
+    /// holding the session's client and data-plane locks, as a bug in a call would,
+    /// so all three are poisoned. Test-only (`jni-test-hooks`).
+    #[cfg(feature = "jni-test-hooks")]
+    fn Java_org_tstrans_internal_PanicProbe_nPoisonRtspSession(env, _class, handle: jlong) = () => {
+        let Some((client, session, depay)) = REGISTRY_SESSION.with(handle as u64, |s| {
+            (s.client.clone(), s.session.clone(), s.h264_depay_config.clone())
+        }) else {
+            crate::error::throw_closed(env, "RtspSession");
+            return;
+        };
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _c = client.lock();
+            let _s = session.lock();
+            let _d = depay.lock();
+            panic!("a panic inside an RTSP session call, for a test");
+        }));
     }
 }

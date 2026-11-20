@@ -28,9 +28,11 @@ import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 import java.util.List;
+import java.util.Optional;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
@@ -45,6 +47,7 @@ import org.tstrans.mpegts.DemuxEvent;
 import org.tstrans.mpegts.MuxerConfig;
 import org.tstrans.mpegts.VideoCodec;
 import org.tstrans.shells.DemuxReceiver;
+import org.tstrans.shells.EndReason;
 import org.tstrans.shells.MuxSender;
 import org.tstrans.shells.Sender;
 
@@ -181,14 +184,16 @@ class RtspPushTest {
                 RtspPushSession push = RtspClient.push(serverConfig(server), PushDescription.mp2t());
                 AtomicReference<Throwable> readerError = new AtomicReference<>();
                 AtomicLong reads = new AtomicLong();
+                AtomicBoolean stop = new AtomicBoolean();
+                // stats() never takes the session; isSessionAlive() peeks at it, so the
+                // TEARDOWN can still meet a session held for a moment.
                 Thread reader = new Thread(() -> {
                     try {
-                        while (true) {
+                        while (!stop.get()) {
                             push.stats();
+                            push.isSessionAlive();
                             reads.incrementAndGet();
                         }
-                    } catch (IllegalStateException closed) {
-                        // The session closed: the reader is done.
                     } catch (Throwable t) {
                         readerError.set(t);
                     }
@@ -200,6 +205,7 @@ class RtspPushTest {
                 // A reader holding the session for a moment is not a call to cancel: the
                 // TEARDOWN is accepted, so nothing is thrown.
                 push.teardown();
+                stop.set(true);
                 reader.join(scaledMs(5_000));
                 assertFalse(reader.isAlive(), "the stats reader did not end");
                 assertEquals(null, readerError.get());
@@ -488,7 +494,10 @@ class RtspPushTest {
             assertThrows(IllegalStateException.class, push::resume);
             assertThrows(IllegalStateException.class, push::teardown);
             assertThrows(IllegalStateException.class, push::cancelHandle);
-            assertThrows(IllegalStateException.class, push::stats);
+            // The counters and the end answer after close.
+            assertEquals(0L, push.stats().packetsSent());
+            assertEquals(Optional.of(EndReason.CLEAN_TEARDOWN), push.endReason());
+            assertEquals(Optional.empty(), push.endDetail());
             assertThrows(IllegalStateException.class, push::sessionId);
             assertFalse(push.isSessionAlive());
             assertThrows(IllegalStateException.class, push::intoSender);
@@ -830,6 +839,171 @@ class RtspPushTest {
         assertThrows(NullPointerException.class, () -> PushDescription.h264(List.of(SPS, null), false));
         assertThrows(NullPointerException.class, () -> PushDescription.h265(null, SPS, PPS, false));
         assertThrows(NullPointerException.class, () -> PushDescription.h264FromKeyFrame(null, false));
+    }
+
+    @Test
+    @Timeout(30)
+    void statsAnswersAtOnceWhileASendIsParked() throws Exception {
+        try (ScriptedRecordServer peer = new ScriptedRecordServer(200, true);
+             RtspPushSession push = RtspClient.push(peer.config(), PushDescription.mp2t())) {
+            Sending sending = Sending.start(push);
+            sending.awaitParked();
+            awaitInNative(sending.thread, "nSendTs");
+            AtomicReference<RtspPushStats> got = new AtomicReference<>();
+            AtomicReference<Optional<EndReason>> reason = new AtomicReference<>();
+            Side reading = Side.start("reading", () -> {
+                got.set(push.stats());
+                reason.set(push.endReason());
+            });
+            reading.thread.join(scaledMs(2_500));
+            assertFalse(reading.thread.isAlive(), "stats() waited for the parked send");
+            reading.assertEndedNormally();
+            assertTrue(got.get().packetsSent() >= sending.sent.get(), got.get().toString());
+            assertEquals(Optional.empty(), reason.get());
+            assertTrue(sending.thread.isAlive(), "the send ended before the answer");
+            push.cancelHandle().cancel();
+            assertTrue(sending.join(scaledMs(5_000)), "the parked send did not end");
+        }
+    }
+
+    @Test
+    @Timeout(30)
+    void endReasonAfterAServerClose() throws Exception {
+        ScriptedRecordServer peer = new ScriptedRecordServer(200, false);
+        try (RtspPushSession push = RtspClient.push(peer.config(), PushDescription.mp2t())) {
+            push.sendTs(NULL_BUNDLE);
+            assertTrue(waitFor(() -> peer.rtpFramesRead.get() == 1));
+            assertEquals(Optional.empty(), push.endReason());
+            peer.close();
+            assertTrue(waitFor(() -> push.endReason().isPresent()), "no end reason after the server closed");
+            assertEquals(Optional.of(EndReason.CLEAN_TEARDOWN), push.endReason());
+            assertEquals(1L, push.stats().packetsSent());
+        }
+    }
+
+    @Test
+    @Timeout(30)
+    void statsAndEndReasonAfterClose() throws Exception {
+        final int bundles = 10;
+        try (ScriptedRecordServer peer = new ScriptedRecordServer(200, false)) {
+            RtspPushSession push = RtspClient.push(peer.config(), PushDescription.mp2t());
+            for (int i = 0; i < bundles; i++) push.sendTs(NULL_BUNDLE);
+            RtspPushStats before = push.stats();
+            push.close();
+            assertTrue(peer.awaitMethod("TEARDOWN"));
+            RtspPushStats after = push.stats();
+            assertEquals(bundles, after.packetsSent());
+            assertEquals(peer.rtpFramesRead.get(), after.packetsSent());
+            assertEquals(0L, after.framesDroppedAtClose());
+            assertEquals(Optional.of(EndReason.CLEAN_TEARDOWN), push.endReason());
+            // A record taken before the close keeps its values.
+            assertEquals(bundles, before.packetsSent());
+        }
+        // A teardown the server accepted, the same way.
+        try (ScriptedRecordServer peer = new ScriptedRecordServer(200, false)) {
+            RtspPushSession push = RtspClient.push(peer.config(), PushDescription.mp2t());
+            for (int i = 0; i < 5; i++) push.sendTs(NULL_BUNDLE);
+            push.teardown();
+            assertEquals(5L, push.stats().packetsSent());
+            assertEquals(Optional.of(EndReason.CLEAN_TEARDOWN), push.endReason());
+            push.close();
+            assertEquals(5L, push.stats().packetsSent());
+        }
+    }
+
+    @Test
+    @Timeout(30)
+    void statsAndEndReasonAfterIntoSender() throws Exception {
+        try (ScriptedRecordServer peer = new ScriptedRecordServer(200, false)) {
+            RtspPushSession push = RtspClient.push(peer.config(), PushDescription.mp2t());
+            try (Sender tx = push.intoSender()) {
+                for (int i = 0; i < 3; i++) tx.sendBytes(NULL_BUNDLE);
+                tx.flush();
+                // The counters follow the push the sender owns.
+                assertTrue(waitFor(() -> push.stats().packetsSent() == 3), () -> push.stats().toString());
+                assertEquals(Optional.empty(), push.endReason());
+            }
+            // The sender's close cancels first.
+            assertEquals(Optional.of(EndReason.CANCELLED), push.endReason());
+            push.close();
+            assertEquals(3L, push.stats().packetsSent());
+            assertEquals(Optional.of(EndReason.CANCELLED), push.endReason());
+        }
+        try (ScriptedRecordServer peer = new ScriptedRecordServer(200, false)) {
+            RtspPushSession push = RtspClient.push(peer.config(), PushDescription.mp2t());
+            try (MuxSender tx = push.intoMuxSender(roundtripConfig())) {
+                for (int i = 0; i < 20; i++) tx.sendVideo(syntheticH264Idr(), i * 3000L, true);
+                assertTrue(waitFor(() -> push.stats().packetsSent() > 0
+                        && push.stats().packetsSent() == peer.rtpFramesRead.get()),
+                    () -> push.stats() + " against " + peer.rtpFramesRead.get() + " read");
+                assertEquals(Optional.empty(), push.endReason());
+            }
+            assertEquals(Optional.of(EndReason.CANCELLED), push.endReason());
+            push.close();
+        }
+    }
+
+    @Test
+    @Timeout(60)
+    void statsRacingCloseNeverFails() throws Exception {
+        for (int round = 0; round < 10; round++) {
+            try (ScriptedRecordServer peer = new ScriptedRecordServer(200, false)) {
+                RtspPushSession push = RtspClient.push(peer.config(), PushDescription.mp2t());
+                push.sendTs(NULL_BUNDLE);
+                AtomicBoolean stop = new AtomicBoolean();
+                AtomicLong reads = new AtomicLong();
+                Side reader = Side.start("racing-reader", () -> {
+                    while (!stop.get()) {
+                        assertNotNull(push.stats());
+                        assertNotNull(push.endReason());
+                        assertNotNull(push.endDetail());
+                        reads.incrementAndGet();
+                    }
+                });
+                assertTrue(waitFor(() -> reads.get() > 0));
+                push.close();
+                long n = reads.get();
+                assertTrue(waitFor(() -> reads.get() > n + 10), "the reader stopped after the close");
+                stop.set(true);
+                reader.assertEndedNormally();
+                assertEquals(1L, push.stats().packetsSent());
+            }
+        }
+    }
+
+    @Test
+    @Timeout(30)
+    @EnabledIfSystemProperty(named = "tst.jniTestHooks", matches = "true")
+    void aPoisonedPushRefusesCallsButCloses() throws Exception {
+        try (ScriptedRecordServer peer = new ScriptedRecordServer(200, false)) {
+            RtspPushSession push = RtspClient.push(peer.config(), PushDescription.mp2t());
+            push.sendTs(NULL_BUNDLE);
+            PushProbe.nPoison(push.nativeHandleForTest());
+            for (Call call : List.<Call>of(() -> push.sendTs(NULL_BUNDLE),
+                    () -> push.sendVideo(syntheticH264Idr(), 0L), () -> push.sendKlv(KLV, 0L),
+                    push::pause, push::resume, push::intoSender,
+                    () -> push.intoMuxSender(roundtripConfig()))) {
+                RtspException e = assertThrows(RtspException.class, call::run);
+                assertEquals(RtspException.Kind.CLOSED, e.kind());
+                assertTrue(e.getMessage().contains("poisoned"), e.getMessage());
+            }
+            assertFalse(push.isSessionAlive());
+            // What never takes the session still answers.
+            assertEquals(1L, push.stats().packetsSent());
+            assertFalse(push.sessionId().isEmpty());
+            push.cancelHandle().close();
+            push.close();
+            assertTrue(peer.awaitMethod("TEARDOWN"), "the close of a poisoned session wrote no TEARDOWN");
+            assertEquals(1L, peer.rtpFramesRead.get());
+        }
+        // A teardown of a poisoned session runs and reports the TEARDOWN's result.
+        try (ScriptedRecordServer peer = new ScriptedRecordServer(200, false)) {
+            RtspPushSession push = RtspClient.push(peer.config(), PushDescription.mp2t());
+            PushProbe.nPoison(push.nativeHandleForTest());
+            push.teardown();
+            assertTrue(peer.awaitMethod("TEARDOWN"));
+            assertEquals(Optional.of(EndReason.CLEAN_TEARDOWN), push.endReason());
+        }
     }
 
     // ── helpers ──────────────────────────────────────────────────────────────

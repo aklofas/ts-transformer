@@ -7,8 +7,8 @@ package org.tstrans.internal;
  * ends it, so a test can start a close while a query holds the session and only then
  * let it go; {@link #nWaitRounds} counts the rounds a close or a conversion has waited
  * for it.
- * {@link #nMarkClosing} sets the flag a close sets first, without taking the session,
- * so the next blocking call meets a close that has begun.
+ * {@link #nMarkClosing} begins a close without finishing it, so the next blocking call
+ * meets a close that has begun; {@link #nPoison} poisons the session.
  */
 public final class PushProbe {
     static { org.tstrans.NativeLoader.load(); }
@@ -34,6 +34,16 @@ public final class PushProbe {
      */
     public static native long nWaitRounds();
 
-    /** Mark the session as closing, as a close does before it takes the session. */
+    /**
+     * Begin a close of the session on another thread and return once it has begun;
+     * that close takes the session once it is free, and the session's own
+     * {@code close()} finishes it.
+     */
     public static native void nMarkClosing(long sessionHandle);
+
+    /**
+     * Panic inside a query holding the session, as a bug in a call would, so the
+     * session is poisoned; the panic is caught inside the native.
+     */
+    public static native void nPoison(long sessionHandle);
 }

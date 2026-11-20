@@ -1,19 +1,23 @@
 //! `org.tstrans.rtp` RTSP publish surface: `RtspClient.nPush`, `PushDescription`'s
 //! key-frame readers and `RtspPushSession`.
 //!
-//! The session mirrors the play session's layout (`JniRtspSession` in
-//! `client.rs`): the `RtspPush` behind a mutex, which every data, control and query
-//! call locks for its whole run (a data call parks there while the server is slow),
-//! and a clone of the push's cancel kept outside that mutex, so `nCancelHandle` and a
-//! close answer while a send is parked. The registry has no cancel hook: `nClose`
-//! fires the stored cancel itself, and only when a call that can park on the network
-//! holds the push ([`take_for_close`]); a query call holding it for a moment, and a
-//! call only waiting for it, are not cancelled.
+//! The session's push sits in a [`ParkingSlot`], which holds the close rule: every
+//! data and control call runs holding the slot (a data call parks there while the
+//! server is slow); a close fires the push's cancel first only when a call that can
+//! park on the network holds it; a query holding it for a moment, and a call only
+//! waiting for it, are not cancelled, and the waiting call then runs nothing. A
+//! conversion waits behind a query and refuses behind a call that can park. A panic
+//! inside a call poisons the slot: every later call that takes the session throws
+//! `RtspException(CLOSED)`, and a close still ends the push.
+//!
+//! The counters and the end reason are read through the push's `PushStatsHandle`,
+//! never the slot, so they answer while a send is parked. The Java object holds the
+//! handle under a key of its own (`nStatsKey`), kept past a close or a conversion
+//! until its `close()`, so `stats()` answers after both.
 
 use crate::jutil::FindClass;
 use crate::panic::jni_native;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, LazyLock, Mutex, PoisonError, TryLockError};
+use std::sync::{Arc, LazyLock};
 
 use jni::objects::{JBooleanArray, JByteArray, JIntArray, JObject, JObjectArray, JString};
 use jni::strings::JNIString;
@@ -22,13 +26,15 @@ use jni::{Env, jni_str};
 
 use tst_core::mpegts::common::Pts90khz;
 use tst_core::transport::{Transport, TransportCancel, TransportError};
+use tst_pipeline::binding::parking::{ParkingSlot, Peek, SlotRefused};
 use tst_pipeline::binding::{BindingErrorKind, Domain, Opened};
 use tst_rtp::rtsp::client::RtspCancelHandle as RustRtspCancel;
-use tst_rtp::{PushDescription, PushError, RtspPush, VideoTrack};
+use tst_rtp::{PushDescription, PushError, PushStatsHandle, RtspPush, VideoTrack};
 
 use crate::handle::HandleRegistry;
 use crate::mpegts::muxer::build_muxer_config_from_arrays;
 use crate::shells;
+use crate::shells::end_reason::build_close_snapshot;
 
 use super::client::{JniRtspCancel, client_builder};
 use super::errors::{
@@ -42,40 +48,26 @@ const KIND_H265: jint = 2;
 
 const WHAT: &str = "RtspPushSession";
 
-/// How long a close waits between two looks at a push held by a call it does not
-/// cancel.
-const CLOSE_RETRY: std::time::Duration = std::time::Duration::from_millis(1);
-
-/// What a call reports when a close on another thread took the push while the call
-/// waited for it.
+/// What a call reports when a close or a conversion on another thread took the push
+/// while the call waited for it.
 const TAKEN: &str = "the session was closed during the call";
+
+/// What every call that takes the session reports once a panic poisoned it.
+const POISONED: &str =
+    "RtspPushSession: the session's lock was poisoned by a panic in an earlier call";
 
 /// What a conversion reports when a send, `pause` or `resume` on another thread holds
 /// the push.
 const IN_PROGRESS: &str = "a send, pause or resume on another thread is in progress on this \
      RtspPushSession; nothing was converted";
 
-/// What the calls on one session share: the push and what a close or a conversion
-/// reads to decide whether the call holding it can park.
-struct Shared {
-    /// `None` once a close or a conversion has taken the push.
-    push: Mutex<Option<RtspPush>>,
-    /// Set while a call that can park on the network (a send, `pause`, `resume`)
-    /// holds `push` and runs: raised after it has the mutex and has found `closing`
-    /// clear, lowered before it lets go. Query calls and calls only waiting for the
-    /// mutex never set it.
-    parking_holder: AtomicBool,
-    /// Set by a close before it looks at the mutex, and by a conversion once it holds
-    /// the mutex and has claimed the session: a blocking call that gets `push`
-    /// afterwards runs nothing.
-    closing: AtomicBool,
-}
-
 /// Native backing for `org.tstrans.rtp.RtspPushSession`.
 struct JniRtspPush {
-    shared: Arc<Shared>,
-    /// The push's cancel, read at RECORD and kept outside `push`'s mutex, which a
-    /// parked send holds.
+    slot: Arc<ParkingSlot<RtspPush>>,
+    /// Read at RECORD; a clone goes to each `nStatsKey`.
+    stats: PushStatsHandle,
+    /// The push's cancel, read at RECORD and kept outside the slot, which a parked
+    /// send holds.
     cancel: RustRtspCancel,
     /// The session id, read at RECORD: it never changes.
     session_id: String,
@@ -84,8 +76,13 @@ struct JniRtspPush {
 }
 
 /// Per-type leased-handle registry for `org.tstrans.rtp.RtspPushSession`. No cancel
-/// hook (see the module doc).
+/// hook: the slot fires the cancel itself (see the module doc).
 static REGISTRY_PUSH: LazyLock<HandleRegistry<JniRtspPush>> = LazyLock::new(HandleRegistry::new);
+
+/// The counters' and end reason's reader of each Java session object, under the key
+/// `nStatsKey` gave it; freed by `nFreeStats` from the object's `close()`.
+static REGISTRY_PUSH_STATS: LazyLock<HandleRegistry<PushStatsHandle>> =
+    LazyLock::new(HandleRegistry::new);
 
 fn throw_illegal_argument(env: &mut Env, msg: &str) {
     let _ = env.throw_new(
@@ -324,60 +321,42 @@ jni_native! {
                 return 0;
             }
         };
+        let cancel = push.cancel_handle();
+        let session_id = push.session_id().to_string();
+        let stats = push.stats_handle();
+        let slot_cancel: Arc<dyn TransportCancel> = Arc::new(cancel.clone());
+        let slot = ParkingSlot::new(push, slot_cancel);
+        #[cfg(feature = "jni-test-hooks")]
+        let slot = slot.with_observer(probe_observe);
         REGISTRY_PUSH.insert(JniRtspPush {
-            cancel: push.cancel_handle(),
-            session_id: push.session_id().to_string(),
+            slot: Arc::new(slot),
+            stats,
+            cancel,
+            session_id,
             mp2t: matches!(desc, PushDescription::Mp2t),
-            shared: Arc::new(Shared {
-                push: Mutex::new(Some(push)),
-                parking_holder: AtomicBool::new(false),
-                closing: AtomicBool::new(false),
-            }),
         }) as jlong
     }
 }
 
-/// The session's shared state and its shape under a lease; `None` with an
+/// The session's slot and its shape under a lease; `None` with an
 /// `IllegalStateException` pending for a closed or consumed session.
-fn lease(env: &mut Env, handle: jlong) -> Option<(Arc<Shared>, bool)> {
-    let leased = REGISTRY_PUSH.with(handle as u64, |s| (s.shared.clone(), s.mp2t));
+fn lease(env: &mut Env, handle: jlong) -> Option<(Arc<ParkingSlot<RtspPush>>, bool)> {
+    let leased = REGISTRY_PUSH.with(handle as u64, |s| (s.slot.clone(), s.mp2t));
     if leased.is_none() {
         crate::error::throw_closed(env, WHAT);
     }
     leased
 }
 
-/// Run the query `op` on the push, holding its mutex for the whole call; `None`
-/// when a close took the push while this call waited for it. A poisoned mutex (a
-/// panic in an earlier call, already thrown as a `RuntimeException`) is used as it
-/// is.
-fn run<R>(shared: &Shared, op: impl FnOnce(&mut RtspPush) -> R) -> Option<R> {
-    let mut guard = shared.push.lock().unwrap_or_else(PoisonError::into_inner);
-    guard.as_mut().map(op)
-}
-
-/// Lowers [`Shared::parking_holder`] when a blocking call ends, however it ends.
-/// Declared after the mutex guard, so it drops first: the marker is down before the
-/// mutex is released.
-struct ParkingHolder<'a>(&'a AtomicBool);
-
-impl Drop for ParkingHolder<'_> {
-    fn drop(&mut self) {
-        self.0.store(false, Ordering::SeqCst);
+/// Throw what a call the slot refused reports: `CLOSED` in the call's domain (RTP for
+/// a data call) for a session a close or a conversion took, `RtspException(CLOSED)`
+/// for a poisoned one whatever the call.
+fn throw_refused(env: &mut Env, refused: SlotRefused, data_call: bool) {
+    match refused {
+        SlotRefused::Poisoned => throw_rtsp(env, BindingErrorKind::Closed, POISONED),
+        _ if data_call => throw_rtp(env, BindingErrorKind::Closed, TAKEN),
+        _ => throw_rtsp(env, BindingErrorKind::Closed, TAKEN),
     }
-}
-
-/// [`run`] for a call that can park on the network: `None` (nothing run) when it
-/// gets the mutex after a close began; otherwise it marks itself in
-/// [`Shared::parking_holder`] for as long as it runs, so a close cancels it.
-fn run_blocking<R>(shared: &Shared, op: impl FnOnce(&mut RtspPush) -> R) -> Option<R> {
-    let mut guard = shared.push.lock().unwrap_or_else(PoisonError::into_inner);
-    if shared.closing.load(Ordering::SeqCst) {
-        return None;
-    }
-    shared.parking_holder.store(true, Ordering::SeqCst);
-    let _holding = ParkingHolder(&shared.parking_holder);
-    guard.as_mut().map(op)
 }
 
 /// Throw what a failed `send_video` / `send_klv` reports: the transport's error in
@@ -407,14 +386,14 @@ jni_native! {
     ) = () => {
         let Some((slot, mp2t)) = lease(env, handle) else { return };
         let Some(bytes) = read_bytes(env, &ts) else { return };
-        match run_blocking(&slot, |p| p.send_ts(&bytes)) {
-            None => throw_rtp(env, BindingErrorKind::Closed, TAKEN),
-            Some(Ok(())) => {}
-            Some(Err(TransportError::Broken { .. })) if !mp2t => throw_illegal_argument(
+        match slot.run_parking(|p| p.send_ts(&bytes)) {
+            Err(r) => throw_refused(env, r, true),
+            Ok(Ok(())) => {}
+            Ok(Err(TransportError::Broken { .. })) if !mp2t => throw_illegal_argument(
                 env,
                 "this session announced a video track and takes no MPEG-TS",
             ),
-            Some(Err(e)) => transport_error(env, &e),
+            Ok(Err(e)) => transport_error(env, &e),
         }
     }
 }
@@ -430,10 +409,10 @@ jni_native! {
     ) = () => {
         let Some((slot, _)) = lease(env, handle) else { return };
         let Some(bytes) = read_bytes(env, &annexb) else { return };
-        match run_blocking(&slot, |p| p.send_video(&bytes, Pts90khz::new(pts))) {
-            None => throw_rtp(env, BindingErrorKind::Closed, TAKEN),
-            Some(Ok(())) => {}
-            Some(Err(e)) => throw_push_error(env, e),
+        match slot.run_parking(|p| p.send_video(&bytes, Pts90khz::new(pts))) {
+            Err(r) => throw_refused(env, r, true),
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => throw_push_error(env, e),
         }
     }
 }
@@ -449,10 +428,10 @@ jni_native! {
     ) = () => {
         let Some((slot, _)) = lease(env, handle) else { return };
         let Some(bytes) = read_bytes(env, &klv) else { return };
-        match run_blocking(&slot, |p| p.send_klv(&bytes, Pts90khz::new(pts))) {
-            None => throw_rtp(env, BindingErrorKind::Closed, TAKEN),
-            Some(Ok(())) => {}
-            Some(Err(e)) => throw_push_error(env, e),
+        match slot.run_parking(|p| p.send_klv(&bytes, Pts90khz::new(pts))) {
+            Err(r) => throw_refused(env, r, true),
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => throw_push_error(env, e),
         }
     }
 }
@@ -466,10 +445,10 @@ fn control(
     let Some((slot, _)) = lease(env, handle) else {
         return;
     };
-    match run_blocking(&slot, op) {
-        None => throw_rtsp(env, BindingErrorKind::Closed, TAKEN),
-        Some(Ok(())) => {}
-        Some(Err(e)) => rtsp_error_to_jvm(env, e),
+    match slot.run_parking(op) {
+        Err(r) => throw_refused(env, r, false),
+        Ok(Ok(())) => {}
+        Ok(Err(e)) => rtsp_error_to_jvm(env, e),
     }
 }
 
@@ -487,37 +466,17 @@ jni_native! {
     }
 }
 
-/// Take the push out of a session the registry has handed over, for its close. A
-/// call that holds the push and can park on the network (a send on a slow server, a
-/// pause draining the queue or awaiting its reply) is cancelled first, so the close
-/// waits only for it to notice (about 100 ms). Anything else holding the push (a
-/// query call, a blocking call that has just found `closing` set) is waited for
-/// without a cancel: like an idle push, the session's queued media is then written
-/// and an accepted TEARDOWN ends it cleanly. The wait re-reads the marker every
-/// round, so a call that starts to run while the close waits is still cancelled.
-fn take_for_close(entry: &JniRtspPush) -> Option<RtspPush> {
-    let shared = &entry.shared;
-    // A blocking call that gets the mutex from here on runs nothing.
-    shared.closing.store(true, Ordering::SeqCst);
-    loop {
-        match shared.push.try_lock() {
-            Ok(mut guard) => return guard.take(),
-            Err(TryLockError::Poisoned(p)) => return p.into_inner().take(),
-            Err(TryLockError::WouldBlock) => {
-                if shared.parking_holder.load(Ordering::SeqCst) {
-                    entry.cancel.cancel();
-                    return shared
-                        .push
-                        .lock()
-                        .unwrap_or_else(PoisonError::into_inner)
-                        .take();
-                }
-                #[cfg(feature = "jni-test-hooks")]
-                PROBE_WAIT_ROUNDS.fetch_add(1, Ordering::SeqCst);
-                std::thread::sleep(CLOSE_RETRY);
-            }
-        }
+/// Take the push out of a session the registry has handed over, for its close
+/// ([`ParkingSlot::take_for_close`]: a call that can park is cancelled first, a query
+/// is waited for, a poisoned slot still gives the push up). `None` when a conversion
+/// took it first.
+fn take_for_close(entry: &JniRtspPush, _handle: jlong) -> Option<RtspPush> {
+    let push = entry.slot.take_for_close();
+    #[cfg(feature = "jni-test-hooks")]
+    if push.is_none() {
+        return probe_take_marked(_handle);
     }
+    push
 }
 
 jni_native! {
@@ -528,7 +487,7 @@ jni_native! {
             crate::error::throw_closed(env, WHAT);
             return;
         };
-        if let Some(push) = take_for_close(&entry)
+        if let Some(push) = take_for_close(&entry, handle)
             && let Err(e) = push.close()
         {
             rtsp_error_to_jvm(env, e);
@@ -542,7 +501,7 @@ jni_native! {
     /// the close that wins the registry entry runs it.
     fn Java_org_tstrans_rtp_RtspPushSession_nClose(_env, _class, handle: jlong) = () => {
         if let Some(entry) = REGISTRY_PUSH.close(handle as u64)
-            && let Some(push) = take_for_close(&entry)
+            && let Some(push) = take_for_close(&entry, handle)
         {
             let _ = push.close();
         }
@@ -562,13 +521,25 @@ jni_native! {
 }
 
 jni_native! {
-    /// `RtspPushSession.nStats(handle)`: waits for a call that holds the push.
-    fn Java_org_tstrans_rtp_RtspPushSession_nStats(env, _class, handle: jlong) -> jobject = std::ptr::null_mut() => {
-        let Some((slot, _)) = lease(env, handle) else { return std::ptr::null_mut() };
-        let Some(stats) = run(&slot, |p| p.stats()) else {
-            crate::error::throw_closed(env, WHAT);
+    /// `RtspPushSession.nStatsKey(handle)`: a key of its own on the push's counters
+    /// and end reason, which `nStatsOf` / `nEndOf` read until `nFreeStats`; 0 for an
+    /// absent session.
+    fn Java_org_tstrans_rtp_RtspPushSession_nStatsKey(_env, _class, handle: jlong) -> jlong = 0 => {
+        match REGISTRY_PUSH.with(handle as u64, |s| s.stats.clone()) {
+            Some(stats) => REGISTRY_PUSH_STATS.insert(stats) as jlong,
+            None => 0,
+        }
+    }
+}
+
+jni_native! {
+    /// `RtspPushSession.nStatsOf(statsKey)`: the counters now, read through the handle,
+    /// never the slot; null for a freed key.
+    fn Java_org_tstrans_rtp_RtspPushSession_nStatsOf(env, _class, key: jlong) -> jobject = std::ptr::null_mut() => {
+        let Some(handle) = REGISTRY_PUSH_STATS.with(key as u64, |h| h.clone()) else {
             return std::ptr::null_mut();
         };
+        let stats = handle.stats();
         match crate::generated::stats_rtp::build_push_stats(env, &stats) {
             Ok(o) => o.into_raw(),
             Err(e) => {
@@ -576,6 +547,31 @@ jni_native! {
                 std::ptr::null_mut()
             }
         }
+    }
+}
+
+jni_native! {
+    /// `RtspPushSession.nEndOf(statsKey)`: why the session ended, as an
+    /// `EndReasonSnapshot` (reason null while it has not); null for a freed key.
+    fn Java_org_tstrans_rtp_RtspPushSession_nEndOf(env, _class, key: jlong) -> jobject = std::ptr::null_mut() => {
+        let Some(handle) = REGISTRY_PUSH_STATS.with(key as u64, |h| h.clone()) else {
+            return std::ptr::null_mut();
+        };
+        let reason = handle.end_reason();
+        match build_close_snapshot(env, reason) {
+            Ok(o) => o.into_raw(),
+            Err(e) => {
+                throw_runtime_unless_pending(env, e.to_string());
+                std::ptr::null_mut()
+            }
+        }
+    }
+}
+
+jni_native! {
+    /// `RtspPushSession.nFreeStats(statsKey)`: free the reader `nStatsKey` made.
+    fn Java_org_tstrans_rtp_RtspPushSession_nFreeStats(_env, _class, key: jlong) = () => {
+        let _ = REGISTRY_PUSH_STATS.close(key as u64);
     }
 }
 
@@ -599,17 +595,15 @@ jni_native! {
 jni_native! {
     /// `RtspPushSession.nIsSessionAlive(handle)`: never waits and never throws. A call
     /// holding the push counts as live (the shells' `isAlive` rule) unless a close has
-    /// begun; a closed, converted or unknown key is `false`.
+    /// begun; a closed, converted, poisoned or unknown session is `false`.
     fn Java_org_tstrans_rtp_RtspPushSession_nIsSessionAlive(_env, _class, handle: jlong) -> jboolean = false => {
-        let Some(shared) = REGISTRY_PUSH.with(handle as u64, |s| s.shared.clone()) else {
+        let Some(slot) = REGISTRY_PUSH.with(handle as u64, |s| s.slot.clone()) else {
             return false;
         };
-        match shared.push.try_lock() {
-            Ok(guard) => guard.as_ref().is_some_and(RtspPush::is_session_alive),
-            Err(TryLockError::Poisoned(p)) => {
-                p.into_inner().as_ref().is_some_and(RtspPush::is_session_alive)
-            }
-            Err(TryLockError::WouldBlock) => !shared.closing.load(Ordering::SeqCst),
+        match slot.try_peek(RtspPush::is_session_alive) {
+            Peek::Value(alive) => alive,
+            Peek::Held => true,
+            _ => false,
         }
     }
 }
@@ -634,51 +628,36 @@ fn convertible(env: &mut Env, handle: jlong) -> bool {
     }
 }
 
-/// Take the whole session out of its registry for a conversion: the push as an
-/// opened send transport. Never waits for a call that can park: when a send, `pause`
-/// or `resume` holds the push it takes nothing, marks nothing and leaves an
-/// `IllegalStateException` saying so (the session stays usable). A query call holding
-/// the push for a moment is waited for, as a close waits for it. `None` with an
-/// `IllegalStateException` pending also when a close won the session or has begun.
+/// Take the push for a conversion, as an opened send transport
+/// ([`ParkingSlot::take_for_conversion`]): never waits for a call that can park, so
+/// behind a send, `pause` or `resume` it takes nothing and leaves an
+/// `IllegalStateException` saying so (the session stays usable); a query holding the
+/// push for a moment is waited for. `None` with an `IllegalStateException` pending
+/// also when a close won the session or has begun, and with `RtspException(CLOSED)`
+/// for a poisoned one.
 fn take_opened(env: &mut Env, handle: jlong) -> Option<Opened<Box<dyn Transport>>> {
-    let Some(shared) = REGISTRY_PUSH.with(handle as u64, |s| s.shared.clone()) else {
+    let Some(slot) = REGISTRY_PUSH.with(handle as u64, |s| s.slot.clone()) else {
         crate::error::throw_closed(env, WHAT);
         return None;
     };
-    let mut guard = loop {
-        match shared.push.try_lock() {
-            Ok(guard) => break guard,
-            Err(TryLockError::Poisoned(p)) => break p.into_inner(),
-            Err(TryLockError::WouldBlock) => {
-                // A close has begun: the session is closed, not usable.
-                if shared.closing.load(Ordering::SeqCst) {
-                    crate::error::throw_closed(env, WHAT);
-                    return None;
-                }
-                if shared.parking_holder.load(Ordering::SeqCst) {
-                    throw_illegal_state(env, IN_PROGRESS);
-                    return None;
-                }
-                #[cfg(feature = "jni-test-hooks")]
-                PROBE_WAIT_ROUNDS.fetch_add(1, Ordering::SeqCst);
-                std::thread::sleep(CLOSE_RETRY);
-            }
+    let push = match slot.take_for_conversion() {
+        Ok(push) => push,
+        Err(SlotRefused::Busy) => {
+            throw_illegal_state(env, IN_PROGRESS);
+            return None;
+        }
+        Err(SlotRefused::Poisoned) => {
+            throw_rtsp(env, BindingErrorKind::Closed, POISONED);
+            return None;
+        }
+        Err(_) => {
+            crate::error::throw_closed(env, WHAT);
+            return None;
         }
     };
-    // Claimed while the push is held: a close that won the entry first is waiting
-    // for this mutex, and takes the push once it is free.
-    if REGISTRY_PUSH.close(handle as u64).is_none() {
-        drop(guard);
-        crate::error::throw_closed(env, WHAT);
-        return None;
-    }
-    // As a close does: a blocking call that gets the mutex from here on runs nothing.
-    shared.closing.store(true, Ordering::SeqCst);
-    let Some(push) = guard.take() else {
-        crate::error::throw_closed(env, WHAT);
-        return None;
-    };
-    drop(guard);
+    // The slot's closed flag, not the registry key, decided: a close that won the
+    // entry first took nothing from the slot, so the push is converted either way.
+    let _ = REGISTRY_PUSH.close(handle as u64);
     let cancel: Arc<dyn TransportCancel> = Arc::new(push.cancel_handle());
     Some(Opened::new(Box::new(push), cancel, Domain::Rtp))
 }
@@ -755,36 +734,66 @@ jni_native! {
 
 // ---------------------------------------------------------------------------
 // Test-only probes (feature = "jni-test-hooks"), never in the shipped JAR: hold a
-// real session's lock the way a query call does until the test releases it, count
-// the rounds a close or a conversion waits for it, and mark a session as closing
-// without taking it, so a test can order a close against other calls without a
+// real session's slot the way a query call does until the test releases it, count
+// the rounds a close or a conversion waits for it, begin a close without finishing
+// it, and poison the slot, so a test can order a close against other calls without a
 // timing race.
 // ---------------------------------------------------------------------------
 
 #[cfg(feature = "jni-test-hooks")]
-static PROBE_READER_HOLDS: AtomicBool = AtomicBool::new(false);
+static PROBE_READER_HOLDS: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
 
 #[cfg(feature = "jni-test-hooks")]
-static PROBE_RELEASE: AtomicBool = AtomicBool::new(false);
+static PROBE_RELEASE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// The rounds every close or conversion has waited, without a cancel or a refusal,
 /// for a query call holding a push.
 #[cfg(feature = "jni-test-hooks")]
 static PROBE_WAIT_ROUNDS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
-/// The longest a probe holds the lock unreleased: a test that never releases ends
+/// The closes `nMarkClosing` began, by session key: each takes the push once the
+/// slot is free, and the session's own close finishes it.
+#[cfg(feature = "jni-test-hooks")]
+static PROBE_MARKED: LazyLock<
+    std::sync::Mutex<std::collections::HashMap<jlong, std::thread::JoinHandle<Option<RtspPush>>>>,
+> = LazyLock::new(Default::default);
+
+/// The longest a probe holds the slot unreleased: a test that never releases ends
 /// instead of hanging the suite.
 #[cfg(feature = "jni-test-hooks")]
 const PROBE_HOLD_CAP: std::time::Duration = std::time::Duration::from_secs(30);
 
+#[cfg(feature = "jni-test-hooks")]
+fn probe_observe(event: tst_pipeline::binding::parking::ParkingEvent) {
+    use tst_pipeline::binding::parking::ParkingEvent;
+    if matches!(
+        event,
+        ParkingEvent::CloseRetry | ParkingEvent::ConversionRetry
+    ) {
+        PROBE_WAIT_ROUNDS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+/// The push a close `nMarkClosing` began on `handle` took, once it has.
+#[cfg(feature = "jni-test-hooks")]
+fn probe_take_marked(handle: jlong) -> Option<RtspPush> {
+    let marked = PROBE_MARKED
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .remove(&handle)?;
+    marked.join().ok().flatten()
+}
+
 jni_native! {
-    /// `org.tstrans.internal.PushProbe.nHoldAsReader(handle)`: hold the push's lock
+    /// `org.tstrans.internal.PushProbe.nHoldAsReader(handle)`: hold the push's slot
     /// through the query path until `nRelease()` (at most 30 s).
     #[cfg(feature = "jni-test-hooks")]
     fn Java_org_tstrans_internal_PushProbe_nHoldAsReader(env, _class, handle: jlong) = () => {
+        use std::sync::atomic::Ordering;
         PROBE_RELEASE.store(false, Ordering::SeqCst);
         let Some((slot, _)) = lease(env, handle) else { return };
-        let held = run(&slot, |_| {
+        let held = slot.run(|_| {
             PROBE_READER_HOLDS.store(true, Ordering::SeqCst);
             let start = std::time::Instant::now();
             while !PROBE_RELEASE.load(Ordering::SeqCst) && start.elapsed() < PROBE_HOLD_CAP {
@@ -792,8 +801,8 @@ jni_native! {
             }
             PROBE_READER_HOLDS.store(false, Ordering::SeqCst);
         });
-        if held.is_none() {
-            crate::error::throw_closed(env, WHAT);
+        if let Err(r) = held {
+            throw_refused(env, r, false);
         }
     }
 }
@@ -802,7 +811,7 @@ jni_native! {
     /// `org.tstrans.internal.PushProbe.nRelease()`: end the hold of `nHoldAsReader`.
     #[cfg(feature = "jni-test-hooks")]
     fn Java_org_tstrans_internal_PushProbe_nRelease(_env, _class) = () => {
-        PROBE_RELEASE.store(true, Ordering::SeqCst);
+        PROBE_RELEASE.store(true, std::sync::atomic::Ordering::SeqCst);
     }
 }
 
@@ -810,7 +819,7 @@ jni_native! {
     /// `org.tstrans.internal.PushProbe.nReaderHolds()`.
     #[cfg(feature = "jni-test-hooks")]
     fn Java_org_tstrans_internal_PushProbe_nReaderHolds(_env, _class) -> jboolean = false => {
-        PROBE_READER_HOLDS.load(Ordering::SeqCst)
+        PROBE_READER_HOLDS.load(std::sync::atomic::Ordering::SeqCst)
     }
 }
 
@@ -820,17 +829,39 @@ jni_native! {
     /// a push.
     #[cfg(feature = "jni-test-hooks")]
     fn Java_org_tstrans_internal_PushProbe_nWaitRounds(_env, _class) -> jlong = 0 => {
-        PROBE_WAIT_ROUNDS.load(Ordering::SeqCst) as jlong
+        PROBE_WAIT_ROUNDS.load(std::sync::atomic::Ordering::SeqCst) as jlong
     }
 }
 
 jni_native! {
-    /// `org.tstrans.internal.PushProbe.nMarkClosing(handle)`: set the session's
-    /// `closing` flag as a close does first, without taking the push, so the next
-    /// blocking call meets a close that has begun.
+    /// `org.tstrans.internal.PushProbe.nMarkClosing(handle)`: begin a close of the
+    /// session on another thread and return once it has begun (the slot is marked
+    /// closed); that close takes the push when the slot is free and the session's own
+    /// `close()` finishes it. The next call that takes the session meets a close that
+    /// has begun.
     #[cfg(feature = "jni-test-hooks")]
     fn Java_org_tstrans_internal_PushProbe_nMarkClosing(env, _class, handle: jlong) = () => {
         let Some((slot, _)) = lease(env, handle) else { return };
-        slot.closing.store(true, Ordering::SeqCst);
+        let closing = Arc::clone(&slot);
+        let taker = std::thread::spawn(move || closing.take_for_close());
+        PROBE_MARKED
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(handle, taker);
+        while !slot.is_closed() {
+            std::thread::yield_now();
+        }
+    }
+}
+
+jni_native! {
+    /// `org.tstrans.internal.PushProbe.nPoison(handle)`: panic inside a query holding
+    /// the session's slot, as a bug in a call would, so the slot is poisoned.
+    #[cfg(feature = "jni-test-hooks")]
+    fn Java_org_tstrans_internal_PushProbe_nPoison(env, _class, handle: jlong) = () => {
+        let Some((slot, _)) = lease(env, handle) else { return };
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _ = slot.run(|_| panic!("a panic inside a push session call, for a test"));
+        }));
     }
 }
