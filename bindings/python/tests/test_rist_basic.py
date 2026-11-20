@@ -83,8 +83,13 @@ def test_a_port_that_never_binds_fails_naming_what_librist_said():
     def refuse(port: int) -> rist.RecvTransport:
         raise RistError(kind=RistErrorKind.PEER_CREATE_FAILED, message="librist peer creation failed")
 
-    with pytest.raises(pytest.fail.Exception, match="no even port bound in 2 attempts: .*PEER_CREATE_FAILED"):
-        bind_even_port(refuse, attempts=2)
+    # A skip is not a Failed, so it would leave pytest.raises and end this
+    # test SKIPPED: catch it so a refusal turned into a skip goes red.
+    try:
+        with pytest.raises(pytest.fail.Exception, match="no even port bound in 2 attempts: .*PEER_CREATE_FAILED"):
+            bind_even_port(refuse, attempts=2)
+    except pytest.skip.Exception as e:
+        pytest.fail(f"a port that never binds became a skip: {e}")
 
 
 def test_an_open_error_other_than_a_bind_refusal_is_raised():
