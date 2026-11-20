@@ -979,3 +979,37 @@ def test_a_conversion_does_not_wait_behind_a_recv_on_another_thread() -> None:
         reader.join(5.0)
         client.close()
         listener.close()
+
+
+def test_a_conversion_after_a_cancel_reports_closed_even_behind_a_recv() -> None:
+    # The cancel latch is the one `close()` sets first. Right after it fires,
+    # the recv it woke may still be counted in flight (it notices within a
+    # poll tick); the conversion must answer CLOSED, never the
+    # "holds the connection" RuntimeError, whichever side of that it lands.
+    for _ in range(20):
+        client, accepted, listener = _accepted_pair()
+        started = threading.Event()
+        ended: list[object] = []
+
+        def recv_once() -> None:
+            started.set()
+            try:
+                ended.append(accepted.recv(bytearray(4096)))
+            except TcpError as e:
+                ended.append(e.kind)
+
+        reader = threading.Thread(target=recv_once, daemon=True)
+        try:
+            reader.start()
+            assert started.wait(5.0)
+            accepted.cancel_handle().cancel()
+            with pytest.raises(TcpError) as ei:
+                accepted.into_receiver()
+            assert ei.value.kind == TcpErrorKind.CLOSED
+            reader.join(5.0)
+            assert ended == [TcpErrorKind.CLOSED]
+        finally:
+            accepted.close()
+            reader.join(5.0)
+            client.close()
+            listener.close()
