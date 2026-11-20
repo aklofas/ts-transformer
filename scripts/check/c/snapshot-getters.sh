@@ -20,9 +20,16 @@
 # 2. Python: FAIL on any function that calls `.lock()`, `.read()`,
 #    `.write()`, `.try_lock()`, the UFCS `Mutex::lock(` / `RwLock::read(`
 #    / `RwLock::write(` forms, or a waiting `ParkingSlot` call (its mutex is
-#    taken inside tst-pipeline: `.run_parking(`, `slot.run(`,
-#    `.take_for_close(`, `.take_for_conversion(`) while it holds the GIL and is not listed in
-#    scripts/ratchets/gil-held-locks.tsv. A mutex or rwlock whose holder
+#    taken inside tst-pipeline: `.run_parking(`, `.run(`,
+#    `.take_for_close(`, `.take_for_conversion(`) while it holds the GIL, on
+#    a lock its row in scripts/ratchets/gil-held-locks.tsv does not name.
+#    A row names one lock of one function: the identifier the lock call is
+#    made on (`inner` in `self.inner.lock()`, also when the call starts the
+#    next line; `slot` in `self.slot.run(`; the last identifier of a UFCS
+#    form's argument, `inner` in `Mutex::lock(&self.inner)`; the name
+#    before the parentheses of a call result, `get` in `self.get().lock()`;
+#    `<expr>` when none of these applies), so a second lock taken in a
+#    listed function is reported on its own. A mutex or rwlock whose holder
 #    releases the GIL (`py.detach`) while it holds the guard needs
 #    the GIL back before the guard can drop; a second thread that waits
 #    for that lock with the GIL held never lets it have it, and the
@@ -144,7 +151,7 @@ if [ ! -f "$LOCK_ALLOWLIST" ]; then
     exit 1
 fi
 
-# One line per (file, Type::function) with a `.lock()` outside an
+# One line per (file, Type::function, lock) with a `.lock()` outside an
 # `detach(` call, or inside an `attach(` nested in one. `at` and
 # `wg` are the open-parenthesis depths of those two calls; both reset at
 # every `fn`. Comment lines and `#[cfg(test)]` items are skipped.
@@ -155,9 +162,42 @@ find $LOCK_ROOTS -type f -name '*.rs' | LC_ALL=C sort | while IFS= read -r f; do
             nlk = split(".lock() .read() .write() .try_lock() Mutex::lock( RwLock::read( RwLock::write(", sp, " ")
             # The waiting ParkingSlot calls: the slot locks its mutex inside
             # tst-pipeline, so the binding shows only these.
-            nsl = split(".run_parking( slot.run( .take_for_close( .take_for_conversion(", sl, " ")
+            nsl = split(".run_parking( .run( .take_for_close( .take_for_conversion(", sl, " ")
             for (k = 1; k <= nsl; k++) sp[nlk + k] = sl[k]
             nsp = nlk + nsl
+        }
+        # The lock a call at `i` of `line` is made on: the identifier before
+        # its dot (on this line, or ending the previous code line when the
+        # call starts this one), or the name before a call result'"'"'s
+        # parentheses.
+        function receiver(line, i,    j, k, c, depth) {
+            j = i - 1
+            while (j >= 1 && substr(line, j, 1) ~ /[ \t]/) j--
+            if (j < 1) return tail
+            if (substr(line, j, 1) == ")") {
+                depth = 0
+                while (j >= 1) {
+                    c = substr(line, j, 1)
+                    if (c == ")") depth++
+                    else if (c == "(" && --depth == 0) break
+                    j--
+                }
+                j--
+            }
+            k = j
+            while (k >= 1 && substr(line, k, 1) ~ /[A-Za-z0-9_]/) k--
+            return (k == j) ? "<expr>" : substr(line, k + 1, j - k)
+        }
+        # A UFCS lock'"'"'s lock: the last identifier of its argument.
+        function ufcs_arg(rest, n,    a, p) {
+            a = substr(rest, n + 1)
+            p = index(a, ")")
+            if (p == 0) return "<expr>"
+            a = substr(a, 1, p - 1)
+            if (!match(a, /[A-Za-z0-9_]+[ \t]*$/)) return "<expr>"
+            a = substr(a, RSTART, RLENGTH)
+            sub(/[ \t]+$/, "", a)
+            return a
         }
         /^#\[cfg\(test\)\]/ { guarded = 1; next }
         guarded == 1 {
@@ -215,7 +255,8 @@ find $LOCK_ROOTS -type f -name '*.rs' | LC_ALL=C sort | while IFS= read -r f; do
                             # module-level code the scanner cannot attribute.
                             print file "\t<unattributed:" sp[k] ">"
                         } else if (at == 0 || wg > 0) {
-                            print file "\t" (type == "" ? fn : type "::" fn)
+                            lk = (index(sp[k], "::") > 0) ? ufcs_arg(rest, length(sp[k])) : receiver(line, i)
+                            print file "\t" (type == "" ? fn : type "::" fn) "\t" lk
                         }
                         if (substr(sp[k], length(sp[k]), 1) == "(") {
                             # UFCS form (Mutex::lock(/RwLock::read(/
@@ -262,22 +303,28 @@ find $LOCK_ROOTS -type f -name '*.rs' | LC_ALL=C sort | while IFS= read -r f; do
                     i++
                 }
             }
+            # The identifier ending this line, for a lock call that starts
+            # the next one.
+            t = line
+            sub(/[ \t]+$/, "", t)
+            tail = match(t, /[A-Za-z0-9_]+$/) ? substr(t, RSTART, RLENGTH) : "<expr>"
         }
     ' "$f"
 done | LC_ALL=C sort -u > "$tmp/lock_found"
 
-# Allowlist: `path<TAB>Type::function<TAB>reason`; `#` lines are comments.
+# Allowlist: `path<TAB>Type::function<TAB>lock<TAB>reason`; `#` lines are
+# comments.
 if ! awk -F '\t' '
         /^#/ || /^[ \t]*$/ { next }
-        NF < 3 || $2 == "" || $3 == "" {
-            printf "FAIL: %s:%d: expected path<TAB>Type::function<TAB>reason\n", FILENAME, NR
+        NF < 4 || $2 == "" || $3 == "" || $4 == "" {
+            printf "FAIL: %s:%d: expected path<TAB>Type::function<TAB>lock<TAB>reason\n", FILENAME, NR
             bad = 1
         }
         END { exit bad }
     ' "$LOCK_ALLOWLIST"; then
     status=1
 fi
-awk -F '\t' '!/^#/ && NF >= 2 { print $1 "\t" $2 }' "$LOCK_ALLOWLIST" | LC_ALL=C sort -u > "$tmp/lock_allowed"
+awk -F '\t' '!/^#/ && NF >= 3 { print $1 "\t" $2 "\t" $3 }' "$LOCK_ALLOWLIST" | LC_ALL=C sort -u > "$tmp/lock_allowed"
 
 if [ ! -s "$tmp/lock_found" ]; then
     echo "FAIL: no lock taken with the GIL held found under: $LOCK_ROOTS"
@@ -302,7 +349,7 @@ LC_ALL=C comm -23 "$tmp/lock_found_attributed" "$tmp/lock_allowed" > "$tmp/lock_
 LC_ALL=C comm -13 "$tmp/lock_found_attributed" "$tmp/lock_allowed" > "$tmp/lock_stale"
 
 if [ -s "$tmp/lock_unlisted" ]; then
-    echo "FAIL: these functions wait for a lock while holding the GIL:"
+    echo "FAIL: these functions wait for a lock (last column) while holding the GIL:"
     sed 's/^/    /' "$tmp/lock_unlisted"
     echo "      if any holder of that lock releases the GIL while it holds the guard, this"
     echo "      freezes the interpreter. Take the lock inside py.detach and raise"
@@ -312,14 +359,14 @@ if [ -s "$tmp/lock_unlisted" ]; then
     status=1
 fi
 if [ -s "$tmp/lock_stale" ]; then
-    echo "FAIL: $LOCK_ALLOWLIST lists functions that no longer lock while holding the GIL:"
+    echo "FAIL: $LOCK_ALLOWLIST lists locks these functions no longer take while holding the GIL:"
     sed 's/^/    /' "$tmp/lock_stale"
     echo "      remove the rows."
     status=1
 fi
 if [ ! -s "$tmp/lock_unlisted" ] && [ ! -s "$tmp/lock_stale" ] && [ "$unattributed" -eq 0 ]; then
     n=$(wc -l < "$tmp/lock_found_attributed" | tr -d ' ')
-    echo "OK: all $n functions under ($LOCK_ROOTS) that lock while holding the GIL are allowlisted with a reason"
+    echo "OK: all $n locks taken with the GIL held under ($LOCK_ROOTS) are allowlisted, each with a reason"
 fi
 
 exit "$status"

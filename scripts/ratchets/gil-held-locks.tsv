@@ -1,9 +1,12 @@
-# Functions in the Python binding that call `.lock()` while they hold the GIL.
+# Locks the Python binding's functions take while they hold the GIL.
 # Read by scripts/check/c/snapshot-getters.sh (check 2), which fails on any
-# such function not listed here AND on any row whose function no longer does.
+# such lock not listed here AND on any row whose function no longer takes it.
 #
 # Columns (TAB-separated): path, Type::function (bare name for a free
-# function), reason.
+# function), lock, reason. The lock is the identifier the lock call is made on
+# (`inner` for `self.inner.lock()`, `slot` for `self.slot.run(`; the rail's
+# header says how it is found): a row allows that one lock in that function,
+# so a second lock taken there with the GIL held is reported on its own.
 #
 # A row is a claim about the LOCK, not only the function: no holder of it
 # keeps the guard while the GIL is released. If one did, it would need the GIL
@@ -24,21 +27,21 @@
 #     recv): take it inside `detach` and raise after the GIL is back;
 #   - the value cannot change after construction: capture it at construction;
 #   - open/finished for `repr`: an atomic latch.
-bindings/python/src/hls/publisher.rs	PyHlsServerHandle::__repr__	inner: no holder releases the GIL with the guard; shutdown moves the handle out and drops the guard before its detach
-bindings/python/src/hls/publisher.rs	PyHlsServerHandle::local_addr	inner: no holder releases the GIL with the guard; shutdown moves the handle out and drops the guard before its detach
-bindings/python/src/hls/publisher.rs	PyHlsServerHandle::local_port	inner: no holder releases the GIL with the guard; shutdown moves the handle out and drops the guard before its detach
-bindings/python/src/hls/publisher.rs	PyHlsServerHandle::shutdown	inner: takes the handle out and drops the guard before releasing the GIL for the native shutdown
-bindings/python/src/rtp/client.rs	PyRtspSession::check_data_plane	data_plane: every holder (check_data_plane, take_data_plane, poison_for_test) locks it with the GIL held and runs only Rust under the guard (a refusal BindingError, a move of the plane, a panic caught at once); drop reads it through get_mut; never held across a GIL release or a call into Python
-bindings/python/src/rtp/client.rs	PyRtspSession::take_data_plane	data_plane: every holder (check_data_plane, take_data_plane, poison_for_test) locks it with the GIL held and runs only Rust under the guard (a refusal BindingError, a move of the plane, a panic caught at once); drop reads it through get_mut; never held across a GIL release or a call into Python
-bindings/python/src/rtp/client.rs	poison_for_test	data_plane only, the client lock is taken inside allow_threads_parking: every holder (check_data_plane, take_data_plane, poison_for_test) locks it with the GIL held and runs only Rust under the guard (a refusal BindingError, a move of the plane, a panic caught at once); drop reads it through get_mut; never held across a GIL release or a call into Python
-bindings/python/src/rtp/h264_receiver.rs	H264Held::close	closed_end_reason: runs inside Owned::close; holds the guard for one assignment and needs no GIL to let go
-bindings/python/src/rtp/h264_receiver.rs	PyH264Receiver::current_end_reason	closed_end_reason: the one other holder is H264Held::close, a single assignment that needs no GIL to let go
-bindings/python/src/rtp/push.rs	PyRtspPushSession::drop	slot: Drop runs only once nothing refers to the session, so no call holds or waits for the slot; take_for_close then finds it free or already closed and returns at once; every other slot call runs inside allow_threads_parking
-bindings/python/src/srt/lowlevel.rs	PySocket::close	inner: no Socket method holds this guard across a GIL release; close takes the handle out and drops the guard before releasing the GIL for the native close
-bindings/python/src/srt/lowlevel.rs	PySocket::is_alive	inner: no Socket method holds this guard across a GIL release, so the guard is never held across a park
-bindings/python/src/srt/lowlevel.rs	PySocket::local_addr	inner: no Socket method holds this guard across a GIL release, so the guard is never held across a park
-bindings/python/src/srt/lowlevel.rs	PySocket::peer_addr	inner: no Socket method holds this guard across a GIL release, so the guard is never held across a park
-bindings/python/src/srt/lowlevel.rs	PySocket::stream_id	inner: no Socket method holds this guard across a GIL release, so the guard is never held across a park
-bindings/python/src/srt/lowlevel.rs	PySocket::take_socket	inner: no Socket method holds this guard across a GIL release, so the guard is never held across a park
-bindings/python/src/util.rs	CancelSource::registered	exit registry: held for one push/retain of Weak pointers; no holder releases or needs the GIL while it has the guard
-bindings/python/src/util.rs	fire_cancel_sources_at_exit	exit registry: the guard is a temporary dropped at the end of the drain statement, before detach
+bindings/python/src/hls/publisher.rs	PyHlsServerHandle::__repr__	inner	inner: no holder releases the GIL with the guard; shutdown moves the handle out and drops the guard before its detach
+bindings/python/src/hls/publisher.rs	PyHlsServerHandle::local_addr	inner	inner: no holder releases the GIL with the guard; shutdown moves the handle out and drops the guard before its detach
+bindings/python/src/hls/publisher.rs	PyHlsServerHandle::local_port	inner	inner: no holder releases the GIL with the guard; shutdown moves the handle out and drops the guard before its detach
+bindings/python/src/hls/publisher.rs	PyHlsServerHandle::shutdown	inner	inner: takes the handle out and drops the guard before releasing the GIL for the native shutdown
+bindings/python/src/rtp/client.rs	PyRtspSession::check_data_plane	data_plane	data_plane: every holder (check_data_plane, take_data_plane, poison_for_test) locks it with the GIL held and runs only Rust under the guard (a refusal BindingError, a move of the plane, a panic caught at once); drop reads it through get_mut; never held across a GIL release or a call into Python
+bindings/python/src/rtp/client.rs	PyRtspSession::take_data_plane	data_plane	data_plane: every holder (check_data_plane, take_data_plane, poison_for_test) locks it with the GIL held and runs only Rust under the guard (a refusal BindingError, a move of the plane, a panic caught at once); drop reads it through get_mut; never held across a GIL release or a call into Python
+bindings/python/src/rtp/client.rs	poison_for_test	data_plane	data_plane only, the client lock is taken inside allow_threads_parking: every holder (check_data_plane, take_data_plane, poison_for_test) locks it with the GIL held and runs only Rust under the guard (a refusal BindingError, a move of the plane, a panic caught at once); drop reads it through get_mut; never held across a GIL release or a call into Python
+bindings/python/src/rtp/h264_receiver.rs	H264Held::close	closed_end_reason	closed_end_reason: runs inside Owned::close; holds the guard for one assignment and needs no GIL to let go
+bindings/python/src/rtp/h264_receiver.rs	PyH264Receiver::current_end_reason	closed_end_reason	closed_end_reason: the one other holder is H264Held::close, a single assignment that needs no GIL to let go
+bindings/python/src/rtp/push.rs	PyRtspPushSession::drop	slot	slot: Drop runs only once nothing refers to the session, so no call holds or waits for the slot; take_for_close then finds it free or already closed and returns at once; every other slot call runs inside allow_threads_parking
+bindings/python/src/srt/lowlevel.rs	PySocket::close	inner	inner: no Socket method holds this guard across a GIL release; close takes the handle out and drops the guard before releasing the GIL for the native close
+bindings/python/src/srt/lowlevel.rs	PySocket::is_alive	inner	inner: no Socket method holds this guard across a GIL release, so the guard is never held across a park
+bindings/python/src/srt/lowlevel.rs	PySocket::local_addr	inner	inner: no Socket method holds this guard across a GIL release, so the guard is never held across a park
+bindings/python/src/srt/lowlevel.rs	PySocket::peer_addr	inner	inner: no Socket method holds this guard across a GIL release, so the guard is never held across a park
+bindings/python/src/srt/lowlevel.rs	PySocket::stream_id	inner	inner: no Socket method holds this guard across a GIL release, so the guard is never held across a park
+bindings/python/src/srt/lowlevel.rs	PySocket::take_socket	inner	inner: no Socket method holds this guard across a GIL release, so the guard is never held across a park
+bindings/python/src/util.rs	CancelSource::registered	LIVE_CANCEL_SOURCES	exit registry: held for one push/retain of Weak pointers; no holder releases or needs the GIL while it has the guard
+bindings/python/src/util.rs	fire_cancel_sources_at_exit	LIVE_CANCEL_SOURCES	exit registry: the guard is a temporary dropped at the end of the drain statement, before detach
