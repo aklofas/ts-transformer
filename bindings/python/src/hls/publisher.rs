@@ -213,24 +213,24 @@ impl PyHlsPublisher {
         Ok(HlsStats::from(&stats))
     }
 
-    /// Local socket address the HTTP server bound to, as `"ip:port"`
+    /// Local socket address the HTTP server bound to, as `(host, port)`
     /// (`None` if the publisher was built without a server). Raises
     /// `HlsError(FINISHED)` if consumed. A construction constant: answers
     /// without waiting while another thread is inside a push.
-    fn local_addr(&self, py: Python<'_>) -> PyResult<Option<String>> {
+    fn local_addr(&self, py: Python<'_>) -> PyResult<Option<crate::util::PyAddr>> {
         if self.finished.load(Ordering::Acquire) {
             return Err(Self::finished_error(py, "HlsPublisher finished"));
         }
-        Ok(self.local_addr.map(|a| a.to_string()))
+        Ok(self.local_addr.map(crate::util::addr_tuple))
     }
 
-    /// Convenience: the bound TCP port (0 if no server). Raises
+    /// Convenience: the bound TCP port (`None` if no server). Raises
     /// `HlsError(FINISHED)` if consumed.
-    fn local_port(&self, py: Python<'_>) -> PyResult<u16> {
+    fn local_port(&self, py: Python<'_>) -> PyResult<Option<u16>> {
         if self.finished.load(Ordering::Acquire) {
             return Err(Self::finished_error(py, "HlsPublisher finished"));
         }
-        Ok(self.local_addr.map(|a| a.port()).unwrap_or(0))
+        Ok(self.local_addr.map(|a| a.port()))
     }
 
     /// Render the current playlist text. `is_event` selects the terminal
@@ -241,7 +241,7 @@ impl PyHlsPublisher {
     }
 
     /// Close = `finish()` semantics but never raises if already finished
-    /// (idempotent). Useful in `with`-style cleanup.
+    /// (idempotent).
     fn close(&self, py: Python<'_>) -> PyResult<()> {
         if let Some(inner) = self.take(py)? {
             crate::util::allow_threads_parking(py, || Publisher::finish(inner))
@@ -478,15 +478,15 @@ impl PyHlsServerHandle {
 
 #[pymethods]
 impl PyHlsServerHandle {
-    /// Local socket address the HTTP server is bound to, as `"ip:port"`.
+    /// Local socket address the HTTP server is bound to, as `(host, port)`.
     /// Raises `HlsError(FINISHED)` if the server has already been shut down.
-    fn local_addr(&self, py: Python<'_>) -> PyResult<String> {
+    fn local_addr(&self, py: Python<'_>) -> PyResult<crate::util::PyAddr> {
         let value = self
             .inner
             .lock()
             .map_err(|_| PyRuntimeError::new_err("HlsServerHandle mutex poisoned"))?
             .as_ref()
-            .map(|handle| handle.local_addr().to_string());
+            .map(|handle| crate::util::addr_tuple(handle.local_addr()));
         value.ok_or_else(|| {
             raise(
                 py,

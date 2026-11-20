@@ -34,7 +34,7 @@ pytest.importorskip(
 import tstrans
 import tstrans.hls
 from tstrans import _native
-from tstrans.exceptions import HlsError, HlsErrorKind
+from tstrans.exceptions import HlsError, HlsErrorKind, MuxError, MuxErrorKind
 from tstrans.hls import (
     HlsMode,
     HlsPublisher,
@@ -46,13 +46,18 @@ from tstrans.hls import (
     Publisher,
     PublisherStats,
 )
+from tstrans.codec import MispTimestamp, extract_misp_timestamp
 from tstrans.mpegts import (
+    Demuxer,
+    DemuxerConfig,
+    DemuxEvent,
     MuxerProgramConfigBuilder,
     Pts90khz,
     VideoCodec,
 )
 
 from _builders.mux_programs import masquerade_program as _masquerade_program
+from _builders.mux_programs import video_data_program as _video_data_program
 from _builders.mux_programs import video_klv_program as _video_klv_program
 
 # 376 bytes = 2 × 188-byte TS packets (aligned).
@@ -201,7 +206,7 @@ def test_hls_publisher_push_cut_finish_writes_files() -> None:
         )
         # local_addr / local_port should reflect the OS-assigned port.
         addr = pub.local_addr()
-        assert addr is not None and addr.startswith("127.0.0.1:")
+        assert addr is not None and addr[0] == "127.0.0.1"
         assert pub.local_port() > 0
 
         pub.push_ts(TS_TWO_PACKETS)
@@ -554,7 +559,7 @@ def test_finish_serving_serves_vod(tmp_path: object) -> None:
         assert isinstance(handle, HlsServerHandle)
         port = handle.local_port()
         assert port > 0
-        assert handle.local_addr().startswith("127.0.0.1:")
+        assert handle.local_addr() == ("127.0.0.1", port)
         url = f"http://127.0.0.1:{port}/playlist.m3u8"
         with urllib.request.urlopen(url) as resp:  # noqa: S310
             body = resp.read().decode()
@@ -583,7 +588,7 @@ def test_no_server_builds_twice_on_one_bind_and_finishes_to_files(tmp_path: obje
     b = build(dir_b)
     assert a.local_addr() is None
     assert b.local_addr() is None
-    assert a.local_port() == 0
+    assert a.local_port() is None
     a.push_ts(TS_TWO_PACKETS)
     a.cut_segment()
     a.finish()
@@ -698,3 +703,133 @@ def test_server_handle_shutdown_is_idempotent(tmp_path: object) -> None:
     handle = pub.finish_serving()
     handle.shutdown()
     handle.close()  # alias; idempotent no-op after shutdown
+
+
+# --------------------------------------------------------------------------- #
+# Addresses                                                                   #
+# --------------------------------------------------------------------------- #
+
+
+def test_publisher_local_addr_is_a_tuple(tmp_path: object) -> None:
+    pub = HlsPublisher.builder().bind("127.0.0.1:0").output_dir(str(tmp_path)).build()
+    try:
+        host, port = pub.local_addr()
+        assert host == "127.0.0.1"
+        assert isinstance(port, int) and port > 0
+        assert pub.local_port() == port
+    finally:
+        pub.finish()
+
+
+def test_local_port_is_none_without_a_server(tmp_path: object) -> None:
+    pub = (
+        HlsPublisher.builder()
+        .no_server()
+        .output_dir(str(tmp_path))
+        .mode(HlsMode.EVENT)
+        .build()
+    )
+    try:
+        assert pub.local_addr() is None
+        assert pub.local_port() is None
+    finally:
+        pub.finish()
+
+
+def test_server_handle_local_addr_is_a_tuple(tmp_path: object) -> None:
+    pub = (
+        HlsPublisher.builder()
+        .bind("127.0.0.1:0")
+        .output_dir(str(tmp_path))
+        .mode(HlsMode.VOD)
+        .build()
+    )
+    pub.push_ts(TS_TWO_PACKETS)
+    pub.cut_segment()
+    with pub.finish_serving() as handle:
+        host, port = handle.local_addr()
+        assert host == "127.0.0.1"
+        assert isinstance(port, int) and port == handle.local_port()
+
+
+# --------------------------------------------------------------------------- #
+# MuxPublisher: data and MISP video                                           #
+# --------------------------------------------------------------------------- #
+
+
+def _segment_events(d: str) -> list[object]:
+    """Every demux event of the segments written to `d`, in order."""
+    data = b""
+    for seg in sorted(glob.glob(os.path.join(d, "*.ts"))):
+        with open(seg, "rb") as f:
+            data += f.read()
+    assert data, "no segments produced"
+    dm = Demuxer(DemuxerConfig())
+    dm.feed(data)
+    dm.flush()
+    return list(dm)
+
+
+def _nal(nal_type: int, nri: int, body: bytes) -> bytes:
+    return b"\x00\x00\x00\x01" + bytes([(nri << 5) | nal_type]) + body
+
+
+# AUD + SPS + PPS + IDR: a keyframe access unit the MISP SEI is spliced into.
+H264_KEY_AU = (
+    _nal(9, 0b00, b"\xf0")
+    + _nal(7, 0b11, b"\x42\xc0\x28")
+    + _nal(8, 0b11, b"\xce\x38")
+    + _nal(5, 0b11, b"\x88\x84\x0a")
+)
+
+
+def test_push_data_reaches_its_pid(tmp_path: object) -> None:
+    d = str(tmp_path)
+    pub = HlsPublisher.builder().no_server().output_dir(d).mode(HlsMode.EVENT).build()
+    mp = MuxPublisher.with_config_hls(pub, _video_data_program())
+    payload = b"\x01\x02\x03\x04data-record"
+    mp.push_video(H264_KEY_AU, pts=Pts90khz.from_raw(90_000), key_frame=True)
+    mp.push_data(payload, pts=Pts90khz.from_raw(90_000))
+    mp.cut_segment()
+    mp.finish_into_publisher().finish()
+
+    samples = [e for e in _segment_events(d) if isinstance(e, DemuxEvent.UnknownSample)]
+    assert [(s.stream.pid, s.stream_type, s.payload, s.pts.raw) for s in samples] == [
+        (0x1F0, 0x06, payload, 90_000)
+    ]
+
+
+def test_push_video_misp_recovers_the_timestamp(tmp_path: object) -> None:
+    d = str(tmp_path)
+    pub = HlsPublisher.builder().no_server().output_dir(d).mode(HlsMode.EVENT).build()
+    mp = MuxPublisher.with_config_hls(pub, _video_program())
+    misp = MispTimestamp.micros(0xDEAD_BEEF_0000_0001, 0x3F)
+    mp.push_video_misp(H264_KEY_AU, pts=Pts90khz.from_raw(0), key_frame=True, misp=misp)
+    mp.cut_segment()
+    mp.finish_into_publisher().finish()
+
+    videos = [e for e in _segment_events(d) if isinstance(e, DemuxEvent.Video)]
+    assert videos, "no video access unit demuxed"
+    found = extract_misp_timestamp(videos[0].raw, VideoCodec.H264)
+    assert found is not None, "no MISP SEI in the demuxed access unit"
+    assert (found.value, found.time_status) == (misp.value, misp.time_status)
+
+
+def test_push_video_misp_needs_one_video_stream(tmp_path: object) -> None:
+    pub = HlsPublisher.builder().no_server().output_dir(str(tmp_path)).mode(HlsMode.EVENT).build()
+    two = (
+        MuxerProgramConfigBuilder(1, 0x100)
+        .add_video(0x101, VideoCodec.H264)
+        .add_video(0x102, VideoCodec.H264)
+        .build()
+    )
+    mp = MuxPublisher.with_config_hls(pub, two)
+    with pytest.raises(MuxError) as ei:
+        mp.push_video_misp(
+            H264_KEY_AU,
+            pts=Pts90khz.from_raw(0),
+            key_frame=True,
+            misp=MispTimestamp.micros(1, 0),
+        )
+    assert ei.value.kind == MuxErrorKind.INVALID_USAGE
+    mp.finish_into_publisher().finish()

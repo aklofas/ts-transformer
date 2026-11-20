@@ -153,8 +153,8 @@ def test_local_addr_and_repr_answer_from_the_construction_snapshot(tmp_path: Pat
 
     pub = HlsPublisher.builder().bind("127.0.0.1:0").output_dir(str(tmp_path)).build()
     addr = pub.local_addr()
-    assert addr is not None and addr.startswith("127.0.0.1:")
-    assert pub.local_port() == int(addr.rsplit(":", 1)[1])
+    assert addr is not None and addr[0] == "127.0.0.1"
+    assert pub.local_port() == addr[1]
     assert repr(pub) == "HlsPublisher(open)"
 
     pub.finish()

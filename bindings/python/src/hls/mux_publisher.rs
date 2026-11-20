@@ -10,8 +10,8 @@
 //! (the only publisher impl that exists) instead of adapting *any* Python
 //! `Publisher` subclass back to the Rust `Publisher` trait via per-call GIL
 //! acquisition. This matches tst-c (handles are concrete per-transport,
-//! never `Box<dyn ...>`) and the `shells/mux_sender.rs::PyMuxSender` template
-//! (concrete `MuxSender<RtpTransport>`).
+//! never `Box<dyn ...>`); the `shells/mux_sender.rs::PyMuxSender` shell
+//! erases its transport instead (`MuxSender<Box<dyn Transport>>`).
 //!
 //! `with_config_hls(publisher, program_config)` *consumes* the
 //! `HlsPublisher` (moves its inner out of the `Option`); the source
@@ -257,6 +257,43 @@ impl PyMuxPublisher {
         let coerced = crate::util::coerce_bytes_like(py, frames)?;
         let slice = coerced.as_bytes();
         self.with_inner(py, |mp| mp.push_audio(slice, rust_pts))
+    }
+
+    /// [`Self::push_video`] plus an ST 0604 MISP timestamp SEI spliced
+    /// before the first VCL NAL unit. Requires exactly one configured video
+    /// stream.
+    #[pyo3(signature = (nal, *, pts, key_frame = false, misp))]
+    fn push_video_misp(
+        &self,
+        py: Python<'_>,
+        nal: &Bound<'_, PyAny>,
+        pts: &Bound<'_, PyAny>,
+        key_frame: bool,
+        misp: PyRef<'_, crate::generated::codec::MispTimestamp>,
+    ) -> PyResult<()> {
+        let rust_pts = py_pts90khz(pts)?;
+        let coerced = crate::util::coerce_bytes_like(py, nal)?;
+        let slice = coerced.as_bytes();
+        // Converted while the GIL is held: `misp` is a GIL-bound PyRef.
+        let rust_misp = tst_core::codec::misp_time::MispTimestamp::from(*misp);
+        self.with_inner(py, |mp| {
+            mp.push_video_misp(slice, rust_pts, key_frame, &rust_misp)
+        })
+    }
+
+    /// Push one data payload on the program's single data stream: a PES
+    /// pass-through, `pts` written only for a `carries_pts=True` stream.
+    #[pyo3(signature = (data, *, pts))]
+    fn push_data(
+        &self,
+        py: Python<'_>,
+        data: &Bound<'_, PyAny>,
+        pts: &Bound<'_, PyAny>,
+    ) -> PyResult<()> {
+        let rust_pts = py_pts90khz(pts)?;
+        let coerced = crate::util::coerce_bytes_like(py, data)?;
+        let slice = coerced.as_bytes();
+        self.with_inner(py, |mp| mp.push_data(slice, rust_pts))
     }
 
     /// Push one subtitle payload.

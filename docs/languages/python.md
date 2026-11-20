@@ -1985,6 +1985,15 @@ both timestamps into the PES header. It needs exactly one configured video strea
 `dts <= pts` is the caller's invariant. `rtp.MountHandle.push_video_with_dts` is the same
 call on an RTSP mount.
 
+`mp.push_data(data, pts=...)` writes one PES on the program's single data stream
+(a pass-through: no framing, `pts` only for a `carries_pts=True` stream), and
+`mp.push_video_misp(nal, pts=..., key_frame=..., misp=MispTimestamp.micros(us, status))`
+splices an ST 0604 MISP timestamp SEI before the first VCL NAL unit, like
+`Muxer.push_video_misp_to`; it needs exactly one configured video stream.
+
+`HlsPublisher.local_addr()` is the server's `(host, port)` and `local_port()`
+its port; both are `None` for a publisher built with `.no_server()`.
+
 An unfinished `MuxPublisher` dropped without `finish_into_publisher()`
 aborts: nothing is drained and no closing cut is written. The Rust type's
 `Drop` drains best-effort; Python's does not.
@@ -2009,7 +2018,8 @@ an `HlsServerHandle` with `local_addr()` and `shutdown()`:
 ```python
 pub = mp.finish_into_publisher()
 handle = pub.finish_serving()      # #EXT-X-ENDLIST written; server keeps serving
-print("VOD at http://%s/playlist.m3u8" % handle.local_addr())
+host, port = handle.local_addr()
+print(f"VOD at http://{host}:{port}/playlist.m3u8")
 # ... hold the handle while clients should be able to fetch ...
 handle.shutdown()
 ```

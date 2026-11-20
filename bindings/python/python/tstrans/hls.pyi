@@ -14,7 +14,9 @@ from __future__ import annotations
 
 import abc
 
-from typing import Any, Union, final
+from typing import Any, Optional, Tuple, Union, final
+
+from .codec import MispTimestamp
 
 # A bytes-like input — `bytes`, `bytearray`, `memoryview`, NumPy uint8, or
 # any object implementing the buffer protocol. Concrete extraction happens
@@ -194,12 +196,12 @@ class HlsPublisher:
         """Richer HLS-specific stats."""
         ...
 
-    def local_addr(self) -> str | None:
-        """Bound HTTP server address as ``"ip:port"``, or ``None`` (built with ``no_server()``)."""
+    def local_addr(self) -> Optional[Tuple[str, int]]:
+        """Bound HTTP server address as ``(host, port)``, or ``None`` (built with ``no_server()``)."""
         ...
 
-    def local_port(self) -> int:
-        """Bound TCP port (0 if no server)."""
+    def local_port(self) -> Optional[int]:
+        """Bound TCP port, or ``None`` (built with ``no_server()``)."""
         ...
 
     def render_playlist(self, is_event: bool = ...) -> str:
@@ -244,8 +246,8 @@ class HlsServerHandle:
     explicitly; the server also stops when the handle is dropped.
     """
 
-    def local_addr(self) -> str:
-        """Bound HTTP server address as ``"ip:port"``.
+    def local_addr(self) -> Tuple[str, int]:
+        """Bound HTTP server address as ``(host, port)``.
 
         Raises ``HlsError(kind=FINISHED)`` after shutdown.
         """
@@ -422,6 +424,25 @@ class MuxPublisher:
     ) -> None:
         """``push_video`` with an explicit decode timestamp; requires exactly
         one configured video stream. ``dts <= pts`` is not enforced."""
+        ...
+
+    def push_video_misp(
+        self,
+        nal: _BytesLike,
+        *,
+        pts: Any,
+        key_frame: bool = ...,
+        misp: MispTimestamp,
+    ) -> None:
+        """``push_video`` plus an ST 0604 MISP timestamp SEI spliced before
+        the first VCL NAL unit; requires exactly one configured video
+        stream (``MuxError(INVALID_USAGE)`` otherwise)."""
+        ...
+
+    def push_data(self, data: _BytesLike, *, pts: Any) -> None:
+        """Push one payload on the program's single data stream: a PES
+        pass-through, ``pts`` written only for a ``carries_pts=True``
+        stream."""
         ...
 
     def push_klv(self, klv: _BytesLike, *, pts: Any, stream_index: int = ...) -> None:
