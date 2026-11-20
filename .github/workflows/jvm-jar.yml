@@ -240,6 +240,8 @@ jobs:
         run: |
           set -euo pipefail
           (cd bindings/jvm && ./gradlew sourcesJar --no-daemon --stacktrace -PnativeStagingDir="$GITHUB_WORKSPACE/staging")
+          sources=(bindings/jvm/build/libs/*-sources.jar)
+          [ "${#sources[@]}" -eq 1 ] && [ -f "${sources[0]}" ] || { echo "::error::want one sources JAR under bindings/jvm/build/libs, found: ${sources[*]}"; exit 1; }
           bash scripts/ci/jvm-hook-guard.sh check bindings/jvm/build/libs/*.jar
 
   publish:

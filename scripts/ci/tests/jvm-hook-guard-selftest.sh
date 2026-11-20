@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Self-test of scripts/ci/jvm-hook-guard.sh: the hook symbols derived from a
 # fixture source tree (each way a native can be compiled only under the
-# hooks, and the forms the parser must refuse), then archives and libraries
-# with and without a hook symbol, a sources JAR carrying a native, and the
+# hooks, the test-only Java classes that declare natives, and the forms the
+# parser must refuse), then archives and libraries with and without a hook
+# symbol, a sources JAR carrying a native, checks that read nothing, and the
 # positive control. Ends with the derivation over the real tree.
 set -euo pipefail
 
@@ -17,10 +18,38 @@ run() { set +e; bash "$GUARD" "$@" > "$TMP/out" 2>&1; rc=$?; set -e; }
 expect_rc() { [ "$rc" -eq "$1" ] || fail "$2: rc=$rc, want $1"; }
 has() { grep -qF -- "$1" "$TMP/out" || fail "$2: output lacks '$1'"; }
 lacks() { ! grep -qF -- "$1" "$TMP/out" || fail "$2: output has '$1'"; }
+lacks_line() { ! grep -qxF -- "$1" "$TMP/out" || fail "$2: output has the line '$1'"; }
 
 # --- A fixture source tree --------------------------------------------------
 S="$TMP/src"
-mkdir -p "$S/hooks" "$S/rtp"
+mkdir -p "$S/hooks" "$S/rtp" "$S/test/java/org/tstrans/internal" "$S/test/java/org/tstrans/rtp" "$S/test/java/org/tstrans/x"
+# Test-only classes that declare natives: each one's prefix is a hook prefix,
+# whether or not the Rust side has a native for it yet.
+cat > "$S/test/java/org/tstrans/internal/AttrProbe.java" <<'JAVA'
+package org.tstrans.internal;
+
+public final class AttrProbe {
+    public static native void nThree();
+}
+JAVA
+cat > "$S/test/java/org/tstrans/rtp/RtpProbe.java" <<'JAVA'
+package org.tstrans.rtp;
+
+final class RtpProbe {
+    static native long nTake(long handle);
+}
+JAVA
+# A native named in a comment is not a declaration.
+cat > "$S/test/java/org/tstrans/x/Doc.java" <<'JAVA'
+package org.tstrans.x;
+
+/**
+ * public static native long nFake();
+ */
+class Doc {
+    // static native void nAlsoFake();
+}
+JAVA
 cat > "$S/lib.rs" <<'RS'
 mod rtp;
 #[cfg(feature = "jni-test-hooks")]
@@ -81,7 +110,9 @@ done
 # natives (Session) does not, so only its hook native's exact name counts.
 has "prefix Java_org_tstrans_internal_" "the hook-only package"
 has "prefix Java_org_tstrans_internal_AttrProbe_" "a hook-only class"
-lacks "prefix Java_org_tstrans_rtp_" "a package with shipped natives"
+has "prefix Java_org_tstrans_rtp_RtpProbe_" "a test-only Java class"
+lacks_line "prefix Java_org_tstrans_rtp_" "a package with shipped natives"
+lacks "Java_org_tstrans_x_Doc_" "a native named in a comment"
 echo "PASS: fixture derive"
 
 # --- The parser refuses what it cannot classify ----------------------------
@@ -94,6 +125,17 @@ printf 'fn Java_a_B_nD() {}\n' > "$B/lib.rs"
 run derive --src "$B"
 expect_rc 1 "no hook native"
 has "no jni-test-hooks native found" "no hook native"
+printf '#[cfg(feature = "jni-test-hooks")]\nfn Java_a_B_nC() {}\nfn Java_a_B_nD() {}\n' > "$B/lib.rs"
+run derive --src "$B"
+expect_rc 1 "no test class declares a native"
+has "no native method declared under" "no test class declares a native"
+# A test-only class's native compiled without the feature fails at the source,
+# before any build: the mistake the symbol scan alone would then wave through.
+mkdir -p "$B/test/java/a"
+printf 'package a;\nclass B {\n    static native void nD();\n}\n' > "$B/test/java/a/B.java"
+run derive --src "$B"
+expect_rc 1 "an ungated native of a test-only class"
+has "compiled without the jni-test-hooks feature: Java_a_B_nD" "an ungated native of a test-only class"
 echo "PASS: refusals"
 
 # --- Libraries and archives -------------------------------------------------
@@ -128,6 +170,14 @@ for lib in hook.so hook.dylib newhook.dll; do
   has "test-hook symbol(s)" "$lib"
 done
 has "Java_org_tstrans_internal_AttrProbe_nNew" "a new native in a hook class"
+mklib "$TMP/rtpprobe.so" Java_org_tstrans_rtp_Session_nOpen Java_org_tstrans_rtp_RtpProbe_nTake
+run check --src "$S" "$TMP/rtpprobe.so"
+expect_rc 1 "a native of a test-only class the Rust side has no native for"
+has "test-hook symbol(s) Java_org_tstrans_rtp_RtpProbe_nTake" "a native of a test-only class"
+: > "$TMP/empty.so"
+run check --src "$S" "$TMP/empty.so"
+expect_rc 1 "a library with no JNI symbol"
+has "no JNI symbol" "a library with no JNI symbol"
 
 mkzip "$TMP/fat.jar" native/linux-x86_64/libtstjni.so="$TMP/plain.so" native/macos-aarch64/libtstjni.dylib="$TMP/plain.so"
 run check --src "$S" "$TMP/fat.jar"
@@ -138,6 +188,10 @@ mkzip "$TMP/hookfat.jar" native/linux-x86_64/libtstjni.so="$TMP/plain.so" native
 run check --src "$S" "$TMP/fat.jar" "$TMP/hookfat.jar"
 expect_rc 1 "a fat JAR with one hook library"
 has "hookfat.jar!native/macos-aarch64/libtstjni.dylib: test-hook symbol(s)" "the hook entry is named"
+mkzip "$TMP/thin.jar"
+run check --src "$S" "$TMP/thin.jar"
+expect_rc 1 "a JAR that is not a sources JAR with no native"
+has "thin.jar: no native library to check" "a JAR with no native"
 mkzip "$TMP/x-sources.jar"
 run check --src "$S" "$TMP/x-sources.jar"
 expect_rc 0 "sources JAR without natives"
