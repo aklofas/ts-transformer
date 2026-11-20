@@ -473,8 +473,10 @@ The receiving shells (`Receiver`, `DemuxReceiver`) report the address
 their open bound: `local_addr()` is `(host, port)` and `local_port()` its
 port, for a `udp://`, `rist://@` or `rtp://` bind (the kernel's port when
 the URL named 0) and for an `srt://` listener once its caller connected.
-They answer `None` for a shell whose open records no address (an accepted
-TCP connection), never wait behind a receive in progress, and raise the
+They answer `None` for a shell with no address of its own to report: a
+`tcp://` / `tcps://` receiver (caller or listener) and every receiver not
+made by `open` (from an RTSP session, a publish mount, `srt.Socket` or
+`tcp.Transport`). They never wait behind a receive in progress, and raise the
 transport's `CLOSED` once the shell is closed. For `srt://` the port is
 known only after the accept, so port 0 cannot tell a caller where to
 dial: use the low-level path below for that.
@@ -757,7 +759,7 @@ falls into two groups.
 | `repr()` | the open form | the `closed` form |
 | `local_addr()` / `local_port()` / `local_addr_port()`, `tcp.Transport.peer_addr()` | the value captured when the object was built | raises `CLOSED` |
 | `peer_addr()`, `source_rejected()` on the receiving shells, `udp.RecvTransport` and `rist.RecvTransport` | the publisher's address and the count of what the `source` pin turned away, as they stand (the same count in `stats().source_rejected` waits, like `stats()`) | the shells keep answering; the two transports raise `CLOSED` |
-| `rtp_stats()` on the receiving shells (`shells.Receiver`, `shells.DemuxReceiver`) | the RTP counters as they stand; `None` off `rtp://` and RTSP | the last value |
+| `rtp_stats()` on the receiving shells (`shells.Receiver`, `shells.DemuxReceiver`) | the RTP counters as they stand; `None` off `rtp://`, RTSP and a publish mount | the last value |
 | `RtspPushSession.stats()` | the push's counters as they stand | the last value, also after a conversion |
 | `video_handle()` … `data_handle()` on the three `MuxSender` classes | the handles of the program config the sender was built from | `None` |
 | `reconnect_attempts()`, `reconnect_stats()` on the managed shells | live counters kept outside the object | `reconnect_attempts()` keeps its last value; `reconnect_stats()` raises `CLOSED` |

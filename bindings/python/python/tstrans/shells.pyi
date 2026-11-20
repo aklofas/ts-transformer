@@ -501,8 +501,8 @@ class DemuxReceiver:
         on another thread; raises the transport's ``CLOSED`` kind after
         ``close()``. A record taken earlier keeps its values."""
     def rtp_stats(self) -> Optional[RtpStats]:
-        """The RTP counters of a receiver over ``rtp://`` or an RTSP
-        session; ``None`` on any other transport. Never waits behind a call
+        """The RTP counters of a receiver over ``rtp://``, an RTSP session
+        or a publish mount; ``None`` on any other transport. Never waits behind a call
         parked on another thread; the last value after ``close()``."""
     def last_seen(self, pid: int) -> Optional[datetime.datetime]:
         """When ``pid`` last carried an item through this receiver, as a
