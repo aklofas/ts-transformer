@@ -1239,7 +1239,7 @@ impl PyRtspSession {
 }
 
 /// `raise` needs a `Python` token; this helper serves the sites that have
-/// none in scope (e.g. `refuse_if_consumed` returning a typed error inside
+/// none in scope (e.g. `refuse_if_closed` returning a typed error inside
 /// a `?` chain before `Python::attach`) by re-acquiring the GIL.
 fn rtsp_err_no_gil(kind: BindingErrorKind, message: &str) -> PyErr {
     Python::attach(|py| raise(py, &RTSP, BindingError::new(kind, message)))
