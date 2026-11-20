@@ -1951,6 +1951,152 @@ rm -r "$tmp/dep/bindings/jvm"
 expect "deprecations: a tree whose Java sources were not found fails" 1 dep
 expect_out "deprecations: what was not read" "no java source file was read under bindings/jvm/src/main: its deprecations were not checked"
 
+# An argument's deprecation is its own name: `module.Class.method.arg` in
+# Python, `Class.method(types)` in Java. A warning covers a Python argument
+# row only when it names the method with its `(` and the argument; a Java
+# site only when its parameter types are the row's list; rows that share a
+# last component need a site each; a removed argument row is resolved
+# against the stub's signature or the class's overloads.
+dep_args() {
+    local t="$tmp/dep"
+    cat >> "$t/bindings/python/src/lib.rs" <<'EOF'
+
+fn recv_bytes(py: Python<'_>) -> PyResult<()> {
+    PyErr::warn(py, &py.get_type::<PyDeprecationWarning>(), c"Receiver.recv_bytes(max_len=...) is deprecated: the argument is ignored; removed in 0.12.0", 1)
+}
+
+fn managed_recv_bytes(py: Python<'_>) -> PyResult<()> {
+    PyErr::warn(py, &py.get_type::<PyDeprecationWarning>(), c"ManagedReceiver.recv_bytes(max_len=...) is deprecated: the argument is ignored; removed in 0.12.0", 1)
+}
+EOF
+    cat > "$t/bindings/python/python/tstrans/shapes.pyi" <<'EOF'
+class Thing:
+    def open(
+        self,
+        url: str,
+        *,
+        retries: int = 0,
+    ) -> "Thing": ...
+EOF
+    cat > "$t/bindings/jvm/src/main/java/org/demo/Server.java" <<'EOF'
+package org.demo;
+
+public final class Server {
+    /**
+     * Stops the server.
+     *
+     * @deprecated the argument is ignored: use {@link #stop()}; removed in 0.12.0.
+     */
+    @Deprecated(since = "0.10.0", forRemoval = true)
+    public void stop(long drainMs) {
+        nStop();
+    }
+
+    public void stop() {
+        nStop();
+    }
+
+    private native void nStop();
+}
+EOF
+    cat > "$t/CHANGELOG.md" <<'EOF'
+# Changelog
+
+## [Unreleased]
+
+### Removed — tst-demo (BREAKING)
+
+- `Gone` is removed: use `New`.
+
+### Removed — tst-py (BREAKING)
+
+- `Thing.open(timeout=...)`: the `timeout` argument is removed.
+
+### Removed — tst-jni (BREAKING)
+
+- `Server.stop(int)` is removed.
+
+## [0.10.0] — 2026-01-01
+
+### Removed — tst-demo (BREAKING)
+
+- `Older` is removed.
+EOF
+    cat >> "$t/tests/coverage/deprecations.toml" <<'EOF'
+
+[[deprecation]]
+lang = "python"
+symbol = "tstrans.shells.Receiver.recv_bytes.max_len"
+since = "0.10.0"
+replacement = "tstrans.shells.Receiver.recv_bytes()"
+earliest_removal = "0.12.0"
+
+[[deprecation]]
+lang = "python"
+symbol = "tstrans.srt.ManagedReceiver.recv_bytes.max_len"
+since = "0.10.0"
+replacement = "tstrans.srt.ManagedReceiver.recv_bytes()"
+earliest_removal = "0.12.0"
+
+[[deprecation]]
+lang = "java"
+symbol = "org.demo.Server.stop(long)"
+since = "0.10.0"
+replacement = "org.demo.Server.stop()"
+earliest_removal = "0.12.0"
+
+[[deprecation]]
+lang = "python"
+symbol = "tstrans.shapes.Thing.open.timeout"
+since = "0.9.0"
+replacement = "tstrans.shapes.Thing.open(retries=...)"
+earliest_removal = "0.11.0"
+removed_in = "0.11.0"
+
+[[deprecation]]
+lang = "java"
+symbol = "org.demo.Server.stop(int)"
+since = "0.9.0"
+replacement = "org.demo.Server.stop()"
+earliest_removal = "0.11.0"
+removed_in = "0.11.0"
+EOF
+}
+dep_tree; dep_args
+expect "deprecations: argument rows with a site each pass" 0 dep
+expect_out "deprecations: the argument sites are counted" "9 deprecation sites (rust 1, java 3, python 5); 8 live rows, 3 removed rows"
+expect_out "deprecations: the removed arguments are resolved" "2 removed argument rows resolved"
+dep_tree; dep_args
+plant "$tmp/dep/bindings/python/src/lib.rs" 'PyErr::warn(.*c"ManagedReceiver.*' 'Ok(())'
+expect "deprecations: two rows sharing a last component with one site fail" 1 dep
+expect_out "deprecations: the row left without a site" "live row tstrans.srt.ManagedReceiver.recv_bytes.max_len (python) shares its last component \`max_len\` with tstrans.shells.Receiver.recv_bytes.max_len"
+dep_tree; dep_args
+plant "$tmp/dep/bindings/python/src/lib.rs" 'c"Receiver.recv_bytes(max_len=...)' 'c"Receiver.recv_bytes: max_len'
+expect "deprecations: a warning that names the argument but not the method call fails" 1 dep
+expect_out "deprecations: the warning that names no method call" "bindings/python/src/lib.rs:9: PyDeprecationWarning on"
+expect_out "deprecations: is covered by no argument row" "has no live row"
+dep_tree; dep_args
+printf 'package org.demo;\n\npublic final class Server {\n    public void stop(long drainMs) {}\n\n    /** @deprecated use {@link #stop(long)}; removed in 0.12.0. */\n    @Deprecated(since = "0.10.0", forRemoval = true)\n    public void stop() {}\n}\n' \
+    > "$tmp/dep/bindings/jvm/src/main/java/org/demo/Server.java"
+expect "deprecations: @Deprecated on the overload the row does not name fails" 1 dep
+expect_out "deprecations: the row of the other overload" "live row org.demo.Server.stop(long) (java) covers no deprecation site"
+expect_out "deprecations: the overload with no row" "Server.java:8: @Deprecated on \`stop\` has no live row"
+dep_tree; dep_args
+plant "$tmp/dep/bindings/python/python/tstrans/shapes.pyi" 'retries: int = 0,' 'retries: int = 0,\
+        timeout: float = 1.0,'
+expect "deprecations: a removed argument still in the stub's signature fails" 1 dep
+expect_out "deprecations: the argument that is not gone" "removed row tstrans.shapes.Thing.open.timeout: bindings/python/python/tstrans/shapes.pyi still gives Thing.open a parameter \`timeout\`"
+dep_tree; dep_args
+plant "$tmp/dep/bindings/jvm/src/main/java/org/demo/Server.java" '    private native void nStop();' '    public void stop(int code) {}\
+\
+    private native void nStop();'
+expect "deprecations: a removed Java overload still declared fails" 1 dep
+expect_out "deprecations: the overload that is not gone" "removed row org.demo.Server.stop(int): bindings/jvm/src/main/java/org/demo/Server.java still declares stop(int)"
+dep_tree; dep_args
+rm "$tmp/dep/bindings/python/python/tstrans/shapes.pyi"
+expect "deprecations: a removed Python argument row with no stub to read fails" 1 dep
+expect_out "deprecations: the missing stub" "removed row tstrans.shapes.Thing.open.timeout: no stub for tstrans.shapes"
+
 # ---- doc-snippets: a marked snippet that does not compile fails -------------
 DS="$DIR/../check/repo/doc-snippets.sh"
 mkdir -p "$tmp/ds/inc"

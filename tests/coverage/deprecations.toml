@@ -20,7 +20,11 @@
 #   symbol            the name as a user of that language writes it, fully
 #                     qualified: `tst_srt::socket::Socket`,
 #                     `tstrans.mpegts.DemuxEvent.Klv`, `org.tstrans.srt.Sender`.
-#                     A trailing `()` names a constructor.
+#                     A trailing `()` names a Python constructor. One argument
+#                     is named as Python `module.Class.method.arg`
+#                     (`tstrans.rtp.RtspServer.stop.drain_ms`); one Java
+#                     overload as `Class.method(types)`
+#                     (`org.tstrans.rtp.RtspServer.stop(long)`).
 #   since             the release that deprecated it
 #   replacement       what to use instead
 #   earliest_removal  the first release that may remove it (X.Y.Z)

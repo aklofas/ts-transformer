@@ -38,11 +38,21 @@
 #           nothing (a warning call) names it as a whole word in its message
 #           or in a comment directly above the statement. The row of a Java
 #           class covers the deprecated members of that class too.
+#   an argument  a Python row `module.Class.method.arg` (the last two
+#           components lower-snake after a CapWords class) names one argument:
+#           a site covers it only when it names the method with its `(` and
+#           the argument as a whole word (`stop(drain_ms=...)`), or declares
+#           the method with a parameter of that name. A Java row
+#           `Class.method(types)` names one overload: the site's declaration
+#           must have exactly those parameter types (`stop(long)` is not
+#           covered by `@Deprecated` on `stop()`).
 #
 # Enforced (fails on violation):
 #   (a) every site is covered by a live row (a row without `removed_in`);
 #   (b) every live row covers a site, and where the site states `since = "X"`
-#       (Rust, Java) X equals the row's `since`;
+#       (Rust, Java) X equals the row's `since`; live rows of one language
+#       that share their last component (`max_len` of two methods) cover a
+#       site each, so one warning cannot stand for both;
 #   (c) a live row's `earliest_removal` is later than the workspace version
 #       ([workspace.package] version in Cargo.toml), and every removal
 #       version written at a site ("removed in X.Y.Z", "remove at X.Y",
@@ -52,6 +62,11 @@
 #   (d) a removed row covers no site; a Rust row's path is in no
 #       crates/*/public-api.txt and a Java row's class file does not exist
 #       (Python names are not resolved: the binding's tests assert those);
+#       a removed argument is resolved: the stub of a Python row's module
+#       (`<module>.pyi` or `<module>/__init__.pyi`, which must exist) gives
+#       no `def method` of its class a parameter of that name, and the class
+#       file of a Java overload row (when it still exists) declares no method
+#       of that name with those parameter types;
 #       `removed_in` is not earlier than `earliest_removal`; and CHANGELOG.md
 #       names the row's last component under a `### Removed` heading that
 #       names its package (the crate with hyphens, `tst-py`, `tst-jni`,
@@ -147,6 +162,105 @@ def plain(symbol):
 
 def leaf(symbol):
     return re.split(r"::|\.", plain(symbol))[-1]
+
+
+SNAKE = r"[a-z_][a-z0-9_]*"
+
+
+def py_argument(row):
+    """(class, method, argument) of a Python row that names an argument,
+    `module.Class.method.arg`; None for any other row."""
+    parts = row["symbol"].split(".")
+    if (row["lang"] == "python" and len(parts) >= 4 and re.fullmatch(r"[A-Z]\w*", parts[-3])
+            and re.fullmatch(SNAKE, parts[-2]) and re.fullmatch(SNAKE, parts[-1])):
+        return parts[-3], parts[-2], parts[-1]
+    return None
+
+
+def split_top(text, opening, closing):
+    """`text` cut at the commas outside every bracket."""
+    out, depth, cur = [], 0, ""
+    for c in text:
+        depth += (c in opening) - (c in closing)
+        if c == "," and depth == 0:
+            out.append(cur)
+            cur = ""
+        else:
+            cur += c
+    out.append(cur)
+    return [p.strip() for p in out if p.strip()]
+
+
+def java_types(row):
+    """The parameter types of a Java row that names one overload,
+    `Class.method(long, int)`; None for any other row."""
+    m = re.fullmatch(r"[\w.]+\.\w+\((.*)\)", row["symbol"]) if row["lang"] == "java" else None
+    return [re.sub(r"\s+", "", t) for t in split_top(m.group(1), "(<[", ")>]")] if m else None
+
+
+def inside(text, start):
+    """The text from `start` to the `)` that closes the `(` just before it."""
+    depth = 1
+    for i in range(start, len(text)):
+        depth += (text[i] == "(") - (text[i] == ")")
+        if depth == 0:
+            return text[start:i]
+    return None
+
+
+NOT_A_TYPE = {"return", "new", "throw", "else", "case", "do", "yield", "assert"}
+
+
+def java_overloads(code, name):
+    """The parameter types of every declaration of the method `name` in
+    `code` (a call is not one: its arguments have no declared type)."""
+    found = []
+    for m in re.finditer(r"(?<![\w.#])" + re.escape(name) + r"\s*\(", code):
+        before = code[: m.start()].rstrip()
+        prev = re.search(r"(\w+)$", before)
+        if not (before.endswith((">", "]")) or (prev and prev.group(1) not in NOT_A_TYPE)):
+            continue
+        args = inside(code, m.end())
+        types = []
+        for p in split_top(args or "", "(<[", ")>]"):
+            p = re.sub(r"\bfinal\b", "", re.sub(r"@[\w.]+(\([^()]*\))?", "", p)).strip()
+            t = re.fullmatch(r"(.+?)\s*\b\w+", p)
+            if not t:
+                break
+            types.append(re.sub(r"\s+", "", t.group(1)))
+        else:
+            if args is not None:
+                found.append(types)
+    return found
+
+
+def java_code(text):
+    """Java source without its string literals and comments."""
+    text = "\n".join(STRING.sub('""', line) for line in text.split("\n"))
+    return re.sub(r"//[^\n]*", "", re.sub(r"/\*.*?\*/", " ", text, flags=re.S))
+
+
+def py_params(text, cls, method):
+    """Every parameter name of every `def method` in `class cls` of a stub;
+    None when the stub has no such class."""
+    lines = [line.split("#")[0] for line in text.split("\n")]
+    names, found = set(), False
+    for i, line in enumerate(lines):
+        m = re.match(r"(\s*)class\s+" + re.escape(cls) + r"\b", line)
+        if not m:
+            continue
+        found, indent, body = True, len(m.group(1)), []
+        for later in lines[i + 1:]:
+            if later.strip() and len(later) - len(later.lstrip()) <= indent:
+                break
+            body.append(later)
+        block = "\n".join(body)
+        for d in re.finditer(r"\bdef\s+" + re.escape(method) + r"\s*\(", block):
+            for p in split_top(inside(block, d.end()) or "", "([{", ")]}"):
+                n = re.match(r"\*{0,2}(\w+)", p)
+                if n:
+                    names.add(n.group(1))
+    return names if found else None
 
 
 # ---- inputs ---------------------------------------------------------------
@@ -316,9 +430,11 @@ def python_name(decl):
 def site(lang, rel, line, scope, name, kind, comments, above, decl):
     text = " ".join(c.lstrip("/#*! ") for c in comments + above + decl)
     since = re.search(r'\bsince\s*=\s*"([^"]*)"', " ".join(above + decl))
+    overloads = java_overloads(java_code(" ".join(decl)), name) if lang == "java" and name else []
     sites.append({
         "lang": lang, "file": rel, "line": line, "scope": scope, "name": name, "kind": kind,
-        "text": text, "since": since.group(1) if since else None,
+        "text": text, "since": since.group(1) if since else None, "decl": " ".join(decl),
+        "params": overloads[0] if overloads else None,
         "promises": [version(v) for v in PROMISE.findall(text)], "first": decl[0],
     })
 
@@ -393,7 +509,16 @@ def covers(row, s):
         return False
     if row["lang"] == "java" and symbol == scope:
         return True
-    return s["name"] == row["leaf"] if s["name"] else word(row["leaf"], s["text"])
+    argument = py_argument(row)
+    if argument:
+        _, method, arg = argument
+        if s["name"]:
+            return s["name"] == method and word(arg, s["decl"])
+        return re.search(r"(?<!\w)" + re.escape(method) + r"\(", s["text"]) is not None and word(arg, s["text"])
+    if not (s["name"] == row["leaf"] if s["name"] else word(row["leaf"], s["text"])):
+        return False
+    types = java_types(row)
+    return types is None or s["params"] == types
 
 
 def at(s):
@@ -449,6 +574,33 @@ for r in live:
             f"already {show(workspace)}: remove the name in this release (add removed_in), or move "
             "earliest_removal, the code and the docs to a later release")
 
+# Rows that share a last component (`max_len` of two methods) could all lean
+# on one site: each needs a site of its own.
+groups = {}
+for r in live:
+    groups.setdefault((r["lang"], r["leaf"]), []).append(r)
+for (lang, name), group in groups.items():
+    if len(group) < 2:
+        continue
+    options = [[i for i, s in enumerate(sites) if covers(r, s)] for r in group]
+    served = {}  # site -> the row of the group it serves
+
+    def place(k, tried):
+        for i in options[k]:
+            if i not in tried:
+                tried.add(i)
+                if i not in served or place(served[i], tried):
+                    served[i] = k
+                    return True
+        return False
+
+    for k, r in enumerate(group):
+        if options[k] and not place(k, set()):
+            shared = len({i for o in options for i in o})
+            others = ", ".join(o["symbol"] for o in group if o is not r)
+            err(f"{MANIFEST}: live row {r['symbol']} ({lang}) shares its last component `{name}` with {others}, "
+                f"and they cover {shared} site(s) between them: each row needs a deprecation site of its own")
+
 # ---- (d): removed rows ----------------------------------------------------
 
 try:
@@ -474,7 +626,7 @@ if os.path.isdir(os.path.join(root, "crates")):
         rel = f"crates/{d}/public-api.txt"
         if os.path.isfile(os.path.join(root, rel)):
             baselines[rel] = read(rel)
-rust_absent = java_absent = noted = 0
+rust_absent = java_absent = noted = resolved = 0
 for r in gone:
     name = f"{MANIFEST}: removed row {r['symbol']}"
     for s in sites:
@@ -490,12 +642,35 @@ for r in gone:
         if hit:
             err(f"{name} is still a public path in {hit[0]}: remove the item, or drop removed_in from the row")
         rust_absent += not hit
-    if r["lang"] == "java":
+    types, argument = java_types(r), py_argument(r)
+    if types is not None:
+        cls, method = symbol.rsplit(".", 1)
+        parts = cls.split(".")
+        candidates = [f"bindings/jvm/src/main/java/{'/'.join(parts[:n])}.java" for n in range(len(parts), 0, -1)]
+        rel = next((f for f in candidates if os.path.isfile(os.path.join(root, f))), None)
+        if rel and types in java_overloads(java_code(read(rel)), method):
+            err(f"{name}: {rel} still declares {method}({', '.join(types)}): remove the overload, "
+                "or drop removed_in from the row")
+        else:
+            resolved += 1
+    elif r["lang"] == "java":
         rel = "bindings/jvm/src/main/java/" + symbol.replace(".", "/") + ".java"
         if os.path.isfile(os.path.join(root, rel)):
             err(f"{name}: {rel} still exists: remove the class, or drop removed_in from the row")
         else:
             java_absent += 1
+    if argument:
+        cls, method, arg = argument
+        module = symbol.rsplit(".", 3)[0]
+        base = "bindings/python/python/" + module.replace(".", "/")
+        stub = next((f for f in (base + ".pyi", base + "/__init__.pyi") if os.path.isfile(os.path.join(root, f))), None)
+        if stub is None:
+            err(f"{name}: no stub for {module} ({base}.pyi): a removed argument is checked against the stub's signature")
+        elif arg in (py_params(read(stub), cls, method) or set()):
+            err(f"{name}: {stub} still gives {cls}.{method} a parameter `{arg}`: remove it, "
+                "or drop removed_in from the row")
+        else:
+            resolved += 1
     if r["removed_in"] in released:
         section = r["removed_in"]
     elif r["removed_v"] >= workspace:
@@ -586,7 +761,8 @@ print(f"  (b) {with_site} of {len(live)} live rows cover a site; `since` compare
 print(f"  (c) {len(live)} earliest_removal and {promises_read} removal versions written at sites compared with "
       f"workspace {show(workspace)} and the rows")
 print(f"  (d) {len(gone)} removed rows: {rust_absent} Rust paths absent from {len(baselines)} public-api.txt, "
-      f"{java_absent} Java rows with no class file, {noted} named under `### Removed` in CHANGELOG.md")
+      f"{java_absent} Java rows with no class file, {resolved} removed argument rows resolved against the stubs "
+      f"and the Java classes, {noted} named under `### Removed` in CHANGELOG.md")
 print(f"  (e) {docs_compared} symbol and removal-version passages compared in {docs_read} docs pages")
 if failures:
     print(f"deprecations: {len(failures)} failure(s)", file=sys.stderr)
