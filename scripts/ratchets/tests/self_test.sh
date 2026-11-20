@@ -2097,13 +2097,38 @@ dep_tree; dep_args
 expect "deprecations: argument rows with a site each pass" 0 dep
 expect_out "deprecations: the argument sites are counted" "10 deprecation sites (rust 1, java 3, python 6); 9 live rows, 5 removed rows"
 expect_out "deprecations: the removed arguments are resolved" "2 removed argument rows resolved"
-# One warning that names both classes' methods covers both rows, and is
-# still one site.
+# Two method rows that share a last component, and one warning naming it:
+# each row needs a site of its own.
+dep_two_srt_stats() {
+    cat >> "$tmp/dep/bindings/python/src/lib.rs" <<'EOF'
+
+fn srt_stats(py: Python<'_>) -> PyResult<()> {
+    PyErr::warn(py, &py.get_type::<PyDeprecationWarning>(), c"srt_stats() is deprecated: use socket_stats(); removed in 0.12.0", 1)
+}
+EOF
+    printf '\n[[deprecation]]\nlang = "python"\nsymbol = "%s"\nsince = "0.10.0"\nreplacement = "socket_stats"\nearliest_removal = "0.12.0"\n' \
+        tstrans.shells.Receiver.srt_stats tstrans.srt.ManagedReceiver.srt_stats >> "$tmp/dep/tests/coverage/deprecations.toml"
+}
+dep_tree; dep_args; dep_two_srt_stats
+expect "deprecations: two rows sharing a last component with one site fail" 1 dep
+expect_out "deprecations: the row left without a site" "live row tstrans.srt.ManagedReceiver.srt_stats (python) shares its last component \`srt_stats\` with tstrans.shells.Receiver.srt_stats"
+# A stub's deprecated method is the shells row's site; the warning then serves
+# the other row, whatever the order the rows are tried in.
+dep_stats_stub() { # <name of the deprecated def>
+    printf 'from typing_extensions import deprecated\n\nclass Receiver:\n    @deprecated("use socket_stats(); removed in 0.12.0")\n    def %s(self) -> int: ...\n' "$1" \
+        > "$tmp/dep/bindings/python/python/tstrans/shells.pyi"
+}
+dep_tree; dep_args; dep_two_srt_stats; dep_stats_stub srt_stats
+expect "deprecations: rows sharing a last component get a site each when one exists" 0 dep
+dep_tree; dep_args; dep_two_srt_stats; dep_stats_stub other_stats
+expect "deprecations: a stub def of another name is no site of the row" 1 dep
+expect_out "deprecations: the row still left without a site" "live row tstrans.srt.ManagedReceiver.srt_stats (python) shares its last component \`srt_stats\`"
+# A message naming two qualified calls is the site of the first one's row.
 dep_tree; dep_args
 plant "$tmp/dep/bindings/python/src/lib.rs" 'PyErr::warn(.*c"ManagedReceiver.*' 'Ok(())'
-plant "$tmp/dep/bindings/python/src/lib.rs" 'c"Receiver.recv_bytes(' 'c"ManagedReceiver.recv_bytes(max_len=...) and Receiver.recv_bytes('
-expect "deprecations: two rows sharing a last component with one site fail" 1 dep
-expect_out "deprecations: the row left without a site" "live row tstrans.srt.ManagedReceiver.recv_bytes.max_len (python) shares its last component \`max_len\` with tstrans.shells.Receiver.recv_bytes.max_len"
+plant "$tmp/dep/bindings/python/src/lib.rs" 'c"Receiver.recv_bytes(max_len=...)' 'c"Receiver.recv_bytes(max_len=...) like ManagedReceiver.recv_bytes(max_len=...)'
+expect "deprecations: a message naming two calls covers the first one's row only" 1 dep
+expect_out "deprecations: the second call's row" "live row tstrans.srt.ManagedReceiver.recv_bytes.max_len (python) covers no deprecation site"
 # A warning names its own class and method: one that names the method alone,
 # or another class's, is no row's site.
 dep_tree; dep_args
@@ -2150,9 +2175,8 @@ plant "$tmp/dep/bindings/jvm/src/main/java/org/demo/Server.java" '    private na
     private native void nStop();'
 expect "deprecations: a removed Java method still declared fails" 1 dep
 expect_out "deprecations: the method that is not gone" "removed row org.demo.Server.restart: bindings/jvm/src/main/java/org/demo/Server.java still declares restart"
-# A stub's deprecated overload names its argument as a parameter. Two rows
-# that share `max_len`, one covering two sites and one only the first: each
-# still gets a site, whatever the order the rows are tried in.
+# A stub's deprecated overload, in the row's class and naming the argument as
+# a parameter, is that argument's site.
 dep_shells_stub() { # <class> <parameter>
     cat > "$tmp/dep/bindings/python/python/tstrans/shells.pyi" <<EOF
 from typing import overload
@@ -2165,14 +2189,13 @@ class $1:
     @overload
     def recv_bytes(self) -> bytes: ...
 EOF
-    plant "$tmp/dep/bindings/python/src/lib.rs" 'PyErr::warn(.*c"ManagedReceiver.*' 'Ok(())'
-    plant "$tmp/dep/bindings/python/src/lib.rs" 'c"Receiver.recv_bytes(' 'c"ManagedReceiver.recv_bytes(max_len=...) and Receiver.recv_bytes('
+    plant "$tmp/dep/bindings/python/src/lib.rs" 'PyErr::warn(.*c"Receiver.*' 'Ok(())'
 }
 dep_tree; dep_args; dep_shells_stub Receiver max_len
 expect "deprecations: a stub overload naming the argument is that argument's site" 0 dep
 dep_tree; dep_args; dep_shells_stub Receiver size
 expect "deprecations: a stub overload without the argument is not its site" 1 dep
-expect_out "deprecations: the row left without a site of its own" "live row tstrans.srt.ManagedReceiver.recv_bytes.max_len (python) shares its last component \`max_len\`"
+expect_out "deprecations: the row without its overload" "live row tstrans.shells.Receiver.recv_bytes.max_len (python) covers no deprecation site"
 dep_tree; dep_args; dep_shells_stub Other max_len
 expect "deprecations: a stub overload in another class is not the argument's site" 1 dep
 expect_out "deprecations: the overload of the other class" "shells.pyi:7: @deprecated on \`recv_bytes\` has no live row"

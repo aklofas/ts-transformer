@@ -42,9 +42,11 @@
 #           class too.
 #   an argument  a Python row `module.Class.method.arg` (the last two
 #           components lower-snake after a CapWords class) names one argument:
-#           a warning covers it only when its message names the class's
-#           method call, `<Class>.<method>(`, and the argument as a whole
-#           word (`RtspServer.stop(drain_ms=...) is deprecated`); a
+#           a warning covers it only when the first call of the method its
+#           message names is qualified with the row's class,
+#           `<Class>.<method>(`, and the message names the argument as a
+#           whole word (`RtspServer.stop(drain_ms=...) is deprecated`); an
+#           unqualified `stop(drain_ms=...)` covers no argument row; a
 #           `@deprecated` def covers it when it is that method of that class
 #           and declares the argument. A Java row `Class.method(types)` names
 #           one overload: the site's declaration, directly in that class
@@ -546,8 +548,9 @@ def covers(row, s):
         cls, method, arg = argument
         if s["name"]:
             return s["owner"] == cls and s["name"] == method and word(arg, s["decl"])
-        call = r"(?<!\w)" + re.escape(cls) + r"\." + re.escape(method) + r"\("
-        return re.search(call, s["text"]) is not None and word(arg, s["text"])
+        # The first qualified call of the method names the one class it is for.
+        call = re.search(r"(?<!\w)(\w+)\." + re.escape(method) + r"\(", s["text"])
+        return call is not None and call.group(1) == cls and word(arg, s["text"])
     if not (s["name"] == row["leaf"] if s["name"] else named(row["leaf"], s["text"])):
         return False
     types = java_types(row)
