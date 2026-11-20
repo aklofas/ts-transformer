@@ -425,6 +425,19 @@ class ScenarioReproductionTest {
         "exception-kind-stability", "covered: DemuxerConfigTest.strictFullRejectsNonConformantInput "
             + "(the same corrupted-PMT input) + ErrorModelTest.kindMembersMatchTheDemuxDomain");
 
+    /**
+     * binding_contract ids declared above whose golden's {@code extensions} carries observed
+     * values, and the keys those values sit under. A "covered:" string compares nothing, so
+     * any other id with such values must have a leg in {@link #CONTRACT_LEGS}.
+     */
+    static final Map<String, Set<String>> EXTENSIONS_COMPARED_ELSEWHERE = Map.of(
+        // detail: CancelledRecvKindGoldenTest compares it with the cancelled receive's message.
+        // c_code: the C ABI's return code (TST_E_CLOSED), which run_scenarios.c checks; the
+        // JVM has no numeric code to compare.
+        "cancelled-recv-kind", Set.of("c_code", "detail"),
+        // c_code: the C ABI's return code (TST_E_TRANSPORT), which run_scenarios.c checks.
+        "peer-reset-recv-kind", Set.of("c_code"));
+
     /** A leg that runs here, against the text of its scenario's golden. */
     @FunctionalInterface
     interface ContractLeg {
@@ -465,6 +478,9 @@ class ScenarioReproductionTest {
                     leg.run(golden);
                     return;
                 }
+                assertEquals(EXTENSIONS_COMPARED_ELSEWHERE.getOrDefault(id, Set.of()), extensionValueKeys(golden),
+                    id + ": the keys of the golden's extensions that hold observed values; only a leg in "
+                        + "CONTRACT_LEGS compares them (a \"covered:\" string compares nothing)");
                 String how = BINDING_CONTRACT.get(id);
                 assertNotNull(how, id + " is a binding_contract scenario with no JVM coverage declared");
                 assertTrue(how.startsWith("covered:") || how.startsWith("skip:"), how);
@@ -512,6 +528,56 @@ class ScenarioReproductionTest {
             id + " passed with " + what + ": its leg does not compare that value with what it observed");
         assertTrue(Pattern.compile(failure).matcher(String.valueOf(e.getMessage())).find(),
             id + " failed with " + what + ", but not at the comparison of that value: " + e);
+    }
+
+    /**
+     * The top-level keys of the golden's {@code extensions} object except {@code contract},
+     * the scenario's label: the keys that hold observed values. None when it is null or absent.
+     */
+    static Set<String> extensionValueKeys(String golden) {
+        Set<String> keys = new TreeSet<>();
+        int k = golden.indexOf("\"extensions\"");
+        if (k < 0) return keys;
+        int i = golden.indexOf(':', k) + 1;
+        while (Character.isWhitespace(golden.charAt(i))) i++;
+        if (golden.startsWith("null", i)) return keys;
+        assertEquals('{', golden.charAt(i), "the golden's extensions is neither an object nor null");
+        int depth = 0;
+        for (; i < golden.length(); i++) {
+            char c = golden.charAt(i);
+            if (c == '"') {
+                int close = i + 1;
+                while (golden.charAt(close) != '"') close += golden.charAt(close) == '\\' ? 2 : 1;
+                int next = close + 1;
+                while (Character.isWhitespace(golden.charAt(next))) next++;
+                if (depth == 1 && golden.charAt(next) == ':') keys.add(golden.substring(i + 1, close));
+                i = close;
+            } else if (c == '{' || c == '[') {
+                depth++;
+            } else if ((c == '}' || c == ']') && --depth == 0) {
+                break;
+            }
+        }
+        keys.remove("contract");
+        return keys;
+    }
+
+    /** An exemption names an id declared with a "covered:" string, not a leg or a stale id. */
+    @Test
+    void everyExtensionsExemptionIsADeclaredId() {
+        assertTrue(BINDING_CONTRACT.keySet().containsAll(EXTENSIONS_COMPARED_ELSEWHERE.keySet()),
+            "exempted " + EXTENSIONS_COMPARED_ELSEWHERE.keySet() + ", declared " + BINDING_CONTRACT.keySet());
+    }
+
+    @Test
+    void extensionValueKeysReadsOnlyTheTopLevelOfExtensions() {
+        assertEquals(Set.of(), extensionValueKeys("{\"core\": [], \"extensions\": null}"));
+        assertEquals(Set.of(), extensionValueKeys("{\"core\": []}"));
+        assertEquals(Set.of(), extensionValueKeys("{\"extensions\": {\"contract\": \"x\"}}"));
+        assertEquals(Set.of("stats", "rows", "detail"), extensionValueKeys(
+            "{\"core\": [{\"event\": \"error\"}], \"extensions\": {\"contract\": \"x\", "
+                + "\"stats\": {\"a\": 1}, \"rows\": [{\"code\": 0, \"name\": \"N\"}], "
+                + "\"detail\": \"a \\\"quoted\\\": text\"}}"));
     }
 
     /** Every leg run here has at least one edit above. */
