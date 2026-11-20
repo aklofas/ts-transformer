@@ -42,10 +42,14 @@ class RtspSessionCloseTest {
              RtspSession session = RtspClient.connect(peer.config());
              Drain drain = new Drain(session.intoDemuxReceiver())) {
             drain.awaitLive();
+            // A receiver taken from an RTSP session reaches its RTP counters.
+            assertTrue(drain.rx.rtpStats().isPresent());
             session.close();
             assertTrue(peer.awaitTeardown(CLOSE_BOUND_MS), "close() sent TEARDOWN");
             assertClosed(drain.awaitEnd(CLOSE_BOUND_MS));
             assertEquals(Optional.of(EndReason.CANCELLED), drain.rx.endReason());
+            drain.rx.close();
+            assertTrue(drain.rx.rtpStats().isPresent());
         }
     }
 

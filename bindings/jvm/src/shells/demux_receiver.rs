@@ -103,10 +103,16 @@ pub(crate) fn write_counter_out(env: &mut Env, out: &JLongArray, v: u64) {
     let _ = out.set_region(env, 0, &[counter_to_jlong(v)]);
 }
 
-/// The RTP counters as a Java `RtpStats`; null with nothing pending when JNI
-/// cannot build it (the getter then keeps its last value).
+/// The RTP counters as a Java `RtpStats`; null when JNI cannot build it, with its
+/// error cleared, so the getter answers its last value instead of throwing.
 pub(crate) fn rtp_stats_object(env: &mut Env, h: &RtpStatsHandle) -> jobject {
-    build_rtp_stats(env, &h.stats()).map_or(std::ptr::null_mut(), JObject::into_raw)
+    match build_rtp_stats(env, &h.stats()) {
+        Ok(o) => o.into_raw(),
+        Err(_) => {
+            env.exception_clear();
+            std::ptr::null_mut()
+        }
+    }
 }
 
 /// Write the RTP counters into `out[0..2]` (malformed, source-rejected); a

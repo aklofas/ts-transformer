@@ -152,6 +152,10 @@ class RtspPublishMountTest {
             // The take does not consume the mount wrapper.
             assertEquals(0L, mount.stats().generation());
             assertEquals("/cam", mount.mountPath());
+            // The mount's receiver reaches its RTP counters, also once closed.
+            assertTrue(rx.rtpStats().isPresent());
+            rx.close();
+            assertTrue(rx.rtpStats().isPresent());
         }
     }
 
