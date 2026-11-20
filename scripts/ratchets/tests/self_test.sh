@@ -358,8 +358,11 @@ expect_out "gil locks: the stale lock row" "$(printf 'poison_for_test\tgone')"
 # A getter returning `(host, port)` builds it with util::addr_tuple: an
 # address taken apart (`.ip()`) outside util.rs fails, so does an
 # address-returning function (signature on one line or several) that never
-# calls the helper; util.rs itself, comments and a helper call pass; a scan
-# with no address-returning function fails closed.
+# calls the helper; so do the path form `SocketAddr::ip(&a)`, a return type
+# spelled through an alias (or an alias of one), a helper named only in a
+# string, and a function that calls the helper in one branch and reads
+# `.port()` in another; util.rs itself, comments, strings and a helper call
+# pass; a scan with no address-returning function fails closed.
 AT="$DIR/../check/python/address-tuples.sh"
 mkdir -p "$tmp/at/bypass" "$tmp/at/clean" "$tmp/at/none"
 cat > "$tmp/at/bypass/srt.rs" <<'EOF'
@@ -396,7 +399,35 @@ impl PySocket {
         self.remote.map(crate::util::addr_tuple)
     }
     fn local_port(&self) -> PyResult<u16> {
+        let _why = "a string naming .ip() is no finding";
         Ok(self.local()?.port())
+    }
+}
+EOF
+mkdir -p "$tmp/at/shapes"
+cat > "$tmp/at/shapes/srt.rs" <<'EOF'
+type HostPort = (String, u16);
+pub(crate) type MaybeHost = Option<HostPort>;
+impl PySocket {
+    fn split_branch(&self, v6: bool) -> PyAddr {
+        let a = self.peer();
+        if v6 { crate::util::addr_tuple(a) } else { (a.to_string(), a.port()) }
+    }
+    fn ufcs(&self) -> PyResult<u16> {
+        let a = self.peer();
+        Ok(std::net::SocketAddr::ip(&a).is_loopback() as u16)
+    }
+    fn aliased(&self) -> HostPort {
+        let text = self.peer().to_string();
+        let (host, port) = text.rsplit_once(':').unwrap();
+        (host.to_string(), port.parse().unwrap())
+    }
+    fn alias_of_alias(&self) -> MaybeHost {
+        None
+    }
+    fn noted(&self) -> PyAddr {
+        let note = "see addr_tuple";
+        (self.text(note), 0)
     }
 }
 EOF
@@ -418,7 +449,13 @@ expect_out "address tuples: a one-line signature without the helper" "fn peer_ad
 expect_out "address tuples: a multi-line signature without the helper" "fn local_addr"
 expect_out "address tuples: the test hook is not the helper" "fn test_only"
 expect_out "address tuples: a name ending in addr_tuple is not the helper" "fn decoy"
-expect "address tuples: the helper, util.rs and comments pass" 0 env AT_ROOT="$tmp/at/clean" bash "$AT"
+expect "address tuples: a hand-built branch, UFCS, an alias and a helper named in a string fail" 1 env AT_ROOT="$tmp/at/shapes" bash "$AT"
+expect_out "address tuples: the port read beside a helper call is named" "fn split_branch"
+expect_out "address tuples: the UFCS form is named" "std::net::SocketAddr::ip(&a)"
+expect_out "address tuples: a return type spelled through an alias" "fn aliased"
+expect_out "address tuples: an alias of an alias" "fn alias_of_alias"
+expect_out "address tuples: the helper named only in a string is not a call" "fn noted"
+expect "address tuples: the helper, util.rs, comments and strings pass" 0 env AT_ROOT="$tmp/at/clean" bash "$AT"
 expect "address tuples: no address-returning function fails closed" 1 env AT_ROOT="$tmp/at/none" bash "$AT"
 
 # ---- duplicate test helpers (scripts/check/repo/no-duplicate-test-helpers.sh) ----
