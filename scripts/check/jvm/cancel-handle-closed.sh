@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Bash ratchet: every `.cancelHandle()` in the JVM test sources is closed.
+# Bash ratchet: every `.cancelHandle()` and `::cancelHandle` in the JVM test
+# sources is closed.
 # A JVM cancel handle holds a native registry entry until its own close();
 # nothing frees it otherwise, so a test that takes one and drops it leaks it
 # for the rest of the run.
@@ -9,16 +10,19 @@
 #     (`try (CancelHandle h = rx.cancelHandle()) {`, also on a later line of
 #     a header whose resources end in `;`),
 #   - the argument of `new Watchdog(`, `new Parked(` (first or second
-#     argument) or `.add(` (a Cleanup), which close it, or of `cancelNow(`
-#     (as `() -> x.cancelHandle()`),
+#     argument) or `c.add(` / `cleanup.add(` (a Cleanup), which close it, or
+#     of `cancelNow(` (as `() -> x.cancelHandle()`),
 #   - closed at once (`x.cancelHandle().close();`),
 #   - returned (`return x.cancelHandle();`: the caller's own site is checked),
 #   - or marked `// cancel-handle: <reason>` on its line or the line above.
+# A method reference `x::cancelHandle` passes as the argument of `cancelNow(`,
+# anywhere after a `c.add(` / `cleanup.add(` or an `assertThrows(` on its line
+# (a closed shell's cancelHandle() throws, so no handle exists), or marked.
 #
 # What a line scanner cannot see: a receiver chain split across lines (the
-# site fails; put `x.cancelHandle()` on one line), a method reference
-# (`x::cancelHandle` is not checked), and whether the try resource or the
-# Cleanup is the handle itself rather than something made from it.
+# site fails; put `x.cancelHandle()` on one line), whether the try resource
+# or the Cleanup entry is the handle itself rather than something made from
+# it, and whether a variable named `c` or `cleanup` is a Cleanup.
 #
 # Run it:       bash scripts/check/jvm/cancel-handle-closed.sh
 # Overridable (the ratchet self-test points it at fixtures):
@@ -75,7 +79,8 @@ result="$(printf '%s\n' "$files" | while IFS= read -r f; do
     END {
       recv = "[A-Za-z_][A-Za-z0-9_.()]*"
       decl = "[A-Za-z_][A-Za-z0-9_.<>]*[ \t]+[A-Za-z_][A-Za-z0-9_]*[ \t]*=[ \t]*" recv "$"
-      arg = "(new[ \t]+(ShellPeers\\.)?(Watchdog|Parked)|\\.add|cancelNow)[ \t]*\\([ \t]*([A-Za-z_][A-Za-z0-9_.]*[ \t]*,[ \t]*)?(\\([ \t]*\\)[ \t]*->[ \t]*)?" recv "$"
+      cleanup = "(^|[^A-Za-z0-9_])(c|cleanup)\\.add[ \t]*\\("
+      arg = "(new[ \t]+(ShellPeers\\.)?(Watchdog|Parked)|(^|[^A-Za-z0-9_])(c|cleanup)\\.add|cancelNow)[ \t]*\\([ \t]*([A-Za-z_][A-Za-z0-9_.]*[ \t]*,[ \t]*)?(\\([ \t]*\\)[ \t]*->[ \t]*)?" recv "$"
       for (k = 1; k <= NR; k++) {
         c = codes[k]
         t = lines[k]; sub(/^[ \t]+/, "", t)
@@ -98,6 +103,19 @@ result="$(printf '%s\n' "$files" | while IFS= read -r f; do
           off += p + length(".cancelHandle()") - 1
           rest = substr(c, off + 1)
         }
+        rest = c; off = 0
+        while ((p = index(rest, "::cancelHandle")) > 0) {
+          sites++
+          pre = substr(c, 1, off + p - 1)
+          ok = 0
+          if (marked(lines[k]) || (k > 1 && marked(lines[k - 1]))) ok = 1
+          else if (pre ~ /cancelNow[ \t]*\([ \t]*[A-Za-z_][A-Za-z0-9_.]*$/) ok = 1
+          else if (pre ~ /assertThrows[ \t]*\(/) ok = 1
+          else if (pre ~ cleanup) ok = 1
+          if (!ok) printf "SITE\t%s:%d: %s\n", rel, k, t
+          off += p + length("::cancelHandle") - 1
+          rest = substr(c, off + 1)
+        }
       }
       printf "COUNT\t%d\n", sites + 0
     }' "$f"
@@ -112,14 +130,14 @@ EOF_RESULT
 
 leaks="$(printf '%s\n' "$result" | grep '^SITE' | cut -f2- || true)"
 if [ "$total" -eq 0 ]; then
-  echo "FAIL: cancel-handle-closed: no .cancelHandle() found under $JAVA_DIR: nothing was checked"
+  echo "FAIL: cancel-handle-closed: no cancelHandle site found under $JAVA_DIR: nothing was checked"
   exit 2
 fi
 if [ -n "$leaks" ]; then
   printf '%s\n' "$leaks" | while IFS= read -r l; do
     echo "FAIL: cancel-handle-closed: $l"
   done
-  echo "FAIL: cancel-handle-closed: $(printf '%s\n' "$leaks" | grep -c .) of $total .cancelHandle() sites are never closed (try-with-resources, Watchdog, Parked, Cleanup.add, cancelNow, or // cancel-handle: <reason>)"
+  echo "FAIL: cancel-handle-closed: $(printf '%s\n' "$leaks" | grep -c .) of $total cancelHandle sites are never closed (try-with-resources, Watchdog, Parked, Cleanup.add, cancelNow, or // cancel-handle: <reason>)"
   exit 1
 fi
-echo "OK: cancel-handle-closed: all $total .cancelHandle() sites under ${JAVA_DIR#"$ROOT"/} are closed"
+echo "OK: cancel-handle-closed: all $total cancelHandle sites under ${JAVA_DIR#"$ROOT"/} are closed"

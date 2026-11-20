@@ -152,7 +152,7 @@ class SrtManagedListenerCancelTest {
             // call blocked behind the reader's registry lease until a peer showed
             // up. Off-thread so a regression fails the assertion instead of
             // wedging main.
-            CompletableFuture<CancelHandle> handleFuture = CompletableFuture.supplyAsync(
+            CompletableFuture<CancelHandle> handleFuture = CompletableFuture.supplyAsync( // cancel-handle: closed after its cancel, or in the rescue
                 rx::cancelHandle, r -> {
                     Thread t = new Thread(r, "cancel-handle-getter");
                     t.setDaemon(true);
@@ -168,7 +168,9 @@ class SrtManagedListenerCancelTest {
                 // rescue must not mask the verdict below.
                 try {
                     ManagedMuxSender rescue = connectSender(callerUrl, 5_000);
-                    handleFuture.get(5, TimeUnit.SECONDS).cancel();
+                    try (CancelHandle late = handleFuture.get(5, TimeUnit.SECONDS)) {
+                        late.cancel();
+                    }
                     endFuture.get(5, TimeUnit.SECONDS);
                     rescue.close();
                 } catch (Exception ignored) {

@@ -98,6 +98,7 @@ class RtspSessionCloseTest {
             RtspCancelHandle handle = null;
             try {
                 assertTrue(peer.awaitPause(10_000), "the peer never read PAUSE");
+                // cancel-handle: closed in the finally
                 taker = new Worker<>("cancel-handle", session::cancelHandle);
                 handle = taker.get(2_000, "cancelHandle() while pause() is parked");
                 assertFalse(handle.isCancelled());

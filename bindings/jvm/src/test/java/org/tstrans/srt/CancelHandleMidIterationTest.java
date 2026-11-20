@@ -81,7 +81,7 @@ final class CancelHandleMidIterationTest {
                 assertTrue(iterating.await(2, TimeUnit.SECONDS));
                 Thread.sleep(300); // let next() actually park inside the native receive
 
-                CompletableFuture<CancelHandle> handleFuture = CompletableFuture.supplyAsync(
+                CompletableFuture<CancelHandle> handleFuture = CompletableFuture.supplyAsync( // cancel-handle: closed after its cancel, or in the rescue
                     rx::cancelHandle, r -> {
                         Thread t = new Thread(r, "cancel-handle-getter");
                         t.setDaemon(true);
@@ -97,7 +97,7 @@ final class CancelHandleMidIterationTest {
                     // socket — irrelevant to the verdict, so swallow it).
                     watchdog.cancel();
                     try {
-                        handleFuture.get(5, TimeUnit.SECONDS);
+                        handleFuture.get(5, TimeUnit.SECONDS).close();
                     } catch (Exception ignored) {
                         // see above
                     }
