@@ -151,7 +151,7 @@ impl PyReceiver {
             PyErr::warn(
                 py,
                 &py.get_type::<pyo3::exceptions::PyDeprecationWarning>(),
-                c"recv_bytes(max_len=...) is deprecated: the argument is ignored; removed in 0.12.0",
+                c"Receiver.recv_bytes(max_len=...) is deprecated: the argument is ignored; removed in 0.12.0",
                 1,
             )?;
         }

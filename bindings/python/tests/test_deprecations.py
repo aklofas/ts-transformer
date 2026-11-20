@@ -69,7 +69,7 @@ def test_receiver_recv_bytes_with_max_len_warns() -> None:
         _send_null_packets(port)
         with pytest.warns(
             DeprecationWarning,
-            match=r"^recv_bytes\(max_len=\.\.\.\) is deprecated: the argument is ignored; removed in 0\.12\.0",
+            match=r"^Receiver\.recv_bytes\(max_len=\.\.\.\) is deprecated: the argument is ignored; removed in 0\.12\.0",
         ) as rec:
             assert rx.recv_bytes(max_len=1500) == NULL
         assert len(rec) == 1
