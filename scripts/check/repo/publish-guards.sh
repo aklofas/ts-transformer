@@ -22,6 +22,18 @@
 #    composite action (`./...`) runs inside the job, so its `uses:` are held to
 #    the same rule; one that cannot be read fails, and one that itself uses a
 #    local action is refused (the rail follows one level).
+# 4. The guards that ship with an artefact stay wired. A job that builds a
+#    wheel (a `PyO3/maturin-action` step whose `command` is not `sdist`) has a
+#    step whose `run` names `hook_names.py` and `absent-in`. The local action
+#    `./.github/actions/jvm-build`, wherever a job uses it, runs
+#    `jvm-hook-guard.sh check --expect-hooks` (the hook build) and, before its
+#    first `upload-artifact` step, `jvm-hook-guard.sh check` on another path
+#    (the shipped library). A job that uploads a `.jar` path has a step that
+#    runs `jvm-hook-guard.sh check` over `.jar` files. A file named
+#    `python-wheels.yml` with no wheel job, or `jvm-jar.yml` with no job using
+#    the build action or uploading a JAR, fails: the rule would check nothing.
+#    Lines whose first character is `#` are not read inside a `run:`; the
+#    paths the guards are given are not compared with the paths uploaded.
 #
 # A condition is read once per reader: drop a trailing comment and a
 # `${{ ... }}` wrapper, refuse `||`, split at depth-0 `&&`, strip balanced outer
@@ -36,9 +48,14 @@ if [[ $# -gt 0 ]]; then files=("$@"); else files=("$root"/.github/workflows/*.ym
 
 NEG_MSG='is publish-shaped and callable but its `if:` does not negate inputs.dry_run'
 TAG_MSG="has an environment but its \`if:\` does not require github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')"
+WHEEL_MSG='builds a wheel but no step runs `hook_names.py absent-in` on it'
+SHIP_MSG='runs no `jvm-hook-guard.sh check` on the library before its upload step'
+EXPECT_MSG='runs no `jvm-hook-guard.sh check --expect-hooks` on the hook build'
+JAR_MSG='uploads a JAR but no step runs `jvm-hook-guard.sh check` over the JARs'
+export NEG_MSG TAG_MSG WHEEL_MSG SHIP_MSG EXPECT_MSG JAR_MSG
 
 if python3 -c 'import yaml' 2>/dev/null; then
-NEG_MSG="$NEG_MSG" TAG_MSG="$TAG_MSG" python3 - "${files[@]}" <<'PY'
+python3 - "${files[@]}" <<'PY'
 import os, re, sys, yaml
 PUB_USES = re.compile(r'pypa/gh-action-pypi-publish|publish', re.I)
 PUB_RUN = re.compile(r'cargo publish|gradlew .*publish|gh release (upload|create)')
@@ -46,6 +63,20 @@ GUARDS = {'!inputs.dry_run', 'inputs.dry_run==false', 'inputs.dry_run!=true'}
 TAG_CONJ = {"github.event_name=='push'", "startsWith(github.ref,'refs/tags/v')"}
 SHA = re.compile(r'[^@\s]+@[0-9a-f]{40}')
 NEG_MSG, TAG_MSG = os.environ['NEG_MSG'], os.environ['TAG_MSG']
+WHEEL_MSG, SHIP_MSG = os.environ['WHEEL_MSG'], os.environ['SHIP_MSG']
+EXPECT_MSG, JAR_MSG = os.environ['EXPECT_MSG'], os.environ['JAR_MSG']
+JVM_BUILD = './.github/actions/jvm-build'
+HOOK_CHECK = re.compile(r'(^|[ \t])absent-in([ \t]|$)', re.M)
+SHIP_CHECK = re.compile(r'jvm-hook-guard\.sh[ \t]+check[ \t]+[^- \t]')
+EXPECT_CHECK = re.compile(r'jvm-hook-guard\.sh[ \t]+check[ \t]+--expect-hooks')
+JAR_CHECK = re.compile(r'jvm-hook-guard\.sh[ \t]+check[ \t]+[^ \t]*\.jar')
+
+def run_of(step):
+    """A step's `run`, without the lines that start with `#`."""
+    return '\n'.join(l for l in str(step.get('run', '')).splitlines() if not l.lstrip().startswith('#'))
+
+def uses_of(step):
+    return str(step.get('uses', ''))
 
 def outer_wraps(p):
     """True when p's first '(' closes at its last character."""
@@ -112,6 +143,7 @@ for f in sys.argv[1:]:
     repo = os.path.dirname(os.path.dirname(wfdir))
     jobs = doc.get('jobs') or {}
     callable_ = isinstance(on, dict) and 'workflow_call' in on
+    wheels = builds = jars = 0
     for name, job in jobs.items():
         u = str(job.get('uses', ''))
         if u.startswith('./.github/workflows/') and callee_has_dry_run(os.path.join(wfdir, os.path.basename(u))):
@@ -128,6 +160,16 @@ for f in sys.argv[1:]:
                 bad.append(f"{f}: job '{name}' {NEG_MSG}")
         if has_env and not TAG_CONJ.issubset(cj):
             bad.append(f"{f}: job '{name}' {TAG_MSG}")
+        if any('maturin-action' in uses_of(s) and str((s.get('with') or {}).get('command', 'build')) != 'sdist'
+               for s in steps):
+            wheels += 1
+            if not any('hook_names.py' in run_of(s) and HOOK_CHECK.search(run_of(s)) for s in steps):
+                bad.append(f"{f}: job '{name}' {WHEEL_MSG}")
+        if any('upload-artifact' in uses_of(s) and '.jar' in str((s.get('with') or {}).get('path', ''))
+               for s in steps):
+            jars += 1
+            if not any(JAR_CHECK.search(run_of(s)) for s in steps):
+                bad.append(f"{f}: job '{name}' {JAR_MSG}")
         refs = [u] if u else []
         refs += [str(s['uses']) for s in steps if 'uses' in s]
         for r in refs:
@@ -140,11 +182,26 @@ for f in sys.argv[1:]:
                     bad.append(f"{f}: job '{name}' uses {r}, but {r}/action.yml cannot be read")
                     continue
                 a = yaml.safe_load(open(act)) or {}
+                if r.rstrip('/') == JVM_BUILD:
+                    builds += 1
+                    asteps = (a.get('runs') or {}).get('steps') or []
+                    up = next((i for i, s in enumerate(asteps) if 'upload-artifact' in uses_of(s)), len(asteps))
+                    if not any(SHIP_CHECK.search(run_of(s)) for s in asteps[:up]):
+                        bad.append(f"{f}: job '{name}' uses {r}, which {SHIP_MSG}")
+                    if not any(EXPECT_CHECK.search(run_of(s)) for s in asteps):
+                        bad.append(f"{f}: job '{name}' uses {r}, which {EXPECT_MSG}")
                 for s in ((a.get('runs') or {}).get('steps') or []):
                     if 'uses' in s and str(s['uses']).startswith('./'):
                         bad.append(f"{f}: job '{name}' uses {r}, whose step uses the local action {s['uses']}, which this rail does not follow")
                     elif 'uses' in s and unpinned(str(s['uses'])):
                         bad.append(f"{f}: job '{name}' uses {r}, whose step uses {s['uses']}, which is not pinned to a commit sha")
+    base = os.path.basename(f)
+    if base == 'python-wheels.yml' and not wheels:
+        bad.append(f"{f}: no job builds a wheel, so the hook-name rule checks nothing")
+    if base == 'jvm-jar.yml' and not builds:
+        bad.append(f"{f}: no job uses {JVM_BUILD}, so the library guard rule checks nothing")
+    if base == 'jvm-jar.yml' and not jars:
+        bad.append(f"{f}: no job uploads a JAR, so the JAR guard rule checks nothing")
 if bad:
     print('\n'.join(bad)); sys.exit(1)
 print('publish-guards: OK')
@@ -155,7 +212,8 @@ for f in "${files[@]}"; do
     d="$(dirname "$f")"
     repo="$(cd "$d/../.." 2>/dev/null && pwd || echo "$d/../..")"
     callable=0; grep -qE '^  workflow_call:' "$f" && callable=1
-    awk -v F="$f" -v D="$d" -v R="$repo" -v C="$callable" -v SQ="'" -v NEG="$NEG_MSG" -v TAG="$TAG_MSG" '
+    awk -v F="$f" -v D="$d" -v R="$repo" -v C="$callable" -v SQ="'" -v NEG="$NEG_MSG" -v TAG="$TAG_MSG" \
+        -v WHEEL="$WHEEL_MSG" -v SHIP="$SHIP_MSG" -v EXPECT="$EXPECT_MSG" -v JAR="$JAR_MSG" '
         function outer_wraps(p,   i, ch, q, depth) {
             if (substr(p, 1, 1) != "(" || substr(p, length(p), 1) != ")") return 0
             q = ""; depth = 0
@@ -200,16 +258,62 @@ for f in "${files[@]}"; do
             return length(ref) == 40
         }
         function uses_of(line,   u) { u = line; sub(/^[ \t-]*uses:[ \t]*/, "", u); sub(/[ \t]+#.*$/, "", u); sub(/[ \t]+$/, "", u); return u }
-        function check_local(r,   path, line, u, found) {
+        # Rule 4 reads steps: items at indent `si`, their keys at si + 2. The
+        # flags of a step (ST_*) fold into those of its job (J_*) when it ends.
+        function step_end() {
+            if (!ST_OPEN) return
+            if (ST_MAT && !ST_SDIST) J_WHEEL = 1
+            if (ST_HN && ST_AI) J_HOOK = 1
+            if (ST_UP && ST_JARPATH) J_JARUP = 1
+            if (ST_JAR) J_JARCHECK = 1
+            if (ST_SHIP && !J_UPSEEN) J_SHIPBEFORE = 1
+            if (ST_UP) J_UPSEEN = 1
+            if (ST_EXPECT) J_EXPECT = 1
+            ST_OPEN = ST_MAT = ST_SDIST = ST_HN = ST_AI = ST_UP = ST_JARPATH = ST_JAR = ST_SHIP = ST_EXPECT = ST_INRUN = 0
+        }
+        function steps_reset() { step_end(); J_WHEEL = J_HOOK = J_JARUP = J_JARCHECK = J_SHIPBEFORE = J_UPSEEN = J_EXPECT = 0 }
+        function run_text(t) {
+            if (t ~ /hook_names\.py/) ST_HN = 1
+            if (t ~ /(^|[ \t])absent-in([ \t]|$)/) ST_AI = 1
+            if (t ~ /jvm-hook-guard\.sh[ \t]+check[ \t]+[^- \t]/) ST_SHIP = 1
+            if (t ~ /jvm-hook-guard\.sh[ \t]+check[ \t]+--expect-hooks/) ST_EXPECT = 1
+            if (t ~ /jvm-hook-guard\.sh[ \t]+check[ \t]+[^ \t]*\.jar/) ST_JAR = 1
+        }
+        function step_line(line, si,   t, ind) {
+            t = line; sub(/^ */, "", t); ind = length(line) - length(t)
+            if (t == "") return
+            if (ind == si && substr(t, 1, 2) == "- ") { step_end(); ST_OPEN = 1; t = substr(t, 3); ind = si + 2 }
+            else if (ind <= si) { step_end(); return }
+            if (!ST_OPEN || substr(t, 1, 1) == "#") return
+            if (ind == si + 2) {
+                ST_INRUN = 0
+                if (t ~ /^uses:/ && t ~ /maturin-action/) ST_MAT = 1
+                if (t ~ /^uses:/ && t ~ /upload-artifact/) ST_UP = 1
+                if (t ~ /^run:/) { ST_INRUN = 1; run_text(substr(t, 5)) }
+                return
+            }
+            if (ST_INRUN) run_text(t)
+            if (t ~ /^command:[ \t]*sdist/) ST_SDIST = 1
+            if (t ~ /^path:/ && t ~ /\.jar/) ST_JARPATH = 1
+        }
+        function check_local(r,   path, line, u, found, jb, insteps) {
             path = R "/" substr(r, 3) "/action.yml"
             if ((getline line < path) < 0) {
                 path = R "/" substr(r, 3) "/action.yaml"
                 if ((getline line < path) < 0) { printf "%s: job \x27%s\x27 uses %s, but %s/action.yml cannot be read\n", F, job, r, r; bad = 1; return }
             }
+            jb = (r == "./.github/actions/jvm-build" || r == "./.github/actions/jvm-build/")
+            if (jb) { builds++; steps_reset(); insteps = 0 }
             do {
+                if (jb) { if (line ~ /^  steps:/) insteps = 1; else if (insteps) step_line(line, 4) }
                 if (line ~ /^[ \t-]*uses:/) { u = uses_of(line); if (u ~ /^\.\//) { printf "%s: job \x27%s\x27 uses %s, whose step uses the local action %s, which this rail does not follow\n", F, job, r, u; bad = 1 } else if (!pinned(u)) { printf "%s: job \x27%s\x27 uses %s, whose step uses %s, which is not pinned to a commit sha\n", F, job, r, u; bad = 1 } }
             } while ((getline line < path) > 0)
             close(path)
+            if (jb) {
+                step_end()
+                if (!J_SHIPBEFORE) { printf "%s: job \x27%s\x27 uses %s, which %s\n", F, job, r, SHIP; bad = 1 }
+                if (!J_EXPECT) { printf "%s: job \x27%s\x27 uses %s, which %s\n", F, job, r, EXPECT; bad = 1 }
+            }
         }
         function flush(   line, hasdr, k) {
             if (job == "") return
@@ -222,13 +326,17 @@ for f in "${files[@]}"; do
             NC = conjuncts(cond)
             if (C && (env || shaped) && !(has_conj("!inputs.dry_run") || has_conj("inputs.dry_run==false") || has_conj("inputs.dry_run!=true"))) { printf "%s: job \x27%s\x27 %s\n", F, job, NEG; bad = 1 }
             if (env && !(has_conj("github.event_name==" SQ "push" SQ) && has_conj("startsWith(github.ref," SQ "refs/tags/v" SQ ")"))) { printf "%s: job \x27%s\x27 %s\n", F, job, TAG; bad = 1 }
+            step_end()
+            if (J_WHEEL) { wheels++; if (!J_HOOK) { printf "%s: job \x27%s\x27 %s\n", F, job, WHEEL; bad = 1 } }
+            if (J_JARUP) { jars++; if (!J_JARCHECK) { printf "%s: job \x27%s\x27 %s\n", F, job, JAR; bad = 1 } }
             for (k = 1; k <= nu; k++) {
                 if (!pinned(U[k])) { printf "%s: job \x27%s\x27 uses %s, which is not pinned to a commit sha\n", F, job, U[k]; bad = 1 }
                 else if (U[k] ~ /^\.\// && U[k] !~ /^\.\/\.github\/workflows\//) check_local(U[k])
             }
         }
         /^jobs:/ { injobs = 1; next }
-        injobs && /^  [A-Za-z0-9_-]+:/ { flush(); job = $1; sub(/:$/, "", job); callee = ""; passes = 0; env = 0; shaped = 0; cond = ""; nu = 0; next }
+        injobs && /^  [A-Za-z0-9_-]+:/ { flush(); job = $1; sub(/:$/, "", job); callee = ""; passes = 0; env = 0; shaped = 0; cond = ""; nu = 0; steps_reset(); next }
+        injobs { step_line($0, 6) }
         injobs && /^    uses: \.\/\.github\/workflows\// { callee = $2; sub(/.*\//, "", callee) }
         injobs && /^      dry_run: true[ ]*$/ { passes = 1 }
         injobs && /^    environment:/ { env = 1 }
@@ -237,7 +345,14 @@ for f in "${files[@]}"; do
         injobs && /^[ \t-]*uses:/ { U[++nu] = uses_of($0) }
         injobs && /uses:.*publish/ { shaped = 1 }
         injobs && /cargo publish|gradlew .*publish|gh release (upload|create)/ { shaped = 1 }
-        END { flush(); exit bad }' "$f" || fail=1
+        END {
+            flush()
+            b = F; sub(/.*\//, "", b)
+            if (b == "python-wheels.yml" && !wheels) { printf "%s: no job builds a wheel, so the hook-name rule checks nothing\n", F; bad = 1 }
+            if (b == "jvm-jar.yml" && !builds) { printf "%s: no job uses ./.github/actions/jvm-build, so the library guard rule checks nothing\n", F; bad = 1 }
+            if (b == "jvm-jar.yml" && !jars) { printf "%s: no job uploads a JAR, so the JAR guard rule checks nothing\n", F; bad = 1 }
+            exit bad
+        }' "$f" || fail=1
 done
 [[ $fail == 0 ]] && echo 'publish-guards: OK'
 exit $fail
