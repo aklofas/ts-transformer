@@ -19,6 +19,8 @@ from tstrans.mpegts import DemuxEvent, Demuxer, Muxer, MuxerConfigBuilder, Pts90
 from tstrans.srt import ManagedDemuxReceiver
 
 from _builders.mux_programs import video_only_program as _video_only_program
+from _builders.parked import parked as _parked
+from _builders.parked import slot_held as _held
 from _builders.ports import free_udp_port as _free_udp_port
 from _builders.srt_pair import make_srt_pair as _make_srt_pair
 from test_srt_managed_convenience import NAL_IDR, _make_managed_pair
@@ -225,18 +227,18 @@ def test_receiver_demuxer_composition_over_tcp() -> None:
 def test_ts_bytes_demuxed_answers_while_iteration_is_parked() -> None:
     port = _free_udp_port()
     rx = shells.DemuxReceiver.open(f"rtp://127.0.0.1:{port}")
-    iterating = threading.Thread(target=lambda: _drain(rx), daemon=True)
-    iterating.start()
-    time.sleep(0.2)
+    try:
+        iterating = _parked(rx, lambda: _drain(rx))
 
-    got: list[int] = []
-    reader = threading.Thread(target=lambda: got.append(rx.ts_bytes_demuxed()), daemon=True)
-    reader.start()
-    reader.join(timeout=2.0)
-    assert not reader.is_alive(), "ts_bytes_demuxed() waited behind a parked __next__"
-    assert got == [0]
-
-    rx.close()
+        got: list[int] = []
+        reader = threading.Thread(target=lambda: got.append(rx.ts_bytes_demuxed()), daemon=True)
+        reader.start()
+        reader.join(timeout=2.0)
+        assert not reader.is_alive(), "ts_bytes_demuxed() waited behind a parked __next__"
+        assert got == [0]
+        assert _held(rx), "the iteration let go of the slot before the getter answered"
+    finally:
+        rx.close()
     iterating.join(timeout=5.0)
     assert not iterating.is_alive()
 
