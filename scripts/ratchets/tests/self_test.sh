@@ -2097,12 +2097,23 @@ dep_tree; dep_args
 expect "deprecations: argument rows with a site each pass" 0 dep
 expect_out "deprecations: the argument sites are counted" "10 deprecation sites (rust 1, java 3, python 6); 9 live rows, 5 removed rows"
 expect_out "deprecations: the removed arguments are resolved" "2 removed argument rows resolved"
-# A warning that names the method without its class serves either row.
+# One warning that names both classes' methods covers both rows, and is
+# still one site.
 dep_tree; dep_args
 plant "$tmp/dep/bindings/python/src/lib.rs" 'PyErr::warn(.*c"ManagedReceiver.*' 'Ok(())'
-plant "$tmp/dep/bindings/python/src/lib.rs" 'c"Receiver.recv_bytes(' 'c"recv_bytes('
+plant "$tmp/dep/bindings/python/src/lib.rs" 'c"Receiver.recv_bytes(' 'c"ManagedReceiver.recv_bytes(max_len=...) and Receiver.recv_bytes('
 expect "deprecations: two rows sharing a last component with one site fail" 1 dep
 expect_out "deprecations: the row left without a site" "live row tstrans.srt.ManagedReceiver.recv_bytes.max_len (python) shares its last component \`max_len\` with tstrans.shells.Receiver.recv_bytes.max_len"
+# A warning names its own class and method: one that names the method alone,
+# or another class's, is no row's site.
+dep_tree; dep_args
+plant "$tmp/dep/bindings/python/src/lib.rs" 'c"ManagedReceiver.recv_bytes(' 'c"recv_bytes('
+expect "deprecations: a warning that names the method without its class is not its site" 1 dep
+expect_out "deprecations: the row whose warning names no class" "live row tstrans.srt.ManagedReceiver.recv_bytes.max_len (python) covers no deprecation site"
+dep_tree; dep_args
+plant "$tmp/dep/bindings/python/src/lib.rs" 'c"ManagedReceiver.recv_bytes(' 'c"ManagedSender.recv_bytes('
+expect "deprecations: a warning that names the argument of another class is not its site" 1 dep
+expect_out "deprecations: the row of the class the warning does not name" "live row tstrans.srt.ManagedReceiver.recv_bytes.max_len (python) covers no deprecation site"
 dep_tree; dep_args
 plant "$tmp/dep/bindings/python/src/lib.rs" 'c"ManagedReceiver.recv_bytes(' 'c"Receiver.recv_bytes('
 expect "deprecations: a warning that names another class's method is not its site" 1 dep
@@ -2142,26 +2153,36 @@ expect_out "deprecations: the method that is not gone" "removed row org.demo.Ser
 # A stub's deprecated overload names its argument as a parameter. Two rows
 # that share `max_len`, one covering two sites and one only the first: each
 # still gets a site, whatever the order the rows are tried in.
-dep_shells_stub() {
+dep_shells_stub() { # <class> <parameter>
     cat > "$tmp/dep/bindings/python/python/tstrans/shells.pyi" <<EOF
 from typing import overload
 from typing_extensions import deprecated
 
-class Receiver:
+class $1:
     @overload
     @deprecated("max_len is ignored; removed in 0.12.0")
-    def recv_bytes(self, $1: int) -> bytes: ...
+    def recv_bytes(self, $2: int) -> bytes: ...
     @overload
     def recv_bytes(self) -> bytes: ...
 EOF
     plant "$tmp/dep/bindings/python/src/lib.rs" 'PyErr::warn(.*c"ManagedReceiver.*' 'Ok(())'
-    plant "$tmp/dep/bindings/python/src/lib.rs" 'c"Receiver.recv_bytes(' 'c"recv_bytes('
+    plant "$tmp/dep/bindings/python/src/lib.rs" 'c"Receiver.recv_bytes(' 'c"ManagedReceiver.recv_bytes(max_len=...) and Receiver.recv_bytes('
 }
-dep_tree; dep_args; dep_shells_stub max_len
+dep_tree; dep_args; dep_shells_stub Receiver max_len
 expect "deprecations: a stub overload naming the argument is that argument's site" 0 dep
-dep_tree; dep_args; dep_shells_stub size
+dep_tree; dep_args; dep_shells_stub Receiver size
 expect "deprecations: a stub overload without the argument is not its site" 1 dep
 expect_out "deprecations: the row left without a site of its own" "live row tstrans.srt.ManagedReceiver.recv_bytes.max_len (python) shares its last component \`max_len\`"
+dep_tree; dep_args; dep_shells_stub Other max_len
+expect "deprecations: a stub overload in another class is not the argument's site" 1 dep
+expect_out "deprecations: the overload of the other class" "shells.pyi:7: @deprecated on \`recv_bytes\` has no live row"
+# Java: the overload must be declared in the row's class, not in a class
+# nested in its file.
+dep_tree; dep_args
+printf 'package org.demo;\n\npublic final class Server {\n    public void stop(long drainMs) {}\n\n    public static final class Inner {\n        /** @deprecated use {@link #stop()}; removed in 0.12.0. */\n        @Deprecated(since = "0.10.0", forRemoval = true)\n        public void stop(long drainMs) {}\n    }\n}\n' \
+    > "$tmp/dep/bindings/jvm/src/main/java/org/demo/Server.java"
+expect "deprecations: a deprecated overload of a nested class is not the outer class's" 1 dep
+expect_out "deprecations: the outer class's row" "live row org.demo.Server.stop(long) (java) covers no deprecation site"
 
 # ---- doc-snippets: a marked snippet that does not compile fails -------------
 DS="$DIR/../check/repo/doc-snippets.sh"

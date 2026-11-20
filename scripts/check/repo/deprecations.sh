@@ -42,14 +42,14 @@
 #           class too.
 #   an argument  a Python row `module.Class.method.arg` (the last two
 #           components lower-snake after a CapWords class) names one argument:
-#           a site covers it only when it names the method with its `(`
-#           (unqualified, or qualified with the row's class:
-#           `RtspServer.stop(`) and the argument as a whole word
-#           (`stop(drain_ms=...)`), or declares
-#           the method with a parameter of that name. A Java row
-#           `Class.method(types)` names one overload: the site's declaration
-#           must have exactly those parameter types (`stop(long)` is not
-#           covered by `@Deprecated` on `stop()`).
+#           a warning covers it only when its message names the class's
+#           method call, `<Class>.<method>(`, and the argument as a whole
+#           word (`RtspServer.stop(drain_ms=...) is deprecated`); a
+#           `@deprecated` def covers it when it is that method of that class
+#           and declares the argument. A Java row `Class.method(types)` names
+#           one overload: the site's declaration, directly in that class
+#           (not in a class nested in it), must have exactly those parameter
+#           types (`stop(long)` is not covered by `@Deprecated` on `stop()`).
 #
 # Enforced (fails on violation):
 #   (a) every site is covered by a live row (a row without `removed_in`);
@@ -439,14 +439,32 @@ def python_name(decl):
     return m.group(1).split(".")[-1] if m else None
 
 
-def site(lang, rel, line, scope, name, kind, comments, above, decl):
+CLASS_LINE = {
+    "java": re.compile(r"^(\s*)(?:(?:public|protected|private|static|final|abstract|sealed)\s+)*"
+                       r"(?:class|interface|enum|record)\s+(\w+)"),
+    "python": re.compile(r"^(\s*)class\s+(\w+)"),
+}
+
+
+def enclosing(lang, lines, line):
+    """The innermost class whose body holds line `line` (1-based) of a
+    Java or Python file, by indentation; None at the top level."""
+    indent = len(lines[line - 1]) - len(lines[line - 1].lstrip())
+    for text in reversed(lines[: line - 1]):
+        m = CLASS_LINE[lang].match(text)
+        if m and len(m.group(1)) < indent:
+            return m.group(2)
+    return None
+
+
+def site(lang, rel, line, scope, name, kind, comments, above, decl, owner=None):
     text = " ".join(c.lstrip("/#*! ") for c in comments + above + decl)
     since = re.search(r'\bsince\s*=\s*"([^"]*)"', " ".join(above + decl))
     overloads = java_overloads(java_code(" ".join(decl)), name) if lang == "java" and name else []
     sites.append({
         "lang": lang, "file": rel, "line": line, "scope": scope, "name": name, "kind": kind,
         "text": text, "since": since.group(1) if since else None, "decl": " ".join(decl),
-        "params": overloads[0] if overloads else None,
+        "params": overloads[0] if overloads else None, "owner": owner,
         "promises": [version(v) for v in PROMISE.findall(text)], "first": decl[0],
     })
 
@@ -475,7 +493,8 @@ for rel in files("bindings/jvm/src/main", ".java"):
         if re.search(r"@Deprecated\b", code) or re.search(r"@deprecated\b", " ".join(comments + decl)):
             name = java_name(" ".join(decl))
             kind = "@Deprecated" if "@Deprecated" in code else "Javadoc @deprecated"
-            site("java", rel, line, cls, name, kind, comments, above, decl)
+            site("java", rel, line, cls, name, kind, comments, above, decl,
+                 enclosing("java", text.split("\n"), line))
 
 for rel in files("bindings/python/python", (".py", ".pyi")):
     scanned["python"] += 1
@@ -490,7 +509,8 @@ for rel in files("bindings/python/python", (".py", ".pyi")):
         if re.search(r"\bdeprecated alias\b", " ".join(comments + trailing), re.I):
             site("python", rel, line, module, python_name(decl[0]), "deprecated alias comment", comments, above, decl)
         elif re.search(r"@(?:[\w.]+\.)?deprecated\b", " ".join(above)):
-            site("python", rel, line, module, python_name(decl[0]), "@deprecated", comments, above, decl)
+            site("python", rel, line, module, python_name(decl[0]), "@deprecated", comments, above, decl,
+                 enclosing("python", text.split("\n"), line))
         elif re.search(r"\bwarn\(", code) and "DeprecationWarning" in code:
             site("python", rel, line, module, None, "DeprecationWarning", comments, above, decl)
 
@@ -525,15 +545,15 @@ def covers(row, s):
     if argument:
         cls, method, arg = argument
         if s["name"]:
-            return s["name"] == method and word(arg, s["decl"])
-        # A call the message qualifies with a class names that class's method.
-        owners = [re.search(r"(\w+)\.$", s["text"][: m.start()])
-                  for m in re.finditer(r"(?<!\w)" + re.escape(method) + r"\(", s["text"])]
-        return any(o is None or o.group(1) == cls for o in owners) and word(arg, s["text"])
+            return s["owner"] == cls and s["name"] == method and word(arg, s["decl"])
+        call = r"(?<!\w)" + re.escape(cls) + r"\." + re.escape(method) + r"\("
+        return re.search(call, s["text"]) is not None and word(arg, s["text"])
     if not (s["name"] == row["leaf"] if s["name"] else named(row["leaf"], s["text"])):
         return False
     types = java_types(row)
-    return types is None or s["params"] == types
+    if types is None:
+        return True
+    return s["params"] == types and s["owner"] == symbol.split(".")[-2]
 
 
 def at(s):
