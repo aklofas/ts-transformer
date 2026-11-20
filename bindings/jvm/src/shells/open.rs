@@ -14,7 +14,7 @@ use tst_core::url::redact_url;
 use tst_pipeline::binding::{BindingError, BindingErrorKind, Domain, OpenSlot, Opened};
 use tst_rtp::RtpStatsHandle;
 
-use super::open_cancel::{begin, closed, finish, object_of, refuse_config};
+use super::open_cancel::{after_begin, begin, closed, finish, object_of, refuse_config};
 use crate::error::throw_binding;
 
 /// The domain of `url`'s scheme, or `None` for a scheme no shell opens.
@@ -74,6 +74,7 @@ fn check<'local, C>(
     };
     let oc = object_of(env, cancel).ok()?;
     let slot = begin(env, domain, oc.as_ref()).ok()?;
+    after_begin(oc.as_ref());
     match config(env) {
         Ok(c) => Some((domain, slot, c)),
         Err(()) => {

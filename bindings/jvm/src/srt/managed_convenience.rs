@@ -82,7 +82,7 @@ use super::ManagedSenderSnapshot;
 use super::errors::{throw_data_plane_state, throw_srt, transport_error};
 use crate::generated::stats_srt::build_managed_transport_stats;
 use crate::shells::mux_sender::build_transport_stats;
-use crate::shells::open_cancel::{begin, finish, object_of, refuse_config};
+use crate::shells::open_cancel::{after_begin, begin, finish, object_of, refuse_config};
 
 /// Map a `DemuxReceiverError` raised by `recv_event` onto a thrown Java
 /// exception: transport-side errors become `SrtException` (via
@@ -213,6 +213,7 @@ jni_native! {
         let Ok(slot) = begin(env, Domain::Srt, oc.as_ref()) else {
             return 0;
         };
+        after_begin(oc.as_ref());
         // After the cancelled-object check and before the URL: a refused
         // config throws its MuxException (or CLOSED, if cancelled by now).
         let muxer_cfg = match build_muxer_config_from_arrays(

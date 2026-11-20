@@ -35,6 +35,7 @@ import org.tstrans.BindingException;
 import org.tstrans.MuxException;
 import org.tstrans.SrtException;
 import org.tstrans.internal.CancelProbe;
+import org.tstrans.internal.OpenProbe;
 import org.tstrans.mpegts.DemuxerConfig;
 import org.tstrans.mpegts.MuxerConfig;
 import org.tstrans.mpegts.VideoCodec;
@@ -408,6 +409,31 @@ class OpenCancelTest {
             Exception e = assertThrows(Exception.class, () -> muxOpen(name, refusedConfig()).open(
                 "srt://127.0.0.1:" + target.getLocalPort() + "?mode=caller&conntimeo=1000", oc));
             assertSrtClosed(e);
+            assertNothingDialled(target);
+        }
+    }
+
+    /**
+     * A cancel that lands after the open checked the object and before it built its
+     * configuration: the refused configuration is reported as CLOSED, since the object
+     * was cancelled by the time the open finished. The hook cancels in that window.
+     */
+    @ParameterizedTest
+    @ValueSource(strings = {"MuxSender.open", "ManagedMuxSender.fromUrl"})
+    @EnabledIfSystemProperty(named = "tst.jniTestHooks", matches = "true")
+    void aCancelBeforeARefusedConfigIsBuiltIsClosed(String name) throws Exception {
+        try (OpenCancel oc = new OpenCancel();
+             DatagramSocket target = new DatagramSocket(new InetSocketAddress("127.0.0.1", 0))) {
+            target.setSoTimeout((int) DEADLINE_MS);
+            OpenProbe.nArmCancelAfterBegin(true);
+            try {
+                Exception e = assertThrows(Exception.class, () -> muxOpen(name, refusedConfig()).open(
+                    "srt://127.0.0.1:" + target.getLocalPort() + "?mode=caller&conntimeo=1000", oc));
+                assertSrtClosed(e);
+            } finally {
+                OpenProbe.nArmCancelAfterBegin(false);
+            }
+            assertTrue(oc.isCancelled(), "the hook did not cancel the object");
             assertNothingDialled(target);
         }
     }

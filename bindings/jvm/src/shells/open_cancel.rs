@@ -79,6 +79,32 @@ pub(crate) fn finish<T, E>(slot: Option<OpenSlot>, r: Result<T, E>, closed: E) -
     r
 }
 
+/// Armed by `org.tstrans.internal.OpenProbe.nArmCancelAfterBegin`: the next open
+/// that has begun with an object cancels it before its configuration is built.
+#[cfg(feature = "jni-test-hooks")]
+static CANCEL_AFTER_BEGIN: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// Runs between `begin` and an open's configuration build. Under the test hooks it
+/// can cancel `oc` there, as another thread's `cancel()` landing in that window would.
+#[cfg_attr(not(feature = "jni-test-hooks"), allow(unused_variables))]
+pub(crate) fn after_begin(oc: Option<&OpenCancel>) {
+    #[cfg(feature = "jni-test-hooks")]
+    if let Some(oc) = oc
+        && CANCEL_AFTER_BEGIN.swap(false, std::sync::atomic::Ordering::SeqCst)
+    {
+        oc.cancel();
+    }
+}
+
+jni_native! {
+    /// `org.tstrans.internal.OpenProbe.nArmCancelAfterBegin(armed)`.
+    #[cfg(feature = "jni-test-hooks")]
+    fn Java_org_tstrans_internal_OpenProbe_nArmCancelAfterBegin(_env, _class, armed: jboolean) = () => {
+        CANCEL_AFTER_BEGIN.store(armed, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
 /// End an open whose configuration was refused, with that refusal's
 /// exception pending: when the object was cancelled by now the domain's
 /// `CLOSED` replaces it, as [`finish`] replaces a failed open's error.
