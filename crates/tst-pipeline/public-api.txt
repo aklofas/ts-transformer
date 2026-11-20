@@ -2209,6 +2209,7 @@ pub struct tst_pipeline::sender::Sender<T: tst_core::transport::Transport>
 impl<T: tst_core::transport::Transport> tst_pipeline::sender::Sender<T>
 pub fn tst_pipeline::sender::Sender<T>::cancel_handle(&self) -> core::option::Option<alloc::sync::Arc<(dyn tst_core::transport::TransportCancel + core::marker::Send + core::marker::Sync)>>
 pub fn tst_pipeline::sender::Sender<T>::close(&mut self)
+pub fn tst_pipeline::sender::Sender<T>::finish(&mut self) -> core::result::Result<(), tst_pipeline::sender::SenderError>
 pub fn tst_pipeline::sender::Sender<T>::flush(&mut self) -> core::result::Result<(), tst_pipeline::sender::SenderError>
 pub fn tst_pipeline::sender::Sender<T>::is_alive(&self) -> bool
 pub fn tst_pipeline::sender::Sender<T>::new(T, tst_pipeline::sender::SenderConfig) -> Self
@@ -3274,6 +3275,7 @@ pub struct tst_pipeline::Sender<T: tst_core::transport::Transport>
 impl<T: tst_core::transport::Transport> tst_pipeline::sender::Sender<T>
 pub fn tst_pipeline::sender::Sender<T>::cancel_handle(&self) -> core::option::Option<alloc::sync::Arc<(dyn tst_core::transport::TransportCancel + core::marker::Send + core::marker::Sync)>>
 pub fn tst_pipeline::sender::Sender<T>::close(&mut self)
+pub fn tst_pipeline::sender::Sender<T>::finish(&mut self) -> core::result::Result<(), tst_pipeline::sender::SenderError>
 pub fn tst_pipeline::sender::Sender<T>::flush(&mut self) -> core::result::Result<(), tst_pipeline::sender::SenderError>
 pub fn tst_pipeline::sender::Sender<T>::is_alive(&self) -> bool
 pub fn tst_pipeline::sender::Sender<T>::new(T, tst_pipeline::sender::SenderConfig) -> Self

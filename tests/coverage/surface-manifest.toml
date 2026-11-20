@@ -1939,6 +1939,17 @@ bindings = ["java:org.tstrans.shells.Sender", "c:unaudited", "python:unaudited",
 scenario_ids = ["h264-st0601-mp"]
 tier = "A"
 
+# finish: flush, mark closed, close the transport, no cancel first; returns
+# the flush's error. Unit tests over a transport that queues until close.
+[[surface]]
+kind = "rust"
+crate = "tst-pipeline"
+item = "tst_pipeline::sender::Sender::finish"
+owning_tests = ["crates/tst-pipeline/src/sender/mod.rs"]
+bindings = ["c:deferred(no C finish on the plain sender)", "python:deferred(the binding finish comes with the shells' close rules)", "java:deferred(the binding finish comes with the shells' close rules)", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
 # capability: srt_stats on a shell: Rust; C has the per-family tst_*_get_socket_stats getters instead; Python and JVM on Sender and Receiver over srt:// only, none on MuxSender or DemuxReceiver.
 [[surface]]
 kind = "rust"

@@ -145,7 +145,7 @@ impl crate::shell_error::ShellError for SenderError {
 ///
 /// # Closing
 ///
-/// `Sender` supports three shutdown patterns:
+/// `Sender` supports four shutdown patterns:
 ///
 /// 1. **Drop** — the [`Drop`] impl best-effort flushes any buffered
 ///    partial bundle and closes the underlying transport. Synchronous:
@@ -165,7 +165,14 @@ impl crate::shell_error::ShellError for SenderError {
 ///    the transport first and then closes, so a partial bundle buffered
 ///    against a lost peer is dropped rather than replayed through a
 ///    reconnect.
-/// 3. **Cross-thread cancel** — call [`Self::cancel_handle`] to obtain a
+/// 3. **Graceful finish** — call [`Self::finish`]. Flushes the partial
+///    bundle and the retained bundles to the still-live transport
+///    (fallible: the caller learns whether the tail went out), marks the
+///    sender closed, then closes the transport, with no cancel first, so a
+///    transport that queues (an RTSP push) writes what it holds. A binding's
+///    `finish()` calls it without cancelling. A later `close()` or Drop
+///    does nothing.
+/// 4. **Cross-thread cancel** — call [`Self::cancel_handle`] to obtain a
 ///    `Send + Sync` [`tst_core::transport::TransportCancel`] handle,
 ///    then `cancel()` from any thread. Wakes a peer thread parked in
 ///    `send_ts`; how soon depends on the transport (SRT closes the
@@ -181,7 +188,7 @@ impl crate::shell_error::ShellError for SenderError {
 /// | Kotlin | Wrap as `AutoCloseable`; `.use { }` calls `close()` on exit |
 /// | Swift | `deinit` calls drop; `defer { handle.cancel() }` for explicit cross-thread |
 /// | Python | Wrap as `__enter__`/`__exit__`; `with ... as sender:` calls `close()` on exit |
-/// | C | `tst_sender_close(sender)` (explicit; mirrors `Drop`) |
+/// | C | `tst_sender_close(sender)` (explicit; mirrors `Drop`); no `finish` twin |
 ///
 /// See [`docs/reference/srt-cancel-handle.md`](https://github.com/aklofas/ts-transformer/blob/main/docs/reference/srt-cancel-handle.md) for the full cancel-handle pattern.
 pub struct Sender<T: Transport> {
@@ -474,7 +481,35 @@ impl<T: Transport> Sender<T> {
         self.transport.socket_stats()
     }
 
+    /// Flush, then close: the fallible counterpart to [`Self::close`].
+    /// Nothing is cancelled first, so the flush sends go to the still-live
+    /// transport and the transport's own close runs uncancelled (a queuing
+    /// transport writes its queue). Idempotent: `Ok(())` on a sender that
+    /// is already closed. Mirrors [`crate::MuxSender::finish`].
+    ///
+    /// **May block** as long as the flush sends and the transport's close
+    /// take; a watchdog holding [`Self::cancel_handle`] can end it from
+    /// another thread, and the parked send's error is returned.
+    ///
+    /// # Errors
+    ///
+    /// The flush's error ([`Self::flush`]); the bundles not yet sent are
+    /// abandoned. The sender is marked closed and the transport closed
+    /// whatever the flush returned.
+    pub fn finish(&mut self) -> Result<(), SenderError> {
+        if self.closed {
+            return Ok(());
+        }
+        let flushed = self.flush();
+        self.closed = true;
+        self.transport.close();
+        flushed
+    }
+
     pub fn close(&mut self) {
+        if self.closed {
+            return;
+        }
         // Best-effort flush of any buffered partial bundle BEFORE marking
         // closed (otherwise the subsequent flush() would early-return on
         // the `self.closed` guard). Mirrors Drop semantics so explicit
@@ -872,5 +907,156 @@ mod tests {
         input.extend(ts_packets(3));
         let err = sender.send_ts(&input).unwrap_err();
         assert_eq!(err.input_consumed, Some(false));
+    }
+
+    /// A transport that queues what it is given and hands the queue on at
+    /// `close()` unless its cancel fired first, the way a push session's
+    /// close waits for its media queue. The first `fail_sends` sends are
+    /// refused with `Backpressure`; with `broken` every send fails.
+    #[derive(Default)]
+    struct QueuingState {
+        queued: Vec<u8>,
+        delivered: Vec<u8>,
+        dropped_at_close: usize,
+        closes: usize,
+    }
+    struct Queuing {
+        state: std::sync::Arc<std::sync::Mutex<QueuingState>>,
+        cancel: std::sync::Arc<tst_core::cancel::FlagCancel>,
+        fail_sends: usize,
+        broken: bool,
+    }
+    impl Queuing {
+        fn new(
+            fail_sends: usize,
+            broken: bool,
+        ) -> (Self, std::sync::Arc<std::sync::Mutex<QueuingState>>) {
+            let state = std::sync::Arc::new(std::sync::Mutex::new(QueuingState::default()));
+            (
+                Self {
+                    state: state.clone(),
+                    cancel: std::sync::Arc::new(tst_core::cancel::FlagCancel::new()),
+                    fail_sends,
+                    broken,
+                },
+                state,
+            )
+        }
+    }
+    impl Transport for Queuing {
+        fn send_bytes(&mut self, b: &[u8]) -> Result<(), TransportError> {
+            if self.broken {
+                return Err(TransportError::Broken {
+                    msg: "test broken".into(),
+                    errno_code: None,
+                    cause: tst_core::transport::BrokenCause::Unspecified,
+                });
+            }
+            if self.fail_sends > 0 {
+                self.fail_sends -= 1;
+                return Err(TransportError::Backpressure {
+                    msg: "test backpressure".into(),
+                    errno_code: None,
+                });
+            }
+            self.state.lock().unwrap().queued.extend_from_slice(b);
+            Ok(())
+        }
+        fn max_payload(&self) -> usize {
+            1316
+        }
+        fn close(&mut self) {
+            let mut st = self.state.lock().unwrap();
+            st.closes += 1;
+            let q = core::mem::take(&mut st.queued);
+            if self.cancel.is_cancelled() {
+                st.dropped_at_close += q.len();
+            } else {
+                st.delivered.extend_from_slice(&q);
+            }
+        }
+        fn is_alive(&self) -> bool {
+            self.state.lock().unwrap().closes == 0
+        }
+        fn cancel_handle(
+            &self,
+        ) -> Option<std::sync::Arc<dyn tst_core::transport::TransportCancel + Send + Sync>>
+        {
+            Some(self.cancel.clone())
+        }
+    }
+
+    #[test]
+    fn finish_delivers_every_retained_bundle_then_closes() {
+        let (t, state) = Queuing::new(1, false);
+        let mut s = Sender::new(t, SenderConfig::default());
+        let input = ts_packets(9);
+        // The first bundle (7 packets) is refused and retained; 2 packets
+        // stay in the framing buffer.
+        let e = s.send_ts(&input).unwrap_err();
+        assert_eq!(e.input_consumed, Some(true));
+        assert!(state.lock().unwrap().queued.is_empty());
+
+        s.finish().expect("finish drains and closes");
+        let st = state.lock().unwrap();
+        assert_eq!(st.delivered, input, "every byte, in order");
+        assert_eq!(st.dropped_at_close, 0);
+        assert_eq!(st.closes, 1);
+        drop(st);
+        assert!(!s.is_alive());
+    }
+
+    #[test]
+    fn finish_reports_a_flush_error_and_still_closes() {
+        let (t, state) = Queuing::new(0, true);
+        let mut s = Sender::new(t, SenderConfig::default());
+        s.send_ts(&ts_packets(3)).unwrap();
+        let e = s.finish().unwrap_err();
+        assert!(
+            matches!(
+                e.source,
+                SenderErrorSource::Transport(TransportError::Broken { .. })
+            ),
+            "got {e:?}"
+        );
+        assert_eq!(state.lock().unwrap().closes, 1, "closed despite the error");
+        assert!(!s.is_alive());
+        assert!(s.finish().is_ok(), "a second finish is a no-op");
+        assert_eq!(state.lock().unwrap().closes, 1);
+    }
+
+    #[test]
+    fn close_after_finish_does_nothing() {
+        let (t, state) = Queuing::new(0, false);
+        let mut s = Sender::new(t, SenderConfig::default());
+        s.send_ts(&ts_packets(3)).unwrap();
+        s.finish().unwrap();
+        s.close();
+        drop(s);
+        let st = state.lock().unwrap();
+        assert_eq!(st.closes, 1, "neither close nor drop closes again");
+        assert_eq!(st.delivered, ts_packets(3));
+    }
+
+    #[test]
+    fn send_after_finish_is_refused() {
+        let (t, state) = Queuing::new(0, false);
+        let mut s = Sender::new(t, SenderConfig::default());
+        s.finish().unwrap();
+        let e = s.send_ts(&ts_packets(1)).unwrap_err();
+        assert!(
+            matches!(
+                e.source,
+                SenderErrorSource::Transport(TransportError::Closed)
+            ),
+            "got {e:?}"
+        );
+        assert_eq!(e.kind, ShellErrorKind::Closed);
+        assert_eq!(e.input_consumed, Some(false));
+        assert!(matches!(
+            s.flush().unwrap_err().source,
+            SenderErrorSource::Transport(TransportError::Closed)
+        ));
+        assert!(state.lock().unwrap().delivered.is_empty());
     }
 }
