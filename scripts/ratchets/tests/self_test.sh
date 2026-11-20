@@ -377,6 +377,10 @@ impl PySocket {
     fn test_only(&self) -> PyResult<PyAddr> {
         crate::util::addr_tuple_for_test("::1", 1, 0)
     }
+    fn decoy(&self) -> PyResult<PyAddr> {
+        let my_addr_tuple = (self.text(), 0);
+        Ok(my_addr_tuple)
+    }
 }
 EOF
 cat > "$tmp/at/clean/srt.rs" <<'EOF'
@@ -413,6 +417,7 @@ expect_out "address tuples: the hand-built host is named" "addr.ip().to_string()
 expect_out "address tuples: a one-line signature without the helper" "fn peer_addr"
 expect_out "address tuples: a multi-line signature without the helper" "fn local_addr"
 expect_out "address tuples: the test hook is not the helper" "fn test_only"
+expect_out "address tuples: a name ending in addr_tuple is not the helper" "fn decoy"
 expect "address tuples: the helper, util.rs and comments pass" 0 env AT_ROOT="$tmp/at/clean" bash "$AT"
 expect "address tuples: no address-returning function fails closed" 1 env AT_ROOT="$tmp/at/none" bash "$AT"
 

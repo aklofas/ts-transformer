@@ -17,7 +17,9 @@
 #    The check fails closed when it finds no such function at all.
 #
 # A line scanner: a body is "up to the next `fn`", so a nested closure
-# declared with `fn` would end it early (none does today).
+# declared with `fn` would end it early (none does today); and a tuple
+# returned under another type (`Py<PyAny>` built with `PyTuple::new`) is
+# seen only if it takes the address apart with `.ip()`.
 #
 # Portable: bash 3.2, POSIX awk.
 #
@@ -88,7 +90,7 @@ while IFS= read -r f; do
                     if (sub(/.*->/, "", ret) && ret ~ /\(String, u16\)|PyAddr/) needs = 1
                 }
             }
-            if (line ~ /addr_tuple([^A-Za-z0-9_]|$)/) calls = 1
+            if (line ~ /(^|[^A-Za-z0-9_])(peer_)?addr_tuple([^A-Za-z0-9_]|$)/) calls = 1
         }
         END { finish() }
     ' "$f"

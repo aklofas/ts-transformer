@@ -49,6 +49,10 @@
 #    The allowlist is exact in both directions and the check fails if it
 #    finds no lock at all.
 #
+#    `.run(` is matched whatever its receiver, so a `run(` that is not a
+#    slot query (PyO3's `py.run(`) taken with the GIL held is reported too
+#    and gets a row with its reason.
+#
 #    What a line scanner cannot see, so review has to:
 #      - a function that locks and is only ever CALLED from inside an
 #        `detach` closure is reported (it is lexically outside one);
@@ -57,6 +61,9 @@
 #        closure is not reported;
 #      - whether the other holders of an allowlisted lock release the GIL is
 #        the judgement the row's reason records — the scan does not prove it;
+#      - a lock is named by its last identifier only: in a function listed
+#        for `inner`, `other.inner.lock()` on another object passes, and every
+#        lock reached through a call result shares the method's name;
 #      - a guard returned by a helper the binding names itself (e.g.
 #        `fn lock_inner(&self) -> MutexGuard<…>`) is not one of the scanned
 #        spellings and is invisible to this check;
