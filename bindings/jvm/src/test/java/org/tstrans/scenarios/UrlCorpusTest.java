@@ -73,9 +73,20 @@ import org.tstrans.webrtc.WhepServer;
  * <p>The corpus is read from the JSON twin {@code gen-scenarios} writes into the scenario's
  * golden ({@code extensions.corpus}), because the test classpath has no TOML reader.
  */
-class UrlCorpusTest {
+public class UrlCorpusTest {
 
     static final Map<String, Object> CORPUS = load();
+
+    /**
+     * The corpus's {@code [shell_schemes]} table, scheme to error domain (the
+     * {@code tst_pipeline::binding::SHELL_SCHEMES} list), for the shell dispatch tests.
+     */
+    @SuppressWarnings("unchecked")
+    public static Map<String, String> shellSchemes() {
+        Map<String, String> table = (Map<String, String>) CORPUS.get("shell_schemes");
+        if (table == null || table.isEmpty()) throw new AssertionError("the corpus has no [shell_schemes]");
+        return table;
+    }
 
     @SuppressWarnings("unchecked")
     private static Map<String, Object> load() {
