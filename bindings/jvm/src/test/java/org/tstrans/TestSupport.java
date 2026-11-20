@@ -51,6 +51,18 @@ public final class TestSupport {
     }
 
     /**
+     * Synthetic ADTS frame (mirrors tst-integration's {@code synthetic_adts_frame()}):
+     * AAC-LC 44100 Hz stereo, frame_length=15 (7-byte header + 8 payload bytes).
+     */
+    public static byte[] syntheticAdtsFrame() {
+        return new byte[]{
+            (byte) 0xFF, (byte) 0xF1, 0x50, (byte) 0x80, 0x01, (byte) 0xFF, (byte) 0xFC,
+            (byte) 0xA0, (byte) 0xA1, (byte) 0xA2, (byte) 0xA3,
+            (byte) 0xA4, (byte) 0xA5, (byte) 0xA6, (byte) 0xA7
+        };
+    }
+
+    /**
      * {@code ms} scaled by the {@code TST_TEST_TIMEOUT_SCALE} environment variable (a
      * decimal factor, default 1; values below 1 count as 1), so slow runners can stretch
      * every live-socket budget at once.

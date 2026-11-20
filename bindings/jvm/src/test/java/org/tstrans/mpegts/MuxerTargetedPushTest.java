@@ -2,6 +2,7 @@ package org.tstrans.mpegts;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.tstrans.TestSupport.drain;
+import static org.tstrans.TestSupport.syntheticAdtsFrame;
 import static org.tstrans.TestSupport.syntheticH264Idr;
 
 import java.util.ArrayList;
@@ -14,18 +15,6 @@ import org.tstrans.MuxException;
  * routing to a specific stream and forged-handle rejection.
  */
 class MuxerTargetedPushTest {
-
-    /**
-     * Synthetic ADTS frame (mirrors tst-integration's {@code synthetic_adts_frame()}):
-     * AAC-LC 44100 Hz stereo, frame_length=15 (7-byte header + 8 payload bytes).
-     */
-    private static byte[] syntheticAdtsFrame() {
-        return new byte[]{
-            (byte) 0xFF, (byte) 0xF1, 0x50, (byte) 0x80, 0x01, (byte) 0xFF, (byte) 0xFC,
-            (byte) 0xA0, (byte) 0xA1, (byte) 0xA2, (byte) 0xA3,
-            (byte) 0xA4, (byte) 0xA5, (byte) 0xA6, (byte) 0xA7
-        };
-    }
 
     // -------------------------------------------------------------------------
     // Routing assertions — targeted push lands on the right PID.

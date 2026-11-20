@@ -35,6 +35,7 @@ import org.tstrans.klv.UasDatalinkLs;
 import org.tstrans.mpegts.AudioCodec;
 import org.tstrans.mpegts.DemuxEvent;
 import org.tstrans.mpegts.Demuxer;
+import org.tstrans.mpegts.ScenarioMuxRecipes;
 import org.tstrans.mpegts.VideoCodec;
 
 /**
@@ -421,11 +422,25 @@ class ScenarioReproductionTest {
         "exception-kind-stability", "covered: DemuxerConfigTest.strictFullRejectsNonConformantInput "
             + "(the same corrupted-PMT input) + ErrorModelTest.kindMembersMatchTheDemuxDomain");
 
+    /** A roundtrip scenario's mux recipe on the JVM. */
+    @FunctionalInterface
+    interface MuxRecipe {
+        byte[] mux() throws Exception;
+    }
+
+    /** Every roundtrip id and the JVM recipe that re-muxes it; an id missing here fails. */
+    static final Map<String, MuxRecipe> ROUNDTRIP = Map.of(
+        "video-roundtrip", ScenarioMuxRecipes::videoRoundtrip,
+        "audio-klv-roundtrip", ScenarioMuxRecipes::audioKlvRoundtrip,
+        "video-dts-roundtrip", ScenarioMuxRecipes::videoDtsRoundtrip,
+        "video-misp-roundtrip", ScenarioMuxRecipes::videoMispRoundtrip);
+
     @ParameterizedTest(name = "{0} ({1})")
     @MethodSource("scenarios")
     void everyManifestScenarioRunsOrIsDeclared(String id, String kind) throws Exception {
         switch (kind) {
-            case "demux", "roundtrip" -> assertSubsetMatchesGolden(id, kind);
+            case "demux" -> assertSubsetMatchesGolden(id);
+            case "roundtrip" -> assertRoundtripReproduced(id);
             case "binding_contract" -> {
                 String how = BINDING_CONTRACT.get(id);
                 assertNotNull(how, id + " is a binding_contract scenario with no JVM coverage declared");
@@ -441,15 +456,32 @@ class ScenarioReproductionTest {
     }
 
     /**
+     * Re-mux a roundtrip scenario through the JVM {@link org.tstrans.mpegts.Muxer} with the
+     * recipe {@link #ROUNDTRIP} names for it: the bytes must equal the committed
+     * {@code output.ts} and hash to the golden's {@code output_sha256}.
+     */
+    private static void assertRoundtripReproduced(String id) throws Exception {
+        MuxRecipe recipe = ROUNDTRIP.get(id);
+        assertNotNull(recipe, id + " is a roundtrip scenario with no JVM mux recipe");
+        Path dir = scenarioDir(id);
+        Path output = dir.resolve("output.ts");
+        assertTrue(Files.isRegularFile(output), "shared scenario output missing: " + output);
+        String golden = Files.readString(dir.resolve("golden.json"), StandardCharsets.UTF_8);
+        byte[] fresh = recipe.mux();
+        assertArrayEquals(Files.readAllBytes(output), fresh,
+            id + ": the JVM muxer's bytes differ from the committed output.ts");
+        assertEquals(extractString(golden, "output_sha256"),
+            HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(fresh)),
+            id + ": the JVM muxer's bytes do not hash to the golden's output_sha256");
+    }
+
+    /**
      * Demux the scenario's input and require every video, KLV and audio event of the golden
      * among the JVM's. A golden with none of those events requires the JVM to observe none.
-     * A roundtrip scenario's committed {@code output.ts} must hash to the golden's
-     * {@code output_sha256} and demux without error; its golden core is empty because the
-     * mux recipe, not the demux result, is what it pins.
      */
-    private static void assertSubsetMatchesGolden(String id, String kind) throws Exception {
+    private static void assertSubsetMatchesGolden(String id) throws Exception {
         Path dir = scenarioDir(id);
-        Path input = dir.resolve(kind.equals("roundtrip") ? "output.ts" : "input.ts");
+        Path input = dir.resolve("input.ts");
         String golden = Files.readString(dir.resolve("golden.json"), StandardCharsets.UTF_8);
         assertTrue(Files.isRegularFile(input), "shared scenario input missing: " + input);
         byte[] ts = Files.readAllBytes(input);
@@ -467,12 +499,6 @@ class ScenarioReproductionTest {
                     observed.add("klv|" + m.stream().pid() + "|" + klvSetFromUl(m.payload()));
                 }
             }
-        }
-
-        if (kind.equals("roundtrip")) {
-            assertEquals(extractString(golden, "output_sha256"), HexFormat.of().formatHex(
-                MessageDigest.getInstance("SHA-256").digest(ts)), id + ": output.ts drifted from the golden");
-            return;
         }
 
         Set<String> expected = new TreeSet<>();
