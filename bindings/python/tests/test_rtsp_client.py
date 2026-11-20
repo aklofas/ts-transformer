@@ -1085,6 +1085,38 @@ def test_a_request_never_answered_ends_at_the_request_timeout():
         server.join(10)
 
 
+@pytest.mark.parametrize(("budget_ms", "at_least", "at_most"), [(300, 0.0, 5.0), (3000, 2.5, 10.0)])
+def test_the_connect_timeout_bounds_the_tls_handshake(budget_ms: int, at_least: float, at_most: float):
+    """`connect_timeout_ms` covers the TCP connect and every handshake read:
+    an `rtsps://` connect to a listener that accepts and never answers the
+    ClientHello fails with `RtspError(IO)` ("TimedOut") once the budget is
+    spent, not at the 10 s default."""
+    listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(1)
+    held: list = []
+    acceptor = threading.Thread(target=lambda: held.append(listener.accept()), daemon=True)
+    acceptor.start()
+    cfg = RtspClientConfig(
+        url=f"rtsps://127.0.0.1:{listener.getsockname()[1]}/x",
+        keepalive=False,
+        connect_timeout_ms=budget_ms,
+    )
+    try:
+        began = time.monotonic()
+        with pytest.raises(RtspError) as ei:
+            RtspClient.connect(cfg)
+        took = time.monotonic() - began
+        assert ei.value.kind == RtspErrorKind.IO, ei.value
+        assert "TimedOut" in str(ei.value), ei.value
+        assert at_least <= took < at_most, took
+    finally:
+        acceptor.join(5)
+        for conn, _ in held:
+            conn.close()
+        listener.close()
+
+
 # ---------------------------------------------------------------------------
 # The data plane is decided and taken in one step
 # ---------------------------------------------------------------------------
