@@ -151,11 +151,12 @@ class LocalPortTest {
         }
     }
 
-    @Test
-    void aCallerShellHasNoLocalPort() throws Exception {
+    @ParameterizedTest
+    @ValueSource(strings = {"Receiver", "DemuxReceiver"})
+    void aCallerShellHasNoLocalPort(String shell) throws Exception {
         try (ShellPeers.Cleanup c = new ShellPeers.Cleanup()) {
             ServerSocket server = c.add(new ServerSocket(0, 1, InetAddress.getLoopbackAddress()));
-            Receiver rx = c.add(Receiver.open("tcp://127.0.0.1:" + server.getLocalPort()));
+            ShellPeers.Rx rx = c.add(ShellPeers.openRx(shell, "tcp://127.0.0.1:" + server.getLocalPort()));
             assertEquals(OptionalInt.empty(), rx.localPort());
         }
     }
