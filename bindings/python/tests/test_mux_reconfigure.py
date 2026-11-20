@@ -125,39 +125,52 @@ def test_a_removed_streams_handle_raises_invalid_usage() -> None:
 
 
 @pytest.mark.parametrize(
-    "refused",
+    ("refused", "reason"),
     [
         # The PMT PID of a surviving program moved.
-        lambda: _config(_video_program(1, 0x110, 0x101)),
+        pytest.param(
+            lambda: _config(_video_program(1, 0x110, 0x101)),
+            "changes its PMT PID",
+            id="pmt-pid-moved",
+        ),
         # The same PID now carries another codec.
-        lambda: _config(
-            MuxerProgramConfigBuilder(1, 0x100).add_video(0x101, VideoCodec.H265).build()
+        pytest.param(
+            lambda: _config(
+                MuxerProgramConfigBuilder(1, 0x100).add_video(0x101, VideoCodec.H265).build()
+            ),
+            "changes its stream type or codec",
+            id="codec-changed",
         ),
         # The PID moved to another program.
-        lambda: _config(_video_program(1, 0x100, 0x111), _video_program(2, 0x200, 0x101)),
+        pytest.param(
+            lambda: _config(_video_program(1, 0x100, 0x111), _video_program(2, 0x200, 0x101)),
+            "moves from program 1 to program 2",
+            id="pid-moved-program",
+        ),
         # The PCR moved to 0x102 while 0x101, which carried it, stays.
-        lambda: _config(
-            MuxerProgramConfigBuilder(1, 0x100)
-            .add_video(0x101, VideoCodec.H264)
-            .add_video(0x102, VideoCodec.H264)
-            .pcr_pid(0x102)
-            .build()
+        pytest.param(
+            lambda: _config(
+                MuxerProgramConfigBuilder(1, 0x100)
+                .add_video(0x101, VideoCodec.H264)
+                .add_video(0x102, VideoCodec.H264)
+                .pcr_pid(0x102)
+                .build()
+            ),
+            "changes its PCR PID",
+            id="pcr-moved-old-stays",
         ),
         # A muxer-wide setting differs from the running one.
-        lambda: MuxerConfigBuilder()
-        .add_program(_video_program(1, 0x100, 0x101))
-        .pcr_interval_ms(20)
-        .build(),
-    ],
-    ids=[
-        "pmt-pid-moved",
-        "codec-changed",
-        "pid-moved-program",
-        "pcr-moved-old-stays",
-        "muxer-setting-changed",
+        pytest.param(
+            lambda: MuxerConfigBuilder()
+            .add_program(_video_program(1, 0x100, 0x101))
+            .pcr_interval_ms(20)
+            .build(),
+            "pcr_interval_ms changes",
+            id="muxer-setting-changed",
+        ),
     ],
 )
-def test_a_refused_config_raises_config_invalid_and_changes_nothing(refused) -> None:
+def test_a_refused_config_raises_config_invalid_and_changes_nothing(refused, reason: str) -> None:
     start = _config(
         MuxerProgramConfigBuilder(1, 0x100)
         .add_video(0x101, VideoCodec.H264)
@@ -174,6 +187,8 @@ def test_a_refused_config_raises_config_invalid_and_changes_nothing(refused) -> 
     with pytest.raises(MuxError) as ei:
         m.reconfigure(bad)
     assert ei.value.kind == MuxErrorKind.CONFIG_INVALID
+    # The case is refused for its own reason, not another the start config hit.
+    assert reason in str(ei.value)
     assert m.video_handles() == handles
     after = _push_frames(m, v, 99_000, 3)
     assert after == _push_frames(twin, tv, 99_000, 3)
