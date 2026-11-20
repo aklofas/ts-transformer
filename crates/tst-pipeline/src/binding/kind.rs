@@ -105,7 +105,7 @@ macro_rules! kinds {
 }
 
 kinds! {
-    /// Configuration rejected before anything was built: an invalid config, URL, option or address.
+    /// The offered configuration (a config, URL, option or address) was refused and nothing changed: a constructor or an open built nothing, `reconfigure` left the running configuration in place.
     ///
     /// `ShellErrorKind::ConfigInvalid`, `MuxErrorKind::ConfigInvalid`, SRT address/option/URL errors.
     ConfigInvalid = -1 => "CONFIG_INVALID", "CONFIG_INVALID", -1;

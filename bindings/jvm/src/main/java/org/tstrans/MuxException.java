@@ -21,8 +21,9 @@ public final class MuxException extends BindingException {
          */
         INPUT_MALFORMED,
         /**
-         * Configuration rejected before anything was built: an invalid config,
-         * URL, option or address.
+         * The offered configuration (a config, URL, option or address) was refused
+         * and nothing changed: a constructor or an open built nothing,
+         * `reconfigure` left the running configuration in place.
          */
         CONFIG_INVALID,
         /**

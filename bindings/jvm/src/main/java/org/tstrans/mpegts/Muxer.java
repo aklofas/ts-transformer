@@ -40,8 +40,9 @@ public final class Muxer extends NativeHandle {
      * Build a muxer from {@code cfg}. The whole single-program config is
      * marshalled across one {@code nOpen} call.
      *
-     * @throws MuxException ({@code CONFIG_INVALID}) if {@code Muxer::new} rejects
-     *     the config (PID collisions, PMT over budget, sync-KLV without PTS, …).
+     * @throws MuxException ({@code CONFIG_INVALID}) if {@code Muxer::new} refuses
+     *     the config (PID collisions, PMT over budget, sync-KLV without PTS, …);
+     *     nothing was built.
      */
     public Muxer(MuxerConfig cfg) throws MuxException {
         setHandle(nOpen(
