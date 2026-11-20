@@ -1034,6 +1034,30 @@ class RtspPushTest {
         }
     }
 
+    /**
+     * The same when the conversion has also claimed the session's key before the teardown
+     * reaches its native: CLOSED, not {@code IllegalStateException}.
+     */
+    @Test
+    @Timeout(30)
+    @EnabledIfSystemProperty(named = "tst.jniTestHooks", matches = "true")
+    void aTeardownAfterAConversionClaimedTheKeyThrowsClosed() throws Exception {
+        try (ScriptedRecordServer peer = new ScriptedRecordServer(200, false)) {
+            RtspPushSession push = RtspClient.push(peer.config(), PushDescription.mp2t());
+            push.sendTs(NULL_BUNDLE);
+            PushProbe.nTakeAsConversion(push.nativeHandleForTest());
+            PushProbe.nRemoveKey(push.nativeHandleForTest());
+            try {
+                RtspException e = assertThrows(RtspException.class, push::teardown);
+                assertEquals(RtspException.Kind.CLOSED, e.kind());
+            } finally {
+                PushProbe.nCloseTaken();
+            }
+            assertTrue(peer.awaitMethod("TEARDOWN"), "the push's owner wrote no TEARDOWN");
+            assertEquals(Optional.of(EndReason.CLEAN_TEARDOWN), push.endReason());
+        }
+    }
+
     @Test
     @Timeout(60)
     @EnabledIfSystemProperty(named = "tst.jniTestHooks", matches = "true")

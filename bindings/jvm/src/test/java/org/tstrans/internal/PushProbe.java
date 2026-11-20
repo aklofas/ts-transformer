@@ -53,6 +53,12 @@ public final class PushProbe {
      * push and its claim of the session. {@link #nCloseTaken()} closes the push.
      */
     public static native void nTakeAsConversion(long sessionHandle);
+    /**
+     * Remove the session's key, as a conversion does once it has taken the push; with
+     * {@link #nTakeAsConversion} first, the session stands where a finished conversion
+     * leaves it while its Java object still holds the key.
+     */
+    public static native void nRemoveKey(long sessionHandle);
     /** Close the push {@link #nTakeAsConversion} took; quiet when there is none. */
     public static native void nCloseTaken();
 }

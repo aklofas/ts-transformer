@@ -482,11 +482,11 @@ fn take_for_close(entry: &JniRtspPush, _handle: jlong) -> Option<RtspPush> {
 jni_native! {
     /// `RtspPushSession.nTeardown(handle)`: CONSUMING (the Java side zeroed its key
     /// first). Closes the push as `nClose` does and throws the TEARDOWN's error.
-    /// `false` when a conversion had taken the push: nothing was torn down, and the
-    /// Java side reports that as `CLOSED`.
+    /// `false` when a conversion had taken the push, also when it has claimed the key
+    /// as well (only a conversion removes the entry while the Java side holds the key):
+    /// nothing was torn down, and the Java side reports that as `CLOSED`.
     fn Java_org_tstrans_rtp_RtspPushSession_nTeardown(env, _class, handle: jlong) -> jboolean = false => {
         let Some(entry) = REGISTRY_PUSH.close(handle as u64) else {
-            crate::error::throw_closed(env, WHAT);
             return false;
         };
         let Some(push) = take_for_close(&entry, handle) else {
@@ -878,6 +878,15 @@ jni_native! {
             }
             Err(r) => throw_refused(env, r, false),
         }
+    }
+}
+
+jni_native! {
+    /// `org.tstrans.internal.PushProbe.nRemoveKey(handle)`: remove the session's
+    /// registry entry, as a conversion does once it has taken the push.
+    #[cfg(feature = "jni-test-hooks")]
+    fn Java_org_tstrans_internal_PushProbe_nRemoveKey(_env, _class, handle: jlong) = () => {
+        drop(REGISTRY_PUSH.close(handle as u64));
     }
 }
 
