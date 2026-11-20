@@ -530,7 +530,7 @@ TEARDOWN that `teardown()`, `teardown_within()` or `close()` sent on a
 client whose cancel was not set. CLOSED (`ExplicitClose`,
 `RtpError(CLOSED)`, `RtpException(CLOSED)`, `TST_E_CLOSED`) means a
 cancel: the receiver itself was cancelled or closed; or its `RtspClient`
-was dropped (in Python, the `RtspSession` object was collected); or the
+was dropped; or the
 client's cancel handle had fired before the client sent its TEARDOWN, so
 `teardown()` and `close()` on a cancelled client, and the bindings' close
 paths on a cancelled session, are a cancel whatever the server then does;
@@ -592,8 +592,8 @@ let mut demux = DemuxReceiver::new(transport);
 match handle.get() { /* same match as above */ }
 ```
 
-Keep the owning `RtspClient` (in Python, the `RtspSession` object) alive
-while you receive, and call `teardown()` (or `close()`) to end the stream
+Keep the owning `RtspClient` alive while you receive (in Python a receiver
+keeps it alive), and call `teardown()` (or `close()`) to end the stream
 cleanly: on a client whose cancel is not set, an accepted reply (`2xx` or
 `454`) records `CleanTeardown` and closes an interleaved receiver's queue
 before the call returns, and the receiver ends with end of stream after

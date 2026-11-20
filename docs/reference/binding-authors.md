@@ -420,7 +420,8 @@ table says what each of those waits for, one phase at a time.
 `WhepServer`, the HLS serving handle, `ManagedTransport` and `RtspClient`
 follow this today; every binding's explicit close of an RTSP session is
 `RtspClient::close()`, and a Python session collected without `close()`
-takes the drop. `RtspServer` is the listed exception: its `Drop` still
+drops its share of the client, which takes the drop once the session
+object and every receiver taken from it are gone. `RtspServer` is the listed exception: its `Drop` still
 waits up to 5 s for its runtime (the RIST transports also join in `Drop`;
 the same table lists them). A Rust `Sender` or `MuxSender` dropped without `close()`
 sends what it still buffers, then closes its transport. The binding layer
