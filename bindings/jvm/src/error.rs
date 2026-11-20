@@ -101,7 +101,14 @@ pub(crate) fn throw_binding(env: &mut Env, domain: Domain, e: &BindingError) {
         return;
     };
     let kind_sig = format!("L{class}$Kind;");
-    if let Err(err) = throw_kinded(env, class, &kind_sig, member, &e.detail) {
+    let result = match e.diagnostics.reject_code {
+        // A refused SRT connection keeps the reason the peer sent.
+        Some(code) if domain == Domain::Srt => {
+            throw_kinded_args(env, class, &kind_sig, member, &e.detail, Some(code))
+        }
+        _ => throw_kinded(env, class, &kind_sig, member, &e.detail),
+    };
+    if let Err(err) = result {
         let simple_name = class.rsplit('/').next().unwrap_or(class);
         let _ = env.throw_new(
             FindClass(jni_str!("java/lang/RuntimeException")),
@@ -531,6 +538,19 @@ pub(crate) fn throw_kinded(
     kind: &str,
     message: &str,
 ) -> jni::errors::Result<()> {
+    throw_kinded_args(env, exc_class, kind_sig, kind, message, None)
+}
+
+/// [`throw_kinded`], through the `(Kind, String, int)` constructor when
+/// `int_arg` is `Some` (`SrtException`'s reject code).
+fn throw_kinded_args(
+    env: &mut Env,
+    exc_class: &str,
+    kind_sig: &str,
+    kind: &str,
+    message: &str,
+    int_arg: Option<i32>,
+) -> jni::errors::Result<()> {
     let kind_class = format!("{exc_class}$Kind");
     let kind_val = env
         .get_static_field(
@@ -540,12 +560,24 @@ pub(crate) fn throw_kinded(
         )?
         .l()?;
     let msg = env.new_string(message)?;
-    let ctor_sig = format!("({kind_sig}Ljava/lang/String;)V");
-    let exc: JObject = env.new_object(
-        FindClass(JNIString::from(exc_class)),
-        RuntimeMethodSignature::from_str(&ctor_sig)?.method_signature(),
-        &[JValue::Object(&kind_val), JValue::Object(&msg)],
-    )?;
+    let exc: JObject = match int_arg {
+        None => env.new_object(
+            FindClass(JNIString::from(exc_class)),
+            RuntimeMethodSignature::from_str(format!("({kind_sig}Ljava/lang/String;)V"))?
+                .method_signature(),
+            &[JValue::Object(&kind_val), JValue::Object(&msg)],
+        )?,
+        Some(n) => env.new_object(
+            FindClass(JNIString::from(exc_class)),
+            RuntimeMethodSignature::from_str(format!("({kind_sig}Ljava/lang/String;I)V"))?
+                .method_signature(),
+            &[
+                JValue::Object(&kind_val),
+                JValue::Object(&msg),
+                JValue::Int(n),
+            ],
+        )?,
+    };
     thrown(env.throw(env.cast_local::<jni::objects::JThrowable>(exc)?))
 }
 

@@ -1082,9 +1082,10 @@ try (Listener listener = new Builder("srt://127.0.0.1:9000")
 
 `remove(String)` returns whether a rule existed, `clear()` drops every
 explicit rule and `size()` counts them. `RejectReason` has constants such as
-`FORBIDDEN`, `CONFLICT` and `OVERLOAD`, `userDefined(int)` for application
-codes of 2000 or more, and `ofCode(int)`. `ListenRule.reject` takes codes of
-1000 or more. `set` throws `SrtException(CONFIG_INVALID)` for a bad
+`FORBIDDEN`, `CONFLICT` and `OVERLOAD`, constants for libsrt's internal
+codes 0 to 17 (`BAD_SECRET`, `UNSECURE`, …), `userDefined(int)` for
+application codes of 2000 or more, and `ofCode(int)`. `ListenRule.reject`
+takes codes of 1000 or more. `set` throws `SrtException(CONFIG_INVALID)` for a bad
 passphrase, a reject code above 2147482647 (which libsrt cannot send), or a
 NUL byte in a stream ID or rule key. A stream ID, rule key or passphrase with an unpaired UTF-16 surrogate is refused with `IllegalArgumentException` before the listener is consulted (JNI would otherwise decode it lossily and two distinct strings could share one rule). On a closed listener every other `set`/`setDefault` throws `SrtException(CLOSED)` even when the rule itself is invalid. After `Listener.close()` every `ListenRules` method throws
 `SrtException(CLOSED)` and `Listener.rules()` throws `IllegalStateException`.
@@ -1092,8 +1093,14 @@ After `cancelHandle().cancel()` without a `close()`, `Listener.rules()` still
 returns a view, and every method of that view throws `SrtException(CLOSED)`.
 A rule installed after `accept` returns does not cover a caller whose
 handshake already completed, so keep your own check after `accept` when it
-matters. A refused caller's connect throws `SrtException(CONNECT_FAILED)`
-with the reason name in the message. `AccessControl.parse(streamId)` (throws
+matters. A refused caller's connect (`Builder.caller().connect()` or an
+`srt://` shell's open) throws `SrtException(CONNECT_FAILED)` with the reason
+name in the message and the reason itself in `rejectReason()`: the rule's
+`RejectReason` constant, a reason named `OTHER` that keeps an application
+code, or an internal one such as `BAD_SECRET` for a wrong passphrase
+(`UNSECURE` when only one side has one). `rejectReason()` is empty for every
+other error. The listener's `accept` never sees a caller it refused, and the
+managed shells retry a refused connect, so neither reports a reason. `AccessControl.parse(streamId)` (throws
 `IllegalArgumentException` for any other form) reads
 the `#!::` stream-ID form into `user()`, `resource()`, `host()`, `session()`
 (each an `Optional<String>`), `kind()`, `mode()`, `get(key)` and `all()`.

@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 import static org.tstrans.TestSupport.isLinux;
 
+import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -235,5 +236,82 @@ class ListenRulesTest {
             assertTrue(rules.remove("a\uD83D\uDE00"));
             assertEquals(0, rules.size());
         }
+    }
+
+    // ── the typed reject reason ──────────────────────────────────────────────
+
+    @Test
+    @Timeout(30)
+    void rejectRuleReasonIsTyped() throws Exception {
+        assumeTrue(isLinux(), "srt live-socket loopback gated to Linux");
+        try (Listener listener = listen()) {
+            int port = listener.localAddr().port();
+            listener.rules().set("publish:amber", ListenRule.reject(RejectReason.FORBIDDEN));
+            AtomicReference<Object> outcome = new AtomicReference<>();
+            Thread acceptor = acceptOnDaemon(listener, 2000, outcome);
+
+            SrtException e = assertThrows(SrtException.class,
+                () -> caller(port, "publish:amber").connect());
+            assertEquals(Optional.of(RejectReason.FORBIDDEN), e.rejectReason());
+            assertSame(RejectReason.FORBIDDEN, e.rejectReason().orElseThrow());
+            assertTrue(e.getMessage().contains("Forbidden"), e.getMessage());
+            // The shell open carries it too.
+            SrtException shell = assertThrows(SrtException.class, () -> org.tstrans.shells.Sender.open(
+                "srt://127.0.0.1:" + port + "?mode=caller&streamid=publish:amber").close());
+            assertEquals(Optional.of(RejectReason.FORBIDDEN), shell.rejectReason());
+
+            // The listener never sees a refused caller: its accept times out, with no reason.
+            acceptor.join(10_000);
+            SrtException accepted = assertInstanceOf(SrtException.class, outcome.get());
+            assertEquals(SrtException.Kind.TIMEOUT, accepted.kind());
+            assertEquals(Optional.empty(), accepted.rejectReason());
+        }
+    }
+
+    @Test
+    @Timeout(30)
+    void userDefinedReasonKeepsItsCode() throws Exception {
+        assumeTrue(isLinux(), "srt live-socket loopback gated to Linux");
+        try (Listener listener = listen()) {
+            int port = listener.localAddr().port();
+            listener.rules().set("x", ListenRule.reject(RejectReason.userDefined(4242)));
+            SrtException e = assertThrows(SrtException.class, () -> caller(port, "x").connect());
+            RejectReason r = e.rejectReason().orElseThrow();
+            assertEquals(4242, r.code());
+            assertEquals("OTHER", r.name());
+            assertEquals(RejectReason.userDefined(4242), r);
+        }
+    }
+
+    @Test
+    @Timeout(30)
+    void aWrongPassphraseIsBadSecret() throws Exception {
+        assumeTrue(isLinux(), "srt live-socket loopback gated to Linux");
+        try (Listener listener = listen()) {
+            int port = listener.localAddr().port();
+            listener.rules().set("a", ListenRule.acceptWith("secretsecretsecret"));
+            SrtException e = assertThrows(SrtException.class,
+                () -> caller(port, "a").passphrase("othersecretother").connect());
+            assertEquals(SrtException.Kind.CONNECT_FAILED, e.kind());
+            assertSame(RejectReason.BAD_SECRET, e.rejectReason().orElseThrow());
+            assertEquals(10, e.rejectReason().orElseThrow().code());
+        }
+    }
+
+    @Test
+    @Timeout(30)
+    void nonRejectErrorsHaveNoReason() throws Exception {
+        assumeTrue(isLinux(), "srt live-socket loopback gated to Linux");
+        int port = org.tstrans.TestSupport.freeUdpPort();
+        SrtException timedOut = assertThrows(SrtException.class,
+            () -> new Builder("srt://127.0.0.1:" + port + "?connect_timeout=300").caller().connect());
+        assertEquals(Optional.empty(), timedOut.rejectReason(), timedOut.toString());
+        SrtException url = assertThrows(SrtException.class,
+            () -> new Builder("srt://127.0.0.1:notaport").caller().connect());
+        assertEquals(SrtException.Kind.CONFIG_INVALID, url.kind());
+        assertEquals(Optional.empty(), url.rejectReason());
+        assertEquals(Optional.empty(), new SrtException(SrtException.Kind.IO, "m").rejectReason());
+        assertEquals(Optional.of(RejectReason.FORBIDDEN),
+            new SrtException(SrtException.Kind.CONNECT_FAILED, "m", 1403).rejectReason());
     }
 }

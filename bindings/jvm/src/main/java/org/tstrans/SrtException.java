@@ -1,11 +1,24 @@
 package org.tstrans;
 
+import java.util.Optional;
+
 /**
  * Checked exception for the SRT transport surface ({@code org.tstrans.srt}).
  * Mirrors tst-py's {@code tstrans.exceptions.SrtError} / {@code SrtErrorKind}.
  * {@link Kind} maps the Rust {@code tst_srt} error families
  * (UrlError / ConnectError / BindError / AcceptError / IoError / TransportError)
- * onto eleven user-facing buckets — see {@code bindings/jvm/src/srt/errors.rs}.
+ * onto eleven user-facing buckets, from the one kind table every binding shares.
+ *
+ * <h2>Reject reason</h2>
+ *
+ * <p>A connection the peer refused during the handshake carries the reason it
+ * sent: {@link #rejectReason()}, on a caller's connect (the low-level
+ * {@code Builder.caller().connect()} and an {@code srt://} shell's open alike). A
+ * listener rule's own reason ({@code ListenRule.reject}), an application code
+ * ({@code RejectReason.userDefined}), or one of libsrt's internal codes, such as
+ * {@code BAD_SECRET} for a wrong passphrase. A listener's {@code accept} never sees
+ * a caller it refused, and the managed shells retry a refused connect, so neither
+ * reports a reason.
  *
  * <h2>{@code END_OF_STREAM}</h2>
  *
@@ -92,15 +105,45 @@ public final class SrtException extends BindingException {
     }
 
     private final Kind kind;
+    // The SRT reject code of a refused connection; null for every other error.
+    private final Integer rejectCode;
 
     public SrtException(Kind kind, String message) {
         super(message);
         this.kind = kind;
+        this.rejectCode = null;
+    }
+
+    /**
+     * An exception for a connection the peer refused with {@code rejectCode}.
+     *
+     * @param kind the error discriminant
+     * @param message the detail
+     * @param rejectCode the SRT reject code the peer sent
+     */
+    public SrtException(Kind kind, String message, int rejectCode) {
+        super(message);
+        this.kind = kind;
+        this.rejectCode = rejectCode;
     }
 
     /** @return the error discriminant. */
     @Override
     public Kind kind() {
         return kind;
+    }
+
+    /**
+     * Why the peer refused the connection: the matching
+     * {@link org.tstrans.srt.RejectReason} constant for a code libsrt or the
+     * predefined range names, a reason named {@code "OTHER"} that keeps the code
+     * for an application's own; empty when the error is not a refused connection.
+     *
+     * @return the reject reason, or empty
+     */
+    public Optional<org.tstrans.srt.RejectReason> rejectReason() {
+        return rejectCode == null
+            ? Optional.empty()
+            : Optional.of(org.tstrans.srt.RejectReason.ofCode(rejectCode));
     }
 }

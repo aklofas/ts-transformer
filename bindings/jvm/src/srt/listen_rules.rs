@@ -26,6 +26,41 @@ fn reason_from_code(code: i32) -> RejectReason {
         .unwrap_or(RejectReason::Other(code))
 }
 
+/// libsrt's internal reasons (0..=17), which `RejectReason::PREDEFINED` does not
+/// hold: what a caller reads on a refused connect, never what a rule sends.
+const INTERNAL: [RejectReason; 18] = [
+    RejectReason::Unknown,
+    RejectReason::System,
+    RejectReason::Peer,
+    RejectReason::Resource,
+    RejectReason::Rogue,
+    RejectReason::Backlog,
+    RejectReason::Ipe,
+    RejectReason::Close,
+    RejectReason::Version,
+    RejectReason::RdvCookie,
+    RejectReason::BadSecret,
+    RejectReason::Unsecure,
+    RejectReason::MessageApi,
+    RejectReason::Congestion,
+    RejectReason::Filter,
+    RejectReason::Group,
+    RejectReason::Timeout,
+    RejectReason::Crypto,
+];
+
+/// `BadSecret` -> `BAD_SECRET`: Rust's variant name as a Java constant name.
+fn screaming_snake(camel: &str) -> String {
+    let mut out = String::new();
+    for (i, c) in camel.chars().enumerate() {
+        if c.is_ascii_uppercase() && i > 0 {
+            out.push('_');
+        }
+        out.push(c.to_ascii_uppercase());
+    }
+    out
+}
+
 /// The listener's rules, or a pending `SrtException(CLOSED)`.
 fn rules_or_throw(env: &mut Env, handle: jlong) -> Option<ListenRules> {
     let rules = listener_rules(handle as u64);
@@ -152,10 +187,13 @@ jni_native! {
         _class,
     ) -> jobjectArray = std::ptr::null_mut() => {
         let build = |env: &mut Env| -> jni::errors::Result<jobjectArray> {
-            let named: Vec<(i32, &'static str)> = RejectReason::PREDEFINED
+            let internal = INTERNAL
                 .iter()
-                .filter_map(|reason| Some((reason.raw(), reason.name()?)))
-                .collect();
+                .map(|r| (r.raw(), screaming_snake(&format!("{r:?}"))));
+            let predefined = RejectReason::PREDEFINED
+                .iter()
+                .filter_map(|r| Some((r.raw(), r.name()?.to_owned())));
+            let named: Vec<(i32, String)> = internal.chain(predefined).collect();
             let rows = env.new_object_array(
                 named.len() as i32,
                 FindClass(jni_str!("java/lang/String")),

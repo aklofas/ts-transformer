@@ -4,17 +4,57 @@ import org.tstrans.NativeLoader;
 
 /**
  * Reason code a listener sends a caller it refuses during the SRT handshake,
- * set through {@link ListenRule#reject(RejectReason)}.
+ * set through {@link ListenRule#reject(RejectReason)}, and what a caller reads
+ * from {@code SrtException.rejectReason()} when a connect is refused.
  *
  * <p>Not an enum: the user-defined range ({@code 2000} and up) is open. Two
  * reasons are equal when their codes are equal. The constants cover libsrt's
- * predefined range ({@code 1000..1999}). libsrt-internal codes (below
- * {@code 1000}) have no constants here: they are outcomes a caller reads on a
- * failed connect, never something a rule may send.
+ * internal codes ({@code 0..17}, {@link #UNKNOWN} to {@link #CRYPTO}) and its
+ * predefined range ({@code 1000..1999}). An internal code is an outcome a caller
+ * reads on a failed connect ({@link #BAD_SECRET} for a wrong passphrase), never
+ * something a rule may send: {@link ListenRule#reject} refuses one.
  */
 public final class RejectReason {
 
     static { NativeLoader.load(); }
+
+    // libsrt's internal codes: what a failed connect reports, never what a rule sends.
+    /** {@code SRT_REJ_UNKNOWN} (0): initial state, set while a handshake is in progress. */
+    public static final RejectReason UNKNOWN = new RejectReason(0, "UNKNOWN");
+    /** {@code SRT_REJ_SYSTEM} (1): broken due to a system function error. */
+    public static final RejectReason SYSTEM = new RejectReason(1, "SYSTEM");
+    /** {@code SRT_REJ_PEER} (2): the connection was rejected by the peer. */
+    public static final RejectReason PEER = new RejectReason(2, "PEER");
+    /** {@code SRT_REJ_RESOURCE} (3): internal problem with resource allocation. */
+    public static final RejectReason RESOURCE = new RejectReason(3, "RESOURCE");
+    /** {@code SRT_REJ_ROGUE} (4): incorrect data in handshake messages. */
+    public static final RejectReason ROGUE = new RejectReason(4, "ROGUE");
+    /** {@code SRT_REJ_BACKLOG} (5): the listener's backlog exceeded. */
+    public static final RejectReason BACKLOG = new RejectReason(5, "BACKLOG");
+    /** {@code SRT_REJ_IPE} (6): internal program error. */
+    public static final RejectReason IPE = new RejectReason(6, "IPE");
+    /** {@code SRT_REJ_CLOSE} (7): the socket is closing. */
+    public static final RejectReason CLOSE = new RejectReason(7, "CLOSE");
+    /** {@code SRT_REJ_VERSION} (8): the peer is older than the agent's minimum version. */
+    public static final RejectReason VERSION = new RejectReason(8, "VERSION");
+    /** {@code SRT_REJ_RDVCOOKIE} (9): rendezvous cookie collision. */
+    public static final RejectReason RDV_COOKIE = new RejectReason(9, "RDV_COOKIE");
+    /** {@code SRT_REJ_BADSECRET} (10): wrong passphrase. */
+    public static final RejectReason BAD_SECRET = new RejectReason(10, "BAD_SECRET");
+    /** {@code SRT_REJ_UNSECURE} (11): a passphrase required or unexpected. */
+    public static final RejectReason UNSECURE = new RejectReason(11, "UNSECURE");
+    /** {@code SRT_REJ_MESSAGEAPI} (12): stream API and message API collision. */
+    public static final RejectReason MESSAGE_API = new RejectReason(12, "MESSAGE_API");
+    /** {@code SRT_REJ_CONGESTION} (13): incompatible congestion-controller type. */
+    public static final RejectReason CONGESTION = new RejectReason(13, "CONGESTION");
+    /** {@code SRT_REJ_FILTER} (14): incompatible packet filter. */
+    public static final RejectReason FILTER = new RejectReason(14, "FILTER");
+    /** {@code SRT_REJ_GROUP} (15): incompatible group. */
+    public static final RejectReason GROUP = new RejectReason(15, "GROUP");
+    /** {@code SRT_REJ_TIMEOUT} (16): connection timeout. */
+    public static final RejectReason TIMEOUT = new RejectReason(16, "TIMEOUT");
+    /** {@code SRT_REJ_CRYPTO} (17): conflicting cryptographic configurations. */
+    public static final RejectReason CRYPTO = new RejectReason(17, "CRYPTO");
 
     /** {@code SRT_REJX_FALLBACK} (1000): generic predefined fallback. */
     public static final RejectReason FALLBACK = new RejectReason(1000, "FALLBACK");
@@ -59,6 +99,11 @@ public final class RejectReason {
     /** {@code SRT_REJX_NOROOM} (1507): out of storage to archive the stream. */
     public static final RejectReason NO_ROOM = new RejectReason(1507, "NO_ROOM");
 
+    private static final RejectReason[] INTERNAL = {
+        UNKNOWN, SYSTEM, PEER, RESOURCE, ROGUE, BACKLOG, IPE, CLOSE, VERSION, RDV_COOKIE,
+        BAD_SECRET, UNSECURE, MESSAGE_API, CONGESTION, FILTER, GROUP, TIMEOUT, CRYPTO,
+    };
+
     private static final RejectReason[] PREDEFINED = {
         FALLBACK, KEY_NOT_SUPPORTED, FILEPATH, HOST_NOT_FOUND, BAD_REQUEST, UNAUTHORIZED,
         OVERLOAD, FORBIDDEN, NOT_FOUND, BAD_MODE, UNACCEPTABLE, CONFLICT, NOT_SUPPORTED_MEDIA,
@@ -89,10 +134,13 @@ public final class RejectReason {
     }
 
     /**
-     * The reason for any code: the matching constant for a predefined code,
-     * otherwise a reason whose {@link #name()} is {@code "OTHER"}.
+     * The reason for any code: the matching constant for an internal or a
+     * predefined code, otherwise a reason whose {@link #name()} is {@code "OTHER"}.
      */
     public static RejectReason ofCode(int code) {
+        for (RejectReason r : INTERNAL) {
+            if (r.code == code) return r;
+        }
         for (RejectReason r : PREDEFINED) {
             if (r.code == code) return r;
         }
@@ -113,6 +161,6 @@ public final class RejectReason {
 
     @Override public String toString() { return name + "(" + code + ")"; }
 
-    /** {@code "CODE NAME"} for every typed predefined reason the native side knows. */
+    /** {@code "CODE NAME"} for every typed internal and predefined reason the native side knows. */
     static native String[] nTable();
 }

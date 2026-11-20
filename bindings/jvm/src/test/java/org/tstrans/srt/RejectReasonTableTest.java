@@ -24,7 +24,23 @@ class RejectReasonTableTest {
             }
         }
         Set<String> rust = new TreeSet<>(Arrays.asList(RejectReason.nTable()));
-        assertEquals(21, rust.size());
+        assertEquals(39, rust.size());
         assertEquals(rust, java);
+    }
+
+    @Test
+    void everyRustCodeHasAName() {
+        // libsrt's 18 internal codes, as a failed connect reports them.
+        for (int code = 0; code <= 17; code++) {
+            RejectReason r = RejectReason.ofCode(code);
+            assertNotEquals("OTHER", r.name(), "code " + code);
+            assertSame(r, RejectReason.ofCode(code));
+        }
+        assertSame(RejectReason.BAD_SECRET, RejectReason.ofCode(10));
+        assertEquals("RDV_COOKIE", RejectReason.ofCode(9).name());
+        assertEquals("MESSAGE_API", RejectReason.ofCode(12).name());
+        // A rule still may not send one.
+        assertThrows(IllegalArgumentException.class, () -> ListenRule.reject(RejectReason.BAD_SECRET));
+        assertEquals("OTHER", RejectReason.ofCode(999).name());
     }
 }
