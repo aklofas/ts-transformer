@@ -1,6 +1,8 @@
 package org.tstrans.scenarios;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
+import static org.tstrans.TestSupport.isLinux;
 import static org.tstrans.TestSupport.scenarioDir;
 import static org.tstrans.TestSupport.sha256Units;
 
@@ -16,6 +18,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
+import java.util.function.UnaryOperator;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
@@ -422,10 +425,10 @@ class ScenarioReproductionTest {
         "exception-kind-stability", "covered: DemuxerConfigTest.strictFullRejectsNonConformantInput "
             + "(the same corrupted-PMT input) + ErrorModelTest.kindMembersMatchTheDemuxDomain");
 
-    /** A leg that runs here, against its scenario's committed golden. */
+    /** A leg that runs here, against the text of its scenario's golden. */
     @FunctionalInterface
     interface ContractLeg {
-        void run() throws Exception;
+        void run(String golden) throws Exception;
     }
 
     /** binding_contract ids whose JVM leg this test runs itself; each compares the golden's extensions. */
@@ -456,9 +459,10 @@ class ScenarioReproductionTest {
             case "binding_contract" -> {
                 assertFalse(CONTRACT_LEGS.containsKey(id) && BINDING_CONTRACT.containsKey(id),
                     id + " is both run here and declared elsewhere");
+                String golden = Files.readString(scenarioDir(id).resolve("golden.json"), StandardCharsets.UTF_8);
                 ContractLeg leg = CONTRACT_LEGS.get(id);
                 if (leg != null) {
-                    leg.run();
+                    leg.run(golden);
                     return;
                 }
                 String how = BINDING_CONTRACT.get(id);
@@ -472,6 +476,59 @@ class ScenarioReproductionTest {
             }
             default -> fail("scenario kind " + kind + " (" + id + ") has no JVM adapter");
         }
+    }
+
+    /**
+     * One committed {@code extensions} value per edit, changed in memory: the leg run with the
+     * edited golden must fail its comparison, so it compares what it observed with the golden
+     * and does not read the expected value back from the golden. The fourth argument matches
+     * the failure of that comparison; the last says whether it is reached only on Linux (the
+     * SRT loopback).
+     */
+    static Stream<Arguments> extensionEdits() {
+        UnaryOperator<String> nonconformantPlusOne = g -> editPart(g, GoldenSupport.objectField(g, "stats"),
+            o -> o.replaceFirst("(\"nonconformant\"\\s*:\\s*)" + GoldenSupport.signedNumber(o, "nonconformant") + "\\b",
+                "$1" + (GoldenSupport.signedNumber(o, "nonconformant") + 1)));
+        UnaryOperator<String> tableRowRenamed = g -> editPart(g, GoldenSupport.arrayField(g, "reject_reasons"),
+            a -> a.replace("\"FORBIDDEN\"", "\"NOT_A_REASON\""));
+        UnaryOperator<String> refusalRenamed = g -> editPart(g, GoldenSupport.objectField(g, "reject_reason"),
+            o -> o.replace("\"FORBIDDEN\"", "\"NOT_A_REASON\""));
+        return Stream.of(
+            Arguments.of("demux-receiver-stats", "extensions.stats.nonconformant + 1", nonconformantPlusOne,
+                "differs from the golden's extensions.stats", false),
+            Arguments.of("srt-reject-reason", "extensions.reject_reasons row FORBIDDEN renamed", tableRowRenamed,
+                "does not carry the golden's name|differ from the golden's table", false),
+            Arguments.of("srt-reject-reason", "extensions.reject_reason.name renamed", refusalRenamed,
+                "reject reason name", true));
+    }
+
+    @ParameterizedTest(name = "{0}: {1}")
+    @MethodSource("extensionEdits")
+    void observedExtensionsAreComparedNotCopied(String id, String what, UnaryOperator<String> edit,
+            String failure, boolean linuxOnly) throws Exception {
+        if (linuxOnly) assumeTrue(isLinux(), "srt live-socket loopback gated to Linux");
+        String edited = edit.apply(Files.readString(scenarioDir(id).resolve("golden.json"), StandardCharsets.UTF_8));
+        AssertionError e = assertThrows(AssertionError.class, () -> CONTRACT_LEGS.get(id).run(edited),
+            id + " passed with " + what + ": its leg does not compare that value with what it observed");
+        assertTrue(Pattern.compile(failure).matcher(String.valueOf(e.getMessage())).find(),
+            id + " failed with " + what + ", but not at the comparison of that value: " + e);
+    }
+
+    /** Every leg run here has at least one edit above. */
+    @Test
+    void everyContractLegHasAnExtensionEdit() {
+        Set<String> edited = new TreeSet<>();
+        extensionEdits().forEach(a -> edited.add((String) a.get()[0]));
+        assertEquals(new TreeSet<>(CONTRACT_LEGS.keySet()), edited);
+    }
+
+    /** {@code golden} with {@code part} (found once in it) replaced by {@code edit(part)}; the edit must change it. */
+    private static String editPart(String golden, String part, UnaryOperator<String> edit) {
+        String edited = edit.apply(part);
+        assertNotEquals(part, edited, "the edit changed nothing in: " + part);
+        int at = golden.indexOf(part);
+        assertEquals(at, golden.lastIndexOf(part), "the edited part occurs more than once in the golden");
+        return golden.substring(0, at) + edited + golden.substring(at + part.length());
     }
 
     /**
