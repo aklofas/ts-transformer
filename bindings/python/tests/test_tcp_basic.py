@@ -504,6 +504,52 @@ def test_into_demux_receiver_and_into_sender_consume_the_transport() -> None:
         listener.close()
 
 
+def test_into_demux_receiver_applies_its_config() -> None:
+    """The config reaches the receiver: with `pes_cap_per_pid=1024` each
+    4 KiB access unit is reported as a `PES_OVERSIZE` discontinuity, where
+    the default cap would hand out `Video` events."""
+    from tstrans.mpegts import (
+        DemuxEvent,
+        DiscontinuityKindTag,
+        Muxer,
+        MuxerConfigBuilder,
+    )
+
+    mux = Muxer(MuxerConfigBuilder().add_program(video_only_program()).build())
+    nal = b"\x00\x00\x00\x01\x65" + bytes(range(256)) * 16
+    for i in range(3):
+        mux.push_video(nal, pts=Pts90khz.from_raw(i * 3000), key_frame=True)
+    ts = bytearray()
+    scratch = bytearray(188 * 64)
+    while (n := mux.pull(scratch)) > 0:
+        ts.extend(scratch[:n])
+
+    client, accepted, listener = _accepted_pair()
+    try:
+        rx = accepted.into_demux_receiver(DemuxerConfig(pes_cap_per_pid=1024))
+        # A lost byte fails the test instead of hanging it.
+        watchdog = threading.Timer(10.0, rx.cancel_handle().cancel)
+        watchdog.start()
+        try:
+            client.sendall(bytes(ts))
+            client.shutdown(socket.SHUT_WR)
+            events = [ev for ev in rx if not isinstance(ev, DemuxEvent.ProgramMap)]
+        finally:
+            watchdog.cancel()
+            rx.close()
+        assert not any(isinstance(ev, DemuxEvent.Video) for ev in events), events
+        oversize = [
+            ev
+            for ev in events
+            if isinstance(ev, DemuxEvent.Discontinuity)
+            and ev.kind is DiscontinuityKindTag.PES_OVERSIZE
+        ]
+        assert len(oversize) >= 2, events
+    finally:
+        client.close()
+        listener.close()
+
+
 def test_into_mux_sender_with_a_refused_config_leaves_the_transport_usable() -> None:
     client, accepted, listener = _accepted_pair()
     try:
