@@ -207,9 +207,13 @@ Each `push*` targets the lone stream of that kind; a muxer configured with
 zero or more than one stream of the kind throws `MuxException(INVALID_USAGE)`.
 Build the `MuxerConfig` with `addVideo` / `addKlv` / `addAudio` / `addSubtitle`
 / `addData(pid, streamType, carriesPts)` on `MuxerConfig.builder()`; the
-builder is single-program. Data streams may also carry raw PMT descriptor TLVs
-via `streamDescriptorsForData(dataIndex, byte[][])` (the muxer never auto-emits
-a descriptor on a data stream). Deep config validation (PID collisions,
+builder is single-program. `programDescriptors(byte[][])` sets the program
+info loop, and `streamDescriptorsForVideo` / `ForKlv` / `ForAudio` /
+`ForSubtitle` / `ForData(int kindIndex, byte[][])` set one stream's PMT
+descriptor TLVs, the index counting that kind's `add*` calls in order;
+`streamDescriptorsForStream(int streamIndex, byte[][])` counts every `add*`
+call. A later call naming the same stream replaces an earlier one. The muxer
+never auto-emits a descriptor on a data stream. Deep config validation (PID collisions,
 PMT-size budget, sync-KLV-without-PTS, a data `streamType` that would classify
 as a typed kind, …) runs in the native `Muxer` constructor and surfaces as
 `MuxException(CONFIG_INVALID)`. The muxer's PCR runs 100 ms behind each access
@@ -219,14 +223,15 @@ unit's decode time; `MuxerConfig.Builder.pcrLeadMs(ms)` sets another lead
 > **Scope.** This binding's `MuxerConfig` is single-program; multi-program
 > configs are deferred. DVB-subtitle codec configuration is deferred;
 > `addSubtitle` accepts the no-config codecs (`CEA708_STANDALONE` /
-> `WEBVTT_IN_TS`). Per-stream descriptors for the typed kinds (video / KLV /
-> audio / subtitle) are deferred.
+> `WEBVTT_IN_TS`).
 
-> Because the JVM builder cannot set KLV descriptors, configure at most one
-> `SYNCHRONOUS_METADATA` KLV stream per transport stream. Several such
-> streams would all declare service id 0 and fail with `CONFIG_INVALID`.
-> The per-push `metadataServiceId` argument does not change the PMT
-> descriptors.
+> Every `SYNCHRONOUS_METADATA` KLV stream declares `metadata_service_id` 0
+> unless its descriptors carry a `metadata_descriptor` (tag 0x26), and two
+> streams declaring the same id in one transport stream fail with
+> `CONFIG_INVALID`. Give the second stream its own id with
+> `streamDescriptorsForKlv(1, new byte[][] {{0x26, 0x09, 0x01, 0x00, (byte) 0xFF,
+> 'K', 'L', 'V', 'A', 1, 0x0F}})` (service id 1). The per-push
+> `metadataServiceId` argument does not change the PMT descriptors.
 
 ## First receive
 

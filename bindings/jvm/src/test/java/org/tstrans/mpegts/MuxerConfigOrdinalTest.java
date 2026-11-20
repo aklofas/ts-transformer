@@ -68,7 +68,7 @@ class MuxerConfigOrdinalTest {
                     /* streamTypeCodes*/ new int[]{streamTypeCode},
                     /* streamCarriesPts */ new boolean[]{false},
                     /* dataDescBytes  */ new byte[0],
-                    /* dataDescLens   */ new int[]{0});
+                    /* dataDescLens   */ new int[]{0, 0});
         } catch (InvocationTargetException e) {
             throw e.getCause();
         }

@@ -17,9 +17,12 @@ import java.util.Objects;
  * needs carriesPts, etc.) runs Rust-side in {@code Muxer::new} and surfaces as
  * {@link org.tstrans.MuxException} ({@code CONFIG_INVALID}).
  *
- * <p><b>Deferred (documented):</b> multi-program configs; per-stream/program
- * descriptors for the typed kinds (data streams get theirs via
- * {@link Builder#streamDescriptorsForData}); stats. The handle-targeted
+ * <p>Program and per-stream PMT descriptors are set with
+ * {@link Builder#programDescriptors} and the {@code streamDescriptorsFor*}
+ * setters (two {@code SYNCHRONOUS_METADATA} KLV streams in one TS need
+ * distinct {@code metadata_service_id}s, which only a caller descriptor sets).
+ *
+ * <p><b>Deferred (documented):</b> multi-program configs; stats. The handle-targeted
  * pushes ({@link Muxer#pushVideoTo}, {@link Muxer#pushVideoWireTo},
  * {@link Muxer#pushKlvTo}, {@link Muxer#pushAudioTo},
  * {@link Muxer#pushSubtitleTo}, {@link Muxer#pushDataTo}) are available.
@@ -50,9 +53,10 @@ public final class MuxerConfig {
     // KlvStreamType ordinal for KLV; raw PMT stream_type byte for DATA; -1 otherwise.
     private final int[] streamTypeCodes;
     private final boolean[] streamCarriesPts; // KLV + DATA; false otherwise
-    // Per-stream PMT descriptor loops for DATA streams, flattened: dataDescBytes
-    // is every descriptor TLV concatenated in stream order; dataDescLens[i] is
-    // that stream's byte count within the blob (0 for non-data/descriptor-less).
+    // PMT descriptor loops, flattened: dataDescBytes is every descriptor TLV
+    // concatenated, stream by stream in stream order and the program loop last;
+    // dataDescLens has one entry per stream (its byte count within the blob, 0
+    // for none) and a last entry for the program loop.
     private final byte[] dataDescBytes;
     private final int[] dataDescLens;
 
@@ -78,19 +82,15 @@ public final class MuxerConfig {
             this.streamTypeCodes[i] = b.typeCodes.get(i);
             this.streamCarriesPts[i] = b.carriesPts.get(i);
         }
-        this.dataDescLens = new int[n];
+        byte[][][] perStream = b.resolveStreamDescriptors();
+        this.dataDescLens = new int[n + 1];
         java.io.ByteArrayOutputStream blob = new java.io.ByteArrayOutputStream();
-        int dataIdx = 0;
-        for (int i = 0; i < n; i++) {
-            if (b.kinds.get(i) == KIND_DATA) {
-                byte[][] descs = b.dataDescs.get(dataIdx);
-                if (descs != null) {
-                    int total = 0;
-                    for (byte[] d : descs) { blob.write(d, 0, d.length); total += d.length; }
-                    this.dataDescLens[i] = total;
-                }
-                dataIdx++;
-            }
+        for (int i = 0; i <= n; i++) {
+            byte[][] descs = i < n ? perStream[i] : b.programDescs;
+            if (descs == null) continue;
+            int total = 0;
+            for (byte[] d : descs) { blob.write(d, 0, d.length); total += d.length; }
+            this.dataDescLens[i] = total;
         }
         this.dataDescBytes = blob.toByteArray();
     }
@@ -133,7 +133,12 @@ public final class MuxerConfig {
     public int[] streamTypeCodes() { return streamTypeCodes.clone(); }
     /** {@code true} if this stream carries PTS (KLV + DATA streams); {@code false} otherwise. */
     public boolean[] streamCarriesPts() { return streamCarriesPts.clone(); }
+    /** Every PMT descriptor TLV, stream by stream in stream order, then the program loop's. */
     public byte[] dataDescBytes() { return dataDescBytes.clone(); }
+    /**
+     * Each stream's byte count within {@link #dataDescBytes()}, then the program loop's:
+     * {@code streamCount() + 1} entries.
+     */
     public int[] dataDescLens() { return dataDescLens.clone(); }
 
     /**
@@ -157,7 +162,13 @@ public final class MuxerConfig {
         private final List<Integer> codecs = new ArrayList<>();
         private final List<Integer> typeCodes = new ArrayList<>();
         private final List<Boolean> carriesPts = new ArrayList<>();
-        private final java.util.Map<Integer, byte[][]> dataDescs = new java.util.LinkedHashMap<>();
+        private byte[][] programDescs;
+        // Every streamDescriptorsFor* call in call order; a later call naming
+        // the same stream replaces the earlier one, as in the Rust builder.
+        private final List<DescriptorTarget> streamDescs = new ArrayList<>();
+
+        /** One {@code streamDescriptorsFor*} call: {@code kind} -1 is the absolute index. */
+        private record DescriptorTarget(int kind, int index, byte[][] descs, String setter) {}
 
         /**
          * @throws IllegalArgumentException if {@code v} is outside 0..=0xFFFF
@@ -278,6 +289,65 @@ public final class MuxerConfig {
         }
 
         /**
+         * Set the program-level PMT descriptors (the program info loop, before
+         * the per-stream entries). Each element is one complete descriptor TLV
+         * (tag, length, payload), emitted verbatim; TLV well-formedness is
+         * validated at {@code new Muxer(...)} ({@code CONFIG_INVALID}).
+         */
+        public Builder programDescriptors(byte[][] descs) {
+            this.programDescs = checkedDescriptors(descs);
+            return this;
+        }
+
+        /**
+         * Set the PMT descriptor loop for the {@code videoIdx}-th video stream
+         * (zero-indexed among {@link #addVideo} calls, in call order); the
+         * caller's descriptors follow the muxer's own (an AV1 stream's AV01
+         * registration is not repeated when the caller supplies one).
+         * {@code videoIdx} is range-checked at {@link #build()}; TLV
+         * well-formedness at {@code new Muxer(...)}.
+         */
+        public Builder streamDescriptorsForVideo(int videoIdx, byte[][] descs) {
+            return addTarget(KIND_VIDEO, videoIdx, descs, "streamDescriptorsForVideo", "videoIdx");
+        }
+
+        /**
+         * Set the PMT descriptor loop for the {@code klvIdx}-th KLV stream
+         * (zero-indexed among {@link #addKlv} calls, in call order). A caller
+         * {@code metadata_descriptor} (tag 0x26) replaces the muxer's own,
+         * which declares {@code metadata_service_id} 0; two
+         * {@code SYNCHRONOUS_METADATA} streams in one TS must declare distinct
+         * service ids. {@code klvIdx} is range-checked at {@link #build()};
+         * TLV well-formedness and the service-id rule at
+         * {@code new Muxer(...)}.
+         */
+        public Builder streamDescriptorsForKlv(int klvIdx, byte[][] descs) {
+            return addTarget(KIND_KLV, klvIdx, descs, "streamDescriptorsForKlv", "klvIdx");
+        }
+
+        /**
+         * Set the PMT descriptor loop for the {@code audioIdx}-th audio stream
+         * (zero-indexed among {@link #addAudio} calls, in call order).
+         * {@code audioIdx} is range-checked at {@link #build()}; TLV
+         * well-formedness at {@code new Muxer(...)}.
+         */
+        public Builder streamDescriptorsForAudio(int audioIdx, byte[][] descs) {
+            return addTarget(KIND_AUDIO, audioIdx, descs, "streamDescriptorsForAudio", "audioIdx");
+        }
+
+        /**
+         * Set the PMT descriptor loop for the {@code subtitleIdx}-th subtitle
+         * stream (zero-indexed among {@link #addSubtitle} calls, in call
+         * order). A recognised subtitle codec marker among them replaces the
+         * muxer's own. {@code subtitleIdx} is range-checked at
+         * {@link #build()}; TLV well-formedness at {@code new Muxer(...)}.
+         */
+        public Builder streamDescriptorsForSubtitle(int subtitleIdx, byte[][] descs) {
+            return addTarget(
+                KIND_SUBTITLE, subtitleIdx, descs, "streamDescriptorsForSubtitle", "subtitleIdx");
+        }
+
+        /**
          * Set the PMT descriptor loop for the {@code dataIdx}-th data stream
          * (zero-indexed among {@link #addData} calls, in call order). Each element
          * is one complete descriptor TLV (tag, length, payload), emitted verbatim.
@@ -285,13 +355,59 @@ public final class MuxerConfig {
          * and classification rules are validated at {@code new Muxer(...)}.
          */
         public Builder streamDescriptorsForData(int dataIdx, byte[][] descs) {
+            return addTarget(KIND_DATA, dataIdx, descs, "streamDescriptorsForData", "dataIdx");
+        }
+
+        /**
+         * Set the PMT descriptor loop for a stream by its absolute index among
+         * every {@code add*} call of this program, in call order. A later
+         * {@code streamDescriptorsFor*} call naming the same stream replaces
+         * this one, and this one replaces an earlier one.
+         * {@code streamIdx} is range-checked at {@link #build()}; TLV
+         * well-formedness at {@code new Muxer(...)}.
+         */
+        public Builder streamDescriptorsForStream(int streamIdx, byte[][] descs) {
+            return addTarget(-1, streamIdx, descs, "streamDescriptorsForStream", "streamIdx");
+        }
+
+        private Builder addTarget(int kind, int idx, byte[][] descs, String setter, String idxName) {
+            byte[][] checked = checkedDescriptors(descs);
+            if (idx < 0) {
+                throw new IllegalArgumentException(idxName + " must be >= 0, got " + idx);
+            }
+            streamDescs.add(new DescriptorTarget(kind, idx, checked, setter));
+            return this;
+        }
+
+        private static byte[][] checkedDescriptors(byte[][] descs) {
             Objects.requireNonNull(descs, "descs");
             for (byte[] d : descs) Objects.requireNonNull(d, "descs element");
-            if (dataIdx < 0) {
-                throw new IllegalArgumentException("dataIdx must be >= 0, got " + dataIdx);
+            return descs.clone();
+        }
+
+        /**
+         * Each stream's descriptor list (null for none), the calls applied in
+         * call order.
+         *
+         * @throws IllegalArgumentException for an index past its kind's count
+         */
+        private byte[][][] resolveStreamDescriptors() {
+            byte[][][] out = new byte[kinds.size()][][];
+            for (DescriptorTarget t : streamDescs) {
+                int abs = -1;
+                int count = 0;
+                for (int i = 0; i < kinds.size(); i++) {
+                    if (t.kind() != -1 && kinds.get(i) != t.kind()) continue;
+                    if (count == t.index()) abs = i;
+                    count++;
+                }
+                if (abs < 0) {
+                    throw new IllegalArgumentException(t.setter() + " index " + t.index()
+                        + " out of range (" + count + " such streams)");
+                }
+                out[abs] = t.descs();
             }
-            dataDescs.put(dataIdx, descs.clone());
-            return this;
+            return out;
         }
 
         private void addStream(int pid, int kind, int codec, int typeCode, boolean carriesPtsFlag) {
@@ -311,16 +427,7 @@ public final class MuxerConfig {
             if (pids.isEmpty()) {
                 throw new IllegalArgumentException("at least one stream is required");
             }
-            int dataCount = 0;
-            for (int k : kinds) {
-                if (k == KIND_DATA) dataCount++;
-            }
-            for (int idx : dataDescs.keySet()) {
-                if (idx >= dataCount) {
-                    throw new IllegalArgumentException("streamDescriptorsForData dataIdx " + idx
-                        + " out of range (" + dataCount + " data streams)");
-                }
-            }
+            resolveStreamDescriptors();
             return new MuxerConfig(this);
         }
     }

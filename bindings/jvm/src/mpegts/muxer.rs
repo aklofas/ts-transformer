@@ -127,9 +127,10 @@ jni_native! {
 /// (`stream_type_codes` doubles as the raw PMT stream_type byte for kind=data)
 /// — see the `*_codec` / `klv_type` / `av1_mode` mappers for the exact
 /// ordinal → Rust-enum contract. `data_desc_bytes` / `data_desc_lens` carry the
-/// per-data-stream PMT descriptor loops: the blob is every descriptor TLV
-/// concatenated in stream order, the lens array (one entry per stream) is each
-/// stream's byte count within it (0 for non-data / descriptor-less).
+/// PMT descriptor loops: the blob is every descriptor TLV concatenated, stream
+/// by stream in stream order and the program loop last; the lens array has one
+/// entry per stream (its byte count within the blob, 0 for none) and a last
+/// entry for the program loop.
 ///
 /// On ANY config or marshalling failure this throws the matching
 /// `MuxException` (or `RuntimeException` for a raw JNI array-read error) and
@@ -185,7 +186,7 @@ pub(crate) fn build_muxer_config_from_arrays<'local>(
         );
         return Err(());
     }
-    if desc_lens.len() != n {
+    if desc_lens.len() != n + 1 {
         throw_mux(
             env,
             BindingErrorKind::Internal,
@@ -198,6 +199,9 @@ pub(crate) fn build_muxer_config_from_arrays<'local>(
     let mut desc_off = 0usize;
     let mut data_idx = 0usize;
     for i in 0..n {
+        let Some(descs) = next_descriptor_loop(env, &desc_blob, &mut desc_off, desc_lens[i]) else {
+            return Err(());
+        };
         let pid = pids[i] as u16;
         // stream kind code: 0=video, 1=klv, 2=audio, 3=subtitle, 4=data.
         match kinds[i] {
@@ -251,41 +255,6 @@ pub(crate) fn build_muxer_config_from_arrays<'local>(
                     return Err(());
                 };
                 prog.add_data(pid, stream_type, carries[i]);
-                // Fail closed on a negative length (a sign-cast would turn it
-                // into a huge usize) and on offset overflow — never panic
-                // across the FFI boundary, in any build profile.
-                let Ok(dl) = usize::try_from(desc_lens[i]) else {
-                    throw_mux(
-                        env,
-                        BindingErrorKind::Internal,
-                        "negative data-stream descriptor length",
-                    );
-                    return Err(());
-                };
-                if dl > 0 {
-                    let Some(end) = desc_off.checked_add(dl) else {
-                        throw_mux(
-                            env,
-                            BindingErrorKind::Internal,
-                            "data-stream descriptor offset overflow",
-                        );
-                        return Err(());
-                    };
-                    let Some(descs) = desc_blob.get(desc_off..end).and_then(split_descriptor_tlvs)
-                    else {
-                        throw_mux(
-                            env,
-                            BindingErrorKind::ConfigInvalid,
-                            "malformed data-stream descriptor TLV",
-                        );
-                        return Err(());
-                    };
-                    if let Err(e) = prog.stream_descriptors_for_data(data_idx, descs) {
-                        throw_mux_error(env, &e);
-                        return Err(());
-                    }
-                    desc_off = end;
-                }
                 data_idx += 1;
             }
             _ => {
@@ -297,6 +266,20 @@ pub(crate) fn build_muxer_config_from_arrays<'local>(
                 return Err(());
             }
         }
+        // Stream `i` was added just above, so its absolute index is `i`.
+        if let Some(descs) = descs
+            && let Err(e) = prog.stream_descriptors_for_stream(i, descs)
+        {
+            throw_mux_error(env, &e);
+            return Err(());
+        }
+    }
+    let Some(program_descs) = next_descriptor_loop(env, &desc_blob, &mut desc_off, desc_lens[n])
+    else {
+        return Err(());
+    };
+    if let Some(descs) = program_descs {
+        prog.program_descriptors(descs);
     }
 
     // `pcr_pid < 0` means "auto-resolve" — leave the builder default; `>= 0`
@@ -1270,6 +1253,48 @@ fn audio_codec(env: &mut Env, ordinal: i32) -> Option<AudioCodec> {
 
 /// Split a concatenated PMT descriptor loop into individual TLV descriptors
 /// (tag, length, payload). `None` on a truncated/overrunning length field.
+/// The next descriptor loop of `len` bytes in `blob` at `*off`, split into
+/// TLVs: `Some(None)` for an empty loop. A negative length or an offset
+/// overflow is `INTERNAL` (a sign-cast would turn it into a huge `usize`; never
+/// panic across the FFI boundary), a malformed TLV `CONFIG_INVALID`; both
+/// throw and return `None`.
+fn next_descriptor_loop(
+    env: &mut Env,
+    blob: &[u8],
+    off: &mut usize,
+    len: jint,
+) -> Option<Option<Vec<Vec<u8>>>> {
+    let Ok(len) = usize::try_from(len) else {
+        throw_mux(
+            env,
+            BindingErrorKind::Internal,
+            "negative descriptor loop length",
+        );
+        return None;
+    };
+    if len == 0 {
+        return Some(None);
+    }
+    let Some(end) = off.checked_add(len) else {
+        throw_mux(
+            env,
+            BindingErrorKind::Internal,
+            "descriptor loop offset overflow",
+        );
+        return None;
+    };
+    let Some(descs) = blob.get(*off..end).and_then(split_descriptor_tlvs) else {
+        throw_mux(
+            env,
+            BindingErrorKind::ConfigInvalid,
+            "malformed descriptor TLV",
+        );
+        return None;
+    };
+    *off = end;
+    Some(Some(descs))
+}
+
 fn split_descriptor_tlvs(blob: &[u8]) -> Option<Vec<Vec<u8>>> {
     let mut out = Vec::new();
     let mut off = 0usize;
