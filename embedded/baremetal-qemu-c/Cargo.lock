@@ -332,7 +332,6 @@ version = "0.10.0"
 dependencies = [
  "critical-section",
  "libc",
- "thiserror",
  "tst-core",
  "tst-pipeline",
 ]

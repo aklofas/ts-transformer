@@ -46,7 +46,6 @@ tst-rist     = { path = "../../../crates/tst-rist", default-features = false, op
 tst-pipeline = { path = "../../../crates/tst-pipeline", default-features = false }
 tst-core     = { path = "../../../crates/tst-core", default-features = false }
 libc         = { workspace = true }
-thiserror    = { workspace = true }
 secrecy      = { workspace = true, optional = true }
 critical-section = "1"
 
