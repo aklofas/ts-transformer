@@ -202,7 +202,9 @@ impl<T> ParkingSlot<T> {
     /// call holding the slot is cancelled first and waited for; a query
     /// holding it is waited for without a cancel; a call only waiting gets
     /// the slot afterwards and runs nothing. A poisoned slot still gives
-    /// its value up. `None` when a close or a conversion already took it.
+    /// its value up. `None` at once when a close has already begun (it may
+    /// still be waiting for the holder: a second close does not wait for
+    /// the first) or a conversion has taken the value.
     pub fn take_for_close(&self) -> Option<T> {
         if self.closed.swap(true, Ordering::SeqCst) {
             return None;
