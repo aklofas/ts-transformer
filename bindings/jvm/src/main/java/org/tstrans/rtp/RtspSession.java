@@ -137,9 +137,9 @@ public final class RtspSession extends NativeHandle {
     public org.tstrans.shells.DemuxReceiver intoDemuxReceiver(DemuxerConfig demuxConfig) throws RtspException {
         ensureOpen("RtspSession is closed");
         long h = nIntoDemuxReceiver(peekHandle(), true,
-            demuxConfig.strictMode().ordinal(), demuxConfig.pesCapPerPid(),
+            demuxConfig.strictMode().code(), demuxConfig.pesCapPerPid(),
             demuxConfig.pesCapTotal(), demuxConfig.cfiTolerance(),
-            demuxConfig.av1Carriage().ordinal(), demuxConfig.auCellCapPerPid(),
+            demuxConfig.av1Carriage().code(), demuxConfig.auCellCapPerPid(),
             demuxConfig.lenientPsiReassembly(), demuxConfig.syncBufCap(),
             demuxConfig.unwrapTimestamps());
         if (h == 0) {

@@ -10,11 +10,21 @@ package org.tstrans.mpegts;
  * LS bytes; do NOT pre-wrap). {@code PRIVATE_DATA} (stream_type 0x06) is the
  * broadly-recognized form and passes the payload through as-is.
  *
- * <p>Ordinal contract: the JNI bridge maps this enum by ORDINAL — keep this
- * declaration order in lockstep with the Rust mapping in the {@code Muxer} JNI
- * ({@code 0 => SynchronousMetadata, 1 => PrivateData}).
+ * <p>The JNI bridge maps {@link #code()} with the Rust mapping in the
+ * {@code Muxer} JNI ({@code 0 => SynchronousMetadata, 1 => PrivateData}).
  */
 public enum KlvStreamType {
-    SYNCHRONOUS_METADATA,
-    PRIVATE_DATA
+    SYNCHRONOUS_METADATA(0),
+    PRIVATE_DATA(1);
+
+    private final int code;
+
+    KlvStreamType(int code) {
+        this.code = code;
+    }
+
+    /** @return the value native code receives for this constant; stable across releases. */
+    public int code() {
+        return code;
+    }
 }

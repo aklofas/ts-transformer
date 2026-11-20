@@ -34,10 +34,24 @@ public final class Builder {
     /**
      * Builder mode. Tracks the caller's explicit mode choice.
      * {@code URL_CHOICE} (default) defers to the URL's {@code ?mode=} parameter.
-     * Ordinal mapping: URL_CHOICE=0, CALLER=1, LISTENER=2, RENDEZVOUS=3 —
-     * passed as {@code mode.ordinal()} to the native layer.
+     * Passed as {@code mode.code()} to the native layer.
      */
-    enum Mode { URL_CHOICE, CALLER, LISTENER, RENDEZVOUS }
+    enum Mode {
+        URL_CHOICE(0),
+        CALLER(1),
+        LISTENER(2),
+        RENDEZVOUS(3);
+
+        private final int code;
+
+        Mode(int code) {
+            this.code = code;
+        }
+
+        int code() {
+            return code;
+        }
+    }
 
     private final String url;
     private Mode mode = Mode.URL_CHOICE;
@@ -181,7 +195,7 @@ public final class Builder {
      */
     public Socket connect() throws SrtException {
         return new Socket(nConnect(
-            url, mode.ordinal(),
+            url, mode.code(),
             latencyMs, passphrase, streamId, congestion,
             connectTimeoutMs, recvTimeoutMs, sendTimeoutMs, peerIdleTimeoutMs,
             peerLatencyMs, recvLatencyMs,
@@ -209,7 +223,7 @@ public final class Builder {
      */
     public Listener listen() throws SrtException {
         return new Listener(nListen(
-            url, mode.ordinal(),
+            url, mode.code(),
             latencyMs, passphrase, streamId, congestion,
             connectTimeoutMs, recvTimeoutMs, sendTimeoutMs, peerIdleTimeoutMs,
             peerLatencyMs, recvLatencyMs,

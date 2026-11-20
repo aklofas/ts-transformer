@@ -35,14 +35,13 @@ public final class Demuxer extends NativeHandle implements Iterable<DemuxEvent> 
     /**
      * Construct a demuxer with a non-default configuration.
      *
-     * <p>Ordinal contract: the {@code strict}/{@code av1} ints passed to
-     * {@code nOpenWithConfig} are the Java enum ORDINALS — the Rust side maps by
-     * ordinal in the SAME declaration order as {@link StrictMode} / {@link Av1CarriageMode}.
+     * <p>The {@code strict}/{@code av1} ints passed to {@code nOpenWithConfig} are
+     * {@link StrictMode#code()} / {@link Av1CarriageMode#code()}.
      */
     public Demuxer(DemuxerConfig cfg) {
         setHandle(nOpenWithConfig(
-            cfg.strictMode().ordinal(), cfg.pesCapPerPid(), cfg.pesCapTotal(),
-            cfg.cfiTolerance(), cfg.av1Carriage().ordinal(),
+            cfg.strictMode().code(), cfg.pesCapPerPid(), cfg.pesCapTotal(),
+            cfg.cfiTolerance(), cfg.av1Carriage().code(),
             cfg.auCellCapPerPid(), cfg.lenientPsiReassembly(), cfg.syncBufCap(),
             cfg.unwrapTimestamps()));
     }

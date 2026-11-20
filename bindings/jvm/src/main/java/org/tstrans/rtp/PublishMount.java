@@ -85,9 +85,9 @@ public final class PublishMount extends NativeHandle {
      */
     public org.tstrans.shells.DemuxReceiver intoDemuxReceiver(DemuxerConfig demuxConfig) throws RtspException {
         long h = nIntoDemuxReceiver(requireOpen(CLOSED), true,
-            demuxConfig.strictMode().ordinal(), demuxConfig.pesCapPerPid(),
+            demuxConfig.strictMode().code(), demuxConfig.pesCapPerPid(),
             demuxConfig.pesCapTotal(), demuxConfig.cfiTolerance(),
-            demuxConfig.av1Carriage().ordinal(), demuxConfig.auCellCapPerPid(),
+            demuxConfig.av1Carriage().code(), demuxConfig.auCellCapPerPid(),
             demuxConfig.lenientPsiReassembly(), demuxConfig.syncBufCap(),
             demuxConfig.unwrapTimestamps());
         return wrap(h);

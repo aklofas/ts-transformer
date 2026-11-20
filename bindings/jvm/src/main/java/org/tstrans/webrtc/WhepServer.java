@@ -68,8 +68,8 @@ public final class WhepServer extends NativeHandle {
         Objects.requireNonNull(path, "path");
         Objects.requireNonNull(config, "config");
         ensureOpen();
-        long h = nAddMount(peekHandle(), path, config.kind().ordinal(),
-            config.video().ordinal(), config.audio().ordinal(), config.klv().ordinal(),
+        long h = nAddMount(peekHandle(), path, config.kind().code(),
+            config.video().code(), config.audio().code(), config.klv().code(),
             config.seiBudgetBytes(), config.viewerQueuePackets());
         if (h == 0) {
             throw new WebrtcException(WebrtcException.Kind.MOUNT,

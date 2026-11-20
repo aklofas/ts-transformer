@@ -108,10 +108,10 @@ public sealed interface DemuxEvent
                 bytes = new byte[r.remaining()];
                 r.get(bytes);
             }
-            // av1Carriage() null (non-AV1 codec) → ordinal 0 (MPEG2_TS_BINDING default;
+            // av1Carriage() null (non-AV1 codec) → code 0 (MPEG2_TS_BINDING default;
             // split_video ignores the carriage arg for non-AV1 codecs).
-            int carriageOrd = av1Carriage() != null ? av1Carriage().ordinal() : 0;
-            return DemuxEventVideoNatives.nSplitVideo(bytes, codec().ordinal(), carriageOrd);
+            int carriageCode = av1Carriage() != null ? av1Carriage().code() : 0;
+            return DemuxEventVideoNatives.nSplitVideo(bytes, codec().code(), carriageCode);
         }
     }
 
@@ -192,7 +192,7 @@ public sealed interface DemuxEvent
                 bytes = new byte[r.remaining()];
                 r.get(bytes);
             }
-            return DemuxEventAudioNatives.nParseAudio(bytes, codec().ordinal(), strict);
+            return DemuxEventAudioNatives.nParseAudio(bytes, codec().code(), strict);
         }
     }
 

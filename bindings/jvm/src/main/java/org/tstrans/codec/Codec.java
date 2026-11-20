@@ -408,7 +408,7 @@ public final class Codec {
      * on {@code MispTimestamp}.
      *
      * @param au           Annex-B access unit bytes
-     * @param codecOrdinal Java {@code VideoCodec} ordinal (0=H264, 1=H265,
+     * @param codecOrdinal Java {@code VideoCodec} code (0=H264, 1=H265,
      *                     2=H266, 3=AV1)
      * @return the first MISP timestamp found, or {@code null}
      * @throws CodecParseException if a MISP identifier matched but the

@@ -165,9 +165,9 @@ public class DemuxReceiver extends NativeHandle implements Iterable<DemuxEvent> 
             throws BindingException {
         return nOpenWithConfig(
             url,
-            demuxConfig.strictMode().ordinal(), demuxConfig.pesCapPerPid(),
+            demuxConfig.strictMode().code(), demuxConfig.pesCapPerPid(),
             demuxConfig.pesCapTotal(), demuxConfig.cfiTolerance(),
-            demuxConfig.av1Carriage().ordinal(), demuxConfig.auCellCapPerPid(),
+            demuxConfig.av1Carriage().code(), demuxConfig.auCellCapPerPid(),
             demuxConfig.lenientPsiReassembly(), demuxConfig.syncBufCap(),
             demuxConfig.unwrapTimestamps(), cancel);
     }

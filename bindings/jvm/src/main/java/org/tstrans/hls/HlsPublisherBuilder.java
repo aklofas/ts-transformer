@@ -112,7 +112,7 @@ public final class HlsPublisherBuilder {
      */
     public HlsPublisher build() throws HlsException {
         long h = HlsPublisher.nBuild(url, bind, outputDir, segmentDurationMs, maxSegmentDurationMs,
-            playlistWindow, mode == null ? -1 : mode.ordinal(), authUser, authPass, tlsCert, tlsKey, noServer);
+            playlistWindow, mode == null ? -1 : mode.code(), authUser, authPass, tlsCert, tlsKey, noServer);
         if (h == 0) {
             throw new HlsException(HlsException.Kind.INTERNAL, "nBuild returned 0 without throwing");
         }

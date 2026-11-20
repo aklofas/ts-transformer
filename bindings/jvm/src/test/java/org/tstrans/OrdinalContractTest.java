@@ -1,11 +1,19 @@
 package org.tstrans;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.params.provider.Arguments.arguments;
 
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
 import java.util.Arrays;
-import java.util.List;
+import java.util.Map;
+import java.util.function.ToIntFunction;
+import java.util.stream.Collectors;
 import java.util.stream.Stream;
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
@@ -13,6 +21,7 @@ import org.tstrans.codec.MispTimeKind;
 import org.tstrans.hls.HlsMode;
 import org.tstrans.mpegts.Av1CarriageMode;
 import org.tstrans.mpegts.AudioCodec;
+import org.tstrans.mpegts.Demuxer;
 import org.tstrans.mpegts.KlvStreamType;
 import org.tstrans.mpegts.StrictMode;
 import org.tstrans.mpegts.SubtitleCodec;
@@ -25,34 +34,64 @@ import org.tstrans.webrtc.KlvCarriage;
 import org.tstrans.webrtc.MountKind;
 
 /**
- * Each enum below crosses JNI as its ordinal, so its constant order is the native decode table
- * in bindings/jvm/src (the file is named per row). Reordering a constant here without the Rust
- * match arm silently selects a different variant.
+ * Each enum below crosses JNI as its {@code code()}, which the native decode table in
+ * bindings/jvm/src (the file is named per row) maps back to a variant. Changing a code here
+ * without the Rust match arm silently selects a different variant; a constant added without a
+ * row here fails.
  */
 class OrdinalContractTest {
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("contracts")
-    void javaOrderMatchesTheNativeDecodeTable(Class<? extends Enum<?>> e, List<String> nativeOrder) {
-        assertEquals(nativeOrder, Arrays.stream(e.getEnumConstants()).map(Enum::name).toList());
+    void codesMatchTheNativeDecodeTable(String name, Map<String, Integer> codes, Map<String, Integer> nativeTable) {
+        assertEquals(nativeTable, codes);
+    }
+
+    static <E extends Enum<E>> Arguments row(Class<E> e, ToIntFunction<E> code, Map<String, Integer> nativeTable) {
+        Map<String, Integer> codes = Arrays.stream(e.getEnumConstants())
+            .collect(Collectors.toMap(Enum::name, code::applyAsInt));
+        return arguments(e.getSimpleName(), codes, nativeTable);
     }
 
     static Stream<Arguments> contracts() {
         return Stream.of(
-            arguments(MountKind.class, List.of("ELEMENTARY", "MP2T")),                                 // webrtc/server.rs
-            arguments(AudioPolicy.class, List.of("DROP", "PASSTHROUGH_OPUS")),                         // webrtc/server.rs
-            arguments(KlvCarriage.class, List.of("SEI_AND_DATA_CHANNEL", "SEI_ONLY", "DATA_CHANNEL_ONLY")), // webrtc/server.rs
-            arguments(VideoCodec.class, List.of("H264", "H265", "H266", "AV1")),                       // mpegts/muxer.rs, mpegts/mod.rs, codec/misp_time.rs, webrtc/server.rs
-            arguments(AudioCodec.class, List.of("MP2", "AAC", "AAC_LATM", "AC3")),                     // mpegts/muxer.rs, mpegts/mod.rs
-            arguments(SubtitleCodec.class,
-                List.of("DVB_SUBTITLING", "DVB_TELETEXT", "CEA708_STANDALONE", "WEBVTT_IN_TS")),       // mpegts/muxer.rs
-            arguments(KlvStreamType.class, List.of("SYNCHRONOUS_METADATA", "PRIVATE_DATA")),           // mpegts/muxer.rs
-            arguments(Av1CarriageMode.class, List.of("MPEG2_TS_BINDING", "INTEROP_RAW_OBU")),          // mpegts/muxer.rs, mpegts/mod.rs
-            arguments(StrictMode.class, List.of("OFF", "TIMING_ONLY", "PSI_ONLY", "FULL")),            // mpegts/mod.rs
-            arguments(MispTimeKind.class, List.of("MICRO", "NANO")),                                   // mpegts/muxer.rs
-            arguments(OverflowPolicy.class, List.of("DROP_OLDEST", "REJECT")),                         // srt/mod.rs
-            arguments(ReconnectMode.class, List.of("BLOCKING", "BACKGROUND")),                         // srt/mod.rs
-            arguments(ParameterSetInjection.class, List.of("NONE", "BEFORE_IDR")),                     // rtp/h264_receiver.rs
-            arguments(HlsMode.class, List.of("LIVE", "EVENT", "VOD")));                                // hls/publisher.rs
+            row(MountKind.class, MountKind::code, Map.of("ELEMENTARY", 0, "MP2T", 1)),            // webrtc/server.rs
+            row(AudioPolicy.class, AudioPolicy::code, Map.of("DROP", 0, "PASSTHROUGH_OPUS", 1)),  // webrtc/server.rs
+            row(KlvCarriage.class, KlvCarriage::code,
+                Map.of("SEI_AND_DATA_CHANNEL", 0, "SEI_ONLY", 1, "DATA_CHANNEL_ONLY", 2)),        // webrtc/server.rs
+            row(VideoCodec.class, VideoCodec::code,
+                Map.of("H264", 0, "H265", 1, "H266", 2, "AV1", 3)),  // mpegts/muxer.rs, mpegts/mod.rs, codec/misp_time.rs, webrtc/server.rs
+            row(AudioCodec.class, AudioCodec::code,
+                Map.of("MP2", 0, "AAC", 1, "AAC_LATM", 2, "AC3", 3)),                             // mpegts/muxer.rs, mpegts/mod.rs
+            row(SubtitleCodec.class, SubtitleCodec::code,
+                Map.of("DVB_SUBTITLING", 0, "DVB_TELETEXT", 1, "CEA708_STANDALONE", 2, "WEBVTT_IN_TS", 3)), // mpegts/muxer.rs
+            row(KlvStreamType.class, KlvStreamType::code,
+                Map.of("SYNCHRONOUS_METADATA", 0, "PRIVATE_DATA", 1)),                            // mpegts/muxer.rs
+            row(Av1CarriageMode.class, Av1CarriageMode::code,
+                Map.of("MPEG2_TS_BINDING", 0, "INTEROP_RAW_OBU", 1)),                             // mpegts/muxer.rs, mpegts/mod.rs
+            row(StrictMode.class, StrictMode::code,
+                Map.of("OFF", 0, "TIMING_ONLY", 1, "PSI_ONLY", 2, "FULL", 3)),                    // mpegts/mod.rs
+            row(MispTimeKind.class, MispTimeKind::code, Map.of("MICRO", 0, "NANO", 1)),           // mpegts/muxer.rs
+            row(OverflowPolicy.class, OverflowPolicy::code, Map.of("DROP_OLDEST", 0, "REJECT", 1)), // srt/mod.rs
+            row(ReconnectMode.class, ReconnectMode::code, Map.of("BLOCKING", 0, "BACKGROUND", 1)),  // srt/mod.rs
+            row(ParameterSetInjection.class, ParameterSetInjection::code,
+                Map.of("NONE", 0, "BEFORE_IDR", 1)),                                              // rtp/h264_receiver.rs
+            row(HlsMode.class, HlsMode::code, Map.of("LIVE", 0, "EVENT", 1, "VOD", 2)));          // hls/publisher.rs
+    }
+
+    /**
+     * A strictness code the native table does not know is enum drift: it is refused as an
+     * internal failure (a {@code RuntimeException}, as for an unknown AV1 carriage code), not
+     * mapped to some level.
+     */
+    @Test
+    void anUnknownStrictModeCodeIsInternal() throws Exception {
+        Method open = Demuxer.class.getDeclaredMethod("nOpenWithConfig", int.class, long.class, long.class,
+            boolean.class, int.class, long.class, boolean.class, long.class, boolean.class);
+        open.setAccessible(true);
+        InvocationTargetException e = assertThrows(InvocationTargetException.class,
+            () -> open.invoke(null, 99, 0L, 0L, false, Av1CarriageMode.MPEG2_TS_BINDING.code(), 0L, false, 0L, false));
+        assertSame(RuntimeException.class, e.getCause().getClass(), String.valueOf(e.getCause()));
+        assertTrue(e.getCause().getMessage().contains("unknown StrictMode code 99"), e.getCause().getMessage());
     }
 }

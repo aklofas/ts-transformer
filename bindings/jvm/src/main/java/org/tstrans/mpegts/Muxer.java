@@ -48,7 +48,7 @@ public final class Muxer extends NativeHandle {
         setHandle(nOpen(
             cfg.programNumber(), cfg.pmtPid(), cfg.pcrPid(),
             cfg.pcrIntervalMs(), cfg.pcrLeadMs(), cfg.psiIntervalMs(), cfg.bufferPackets(),
-            cfg.av1Carriage().ordinal(),
+            cfg.av1Carriage().code(),
             cfg.streamPids(), cfg.streamKinds(), cfg.streamCodecs(),
             cfg.streamTypeCodes(), cfg.streamCarriesPts(),
             cfg.dataDescBytes(), cfg.dataDescLens()));
@@ -328,7 +328,7 @@ public final class Muxer extends NativeHandle {
             MispTimestamp misp) throws MuxException {
         ensureOpen("Muxer is closed");
         nPushVideoMispTo(peekHandle(), h.raw(), nal, pts, keyFrame,
-                misp.kind().ordinal(), misp.timeStatus(), misp.value());
+                misp.kind().code(), misp.timeStatus(), misp.value());
     }
 
     /**
@@ -355,7 +355,7 @@ public final class Muxer extends NativeHandle {
             boolean keyFrame, MispTimestamp misp) throws MuxException {
         ensureOpen("Muxer is closed");
         nPushVideoMispToWithDts(peekHandle(), h.raw(), nal, pts, dts, keyFrame,
-                misp.kind().ordinal(), misp.timeStatus(), misp.value());
+                misp.kind().code(), misp.timeStatus(), misp.value());
     }
 
     /**

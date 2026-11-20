@@ -113,11 +113,11 @@ public final class Transport extends NativeHandle {
     public DemuxReceiver intoDemuxReceiver(DemuxerConfig demuxConfig) {
         ensureOpen("Transport is closed");
         Objects.requireNonNull(demuxConfig, "demuxConfig");
-        int strict = demuxConfig.strictMode().ordinal();
+        int strict = demuxConfig.strictMode().code();
         long pesCapPerPid = demuxConfig.pesCapPerPid();
         long pesCapTotal = demuxConfig.pesCapTotal();
         boolean cfiTolerance = demuxConfig.cfiTolerance();
-        int av1Carriage = demuxConfig.av1Carriage().ordinal();
+        int av1Carriage = demuxConfig.av1Carriage().code();
         long auCellCapPerPid = demuxConfig.auCellCapPerPid();
         boolean lenientPsi = demuxConfig.lenientPsiReassembly();
         long syncBufCap = demuxConfig.syncBufCap();

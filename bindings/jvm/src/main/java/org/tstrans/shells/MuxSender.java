@@ -119,7 +119,7 @@ public class MuxSender extends NativeHandle {
             programConfig.programNumber(), programConfig.pmtPid(), programConfig.pcrPid(),
             programConfig.pcrIntervalMs(), programConfig.pcrLeadMs(),
             programConfig.psiIntervalMs(),
-            programConfig.bufferPackets(), programConfig.av1Carriage().ordinal(),
+            programConfig.bufferPackets(), programConfig.av1Carriage().code(),
             programConfig.streamPids(), programConfig.streamKinds(),
             programConfig.streamCodecs(), programConfig.streamTypeCodes(),
             programConfig.streamCarriesPts(),

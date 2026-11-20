@@ -5,8 +5,19 @@ package org.tstrans.mpegts;
  * {@code tst_core::mpegts::demux::event::VideoCodec}.
  */
 public enum VideoCodec {
-    H264,
-    H265,
-    H266,
-    AV1
+    H264(0),
+    H265(1),
+    H266(2),
+    AV1(3);
+
+    private final int code;
+
+    VideoCodec(int code) {
+        this.code = code;
+    }
+
+    /** @return the value native code receives for this constant; stable across releases. */
+    public int code() {
+        return code;
+    }
 }
