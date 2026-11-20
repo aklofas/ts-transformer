@@ -24,7 +24,9 @@ import pytest
 from tstrans import rist, shells, udp
 from tstrans.exceptions import RistError, RistErrorKind, UdpError, UdpErrorKind
 
-from _builders.native_hooks import native_hook, shells_hook
+from _builders.native_hooks import native_hook
+from _builders.parked import parked as _parked
+from _builders.parked import slot_held as _held
 from _builders.ports import free_udp_port
 from _builders.rist_ports import bind_even_port
 from _builders.wait import wait_for
@@ -41,20 +43,6 @@ def _ts_chunk(tag: int, packets: int = 7) -> bytes:
     """`packets` TS packets, each carrying `tag` in its second byte."""
     pkt = bytes([0x47, tag]) + b"\xff" * 186
     return pkt * packets
-
-
-def _held(obj: object) -> bool:
-    """Whether a call on another thread holds `obj`'s slot (never waits)."""
-    return shells_hook("_slot_held_for_test")(obj)
-
-
-def _parked(obj: object, call: Callable[[], object], limit: float = WAIT_S) -> threading.Thread:
-    """Run `call` on its own thread and return once it holds `obj`'s slot,
-    so a getter read next is read while the call is parked."""
-    t = threading.Thread(target=call, daemon=True)
-    t.start()
-    wait_for("the call holding the slot", lambda: _held(obj), limit)
-    return t
 
 
 def _finishes(fn: Callable[[], object], seconds: float = 2.0) -> object:
