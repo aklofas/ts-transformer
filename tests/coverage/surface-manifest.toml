@@ -4061,6 +4061,49 @@ bindings = ["c:n/a(the C binding takes no open cancel; its listener opens stay a
 scenario_ids = []
 tier = "A"
 
+# `ParkingSlot`: a session object whose calls may park (a push's sends,
+# PAUSE), and the one close rule both bindings' push sessions follow: a
+# close cancels only a parking holder, a waiting call runs nothing after
+# it, a conversion waits behind a query and refuses behind a parking call,
+# a peek never waits, a poisoned slot refuses all but a close. Its unit
+# tests order the threads by channels, condition waits and the observer.
+
+[[surface]]
+kind = "rust"
+crate = "tst-pipeline"
+item = "tst_pipeline::binding::parking::ParkingSlot"
+owning_tests = ["crates/tst-pipeline/src/binding/parking.rs"]
+bindings = ["c:n/a(the C binding has no push session)", "python:n/a(internal: the push session's lock rule)", "java:n/a(internal: the push session's lock rule)", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-pipeline"
+item = "tst_pipeline::binding::parking::Peek"
+owning_tests = ["crates/tst-pipeline/src/binding/parking.rs"]
+bindings = ["c:n/a(the C binding has no push session)", "python:n/a(internal: the push session's lock rule)", "java:n/a(internal: the push session's lock rule)", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-pipeline"
+item = "tst_pipeline::binding::parking::SlotRefused"
+owning_tests = ["crates/tst-pipeline/src/binding/parking.rs"]
+bindings = ["c:n/a(the C binding has no push session)", "python:n/a(internal: the push session's lock rule)", "java:n/a(internal: the push session's lock rule)", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-pipeline"
+item = "tst_pipeline::binding::parking::ParkingEvent"
+owning_tests = ["crates/tst-pipeline/src/binding/parking.rs"]
+bindings = ["c:n/a(the C binding has no push session)", "python:n/a(internal: the push session's lock rule)", "java:n/a(internal: the push session's lock rule)", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
 [[surface]]
 kind = "rust"
 crate = "tst-pipeline"

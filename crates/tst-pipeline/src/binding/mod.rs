@@ -6,8 +6,9 @@
 //! [API stability reference](https://github.com/aklofas/ts-transformer/blob/main/docs/reference/api-stability.md).
 //!
 //! `no_std` + `alloc`, except [`handles`] (its end-reason cell is a
-//! `std::sync::OnceLock`) and [`open_cancel`] (it hands out
-//! `std`-only `CancelSlot`s): the C binding's bare-metal plane drives its
+//! `std::sync::OnceLock`), [`open_cancel`] (it hands out
+//! `std`-only `CancelSlot`s) and [`parking`] (it waits on `std` threads):
+//! the C binding's bare-metal plane drives its
 //! offline handles through the same [`Owned`] and kind table as every
 //! other handle. On a `no_std` target the slot lock is a spin lock and
 //! panics abort — see [`Owned`]'s "`no_std` targets" section.
@@ -26,6 +27,9 @@
 //!   lock-free cancel + construction-time snapshot, with the poison and
 //!   panic policy (readers recover, mutators refuse; a panic inside a
 //!   closure is reported, never poisons the mutex).
+//! - [`parking`] — [`ParkingSlot`](parking::ParkingSlot): a session whose
+//!   calls may park, and the one rule for closing or converting it while
+//!   one does (a close cancels only a parking holder).
 //! - [`mod@panic`] — `catch_unwind` + payload-to-string, once, for every
 //!   binding's outer boundary (`ffi_catch` / `jni_catch` delegate here).
 //! - [`shells`] — [`Close`] for the seven pipeline shells, and
@@ -40,6 +44,8 @@ pub mod open_cancel;
 pub mod opened;
 pub mod owned;
 pub mod panic;
+#[cfg(feature = "std")]
+pub mod parking;
 pub mod shells;
 pub mod view;
 

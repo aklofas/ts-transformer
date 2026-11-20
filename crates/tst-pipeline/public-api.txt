@@ -463,6 +463,85 @@ pub fn tst_pipeline::sender::Sender<T>::close(&mut self) -> core::result::Result
 pub mod tst_pipeline::binding::panic
 pub fn tst_pipeline::binding::panic::catch<R>(impl core::ops::function::FnOnce() -> R) -> core::result::Result<R, alloc::string::String>
 pub fn tst_pipeline::binding::panic::payload_message(&(dyn core::any::Any + core::marker::Send)) -> alloc::string::String
+pub mod tst_pipeline::binding::parking
+#[non_exhaustive] pub enum tst_pipeline::binding::parking::ParkingEvent
+pub tst_pipeline::binding::parking::ParkingEvent::CloseRetry
+pub tst_pipeline::binding::parking::ParkingEvent::ConversionRetry
+pub tst_pipeline::binding::parking::ParkingEvent::ParkingEntered
+pub tst_pipeline::binding::parking::ParkingEvent::ParkingLeft
+impl core::clone::Clone for tst_pipeline::binding::parking::ParkingEvent
+pub fn tst_pipeline::binding::parking::ParkingEvent::clone(&self) -> tst_pipeline::binding::parking::ParkingEvent
+impl core::cmp::Eq for tst_pipeline::binding::parking::ParkingEvent
+impl core::cmp::PartialEq for tst_pipeline::binding::parking::ParkingEvent
+pub fn tst_pipeline::binding::parking::ParkingEvent::eq(&self, &tst_pipeline::binding::parking::ParkingEvent) -> bool
+impl core::fmt::Debug for tst_pipeline::binding::parking::ParkingEvent
+pub fn tst_pipeline::binding::parking::ParkingEvent::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for tst_pipeline::binding::parking::ParkingEvent
+impl core::marker::StructuralPartialEq for tst_pipeline::binding::parking::ParkingEvent
+impl core::marker::Freeze for tst_pipeline::binding::parking::ParkingEvent
+impl core::marker::Send for tst_pipeline::binding::parking::ParkingEvent
+impl core::marker::Sync for tst_pipeline::binding::parking::ParkingEvent
+impl core::marker::Unpin for tst_pipeline::binding::parking::ParkingEvent
+impl core::marker::UnsafeUnpin for tst_pipeline::binding::parking::ParkingEvent
+impl core::panic::unwind_safe::RefUnwindSafe for tst_pipeline::binding::parking::ParkingEvent
+impl core::panic::unwind_safe::UnwindSafe for tst_pipeline::binding::parking::ParkingEvent
+#[non_exhaustive] pub enum tst_pipeline::binding::parking::Peek<R>
+pub tst_pipeline::binding::parking::Peek::Closed
+pub tst_pipeline::binding::parking::Peek::Held
+pub tst_pipeline::binding::parking::Peek::Value(R)
+impl<R: core::clone::Clone> core::clone::Clone for tst_pipeline::binding::parking::Peek<R>
+pub fn tst_pipeline::binding::parking::Peek<R>::clone(&self) -> tst_pipeline::binding::parking::Peek<R>
+impl<R: core::cmp::Eq> core::cmp::Eq for tst_pipeline::binding::parking::Peek<R>
+impl<R: core::cmp::PartialEq> core::cmp::PartialEq for tst_pipeline::binding::parking::Peek<R>
+pub fn tst_pipeline::binding::parking::Peek<R>::eq(&self, &tst_pipeline::binding::parking::Peek<R>) -> bool
+impl<R: core::cmp::PartialEq> core::marker::StructuralPartialEq for tst_pipeline::binding::parking::Peek<R>
+impl<R: core::fmt::Debug> core::fmt::Debug for tst_pipeline::binding::parking::Peek<R>
+pub fn tst_pipeline::binding::parking::Peek<R>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<R: core::marker::Copy> core::marker::Copy for tst_pipeline::binding::parking::Peek<R>
+impl<R> core::marker::Freeze for tst_pipeline::binding::parking::Peek<R> where R: core::marker::Freeze
+impl<R> core::marker::Send for tst_pipeline::binding::parking::Peek<R> where R: core::marker::Send
+impl<R> core::marker::Sync for tst_pipeline::binding::parking::Peek<R> where R: core::marker::Sync
+impl<R> core::marker::Unpin for tst_pipeline::binding::parking::Peek<R> where R: core::marker::Unpin
+impl<R> core::marker::UnsafeUnpin for tst_pipeline::binding::parking::Peek<R> where R: core::marker::UnsafeUnpin
+impl<R> core::panic::unwind_safe::RefUnwindSafe for tst_pipeline::binding::parking::Peek<R> where R: core::panic::unwind_safe::RefUnwindSafe
+impl<R> core::panic::unwind_safe::UnwindSafe for tst_pipeline::binding::parking::Peek<R> where R: core::panic::unwind_safe::UnwindSafe
+#[non_exhaustive] pub enum tst_pipeline::binding::parking::SlotRefused
+pub tst_pipeline::binding::parking::SlotRefused::Busy
+pub tst_pipeline::binding::parking::SlotRefused::Closed
+pub tst_pipeline::binding::parking::SlotRefused::Poisoned
+impl core::clone::Clone for tst_pipeline::binding::parking::SlotRefused
+pub fn tst_pipeline::binding::parking::SlotRefused::clone(&self) -> tst_pipeline::binding::parking::SlotRefused
+impl core::cmp::Eq for tst_pipeline::binding::parking::SlotRefused
+impl core::cmp::PartialEq for tst_pipeline::binding::parking::SlotRefused
+pub fn tst_pipeline::binding::parking::SlotRefused::eq(&self, &tst_pipeline::binding::parking::SlotRefused) -> bool
+impl core::fmt::Debug for tst_pipeline::binding::parking::SlotRefused
+pub fn tst_pipeline::binding::parking::SlotRefused::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for tst_pipeline::binding::parking::SlotRefused
+impl core::marker::StructuralPartialEq for tst_pipeline::binding::parking::SlotRefused
+impl core::marker::Freeze for tst_pipeline::binding::parking::SlotRefused
+impl core::marker::Send for tst_pipeline::binding::parking::SlotRefused
+impl core::marker::Sync for tst_pipeline::binding::parking::SlotRefused
+impl core::marker::Unpin for tst_pipeline::binding::parking::SlotRefused
+impl core::marker::UnsafeUnpin for tst_pipeline::binding::parking::SlotRefused
+impl core::panic::unwind_safe::RefUnwindSafe for tst_pipeline::binding::parking::SlotRefused
+impl core::panic::unwind_safe::UnwindSafe for tst_pipeline::binding::parking::SlotRefused
+pub struct tst_pipeline::binding::parking::ParkingSlot<T>
+impl<T> tst_pipeline::binding::parking::ParkingSlot<T>
+pub fn tst_pipeline::binding::parking::ParkingSlot<T>::is_closed(&self) -> bool
+pub fn tst_pipeline::binding::parking::ParkingSlot<T>::new(T, alloc::sync::Arc<dyn tst_core::transport::TransportCancel>) -> Self
+pub fn tst_pipeline::binding::parking::ParkingSlot<T>::run<R>(&self, impl core::ops::function::FnOnce(&mut T) -> R) -> core::result::Result<R, tst_pipeline::binding::parking::SlotRefused>
+pub fn tst_pipeline::binding::parking::ParkingSlot<T>::run_parking<R>(&self, impl core::ops::function::FnOnce(&mut T) -> R) -> core::result::Result<R, tst_pipeline::binding::parking::SlotRefused>
+pub fn tst_pipeline::binding::parking::ParkingSlot<T>::take_for_close(&self) -> core::option::Option<T>
+pub fn tst_pipeline::binding::parking::ParkingSlot<T>::take_for_conversion(&self) -> core::result::Result<T, tst_pipeline::binding::parking::SlotRefused>
+pub fn tst_pipeline::binding::parking::ParkingSlot<T>::try_peek<R>(&self, impl core::ops::function::FnOnce(&T) -> R) -> tst_pipeline::binding::parking::Peek<R>
+pub fn tst_pipeline::binding::parking::ParkingSlot<T>::with_observer(self, fn(tst_pipeline::binding::parking::ParkingEvent)) -> Self
+impl<T> !core::marker::Freeze for tst_pipeline::binding::parking::ParkingSlot<T>
+impl<T> core::marker::Send for tst_pipeline::binding::parking::ParkingSlot<T> where T: core::marker::Send
+impl<T> core::marker::Sync for tst_pipeline::binding::parking::ParkingSlot<T> where T: core::marker::Send
+impl<T> core::marker::Unpin for tst_pipeline::binding::parking::ParkingSlot<T> where T: core::marker::Unpin
+impl<T> core::marker::UnsafeUnpin for tst_pipeline::binding::parking::ParkingSlot<T> where T: core::marker::UnsafeUnpin
+impl<T> !core::panic::unwind_safe::RefUnwindSafe for tst_pipeline::binding::parking::ParkingSlot<T>
+impl<T> !core::panic::unwind_safe::UnwindSafe for tst_pipeline::binding::parking::ParkingSlot<T>
 pub mod tst_pipeline::binding::shells
 pub struct tst_pipeline::binding::shells::RecvHalf<R>(pub R)
 impl<R: tst_core::transport::RecvTransport> tst_pipeline::binding::owned::Close for tst_pipeline::binding::shells::RecvHalf<R>
