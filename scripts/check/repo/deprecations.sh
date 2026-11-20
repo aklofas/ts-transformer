@@ -42,8 +42,10 @@
 #           class too.
 #   an argument  a Python row `module.Class.method.arg` (the last two
 #           components lower-snake after a CapWords class) names one argument:
-#           a site covers it only when it names the method with its `(` and
-#           the argument as a whole word (`stop(drain_ms=...)`), or declares
+#           a site covers it only when it names the method with its `(`
+#           (unqualified, or qualified with the row's class:
+#           `RtspServer.stop(`) and the argument as a whole word
+#           (`stop(drain_ms=...)`), or declares
 #           the method with a parameter of that name. A Java row
 #           `Class.method(types)` names one overload: the site's declaration
 #           must have exactly those parameter types (`stop(long)` is not
@@ -521,10 +523,13 @@ def covers(row, s):
         return True
     argument = py_argument(row)
     if argument:
-        _, method, arg = argument
+        cls, method, arg = argument
         if s["name"]:
             return s["name"] == method and word(arg, s["decl"])
-        return re.search(r"(?<!\w)" + re.escape(method) + r"\(", s["text"]) is not None and word(arg, s["text"])
+        # A call the message qualifies with a class names that class's method.
+        owners = [re.search(r"(\w+)\.$", s["text"][: m.start()])
+                  for m in re.finditer(r"(?<!\w)" + re.escape(method) + r"\(", s["text"])]
+        return any(o is None or o.group(1) == cls for o in owners) and word(arg, s["text"])
     if not (s["name"] == row["leaf"] if s["name"] else named(row["leaf"], s["text"])):
         return False
     types = java_types(row)

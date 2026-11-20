@@ -2097,10 +2097,16 @@ dep_tree; dep_args
 expect "deprecations: argument rows with a site each pass" 0 dep
 expect_out "deprecations: the argument sites are counted" "10 deprecation sites (rust 1, java 3, python 6); 9 live rows, 5 removed rows"
 expect_out "deprecations: the removed arguments are resolved" "2 removed argument rows resolved"
+# A warning that names the method without its class serves either row.
 dep_tree; dep_args
 plant "$tmp/dep/bindings/python/src/lib.rs" 'PyErr::warn(.*c"ManagedReceiver.*' 'Ok(())'
+plant "$tmp/dep/bindings/python/src/lib.rs" 'c"Receiver.recv_bytes(' 'c"recv_bytes('
 expect "deprecations: two rows sharing a last component with one site fail" 1 dep
 expect_out "deprecations: the row left without a site" "live row tstrans.srt.ManagedReceiver.recv_bytes.max_len (python) shares its last component \`max_len\` with tstrans.shells.Receiver.recv_bytes.max_len"
+dep_tree; dep_args
+plant "$tmp/dep/bindings/python/src/lib.rs" 'c"ManagedReceiver.recv_bytes(' 'c"Receiver.recv_bytes('
+expect "deprecations: a warning that names another class's method is not its site" 1 dep
+expect_out "deprecations: the row of the class no warning names" "live row tstrans.srt.ManagedReceiver.recv_bytes.max_len (python) covers no deprecation site"
 dep_tree; dep_args
 plant "$tmp/dep/bindings/python/src/lib.rs" 'c"Receiver.recv_bytes(max_len=...)' 'c"Receiver.recv_bytes: max_len'
 expect "deprecations: a warning that names the argument but not the method call fails" 1 dep
@@ -2149,6 +2155,7 @@ class Receiver:
     def recv_bytes(self) -> bytes: ...
 EOF
     plant "$tmp/dep/bindings/python/src/lib.rs" 'PyErr::warn(.*c"ManagedReceiver.*' 'Ok(())'
+    plant "$tmp/dep/bindings/python/src/lib.rs" 'c"Receiver.recv_bytes(' 'c"recv_bytes('
 }
 dep_tree; dep_args; dep_shells_stub max_len
 expect "deprecations: a stub overload naming the argument is that argument's site" 0 dep
