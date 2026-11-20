@@ -1424,6 +1424,28 @@ def test_a_byte_argument_refuses_an_integer(caller, value, _peers) -> None:
         _byte_callers(*_peers)[caller](value)
 
 
+def test_an_object_with_bytes_and_index_is_read_through_bytes() -> None:
+    """`bytes(x)` calls `__bytes__` before it would read `__index__` as a
+    length, so such an object is bytes-like: the muxer gets its bytes."""
+    nal = _minimal_h264_nal_aud()
+
+    class Both:
+        def __index__(self) -> int:
+            return 3
+
+        def __bytes__(self) -> bytes:
+            return nal
+
+    def muxed(value) -> bytes:  # type: ignore[no-untyped-def]
+        m = Muxer(_simple_config())
+        m.push_video(value, pts=Pts90khz.from_raw(0))
+        out = bytearray(188 * 16)
+        n = m.pull(out)
+        return bytes(out[:n])
+
+    assert muxed(Both()) == muxed(nal)
+
+
 def test_byte_arguments_still_take_bytes_like_objects_and_iterables() -> None:
     nal = _minimal_h264_nal_aud()
     for wrap in (bytes, bytearray, memoryview, list):

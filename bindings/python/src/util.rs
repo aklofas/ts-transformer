@@ -58,8 +58,12 @@ pub(crate) fn coerce_bytes_like<'py>(
 
 /// Whether `bytes(arg)` would take `arg` as a length: its `__index__`
 /// succeeds (CPython's `bytes()` tries it before the buffer protocol, so a
-/// NumPy integer scalar, which has a buffer too, is a length).
+/// NumPy integer scalar, which has a buffer too, is a length). A type with
+/// `__bytes__` never is: `bytes()` calls that first.
 fn reads_as_a_length(py: Python<'_>, arg: &Bound<'_, PyAny>) -> PyResult<bool> {
+    if arg.get_type().hasattr(intern!(py, "__bytes__"))? {
+        return Ok(false);
+    }
     if arg.is_instance_of::<pyo3::types::PyInt>() {
         return Ok(true);
     }
