@@ -8,10 +8,15 @@
 # retried, a broken build file included: about four minutes more.
 # Maven Central has answered "not found" for an existing file through all
 # three attempts twice: about 90 s with waits of 20 s and 60 s, about five
-# minutes with the present 60 s and 180 s. The retry has outlasted none so
-# far; it is kept because a reset, a 5xx or a timeout may be shorter than its
-# waits. After each failed attempt the probe below prints what the repository
-# answers a HEAD request from this runner.
+# minutes with the present 60 s and 180 s. On a "not found" the build now
+# tries its second repository, Google's mirror of Maven Central, whose files
+# are checked against the SHA-256 in bindings/jvm/gradle/verification-metadata.xml
+# (measured with a local proxy; not yet met on a runner). A 429, a 5xx or a
+# reset does not fall through: Gradle disables Maven Central for the rest of
+# that build and fails it (also measured), so for those this retry is the only
+# answer. It has outlasted none so far; it is kept because such a failure may
+# be shorter than its waits. After each failed attempt the probe below prints
+# what the repository answers a HEAD request from this runner.
 #
 # Usage: gradle-resolve.sh [--no-test] [gradle arguments...] (added to the
 # resolveAll call). --no-test leaves out the configurations only the tests use
