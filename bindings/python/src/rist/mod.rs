@@ -7,7 +7,8 @@
 //!   (secret never exposed through __repr__ or any getter).
 //! - `RistProfile` — SIMPLE / MAIN (SCREAMING_SNAKE variant names per the
 //!   tst-py convention; cf. UdpSocketKind, HlsMode).
-//! - `RistStats` — frozen stats projection (8 fields from tst_rist::RistStats).
+//! - `RistStats` — frozen stats projection (the generated record of
+//!   `tst_rist::RistStats`).
 //!
 //! GIL boundaries:
 //! - `send`, `recv`, builder `build` / `connect`, `close`, `stats` — the
@@ -455,6 +456,7 @@ impl tst_pipeline::binding::Close for RistRecvInner {
 struct RistRecvSnapshot {
     bind_url: String,
     source: Option<SourceHandle>,
+    local_addr: std::net::SocketAddr,
 }
 
 /// RIST receiver — wraps `tst_rist::RistRecvTransport`.
@@ -474,8 +476,9 @@ pub(crate) struct PyRistRecvTransport {
     /// holds the slot with the GIL released, and `close()` latches the
     /// cancel BEFORE taking it, so the parked recv ends with
     /// `RistError(CLOSED)` within one librist poll window. Snapshot =
-    /// `bind_url()` and the transport's source record, so `repr()` and
-    /// `peer_addr()` never wait behind a parked `recv`.
+    /// `bind_url()`, the transport's source record and its bound address,
+    /// so `repr()`, `peer_addr()` and `local_addr()` never wait behind a
+    /// parked `recv`.
     owned: Owned<RistRecvInner, RistRecvSnapshot>,
     /// Shared cancel state, wrapping the transport's real `RistCancelHandle`
     /// `close()` and `cancel_handle().cancel()` both latch it
@@ -555,6 +558,24 @@ impl PyRistRecvTransport {
         });
         let bytes = pyres(py, &RIST, res)?;
         Ok(PyBytes::new(py, &bytes).unbind())
+    }
+
+    /// `(host, port)` librist bound: the kernel's port when the bind URL
+    /// named port 0 (the Main profile; the Simple profile refuses port 0).
+    /// Answered from the `build()`-time snapshot, so it never waits behind
+    /// a `recv()` parked on another thread; raises `RistError(CLOSED)` once
+    /// the transport is closed.
+    fn local_addr(&self, py: Python<'_>) -> PyResult<crate::util::PyAddr> {
+        if self.owned.is_closed() {
+            Err(raise(py, &RIST, BindingError::from(HandleState::Closed)))
+        } else {
+            Ok(crate::util::addr_tuple(self.owned.snapshot().local_addr))
+        }
+    }
+
+    /// The port of `local_addr()`; same rules.
+    fn local_port(&self, py: Python<'_>) -> PyResult<u16> {
+        Ok(self.local_addr(py)?.1)
     }
 
     /// `(host, port)` of the sender whose block was delivered last, or
@@ -771,6 +792,7 @@ impl PyRistRecvTransportBuilder {
         let scratch_len = t.max_payload().max(65_536);
         let bind_url = t.bind_url().to_owned();
         let source = t.source_handle();
+        let local_addr = t.local_addr();
         // Obtain-before-move (see the sender twin).
         let cancel = CancelSource::new(Arc::new(t.cancel_handle()));
         Ok(PyRistRecvTransport {
@@ -780,7 +802,11 @@ impl PyRistRecvTransportBuilder {
                     scratch: vec![0u8; scratch_len],
                 },
                 cancel.as_dyn(),
-                RistRecvSnapshot { bind_url, source },
+                RistRecvSnapshot {
+                    bind_url,
+                    source,
+                    local_addr,
+                },
             ),
             cancel,
         })

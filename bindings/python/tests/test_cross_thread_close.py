@@ -880,7 +880,7 @@ def test_udp_recv_transport_close_from_other_thread_while_recv_parked() -> None:
     from tstrans.exceptions import UdpError, UdpErrorKind
 
     rx = udp.RecvTransport.builder().bind_url("udp://127.0.0.1:0").build()
-    port = rx.local_addr_port()
+    port = rx.local_port()
     captured: list[BaseException] = []
 
     def worker() -> None:
@@ -1124,7 +1124,7 @@ def test_udp_recv_transport_cancel_handle_from_other_thread_ends_parked_recv() -
     from tstrans.exceptions import UdpError, UdpErrorKind
 
     rx = udp.RecvTransport.builder().bind_url("udp://127.0.0.1:0").build()
-    port = rx.local_addr_port()
+    port = rx.local_port()
     handle = rx.cancel_handle()
     assert isinstance(handle, udp.CancelHandle)
     assert not handle.is_cancelled()
@@ -1285,21 +1285,21 @@ def test_tcp_listener_local_port_does_not_wait_behind_parked_accept() -> None:
     assert ei.value.kind == TcpErrorKind.CLOSED
 
 
-def test_udp_recv_transport_local_addr_port_does_not_wait_behind_parked_recv() -> None:
+def test_udp_recv_transport_local_port_does_not_wait_behind_parked_recv() -> None:
     from tstrans import udp
     from tstrans.exceptions import UdpError, UdpErrorKind
 
     rx = udp.RecvTransport.builder().bind_url("udp://127.0.0.1:0").build()
-    before = rx.local_addr_port()
+    before = rx.local_port()
     got = _assert_getter_does_not_wait_behind_park(
-        "udp.RecvTransport.local_addr_port()",
+        "udp.RecvTransport.local_port()",
         lambda: rx.recv(timeout_ms=None),
-        rx.local_addr_port,
+        rx.local_port,
         rx.close,
     )
     assert got == before
     with pytest.raises(UdpError) as ei:
-        rx.local_addr_port()
+        rx.local_port()
     assert ei.value.kind == UdpErrorKind.CLOSED
 
 

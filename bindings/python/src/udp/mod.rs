@@ -310,7 +310,7 @@ enum UdpRecvOutcome {
 
 /// What a `RecvTransport` answers without the slot.
 struct UdpRecvSnapshot {
-    local_port: u16,
+    local_addr: std::net::SocketAddr,
     source: Option<SourceHandle>,
 }
 
@@ -318,7 +318,7 @@ struct UdpRecvSnapshot {
 ///
 /// Construct via `RecvTransport.builder().bind_url("udp://0.0.0.0:0").build()`.
 /// Binding to port 0 lets the kernel pick a free port; read it back via
-/// `.local_addr_port()`.
+/// `.local_port()`.
 ///
 /// GIL is released during `recv` so other Python threads remain live while
 /// waiting for a datagram.
@@ -326,7 +326,7 @@ struct UdpRecvSnapshot {
 pub(crate) struct PyUdpRecvTransport {
     /// The binding layer's handle state machine. Snapshot = the
     /// bound port read at `build()` and the transport's source record, so
-    /// `local_addr_port()` and `peer_addr()` never wait behind a parked
+    /// `local_addr()` and `peer_addr()` never wait behind a parked
     /// `recv`.
     owned: Owned<UdpRecvInner, UdpRecvSnapshot>,
     /// Shared cancel state, wrapping the transport's real `UdpCancelHandle`
@@ -334,6 +334,17 @@ pub(crate) struct PyUdpRecvTransport {
     /// and the poll loop checks it between slices, so a parked `recv()`
     /// ends within about one slice.
     cancel: Arc<CancelSource>,
+}
+
+impl PyUdpRecvTransport {
+    /// The bound address, or `UdpError(CLOSED)` once closed.
+    fn bound(&self, py: Python<'_>) -> PyResult<std::net::SocketAddr> {
+        if self.owned.is_closed() {
+            Err(raise(py, &UDP, BindingError::from(HandleState::Closed)))
+        } else {
+            Ok(self.owned.snapshot().local_addr)
+        }
+    }
 }
 
 impl Drop for PyUdpRecvTransport {
@@ -435,16 +446,29 @@ impl PyUdpRecvTransport {
         ))
     }
 
-    /// Local bound port. Useful when the transport was bound to port 0
-    /// (kernel picks a free port). Answered from the `build()`-time
-    /// snapshot, so it never waits behind a `recv()` parked on another
-    /// thread; raises `UdpError(CLOSED)` once the transport is closed.
+    /// `(host, port)` the transport bound: the kernel's port when the
+    /// bind URL named port 0. Answered from the `build()`-time snapshot,
+    /// so it never waits behind a `recv()` parked on another thread;
+    /// raises `UdpError(CLOSED)` once the transport is closed.
+    fn local_addr(&self, py: Python<'_>) -> PyResult<crate::util::PyAddr> {
+        Ok(crate::util::addr_tuple(self.bound(py)?))
+    }
+
+    /// The port of `local_addr()`; same rules.
+    fn local_port(&self, py: Python<'_>) -> PyResult<u16> {
+        Ok(self.bound(py)?.port())
+    }
+
+    /// Deprecated: `local_port()`. Warns, then answers what `local_port()`
+    /// answers.
     fn local_addr_port(&self, py: Python<'_>) -> PyResult<u16> {
-        if self.owned.is_closed() {
-            Err(raise(py, &UDP, BindingError::from(HandleState::Closed)))
-        } else {
-            Ok(self.owned.snapshot().local_port)
-        }
+        PyErr::warn(
+            py,
+            &py.get_type::<pyo3::exceptions::PyDeprecationWarning>(),
+            c"udp.RecvTransport.local_addr_port() is deprecated: use local_port(); removed in 0.12.0",
+            1,
+        )?;
+        self.local_port(py)
     }
 
     /// `(host, port)` of the sender of the datagram delivered last, or
@@ -636,7 +660,7 @@ impl PyUdpRecvTransportBuilder {
         // Recv max_payload() is a flat 65535 deliverable ceiling; 65_536
         // keeps the historical scratch size.
         let scratch_len = t.max_payload().max(65_536);
-        let local_port = t.local_addr().port();
+        let local_addr = t.local_addr();
         let source = t.source_handle();
         // Obtain-before-move (see the sender twin).
         let cancel = CancelSource::new(Arc::new(t.cancel_handle()));
@@ -647,7 +671,7 @@ impl PyUdpRecvTransportBuilder {
                     scratch: vec![0u8; scratch_len],
                 },
                 cancel.as_dyn(),
-                UdpRecvSnapshot { local_port, source },
+                UdpRecvSnapshot { local_addr, source },
             ),
             cancel,
         })

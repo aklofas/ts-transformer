@@ -18,13 +18,11 @@ use pyo3::types::{PyBytes, PyType};
 
 use tst_core::transport::{RecvTransport, SourceHandle};
 use tst_pipeline::binding::view::{BlockingReason, Snapshot};
-use tst_pipeline::binding::{Opened, Owned};
+use tst_pipeline::binding::{BindingError, HandleState, Opened, Owned};
 use tst_pipeline::{Receiver as PlReceiver, ReceiverConfig};
 
 use crate::generated::stats_shells::{ReceiverStats, SocketStats};
-#[cfg(feature = "srt")]
-use crate::raise::raise;
-use crate::raise::{pyok, pyres};
+use crate::raise::{pyok, pyres, raise};
 use crate::shells::cancel::{PyCancelHandle, cancel_source};
 use crate::shells::end_reason::{end_detail, end_reason_to_py};
 use crate::shells::open::{OpenedRecv, RtpStatsSource};
@@ -49,6 +47,9 @@ struct Handles {
     /// The RTP counters; `None` off RTP.
     #[cfg_attr(not(feature = "rtp"), allow(dead_code))]
     rtp_stats: RtpStatsSource,
+    /// The address the open bound; `None` for a transport whose opener
+    /// records none.
+    local_addr: Option<std::net::SocketAddr>,
 }
 
 impl Drop for PyReceiver {
@@ -58,6 +59,19 @@ impl Drop for PyReceiver {
 }
 
 impl PyReceiver {
+    /// The address the open bound, or the transport's `CLOSED` once closed.
+    fn bound(&self, py: Python<'_>) -> PyResult<Option<std::net::SocketAddr>> {
+        if self.owned.is_closed() {
+            Err(raise(
+                py,
+                &self.owned.snapshot().domain,
+                BindingError::from(HandleState::Closed),
+            ))
+        } else {
+            Ok(self.owned.snapshot().handles.local_addr)
+        }
+    }
+
     /// Wrap an already-opened transport (the `open` and
     /// `Socket.into_receiver()` paths meet here).
     pub(crate) fn from_opened(
@@ -74,6 +88,7 @@ impl PyReceiver {
             transport,
             cancel,
             domain,
+            local_addr,
             ..
         } = opened;
         let cancel = cancel_source(&cancel);
@@ -86,7 +101,11 @@ impl PyReceiver {
             cancel.as_dyn(),
             Snapshot {
                 domain,
-                handles: Handles { source, rtp_stats },
+                handles: Handles {
+                    source,
+                    rtp_stats,
+                    local_addr,
+                },
             },
         );
         if let Some(h) = end_reason {
@@ -230,6 +249,21 @@ impl PyReceiver {
     fn end_detail(&self) -> Option<String> {
         let reason = self.owned.end_reason()?;
         end_detail(&reason).map(str::to_owned)
+    }
+
+    /// `(host, port)` the open bound: a `udp://`, `rist://@` or `rtp://`
+    /// bind (the kernel's port when the URL named 0), or an `srt://`
+    /// listener once its caller connected; `None` for a transport whose
+    /// opener records none. Never waits behind a parked `recv_bytes()`; raises
+    /// the transport's `CLOSED` kind once the receiver is closed.
+    fn local_addr(&self, py: Python<'_>) -> PyResult<Option<crate::util::PyAddr>> {
+        Ok(self.bound(py)?.map(crate::util::addr_tuple))
+    }
+
+    /// The port of `local_addr()`, or `None` where that is `None`. Same
+    /// rules as `local_addr()`.
+    fn local_port(&self, py: Python<'_>) -> PyResult<Option<u16>> {
+        Ok(self.bound(py)?.map(|a| a.port()))
     }
 
     /// `(host, port)` of the sender whose datagram (`udp://`) or block

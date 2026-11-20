@@ -460,6 +460,16 @@ with Receiver.open("srt://:9000?mode=listener") as rx:
             raise
 ```
 
+The receiving shells (`Receiver`, `DemuxReceiver`) report the address
+their open bound: `local_addr()` is `(host, port)` and `local_port()` its
+port, for a `udp://`, `rist://@` or `rtp://` bind (the kernel's port when
+the URL named 0) and for an `srt://` listener once its caller connected.
+They answer `None` for a shell whose open records no address (an accepted
+TCP connection), never wait behind a receive in progress, and raise the
+transport's `CLOSED` once the shell is closed. For `srt://` the port is
+known only after the accept, so port 0 cannot tell a caller where to
+dial: use the low-level path below for that.
+
 ### Builder → Socket low-level path
 
 When you need the listener's bound port (e.g. binding to an ephemeral
@@ -1074,11 +1084,11 @@ end a `recv()` loop; stop on a sentinel or via `cancel_handle().cancel()`,
 which wakes a parked `send` / `recv` with `RtpError(CLOSED)` within
 ~100 ms. The `tstrans.shells.CancelHandle` has `cancel()` and
 `is_cancelled()` (shared per shell). A literal `rtp://host:0` receiver binds (the kernel
-picks an ephemeral port; no RTCP port is bound), but it
-is impractical: the raw receiver exposes no local-address getter, so
-there is no way to learn which port the kernel chose and no sender can
-be pointed at it — bind a concrete port. (The H.264 receiver surface
-differs: `H264Receiver.local_addr()` reports its bound address.)
+picks an ephemeral port; no RTCP port is bound). The raw `RecvTransport`
+exposes no local-address getter, so bind a concrete port there, or open a
+`shells.Receiver` / `DemuxReceiver` on the URL, whose `local_port()`
+reports the kernel's port. (`H264Receiver.local_addr()` reports its bound
+address too.)
 
 ### RTP convenience (`MuxSender` / `DemuxReceiver`)
 
@@ -1729,8 +1739,10 @@ with RecvTransport.builder().bind_url("udp://@239.0.0.1:5000").build() as rx:
 `recv()` returns `(payload, (host, port))`, the second element the
 sender's address (see [the publisher's address](#the-publishers-address-and-the-source-pin)
 below). Use `udp://@group:port` (the `@` prefix) on
-`bind_url` for a multicast join; `RecvTransport.local_addr_port()` reads
-back an ephemeral port when you bind `:0`. `close()` from another thread
+`bind_url` for a multicast join; `RecvTransport.local_port()` (and
+`local_addr()`, the `(host, port)` pair) reads back an ephemeral port when
+you bind `:0`. `RecvTransport.local_addr_port()` is the deprecated name of
+`local_port()`: it warns `DeprecationWarning` and is removed in 0.12.0. `close()` from another thread
 ends a parked `recv()` with `UdpError(CLOSED)` within about 100 ms — it
 fires the transport's cancel handle first. The handle itself is available
 as `rx.cancel_handle()` (a `udp.CancelHandle` with `cancel()` /
@@ -1835,7 +1847,11 @@ convention); omit it on the sender's `url`. Mixing them up raises
 each force `RistProfile.MAIN` (the profile that carries encryption); the
 default is `RistProfile.MAIN`; pass `RistProfile.SIMPLE` to `.profile()` (or `?profile=simple`
 on the URL) for a Simple-only peer. Both transports return a `RistStats`
-snapshot from `stats()`.
+snapshot from `stats()`. `RecvTransport.local_addr()` / `local_port()`
+read back the bound address; a `rist://@host:0` bind gets a kernel port in
+the Main profile, and the Simple profile refuses port 0 with
+`RistError(INVALID_CONFIG)` (its second port cannot follow a kernel-picked
+one).
 
 `close()` from another thread ends a parked `recv()` with
 `RistError(CLOSED)`, detail "cancelled from another thread", within about

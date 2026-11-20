@@ -183,7 +183,7 @@ class RecvTransport:
     Construct via
     ``RecvTransport.builder().bind_url("udp://0.0.0.0:0").build()``.
     Binding to port 0 lets the kernel pick a free port; read it back via
-    ``local_addr_port()``. Supports the context-manager protocol.
+    ``local_port()``. Supports the context-manager protocol.
     """
 
     @staticmethod
@@ -223,12 +223,19 @@ class RecvTransport:
         """
         ...
 
-    def local_addr_port(self) -> int:
-        """Local bound port. Non-zero after successful ``build()``.
+    def local_addr(self) -> Tuple[str, int]:
+        """``(host, port)`` the transport bound; the kernel's port when
+        ``bind_url`` named port 0. Never waits behind a ``recv()`` parked
+        on another thread; raises ``UdpError(CLOSED)`` once closed."""
+        ...
 
-        Use this to discover the ephemeral port when ``bind_url`` was
-        ``udp://0.0.0.0:0``.
-        """
+    def local_port(self) -> int:
+        """The port of ``local_addr()``; same rules."""
+        ...
+
+    def local_addr_port(self) -> int:
+        """Deprecated: use ``local_port()``; removed in 0.12.0. Warns
+        ``DeprecationWarning``, then returns what ``local_port()`` returns."""
         ...
 
     def peer_addr(self) -> Optional[Tuple[str, int]]:

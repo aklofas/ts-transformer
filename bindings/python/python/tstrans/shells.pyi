@@ -279,12 +279,23 @@ class Receiver:
         """The recorded reason, or `None` while the stream is live. Every plain
         receive transport records one."""
     def end_detail(self) -> Optional[str]: ...
+    def local_addr(self) -> Optional[Tuple[str, int]]:
+        """``(host, port)`` the open bound: a ``udp://``, ``rist://@`` or
+        ``rtp://`` bind (the kernel's port when the URL named 0), or an
+        ``srt://`` listener once its caller connected (so port 0 cannot
+        tell an ``srt://`` caller where to dial). ``None`` for a shell
+        whose open records none (a caller, an accepted TCP connection).
+        Never waits behind a call parked on another thread; raises the
+        transport's ``CLOSED`` once closed."""
+    def local_port(self) -> Optional[int]:
+        """The port of ``local_addr()``; same rules."""
     def peer_addr(self) -> Optional[Tuple[str, int]]:
         """``(host, port)`` of the sender whose datagram (``udp://``) or
         block (``rist://``) was delivered last; ``None`` until the first
         one, and always ``None`` for a transport that keeps no source
         record (``srt://``, ``tcp://``, ``rtp://``). The host is the IP as
-        text; an IPv4 sender on a dual-stack bind reads as IPv4.
+        text (an IPv6 link-local sender's host carries its scope,
+        ``fe80::1%2``); an IPv4 sender on a dual-stack bind reads as IPv4.
 
         It is the source address of the datagrams, which nothing verifies:
         a UDP or RIST sender can forge it. Without a ``source`` key in the
@@ -472,12 +483,23 @@ class DemuxReceiver:
         """The recorded reason, or `None` while the stream is live. Every plain
         receive transport records one."""
     def end_detail(self) -> Optional[str]: ...
+    def local_addr(self) -> Optional[Tuple[str, int]]:
+        """``(host, port)`` the open bound: a ``udp://``, ``rist://@`` or
+        ``rtp://`` bind (the kernel's port when the URL named 0), or an
+        ``srt://`` listener once its caller connected (so port 0 cannot
+        tell an ``srt://`` caller where to dial). ``None`` for a shell
+        whose open records none (a caller, an accepted TCP connection).
+        Never waits behind a call parked on another thread; raises the
+        transport's ``CLOSED`` once closed."""
+    def local_port(self) -> Optional[int]:
+        """The port of ``local_addr()``; same rules."""
     def peer_addr(self) -> Optional[Tuple[str, int]]:
         """``(host, port)`` of the sender whose datagram (``udp://``) or
         block (``rist://``) was delivered last; ``None`` until the first
         one, and always ``None`` for a transport that keeps no source
         record (``srt://``, ``tcp://``, ``rtp://``). The host is the IP as
-        text; an IPv4 sender on a dual-stack bind reads as IPv4.
+        text (an IPv6 link-local sender's host carries its scope,
+        ``fe80::1%2``); an IPv4 sender on a dual-stack bind reads as IPv4.
 
         It is the source address of the datagrams, which nothing verifies:
         a UDP or RIST sender can forge it. Without a ``source`` key in the

@@ -135,7 +135,7 @@ def test_udp_recv_returns_the_senders_address() -> None:
     tx = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
         tx.bind(("127.0.0.1", 0))
-        tx.sendto(b"hello", ("127.0.0.1", rx.local_addr_port()))
+        tx.sendto(b"hello", ("127.0.0.1", rx.local_port()))
         data, (host, port) = rx.recv(timeout_ms=2000)
         assert data == b"hello"
         assert host == "127.0.0.1"
@@ -151,7 +151,7 @@ def test_udp_peer_addr_none_then_address() -> None:
     try:
         assert rx.peer_addr() is None
         tx.bind(("127.0.0.1", 0))
-        tx.sendto(b"x", ("127.0.0.1", rx.local_addr_port()))
+        tx.sendto(b"x", ("127.0.0.1", rx.local_port()))
         rx.recv(timeout_ms=2000)
         assert rx.peer_addr() == ("127.0.0.1", tx.getsockname()[1])
     finally:
@@ -167,9 +167,9 @@ def test_udp_recv_names_the_sender_of_an_empty_datagram() -> None:
     try:
         a.bind(("127.0.0.1", 0))
         b.bind(("127.0.0.1", 0))
-        a.sendto(b"x", ("127.0.0.1", rx.local_addr_port()))
+        a.sendto(b"x", ("127.0.0.1", rx.local_port()))
         assert rx.recv(timeout_ms=2000) == (b"x", ("127.0.0.1", a.getsockname()[1]))
-        b.sendto(b"", ("127.0.0.1", rx.local_addr_port()))
+        b.sendto(b"", ("127.0.0.1", rx.local_port()))
         assert rx.recv(timeout_ms=2000) == (b"", ("127.0.0.1", b.getsockname()[1]))
         assert rx.peer_addr() == ("127.0.0.1", a.getsockname()[1])
     finally:
@@ -187,7 +187,7 @@ def test_udp_builder_source_first_drops_and_counts() -> None:
         .build()
     )
     try:
-        port = rx.local_addr_port()
+        port = rx.local_port()
         # A delivers first and takes the lock; B is refused from then on.
         pair.send_a(bytes([TAG_A]), port)
         assert rx.recv(timeout_ms=2000)[0] == bytes([TAG_A])
@@ -226,7 +226,7 @@ def test_udp_dual_stack_bind_reports_an_ipv4_sender_in_ipv4_form() -> None:
     tx = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
         tx.bind(("127.0.0.1", 0))
-        tx.sendto(b"4", ("127.0.0.1", rx.local_addr_port()))
+        tx.sendto(b"4", ("127.0.0.1", rx.local_port()))
         try:
             got = rx.recv(timeout_ms=5000)
         except UdpError as e:
@@ -251,7 +251,7 @@ def test_udp_builder_source_wins_over_the_url_key() -> None:
     tx = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
         tx.bind(("127.0.0.1", 0))
-        tx.sendto(b"x", ("127.0.0.1", rx.local_addr_port()))
+        tx.sendto(b"x", ("127.0.0.1", rx.local_port()))
         assert rx.recv(timeout_ms=5000)[0] == b"x"
     finally:
         tx.close()
@@ -535,7 +535,7 @@ def test_peer_addr_while_recv_parked() -> None:
         time.sleep(0.2)
         assert parked.is_alive()
         assert _finishes(rx.peer_addr) is None
-        tx.sendto(b"one", ("127.0.0.1", rx.local_addr_port()))
+        tx.sendto(b"one", ("127.0.0.1", rx.local_port()))
         parked.join(5)
         assert got and got[0] == (b"one", ("127.0.0.1", tx.getsockname()[1]))
 
@@ -570,7 +570,7 @@ def test_peer_addr_while_recv_parked() -> None:
 
 def test_closed_raises() -> None:
     # The transports' snapshot getter raises CLOSED once closed, like
-    # `local_addr_port()`.
+    # `local_port()`.
     rx = udp.RecvTransport.builder().bind_url("udp://127.0.0.1:0").build()
     rx.close()
     with pytest.raises(UdpError) as e:

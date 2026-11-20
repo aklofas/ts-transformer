@@ -7,7 +7,8 @@ battery covers:
 
 1. Module structure / class presence.
 2. Builder construction and error handling (malformed URL).
-3. RecvTransport open + close (bind on port 0 picks a free port).
+3. RecvTransport open + close (port 0 picks a free port in the Main
+   profile, the default; the Simple profile refuses it).
 4. EncryptionKey repr discipline (secret must not leak).
 5. RistErrorKind count matches exceptions.py.
 6. Stats field presence on an open handle.
@@ -67,8 +68,9 @@ def test_recv_transport_builder_returns_builder():
 
 
 # ---------------------------------------------------------------------------
-# RecvTransport open + close (port 0 not valid for librist — use any
-# free even port; we try a range and skip the test if all are busy)
+# RecvTransport open + close on a free even port, the shape the Simple
+# profile needs too (it refuses port 0); we try a range and skip the test
+# if all are busy. Port 0 in the Main profile: test_local_addr.py.
 # ---------------------------------------------------------------------------
 
 

@@ -33,7 +33,7 @@ use pyo3::types::PyType;
 
 use tst_core::transport::{RecvTransport, SourceHandle, TransportCancel};
 use tst_pipeline::binding::view::{BlockingReason, Snapshot};
-use tst_pipeline::binding::{BindingError, BindingErrorKind, Domain, Opened, Owned};
+use tst_pipeline::binding::{BindingError, BindingErrorKind, Domain, HandleState, Opened, Owned};
 use tst_pipeline::{
     DemuxReceiver as RustDemuxReceiver, DemuxReceiverError, DemuxReceiverErrorSource,
     TsBytesDemuxedHandle,
@@ -75,6 +75,9 @@ struct Handles {
     /// The RTP counters; `None` off RTP.
     #[cfg_attr(not(feature = "rtp"), allow(dead_code))]
     rtp_stats: RtpStatsSource,
+    /// The address the open bound; `None` for a transport whose opener
+    /// records none.
+    local_addr: Option<std::net::SocketAddr>,
 }
 
 /// Python demux receiver over any transport: owns a `Demuxer` and a
@@ -116,6 +119,19 @@ impl Drop for PyDemuxReceiver {
 }
 
 impl PyDemuxReceiver {
+    /// The address the open bound, or the transport's `CLOSED` once closed.
+    fn bound(&self, py: Python<'_>) -> PyResult<Option<std::net::SocketAddr>> {
+        if self.owned.is_closed() {
+            Err(raise(
+                py,
+                &self.owned.snapshot().domain,
+                BindingError::from(HandleState::Closed),
+            ))
+        } else {
+            Ok(self.owned.snapshot().handles.local_addr)
+        }
+    }
+
     /// Wrap an already-opened transport (the `open`,
     /// `Socket.into_demux_receiver()` and RTSP `into_demux_receiver()`
     /// paths meet here).
@@ -138,6 +154,7 @@ impl PyDemuxReceiver {
             transport,
             cancel,
             domain,
+            local_addr,
             ..
         } = opened;
         let cancel = cancel_source(&cancel);
@@ -158,6 +175,7 @@ impl PyDemuxReceiver {
                     ts_bytes,
                     source,
                     rtp_stats,
+                    local_addr,
                 },
             },
         );
@@ -376,6 +394,21 @@ impl PyDemuxReceiver {
     fn end_detail(&self) -> Option<String> {
         let reason = self.owned.end_reason()?;
         end_detail(&reason).map(str::to_owned)
+    }
+
+    /// `(host, port)` the open bound: a `udp://`, `rist://@` or `rtp://`
+    /// bind (the kernel's port when the URL named 0), or an `srt://`
+    /// listener once its caller connected; `None` for a transport whose
+    /// opener records none. Never waits behind a parked `__next__`; raises
+    /// the transport's `CLOSED` kind once the receiver is closed.
+    fn local_addr(&self, py: Python<'_>) -> PyResult<Option<crate::util::PyAddr>> {
+        Ok(self.bound(py)?.map(crate::util::addr_tuple))
+    }
+
+    /// The port of `local_addr()`, or `None` where that is `None`. Same
+    /// rules as `local_addr()`.
+    fn local_port(&self, py: Python<'_>) -> PyResult<Option<u16>> {
+        Ok(self.bound(py)?.map(|a| a.port()))
     }
 
     /// `(host, port)` of the sender whose datagram (`udp://`) or block

@@ -249,6 +249,13 @@ class RecvTransport:
         """
         ...
 
+    def local_addr(self) -> Tuple[str, int]:
+        """``(host, port)`` librist bound; the kernel's port when the bind
+        URL named port 0 (the Main profile, the default; the Simple profile
+        refuses port 0). Never waits behind a ``recv()`` parked on another
+        thread; raises ``RistError(CLOSED)`` once closed."""
+    def local_port(self) -> int:
+        """The port of ``local_addr()``; same rules."""
     def peer_addr(self) -> Optional[Tuple[str, int]]:
         """``(host, port)`` of the sender whose block was delivered last;
         ``None`` until the first one. The host is the IP as text; an IPv4

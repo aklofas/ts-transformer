@@ -2,7 +2,7 @@
 
 Covers:
 - unicast loopback round-trip via Transport + RecvTransport
-- builder URL validation, local_addr_port, stats fields
+- builder URL validation, local_port, stats fields
 - TOO_LARGE error-kind propagation, UdpErrorKind variant count
 """
 
@@ -21,7 +21,7 @@ def test_udp_unicast_loopback_round_trip() -> None:
     """UdpTransport pushes raw bytes; UdpRecvTransport receives them."""
     # Bind receiver on port 0 — kernel picks a free ephemeral port.
     rx = udp.RecvTransport.builder().bind_url("udp://0.0.0.0:0").build()
-    port = rx.local_addr_port()
+    port = rx.local_port()
     assert port > 0
 
     tx = udp.Transport.builder().url(f"udp://127.0.0.1:{port}").build()
@@ -39,7 +39,7 @@ def test_udp_unicast_loopback_round_trip() -> None:
 def test_udp_send_bytearray() -> None:
     """Transport.send() accepts bytearray (fallback bytes-like path)."""
     rx = udp.RecvTransport.builder().bind_url("udp://0.0.0.0:0").build()
-    port = rx.local_addr_port()
+    port = rx.local_port()
     tx = udp.Transport.builder().url(f"udp://127.0.0.1:{port}").build()
 
     payload = bytearray(b"\x47\x41\x00\x10" + b"\xff" * 184)
@@ -52,7 +52,7 @@ def test_udp_send_bytearray() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Builders, URL validation, local_addr_port, stats
+# Builders, URL validation, local_port, stats
 # ---------------------------------------------------------------------------
 
 
@@ -76,9 +76,9 @@ def test_udp_recv_url_parse_rejects_missing_url() -> None:
 
 
 def test_udp_recv_local_addr_after_bind_zero() -> None:
-    """local_addr_port() returns a non-zero port after binding to port 0."""
+    """local_port() returns a non-zero port after binding to port 0."""
     rx = udp.RecvTransport.builder().bind_url("udp://0.0.0.0:0").build()
-    port = rx.local_addr_port()
+    port = rx.local_port()
     assert isinstance(port, int)
     assert port > 0
     rx.close()
@@ -97,7 +97,7 @@ def test_udp_stats_fields_default_zero_on_recv() -> None:
 def test_udp_stats_fields_update_after_send() -> None:
     """Transport.stats() counters tick after a successful send."""
     rx = udp.RecvTransport.builder().bind_url("udp://0.0.0.0:0").build()
-    port = rx.local_addr_port()
+    port = rx.local_port()
     tx = udp.Transport.builder().url(f"udp://127.0.0.1:{port}").build()
 
     payload = b"\x47" * 188
@@ -115,7 +115,7 @@ def test_udp_stats_fields_update_after_send() -> None:
 def test_udp_transport_context_manager() -> None:
     """Transport supports the context-manager (with) protocol."""
     rx = udp.RecvTransport.builder().bind_url("udp://0.0.0.0:0").build()
-    port = rx.local_addr_port()
+    port = rx.local_port()
     with udp.Transport.builder().url(f"udp://127.0.0.1:{port}").build() as tx:
         tx.send(b"\x47" * 188)
     rx.close()
@@ -124,7 +124,7 @@ def test_udp_transport_context_manager() -> None:
 def test_udp_recv_transport_context_manager() -> None:
     """RecvTransport supports the context-manager (with) protocol."""
     with udp.RecvTransport.builder().bind_url("udp://0.0.0.0:0").build() as rx:
-        assert rx.local_addr_port() > 0
+        assert rx.local_port() > 0
 
 
 # ---------------------------------------------------------------------------
@@ -135,7 +135,7 @@ def test_udp_recv_transport_context_manager() -> None:
 def test_udp_error_payload_too_large() -> None:
     """Transport.send() raises UdpError(kind=TOO_LARGE) for oversized payload."""
     rx = udp.RecvTransport.builder().bind_url("udp://0.0.0.0:0").build()
-    port = rx.local_addr_port()
+    port = rx.local_port()
     # pkt_size=188 means any payload > 188 bytes is rejected.
     tx = udp.Transport.builder().url(f"udp://127.0.0.1:{port}").pkt_size(188).build()
     huge = b"\x47" * 1316  # 7×188, exceeds cap of 188
@@ -199,7 +199,7 @@ def test_udp_recv_deadline_is_backpressure_and_keeps_the_handle_open() -> None:
         assert "timed out" in str(ei.value)
         assert "open" in repr(rx)
         s = _socket.socket(_socket.AF_INET, _socket.SOCK_DGRAM)
-        s.sendto(b"\x47" * 188, ("127.0.0.1", rx.local_addr_port()))
+        s.sendto(b"\x47" * 188, ("127.0.0.1", rx.local_port()))
         s.close()
         payload, _ = rx.recv(timeout_ms=2000)
         assert payload == b"\x47" * 188
@@ -210,7 +210,7 @@ def test_udp_recv_deadline_is_backpressure_and_keeps_the_handle_open() -> None:
 @pytest.mark.parametrize("host", ["127.0.0.1", "localhost"])
 def test_udp_builders_build_literal_and_hostname_urls(host) -> None:
     rx = udp.RecvTransport.builder().bind_url(f"udp://{host}:0").build()
-    tx = udp.Transport.builder().url(f"udp://{host}:{rx.local_addr_port()}").build()
+    tx = udp.Transport.builder().url(f"udp://{host}:{rx.local_port()}").build()
     tx.close()
     rx.close()
 
