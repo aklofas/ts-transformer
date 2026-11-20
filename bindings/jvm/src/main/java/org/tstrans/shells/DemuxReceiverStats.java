@@ -14,11 +14,13 @@ package org.tstrans.shells;
  *     the one that never resets and never waits for the receiver.
  * @param packetsReceived Aligned 188-byte TS packets the receiver took from its transport. A stats
  *     reset zeroes it.
- * @param programMapsSeen Program maps the demuxer reported, one per new PMT version of each
- *     program. A stats reset zeroes it.
- * @param pmtVersionsSeen Distinct PMT versions seen, the first sighting included; a repeat of the
- *     known version is not counted. A stats reset zeroes it and keeps the known version, so a
- *     repeat after the reset is not counted either.
+ * @param programMapsSeen Program maps the demuxer reported: one each time a program's PMT version
+ *     changes, the first sighting included. A stats reset zeroes it.
+ * @param pmtVersionsSeen PMT versions taken: one each time a program's PMT version changes, the
+ *     first sighting included, so a version that comes back counts again and two programs count one
+ *     each; the same count as {@code programMapsSeen}. A stats reset zeroes it and keeps the known
+ *     versions; a managed receiver's reconnect forgets them, so the next PMT after it counts even
+ *     at the same version.
  * @param discontinuities Discontinuities the demuxer reported, over every PID. A stats reset zeroes
  *     it.
  * @param nonconformant Non-conformant inputs the demuxer reported, over every PID. A stats reset
