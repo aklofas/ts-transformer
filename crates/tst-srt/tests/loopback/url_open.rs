@@ -390,3 +390,40 @@ fn opener_pairs_a_listener_recv_with_a_caller_sender_and_cancels() {
         .expect("caller-mode receiver");
     assert_eq!(e.kind, BindingErrorKind::ConfigInvalid);
 }
+
+/// A listener-mode open records the local address of the accepted
+/// connection: the listener's port, known only once a caller connected.
+#[test]
+fn a_listener_open_records_the_accepted_local_addr() {
+    require_loopback!();
+    let port = reserve_port();
+    let slot = Arc::new(CancelSlot::new());
+    let acceptor = {
+        let slot = Arc::clone(&slot);
+        std::thread::spawn(move || {
+            tst_srt::opener::open_recv(&format!("srt://127.0.0.1:{port}?mode=listener"), &slot)
+        })
+    };
+    let deadline = Instant::now() + WATCHDOG;
+    let _tx = loop {
+        match tst_srt::opener::open_sender(&format!("srt://127.0.0.1:{port}?mode=caller")) {
+            Ok(o) => break o,
+            Err(e) => {
+                if Instant::now() >= deadline {
+                    slot.cancel();
+                    panic!("open_sender never connected: {e}");
+                }
+                std::thread::sleep(Duration::from_millis(20));
+            }
+        }
+    };
+    let rx = acceptor
+        .join()
+        .expect("acceptor thread")
+        .expect("open_recv");
+    let addr = rx
+        .local_addr
+        .expect("the accepted connection's local address");
+    assert_eq!(addr.port(), port);
+    assert_eq!(addr.ip(), std::net::Ipv4Addr::LOCALHOST);
+}

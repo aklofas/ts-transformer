@@ -159,6 +159,13 @@ impl SrtTransport {
         self.cancel.clone()
     }
 
+    /// The socket's local address; `None` once the socket is gone or when
+    /// libsrt cannot report it. For an accepted connection it is the
+    /// listener's address.
+    pub(crate) fn local_addr(&self) -> Option<std::net::SocketAddr> {
+        self.socket.as_ref()?.local_addr().ok()
+    }
+
     /// Snapshot the libsrt-flavored 17-field [`SrtStats`] for the underlying
     /// socket. Returns `Err(IoError::SocketClosed)` once the transport
     /// has been closed (either explicitly via [`Transport::close`] or

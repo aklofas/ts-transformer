@@ -43,6 +43,10 @@ pub fn open_sender(url: &str) -> Result<Opened<Box<dyn Transport>>, BindingError
 /// `accept` lets the caller (and a host's interpreter-exit hook) cancel the
 /// accept before the shell exists.
 ///
+/// `Opened::local_addr` is the accepted connection's local address, the
+/// listener's port. It is known only once a caller has connected, so a
+/// port-0 URL cannot be used to learn the port a caller should dial.
+///
 /// # Errors
 /// `ConfigInvalid` for another mode; the URL, bind and accept errors' kinds otherwise.
 pub fn open_recv(
@@ -61,5 +65,10 @@ pub fn open_recv(
     }
     let t = parsed.accept_one(accept)?;
     let cancel = recv_cancel_of(&t);
-    Ok(Opened::new(Box::new(t), cancel, Domain::Srt))
+    let local_addr = t.local_addr();
+    let mut opened = Opened::new(Box::new(t) as Box<dyn RecvTransport>, cancel, Domain::Srt);
+    if let Some(addr) = local_addr {
+        opened = opened.with_local_addr(addr);
+    }
+    Ok(opened)
 }
