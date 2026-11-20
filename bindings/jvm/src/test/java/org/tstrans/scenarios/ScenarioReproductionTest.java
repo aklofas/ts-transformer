@@ -432,10 +432,10 @@ class ScenarioReproductionTest {
      */
     static final Map<String, Set<String>> EXTENSIONS_COMPARED_ELSEWHERE = Map.of(
         // detail: CancelledRecvKindGoldenTest compares it with the cancelled receive's message.
-        // c_code: the C ABI's return code (TST_E_CLOSED), which run_scenarios.c checks; the
-        // JVM has no numeric code to compare.
+        // c_code: the C ABI's return code; run_scenarios.c checks the constant TST_E_CLOSED,
+        // not this value, and the JVM has no numeric code to compare.
         "cancelled-recv-kind", Set.of("c_code", "detail"),
-        // c_code: the C ABI's return code (TST_E_TRANSPORT), which run_scenarios.c checks.
+        // c_code: run_scenarios.c checks the constant TST_E_TRANSPORT, not this value.
         "peer-reset-recv-kind", Set.of("c_code"));
 
     /** A leg that runs here, against the text of its scenario's golden. */
