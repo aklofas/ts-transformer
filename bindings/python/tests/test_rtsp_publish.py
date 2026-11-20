@@ -733,9 +733,20 @@ def test_publisher_info_peer_from_a_dual_stack_server_reads_as_ipv4():
     IPv4-mapped address; the tuple names it as IPv4, as the other address
     getters do."""
     cfg = RtspServerConfig(bind_addr="[::]:0", graceful_shutdown_drain_ms=50)
-    with RtspServer.start(cfg) as server:
+    try:
+        server = RtspServer.start(cfg)
+    except RtspError as e:
+        if sys.platform.startswith("linux"):
+            pytest.fail(f"no IPv6 wildcard bind on Linux: {e}")
+        pytest.skip(f"no IPv6 wildcard bind: {e}")
+    with server:
         mount = server.add_publish_mount("/cam")
-        pub = RawPublisher(server.local_addr()[1], "/cam")
+        try:
+            pub = RawPublisher(server.local_addr()[1], "/cam")
+        except OSError as e:
+            if sys.platform.startswith("linux"):
+                raise
+            pytest.skip(f"IPv4 does not reach a [::] server here: {e}")
         try:
             assert mount.publisher().peer == pub.sock.getsockname()[:2]
         finally:
