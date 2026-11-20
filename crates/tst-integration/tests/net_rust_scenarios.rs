@@ -643,19 +643,32 @@ fn observe_golden(entry: &ScenarioEntry, committed: &Golden, input: &[u8]) -> Go
 
 /// A scenario whose values live in `extensions` is compared on what the run
 /// observed: a committed value edited to something no run produces must show
-/// up as a difference, never be copied into the observed golden.
+/// up as a difference, never be copied into the observed golden. One pass over
+/// the manifest: an edited scenario's leg must observe, and every other
+/// `binding_contract` scenario's leg must observe nothing, so the scenarios
+/// edited here are exactly those `run_contract_with_extensions` runs.
 #[test]
 fn an_edited_committed_extension_is_not_what_the_leg_observes() {
-    let manifest = load_manifest();
-    for (id, pointer) in [
+    // One observed value per scenario, edited in the committed golden.
+    const EDITED: [(&str, &str); 2] = [
         ("demux-receiver-stats", "/stats/discontinuities"),
         ("srt-reject-reason", "/reject_reason"),
-    ] {
-        let entry = manifest
-            .scenario
-            .iter()
-            .find(|e| e.id == id)
-            .unwrap_or_else(|| panic!("scenarios.toml has no '{id}'"));
+    ];
+    let manifest = load_manifest();
+    let mut seen = Vec::new();
+    for entry in &manifest.scenario {
+        let input = load_input(&entry.input);
+        let Some(&(id, pointer)) = EDITED.iter().find(|(id, _)| *id == entry.id) else {
+            if entry.kind == "binding_contract" {
+                assert!(
+                    run_contract_with_extensions(&entry.id, &input).is_none(),
+                    "'{}': the leg observes extensions but none is edited here: add one to EDITED",
+                    entry.id
+                );
+            }
+            continue;
+        };
+        seen.push(id);
         let committed = load_golden(&entry.golden);
         let mut edited = committed.clone();
         *edited
@@ -663,7 +676,7 @@ fn an_edited_committed_extension_is_not_what_the_leg_observes() {
             .pointer_mut(pointer)
             .unwrap_or_else(|| panic!("'{id}': the golden has no {pointer}")) =
             serde_json::json!("a value no run observes");
-        let observed = observe_golden(entry, &edited, &load_input(&entry.input));
+        let observed = observe_golden(entry, &edited, &input);
         assert_ne!(
             observed.extensions, edited.extensions,
             "'{id}': the leg took {pointer} from the committed golden instead of observing it"
@@ -672,6 +685,9 @@ fn an_edited_committed_extension_is_not_what_the_leg_observes() {
             observed, committed,
             "scenario '{id}': observed golden differs from committed"
         );
+    }
+    for (id, _) in EDITED {
+        assert!(seen.contains(&id), "scenarios.toml has no '{id}'");
     }
 }
 
