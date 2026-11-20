@@ -63,6 +63,22 @@ public final class ScenarioMuxRecipes {
         }
     }
 
+    /**
+     * {@code muxer_reconfigure_ts_bytes()}: H.264 + AAC with one IDR and one ADTS frame at
+     * PTS 0; {@code reconfigure} then drops the audio and adds synchronous KLV (the video
+     * unchanged): one IDR and one ST 0601 LS at PTS 3600.
+     */
+    public static byte[] muxerReconfigure() throws MuxException {
+        try (Muxer m = new Muxer(videoWith(true))) {
+            m.pushVideo(syntheticH264Idr(), 0L, true);
+            m.pushAudio(syntheticAdtsFrame(), 0L);
+            m.reconfigure(videoWith(false));
+            m.pushVideo(syntheticH264Idr(), 3600L, true);
+            m.pushKlv(minimalSt0601Ls(), 3600L, 0);
+            return drain(m);
+        }
+    }
+
     /** {@code minimal_st0601_ls()}: the 16-byte ST 0601 UAS Datalink LS UL and a zero BER length. */
     public static byte[] minimalSt0601Ls() {
         return new byte[]{
@@ -77,5 +93,18 @@ public final class ScenarioMuxRecipes {
             .programNumber(1).pmtPid(0x1000)
             .addVideo(0x1011, VideoCodec.H264)
             .build();
+    }
+
+    /** Program 1 with H.264 video and either AAC audio or synchronous KLV. */
+    private static MuxerConfig videoWith(boolean audio) {
+        MuxerConfig.Builder b = MuxerConfig.builder()
+            .programNumber(1).pmtPid(0x1000)
+            .addVideo(0x1011, VideoCodec.H264);
+        if (audio) {
+            b.addAudio(0x1021, AudioCodec.AAC);
+        } else {
+            b.addKlv(0x1031, KlvStreamType.SYNCHRONOUS_METADATA, /*carriesPts=*/ true);
+        }
+        return b.build();
     }
 }
