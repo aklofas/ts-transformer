@@ -2565,7 +2565,7 @@ kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::mux_sender::MuxSender::reconfigure"
 owning_tests = ["crates/tst-pipeline/tests/shells/mux_sender_reconfigure.rs"]
-bindings = ["c:deferred(0.11.0 c-surface parity batch)", "python:deferred(0.11.0 binding-surface parity batch)", "java:deferred(0.11.0 binding-surface parity batch)", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:deferred(0.11.0 c-surface parity batch)", "python:deferred(a shell keeps the stream handles it read at construction; needs a shell design change)", "java:deferred(a shell keeps the stream handles it read at construction; needs a shell design change)", "swift:deferred", "kotlin:deferred"]
 tier = "A"
 
 [[surface]]

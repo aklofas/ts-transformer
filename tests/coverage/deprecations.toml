@@ -66,6 +66,34 @@ replacement = "org.tstrans.srt.ManagedDemuxReceiver.lastSeen"
 earliest_removal = "0.12.0"
 
 [[deprecation]]
+lang = "python"
+symbol = "tstrans.shells.DemuxReceiver.last_seen_micros"
+since = "0.11.0"
+replacement = "tstrans.shells.DemuxReceiver.last_seen"
+earliest_removal = "0.12.0"
+
+[[deprecation]]
+lang = "python"
+symbol = "tstrans.srt.ManagedDemuxReceiver.last_seen_micros"
+since = "0.11.0"
+replacement = "tstrans.srt.ManagedDemuxReceiver.last_seen"
+earliest_removal = "0.12.0"
+
+[[deprecation]]
+lang = "python"
+symbol = "tstrans.rtp.PublisherInfo.since_unix_ms"
+since = "0.11.0"
+replacement = "tstrans.rtp.PublisherInfo.since"
+earliest_removal = "0.12.0"
+
+[[deprecation]]
+lang = "java"
+symbol = "org.tstrans.srt.HostPort"
+since = "0.11.0"
+replacement = "java.net.InetSocketAddress, as returned by org.tstrans.srt.Socket.localAddr"
+earliest_removal = "0.12.0"
+
+[[deprecation]]
 lang = "rust"
 symbol = "tst_rtp::rtsp::client::builder::RtspClientBuilder::read_timeout"
 since = "0.11.0"
