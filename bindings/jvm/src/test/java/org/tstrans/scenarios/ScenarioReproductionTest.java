@@ -422,6 +422,17 @@ class ScenarioReproductionTest {
         "exception-kind-stability", "covered: DemuxerConfigTest.strictFullRejectsNonConformantInput "
             + "(the same corrupted-PMT input) + ErrorModelTest.kindMembersMatchTheDemuxDomain");
 
+    /** A leg that runs here, against its scenario's committed golden. */
+    @FunctionalInterface
+    interface ContractLeg {
+        void run() throws Exception;
+    }
+
+    /** binding_contract ids whose JVM leg this test runs itself; each compares the golden's extensions. */
+    static final Map<String, ContractLeg> CONTRACT_LEGS = Map.of(
+        "demux-receiver-stats", ScenarioContractLegs::demuxReceiverStats,
+        "srt-reject-reason", ScenarioContractLegs::srtRejectReason);
+
     /** A roundtrip scenario's mux recipe on the JVM. */
     @FunctionalInterface
     interface MuxRecipe {
@@ -433,7 +444,8 @@ class ScenarioReproductionTest {
         "video-roundtrip", ScenarioMuxRecipes::videoRoundtrip,
         "audio-klv-roundtrip", ScenarioMuxRecipes::audioKlvRoundtrip,
         "video-dts-roundtrip", ScenarioMuxRecipes::videoDtsRoundtrip,
-        "video-misp-roundtrip", ScenarioMuxRecipes::videoMispRoundtrip);
+        "video-misp-roundtrip", ScenarioMuxRecipes::videoMispRoundtrip,
+        "muxer-reconfigure", ScenarioMuxRecipes::muxerReconfigure);
 
     @ParameterizedTest(name = "{0} ({1})")
     @MethodSource("scenarios")
@@ -442,6 +454,13 @@ class ScenarioReproductionTest {
             case "demux" -> assertSubsetMatchesGolden(id);
             case "roundtrip" -> assertRoundtripReproduced(id);
             case "binding_contract" -> {
+                assertFalse(CONTRACT_LEGS.containsKey(id) && BINDING_CONTRACT.containsKey(id),
+                    id + " is both run here and declared elsewhere");
+                ContractLeg leg = CONTRACT_LEGS.get(id);
+                if (leg != null) {
+                    leg.run();
+                    return;
+                }
                 String how = BINDING_CONTRACT.get(id);
                 assertNotNull(how, id + " is a binding_contract scenario with no JVM coverage declared");
                 assertTrue(how.startsWith("covered:") || how.startsWith("skip:"), how);

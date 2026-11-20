@@ -28,6 +28,26 @@ public final class GoldenSupport {
         return json.substring(start, end + 1);
     }
 
+    /** The {@code {...}} text of the flat object under {@code "key"}. */
+    public static String objectField(String json, String key) {
+        return bracketed(json, key, '{', '}');
+    }
+
+    /** The {@code [...]} text of the array under {@code "key"}; its elements are flat objects. */
+    public static String arrayField(String json, String key) {
+        return bracketed(json, key, '[', ']');
+    }
+
+    private static String bracketed(String json, String key, char open, char close) {
+        int colon = colonAfter(json, key);
+        int start = json.indexOf(open, colon);
+        int end = json.indexOf(close, start + 1);
+        if (start < 0 || end < 0 || !json.substring(colon + 1, start).isBlank()) {
+            throw new AssertionError("golden field \"" + key + "\" is not a " + open + "..." + close);
+        }
+        return json.substring(start, end + 1);
+    }
+
     /** Read a string-valued field {@code "key": "<value>"}. */
     public static String stringField(String obj, String key) {
         int colon = colonAfter(obj, key);
