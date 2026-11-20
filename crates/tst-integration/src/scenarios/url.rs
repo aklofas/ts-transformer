@@ -24,6 +24,9 @@ pub struct Corpus {
     /// The family of each written scheme, for the legs outside Rust; the
     /// coverage check holds it to [`family`].
     pub families: BTreeMap<String, String>,
+    /// The schemes the bindings' shells open, with the error domain of each
+    /// (`tst_pipeline::binding::SHELL_SCHEMES`, by variant name).
+    pub shell_schemes: BTreeMap<String, String>,
     /// Entry point per leg, per scheme family, per role (plus `probe`).
     pub legs: BTreeMap<String, BTreeMap<String, BTreeMap<String, String>>>,
     /// The rows, in file order.
@@ -550,6 +553,15 @@ mod tests {
         assert_eq!(r.expect.port, Some(Port::Number(40000)));
         assert_eq!(r.expect.keys.unwrap()["cert"], "/x/server.crt");
         assert!(!valid_udp_send().needs_port());
+    }
+
+    #[test]
+    fn the_shell_schemes_table_is_the_rust_list() {
+        let rust: BTreeMap<String, String> = tst_pipeline::binding::SHELL_SCHEMES
+            .iter()
+            .map(|(s, d)| (s.to_string(), format!("{d:?}")))
+            .collect();
+        assert_eq!(load().shell_schemes, rust);
     }
 
     #[test]

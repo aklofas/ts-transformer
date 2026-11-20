@@ -135,6 +135,22 @@ rist = "rist"
 whep = "whep"
 wheps = "whep"
 
+# ── Shell schemes ─────────────────────────────────────────────────────────────
+#
+# The schemes the bindings' shells (`shells.Sender.open`, `Receiver.open`)
+# open, with each one's error domain: `tst_pipeline::binding::SHELL_SCHEMES`,
+# which the Rust leg holds this table to. Each binding opens every scheme here
+# in both directions and must never fail with its unsupported-scheme error or
+# the INTERNAL kind.
+
+[shell_schemes]
+srt = "Srt"
+rtp = "Rtp"
+udp = "Udp"
+tcp = "Tcp"
+tcps = "Tcp"
+rist = "Rist"
+
 # ── Entry points per leg ──────────────────────────────────────────────────────
 #
 # Neither C, Python nor the JVM exposes a parsed URL, so only the Rust leg

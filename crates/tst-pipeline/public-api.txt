@@ -301,6 +301,7 @@ impl core::marker::Unpin for tst_pipeline::binding::kind::Diagnostics
 impl core::marker::UnsafeUnpin for tst_pipeline::binding::kind::Diagnostics
 impl core::panic::unwind_safe::RefUnwindSafe for tst_pipeline::binding::kind::Diagnostics
 impl core::panic::unwind_safe::UnwindSafe for tst_pipeline::binding::kind::Diagnostics
+pub const tst_pipeline::binding::kind::SHELL_SCHEMES: &[(&str, tst_pipeline::binding::kind::Domain)]
 pub fn tst_pipeline::binding::kind::kind_of_codec(&tst_core::codec::CodecParseError) -> tst_pipeline::binding::kind::BindingErrorKind
 pub fn tst_pipeline::binding::kind::kind_of_demux(&tst_core::error::DemuxError) -> tst_pipeline::binding::kind::BindingErrorKind
 pub fn tst_pipeline::binding::kind::kind_of_klv_decode(&tst_core::error::KlvDecodeError) -> tst_pipeline::binding::kind::BindingErrorKind
@@ -1069,6 +1070,7 @@ impl<T> core::marker::Unpin for tst_pipeline::binding::shells::SendHalf<T> where
 impl<T> core::marker::UnsafeUnpin for tst_pipeline::binding::shells::SendHalf<T> where T: core::marker::UnsafeUnpin
 impl<T> core::panic::unwind_safe::RefUnwindSafe for tst_pipeline::binding::shells::SendHalf<T> where T: core::panic::unwind_safe::RefUnwindSafe
 impl<T> core::panic::unwind_safe::UnwindSafe for tst_pipeline::binding::shells::SendHalf<T> where T: core::panic::unwind_safe::UnwindSafe
+pub const tst_pipeline::binding::SHELL_SCHEMES: &[(&str, tst_pipeline::binding::kind::Domain)]
 pub trait tst_pipeline::binding::Close
 pub type tst_pipeline::binding::Close::Error: core::fmt::Debug + core::fmt::Display
 pub fn tst_pipeline::binding::Close::close(&mut self) -> core::result::Result<(), Self::Error>
