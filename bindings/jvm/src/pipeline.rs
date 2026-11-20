@@ -61,7 +61,7 @@ jni_native! {
 
 jni_native! {
     /// `nOpenWithConfig(...)` — build a configured [`PairingDemuxer`]. The
-    /// `strict`/`av1` ints are the Java enum ORDINALS (same contract as the
+    /// `strict`/`av1` ints are the Java enums' `code()` (same contract as the
     /// `mpegts.Demuxer.nOpenWithConfig` path — see
     /// [`build_demux_config_from_args`]). When `has_demuxer_config` is false
     /// the demuxer half keeps its `DemuxerConfig::default()`.

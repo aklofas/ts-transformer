@@ -198,10 +198,18 @@ jni_native! {
             Ok(v) => v,
             Err(_) => return 0,
         };
-        // Order pinned by OrdinalContractTest.
+        // Codes pinned by OrdinalContractTest. The value comes from our own Java
+        // enum, so an unknown code is enum drift, not an injection setting.
         config.parameter_set_injection = match parameter_set_injection {
+            0 => ParameterSetInjection::None,
             1 => ParameterSetInjection::BeforeIdr,
-            _ => ParameterSetInjection::None,
+            other => {
+                let _ = env.throw_new(
+                    FindClass(jni_str!("java/lang/RuntimeException")),
+                    JNIString::from(format!("unknown ParameterSetInjection code {other}")),
+                );
+                return 0;
+            }
         };
         config.max_au_bytes = max_au_bytes as usize;
 

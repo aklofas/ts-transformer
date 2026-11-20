@@ -12,9 +12,9 @@
 //! [`crate::error::throw_codec`] (malformed MISP SEI; corresponds to
 //! Python's `PyValueError` for the same error conditions).
 //!
-//! The Java `VideoCodec` ordinal (0=H264, 1=H265, 2=H266, 3=AV1) is mapped
+//! The Java `VideoCodec.code()` (0=H264, 1=H265, 2=H266, 3=AV1) is mapped
 //! to the mux-side `VideoCodec` via the same table as `video_codec()` in
-//! `mpegts/muxer.rs` — ordinals outside 0–3 surface as `CodecParseException`
+//! `mpegts/muxer.rs` — codes outside 0–3 surface as `CodecParseException`
 //! (an invalid codec is a caller bug, surfaced as a parse error).
 
 use crate::jutil::FindClass;
@@ -32,12 +32,12 @@ use crate::error::{CodecErrFields, throw_codec};
 use crate::generated::codec::build_misp_timestamp;
 use tst_pipeline::binding::BindingErrorKind;
 
-/// Map the Java `VideoCodec` ordinal (0-3) to the mux-side `VideoCodec`.
+/// Map the Java `VideoCodec.code()` (0-3) to the mux-side `VideoCodec`.
 /// Returns `None` and throws `CodecParseException(ENGINE_ERROR)` for
-/// ordinals outside the valid range.
-fn java_video_codec_ordinal_to_rust(env: &mut Env, ordinal: jint) -> Option<VideoCodec> {
-    // Order pinned by OrdinalContractTest.
-    match ordinal {
+/// codes outside the valid range.
+fn java_video_codec_code_to_rust(env: &mut Env, code: jint) -> Option<VideoCodec> {
+    // Codes pinned by OrdinalContractTest.
+    match code {
         0 => Some(VideoCodec::H264),
         1 => Some(VideoCodec::H265),
         2 => Some(VideoCodec::H266),
@@ -48,7 +48,7 @@ fn java_video_codec_ordinal_to_rust(env: &mut Env, ordinal: jint) -> Option<Vide
                 BindingErrorKind::CodecEngineError,
                 "misp_time",
                 &CodecErrFields::default(),
-                &format!("unknown VideoCodec ordinal {ordinal}"),
+                &format!("unknown VideoCodec code {code}"),
             );
             None
         }
@@ -99,13 +99,13 @@ jni_native! {
         env,
         _class,
         au: JByteArray<'local>,
-        codec_ordinal: jint,
+        codec_code: jint,
     ) -> jobject = std::ptr::null_mut() => {
         let bytes = match env.convert_byte_array(&au) {
             Ok(b) => b,
             Err(_) => return JObject::null().into_raw(),
         };
-        let Some(codec) = java_video_codec_ordinal_to_rust(env, codec_ordinal) else {
+        let Some(codec) = java_video_codec_code_to_rust(env, codec_code) else {
             return JObject::null().into_raw();
         };
         match extract(&bytes, codec) {

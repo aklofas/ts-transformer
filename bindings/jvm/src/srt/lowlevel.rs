@@ -208,8 +208,8 @@ mod url_mode_tests {
 // Helper: build SrtSocketConfig from knob args
 // ---------------------------------------------------------------------------
 //
-// Mode ordinals (the Java Builder.Mode enum, passed as mode.ordinal()):
-//   URL_CHOICE=0, CALLER=1, LISTENER=2, RENDEZVOUS=3.
+// Mode codes (the Java Builder.Mode enum, passed as mode.code()):
+//   URL_CHOICE=0, CALLER=1, LISTENER=2, RENDEZVOUS=3; any other code is refused.
 // nConnect rejects LISTENER(2) and RENDEZVOUS(3); nListen rejects CALLER(1)
 // and RENDEZVOUS(3). URL_CHOICE(0) defers to the URL's ?mode= parameter.
 
@@ -407,7 +407,7 @@ fn build_listener_config(
 jni_native! {
     /// Open a caller-mode SRT socket. Returns `Box<Socket>` as `jlong`.
     ///
-    /// Mode ordinal mapping (Builder.Mode enum):
+    /// Mode code mapping (Builder.Mode enum; any other code is CONFIG_INVALID):
     /// - 0 = URL_CHOICE: defer to the URL's ?mode= (default is caller)
     /// - 1 = CALLER: assert URL mode must be caller
     /// - 2 = LISTENER: reject from nConnect (wrong finalizer)
@@ -431,8 +431,16 @@ jni_native! {
         mss: JObject<'local>,
         payload_size: JObject<'local>,
     ) -> jlong = 0 => {
-        // Ordinal 3 = RENDEZVOUS, ordinal 2 = LISTENER (wrong for connect).
-        // Order pinned by BuilderModeOrdinalTest.
+        // Code 3 = RENDEZVOUS, code 2 = LISTENER (wrong for connect).
+        // Codes pinned by BuilderModeOrdinalTest.
+        if !(0..=3).contains(&mode) {
+            throw_srt(
+                env,
+                BindingErrorKind::ConfigInvalid,
+                &format!("unknown Builder.Mode code {mode}"),
+            );
+            return 0;
+        }
         if mode == 3 {
             throw_srt(
                 env,
@@ -521,7 +529,7 @@ jni_native! {
 jni_native! {
     /// Bind a listener-mode SRT socket. Returns `Box<Listener>` as `jlong`.
     ///
-    /// Mode ordinal mapping (same as nConnect):
+    /// Mode code mapping (same as nConnect):
     /// - 0 = URL_CHOICE: defer to URL (must have ?mode=listener)
     /// - 1 = CALLER: reject from nListen (wrong finalizer)
     /// - 2 = LISTENER: add `mode=listener` when the URL has no `mode=`; a contradicting mode is refused
@@ -545,7 +553,15 @@ jni_native! {
         mss: JObject<'local>,
         payload_size: JObject<'local>,
     ) -> jlong = 0 => {
-        // Order pinned by BuilderModeOrdinalTest.
+        // Codes pinned by BuilderModeOrdinalTest.
+        if !(0..=3).contains(&mode) {
+            throw_srt(
+                env,
+                BindingErrorKind::ConfigInvalid,
+                &format!("unknown Builder.Mode code {mode}"),
+            );
+            return 0;
+        }
         if mode == 3 {
             throw_srt(
                 env,

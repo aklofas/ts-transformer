@@ -1870,6 +1870,9 @@ expect_out "ordinal sites: none" "ordinal-sites: OK (0 pinned sites)"
 printf 'stale\tmode.ordinal()\n' > "$os/none.tsv"
 expect "ordinal sites: regenerating a tree with no site" 0 env ORDINAL_SITES_JAVA_DIR="$os/none" ORDINAL_SITES_LIST="$os/none.tsv" bash "$OS" --regen
 expect "ordinal sites: the regenerated list is empty" 1 test -s "$os/none.tsv"
+printf 'class E {\n    int g() { return mode.ordinal(); }\n}\n' > "$os/none/org/tstrans/x/E.java"
+expect "ordinal sites: a site against the empty list fails" 1 env ORDINAL_SITES_JAVA_DIR="$os/none" ORDINAL_SITES_LIST="$os/none.tsv" bash "$OS"
+expect_out "ordinal sites: new against empty" "FAIL: ordinal-sites: new ordinal site org/tstrans/x/E.java: mode.ordinal()"
 
 # ---- release-vm-corpus.sh: a run names its baseline or says it has none ----
 # --dry-run prints each stage's command and runs nothing. A run with neither

@@ -70,9 +70,9 @@ jni_native! {
     }
 }
 
-/// Builds the mount configuration from the Java enums' ordinals, which follow
-/// their declaration order. An ordinal outside an enum is a JAR built from
-/// other sources; it is refused as `MOUNT`, the invalid-configuration kind.
+/// Builds the mount configuration from the Java enums' `code()`. A code outside
+/// an enum is a JAR built from other sources; it is refused as `MOUNT`, the
+/// invalid-configuration kind.
 fn mount_config(
     env: &mut Env,
     kind: jint,
@@ -86,18 +86,18 @@ fn mount_config(
         throw_webrtc(
             env,
             BindingErrorKind::WebrtcMount,
-            &format!("unknown {what} ordinal {v}"),
+            &format!("unknown {what} code {v}"),
         );
         None
     };
     let mut cfg = MountConfig::default();
-    // Order pinned by OrdinalContractTest.
+    // Codes pinned by OrdinalContractTest.
     cfg.kind = match kind {
         0 => MountKind::Elementary,
         1 => MountKind::Mp2t,
         v => return refuse("MountKind", v),
     };
-    // Order pinned by OrdinalContractTest.
+    // Codes pinned by OrdinalContractTest.
     cfg.video = match video {
         0 => VideoCodec::H264,
         1 => VideoCodec::H265,
@@ -105,13 +105,13 @@ fn mount_config(
         3 => VideoCodec::Av1,
         v => return refuse("VideoCodec", v),
     };
-    // Order pinned by OrdinalContractTest.
+    // Codes pinned by OrdinalContractTest.
     cfg.audio = match audio {
         0 => AudioPolicy::Drop,
         1 => AudioPolicy::PassthroughOpus,
         v => return refuse("AudioPolicy", v),
     };
-    // Order pinned by OrdinalContractTest.
+    // Codes pinned by OrdinalContractTest.
     cfg.klv = match klv {
         0 => KlvCarriage::SeiAndDataChannel,
         1 => KlvCarriage::SeiOnly,
