@@ -127,7 +127,7 @@ class ShellLifecycleContractTest {
     void cancelEndsAParkedRecvWithClosed(String shell, String scheme) throws Exception {
         try (Cleanup c = new Cleanup()) {
             Rx rx = ShellPeers.receiverWithPeer(shell, scheme, c);
-            CancelHandle cancel = rx.cancelHandle();
+            CancelHandle cancel = c.add(rx.cancelHandle());
             try (Parked parked = new Parked(rx)) {
                 cancel.cancel();
                 Throwable ended = parked.awaitEnd(5_000);
@@ -143,11 +143,11 @@ class ShellLifecycleContractTest {
     void accessorsDoNotWaitBehindAParkedRecv(String shell, String scheme) throws Exception {
         try (Cleanup c = new Cleanup()) {
             Rx rx = ShellPeers.receiverWithPeer(shell, scheme, c);
-            CancelHandle cancel = rx.cancelHandle();
+            CancelHandle cancel = c.add(rx.cancelHandle());
             try (Parked parked = new Parked(rx)) {
                 try {
                     assertTrue(ShellPeers.within(1_000, "isAlive()", rx::isAlive));
-                    assertNotNull(ShellPeers.within(1_000, "cancelHandle()", rx::cancelHandle));
+                    assertNotNull(c.add(ShellPeers.within(1_000, "cancelHandle()", rx::cancelHandle)));
                     parked.assertStillParked();
                 } finally {
                     cancel.cancel();
@@ -166,7 +166,7 @@ class ShellLifecycleContractTest {
             SenderPeer sp = ShellPeers.senderWithPeer(shell, scheme, c);
             sp.tx().sendOnce();
             sp.dropPeer().run();
-            CancelHandle watchdog = sp.tx().cancelHandle();
+            CancelHandle watchdog = c.add(sp.tx().cancelHandle());
             CompletableFuture<Throwable> failure = new CompletableFuture<>();
             Thread sender = new Thread(() -> {
                 long end = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(windowMs);
@@ -213,7 +213,7 @@ class ShellLifecycleContractTest {
         try (Cleanup c = new Cleanup()) {
             ShellPeers.ReceiverPeer rp = ShellPeers.receiverAndPeer(shell, scheme, c);
             Rx rx = rp.rx();
-            CancelHandle watchdog = rx.cancelHandle();
+            CancelHandle watchdog = c.add(rx.cancelHandle());
             rp.closePeer().run();
             CompletableFuture<Throwable> first = new CompletableFuture<>();
             Thread receiver = new Thread(() -> {

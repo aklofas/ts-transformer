@@ -15,6 +15,7 @@ import java.util.Locale;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
+import java.util.function.Supplier;
 import org.tstrans.codec.NalUnit;
 import org.tstrans.codec.VideoUnit;
 import org.tstrans.mpegts.DemuxEvent;
@@ -125,6 +126,13 @@ public final class TestSupport {
                 throw new AssertionError(t.getName() + " never reached " + method + " within " + ms + " ms");
             }
             Thread.sleep(2);
+        }
+    }
+
+    /** Cancel through a handle taken for that alone, and close it. */
+    public static void cancelNow(Supplier<? extends org.tstrans.shells.CancelHandle> handle) {
+        try (org.tstrans.shells.CancelHandle h = handle.get()) {
+            h.cancel();
         }
     }
 

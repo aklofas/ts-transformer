@@ -81,7 +81,7 @@ class RtpLoopbackScenarioTest {
         // accumulation loop is robust to fragmentation, but the single-datagram
         // path (752 < 1316) completes after the first recv.
         RecvTransport receiver = RecvTransport.fromUrl("rtp://127.0.0.1:" + port);
-        CancelHandle watchdogHandle = receiver.cancelHandle(); // pre-obtained
+        CancelHandle watchdogHandle = receiver.cancelHandle(); // cancel-handle: pre-obtained, closed in the finally
         CompletableFuture<byte[]> receivedFuture = new CompletableFuture<>();
 
         Thread receiverThread = new Thread(() -> {

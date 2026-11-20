@@ -2,6 +2,7 @@ package org.tstrans.rtp;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
+import static org.tstrans.TestSupport.cancelNow;
 import static org.tstrans.TestSupport.isLinux;
 
 import java.util.Optional;
@@ -404,11 +405,11 @@ class H264ReceiverTest {
     @Test
     void cancelHandleUsable() throws Exception {
         try (H264Receiver rx = H264Receiver.listen("rtp://127.0.0.1:0?pt=96")) {
-            CancelHandle ch = rx.cancelHandle();
-            assertNotNull(ch);
-            // cancel() must not throw.
-            ch.cancel();
-            ch.close();
+            try (CancelHandle ch = rx.cancelHandle()) {
+                assertNotNull(ch);
+                // cancel() must not throw.
+                ch.cancel();
+            }
         }
     }
 
@@ -419,15 +420,16 @@ class H264ReceiverTest {
     @Test @Timeout(30)
     void parkedRecvAuEndsClosedAfterCancel() throws Exception {
         try (H264Receiver rx = H264Receiver.listen("rtp://127.0.0.1:0?pt=96")) {
-            CancelHandle ch = rx.cancelHandle();
-            CompletableFuture<Object> r = CompletableFuture.supplyAsync(() -> {
-                try { return java.util.Optional.ofNullable(rx.recvAu()); } catch (Exception e) { return e; }
-            });
-            Thread.sleep(300); // let recvAu park
-            ch.cancel();
-            Object got = r.get(org.tstrans.TestSupport.scaledMs(5_000), TimeUnit.MILLISECONDS);
-            RtpException e = assertInstanceOf(RtpException.class, got);
-            assertEquals(RtpException.Kind.CLOSED, e.kind());
+            try (CancelHandle ch = rx.cancelHandle()) {
+                CompletableFuture<Object> r = CompletableFuture.supplyAsync(() -> {
+                    try { return java.util.Optional.ofNullable(rx.recvAu()); } catch (Exception e) { return e; }
+                });
+                Thread.sleep(300); // let recvAu park
+                ch.cancel();
+                Object got = r.get(org.tstrans.TestSupport.scaledMs(5_000), TimeUnit.MILLISECONDS);
+                RtpException e = assertInstanceOf(RtpException.class, got);
+                assertEquals(RtpException.Kind.CLOSED, e.kind());
+            }
         }
     }
 
@@ -450,7 +452,7 @@ class H264ReceiverTest {
             assertNotNull(first);
             assertEquals(0L, first.rtpTimestamp());
 
-            rx.cancelHandle().cancel();
+            cancelNow(rx::cancelHandle);
             H264AccessUnit flushed = rx.recvAu();
             assertNotNull(flushed, "the open AU must be flushed before CLOSED");
             assertEquals(3000L, flushed.rtpTimestamp());
@@ -474,7 +476,7 @@ class H264ReceiverTest {
             RuntimeException e = assertThrows(RuntimeException.class, () -> {
                 for (H264AccessUnit au : rx) {
                     collected.add(au);
-                    rx.cancelHandle().cancel();
+                    cancelNow(rx::cancelHandle);
                 }
             });
             RtpException cause = assertInstanceOf(RtpException.class, e.getCause());

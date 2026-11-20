@@ -20,7 +20,7 @@ import org.tstrans.mpegts.DemuxEvent;
 import org.tstrans.shells.Sender;
 import org.tstrans.shells.MuxSender;
 import org.tstrans.shells.DemuxReceiver;
-import org.tstrans.shells.CancelHandle;
+import org.tstrans.shells.ShellPeers.Watchdog;
 
 /**
  * Live-socket tests for {@code lastSeen(int pid)} on the two
@@ -121,18 +121,7 @@ class LastSeenMicrosTest {
             // recv, so a daemon watchdog cancels through a handle obtained
             // BEFORE iterating. A starved receiver then fails the Video
             // assertion loudly instead of wedging the gating runner.
-            CancelHandle cancel = rx.cancelHandle();
-            Thread watchdog = new Thread(() -> {
-                try {
-                    if (!observed.await(TIMEOUT_SEC - 3, TimeUnit.SECONDS)) {
-                        cancel.cancel();
-                    }
-                } catch (InterruptedException ignored) {
-                    Thread.currentThread().interrupt();
-                }
-            }, "last-seen-micros-watchdog");
-            watchdog.setDaemon(true);
-            watchdog.start();
+            Watchdog watchdog = new Watchdog(rx.cancelHandle(), TimeUnit.SECONDS.toMillis(TIMEOUT_SEC - 3));
 
             // The first demuxed event is typically a ProgramMap (PAT/PMT), not a
             // Video sample — pull until a Video event on the configured PID
@@ -154,6 +143,7 @@ class LastSeenMicrosTest {
                 if (!isCleanEndOfStream(re)) throw re;
             } finally {
                 observed.countDown(); // always release the watchdog
+                watchdog.close();
             }
             assertNotNull(videoEvent, "expected a Video event on the configured PID");
 
@@ -241,18 +231,7 @@ class LastSeenMicrosTest {
 
             // Hard no-hang safety net (same as SrtManagedLiveTest): a cancel handle
             // obtained BEFORE iterating — the documented happy-path moment.
-            CancelHandle cancel = rx.cancelHandle();
-            Thread watchdog = new Thread(() -> {
-                try {
-                    if (!observed.await(TIMEOUT_SEC - 3, TimeUnit.SECONDS)) {
-                        cancel.cancel();
-                    }
-                } catch (InterruptedException ignored) {
-                    Thread.currentThread().interrupt();
-                }
-            });
-            watchdog.setDaemon(true);
-            watchdog.start();
+            Watchdog watchdog = new Watchdog(rx.cancelHandle(), TimeUnit.SECONDS.toMillis(TIMEOUT_SEC - 3));
             // The first demuxed event is typically a ProgramMap (PAT/PMT), not a
             // Video sample — pull until a Video event on the configured PID
             // arrives (bounded so a real regression fails instead of hanging).
@@ -267,6 +246,7 @@ class LastSeenMicrosTest {
                 if (!isCleanEndOfStream(re)) throw re;
             } finally {
                 observed.countDown(); // always release the peer + watchdog
+                watchdog.close();
             }
 
             assertTrue(sawEvent, "managed demux receiver must have seen at least one demux event");

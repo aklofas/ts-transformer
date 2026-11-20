@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
+import static org.tstrans.TestSupport.cancelNow;
 import static org.tstrans.TestSupport.scaledMs;
 import static org.tstrans.shells.ShellPeers.within;
 
@@ -122,10 +123,11 @@ class ListenerTest {
     @Test
     void cancelEndsAParkedAcceptWithClosed() throws Exception {
         try (Listener l = Listener.open(LOOPBACK_V4)) {
-            CancelHandle h = l.cancelHandle();
-            try (Parked p = parkAccept(l)) {
-                h.cancel();
-                assertKind(TcpException.Kind.CLOSED, p.awaitEnd(scaledMs(2000)));
+            try (CancelHandle h = l.cancelHandle()) {
+                try (Parked p = parkAccept(l)) {
+                    h.cancel();
+                    assertKind(TcpException.Kind.CLOSED, p.awaitEnd(scaledMs(2000)));
+                }
             }
         }
     }
@@ -133,7 +135,7 @@ class ListenerTest {
     @Test
     void afterACancelEveryAcceptThrowsClosed() throws Exception {
         try (Listener l = Listener.open(LOOPBACK_V4)) {
-            l.cancelHandle().cancel();
+            cancelNow(l::cancelHandle);
             for (int i = 0; i < 3; i++) {
                 assertKind(TcpException.Kind.CLOSED, assertThrows(TcpException.class, l::accept));
             }
@@ -210,7 +212,7 @@ class ListenerTest {
             try (Parked p = parkAccept(l)) {
                 assertEquals(port, (int) within(scaledMs(1000), "localPort()", l::localPort));
                 p.assertStillParked();
-                l.cancelHandle().cancel();
+                cancelNow(l::cancelHandle);
                 assertKind(TcpException.Kind.CLOSED, p.awaitEnd(scaledMs(2000)));
             }
         }

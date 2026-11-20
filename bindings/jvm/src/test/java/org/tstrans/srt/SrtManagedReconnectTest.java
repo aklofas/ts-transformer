@@ -13,7 +13,7 @@ import org.junit.jupiter.api.Test;
 import org.tstrans.SrtException;
 import org.tstrans.mpegts.DemuxEvent;
 import org.tstrans.shells.MuxSender;
-import org.tstrans.shells.CancelHandle;
+import org.tstrans.shells.ShellPeers.Watchdog;
 
 /**
  * Live-socket RECONNECT parity test for the managed (auto-reconnect) SRT shells.
@@ -162,18 +162,7 @@ class SrtManagedReconnectTest {
             // unforeseen stall into a prompt CLOSED/BROKEN end-of-iteration + a clean
             // assertion failure, never a hang. In the happy path the loop breaks on
             // the discontinuity well before the watchdog fires.
-            CancelHandle cancel = rx.cancelHandle();
-            Thread watchdog = new Thread(() -> {
-                try {
-                    if (!observed.await(TIMEOUT_SEC - 3, TimeUnit.SECONDS)) {
-                        cancel.cancel();
-                    }
-                } catch (InterruptedException ignored) {
-                    Thread.currentThread().interrupt();
-                }
-            });
-            watchdog.setDaemon(true);
-            watchdog.start();
+            Watchdog watchdog = new Watchdog(rx.cancelHandle(), TimeUnit.SECONDS.toMillis(TIMEOUT_SEC - 3));
             try {
                 int events = 0;
                 for (DemuxEvent e : rx) {
@@ -189,6 +178,7 @@ class SrtManagedReconnectTest {
                 if (!isCleanEndOfStream(re)) throw re;
             } finally {
                 observed.countDown(); // always release the peer + watchdog
+                watchdog.close();
             }
         }
 

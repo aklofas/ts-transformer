@@ -128,6 +128,11 @@ runs:
       shell: bash
       run: bash scripts/check/jvm/ordinal-sites.sh
 
+    - name: check-jvm-cancel-handle-closed
+      if: inputs.triple == 'linux-x86_64'
+      shell: bash
+      run: bash scripts/check/jvm/cancel-handle-closed.sh
+
     # The marked Java blocks of docs/languages/jvm.md compile against this
     # leg's jar (the module-path smoke above built it; javac only, nothing
     # loads the native library). The rail SKIPs without an input; here a SKIP

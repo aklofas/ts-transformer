@@ -57,7 +57,7 @@ final class DemuxReceiverTestSupport {
             server = new ServerSocket(0, 1, InetAddress.getLoopbackAddress());
             rx = DemuxReceiver.open("tcp://127.0.0.1:" + server.getLocalPort());
             peer = server.accept();
-            rescue = rx.cancelHandle();
+            rescue = rx.cancelHandle(); // cancel-handle: closed in close()
         }
 
         void write(byte[] bytes) throws IOException {
@@ -67,6 +67,7 @@ final class DemuxReceiverTestSupport {
 
         @Override public void close() throws IOException {
             rescue.cancel();
+            rescue.close();
             rx.close();
             peer.close();
             server.close();

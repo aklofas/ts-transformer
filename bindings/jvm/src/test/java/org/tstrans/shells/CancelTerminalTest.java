@@ -1,6 +1,7 @@
 package org.tstrans.shells;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.tstrans.TestSupport.cancelNow;
 
 import java.net.DatagramPacket;
 import java.net.DatagramSocket;
@@ -25,7 +26,7 @@ class CancelTerminalTest {
     @Test
     void senderCancelThenPartialSendAndFlushThrowClosed() throws Exception {
         try (Sender tx = Sender.open("udp://127.0.0.1:" + TestSupport.freeUdpPort())) {
-            tx.cancelHandle().cancel();
+            cancelNow(tx::cancelHandle);
             UdpException send = assertThrows(UdpException.class,
                 () -> tx.sendBytes(ShellPeers.TS_PACKET),
                 "a sub-bundle send after cancel must not be buffered");
@@ -50,7 +51,7 @@ class CancelTerminalTest {
                 InetAddress.getLoopbackAddress(), port));
             byte[] first = ShellPeers.within(5_000, "first recvBytes", rx::recvBytes);
             assertEquals(188, first.length);
-            rx.cancelHandle().cancel();
+            cancelNow(rx::cancelHandle);
             UdpException e = assertThrows(UdpException.class, rx::recvBytes,
                 "buffered packets must not be delivered after cancel");
             assertEquals("CLOSED", ShellPeers.kindName(e));
@@ -61,7 +62,7 @@ class CancelTerminalTest {
     void muxSenderCancelThenFinishThrowsClosed() throws Exception {
         try (MuxSender tx = MuxSender.open("udp://127.0.0.1:" + TestSupport.freeUdpPort(),
                 TestSupport.roundtripConfig())) {
-            tx.cancelHandle().cancel();
+            cancelNow(tx::cancelHandle);
             UdpException e = assertThrows(UdpException.class, tx::finish,
                 "an empty finish after cancel is CLOSED, not a quiet no-op");
             assertEquals("CLOSED", ShellPeers.kindName(e));
@@ -75,7 +76,7 @@ class CancelTerminalTest {
             p.write(DemuxReceiverTestSupport.eventPackets());
             Iterator<DemuxEvent> it = p.rx.iterator();
             assertTrue(ShellPeers.within(5_000, "first hasNext", it::hasNext));
-            p.rx.cancelHandle().cancel();
+            cancelNow(p.rx::cancelHandle);
             RuntimeException e = assertThrows(RuntimeException.class, it::next,
                 "the event cached by hasNext() must not be served after cancel");
             assertInstanceOf(TcpException.class, e.getCause());
@@ -86,7 +87,7 @@ class CancelTerminalTest {
     @Test
     void h264ReceiverEndsClosedAfterCancel() throws Exception {
         try (H264Receiver rx = H264Receiver.listen("rtp://127.0.0.1:0?pt=96")) {
-            rx.cancelHandle().cancel();
+            cancelNow(rx::cancelHandle);
             for (int call = 0; call < 2; call++) {
                 RtpException e = assertThrows(RtpException.class, rx::recvAu,
                     "a cancelled H.264 receiver with nothing buffered ends with the cancel");

@@ -862,7 +862,9 @@ class RtspPushTest {
             assertTrue(got.get().packetsSent() >= sending.sent.get(), got.get().toString());
             assertEquals(Optional.empty(), reason.get());
             assertTrue(sending.thread.isAlive(), "the send ended before the answer");
-            push.cancelHandle().cancel();
+            try (RtspCancelHandle h = push.cancelHandle()) {
+                h.cancel();
+            }
             assertTrue(sending.join(scaledMs(5_000)), "the parked send did not end");
         }
     }

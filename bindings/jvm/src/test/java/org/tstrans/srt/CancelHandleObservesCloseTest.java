@@ -93,36 +93,37 @@ final class CancelHandleObservesCloseTest {
         assumeTrue(isLinux(), "srt live-socket loopback gated to Linux");
         Live live = connect();
         try (DemuxReceiver rx = live.rx) {
-            CancelHandle a = rx.cancelHandle();
-            CancelHandle b = rx.cancelHandle();
-            // A THIRD handle is the rescue. It must not be `b`: cancelling the
-            // handle under test would set that handle's own flag and the verdict
-            // would hold under the old per-handle model too (a vacuous pass).
-            CancelHandle rescue = rx.cancelHandle();
-            assertFalse(a.isCancelled());
-            assertFalse(b.isCancelled());
-            CompletableFuture<Throwable> end = parkReader(rx);
-            a.cancel();
-            final Throwable cause;
-            final boolean secondHandleSaw;
-            final boolean cancellerSaw;
-            try {
-                cause = end.get(10, TimeUnit.SECONDS);
-                // Read both verdicts while nothing but `a.cancel()` has run.
-                cancellerSaw = a.isCancelled();
-                secondHandleSaw = b.isCancelled();
-            } finally {
-                rescue.cancel(); // frees the reader on a failed verdict; never asserted on
+            try (CancelHandle a = rx.cancelHandle();
+                 CancelHandle b = rx.cancelHandle();
+                 // A THIRD handle is the rescue. It must not be `b`: cancelling the
+                 // handle under test would set that handle's own flag and the verdict
+                 // would hold under the old per-handle model too (a vacuous pass).
+                 CancelHandle rescue = rx.cancelHandle()) {
+                assertFalse(a.isCancelled());
+                assertFalse(b.isCancelled());
+                CompletableFuture<Throwable> end = parkReader(rx);
+                a.cancel();
+                final Throwable cause;
+                final boolean secondHandleSaw;
+                final boolean cancellerSaw;
+                try {
+                    cause = end.get(10, TimeUnit.SECONDS);
+                    // Read both verdicts while nothing but `a.cancel()` has run.
+                    cancellerSaw = a.isCancelled();
+                    secondHandleSaw = b.isCancelled();
+                } finally {
+                    rescue.cancel(); // frees the reader on a failed verdict; never asserted on
+                }
+                assertTrue(cause instanceof SrtException, "expected an SrtException, got " + cause);
+                // A cancel is CLOSED on every srt shell: the plain
+                // transport closes the socket under the parked recv and then
+                // reports the cancel it observed.
+                SrtException.Kind kind = ((SrtException) cause).kind();
+                assertEquals(SrtException.Kind.CLOSED, kind, "cancel should surface as CLOSED, got " + kind);
+                assertTrue(cancellerSaw, "the cancelling handle observes its own cancel");
+                assertTrue(secondHandleSaw,
+                    "a second handle on the same shell observes the cancel (one state)");
             }
-            assertTrue(cause instanceof SrtException, "expected an SrtException, got " + cause);
-            // A cancel is CLOSED on every srt shell: the plain
-            // transport closes the socket under the parked recv and then
-            // reports the cancel it observed.
-            SrtException.Kind kind = ((SrtException) cause).kind();
-            assertEquals(SrtException.Kind.CLOSED, kind, "cancel should surface as CLOSED, got " + kind);
-            assertTrue(cancellerSaw, "the cancelling handle observes its own cancel");
-            assertTrue(secondHandleSaw,
-                "a second handle on the same shell observes the cancel (one state)");
         } finally {
             live.release.countDown();
         }
@@ -134,24 +135,25 @@ final class CancelHandleObservesCloseTest {
         assumeTrue(isLinux(), "srt live-socket loopback gated to Linux");
         Live live = connect();
         try {
-            CancelHandle handle = live.rx.cancelHandle();
-            // Separate rescue handle, obtained while the receiver is still open
-            // (cancelHandle() throws once it is closed) — cancelling `handle`
-            // itself would set the very flag under test.
-            CancelHandle rescue = live.rx.cancelHandle();
-            assertFalse(handle.isCancelled());
-            CompletableFuture<Throwable> end = parkReader(live.rx);
-            CompletableFuture<Void> closed = CompletableFuture.runAsync(live.rx::close);
-            final boolean sawClose;
-            try {
-                closed.get(10, TimeUnit.SECONDS);
-                assertNotNull(end.get(10, TimeUnit.SECONDS), "close() cancels first, so the parked next() ends");
-                sawClose = handle.isCancelled();
-            } finally {
-                rescue.cancel(); // rescue; never asserted on
+            try (CancelHandle handle = live.rx.cancelHandle();
+                 // Separate rescue handle, obtained while the receiver is still open
+                 // (cancelHandle() throws once it is closed) — cancelling `handle`
+                 // itself would set the very flag under test.
+                 CancelHandle rescue = live.rx.cancelHandle()) {
+                assertFalse(handle.isCancelled());
+                CompletableFuture<Throwable> end = parkReader(live.rx);
+                CompletableFuture<Void> closed = CompletableFuture.runAsync(live.rx::close);
+                final boolean sawClose;
+                try {
+                    closed.get(10, TimeUnit.SECONDS);
+                    assertNotNull(end.get(10, TimeUnit.SECONDS), "close() cancels first, so the parked next() ends");
+                    sawClose = handle.isCancelled();
+                } finally {
+                    rescue.cancel(); // rescue; never asserted on
+                }
+                assertTrue(sawClose, "close() cancels first; a handle obtained before it observes that");
+                assertThrows(IllegalStateException.class, live.rx::cancelHandle, "closed receiver");
             }
-            assertTrue(sawClose, "close() cancels first; a handle obtained before it observes that");
-            assertThrows(IllegalStateException.class, live.rx::cancelHandle, "closed receiver");
         } finally {
             live.release.countDown();
         }

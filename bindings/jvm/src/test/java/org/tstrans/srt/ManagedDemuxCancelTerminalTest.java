@@ -2,6 +2,7 @@ package org.tstrans.srt;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
+import static org.tstrans.TestSupport.cancelNow;
 import static org.tstrans.TestSupport.isLinux;
 import static org.tstrans.TestSupport.roundtripConfig;
 import static org.tstrans.TestSupport.syntheticH264Idr;
@@ -14,8 +15,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.tstrans.SrtException;
 import org.tstrans.mpegts.DemuxEvent;
-import org.tstrans.shells.CancelHandle;
 import org.tstrans.shells.MuxSender;
+import org.tstrans.shells.ShellPeers.Watchdog;
 
 /**
  * A cancel is terminal for the managed demux receiver's iterator too: an event
@@ -69,26 +70,18 @@ class ManagedDemuxCancelTerminalTest {
         try (ManagedDemuxReceiver rx = ManagedDemuxReceiver.fromUrl(
                 "srt://127.0.0.1:" + port + "?mode=caller&latency=" + LATENCY_MS)) {
             // A no-hang safety net: a cancel handle taken before iterating.
-            CancelHandle cancel = rx.cancelHandle();
-            Thread watchdog = new Thread(() -> {
-                try {
-                    if (!done.await(TIMEOUT_SEC - 3, TimeUnit.SECONDS)) cancel.cancel();
-                } catch (InterruptedException ignored) {
-                    Thread.currentThread().interrupt();
-                }
-            });
-            watchdog.setDaemon(true);
-            watchdog.start();
+            Watchdog watchdog = new Watchdog(rx.cancelHandle(), TimeUnit.SECONDS.toMillis(TIMEOUT_SEC - 3));
             try {
                 Iterator<DemuxEvent> it = rx.iterator();
                 assertTrue(it.hasNext(), "the stream must produce an event");
-                cancel.cancel();
+                cancelNow(rx::cancelHandle);
                 RuntimeException e = assertThrows(RuntimeException.class, it::next,
                     "the event cached by hasNext() must not be served after cancel");
                 SrtException se = assertInstanceOf(SrtException.class, e.getCause());
                 assertEquals(SrtException.Kind.CLOSED, se.kind());
             } finally {
                 done.countDown();
+                watchdog.close();
             }
         }
         peerThread.join(TimeUnit.SECONDS.toMillis(TIMEOUT_SEC));

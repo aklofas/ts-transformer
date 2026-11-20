@@ -246,7 +246,7 @@ class RtspSessionCloseTest {
 
         Drain(DemuxReceiver rx) {
             this.rx = rx;
-            this.rescue = rx.cancelHandle();
+            this.rescue = rx.cancelHandle(); // cancel-handle: closed in close()
             this.thread = new Thread(() -> {
                 try {
                     while (rx.recvEvent() != null) firstEvent.countDown();
