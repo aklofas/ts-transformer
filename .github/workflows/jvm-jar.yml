@@ -32,6 +32,9 @@ on:
       - "scripts/ci/install-build-tools.sh"
       - "scripts/ci/gradle-resolve.sh"
       - "scripts/ci/gradle-resolve-all.init.gradle"
+      - "scripts/ci/jvm-hook-guard.sh"
+      - "scripts/ci/jvm_hook_guard.py"
+      - "scripts/ci/tests/jvm-hook-guard-selftest.sh"
       - ".github/actions/free-disk/**"
       - ".github/workflows/jvm-jar.yml"
 
@@ -228,6 +231,16 @@ jobs:
           path: bindings/jvm/build/libs/tstrans-jvm*.jar
           if-no-files-found: error
           retention-days: 7
+
+      # Every archive the publish makes from these natives: the fat JAR may
+      # carry no test-hook native, the sources JAR no native at all. Last, so
+      # the steps and the artefact above see the fat JAR alone.
+      - name: No archive carries a test hook or a stray native
+        shell: bash
+        run: |
+          set -euo pipefail
+          (cd bindings/jvm && ./gradlew sourcesJar --no-daemon --stacktrace -PnativeStagingDir="$GITHUB_WORKSPACE/staging")
+          bash scripts/ci/jvm-hook-guard.sh check bindings/jvm/build/libs/*.jar
 
   publish:
     name: publish to Maven Central (staged)

@@ -74,6 +74,13 @@ runs:
       # RuntimeException instead of aborting the JVM.
       run: ./gradlew test --no-daemon --stacktrace -PjniTestHooks=true
 
+    # The positive control of the hook guard below: the library the step above
+    # built with the test hooks must hold them, so a guard that reads no symbol
+    # cannot pass. The hook symbols are derived from bindings/jvm/src.
+    - name: Hook guard sees the hooks in a hook build
+      shell: bash
+      run: bash scripts/ci/jvm-hook-guard.sh check --expect-hooks bindings/jvm/src/main/resources/native/${{ inputs.triple }}/libtstjni.*
+
     - name: Rebuild shippable native lib (probe-free)
       working-directory: bindings/jvm
       shell: bash
@@ -84,6 +91,17 @@ runs:
       # cargo rebuilds (feature set changed) and copyNative re-stages the
       # probe-free lib into resources/ before the upload step copies it.
       run: ./gradlew copyNative --no-daemon --stacktrace
+
+    # The suite once more against the library users get: a test that passes
+    # only because a hook is compiled in fails here.
+    - name: Test JVM binding without the test hooks
+      if: inputs.triple == 'linux-x86_64'
+      working-directory: bindings/jvm
+      shell: bash
+      env:
+        SRT_FORCE_VENDORED: "1"
+        RIST_FORCE_VENDORED: "1"
+      run: ./gradlew test --rerun --no-daemon --stacktrace
 
     # A named module on the module path consumes this leg's jar, so a package
     # missing from module-info fails on every platform (path separators differ).
@@ -135,21 +153,16 @@ runs:
            upload/native/${{ inputs.triple }}/
         ls -la upload/native/${{ inputs.triple }}/
 
-    # Belt-and-suspenders: prove the rebuild step produced a probe-free lib so
-    # a future refactor dropping that step can't silently ship the probe.
-    # Linux-only: nm/symbol tooling isn't portable across macos/windows
-    # runners, and the feature-gating + rebuild logic is identical on every
-    # platform, so linux is a sufficient sentinel.
-    - name: Assert shipped native lib has no test-probe symbol
+    # The rebuild above must have dropped every test-hook native: checked on
+    # every platform by the symbol names, which ELF, Mach-O and PE all carry.
+    - name: Shipped native lib has no test-hook symbol
+      shell: bash
+      run: bash scripts/ci/jvm-hook-guard.sh check upload/native/${{ inputs.triple }}/libtstjni.*
+
+    - name: check-jvm-hook-guard self-test
       if: inputs.triple == 'linux-x86_64'
       shell: bash
-      run: |
-        LIB=upload/native/linux-x86_64/libtstjni.so
-        # Every jni-test-hooks native backs a class in org.tstrans.internal.
-        if nm -D "$LIB" | grep -q 'Java_org_tstrans_internal_'; then
-          echo "FAIL: test-only org.tstrans.internal symbol present in shipped lib ($LIB)"; exit 1
-        fi
-        echo "OK: no org.tstrans.internal symbol in shipped native lib"
+      run: bash scripts/ci/tests/jvm-hook-guard-selftest.sh
 
     - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
       with:
