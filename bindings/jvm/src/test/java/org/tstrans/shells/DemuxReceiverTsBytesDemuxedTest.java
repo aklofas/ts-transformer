@@ -58,14 +58,14 @@ class DemuxReceiverTsBytesDemuxedTest {
 
     @Test
     void tsBytesDemuxedAnswersWhileNextIsParked() throws Exception {
-        try (DemuxReceiverTestSupport.Pair p = new DemuxReceiverTestSupport.Pair()) {
-            CompletableFuture<Object> parked = DemuxReceiverTestSupport.recvOnDaemon(p.rx);
-            Thread.sleep(TestSupport.scaledMs(200));
+        try (DemuxReceiverTestSupport.Pair p = new DemuxReceiverTestSupport.Pair();
+             ShellPeers.Parked parked = new ShellPeers.Parked(p.rx, p.rx.cancelHandle(),
+                 "the receive returned", p.rx::recvEvent)) {
             CompletableFuture<Long> answer = CompletableFuture.supplyAsync(p.rx::tsBytesDemuxed);
             assertEquals(0L, answer.get(TestSupport.scaledMs(2_000), TimeUnit.MILLISECONDS));
-            assertFalse(parked.isDone(), "the receive stays parked");
+            parked.assertStillParked();
             p.rescue.cancel();
-            DemuxReceiverTestSupport.await(parked);
+            parked.awaitEnd(TestSupport.scaledMs(5_000));
         }
     }
 
