@@ -2330,3 +2330,135 @@ fn the_transport_impl_reports_max_payload_1316_and_is_alive() {
     drop(push);
     joined(peer);
 }
+
+// ---- the stats handle -------------------------------------------------
+
+// The handle is read from threads the push is not on.
+const _: fn() = || {
+    fn sync<T: Sync + Send + Clone + std::fmt::Debug>() {}
+    sync::<super::PushStatsHandle>();
+};
+
+/// A send parks against a server that reads nothing: the handle answers on
+/// another thread while the sending thread still holds the push.
+#[test]
+fn the_stats_handle_answers_while_a_send_holds_the_push() {
+    let (mut push, open, peer) = recording_gated(&elementary(true), |peer| peer.until_hangup());
+    let handle = push.stats_handle();
+    let queue = push.client().driver.media_queue();
+    let cancel = push.cancel_handle();
+    let sender = std::thread::spawn(move || {
+        let refused = loop {
+            if let Err(e) = push.send_klv(&BIG_UNIT, pts(0)) {
+                break e;
+            }
+        };
+        (refused, push)
+    });
+    eventually("the media queue full", || queue.len() == MEDIA_QUEUE_BOUND);
+    let (tx, rx) = mpsc::channel();
+    let reader = {
+        let handle = handle.clone();
+        std::thread::spawn(move || {
+            let _ = tx.send((handle.stats(), handle.end_reason()));
+        })
+    };
+    let (stats, reason) = rx
+        .recv_timeout(scaled(Duration::from_secs(5)))
+        .expect("the handle answered while the send held the push");
+    reader.join().unwrap();
+    assert!(!sender.is_finished(), "the send still holds the push");
+    assert!(stats.packets_sent >= MEDIA_QUEUE_BOUND as u64, "{stats:?}");
+    assert_eq!(reason, None);
+
+    cancel.cancel();
+    let (refused, push) = sender.join().unwrap();
+    assert!(is_explicit_close(&refused), "{refused:?}");
+    assert_eq!(handle.stats(), push.stats());
+    assert_eq!(handle.end_reason(), Some(EndReason::Cancelled));
+    let queue = push.client().driver.media_queue();
+    open.send(()).unwrap();
+    eventually("the server reading again", || {
+        queue.len() < MEDIA_QUEUE_BOUND
+    });
+    drop(push);
+    joined(peer);
+}
+
+/// After `close` the handle reads the push's last counters: what the server
+/// was sent, the close's own sender report included.
+#[test]
+fn the_stats_handle_answers_after_close_with_the_last_values() {
+    let (mut push, peer) = recording(&PushDescription::Mp2t);
+    let handle = push.stats_handle();
+    for i in 0..3 {
+        push.send_ts(&ts(7, i)).unwrap();
+    }
+    let before = push.stats();
+    let (_, units) = closed(push, peer);
+    let after = handle.stats();
+    assert_eq!(after.packets_sent, before.packets_sent);
+    assert_eq!(after.bytes_sent, before.bytes_sent);
+    assert!(
+        after.sender_reports_sent > before.sender_reports_sent,
+        "{after:?}"
+    );
+    assert_eq!(
+        frames(&units).len() as u64,
+        after.packets_sent + after.sender_reports_sent,
+        "every counted frame reached the server"
+    );
+    assert_eq!(after.frames_dropped_at_close, 0);
+    assert_eq!(handle.end_reason(), Some(EndReason::CleanTeardown));
+}
+
+/// `RtspPush::stats` and the handle read the same counters, the RTCP loss
+/// figures and the dropped inbound frames included.
+#[test]
+fn stats_and_the_handle_agree() {
+    let (port, peer) = serve(|peer| {
+        peer.accept_push();
+        let Some(Unit::Frame(1, report)) = peer.read_unit() else {
+            panic!("expected the first sender report");
+        };
+        let ssrc = sender_report(&report).ssrc;
+        peer.sock
+            .write_all(&interleaved(1, &receiver_report(ssrc, 77, 5)))
+            .unwrap();
+        peer.sock.write_all(&interleaved(0, &[0; 20])).unwrap();
+        peer.until_teardown().len()
+    });
+    let mut push = RtspPush::connect(builder(port, "/live"), &PushDescription::Mp2t).unwrap();
+    let handle = push.stats_handle();
+    push.send_ts(&ts(1, 0)).unwrap();
+    eventually("the receiver report and the stray frame", || {
+        let stats = handle.stats();
+        stats.receiver_reports == 1 && stats.frames_dropped_inbound == 1
+    });
+    let stats = handle.stats();
+    assert_eq!((stats.fraction_lost_q8, stats.cumulative_lost), (77, 5));
+    assert_eq!(stats.packets_sent, 1);
+    assert_eq!(stats, push.stats());
+    assert_eq!(
+        push.stats_handle().stats(),
+        stats,
+        "every handle reads the same"
+    );
+    assert_eq!(handle.end_reason(), push.end_reason());
+    push.close().unwrap();
+    joined(peer);
+}
+
+/// The server closes the connection: the handle names the end, also once
+/// the push is gone.
+#[test]
+fn end_reason_through_the_handle_after_a_server_close() {
+    let (mut push, peer) = ended_by(|_| {});
+    let handle = push.stats_handle();
+    assert_eq!(handle.end_reason(), Some(EndReason::CleanTeardown));
+    refused_send(&mut push);
+    assert_eq!(handle.stats(), push.stats());
+    drop(push);
+    assert_eq!(handle.end_reason(), Some(EndReason::CleanTeardown));
+    joined(peer);
+}

@@ -6219,6 +6219,54 @@ bindings = ["c:deferred(the RTSP push client in the C API: docs/project/deferred
 scenario_ids = []
 tier = "A"
 
+# PushStatsHandle: the push's counters and end read without the push, from
+# another thread while a send holds it, after close and after a server close.
+
+[[surface]]
+kind = "rust"
+crate = "tst-rtp"
+item = "tst_rtp::PushStatsHandle"
+owning_tests = ["crates/tst-rtp/src/rtsp/client/push/tests.rs"]
+bindings = ["c:deferred(the RTSP push client in the C API: docs/project/deferred-features.md)", "python:deferred(RtspPushSession reads the push under its lock)", "java:deferred(RtspPushSession reads the push under its lock)", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-rtp"
+item = "tst_rtp::rtsp::client::push::PushStatsHandle"
+owning_tests = ["crates/tst-rtp/src/rtsp/client/push/tests.rs"]
+bindings = ["c:deferred(the RTSP push client in the C API: docs/project/deferred-features.md)", "python:deferred(RtspPushSession reads the push under its lock)", "java:deferred(RtspPushSession reads the push under its lock)", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-rtp"
+item = "tst_rtp::rtsp::client::push::PushStatsHandle::stats"
+owning_tests = ["crates/tst-rtp/src/rtsp/client/push/tests.rs"]
+bindings = ["c:deferred(the RTSP push client in the C API: docs/project/deferred-features.md)", "python:deferred(RtspPushSession reads the push under its lock)", "java:deferred(RtspPushSession reads the push under its lock)", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-rtp"
+item = "tst_rtp::rtsp::client::push::PushStatsHandle::end_reason"
+owning_tests = ["crates/tst-rtp/src/rtsp/client/push/tests.rs"]
+bindings = ["c:deferred(the RTSP push client in the C API: docs/project/deferred-features.md)", "python:deferred(RtspPushSession reads the push under its lock)", "java:deferred(RtspPushSession reads the push under its lock)", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-rtp"
+item = "tst_rtp::RtspPush::stats_handle"
+owning_tests = ["crates/tst-rtp/src/rtsp/client/push/tests.rs"]
+bindings = ["c:deferred(the RTSP push client in the C API: docs/project/deferred-features.md)", "python:deferred(RtspPushSession reads the push under its lock)", "java:deferred(RtspPushSession reads the push under its lock)", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
 [[surface]]
 kind = "rust"
 crate = "tst-rtp"

@@ -15,16 +15,16 @@ use crate::panic::jni_native;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, LazyLock, Mutex, PoisonError, TryLockError};
 
-use jni::objects::{JBooleanArray, JByteArray, JIntArray, JObject, JObjectArray, JString, JValue};
+use jni::objects::{JBooleanArray, JByteArray, JIntArray, JObject, JObjectArray, JString};
 use jni::strings::JNIString;
 use jni::sys::{jboolean, jint, jlong, jobject, jobjectArray, jstring};
-use jni::{Env, jni_sig, jni_str};
+use jni::{Env, jni_str};
 
 use tst_core::mpegts::common::Pts90khz;
 use tst_core::transport::{Transport, TransportCancel, TransportError};
 use tst_pipeline::binding::{BindingErrorKind, Domain, Opened};
 use tst_rtp::rtsp::client::RtspCancelHandle as RustRtspCancel;
-use tst_rtp::{PushDescription, PushError, PushStats, RtspPush, VideoTrack};
+use tst_rtp::{PushDescription, PushError, RtspPush, VideoTrack};
 
 use crate::handle::HandleRegistry;
 use crate::mpegts::muxer::build_muxer_config_from_arrays;
@@ -549,24 +549,6 @@ jni_native! {
     }
 }
 
-/// One `org.tstrans.rtp.RtspPushStats`.
-fn build_stats<'l>(env: &mut Env<'l>, s: &PushStats) -> jni::errors::Result<JObject<'l>> {
-    env.new_object(
-        FindClass(jni_str!("org/tstrans/rtp/RtspPushStats")),
-        jni_sig!("(JJJJIJJJ)V"),
-        &[
-            JValue::Long(s.packets_sent as i64),
-            JValue::Long(s.bytes_sent as i64),
-            JValue::Long(s.sender_reports_sent as i64),
-            JValue::Long(s.receiver_reports as i64),
-            JValue::Int(jint::from(s.fraction_lost_q8)),
-            JValue::Long(i64::from(s.cumulative_lost)),
-            JValue::Long(s.frames_dropped_inbound as i64),
-            JValue::Long(s.frames_dropped_at_close as i64),
-        ],
-    )
-}
-
 jni_native! {
     /// `RtspPushSession.nStats(handle)`: waits for a call that holds the push.
     fn Java_org_tstrans_rtp_RtspPushSession_nStats(env, _class, handle: jlong) -> jobject = std::ptr::null_mut() => {
@@ -575,7 +557,7 @@ jni_native! {
             crate::error::throw_closed(env, WHAT);
             return std::ptr::null_mut();
         };
-        match build_stats(env, &stats) {
+        match crate::generated::stats_rtp::build_push_stats(env, &stats) {
             Ok(o) => o.into_raw(),
             Err(e) => {
                 throw_runtime_unless_pending(env, e.to_string());

@@ -49,7 +49,9 @@ pub fn stats_records() -> Vec<Entry> {
         DemuxReceiverStats, ManagedTransportStats, MuxPublisherStats, ReceiverStats,
     };
     use tst_rist::RistStats;
-    use tst_rtp::{H264DepayStats, MountStats, PublishMountStats, RtpStats, ServerStats};
+    use tst_rtp::{
+        H264DepayStats, MountStats, PublishMountStats, PushStats, RtpStats, ServerStats,
+    };
     use tst_srt::SrtStats;
     use tst_tcp::TcpStats;
     use tst_udp::UdpStats;
@@ -290,6 +292,27 @@ pub fn stats_records() -> Vec<Entry> {
             "self.parameter_set_updates",
         ],
     ));
+    let mut push = stats(
+        "stats_rtp",
+        "tstrans.rtp",
+        "org/tstrans/rtp",
+        "tst_rtp::PushStats",
+        PushStats::BINDING_SCHEMA,
+    );
+    push.host_name = "RtspPushStats";
+    push.py_repr = Some((
+        "RtspPushStats(packets_sent={}, bytes_sent={}, sender_reports_sent={}, receiver_reports={}, fraction_lost_q8={}, cumulative_lost={}, frames_dropped_inbound={}, frames_dropped_at_close={})",
+        &[
+            "self.packets_sent",
+            "self.bytes_sent",
+            "self.sender_reports_sent",
+            "self.receiver_reports",
+            "self.fraction_lost_q8",
+            "self.cumulative_lost",
+            "self.frames_dropped_inbound",
+            "self.frames_dropped_at_close",
+        ],
+    ));
     let mut server = stats(
         "stats_rtp",
         "tstrans.rtp",
@@ -427,6 +450,7 @@ pub fn stats_records() -> Vec<Entry> {
         rist,
         rtp,
         depay,
+        push,
         server,
         mount,
         publish,

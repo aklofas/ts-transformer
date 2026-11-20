@@ -9,11 +9,11 @@ mod tests;
 pub use session::RtspPush;
 
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use bytes::Bytes;
-use tst_core::transport::{EndReason, TransportError};
+use tst_core::transport::{EndReason, EndReasonHandle, TransportError};
 
 use crate::error::RtspError;
 use crate::rtcp::sender::TrackState;
@@ -23,6 +23,7 @@ use crate::rtsp::client::engine::{
     RECORD_BEFORE_SETUP, RequestBody, RequestSpec, RouteId, RouteKind, SETUP_BEFORE_ANNOUNCE,
     SetupAccepted, SetupRoute,
 };
+use crate::rtsp::client::media_queue::MediaQueue;
 use crate::rtsp::client::{CLOSE_JOIN_BOUND, CLOSE_TEARDOWN_BOUND, RtspClient};
 use crate::rtsp::message::RtspMethod;
 use crate::sdp::write::{
@@ -127,33 +128,121 @@ pub enum PushError {
     Empty(&'static str),
 }
 
-/// Counters of an [`RtspPush`], over all its tracks.
-#[derive(Debug, Clone, Default)]
-#[non_exhaustive]
-pub struct PushStats {
-    /// RTP packets handed to the client's thread.
-    pub packets_sent: u64,
-    /// Bytes of those packets, RTP header included.
-    pub bytes_sent: u64,
-    /// RTCP sender reports handed to the client's thread.
-    pub sender_reports_sent: u64,
-    /// RTCP receiver reports the server sent. A server that sends none
-    /// leaves this and the two loss figures at 0.
-    pub receiver_reports: u64,
-    /// The fraction of packets lost since the report before, in 1/256.
-    /// This and [`Self::cumulative_lost`] are the figures of one track:
-    /// the one whose RTCP channel carried the last receiver report, as
-    /// the last report that named that track gave them. With two tracks
-    /// reporting, the pair therefore changes between the tracks' values.
-    pub fraction_lost_q8: u8,
-    /// The packets lost since the start, for the same track.
-    pub cumulative_lost: u32,
-    /// Frames the server sent on a channel this side sends media on, read
-    /// and dropped.
-    pub frames_dropped_inbound: u64,
-    /// Frames still queued, not yet handed to the connection, when the
-    /// session ended or its TEARDOWN was sent: they were never written.
-    pub frames_dropped_at_close: u64,
+tst_core::binding_record! {
+    /// Counters of a push, over all its tracks.
+    ///
+    /// <!-- rust-only -->
+    /// Counters of an [`RtspPush`], over all its tracks; a
+    /// [`PushStatsHandle`] reads them without the push.
+    #[derive(Debug, Clone, Default, PartialEq, Eq)]
+    #[non_exhaustive]
+    pub struct PushStats {
+        /// RTP packets handed to the client's thread.
+        pub packets_sent: u64,
+        /// Bytes of those packets, RTP header included.
+        pub bytes_sent: u64,
+        /// RTCP sender reports handed to the client's thread.
+        pub sender_reports_sent: u64,
+        /// RTCP receiver reports the server sent. A server that sends none
+        /// leaves this and the two loss figures at 0.
+        pub receiver_reports: u64,
+        /// The fraction of packets lost since the report before, in 1/256.
+        /// This and [`Self::cumulative_lost`] are the figures of one track:
+        /// the one whose RTCP channel carried the last receiver report, as
+        /// the last report that named that track gave them. With two tracks
+        /// reporting, the pair therefore changes between the tracks' values.
+        pub fraction_lost_q8: u8,
+        /// The packets lost since the start, for the same track.
+        pub cumulative_lost: u32,
+        /// Frames the server sent on a channel this side sends media on, read
+        /// and dropped.
+        pub frames_dropped_inbound: u64,
+        /// Frames still queued, not yet handed to the connection, when the
+        /// session ended or its TEARDOWN was sent: they were never written.
+        pub frames_dropped_at_close: u64,
+    }
+}
+
+/// The counters a push increments as it sends, shared with every
+/// [`PushStatsHandle`].
+#[derive(Debug, Default)]
+pub(crate) struct PushCounters {
+    pub(crate) packets_sent: AtomicU64,
+    pub(crate) bytes_sent: AtomicU64,
+    pub(crate) sender_reports_sent: AtomicU64,
+}
+
+/// A reader of an [`RtspPush`]'s counters and end that does not borrow the
+/// push: it never waits for a send in progress, and it keeps answering the
+/// last values after the push is closed, dropped or moved into a shell.
+/// Obtain it with [`RtspPush::stats_handle`].
+#[derive(Clone)]
+pub struct PushStatsHandle {
+    counters: Arc<PushCounters>,
+    frames_dropped_inbound: Arc<AtomicU64>,
+    media: Arc<MediaQueue>,
+    /// Each track's receiver-report counters, held only for a copy.
+    rtcp: Vec<Arc<Mutex<RtcpStats>>>,
+    end_reason: EndReasonHandle,
+}
+
+impl std::fmt::Debug for PushStatsHandle {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PushStatsHandle")
+            .field("stats", &self.stats())
+            .field("end_reason", &self.end_reason())
+            .finish()
+    }
+}
+
+impl PushStatsHandle {
+    /// The push's counters now; the same values [`RtspPush::stats`]
+    /// reports.
+    pub fn stats(&self) -> PushStats {
+        push_stats(
+            &self.counters,
+            &self.frames_dropped_inbound,
+            self.media.dropped_at_close(),
+            self.rtcp.iter().map(|r| &**r),
+        )
+    }
+
+    /// Why the session ended, once it has; what [`RtspPush::end_reason`]
+    /// reports.
+    pub fn end_reason(&self) -> Option<EndReason> {
+        self.end_reason.get()
+    }
+}
+
+/// The [`PushStats`] of a push's shared counters and its tracks' RTCP
+/// counters.
+fn push_stats<'a>(
+    counters: &PushCounters,
+    frames_dropped_inbound: &AtomicU64,
+    frames_dropped_at_close: u64,
+    rtcp: impl Iterator<Item = &'a Mutex<RtcpStats>>,
+) -> PushStats {
+    let mut stats = PushStats {
+        packets_sent: counters.packets_sent.load(Ordering::Relaxed),
+        bytes_sent: counters.bytes_sent.load(Ordering::Relaxed),
+        sender_reports_sent: counters.sender_reports_sent.load(Ordering::Relaxed),
+        frames_dropped_inbound: frames_dropped_inbound.load(Ordering::Relaxed),
+        frames_dropped_at_close,
+        ..PushStats::default()
+    };
+    let mut latest = None;
+    for track in rtcp {
+        let Ok(rtcp) = track.lock() else {
+            continue;
+        };
+        stats.receiver_reports += rtcp.rr_packets_received;
+        if rtcp.last_rr_ts.is_some() && rtcp.last_rr_ts >= latest {
+            latest = rtcp.last_rr_ts;
+            stats.fraction_lost_q8 = rtcp.fraction_lost_q8;
+            stats.cumulative_lost = rtcp.cumulative_lost_send;
+        }
+    }
+    stats
 }
 
 /// What a track carries.

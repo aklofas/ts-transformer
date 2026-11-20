@@ -34,9 +34,10 @@ use tst_pipeline::binding::{BindingError, BindingErrorKind, Domain, Opened};
 use tst_rtp::error::RtspError as RustRtspError;
 use tst_rtp::rtsp::client::RtspCancelHandle as RustRtspCancelHandle;
 use tst_rtp::{
-    PushDescription as RustPushDescription, PushError, PushStats, RtspPush as RustRtspPush,
-    VideoTrack,
+    PushDescription as RustPushDescription, PushError, RtspPush as RustRtspPush, VideoTrack,
 };
+
+use crate::generated::stats_rtp::RtspPushStats;
 
 use crate::mux::{PyMuxerProgramConfig, py_pts90khz};
 use crate::raise::{RTP, RTSP, raise};
@@ -153,103 +154,6 @@ fn owned_bytes(py: Python<'_>, arg: &Bound<'_, PyAny>) -> PyResult<Vec<u8>> {
         )));
     }
     Ok(coerce_bytes_like(py, arg)?.as_bytes().to_vec())
-}
-
-// ---------------------------------------------------------------------------
-// RtspPushStats
-// ---------------------------------------------------------------------------
-
-/// Counters of a push, over all its tracks. Frozen snapshot.
-#[pyclass(name = "RtspPushStats", module = "tstrans.rtp", frozen)]
-pub struct PyRtspPushStats {
-    packets_sent: u64,
-    bytes_sent: u64,
-    sender_reports_sent: u64,
-    receiver_reports: u64,
-    fraction_lost_q8: u8,
-    cumulative_lost: u32,
-    frames_dropped_inbound: u64,
-    frames_dropped_at_close: u64,
-}
-
-impl From<PushStats> for PyRtspPushStats {
-    fn from(s: PushStats) -> Self {
-        Self {
-            packets_sent: s.packets_sent,
-            bytes_sent: s.bytes_sent,
-            sender_reports_sent: s.sender_reports_sent,
-            receiver_reports: s.receiver_reports,
-            fraction_lost_q8: s.fraction_lost_q8,
-            cumulative_lost: s.cumulative_lost,
-            frames_dropped_inbound: s.frames_dropped_inbound,
-            frames_dropped_at_close: s.frames_dropped_at_close,
-        }
-    }
-}
-
-#[pymethods]
-impl PyRtspPushStats {
-    /// RTP packets handed to the client's thread.
-    #[getter]
-    fn packets_sent(&self) -> u64 {
-        self.packets_sent
-    }
-    /// Bytes of those packets, RTP header included.
-    #[getter]
-    fn bytes_sent(&self) -> u64 {
-        self.bytes_sent
-    }
-    /// RTCP sender reports handed to the client's thread.
-    #[getter]
-    fn sender_reports_sent(&self) -> u64 {
-        self.sender_reports_sent
-    }
-    /// RTCP receiver reports the server sent.
-    #[getter]
-    fn receiver_reports(&self) -> u64 {
-        self.receiver_reports
-    }
-    /// The fraction of packets lost, in 1/256, from the last receiver report.
-    #[getter]
-    fn fraction_lost_q8(&self) -> u8 {
-        self.fraction_lost_q8
-    }
-    /// The packets lost since the start, from the same report.
-    #[getter]
-    fn cumulative_lost(&self) -> u32 {
-        self.cumulative_lost
-    }
-    /// Frames the server sent on a channel this side sends media on.
-    #[getter]
-    fn frames_dropped_inbound(&self) -> u64 {
-        self.frames_dropped_inbound
-    }
-    /// Frames still queued, never written, when the session ended.
-    /// Readable on a session that ended while still open (the server ended
-    /// it): `close()` and `teardown()` end the session before it could be
-    /// read, and `stats()` raises `CLOSED` after them. `teardown()` is the
-    /// call that reports a loss at the end: it raises unless the queued
-    /// media was written and the server accepted the TEARDOWN.
-    #[getter]
-    fn frames_dropped_at_close(&self) -> u64 {
-        self.frames_dropped_at_close
-    }
-
-    fn __repr__(&self) -> String {
-        format!(
-            "RtspPushStats(packets_sent={}, bytes_sent={}, sender_reports_sent={}, \
-             receiver_reports={}, fraction_lost_q8={}, cumulative_lost={}, \
-             frames_dropped_inbound={}, frames_dropped_at_close={})",
-            self.packets_sent,
-            self.bytes_sent,
-            self.sender_reports_sent,
-            self.receiver_reports,
-            self.fraction_lost_q8,
-            self.cumulative_lost,
-            self.frames_dropped_inbound,
-            self.frames_dropped_at_close,
-        )
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -692,9 +596,9 @@ impl PyRtspPushSession {
     /// send can stay parked for as long as the server takes a byte now and
     /// then. `cancel_handle()` never waits, and firing it is how to end a
     /// parked send.
-    fn stats(&self, py: Python<'_>) -> PyResult<PyRtspPushStats> {
+    fn stats(&self, py: Python<'_>) -> PyResult<RtspPushStats> {
         self.read(py, "stats", RustRtspPush::stats)
-            .map(PyRtspPushStats::from)
+            .map(|s| RtspPushStats::from(&s))
     }
 
     /// The session id the server named at SETUP.
@@ -778,7 +682,6 @@ impl PyRtspPushSession {
 
 pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyPushDescription>()?;
-    m.add_class::<PyRtspPushStats>()?;
     m.add_class::<PyRtspPushSession>()?;
     #[cfg(feature = "py-test-hooks")]
     probe::register(m)?;

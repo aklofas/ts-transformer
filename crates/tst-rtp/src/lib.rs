@@ -73,7 +73,8 @@ pub use rtsp::client::builder::RtspClientBuilder;
 pub use rtsp::client::options_describe::OptionsResponse;
 pub use rtsp::client::play::RtpInfo;
 pub use rtsp::client::push::{
-    PUSH_MP2T_MAX_PAYLOAD, PushDescription, PushError, PushStats, RtspPush, VideoTrack,
+    PUSH_MP2T_MAX_PAYLOAD, PushDescription, PushError, PushStats, PushStatsHandle, RtspPush,
+    VideoTrack,
 };
 pub use rtsp::client::session::RtspSession;
 pub use rtsp::client::{RtspCancelHandle, RtspClient};

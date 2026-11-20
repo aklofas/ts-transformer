@@ -176,9 +176,8 @@ impl DriverHandle {
         self.media.dropped_at_close()
     }
 
-    /// The media queue itself, for a test that watches it from a thread
-    /// the handle is not on.
-    #[cfg(test)]
+    /// The media queue itself, for a reader on a thread the handle is not
+    /// on (a push's stats handle, a test that watches the queue).
     pub(crate) fn media_queue(&self) -> Arc<MediaQueue> {
         self.media.clone()
     }

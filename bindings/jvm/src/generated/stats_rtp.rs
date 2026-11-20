@@ -97,6 +97,28 @@ pub(crate) fn build_depay_stats<'l>(
     Ok(obj)
 }
 
+pub(crate) fn build_push_stats<'l>(
+    env: &mut Env<'l>,
+    r: &tst_rtp::PushStats,
+) -> jni::errors::Result<JObject<'l>> {
+    env.ensure_local_capacity(48)?;
+    let obj = env.new_object(
+        crate::jutil::FindClass(jni_str!("org/tstrans/rtp/RtspPushStats")),
+        jni_sig!("(JJJJIJJJ)V"),
+        &[
+            JValue::Long(r.packets_sent as i64),
+            JValue::Long(r.bytes_sent as i64),
+            JValue::Long(r.sender_reports_sent as i64),
+            JValue::Long(r.receiver_reports as i64),
+            JValue::Int(r.fraction_lost_q8 as i32),
+            JValue::Long(r.cumulative_lost as i64),
+            JValue::Long(r.frames_dropped_inbound as i64),
+            JValue::Long(r.frames_dropped_at_close as i64),
+        ],
+    )?;
+    Ok(obj)
+}
+
 pub(crate) fn build_server_stats<'l>(
     env: &mut Env<'l>,
     r: &tst_rtp::ServerStats,

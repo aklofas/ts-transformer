@@ -117,6 +117,73 @@ impl From<&tst_rtp::H264DepayStats> for H264DepayStats {
     }
 }
 
+/// Counters of a push, over all its tracks.
+#[pyclass(
+    frozen,
+    from_py_object,
+    get_all,
+    name = "RtspPushStats",
+    module = "tstrans.rtp"
+)]
+#[derive(Debug, Clone, Copy)]
+pub struct RtspPushStats {
+    /// RTP packets handed to the client's thread.
+    pub packets_sent: u64,
+    /// Bytes of those packets, RTP header included.
+    pub bytes_sent: u64,
+    /// RTCP sender reports handed to the client's thread.
+    pub sender_reports_sent: u64,
+    /// RTCP receiver reports the server sent. A server that sends none
+    /// leaves this and the two loss figures at 0.
+    pub receiver_reports: u64,
+    /// The fraction of packets lost since the report before, in 1/256. This
+    /// and `cumulative_lost` are the figures of one track: the one whose
+    /// RTCP channel carried the last receiver report, as the last report
+    /// that named that track gave them. With two tracks reporting, the pair
+    /// therefore changes between the tracks' values.
+    pub fraction_lost_q8: u8,
+    /// The packets lost since the start, for the same track.
+    pub cumulative_lost: u32,
+    /// Frames the server sent on a channel this side sends media on, read
+    /// and dropped.
+    pub frames_dropped_inbound: u64,
+    /// Frames still queued, not yet handed to the connection, when the
+    /// session ended or its TEARDOWN was sent: they were never written.
+    pub frames_dropped_at_close: u64,
+}
+
+#[pymethods]
+impl RtspPushStats {
+    fn __repr__(&self) -> String {
+        format!(
+            "RtspPushStats(packets_sent={}, bytes_sent={}, sender_reports_sent={}, receiver_reports={}, fraction_lost_q8={}, cumulative_lost={}, frames_dropped_inbound={}, frames_dropped_at_close={})",
+            self.packets_sent,
+            self.bytes_sent,
+            self.sender_reports_sent,
+            self.receiver_reports,
+            self.fraction_lost_q8,
+            self.cumulative_lost,
+            self.frames_dropped_inbound,
+            self.frames_dropped_at_close
+        )
+    }
+}
+
+impl From<&tst_rtp::PushStats> for RtspPushStats {
+    fn from(r: &tst_rtp::PushStats) -> Self {
+        Self {
+            packets_sent: r.packets_sent,
+            bytes_sent: r.bytes_sent,
+            sender_reports_sent: r.sender_reports_sent,
+            receiver_reports: r.receiver_reports,
+            fraction_lost_q8: r.fraction_lost_q8,
+            cumulative_lost: r.cumulative_lost,
+            frames_dropped_inbound: r.frames_dropped_inbound,
+            frames_dropped_at_close: r.frames_dropped_at_close,
+        }
+    }
+}
+
 /// Aggregate server stats snapshot.
 #[pyclass(
     frozen,
@@ -354,6 +421,7 @@ impl TryFrom<&tst_rtp::PublishMountStats> for PublishMountStats {
 pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<RtpStats>()?;
     m.add_class::<H264DepayStats>()?;
+    m.add_class::<RtspPushStats>()?;
     m.add_class::<ServerStats>()?;
     m.add_class::<MountStats>()?;
     m.add_class::<PublishMountStats>()?;

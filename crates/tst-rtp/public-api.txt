@@ -759,10 +759,14 @@ pub tst_rtp::rtsp::client::push::PushStats::receiver_reports: u64
 pub tst_rtp::rtsp::client::push::PushStats::sender_reports_sent: u64
 impl core::clone::Clone for tst_rtp::rtsp::client::push::PushStats
 pub fn tst_rtp::rtsp::client::push::PushStats::clone(&self) -> tst_rtp::rtsp::client::push::PushStats
+impl core::cmp::Eq for tst_rtp::rtsp::client::push::PushStats
+impl core::cmp::PartialEq for tst_rtp::rtsp::client::push::PushStats
+pub fn tst_rtp::rtsp::client::push::PushStats::eq(&self, &tst_rtp::rtsp::client::push::PushStats) -> bool
 impl core::default::Default for tst_rtp::rtsp::client::push::PushStats
 pub fn tst_rtp::rtsp::client::push::PushStats::default() -> tst_rtp::rtsp::client::push::PushStats
 impl core::fmt::Debug for tst_rtp::rtsp::client::push::PushStats
 pub fn tst_rtp::rtsp::client::push::PushStats::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for tst_rtp::rtsp::client::push::PushStats
 impl core::marker::Freeze for tst_rtp::rtsp::client::push::PushStats
 impl core::marker::Send for tst_rtp::rtsp::client::push::PushStats
 impl core::marker::Sync for tst_rtp::rtsp::client::push::PushStats
@@ -770,6 +774,21 @@ impl core::marker::Unpin for tst_rtp::rtsp::client::push::PushStats
 impl core::marker::UnsafeUnpin for tst_rtp::rtsp::client::push::PushStats
 impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::rtsp::client::push::PushStats
 impl core::panic::unwind_safe::UnwindSafe for tst_rtp::rtsp::client::push::PushStats
+pub struct tst_rtp::rtsp::client::push::PushStatsHandle
+impl tst_rtp::rtsp::client::push::PushStatsHandle
+pub fn tst_rtp::rtsp::client::push::PushStatsHandle::end_reason(&self) -> core::option::Option<tst_core::transport::EndReason>
+pub fn tst_rtp::rtsp::client::push::PushStatsHandle::stats(&self) -> tst_rtp::rtsp::client::push::PushStats
+impl core::clone::Clone for tst_rtp::rtsp::client::push::PushStatsHandle
+pub fn tst_rtp::rtsp::client::push::PushStatsHandle::clone(&self) -> tst_rtp::rtsp::client::push::PushStatsHandle
+impl core::fmt::Debug for tst_rtp::rtsp::client::push::PushStatsHandle
+pub fn tst_rtp::rtsp::client::push::PushStatsHandle::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for tst_rtp::rtsp::client::push::PushStatsHandle
+impl core::marker::Send for tst_rtp::rtsp::client::push::PushStatsHandle
+impl core::marker::Sync for tst_rtp::rtsp::client::push::PushStatsHandle
+impl core::marker::Unpin for tst_rtp::rtsp::client::push::PushStatsHandle
+impl core::marker::UnsafeUnpin for tst_rtp::rtsp::client::push::PushStatsHandle
+impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::rtsp::client::push::PushStatsHandle
+impl core::panic::unwind_safe::UnwindSafe for tst_rtp::rtsp::client::push::PushStatsHandle
 pub struct tst_rtp::rtsp::client::push::RtspPush
 impl tst_rtp::RtspPush
 pub fn tst_rtp::RtspPush::cancel_handle(&self) -> tst_rtp::rtsp::client::RtspCancelHandle
@@ -784,6 +803,7 @@ pub fn tst_rtp::RtspPush::send_ts(&mut self, &[u8]) -> core::result::Result<(), 
 pub fn tst_rtp::RtspPush::send_video(&mut self, &[u8], tst_core::mpegts::common::Pts90khz) -> core::result::Result<(), tst_rtp::rtsp::client::push::PushError>
 pub fn tst_rtp::RtspPush::session_id(&self) -> &str
 pub fn tst_rtp::RtspPush::stats(&self) -> tst_rtp::rtsp::client::push::PushStats
+pub fn tst_rtp::RtspPush::stats_handle(&self) -> tst_rtp::rtsp::client::push::PushStatsHandle
 impl core::fmt::Debug for tst_rtp::RtspPush
 pub fn tst_rtp::RtspPush::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl tst_core::transport::Transport for tst_rtp::RtspPush
@@ -2457,10 +2477,14 @@ pub tst_rtp::PushStats::receiver_reports: u64
 pub tst_rtp::PushStats::sender_reports_sent: u64
 impl core::clone::Clone for tst_rtp::rtsp::client::push::PushStats
 pub fn tst_rtp::rtsp::client::push::PushStats::clone(&self) -> tst_rtp::rtsp::client::push::PushStats
+impl core::cmp::Eq for tst_rtp::rtsp::client::push::PushStats
+impl core::cmp::PartialEq for tst_rtp::rtsp::client::push::PushStats
+pub fn tst_rtp::rtsp::client::push::PushStats::eq(&self, &tst_rtp::rtsp::client::push::PushStats) -> bool
 impl core::default::Default for tst_rtp::rtsp::client::push::PushStats
 pub fn tst_rtp::rtsp::client::push::PushStats::default() -> tst_rtp::rtsp::client::push::PushStats
 impl core::fmt::Debug for tst_rtp::rtsp::client::push::PushStats
 pub fn tst_rtp::rtsp::client::push::PushStats::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for tst_rtp::rtsp::client::push::PushStats
 impl core::marker::Freeze for tst_rtp::rtsp::client::push::PushStats
 impl core::marker::Send for tst_rtp::rtsp::client::push::PushStats
 impl core::marker::Sync for tst_rtp::rtsp::client::push::PushStats
@@ -2468,6 +2492,21 @@ impl core::marker::Unpin for tst_rtp::rtsp::client::push::PushStats
 impl core::marker::UnsafeUnpin for tst_rtp::rtsp::client::push::PushStats
 impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::rtsp::client::push::PushStats
 impl core::panic::unwind_safe::UnwindSafe for tst_rtp::rtsp::client::push::PushStats
+pub struct tst_rtp::PushStatsHandle
+impl tst_rtp::rtsp::client::push::PushStatsHandle
+pub fn tst_rtp::rtsp::client::push::PushStatsHandle::end_reason(&self) -> core::option::Option<tst_core::transport::EndReason>
+pub fn tst_rtp::rtsp::client::push::PushStatsHandle::stats(&self) -> tst_rtp::rtsp::client::push::PushStats
+impl core::clone::Clone for tst_rtp::rtsp::client::push::PushStatsHandle
+pub fn tst_rtp::rtsp::client::push::PushStatsHandle::clone(&self) -> tst_rtp::rtsp::client::push::PushStatsHandle
+impl core::fmt::Debug for tst_rtp::rtsp::client::push::PushStatsHandle
+pub fn tst_rtp::rtsp::client::push::PushStatsHandle::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for tst_rtp::rtsp::client::push::PushStatsHandle
+impl core::marker::Send for tst_rtp::rtsp::client::push::PushStatsHandle
+impl core::marker::Sync for tst_rtp::rtsp::client::push::PushStatsHandle
+impl core::marker::Unpin for tst_rtp::rtsp::client::push::PushStatsHandle
+impl core::marker::UnsafeUnpin for tst_rtp::rtsp::client::push::PushStatsHandle
+impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::rtsp::client::push::PushStatsHandle
+impl core::panic::unwind_safe::UnwindSafe for tst_rtp::rtsp::client::push::PushStatsHandle
 pub struct tst_rtp::ReceiverReport
 pub tst_rtp::ReceiverReport::report_blocks: alloc::vec::Vec<tst_rtp::rtcp::ReportBlock>
 pub tst_rtp::ReceiverReport::ssrc: u32
@@ -2794,6 +2833,7 @@ pub fn tst_rtp::RtspPush::send_ts(&mut self, &[u8]) -> core::result::Result<(), 
 pub fn tst_rtp::RtspPush::send_video(&mut self, &[u8], tst_core::mpegts::common::Pts90khz) -> core::result::Result<(), tst_rtp::rtsp::client::push::PushError>
 pub fn tst_rtp::RtspPush::session_id(&self) -> &str
 pub fn tst_rtp::RtspPush::stats(&self) -> tst_rtp::rtsp::client::push::PushStats
+pub fn tst_rtp::RtspPush::stats_handle(&self) -> tst_rtp::rtsp::client::push::PushStatsHandle
 impl core::fmt::Debug for tst_rtp::RtspPush
 pub fn tst_rtp::RtspPush::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl tst_core::transport::Transport for tst_rtp::RtspPush

@@ -12,7 +12,10 @@ use tst_core::transport::{
     BrokenCause, EndReason, SocketStats, Transport, TransportCancel, TransportError,
 };
 
-use super::{PUSH_MP2T_MAX_PAYLOAD, PushDescription, PushError, PushStats, Track, TrackKind};
+use super::{
+    PUSH_MP2T_MAX_PAYLOAD, PushCounters, PushDescription, PushError, PushStats, PushStatsHandle,
+    Track, TrackKind, push_stats,
+};
 use crate::clock::RtpClock;
 use crate::error::RtspError;
 use crate::packet::{Chunk, RTP_HEADER_LEN};
@@ -146,9 +149,9 @@ pub struct RtspPush {
     /// The RTP timestamps of an MPEG-TS track.
     clock: RtpClock,
     cname: String,
-    packets_sent: u64,
-    bytes_sent: u64,
-    sender_reports_sent: u64,
+    /// Packets, bytes and sender reports sent, shared with every
+    /// [`PushStatsHandle`].
+    counters: Arc<PushCounters>,
     /// What the frames last handed to the media queue carry.
     pub(super) queued: QueuedKinds,
     paused: bool,
@@ -269,9 +272,7 @@ impl RtspPush {
             timeline: None,
             clock: RtpClock::new(random_u32()),
             cname: random_cname(),
-            packets_sent: 0,
-            bytes_sent: 0,
-            sender_reports_sent: 0,
+            counters: Arc::default(),
             queued: QueuedKinds::default(),
             paused: false,
             closed: false,
@@ -558,27 +559,26 @@ impl RtspPush {
 
     /// The push's counters now.
     pub fn stats(&self) -> PushStats {
-        let mut stats = PushStats {
-            packets_sent: self.packets_sent,
-            bytes_sent: self.bytes_sent,
-            sender_reports_sent: self.sender_reports_sent,
-            frames_dropped_inbound: self.client.frames_dropped_inbound.load(Ordering::Relaxed),
-            frames_dropped_at_close: self.client.driver.frames_dropped_at_close(),
-            ..PushStats::default()
-        };
-        let mut latest = None;
-        for track in &self.tracks {
-            let Ok(rtcp) = track.rtcp.lock() else {
-                continue;
-            };
-            stats.receiver_reports += rtcp.rr_packets_received;
-            if rtcp.last_rr_ts.is_some() && rtcp.last_rr_ts >= latest {
-                latest = rtcp.last_rr_ts;
-                stats.fraction_lost_q8 = rtcp.fraction_lost_q8;
-                stats.cumulative_lost = rtcp.cumulative_lost_send;
-            }
+        push_stats(
+            &self.counters,
+            &self.client.frames_dropped_inbound,
+            self.client.driver.frames_dropped_at_close(),
+            self.tracks.iter().map(|t| &*t.rtcp),
+        )
+    }
+
+    /// A reader of [`Self::stats`] and [`Self::end_reason`] that outlives
+    /// the push and never waits for it: take it before the push moves to
+    /// the thread that sends, into a shell, or behind a binding's lock.
+    #[must_use]
+    pub fn stats_handle(&self) -> PushStatsHandle {
+        PushStatsHandle {
+            counters: Arc::clone(&self.counters),
+            frames_dropped_inbound: Arc::clone(&self.client.frames_dropped_inbound),
+            media: self.client.driver.media_queue(),
+            rtcp: self.tracks.iter().map(|t| Arc::clone(&t.rtcp)).collect(),
+            end_reason: self.client.end_reason.clone(),
         }
-        stats
     }
 
     /// The session id the server named at SETUP.
@@ -730,7 +730,9 @@ impl RtspPush {
         if self.tracks[at].state.report_due(now) {
             let report = self.report(at, ntp, rtp)?;
             self.queue(report, Queued::Report)?;
-            self.sender_reports_sent += 1;
+            self.counters
+                .sender_reports_sent
+                .fetch_add(1, Ordering::Relaxed);
             self.tracks[at].state.mark_reported(now);
         }
         for (payload, marker) in packets {
@@ -740,8 +742,10 @@ impl RtspPush {
             let channel = track.channels.0;
             let packet = frame(channel, &[header.as_slice(), payload])?;
             self.queue(packet, Queued::Media)?;
-            self.packets_sent += 1;
-            self.bytes_sent += (RTP_HEADER_LEN + payload.len()) as u64;
+            self.counters.packets_sent.fetch_add(1, Ordering::Relaxed);
+            self.counters
+                .bytes_sent
+                .fetch_add((RTP_HEADER_LEN + payload.len()) as u64, Ordering::Relaxed);
         }
         Ok(())
     }
@@ -760,7 +764,9 @@ impl RtspPush {
                     continue;
                 };
                 self.enqueue(report, Queued::Report)?;
-                self.sender_reports_sent += 1;
+                self.counters
+                    .sender_reports_sent
+                    .fetch_add(1, Ordering::Relaxed);
             }
         }
         self.client.driver.drain_media(&self.client.cancel)
