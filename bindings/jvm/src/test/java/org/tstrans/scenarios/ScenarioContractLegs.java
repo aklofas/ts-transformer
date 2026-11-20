@@ -14,7 +14,6 @@ import java.net.ServerSocket;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.Map;
 import java.util.TreeMap;
 import java.util.concurrent.CompletableFuture;
@@ -34,8 +33,8 @@ import org.tstrans.srt.RejectReason;
 
 /**
  * The JVM legs of the binding_contract scenarios whose golden carries observed values in
- * {@code extensions}. {@link ScenarioReproductionTest} runs each one for its id, so the
- * golden is compared on the JVM, not only declared.
+ * {@code extensions}. {@link ScenarioReproductionTest} runs each one for its id with the
+ * golden's text, so the golden is compared on the JVM, not only declared.
  */
 final class ScenarioContractLegs {
     private ScenarioContractLegs() {}
@@ -48,10 +47,8 @@ final class ScenarioContractLegs {
      * whose peer writes it and closes normally; at the end of the stream the six counters
      * equal the golden's {@code extensions.stats}.
      */
-    static void demuxReceiverStats() throws Exception {
-        Path dir = scenarioDir("demux-receiver-stats");
-        byte[] input = Files.readAllBytes(dir.resolve("input.ts"));
-        String golden = Files.readString(dir.resolve("golden.json"), StandardCharsets.UTF_8);
+    static void demuxReceiverStats(String golden) throws Exception {
+        byte[] input = Files.readAllBytes(scenarioDir("demux-receiver-stats").resolve("input.ts"));
         assertEquals("demux_receiver_stats", GoldenSupport.stringField(golden, "contract"));
         assertEquals("[]", GoldenSupport.arrayField(golden, "core").replaceAll("\\s", ""),
             "the receive leg observes no core event");
@@ -112,10 +109,9 @@ final class ScenarioContractLegs {
      * names its JVM {@link RejectReason} and the JVM has no constant the table lacks; then a
      * caller refused by a listener rule reads the golden's kind and reason.
      */
-    static void srtRejectReason() throws Exception {
-        Path dir = scenarioDir("srt-reject-reason");
-        String golden = Files.readString(dir.resolve("golden.json"), StandardCharsets.UTF_8);
-        String streamId = Files.readString(dir.resolve("input.bin"), StandardCharsets.UTF_8);
+    static void srtRejectReason(String golden) throws Exception {
+        String streamId = Files.readString(scenarioDir("srt-reject-reason").resolve("input.bin"),
+            StandardCharsets.UTF_8);
         assertEquals("srt_reject_reason", GoldenSupport.stringField(golden, "contract"));
 
         Map<Integer, String> table = new TreeMap<>();
