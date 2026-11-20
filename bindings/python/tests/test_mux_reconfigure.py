@@ -135,25 +135,66 @@ def test_a_removed_streams_handle_raises_invalid_usage() -> None:
         ),
         # The PID moved to another program.
         lambda: _config(_video_program(1, 0x100, 0x111), _video_program(2, 0x200, 0x101)),
+        # The PCR moved to 0x102 while 0x101, which carried it, stays.
+        lambda: _config(
+            MuxerProgramConfigBuilder(1, 0x100)
+            .add_video(0x101, VideoCodec.H264)
+            .add_video(0x102, VideoCodec.H264)
+            .pcr_pid(0x102)
+            .build()
+        ),
         # A muxer-wide setting differs from the running one.
         lambda: MuxerConfigBuilder()
         .add_program(_video_program(1, 0x100, 0x101))
         .pcr_interval_ms(20)
         .build(),
     ],
-    ids=["pmt-pid-moved", "codec-changed", "pid-moved-program", "muxer-setting-changed"],
+    ids=[
+        "pmt-pid-moved",
+        "codec-changed",
+        "pid-moved-program",
+        "pcr-moved-old-stays",
+        "muxer-setting-changed",
+    ],
 )
 def test_a_refused_config_raises_config_invalid_and_changes_nothing(refused) -> None:
-    start = _config(_video_program(1, 0x100, 0x101))
+    start = _config(
+        MuxerProgramConfigBuilder(1, 0x100)
+        .add_video(0x101, VideoCodec.H264)
+        .add_video(0x102, VideoCodec.H264)
+        .build()
+    )
     m = Muxer(start)
     twin = Muxer(start)
-    [v] = m.video_handles()
-    [tv] = twin.video_handles()
+    v = m.video_handles()[0]
+    tv = twin.video_handles()[0]
     assert _push_frames(m, v, 90_000, 3) == _push_frames(twin, tv, 90_000, 3)
     bad = refused()  # valid on its own: only reconfigure refuses it
+    handles = m.video_handles()
     with pytest.raises(MuxError) as ei:
         m.reconfigure(bad)
     assert ei.value.kind == MuxErrorKind.CONFIG_INVALID
-    assert m.video_handles() == [v]
+    assert m.video_handles() == handles
     after = _push_frames(m, v, 99_000, 3)
     assert after == _push_frames(twin, tv, 99_000, 3)
+
+
+def test_the_pcr_moves_when_its_stream_leaves_in_the_same_call() -> None:
+    # 0x101 carries the PCR (the first video stream); removing it lets the
+    # PCR move to 0x102, which stays.
+    m = Muxer(
+        _config(
+            MuxerProgramConfigBuilder(1, 0x100)
+            .add_video(0x101, VideoCodec.H264)
+            .add_video(0x102, VideoCodec.H264)
+            .build()
+        )
+    )
+    first, second = m.video_handles()
+    ts = _push_frames(m, first, 90_000, 2)
+    m.reconfigure(_config(_video_program(1, 0x100, 0x102)))
+    assert m.video_handles() == [second]
+    ts += _push_frames(m, second, 96_000, 2)
+    maps = [e for e in _events(ts) if isinstance(e, DemuxEvent.ProgramMap)]
+    assert [p.pcr_pid for p in maps[0].programs] == [0x101]
+    assert [p.pcr_pid for p in maps[-1].programs] == [0x102]
