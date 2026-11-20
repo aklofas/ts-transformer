@@ -11,6 +11,7 @@ receiver); on Linux a missing second address fails the test.
 
 from __future__ import annotations
 
+import ipaddress
 import select
 import socket
 import sys
@@ -23,6 +24,7 @@ import pytest
 from tstrans import rist, shells, udp
 from tstrans.exceptions import RistError, RistErrorKind, UdpError, UdpErrorKind
 
+from _builders.native_hooks import native_hook
 from _builders.ports import free_udp_port
 from _builders.rist_ports import bind_even_port_or_skip
 
@@ -684,3 +686,29 @@ def test_shell_over_rist_reports_the_senders_address() -> None:
             tx.close()
     finally:
         rx.close()
+
+
+# ---------------------------------------------------------------------------
+# The address tuple every getter builds
+# ---------------------------------------------------------------------------
+
+
+def test_a_scoped_ipv6_address_keeps_its_scope_id() -> None:
+    fmt = native_hook("_addr_tuple_for_test")
+    host, port = fmt("fe80::1", 4242, 2)
+    assert (host, port) == ("fe80::1%2", 4242)
+    assert ipaddress.ip_address(host).scope_id == "2"
+    # Scope id 0 is "no scope": no `%` in the host.
+    assert fmt("fe80::1", 4242, 0) == ("fe80::1", 4242)
+    assert fmt("2001:db8::1", 1, 0) == ("2001:db8::1", 1)
+    assert fmt("192.0.2.1", 5, 0) == ("192.0.2.1", 5)
+
+
+def test_an_ipv4_mapped_address_is_reported_as_measured() -> None:
+    # A dual-stack receiver hears an IPv4 sender as ::ffff:a.b.c.d; the UDP
+    # and RIST source records already report it in IPv4 form
+    # (`test_udp_dual_stack_bind_reports_an_ipv4_sender_in_ipv4_form`), and
+    # every getter that builds a tuple reports it the same way.
+    fmt = native_hook("_addr_tuple_for_test")
+    assert fmt("::ffff:127.0.0.1", 4242, 0) == ("127.0.0.1", 4242)
+    assert fmt("::ffff:192.0.2.7", 9, 0) == ("192.0.2.7", 9)

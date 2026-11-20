@@ -1881,8 +1881,10 @@ refusing by `first` works only against a sender that stops.
 - **Where.** `peer_addr() -> Optional[Tuple[str, int]]` and
   `source_rejected() -> int` on `shells.Receiver` and `shells.DemuxReceiver`
   (any `udp://` or `rist://` URL), `udp.RecvTransport` and
-  `rist.RecvTransport`. The host is the IP as text, unbracketed, and without
-  an IPv6 scope id: a link-local sender's interface is not in the tuple. `peer_addr()`
+  `rist.RecvTransport`. The host is the IP as text, unbracketed; a scoped
+  IPv6 host carries `%<scope id>` (`"fe80::1%2"`, the form
+  `ipaddress.ip_address` parses and `socket.sendto` accepts), and an IPv4
+  sender heard on a dual-stack bind is reported in IPv4 form. `peer_addr()`
   is `None` until the first datagram or block is delivered. The builders set
   the pin with `udp.RecvTransportBuilder.source(value)` and
   `rist.RecvTransportBuilder.source(value)` (`"first"` or an IP literal).
@@ -2037,6 +2039,8 @@ with WhepServer.bind("whep://0.0.0.0:8889?advertise=192.0.2.10") as server:
   reverse proxy on the same host, set `advertise=` to the address viewers
   reach (see [Network](/docs/guides/webrtc.md#network-ice-ports-tls)). One
   UDP port (`media_port`, default the signalling port) carries every viewer.
+  `local_addr()` (signalling) and `media_addr()` return `(host, port)`
+  tuples with the kernel's port when the URL asked for port 0.
 - **Mounts.** `add_mount(path)` (or `add_mount(path, MountConfig())`) is an
   elementary H.264 mount with audio dropped and KLV in both carriages; set
   `MountConfig` fields to choose `MountKind.MP2T` (feed MPEG-TS with
@@ -2071,7 +2075,9 @@ with WhepServer.bind("whep://0.0.0.0:8889?advertise=192.0.2.10") as server:
   0..=255 raises `ValueError`.
 - **Stats.** `WhepServer.stats()`, `MountHandle.stats()` and
   `MountHandle.sessions()` (one `SessionStats` per viewer, with
-  `connected_for_ms` `None` until the session connects) are snapshots.
+  `connected_for_ms` `None` until the session connects and `remote_addr` a
+  `(host, port)` tuple once ICE has selected the viewer's address) are
+  snapshots.
   `WhepServer.stats()` and `MountHandle.sessions()` ask the media thread and
   can wait up to 2 s for its reply when it is busy, so call them from a
   monitoring thread, not the thread that paces pushes; they release the GIL

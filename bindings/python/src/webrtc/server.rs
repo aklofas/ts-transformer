@@ -120,15 +120,15 @@ impl PyWhepServer {
         Ok(ServerStats::from(&s))
     }
 
-    /// The signalling (HTTP) address as `"ip:port"`, with the kernel's port
-    /// when the URL asked for port 0.
-    pub fn local_addr(&self, py: Python<'_>) -> PyResult<String> {
-        Ok(self.server(py)?.local_addr().to_string())
+    /// The signalling (HTTP) address as `(host, port)`, with the kernel's
+    /// port when the URL asked for port 0.
+    pub fn local_addr(&self, py: Python<'_>) -> PyResult<crate::util::PyAddr> {
+        Ok(crate::util::addr_tuple(self.server(py)?.local_addr()))
     }
 
-    /// The media (UDP) address as `"ip:port"`, shared by every viewer.
-    pub fn media_addr(&self, py: Python<'_>) -> PyResult<String> {
-        Ok(self.server(py)?.media_addr().to_string())
+    /// The media (UDP) address as `(host, port)`, shared by every viewer.
+    pub fn media_addr(&self, py: Python<'_>) -> PyResult<crate::util::PyAddr> {
+        Ok(crate::util::addr_tuple(self.server(py)?.media_addr()))
     }
 
     /// Stops the server: every mount's pushes then raise

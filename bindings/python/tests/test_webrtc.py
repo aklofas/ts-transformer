@@ -79,22 +79,19 @@ def server():
 # ---------------------------------------------------------------------------
 
 
-def test_bind_reports_kernel_picked_addresses(server):
-    addr = server.local_addr()
-    host, port = addr.rsplit(":", 1)
+def test_whep_local_and_media_addr_are_tuples(server):
+    host, port = server.local_addr()
     assert host == "127.0.0.1"
-    assert int(port) > 0
-    media_host, media_port = server.media_addr().rsplit(":", 1)
+    assert isinstance(port, int) and port > 0
+    media_host, media_port = server.media_addr()
     assert media_host == "127.0.0.1"
-    assert int(media_port) > 0
+    assert isinstance(media_port, int) and media_port > 0
 
 
 def test_preflight_does_not_advertise_patch(server):
     # Neither trickle ICE nor ICE restart is supported; a client that sees
     # PATCH in the method list switches to trickle and then needs an ETag.
-    conn = http.client.HTTPConnection(
-        *server.local_addr().rsplit(":", 1), timeout=10
-    )
+    conn = http.client.HTTPConnection(*server.local_addr(), timeout=10)
     try:
         conn.request("OPTIONS", "/cam")
         resp = conn.getresponse()
@@ -186,7 +183,8 @@ def test_session_stats_class_is_exported():
 
 def test_repr_names_the_addresses_and_path(server):
     m = server.add_mount("/cam")
-    assert server.local_addr() in repr(server)
+    host, port = server.local_addr()
+    assert f"{host}:{port}" in repr(server)
     assert "/cam" in repr(m)
 
 
@@ -281,8 +279,8 @@ def test_hostname_bind_is_url():
 
 
 def test_refused_bind_is_io(server):
-    taken = server.local_addr()
-    assert _kind_of(lambda: WhepServer.bind(f"whep://{taken}")) == WebrtcErrorKind.IO
+    host, port = server.local_addr()
+    assert _kind_of(lambda: WhepServer.bind(f"whep://{host}:{port}")) == WebrtcErrorKind.IO
 
 
 def test_mount_errors(server):
@@ -408,3 +406,43 @@ def test_a_viewer_receives_frames_pushed_from_python(server):
     assert m.stats().frames_pushed > 0
     assert server.stats().rtp_packets_sent > 0
     assert server.stats().sessions_total == 1
+
+
+def test_session_stats_remote_addr_is_a_tuple_or_none(server):
+    probe = _probe()
+    aus = _gop_access_units()
+    m = server.add_mount("/cam")
+    done = threading.Event()
+
+    def push() -> None:
+        pts = 0
+        while not done.is_set():
+            for i, au in enumerate(aus):
+                if done.is_set():
+                    break
+                m.push_video(au, pts=Pts90khz(pts), key_frame=i == 0)
+                pts += 3000
+                time.sleep(0.033)
+
+    pusher = threading.Thread(target=push, name="whep-pusher", daemon=True)
+    pusher.start()
+    seen: list[object] = []
+    try:
+        assert probe(server, "/cam") > 0
+        # The session outlives the probe's viewer until its ICE times out;
+        # its address is set once ICE selected a pair.
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            seen = [s.remote_addr for s in m.sessions()]
+            if any(a is not None for a in seen):
+                break
+            time.sleep(0.01)
+    finally:
+        done.set()
+        pusher.join(5)
+    assert seen, "no session listed after the viewer connected"
+    for addr in seen:
+        assert addr is None or isinstance(addr, tuple)
+    host, port = next(a for a in seen if a is not None)
+    assert host == "127.0.0.1"
+    assert isinstance(port, int) and port > 0

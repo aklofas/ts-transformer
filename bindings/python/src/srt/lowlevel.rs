@@ -597,7 +597,7 @@ impl PySocket {
                 make_kinded_error(py, "SrtError", "SrtErrorKind", "CLOSED", "socket is closed")
             })?
             .map_err(|e| raise(py, &SRT, BindingError::from(e)))?;
-        Ok((addr.ip().to_string(), addr.port()))
+        Ok(crate::util::addr_tuple(addr))
     }
 
     /// Peer address as `(host, port)`. Errors if the socket isn't
@@ -614,7 +614,7 @@ impl PySocket {
                 make_kinded_error(py, "SrtError", "SrtErrorKind", "CLOSED", "socket is closed")
             })?
             .map_err(|e| raise(py, &SRT, BindingError::from(e)))?;
-        Ok((addr.ip().to_string(), addr.port()))
+        Ok(crate::util::addr_tuple(addr))
     }
 
     /// Stream ID negotiated at handshake, if any.
@@ -807,7 +807,7 @@ impl PyListener {
                 ));
             }
         };
-        Ok((addr.ip().to_string(), addr.port()))
+        Ok(crate::util::addr_tuple(addr))
     }
 
     /// Close the listener. Fires the cancel handle BEFORE taking the

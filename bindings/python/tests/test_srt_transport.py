@@ -629,3 +629,37 @@ def test_every_public_transport_class_has_a_docstring(mod_name: str) -> None:
         and not (obj.__doc__ or "").strip()
     ]
     assert not missing, f"tstrans.{mod_name} classes without a docstring: {missing}"
+
+
+# --------------------------------------------------------------------------- #
+# Address tuples                                                              #
+# --------------------------------------------------------------------------- #
+
+
+def test_ipv6_socket_addresses_are_unscoped_host_port_tuples() -> None:
+    """An IPv6 address without a scope id is `(ip, port)`, no `%`; the
+    scoped form is pinned in test_peer_addr.py through the shared helper."""
+    try:
+        lst = tstrans.srt.Builder("srt://[::1]:0?mode=listener").listen()
+    except SrtError as e:
+        pytest.skip(f"no IPv6 loopback bind: {e}")
+    port = lst.local_addr()[1]
+    accepted: list[tstrans.srt.Socket] = []
+    t = threading.Thread(
+        target=lambda: accepted.append(lst.accept(timeout_ms=5000)), daemon=True
+    )
+    t.start()
+    caller = tstrans.srt.Builder(f"srt://[::1]:{port}").connect()
+    t.join(5.0)
+    try:
+        assert accepted, "the listener did not accept within 5 s"
+        assert lst.local_addr() == ("::1", port)
+        assert caller.peer_addr() == ("::1", port)
+        host, cport = accepted[0].peer_addr()
+        assert (host, cport) == caller.local_addr()
+        assert host == "::1"
+    finally:
+        caller.close()
+        for s in accepted:
+            s.close()
+        lst.close()

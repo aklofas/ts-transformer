@@ -192,8 +192,8 @@ pub struct PySessionStats {
     id: String,
     /// The path of the mount the session plays.
     mount_path: String,
-    /// The viewer's address as `"ip:port"` once ICE has selected one.
-    remote_addr: Option<String>,
+    /// The viewer's address as `(host, port)` once ICE has selected one.
+    remote_addr: Option<crate::util::PyAddr>,
     /// The ICE connection state: `new`, `checking`, `connected`,
     /// `disconnected`, `failed` or `closed`.
     ice_state: String,
@@ -234,7 +234,7 @@ impl From<&SessionStats> for PySessionStats {
         Self {
             id: s.id.clone(),
             mount_path: s.mount_path.clone(),
-            remote_addr: s.remote_addr.map(|a| a.to_string()),
+            remote_addr: s.remote_addr.map(crate::util::addr_tuple),
             ice_state: ice_state_name(s.ice_state).to_string(),
             connected_for_ms: s
                 .connected_for

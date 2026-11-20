@@ -1,5 +1,5 @@
-"""Lookup of the native `py-test-hooks` helpers in `tstrans._native.shells`
-and `tstrans._native.rtp`.
+"""Lookup of the native `py-test-hooks` helpers in `tstrans._native` and its
+`shells` and `rtp` submodules.
 
 A build without the `py-test-hooks` feature lacks them: the test skips,
 unless `TSTRANS_EXPECT_TEST_HOOKS=1` says the hooks were built, in which
@@ -30,3 +30,7 @@ def shells_hook(name):
 
 def rtp_hook(name):
     return _hook(_native.rtp, name)
+
+
+def native_hook(name):
+    return _hook(_native, name)

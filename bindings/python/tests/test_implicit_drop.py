@@ -290,10 +290,10 @@ def test_gc_dropped_whep_server_releases_its_port():
     from tstrans.webrtc import WhepServer
 
     s = WhepServer.bind("whep://127.0.0.1:0")
-    addr = s.local_addr()
+    host, port = s.local_addr()
     del s
     gc.collect()
-    again = _retry(lambda: WhepServer.bind(f"whep://{addr}"))
+    again = _retry(lambda: WhepServer.bind(f"whep://{host}:{port}"))
     again.close()
 
 

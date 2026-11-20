@@ -458,11 +458,44 @@ pub(crate) fn redact_url_py(url: &str) -> String {
 
 /// A socket address as Python's `(host, port)`: the IP as text, unbracketed,
 /// a 2-tuple for IPv6 too; the shape `tstrans.srt.Socket.peer_addr()` returns.
+/// A scoped IPv6 host carries `%<scope id>` (the form `ipaddress` parses and
+/// `socket.sendto` accepts); an IPv4-mapped IPv6 address is reported as the
+/// IPv4 address, as the source records report one.
 pub(crate) type PyAddr = (String, u16);
 
 /// `addr` as a [`PyAddr`].
 pub(crate) fn addr_tuple(addr: std::net::SocketAddr) -> PyAddr {
-    (addr.ip().to_string(), addr.port())
+    match addr {
+        std::net::SocketAddr::V4(v4) => (v4.ip().to_string(), v4.port()),
+        std::net::SocketAddr::V6(v6) => match v6.ip().to_ipv4_mapped() {
+            Some(v4) => (v4.to_string(), v6.port()),
+            None if v6.scope_id() != 0 => (format!("{}%{}", v6.ip(), v6.scope_id()), v6.port()),
+            None => (v6.ip().to_string(), v6.port()),
+        },
+    }
+}
+
+/// `_addr_tuple_for_test(host, port, scope_id)`: [`addr_tuple`] of the
+/// address built from an IP literal, a port and an IPv6 scope id, so the
+/// tests reach the scoped form without a link-local peer.
+#[cfg(feature = "py-test-hooks")]
+#[pyfunction]
+#[pyo3(name = "_addr_tuple_for_test")]
+pub(crate) fn addr_tuple_for_test(host: &str, port: u16, scope_id: u32) -> PyResult<PyAddr> {
+    use std::net::{IpAddr, SocketAddr, SocketAddrV6};
+    let ip: IpAddr = host.parse().map_err(|_| {
+        pyo3::exceptions::PyValueError::new_err(format!("not an IP literal: {host:?}"))
+    })?;
+    let addr = match ip {
+        IpAddr::V4(v4) if scope_id == 0 => SocketAddr::from((v4, port)),
+        IpAddr::V4(_) => {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "an IPv4 address has no scope id",
+            ));
+        }
+        IpAddr::V6(v6) => SocketAddr::V6(SocketAddrV6::new(v6, port, 0, scope_id)),
+    };
+    Ok(addr_tuple(addr))
 }
 
 /// The last delivering sender of a transport's source record, if it keeps one.
