@@ -289,13 +289,14 @@ mod tests {
 
     #[test]
     fn a_time_before_1970_is_negative_not_clamped() {
+        // Whole 100 ns: Windows' `SystemTime` drops anything finer.
         assert_eq!(
-            epoch_seconds_nanos(UNIX_EPOCH + Duration::new(5, 7)),
-            (5, 7)
+            epoch_seconds_nanos(UNIX_EPOCH + Duration::new(5, 700)),
+            (5, 700)
         );
         assert_eq!(
-            epoch_seconds_nanos(UNIX_EPOCH - Duration::new(5, 7)),
-            (-5, -7)
+            epoch_seconds_nanos(UNIX_EPOCH - Duration::new(5, 700)),
+            (-5, -700)
         );
     }
 }
