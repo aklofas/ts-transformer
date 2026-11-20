@@ -505,6 +505,43 @@ def _audio_klv_roundtrip_ts_bytes() -> bytes:
     return bytes(out)
 
 
+def _muxer_reconfigure_ts_bytes() -> bytes:
+    """Reproduce the ``muxer-reconfigure`` mux recipe byte-for-byte.
+
+    Program 1 (pmt_pid 0x1000) starts with H.264 video 0x1011 + AAC audio
+    0x1021: one IDR and one ADTS frame at PTS 0. ``reconfigure`` then drops
+    the audio and adds synchronous KLV 0x1031 (video unchanged): one IDR and
+    one ST 0601 LS at PTS 3600.
+    """
+
+    def config(audio: bool, klv: bool) -> Any:
+        prog = MuxerProgramConfigBuilder(program_number=1, pmt_pid=0x1000).add_video(
+            pid=0x1011, codec=VideoCodec.H264
+        )
+        if audio:
+            prog = prog.add_audio(0x1021, AudioCodec.AAC)
+        if klv:
+            prog = prog.add_klv(0x1031, KlvStreamType.SYNCHRONOUS_METADATA, carries_pts=True)
+        return MuxerConfigBuilder().add_program(prog.build()).build()
+
+    mux = Muxer(config(audio=True, klv=False))
+    pts = Pts90khz.from_raw(0)
+    mux.push_video(_synthetic_h264_idr(), pts=pts, key_frame=True)
+    mux.push_audio(_synthetic_adts_frame(), pts=pts)
+    mux.reconfigure(config(audio=False, klv=True))
+    pts = Pts90khz.from_raw(3600)
+    mux.push_video(_synthetic_h264_idr(), pts=pts, key_frame=True)
+    mux.push_klv(_minimal_st0601_ls(), pts=pts, metadata_service_id=0)
+    out = bytearray()
+    buf = bytearray(1316)  # 7 × 188
+    while True:
+        n = mux.pull(buf)
+        if n == 0:
+            break
+        out.extend(buf[:n])
+    return bytes(out)
+
+
 def _run_roundtrip(
     scenario_id: str,
     input_path: Path,
@@ -526,6 +563,8 @@ def _run_roundtrip(
         fresh = _video_dts_roundtrip_ts_bytes()
     elif scenario_id == "video-misp-roundtrip":
         fresh = _video_misp_roundtrip_ts_bytes()
+    elif scenario_id == "muxer-reconfigure":
+        fresh = _muxer_reconfigure_ts_bytes()
     else:
         pytest.fail(f"unknown roundtrip scenario id: {scenario_id!r}")
 
@@ -841,6 +880,133 @@ def _run_peer_reset_recv_kind(scenario_id: str, packet: bytes) -> list[dict[str,
     return [{"event": "error", "code": outcome["kind"]}]
 
 
+def _scaled(seconds: float) -> float:
+    """``seconds`` times ``TST_TEST_TIMEOUT_SCALE`` (unset or invalid = 1),
+    as the Rust ``scaled()`` helper."""
+    import os
+
+    try:
+        scale = max(int(os.environ.get("TST_TEST_TIMEOUT_SCALE", "1")), 1)
+    except ValueError:
+        scale = 1
+    return seconds * scale
+
+
+def _run_demux_receiver_stats(
+    scenario_id: str, input_bytes: bytes
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """The committed TS through a caller-mode TCP ``DemuxReceiver``; the
+    observed extensions carry its six counters after the end of the stream.
+
+    The peer (a plain socket) writes the input and closes normally (a FIN);
+    the receiver is read on a daemon thread until its iteration ends, under a
+    10 s FAILURE bound that cancels the pre-obtained handle on a miss.  Any
+    other end (an exception) fails the scenario.
+    """
+    import socket
+    import threading
+
+    from _builders.wait import wait_until
+
+    deadline = _scaled(10.0)
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server:
+        server.bind(("127.0.0.1", 0))
+        server.listen(1)
+        port = server.getsockname()[1]
+        receiver = shells.DemuxReceiver.open(f"tcp://127.0.0.1:{port}")
+        handle = receiver.cancel_handle()
+        conn, _ = server.accept()
+        with conn:
+            conn.sendall(input_bytes)
+
+    outcome: dict[str, Any] = {}
+
+    def recv_worker() -> None:
+        try:
+            for _ in receiver:
+                pass
+            outcome["end"] = "end of stream"
+        except BaseException as exc:  # noqa: BLE001
+            outcome["end"] = repr(exc)
+
+    w = threading.Thread(target=recv_worker, daemon=True, name="demux-stats-recv")
+    w.start()
+    if not wait_until(lambda: not w.is_alive(), deadline):
+        handle.cancel()
+        w.join(timeout=5.0)
+        pytest.fail(f"[{scenario_id}] the receive did not end within {deadline} s of the FIN")
+    assert outcome.get("end") == "end of stream", (
+        f"[{scenario_id}] the receive did not end at the end of the stream: {outcome}"
+    )
+    s = receiver.stats()
+    receiver.close()
+    stats = {
+        "bytes_received": s.bytes_received,
+        "packets_received": s.packets_received,
+        "program_maps_seen": s.program_maps_seen,
+        "pmt_versions_seen": s.pmt_versions_seen,
+        "discontinuities": s.discontinuities,
+        "nonconformant": s.nonconformant,
+    }
+    return [], {"contract": "demux_receiver_stats", "stats": stats}
+
+
+def _run_srt_reject_reason(
+    scenario_id: str, input_bytes: bytes
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """A caller refused by a listener rule; the observed core is its error
+    kind, the observed extensions its typed reason and the binding's whole
+    ``RejectReason`` table (every member, by code), so a reason the table
+    gains or loses on either side fails here.
+
+    The reason is fixed here, not read from the golden, so the golden's
+    ``reject_reason`` is checked too.
+    """
+    import tstrans.srt
+    from tstrans.exceptions import SrtError
+    from tstrans.srt import ListenRule, RejectReason
+
+    from _builders.ports import free_udp_port
+
+    stream_id = input_bytes.decode("utf-8")
+    port = free_udp_port()
+    listener = tstrans.srt.Builder(f"srt://127.0.0.1:{port}?mode=listener").listen()
+    try:
+        listener.rules().set(stream_id, ListenRule.reject(RejectReason.FORBIDDEN))
+        with pytest.raises(SrtError) as ei:
+            tstrans.srt.Builder(
+                f"srt://127.0.0.1:{port}",
+                stream_id=stream_id,
+                connect_timeout_ms=int(_scaled(5.0) * 1000),
+            ).connect()
+    finally:
+        listener.close()
+    err = ei.value
+    reason = err.reject_reason
+    assert isinstance(reason, RejectReason), (
+        f"[{scenario_id}] the refused connect carried no typed reason: {reason!r} ({err})"
+    )
+    table = [{"code": int(m), "name": m.name} for m in sorted(RejectReason, key=int)]
+    return [{"event": "error", "code": err.kind.name}], {
+        "contract": "srt_reject_reason",
+        "reject_reason": {"code": int(reason), "name": reason.name},
+        "reject_reasons": table,
+    }
+
+
+def _run_contract_with_extensions(
+    scenario_id: str, input_path: Path
+) -> tuple[list[dict[str, Any]], dict[str, Any]] | None:
+    """The binding_contract scenarios whose golden carries observed values in
+    ``extensions``: the core events and the OBSERVED extensions, or ``None``
+    for every other id (``_run_binding_contract`` runs those)."""
+    if scenario_id == "demux-receiver-stats":
+        return _run_demux_receiver_stats(scenario_id, input_path.read_bytes())
+    if scenario_id == "srt-reject-reason":
+        return _run_srt_reject_reason(scenario_id, input_path.read_bytes())
+    return None
+
+
 def _run_binding_contract(
     scenario_id: str,
     input_path: Path,
@@ -945,6 +1111,8 @@ def test_scenario_matches_committed_golden(scenario_id: str) -> None:
 
     _validate_golden_tags(committed, scenario_id)
 
+    # Copied for the scenarios whose extensions this leg does not observe.
+    observed_extensions = committed.get("extensions")
     if kind == "demux":
         observed_core = _run_demux(scenario_id, input_path)
     elif kind == "roundtrip":
@@ -954,7 +1122,11 @@ def test_scenario_matches_committed_golden(scenario_id: str) -> None:
             committed.get("extensions") or {},
         )
     elif kind == "binding_contract":
-        observed_core = _run_binding_contract(scenario_id, input_path)
+        with_extensions = _run_contract_with_extensions(scenario_id, input_path)
+        if with_extensions is not None:
+            observed_core, observed_extensions = with_extensions
+        else:
+            observed_core = _run_binding_contract(scenario_id, input_path)
     elif kind == "url-corpus":
         # Every row carries its own record; test_url_corpus checks them one
         # by one, this runs the same check over the whole corpus.
@@ -972,12 +1144,14 @@ def test_scenario_matches_committed_golden(scenario_id: str) -> None:
         "schema_version": committed["schema_version"],
         "lossy": committed["lossy"],
         "core": observed_core,
-        "extensions": committed.get("extensions"),
+        "extensions": observed_extensions,
     }
 
     assert observed == committed, (
         f"scenario '{scenario_id}': Python adapter output differs from "
         f"committed golden.\n"
         f"  observed_core: {json.dumps(observed_core, indent=2)}\n"
-        f"  committed_core: {json.dumps(committed['core'], indent=2)}"
+        f"  committed_core: {json.dumps(committed['core'], indent=2)}\n"
+        f"  observed_extensions: {json.dumps(observed_extensions)}\n"
+        f"  committed_extensions: {json.dumps(committed.get('extensions'))}"
     )
