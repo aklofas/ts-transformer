@@ -3765,6 +3765,10 @@ bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred
 scenario_ids = []
 tier = "A"
 
+[[exempt]]
+item = "tst_pipeline::binding::owned::Owned::is_held"
+reason = "#[doc(hidden)] test seam: whether a call holds the slot, for the bindings' test hooks that prove a getter answered while a call was parked; not a supported API"
+
 [[surface]]
 kind = "rust"
 crate = "tst-pipeline"

@@ -427,8 +427,8 @@ impl<T, S> Owned<T, S> {
     }
 
     /// Non-blocking [`Self::with_ref_blocking`]. `None` when another thread holds
-    /// the slot — the caller decides what "busy" means (Python's
-    /// `is_alive()` reports `True`, a `repr()` prints "busy"); otherwise
+    /// the slot — the caller decides what "busy" means (the bindings'
+    /// `is_alive()` reports open, as [`Self::alive`] does); otherwise
     /// exactly `Some(with_ref_blocking(_, f))`: `Err(Closed)` on an empty slot,
     /// `Err(Panicked)` if `f` panics, poison recovered. Only acquiring the
     /// slot is non-blocking: `f` runs with the lock held.
@@ -442,6 +442,14 @@ impl<T, S> Owned<T, S> {
             return Some(Err(HandleState::Closed));
         };
         Some(panic::catch(|| f(t)).map_err(|detail| HandleState::Panicked { detail }))
+    }
+
+    /// Whether another call holds the slot right now (a parked receive).
+    /// Test seam: a test waits for it before reading a getter, to prove the
+    /// getter answered while the call was parked. Never waits.
+    #[doc(hidden)]
+    pub fn is_held(&self) -> bool {
+        matches!(self.inner.try_lock(), Err(TryLockError::WouldBlock))
     }
 
     /// Non-blocking liveness: `alive(&T)` when the slot can be inspected
@@ -1262,6 +1270,22 @@ mod tests {
         );
         f.owned.cancel(); // release the parked thread
         let _ = parked.join().unwrap();
+    }
+
+    #[test]
+    #[cfg(feature = "std")]
+    fn is_held_is_true_only_while_another_thread_holds_the_slot() {
+        let f = fixture();
+        assert!(!f.owned.is_held(), "idle open slot");
+        let (parked, _) = park_in_with_mut(&f);
+        assert!(f.owned.is_held(), "a call parked inside with_mut holds it");
+        f.owned.cancel(); // release the parked thread
+        let _ = parked.join().unwrap();
+        assert!(!f.owned.is_held(), "released after the call returned");
+        poison(&f);
+        assert!(!f.owned.is_held(), "a poisoned slot is not held");
+        assert!(f.owned.take().is_some());
+        assert!(!f.owned.is_held(), "an empty slot is not held");
     }
 
     /// ORDER PIN for the private `OwnedCancel` — the latch must be visible
