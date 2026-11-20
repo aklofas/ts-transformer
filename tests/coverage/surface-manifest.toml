@@ -2816,6 +2816,66 @@ bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred
 scenario_ids = []
 tier = "A"
 
+# RtpStatsHandle: the RTP counters read without the transport, while a
+# receive call parks (malformed and, on Linux, pinned-out datagrams) and
+# after the transport is gone; the opener hands one out beside the boxed
+# transport. local_addr: the bound address (kernel port for port 0), kept
+# after close, None on the interleaved source (unit test in recv.rs).
+
+[[surface]]
+kind = "rust"
+crate = "tst-rtp"
+item = "tst_rtp::RtpStatsHandle"
+owning_tests = ["crates/tst-rtp/tests/rtp/loopback_unicast.rs"]
+bindings = ["c:n/a(the C RTP receivers report socket stats only)", "python:deferred(binding receivers read it through the shells)", "java:deferred(binding receivers read it through the shells)", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-rtp"
+item = "tst_rtp::transport::RtpStatsHandle"
+owning_tests = ["crates/tst-rtp/tests/rtp/loopback_unicast.rs"]
+bindings = ["c:n/a(the C RTP receivers report socket stats only)", "python:deferred(binding receivers read it through the shells)", "java:deferred(binding receivers read it through the shells)", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-rtp"
+item = "tst_rtp::RtpStatsHandle::stats"
+owning_tests = ["crates/tst-rtp/tests/rtp/loopback_unicast.rs"]
+bindings = ["c:n/a(the C RTP receivers report socket stats only)", "python:deferred(binding receivers read it through the shells)", "java:deferred(binding receivers read it through the shells)", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-rtp"
+item = "tst_rtp::RtpRecvTransport::stats_handle"
+owning_tests = ["crates/tst-rtp/tests/rtp/loopback_unicast.rs"]
+bindings = ["c:n/a(the C RTP receivers report socket stats only)", "python:deferred(binding receivers read it through the shells)", "java:deferred(binding receivers read it through the shells)", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-rtp"
+item = "tst_rtp::RtpRecvTransport::local_addr"
+owning_tests = ["crates/tst-rtp/tests/rtp/loopback_unicast.rs", "crates/tst-rtp/src/transport/recv.rs"]
+bindings = ["c:n/a(the C RTP receivers report no local address)", "python:deferred(binding receivers read it through the shells)", "java:deferred(binding receivers read it through the shells)", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-rtp"
+item = "tst_rtp::opener::open_recv_with_stats"
+owning_tests = ["crates/tst-rtp/tests/rtp/loopback_unicast.rs"]
+bindings = ["c:n/a(a binding opener; the C ABI opens through its own constructors)", "python:deferred(binding receivers read it through the shells)", "java:deferred(binding receivers read it through the shells)", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
 [[exempt]]
 item = "tst_rtp::H264Depacketizer"
 reason = "RFC 6184 depacketizer; graduate to [[surface]] when integration tests land"

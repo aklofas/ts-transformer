@@ -356,6 +356,7 @@ pub const tst_rtp::klv::packetizer::MIN_MAX_PAYLOAD: usize
 pub fn tst_rtp::klv::packetizer::packetize(&[u8], usize) -> alloc::vec::Vec<tst_rtp::packet::Chunk>
 pub mod tst_rtp::opener
 pub fn tst_rtp::opener::open_recv(&str) -> core::result::Result<tst_pipeline::binding::opened::Opened<alloc::boxed::Box<dyn tst_core::transport::RecvTransport>>, tst_pipeline::binding::kind::BindingError>
+pub fn tst_rtp::opener::open_recv_with_stats(&str) -> core::result::Result<(tst_pipeline::binding::opened::Opened<alloc::boxed::Box<dyn tst_core::transport::RecvTransport>>, tst_rtp::RtpStatsHandle), tst_pipeline::binding::kind::BindingError>
 pub fn tst_rtp::opener::open_sender(&str) -> core::result::Result<tst_pipeline::binding::opened::Opened<alloc::boxed::Box<dyn tst_core::transport::Transport>>, tst_pipeline::binding::kind::BindingError>
 pub mod tst_rtp::packet
 #[non_exhaustive] pub enum tst_rtp::packet::RtpParseError
@@ -1372,10 +1373,12 @@ pub fn tst_rtp::RtpRecvTransport::end_reason(&self) -> core::option::Option<tst_
 pub fn tst_rtp::RtpRecvTransport::end_reason_handle(&self) -> tst_core::transport::EndReasonHandle
 pub fn tst_rtp::RtpRecvTransport::listen(&str) -> core::result::Result<Self, tst_rtp::transport::RtpConnectError>
 pub fn tst_rtp::RtpRecvTransport::listen_with(&tst_rtp::url::RtpUrl) -> core::result::Result<Self, tst_rtp::transport::RtpConnectError>
+pub fn tst_rtp::RtpRecvTransport::local_addr(&self) -> core::option::Option<core::net::socket_addr::SocketAddr>
 pub fn tst_rtp::RtpRecvTransport::recv_timeout(&mut self, &mut [u8], core::time::Duration) -> core::result::Result<core::option::Option<usize>, tst_core::transport::TransportError>
 pub fn tst_rtp::RtpRecvTransport::rtcp_stats(&self) -> tst_rtp::rtcp::stats::RtcpStats
 pub fn tst_rtp::RtpRecvTransport::rtp_stats(&self) -> tst_rtp::RtpStats
 pub fn tst_rtp::RtpRecvTransport::set_recv_timeout(&mut self, core::option::Option<core::time::Duration>)
+pub fn tst_rtp::RtpRecvTransport::stats_handle(&self) -> tst_rtp::RtpStatsHandle
 impl core::ops::drop::Drop for tst_rtp::RtpRecvTransport
 pub fn tst_rtp::RtpRecvTransport::drop(&mut self)
 impl tst_core::transport::RecvTransport for tst_rtp::RtpRecvTransport
@@ -1414,6 +1417,20 @@ impl core::marker::Unpin for tst_rtp::RtpStats
 impl core::marker::UnsafeUnpin for tst_rtp::RtpStats
 impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::RtpStats
 impl core::panic::unwind_safe::UnwindSafe for tst_rtp::RtpStats
+pub struct tst_rtp::transport::RtpStatsHandle(_)
+impl tst_rtp::RtpStatsHandle
+pub fn tst_rtp::RtpStatsHandle::stats(&self) -> tst_rtp::RtpStats
+impl core::clone::Clone for tst_rtp::RtpStatsHandle
+pub fn tst_rtp::RtpStatsHandle::clone(&self) -> tst_rtp::RtpStatsHandle
+impl core::fmt::Debug for tst_rtp::RtpStatsHandle
+pub fn tst_rtp::RtpStatsHandle::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for tst_rtp::RtpStatsHandle
+impl core::marker::Send for tst_rtp::RtpStatsHandle
+impl core::marker::Sync for tst_rtp::RtpStatsHandle
+impl core::marker::Unpin for tst_rtp::RtpStatsHandle
+impl core::marker::UnsafeUnpin for tst_rtp::RtpStatsHandle
+impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::RtpStatsHandle
+impl core::panic::unwind_safe::UnwindSafe for tst_rtp::RtpStatsHandle
 pub struct tst_rtp::transport::RtpTransport
 impl tst_rtp::RtpTransport
 pub fn tst_rtp::RtpTransport::connect(&str) -> core::result::Result<Self, tst_rtp::transport::RtpConnectError>
@@ -2593,10 +2610,12 @@ pub fn tst_rtp::RtpRecvTransport::end_reason(&self) -> core::option::Option<tst_
 pub fn tst_rtp::RtpRecvTransport::end_reason_handle(&self) -> tst_core::transport::EndReasonHandle
 pub fn tst_rtp::RtpRecvTransport::listen(&str) -> core::result::Result<Self, tst_rtp::transport::RtpConnectError>
 pub fn tst_rtp::RtpRecvTransport::listen_with(&tst_rtp::url::RtpUrl) -> core::result::Result<Self, tst_rtp::transport::RtpConnectError>
+pub fn tst_rtp::RtpRecvTransport::local_addr(&self) -> core::option::Option<core::net::socket_addr::SocketAddr>
 pub fn tst_rtp::RtpRecvTransport::recv_timeout(&mut self, &mut [u8], core::time::Duration) -> core::result::Result<core::option::Option<usize>, tst_core::transport::TransportError>
 pub fn tst_rtp::RtpRecvTransport::rtcp_stats(&self) -> tst_rtp::rtcp::stats::RtcpStats
 pub fn tst_rtp::RtpRecvTransport::rtp_stats(&self) -> tst_rtp::RtpStats
 pub fn tst_rtp::RtpRecvTransport::set_recv_timeout(&mut self, core::option::Option<core::time::Duration>)
+pub fn tst_rtp::RtpRecvTransport::stats_handle(&self) -> tst_rtp::RtpStatsHandle
 impl core::ops::drop::Drop for tst_rtp::RtpRecvTransport
 pub fn tst_rtp::RtpRecvTransport::drop(&mut self)
 impl tst_core::transport::RecvTransport for tst_rtp::RtpRecvTransport
@@ -2635,6 +2654,20 @@ impl core::marker::Unpin for tst_rtp::RtpStats
 impl core::marker::UnsafeUnpin for tst_rtp::RtpStats
 impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::RtpStats
 impl core::panic::unwind_safe::UnwindSafe for tst_rtp::RtpStats
+pub struct tst_rtp::RtpStatsHandle(_)
+impl tst_rtp::RtpStatsHandle
+pub fn tst_rtp::RtpStatsHandle::stats(&self) -> tst_rtp::RtpStats
+impl core::clone::Clone for tst_rtp::RtpStatsHandle
+pub fn tst_rtp::RtpStatsHandle::clone(&self) -> tst_rtp::RtpStatsHandle
+impl core::fmt::Debug for tst_rtp::RtpStatsHandle
+pub fn tst_rtp::RtpStatsHandle::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for tst_rtp::RtpStatsHandle
+impl core::marker::Send for tst_rtp::RtpStatsHandle
+impl core::marker::Sync for tst_rtp::RtpStatsHandle
+impl core::marker::Unpin for tst_rtp::RtpStatsHandle
+impl core::marker::UnsafeUnpin for tst_rtp::RtpStatsHandle
+impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::RtpStatsHandle
+impl core::panic::unwind_safe::UnwindSafe for tst_rtp::RtpStatsHandle
 pub struct tst_rtp::RtpTransport
 impl tst_rtp::RtpTransport
 pub fn tst_rtp::RtpTransport::connect(&str) -> core::result::Result<Self, tst_rtp::transport::RtpConnectError>

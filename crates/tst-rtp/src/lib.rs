@@ -60,7 +60,7 @@ mod binding_kind;
 // RTP transport.
 pub use cancel::RtpCancelHandle;
 pub use packet::{Parsed, RTP_HEADER_LEN, RtpHeader, RtpParseError};
-pub use transport::{RtpConnectError, RtpRecvTransport, RtpStats, RtpTransport};
+pub use transport::{RtpConnectError, RtpRecvTransport, RtpStats, RtpStatsHandle, RtpTransport};
 pub use url::{DEFAULT_PKT_SIZE, MAX_PKT_SIZE, RtpUrl, RtpUrlError};
 
 // RTSP client.

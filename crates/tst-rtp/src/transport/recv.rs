@@ -1,6 +1,7 @@
 //! The receiving half: [`RtpRecvTransport`] and the byte source behind it.
 
 use std::net::{IpAddr, SocketAddr, UdpSocket};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -58,6 +59,25 @@ pub(crate) enum Source {
     Mpsc(std::sync::mpsc::Receiver<bytes::Bytes>),
 }
 
+/// Where [`Source::recv_raw`] counts a datagram the `?source=` pin
+/// dropped: a counter its caller owns, or the shared atomic an
+/// [`RtpStatsHandle`] reads while the receive call is still running.
+pub(crate) trait RejectCounter {
+    fn tick(&mut self);
+}
+
+impl RejectCounter for &mut u64 {
+    fn tick(&mut self) {
+        **self = self.saturating_add(1);
+    }
+}
+
+impl RejectCounter for &AtomicU64 {
+    fn tick(&mut self) {
+        self.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
 impl Source {
     /// Block (polling `cancel` between timeouts) until one raw packet is
     /// available; copy it into `scratch` and return its byte length.
@@ -112,11 +132,11 @@ impl Source {
     /// `source_pin` is `Some((ip, rejected))` when the receiver was built
     /// with `?source=`: the UDP arm then reads with `recv_from`, drops any
     /// datagram whose canonical peer IP differs from `ip` (the port is not
-    /// compared), ticks `*rejected`, and keeps looping with the same cancel
+    /// compared), ticks `rejected`, and keeps looping with the same cancel
     /// and deadline checks. `None` keeps the UDP arm on plain `recv`. The
     /// mpsc arm ignores it (interleaved frames have no per-datagram peer).
     ///
-    /// Apart from `*rejected`, `recv_raw` takes `&self` and performs no
+    /// Apart from `rejected`, `recv_raw` takes `&self` and performs no
     /// side effects on the source or any counters. Callers are responsible for:
     /// - Ticking `bytes_received` / `packets_received` after `Ok`.
     /// - Clearing `self.source = None` after a `Broken` return.
@@ -125,7 +145,7 @@ impl Source {
         scratch: &mut [u8],
         cancel: &RtpCancelHandle,
         deadline: Option<Instant>,
-        mut source_pin: Option<(IpAddr, &mut u64)>,
+        mut source_pin: Option<(IpAddr, impl RejectCounter)>,
     ) -> Result<usize, TransportError> {
         match self {
             Source::Udp(socket) => loop {
@@ -144,7 +164,7 @@ impl Source {
                     None => socket.recv(scratch),
                     Some((pin, rejected)) => match socket.recv_from(scratch) {
                         Ok((_, peer)) if peer.ip().to_canonical() != *pin => {
-                            **rejected = rejected.saturating_add(1);
+                            rejected.tick();
                             continue;
                         }
                         Ok((n, _)) => Ok(n),
@@ -243,13 +263,14 @@ pub struct RtpRecvTransport {
     cancel: Arc<RtpCancelHandle>,
     bytes_received: u64,
     packets_received: u64,
-    /// Counter for RTP packets that failed the header check.
-    malformed_packets: u64,
+    /// The [`RtpStats`] counters, shared with every [`RtpStatsHandle`].
+    counters: Arc<RtpCounters>,
     /// `?source=` pin, canonicalised (an IPv4-mapped IPv6 address compares
     /// as its IPv4 form). `None` keeps the receive loop on plain `recv`.
     source_pin: Option<IpAddr>,
-    /// Datagrams dropped because their peer IP did not match `source_pin`.
-    source_rejected: u64,
+    /// The address the UDP socket was bound to, read once at bind time.
+    /// `None` for the interleaved source, which has no socket.
+    local_addr: Option<SocketAddr>,
     /// Per-recv scratch, sized to [`RECV_SCRATCH_LEN`] — heap allocated
     /// once; holds one whole RTP packet (header + payload) per recv.
     scratch: Vec<u8>,
@@ -298,6 +319,44 @@ tst_core::binding_record! {
         /// `?source=` pin; 0 when no pin is set. Rejected datagrams are not
         /// counted in the received counters of the socket stats.
         pub source_rejected: u64,
+    }
+}
+
+/// The [`RtpStats`] counters of one receiver: atomics, so a handle reads
+/// them while a receive call holds the transport.
+#[derive(Debug, Default)]
+struct RtpCounters {
+    /// RTP packets that failed the header or MP2T shape check.
+    malformed_packets: AtomicU64,
+    /// Datagrams dropped because their peer IP did not match the pin.
+    source_rejected: AtomicU64,
+}
+
+impl RtpCounters {
+    fn snapshot(&self) -> RtpStats {
+        RtpStats {
+            malformed_packets: self.malformed_packets.load(Ordering::Relaxed),
+            source_rejected: self.source_rejected.load(Ordering::Relaxed),
+        }
+    }
+
+    fn count_malformed(&self) {
+        self.malformed_packets.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+/// A reader of an [`RtpRecvTransport`]'s [`RtpStats`] that does not borrow
+/// the transport: it never waits for a receive call in progress, and it
+/// keeps answering the last values after the transport is closed or
+/// dropped. Obtain it with [`RtpRecvTransport::stats_handle`].
+#[derive(Clone, Debug)]
+pub struct RtpStatsHandle(Arc<RtpCounters>);
+
+impl RtpStatsHandle {
+    /// The counters now; the same values [`RtpRecvTransport::rtp_stats`]
+    /// reports.
+    pub fn stats(&self) -> RtpStats {
+        self.0.snapshot()
     }
 }
 
@@ -362,14 +421,15 @@ impl RtpRecvTransport {
                 .map_err(udp_err_to_connect)?;
         }
         let ssrc = url.ssrc.unwrap_or_else(random_u32);
+        let local_addr = socket.local_addr().ok();
         Ok(Self {
             source: Some(Source::Udp(socket)),
             cancel: RtpCancelHandle::new(),
             bytes_received: 0,
             packets_received: 0,
-            malformed_packets: 0,
+            counters: Arc::default(),
             source_pin: url.source.map(|ip| ip.to_canonical()),
-            source_rejected: 0,
+            local_addr,
             scratch: vec![0u8; RECV_SCRATCH_LEN],
             rtcp_stats: Arc::new(Mutex::new(RtcpStats::default())),
             ssrc,
@@ -395,14 +455,15 @@ impl RtpRecvTransport {
             .set_read_timeout(Some(CANCEL_POLL_INTERVAL))
             .map_err(RtpConnectError::Io)?;
         let ssrc = random_u32();
+        let local_addr = socket.local_addr().ok();
         Ok(Self {
             source: Some(Source::Udp(socket)),
             cancel: RtpCancelHandle::new(),
             bytes_received: 0,
             packets_received: 0,
-            malformed_packets: 0,
+            counters: Arc::default(),
             source_pin: None,
-            source_rejected: 0,
+            local_addr,
             scratch: vec![0u8; RECV_SCRATCH_LEN],
             rtcp_stats: Arc::new(Mutex::new(RtcpStats::default())),
             ssrc,
@@ -434,9 +495,9 @@ impl RtpRecvTransport {
             cancel: RtpCancelHandle::new(),
             bytes_received: 0,
             packets_received: 0,
-            malformed_packets: 0,
+            counters: Arc::default(),
             source_pin: None,
-            source_rejected: 0,
+            local_addr: None,
             // Scratch holds one whole RTP packet (header + TS payload).
             // recv_raw (Source::Mpsc arm) copies the incoming Bytes into
             // scratch before recv_bytes decodes the header and strips the
@@ -482,10 +543,24 @@ impl RtpRecvTransport {
 
     /// RTP-protocol-level stats — separate from [`SocketStats`].
     pub fn rtp_stats(&self) -> RtpStats {
-        RtpStats {
-            malformed_packets: self.malformed_packets,
-            source_rejected: self.source_rejected,
-        }
+        self.counters.snapshot()
+    }
+
+    /// A reader of [`Self::rtp_stats`] that outlives the transport and never
+    /// waits for it: take it before the transport moves into a shell or a
+    /// receive call parks.
+    #[must_use]
+    pub fn stats_handle(&self) -> RtpStatsHandle {
+        RtpStatsHandle(Arc::clone(&self.counters))
+    }
+
+    /// The local address of the UDP socket, read when it was bound (the
+    /// kernel's port for a port-0 URL), and still reported after
+    /// [`RecvTransport::close`]. `None` for a receiver fed by an RTSP
+    /// TCP-interleaved session, which has no socket of its own.
+    #[must_use]
+    pub fn local_addr(&self) -> Option<SocketAddr> {
+        self.local_addr
     }
 
     /// Snapshot of the RTCP-derived counters. Returns a clone of the
@@ -632,7 +707,8 @@ impl RtpRecvTransport {
                     &mut self.scratch,
                     &self.cancel,
                     deadline,
-                    self.source_pin.map(|ip| (ip, &mut self.source_rejected)),
+                    self.source_pin
+                        .map(|ip| (ip, &self.counters.source_rejected)),
                 );
             let n = match raw_result {
                 Ok(n) => n,
@@ -697,7 +773,7 @@ impl RtpRecvTransport {
             let parsed = match RtpHeader::decode(&self.scratch[..n]) {
                 Ok(p) => p,
                 Err(parse_err) => {
-                    self.malformed_packets = self.malformed_packets.saturating_add(1);
+                    self.counters.count_malformed();
                     tracing::debug!(
                         error = ?parse_err,
                         "RTP packet rejected at recv; counter ticked",
@@ -706,7 +782,7 @@ impl RtpRecvTransport {
                 }
             };
             if parsed.header.payload_type != RTP_PT_MP2T {
-                self.malformed_packets = self.malformed_packets.saturating_add(1);
+                self.counters.count_malformed();
                 tracing::debug!(
                     pt = parsed.header.payload_type,
                     "non-MP2T payload type at MP2T receiver; packet dropped",
@@ -735,7 +811,7 @@ impl RtpRecvTransport {
             // above already pinned PT=33 (MP2T); this catches a corrupt or
             // misaligned bundle.
             if !is_valid_mp2t_payload(payload) {
-                self.malformed_packets = self.malformed_packets.saturating_add(1);
+                self.counters.count_malformed();
                 tracing::debug!(
                     payload_len = payload.len(),
                     first_byte = payload.first().copied().unwrap_or(0),
@@ -958,13 +1034,21 @@ mod mpsc_source_tests {
     }
 
     #[test]
+    fn an_interleaved_receiver_has_no_local_addr() {
+        let (_tx, rx) = mpsc::channel::<Bytes>();
+        let t = RtpRecvTransport::from_packet_channel(rx);
+        assert_eq!(t.local_addr(), None);
+        assert_eq!(t.stats_handle().stats(), RtpStats::default());
+    }
+
+    #[test]
     fn a_media_queue_end_under_a_latched_cancel_reports_the_cancel() {
         let (tx, rx) = mpsc::channel::<Bytes>();
         let source = Source::Mpsc(rx);
         let cancel = RtpCancelHandle::new();
         cancel_then(&cancel, move || drop(tx));
         let mut scratch = vec![0u8; RECV_SCRATCH_LEN];
-        let r = source.recv_raw(&mut scratch, &cancel, None, None);
+        let r = source.recv_raw(&mut scratch, &cancel, None, None::<(IpAddr, &mut u64)>);
         assert!(matches!(r, Err(TransportError::ExplicitClose)), "got {r:?}");
     }
 
@@ -977,7 +1061,7 @@ mod mpsc_source_tests {
             let _ = tx.send(Bytes::from(vec![0u8; 64]));
         });
         let mut scratch = vec![0u8; 16];
-        let r = source.recv_raw(&mut scratch, &cancel, None, None);
+        let r = source.recv_raw(&mut scratch, &cancel, None, None::<(IpAddr, &mut u64)>);
         assert!(matches!(r, Err(TransportError::ExplicitClose)), "got {r:?}");
     }
 
@@ -1019,7 +1103,7 @@ mod mpsc_source_tests {
 
         let (tx, rx) = mpsc::channel::<Bytes>();
         drop(tx);
-        let r = Source::Mpsc(rx).recv_raw(&mut scratch, &cancel, None, None);
+        let r = Source::Mpsc(rx).recv_raw(&mut scratch, &cancel, None, None::<(IpAddr, &mut u64)>);
         assert!(
             matches!(&r, Err(TransportError::Broken { msg, errno_code: None, .. })
                 if msg == MEDIA_QUEUE_CLOSED),
@@ -1028,7 +1112,7 @@ mod mpsc_source_tests {
 
         let (tx, rx) = mpsc::channel::<Bytes>();
         tx.send(Bytes::from(vec![0u8; 64])).unwrap();
-        let r = Source::Mpsc(rx).recv_raw(&mut scratch, &cancel, None, None);
+        let r = Source::Mpsc(rx).recv_raw(&mut scratch, &cancel, None, None::<(IpAddr, &mut u64)>);
         assert!(
             matches!(&r, Err(TransportError::Broken { msg, errno_code: None, .. })
                 if msg.contains("exceeds scratch buffer")),

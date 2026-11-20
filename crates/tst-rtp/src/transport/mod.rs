@@ -25,7 +25,7 @@ pub(crate) use recv::{MEDIA_QUEUE_CLOSED, RECV_SCRATCH_LEN, Source, record_end};
 // bare plane has no publisher, so the re-export follows the server feature.
 #[cfg(feature = "rtsp-server")]
 pub(crate) use recv::is_valid_mp2t_payload;
-pub use recv::{RtpRecvTransport, RtpStats};
+pub use recv::{RtpRecvTransport, RtpStats, RtpStatsHandle};
 pub(crate) use rtcp_ingest::ingest_rtcp_packet;
 pub use send::RtpTransport;
 

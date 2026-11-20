@@ -545,3 +545,164 @@ fn opener_round_trips_one_datagram_and_its_cancel_ends_a_parked_recv() {
         .expect("wrong scheme");
     assert_eq!(e.kind, tst_pipeline::binding::BindingErrorKind::RtpUrl);
 }
+
+/// The stats handle reads the counters without the transport: one thread
+/// parks in `recv_timeout` (nothing valid ever arrives), a version-1
+/// datagram is sent, and another thread sees `malformed_packets` reach 1
+/// while the receive call is still running. On Linux a datagram from
+/// 127.0.0.2 is also dropped by the `?source=` pin, and `source_rejected`
+/// reaches 1 the same way.
+#[test]
+fn a_stats_handle_counts_a_malformed_datagram_while_the_receiver_is_parked() {
+    use std::net::UdpSocket;
+    use std::time::Instant;
+
+    let base = free_rtp_port_base();
+    let mut recv =
+        RtpRecvTransport::listen(&format!("rtp://127.0.0.1:{base}?source=127.0.0.1")).unwrap();
+    let handle = recv.stats_handle();
+    let cancel = recv.cancel_handle().expect("cancel handle");
+    let (done_tx, done_rx) = std::sync::mpsc::channel();
+    let parked = thread::spawn(move || {
+        let mut buf = vec![0u8; 4096];
+        let r = recv.recv_timeout(&mut buf, Duration::from_secs(30));
+        let _ = done_tx.send(());
+        (r.map(|o| o.is_some()), recv)
+    });
+
+    let mut v1 = make_rtp_datagram(&synthetic_ts_packet(0x01));
+    v1[0] = 0x40; // V=1
+    let peer = UdpSocket::bind("127.0.0.1:0").unwrap();
+    peer.send_to(&v1, ("127.0.0.1", base)).unwrap();
+    #[cfg(target_os = "linux")]
+    {
+        let foreign = UdpSocket::bind("127.0.0.2:0").expect("bind 127.0.0.2");
+        foreign
+            .send_to(
+                &make_rtp_datagram(&synthetic_ts_packet(0x66)),
+                ("127.0.0.1", base),
+            )
+            .unwrap();
+    }
+    let rejected = if cfg!(target_os = "linux") { 1 } else { 0 };
+
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while handle.stats().malformed_packets < 1 || handle.stats().source_rejected < rejected {
+        assert!(
+            Instant::now() < deadline,
+            "the handle never saw the dropped datagrams: {:?}",
+            handle.stats()
+        );
+        thread::yield_now();
+    }
+    assert_eq!(handle.stats().malformed_packets, 1);
+    assert_eq!(handle.stats().source_rejected, rejected);
+    assert!(
+        done_rx.try_recv().is_err(),
+        "the receive call must still be running"
+    );
+
+    cancel.cancel();
+    done_rx
+        .recv_timeout(Duration::from_secs(10))
+        .expect("the parked recv ended after the cancel");
+    let (_, recv) = parked.join().expect("recv thread");
+    assert_eq!(recv.rtp_stats(), handle.stats());
+}
+
+/// A port-0 URL binds a kernel-chosen port; `local_addr` reports it, the
+/// opener records it, and a datagram sent there arrives.
+#[test]
+fn local_addr_reports_the_kernel_port_for_port_zero() {
+    use std::net::{Ipv4Addr, UdpSocket};
+
+    let mut recv = RtpRecvTransport::listen("rtp://127.0.0.1:0").unwrap();
+    let addr = recv
+        .local_addr()
+        .expect("a UDP receiver has a local address");
+    assert_eq!(addr.ip(), Ipv4Addr::LOCALHOST);
+    assert_ne!(addr.port(), 0, "the kernel's port, not the URL's 0");
+
+    let peer = UdpSocket::bind("127.0.0.1:0").unwrap();
+    let expected = synthetic_ts_packet(0x33);
+    peer.send_to(&make_rtp_datagram(&expected), addr).unwrap();
+    let mut buf = vec![0u8; 4096];
+    let n = recv
+        .recv_timeout(&mut buf, Duration::from_secs(5))
+        .expect("recv must not fail")
+        .expect("delivered to the reported port");
+    assert_eq!(&buf[..n], &expected[..]);
+
+    recv.close();
+    assert_eq!(
+        recv.local_addr(),
+        Some(addr),
+        "the bound address is kept after close"
+    );
+
+    let opened = tst_rtp::opener::open_recv("rtp://127.0.0.1:0").expect("open_recv");
+    let at = opened
+        .local_addr
+        .expect("the opener records the local address");
+    assert_ne!(at.port(), 0);
+    let (opened, handle) =
+        tst_rtp::opener::open_recv_with_stats("rtp://127.0.0.1:0").expect("open_recv_with_stats");
+    assert_ne!(opened.local_addr.expect("recorded").port(), 0);
+    assert_eq!(handle.stats(), tst_rtp::RtpStats::default());
+}
+
+/// `rtp_stats()` and the handle read the same counters, also after the
+/// transport is gone; the opener's handle counts what its transport drops.
+#[test]
+fn rtp_stats_and_the_handle_agree() {
+    use std::net::UdpSocket;
+
+    let base = free_rtp_port_base();
+    let mut recv =
+        RtpRecvTransport::listen(&format!("rtp://127.0.0.1:{base}?source=127.0.0.1")).unwrap();
+    let handle = recv.stats_handle();
+    let peer = UdpSocket::bind("127.0.0.1:0").unwrap();
+    #[cfg(target_os = "linux")]
+    {
+        let foreign = UdpSocket::bind("127.0.0.2:0").expect("bind 127.0.0.2");
+        foreign
+            .send_to(
+                &make_rtp_datagram(&synthetic_ts_packet(0x66)),
+                ("127.0.0.1", base),
+            )
+            .unwrap();
+    }
+    peer.send_to(&make_rtp_datagram(&[0xAA; 100]), ("127.0.0.1", base))
+        .unwrap();
+    let expected = synthetic_ts_packet(0x42);
+    peer.send_to(&make_rtp_datagram(&expected), ("127.0.0.1", base))
+        .unwrap();
+    let mut buf = vec![0u8; 4096];
+    let n = recv
+        .recv_timeout(&mut buf, Duration::from_secs(5))
+        .expect("recv must not fail")
+        .expect("delivered");
+    assert_eq!(&buf[..n], &expected[..]);
+
+    let rejected = if cfg!(target_os = "linux") { 1 } else { 0 };
+    let st = recv.rtp_stats();
+    assert_eq!(st.malformed_packets, 1);
+    assert_eq!(st.source_rejected, rejected);
+    assert_eq!(handle.stats(), st);
+    assert_eq!(
+        recv.stats_handle().stats(),
+        st,
+        "every handle reads the same"
+    );
+    drop(recv);
+    assert_eq!(handle.stats(), st, "the last values outlive the transport");
+
+    let (opened, handle) =
+        tst_rtp::opener::open_recv_with_stats("rtp://127.0.0.1:0").expect("open_recv_with_stats");
+    let at = opened.local_addr.expect("recorded");
+    let mut rx = opened.transport;
+    peer.send_to(&make_rtp_datagram(&[0xAA; 100]), at).unwrap();
+    peer.send_to(&make_rtp_datagram(&expected), at).unwrap();
+    assert_eq!(rx.recv_bytes(&mut buf).expect("recv"), 188);
+    assert_eq!(handle.stats().malformed_packets, 1);
+}
