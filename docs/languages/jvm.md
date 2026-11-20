@@ -2092,12 +2092,14 @@ proxy's. An IPv4 client of a listener bound to `::` is reported as an
 `Inet4Address`. The address is built from its bytes, with no name lookup.
 
 A `Transport` becomes a shell with `intoReceiver()`, `intoDemuxReceiver()`,
-`intoDemuxReceiver(DemuxerConfig)` or `intoSender()`. The conversion
+`intoDemuxReceiver(DemuxerConfig)`, `intoSender()` or
+`intoMuxSender(MuxerConfig)`. The conversion
 consumes it: afterwards every call on the `Transport` but `close()` throws
 `IllegalStateException`. `intoReceiver()`, `intoDemuxReceiver()` and
 `intoSender()` consume it even when they throw; a `DemuxerConfig` the native
-layer refuses leaves the `Transport` open, so a corrected retry can convert
-it. The shell throws `TcpException` and reports no `localPort()`. An
+layer refuses, or a `MuxerConfig` the muxer refuses
+(`MuxException(CONFIG_INVALID)`), leaves the `Transport` open, so a corrected
+retry can convert it. The shell throws `TcpException` and reports no `localPort()`. An
 accepted `Transport`, and a shell made from it, stay open after the listener
 closes.
 

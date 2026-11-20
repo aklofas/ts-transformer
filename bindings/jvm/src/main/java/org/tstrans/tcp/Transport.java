@@ -2,11 +2,15 @@ package org.tstrans.tcp;
 
 import java.net.InetSocketAddress;
 import java.util.Objects;
+import org.tstrans.MuxException;
 import org.tstrans.NativeHandle;
 import org.tstrans.NativeLoader;
 import org.tstrans.internal.NativeAddr;
+import org.tstrans.mpegts.Av1CarriageMode;
 import org.tstrans.mpegts.DemuxerConfig;
+import org.tstrans.mpegts.MuxerConfig;
 import org.tstrans.shells.DemuxReceiver;
+import org.tstrans.shells.MuxSender;
 import org.tstrans.shells.Receiver;
 import org.tstrans.shells.Sender;
 
@@ -14,8 +18,9 @@ import org.tstrans.shells.Sender;
  * One connection accepted by a {@link Listener}. It stays open when the listener
  * closes.
  *
- * <p>{@link #intoReceiver()}, {@link #intoDemuxReceiver()} and {@link #intoSender()}
- * <strong>consume</strong> the connection: it moves into the returned shell, and every
+ * <p>{@link #intoReceiver()}, {@link #intoDemuxReceiver()}, {@link #intoSender()} and
+ * {@link #intoMuxSender(MuxerConfig)} <strong>consume</strong> the connection: it moves into
+ * the returned shell, and every
  * later call on this {@code Transport} throws {@code IllegalStateException} except
  * {@link #close()}, which does nothing. The shell throws
  * {@link org.tstrans.TcpException}. On a {@code tcps://} listener the TLS handshake runs
@@ -145,6 +150,35 @@ public final class Transport extends NativeHandle {
         return ShellAdapters.sender(nIntoSender(conn));
     }
 
+    /**
+     * Consume the connection and return a {@link MuxSender} over it: elementary streams in,
+     * muxed by {@code cfg} into TS. The muxer configuration is built and checked before the
+     * connection is taken, so a {@code null} config or one the muxer refuses leaves this
+     * {@code Transport} open and unconsumed; a corrected retry can still convert it.
+     *
+     * <p>A {@code tcps://} handshake runs on the first send that reaches the socket, as
+     * for {@link #intoSender()}.
+     *
+     * @param cfg the muxer program configuration
+     * @return a mux sender owning the connection; it throws {@link org.tstrans.TcpException}
+     * @throws NullPointerException if {@code cfg} is {@code null}
+     * @throws IllegalStateException if the connection is closed or already consumed
+     * @throws MuxException {@code CONFIG_INVALID} if the muxer refuses {@code cfg}
+     */
+    public MuxSender intoMuxSender(MuxerConfig cfg) throws MuxException {
+        ensureOpen("Transport is closed");
+        Objects.requireNonNull(cfg, "cfg");
+        // The native's AV1 carriage codes: 0 = MPEG-2 TS binding, 1 = raw OBUs.
+        int av1 = cfg.av1Carriage() == Av1CarriageMode.MPEG2_TS_BINDING ? 0 : 1;
+        // Claimed after the native takes the connection, as intoDemuxReceiver(DemuxerConfig).
+        long h = nIntoMuxSender(peekHandle(), cfg.programNumber(), cfg.pmtPid(), cfg.pcrPid(),
+            cfg.pcrIntervalMs(), cfg.pcrLeadMs(), cfg.psiIntervalMs(), cfg.bufferPackets(),
+            av1, cfg.streamPids(), cfg.streamKinds(), cfg.streamCodecs(),
+            cfg.streamTypeCodes(), cfg.streamCarriesPts(), cfg.dataDescBytes(), cfg.dataDescLens());
+        consumeHandle();
+        return ShellAdapters.muxSender(h);
+    }
+
     /** Close the connection. Idempotent; does nothing once the connection is consumed. */
     @Override public void close() { super.close(); }
 
@@ -163,4 +197,10 @@ public final class Transport extends NativeHandle {
         long auCellCapPerPid, boolean lenientPsi, long syncBufCap, boolean unwrapTimestamps);
 
     private static native long nIntoSender(long handle);
+
+    private static native long nIntoMuxSender(long handle, int programNumber, int pmtPid,
+        int pcrPid, int pcrIntervalMs, int pcrLeadMs, int psiIntervalMs, int bufferPackets,
+        int av1Carriage, int[] streamPids, int[] streamKinds, int[] streamCodecs,
+        int[] streamTypeCodes, boolean[] streamCarriesPts, byte[] dataDescBytes,
+        int[] dataDescLens) throws MuxException;
 }

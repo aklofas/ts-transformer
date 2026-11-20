@@ -15,7 +15,7 @@ use crate::panic::jni_native;
 use std::net::SocketAddr;
 use std::sync::{Arc, LazyLock};
 
-use jni::objects::JString;
+use jni::objects::{JBooleanArray, JByteArray, JIntArray, JString};
 use jni::sys::{jboolean, jbyteArray, jint, jlong};
 use tst_core::transport::{RecvTransport, Transport, TransportCancel};
 use tst_pipeline::binding::opened::{cancel_of, recv_cancel_of};
@@ -28,6 +28,7 @@ use crate::error::{throw_binding, throw_closed};
 use crate::handle::{HandleRegistry, OwnedRegistry};
 use crate::jutil::socket_addr_array;
 use crate::mpegts::build_demux_config_from_args;
+use crate::mpegts::muxer::build_muxer_config_from_arrays;
 use crate::shells;
 use crate::shells::open::read_url;
 use crate::shells::throw_state;
@@ -258,5 +259,57 @@ jni_native! {
             return 0;
         };
         shells::demux_receiver::register(opened_recv(conn), Some(opts))
+    }
+}
+
+jni_native! {
+    /// `Transport.nIntoMuxSender(handle, ...programConfig...)`.
+    #[allow(clippy::too_many_arguments)]
+    fn Java_org_tstrans_tcp_Transport_nIntoMuxSender<'local>(
+        env,
+        _class,
+        handle: jlong,
+        program_number: jint,
+        pmt_pid: jint,
+        pcr_pid: jint,
+        pcr_interval_ms: jint,
+        pcr_lead_ms: jint,
+        psi_interval_ms: jint,
+        buffer_packets: jint,
+        av1_carriage: jint,
+        stream_pids: JIntArray<'local>,
+        stream_kinds: JIntArray<'local>,
+        stream_codecs: JIntArray<'local>,
+        stream_type_codes: JIntArray<'local>,
+        stream_carries_pts: JBooleanArray<'local>,
+        data_desc_bytes: JByteArray<'local>,
+        data_desc_lens: JIntArray<'local>,
+    ) -> jlong = 0 => {
+        let Ok(cfg) = build_muxer_config_from_arrays(
+            env,
+            program_number,
+            pmt_pid,
+            pcr_pid,
+            pcr_interval_ms,
+            pcr_lead_ms,
+            psi_interval_ms,
+            buffer_packets,
+            av1_carriage,
+            &stream_pids,
+            &stream_kinds,
+            &stream_codecs,
+            &stream_type_codes,
+            &stream_carries_pts,
+            &data_desc_bytes,
+            &data_desc_lens,
+        ) else {
+            // Refused before the take: the connection stays registered with its
+            // caller, which claims its handle only after a successful return.
+            return 0;
+        };
+        let Some(conn) = take_conn(env, handle) else {
+            return 0;
+        };
+        shells::mux_sender::register(env, opened_send(conn), cfg)
     }
 }

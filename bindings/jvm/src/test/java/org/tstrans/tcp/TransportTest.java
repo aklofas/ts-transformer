@@ -21,14 +21,18 @@ import javax.net.ssl.SSLSocket;
 import javax.net.ssl.TrustManagerFactory;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
+import org.tstrans.MuxException;
 import org.tstrans.TcpException;
 import org.tstrans.TestSupport;
 import org.tstrans.mpegts.DemuxEvent;
 import org.tstrans.mpegts.DemuxerConfig;
 import org.tstrans.mpegts.Muxer;
+import org.tstrans.mpegts.MuxerConfig;
+import org.tstrans.mpegts.VideoCodec;
 import org.tstrans.mpegts.DiscontinuityKind;
 import org.tstrans.shells.CancelHandle;
 import org.tstrans.shells.DemuxReceiver;
+import org.tstrans.shells.MuxSender;
 import org.tstrans.shells.Receiver;
 import org.tstrans.shells.Sender;
 import org.tstrans.shells.ShellPeers.Cleanup;
@@ -211,6 +215,48 @@ class TransportTest {
     }
 
     @Test
+    void intoMuxSenderSendsAPatThePeerReads() throws Exception {
+        try (Cleanup c = new Cleanup()) {
+            Listener l = c.add(Listener.open(LOOPBACK_V4));
+            java.net.Socket client = plainClient(l, c);
+            Transport t = accept(l, c);
+            MuxSender tx = c.add(t.intoMuxSender(TestSupport.roundtripConfig()));
+            assertThrows(IllegalStateException.class, t::peerAddr, "the connection moved into the sender");
+            assertTrue(tx.videoHandle().isPresent());
+            tx.sendVideo(TestSupport.syntheticH264Idr(), 0L, true);
+            tx.close();
+            client.setSoTimeout((int) scaledMs(PEER_WAIT_MS));
+            byte[] got = client.getInputStream().readAllBytes();
+            assertTrue(got.length >= 188 && got.length % 188 == 0, "whole TS packets: " + got.length);
+            assertEquals(0x47, got[0] & 0xFF, "sync byte");
+            assertEquals(0, ((got[1] & 0x1F) << 8) | (got[2] & 0xFF), "the first packet is the PAT");
+            assertEquals(0x40, got[1] & 0x40, "payload_unit_start_indicator");
+        }
+    }
+
+    @Test
+    void intoMuxSenderWithARefusedConfigLeavesTheTransportOpen() throws Exception {
+        try (Cleanup c = new Cleanup()) {
+            Listener l = c.add(Listener.open(LOOPBACK_V4));
+            java.net.Socket client = plainClient(l, c);
+            Transport t = accept(l, c);
+            assertThrows(NullPointerException.class, () -> t.intoMuxSender(null));
+            // Program number 0 is the NIT's: the muxer refuses it before the take.
+            MuxerConfig refused = MuxerConfig.builder().programNumber(0)
+                .addVideo(0x101, VideoCodec.H264).build();
+            MuxException e = assertThrows(MuxException.class, () -> t.intoMuxSender(refused));
+            assertEquals(MuxException.Kind.CONFIG_INVALID, e.kind());
+            assertEquals(InetAddress.getByAddress(new byte[] {127, 0, 0, 1}), t.peerAddr().getAddress());
+            Sender tx = c.add(t.intoSender());
+            byte[] sent = packets(7);
+            tx.sendBytes(sent);
+            tx.flush();
+            client.setSoTimeout((int) scaledMs(PEER_WAIT_MS));
+            assertArrayEquals(sent, client.getInputStream().readNBytes(sent.length));
+        }
+    }
+
+    @Test
     void aShellFromAnAcceptedConnectionOutlivesTheListener() throws Exception {
         try (Cleanup c = new Cleanup()) {
             Listener l = c.add(Listener.open(LOOPBACK_V4));
@@ -237,6 +283,8 @@ class TransportTest {
             c.add(t.intoReceiver());
             assertThrows(IllegalStateException.class, t::peerAddr);
             assertThrows(IllegalStateException.class, t::intoSender);
+            assertThrows(IllegalStateException.class,
+                () -> t.intoMuxSender(TestSupport.roundtripConfig()));
             assertThrows(IllegalStateException.class, t::intoReceiver);
             assertThrows(IllegalStateException.class, t::intoDemuxReceiver);
             assertThrows(IllegalStateException.class,

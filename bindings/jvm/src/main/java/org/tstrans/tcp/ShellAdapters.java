@@ -2,6 +2,7 @@ package org.tstrans.tcp;
 
 import org.tstrans.shells.CancelHandle;
 import org.tstrans.shells.DemuxReceiver;
+import org.tstrans.shells.MuxSender;
 import org.tstrans.shells.Receiver;
 import org.tstrans.shells.Sender;
 
@@ -23,6 +24,8 @@ final class ShellAdapters {
     }
 
     static Sender sender(long handle) { return new Sender(handle) {}; }
+
+    static MuxSender muxSender(long handle) { return new MuxSender(handle) {}; }
 
     static Receiver receiver(long handle) { return new Receiver(handle) {}; }
 
