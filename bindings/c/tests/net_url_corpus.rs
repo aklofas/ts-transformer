@@ -25,7 +25,7 @@ use std::ffi::CString;
 use std::io::{BufRead, BufReader, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock, mpsc};
 use std::time::{Duration, Instant};
 
 use tst_integration::scenarios::url::{self, DIR, Record, Row, TLS_FILES};
@@ -241,6 +241,36 @@ fn probe(entry: &str, row: &Row) -> Option<i32> {
             other => panic!("{}: the C leg has no entry point {other:?}", row.label()),
         }
     }
+}
+
+/// How long a tcp caller row's open may take. The drop peer answers a plain
+/// dial at once and ends a TLS handshake by closing, so only a peer that never
+/// answers reaches it.
+const TCP_CALLER_BOUND: Duration = Duration::from_secs(5);
+
+/// `probe`, and the last error's text read on the thread that opened. A tcp
+/// caller row opens on a worker under `TCP_CALLER_BOUND`: a miss fails the
+/// row by name instead of the whole family by the runner's timeout. The C
+/// open has no cancel before it returns, so a missed worker is left parked.
+fn probe_reporting(entry: &str, row: &Row) -> (Option<i32>, String) {
+    if entry != "tst_tcp_sender_open" {
+        let code = probe(entry, row);
+        return (code, common::last_error_msg());
+    }
+    let (tx, rx) = mpsc::channel();
+    let (worker_entry, worker_row) = (entry.to_string(), row.clone());
+    std::thread::spawn(move || {
+        let code = probe(&worker_entry, &worker_row);
+        let _ = tx.send((code, common::last_error_msg()));
+    });
+    let bound = common::scaled(TCP_CALLER_BOUND);
+    rx.recv_timeout(bound).unwrap_or_else(|_| {
+        panic!(
+            "{} via {entry}: the open did not return within {bound:?}; \
+             the peer never answered the connection",
+            row.label()
+        )
+    })
 }
 
 // ── The RTSP wire probe ─────────────────────────────────────────────────────
@@ -534,13 +564,9 @@ fn run_family(family: &str) {
         };
         let row = &row.resolve(port, &dir);
         let row_started = Instant::now();
-        let observed = probe(entry, row);
+        let (observed, last_error) = probe_reporting(entry, row);
         if let Err(why) = url::check_outcome_code(row, "c", observed) {
-            mismatches.push(format!(
-                "{} via {entry}: {why}: {}",
-                row.label(),
-                common::last_error_msg()
-            ));
+            mismatches.push(format!("{} via {entry}: {why}: {last_error}", row.label()));
         }
         if let Some(fields) = corpus.wire_fields("c", row)
             && !row.expect.is_error()
