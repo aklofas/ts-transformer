@@ -90,6 +90,13 @@ jni_native! {
     }
 }
 
+// A hook-only class in a package that also ships natives: only the class
+// prefix covers a native of it the parser has not seen.
+#[cfg(feature = "jni-test-hooks")]
+jni_native! {
+    fn Java_org_tstrans_rtp_HookOnly_nProbe(_env, _class) = () => {}
+}
+
 #[cfg(feature = "jni-test-hooks")]
 static GATED_STATIC: bool = true;
 jni_native! {
@@ -99,7 +106,8 @@ RS
 run derive --src "$S"
 expect_rc 0 "fixture derive"
 for n in Java_org_tstrans_internal_ModProbe_nOne Java_org_tstrans_internal_DeepProbe_nTwo \
-         Java_org_tstrans_internal_AttrProbe_nThree Java_org_tstrans_rtp_Session_nProbeFour; do
+         Java_org_tstrans_internal_AttrProbe_nThree Java_org_tstrans_rtp_Session_nProbeFour \
+         Java_org_tstrans_rtp_HookOnly_nProbe; do
   has "native $n" "a hook native in the fixture"
 done
 for n in Java_org_tstrans_rtp_Session_nOpen Java_org_tstrans_rtp_Session_nClose \
@@ -110,6 +118,7 @@ done
 # natives (Session) does not, so only its hook native's exact name counts.
 has "prefix Java_org_tstrans_internal_" "the hook-only package"
 has "prefix Java_org_tstrans_internal_AttrProbe_" "a hook-only class"
+has "prefix Java_org_tstrans_rtp_HookOnly_" "a hook-only class in a package with shipped natives"
 has "prefix Java_org_tstrans_rtp_RtpProbe_" "a test-only Java class"
 lacks_line "prefix Java_org_tstrans_rtp_" "a package with shipped natives"
 lacks "Java_org_tstrans_x_Doc_" "a native named in a comment"
@@ -121,6 +130,16 @@ printf '#[cfg(any(feature = "jni-test-hooks", test))]\nfn Java_a_B_nC() {}\nfn J
 run derive --src "$B"
 expect_rc 1 "cfg(any(...))"
 has "cannot classify" "cfg(any(...))"
+# The same refusal when the feature comes first and a not(...) or any(...)
+# follows inside all(...).
+printf '#[cfg(all(feature = "jni-test-hooks", not(target_os = "windows")))]\nfn Java_a_B_nC() {}\nfn Java_a_B_nD() {}\n' > "$B/lib.rs"
+run derive --src "$B"
+expect_rc 1 "cfg(all(feature, not(...)))"
+has "cannot classify" "cfg(all(feature, not(...)))"
+printf '#[cfg(all(feature = "jni-test-hooks", any(unix, windows)))]\nfn Java_a_B_nC() {}\nfn Java_a_B_nD() {}\n' > "$B/lib.rs"
+run derive --src "$B"
+expect_rc 1 "cfg(all(feature, any(...)))"
+has "cannot classify" "cfg(all(feature, any(...)))"
 printf 'fn Java_a_B_nD() {}\n' > "$B/lib.rs"
 run derive --src "$B"
 expect_rc 1 "no hook native"
@@ -170,6 +189,10 @@ for lib in hook.so hook.dylib newhook.dll; do
   has "test-hook symbol(s)" "$lib"
 done
 has "Java_org_tstrans_internal_AttrProbe_nNew" "a new native in a hook class"
+mklib "$TMP/newclasshook.so" Java_org_tstrans_rtp_Session_nOpen Java_org_tstrans_rtp_HookOnly_nNew
+run check --src "$S" "$TMP/newclasshook.so"
+expect_rc 1 "a new native of a hook-only class in a package with shipped natives"
+has "test-hook symbol(s) Java_org_tstrans_rtp_HookOnly_nNew" "a new native of a hook-only class in a package with shipped natives"
 mklib "$TMP/rtpprobe.so" Java_org_tstrans_rtp_Session_nOpen Java_org_tstrans_rtp_RtpProbe_nTake
 run check --src "$S" "$TMP/rtpprobe.so"
 expect_rc 1 "a native of a test-only class the Rust side has no native for"
