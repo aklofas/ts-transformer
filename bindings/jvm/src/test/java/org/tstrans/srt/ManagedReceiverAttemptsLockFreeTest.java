@@ -91,7 +91,7 @@ final class ManagedReceiverAttemptsLockFreeTest {
         }
         assertNotNull(peer, "caller could not connect: " + last);
         ManagedReceiver rx = rxFuture.get(5, TimeUnit.SECONDS);
-        CancelHandle rescue = rx.cancelHandle(); // pre-obtained: the only thing that ends a parked re-accept
+        CancelHandle rescue = rx.cancelHandle(); // cancel-handle: closed in the finally; the only thing that ends a parked re-accept
         boolean peerClosed = false;
         try {
             // Enough frames to cross the sender's 1316-byte bundle threshold AND
@@ -130,6 +130,7 @@ final class ManagedReceiverAttemptsLockFreeTest {
                 peer.close();
             }
             rescue.cancel();                       // ends the parked re-accept on every path
+            rescue.close();
             rx.close();
         }
         // Terminal-kind verdicts live AFTER the body, not in `finally`: a

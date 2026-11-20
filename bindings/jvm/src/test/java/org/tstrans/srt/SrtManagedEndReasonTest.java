@@ -126,49 +126,50 @@ class SrtManagedEndReasonTest {
         ManagedMuxSender sender = connectSender(callerUrl, 5_000);
         ManagedDemuxReceiver rx = rxFuture.get(5, TimeUnit.SECONDS);
         // Taken before the peer drop, so the daemon reader can always be freed.
-        CancelHandle cancel = rx.cancelHandle();
+        try (CancelHandle cancel = rx.cancelHandle()) {
 
-        for (int i = 0; i < 5; i++) {
-            sender.sendVideo(syntheticH264Idr(), i * 3000L, i == 0);
-            Thread.sleep(10);
-        }
-        Thread.sleep(300);
-        // Peer drop: the reader re-enters its factory (bind + accept) after the
-        // default backoff and parks there with no peer in sight. Close on a side
-        // daemon thread — libsrt's srt_close LINGERS.
-        Thread dropper = new Thread(sender::close);
-        dropper.setDaemon(true);
-        dropper.start();
-        Thread.sleep(1_000);
-
-        // Off-thread so a regression fails the assertion instead of wedging main.
-        CompletableFuture<Optional<EndReason>> reasonFuture = CompletableFuture.supplyAsync(
-            rx::endReason, r -> {
-                Thread t = new Thread(r, "end-reason-getter");
-                t.setDaemon(true);
-                t.start();
-            });
-        // The 2 s `get` IS the oracle: a blocked endReason() times out here. No
-        // wall-clock "it was fast enough" assert follows — those are a known
-        // flake class on loaded CI runners.
-        try {
-            reasonFuture.get(2, TimeUnit.SECONDS);
-        } catch (TimeoutException te) {
-            // Rescue, best-effort: free the parked reader so the suite can go on.
-            // Any failure inside the rescue must not mask the verdict below.
-            try {
-                cancel.cancel();
-                endFuture.get(5, TimeUnit.SECONDS);
-            } catch (Exception ignored) {
-                // see above
+            for (int i = 0; i < 5; i++) {
+                sender.sendVideo(syntheticH264Idr(), i * 3000L, i == 0);
+                Thread.sleep(10);
             }
-            fail("endReason() blocked for >2 s behind a parked native receive");
-            return;
+            Thread.sleep(300);
+            // Peer drop: the reader re-enters its factory (bind + accept) after the
+            // default backoff and parks there with no peer in sight. Close on a side
+            // daemon thread — libsrt's srt_close LINGERS.
+            Thread dropper = new Thread(sender::close);
+            dropper.setDaemon(true);
+            dropper.start();
+            Thread.sleep(1_000);
+
+            // Off-thread so a regression fails the assertion instead of wedging main.
+            CompletableFuture<Optional<EndReason>> reasonFuture = CompletableFuture.supplyAsync(
+                rx::endReason, r -> {
+                    Thread t = new Thread(r, "end-reason-getter");
+                    t.setDaemon(true);
+                    t.start();
+                });
+            // The 2 s `get` IS the oracle: a blocked endReason() times out here. No
+            // wall-clock "it was fast enough" assert follows — those are a known
+            // flake class on loaded CI runners.
+            try {
+                reasonFuture.get(2, TimeUnit.SECONDS);
+            } catch (TimeoutException te) {
+                // Rescue, best-effort: free the parked reader so the suite can go on.
+                // Any failure inside the rescue must not mask the verdict below.
+                try {
+                    cancel.cancel();
+                    endFuture.get(5, TimeUnit.SECONDS);
+                } catch (Exception ignored) {
+                    // see above
+                }
+                fail("endReason() blocked for >2 s behind a parked native receive");
+                return;
+            }
+            cancel.cancel();
+            endFuture.get(5, TimeUnit.SECONDS);
+            reader.join(TimeUnit.SECONDS.toMillis(2));
+            rx.close();
         }
-        cancel.cancel();
-        endFuture.get(5, TimeUnit.SECONDS);
-        reader.join(TimeUnit.SECONDS.toMillis(2));
-        rx.close();
     }
 
     /**
@@ -220,44 +221,45 @@ class SrtManagedEndReasonTest {
 
         ManagedMuxSender sender = connectSender(callerUrl, 5_000);
         ManagedDemuxReceiver rx = rxFuture.get(5, TimeUnit.SECONDS);
-        CancelHandle cancel = rx.cancelHandle();
-        startIterating.countDown();
+        try (CancelHandle cancel = rx.cancelHandle()) {
+            startIterating.countDown();
 
-        for (int i = 0; i < 5; i++) {
-            sender.sendVideo(syntheticH264Idr(), i * 3000L, i == 0);
-            Thread.sleep(10);
-        }
-        Thread.sleep(300);
-        Thread dropper = new Thread(sender::close);
-        dropper.setDaemon(true);
-        dropper.start();
-        Thread.sleep(1_000);
-
-        cancel.cancel();
-        Throwable end;
-        try {
-            end = endFuture.get(5, TimeUnit.SECONDS);
-        } catch (TimeoutException te) {
-            // Rescue: a new peer releases the accept so the daemon thread ends.
-            try {
-                ManagedMuxSender rescue = connectSender(callerUrl, 5_000);
-                endFuture.get(5, TimeUnit.SECONDS);
-                rescue.close();
-            } catch (Exception ignored) {
-                // best-effort; must not mask the verdict
+            for (int i = 0; i < 5; i++) {
+                sender.sendVideo(syntheticH264Idr(), i * 3000L, i == 0);
+                Thread.sleep(10);
             }
-            fail("cancel() did not end the parked iteration within 5 s");
-            return;
-        }
-        reader.join(TimeUnit.SECONDS.toMillis(2));
+            Thread.sleep(300);
+            Thread dropper = new Thread(sender::close);
+            dropper.setDaemon(true);
+            dropper.start();
+            Thread.sleep(1_000);
 
-        assertTrue(end instanceof SrtException,
-            "expected the iteration to end with SrtException(CLOSED), got " + end);
-        assertEquals(Optional.of(EndReason.CANCELLED), rx.endReason(),
-            "a caller-initiated cancel records CANCELLED");
-        rx.close();
-        assertEquals(Optional.of(EndReason.CANCELLED), rx.endReason(),
-            "the close-time snapshot must preserve CANCELLED after close()");
+            cancel.cancel();
+            Throwable end;
+            try {
+                end = endFuture.get(5, TimeUnit.SECONDS);
+            } catch (TimeoutException te) {
+                // Rescue: a new peer releases the accept so the daemon thread ends.
+                try {
+                    ManagedMuxSender rescue = connectSender(callerUrl, 5_000);
+                    endFuture.get(5, TimeUnit.SECONDS);
+                    rescue.close();
+                } catch (Exception ignored) {
+                    // best-effort; must not mask the verdict
+                }
+                fail("cancel() did not end the parked iteration within 5 s");
+                return;
+            }
+            reader.join(TimeUnit.SECONDS.toMillis(2));
+
+            assertTrue(end instanceof SrtException,
+                "expected the iteration to end with SrtException(CLOSED), got " + end);
+            assertEquals(Optional.of(EndReason.CANCELLED), rx.endReason(),
+                "a caller-initiated cancel records CANCELLED");
+            rx.close();
+            assertEquals(Optional.of(EndReason.CANCELLED), rx.endReason(),
+                "the close-time snapshot must preserve CANCELLED after close()");
+        }
     }
 
     /**
@@ -403,31 +405,32 @@ class SrtManagedEndReasonTest {
 
         ManagedMuxSender sender = connectSender(callerUrl, 5_000);
         ManagedReceiver rx = rxFuture.get(5, TimeUnit.SECONDS);
-        CancelHandle rescue = rx.cancelHandle(); // pre-obtained; frees a stuck reader
-        startReceiving.countDown();
+        try (CancelHandle rescue = rx.cancelHandle()) { // pre-obtained; frees a stuck reader
+            startReceiving.countDown();
 
-        for (int i = 0; i < 5; i++) {
-            sender.sendVideo(syntheticH264Idr(), i * 3000L, i == 0);
-            Thread.sleep(10);
+            for (int i = 0; i < 5; i++) {
+                sender.sendVideo(syntheticH264Idr(), i * 3000L, i == 0);
+                Thread.sleep(10);
+            }
+            Thread.sleep(300);
+            // Peer leaves for good. Close on a side daemon thread — srt_close LINGERS.
+            Thread dropper = new Thread(sender::close);
+            dropper.setDaemon(true);
+            dropper.start();
+
+            Throwable end;
+            try {
+                end = endFuture.get(15, TimeUnit.SECONDS);
+            } finally {
+                rescue.cancel();
+            }
+            reader.join(TimeUnit.SECONDS.toMillis(2));
+
+            assertTrue(end instanceof SrtException,
+                "expected recvBytes() to end with an SrtException, got " + end);
+            assertEquals(SrtException.Kind.END_OF_STREAM, ((SrtException) end).kind(),
+                "a budget-exhausted managed receiver ends with END_OF_STREAM (was CLOSED before 0.7.0)");
+            rx.close();
         }
-        Thread.sleep(300);
-        // Peer leaves for good. Close on a side daemon thread — srt_close LINGERS.
-        Thread dropper = new Thread(sender::close);
-        dropper.setDaemon(true);
-        dropper.start();
-
-        Throwable end;
-        try {
-            end = endFuture.get(15, TimeUnit.SECONDS);
-        } finally {
-            rescue.cancel();
-        }
-        reader.join(TimeUnit.SECONDS.toMillis(2));
-
-        assertTrue(end instanceof SrtException,
-            "expected recvBytes() to end with an SrtException, got " + end);
-        assertEquals(SrtException.Kind.END_OF_STREAM, ((SrtException) end).kind(),
-            "a budget-exhausted managed receiver ends with END_OF_STREAM (was CLOSED before 0.7.0)");
-        rx.close();
     }
 }

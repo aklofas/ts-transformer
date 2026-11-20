@@ -588,6 +588,7 @@ public final class ShellPeers {
         private final Watchdog watchdog;
 
         Parked(Rx rx) throws InterruptedException {
+            // cancel-handle: the watchdog closes it
             this(rx.shell(), rx.cancelHandle(), "a silent peer delivered data", () -> {
                 while (true) {
                     try {

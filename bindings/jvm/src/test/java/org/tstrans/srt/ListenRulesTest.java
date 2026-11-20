@@ -2,6 +2,7 @@ package org.tstrans.srt;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
+import static org.tstrans.TestSupport.cancelNow;
 import static org.tstrans.TestSupport.isLinux;
 
 import java.util.Optional;
@@ -127,7 +128,7 @@ class ListenRulesTest {
             assertEquals(1, size);
             assertNull(outcome.get(), "accept ended before the edits answered");
 
-            listener.cancelHandle().cancel();
+            cancelNow(listener::cancelHandle);
             acceptor.join(10_000);
             Object got = outcome.get();
             assertTrue(got instanceof SrtException, "accept was woken, got: " + got);
@@ -158,7 +159,7 @@ class ListenRulesTest {
         try (Listener listener = listen()) {
             ListenRules rules = listener.rules();
             rules.set("a", ListenRule.accept());
-            listener.cancelHandle().cancel();
+            cancelNow(listener::cancelHandle);
 
             assertEquals(SrtException.Kind.CLOSED,
                 assertThrows(SrtException.class, rules::size).kind());

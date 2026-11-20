@@ -99,45 +99,45 @@ final class DemuxReceiverCloseRaceTest {
         for (int i = 0; i < 30; i++) {
             DemuxReceiver rx = tryReceiver();
             // Taken before the park so a regressed close() can still be unblocked.
-            CancelHandle rescue = rx.cancelHandle();
+            try (CancelHandle rescue = rx.cancelHandle()) {
 
-            CountDownLatch aboutToIterate = new CountDownLatch(1);
-            AtomicReference<Throwable> unexpected = new AtomicReference<>();
+                CountDownLatch aboutToIterate = new CountDownLatch(1);
+                AtomicReference<Throwable> unexpected = new AtomicReference<>();
 
-            Thread iter =
-                new Thread(
-                    () -> {
-                        aboutToIterate.countDown();
-                        try {
-                            // Parks in next() waiting on a datagram that never arrives. close()
-                            // from the main thread cancels the recv (waking it within ~100 ms).
-                            for (var e : rx) {
-                                assertNotNull(e);
+                Thread iter =
+                    new Thread(
+                        () -> {
+                            aboutToIterate.countDown();
+                            try {
+                                // Parks in next() waiting on a datagram that never arrives. close()
+                                // from the main thread cancels the recv (waking it within ~100 ms).
+                                for (var e : rx) {
+                                    assertNotNull(e);
+                                }
+                            } catch (RuntimeException wrapped) {
+                                // A wrapped RtpException(CLOSED)/DemuxException is the sanctioned
+                                // outcome of the cancelled recv.
+                            } catch (Throwable t) {
+                                unexpected.set(t);
                             }
-                        } catch (RuntimeException wrapped) {
-                            // A wrapped RtpException(CLOSED)/DemuxException is the sanctioned
-                            // outcome of the cancelled recv.
-                        } catch (Throwable t) {
-                            unexpected.set(t);
-                        }
-                    },
-                    "rtp-rx-iter-" + i);
-            iter.start();
+                        },
+                        "rtp-rx-iter-" + i);
+                iter.start();
 
-            assertTrue(aboutToIterate.await(2, TimeUnit.SECONDS), "iterator thread never started");
-            Thread.sleep(20);
-            try {
-                CompletableFuture.runAsync(rx::close).get(scaledMs(5_000), TimeUnit.MILLISECONDS);
-            } catch (TimeoutException hung) {
-                rescue.cancel();
-                fail("close() did not return (run " + i + ")");
+                assertTrue(aboutToIterate.await(2, TimeUnit.SECONDS), "iterator thread never started");
+                Thread.sleep(20);
+                try {
+                    CompletableFuture.runAsync(rx::close).get(scaledMs(5_000), TimeUnit.MILLISECONDS);
+                } catch (TimeoutException hung) {
+                    rescue.cancel();
+                    fail("close() did not return (run " + i + ")");
+                }
+
+                iter.join(scaledMs(5_000));
+                assertFalse(iter.isAlive(), "iterator did not unblock after close (run " + i + ")");
+                assertNull(unexpected.get(), "iterator saw an unexpected failure (run " + i + ")");
+                completed++;
             }
-
-            iter.join(scaledMs(5_000));
-            assertFalse(iter.isAlive(), "iterator did not unblock after close (run " + i + ")");
-            assertNull(unexpected.get(), "iterator saw an unexpected failure (run " + i + ")");
-            rescue.close();
-            completed++;
         }
         assertEquals(30, completed);
     }

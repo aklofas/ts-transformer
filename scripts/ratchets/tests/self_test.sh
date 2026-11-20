@@ -2470,5 +2470,56 @@ expect "advisory-db pin: two rev lines fail" 1 adp
 rm "$tmp/adp/pin.toml"
 expect "advisory-db pin: a missing pin file fails" 1 adp
 
+# ---- JVM cancel handles are closed (scripts/check/jvm/cancel-handle-closed.sh) ----
+# Every `.cancelHandle()` in the JVM tests is closed by a try header, a closing
+# helper, an immediate close, a return, or carries a reason; any other site
+# fails naming file:line. A `.cancelHandle()` inside a string or a comment is
+# not a site; a tree with no site at all fails closed.
+CH="$DIR/../check/jvm/cancel-handle-closed.sh"
+ch="$tmp/cancel-handles"; mkdir -p "$ch/ok/org/x" "$ch/leak/org/x" "$ch/none/org/x" "$ch/empty"
+cat > "$ch/ok/org/x/A.java" <<'JAVA'
+class A {
+    void f(Rx rx, Cleanup c) throws Exception {
+        try (CancelHandle h = rx.cancelHandle()) { h.cancel(); }
+        try (Receiver r = open("srt://127.0.0.1:1");
+             CancelHandle h = r.cancelHandle()) { h.cancel(); }
+        try (Watchdog w = new Watchdog(rx.cancelHandle(), 10)) { }
+        try (Parked p = new ShellPeers.Parked(rx, rx.cancelHandle(), "x", () -> null)) { }
+        CancelHandle k = c.add(rx.cancelHandle());
+        cancelNow(() -> rx.cancelHandle());
+        rx.cancelHandle().close();
+        this.rescue = rx.cancelHandle(); // cancel-handle: closed in close()
+        // cancel-handle: the watchdog closes it
+        this(rx.shell(), rx.cancelHandle());
+        // a comment naming rx.cancelHandle() is not a site
+        String s = "rx.cancelHandle()";
+    }
+    CancelHandle g() { return s.cancelHandle(); }
+}
+JAVA
+expect "cancel handles: every closing form passes" 0 env CANCEL_HANDLE_JAVA_DIR="$ch/ok" bash "$CH"
+expect_out "cancel handles: strings and comments are not sites" "all 10 .cancelHandle() sites"
+cat > "$ch/leak/org/x/B.java" <<'JAVA'
+class B {
+    void f(Rx rx) {
+        CancelHandle h = rx.cancelHandle();
+        rx.cancelHandle().cancel();
+        keep(rx.cancelHandle());
+        CancelHandle m = rx.cancelHandle(); // cancel-handle:
+        try (CancelHandle ok = rx.cancelHandle()) { }
+    }
+}
+JAVA
+expect "cancel handles: unclosed sites fail" 1 env CANCEL_HANDLE_JAVA_DIR="$ch/leak" bash "$CH"
+expect_out "cancel handles: a local" "FAIL: cancel-handle-closed: org/x/B.java:3: CancelHandle h = rx.cancelHandle();"
+expect_out "cancel handles: an inline temporary" "FAIL: cancel-handle-closed: org/x/B.java:4: rx.cancelHandle().cancel();"
+expect_out "cancel handles: an argument to anything else" "FAIL: cancel-handle-closed: org/x/B.java:5: keep(rx.cancelHandle());"
+expect_out "cancel handles: a marker without a reason" "FAIL: cancel-handle-closed: org/x/B.java:6:"
+expect_out "cancel handles: the count" "4 of 5 .cancelHandle() sites are never closed"
+printf 'class C {\n    void f() { }\n}\n' > "$ch/none/org/x/C.java"
+expect "cancel handles: a tree with no site fails closed" 2 env CANCEL_HANDLE_JAVA_DIR="$ch/none" bash "$CH"
+expect "cancel handles: a tree with no Java file fails closed" 2 env CANCEL_HANDLE_JAVA_DIR="$ch/empty" bash "$CH"
+expect "cancel handles: a missing root fails closed" 2 env CANCEL_HANDLE_JAVA_DIR="$ch/absent" bash "$CH"
+
 if [[ "$fail" == 0 ]]; then echo "self-test: ALL OK"; fi
 exit "$fail"

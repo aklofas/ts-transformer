@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.tstrans.TestSupport.cancelNow;
 import static org.tstrans.TestSupport.scaledMs;
 import static org.tstrans.shells.ShellPeers.within;
 
@@ -301,10 +302,10 @@ class TransportTest {
             plainClient(l, c);
             plainClient(l, c);
             Receiver rx = c.add(accept(l, c).intoReceiver());
-            rx.cancelHandle().cancel();
+            cancelNow(rx::cancelHandle);
             assertKind(TcpException.Kind.CLOSED, assertThrows(TcpException.class, rx::recvBytes));
             Sender tx = c.add(accept(l, c).intoSender());
-            tx.cancelHandle().cancel();
+            cancelNow(tx::cancelHandle);
             assertKind(TcpException.Kind.CLOSED,
                 assertThrows(TcpException.class, () -> tx.sendBytes(packets(1))));
         }
@@ -381,7 +382,7 @@ class TransportTest {
                 // Closed before the receiver: if the cancel woke nothing, the client's EOF still
                 // ends the handshake, so the test fails on its bound instead of hanging teardown.
                 c.add(client);
-                CancelHandle h = rx.cancelHandle();
+                CancelHandle h = rx.cancelHandle(); // cancel-handle: the Parked watchdog closes it
                 try (Parked p = new Parked(rx, h, "a silent client completed a TLS handshake", rx::recvBytes)) {
                     long t0 = System.nanoTime();
                     if (byClose) {

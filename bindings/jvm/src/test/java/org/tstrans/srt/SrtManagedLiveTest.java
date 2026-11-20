@@ -26,7 +26,7 @@ import org.tstrans.shells.Sender;
 import org.tstrans.shells.Receiver;
 import org.tstrans.shells.MuxSender;
 import org.tstrans.shells.DemuxReceiver;
-import org.tstrans.shells.CancelHandle;
+import org.tstrans.shells.ShellPeers.Watchdog;
 import org.tstrans.shells.SocketStats;
 import org.tstrans.shells.TransportStats;
 
@@ -656,18 +656,7 @@ class SrtManagedLiveTest {
             // loop can stall (it may equally be obtained mid-iteration).
             // The watchdog converts any unforeseen stall into a prompt CLOSED
             // end-of-iteration + a clean assertion failure, never a wedged worker.
-            CancelHandle cancel = rx.cancelHandle();
-            Thread watchdog = new Thread(() -> {
-                try {
-                    if (!observed.await(TIMEOUT_SEC - 3, TimeUnit.SECONDS)) {
-                        cancel.cancel();
-                    }
-                } catch (InterruptedException ignored) {
-                    Thread.currentThread().interrupt();
-                }
-            });
-            watchdog.setDaemon(true);
-            watchdog.start();
+            Watchdog watchdog = new Watchdog(rx.cancelHandle(), TimeUnit.SECONDS.toMillis(TIMEOUT_SEC - 3));
             try {
                 for (DemuxEvent e : rx) {
                     sawEvent = true;
@@ -689,6 +678,7 @@ class SrtManagedLiveTest {
                 if (!isCleanEndOfStream(re)) throw re;
             } finally {
                 observed.countDown(); // always release the peer + watchdog
+                watchdog.close();
             }
         }
 

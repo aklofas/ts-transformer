@@ -95,29 +95,30 @@ final class CancelledRecvKindGoldenTest {
         Socket sock = listener.accept(null);
         listener.close();
         try (Receiver rx = sock.intoReceiver()) {
-            CancelHandle cancel = rx.cancelHandle(); // obtained BEFORE the reader parks
-            CompletableFuture<Throwable> end = new CompletableFuture<>();
-            CountDownLatch entered = new CountDownLatch(1);
-            Thread reader = new Thread(() -> {
-                try {
-                    entered.countDown();
-                    rx.recvBytes();
-                    end.complete(null);
-                } catch (Throwable t) {
-                    end.complete(t);
-                }
-            }, "parked-reader");
-            reader.setDaemon(true);
-            reader.start();
-            assertTrue(entered.await(10, TimeUnit.SECONDS), "reader never started");
-            Thread.sleep(300); // let recvBytes() park inside the native receive
+            try (CancelHandle cancel = rx.cancelHandle()) { // obtained BEFORE the reader parks
+                CompletableFuture<Throwable> end = new CompletableFuture<>();
+                CountDownLatch entered = new CountDownLatch(1);
+                Thread reader = new Thread(() -> {
+                    try {
+                        entered.countDown();
+                        rx.recvBytes();
+                        end.complete(null);
+                    } catch (Throwable t) {
+                        end.complete(t);
+                    }
+                }, "parked-reader");
+                reader.setDaemon(true);
+                reader.start();
+                assertTrue(entered.await(10, TimeUnit.SECONDS), "reader never started");
+                Thread.sleep(300); // let recvBytes() park inside the native receive
 
-            cancel.cancel();
-            Throwable cause = end.get(10, TimeUnit.SECONDS); // FAILURE bound, never a duration assert
-            assertTrue(cause instanceof SrtException, "expected SrtException, got " + cause);
-            SrtException se = (SrtException) cause;
-            assertEquals(expectedCode, se.kind().name(), "kind name must equal the golden's code");
-            assertEquals(expectedDetail, se.getMessage(), "detail must equal the golden's");
+                cancel.cancel();
+                Throwable cause = end.get(10, TimeUnit.SECONDS); // FAILURE bound, never a duration assert
+                assertTrue(cause instanceof SrtException, "expected SrtException, got " + cause);
+                SrtException se = (SrtException) cause;
+                assertEquals(expectedCode, se.kind().name(), "kind name must equal the golden's code");
+                assertEquals(expectedDetail, se.getMessage(), "detail must equal the golden's");
+            }
         } finally {
             release.countDown();
         }

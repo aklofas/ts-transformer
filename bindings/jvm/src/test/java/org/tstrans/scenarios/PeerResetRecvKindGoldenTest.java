@@ -81,30 +81,31 @@ final class PeerResetRecvKindGoldenTest {
                 conn.setSoLinger(true, 0); // the close below sends an RST
             }
 
-            CancelHandle cancel = r.cancelHandle(); // obtained BEFORE the reader parks
-            CompletableFuture<Throwable> end = new CompletableFuture<>();
-            Thread reader = new Thread(() -> {
-                try {
-                    while (true) {
-                        r.recvBytes();
+            try (CancelHandle cancel = r.cancelHandle()) { // obtained BEFORE the reader parks
+                CompletableFuture<Throwable> end = new CompletableFuture<>();
+                Thread reader = new Thread(() -> {
+                    try {
+                        while (true) {
+                            r.recvBytes();
+                        }
+                    } catch (Throwable t) {
+                        end.complete(t);
                     }
-                } catch (Throwable t) {
-                    end.complete(t);
-                }
-            }, "peer-reset-reader");
-            reader.setDaemon(true);
-            reader.start();
+                }, "peer-reset-reader");
+                reader.setDaemon(true);
+                reader.start();
 
-            Throwable cause;
-            try {
-                cause = end.get(deadlineSeconds(), TimeUnit.SECONDS); // FAILURE bound
-            } catch (TimeoutException e) {
-                cancel.cancel();
-                throw new AssertionError("the receive did not fail within the deadline after the reset", e);
+                Throwable cause;
+                try {
+                    cause = end.get(deadlineSeconds(), TimeUnit.SECONDS); // FAILURE bound
+                } catch (TimeoutException e) {
+                    cancel.cancel();
+                    throw new AssertionError("the receive did not fail within the deadline after the reset", e);
+                }
+                assertTrue(cause instanceof TcpException, "expected TcpException, got " + cause);
+                assertEquals(expectedCode, ((TcpException) cause).kind().name(),
+                    "kind name must equal the golden's code");
             }
-            assertTrue(cause instanceof TcpException, "expected TcpException, got " + cause);
-            assertEquals(expectedCode, ((TcpException) cause).kind().name(),
-                "kind name must equal the golden's code");
         }
     }
 }

@@ -126,6 +126,7 @@ class SrtManagedListenerCancelTest {
 
         ManagedMuxSender sender = connectSender(callerUrl, 5_000);
         ManagedDemuxReceiver rx = rxFuture.get(5, TimeUnit.SECONDS);
+        // cancel-handle: closed after the cancel below
         CancelHandle cancel = obtainHandleMidIteration ? null : rx.cancelHandle();
         startIterating.countDown();
 
@@ -183,6 +184,7 @@ class SrtManagedListenerCancelTest {
 
         long t0 = System.nanoTime();
         cancel.cancel();
+        cancel.close();
 
         Throwable end;
         try {
@@ -266,55 +268,56 @@ class SrtManagedListenerCancelTest {
         ManagedReceiver rx = rxFuture.get(5, TimeUnit.SECONDS);
         // Obtained before any receive is in flight — the handle a caller keeps
         // for the whole session; it must survive every later reconnect.
-        CancelHandle cancel = rx.cancelHandle();
-        startReceiving.countDown();
+        try (CancelHandle cancel = rx.cancelHandle()) {
+            startReceiving.countDown();
 
-        // Keep frames flowing until a packet has actually been delivered, rather
-        // than sending a fixed few and hoping TSBPD released them in time (the
-        // starved-receiver flake class SrtManagedLiveTest documents).
-        for (int i = 0; i < 100 && firstPacket.getCount() > 0; i++) {
-            sender.sendVideo(syntheticH264Idr(), i * 3000L, i == 0);
-            Thread.sleep(20);
-        }
-        assertTrue(firstPacket.await(5, TimeUnit.SECONDS),
-            "the managed receiver never delivered a packet before the peer drop");
-
-        // Peer drop: the managed receiver re-enters its factory (bind + accept)
-        // after the default 100 ms backoff and parks there with no peer in sight.
-        // Close on a side daemon thread: libsrt's srt_close LINGERS.
-        Thread dropper = new Thread(sender::close);
-        dropper.setDaemon(true);
-        dropper.start();
-        Thread.sleep(1_000);
-
-        long t0 = System.nanoTime();
-        cancel.cancel();
-
-        Throwable end;
-        try {
-            end = endFuture.get(3, TimeUnit.SECONDS);
-        } catch (TimeoutException te) {
-            // Rescue: a new peer releases the accept so the daemon thread can be
-            // joined; the cancel already latched, so the reader then exits. Any
-            // failure inside the rescue must not mask the verdict.
-            try {
-                ManagedMuxSender rescue = connectSender(callerUrl, 5_000);
-                endFuture.get(5, TimeUnit.SECONDS);
-                rescue.close();
-            } catch (Exception ignored) {
-                // see above
+            // Keep frames flowing until a packet has actually been delivered, rather
+            // than sending a fixed few and hoping TSBPD released them in time (the
+            // starved-receiver flake class SrtManagedLiveTest documents).
+            for (int i = 0; i < 100 && firstPacket.getCount() > 0; i++) {
+                sender.sendVideo(syntheticH264Idr(), i * 3000L, i == 0);
+                Thread.sleep(20);
             }
-            fail("cancel() did not wake the managed receiver parked in re-accept within 3 s");
-            return;
-        }
-        long wokeMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - t0);
-        reader.join(TimeUnit.SECONDS.toMillis(2));
+            assertTrue(firstPacket.await(5, TimeUnit.SECONDS),
+                "the managed receiver never delivered a packet before the peer drop");
 
-        assertTrue(wokeMs < 2_000, "cancel took " + wokeMs + " ms to wake the parked re-accept");
-        assertTrue(end instanceof SrtException,
-            "expected the receive loop to end with SrtException(CLOSED), got " + end);
-        assertEquals(SrtException.Kind.CLOSED, ((SrtException) end).kind(),
-            "a caller-initiated cancel surfaces as CLOSED");
-        rx.close();
+            // Peer drop: the managed receiver re-enters its factory (bind + accept)
+            // after the default 100 ms backoff and parks there with no peer in sight.
+            // Close on a side daemon thread: libsrt's srt_close LINGERS.
+            Thread dropper = new Thread(sender::close);
+            dropper.setDaemon(true);
+            dropper.start();
+            Thread.sleep(1_000);
+
+            long t0 = System.nanoTime();
+            cancel.cancel();
+
+            Throwable end;
+            try {
+                end = endFuture.get(3, TimeUnit.SECONDS);
+            } catch (TimeoutException te) {
+                // Rescue: a new peer releases the accept so the daemon thread can be
+                // joined; the cancel already latched, so the reader then exits. Any
+                // failure inside the rescue must not mask the verdict.
+                try {
+                    ManagedMuxSender rescue = connectSender(callerUrl, 5_000);
+                    endFuture.get(5, TimeUnit.SECONDS);
+                    rescue.close();
+                } catch (Exception ignored) {
+                    // see above
+                }
+                fail("cancel() did not wake the managed receiver parked in re-accept within 3 s");
+                return;
+            }
+            long wokeMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - t0);
+            reader.join(TimeUnit.SECONDS.toMillis(2));
+
+            assertTrue(wokeMs < 2_000, "cancel took " + wokeMs + " ms to wake the parked re-accept");
+            assertTrue(end instanceof SrtException,
+                "expected the receive loop to end with SrtException(CLOSED), got " + end);
+            assertEquals(SrtException.Kind.CLOSED, ((SrtException) end).kind(),
+                "a caller-initiated cancel surfaces as CLOSED");
+            rx.close();
+        }
     }
 }

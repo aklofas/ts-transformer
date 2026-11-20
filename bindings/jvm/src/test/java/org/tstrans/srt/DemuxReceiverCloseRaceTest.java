@@ -123,52 +123,52 @@ final class DemuxReceiverCloseRaceTest {
             // Pre-obtain a cancel handle for RESCUE ONLY: if close() regresses to waiting behind
             // the parked next(), the watchdog unparks the daemon reader after the verdict has
             // already failed. It is never the wake under test.
-            CancelHandle watchdog = rx.cancelHandle();
+            try (CancelHandle watchdog = rx.cancelHandle()) {
 
-            CompletableFuture<Throwable> iterResult = new CompletableFuture<>();
-            CountDownLatch aboutToIterate = new CountDownLatch(1);
+                CompletableFuture<Throwable> iterResult = new CompletableFuture<>();
+                CountDownLatch aboutToIterate = new CountDownLatch(1);
 
-            Thread iter = new Thread(() -> {
-                aboutToIterate.countDown();
-                try {
-                    for (DemuxEvent e : rx) {
-                        assertNotNull(e);
-                        // Stop the sender once data flows, so subsequent next() parks → the
-                        // window close() must safely interrupt.
-                        stop.set(true);
+                Thread iter = new Thread(() -> {
+                    aboutToIterate.countDown();
+                    try {
+                        for (DemuxEvent e : rx) {
+                            assertNotNull(e);
+                            // Stop the sender once data flows, so subsequent next() parks → the
+                            // window close() must safely interrupt.
+                            stop.set(true);
+                        }
+                        iterResult.complete(null);
+                    } catch (RuntimeException wrapped) {
+                        iterResult.complete(null); // wrapped SrtException/DemuxException is fine
+                    } catch (Throwable t) {
+                        iterResult.complete(t);
                     }
-                    iterResult.complete(null);
-                } catch (RuntimeException wrapped) {
-                    iterResult.complete(null); // wrapped SrtException/DemuxException is fine
-                } catch (Throwable t) {
-                    iterResult.complete(t);
+                }, "rx-iter-" + i);
+                iter.setDaemon(true);
+                iter.start();
+
+                assertTrue(aboutToIterate.await(2, TimeUnit.SECONDS), "iterator never started");
+                // Give the iterator time to receive some events then park in next().
+                Thread.sleep(300);
+
+                // close() cancels first: the registry entry's close-time hook fires the receiver's
+                // cancel target BEFORE taking the resource lock the parked next() holds, so close()
+                // alone unwedges the iteration and returns. The bounded get is the assertion — a
+                // regression to the old wait-behind-the-parked-recv contract fails here instead of
+                // pinning the test until @Timeout.
+                CompletableFuture<Void> closed = CompletableFuture.runAsync(rx::close);
+                try {
+                    closed.get(8, TimeUnit.SECONDS);
+                } catch (TimeoutException te) {
+                    watchdog.cancel();
+                    fail("close() blocked for >8 s behind the parked next() instead of cancelling it"
+                        + " (run " + i + ")");
                 }
-            }, "rx-iter-" + i);
-            iter.setDaemon(true);
-            iter.start();
 
-            assertTrue(aboutToIterate.await(2, TimeUnit.SECONDS), "iterator never started");
-            // Give the iterator time to receive some events then park in next().
-            Thread.sleep(300);
-
-            // close() cancels first: the registry entry's close-time hook fires the receiver's
-            // cancel target BEFORE taking the resource lock the parked next() holds, so close()
-            // alone unwedges the iteration and returns. The bounded get is the assertion — a
-            // regression to the old wait-behind-the-parked-recv contract fails here instead of
-            // pinning the test until @Timeout.
-            CompletableFuture<Void> closed = CompletableFuture.runAsync(rx::close);
-            try {
-                closed.get(8, TimeUnit.SECONDS);
-            } catch (TimeoutException te) {
-                watchdog.cancel();
-                fail("close() blocked for >8 s behind the parked next() instead of cancelling it"
-                    + " (run " + i + ")");
+                Throwable result = iterResult.get(8, TimeUnit.SECONDS);
+                stop.set(true);
+                assertNull(result, "iterator saw an unexpected failure (run " + i + ")");
             }
-
-            Throwable result = iterResult.get(8, TimeUnit.SECONDS);
-            watchdog.close();
-            stop.set(true);
-            assertNull(result, "iterator saw an unexpected failure (run " + i + ")");
         }
     }
 }

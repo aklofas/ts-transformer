@@ -3,6 +3,7 @@ package org.tstrans.shells;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.tstrans.TestSupport.cancelNow;
 import static org.tstrans.TestSupport.scaledMs;
 
 import java.net.DatagramPacket;
@@ -51,7 +52,6 @@ class LocalPortTest {
             Receiver rx = c.add(Receiver.open("rist://@127.0.0.1:0"));
             int port = rx.localPort().getAsInt();
             assertTrue(port > 0, "port " + port);
-            CancelHandle watchdogHandle = rx.cancelHandle();
             Sender tx = c.add(Sender.open("rist://127.0.0.1:" + port));
             AtomicBoolean done = new AtomicBoolean();
             // The first packets can be lost before the session is up, so keep sending.
@@ -67,17 +67,7 @@ class LocalPortTest {
             }, "rist-local-port-sender");
             sender.setDaemon(true);
             sender.start();
-            Thread watchdog = new Thread(() -> {
-                try {
-                    Thread.sleep(scaledMs(10_000));
-                    if (!done.get()) watchdogHandle.cancel();
-                } catch (InterruptedException ignored) {
-                    // the test finished first
-                }
-            }, "rist-local-port-watchdog");
-            watchdog.setDaemon(true);
-            watchdog.start();
-            try {
+            try (ShellPeers.Watchdog watchdog = new ShellPeers.Watchdog(rx.cancelHandle(), scaledMs(10_000))) {
                 assertEquals(188, ShellPeers.recvTolerant(rx).length);
             } finally {
                 done.set(true);
@@ -101,7 +91,7 @@ class LocalPortTest {
                 OptionalInt port = ShellPeers.within(scaledMs(1000), "localPort", rx::localPort);
                 assertTrue(port.getAsInt() > 0);
                 parked.assertStillParked();
-                rx.cancelHandle().cancel();
+                cancelNow(rx::cancelHandle);
                 parked.awaitEnd(scaledMs(5_000));
             }
         }

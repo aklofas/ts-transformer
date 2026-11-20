@@ -153,7 +153,9 @@ class SrtMuxSenderCancelHandleTest {
         // assertion above throws first.
         try (MuxSender plain = connectPlainMux(callerUrl, 5_000);
                 Receiver peer = peerFuture.get(5, TimeUnit.SECONDS)) {
-            assertNotNull(plain.cancelHandle(), "open sender hands out a handle");
+            try (CancelHandle h = plain.cancelHandle()) {
+                assertNotNull(h, "open sender hands out a handle");
+            }
             plain.close();
             assertThrows(IllegalStateException.class, plain::cancelHandle);
         }
