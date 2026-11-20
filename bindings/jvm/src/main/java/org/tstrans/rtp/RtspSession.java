@@ -126,6 +126,11 @@ public final class RtspSession extends NativeHandle {
      * layer enforces single use of the data plane: a second call throws
      * {@link RtspException} of kind {@code CLOSED}.
      *
+     * <p>The receiver does not own the RTSP client: its {@code close()} does not end
+     * the session, only this session's {@link #close()} does. Keep this object and
+     * close it; one dropped without {@code close()} leaves the RTSP session, its
+     * connection and its keepalives running until the process exits.
+     *
      * @param demuxConfig demuxer configuration (must not be null; use
      *     {@link #intoDemuxReceiver()} for defaults)
      */

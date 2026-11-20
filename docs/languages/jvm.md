@@ -3042,7 +3042,16 @@ when the server accepted the TEARDOWN within the close's 500 ms and no
 `recvAu()` was in progress, otherwise `CANCELLED`). By contrast,
 `intoDemuxReceiver()` leases the session handle (a sanctioned borrow — only the
 data-plane transport moves into the receiver), so the control plane remains
-usable after the call.
+usable after the call. That `DemuxReceiver` does not own the RTSP client:
+closing it does not end the session, and only the `RtspSession`'s own
+`close()` does. The JVM has no cleaner, so a session object dropped without
+`close()` is never closed: `RtspClient.connect(cfg).intoDemuxReceiver()` with
+the session not kept leaves the RTSP session, its connection and its
+keepalives running until the process exits, with nothing left to close it.
+Keep the session and close it (the example above closes both). Python
+differs: a receiver keeps the client alive after the session object is
+collected, and the client ends once the session and the receiver are both
+gone.
 
 **Failure path note.** If `intoDemuxReceiver()` previously consumed the data
 plane, a subsequent `intoH264Receiver()` still consumes the session (the native
