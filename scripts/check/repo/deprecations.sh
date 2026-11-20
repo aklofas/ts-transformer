@@ -36,8 +36,10 @@
 #           field after `#[deprecated]`; a Java class, method or field; a
 #           Python class, def or assignment target). A site that declares
 #           nothing (a warning call) names it as a whole word in its message
-#           or in a comment directly above the statement. The row of a Java
-#           class covers the deprecated members of that class too.
+#           or in a comment directly above the statement, and not only as
+#           the owner of a member (`Receiver` in `Receiver.recv_bytes(`).
+#           The row of a Java class covers the deprecated members of that
+#           class too.
 #   an argument  a Python row `module.Class.method.arg` (the last two
 #           components lower-snake after a CapWords class) names one argument:
 #           a site covers it only when it names the method with its `(` and
@@ -153,6 +155,12 @@ def show(v):
 
 def word(name, text):
     return re.search(r"(?<!\w)" + re.escape(name) + r"(?!\w)", text) is not None
+
+
+def named(name, text):
+    """`name` as a whole word in a message, and not only as the owner of a
+    member (`Receiver` in `Receiver.recv_bytes(`)."""
+    return re.search(r"(?<!\w)" + re.escape(name) + r"(?!\w)(?!\.\w)", text) is not None
 
 
 def plain(symbol):
@@ -515,7 +523,7 @@ def covers(row, s):
         if s["name"]:
             return s["name"] == method and word(arg, s["decl"])
         return re.search(r"(?<!\w)" + re.escape(method) + r"\(", s["text"]) is not None and word(arg, s["text"])
-    if not (s["name"] == row["leaf"] if s["name"] else word(row["leaf"], s["text"])):
+    if not (s["name"] == row["leaf"] if s["name"] else named(row["leaf"], s["text"])):
         return False
     types = java_types(row)
     return types is None or s["params"] == types

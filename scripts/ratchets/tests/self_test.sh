@@ -1956,7 +1956,8 @@ expect_out "deprecations: what was not read" "no java source file was read under
 # row only when it names the method with its `(` and the argument; a Java
 # site only when its parameter types are the row's list; rows that share a
 # last component need a site each; a removed argument row is resolved
-# against the stub's signature or the class's overloads.
+# against the stub's signature or the class's overloads. A class named as the
+# owner in a message (`Receiver.recv_bytes(`) is not the class deprecated.
 dep_args() {
     local t="$tmp/dep"
     cat >> "$t/bindings/python/src/lib.rs" <<'EOF'
@@ -2011,6 +2012,7 @@ EOF
 ### Removed — tst-py (BREAKING)
 
 - `Thing.open(timeout=...)`: the `timeout` argument is removed.
+- `tstrans.old.Receiver` is removed: use `tstrans.shells.Receiver`.
 
 ### Removed — tst-jni (BREAKING)
 
@@ -2054,6 +2056,14 @@ earliest_removal = "0.11.0"
 removed_in = "0.11.0"
 
 [[deprecation]]
+lang = "python"
+symbol = "tstrans.old.Receiver"
+since = "0.9.0"
+replacement = "tstrans.shells.Receiver"
+earliest_removal = "0.11.0"
+removed_in = "0.11.0"
+
+[[deprecation]]
 lang = "java"
 symbol = "org.demo.Server.stop(int)"
 since = "0.9.0"
@@ -2064,7 +2074,7 @@ EOF
 }
 dep_tree; dep_args
 expect "deprecations: argument rows with a site each pass" 0 dep
-expect_out "deprecations: the argument sites are counted" "9 deprecation sites (rust 1, java 3, python 5); 8 live rows, 3 removed rows"
+expect_out "deprecations: the argument sites are counted" "9 deprecation sites (rust 1, java 3, python 5); 8 live rows, 4 removed rows"
 expect_out "deprecations: the removed arguments are resolved" "2 removed argument rows resolved"
 dep_tree; dep_args
 plant "$tmp/dep/bindings/python/src/lib.rs" 'PyErr::warn(.*c"ManagedReceiver.*' 'Ok(())'
