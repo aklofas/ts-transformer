@@ -252,8 +252,10 @@ const PEER_BOUND: Duration = Duration::from_secs(5);
 /// `probe`, and the last error's text read on the thread that opened. A tcp
 /// caller row and an srt listener row open on a worker under `PEER_BOUND`: a
 /// miss fails the row by name instead of the whole family by the runner's
-/// timeout. The C open has no cancel before it returns, so a missed worker is
-/// left parked (an srt one is closed by tst-srt's exit guard at exit).
+/// timeout. The C open has no cancel before it returns: a missed tcp caller
+/// ends at its own connect budget (10 s unless the URL sets one), and a
+/// missed srt listener is released by one dial before the row fails, so it
+/// does not keep its port while the other rows run.
 fn probe_reporting(entry: &str, row: &Row) -> (Option<i32>, String) {
     let missed = match entry {
         "tst_tcp_sender_open" => "the peer never answered the connection",
@@ -265,17 +267,32 @@ fn probe_reporting(entry: &str, row: &Row) -> (Option<i32>, String) {
     };
     let (tx, rx) = mpsc::channel();
     let (worker_entry, worker_row) = (entry.to_string(), row.clone());
-    std::thread::spawn(move || {
+    let worker = std::thread::spawn(move || {
         let code = probe(&worker_entry, &worker_row);
         let _ = tx.send((code, common::last_error_msg()));
     });
     let bound = common::scaled(PEER_BOUND);
-    rx.recv_timeout(bound).unwrap_or_else(|_| {
-        panic!(
-            "{} via {entry}: the open did not return within {bound:?}; {missed}",
-            row.label()
-        )
-    })
+    if let Ok(answer) = rx.recv_timeout(bound) {
+        return answer;
+    }
+    if entry == "tst_receiver_open_listener"
+        && let Some(addr) = peer_addr(row)
+    {
+        // The accept returns to this dial and the worker closes the handle.
+        let _ = SrtSocketBuilder::new()
+            .connect_timeout(common::scaled(Duration::from_secs(2)))
+            .connect(addr);
+        if rx
+            .recv_timeout(common::scaled(Duration::from_secs(2)))
+            .is_ok()
+        {
+            let _ = worker.join();
+        }
+    }
+    panic!(
+        "{} via {entry}: the open did not return within {bound:?}; {missed}",
+        row.label()
+    )
 }
 
 // ── The RTSP wire probe ─────────────────────────────────────────────────────
