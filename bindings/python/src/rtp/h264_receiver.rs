@@ -549,7 +549,7 @@ impl PyH264Receiver {
         Py::new(py, SocketStats::from(&s))
     }
 
-    /// Local address the UDP socket is bound to, as `"host:port"` string.
+    /// Local address the UDP socket is bound to, as `(host, port)`.
     /// Returns `None` only for a live TCP-interleaved (RTSP) receiver
     /// where no UDP socket exists.
     ///
@@ -558,11 +558,11 @@ impl PyH264Receiver {
     /// is never ambiguous between "closed" and "no UDP socket". Answered
     /// from the construction-time snapshot, so it never waits behind a
     /// `recv_au` parked on another thread.
-    fn local_addr(&self, py: Python<'_>) -> PyResult<Option<String>> {
+    fn local_addr(&self, py: Python<'_>) -> PyResult<Option<crate::util::PyAddr>> {
         if self.owned.is_closed() {
             Err(raise(py, &RTP, BindingError::from(HandleState::Closed)))
         } else {
-            Ok(self.owned.snapshot().map(|a| a.to_string()))
+            Ok(self.owned.snapshot().map(crate::util::addr_tuple))
         }
     }
 

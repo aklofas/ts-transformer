@@ -89,7 +89,7 @@ def _start_server() -> RtspServer:
 def _url(server: RtspServer, path: str) -> str:
     addr = server.local_addr()
     assert addr is not None
-    return f"rtsp://127.0.0.1:{addr.rsplit(':', 1)[1]}{path}"
+    return f"rtsp://127.0.0.1:{addr[1]}{path}"
 
 
 def _wait_for(cond: Callable[[], bool], limit: float = WAIT_S) -> bool:
@@ -1191,7 +1191,7 @@ def test_interpreter_exit_cancels_an_open_session() -> None:
 
         server = RtspServer.start(RtspServerConfig(bind_addr="127.0.0.1:0"))
         server.add_publish_mount("/cam")
-        url = "rtsp://" + server.local_addr() + "/cam"
+        url = "rtsp://%s:%d/cam" % server.local_addr()
         push = RtspClient.push(RtspClientConfig(url), PushDescription.mp2t())
         handle = push.cancel_handle()
         print("BEFORE=%s" % handle.is_cancelled(), flush=True)

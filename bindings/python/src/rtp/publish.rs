@@ -102,7 +102,7 @@ impl<'py> IntoPyObject<'py> for ClockAlignmentPy {
 /// snapshot returned by [`PublishMount.publisher()`][PyPublishMount::publisher].
 #[pyclass(name = "PublisherInfo", module = "tstrans.rtp", frozen)]
 pub struct PyPublisherInfo {
-    peer: String,
+    peer: std::net::SocketAddr,
     /// `"MP2T"` or `"ELEMENTARY"` — the `PublishShape` member name.
     shape: &'static str,
     klv: bool,
@@ -128,7 +128,7 @@ impl PyPublisherInfo {
             .map(|d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
             .unwrap_or(0);
         Ok(Self {
-            peer: info.peer.to_string(),
+            peer: info.peer,
             shape,
             klv,
             since_unix_ms,
@@ -139,10 +139,10 @@ impl PyPublisherInfo {
 
 #[pymethods]
 impl PyPublisherInfo {
-    /// Address (`"ip:port"`) of the publisher's RTSP control connection.
+    /// `(host, port)` of the publisher's RTSP control connection.
     #[getter]
-    pub fn peer(&self) -> String {
-        self.peer.clone()
+    pub fn peer(&self) -> crate::util::PyAddr {
+        crate::util::addr_tuple(self.peer)
     }
 
     /// Wire shape the publisher's ANNOUNCE declared (`PublishShape`).
@@ -173,9 +173,11 @@ impl PyPublisherInfo {
     }
 
     fn __repr__(&self) -> String {
+        let (host, port) = crate::util::addr_tuple(self.peer);
         format!(
-            "PublisherInfo(peer={:?}, shape={}, klv={}, since_unix_ms={}, generation={})",
-            self.peer,
+            "PublisherInfo(peer=('{}', {}), shape={}, klv={}, since_unix_ms={}, generation={})",
+            host,
+            port,
             self.shape,
             if self.klv { "True" } else { "False" },
             self.since_unix_ms,

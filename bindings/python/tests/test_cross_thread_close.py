@@ -792,7 +792,7 @@ def test_rtp_h264_receiver_close_from_other_thread_while_recv_au_parked_ends_clo
     # rtp / srt siblings capture their ports the same way.
     host_port = rx.local_addr()
     assert host_port is not None
-    host, port = host_port.rsplit(":", 1)
+    host, port = host_port
     outcome: dict[str, object] = {}
 
     def worker() -> None:
@@ -813,7 +813,7 @@ def test_rtp_h264_receiver_close_from_other_thread_while_recv_au_parked_ends_clo
             s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             s.sendto(
                 b"\x80\xe0\x00\x01\x00\x00\x00\x00\x00\x00\x00\x01" + b"\x65\xAB\xCD",
-                (host, int(port)),
+                (host, port),
             )
             s.close()
             w.join(5.0)

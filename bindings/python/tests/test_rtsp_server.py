@@ -224,7 +224,7 @@ def test_digest_auth_client_refuses_a_basic_only_server():
     )
     with RtspServer.start(cfg) as server:
         server.add_unicast_mount("/live", _single_video_program())
-        port = server.local_addr().rsplit(":", 1)[1]
+        port = server.local_addr()[1]
         client_cfg = RtspClientConfig(
             url=f"rtsp://127.0.0.1:{port}/live",
             auth=DigestAuth(user="admin", password="secret"),
@@ -246,7 +246,7 @@ def test_server_start_returns_server():
         assert isinstance(server, RtspServer)
         addr = server.local_addr()
         assert addr is not None
-        assert addr.startswith("127.0.0.1:")
+        assert addr[0] == "127.0.0.1"
     finally:
         server.stop()
 
@@ -874,3 +874,13 @@ def test_handle_getters_do_not_wait_for_a_push_in_progress():
         f"the handle getters returned before the push finished in only "
         f"{unchanged} of {rounds} rounds: they wait for the muxer lock"
     )
+
+
+def test_server_local_addr_is_a_tuple():
+    cfg = RtspServerConfig(bind_addr="127.0.0.1:0", graceful_shutdown_drain_ms=50)
+    with RtspServer.start(cfg) as server:
+        addr = server.local_addr()
+        assert isinstance(addr, tuple)
+        host, port = addr
+        assert host == "127.0.0.1"
+        assert isinstance(port, int) and port > 0

@@ -90,7 +90,7 @@ def _start(accept_unregistered: bool = False) -> RtspServer:
 def _port(server: RtspServer) -> int:
     addr = server.local_addr()
     assert addr is not None
-    return int(addr.rsplit(":", 1)[1])
+    return addr[1]
 
 
 def _wait_for(cond: Callable[[], bool], limit: float = 5.0) -> bool:
@@ -154,9 +154,8 @@ class RawPublisher:
         payload = rtp + ts_bundle
         self.sock.sendall(b"$" + bytes([self.channel]) + struct.pack("!H", len(payload)) + payload)
 
-    def local_addr(self) -> str:
-        host, port = self.sock.getsockname()[:2]
-        return f"{host}:{port}"
+    def local_addr(self) -> tuple[str, int]:
+        return self.sock.getsockname()[:2]
 
     def close(self) -> None:
         self.sock.close()
@@ -714,3 +713,48 @@ def test_next_publisher_releases_the_gil_while_waiting():
             "next_publisher held the GIL while it waited: the probe ran "
             f"{(stamp[0] - t1) * 1000:.1f} ms after the call returned"
         )
+
+
+def test_publisher_info_peer_is_the_clients_address():
+    with _start() as server:
+        mount = server.add_publish_mount("/cam")
+        pub = RawPublisher(_port(server), "/cam")
+        try:
+            info = mount.publisher()
+            assert isinstance(info.peer, tuple)
+            assert info.peer == pub.sock.getsockname()[:2]
+            assert f"peer={info.peer!r}" in repr(info)
+        finally:
+            pub.close()
+
+
+def test_publisher_info_peer_from_a_dual_stack_server_reads_as_ipv4():
+    """An IPv4 client of a server bound to `[::]` arrives as an
+    IPv4-mapped address; the tuple names it as IPv4, as the other address
+    getters do."""
+    cfg = RtspServerConfig(bind_addr="[::]:0", graceful_shutdown_drain_ms=50)
+    with RtspServer.start(cfg) as server:
+        mount = server.add_publish_mount("/cam")
+        pub = RawPublisher(server.local_addr()[1], "/cam")
+        try:
+            assert mount.publisher().peer == pub.sock.getsockname()[:2]
+        finally:
+            pub.close()
+
+
+def test_publisher_info_kept_after_the_server_stopped():
+    """A `PublisherInfo` is a snapshot: its `peer` and `since_unix_ms` stay
+    readable, unchanged, after its server stopped."""
+    server = _start()
+    try:
+        mount = server.add_publish_mount("/cam")
+        pub = RawPublisher(_port(server), "/cam")
+        client_addr = pub.sock.getsockname()[:2]
+        info = mount.publisher()
+        since = info.since_unix_ms
+    finally:
+        server.stop()
+    pub.close()
+    assert info.peer == client_addr
+    assert info.since_unix_ms == since
+    assert since > 0

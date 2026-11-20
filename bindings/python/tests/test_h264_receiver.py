@@ -66,10 +66,9 @@ def test_h264_receiver_single_au_loopback() -> None:
       key_frame = True (NALU type 5 = IDR)
     """
     rx = tstrans.rtp.H264Receiver.listen("rtp://127.0.0.1:0?pt=96")
-    addr_str = rx.local_addr()
-    assert addr_str is not None, "local_addr() must not be None for UDP"
-    host, _, port_str = addr_str.rpartition(":")
-    port = int(port_str)
+    addr = rx.local_addr()
+    assert addr is not None, "local_addr() must not be None for UDP"
+    host, port = addr
 
     # Hand-built packet matching the Rust test exactly.
     pkt = bytes([
@@ -106,10 +105,9 @@ def test_h264_receiver_recv_au_per_call_timeout_ms_raises_and_recovers() -> None
     the same receiver, proving the session stayed alive (retryable
     contract)."""
     rx = tstrans.rtp.H264Receiver.listen("rtp://127.0.0.1:0?pt=96")
-    addr_str = rx.local_addr()
-    assert addr_str is not None
-    host, _, port_str = addr_str.rpartition(":")
-    port = int(port_str)
+    addr = rx.local_addr()
+    assert addr is not None
+    host, port = addr
 
     with pytest.raises(RtpError) as exc_info:
         rx.recv_au(timeout_ms=200)
@@ -139,10 +137,9 @@ def test_h264_receiver_recv_au_timeout_ms_default_none_is_blocking() -> None:
     indefinite-block contract, called explicitly with `timeout_ms=None`
     here to pin the default's identity."""
     rx = tstrans.rtp.H264Receiver.listen("rtp://127.0.0.1:0?pt=96")
-    addr_str = rx.local_addr()
-    assert addr_str is not None
-    host, _, port_str = addr_str.rpartition(":")
-    port = int(port_str)
+    addr = rx.local_addr()
+    assert addr is not None
+    host, port = addr
 
     pkt = bytes([
         0x80, 0x80 | 96,
@@ -170,10 +167,9 @@ def test_h264_receiver_recv_au_timeout_ms_default_none_is_blocking() -> None:
 def test_h264_receiver_iterator_collects_aus() -> None:
     """Send 2 IDR AUs via loopback, then close; list(rx) collects them."""
     rx = tstrans.rtp.H264Receiver.listen("rtp://127.0.0.1:0?pt=96")
-    addr_str = rx.local_addr()
-    assert addr_str is not None
-    host, _, port_str = addr_str.rpartition(":")
-    port = int(port_str)
+    addr = rx.local_addr()
+    assert addr is not None
+    host, port = addr
 
     collected: list[object] = []
     done = threading.Event()
@@ -345,3 +341,29 @@ def test_h264_receiver_source_pin_and_rcvbuf_url_keys() -> None:
     assert rs.source_rejected == 0
     assert "source_rejected=0" in repr(rs)
     rx.close()
+
+
+def test_h264_receiver_local_addr_is_a_tuple_or_none_over_tcp() -> None:
+    rx = tstrans.rtp.H264Receiver.listen("rtp://127.0.0.1:0?pt=96")
+    try:
+        addr = rx.local_addr()
+        assert isinstance(addr, tuple)
+        host, port = addr
+        assert host == "127.0.0.1"
+        assert isinstance(port, int) and port > 0
+    finally:
+        rx.close()
+
+    # Over RTSP TCP-interleaved the receiver has no UDP socket of its own.
+    from test_rtsp_client import _SDP_H264, _recording_peer, _tcp_config
+
+    peer_port, _requests, server = _recording_peer(sdp=_SDP_H264)
+    try:
+        with tstrans.rtp.RtspClient.connect_h264(_tcp_config(peer_port)) as session:
+            rx = session.into_h264_receiver()
+            try:
+                assert rx.local_addr() is None
+            finally:
+                rx.close()
+    finally:
+        server.join(10)

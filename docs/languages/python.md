@@ -1367,7 +1367,7 @@ cfg = RtspServerConfig(bind_addr="0.0.0.0:8554")   # defaults: max_sessions=100,
 with RtspServer.start(cfg) as server:
     mount = server.add_unicast_mount("/live", program)
     mount.push_video(nal, pts=Pts90khz.from_raw(0), key_frame=True)
-    print(server.local_addr())     # bound "ip:port" (useful with port 0)
+    print(server.local_addr())     # bound (host, port) (useful with port 0)
 # __exit__ sends a graceful Notice-5402 teardown to active sessions.
 ```
 
@@ -1466,7 +1466,7 @@ The surface:
   PublisherInfo | None`, `stats() -> PublishMountStats`, `cancel()`,
   `into_demux_receiver(demux_config=None)`. The object stays usable after
   the transport is taken, after `remove_mount` and after the server stops.
-- `PublisherInfo` fields: `peer` (`"ip:port"`), `shape`, `klv`,
+- `PublisherInfo` fields: `peer` (`(host, port)`), `shape`, `klv`,
   `since_unix_ms`, `generation`.
 - `PublishMountStats` mirrors every counter of the Rust snapshot, including
   `source_rejected`, `aus_reordered`, `ssrc_changes`, and `alignment` (a

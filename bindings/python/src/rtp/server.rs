@@ -931,9 +931,10 @@ impl PyRtspServer {
         PyMountRules::new(self.inner.mount_rules())
     }
 
-    /// Listener's bound address as `"ip:port"`, populated after `start()`.
-    pub fn local_addr(&self) -> Option<String> {
-        self.inner.local_addr().map(|a| a.to_string())
+    /// Listener's bound address as `(host, port)`, populated after
+    /// `start()`.
+    pub fn local_addr(&self) -> Option<crate::util::PyAddr> {
+        self.inner.local_addr().map(crate::util::addr_tuple)
     }
 
     /// Graceful shutdown: sends the Notice 5402 teardown to each active

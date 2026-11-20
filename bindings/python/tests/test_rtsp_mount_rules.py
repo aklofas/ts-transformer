@@ -41,7 +41,7 @@ def _start(**kw: object) -> RtspServer:
 def _port(server: RtspServer) -> int:
     addr = server.local_addr()
     assert addr is not None
-    return int(addr.rsplit(":", 1)[1])
+    return addr[1]
 
 
 def _announce(port: int, path: str, authorization: str | None = None) -> str:

@@ -86,8 +86,7 @@ def _h264_rx_and_addr(url: str) -> tuple[tstrans.rtp.H264Receiver, tuple[str, in
     rx = tstrans.rtp.H264Receiver.listen(url)
     addr = rx.local_addr()
     assert addr is not None
-    host, _, port = addr.rpartition(":")
-    return rx, (host, int(port))
+    return rx, addr
 
 
 def test_h264_receiver_ends_closed_after_cancel() -> None:

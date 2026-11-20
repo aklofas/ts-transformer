@@ -193,7 +193,7 @@ def test_gc_dropped_rtsp_server_releases_its_port():
     server = RtspServer.start(
         RtspServerConfig(bind_addr="127.0.0.1:0", graceful_shutdown_drain_ms=50)
     )
-    port = server.local_addr().rsplit(":", 1)[1]
+    port = server.local_addr()[1]
     del server
     gc.collect()
     again = _retry(
@@ -226,7 +226,7 @@ def test_gc_dropped_rtsp_session_tears_down():
     cfg = RtspServerConfig(bind_addr="127.0.0.1:0", graceful_shutdown_drain_ms=50)
     with RtspServer.start(cfg) as server:
         server.add_unicast_mount("/live", _single_video_program())
-        port = server.local_addr().rsplit(":", 1)[1]
+        port = server.local_addr()[1]
         session = RtspClient.connect(
             RtspClientConfig(url=f"rtsp://127.0.0.1:{port}/live", keepalive=False)
         )
@@ -248,7 +248,7 @@ def test_gc_dropped_session_ends_its_live_receiver_closed():
     cfg = RtspServerConfig(bind_addr="127.0.0.1:0", graceful_shutdown_drain_ms=50)
     with RtspServer.start(cfg) as server:
         server.add_unicast_mount("/live", _single_video_program())
-        port = server.local_addr().rsplit(":", 1)[1]
+        port = server.local_addr()[1]
         # The receiver does not own the client: the session object goes away
         # here, and its RTSP client with it.
         rx = RtspClient.connect(

@@ -175,12 +175,10 @@ def test_full_pipeline_rtsp_server_to_rtsp_client() -> None:
     with RtspServer.start(server_cfg) as server:
         local = server.local_addr()
         assert local is not None, "server.local_addr() returned None"
-        # `local_addr()` returns a `host:port` string like
-        # `127.0.0.1:54321`. Split off the port for the client URL.
-        # (The Rust side stringifies a SocketAddr, never with a scheme.)
-        host, _, port_str = local.rpartition(":")
+        # `local_addr()` returns `(host, port)`: the port goes into the
+        # client URL.
+        host, port = local
         assert host == "127.0.0.1", f"unexpected bind host: {host!r}"
-        port = int(port_str)
 
         mount = server.add_unicast_mount("/live", program)
 
@@ -337,8 +335,7 @@ def test_rtsps_client_connect_with_custom_ca() -> None:
     with RtspServer.start(server_cfg) as server:
         local = server.local_addr()
         assert local is not None
-        host, _, port_str = local.rpartition(":")
-        port = int(port_str)
+        host, port = local
 
         server.add_unicast_mount("/live", program)
 
@@ -374,8 +371,7 @@ def test_rtsps_client_untrusted_cert_fails_closed() -> None:
     with RtspServer.start(server_cfg) as server:
         local = server.local_addr()
         assert local is not None
-        host, _, port_str = local.rpartition(":")
-        port = int(port_str)
+        host, port = local
         server.add_unicast_mount("/live", _build_test_program())
 
         cfg = RtspClientConfig(url=f"rtsps://{host}:{port}/live", keepalive=False)

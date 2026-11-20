@@ -678,7 +678,7 @@ def test_accepted_teardown_then_close_ends_the_live_receiver_with_end_of_stream(
     cfg = RtspServerConfig(bind_addr="127.0.0.1:0", graceful_shutdown_drain_ms=50)
     with RtspServer.start(cfg) as server:
         mount = server.add_unicast_mount("/live", video_only_program())
-        port = server.local_addr().rsplit(":", 1)[1]
+        port = server.local_addr()[1]
 
         def producer() -> None:
             i = 0
@@ -894,7 +894,7 @@ def test_data_plane_after_close_is_closed_over_udp():
     cfg = RtspServerConfig(bind_addr="127.0.0.1:0", graceful_shutdown_drain_ms=50)
     with RtspServer.start(cfg) as server:
         server.add_unicast_mount("/live", video_only_program())
-        port = server.local_addr().rsplit(":", 1)[1]
+        port = server.local_addr()[1]
         # UDP is forced (no TCP fallback), so a connect that succeeds
         # negotiated UDP; the session has no getter for its transport.
         session = RtspClient.connect(
