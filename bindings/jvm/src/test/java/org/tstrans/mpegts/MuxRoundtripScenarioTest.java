@@ -139,6 +139,28 @@ class MuxRoundtripScenarioTest {
         assertEquals(goldenMispValue, extracted.value(), "misp value mismatch (unsigned 64-bit)");
     }
 
+    // ── muxer-reconfigure ───────────────────────────────────────────────────
+
+    /**
+     * {@link Muxer#reconfigure} mid-stream (audio dropped, synchronous KLV added) reproduces
+     * the committed {@code muxer-reconfigure/output.ts} byte for byte. This calls the recipe
+     * itself, so the bytes are checked here whatever the manifest test does with the id.
+     */
+    @Test
+    void reproducesMuxerReconfigureBytesExactly() throws Exception {
+        Path dir = scenarioDir("muxer-reconfigure");
+        Path output = dir.resolve("output.ts");
+        assertTrue(Files.isRegularFile(output),
+            "muxer-reconfigure output missing (expected committed fixture): " + output);
+        String goldenJson = Files.readString(dir.resolve("golden.json"), StandardCharsets.UTF_8);
+
+        byte[] tsOut = ScenarioMuxRecipes.muxerReconfigure();
+        assertArrayEquals(Files.readAllBytes(output), tsOut,
+            "JNI muxer output across a reconfigure must equal the committed muxer-reconfigure output.ts");
+        assertEquals(GoldenSupport.stringField(goldenJson, "output_sha256"), sha256Hex(tsOut),
+            "JNI muxer output across a reconfigure must hash to the golden's output_sha256");
+    }
+
     // ── Shared helpers ───────────────────────────────────────────────────────
 
     private static String sha256Hex(byte[] bytes) throws Exception {
