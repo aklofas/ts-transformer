@@ -99,6 +99,7 @@ class LastSeenMicrosTest {
 
     @Test
     @Timeout(30)
+    @SuppressWarnings("removal") // checks the deprecated microsecond getter after close too
     void demuxReceiverLastSeenTracksLiveStreamAndIsEmptyForAnUnknownPid() throws Exception {
         assumeTrue(isLinux(), "srt live-socket loopback gated to Linux");
 
@@ -162,6 +163,12 @@ class LastSeenMicrosTest {
 
             assertEquals(Optional.empty(), rx.lastSeen(0x1FFF),
                 "lastSeen must be empty for a PID that was never carried");
+
+            rx.close();
+            assertEquals("DemuxReceiver is closed",
+                assertThrows(IllegalStateException.class, () -> rx.lastSeen(0x1011)).getMessage());
+            assertEquals("DemuxReceiver is closed",
+                assertThrows(IllegalStateException.class, () -> rx.lastSeenMicros(0x1011)).getMessage());
         } finally {
             stop.set(true);
         }
@@ -271,6 +278,12 @@ class LastSeenMicrosTest {
 
             assertEquals(Optional.empty(), rx.lastSeen(0x1FFF),
                 "lastSeen must be empty for a PID that was never carried");
+
+            rx.close();
+            assertEquals("ManagedDemuxReceiver is closed",
+                assertThrows(IllegalStateException.class, () -> rx.lastSeen(0x1011)).getMessage());
+            assertEquals("ManagedDemuxReceiver is closed",
+                assertThrows(IllegalStateException.class, () -> rx.lastSeenMicros(0x1011)).getMessage());
         }
 
         peerThread.join(TimeUnit.SECONDS.toMillis(TIMEOUT_SEC));
