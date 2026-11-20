@@ -2,9 +2,7 @@ package org.tstrans.mpegts;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.tstrans.TestSupport.scenarioDir;
-import static org.tstrans.TestSupport.syntheticH264Idr;
 
-import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -19,7 +17,7 @@ import org.tstrans.codec.MispTimestamp;
 /**
  * Cross-binding byte-exactness proofs for the offline {@link Muxer}.
  *
- * <p>Each test replicates one of the shared mux recipes (single source of truth =
+ * <p>Each test runs one of the shared mux recipes ({@link ScenarioMuxRecipes}, ported from
  * {@code crates/tst-integration/src/scenarios/mod.rs}) and asserts the SHA-256
  * of the JNI muxer's TS output equals the committed golden's
  * {@code extensions.output_sha256}. The muxer is integer-only/deterministic, so
@@ -47,27 +45,9 @@ class MuxRoundtripScenarioTest {
         // (2aa000852931462b875ec9b2548dd8bf5846fef36e5a1084d149cdd636d09a24).
         String expectedSha = GoldenSupport.stringField(goldenJson, "output_sha256");
 
-        byte[] tsOut = videoRoundtripMuxAndDrain();
+        byte[] tsOut = ScenarioMuxRecipes.videoRoundtrip();
         assertEquals(expectedSha, sha256Hex(tsOut),
             "JNI muxer output must be byte-identical to the Rust/C video-roundtrip golden");
-    }
-
-    /** Replicate {@code video_roundtrip_ts_bytes()}: config + one pushVideo + drain. */
-    private static byte[] videoRoundtripMuxAndDrain() throws Exception {
-        MuxerConfig cfg = MuxerConfig.builder()
-            .programNumber(1).pmtPid(0x1000)
-            .addVideo(0x1011, VideoCodec.H264)
-            .build();
-        ByteArrayOutputStream acc = new ByteArrayOutputStream();
-        byte[] out = new byte[8192];
-        try (Muxer m = new Muxer(cfg)) {
-            m.pushVideo(syntheticH264Idr(), /*pts=*/ 0L, /*keyFrame=*/ true);
-            int n;
-            while ((n = m.pull(out)) > 0) {
-                acc.write(out, 0, n);
-            }
-        }
-        return acc.toByteArray();
     }
 
     // ── video-dts-roundtrip ───────────────────────────────────────
@@ -92,34 +72,9 @@ class MuxRoundtripScenarioTest {
         String goldenJson = Files.readString(goldenPath, StandardCharsets.UTF_8);
         String expectedSha = GoldenSupport.stringField(goldenJson, "output_sha256");
 
-        byte[] tsOut = videoDtsRoundtripMuxAndDrain();
+        byte[] tsOut = ScenarioMuxRecipes.videoDtsRoundtrip();
         assertEquals(expectedSha, sha256Hex(tsOut),
             "JNI muxer DTS output must be byte-identical to the Rust/C video-dts-roundtrip golden");
-    }
-
-    /**
-     * Replicate {@code video_dts_roundtrip_ts_bytes()}: config + videoStreamHandle(0)
-     * + pushVideoToWithDts(handle, au, pts=9000, dts=6000, keyFrame=true) + drain.
-     */
-    private static byte[] videoDtsRoundtripMuxAndDrain() throws Exception {
-        MuxerConfig cfg = MuxerConfig.builder()
-            .programNumber(1).pmtPid(0x1000)
-            .addVideo(0x1011, VideoCodec.H264)
-            .build();
-        ByteArrayOutputStream acc = new ByteArrayOutputStream();
-        byte[] out = new byte[8192];
-        try (Muxer m = new Muxer(cfg)) {
-            VideoStreamHandle h = m.videoStreamHandle(0)
-                .orElseThrow(() -> new IllegalStateException("no video handle at index 0"));
-            // PTS=9000 / DTS=6000 ticks (90 kHz) — fixed so golden is stable.
-            m.pushVideoToWithDts(h, syntheticH264Idr(), /*pts=*/ 9000L, /*dts=*/ 6000L,
-                                 /*keyFrame=*/ true);
-            int n;
-            while ((n = m.pull(out)) > 0) {
-                acc.write(out, 0, n);
-            }
-        }
-        return acc.toByteArray();
     }
 
     // ── video-misp-roundtrip ────────────────────────────────────────────────
@@ -154,7 +109,7 @@ class MuxRoundtripScenarioTest {
         long goldenTimeStatus  = GoldenSupport.unsignedNumber(goldenJson, "misp_time_status");
         long goldenMispValue   = GoldenSupport.unsignedNumber(goldenJson, "misp_value");
 
-        byte[] tsOut = videoMispRoundtripMuxAndDrain();
+        byte[] tsOut = ScenarioMuxRecipes.videoMispRoundtrip();
 
         // 1. SHA-256 byte-identity parity.
         assertEquals(expectedSha, sha256Hex(tsOut),
@@ -182,32 +137,6 @@ class MuxRoundtripScenarioTest {
         assertEquals(expectedKind, extracted.kind(), "misp kind mismatch");
         assertEquals((int) goldenTimeStatus, extracted.timeStatus(), "misp time_status mismatch");
         assertEquals(goldenMispValue, extracted.value(), "misp value mismatch (unsigned 64-bit)");
-    }
-
-    /**
-     * Replicate {@code video_misp_roundtrip_ts_bytes()}: config + videoStreamHandle(0)
-     * + pushVideoMispTo(handle, au, pts=9000, keyFrame=true,
-     *   MispTimestamp.micros(0x0005_F5E1_0000_0001L, 0x1F)) + drain.
-     */
-    private static byte[] videoMispRoundtripMuxAndDrain() throws Exception {
-        MuxerConfig cfg = MuxerConfig.builder()
-            .programNumber(1).pmtPid(0x1000)
-            .addVideo(0x1011, VideoCodec.H264)
-            .build();
-        MispTimestamp misp = MispTimestamp.micros(0x0005_F5E1_0000_0001L, 0x1F);
-        ByteArrayOutputStream acc = new ByteArrayOutputStream();
-        byte[] out = new byte[8192];
-        try (Muxer m = new Muxer(cfg)) {
-            VideoStreamHandle h = m.videoStreamHandle(0)
-                .orElseThrow(() -> new IllegalStateException("no video handle at index 0"));
-            // PTS=9000 ticks (90 kHz) — fixed so golden is stable.
-            m.pushVideoMispTo(h, syntheticH264Idr(), /*pts=*/ 9000L, /*keyFrame=*/ true, misp);
-            int n;
-            while ((n = m.pull(out)) > 0) {
-                acc.write(out, 0, n);
-            }
-        }
-        return acc.toByteArray();
     }
 
     // ── Shared helpers ───────────────────────────────────────────────────────
