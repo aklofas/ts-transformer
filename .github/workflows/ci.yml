@@ -1695,6 +1695,11 @@ jobs:
         # mirrors the Rust tst_core Publisher trait.
         run: bash scripts/check/python/publisher-class-mirror.sh
 
+      - name: check-py-address-tuples
+        # Every (host, port) tuple the Python binding returns is built by
+        # util::addr_tuple (scope id, IPv4-mapped peers).
+        run: bash scripts/check/python/address-tuples.sh
+
       - name: Install build prerequisites
         # meson from the hashed pip file; cmake, ninja and pkg-config are on the runner image.
         run: bash scripts/ci/install-build-tools.sh
