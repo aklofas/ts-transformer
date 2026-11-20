@@ -11,7 +11,9 @@ use std::sync::Arc;
 use tst_core::cancel::CancelSlot;
 use tst_core::transport::{RecvTransport, Transport};
 use tst_core::url::redact_url;
-use tst_pipeline::binding::{BindingError, BindingErrorKind, Domain, OpenSlot, Opened};
+use tst_pipeline::binding::{
+    BindingError, BindingErrorKind, Domain, OpenSlot, Opened, SHELL_SCHEMES,
+};
 use tst_rtp::RtpStatsHandle;
 
 use super::open_cancel::{after_begin, begin, closed, finish, object_of, refuse_config};
@@ -36,13 +38,16 @@ pub(crate) fn read_url(env: &mut Env, url: &JString) -> Option<String> {
     }
 }
 
-/// `IllegalArgumentException` for a scheme no shell opens.
+/// `IllegalArgumentException` for a scheme no shell opens, naming every shell
+/// scheme (the JVM binding builds them all).
 fn unsupported(env: &mut Env, url: &str) {
+    let schemes: Vec<&str> = SHELL_SCHEMES.iter().map(|(s, _)| *s).collect();
     let _ = env.throw_new(
         FindClass(jni_str!("java/lang/IllegalArgumentException")),
         JNIString::from(format!(
-            "unsupported URL scheme in {:?}; expected one of: srt, rtp, udp, tcp, tcps, rist",
-            redact_url(url)
+            "unsupported URL scheme in {:?}; expected one of: {}",
+            redact_url(url),
+            schemes.join(", ")
         )),
     );
 }
