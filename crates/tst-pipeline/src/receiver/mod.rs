@@ -483,6 +483,38 @@ mod stats_tests {
         );
     }
 
+    /// Each counter driven to its own value, so a record that copies one
+    /// counter into another field fails: garbage before the first packet
+    /// and again after the fifth, so the syncer locks twice.
+    #[test]
+    fn stats_names_every_counter_by_its_own_value() {
+        let mut input = vec![0x00; 5];
+        for _ in 0..5 {
+            input.extend(one_packet());
+        }
+        input.extend([0x00; 3]);
+        for _ in 0..6 {
+            input.extend(one_packet());
+        }
+        let mut r = Receiver::new(
+            MemRecv {
+                queue: input.chunks(1316).map(<[u8]>::to_vec).collect(),
+                alive: true,
+            },
+            ReceiverConfig::default(),
+        );
+        let mut got = 0u64;
+        while r.next_packet().is_ok() {
+            got += 1;
+        }
+        assert_eq!(got, 11);
+        let st = r.stats();
+        assert_eq!(st.packets_received, 11, "{st:?}");
+        assert_eq!(st.bytes_received, 11 * 188, "{st:?}");
+        assert_eq!(st.bytes_skipped_for_sync, 5 + 3, "{st:?}");
+        assert_eq!(st.resync_events, 2, "{st:?}");
+    }
+
     #[test]
     fn stats_starts_zero() {
         let r = Receiver::new(

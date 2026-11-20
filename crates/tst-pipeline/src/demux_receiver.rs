@@ -831,6 +831,126 @@ mod stats_tests {
         assert!(!crossing.contains(&"per_stream"));
     }
 
+    const PMT_PID: u16 = 0x0100;
+    const VIDEO_PID: u16 = 0x0101;
+
+    fn ts_packet(pid: u16, payload: &[u8], pusi: bool, cc: u8) -> Vec<u8> {
+        let mut p = vec![
+            0x47,
+            (u8::from(pusi) << 6) | (pid >> 8) as u8,
+            pid as u8,
+            0x10 | (cc & 0x0F),
+        ];
+        p.extend_from_slice(payload);
+        p.resize(188, 0xFF);
+        p
+    }
+
+    /// One section after a zero pointer field, its CRC added (and broken
+    /// when `bad_crc`).
+    fn psi_packet(pid: u16, section: &[u8], cc: u8, bad_crc: bool) -> Vec<u8> {
+        let mut crc = tst_core::mpegts::common::crc32::crc32_mpeg2(section);
+        if bad_crc {
+            crc ^= 1;
+        }
+        let mut payload = vec![0x00];
+        payload.extend_from_slice(section);
+        payload.extend_from_slice(&crc.to_be_bytes());
+        ts_packet(pid, &payload, true, cc)
+    }
+
+    fn pat_packet() -> Vec<u8> {
+        let section = [
+            0x00,
+            0xB0,
+            13,
+            0x00,
+            0x01,
+            0xC1,
+            0x00,
+            0x00,
+            0x00,
+            0x01,
+            0xE0 | (PMT_PID >> 8) as u8,
+            PMT_PID as u8,
+        ];
+        psi_packet(0x0000, &section, 0, false)
+    }
+
+    /// The PMT of program 1: one H.264 stream on `VIDEO_PID`.
+    fn pmt_packet(version: u8, cc: u8, bad_crc: bool) -> Vec<u8> {
+        let section = [
+            0x02,
+            0xB0,
+            18,
+            0x00,
+            0x01,
+            0xC1 | ((version & 0x1F) << 1),
+            0x00,
+            0x00,
+            0xE0 | (VIDEO_PID >> 8) as u8,
+            VIDEO_PID as u8,
+            0xF0,
+            0x00,
+            0x1B,
+            0xE0 | (VIDEO_PID >> 8) as u8,
+            VIDEO_PID as u8,
+            0xF0,
+            0x00,
+        ];
+        psi_packet(PMT_PID, &section, cc, bad_crc)
+    }
+
+    /// Two PMT versions (version 0 repeated), three PMTs with a broken CRC,
+    /// and a video PES whose packets skip three continuity counters: three
+    /// discontinuities, and four non-conformant inputs (the three CRCs and
+    /// the PES the gaps cut).
+    fn counted_capture() -> Vec<Vec<u8>> {
+        let pes_start = [
+            0x00, 0x00, 0x01, 0xE0, 0x00, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x09,
+            0xF0,
+        ];
+        vec![
+            pat_packet(),
+            pmt_packet(0, 0, false),
+            pmt_packet(0, 1, false),
+            ts_packet(VIDEO_PID, &pes_start, true, 0),
+            ts_packet(VIDEO_PID, &[], false, 1),
+            ts_packet(VIDEO_PID, &[], false, 3),
+            ts_packet(VIDEO_PID, &[], false, 5),
+            ts_packet(VIDEO_PID, &[], false, 7),
+            pmt_packet(1, 2, true),
+            pmt_packet(1, 3, true),
+            pmt_packet(1, 4, true),
+            pmt_packet(1, 5, false),
+            ts_packet(0x1FFF, &[], false, 0),
+            ts_packet(0x1FFF, &[], false, 1),
+            ts_packet(0x1FFF, &[], false, 2),
+        ]
+    }
+
+    /// Each counter driven to its own value, so a record that copies one
+    /// counter into another field fails.
+    #[test]
+    fn stats_names_every_counter_by_its_own_value() {
+        let capture = counted_capture();
+        let n = capture.len() as u64;
+        // Two packets a read: no read ends a PSI section early.
+        let chunks: VecDeque<Vec<u8>> = capture.chunks(2).map(|c| c.concat()).collect();
+        let mut r = DemuxReceiver::new(CannedRecv {
+            chunks,
+            alive: true,
+        });
+        while r.recv_event().is_ok_and(|e| e.is_some()) {}
+        let st = r.stats();
+        assert_eq!(st.program_maps_seen, 2, "{st:?}");
+        assert_eq!(st.pmt_versions_seen, 2, "{st:?}");
+        assert_eq!(st.discontinuities, 3, "{st:?}");
+        assert_eq!(st.nonconformant, 4, "{st:?}");
+        assert_eq!(st.packets_received, n, "{st:?}");
+        assert_eq!(st.bytes_received, n * 188, "{st:?}");
+    }
+
     #[test]
     fn stats_starts_zero_with_empty_per_stream() {
         let r = DemuxReceiver::new(CannedRecv {
