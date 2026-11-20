@@ -166,7 +166,8 @@ impl crate::shell_error::ShellError for SenderError {
 ///    against a lost peer is dropped rather than replayed through a
 ///    reconnect.
 /// 3. **Graceful finish** — call [`Self::finish`]. Flushes the partial
-///    bundle and the retained bundles to the still-live transport
+///    bundle (in the default recover mode, not a stream of fewer than
+///    three TS packets: see [`Self::flush`]) and the retained bundles to the still-live transport
 ///    (fallible: the caller learns whether the tail went out), marks the
 ///    sender closed, then closes the transport, with no cancel first, so a
 ///    transport that queues (an RTSP push) writes what it holds. A binding's
@@ -374,6 +375,13 @@ impl<T: Transport> Sender<T> {
 
     /// Emit any buffered partial bundle.
     ///
+    /// In the default [`TsFramingMode::Recover`] a sender forwards bytes
+    /// only once three aligned TS packets have confirmed the alignment, so
+    /// for a stream of one or two packets `flush` sends nothing and reports
+    /// nothing: those bytes stay buffered and are lost at close. In
+    /// [`TsFramingMode::Strict`] every packet boundary is checked on push,
+    /// so the whole packets of a short stream are sent.
+    ///
     /// Bundles are sent in whole-packet slices that fit `max_payload()`; a
     /// ceiling below one TS packet returns `TooLarge` and keeps the bundle
     /// queued.
@@ -482,6 +490,10 @@ impl<T: Transport> Sender<T> {
     }
 
     /// Flush, then close: the fallible counterpart to [`Self::close`].
+    /// What the flush delivers is what [`Self::flush`] delivers: in the
+    /// default [`TsFramingMode::Recover`] a stream of one or two TS packets
+    /// never confirmed its alignment, so `finish` sends none of it and still
+    /// returns `Ok(())`.
     /// Nothing is cancelled first, so the flush sends go to the still-live
     /// transport and the transport's own close runs uncancelled (a queuing
     /// transport writes its queue). Idempotent: `Ok(())` on a sender that
