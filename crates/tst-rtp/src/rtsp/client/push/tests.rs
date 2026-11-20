@@ -1927,6 +1927,7 @@ fn close_after_expiry_dropped_media(
     });
     let pinging = builder(port, "/live").keepalive_interval(Duration::from_millis(40));
     let mut push = RtspPush::connect(pinging, &elementary(true)).unwrap();
+    let handle = push.stats_handle();
     holding
         .recv_timeout(scaled(Duration::from_secs(5)))
         .expect("a ping reaches the server");
@@ -1941,8 +1942,11 @@ fn close_after_expiry_dropped_media(
         push.stats().frames_dropped_at_close > 0
     });
     let dropped = push.stats().frames_dropped_at_close;
+    assert_eq!(handle.stats().frames_dropped_at_close, dropped);
     let r = push.close();
     assert_eq!(queue.dropped_at_close(), dropped);
+    // The handle keeps the loss readable once the push is gone.
+    assert_eq!(handle.stats().frames_dropped_at_close, dropped);
     // The server read the TEARDOWN: its script ends there.
     joined(peer);
     r
