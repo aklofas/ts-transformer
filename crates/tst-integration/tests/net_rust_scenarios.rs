@@ -969,6 +969,9 @@ mod url_corpus_leg {
             let mut stated = Vec::new();
             for word in text.split_whitespace() {
                 match Outcome::parse(row.family(), word) {
+                    Ok(o) if stated.contains(&o) => {
+                        gaps.push(format!("{}: open.{leg} repeats {word}", row.label()))
+                    }
                     Ok(o) => stated.push(o),
                     Err(e) => gaps.push(format!("{}: open.{leg}: {e}", row.label())),
                 }
@@ -1046,6 +1049,7 @@ mod url_corpus_leg {
                 None,
                 "neither ok nor a udp kind",
             ),
+            (&[("c", "IO IO")], Some("why"), None, "repeats IO"),
             (&[], None, Some("udp://127.0.0.1:{prt}"), "a brace"),
             (
                 &[],
