@@ -1408,6 +1408,15 @@ expect_out "roster-sync: bogus manifest-path" "cargo-deny-all.sh lists a manifes
 rs_copy; plant "$tmp/rs/.github/workflows/ci.yml" '^        run: bash scripts/dev/cargo-deny-all.sh$' '        run: echo skipped'
                                                                                  expect "roster-sync: the deny job no longer runs cargo-deny-all.sh" 1 rsync_
 expect_out "roster-sync: deny job without the script" "ci.yml's deny job does not run scripts/dev/cargo-deny-all.sh"
+rs_copy; plant "$tmp/rs/.github/workflows/ci.yml" 'run: bash scripts/check/python/address-tuples.sh' 'run: echo skipped'
+                                                                                 expect "roster-sync: a python rail no step runs" 1 rsync_
+expect_out "roster-sync: unwired python rail" "ci.yml's python-core job has no unconditional step running scripts/check/python/address-tuples.sh"
+rs_copy; awk '{print} /name: check-py-address-tuples/ {print "        if: false"}' "$tmp/rs/.github/workflows/ci.yml" > "$tmp/rs/ci.new" && mv "$tmp/rs/ci.new" "$tmp/rs/.github/workflows/ci.yml"
+                                                                                 expect "roster-sync: a python rail under if:" 1 rsync_
+rs_copy; awk '{print} /name: check-py-address-tuples/ {print "        continue-on-error: true"}' "$tmp/rs/.github/workflows/ci.yml" > "$tmp/rs/ci.new" && mv "$tmp/rs/ci.new" "$tmp/rs/.github/workflows/ci.yml"
+                                                                                 expect "roster-sync: a python rail that may fail" 1 rsync_
+rs_copy; awk '{print} /name: check-py-address-tuples/ {print "        continue-on-error: false"}' "$tmp/rs/.github/workflows/ci.yml" > "$tmp/rs/ci.new" && mv "$tmp/rs/ci.new" "$tmp/rs/.github/workflows/ci.yml"
+                                                                                 expect "roster-sync: continue-on-error: false still runs the rail" 0 rsync_
 rs_copy; plant "$tmp/rs/.github/workflows/ci.yml" 'pass: no-default' 'pass: no-defaults';  expect "roster-sync: a test pass renamed away loses the union" 1 rsync_
 rs_copy; plant "$tmp/rs/.github/workflows/ci.yml" "(github.event_name != 'pull_request')" '(true)'; expect "roster-sync: the main-only test job runs on PRs" 1 rsync_
 expect_out "roster-sync: main-only job on PRs" "ci.yml test-main-extra no longer runs only off pull requests"
