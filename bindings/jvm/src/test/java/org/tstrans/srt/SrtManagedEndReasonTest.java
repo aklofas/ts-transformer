@@ -7,6 +7,7 @@ import static org.tstrans.TestSupport.freeUdpPort;
 import static org.tstrans.TestSupport.isLinux;
 import static org.tstrans.TestSupport.syntheticH264Idr;
 
+import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -66,7 +67,7 @@ class SrtManagedEndReasonTest {
         ManagedMuxSender sender = connectSender(callerUrl, 5_000);
         ManagedDemuxReceiver rx = rxFuture.get(5, TimeUnit.SECONDS);
         try {
-            assertNull(rx.endReason(), "a receiver that has not ended records no reason");
+            assertEquals(Optional.empty(), rx.endReason(), "a receiver that has not ended records no reason");
         } finally {
             Thread dropper = new Thread(sender::close);
             dropper.setDaemon(true);
@@ -141,7 +142,7 @@ class SrtManagedEndReasonTest {
         Thread.sleep(1_000);
 
         // Off-thread so a regression fails the assertion instead of wedging main.
-        CompletableFuture<EndReason> reasonFuture = CompletableFuture.supplyAsync(
+        CompletableFuture<Optional<EndReason>> reasonFuture = CompletableFuture.supplyAsync(
             rx::endReason, r -> {
                 Thread t = new Thread(r, "end-reason-getter");
                 t.setDaemon(true);
@@ -252,10 +253,10 @@ class SrtManagedEndReasonTest {
 
         assertTrue(end instanceof SrtException,
             "expected the iteration to end with SrtException(CLOSED), got " + end);
-        assertEquals(EndReason.CANCELLED, rx.endReason(),
+        assertEquals(Optional.of(EndReason.CANCELLED), rx.endReason(),
             "a caller-initiated cancel records CANCELLED");
         rx.close();
-        assertEquals(EndReason.CANCELLED, rx.endReason(),
+        assertEquals(Optional.of(EndReason.CANCELLED), rx.endReason(),
             "the close-time snapshot must preserve CANCELLED after close()");
     }
 
@@ -337,10 +338,10 @@ class SrtManagedEndReasonTest {
         reader.join(TimeUnit.SECONDS.toMillis(2));
         assertNull(end, "a budget-exhausted managed receiver ends iteration cleanly, got " + end);
 
-        assertEquals(EndReason.RECONNECT_EXHAUSTED, rx.endReason(),
+        assertEquals(Optional.of(EndReason.RECONNECT_EXHAUSTED), rx.endReason(),
             "an exhausted reconnect budget records RECONNECT_EXHAUSTED");
         rx.close();
-        assertEquals(EndReason.RECONNECT_EXHAUSTED, rx.endReason(),
+        assertEquals(Optional.of(EndReason.RECONNECT_EXHAUSTED), rx.endReason(),
             "the close-time snapshot must preserve the reason after close()");
     }
     /**

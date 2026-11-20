@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 import static org.tstrans.TestSupport.isLinux;
 
+import java.util.Optional;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.net.DatagramPacket;
@@ -539,8 +540,8 @@ class H264ReceiverTest {
                 return;
             }
             assertFalse(returned.isDone(), "recvAu() ended before the getters answered");
-            assertNull(got[0], "the session has not ended while a receive is in flight");
-            assertNull(got[1]);
+            assertEquals(Optional.empty(), got[0], "the session has not ended while a receive is in flight");
+            assertEquals(Optional.empty(), got[1]);
         } finally {
             rx.close();
         }
@@ -548,7 +549,7 @@ class H264ReceiverTest {
         RtpException ended = assertInstanceOf(RtpException.class, outcome,
             "close() ends a parked recvAu() as a cancel, never as the end of the stream");
         assertEquals(RtpException.Kind.CLOSED, ended.kind());
-        assertEquals(EndReason.CANCELLED, rx.endReason(),
+        assertEquals(Optional.of(EndReason.CANCELLED), rx.endReason(),
             "close() records the end reason and it stays readable");
     }
 

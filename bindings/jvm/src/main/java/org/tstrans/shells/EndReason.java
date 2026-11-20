@@ -2,8 +2,8 @@ package org.tstrans.shells;
 
 /**
  * Why a receive session ended ({@code Receiver.endReason()},
- * {@code DemuxReceiver.endReason()}); {@code null} while it has not ended, or
- * when the transport records none. The wire values are the cross-surface
+ * {@code DemuxReceiver.endReason()}); those getters return an empty
+ * {@code Optional} while it has not ended, or when the transport records none. The wire values are the cross-surface
  * numbering shared with the C ABI's {@code TstStreamEndReason} and tst-py's
  * {@code EndReason}.
  */
@@ -38,27 +38,5 @@ public enum EndReason {
             if (r.wireValue == v) return r;
         }
         return null;
-    }
-
-    /**
-     * The close-time carrier a receiver's {@code nClose} returns: the end reason
-     * and detail as they stood after teardown, cached by the Java object because
-     * its native handle no longer exists. Internal to the binding classes, not
-     * for application use.
-     */
-    public static final class Snapshot {
-        private final EndReason reason;
-        private final String detail;
-
-        Snapshot(int wireValue, String detail) {
-            this.reason = fromWireValue(wireValue);
-            this.detail = detail;
-        }
-
-        /** @return the end reason, or {@code null} when none was recorded. */
-        public EndReason reason() { return reason; }
-
-        /** @return the free-text detail, or {@code null}. */
-        public String detail() { return detail; }
     }
 }

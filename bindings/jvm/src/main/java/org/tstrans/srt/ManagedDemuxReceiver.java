@@ -1,7 +1,10 @@
 package org.tstrans.srt;
 
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.Iterator;
 import java.util.NoSuchElementException;
+import java.util.Optional;
 import java.util.concurrent.atomic.AtomicLong;
 import org.tstrans.DemuxException;
 import org.tstrans.NativeHandle;
@@ -317,36 +320,56 @@ public final class ManagedDemuxReceiver extends NativeHandle implements Iterable
 
     /**
      * Wall-clock time the stream identified by {@code pid} last carried a
-     * demuxed item through this receiver (last emitted event), as a
-     * Unix-epoch microsecond count. {@code null} if {@code pid} was never
-     * seen — including an unrecognized PID — or before any event has
-     * arrived. {@code pid} must be in 0..=0x1FFF, else
-     * {@link IllegalArgumentException}. Unlike {@link #socketStats()}, this reads the demuxer-side
-     * counters (not the live transport), so it is unaffected by a
-     * mid-reconnect gap.
+     * demuxed item through this receiver (last emitted event), to the
+     * microsecond. Empty if {@code pid} was never seen (including an
+     * unrecognized PID) or before any event has arrived.
+     *
+     * Unlike {@link #socketStats()}, this reads the demuxer-side counters (not
+     * the live transport), so it is unaffected by a mid-reconnect gap.
      *
      * <p><b>Blocking:</b> this takes the same internal resource lock a
      * parked {@code next()} call holds — if an iteration is currently in
-     * flight on this receiver, {@code lastSeenMicros} blocks until it
+     * flight on this receiver, {@code lastSeen} blocks until it
      * returns (an event, end of stream, or an error), which on a
      * fully-quiet stream may be indefinite. Call between {@code next()}
      * calls, or from the same thread driving the iteration, to avoid
      * blocking.
      *
-     * @param pid the stream PID to query
+     * @param pid the stream PID to query, in 0..=0x1FFF
+     * @return the instant, or empty
+     * @throws IllegalArgumentException if {@code pid} is outside 0..=0x1FFF
+     * @throws IllegalStateException if the receiver is closed
+     */
+    public Optional<Instant> lastSeen(int pid) {
+        long v = lastSeenRaw(pid);
+        return v < 0 ? Optional.empty() : Optional.of(Instant.EPOCH.plus(v, ChronoUnit.MICROS));
+    }
+
+    /**
+     * {@link #lastSeen(int)} as a Unix-epoch microsecond count, {@code null}
+     * where {@code lastSeen} is empty; same blocking and errors.
+     *
+     * @param pid the stream PID to query, in 0..=0x1FFF
      * @return the last-seen timestamp in Unix-epoch microseconds, or
      *     {@code null}
      * @throws IllegalArgumentException if {@code pid} is outside 0..=0x1FFF
      * @throws IllegalStateException if the receiver is closed
+     * @deprecated use {@link #lastSeen(int)}; removed in 0.12.0
      */
+    @Deprecated(since = "0.11.0", forRemoval = true)
     public Long lastSeenMicros(int pid) {
+        long v = lastSeenRaw(pid);
+        return v < 0 ? null : v;
+    }
+
+    /** The native microsecond count for {@code pid}, negative when never seen. */
+    private long lastSeenRaw(int pid) {
         if (pid < 0 || pid > 0x1FFF) {
             throw new IllegalArgumentException(
                 "pid must be in 0..=0x1FFF, got 0x" + Integer.toHexString(pid));
         }
         ensureOpen("ManagedDemuxReceiver is closed");
-        long v = nLastSeenMicros(peekHandle(), pid);
-        return v < 0 ? null : v;
+        return nLastSeenMicros(peekHandle(), pid);
     }
 
     /**
@@ -369,7 +392,7 @@ public final class ManagedDemuxReceiver extends NativeHandle implements Iterable
     @Override public synchronized void close() { super.close(); }
 
     /**
-     * Why this receiver's stream ended, or {@code null} while it is still live
+     * Why this receiver's stream ended; empty while it is still live
      * (or if it ended through a path {@code tst-pipeline} does not instrument).
      *
      * <p>Recorded once, first-writer-wins, by the iteration itself at the moment
@@ -383,7 +406,7 @@ public final class ManagedDemuxReceiver extends NativeHandle implements Iterable
      * not occur here: a managed receiver reconnects instead of ending on a peer close.
      *
      * <p><b>Non-blocking, unlike the other getters.</b> {@link #socketStats()}
-     * and {@link #lastSeenMicros(int)} take the internal resource lock a parked
+     * and {@link #lastSeen(int)} take the internal resource lock a parked
      * {@code next()} holds and therefore wait for it; this call does not. The
      * end-reason cell is captured when the receiver is opened and read without
      * that lock, so it stays answerable from another thread while iteration is
@@ -396,18 +419,18 @@ public final class ManagedDemuxReceiver extends NativeHandle implements Iterable
      * Unlike every other accessor on this class, it does not throw once closed.
      *
      * <p><b>Cross-thread close race:</b> a concurrent call from another thread
-     * while {@link #close()} is in flight may briefly observe {@code null} —
+     * while {@link #close()} is in flight may briefly observe an empty answer —
      * {@code close()} claims the handle (so this method switches to the cached
      * snapshot) before the native teardown that computes that snapshot
      * completes. Read it from the thread that closed, or after {@code close()}
      * returns.
      *
-     * @return the recorded reason, or {@code null}
+     * @return the recorded reason, or empty
      */
-    public EndReason endReason() {
+    public Optional<EndReason> endReason() {
         long h = peekHandle();
-        if (h == 0) return closedEndReason;
-        return EndReason.fromWireValue(nEndReason(h));
+        if (h == 0) return Optional.ofNullable(closedEndReason);
+        return Optional.ofNullable(EndReason.fromWireValue(nEndReason(h)));
     }
 
     /**

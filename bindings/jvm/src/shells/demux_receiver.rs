@@ -480,7 +480,7 @@ jni_native! {
 
 jni_native! {
     /// `nClose(handle, tsBytesOut)` — cancel first, then take the receiver and close it.
-    /// Returns the end-reason snapshot (`EndReason$Snapshot`), null when the
+    /// Returns the end-reason snapshot (`EndReasonSnapshot`), null when the
     /// close lost the race (a double `close()` is safe). Writes the fed-byte
     /// count, read after the registry take, into `tsBytesOut[0]`.
     fn Java_org_tstrans_shells_DemuxReceiver_nClose<'local>(

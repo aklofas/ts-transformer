@@ -7,6 +7,7 @@ import static org.tstrans.TestSupport.roundtripConfig;
 import static org.tstrans.TestSupport.sha256Units;
 import static org.tstrans.TestSupport.syntheticH264Idr;
 
+import java.util.Optional;
 import java.io.ByteArrayOutputStream;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
@@ -324,7 +325,7 @@ class RtspServerClientLoopbackTest {
                 for (DemuxEvent ignored : rx) {
                     // drain the queued events; the iteration must end, not throw
                 }
-                assertEquals(EndReason.CLEAN_TEARDOWN, rx.endReason());
+                assertEquals(Optional.of(EndReason.CLEAN_TEARDOWN), rx.endReason());
             } finally {
                 done.countDown();
                 watchdog.interrupt();

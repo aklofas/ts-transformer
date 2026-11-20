@@ -204,7 +204,8 @@ public final class ShellPeers {
         java.util.Optional<java.net.InetSocketAddress> peerAddr();
         long sourceRejected();
         SocketStats socketStats();
-        EndReason endReason();
+        java.util.Optional<EndReason> endReason();
+        java.util.Optional<String> endDetail();
         @Override void close();
     }
 
@@ -243,7 +244,8 @@ public final class ShellPeers {
                 @Override public java.util.Optional<java.net.InetSocketAddress> peerAddr() { return r.peerAddr(); }
                 @Override public long sourceRejected() { return r.sourceRejected(); }
                 @Override public SocketStats socketStats() { return r.socketStats(); }
-                @Override public EndReason endReason() { return r.endReason(); }
+                @Override public java.util.Optional<EndReason> endReason() { return r.endReason(); }
+                @Override public java.util.Optional<String> endDetail() { return r.endDetail(); }
                 @Override public void close() { r.close(); }
             };
         }
@@ -260,7 +262,8 @@ public final class ShellPeers {
             @Override public java.util.Optional<java.net.InetSocketAddress> peerAddr() { return d.peerAddr(); }
             @Override public long sourceRejected() { return d.sourceRejected(); }
             @Override public SocketStats socketStats() { return d.socketStats(); }
-            @Override public EndReason endReason() { return d.endReason(); }
+            @Override public java.util.Optional<EndReason> endReason() { return d.endReason(); }
+            @Override public java.util.Optional<String> endDetail() { return d.endDetail(); }
             @Override public void close() { d.close(); }
         };
     }

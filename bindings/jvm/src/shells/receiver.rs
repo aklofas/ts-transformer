@@ -297,7 +297,7 @@ jni_native! {
 jni_native! {
     /// Close the receiver. Cancel first, so a `recvBytes` parked on another
     /// thread ends with the transport's `CLOSED`. Returns the end-reason snapshot
-    /// (`EndReason$Snapshot`), null when the close lost the race.
+    /// (`EndReasonSnapshot`), null when the close lost the race.
     fn Java_org_tstrans_shells_Receiver_nClose<'local>(
         env,
         _class,

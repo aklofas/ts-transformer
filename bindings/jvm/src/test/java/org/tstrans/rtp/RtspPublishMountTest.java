@@ -162,7 +162,7 @@ class RtspPublishMountTest {
             mount.cancel();
             RtpException e = assertThrows(RtpException.class, rx::recvEvent);
             assertEquals(RtpException.Kind.CLOSED, e.kind());
-            assertEquals(EndReason.CANCELLED, rx.endReason());
+            assertEquals(Optional.of(EndReason.CANCELLED), rx.endReason());
         }
     }
 
@@ -193,7 +193,7 @@ class RtspPublishMountTest {
             RtpException e = assertThrows(RtpException.class, rx::recvEvent,
                 "a queued event came out after the mount cancel");
             assertEquals(RtpException.Kind.CLOSED, e.kind());
-            assertEquals(EndReason.CANCELLED, rx.endReason());
+            assertEquals(Optional.of(EndReason.CANCELLED), rx.endReason());
         }
     }
 
@@ -217,7 +217,7 @@ class RtspPublishMountTest {
                 () -> "expected RtpException(CLOSED), got "
                     + (e != null ? e : "value " + parked.value.get()));
             assertEquals(RtpException.Kind.CLOSED, ((RtpException) e).kind());
-            assertEquals(EndReason.CANCELLED, rx.endReason());
+            assertEquals(Optional.of(EndReason.CANCELLED), rx.endReason());
         }
     }
 
@@ -238,7 +238,7 @@ class RtspPublishMountTest {
             // END_OF_STREAM: recvEvent returns null, never an exception.
             assertNull(parked.error.get(), () -> "unexpected " + parked.error.get());
             assertNull(parked.value.get());
-            assertEquals(EndReason.CLEAN_TEARDOWN, rx.endReason());
+            assertEquals(Optional.of(EndReason.CLEAN_TEARDOWN), rx.endReason());
         }
     }
 
@@ -272,7 +272,7 @@ class RtspPublishMountTest {
                         assertTrue(parked.join(), label + ": receiver did not end");
                         assertNull(parked.error.get(), label);
                         assertNull(parked.value.get(), label);
-                        assertEquals(EndReason.CLEAN_TEARDOWN, rx.endReason(), label);
+                        assertEquals(Optional.of(EndReason.CLEAN_TEARDOWN), rx.endReason(), label);
                     } else {
                         assertFalse(parked.join(300), label + ": receiver ended");
                         mount.cancel();
@@ -460,7 +460,7 @@ class RtspPublishMountTest {
             // ... and the publish mount's receiver reads end of stream.
             assertNull(recv.error.get(), () -> "receiver: unexpected " + recv.error.get());
             assertNull(recv.value.get());
-            assertEquals(EndReason.CLEAN_TEARDOWN, rx.endReason());
+            assertEquals(Optional.of(EndReason.CLEAN_TEARDOWN), rx.endReason());
         } finally {
             rx.close();
             mount.close();
@@ -541,7 +541,7 @@ class RtspPublishMountTest {
             // receiver's own cancel.
             assertNull(recv.error.get(), () -> "receiver: unexpected " + recv.error.get());
             assertNull(recv.value.get());
-            assertEquals(EndReason.CLEAN_TEARDOWN, rx.endReason());
+            assertEquals(Optional.of(EndReason.CLEAN_TEARDOWN), rx.endReason());
             assertNull(rx.recvEvent());
             assertFalse(rx.iterator().hasNext());
         } finally {

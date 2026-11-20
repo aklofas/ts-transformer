@@ -6,6 +6,7 @@ import java.util.OptionalInt;
 import org.tstrans.BindingException;
 import org.tstrans.NativeHandle;
 import org.tstrans.NativeLoader;
+import org.tstrans.internal.EndReasonSnapshot;
 import org.tstrans.internal.NativeAddr;
 import org.tstrans.srt.SrtStats;
 
@@ -201,7 +202,7 @@ public class Receiver extends NativeHandle {
     }
 
     /**
-     * Why the receive session ended, or {@code null} while it has not ended.
+     * Why the receive session ended; empty while it has not ended.
      * Every plain receive transport ({@code rtp}, {@code srt}, {@code udp},
      * {@code tcp}, {@code rist}) records one; {@code srt} never records a
      * clean teardown, because libsrt reports a peer's close as a broken link.
@@ -209,25 +210,25 @@ public class Receiver extends NativeHandle {
      * {@link #recvBytes()} is parked on another thread; once the receiver is
      * closed it returns the reason as it stood after close.
      *
-     * @return the end reason, or {@code null}
+     * @return the end reason, or empty
      */
-    public EndReason endReason() {
+    public Optional<EndReason> endReason() {
         long h = peekHandle();
-        if (h == 0) return closedEndReason;
-        return EndReason.fromWireValue(nEndReason(h));
+        if (h == 0) return Optional.ofNullable(closedEndReason);
+        return Optional.ofNullable(EndReason.fromWireValue(nEndReason(h)));
     }
 
     /**
      * Free-text detail for {@link #endReason()}: the message carried by
      * {@code KEEPALIVE_FAILED}, {@code TRANSPORT_FAILED} and
-     * {@code PROTOCOL_ERROR}; {@code null} otherwise.
+     * {@code PROTOCOL_ERROR}; empty otherwise.
      *
-     * @return the detail, or {@code null}
+     * @return the detail, or empty
      */
-    public String endDetail() {
+    public Optional<String> endDetail() {
         long h = peekHandle();
-        if (h == 0) return closedEndDetail;
-        return nEndDetail(h);
+        if (h == 0) return Optional.ofNullable(closedEndDetail);
+        return Optional.ofNullable(nEndDetail(h));
     }
 
     /**
@@ -331,7 +332,7 @@ public class Receiver extends NativeHandle {
     }
 
     @Override protected void nativeClose(long h) {
-        EndReason.Snapshot snapshot = nClose(h);
+        EndReasonSnapshot snapshot = nClose(h);
         if (snapshot != null) {
             closedEndDetail = snapshot.detail();
             closedEndReason = snapshot.reason();
@@ -345,7 +346,7 @@ public class Receiver extends NativeHandle {
     private static native SrtStats    nSrtStats(long handle) throws BindingException;
     private static native int     nEndReason(long handle);
     private static native String  nEndDetail(long handle);
-    private static native EndReason.Snapshot nClose(long handle);
+    private static native EndReasonSnapshot nClose(long handle);
     private static native int nLocalPort(long handle);
     private static native byte[] nLocalAddr(long handle);
     private static native byte[] nPeerAddr(long handle);

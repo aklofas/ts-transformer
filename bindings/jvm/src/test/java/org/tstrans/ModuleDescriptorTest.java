@@ -1,6 +1,7 @@
 package org.tstrans;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.lang.module.ModuleDescriptor;
@@ -35,5 +36,15 @@ class ModuleDescriptorTest {
         assertTrue(
                 exported.containsAll(
                         Set.of("org.tstrans.shells", "org.tstrans.hls", "org.tstrans.webrtc")));
+    }
+
+    /** The close-time end-reason carrier lives in the non-exported package, not on the enum. */
+    @Test
+    void endReasonHasNoPublicNestedClass() {
+        for (Class<?> c : org.tstrans.shells.EndReason.class.getDeclaredClasses()) {
+            assertFalse(java.lang.reflect.Modifier.isPublic(c.getModifiers()), c.getName());
+        }
+        assertEquals("org.tstrans.internal",
+                org.tstrans.internal.EndReasonSnapshot.class.getPackageName());
     }
 }

@@ -1244,7 +1244,7 @@ falls into two groups.
 | `peerAddr()` (`tcp.Transport`) | the address captured at accept | throws `IllegalStateException`, also once the connection is converted into a shell |
 | `videoHandle()` … `dataHandle()` on the three `MuxSender` classes | the handles of the `MuxerConfig` the sender was built from | throws `IllegalStateException` |
 | `reconnectAttempts()`, `reconnectStats()` on the managed shells | live counters kept outside the object | throws `IllegalStateException` |
-| `endReason()` / `endDetail()` | the recorded reason, or `null`; `H264Receiver` answers `null` while a `recvAu()` is in flight | the reason recorded at close |
+| `endReason()` / `endDetail()` | the recorded reason, or empty; `H264Receiver` answers empty while a `recvAu()` is in flight | the reason recorded at close |
 
 `RtspServer.close()` runs the graceful `stop()` before it frees the server,
 so it takes as long as `stop()` (a parked `nextPublisher` does not hold it
@@ -1269,12 +1269,12 @@ client's thread (see [RTSP client](#rtsp-client-orgtstransrtp)).
 progress; the control calls themselves run one at a time.
 
 **Waits for the parked call to return:** `stats()`, `socketStats()`,
-`srtStats()`, `depayStats()`, `rtpStats()` and `lastSeenMicros()`. These
+`srtStats()`, `depayStats()`, `rtpStats()` and `lastSeen()`. These
 read counters that live inside the object and have nothing to report
 without it. Poll them from the thread that drives the send or receive
 loop, or give the receiver a receive deadline (`?recv_timeout=<ms>` on
 `rtp://` / `rtsp(s)://`, `?x-recvtimeout=<ms>` on `srt://`) so its blocking
-call returns on a cadence (the [`lastSeenMicros` caveat](#per-stream-staleness-lastseenmicros)
+call returns on a cadence (the [`lastSeen` caveat](#per-stream-staleness-lastseen)
 spells this out). `finish()` is a blocking operation in its own right.
 
 Through 0.6.x `isAlive()` on every class except the two `DemuxReceiver`s,
@@ -1510,11 +1510,13 @@ Gotchas:
 - **No user code on the library's thread.** Your loop owns the recorder and
   every error it raises.
 
-### Per-stream staleness: `lastSeenMicros`
+### Per-stream staleness: `lastSeen`
 
-`rx.lastSeenMicros(pid)` returns the epoch-microsecond timestamp of the most
-recent item this receiver emitted for `pid`, or `null` if `pid` was never
+`rx.lastSeen(pid)` returns an `Optional<Instant>`: when this receiver last
+emitted an item for `pid`, to the microsecond, or empty if `pid` was never
 seen — a cheap staleness check with no `stats()` snapshot-diffing required.
+`lastSeenMicros(pid)` (the same instant as a `Long` of Unix-epoch
+microseconds, `null` for never) is deprecated and is removed in 0.12.0.
 See the watchdog recipe under [RTP convenience](#rtp-convenience-muxsender--demuxreceiver)
 below (the method is identical here). The same method also exists on
 `org.tstrans.srt.ManagedDemuxReceiver`.
@@ -1618,7 +1620,7 @@ re-accept parked with no peer in sight — and the iterator ends with
 **Why did a managed session end? (`endReason()`)** Once the receive loop has
 stopped for good, `rx.endReason()` (on `ManagedDemuxReceiver` only — none of
 the other three managed shells expose it) answers with an `org.tstrans.shells.EndReason`
-member — or `null` before any ending, including while a reconnect is still
+member in an `Optional` — empty before any ending, including while a reconnect is still
 in progress. Two of its three members are reachable on the managed-SRT path
 today: `RECONNECT_EXHAUSTED` (the `ReconnectPolicy`'s `maxAttempts` budget
 ran out — also what a plain peer close reports under a zero-retry policy,
@@ -2317,18 +2319,18 @@ try (DemuxReceiver rx = DemuxReceiver.open("rtp://0.0.0.0:5004")) {
   the receiver) rather than waiting for end-of-stream.
 - Sample payloads are heap `byte[]` copies.
 
-`rx.lastSeenMicros(pid)` returns the Unix-epoch microsecond timestamp of the
-most recent item this receiver emitted for `pid`, or `null` if that PID has
+`rx.lastSeen(pid)` returns when this receiver last emitted an item for
+`pid` (an `Optional<Instant>`, to the microsecond), or empty if that PID has
 never been seen — a per-stream staleness check that needs no `stats()`
 snapshot-diffing. A watchdog thread can poll it directly:
 
 ```java
-long staleAfterUs = 5_000_000;  // 5 s
+Duration staleAfter = Duration.ofSeconds(5);
 
 void watchdog(DemuxReceiver rx, int pid, AtomicBoolean stop) {
     while (!stop.get()) {
-        Long seen = rx.lastSeenMicros(pid);
-        if (seen != null && System.currentTimeMillis() * 1_000 - seen > staleAfterUs) {
+        Optional<Instant> seen = rx.lastSeen(pid);
+        if (seen.isPresent() && seen.get().plus(staleAfter).isBefore(Instant.now())) {
             System.out.println("pid " + Integer.toHexString(pid) + " has gone quiet");
         }
         try {
@@ -2341,13 +2343,13 @@ void watchdog(DemuxReceiver rx, int pid, AtomicBoolean stop) {
 }
 ```
 
-**Blocking caveat:** `lastSeenMicros` takes the same internal resource lock a
+**Blocking caveat:** `lastSeen` takes the same internal resource lock a
 parked `next()` call holds, so on a receiver whose consumer thread is
 currently blocked in `next()` waiting on a fully-quiet stream, the watchdog's
 call blocks too — indefinitely, until an item finally arrives (or the
 consumer's own deadline, if any, expires). A separate watchdog thread is
 therefore not truly independent of the consumer's recv cadence. Two ways to
-keep it responsive: poll `lastSeenMicros` from the *consumer* thread itself,
+keep it responsive: poll `lastSeen` from the *consumer* thread itself,
 between `next()` calls, rather than from a separate thread; or pair it with
 a receive deadline on the receiver URL (`?recv_timeout=<ms>` on `rtp://` /
 `rtsp(s)://`, `?x-recvtimeout=<ms>` on `srt://`; see [Recv deadlines](#recv-deadlines-recv_timeout--per-call-overloads)
@@ -2517,14 +2519,14 @@ try (RtspSession session = RtspClient.connect(cfg);
   call throws, `rx.endReason()` (on `Receiver`, `DemuxReceiver`, and
   `H264Receiver` alike) answers with an `org.tstrans.shells.EndReason` member —
   `CLEAN_TEARDOWN`, `SESSION_EXPIRED`, `KEEPALIVE_FAILED`,
-  `TRANSPORT_FAILED`, `PROTOCOL_ERROR`, or `CANCELLED` — or `null` if the
-  session hasn't ended yet (or ended through a path that records no
+  `TRANSPORT_FAILED`, `PROTOCOL_ERROR`, or `CANCELLED` in an `Optional` —
+  empty if the session hasn't ended yet (or ended through a path that records no
   reason, e.g. a plain `rtp://` receiver with no owning `RtspClient`).
   `rx.endDetail()` carries the free-text message for the three failure
-  variants. Both stay readable after `close()` — the receiver snapshots
+  variants (empty for the others). Both stay readable after `close()` — the receiver snapshots
   them at close time, before the underlying native handle is freed.
   Neither ever waits behind a receive parked on another thread; on
-  `H264Receiver` they answer `null` while a `recvAu()` is in flight. Set
+  `H264Receiver` they answer empty while a `recvAu()` is in flight. Set
   `TSTRANS_LOG=tst_rtp=debug` before the first `System.load` of the
   native library (i.e. before touching any `org.tstrans.*` class) to
   also see the RTSP client's `tracing` events (targets
@@ -3543,10 +3545,10 @@ Gotchas:
   off the Rust `EndReason` value (same approach as Python). A
   recorded end reason is data, not a failure, so it never touches
   `RtpException`.
-- **`lastSeenMicros(pid)` returns `null`, not `0`, for "never
+- **`lastSeen(pid)` returns an empty `Optional`, not `0`, for "never
   seen".** The C ABI has no nullable type in its getter shape, so it
-  uses a `0` sentinel; this binding's boxed `Long` `null` is the honest
-  absent value (same convention as Python's `None`).
+  uses a `0` sentinel; this binding answers with an `Optional<Instant>`
+  (Python answers `None`).
 - **A finished or consumed HLS handle throws `IllegalStateException`**, like
   every other closed handle here; Python raises `HlsError(FINISHED)` for the
   same state. `HlsException.Kind.FINISHED` is still declared because the

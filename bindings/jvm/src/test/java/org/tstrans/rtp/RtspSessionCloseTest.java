@@ -2,6 +2,7 @@ package org.tstrans.rtp;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import java.util.Optional;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
@@ -44,7 +45,7 @@ class RtspSessionCloseTest {
             session.close();
             assertTrue(peer.awaitTeardown(CLOSE_BOUND_MS), "close() sent TEARDOWN");
             assertClosed(drain.awaitEnd(CLOSE_BOUND_MS));
-            assertEquals(EndReason.CANCELLED, drain.rx.endReason());
+            assertEquals(Optional.of(EndReason.CANCELLED), drain.rx.endReason());
         }
     }
 
@@ -219,7 +220,7 @@ class RtspSessionCloseTest {
             long ms = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - t0);
             assertTrue(ms < CLOSE_BOUND_MS, "close() took " + ms + " ms");
             assertTrue(peer.awaitTeardown(CLOSE_BOUND_MS), "close() sent TEARDOWN");
-            assertEquals(EndReason.CANCELLED, rx.endReason());
+            assertEquals(Optional.of(EndReason.CANCELLED), rx.endReason());
         }
     }
 

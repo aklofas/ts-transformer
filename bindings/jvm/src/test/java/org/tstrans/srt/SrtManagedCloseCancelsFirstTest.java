@@ -7,6 +7,7 @@ import static org.tstrans.TestSupport.freeUdpPort;
 import static org.tstrans.TestSupport.isLinux;
 import static org.tstrans.TestSupport.syntheticH264Idr;
 
+import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -89,7 +90,7 @@ class SrtManagedCloseCancelsFirstTest {
         // Let the reader park inside the native receive: the peer is connected
         // and stays silent, so only a cancel can end that receive.
         Thread.sleep(500);
-        assertNull(rx.endReason(), "recorded a reason before the stream ended");
+        assertEquals(Optional.empty(), rx.endReason(), "recorded a reason before the stream ended");
 
         // The call under test, from a side thread so a regression to the old
         // wait-behind-the-parked-recv contract fails the bounded get below
@@ -117,7 +118,7 @@ class SrtManagedCloseCancelsFirstTest {
             "expected the iteration to end with SrtException(CLOSED), got " + end);
         assertEquals(SrtException.Kind.CLOSED, ((SrtException) end).kind(),
             "a close-initiated cancel surfaces as CLOSED");
-        assertEquals(EndReason.CANCELLED, rx.endReason(),
+        assertEquals(Optional.of(EndReason.CANCELLED), rx.endReason(),
             "close() cancels first, so the parked iteration recorded CANCELLED "
                 + "and the close-time snapshot carries it");
         sender.close();

@@ -7,6 +7,9 @@ import static org.tstrans.TestSupport.isLinux;
 import static org.tstrans.TestSupport.roundtripConfig;
 import static org.tstrans.TestSupport.syntheticH264Idr;
 
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
+import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.tstrans.RtpException;
@@ -85,11 +88,11 @@ class DemuxReceiverTest {
     }
 
     /**
-     * {@code lastSeenMicros(pid)}: {@code null} before any event has
-     * arrived, {@code null} for an unrecognized PID, and a positive Unix-epoch
-     * microsecond count for the configured video PID once at least one event
-     * has been demuxed. Reuses the same bind-retry + {@code MuxSender} burst
-     * fixture as {@link #recvEventPersistentTimeoutRaisesCheckedTimeoutThenDeliversRealEvent}.
+     * {@code lastSeen(pid)}: empty before any event has arrived, empty for an
+     * unrecognized PID, and an instant after the epoch for the configured video
+     * PID once at least one event has been demuxed. Reuses the same bind-retry +
+     * {@code MuxSender} burst fixture as
+     * {@link #recvEventPersistentTimeoutRaisesCheckedTimeoutThenDeliversRealEvent}.
      *
      * <p>Binds with {@code ?recv_timeout=2000} as a backstop: {@code @Timeout}
      * runs in {@code SAME_THREAD} mode by default and cannot interrupt a
@@ -100,10 +103,50 @@ class DemuxReceiverTest {
      */
     @Test
     @Timeout(20)
-    void lastSeenMicrosTracksLiveStreamAndNullsUnknownPid() throws Exception {
+    void lastSeenTracksLiveStreamAndIsEmptyForAnUnknownPid() throws Exception {
         assumeTrue(isLinux(),
             "RTP live-socket loopback gated to Linux (same as #![cfg(target_os = \"linux\")] in Rust)");
+        try (DemuxReceiver receiver = receiverThatDemuxedVideo(rx -> {
+            // Before any data has arrived, both a real (never-seen) PID and an
+            // unrecognized PID read empty.
+            assertEquals(Optional.empty(), rx.lastSeen(0x1011),
+                "lastSeen must be empty before any event has been demuxed");
+            assertEquals(Optional.empty(), rx.lastSeen(0x1FFF),
+                "lastSeen must be empty for an unrecognized PID");
+        })) {
+            Instant seen = receiver.lastSeen(0x1011)
+                .orElseThrow(() -> new AssertionError("lastSeen must be present for the video PID after delivery"));
+            assertTrue(seen.isAfter(Instant.EPOCH), "lastSeen must be after the Unix epoch");
+            assertEquals(Optional.empty(), receiver.lastSeen(0x1FFF),
+                "lastSeen must stay empty for a PID that was never carried");
+        }
+    }
 
+    /** The deprecated microsecond getter and {@code lastSeen} name the same instant. */
+    @Test
+    @Timeout(20)
+    @SuppressWarnings("removal")
+    void lastSeenEqualsLastSeenMicrosToTheMicrosecond() throws Exception {
+        assumeTrue(isLinux(),
+            "RTP live-socket loopback gated to Linux (same as #![cfg(target_os = \"linux\")] in Rust)");
+        try (DemuxReceiver receiver = receiverThatDemuxedVideo(rx -> {
+            assertNull(rx.lastSeenMicros(0x1011), "the deprecated getter still answers null");
+        })) {
+            Long micros = receiver.lastSeenMicros(0x1011);
+            assertNotNull(micros);
+            assertEquals(Optional.of(Instant.EPOCH.plus(micros, ChronoUnit.MICROS)),
+                receiver.lastSeen(0x1011));
+            assertNull(receiver.lastSeenMicros(0x1FFF));
+        }
+    }
+
+    /**
+     * A DemuxReceiver that has demuxed one Video event of
+     * {@link org.tstrans.TestSupport#roundtripConfig()}; {@code beforeData} runs on it
+     * before anything is sent.
+     */
+    private static DemuxReceiver receiverThatDemuxedVideo(
+            java.util.function.Consumer<DemuxReceiver> beforeData) throws Exception {
         DemuxReceiver rx = null;
         int port = -1;
         for (int attempt = 0; attempt < 8 && rx == null; attempt++) {
@@ -116,41 +159,30 @@ class DemuxReceiverTest {
             }
         }
         assertNotNull(rx, "could not bind an rtp DemuxReceiver after 8 attempts");
-
-        try (DemuxReceiver receiver = rx) {
-            // Before any data has arrived, both a real (never-seen) PID and an
-            // unrecognized PID must read null.
-            assertNull(receiver.lastSeenMicros(0x1011),
-                "lastSeenMicros must be null before any event has been demuxed");
-            assertNull(receiver.lastSeenMicros(0x1FFF),
-                "lastSeenMicros must be null for an unrecognized PID");
-
+        try {
+            beforeData.accept(rx);
             try (MuxSender tx = MuxSender.open("rtp://127.0.0.1:" + port, roundtripConfig())) {
                 for (int i = 0; i < 8; i++) {
                     tx.sendVideo(syntheticH264Idr(), i * 3000L, true);
                 }
                 Thread.sleep(300);
             }
-
             // The first demuxed event is typically a ProgramMap (PAT/PMT), not a
             // Video sample — pull until a Video event on the configured PID
             // arrives (bounded so a real regression fails instead of hanging).
             DemuxEvent.Video videoEvent = null;
             for (int i = 0; i < 20 && videoEvent == null; i++) {
-                DemuxEvent event = receiver.recvEvent();
+                DemuxEvent event = rx.recvEvent();
                 assertNotNull(event, "expected at least one demuxed event");
                 if (event instanceof DemuxEvent.Video v) {
                     videoEvent = v;
                 }
             }
             assertNotNull(videoEvent, "expected a Video event on the configured PID");
-
-            Long seen = receiver.lastSeenMicros(0x1011);
-            assertNotNull(seen, "lastSeenMicros must be non-null for the video PID after delivery");
-            assertTrue(seen > 0, "lastSeenMicros must be a positive Unix-epoch microsecond count");
-
-            assertNull(receiver.lastSeenMicros(0x1FFF),
-                "lastSeenMicros must stay null for a PID that was never carried");
+            return rx;
+        } catch (Throwable t) {
+            rx.close();
+            throw t;
         }
     }
 }

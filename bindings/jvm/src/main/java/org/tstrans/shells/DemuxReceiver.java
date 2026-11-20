@@ -1,5 +1,7 @@
 package org.tstrans.shells;
 
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.Iterator;
 import java.util.NoSuchElementException;
 import java.net.InetSocketAddress;
@@ -10,6 +12,7 @@ import org.tstrans.BindingException;
 import org.tstrans.DemuxException;
 import org.tstrans.NativeHandle;
 import org.tstrans.NativeLoader;
+import org.tstrans.internal.EndReasonSnapshot;
 import org.tstrans.internal.NativeAddr;
 import org.tstrans.mpegts.DemuxEvent;
 import org.tstrans.mpegts.DemuxerConfig;
@@ -322,37 +325,57 @@ public class DemuxReceiver extends NativeHandle implements Iterable<DemuxEvent> 
 
     /**
      * Wall-clock time the stream identified by {@code pid} last carried a
-     * demuxed item through this receiver (last emitted event), as a
-     * Unix-epoch microsecond count. {@code null} if {@code pid} was never
-     * seen — including an unrecognized PID — or before any event has arrived.
-     * {@code pid} must be in 0..=0x1FFF, else {@link IllegalArgumentException}.
+     * demuxed item through this receiver (last emitted event), to the
+     * microsecond. Empty if {@code pid} was never seen (including an
+     * unrecognized PID) or before any event has arrived.
      *
      * <p><b>Blocking:</b> this takes the same internal resource lock a
      * parked {@code next()} call holds — if an iteration is currently in
-     * flight on this receiver, {@code lastSeenMicros} blocks until it
+     * flight on this receiver, {@code lastSeen} blocks until it
      * returns (an event, end of stream, or an error), which on a
      * fully-quiet stream may be indefinite. Call between {@code next()}
      * calls, or from the same thread driving the iteration, to avoid
      * blocking.
      *
-     * @param pid the stream PID to query
+     * @param pid the stream PID to query, in 0..=0x1FFF
+     * @return the instant, or empty
+     * @throws IllegalArgumentException if {@code pid} is outside 0..=0x1FFF
+     * @throws IllegalStateException if the receiver is closed
+     */
+    public Optional<Instant> lastSeen(int pid) {
+        long v = lastSeenRaw(pid);
+        return v < 0 ? Optional.empty() : Optional.of(Instant.EPOCH.plus(v, ChronoUnit.MICROS));
+    }
+
+    /**
+     * {@link #lastSeen(int)} as a Unix-epoch microsecond count, {@code null}
+     * where {@code lastSeen} is empty; same blocking and errors.
+     *
+     * @param pid the stream PID to query, in 0..=0x1FFF
      * @return the last-seen timestamp in Unix-epoch microseconds, or
      *     {@code null}
      * @throws IllegalArgumentException if {@code pid} is outside 0..=0x1FFF
      * @throws IllegalStateException if the receiver is closed
+     * @deprecated use {@link #lastSeen(int)}; removed in 0.12.0
      */
+    @Deprecated(since = "0.11.0", forRemoval = true)
     public Long lastSeenMicros(int pid) {
+        long v = lastSeenRaw(pid);
+        return v < 0 ? null : v;
+    }
+
+    /** The native microsecond count for {@code pid}, negative when never seen. */
+    private long lastSeenRaw(int pid) {
         if (pid < 0 || pid > 0x1FFF) {
             throw new IllegalArgumentException(
                 "pid must be in 0..=0x1FFF, got 0x" + Integer.toHexString(pid));
         }
         ensureOpen("DemuxReceiver is closed");
-        long v = nLastSeenMicros(peekHandle(), pid);
-        return v < 0 ? null : v;
+        return nLastSeenMicros(peekHandle(), pid);
     }
 
     /**
-     * Why the receive session ended, or {@code null} while it has not ended.
+     * Why the receive session ended; empty while it has not ended.
      * Every plain receive transport ({@code rtp}, {@code srt}, {@code udp},
      * {@code tcp}, {@code rist}) records one; {@code srt} never records a
      * clean teardown, because libsrt reports a peer's close as a broken link.
@@ -360,25 +383,25 @@ public class DemuxReceiver extends NativeHandle implements Iterable<DemuxEvent> 
      * iteration is parked on another thread; once the receiver is closed it
      * returns the reason as it stood after close.
      *
-     * @return the end reason, or {@code null}
+     * @return the end reason, or empty
      */
-    public EndReason endReason() {
+    public Optional<EndReason> endReason() {
         long h = peekHandle();
-        if (h == 0) return closedEndReason;
-        return EndReason.fromWireValue(nEndReason(h));
+        if (h == 0) return Optional.ofNullable(closedEndReason);
+        return Optional.ofNullable(EndReason.fromWireValue(nEndReason(h)));
     }
 
     /**
      * Free-text detail for {@link #endReason()}: the message carried by
      * {@code KEEPALIVE_FAILED}, {@code TRANSPORT_FAILED} and
-     * {@code PROTOCOL_ERROR}; {@code null} otherwise.
+     * {@code PROTOCOL_ERROR}; empty otherwise.
      *
-     * @return the detail, or {@code null}
+     * @return the detail, or empty
      */
-    public String endDetail() {
+    public Optional<String> endDetail() {
         long h = peekHandle();
-        if (h == 0) return closedEndDetail;
-        return nEndDetail(h);
+        if (h == 0) return Optional.ofNullable(closedEndDetail);
+        return Optional.ofNullable(nEndDetail(h));
     }
 
     /**
@@ -508,7 +531,7 @@ public class DemuxReceiver extends NativeHandle implements Iterable<DemuxEvent> 
 
     @Override protected void nativeClose(long h) {
         long[] tsBytesOut = {-1};
-        EndReason.Snapshot snapshot = nClose(h, tsBytesOut);
+        EndReasonSnapshot snapshot = nClose(h, tsBytesOut);
         tsBytesSeen.accumulateAndGet(tsBytesOut[0], Math::max);
         if (snapshot != null) {
             closedEndDetail = snapshot.detail();
@@ -530,7 +553,7 @@ public class DemuxReceiver extends NativeHandle implements Iterable<DemuxEvent> 
     private static native long nLastSeenMicros(long handle, int pid);
     private static native int nEndReason(long handle);
     private static native String nEndDetail(long handle);
-    private static native EndReason.Snapshot nClose(long handle, long[] tsBytesOut);
+    private static native EndReasonSnapshot nClose(long handle, long[] tsBytesOut);
     private static native long nTsBytesDemuxed(long handle);
     private static native int nLocalPort(long handle);
     private static native byte[] nLocalAddr(long handle);

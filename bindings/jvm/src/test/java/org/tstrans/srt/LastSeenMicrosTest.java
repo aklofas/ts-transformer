@@ -6,6 +6,9 @@ import static org.tstrans.TestSupport.isLinux;
 import static org.tstrans.TestSupport.roundtripConfig;
 import static org.tstrans.TestSupport.syntheticH264Idr;
 
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
+import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -20,19 +23,20 @@ import org.tstrans.shells.DemuxReceiver;
 import org.tstrans.shells.CancelHandle;
 
 /**
- * Live-socket tests for {@code lastSeenMicros(int pid)} on the two
+ * Live-socket tests for {@code lastSeen(int pid)} on the two
  * srt convenience receivers: the plain {@link DemuxReceiver} and the managed
  * (auto-reconnect) {@link ManagedDemuxReceiver}. Each proves the same three
- * states as the rtp {@code DemuxReceiverTest} counterpart: {@code null}
- * before any event has been demuxed, {@code null} for an unrecognized PID,
- * and a positive Unix-epoch microsecond count for the configured video PID
- * once at least one event has arrived.
+ * states as the rtp {@code DemuxReceiverTest} counterpart: empty
+ * before any event has been demuxed, empty for an unrecognized PID,
+ * and an instant after the epoch for the configured video PID
+ * once at least one event has arrived; the managed test also checks the
+ * deprecated {@code lastSeenMicros} names the same instant.
  *
  * <p>Both fixtures below reuse already-proven live-socket shapes from sibling
  * test files rather than inventing new topology: {@link #connectedReceiver}
  * mirrors {@code DemuxReceiverCloseRaceTest}'s helper (a continuous
  * caller-mode sender daemon streams into a listener accepted on this thread),
- * and {@link #managedDemuxReceiverLastSeenMicrosTracksLiveStreamAndNullsUnknownPid}
+ * and {@link #managedDemuxReceiverLastSeenTracksLiveStreamAndEqualsLastSeenMicros}
  * mirrors {@code SrtManagedLiveTest}'s Test 3 topology (managed shell as the
  * active CALLER on the main thread; peer is a plain listener+{@code
  * MuxSender} on a daemon thread streaming continuously until observed).
@@ -95,7 +99,7 @@ class LastSeenMicrosTest {
 
     @Test
     @Timeout(30)
-    void demuxReceiverLastSeenMicrosTracksLiveStreamAndNullsUnknownPid() throws Exception {
+    void demuxReceiverLastSeenTracksLiveStreamAndIsEmptyForAnUnknownPid() throws Exception {
         assumeTrue(isLinux(), "srt live-socket loopback gated to Linux");
 
         AtomicReference<Boolean> stop = new AtomicReference<>(false);
@@ -104,12 +108,12 @@ class LastSeenMicrosTest {
             // The sender daemon is already streaming, but nothing has been pulled
             // through recvEvent() yet — the demuxer's per-stream stats are only
             // updated as events are produced, so both queries must read null here.
-            assertNull(rx.lastSeenMicros(0x1011),
-                "lastSeenMicros must be null before any event has been demuxed");
-            assertNull(rx.lastSeenMicros(0x1FFF),
-                "lastSeenMicros must be null for an unrecognized PID");
-            assertThrows(IllegalArgumentException.class, () -> rx.lastSeenMicros(0x2000));
-            assertThrows(IllegalArgumentException.class, () -> rx.lastSeenMicros(0x10101));
+            assertEquals(Optional.empty(), rx.lastSeen(0x1011),
+                "lastSeen must be empty before any event has been demuxed");
+            assertEquals(Optional.empty(), rx.lastSeen(0x1FFF),
+                "lastSeen must be empty for an unrecognized PID");
+            assertThrows(IllegalArgumentException.class, () -> rx.lastSeen(0x2000));
+            assertThrows(IllegalArgumentException.class, () -> rx.lastSeen(0x10101));
 
             // Hard no-hang safety net, the same shape as the managed test below:
             // JUnit's @Timeout cannot interrupt a thread parked in a native
@@ -152,12 +156,12 @@ class LastSeenMicrosTest {
             }
             assertNotNull(videoEvent, "expected a Video event on the configured PID");
 
-            Long seen = rx.lastSeenMicros(0x1011);
-            assertNotNull(seen, "lastSeenMicros must be non-null for the video PID after delivery");
-            assertTrue(seen > 0, "lastSeenMicros must be a positive Unix-epoch microsecond count");
+            Instant seen = rx.lastSeen(0x1011).orElseThrow(
+                () -> new AssertionError("lastSeen must be present for the video PID after delivery"));
+            assertTrue(seen.isAfter(Instant.EPOCH), "lastSeen must be after the Unix epoch");
 
-            assertNull(rx.lastSeenMicros(0x1FFF),
-                "lastSeenMicros must stay null for a PID that was never carried");
+            assertEquals(Optional.empty(), rx.lastSeen(0x1FFF),
+                "lastSeen must be empty for a PID that was never carried");
         } finally {
             stop.set(true);
         }
@@ -167,7 +171,8 @@ class LastSeenMicrosTest {
 
     @Test
     @Timeout(TIMEOUT_SEC + 10)
-    void managedDemuxReceiverLastSeenMicrosTracksLiveStreamAndNullsUnknownPid() throws Exception {
+    @SuppressWarnings("removal")
+    void managedDemuxReceiverLastSeenTracksLiveStreamAndEqualsLastSeenMicros() throws Exception {
         assumeTrue(isLinux(), "srt live-socket loopback gated to Linux");
 
         // Topology mirrors SrtManagedLiveTest's Test 3 (the proven deterministic
@@ -220,12 +225,12 @@ class LastSeenMicrosTest {
         try (ManagedDemuxReceiver rx = ManagedDemuxReceiver.fromUrl(
                 "srt://127.0.0.1:" + port + "?mode=caller&latency=" + LATENCY_MS)) {
             // Constructed but not yet iterated — nothing has been demuxed.
-            assertNull(rx.lastSeenMicros(0x1011),
-                "lastSeenMicros must be null before any event has been demuxed");
-            assertNull(rx.lastSeenMicros(0x1FFF),
-                "lastSeenMicros must be null for an unrecognized PID");
-            assertThrows(IllegalArgumentException.class, () -> rx.lastSeenMicros(0x2000));
-            assertThrows(IllegalArgumentException.class, () -> rx.lastSeenMicros(0x10101));
+            assertEquals(Optional.empty(), rx.lastSeen(0x1011),
+                "lastSeen must be empty before any event has been demuxed");
+            assertEquals(Optional.empty(), rx.lastSeen(0x1FFF),
+                "lastSeen must be empty for an unrecognized PID");
+            assertThrows(IllegalArgumentException.class, () -> rx.lastSeen(0x2000));
+            assertThrows(IllegalArgumentException.class, () -> rx.lastSeen(0x10101));
 
             // Hard no-hang safety net (same as SrtManagedLiveTest): a cancel handle
             // obtained BEFORE iterating — the documented happy-path moment.
@@ -258,12 +263,14 @@ class LastSeenMicrosTest {
             }
 
             assertTrue(sawEvent, "managed demux receiver must have seen at least one demux event");
-            Long seen = rx.lastSeenMicros(0x1011);
-            assertNotNull(seen, "lastSeenMicros must be non-null for the video PID after delivery");
-            assertTrue(seen > 0, "lastSeenMicros must be a positive Unix-epoch microsecond count");
+            Instant seen = rx.lastSeen(0x1011).orElseThrow(
+                () -> new AssertionError("lastSeen must be present for the video PID after delivery"));
+            assertTrue(seen.isAfter(Instant.EPOCH), "lastSeen must be after the Unix epoch");
+            // The deprecated microsecond getter names the same instant.
+            assertEquals(seen, Instant.EPOCH.plus(rx.lastSeenMicros(0x1011), ChronoUnit.MICROS));
 
-            assertNull(rx.lastSeenMicros(0x1FFF),
-                "lastSeenMicros must stay null for a PID that was never carried");
+            assertEquals(Optional.empty(), rx.lastSeen(0x1FFF),
+                "lastSeen must be empty for a PID that was never carried");
         }
 
         peerThread.join(TimeUnit.SECONDS.toMillis(TIMEOUT_SEC));

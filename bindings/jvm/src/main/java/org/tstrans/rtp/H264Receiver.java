@@ -2,9 +2,11 @@ package org.tstrans.rtp;
 
 import java.util.Iterator;
 import java.util.NoSuchElementException;
+import java.util.Optional;
 import org.tstrans.NativeHandle;
 import org.tstrans.NativeLoader;
 import org.tstrans.RtpException;
+import org.tstrans.internal.EndReasonSnapshot;
 import org.tstrans.shells.CancelHandle;
 import org.tstrans.shells.EndReason;
 import org.tstrans.shells.SocketStats;
@@ -337,7 +339,7 @@ public final class H264Receiver extends NativeHandle implements Iterable<H264Acc
     @Override public void close() { super.close(); }
 
     /**
-     * Why the receive session ended, or {@code null} if it hasn't ended yet
+     * Why the receive session ended; empty if it hasn't ended yet
      * (or ended through a path this type doesn't instrument). Still readable
      * after {@link #close()} — the close path snapshots the reason before
      * the underlying native resource is freed. For a receiver made by
@@ -346,39 +348,39 @@ public final class H264Receiver extends NativeHandle implements Iterable<H264Acc
      * 500&nbsp;ms and no {@code recvAu()} was in progress; otherwise {@code CANCELLED}.
      *
      * <p><b>Never blocks.</b> While a {@link #recvAu()} is in flight on
-     * another thread the reason is not final, and this answers {@code null}
+     * another thread the reason is not final, and this answers empty
      * without waiting for that call (through 0.6.x it waited until the
      * receive returned). Read it after the recv loop has observed its
      * terminal outcome. Once closed, it returns the cached snapshot.
      *
      * <p><b>Cross-thread close race:</b> a concurrent call from another
-     * thread while {@link #close()} is in flight may briefly observe
-     * {@code null} before {@code close()} finishes — {@code peekHandle()}
+     * thread while {@link #close()} is in flight may briefly observe an
+     * empty answer before {@code close()} finishes — {@code peekHandle()}
      * reports closed as soon as {@code close()} claims the handle, before
      * the native teardown (which computes the snapshot) completes.
      */
-    public EndReason endReason() {
+    public Optional<EndReason> endReason() {
         long h = peekHandle();
-        if (h == 0) return closedEndReason;
-        return EndReason.fromWireValue(nEndReason(h));
+        if (h == 0) return Optional.ofNullable(closedEndReason);
+        return Optional.ofNullable(EndReason.fromWireValue(nEndReason(h)));
     }
 
     /**
      * Free-text detail for {@link #endReason()} — the message carried by
      * {@code KEEPALIVE_FAILED} / {@code TRANSPORT_FAILED} /
-     * {@code PROTOCOL_ERROR}; {@code null} for every other reason (including
+     * {@code PROTOCOL_ERROR}; empty for every other reason (including
      * "hasn't ended yet"). Still readable after {@link #close()}. Never
      * blocks, and has the same in-flight-receive and cross-thread-close-race
      * caveats as {@link #endReason()}.
      */
-    public String endDetail() {
+    public Optional<String> endDetail() {
         long h = peekHandle();
-        if (h == 0) return closedEndDetail;
-        return nEndDetail(h);
+        if (h == 0) return Optional.ofNullable(closedEndDetail);
+        return Optional.ofNullable(nEndDetail(h));
     }
 
     @Override protected void nativeClose(long h) {
-        EndReason.Snapshot snapshot = nClose(h);
+        EndReasonSnapshot snapshot = nClose(h);
         if (snapshot == null) return;
         // Detail FIRST, reason SECOND: a reader that observes the (volatile)
         // reason write is then guaranteed (JMM happens-before) to also see
@@ -402,5 +404,5 @@ public final class H264Receiver extends NativeHandle implements Iterable<H264Acc
     private static native long nCancelHandle(long handle);
     private static native int nEndReason(long handle);
     private static native String nEndDetail(long handle);
-    private static native EndReason.Snapshot nClose(long handle);
+    private static native EndReasonSnapshot nClose(long handle);
 }

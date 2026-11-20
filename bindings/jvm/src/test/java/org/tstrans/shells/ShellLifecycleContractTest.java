@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.util.Optional;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
@@ -133,7 +134,7 @@ class ShellLifecycleContractTest {
                 assertEquals(ShellPeers.errorClass(scheme), ended.getClass(), String.valueOf(ended));
                 assertEquals("CLOSED", ShellPeers.kindName(ended));
             }
-            assertEquals(EndReason.CANCELLED, rx.endReason());
+            assertEquals(Optional.of(EndReason.CANCELLED), rx.endReason());
         }
     }
 
@@ -245,8 +246,10 @@ class ShellLifecycleContractTest {
                 assertEquals("END_OF_STREAM", ShellPeers.kindName(later));
             }
             assertEquals(
-                    scheme.equals("srt") ? EndReason.TRANSPORT_FAILED : EndReason.CLEAN_TEARDOWN,
+                    Optional.of(scheme.equals("srt") ? EndReason.TRANSPORT_FAILED : EndReason.CLEAN_TEARDOWN),
                     rx.endReason());
+            // Only a failure reason carries a detail.
+            assertEquals(scheme.equals("srt"), rx.endDetail().isPresent(), String.valueOf(rx.endDetail()));
         }
     }
 }

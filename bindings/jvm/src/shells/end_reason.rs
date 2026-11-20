@@ -6,7 +6,7 @@
 //! SESSION_EXPIRED=2, KEEPALIVE_FAILED=3, TRANSPORT_FAILED=4,
 //! PROTOCOL_ERROR=5, CANCELLED=6, END_OF_STREAM=7, RECONNECT_EXHAUSTED=8.
 //! `-1` is "has not ended, or ended through a path this type does not
-//! instrument", which Java maps to `null`.
+//! instrument", which Java maps to an empty `Optional`.
 //!
 //! A recorded end reason is data, not a failure: the free-text detail is read
 //! off the `msg` the `KeepaliveFailed` / `TransportFailed` / `ProtocolError`
@@ -17,8 +17,8 @@
 //! A JVM handle is zeroed before `nClose` runs and the registry key is gone
 //! once it returns, so there is nothing left to pass to a later
 //! `nEndReason`. `nClose` therefore reads the reason itself, after the shell's
-//! teardown recorded `Cancelled`, and returns it as an `EndReason$Snapshot`
-//! the Java class caches.
+//! teardown recorded `Cancelled`, and returns it as an
+//! `org.tstrans.internal.EndReasonSnapshot` the Java class caches.
 
 use crate::jutil::FindClass;
 use jni::Env;
@@ -54,7 +54,7 @@ pub(crate) fn detail(r: &EndReason) -> Option<&str> {
     }
 }
 
-/// Build the package-private `EndReason$Snapshot` `nClose` returns.
+/// Build the `org.tstrans.internal.EndReasonSnapshot` `nClose` returns.
 pub(crate) fn build_close_snapshot<'local>(
     env: &mut Env<'local>,
     reason: Option<EndReason>,
@@ -65,7 +65,7 @@ pub(crate) fn build_close_snapshot<'local>(
         None => JObject::null(),
     };
     env.new_object(
-        FindClass(jni_str!("org/tstrans/shells/EndReason$Snapshot")),
+        FindClass(jni_str!("org/tstrans/internal/EndReasonSnapshot")),
         jni_sig!("(ILjava/lang/String;)V"),
         &[JValue::Int(wire), JValue::Object(&detail_obj)],
     )
