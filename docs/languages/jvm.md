@@ -223,8 +223,9 @@ unit's decode time; `MuxerConfig.Builder.pcrLeadMs(ms)` sets another lead
 `Muxer.reconfigure(MuxerConfig)` replaces the running program in place: streams
 match by PID, and one whose stream type and codec are unchanged keeps its handle,
 its continuity counter and the program's PCR and PSI cadence; a removed stream's
-handle is refused with `INVALID_USAGE`, and a new stream's handle comes from the
-`*Handles()` getters after the call. A config that moves a PMT PID, changes a
+handle is refused with `INVALID_USAGE` until a later `reconfigure` reuses its
+slot (a new stream takes the slot that last carried its PID, else any freed
+one), so re-read the handles from the `*Handles()` getters after each call. A config that moves a PMT PID, changes a
 PID's stream type or codec, moves a PID to another program number, or changes a
 muxer-wide setting (`pcrIntervalMs`, `pcrLeadMs`, `psiIntervalMs`,
 `bufferPackets`, `av1Carriage`) throws `MuxException(CONFIG_INVALID)` and

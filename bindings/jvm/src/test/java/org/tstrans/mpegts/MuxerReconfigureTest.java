@@ -143,6 +143,31 @@ class MuxerReconfigureTest {
     }
 
     @Test
+    void aRemovedStreamsHandleWorksAgainWhenItsPidComesBack() throws Exception {
+        try (Muxer m = new Muxer(videoKlv(0x100, 0x101, 0x102))) {
+            KlvStreamHandle old = m.klvHandles().get(0);
+            VideoStreamHandle v = m.videoHandles().get(0);
+            m.reconfigure(video(0x100, 0x101));
+            assertThrows(MuxException.class, () -> m.pushKlvTo(old, KLV_LS, 90_000, 0));
+            // The KLV stream comes back on its PID: it takes its old slot, so the old
+            // handle names it again.
+            m.reconfigure(videoKlv(0x100, 0x101, 0x102));
+            assertEquals(List.of(old), m.klvHandles());
+            m.pushVideoTo(v, NAL_IDR, 90_000, true);
+            m.pushKlvTo(old, KLV_LS, 90_000, 0);
+            m.pushVideoTo(v, NAL_IDR, 93_000, false);
+            List<byte[]> metadata = new ArrayList<>();
+            for (DemuxEvent e : events(drain(m))) {
+                if (e instanceof DemuxEvent.Metadata md && md.stream().pid() == 0x102) {
+                    metadata.add(bytes(md.payload()));
+                }
+            }
+            assertEquals(1, metadata.size());
+            assertArrayEquals(KLV_LS, metadata.get(0));
+        }
+    }
+
+    @Test
     void aRefusedConfigRaisesConfigInvalidAndChangesNothing() throws Exception {
         Map<String, Supplier<MuxerConfig>> refused = Map.of(
             // The PMT PID of the program moved.

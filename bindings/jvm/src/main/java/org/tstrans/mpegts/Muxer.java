@@ -57,14 +57,16 @@ public final class Muxer extends NativeHandle {
     /**
      * Replace the running program with {@code cfg}'s, in place. The JVM
      * {@link MuxerConfig} holds one program, so this adds, removes and re-describes
-     * the streams of that program; a config with another program number replaces the
-     * program (the old one is removed, the new one added).
+     * the streams of that program; a config with another program number, on PIDs of
+     * its own, replaces the program (the old one is removed, the new one added).
      *
      * <p>Streams match by PID. A stream whose PID, stream type and codec are unchanged
      * survives: it keeps its handle, its continuity counter and the program's PCR and
      * PSI cadence, and its descriptors may change. A removed stream's handle is refused
-     * by every {@code push*To} with {@code INVALID_USAGE}; a new stream's handle comes
-     * from the {@code *Handles()} getters after the call, so re-read them. Packets
+     * by every {@code push*To} with {@code INVALID_USAGE} until a later
+     * {@code reconfigure} reuses its slot: a new stream takes the slot that last carried
+     * its PID, else any freed slot, so an old handle can then push into the stream that
+     * took it. Re-read the handles from the {@code *Handles()} getters after each call. Packets
      * already queued still drain. The next push emits the new PAT and PMT first, with
      * their versions raised where they changed.
      *
