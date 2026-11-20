@@ -51,7 +51,7 @@ pub mod view;
 
 #[cfg(feature = "std")]
 pub use handles::ManagedHandles;
-pub use kind::{BindingError, BindingErrorKind, DiagValue, Diagnostics, Domain};
+pub use kind::{BindingError, BindingErrorKind, DiagValue, Diagnostics, Domain, SHELL_SCHEMES};
 #[cfg(feature = "std")]
 pub use open_cancel::{OpenCancel, OpenSlot};
 pub use opened::Opened;

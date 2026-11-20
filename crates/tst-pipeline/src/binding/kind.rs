@@ -523,6 +523,18 @@ pub enum Domain {
     Webrtc,
 }
 
+/// The URL schemes the bindings' shells open, each with the error domain of
+/// its transport. [`Domain::of_scheme`] reads it; each binding's shell
+/// dispatch must open every entry in both directions.
+pub const SHELL_SCHEMES: &[(&str, Domain)] = &[
+    ("srt", Domain::Srt),
+    ("rtp", Domain::Rtp),
+    ("udp", Domain::Udp),
+    ("tcp", Domain::Tcp),
+    ("tcps", Domain::Tcp),
+    ("rist", Domain::Rist),
+];
+
 impl Domain {
     /// Every domain, in declaration order.
     pub const ALL: &'static [Domain] = &[
@@ -541,19 +553,14 @@ impl Domain {
         Domain::Webrtc,
     ];
 
-    /// The domain of the transport a URL scheme opens: `srt`, `rtp`, `udp`,
-    /// `tcp` / `tcps` and `rist`. `None` for any other scheme; those six
-    /// are the schemes the bindings' shells open.
+    /// The domain of the transport a URL scheme opens: the scheme's entry in
+    /// [`SHELL_SCHEMES`]. `None` for any other scheme.
     #[must_use]
     pub fn of_scheme(scheme: &str) -> Option<Domain> {
-        match scheme {
-            "srt" => Some(Domain::Srt),
-            "rtp" => Some(Domain::Rtp),
-            "udp" => Some(Domain::Udp),
-            "tcp" | "tcps" => Some(Domain::Tcp),
-            "rist" => Some(Domain::Rist),
-            _ => None,
-        }
+        SHELL_SCHEMES
+            .iter()
+            .find(|(s, _)| *s == scheme)
+            .map(|(_, d)| *d)
     }
 
     /// The kinds this domain's host enums carry, in host member order.

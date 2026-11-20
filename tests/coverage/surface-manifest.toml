@@ -4049,6 +4049,24 @@ bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred
 scenario_ids = []
 tier = "A"
 
+[[surface]]
+kind = "rust"
+crate = "tst-pipeline"
+item = "tst_pipeline::binding::SHELL_SCHEMES"
+owning_tests = ["crates/tst-pipeline/src/binding/kind.rs", "crates/tst-integration/src/scenarios/url.rs"]
+bindings = ["c:n/a(C has no shell that opens a URL of any scheme)", "python:n/a(read by the shells' open dispatch; the tests read the URL corpus's [shell_schemes])", "java:n/a(read by the shells' open dispatch; the tests read the URL corpus's [shell_schemes])", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-pipeline"
+item = "tst_pipeline::binding::kind::SHELL_SCHEMES"
+owning_tests = ["crates/tst-pipeline/src/binding/kind.rs", "crates/tst-integration/src/scenarios/url.rs"]
+bindings = ["c:n/a(C has no shell that opens a URL of any scheme)", "python:n/a(read by the shells' open dispatch; the tests read the URL corpus's [shell_schemes])", "java:n/a(read by the shells' open dispatch; the tests read the URL corpus's [shell_schemes])", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
 # --- SRT open path + managed handles ------------------------------------
 # `ManagedHandles` is covered by its own in-module tests; the tst-srt open
 # path and the `from_url` family by the two loopback domains below.

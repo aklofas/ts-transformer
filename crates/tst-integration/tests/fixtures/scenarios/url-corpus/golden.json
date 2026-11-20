@@ -250,6 +250,14 @@
           ]
         }
       },
+      "shell_schemes": {
+        "rist": "Rist",
+        "rtp": "Rtp",
+        "srt": "Srt",
+        "tcp": "Tcp",
+        "tcps": "Tcp",
+        "udp": "Udp"
+      },
       "url": [
         {
           "case": "default",
