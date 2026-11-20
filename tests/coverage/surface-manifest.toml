@@ -5538,6 +5538,15 @@ tier = "A"
 [[surface]]
 kind = "rust"
 crate = "tst-srt"
+item = "tst_srt::error::RejectReason::INTERNAL"
+owning_tests = ["crates/tst-srt/src/error.rs"]
+bindings = ["c:deferred(C parity backlog — the C ABI has no typed reject reason)", "python:RejectReason", "java:org.tstrans.srt.RejectReason", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-srt"
 item = "tst_srt::error::RejectReason::name"
 owning_tests = ["crates/tst-srt/src/error.rs"]
 bindings = ["c:deferred(C parity backlog — the table ports without callbacks)", "python:RejectReason", "java:org.tstrans.srt.RejectReason", "swift:deferred", "kotlin:deferred"]
