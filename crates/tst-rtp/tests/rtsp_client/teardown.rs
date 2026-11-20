@@ -31,6 +31,8 @@ fn explicit_teardown_clears_session() {
 /// 500 ms bound, bounds only the reads of a TLS handshake: this pins that
 /// it holds nothing back after connect.
 #[test]
+// Pins what the deprecated `read_timeout` does not bound.
+#[allow(deprecated)]
 fn drop_writes_teardown_on_a_quiet_interleaved_session_with_a_long_read_timeout() {
     use std::io::{Read, Write};
     use std::net::TcpListener;

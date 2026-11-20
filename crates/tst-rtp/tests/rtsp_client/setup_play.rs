@@ -60,6 +60,8 @@ fn malformed_describe_sdp_is_bad_sdp() {
 /// and answered at once: nothing holds it behind a read waiting for data,
 /// whatever `read_timeout` is configured to.
 #[test]
+// Pins what the deprecated `read_timeout` does not bound.
+#[allow(deprecated)]
 fn a_request_on_a_quiet_interleaved_session_does_not_wait_for_a_read() {
     use std::io::{Read, Write};
     use std::net::TcpListener;

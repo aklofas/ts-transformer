@@ -191,6 +191,10 @@ impl RtspClientBuilder {
     /// connect, nor on a connected client: the client's thread reads the
     /// control connection only when it has bytes. How long a request waits is
     /// [`Self::request_timeout`].
+    #[deprecated(
+        since = "0.11.0",
+        note = "bounds only each read of the rtsps:// TLS handshake; connect_timeout bounds the whole handshake; removed in 0.12.0"
+    )]
     pub fn read_timeout(mut self, t: Duration) -> Self {
         self.read_timeout = t;
         self

@@ -236,6 +236,8 @@ fn silent_peer() -> (
 /// A silent peer ends the call at the request deadline, not at the (much
 /// longer) socket read timeout.
 #[test]
+// Pins what the deprecated `read_timeout` does not bound.
+#[allow(deprecated)]
 fn request_timeout_is_not_stretched_by_a_longer_read_timeout() {
     let (port, done_tx, server) = silent_peer();
 
@@ -270,6 +272,8 @@ fn request_timeout_is_not_stretched_by_a_longer_read_timeout() {
 /// A well-formed response that arrives 20 s after the request, long past the
 /// request deadline, is a `Timeout`, not a success.
 #[test]
+// Pins what the deprecated `read_timeout` does not bound.
+#[allow(deprecated)]
 fn response_after_the_request_deadline_is_a_timeout() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
@@ -334,6 +338,8 @@ fn response_after_the_request_deadline_is_a_timeout() {
 /// A cancel is seen within a short tick even with no request deadline and
 /// a long socket read timeout.
 #[test]
+// Pins what the deprecated `read_timeout` does not bound.
+#[allow(deprecated)]
 fn cancel_latency_does_not_depend_on_read_timeout() {
     let (port, done_tx, server) = silent_peer();
 
@@ -375,6 +381,8 @@ fn cancel_latency_does_not_depend_on_read_timeout() {
 /// answers.
 #[cfg(feature = "tls")]
 #[test]
+// Pins what the deprecated `read_timeout` does not bound.
+#[allow(deprecated)]
 fn request_timeout_is_not_stretched_by_a_longer_read_timeout_over_tls() {
     let certs = crate::fixtures::tls_certs::SelfSignedCert::generate();
     let key_pem = std::fs::read(&certs.key_path).unwrap();

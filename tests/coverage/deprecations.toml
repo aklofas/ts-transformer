@@ -65,6 +65,13 @@ since = "0.11.0"
 replacement = "org.tstrans.srt.ManagedDemuxReceiver.lastSeen"
 earliest_removal = "0.12.0"
 
+[[deprecation]]
+lang = "rust"
+symbol = "tst_rtp::rtsp::client::builder::RtspClientBuilder::read_timeout"
+since = "0.11.0"
+replacement = "tst_rtp::rtsp::client::builder::RtspClientBuilder::connect_timeout"
+earliest_removal = "0.12.0"
+
 # ─── removed in 0.11.0: Rust aliases of the 0.9.0 renames, two tst-srt variants ─
 
 [[deprecation]]
