@@ -70,9 +70,9 @@ jni_native! {
 
 jni_native! {
     /// `nOpenWithConfig(...)` — build a configured [`Demuxer`]. The `strict`/`av1`
-    /// ints are the Java enum ORDINALS (contract: must mirror the Java enum
-    /// declaration order — `StrictMode`: 0=OFF,1=TIMING_ONLY,2=PSI_ONLY,3=FULL;
-    /// `Av1CarriageMode`: 0=MPEG2_TS_BINDING,1=INTEROP_RAW_OBU). A `0` cap means
+    /// ints are the Java enums' `code()` (`StrictMode`:
+    /// 0=OFF,1=TIMING_ONLY,2=PSI_ONLY,3=FULL; `Av1CarriageMode`:
+    /// 0=MPEG2_TS_BINDING,1=INTEROP_RAW_OBU). A `0` cap means
     /// "use the Rust default" (mapped to `None`). Mirrors tst-py's
     /// `build_demuxer_config` field-by-field.
     fn Java_org_tstrans_mpegts_Demuxer_nOpenWithConfig<'local>(
@@ -152,19 +152,19 @@ pub(crate) fn build_demux_config_from_args(
             return None;
         }
     };
-    // Order pinned by OrdinalContractTest.
+    // Codes pinned by OrdinalContractTest.
     opts.av1_carriage = match av1 {
         0 => Av1CarriageMode::Mpeg2TsBinding,
         1 => Av1CarriageMode::InteropRawObu,
         other => {
-            // Exact ordinal validation, mirroring nSplitVideo: the value
+            // Exact code validation, mirroring nSplitVideo: the value
             // comes from our own Java enum, so out-of-range means enum
             // drift — fail loudly rather than silently demuxing with the
             // wrong carriage.
             throw_demux(
                 env,
                 BindingErrorKind::Internal,
-                &format!("unknown Av1CarriageMode ordinal {other}"),
+                &format!("unknown Av1CarriageMode code {other}"),
             );
             return None;
         }
@@ -296,16 +296,16 @@ jni_native! {
     /// opt-in unit-split native backing [`DemuxEvent.Video.parse()`]. Calls
     /// `tst_core::mpegts::demux::split_video` on `raw` and converts the resulting
     /// [`VideoPayload`] into the same `java.util.List<VideoUnit>` the eager path
-    /// formerly produced. The codec ordinal maps the Java `VideoCodec` enum
-    /// declaration order; the av1 carriage ordinal maps `Av1CarriageMode`
+    /// formerly produced. The codec code maps the Java `VideoCodec.code()`;
+    /// the av1 carriage code maps `Av1CarriageMode.code()`
     /// (0 = MPEG2_TS_BINDING, 1 = INTEROP_RAW_OBU; non-AV1 callers pass 0 and
     /// `split_video` ignores it). Mirrors tst-py's `Video.parse()`.
     fn Java_org_tstrans_mpegts_DemuxEventVideoNatives_nSplitVideo<'local>(
         env,
         _class,
         raw: jni::objects::JByteArray<'local>,
-        codec_ordinal: jni::sys::jint,
-        av1_carriage_ordinal: jni::sys::jint,
+        codec_code: jni::sys::jint,
+        av1_carriage_code: jni::sys::jint,
     ) -> jni::sys::jobject = std::ptr::null_mut() => {
         let raw_bytes = match env.convert_byte_array(&raw) {
             Ok(b) => b,
@@ -318,12 +318,12 @@ jni_native! {
                 return std::ptr::null_mut();
             }
         };
-        // Exact ordinal validation: the values come from our own Java enums,
-        // so an out-of-range ordinal means enum drift (a Java variant added
+        // Exact code validation: the values come from our own Java enums,
+        // so an out-of-range code means enum drift (a Java variant added
         // without updating this mapping) or a reflective misuse — fail loudly
         // rather than silently parsing with the wrong codec/carriage.
-        // Order pinned by OrdinalContractTest.
-        let codec = match codec_ordinal {
+        // Codes pinned by OrdinalContractTest.
+        let codec = match codec_code {
             0 => VideoCodec::H264,
             1 => VideoCodec::H265,
             2 => VideoCodec::H266,
@@ -332,19 +332,19 @@ jni_native! {
                 throw_demux(
                     env,
                     BindingErrorKind::Internal,
-                    &format!("unknown VideoCodec ordinal {other}"),
+                    &format!("unknown VideoCodec code {other}"),
                 );
                 return std::ptr::null_mut();
             }
         };
-        let av1_carriage = match av1_carriage_ordinal {
+        let av1_carriage = match av1_carriage_code {
             0 => Av1CarriageMode::Mpeg2TsBinding,
             1 => Av1CarriageMode::InteropRawObu,
             other => {
                 throw_demux(
                     env,
                     BindingErrorKind::Internal,
-                    &format!("unknown Av1CarriageMode ordinal {other}"),
+                    &format!("unknown Av1CarriageMode code {other}"),
                 );
                 return std::ptr::null_mut();
             }
@@ -376,7 +376,7 @@ jni_native! {
         env,
         _class,
         raw: jni::objects::JByteArray<'local>,
-        codec_ordinal: jni::sys::jint,
+        codec_code: jni::sys::jint,
         strict: jni::sys::jboolean,
     ) -> jni::sys::jobject = std::ptr::null_mut() => {
         use tst_core::codec::aac::{frames as aac_frames, frames_with_resync as aac_resync};
@@ -393,11 +393,11 @@ jni_native! {
                 return std::ptr::null_mut();
             }
         };
-        // Exact ordinal validation, mirroring nSplitVideo: an out-of-range value
+        // Exact code validation, mirroring nSplitVideo: an out-of-range value
         // means AudioCodec enum drift (a Java variant added without updating this
         // mapping) or a reflective misuse — fail loudly.
-        // Order pinned by OrdinalContractTest.
-        let codec = match codec_ordinal {
+        // Codes pinned by OrdinalContractTest.
+        let codec = match codec_code {
             0 => AudioCodec::Mp2,
             1 => AudioCodec::Aac,
             2 => AudioCodec::AacLatm,
@@ -406,7 +406,7 @@ jni_native! {
                 throw_demux(
                     env,
                     BindingErrorKind::Internal,
-                    &format!("unknown AudioCodec ordinal {other}"),
+                    &format!("unknown AudioCodec code {other}"),
                 );
                 return std::ptr::null_mut();
             }

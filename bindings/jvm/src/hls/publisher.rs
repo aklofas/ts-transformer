@@ -184,7 +184,7 @@ jni_native! {
         if playlist_window >= 0 {
             b.playlist_window(playlist_window as usize);
         }
-        // Order pinned by OrdinalContractTest.
+        // Codes pinned by OrdinalContractTest.
         match mode {
             -1 => {}
             0 => {
@@ -199,7 +199,7 @@ jni_native! {
             other => {
                 let _ = env.throw_new(
                     FindClass(jni_str!("java/lang/IllegalArgumentException")),
-                    JNIString::from(format!("invalid HlsMode ordinal {other}")),
+                    JNIString::from(format!("invalid HlsMode code {other}")),
                 );
                 return 0;
             }

@@ -62,10 +62,8 @@ impl ManagedOpenError {
 /// `backoff_kind`: 0 = Constant, 1 = Exponential — `CONFIG_INVALID` on
 /// any other value. `overflow_policy`: 0 = DropOldest, 1 = Reject —
 /// `CONFIG_INVALID` on any other value. `mode`: 0 = Blocking, 1 = Background —
-/// an out-of-range ordinal defensively degrades to Blocking rather than
-/// throwing (mirrors `ReconnectMode`'s non-exhaustive-enum + default-Blocking
-/// arm on the Rust side, so a JAR built against a future variant still loads
-/// against an older native). `max_attempts_present == false` → retry forever.
+/// `CONFIG_INVALID` on any other value (the JAR carries its own native library,
+/// so an unknown code is enum drift). `max_attempts_present == false` → retry forever.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn build_reconnect_policy(
     max_attempts_present: bool,
@@ -85,27 +83,29 @@ pub(crate) fn build_reconnect_policy(
         },
         other => {
             return Err(ManagedOpenError::config(format!(
-                "unknown BackoffStrategy ordinal {other}"
+                "unknown BackoffStrategy code {other}"
             )));
         }
     };
-    // Order pinned by OrdinalContractTest.
+    // Codes pinned by OrdinalContractTest.
     let overflow = match overflow_policy {
         0 => OverflowPolicy::DropOldest,
         1 => OverflowPolicy::Reject,
         other => {
             return Err(ManagedOpenError::config(format!(
-                "unknown OverflowPolicy ordinal {other}"
+                "unknown OverflowPolicy code {other}"
             )));
         }
     };
-    // Defensive default (not a throw, unlike backoff_kind/overflow_policy above):
-    // an unrecognized ordinal falls back to Blocking rather than rejecting the
-    // call, matching ReconnectMode's own #[default] Blocking arm.
-    // Order pinned by OrdinalContractTest.
+    // Codes pinned by OrdinalContractTest.
     let recon_mode = match mode {
+        0 => ReconnectMode::Blocking,
         1 => ReconnectMode::Background,
-        _ => ReconnectMode::Blocking,
+        other => {
+            return Err(ManagedOpenError::config(format!(
+                "unknown ReconnectMode code {other}"
+            )));
+        }
     };
     Ok(ReconnectPolicy::default()
         .with_max_attempts(if max_attempts_present {

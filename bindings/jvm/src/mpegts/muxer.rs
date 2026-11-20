@@ -2,7 +2,7 @@
 //!
 //! Wraps `tst_core::mpegts::mux::Muxer`. `nOpen` marshals the parallel-array
 //! config description (one entry per elementary stream, decoded by Java enum
-//! ORDINAL) into a [`MuxerConfig`] via the `tst_core` builders, registers
+//! `code()`) into a [`MuxerConfig`] via the `tst_core` builders, registers
 //! the [`Muxer`], and returns its opaque registry key as a `jlong` handle. The push family
 //! (`nPushVideo` / `nPushVideoWire` / `nPushKlv` / `nPushAudio` / `nPushSubtitle` /
 //! `nPushData` / `nPushDataTo` / `nPushVideoTo` / `nPushVideoWireTo` /
@@ -62,9 +62,9 @@ jni_native! {
     ///
     /// The per-stream arrays (`stream_pids` / `stream_kinds` / `stream_codecs` /
     /// `stream_type_codes` / `stream_carries_pts`) are decoded by Java enum
-    /// ORDINAL (`stream_type_codes` is the raw PMT stream_type byte for kind=data)
+    /// `code()` (`stream_type_codes` is the raw PMT stream_type byte for kind=data)
     /// — see the `*_codec` / `klv_type` / `av1_mode` mappers below for the exact
-    /// ordinal → Rust-enum contract.
+    /// code → Rust-enum contract.
     #[allow(clippy::too_many_arguments)]
     fn Java_org_tstrans_mpegts_Muxer_nOpen<'local>(
         env,
@@ -173,10 +173,10 @@ jni_native! {
 /// `Muxer::nOpen` and the srt `MuxSender` / `Socket::intoMuxSender` JNI paths
 /// marshal in a single call. The per-stream arrays (`stream_pids` /
 /// `stream_kinds` / `stream_codecs` / `stream_type_codes` /
-/// `stream_carries_pts`) are decoded by Java enum ORDINAL
+/// `stream_carries_pts`) are decoded by Java enum `code()`
 /// (`stream_type_codes` doubles as the raw PMT stream_type byte for kind=data)
 /// — see the `*_codec` / `klv_type` / `av1_mode` mappers for the exact
-/// ordinal → Rust-enum contract. `data_desc_bytes` / `data_desc_lens` carry the
+/// code → Rust-enum contract. `data_desc_bytes` / `data_desc_lens` carry the
 /// PMT descriptor loops: the blob is every descriptor TLV concatenated, stream
 /// by stream in stream order and the program loop last; the lens array has one
 /// entry per stream (its byte count within the blob, 0 for none) and a last
@@ -274,11 +274,11 @@ pub(crate) fn build_muxer_config_from_arrays<'local>(
                 prog.add_audio(pid, codec);
             }
             3 => {
-                // Subtitle ordinals 2/3 only (CEA-708 / WebVTT). Ordinals 0/1 are
+                // Subtitle codes 2/3 only (CEA-708 / WebVTT). Codes 0/1 are
                 // the DVB codecs the Java builder already rejects (they need config
                 // not exposed in the JVM binding); reject defensively if one slips
                 // through.
-                // Order pinned by OrdinalContractTest.
+                // Codes pinned by OrdinalContractTest.
                 match codecs[i] {
                     2 => {
                         prog.add_subtitle(pid, SubtitleCodec::Cea708Standalone);
@@ -669,7 +669,7 @@ jni_native! {
 jni_native! {
     /// `nPushVideoMispTo(handle, streamHandleRaw, nal, pts, keyFrame, kind, timeStatus, value)` —
     /// targeted Annex-B AU push with a MISB ST 0604 MISP timestamp SEI spliced
-    /// before the first VCL NAL. `kind` is the `MispTimeKind` ordinal (0=MICRO,
+    /// before the first VCL NAL. `kind` is the `MispTimeKind` code (0=MICRO,
     /// 1=NANO); `value` is treated as unsigned 64-bit (bit-pattern reinterpret from
     /// `jlong`). Out-of-range kind → `MuxException(INVALID_USAGE)`. An H.264 stream
     /// with `kind=NANO` → `MuxException(INPUT_MALFORMED)` via the Rust `MispTimeError`.
@@ -1132,7 +1132,7 @@ jni_native! {
     }
 }
 
-/// Construct a `MispTimestamp` from the JNI scalar fields (kind ordinal 0/1,
+/// Construct a `MispTimestamp` from the JNI scalar fields (kind code 0/1,
 /// timeStatus as a byte, value as unsigned reinterpret). Returns `None`
 /// (with a `MuxException(INVALID_USAGE)` thrown) when `kind` is out of range.
 pub(crate) fn build_misp(
@@ -1144,7 +1144,7 @@ pub(crate) fn build_misp(
     use tst_core::codec::misp_time::MispTimestamp;
     let ts = crate::jutil::checked_u8(env, time_status as i64, "timeStatus").ok()?;
     let v = value as u64;
-    // Order pinned by OrdinalContractTest.
+    // Codes pinned by OrdinalContractTest.
     match kind {
         0 => Some(MispTimestamp::micros(v, ts)),
         1 => Some(MispTimestamp::nanos(v, ts)),
@@ -1258,13 +1258,13 @@ fn read_boolean_array(env: &mut Env, arr: &JBooleanArray) -> Option<Vec<bool>> {
     Some(v)
 }
 
-/// Video codec ordinal (`stream_codecs[i]` when kind=video) → [`VideoCodec`].
-/// Matches the Java `VideoCodec` enum declaration order. Throws CONFIG_INVALID
-/// and returns `None` on any ordinal outside the valid range (0-3); this
+/// Video codec code (`stream_codecs[i]` when kind=video) → [`VideoCodec`].
+/// Matches the Java `VideoCodec.code()`. Throws CONFIG_INVALID
+/// and returns `None` on any code outside the valid range (0-3); this
 /// catches enum drift across binding versions.
-fn video_codec(env: &mut Env, ordinal: i32) -> Option<VideoCodec> {
-    // Order pinned by OrdinalContractTest.
-    match ordinal {
+fn video_codec(env: &mut Env, code: i32) -> Option<VideoCodec> {
+    // Codes pinned by OrdinalContractTest.
+    match code {
         0 => Some(VideoCodec::H264),
         1 => Some(VideoCodec::H265),
         2 => Some(VideoCodec::H266),
@@ -1273,19 +1273,19 @@ fn video_codec(env: &mut Env, ordinal: i32) -> Option<VideoCodec> {
             throw_mux(
                 env,
                 BindingErrorKind::ConfigInvalid,
-                &format!("unknown VideoCodec ordinal {other}"),
+                &format!("unknown VideoCodec code {other}"),
             );
             None
         }
     }
 }
 
-/// Audio codec ordinal (`stream_codecs[i]` when kind=audio) → [`AudioCodec`].
-/// Matches the Java `AudioCodec` enum declaration order. Throws CONFIG_INVALID
-/// and returns `None` on any ordinal outside the valid range (0-3).
-fn audio_codec(env: &mut Env, ordinal: i32) -> Option<AudioCodec> {
-    // Order pinned by OrdinalContractTest.
-    match ordinal {
+/// Audio codec code (`stream_codecs[i]` when kind=audio) → [`AudioCodec`].
+/// Matches the Java `AudioCodec.code()`. Throws CONFIG_INVALID
+/// and returns `None` on any code outside the valid range (0-3).
+fn audio_codec(env: &mut Env, code: i32) -> Option<AudioCodec> {
+    // Codes pinned by OrdinalContractTest.
+    match code {
         0 => Some(AudioCodec::Mp2),
         1 => Some(AudioCodec::Aac),
         2 => Some(AudioCodec::AacLatm),
@@ -1294,7 +1294,7 @@ fn audio_codec(env: &mut Env, ordinal: i32) -> Option<AudioCodec> {
             throw_mux(
                 env,
                 BindingErrorKind::ConfigInvalid,
-                &format!("unknown AudioCodec ordinal {other}"),
+                &format!("unknown AudioCodec code {other}"),
             );
             None
         }
@@ -1357,41 +1357,41 @@ fn split_descriptor_tlvs(blob: &[u8]) -> Option<Vec<Vec<u8>>> {
     Some(out)
 }
 
-/// KLV stream-type ordinal (`stream_type_codes[i]` when kind=klv) →
-/// [`KlvStreamType`]. Matches the Java `KlvStreamType` enum declaration order:
+/// KLV stream-type code (`stream_type_codes[i]` when kind=klv) →
+/// [`KlvStreamType`]. Matches the Java `KlvStreamType.code()`:
 /// 0 = SynchronousMetadata, 1 = PrivateData. Throws CONFIG_INVALID and returns
-/// `None` on ordinals outside 0-1 (ordinal 1 IS valid PrivateData — only
+/// `None` on codes outside 0-1 (code 1 IS valid PrivateData — only
 /// truly out-of-range values indicate enum drift).
-fn klv_type(env: &mut Env, ordinal: i32) -> Option<KlvStreamType> {
-    // Order pinned by OrdinalContractTest.
-    match ordinal {
+fn klv_type(env: &mut Env, code: i32) -> Option<KlvStreamType> {
+    // Codes pinned by OrdinalContractTest.
+    match code {
         0 => Some(KlvStreamType::SynchronousMetadata),
         1 => Some(KlvStreamType::PrivateData),
         other => {
             throw_mux(
                 env,
                 BindingErrorKind::ConfigInvalid,
-                &format!("unknown KlvStreamType ordinal {other}"),
+                &format!("unknown KlvStreamType code {other}"),
             );
             None
         }
     }
 }
 
-/// `av1Carriage` scalar ordinal → [`Av1CarriageMode`]. Matches the Java
-/// `Av1CarriageMode` enum declaration order: 0 = Mpeg2TsBinding,
-/// 1 = InteropRawObu. Throws CONFIG_INVALID and returns `None` on ordinals
+/// `av1Carriage` scalar code → [`Av1CarriageMode`]. Matches the Java
+/// `Av1CarriageMode.code()`: 0 = Mpeg2TsBinding,
+/// 1 = InteropRawObu. Throws CONFIG_INVALID and returns `None` on codes
 /// outside 0-1; mirrors the demux path hardened in commit 38d51690.
-fn av1_mode(env: &mut Env, ordinal: i32) -> Option<Av1CarriageMode> {
-    // Order pinned by OrdinalContractTest.
-    match ordinal {
+fn av1_mode(env: &mut Env, code: i32) -> Option<Av1CarriageMode> {
+    // Codes pinned by OrdinalContractTest.
+    match code {
         0 => Some(Av1CarriageMode::Mpeg2TsBinding),
         1 => Some(Av1CarriageMode::InteropRawObu),
         other => {
             throw_mux(
                 env,
                 BindingErrorKind::ConfigInvalid,
-                &format!("unknown Av1CarriageMode ordinal {other}"),
+                &format!("unknown Av1CarriageMode code {other}"),
             );
             None
         }

@@ -1,6 +1,7 @@
 package org.tstrans;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -26,7 +27,10 @@ import org.tstrans.mpegts.KlvStreamType;
 import org.tstrans.mpegts.StrictMode;
 import org.tstrans.mpegts.SubtitleCodec;
 import org.tstrans.mpegts.VideoCodec;
+import org.tstrans.rtp.H264Receiver;
 import org.tstrans.rtp.ParameterSetInjection;
+import org.tstrans.shells.OpenCancel;
+import org.tstrans.srt.ManagedSender;
 import org.tstrans.srt.OverflowPolicy;
 import org.tstrans.srt.ReconnectMode;
 import org.tstrans.webrtc.AudioPolicy;
@@ -93,5 +97,38 @@ class OrdinalContractTest {
             () -> open.invoke(null, 99, 0L, 0L, false, Av1CarriageMode.MPEG2_TS_BINDING.code(), 0L, false, 0L, false));
         assertSame(RuntimeException.class, e.getCause().getClass(), String.valueOf(e.getCause()));
         assertTrue(e.getCause().getMessage().contains("unknown StrictMode code 99"), e.getCause().getMessage());
+    }
+
+    /**
+     * An unknown reconnect mode is refused as an invalid configuration, as an unknown overflow
+     * policy is, before any connection attempt; it is not run as {@code BLOCKING}.
+     */
+    @Test
+    void anUnknownReconnectModeCodeIsConfigInvalid() throws Exception {
+        Method open = ManagedSender.class.getDeclaredMethod("nFromUrl", String.class, boolean.class, int.class,
+            int.class, long.class, long.class, int.class, int.class, int.class, OpenCancel.class);
+        open.setAccessible(true);
+        InvocationTargetException e = assertThrows(InvocationTargetException.class,
+            () -> open.invoke(null, "srt://127.0.0.1:49199", false, 0, 0, 100L, 10_000L, 256,
+                OverflowPolicy.DROP_OLDEST.code(), 99, null));
+        SrtException s = assertInstanceOf(SrtException.class, e.getCause());
+        assertEquals(SrtException.Kind.CONFIG_INVALID, s.kind(), s.getMessage());
+        assertTrue(s.getMessage().contains("unknown ReconnectMode code 99"), s.getMessage());
+    }
+
+    /**
+     * An unknown parameter-set injection code is enum drift: refused as an internal failure
+     * before the receiver binds, not read as {@code NONE}.
+     */
+    @Test
+    void anUnknownParameterSetInjectionCodeIsInternal() throws Exception {
+        Method listen = H264Receiver.class.getDeclaredMethod("nListenWithConfig", String.class, int.class,
+            int.class, byte[][].class, long.class);
+        listen.setAccessible(true);
+        InvocationTargetException e = assertThrows(InvocationTargetException.class,
+            () -> listen.invoke(null, "rtp://127.0.0.1:0?pt=96", 96, 99, null, 0L));
+        assertSame(RuntimeException.class, e.getCause().getClass(), String.valueOf(e.getCause()));
+        assertTrue(e.getCause().getMessage().contains("unknown ParameterSetInjection code 99"),
+            e.getCause().getMessage());
     }
 }
