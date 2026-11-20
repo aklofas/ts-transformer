@@ -865,6 +865,30 @@ def test_frames_the_server_sends_on_a_media_channel_count_as_dropped_inbound() -
         push.close()
 
 
+def test_a_reset_by_the_server_ends_the_push_with_a_detail() -> None:
+    """The server resets the connection after RECORD: the push records
+    `TRANSPORT_FAILED`, and `end_detail()` names the failure."""
+
+    def reset(conn: socket.socket) -> None:
+        # Linger 0: the close sends a reset instead of a FIN.
+        conn.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
+        conn.close()
+
+    server = ScriptedRecordServer(after_record=reset)
+    push = RtspClient.push(RtspClientConfig(server.url), PushDescription.mp2t())
+    try:
+        assert _wait_for(lambda: push.end_reason() is not None), "no end recorded"
+        assert push.end_reason() is EndReason.TRANSPORT_FAILED
+        detail = push.end_detail()
+        assert isinstance(detail, str) and detail, detail
+        assert push.is_session_alive() is False
+    finally:
+        server.close()
+        push.close()
+    assert push.end_reason() is EndReason.TRANSPORT_FAILED
+    assert push.end_detail() == detail
+
+
 def test_stats_and_end_reason_after_into_sender() -> None:
     """The session keeps the push's counters and end after a conversion:
     they follow the sender that now owns the push."""
