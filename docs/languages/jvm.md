@@ -1249,8 +1249,8 @@ The overloads are `Receiver.open(url, cancel)`, `Sender.open(url, cancel)`,
 - One object may be given to any number of opens, one after another or at the
   same time; one `cancel()` ends every open in progress with it.
 - `cancel()` is sticky: every later open given the object opens nothing. With
-  an already-cancelled object an open is refused with `CLOSED` before its URL
-  is parsed; an invalid configuration object may be reported first. The shell
+  an already-cancelled object an open is refused with `CLOSED` before its
+  configuration and its URL are looked at. The shell
   opens throw the URL's transport exception (a URL whose scheme no shell opens
   still throws `IllegalArgumentException`: there is no transport to name). The
   managed `fromUrl`s are SRT only and throw `SrtException(CLOSED)` whatever

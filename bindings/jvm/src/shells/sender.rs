@@ -30,7 +30,6 @@ use tst_pipeline::{Sender as PlSender, SenderConfig};
 
 use super::cancel::cancel_view_handle;
 use super::open::{open_send, read_url};
-use super::open_cancel::object_of;
 use super::{domain_or_closed, throw_state};
 use crate::error::{throw_binding, throw_handle_state};
 use crate::generated::stats_shells::build_socket_stats;
@@ -52,13 +51,10 @@ jni_native! {
         url: JString<'_>,
         cancel: JObject<'_>,
     ) -> jlong = 0 => {
-        let Ok(oc) = object_of(env, &cancel) else {
-            return 0;
-        };
         let Some(url) = read_url(env, &url) else {
             return 0;
         };
-        let Some(opened) = open_send(env, &url, oc.as_ref()) else {
+        let Some((opened, ())) = open_send(env, &url, &cancel, |_| Ok(())) else {
             return 0;
         };
         register(opened)

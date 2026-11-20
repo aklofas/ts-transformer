@@ -100,12 +100,11 @@ public final class ManagedMuxSender extends NativeHandle {
     /**
      * Same as {@link #fromUrl(String, MuxerConfig, ReconnectPolicy)}, under
      * {@code cancel}: an object already cancelled refuses the open with
-     * {@code SrtException(CLOSED)} before the URL is parsed, and nothing is
-     * dialled. A cancel while the initial connect runs does not interrupt it, but
-     * the open then throws {@code SrtException(CLOSED)} and the connection is
-     * closed again (see {@link OpenCancel}). The program configuration is built
-     * first: one the muxer refuses there throws {@code MuxException} even when
-     * {@code cancel} is already cancelled.
+     * {@code SrtException(CLOSED)} before the program configuration and the URL
+     * are looked at, and nothing is dialled. A cancel while the initial connect
+     * runs does not interrupt it, but the open then throws
+     * {@code SrtException(CLOSED)} and the connection is closed again (see
+     * {@link OpenCancel}).
      *
      * @param url           {@code srt://host:port[?key=value&...]} with {@code mode=caller}
      * @param programConfig the muxer program configuration

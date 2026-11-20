@@ -32,9 +32,12 @@ import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.tstrans.BindingException;
+import org.tstrans.MuxException;
 import org.tstrans.SrtException;
 import org.tstrans.internal.CancelProbe;
 import org.tstrans.mpegts.DemuxerConfig;
+import org.tstrans.mpegts.MuxerConfig;
+import org.tstrans.mpegts.VideoCodec;
 import org.tstrans.srt.Builder;
 import org.tstrans.srt.Listener;
 import org.tstrans.srt.ManagedDemuxReceiver;
@@ -360,6 +363,131 @@ class OpenCancelTest {
             IllegalArgumentException r = assertThrows(IllegalArgumentException.class,
                 () -> Receiver.open("http://127.0.0.1:1", oc));
             assertTrue(r.getMessage().contains("unsupported URL scheme"), r.getMessage());
+        }
+    }
+
+    // ----------------------------------------------------------------------------------------
+    // The order of the checks: the scheme, a closed object, a cancelled object, the
+    // configuration, the URL, the dial
+    // ----------------------------------------------------------------------------------------
+
+    /** Program number 0 is the NIT's: the Java builder takes it, the muxer refuses it. */
+    private static MuxerConfig refusedConfig() {
+        return MuxerConfig.builder().programNumber(0).addVideo(0x101, VideoCodec.H264).build();
+    }
+
+    /** The two opens that take a program configuration the muxer can refuse. */
+    private static Open muxOpen(String name, MuxerConfig cfg) {
+        switch (name) {
+            case "MuxSender.open": return (u, oc) -> MuxSender.open(u, cfg, oc);
+            case "ManagedMuxSender.fromUrl": return (u, oc) -> ManagedMuxSender.fromUrl(u, cfg, null, oc);
+            default: throw new IllegalArgumentException(name);
+        }
+    }
+
+    /** Assert that nothing reached {@code target}: a marker sent now is the first datagram there. */
+    private static void assertNothingDialled(DatagramSocket target) throws Exception {
+        byte[] marker = "marker".getBytes(java.nio.charset.StandardCharsets.US_ASCII);
+        try (DatagramSocket s = new DatagramSocket()) {
+            s.send(new DatagramPacket(marker, marker.length, target.getLocalSocketAddress()));
+        }
+        DatagramPacket first = new DatagramPacket(new byte[2048], 2048);
+        target.receive(first);
+        assertArrayEquals(marker, Arrays.copyOf(first.getData(), first.getLength()),
+            "the open dialled: its handshake arrived first");
+    }
+
+    /** A cancelled object is reported before a configuration the muxer refuses, and nothing is dialled. */
+    @ParameterizedTest
+    @ValueSource(strings = {"MuxSender.open", "ManagedMuxSender.fromUrl"})
+    void aCancelledOpenWithARefusedConfigIsClosed(String name) throws Exception {
+        try (OpenCancel oc = new OpenCancel();
+             DatagramSocket target = new DatagramSocket(new InetSocketAddress("127.0.0.1", 0))) {
+            oc.cancel();
+            target.setSoTimeout((int) DEADLINE_MS);
+            Exception e = assertThrows(Exception.class, () -> muxOpen(name, refusedConfig()).open(
+                "srt://127.0.0.1:" + target.getLocalPort() + "?mode=caller&conntimeo=1000", oc));
+            assertSrtClosed(e);
+            assertNothingDialled(target);
+        }
+    }
+
+    /** The shell open throws each scheme's own CLOSED over a refused configuration too. */
+    @ParameterizedTest
+    @ValueSource(strings = {"srt", "rtp", "udp", "tcp", "tcps", "rist"})
+    void aCancelledMuxSenderOpenWithARefusedConfigThrowsTheSchemesClosed(String scheme) throws Exception {
+        try (OpenCancel oc = new OpenCancel()) {
+            oc.cancel();
+            int port = freeUdpPort();
+            String url = scheme.equals("rist") ? "rist://127.0.0.1:" + port : scheme + "://127.0.0.1:" + port;
+            Exception e = assertThrows(Exception.class, () -> MuxSender.open(url, refusedConfig(), oc));
+            assertClosed(e, ShellPeers.errorClass(scheme.equals("tcps") ? "tcp" : scheme));
+        }
+    }
+
+    /**
+     * The two demux opens. A {@code DemuxerConfig} is checked by its builder, so none an open
+     * could refuse reaches it; with a cancelled object any built config is CLOSED.
+     */
+    @ParameterizedTest
+    @ValueSource(strings = {"DemuxReceiver.open", "ManagedDemuxReceiver.fromUrl"})
+    void aCancelledDemuxOpenWithAConfigIsClosed(String name) throws Exception {
+        DemuxerConfig cfg = DemuxerConfig.builder().pesCapPerPid(4096).syncBufCap(0).build();
+        Open open = name.equals("DemuxReceiver.open")
+            ? (u, oc) -> DemuxReceiver.open(u, cfg, oc)
+            : (u, oc) -> ManagedDemuxReceiver.fromUrl(u, cfg, null, oc);
+        try (OpenCancel oc = new OpenCancel()) {
+            oc.cancel();
+            int port = freeUdpPort();
+            assertSrtClosed(assertThrows(Exception.class,
+                () -> open.open("srt://127.0.0.1:" + port + "?mode=listener", oc)));
+            assertFalse(udpPortBound(port), "the refused open left its port bound");
+        }
+    }
+
+    /**
+     * Without a cancel the configuration is still checked before the URL and the dial: a bad
+     * URL is not looked at, and a good one is not dialled.
+     */
+    @ParameterizedTest
+    @ValueSource(strings = {"MuxSender.open", "ManagedMuxSender.fromUrl"})
+    void aRefusedConfigIsReportedBeforeTheUrlAndDialsNothing(String name) throws Exception {
+        Open open = muxOpen(name, refusedConfig());
+        try (OpenCancel oc = new OpenCancel();
+             DatagramSocket target = new DatagramSocket(new InetSocketAddress("127.0.0.1", 0))) {
+            target.setSoTimeout((int) DEADLINE_MS);
+            for (OpenCancel given : Arrays.asList(null, oc)) {
+                MuxException bad = assertThrows(MuxException.class,
+                    () -> open.open("srt://127.0.0.1:notaport?mode=caller&no_such_key=1", given));
+                assertEquals(MuxException.Kind.CONFIG_INVALID, bad.kind());
+                MuxException good = assertThrows(MuxException.class, () -> open.open(
+                    "srt://127.0.0.1:" + target.getLocalPort() + "?mode=caller&conntimeo=1000", given));
+                assertEquals(MuxException.Kind.CONFIG_INVALID, good.kind());
+            }
+            assertFalse(oc.isCancelled());
+            assertNothingDialled(target);
+        }
+    }
+
+    /** A closed object is reported after an unsupported scheme and before the configuration. */
+    @Test
+    void aClosedObjectComesAfterTheSchemeAndBeforeTheConfig() throws Exception {
+        OpenCancel closed = new OpenCancel();
+        closed.close();
+        for (String name : List.of("MuxSender.open", "ManagedMuxSender.fromUrl")) {
+            assertEquals("OpenCancel is closed", assertThrows(IllegalStateException.class,
+                () -> muxOpen(name, refusedConfig()).open("srt://127.0.0.1:1?mode=caller", closed),
+                name).getMessage());
+        }
+        List<Open> shells = List.of(
+            Receiver::open,
+            (u, c) -> DemuxReceiver.open(u, DemuxerConfig.builder().build(), c),
+            Sender::open,
+            (u, c) -> MuxSender.open(u, refusedConfig(), c));
+        for (Open open : shells) {
+            IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
+                () -> open.open("http://127.0.0.1:1", closed));
+            assertTrue(e.getMessage().contains("unsupported URL scheme"), e.getMessage());
         }
     }
 

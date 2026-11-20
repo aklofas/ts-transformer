@@ -37,7 +37,6 @@ use tst_rtp::RtpStatsHandle;
 use super::cancel::cancel_view_handle;
 use super::end_reason::{build_close_snapshot, detail, wire_value};
 use super::open::{open_recv, read_url};
-use super::open_cancel::object_of;
 use super::{domain_or_closed, throw_state};
 use crate::error::{throw_binding, throw_handle_state};
 use crate::generated::stats_rtp::build_rtp_stats;
@@ -158,13 +157,10 @@ fn open_with(
     opts: Option<tst_core::mpegts::demux::DemuxerConfig>,
     cancel: &JObject,
 ) -> jlong {
-    let Ok(oc) = object_of(env, cancel) else {
-        return 0;
-    };
     let Some(url) = read_url(env, url) else {
         return 0;
     };
-    let Some((opened, rtp_stats)) = open_recv(env, &url, oc.as_ref()) else {
+    let Some((opened, rtp_stats)) = open_recv(env, &url, cancel) else {
         return 0;
     };
     register_with(opened, opts, None, rtp_stats)

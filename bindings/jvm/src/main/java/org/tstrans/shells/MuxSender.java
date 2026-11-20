@@ -65,7 +65,7 @@ public class MuxSender extends NativeHandle {
      * @throws BindingException the transport's exception for a malformed URL or a
      *     connect failure
      * @throws MuxException {@code CONFIG_INVALID} if the muxer rejects the
-     *     program configuration
+     *     program configuration, before the URL is parsed and without connecting
      */
     public static MuxSender open(String url, MuxerConfig programConfig)
             throws BindingException, MuxException {
@@ -74,12 +74,10 @@ public class MuxSender extends NativeHandle {
 
     /**
      * Same as {@link #open(String, MuxerConfig)}, under {@code cancel}: an object
-     * already cancelled refuses the open before the URL is parsed, and nothing
-     * is dialled. A cancel while the connect runs does not interrupt it, but the
-     * open then throws {@code CLOSED} and the connection is closed again (see
-     * {@link OpenCancel}). The program configuration is built first, as in
-     * {@link #open(String, MuxerConfig)}: one the muxer refuses there throws
-     * {@code MuxException} even when {@code cancel} is already cancelled.
+     * already cancelled refuses the open before the program configuration and the
+     * URL are looked at, and nothing is dialled. A cancel while the connect runs
+     * does not interrupt it, but the open then throws {@code CLOSED} and the
+     * connection is closed again (see {@link OpenCancel}).
      *
      * @param url           {@code scheme://...} with per-transport query options
      * @param programConfig the muxer program configuration

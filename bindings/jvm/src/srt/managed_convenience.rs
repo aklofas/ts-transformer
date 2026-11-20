@@ -82,7 +82,7 @@ use super::ManagedSenderSnapshot;
 use super::errors::{throw_data_plane_state, throw_srt, transport_error};
 use crate::generated::stats_srt::build_managed_transport_stats;
 use crate::shells::mux_sender::build_transport_stats;
-use crate::shells::open_cancel::{begin, finish, object_of};
+use crate::shells::open_cancel::{begin, finish, object_of, refuse_config};
 
 /// Map a `DemuxReceiverError` raised by `recv_event` onto a thrown Java
 /// exception: transport-side errors become `SrtException` (via
@@ -199,7 +199,22 @@ jni_native! {
         mode: jint,
         cancel: JObject<'local>,
     ) -> jlong = 0 => {
-        // Build the MuxerConfig FIRST — a pending MuxException is thrown on Err(()).
+        let Ok(oc) = object_of(env, &cancel) else {
+            return 0;
+        };
+        let url_str: String = match url.try_to_string(env) {
+            Ok(s) => s,
+            Err(e) => {
+                let _ = env.throw_new(FindClass(jni_str!("java/lang/RuntimeException")), JNIString::from(e.to_string()));
+                return 0;
+            }
+        };
+
+        let Ok(slot) = begin(env, Domain::Srt, oc.as_ref()) else {
+            return 0;
+        };
+        // After the cancelled-object check and before the URL: a refused
+        // config throws its MuxException (or CLOSED, if cancelled by now).
         let muxer_cfg = match build_muxer_config_from_arrays(
             env,
             program_number,
@@ -219,22 +234,10 @@ jni_native! {
             &data_desc_lens,
         ) {
             Ok(c) => c,
-            Err(()) => return 0,
-        };
-
-        let Ok(oc) = object_of(env, &cancel) else {
-            return 0;
-        };
-        let url_str: String = match url.try_to_string(env) {
-            Ok(s) => s,
-            Err(e) => {
-                let _ = env.throw_new(FindClass(jni_str!("java/lang/RuntimeException")), JNIString::from(e.to_string()));
+            Err(()) => {
+                refuse_config(env, Domain::Srt, slot);
                 return 0;
             }
-        };
-
-        let Ok(slot) = begin(env, Domain::Srt, oc.as_ref()) else {
-            return 0;
         };
         // Everything after `begin` is the open, its checks included: a
         // failure goes through `finish` like the dial's own.

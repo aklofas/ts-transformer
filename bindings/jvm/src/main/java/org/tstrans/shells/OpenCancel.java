@@ -18,8 +18,8 @@ import org.tstrans.NativeLoader;
  *       time; one {@code cancel()} reaches all of them.</li>
  *   <li>{@code cancel()} is sticky. Every open given the object after it opens nothing:
  *       no port is bound, no peer is dialled. With an already-cancelled object an open is
- *       refused with {@code CLOSED} before its URL is parsed; an invalid configuration
- *       object may be reported first. The shell opens throw the URL's transport exception;
+ *       refused with {@code CLOSED} before its configuration and its URL are looked at.
+ *       The shell opens throw the URL's transport exception;
  *       a URL whose scheme no shell opens still throws {@code IllegalArgumentException},
  *       because there is no transport whose {@code CLOSED} could be thrown. The managed
  *       {@code fromUrl}s are SRT only and throw {@code SrtException(CLOSED)} whatever the

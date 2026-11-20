@@ -25,7 +25,6 @@ use super::cancel::cancel_view_handle;
 use super::demux_receiver::{rtp_stats_object, write_rtp_stats_out};
 use super::end_reason::{build_close_snapshot, detail, wire_value};
 use super::open::{open_recv, read_url};
-use super::open_cancel::object_of;
 use super::{domain_or_closed, throw_state};
 use crate::error::{throw_binding, throw_handle_state};
 use crate::generated::stats_shells::{build_receiver_stats, build_socket_stats};
@@ -60,13 +59,10 @@ jni_native! {
         url: JString<'_>,
         cancel: JObject<'_>,
     ) -> jlong = 0 => {
-        let Ok(oc) = object_of(env, &cancel) else {
-            return 0;
-        };
         let Some(url) = read_url(env, &url) else {
             return 0;
         };
-        let Some((opened, rtp_stats)) = open_recv(env, &url, oc.as_ref()) else {
+        let Some((opened, rtp_stats)) = open_recv(env, &url, &cancel) else {
             return 0;
         };
         register_with(opened, rtp_stats)

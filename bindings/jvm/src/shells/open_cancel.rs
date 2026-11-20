@@ -1,6 +1,6 @@
 //! `org.tstrans.shells.OpenCancel` natives, and the steps every open takes
-//! with the object (`begin` before the URL is parsed, `finish` after the
-//! open).
+//! with the object (`begin` before the configuration and the URL are looked
+//! at, `finish` after the open).
 //!
 //! The registry holds the [`OpenCancel`]; every native clones it out of the
 //! entry and calls it after the entry lock is released, so a `cancel()`
@@ -77,6 +77,16 @@ pub(crate) fn finish<T, E>(slot: Option<OpenSlot>, r: Result<T, E>, closed: E) -
         return Err(closed);
     }
     r
+}
+
+/// End an open whose configuration was refused, with that refusal's
+/// exception pending: when the object was cancelled by now the domain's
+/// `CLOSED` replaces it, as [`finish`] replaces a failed open's error.
+pub(crate) fn refuse_config(env: &mut Env, domain: Domain, slot: Option<OpenSlot>) {
+    if slot.is_some_and(OpenSlot::finish) {
+        env.exception_clear();
+        throw_binding(env, domain, &closed());
+    }
 }
 
 jni_native! {

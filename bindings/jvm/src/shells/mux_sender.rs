@@ -40,7 +40,6 @@ use tst_pipeline::{MuxSender as RustMuxSender, MuxSenderError, MuxSenderErrorSou
 
 use super::cancel::cancel_view_handle;
 use super::open::{open_send, read_url};
-use super::open_cancel::object_of;
 use super::{domain_or_closed, throw_state};
 use crate::error::{throw_binding, throw_handle_state};
 use crate::generated::stats_mpegts::build_muxer_stats;
@@ -128,35 +127,31 @@ jni_native! {
         data_desc_lens: JIntArray<'local>,
         cancel: JObject<'local>,
     ) -> jlong = 0 => {
-        // Build the MuxerConfig FIRST — a pending MuxException is thrown on Err(()).
-        let cfg = match build_muxer_config_from_arrays(
-            env,
-            program_number,
-            pmt_pid,
-            pcr_pid,
-            pcr_interval_ms,
-            pcr_lead_ms,
-            psi_interval_ms,
-            buffer_packets,
-            av1_carriage,
-            &stream_pids,
-            &stream_kinds,
-            &stream_codecs,
-            &stream_type_codes,
-            &stream_carries_pts,
-            &data_desc_bytes,
-            &data_desc_lens,
-        ) {
-            Ok(c) => c,
-            Err(()) => return 0,
-        };
-        let Ok(oc) = object_of(env, &cancel) else {
-            return 0;
-        };
         let Some(url) = read_url(env, &url) else {
             return 0;
         };
-        let Some(opened) = open_send(env, &url, oc.as_ref()) else {
+        // The config is built after the cancelled-object check and before
+        // the URL is parsed, so a refused one dials nothing.
+        let Some((opened, cfg)) = open_send(env, &url, &cancel, |env| {
+            build_muxer_config_from_arrays(
+                env,
+                program_number,
+                pmt_pid,
+                pcr_pid,
+                pcr_interval_ms,
+                pcr_lead_ms,
+                psi_interval_ms,
+                buffer_packets,
+                av1_carriage,
+                &stream_pids,
+                &stream_kinds,
+                &stream_codecs,
+                &stream_type_codes,
+                &stream_carries_pts,
+                &data_desc_bytes,
+                &data_desc_lens,
+            )
+        }) else {
             return 0;
         };
         register(env, opened, cfg)
