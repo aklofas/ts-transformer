@@ -453,6 +453,12 @@ impl PyTcpTransport {
                 Err(CONVERTED) => return Err(Refused::Closed),
                 Err(_) => return Err(Refused::Busy),
             }
+            // A close that began (or a cancel) is reported as such, also
+            // while the close still waits for a recv to leave the slot.
+            if self.cancel.is_cancelled() {
+                self.conversion.store(OPEN, Ordering::SeqCst);
+                return Err(Refused::Closed);
+            }
             if self.io_in_flight.load(Ordering::SeqCst) > 0 {
                 self.conversion.store(OPEN, Ordering::SeqCst);
                 return Err(Refused::Busy);
