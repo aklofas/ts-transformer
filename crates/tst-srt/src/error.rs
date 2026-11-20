@@ -901,6 +901,38 @@ mod tests {
         }
     }
 
+    /// Whether `r` sits in its own list and not in the other. The match has
+    /// no wildcard, so a new variant does not compile until it is placed.
+    fn is_in_exactly_one_list(r: RejectReason) -> bool {
+        use RejectReason::*;
+        let (own, other) = match r {
+            Unknown | System | Peer | Resource | Rogue | Backlog | Ipe | Close | Version
+            | RdvCookie | BadSecret | Unsecure | MessageApi | Congestion | Filter | Group
+            | Timeout | Crypto => (&RejectReason::INTERNAL[..], &RejectReason::PREDEFINED[..]),
+            Fallback | KeyNotSupported | Filepath | HostNotFound | BadRequest | Unauthorized
+            | Overload | Forbidden | NotFound | BadMode | Unacceptable | Conflict
+            | NotSupportedMedia | Locked | FailedDependency | InternalServerError
+            | Unimplemented | Gateway | Down | VersionUnsupported | NoRoom => {
+                (&RejectReason::PREDEFINED[..], &RejectReason::INTERNAL[..])
+            }
+            Other(_) => return true,
+        };
+        own.contains(&r) && !other.contains(&r)
+    }
+
+    #[test]
+    fn every_listed_reason_is_in_exactly_one_list() {
+        for r in RejectReason::INTERNAL
+            .into_iter()
+            .chain(RejectReason::PREDEFINED)
+        {
+            assert!(
+                is_in_exactly_one_list(r),
+                "{r:?} is listed in the wrong list"
+            );
+        }
+    }
+
     #[test]
     fn validation_error_displays() {
         let e = PassphraseError::InvalidLength(5);
