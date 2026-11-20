@@ -6,6 +6,7 @@ import static org.tstrans.TestSupport.awaitInNative;
 import static org.tstrans.TestSupport.cancelNow;
 import static org.tstrans.TestSupport.inNative;
 import static org.tstrans.TestSupport.isLinux;
+import static org.tstrans.TestSupport.scaledMs;
 
 import java.util.Optional;
 import java.lang.reflect.InvocationTargetException;
@@ -530,8 +531,7 @@ class H264ReceiverTest {
         reader.start();
         try {
             assertTrue(entered.await(5, TimeUnit.SECONDS), "recvAu() never started");
-            awaitInNative(reader, "nRecvAu", org.tstrans.TestSupport.scaledMs(10_000),
-                () -> String.valueOf(returned.getNow(null)));
+            awaitInNative(reader, "nRecvAu", scaledMs(10_000), () -> String.valueOf(returned.getNow(null)));
             assertFalse(returned.isDone(), "recvAu() returned on its own; nothing was sent");
 
             CompletableFuture<Object[]> answer = CompletableFuture.supplyAsync(
