@@ -482,16 +482,20 @@ fn take_for_close(entry: &JniRtspPush, _handle: jlong) -> Option<RtspPush> {
 jni_native! {
     /// `RtspPushSession.nTeardown(handle)`: CONSUMING (the Java side zeroed its key
     /// first). Closes the push as `nClose` does and throws the TEARDOWN's error.
-    fn Java_org_tstrans_rtp_RtspPushSession_nTeardown(env, _class, handle: jlong) = () => {
+    /// `false` when a conversion had taken the push: nothing was torn down, and the
+    /// Java side reports that as `CLOSED`.
+    fn Java_org_tstrans_rtp_RtspPushSession_nTeardown(env, _class, handle: jlong) -> jboolean = false => {
         let Some(entry) = REGISTRY_PUSH.close(handle as u64) else {
             crate::error::throw_closed(env, WHAT);
-            return;
+            return false;
         };
-        if let Some(push) = take_for_close(&entry, handle)
-            && let Err(e) = push.close()
-        {
+        let Some(push) = take_for_close(&entry, handle) else {
+            return false;
+        };
+        if let Err(e) = push.close() {
             rtsp_error_to_jvm(env, e);
         }
+        true
     }
 }
 
@@ -853,6 +857,38 @@ jni_native! {
             .insert(handle, taker);
         while !slot.is_closed() {
             std::thread::yield_now();
+        }
+    }
+}
+
+/// The push `nTakeAsConversion` took, until `nCloseTaken`.
+#[cfg(feature = "jni-test-hooks")]
+static PROBE_TAKEN: std::sync::Mutex<Option<RtspPush>> = std::sync::Mutex::new(None);
+
+jni_native! {
+    /// `org.tstrans.internal.PushProbe.nTakeAsConversion(handle)`: take the push from
+    /// the session's slot as a conversion does and keep it, leaving the session's key
+    /// in place: where a conversion stands between its take and its claim of the key.
+    #[cfg(feature = "jni-test-hooks")]
+    fn Java_org_tstrans_internal_PushProbe_nTakeAsConversion(env, _class, handle: jlong) = () => {
+        let Some((slot, _)) = lease(env, handle) else { return };
+        match slot.take_for_conversion() {
+            Ok(push) => {
+                *PROBE_TAKEN.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(push);
+            }
+            Err(r) => throw_refused(env, r, false),
+        }
+    }
+}
+
+jni_native! {
+    /// `org.tstrans.internal.PushProbe.nCloseTaken()`: close the push
+    /// `nTakeAsConversion` took, as its new owner would; quiet when there is none.
+    #[cfg(feature = "jni-test-hooks")]
+    fn Java_org_tstrans_internal_PushProbe_nCloseTaken(_env, _class) = () => {
+        let taken = PROBE_TAKEN.lock().unwrap_or_else(std::sync::PoisonError::into_inner).take();
+        if let Some(push) = taken {
+            let _ = push.close();
         }
     }
 }

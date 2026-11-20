@@ -219,23 +219,30 @@ public final class RtspPushSession extends NativeHandle {
      *     queued media was lost to an expired session; otherwise the TEARDOWN's own
      *     result: the kind of the status for a TEARDOWN the server refuses
      *     ({@code PROTOCOL}, or {@code NOT_FOUND} for a 404), {@code TIMEOUT} when no
-     *     reply came within the bound, {@code IO} when the connection failed
+     *     reply came within the bound, {@code IO} when the connection failed; and
+     *     {@code CLOSED} when a conversion on another thread took the session first:
+     *     nothing was torn down, the converted shell owns the push, and
+     *     {@link #stats()} and {@link #endReason()} keep following it
      * @throws IllegalStateException if the session is closed
      */
     public void teardown() throws RtspException {
         ensureOpen(CLOSED);
         long h = consumeHandle();
         if (h == 0) throw new IllegalStateException(CLOSED);
-        boolean ended = false;
+        boolean took;
         try {
-            nTeardown(h);
-            ended = true;
+            took = nTeardown(h);
         } catch (RtspException e) {
-            ended = true;   // the TEARDOWN ran and was refused or failed
+            releaseStats();   // the TEARDOWN ran and was refused or failed
             throw e;
-        } finally {
-            if (ended) releaseStats();
         }
+        if (!took) {
+            // A conversion took the push first: its new owner ends it, and the
+            // statistics keep following it.
+            throw new RtspException(RtspException.Kind.CLOSED,
+                "RtspPushSession.teardown: the session was converted on another thread");
+        }
+        releaseStats();
     }
 
     /**
@@ -461,7 +468,7 @@ public final class RtspPushSession extends NativeHandle {
     private static native void nSendKlv(long handle, byte[] klv, long pts) throws RtpException, RtspException;
     private static native void nPause(long handle) throws RtspException;
     private static native void nResume(long handle) throws RtspException;
-    private static native void nTeardown(long handle) throws RtspException;
+    private static native boolean nTeardown(long handle) throws RtspException;
     private static native long nCancelHandle(long handle);
     private static native long nStatsKey(long handle);
     private static native RtspPushStats nStatsOf(long statsKey);

@@ -1006,6 +1006,34 @@ class RtspPushTest {
         }
     }
 
+    /**
+     * A teardown that finds a conversion took the push tore nothing down: it throws
+     * CLOSED, and the session's statistics keep following the push its new owner ends.
+     */
+    @Test
+    @Timeout(30)
+    @EnabledIfSystemProperty(named = "tst.jniTestHooks", matches = "true")
+    void aTeardownThatLostThePushToAConversionThrowsClosed() throws Exception {
+        try (ScriptedRecordServer peer = new ScriptedRecordServer(200, false)) {
+            RtspPushSession push = RtspClient.push(peer.config(), PushDescription.mp2t());
+            push.sendTs(NULL_BUNDLE);
+            PushProbe.nTakeAsConversion(push.nativeHandleForTest());
+            try {
+                RtspException e = assertThrows(RtspException.class, push::teardown);
+                assertEquals(RtspException.Kind.CLOSED, e.kind());
+                // Nothing to wait for: the push this call would have ended is held above.
+                assertFalse(peer.methods.contains("TEARDOWN"), "the teardown wrote a TEARDOWN");
+                assertEquals(Optional.empty(), push.endReason());
+                assertThrows(IllegalStateException.class, push::teardown);
+            } finally {
+                PushProbe.nCloseTaken();
+            }
+            assertTrue(peer.awaitMethod("TEARDOWN"), "the push's owner wrote no TEARDOWN");
+            assertEquals(Optional.of(EndReason.CLEAN_TEARDOWN), push.endReason());
+            assertEquals(1L, push.stats().packetsSent());
+        }
+    }
+
     @Test
     @Timeout(60)
     @EnabledIfSystemProperty(named = "tst.jniTestHooks", matches = "true")

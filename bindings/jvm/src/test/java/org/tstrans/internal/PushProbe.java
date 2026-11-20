@@ -8,7 +8,8 @@ package org.tstrans.internal;
  * let it go; {@link #nWaitRounds} counts the rounds a close or a conversion has waited
  * for it.
  * {@link #nMarkClosing} begins a close without finishing it, so the next blocking call
- * meets a close that has begun; {@link #nPoison} poisons the session.
+ * meets a close that has begun; {@link #nPoison} poisons the session;
+ * {@link #nTakeAsConversion} takes the push as a conversion does.
  */
 public final class PushProbe {
     static { org.tstrans.NativeLoader.load(); }
@@ -46,4 +47,12 @@ public final class PushProbe {
      * session is poisoned; the panic is caught inside the native.
      */
     public static native void nPoison(long sessionHandle);
+    /**
+     * Take the push from the session's slot as a conversion does and keep it, leaving
+     * the session's key in place: where a conversion stands between its take of the
+     * push and its claim of the session. {@link #nCloseTaken()} closes the push.
+     */
+    public static native void nTakeAsConversion(long sessionHandle);
+    /** Close the push {@link #nTakeAsConversion} took; quiet when there is none. */
+    public static native void nCloseTaken();
 }
