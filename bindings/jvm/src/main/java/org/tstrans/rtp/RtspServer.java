@@ -108,20 +108,26 @@ public final class RtspServer extends NativeHandle {
 
     /**
      * Graceful shutdown: sends the Notice 5402 to each active session (up to 1&nbsp;s
-     * each), waits for the sessions to end for up to the builder's drain window plus
-     * 500&nbsp;ms, then shuts each session's connection (up to 500&nbsp;ms each).
-     * Idempotent. {@code drainMs} is accepted for API
-     * stability but the configured {@code gracefulShutdownDrainMs} governs the wait.
-     * After the hard cancel ({@link #cancelHandle()}) it sends no Notice, waits for
-     * no drain and returns once the publish side is closed. A hard cancel fired while
-     * this call runs closes the publish side within about 100 ms but does not shorten
-     * the call: the Notice writes, the drain wait and the shutdown of each session's
-     * connection do not read it.
+     * each), waits for the sessions to end for up to the builder's drain window
+     * ({@code gracefulShutdownDrainMs}) plus 500&nbsp;ms, then shuts each session's
+     * connection (up to 500&nbsp;ms each). Idempotent. After the hard cancel
+     * ({@link #cancelHandle()}) it sends no Notice, waits for no drain and returns once
+     * the publish side is closed. A hard cancel fired while this call runs closes the
+     * publish side within about 100 ms but does not shorten the call: the Notice
+     * writes, the drain wait and the shutdown of each session's connection do not read
+     * it.
      */
-    public void stop(long drainMs) throws RtspException { ensureOpen(); nStop(peekHandle(), drainMs); }
+    public void stop() throws RtspException { ensureOpen(); nStop(peekHandle()); }
 
-    /** {@link #stop(long)} with the default drain hint (1000). */
-    public void stop() throws RtspException { stop(1000L); }
+    /**
+     * {@link #stop()}: {@code drainMs} is ignored, the configured
+     * {@code gracefulShutdownDrainMs} governs the wait.
+     *
+     * @param drainMs ignored
+     * @deprecated the argument does nothing; call {@link #stop()}. Removed in 0.12.0.
+     */
+    @Deprecated(since = "0.11.0", forRemoval = true)
+    public void stop(long drainMs) throws RtspException { ensureOpen(); nStop(peekHandle()); }
 
     /**
      * Register a unicast mount under {@code path}. The returned {@link MountHandle}
@@ -348,7 +354,7 @@ public final class RtspServer extends NativeHandle {
     private static native long nMountRules(long handle);
     private static native ServerStats nStats(long handle);
     private static native byte[] nLocalAddr(long handle);
-    private static native void nStop(long handle, long drainMs) throws RtspException;
+    private static native void nStop(long handle) throws RtspException;
     private static native long nCancelHandle(long handle);
     private static native long nAddPublishMount(long serverHandle, String path)
         throws RtspException;

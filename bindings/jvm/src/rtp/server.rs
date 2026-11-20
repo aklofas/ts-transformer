@@ -404,10 +404,9 @@ jni_native! {
 }
 
 jni_native! {
-    /// `RtspServer.nStop(handle, drainMs)` — graceful shutdown. `drainMs` is accepted
-    /// for API stability but ignored (the builder's graceful_shutdown_drain governs the
-    /// real window), mirroring tst-py.
-    fn Java_org_tstrans_rtp_RtspServer_nStop(env, _class, handle: jlong, _drain_ms: jlong) = () => {
+    /// `RtspServer.nStop(handle)` — graceful shutdown; the builder's
+    /// graceful_shutdown_drain governs the window.
+    fn Java_org_tstrans_rtp_RtspServer_nStop(env, _class, handle: jlong) = () => {
         let Some(res) = with_server_poisoning(env, handle, |server| server.stop()) else {
             return;
         };

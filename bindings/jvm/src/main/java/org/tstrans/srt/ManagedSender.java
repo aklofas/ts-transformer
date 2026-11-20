@@ -166,7 +166,9 @@ public final class ManagedSender extends NativeHandle {
      * @return never returns normally
      * @throws IllegalStateException if the sender is closed
      * @throws SrtException always ({@code IO})
+     * @deprecated it always throws; call {@link #socketStats()}. Removed in 0.12.0.
      */
+    @Deprecated(since = "0.11.0", forRemoval = true)
     public SrtStats srtStats() throws SrtException {
         ensureOpen("ManagedSender is closed");
         return nSrtStats(peekHandle());

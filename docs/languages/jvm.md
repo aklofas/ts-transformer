@@ -1290,7 +1290,9 @@ falls into two groups.
 
 `RtspServer.close()` runs the graceful `stop()` before it frees the server,
 so it takes as long as `stop()` (a parked `nextPublisher` does not hold it
-up). `OpenCancel.close()` frees the object only.
+up). `RtspServer.stop(long)` ignores its argument (`gracefulShutdownDrainMs`
+sets the wait): it is deprecated and removed in 0.12.0. `OpenCancel.close()`
+frees the object only.
 
 One rule covers a closed object: every call the table above does not list
 as answering once closed throws `IllegalStateException("<Class> is closed")`,
@@ -1705,9 +1707,10 @@ The managed shells inherit the same `srtStats()` drifts as tst-py — **read the
 carefully, they are not uniform across the four shells:**
 
 - **`ManagedSender.srtStats()` and `ManagedReceiver.srtStats()` always throw
-  `SrtException(IO)`** today (the managed send/recv transports expose no
-  SRT-rich shape). Use `socketStats()` instead — it returns the scheme-neutral
-  16-field `org.tstrans.shells.SocketStats`.
+  `SrtException(IO)`** (the managed send/recv transports expose no
+  SRT-rich shape); both are deprecated and removed in 0.12.0. Use
+  `socketStats()` instead — it returns the scheme-neutral 16-field
+  `org.tstrans.shells.SocketStats`.
 - **`ManagedMuxSender` has no `srtStats()` at all.** It exposes a combined
   `stats()` returning a `TransportStats` (socket + muxer); use that.
 - **`ManagedDemuxReceiver.srtStats()` returns a `SocketStats`** (NOT `SrtStats`)
@@ -1803,7 +1806,9 @@ thread; after `close()` it throws
 the same port.
 
 `recvBytes()` returns aligned TS packets (one 188-byte packet per call),
-whatever datagram size the publisher sends. A receiving shell returns its
+whatever datagram size the publisher sends. `Receiver.recvBytes(int)` and
+`srt.ManagedReceiver.recvBytes(int)` ignore their argument: they are
+deprecated and removed in 0.12.0. A receiving shell returns its
 first packet only once it has found four sync bytes 188 bytes apart (the
 starts of four aligned TS packets); a stream shorter than that yields
 nothing. A `udp://` receive blocks until a packet is ready or the

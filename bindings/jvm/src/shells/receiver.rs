@@ -173,15 +173,14 @@ jni_native! {
 }
 
 jni_native! {
-    /// One 188-byte TS packet per call. `maxLen` is accepted for API symmetry
-    /// and ignored. Throws the transport's exception on failure, including
+    /// One 188-byte TS packet per call. Throws the transport's exception on
+    /// failure, including
     /// `END_OF_STREAM` when the peer closed cleanly (an `srt://` shell reads
     /// `BROKEN` first: libsrt reports a broken link, never a clean EOF).
     fn Java_org_tstrans_shells_Receiver_nRecvBytes(
         env,
         _class,
         handle: jlong,
-        _max_len: jint,
     ) -> jbyteArray = std::ptr::null_mut() => {
         let Some(domain) = domain_or_closed(env, &REGISTRY, handle, "Receiver") else {
             return std::ptr::null_mut();

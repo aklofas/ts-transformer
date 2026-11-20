@@ -36,8 +36,7 @@ import org.tstrans.srt.SrtStats;
  * {@code MemorySegment}) is JDK-22+ only.
  *
  * <p><b>Receive quantum:</b> each {@link #recvBytes()} call returns one 188-byte
- * TS packet. The {@code maxLen} parameter is accepted for API symmetry with
- * tst-py and does not cause additional buffering.
+ * TS packet.
  *
  * <p>Mirrors {@code tstrans.shells.Receiver} in tst-py.
  */
@@ -104,8 +103,7 @@ public class Receiver extends NativeHandle {
     }
 
     /**
-     * Receive one TS packet. Blocks until a packet is available. Defaults
-     * {@code maxLen} to 1500.
+     * Receive one TS packet. Blocks until a packet is available.
      *
      * <p>After {@code cancelHandle().cancel()} this throws the transport's
      * {@code CLOSED}, buffered data included.
@@ -118,25 +116,23 @@ public class Receiver extends NativeHandle {
      *     {@code BROKEN} if the transport is dead, {@code CLOSED} if cancelled
      */
     public byte[] recvBytes() throws BindingException {
-        return recvBytes(1500);
+        ensureOpen("Receiver is closed");
+        return nRecvBytes(peekHandle());
     }
 
     /**
-     * Receive one TS packet. Blocks until a packet is available. The
-     * {@code maxLen} parameter is accepted for API symmetry and does not alter
-     * the one-packet-per-call quantum.
+     * {@link #recvBytes()}: {@code maxLen} is ignored, one 188-byte packet per call.
      *
-     * <p>After {@code cancelHandle().cancel()} this throws the transport's
-     * {@code CLOSED}, buffered data included.
-     *
-     * @param maxLen hint for the maximum bytes to return (ignored)
+     * @param maxLen ignored
      * @return a 188-byte TS packet
      * @throws IllegalStateException if the receiver is closed
      * @throws BindingException the transport's exception
+     * @deprecated the argument does nothing; call {@link #recvBytes()}. Removed in 0.12.0.
      */
+    @Deprecated(since = "0.11.0", forRemoval = true)
     public byte[] recvBytes(int maxLen) throws BindingException {
         ensureOpen("Receiver is closed");
-        return nRecvBytes(peekHandle(), maxLen);
+        return nRecvBytes(peekHandle());
     }
 
     /**
@@ -380,7 +376,7 @@ public class Receiver extends NativeHandle {
     }
 
     private static native long    nOpen(String url, OpenCancel cancel) throws BindingException;
-    private static native byte[]  nRecvBytes(long handle, int maxLen) throws BindingException;
+    private static native byte[]  nRecvBytes(long handle) throws BindingException;
     private static native long    nCancelHandle(long handle);
     private static native SocketStats nSocketStats(long handle);
     private static native ReceiverStats nStats(long handle);

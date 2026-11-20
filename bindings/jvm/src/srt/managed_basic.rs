@@ -414,7 +414,6 @@ jni_native! {
         env,
         _class,
         handle: jlong,
-        _max_len: jint,
     ) -> jbyteArray = std::ptr::null_mut() => {
         let res = match REGISTRY_RECEIVER
             .with_mut_unless_cancelled(handle as u64, |jstruct| jstruct.inner.next_packet())

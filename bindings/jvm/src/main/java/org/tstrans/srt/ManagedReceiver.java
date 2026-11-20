@@ -117,8 +117,7 @@ public final class ManagedReceiver extends NativeHandle {
      * until a packet is available. On a Broken peer, an in-line reconnect runs
      * under the policy before delivery resumes.
      *
-     * <p>Each call returns exactly one TS-packet quantum; {@code maxLen} is
-     * accepted only for API symmetry and does not cap the read.
+     * <p>Each call returns exactly one TS-packet quantum.
      *
      * <p>After {@code cancelHandle().cancel()} this throws {@code SrtException}
      * ({@code CLOSED}), buffered data included.
@@ -129,26 +128,27 @@ public final class ManagedReceiver extends NativeHandle {
      *     reconnect budget; {@code IO} on other errors
      */
     public byte[] recvBytes() throws SrtException {
-        return recvBytes(1500);
+        ensureOpen("ManagedReceiver is closed");
+        byte[] result = nRecvBytes(peekHandle());
+        if (result == null) {
+            throw new SrtException(SrtException.Kind.IO, "nRecvBytes returned null without throwing");
+        }
+        return result;
     }
 
     /**
-     * Receive one TS packet from the underlying transport. The {@code maxLen}
-     * parameter is accepted for API symmetry with tst-py but does not alter the
-     * one-packet-per-call quantum.
+     * {@link #recvBytes()}: {@code maxLen} is ignored, one 188-byte packet per call.
      *
-     * <p>After {@code cancelHandle().cancel()} this throws {@code SrtException}
-     * ({@code CLOSED}), buffered data included.
-     *
-     * @param maxLen hint for the maximum bytes to return (currently ignored
-     *     beyond accepting the parameter; one 188-byte packet is returned)
+     * @param maxLen ignored
      * @return a 188-byte TS packet
      * @throws IllegalStateException if the receiver is closed
      * @throws SrtException {@code BROKEN} or {@code IO} on transport failure
+     * @deprecated the argument does nothing; call {@link #recvBytes()}. Removed in 0.12.0.
      */
+    @Deprecated(since = "0.11.0", forRemoval = true)
     public byte[] recvBytes(int maxLen) throws SrtException {
         ensureOpen("ManagedReceiver is closed");
-        byte[] result = nRecvBytes(peekHandle(), maxLen);
+        byte[] result = nRecvBytes(peekHandle());
         if (result == null) {
             throw new SrtException(SrtException.Kind.IO, "nRecvBytes returned null without throwing");
         }
@@ -213,7 +213,9 @@ public final class ManagedReceiver extends NativeHandle {
      * @return never returns normally
      * @throws IllegalStateException if the receiver is closed
      * @throws SrtException always ({@code IO})
+     * @deprecated it always throws; call {@link #socketStats()}. Removed in 0.12.0.
      */
+    @Deprecated(since = "0.11.0", forRemoval = true)
     public SrtStats srtStats() throws SrtException {
         ensureOpen("ManagedReceiver is closed");
         return nSrtStats(peekHandle());
@@ -248,7 +250,7 @@ public final class ManagedReceiver extends NativeHandle {
         int backoffKind, long backoffBaseMs, long backoffMaxMs,
         int gapBufferCapacity, int overflowPolicy, int mode, OpenCancel cancel)
         throws SrtException;
-    private static native byte[]  nRecvBytes(long handle, int maxLen) throws SrtException;
+    private static native byte[]  nRecvBytes(long handle) throws SrtException;
     private static native long    nReconnectAttempts(long handle);
     private static native long    nCancelHandle(long handle);
     private static native SocketStats nSocketStats(long handle);
