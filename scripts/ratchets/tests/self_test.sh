@@ -1736,6 +1736,115 @@ jobs:
     uses: ./.github/workflows/callee.yml
 YML
 sed 's/dry_run: false/dry_run: true/' "$pg/caller-bad.yml" > "$pg/caller-good.yml"
+# publish-guards, artefact guards: a wheel job runs the hook-name check, the
+# JVM build action guards its library before the upload, a JAR upload's job
+# guards the JARs; a python-wheels.yml or jvm-jar.yml with nothing to check
+# fails closed.
+WHEEL_MSG='builds a wheel but no step runs `hook_names.py absent-in` on it'
+SHIP_MSG='runs no `jvm-hook-guard.sh check` on the library before its upload step'
+EXPECT_MSG='runs no `jvm-hook-guard.sh check --expect-hooks` on the hook build'
+JAR_MSG='uploads a JAR but no step runs `jvm-hook-guard.sh check` over the JARs'
+wire_tree() { # <dir>: a repository whose artefact guards are all in place
+  mkdir -p "$1/.github/workflows" "$1/.github/actions/jvm-build"
+  cat > "$1/.github/workflows/python-wheels.yml" <<YML
+name: wheels
+on: push
+jobs:
+  linux-wheel:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: PyO3/maturin-action@$SHA
+        with:
+          args: --release --out dist
+      - name: No test-only names in the wheel
+        run: |
+          check=tests/_builders/hook_names.py
+          python "\$check" absent-in dist/*.whl
+      - uses: actions/upload-artifact@$SHA
+        with:
+          path: dist/*.whl
+  sdist:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: PyO3/maturin-action@$SHA
+        with:
+          command: sdist
+YML
+  cat > "$1/.github/workflows/jvm-jar.yml" <<YML
+name: jvm
+on: push
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: ./.github/actions/jvm-build
+  assemble:
+    runs-on: ubuntu-latest
+    steps:
+      - run: ./gradlew fatJar
+      - uses: actions/upload-artifact@$SHA
+        with:
+          path: build/libs/tstrans-jvm*.jar
+      - name: No archive carries a test hook
+        run: |
+          bash scripts/ci/jvm-hook-guard.sh check build/libs/*.jar
+YML
+  cat > "$1/.github/actions/jvm-build/action.yml" <<YML
+name: jvm-build
+runs:
+  using: composite
+  steps:
+    - name: Hook guard sees the hooks in a hook build
+      shell: bash
+      run: bash scripts/ci/jvm-hook-guard.sh check --expect-hooks native/libtstjni.*
+    - name: Shipped native lib has no test-hook symbol
+      shell: bash
+      run: bash scripts/ci/jvm-hook-guard.sh check upload/native/libtstjni.*
+    - uses: actions/upload-artifact@$SHA
+      with:
+        path: upload/
+YML
+}
+for t in good wheel-nocheck wheel-comment noship shiplate noexpect nojar empty; do wire_tree "$pg/wire-$t"; done
+plant "$pg/wire-wheel-nocheck/.github/workflows/python-wheels.yml" 'absent-in' 'present-in'
+plant "$pg/wire-wheel-comment/.github/workflows/python-wheels.yml" 'python "$check" absent-in' '# python "$check" absent-in'
+plant "$pg/wire-noship/.github/actions/jvm-build/action.yml" 'check upload/' 'version upload/'
+plant "$pg/wire-noexpect/.github/actions/jvm-build/action.yml" 'check --expect-hooks' 'symbols --expect-hooks'
+plant "$pg/wire-nojar/.github/workflows/jvm-jar.yml" 'check build/libs' 'list build/libs'
+# The shipped-library guard moved after the upload guards nothing it uploads.
+cat > "$pg/wire-shiplate/.github/actions/jvm-build/action.yml" <<YML
+name: jvm-build
+runs:
+  using: composite
+  steps:
+    - run: bash scripts/ci/jvm-hook-guard.sh check --expect-hooks native/libtstjni.*
+      shell: bash
+    - uses: actions/upload-artifact@$SHA
+      with:
+        path: upload/
+    - run: bash scripts/ci/jvm-hook-guard.sh check upload/native/libtstjni.*
+      shell: bash
+YML
+cat > "$pg/wire-empty/.github/workflows/python-wheels.yml" <<YML
+name: wheels
+on: push
+jobs:
+  sdist:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: PyO3/maturin-action@$SHA
+        with:
+          command: sdist
+YML
+cat > "$pg/wire-empty/.github/workflows/jvm-jar.yml" <<'YML'
+name: jvm
+on: push
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - run: ./gradlew build
+YML
 # a python3 without PyYAML forces the awk fallback
 mkdir -p "$pg/noyaml"
 real_py="$(command -v python3)"
@@ -1782,6 +1891,30 @@ for mode in python awk; do
   expect_out "publish-guards ($mode): local-missing" "$pg/repo/.github/workflows/local-missing.yml: job 'attest' uses ./.github/actions/missing, but ./.github/actions/missing/action.yml cannot be read"
   expect "publish-guards ($mode): a local action inside a local action fails" 1 "${pre[@]}" bash $PGS "$pg/repo/.github/workflows/local-nested.yml"
   expect_out "publish-guards ($mode): local-nested" "$pg/repo/.github/workflows/local-nested.yml: job 'attest' uses ./.github/actions/outer, whose step uses the local action ./.github/actions/setup, which this rail does not follow"
+  W="$pg/wire-good/.github/workflows"
+  expect "publish-guards ($mode): every artefact guard in place passes" 0 "${pre[@]}" bash $PGS "$W/python-wheels.yml" "$W/jvm-jar.yml"
+  for t in wheel-nocheck wheel-comment; do
+    W="$pg/wire-$t/.github/workflows"
+    expect "publish-guards ($mode): $t fails" 1 "${pre[@]}" bash $PGS "$W/python-wheels.yml"
+    expect_out "publish-guards ($mode): $t" "$W/python-wheels.yml: job 'linux-wheel' $WHEEL_MSG"
+  done
+  for t in noship shiplate; do
+    W="$pg/wire-$t/.github/workflows"
+    expect "publish-guards ($mode): $t fails" 1 "${pre[@]}" bash $PGS "$W/jvm-jar.yml"
+    expect_out "publish-guards ($mode): $t" "$W/jvm-jar.yml: job 'build' uses ./.github/actions/jvm-build, which $SHIP_MSG"
+  done
+  W="$pg/wire-noexpect/.github/workflows"
+  expect "publish-guards ($mode): noexpect fails" 1 "${pre[@]}" bash $PGS "$W/jvm-jar.yml"
+  expect_out "publish-guards ($mode): noexpect" "$W/jvm-jar.yml: job 'build' uses ./.github/actions/jvm-build, which $EXPECT_MSG"
+  W="$pg/wire-nojar/.github/workflows"
+  expect "publish-guards ($mode): nojar fails" 1 "${pre[@]}" bash $PGS "$W/jvm-jar.yml"
+  expect_out "publish-guards ($mode): nojar" "$W/jvm-jar.yml: job 'assemble' $JAR_MSG"
+  W="$pg/wire-empty/.github/workflows"
+  expect "publish-guards ($mode): a python-wheels.yml building no wheel fails closed" 1 "${pre[@]}" bash $PGS "$W/python-wheels.yml"
+  expect_out "publish-guards ($mode): no wheel" "$W/python-wheels.yml: no job builds a wheel, so the hook-name rule checks nothing"
+  expect "publish-guards ($mode): a jvm-jar.yml with no build action and no JAR fails closed" 1 "${pre[@]}" bash $PGS "$W/jvm-jar.yml"
+  expect_out "publish-guards ($mode): no build action" "$W/jvm-jar.yml: no job uses ./.github/actions/jvm-build, so the library guard rule checks nothing"
+  expect_out "publish-guards ($mode): no JAR" "$W/jvm-jar.yml: no job uploads a JAR, so the JAR guard rule checks nothing"
 done
 plant "$pg/repo/.github/actions/setup/action.yml" '@stable' "@$SHA"
 for mode in python awk; do
