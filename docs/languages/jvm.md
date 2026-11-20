@@ -985,7 +985,13 @@ try (var tx = Sender.open(
 
 `sendBytes` accepts raw TS bytes of any length; the sender internally frames
 them into 7-packet (1316-byte) SRT bundles. Call `flush()` after the last push
-to emit any partial bundle.
+to emit any partial bundle, or `finish()` to end the stream: it flushes, then
+closes the transport without cancelling it first (so a transport that queues,
+an RTSP push, writes its queue), throws the first flush error, and leaves the
+handle for `close()`, which then does nothing more. A stream shorter than
+three TS packets in all is never sent: the sender finds the packet boundary
+only after three aligned packets, and until then neither `flush()` nor
+`finish()` sends anything or reports it.
 
 ### RecvTransport hello
 
@@ -2865,8 +2871,9 @@ Rules the types do not enforce:
   session writes its queue and sends TEARDOWN; the handle still needs its
   `close()` afterwards (try-with-resources does it). `finish()` cannot tell
   you whether the queue was written: a session that ended first drops it
-  and `finish()` still returns normally. `close()` alone cancels first and
-  can drop media still queued, and so does `Sender`'s `close()`. When you
+  and `finish()` still returns normally. `Sender.finish()` after
+  `intoSender()` does the same for pre-muxed bytes. `close()` alone cancels
+  first and can drop media still queued, on either shell. When you
   must know that everything was written, send through `sendTs` and call
   `teardown()`, which throws unless the queued media was written and the
   server accepted the TEARDOWN.

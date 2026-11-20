@@ -124,6 +124,32 @@ public class Sender extends NativeHandle {
     }
 
     /**
+     * Flush what the sender holds, report the first flush error, then close the
+     * transport: the lossless counterpart to {@link #close()}. It does NOT cancel
+     * first, so a transport that queues (an RTSP push from
+     * {@code RtspPushSession.intoSender()}) writes its queue before it ends; a
+     * {@link #sendBytes} parked on another thread holds the sender and
+     * {@code finish()} waits behind it. The sender is closed either way; a second
+     * call, and a call after {@link #close()}, do nothing. The handle still needs
+     * {@link #close()} afterwards, which then does nothing more.
+     *
+     * <p>A stream shorter than three TS packets in all is never sent: the sender
+     * finds the packet boundary only once three aligned packets have arrived, and
+     * until then neither {@link #flush()} nor this call has anything to send, and
+     * neither reports it.
+     *
+     * <p>After {@code cancelHandle().cancel()} every call throws the transport's
+     * {@code CLOSED}, a repeated one included.
+     *
+     * @throws BindingException the transport's exception for the first flush error
+     */
+    public void finish() throws BindingException {
+        long h = peekHandle();
+        if (h == 0) return;            // already closed: quiet, like a second finish
+        nFinish(h);
+    }
+
+    /**
      * Return a shareable cancel handle. Calling {@link CancelHandle#cancel()}
      * on any handle wakes a thread parked in {@link #sendBytes}; that call
      * throws the transport's exception with kind {@code CLOSED}.
@@ -196,8 +222,9 @@ public class Sender extends NativeHandle {
      * Close the sender. Cancels first, so a {@link #sendBytes} parked on another
      * thread ends with the transport's {@code CLOSED} and this call returns
      * promptly; a partial bundle in the framing buffer is not delivered, so
-     * {@link #flush()} first when the tail matters. Idempotent. After close,
-     * further calls throw {@code IllegalStateException}.
+     * {@link #finish()} (or {@link #flush()}) first when the tail matters.
+     * Idempotent. After close, further calls throw {@code IllegalStateException},
+     * except {@link #finish()}, which does nothing.
      */
     @Override public void close() { super.close(); }
 
@@ -217,6 +244,7 @@ public class Sender extends NativeHandle {
     private static native long    nOpen(String url, OpenCancel cancel) throws BindingException;
     private static native void    nSendBytes(long handle, byte[] data) throws BindingException;
     private static native void    nFlush(long handle) throws BindingException;
+    private static native void    nFinish(long handle) throws BindingException;
     private static native long    nCancelHandle(long handle);
     private static native SocketStats nSocketStats(long handle);
     private static native SrtStats    nSrtStats(long handle) throws BindingException;

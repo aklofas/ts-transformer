@@ -252,4 +252,54 @@ class ShellLifecycleContractTest {
             assertEquals(scheme.equals("srt"), rx.endDetail().isPresent(), String.valueOf(rx.endDetail()));
         }
     }
+
+    // ── Sender.finish() ──────────────────────────────────────────────────────
+
+    /** {@code n} aligned null TS packets. */
+    private static byte[] nullPackets(int n) {
+        byte[] b = new byte[188 * n];
+        for (int i = 0; i < n; i++) {
+            b[i * 188] = 0x47;
+            b[i * 188 + 1] = 0x1F;
+            b[i * 188 + 2] = (byte) 0xFF;
+            b[i * 188 + 3] = 0x10;
+        }
+        return b;
+    }
+
+    @org.junit.jupiter.api.Test
+    void finishAfterACancelThrowsClosed() throws Exception {
+        int port = org.tstrans.TestSupport.freeUdpPort();
+        try (Sender tx = Sender.open("udp://127.0.0.1:" + port);
+             CancelHandle cancel = tx.cancelHandle()) {
+            cancel.cancel();
+            for (int i = 0; i < 2; i++) {
+                org.tstrans.UdpException e = assertThrows(org.tstrans.UdpException.class, tx::finish);
+                assertEquals(org.tstrans.UdpException.Kind.CLOSED, e.kind());
+            }
+        }
+    }
+
+    @org.junit.jupiter.api.Test
+    void closeAfterFinishDoesNothing() throws Exception {
+        try (java.net.DatagramSocket peer = new java.net.DatagramSocket(0, java.net.InetAddress.getLoopbackAddress())) {
+            peer.setSoTimeout((int) org.tstrans.TestSupport.scaledMs(5_000));
+            Sender tx = Sender.open("udp://127.0.0.1:" + peer.getLocalPort());
+            tx.sendBytes(nullPackets(3));
+            tx.finish();
+            // The partial bundle went out as one datagram.
+            java.net.DatagramPacket got = new java.net.DatagramPacket(new byte[2048], 2048);
+            peer.receive(got);
+            assertEquals(3 * 188, got.getLength());
+            assertFalse(tx.isAlive());
+            org.tstrans.UdpException e = assertThrows(org.tstrans.UdpException.class, () -> tx.sendBytes(nullPackets(7)));
+            assertEquals(org.tstrans.UdpException.Kind.CLOSED, e.kind());
+            assertDoesNotThrow(tx::finish);
+            tx.close();
+            assertDoesNotThrow(tx::finish);
+            // Nothing more reached the peer.
+            peer.setSoTimeout(300);
+            assertThrows(java.net.SocketTimeoutException.class, () -> peer.receive(got));
+        }
+    }
 }

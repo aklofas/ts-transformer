@@ -63,9 +63,9 @@ import org.tstrans.shells.EndReason;
  * and {@link #close()} and {@link #teardown()} still end the push.
  *
  * <p><b>Ending without loss.</b> {@link #close()} and {@link #teardown()} write the
- * queued media before the TEARDOWN, and so does {@code MuxSender.finish()} after
- * {@link #intoMuxSender}. A plain {@code Sender} from {@link #intoSender} has no
- * lossless end: its {@code close()} cancels first and can drop frames queued a moment
+ * queued media before the TEARDOWN, and so do {@code MuxSender.finish()} after
+ * {@link #intoMuxSender} and {@code Sender.finish()} after {@link #intoSender}. A
+ * sender's {@code close()} alone cancels first and can drop frames queued a moment
  * before.
  *
  * <p><b>Pause.</b> After {@link #pause()} the data calls still queue and write their
@@ -387,9 +387,11 @@ public final class RtspPushSession extends NativeHandle {
      * first, as it does for every transport, then ends it: media still queued for the
      * server is dropped and TEARDOWN is written without that wait.
      *
-     * <p>A plain {@code Sender} over a push has no lossless end: to end a pre-muxed push
-     * without loss, send with {@link #sendTs} and close this session, or use
-     * {@link #intoMuxSender} and {@code MuxSender.finish()}.
+     * <p>{@link org.tstrans.shells.Sender#finish()} ends it without that loss: it
+     * flushes the sender, then the session writes its queue and sends TEARDOWN. Like
+     * {@code MuxSender.finish()} it cannot tell you whether the queue was written (a
+     * session that ended first drops it); to know that, send with {@link #sendTs} and
+     * call {@link #teardown()}.
      *
      * <p>Called while a send, {@code pause()} or {@code resume()} is running on another
      * thread, it does not wait: it throws {@link IllegalStateException} and consumes

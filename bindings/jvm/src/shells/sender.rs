@@ -25,7 +25,7 @@ use jni::strings::JNIString;
 use jni::sys::{jboolean, jlong};
 use tst_core::transport::Transport;
 use tst_pipeline::binding::view::{BlockingReason, Snapshot};
-use tst_pipeline::binding::{BindingError, Domain, Opened, Owned};
+use tst_pipeline::binding::{BindingError, Domain, HandleState, Opened, Owned};
 use tst_pipeline::{Sender as PlSender, SenderConfig};
 
 use super::cancel::cancel_view_handle;
@@ -122,6 +122,26 @@ jni_native! {
         match REGISTRY.with_mut_unless_cancelled(handle as u64, |s| s.flush()) {
             Ok(Ok(())) => {}
             Ok(Err(e)) => throw_binding(env, domain, &BindingError::from(e)),
+            Err(state) => throw_state(env, domain, "Sender", &state),
+        }
+    }
+}
+
+jni_native! {
+    /// Flush what the sender holds, report the first error, then close the
+    /// transport without cancelling it first (`Sender::finish`), so a queuing
+    /// transport writes its queue. Waits behind a send in flight. Does NOT free
+    /// the registry entry: the Java side still calls `close()`. A closed handle,
+    /// and a second finish, are quiet; after a cancel every finish is `CLOSED`.
+    fn Java_org_tstrans_shells_Sender_nFinish(env, _class, handle: jlong) = () => {
+        // Closed between the Java-side `peekHandle()` and here: stay quiet.
+        let Some(domain) = REGISTRY.snapshot(handle as u64, |s| s.domain) else {
+            return;
+        };
+        match REGISTRY.with_mut_unless_cancelled(handle as u64, |s| s.finish()) {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => throw_binding(env, domain, &BindingError::from(e)),
+            Err(HandleState::Closed) => {}
             Err(state) => throw_state(env, domain, "Sender", &state),
         }
     }

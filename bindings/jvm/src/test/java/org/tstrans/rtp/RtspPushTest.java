@@ -1006,6 +1006,29 @@ class RtspPushTest {
         }
     }
 
+    @Test
+    @Timeout(30)
+    void finishAfterIntoSenderDeliversEveryPacket() throws Exception {
+        try (ScriptedRecordServer peer = new ScriptedRecordServer(200, false)) {
+            RtspPushSession push = RtspClient.push(peer.config(), PushDescription.mp2t());
+            Sender tx = push.intoSender();
+            for (int i = 0; i < 20; i++) tx.sendBytes(NULL_BUNDLE);
+            // Three packets the framing holds as a partial bundle.
+            tx.sendBytes(java.util.Arrays.copyOf(NULL_BUNDLE, 3 * 188));
+            tx.finish();
+            assertTrue(peer.awaitMethod("TEARDOWN"), "finish() wrote no TEARDOWN");
+            assertEquals(21L, peer.rtpFramesRead.get(), "a frame was lost before the TEARDOWN");
+            assertEquals(Optional.of(EndReason.CLEAN_TEARDOWN), push.endReason());
+            assertEquals(21L, push.stats().packetsSent());
+            assertEquals(0L, push.stats().framesDroppedAtClose());
+            // A later close writes nothing more and keeps the end.
+            tx.close();
+            assertEquals(1L, peer.methods.stream().filter("TEARDOWN"::equals).count());
+            assertEquals(Optional.of(EndReason.CLEAN_TEARDOWN), push.endReason());
+            push.close();
+        }
+    }
+
     // ── helpers ──────────────────────────────────────────────────────────────
 
     private static void assumeLinux() {
