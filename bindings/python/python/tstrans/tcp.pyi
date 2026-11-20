@@ -70,7 +70,8 @@ class SocketStats:
 
 @final
 class ClientCert:
-    """Client certificate for mutual TLS authentication.
+    """Client certificate for mutual TLS authentication. Deprecated: the
+    constructor warns ``DeprecationWarning``; removed in 0.12.0.
 
     **Note:** forward-compat only — mTLS client certificates have no
     tst-tcp backend yet. Server verification uses the ``?ca=`` URL param;
@@ -88,7 +89,8 @@ class ClientCert:
 
 @final
 class TlsConfig:
-    """TLS configuration for ``tcps://`` transports.
+    """TLS configuration for ``tcps://`` transports. Deprecated: the
+    constructor warns ``DeprecationWarning``; removed in 0.12.0.
 
     **Note:** no builder method accepts this dataclass today. The working
     knobs: callers verify against a

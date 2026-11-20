@@ -183,7 +183,7 @@ def test_managed_receiver_cancel_wakes_reaccept() -> None:
     # Receive at least once so the link is genuinely up before the peer drops.
     for _ in range(7):
         sender.send_bytes(TS_PACKET)
-    first = rx.recv_bytes(max_len=1500)
+    first = rx.recv_bytes()
     assert len(first) >= 188, f"expected a whole TS packet, got {len(first)} bytes"
     assert first[0] == 0x47
 
@@ -192,7 +192,7 @@ def test_managed_receiver_cancel_wakes_reaccept() -> None:
     def pump() -> None:
         try:
             while True:
-                rx.recv_bytes(max_len=1500)
+                rx.recv_bytes()
         except SrtError as exc:
             outcome["end"] = "SrtError"
             outcome["kind"] = exc.kind

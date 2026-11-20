@@ -425,7 +425,7 @@ def test_srt_managed_receiver_close_from_other_thread_while_recv_parked() -> Non
 
     def worker() -> None:
         try:
-            rx.recv_bytes(max_len=1316)
+            rx.recv_bytes()
         except BaseException as exc:  # noqa: BLE001
             captured.append(exc)
 

@@ -16,8 +16,9 @@
 //!   trust roots or a custom CA via the `?ca=<pem path>` URL param;
 //!   listeners serve TLS via `ListenerBuilder.tls(cert, key)`. A source
 //!   build without `tls` raises `TcpError(kind=TLS_DISABLED)` at build()
-//!   time. `TlsConfig` and `ClientCert` remain forward-compat dataclasses
-//!   — mTLS client certs have no tst-tcp backend yet.
+//!   time. `TlsConfig` and `ClientCert` are deprecated (nothing accepts
+//!   them; mTLS client certs have no tst-tcp backend): their constructors
+//!   warn, and they go in 0.12.0.
 //!
 //! GIL boundaries:
 //! - `send`, `recv`, `build()` (both builders), `accept_blocking` ->
@@ -963,7 +964,8 @@ impl PyTcpListenerBuilder {
 // TlsConfig / ClientCert -- forward-compat dataclasses for tcps:// callers
 // ---------------------------------------------------------------------------
 
-/// TLS configuration dataclass for `tcps://` transports.
+/// TLS configuration dataclass for `tcps://` transports. Deprecated: its
+/// constructor warns; removed in 0.12.0.
 ///
 /// **Note:** no builder method accepts these dataclasses today. The
 /// working knobs are:
@@ -989,15 +991,22 @@ impl PyTlsConfig {
     #[new]
     #[pyo3(signature = (ca_pem = None, *, verify_hostname = true, client_cert = None))]
     fn new(
+        py: Python<'_>,
         ca_pem: Option<&[u8]>,
         verify_hostname: bool,
         client_cert: Option<PyClientCert>,
-    ) -> Self {
-        Self {
+    ) -> PyResult<Self> {
+        PyErr::warn(
+            py,
+            &py.get_type::<pyo3::exceptions::PyDeprecationWarning>(),
+            c"tcp.TlsConfig is deprecated: no method accepts it; removed in 0.12.0",
+            1,
+        )?;
+        Ok(Self {
             ca_pem: ca_pem.unwrap_or_default().to_vec(),
             verify_hostname,
             client_cert,
-        }
+        })
     }
 
     // Explicit getters — `ca_pem` returns `bytes` (a `get_all` auto-getter
@@ -1024,7 +1033,8 @@ impl PyTlsConfig {
     }
 }
 
-/// Client certificate for mutual TLS authentication.
+/// Client certificate for mutual TLS authentication. Deprecated: its
+/// constructor warns; removed in 0.12.0.
 #[pyclass(from_py_object, name = "ClientCert", module = "tstrans.tcp", frozen)]
 #[derive(Clone)]
 pub(crate) struct PyClientCert {
@@ -1037,11 +1047,17 @@ pub(crate) struct PyClientCert {
 #[pymethods]
 impl PyClientCert {
     #[new]
-    fn new(cert_pem: &[u8], key_pem: &[u8]) -> Self {
-        Self {
+    fn new(py: Python<'_>, cert_pem: &[u8], key_pem: &[u8]) -> PyResult<Self> {
+        PyErr::warn(
+            py,
+            &py.get_type::<pyo3::exceptions::PyDeprecationWarning>(),
+            c"tcp.ClientCert is deprecated: no method accepts it; removed in 0.12.0",
+            1,
+        )?;
+        Ok(Self {
             cert_pem: cert_pem.to_vec(),
             key_pem: key_pem.to_vec(),
-        }
+        })
     }
 
     // Explicit getters returning `bytes` (not the `list[int]` a `get_all`

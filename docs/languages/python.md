@@ -445,7 +445,10 @@ split).
 ### Receiver hello
 
 `Receiver.open` does a one-shot bind + accept (listener mode). Each
-`recv_bytes()` returns one 188-byte TS packet:
+`recv_bytes()` returns one 188-byte TS packet (its `max_len` argument is
+ignored: `Receiver.recv_bytes(max_len=...)` and
+`ManagedReceiver.recv_bytes(max_len=...)` warn `DeprecationWarning`, and
+the argument is removed in 0.12.0):
 
 ```python
 from tstrans.shells import Receiver
@@ -990,6 +993,10 @@ as the plain `DemuxReceiver` above, and its `stats()` returns the same
 `DemuxReceiverStats` record, counted across reconnects (the packet a
 reconnect's splice drops is in `stats()` and not in `ts_bytes_demuxed()`).
 
+`ManagedSender.srt_stats()` and `ManagedReceiver.srt_stats()` are
+deprecated: they warn `DeprecationWarning` before raising and are removed
+in 0.12.0.
+
 **Why did the managed stream end?** `ManagedDemuxReceiver.end_reason()`
 (only this shell exposes it — not `ManagedReceiver`, `ManagedSender`, or
 `ManagedMuxSender`) returns a `tstrans.shells.EndReason` once the receive
@@ -1392,6 +1399,9 @@ not run the graceful path. A `cancel()` while a `stop()` or the `with`
 exit runs closes the publish side but does not shorten that call (its
 Notice writes, its drain wait and its connection shutdowns do not read
 the cancel): for an end without the Notice, cancel before it.
+`RtspServer.stop(drain_ms=...)` takes an argument it ignores (the drain
+window is the config's `graceful_shutdown_drain_ms`): passing it warns
+`DeprecationWarning`, and the argument is removed in 0.12.0; call `stop()`.
 
 ### RTSP publisher ingest
 
@@ -1828,6 +1838,10 @@ raises `RuntimeError` and consumes nothing, and a transport already closed
 or cancelled raises `TcpError(CLOSED)`.
 `peer_addr()` returns `(host, port)` and raises `TcpError(CLOSED)` once the
 transport is closed or converted.
+
+`tcp.TlsConfig` and `tcp.ClientCert` are deprecated: nothing accepts
+them (the URL and `ListenerBuilder.tls()` below carry TLS), their
+constructors warn `DeprecationWarning`, and they are removed in 0.12.0.
 
 `tcps://` is compiled into the published wheels: callers verify against
 native trust roots, or a custom CA with `tcps://host:port?ca=<pem path>`;

@@ -553,14 +553,16 @@ def test_tls_with_a_missing_pem_is_io(tmp_path: pathlib.Path) -> None:
 
 def test_tcp_tls_config_dataclass_round_trip() -> None:
     """TlsConfig is constructible and fields are accessible."""
-    cfg = tcp.TlsConfig(ca_pem=b"-----BEGIN CERTIFICATE-----\n...", verify_hostname=True)
+    with pytest.warns(DeprecationWarning, match="TlsConfig"):
+        cfg = tcp.TlsConfig(ca_pem=b"-----BEGIN CERTIFICATE-----\n...", verify_hostname=True)
     assert cfg.verify_hostname is True
     assert cfg.ca_pem.startswith(b"-----BEGIN")
 
 
 def test_tcp_tls_config_default_empty_pem() -> None:
     """TlsConfig() with no args uses an empty ca_pem."""
-    cfg = tcp.TlsConfig()
+    with pytest.warns(DeprecationWarning, match="TlsConfig"):
+        cfg = tcp.TlsConfig()
     assert cfg.ca_pem == b""
     assert cfg.verify_hostname is True
     assert cfg.client_cert is None
@@ -568,15 +570,18 @@ def test_tcp_tls_config_default_empty_pem() -> None:
 
 def test_tcp_client_cert_dataclass() -> None:
     """ClientCert stores cert_pem and key_pem."""
-    cert = tcp.ClientCert(cert_pem=b"CERT_PEM", key_pem=b"KEY_PEM")
+    with pytest.warns(DeprecationWarning, match="ClientCert"):
+        cert = tcp.ClientCert(cert_pem=b"CERT_PEM", key_pem=b"KEY_PEM")
     assert cert.cert_pem == b"CERT_PEM"
     assert cert.key_pem == b"KEY_PEM"
 
 
 def test_tcp_tls_config_with_client_cert() -> None:
     """TlsConfig accepts a ClientCert in client_cert."""
-    client_cert = tcp.ClientCert(cert_pem=b"CERT", key_pem=b"KEY")
-    cfg = tcp.TlsConfig(ca_pem=b"CA", client_cert=client_cert)
+    with pytest.warns(DeprecationWarning, match="ClientCert"):
+        client_cert = tcp.ClientCert(cert_pem=b"CERT", key_pem=b"KEY")
+    with pytest.warns(DeprecationWarning, match="TlsConfig"):
+        cfg = tcp.TlsConfig(ca_pem=b"CA", client_cert=client_cert)
     assert cfg.client_cert is not None
     assert cfg.client_cert.cert_pem == b"CERT"
 

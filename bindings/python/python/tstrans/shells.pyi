@@ -271,8 +271,11 @@ class Receiver:
 
     @classmethod
     def open(cls, url: str, *, cancel: Optional[OpenCancel] = ...) -> Receiver: ...
-    def recv_bytes(self, max_len: int = ...) -> bytes:
-        """After ``cancel_handle().cancel()`` this raises ``CLOSED``, buffered data included."""
+    def recv_bytes(self, max_len: Optional[int] = ...) -> bytes:
+        """One 188-byte TS packet per call. After ``cancel_handle().cancel()``
+        this raises ``CLOSED``, buffered data included. ``max_len`` is
+        deprecated and ignored: passing it warns ``DeprecationWarning``;
+        removed in 0.12.0."""
     def cancel_handle(self) -> CancelHandle: ...
     def socket_stats(self) -> SocketStats: ...
     def stats(self) -> ReceiverStats:

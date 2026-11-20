@@ -342,7 +342,7 @@ def test_encrypted_loopback_round_trip() -> None:
         # Send one full 7-packet bundle through; expect ≥1 packet back.
         bundle = (b"\x47" + b"\x00" * 187) * 7  # 1316 bytes
         sender.send_bytes(bundle)
-        received = receiver.recv_bytes(max_len=1500)
+        received = receiver.recv_bytes()
         # First packet is one TS packet (188 bytes) starting with sync.
         assert len(received) == 188
         assert received[0] == 0x47
@@ -459,7 +459,7 @@ def test_managed_sender_receiver_with_reconnect_policy() -> None:
         bundle = (b"\x47" + b"\x00" * 187) * 7  # 1316 bytes
         sender.send_bytes(bundle)
         # First recv yields one 188-byte packet (libsrt boundary).
-        received = receiver.recv_bytes(max_len=1500)
+        received = receiver.recv_bytes()
         assert len(received) == 188
         assert received[0] == 0x47
 

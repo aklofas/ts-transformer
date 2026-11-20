@@ -752,7 +752,7 @@ def _run_cancelled_recv_kind(scenario_id: str, rescue_frame: bytes) -> list[dict
 
     def recv_worker() -> None:
         try:
-            receiver.recv_bytes(max_len=1316)
+            receiver.recv_bytes()
             outcome["end"] = "ok"
         except SrtError as exc:
             outcome["kind"] = exc.kind.name
@@ -823,7 +823,7 @@ def _run_peer_reset_recv_kind(scenario_id: str, packet: bytes) -> list[dict[str,
     def recv_worker() -> None:
         try:
             while True:
-                receiver.recv_bytes(max_len=1316)
+                receiver.recv_bytes()
         except TcpError as exc:
             outcome["kind"] = exc.kind.name
         except BaseException as exc:  # noqa: BLE001

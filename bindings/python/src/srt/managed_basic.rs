@@ -244,8 +244,14 @@ impl PyManagedSender {
     /// SRT-rich 17-field stats are not reachable through `ManagedTransport`
     /// (no accessor on tst-pipeline — see the module doc's "API drift");
     /// raises `SrtError(IO)` on a live sender and `SrtError(CLOSED)` on a
-    /// closed one, as before.
+    /// closed one, as before. Deprecated: warns first; removed in 0.12.0.
     fn srt_stats(&self, py: Python<'_>) -> PyResult<Py<SrtStats>> {
+        PyErr::warn(
+            py,
+            &py.get_type::<pyo3::exceptions::PyDeprecationWarning>(),
+            c"ManagedSender.srt_stats() is deprecated: it always raises; use socket_stats(); removed in 0.12.0",
+            1,
+        )?;
         if self.owned.is_closed() {
             return Err(raise(py, &SRT, BindingError::from(HandleState::Closed)));
         }
@@ -453,10 +459,18 @@ impl PyManagedReceiver {
     /// Releases the GIL during the blocking recv AND during any
     /// in-line reconnect work (factory + backoff sleep). The slot is
     /// held for the whole park; `close()` cancels before taking it, so a
-    /// parked call ends with `SrtError(CLOSED)`.
-    #[pyo3(signature = (max_len = 1500))]
-    fn recv_bytes(&self, py: Python<'_>, max_len: usize) -> PyResult<Py<PyBytes>> {
-        let _cap = max_len.max(188);
+    /// parked call ends with `SrtError(CLOSED)`. `max_len` is deprecated
+    /// and ignored; passing it warns. Removed in 0.12.0.
+    #[pyo3(signature = (max_len = None))]
+    fn recv_bytes(&self, py: Python<'_>, max_len: Option<usize>) -> PyResult<Py<PyBytes>> {
+        if max_len.is_some() {
+            PyErr::warn(
+                py,
+                &py.get_type::<pyo3::exceptions::PyDeprecationWarning>(),
+                c"ManagedReceiver.recv_bytes(max_len=...) is deprecated: the argument is ignored; removed in 0.12.0",
+                1,
+            )?;
+        }
         let bytes = pyres(
             py,
             &SRT,
@@ -505,7 +519,14 @@ impl PyManagedReceiver {
     /// SRT-rich 17-field stats are not directly accessible through
     /// `ManagedRecvTransport` today — same drift as `ManagedSender`.
     /// Use `socket_stats()` for the 16-field scheme-neutral view.
+    /// Deprecated: warns first; removed in 0.12.0.
     fn srt_stats(&self, py: Python<'_>) -> PyResult<Py<SrtStats>> {
+        PyErr::warn(
+            py,
+            &py.get_type::<pyo3::exceptions::PyDeprecationWarning>(),
+            c"ManagedReceiver.srt_stats() is deprecated: it always raises; use socket_stats(); removed in 0.12.0",
+            1,
+        )?;
         if self.owned.is_closed() {
             return Err(raise(py, &SRT, BindingError::from(HandleState::Closed)));
         }

@@ -100,7 +100,7 @@ def test_managed_sender_round_trip_via_loopback() -> None:
             sender.send_bytes(payload)
         # Receive at least the first packet — opportunistic drain
         # quantum from the plain Receiver's recv_bytes semantics.
-        received = receiver.recv_bytes(max_len=1500)
+        received = receiver.recv_bytes()
         assert len(received) >= 188
         assert len(received) % 188 == 0
         # First byte must be the TS sync byte we wrote.
@@ -125,7 +125,7 @@ def test_managed_receiver_round_trip_via_loopback() -> None:
         payload = b"\x47" + b"\xff" * 187  # 188 bytes, distinctive content
         for _ in range(7):
             sender.send_bytes(payload)
-        received = receiver.recv_bytes(max_len=1500)
+        received = receiver.recv_bytes()
         assert len(received) >= 188
         # Sync byte preserved across the loopback.
         assert received[0] == 0x47

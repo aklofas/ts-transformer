@@ -949,10 +949,19 @@ impl PyRtspServer {
     /// read it. For an end without the Notice, cancel before `stop()`.
     ///
     /// Idempotent: a second call is a no-op.
-    #[pyo3(signature = (*, drain_ms = 1000))]
-    pub fn stop(&self, py: Python<'_>, drain_ms: u64) -> PyResult<()> {
-        // Kept for the signature; the drain window is the builder's.
-        let _ = drain_ms;
+    ///
+    /// `drain_ms` is deprecated and ignored (the drain window is the
+    /// config's); passing it warns. Removed in 0.12.0.
+    #[pyo3(signature = (*, drain_ms = None))]
+    pub fn stop(&self, py: Python<'_>, drain_ms: Option<u64>) -> PyResult<()> {
+        if drain_ms.is_some() {
+            PyErr::warn(
+                py,
+                &py.get_type::<pyo3::exceptions::PyDeprecationWarning>(),
+                c"RtspServer.stop(drain_ms=...) is deprecated: the argument is ignored; removed in 0.12.0",
+                1,
+            )?;
+        }
         let server = self.server();
         crate::util::allow_threads_parking(py, move || server.stop())
             .map_err(|e| raise(py, &RTSP, BindingError::from(e)))?;

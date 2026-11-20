@@ -147,13 +147,13 @@ def test_loopback_round_trip_small() -> None:
         payload = (b"\x47" + b"\x00" * 187) * 7
         sender.send_bytes(payload)
         # First recv returns one 188-byte packet.
-        received = receiver.recv_bytes(max_len=1500)
+        received = receiver.recv_bytes()
         assert len(received) == 188
         assert received[0] == 0x47
         # Drain the remaining 6 packets so the receiver thread teardown
         # doesn't fight with the recv-buffer cleanup.
         for _ in range(6):
-            receiver.recv_bytes(max_len=1500)
+            receiver.recv_bytes()
     finally:
         sender.close()
         receiver.close()
@@ -171,7 +171,7 @@ def test_loopback_round_trip_large() -> None:
         # Collect 7 packets — one per recv_bytes call.
         collected = b""
         for _ in range(7):
-            chunk = receiver.recv_bytes(max_len=1500)
+            chunk = receiver.recv_bytes()
             assert len(chunk) == 188
             assert chunk[0] == 0x47, f"bad sync at offset {len(collected)}"
             collected += chunk
@@ -199,7 +199,7 @@ def test_bytes_like_inputs_accepted() -> None:
         sender.send_bytes(memoryview(bytearray(bundle)))
         # Drain all 21 packets.
         for _ in range(21):
-            received = receiver.recv_bytes(max_len=1500)
+            received = receiver.recv_bytes()
             assert received[0] == 0x47
     finally:
         sender.close()
@@ -222,7 +222,7 @@ def test_socket_stats_populated_after_transfer() -> None:
         # Receive the payload to drive the receiver-side counters too.
         # Drain all 7 packets so receiver-side counters tick.
         for _ in range(7):
-            receiver.recv_bytes(max_len=1500)
+            receiver.recv_bytes()
         # Stats should reflect at least one packet sent.
         stats = sender.socket_stats()
         assert stats.bytes_sent > 0
@@ -246,7 +246,7 @@ def test_srt_stats_populated_after_transfer() -> None:
         sender.send_bytes(payload)
         # Drain all 7 packets.
         for _ in range(7):
-            receiver.recv_bytes(max_len=1500)
+            receiver.recv_bytes()
         stats = sender.srt_stats()
         # mbps_estimated_bandwidth is libsrt's bandwidth probe — should
         # be a non-negative float (often 0.0 on a brand-new socket
@@ -358,7 +358,7 @@ def test_cancel_handle_cross_thread() -> None:
         try:
             # Block until a packet arrives — none will, the cancel
             # tears down the socket first.
-            receiver.recv_bytes(max_len=1316)
+            receiver.recv_bytes()
         except BaseException as exc:  # noqa: BLE001
             captured.append(exc)
 
@@ -395,7 +395,7 @@ def test_close_while_recv_parked_cancels_first() -> None:
         try:
             # Block until a packet arrives — none will; the close under
             # test must end this call.
-            receiver.recv_bytes(max_len=1316)
+            receiver.recv_bytes()
         except BaseException as exc:  # noqa: BLE001
             captured.append(exc)
 

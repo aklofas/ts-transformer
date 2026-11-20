@@ -179,7 +179,7 @@ def test_server_start_with_basic_auth_and_realm_succeeds():
     auth = BasicAuth(user="admin", password="secret", realm="protected")
     cfg = RtspServerConfig(bind_addr="127.0.0.1:0", auth=auth)
     s = RtspServer.start(cfg)
-    s.stop(drain_ms=10)
+    s.stop()
 
 
 # ---------------------------------------------------------------------------

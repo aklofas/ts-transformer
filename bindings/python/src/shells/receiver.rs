@@ -140,12 +140,19 @@ impl PyReceiver {
         Self::from_recv(py, crate::shells::open::open_recv(py, url, &oc)?)
     }
 
-    /// One 188-byte TS packet per call; `max_len` is accepted for API
-    /// symmetry and floored at 188. Releases the GIL while parked;
-    /// `close()` on another thread cancels first.
-    #[pyo3(signature = (max_len = 1500))]
-    fn recv_bytes(&self, py: Python<'_>, max_len: usize) -> PyResult<Py<PyBytes>> {
-        let _cap = max_len.max(188);
+    /// One 188-byte TS packet per call. Releases the GIL while parked;
+    /// `close()` on another thread cancels first. `max_len` is deprecated
+    /// and ignored; passing it warns. Removed in 0.12.0.
+    #[pyo3(signature = (max_len = None))]
+    fn recv_bytes(&self, py: Python<'_>, max_len: Option<usize>) -> PyResult<Py<PyBytes>> {
+        if max_len.is_some() {
+            PyErr::warn(
+                py,
+                &py.get_type::<pyo3::exceptions::PyDeprecationWarning>(),
+                c"recv_bytes(max_len=...) is deprecated: the argument is ignored; removed in 0.12.0",
+                1,
+            )?;
+        }
         let pkt = crate::util::allow_threads_parking(py, || {
             self.owned.with_mut_unless_cancelled(|r| r.next_packet())
         });
