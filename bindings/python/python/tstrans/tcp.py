@@ -15,8 +15,9 @@ TransportBuilder
     ``connect_timeout_ms`` knobs before ``build()``.
 Listener
     TCP listener. Construct via
-    ``Listener.builder().bind("host:port").build()``, then call
-    ``accept_blocking()`` per inbound connection.
+    ``Listener.builder().bind("host:port").build()`` or
+    ``Listener.open(url)``, then call ``accept_blocking()`` per inbound
+    connection.
 ListenerBuilder
     Builder for ``Listener`` -- supports ``bind``, ``nodelay``,
     ``rcvbuf``, ``sndbuf``, ``pkt_size`` knobs before ``build()``.

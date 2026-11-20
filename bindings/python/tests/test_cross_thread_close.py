@@ -1334,6 +1334,7 @@ def test_tcp_transport_peer_addr_and_repr_do_not_wait_behind_parked_recv() -> No
     `repr()` answer from the connect-time snapshot while `recv()` is parked
     on a peer that sends nothing."""
     from tstrans import tcp
+    from tstrans.exceptions import TcpError, TcpErrorKind
 
     srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     srv.bind(("127.0.0.1", 0))
@@ -1343,7 +1344,7 @@ def test_tcp_transport_peer_addr_and_repr_do_not_wait_behind_parked_recv() -> No
     conn, _ = srv.accept()  # held open and silent for the whole test
     try:
         before = (t.peer_addr(), repr(t))
-        assert before == (f"127.0.0.1:{port}", f"Transport(peer=127.0.0.1:{port})")
+        assert before == (("127.0.0.1", port), f"Transport(peer=127.0.0.1:{port})")
         got = _assert_getter_does_not_wait_behind_park(
             "tcp.Transport.peer_addr() / repr()",
             lambda: t.recv(bytearray(1024)),
@@ -1351,7 +1352,10 @@ def test_tcp_transport_peer_addr_and_repr_do_not_wait_behind_parked_recv() -> No
             t.close,
         )
         assert got == before
-        assert (t.peer_addr(), repr(t)) == ("", "Transport(closed)")
+        assert repr(t) == "Transport(closed)"
+        with pytest.raises(TcpError) as ei:
+            t.peer_addr()
+        assert ei.value.kind == TcpErrorKind.CLOSED
     finally:
         t.close()
         conn.close()

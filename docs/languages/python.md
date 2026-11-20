@@ -700,7 +700,7 @@ falls into two groups.
 | `close()`, `cancel_handle()`, `CancelHandle.cancel()` / `is_cancelled()` | cancel first, then free | quiet |
 | `is_alive()` | `True` — a parked call means the object is open | `False` |
 | `repr()` | the open form | the `closed` form |
-| `local_addr()` / `local_port()` / `local_addr_port()`, `tcp.Transport.peer_addr()` | the value captured when the object was built | raises `CLOSED` (`peer_addr()` returns `""`) |
+| `local_addr()` / `local_port()` / `local_addr_port()`, `tcp.Transport.peer_addr()` | the value captured when the object was built | raises `CLOSED` |
 | `peer_addr()`, `source_rejected()` on the receiving shells, `udp.RecvTransport` and `rist.RecvTransport` | the publisher's address and the count of what the `source` pin turned away, as they stand (the same count in `stats().source_rejected` waits, like `stats()`) | the shells keep answering; the two transports raise `CLOSED` |
 | `video_handle()` … `data_handle()` on the three `MuxSender` classes | the handles of the program config the sender was built from | `None` |
 | `reconnect_attempts()`, `reconnect_stats()` on the managed shells | live counters kept outside the object | `reconnect_attempts()` keeps its last value; `reconnect_stats()` raises `CLOSED` |
@@ -1722,15 +1722,39 @@ with Transport.builder().url("tcp://host:5001").nodelay(True).build() as conn:
 # Server.
 with Listener.builder().bind("0.0.0.0:5001").build() as listener:
     conn = listener.accept_blocking()        # -> Transport
+    host, port = conn.peer_addr()            # the client's address
     with conn:
         n = conn.recv(buf := bytearray(64 * 1024))
+
+# Server from a URL; the accepted connection becomes a shell.
+with Listener.open("tcp://0.0.0.0:5001?listen=1") as listener:
+    rx = listener.accept_blocking().into_demux_receiver()
+    for event in rx:
+        ...
 ```
+
+`Listener.open(url)` binds at once from a `tcp://ip:port?listen=1` (or
+`tcps://ip:port?listen=1&cert=<pem>&key=<pem>`) URL and raises
+`TcpError(URL)` for a URL without `?listen=1` or with a host name instead
+of an IP literal. `Transport.into_receiver()`, `into_demux_receiver(demux_config=None)`,
+`into_sender()` and `into_mux_sender(program_config)` consume the
+connection into the matching `tstrans.shells` class; the transport raises
+`TcpError(CLOSED)` afterwards, and a config that is refused raises before
+the connection is taken, so a corrected retry converts the same one.
+`peer_addr()` returns `(host, port)` and raises `TcpError(CLOSED)` once the
+transport is closed or converted.
 
 `tcps://` is compiled into the published wheels: callers verify against
 native trust roots, or a custom CA with `tcps://host:port?ca=<pem path>`;
 listeners serve TLS via `Listener.builder().bind("host:0").tls(cert,
 key)` (PEM file paths). `Listener.builder().bind("host:0")` plus
 `local_port()` gives you an ephemeral port.
+
+`recv()` raises `TcpError(BROKEN)` once the peer closed the connection
+(cleanly or not), and `send()` the same when the connection fails under
+it. `ListenerBuilder.tls()` raises `TcpError(IO)` at `build()` for a file
+that cannot be read or holds no decodable PEM, and `TcpError(TLS)` for any
+other certificate or key refusal.
 
 `recv(buf)` refuses an empty `bytearray` with `ValueError`, and keeps
 `buf` exported while it blocks: a resize of `buf` from another thread in

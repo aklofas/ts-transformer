@@ -10,7 +10,7 @@
 //!   use it as a sender, a receiver, or both. The Python binding does NOT
 //!   enforce mutual exclusion (Rust doesn't either).
 //! - `Listener` wraps `tst_tcp::TcpListener`; `accept_blocking()` returns
-//!   a `Transport`.
+//!   a `Transport`, which `into_*` turns into a shell.
 //! - TLS (`tcps://`) is compiled in when the tst-py `tls` feature is on
 //!   (default; published wheels ship it). Callers verify against native
 //!   trust roots or a custom CA via the `?ca=<pem path>` URL param;
@@ -40,7 +40,13 @@
 //! resolved on `tstrans.exceptions.TcpErrorKind` and checked at
 //! `import tstrans`.
 
-#![allow(unsafe_op_in_unsafe_fn, clippy::useless_conversion)]
+#![allow(
+    unsafe_op_in_unsafe_fn,
+    clippy::useless_conversion,
+    // The `into_*` conversions take `&self`: the slot's `take()` consumes the
+    // connection, not the Python object.
+    clippy::wrong_self_convention
+)]
 
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -53,13 +59,20 @@ use pyo3::types::{PyBytes, PyMemoryView};
 
 use tst_core::transport::{RecvTransport, Transport};
 use tst_core::url::redact_url;
-use tst_pipeline::binding::{BindingError, BindingErrorKind, HandleState, Owned, SendHalf};
+use tst_pipeline::binding::opened::{cancel_of, recv_cancel_of};
+use tst_pipeline::binding::{
+    BindingError, BindingErrorKind, Domain, HandleState, Opened, Owned, SendHalf,
+};
 use tst_tcp::error::TcpError;
 use tst_tcp::{TcpListener, TcpTransport};
 
 use crate::generated::stats_tcp::SocketStats;
 use crate::raise::{TCP, pyok, pyres, raise};
-use crate::util::{CancelSource, close_owned, drop_owned};
+use crate::shells::demux_receiver::PyDemuxReceiver as PyShellDemuxReceiver;
+use crate::shells::mux_sender::PyMuxSender as PyShellMuxSender;
+use crate::shells::receiver::PyReceiver as PyShellReceiver;
+use crate::shells::sender::PySender as PyShellSender;
+use crate::util::{CancelSource, PyAddr, addr_tuple, close_owned, drop_owned};
 
 // ---------------------------------------------------------------------------
 // PyTcpTransport -- wraps tst_tcp::TcpTransport (dual-trait send+recv)
@@ -123,7 +136,8 @@ impl PyTcpTransport {
     /// `bytes`, `bytearray`, `memoryview`, or any buffer-protocol object.
     ///
     /// Raises `TcpError(kind=TOO_LARGE)` if `len(payload)` exceeds
-    /// the configured `pkt_size` (default 64 KiB).
+    /// the configured `pkt_size` (default 64 KiB), and
+    /// `TcpError(kind=BROKEN)` when the connection fails under the send.
     ///
     /// Releases the GIL during the kernel send.
     fn send(&self, py: Python<'_>, payload: &Bound<'_, PyAny>) -> PyResult<()> {
@@ -166,7 +180,8 @@ impl PyTcpTransport {
     /// from peer EOF).
     ///
     /// Raises `TcpError(kind=CLOSED)` if the transport has been closed.
-    /// Raises `TcpError(kind=IO)` on connection errors (including peer close).
+    /// Raises `TcpError(kind=BROKEN)` when the peer closed the connection
+    /// (cleanly or not).
     ///
     /// Releases the GIL while blocking on kernel recv.
     fn recv(&self, py: Python<'_>, buf: &Bound<'_, pyo3::types::PyByteArray>) -> PyResult<usize> {
@@ -217,16 +232,67 @@ impl PyTcpTransport {
         copied
     }
 
-    /// Peer address as a `"host:port"` string. Returns `""` if the transport
-    /// has been closed.
+    /// Peer address as `(host, port)`. Raises `TcpError(kind=CLOSED)` once
+    /// the transport is closed or consumed by an `into_*` conversion.
     ///
     /// Answered from the connect-time snapshot, never the slot, so it does
     /// not wait behind a `recv()` parked on another thread.
-    fn peer_addr(&self) -> String {
-        self.owned
-            .open_snapshot()
-            .map(ToString::to_string)
-            .unwrap_or_default()
+    fn peer_addr(&self, py: Python<'_>) -> PyResult<PyAddr> {
+        match self.owned.open_snapshot() {
+            Some(peer) => Ok(addr_tuple(*peer)),
+            None => Err(raise(py, &TCP, BindingError::from(HandleState::Closed))),
+        }
+    }
+
+    /// Consume the connection into a `shells.Receiver` (TS bytes in).
+    /// Later calls on this transport raise `TcpError(kind=CLOSED)`.
+    fn into_receiver(&self, py: Python<'_>) -> PyResult<PyShellReceiver> {
+        let t = self.take_transport(py)?;
+        let cancel = recv_cancel_of(&t);
+        PyShellReceiver::from_opened(py, Opened::new(Box::new(t), cancel, Domain::Tcp))
+    }
+
+    /// Consume the connection into a `shells.DemuxReceiver`. A
+    /// `demux_config` that fails to convert raises before the transport is
+    /// taken, so a corrected retry converts the same connection.
+    #[pyo3(signature = (demux_config = None))]
+    fn into_demux_receiver(
+        &self,
+        py: Python<'_>,
+        demux_config: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<PyShellDemuxReceiver> {
+        let opts = match demux_config {
+            None => None,
+            Some(cfg) => Some(crate::mpegts::build_demuxer_config(py, cfg)?),
+        };
+        let t = self.take_transport(py)?;
+        let cancel = recv_cancel_of(&t);
+        PyShellDemuxReceiver::from_opened(py, Opened::new(Box::new(t), cancel, Domain::Tcp), opts)
+    }
+
+    /// Consume the connection into a `shells.Sender` (TS bytes out).
+    fn into_sender(&self, py: Python<'_>) -> PyResult<PyShellSender> {
+        let t = self.take_transport(py)?;
+        let cancel = cancel_of(&t);
+        PyShellSender::from_opened(py, Opened::new(Box::new(t), cancel, Domain::Tcp))
+    }
+
+    /// Consume the connection into a `shells.MuxSender` for the
+    /// single-program `program_config`. A config the muxer refuses raises
+    /// `MuxError(CONFIG_INVALID)` before the transport is taken.
+    fn into_mux_sender(
+        &self,
+        py: Python<'_>,
+        program_config: PyRef<'_, crate::mux::PyMuxerProgramConfig>,
+    ) -> PyResult<PyShellMuxSender> {
+        let muxer_cfg = PyShellMuxSender::muxer_config_for(py, &program_config)?;
+        let t = self.take_transport(py)?;
+        let cancel = cancel_of(&t);
+        PyShellMuxSender::from_opened_with_config(
+            py,
+            Opened::new(Box::new(t), cancel, Domain::Tcp),
+            muxer_cfg,
+        )
     }
 
     /// Close the transport. Idempotent -- further `.send()` / `.recv()` calls
@@ -277,6 +343,17 @@ impl PyTcpTransport {
             Some(peer) => format!("Transport(peer={peer})"),
             None => "Transport(closed)".to_string(),
         }
+    }
+}
+
+impl PyTcpTransport {
+    /// Take the connection out for a consuming conversion; `CLOSED` once it
+    /// was closed or consumed. Waits, with the GIL released, for a `send()`
+    /// or `recv()` on another thread to return.
+    fn take_transport(&self, py: Python<'_>) -> PyResult<TcpTransport> {
+        crate::util::allow_threads_parking(py, || self.owned.take())
+            .map(|half| half.0)
+            .ok_or_else(|| raise(py, &TCP, BindingError::from(HandleState::Closed)))
     }
 }
 
@@ -449,8 +526,9 @@ impl tst_pipeline::binding::Close for TcpListenerHeld {
 
 /// TCP listener -- wraps `tst_tcp::TcpListener`.
 ///
-/// Construct via `Listener.builder().bind("host:port").build()`, then call
-/// `accept_blocking()` to receive a `Transport` per inbound connection.
+/// Construct via `Listener.builder().bind("host:port").build()` or
+/// `Listener.open(url)`, then call `accept_blocking()` to receive a
+/// `Transport` per inbound connection.
 ///
 /// Binding to port 0 lets the kernel pick a free ephemeral port; read it
 /// back via `local_port()` before accepting.
@@ -480,6 +558,24 @@ impl PyTcpListener {
     #[staticmethod]
     fn builder() -> PyTcpListenerBuilder {
         PyTcpListenerBuilder::default()
+    }
+
+    /// Bind a listener from a URL (`tcp://ip:port?listen=1`, or
+    /// `tcps://ip:port?listen=1&cert=<pem>&key=<pem>`), at once; accept with
+    /// `accept_blocking()`. Raises `TcpError(kind=URL)` for a URL without
+    /// `?listen=1` or whose host is not an IP literal, and the builder's
+    /// kinds for the bind and the TLS files.
+    #[staticmethod]
+    fn open(py: Python<'_>, url: &str) -> PyResult<PyTcpListener> {
+        let built = crate::util::allow_threads_parking(py, || {
+            tst_tcp::TcpListenerBuilder::from_url(url)
+                .map_err(TcpError::Url)
+                .and_then(|b| b.build())
+        });
+        match built {
+            Ok(l) => Ok(make_py_tcp_listener(l)),
+            Err(e) => Err(raise(py, &TCP, BindingError::from(e))),
+        }
     }
 
     /// Obtain a cross-thread cancel handle. Lock-free: never waits behind a
@@ -568,6 +664,16 @@ impl PyTcpListener {
     }
 }
 
+/// Wrap a bound listener; its port is read once, here.
+fn make_py_tcp_listener(l: TcpListener) -> PyTcpListener {
+    let cancel = CancelSource::new(Arc::new(l.cancel_handle()));
+    let local_port = l.local_addr().ok().map(|a| a.port());
+    PyTcpListener {
+        owned: Owned::new(TcpListenerHeld(l), cancel.as_dyn(), local_port),
+        cancel,
+    }
+}
+
 // ---------------------------------------------------------------------------
 // PyTcpListenerBuilder -- builder for PyTcpListener
 // ---------------------------------------------------------------------------
@@ -629,7 +735,9 @@ impl PyTcpListenerBuilder {
 
     /// Serve TLS (`tcps://`) on accepted connections. `cert` and `key` are
     /// PEM certificate-chain / private-key *file paths*, read at `build()`
-    /// (missing or malformed files raise `TcpError(kind=TLS)`). A source
+    /// (a file that cannot be read or holds no decodable PEM raises
+    /// `TcpError(kind=IO)`, any other certificate or key refusal
+    /// `TcpError(kind=TLS)`). A source
     /// build without the `tls` feature raises `TcpError(kind=TLS_DISABLED)`
     /// at `build()`. Paths ride the internal listener URL, so a path
     /// containing `&`, `#`, or `?` raises `TcpError(kind=INVALID_CONFIG)`
@@ -705,14 +813,7 @@ impl PyTcpListenerBuilder {
             });
 
         match listener {
-            Ok(l) => {
-                let cancel = CancelSource::new(Arc::new(l.cancel_handle()));
-                let local_port = l.local_addr().ok().map(|a| a.port());
-                Ok(PyTcpListener {
-                    owned: Owned::new(TcpListenerHeld(l), cancel.as_dyn(), local_port),
-                    cancel,
-                })
-            }
+            Ok(l) => Ok(make_py_tcp_listener(l)),
             Err(e) => Err(raise(py, &TCP, BindingError::from(e))),
         }
     }

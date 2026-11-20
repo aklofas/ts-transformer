@@ -13,9 +13,11 @@ mypy --strict clean.
 from __future__ import annotations
 
 from types import TracebackType
-from typing import Any, Optional, Type, Union, final
+from typing import Any, Optional, Tuple, Type, Union, final
 
+from tstrans.mpegts import DemuxerConfig, MuxerProgramConfig
 from tstrans.shells import CancelHandle as CancelHandle
+from tstrans.shells import DemuxReceiver, MuxSender, Receiver, Sender
 
 # A bytes-like input -- `bytes`, `bytearray`, `memoryview`, NumPy uint8,
 # or any object implementing the buffer protocol. Concrete extraction
@@ -152,8 +154,8 @@ class Transport:
             (default 64 KiB).
         TcpError(kind=CLOSED)
             If the transport has been closed.
-        TcpError(kind=IO)
-            On underlying socket errors.
+        TcpError(kind=BROKEN)
+            When the connection fails under the send.
         """
         ...
 
@@ -176,13 +178,41 @@ class Transport:
             If ``buf`` is empty (refused before any socket read).
         TcpError(kind=CLOSED)
             If the transport has been closed.
-        TcpError(kind=IO)
-            On connection errors, including graceful peer close.
+        TcpError(kind=BROKEN)
+            When the peer closed the connection, cleanly or not.
         """
         ...
 
-    def peer_addr(self) -> str:
-        """Peer address as ``"host:port"``. Returns ``""`` if closed."""
+    def peer_addr(self) -> Tuple[str, int]:
+        """Peer address as ``(host, port)``; never waits behind a parked
+        ``recv()``. Raises ``TcpError(kind=CLOSED)`` once the transport is
+        closed or consumed by an ``into_*`` conversion."""
+        ...
+
+    def into_receiver(self) -> Receiver:
+        """Consume the connection into a ``shells.Receiver`` (TS bytes in).
+        Later calls on this transport raise ``TcpError(kind=CLOSED)``; a
+        ``send()`` or ``recv()`` in progress on another thread is waited
+        for."""
+        ...
+
+    def into_demux_receiver(
+        self,
+        demux_config: Optional[DemuxerConfig] = ...,
+    ) -> DemuxReceiver:
+        """Consume the connection into a ``shells.DemuxReceiver``. A
+        ``demux_config`` that fails to convert raises before the transport
+        is taken, so a corrected retry converts the same connection."""
+        ...
+
+    def into_sender(self) -> Sender:
+        """Consume the connection into a ``shells.Sender`` (TS bytes out)."""
+        ...
+
+    def into_mux_sender(self, program_config: MuxerProgramConfig) -> MuxSender:
+        """Consume the connection into a ``shells.MuxSender``. A config the
+        muxer refuses raises ``MuxError(CONFIG_INVALID)`` before the
+        transport is taken, leaving it usable."""
         ...
 
     def close(self) -> None:
@@ -286,8 +316,9 @@ class TransportBuilder:
 class Listener:
     """TCP listener wrapping ``tst_tcp::TcpListener``.
 
-    Construct via ``Listener.builder().bind("host:port").build()``, then
-    call ``accept_blocking()`` for each inbound connection.
+    Construct via ``Listener.builder().bind("host:port").build()`` or
+    ``Listener.open(url)``, then call ``accept_blocking()`` for each
+    inbound connection.
 
     Binding to port 0 lets the kernel pick a free ephemeral port; read
     it back via ``local_port()`` before accepting.
@@ -297,6 +328,24 @@ class Listener:
     @staticmethod
     def builder() -> ListenerBuilder:
         """Return a fresh builder. Chain setters then call ``.build()``."""
+        ...
+
+    @staticmethod
+    def open(url: str) -> Listener:
+        """Bind a listener from a URL, at once: ``tcp://ip:port?listen=1``,
+        or ``tcps://ip:port?listen=1&cert=<pem>&key=<pem>``.
+
+        Raises
+        ------
+        TcpError(kind=URL)
+            For a URL without ``?listen=1`` or whose host is not an IP
+            literal.
+        TcpError(kind=IO)
+            If the port cannot be bound, or a TLS file cannot be read or
+            holds no decodable PEM.
+        TcpError(kind=TLS)
+            For any other certificate or key refusal.
+        """
         ...
 
     def cancel_handle(self) -> CancelHandle:
@@ -384,8 +433,9 @@ class ListenerBuilder:
         """Serve TLS (``tcps://``) on accepted connections.
 
         ``cert`` / ``key`` are PEM certificate-chain / private-key *file
-        paths*, read at ``build()`` (missing or malformed files raise
-        ``TcpError(kind=TLS)``). A source build without the ``tls``
+        paths*, read at ``build()``: a file that cannot be read or holds no
+        decodable PEM raises ``TcpError(kind=IO)``, any other certificate or
+        key refusal ``TcpError(kind=TLS)``. A source build without the ``tls``
         feature raises ``TcpError(kind=TLS_DISABLED)`` at ``build()``.
         A path containing ``&``, ``#``, or ``?`` raises
         ``TcpError(kind=INVALID_CONFIG)`` at ``build()``.

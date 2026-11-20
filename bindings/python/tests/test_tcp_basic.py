@@ -6,6 +6,8 @@ Covers:
 - error-kind propagation, TcpErrorKind count sentinel, test-helper wiring
 """
 
+import socket
+import sys
 import threading
 import time
 
@@ -14,13 +16,17 @@ import pathlib
 import pytest
 
 from tstrans import tcp
-from tstrans.exceptions import TcpError, TcpErrorKind
+from tstrans.exceptions import MuxError, MuxErrorKind, TcpError, TcpErrorKind
+from tstrans.mpegts import DemuxerConfig, Pts90khz
+
+from _builders.mux_programs import masquerade_program, video_only_program
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
 _PAYLOAD = b"\x47\x40\x00\x10" + b"\x00" * 184  # one valid 188-byte TS packet
+NAL_AUD = b"\x00\x00\x00\x01\x09\xF0"
 
 
 def _listener_and_port() -> tuple[tcp.Listener, int]:
@@ -292,27 +298,239 @@ def test_tcp_transport_stats_update_after_send() -> None:
     listener.close()
 
 
-def test_tcp_transport_peer_addr() -> None:
-    """Transport.peer_addr() returns a non-empty string when open."""
+def _accepted_pair() -> tuple[socket.socket, tcp.Transport, tcp.Listener]:
+    """A plain client socket connected to a listener on a kernel-picked
+    port, the listener's accepted `Transport`, and the listener. The
+    connect completes against the backlog, so no worker thread is needed."""
     listener, port = _listener_and_port()
-    ready = threading.Event()
+    client = socket.create_connection(("127.0.0.1", port), timeout=5.0)
+    try:
+        accepted = listener.accept_blocking()
+    except BaseException:
+        client.close()
+        listener.close()
+        raise
+    return client, accepted, listener
 
-    def server_thread() -> None:
-        ready.set()
-        peer = listener.accept_blocking()
-        peer.close()
 
-    t = threading.Thread(target=server_thread, daemon=True)
-    t.start()
-    ready.wait(timeout=2.0)
+def test_peer_addr_is_a_host_port_tuple() -> None:
+    client, accepted, listener = _accepted_pair()
+    try:
+        caller = tcp.Transport.builder().url(f"tcp://127.0.0.1:{listener.local_port()}").build()
+        try:
+            assert caller.peer_addr() == ("127.0.0.1", listener.local_port())
+        finally:
+            caller.close()
+        assert accepted.peer_addr() == client.getsockname()
+    finally:
+        accepted.close()
+        client.close()
+        listener.close()
 
-    caller = tcp.Transport.builder().url(f"tcp://127.0.0.1:{port}").build()
-    addr = caller.peer_addr()
-    assert addr != ""
-    assert str(port) in addr
-    caller.close()
-    t.join(timeout=5.0)
-    listener.close()
+
+def test_peer_addr_after_close_raises_closed() -> None:
+    client, accepted, listener = _accepted_pair()
+    try:
+        accepted.close()
+        with pytest.raises(TcpError) as ei:
+            accepted.peer_addr()
+        assert ei.value.kind == TcpErrorKind.CLOSED
+    finally:
+        client.close()
+        listener.close()
+
+
+def test_peer_addr_of_an_ipv4_client_on_a_dual_stack_listener_is_ipv4() -> None:
+    # The kernel hands the listener ::ffff:127.0.0.1; the tuple reports it in
+    # IPv4 form, as the UDP and RIST source records do.
+    try:
+        listener = tcp.Listener.open("tcp://[::]:0?listen=1")
+    except TcpError as e:
+        if sys.platform.startswith("linux"):
+            pytest.fail(f"no IPv6 wildcard bind on Linux: {e}")
+        pytest.skip(f"no IPv6 wildcard bind: {e}")
+    try:
+        try:
+            client = socket.create_connection(("127.0.0.1", listener.local_port()), timeout=5.0)
+        except OSError as e:
+            if sys.platform.startswith("linux"):
+                raise
+            pytest.skip(f"IPv4 does not reach a [::] listener here: {e}")
+        try:
+            accepted = listener.accept_blocking()
+            assert accepted.peer_addr() == client.getsockname()
+            assert client.getsockname()[0] == "127.0.0.1"
+            accepted.close()
+        finally:
+            client.close()
+    finally:
+        listener.close()
+
+
+def test_listener_open_binds_and_reports_its_port() -> None:
+    listener = tcp.Listener.open("tcp://127.0.0.1:0?listen=1")
+    try:
+        port = listener.local_port()
+        assert port > 0
+        client = socket.create_connection(("127.0.0.1", port), timeout=5.0)
+        try:
+            accepted = listener.accept_blocking()
+            client.sendall(_PAYLOAD)
+            buf = bytearray(4096)
+            n = accepted.recv(buf)
+            assert bytes(buf[:n]) == _PAYLOAD
+            accepted.close()
+        finally:
+            client.close()
+    finally:
+        listener.close()
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "tcp://127.0.0.1:0",
+        "tcp://localhost:0?listen=1",
+        "tcp://127.0.0.1:0?listen=maybe",
+    ],
+)
+def test_listener_open_without_listen_is_a_url_error(url: str) -> None:
+    with pytest.raises(TcpError) as ei:
+        tcp.Listener.open(url)
+    assert ei.value.kind == TcpErrorKind.URL
+
+
+def test_listener_open_serves_tls() -> None:
+    cert, key = _tls_fixture_paths()
+    listener = tcp.Listener.open(f"tcps://127.0.0.1:0?listen=1&cert={cert}&key={key}")
+    received: list[bytes] = []
+    try:
+        port = listener.local_port()
+
+        def serve() -> None:
+            peer = listener.accept_blocking()
+            buf = bytearray(4096)
+            n = peer.recv(buf)
+            received.append(bytes(buf[:n]))
+            peer.close()
+
+        t = threading.Thread(target=serve, daemon=True)
+        t.start()
+        caller = tcp.Transport.builder().url(f"tcps://127.0.0.1:{port}?ca={cert}").build()
+        caller.send(_PAYLOAD)
+        caller.close()
+        t.join(timeout=10.0)
+    finally:
+        listener.close()
+    assert received == [_PAYLOAD]
+
+
+def _ts_packets(count: int) -> bytes:
+    """`count` aligned null-PID TS packets, each tagged with its index."""
+    return b"".join(bytes([0x47, 0x1F, 0xFF, 0x10, i]) + b"\xff" * 183 for i in range(count))
+
+
+def test_into_receiver_delivers_the_peers_ts() -> None:
+    client, accepted, listener = _accepted_pair()
+    try:
+        rx = accepted.into_receiver()
+        try:
+            data = _ts_packets(8)
+            client.sendall(data)
+            got = b""
+            deadline = time.monotonic() + 10.0
+            while len(got) < len(data) and time.monotonic() < deadline:
+                got += rx.recv_bytes()
+            assert got == data
+            with pytest.raises(TcpError) as ei:
+                accepted.peer_addr()
+            assert ei.value.kind == TcpErrorKind.CLOSED
+        finally:
+            rx.close()
+    finally:
+        client.close()
+        listener.close()
+
+
+def test_into_demux_receiver_and_into_sender_consume_the_transport() -> None:
+    client, accepted, listener = _accepted_pair()
+    try:
+        rx = accepted.into_demux_receiver(DemuxerConfig())
+        rx.close()
+        for call in (
+            accepted.into_receiver,
+            accepted.into_sender,
+            accepted.into_demux_receiver,
+            lambda: accepted.into_mux_sender(video_only_program()),
+            lambda: accepted.send(_PAYLOAD),
+        ):
+            with pytest.raises(TcpError) as ei:
+                call()
+            assert ei.value.kind == TcpErrorKind.CLOSED
+    finally:
+        client.close()
+        listener.close()
+
+    client, accepted, listener = _accepted_pair()
+    try:
+        tx = accepted.into_sender()
+        try:
+            tx.send_bytes(_ts_packets(4))
+            tx.flush()
+            client.settimeout(5.0)
+            got = b""
+            while len(got) < 4 * 188:
+                chunk = client.recv(4096)
+                assert chunk, "the peer closed before the sender's bytes arrived"
+                got += chunk
+            assert got == _ts_packets(4)
+        finally:
+            tx.close()
+    finally:
+        client.close()
+        listener.close()
+
+
+def test_into_mux_sender_with_a_refused_config_leaves_the_transport_usable() -> None:
+    client, accepted, listener = _accepted_pair()
+    try:
+        with pytest.raises(MuxError) as ei:
+            accepted.into_mux_sender(masquerade_program())
+        assert ei.value.kind is MuxErrorKind.CONFIG_INVALID
+        assert accepted.peer_addr() == client.getsockname()
+        with pytest.raises(OverflowError):
+            accepted.into_demux_receiver(DemuxerConfig(pes_cap_per_pid=1 << 100))
+        assert accepted.peer_addr() == client.getsockname()
+        tx = accepted.into_mux_sender(video_only_program())
+        try:
+            tx.send_video(NAL_AUD, pts=Pts90khz.from_raw(0))
+            client.settimeout(5.0)
+            first = client.recv(188)
+            assert first[:1] == b"\x47"
+        finally:
+            tx.close()
+    finally:
+        client.close()
+        listener.close()
+
+
+def test_recv_after_a_clean_peer_close_is_broken() -> None:
+    client, accepted, listener = _accepted_pair()
+    try:
+        client.close()
+        with pytest.raises(TcpError) as ei:
+            accepted.recv(bytearray(4096))
+        assert ei.value.kind == TcpErrorKind.BROKEN
+    finally:
+        accepted.close()
+        listener.close()
+
+
+def test_tls_with_a_missing_pem_is_io(tmp_path: pathlib.Path) -> None:
+    missing = str(tmp_path / "missing.pem")
+    with pytest.raises(TcpError) as ei:
+        tcp.Listener.builder().bind("127.0.0.1:0").tls(missing, missing).build()
+    assert ei.value.kind == TcpErrorKind.IO
 
 
 # ---------------------------------------------------------------------------
