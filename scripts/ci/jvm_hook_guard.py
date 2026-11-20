@@ -10,6 +10,13 @@ sources compile without the feature fails the derivation itself (a class only
 the tests have can have no shipped native). A class (or package) whose Rust
 natives are all hook natives contributes its prefix too.
 
+The parser refuses on purpose what it cannot classify: a `#[cfg(...)]` naming
+the feature together with `not(...)` or `any(...)` (`not(feature =
+"jni-test-hooks")` on a stub included), and a native defined twice (say under
+two complementary cfgs). When code needs such a form, extend `hook_cfg` or
+`scan_sources` with a fixture in scripts/ci/tests/jvm-hook-guard-selftest.sh,
+rather than writing the attribute in a shape this parser happens to accept.
+
   jvm_hook_guard.py derive [--src DIR]
       print the hook symbols and prefixes
   jvm_hook_guard.py check [--src DIR] [--expect-hooks] FILE...
