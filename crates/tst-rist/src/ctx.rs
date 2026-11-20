@@ -9,7 +9,7 @@ use std::net::{SocketAddr, UdpSocket};
 use std::os::raw::c_void;
 use std::sync::{Arc, Mutex};
 
-use tst_core::transport::SourceHandle;
+use tst_core::transport::SourceRecord;
 
 use crate::config::{RistConfig, RistProfile};
 use crate::error::RistError;
@@ -188,7 +188,7 @@ impl RistCtx {
         // The peer callbacks too: librist's protocol thread reads them without
         // a lock.
         let (peers, peers_arg) = if bind {
-            let peers = Arc::new(Peers::new(SourceHandle::new(cfg.source)));
+            let peers = Arc::new(Peers::new(SourceRecord::new(cfg.source)));
             let arg = Peers::register(ctx, &peers);
             (Some(peers), arg)
         } else {

@@ -72,7 +72,7 @@ pub mod conformance;
 #[cfg(feature = "std")]
 mod source;
 #[cfg(feature = "std")]
-pub use source::{SourceHandle, SourcePin};
+pub use source::{SourceHandle, SourcePin, SourceRecord};
 
 // ============================================================
 // Wire-level socket stats (shared between Transport + RecvTransport)
@@ -862,10 +862,12 @@ mod end_reason_tests {
 
     #[test]
     fn a_boxed_transport_forwards_its_source_handle() {
-        use super::SourceHandle;
-        struct Sourced(SourceHandle);
+        use super::{SourceHandle, SourceRecord};
+        struct Sourced(SourceRecord);
         impl RecvTransport for Sourced {
             fn recv_bytes(&mut self, _: &mut [u8]) -> Result<usize, TransportError> {
+                // Stands in for a datagram refused for its source.
+                self.0.count_rejected();
                 Ok(0)
             }
             fn max_payload(&self) -> usize {
@@ -875,14 +877,16 @@ mod end_reason_tests {
                 true
             }
             fn source_handle(&self) -> Option<SourceHandle> {
-                Some(self.0.clone())
+                Some(self.0.handle())
             }
         }
         assert!(Silent.source_handle().is_none());
-        let h = SourceHandle::default();
-        let boxed: std::boxed::Box<dyn RecvTransport> = std::boxed::Box::new(Sourced(h.clone()));
-        boxed.source_handle().unwrap().count_rejected();
+        let mut boxed: std::boxed::Box<dyn RecvTransport> =
+            std::boxed::Box::new(Sourced(SourceRecord::default()));
+        let h = boxed.source_handle().unwrap();
+        boxed.recv_bytes(&mut []).unwrap();
         assert_eq!(h.rejected(), 1);
+        assert_eq!(boxed.source_handle().unwrap().rejected(), 1);
     }
 }
 

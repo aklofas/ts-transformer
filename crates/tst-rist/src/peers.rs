@@ -15,7 +15,7 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
-use tst_core::transport::SourceHandle;
+use tst_core::transport::SourceRecord;
 
 /// What the connect callback decided for a new peer.
 #[derive(Debug, PartialEq, Eq)]
@@ -34,7 +34,7 @@ pub(crate) enum Verdict {
 /// without `source` delivers what it always did.
 pub(crate) fn on_connect(
     table: &mut HashMap<usize, SocketAddr>,
-    source: &SourceHandle,
+    source: &SourceRecord,
     peer: usize,
     ip_text: &str,
     port: u16,
@@ -47,7 +47,7 @@ pub(crate) fn on_connect(
         return Verdict::Unrecorded;
     };
     // librist's text carries no IPv6 scope id, so none is kept here.
-    let addr = SourceHandle::canonical(SocketAddr::new(ip, port));
+    let addr = SourceRecord::canonical(SocketAddr::new(ip, port));
     // `allows`, not `admit`: a peer is created before its key is proven, so
     // only a delivered block may latch a `first` pin.
     if !source.allows(addr.ip()) {
@@ -75,11 +75,11 @@ pub(crate) struct Peers {
     /// that cached a (pointer, address) pair re-reads the table when it moves,
     /// which also covers librist reusing a freed peer's pointer.
     generation: AtomicU64,
-    pub(crate) source: SourceHandle,
+    pub(crate) source: SourceRecord,
 }
 
 impl Peers {
-    pub(crate) fn new(source: SourceHandle) -> Self {
+    pub(crate) fn new(source: SourceRecord) -> Self {
         Self {
             table: Mutex::new(HashMap::new()),
             generation: AtomicU64::new(0),
@@ -277,14 +277,14 @@ mod tests {
         s.parse().unwrap()
     }
 
-    fn pinned(ip: &str) -> SourceHandle {
-        SourceHandle::new(Some(SourcePin::Ip(ip.parse().unwrap())))
+    fn pinned(ip: &str) -> SourceRecord {
+        SourceRecord::new(Some(SourcePin::Ip(ip.parse().unwrap())))
     }
 
     #[test]
     fn connect_accepts_and_records_the_canonical_address() {
         let mut t = HashMap::new();
-        let h = SourceHandle::default();
+        let h = SourceRecord::default();
         assert_eq!(
             on_connect(&mut t, &h, 1, "::ffff:127.0.0.1", 5000),
             Verdict::Recorded
@@ -320,7 +320,7 @@ mod tests {
 
         // `first` is judged against the latched address only; the connect
         // path never latches (a sender with a wrong key connects too).
-        let first = SourceHandle::new(Some(SourcePin::First));
+        let first = SourceRecord::new(Some(SourcePin::First));
         assert_eq!(
             on_connect(&mut t, &first, 3, "127.0.0.2", 5002),
             Verdict::Recorded
@@ -342,11 +342,11 @@ mod tests {
             assert_eq!(on_connect(&mut t, &h, 1, text, 5000), Verdict::Declined);
             assert!(t.is_empty(), "{text:?}");
             assert_eq!(h.rejected(), 1, "{text:?}");
-            let first = SourceHandle::new(Some(SourcePin::First));
+            let first = SourceRecord::new(Some(SourcePin::First));
             assert_eq!(on_connect(&mut t, &first, 1, text, 5000), Verdict::Declined);
             // Without a pin nothing is turned away: the peer is delivered as
             // before, unrecorded.
-            let open = SourceHandle::default();
+            let open = SourceRecord::default();
             assert_eq!(
                 on_connect(&mut t, &open, 1, text, 5000),
                 Verdict::Unrecorded
@@ -362,7 +362,7 @@ mod tests {
         // `first`, not yet latched: every peer of the first IP is recorded,
         // and a second IP still gets in.
         let mut t = HashMap::new();
-        let first = SourceHandle::new(Some(SourcePin::First));
+        let first = SourceRecord::new(Some(SourcePin::First));
         for peer in 0..MANY {
             assert_eq!(
                 on_connect(&mut t, &first, peer, "127.0.0.2", peer as u16),
@@ -398,7 +398,7 @@ mod tests {
         assert_eq!(pinned.source.rejected(), 1);
         assert_eq!(pinned.source.peer_addr(), None);
 
-        let open = Peers::new(SourceHandle::default());
+        let open = Peers::new(SourceRecord::default());
         assert!(Attribution::default().admit_block(&open, 7));
         assert_eq!(open.source.rejected(), 0);
         assert_eq!(open.source.peer_addr(), None);
@@ -406,7 +406,7 @@ mod tests {
 
     #[test]
     fn a_pointer_reused_after_a_disconnect_reports_the_new_address() {
-        let peers = Peers::new(SourceHandle::default());
+        let peers = Peers::new(SourceRecord::default());
         let mut a = Attribution::default();
         assert_eq!(peers.connect(1, "127.0.0.1", 5000), Verdict::Recorded);
         assert!(a.admit_block(&peers, 1));
@@ -421,7 +421,7 @@ mod tests {
     #[test]
     fn an_emptied_table_gives_its_memory_back() {
         const MANY: usize = 10_000;
-        let peers = Peers::new(SourceHandle::default());
+        let peers = Peers::new(SourceRecord::default());
         for peer in 0..MANY {
             assert_eq!(
                 peers.connect(peer, "127.0.0.1", peer as u16),
@@ -439,7 +439,7 @@ mod tests {
     #[test]
     fn disconnect_forgets_the_peer() {
         let mut t = HashMap::new();
-        let h = SourceHandle::default();
+        let h = SourceRecord::default();
         assert_eq!(
             on_connect(&mut t, &h, 1, "127.0.0.1", 5000),
             Verdict::Recorded

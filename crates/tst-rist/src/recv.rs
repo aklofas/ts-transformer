@@ -414,7 +414,7 @@ impl RecvTransport for RistRecvTransport {
     }
 
     fn source_handle(&self) -> Option<SourceHandle> {
-        Some(self.peers.source.clone())
+        Some(self.peers.source.handle())
     }
 }
 

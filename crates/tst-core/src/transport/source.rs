@@ -48,19 +48,75 @@ struct Shared {
     rejected: AtomicU64,
 }
 
+impl Shared {
+    fn peer_addr(&self) -> Option<SocketAddr> {
+        *self.peer.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn rejected(&self) -> u64 {
+        self.rejected.load(Ordering::Relaxed)
+    }
+}
+
 /// A receiver's view of where its datagrams come from. Clones share one
 /// state, so a binding can read it after the transport moved into a shell.
+///
+/// It only reads: the transport writes through its [`SourceRecord`].
+///
+/// ```compile_fail,E0599
+/// fn writes(h: &tst_core::transport::SourceHandle) {
+///     let _ = h.admit("192.0.2.1:9".parse().unwrap());
+/// }
+/// ```
+/// ```compile_fail,E0599
+/// fn writes(h: &tst_core::transport::SourceHandle) {
+///     h.record("192.0.2.1:9".parse().unwrap());
+/// }
+/// ```
+/// ```compile_fail,E0599
+/// fn writes(h: &tst_core::transport::SourceHandle) {
+///     h.count_rejected();
+/// }
+/// ```
 #[derive(Debug, Clone)]
 pub struct SourceHandle(Arc<Shared>);
 
-impl Default for SourceHandle {
+impl SourceHandle {
+    /// The pin the receiver was made with.
+    #[must_use]
+    pub fn pin(&self) -> Option<SourcePin> {
+        self.0.pin
+    }
+
+    /// The address that last delivered, if one was recorded. It is the
+    /// datagrams' source address, which nothing verifies.
+    #[must_use]
+    pub fn peer_addr(&self) -> Option<SocketAddr> {
+        self.0.peer_addr()
+    }
+
+    /// Datagrams refused for their source so far.
+    #[must_use]
+    pub fn rejected(&self) -> u64 {
+        self.0.rejected()
+    }
+}
+
+/// The writing side of a receiver's source record, for transport
+/// implementations: it applies the pin, counts refusals and stores the
+/// delivering address. Readers get a [`SourceHandle`] from
+/// [`Self::handle`], which cannot write.
+#[derive(Debug)]
+pub struct SourceRecord(Arc<Shared>);
+
+impl Default for SourceRecord {
     fn default() -> Self {
         Self::new(None)
     }
 }
 
-impl SourceHandle {
-    /// A handle enforcing `pin`, or recording only when `pin` is `None`.
+impl SourceRecord {
+    /// A record enforcing `pin`, or recording only when `pin` is `None`.
     #[must_use]
     pub fn new(pin: Option<SourcePin>) -> Self {
         let pin = match pin {
@@ -75,10 +131,29 @@ impl SourceHandle {
         }))
     }
 
-    /// The pin this handle was made with.
+    /// A read-only handle on this record, for a transport's
+    /// `source_handle()`.
+    #[must_use]
+    pub fn handle(&self) -> SourceHandle {
+        SourceHandle(Arc::clone(&self.0))
+    }
+
+    /// The pin this record was made with.
     #[must_use]
     pub fn pin(&self) -> Option<SourcePin> {
         self.0.pin
+    }
+
+    /// The address that last delivered, as [`SourceHandle::peer_addr`].
+    #[must_use]
+    pub fn peer_addr(&self) -> Option<SocketAddr> {
+        self.0.peer_addr()
+    }
+
+    /// Datagrams refused for their source so far.
+    #[must_use]
+    pub fn rejected(&self) -> u64 {
+        self.0.rejected()
     }
 
     /// Lock-free. No pin, or `First` not yet latched: true. Otherwise the
@@ -139,19 +214,6 @@ impl SourceHandle {
     pub fn count_rejected(&self) {
         self.0.rejected.fetch_add(1, Ordering::Relaxed);
     }
-
-    /// The address that last delivered, if one was recorded. It is the
-    /// datagrams' source address, which nothing verifies.
-    #[must_use]
-    pub fn peer_addr(&self) -> Option<SocketAddr> {
-        *self.0.peer.lock().unwrap_or_else(PoisonError::into_inner)
-    }
-
-    /// Datagrams refused for their source so far.
-    #[must_use]
-    pub fn rejected(&self) -> u64 {
-        self.0.rejected.load(Ordering::Relaxed)
-    }
 }
 
 #[cfg(test)]
@@ -179,7 +241,7 @@ mod tests {
         let mapped = SourcePin::parse("::ffff:10.0.0.5");
         assert!(matches!(mapped, Some(SourcePin::Ip(_))));
         assert_eq!(
-            SourceHandle::new(mapped).pin(),
+            SourceRecord::new(mapped).pin(),
             Some(SourcePin::Ip(ip("10.0.0.5")))
         );
         for bad in ["camera.local", "", "[::1]", "First "] {
@@ -189,18 +251,18 @@ mod tests {
 
     #[test]
     fn no_pin_allows_everyone_and_counts_nothing() {
-        let h = SourceHandle::new(None);
+        let h = SourceRecord::new(None);
         assert!(h.allows(ip("10.0.0.5")));
         assert!(h.admit(sa("10.0.0.6:1")));
         assert!(h.admit(sa("[fe80::1]:1")));
         assert_eq!(h.rejected(), 0);
         assert_eq!(h.pin(), None);
-        assert_eq!(SourceHandle::default().pin(), None);
+        assert_eq!(SourceRecord::default().pin(), None);
     }
 
     #[test]
     fn ip_pin_admits_the_address_in_both_forms() {
-        let h = SourceHandle::new(Some(SourcePin::Ip(ip("10.0.0.5"))));
+        let h = SourceRecord::new(Some(SourcePin::Ip(ip("10.0.0.5"))));
         assert!(h.admit(sa("[::ffff:10.0.0.5]:9")));
         assert!(!h.admit(sa("10.0.0.6:9")));
         assert_eq!(h.rejected(), 1);
@@ -208,10 +270,10 @@ mod tests {
 
     #[test]
     fn allows_reads_both_forms_of_a_pinned_or_latched_address() {
-        let h = SourceHandle::new(Some(SourcePin::Ip(ip("10.0.0.5"))));
+        let h = SourceRecord::new(Some(SourcePin::Ip(ip("10.0.0.5"))));
         assert!(h.allows(ip("::ffff:10.0.0.5")));
         assert!(!h.allows(ip("::ffff:10.0.0.6")));
-        let h = SourceHandle::new(Some(SourcePin::First));
+        let h = SourceRecord::new(Some(SourcePin::First));
         assert!(h.admit(sa("[::ffff:10.0.0.5]:9")));
         assert!(h.allows(ip("10.0.0.5")));
         assert!(h.allows(ip("::ffff:10.0.0.5")));
@@ -220,7 +282,7 @@ mod tests {
 
     #[test]
     fn first_latches_on_the_first_admit_only() {
-        let h = SourceHandle::new(Some(SourcePin::First));
+        let h = SourceRecord::new(Some(SourcePin::First));
         let (a, b) = (sa("10.0.0.5:1"), sa("10.0.0.6:1"));
         assert!(h.allows(b.ip()));
         assert!(h.admit(a));
@@ -232,7 +294,7 @@ mod tests {
 
     #[test]
     fn peer_addr_is_none_until_recorded_and_canonical_after() {
-        let h = SourceHandle::default();
+        let h = SourceRecord::default();
         assert_eq!(h.peer_addr(), None);
         h.record(sa("[::ffff:10.0.0.5]:9"));
         assert_eq!(h.peer_addr(), Some(sa("10.0.0.5:9")));
@@ -240,7 +302,7 @@ mod tests {
 
     #[test]
     fn record_keeps_an_ipv6_scope_id_and_maps_ipv4_back() {
-        let h = SourceHandle::default();
+        let h = SourceRecord::default();
         h.record(sa("[fe80::1%3]:9"));
         match h.peer_addr() {
             Some(SocketAddr::V6(v6)) => assert_eq!(v6.scope_id(), 3, "{v6}"),
@@ -253,13 +315,13 @@ mod tests {
     #[test]
     fn canonical_maps_ipv4_back_and_keeps_everything_else() {
         assert_eq!(
-            SourceHandle::canonical(sa("[::ffff:10.0.0.5]:9")),
+            SourceRecord::canonical(sa("[::ffff:10.0.0.5]:9")),
             sa("10.0.0.5:9")
         );
         for keep in ["10.0.0.5:9", "[fe80::1%3]:9", "[::1]:9"] {
-            assert_eq!(SourceHandle::canonical(sa(keep)), sa(keep), "{keep}");
+            assert_eq!(SourceRecord::canonical(sa(keep)), sa(keep), "{keep}");
         }
-        match SourceHandle::canonical(sa("[fe80::1%3]:9")) {
+        match SourceRecord::canonical(sa("[fe80::1%3]:9")) {
             SocketAddr::V6(v6) => assert_eq!(v6.scope_id(), 3),
             other => panic!("{other}"),
         }
@@ -285,31 +347,35 @@ mod tests {
 
     #[test]
     fn admit_does_not_record() {
-        let h = SourceHandle::default();
+        let h = SourceRecord::default();
         assert!(h.admit(sa("10.0.0.5:9")));
         assert_eq!(h.peer_addr(), None);
     }
 
     #[test]
-    fn clones_share_state() {
-        let h = SourceHandle::new(Some(SourcePin::First));
+    fn a_handle_sees_what_its_record_wrote() {
+        let r = SourceRecord::new(Some(SourcePin::First));
+        let h = r.handle();
         let c = h.clone();
-        assert!(h.admit(sa("10.0.0.5:1")));
-        assert!(!c.allows(ip("10.0.0.6")));
-        c.count_rejected();
-        assert_eq!(h.rejected(), 1);
-        c.record(sa("10.0.0.5:1"));
-        assert_eq!(h.peer_addr(), Some(sa("10.0.0.5:1")));
+        assert_eq!(h.pin(), Some(SourcePin::First));
+        assert!(r.admit(sa("10.0.0.5:1")));
+        assert!(!r.admit(sa("10.0.0.6:1")));
+        r.count_rejected();
+        r.record(sa("[::ffff:10.0.0.5]:1"));
+        for h in [&h, &c, &r.handle()] {
+            assert_eq!(h.rejected(), 2);
+            assert_eq!(h.peer_addr(), Some(sa("10.0.0.5:1")));
+        }
     }
 
     #[test]
     fn two_threads_racing_to_latch_agree_on_one_winner() {
         use std::sync::Barrier;
         const N: u64 = 1_000;
-        let h = SourceHandle::new(Some(SourcePin::First));
+        let h = SourceRecord::new(Some(SourcePin::First));
         let barrier = Barrier::new(2);
         let run = |addr: SocketAddr| {
-            let h = h.clone();
+            let h = &h;
             let barrier = &barrier;
             move || {
                 barrier.wait();
@@ -332,5 +398,6 @@ mod tests {
     fn a_handle_is_send_and_sync() {
         fn assert_send_sync<T: Send + Sync>() {}
         assert_send_sync::<SourceHandle>();
+        assert_send_sync::<SourceRecord>();
     }
 }

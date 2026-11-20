@@ -11,7 +11,7 @@ use tst_core::net::udp_socket::{
 use tst_core::net::{RecvAction, classify_recv_error};
 use tst_core::transport::{
     BrokenCause, EndReason, EndReasonHandle, RecvTransport, SocketStats, SourceHandle, SourcePin,
-    TransportCancel, TransportError,
+    SourceRecord, TransportCancel, TransportError,
 };
 use tst_core::url::UrlError;
 
@@ -58,7 +58,7 @@ pub struct UdpRecvTransport {
     end_reason: EndReasonHandle,
     /// The `source` pin, the rejected count and the delivering address,
     /// shared with every handle from [`RecvTransport::source_handle`].
-    source: SourceHandle,
+    source: SourceRecord,
     /// The address last stored in `source`; a datagram from the same
     /// address does not touch the handle's lock.
     last_from: Option<SocketAddr>,
@@ -177,7 +177,7 @@ impl UdpRecvTransport {
             // the socket; cache that so the first recv_bytes entry is a no-op.
             applied_timeout: CANCEL_POLL_INTERVAL,
             end_reason: EndReasonHandle::default(),
-            source: SourceHandle::new(cfg.source),
+            source: SourceRecord::new(cfg.source),
             last_from: None,
         })
     }
@@ -313,7 +313,7 @@ impl UdpRecvTransport {
                         }
                     }
                     Verdict::Empty | Verdict::Deliver => {
-                        let from = SourceHandle::canonical(from);
+                        let from = SourceRecord::canonical(from);
                         return Ok(Some((n, from)));
                     }
                 },
@@ -466,7 +466,7 @@ impl RecvTransport for UdpRecvTransport {
     }
 
     fn source_handle(&self) -> Option<SourceHandle> {
-        Some(self.source.clone())
+        Some(self.source.handle())
     }
 }
 

@@ -5915,7 +5915,7 @@ tier = "A"
 [[surface]]
 kind = "rust"
 crate = "tst-core"
-item = "tst_core::transport::SourceHandle::admit"
+item = "tst_core::transport::SourceRecord::admit"
 owning_tests = ["crates/tst-core/src/transport/source.rs", "crates/tst-udp/tests/net_source.rs", "crates/tst-rist/tests/net_source.rs"]
 bindings = ["c:n/a(the C ABI has no bridge to this Rust-only item)", "python:n/a(Rust-only building block of the receive transports)", "java:n/a(Rust-only building block of the receive transports)", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
@@ -5924,7 +5924,7 @@ tier = "A"
 [[surface]]
 kind = "rust"
 crate = "tst-core"
-item = "tst_core::transport::SourceHandle::allows"
+item = "tst_core::transport::SourceRecord::allows"
 owning_tests = ["crates/tst-core/src/transport/source.rs", "crates/tst-udp/tests/net_source.rs", "crates/tst-rist/tests/net_source.rs"]
 bindings = ["c:n/a(the C ABI has no bridge to this Rust-only item)", "python:n/a(Rust-only building block of the receive transports)", "java:n/a(Rust-only building block of the receive transports)", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
@@ -5933,7 +5933,7 @@ tier = "A"
 [[surface]]
 kind = "rust"
 crate = "tst-core"
-item = "tst_core::transport::SourceHandle::canonical"
+item = "tst_core::transport::SourceRecord::canonical"
 owning_tests = ["crates/tst-core/src/transport/source.rs", "crates/tst-udp/tests/net_source.rs", "crates/tst-rist/tests/net_source.rs"]
 bindings = ["c:n/a(the C ABI has no bridge to this Rust-only item)", "python:n/a(Rust-only building block of the receive transports)", "java:n/a(Rust-only building block of the receive transports)", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
@@ -5942,7 +5942,7 @@ tier = "A"
 [[surface]]
 kind = "rust"
 crate = "tst-core"
-item = "tst_core::transport::SourceHandle::count_rejected"
+item = "tst_core::transport::SourceRecord::count_rejected"
 owning_tests = ["crates/tst-core/src/transport/source.rs", "crates/tst-udp/tests/net_source.rs", "crates/tst-rist/tests/net_source.rs"]
 bindings = ["c:n/a(the C ABI has no bridge to this Rust-only item)", "python:n/a(Rust-only building block of the receive transports)", "java:n/a(Rust-only building block of the receive transports)", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
@@ -5951,7 +5951,7 @@ tier = "A"
 [[surface]]
 kind = "rust"
 crate = "tst-core"
-item = "tst_core::transport::SourceHandle::new"
+item = "tst_core::transport::SourceRecord::new"
 owning_tests = ["crates/tst-core/src/transport/source.rs", "crates/tst-udp/tests/net_source.rs", "crates/tst-rist/tests/net_source.rs"]
 bindings = ["c:n/a(the C ABI has no bridge to this Rust-only item)", "python:n/a(Rust-only building block of the receive transports)", "java:n/a(Rust-only building block of the receive transports)", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
@@ -5969,7 +5969,52 @@ tier = "A"
 [[surface]]
 kind = "rust"
 crate = "tst-core"
-item = "tst_core::transport::SourceHandle::record"
+item = "tst_core::transport::SourceRecord::record"
+owning_tests = ["crates/tst-core/src/transport/source.rs", "crates/tst-udp/tests/net_source.rs", "crates/tst-rist/tests/net_source.rs"]
+bindings = ["c:n/a(the C ABI has no bridge to this Rust-only item)", "python:n/a(Rust-only building block of the receive transports)", "java:n/a(Rust-only building block of the receive transports)", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-core"
+item = "tst_core::transport::SourceRecord"
+owning_tests = ["crates/tst-core/src/transport/source.rs", "crates/tst-udp/tests/net_source.rs", "crates/tst-rist/tests/net_source.rs"]
+bindings = ["c:n/a(the C ABI has no bridge to this Rust-only item)", "python:n/a(Rust-only building block of the receive transports)", "java:n/a(Rust-only building block of the receive transports)", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-core"
+item = "tst_core::transport::SourceRecord::handle"
+owning_tests = ["crates/tst-core/src/transport/source.rs", "crates/tst-udp/tests/net_source.rs", "crates/tst-rist/tests/net_source.rs"]
+bindings = ["c:n/a(the C ABI has no bridge to this Rust-only item)", "python:n/a(Rust-only building block of the receive transports)", "java:n/a(Rust-only building block of the receive transports)", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-core"
+item = "tst_core::transport::SourceRecord::peer_addr"
+owning_tests = ["crates/tst-core/src/transport/source.rs", "crates/tst-udp/tests/net_source.rs", "crates/tst-rist/tests/net_source.rs"]
+bindings = ["c:n/a(the C ABI has no bridge to this Rust-only item)", "python:n/a(Rust-only building block of the receive transports)", "java:n/a(Rust-only building block of the receive transports)", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-core"
+item = "tst_core::transport::SourceRecord::pin"
+owning_tests = ["crates/tst-core/src/transport/source.rs", "crates/tst-udp/tests/net_source.rs", "crates/tst-rist/tests/net_source.rs"]
+bindings = ["c:n/a(the C ABI has no bridge to this Rust-only item)", "python:n/a(Rust-only building block of the receive transports)", "java:n/a(Rust-only building block of the receive transports)", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-core"
+item = "tst_core::transport::SourceRecord::rejected"
 owning_tests = ["crates/tst-core/src/transport/source.rs", "crates/tst-udp/tests/net_source.rs", "crates/tst-rist/tests/net_source.rs"]
 bindings = ["c:n/a(the C ABI has no bridge to this Rust-only item)", "python:n/a(Rust-only building block of the receive transports)", "java:n/a(Rust-only building block of the receive transports)", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
