@@ -211,15 +211,13 @@ whep = { server = "webrtc.WhepServer.bind", probe = "open-refused" }
 
 # The JVM's HLS builder parses its URL only in `build()`, which binds the HTTP
 # server, so the leg builds with a port-0 bind and a temporary output directory
-# overlaid (an overlay never changes how the URL parses). A tcp listener URL
-# binds port 0 and accepts one peer on a port the open never reports, so no
-# peer can reach it: the role is absent, as in Python.
+# overlaid (an overlay never changes how the URL parses).
 [legs.jvm]
 srt = { caller = "shells.Sender.open", listener = "shells.Receiver.open", probe = "open-peer" }
 rtp = { send = "shells.Sender.open", recv = "shells.Receiver.open", h264 = "rtp.H264Receiver.listen", probe = "open-refused" }
 rtsp = { client = "rtp.RtspClient.connect", probe = "open-peer", wire_schemes = "rtsp", wire = "host path username password_set keys.rtsp_version keys.transport", unobserved = "scheme: the peer speaks no TLS, so rtsps rows are refusal-only; port: the peer's port replaces the URL's; keys.tcp_keepalive: a socket option the peer cannot see; keys.recv_timeout: a read deadline the peer cannot see" }
 udp = { send = "shells.Sender.open", recv = "shells.Receiver.open", probe = "open-refused" }
-tcp = { caller = "shells.Sender.open", listener = "absent", probe = "open-refused" }
+tcp = { caller = "shells.Sender.open", listener = "tcp.Listener.open", probe = "open-refused" }
 hls = { publisher = "hls.HlsPublisherBuilder.build", probe = "open-refused" }
 rist = { send = "shells.Sender.open", recv = "shells.Receiver.open", probe = "open-refused" }
 whep = { server = "webrtc.WhepServer.bind", probe = "open-refused" }
