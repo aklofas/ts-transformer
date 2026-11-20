@@ -390,7 +390,7 @@ public final class RtspPushSession extends NativeHandle {
         // is claimed only once the native has taken it.
         long h = nIntoMuxSender(peekHandle(), config.programNumber(), config.pmtPid(),
             config.pcrPid(), config.pcrIntervalMs(), config.pcrLeadMs(), config.psiIntervalMs(),
-            config.bufferPackets(), config.av1Carriage().ordinal(), config.streamPids(),
+            config.bufferPackets(), config.av1Carriage().code(), config.streamPids(),
             config.streamKinds(), config.streamCodecs(), config.streamTypeCodes(),
             config.streamCarriesPts(), config.dataDescBytes(), config.dataDescLens());
         consumeHandle();

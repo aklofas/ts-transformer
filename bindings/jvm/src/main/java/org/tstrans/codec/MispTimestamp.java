@@ -72,6 +72,6 @@ public record MispTimestamp(MispTimeKind kind, int timeStatus, long value) {
             byte[] au,
             org.tstrans.mpegts.VideoCodec codec)
             throws CodecParseException {
-        return Codec.extractMispTimestamp(au, codec.ordinal());
+        return Codec.extractMispTimestamp(au, codec.code());
     }
 }

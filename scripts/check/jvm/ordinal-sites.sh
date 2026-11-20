@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Bash ratchet: every `.ordinal()` in the JVM binding's main sources is a
-# pinned site. An enum's ordinal passed to native code is a wire value: each
-# one is pinned by OrdinalContractTest (bindings/jvm/src/test/java/org/tstrans/),
-# which holds every enum's ordinal order to the native codes. A new site must
-# be added there and here, or pass an explicit code instead.
+# pinned site. A value passed to native code is a wire value, so the enums
+# pass an explicit `code()`, pinned to the native decode tables by
+# OrdinalContractTest (bindings/jvm/src/test/java/org/tstrans/), and the list
+# is empty. A new site fails: pass an explicit code instead.
 #
 # The pinned list is scripts/ratchets/ordinal-sites.tsv: one row per
 # occurrence, `<path under the Java source root><TAB><expression>`, sorted.
@@ -77,7 +77,7 @@ removed="$(LC_ALL=C comm -23 <(printf '%s\n' "$want" | grep -v '^$' || true) <(p
 fail=0
 if [ -n "$added" ]; then
   printf '%s\n' "$added" | while IFS="$(printf '\t')" read -r f e; do
-    echo "FAIL: ordinal-sites: new ordinal site $f: $e (pin it in OrdinalContractTest and run --regen, or pass an explicit code)"
+    echo "FAIL: ordinal-sites: new ordinal site $f: $e (pass an explicit code() instead)"
   done
   fail=1
 fi

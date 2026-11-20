@@ -102,7 +102,7 @@ public final class Socket extends NativeHandle {
         int pcrLeadMs = programConfig.pcrLeadMs();
         int psiIntervalMs = programConfig.psiIntervalMs();
         int bufferPackets = programConfig.bufferPackets();
-        int av1Carriage = programConfig.av1Carriage().ordinal();
+        int av1Carriage = programConfig.av1Carriage().code();
         int[] streamPids = programConfig.streamPids();
         int[] streamKinds = programConfig.streamKinds();
         int[] streamCodecs = programConfig.streamCodecs();
@@ -159,11 +159,11 @@ public final class Socket extends NativeHandle {
             throws SrtException {
         ensureOpen("Socket is closed");
         Objects.requireNonNull(demuxConfig, "demuxConfig");
-        int strict = demuxConfig.strictMode().ordinal();
+        int strict = demuxConfig.strictMode().code();
         long pesCapPerPid = demuxConfig.pesCapPerPid();
         long pesCapTotal = demuxConfig.pesCapTotal();
         boolean cfiTolerance = demuxConfig.cfiTolerance();
-        int av1Carriage = demuxConfig.av1Carriage().ordinal();
+        int av1Carriage = demuxConfig.av1Carriage().code();
         long auCellCapPerPid = demuxConfig.auCellCapPerPid();
         boolean lenientPsi = demuxConfig.lenientPsiReassembly();
         long syncBufCap = demuxConfig.syncBufCap();

@@ -193,9 +193,9 @@ public final class ManagedDemuxReceiver extends NativeHandle implements Iterable
             p.maxAttemptsPresent(), p.maxAttempts(),
             p.backoffKind(), p.backoffBaseMs(), p.backoffMaxMs(),
             p.gapBufferCapacity(), p.overflowPolicy(), p.mode(),
-            demuxConfig.strictMode().ordinal(), demuxConfig.pesCapPerPid(),
+            demuxConfig.strictMode().code(), demuxConfig.pesCapPerPid(),
             demuxConfig.pesCapTotal(), demuxConfig.cfiTolerance(),
-            demuxConfig.av1Carriage().ordinal(), demuxConfig.auCellCapPerPid(),
+            demuxConfig.av1Carriage().code(), demuxConfig.auCellCapPerPid(),
             demuxConfig.lenientPsiReassembly(), demuxConfig.syncBufCap(),
             demuxConfig.unwrapTimestamps(), cancel);
         if (h == 0) {

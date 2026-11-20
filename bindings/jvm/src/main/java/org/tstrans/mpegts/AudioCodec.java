@@ -5,8 +5,19 @@ package org.tstrans.mpegts;
  * {@code tst_core::mpegts::demux::event::AudioCodec}.
  */
 public enum AudioCodec {
-    MP2,
-    AAC,
-    AAC_LATM,
-    AC3
+    MP2(0),
+    AAC(1),
+    AAC_LATM(2),
+    AC3(3);
+
+    private final int code;
+
+    AudioCodec(int code) {
+        this.code = code;
+    }
+
+    /** @return the value native code receives for this constant; stable across releases. */
+    public int code() {
+        return code;
+    }
 }

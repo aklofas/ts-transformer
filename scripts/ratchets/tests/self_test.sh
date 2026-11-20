@@ -1860,6 +1860,16 @@ os_bad indexed '        n(Mode.values()[i].ordinal());' "FAIL: ordinal-sites: or
 os_bad continuation '            .ordinal());' "FAIL: ordinal-sites: org/tstrans/x/C.java:3: cannot parse the receiver of every .ordinal()"
 os_bad string-comment '        n("a//b", mode.ordinal());' "FAIL: ordinal-sites: org/tstrans/x/C.java:3: cannot classify a line mixing a string literal and a comment"
 os_bad block-comment '        n(mode.ordinal()); /* was kind.ordinal() */' "FAIL: ordinal-sites: org/tstrans/x/C.java:3: cannot classify a line holding a block-comment delimiter"
+# Enums that pass explicit codes leave no site: an empty list passes, and a
+# list regenerated from such a tree is empty.
+mkdir -p "$os/none/org/tstrans/x"
+printf 'class D {\n    int f() { return mode.code(); }\n    // Mode.ordinal() is not passed\n}\n' > "$os/none/org/tstrans/x/D.java"
+: > "$os/none.tsv"
+expect "ordinal sites: no site and an empty list pass" 0 env ORDINAL_SITES_JAVA_DIR="$os/none" ORDINAL_SITES_LIST="$os/none.tsv" bash "$OS"
+expect_out "ordinal sites: none" "ordinal-sites: OK (0 pinned sites)"
+printf 'stale\tmode.ordinal()\n' > "$os/none.tsv"
+expect "ordinal sites: regenerating a tree with no site" 0 env ORDINAL_SITES_JAVA_DIR="$os/none" ORDINAL_SITES_LIST="$os/none.tsv" bash "$OS" --regen
+expect "ordinal sites: the regenerated list is empty" 1 test -s "$os/none.tsv"
 
 # ---- release-vm-corpus.sh: a run names its baseline or says it has none ----
 # --dry-run prints each stage's command and runs nothing. A run with neither

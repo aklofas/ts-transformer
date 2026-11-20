@@ -13,8 +13,8 @@ record PolicyArgs(
         long backoffBaseMs,
         long backoffMaxMs,
         int gapBufferCapacity,
-        int overflowPolicy,   // OverflowPolicy.ordinal(): 0 = DROP_OLDEST, 1 = REJECT
-        int mode) {           // ReconnectMode.ordinal(): 0 = BLOCKING, 1 = BACKGROUND
+        int overflowPolicy,   // OverflowPolicy.code(): 0 = DROP_OLDEST, 1 = REJECT
+        int mode) {           // ReconnectMode.code(): 0 = BLOCKING, 1 = BACKGROUND
 
     /** Flatten {@code policy} (or {@link ReconnectPolicy#defaults()} when null). */
     static PolicyArgs from(ReconnectPolicy policy) {
@@ -28,7 +28,7 @@ record PolicyArgs(
             b.baseMs(),
             b.maxMs(),
             p.gapBufferCapacity(),
-            p.overflowPolicy().ordinal(),
-            p.mode().ordinal());
+            p.overflowPolicy().code(),
+            p.mode().code());
     }
 }

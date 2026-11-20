@@ -131,7 +131,7 @@ public final class H264Receiver extends NativeHandle implements Iterable<H264Acc
         long h = nListenWithConfig(
             url,
             config.payloadType(),
-            config.parameterSetInjection().ordinal(),
+            config.parameterSetInjection().code(),
             psArr,
             config.maxAuBytes()
         );

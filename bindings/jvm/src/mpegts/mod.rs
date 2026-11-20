@@ -107,10 +107,10 @@ jni_native! {
 }
 
 /// Assemble a `tst_core` [`DemuxerConfig`] from the 9 marshalled JNI primitives
-/// (the `nOpenWithConfig` arg shape). The `strict`/`av1` ints are the Java enum
-/// ORDINALS (contract: must mirror the Java enum declaration order —
-/// `StrictMode`: 0=OFF,1=TIMING_ONLY,2=PSI_ONLY,3=FULL; `Av1CarriageMode`:
-/// 0=MPEG2_TS_BINDING,1=INTEROP_RAW_OBU). A `0` cap means "use the Rust default"
+/// (the `nOpenWithConfig` arg shape). The `strict`/`av1` ints are the Java
+/// enums' `code()` (`StrictMode`: 0=OFF,1=TIMING_ONLY,2=PSI_ONLY,3=FULL;
+/// `Av1CarriageMode`: 0=MPEG2_TS_BINDING,1=INTEROP_RAW_OBU); an unknown code
+/// throws a `RuntimeException` and returns `None`. A `0` cap means "use the Rust default"
 /// (mapped to `None`). Mirrors tst-py's `build_demuxer_config` field-by-field.
 ///
 /// Shared by `nOpenWithConfig` and the srt `DemuxReceiver.nFromUrlWithConfig` /
@@ -135,12 +135,22 @@ pub(crate) fn build_demux_config_from_args(
     // top of `default()`, mirroring tst-py's `build_demuxer_config`. The Rust-only
     // `klv_link_overrides`/`stream_kind_overrides` keep their defaults (deferred).
     let mut opts = DemuxerConfig::default();
-    // Order pinned by OrdinalContractTest.
+    // Codes pinned by OrdinalContractTest.
     opts.strict = match strict {
         0 => StrictMode::Off,
         1 => StrictMode::TimingOnly,
         2 => StrictMode::DescriptorsOnly, // Java PSI_ONLY
-        _ => StrictMode::Full,            // 3 (and any out-of-range → strictest, safe)
+        3 => StrictMode::Full,
+        other => {
+            // As for the AV1 carriage below: the value comes from our own Java
+            // enum, so an unknown code is enum drift, not a strictness level.
+            throw_demux(
+                env,
+                BindingErrorKind::Internal,
+                &format!("unknown StrictMode code {other}"),
+            );
+            return None;
+        }
     };
     // Order pinned by OrdinalContractTest.
     opts.av1_carriage = match av1 {

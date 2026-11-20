@@ -43,10 +43,9 @@ public final class Pairer extends NativeHandle {
     /**
      * Construct with explicit configs.
      *
-     * <p>Ordinal contract: the {@code strict}/{@code av1} ints passed to
-     * {@code nOpenWithConfig} are the Java enum ORDINALS — the Rust side maps by
-     * ordinal in the SAME declaration order as {@link org.tstrans.mpegts.StrictMode}
-     * / {@link org.tstrans.mpegts.Av1CarriageMode}.
+     * <p>The {@code strict}/{@code av1} ints passed to {@code nOpenWithConfig} are
+     * {@link org.tstrans.mpegts.StrictMode#code()} /
+     * {@link org.tstrans.mpegts.Av1CarriageMode#code()}.
      *
      * @throws IllegalArgumentException if either PID is outside 0x0010..=0x1FFE
      *     or {@code config} is null
@@ -63,11 +62,11 @@ public final class Pairer extends NativeHandle {
             buffered, maxLagNanos, pc.tolerance().toNanos(),
             pc.maxBufferedKlv(), pc.maxBufferedVideo(),
             dx != null,
-            dx != null ? dx.strictMode().ordinal() : 0,
+            dx != null ? dx.strictMode().code() : 0,
             dx != null ? dx.pesCapPerPid() : 0L,
             dx != null ? dx.pesCapTotal() : 0L,
             dx != null && dx.cfiTolerance(),
-            dx != null ? dx.av1Carriage().ordinal() : 0,
+            dx != null ? dx.av1Carriage().code() : 0,
             dx != null ? dx.auCellCapPerPid() : 0L,
             dx != null && dx.lenientPsiReassembly(),
             dx != null ? dx.syncBufCap() : 0L,

@@ -43,7 +43,7 @@ public final class DemuxerConfig {
 
     // Accessors read by the Demuxer ctor and the srt DemuxReceiver/Socket marshalling
     // to push primitives across the JNI boundary. Public for cross-package
-    // org.tstrans.srt callers; the ordinal/sentinel shape is not a stable user API.
+    // org.tstrans.srt callers; the code/sentinel shape is not a stable user API.
     public StrictMode strictMode() { return strictMode; }
     public long pesCapPerPid() { return pesCapPerPid; }
     public long pesCapTotal() { return pesCapTotal; }

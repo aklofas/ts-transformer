@@ -49,8 +49,8 @@ public final class MuxerConfig {
     private final Av1CarriageMode av1Carriage;
     private final int[] streamPids;
     private final int[] streamKinds;     // KIND_* per stream
-    private final int[] streamCodecs;    // codec ordinal per kind; -1 for KLV/DATA
-    // KlvStreamType ordinal for KLV; raw PMT stream_type byte for DATA; -1 otherwise.
+    private final int[] streamCodecs;    // codec code() per kind; -1 for KLV/DATA
+    // KlvStreamType code() for KLV; raw PMT stream_type byte for DATA; -1 otherwise.
     private final int[] streamTypeCodes;
     private final boolean[] streamCarriesPts; // KLV + DATA; false otherwise
     // PMT descriptor loops, flattened: dataDescBytes is every descriptor TLV
@@ -129,7 +129,7 @@ public final class MuxerConfig {
     public int[] streamPids() { return streamPids.clone(); }
     public int[] streamKinds() { return streamKinds.clone(); }
     public int[] streamCodecs() { return streamCodecs.clone(); }
-    /** KlvStreamType ordinal for KLV streams; raw PMT stream_type byte for DATA streams; -1 otherwise. */
+    /** KlvStreamType code() for KLV streams; raw PMT stream_type byte for DATA streams; -1 otherwise. */
     public int[] streamTypeCodes() { return streamTypeCodes.clone(); }
     /** {@code true} if this stream carries PTS (KLV + DATA streams); {@code false} otherwise. */
     public boolean[] streamCarriesPts() { return streamCarriesPts.clone(); }
@@ -227,7 +227,7 @@ public final class MuxerConfig {
         /** Add an H.264/H.265/H.266/AV1 video elementary stream. */
         public Builder addVideo(int pid, VideoCodec codec) {
             Objects.requireNonNull(codec, "codec");
-            addStream(pid, KIND_VIDEO, codec.ordinal(), -1, false);
+            addStream(pid, KIND_VIDEO, codec.code(), -1, false);
             return this;
         }
 
@@ -237,14 +237,14 @@ public final class MuxerConfig {
          */
         public Builder addKlv(int pid, KlvStreamType type, boolean carriesPts) {
             Objects.requireNonNull(type, "type");
-            addStream(pid, KIND_KLV, -1, type.ordinal(), carriesPts);
+            addStream(pid, KIND_KLV, -1, type.code(), carriesPts);
             return this;
         }
 
         /** Add an audio elementary stream. */
         public Builder addAudio(int pid, AudioCodec codec) {
             Objects.requireNonNull(codec, "codec");
-            addStream(pid, KIND_AUDIO, codec.ordinal(), -1, false);
+            addStream(pid, KIND_AUDIO, codec.code(), -1, false);
             return this;
         }
 
@@ -262,7 +262,7 @@ public final class MuxerConfig {
                     "DVB subtitle codecs need language/page-ID config not yet exposed in the "
                         + "JVM binding (deferred); use CEA708_STANDALONE or WEBVTT_IN_TS");
             }
-            addStream(pid, KIND_SUBTITLE, codec.ordinal(), -1, false);
+            addStream(pid, KIND_SUBTITLE, codec.code(), -1, false);
             return this;
         }
 

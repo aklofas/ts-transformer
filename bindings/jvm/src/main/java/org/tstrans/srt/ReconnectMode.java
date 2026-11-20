@@ -7,7 +7,7 @@ package org.tstrans.srt;
  */
 public enum ReconnectMode {
     /** Reconnect on the caller's thread (the pre-0.6 behavior and the default). */
-    BLOCKING,
+    BLOCKING(0),
     /**
      * Reconnect on a per-outage background worker thread. A send never waits
      * out backoff or a factory call; while the inner transport is down it
@@ -17,5 +17,16 @@ public enum ReconnectMode {
      * receiver accepts this value structurally but reconnects as
      * {@link #BLOCKING} regardless (see the affected classes' javadoc).
      */
-    BACKGROUND
+    BACKGROUND(1);
+
+    private final int code;
+
+    ReconnectMode(int code) {
+        this.code = code;
+    }
+
+    /** @return the value native code receives for this constant; stable across releases. */
+    public int code() {
+        return code;
+    }
 }
