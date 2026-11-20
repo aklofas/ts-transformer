@@ -740,6 +740,7 @@ falls into two groups.
 | `local_addr()` / `local_port()` / `local_addr_port()`, `tcp.Transport.peer_addr()` | the value captured when the object was built | raises `CLOSED` |
 | `peer_addr()`, `source_rejected()` on the receiving shells, `udp.RecvTransport` and `rist.RecvTransport` | the publisher's address and the count of what the `source` pin turned away, as they stand (the same count in `stats().source_rejected` waits, like `stats()`) | the shells keep answering; the two transports raise `CLOSED` |
 | `rtp_stats()` on the receiving shells (`shells.Receiver`, `shells.DemuxReceiver`) | the RTP counters as they stand; `None` off `rtp://` and RTSP | the last value |
+| `RtspPushSession.stats()` | the push's counters as they stand | the last value, also after a conversion |
 | `video_handle()` … `data_handle()` on the three `MuxSender` classes | the handles of the program config the sender was built from | `None` |
 | `reconnect_attempts()`, `reconnect_stats()` on the managed shells | live counters kept outside the object | `reconnect_attempts()` keeps its last value; `reconnect_stats()` raises `CLOSED` |
 | `end_reason()` / `end_detail()` | the recorded reason, or `None`; `H264Receiver` answers `None` while a `recv_au()` is in flight | the reason recorded at close |
@@ -1531,19 +1532,24 @@ The surface:
 - `RtspPushSession.send_ts(ts)` (whole TS packets, at most 1316 bytes, on an
   MPEG-TS push), `send_video(annexb, *, pts)`, `send_klv(klv, *, pts)`.
 - `pause()`, `resume()`, `teardown()`, `close()`, `cancel_handle()`,
-  `stats() -> RtspPushStats`, `is_session_alive()`, the `session_id`
-  property, and the context manager.
+  `stats() -> RtspPushStats`, `end_reason() -> Optional[EndReason]`,
+  `end_detail()`, `is_session_alive()`, the `session_id` property, and the
+  context manager. `stats()`, `end_reason()` and `end_detail()` read the
+  push's counters and end without the session: they never wait and keep
+  answering after `close()`, `teardown()` and a conversion (for the push
+  the sender then owns).
 - `into_mux_sender(program_config) -> MuxSender` and `into_sender() ->
   Sender` move an MPEG-TS push into a sender shell; the session is closed
   afterwards. Both raise `ValueError` on an elementary push, and
   `into_mux_sender` raises `MuxError(CONFIG_INVALID)` for a refused config,
   each leaving the session as it was. Neither waits for a send, `pause()`
   or `resume()` running on another thread: they raise `RuntimeError`,
-  consume nothing and leave the session open; a `stats()` in progress they
-  wait for.
+  consume nothing and leave the session open; an `is_session_alive()`
+  peeking at the session they wait for.
 - `RtspPushStats`: `packets_sent`, `bytes_sent`, `sender_reports_sent`,
   `receiver_reports`, `fraction_lost_q8`, `cumulative_lost`,
-  `frames_dropped_inbound`, `frames_dropped_at_close`.
+  `frames_dropped_inbound`, `frames_dropped_at_close` (media a close
+  discarded; `teardown()` is the call that reports such a loss).
 
 How each call ends:
 
@@ -1568,7 +1574,7 @@ Rules the types do not enforce:
   connection stays bounded.
   `pause()` and `close()` first wait for the queue the same way.
 - **One call at a time.** A second thread's call waits for the one in
-  progress; `stats()` too waits while a send, `pause()` or `resume()` runs.
+  progress; `stats()`, `end_reason()` and `end_detail()` never wait.
   `cancel_handle()` answers at once and is the way to end a waiting send.
   `is_session_alive()` never waits and never raises: a call in progress on
   another thread counts as live, and it reads `False` once the session is
@@ -1577,8 +1583,13 @@ Rules the types do not enforce:
   session: that call raises `CLOSED`, what is queued is dropped, and the
   session ends as a cancel. A send, `pause()` or `resume()` still waiting
   for the session is not cancelled: it runs nothing and raises `CLOSED`,
-  and the close stays clean. A close that finds only a `stats()` holding
-  the session waits for it.
+  and the close stays clean. A close that finds only an
+  `is_session_alive()` peeking at the session waits for it.
+- **A panic poisons the session.** A panic inside a call (a bug) leaves
+  the session unusable: every later call that needs it raises
+  `RtspError(CLOSED)` naming the poisoning, `is_session_alive()` reads
+  `False`, `stats()` and `end_reason()` still answer, and `close()` /
+  `teardown()` still end the push.
 - **Ending a push through a shell.** `MuxSender.finish()` cancels nothing:
   it writes what the sender holds and closes the push, which, while the
   session is up, writes its queue and then sends TEARDOWN. It cannot tell

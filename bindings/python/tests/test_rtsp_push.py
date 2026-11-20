@@ -55,9 +55,10 @@ from tstrans.rtp import (
     RtspVersion,
     TransportPref,
 )
-from tstrans.shells import MuxSender, Sender
+from tstrans.shells import EndReason, MuxSender, Sender
 
 from _builders.mux_programs import masquerade_program, video_only_program
+from _builders.hang_deadline import call_with_hang_deadline
 from _builders.native_hooks import rtp_hook
 import tstrans
 
@@ -476,11 +477,14 @@ def test_calls_after_close_raise_closed() -> None:
             with pytest.raises(RtpError) as rtp_ei:
                 send()
             assert rtp_ei.value.kind is RtpErrorKind.CLOSED
+        # The counters and the end are read without the session: the last
+        # values after close.
+        assert push.stats().packets_sent == 1
+        assert push.end_reason() is EndReason.CLEAN_TEARDOWN
         for call in (
             push.pause,
             push.resume,
             push.teardown,
-            push.stats,
             push.cancel_handle,
             push.into_sender,
             lambda: push.into_mux_sender(video_only_program()),
@@ -741,6 +745,170 @@ def test_is_session_alive_answers_at_once_while_a_send_is_parked() -> None:
         sender.close()
     finally:
         server.close()
+
+
+def test_stats_answers_at_once_while_a_send_is_parked() -> None:
+    """`stats()` reads the push's counters without the session: a send
+    parked on another thread does not hold it up."""
+    server = ScriptedRecordServer(stop_reading=True)
+    push = RtspClient.push(RtspClientConfig(server.url), PushDescription.mp2t())
+    try:
+        state = _push_until_parked(push)
+        blocked, got = call_with_hang_deadline(push.stats, 2.5)
+        still_parked = not state["ended"].is_set()
+        end = push.end_reason()
+        push.close()
+        assert state["ended"].wait(WAIT_S), "the parked send did not end"
+        assert not blocked, "stats() waited behind the parked send"
+        assert still_parked, "the send was not parked when stats() answered"
+        s = got["value"]
+        assert isinstance(s, RtspPushStats)
+        assert s.packets_sent >= state["sent"]
+        assert end is None
+    finally:
+        server.close()
+        push.close()
+
+
+def test_end_reason_after_a_server_close() -> None:
+    server = ScriptedRecordServer()
+    push = RtspClient.push(RtspClientConfig(server.url), PushDescription.mp2t())
+    try:
+        assert push.end_reason() is None
+        assert push.end_detail() is None
+        server.close()  # the server closes the connection
+        assert _wait_for(lambda: push.end_reason() is not None), "no end recorded"
+        assert push.end_reason() is EndReason.CLEAN_TEARDOWN
+        assert push.end_detail() is None
+        assert push.is_session_alive() is False
+    finally:
+        push.close()
+    assert push.end_reason() is EndReason.CLEAN_TEARDOWN
+
+
+def test_stats_and_end_reason_after_close() -> None:
+    with _start_server() as server:
+        mount = server.add_publish_mount("/cam")
+        push = RtspClient.push(RtspClientConfig(_url(server, "/cam")), PushDescription.mp2t())
+        for _ in range(10):
+            push.send_ts(TS_BUNDLE)
+        kept = push.stats()
+        push.close()
+        assert _wait_for(lambda: mount.stats().rtp_packets_received == 10), mount.stats()
+        s = push.stats()
+        assert s.packets_sent == 10
+        assert s.bytes_sent == 10 * (12 + len(TS_BUNDLE))
+        assert s.frames_dropped_at_close == 0
+        assert kept.packets_sent == 10, "a record keeps its values"
+        assert push.end_reason() is EndReason.CLEAN_TEARDOWN
+        # teardown() after close is still CLOSED; the reads are not.
+        with pytest.raises(RtspError) as ei:
+            push.teardown()
+        assert ei.value.kind is RtspErrorKind.CLOSED
+        assert repr(push.stats()) == repr(s)
+
+
+def test_stats_and_end_reason_after_into_sender() -> None:
+    """The session keeps the push's counters and end after a conversion:
+    they follow the sender that now owns the push."""
+    server = ScriptedRecordServer()
+    push = RtspClient.push(RtspClientConfig(server.url), PushDescription.mp2t())
+    try:
+        sender = push.into_sender()
+        assert push.stats().packets_sent == 0
+        sender.send_bytes(TS_BUNDLE)
+        assert _wait_for(lambda: server.rtp_frames == 1), server.rtp_frames
+        assert push.stats().packets_sent == 1
+        assert push.end_reason() is None
+        sender.close()
+        assert push.end_reason() is EndReason.CANCELLED
+        assert push.stats().packets_sent == 1
+    finally:
+        server.close()
+        push.close()
+
+
+def test_stats_racing_close_never_fails() -> None:
+    server = ScriptedRecordServer()
+    try:
+        for _ in range(10):
+            push = RtspClient.push(RtspClientConfig(server.url), PushDescription.mp2t())
+            answers: list[object] = []
+            errs: list[BaseException] = []
+            stop = threading.Event()
+
+            def read(push: RtspPushSession = push) -> None:
+                while not stop.is_set():
+                    try:
+                        answers.append(push.stats())
+                        push.end_reason()
+                        push.end_detail()
+                    except BaseException as exc:  # noqa: BLE001
+                        errs.append(exc)
+                        return
+
+            t = threading.Thread(target=read, daemon=True)
+            t.start()
+            assert _wait_for(lambda: len(answers) > 0)
+            push.close()
+            n = len(answers)
+            assert _wait_for(lambda: len(answers) > n)
+            stop.set()
+            t.join(WAIT_S)
+            assert not t.is_alive()
+            assert not errs, errs
+            assert all(isinstance(a, RtspPushStats) for a in answers)
+            server.close()
+            server = ScriptedRecordServer()
+    finally:
+        server.close()
+
+
+def test_a_poisoned_session_refuses_calls_but_closes() -> None:
+    """A panic inside a call poisons the session: every call that needs
+    the session raises `RtspError(CLOSED)` naming the poisoning, the reads
+    kept outside it still answer, and `close()` still ends the push, as
+    `teardown()` (a close that reports) does."""
+    poison = rtp_hook("_push_poison_for_test")
+    server = ScriptedRecordServer()
+    push = RtspClient.push(RtspClientConfig(server.url), PushDescription.mp2t())
+    try:
+        push.send_ts(TS_BUNDLE)
+        poison(push)
+        for call in (
+            lambda: push.send_ts(TS_BUNDLE),
+            lambda: push.send_video(START + b"\x65\x00", pts=Pts90khz.from_raw(0)),
+            lambda: push.send_klv(KLV_UNIT, pts=Pts90khz.from_raw(0)),
+            push.pause,
+            push.resume,
+            push.cancel_handle,
+            push.into_sender,
+            lambda: push.into_mux_sender(video_only_program()),
+        ):
+            with pytest.raises(RtspError) as ei:
+                call()
+            assert ei.value.kind is RtspErrorKind.CLOSED
+            assert "poisoned" in str(ei.value), ei.value
+        assert push.is_session_alive() is False
+        assert push.stats().packets_sent == 1
+        push.close()
+        assert _wait_for(lambda: "TEARDOWN" in server.methods), server.methods
+        assert server.rtp_frames == 1
+        with pytest.raises(RtpError) as rtp_ei:
+            push.send_ts(TS_BUNDLE)
+        assert rtp_ei.value.kind is RtpErrorKind.CLOSED
+    finally:
+        server.close()
+        push.close()
+    server = ScriptedRecordServer()
+    try:
+        push = RtspClient.push(RtspClientConfig(server.url), PushDescription.mp2t())
+        poison(push)
+        assert push.teardown() is None
+        assert "TEARDOWN" in server.methods
+    finally:
+        server.close()
+        push.close()
 
 
 def test_a_conversion_while_a_send_is_parked_refuses_and_consumes_nothing() -> None:

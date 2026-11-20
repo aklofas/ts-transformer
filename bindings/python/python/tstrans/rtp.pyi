@@ -549,17 +549,19 @@ class RtspPushSession:
     with the same ends as a data call.
 
     The calls that use the push run one at a time: a second thread's call
-    waits, GIL released, for the one in progress; `stats()` too waits while
-    a send, `pause()` or `resume()` is in progress on another thread.
-    `is_session_alive()` never waits: a call in progress on another thread
-    counts as live. `cancel_handle()` answers at once, also while a send is
-    parked on another thread, and is the way to end a parked send.
+    waits, GIL released, for the one in progress. `stats()`, `end_reason()`
+    and `end_detail()` never wait: they read the push's counters and end
+    without the session, and keep answering after `close()`, `teardown()`
+    and a conversion. `is_session_alive()` never waits: a call in progress
+    on another thread counts as live. `cancel_handle()` answers at once,
+    also while a send is parked on another thread, and is the way to end a
+    parked send.
 
     A `close()` or `teardown()` fires the cancel first only when a send,
     `pause()` or `resume()` on another thread holds the session: that call
     raises `CLOSED`, what is queued is dropped, and the session ends as a
-    cancel. One that finds only `stats()` or `is_session_alive()` holding
-    the session waits for it and closes cleanly. A send, `pause()` or
+    cancel. One that finds only `is_session_alive()` peeking at the
+    session waits for it and closes cleanly. A send, `pause()` or
     `resume()` still waiting for the session is neither cancelled nor
     waited for: it gets the session after the close began, runs nothing
     and raises `CLOSED`. So does one that gets the session after a
@@ -571,7 +573,8 @@ class RtspPushSession:
     `teardown()` does the same and raises what the TEARDOWN returned;
     unlike `RtspSession.teardown()`, the session is closed after it. After
     either, every call raises `CLOSED` (`RtpError` for the data calls,
-    `RtspError` for the rest); `session_id` stays readable. A session
+    `RtspError` for the rest); `session_id`, `stats()`, `end_reason()` and
+    `end_detail()` stay readable. A session
     collected without `close()` sets its cancel, discards what is queued
     and writes TEARDOWN without waiting for the reply. Interpreter exit
     cancels a call parked in a session left open.
@@ -580,8 +583,8 @@ class RtspPushSession:
     shell; the session is closed afterwards. They never wait for a call
     that may park: while a send, `pause()` or `resume()` on another thread
     holds the session they raise `RuntimeError`, consume nothing and leave
-    the session open. One that finds only `stats()` or
-    `is_session_alive()` holding the session waits for it and converts.
+    the session open. One that finds only `is_session_alive()` peeking at
+    the session waits for it and converts.
     The shell's `close()` cancels first, so it can drop
     packets queued a moment before. `MuxSender.finish()` cancels nothing:
     it writes what the sender holds and closes the push, which, while the
@@ -589,6 +592,11 @@ class RtspPushSession:
     report whether that happened). A plain `Sender` has no such end: when
     you must know that everything was written, send with `send_ts` and end
     the session with `teardown()`.
+
+    A panic inside a call (a bug) poisons the session: from then on every
+    call that needs the session raises `RtspError(CLOSED)` naming the
+    poisoning, `is_session_alive()` reads `False`, the reads above still
+    answer, and `close()` / `teardown()` still end the push.
     """
 
     def send_ts(self, ts: bytes) -> None:
@@ -634,11 +642,20 @@ class RtspPushSession:
         more. Raises `RtspError(CLOSED)` once the session is closed."""
         ...
     def stats(self) -> RtspPushStats:
-        """The push's counters now. Waits, GIL released, while a send,
-        `pause()` or `resume()` on another thread is in progress: a parked
-        send can stay parked for as long as the server takes a byte now and
-        then. `cancel_handle()` never waits, and firing it is how to end a
-        parked send."""
+        """The push's counters now. Never waits (a send parked on another
+        thread does not hold it up) and never raises; after `close()`,
+        `teardown()` or a conversion, the last values, a converted push's
+        sends included. `frames_dropped_at_close` counts media a close
+        discarded; `teardown()` is the call that reports such a loss."""
+        ...
+    def end_reason(self) -> Optional[EndReason]:
+        """Why the push ended, or `None` while it has not: `CLEAN_TEARDOWN`
+        once the server closed the connection or accepted the TEARDOWN,
+        `CANCELLED` after a cancel. Never waits; kept after `close()` and
+        after a conversion (it follows the sender that owns the push)."""
+        ...
+    def end_detail(self) -> Optional[str]:
+        """Free-text detail for `end_reason()`, or `None`."""
         ...
     @property
     def session_id(self) -> str:
@@ -646,8 +663,9 @@ class RtspPushSession:
         ...
     def is_session_alive(self) -> bool:
         """False once the session is known dead (the control connection
-        ended, or a keepalive ping was answered `454`) and once it is
-        closed or converted. Never waits and never raises: a send,
+        ended, or a keepalive ping was answered `454`), once it is closed
+        or converted, and once a panic poisoned it. Never waits and never
+        raises: a send,
         `pause()` or `resume()` in progress on another thread counts as
         live."""
         ...
@@ -656,18 +674,20 @@ class RtspPushSession:
         afterwards. Raises `ValueError` on an elementary push,
         `MuxError(CONFIG_INVALID)` for a refused config and `RuntimeError`
         while a send, `pause()` or `resume()` on another thread holds the
-        session, each leaving the session as it was; a `stats()` or
-        `is_session_alive()` holding it is waited for. The sender's
-        `close()` cancels first; `finish()` cancels nothing."""
+        session, each leaving the session as it was; an
+        `is_session_alive()` peeking at it is waited for. The sender's
+        `close()` cancels first; `finish()` cancels nothing. `stats()` and
+        `end_reason()` keep answering for the push the sender owns."""
         ...
     def into_sender(self) -> Sender:
         """Move an MPEG-TS push into a `Sender`; the session is closed
         afterwards. Raises `ValueError` on an elementary push and
         `RuntimeError` while a send, `pause()` or `resume()` on another
-        thread holds the session, both leaving the session as it was; a
-        `stats()` or `is_session_alive()` holding it is waited for. The
-        sender's `close()` cancels first, and a `Sender` has no lossless
-        end: for one, send with `send_ts` and call `teardown()`."""
+        thread holds the session, both leaving the session as it was; an
+        `is_session_alive()` peeking at it is waited for. The sender's
+        `close()` cancels first, and a `Sender` has no lossless end: for
+        one, send with `send_ts` and call `teardown()`. `stats()` and
+        `end_reason()` keep answering for the push the sender owns."""
         ...
     def __enter__(self) -> RtspPushSession: ...
     def __exit__(
