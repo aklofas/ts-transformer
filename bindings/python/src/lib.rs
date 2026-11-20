@@ -103,28 +103,29 @@ fn _native(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     let hook = wrap_pyfunction!(util::fire_cancel_sources_at_exit, m)?;
     m.add_function(hook.clone())?;
     _py.import("atexit")?.getattr("register")?.call1((hook,))?;
+    #[cfg(feature = "py-test-hooks")]
     m.add_function(wrap_pyfunction!(errors::raise_mux_error_for_test, m)?)?;
-    #[cfg(feature = "srt")]
+    #[cfg(all(feature = "py-test-hooks", feature = "srt"))]
     {
         m.add_function(wrap_pyfunction!(errors::raise_srt_error_for_test, m)?)?;
     }
-    #[cfg(feature = "udp")]
+    #[cfg(all(feature = "py-test-hooks", feature = "udp"))]
     {
         m.add_function(wrap_pyfunction!(errors::raise_udp_error_for_test, m)?)?;
     }
-    #[cfg(feature = "tcp")]
+    #[cfg(all(feature = "py-test-hooks", feature = "tcp"))]
     {
         m.add_function(wrap_pyfunction!(errors::raise_tcp_error_for_test, m)?)?;
     }
-    #[cfg(feature = "hls")]
+    #[cfg(all(feature = "py-test-hooks", feature = "hls"))]
     {
         m.add_function(wrap_pyfunction!(errors::raise_hls_error_for_test, m)?)?;
     }
-    #[cfg(feature = "rist")]
+    #[cfg(all(feature = "py-test-hooks", feature = "rist"))]
     {
         m.add_function(wrap_pyfunction!(errors::raise_rist_error_for_test, m)?)?;
     }
-    #[cfg(feature = "webrtc")]
+    #[cfg(all(feature = "py-test-hooks", feature = "webrtc"))]
     {
         m.add_function(wrap_pyfunction!(errors::raise_webrtc_error_for_test, m)?)?;
     }

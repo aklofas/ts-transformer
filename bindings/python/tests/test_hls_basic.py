@@ -33,7 +33,6 @@ pytest.importorskip(
 
 import tstrans
 import tstrans.hls
-from tstrans import _native
 from tstrans.exceptions import HlsError, HlsErrorKind, MuxError, MuxErrorKind
 from tstrans.hls import (
     HlsMode,
@@ -59,6 +58,7 @@ from tstrans.mpegts import (
 from _builders.mux_programs import masquerade_program as _masquerade_program
 from _builders.mux_programs import video_data_program as _video_data_program
 from _builders.mux_programs import video_klv_program as _video_klv_program
+from _builders.native_hooks import native_hook
 
 # 376 bytes = 2 × 188-byte TS packets (aligned).
 TS_TWO_PACKETS = b"\x47" + b"\x00" * 187 + b"\x47" + b"\x00" * 187
@@ -472,7 +472,7 @@ def test_hls_error_kind_count() -> None:
 def test_hls_error_round_trips_from_rust(kind_name: str) -> None:
     """Every HlsErrorKind variant maps through the one raise path in Rust."""
     with pytest.raises(HlsError) as ei:
-        _native._raise_hls_error_for_test(kind_name, f"test {kind_name}")
+        native_hook("_raise_hls_error_for_test")(kind_name, f"test {kind_name}")
     assert ei.value.kind == getattr(HlsErrorKind, kind_name)
     assert kind_name in ei.value.message
 

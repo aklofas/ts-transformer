@@ -151,9 +151,7 @@ pub(crate) fn pyok<R>(py: Python<'_>, d: &Domain, r: Result<R, HandleState>) -> 
 
 /// The domain's kind whose `name()` is `name` (test helpers; names like
 /// `IO` exist in several domains, so the lookup is per domain).
-// Its only caller, `errors::raise_for_test`, needs one of the transport
-// features; a bare `--no-default-features` build has none.
-#[allow(dead_code)]
+#[cfg(feature = "py-test-hooks")]
 pub(crate) fn kind_by_name(d: &Domain, name: &str) -> Option<K> {
     d.kinds().iter().copied().find(|k| k.name() == name)
 }

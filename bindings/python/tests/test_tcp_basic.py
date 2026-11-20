@@ -785,7 +785,9 @@ def test_tcp_pkt_size_zero_is_refused() -> None:
 
 def test_tcp_error_wiring_via_test_helper() -> None:
     """Verify make_tcp_error wiring for all 8 kind variants via test helper."""
-    from tstrans._native import _raise_tcp_error_for_test
+    from _builders.native_hooks import native_hook
+
+    _raise_tcp_error_for_test = native_hook("_raise_tcp_error_for_test")
 
     for kind in TcpErrorKind:
         with pytest.raises(TcpError) as excinfo:

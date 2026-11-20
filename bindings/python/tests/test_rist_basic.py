@@ -29,7 +29,8 @@ import pytest
 
 from tstrans import rist
 from tstrans.exceptions import RistError, RistErrorKind
-from tstrans import _native
+
+from _builders.native_hooks import native_hook
 
 
 # ---------------------------------------------------------------------------
@@ -225,7 +226,7 @@ def test_rist_error_kind_variant_mapping_via_raise():
     ]
     for v in variants:
         with pytest.raises(RistError) as exc_info:
-            _native._raise_rist_error_for_test(v, f"test {v}")
+            native_hook("_raise_rist_error_for_test")(v, f"test {v}")
         assert exc_info.value.kind == RistErrorKind[v], f"kind mismatch for {v}"
         assert f"test {v}" in str(exc_info.value)
 
