@@ -75,3 +75,51 @@ def test_end_reason_values_are_pinned() -> None:
         ("TRANSPORT_FAILED", 4), ("PROTOCOL_ERROR", 5), ("CANCELLED", 6),
         ("END_OF_STREAM", 7), ("RECONNECT_EXHAUSTED", 8),
     ]
+
+
+def _null_packets(n: int) -> bytes:
+    return (bytes([0x47, 0x1F, 0xFF, 0x10]) + b"\xff" * 184) * n
+
+
+def test_finish_after_a_cancel_raises_closed() -> None:
+    import socket
+
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as rx:
+        rx.bind(("127.0.0.1", 0))
+        tx = Sender.open(f"udp://127.0.0.1:{rx.getsockname()[1]}")
+        tx.send_bytes(_null_packets(3))
+        tx.cancel_handle().cancel()
+        for _ in range(2):
+            with pytest.raises(exceptions.UdpError) as ei:
+                tx.finish()
+            assert ei.value.kind == exceptions.UdpErrorKind.CLOSED
+        tx.close()
+
+
+def test_close_after_finish_does_nothing() -> None:
+    """`finish()` sends the partial bundle `close()` would drop; the shell
+    is closed after it, a second `finish()` and a `close()` do nothing,
+    and a `finish()` after `close()` is quiet too."""
+    import socket
+
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as rx:
+        rx.bind(("127.0.0.1", 0))
+        rx.settimeout(5.0)
+        tx = Sender.open(f"udp://127.0.0.1:{rx.getsockname()[1]}")
+        tx.send_bytes(_null_packets(3))
+        assert tx.finish() is None
+        assert rx.recv(65536) == _null_packets(3)
+        assert tx.is_alive() is False
+        assert tx.finish() is None
+        assert tx.close() is None
+        with pytest.raises(exceptions.UdpError) as ei:
+            tx.send_bytes(_null_packets(1))
+        assert ei.value.kind == exceptions.UdpErrorKind.CLOSED
+        rx.settimeout(0.2)
+        with pytest.raises(socket.timeout):
+            rx.recv(65536)
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as rx:
+        rx.bind(("127.0.0.1", 0))
+        tx = Sender.open(f"udp://127.0.0.1:{rx.getsockname()[1]}")
+        tx.close()
+        assert tx.finish() is None

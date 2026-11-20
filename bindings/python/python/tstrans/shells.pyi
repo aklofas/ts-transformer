@@ -230,6 +230,16 @@ class Sender:
     def srt_stats(self) -> SrtStats:
         """Raises TypeError unless the shell was opened from an srt:// URL."""
     def close(self) -> None: ...
+    def finish(self) -> None:
+        """Flush the partial and retained bundles, close the transport
+        without cancelling first, and raise the flush's error (the
+        transport's error class): the lossless end, also over a transport
+        that queues (an RTSP push writes its queue, then TEARDOWN). The
+        sender is closed either way; a later `finish()` or `close()` does
+        nothing, and a `finish()` after `close()` is quiet. Waits behind a
+        `send_bytes()` parked on another thread. After
+        ``cancel_handle().cancel()`` this raises ``CLOSED``, buffered data
+        included."""
     def is_alive(self) -> bool: ...
     def __enter__(self) -> Sender: ...
     def __exit__(

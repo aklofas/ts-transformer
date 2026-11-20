@@ -434,7 +434,10 @@ with Sender.open("srt://host:9000?mode=caller&passphrase=example-shared-secret")
 
 `send_bytes` accepts a bytes-like payload of any length; the sender frames
 it into 7-packet (1316-byte) SRT bundles internally. Call `flush()` after
-the last push to emit a partial bundle. `socket_stats()` returns the
+the last push to emit a partial bundle, or end with `finish()`: it
+flushes, closes the transport without cancelling first and raises the
+flush's error, so a transport that queues (an RTSP push) writes what it
+holds. `socket_stats()` returns the
 scheme-neutral 16-field `SocketStats`; `srt_stats()` returns the
 libsrt-rich `SrtStats` (estimated bandwidth, symmetric send/recv-side loss
 split).
@@ -653,9 +656,10 @@ another thread through `OpenCancel`.
 
 A cancel-first `close()` is abortive by design: for the raw-bytes
 `Sender`, a partial 7-packet bundle still in the framing buffer is not
-delivered — call `flush()` first when the tail matters (`MuxSender`
-already closed cancel-first; on the Rust side `finish()` is the lossless
-alternative). Dropping a `Managed*` shell without `close()` is abortive
+delivered — call `flush()` first when the tail matters, or end with
+`finish()`, the lossless end of both `Sender` and `MuxSender` (no cancel;
+it waits behind a send parked on another thread, and the shell is closed
+after it). Dropping a `Managed*` shell without `close()` is abortive
 too: the drop cancels first, with the GIL released, rather than retrying
 the reconnect policy.
 
@@ -1590,11 +1594,14 @@ Rules the types do not enforce:
   `RtspError(CLOSED)` naming the poisoning, `is_session_alive()` reads
   `False`, `stats()` and `end_reason()` still answer, and `close()` /
   `teardown()` still end the push.
-- **Ending a push through a shell.** `MuxSender.finish()` cancels nothing:
-  it writes what the sender holds and closes the push, which, while the
-  session is up, writes its queue and then sends TEARDOWN. It cannot tell
-  you whether that happened: a session that ended first drops what was
-  queued and `finish()` still returns `None`. A shell's `close()` cancels
+- **Ending a push through a shell.** `MuxSender.finish()` and
+  `Sender.finish()` cancel nothing: each writes what the sender holds and
+  closes the push, which, while the session is up, writes its queue and
+  then sends TEARDOWN. Neither reports the TEARDOWN's answer: a session
+  that ended first drops what was queued (a `Sender` whose push the
+  server already ended raises the send's error). The session's
+  `end_reason()` and `stats().frames_dropped_at_close` tell afterwards
+  how the push ended and what a close dropped. A shell's `close()` cancels
   first, so it can drop packets queued a moment before. When you must know
   that everything was written, send through the session's `send_ts` and
   call `teardown()`, which raises unless the queued media was written and

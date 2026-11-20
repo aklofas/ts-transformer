@@ -21,13 +21,11 @@ use pyo3::types::PyType;
 
 use tst_core::transport::Transport;
 use tst_pipeline::binding::view::{BlockingReason, Snapshot};
-use tst_pipeline::binding::{Opened, Owned};
+use tst_pipeline::binding::{BindingError, HandleState, Opened, Owned};
 use tst_pipeline::{Sender as PlSender, SenderConfig};
 
 use crate::generated::stats_shells::SocketStats;
-#[cfg(feature = "srt")]
-use crate::raise::raise;
-use crate::raise::{pyok, pyres};
+use crate::raise::{pyok, pyres, raise};
 use crate::shells::cancel::{PyCancelHandle, cancel_source};
 use crate::shells::open_cancel::{PyOpenCancel, object_of};
 use crate::util::{CancelSource, close_owned, drop_owned};
@@ -117,7 +115,8 @@ impl PySender {
 
     /// Flush a partial 7-packet bundle (see `Sender::send_ts`). Releases
     /// the GIL. Call it before `close()` when the tail matters: `close()`
-    /// cancels first and does not drain the framing buffer.
+    /// cancels first and does not drain the framing buffer; `finish()`
+    /// flushes and closes without a cancel.
     fn flush(&self, py: Python<'_>) -> PyResult<()> {
         let res = crate::util::allow_threads_parking(py, || {
             self.owned.with_mut_unless_cancelled(|s| s.flush())
@@ -165,13 +164,8 @@ impl PySender {
         });
         match pyok(py, &self.owned.snapshot().domain, stats)? {
             Some(r) => {
-                let stats = r.map_err(|e| {
-                    raise(
-                        py,
-                        &self.owned.snapshot().domain,
-                        tst_pipeline::binding::BindingError::from(e),
-                    )
-                })?;
+                let stats =
+                    r.map_err(|e| raise(py, &self.owned.snapshot().domain, BindingError::from(e)))?;
                 Py::new(py, crate::generated::stats_srt::SrtStats::from(&stats))
             }
             None => Err(pyo3::exceptions::PyTypeError::new_err(
@@ -182,10 +176,44 @@ impl PySender {
 
     /// Close: cancel first (a parked `send_bytes` on another thread ends
     /// promptly), then take the slot and close the transport. A partial
-    /// bundle in the framing buffer is not delivered: `flush()` first
-    /// when the tail matters. Idempotent; later calls raise `CLOSED`.
+    /// bundle in the framing buffer is not delivered: `flush()` first, or
+    /// `finish()`, when the tail matters. Idempotent; later calls raise
+    /// `CLOSED`.
     fn close(&self, py: Python<'_>) -> PyResult<()> {
         close_owned(py, &self.owned.snapshot().domain, &self.owned)
+    }
+
+    /// Flush the partial and retained bundles, close the transport without
+    /// cancelling first, and raise the flush's error (the transport's
+    /// error class): the lossless end, also over a transport that queues
+    /// (an RTSP push writes its queue, then TEARDOWN). The sender is closed
+    /// either way; a later `finish()` or `close()` does nothing, and a
+    /// `finish()` after `close()` is quiet.
+    ///
+    /// It does not cancel: a `send_bytes` parked on another thread keeps
+    /// the shell and `finish()` waits behind it; `close()` instead if that
+    /// is not wanted. After `cancel_handle().cancel()` it raises `CLOSED`,
+    /// buffered data included.
+    fn finish(&self, py: Python<'_>) -> PyResult<()> {
+        // lossless shutdown: drains through the transport, documented to wait behind a send in flight
+        match crate::util::allow_threads_parking(py, || {
+            self.owned.with_mut_unless_cancelled(|s| s.finish())
+        }) {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(e)) => Err(raise(
+                py,
+                &self.owned.snapshot().domain,
+                BindingError::from(e),
+            )),
+            // Already closed: the slot is empty, the answer a second
+            // `finish()` gets from the shell itself.
+            Err(HandleState::Closed) => Ok(()),
+            Err(state) => Err(raise(
+                py,
+                &self.owned.snapshot().domain,
+                BindingError::from(state),
+            )),
+        }
     }
 
     /// `True` while the sender owns a live transport (a send in flight on

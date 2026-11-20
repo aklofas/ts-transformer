@@ -589,9 +589,11 @@ class RtspPushSession:
     packets queued a moment before. `MuxSender.finish()` cancels nothing:
     it writes what the sender holds and closes the push, which, while the
     session is up, writes its queue and then sends TEARDOWN (it cannot
-    report whether that happened). A plain `Sender` has no such end: when
-    you must know that everything was written, send with `send_ts` and end
-    the session with `teardown()`.
+    report whether that happened); `Sender.finish()` ends a plain `Sender`
+    the same way. `end_reason()` and `stats()` on this session then tell
+    how the push ended and what a close dropped. When you must have the
+    TEARDOWN's answer, send with `send_ts` and end the session with
+    `teardown()`.
 
     A panic inside a call (a bug) poisons the session: from then on every
     call that needs the session raises `RtspError(CLOSED)` naming the
@@ -685,9 +687,10 @@ class RtspPushSession:
         `RuntimeError` while a send, `pause()` or `resume()` on another
         thread holds the session, both leaving the session as it was; an
         `is_session_alive()` peeking at it is waited for. The sender's
-        `close()` cancels first, and a `Sender` has no lossless end: for
-        one, send with `send_ts` and call `teardown()`. `stats()` and
-        `end_reason()` keep answering for the push the sender owns."""
+        `close()` cancels first; its `finish()` cancels nothing, writes what
+        the sender and the push hold, then sends TEARDOWN, without
+        reporting the TEARDOWN's answer. `stats()` and `end_reason()` keep
+        answering for the push the sender owns."""
         ...
     def __enter__(self) -> RtspPushSession: ...
     def __exit__(

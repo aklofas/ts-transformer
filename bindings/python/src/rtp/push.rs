@@ -578,8 +578,10 @@ impl PyRtspPushSession {
     /// `RuntimeError` while a send, `pause()` or `resume()` on another
     /// thread holds the session, both leaving the session as it was; an
     /// `is_session_alive()` peeking at it is waited for. The sender's
-    /// `close()` cancels first, and a `Sender` has no lossless end: for
-    /// one, send with `send_ts` and call `teardown()`. `stats()` and
+    /// `close()` cancels first; its `finish()` cancels nothing, writes
+    /// what the sender and the push hold, then sends TEARDOWN (it cannot
+    /// report the TEARDOWN's answer: `end_reason()` and `stats()` here
+    /// tell how the push ended and what a close dropped). `stats()` and
     /// `end_reason()` keep answering on this session, for the push the
     /// sender now owns.
     #[allow(clippy::wrong_self_convention)]

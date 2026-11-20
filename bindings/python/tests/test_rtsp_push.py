@@ -911,6 +911,54 @@ def test_a_poisoned_session_refuses_calls_but_closes() -> None:
         push.close()
 
 
+def test_finish_after_into_sender_delivers_every_packet() -> None:
+    """`Sender.finish()` over a push cancels nothing: the partial bundle it
+    holds and everything queued is written before the TEARDOWN, which
+    `close()` (cancel first) would drop."""
+    bundles = 20
+    server = ScriptedRecordServer()
+    push = RtspClient.push(RtspClientConfig(server.url), PushDescription.mp2t())
+    try:
+        sender = push.into_sender()
+        for _ in range(bundles):
+            sender.send_bytes(TS_BUNDLE)
+        sender.send_bytes(TS_PACKET * 3)  # a partial bundle, held by the sender
+        assert sender.finish() is None
+        assert _wait_for(lambda: "TEARDOWN" in server.methods), server.methods
+        assert server.rtp_frames == bundles + 1, server.rtp_frames
+        assert push.end_reason() is EndReason.CLEAN_TEARDOWN
+        s = push.stats()
+        assert s.packets_sent == bundles + 1
+        assert s.frames_dropped_at_close == 0
+        sender.close()
+        assert server.methods.count("TEARDOWN") == 1
+        assert push.end_reason() is EndReason.CLEAN_TEARDOWN
+    finally:
+        server.close()
+        push.close()
+
+
+def test_finish_raises_the_drain_error_and_still_closes() -> None:
+    """A push the server already ended cannot take the partial bundle:
+    `finish()` raises the send's error, and the sender is closed after."""
+    server = ScriptedRecordServer()
+    push = RtspClient.push(RtspClientConfig(server.url), PushDescription.mp2t())
+    try:
+        sender = push.into_sender()
+        sender.send_bytes(TS_PACKET * 3)
+        server.close()
+        assert _wait_for(lambda: push.end_reason() is not None), "no end recorded"
+        with pytest.raises(RtpError) as ei:
+            sender.finish()
+        assert ei.value.kind is RtpErrorKind.BROKEN
+        assert sender.is_alive() is False
+        assert sender.finish() is None
+        assert push.end_reason() is EndReason.CLEAN_TEARDOWN
+    finally:
+        server.close()
+        push.close()
+
+
 def test_a_conversion_while_a_send_is_parked_refuses_and_consumes_nothing() -> None:
     server = ScriptedRecordServer(stop_reading=True)
     push = RtspClient.push(RtspClientConfig(server.url), PushDescription.mp2t())
