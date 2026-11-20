@@ -1268,15 +1268,20 @@ pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
 /// `_rtsp_session_poison_for_test(session)`: panic while holding each of
 /// the session's locks, as a bug in a call would, so both are poisoned.
 /// Test-only (`py-test-hooks`), never in a published wheel.
+///
+/// The client lock is taken with the GIL released: `pause` / `play` /
+/// `teardown` hold it across their network exchange without the GIL.
 #[cfg(feature = "py-test-hooks")]
 #[pyfunction]
 #[pyo3(name = "_rtsp_session_poison_for_test")]
-fn poison_for_test(session: &Bound<'_, PyRtspSession>) {
+fn poison_for_test(py: Python<'_>, session: &Bound<'_, PyRtspSession>) {
     let s = session.get();
-    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let _guard = s.client.lock();
-        panic!("_rtsp_session_poison_for_test");
-    }));
+    crate::util::allow_threads_parking(py, || {
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = s.client.lock();
+            panic!("_rtsp_session_poison_for_test");
+        }));
+    });
     let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let _guard = s.data_plane.lock();
         panic!("_rtsp_session_poison_for_test");

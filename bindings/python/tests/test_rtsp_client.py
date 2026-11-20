@@ -1151,3 +1151,59 @@ def test_a_poisoned_session_raises_closed_and_still_closes():
     finally:
         server.join(10)
         assert not server.is_alive()
+
+
+def test_poisoning_a_session_does_not_hold_the_gil_behind_a_parked_teardown():
+    """The poison hook takes the client's lock with the GIL released: a
+    `teardown()` on another thread holds that lock while it waits for a reply
+    the peer never sends, and other threads keep running until the
+    request's deadline ends it."""
+    from _builders.native_hooks import rtp_hook
+
+    poison = rtp_hook("_rtsp_session_poison_for_test")
+    teardown_read = threading.Event()
+    port, _requests, server = _recording_peer(teardown_status=None, on_teardown=teardown_read.set)
+    cfg = RtspClientConfig(
+        url=f"rtsp://127.0.0.1:{port}/x",
+        transport_pref=TransportPref.TCP,
+        keepalive=False,
+        request_timeout_ms=5000,
+    )
+    try:
+        session = RtspClient.connect(cfg)
+        outcome: list[BaseException] = []
+
+        def teardown() -> None:
+            try:
+                session.teardown()
+            except BaseException as exc:  # noqa: BLE001
+                outcome.append(exc)
+
+        t = threading.Thread(target=teardown, daemon=True)
+        t.start()
+        # The peer read the TEARDOWN: the teardown holds the client's lock
+        # until the 5 s deadline, as no reply comes.
+        assert teardown_read.wait(5.0), "the TEARDOWN never reached the peer"
+        stop = threading.Event()
+        ticks: list[float] = []
+
+        def heartbeat() -> None:
+            while not stop.is_set():
+                ticks.append(time.monotonic())
+                time.sleep(0.01)
+
+        h = threading.Thread(target=heartbeat, daemon=True)
+        h.start()
+        begin = time.monotonic()
+        poison(session)
+        end = time.monotonic()
+        stop.set()
+        h.join(5)
+        t.join(10)
+        assert not t.is_alive()
+        during = [begin] + [x for x in ticks if begin <= x <= end] + [end]
+        gap = max(b - a for a, b in zip(during, during[1:]))
+        assert gap < 2.0, f"the GIL was held for {gap:.2f}s while the hook waited for the lock"
+        session.close()
+    finally:
+        server.join(10)
