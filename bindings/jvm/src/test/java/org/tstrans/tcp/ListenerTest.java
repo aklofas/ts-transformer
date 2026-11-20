@@ -172,6 +172,23 @@ class ListenerTest {
      * lookup; the native is driven directly with the closed listener's key, which no other
      * listener reuses, so that window is hit every time.
      */
+    /**
+     * A {@code close()} that lands between {@code accept()}'s open check and its native finds
+     * no listener: that is a closed object, {@code IllegalStateException}, not the
+     * {@code CLOSED} of a call that was already parked.
+     */
+    @Test
+    void acceptOnAListenerClosedUnderneathThrowsIllegalState() throws Exception {
+        Listener l = Listener.open(LOOPBACK_V4);
+        org.tstrans.TestSupport.closeUnderneath(l);
+        try {
+            IllegalStateException e = assertThrows(IllegalStateException.class, l::accept);
+            assertEquals("Listener is closed", e.getMessage());
+        } finally {
+            org.tstrans.TestSupport.forgetKey(l);
+        }
+    }
+
     @Test
     void cancelHandleOnAListenerClosedUnderneathThrows() throws Exception {
         Listener l = Listener.open(LOOPBACK_V4);

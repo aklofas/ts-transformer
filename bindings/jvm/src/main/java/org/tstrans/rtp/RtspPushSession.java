@@ -235,7 +235,9 @@ public final class RtspPushSession extends NativeHandle {
     }
 
     /**
-     * The session id the server named at SETUP. Answers at once.
+     * The session id the server named at SETUP. Answers at once while the session is
+     * open; after {@link #close()} it throws, as every getter of a closed object does
+     * (Python's {@code session_id} stays readable).
      *
      * @return the session id
      * @throws IllegalStateException if the session is closed

@@ -266,7 +266,7 @@ public final class ManagedDemuxReceiver extends NativeHandle implements Iterable
     public CancelHandle cancelHandle() {
         ensureOpen("ManagedDemuxReceiver is closed");
         long ch = nCancelHandle(peekHandle());
-        return ShellAdapters.cancelHandle(ch);
+        return ShellAdapters.cancelHandle(ch, "ManagedDemuxReceiver");
     }
 
     /**

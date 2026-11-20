@@ -108,7 +108,7 @@ public class RecvTransport extends NativeHandle {
      */
     public org.tstrans.shells.CancelHandle cancelHandle() {
         ensureOpen("RecvTransport is closed");
-        return ShellAdapters.cancelHandle(nCancelHandle(peekHandle()));
+        return ShellAdapters.cancelHandle(nCancelHandle(peekHandle()), "RecvTransport");
     }
 
     /**

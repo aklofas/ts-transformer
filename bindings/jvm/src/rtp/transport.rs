@@ -187,7 +187,8 @@ jni_native! {
 jni_native! {
     /// Return a cancel-handle `jlong` (a `CancelView` over the `Owned` entry).
     fn Java_org_tstrans_rtp_Transport_nCancelHandle(_env, _class, handle: jlong) -> jlong = 0 => {
-        // Lock-free (see the registration comment); closed handle → 0.
+        // Lock-free (see the registration comment); 0 means closed underneath
+        // the call, refused in Java as a closed object.
         REGISTRY_SENDER
             .cancel_view(handle as u64)
             .map_or(0, crate::shells::cancel::cancel_view_handle)
@@ -397,7 +398,8 @@ jni_native! {
         _class,
         handle: jlong,
     ) -> jlong = 0 => {
-        // Lock-free (see the registration comment); closed handle → 0.
+        // Lock-free (see the registration comment); 0 means closed underneath
+        // the call, refused in Java as a closed object.
         REGISTRY_RECEIVER
             .cancel_view(handle as u64)
             .map_or(0, crate::shells::cancel::cancel_view_handle)

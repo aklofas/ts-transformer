@@ -143,7 +143,7 @@ public final class ManagedSender extends NativeHandle {
     public CancelHandle cancelHandle() {
         ensureOpen("ManagedSender is closed");
         long ch = nCancelHandle(peekHandle());
-        return ShellAdapters.cancelHandle(ch);
+        return ShellAdapters.cancelHandle(ch, "ManagedSender");
     }
 
     /**

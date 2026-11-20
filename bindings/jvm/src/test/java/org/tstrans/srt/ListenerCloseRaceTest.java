@@ -49,6 +49,22 @@ import org.tstrans.SrtException;
  */
 final class ListenerCloseRaceTest {
 
+    /**
+     * A {@code close()} that lands between {@code cancelHandle()}'s open check and its native
+     * finds no listener: {@code IllegalStateException}, never a handle born closed.
+     */
+    @Test
+    void cancelHandleOnAClosedUnderneathSrtListenerThrows() throws Exception {
+        Listener l = new Builder("srt://127.0.0.1:0?mode=listener").listener().listen();
+        org.tstrans.TestSupport.closeUnderneath(l);
+        try {
+            IllegalStateException e = assertThrows(IllegalStateException.class, l::cancelHandle);
+            assertEquals("Listener is closed", e.getMessage());
+        } finally {
+            org.tstrans.TestSupport.forgetKey(l);
+        }
+    }
+
     @Test
     @Timeout(120) // 50 races with widened per-race waits; only a genuine hang ever pays this
     @DisabledOnOs(

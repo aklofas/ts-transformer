@@ -461,7 +461,7 @@ public final class ManagedMuxSender extends NativeHandle {
     public CancelHandle cancelHandle() {
         ensureOpen("ManagedMuxSender is closed");
         long ch = nCancelHandle(peekHandle());
-        return ShellAdapters.cancelHandle(ch);
+        return ShellAdapters.cancelHandle(ch, "ManagedMuxSender");
     }
 
     /**

@@ -93,7 +93,7 @@ public class Transport extends NativeHandle {
      */
     public org.tstrans.shells.CancelHandle cancelHandle() {
         ensureOpen("Transport is closed");
-        return ShellAdapters.cancelHandle(nCancelHandle(peekHandle()));
+        return ShellAdapters.cancelHandle(nCancelHandle(peekHandle()), "Transport");
     }
 
     /** Close the transport. Idempotent. */

@@ -56,7 +56,7 @@ public final class Listener extends NativeHandle implements Iterable<Socket> {
      */
     public CancelHandle cancelHandle() {
         ensureOpen("Listener is closed");
-        return ShellAdapters.cancelHandle(nCancelHandle(peekHandle()));
+        return ShellAdapters.cancelHandle(nCancelHandle(peekHandle()), "Listener");
     }
 
     /**

@@ -2,6 +2,7 @@ package org.tstrans.shells;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.lang.reflect.Modifier;
@@ -31,6 +32,18 @@ class DemuxReceiverTsBytesDemuxedTest {
         List<DemuxEvent> events = new ArrayList<>();
         Object r = DemuxReceiverTestSupport.await(DemuxReceiverTestSupport.drainOnDaemon(p.rx, events));
         assertFalse(r instanceof Throwable, String.valueOf(r));
+    }
+
+    /** An event {@code hasNext()} holds is not served once the receiver is closed. */
+    @Test
+    void closeBetweenHasNextAndNextThrowsIllegalState() throws Exception {
+        try (DemuxReceiverTestSupport.Pair p = new DemuxReceiverTestSupport.Pair()) {
+            p.write(DemuxReceiverTestSupport.eventPackets());
+            java.util.Iterator<DemuxEvent> it = p.rx.iterator();
+            assertTrue(it.hasNext());
+            p.rx.close();
+            assertThrows(IllegalStateException.class, it::next);
+        }
     }
 
     @Test

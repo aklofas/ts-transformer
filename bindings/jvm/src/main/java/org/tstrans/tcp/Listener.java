@@ -102,7 +102,7 @@ public final class Listener extends NativeHandle {
      */
     public CancelHandle cancelHandle() {
         ensureOpen("Listener is closed");
-        return ShellAdapters.cancelHandle(nCancelHandle(peekHandle()));
+        return ShellAdapters.cancelHandle(nCancelHandle(peekHandle()), "Listener");
     }
 
     /**

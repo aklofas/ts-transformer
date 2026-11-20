@@ -192,15 +192,15 @@ jni_native! {
 
 jni_native! {
     /// Obtain a cancel handle for this managed sender. Returns a `jlong` handle on
-    /// success; throws `IllegalStateException` and returns 0 if absent.
+    /// success; 0 if absent.
     fn Java_org_tstrans_srt_ManagedSender_nCancelHandle(
         _env,
         _class,
         handle: jlong,
     ) -> jlong = 0 => {
         // Lock-free: the view is the `Owned` entry itself, so this returns
-        // even while `send` is parked on the slot. Closed handle → 0
-        // (no throw, matching the original contract).
+        // even while `send` is parked on the slot. 0 means closed underneath
+        // the call, refused in Java as a closed object.
         REGISTRY_SENDER
             .cancel_view(handle as u64)
             .map_or(0, crate::shells::cancel::cancel_view_handle)
@@ -463,8 +463,8 @@ jni_native! {
         handle: jlong,
     ) -> jlong = 0 => {
         // Lock-free: the view is the `Owned` entry itself, so this returns
-        // even while `recvBytes` is parked on the slot. Closed handle → 0
-        // (no throw, matching the original contract).
+        // even while `recvBytes` is parked on the slot. 0 means closed
+        // underneath the call, refused in Java as a closed object.
         REGISTRY_RECEIVER
             .cancel_view(handle as u64)
             .map_or(0, crate::shells::cancel::cancel_view_handle)

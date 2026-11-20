@@ -77,6 +77,13 @@ jni_native! {
 
 jni_native! {
     fn Java_org_tstrans_tcp_Listener_nAccept(env, _class, handle: jlong) -> jlong = 0 => {
+        // A key already gone is a listener closed before this call, the shells'
+        // rule; only a close or cancel that lands while the accept holds the
+        // slot is the transport's `CLOSED` (`throw_state` below).
+        if REGISTRY_LISTENER.snapshot(handle as u64, |_| ()).is_none() {
+            throw_closed(env, "Listener");
+            return 0;
+        }
         // `accept_blocking` polls the listener's alive flag, so the cancel that
         // `close` fires first wakes it and releases the slot for the take.
         let result = REGISTRY_LISTENER.with_ref_blocking(

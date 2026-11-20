@@ -311,9 +311,7 @@ public final class H264Receiver extends NativeHandle implements Iterable<H264Acc
      */
     public CancelHandle cancelHandle() {
         ensureOpen("H264Receiver is closed");
-        long h = nCancelHandle(peekHandle());
-        if (h == 0) throw new IllegalStateException("H264Receiver: cancelHandle native returned 0");
-        return ShellAdapters.cancelHandle(h);
+        return ShellAdapters.cancelHandle(nCancelHandle(peekHandle()), "H264Receiver");
     }
 
     /**

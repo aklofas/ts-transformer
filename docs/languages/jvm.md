@@ -1235,7 +1235,8 @@ falls into two groups.
 
 | Accessor | While a call is parked | Once closed |
 |---|---|---|
-| `close()` (every class but `RtspSession`, `RtspServer` and `OpenCancel`: see below), `cancelHandle()`, `CancelHandle.cancel()` / `isCancelled()` | cancel first, then free | quiet |
+| `close()` (every class but `RtspSession`, `RtspServer` and `OpenCancel`: see below), `CancelHandle.cancel()` / `isCancelled()` | cancel first, then free | quiet |
+| `cancelHandle()` | a new handle | throws `IllegalStateException` |
 | `isAlive()` | `true` — a parked call means the object is open | `false` |
 | `localAddr()` (`srt.Listener`, `H264Receiver`) | the value captured when the object was built | throws `IllegalStateException` |
 | `localPort()` (`Receiver`, `DemuxReceiver`, `tcp.Listener`) | the port captured at open (`tcp.Listener` answers while `accept()` is parked) | throws `IllegalStateException` |
@@ -1248,6 +1249,13 @@ falls into two groups.
 `RtspServer.close()` runs the graceful `stop()` before it frees the server,
 so it takes as long as `stop()` (a parked `nextPublisher` does not hold it
 up). `OpenCancel.close()` frees the object only.
+
+One rule covers a closed object: a call on it throws
+`IllegalStateException("<Class> is closed")`, also when another thread's
+`close()` lands between the call's own open check and its native work. Only
+a call that was already parked when the close or a cancel landed ends with
+the transport's `CLOSED` instead. (`RtspPushSession.isSessionAlive()` is the
+one getter that answers `false` instead of throwing.)
 
 `RtspSession` differs. Its `close()` cancels only a `pause()` / `play()` /
 `teardown()` in progress on another thread (that call throws `CLOSED`, and

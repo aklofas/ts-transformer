@@ -236,6 +236,31 @@ public final class TestSupport {
         return new byte[]{0x00, 0x00, 0x00, 0x01, 0x65, (byte) 0x88, (byte) 0x84, 0x00};
     }
 
+    /**
+     * Close {@code h} natively but put its registry key back on the Java object, so the
+     * next call passes the Java open check and reaches its native with a key that is gone:
+     * a {@code close()} that lands between the guard and the native, every time (keys are
+     * never reused). Undo with {@link #forgetKey}.
+     */
+    public static void closeUnderneath(NativeHandle h) throws ReflectiveOperationException {
+        java.util.concurrent.atomic.AtomicLong key = handleField(h);
+        long k = key.get();
+        h.close();
+        key.set(k);
+    }
+
+    /** Zero the key {@link #closeUnderneath} put back, so a later {@code close()} does nothing. */
+    public static void forgetKey(NativeHandle h) throws ReflectiveOperationException {
+        handleField(h).set(0);
+    }
+
+    private static java.util.concurrent.atomic.AtomicLong handleField(NativeHandle h)
+            throws ReflectiveOperationException {
+        java.lang.reflect.Field f = NativeHandle.class.getDeclaredField("handle");
+        f.setAccessible(true);
+        return (java.util.concurrent.atomic.AtomicLong) f.get(h);
+    }
+
     /** Drain every buffered TS byte from {@code m}. */
     public static byte[] drain(Muxer m) {
         ByteArrayOutputStream acc = new ByteArrayOutputStream();

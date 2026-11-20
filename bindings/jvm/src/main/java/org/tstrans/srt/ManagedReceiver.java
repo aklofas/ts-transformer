@@ -191,7 +191,7 @@ public final class ManagedReceiver extends NativeHandle {
     public CancelHandle cancelHandle() {
         ensureOpen("ManagedReceiver is closed");
         long ch = nCancelHandle(peekHandle());
-        return ShellAdapters.cancelHandle(ch);
+        return ShellAdapters.cancelHandle(ch, "ManagedReceiver");
     }
 
     /**

@@ -89,6 +89,35 @@ class RtpTransportTest {
         }
     }
 
+    /**
+     * A {@code close()} that lands between {@code cancelHandle()}'s open check and its native
+     * finds no transport: {@code IllegalStateException}, never a handle born closed.
+     */
+    @Test
+    void cancelHandleOnAClosedUnderneathRtpTransportThrows() throws Exception {
+        int port = freeUdpPort();
+        Transport s = Transport.fromUrl("rtp://127.0.0.1:" + port);
+        org.tstrans.TestSupport.closeUnderneath(s);
+        try {
+            IllegalStateException e = assertThrows(IllegalStateException.class, s::cancelHandle);
+            assertEquals("Transport is closed", e.getMessage());
+        } finally {
+            org.tstrans.TestSupport.forgetKey(s);
+        }
+    }
+
+    @Test
+    void cancelHandleOnAClosedUnderneathRtpRecvTransportThrows() throws Exception {
+        RecvTransport r = RecvTransport.fromUrl("rtp://127.0.0.1:0");
+        org.tstrans.TestSupport.closeUnderneath(r);
+        try {
+            IllegalStateException e = assertThrows(IllegalStateException.class, r::cancelHandle);
+            assertEquals("RecvTransport is closed", e.getMessage());
+        } finally {
+            org.tstrans.TestSupport.forgetKey(r);
+        }
+    }
+
     @Test
     void receiverClosedThenRecvThrowsIllegalState() throws Exception {
         RecvTransport r = RecvTransport.fromUrl("rtp://127.0.0.1:0");

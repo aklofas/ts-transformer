@@ -13,7 +13,14 @@ import org.tstrans.shells.Sender;
 final class ShellAdapters {
     private ShellAdapters() {}
 
-    static CancelHandle cancelHandle(long key) { return new CancelHandle(key) {}; }
+    /**
+     * The handle for a native cancel key; {@code key} 0 is the native's answer for an object
+     * closed under the call, refused as a closed object is.
+     */
+    static CancelHandle cancelHandle(long key, String what) {
+        if (key == 0) throw new IllegalStateException(what + " is closed");
+        return new CancelHandle(key) {};
+    }
 
     static Sender sender(long handle) { return new Sender(handle) {}; }
 

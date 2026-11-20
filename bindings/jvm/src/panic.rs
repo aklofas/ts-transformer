@@ -33,9 +33,12 @@ use jni::{Env, EnvUnowned, Outcome, jni_str};
 /// `tst-c`'s `ffi_catch`. Its `AssertUnwindSafe` is sound here for the same
 /// reason as there: the panic arm only *throws + returns a default*; it never
 /// observes potentially-broken state behind the `&mut Env` or any captured
-/// handle. A panic mid-body either drops an in-progress `Box` (leaking
-/// nothing) or leaves the registry entry usable — the lock simply unlocks
-/// (poison-tolerated) on unwind; any partial mutation persists.
+/// handle. A panic mid-body drops an in-progress `Box` (leaking nothing). A
+/// panic inside a mutating native's `with_poisoning` lease drops the torn
+/// value and removes the registry entry (`HandleRegistry::with_poisoning`),
+/// so every later call sees a closed handle; under the other leases the lock
+/// unlocks (poison-tolerated) on unwind and the entry stays usable with any
+/// partial mutation.
 pub(crate) fn jni_catch<'local, R, F>(env: &mut EnvUnowned<'local>, default: R, f: F) -> R
 where
     F: FnOnce(&mut Env<'local>) -> R,

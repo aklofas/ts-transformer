@@ -956,6 +956,8 @@ jni_native! {
         // holds that lock, and this is exactly the call that must wake it.
         // `cancel()` closes the SRTSOCKET WITHOUT freeing the Listener — the
         // sanctioned cross-thread wake. Mirrors tst-py's PyCancelHandle.
+        // 0 means closed underneath the call, refused in Java as a closed
+        // object.
         REGISTRY_LISTENER
             .cancel_view(handle as u64)
             .map_or(0, crate::shells::cancel::cancel_view_handle)
