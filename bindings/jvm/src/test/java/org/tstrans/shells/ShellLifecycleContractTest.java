@@ -148,6 +148,7 @@ class ShellLifecycleContractTest {
                 try {
                     assertTrue(ShellPeers.within(1_000, "isAlive()", rx::isAlive));
                     assertNotNull(ShellPeers.within(1_000, "cancelHandle()", rx::cancelHandle));
+                    parked.assertStillParked();
                 } finally {
                     cancel.cancel();
                 }

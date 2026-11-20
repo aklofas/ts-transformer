@@ -3,6 +3,7 @@ package org.tstrans.rtp;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.tstrans.TestSupport.waitUntil;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -171,7 +172,7 @@ class RtspClientPrefsTest {
             try (RtspSession s = RtspClient.connect(cfg)) {
                 // The SETUP reply says timeout=60, so without the interval the first ping
                 // would come after 30 s.
-                assertTrue(waitFor(() -> pingsAfterPlay(peer.requests) >= 2),
+                assertTrue(waitUntil(() -> pingsAfterPlay(peer.requests) >= 2, org.tstrans.TestSupport.scaledMs(5_000)),
                     () -> "no pings after PLAY: " + methods(peer.requests));
             }
         }
@@ -211,7 +212,7 @@ class RtspClientPrefsTest {
                 .connectTimeoutMs(9_000).requestTimeoutMs(4_000)
                 .userAgent("example-agent/1").build();
             try (RtspSession s = RtspClient.connectH264(cfg)) {
-                assertTrue(waitFor(() -> pingsAfterPlay(peer.requests) >= 2),
+                assertTrue(waitUntil(() -> pingsAfterPlay(peer.requests) >= 2, org.tstrans.TestSupport.scaledMs(5_000)),
                     () -> "no pings after PLAY: " + methods(peer.requests));
                 long t0 = System.nanoTime();
                 RtspException e = assertThrows(RtspException.class, s::pause);
@@ -255,13 +256,4 @@ class RtspClientPrefsTest {
         return requests.stream().map(r -> r.split(" ", 2)[0]).toList();
     }
 
-    private static boolean waitFor(java.util.function.BooleanSupplier cond) throws InterruptedException {
-        long deadline = System.nanoTime()
-            + TimeUnit.MILLISECONDS.toNanos(org.tstrans.TestSupport.scaledMs(5_000));
-        while (System.nanoTime() < deadline) {
-            if (cond.getAsBoolean()) return true;
-            Thread.sleep(20);
-        }
-        return cond.getAsBoolean();
-    }
 }
