@@ -72,7 +72,7 @@ class SrtMuxSenderCancelHandleTest {
 
             CancelHandle cancel;
             try {
-                cancel = handleWhileParked(sender::cancelHandle);
+                cancel = handleWhileParked(sender::cancelHandle); // cancel-handle: closed at the end
             } catch (TimeoutException te) {
                 try {
                     pump.end.get(30, TimeUnit.SECONDS); // budget unparks it
@@ -116,7 +116,7 @@ class SrtMuxSenderCancelHandleTest {
 
             CancelHandle cancel;
             try {
-                cancel = handleWhileParked(sender::cancelHandle);
+                cancel = handleWhileParked(sender::cancelHandle); // cancel-handle: closed at the end
             } catch (TimeoutException te) {
                 peer.close(); // rescue: the peer's shutdown breaks the parked srt_sendmsg
                 try {

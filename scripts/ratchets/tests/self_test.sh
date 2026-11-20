@@ -2471,9 +2471,9 @@ rm "$tmp/adp/pin.toml"
 expect "advisory-db pin: a missing pin file fails" 1 adp
 
 # ---- JVM cancel handles are closed (scripts/check/jvm/cancel-handle-closed.sh) ----
-# Every `.cancelHandle()` in the JVM tests is closed by a try header, a closing
-# helper, an immediate close, a return, or carries a reason; any other site
-# fails naming file:line. A `.cancelHandle()` inside a string or a comment is
+# Every `.cancelHandle()` / `::cancelHandle` in the JVM tests is closed by a try
+# header, a closing helper, an immediate close, a return, or carries a reason;
+# any other site fails naming file:line. A `.cancelHandle()` inside a string or a comment is
 # not a site; a tree with no site at all fails closed.
 CH="$DIR/../check/jvm/cancel-handle-closed.sh"
 ch="$tmp/cancel-handles"; mkdir -p "$ch/ok/org/x" "$ch/leak/org/x" "$ch/none/org/x" "$ch/empty"
@@ -2493,12 +2493,15 @@ class A {
         this(rx.shell(), rx.cancelHandle());
         // a comment naming rx.cancelHandle() is not a site
         String s = "rx.cancelHandle()";
+        cancelNow(rx::cancelHandle);
+        assertThrows(IllegalStateException.class, rx::cancelHandle);
+        c.add(within(1, "x", rx::cancelHandle));
     }
     CancelHandle g() { return s.cancelHandle(); }
 }
 JAVA
 expect "cancel handles: every closing form passes" 0 env CANCEL_HANDLE_JAVA_DIR="$ch/ok" bash "$CH"
-expect_out "cancel handles: strings and comments are not sites" "all 10 .cancelHandle() sites"
+expect_out "cancel handles: strings and comments are not sites" "all 13 cancelHandle sites"
 cat > "$ch/leak/org/x/B.java" <<'JAVA'
 class B {
     void f(Rx rx) {
@@ -2507,6 +2510,8 @@ class B {
         keep(rx.cancelHandle());
         CancelHandle m = rx.cancelHandle(); // cancel-handle:
         try (CancelHandle ok = rx.cancelHandle()) { }
+        keep.add(rx.cancelHandle());
+        Optional.of(rx).map(Receiver::cancelHandle);
     }
 }
 JAVA
@@ -2515,7 +2520,9 @@ expect_out "cancel handles: a local" "FAIL: cancel-handle-closed: org/x/B.java:3
 expect_out "cancel handles: an inline temporary" "FAIL: cancel-handle-closed: org/x/B.java:4: rx.cancelHandle().cancel();"
 expect_out "cancel handles: an argument to anything else" "FAIL: cancel-handle-closed: org/x/B.java:5: keep(rx.cancelHandle());"
 expect_out "cancel handles: a marker without a reason" "FAIL: cancel-handle-closed: org/x/B.java:6:"
-expect_out "cancel handles: the count" "4 of 5 .cancelHandle() sites are never closed"
+expect_out "cancel handles: a list is not a Cleanup" "FAIL: cancel-handle-closed: org/x/B.java:8: keep.add(rx.cancelHandle());"
+expect_out "cancel handles: a method reference to anything else" "FAIL: cancel-handle-closed: org/x/B.java:9: Optional.of(rx).map(Receiver::cancelHandle);"
+expect_out "cancel handles: the count" "6 of 7 cancelHandle sites are never closed"
 printf 'class C {\n    void f() { }\n}\n' > "$ch/none/org/x/C.java"
 expect "cancel handles: a tree with no site fails closed" 2 env CANCEL_HANDLE_JAVA_DIR="$ch/none" bash "$CH"
 expect "cancel handles: a tree with no Java file fails closed" 2 env CANCEL_HANDLE_JAVA_DIR="$ch/empty" bash "$CH"
