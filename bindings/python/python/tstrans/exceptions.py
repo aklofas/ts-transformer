@@ -552,9 +552,9 @@ class SrtError(_KindMessageError):
     `tstrans.srt.RejectReason` member for a code it names (libsrt's own,
     such as `BAD_SECRET` for a wrong passphrase, or a predefined one), the
     bare `int` for an application's code, `None` when the error is not a
-    reject. It is set on a caller's refused connect and on a listener's
-    accept of a caller that rejected; the managed opens retry a reject and
-    report none."""
+    reject. It is set on a caller's refused connect; the listener never
+    hands a refused caller to `accept()`, so its side sees none, and the
+    managed opens retry a reject and report none."""
 
     kind: SrtErrorKind
     reject_reason: "Optional[Union[RejectReason, int]]"
