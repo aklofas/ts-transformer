@@ -68,6 +68,7 @@ fn clean_teardown_records_clean_teardown() {
 fn keepalive_454_records_session_expired() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
+    let (offered_tx, offered_rx) = std::sync::mpsc::channel();
     let server = std::thread::spawn(move || {
         let (mut sock, _) = listener.accept().unwrap();
         let mut leftover = Vec::new();
@@ -88,6 +89,7 @@ fn keepalive_454_records_session_expired() {
         assert_eq!(method_of(&req), "SETUP");
         let cseq = cseq_of(&req);
         let client_port = extract_client_port(&req).expect("SETUP request carries client_port=");
+        offered_tx.send(client_port).unwrap();
         sock.write_all(
             format!(
                 "RTSP/1.0 200 OK\r\nCSeq: {cseq}\r\nSession: DEADBEEF;timeout=60\r\n\
@@ -134,6 +136,17 @@ fn keepalive_454_records_session_expired() {
     let sdp = client.describe().unwrap();
     let session = client.setup_mp2t_auto(&sdp).unwrap();
     let transport = session.into_recv_transport();
+    // The UDP receiver reports the port its SETUP offered.
+    let offered = offered_rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("the server read the SETUP");
+    assert_eq!(
+        transport
+            .local_addr()
+            .expect("a UDP session's receiver has a local address")
+            .port(),
+        offered
+    );
     client
         .spawn_keepalive_if_needed(Some(Duration::from_millis(50)))
         .unwrap();
