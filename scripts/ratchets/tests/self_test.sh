@@ -123,6 +123,52 @@ expect "gil locks: a lock inside allow_threads_parking is not a finding (stale r
 expect "gil locks: an allowlist row without a reason fails"             1 env SG_ONLY_LOCKS=1 SG_LOCK_ROOTS="$tmp/gl/held"  SG_LOCK_ALLOWLIST="$tmp/gl/noreason.tsv"  bash "$SG"
 expect "gil locks: a scan that matches nothing fails closed"            1 env SG_ONLY_LOCKS=1 SG_LOCK_ROOTS="$tmp/gl/clean" SG_LOCK_ALLOWLIST="$tmp/gl/empty.tsv"     bash "$SG"
 
+# ---- gil locks: a ParkingSlot wait is a lock ------------------------------
+# The slot's mutex is taken inside tst-pipeline, so the binding shows no
+# `.lock()`: its waiting calls are the lock forms to scan. A bare
+# `run_parking` with the GIL held fails; the same inside
+# `allow_threads_parking` is no finding, and neither is a call of the
+# binding type's own method of the same name (`self.take_for_conversion(`).
+mkdir -p "$tmp/gl/slot"
+cat > "$tmp/gl/slot/shell.rs" <<'EOF'
+impl Session {
+    fn data(&self, py: Python<'_>, b: &[u8]) -> PyResult<()> {
+        self.slot.run_parking(|live| live.send(b)).map_err(to_py)
+    }
+    fn pause(&self, py: Python<'_>) -> PyResult<()> {
+        crate::util::allow_threads_parking(py, || {
+            self.slot
+                .run_parking(|live| live.pause())
+        })
+        .map_err(to_py)
+    }
+    fn count(&self) -> u64 {
+        self.slot.run(|live| live.count()).unwrap()
+    }
+    fn close(&self) {
+        let _ = self.slot.take_for_close();
+    }
+    fn into_sender(&self) -> Live {
+        self.slot.take_for_conversion().unwrap()
+    }
+    fn into_mux_sender(&self, py: Python<'_>) -> PyResult<Live> {
+        // The type's own method of that name, which releases the GIL itself.
+        self.take_for_conversion(py, "into_mux_sender")
+    }
+}
+EOF
+GLS="$tmp/gl/slot/shell.rs"
+printf '%s\t%s\t%s\n' "$GLS" Session::data "fixture" "$GLS" Session::count "fixture" \
+                      "$GLS" Session::close "fixture" "$GLS" Session::into_sender "fixture" > "$tmp/gl/slot.tsv"
+{ cat "$tmp/gl/slot.tsv"; printf '%s\t%s\t%s\n' "$GLS" Session::pause "fixture"; } > "$tmp/gl/slot_stale.tsv"
+expect "gil locks: a ParkingSlot wait with the GIL held is caught" 1 env SG_ONLY_LOCKS=1 SG_LOCK_ROOTS="$tmp/gl/slot" SG_LOCK_ALLOWLIST="$tmp/gl/empty.tsv" bash "$SG"
+for w in Session::data Session::count Session::close Session::into_sender; do
+    expect_out "gil locks: the slot wait in $w" "$w"
+done
+expect "gil locks: the slot waits, allowlisted, pass" 0 env SG_ONLY_LOCKS=1 SG_LOCK_ROOTS="$tmp/gl/slot" SG_LOCK_ALLOWLIST="$tmp/gl/slot.tsv" bash "$SG"
+expect "gil locks: a slot wait inside allow_threads_parking is not a finding (stale row fails)" 1 env SG_ONLY_LOCKS=1 SG_LOCK_ROOTS="$tmp/gl/slot" SG_LOCK_ALLOWLIST="$tmp/gl/slot_stale.tsv" bash "$SG"
+expect_out "gil locks: the stale slot row" "Session::pause"
+
 # ---- gil locks: every lock spelling, and a lock inside a macro body -------
 # A line scanner looking only for `.lock()` misses `.read()` / `.write()` /
 # `.try_lock()` / the UFCS forms, and a lock taken inside a macro_rules!

@@ -18,8 +18,10 @@
 # (`Owned::with_ref_blocking`); the compiler, not this script, requires it.
 #
 # 2. Python: FAIL on any function that calls `.lock()`, `.read()`,
-#    `.write()`, `.try_lock()`, or the UFCS `Mutex::lock(` / `RwLock::read(`
-#    / `RwLock::write(` forms while it holds the GIL and is not listed in
+#    `.write()`, `.try_lock()`, the UFCS `Mutex::lock(` / `RwLock::read(`
+#    / `RwLock::write(` forms, or a waiting `ParkingSlot` call (its mutex is
+#    taken inside tst-pipeline: `.run_parking(`, `slot.run(`,
+#    `.take_for_close(`, `.take_for_conversion(`) while it holds the GIL and is not listed in
 #    scripts/ratchets/gil-held-locks.tsv. A mutex or rwlock whose holder
 #    releases the GIL (`py.detach`) while it holds the guard needs
 #    the GIL back before the guard can drop; a second thread that waits
@@ -150,7 +152,12 @@ fi
 find $LOCK_ROOTS -type f -name '*.rs' | LC_ALL=C sort | while IFS= read -r f; do
     awk -v file="$f" '
         BEGIN {
-            nsp = split(".lock() .read() .write() .try_lock() Mutex::lock( RwLock::read( RwLock::write(", sp, " ")
+            nlk = split(".lock() .read() .write() .try_lock() Mutex::lock( RwLock::read( RwLock::write(", sp, " ")
+            # The waiting ParkingSlot calls: the slot locks its mutex inside
+            # tst-pipeline, so the binding shows only these.
+            nsl = split(".run_parking( slot.run( .take_for_close( .take_for_conversion(", sl, " ")
+            for (k = 1; k <= nsl; k++) sp[nlk + k] = sl[k]
+            nsp = nlk + nsl
         }
         /^#\[cfg\(test\)\]/ { guarded = 1; next }
         guarded == 1 {
@@ -195,6 +202,14 @@ find $LOCK_ROOTS -type f -name '*.rs' | LC_ALL=C sort | while IFS= read -r f; do
                 matched = 0
                 for (k = 1; k <= nsp; k++) {
                     if (index(rest, sp[k]) == 1) {
+                        if (k > nlk && i > 4 && substr(line, i - 4, 4) == "self" &&
+                            (i == 5 || substr(line, i - 5, 1) !~ /[A-Za-z0-9_]/)) {
+                            # self.take_for_conversion(: the binding type'"'"'s own
+                            # method of that name, scanned in its own body.
+                            i += length(sp[k]) - 1
+                            matched = 1
+                            break
+                        }
                         if (fn == "") {
                             # a lock outside any fn: a macro_rules! body or
                             # module-level code the scanner cannot attribute.
