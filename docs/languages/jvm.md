@@ -1289,6 +1289,7 @@ falls into two groups.
 | `localPort()` (`Receiver`, `DemuxReceiver`, `tcp.Listener`) | the port captured at open (`tcp.Listener` answers while `accept()` is parked) | throws `IllegalStateException` |
 | `localAddr()`, `peerAddr()`, `sourceRejected()` (`Receiver`, `DemuxReceiver`) | the bound address captured at open; the publisher's address and the count of what the `source` pin turned away, as they stand | throws `IllegalStateException` |
 | `rtpStats()` (`Receiver`, `DemuxReceiver`) | the RTP counters as they stand; empty off RTP | the counters as the close left them |
+| `tsBytesDemuxed()` (`DemuxReceiver`, `ManagedDemuxReceiver`) | the count as it stands | the count at close |
 | `peerAddr()` (`tcp.Transport`) | the address captured at accept | throws `IllegalStateException`, also once the connection is converted into a shell |
 | `videoHandle()` … `dataHandle()` on the three `MuxSender` classes | the handles of the `MuxerConfig` the sender was built from | throws `IllegalStateException` |
 | `reconnectAttempts()`, `reconnectStats()` on the managed shells | live counters kept outside the object | throws `IllegalStateException` |
@@ -1305,8 +1306,17 @@ One rule covers a closed object: every call the table above does not list
 as answering once closed throws `IllegalStateException("<Class> is closed")`,
 also when another thread's `close()` lands between the call's own open check
 and its native work. Only a call that was already parked when the close or a
-cancel landed ends with the transport's `CLOSED` instead.
-`RtspPushSession.isSessionAlive()`, like `isAlive()`, answers `false`.
+cancel landed ends with the transport's `CLOSED` instead. These calls answer
+a closed object too, although they are not in the table (while the object is
+open, `finish()` waits behind a parked send):
+
+- `finish()` on `Sender`, `MuxSender` and `ManagedMuxSender` returns quietly;
+- `RtspSession.isTornDown()` returns `true`;
+- `RtspPushSession.isSessionAlive()`, like `isAlive()`, returns `false`;
+- `HlsServerHandle.shutdown()`, which is its `close()`, returns quietly;
+- `toString()` answers on every class;
+- `iterator()` returns an iterator, whose first `hasNext()` throws
+  `IllegalStateException`.
 
 `RtspSession` differs. Its `close()` cancels only a `pause()` / `play()` /
 `teardown()` in progress on another thread (that call throws `CLOSED`, and
