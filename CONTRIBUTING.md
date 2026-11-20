@@ -88,9 +88,10 @@ update the gradle/verification-metadata.xml file". Regenerate it from
 `bindings/jvm` with `./gradlew --write-verification-metadata sha256 help`,
 review the diff (each new hash is a file the build will now trust; check it
 against the publisher's published checksum where there is one), run
-`./gradlew test`, and commit the file with the change. Generation only adds:
-the entries of a removed dependency stay until the file is regenerated from
-an empty one.
+`./gradlew test`, and commit the file with the change. Regenerate over the
+existing file, which keeps its header comment; never start from an empty one.
+Generation only adds: to drop the entries of a removed dependency, delete its
+`<component>` elements and regenerate.
 The embedded sub-project has its own gates under `embedded/scripts/check/`.
 
 ## Pull requests
