@@ -37,6 +37,24 @@ class WhepServerTest {
         assertThrows(IllegalStateException.class, s::mediaAddr);
     }
 
+    /** The media address is the UDP socket's, not the signalling one's. */
+    @Test
+    void mediaAddrIsTheMediaSocketsAddress() throws Exception {
+        int signalling;
+        int media;
+        do {
+            try (java.net.ServerSocket probe = new java.net.ServerSocket(0)) {
+                signalling = probe.getLocalPort();
+            }
+            media = org.tstrans.TestSupport.freeUdpPort();
+        } while (signalling == media);
+        try (WhepServer s = WhepServer.bind(
+                "whep://127.0.0.1:" + signalling + "?media_port=" + media)) {
+            assertEquals(signalling, s.localAddr().getPort());
+            assertEquals(media, s.mediaAddr().getPort());
+        }
+    }
+
     /** The record of a viewer that has not connected: no address, no time connected. */
     @Test
     void sessionStatsAreEmptyBeforeConnect() {
