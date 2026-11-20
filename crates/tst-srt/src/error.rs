@@ -511,6 +511,29 @@ impl SrtErrno {
 }
 
 impl RejectReason {
+    /// libsrt's own reasons (`SRT_REJ_*`, 0..=17) in code order: what a
+    /// failed connect may report, never what a listen rule may send.
+    pub const INTERNAL: [RejectReason; 18] = [
+        RejectReason::Unknown,
+        RejectReason::System,
+        RejectReason::Peer,
+        RejectReason::Resource,
+        RejectReason::Rogue,
+        RejectReason::Backlog,
+        RejectReason::Ipe,
+        RejectReason::Close,
+        RejectReason::Version,
+        RejectReason::RdvCookie,
+        RejectReason::BadSecret,
+        RejectReason::Unsecure,
+        RejectReason::MessageApi,
+        RejectReason::Congestion,
+        RejectReason::Filter,
+        RejectReason::Group,
+        RejectReason::Timeout,
+        RejectReason::Crypto,
+    ];
+
     /// The predefined reasons (`SRT_REJX_*`, 1000..=1999) in code order.
     pub const PREDEFINED: [RejectReason; 21] = [
         RejectReason::Fallback,
@@ -855,6 +878,26 @@ mod tests {
         }
         for entry in RejectReason::PREDEFINED {
             assert_eq!(RejectReason::from_raw(entry.raw()), entry);
+        }
+    }
+
+    #[test]
+    fn internal_table_covers_every_typed_code_below_the_predefined_range() {
+        assert_eq!(RejectReason::INTERNAL.len(), 18);
+        for raw in 0..1000 {
+            let reason = RejectReason::from_raw(raw);
+            if matches!(reason, RejectReason::Other(_)) {
+                continue;
+            }
+            assert!(
+                RejectReason::INTERNAL.contains(&reason),
+                "code {raw} maps to {reason:?} but is missing from INTERNAL"
+            );
+        }
+        for (code, entry) in RejectReason::INTERNAL.into_iter().enumerate() {
+            assert_eq!(entry.raw(), code as i32, "INTERNAL is in code order");
+            assert_eq!(RejectReason::from_raw(entry.raw()), entry);
+            assert_eq!(entry.name(), None);
         }
     }
 
