@@ -1251,8 +1251,6 @@ fn audio_codec(env: &mut Env, ordinal: i32) -> Option<AudioCodec> {
     }
 }
 
-/// Split a concatenated PMT descriptor loop into individual TLV descriptors
-/// (tag, length, payload). `None` on a truncated/overrunning length field.
 /// The next descriptor loop of `len` bytes in `blob` at `*off`, split into
 /// TLVs: `Some(None)` for an empty loop. A negative length or an offset
 /// overflow is `INTERNAL` (a sign-cast would turn it into a huge `usize`; never
@@ -1295,6 +1293,8 @@ fn next_descriptor_loop(
     Some(Some(descs))
 }
 
+/// Split a concatenated PMT descriptor loop into individual TLV descriptors
+/// (tag, length, payload). `None` on a truncated/overrunning length field.
 fn split_descriptor_tlvs(blob: &[u8]) -> Option<Vec<Vec<u8>>> {
     let mut out = Vec::new();
     let mut off = 0usize;

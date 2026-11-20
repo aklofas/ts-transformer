@@ -138,6 +138,7 @@ class StreamDescriptorsTest {
         assertFalse(contains(pmt.esInfo().get(0x1011), d), "a program descriptor is not a stream's");
     }
 
+    /** A program descriptor rides along, so the two halves of the flattened layout are pinned too. */
     @Test
     void eachTypedSetterLandsOnItsStream() throws Exception {
         byte[] video = privateDescriptor(0xE0, 1);
@@ -146,6 +147,7 @@ class StreamDescriptorsTest {
         byte[] subtitle = privateDescriptor(0xE3, 4);
         byte[] data = privateDescriptor(0xE4, 5);
         byte[] byAbsoluteIndex = privateDescriptor(0xE5, 6);
+        byte[] program = privateDescriptor(0xE6, 7);
         MuxerConfig cfg = MuxerConfig.builder()
             .addVideo(0x1011, VideoCodec.H264)
             .addKlv(0x1012, KlvStreamType.PRIVATE_DATA, false)
@@ -159,6 +161,7 @@ class StreamDescriptorsTest {
             .streamDescriptorsForSubtitle(0, one(subtitle))
             .streamDescriptorsForData(0, one(data))
             .streamDescriptorsForStream(5, one(byAbsoluteIndex))
+            .programDescriptors(one(program))
             .build();
         Pmt pmt = readPmt(muxOneVideoFrame(cfg));
         Map<Integer, byte[]> expected = new LinkedHashMap<>();
@@ -169,6 +172,10 @@ class StreamDescriptorsTest {
         expected.put(0x1015, data);
         expected.put(0x1016, byAbsoluteIndex);
         for (Map.Entry<Integer, byte[]> e : expected.entrySet()) {
+            assertFalse(contains(pmt.esInfo().get(e.getKey()), program),
+                "the program descriptor on 0x" + Integer.toHexString(e.getKey()));
+            assertFalse(contains(pmt.programInfo(), e.getValue()),
+                "the descriptor of 0x" + Integer.toHexString(e.getKey()) + " in the program loop");
             for (Map.Entry<Integer, byte[]> other : expected.entrySet()) {
                 boolean here = contains(pmt.esInfo().get(e.getKey()), other.getValue());
                 assertEquals(e.getKey().equals(other.getKey()), here,
@@ -176,7 +183,8 @@ class StreamDescriptorsTest {
                         + " on 0x" + Integer.toHexString(e.getKey()));
             }
         }
-        assertTrue(pmt.programInfo().isEmpty());
+        assertEquals(1, pmt.programInfo().size());
+        assertArrayEquals(program, pmt.programInfo().get(0));
     }
 
     @Test
