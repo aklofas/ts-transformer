@@ -80,6 +80,8 @@ pub enum ParkingEvent {
     CloseRetry,
     /// A conversion found the slot held by a query and waits a round.
     ConversionRetry,
+    /// A query starts waiting for the slot.
+    QueryEntered,
 }
 
 /// Lowers the parking marker when a parking call ends, however it ends.
@@ -173,6 +175,7 @@ impl<T> ParkingSlot<T> {
         if self.closed.load(Ordering::SeqCst) {
             return Err(SlotRefused::Closed);
         }
+        self.notify(ParkingEvent::QueryEntered);
         let locked = self.value.lock();
         if self.closed.load(Ordering::SeqCst) {
             return Err(SlotRefused::Closed);
@@ -455,11 +458,13 @@ mod tests {
     static W_ENTERED: AtomicUsize = AtomicUsize::new(0);
     static W_LEFT: AtomicUsize = AtomicUsize::new(0);
     static W_RETRIES: AtomicUsize = AtomicUsize::new(0);
+    static W_QUERIES: AtomicUsize = AtomicUsize::new(0);
     fn w_observer(e: ParkingEvent) {
         match e {
             ParkingEvent::ParkingEntered => W_ENTERED.fetch_add(1, Ordering::SeqCst),
             ParkingEvent::ParkingLeft => W_LEFT.fetch_add(1, Ordering::SeqCst),
             ParkingEvent::CloseRetry => W_RETRIES.fetch_add(1, Ordering::SeqCst),
+            ParkingEvent::QueryEntered => W_QUERIES.fetch_add(1, Ordering::SeqCst),
             ParkingEvent::ConversionRetry => 0,
         };
     }
@@ -476,8 +481,12 @@ mod tests {
         wait_until("the second call waits for the slot", || {
             W_ENTERED.load(Ordering::SeqCst) == 2 && W_LEFT.load(Ordering::SeqCst) == 1
         });
+        let queries = W_QUERIES.load(Ordering::SeqCst);
         let (s, r) = (slot.clone(), ran.clone());
         let query_waiter = thread::spawn(move || s.run(|_| r.store(true, Ordering::SeqCst)));
+        wait_until("the query waits for the slot", || {
+            W_QUERIES.load(Ordering::SeqCst) == queries + 1
+        });
 
         assert_eq!(slot.take_for_close(), Some(7));
         assert_eq!(cancel.calls(), 1, "only the holder is cancelled");
@@ -497,10 +506,14 @@ mod tests {
         let release = Arc::new(Release::default());
         let query = query_holder(&slot, &release);
         let entered = W_ENTERED.load(Ordering::SeqCst);
+        let queries = W_QUERIES.load(Ordering::SeqCst);
         let (s, r) = (slot.clone(), ran.clone());
         let waiter = thread::spawn(move || s.run_parking(|_| r.store(true, Ordering::SeqCst)));
-        wait_until("the call waits behind the query", || {
+        let (s, r) = (slot.clone(), ran.clone());
+        let query_waiter = thread::spawn(move || s.run(|_| r.store(true, Ordering::SeqCst)));
+        wait_until("both calls wait behind the query", || {
             W_ENTERED.load(Ordering::SeqCst) == entered + 1
+                && W_QUERIES.load(Ordering::SeqCst) == queries + 1
         });
         let s = slot.clone();
         let closer = thread::spawn(move || s.take_for_close());
@@ -510,6 +523,7 @@ mod tests {
         release.release();
         assert_eq!(query.join().unwrap(), Ok(7));
         assert_eq!(waiter.join().unwrap(), Err(SlotRefused::Closed));
+        assert_eq!(query_waiter.join().unwrap(), Err(SlotRefused::Closed));
         assert_eq!(closer.join().unwrap(), Some(7));
         assert!(!ran.load(Ordering::SeqCst));
         assert_eq!(cancel.calls(), 0);
@@ -631,8 +645,13 @@ mod tests {
         assert_eq!(slot.run_parking(|v| *v), Ok(7));
         assert_eq!(o_count(ParkingEvent::ParkingEntered), 1);
         assert_eq!(o_count(ParkingEvent::ParkingLeft), 1);
-        assert_eq!(slot.run(|v| *v), Ok(7), "a query reports no wait");
-        assert_eq!(O_EVENTS.lock().unwrap().len(), 2);
+        assert_eq!(slot.run(|v| *v), Ok(7));
+        assert_eq!(o_count(ParkingEvent::QueryEntered), 1);
+        assert_eq!(
+            O_EVENTS.lock().unwrap().len(),
+            3,
+            "no retry without a holder"
+        );
 
         let release = Arc::new(Release::default());
         let query = query_holder(&slot, &release);

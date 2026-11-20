@@ -470,6 +470,7 @@ pub tst_pipeline::binding::parking::ParkingEvent::CloseRetry
 pub tst_pipeline::binding::parking::ParkingEvent::ConversionRetry
 pub tst_pipeline::binding::parking::ParkingEvent::ParkingEntered
 pub tst_pipeline::binding::parking::ParkingEvent::ParkingLeft
+pub tst_pipeline::binding::parking::ParkingEvent::QueryEntered
 impl core::clone::Clone for tst_pipeline::binding::parking::ParkingEvent
 pub fn tst_pipeline::binding::parking::ParkingEvent::clone(&self) -> tst_pipeline::binding::parking::ParkingEvent
 impl core::cmp::Eq for tst_pipeline::binding::parking::ParkingEvent
