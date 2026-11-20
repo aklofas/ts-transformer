@@ -1969,6 +1969,10 @@ fn recv_bytes(py: Python<'_>) -> PyResult<()> {
 fn managed_recv_bytes(py: Python<'_>) -> PyResult<()> {
     PyErr::warn(py, &py.get_type::<PyDeprecationWarning>(), c"ManagedReceiver.recv_bytes(max_len=...) is deprecated: the argument is ignored; removed in 0.12.0", 1)
 }
+
+fn old_helper(py: Python<'_>) -> PyResult<()> {
+    PyErr::warn(py, &py.get_type::<PyDeprecationWarning>(), c"old_helper() is deprecated; removed in 0.12.0", 1)
+}
 EOF
     cat > "$t/bindings/python/python/tstrans/shapes.pyi" <<'EOF'
 class Thing:
@@ -1989,10 +1993,11 @@ public final class Server {
      * @deprecated the argument is ignored: use {@link #stop()}; removed in 0.12.0.
      */
     @Deprecated(since = "0.10.0", forRemoval = true)
-    public void stop(long drainMs) {
+    public void stop(@SuppressWarnings("unused") final long drainMs) {
         nStop();
     }
 
+    // Was also: public void stop(int code) {}
     public void stop() {
         nStop();
     }
@@ -2017,6 +2022,7 @@ EOF
 ### Removed — tst-jni (BREAKING)
 
 - `Server.stop(int)` is removed.
+- `Server.restart` is removed.
 
 ## [0.10.0] — 2026-01-01
 
@@ -2038,6 +2044,13 @@ lang = "python"
 symbol = "tstrans.srt.ManagedReceiver.recv_bytes.max_len"
 since = "0.10.0"
 replacement = "tstrans.srt.ManagedReceiver.recv_bytes()"
+earliest_removal = "0.12.0"
+
+[[deprecation]]
+lang = "python"
+symbol = "tstrans.shapes.util.old_helper"
+since = "0.10.0"
+replacement = "tstrans.shapes.util.new_helper"
 earliest_removal = "0.12.0"
 
 [[deprecation]]
@@ -2070,11 +2083,19 @@ since = "0.9.0"
 replacement = "org.demo.Server.stop()"
 earliest_removal = "0.11.0"
 removed_in = "0.11.0"
+
+[[deprecation]]
+lang = "java"
+symbol = "org.demo.Server.restart"
+since = "0.9.0"
+replacement = "org.demo.Server.stop()"
+earliest_removal = "0.11.0"
+removed_in = "0.11.0"
 EOF
 }
 dep_tree; dep_args
 expect "deprecations: argument rows with a site each pass" 0 dep
-expect_out "deprecations: the argument sites are counted" "9 deprecation sites (rust 1, java 3, python 5); 8 live rows, 4 removed rows"
+expect_out "deprecations: the argument sites are counted" "10 deprecation sites (rust 1, java 3, python 6); 9 live rows, 5 removed rows"
 expect_out "deprecations: the removed arguments are resolved" "2 removed argument rows resolved"
 dep_tree; dep_args
 plant "$tmp/dep/bindings/python/src/lib.rs" 'PyErr::warn(.*c"ManagedReceiver.*' 'Ok(())'
@@ -2106,6 +2127,34 @@ dep_tree; dep_args
 rm "$tmp/dep/bindings/python/python/tstrans/shapes.pyi"
 expect "deprecations: a removed Python argument row with no stub to read fails" 1 dep
 expect_out "deprecations: the missing stub" "removed row tstrans.shapes.Thing.open.timeout: no stub for tstrans.shapes"
+dep_tree; dep_args
+plant "$tmp/dep/bindings/jvm/src/main/java/org/demo/Server.java" '    private native void nStop();' '    public void restart() {}\
+\
+    private native void nStop();'
+expect "deprecations: a removed Java method still declared fails" 1 dep
+expect_out "deprecations: the method that is not gone" "removed row org.demo.Server.restart: bindings/jvm/src/main/java/org/demo/Server.java still declares restart"
+# A stub's deprecated overload names its argument as a parameter. Two rows
+# that share `max_len`, one covering two sites and one only the first: each
+# still gets a site, whatever the order the rows are tried in.
+dep_shells_stub() {
+    cat > "$tmp/dep/bindings/python/python/tstrans/shells.pyi" <<EOF
+from typing import overload
+from typing_extensions import deprecated
+
+class Receiver:
+    @overload
+    @deprecated("max_len is ignored; removed in 0.12.0")
+    def recv_bytes(self, $1: int) -> bytes: ...
+    @overload
+    def recv_bytes(self) -> bytes: ...
+EOF
+    plant "$tmp/dep/bindings/python/src/lib.rs" 'PyErr::warn(.*c"ManagedReceiver.*' 'Ok(())'
+}
+dep_tree; dep_args; dep_shells_stub max_len
+expect "deprecations: a stub overload naming the argument is that argument's site" 0 dep
+dep_tree; dep_args; dep_shells_stub size
+expect "deprecations: a stub overload without the argument is not its site" 1 dep
+expect_out "deprecations: the row left without a site of its own" "live row tstrans.srt.ManagedReceiver.recv_bytes.max_len (python) shares its last component \`max_len\`"
 
 # ---- doc-snippets: a marked snippet that does not compile fails -------------
 DS="$DIR/../check/repo/doc-snippets.sh"

@@ -62,8 +62,10 @@
 #       workspace version and equals the `earliest_removal` of a row that
 #       covers the site;
 #   (d) a removed row covers no site; a Rust row's path is in no
-#       crates/*/public-api.txt and a Java row's class file does not exist
-#       (Python names are not resolved: the binding's tests assert those);
+#       crates/*/public-api.txt; a Java row's class file does not exist, and
+#       a Java method row without a parameter list leaves no overload of
+#       that name in its class (Python names are not resolved: the binding's
+#       tests assert those);
 #       a removed argument is resolved: the stub of a Python row's module
 #       (`<module>.pyi` or `<module>/__init__.pyi`, which must exist) gives
 #       no `def method` of its class a parameter of that name, and the class
@@ -663,8 +665,14 @@ for r in gone:
             resolved += 1
     elif r["lang"] == "java":
         rel = "bindings/jvm/src/main/java/" + symbol.replace(".", "/") + ".java"
+        cls, member = symbol.rsplit(".", 1)
+        owner = "bindings/jvm/src/main/java/" + cls.replace(".", "/") + ".java"
         if os.path.isfile(os.path.join(root, rel)):
             err(f"{name}: {rel} still exists: remove the class, or drop removed_in from the row")
+        elif (member[:1].islower() and os.path.isfile(os.path.join(root, owner))
+              and java_overloads(java_code(read(owner)), member)):
+            # A method row without a parameter list names every overload.
+            err(f"{name}: {owner} still declares {member}: remove the method, or drop removed_in from the row")
         else:
             java_absent += 1
     if argument:
@@ -769,7 +777,7 @@ print(f"  (b) {with_site} of {len(live)} live rows cover a site; `since` compare
 print(f"  (c) {len(live)} earliest_removal and {promises_read} removal versions written at sites compared with "
       f"workspace {show(workspace)} and the rows")
 print(f"  (d) {len(gone)} removed rows: {rust_absent} Rust paths absent from {len(baselines)} public-api.txt, "
-      f"{java_absent} Java rows with no class file, {resolved} removed argument rows resolved against the stubs "
+      f"{java_absent} Java rows whose class or method is gone, {resolved} removed argument rows resolved against the stubs "
       f"and the Java classes, {noted} named under `### Removed` in CHANGELOG.md")
 print(f"  (e) {docs_compared} symbol and removal-version passages compared in {docs_read} docs pages")
 if failures:
