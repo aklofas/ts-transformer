@@ -515,14 +515,25 @@ fn url_corpus_covers_every_documented_key() {
     url_corpus_leg::check_coverage();
 }
 
+#[test]
+fn a_row_stating_its_outcomes_wrongly_is_a_coverage_gap() {
+    url_corpus_leg::check_open_refuses_bad_entries();
+}
+
 mod url_corpus_leg {
-    use tst_integration::scenarios::url::{self, Record, Row};
+    use tst_integration::scenarios::url::{self, Outcome, Port, Record, Row};
+
+    /// What this leg puts in a row's placeholders: it parses without binding,
+    /// so any port and any directory text will do.
+    const PORT: u16 = 30_000;
+    const DIR: &str = "certs";
 
     /// Parse every row through its scheme's parser and compare the record.
     pub(super) fn run() {
         let corpus = url::load();
         let mut mismatches = Vec::new();
         for row in &corpus.url {
+            let row = &row.resolve(PORT, DIR);
             let observed = observe(row);
             if observed != row.expect {
                 mismatches.push(format!(
@@ -554,7 +565,7 @@ mod url_corpus_leg {
         Record {
             scheme: Some(scheme.to_string()),
             host: Some(host.to_string()),
-            port: Some(port),
+            port: Some(Port::Number(port)),
             keys: Some(keys),
             ..Record::default()
         }
@@ -931,6 +942,126 @@ mod url_corpus_leg {
         })
     }
 
+    /// A row's `open` entries: each has its reason, names a probing leg that
+    /// opens the row, lists outcomes of the row's family, and says something
+    /// the record does not already say; a placeholder is written only where
+    /// the legs fill it.
+    fn check_open(corpus: &url::Corpus, row: &Row, gaps: &mut Vec<String>) {
+        if row.open.is_some() != row.open_why.is_some() {
+            gaps.push(format!("{}: open and open_why go together", row.label()));
+        }
+        for (leg, text) in row.open.iter().flatten() {
+            let Some(families) = corpus.legs.get(leg) else {
+                gaps.push(format!("{}: open names unknown leg {leg}", row.label()));
+                continue;
+            };
+            let table = &families[row.family()];
+            let probe = table.get("probe").map(String::as_str);
+            if matches!(probe, Some("record") | Some("absent"))
+                || table.get(&row.role).map(String::as_str) == Some("absent")
+            {
+                gaps.push(format!(
+                    "{}: open names {leg}, which does not open it",
+                    row.label()
+                ));
+                continue;
+            }
+            let mut stated = Vec::new();
+            for word in text.split_whitespace() {
+                match Outcome::parse(row.family(), word) {
+                    Ok(o) => stated.push(o),
+                    Err(e) => gaps.push(format!("{}: open.{leg}: {e}", row.label())),
+                }
+            }
+            let default = Row {
+                open: None,
+                ..row.clone()
+            };
+            if stated.is_empty() || stated == default.outcomes(leg) {
+                gaps.push(format!(
+                    "{}: open.{leg} states nothing beyond the record",
+                    row.label()
+                ));
+            }
+        }
+        let braces = row.url.matches('{').count();
+        let placeholders = row.url.matches(url::PORT).count() + row.url.matches(url::DIR).count();
+        if braces != placeholders {
+            gaps.push(format!(
+                "{}: a brace that is not {} or {}",
+                row.label(),
+                url::PORT,
+                url::DIR
+            ));
+        }
+        if !row.expect.is_error()
+            && (row.expect.port == Some(Port::Placeholder))
+                != row.url.contains(&format!(":{}", url::PORT))
+        {
+            gaps.push(format!(
+                "{}: the record's port is {} exactly when the URL's is",
+                row.label(),
+                url::PORT
+            ));
+        }
+    }
+
+    pub(super) fn check_open_refuses_bad_entries() {
+        let corpus = url::load();
+        let row = corpus
+            .url
+            .iter()
+            .find(|r| r.scheme == "udp" && r.role == "send" && !r.expect.is_error())
+            .expect("a valid udp send row");
+        let gaps_of = |open: &[(&str, &str)], why: Option<&str>, url: Option<&str>| {
+            let r = Row {
+                open: (!open.is_empty()).then(|| {
+                    open.iter()
+                        .map(|(l, o)| (l.to_string(), o.to_string()))
+                        .collect()
+                }),
+                open_why: why.map(str::to_string),
+                url: url.map_or(row.url.clone(), str::to_string),
+                ..row.clone()
+            };
+            let mut gaps = Vec::new();
+            check_open(&corpus, &r, &mut gaps);
+            gaps
+        };
+        assert!(gaps_of(&[("c", "IO")], Some("why"), None).is_empty());
+        for (open, why, url, gap) in [
+            (&[("c", "IO")][..], None, None, "go together"),
+            (&[], Some("why"), None, "go together"),
+            (&[("rust", "IO")], Some("why"), None, "does not open it"),
+            (&[("go", "IO")], Some("why"), None, "unknown leg"),
+            (
+                &[("c", "ok")],
+                Some("why"),
+                None,
+                "nothing beyond the record",
+            ),
+            (
+                &[("c", "TLS")],
+                Some("why"),
+                None,
+                "neither ok nor a udp kind",
+            ),
+            (&[], None, Some("udp://127.0.0.1:{prt}"), "a brace"),
+            (
+                &[],
+                None,
+                Some("udp://127.0.0.1:{port}"),
+                "the record's port",
+            ),
+        ] {
+            let gaps = gaps_of(open, why, url);
+            assert!(
+                gaps.iter().any(|g| g.contains(gap)),
+                "{open:?} {why:?} {url:?}: expected a gap with {gap:?}, got {gaps:?}"
+            );
+        }
+    }
+
     pub(super) fn check_coverage() {
         let corpus = url::load();
         let tables = tables();
@@ -1083,6 +1214,7 @@ mod url_corpus_leg {
             for leg in corpus.legs.keys() {
                 let _ = corpus.entry(leg, row);
             }
+            check_open(&corpus, row, &mut gaps);
         }
         assert!(
             gaps.is_empty(),

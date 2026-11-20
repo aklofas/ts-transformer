@@ -258,12 +258,12 @@
             "keys": {
               "mode": "caller"
             },
-            "port": 31101,
+            "port": "{port}",
             "scheme": "srt"
           },
           "role": "caller",
           "scheme": "srt",
-          "url": "srt://127.0.0.1:31101"
+          "url": "srt://127.0.0.1:{port}"
         },
         {
           "case": "default",
@@ -272,12 +272,12 @@
             "keys": {
               "mode": "caller"
             },
-            "port": 31102,
+            "port": "{port}",
             "scheme": "srt"
           },
           "role": "caller",
           "scheme": "srt",
-          "url": "srt://[::1]:31102"
+          "url": "srt://[::1]:{port}"
         },
         {
           "case": "explicit",
@@ -287,13 +287,13 @@
               "congestion": "live",
               "mode": "caller"
             },
-            "port": 31103,
+            "port": "{port}",
             "scheme": "srt"
           },
           "key": "congestion",
           "role": "caller",
           "scheme": "srt",
-          "url": "srt://127.0.0.1:31103?congestion=live"
+          "url": "srt://127.0.0.1:{port}?congestion=live"
         },
         {
           "case": "explicit",
@@ -303,13 +303,13 @@
               "conntimeo": "1500",
               "mode": "caller"
             },
-            "port": 31104,
+            "port": "{port}",
             "scheme": "srt"
           },
           "key": "conntimeo",
           "role": "caller",
           "scheme": "srt",
-          "url": "srt://127.0.0.1:31104?conntimeo=1500"
+          "url": "srt://127.0.0.1:{port}?conntimeo=1500"
         },
         {
           "case": "explicit",
@@ -319,13 +319,13 @@
               "mode": "caller",
               "peeridletimeo": "2500"
             },
-            "port": 31178,
+            "port": "{port}",
             "scheme": "srt"
           },
           "key": "peeridletimeo",
           "role": "caller",
           "scheme": "srt",
-          "url": "srt://127.0.0.1:31178?peeridletimeo=2500"
+          "url": "srt://127.0.0.1:{port}?peeridletimeo=2500"
         },
         {
           "case": "explicit",
@@ -335,13 +335,13 @@
               "fc": "25600",
               "mode": "caller"
             },
-            "port": 31105,
+            "port": "{port}",
             "scheme": "srt"
           },
           "key": "fc",
           "role": "caller",
           "scheme": "srt",
-          "url": "srt://127.0.0.1:31105?fc=25600"
+          "url": "srt://127.0.0.1:{port}?fc=25600"
         },
         {
           "case": "explicit",
@@ -351,13 +351,13 @@
               "inputbw": "1000000",
               "mode": "caller"
             },
-            "port": 31106,
+            "port": "{port}",
             "scheme": "srt"
           },
           "key": "inputbw",
           "role": "caller",
           "scheme": "srt",
-          "url": "srt://127.0.0.1:31106?inputbw=1000000"
+          "url": "srt://127.0.0.1:{port}?inputbw=1000000"
         },
         {
           "case": "explicit",
@@ -367,13 +367,13 @@
               "latency": "120",
               "mode": "caller"
             },
-            "port": 31107,
+            "port": "{port}",
             "scheme": "srt"
           },
           "key": "latency",
           "role": "caller",
           "scheme": "srt",
-          "url": "srt://127.0.0.1:31107?latency=120"
+          "url": "srt://127.0.0.1:{port}?latency=120"
         },
         {
           "case": "explicit",
@@ -383,13 +383,13 @@
               "linger": "0",
               "mode": "caller"
             },
-            "port": 31108,
+            "port": "{port}",
             "scheme": "srt"
           },
           "key": "linger",
           "role": "caller",
           "scheme": "srt",
-          "url": "srt://127.0.0.1:31108?linger=0"
+          "url": "srt://127.0.0.1:{port}?linger=0"
         },
         {
           "case": "explicit",
@@ -399,13 +399,13 @@
               "lossmaxttl": "4",
               "mode": "caller"
             },
-            "port": 31109,
+            "port": "{port}",
             "scheme": "srt"
           },
           "key": "lossmaxttl",
           "role": "caller",
           "scheme": "srt",
-          "url": "srt://127.0.0.1:31109?lossmaxttl=4"
+          "url": "srt://127.0.0.1:{port}?lossmaxttl=4"
         },
         {
           "case": "explicit",
@@ -415,13 +415,13 @@
               "maxbw": "5000000",
               "mode": "caller"
             },
-            "port": 31110,
+            "port": "{port}",
             "scheme": "srt"
           },
           "key": "maxbw",
           "role": "caller",
           "scheme": "srt",
-          "url": "srt://127.0.0.1:31110?maxbw=5000000"
+          "url": "srt://127.0.0.1:{port}?maxbw=5000000"
         },
         {
           "case": "explicit",
@@ -430,13 +430,13 @@
             "keys": {
               "mode": "listener"
             },
-            "port": 31111,
+            "port": "{port}",
             "scheme": "srt"
           },
           "key": "mode",
           "role": "listener",
           "scheme": "srt",
-          "url": "srt://127.0.0.1:31111?mode=listener"
+          "url": "srt://127.0.0.1:{port}?mode=listener"
         },
         {
           "case": "explicit",
@@ -445,13 +445,13 @@
             "keys": {
               "mode": "listener"
             },
-            "port": 31112,
+            "port": "{port}",
             "scheme": "srt"
           },
           "key": "mode",
           "role": "listener",
           "scheme": "srt",
-          "url": "srt://:31112?mode=listener"
+          "url": "srt://:{port}?mode=listener"
         },
         {
           "case": "explicit",
@@ -461,13 +461,13 @@
               "mode": "caller",
               "mss": "1360"
             },
-            "port": 31113,
+            "port": "{port}",
             "scheme": "srt"
           },
           "key": "mss",
           "role": "caller",
           "scheme": "srt",
-          "url": "srt://127.0.0.1:31113?mss=1360"
+          "url": "srt://127.0.0.1:{port}?mss=1360"
         },
         {
           "case": "explicit",
@@ -477,13 +477,13 @@
               "mode": "caller",
               "oheadbw": "25"
             },
-            "port": 31114,
+            "port": "{port}",
             "scheme": "srt"
           },
           "key": "oheadbw",
           "role": "caller",
           "scheme": "srt",
-          "url": "srt://127.0.0.1:31114?oheadbw=25"
+          "url": "srt://127.0.0.1:{port}?oheadbw=25"
         },
         {
           "case": "explicit",
@@ -493,13 +493,13 @@
               "mode": "caller",
               "packetfilter": "fec,cols:4,rows:2"
             },
-            "port": 31115,
+            "port": "{port}",
             "scheme": "srt"
           },
           "key": "packetfilter",
           "role": "caller",
           "scheme": "srt",
-          "url": "srt://127.0.0.1:31115?packetfilter=fec,cols:4,rows:2"
+          "url": "srt://127.0.0.1:{port}?packetfilter=fec,cols:4,rows:2"
         },
         {
           "case": "explicit",
@@ -509,13 +509,13 @@
               "mode": "caller",
               "passphrase": "correcthorse"
             },
-            "port": 31116,
+            "port": "{port}",
             "scheme": "srt"
           },
           "key": "passphrase",
           "role": "caller",
           "scheme": "srt",
-          "url": "srt://127.0.0.1:31116?passphrase=correcthorse"
+          "url": "srt://127.0.0.1:{port}?passphrase=correcthorse"
         },
         {
           "case": "explicit",
@@ -525,13 +525,13 @@
               "mode": "caller",
               "payloadsize": "1316"
             },
-            "port": 31117,
+            "port": "{port}",
             "scheme": "srt"
           },
           "key": "payloadsize",
           "role": "caller",
           "scheme": "srt",
-          "url": "srt://127.0.0.1:31117?payloadsize=1316"
+          "url": "srt://127.0.0.1:{port}?payloadsize=1316"
         },
         {
           "case": "explicit",
@@ -541,13 +541,13 @@
               "mode": "caller",
               "pbkeylen": "32"
             },
-            "port": 31118,
+            "port": "{port}",
             "scheme": "srt"
           },
           "key": "pbkeylen",
           "role": "caller",
           "scheme": "srt",
-          "url": "srt://127.0.0.1:31118?pbkeylen=32"
+          "url": "srt://127.0.0.1:{port}?pbkeylen=32"
         },
         {
           "case": "explicit",
@@ -557,13 +557,13 @@
               "mode": "caller",
               "peerlatency": "120"
             },
-            "port": 31119,
+            "port": "{port}",
             "scheme": "srt"
           },
           "key": "peerlatency",
           "role": "caller",
           "scheme": "srt",
-          "url": "srt://127.0.0.1:31119?peerlatency=120"
+          "url": "srt://127.0.0.1:{port}?peerlatency=120"
         },
         {
           "case": "explicit",
@@ -573,13 +573,13 @@
               "mode": "caller",
               "rcvlatency": "120"
             },
-            "port": 31120,
+            "port": "{port}",
             "scheme": "srt"
           },
           "key": "rcvlatency",
           "role": "caller",
           "scheme": "srt",
-          "url": "srt://127.0.0.1:31120?rcvlatency=120"
+          "url": "srt://127.0.0.1:{port}?rcvlatency=120"
         },
         {
           "case": "explicit",
@@ -589,13 +589,13 @@
               "mode": "caller",
               "streamid": "front-camera"
             },
-            "port": 31121,
+            "port": "{port}",
             "scheme": "srt"
           },
           "key": "streamid",
           "role": "caller",
           "scheme": "srt",
-          "url": "srt://127.0.0.1:31121?streamid=front-camera"
+          "url": "srt://127.0.0.1:{port}?streamid=front-camera"
         },
         {
           "case": "explicit",
@@ -605,13 +605,13 @@
               "mode": "caller",
               "tlpktdrop": "0"
             },
-            "port": 31122,
+            "port": "{port}",
             "scheme": "srt"
           },
           "key": "tlpktdrop",
           "role": "caller",
           "scheme": "srt",
-          "url": "srt://127.0.0.1:31122?tlpktdrop=0"
+          "url": "srt://127.0.0.1:{port}?tlpktdrop=0"
         },
         {
           "case": "explicit",
@@ -621,13 +621,13 @@
               "mode": "caller",
               "udprcvbuf": "1048576"
             },
-            "port": 31123,
+            "port": "{port}",
             "scheme": "srt"
           },
           "key": "udprcvbuf",
           "role": "caller",
           "scheme": "srt",
-          "url": "srt://127.0.0.1:31123?udprcvbuf=1048576"
+          "url": "srt://127.0.0.1:{port}?udprcvbuf=1048576"
         },
         {
           "case": "explicit",
@@ -637,13 +637,13 @@
               "mode": "caller",
               "udpsndbuf": "1048576"
             },
-            "port": 31124,
+            "port": "{port}",
             "scheme": "srt"
           },
           "key": "udpsndbuf",
           "role": "caller",
           "scheme": "srt",
-          "url": "srt://127.0.0.1:31124?udpsndbuf=1048576"
+          "url": "srt://127.0.0.1:{port}?udpsndbuf=1048576"
         },
         {
           "case": "explicit",
@@ -653,13 +653,13 @@
               "mode": "caller",
               "x-recvtimeout": "2000"
             },
-            "port": 31125,
+            "port": "{port}",
             "scheme": "srt"
           },
           "key": "x-recvtimeout",
           "role": "caller",
           "scheme": "srt",
-          "url": "srt://127.0.0.1:31125?x-recvtimeout=2000"
+          "url": "srt://127.0.0.1:{port}?x-recvtimeout=2000"
         },
         {
           "case": "explicit",
@@ -669,13 +669,13 @@
               "mode": "caller",
               "x-sendtimeout": "2000"
             },
-            "port": 31126,
+            "port": "{port}",
             "scheme": "srt"
           },
           "key": "x-sendtimeout",
           "role": "caller",
           "scheme": "srt",
-          "url": "srt://127.0.0.1:31126?x-sendtimeout=2000"
+          "url": "srt://127.0.0.1:{port}?x-sendtimeout=2000"
         },
         {
           "case": "explicit",
@@ -685,13 +685,13 @@
               "mode": "caller",
               "streamid": "#!::r=cam1"
             },
-            "port": 31127,
+            "port": "{port}",
             "scheme": "srt"
           },
           "key": "streamid",
           "role": "caller",
           "scheme": "srt",
-          "url": "srt://127.0.0.1:31127?streamid=%23%21%3A%3Ar%3Dcam1"
+          "url": "srt://127.0.0.1:{port}?streamid=%23%21%3A%3Ar%3Dcam1"
         },
         {
           "case": "alias",
@@ -701,13 +701,13 @@
               "congestion": "live",
               "mode": "caller"
             },
-            "port": 31128,
+            "port": "{port}",
             "scheme": "srt"
           },
           "key": "congestion",
           "role": "caller",
           "scheme": "srt",
-          "url": "srt://127.0.0.1:31128?smoother=live"
+          "url": "srt://127.0.0.1:{port}?smoother=live"
         },
         {
           "case": "alias",
@@ -717,13 +717,13 @@
               "conntimeo": "1500",
               "mode": "caller"
             },
-            "port": 31129,
+            "port": "{port}",
             "scheme": "srt"
           },
           "key": "conntimeo",
           "role": "caller",
           "scheme": "srt",
-          "url": "srt://127.0.0.1:31129?connect_timeout=1500"
+          "url": "srt://127.0.0.1:{port}?connect_timeout=1500"
         },
         {
           "case": "alias",
@@ -733,13 +733,13 @@
               "fc": "25600",
               "mode": "caller"
             },
-            "port": 31130,
+            "port": "{port}",
             "scheme": "srt"
           },
           "key": "fc",
           "role": "caller",
           "scheme": "srt",
-          "url": "srt://127.0.0.1:31130?ffs=25600"
+          "url": "srt://127.0.0.1:{port}?ffs=25600"
         },
         {
           "case": "alias",
@@ -749,13 +749,13 @@
               "latency": "120",
               "mode": "caller"
             },
-            "port": 31131,
+            "port": "{port}",
             "scheme": "srt"
           },
           "key": "latency",
           "role": "caller",
           "scheme": "srt",
-          "url": "srt://127.0.0.1:31131?tsbpddelay=120"
+          "url": "srt://127.0.0.1:{port}?tsbpddelay=120"
         },
         {
           "case": "alias",
@@ -765,13 +765,13 @@
               "mode": "caller",
               "payloadsize": "1316"
             },
-            "port": 31132,
+            "port": "{port}",
             "scheme": "srt"
           },
           "key": "payloadsize",
           "role": "caller",
           "scheme": "srt",
-          "url": "srt://127.0.0.1:31132?pkt_size=1316"
+          "url": "srt://127.0.0.1:{port}?pkt_size=1316"
         },
         {
           "case": "alias",
@@ -781,13 +781,13 @@
               "mode": "caller",
               "payloadsize": "1316"
             },
-            "port": 31133,
+            "port": "{port}",
             "scheme": "srt"
           },
           "key": "payloadsize",
           "role": "caller",
           "scheme": "srt",
-          "url": "srt://127.0.0.1:31133?payload_size=1316"
+          "url": "srt://127.0.0.1:{port}?payload_size=1316"
         },
         {
           "case": "alias",
@@ -797,13 +797,13 @@
               "mode": "caller",
               "streamid": "front-camera"
             },
-            "port": 31134,
+            "port": "{port}",
             "scheme": "srt"
           },
           "key": "streamid",
           "role": "caller",
           "scheme": "srt",
-          "url": "srt://127.0.0.1:31134?srt_streamid=front-camera"
+          "url": "srt://127.0.0.1:{port}?srt_streamid=front-camera"
         },
         {
           "case": "alias",
@@ -813,13 +813,13 @@
               "mode": "caller",
               "udprcvbuf": "1048576"
             },
-            "port": 31135,
+            "port": "{port}",
             "scheme": "srt"
           },
           "key": "udprcvbuf",
           "role": "caller",
           "scheme": "srt",
-          "url": "srt://127.0.0.1:31135?recv_buffer_size=1048576"
+          "url": "srt://127.0.0.1:{port}?recv_buffer_size=1048576"
         },
         {
           "case": "alias",
@@ -829,13 +829,13 @@
               "mode": "caller",
               "udpsndbuf": "1048576"
             },
-            "port": 31136,
+            "port": "{port}",
             "scheme": "srt"
           },
           "key": "udpsndbuf",
           "role": "caller",
           "scheme": "srt",
-          "url": "srt://127.0.0.1:31136?send_buffer_size=1048576"
+          "url": "srt://127.0.0.1:{port}?send_buffer_size=1048576"
         },
         {
           "case": "conflict",
@@ -845,13 +845,13 @@
               "latency": "150",
               "mode": "caller"
             },
-            "port": 31137,
+            "port": "{port}",
             "scheme": "srt"
           },
           "key": "latency",
           "role": "caller",
           "scheme": "srt",
-          "url": "srt://127.0.0.1:31137?latency=100&latency=150"
+          "url": "srt://127.0.0.1:{port}?latency=100&latency=150"
         },
         {
           "case": "conflict",
@@ -861,13 +861,13 @@
               "latency": "200",
               "mode": "caller"
             },
-            "port": 31138,
+            "port": "{port}",
             "scheme": "srt"
           },
           "key": "latency",
           "role": "caller",
           "scheme": "srt",
-          "url": "srt://127.0.0.1:31138?latency=100&tsbpddelay=200"
+          "url": "srt://127.0.0.1:{port}?latency=100&tsbpddelay=200"
         },
         {
           "case": "conflict",
@@ -877,13 +877,13 @@
               "congestion": "live",
               "mode": "caller"
             },
-            "port": 31139,
+            "port": "{port}",
             "scheme": "srt"
           },
           "key": "congestion",
           "role": "caller",
           "scheme": "srt",
-          "url": "srt://127.0.0.1:31139?smoother=file&congestion=live"
+          "url": "srt://127.0.0.1:{port}?smoother=file&congestion=live"
         },
         {
           "case": "conflict",
@@ -893,13 +893,13 @@
               "conntimeo": "1500",
               "mode": "caller"
             },
-            "port": 31140,
+            "port": "{port}",
             "scheme": "srt"
           },
           "key": "conntimeo",
           "role": "caller",
           "scheme": "srt",
-          "url": "srt://127.0.0.1:31140?conntimeo=1000&connect_timeout=1500"
+          "url": "srt://127.0.0.1:{port}?conntimeo=1000&connect_timeout=1500"
         },
         {
           "case": "conflict",
@@ -909,13 +909,13 @@
               "fc": "25600",
               "mode": "caller"
             },
-            "port": 31141,
+            "port": "{port}",
             "scheme": "srt"
           },
           "key": "fc",
           "role": "caller",
           "scheme": "srt",
-          "url": "srt://127.0.0.1:31141?fc=8192&ffs=25600"
+          "url": "srt://127.0.0.1:{port}?fc=8192&ffs=25600"
         },
         {
           "case": "conflict",
@@ -925,13 +925,13 @@
               "mode": "caller",
               "payloadsize": "1316"
             },
-            "port": 31142,
+            "port": "{port}",
             "scheme": "srt"
           },
           "key": "payloadsize",
           "role": "caller",
           "scheme": "srt",
-          "url": "srt://127.0.0.1:31142?payloadsize=1200&pkt_size=1316"
+          "url": "srt://127.0.0.1:{port}?payloadsize=1200&pkt_size=1316"
         },
         {
           "case": "conflict",
@@ -941,13 +941,13 @@
               "mode": "caller",
               "payloadsize": "1316"
             },
-            "port": 31143,
+            "port": "{port}",
             "scheme": "srt"
           },
           "key": "payloadsize",
           "role": "caller",
           "scheme": "srt",
-          "url": "srt://127.0.0.1:31143?pkt_size=1200&payload_size=1316"
+          "url": "srt://127.0.0.1:{port}?pkt_size=1200&payload_size=1316"
         },
         {
           "case": "conflict",
@@ -957,13 +957,13 @@
               "mode": "caller",
               "streamid": "front-camera"
             },
-            "port": 31144,
+            "port": "{port}",
             "scheme": "srt"
           },
           "key": "streamid",
           "role": "caller",
           "scheme": "srt",
-          "url": "srt://127.0.0.1:31144?streamid=a&srt_streamid=front-camera"
+          "url": "srt://127.0.0.1:{port}?streamid=a&srt_streamid=front-camera"
         },
         {
           "case": "conflict",
@@ -973,13 +973,13 @@
               "mode": "caller",
               "udprcvbuf": "1048576"
             },
-            "port": 31145,
+            "port": "{port}",
             "scheme": "srt"
           },
           "key": "udprcvbuf",
           "role": "caller",
           "scheme": "srt",
-          "url": "srt://127.0.0.1:31145?udprcvbuf=65536&recv_buffer_size=1048576"
+          "url": "srt://127.0.0.1:{port}?udprcvbuf=65536&recv_buffer_size=1048576"
         },
         {
           "case": "conflict",
@@ -989,13 +989,13 @@
               "mode": "caller",
               "udpsndbuf": "1048576"
             },
-            "port": 31146,
+            "port": "{port}",
             "scheme": "srt"
           },
           "key": "udpsndbuf",
           "role": "caller",
           "scheme": "srt",
-          "url": "srt://127.0.0.1:31146?udpsndbuf=65536&send_buffer_size=1048576"
+          "url": "srt://127.0.0.1:{port}?udpsndbuf=65536&send_buffer_size=1048576"
         },
         {
           "case": "conflict",
@@ -1004,13 +1004,13 @@
             "keys": {
               "mode": "caller"
             },
-            "port": 31147,
+            "port": "{port}",
             "scheme": "srt"
           },
           "key": "mode",
           "role": "caller",
           "scheme": "srt",
-          "url": "srt://127.0.0.1:31147?mode=listener&mode=caller"
+          "url": "srt://127.0.0.1:{port}?mode=listener&mode=caller"
         },
         {
           "case": "conflict",
@@ -1020,7 +1020,7 @@
           "key": "latency",
           "role": "caller",
           "scheme": "srt",
-          "url": "srt://127.0.0.1:31148?latency=abc&latency=120"
+          "url": "srt://127.0.0.1:{port}?latency=abc&latency=120"
         },
         {
           "case": "credentials",
@@ -1029,7 +1029,7 @@
           },
           "role": "caller",
           "scheme": "srt",
-          "url": "srt://user:secret@127.0.0.1:31149"
+          "url": "srt://user:secret@127.0.0.1:{port}"
         },
         {
           "case": "invalid",
@@ -1039,7 +1039,7 @@
           "key": "congestion",
           "role": "caller",
           "scheme": "srt",
-          "url": "srt://127.0.0.1:31150?congestion=fast"
+          "url": "srt://127.0.0.1:{port}?congestion=fast"
         },
         {
           "case": "invalid",
@@ -1049,7 +1049,7 @@
           "key": "conntimeo",
           "role": "caller",
           "scheme": "srt",
-          "url": "srt://127.0.0.1:31151?conntimeo=-1"
+          "url": "srt://127.0.0.1:{port}?conntimeo=-1"
         },
         {
           "case": "invalid",
@@ -1059,7 +1059,7 @@
           "key": "peeridletimeo",
           "role": "caller",
           "scheme": "srt",
-          "url": "srt://127.0.0.1:31179?peeridletimeo=0"
+          "url": "srt://127.0.0.1:{port}?peeridletimeo=0"
         },
         {
           "case": "invalid",
@@ -1069,7 +1069,7 @@
           "key": "peeridletimeo",
           "role": "caller",
           "scheme": "srt",
-          "url": "srt://127.0.0.1:31180?peeridletimeo=-1"
+          "url": "srt://127.0.0.1:{port}?peeridletimeo=-1"
         },
         {
           "case": "invalid",
@@ -1079,7 +1079,7 @@
           "key": "peeridletimeo",
           "role": "caller",
           "scheme": "srt",
-          "url": "srt://127.0.0.1:31181?peeridletimeo=2147484"
+          "url": "srt://127.0.0.1:{port}?peeridletimeo=2147484"
         },
         {
           "case": "invalid",
@@ -1089,7 +1089,7 @@
           "key": "fc",
           "role": "caller",
           "scheme": "srt",
-          "url": "srt://127.0.0.1:31152?fc=abc"
+          "url": "srt://127.0.0.1:{port}?fc=abc"
         },
         {
           "case": "invalid",
@@ -1099,7 +1099,7 @@
           "key": "inputbw",
           "role": "caller",
           "scheme": "srt",
-          "url": "srt://127.0.0.1:31153?inputbw=-5"
+          "url": "srt://127.0.0.1:{port}?inputbw=-5"
         },
         {
           "case": "invalid",
@@ -1109,7 +1109,7 @@
           "key": "latency",
           "role": "caller",
           "scheme": "srt",
-          "url": "srt://127.0.0.1:31154?latency=0120"
+          "url": "srt://127.0.0.1:{port}?latency=0120"
         },
         {
           "case": "invalid",
@@ -1119,7 +1119,7 @@
           "key": "linger",
           "role": "caller",
           "scheme": "srt",
-          "url": "srt://127.0.0.1:31155?linger=x"
+          "url": "srt://127.0.0.1:{port}?linger=x"
         },
         {
           "case": "invalid",
@@ -1129,7 +1129,7 @@
           "key": "lossmaxttl",
           "role": "caller",
           "scheme": "srt",
-          "url": "srt://127.0.0.1:31156?lossmaxttl=x"
+          "url": "srt://127.0.0.1:{port}?lossmaxttl=x"
         },
         {
           "case": "invalid",
@@ -1139,7 +1139,7 @@
           "key": "maxbw",
           "role": "caller",
           "scheme": "srt",
-          "url": "srt://127.0.0.1:31157?maxbw=-1"
+          "url": "srt://127.0.0.1:{port}?maxbw=-1"
         },
         {
           "case": "invalid",
@@ -1149,7 +1149,7 @@
           "key": "mode",
           "role": "caller",
           "scheme": "srt",
-          "url": "srt://127.0.0.1:31158?mode=rendezvous"
+          "url": "srt://127.0.0.1:{port}?mode=rendezvous"
         },
         {
           "case": "invalid",
@@ -1159,7 +1159,7 @@
           "key": "mss",
           "role": "caller",
           "scheme": "srt",
-          "url": "srt://127.0.0.1:31159?mss=70000"
+          "url": "srt://127.0.0.1:{port}?mss=70000"
         },
         {
           "case": "invalid",
@@ -1169,7 +1169,7 @@
           "key": "oheadbw",
           "role": "caller",
           "scheme": "srt",
-          "url": "srt://127.0.0.1:31160?oheadbw=200"
+          "url": "srt://127.0.0.1:{port}?oheadbw=200"
         },
         {
           "case": "invalid",
@@ -1179,7 +1179,7 @@
           "key": "packetfilter",
           "role": "caller",
           "scheme": "srt",
-          "url": "srt://127.0.0.1:31161?packetfilter=fec;cols:4"
+          "url": "srt://127.0.0.1:{port}?packetfilter=fec;cols:4"
         },
         {
           "case": "invalid",
@@ -1189,7 +1189,7 @@
           "key": "passphrase",
           "role": "caller",
           "scheme": "srt",
-          "url": "srt://127.0.0.1:31162?passphrase=short"
+          "url": "srt://127.0.0.1:{port}?passphrase=short"
         },
         {
           "case": "invalid",
@@ -1199,7 +1199,7 @@
           "key": "payloadsize",
           "role": "caller",
           "scheme": "srt",
-          "url": "srt://127.0.0.1:31163?payloadsize=2000"
+          "url": "srt://127.0.0.1:{port}?payloadsize=2000"
         },
         {
           "case": "invalid",
@@ -1209,7 +1209,7 @@
           "key": "pbkeylen",
           "role": "caller",
           "scheme": "srt",
-          "url": "srt://127.0.0.1:31164?pbkeylen=20"
+          "url": "srt://127.0.0.1:{port}?pbkeylen=20"
         },
         {
           "case": "invalid",
@@ -1219,7 +1219,7 @@
           "key": "peerlatency",
           "role": "caller",
           "scheme": "srt",
-          "url": "srt://127.0.0.1:31165?peerlatency=x"
+          "url": "srt://127.0.0.1:{port}?peerlatency=x"
         },
         {
           "case": "invalid",
@@ -1229,7 +1229,7 @@
           "key": "rcvlatency",
           "role": "caller",
           "scheme": "srt",
-          "url": "srt://127.0.0.1:31166?rcvlatency=x"
+          "url": "srt://127.0.0.1:{port}?rcvlatency=x"
         },
         {
           "case": "invalid",
@@ -1239,7 +1239,7 @@
           "key": "streamid",
           "role": "caller",
           "scheme": "srt",
-          "url": "srt://127.0.0.1:31167?streamid=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+          "url": "srt://127.0.0.1:{port}?streamid=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
         },
         {
           "case": "invalid",
@@ -1249,7 +1249,7 @@
           "key": "tlpktdrop",
           "role": "caller",
           "scheme": "srt",
-          "url": "srt://127.0.0.1:31168?tlpktdrop=2"
+          "url": "srt://127.0.0.1:{port}?tlpktdrop=2"
         },
         {
           "case": "invalid",
@@ -1259,7 +1259,7 @@
           "key": "udprcvbuf",
           "role": "caller",
           "scheme": "srt",
-          "url": "srt://127.0.0.1:31169?udprcvbuf=-1"
+          "url": "srt://127.0.0.1:{port}?udprcvbuf=-1"
         },
         {
           "case": "invalid",
@@ -1269,7 +1269,7 @@
           "key": "udpsndbuf",
           "role": "caller",
           "scheme": "srt",
-          "url": "srt://127.0.0.1:31170?udpsndbuf=-1"
+          "url": "srt://127.0.0.1:{port}?udpsndbuf=-1"
         },
         {
           "case": "invalid",
@@ -1279,7 +1279,7 @@
           "key": "x-recvtimeout",
           "role": "caller",
           "scheme": "srt",
-          "url": "srt://127.0.0.1:31171?x-recvtimeout=x"
+          "url": "srt://127.0.0.1:{port}?x-recvtimeout=x"
         },
         {
           "case": "invalid",
@@ -1289,7 +1289,7 @@
           "key": "x-sendtimeout",
           "role": "caller",
           "scheme": "srt",
-          "url": "srt://127.0.0.1:31172?x-sendtimeout=x"
+          "url": "srt://127.0.0.1:{port}?x-sendtimeout=x"
         },
         {
           "case": "invalid",
@@ -1298,7 +1298,7 @@
           },
           "role": "caller",
           "scheme": "srt",
-          "url": "srt://127.0.0.1:31173?foo=1"
+          "url": "srt://127.0.0.1:{port}?foo=1"
         },
         {
           "case": "invalid",
@@ -1307,7 +1307,7 @@
           },
           "role": "caller",
           "scheme": "srt",
-          "url": "srt://127.0.0.1:31174?rcvbuf=1048576"
+          "url": "srt://127.0.0.1:{port}?rcvbuf=1048576"
         },
         {
           "case": "invalid",
@@ -1316,7 +1316,7 @@
           },
           "role": "caller",
           "scheme": "srt",
-          "url": "srt://127.0.0.1:31175?timeout=1000"
+          "url": "srt://127.0.0.1:{port}?timeout=1000"
         },
         {
           "case": "invalid",
@@ -1334,7 +1334,7 @@
           },
           "role": "caller",
           "scheme": "srt",
-          "url": "srt://:31176"
+          "url": "srt://:{port}"
         },
         {
           "case": "invalid",
@@ -1343,7 +1343,7 @@
           },
           "role": "caller",
           "scheme": "srt",
-          "url": "srt://127.0.0.1:31177?latency=%zz"
+          "url": "srt://127.0.0.1:{port}?latency=%zz"
         },
         {
           "case": "default",
@@ -1720,6 +1720,11 @@
             "port": 322,
             "scheme": "rtsps"
           },
+          "open": {
+            "jvm": "TLS",
+            "python": "IO"
+          },
+          "open_why": "no RTSP peer speaks TLS: Python dials the default port 322, where nothing listens; the JVM dials a drop peer, which closes the connection during the handshake",
           "role": "client",
           "scheme": "rtsps",
           "url": "rtsps://127.0.0.1/live"
@@ -2253,12 +2258,12 @@
               "listen": "0",
               "nodelay": "1"
             },
-            "port": 31401,
+            "port": "{port}",
             "scheme": "tcp"
           },
           "role": "caller",
           "scheme": "tcp",
-          "url": "tcp://127.0.0.1:31401"
+          "url": "tcp://127.0.0.1:{port}"
         },
         {
           "case": "default",
@@ -2268,12 +2273,18 @@
               "listen": "0",
               "nodelay": "1"
             },
-            "port": 31401,
+            "port": "{port}",
             "scheme": "tcps"
           },
+          "open": {
+            "c": "IO",
+            "jvm": "IO",
+            "python": "IO"
+          },
+          "open_why": "every leg dials a drop peer, which closes the connection during the TLS handshake",
           "role": "caller",
           "scheme": "tcps",
-          "url": "tcps://127.0.0.1:31401"
+          "url": "tcps://127.0.0.1:{port}"
         },
         {
           "case": "explicit",
@@ -2299,13 +2310,13 @@
               "listen": "0",
               "nodelay": "0"
             },
-            "port": 31401,
+            "port": "{port}",
             "scheme": "tcp"
           },
           "key": "nodelay",
           "role": "caller",
           "scheme": "tcp",
-          "url": "tcp://127.0.0.1:31401?nodelay=false"
+          "url": "tcp://127.0.0.1:{port}?nodelay=false"
         },
         {
           "case": "explicit",
@@ -2316,13 +2327,13 @@
               "listen": "0",
               "nodelay": "1"
             },
-            "port": 31401,
+            "port": "{port}",
             "scheme": "tcp"
           },
           "key": "keepalive",
           "role": "caller",
           "scheme": "tcp",
-          "url": "tcp://127.0.0.1:31401?keepalive=30"
+          "url": "tcp://127.0.0.1:{port}?keepalive=30"
         },
         {
           "case": "explicit",
@@ -2333,13 +2344,13 @@
               "nodelay": "1",
               "rcvbuf": "1048576"
             },
-            "port": 31401,
+            "port": "{port}",
             "scheme": "tcp"
           },
           "key": "rcvbuf",
           "role": "caller",
           "scheme": "tcp",
-          "url": "tcp://127.0.0.1:31401?rcvbuf=1M"
+          "url": "tcp://127.0.0.1:{port}?rcvbuf=1M"
         },
         {
           "case": "explicit",
@@ -2350,13 +2361,13 @@
               "nodelay": "1",
               "sndbuf": "1048576"
             },
-            "port": 31401,
+            "port": "{port}",
             "scheme": "tcp"
           },
           "key": "sndbuf",
           "role": "caller",
           "scheme": "tcp",
-          "url": "tcp://127.0.0.1:31401?sndbuf=1M"
+          "url": "tcp://127.0.0.1:{port}?sndbuf=1M"
         },
         {
           "case": "explicit",
@@ -2367,13 +2378,13 @@
               "nodelay": "1",
               "pkt_size": "65536"
             },
-            "port": 31401,
+            "port": "{port}",
             "scheme": "tcp"
           },
           "key": "pkt_size",
           "role": "caller",
           "scheme": "tcp",
-          "url": "tcp://127.0.0.1:31401?pkt_size=64K"
+          "url": "tcp://127.0.0.1:{port}?pkt_size=64K"
         },
         {
           "case": "explicit",
@@ -2384,21 +2395,21 @@
               "listen": "0",
               "nodelay": "1"
             },
-            "port": 31401,
+            "port": "{port}",
             "scheme": "tcp"
           },
           "key": "connect_timeout",
           "role": "caller",
           "scheme": "tcp",
-          "url": "tcp://127.0.0.1:31401?connect_timeout=5"
+          "url": "tcp://127.0.0.1:{port}?connect_timeout=5"
         },
         {
           "case": "explicit",
           "expect": {
             "host": "127.0.0.1",
             "keys": {
-              "cert": "server.crt",
-              "key": "server.key",
+              "cert": "{dir}/server.crt",
+              "key": "{dir}/server.key",
               "listen": "1",
               "nodelay": "1"
             },
@@ -2408,15 +2419,15 @@
           "key": "cert",
           "role": "listener",
           "scheme": "tcps",
-          "url": "tcps://127.0.0.1:0?listen=1&cert=server.crt&key=server.key"
+          "url": "tcps://127.0.0.1:0?listen=1&cert={dir}/server.crt&key={dir}/server.key"
         },
         {
           "case": "explicit",
           "expect": {
             "host": "127.0.0.1",
             "keys": {
-              "cert": "server.crt",
-              "key": "server.key",
+              "cert": "{dir}/server.crt",
+              "key": "{dir}/server.key",
               "listen": "1",
               "nodelay": "1"
             },
@@ -2426,24 +2437,30 @@
           "key": "key",
           "role": "listener",
           "scheme": "tcps",
-          "url": "tcps://127.0.0.1:0?listen=1&key=server.key&cert=server.crt"
+          "url": "tcps://127.0.0.1:0?listen=1&key={dir}/server.key&cert={dir}/server.crt"
         },
         {
           "case": "explicit",
           "expect": {
             "host": "127.0.0.1",
             "keys": {
-              "ca": "roots.pem",
+              "ca": "{dir}/server.crt",
               "listen": "0",
               "nodelay": "1"
             },
-            "port": 31401,
+            "port": "{port}",
             "scheme": "tcps"
           },
           "key": "ca",
+          "open": {
+            "c": "IO",
+            "jvm": "IO",
+            "python": "IO"
+          },
+          "open_why": "every leg dials a drop peer, which closes the connection during the TLS handshake",
           "role": "caller",
           "scheme": "tcps",
-          "url": "tcps://127.0.0.1:31401?ca=roots.pem"
+          "url": "tcps://127.0.0.1:{port}?ca={dir}/server.crt"
         },
         {
           "case": "credentials",
@@ -2453,12 +2470,12 @@
               "listen": "0",
               "nodelay": "1"
             },
-            "port": 31401,
+            "port": "{port}",
             "scheme": "tcp"
           },
           "role": "caller",
           "scheme": "tcp",
-          "url": "tcp://user:secret@127.0.0.1:31401"
+          "url": "tcp://user:secret@127.0.0.1:{port}"
         },
         {
           "case": "conflict",
@@ -2469,13 +2486,13 @@
               "listen": "0",
               "nodelay": "1"
             },
-            "port": 31401,
+            "port": "{port}",
             "scheme": "tcp"
           },
           "key": "keepalive",
           "role": "caller",
           "scheme": "tcp",
-          "url": "tcp://127.0.0.1:31401?keepalive=10&keepalive=30"
+          "url": "tcp://127.0.0.1:{port}?keepalive=10&keepalive=30"
         },
         {
           "case": "conflict",
@@ -2505,7 +2522,7 @@
           "key": "nodelay",
           "role": "caller",
           "scheme": "tcp",
-          "url": "tcp://127.0.0.1:31401?nodelay=2"
+          "url": "tcp://127.0.0.1:{port}?nodelay=2"
         },
         {
           "case": "invalid",
@@ -2515,7 +2532,7 @@
           "key": "keepalive",
           "role": "caller",
           "scheme": "tcp",
-          "url": "tcp://127.0.0.1:31401?keepalive=x"
+          "url": "tcp://127.0.0.1:{port}?keepalive=x"
         },
         {
           "case": "invalid",
@@ -2525,7 +2542,7 @@
           "key": "rcvbuf",
           "role": "caller",
           "scheme": "tcp",
-          "url": "tcp://127.0.0.1:31401?rcvbuf=x"
+          "url": "tcp://127.0.0.1:{port}?rcvbuf=x"
         },
         {
           "case": "invalid",
@@ -2535,7 +2552,7 @@
           "key": "sndbuf",
           "role": "caller",
           "scheme": "tcp",
-          "url": "tcp://127.0.0.1:31401?sndbuf=512M"
+          "url": "tcp://127.0.0.1:{port}?sndbuf=512M"
         },
         {
           "case": "invalid",
@@ -2545,7 +2562,7 @@
           "key": "pkt_size",
           "role": "caller",
           "scheme": "tcp",
-          "url": "tcp://127.0.0.1:31401?pkt_size=x"
+          "url": "tcp://127.0.0.1:{port}?pkt_size=x"
         },
         {
           "case": "invalid",
@@ -2555,7 +2572,7 @@
           "key": "connect_timeout",
           "role": "caller",
           "scheme": "tcp",
-          "url": "tcp://127.0.0.1:31401?connect_timeout=-1"
+          "url": "tcp://127.0.0.1:{port}?connect_timeout=-1"
         },
         {
           "case": "invalid",
@@ -2565,12 +2582,12 @@
               "listen": "0",
               "nodelay": "1"
             },
-            "port": 31401,
+            "port": "{port}",
             "scheme": "tcp"
           },
           "role": "caller",
           "scheme": "tcp",
-          "url": "tcp://127.0.0.1:31401?foo=1"
+          "url": "tcp://127.0.0.1:{port}?foo=1"
         },
         {
           "case": "invalid",
@@ -2609,6 +2626,10 @@
             "port": 31701,
             "scheme": "hlss"
           },
+          "open": {
+            "jvm": "INVALID_CONFIG"
+          },
+          "open_why": "the JVM builds the publisher, and an HTTPS server needs a certificate and a key",
           "role": "publisher",
           "scheme": "hlss",
           "url": "hlss://127.0.0.1:31701"
@@ -2725,8 +2746,8 @@
           "expect": {
             "host": "127.0.0.1",
             "keys": {
-              "cert": "server.crt",
-              "key": "server.key",
+              "cert": "{dir}/server.crt",
+              "key": "{dir}/server.key",
               "mode": "live",
               "playlist_window": "6",
               "segment_duration": "4"
@@ -2737,7 +2758,7 @@
           "key": "cert",
           "role": "publisher",
           "scheme": "hlss",
-          "url": "hlss://127.0.0.1:31701?cert=server.crt&key=server.key"
+          "url": "hlss://127.0.0.1:31701?cert={dir}/server.crt&key={dir}/server.key"
         },
         {
           "case": "explicit",
@@ -2753,6 +2774,10 @@
             "scheme": "hlss"
           },
           "key": "key",
+          "open": {
+            "jvm": "INVALID_CONFIG"
+          },
+          "open_why": "the JVM builds the publisher, and an HTTPS server needs a certificate and a key",
           "role": "publisher",
           "scheme": "hlss",
           "url": "hlss://127.0.0.1:31701?key=server.key"
@@ -2883,12 +2908,12 @@
               "pkt_size": "1316",
               "profile": "main"
             },
-            "port": 31650,
+            "port": "{port}",
             "scheme": "rist"
           },
           "role": "recv",
           "scheme": "rist",
-          "url": "rist://@127.0.0.1:31650"
+          "url": "rist://@127.0.0.1:{port}"
         },
         {
           "case": "explicit",
@@ -3127,12 +3152,12 @@
               "pkt_size": "1316",
               "profile": "main"
             },
-            "port": 31651,
+            "port": "{port}",
             "scheme": "rist"
           },
           "role": "recv",
           "scheme": "rist",
-          "url": "rist://user:secret@127.0.0.1:31651"
+          "url": "rist://user:secret@127.0.0.1:{port}"
         },
         {
           "case": "conflict",
@@ -3360,13 +3385,13 @@
               "profile": "main",
               "source": "10.0.0.5"
             },
-            "port": 31652,
+            "port": "{port}",
             "scheme": "rist"
           },
           "key": "source",
           "role": "recv",
           "scheme": "rist",
-          "url": "rist://@127.0.0.1:31652?source=10.0.0.5"
+          "url": "rist://@127.0.0.1:{port}?source=10.0.0.5"
         },
         {
           "case": "explicit",
@@ -3380,13 +3405,13 @@
               "profile": "main",
               "source": "first"
             },
-            "port": 31653,
+            "port": "{port}",
             "scheme": "rist"
           },
           "key": "source",
           "role": "recv",
           "scheme": "rist",
-          "url": "rist://@127.0.0.1:31653?source=first"
+          "url": "rist://@127.0.0.1:{port}?source=first"
         },
         {
           "case": "invalid",
@@ -3396,7 +3421,7 @@
           "key": "source",
           "role": "recv",
           "scheme": "rist",
-          "url": "rist://@127.0.0.1:31654?source=camera.local"
+          "url": "rist://@127.0.0.1:{port}?source=camera.local"
         },
         {
           "case": "invalid",
@@ -3452,7 +3477,7 @@
             "keys": {
               "cors_origin": "*",
               "max_viewers": "10",
-              "media_port": "31801"
+              "media_port": "{port}"
             },
             "port": 0,
             "scheme": "whep"
@@ -3460,7 +3485,7 @@
           "key": "media_port",
           "role": "server",
           "scheme": "whep",
-          "url": "whep://127.0.0.1:0?media_port=31801"
+          "url": "whep://127.0.0.1:0?media_port={port}"
         },
         {
           "case": "explicit",
@@ -3537,9 +3562,9 @@
           "expect": {
             "host": "127.0.0.1",
             "keys": {
-              "cert": "server.crt",
+              "cert": "{dir}/server.crt",
               "cors_origin": "*",
-              "key": "server.key",
+              "key": "{dir}/server.key",
               "max_viewers": "10",
               "media_port": "0"
             },
@@ -3549,16 +3574,16 @@
           "key": "cert",
           "role": "server",
           "scheme": "wheps",
-          "url": "wheps://127.0.0.1:0?cert=server.crt&key=server.key"
+          "url": "wheps://127.0.0.1:0?cert={dir}/server.crt&key={dir}/server.key"
         },
         {
           "case": "explicit",
           "expect": {
             "host": "127.0.0.1",
             "keys": {
-              "cert": "server.crt",
+              "cert": "{dir}/server.crt",
               "cors_origin": "*",
-              "key": "server.key",
+              "key": "{dir}/server.key",
               "max_viewers": "10",
               "media_port": "0"
             },
@@ -3568,7 +3593,7 @@
           "key": "key",
           "role": "server",
           "scheme": "wheps",
-          "url": "wheps://127.0.0.1:0?key=server.key&cert=server.crt"
+          "url": "wheps://127.0.0.1:0?key={dir}/server.key&cert={dir}/server.crt"
         },
         {
           "case": "conflict",

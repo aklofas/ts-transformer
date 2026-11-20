@@ -1,9 +1,9 @@
 //! The C leg of the URL corpus (`crates/tst-integration/tests/fixtures/
 //! scenarios/url-corpus/corpus.toml`): every row's URL goes through the C entry point
 //! the corpus header names for its scheme and role, and the outcome must match
-//! the row's record. C exposes no parsed URL, so only the outcome is compared:
-//! a refused row must fail with the expected kind's `TST_E_*` code, an
-//! accepted row must not fail with the code of one of the scheme's URL kinds.
+//! the row's. C exposes no parsed URL, so only the outcome is compared: `ok`
+//! for a valid row, the expected kind's `TST_E_*` code for a refused one,
+//! unless the row's `open` table states other outcomes for the `c` leg.
 //! For the wire schemes (rtsp) a valid row is also connected to a recording
 //! peer, and the request heads must show the record's credentials and keys.
 
@@ -20,7 +20,7 @@
 #[path = "common/mod.rs"]
 mod common;
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::ffi::CString;
 use std::io::{BufRead, BufReader, Write};
 use std::net::{TcpListener, TcpStream};
@@ -28,7 +28,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
-use tst_integration::scenarios::url::{self, Record, Row};
+use tst_integration::scenarios::url::{self, DIR, Record, Row, TLS_FILES};
 use tst_srt::{SrtListenerBuilder, SrtSocketBuilder};
 use tstrans::config::{tst_sender_config_free, tst_sender_config_new};
 use tstrans::error::{tst_clear_last_error, tst_get_last_error};
@@ -73,32 +73,65 @@ fn peer_addr(row: &Row) -> Option<String> {
     })
 }
 
-/// The port written in `url`'s authority, when there is one.
-fn url_port(url: &str) -> Option<u16> {
-    let rest = url.split_once("://")?.1;
-    let authority = &rest[..rest.find(['/', '?']).unwrap_or(rest.len())];
-    let hostport = authority.rsplit('@').next()?;
-    let port = hostport.rsplit_once(':')?.1;
-    port.parse().ok()
+/// The port of a loopback TCP listener that accepts and drops every
+/// connection, started once. A caller dialing a closed loopback port is
+/// refused at once on Linux but only after about two seconds of SYN retries
+/// on Windows, so the tcp caller rows dial this instead.
+fn tcp_peer() -> u16 {
+    static PORT: OnceLock<u16> = OnceLock::new();
+    *PORT.get_or_init(|| {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind the tcp drop peer");
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            for conn in listener.incoming() {
+                drop(conn);
+            }
+        });
+        port
+    })
 }
 
-/// A loopback TCP listener on `port` that accepts and drops every
-/// connection, started once per port. A caller dialing a closed loopback port
-/// is refused at once on Linux but only after about two seconds of SYN
-/// retries on Windows, so the tcp caller rows dial this instead.
-fn tcp_peer(port: u16) {
-    static BOUND: OnceLock<Mutex<BTreeSet<u16>>> = OnceLock::new();
-    let mut bound = BOUND.get_or_init(Default::default).lock().unwrap();
-    if !bound.insert(port) {
-        return;
-    }
-    let listener = TcpListener::bind(("127.0.0.1", port))
-        .unwrap_or_else(|e| panic!("tcp peer on 127.0.0.1:{port}: {e}"));
-    std::thread::spawn(move || {
-        for conn in listener.incoming() {
-            drop(conn);
+/// A UDP port free on `url`'s loopback host when this returns.
+fn free_udp_port(url: &str) -> u16 {
+    let host = if url.contains("[::1]") {
+        "::1"
+    } else {
+        "127.0.0.1"
+    };
+    let s = std::net::UdpSocket::bind((host, 0)).expect("bind a UDP port to read it");
+    s.local_addr().unwrap().port()
+}
+
+/// The port `entry` puts in `row`'s placeholder: the drop peer's for a tcp
+/// caller, else a free UDP port the entry or its srt peer binds.
+fn run_port(entry: &str, row: &Row) -> u16 {
+    match entry {
+        "tst_tcp_sender_open" => tcp_peer(),
+        "tst_sender_open" | "tst_receiver_open_listener" | "tst_rist_recv_open" => {
+            free_udp_port(&row.url)
         }
-    });
+        other => panic!("{}: no port for {other}'s placeholder", row.label()),
+    }
+}
+
+/// The directory that stands for the corpus's certificate placeholder,
+/// written once: a self-signed certificate and its key.
+fn tls_dir() -> &'static str {
+    static DIR: OnceLock<(tempfile::TempDir, String)> = OnceLock::new();
+    &DIR.get_or_init(|| {
+        let cert = rcgen::generate_simple_self_signed(vec![
+            "127.0.0.1".to_string(),
+            "localhost".to_string(),
+        ])
+        .expect("generate a self-signed certificate");
+        let dir = tempfile::tempdir().expect("a directory for the certificate");
+        let [crt, key] = TLS_FILES;
+        std::fs::write(dir.path().join(crt), cert.cert.pem()).unwrap();
+        std::fs::write(dir.path().join(key), cert.signing_key.serialize_pem()).unwrap();
+        let path = dir.path().display().to_string();
+        (dir, path)
+    })
+    .1
 }
 
 /// The last-error code after an open returned null (or a negative status).
@@ -192,9 +225,6 @@ fn probe(entry: &str, row: &Row) -> Option<i32> {
                 open_close(|| tst_udp_recv_open(u), |h| tst_udp_receiver_close(h))
             }
             "tst_tcp_sender_open" => {
-                if let Some(port) = url_port(&row.url) {
-                    tcp_peer(port);
-                }
                 open_close(|| tst_tcp_sender_open(u), |h| tst_tcp_sender_close(h))
             }
             "tst_tcp_listener_from_url" => open_close(
@@ -498,9 +528,16 @@ fn run_family(family: &str) {
             absent += 1;
             continue;
         }
+        let port = if row.needs_port() {
+            run_port(entry, row)
+        } else {
+            0
+        };
+        let dir = if row.needs_dir() { tls_dir() } else { DIR };
+        let row = &row.resolve(port, dir);
         let row_started = Instant::now();
         let observed = probe(entry, row);
-        if let Err(why) = url::check_probe_code(&corpus, row, observed) {
+        if let Err(why) = url::check_outcome_code(row, "c", observed) {
             mismatches.push(format!(
                 "{} via {entry}: {why}: {}",
                 row.label(),

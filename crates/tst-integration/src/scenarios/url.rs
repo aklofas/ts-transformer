@@ -59,6 +59,12 @@ pub struct Row {
     /// Record fields the wire legs must see absent from the requests, though
     /// the parser holds them (space-separated, the row's comment says why).
     pub wire_absent: Option<String>,
+    /// Per probing leg, the outcomes the leg may see when they differ from
+    /// the record's (space-separated, each `ok` or a kind name); see
+    /// [`Row::outcomes`].
+    pub open: Option<BTreeMap<String, String>>,
+    /// Why `open` departs from the record; required with it.
+    pub open_why: Option<String>,
     pub url: String,
     pub expect: Record,
 }
@@ -72,13 +78,60 @@ pub struct Record {
     pub error_kind: Option<String>,
     pub scheme: Option<String>,
     pub host: Option<String>,
-    pub port: Option<u16>,
+    pub port: Option<Port>,
     pub path: Option<String>,
     pub bind: Option<bool>,
     pub username: Option<String>,
     pub password_set: Option<bool>,
     pub keys: Option<BTreeMap<String, String>>,
 }
+
+/// A record's port: a number, or [`PORT`] in a row whose URL holds it.
+#[derive(Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(try_from = "PortText")]
+pub enum Port {
+    Number(u16),
+    Placeholder,
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum PortText {
+    Number(u16),
+    Text(String),
+}
+
+impl TryFrom<PortText> for Port {
+    type Error = String;
+    fn try_from(p: PortText) -> Result<Self, String> {
+        match p {
+            PortText::Number(n) => Ok(Port::Number(n)),
+            PortText::Text(t) if t == PORT => Ok(Port::Placeholder),
+            PortText::Text(t) => Err(format!("a port is a number or {PORT:?}, not {t:?}")),
+        }
+    }
+}
+
+impl std::fmt::Display for Port {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Port::Number(n) => write!(f, "{n}"),
+            Port::Placeholder => f.write_str(PORT),
+        }
+    }
+}
+
+/// In a row's URL and record: a loopback port the leg chooses when it runs
+/// the row, so no row binds a fixed port.
+pub const PORT: &str = "{port}";
+
+/// In a row's URL and record: a directory the leg creates holding
+/// [`TLS_FILES`].
+pub const DIR: &str = "{dir}";
+
+/// The files a leg writes into [`DIR`]: a self-signed certificate for
+/// `127.0.0.1` and `localhost`, and its private key, both PEM.
+pub const TLS_FILES: [&str; 2] = ["server.crt", "server.key"];
 
 impl Record {
     /// The record of a refused URL.
@@ -105,6 +158,64 @@ impl Row {
     /// A short label for failure messages.
     pub fn label(&self) -> String {
         format!("[{} {} {}] {}", self.scheme, self.role, self.case, self.url)
+    }
+
+    /// Whether the row's URL holds [`PORT`].
+    pub fn needs_port(&self) -> bool {
+        self.url.contains(PORT)
+    }
+
+    /// Whether the row's URL holds [`DIR`].
+    pub fn needs_dir(&self) -> bool {
+        self.url.contains(DIR)
+    }
+
+    /// The row with [`PORT`] replaced by `port` and [`DIR`] by `dir`, in its
+    /// URL and in its record.
+    pub fn resolve(&self, port: u16, dir: &str) -> Row {
+        let text = |s: &str| s.replace(PORT, &port.to_string()).replace(DIR, dir);
+        let opt = |s: &Option<String>| s.as_deref().map(text);
+        let e = &self.expect;
+        Row {
+            url: text(&self.url),
+            expect: Record {
+                error_kind: e.error_kind.clone(),
+                scheme: opt(&e.scheme),
+                host: opt(&e.host),
+                port: e.port.map(|p| match p {
+                    Port::Placeholder => Port::Number(port),
+                    n => n,
+                }),
+                path: opt(&e.path),
+                bind: e.bind,
+                username: opt(&e.username),
+                password_set: e.password_set,
+                keys: e
+                    .keys
+                    .as_ref()
+                    .map(|k| k.iter().map(|(k, v)| (k.clone(), text(v))).collect()),
+            },
+            ..self.clone()
+        }
+    }
+
+    /// The outcomes probing leg `leg` may see when it opens the row: the
+    /// row's `open` entry for the leg when it has one, else the record's
+    /// error kind for a refused row, else [`Outcome::Opened`].
+    pub fn outcomes(&self, leg: &str) -> Vec<Outcome> {
+        if let Some(text) = self.open.as_ref().and_then(|o| o.get(leg)) {
+            return text
+                .split_whitespace()
+                .map(|w| {
+                    Outcome::parse(self.family(), w)
+                        .unwrap_or_else(|e| panic!("{}: open.{leg}: {e}", self.label()))
+                })
+                .collect();
+        }
+        match &self.expect.error_kind {
+            Some(name) => vec![Outcome::Refused(kind_for(self.family(), name))],
+            None => vec![Outcome::Opened],
+        }
     }
 }
 
@@ -141,28 +252,17 @@ fn domain_prefix(family: &str) -> &'static str {
 /// The kind a corpus `error_kind` names for `family`: the domain's kind of
 /// that name, or the cross-domain kind (`CONFIG_INVALID`) of that name.
 pub fn kind_for(family: &str, name: &str) -> BindingErrorKind {
+    try_kind_for(family, name)
+        .unwrap_or_else(|| panic!("url corpus: no {family} kind named {name:?}"))
+}
+
+/// [`kind_for`], or `None` when `family` has no kind of that name.
+pub fn try_kind_for(family: &str, name: &str) -> Option<BindingErrorKind> {
     let domain = format!("{}{name}", domain_prefix(family));
     BindingErrorKind::ALL
         .iter()
         .copied()
         .find(|k| k.name() == name && (k.variant_name() == domain || k.variant_name() == name))
-        .unwrap_or_else(|| panic!("url corpus: no {family} kind named {name:?}"))
-}
-
-/// The kinds a refused URL of `family` fails with in this corpus. A valid row
-/// may fail at open for another reason (a refused connect); failing with one
-/// of these is a mismatch.
-pub fn url_kinds(corpus: &Corpus, family: &str) -> Vec<BindingErrorKind> {
-    let mut kinds: Vec<BindingErrorKind> = Vec::new();
-    for row in corpus.url.iter().filter(|r| r.family() == family) {
-        if let Some(name) = &row.expect.error_kind {
-            let k = kind_for(family, name);
-            if !kinds.contains(&k) {
-                kinds.push(k);
-            }
-        }
-    }
-    kinds
 }
 
 /// The corpus file's path.
@@ -208,56 +308,85 @@ impl Corpus {
     }
 }
 
-/// The outcome a probing leg (C, Python) observed when it opened a row's URL.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Probe {
-    /// The open returned, or failed with a kind outside the scheme's URL kinds.
-    Accepted,
-    /// The open failed with this kind.
+/// What a probing leg (C, Python, the JVM) saw when it opened a row's URL.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Outcome {
+    /// The open returned an object (spelled `ok` in the corpus).
+    Opened,
+    /// The open failed with this kind (spelled by its name).
     Refused(BindingErrorKind),
 }
 
-/// Compare a probing leg's outcome with the row's record. `Err` carries the
-/// mismatch for the failure report.
-pub fn check_probe(corpus: &Corpus, row: &Row, observed: &Probe) -> Result<(), String> {
-    let family = row.family();
-    match (&row.expect.error_kind, observed) {
-        (Some(name), Probe::Refused(k)) if kind_for(family, name) == *k => Ok(()),
-        (Some(name), other) => Err(format!("expected {name}, observed {other:?}")),
-        (None, Probe::Accepted) => Ok(()),
-        (None, Probe::Refused(k)) if !url_kinds(corpus, family).contains(k) => Ok(()),
-        (None, Probe::Refused(k)) => Err(format!(
-            "expected the URL to be accepted, observed {} ({})",
-            k.name(),
-            k.variant_name()
-        )),
+impl Outcome {
+    /// The outcome a corpus word names for `family`: `ok`, or a kind name
+    /// inside the family's error domain.
+    pub fn parse(family: &str, word: &str) -> Result<Self, String> {
+        if word == "ok" {
+            return Ok(Outcome::Opened);
+        }
+        try_kind_for(family, word)
+            .map(Outcome::Refused)
+            .ok_or_else(|| format!("{word:?} is neither ok nor a {family} kind"))
     }
 }
 
-/// [`check_probe`] for a leg that reports `TST_E_*` codes (C): `None` is an
+impl std::fmt::Display for Outcome {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Outcome::Opened => f.write_str("ok"),
+            Outcome::Refused(k) => write!(f, "{} ({})", k.name(), k.variant_name()),
+        }
+    }
+}
+
+fn one_of(allowed: &[Outcome]) -> String {
+    allowed
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join(" or ")
+}
+
+/// Compare what probing leg `leg` saw for `row` with the outcomes the row
+/// allows it ([`Row::outcomes`]). `Err` carries the mismatch for the failure
+/// report.
+pub fn check_outcome(row: &Row, leg: &str, observed: &Outcome) -> Result<(), String> {
+    let allowed = row.outcomes(leg);
+    if allowed.contains(observed) {
+        Ok(())
+    } else {
+        Err(format!(
+            "expected {}, observed {observed}",
+            one_of(&allowed)
+        ))
+    }
+}
+
+/// [`check_outcome`] for a leg that reports `TST_E_*` codes (C): `None` is an
 /// open that returned, `Some(code)` a failed one. Codes are compared through
 /// each kind's `c_projection()`, so two kinds C folds into one code match.
-pub fn check_probe_code(corpus: &Corpus, row: &Row, observed: Option<i32>) -> Result<(), String> {
-    let family = row.family();
-    match (&row.expect.error_kind, observed) {
-        (Some(name), Some(code)) if kind_for(family, name).c_projection() == code => Ok(()),
-        (Some(name), other) => Err(format!(
-            "expected {name} (code {}), observed {other:?}",
-            kind_for(family, name).c_projection()
-        )),
-        (None, None) => Ok(()),
-        (None, Some(code)) => {
-            match url_kinds(corpus, family)
-                .iter()
-                .find(|k| k.c_projection() == code)
-            {
-                Some(k) => Err(format!(
-                    "expected the URL to be accepted, observed code {code} (the code of {})",
-                    k.variant_name()
-                )),
-                None => Ok(()),
-            }
-        }
+pub fn check_outcome_code(row: &Row, leg: &str, observed: Option<i32>) -> Result<(), String> {
+    let allowed = row.outcomes(leg);
+    let matches = allowed.iter().any(|o| match (o, observed) {
+        (Outcome::Opened, None) => true,
+        (Outcome::Refused(k), Some(code)) => k.c_projection() == code,
+        _ => false,
+    });
+    if matches {
+        Ok(())
+    } else {
+        let codes: Vec<String> = allowed
+            .iter()
+            .map(|o| match o {
+                Outcome::Opened => "ok".to_string(),
+                Outcome::Refused(k) => format!("{} (code {})", k.name(), k.c_projection()),
+            })
+            .collect();
+        Err(format!(
+            "expected {}, observed {}",
+            codes.join(" or "),
+            observed.map_or("ok".to_string(), |c| format!("code {c}"))
+        ))
     }
 }
 
@@ -310,5 +439,128 @@ impl Row {
         } else {
             field(&self.expect, name)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn valid_udp_send() -> Row {
+        Row {
+            scheme: "udp".into(),
+            role: "send".into(),
+            case: "explicit".into(),
+            key: Some("pkt_size".into()),
+            stage: None,
+            wire_absent: None,
+            open: None,
+            open_why: None,
+            url: "udp://127.0.0.1:31301?pkt_size=1316".into(),
+            expect: Record {
+                scheme: Some("udp".into()),
+                host: Some("127.0.0.1".into()),
+                port: Some(Port::Number(31301)),
+                ..Record::default()
+            },
+        }
+    }
+
+    fn invalid_udp_send() -> Row {
+        Row {
+            url: "udp://127.0.0.1:31301?pkt_size=x".into(),
+            expect: Record::error(BindingErrorKind::UdpUrl),
+            case: "invalid".into(),
+            ..valid_udp_send()
+        }
+    }
+
+    #[test]
+    fn a_valid_row_reporting_invalid_config_fails() {
+        let observed = Outcome::Refused(BindingErrorKind::UdpInvalidConfig);
+        assert!(check_outcome(&valid_udp_send(), "python", &observed).is_err());
+        let code = BindingErrorKind::UdpInvalidConfig.c_projection();
+        assert!(check_outcome_code(&valid_udp_send(), "c", Some(code)).is_err());
+        assert!(check_outcome(&valid_udp_send(), "python", &Outcome::Opened).is_ok());
+        assert!(check_outcome_code(&valid_udp_send(), "c", None).is_ok());
+    }
+
+    #[test]
+    fn a_row_expected_ok_that_is_refused_fails() {
+        let observed = Outcome::Refused(BindingErrorKind::UdpIo);
+        let err = check_outcome(&valid_udp_send(), "jvm", &observed).unwrap_err();
+        assert!(err.contains("expected ok"), "{err}");
+    }
+
+    #[test]
+    fn a_refused_row_that_opens_or_fails_otherwise_fails() {
+        let row = invalid_udp_send();
+        assert!(check_outcome(&row, "python", &Outcome::Opened).is_err());
+        let other = Outcome::Refused(BindingErrorKind::UdpIo);
+        assert!(check_outcome(&row, "python", &other).is_err());
+        assert!(check_outcome_code(&row, "c", None).is_err());
+        let url = Outcome::Refused(BindingErrorKind::UdpUrl);
+        assert!(check_outcome(&row, "python", &url).is_ok());
+    }
+
+    #[test]
+    fn an_open_entry_sets_only_its_legs_outcomes() {
+        let mut row = valid_udp_send();
+        row.open = Some(BTreeMap::from([("jvm".to_string(), "IO ok".to_string())]));
+        let io = Outcome::Refused(BindingErrorKind::UdpIo);
+        assert_eq!(row.outcomes("jvm"), vec![io, Outcome::Opened]);
+        assert!(check_outcome(&row, "jvm", &io).is_ok());
+        assert!(check_outcome(&row, "python", &io).is_err());
+        let code = BindingErrorKind::UdpIo.c_projection();
+        assert!(check_outcome_code(&row, "c", Some(code)).is_err());
+    }
+
+    #[test]
+    fn an_outcome_word_is_ok_or_a_kind_of_the_family() {
+        assert_eq!(Outcome::parse("tcp", "ok"), Ok(Outcome::Opened));
+        assert_eq!(
+            Outcome::parse("tcp", "TLS"),
+            Ok(Outcome::Refused(BindingErrorKind::TcpTls))
+        );
+        assert_eq!(
+            Outcome::parse("srt", "CONFIG_INVALID"),
+            Ok(Outcome::Refused(BindingErrorKind::ConfigInvalid))
+        );
+        assert!(Outcome::parse("tcp", "refused").is_err());
+        assert!(Outcome::parse("udp", "TLS").is_err());
+    }
+
+    #[test]
+    fn resolve_fills_the_placeholders_in_the_url_and_the_record() {
+        let row = Row {
+            url: "tcps://127.0.0.1:{port}?cert={dir}/server.crt".into(),
+            expect: Record {
+                port: Some(Port::Placeholder),
+                keys: Some(BTreeMap::from([(
+                    "cert".to_string(),
+                    "{dir}/server.crt".to_string(),
+                )])),
+                ..Record::default()
+            },
+            ..valid_udp_send()
+        };
+        assert!(row.needs_port() && row.needs_dir());
+        let r = row.resolve(40000, "/x");
+        assert_eq!(r.url, "tcps://127.0.0.1:40000?cert=/x/server.crt");
+        assert_eq!(r.expect.port, Some(Port::Number(40000)));
+        assert_eq!(r.expect.keys.unwrap()["cert"], "/x/server.crt");
+        assert!(!valid_udp_send().needs_port());
+    }
+
+    #[test]
+    fn a_port_is_a_number_or_the_placeholder() {
+        #[derive(Deserialize)]
+        struct P {
+            port: Port,
+        }
+        let p = |t: &str| toml::from_str::<P>(t).map(|p| p.port);
+        assert_eq!(p("port = 5").unwrap(), Port::Number(5));
+        assert_eq!(p("port = \"{port}\"").unwrap(), Port::Placeholder);
+        assert!(p("port = \"5\"").is_err());
     }
 }
