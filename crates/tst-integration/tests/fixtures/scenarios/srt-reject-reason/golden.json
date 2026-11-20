@@ -1,0 +1,175 @@
+{
+  "schema_version": 0,
+  "lossy": false,
+  "core": [
+    {
+      "event": "error",
+      "code": "CONNECT_FAILED"
+    }
+  ],
+  "extensions": {
+    "contract": "srt_reject_reason",
+    "reject_reason": {
+      "code": 1403,
+      "name": "FORBIDDEN"
+    },
+    "reject_reasons": [
+      {
+        "code": 0,
+        "name": "UNKNOWN"
+      },
+      {
+        "code": 1,
+        "name": "SYSTEM"
+      },
+      {
+        "code": 2,
+        "name": "PEER"
+      },
+      {
+        "code": 3,
+        "name": "RESOURCE"
+      },
+      {
+        "code": 4,
+        "name": "ROGUE"
+      },
+      {
+        "code": 5,
+        "name": "BACKLOG"
+      },
+      {
+        "code": 6,
+        "name": "IPE"
+      },
+      {
+        "code": 7,
+        "name": "CLOSE"
+      },
+      {
+        "code": 8,
+        "name": "VERSION"
+      },
+      {
+        "code": 9,
+        "name": "RDV_COOKIE"
+      },
+      {
+        "code": 10,
+        "name": "BAD_SECRET"
+      },
+      {
+        "code": 11,
+        "name": "UNSECURE"
+      },
+      {
+        "code": 12,
+        "name": "MESSAGE_API"
+      },
+      {
+        "code": 13,
+        "name": "CONGESTION"
+      },
+      {
+        "code": 14,
+        "name": "FILTER"
+      },
+      {
+        "code": 15,
+        "name": "GROUP"
+      },
+      {
+        "code": 16,
+        "name": "TIMEOUT"
+      },
+      {
+        "code": 17,
+        "name": "CRYPTO"
+      },
+      {
+        "code": 1000,
+        "name": "FALLBACK"
+      },
+      {
+        "code": 1001,
+        "name": "KEY_NOT_SUPPORTED"
+      },
+      {
+        "code": 1002,
+        "name": "FILEPATH"
+      },
+      {
+        "code": 1003,
+        "name": "HOST_NOT_FOUND"
+      },
+      {
+        "code": 1400,
+        "name": "BAD_REQUEST"
+      },
+      {
+        "code": 1401,
+        "name": "UNAUTHORIZED"
+      },
+      {
+        "code": 1402,
+        "name": "OVERLOAD"
+      },
+      {
+        "code": 1403,
+        "name": "FORBIDDEN"
+      },
+      {
+        "code": 1404,
+        "name": "NOT_FOUND"
+      },
+      {
+        "code": 1405,
+        "name": "BAD_MODE"
+      },
+      {
+        "code": 1406,
+        "name": "UNACCEPTABLE"
+      },
+      {
+        "code": 1409,
+        "name": "CONFLICT"
+      },
+      {
+        "code": 1415,
+        "name": "NOT_SUPPORTED_MEDIA"
+      },
+      {
+        "code": 1423,
+        "name": "LOCKED"
+      },
+      {
+        "code": 1424,
+        "name": "FAILED_DEPENDENCY"
+      },
+      {
+        "code": 1500,
+        "name": "INTERNAL_SERVER_ERROR"
+      },
+      {
+        "code": 1501,
+        "name": "UNIMPLEMENTED"
+      },
+      {
+        "code": 1502,
+        "name": "GATEWAY"
+      },
+      {
+        "code": 1503,
+        "name": "DOWN"
+      },
+      {
+        "code": 1505,
+        "name": "VERSION_UNSUPPORTED"
+      },
+      {
+        "code": 1507,
+        "name": "NO_ROOM"
+      }
+    ]
+  }
+}

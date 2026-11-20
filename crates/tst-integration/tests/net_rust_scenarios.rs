@@ -106,6 +106,7 @@ fn run_roundtrip(id: &str, committed_output_ts: &[u8], golden: &Golden) -> Vec<C
         "audio-klv-roundtrip" => audio_klv_roundtrip_ts_bytes(),
         "video-dts-roundtrip" => video_dts_roundtrip_ts_bytes(),
         "video-misp-roundtrip" => video_misp_roundtrip_ts_bytes(),
+        "muxer-reconfigure" => tst_integration::scenarios::muxer_reconfigure_ts_bytes(),
         other => panic!("unknown roundtrip scenario: {other}"),
     };
 
@@ -459,6 +460,134 @@ fn run_binding_contract(id: &str, input: &[u8]) -> Vec<CoreEvent> {
     }
 }
 
+/// Run a `binding_contract` scenario whose golden carries observed values in
+/// `extensions`; returns `None` for the others, whose extensions only name
+/// their contract.
+fn run_contract_with_extensions(
+    id: &str,
+    input: &[u8],
+) -> Option<(Vec<CoreEvent>, serde_json::Value)> {
+    match id {
+        "demux-receiver-stats" => Some(run_demux_receiver_stats(input)),
+        "srt-reject-reason" => Some(run_srt_reject_reason(input)),
+        _ => None,
+    }
+}
+
+/// `demux-receiver-stats`: a plain TCP `DemuxReceiver` reads the input from a
+/// peer that writes it and closes; the six counters of its stats record are
+/// the observed `extensions.stats`. The receive runs on a worker; a deadline
+/// that misses cancels a pre-obtained handle and FAILS, and the worker is
+/// never joined after that.
+fn run_demux_receiver_stats(input: &[u8]) -> (Vec<CoreEvent>, serde_json::Value) {
+    use std::io::Write;
+    use std::net::TcpListener;
+    use std::sync::mpsc;
+    use std::time::Duration;
+    use tst_integration::scenarios::demux_receiver_stats_json;
+    use tst_pipeline::DemuxReceiver;
+    use tst_test_helpers::timing::scaled;
+
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .expect("demux-receiver-stats: bind 127.0.0.1:0 (loopback is required, not optional)");
+    let port = listener.local_addr().expect("local_addr").port();
+    let payload = input.to_vec();
+    let peer = std::thread::spawn(move || {
+        let (mut conn, _) = listener.accept().expect("accept");
+        conn.write_all(&payload).expect("peer write");
+        // Dropping the stream closes it: the receiver reads a clean end.
+    });
+    let opened = tst_tcp::opener::open_recv(&format!("tcp://127.0.0.1:{port}"))
+        .expect("demux-receiver-stats: open the plain TCP receiver");
+    let cancel = opened.cancel.clone();
+    let mut rx = DemuxReceiver::new(opened.transport);
+
+    let (tx, result_rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let end = loop {
+            match rx.recv_event() {
+                Ok(Some(_)) => continue,
+                other => break other.map(|_| ()),
+            }
+        };
+        let _ = tx.send((end, rx.stats()));
+    });
+    let (end, stats) = match result_rx.recv_timeout(scaled(Duration::from_secs(10))) {
+        Ok(r) => r,
+        Err(_) => {
+            cancel.cancel();
+            panic!("demux-receiver-stats: the receive did not end within 10 s of the peer's close");
+        }
+    };
+    peer.join().expect("peer thread");
+    end.expect("demux-receiver-stats: the receive ends cleanly at the peer's close");
+    (
+        vec![],
+        serde_json::json!({
+            "contract": "demux_receiver_stats",
+            "stats": demux_receiver_stats_json(&stats),
+        }),
+    )
+}
+
+/// `srt-reject-reason`: a listener whose rule refuses the input's stream ID
+/// with the golden's reason; the caller's error, projected by the shared
+/// binding layer, gives the observed kind and reason. `reject_reasons` is
+/// Rust's own table.
+fn run_srt_reject_reason(input: &[u8]) -> (Vec<CoreEvent>, serde_json::Value) {
+    use std::time::Duration;
+    use tst_integration::scenarios::{
+        SRT_REJECT_STREAM_ID, reject_reason_json, reject_reasons_json,
+    };
+    use tst_pipeline::binding::BindingError;
+    use tst_srt::error::RejectReason;
+    use tst_srt::{ListenRule, SrtConnectError, SrtListenerBuilder, SrtSocketBuilder, StreamId};
+    use tst_test_helpers::timing::scaled;
+
+    let stream_id = std::str::from_utf8(input).expect("srt-reject-reason: the input is UTF-8");
+    assert_eq!(
+        stream_id, SRT_REJECT_STREAM_ID,
+        "srt-reject-reason: input drifted"
+    );
+    let listener = SrtListenerBuilder::new()
+        .bind("127.0.0.1:0")
+        .expect("srt-reject-reason: bind 127.0.0.1:0 (loopback is required, not optional)");
+    let port = listener.local_addr().expect("local_addr").port();
+    listener
+        .rules()
+        .set(stream_id, ListenRule::Reject(RejectReason::Forbidden))
+        .expect("install the reject rule");
+
+    let mut caller = SrtSocketBuilder::new();
+    caller.connect_timeout(scaled(Duration::from_secs(5)));
+    caller.stream_id(StreamId::new(stream_id).expect("stream id"));
+    let err = match caller.connect(("127.0.0.1", port)) {
+        Ok(_) => panic!("srt-reject-reason: the refused caller connected"),
+        Err(e) => e,
+    };
+    let SrtConnectError::Rejected { reason, .. } = &err else {
+        panic!("srt-reject-reason: expected a reject, got {err:?}");
+    };
+    let reason = *reason;
+    let projected = BindingError::from(err);
+    assert_eq!(
+        projected.diagnostics.reject_code,
+        Some(reason.raw()),
+        "srt-reject-reason: the projected error lost the reject code"
+    );
+    drop(listener);
+    (
+        vec![CoreEvent::Error {
+            code: projected.kind.name().to_string(),
+        }],
+        serde_json::json!({
+            "contract": "srt_reject_reason",
+            "reject_reason": reject_reason_json(reason),
+            "reject_reasons": reject_reasons_json(),
+        }),
+    )
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Main test
 // ─────────────────────────────────────────────────────────────────────────────
@@ -475,10 +604,17 @@ fn all_scenarios_match_committed_goldens() {
         let committed = load_golden(&entry.golden);
         let input = load_input(&entry.input);
 
+        let mut observed_extensions = committed.extensions.clone();
         let observed_core: Vec<CoreEvent> = match entry.kind.as_str() {
             "demux" => run_demux(&input),
             "roundtrip" => run_roundtrip(&entry.id, &input, &committed),
-            "binding_contract" => run_binding_contract(&entry.id, &input),
+            "binding_contract" => match run_contract_with_extensions(&entry.id, &input) {
+                Some((core, extensions)) => {
+                    observed_extensions = extensions;
+                    core
+                }
+                None => run_binding_contract(&entry.id, &input),
+            },
             "url-corpus" => {
                 url_corpus_leg::run();
                 vec![]
@@ -490,7 +626,7 @@ fn all_scenarios_match_committed_goldens() {
             schema_version: committed.schema_version,
             lossy: committed.lossy,
             core: observed_core,
-            extensions: committed.extensions.clone(),
+            extensions: observed_extensions,
         };
 
         assert_eq!(

@@ -213,3 +213,30 @@ golden = "url-corpus/golden.json"
 features = ["srt", "rtp", "udp", "tcp", "hls", "rist"]
 tier = "A"
 schema_version = 0
+
+[[scenario]]
+id = "demux-receiver-stats"
+kind = "binding_contract"
+input = "demux-receiver-stats/input.ts"
+golden = "demux-receiver-stats/golden.json"
+features = ["tcp"]
+tier = "A"
+schema_version = 0
+
+[[scenario]]
+id = "srt-reject-reason"
+kind = "binding_contract"
+input = "srt-reject-reason/input.bin"
+golden = "srt-reject-reason/golden.json"
+features = ["srt"]
+tier = "A"
+schema_version = 0
+
+[[scenario]]
+id = "muxer-reconfigure"
+kind = "roundtrip"
+input = "muxer-reconfigure/output.ts"
+golden = "muxer-reconfigure/golden.json"
+features = []
+tier = "A"
+schema_version = 0

@@ -2201,8 +2201,185 @@ static int contract_peer_reset_recv_kind(const char *scenarios_dir_path,
     return 0;
 }
 
+/* demux-receiver-stats - a fixed TS read to its end by a TCP demux receiver:
+ * the six counters of tst_demux_receiver_stats_t must equal the golden's
+ * extensions.stats. The peer is a plain socket on this thread: listen on
+ * 127.0.0.1:0, open the receiver as caller (the kernel completes the connect
+ * from the listen backlog), accept, write the committed input.ts and close,
+ * which ends the stream cleanly. The events are read on a worker until its
+ * first non-zero return, which must be TST_E_END_OF_STREAM; the wait is the
+ * same scaled 10 s FAILURE bound as peer-reset-recv-kind, with the same
+ * cancel on a miss. The golden's core is empty. */
+typedef struct {
+    struct TstTcpDemuxReceiver *rx;
+    _Atomic int rc;
+    _Atomic int done;
+    char detail[256];
+} demux_stats_state_t;
+
+static void *demux_stats_worker(void *arg) {
+    demux_stats_state_t *st = arg;
+    tst_event_t ev;
+    int rc;
+    do {
+        rc = tst_tcp_demux_receiver_next_event(st->rx, &ev);
+    } while (rc == 0);
+    snprintf(st->detail, sizeof st->detail, "%s", tst_get_last_error_str());
+    atomic_store(&st->rc, rc);
+    atomic_store(&st->done, 1);
+    return NULL;
+}
+
+static int contract_demux_receiver_stats(const char *scenarios_dir_path,
+                                         const scenario_entry_t *entry,
+                                         const char *golden_json) {
+    /* The expected counters, by the Rust field names. */
+    static const char *const FIELDS[6] = {
+        "bytes_received", "packets_received", "program_maps_seen",
+        "pmt_versions_seen", "discontinuities", "nonconformant",
+    };
+    const char *stats_obj = strstr(golden_json, "\"stats\"");
+    if (!stats_obj) {
+        fprintf(stderr, "FAIL [%s]: golden has no extensions.stats\n", entry->id);
+        return -1;
+    }
+    int64_t expected[6];
+    for (int i = 0; i < 6; i++) {
+        if (!json_extract_int64(stats_obj, 0, FIELDS[i], &expected[i])) {
+            fprintf(stderr, "FAIL [%s]: golden stats has no %s\n", entry->id, FIELDS[i]);
+            return -1;
+        }
+    }
+
+    char *input_path = path_join(scenarios_dir_path, entry->input);
+    if (!input_path) return -1;
+    size_t input_len = 0;
+    uint8_t *input_data = read_file(input_path, &input_len);
+    free(input_path);
+    if (!input_data) return -1;
+
+    int lfd = socket(AF_INET, SOCK_STREAM, 0);
+    struct sockaddr_in a;
+    memset(&a, 0, sizeof a);
+    a.sin_family = AF_INET;
+    a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    a.sin_port = 0;
+    socklen_t alen = sizeof a;
+    if (lfd < 0 || bind(lfd, (struct sockaddr *)&a, sizeof a) != 0 || listen(lfd, 1) != 0
+        || getsockname(lfd, (struct sockaddr *)&a, &alen) != 0) {
+        perror("demux-receiver-stats: listen on 127.0.0.1:0");
+        free(input_data);
+        if (lfd >= 0) close(lfd);
+        return -1;
+    }
+    char url[64];
+    snprintf(url, sizeof url, "tcp://127.0.0.1:%u", (unsigned)ntohs(a.sin_port));
+    struct TstTcpDemuxReceiver *rx = tst_tcp_demux_receiver_open(url, NULL);
+    if (!rx) {
+        fprintf(stderr, "FAIL [%s]: tst_tcp_demux_receiver_open: %s\n", entry->id,
+                tst_get_last_error_str());
+        free(input_data);
+        close(lfd);
+        return -1;
+    }
+
+    int cfd = accept(lfd, NULL, NULL);
+    close(lfd);
+    if (cfd < 0) {
+        perror("demux-receiver-stats: accept");
+        free(input_data);
+        tst_tcp_demux_receiver_close(rx);
+        return -1;
+    }
+    size_t off = 0;
+    while (off < input_len) {
+        ssize_t w = write(cfd, input_data + off, input_len - off);
+        if (w <= 0) {
+            perror("demux-receiver-stats: write");
+            free(input_data);
+            close(cfd);
+            tst_tcp_demux_receiver_close(rx);
+            return -1;
+        }
+        off += (size_t)w;
+    }
+    free(input_data);
+    close(cfd); /* FIN: a clean end of stream */
+
+    /* HEAP, as in peer-reset-recv-kind: a failed verdict leaks it rather than
+     * free memory a still-parked worker may touch. */
+    demux_stats_state_t *st = calloc(1, sizeof *st);
+    if (!st) {
+        perror("calloc");
+        tst_tcp_demux_receiver_close(rx);
+        return -1;
+    }
+    st->rx = rx;
+    pthread_t th;
+    if (pthread_create(&th, NULL, demux_stats_worker, st) != 0) {
+        perror("pthread_create");
+        free(st);
+        tst_tcp_demux_receiver_close(rx);
+        return -1;
+    }
+    pthread_detach(th);
+
+    unsigned polls = 200 * timeout_scale(); /* 10 s x scale, 50 ms each */
+    for (unsigned i = 0; i < polls && !atomic_load(&st->done); i++) {
+        usleep(50 * 1000);
+    }
+    if (!atomic_load(&st->done)) {
+        tst_tcp_demux_receiver_cancel(rx);
+        for (int i = 0; i < 100 && !atomic_load(&st->done); i++) { /* <= 5 s */
+            usleep(50 * 1000);
+        }
+        fprintf(stderr, "FAIL [%s]: the receive did not end within %u s of the peer's close\n",
+                entry->id, 10 * timeout_scale());
+        if (atomic_load(&st->done)) {
+            tst_tcp_demux_receiver_close(rx);
+            free(st);
+        } /* else: worker still parked - leak both */
+        return -1;
+    }
+
+    int rc = atomic_load(&st->rc);
+    char detail[sizeof st->detail];
+    snprintf(detail, sizeof detail, "%s", st->detail);
+    free(st);
+    tst_demux_receiver_stats_t stats;
+    memset(&stats, 0, sizeof stats);
+    int stats_rc = tst_tcp_demux_receiver_get_stats(rx, &stats);
+    tst_tcp_demux_receiver_close(rx);
+
+    if (rc != TST_E_END_OF_STREAM) {
+        fprintf(stderr, "FAIL [%s]: expected TST_E_END_OF_STREAM (%d) at the peer's close, "
+                "got %d (%s)\n", entry->id, (int)TST_E_END_OF_STREAM, rc, detail);
+        return -1;
+    }
+    if (stats_rc != 0) {
+        fprintf(stderr, "FAIL [%s]: tst_tcp_demux_receiver_get_stats returned %d\n",
+                entry->id, stats_rc);
+        return -1;
+    }
+    const uint64_t observed[6] = {
+        stats.bytes_received, stats.packets_received, stats.program_maps_seen,
+        stats.pmt_versions_seen, stats.discontinuities, stats.nonconformant,
+    };
+    int ok = 1;
+    for (int i = 0; i < 6; i++) {
+        fprintf(stdout, "  [demux-receiver-stats] %s = %" PRIu64 "\n", FIELDS[i], observed[i]);
+        if (expected[i] < 0 || observed[i] != (uint64_t)expected[i]) {
+            fprintf(stderr, "FAIL [%s]: %s: expected %" PRId64 ", observed %" PRIu64 "\n",
+                    entry->id, FIELDS[i], expected[i], observed[i]);
+            ok = 0;
+        }
+    }
+    return ok ? 0 : -1;
+}
+
 static int run_binding_contract(const char *scenarios_dir_path,
                                 const scenario_entry_t *entry,
+                                const char *golden_json,
                                 core_event_list_t *out_events) {
     if (strcmp(entry->id, "strict-rejection") == 0) {
         return contract_strict_rejection(scenarios_dir_path, entry, out_events);
@@ -2222,6 +2399,9 @@ static int run_binding_contract(const char *scenarios_dir_path,
     }
     if (strcmp(entry->id, "peer-reset-recv-kind") == 0) {
         return contract_peer_reset_recv_kind(scenarios_dir_path, entry, out_events);
+    }
+    if (strcmp(entry->id, "demux-receiver-stats") == 0) {
+        return contract_demux_receiver_stats(scenarios_dir_path, entry, golden_json);
     }
     fprintf(stderr, "ERROR: unknown binding_contract scenario: %s\n", entry->id);
     return -1;
@@ -2502,6 +2682,29 @@ static int compare_core_events(const char *scenario_id,
     return ok;
 }
 
+/* ── Scenarios with no C leg ─────────────────────────────────────────────────
+ *
+ * The scenarios whose surface the C ABI does not have, each with the reason
+ * the run prints. The list is exact: a scenario not here runs, and one no
+ * runner knows fails. */
+static const struct {
+    const char *id;
+    const char *reason;
+} C_ABSENT[] = {
+    { "srt-reject-reason",
+      "the C ABI has no typed reject reason (a refused connect is TST_E_TRANSPORT, no code)" },
+    { "muxer-reconfigure", "the C ABI has no muxer reconfigure" },
+};
+
+static const char *c_absent_reason(const char *id) {
+    for (size_t i = 0; i < sizeof C_ABSENT / sizeof C_ABSENT[0]; i++) {
+        if (strcmp(C_ABSENT[i].id, id) == 0) {
+            return C_ABSENT[i].reason;
+        }
+    }
+    return NULL;
+}
+
 /* ── Main ────────────────────────────────────────────────────────────────────*/
 
 int main(int argc, char **argv) {
@@ -2557,6 +2760,16 @@ int main(int argc, char **argv) {
         if (!golden_data) { failures++; continue; }
         const char *golden_json = (const char *)golden_data;
 
+        /* A scenario the C ABI has no surface for is declared here, by id,
+         * with the reason; any other id a runner does not know fails. */
+        const char *absent = c_absent_reason(entry->id);
+        if (absent) {
+            fprintf(stdout, "SKIP [%s]: %s\n\n", entry->id, absent);
+            free(golden_data);
+            skipped++;
+            continue;
+        }
+
         /* Run the scenario. */
         core_event_list_t observed;
         memset(&observed, 0, sizeof(observed));
@@ -2567,7 +2780,7 @@ int main(int argc, char **argv) {
         } else if (strcmp(entry->kind, "roundtrip") == 0) {
             run_rc = run_roundtrip(scenarios_dir_path, entry, golden_json, &observed);
         } else if (strcmp(entry->kind, "binding_contract") == 0) {
-            run_rc = run_binding_contract(scenarios_dir_path, entry, &observed);
+            run_rc = run_binding_contract(scenarios_dir_path, entry, golden_json, &observed);
         } else if (strcmp(entry->kind, "url-corpus") == 0) {
             /* The URL corpus is a table of URLs, each with its own expected
              * record, not a stream to demux; the C leg that opens every row

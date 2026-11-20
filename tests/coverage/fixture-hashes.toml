@@ -331,6 +331,14 @@ path = "crates/tst-integration/tests/fixtures/scenarios/damaged-pes-lenient/inpu
 sha256 = "b3fa4cff3b2817f2686fdcaa890f2ae6e50dacc44b0b61abb9d061d0708a8f78"
 
 [[file]]
+path = "crates/tst-integration/tests/fixtures/scenarios/demux-receiver-stats/golden.json"
+sha256 = "1278d452a97583006d154b7e5d023d201552b29e0ee96a9ca80775a417de0b0a"
+
+[[file]]
+path = "crates/tst-integration/tests/fixtures/scenarios/demux-receiver-stats/input.ts"
+sha256 = "3ea321d1a5f84e64c9e96016bdbab48a4602d6e7f1aefb081eb9e5f5d0f7466b"
+
+[[file]]
 path = "crates/tst-integration/tests/fixtures/scenarios/drop-idempotence/golden.json"
 sha256 = "cd1f6ec06b46d6ef35ef5c68c95c886726af4d84cc39b2d3df42fb5d3f593ef8"
 
@@ -403,6 +411,14 @@ path = "crates/tst-integration/tests/fixtures/scenarios/malformed-psi-strict/inp
 sha256 = "637525b5bf575a8a337f838ccd9495d589198ad6c2dfd0d6c563ff7b60551341"
 
 [[file]]
+path = "crates/tst-integration/tests/fixtures/scenarios/muxer-reconfigure/golden.json"
+sha256 = "ad0c63b86dfc24bfebcc137926d4edb1e5c27572f1c584daa4de00e020c2a4c4"
+
+[[file]]
+path = "crates/tst-integration/tests/fixtures/scenarios/muxer-reconfigure/output.ts"
+sha256 = "72dc04e6e3d8f480a044c76407d6a8d3cc81b24c6947b7e30cd992d922cb8f80"
+
+[[file]]
 path = "crates/tst-integration/tests/fixtures/scenarios/peer-reset-recv-kind/golden.json"
 sha256 = "13e661b723819018c8bef0214c6e9b0a90e586d880c483143fdaa3aaf8cf96e6"
 
@@ -420,7 +436,15 @@ sha256 = "01999181afe5f8a311154f79acaa70ffd2a8a5e01089d48a0307ead7722ffa8d"
 
 [[file]]
 path = "crates/tst-integration/tests/fixtures/scenarios/scenarios.toml"
-sha256 = "9ab802778f0ddb1b001adc3bcc7b32425603ef2f7fabe81e1360eb1084375b02"
+sha256 = "4da458c6d0bd4e81a6a2c38dbddfb31ed3456435cc4b69cb77ed075f2ee5bac7"
+
+[[file]]
+path = "crates/tst-integration/tests/fixtures/scenarios/srt-reject-reason/golden.json"
+sha256 = "4196eb26c41c16548300dd32a78d11337a3e9b1f73dbe2449f846de169ed193b"
+
+[[file]]
+path = "crates/tst-integration/tests/fixtures/scenarios/srt-reject-reason/input.bin"
+sha256 = "beff3b7a89b380214ae6860cf27cb4147f4158f96fb662ba1b994f489232daad"
 
 [[file]]
 path = "crates/tst-integration/tests/fixtures/scenarios/strict-rejection/golden.json"
