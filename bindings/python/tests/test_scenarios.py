@@ -1001,7 +1001,8 @@ def _run_contract_with_extensions(
 ) -> tuple[list[dict[str, Any]], dict[str, Any]] | None:
     """The binding_contract scenarios whose golden carries observed values in
     ``extensions``: the core events and the OBSERVED extensions, or ``None``
-    for every other id (``_run_binding_contract`` runs those)."""
+    for every other id (``_run_binding_contract`` runs those).  A new id here
+    needs a row in ``_EXTENSION_EDITS`` too."""
     if scenario_id == "demux-receiver-stats":
         return _run_demux_receiver_stats(scenario_id, input_path.read_bytes())
     if scenario_id == "srt-reject-reason":
