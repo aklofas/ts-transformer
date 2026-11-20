@@ -488,7 +488,7 @@ class OpenCancelTest {
     @Timeout(60)
     void aDialThatSucceedsAfterTheCancelIsClosedAgain() throws Exception {
         try (Listener lst = new Builder("srt://127.0.0.1:0").listener().listen();
-             HeldRelay relay = new HeldRelay(lst.localAddr().port());
+             HeldRelay relay = new HeldRelay(lst.localAddr().getPort());
              OpenCancel oc = new OpenCancel()) {
             Opening o = new Opening(() -> Sender.open(
                 "srt://127.0.0.1:" + relay.port() + "?conntimeo=5000", oc));

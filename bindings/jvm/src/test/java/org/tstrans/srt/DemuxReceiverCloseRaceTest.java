@@ -48,7 +48,7 @@ final class DemuxReceiverCloseRaceTest {
     private DemuxReceiver connectedReceiver(AtomicReference<Boolean> stop) throws Exception {
         Listener listener = new Builder("srt://127.0.0.1:0?mode=listener&latency=" + LATENCY_MS)
             .listener().listen();
-        int port = listener.localAddr().port();
+        int port = listener.localAddr().getPort();
 
         // Continuous caller-mode sender on a daemon: connects, then streams muxed TS until stop.
         Thread sender = new Thread(() -> {

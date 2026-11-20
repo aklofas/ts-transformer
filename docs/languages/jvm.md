@@ -1068,7 +1068,7 @@ try (Listener listener = new Builder("srt://127.0.0.1:0")
         .listener()
         .listen()) {
 
-    int port = listener.localAddr().port();   // get the assigned port
+    int port = listener.localAddr().getPort();   // get the assigned port
     System.out.println("listening on port " + port);
 
     // Accept the first incoming peer (infinite wait).
@@ -1081,6 +1081,12 @@ try (Listener listener = new Builder("srt://127.0.0.1:0")
     }
 }
 ```
+
+`Listener.localAddr()`, `Socket.localAddr()` and `Socket.peerAddr()` return an
+`InetSocketAddress` built from the native address: no name lookup, an IPv6
+scope id kept, and an IPv4 peer reached through an IPv6 socket reported as an
+`Inet4Address`. The `HostPort` record they returned before is deprecated and
+removed in 0.12.0.
 
 ### Listen rules
 

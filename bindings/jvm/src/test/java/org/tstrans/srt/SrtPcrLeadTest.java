@@ -49,7 +49,7 @@ class SrtPcrLeadTest {
                     listener = new Builder("srt://127.0.0.1:0?mode=listener&latency=" + LATENCY_MS)
                         .listener()
                         .listen();
-                    port.complete(listener.localAddr().port());
+                    port.complete(listener.localAddr().getPort());
                     sock = listener.accept(null);
                     rx = sock.intoReceiver();
                     long pcr = -1;

@@ -49,7 +49,7 @@ import org.tstrans.shells.CancelHandle;
  *
  * <h2>Robustness</h2>
  * Daemon peer thread; {@code portFuture.get(15s)} + {@code peer.join(15s)}
- * ceilings; ephemeral port via the peer's own {@code localAddr().port()};
+ * ceilings; ephemeral port via the peer's own {@code localAddr().getPort()};
  * CLOSED/BROKEN (and the {@code RuntimeException}-wrapped iterator form) treated as
  * clean end-of-stream. The {@code EVENT_CEILING} bounds the iteration so the loop
  * can never spin forever if a reconnect never surfaces.
@@ -98,7 +98,7 @@ class SrtManagedReconnectTest {
                 listener = new Builder("srt://127.0.0.1:0?mode=listener&latency=" + LATENCY_MS)
                     .listener()
                     .listen();
-                portFuture.complete(listener.localAddr().port());
+                portFuture.complete(listener.localAddr().getPort());
 
                 // connection #1 — stream a batch, give it a delivery window so the
                 // receiver locks sync + emits events, then DROP it.

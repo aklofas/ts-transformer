@@ -10,5 +10,10 @@ package org.tstrans.srt;
  * ambiguity: an IPv6 literal like {@code ::1} would need bracketing to distinguish
  * the colon from the host:port separator. Keeping host and port as separate fields
  * mirrors the tuple slot access in tst-py ({@code host, port = local_addr()}).
+ *
+ * @deprecated nothing returns it any more: {@link Socket#localAddr()},
+ *     {@link Socket#peerAddr()} and {@link Listener#localAddr()} return an
+ *     {@link java.net.InetSocketAddress}, which keeps an IPv6 scope id. Removed in 0.12.0.
  */
+@Deprecated(since = "0.11.0", forRemoval = true)
 public record HostPort(String host, int port) {}

@@ -1,11 +1,13 @@
 package org.tstrans.srt;
 
+import java.net.InetSocketAddress;
 import java.util.Objects;
 import java.util.Optional;
 import org.tstrans.MuxException;
 import org.tstrans.NativeHandle;
 import org.tstrans.NativeLoader;
 import org.tstrans.SrtException;
+import org.tstrans.internal.NativeAddr;
 
 /**
  * Low-level SRT socket handle. Returned by {@link Builder#connect()} and
@@ -175,25 +177,29 @@ public final class Socket extends NativeHandle {
     }
 
     /**
-     * Local bound address as a {@link HostPort} record. Useful when the URL
-     * requested port 0 (kernel-assigned).
+     * Local bound address. Useful when the URL requested port 0 (kernel-assigned). Built
+     * from the native address, so no name lookup happens and an IPv6 scope id is kept.
      *
+     * @return the local address
      * @throws IllegalStateException if the socket is already closed
      * @throws SrtException if the socket handle is invalid ({@code IO}).
      */
-    public HostPort localAddr() throws SrtException {
+    public InetSocketAddress localAddr() throws SrtException {
         ensureOpen("Socket is closed");
-        return nLocalAddr(peekHandle());
+        return NativeAddr.decode(nLocalAddr(peekHandle()));
     }
 
     /**
-     * Peer (remote) address as a {@link HostPort} record.
+     * Peer (remote) address, built as {@link #localAddr()} is. An IPv4 peer reached
+     * through an IPv6 socket (an IPv4-mapped address) is an {@code Inet4Address}.
      *
+     * @return the peer's address
+     * @throws IllegalStateException if the socket is already closed
      * @throws SrtException if the socket is not connected or the handle is invalid ({@code IO}).
      */
-    public HostPort peerAddr() throws SrtException {
+    public InetSocketAddress peerAddr() throws SrtException {
         ensureOpen("Socket is closed");
-        return nPeerAddr(peekHandle());
+        return NativeAddr.decode(nPeerAddr(peekHandle()));
     }
 
     /**
@@ -255,9 +261,9 @@ public final class Socket extends NativeHandle {
         long pesCapPerPid, long pesCapTotal, boolean cfi, int av1, long auCellCap,
         boolean lenientPsi, long syncBufCap, boolean unwrapTimestamps) throws SrtException;
 
-    private static native HostPort nLocalAddr(long handle) throws SrtException;
+    private static native byte[] nLocalAddr(long handle) throws SrtException;
 
-    private static native HostPort nPeerAddr(long handle) throws SrtException;
+    private static native byte[] nPeerAddr(long handle) throws SrtException;
 
     private static native String nStreamId(long handle);
 

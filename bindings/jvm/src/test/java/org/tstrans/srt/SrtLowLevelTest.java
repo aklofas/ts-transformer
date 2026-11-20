@@ -3,14 +3,21 @@ package org.tstrans.srt;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 import static org.tstrans.TestSupport.isLinux;
+
+import java.lang.reflect.Method;
+import java.net.Inet4Address;
+import java.net.Inet6Address;
+import java.net.InetAddress;
+import java.net.InetSocketAddress;
+import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.tstrans.SrtException;
+import org.tstrans.internal.NativeAddr;
 
 /**
- * Non-live tests for {@link Builder}, {@link Socket}, {@link Listener}, and
- * {@link HostPort}. All paths exercised here complete without a live SRT peer —
- * they hit config-validation or option-narrowing paths that return before any
- * network call.
+ * Tests for {@link Builder}, {@link Socket} and {@link Listener}. Most complete without a
+ * live SRT peer: they hit config-validation or option-narrowing paths that return before any
+ * network call. The address tests and the peer-idle test connect on loopback.
  */
 class SrtLowLevelTest {
 
@@ -97,6 +104,7 @@ class SrtLowLevelTest {
      * HostPort is a plain Java record; verify field access works correctly.
      */
     @Test
+    @SuppressWarnings("removal") // the deprecated record keeps working until its removal
     void hostPortRecord() {
         var hp = new HostPort("192.168.1.1", 9000);
         assertEquals("192.168.1.1", hp.host());
@@ -131,10 +139,10 @@ class SrtLowLevelTest {
     @Test
     void listenerModeAddsTheUrlMode() throws Exception {
         try (Listener l = new Builder("srt://127.0.0.1:0").listener().listen()) {
-            assertTrue(l.localAddr().port() > 0);
+            assertTrue(l.localAddr().getPort() > 0);
         }
         try (Listener l = new Builder("srt://:0").listener().listen()) {
-            assertTrue(l.localAddr().port() > 0);
+            assertTrue(l.localAddr().getPort() > 0);
         }
     }
 
@@ -192,12 +200,140 @@ class SrtLowLevelTest {
         assumeTrue(isLinux(), "SRT live-socket loopback gated to Linux (same as #![cfg(target_os = \"linux\")] in Rust)");
         try (var lst = new Builder("srt://127.0.0.1:0?mode=listener").listener()
                 .peerIdleTimeoutMs(8000).listen()) {
-            int port = lst.localAddr().port();
+            int port = lst.localAddr().getPort();
             try (var sock = new Builder("srt://127.0.0.1:" + port).caller()
                     .peerIdleTimeoutMs(8000).connect();
                  var accepted = lst.accept(5000)) {
                 assertNotNull(accepted);
             }
         }
+    }
+
+    // ----------------------------------------------------------------------------------------
+    // Addresses: InetSocketAddress built from the native bytes
+    // ----------------------------------------------------------------------------------------
+
+    private static final InetAddress LOOPBACK_V4 = loopbackV4();
+
+    private static InetAddress loopbackV4() {
+        try {
+            return InetAddress.getByAddress(new byte[] {127, 0, 0, 1});
+        } catch (java.net.UnknownHostException e) {
+            throw new AssertionError(e);
+        }
+    }
+
+    /** The listener's and both sockets' local addresses, before and after close. */
+    @Test
+    void localAddrIsAnInetSocketAddress() throws Exception {
+        assumeTrue(isLinux(), "SRT live-socket loopback gated to Linux (same as #![cfg(target_os = \"linux\")] in Rust)");
+        Listener lst = new Builder("srt://127.0.0.1:0?mode=listener").listener().listen();
+        Socket caller;
+        Socket accepted;
+        try {
+            InetSocketAddress at = lst.localAddr();
+            assertFalse(at.isUnresolved());
+            assertInstanceOf(Inet4Address.class, at.getAddress());
+            assertEquals(LOOPBACK_V4, at.getAddress());
+            assertTrue(at.getPort() > 0);
+            caller = new Builder("srt://127.0.0.1:" + at.getPort()).caller().connect();
+            accepted = lst.accept(5000);
+            assertNotNull(accepted);
+            try {
+                InetSocketAddress mine = caller.localAddr();
+                assertFalse(mine.isUnresolved());
+                assertTrue(mine.getPort() > 0);
+                assertEquals(at, accepted.localAddr());
+            } finally {
+                caller.close();
+                accepted.close();
+            }
+        } finally {
+            lst.close();
+        }
+        assertThrows(IllegalStateException.class, lst::localAddr);
+        assertThrows(IllegalStateException.class, caller::localAddr);
+        assertThrows(IllegalStateException.class, accepted::peerAddr);
+    }
+
+    /** Each end's peer is the other end's local address. */
+    @Test
+    void peerAddrMatchesTheCallersLocalAddr() throws Exception {
+        assumeTrue(isLinux(), "SRT live-socket loopback gated to Linux (same as #![cfg(target_os = \"linux\")] in Rust)");
+        try (Listener lst = new Builder("srt://127.0.0.1:0?mode=listener").listener().listen()) {
+            InetSocketAddress at = lst.localAddr();
+            try (Socket caller = new Builder("srt://127.0.0.1:" + at.getPort()).caller().connect();
+                 Socket accepted = lst.accept(5000)) {
+                assertNotNull(accepted);
+                InetSocketAddress peer = accepted.peerAddr();
+                assertEquals(LOOPBACK_V4, peer.getAddress());
+                assertEquals(caller.localAddr().getPort(), peer.getPort());
+                assertEquals(at, caller.peerAddr());
+            }
+        }
+    }
+
+    /** An IPv6 listener and its sockets report an Inet6Address. */
+    @Test
+    void anIpv6LoopbackAddressIsAnInet6Address() throws Exception {
+        assumeTrue(isLinux(), "SRT live-socket loopback gated to Linux (same as #![cfg(target_os = \"linux\")] in Rust)");
+        try (Listener lst = new Builder("srt://[::1]:0?mode=listener").listener().listen()) {
+            InetSocketAddress at = lst.localAddr();
+            Inet6Address ip = assertInstanceOf(Inet6Address.class, at.getAddress());
+            assertTrue(ip.isLoopbackAddress());
+            assertEquals(0, ip.getScopeId());
+            try (Socket caller = new Builder("srt://[::1]:" + at.getPort()).caller().connect();
+                 Socket accepted = lst.accept(5000)) {
+                assertNotNull(accepted);
+                assertEquals(at, caller.peerAddr());
+                assertEquals(caller.localAddr().getPort(), accepted.peerAddr().getPort());
+                assertInstanceOf(Inet6Address.class, accepted.peerAddr().getAddress());
+            }
+        }
+    }
+
+    /**
+     * No link-local SRT peer exists on loopback, so the scope id and the IPv4-mapped rule are
+     * checked on the byte layout the SRT getters return (jutil's address layout, pinned on
+     * the Rust side by {@code socket_addr_array_carries_the_scope_id} and
+     * {@code an_ipv4_mapped_address_goes_out_as_ipv4}): a scope id survives, and a mapped peer
+     * arrives in its 4-byte form, an {@link Inet4Address}, as the shells' {@code peerAddr()} reports one.
+     */
+    @Test
+    void aScopeIdAndAnIpv4MappedPeerAsTheGettersSendThem() throws Exception {
+        byte[] scoped = new byte[22];
+        scoped[0] = (byte) 0xfe;
+        scoped[1] = (byte) 0x80;
+        scoped[15] = 1;
+        scoped[16] = (byte) (9000 >>> 8);
+        scoped[17] = (byte) 9000;
+        scoped[21] = 2;
+        InetSocketAddress s = NativeAddr.decode(scoped);
+        Inet6Address ip = assertInstanceOf(Inet6Address.class, s.getAddress());
+        assertEquals(2, ip.getScopeId());
+        assertTrue(ip.isLinkLocalAddress());
+        assertEquals(9000, s.getPort());
+
+        InetSocketAddress m = NativeAddr.decode(new byte[] {127, 0, 0, 1, (byte) (9000 >>> 8), (byte) 9000});
+        assertInstanceOf(Inet4Address.class, m.getAddress());
+        assertEquals(new InetSocketAddress(LOOPBACK_V4, 9000), m);
+    }
+
+    /** HostPort is deprecated for removal, and no SRT method returns it any more. */
+    @Test
+    @SuppressWarnings("removal") // names the deprecated record to check its annotation
+    void hostPortIsDeprecatedForRemoval() throws Exception {
+        Deprecated d = HostPort.class.getAnnotation(Deprecated.class);
+        assertNotNull(d, "HostPort is not @Deprecated");
+        assertTrue(d.forRemoval());
+        assertEquals("0.11.0", d.since());
+        for (Class<?> c : List.of(Socket.class, Listener.class)) {
+            for (Method m : c.getDeclaredMethods()) {
+                assertNotEquals(HostPort.class, m.getReturnType(), m.toString());
+            }
+        }
+        assertEquals(InetSocketAddress.class, Socket.class.getMethod("localAddr").getReturnType());
+        assertEquals(InetSocketAddress.class, Socket.class.getMethod("peerAddr").getReturnType());
+        assertEquals(InetSocketAddress.class, Listener.class.getMethod("localAddr").getReturnType());
     }
 }

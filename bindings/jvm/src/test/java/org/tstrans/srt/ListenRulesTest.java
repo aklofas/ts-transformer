@@ -49,7 +49,7 @@ class ListenRulesTest {
     void rejectRuleRefusesCallerWithReason() throws Exception {
         assumeTrue(isLinux(), "srt live-socket loopback gated to Linux");
         try (Listener listener = listen()) {
-            int port = listener.localAddr().port();
+            int port = listener.localAddr().getPort();
             listener.rules().set("publish:amber", ListenRule.reject(RejectReason.FORBIDDEN));
 
             AtomicReference<Object> outcome = new AtomicReference<>();
@@ -73,7 +73,7 @@ class ListenRulesTest {
     void passphraseRuleRoundTrip() throws Exception {
         assumeTrue(isLinux(), "srt live-socket loopback gated to Linux");
         try (Listener listener = listen()) {
-            int port = listener.localAddr().port();
+            int port = listener.localAddr().getPort();
             listener.rules().set("a", ListenRule.acceptWith("secretsecretsecret"));
 
             try (Socket ok = caller(port, "a").passphrase("secretsecretsecret").connect()) {
@@ -245,7 +245,7 @@ class ListenRulesTest {
     void rejectRuleReasonIsTyped() throws Exception {
         assumeTrue(isLinux(), "srt live-socket loopback gated to Linux");
         try (Listener listener = listen()) {
-            int port = listener.localAddr().port();
+            int port = listener.localAddr().getPort();
             listener.rules().set("publish:amber", ListenRule.reject(RejectReason.FORBIDDEN));
             AtomicReference<Object> outcome = new AtomicReference<>();
             Thread acceptor = acceptOnDaemon(listener, 2000, outcome);
@@ -273,7 +273,7 @@ class ListenRulesTest {
     void userDefinedReasonKeepsItsCode() throws Exception {
         assumeTrue(isLinux(), "srt live-socket loopback gated to Linux");
         try (Listener listener = listen()) {
-            int port = listener.localAddr().port();
+            int port = listener.localAddr().getPort();
             listener.rules().set("x", ListenRule.reject(RejectReason.userDefined(4242)));
             SrtException e = assertThrows(SrtException.class, () -> caller(port, "x").connect());
             RejectReason r = e.rejectReason().orElseThrow();
@@ -288,7 +288,7 @@ class ListenRulesTest {
     void aWrongPassphraseIsBadSecret() throws Exception {
         assumeTrue(isLinux(), "srt live-socket loopback gated to Linux");
         try (Listener listener = listen()) {
-            int port = listener.localAddr().port();
+            int port = listener.localAddr().getPort();
             listener.rules().set("a", ListenRule.acceptWith("secretsecretsecret"));
             SrtException e = assertThrows(SrtException.class,
                 () -> caller(port, "a").passphrase("othersecretother").connect());

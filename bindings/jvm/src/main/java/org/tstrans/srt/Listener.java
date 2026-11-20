@@ -1,10 +1,12 @@
 package org.tstrans.srt;
 
+import java.net.InetSocketAddress;
 import java.util.Iterator;
 import java.util.NoSuchElementException;
 import org.tstrans.NativeHandle;
 import org.tstrans.NativeLoader;
 import org.tstrans.SrtException;
+import org.tstrans.internal.NativeAddr;
 import org.tstrans.shells.CancelHandle;
 
 /**
@@ -60,14 +62,16 @@ public final class Listener extends NativeHandle implements Iterable<Socket> {
     }
 
     /**
-     * Local bound address as a {@link HostPort} record. Useful when the URL
-     * requested port 0 (kernel-assigned).
+     * Local bound address. Useful when the URL requested port 0 (kernel-assigned). Built
+     * from the native address, so no name lookup happens and an IPv6 scope id is kept.
      *
+     * @return the local address
+     * @throws IllegalStateException if the listener is already closed
      * @throws SrtException if the handle is invalid ({@code IO}).
      */
-    public HostPort localAddr() throws SrtException {
+    public InetSocketAddress localAddr() throws SrtException {
         ensureOpen("Listener is closed");
-        return nLocalAddr(peekHandle());
+        return NativeAddr.decode(nLocalAddr(peekHandle()));
     }
 
     /**
@@ -181,7 +185,7 @@ public final class Listener extends NativeHandle implements Iterable<Socket> {
     /** Return a handle wrapping the listener's cancel view (its one cancel state). */
     private static native long nCancelHandle(long handle);
 
-    private static native HostPort nLocalAddr(long handle) throws SrtException;
+    private static native byte[] nLocalAddr(long handle) throws SrtException;
 
     private static native void nClose(long handle);
 }

@@ -133,7 +133,7 @@ class SrtMuxDemuxLoopbackTest {
                 listener = new Builder("srt://127.0.0.1:0?mode=listener&latency=" + LATENCY_MS)
                     .listener()
                     .listen();
-                portFuture.complete(listener.localAddr().port());
+                portFuture.complete(listener.localAddr().getPort());
 
                 // accept(null) = srt_accept directly (infinite wait); avoids the
                 // accept-timeout epoll interaction (see SrtLoopbackScenarioTest).

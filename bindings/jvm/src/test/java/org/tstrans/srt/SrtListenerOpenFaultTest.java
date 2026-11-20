@@ -34,7 +34,7 @@ class SrtListenerOpenFaultTest {
         // Hold the port with a real SRT listener, then race a second open at it.
         Listener held = new Builder("srt://127.0.0.1:0?mode=listener").listener().listen();
         try {
-            int port = held.localAddr().port();
+            int port = held.localAddr().getPort();
             String url = "srt://127.0.0.1:" + port + "?mode=listener";
 
             SrtException e = assertThrows(SrtException.class, () -> Receiver.open(url));

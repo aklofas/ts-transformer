@@ -28,7 +28,7 @@ class ManagedCancelHandleClosedUnderneathTest {
         assumeTrue(isLinux(), "SRT live-socket test gated to Linux (as the other managed pairs)");
         try (Listener peer = new Builder("srt://127.0.0.1:0?mode=listener").listener().listen()) {
             ManagedSender tx = ManagedSender.fromUrl(
-                "srt://127.0.0.1:" + peer.localAddr().port() + "?mode=caller");
+                "srt://127.0.0.1:" + peer.localAddr().getPort() + "?mode=caller");
             closeUnderneath(tx);
             try {
                 IllegalStateException e = assertThrows(IllegalStateException.class, tx::cancelHandle);

@@ -42,7 +42,7 @@ final class SocketConsumeValidationTest {
     private static Live connect() throws Exception {
         Listener listener = new Builder("srt://127.0.0.1:0?mode=listener&latency=" + LATENCY_MS)
             .listener().listen();
-        int port = listener.localAddr().port();
+        int port = listener.localAddr().getPort();
         CountDownLatch release = new CountDownLatch(1);
         Thread peer = new Thread(() -> {
             try (MuxSender tx = MuxSender.open(

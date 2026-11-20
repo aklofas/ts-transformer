@@ -24,9 +24,9 @@ use std::time::Duration;
 use jni::Env;
 use jni::jni_sig;
 use jni::jni_str;
-use jni::objects::{JBooleanArray, JByteArray, JIntArray, JObject, JString, JValue};
+use jni::objects::{JBooleanArray, JByteArray, JIntArray, JObject, JString};
 use jni::strings::JNIString;
-use jni::sys::{jboolean, jint, jlong, jobject};
+use jni::sys::{jboolean, jbyteArray, jint, jlong, jobject};
 use tst_core::transport::{RecvTransport, Transport, TransportCancel};
 use tst_pipeline::binding::{BindingErrorKind, Domain, Opened, Owned};
 use tst_srt::{
@@ -37,7 +37,7 @@ use tst_srt::{
 
 use super::errors::{srt_error, throw_srt, url_error};
 use crate::handle::{HandleRegistry, OwnedRegistry};
-use crate::jutil::{checked_u16, join_host_port};
+use crate::jutil::{checked_u16, join_host_port, socket_addr_array};
 use crate::mpegts::build_demux_config_from_args;
 use crate::mpegts::muxer::build_muxer_config_from_arrays;
 use crate::shells;
@@ -98,25 +98,6 @@ pub(super) fn listener_rules(handle: u64) -> Option<tst_srt::ListenRules> {
         return None;
     }
     REGISTRY_LISTENER.snapshot(handle, |s| s.rules.clone())
-}
-
-// ---------------------------------------------------------------------------
-// Helper: build a HostPort JObject from a std::net::SocketAddr
-// ---------------------------------------------------------------------------
-
-fn build_host_port<'local>(
-    env: &mut Env<'local>,
-    addr: std::net::SocketAddr,
-) -> jni::errors::Result<JObject<'local>> {
-    // Ensure capacity for: HostPort ctor arg (String) + local refs.
-    env.ensure_local_capacity(8)?;
-    let host_str = addr.ip().to_string();
-    let host = env.new_string(&host_str)?;
-    env.new_object(
-        FindClass(jni_str!("org/tstrans/srt/HostPort")),
-        jni_sig!("(Ljava/lang/String;I)V"),
-        &[JValue::Object(&host), JValue::Int(addr.port() as i32)],
-    )
 }
 
 // ---------------------------------------------------------------------------
@@ -832,7 +813,7 @@ jni_native! {
         env,
         _class,
         handle: jlong,
-    ) -> jobject = std::ptr::null_mut() => {
+    ) -> jbyteArray = std::ptr::null_mut() => {
         let addr = match REGISTRY_SOCKET.with(handle as u64, |s| s.local_addr()) {
             Some(r) => r,
             None => {
@@ -841,10 +822,7 @@ jni_native! {
             }
         };
         match addr {
-            Ok(addr) => match build_host_port(env, addr) {
-                Ok(obj) => obj.into_raw(),
-                Err(_) => std::ptr::null_mut(),
-            },
+            Ok(addr) => socket_addr_array(env, addr),
             Err(e) => {
                 srt_error(env, e);
                 std::ptr::null_mut()
@@ -858,7 +836,7 @@ jni_native! {
         env,
         _class,
         handle: jlong,
-    ) -> jobject = std::ptr::null_mut() => {
+    ) -> jbyteArray = std::ptr::null_mut() => {
         let addr = match REGISTRY_SOCKET.with(handle as u64, |s| s.peer_addr()) {
             Some(r) => r,
             None => {
@@ -867,10 +845,7 @@ jni_native! {
             }
         };
         match addr {
-            Ok(addr) => match build_host_port(env, addr) {
-                Ok(obj) => obj.into_raw(),
-                Err(_) => std::ptr::null_mut(),
-            },
+            Ok(addr) => socket_addr_array(env, addr),
             Err(e) => {
                 srt_error(env, e);
                 std::ptr::null_mut()
@@ -973,15 +948,12 @@ jni_native! {
         env,
         _class,
         handle: jlong,
-    ) -> jobject = std::ptr::null_mut() => {
+    ) -> jbyteArray = std::ptr::null_mut() => {
         // Lock-free: the bound address was snapshotted at registration, so this
         // answers while `accept` is parked on the slot — a getter must never
         // block behind a parked call.
         match REGISTRY_LISTENER.snapshot(handle as u64, |s| s.local_addr.clone()) {
-            Some(Ok(addr)) => match build_host_port(env, addr) {
-                Ok(obj) => obj.into_raw(),
-                Err(_) => std::ptr::null_mut(),
-            },
+            Some(Ok(addr)) => socket_addr_array(env, addr),
             Some(Err(msg)) => {
                 throw_srt(env, BindingErrorKind::SrtIo, &msg);
                 std::ptr::null_mut()

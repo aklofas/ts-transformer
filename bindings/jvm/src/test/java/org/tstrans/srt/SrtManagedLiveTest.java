@@ -132,7 +132,7 @@ class SrtManagedLiveTest {
                 listener = new Builder("srt://127.0.0.1:0?mode=listener&latency=" + LATENCY_MS)
                     .listener()
                     .listen();
-                portFuture.complete(listener.localAddr().port());
+                portFuture.complete(listener.localAddr().getPort());
 
                 sock = listener.accept(null);
                 rx = sock.intoDemuxReceiver();
@@ -299,7 +299,7 @@ class SrtManagedLiveTest {
                 listener = new Builder("srt://127.0.0.1:0?mode=listener&latency=" + LATENCY_MS)
                     .listener()
                     .listen();
-                portFuture.complete(listener.localAddr().port());
+                portFuture.complete(listener.localAddr().getPort());
 
                 sock = listener.accept(null);
                 r = sock.intoReceiver();
@@ -379,7 +379,7 @@ class SrtManagedLiveTest {
                 listener = new Builder("srt://127.0.0.1:0?mode=listener&latency=" + LATENCY_MS)
                     .listener()
                     .listen();
-                portFuture.complete(listener.localAddr().port());
+                portFuture.complete(listener.localAddr().getPort());
 
                 sock = listener.accept(null);
                 r = sock.intoReceiver();
@@ -453,7 +453,7 @@ class SrtManagedLiveTest {
                 listener = new Builder("srt://127.0.0.1:0?mode=listener&latency=" + LATENCY_MS)
                     .listener()
                     .listen();
-                portFuture.complete(listener.localAddr().port());
+                portFuture.complete(listener.localAddr().getPort());
 
                 sock = listener.accept(null);
                 r = sock.intoReceiver();
@@ -530,7 +530,7 @@ class SrtManagedLiveTest {
                 listener = new Builder("srt://127.0.0.1:0?mode=listener&latency=" + LATENCY_MS)
                     .listener()
                     .listen();
-                portFuture.complete(listener.localAddr().port());
+                portFuture.complete(listener.localAddr().getPort());
 
                 sock = listener.accept(null);
                 r = sock.intoReceiver();
@@ -611,7 +611,7 @@ class SrtManagedLiveTest {
                 listener = new Builder("srt://127.0.0.1:0?mode=listener&latency=" + LATENCY_MS)
                     .listener()
                     .listen();
-                portFuture.complete(listener.localAddr().port());
+                portFuture.complete(listener.localAddr().getPort());
 
                 sock = listener.accept(null);
                 ms = sock.intoMuxSender(roundtripConfigWithData());
@@ -800,7 +800,7 @@ class SrtManagedLiveTest {
         try (Listener probe = new Builder("srt://127.0.0.1:0?mode=listener")
                 .listener()
                 .listen()) {
-            return probe.localAddr().port();
+            return probe.localAddr().getPort();
         }
     }
 

@@ -210,7 +210,7 @@ class DemuxReceiverStatsTest {
         // The managed shell is the caller on this thread; the peer streams until observed.
         Thread peer = new Thread(() -> {
             try (Listener listener = new Builder("srt://127.0.0.1:0?mode=listener&latency=120").listener().listen()) {
-                portFuture.complete(listener.localAddr().port());
+                portFuture.complete(listener.localAddr().getPort());
                 try (Socket sock = listener.accept(null);
                      MuxSender ms = sock.intoMuxSender(roundtripConfig())) {
                     long pts = 0;

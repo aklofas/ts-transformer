@@ -172,7 +172,7 @@ class SrtLoopbackScenarioTest {
                 // Publish the actual port to the sender thread before blocking
                 // on accept — the sender must not call Sender.fromUrl until after
                 // this completes, or the handshake would occur before we're ready.
-                int port = listener.localAddr().port();
+                int port = listener.localAddr().getPort();
                 portFuture.complete(port);
 
                 // Accept the first (only) incoming connection. Use null (infinite
