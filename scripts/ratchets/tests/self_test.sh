@@ -354,6 +354,68 @@ expect_out "gil locks: the UFCS lock is named" "$(printf 'Publisher::split\tothe
 expect "gil locks: a row naming a lock the function no longer takes is stale" 1 env SG_ONLY_LOCKS=1 SG_LOCK_ROOTS="$tmp/gl/twolocks" SG_LOCK_ALLOWLIST="$tmp/gl/twolocks-stale.tsv" bash "$SG"
 expect_out "gil locks: the stale lock row" "$(printf 'poison_for_test\tgone')"
 
+# ---- Python address tuples (scripts/check/python/address-tuples.sh) ------
+# A getter returning `(host, port)` builds it with util::addr_tuple: an
+# address taken apart (`.ip()`) outside util.rs fails, so does an
+# address-returning function (signature on one line or several) that never
+# calls the helper; util.rs itself, comments and a helper call pass; a scan
+# with no address-returning function fails closed.
+AT="$DIR/../check/python/address-tuples.sh"
+mkdir -p "$tmp/at/bypass" "$tmp/at/clean" "$tmp/at/none"
+cat > "$tmp/at/bypass/srt.rs" <<'EOF'
+impl PySocket {
+    fn peer_addr(&self, py: Python<'_>) -> PyResult<(String, u16)> {
+        let addr = self.peer()?;
+        Ok((addr.ip().to_string(), addr.port()))
+    }
+    fn local_addr(
+        &self,
+    ) -> PyResult<crate::util::PyAddr> {
+        let a = self.local()?;
+        Ok((format!("{a}"), 0))
+    }
+    fn test_only(&self) -> PyResult<PyAddr> {
+        crate::util::addr_tuple_for_test("::1", 1, 0)
+    }
+}
+EOF
+cat > "$tmp/at/clean/srt.rs" <<'EOF'
+impl PySocket {
+    // `.ip()` in a comment is no finding.
+    fn peer_addr(&self, py: Python<'_>) -> PyResult<(String, u16)> {
+        Ok(crate::util::addr_tuple(self.peer()?))
+    }
+    fn source(&self) -> Option<crate::util::PyAddr> {
+        crate::util::peer_addr_tuple(self.handles.source.as_ref())
+    }
+    fn remote(&self) -> Option<PyAddr> {
+        self.remote.map(crate::util::addr_tuple)
+    }
+    fn local_port(&self) -> PyResult<u16> {
+        Ok(self.local()?.port())
+    }
+}
+EOF
+cat > "$tmp/at/clean/util.rs" <<'EOF'
+pub(crate) fn addr_tuple(addr: std::net::SocketAddr) -> PyAddr {
+    (addr.ip().to_string(), addr.port())
+}
+EOF
+cat > "$tmp/at/none/srt.rs" <<'EOF'
+impl PySocket {
+    fn local_port(&self) -> PyResult<u16> {
+        Ok(self.local()?.port())
+    }
+}
+EOF
+expect "address tuples: an address taken apart, or returned without the helper, fails" 1 env AT_ROOT="$tmp/at/bypass" bash "$AT"
+expect_out "address tuples: the hand-built host is named" "addr.ip().to_string()"
+expect_out "address tuples: a one-line signature without the helper" "fn peer_addr"
+expect_out "address tuples: a multi-line signature without the helper" "fn local_addr"
+expect_out "address tuples: the test hook is not the helper" "fn test_only"
+expect "address tuples: the helper, util.rs and comments pass" 0 env AT_ROOT="$tmp/at/clean" bash "$AT"
+expect "address tuples: no address-returning function fails closed" 1 env AT_ROOT="$tmp/at/none" bash "$AT"
+
 # ---- duplicate test helpers (scripts/check/repo/no-duplicate-test-helpers.sh) ----
 # One helper body in two test files is caught (renamed copies too) unless it
 # is allowlisted with a reason; a stale row, a row without a reason and an
