@@ -77,6 +77,7 @@ public final class TcpException extends BindingException {
     }
 
     /** @return the error discriminant. */
+    @Override
     public Kind kind() {
         return kind;
     }

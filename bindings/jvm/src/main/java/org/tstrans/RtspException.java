@@ -64,6 +64,7 @@ public final class RtspException extends BindingException {
     }
 
     /** @return the error discriminant. */
+    @Override
     public Kind kind() {
         return kind;
     }

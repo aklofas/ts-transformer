@@ -71,6 +71,7 @@ public final class UdpException extends BindingException {
     }
 
     /** @return the error discriminant. */
+    @Override
     public Kind kind() {
         return kind;
     }

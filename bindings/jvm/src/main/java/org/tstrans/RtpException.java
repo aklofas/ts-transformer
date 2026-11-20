@@ -86,6 +86,7 @@ public final class RtpException extends BindingException {
     }
 
     /** @return the error discriminant. */
+    @Override
     public Kind kind() {
         return kind;
     }

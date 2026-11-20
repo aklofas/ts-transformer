@@ -1388,6 +1388,24 @@ each a `BindingException`:
 | `tcp://`, `tcps://` | `TcpException` (also `org.tstrans.tcp.Listener` and `Transport`) |
 | `rist://` | `RistException` |
 
+Every checked exception of this binding extends `BindingException`, whose
+`kind()` returns the concrete class's `Kind` member, so a handler that
+catches the base reads it without a cast. Keep or compare `kind().name()`,
+not the ordinal: members are added in later releases.
+
+<!-- compile: java-statements -->
+```java
+import org.tstrans.BindingException;
+import org.tstrans.shells.Sender;
+
+try (Sender tx = Sender.open("srt://media.example:9000")) {
+    tx.sendBytes(tsBytes);
+} catch (BindingException e) {
+    // e.g. "CONNECT_FAILED: …" when no listener answers
+    System.err.println(e.kind().name() + ": " + e.getMessage());
+}
+```
+
 Every one carries a `Kind` enum; `CLOSED` is the kind a cancelled or closed
 call raises.
 

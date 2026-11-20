@@ -77,6 +77,7 @@ public final class RistException extends BindingException {
     }
 
     /** @return the error discriminant. */
+    @Override
     public Kind kind() {
         return kind;
     }

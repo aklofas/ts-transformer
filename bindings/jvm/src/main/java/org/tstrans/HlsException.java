@@ -55,6 +55,7 @@ public final class HlsException extends BindingException {
     }
 
     /** @return the error discriminant. */
+    @Override
     public Kind kind() {
         return kind;
     }

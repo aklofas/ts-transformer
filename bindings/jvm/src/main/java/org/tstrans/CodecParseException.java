@@ -131,6 +131,7 @@ public final class CodecParseException extends BindingException {
     }
 
     /** @return the error discriminant. */
+    @Override
     public Kind kind() {
         return kind;
     }
