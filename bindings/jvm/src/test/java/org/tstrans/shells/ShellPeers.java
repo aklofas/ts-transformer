@@ -16,6 +16,7 @@ import org.tstrans.SrtException;
 import org.tstrans.TcpException;
 import org.tstrans.TestSupport;
 import org.tstrans.UdpException;
+import org.tstrans.internal.SlotProbe;
 import org.tstrans.mpegts.DemuxEvent;
 
 /**
@@ -28,6 +29,8 @@ public final class ShellPeers {
     private ShellPeers() {}
 
     static final long PEER_WAIT_MS = 10_000;
+    /** Whether the suite runs against a library built with the test hooks. */
+    static final boolean HOOKS = Boolean.getBoolean("tst.jniTestHooks");
     static final byte[] TS_PACKET = tsPacket();
     static final byte[] TS_BUNDLE = bundle();
     static final byte[] NAL_IDR = {0, 0, 0, 1, 0x65, (byte) 0xBB};
@@ -197,6 +200,8 @@ public final class ShellPeers {
     interface Rx extends AutoCloseable {
         /** One blocking receive; returns normally only when data arrived. */
         void recvOnce() throws Exception;
+        /** The shell itself, for a slot probe. */
+        org.tstrans.NativeHandle shell();
         CancelHandle cancelHandle();
         boolean isAlive();
         java.util.OptionalInt localPort();
@@ -237,6 +242,7 @@ public final class ShellPeers {
             Receiver r = Receiver.open(url);
             return new Rx() {
                 @Override public void recvOnce() throws Exception { r.recvBytes(); }
+                @Override public org.tstrans.NativeHandle shell() { return r; }
                 @Override public CancelHandle cancelHandle() { return r.cancelHandle(); }
                 @Override public boolean isAlive() { return r.isAlive(); }
                 @Override public java.util.OptionalInt localPort() { return r.localPort(); }
@@ -255,6 +261,7 @@ public final class ShellPeers {
                 DemuxEvent e = d.recvEvent();
                 if (e == null) throw new AssertionError("the iterator ended instead of parking");
             }
+            @Override public org.tstrans.NativeHandle shell() { return d; }
             @Override public CancelHandle cancelHandle() { return d.cancelHandle(); }
             @Override public boolean isAlive() { return d.isAlive(); }
             @Override public java.util.OptionalInt localPort() { return d.localPort(); }
@@ -565,13 +572,23 @@ public final class ShellPeers {
         @Override public void close() { finished.countDown(); }
     }
 
-    /** A receive parked on a daemon thread, with a watchdog that cancels it if the test hangs. */
+    /** How long a call may take to reach its park. */
+    static final long PARK_MS = TestSupport.scaledMs(10_000);
+
+    /**
+     * A receive parked on a daemon thread, with a {@link Watchdog} that cancels it if the test
+     * hangs. The constructor returns once the call is parked: with the test hooks built, once
+     * the call holds the shell's slot ({@code SlotProbe.held}); without them, once the thread
+     * is inside a binding native method.
+     */
     public static final class Parked implements AutoCloseable {
         final CompletableFuture<Throwable> outcome = new CompletableFuture<>();
-        private final CountDownLatch finished = new CountDownLatch(1);
+        private final org.tstrans.NativeHandle shell;
+        private final Thread thread;
+        private final Watchdog watchdog;
 
         Parked(Rx rx) throws InterruptedException {
-            this(rx.cancelHandle(), "a silent peer delivered data", () -> {
+            this(rx.shell(), rx.cancelHandle(), "a silent peer delivered data", () -> {
                 while (true) {
                     try {
                         rx.recvOnce();
@@ -587,21 +604,20 @@ public final class ShellPeers {
         }
 
         /**
-         * {@code call} parked on a daemon thread; {@code watchdogHandle} must cancel it. A
-         * normal return is recorded as a failure named {@code returned}.
+         * {@code call} on {@code shell}, parked on a daemon thread; {@code watchdogHandle} must
+         * cancel it, and the watchdog closes it (pass a fresh one). A normal return is recorded
+         * as a failure named {@code returned}.
          */
-        public Parked(CancelHandle watchdogHandle, String returned, Callable<?> call)
-                throws InterruptedException {
-            Thread watchdog = new Thread(() -> {
-                try {
-                    if (!finished.await(30, TimeUnit.SECONDS)) watchdogHandle.cancel();
-                } catch (InterruptedException ignored) {
-                    // the test finished first
-                }
-            }, "shell-watchdog");
-            watchdog.setDaemon(true);
-            watchdog.start();
-            Thread t = new Thread(() -> {
+        public Parked(org.tstrans.NativeHandle shell, CancelHandle watchdogHandle, String returned,
+                Callable<?> call) throws InterruptedException {
+            this(shell, watchdogHandle, returned, call, PARK_MS);
+        }
+
+        Parked(org.tstrans.NativeHandle shell, CancelHandle watchdogHandle, String returned,
+                Callable<?> call, long parkMs) throws InterruptedException {
+            this.shell = shell;
+            watchdog = new Watchdog(watchdogHandle, 30_000);
+            thread = new Thread(() -> {
                 try {
                     call.call();
                     outcome.complete(new AssertionError(returned));
@@ -609,9 +625,32 @@ public final class ShellPeers {
                     outcome.complete(e);
                 }
             }, "shell-parked-call");
-            t.setDaemon(true);
-            t.start();
-            Thread.sleep(300); // let the receive park
+            thread.setDaemon(true);
+            thread.start();
+            boolean parked = TestSupport.waitUntil(() -> outcome.isDone() || parkedNow(), parkMs);
+            if (outcome.isDone()) {
+                close();
+                throw new AssertionError("the call ended before it parked", outcome.getNow(null));
+            }
+            if (!parked) {
+                close();
+                throw new AssertionError("the call did not park within " + parkMs + " ms");
+            }
+        }
+
+        private boolean parkedNow() {
+            return HOOKS ? SlotProbe.held(shell) : TestSupport.inNative(thread, null);
+        }
+
+        /**
+         * Fail unless the call is still parked, so a getter that just answered did so beside
+         * it. A receive that returns and re-enters (RIST's BACKPRESSURE tick) is let back in.
+         */
+        public void assertStillParked() throws InterruptedException {
+            TestSupport.waitUntil(() -> outcome.isDone() || parkedNow(), 1_000);
+            if (outcome.isDone() || !parkedNow()) {
+                throw new AssertionError("the call no longer holds its park", outcome.getNow(null));
+            }
         }
 
         /** The exception that ended the receive, within {@code ms}. */
@@ -623,6 +662,6 @@ public final class ShellPeers {
             }
         }
 
-        @Override public void close() { finished.countDown(); }
+        @Override public void close() { watchdog.close(); }
     }
 }

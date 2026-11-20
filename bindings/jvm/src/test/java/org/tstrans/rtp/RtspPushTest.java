@@ -9,10 +9,12 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
+import static org.tstrans.TestSupport.awaitInNative;
 import static org.tstrans.TestSupport.isLinux;
 import static org.tstrans.TestSupport.roundtripConfig;
 import static org.tstrans.TestSupport.scaledMs;
 import static org.tstrans.TestSupport.syntheticH264Idr;
+import static org.tstrans.TestSupport.waitUntil;
 import static org.tstrans.rtp.RtspTestSupport.nullBundle;
 import static org.tstrans.rtp.RtspTestSupport.startServer;
 
@@ -35,7 +37,6 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
-import java.util.function.BooleanSupplier;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
@@ -98,7 +99,7 @@ class RtspPushTest {
                 assertNotNull(video, "no video reached the mount");
                 tx.finish();
             }
-            assertTrue(waitFor(() -> mount.publisher().isEmpty()), "the finished sender kept the mount");
+            assertTrue(waitUntil(() -> mount.publisher().isEmpty(), scaledMs(5_000)), "the finished sender kept the mount");
         }
     }
 
@@ -117,9 +118,9 @@ class RtspPushTest {
                 push.sendKlv(new byte[] {0x06, 0x0E, 0x2B, 0x34, (byte) i}, pts);
             }
             // The mount holds the last access unit until the next one starts.
-            assertTrue(waitFor(() -> mount.stats().ausEmitted() >= units - 1
+            assertTrue(waitUntil(() -> mount.stats().ausEmitted() >= units - 1
                     && mount.stats().klvUnitsEmitted() >= units - 1
-                    && mount.stats().alignment() == ClockAlignment.SENDER_REPORT),
+                    && mount.stats().alignment() == ClockAlignment.SENDER_REPORT, scaledMs(5_000)),
                 () -> "the mount stopped at " + mount.stats());
             assertEquals(0L, mount.stats().malformedPackets());
             assertEquals(PublishShape.ELEMENTARY, mount.publisher().orElseThrow().shape());
@@ -136,7 +137,7 @@ class RtspPushTest {
              PublishMount mount = server.addPublishMount("/pub");
              RtspPushSession push = RtspClient.push(serverConfig(server), d)) {
             for (int i = 0; i < 5; i++) push.sendVideo(accessUnit(i), i * 3003L);
-            assertTrue(waitFor(() -> mount.stats().ausEmitted() >= 4),
+            assertTrue(waitUntil(() -> mount.stats().ausEmitted() >= 4, scaledMs(5_000)),
                 () -> "the mount stopped at " + mount.stats());
             assertFalse(mount.publisher().orElseThrow().klv());
         }
@@ -163,9 +164,9 @@ class RtspPushTest {
                 for (int i = 0; i < bundles; i++) push.sendTs(NULL_BUNDLE);
             }
             // close() wrote every queued packet before its TEARDOWN.
-            assertTrue(waitFor(() -> mount.stats().rtpPacketsReceived() == bundles),
+            assertTrue(waitUntil(() -> mount.stats().rtpPacketsReceived() == bundles, scaledMs(5_000)),
                 () -> "the mount counted " + mount.stats().rtpPacketsReceived() + " of " + bundles);
-            assertTrue(waitFor(() -> mount.publisher().isEmpty()), "the closed push kept the mount");
+            assertTrue(waitUntil(() -> mount.publisher().isEmpty(), scaledMs(5_000)), "the closed push kept the mount");
         }
     }
 
@@ -201,7 +202,7 @@ class RtspPushTest {
                 reader.setDaemon(true);
                 reader.start();
                 for (int i = 0; i < bundles; i++) push.sendTs(NULL_BUNDLE);
-                assertTrue(waitFor(() -> reads.get() > 0), "the reader never read");
+                assertTrue(waitUntil(() -> reads.get() > 0, scaledMs(5_000)), "the reader never read");
                 // A reader holding the session for a moment is not a call to cancel: the
                 // TEARDOWN is accepted, so nothing is thrown.
                 push.teardown();
@@ -210,10 +211,10 @@ class RtspPushTest {
                 assertFalse(reader.isAlive(), "the stats reader did not end");
                 assertEquals(null, readerError.get());
                 final int r = round;
-                assertTrue(waitFor(() -> mount.stats().rtpPacketsReceived() - before == bundles),
+                assertTrue(waitUntil(() -> mount.stats().rtpPacketsReceived() - before == bundles, scaledMs(5_000)),
                     () -> "round " + r + ": the mount counted "
                         + (mount.stats().rtpPacketsReceived() - before) + " of " + bundles);
-                assertTrue(waitFor(() -> mount.publisher().isEmpty()), "the torn-down push kept the mount");
+                assertTrue(waitUntil(() -> mount.publisher().isEmpty(), scaledMs(5_000)), "the torn-down push kept the mount");
             }
         }
     }
@@ -278,7 +279,7 @@ class RtspPushTest {
             try (RtspPushSession push = RtspClient.push(cfg, PushDescription.mp2t())) {
                 // The SETUP reply says timeout=60: without the interval the first ping
                 // would come after 30 s.
-                assertTrue(waitFor(() -> pingsAfterRecord(peer.methods) >= 2),
+                assertTrue(waitUntil(() -> pingsAfterRecord(peer.methods) >= 2, scaledMs(5_000)),
                     () -> "no pings after RECORD: " + peer.methods);
                 assertTrue(push.isSessionAlive());
             }
@@ -394,7 +395,7 @@ class RtspPushTest {
                 for (int i = 0; i < 5; i++) push.sendTs(NULL_BUNDLE);
                 Side holder = Side.start("query-holder", () -> PushProbe.nHoldAsReader(push.nativeHandleForTest()));
                 try {
-                    assertTrue(waitFor(PushProbe::nReaderHolds), "the probe never held the session");
+                    assertTrue(waitUntil(PushProbe::nReaderHolds, scaledMs(5_000)), "the probe never held the session");
                     long rounds = PushProbe.nWaitRounds();
                     Side tearing = Side.start("tearing-down", push::teardown);
                     // The teardown has met the session held by the query; only then does
@@ -426,10 +427,10 @@ class RtspPushTest {
                 for (int i = 0; i < 3; i++) push.sendTs(NULL_BUNDLE);
                 Side holder = Side.start("query-holder", () -> PushProbe.nHoldAsReader(push.nativeHandleForTest()));
                 try {
-                    assertTrue(waitFor(PushProbe::nReaderHolds), "the probe never held the session");
+                    assertTrue(waitUntil(PushProbe::nReaderHolds, scaledMs(5_000)), "the probe never held the session");
                     // A send that waits for the session behind the query: it does not hold it.
                     Side sender = Side.start("waiting-sender", () -> push.sendTs(NULL_BUNDLE));
-                    awaitInNative(sender.thread, "nSendTs");
+                    awaitInNative(sender.thread, "nSendTs", scaledMs(5_000));
                     long rounds = PushProbe.nWaitRounds();
                     Side tearing = Side.start("tearing-down", push::teardown);
                     awaitWaitRound(tearing, rounds);
@@ -459,7 +460,7 @@ class RtspPushTest {
             RtspPushSession push = RtspClient.push(peer.config(), PushDescription.mp2t());
             try {
                 push.sendTs(NULL_BUNDLE);
-                assertTrue(waitFor(() -> peer.rtpFramesRead.get() == 1), "RTP frames read: " + peer.rtpFramesRead.get());
+                assertTrue(waitUntil(() -> peer.rtpFramesRead.get() == 1, scaledMs(5_000)), "RTP frames read: " + peer.rtpFramesRead.get());
                 // The flag a close sets before it takes the session; the session is free.
                 PushProbe.nMarkClosing(push.nativeHandleForTest());
                 RtpException send = assertThrows(RtpException.class, () -> push.sendTs(NULL_BUNDLE));
@@ -552,7 +553,7 @@ class RtspPushTest {
                 try {
                     Side holder = Side.start("query-holder", () -> PushProbe.nHoldAsReader(push.nativeHandleForTest()));
                     try {
-                        assertTrue(waitFor(PushProbe::nReaderHolds), "the probe never held the session");
+                        assertTrue(waitUntil(PushProbe::nReaderHolds, scaledMs(5_000)), "the probe never held the session");
                         long rounds = PushProbe.nWaitRounds();
                         Side converting = Side.start("converting", () -> shell.set(
                             mux ? push.intoMuxSender(roundtripConfig()) : push.intoSender()));
@@ -627,7 +628,7 @@ class RtspPushTest {
                 // and a pause do their work on the same session.
                 long parkedAt = sending.sent.get();
                 peer.resumeReading();
-                assertTrue(waitFor(() -> sending.sent.get() > parkedAt + 10 || !sending.thread.isAlive()),
+                assertTrue(waitUntil(() -> sending.sent.get() > parkedAt + 10 || !sending.thread.isAlive(), scaledMs(5_000)),
                     "the sends did not go on");
                 assertTrue(sending.thread.isAlive(), "a send after the refusal threw: " + sending.error.get());
                 push.pause();
@@ -655,7 +656,7 @@ class RtspPushTest {
             try {
                 Side holder = Side.start("query-holder", () -> PushProbe.nHoldAsReader(push.nativeHandleForTest()));
                 try {
-                    assertTrue(waitFor(PushProbe::nReaderHolds), "the probe never held the session");
+                    assertTrue(waitUntil(PushProbe::nReaderHolds, scaledMs(5_000)), "the probe never held the session");
                     // A call holds the session: live.
                     assertTrue(push.isSessionAlive());
                     // The flag a close sets before it waits for the session.
@@ -722,13 +723,13 @@ class RtspPushTest {
             MuxException e = assertThrows(MuxException.class, () -> push.intoMuxSender(refused));
             assertEquals(MuxException.Kind.CONFIG_INVALID, e.kind());
             push.sendTs(NULL_BUNDLE);
-            assertTrue(waitFor(() -> peer.rtpFramesRead.get() == 1), "RTP frames read: " + peer.rtpFramesRead.get());
+            assertTrue(waitUntil(() -> peer.rtpFramesRead.get() == 1, scaledMs(5_000)), "RTP frames read: " + peer.rtpFramesRead.get());
             try (Sender tx = push.intoSender()) {
                 assertThrows(IllegalStateException.class, () -> push.sendTs(NULL_BUNDLE));
                 tx.sendBytes(NULL_BUNDLE);
                 // Read before the close: a sender's close() cancels the session first
                 // and drops media still queued.
-                assertTrue(waitFor(() -> peer.rtpFramesRead.get() == 2), "RTP frames read: " + peer.rtpFramesRead.get());
+                assertTrue(waitUntil(() -> peer.rtpFramesRead.get() == 2, scaledMs(5_000)), "RTP frames read: " + peer.rtpFramesRead.get());
             }
             assertTrue(peer.awaitMethod("TEARDOWN"));
         }
@@ -848,7 +849,7 @@ class RtspPushTest {
              RtspPushSession push = RtspClient.push(peer.config(), PushDescription.mp2t())) {
             Sending sending = Sending.start(push);
             sending.awaitParked();
-            awaitInNative(sending.thread, "nSendTs");
+            awaitInNative(sending.thread, "nSendTs", scaledMs(5_000));
             AtomicReference<RtspPushStats> got = new AtomicReference<>();
             AtomicReference<Optional<EndReason>> reason = new AtomicReference<>();
             Side reading = Side.start("reading", () -> {
@@ -872,10 +873,10 @@ class RtspPushTest {
         ScriptedRecordServer peer = new ScriptedRecordServer(200, false);
         try (RtspPushSession push = RtspClient.push(peer.config(), PushDescription.mp2t())) {
             push.sendTs(NULL_BUNDLE);
-            assertTrue(waitFor(() -> peer.rtpFramesRead.get() == 1));
+            assertTrue(waitUntil(() -> peer.rtpFramesRead.get() == 1, scaledMs(5_000)));
             assertEquals(Optional.empty(), push.endReason());
             peer.close();
-            assertTrue(waitFor(() -> push.endReason().isPresent()), "no end reason after the server closed");
+            assertTrue(waitUntil(() -> push.endReason().isPresent(), scaledMs(5_000)), "no end reason after the server closed");
             assertEquals(Optional.of(EndReason.CLEAN_TEARDOWN), push.endReason());
             assertEquals(1L, push.stats().packetsSent());
         }
@@ -920,7 +921,7 @@ class RtspPushTest {
                 for (int i = 0; i < 3; i++) tx.sendBytes(NULL_BUNDLE);
                 tx.flush();
                 // The counters follow the push the sender owns.
-                assertTrue(waitFor(() -> push.stats().packetsSent() == 3), () -> push.stats().toString());
+                assertTrue(waitUntil(() -> push.stats().packetsSent() == 3, scaledMs(5_000)), () -> push.stats().toString());
                 assertEquals(Optional.empty(), push.endReason());
             }
             // The sender's close cancels first.
@@ -933,8 +934,8 @@ class RtspPushTest {
             RtspPushSession push = RtspClient.push(peer.config(), PushDescription.mp2t());
             try (MuxSender tx = push.intoMuxSender(roundtripConfig())) {
                 for (int i = 0; i < 20; i++) tx.sendVideo(syntheticH264Idr(), i * 3000L, true);
-                assertTrue(waitFor(() -> push.stats().packetsSent() > 0
-                        && push.stats().packetsSent() == peer.rtpFramesRead.get()),
+                assertTrue(waitUntil(() -> push.stats().packetsSent() > 0
+                        && push.stats().packetsSent() == peer.rtpFramesRead.get(), scaledMs(5_000)),
                     () -> push.stats() + " against " + peer.rtpFramesRead.get() + " read");
                 assertEquals(Optional.empty(), push.endReason());
             }
@@ -960,10 +961,10 @@ class RtspPushTest {
                         reads.incrementAndGet();
                     }
                 });
-                assertTrue(waitFor(() -> reads.get() > 0));
+                assertTrue(waitUntil(() -> reads.get() > 0, scaledMs(5_000)));
                 push.close();
                 long n = reads.get();
-                assertTrue(waitFor(() -> reads.get() > n + 10), "the reader stopped after the close");
+                assertTrue(waitUntil(() -> reads.get() > n + 10, scaledMs(5_000)), "the reader stopped after the close");
                 stop.set(true);
                 reader.assertEndedNormally();
                 assertEquals(1L, push.stats().packetsSent());
@@ -1126,7 +1127,7 @@ class RtspPushTest {
                 for (int i = 0; i < 5; i++) push.sendTs(NULL_BUNDLE);
                 Side holder = Side.start("query-holder", () -> PushProbe.nHoldAsReader(push.nativeHandleForTest()));
                 try {
-                    assertTrue(waitFor(PushProbe::nReaderHolds), "the probe never held the session");
+                    assertTrue(waitUntil(PushProbe::nReaderHolds, scaledMs(5_000)), "the probe never held the session");
                     long rounds = PushProbe.nWaitRounds();
                     Side first = Side.start("first-" + ending, ending.equals("close") ? push::close : push::teardown);
                     // The first call has met the held session and has not ended it yet.
@@ -1219,18 +1220,6 @@ class RtspPushTest {
         }
     }
 
-    /** Wait (up to 5 s, scaled) until {@code t}'s top frame is the native {@code method}. */
-    private static void awaitInNative(Thread t, String method) throws InterruptedException {
-        long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(scaledMs(5_000));
-        while (System.nanoTime() < deadline) {
-            StackTraceElement[] st = t.getStackTrace();
-            if (st.length > 0 && st[0].isNativeMethod() && st[0].getMethodName().equals(method)) return;
-            if (!t.isAlive()) fail(t.getName() + " ended before it reached " + method);
-            Thread.sleep(2);
-        }
-        fail(t.getName() + " never reached " + method);
-    }
-
     /**
      * Wait (up to 5 s, scaled) until the close or conversion on {@code side} has met the
      * session held by the probe: the probe's wait-round count has passed {@code before}.
@@ -1246,16 +1235,6 @@ class RtspPushTest {
             Thread.sleep(2);
         }
         fail(t.getName() + " never met the held session");
-    }
-
-    /** Poll {@code cond} every 20 ms for up to 5 s (scaled). */
-    private static boolean waitFor(BooleanSupplier cond) throws InterruptedException {
-        long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(scaledMs(5_000));
-        while (System.nanoTime() < deadline) {
-            if (cond.getAsBoolean()) return true;
-            Thread.sleep(20);
-        }
-        return cond.getAsBoolean();
     }
 
     /**
@@ -1389,7 +1368,7 @@ class RtspPushTest {
 
         /** Wait up to 5 s (scaled) until {@code method} has been read {@code count} times. */
         boolean awaitMethod(String method, int count) throws InterruptedException {
-            return waitFor(() -> methods.stream().filter(method::equals).count() >= count);
+            return waitUntil(() -> methods.stream().filter(method::equals).count() >= count, scaledMs(5_000));
         }
 
         /** A server that stopped reading after RECORD reads and answers again. */

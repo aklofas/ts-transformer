@@ -2,10 +2,12 @@ package org.tstrans.rtp;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
+import static org.tstrans.TestSupport.awaitInNative;
 import static org.tstrans.TestSupport.isLinux;
 import static org.tstrans.TestSupport.rtspHeader;
 import static org.tstrans.TestSupport.roundtripConfig;
 import static org.tstrans.TestSupport.sha256Units;
+import static org.tstrans.TestSupport.waitUntil;
 import static org.tstrans.rtp.RtspTestSupport.nullBundle;
 
 import java.io.ByteArrayOutputStream;
@@ -24,7 +26,6 @@ import java.util.Optional;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
-import java.util.function.BooleanSupplier;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.tstrans.RtpException;
@@ -191,7 +192,7 @@ class RtspPublishMountTest {
                 bundles++;
             }
             long sent = bundles;
-            assertTrue(waitFor(() -> mount.stats().rtpPacketsReceived() == sent),
+            assertTrue(waitUntil(() -> mount.stats().rtpPacketsReceived() == sent, 5_000),
                 () -> "stats never reached " + sent + " packets: " + mount.stats());
             // One read pulls a whole bundle into the shell, so more events are
             // already queued behind the one returned.
@@ -212,7 +213,7 @@ class RtspPublishMountTest {
              PublishMount mount = server.addPublishMount("/cam");
              DemuxReceiver rx = mount.intoDemuxReceiver()) {
             Parked<DemuxEvent> parked = park(rx::recvEvent);
-            awaitNative(parked, "nNext");
+            awaitInNative(parked.thread, "nNext", JOIN_MS);
             Parked<Object> closer = park(() -> { rx.close(); return null; });
             if (!(closer.join() && parked.join())) {
                 mount.cancel(); // unpark so the suite does not hang
@@ -273,7 +274,7 @@ class RtspPublishMountTest {
                 Parked<DemuxEvent> parked = park(rx::recvEvent);
                 try (RawPublisher pub = new RawPublisher(port(server), "/cam")) {
                     assertEquals(200, pub.teardown());
-                    assertTrue(waitFor(() -> mount.generation() == 1));
+                    assertTrue(waitUntil(() -> mount.generation() == 1, 5_000));
                     String label = "default=" + serverDefault + " option=" + opt;
                     if (expectEnd) {
                         assertTrue(parked.join(), label + ": receiver did not end");
@@ -323,7 +324,7 @@ class RtspPublishMountTest {
              DemuxReceiver rx = mount.intoDemuxReceiver()) {
             try (RawPublisher pub = new RawPublisher(port(server), "/cam")) {
                 for (int i = 0; i < 5; i++) pub.sendRtp(NULL_BUNDLE);
-                assertTrue(waitFor(() -> mount.stats().rtpPacketsReceived() >= 5),
+                assertTrue(waitUntil(() -> mount.stats().rtpPacketsReceived() >= 5, 5_000),
                     () -> "stats never reached 5 packets: " + mount.stats());
                 PublishMountStats s = mount.stats();
                 assertEquals(5L, s.rtpPacketsReceived());
@@ -345,11 +346,11 @@ class RtspPublishMountTest {
 
                 assertEquals(200, pub.teardown());
                 // The publisher's end bumps the generation and frees the slot.
-                assertTrue(waitFor(() -> mount.generation() == 1),
+                assertTrue(waitUntil(() -> mount.generation() == 1, 5_000),
                     () -> "generation stayed " + mount.generation());
-                assertTrue(waitFor(() -> mount.publisher().isEmpty()));
+                assertTrue(waitUntil(() -> mount.publisher().isEmpty(), 5_000));
                 assertEquals(1L, mount.stats().generation());
-                assertTrue(waitFor(() -> server.stats().activePublishers() == 0));
+                assertTrue(waitUntil(() -> server.stats().activePublishers() == 0, 5_000));
             }
         }
     }
@@ -414,7 +415,7 @@ class RtspPublishMountTest {
              DemuxReceiver rx = mount.intoDemuxReceiver()) {
             before = Instant.now();
             try (RawPublisher pub = new RawPublisher(port(server), "/cam")) {
-                assertTrue(waitFor(() -> mount.publisher().isPresent()), "no publisher arrived");
+                assertTrue(waitUntil(() -> mount.publisher().isPresent(), 5_000), "no publisher arrived");
                 info = mount.publisher().orElseThrow();
                 after = Instant.now();
             }
@@ -438,7 +439,7 @@ class RtspPublishMountTest {
         try (PublishMount mount = server.addPublishMount("/cam");
              DemuxReceiver rx = mount.intoDemuxReceiver();
              RawPublisher pub = new RawPublisher(port(server), "/cam")) {
-            assertTrue(waitFor(() -> mount.publisher().isPresent()), "no publisher arrived");
+            assertTrue(waitUntil(() -> mount.publisher().isPresent(), 5_000), "no publisher arrived");
             info = mount.publisher().orElseThrow();
             client = pub.localAddr();
         } finally {
@@ -467,7 +468,7 @@ class RtspPublishMountTest {
                         mount::intoDemuxReceiver);
                     assertEquals(RtspException.Kind.CLOSED, twice.kind());
                     pub.sendRtp(NULL_BUNDLE);
-                    assertTrue(waitFor(() -> mount.stats().rtpPacketsReceived() == 1),
+                    assertTrue(waitUntil(() -> mount.stats().rtpPacketsReceived() == 1, 5_000),
                         () -> "stats: " + mount.stats());
                 }
                 assertEquals(1L, server.stats().mounts());
@@ -490,8 +491,8 @@ class RtspPublishMountTest {
             Parked<Optional<PublishMount>> next = park(() -> server.nextPublisher(PARK_MS));
             Parked<DemuxEvent> recv = park(rx::recvEvent);
             // Close only once both calls are inside their native waits.
-            awaitNative(next, "nNextPublisher");
-            awaitNative(recv, "nNext");
+            awaitInNative(next.thread, "nNextPublisher", JOIN_MS);
+            awaitInNative(recv.thread, "nNext", JOIN_MS);
             Parked<Object> closer = park(() -> { server.close(); return null; });
             boolean woke = closer.join() && next.join() && recv.join();
             if (!woke) {
@@ -526,7 +527,7 @@ class RtspPublishMountTest {
         RtspServer server = start(true);
         try {
             Parked<Optional<PublishMount>> next = park(() -> server.nextPublisher(PARK_MS));
-            awaitNative(next, "nNextPublisher");
+            awaitInNative(next.thread, "nNextPublisher", JOIN_MS);
             // Other server calls answer while it waits.
             Parked<ServerStats> stats = park(server::stats);
             boolean answered = stats.join(TimeUnit.SECONDS.toMillis(4));
@@ -551,7 +552,7 @@ class RtspPublishMountTest {
         RtspServer server = start(true);
         try (RtspServerCancelHandle cancel = server.cancelHandle()) {
             Parked<Optional<PublishMount>> next = park(() -> server.nextPublisher(PARK_MS));
-            awaitNative(next, "nNextPublisher");
+            awaitInNative(next.thread, "nNextPublisher", JOIN_MS);
             cancel.cancel();
             if (!next.join(WAKE_MS)) {
                 server.close();
@@ -580,7 +581,7 @@ class RtspPublishMountTest {
         DemuxReceiver rx = mount.intoDemuxReceiver();
         try (RtspServerCancelHandle cancel = server.cancelHandle()) {
             Parked<DemuxEvent> recv = park(rx::recvEvent);
-            awaitNative(recv, "nNext");
+            awaitInNative(recv.thread, "nNext", JOIN_MS);
             cancel.cancel();
             if (!recv.join(WAKE_MS)) {
                 server.close();
@@ -646,16 +647,6 @@ class RtspPublishMountTest {
     private static int port(RtspServer server) {
         return server.localAddr().orElseThrow(() -> new AssertionError("server must be bound"))
             .getPort();
-    }
-
-    /** Poll {@code cond} every 20 ms for up to 5 s. */
-    private static boolean waitFor(BooleanSupplier cond) throws InterruptedException {
-        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
-        while (System.nanoTime() < deadline) {
-            if (cond.getAsBoolean()) return true;
-            Thread.sleep(20);
-        }
-        return cond.getAsBoolean();
     }
 
     private static byte[] idr(int i) {
@@ -724,28 +715,6 @@ class RtspPublishMountTest {
         });
         entered.await();
         return p;
-    }
-
-    /**
-     * Wait until {@code p}'s thread is inside the native {@code nativeMethod} (its
-     * top stack frame), so a test closes or probes only a call that is really
-     * parked. Fails if it does not get there within {@link #JOIN_MS}.
-     */
-    private static void awaitNative(Parked<?> p, String nativeMethod) throws InterruptedException {
-        long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(JOIN_MS);
-        while (System.nanoTime() < deadline) {
-            StackTraceElement[] st = p.thread.getStackTrace();
-            if (st.length > 0 && st[0].isNativeMethod()
-                    && st[0].getMethodName().equals(nativeMethod)) {
-                return;
-            }
-            if (!p.thread.isAlive()) {
-                fail(nativeMethod + " returned before it parked: value " + p.value.get()
-                    + ", error " + p.error.get());
-            }
-            Thread.sleep(5);
-        }
-        fail("the side thread never reached " + nativeMethod);
     }
 
     private static Thread daemon(Runnable r) {

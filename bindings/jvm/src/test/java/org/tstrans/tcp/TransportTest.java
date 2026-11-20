@@ -382,7 +382,7 @@ class TransportTest {
                 // ends the handshake, so the test fails on its bound instead of hanging teardown.
                 c.add(client);
                 CancelHandle h = rx.cancelHandle();
-                try (Parked p = new Parked(h, "a silent client completed a TLS handshake", rx::recvBytes)) {
+                try (Parked p = new Parked(rx, h, "a silent client completed a TLS handshake", rx::recvBytes)) {
                     long t0 = System.nanoTime();
                     if (byClose) {
                         within(scaledMs(3000), "close()", () -> {

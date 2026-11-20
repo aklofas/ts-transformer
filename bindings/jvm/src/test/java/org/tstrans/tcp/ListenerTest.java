@@ -34,7 +34,7 @@ class ListenerTest {
 
     /** {@code accept()} parked on a daemon thread; it must end by a cancel or a close. */
     private static Parked parkAccept(Listener l) throws InterruptedException {
-        return new Parked(l.cancelHandle(), "accept returned a connection with no peer", () -> {
+        return new Parked(l, l.cancelHandle(), "accept returned a connection with no peer", () -> {
             l.accept().close();
             return null;
         });
@@ -209,6 +209,7 @@ class ListenerTest {
             int port = l.localPort();
             try (Parked p = parkAccept(l)) {
                 assertEquals(port, (int) within(scaledMs(1000), "localPort()", l::localPort));
+                p.assertStillParked();
                 l.cancelHandle().cancel();
                 assertKind(TcpException.Kind.CLOSED, p.awaitEnd(scaledMs(2000)));
             }

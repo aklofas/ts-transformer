@@ -11,6 +11,7 @@ import static org.tstrans.TestSupport.isLinux;
 import static org.tstrans.TestSupport.roundtripConfig;
 import static org.tstrans.TestSupport.scaledMs;
 import static org.tstrans.TestSupport.syntheticH264Idr;
+import static org.tstrans.TestSupport.waitUntil;
 
 import java.io.ByteArrayOutputStream;
 import java.net.DatagramPacket;
@@ -24,7 +25,6 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.function.BooleanSupplier;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -141,15 +141,6 @@ class DemuxReceiverStatsTest {
                 if (gap && e instanceof DemuxEvent.ProgramMap) return null;
             }
         });
-    }
-
-    private static boolean waitFor(BooleanSupplier cond) throws InterruptedException {
-        long end = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(WAIT_MS);
-        while (System.nanoTime() < end) {
-            if (cond.getAsBoolean()) return true;
-            Thread.sleep(10);
-        }
-        return cond.getAsBoolean();
     }
 
     // ── the records ──────────────────────────────────────────────────────────
@@ -307,7 +298,7 @@ class DemuxReceiverStatsTest {
         try {
             t = park(rx);
             sendDatagram(port, versionOneDatagram());
-            assertTrue(waitFor(() -> rx.rtpStats().orElseThrow().malformedPackets() == 1),
+            assertTrue(waitUntil(() -> rx.rtpStats().orElseThrow().malformedPackets() == 1, WAIT_MS),
                 () -> "rtpStats: " + rx.rtpStats());
             assertEquals(0, rx.rtpStats().orElseThrow().sourceRejected());
         } finally {
@@ -367,7 +358,7 @@ class DemuxReceiverStatsTest {
         Thread t = park(rx);
         try {
             for (int i = 0; i < 3; i++) sendDatagram(port, versionOneDatagram());
-            assertTrue(waitFor(() -> rx.rtpStats().orElseThrow().malformedPackets() == 3),
+            assertTrue(waitUntil(() -> rx.rtpStats().orElseThrow().malformedPackets() == 3, WAIT_MS),
                 () -> "rtpStats: " + rx.rtpStats());
             // The receive has not returned: every datagram was dropped.
             assertTrue(t.isAlive());
@@ -402,11 +393,11 @@ class DemuxReceiverStatsTest {
             reader.setDaemon(true);
             reader.start();
             try {
-                assertTrue(waitFor(() -> !answers.isEmpty()));
+                assertTrue(waitUntil(() -> !answers.isEmpty(), WAIT_MS));
                 rx.close();
                 // Read on a little after the close, then stop.
                 int n = answers.size();
-                assertTrue(waitFor(() -> answers.size() > n + 10));
+                assertTrue(waitUntil(() -> answers.size() > n + 10, WAIT_MS));
             } finally {
                 stop.set(true);
                 rx.close();

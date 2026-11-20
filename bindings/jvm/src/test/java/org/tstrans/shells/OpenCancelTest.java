@@ -11,6 +11,7 @@ import static org.junit.jupiter.api.Assertions.fail;
 import static org.tstrans.TestSupport.freeUdpPort;
 import static org.tstrans.TestSupport.roundtripConfig;
 import static org.tstrans.TestSupport.scaledMs;
+import static org.tstrans.TestSupport.waitFor;
 
 import java.lang.reflect.Modifier;
 import java.net.DatagramPacket;
@@ -25,7 +26,6 @@ import java.util.concurrent.Callable;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
-import java.util.function.BooleanSupplier;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
@@ -67,14 +67,6 @@ class OpenCancelTest {
     // ----------------------------------------------------------------------------------------
     // Helpers
     // ----------------------------------------------------------------------------------------
-
-    private static void waitFor(String what, BooleanSupplier cond) throws InterruptedException {
-        long end = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(DEADLINE_MS);
-        while (!cond.getAsBoolean()) {
-            if (System.nanoTime() > end) fail("timed out after " + DEADLINE_MS + " ms waiting for " + what);
-            Thread.sleep(10);
-        }
-    }
 
     /** {@code true} while something holds the loopback UDP {@code port} (a plain bind of it fails). */
     private static boolean udpPortBound(int port) {
@@ -196,7 +188,7 @@ class OpenCancelTest {
             int port = freeUdpPort();
             String url = "srt://127.0.0.1:" + port + "?mode=listener";
             Opening o = new Opening(() -> open.open(url, oc));
-            waitFor("the open to bind its port", () -> udpPortBound(port) || o.result.isDone());
+            waitFor("the open to bind its port", () -> udpPortBound(port) || o.result.isDone(), DEADLINE_MS);
             if (o.result.isDone() && attempt < 5 && o.error() instanceof SrtException e
                     && e.getMessage().startsWith("bind:")) {
                 continue;
@@ -223,7 +215,7 @@ class OpenCancelTest {
                 assertSrtClosed(p.opening().error());
                 assertNull(p.opening().value());
                 assertTrue(oc.isCancelled());
-                waitFor("the port to be released", () -> !udpPortBound(p.port()));
+                waitFor("the port to be released", () -> !udpPortBound(p.port()), DEADLINE_MS);
             } finally {
                 rescue(p.port(), p.opening());
             }
@@ -795,7 +787,7 @@ class OpenCancelTest {
                 pump.start();
                 for (int i = 0; i < 7; i++) tx.sendBytes(ShellPeers.TS_PACKET);
                 tx.flush();
-                waitFor("data before the reconnect", () -> !got.isEmpty() || pumpEnd.isDone());
+                waitFor("data before the reconnect", () -> !got.isEmpty() || pumpEnd.isDone(), DEADLINE_MS);
                 assertFalse(pumpEnd.isDone(), () -> "the receive ended: " + pumpEnd.getNow(null));
 
                 // The peer leaves; the receiver re-accepts on the slot the object no longer
@@ -803,7 +795,7 @@ class OpenCancelTest {
                 tx.close();
                 tx = null;
                 ManagedReceiver watched = rx;
-                waitFor("a reconnect attempt", () -> watched.reconnectAttempts() >= 1 || pumpEnd.isDone());
+                waitFor("a reconnect attempt", () -> watched.reconnectAttempts() >= 1 || pumpEnd.isDone(), DEADLINE_MS);
                 int before = got.size();
                 tx = connectWithRetry(caller);
                 ManagedSender t = tx;
@@ -816,7 +808,7 @@ class OpenCancelTest {
                         // the link is still coming up; try again on the next poll
                     }
                     return false;
-                });
+                }, DEADLINE_MS);
                 assertFalse(pumpEnd.isDone(), () -> "the receive ended: " + pumpEnd.getNow(null));
                 rx.close();
                 pump.join(DEADLINE_MS);

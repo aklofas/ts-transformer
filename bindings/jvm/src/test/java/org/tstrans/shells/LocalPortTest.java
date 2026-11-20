@@ -100,6 +100,7 @@ class LocalPortTest {
             try (ShellPeers.Parked parked = new ShellPeers.Parked(rx)) {
                 OptionalInt port = ShellPeers.within(scaledMs(1000), "localPort", rx::localPort);
                 assertTrue(port.getAsInt() > 0);
+                parked.assertStillParked();
                 rx.cancelHandle().cancel();
                 parked.awaitEnd(scaledMs(5_000));
             }

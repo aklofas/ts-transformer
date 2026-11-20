@@ -14,6 +14,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.BooleanSupplier;
 import org.tstrans.codec.NalUnit;
 import org.tstrans.codec.VideoUnit;
 import org.tstrans.mpegts.DemuxEvent;
@@ -78,6 +79,53 @@ public final class TestSupport {
             Thread.sleep(10);
         }
         return true;
+    }
+
+    /**
+     * Poll {@code cond} every 10 ms until it holds or {@code ms} elapses (asked once more at
+     * the deadline).
+     *
+     * @return whether {@code cond} held
+     */
+    public static boolean waitUntil(BooleanSupplier cond, long ms) throws InterruptedException {
+        long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(ms);
+        while (System.nanoTime() < deadline) {
+            if (cond.getAsBoolean()) return true;
+            Thread.sleep(10);
+        }
+        return cond.getAsBoolean();
+    }
+
+    /** {@link #waitUntil}, failing with {@code what} when {@code cond} never held. */
+    public static void waitFor(String what, BooleanSupplier cond, long ms) throws InterruptedException {
+        if (!waitUntil(cond, ms)) throw new AssertionError("timed out after " + ms + " ms waiting for " + what);
+    }
+
+    /**
+     * Whether {@code t}'s top frame is the native method {@code method} of a binding class, or
+     * any binding native method when {@code method} is null. A thread blocked in a lock or a
+     * sleep is in a JDK native method, not a binding one.
+     */
+    public static boolean inNative(Thread t, String method) {
+        StackTraceElement[] st = t.getStackTrace();
+        return st.length > 0 && st[0].isNativeMethod() && st[0].getClassName().startsWith("org.tstrans.")
+            && (method == null || st[0].getMethodName().equals(method));
+    }
+
+    /**
+     * Wait until {@code t} is inside the binding's native {@code method} (its top frame), so a
+     * test probes a call that is really in the library; fails when {@code t} ends first or
+     * does not get there within {@code ms}.
+     */
+    public static void awaitInNative(Thread t, String method, long ms) throws InterruptedException {
+        long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(ms);
+        while (!inNative(t, method)) {
+            if (!t.isAlive()) throw new AssertionError(t.getName() + " ended before it reached " + method);
+            if (System.nanoTime() >= deadline) {
+                throw new AssertionError(t.getName() + " never reached " + method + " within " + ms + " ms");
+            }
+            Thread.sleep(2);
+        }
     }
 
     /** A finished child process: its exit status and its combined stdout and stderr. */

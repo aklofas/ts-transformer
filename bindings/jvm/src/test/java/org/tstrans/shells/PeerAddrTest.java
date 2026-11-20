@@ -238,7 +238,7 @@ class PeerAddrTest {
                 send(tx, loopbackV4(), rx.localPort().getAsInt(), tagged(TAG_A, 1));
                 Optional<InetSocketAddress> peer = awaitPeer(rx, scaledMs(10_000), scaledMs(500));
                 assertEquals(Optional.of(new InetSocketAddress(loopbackV4(), tx.getLocalPort())), peer);
-                assertFalse(parked.outcome.isDone(), "the receive was meant to stay parked");
+                parked.assertStillParked();
                 c.add(rx.cancelHandle()).cancel();
                 parked.awaitEnd(scaledMs(5_000));
             }
