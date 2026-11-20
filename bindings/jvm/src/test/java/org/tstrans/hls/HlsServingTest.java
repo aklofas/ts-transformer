@@ -61,13 +61,27 @@ class HlsServingTest {
     }
 
     @Test
+    void serverHandleLocalAddrIsAnInetSocketAddress(@TempDir Path dir) throws Exception {
+        HlsPublisher pub = vod(dir);
+        pub.pushTs(onePacket());
+        pub.cutSegment();
+        HlsServerHandle h = pub.finishServing();
+        java.net.InetSocketAddress a = h.localAddr();
+        assertInstanceOf(java.net.Inet4Address.class, a.getAddress());
+        assertEquals("127.0.0.1", a.getAddress().getHostAddress());
+        assertTrue(a.getPort() > 0, "the kernel's port for :0");
+        h.shutdown();
+        assertThrows(IllegalStateException.class, h::localAddr);
+    }
+
+    @Test
     void finishServingServesVodPlaylistAndSegment(@TempDir Path dir) throws Exception {
         HlsPublisher pub = vod(dir);
         pub.pushTs(onePacket());
         pub.cutSegment();
         try (HlsServerHandle h = pub.finishServing()) {
             assertTrue(h.localPort() > 0);
-            assertTrue(h.localAddr().startsWith("127.0.0.1:"));
+            assertEquals(h.localPort(), h.localAddr().getPort());
             assertThrows(IllegalStateException.class, pub::stats, "publisher consumed");
             HttpClient c = HttpClient.newHttpClient();
             HttpResponse<String> pl = get(c, "http://127.0.0.1:" + h.localPort() + "/playlist.m3u8", null);

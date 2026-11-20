@@ -59,7 +59,7 @@ class HlsCrossThreadTest {
         try {
             for (int i = 0; i < 500; i++) {
                 assertTrue(pub.localAddr().isPresent());
-                assertTrue(pub.localPort() > 0);
+                assertTrue(pub.localPort().orElseThrow() > 0);
                 assertEquals("HlsPublisher(open)", pub.toString());
                 pub.stats();
                 pub.hlsStats();

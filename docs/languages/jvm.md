@@ -2997,6 +2997,7 @@ streams instead of TS bytes. Mirrors `tstrans.hls`.
 
 <!-- compile: java-statements -->
 ```java
+import java.net.InetSocketAddress;
 import org.tstrans.hls.HlsMode;
 import org.tstrans.hls.HlsPublisher;
 import org.tstrans.hls.MuxPublisher;
@@ -3012,7 +3013,9 @@ HlsPublisher publisher = HlsPublisher.builder()
     .playlistWindow(6)
     .mode(HlsMode.LIVE)
     .build();
-System.out.println("serving http://" + publisher.localAddr().orElseThrow() + "/playlist.m3u8");
+InetSocketAddress at = publisher.localAddr().orElseThrow(); // empty after noServer()
+System.out.println("serving http://" + at.getAddress().getHostAddress() + ":" + at.getPort()
+    + "/playlist.m3u8");
 
 MuxerConfig program = MuxerConfig.builder()
     .programNumber(1).pmtPid(0x100)
@@ -3037,8 +3040,10 @@ back.finish();                                          // or back.finishServing
 
 Pre-muxed TS goes straight in with `publisher.pushTs(bytes)` (whole 188-byte
 packets, else `HlsException(UNALIGNED_PUSH_TS)`) and `cutSegment()` /
-`cutSegmentWithDuration(us)`. `finishServing()` returns an `HlsServerHandle`
-that keeps the terminal playlist fetchable until `shutdown()`.
+`cutSegmentWithDuration(us)`. `publisher.localPort()` is an `OptionalInt`,
+empty after `noServer()` like `localAddr()`. `finishServing()` returns an
+`HlsServerHandle` that keeps the terminal playlist fetchable until
+`shutdown()`; its `localAddr()` is an `InetSocketAddress`.
 `HlsPublisher.builder().fromUrl("hls://127.0.0.1:8080?segment_duration=4")`
 seeds a builder from a URL; later setters overlay it. Basic auth
 (`basicAuth(user, pass)`) and HTTPS (`enableTls(certPath, keyPath)`) are on the

@@ -32,11 +32,34 @@ class HlsPublisherTest {
     }
 
     @Test
+    void localAddrIsAnInetSocketAddress(@TempDir Path dir) throws Exception {
+        HlsPublisher pub = open(dir);
+        java.net.InetSocketAddress a = pub.localAddr().orElseThrow();
+        assertInstanceOf(java.net.Inet4Address.class, a.getAddress());
+        assertEquals("127.0.0.1", a.getAddress().getHostAddress());
+        assertEquals(java.util.OptionalInt.of(a.getPort()), pub.localPort());
+        assertTrue(a.getPort() > 0, "the kernel's port for :0");
+        pub.finish();
+        assertThrows(IllegalStateException.class, pub::localAddr);
+        assertThrows(IllegalStateException.class, pub::localPort);
+    }
+
+    @Test
+    void localPortIsEmptyWithoutAServer(@TempDir Path dir) throws Exception {
+        HlsPublisher pub = HlsPublisher.builder().noServer().outputDir(dir.toString()).build();
+        try {
+            assertEquals(java.util.Optional.empty(), pub.localAddr());
+            assertEquals(java.util.OptionalInt.empty(), pub.localPort());
+        } finally {
+            pub.finish();
+        }
+    }
+
+    @Test
     void pushCutFinishWritesFiles(@TempDir Path dir) throws Exception {
         HlsPublisher pub = open(dir);
         assertTrue(pub.localAddr().isPresent());
-        assertTrue(pub.localAddr().get().startsWith("127.0.0.1:"));
-        assertTrue(pub.localPort() > 0);
+        assertTrue(pub.localPort().orElseThrow() > 0);
         assertEquals("HlsPublisher(open)", pub.toString());
 
         pub.pushTs(twoPackets());
@@ -108,7 +131,7 @@ class HlsPublisherTest {
                 .outputDir(dir.toString())
                 .bind("127.0.0.1:0")
                 .build()) {
-            assertTrue(pub.localPort() > 1);
+            assertTrue(pub.localPort().orElseThrow() > 1);
         }
     }
 
@@ -150,7 +173,7 @@ class HlsPublisherTest {
         try {
             assertTrue(a.localAddr().isEmpty());
             assertTrue(b.localAddr().isEmpty());
-            assertEquals(0, a.localPort());
+            assertEquals(java.util.OptionalInt.empty(), a.localPort());
             byte[] ts = new byte[376];
             for (int i = 0; i < ts.length; i += 188) ts[i] = 0x47;
             a.pushTs(ts);

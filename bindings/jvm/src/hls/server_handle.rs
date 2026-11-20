@@ -6,12 +6,13 @@
 use crate::panic::jni_native;
 use std::sync::LazyLock;
 
-use jni::sys::{jlong, jstring};
+use jni::sys::{jbyteArray, jlong};
 
 use tst_hls::HlsServerHandle;
 
 use crate::error::throw_closed;
 use crate::handle::HandleRegistry;
+use crate::jutil::socket_addr_array;
 
 static REGISTRY: LazyLock<HandleRegistry<HlsServerHandle>> = LazyLock::new(HandleRegistry::new);
 
@@ -24,12 +25,9 @@ jni_native! {
         env,
         _class,
         handle: jlong,
-    ) -> jstring = std::ptr::null_mut() => {
-        match REGISTRY.with(handle as u64, |h| h.local_addr().to_string()) {
-            Some(addr) => env
-                .new_string(addr)
-                .map(|s| s.into_raw())
-                .unwrap_or(std::ptr::null_mut()),
+    ) -> jbyteArray = std::ptr::null_mut() => {
+        match REGISTRY.with(handle as u64, |h| h.local_addr()) {
+            Some(addr) => socket_addr_array(env, addr),
             None => {
                 throw_closed(env, "HlsServerHandle");
                 std::ptr::null_mut()

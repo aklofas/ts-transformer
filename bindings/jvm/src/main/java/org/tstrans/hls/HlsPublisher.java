@@ -1,9 +1,12 @@
 package org.tstrans.hls;
 
+import java.net.InetSocketAddress;
 import java.util.Optional;
+import java.util.OptionalInt;
 import org.tstrans.HlsException;
 import org.tstrans.NativeHandle;
 import org.tstrans.NativeLoader;
+import org.tstrans.internal.NativeAddr;
 
 /**
  * HLS publisher: segments pushed MPEG-TS bytes to disk and serves them (plus a
@@ -24,11 +27,11 @@ import org.tstrans.NativeLoader;
 public final class HlsPublisher extends NativeHandle implements Publisher {
     static { NativeLoader.load(); }
 
-    private final String localAddr; // null = built without a server
+    private final InetSocketAddress localAddr; // null = built without a server
 
     HlsPublisher(long h) {
         setHandle(h);
-        this.localAddr = nLocalAddr(h);
+        this.localAddr = NativeAddr.decode(nLocalAddr(h));
     }
 
     /** A fresh builder. */
@@ -101,23 +104,23 @@ public final class HlsPublisher extends NativeHandle implements Publisher {
     }
 
     /**
-     * Bound server address as {@code "ip:port"}; the library default is
-     * {@code 127.0.0.1:8080} when {@link HlsPublisherBuilder#bind} was not called;
-     * empty after {@link HlsPublisherBuilder#noServer()}.
+     * Bound server address, with the kernel's port when the bind asked for port 0; the
+     * library default is {@code 127.0.0.1:8080} when {@link HlsPublisherBuilder#bind} was
+     * not called; empty after {@link HlsPublisherBuilder#noServer()}.
      */
-    public Optional<String> localAddr() {
+    public Optional<InetSocketAddress> localAddr() {
         ensureOpen("HlsPublisher is closed");
         return Optional.ofNullable(localAddr);
     }
 
     /**
      * Bound TCP port; the library default is {@code 8080} when
-     * {@link HlsPublisherBuilder#bind} was not called.
+     * {@link HlsPublisherBuilder#bind} was not called; empty after
+     * {@link HlsPublisherBuilder#noServer()}.
      */
-    public int localPort() {
+    public OptionalInt localPort() {
         ensureOpen("HlsPublisher is closed");
-        if (localAddr == null) return 0;
-        return Integer.parseInt(localAddr.substring(localAddr.lastIndexOf(':') + 1));
+        return localAddr == null ? OptionalInt.empty() : OptionalInt.of(localAddr.getPort());
     }
 
     /** Current playlist text; {@code isEvent} selects the terminal form. */
@@ -138,7 +141,7 @@ public final class HlsPublisher extends NativeHandle implements Publisher {
     static native long nBuild(String url, String bind, String outputDir, long segmentDurationMs,
         long maxSegmentDurationMs, int playlistWindow, int mode, String authUser, String authPass,
         String tlsCert, String tlsKey, boolean noServer) throws HlsException;
-    private static native String nLocalAddr(long handle);
+    private static native byte[] nLocalAddr(long handle);
     private static native void nPushTs(long handle, byte[] tsBytes) throws HlsException;
     private static native void nCutSegment(long handle) throws HlsException;
     private static native void nCutSegmentWithDuration(long handle, long mediaDurationUs) throws HlsException;

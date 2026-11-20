@@ -1,7 +1,9 @@
 package org.tstrans.hls;
 
+import java.net.InetSocketAddress;
 import org.tstrans.NativeHandle;
 import org.tstrans.NativeLoader;
+import org.tstrans.internal.NativeAddr;
 
 /**
  * The built-in HTTP(S) server kept serving a finished playlist + its segments.
@@ -12,15 +14,15 @@ import org.tstrans.NativeLoader;
 public final class HlsServerHandle extends NativeHandle {
     static { NativeLoader.load(); }
 
-    private final String localAddr;
+    private final InetSocketAddress localAddr;
 
     HlsServerHandle(long h) {
         setHandle(h);
-        this.localAddr = nLocalAddr(h);
+        this.localAddr = NativeAddr.decode(nLocalAddr(h));
     }
 
-    /** Bound address as {@code "ip:port"}. */
-    public String localAddr() {
+    /** Bound address. */
+    public InetSocketAddress localAddr() {
         ensureOpen("HlsServerHandle is closed");
         return localAddr;
     }
@@ -28,7 +30,7 @@ public final class HlsServerHandle extends NativeHandle {
     /** Bound TCP port. */
     public int localPort() {
         ensureOpen("HlsServerHandle is closed");
-        return Integer.parseInt(localAddr.substring(localAddr.lastIndexOf(':') + 1));
+        return localAddr.getPort();
     }
 
     /** Stop serving and wait up to 2 s for the {@code tst-hls} thread. Idempotent. */
@@ -42,6 +44,6 @@ public final class HlsServerHandle extends NativeHandle {
         return peekHandle() == 0 ? "HlsServerHandle(shutdown)" : "HlsServerHandle(serving)";
     }
 
-    private static native String nLocalAddr(long handle);
+    private static native byte[] nLocalAddr(long handle);
     private static native void nShutdown(long handle);
 }

@@ -24,7 +24,7 @@ use jni::jni_sig;
 use jni::jni_str;
 use jni::objects::{JByteArray, JObject, JString, JValue};
 use jni::strings::JNIString;
-use jni::sys::{jboolean, jint, jlong, jobject, jstring};
+use jni::sys::{jboolean, jbyteArray, jint, jlong, jobject, jstring};
 
 use tst_core::publisher::{Publisher, PublisherStats};
 use tst_core::url::redact_url;
@@ -224,17 +224,15 @@ jni_native! {
 }
 
 jni_native! {
-    /// `nLocalAddr(handle)` — `"ip:port"` or `null` when built without a server.
+    /// `nLocalAddr(handle)` — the bound address as `NativeAddr` bytes, or
+    /// `null` when built without a server.
     fn Java_org_tstrans_hls_HlsPublisher_nLocalAddr<'local>(
         env,
         _class,
         handle: jlong,
-    ) -> jstring = std::ptr::null_mut() => {
-        match REGISTRY.with(handle as u64, |p| p.local_addr().map(|a| a.to_string())) {
-            Some(Some(addr)) => env
-                .new_string(addr)
-                .map(|s| s.into_raw())
-                .unwrap_or(std::ptr::null_mut()),
+    ) -> jbyteArray = std::ptr::null_mut() => {
+        match REGISTRY.with(handle as u64, |p| p.local_addr()) {
+            Some(Some(addr)) => crate::jutil::socket_addr_array(env, addr),
             Some(None) => std::ptr::null_mut(),
             None => {
                 throw_closed(env, "HlsPublisher");
