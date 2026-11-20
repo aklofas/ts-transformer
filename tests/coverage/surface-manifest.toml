@@ -4808,7 +4808,7 @@ kind = "rust"
 crate = "tst-udp"
 item = "tst_udp::recv::UdpRecvTransport::local_addr"
 owning_tests = ["crates/tst-udp/tests/net_loopback_unicast.rs", "bindings/jvm/src/test/java/org/tstrans/shells/LocalPortTest.java"]
-bindings = ["c:deferred(the C udp receivers have no bound-port getter)", "python:tstrans.udp.RecvTransport.local_addr_port", "java:org.tstrans.shells.Receiver.localPort", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:deferred(the C udp receivers have no bound-port getter)", "python:tstrans.udp.RecvTransport.local_addr", "java:org.tstrans.shells.Receiver.localPort", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
