@@ -313,3 +313,9 @@ jni_native! {
         shells::mux_sender::register(env, opened_send(conn), cfg)
     }
 }
+
+/// Test hook: whether a call holds the slot of the listener `handle`.
+#[cfg(feature = "jni-test-hooks")]
+pub(crate) fn held(handle: jlong) -> bool {
+    REGISTRY_LISTENER.is_held(handle as u64)
+}
