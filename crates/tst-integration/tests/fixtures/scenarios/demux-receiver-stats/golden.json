@@ -1,0 +1,16 @@
+{
+  "schema_version": 0,
+  "lossy": false,
+  "core": [],
+  "extensions": {
+    "contract": "demux_receiver_stats",
+    "stats": {
+      "bytes_received": 2068,
+      "discontinuities": 1,
+      "nonconformant": 3,
+      "packets_received": 11,
+      "pmt_versions_seen": 2,
+      "program_maps_seen": 2
+    }
+  }
+}

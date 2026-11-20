@@ -74,6 +74,9 @@ pub fn all_scenarios() -> Vec<Box<dyn Scenario>> {
         Box::new(CancelledRecvKind),
         Box::new(PeerResetRecvKind),
         Box::new(UrlCorpus),
+        Box::new(DemuxReceiverStatsScenario),
+        Box::new(SrtRejectReasonScenario),
+        Box::new(MuxerReconfigure),
     ]
 }
 
@@ -2274,6 +2277,302 @@ impl Scenario for PeerResetRecvKind {
     }
 }
 
+// -----------------------------------------------------------------------------
+// Scenario 22 - demux-receiver-stats (binding_contract)
+// -----------------------------------------------------------------------------
+
+/// `kind = "binding_contract"`, `features = ["tcp"]`: a fixed TS read to its
+/// end by each binding's TCP `DemuxReceiver` must leave the same six counters
+/// in its stats record. The peer is a plain TCP listener that writes the input
+/// and closes. The golden is `extensions.stats`, keyed by the Rust field
+/// names; `core` is empty.
+///
+/// The input moves every counter off zero, and the two demuxer diagnostics to
+/// different values, so a binding that swaps or drops one is caught: two PMT
+/// versions (`program_maps_seen` = `pmt_versions_seen` = 2, equal by
+/// definition), one continuity-counter jump (`discontinuities` = 1) and
+/// `nonconformant` = 3: two PES with malformed marker bits, and the PES the
+/// jump cuts short.
+///
+/// This generator NEVER reads from testfiles/ or local/ directories.
+struct DemuxReceiverStatsScenario;
+
+impl Scenario for DemuxReceiverStatsScenario {
+    fn id(&self) -> &'static str {
+        "demux-receiver-stats"
+    }
+    fn kind(&self) -> &'static str {
+        "binding_contract"
+    }
+    fn features(&self) -> Vec<&'static str> {
+        vec!["tcp"]
+    }
+    fn tier(&self) -> &'static str {
+        "A"
+    }
+
+    fn generate(&self, out_dir: &Path) -> (PathBuf, Golden) {
+        let ts_bytes = demux_receiver_stats_input();
+        let artifact_rel = PathBuf::from(self.id()).join("input.ts");
+        write_file(&out_dir.join(&artifact_rel), &ts_bytes);
+
+        let golden = Golden {
+            schema_version: 0,
+            lossy: false,
+            core: vec![],
+            extensions: serde_json::json!({
+                "contract": "demux_receiver_stats",
+                "stats": demux_receiver_stats_json(&demux_receiver_stats_of(&ts_bytes)),
+            }),
+        };
+        (artifact_rel, golden)
+    }
+}
+
+/// The `demux-receiver-stats` input: PAT, PMT version 0, five H.264 PES (two
+/// with malformed marker bits, the last after a continuity-counter jump),
+/// PAT, PMT version 1, one more PES. Continuity counters are correct
+/// everywhere else.
+fn demux_receiver_stats_input() -> Vec<u8> {
+    const PMT_PID: u16 = 0x0100;
+    const VIDEO_PID: u16 = 0x0101;
+    let pat = build_pat_section(0x0001, 0x0001, PMT_PID);
+    let pmt = |version| build_pmt_section_version(0x0001, VIDEO_PID, VIDEO_PID, 0x1B, version);
+    let pes = |malformed, cc| ts_packet_cc(VIDEO_PID, true, &build_pes_h264(malformed), cc);
+
+    let mut out = Vec::new();
+    out.extend(ts_psi_packet_cc(0x0000, &pat, 0));
+    out.extend(ts_psi_packet_cc(PMT_PID, &pmt(0), 0));
+    out.extend(pes(false, 0));
+    out.extend(pes(true, 1));
+    out.extend(pes(false, 2));
+    out.extend(pes(true, 3));
+    out.extend(pes(false, 4));
+    out.extend(pes(false, 7)); // 4 -> 7: one discontinuity
+    out.extend(ts_psi_packet_cc(0x0000, &pat, 1));
+    out.extend(ts_psi_packet_cc(PMT_PID, &pmt(1), 1));
+    out.extend(pes(false, 8));
+    out
+}
+
+/// What a `DemuxReceiver` reading `ts` to its end reports, through an
+/// in-memory transport that hands out up to seven packets per receive.
+pub fn demux_receiver_stats_of(ts: &[u8]) -> tst_pipeline::DemuxReceiverStats {
+    use tst_core::transport::{RecvTransport, TransportError};
+
+    struct Source<'a>(&'a [u8]);
+    impl RecvTransport for Source<'_> {
+        fn recv_bytes(&mut self, buf: &mut [u8]) -> Result<usize, TransportError> {
+            if self.0.is_empty() {
+                return Err(TransportError::Closed);
+            }
+            let n = self.0.len().min(buf.len()).min(1316);
+            buf[..n].copy_from_slice(&self.0[..n]);
+            self.0 = &self.0[n..];
+            Ok(n)
+        }
+        fn max_payload(&self) -> usize {
+            1316
+        }
+        fn is_alive(&self) -> bool {
+            !self.0.is_empty()
+        }
+    }
+
+    let mut rx = tst_pipeline::DemuxReceiver::new(Source(ts));
+    while let Some(_event) = rx.recv_event().expect("an in-memory receive ends cleanly") {}
+    rx.stats()
+}
+
+/// The six counters of `stats` as the golden's `extensions.stats` object.
+pub fn demux_receiver_stats_json(stats: &tst_pipeline::DemuxReceiverStats) -> serde_json::Value {
+    serde_json::json!({
+        "bytes_received": stats.bytes_received,
+        "packets_received": stats.packets_received,
+        "program_maps_seen": stats.program_maps_seen,
+        "pmt_versions_seen": stats.pmt_versions_seen,
+        "discontinuities": stats.discontinuities,
+        "nonconformant": stats.nonconformant,
+    })
+}
+
+// -----------------------------------------------------------------------------
+// Scenario 23 - srt-reject-reason (binding_contract)
+// -----------------------------------------------------------------------------
+
+/// The stream ID the `srt-reject-reason` listener refuses, and its input.
+pub const SRT_REJECT_STREAM_ID: &str = "refused-by-rule";
+
+/// `kind = "binding_contract"`, `features = ["srt"]`: a caller whose stream ID
+/// a listener's rule refuses with `FORBIDDEN` must see, in every binding, the
+/// kind `CONNECT_FAILED` and the typed reason `FORBIDDEN` (1403). The input is
+/// the stream ID (UTF-8). `extensions.reject_reason` is the reason, by name
+/// and code; `extensions.reject_reasons` is every reason Rust names
+/// (`RejectReason::INTERNAL` then `RejectReason::PREDEFINED`), each with the
+/// name a binding must give its code: a binding leg checks its whole table
+/// against it, so a reason Rust adds later fails every binding leg that does
+/// not name it.
+///
+/// This generator NEVER reads from testfiles/ or local/ directories.
+struct SrtRejectReasonScenario;
+
+impl Scenario for SrtRejectReasonScenario {
+    fn id(&self) -> &'static str {
+        "srt-reject-reason"
+    }
+    fn kind(&self) -> &'static str {
+        "binding_contract"
+    }
+    fn features(&self) -> Vec<&'static str> {
+        vec!["srt"]
+    }
+    fn tier(&self) -> &'static str {
+        "A"
+    }
+
+    fn generate(&self, out_dir: &Path) -> (PathBuf, Golden) {
+        use tst_srt::error::RejectReason;
+
+        let artifact_rel = PathBuf::from(self.id()).join("input.bin");
+        write_file(
+            &out_dir.join(&artifact_rel),
+            SRT_REJECT_STREAM_ID.as_bytes(),
+        );
+
+        let golden = Golden {
+            schema_version: 0,
+            lossy: false,
+            core: vec![CoreEvent::Error {
+                code: tst_pipeline::binding::BindingErrorKind::SrtConnectFailed
+                    .name()
+                    .to_string(),
+            }],
+            extensions: serde_json::json!({
+                "contract": "srt_reject_reason",
+                "reject_reason": reject_reason_json(RejectReason::Forbidden),
+                "reject_reasons": reject_reasons_json(),
+            }),
+        };
+        (artifact_rel, golden)
+    }
+}
+
+/// The name a binding gives a reject reason: the predefined name, else
+/// Rust's variant name in upper snake case (`BadSecret` -> `BAD_SECRET`).
+pub fn reject_reason_name(reason: tst_srt::error::RejectReason) -> String {
+    if let Some(name) = reason.name() {
+        return name.to_string();
+    }
+    let mut out = String::new();
+    for (i, c) in format!("{reason:?}").chars().enumerate() {
+        if c.is_ascii_uppercase() && i > 0 {
+            out.push('_');
+        }
+        out.push(c.to_ascii_uppercase());
+    }
+    out
+}
+
+/// `{"code": …, "name": …}` for one reason.
+pub fn reject_reason_json(reason: tst_srt::error::RejectReason) -> serde_json::Value {
+    serde_json::json!({ "code": reason.raw(), "name": reject_reason_name(reason) })
+}
+
+/// Every reason Rust names, internal then predefined, in code order.
+pub fn reject_reasons_json() -> serde_json::Value {
+    use tst_srt::error::RejectReason;
+    RejectReason::INTERNAL
+        .into_iter()
+        .chain(RejectReason::PREDEFINED)
+        .map(reject_reason_json)
+        .collect()
+}
+
+// -----------------------------------------------------------------------------
+// Scenario 24 - muxer-reconfigure (roundtrip)
+// -----------------------------------------------------------------------------
+
+/// `kind = "roundtrip"`: mux, `reconfigure`, mux; every binding that has
+/// `Muxer::reconfigure` must produce the same TS bytes. The recipe is
+/// [`muxer_reconfigure_ts_bytes`]; the golden is `extensions.output_sha256`
+/// over the committed `output.ts`, as for the other roundtrip scenarios.
+///
+/// This generator NEVER reads from testfiles/ or local/ directories.
+struct MuxerReconfigure;
+
+impl Scenario for MuxerReconfigure {
+    fn id(&self) -> &'static str {
+        "muxer-reconfigure"
+    }
+    fn kind(&self) -> &'static str {
+        "roundtrip"
+    }
+    fn features(&self) -> Vec<&'static str> {
+        vec![]
+    }
+    fn tier(&self) -> &'static str {
+        "A"
+    }
+
+    fn generate(&self, out_dir: &Path) -> (PathBuf, Golden) {
+        let ts_bytes = muxer_reconfigure_ts_bytes();
+        let artifact_rel = PathBuf::from(self.id()).join("output.ts");
+        write_file(&out_dir.join(&artifact_rel), &ts_bytes);
+        let golden = Golden {
+            schema_version: 0,
+            lossy: false,
+            core: vec![],
+            extensions: serde_json::json!({ "output_sha256": sha256_hex(&ts_bytes) }),
+        };
+        (artifact_rel, golden)
+    }
+}
+
+/// Re-run the `muxer-reconfigure` recipe and return its TS bytes.
+///
+/// Program 1 (PMT PID 0x1000) starts with H.264 video on 0x1011 and AAC
+/// audio on 0x1021; one IDR and one ADTS frame at PTS 0. `reconfigure`
+/// then removes the audio and adds synchronous KLV (`carries_pts`) on
+/// 0x1031; one IDR and one ST 0601 local set (service id 0) at PTS 3600.
+/// Every push is a lone-target push; the packets are drained once, at the
+/// end.
+pub fn muxer_reconfigure_ts_bytes() -> Vec<u8> {
+    let config = |audio: bool, klv: bool| {
+        let mut prog = MuxerProgramConfigBuilder::new(1, 0x1000);
+        prog.add_video(0x1011, VideoCodec::H264);
+        if audio {
+            prog.add_audio(0x1021, AudioCodec::Aac);
+        }
+        if klv {
+            prog.add_klv(
+                0x1031,
+                KlvStreamType::SynchronousMetadata,
+                /*carries_pts=*/ true,
+            );
+        }
+        let mut b = MuxerConfig::builder();
+        b.add_program(prog.build());
+        b.build().expect("valid muxer config")
+    };
+    let mut mux = Muxer::new(config(true, false)).expect("muxer init");
+    let pts = Pts90khz::new(0);
+    mux.push_video(&synthetic_h264_idr(), pts, /*key_frame=*/ true)
+        .expect("push_video");
+    mux.push_audio(&synthetic_adts_frame(), pts)
+        .expect("push_audio");
+    mux.reconfigure(config(false, true)).expect("reconfigure");
+    let pts = Pts90khz::new(3_600);
+    mux.push_video(&synthetic_h264_idr(), pts, /*key_frame=*/ true)
+        .expect("push_video after reconfigure");
+    mux.push_klv(
+        &minimal_st0601_ls(),
+        pts,
+        /*metadata_service_id=*/ 0x00,
+    )
+    .expect("push_klv after reconfigure");
+    drain_mux(&mut mux)
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Hand-crafted TS input helpers (Scenarios 11–13, 17)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2286,6 +2585,11 @@ impl Scenario for PeerResetRecvKind {
 /// Build a 188-byte TS packet. `pid` must fit in 13 bits. `payload_unit_start`
 /// sets PUSI. `payload` must be ≤ 184 bytes; the remainder is stuffed with 0xFF.
 fn ts_packet(pid: u16, payload_unit_start: bool, payload: &[u8]) -> Vec<u8> {
+    ts_packet_cc(pid, payload_unit_start, payload, 0)
+}
+
+/// [`ts_packet`] with continuity counter `cc` (low four bits).
+fn ts_packet_cc(pid: u16, payload_unit_start: bool, payload: &[u8], cc: u8) -> Vec<u8> {
     assert!(pid <= 0x1FFF, "PID out of range");
     assert!(payload.len() <= 184, "payload too large for one TS packet");
     let mut pkt = vec![0u8; 188];
@@ -2293,8 +2597,8 @@ fn ts_packet(pid: u16, payload_unit_start: bool, payload: &[u8]) -> Vec<u8> {
     let pusi_bit: u8 = if payload_unit_start { 0x40 } else { 0x00 };
     pkt[1] = pusi_bit | ((pid >> 8) as u8 & 0x1F);
     pkt[2] = pid as u8;
-    // adaptation_field_control = 0b01 (payload only, no adaptation field), CC=0
-    pkt[3] = 0x10;
+    // adaptation_field_control = 0b01 (payload only, no adaptation field)
+    pkt[3] = 0x10 | (cc & 0x0F);
     pkt[4..].fill(0xFF); // stuff unused portion with 0xFF
     pkt[4..4 + payload.len()].copy_from_slice(payload);
     pkt
@@ -2304,13 +2608,18 @@ fn ts_packet(pid: u16, payload_unit_start: bool, payload: &[u8]) -> Vec<u8> {
 /// `pointer_field` byte (0x00) immediately after the 4-byte TS header when
 /// PUSI=1 (ISO/IEC 13818-1 §2.4.4.1).
 fn ts_psi_packet(pid: u16, section: &[u8]) -> Vec<u8> {
+    ts_psi_packet_cc(pid, section, 0)
+}
+
+/// [`ts_psi_packet`] with continuity counter `cc`.
+fn ts_psi_packet_cc(pid: u16, section: &[u8], cc: u8) -> Vec<u8> {
     assert!(
         section.len() <= 183,
         "PSI section too large for one TS packet (need room for pointer_field)"
     );
     let mut payload = vec![0x00]; // pointer_field = 0
     payload.extend_from_slice(section);
-    ts_packet(pid, /*pusi=*/ true, &payload)
+    ts_packet_cc(pid, /*pusi=*/ true, &payload, cc)
 }
 
 /// Compute CRC-32/MPEG-2 and append the 4-byte big-endian result to `data`.
@@ -2354,6 +2663,22 @@ fn build_pmt_section(
     stream_type: u8,
     corrupt_crc: bool,
 ) -> Vec<u8> {
+    let mut sec = build_pmt_section_version(program_number, pcr_pid, es_pid, stream_type, 0);
+    if corrupt_crc {
+        let last = sec.len() - 1;
+        sec[last] ^= 0xFF;
+    }
+    sec
+}
+
+/// [`build_pmt_section`] at PMT `version` (0..=31), with a valid CRC.
+fn build_pmt_section_version(
+    program_number: u16,
+    pcr_pid: u16,
+    es_pid: u16,
+    stream_type: u8,
+    version: u8,
+) -> Vec<u8> {
     // PMT section content after the 3-byte header (table_id + section_length):
     //   program_number(2) + version/current_next(1) + section_number(1) +
     //   last_section_number(1)                                          = 5
@@ -2367,7 +2692,7 @@ fn build_pmt_section(
     sec.push(0xB0 | ((section_length >> 8) as u8 & 0x0F));
     sec.push(section_length as u8);
     sec.extend_from_slice(&program_number.to_be_bytes());
-    sec.push(0xC1); // reserved + version=0 + current_next=1
+    sec.push(0xC1 | ((version & 0x1F) << 1)); // reserved + version + current_next=1
     sec.push(0x00); // section_number
     sec.push(0x00); // last_section_number
     let pcr_pid_field: u16 = 0xE000 | (pcr_pid & 0x1FFF);
@@ -2379,10 +2704,6 @@ fn build_pmt_section(
     sec.extend_from_slice(&es_pid_field.to_be_bytes());
     sec.extend_from_slice(&[0xF0, 0x00]); // reserved + ES_info_length = 0
     append_crc(&mut sec);
-    if corrupt_crc {
-        let last = sec.len() - 1;
-        sec[last] ^= 0xFF;
-    }
     sec
 }
 
@@ -2527,5 +2848,50 @@ impl Scenario for UrlCorpus {
             extensions: serde_json::json!({ "corpus": corpus }),
         };
         (PathBuf::from(self.id()).join("corpus.toml"), golden)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_stats_input_moves_every_counter_and_tells_them_apart() {
+        let input = demux_receiver_stats_input();
+        let s = demux_receiver_stats_of(&input);
+        assert_eq!(s.bytes_received, input.len() as u64);
+        assert_eq!(s.bytes_received, s.packets_received * 188);
+        // The two PMT counters are equal by definition; every other pair
+        // differs, so a binding that swaps two of them is caught.
+        assert_eq!(s.program_maps_seen, s.pmt_versions_seen);
+        let distinct: std::collections::BTreeSet<u64> = [
+            s.packets_received,
+            s.program_maps_seen,
+            s.discontinuities,
+            s.nonconformant,
+        ]
+        .into();
+        assert_eq!(distinct.len(), 4, "{s:?}");
+        assert!(!distinct.contains(&0), "{s:?}");
+    }
+
+    #[test]
+    fn the_reject_reason_table_names_each_code_once() {
+        use tst_srt::error::RejectReason;
+        let table = reject_reasons_json();
+        let rows = table.as_array().expect("an array");
+        assert_eq!(
+            rows.len(),
+            RejectReason::INTERNAL.len() + RejectReason::PREDEFINED.len()
+        );
+        let codes: Vec<i64> = rows.iter().map(|r| r["code"].as_i64().unwrap()).collect();
+        assert!(codes.windows(2).all(|w| w[0] < w[1]), "{codes:?}");
+        let names: std::collections::BTreeSet<&str> =
+            rows.iter().map(|r| r["name"].as_str().unwrap()).collect();
+        assert_eq!(names.len(), rows.len());
+        assert_eq!(reject_reason_name(RejectReason::BadSecret), "BAD_SECRET");
+        assert_eq!(reject_reason_name(RejectReason::RdvCookie), "RDV_COOKIE");
+        assert_eq!(reject_reason_name(RejectReason::Ipe), "IPE");
+        assert_eq!(reject_reason_name(RejectReason::Forbidden), "FORBIDDEN");
     }
 }

@@ -91,6 +91,7 @@ crate = "tst-core"
 item = "tst_core::mpegts::mux::Muxer::reconfigure"
 owning_tests = ["crates/tst-core/tests/mpegts/mux_reconfigure.rs"]
 bindings = ["c:deferred(0.11.0 c-surface parity batch)", "python:Muxer.reconfigure", "java:org.tstrans.mpegts.Muxer.reconfigure", "swift:deferred", "kotlin:deferred"]
+scenario_ids = ["muxer-reconfigure"]
 tier = "A"
 
 [[surface]]
@@ -2293,7 +2294,7 @@ crate = "tst-pipeline"
 item = "tst_pipeline::DemuxReceiver::stats"
 owning_tests = ["crates/tst-pipeline/src/demux_receiver.rs", "crates/tst-pipeline/tests/shells/pipeline_receiver.rs"]
 bindings = ["c:tst_demux_receiver_get_stats", "python:tstrans.shells.DemuxReceiver.stats", "java:org.tstrans.shells.DemuxReceiver.stats", "swift:deferred", "kotlin:deferred"]
-scenario_ids = []
+scenario_ids = ["demux-receiver-stats"]
 tier = "A"
 
 [[surface]]
@@ -5532,7 +5533,7 @@ crate = "tst-srt"
 item = "tst_srt::error::RejectReason::PREDEFINED"
 owning_tests = ["crates/tst-srt/src/error.rs"]
 bindings = ["c:deferred(C parity backlog — the table ports without callbacks)", "python:RejectReason", "java:org.tstrans.srt.RejectReason", "swift:deferred", "kotlin:deferred"]
-scenario_ids = []
+scenario_ids = ["srt-reject-reason"]
 tier = "A"
 
 [[surface]]
@@ -5541,7 +5542,7 @@ crate = "tst-srt"
 item = "tst_srt::error::RejectReason::INTERNAL"
 owning_tests = ["crates/tst-srt/src/error.rs"]
 bindings = ["c:deferred(C parity backlog — the C ABI has no typed reject reason)", "python:RejectReason", "java:org.tstrans.srt.RejectReason", "swift:deferred", "kotlin:deferred"]
-scenario_ids = []
+scenario_ids = ["srt-reject-reason"]
 tier = "A"
 
 [[surface]]
