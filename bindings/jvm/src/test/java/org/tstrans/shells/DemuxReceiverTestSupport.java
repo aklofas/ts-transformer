@@ -5,7 +5,6 @@ import java.net.InetAddress;
 import java.net.ServerSocket;
 import java.util.Arrays;
 import java.util.List;
-import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import org.tstrans.TestSupport;
@@ -72,21 +71,6 @@ final class DemuxReceiverTestSupport {
             peer.close();
             server.close();
         }
-    }
-
-    /** One {@code recvEvent()} on a daemon thread: the event (as an Optional) or the throwable. */
-    static CompletableFuture<Object> recvOnDaemon(DemuxReceiver rx) {
-        CompletableFuture<Object> f = new CompletableFuture<>();
-        Thread t = new Thread(() -> {
-            try {
-                f.complete(Optional.ofNullable(rx.recvEvent()));
-            } catch (Throwable e) {
-                f.complete(e);
-            }
-        }, "sink-recv");
-        t.setDaemon(true);
-        t.start();
-        return f;
     }
 
     /** Iterate {@code rx} to its end on a daemon thread: the events, or the throwable. */
