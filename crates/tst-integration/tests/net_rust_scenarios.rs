@@ -603,36 +603,74 @@ fn all_scenarios_match_committed_goldens() {
     for entry in &manifest.scenario {
         let committed = load_golden(&entry.golden);
         let input = load_input(&entry.input);
-
-        let mut observed_extensions = committed.extensions.clone();
-        let observed_core: Vec<CoreEvent> = match entry.kind.as_str() {
-            "demux" => run_demux(&input),
-            "roundtrip" => run_roundtrip(&entry.id, &input, &committed),
-            "binding_contract" => match run_contract_with_extensions(&entry.id, &input) {
-                Some((core, extensions)) => {
-                    observed_extensions = extensions;
-                    core
-                }
-                None => run_binding_contract(&entry.id, &input),
-            },
-            "url-corpus" => {
-                url_corpus_leg::run();
-                vec![]
-            }
-            other => panic!("unknown scenario kind '{}' in manifest", other),
-        };
-
-        let observed = Golden {
-            schema_version: committed.schema_version,
-            lossy: committed.lossy,
-            core: observed_core,
-            extensions: observed_extensions,
-        };
-
+        let observed = observe_golden(entry, &committed, &input);
         assert_eq!(
             observed, committed,
             "scenario '{}': observed golden differs from committed",
             entry.id
+        );
+    }
+}
+
+/// Run `entry` and build the golden it observed. The extensions of a
+/// scenario whose values live there are the observed ones; the others carry
+/// only their contract's name, copied from `committed`.
+fn observe_golden(entry: &ScenarioEntry, committed: &Golden, input: &[u8]) -> Golden {
+    let mut observed_extensions = committed.extensions.clone();
+    let observed_core: Vec<CoreEvent> = match entry.kind.as_str() {
+        "demux" => run_demux(input),
+        "roundtrip" => run_roundtrip(&entry.id, input, committed),
+        "binding_contract" => match run_contract_with_extensions(&entry.id, input) {
+            Some((core, extensions)) => {
+                observed_extensions = extensions;
+                core
+            }
+            None => run_binding_contract(&entry.id, input),
+        },
+        "url-corpus" => {
+            url_corpus_leg::run();
+            vec![]
+        }
+        other => panic!("unknown scenario kind '{}' in manifest", other),
+    };
+    Golden {
+        schema_version: committed.schema_version,
+        lossy: committed.lossy,
+        core: observed_core,
+        extensions: observed_extensions,
+    }
+}
+
+/// A scenario whose values live in `extensions` is compared on what the run
+/// observed: a committed value edited to something no run produces must show
+/// up as a difference, never be copied into the observed golden.
+#[test]
+fn an_edited_committed_extension_is_not_what_the_leg_observes() {
+    let manifest = load_manifest();
+    for (id, pointer) in [
+        ("demux-receiver-stats", "/stats/discontinuities"),
+        ("srt-reject-reason", "/reject_reason"),
+    ] {
+        let entry = manifest
+            .scenario
+            .iter()
+            .find(|e| e.id == id)
+            .unwrap_or_else(|| panic!("scenarios.toml has no '{id}'"));
+        let committed = load_golden(&entry.golden);
+        let mut edited = committed.clone();
+        *edited
+            .extensions
+            .pointer_mut(pointer)
+            .unwrap_or_else(|| panic!("'{id}': the golden has no {pointer}")) =
+            serde_json::json!("a value no run observes");
+        let observed = observe_golden(entry, &edited, &load_input(&entry.input));
+        assert_ne!(
+            observed.extensions, edited.extensions,
+            "'{id}': the leg took {pointer} from the committed golden instead of observing it"
+        );
+        assert_eq!(
+            observed, committed,
+            "scenario '{id}': observed golden differs from committed"
         );
     }
 }
