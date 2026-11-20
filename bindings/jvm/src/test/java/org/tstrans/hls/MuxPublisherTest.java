@@ -188,6 +188,25 @@ class MuxPublisherTest {
         assertEquals(input.value(), got.value());
     }
 
+    /** {@code keyFrame} reaches the muxer: only the key frame's PES is a random access point. */
+    @Test
+    void pushVideoMispPassesTheKeyFrameFlag(@TempDir Path dir) throws Exception {
+        MispTimestamp misp = MispTimestamp.micros(0x0005_F5E1_0000_0001L, 0x1F);
+        MuxPublisher mp = MuxPublisher.withConfigHls(pub(dir, HlsMode.LIVE), video());
+        mp.pushVideoMisp(syntheticH264IdrPrefix(), 9_000L, true, misp);
+        mp.pushVideoMisp(syntheticH264IdrPrefix(), 12_000L, false, misp);
+        mp.cutSegment();
+        mp.finishIntoPublisher().finish();
+
+        List<DemuxEvent.Video> videos = new ArrayList<>();
+        for (DemuxEvent ev : demux(Files.readAllBytes(firstSegment(dir)))) {
+            if (ev instanceof DemuxEvent.Video v) videos.add(v);
+        }
+        assertEquals(2, videos.size());
+        assertTrue(videos.get(0).randomAccessIndicator(), "the key frame");
+        assertFalse(videos.get(1).randomAccessIndicator(), "the frame pushed with keyFrame=false");
+    }
+
     @Test
     void pushVideoMispRefusesANanoTimestampOnH264(@TempDir Path dir) throws Exception {
         try (MuxPublisher mp = MuxPublisher.withConfigHls(pub(dir, HlsMode.LIVE), video())) {
