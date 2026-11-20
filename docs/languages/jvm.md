@@ -3070,7 +3070,8 @@ try (WhepServer server = WhepServer.bind("whep://0.0.0.0:8889?advertise=192.0.2.
     // record rides the first frame pushed at or after its PTS.
     mount.pushKlv(st0601Record, pts, /*metadataServiceId=*/ 0);
     mount.pushVideo(annexBAccessUnit, pts, /*keyFrame=*/ true);
-    System.out.println(server.localAddr() + " viewers=" + mount.stats().viewers());
+    // localAddr() and mediaAddr() are InetSocketAddresses: the kernel's port for :0.
+    System.out.println("port " + server.localAddr().getPort() + " viewers=" + mount.stats().viewers());
 }
 ```
 
@@ -3116,7 +3117,9 @@ try (WhepServer server = WhepServer.bind("whep://0.0.0.0:8889?advertise=192.0.2.
   the mount or server closed.
 - **Stats.** `WhepServer.stats()`, `MountHandle.stats()` and
   `MountHandle.sessions()` (one `SessionStats` per viewer) are snapshots;
-  every counter is the bit pattern of an unsigned 64-bit value.
+  every counter is the bit pattern of an unsigned 64-bit value. A session's
+  `remoteAddr()` (`Optional<InetSocketAddress>`) and `connectedFor()`
+  (`Optional<Duration>`) are empty until ICE has connected the viewer.
   `WhepServer.stats()` and `MountHandle.sessions()` ask the media thread and
   can wait up to 2 s for its reply when it is busy, so call them from a
   monitoring thread, not the thread that paces pushes; `MountHandle.stats()`
@@ -3218,8 +3221,8 @@ public final class ServeWhep {
         try (WhepServer server = WhepServer.bind(url);
              MountHandle mount = server.addMount("/live", mp2tMount());
              InputStream in = Files.newInputStream(input)) {
-            System.out.println("serving " + input + " at http://" + server.localAddr()
-                + "/live (media on udp " + server.mediaAddr() + ")");
+            System.out.println("serving " + input + " on port " + server.localAddr().getPort()
+                + " at /live (media on udp port " + server.mediaAddr().getPort() + ")");
             serve(in, server, mount);
             // The mount's demuxer emits an access unit when the next one
             // starts, so it runs one frame behind the bytes pushed and the

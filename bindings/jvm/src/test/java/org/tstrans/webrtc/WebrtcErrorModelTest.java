@@ -40,7 +40,7 @@ class WebrtcErrorModelTest {
     @Test @Timeout(15)
     void portInUseIsIo() throws Exception {
         try (WhepServer a = WhepServer.bind("whep://127.0.0.1:0")) {
-            String taken = a.localAddr();
+            String taken = org.tstrans.TestSupport.hostPort(a.localAddr());
             assertEquals(WebrtcException.Kind.IO,
                 kindOf(() -> WhepServer.bind("whep://" + taken)));
         }

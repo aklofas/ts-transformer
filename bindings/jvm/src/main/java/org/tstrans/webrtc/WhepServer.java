@@ -1,9 +1,11 @@
 package org.tstrans.webrtc;
 
+import java.net.InetSocketAddress;
 import java.util.Objects;
 import org.tstrans.NativeHandle;
 import org.tstrans.NativeLoader;
 import org.tstrans.WebrtcException;
+import org.tstrans.internal.NativeAddr;
 
 /**
  * WebRTC playback server: browsers pull a mount over WHEP (an HTTP POST of an
@@ -96,16 +98,22 @@ public final class WhepServer extends NativeHandle {
     public ServerStats stats() { ensureOpen(); return nStats(peekHandle()); }
 
     /**
-     * The signalling socket's address as {@code "ip:port"}, with the kernel's port
-     * when the URL asked for port 0. @throws IllegalStateException if closed.
+     * The signalling socket's address, with the kernel's port when the URL asked for
+     * port 0. @throws IllegalStateException if closed.
      */
-    public String localAddr() { ensureOpen(); return nLocalAddr(peekHandle()); }
+    public InetSocketAddress localAddr() {
+        ensureOpen();
+        return NativeAddr.decode(nLocalAddr(peekHandle()));
+    }
 
     /**
-     * The media (UDP) socket's address as {@code "ip:port"}, shared by every viewer.
+     * The media (UDP) socket's address, shared by every viewer.
      * @throws IllegalStateException if closed.
      */
-    public String mediaAddr() { ensureOpen(); return nMediaAddr(peekHandle()); }
+    public InetSocketAddress mediaAddr() {
+        ensureOpen();
+        return NativeAddr.decode(nMediaAddr(peekHandle()));
+    }
 
     /**
      * Stop serving; see the class's <b>Closing</b> section. Idempotent: a second call
@@ -132,8 +140,8 @@ public final class WhepServer extends NativeHandle {
         int audio, int klv, int seiBudgetBytes, int viewerQueuePackets) throws WebrtcException;
     private static native void nRemoveMount(long handle, String path) throws WebrtcException;
     private static native ServerStats nStats(long handle);
-    private static native String nLocalAddr(long handle);
-    private static native String nMediaAddr(long handle);
+    private static native byte[] nLocalAddr(long handle);
+    private static native byte[] nMediaAddr(long handle);
     private static native void nStop(long handle);
     private static native void nClose(long handle);
 }

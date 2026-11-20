@@ -1,6 +1,11 @@
 package org.tstrans.webrtc;
 
+import java.net.Inet4Address;
+import java.net.InetSocketAddress;
+import java.time.Duration;
+import java.util.Optional;
 import static org.junit.jupiter.api.Assertions.*;
+import static org.tstrans.TestSupport.hostPort;
 
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -20,13 +25,38 @@ class WhepServerTest {
     }
 
     @Test @Timeout(15)
+    void localAddrAndMediaAddrAreInetSocketAddresses() throws Exception {
+        WhepServer s = WhepServer.bind("whep://127.0.0.1:0");
+        for (InetSocketAddress a : new InetSocketAddress[] {s.localAddr(), s.mediaAddr()}) {
+            assertInstanceOf(Inet4Address.class, a.getAddress());
+            assertEquals("127.0.0.1", a.getAddress().getHostAddress());
+            assertTrue(a.getPort() > 0, "the kernel's port for :0");
+        }
+        s.close();
+        assertThrows(IllegalStateException.class, s::localAddr);
+        assertThrows(IllegalStateException.class, s::mediaAddr);
+    }
+
+    /** The record of a viewer that has not connected: no address, no time connected. */
+    @Test
+    void sessionStatsAreEmptyBeforeConnect() {
+        SessionStats before = SessionStats.fromNative("s1", "/cam", null, "new", -1L,
+            0, 0, 0, 0, 0, 0, 0);
+        assertEquals(Optional.empty(), before.remoteAddr());
+        assertEquals(Optional.empty(), before.connectedFor());
+        assertEquals("new", before.iceState());
+        SessionStats after = SessionStats.fromNative("s1", "/cam",
+            new byte[] {(byte) 192, 0, 2, 7, 0x13, (byte) 0x88}, "connected", 1_500_000_000L,
+            1, 2, 3, 4, 5, 6, 7);
+        assertEquals(Optional.of(new InetSocketAddress("192.0.2.7", 5000)), after.remoteAddr());
+        assertEquals(Optional.of(Duration.ofMillis(1500)), after.connectedFor());
+        assertEquals(7L, after.dcMessagesDropped());
+    }
+
+    @Test @Timeout(15)
     void bindMountPushStatsRemove() throws Exception {
         try (WhepServer s = WhepServer.bind(new WhepServerConfig("whep://127.0.0.1:0"))) {
-            String addr = s.localAddr();
-            assertNotNull(addr);
-            assertTrue(addr.startsWith("127.0.0.1:"), addr);
-            assertFalse(addr.endsWith(":0"), "the kernel-picked port is reported: " + addr);
-            assertTrue(s.mediaAddr().startsWith("127.0.0.1:"), s.mediaAddr());
+            assertNotEquals(0, s.localAddr().getPort(), "the kernel-picked port is reported");
             assertEquals(0L, s.stats().mounts());
 
             try (MountHandle m = s.addMount("/cam", MountConfig.defaults())) {
@@ -51,7 +81,7 @@ class WhepServerTest {
     void preflightDoesNotAdvertisePatch() throws Exception {
         try (WhepServer s = WhepServer.bind("whep://127.0.0.1:0")) {
             HttpClient client = HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1).build();
-            HttpRequest req = HttpRequest.newBuilder(URI.create("http://" + s.localAddr() + "/cam"))
+            HttpRequest req = HttpRequest.newBuilder(URI.create("http://" + hostPort(s.localAddr()) + "/cam"))
                     .method("OPTIONS", HttpRequest.BodyPublishers.noBody())
                     .build();
             HttpResponse<Void> resp = client.send(req, HttpResponse.BodyHandlers.discarding());

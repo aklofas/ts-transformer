@@ -9,7 +9,7 @@ use tst_core::mpegts::common::Pts90khz;
 use tst_webrtc::{IceState, MountHandle, SessionStats};
 
 use crate::handle::HandleRegistry;
-use crate::jutil::{FindClass, checked_u8, read_bytes};
+use crate::jutil::{FindClass, checked_u8, read_bytes, socket_addr_bytes};
 use crate::panic::jni_native;
 
 use super::errors::push_error;
@@ -171,30 +171,31 @@ fn ice_state_name(s: IceState) -> &'static str {
     }
 }
 
-/// One `org.tstrans.webrtc.SessionStats`.
+/// One `org.tstrans.webrtc.SessionStats`, through its `fromNative` factory.
 fn build_session<'l>(env: &mut Env<'l>, s: &SessionStats) -> jni::errors::Result<JObject<'l>> {
     let id = env.new_string(&s.id)?;
     let path = env.new_string(&s.mount_path)?;
     let remote: JObject = match s.remote_addr {
-        Some(a) => env.new_string(a.to_string())?.into(),
+        Some(a) => socket_addr_bytes(env, a)?.into(),
         None => JObject::null(),
     };
     let ice = env.new_string(ice_state_name(s.ice_state))?;
-    // -1 before the session connected, as the record documents.
-    let connected_ms = s
+    // -1 before the session connected: the factory makes it an empty Optional.
+    let connected_ns = s
         .connected_for
-        .map_or(-1, |d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX));
-    env.new_object(
+        .map_or(-1, |d| i64::try_from(d.as_nanos()).unwrap_or(i64::MAX));
+    env.call_static_method(
         FindClass(jni_str!("org/tstrans/webrtc/SessionStats")),
+        jni_str!("fromNative"),
         jni_sig!(
-            "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;JJJJJJJJ)V"
+            "(Ljava/lang/String;Ljava/lang/String;[BLjava/lang/String;JJJJJJJJ)Lorg/tstrans/webrtc/SessionStats;"
         ),
         &[
             JValue::Object(&id),
             JValue::Object(&path),
             JValue::Object(&remote),
             JValue::Object(&ice),
-            JValue::Long(connected_ms),
+            JValue::Long(connected_ns),
             JValue::Long(s.rtp_packets as i64),
             JValue::Long(s.rtp_bytes as i64),
             JValue::Long(s.nacks as i64),
@@ -203,7 +204,8 @@ fn build_session<'l>(env: &mut Env<'l>, s: &SessionStats) -> jni::errors::Result
             JValue::Long(s.packets_dropped_queue_full as i64),
             JValue::Long(s.dc_messages_dropped as i64),
         ],
-    )
+    )?
+    .l()
 }
 
 jni_native! {

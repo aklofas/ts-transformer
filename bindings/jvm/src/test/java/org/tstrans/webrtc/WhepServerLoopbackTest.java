@@ -70,14 +70,47 @@ class WhepServerLoopbackTest {
             }, "whep-pusher");
             pusher.setDaemon(true);
             pusher.start();
+            // Samples the session records while the viewer is attached, so the native
+            // record builder runs on a live session.
+            List<SessionStats> seen = java.util.Collections.synchronizedList(new ArrayList<>());
+            AtomicReference<Throwable> sampleFailure = new AtomicReference<>();
+            Thread sampler = new Thread(() -> {
+                try {
+                    while (!done.get()) {
+                        seen.addAll(m.sessions());
+                        Thread.sleep(20);
+                    }
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                } catch (Throwable t) {
+                    sampleFailure.set(t);
+                }
+            }, "whep-session-sampler");
+            sampler.setDaemon(true);
+            sampler.start();
             int frames;
             try {
                 frames = WebrtcProbe.nLoopbackViewerProbe(s.nativeHandleForTest(), "/cam");
+                seen.addAll(m.sessions());
             } finally {
                 done.set(true);
                 pusher.join(5_000);
+                sampler.join(5_000);
             }
             assertNull(pushFailure.get(), () -> "push failed: " + pushFailure.get());
+            assertNull(sampleFailure.get(), () -> "sessions() failed: " + sampleFailure.get());
+            assertFalse(seen.isEmpty(), "no session record was read while the viewer was attached");
+            synchronized (seen) {
+                for (SessionStats st : seen) {
+                    assertEquals("/cam", st.mountPath());
+                    // A connected session has a selected pair: its viewer's address.
+                    if (st.connectedFor().isPresent()) {
+                        assertTrue(st.remoteAddr().isPresent(), st.toString());
+                    }
+                    st.remoteAddr().ifPresent(a ->
+                        assertEquals("127.0.0.1", a.getAddress().getHostAddress(), st.toString()));
+                }
+            }
             assertTrue(frames > 0, "the viewer received no frame");
             assertTrue(m.stats().framesPushed() > 0);
             assertTrue(s.stats().rtpPacketsSent() > 0);

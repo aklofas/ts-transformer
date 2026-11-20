@@ -13,7 +13,7 @@ use std::sync::{Arc, LazyLock};
 
 use jni::Env;
 use jni::objects::{JObject, JString};
-use jni::sys::{jint, jlong};
+use jni::sys::{jbyteArray, jint, jlong};
 use tst_pipeline::binding::BindingErrorKind;
 use tst_webrtc::{AudioPolicy, KlvCarriage, MountConfig, MountKind, VideoCodec, WhepServer};
 
@@ -205,32 +205,30 @@ jni_native! {
 }
 
 jni_native! {
-    /// `WhepServer.nLocalAddr(handle)` → the signalling address as "ip:port".
+    /// `WhepServer.nLocalAddr(handle)` → the signalling address as `NativeAddr` bytes.
     fn Java_org_tstrans_webrtc_WhepServer_nLocalAddr<'local>(
         env,
         _class,
         handle: jlong,
-    ) -> JString<'local> = JString::null() => {
+    ) -> jbyteArray = std::ptr::null_mut() => {
         let Some(srv) = server(env, handle) else {
-            return JString::null();
+            return std::ptr::null_mut();
         };
-        env.new_string(srv.local_addr().to_string())
-            .unwrap_or_else(|_| JString::null())
+        crate::jutil::socket_addr_array(env, srv.local_addr())
     }
 }
 
 jni_native! {
-    /// `WhepServer.nMediaAddr(handle)` → the media address as "ip:port".
+    /// `WhepServer.nMediaAddr(handle)` → the media address as `NativeAddr` bytes.
     fn Java_org_tstrans_webrtc_WhepServer_nMediaAddr<'local>(
         env,
         _class,
         handle: jlong,
-    ) -> JString<'local> = JString::null() => {
+    ) -> jbyteArray = std::ptr::null_mut() => {
         let Some(srv) = server(env, handle) else {
-            return JString::null();
+            return std::ptr::null_mut();
         };
-        env.new_string(srv.media_addr().to_string())
-            .unwrap_or_else(|_| JString::null())
+        crate::jutil::socket_addr_array(env, srv.media_addr())
     }
 }
 

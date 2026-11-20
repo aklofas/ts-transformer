@@ -84,8 +84,8 @@ public final class ServeWhep {
         try (WhepServer server = WhepServer.bind(url);
              MountHandle mount = server.addMount("/live", mp2tMount());
              InputStream in = Files.newInputStream(input)) {
-            System.out.println("serving " + input + " at http://" + server.localAddr()
-                + "/live (media on udp " + server.mediaAddr() + ")");
+            System.out.println("serving " + input + " on port " + server.localAddr().getPort()
+                + " at /live (media on udp port " + server.mediaAddr().getPort() + ")");
             serve(in, server, mount);
             // The mount's demuxer emits an access unit when the next one
             // starts, so it runs one frame behind the bytes pushed and the
