@@ -386,11 +386,13 @@ def test_stats_counts_packets_and_reports() -> None:
 
 
 def test_close_while_stats_is_read_does_not_cancel() -> None:
-    """`stats()` holds the session's lock only for a moment: a `teardown()`
-    that finds it held waits for it instead of cancelling the session, so
-    the queued media is written and the TEARDOWN is answered. Threads read
-    `stats()` in a loop through every round, so some teardowns meet a
-    held lock (4000 rounds, or 5 s of them on a slow machine)."""
+    """Reads from other threads never make a `teardown()` cancel: `stats()`
+    takes no lock, and `is_session_alive()` holds the session's lock only
+    for a peek, which a `teardown()` that finds it held waits out instead of
+    cancelling the session, so the queued media is written and the
+    TEARDOWN is answered. Threads read both in a loop through every round,
+    so some teardowns meet a held lock (4000 rounds, or 5 s of them on a
+    slow machine)."""
     rounds, bundles, readers = 4000, 50, 3
     give_up = time.monotonic() + 5.0
     with _start_server() as server:
@@ -407,6 +409,7 @@ def test_close_while_stats_is_read_does_not_cancel() -> None:
                 while not stop.is_set():
                     try:
                         push.stats()
+                        push.is_session_alive()
                     except RtspError:
                         return  # the session closed under the loop
 
@@ -806,6 +809,15 @@ def test_stats_and_end_reason_after_close() -> None:
             push.teardown()
         assert ei.value.kind is RtspErrorKind.CLOSED
         assert repr(push.stats()) == repr(s)
+        # The same after a teardown() that returned.
+        mount = server.add_publish_mount("/cam2")
+        push = RtspClient.push(RtspClientConfig(_url(server, "/cam2")), PushDescription.mp2t())
+        for _ in range(5):
+            push.send_ts(TS_BUNDLE)
+        assert push.teardown() is None
+        assert _wait_for(lambda: mount.stats().rtp_packets_received == 5), mount.stats()
+        assert push.stats().packets_sent == 5
+        assert push.end_reason() is EndReason.CLEAN_TEARDOWN
 
 
 def test_stats_and_end_reason_after_into_sender() -> None:
@@ -823,6 +835,24 @@ def test_stats_and_end_reason_after_into_sender() -> None:
         sender.close()
         assert push.end_reason() is EndReason.CANCELLED
         assert push.stats().packets_sent == 1
+    finally:
+        server.close()
+        push.close()
+
+
+def test_stats_and_end_reason_after_into_mux_sender() -> None:
+    server = ScriptedRecordServer()
+    push = RtspClient.push(RtspClientConfig(server.url), PushDescription.mp2t())
+    try:
+        mux = push.into_mux_sender(video_only_program())
+        for i in range(3):
+            mux.send_video(_access_unit(i), pts=Pts90khz.from_raw(i * 3000), key_frame=(i == 0))
+        assert _wait_for(lambda: server.rtp_frames >= 1), server.rtp_frames
+        assert _wait_for(lambda: push.stats().packets_sent == server.rtp_frames)
+        assert push.end_reason() is None
+        mux.close()
+        assert push.end_reason() is EndReason.CANCELLED
+        assert push.stats().packets_sent >= 1
     finally:
         server.close()
         push.close()

@@ -12,7 +12,9 @@
 //! that call ends; a call only waiting for the session runs nothing after
 //! the close began and raises CLOSED; a conversion waits behind a query and
 //! refuses only behind a call that can park; a panic in a call poisons the
-//! session, and only `close()` runs on it afterwards. Every call that takes
+//! session: every call that takes it is refused from then on, while
+//! `close()` and `teardown()` still end the push and the reads below still
+//! answer. Every call that takes
 //! the slot takes it with the GIL released and builds its exception after
 //! it let go; `is_session_alive()` only peeks.
 //!
