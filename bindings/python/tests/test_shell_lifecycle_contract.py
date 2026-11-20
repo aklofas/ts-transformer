@@ -62,7 +62,7 @@ from tstrans.mpegts import Pts90khz
 from _builders.hang_deadline import call_with_hang_deadline
 from _builders.mux_programs import video_only_program
 from _builders.ports import free_udp_port
-from _builders.rist_ports import bind_even_port_or_skip
+from _builders.rist_ports import bind_even_port
 
 SCHEMES = ("srt", "rtp", "udp", "tcp", "rist")
 ERRORS = {
@@ -196,7 +196,7 @@ def _receiver_and_peer(
             close_peer = close_tcp_peer
 
         else:
-            rx, _ = bind_even_port_or_skip(lambda p: _open_receiver(shell, f"rist://@127.0.0.1:{p}"))
+            rx, _ = bind_even_port(lambda p: _open_receiver(shell, f"rist://@127.0.0.1:{p}"))
         cleanup.append(rx.close)
         yield rx, close_peer
     finally:
@@ -263,7 +263,7 @@ def _sender_with_peer(shell: str, scheme: str) -> Iterator[tuple[object, Callabl
                 server.close()
 
         else:
-            peer, port = bind_even_port_or_skip(lambda p: shells.Receiver.open(f"rist://@127.0.0.1:{p}"))
+            peer, port = bind_even_port(lambda p: shells.Receiver.open(f"rist://@127.0.0.1:{p}"))
             cleanup.append(peer.close)
             tx = _open_sender(shell, f"rist://127.0.0.1:{port}")
             drop = peer.close

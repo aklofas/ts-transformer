@@ -121,7 +121,7 @@ def test_corrupted_aac_strict_parse_raises():
         corrupted = _corrupt_aac_payload(clean_bytes)
 
         if corrupted == clean_bytes:
-            pytest.skip("could not locate ADTS syncword in synthetic TS — skipping corruption test")
+            pytest.fail("could not locate ADTS syncword in synthetic TS")
 
         corrupt_path = Path(tmp) / "corrupted.ts"
         corrupt_path.write_bytes(corrupted)
@@ -133,7 +133,7 @@ def test_corrupted_aac_strict_parse_raises():
         if isinstance(e, DemuxEvent.Audio) and e.codec.value == "aac"
     ]
     if not aac_evs:
-        pytest.skip("no AAC events in corrupted TS — syncword may not have landed in AAC PID")
+        pytest.fail("no AAC events in corrupted TS — syncword may not have landed in AAC PID")
 
     # Find an event whose raw bytes start with a corrupted (non-sync) header.
     corrupt_evs = [
@@ -141,7 +141,7 @@ def test_corrupted_aac_strict_parse_raises():
         if len(e.raw) >= 2 and not (e.raw[0] == 0xFF and (e.raw[1] & 0xF6) == 0xF0)
     ]
     if not corrupt_evs:
-        pytest.skip(
+        pytest.fail(
             f"corruption did not land at a frame start — "
             f"raw heads: {[bytes(e.raw[:2]) for e in aac_evs]}"
         )

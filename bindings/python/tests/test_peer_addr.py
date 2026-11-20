@@ -26,7 +26,7 @@ from tstrans.exceptions import RistError, RistErrorKind, UdpError, UdpErrorKind
 
 from _builders.native_hooks import native_hook, shells_hook
 from _builders.ports import free_udp_port
-from _builders.rist_ports import bind_even_port_or_skip
+from _builders.rist_ports import bind_even_port
 from _builders.wait import wait_for
 
 #: Every wait in this file.
@@ -292,7 +292,7 @@ def _open_rist_rx(query: str = "", source: Optional[str] = None) -> tuple[rist.R
             b = b.source(source)
         return b.build()
 
-    rx, port = bind_even_port_or_skip(open_fn)
+    rx, port = bind_even_port(open_fn)
     return rx, port  # type: ignore[return-value]
 
 
@@ -674,7 +674,7 @@ def test_shell_over_rist_reports_the_senders_address() -> None:
     def open_fn(port: int) -> shells.Receiver:
         return shells.Receiver.open(f"rist://@0.0.0.0:{port}?buffer=100")
 
-    rx, port = bind_even_port_or_skip(open_fn)
+    rx, port = bind_even_port(open_fn)
     assert isinstance(rx, shells.Receiver)
     try:
         assert rx.peer_addr() is None
