@@ -1016,10 +1016,10 @@ them into 7-packet (1316-byte) SRT bundles. Call `flush()` after the last push
 to emit any partial bundle, or `finish()` to end the stream: it flushes, then
 closes the transport without cancelling it first (so a transport that queues,
 an RTSP push, writes its queue), throws the first flush error, and leaves the
-handle for `close()`, which then does nothing more. A stream shorter than
-three TS packets in all is never sent: the sender finds the packet boundary
-only after three aligned packets, and until then neither `flush()` nor
-`finish()` sends anything or reports it.
+handle for `close()`, which then does nothing more. A stream of one or two
+aligned TS packets is not sent by either, and nothing reports it: the sender
+forwards bytes only once three aligned packets have confirmed the TS
+alignment; three or more are sent.
 
 ### RecvTransport hello
 

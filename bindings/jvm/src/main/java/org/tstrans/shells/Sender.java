@@ -112,6 +112,10 @@ public class Sender extends NativeHandle {
      * Flush any buffered partial TS bundle. Use after the last {@link #sendBytes}
      * call in a logical unit to ensure all bytes reach the peer.
      *
+     * <p>A stream of one or two aligned TS packets is not sent, and nothing
+     * reports it: the sender forwards bytes only once three aligned packets have
+     * confirmed the TS alignment. Three or more are sent.
+     *
      * <p>After {@code cancelHandle().cancel()} this throws the transport's
      * {@code CLOSED}, buffered data included.
      *
@@ -133,10 +137,9 @@ public class Sender extends NativeHandle {
      * call, and a call after {@link #close()}, do nothing. The handle still needs
      * {@link #close()} afterwards, which then does nothing more.
      *
-     * <p>A stream shorter than three TS packets in all is never sent: the sender
-     * finds the packet boundary only once three aligned packets have arrived, and
-     * until then neither {@link #flush()} nor this call has anything to send, and
-     * neither reports it.
+     * <p>A stream of one or two aligned TS packets is not sent by this call
+     * either, and nothing reports it: the sender forwards bytes only once three
+     * aligned packets have confirmed the TS alignment. Three or more are sent.
      *
      * <p>After {@code cancelHandle().cancel()} every call throws the transport's
      * {@code CLOSED}, a repeated one included.
