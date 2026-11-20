@@ -824,7 +824,9 @@ fn apply_tls_roots(
 pub struct PyRtspSession {
     /// Live `tst_rtp::RtspClient` in PLAY state. `Option` because
     /// `close()` / `__exit__` take it out to end it. `pause` / `play` /
-    /// `teardown` hold the mutex across their network exchange.
+    /// `teardown` hold the mutex across their network exchange. A receiver
+    /// taken by `into_*` holds a clone of the `Arc`, so the client ends at
+    /// `close()`, or when the last of the session and its receiver goes.
     client: Arc<Mutex<Option<RustRtspClient>>>,
     /// A clone of the client's cancel, kept outside the `client` mutex so
     /// `cancel_handle()` and a contended `close()` never wait behind a
@@ -881,18 +883,18 @@ fn poisoned() -> BindingError {
 /// `RtspClient::close`.
 impl Drop for PyRtspSession {
     fn drop(&mut self) {
-        let client = self.client.lock().unwrap_or_else(|e| e.into_inner()).take();
+        // Only this session's share of the client: a receiver taken from it
+        // keeps the client, and the last holder's drop ends it.
+        let client = std::mem::take(&mut self.client);
         let session = self
             .data_plane
-            .lock()
+            .get_mut()
             .unwrap_or_else(|e| e.into_inner())
             .take();
-        if client.is_some() || session.is_some() {
-            crate::util::drop_blocking(move || {
-                drop(client);
-                drop(session);
-            });
-        }
+        crate::util::drop_blocking(move || {
+            drop(client);
+            drop(session);
+        });
     }
 }
 
@@ -1022,7 +1024,8 @@ impl PyRtspSession {
     /// value, distinct from this Python wrapper) is consumed. Calling
     /// `into_demux_receiver` twice on the same `PyRtspSession`, or once
     /// `close()` has begun, raises `RtspError(CLOSED)` (the data plane is
-    /// a consumable handle).
+    /// a consumable handle). The receiver holds the session's client, so
+    /// collecting this session object does not end it; `close()` here does.
     ///
     /// `demux_config` accepts the same `tstrans.mpegts.DemuxerConfig`
     /// dataclass the Python `Demuxer(config=...)` constructor takes;
@@ -1078,7 +1081,8 @@ impl PyRtspSession {
             opened: crate::rtp::transport::opened_recv(transport),
             rtp_stats,
         };
-        PyDemuxReceiver::from_recv(py, opened, opts)
+        let client: crate::shells::demux_receiver::KeepAlive = self.client.clone();
+        PyDemuxReceiver::from_recv(py, opened, opts).map(|rx| rx.keeping_alive(client))
     }
 
     /// Consume the session's data plane and wrap it in an `H264Receiver`
@@ -1092,7 +1096,9 @@ impl PyRtspSession {
     ///
     /// The control-plane methods (`pause` / `play` / `teardown` /
     /// `cancel_handle`) remain usable after the call — only the data-plane
-    /// `RtspSession` (the inner Rust value) is consumed.
+    /// `RtspSession` (the inner Rust value) is consumed. The receiver holds
+    /// the session's client, so collecting this session object does not end
+    /// it; `close()` here does.
     ///
     /// Handle is zeroed BEFORE the fallible native work (prevents a double
     /// free if the construction raises).
@@ -1119,7 +1125,10 @@ impl PyRtspSession {
             .map_err(|e| raise(py, &RTSP, e))?;
 
         let receiver = session.into_h264_receiver(depay_config);
-        Ok(PyH264Receiver::from_h264_receiver(receiver))
+        Ok(PyH264Receiver::from_h264_receiver(
+            receiver,
+            Some(self.client.clone()),
+        ))
     }
 
     fn __enter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {

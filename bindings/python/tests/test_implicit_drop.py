@@ -17,6 +17,8 @@ from __future__ import annotations
 
 import gc
 import os
+import socket
+import struct
 import subprocess
 import sys
 import textwrap
@@ -239,45 +241,308 @@ def test_gc_dropped_rtsp_session_tears_down():
         assert server.stats().active_sessions == 0
 
 
-def test_gc_dropped_session_ends_its_live_receiver_closed():
+_IDR_NAL = b"\x00\x00\x00\x01\x65\xbb"
+
+
+def _wait_until(what: str, cond: Callable[[], bool], limit: float = 5.0) -> None:
+    end = time.monotonic() + limit
+    while not cond():
+        if time.monotonic() > end:
+            pytest.fail(f"timed out after {limit}s waiting for {what}")
+        time.sleep(0.02)
+
+
+class _Pusher:
+    """Pushes an IDR access unit to `mount` every 20 ms until `stop()`."""
+
+    def __init__(self, mount) -> None:  # type: ignore[no-untyped-def]
+        from tstrans.mpegts import Pts90khz
+
+        self._stop = threading.Event()
+
+        def run() -> None:
+            i = 0
+            while not self._stop.is_set():
+                mount.push_video(_IDR_NAL, pts=Pts90khz.from_raw(i * 3000), key_frame=True)
+                i += 1
+                self._stop.wait(0.02)
+
+        self._thread = threading.Thread(target=run, daemon=True)
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+        self._thread.join(5)
+        assert not self._thread.is_alive()
+
+
+def _rtsp_server():  # type: ignore[no-untyped-def]
+    from tstrans.rtp import RtspServer, RtspServerConfig
+
+    server = RtspServer.start(
+        RtspServerConfig(bind_addr="127.0.0.1:0", graceful_shutdown_drain_ms=50)
+    )
+    mount = server.add_unicast_mount("/live", _single_video_program())
+    return server, mount, server.local_addr()[1]
+
+
+def _receiver_of_a_collected_session(port: int, transport: str):  # type: ignore[no-untyped-def]
+    """`RtspClient.connect(cfg).into_demux_receiver()`: the session object is
+    gone once this returns. Each `next()` gives up after 5 s with
+    `RtpError(BACKPRESSURE)`, so a receiver that gets nothing fails the test
+    instead of hanging it."""
+    from tstrans.rtp import RtspClient, RtspClientConfig
+
+    rx = RtspClient.connect(
+        RtspClientConfig(
+            url=f"rtsp://127.0.0.1:{port}/live?transport={transport}&recv_timeout=5000",
+            keepalive=False,
+        )
+    ).into_demux_receiver()
+    gc.collect()
+    return rx
+
+
+@pytest.mark.parametrize("transport", ["tcp", "udp"])
+def test_a_receiver_outlives_its_collected_session(transport: str):
+    """The receiver holds the session's client: media pushed after the
+    session object was collected still arrives, and over TCP the receiver
+    ends with end of stream (`StopIteration`) when the server stops; the
+    client records a server's close of the control connection as
+    `CLEAN_TEARDOWN`."""
     pytest.importorskip("tstrans.rtp", exc_type=ImportError)
-    from tstrans.exceptions import RtpError, RtpErrorKind
-    from tstrans.rtp import RtspClient, RtspClientConfig, RtspServer, RtspServerConfig
     from tstrans.shells import EndReason
 
-    cfg = RtspServerConfig(bind_addr="127.0.0.1:0", graceful_shutdown_drain_ms=50)
-    with RtspServer.start(cfg) as server:
-        server.add_unicast_mount("/live", _single_video_program())
-        port = server.local_addr()[1]
-        # The receiver does not own the client: the session object goes away
-        # here, and its RTSP client with it.
-        rx = RtspClient.connect(
-            RtspClientConfig(url=f"rtsp://127.0.0.1:{port}/live?transport=tcp", keepalive=False)
-        ).into_demux_receiver()
-        gc.collect()
-
-        # A deadline that cannot be mistaken for the outcome: the watchdog's
-        # cancel also raises CLOSED, so it records that it fired.
-        done, timed_out = threading.Event(), threading.Event()
-        cancel = rx.cancel_handle()
-
-        def watchdog() -> None:
-            if not done.wait(5.0):
-                timed_out.set()
-                cancel.cancel()
-
-        t = threading.Thread(target=watchdog, daemon=True)
-        t.start()
+    server, mount, port = _rtsp_server()
+    try:
+        rx = _receiver_of_a_collected_session(port, transport)
         try:
-            with pytest.raises(RtpError) as e:
+            assert server.stats().active_sessions == 1
+            pusher = _Pusher(mount)
+            try:
                 next(rx)
+            finally:
+                pusher.stop()
+            assert rx.end_reason() is None
+            if transport == "tcp":
+                server.stop()
+                for _ in rx:
+                    pass
+                assert rx.end_reason() == EndReason.CLEAN_TEARDOWN
         finally:
-            done.set()
-            t.join()
-        assert not timed_out.is_set(), "the receiver did not end within 5 s"
-        assert e.value.kind == RtpErrorKind.CLOSED
-        assert rx.end_reason() == EndReason.CANCELLED
-        rx.close()
+            rx.close()
+    finally:
+        server.stop()
+
+
+@pytest.mark.parametrize("release", ["close", "collect"])
+def test_gc_dropped_session_leaves_its_live_receiver_receiving(release: str):
+    """Collecting the session object no longer ends its TCP-interleaved
+    receiver; the receiver's own `close()`, or its collection, releases the
+    client, and the server sees the session go."""
+    pytest.importorskip("tstrans.rtp", exc_type=ImportError)
+
+    server, mount, port = _rtsp_server()
+    try:
+        rx = _receiver_of_a_collected_session(port, "tcp")
+        pusher = _Pusher(mount)
+        try:
+            next(rx)
+            assert rx.end_reason() is None
+            assert server.stats().active_sessions == 1
+            if release == "close":
+                rx.close()
+            else:
+                del rx
+                gc.collect()
+            _wait_until("the server to see the client go", lambda: server.stats().active_sessions == 0)
+        finally:
+            pusher.stop()
+    finally:
+        server.stop()
+
+
+def test_closing_the_session_still_ends_its_receiver():
+    """`close()` on the session ends the client and so the receiver (end of
+    stream: the server accepted the TEARDOWN), although the receiver still
+    holds the client's cell."""
+    pytest.importorskip("tstrans.rtp", exc_type=ImportError)
+    from tstrans.rtp import RtspClient, RtspClientConfig
+    from tstrans.shells import EndReason
+
+    server, mount, port = _rtsp_server()
+    pusher = _Pusher(mount)
+    try:
+        session = RtspClient.connect(
+            RtspClientConfig(
+                url=f"rtsp://127.0.0.1:{port}/live?transport=tcp&recv_timeout=5000",
+                keepalive=False,
+            )
+        )
+        rx = session.into_demux_receiver()
+        try:
+            next(rx)
+            session.close()
+            for _ in rx:
+                pass
+            assert rx.end_reason() == EndReason.CLEAN_TEARDOWN
+            _wait_until("the server to see the client go", lambda: server.stats().active_sessions == 0)
+        finally:
+            rx.close()
+    finally:
+        pusher.stop()
+        server.stop()
+
+
+class _H264Peer:
+    """A scripted RTSP server for one `connect_h264` client over TCP: it
+    answers OPTIONS / DESCRIBE / SETUP / PLAY, then writes one interleaved
+    IDR access unit per `send_au()`, closes the connection on `hang_up()`,
+    and sets `client_gone` once the client sends TEARDOWN or closes its
+    side."""
+
+    def __init__(self) -> None:
+        from test_rtsp_client import _SDP_H264, _header
+
+        self._sdp, self._header = _SDP_H264, _header
+        self._listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self._listener.bind(("127.0.0.1", 0))
+        self._listener.listen(1)
+        self._listener.settimeout(10)
+        self.port = self._listener.getsockname()[1]
+        self.playing = threading.Event()
+        self.client_gone = threading.Event()
+        self._au = threading.Event()
+        self._hang_up = threading.Event()
+        self._thread = threading.Thread(target=self._serve, daemon=True)
+        self._thread.start()
+
+    def send_au(self) -> None:
+        self._au.set()
+
+    def hang_up(self) -> None:
+        self._hang_up.set()
+
+    def join(self) -> None:
+        self._hang_up.set()
+        self._thread.join(10)
+        assert not self._thread.is_alive()
+
+    def _reply(self, sock: socket.socket, req: str) -> None:
+        method = req.split(None, 1)[0]
+        extra, body = "", b""
+        if method == "OPTIONS":
+            extra = "Public: OPTIONS, DESCRIBE, SETUP, PLAY, PAUSE, TEARDOWN\r\n"
+        elif method == "DESCRIBE":
+            body = self._sdp
+            extra = f"Content-Type: application/sdp\r\nContent-Length: {len(body)}\r\n"
+        elif method == "SETUP":
+            extra = f"Session: DEADBEEF;timeout=60\r\nTransport: {self._header(req, 'transport')}\r\n"
+        else:
+            extra = "Session: DEADBEEF\r\n"
+        cseq = self._header(req, "cseq") or "1"
+        sock.sendall(f"RTSP/1.0 200 OK\r\nCSeq: {cseq}\r\n{extra}\r\n".encode() + body)
+
+    def _serve(self) -> None:
+        try:
+            sock, _ = self._listener.accept()
+        except OSError:
+            return
+        finally:
+            self._listener.close()
+        seq = 0
+        with sock:
+            # Short reads, so the loop also sees the test's requests.
+            sock.settimeout(0.05)
+            buf = b""
+            while not self._hang_up.is_set():
+                if self._au.is_set():
+                    self._au.clear()
+                    seq += 1
+                    rtp = struct.pack("!BBHII", 0x80, 0x80 | 96, seq, seq * 3000, 9) + _IDR_NAL[4:]
+                    sock.sendall(b"$\x00" + struct.pack("!H", len(rtp)) + rtp)
+                try:
+                    chunk = sock.recv(8192)
+                except socket.timeout:
+                    continue
+                except OSError:
+                    self.client_gone.set()
+                    return
+                if not chunk:
+                    self.client_gone.set()
+                    return
+                buf += chunk
+                while b"\r\n\r\n" in buf:
+                    head, buf = buf.split(b"\r\n\r\n", 1)
+                    req = head.decode("latin-1")
+                    if req.startswith("TEARDOWN"):
+                        self.client_gone.set()
+                    self._reply(sock, req)
+                    if req.startswith("PLAY"):
+                        self.playing.set()
+
+
+def _h264_receiver_of_a_collected_session(peer: _H264Peer):  # type: ignore[no-untyped-def]
+    from tstrans.rtp import RtspClient, RtspClientConfig, TransportPref
+
+    rx = RtspClient.connect_h264(
+        RtspClientConfig(
+            url=f"rtsp://127.0.0.1:{peer.port}/x",
+            transport_pref=TransportPref.TCP,
+            keepalive=False,
+        )
+    ).into_h264_receiver()
+    gc.collect()
+    assert peer.playing.is_set()
+    return rx
+
+
+def test_an_h264_receiver_outlives_its_collected_session():
+    """An access unit the server writes after the session object was
+    collected still arrives; the receiver ends with end of stream (`None`)
+    when the server closes the connection, which the client records as
+    `CLEAN_TEARDOWN`."""
+    pytest.importorskip("tstrans.rtp", exc_type=ImportError)
+    from tstrans.shells import EndReason
+
+    peer = _H264Peer()
+    try:
+        rx = _h264_receiver_of_a_collected_session(peer)
+        try:
+            assert not peer.client_gone.is_set()
+            peer.send_au()
+            au = rx.recv_au(timeout_ms=5000)
+            assert au is not None and au.key_frame
+            peer.hang_up()
+            assert rx.recv_au(timeout_ms=5000) is None
+            assert rx.end_reason() == EndReason.CLEAN_TEARDOWN
+        finally:
+            rx.close()
+    finally:
+        peer.join()
+
+
+@pytest.mark.parametrize("release", ["close", "collect"])
+def test_releasing_an_h264_receiver_releases_its_client(release: str):
+    """With the session object gone, the receiver's `close()` or its
+    collection ends the client: the server sees TEARDOWN or the
+    connection's end."""
+    pytest.importorskip("tstrans.rtp", exc_type=ImportError)
+
+    peer = _H264Peer()
+    try:
+        rx = _h264_receiver_of_a_collected_session(peer)
+        peer.send_au()
+        assert rx.recv_au(timeout_ms=5000) is not None
+        assert not peer.client_gone.is_set()
+        if release == "close":
+            rx.close()
+        else:
+            del rx
+            gc.collect()
+        assert peer.client_gone.wait(5.0), "the client outlived its receiver"
+    finally:
+        peer.join()
 
 
 # --------------------------------------------------------------------------- #

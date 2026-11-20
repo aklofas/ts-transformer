@@ -65,6 +65,7 @@ use crate::generated::stats_rtp::{H264DepayStats, RtpStats};
 use crate::generated::stats_shells::SocketStats;
 use crate::raise::{RTP, pyok, pyres, raise};
 use crate::shells::cancel::PyCancelHandle;
+use crate::shells::demux_receiver::KeepAlive;
 use crate::util::{CancelSource, close_owned, drop_owned};
 
 // ---------------------------------------------------------------------------
@@ -351,6 +352,10 @@ impl Drop for PyH264Receiver {
 pub(crate) struct H264Held {
     rx: H264Receiver,
     closed_end_reason: Arc<Mutex<Option<EndReason>>>,
+    /// The client of the RTSP session this receiver was taken from, so
+    /// collecting the session does not end the stream; it drops after the
+    /// receiver closes. `None` for a `listen()` receiver.
+    _client: Option<KeepAlive>,
 }
 
 impl tst_pipeline::binding::Close for H264Held {
@@ -371,7 +376,7 @@ impl PyH264Receiver {
     /// `receiver` already carries the owning RtspClient's shared
     /// end-reason slot (swapped in by `RtspSession::into_h264_receiver`
     /// before this constructor is ever called).
-    pub(crate) fn from_h264_receiver(receiver: H264Receiver) -> Self {
+    pub(crate) fn from_h264_receiver(receiver: H264Receiver, client: Option<KeepAlive>) -> Self {
         let cancel = CancelSource::new(receiver.cancel_handle());
         let local_addr = receiver.local_addr();
         let closed_end_reason = Arc::new(Mutex::new(None));
@@ -380,6 +385,7 @@ impl PyH264Receiver {
                 H264Held {
                     rx: receiver,
                     closed_end_reason: Arc::clone(&closed_end_reason),
+                    _client: client,
                 },
                 cancel.as_dyn(),
                 local_addr,
@@ -445,7 +451,7 @@ impl PyH264Receiver {
                     .map_err(|e| raise(py, &RTP, BindingError::from(e)))?
             }
         };
-        Ok(Self::from_h264_receiver(receiver))
+        Ok(Self::from_h264_receiver(receiver, None))
     }
 
     /// Receive the next reassembled H.264 Access Unit.

@@ -414,16 +414,18 @@ class RtspSession:
 
     `close()` (and the `with` exit, which calls it) ends the session and
     its client; `teardown()` reports what the server answered and keeps
-    the client until then. A session collected without `close()` writes a
-    best-effort TEARDOWN with the GIL released (500 ms bounds the write;
-    the reply is not awaited), then tells the client's thread to stop
-    without waiting for it; that thread closes the connection on its own.
+    the client until then. A receiver taken by `into_*` holds the client
+    too, so collecting the session object does not end it
+    (`RtspClient.connect(cfg).into_demux_receiver()` keeps receiving); the
+    client ends at the session's `close()`, or once the session and every
+    receiver taken from it are gone (the receiver's `close()` or its
+    collection). Ended without `close()`, the client writes a best-effort
+    TEARDOWN with the GIL released (500 ms bounds the write; the reply is
+    not awaited), then tells its thread to stop without waiting for it;
+    that thread closes the connection on its own.
 
-    A receiver never owns the client, so keep the session object alive
-    while one receives: collecting it ends a live TCP-interleaved receiver
-    with `RtpError(CLOSED)` after what is already queued, whatever the
-    server then does. `teardown()` or `close()` ends it with end of stream
-    once the server accepts the TEARDOWN, on a session whose cancel was
+    `teardown()` or `close()` ends a live TCP-interleaved receiver with end
+    of stream once the server accepts the TEARDOWN, on a session whose cancel was
     not set; on a session whose cancel handle had fired it is a cancel,
     `RtpError(CLOSED)`, whatever the server then does. A TEARDOWN the
     server refuses leaves the receiver running until `close()`, which ends

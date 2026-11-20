@@ -25,7 +25,7 @@
 
 #![allow(unsafe_op_in_unsafe_fn, clippy::useless_conversion)]
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use pyo3::Py;
 use pyo3::prelude::*;
@@ -110,11 +110,27 @@ pub(crate) struct PyDemuxReceiver {
     /// cancel across: a mount cancel must beat events already queued, like
     /// the receiver's own cancel.
     mount_cancel: Option<Arc<dyn TransportCancel>>,
+    /// What the transport needs alive besides itself: the client of the RTSP
+    /// session this receiver was taken from, so collecting the session does
+    /// not end the stream. Released after the transport closes, at `close()`
+    /// or collection; `None` on every other receiver.
+    keep_alive: Mutex<Option<KeepAlive>>,
 }
+
+/// An owner a receiver keeps alive until it closes.
+pub(crate) type KeepAlive = Arc<dyn std::any::Any + Send + Sync>;
 
 impl Drop for PyDemuxReceiver {
     fn drop(&mut self) {
         drop_owned(&self.owned.snapshot().domain, &self.owned);
+        let held = self
+            .keep_alive
+            .get_mut()
+            .unwrap_or_else(|e| e.into_inner())
+            .take();
+        if held.is_some() {
+            crate::util::drop_blocking(move || drop(held));
+        }
     }
 }
 
@@ -205,7 +221,15 @@ impl PyDemuxReceiver {
             owned,
             cancel,
             mount_cancel: None,
+            keep_alive: Mutex::new(None),
         })
+    }
+
+    /// Keep `owner` alive until this receiver closes or is collected.
+    #[cfg(feature = "rtp")]
+    pub(crate) fn keeping_alive(mut self, owner: KeepAlive) -> Self {
+        *self.keep_alive.get_mut().unwrap_or_else(|e| e.into_inner()) = Some(owner);
+        self
     }
 
     /// [`Self::from_opened`] for the transport of a publish mount, whose
@@ -460,7 +484,18 @@ impl PyDemuxReceiver {
     /// acquiring the mutex so a concurrent `__next__` parked in
     /// `recv_event` unparks promptly.
     fn close(&self, py: Python<'_>) -> PyResult<()> {
-        close_owned(py, &self.owned.snapshot().domain, &self.owned)
+        let closed = close_owned(py, &self.owned.snapshot().domain, &self.owned);
+        // After the transport: dropping the last holder of an RTSP client
+        // writes its TEARDOWN and stops its thread.
+        crate::util::allow_threads_parking(py, || {
+            drop(
+                self.keep_alive
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .take(),
+            )
+        });
+        closed
     }
 
     /// `True` while the receiver owns a live transport (a `__next__`
