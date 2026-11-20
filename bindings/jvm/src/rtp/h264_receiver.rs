@@ -32,7 +32,7 @@ use jni::jni_sig;
 use jni::jni_str;
 use jni::objects::{JByteArray, JObject, JObjectArray, JString, JValue};
 use jni::strings::JNIString;
-use jni::sys::{jboolean, jint, jlong, jobject};
+use jni::sys::{jboolean, jbyteArray, jint, jlong, jobject};
 
 use tst_rtp::rtsp::client::RtspCancelHandle as RustRtspCancel;
 use tst_rtp::rtsp::client::RtspClient as RustRtspClient;
@@ -522,31 +522,22 @@ jni_native! {
 // ─────────────────────────────────────────────────────────────────────────────
 
 jni_native! {
-    /// `H264Receiver.nLocalAddr(handle)` — local UDP socket address as
-    /// `"host:port"` string, or `null` for the TCP-interleaved (RTSP) path.
+    /// `H264Receiver.nLocalAddr(handle)` — the local UDP socket address as
+    /// `NativeAddr` bytes, or null for the TCP-interleaved (RTSP) path.
     fn Java_org_tstrans_rtp_H264Receiver_nLocalAddr<'local>(
         env,
         _class,
         handle: jlong,
-    ) -> jobject = std::ptr::null_mut() => {
+    ) -> jbyteArray = std::ptr::null_mut() => {
         // Lock-free: the bound address is a construction constant, snapshotted
         // at `insert_receiver`, so this answers while `recvAu` is parked.
         let Some(addr) = REGISTRY.snapshot(handle as u64, |a| *a) else {
             crate::error::throw_closed(env, "H264Receiver");
-            return JObject::null().into_raw();
+            return std::ptr::null_mut();
         };
         match addr {
-            None => JObject::null().into_raw(),
-            Some(a) => {
-                let s = a.to_string();
-                match env.new_string(&s) {
-                    Ok(js) => JObject::from(js).into_raw(),
-                    Err(e) => {
-                        let _ = env.throw_new(FindClass(jni_str!("java/lang/RuntimeException")), JNIString::from(e.to_string()));
-                        JObject::null().into_raw()
-                    }
-                }
-            }
+            None => std::ptr::null_mut(),
+            Some(a) => crate::jutil::socket_addr_array(env, a),
         }
     }
 }

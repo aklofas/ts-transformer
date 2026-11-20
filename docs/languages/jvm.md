@@ -2564,7 +2564,8 @@ try (RtspServer server = RtspServer.start(cfg);
     mount.pushVideo(annexBNal, /*pts=*/ 0L, /*keyFrame=*/ true);
     mount.pushKlv(klvBytes, /*pts=*/ 0L, /*metadataServiceId=*/ 1);
 
-    // server.localAddr() returns the bound "ip:port" (useful when port 0 is used).
+    // server.localAddr() returns the bound address, an Optional<InetSocketAddress>
+    // (getPort() is the kernel's port when port 0 is used).
 }
 // close() performs a graceful Notice 5402 teardown of active sessions (it takes
 // as long as stop(), the drain included), then frees the native server.
@@ -2705,8 +2706,8 @@ The surface:
   `intoDemuxReceiver()` / `intoDemuxReceiver(DemuxerConfig)`. The object stays
   usable after the transport is taken, after `removeMount` and after the
   server stops. `close()` frees only the wrapper; the mount stays registered.
-- `PublisherInfo` record: `peer` (`"ip:port"`), `shape`, `klv`,
-  `sinceUnixMs`, `generation`.
+- `PublisherInfo` record: `peer` (an `InetSocketAddress`), `shape`, `klv`,
+  `since` (an `Instant`), `generation`.
 - `PublishMountStats` record: every counter of the Rust snapshot in the same
   order, including `sourceRejected`, `ausReordered`, `ssrcChanges`, and
   `alignment` (a `ClockAlignment`: `NOT_APPLICABLE`, `PENDING`, `PROVISIONAL`

@@ -54,6 +54,31 @@ class NativeAddrTest {
     }
 
     @Test
+    void decodeKeepsAnIpv6ScopeId() {
+        byte[] fe80_1 = {(byte) 0xFE, (byte) 0x80, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1};
+        InetSocketAddress a = NativeAddr.decode(v6(fe80_1, 554, 2));
+        Inet6Address ip = assertInstanceOf(Inet6Address.class, a.getAddress());
+        assertEquals(2, ip.getScopeId());
+        assertEquals("fe80:0:0:0:0:0:0:1%2", ip.getHostAddress());
+        assertEquals(554, a.getPort());
+    }
+
+    /**
+     * The natives never send an IPv4-mapped address as 16 bytes (they send its IPv4 form,
+     * {@code jutil.rs} {@code an_ipv4_mapped_address_goes_out_as_ipv4}); were 16 mapped bytes
+     * to arrive without a scope, {@code InetAddress.getByAddress} still makes them IPv4.
+     */
+    @Test
+    void decodeOfAnIpv4MappedAddressIsAsMeasured() {
+        byte[] mapped = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, (byte) 0xFF, (byte) 0xFF, 127, 0, 0, 1};
+        InetSocketAddress a = NativeAddr.decode(v6(mapped, 5000, 0));
+        Inet4Address ip = assertInstanceOf(Inet4Address.class, a.getAddress());
+        assertEquals("127.0.0.1", ip.getHostAddress());
+        InetSocketAddress v4 = NativeAddr.decode(new byte[] {127, 0, 0, 1, 0x13, (byte) 0x88});
+        assertEquals(v4, a, "the mapped form and the IPv4 form name the same endpoint");
+    }
+
+    @Test
     void aNullArrayIsNoAddress() {
         assertNull(NativeAddr.decode(null));
     }

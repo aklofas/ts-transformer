@@ -539,6 +539,15 @@ pub(crate) fn socket_addr_array(env: &mut Env, addr: SocketAddr) -> jbyteArray {
     }
 }
 
+/// A socket address as an owned `byte[]` local reference in the
+/// [`addr_bytes`] layout, for a constructor or factory argument.
+pub(crate) fn socket_addr_bytes<'local>(
+    env: &mut Env<'local>,
+    addr: SocketAddr,
+) -> jni::errors::Result<JByteArray<'local>> {
+    env.byte_array_from_slice(&addr_bytes(addr))
+}
+
 /// Read a Java `byte[]` argument, or throw `RuntimeException` + return `None`.
 pub fn read_bytes(env: &mut Env, arr: &JByteArray) -> Option<Vec<u8>> {
     match env.convert_byte_array(arr) {
@@ -598,6 +607,19 @@ mod tests {
         let a = SocketAddr::V6(SocketAddrV6::new(Ipv6Addr::LOCALHOST, 0x8001, 0, 3));
         let mut want = Ipv6Addr::LOCALHOST.octets().to_vec();
         want.extend_from_slice(&[0x80, 0x01, 0, 0, 0, 3]);
+        assert_eq!(addr_bytes(a), want);
+    }
+
+    /// The bytes `socket_addr_array` hands Java for `[fe80::1%2]:554`: the
+    /// scope id travels, so `NativeAddr.decode` builds an `Inet6Address` with
+    /// scope 2.
+    #[test]
+    fn socket_addr_array_carries_the_scope_id() {
+        let ip: Ipv6Addr = "fe80::1".parse().unwrap();
+        let a = SocketAddr::V6(SocketAddrV6::new(ip, 554, 0, 2));
+        let mut want = ip.octets().to_vec();
+        want.extend_from_slice(&554u16.to_be_bytes());
+        want.extend_from_slice(&2u32.to_be_bytes());
         assert_eq!(addr_bytes(a), want);
     }
 

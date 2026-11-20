@@ -18,7 +18,7 @@ use jni::objects::{
     JBooleanArray, JByteArray, JIntArray, JLongArray, JObject, JObjectArray, JString,
 };
 use jni::strings::JNIString;
-use jni::sys::{jboolean, jint, jlong};
+use jni::sys::{jboolean, jbyteArray, jint, jlong};
 use secrecy::SecretString;
 
 use tst_core::mpegts::common::Pts90khz;
@@ -33,7 +33,7 @@ use tst_rtp::error::RtspServerError;
 use tst_rtp::rtsp::server::mount::{MountHandle as RustMountHandle, MountKind};
 
 use crate::handle::HandleRegistry;
-use crate::jutil::{checked_u8, read_bytes};
+use crate::jutil::{checked_u8, read_bytes, socket_addr_array};
 use crate::mpegts::muxer::build_muxer_config_from_arrays;
 
 use super::errors::{mount_error_to_jvm, server_error_to_jvm, throw_rtsp};
@@ -386,20 +386,19 @@ jni_native! {
 }
 
 jni_native! {
-    /// `RtspServer.nLocalAddr(handle)` → "ip:port" or null.
+    /// `RtspServer.nLocalAddr(handle)` → the bound address as `NativeAddr`
+    /// bytes, or null before bind.
     fn Java_org_tstrans_rtp_RtspServer_nLocalAddr<'local>(
         env,
         _class,
         handle: jlong,
-    ) -> JString<'local> = JString::null() => {
+    ) -> jbyteArray = std::ptr::null_mut() => {
         let Some(addr) = with_server(env, handle, |server| server.local_addr()) else {
-            return JString::null();
+            return std::ptr::null_mut();
         };
         match addr {
-            Some(addr) => env
-                .new_string(addr.to_string())
-                .unwrap_or_else(|_| JString::null()),
-            None => JString::null(),
+            Some(addr) => socket_addr_array(env, addr),
+            None => std::ptr::null_mut(),
         }
     }
 }

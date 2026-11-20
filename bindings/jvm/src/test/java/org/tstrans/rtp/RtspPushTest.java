@@ -814,8 +814,7 @@ class RtspPushTest {
     }
 
     private static RtspClientConfig serverConfig(RtspServer server) {
-        String addr = server.localAddr();
-        String port = addr.substring(addr.lastIndexOf(':') + 1);
+        int port = server.localAddr().orElseThrow().getPort();
         return RtspClientConfig.builder("rtsp://127.0.0.1:" + port + "/pub").keepalive(false).build();
     }
 

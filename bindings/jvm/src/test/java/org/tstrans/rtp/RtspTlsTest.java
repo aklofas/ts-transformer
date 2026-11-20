@@ -136,9 +136,8 @@ class RtspTlsTest {
             .tlsCert(cert.toString()).tlsKey(key.toString())
             .build();
         try (RtspServer server = RtspServer.start(serverCfg)) {
-            String addr = server.localAddr();
-            assertNotNull(addr, "server must be bound");
-            int port = Integer.parseInt(addr.substring(addr.lastIndexOf(':') + 1));
+            int port = server.localAddr().orElseThrow(() -> new AssertionError("server must be bound"))
+                .getPort();
             MountHandle mount = server.addUnicastMount("/live", roundtripConfig());
 
             CountDownLatch done = new CountDownLatch(1);

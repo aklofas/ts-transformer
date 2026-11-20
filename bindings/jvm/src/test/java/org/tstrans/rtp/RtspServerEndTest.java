@@ -191,9 +191,8 @@ class RtspServerEndTest {
     }
 
     private static int port(RtspServer server) {
-        String addr = server.localAddr();
-        assertNotNull(addr, "server must be bound");
-        return Integer.parseInt(addr.substring(addr.lastIndexOf(':') + 1));
+        return server.localAddr().orElseThrow(() -> new AssertionError("server must be bound"))
+            .getPort();
     }
 
     private static void assertNotice(Wire wire, RawPlayer player) {

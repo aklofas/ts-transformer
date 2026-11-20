@@ -79,12 +79,23 @@ class H264ReceiverTest {
      * selection to the OS and we discover the actual port from the receiver.
      */
     @Test
+    void localAddrIsAnInetSocketAddress() throws Exception {
+        H264Receiver rx = H264Receiver.listen("rtp://127.0.0.1:0?pt=96");
+        InetSocketAddress a = rx.localAddr().orElseThrow();
+        assertInstanceOf(java.net.Inet4Address.class, a.getAddress());
+        assertEquals("127.0.0.1", a.getAddress().getHostAddress());
+        assertTrue(a.getPort() > 0, "the kernel's port for :0");
+        rx.close();
+        assertThrows(IllegalStateException.class, rx::localAddr);
+    }
+
+    @Test
     void udpLoopbackSingleIdrPacket() throws Exception {
         try (H264Receiver rx = H264Receiver.listen("rtp://127.0.0.1:0?pt=96")) {
-            // Discover ephemeral port — localAddr() returns "host:port".
-            String addrStr = rx.localAddr();
-            assertNotNull(addrStr, "localAddr() must be non-null for UDP receiver");
-            int port = Integer.parseInt(addrStr.substring(addrStr.lastIndexOf(':') + 1));
+            // Discover the ephemeral port.
+            int port = rx.localAddr()
+                .orElseThrow(() -> new AssertionError("localAddr() must be present for a UDP receiver"))
+                .getPort();
             assertTrue(port > 0, "bound port must be positive");
 
             // Push the canned packet from a throwaway DatagramSocket.
@@ -129,9 +140,7 @@ class H264ReceiverTest {
     @Test
     void recvAuPerCallTimeoutRaisesTimeoutThenDeliversRealAu() throws Exception {
         try (H264Receiver rx = H264Receiver.listen("rtp://127.0.0.1:0?pt=96")) {
-            String addrStr = rx.localAddr();
-            assertNotNull(addrStr);
-            int port = Integer.parseInt(addrStr.substring(addrStr.lastIndexOf(':') + 1));
+            int port = rx.localAddr().orElseThrow().getPort();
 
             RtpException ex = assertThrows(RtpException.class, () -> rx.recvAu(200));
             assertEquals(RtpException.Kind.BACKPRESSURE, ex.kind());
@@ -168,9 +177,7 @@ class H264ReceiverTest {
     @Timeout(10)
     void iteratorCollectsTwoAus() throws Exception {
         try (H264Receiver rx = H264Receiver.listen("rtp://127.0.0.1:0?pt=96")) {
-            String addrStr = rx.localAddr();
-            assertNotNull(addrStr);
-            int port = Integer.parseInt(addrStr.substring(addrStr.lastIndexOf(':') + 1));
+            int port = rx.localAddr().orElseThrow().getPort();
 
             List<H264AccessUnit> collected = new ArrayList<>();
             // Consumer thread: collect exactly 2 AUs then break.
@@ -350,7 +357,7 @@ class H264ReceiverTest {
             .maxAuBytes(4 * 1024 * 1024L)
             .build();
         try (H264Receiver rx = H264Receiver.listen("rtp://127.0.0.1:0?pt=96", cfg)) {
-            assertNotNull(rx.localAddr());
+            assertTrue(rx.localAddr().isPresent());
         }
     }
 
@@ -363,7 +370,7 @@ class H264ReceiverTest {
             .initialParameterSets(sets)
             .build();
         try (H264Receiver rx = H264Receiver.listen("rtp://127.0.0.1:0?pt=96", cfg)) {
-            assertNotNull(rx.localAddr());
+            assertTrue(rx.localAddr().isPresent());
         }
     }
 
@@ -477,10 +484,7 @@ class H264ReceiverTest {
     }
 
     private static InetSocketAddress loopbackAddr(H264Receiver rx) {
-        String addr = rx.localAddr();
-        assertNotNull(addr);
-        return new InetSocketAddress("127.0.0.1",
-            Integer.parseInt(addr.substring(addr.lastIndexOf(':') + 1)));
+        return new InetSocketAddress("127.0.0.1", rx.localAddr().orElseThrow().getPort());
     }
 
     /** A single-NAL-unit RTP packet (PT 96, SSRC 9) carrying the two NAL bytes. */
@@ -583,9 +587,8 @@ class H264ReceiverTest {
         assumeTrue(isLinux(),
             "RTSP live fixture gated to Linux (real sockets + tokio runtime)");
         try (RtspServer server = RtspServer.start(RtspServerConfig.of("127.0.0.1:0"))) {
-            String addr = server.localAddr();
-            assertNotNull(addr, "server must be bound");
-            int port = Integer.parseInt(addr.substring(addr.lastIndexOf(':') + 1));
+            int port = server.localAddr().orElseThrow(() -> new AssertionError("server must be bound"))
+                .getPort();
             MountHandle mount = server.addUnicastMount("/live", mp2tCfg());
             try {
                 RtspSession session = RtspClient.connect(
@@ -618,9 +621,8 @@ class H264ReceiverTest {
         assumeTrue(isLinux(),
             "RTSP live fixture gated to Linux (real sockets + tokio runtime)");
         try (RtspServer server = RtspServer.start(RtspServerConfig.of("127.0.0.1:0"))) {
-            String addr = server.localAddr();
-            assertNotNull(addr, "server must be bound");
-            int port = Integer.parseInt(addr.substring(addr.lastIndexOf(':') + 1));
+            int port = server.localAddr().orElseThrow(() -> new AssertionError("server must be bound"))
+                .getPort();
             MountHandle mount = server.addUnicastMount("/live", mp2tCfg());
             try {
                 RtspSession session = RtspClient.connect(

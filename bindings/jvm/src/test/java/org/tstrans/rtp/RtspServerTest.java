@@ -17,13 +17,22 @@ class RtspServerTest {
     @Test @Timeout(15)
     void startBindsAndReportsLocalAddr() throws Exception {
         try (RtspServer s = RtspServer.start(RtspServerConfig.of("127.0.0.1:0"))) {
-            String addr = s.localAddr();
-            assertNotNull(addr, "localAddr should be populated after start()");
-            assertTrue(addr.startsWith("127.0.0.1:"));
+            assertTrue(s.localAddr().isPresent(), "localAddr should be populated after start()");
             ServerStats st = s.stats();
             assertEquals(0L, st.activeSessions());
             assertEquals(0L, st.mounts());
         }
+    }
+
+    @Test @Timeout(15)
+    void localAddrIsAnInetSocketAddress() throws Exception {
+        RtspServer s = RtspServer.start(RtspServerConfig.of("127.0.0.1:0"));
+        java.net.InetSocketAddress a = s.localAddr().orElseThrow();
+        assertInstanceOf(java.net.Inet4Address.class, a.getAddress());
+        assertEquals("127.0.0.1", a.getAddress().getHostAddress());
+        assertTrue(a.getPort() > 0, "the kernel's port for :0");
+        s.close();
+        assertThrows(IllegalStateException.class, s::localAddr);
     }
 
     @Test @Timeout(15)
@@ -61,7 +70,7 @@ class RtspServerTest {
             .auth(new BasicAuth("admin", "secret", "tst"))
             .build();
         try (RtspServer s = RtspServer.start(cfg)) {
-            assertNotNull(s.localAddr());
+            assertTrue(s.localAddr().isPresent());
         }
     }
 
@@ -72,7 +81,7 @@ class RtspServerTest {
             .auth(new DigestAuth("admin", "secret", DigestAlgorithm.SHA256, "tst"))
             .build();
         try (RtspServer s = RtspServer.start(cfg)) {
-            assertNotNull(s.localAddr());
+            assertTrue(s.localAddr().isPresent());
         }
     }
 
@@ -85,8 +94,7 @@ class RtspServerTest {
             .build();
         try (RtspServer s = RtspServer.start(cfg)) {
             s.addUnicastMount("/live", org.tstrans.TestSupport.roundtripConfig());
-            String addr = s.localAddr();
-            String url = "rtsp://127.0.0.1:" + addr.substring(addr.lastIndexOf(':') + 1) + "/live";
+            String url = "rtsp://127.0.0.1:" + s.localAddr().orElseThrow().getPort() + "/live";
             RtspClientConfig client = RtspClientConfig.builder(url)
                 .auth(new DigestAuth("admin", "secret"))
                 .build();

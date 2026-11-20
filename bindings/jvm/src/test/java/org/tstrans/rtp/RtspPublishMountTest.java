@@ -12,9 +12,12 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.net.Inet4Address;
 import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -314,7 +317,6 @@ class RtspPublishMountTest {
         try (RtspServer server = start(false);
              PublishMount mount = server.addPublishMount("/cam");
              DemuxReceiver rx = mount.intoDemuxReceiver()) {
-            long beforeConnectMs = System.currentTimeMillis();
             try (RawPublisher pub = new RawPublisher(port(server), "/cam")) {
                 for (int i = 0; i < 5; i++) pub.sendRtp(NULL_BUNDLE);
                 assertTrue(waitFor(() -> mount.stats().rtpPacketsReceived() >= 5),
@@ -327,17 +329,10 @@ class RtspPublishMountTest {
                 assertEquals(ClockAlignment.NOT_APPLICABLE, s.alignment());
 
                 PublisherInfo info = mount.publisher().orElseThrow();
-                long afterInfoMs = System.currentTimeMillis();
                 assertEquals(pub.localAddr(), info.peer());
                 assertEquals(PublishShape.MP2T, info.shape());
                 assertFalse(info.klv());
                 assertEquals(0L, info.generation());
-                // A wall-clock instant, not a duration: the ANNOUNCE happened after
-                // the publisher connected and before publisher() returned.
-                assertTrue(info.sinceUnixMs() >= beforeConnectMs
-                        && info.sinceUnixMs() <= afterInfoMs,
-                    () -> "sinceUnixMs " + info.sinceUnixMs() + " outside ["
-                        + beforeConnectMs + ", " + afterInfoMs + "]");
 
                 ServerStats st = server.stats();
                 assertEquals(1L, st.activePublishers());
@@ -396,6 +391,58 @@ class RtspPublishMountTest {
                 watchdog.join(JOIN_MS);
             }
         }
+    }
+
+    /**
+     * A wall-clock instant, not a duration: the ANNOUNCE happened after the publisher
+     * connected and before {@code publisher()} returned. The record keeps it after the
+     * server stopped.
+     */
+    @Test
+    @Timeout(30)
+    void publisherInfoSinceLiesBetweenTheTwoClockReads() throws Exception {
+        assumeLinux();
+        RtspServer server = start(false);
+        PublisherInfo info;
+        Instant before;
+        Instant after;
+        try (PublishMount mount = server.addPublishMount("/cam");
+             DemuxReceiver rx = mount.intoDemuxReceiver()) {
+            before = Instant.now();
+            try (RawPublisher pub = new RawPublisher(port(server), "/cam")) {
+                assertTrue(waitFor(() -> mount.publisher().isPresent()), "no publisher arrived");
+                info = mount.publisher().orElseThrow();
+                after = Instant.now();
+            }
+        } finally {
+            server.close();
+        }
+        Instant since = info.since();
+        assertFalse(since.isBefore(before.truncatedTo(ChronoUnit.MILLIS)),
+            () -> "since " + since + " before " + before);
+        assertFalse(since.isAfter(after), () -> "since " + since + " after " + after);
+        assertEquals(since, info.since(), "a record read after its server stopped keeps its time");
+    }
+
+    @Test
+    @Timeout(30)
+    void publisherInfoPeerIsTheClientsAddress() throws Exception {
+        assumeLinux();
+        RtspServer server = start(false);
+        PublisherInfo info;
+        InetSocketAddress client;
+        try (PublishMount mount = server.addPublishMount("/cam");
+             DemuxReceiver rx = mount.intoDemuxReceiver();
+             RawPublisher pub = new RawPublisher(port(server), "/cam")) {
+            assertTrue(waitFor(() -> mount.publisher().isPresent()), "no publisher arrived");
+            info = mount.publisher().orElseThrow();
+            client = pub.localAddr();
+        } finally {
+            server.close();
+        }
+        assertInstanceOf(Inet4Address.class, info.peer().getAddress());
+        assertEquals(client, info.peer());
+        assertEquals(client, info.peer(), "a record read after its server stopped keeps its peer");
     }
 
     @Test
@@ -562,9 +609,13 @@ class RtspPublishMountTest {
         assertEquals(ClockAlignment.SENDER_REPORT, s.alignment());
         assertEquals(14L, s.ssrcChanges());
         assertEquals(16L, s.peerCount());
-        PublisherInfo i = new PublisherInfo("127.0.0.1:1", PublishShape.ELEMENTARY, true, 7L, 2L);
+        PublisherInfo i = PublisherInfo.fromNative(new byte[] {127, 0, 0, 1, 0, 1},
+            PublishShape.ELEMENTARY, true, 7L, 5L, 2L);
+        assertEquals(new InetSocketAddress("127.0.0.1", 1), i.peer());
         assertEquals(PublishShape.ELEMENTARY, i.shape());
         assertTrue(i.klv());
+        assertEquals(Instant.ofEpochSecond(7, 5), i.since());
+        assertEquals(2L, i.generation());
         // Ordinals are numbered as in the C ABI and the Python IntEnums.
         assertEquals(0, PublishShape.MP2T.ordinal());
         assertEquals(1, PublishShape.ELEMENTARY.ordinal());
@@ -589,9 +640,8 @@ class RtspPublishMountTest {
     }
 
     private static int port(RtspServer server) {
-        String addr = server.localAddr();
-        assertNotNull(addr, "server must be bound");
-        return Integer.parseInt(addr.substring(addr.lastIndexOf(':') + 1));
+        return server.localAddr().orElseThrow(() -> new AssertionError("server must be bound"))
+            .getPort();
     }
 
     /** Poll {@code cond} every 20 ms for up to 5 s. */
@@ -773,8 +823,8 @@ class RtspPublishMountTest {
             out.flush();
         }
 
-        String localAddr() {
-            return sock.getLocalAddress().getHostAddress() + ":" + sock.getLocalPort();
+        InetSocketAddress localAddr() {
+            return new InetSocketAddress(sock.getLocalAddress(), sock.getLocalPort());
         }
 
         /** Send {@code requestLine} + CSeq + {@code rest}; read the response head. */

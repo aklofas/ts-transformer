@@ -261,6 +261,13 @@ public final class TestSupport {
         return (java.util.concurrent.atomic.AtomicLong) f.get(h);
     }
 
+    /** {@code "ip:port"} of {@code a}, the IPv6 host in brackets, for building a URL. */
+    public static String hostPort(InetSocketAddress a) {
+        String host = a.getAddress().getHostAddress();
+        return (a.getAddress() instanceof java.net.Inet6Address ? "[" + host + "]" : host)
+            + ":" + a.getPort();
+    }
+
     /** Drain every buffered TS byte from {@code m}. */
     public static byte[] drain(Muxer m) {
         ByteArrayOutputStream acc = new ByteArrayOutputStream();

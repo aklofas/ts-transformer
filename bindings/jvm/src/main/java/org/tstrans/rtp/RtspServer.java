@@ -1,10 +1,12 @@
 package org.tstrans.rtp;
 
+import java.net.InetSocketAddress;
 import java.util.Optional;
 import org.tstrans.MuxException;
 import org.tstrans.NativeHandle;
 import org.tstrans.NativeLoader;
 import org.tstrans.RtspException;
+import org.tstrans.internal.NativeAddr;
 import org.tstrans.mpegts.MuxerConfig;
 
 /**
@@ -95,8 +97,14 @@ public final class RtspServer extends NativeHandle {
     /** Aggregate server stats snapshot. @throws IllegalStateException if closed. */
     public ServerStats stats() { ensureOpen(); return nStats(peekHandle()); }
 
-    /** Bound listener address as {@code "ip:port"}, or {@code null} before bind. */
-    public String localAddr() { ensureOpen(); return nLocalAddr(peekHandle()); }
+    /**
+     * The bound listener address, with the kernel's port when the config asked for port 0;
+     * empty before bind. @throws IllegalStateException if closed.
+     */
+    public Optional<InetSocketAddress> localAddr() {
+        ensureOpen();
+        return Optional.ofNullable(NativeAddr.decode(nLocalAddr(peekHandle())));
+    }
 
     /**
      * Graceful shutdown: sends the Notice 5402 to each active session (up to 1&nbsp;s
@@ -339,7 +347,7 @@ public final class RtspServer extends NativeHandle {
         throws RtspException;
     private static native long nMountRules(long handle);
     private static native ServerStats nStats(long handle);
-    private static native String nLocalAddr(long handle);
+    private static native byte[] nLocalAddr(long handle);
     private static native void nStop(long handle, long drainMs) throws RtspException;
     private static native long nCancelHandle(long handle);
     private static native long nAddPublishMount(long serverHandle, String path)

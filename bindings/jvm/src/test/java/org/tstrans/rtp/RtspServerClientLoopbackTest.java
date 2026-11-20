@@ -53,9 +53,8 @@ class RtspServerClientLoopbackTest {
         String offlineSha = offlineSha();
 
         try (RtspServer server = RtspServer.start(RtspServerConfig.of("127.0.0.1:0"))) {
-            String addr = server.localAddr();
-            assertNotNull(addr, "server must be bound");
-            int port = Integer.parseInt(addr.substring(addr.lastIndexOf(':') + 1));
+            int port = server.localAddr().orElseThrow(() -> new AssertionError("server must be bound"))
+                .getPort();
             MountHandle mount = server.addUnicastMount("/live", roundtripConfig());
 
             // Continuous producer: keep pushing identical IDRs so post-PLAY bytes
@@ -203,8 +202,7 @@ class RtspServerClientLoopbackTest {
             "RTSP live loopback gated to Linux (real sockets + tokio runtime)");
 
         try (RtspServer server = RtspServer.start(RtspServerConfig.of("127.0.0.1:0"))) {
-            String addr = server.localAddr();
-            int port = Integer.parseInt(addr.substring(addr.lastIndexOf(':') + 1));
+            int port = server.localAddr().orElseThrow().getPort();
             MountHandle mount = server.addUnicastMount("/live", roundtripConfig());
 
             CountDownLatch done = new CountDownLatch(1);
@@ -273,8 +271,7 @@ class RtspServerClientLoopbackTest {
             "RTSP live loopback gated to Linux (real sockets + tokio runtime)");
 
         try (RtspServer server = RtspServer.start(RtspServerConfig.of("127.0.0.1:0"))) {
-            String addr = server.localAddr();
-            int port = Integer.parseInt(addr.substring(addr.lastIndexOf(':') + 1));
+            int port = server.localAddr().orElseThrow().getPort();
             MountHandle mount = server.addUnicastMount("/live", roundtripConfig());
 
             CountDownLatch done = new CountDownLatch(1);

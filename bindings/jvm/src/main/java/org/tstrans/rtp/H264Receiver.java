@@ -1,5 +1,6 @@
 package org.tstrans.rtp;
 
+import java.net.InetSocketAddress;
 import java.util.Iterator;
 import java.util.NoSuchElementException;
 import java.util.Optional;
@@ -7,6 +8,7 @@ import org.tstrans.NativeHandle;
 import org.tstrans.NativeLoader;
 import org.tstrans.RtpException;
 import org.tstrans.internal.EndReasonSnapshot;
+import org.tstrans.internal.NativeAddr;
 import org.tstrans.shells.CancelHandle;
 import org.tstrans.shells.EndReason;
 import org.tstrans.shells.SocketStats;
@@ -290,17 +292,17 @@ public final class H264Receiver extends NativeHandle implements Iterable<H264Acc
     }
 
     /**
-     * Local address the UDP socket is bound to, as {@code "host:port"}. Returns
-     * {@code null} for the TCP-interleaved (RTSP) path where no UDP socket exists.
+     * The local address the UDP socket is bound to; empty for the TCP-interleaved (RTSP)
+     * path, where no UDP socket exists.
      *
      * <p>Tests use this to discover the ephemeral port when the URL specifies
      * {@code :0}.
      *
      * @throws IllegalStateException if the receiver is closed
      */
-    public String localAddr() {
+    public Optional<InetSocketAddress> localAddr() {
         ensureOpen("H264Receiver is closed");
-        return nLocalAddr(peekHandle());
+        return Optional.ofNullable(NativeAddr.decode(nLocalAddr(peekHandle())));
     }
 
     /**
@@ -400,7 +402,7 @@ public final class H264Receiver extends NativeHandle implements Iterable<H264Acc
     private static native H264DepayStats nDepayStats(long handle);
     private static native RtpStats nRtpStats(long handle);
     private static native SocketStats nSocketStats(long handle);
-    private static native String nLocalAddr(long handle);
+    private static native byte[] nLocalAddr(long handle);
     private static native long nCancelHandle(long handle);
     private static native int nEndReason(long handle);
     private static native String nEndDetail(long handle);
