@@ -36,6 +36,46 @@ pub(crate) fn register(parent: &Bound<'_, PyModule>) -> PyResult<()> {
         open_cancel::open_cancel_with_slow_open_for_test,
         &m
     )?)?;
+    #[cfg(feature = "py-test-hooks")]
+    m.add_function(wrap_pyfunction!(slot_held_for_test, &m)?)?;
     parent.add_submodule(&m)?;
     Ok(())
+}
+
+/// `_slot_held_for_test(obj)`: whether a call on another thread holds the
+/// slot of `obj` (a shell, a udp or rist receive transport, a tcp
+/// transport), so a test reads a getter only once that call is parked.
+/// Never waits.
+#[cfg(feature = "py-test-hooks")]
+#[pyfunction]
+#[pyo3(name = "_slot_held_for_test")]
+fn slot_held_for_test(obj: &Bound<'_, PyAny>) -> PyResult<bool> {
+    if let Ok(s) = obj.cast::<sender::PySender>() {
+        return Ok(s.borrow().slot_held());
+    }
+    if let Ok(s) = obj.cast::<receiver::PyReceiver>() {
+        return Ok(s.borrow().slot_held());
+    }
+    if let Ok(s) = obj.cast::<mux_sender::PyMuxSender>() {
+        return Ok(s.borrow().slot_held());
+    }
+    if let Ok(s) = obj.cast::<demux_receiver::PyDemuxReceiver>() {
+        return Ok(s.borrow().slot_held());
+    }
+    #[cfg(feature = "udp")]
+    if let Ok(s) = obj.cast::<crate::udp::PyUdpRecvTransport>() {
+        return Ok(s.borrow().slot_held());
+    }
+    #[cfg(feature = "rist")]
+    if let Ok(s) = obj.cast::<crate::rist::PyRistRecvTransport>() {
+        return Ok(s.borrow().slot_held());
+    }
+    #[cfg(feature = "tcp")]
+    if let Ok(s) = obj.cast::<crate::tcp::PyTcpTransport>() {
+        return Ok(s.borrow().slot_held());
+    }
+    Err(pyo3::exceptions::PyTypeError::new_err(format!(
+        "no slot probe for {}",
+        obj.get_type().name()?
+    )))
 }

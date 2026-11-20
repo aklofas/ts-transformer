@@ -44,6 +44,14 @@ pub(crate) struct PySender {
     cancel: Arc<CancelSource>,
 }
 
+/// Whether a call on another thread holds the slot. Test-only.
+#[cfg(feature = "py-test-hooks")]
+impl PySender {
+    pub(crate) fn slot_held(&self) -> bool {
+        self.owned.is_held()
+    }
+}
+
 impl Drop for PySender {
     fn drop(&mut self) {
         drop_owned(&self.owned.snapshot().domain, &self.owned);

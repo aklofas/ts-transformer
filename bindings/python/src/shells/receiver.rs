@@ -40,6 +40,14 @@ pub(crate) struct PyReceiver {
     cancel: Arc<CancelSource>,
 }
 
+/// Whether a call on another thread holds the slot. Test-only.
+#[cfg(feature = "py-test-hooks")]
+impl PyReceiver {
+    pub(crate) fn slot_held(&self) -> bool {
+        self.owned.is_held()
+    }
+}
+
 /// The shell's construction-time handles, read without the slot.
 struct Handles {
     /// The transport's source record; `None` for a transport that keeps none.

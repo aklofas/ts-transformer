@@ -86,6 +86,14 @@ pub(crate) struct PyMuxSender {
     cancel: Arc<CancelSource>,
 }
 
+/// Whether a call on another thread holds the slot. Test-only.
+#[cfg(feature = "py-test-hooks")]
+impl PyMuxSender {
+    pub(crate) fn slot_held(&self) -> bool {
+        self.owned.is_held()
+    }
+}
+
 impl Drop for PyMuxSender {
     fn drop(&mut self) {
         drop_owned(&self.owned.snapshot().domain, &self.owned);

@@ -119,6 +119,14 @@ pub(crate) struct PyTcpTransport {
     conversion: AtomicU8,
 }
 
+/// Whether a call on another thread holds the slot. Test-only.
+#[cfg(feature = "py-test-hooks")]
+impl PyTcpTransport {
+    pub(crate) fn slot_held(&self) -> bool {
+        self.owned.is_held()
+    }
+}
+
 /// No conversion has run, or the last one was refused.
 const OPEN: u8 = 0;
 /// A conversion is deciding; a `send()` / `recv()` that starts now waits.

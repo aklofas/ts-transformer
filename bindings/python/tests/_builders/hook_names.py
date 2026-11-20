@@ -41,6 +41,7 @@ EXPECTED = (
     "_native.rtp._rtsp_session_poison_for_test",
     "_native.shells._open_cancel_with_slow_open_for_test",
     "_native.shells._slow_cancel_handle_for_test",
+    "_native.shells._slot_held_for_test",
     "_native.shells._slow_drop_for_test",
     "_native.webrtc._loopback_viewer_probe",
 )

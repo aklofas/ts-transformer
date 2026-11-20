@@ -336,6 +336,14 @@ pub(crate) struct PyUdpRecvTransport {
     cancel: Arc<CancelSource>,
 }
 
+/// Whether a call on another thread holds the slot. Test-only.
+#[cfg(feature = "py-test-hooks")]
+impl PyUdpRecvTransport {
+    pub(crate) fn slot_held(&self) -> bool {
+        self.owned.is_held()
+    }
+}
+
 impl PyUdpRecvTransport {
     /// The bound address, or `UdpError(CLOSED)` once closed.
     fn bound(&self, py: Python<'_>) -> PyResult<std::net::SocketAddr> {

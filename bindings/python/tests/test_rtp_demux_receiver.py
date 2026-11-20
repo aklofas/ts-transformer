@@ -30,6 +30,7 @@ from _builders.mux_programs import video_only_program as _video_only_program
 from _builders.hang_deadline import call_with_hang_deadline
 from _builders.ports import free_udp_port as _free_udp_port
 from _builders.unknown_stream import _crc32_mpeg, _ts_packet
+from _builders.wait import wait_until
 
 
 def _build_minimal_ts_bytes() -> bytes:
@@ -444,15 +445,6 @@ def _park(rx) -> tuple[threading.Thread, threading.Event]:
     return t, started
 
 
-def _wait_for(cond: Callable[[], bool]) -> bool:
-    deadline = time.monotonic() + _WAIT_S
-    while time.monotonic() < deadline:
-        if cond():
-            return True
-        time.sleep(0.01)
-    return cond()
-
-
 @pytest.mark.parametrize("cls", [shells.DemuxReceiver, shells.Receiver])
 def test_rtp_stats_counts_a_malformed_datagram(cls) -> None:
     """A datagram whose first byte says RTP version 1 is dropped and
@@ -462,7 +454,7 @@ def test_rtp_stats_counts_a_malformed_datagram(cls) -> None:
     try:
         t, _ = _park(rx)
         _send_datagram(port, b"\x40" + b"\x00" * 11 + b"\x47" + b"\x00" * 187)
-        assert _wait_for(lambda: rx.rtp_stats().malformed_packets == 1), rx.rtp_stats()
+        assert wait_until(lambda: rx.rtp_stats().malformed_packets == 1, _WAIT_S), rx.rtp_stats()
         assert rx.rtp_stats().source_rejected == 0
     finally:
         rx.close()
@@ -480,7 +472,7 @@ def test_rtp_stats_answers_while_a_receive_is_parked_and_after_close(cls) -> Non
     t, _ = _park(rx)
     for _ in range(3):
         _send_datagram(port, b"\x40" + b"\x00" * 199)
-    assert _wait_for(lambda: rx.rtp_stats().malformed_packets == 3)
+    assert wait_until(lambda: rx.rtp_stats().malformed_packets == 3, _WAIT_S)
     # The receive has not returned: the datagrams were all dropped.
     assert t.is_alive()
     blocked, got = call_with_hang_deadline(rx.rtp_stats, 5.0)
@@ -513,11 +505,11 @@ def test_rtp_stats_racing_close_never_fails(cls) -> None:
 
         t = threading.Thread(target=read, daemon=True)
         t.start()
-        assert _wait_for(lambda: len(answers) > 0)
+        assert wait_until(lambda: len(answers) > 0, _WAIT_S)
         rx.close()
         # Read on a little after the close, then stop.
         n = len(answers)
-        assert _wait_for(lambda: len(answers) > n)
+        assert wait_until(lambda: len(answers) > n, _WAIT_S)
         stop.set()
         t.join(_WAIT_S)
         assert not t.is_alive()

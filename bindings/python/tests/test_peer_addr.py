@@ -24,9 +24,10 @@ import pytest
 from tstrans import rist, shells, udp
 from tstrans.exceptions import RistError, RistErrorKind, UdpError, UdpErrorKind
 
-from _builders.native_hooks import native_hook
+from _builders.native_hooks import native_hook, shells_hook
 from _builders.ports import free_udp_port
 from _builders.rist_ports import bind_even_port_or_skip
+from _builders.wait import wait_for
 
 #: Every wait in this file.
 WAIT_S = 15.0
@@ -42,12 +43,18 @@ def _ts_chunk(tag: int, packets: int = 7) -> bytes:
     return pkt * packets
 
 
-def _wait_for(what: str, cond: Callable[[], bool]) -> None:
-    deadline = time.monotonic() + WAIT_S
-    while not cond():
-        if time.monotonic() >= deadline:
-            pytest.fail(f"{what}: not seen within {WAIT_S} s")
-        time.sleep(0.005)
+def _held(obj: object) -> bool:
+    """Whether a call on another thread holds `obj`'s slot (never waits)."""
+    return shells_hook("_slot_held_for_test")(obj)
+
+
+def _parked(obj: object, call: Callable[[], object], limit: float = WAIT_S) -> threading.Thread:
+    """Run `call` on its own thread and return once it holds `obj`'s slot,
+    so a getter read next is read while the call is parked."""
+    t = threading.Thread(target=call, daemon=True)
+    t.start()
+    wait_for("the call holding the slot", lambda: _held(obj), limit)
+    return t
 
 
 def _finishes(fn: Callable[[], object], seconds: float = 2.0) -> object:
@@ -479,10 +486,11 @@ def test_shell_demux_receiver_peer_addr_udp() -> None:
         assert rx.source_rejected() == 0
         # Null-like packets: the demuxer is fed but emits no event, so the
         # iteration stays parked while the address is read.
-        _wait_for(
+        wait_for(
             "the sender's address",
             lambda: tx.sendto(_ts_chunk(TAG_A), ("127.0.0.1", port)) > 0
             and rx.peer_addr() is not None,
+            WAIT_S,
         )
         assert rx.peer_addr() == ("127.0.0.1", tx.getsockname()[1])
         assert rx.ts_bytes_demuxed() > 0
@@ -515,6 +523,18 @@ def test_shell_source_rejected() -> None:
         pair.close()
 
 
+@pytest.mark.parametrize("call", ["returns at once", "alive outside the call"])
+def test_a_call_that_does_not_hold_the_slot_is_not_taken_for_parked(call: str) -> None:
+    rx = udp.RecvTransport.builder().bind_url("udp://127.0.0.1:0").build()
+    release = threading.Event()
+    try:
+        with pytest.raises(pytest.fail.Exception, match="the call holding the slot: not seen within"):
+            _parked(rx, (lambda: None) if call == "returns at once" else release.wait, limit=0.5)
+    finally:
+        release.set()
+        rx.close()
+
+
 def test_peer_addr_while_recv_parked() -> None:
     # udp.RecvTransport: a recv() parked with no deadline holds the slot.
     rx = udp.RecvTransport.builder().bind_url("udp://127.0.0.1:0").build()
@@ -530,21 +550,17 @@ def test_peer_addr_while_recv_parked() -> None:
             got.append(e.kind)
 
     try:
-        parked = threading.Thread(target=recv_once, daemon=True)
-        parked.start()
-        time.sleep(0.2)
-        assert parked.is_alive()
+        parked = _parked(rx, recv_once)
         assert _finishes(rx.peer_addr) is None
+        assert _held(rx), "the recv() let go of the slot before the getter answered"
         tx.sendto(b"one", ("127.0.0.1", rx.local_port()))
         parked.join(5)
         assert got and got[0] == (b"one", ("127.0.0.1", tx.getsockname()[1]))
 
-        parked = threading.Thread(target=recv_once, daemon=True)
-        parked.start()
-        time.sleep(0.2)
-        assert parked.is_alive()
+        parked = _parked(rx, recv_once)
         assert _finishes(rx.peer_addr) == ("127.0.0.1", tx.getsockname()[1])
         assert _finishes(rx.source_rejected) == 0
+        assert _held(rx), "the recv() let go of the slot before the getters answered"
     finally:
         rx.close()
         tx.close()
@@ -555,13 +571,11 @@ def test_peer_addr_while_recv_parked() -> None:
     port = free_udp_port()
     shell = shells.DemuxReceiver.open(f"udp://127.0.0.1:{port}")
     errors: list[BaseException] = []
-    it = threading.Thread(target=_iterate, args=(shell, errors), daemon=True)
-    it.start()
+    it = _parked(shell, lambda: _iterate(shell, errors))
     try:
-        time.sleep(0.2)
-        assert it.is_alive()
         assert _finishes(shell.peer_addr) is None
         assert _finishes(shell.source_rejected) == 0
+        assert _held(shell), "the iteration let go of the slot before the getters answered"
     finally:
         shell.close()
         it.join(5)
@@ -601,13 +615,11 @@ def test_rist_getters_answer_while_recv_parked() -> None:
         except RistError as e:
             ended.append(e.kind)
 
-    parked = threading.Thread(target=recv_once, daemon=True)
-    parked.start()
+    parked = _parked(rx, recv_once)
     try:
-        time.sleep(0.2)
-        assert parked.is_alive()
         assert _finishes(rx.peer_addr) is None
         assert _finishes(rx.source_rejected) == 0
+        assert _held(rx), "the recv() let go of the slot before the getters answered"
     finally:
         rx.close()
     parked.join(5)
