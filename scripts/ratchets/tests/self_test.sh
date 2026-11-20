@@ -459,6 +459,132 @@ expect_out "address tuples: the helper named only in a string is not a call" "fn
 expect "address tuples: the helper, util.rs, comments and strings pass" 0 env AT_ROOT="$tmp/at/clean" bash "$AT"
 expect "address tuples: no address-returning function fails closed" 1 env AT_ROOT="$tmp/at/none" bash "$AT"
 
+# ---- Python test hook names (scripts/check/python/test-hook-names.sh) ------
+# Every name a `py-test-hooks` build registers ends in a suffix the wheel
+# check walks for, and the set equals hook_names.py's EXPECTED: a gated
+# function without a suffix fails, so does a suffixed one missing from
+# EXPECTED, an EXPECTED name nothing registers, a hook cfg the rail cannot
+# classify, and a tree with no hook at all.
+HN="$DIR/../check/python/test-hook-names.sh"
+mkdir -p "$tmp/hn/clean/shells" "$tmp/hn/bad" "$tmp/hn/notcfg" "$tmp/hn/none"
+cat > "$tmp/hn/expected.py" <<'EOF'
+SUFFIXES = ("_for_test", "_probe", "ForTest")
+
+EXPECTED = (
+    "_native._addr_tuple_for_test",
+    "_native.shells._slot_held_for_test",
+    "_native.shells.Receiver._hold_for_test",
+    "_native.rtp._push_release_for_test",
+    "_native.webrtc._loopback_viewer_probe",
+)
+EOF
+cat > "$tmp/hn/clean/lib.rs" <<'EOF'
+// `#[cfg(feature = "py-test-hooks")]` in a comment is no hook.
+fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add_function(wrap_pyfunction!(util::redact_url_py, m)?)?;
+    #[cfg(feature = "py-test-hooks")]
+    m.add_function(wrap_pyfunction!(util::addr_tuple_for_test, m)?)?;
+    #[cfg(all(feature = "py-test-hooks", feature = "webrtc"))]
+    {
+        m.add_function(wrap_pyfunction!(server::loopback_viewer_probe, m)?)?;
+    }
+    Ok(())
+}
+EOF
+cat > "$tmp/hn/clean/util.rs" <<'EOF'
+#[pyfunction]
+#[pyo3(name = "redact_url")]
+pub(crate) fn redact_url_py(url: &str) -> String {
+    format!("{} and {{", url)
+}
+
+#[cfg(feature = "py-test-hooks")]
+#[pyfunction]
+#[pyo3(name = "_addr_tuple_for_test")]
+pub(crate) fn addr_tuple_for_test(host: &str) -> PyResult<PyAddr> {
+    let brace = '{';
+    Ok((format!("{brace}{host}"), 0))
+}
+
+#[cfg(all(feature = "py-test-hooks", feature = "webrtc"))]
+#[pyfunction(name = "_loopback_viewer_probe")]
+pub(super) fn loopback_viewer_probe<'py>(py: Python<'py>) {}
+EOF
+cat > "$tmp/hn/clean/shells/mod.rs" <<'EOF'
+#[pymethods]
+impl PyReceiver {
+    fn recv(&self) {}
+    #[cfg(feature = "py-test-hooks")]
+    #[pyo3(name = "_hold_for_test")]
+    fn hold(&self) {}
+}
+
+#[cfg(feature = "py-test-hooks")]
+#[pyclass(name = "_SlowDropForTest", module = "tstrans.shells")]
+pub(crate) struct PySlowDropForTest {
+    delay: u64,
+}
+
+#[cfg(feature = "py-test-hooks")]
+impl PyReceiver {
+    pub(crate) fn slot_held(&self) -> bool {
+        true
+    }
+}
+
+#[cfg(feature = "py-test-hooks")]
+#[pyfunction]
+fn _slot_held_for_test() {}
+
+#[cfg(feature = "py-test-hooks")]
+mod probe {
+    #[pyfunction]
+    #[pyo3(name = "_push_release_for_test")]
+    fn release() {}
+}
+EOF
+cp "$tmp/hn/clean/lib.rs" "$tmp/hn/clean/util.rs" "$tmp/hn/bad/"
+mkdir -p "$tmp/hn/bad/shells"
+cp "$tmp/hn/clean/shells/mod.rs" "$tmp/hn/bad/shells/"
+cat >> "$tmp/hn/bad/shells/mod.rs" <<'EOF'
+
+#[cfg(feature = "py-test-hooks")]
+#[pyfunction]
+#[pyo3(name = "_hold_slot")]
+fn hold_slot() {}
+
+#[cfg(feature = "py-test-hooks")]
+#[pyfunction]
+fn _extra_for_test() {}
+EOF
+plant "$tmp/hn/bad/lib.rs" 'server::loopback_viewer_probe' 'server::other'
+cat > "$tmp/hn/notcfg/lib.rs" <<'EOF'
+#[cfg(feature = "py-test-hooks")]
+#[pyfunction]
+#[pyo3(name = "_addr_tuple_for_test")]
+fn addr_tuple_for_test() {}
+
+#[cfg(not(feature = "py-test-hooks"))]
+fn stub() {}
+EOF
+cat > "$tmp/hn/none/lib.rs" <<'EOF'
+#[pyfunction]
+fn redact_url() {}
+EOF
+expect "hook names: the registered forms pass" 0 env HN_ROOT="$tmp/hn/clean" HN_EXPECTED="$tmp/hn/expected.py" bash "$HN"
+expect_out "hook names: the count" "all 5 test-only names"
+expect "hook names: a name without a suffix, or outside EXPECTED, fails" 1 env HN_ROOT="$tmp/hn/bad" HN_EXPECTED="$tmp/hn/expected.py" bash "$HN"
+expect_out "hook names: a gated function without a suffix" "_hold_slot"
+expect_out "hook names: a suffixed name missing from EXPECTED" "_extra_for_test"
+expect_out "hook names: a gated wrap of an unknown function" "cannot resolve wrap_pyfunction!(server::other)"
+cp -R "$tmp/hn/clean" "$tmp/hn/renamed"
+plant "$tmp/hn/renamed/shells/mod.rs" '_push_release_for_test' '_push_released_for_test'
+expect "hook names: an EXPECTED name nothing registers fails" 1 env HN_ROOT="$tmp/hn/renamed" HN_EXPECTED="$tmp/hn/expected.py" bash "$HN"
+expect_out "hook names: the unregistered EXPECTED name" "_native.rtp._push_release_for_test"
+expect "hook names: a hook cfg it cannot classify fails" 1 env HN_ROOT="$tmp/hn/notcfg" HN_EXPECTED="$tmp/hn/expected.py" bash "$HN"
+expect_out "hook names: the unclassified cfg is named" "lib.rs:6"
+expect "hook names: a tree with no hook fails closed" 1 env HN_ROOT="$tmp/hn/none" HN_EXPECTED="$tmp/hn/expected.py" bash "$HN"
+
 # ---- duplicate test helpers (scripts/check/repo/no-duplicate-test-helpers.sh) ----
 # One helper body in two test files is caught (renamed copies too) unless it
 # is allowlisted with a reason; a stale row, a row without a reason and an

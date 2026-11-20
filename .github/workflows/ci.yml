@@ -1700,6 +1700,11 @@ jobs:
         # util::addr_tuple (scope id, IPv4-mapped peers).
         run: bash scripts/check/python/address-tuples.sh
 
+      - name: check-py-test-hook-names
+        # Every name the py-test-hooks feature registers ends in a suffix
+        # the wheels' check walks for and is listed in hook_names.py.
+        run: bash scripts/check/python/test-hook-names.sh
+
       - name: Install build prerequisites
         # meson from the hashed pip file; cmake, ninja and pkg-config are on the runner image.
         run: bash scripts/ci/install-build-tools.sh
