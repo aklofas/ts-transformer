@@ -27,7 +27,7 @@ from _builders.hang_deadline import call_with_hang_deadline
 from _builders.mux_programs import video_only_program as _video_only_program
 from _builders.mux_programs import video_private_data_program as _video_data_program
 from _builders.ports import free_udp_port as _free_udp_port
-from _builders.rist_ports import bind_even_port_or_skip
+from _builders.rist_ports import bind_even_port
 
 TS_PACKET = b"\x47" + b"\x00" * 187
 TS_BUNDLE = TS_PACKET * 7          # one full 1316-byte framing bundle
@@ -955,11 +955,11 @@ def test_udp_recv_transport_timeout_ms_still_raises_backpressure() -> None:
 # --------------------------------------------------------------------------- #
 
 
-def _rist_recv_or_skip():
-    """Open a RIST receiver on a free even loopback port; skip when none binds."""
+def _rist_recv():
+    """Open a RIST receiver on a free even loopback port."""
     from tstrans import rist
 
-    return bind_even_port_or_skip(
+    return bind_even_port(
         lambda port: rist.RecvTransport.builder().bind_url(f"rist://@127.0.0.1:{port}").build()
     )
 
@@ -968,12 +968,12 @@ def test_rist_transport_close_from_other_thread_during_send() -> None:
     from tstrans import rist
     from tstrans.exceptions import RistError, RistErrorKind
 
-    rx, port = _rist_recv_or_skip()
+    rx, port = _rist_recv()
     try:
         tx = rist.Transport.builder().url(f"rist://127.0.0.1:{port}").build()
-    except RistError as e:
+    except BaseException:
         rx.close()
-        pytest.skip(f"sender build failed ({e.kind.name}): {e}")
+        raise
     stop = threading.Event()
     outcome: dict[str, object] = {}
 
@@ -1003,7 +1003,7 @@ def test_rist_recv_transport_close_from_other_thread_while_recv_parked() -> None
     from tstrans import rist
     from tstrans.exceptions import RistError, RistErrorKind
 
-    rx, port = _rist_recv_or_skip()
+    rx, port = _rist_recv()
     captured: list[BaseException] = []
 
     def worker() -> None:
@@ -1196,7 +1196,7 @@ def test_rist_recv_transport_cancel_handle_from_other_thread_ends_parked_recv() 
     from tstrans import rist
     from tstrans.exceptions import RistError, RistErrorKind
 
-    rx, _port = _rist_recv_or_skip()
+    rx, _port = _rist_recv()
     handle = rx.cancel_handle()
     assert isinstance(handle, rist.CancelHandle)
     assert not handle.is_cancelled()
@@ -1233,12 +1233,12 @@ def test_rist_transport_cancel_handle_makes_next_send_closed() -> None:
     from tstrans import rist
     from tstrans.exceptions import RistError, RistErrorKind
 
-    rx, port = _rist_recv_or_skip()
+    rx, port = _rist_recv()
     try:
         tx = rist.Transport.builder().url(f"rist://127.0.0.1:{port}").build()
-    except RistError as e:
+    except BaseException:
         rx.close()
-        pytest.skip(f"sender build failed ({e.kind.name}): {e}")
+        raise
     try:
         tx.send(TS_BUNDLE)
         handle = tx.cancel_handle()
@@ -1319,7 +1319,7 @@ def test_rtp_h264_receiver_local_addr_does_not_wait_behind_parked_recv_au() -> N
 
 
 def test_rist_recv_transport_repr_does_not_wait_behind_parked_recv() -> None:
-    rx, _port = _rist_recv_or_skip()
+    rx, _port = _rist_recv()
     before = repr(rx)
     assert "rist://" in before
     got = _assert_getter_does_not_wait_behind_park(

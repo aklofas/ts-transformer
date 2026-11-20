@@ -24,13 +24,13 @@ included but tolerant — it skips if the recv can't open cleanly.
 from __future__ import annotations
 
 import threading
-import time
 import pytest
 
 from tstrans import rist
 from tstrans.exceptions import RistError, RistErrorKind
 
 from _builders.native_hooks import native_hook
+from _builders.rist_ports import bind_even_port
 
 
 # ---------------------------------------------------------------------------
@@ -70,33 +70,34 @@ def test_recv_transport_builder_returns_builder():
 
 # ---------------------------------------------------------------------------
 # RecvTransport open + close on a free even port, the shape the Simple
-# profile needs too (it refuses port 0); we try a range and skip the test
-# if all are busy. Port 0 in the Main profile: test_local_addr.py.
+# profile needs too (it refuses port 0). Port 0 in the Main profile:
+# test_local_addr.py.
 # ---------------------------------------------------------------------------
 
 
-def _try_open_recv(port: int) -> rist.RecvTransport | None:
-    """Try to open a RecvTransport on the given port; return None on error."""
-    try:
-        return (
-            rist.RecvTransport.builder()
-            .bind_url(f"rist://@0.0.0.0:{port}")
-            .build()
-        )
-    except RistError:
-        return None
+def _open_recv(port: int) -> rist.RecvTransport:
+    return rist.RecvTransport.builder().bind_url(f"rist://@0.0.0.0:{port}").build()
+
+
+def test_a_port_that_never_binds_fails_naming_what_librist_said():
+    def refuse(port: int) -> rist.RecvTransport:
+        raise RistError(kind=RistErrorKind.PEER_CREATE_FAILED, message="librist peer creation failed")
+
+    with pytest.raises(pytest.fail.Exception, match="no even port bound in 2 attempts: .*PEER_CREATE_FAILED"):
+        bind_even_port(refuse, attempts=2)
+
+
+def test_an_open_error_other_than_a_bind_refusal_is_raised():
+    def broken(port: int) -> rist.RecvTransport:
+        raise RistError(kind=RistErrorKind.INVALID_CONFIG, message="not a port problem")
+
+    with pytest.raises(RistError, match="not a port problem"):
+        bind_even_port(broken)
 
 
 def test_recv_transport_open_and_close():
     """Open a RecvTransport on an even port and close it cleanly."""
-    # librist Simple profile requires even ports; try several candidates.
-    rx = None
-    for port in range(34010, 34030, 2):
-        rx = _try_open_recv(port)
-        if rx is not None:
-            break
-    if rx is None:
-        pytest.skip("could not bind any even RIST port (librist unavailable)")
+    rx, _ = bind_even_port(_open_recv)
     # Close is idempotent.
     rx.close()
     rx.close()
@@ -104,13 +105,7 @@ def test_recv_transport_open_and_close():
 
 def test_recv_transport_stats_fields():
     """Stats on an open RecvTransport has all required fields."""
-    rx = None
-    for port in range(34030, 34050, 2):
-        rx = _try_open_recv(port)
-        if rx is not None:
-            break
-    if rx is None:
-        pytest.skip("could not bind any even RIST port (librist unavailable)")
+    rx, _ = bind_even_port(_open_recv)
     try:
         s = rx.stats()
         assert hasattr(s, "packets_sent")
@@ -132,13 +127,7 @@ def test_recv_transport_stats_fields():
 
 def test_recv_transport_stats_after_close_raises():
     """stats() on a closed RecvTransport raises RistError(kind=CLOSED)."""
-    rx = None
-    for port in range(34050, 34070, 2):
-        rx = _try_open_recv(port)
-        if rx is not None:
-            break
-    if rx is None:
-        pytest.skip("could not bind any even RIST port (librist unavailable)")
+    rx, _ = bind_even_port(_open_recv)
     rx.close()
     with pytest.raises(RistError) as exc_info:
         rx.stats()
@@ -308,26 +297,21 @@ def test_encryption_key_aes256_probe():
     mbedtls feature (regression: the wheels used to raise
     ENCRYPTION_DISABLED for every EncryptionKey)."""
     key = rist.EncryptionKey.aes256(b"my-test-pre-shared-aes-256-secret")
-    for port in range(34200, 34220, 2):
-        try:
-            rx = (
-                rist.RecvTransport.builder()
-                .bind_url(f"rist://@0.0.0.0:{port}")
-                .encryption(key)
-                .build()
+    try:
+        rx, _ = bind_even_port(
+            lambda port: rist.RecvTransport.builder()
+            .bind_url(f"rist://@0.0.0.0:{port}")
+            .encryption(key)
+            .build()
+        )
+    except RistError as e:
+        if e.kind == RistErrorKind.ENCRYPTION_DISABLED:
+            pytest.fail(
+                "RIST encryption must be compiled in (tst-rist mbedtls "
+                "feature) — got ENCRYPTION_DISABLED"
             )
-            rx.close()
-            return
-        except RistError as e:
-            if e.kind == RistErrorKind.ENCRYPTION_DISABLED:
-                pytest.fail(
-                    "RIST encryption must be compiled in (tst-rist mbedtls "
-                    "feature) — got ENCRYPTION_DISABLED"
-                )
-            if e.kind in (RistErrorKind.CONTEXT_CREATE_FAILED, RistErrorKind.PEER_CREATE_FAILED):
-                continue  # port busy; try next
-            raise
-    pytest.skip("could not bind any even RIST port for encryption probe")
+        raise
+    rx.close()
 
 
 # ---------------------------------------------------------------------------
@@ -350,31 +334,23 @@ def test_rist_error_construction():
 
 
 # ---------------------------------------------------------------------------
-# Simple profile loopback (skips only on bind or recv-timeout environment limits)
+# Simple profile loopback
 # ---------------------------------------------------------------------------
 
 
 def test_rist_simple_profile_loopback():
     """Simple-profile loopback round-trip on librist's bundled UDP transport.
 
-    This test requires librist to bind an even port for the receiver and
-    establish a sender session. Only a receiver bind failure or a recv timeout
-    skips; a sender build or send error fails the test.
+    Both ends speak the Simple profile (a receiver left at the default Main
+    profile never delivers a Simple sender's datagrams).
     """
-    # Try several even ports in case one is busy.
-    rx = None
-    recv_port = None
-    for port in range(34100, 34130, 2):
-        rx = _try_open_recv(port)
-        if rx is not None:
-            recv_port = port
-            break
-    if rx is None:
-        pytest.skip("could not bind any even RIST port for loopback")
+    rx, recv_port = bind_even_port(
+        lambda port: rist.RecvTransport.builder()
+        .bind_url(f"rist://@0.0.0.0:{port}?profile=simple")
+        .build()
+    )
 
     try:
-        # Give librist a moment to register the bind.
-        time.sleep(0.1)
         try:
             tx = (
                 rist.Transport.builder()
@@ -393,17 +369,18 @@ def test_rist_simple_profile_loopback():
             except RistError as e:
                 pytest.fail(f"send failed ({e.kind.name}): {e}")
 
-            # recv with a tolerant timeout
+            # librist delivers the first datagram after about its 200 ms
+            # buffer on loopback.
             try:
-                received = rx.recv(timeout_ms=2000)
-                # librist may pad/wrap the payload; just check the TS header.
-                assert received[:4] == payload[:4], (
-                    f"TS header mismatch: {received[:4]!r} != {payload[:4]!r}"
-                )
+                received = rx.recv(timeout_ms=10_000)
             except RistError as e:
                 if e.kind == RistErrorKind.BACKPRESSURE:
-                    pytest.skip("loopback recv timed out (librist session not ready)")
+                    pytest.fail("no datagram within 10 s of the send")
                 raise
+            # librist may pad/wrap the payload; just check the TS header.
+            assert received[:4] == payload[:4], (
+                f"TS header mismatch: {received[:4]!r} != {payload[:4]!r}"
+            )
         finally:
             tx.close()
     finally:
