@@ -6484,3 +6484,30 @@ owning_tests = ["crates/tst-rtp/src/klv/packetizer.rs"]
 bindings = ["c:deferred(no C consumer yet)", "python:n/a(the push session packetizes KLV inside send_klv)", "java:n/a(the push session packetizes KLV inside sendKlv)", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-srt"
+item = "tst_srt::socket::SrtSocket::local_addr"
+owning_tests = ["crates/tst-srt/tests/loopback/handshake.rs"]
+bindings = ["c:deferred(the C socket handle has no address getter)", "python:Socket.local_addr", "java:org.tstrans.srt.Socket.localAddr", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-srt"
+item = "tst_srt::socket::SrtSocket::peer_addr"
+owning_tests = ["crates/tst-srt/tests/loopback/handshake.rs"]
+bindings = ["c:deferred(the C socket handle has no address getter)", "python:Socket.peer_addr", "java:org.tstrans.srt.Socket.peerAddr", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-srt"
+item = "tst_srt::listener::SrtListener::local_addr"
+owning_tests = ["crates/tst-srt/tests/builder/listener.rs"]
+bindings = ["c:deferred(the C listener handle has no address getter)", "python:Listener.local_addr", "java:org.tstrans.srt.Listener.localAddr", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
