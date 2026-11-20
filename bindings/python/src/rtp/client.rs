@@ -441,7 +441,7 @@ impl PyRtspClientConfig {
             "RtspClientConfig(url={:?}, auth={}, transport_pref={:?}, \
              tls_root_certs_pem={}, keepalive={}, rtsp_version={:?}, \
              keepalive_interval_ms={}, connect_timeout_ms={}, request_timeout_ms={}, \
-             user_agent={:?})",
+             user_agent={})",
             redact_url(&self.url),
             if self.auth.is_some() {
                 "<auth>"
@@ -459,7 +459,9 @@ impl PyRtspClientConfig {
             ms_repr(self.keepalive_interval_ms),
             ms_repr(self.connect_timeout_ms),
             ms_repr(self.request_timeout_ms),
-            self.user_agent,
+            self.user_agent
+                .as_deref()
+                .map_or_else(|| "None".to_owned(), |ua| format!("{ua:?}")),
         )
     }
 }

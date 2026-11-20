@@ -1003,6 +1003,12 @@ def test_the_new_knobs_read_back():
     assert "keepalive_interval_ms=1500" in repr(cfg)
 
 
+def test_the_repr_prints_the_user_agent_as_text():
+    cfg = RtspClientConfig("rtsp://127.0.0.1:1/x", user_agent="example-agent/1.0")
+    assert repr(cfg).endswith(', user_agent="example-agent/1.0")'), repr(cfg)
+    assert repr(RtspClientConfig("rtsp://127.0.0.1:1/x")).endswith(", user_agent=None)")
+
+
 def _pings_after_play(requests: list[str]) -> list[str]:
     methods = [r.split(None, 1)[0] for r in requests]
     if "PLAY" not in methods:
