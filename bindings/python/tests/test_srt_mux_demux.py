@@ -379,18 +379,40 @@ def test_mux_sender_stats_tuple_shape() -> None:
         receiver.close()
 
 
-def test_demux_receiver_stats_tuple_shape() -> None:
-    """`DemuxReceiver.stats()` returns a 2-tuple of (SocketStats,
-    MuxerStats). Mirror of MuxSender for shape parity."""
+def test_demux_receiver_stats_counts_the_srt_stream() -> None:
+    """`DemuxReceiver.stats()` over `srt://` is a `DemuxReceiverStats`:
+    one program map seen at one version, no gap, whole packets, and the
+    same bytes the demuxer was fed (a plain receiver drops nothing)."""
     port = _free_udp_port()
     sender, receiver = _make_mux_demux_pair(port)
     try:
-        stats = receiver.stats()
-        assert isinstance(stats, tuple)
-        assert len(stats) == 2
-        sock_stats, mux_stats = stats
-        assert hasattr(sock_stats, "packets_received")
-        assert hasattr(mux_stats, "ts_packets_emitted")
+        err: list[BaseException] = []
+
+        def consumer() -> None:
+            try:
+                for ev in receiver:
+                    if isinstance(ev, DemuxEvent.Video):
+                        return
+            except BaseException as exc:  # noqa: BLE001
+                err.append(exc)
+
+        t = threading.Thread(target=consumer, daemon=True)
+        t.start()
+        for i in range(32):
+            sender.send_video(
+                NAL_IDR, pts=Pts90khz.from_raw(i * 3000), key_frame=(i % 4 == 0)
+            )
+        t.join(timeout=10.0)
+        assert not t.is_alive(), "no Video event within 10 s"
+        assert not err, err
+        s = receiver.stats()
+        assert isinstance(s, shells.DemuxReceiverStats)
+        assert s.program_maps_seen == 1
+        assert s.pmt_versions_seen == 1
+        assert s.discontinuities == 0
+        assert s.packets_received > 0
+        assert s.bytes_received == s.packets_received * 188
+        assert s.bytes_received == receiver.ts_bytes_demuxed()
     finally:
         sender.close()
         receiver.close()

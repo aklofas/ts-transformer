@@ -6,7 +6,7 @@
 //! transport's error domain in the snapshot. The transport's end-reason
 //! handle is attached to the `Owned`, so `end_reason()` keeps answering
 //! after `close()`; so do `peer_addr()` and `source_rejected()`, which read
-//! the transport's source record from the snapshot.
+//! the transport's source record from the snapshot, and `rtp_stats()`.
 
 #![allow(unsafe_op_in_unsafe_fn, clippy::useless_conversion)]
 
@@ -21,12 +21,13 @@ use tst_pipeline::binding::view::{BlockingReason, Snapshot};
 use tst_pipeline::binding::{Opened, Owned};
 use tst_pipeline::{Receiver as PlReceiver, ReceiverConfig};
 
-use crate::generated::stats_shells::SocketStats;
+use crate::generated::stats_shells::{ReceiverStats, SocketStats};
 #[cfg(feature = "srt")]
 use crate::raise::raise;
 use crate::raise::{pyok, pyres};
 use crate::shells::cancel::{PyCancelHandle, cancel_source};
 use crate::shells::end_reason::{end_detail, end_reason_to_py};
+use crate::shells::open::{OpenedRecv, RtpStatsSource};
 use crate::shells::open_cancel::{PyOpenCancel, object_of};
 use crate::util::{CancelSource, close_owned, drop_owned};
 
@@ -37,10 +38,17 @@ use crate::util::{CancelSource, close_owned, drop_owned};
 /// ONE peer; the datagram and stream transports open their socket.
 #[pyclass(name = "Receiver", module = "tstrans.shells")]
 pub(crate) struct PyReceiver {
-    /// Snapshot handles = the transport's source record, `None` for a
-    /// transport that keeps none.
-    owned: Owned<PlReceiver<Box<dyn RecvTransport>>, Snapshot<Option<SourceHandle>>>,
+    owned: Owned<PlReceiver<Box<dyn RecvTransport>>, Snapshot<Handles>>,
     cancel: Arc<CancelSource>,
+}
+
+/// The shell's construction-time handles, read without the slot.
+struct Handles {
+    /// The transport's source record; `None` for a transport that keeps none.
+    source: Option<SourceHandle>,
+    /// The RTP counters; `None` off RTP.
+    #[cfg_attr(not(feature = "rtp"), allow(dead_code))]
+    rtp_stats: RtpStatsSource,
 }
 
 impl Drop for PyReceiver {
@@ -53,9 +61,15 @@ impl PyReceiver {
     /// Wrap an already-opened transport (the `open` and
     /// `Socket.into_receiver()` paths meet here).
     pub(crate) fn from_opened(
-        _py: Python<'_>,
+        py: Python<'_>,
         opened: Opened<Box<dyn RecvTransport>>,
     ) -> PyResult<Self> {
+        Self::from_recv(py, OpenedRecv::plain(opened))
+    }
+
+    /// [`Self::from_opened`] with the RTP counters of an `rtp://` transport.
+    fn from_recv(_py: Python<'_>, opened: OpenedRecv) -> PyResult<Self> {
+        let OpenedRecv { opened, rtp_stats } = opened;
         let Opened {
             transport,
             cancel,
@@ -72,7 +86,7 @@ impl PyReceiver {
             cancel.as_dyn(),
             Snapshot {
                 domain,
-                handles: source,
+                handles: Handles { source, rtp_stats },
             },
         );
         if let Some(h) = end_reason {
@@ -104,7 +118,7 @@ impl PyReceiver {
         cancel: Option<&Bound<'_, PyOpenCancel>>,
     ) -> PyResult<Self> {
         let oc = object_of(cancel);
-        Self::from_opened(py, crate::shells::open::open_recv(py, url, &oc)?)
+        Self::from_recv(py, crate::shells::open::open_recv(py, url, &oc)?)
     }
 
     /// One 188-byte TS packet per call; `max_len` is accepted for API
@@ -141,6 +155,33 @@ impl PyReceiver {
             py,
             SocketStats::from(&pyok(py, &self.owned.snapshot().domain, core)?),
         )
+    }
+
+    /// The receiver's counters (`ReceiverStats`): the packets handed out
+    /// and what sync recovery skipped to find them. Waits behind a parked
+    /// `recv_bytes()`, as `socket_stats()` does; raises the transport's
+    /// `CLOSED` kind after `close()`.
+    fn stats(&self, py: Python<'_>) -> PyResult<Py<ReceiverStats>> {
+        let raw = crate::util::allow_threads_parking(py, || {
+            self.owned
+                // counters live inside the shell and have no value to report while a parked call holds it
+                .with_ref_blocking(BlockingReason::NoAnswerWithoutSlot, |r| r.stats())
+        });
+        Py::new(
+            py,
+            ReceiverStats::from(&pyok(py, &self.owned.snapshot().domain, raw)?),
+        )
+    }
+
+    /// The RTP counters (`tstrans.rtp.RtpStats`) of a receiver over
+    /// `rtp://`; `None` on any other transport. Never waits behind a parked
+    /// `recv_bytes()`; the last value after `close()`.
+    #[cfg(feature = "rtp")]
+    fn rtp_stats(
+        &self,
+        py: Python<'_>,
+    ) -> PyResult<Option<Py<crate::generated::stats_rtp::RtpStats>>> {
+        crate::shells::demux_receiver::rtp_stats_of(py, &self.owned.snapshot().handles.rtp_stats)
     }
 
     /// Snapshot of the SRT-rich 17-field stats. Raises `TypeError` unless
@@ -196,7 +237,7 @@ impl PyReceiver {
     /// a transport that keeps no source record. Never waits behind a
     /// parked `recv_bytes()`; the last value after `close()`.
     fn peer_addr(&self) -> Option<crate::util::PyAddr> {
-        crate::util::peer_addr_tuple(self.owned.snapshot().handles.as_ref())
+        crate::util::peer_addr_tuple(self.owned.snapshot().handles.source.as_ref())
     }
 
     /// Datagrams or blocks the `source` key of a `udp://` or `rist://` URL
@@ -206,6 +247,7 @@ impl PyReceiver {
         self.owned
             .snapshot()
             .handles
+            .source
             .as_ref()
             .map_or(0, SourceHandle::rejected)
     }

@@ -85,7 +85,7 @@ def test_srt_ts_bytes_demuxed_counts_the_stream() -> None:
         n = rx.ts_bytes_demuxed()
         assert n > 0
         assert n % 188 == 0
-        assert n == rx.stats()[0].bytes_received
+        assert n == rx.stats().bytes_received
     finally:
         rx.close()
 

@@ -366,6 +366,48 @@ def test_managed_demux_receiver_last_seen_micros_none_paths() -> None:
         receiver.close()
 
 
+def test_managed_demux_receiver_stats() -> None:
+    """`ManagedDemuxReceiver.stats()` is the `shells.DemuxReceiver` record:
+    one program map at one version, whole packets; with no reconnect it
+    counts what the demuxer was fed. CLOSED after `close()`."""
+    port = _free_udp_port()
+    sender, receiver = _make_managed_pair(port)
+    try:
+        err: list[BaseException] = []
+
+        def consumer() -> None:
+            try:
+                for ev in receiver:
+                    if isinstance(ev, DemuxEvent.Video):
+                        return
+            except BaseException as exc:  # noqa: BLE001
+                err.append(exc)
+
+        t = threading.Thread(target=consumer, daemon=True)
+        t.start()
+        for i in range(32):
+            sender.send_video(
+                NAL_IDR, pts=Pts90khz.from_raw(i * 3000), key_frame=(i % 4 == 0)
+            )
+        t.join(timeout=10.0)
+        assert not t.is_alive(), "no Video event within 10 s"
+        assert not err, err
+        s = receiver.stats()
+        assert isinstance(s, shells.DemuxReceiverStats)
+        assert s.program_maps_seen == 1
+        assert s.pmt_versions_seen == 1
+        assert s.discontinuities == 0
+        assert s.packets_received > 0
+        assert s.bytes_received == s.packets_received * 188
+        assert s.bytes_received == receiver.ts_bytes_demuxed()
+    finally:
+        sender.close()
+        receiver.close()
+    with pytest.raises(SrtError) as ei:
+        receiver.stats()
+    assert ei.value.kind == SrtErrorKind.CLOSED
+
+
 # --------------------------------------------------------------------------- #
 # push_data / push_data_to / data_handle                                      #
 # --------------------------------------------------------------------------- #

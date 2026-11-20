@@ -622,6 +622,31 @@ def test_with_exit_after_a_refused_teardown_ends_the_live_receiver_closed():
         assert not server.is_alive()
 
 
+def test_an_rtsp_receiver_reads_its_rtp_counters():
+    """`into_demux_receiver()` keeps the session's RTP counters: a frame
+    whose payload type is not MP2T (33) is counted while the receiver
+    iterates."""
+    bad = struct.pack("!BBHII", 0x80, 96, 4, 0, 0x1234) + b"\x47" + b"\x00" * 187
+    after_play = _interleaved_ts_frames() + b"$\x00" + struct.pack("!H", len(bad)) + bad
+    port, _requests, server = _recording_peer(after_play=after_play)
+    first, outcome = threading.Event(), {}
+    with RtspClient.connect(_tcp_config(port)) as session:
+        rx = session.into_demux_receiver()
+        rescue = rx.cancel_handle()
+        consumer = threading.Thread(target=_consume, args=(rx, first, outcome), daemon=True)
+        consumer.start()
+        try:
+            deadline = time.monotonic() + 10
+            while rx.rtp_stats().malformed_packets < 1 and time.monotonic() < deadline:
+                time.sleep(0.01)
+            assert rx.rtp_stats().malformed_packets == 1, rx.rtp_stats()
+        finally:
+            _join_or_rescue(consumer, rescue.cancel, 0)
+    assert rx.rtp_stats().malformed_packets == 1
+    rx.close()
+    server.join(10)
+
+
 @pytest.mark.parametrize("teardown_status", [403, None], ids=["refused", "unanswered"])
 def test_close_is_silent_bounded_and_idempotent(teardown_status):
     port, requests, server = _recording_peer(teardown_status=teardown_status)

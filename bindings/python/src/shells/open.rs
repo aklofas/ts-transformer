@@ -74,15 +74,36 @@ pub(crate) fn open_send(
     r.map_err(|e| raise(py, &d, e))
 }
 
+/// The RTP counters' handle of a receive transport, which a shell reads
+/// without its slot.
+#[cfg(feature = "rtp")]
+pub(crate) type RtpStatsSource = Option<tst_rtp::RtpStatsHandle>;
+/// No build without `rtp` has RTP counters.
+#[cfg(not(feature = "rtp"))]
+pub(crate) type RtpStatsSource = Option<std::convert::Infallible>;
+
+/// A receive open and the RTP counters of an `rtp://` transport, taken
+/// before the transport is boxed (a boxed transport cannot be asked).
+pub(crate) struct OpenedRecv {
+    pub(crate) opened: Opened<Box<dyn RecvTransport>>,
+    pub(crate) rtp_stats: RtpStatsSource,
+}
+
+impl OpenedRecv {
+    /// A transport with no RTP counters.
+    pub(crate) fn plain(opened: Opened<Box<dyn RecvTransport>>) -> Self {
+        Self {
+            opened,
+            rtp_stats: None,
+        }
+    }
+}
+
 /// Open a receive transport for a shell, with the GIL released. An `srt://`
 /// open hands the slot `oc` gave it to its first accept and registers it,
 /// so both `oc.cancel()` and the interpreter-exit hook end a first accept
 /// that no caller holds a handle to yet.
-pub(crate) fn open_recv(
-    py: Python<'_>,
-    url: &str,
-    oc: &OpenCancel,
-) -> PyResult<Opened<Box<dyn RecvTransport>>> {
+pub(crate) fn open_recv(py: Python<'_>, url: &str, oc: &OpenCancel) -> PyResult<OpenedRecv> {
     let d = domain_of(url).ok_or_else(|| unsupported(url))?;
     let slot = begin(oc).ok_or_else(|| raise(py, &d, closed()))?;
     let r = crate::util::allow_threads_parking(py, || {
@@ -90,16 +111,21 @@ pub(crate) fn open_recv(
             #[cfg(feature = "srt")]
             Domain::Srt => {
                 let _accept_guard = crate::util::register_accept_slot(&slot);
-                tst_srt::opener::open_recv(url, &slot)
+                tst_srt::opener::open_recv(url, &slot).map(OpenedRecv::plain)
             }
             #[cfg(feature = "rtp")]
-            Domain::Rtp => tst_rtp::opener::open_recv(url),
+            Domain::Rtp => {
+                tst_rtp::opener::open_recv_with_stats(url).map(|(opened, h)| OpenedRecv {
+                    opened,
+                    rtp_stats: Some(h),
+                })
+            }
             #[cfg(feature = "udp")]
-            Domain::Udp => tst_udp::opener::open_recv(url),
+            Domain::Udp => tst_udp::opener::open_recv(url).map(OpenedRecv::plain),
             #[cfg(feature = "tcp")]
-            Domain::Tcp => tst_tcp::opener::open_recv(url),
+            Domain::Tcp => tst_tcp::opener::open_recv(url).map(OpenedRecv::plain),
             #[cfg(feature = "rist")]
-            Domain::Rist => tst_rist::opener::open_recv(url),
+            Domain::Rist => tst_rist::opener::open_recv(url).map(OpenedRecv::plain),
             _ => unreachable_scheme(),
         };
         finish(slot, r)

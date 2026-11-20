@@ -291,6 +291,8 @@ def test_into_demux_receiver_is_take_once():
             assert ei.value.kind == RtspErrorKind.CLOSED
             # Still usable for stats after the take.
             assert mount.stats().generation == 0
+            # The receiver reads the mount transport's RTP counters.
+            assert rx.rtp_stats().malformed_packets == 0
         finally:
             rx.close()
 

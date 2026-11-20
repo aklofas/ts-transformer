@@ -36,6 +36,7 @@ from tstrans.mpegts import (
     SubtitleStreamHandle,
     VideoStreamHandle,
 )
+from tstrans.rtp import RtpStats
 from tstrans.srt import SrtStats
 
 # A bytes-like input — `bytes`, `bytearray`, `memoryview`, NumPy uint8,
@@ -264,6 +265,14 @@ class Receiver:
         """After ``cancel_handle().cancel()`` this raises ``CLOSED``, buffered data included."""
     def cancel_handle(self) -> CancelHandle: ...
     def socket_stats(self) -> SocketStats: ...
+    def stats(self) -> ReceiverStats:
+        """The packets handed out and what sync recovery skipped to find
+        them. Waits behind a ``recv_bytes()`` parked on another thread;
+        raises the transport's ``CLOSED`` kind after ``close()``."""
+    def rtp_stats(self) -> Optional[RtpStats]:
+        """The RTP counters of a shell over ``rtp://``; ``None`` on any other
+        transport. Never waits behind a call parked on another thread; the
+        last value after ``close()``."""
     def srt_stats(self) -> SrtStats:
         """Raises TypeError unless the shell was opened from an srt:// URL."""
     def end_reason(self) -> Optional[EndReason]:
@@ -426,9 +435,8 @@ class DemuxReceiver:
     event type hierarchy. `__next__` blocks (releases the GIL) on the
     underlying transport read.
 
-    `stats()` returns a tuple `(SocketStats, MuxerStats)` — same shape
-    as `MuxSender.stats()` so cross-direction code can read both
-    accessors identically.
+    `stats()` returns the receive counters as a `DemuxReceiverStats`;
+    the wire counters are `socket_stats()`.
 
     An `srt://` bind or accept fault raises `SrtError(kind=BROKEN)` with
     the message prefixed `bind: ` or `accept: `. The `srt://` open blocks
@@ -451,7 +459,14 @@ class DemuxReceiver:
     def socket_stats(self) -> SocketStats: ...
     def ts_bytes_demuxed(self) -> int:
         """Aligned TS bytes the demuxer was fed; the last value after `close()`."""
-    def stats(self) -> Tuple[SocketStats, MuxerStats]: ...
+    def stats(self) -> DemuxReceiverStats:
+        """The receive counters by name. Waits behind a ``__next__`` parked
+        on another thread; raises the transport's ``CLOSED`` kind after
+        ``close()``. A record taken earlier keeps its values."""
+    def rtp_stats(self) -> Optional[RtpStats]:
+        """The RTP counters of a receiver over ``rtp://`` or an RTSP
+        session; ``None`` on any other transport. Never waits behind a call
+        parked on another thread; the last value after ``close()``."""
     def last_seen_micros(self, pid: int) -> Optional[int]: ...
     def end_reason(self) -> Optional[EndReason]:
         """The recorded reason, or `None` while the stream is live. Every plain

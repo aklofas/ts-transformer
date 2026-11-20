@@ -13,18 +13,22 @@ Loopback tests:
 from __future__ import annotations
 
 from tstrans import shells
+import socket
 import threading
 import time
+from typing import Callable
 
 import pytest
 
 import tstrans
 import tstrans.rtp
-from tstrans.exceptions import RtpError, RtpErrorKind
+from tstrans.exceptions import RtpError, RtpErrorKind, UdpError, UdpErrorKind
 from tstrans.mpegts import DemuxEvent, Muxer, MuxerConfigBuilder, Pts90khz
 
 from _builders.mux_programs import video_only_program as _video_only_program
+from _builders.hang_deadline import call_with_hang_deadline
 from _builders.ports import free_udp_port as _free_udp_port
+from _builders.unknown_stream import _crc32_mpeg, _ts_packet
 
 
 def _build_minimal_ts_bytes() -> bytes:
@@ -258,16 +262,266 @@ def test_mux_sender_to_demux_receiver_round_trip() -> None:
 # Stats                                                                       #
 # --------------------------------------------------------------------------- #
 
+_PMT_PID = 0x0100
+_VIDEO_PID = 0x0101
+_WAIT_S = 10.0
 
-def test_stats_tuple_shape() -> None:
+
+def _psi_packet(pid: int, section_no_crc: bytes, cc: int) -> bytes:
+    """One section, CRC added, after a zero pointer field; the rest of the
+    packet is 0xFF stuffing (zeros would read as further sections)."""
+    section = section_no_crc + _crc32_mpeg(section_no_crc).to_bytes(4, "big")
+    payload = b"\x00" + section
+    return _ts_packet(pid, payload + b"\xFF" * (184 - len(payload)), pusi=True, cc=cc)
+
+
+def _pat_packet() -> bytes:
+    """PAT: program 1 on `_PMT_PID`."""
+    body = bytes([0x00, 0x01, 0xE0 | (_PMT_PID >> 8), _PMT_PID & 0xFF])
+    section_length = 5 + len(body) + 4
+    header = bytes([0x00, 0xB0, section_length, 0x00, 0x01, 0xC1, 0x00, 0x00])
+    return _psi_packet(0x0000, header + body, cc=0)
+
+
+def _pmt_packet(version: int, cc: int) -> bytes:
+    """PMT for program 1 on `_PMT_PID`: one H.264 stream on `_VIDEO_PID`."""
+    body = bytes([
+        0xE0 | (_VIDEO_PID >> 8), _VIDEO_PID & 0xFF,  # PCR_PID
+        0xF0, 0x00,                                  # program_info_length = 0
+        0x1B, 0xE0 | (_VIDEO_PID >> 8), _VIDEO_PID & 0xFF, 0xF0, 0x00,
+    ])
+    section_length = 5 + len(body) + 4
+    header = bytes([
+        0x02, 0xB0 | (section_length >> 8), section_length & 0xFF,
+        0x00, 0x01,                                  # program_number = 1
+        0xC1 | ((version & 0x1F) << 1),              # version, current_next = 1
+        0x00, 0x00,
+    ])
+    return _psi_packet(_PMT_PID, header + body, cc=cc)
+
+
+def _stats_capture() -> list[bytes]:
+    """PAT, PMT version 0 twice, a video PES whose third packet skips a
+    continuity counter, then PMT version 1 and three null packets (so the
+    last PMT is not the final packet of the datagram)."""
+    pes_start = b"\x00\x00\x01\xE0\x00\x00\x80\x00\x00" + b"\x00\x00\x00\x01\x09\xF0"
+    return [
+        _pat_packet(),
+        _pmt_packet(0, cc=0),
+        _pmt_packet(0, cc=1),
+        _ts_packet(_VIDEO_PID, pes_start, pusi=True, cc=0),
+        _ts_packet(_VIDEO_PID, b"", cc=1),
+        _ts_packet(_VIDEO_PID, b"", cc=3),  # expected 2: one continuity gap
+        _pmt_packet(1, cc=2),
+        *[_ts_packet(0x1FFF, b"", cc=i) for i in range(3)],
+    ]
+
+
+def _send_datagram(port: int, data: bytes) -> None:
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+        s.sendto(data, ("127.0.0.1", port))
+
+
+def _iterate_until(rx: shells.DemuxReceiver, done: Callable[[object], bool]) -> list[object]:
+    """Iterate `rx` on a daemon thread until `done(event)`; the receiver's
+    `recv_timeout` bounds each wait, the thread join bounds the whole."""
+    events: list[object] = []
+    err: list[BaseException] = []
+
+    def run() -> None:
+        try:
+            for ev in rx:
+                events.append(ev)
+                if done(ev):
+                    return
+        except BaseException as exc:  # noqa: BLE001
+            err.append(exc)
+
+    t = threading.Thread(target=run, daemon=True)
+    t.start()
+    t.join(_WAIT_S)
+    assert not t.is_alive(), f"no matching event within {_WAIT_S} s: {events}"
+    assert not err, err
+    return events
+
+
+def _second_pmt_seen() -> Callable[[object], bool]:
+    """True at the first `ProgramMap` after the continuity gap's
+    `Discontinuity`, which only PMT version 1 follows."""
+    gap = [False]
+
+    def done(ev: object) -> bool:
+        if isinstance(ev, DemuxEvent.Discontinuity):
+            gap[0] = True
+        return gap[0] and isinstance(ev, DemuxEvent.ProgramMap)
+
+    return done
+
+
+def test_demux_receiver_stats_values() -> None:
+    """The six counters by name, against what the capture holds: two PMT
+    versions (the repeat of version 0 counts nothing), one continuity gap,
+    and whole packets only."""
     port = _free_udp_port()
-    with shells.DemuxReceiver.open(f"rtp://127.0.0.1:{port}") as rx:
-        stats = rx.stats()
-        assert isinstance(stats, tuple)
-        assert len(stats) == 2
-        socket_stats, muxer_stats = stats
-        assert socket_stats.packets_received == 0
-        assert muxer_stats.programs_configured == 0
+    capture = _stats_capture()
+    with shells.DemuxReceiver.open(f"udp://127.0.0.1:{port}") as rx:
+        _send_datagram(port, b"".join(capture))
+        _iterate_until(rx, _second_pmt_seen())
+        s = rx.stats()
+        assert isinstance(s, shells.DemuxReceiverStats)
+        assert s.program_maps_seen == 2
+        assert s.pmt_versions_seen == 2
+        assert s.discontinuities == 1
+        assert s.nonconformant == 0
+        assert s.packets_received >= capture.index(_pmt_packet(1, cc=2)) + 1
+        assert s.packets_received <= len(capture)
+        assert s.bytes_received == s.packets_received * 188
+
+
+def test_a_stats_record_kept_across_close_keeps_its_values() -> None:
+    port = _free_udp_port()
+    rx = shells.DemuxReceiver.open(f"udp://127.0.0.1:{port}")
+    _send_datagram(port, b"".join(_stats_capture()))
+    _iterate_until(rx, _second_pmt_seen())
+    before = rx.stats()
+    values = repr(before)
+    rx.close()
+    assert repr(before) == values
+    assert before.program_maps_seen == 2
+    with pytest.raises(UdpError) as ei:
+        rx.stats()
+    assert ei.value.kind == UdpErrorKind.CLOSED
+
+
+def test_receiver_stats_values() -> None:
+    """Five bytes of garbage, then aligned packets: the syncer skips the
+    five and locks once; each packet read counts 188 bytes."""
+    port = _free_udp_port()
+    packets = [_ts_packet(0x1FFF, b"", cc=i) for i in range(8)]
+    with shells.Receiver.open(f"udp://127.0.0.1:{port}") as rx:
+        _send_datagram(port, b"\x00" * 5 + b"".join(packets))
+        for _ in range(4):
+            assert len(rx.recv_bytes()) == 188
+        s = rx.stats()
+        assert isinstance(s, shells.ReceiverStats)
+        assert s.packets_received == 4
+        assert s.bytes_received == 4 * 188
+        assert s.bytes_skipped_for_sync == 5
+        assert s.resync_events == 1
+    with pytest.raises(UdpError) as ei:
+        rx.stats()
+    assert ei.value.kind == UdpErrorKind.CLOSED
+
+
+@pytest.mark.parametrize("cls", [shells.DemuxReceiver, shells.Receiver])
+def test_rtp_stats_is_none_off_rtp(cls) -> None:
+    port = _free_udp_port()
+    with cls.open(f"udp://127.0.0.1:{port}") as rx:
+        assert rx.rtp_stats() is None
+    assert rx.rtp_stats() is None
+
+
+def _park(rx) -> tuple[threading.Thread, threading.Event]:
+    """Start a receive on a daemon thread; the Event is set just before it."""
+    started = threading.Event()
+
+    def run() -> None:
+        started.set()
+        try:
+            if isinstance(rx, shells.Receiver):
+                while True:
+                    rx.recv_bytes()
+            else:
+                for _ in rx:
+                    pass
+        except Exception:  # noqa: BLE001 - CLOSED at close() ends it
+            pass
+
+    t = threading.Thread(target=run, daemon=True)
+    t.start()
+    assert started.wait(_WAIT_S)
+    return t, started
+
+
+def _wait_for(cond: Callable[[], bool]) -> bool:
+    deadline = time.monotonic() + _WAIT_S
+    while time.monotonic() < deadline:
+        if cond():
+            return True
+        time.sleep(0.01)
+    return cond()
+
+
+@pytest.mark.parametrize("cls", [shells.DemuxReceiver, shells.Receiver])
+def test_rtp_stats_counts_a_malformed_datagram(cls) -> None:
+    """A datagram whose first byte says RTP version 1 is dropped and
+    counted in `malformed_packets`."""
+    port = _free_udp_port()
+    rx = cls.open(f"rtp://127.0.0.1:{port}")
+    try:
+        t, _ = _park(rx)
+        _send_datagram(port, b"\x40" + b"\x00" * 11 + b"\x47" + b"\x00" * 187)
+        assert _wait_for(lambda: rx.rtp_stats().malformed_packets == 1), rx.rtp_stats()
+        assert rx.rtp_stats().source_rejected == 0
+    finally:
+        rx.close()
+    t.join(_WAIT_S)
+    assert not t.is_alive()
+
+
+@pytest.mark.parametrize("cls", [shells.DemuxReceiver, shells.Receiver])
+def test_rtp_stats_answers_while_a_receive_is_parked_and_after_close(cls) -> None:
+    """The counters are read without the receiver's slot: a receive in
+    progress on another thread does not hold them up, and `close()` keeps
+    the last value."""
+    port = _free_udp_port()
+    rx = cls.open(f"rtp://127.0.0.1:{port}")
+    t, _ = _park(rx)
+    for _ in range(3):
+        _send_datagram(port, b"\x40" + b"\x00" * 199)
+    assert _wait_for(lambda: rx.rtp_stats().malformed_packets == 3)
+    # The receive has not returned: the datagrams were all dropped.
+    assert t.is_alive()
+    blocked, got = call_with_hang_deadline(rx.rtp_stats, 5.0)
+    assert not blocked
+    assert got["value"].malformed_packets == 3
+    rx.close()
+    t.join(_WAIT_S)
+    assert not t.is_alive()
+    after = rx.rtp_stats()
+    assert isinstance(after, tstrans.rtp.RtpStats)
+    assert after.malformed_packets == 3
+
+
+@pytest.mark.parametrize("cls", [shells.DemuxReceiver, shells.Receiver])
+def test_rtp_stats_racing_close_never_fails(cls) -> None:
+    for _ in range(20):
+        port = _free_udp_port()
+        rx = cls.open(f"rtp://127.0.0.1:{port}")
+        stop = threading.Event()
+        answers: list[object] = []
+        errs: list[BaseException] = []
+
+        def read() -> None:
+            while not stop.is_set():
+                try:
+                    answers.append(rx.rtp_stats())
+                except BaseException as exc:  # noqa: BLE001
+                    errs.append(exc)
+                    return
+
+        t = threading.Thread(target=read, daemon=True)
+        t.start()
+        assert _wait_for(lambda: len(answers) > 0)
+        rx.close()
+        # Read on a little after the close, then stop.
+        n = len(answers)
+        assert _wait_for(lambda: len(answers) > n)
+        stop.set()
+        t.join(_WAIT_S)
+        assert not t.is_alive()
+        assert not errs, errs
+        assert all(isinstance(a, tstrans.rtp.RtpStats) for a in answers)
 
 
 # --------------------------------------------------------------------------- #

@@ -44,7 +44,7 @@ use tst_srt::{SrtTransport, SrtUrl, url::Mode};
 
 use crate::errors::mux_error_to_pyerr;
 use crate::generated::stats_mpegts::MuxerStats;
-use crate::generated::stats_shells::SocketStats;
+use crate::generated::stats_shells::{DemuxReceiverStats, SocketStats};
 use crate::generated::stats_srt::ManagedTransportStats;
 use crate::mux::{
     PyAudioStreamHandle, PyDataStreamHandle, PyKlvStreamHandle, PyMuxerProgramConfig,
@@ -820,6 +820,24 @@ impl PyManagedDemuxReceiver {
             }),
         )?;
         Py::new(py, SocketStats::from(&core))
+    }
+
+    /// The receive counters, the `tstrans.shells.DemuxReceiverStats`
+    /// record (cumulative across reconnects; the packet a reconnect's
+    /// splice drops is counted here and not in `ts_bytes_demuxed()`).
+    /// Same access pattern as `socket_stats`; raises `SrtError(CLOSED)`
+    /// after `close()`.
+    fn stats(&self, py: Python<'_>) -> PyResult<Py<DemuxReceiverStats>> {
+        let stats = pyok(
+            py,
+            &SRT,
+            crate::util::allow_threads_parking(py, || {
+                self.owned
+                    // counters live inside the shell and have no value to report while a parked call holds it
+                    .with_ref_blocking(BlockingReason::NoAnswerWithoutSlot, |rx| rx.stats())
+            }),
+        )?;
+        Py::new(py, DemuxReceiverStats::from(&stats))
     }
 
     /// SRT-specific stats. Same access pattern as `socket_stats` — peers

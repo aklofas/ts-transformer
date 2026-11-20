@@ -32,6 +32,7 @@ from typing import (
 from tstrans.shells import (
     CancelHandle,
     DemuxReceiver,
+    DemuxReceiverStats,
     EndReason,
     MuxSender,
     OpenCancel,
@@ -792,6 +793,11 @@ class ManagedDemuxReceiver:
         """After ``cancel_handle().cancel()`` this raises ``CLOSED``, buffered data included."""
     def cancel_handle(self) -> CancelHandle: ...
     def socket_stats(self) -> SocketStats: ...
+    def stats(self) -> DemuxReceiverStats:
+        """The receive counters, cumulative across reconnects (the packet a
+        reconnect's splice drops counts here, not in ``ts_bytes_demuxed()``).
+        Waits behind a ``__next__`` parked on another thread; raises
+        ``SrtError(CLOSED)`` after ``close()``."""
     def srt_stats(self) -> SocketStats: ...
     def ts_bytes_demuxed(self) -> int:
         """Aligned TS bytes the demuxer was fed; the last value after `close()`."""

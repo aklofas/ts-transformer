@@ -729,13 +729,14 @@ falls into two groups.
 | `repr()` | the open form | the `closed` form |
 | `local_addr()` / `local_port()` / `local_addr_port()`, `tcp.Transport.peer_addr()` | the value captured when the object was built | raises `CLOSED` |
 | `peer_addr()`, `source_rejected()` on the receiving shells, `udp.RecvTransport` and `rist.RecvTransport` | the publisher's address and the count of what the `source` pin turned away, as they stand (the same count in `stats().source_rejected` waits, like `stats()`) | the shells keep answering; the two transports raise `CLOSED` |
+| `rtp_stats()` on the receiving shells (`shells.Receiver`, `shells.DemuxReceiver`) | the RTP counters as they stand; `None` off `rtp://` and RTSP | the last value |
 | `video_handle()` … `data_handle()` on the three `MuxSender` classes | the handles of the program config the sender was built from | `None` |
 | `reconnect_attempts()`, `reconnect_stats()` on the managed shells | live counters kept outside the object | `reconnect_attempts()` keeps its last value; `reconnect_stats()` raises `CLOSED` |
 | `end_reason()` / `end_detail()` | the recorded reason, or `None`; `H264Receiver` answers `None` while a `recv_au()` is in flight | the reason recorded at close |
 
 **Waits for the parked call to return** (with the GIL released, so other
 threads keep running): `stats()`, `socket_stats()`, `srt_stats()`,
-`depay_stats()`, `rtp_stats()` and `last_seen_micros()`. These read
+`depay_stats()`, `H264Receiver.rtp_stats()` and `last_seen_micros()`. These read
 counters that live inside the object and have nothing to report without
 it. Poll them from the thread that drives the send or receive loop, or
 give the receiver a receive deadline (`?recv_timeout=<ms>` on `rtp://` /
@@ -970,7 +971,9 @@ success count (excludes the initial accept); `ManagedMuxSender` and
 invocation — read from the core's own attempt counter since 0.7.0
 (`ManagedTransportStats.reconnect_attempts` agrees with it).
 `ManagedDemuxReceiver.last_seen_micros(pid)` works the same
-as the plain `DemuxReceiver` above.
+as the plain `DemuxReceiver` above, and its `stats()` returns the same
+`DemuxReceiverStats` record, counted across reconnects (the packet a
+reconnect's splice drops is in `stats()` and not in `ts_bytes_demuxed()`).
 
 **Why did the managed stream end?** `ManagedDemuxReceiver.end_reason()`
 (only this shell exposes it — not `ManagedReceiver`, `ManagedSender`, or
@@ -1083,8 +1086,14 @@ differs: `H264Receiver.local_addr()` reports its bound address.)
 over an `rtp://` URL, opened with `MuxSender.open(url, program_config)`
 (the datagram size is the `?pkt_size=` URL key); `DemuxReceiver` iterates
 `DemuxEvent`s and is opened with `DemuxReceiver.open(url, *,
-demux_config=None)`. Both also expose `stats()` (a `(SocketStats,
-MuxerStats)` tuple), `cancel_handle()` and `close()`:
+demux_config=None)`. Both also expose `stats()`, `cancel_handle()` and
+`close()`: the sender's `stats()` is a `(SocketStats, MuxerStats)` tuple,
+the receiver's a `DemuxReceiverStats` (the receive counters by name:
+`bytes_received`, `packets_received`, `program_maps_seen`,
+`pmt_versions_seen`, `discontinuities`, `nonconformant`; the wire counters
+stay `socket_stats()`). Their `rtp_stats()` reads the RTP counters
+(`malformed_packets`, `source_rejected`) without waiting for a receive in
+progress:
 
 ```python
 from tstrans.shells import MuxSender, DemuxReceiver

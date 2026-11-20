@@ -984,7 +984,12 @@ impl PyRtspSession {
         // tst-rtp release flips this to fallible we'll switch to
         // map_err.
         let transport = session.into_recv_transport();
-        PyDemuxReceiver::from_opened(py, crate::rtp::transport::opened_recv(transport), opts)
+        let rtp_stats = Some(transport.stats_handle());
+        let opened = crate::shells::open::OpenedRecv {
+            opened: crate::rtp::transport::opened_recv(transport),
+            rtp_stats,
+        };
+        PyDemuxReceiver::from_recv(py, opened, opts)
     }
 
     /// Consume the session's data plane and wrap it in an `H264Receiver`

@@ -20,7 +20,8 @@
 //!   after `close()`; the transport's end-reason handle is attached to the
 //!   `Owned`, so `end_reason()` keeps answering after `close()`; so do
 //!   `peer_addr()` and `source_rejected()`, which read the transport's
-//!   source record from the snapshot.
+//!   source record from the snapshot, and `rtp_stats()`, which reads the
+//!   RTP counters' handle taken before the transport was boxed.
 
 #![allow(unsafe_op_in_unsafe_fn, clippy::useless_conversion)]
 
@@ -38,12 +39,12 @@ use tst_pipeline::{
     TsBytesDemuxedHandle,
 };
 
-use crate::generated::stats_mpegts::MuxerStats;
-use crate::generated::stats_shells::SocketStats;
+use crate::generated::stats_shells::{DemuxReceiverStats, SocketStats};
 use crate::mpegts::demux_error_to_pyerr;
 use crate::raise::{pyok, raise};
 use crate::shells::cancel::{PyCancelHandle, cancel_source};
 use crate::shells::end_reason::{end_detail, end_reason_to_py};
+use crate::shells::open::{OpenedRecv, RtpStatsSource};
 use crate::shells::open_cancel::{PyOpenCancel, object_of};
 use crate::util::{CancelSource, close_owned, drop_owned};
 
@@ -71,6 +72,9 @@ struct Handles {
     ts_bytes: TsBytesDemuxedHandle,
     /// The transport's source record; `None` for a transport that keeps none.
     source: Option<SourceHandle>,
+    /// The RTP counters; `None` off RTP.
+    #[cfg_attr(not(feature = "rtp"), allow(dead_code))]
+    rtp_stats: RtpStatsSource,
 }
 
 /// Python demux receiver over any transport: owns a `Demuxer` and a
@@ -116,10 +120,20 @@ impl PyDemuxReceiver {
     /// `Socket.into_demux_receiver()` and RTSP `into_demux_receiver()`
     /// paths meet here).
     pub(crate) fn from_opened(
-        _py: Python<'_>,
+        py: Python<'_>,
         opened: Opened<Box<dyn RecvTransport>>,
         opts: Option<tst_core::mpegts::demux::DemuxerConfig>,
     ) -> PyResult<Self> {
+        Self::from_recv(py, OpenedRecv::plain(opened), opts)
+    }
+
+    /// [`Self::from_opened`] with the RTP counters of an `rtp://` transport.
+    pub(crate) fn from_recv(
+        _py: Python<'_>,
+        opened: OpenedRecv,
+        opts: Option<tst_core::mpegts::demux::DemuxerConfig>,
+    ) -> PyResult<Self> {
+        let OpenedRecv { opened, rtp_stats } = opened;
         let Opened {
             transport,
             cancel,
@@ -140,7 +154,11 @@ impl PyDemuxReceiver {
             cancel.as_dyn(),
             Snapshot {
                 domain,
-                handles: Handles { ts_bytes, source },
+                handles: Handles {
+                    ts_bytes,
+                    source,
+                    rtp_stats,
+                },
             },
         );
         if let Some(h) = end_reason {
@@ -157,11 +175,11 @@ impl PyDemuxReceiver {
     /// cancel latch the mount's `cancel()` sets.
     pub(crate) fn from_publish_mount(
         py: Python<'_>,
-        opened: Opened<Box<dyn RecvTransport>>,
+        opened: OpenedRecv,
         opts: Option<tst_core::mpegts::demux::DemuxerConfig>,
     ) -> PyResult<Self> {
-        let mount_cancel = Arc::clone(&opened.cancel);
-        let mut rx = Self::from_opened(py, opened, opts)?;
+        let mount_cancel = Arc::clone(&opened.opened.cancel);
+        let mut rx = Self::from_recv(py, opened, opts)?;
         rx.mount_cancel = Some(mount_cancel);
         Ok(rx)
     }
@@ -190,7 +208,7 @@ impl PyDemuxReceiver {
         };
         let oc = object_of(cancel);
         let opened = crate::shells::open::open_recv(py, url, &oc)?;
-        Self::from_opened(py, opened, demux_opts)
+        Self::from_recv(py, opened, demux_opts)
     }
 }
 
@@ -287,43 +305,32 @@ impl PyDemuxReceiver {
         self.owned.snapshot().handles.ts_bytes.get()
     }
 
-    /// Tuple of `(SocketStats, MuxerStats)`. Same shape as
-    /// `MuxSender.stats()`, so callers can read the same
-    /// `(SocketStats, MuxerStats)` tuple on both MuxSender and
-    /// DemuxReceiver.
+    /// The receive counters (`DemuxReceiverStats`): the packets the
+    /// syncer handed out, the program maps and their versions, the
+    /// discontinuities and the nonconformant items. Waits behind a parked
+    /// `__next__`, as `socket_stats()` does; a record taken earlier keeps
+    /// its values.
     ///
     /// Returns the transport's `CLOSED` kind if the receiver has been closed.
-    fn stats(&self, py: Python<'_>) -> PyResult<(Py<SocketStats>, Py<MuxerStats>)> {
-        // Release the GIL before taking the inner lock, like `socket_stats`
-        // above. Extract plain Rust values under the lock, then build Python
-        // objects after the guard is dropped and the GIL is reacquired.
+    fn stats(&self, py: Python<'_>) -> PyResult<Py<DemuxReceiverStats>> {
         let raw = crate::util::allow_threads_parking(py, || {
             // counters live inside the shell and have no value to report while a parked call holds it
             self.owned
-                .with_ref_blocking(BlockingReason::NoAnswerWithoutSlot, |rx| {
-                    let combined = rx.stats();
-                    // SocketStats from the wire counters tracked at the pipeline
-                    // layer (full SocketStats via the transport accessor isn't
-                    // surfaced through the pipeline shell).
-                    let mut sock_stats = tst_core::transport::SocketStats::default();
-                    sock_stats.bytes_received = combined.bytes_received;
-                    sock_stats.packets_received = combined.packets_received;
-                    // Re-shape the demux side as a MuxerStats projection so callers
-                    // get the same `(SocketStats, MuxerStats)` tuple shape on both
-                    // MuxSender + DemuxReceiver.
-                    let mut mux_stats = tst_core::mpegts::mux::MuxerStats::default();
-                    mux_stats.ts_packets_emitted = combined.packets_received;
-                    mux_stats.ts_bytes_emitted = combined.bytes_received;
-                    mux_stats.programs_configured =
-                        u32::try_from(combined.program_maps_seen).unwrap_or(u32::MAX);
-                    mux_stats.per_stream = combined.per_stream;
-                    (sock_stats, mux_stats)
-                })
+                .with_ref_blocking(BlockingReason::NoAnswerWithoutSlot, |rx| rx.stats())
         });
-        let (sock_stats, mux_stats) = pyok(py, &self.owned.snapshot().domain, raw)?;
-        let sock_py = Py::new(py, SocketStats::from(&sock_stats))?;
-        let mux_py = Py::new(py, MuxerStats::from(&mux_stats))?;
-        Ok((sock_py, mux_py))
+        let stats = pyok(py, &self.owned.snapshot().domain, raw)?;
+        Py::new(py, DemuxReceiverStats::from(&stats))
+    }
+
+    /// The RTP counters (`tstrans.rtp.RtpStats`) of a receiver over
+    /// `rtp://` or an RTSP session; `None` on any other transport. Never
+    /// waits behind a parked `__next__`; the last value after `close()`.
+    #[cfg(feature = "rtp")]
+    fn rtp_stats(
+        &self,
+        py: Python<'_>,
+    ) -> PyResult<Option<Py<crate::generated::stats_rtp::RtpStats>>> {
+        rtp_stats_of(py, &self.owned.snapshot().handles.rtp_stats)
     }
 
     /// Wall-clock time the stream identified by `pid` last carried an
@@ -426,4 +433,16 @@ impl PyDemuxReceiver {
             "DemuxReceiver(open)".to_string()
         }
     }
+}
+
+/// A shell's `rtp_stats()` answer from its handle.
+#[cfg(feature = "rtp")]
+pub(crate) fn rtp_stats_of(
+    py: Python<'_>,
+    handle: &RtpStatsSource,
+) -> PyResult<Option<Py<crate::generated::stats_rtp::RtpStats>>> {
+    handle
+        .as_ref()
+        .map(|h| Py::new(py, crate::generated::stats_rtp::RtpStats::from(&h.stats())))
+        .transpose()
 }
