@@ -1248,6 +1248,18 @@ with RtspClient.connect(cfg) as session:
   URL's `?transport=` / `?rtsp_version=` when set to a non-default value;
   the defaults (`TransportPref.AUTO`, `RtspVersion.V1_0`) leave the URL in
   charge.
+- **Keepalive, timeouts, user agent.** `keepalive_interval_ms` pins the
+  keepalive cadence (default: half the session timeout the server
+  advertises); `connect_timeout_ms` bounds the TCP connect and the TLS
+  handshake together (default 10 s); `request_timeout_ms` bounds each
+  request's write and reply (default 10 s, expiry `RtspError(TIMEOUT)`);
+  `user_agent` replaces the `User-Agent` header (one holding a control
+  character is refused with `RtspError(PROTOCOL)` before any request is
+  written). `None` keeps a default; zero or below, and an interval with
+  `keepalive=False`, raise `ValueError`. Push sessions take the same knobs.
+- **A poisoned session.** A panic inside a call (a bug) leaves the session
+  unusable: every later call that needs it raises `RtspError(CLOSED)`
+  naming the poisoning.
 - **URL credentials.** With `auth=None` the URL's userinfo answers a
   challenge; a user name without a password (`rtsp://admin@cam/…`) answers
   with an empty password, as `rtsp://admin:@cam/…` does. `auth` overrides it.
@@ -1606,10 +1618,11 @@ Rules the types do not enforce:
   that everything was written, send through the session's `send_ts` and
   call `teardown()`, which raises unless the queued media was written and
   the server accepted the TEARDOWN.
-- **Keepalive is on or off.** `keepalive=True` (the default) sends OPTIONS
-  pings at half the session timeout the server advertises; the config has
-  no interval. mediamtx 1.21.4 ends a recording publisher after 10 s
-  without a byte while it advertises 55 s, so keep media flowing.
+- **Keepalive.** `keepalive=True` (the default) sends OPTIONS pings at
+  half the session timeout the server advertises, or every
+  `keepalive_interval_ms` when the config sets it. mediamtx 1.21.4 ends a
+  recording publisher after 10 s without a byte while it advertises 55 s:
+  keep media flowing, or set an interval under 10 s.
 - **After `pause()` the data calls still send**, and some servers end the
   session for that (mediamtx 1.21.4 closes the connection).
 - **Collection.** A session collected without `close()` sets its cancel,

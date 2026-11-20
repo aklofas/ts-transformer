@@ -989,6 +989,26 @@ def test_finish_raises_the_drain_error_and_still_closes() -> None:
         push.close()
 
 
+def test_a_push_honours_the_interval() -> None:
+    """A push's keepalive pings follow `keepalive_interval_ms`: two within
+    a few hundred ms of RECORD, where the default cadence would wait half
+    the server's session timeout."""
+    server = ScriptedRecordServer()
+    cfg = RtspClientConfig(server.url, keepalive_interval_ms=200)
+    push = RtspClient.push(cfg, PushDescription.mp2t())
+    try:
+
+        def pings() -> int:
+            m = server.methods
+            after = m[m.index("RECORD") + 1 :] if "RECORD" in m else []
+            return sum(1 for x in after if x in ("OPTIONS", "GET_PARAMETER"))
+
+        assert _wait_for(lambda: pings() >= 2, limit=10.0), server.methods
+    finally:
+        push.close()
+        server.close()
+
+
 def test_a_conversion_while_a_send_is_parked_refuses_and_consumes_nothing() -> None:
     server = ScriptedRecordServer(stop_reading=True)
     push = RtspClient.push(RtspClientConfig(server.url), PushDescription.mp2t())

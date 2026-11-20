@@ -964,3 +964,190 @@ def test_rtsps_peer_closing_mid_handshake_raises_tls():
         )
     assert exc_info.value.kind == RtspErrorKind.TLS
     server.join(5)
+
+
+# ---------------------------------------------------------------------------
+# RtspClientConfig: keepalive interval, timeouts, user agent
+# ---------------------------------------------------------------------------
+
+_KNOBS = ("keepalive_interval_ms", "connect_timeout_ms", "request_timeout_ms")
+
+
+@pytest.mark.parametrize("knob", _KNOBS)
+@pytest.mark.parametrize("value", [0, -1])
+def test_a_zero_interval_is_refused(knob, value):
+    """Zero or below is no interval and no timeout: refused at once."""
+    with pytest.raises(ValueError, match=knob):
+        RtspClientConfig("rtsp://127.0.0.1:1/x", **{knob: value})
+
+
+def test_an_interval_with_keepalive_off_is_refused():
+    with pytest.raises(ValueError, match="keepalive"):
+        RtspClientConfig("rtsp://127.0.0.1:1/x", keepalive=False, keepalive_interval_ms=500)
+
+
+def test_the_new_knobs_read_back():
+    cfg = RtspClientConfig(
+        "rtsp://127.0.0.1:1/x",
+        keepalive_interval_ms=1500,
+        connect_timeout_ms=2500,
+        request_timeout_ms=3500,
+        user_agent="example-agent/1.0",
+    )
+    assert cfg.keepalive_interval_ms == 1500
+    assert cfg.connect_timeout_ms == 2500
+    assert cfg.request_timeout_ms == 3500
+    assert cfg.user_agent == "example-agent/1.0"
+    for knob in (*_KNOBS, "user_agent"):
+        assert getattr(RtspClientConfig("rtsp://127.0.0.1:1/x"), knob) is None, knob
+    assert "keepalive_interval_ms=1500" in repr(cfg)
+
+
+def _pings_after_play(requests: list[str]) -> list[str]:
+    methods = [r.split(None, 1)[0] for r in requests]
+    if "PLAY" not in methods:
+        return []
+    return [m for m in methods[methods.index("PLAY") + 1 :] if m in ("OPTIONS", "GET_PARAMETER")]
+
+
+def test_an_explicit_interval_sends_a_ping_within_it():
+    """The peer advertises a 60 s session timeout, so the default cadence
+    would ping after 30 s; a 200 ms interval pings at once."""
+    port, requests, server = _recording_peer()
+    cfg = RtspClientConfig(
+        url=f"rtsp://127.0.0.1:{port}/x",
+        transport_pref=TransportPref.TCP,
+        keepalive_interval_ms=200,
+    )
+    session = RtspClient.connect(cfg)
+    try:
+        deadline = time.monotonic() + 10
+        while len(_pings_after_play(requests)) < 2 and time.monotonic() < deadline:
+            time.sleep(0.02)
+        assert len(_pings_after_play(requests)) >= 2, requests
+    finally:
+        session.close()
+        server.join(10)
+
+
+def test_the_user_agent_is_sent():
+    port, requests, server = _recording_peer()
+    cfg = RtspClientConfig(
+        url=f"rtsp://127.0.0.1:{port}/x",
+        transport_pref=TransportPref.TCP,
+        keepalive=False,
+        user_agent="example-agent/1.0",
+    )
+    _connect_and_teardown(cfg, server)
+    assert requests
+    assert all(_header(r, "user-agent") == "example-agent/1.0" for r in requests), requests
+
+
+def test_a_user_agent_with_a_line_break_is_refused_before_any_request():
+    port, requests, server = _recording_peer()
+    cfg = RtspClientConfig(
+        url=f"rtsp://127.0.0.1:{port}/x",
+        transport_pref=TransportPref.TCP,
+        keepalive=False,
+        user_agent="example-agent/1.0\r\nX-Injected: 1",
+    )
+    try:
+        with pytest.raises(RtspError) as ei:
+            RtspClient.connect(cfg)
+        assert ei.value.kind == RtspErrorKind.PROTOCOL
+    finally:
+        # Refused before it connected: end the peer's wait for a client.
+        socket.create_connection(("127.0.0.1", port)).close()
+        server.join(10)
+    assert requests == []
+
+
+def test_a_request_never_answered_ends_at_the_request_timeout():
+    port, done, server = _silent_on_pause_peer()
+    cfg = RtspClientConfig(
+        url=f"rtsp://127.0.0.1:{port}/x",
+        transport_pref=TransportPref.TCP,
+        keepalive=False,
+        request_timeout_ms=300,
+    )
+    session = RtspClient.connect(cfg)
+    try:
+        began = time.monotonic()
+        with pytest.raises(RtspError) as ei:
+            session.pause()
+        took = time.monotonic() - began
+        assert ei.value.kind == RtspErrorKind.TIMEOUT
+        # The default is 10 s; a bound that held answers well before it.
+        assert took < 5.0, took
+    finally:
+        done.set()
+        session.close()
+        server.join(10)
+
+
+# ---------------------------------------------------------------------------
+# The data plane is decided and taken in one step
+# ---------------------------------------------------------------------------
+# The build holds the GIL, so two takes cannot run at once here: these pin the
+# outcome rules one call after another.
+
+
+def test_into_demux_receiver_on_an_h264_session_is_protocol_and_keeps_the_data_plane():
+    port, _requests, server = _recording_peer(sdp=_SDP_H264)
+    try:
+        with RtspClient.connect_h264(_tcp_config(port)) as session:
+            with pytest.raises(RtspError) as ei:
+                session.into_demux_receiver()
+            assert ei.value.kind == RtspErrorKind.PROTOCOL
+            rx = session.into_h264_receiver()
+            rx.close()
+            with pytest.raises(RtspError) as ei:
+                session.into_demux_receiver()
+            assert ei.value.kind == RtspErrorKind.CLOSED
+    finally:
+        server.join(10)
+
+
+def test_into_h264_receiver_after_into_demux_receiver_is_closed():
+    port, _requests, server = _recording_peer()
+    try:
+        with RtspClient.connect(_tcp_config(port)) as session:
+            with pytest.raises(RtspError) as ei:
+                session.into_h264_receiver()
+            assert ei.value.kind == RtspErrorKind.PROTOCOL  # the plane is kept
+            rx = session.into_demux_receiver()
+            with pytest.raises(RtspError) as ei:
+                session.into_h264_receiver()
+            assert ei.value.kind == RtspErrorKind.CLOSED
+            rx.close()
+    finally:
+        server.join(10)
+
+
+def test_a_poisoned_session_raises_closed_and_still_closes():
+    """A panic inside a call poisons the session: every call that needs a
+    lock raises `RtspError(CLOSED)` naming the poisoning (it was a
+    `ValueError` for the data plane), and `close()` still ends the client."""
+    from _builders.native_hooks import rtp_hook
+
+    poison = rtp_hook("_rtsp_session_poison_for_test")
+    port, requests, server = _recording_peer()
+    try:
+        session = RtspClient.connect(_tcp_config(port))
+        poison(session)
+        for call in (
+            session.pause,
+            session.play,
+            session.teardown,
+            session.into_demux_receiver,
+            session.into_h264_receiver,
+        ):
+            with pytest.raises(RtspError) as ei:
+                call()
+            assert ei.value.kind == RtspErrorKind.CLOSED, call
+            assert "poisoned" in str(ei.value), ei.value
+        session.close()
+        assert any(r.startswith("TEARDOWN ") for r in requests), requests
+    finally:
+        server.join(10)
+        assert not server.is_alive()

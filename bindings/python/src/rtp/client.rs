@@ -33,6 +33,7 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, TryLockError};
+use std::time::Duration;
 
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
@@ -275,6 +276,14 @@ impl PyDigestAuth {
 /// connections verify the server certificate against platform native trust roots by default;
 /// pass `tls_root_certs_pem` (a PEM bundle) to verify against a private
 /// CA / self-signed camera cert instead.
+///
+/// `keepalive_interval_ms` pins the keepalive cadence (default: half the
+/// session timeout the server advertises); `connect_timeout_ms` bounds the
+/// TCP connect and the TLS handshake together (default 10 s);
+/// `request_timeout_ms` bounds each request's write and reply (default
+/// 10 s); `user_agent` replaces the `User-Agent` header. `None` keeps the
+/// default; zero or below, and an interval with `keepalive=False`, raise
+/// `ValueError`.
 #[pyclass(name = "RtspClientConfig", module = "tstrans.rtp", frozen)]
 pub struct PyRtspClientConfig {
     url: String,
@@ -285,6 +294,25 @@ pub struct PyRtspClientConfig {
     tls_root_certs_pem: Option<Vec<u8>>,
     keepalive: bool,
     rtsp_version: PyRtspVersion,
+    keepalive_interval_ms: Option<u64>,
+    connect_timeout_ms: Option<u64>,
+    request_timeout_ms: Option<u64>,
+    user_agent: Option<String>,
+}
+
+/// A millisecond knob: `None`, or a positive count.
+fn positive_ms(name: &str, v: Option<i64>) -> PyResult<Option<u64>> {
+    match v {
+        None => Ok(None),
+        Some(ms) if ms > 0 => Ok(Some(ms as u64)),
+        Some(ms) => Err(PyValueError::new_err(format!(
+            "RtspClientConfig: {name} must be positive, got {ms}"
+        ))),
+    }
+}
+
+fn ms_repr(v: Option<u64>) -> String {
+    v.map_or_else(|| "None".to_owned(), |ms| ms.to_string())
 }
 
 #[pymethods]
@@ -298,7 +326,12 @@ impl PyRtspClientConfig {
         tls_root_certs_pem = None,
         keepalive = true,
         rtsp_version = PyRtspVersion::V1_0,
+        keepalive_interval_ms = None,
+        connect_timeout_ms = None,
+        request_timeout_ms = None,
+        user_agent = None,
     ))]
+    #[allow(clippy::too_many_arguments)]
     fn new(
         url: String,
         auth: Option<&Bound<'_, PyAny>>,
@@ -306,6 +339,10 @@ impl PyRtspClientConfig {
         tls_root_certs_pem: Option<Vec<u8>>,
         keepalive: bool,
         rtsp_version: PyRtspVersion,
+        keepalive_interval_ms: Option<i64>,
+        connect_timeout_ms: Option<i64>,
+        request_timeout_ms: Option<i64>,
+        user_agent: Option<String>,
     ) -> PyResult<Self> {
         if url.is_empty() {
             return Err(PyValueError::new_err(
@@ -329,6 +366,12 @@ impl PyRtspClientConfig {
                 Some(a.clone().unbind())
             }
         };
+        let keepalive_interval_ms = positive_ms("keepalive_interval_ms", keepalive_interval_ms)?;
+        if keepalive_interval_ms.is_some() && !keepalive {
+            return Err(PyValueError::new_err(
+                "RtspClientConfig: keepalive_interval_ms needs keepalive=True",
+            ));
+        }
         Ok(Self {
             url,
             auth: auth_obj,
@@ -336,6 +379,10 @@ impl PyRtspClientConfig {
             tls_root_certs_pem,
             keepalive,
             rtsp_version,
+            keepalive_interval_ms,
+            connect_timeout_ms: positive_ms("connect_timeout_ms", connect_timeout_ms)?,
+            request_timeout_ms: positive_ms("request_timeout_ms", request_timeout_ms)?,
+            user_agent,
         })
     }
 
@@ -369,10 +416,32 @@ impl PyRtspClientConfig {
         self.rtsp_version
     }
 
+    #[getter]
+    fn keepalive_interval_ms(&self) -> Option<u64> {
+        self.keepalive_interval_ms
+    }
+
+    #[getter]
+    fn connect_timeout_ms(&self) -> Option<u64> {
+        self.connect_timeout_ms
+    }
+
+    #[getter]
+    fn request_timeout_ms(&self) -> Option<u64> {
+        self.request_timeout_ms
+    }
+
+    #[getter]
+    fn user_agent(&self) -> Option<&str> {
+        self.user_agent.as_deref()
+    }
+
     fn __repr__(&self) -> String {
         format!(
             "RtspClientConfig(url={:?}, auth={}, transport_pref={:?}, \
-             tls_root_certs_pem={}, keepalive={}, rtsp_version={:?})",
+             tls_root_certs_pem={}, keepalive={}, rtsp_version={:?}, \
+             keepalive_interval_ms={}, connect_timeout_ms={}, request_timeout_ms={}, \
+             user_agent={:?})",
             redact_url(&self.url),
             if self.auth.is_some() {
                 "<auth>"
@@ -387,6 +456,10 @@ impl PyRtspClientConfig {
             },
             self.keepalive,
             self.rtsp_version,
+            ms_repr(self.keepalive_interval_ms),
+            ms_repr(self.connect_timeout_ms),
+            ms_repr(self.request_timeout_ms),
+            self.user_agent,
         )
     }
 }
@@ -496,7 +569,8 @@ fn apply_transport_and_version(
 }
 
 /// The `RtspClientBuilder` a config describes: the URL (a parse error is
-/// `RtspError`), the credentials, `keepalive`, `transport_pref` /
+/// `RtspError`), the credentials, `keepalive` and its interval, the
+/// connect and request timeouts, the user agent, `transport_pref` /
 /// `rtsp_version` and the TLS trust roots. Every factory of `RtspClient`
 /// starts from it.
 fn builder_from_config(py: Python<'_>, config: &PyRtspClientConfig) -> PyResult<RtspClientBuilder> {
@@ -529,6 +603,18 @@ fn builder_from_config(py: Python<'_>, config: &PyRtspClientConfig) -> PyResult<
     // `keepalive=false` disables the automatic keepalive pings.
     if !config.keepalive {
         builder = builder.no_auto_keepalive(true);
+    }
+    if let Some(ms) = config.keepalive_interval_ms {
+        builder = builder.keepalive_interval(Duration::from_millis(ms));
+    }
+    if let Some(ms) = config.connect_timeout_ms {
+        builder = builder.connect_timeout(Duration::from_millis(ms));
+    }
+    if let Some(ms) = config.request_timeout_ms {
+        builder = builder.request_timeout(Some(Duration::from_millis(ms)));
+    }
+    if let Some(ua) = &config.user_agent {
+        builder = builder.user_agent(ua.clone());
     }
 
     // `transport_pref` / `rtsp_version` (non-default values override the
@@ -747,27 +833,45 @@ pub struct PyRtspSession {
     /// Set when `close()` begins: `cancel_handle()` and the data-plane
     /// takes are refused from then.
     closed: AtomicBool,
-    /// The SETUP-time `RtspSession` carrying the UDP socket pair (or
-    /// TCP-interleaved mpsc receiver) for the data plane. `Option`
-    /// because `into_demux_receiver` / `into_h264_receiver` consumes it
-    /// — any take after the first raises `RtspError(CLOSED)`. The
-    /// `Mutex` mirrors the `client` field's pattern so the two fields
-    /// can be accessed under uniform locking discipline. A refusal on this
-    /// slot or `h264_depay_config` builds its exception only after the
-    /// guard drops: the exception's `__init__` is Python and can hand the
-    /// GIL to a thread waiting for the same lock.
-    session: Arc<Mutex<Option<RustRtspSession>>>,
+    /// The SETUP-time data plane: the `RtspSession` carrying the UDP socket
+    /// pair (or TCP-interleaved mpsc receiver), with the H.264
+    /// depacketizer config of a `connect_h264` session. `None` once
+    /// `into_demux_receiver` / `into_h264_receiver` took it: any later take
+    /// raises `RtspError(CLOSED)`. Which receiver may take it is decided
+    /// and the take done under this one lock. A refusal builds its
+    /// exception only after the guard drops: the exception's `__init__` is
+    /// Python and can hand the GIL to a thread waiting for the same lock.
+    data_plane: Mutex<Option<DataPlane>>,
     /// Set true by `teardown` / `close` so duplicate teardowns
     /// are a no-op rather than a "session_id is None" surface from
     /// `RtspClient::teardown`. `Arc<AtomicBool>` so the `py.detach`
     /// closures can set it without holding the python ref.
     torn_down: Arc<AtomicBool>,
-    /// H.264 depacketizer config stashed at `connect_h264` time. `None`
-    /// when this session was created via `connect()` (MP2T path) or when
-    /// `into_h264_receiver()` has already consumed it. Calling
-    /// `into_h264_receiver()` on a `connect()`-created session raises
-    /// `RtspError(PROTOCOL)`.
-    h264_depay_config: Arc<Mutex<Option<H264DepayConfig>>>,
+}
+
+/// What a session's data plane carries: MPEG-TS from `connect()`, or H.264
+/// with its depacketizer config from `connect_h264()`.
+enum DataPlane {
+    Mp2t(RustRtspSession),
+    H264(RustRtspSession, H264DepayConfig),
+}
+
+/// `into_demux_receiver` on a `connect_h264` session.
+fn h264_session_error() -> BindingError {
+    BindingError::new(
+        BindingErrorKind::RtspProtocol,
+        "RtspSession.into_demux_receiver: this session was negotiated \
+         for H.264 elementary ingest — use into_h264_receiver() instead",
+    )
+}
+
+/// The error for a session whose lock a panic poisoned: unusable from then
+/// on, as a closed session is.
+fn poisoned() -> BindingError {
+    BindingError::new(
+        BindingErrorKind::Closed,
+        "RtspSession: the session's lock was poisoned by a panic in an earlier call",
+    )
 }
 
 /// A session collected without `close()`: the client's own drop sends a
@@ -779,7 +883,7 @@ impl Drop for PyRtspSession {
     fn drop(&mut self) {
         let client = self.client.lock().unwrap_or_else(|e| e.into_inner()).take();
         let session = self
-            .session
+            .data_plane
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .take();
@@ -823,17 +927,16 @@ impl PyRtspSession {
         }
         let client = self.client.clone();
         let torn = self.torn_down.clone();
-        let result =
-            crate::util::allow_threads_parking(py, move || -> Result<(), RustRtspError> {
-                let mut guard = client.lock().map_err(|_| RustRtspError::SessionExpired)?;
-                let r = match guard.as_mut() {
-                    Some(c) => c.teardown(),
-                    None => Ok(()),
-                };
-                torn.store(true, Ordering::Relaxed);
-                r
-            });
-        result.map_err(|e| raise(py, &RTSP, BindingError::from(e)))
+        let result = crate::util::allow_threads_parking(py, move || -> Result<(), BindingError> {
+            let mut guard = client.lock().map_err(|_| poisoned())?;
+            let r = match guard.as_mut() {
+                Some(c) => c.teardown(),
+                None => Ok(()),
+            };
+            torn.store(true, Ordering::Relaxed);
+            r.map_err(BindingError::from)
+        });
+        result.map_err(|e| raise(py, &RTSP, e))
     }
 
     /// End the session and the client: TEARDOWN with one 500 ms bound
@@ -936,47 +1039,33 @@ impl PyRtspSession {
         py: Python<'_>,
         demux_config: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<PyDemuxReceiver> {
-        // A closed session or a consumed data plane is CLOSED on every
-        // take path, checked first so the wrong-constructor guard below
-        // never masks it.
+        // A closed session, a consumed data plane and an H.264 session
+        // refuse before the config is read, so a bad config never masks
+        // them; the take below decides again under its own lock.
         self.refuse_if_closed("RtspSession.into_demux_receiver: the session is closed")?;
-        self.refuse_if_consumed("RtspSession.into_demux_receiver: already consumed")?;
-        // Guard: reject if this session was created by connect_h264() — the
-        // H264DepayConfig slot being Some signals an H.264 session.
-        let is_h264 = self
-            .h264_depay_config
-            .lock()
-            .map_err(|_| PyValueError::new_err("RtspSession lock poisoned"))?
-            .is_some();
-        if is_h264 {
-            return Err(raise(
-                py,
-                &RTSP,
-                BindingError::new(
-                    BindingErrorKind::RtspProtocol,
-                    "RtspSession.into_demux_receiver: this session was negotiated \
-                     for H.264 elementary ingest — use into_h264_receiver() instead",
-                ),
-            ));
-        }
+        self.check_data_plane(
+            |plane| match plane {
+                DataPlane::Mp2t(_) => None,
+                DataPlane::H264(..) => Some(h264_session_error()),
+            },
+            "RtspSession.into_demux_receiver: already consumed",
+        )
+        .map_err(|e| raise(py, &RTSP, e))?;
         // Validate before the take: a refused config must not consume the
         // data plane.
         let opts = match demux_config {
             None => None,
             Some(cfg) => Some(crate::mpegts::build_demuxer_config(py, cfg)?),
         };
-        // Take the SETUP-time RtspSession; double-consume = CLOSED.
         let session = self
-            .session
-            .lock()
-            .map_err(|_| PyValueError::new_err("RtspSession lock poisoned"))?
-            .take();
-        let session = session.ok_or_else(|| {
-            rtsp_err_no_gil(
-                BindingErrorKind::Closed,
+            .take_data_plane(
+                |plane| match plane {
+                    DataPlane::Mp2t(session) => Ok(session),
+                    DataPlane::H264(..) => Err((plane, h264_session_error())),
+                },
                 "RtspSession.into_demux_receiver: already consumed",
             )
-        })?;
+            .map_err(|e| raise(py, &RTSP, e))?;
         // Convert to RtpRecvTransport. The session's `into_recv_transport`
         // panics only on internal-state-corruption shapes that can't
         // happen on a SETUP-succeeded path; we don't catch_unwind here
@@ -1009,49 +1098,26 @@ impl PyRtspSession {
     /// free if the construction raises).
     #[allow(clippy::wrong_self_convention)]
     fn into_h264_receiver(&self, py: Python<'_>) -> PyResult<PyH264Receiver> {
-        // Step 0: a closed session or a consumed data plane is CLOSED,
-        // checked before the config so neither is misreported PROTOCOL.
+        // A closed session or a consumed data plane is CLOSED, before the
+        // wrong-constructor check could say PROTOCOL; a refused plane stays.
         self.refuse_if_closed("RtspSession.into_h264_receiver: the session is closed")?;
-        self.refuse_if_consumed("RtspSession.into_h264_receiver: data plane already consumed")?;
-        // Step 1: take the H264DepayConfig stashed at connect_h264 time.
-        // None = session was created by connect() (wrong path).
-        let depay_config = self
-            .h264_depay_config
-            .lock()
-            .map_err(|_| PyValueError::new_err("RtspSession lock poisoned"))?
-            .take();
-        let depay_config = depay_config.ok_or_else(|| {
-            raise(
-                py,
-                &RTSP,
-                BindingError::new(
-                    BindingErrorKind::RtspProtocol,
-                    "RtspSession.into_h264_receiver: session was not created by \
-                     connect_h264()",
-                ),
+        let (session, depay_config) = self
+            .take_data_plane(
+                |plane| match plane {
+                    DataPlane::H264(session, cfg) => Ok((session, cfg)),
+                    DataPlane::Mp2t(_) => Err((
+                        plane,
+                        BindingError::new(
+                            BindingErrorKind::RtspProtocol,
+                            "RtspSession.into_h264_receiver: session was not created by \
+                             connect_h264()",
+                        ),
+                    )),
+                },
+                "RtspSession.into_h264_receiver: data plane already consumed",
             )
-        })?;
+            .map_err(|e| raise(py, &RTSP, e))?;
 
-        // Step 2: take the SETUP-time RtspSession.
-        // Zero this BEFORE the fallible into_h264_receiver call (prevents a
-        // double free if it raises).
-        let session = self
-            .session
-            .lock()
-            .map_err(|_| PyValueError::new_err("RtspSession lock poisoned"))?
-            .take();
-        let session = session.ok_or_else(|| {
-            raise(
-                py,
-                &RTSP,
-                BindingError::new(
-                    BindingErrorKind::Closed,
-                    "RtspSession.into_h264_receiver: data plane already consumed",
-                ),
-            )
-        })?;
-
-        // Step 3: convert the RTSP session into an H264Receiver.
         let receiver = session.into_h264_receiver(depay_config);
         Ok(PyH264Receiver::from_h264_receiver(receiver))
     }
@@ -1087,13 +1153,16 @@ impl PyRtspSession {
         session: RustRtspSession,
         h264_depay_config: Option<H264DepayConfig>,
     ) -> Self {
+        let data_plane = match h264_depay_config {
+            Some(cfg) => DataPlane::H264(session, cfg),
+            None => DataPlane::Mp2t(session),
+        };
         Self {
             rtsp_cancel: client.cancel_handle(),
             client: Arc::new(Mutex::new(Some(client))),
             closed: AtomicBool::new(false),
-            session: Arc::new(Mutex::new(Some(session))),
+            data_plane: Mutex::new(Some(data_plane)),
             torn_down: Arc::new(AtomicBool::new(false)),
-            h264_depay_config: Arc::new(Mutex::new(h264_depay_config)),
         }
     }
 
@@ -1107,9 +1176,7 @@ impl PyRtspSession {
     ) -> PyResult<()> {
         let client = self.client.clone();
         let result = crate::util::allow_threads_parking(py, move || -> Result<(), BindingError> {
-            let mut guard = client
-                .lock()
-                .map_err(|_| BindingError::from(RustRtspError::SessionExpired))?;
+            let mut guard = client.lock().map_err(|_| poisoned())?;
             match guard.as_mut() {
                 Some(c) => request(c).map_err(BindingError::from),
                 None => Err(BindingError::new(BindingErrorKind::Closed, closed)),
@@ -1129,18 +1196,36 @@ impl PyRtspSession {
         Ok(())
     }
 
-    /// `RtspError(CLOSED)` when the data plane has already been taken —
-    /// a non-taking check, so a refusal never consumes anything.
-    fn refuse_if_consumed(&self, message: &str) -> PyResult<()> {
-        let consumed = self
-            .session
-            .lock()
-            .map_err(|_| PyValueError::new_err("RtspSession lock poisoned"))?
-            .is_none();
-        if consumed {
-            return Err(rtsp_err_no_gil(BindingErrorKind::Closed, message));
+    /// Refuse a take without taking anything: CLOSED when the data plane
+    /// is gone, else what `refusal` says of it.
+    fn check_data_plane(
+        &self,
+        refusal: impl FnOnce(&DataPlane) -> Option<BindingError>,
+        consumed: &str,
+    ) -> Result<(), BindingError> {
+        let guard = self.data_plane.lock().map_err(|_| poisoned())?;
+        match guard.as_ref() {
+            None => Err(BindingError::new(BindingErrorKind::Closed, consumed)),
+            Some(plane) => refusal(plane).map_or(Ok(()), Err),
         }
-        Ok(())
+    }
+
+    /// Take the data plane when `wanted` accepts it, deciding and taking
+    /// under one lock; a refused plane stays. `Err` carries the refusal,
+    /// built into an exception by the caller once the guard is gone.
+    fn take_data_plane<T>(
+        &self,
+        wanted: impl FnOnce(DataPlane) -> Result<T, (DataPlane, BindingError)>,
+        consumed: &str,
+    ) -> Result<T, BindingError> {
+        let mut guard = self.data_plane.lock().map_err(|_| poisoned())?;
+        match guard.take() {
+            None => Err(BindingError::new(BindingErrorKind::Closed, consumed)),
+            Some(plane) => wanted(plane).map_err(|(plane, e)| {
+                *guard = Some(plane);
+                e
+            }),
+        }
     }
 }
 
@@ -1166,7 +1251,27 @@ pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyRtspCancelHandle>()?;
     m.add_class::<PyRtspClient>()?;
     m.add_class::<PyRtspSession>()?;
+    #[cfg(feature = "py-test-hooks")]
+    m.add_function(wrap_pyfunction!(poison_for_test, m)?)?;
     Ok(())
+}
+
+/// `_rtsp_session_poison_for_test(session)`: panic while holding each of
+/// the session's locks, as a bug in a call would, so both are poisoned.
+/// Test-only (`py-test-hooks`), never in a published wheel.
+#[cfg(feature = "py-test-hooks")]
+#[pyfunction]
+#[pyo3(name = "_rtsp_session_poison_for_test")]
+fn poison_for_test(session: &Bound<'_, PyRtspSession>) {
+    let s = session.get();
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _guard = s.client.lock();
+        panic!("_rtsp_session_poison_for_test");
+    }));
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _guard = s.data_plane.lock();
+        panic!("_rtsp_session_poison_for_test");
+    }));
 }
 
 // Hand-written so a `{:?}` never prints the password.

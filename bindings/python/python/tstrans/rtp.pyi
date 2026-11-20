@@ -276,6 +276,16 @@ class RtspClientConfig:
     `tls_root_certs_pem` is a PEM bundle of trust anchors for
     `rtsps://` connections (private-CA / self-signed camera certs);
     platform native trust roots are used when it is `None`.
+
+    `keepalive_interval_ms` pins the keepalive cadence (default: half the
+    session timeout the server advertises, 30 s until it advertises one);
+    `connect_timeout_ms` bounds the TCP connect and the TLS handshake
+    together (default 10 s; name resolution is outside it);
+    `request_timeout_ms` bounds each request's write and its reply
+    (default 10 s; expiry is `RtspError(TIMEOUT)`); `user_agent` replaces
+    the `User-Agent` header (one that holds a control character is refused
+    with `RtspError(PROTOCOL)` before any request is written). `None` keeps each default. Zero or below, and
+    an interval with `keepalive=False`, raise `ValueError`.
     """
 
     def __new__(cls,
@@ -286,6 +296,10 @@ class RtspClientConfig:
         tls_root_certs_pem: Optional[bytes] = ...,
         keepalive: bool = ...,
         rtsp_version: RtspVersion = ...,
+        keepalive_interval_ms: Optional[int] = ...,
+        connect_timeout_ms: Optional[int] = ...,
+        request_timeout_ms: Optional[int] = ...,
+        user_agent: Optional[str] = ...,
     ) -> RtspClientConfig: ...
     @property
     def url(self) -> str: ...
@@ -299,6 +313,14 @@ class RtspClientConfig:
     def keepalive(self) -> bool: ...
     @property
     def rtsp_version(self) -> RtspVersion: ...
+    @property
+    def keepalive_interval_ms(self) -> Optional[int]: ...
+    @property
+    def connect_timeout_ms(self) -> Optional[int]: ...
+    @property
+    def request_timeout_ms(self) -> Optional[int]: ...
+    @property
+    def user_agent(self) -> Optional[str]: ...
     def __repr__(self) -> str: ...
 
 
@@ -417,6 +439,11 @@ class RtspSession:
     `play()`, `teardown()`) run one at a time: a second one waits, GIL
     released, until the call in progress returns or is cancelled (up to its
     request timeout).
+
+    `into_demux_receiver()` / `into_h264_receiver()` decide which receiver
+    may take the data plane and take it in one step. A panic inside a call
+    (a bug) poisons the session: every later call that needs it raises
+    `RtspError(CLOSED)` naming the poisoning; `close()` still ends it.
     """
 
     def pause(self) -> None:
