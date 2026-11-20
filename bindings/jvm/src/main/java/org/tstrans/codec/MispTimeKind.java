@@ -16,7 +16,7 @@ public enum MispTimeKind {
      * Nanoseconds since the MISP epoch (ST 0603 Nano Precision Time Stamp).
      * H.265-only per ST 0604.6 §12.2; using this kind on an H.264 stream
      * throws {@link org.tstrans.MuxException} with kind
-     * {@code INPUT_MALFORMED}.
+     * {@code MISP_TIME}.
      */
     NANO
 }

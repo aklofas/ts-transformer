@@ -102,15 +102,24 @@ class RtpEndReasonTest {
 
     @Test
     void endReasonIsPresentAfterTheEnd() throws Exception {
-        RecvTransport t = RecvTransport.fromUrl("rtp://127.0.0.1:0");
-        Receiver r = Receiver.open("rtp://127.0.0.1:0");
-        DemuxReceiver d = DemuxReceiver.open("rtp://127.0.0.1:0");
-        H264Receiver h = H264Receiver.listen("rtp://127.0.0.1:0?pt=96");
+        try (RecvTransport t = RecvTransport.fromUrl("rtp://127.0.0.1:0");
+             Receiver r = Receiver.open("rtp://127.0.0.1:0");
+             DemuxReceiver d = DemuxReceiver.open("rtp://127.0.0.1:0");
+             H264Receiver h = H264Receiver.listen("rtp://127.0.0.1:0?pt=96")) {
+            endsCancelledAndKeepsItAfterClose(t, r, d, h);
+        }
+    }
+
+    private static void endsCancelledAndKeepsItAfterClose(RecvTransport t, Receiver r,
+            DemuxReceiver d, H264Receiver h) throws Exception {
         // A cancel ends each one with CANCELLED while it is still open.
-        t.cancelHandle().cancel();
-        r.cancelHandle().cancel();
-        d.cancelHandle().cancel();
-        h.cancelHandle().cancel();
+        try (var tc = t.cancelHandle(); var rc = r.cancelHandle();
+             var dc = d.cancelHandle(); var hc = h.cancelHandle()) {
+            tc.cancel();
+            rc.cancel();
+            dc.cancel();
+            hc.cancel();
+        }
         assertThrows(org.tstrans.RtpException.class, t::recv);
         assertThrows(org.tstrans.RtpException.class, r::recvBytes);
         assertThrows(org.tstrans.RtpException.class, d::recvEvent);

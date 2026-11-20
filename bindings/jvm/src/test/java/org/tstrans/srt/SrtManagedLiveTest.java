@@ -282,6 +282,7 @@ class SrtManagedLiveTest {
     // ── Test 2 — ManagedSender.srtStats() throws IO; socketStats() works ──────
 
     @Test
+    @SuppressWarnings("removal") // pins the deprecated method's behaviour until its removal
     void managedSenderSrtStatsThrowsIo() throws Exception {
         assumeTrue(isLinux(),
             "SRT live-socket loopback gated to Linux (same as #![cfg(target_os = \"linux\")] in Rust)");
@@ -698,6 +699,7 @@ class SrtManagedLiveTest {
     // ── Test 4 — ManagedReceiver.srtStats() throws IO ─────────────────────────
 
     @Test
+    @SuppressWarnings("removal") // pins the deprecated method's behaviour until its removal
     void managedReceiverSrtStatsThrowsIo() throws Exception {
         assumeTrue(isLinux(),
             "SRT live-socket loopback gated to Linux (same as #![cfg(target_os = \"linux\")] in Rust)");

@@ -3,9 +3,9 @@ package org.tstrans.shells;
 /**
  * Why a receive session ended ({@code Receiver.endReason()},
  * {@code DemuxReceiver.endReason()}); those getters return an empty
- * {@code Optional} while it has not ended, or when the transport records none. The wire values are the cross-surface
- * numbering shared with the C ABI's {@code TstStreamEndReason} and tst-py's
- * {@code EndReason}.
+ * {@code Optional} while it has not ended, or when the transport records
+ * none. The wire values are the cross-surface numbering shared with the C
+ * ABI's {@code TstStreamEndReason} and tst-py's {@code EndReason}.
  */
 public enum EndReason {
     /** The peer or this side tore the session down cleanly. */
