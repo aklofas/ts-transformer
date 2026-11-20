@@ -79,6 +79,18 @@ Three ratchets need a deliberate update when your change is intentional:
 
 Bindings: `bindings/python` builds with `maturin develop --release` in its
 own venv and tests with `pytest`; `bindings/jvm` runs `./gradlew test`.
+The JVM build checks every file it downloads (plugins, their classpath, the
+test dependencies; POM and module files too) against the SHA-256 in
+`bindings/jvm/gradle/verification-metadata.xml`. After a dependency or
+plugin change Gradle stops with `Dependency verification failed for
+configuration …` and "If the artifacts are trustworthy, you will need to
+update the gradle/verification-metadata.xml file". Regenerate it from
+`bindings/jvm` with `./gradlew --write-verification-metadata sha256 help`,
+review the diff (each new hash is a file the build will now trust; check it
+against the publisher's published checksum where there is one), run
+`./gradlew test`, and commit the file with the change. Generation only adds:
+the entries of a removed dependency stay until the file is regenerated from
+an empty one.
 The embedded sub-project has its own gates under `embedded/scripts/check/`.
 
 ## Pull requests
