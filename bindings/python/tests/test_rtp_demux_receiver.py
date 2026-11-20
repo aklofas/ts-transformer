@@ -13,6 +13,7 @@ Loopback tests:
 from __future__ import annotations
 
 from tstrans import shells
+import datetime
 import socket
 import threading
 import time
@@ -525,29 +526,29 @@ def test_rtp_stats_racing_close_never_fails(cls) -> None:
 
 
 # --------------------------------------------------------------------------- #
-# last_seen_micros(pid)                                                       #
+# last_seen(pid)                                                              #
 # --------------------------------------------------------------------------- #
 
+_EPOCH = datetime.datetime(1970, 1, 1, tzinfo=datetime.timezone.utc)
 
-def test_last_seen_micros_none_before_any_data() -> None:
+
+def test_last_seen_none_before_any_data() -> None:
     """A freshly-bound receiver has seen nothing yet — any pid, including
     a configured-looking one, reports None."""
     port = _free_udp_port()
     with shells.DemuxReceiver.open(f"rtp://127.0.0.1:{port}") as rx:
-        assert rx.last_seen_micros(0x101) is None
+        assert rx.last_seen(0x101) is None
 
 
-def test_last_seen_micros_bogus_pid_returns_none() -> None:
+def test_last_seen_bogus_pid_returns_none() -> None:
     port = _free_udp_port()
     with shells.DemuxReceiver.open(f"rtp://127.0.0.1:{port}") as rx:
-        assert rx.last_seen_micros(0x1FFF) is None
+        assert rx.last_seen(0x1FFF) is None
 
 
-def test_last_seen_micros_reports_int_after_video_event() -> None:
-    """Once a Video event for pid 0x101 has been consumed,
-    `last_seen_micros(0x101)` returns an epoch-microsecond int; a PID
-    that never carried traffic (0x1FFF, outside the configured program)
-    stays None."""
+def _receiver_after_a_video_event() -> shells.DemuxReceiver:
+    """An `rtp://` receiver that has emitted a Video event for pid 0x101 and
+    is no longer iterated, so its per-stream stats stay put."""
     port = _free_udp_port()
     rx = shells.DemuxReceiver.open(f"rtp://127.0.0.1:{port}")
     events: list[object] = []
@@ -564,8 +565,7 @@ def test_last_seen_micros_reports_int_after_video_event() -> None:
 
     t = threading.Thread(target=consumer, daemon=True)
     t.start()
-    # Give the consumer time to bind.
-    time.sleep(0.2)
+    # The receiver is bound by `open`, so the datagrams wait in its socket.
     program = _video_only_program()
     with shells.MuxSender.open(f"rtp://127.0.0.1:{port}", program) as snd:
         nal_idr = b"\x00\x00\x00\x01\x65\xBB"
@@ -575,16 +575,63 @@ def test_last_seen_micros_reports_int_after_video_event() -> None:
             )
     t.join(timeout=5.0)
     saw_video = any(isinstance(e, DemuxEvent.Video) for e in events)
+    if not saw_video:
+        rx.close()
     if not saw_video and err:
         pytest.fail(f"consumer raised before a Video event: {err}")
     assert saw_video, (
         f"expected a Video event, got: {[type(e).__name__ for e in events]}"
     )
-    seen = rx.last_seen_micros(0x101)
-    assert isinstance(seen, int) and seen > 0
-    # A PID never carried on this program stays None even after traffic.
-    assert rx.last_seen_micros(0x1FFF) is None
+    return rx
+
+
+def test_last_seen_is_utc_aware() -> None:
+    """Once a Video event for pid 0x101 has been consumed, `last_seen(0x101)`
+    is a UTC-aware datetime between the test's two clock reads."""
+    before = datetime.datetime.now(datetime.timezone.utc)
+    rx = _receiver_after_a_video_event()
+    try:
+        after = datetime.datetime.now(datetime.timezone.utc)
+        seen = rx.last_seen(0x101)
+        assert isinstance(seen, datetime.datetime)
+        assert seen.tzinfo is datetime.timezone.utc
+        assert seen.utcoffset() == datetime.timedelta(0)
+        assert before <= seen <= after, (before, seen, after)
+    finally:
+        rx.close()
+
+
+def test_last_seen_is_none_for_an_unseen_pid() -> None:
+    """A PID never carried on this program stays None even after traffic."""
+    rx = _receiver_after_a_video_event()
+    try:
+        assert rx.last_seen(0x101) is not None
+        assert rx.last_seen(0x1FFF) is None
+    finally:
+        rx.close()
+
+
+def test_last_seen_equals_last_seen_micros_to_the_microsecond() -> None:
+    """The deprecated count and the datetime name the same instant: the
+    epoch plus that many whole microseconds."""
+    rx = _receiver_after_a_video_event()
+    try:
+        seen = rx.last_seen(0x101)
+        with pytest.warns(DeprecationWarning):
+            micros = rx.last_seen_micros(0x101)
+        assert isinstance(micros, int) and micros > 0
+        assert seen == _EPOCH + datetime.timedelta(microseconds=micros)
+        assert (seen - _EPOCH) // datetime.timedelta(microseconds=1) == micros
+    finally:
+        rx.close()
+
+
+def test_last_seen_after_close_raises_closed() -> None:
+    rx = _receiver_after_a_video_event()
     rx.close()
+    with pytest.raises(RtpError) as ei:
+        rx.last_seen(0x101)
+    assert ei.value.kind == RtpErrorKind.CLOSED
 
 
 # --------------------------------------------------------------------------- #

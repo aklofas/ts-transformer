@@ -759,7 +759,7 @@ falls into two groups.
 
 **Waits for the parked call to return** (with the GIL released, so other
 threads keep running): `stats()`, `socket_stats()`, `srt_stats()`,
-`depay_stats()`, `H264Receiver.rtp_stats()` and `last_seen_micros()`. These read
+`depay_stats()`, `H264Receiver.rtp_stats()` and `last_seen()`. These read
 counters that live inside the object and have nothing to report without
 it. Poll them from the thread that drives the send or receive loop, or
 give the receiver a receive deadline (`?recv_timeout=<ms>` on `rtp://` /
@@ -898,8 +898,8 @@ reconnecting source use `ManagedDemuxReceiver`, which drops the spliced
 packet itself and exposes `ts_bytes_demuxed()`, or accept that one spliced
 packet may reach the demuxer.
 
-`rx.last_seen_micros(pid)` returns the epoch-microsecond timestamp of
-the most recent item this receiver emitted for `pid`, or `None` if
+`rx.last_seen(pid)` returns when this receiver last emitted an item for
+`pid`, as a UTC-aware `datetime`, or `None` if
 `pid` was never seen — a cheap staleness check with no snapshot-diffing
 required. See the watchdog recipe under [RTP convenience](#rtp-convenience-muxsender--demuxreceiver)
 below (the method is identical here).
@@ -993,7 +993,7 @@ success count (excludes the initial accept); `ManagedMuxSender` and
 `ManagedDemuxReceiver` `reconnect_attempts()` count every reconnect-factory
 invocation — read from the core's own attempt counter since 0.7.0
 (`ManagedTransportStats.reconnect_attempts` agrees with it).
-`ManagedDemuxReceiver.last_seen_micros(pid)` works the same
+`ManagedDemuxReceiver.last_seen(pid)` works the same
 as the plain `DemuxReceiver` above, and its `stats()` returns the same
 `DemuxReceiverStats` record, counted across reconnects (the packet a
 reconnect's splice drops is in `stats()` and not in `ts_bytes_demuxed()`).
@@ -1149,25 +1149,29 @@ To stop a `DemuxReceiver` iteration parked on the next datagram, call
 `close()` from another thread — it cancels the in-flight recv first, then
 frees the receiver (safe cross-thread).
 
-`rx.last_seen_micros(pid)` returns the Unix-epoch microsecond timestamp
-of the most recent item this receiver emitted for `pid`, or `None` if
-that PID has never been seen — a per-stream staleness check that needs
-no `stats()` snapshot-diffing. A watchdog thread can poll it directly:
+`rx.last_seen(pid)` returns when this receiver last emitted an item for
+`pid`, as a UTC-aware `datetime` (the epoch plus whole microseconds), or
+`None` if that PID has never been seen — a per-stream staleness check that
+needs no `stats()` snapshot-diffing. A watchdog thread can poll it directly:
 
 ```python
 import time
+from datetime import datetime, timedelta, timezone
 
-STALE_AFTER_US = 5_000_000  # 5 s
+STALE_AFTER = timedelta(seconds=5)
 
 def watchdog(rx, pid, stop_event):
     while not stop_event.is_set():
-        seen = rx.last_seen_micros(pid)
-        if seen is not None and time.time() * 1_000_000 - seen > STALE_AFTER_US:
+        seen = rx.last_seen(pid)
+        if seen is not None and datetime.now(timezone.utc) - seen > STALE_AFTER:
             print(f"pid {pid:#x} has gone quiet")
         time.sleep(1.0)
 ```
 
-One caveat: `last_seen_micros()` reads the receiver's per-stream stats
+`last_seen_micros(pid)`, the same instant as a Unix-epoch microsecond count,
+is deprecated (it warns `DeprecationWarning`) and is removed in 0.12.0.
+
+One caveat: `last_seen()` reads the receiver's per-stream stats
 under the same lock the iterating thread holds for the whole of a
 blocking `next()`. The watchdog above therefore waits (with the GIL
 released — other threads keep running) until the next event, timeout, or
@@ -1175,7 +1179,7 @@ cancel lets the iterator release that lock, and a receiver that has gone
 completely quiet with no receive deadline makes the poll block for as
 long as the silence lasts. Give the receiver a deadline (`?recv_timeout=<ms>`
 on `rtp://` / `rtsp(s)://`, `?x-recvtimeout=<ms>` on `srt://`; the iterator then raises `RtpError(BACKPRESSURE)` /
-`SrtError(BACKPRESSURE)` every `<ms>` and the lock cycles), or poll `last_seen_micros()` from the
+`SrtError(BACKPRESSURE)` every `<ms>` and the lock cycles), or poll `last_seen()` from the
 consuming thread between events. The `end_reason()` getters, by contrast,
 are lock-free and safe to poll from a watchdog at any time — see
 [What answers while another thread is parked](#what-answers-while-another-thread-is-parked)
@@ -1482,7 +1486,9 @@ The surface:
   `into_demux_receiver(demux_config=None)`. The object stays usable after
   the transport is taken, after `remove_mount` and after the server stops.
 - `PublisherInfo` fields: `peer` (`(host, port)`), `shape`, `klv`,
-  `since_unix_ms`, `generation`.
+  `since` (a UTC-aware `datetime`: when the ANNOUNCE claimed the mount),
+  `generation`. `since_unix_ms` (the same instant in milliseconds) is
+  deprecated and is removed in 0.12.0.
 - `PublishMountStats` mirrors every counter of the Rust snapshot, including
   `source_rejected`, `aus_reordered`, `ssrc_changes`, and `alignment` (a
   `ClockAlignment`: `NOT_APPLICABLE`, `PENDING`, `PROVISIONAL` or
@@ -2681,9 +2687,10 @@ output directly when absolute byte offsets matter.
   such channel — `end_detail()` reads the `msg` field straight off the
   Rust `EndReason` value. A recorded end reason is data, not a
   failure, so it never touches `tstrans.exceptions`.
-- **`last_seen_micros(pid)` returns `None`, not `0`, for "never
+- **`last_seen(pid)` returns a `datetime` or `None`, not `0`, for "never
   seen".** The C ABI has no `Option` in its getter shape, so it uses a
-  `0` sentinel; Python's `None` is the honest absent value.
+  `0` sentinel of epoch microseconds; Python's `None` is the honest absent
+  value.
 - **No bindings for low-level `mpegts::demux::low_level::*`.** The Rust
   core exposes extension points there; the Python wrap omits them
   (would need PyO3 wrapping of trait objects).

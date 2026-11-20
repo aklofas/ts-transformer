@@ -529,6 +529,33 @@ pub(crate) fn addr_tuple_for_test(host: &str, port: u16, scope_id: u32) -> PyRes
     Ok(addr_tuple(addr))
 }
 
+/// Signed microseconds from the Unix epoch to `t` (negative for a clock set
+/// before 1970), truncated toward the epoch.
+fn unix_micros(t: std::time::SystemTime) -> i128 {
+    match t.duration_since(std::time::UNIX_EPOCH) {
+        Ok(d) => d.as_micros() as i128,
+        Err(e) => -(e.duration().as_micros() as i128),
+    }
+}
+
+/// `t` as a UTC-aware `datetime.datetime`: the epoch plus a `timedelta` of
+/// whole microseconds, so no float rounding moves the instant.
+pub(crate) fn utc_datetime(py: Python<'_>, t: std::time::SystemTime) -> PyResult<Py<PyAny>> {
+    let dt = py.import(intern!(py, "datetime"))?;
+    let utc = dt
+        .getattr(intern!(py, "timezone"))?
+        .getattr(intern!(py, "utc"))?;
+    let epoch = dt
+        .getattr(intern!(py, "datetime"))?
+        .call((1970, 1, 1, 0, 0, 0, 0, utc), None)?;
+    let kwargs = pyo3::types::PyDict::new(py);
+    kwargs.set_item(intern!(py, "microseconds"), unix_micros(t))?;
+    let delta = dt
+        .getattr(intern!(py, "timedelta"))?
+        .call((), Some(&kwargs))?;
+    Ok(epoch.add(delta)?.unbind())
+}
+
 /// The last delivering sender of a transport's source record, if it keeps one.
 pub(crate) fn peer_addr_tuple(
     source: Option<&tst_core::transport::SourceHandle>,

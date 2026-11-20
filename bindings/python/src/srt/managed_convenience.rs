@@ -684,6 +684,28 @@ impl Drop for PyManagedDemuxReceiver {
     }
 }
 
+impl PyManagedDemuxReceiver {
+    /// When `pid` last carried an item, or `None`; `SrtError(CLOSED)` once
+    /// closed. Waits behind a parked `__next__`, as `socket_stats()`.
+    fn last_seen_instant(
+        &self,
+        py: Python<'_>,
+        pid: u16,
+    ) -> PyResult<Option<std::time::SystemTime>> {
+        pyok(
+            py,
+            &SRT,
+            crate::util::allow_threads_parking(py, || {
+                self.owned
+                    // per-PID timestamp lives in the demuxer stats inside the shell; blocking caveat documented with the watchdog recipe
+                    .with_ref_blocking(BlockingReason::NoAnswerWithoutSlot, |rx| {
+                        rx.stats().per_stream.get(&pid).and_then(|s| s.last_seen)
+                    })
+            }),
+        )
+    }
+}
+
 #[pymethods]
 impl PyManagedDemuxReceiver {
     /// Bind (or connect) a managed receiver to `url`.
@@ -858,34 +880,34 @@ impl PyManagedDemuxReceiver {
     }
 
     /// Wall-clock time the stream identified by `pid` last carried an
-    /// item through this receiver (last emitted event), as a Unix-epoch
-    /// microsecond count. `None` if `pid` was never seen — including an
+    /// item through this receiver (last emitted event), as a UTC-aware
+    /// `datetime.datetime`. `None` if `pid` was never seen, including an
     /// unrecognized PID (no range check beyond the native `u16`, mirror
     /// of `Muxer.stream_codec_stats`'s pid handling: unknown → `None`,
     /// no dedicated "bad pid" error).
-    ///
-    /// This deliberately differs from the C ABI's `0`-sentinel
-    /// convention (the C getters have no `Option`) — Python's `None` is
-    /// the honest "never" value.
     ///
     /// Same access pattern as `socket_stats`: releases the GIL before
     /// taking the `Owned` slot, so a concurrent `__next__` parked in
     /// `recv_event` (holding that same slot inside `detach`)
     /// can't freeze the interpreter. Raises
     /// `SrtError(CLOSED)` if the receiver has been closed.
+    fn last_seen(&self, py: Python<'_>, pid: u16) -> PyResult<Option<Py<PyAny>>> {
+        self.last_seen_instant(py, pid)?
+            .map(|t| crate::util::utc_datetime(py, t))
+            .transpose()
+    }
+
+    /// `last_seen(pid)` as a Unix-epoch microsecond count. Deprecated:
+    /// warns first; removed in 0.12.0.
     fn last_seen_micros(&self, py: Python<'_>, pid: u16) -> PyResult<Option<u64>> {
-        let last_seen = pyok(
+        PyErr::warn(
             py,
-            &SRT,
-            crate::util::allow_threads_parking(py, || {
-                self.owned
-                    // per-PID timestamp lives in the demuxer stats inside the shell; blocking caveat documented with the watchdog recipe
-                    .with_ref_blocking(BlockingReason::NoAnswerWithoutSlot, |rx| {
-                        rx.stats().per_stream.get(&pid).and_then(|s| s.last_seen)
-                    })
-            }),
+            &py.get_type::<pyo3::exceptions::PyDeprecationWarning>(),
+            c"ManagedDemuxReceiver.last_seen_micros() is deprecated: use last_seen(); removed in 0.12.0",
+            1,
         )?;
-        Ok(last_seen
+        Ok(self
+            .last_seen_instant(py, pid)?
             .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
             .map(|d| d.as_micros() as u64))
     }

@@ -25,6 +25,7 @@ regression fails instead of hanging the suite.
 from __future__ import annotations
 
 import _thread
+import datetime
 import signal
 import socket
 import struct
@@ -467,7 +468,7 @@ def test_methods_after_stop_raise_closed_kind():
 def test_raw_publisher_null_bundles_reach_stats_and_publisher_info():
     with _start() as server:
         mount = server.add_publish_mount("/cam")
-        before_ms = int(time.time() * 1000)
+        before = datetime.datetime.now(datetime.timezone.utc)
         pub = RawPublisher(_port(server), "/cam")
         try:
             rx = mount.into_demux_receiver()
@@ -488,8 +489,8 @@ def test_raw_publisher_null_bundles_reach_stats_and_publisher_info():
                 assert info.klv is False
                 assert info.generation == 0
                 # A wall-clock instant, not a duration: the ANNOUNCE
-                # happened after `before_ms` (1 s slack for clock steps).
-                assert info.since_unix_ms >= before_ms - 1000
+                # happened after `before` (1 s slack for clock steps).
+                assert info.since >= before - datetime.timedelta(seconds=1)
                 assert "MP2T" in repr(info)
 
                 st = server.stats()
@@ -753,8 +754,42 @@ def test_publisher_info_peer_from_a_dual_stack_server_reads_as_ipv4():
             pub.close()
 
 
+def test_since_lies_between_the_two_clock_reads():
+    """`PublisherInfo.since` is a UTC-aware datetime taken when the ANNOUNCE
+    claimed the mount: between a clock read before the publisher connects
+    and one after its ANNOUNCE was answered."""
+    with _start() as server:
+        mount = server.add_publish_mount("/cam")
+        before = datetime.datetime.now(datetime.timezone.utc)
+        pub = RawPublisher(_port(server), "/cam")
+        try:
+            after = datetime.datetime.now(datetime.timezone.utc)
+            since = mount.publisher().since
+            assert isinstance(since, datetime.datetime)
+            assert since.tzinfo is datetime.timezone.utc
+            assert before <= since <= after, (before, since, after)
+        finally:
+            pub.close()
+
+
+def test_since_unix_ms_is_since_in_milliseconds():
+    """The deprecated count names the same instant as `since`, truncated to
+    whole milliseconds."""
+    with _start() as server:
+        mount = server.add_publish_mount("/cam")
+        pub = RawPublisher(_port(server), "/cam")
+        try:
+            info = mount.publisher()
+            with pytest.warns(DeprecationWarning):
+                ms = info.since_unix_ms
+            epoch = datetime.datetime(1970, 1, 1, tzinfo=datetime.timezone.utc)
+            assert (info.since - epoch) // datetime.timedelta(milliseconds=1) == ms
+        finally:
+            pub.close()
+
+
 def test_publisher_info_kept_after_the_server_stopped():
-    """A `PublisherInfo` is a snapshot: its `peer` and `since_unix_ms` stay
+    """A `PublisherInfo` is a snapshot: its `peer` and `since` stay
     readable, unchanged, after its server stopped."""
     server = _start()
     try:
@@ -762,10 +797,10 @@ def test_publisher_info_kept_after_the_server_stopped():
         pub = RawPublisher(_port(server), "/cam")
         client_addr = pub.sock.getsockname()[:2]
         info = mount.publisher()
-        since = info.since_unix_ms
+        since = info.since
     finally:
         server.stop()
     pub.close()
     assert info.peer == client_addr
-    assert info.since_unix_ms == since
-    assert since > 0
+    assert info.since == since
+    assert since > datetime.datetime(1970, 1, 1, tzinfo=datetime.timezone.utc)

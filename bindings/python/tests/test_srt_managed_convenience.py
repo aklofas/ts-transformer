@@ -18,6 +18,7 @@ tests against a scripted RecvTransport.
 from __future__ import annotations
 
 from tstrans import shells
+import datetime
 import threading
 import time
 from typing import Optional, Tuple
@@ -347,23 +348,63 @@ def test_managed_demux_receiver_iter_returns_self() -> None:
         receiver.close()
 
 
-def test_managed_demux_receiver_last_seen_micros_none_paths() -> None:
-    """Unit-level None-path coverage: a freshly-connected pair has
-    exchanged no video traffic yet, so both a plausible pid (0x101,
-    matching `_video_only_program()`) and a bogus one (0x1FFF) report
-    None. The int-after-traffic path + the epoch-microsecond conversion
-    are exercised once by the shared `StreamStats.last_seen` ->
-    `last_seen_micros` conversion covered on `tstrans.shells.DemuxReceiver`
-    and `tstrans.shells.DemuxReceiver` — this class wires the identical
-    conversion, just against `ManagedDemuxReceiver::stats().per_stream`."""
+def test_managed_demux_receiver_last_seen_none_paths() -> None:
+    """A freshly-connected pair has exchanged no video traffic yet, so both
+    a plausible pid (0x101, matching `_video_only_program()`) and a bogus
+    one (0x1FFF) report None."""
     port = _free_udp_port()
     sender, receiver = _make_managed_pair(port)
     try:
-        assert receiver.last_seen_micros(0x101) is None
-        assert receiver.last_seen_micros(0x1FFF) is None
+        assert receiver.last_seen(0x101) is None
+        assert receiver.last_seen(0x1FFF) is None
     finally:
         sender.close()
         receiver.close()
+
+
+def test_managed_demux_receiver_last_seen_is_utc_aware_and_equals_last_seen_micros() -> None:
+    """After a Video event `last_seen(0x101)` is a UTC-aware datetime
+    between two clock reads, the epoch plus exactly `last_seen_micros`
+    microseconds; an unseen pid stays None; CLOSED after `close()`."""
+    port = _free_udp_port()
+    before = datetime.datetime.now(datetime.timezone.utc)
+    sender, receiver = _make_managed_pair(port)
+    try:
+        err: list[BaseException] = []
+
+        def consumer() -> None:
+            try:
+                for ev in receiver:
+                    if isinstance(ev, DemuxEvent.Video):
+                        return
+            except BaseException as exc:  # noqa: BLE001
+                err.append(exc)
+
+        t = threading.Thread(target=consumer, daemon=True)
+        t.start()
+        for i in range(32):
+            sender.send_video(
+                NAL_IDR, pts=Pts90khz.from_raw(i * 3000), key_frame=(i % 4 == 0)
+            )
+        t.join(timeout=10.0)
+        assert not t.is_alive(), "no Video event within 10 s"
+        assert not err, err
+        after = datetime.datetime.now(datetime.timezone.utc)
+        seen = receiver.last_seen(0x101)
+        assert isinstance(seen, datetime.datetime)
+        assert seen.tzinfo is datetime.timezone.utc
+        assert before <= seen <= after, (before, seen, after)
+        with pytest.warns(DeprecationWarning):
+            micros = receiver.last_seen_micros(0x101)
+        epoch = datetime.datetime(1970, 1, 1, tzinfo=datetime.timezone.utc)
+        assert seen == epoch + datetime.timedelta(microseconds=micros)
+        assert receiver.last_seen(0x1FFF) is None
+    finally:
+        sender.close()
+        receiver.close()
+    with pytest.raises(SrtError) as ei:
+        receiver.last_seen(0x101)
+    assert ei.value.kind == SrtErrorKind.CLOSED
 
 
 def test_managed_demux_receiver_stats() -> None:

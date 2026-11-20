@@ -9,6 +9,7 @@ the end. No external network is required.
 from __future__ import annotations
 
 from tstrans import shells
+import datetime
 import threading
 import time
 from typing import Optional, Tuple
@@ -419,19 +420,19 @@ def test_demux_receiver_stats_counts_the_srt_stream() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Test 4b: last_seen_micros(pid)                                              #
+# Test 4b: last_seen(pid)                                                     #
 # --------------------------------------------------------------------------- #
 
 
-def test_last_seen_micros_via_loopback() -> None:
-    """Before any traffic, `last_seen_micros(0x101)` is None. After a
-    Video event for pid 0x101 has been consumed, it reports an
-    epoch-microsecond int; a PID that never carried traffic (0x1FFF)
+def test_last_seen_via_loopback() -> None:
+    """Before any traffic, `last_seen(0x101)` is None. After a
+    Video event for pid 0x101 has been consumed, it reports a UTC-aware
+    datetime; a PID that never carried traffic (0x1FFF)
     stays None even once the stream is flowing."""
     port = _free_udp_port()
     sender, receiver = _make_mux_demux_pair(port)
     try:
-        assert receiver.last_seen_micros(0x101) is None
+        assert receiver.last_seen(0x101) is None
 
         events: list[object] = []
         consumer_err: list[BaseException] = []
@@ -463,9 +464,10 @@ def test_last_seen_micros_via_loopback() -> None:
         assert saw_video, (
             f"expected a Video event, got: {[type(e).__name__ for e in events]}"
         )
-        seen = receiver.last_seen_micros(0x101)
-        assert isinstance(seen, int) and seen > 0
-        assert receiver.last_seen_micros(0x1FFF) is None
+        seen = receiver.last_seen(0x101)
+        assert isinstance(seen, datetime.datetime)
+        assert seen.tzinfo is datetime.timezone.utc
+        assert receiver.last_seen(0x1FFF) is None
     finally:
         receiver.close()
 

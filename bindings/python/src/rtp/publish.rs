@@ -19,7 +19,7 @@
 
 #![allow(unsafe_op_in_unsafe_fn, clippy::useless_conversion)]
 
-use std::time::UNIX_EPOCH;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
@@ -106,7 +106,7 @@ pub struct PyPublisherInfo {
     /// `"MP2T"` or `"ELEMENTARY"` — the `PublishShape` member name.
     shape: &'static str,
     klv: bool,
-    since_unix_ms: u64,
+    since: SystemTime,
     generation: u64,
 }
 
@@ -121,17 +121,11 @@ impl PyPublisherInfo {
                 ));
             }
         };
-        // A clock set before 1970 reads 0 rather than failing the snapshot.
-        let since_unix_ms = info
-            .since
-            .duration_since(UNIX_EPOCH)
-            .map(|d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
-            .unwrap_or(0);
         Ok(Self {
             peer: info.peer,
             shape,
             klv,
-            since_unix_ms,
+            since: info.since,
             generation: info.generation,
         })
     }
@@ -158,11 +152,29 @@ impl PyPublisherInfo {
         self.klv
     }
 
-    /// When the ANNOUNCE claimed the mount, in milliseconds since the Unix
-    /// epoch.
+    /// When the ANNOUNCE claimed the mount, as a UTC-aware
+    /// `datetime.datetime`.
     #[getter]
-    pub fn since_unix_ms(&self) -> u64 {
-        self.since_unix_ms
+    pub fn since(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        crate::util::utc_datetime(py, self.since)
+    }
+
+    /// `since` in milliseconds since the Unix epoch. Deprecated: warns
+    /// first; removed in 0.12.0.
+    #[getter]
+    pub fn since_unix_ms(&self, py: Python<'_>) -> PyResult<u64> {
+        PyErr::warn(
+            py,
+            &py.get_type::<pyo3::exceptions::PyDeprecationWarning>(),
+            c"PublisherInfo.since_unix_ms is deprecated: use since; removed in 0.12.0",
+            1,
+        )?;
+        // A clock set before 1970 reads 0, as it did before `since`.
+        Ok(self
+            .since
+            .duration_since(UNIX_EPOCH)
+            .map(|d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
+            .unwrap_or(0))
     }
 
     /// The mount's publisher generation while this publisher holds it (the
@@ -172,17 +184,19 @@ impl PyPublisherInfo {
         self.generation
     }
 
-    fn __repr__(&self) -> String {
+    fn __repr__(&self, py: Python<'_>) -> PyResult<String> {
         let (host, port) = crate::util::addr_tuple(self.peer);
-        format!(
-            "PublisherInfo(peer=('{}', {}), shape={}, klv={}, since_unix_ms={}, generation={})",
+        let since = crate::util::utc_datetime(py, self.since)?;
+        let since: String = since.bind(py).call_method0("isoformat")?.extract()?;
+        Ok(format!(
+            "PublisherInfo(peer=('{}', {}), shape={}, klv={}, since={}, generation={})",
             host,
             port,
             self.shape,
             if self.klv { "True" } else { "False" },
-            self.since_unix_ms,
+            since,
             self.generation,
-        )
+        ))
     }
 }
 

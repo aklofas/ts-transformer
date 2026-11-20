@@ -15,6 +15,7 @@ are `tstrans.shells` classes.
 
 from __future__ import annotations
 
+import datetime
 import enum
 from typing import (
     Any,
@@ -829,7 +830,14 @@ class ManagedDemuxReceiver:
     def ts_bytes_demuxed(self) -> int:
         """Aligned TS bytes the demuxer was fed; the last value after `close()`."""
     def reconnect_attempts(self) -> int: ...
-    def last_seen_micros(self, pid: int) -> Optional[int]: ...
+    def last_seen(self, pid: int) -> Optional[datetime.datetime]:
+        """When ``pid`` last carried an item through this receiver, as a
+        UTC-aware ``datetime``; ``None`` for a PID never seen. Waits behind
+        a ``__next__`` parked on another thread; raises ``SrtError(CLOSED)`` after
+        ``close()``."""
+    def last_seen_micros(self, pid: int) -> Optional[int]:
+        """``last_seen(pid)`` in microseconds since the Unix epoch.
+        Deprecated: warns ``DeprecationWarning``; removed in 0.12.0."""
     def end_reason(self) -> Optional[EndReason]: ...
     def close(self) -> None: ...
     def is_alive(self) -> bool: ...

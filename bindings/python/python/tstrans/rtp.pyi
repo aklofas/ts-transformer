@@ -12,6 +12,7 @@ lives in `rtp.py`.
 
 from __future__ import annotations
 
+import datetime
 import enum
 from dataclasses import dataclass
 from typing import (
@@ -1042,7 +1043,14 @@ class PublisherInfo:
     @property
     def klv(self) -> bool: ...
     @property
-    def since_unix_ms(self) -> int: ...
+    def since(self) -> datetime.datetime:
+        """When the ANNOUNCE claimed the mount, as a UTC-aware ``datetime``."""
+        ...
+    @property
+    def since_unix_ms(self) -> int:
+        """``since`` in milliseconds since the Unix epoch. Deprecated: warns
+        ``DeprecationWarning``; removed in 0.12.0."""
+        ...
     @property
     def generation(self) -> int: ...
     def __repr__(self) -> str: ...
