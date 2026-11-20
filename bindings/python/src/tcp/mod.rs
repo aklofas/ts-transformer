@@ -50,6 +50,7 @@
 
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering};
 use tst_pipeline::binding::view::BlockingReason;
 
 use pyo3::exceptions::PyValueError;
@@ -57,14 +58,14 @@ use pyo3::intern;
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyMemoryView};
 
-use tst_core::transport::{RecvTransport, Transport};
+use tst_core::transport::{RecvTransport, Transport, TransportCancel};
 use tst_core::url::redact_url;
 use tst_pipeline::binding::opened::{cancel_of, recv_cancel_of};
 use tst_pipeline::binding::{
     BindingError, BindingErrorKind, Domain, HandleState, Opened, Owned, SendHalf,
 };
 use tst_tcp::error::TcpError;
-use tst_tcp::{TcpListener, TcpTransport};
+use tst_tcp::{TcpCancelHandle, TcpListener, TcpTransport};
 
 use crate::generated::stats_tcp::SocketStats;
 use crate::raise::{TCP, pyok, pyres, raise};
@@ -107,6 +108,66 @@ pub(crate) struct PyTcpTransport {
     /// Shared cancel state beside the slot so `cancel_handle()` never waits
     /// behind an in-flight call — the udp shape.
     cancel: Arc<CancelSource>,
+    /// What `cancel` reaches the connection through; a conversion turns it
+    /// off.
+    conn_cancel: Arc<ConnCancel>,
+    /// `send()` / `recv()` calls in progress, which a conversion refuses to
+    /// wait for.
+    io_in_flight: AtomicUsize,
+    /// [`OPEN`], [`CONVERTING`] or [`CONVERTED`].
+    conversion: AtomicU8,
+}
+
+/// No conversion has run, or the last one was refused.
+const OPEN: u8 = 0;
+/// A conversion is deciding; a `send()` / `recv()` that starts now waits.
+const CONVERTING: u8 = 1;
+/// The connection moved into a shell or the conversion found it closed.
+const CONVERTED: u8 = 2;
+
+/// The connection's cancel handle behind a switch. Once a conversion moved
+/// the connection into a shell, the shell owns it: this object's `close()`,
+/// its drop and a `cancel_handle()` taken earlier must not reach it.
+///
+/// `fired` and `detached` are a store-then-load pair on each side (SeqCst),
+/// so a cancel racing a conversion is seen by at least one of them: either
+/// the cancel reaches the connection and the conversion sees `fired` and
+/// refuses, or the cancel sees `detached` and the shell keeps a live
+/// connection.
+struct ConnCancel {
+    handle: TcpCancelHandle,
+    fired: AtomicBool,
+    detached: AtomicBool,
+}
+
+impl ConnCancel {
+    /// Turn the switch off; `false` when a cancel came first.
+    fn detach(&self) -> bool {
+        self.detached.store(true, Ordering::SeqCst);
+        !self.fired.load(Ordering::SeqCst)
+    }
+}
+
+impl TransportCancel for ConnCancel {
+    fn cancel(&self) {
+        self.fired.store(true, Ordering::SeqCst);
+        if !self.detached.load(Ordering::SeqCst) {
+            self.handle.cancel();
+        }
+    }
+
+    fn is_cancelled(&self) -> bool {
+        self.fired.load(Ordering::SeqCst)
+    }
+}
+
+/// Lowers [`PyTcpTransport::io_in_flight`] when a `send()` / `recv()` ends.
+struct IoInFlight<'a>(&'a AtomicUsize);
+
+impl Drop for IoInFlight<'_> {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
+    }
 }
 
 impl Drop for PyTcpTransport {
@@ -160,6 +221,7 @@ impl PyTcpTransport {
             py,
             &TCP,
             crate::util::allow_threads_parking(py, || {
+                let _io = self.enter_io()?;
                 self.owned.with_mut(|t| t.0.send_bytes(&owned))
             }),
         )
@@ -203,6 +265,7 @@ impl PyTcpTransport {
         // `PyByteArray` is a Python object and is !Send.
         let mut owned = vec![0u8; buf_len];
         let res = crate::util::allow_threads_parking(py, || {
+            let _io = self.enter_io()?;
             self.owned
                 .with_mut(|t| t.0.recv_bytes(owned.as_mut_slice()))
         });
@@ -245,7 +308,10 @@ impl PyTcpTransport {
     }
 
     /// Consume the connection into a `shells.Receiver` (TS bytes in).
-    /// Later calls on this transport raise `TcpError(kind=CLOSED)`.
+    /// Later calls on this transport raise `TcpError(kind=CLOSED)`, and its
+    /// `close()`, drop and earlier `cancel_handle()`s no longer reach the
+    /// connection. Raises `RuntimeError`, consuming nothing, while a
+    /// `send()` / `recv()` runs on another thread (every `into_*` alike).
     fn into_receiver(&self, py: Python<'_>) -> PyResult<PyShellReceiver> {
         let t = self.take_transport(py)?;
         let cancel = recv_cancel_of(&t);
@@ -347,13 +413,66 @@ impl PyTcpTransport {
 }
 
 impl PyTcpTransport {
-    /// Take the connection out for a consuming conversion; `CLOSED` once it
-    /// was closed or consumed. Waits, with the GIL released, for a `send()`
-    /// or `recv()` on another thread to return.
+    /// Count a `send()` / `recv()` in, called with the GIL released. While a
+    /// conversion decides, wait for it in 1 ms rounds; once the connection
+    /// moved, `Closed`.
+    fn enter_io(&self) -> Result<IoInFlight<'_>, HandleState> {
+        loop {
+            self.io_in_flight.fetch_add(1, Ordering::SeqCst);
+            let guard = IoInFlight(&self.io_in_flight);
+            match self.conversion.load(Ordering::SeqCst) {
+                OPEN => return Ok(guard),
+                CONVERTED => return Err(HandleState::Closed),
+                _ => {
+                    drop(guard);
+                    std::thread::park_timeout(std::time::Duration::from_millis(1));
+                }
+            }
+        }
+    }
+
+    /// Take the connection out for a consuming conversion. Never waits for a
+    /// `send()` / `recv()` on another thread: while one is in progress it
+    /// raises `RuntimeError` and consumes nothing. Waits only for a query
+    /// (`stats()`) or a `close()` holding the slot. `CLOSED` once the
+    /// transport was closed, cancelled or converted; a connection taken
+    /// after a cancel fired is closed, never handed to a shell.
     fn take_transport(&self, py: Python<'_>) -> PyResult<TcpTransport> {
-        crate::util::allow_threads_parking(py, || self.owned.take())
-            .map(|half| half.0)
-            .ok_or_else(|| raise(py, &TCP, BindingError::from(HandleState::Closed)))
+        enum Refused {
+            Closed,
+            Busy,
+        }
+        let taken = crate::util::allow_threads_parking(py, || {
+            match self.conversion.compare_exchange(
+                OPEN,
+                CONVERTING,
+                Ordering::SeqCst,
+                Ordering::SeqCst,
+            ) {
+                Ok(_) => {}
+                Err(CONVERTED) => return Err(Refused::Closed),
+                Err(_) => return Err(Refused::Busy),
+            }
+            if self.io_in_flight.load(Ordering::SeqCst) > 0 {
+                self.conversion.store(OPEN, Ordering::SeqCst);
+                return Err(Refused::Busy);
+            }
+            let taken = self.owned.take();
+            self.conversion.store(CONVERTED, Ordering::SeqCst);
+            match taken {
+                Some(half) if self.conn_cancel.detach() => Ok(half.0),
+                // Dropping it here closes the socket.
+                _ => Err(Refused::Closed),
+            }
+        });
+        match taken {
+            Ok(t) => Ok(t),
+            Err(Refused::Closed) => Err(raise(py, &TCP, BindingError::from(HandleState::Closed))),
+            Err(Refused::Busy) => Err(pyo3::exceptions::PyRuntimeError::new_err(
+                "tcp.Transport: a send() or recv() on another thread holds the connection; \
+                 nothing was converted",
+            )),
+        }
     }
 }
 
@@ -365,11 +484,19 @@ fn make_py_tcp_transport(t: TcpTransport) -> PyTcpTransport {
     // as a caller cancel through it. `CancelSource` keeps its own latch
     // (Python `close()` goes through it); `Owned` is where the transport's
     // latch is ORed in.
-    let cancel = CancelSource::new(Arc::new(t.cancel_handle()));
+    let conn_cancel = Arc::new(ConnCancel {
+        handle: t.cancel_handle(),
+        fired: AtomicBool::new(false),
+        detached: AtomicBool::new(false),
+    });
+    let cancel = CancelSource::new(conn_cancel.clone());
     let peer = t.peer();
     PyTcpTransport {
         owned: Owned::new(SendHalf(t), cancel.as_dyn(), peer),
         cancel,
+        conn_cancel,
+        io_in_flight: AtomicUsize::new(0),
+        conversion: AtomicU8::new(OPEN),
     }
 }
 

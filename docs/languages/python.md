@@ -1740,7 +1740,13 @@ of an IP literal. `Transport.into_receiver()`, `into_demux_receiver(demux_config
 `into_sender()` and `into_mux_sender(program_config)` consume the
 connection into the matching `tstrans.shells` class; the transport raises
 `TcpError(CLOSED)` afterwards, and a config that is refused raises before
-the connection is taken, so a corrected retry converts the same one.
+the connection is taken, so a corrected retry converts the same one. The
+shell owns the connection from then on: closing or dropping the converted
+`Transport`, or a `cancel_handle()` taken from it earlier, no longer
+reaches it (cancel through the shell's own `cancel_handle()`). A conversion
+never waits for a `send()` or `recv()` running on another thread: it
+raises `RuntimeError` and consumes nothing, and a transport already closed
+or cancelled raises `TcpError(CLOSED)`.
 `peer_addr()` returns `(host, port)` and raises `TcpError(CLOSED)` once the
 transport is closed or converted.
 

@@ -191,9 +191,15 @@ class Transport:
 
     def into_receiver(self) -> Receiver:
         """Consume the connection into a ``shells.Receiver`` (TS bytes in).
-        Later calls on this transport raise ``TcpError(kind=CLOSED)``; a
-        ``send()`` or ``recv()`` in progress on another thread is waited
-        for."""
+
+        The rules of every ``into_*``: later calls on this transport raise
+        ``TcpError(kind=CLOSED)``, and its ``close()``, its collection and a
+        ``cancel_handle()`` taken from it before no longer reach the
+        connection (cancel through the shell's own ``cancel_handle()``).
+        While a ``send()`` or ``recv()`` runs on another thread the
+        conversion raises ``RuntimeError`` and consumes nothing. A transport
+        already closed or cancelled raises ``TcpError(kind=CLOSED)``.
+        """
         ...
 
     def into_demux_receiver(

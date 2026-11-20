@@ -19,6 +19,7 @@ from tstrans import tcp
 from tstrans.exceptions import MuxError, MuxErrorKind, TcpError, TcpErrorKind
 from tstrans.mpegts import DemuxerConfig, Pts90khz
 
+from _builders.hang_deadline import call_with_hang_deadline
 from _builders.mux_programs import masquerade_program, video_only_program
 
 # ---------------------------------------------------------------------------
@@ -430,6 +431,22 @@ def _ts_packets(count: int) -> bytes:
     return b"".join(bytes([0x47, 0x1F, 0xFF, 0x10, i]) + b"\xff" * 183 for i in range(count))
 
 
+def _recv_exactly(rx: object, n: int, what: str) -> bytes:
+    """`n` bytes from a receiving shell; a watchdog cancels the shell if they
+    have not all arrived within 10 s, so a lost byte fails with `what`."""
+    watchdog = threading.Timer(10.0, rx.cancel_handle().cancel)  # type: ignore[attr-defined]
+    watchdog.start()
+    got = b""
+    try:
+        while len(got) < n:
+            got += rx.recv_bytes()  # type: ignore[attr-defined]
+    except TcpError as e:
+        pytest.fail(f"{what}: {len(got)} of {n} bytes, then {e.kind.name}")
+    finally:
+        watchdog.cancel()
+    return got
+
+
 def test_into_receiver_delivers_the_peers_ts() -> None:
     client, accepted, listener = _accepted_pair()
     try:
@@ -437,11 +454,7 @@ def test_into_receiver_delivers_the_peers_ts() -> None:
         try:
             data = _ts_packets(8)
             client.sendall(data)
-            got = b""
-            deadline = time.monotonic() + 10.0
-            while len(got) < len(data) and time.monotonic() < deadline:
-                got += rx.recv_bytes()
-            assert got == data
+            assert _recv_exactly(rx, len(data), "the peer's packets") == data
             with pytest.raises(TcpError) as ei:
                 accepted.peer_addr()
             assert ei.value.kind == TcpErrorKind.CLOSED
@@ -821,3 +834,148 @@ def test_tcp_listener_cancel_handle_unparks_accept() -> None:
         listener.close()  # fires the cancel first; a parked accept ends
         if w.is_alive():
             w.join(timeout=5.0)
+
+
+def _send_and_read(tx: object, client: socket.socket) -> None:
+    data = _ts_packets(4)
+    tx.send_bytes(data)  # type: ignore[attr-defined]
+    tx.flush()  # type: ignore[attr-defined]
+    client.settimeout(5.0)
+    got = b""
+    while len(got) < len(data):
+        chunk = client.recv(4096)
+        assert chunk, "the connection ended before the sender's bytes arrived"
+        got += chunk
+    assert got == data
+
+
+def test_a_temporary_transport_converts_into_a_working_shell() -> None:
+    listener, port = _listener_and_port()
+    client = socket.create_connection(("127.0.0.1", port), timeout=5.0)
+    try:
+        # The accepted Transport is collected at once; its drop must not
+        # reach the connection the receiver now owns.
+        rx = listener.accept_blocking().into_receiver()
+        try:
+            data = _ts_packets(8)
+            client.sendall(data)
+            assert _recv_exactly(rx, len(data), "the peer's packets") == data
+        finally:
+            rx.close()
+    finally:
+        client.close()
+        listener.close()
+
+
+def test_closing_a_converted_transport_leaves_its_shell_working() -> None:
+    client, accepted, listener = _accepted_pair()
+    try:
+        early = accepted.cancel_handle()
+        tx = accepted.into_sender()
+        try:
+            accepted.close()
+            early.cancel()
+            _send_and_read(tx, client)
+        finally:
+            tx.close()
+    finally:
+        client.close()
+        listener.close()
+
+    client, accepted, listener = _accepted_pair()
+    try:
+        with accepted:
+            rx = accepted.into_receiver()
+        try:
+            data = _ts_packets(8)
+            client.sendall(data)
+            assert _recv_exactly(rx, len(data), "the peer's packets") == data
+        finally:
+            rx.close()
+    finally:
+        client.close()
+        listener.close()
+
+
+def test_a_cancelled_transport_is_not_converted() -> None:
+    client, accepted, listener = _accepted_pair()
+    try:
+        accepted.cancel_handle().cancel()
+        with pytest.raises(TcpError) as ei:
+            accepted.into_sender()
+        assert ei.value.kind == TcpErrorKind.CLOSED
+    finally:
+        accepted.close()
+        client.close()
+        listener.close()
+
+
+def test_a_close_racing_a_conversion_never_hands_out_a_cancelled_shell() -> None:
+    # Either outcome is right; no round may give a shell that cannot send.
+    # Odd rounds start the close first (it tends to win), even rounds release
+    # both from a barrier (the conversion tends to win).
+    for i in range(60):
+        client, accepted, listener = _accepted_pair()
+        try:
+            together = threading.Barrier(2) if i % 2 == 0 else None
+
+            def close_it() -> None:
+                if together is not None:
+                    together.wait(5.0)
+                accepted.close()
+
+            closer = threading.Thread(target=close_it, daemon=True)
+            closer.start()
+            if together is not None:
+                together.wait(5.0)
+            try:
+                tx = accepted.into_sender()
+            except TcpError as e:
+                assert e.kind == TcpErrorKind.CLOSED
+                tx = None
+            closer.join(5.0)
+            assert not closer.is_alive(), "close() did not return"
+            if tx is not None:
+                try:
+                    _send_and_read(tx, client)
+                finally:
+                    tx.close()
+        finally:
+            client.close()
+            listener.close()
+
+
+def test_a_conversion_does_not_wait_behind_a_recv_on_another_thread() -> None:
+    client, accepted, listener = _accepted_pair()
+    ended: list[object] = []
+
+    def recv_once() -> None:
+        try:
+            ended.append(accepted.recv(bytearray(4096)))
+        except TcpError as e:
+            ended.append(e.kind)
+
+    reader = threading.Thread(target=recv_once, daemon=True)
+    try:
+        reader.start()
+        blocked, outcome = call_with_hang_deadline(accepted.into_receiver, 10.0)
+        if blocked:
+            accepted.cancel_handle().cancel()
+        assert not blocked, "the conversion waited behind the recv()"
+        if "exc" in outcome:
+            # The recv held the connection: nothing was consumed.
+            assert isinstance(outcome["exc"], RuntimeError), outcome["exc"]
+            assert accepted.peer_addr() == client.getsockname()
+            client.sendall(_PAYLOAD)
+            reader.join(5.0)
+            assert ended == [len(_PAYLOAD)]
+        else:
+            # The conversion ran first: the recv found the transport consumed.
+            reader.join(5.0)
+            assert ended == [TcpErrorKind.CLOSED]
+            outcome["value"].close()  # type: ignore[attr-defined]
+    finally:
+        accepted.close()
+        reader.join(5.0)
+        client.close()
+        listener.close()
