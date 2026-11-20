@@ -17,8 +17,16 @@ import time
 import pytest
 
 from tstrans import rist, shells, udp
-from tstrans.exceptions import RtpError, RtpErrorKind, UdpError, UdpErrorKind
+from tstrans.exceptions import (
+    RistError,
+    RistErrorKind,
+    RtpError,
+    RtpErrorKind,
+    UdpError,
+    UdpErrorKind,
+)
 
+from _builders.hang_deadline import call_with_hang_deadline
 from _builders.mux_programs import video_only_program
 from _builders.ports import free_udp_port
 
@@ -118,32 +126,38 @@ def test_shell_local_addr_after_close_raises_closed(cls, url, err, kind) -> None
 
 @pytest.mark.parametrize("cls", SHELLS)
 def test_local_port_answers_while_a_receive_is_parked(cls) -> None:
-    rx = cls.open("udp://127.0.0.1:0")
+    """Over `rtp://` a malformed datagram is counted only inside a receive
+    call, so the count proves the receive holds the shell when
+    `local_port()` answers."""
+    rx = cls.open("rtp://127.0.0.1:0")
     port = rx.local_port()
-    started = threading.Event()
 
     def park() -> None:
-        started.set()
         try:
             if cls is shells.Receiver:
                 rx.recv_bytes()
             else:
                 next(rx)
-        except UdpError:
+        except RtpError:
             pass
 
     t = threading.Thread(target=park, daemon=True)
     t.start()
-    assert started.wait(WAIT_S)
-    out: list[object] = []
-    g = threading.Thread(target=lambda: out.append(rx.local_port()), daemon=True)
-    g.start()
-    g.join(5.0)
-    alive = g.is_alive()
-    rx.close()
-    t.join(WAIT_S)
-    assert not alive, "local_port() waited behind the parked receive"
-    assert out == [port]
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as tx:
+            tx.sendto(b"\x40" + b"\x00" * 199, ("127.0.0.1", port))
+        deadline = time.monotonic() + WAIT_S
+        while rx.rtp_stats().malformed_packets < 1:
+            assert time.monotonic() < deadline, "the receive never ran"
+            time.sleep(0.005)
+        blocked, outcome = call_with_hang_deadline(rx.local_port, 5.0)
+        still_parked = t.is_alive()
+    finally:
+        rx.close()
+        t.join(WAIT_S)
+    assert not blocked, "local_port() waited behind the parked receive"
+    assert outcome["value"] == port
+    assert still_parked
 
 
 @pytest.mark.parametrize("cls", SHELLS)
@@ -188,9 +202,9 @@ def test_rist_main_profile_port_zero_reports_its_port() -> None:
         assert rx.local_addr() == ("127.0.0.1", port)
     finally:
         rx.close()
-    with pytest.raises(Exception) as ei:
+    with pytest.raises(RistError) as ei:
         rx.local_port()
-    assert ei.value.kind.name == "CLOSED"
+    assert ei.value.kind == RistErrorKind.CLOSED
     with shells.Receiver.open("rist://@127.0.0.1:0") as srx:
         p = srx.local_port()
         assert isinstance(p, int) and p != 0
