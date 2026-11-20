@@ -115,10 +115,13 @@ class RtpConvenienceTest {
     void demuxReceiverConstructsAndReportsClosedState() throws Exception {
         DemuxReceiver rx = DemuxReceiver.open("rtp://127.0.0.1:" + freeUdpPort());
         assertTrue(rx.isAlive());
-        // No sender → stats are zeroed but the call succeeds.
-        TransportStats st = rx.stats();
-        assertNotNull(st.socketStats());
-        assertNotNull(st.muxerStats());
+        // No sender → the receive counters are zero but the call succeeds.
+        org.tstrans.shells.DemuxReceiverStats st = rx.stats();
+        assertEquals(0, st.packetsReceived());
+        assertEquals(0, st.bytesReceived());
+        assertEquals(0, st.programMapsSeen());
+        // Over rtp:// the RTP counters are there too, zero.
+        assertEquals(java.util.Optional.of(new RtpStats(0, 0)), rx.rtpStats());
         rx.close();
         assertFalse(rx.isAlive());
         // Nothing was ever demuxed; the counter stays readable after close.

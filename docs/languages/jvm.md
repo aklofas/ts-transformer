@@ -1241,6 +1241,7 @@ falls into two groups.
 | `localAddr()` (`srt.Listener`, `H264Receiver`) | the value captured when the object was built | throws `IllegalStateException` |
 | `localPort()` (`Receiver`, `DemuxReceiver`, `tcp.Listener`) | the port captured at open (`tcp.Listener` answers while `accept()` is parked) | throws `IllegalStateException` |
 | `localAddr()`, `peerAddr()`, `sourceRejected()` (`Receiver`, `DemuxReceiver`) | the bound address captured at open; the publisher's address and the count of what the `source` pin turned away, as they stand | throws `IllegalStateException` |
+| `rtpStats()` (`Receiver`, `DemuxReceiver`) | the RTP counters as they stand; empty off RTP | the counters as the close left them |
 | `peerAddr()` (`tcp.Transport`) | the address captured at accept | throws `IllegalStateException`, also once the connection is converted into a shell |
 | `videoHandle()` … `dataHandle()` on the three `MuxSender` classes | the handles of the `MuxerConfig` the sender was built from | throws `IllegalStateException` |
 | `reconnectAttempts()`, `reconnectStats()` on the managed shells | live counters kept outside the object | throws `IllegalStateException` |
@@ -1269,7 +1270,7 @@ client's thread (see [RTSP client](#rtsp-client-orgtstransrtp)).
 progress; the control calls themselves run one at a time.
 
 **Waits for the parked call to return:** `stats()`, `socketStats()`,
-`srtStats()`, `depayStats()`, `rtpStats()` and `lastSeen()`. These
+`srtStats()`, `depayStats()`, `H264Receiver.rtpStats()` and `lastSeen()`. These
 read counters that live inside the object and have nothing to report
 without it. Poll them from the thread that drives the send or receive
 loop, or give the receiver a receive deadline (`?recv_timeout=<ms>` on
@@ -1729,10 +1730,14 @@ try (Receiver udp = Receiver.open("udp://0.0.0.0:0");
 
 `Receiver.localPort()` and `DemuxReceiver.localPort()` return an
 `OptionalInt`: the port a `udp://` or `rist://@host:port` receiver bound,
-the kernel's pick when the URL said port 0. Every other shell answers empty:
-a caller, a shell made from an accepted TCP connection, `rtp://` and
-`srt://`. The value is the one captured at open, so it answers while a
-receive is parked on another thread; after `close()` it throws
+the kernel's pick when the URL said port 0, and so does an `rtp://` receiver.
+An `srt://` listener reports the port the accepted connection arrived on;
+its open returns only once a caller connected, so port 0 in an `srt://` URL
+cannot tell a caller where to dial. Every other shell answers empty: a
+caller, a shell made from a connection a listener object accepted, a
+receiver taken from an RTSP session or a publish mount. The value is the
+one captured at open, so it answers while a receive is parked on another
+thread; after `close()` it throws
 `IllegalStateException`. `localAddr()` returns the bound address as an
 `Optional<InetSocketAddress>`, present exactly where `localPort()` is, with
 the same port.
@@ -2310,9 +2315,11 @@ try (DemuxReceiver rx = DemuxReceiver.open("rtp://0.0.0.0:5004")) {
 - The datagram size is the `?pkt_size=` URL key (default 1316); a negative
   value is rejected with `RtpException(URL)`. The payload cap per push is
   `pkt_size − 12` (the RTP header is prepended by the transport).
-- Every shell has `cancelHandle()` and `socketStats()` (the `rtp://` open adds
-  nothing and removes nothing), and `stats()` is a `(SocketStats, MuxerStats)`
-  snapshot. To stop a `DemuxReceiver` iteration that is parked waiting for the
+- Every shell has `cancelHandle()` and `socketStats()`; `stats()` is the
+  receive counters (`DemuxReceiverStats` on a `DemuxReceiver`, `ReceiverStats`
+  on a `Receiver`), and an `rtp://` shell's `rtpStats()` counts the datagrams
+  dropped as malformed and those its `source` key turned away, without
+  waiting for a parked receive. To stop a `DemuxReceiver` iteration that is parked waiting for the
   next datagram, call `cancelHandle().cancel()` or `close()` from another
   thread; `close()` cancels the in-flight recv first, then frees the receiver
   (safe cross-thread).

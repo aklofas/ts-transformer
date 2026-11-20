@@ -13,6 +13,7 @@ import org.tstrans.SrtException;
 import org.tstrans.mpegts.DemuxEvent;
 import org.tstrans.mpegts.DemuxerConfig;
 import org.tstrans.shells.CancelHandle;
+import org.tstrans.shells.DemuxReceiverStats;
 import org.tstrans.shells.EndReason;
 import org.tstrans.shells.OpenCancel;
 import org.tstrans.shells.SocketStats;
@@ -285,6 +286,24 @@ public final class ManagedDemuxReceiver extends NativeHandle implements Iterable
     }
 
     /**
+     * The receive counters, as {@code shells.DemuxReceiver.stats()} gives them: TS
+     * bytes and packets read, program maps and PMT versions seen, continuity gaps and
+     * nonconformant items, counted across reconnects. A reconnect forgets the PMT
+     * versions it knew, so the first PMT after it counts again even at the same
+     * version. The wire's own counters are {@link #socketStats()}.
+     *
+     * <p>Waits while another thread is parked in the iteration: the counters live in
+     * the receiver, which a parked receive holds until it returns.
+     *
+     * @return the counters as they stand now
+     * @throws IllegalStateException if the receiver is closed
+     */
+    public DemuxReceiverStats stats() {
+        ensureOpen("ManagedDemuxReceiver is closed");
+        return nStats(peekHandle());
+    }
+
+    /**
      * SRT-specific stats — <b>returns the same {@link SocketStats} view as
      * {@link #socketStats()}</b> ({@code ManagedRecvTransport} exposes no
      * separate SRT-specific shape). Unlike {@code ManagedSender}/
@@ -484,6 +503,7 @@ public final class ManagedDemuxReceiver extends NativeHandle implements Iterable
     private static native void nGateCached(long handle) throws SrtException;
     private static native long nCancelHandle(long handle);
     private static native SocketStats nSocketStats(long handle);
+    private static native DemuxReceiverStats nStats(long handle);
     private static native SocketStats nSrtStats(long handle);
     private static native long nReconnectAttempts(long handle);
     private static native long nLastSeenMicros(long handle, int pid);

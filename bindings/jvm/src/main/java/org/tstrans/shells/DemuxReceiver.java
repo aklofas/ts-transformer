@@ -16,6 +16,7 @@ import org.tstrans.internal.EndReasonSnapshot;
 import org.tstrans.internal.NativeAddr;
 import org.tstrans.mpegts.DemuxEvent;
 import org.tstrans.mpegts.DemuxerConfig;
+import org.tstrans.rtp.RtpStats;
 
 /**
  * Any transport in, {@link DemuxEvent}s out: owns a {@code Demuxer} and a
@@ -66,9 +67,13 @@ public class DemuxReceiver extends NativeHandle implements Iterable<DemuxEvent> 
     // The largest fed-byte count any read or the close saw, so a read never
     // goes backwards across close().
     private final AtomicLong tsBytesSeen = new AtomicLong();
+    private final RtpCounters rtp;
 
     /** Wrap a native handle returned by {@link #openHandle(String)}. */
-    protected DemuxReceiver(long handle) { setHandle(handle); }
+    protected DemuxReceiver(long handle) {
+        setHandle(handle);
+        rtp = new RtpCounters(nRtpStats(handle));
+    }
 
     /**
      * Open a receiver on the transport named by {@code url}'s scheme and demux
@@ -305,22 +310,34 @@ public class DemuxReceiver extends NativeHandle implements Iterable<DemuxEvent> 
     }
 
     /**
-     * Combined {@code (SocketStats, MuxerStats)} snapshot. The socket stats carry
-     * the pipeline-tracked byte/packet counters; the muxer stats reshape the
-     * demux-side counters (packets/bytes received, program maps seen) so callers
-     * read the same {@link TransportStats} shape on both {@code MuxSender} and
-     * {@code DemuxReceiver}.
+     * The receive counters: TS bytes and packets the receiver read, program maps and
+     * PMT versions seen, continuity gaps and nonconformant items the demuxer met. The
+     * wire's own counters are {@link #socketStats()}.
      *
-     * <p>May block briefly if another thread is parked in {@code next()} — the
-     * snapshot is taken under the receiver's resource lock, which a parked recv
-     * holds until it returns.
+     * <p>Waits while another thread is parked in {@code next()}: the counters live in
+     * the receiver, which a parked receive holds until it returns.
      *
-     * @return the combined stats snapshot
+     * @return the counters as they stand now
      * @throws IllegalStateException if the receiver is closed
      */
-    public TransportStats stats() {
+    public DemuxReceiverStats stats() {
         ensureOpen("DemuxReceiver is closed");
         return nStats(peekHandle());
+    }
+
+    /**
+     * The RTP counters of a receiver over {@code rtp://}, an RTSP session or a publish
+     * mount: datagrams dropped as malformed, and those the URL's {@code source} key
+     * turned away. Empty on every other transport. It never waits behind a
+     * {@code next()} parked on another thread, a read never returns less than an
+     * earlier one, and after {@link #close()} it returns the counters as the close
+     * left them.
+     *
+     * @return the RTP counters, or empty off RTP
+     */
+    public Optional<RtpStats> rtpStats() {
+        long h = peekHandle();
+        return rtp.read(h == 0 ? null : nRtpStats(h));
     }
 
     /**
@@ -440,11 +457,14 @@ public class DemuxReceiver extends NativeHandle implements Iterable<DemuxEvent> 
 
     /**
      * The local port the transport bound when this receiver was opened, for a
-     * {@code udp://} URL or a {@code rist://@host:port} listener, so a URL with
-     * port 0 reports the port the kernel picked. Empty for every other shell
-     * (a caller, an accepted connection, {@code rtp://}). The value is the one
-     * captured at open; it never waits behind a {@code next()} parked on
-     * another thread. A RIST receiver on port 0 needs the Main profile (the
+     * {@code udp://} or {@code rtp://} URL or a {@code rist://@host:port} listener, so
+     * a URL with port 0 reports the port the kernel picked. For an {@code srt://}
+     * listener it is the port the accepted connection arrived on: the open returns
+     * only once a caller connected, so port 0 in an {@code srt://} URL cannot tell a
+     * caller where to dial. Empty for every other shell (a caller, a connection
+     * accepted by a listener object, a receiver taken from an RTSP session or a
+     * publish mount). The value is the one captured at open; it never waits behind a
+     * {@code next()} parked on another thread. A RIST receiver on port 0 needs the Main profile (the
      * default); the Simple profile is refused at open with kind
      * {@code INVALID_CONFIG}, because its second port cannot follow a
      * kernel-picked one.
@@ -531,8 +551,10 @@ public class DemuxReceiver extends NativeHandle implements Iterable<DemuxEvent> 
 
     @Override protected void nativeClose(long h) {
         long[] tsBytesOut = {-1};
-        EndReasonSnapshot snapshot = nClose(h, tsBytesOut);
+        long[] rtpOut = {-1, -1};
+        EndReasonSnapshot snapshot = nClose(h, tsBytesOut, rtpOut);
         tsBytesSeen.accumulateAndGet(tsBytesOut[0], Math::max);
+        rtp.atClose(rtpOut);
         if (snapshot != null) {
             closedEndDetail = snapshot.detail();
             closedEndReason = snapshot.reason();
@@ -549,11 +571,12 @@ public class DemuxReceiver extends NativeHandle implements Iterable<DemuxEvent> 
     private static native void nGateCached(long handle) throws BindingException;
     private static native long nCancelHandle(long handle);
     private static native SocketStats nSocketStats(long handle);
-    private static native TransportStats nStats(long handle);
+    private static native DemuxReceiverStats nStats(long handle);
+    private static native RtpStats nRtpStats(long handle);
     private static native long nLastSeenMicros(long handle, int pid);
     private static native int nEndReason(long handle);
     private static native String nEndDetail(long handle);
-    private static native EndReasonSnapshot nClose(long handle, long[] tsBytesOut);
+    private static native EndReasonSnapshot nClose(long handle, long[] tsBytesOut, long[] rtpOut);
     private static native long nTsBytesDemuxed(long handle);
     private static native int nLocalPort(long handle);
     private static native byte[] nLocalAddr(long handle);

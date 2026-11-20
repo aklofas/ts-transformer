@@ -8,6 +8,7 @@ import org.tstrans.NativeHandle;
 import org.tstrans.NativeLoader;
 import org.tstrans.internal.EndReasonSnapshot;
 import org.tstrans.internal.NativeAddr;
+import org.tstrans.rtp.RtpStats;
 import org.tstrans.srt.SrtStats;
 
 /**
@@ -47,9 +48,13 @@ public class Receiver extends NativeHandle {
     // then. Written once by nativeClose, read by endReason()/endDetail().
     private volatile EndReason closedEndReason;
     private volatile String closedEndDetail;
+    private final RtpCounters rtp;
 
     /** Wrap a native handle returned by {@link #openHandle(String)}. */
-    protected Receiver(long handle) { setHandle(handle); }
+    protected Receiver(long handle) {
+        setHandle(handle);
+        rtp = new RtpCounters(nRtpStats(handle));
+    }
 
     /**
      * Open a receiver on the transport named by the URL's scheme.
@@ -188,6 +193,36 @@ public class Receiver extends NativeHandle {
     }
 
     /**
+     * The receive counters: TS bytes and packets the receiver returned, bytes it
+     * skipped to find the packet boundary, and how many times it had to find it. The
+     * wire's own counters are {@link #socketStats()}.
+     *
+     * <p>Waits while another thread is parked in {@link #recvBytes()}: the counters
+     * live in the receiver, which a parked receive holds until it returns.
+     *
+     * @return the counters as they stand now
+     * @throws IllegalStateException if the receiver is closed
+     */
+    public ReceiverStats stats() {
+        ensureOpen("Receiver is closed");
+        return nStats(peekHandle());
+    }
+
+    /**
+     * The RTP counters of a receiver over {@code rtp://}: datagrams dropped as
+     * malformed, and those the URL's {@code source} key turned away. Empty on every
+     * other transport. It never waits behind a {@link #recvBytes()} parked on another
+     * thread, a read never returns less than an earlier one, and after
+     * {@link #close()} it returns the counters as the close left them.
+     *
+     * @return the RTP counters, or empty off RTP
+     */
+    public Optional<RtpStats> rtpStats() {
+        long h = peekHandle();
+        return rtp.read(h == 0 ? null : nRtpStats(h));
+    }
+
+    /**
      * SRT-specific stats snapshot.
      *
      * @return the SRT stats
@@ -241,11 +276,14 @@ public class Receiver extends NativeHandle {
 
     /**
      * The local port the transport bound when this receiver was opened, for a
-     * {@code udp://} URL or a {@code rist://@host:port} listener, so a URL with
-     * port 0 reports the port the kernel picked. Empty for every other shell
-     * (a caller, an accepted connection, {@code rtp://}). The value is the one
-     * captured at open; it never waits behind a {@code recvBytes()} parked on
-     * another thread. A RIST receiver on port 0 needs the Main profile (the
+     * {@code udp://} or {@code rtp://} URL or a {@code rist://@host:port} listener, so
+     * a URL with port 0 reports the port the kernel picked. For an {@code srt://}
+     * listener it is the port the accepted connection arrived on: the open returns
+     * only once a caller connected, so port 0 in an {@code srt://} URL cannot tell a
+     * caller where to dial. Empty for every other shell (a caller, a connection
+     * accepted by a listener object, a receiver taken from an RTSP session or a
+     * publish mount). The value is the one captured at open; it never waits behind a
+     * {@code recvBytes()} parked on another thread. A RIST receiver on port 0 needs the Main profile (the
      * default); the Simple profile is refused at open with kind
      * {@code INVALID_CONFIG}, because its second port cannot follow a
      * kernel-picked one.
@@ -332,7 +370,9 @@ public class Receiver extends NativeHandle {
     }
 
     @Override protected void nativeClose(long h) {
-        EndReasonSnapshot snapshot = nClose(h);
+        long[] rtpOut = {-1, -1};
+        EndReasonSnapshot snapshot = nClose(h, rtpOut);
+        rtp.atClose(rtpOut);
         if (snapshot != null) {
             closedEndDetail = snapshot.detail();
             closedEndReason = snapshot.reason();
@@ -343,10 +383,12 @@ public class Receiver extends NativeHandle {
     private static native byte[]  nRecvBytes(long handle, int maxLen) throws BindingException;
     private static native long    nCancelHandle(long handle);
     private static native SocketStats nSocketStats(long handle);
+    private static native ReceiverStats nStats(long handle);
+    private static native RtpStats    nRtpStats(long handle);
     private static native SrtStats    nSrtStats(long handle) throws BindingException;
     private static native int     nEndReason(long handle);
     private static native String  nEndDetail(long handle);
-    private static native EndReasonSnapshot nClose(long handle);
+    private static native EndReasonSnapshot nClose(long handle, long[] rtpOut);
     private static native int nLocalPort(long handle);
     private static native byte[] nLocalAddr(long handle);
     private static native byte[] nPeerAddr(long handle);

@@ -253,7 +253,12 @@ class PeerAddrTest {
                 ShellPeers.Rx rx = ShellPeers.receiverWithPeer(shell, scheme, c);
                 assertEquals(Optional.empty(), rx.peerAddr(), scheme);
                 assertEquals(0, rx.sourceRejected(), scheme);
-                assertEquals(Optional.empty(), rx.localAddr(), scheme);
+                if (scheme.equals("tcp")) {
+                    assertEquals(Optional.empty(), rx.localAddr(), scheme);
+                } else {
+                    // An srt:// listener reports the accepted connection's local address.
+                    assertEquals(rx.localPort().getAsInt(), rx.localAddr().orElseThrow().getPort(), scheme);
+                }
             }
         }
     }

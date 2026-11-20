@@ -13,20 +13,22 @@ use std::net::SocketAddr;
 use std::sync::LazyLock;
 
 use jni::jni_str;
-use jni::objects::{JObject, JString};
-use jni::sys::{jboolean, jbyteArray, jint, jlong, jstring};
+use jni::objects::{JLongArray, JObject, JString};
+use jni::sys::{jboolean, jbyteArray, jint, jlong, jobject, jstring};
 use tst_core::transport::{RecvTransport, SourceHandle};
 use tst_pipeline::binding::view::{BlockingReason, Snapshot};
 use tst_pipeline::binding::{BindingError, Domain, Opened, Owned};
 use tst_pipeline::{Receiver as PlReceiver, ReceiverConfig};
+use tst_rtp::RtpStatsHandle;
 
 use super::cancel::cancel_view_handle;
+use super::demux_receiver::{rtp_stats_object, write_rtp_stats_out};
 use super::end_reason::{build_close_snapshot, detail, wire_value};
 use super::open::{open_recv, read_url};
 use super::open_cancel::object_of;
 use super::{domain_or_closed, throw_state};
 use crate::error::{throw_binding, throw_handle_state};
-use crate::generated::stats_shells::build_socket_stats;
+use crate::generated::stats_shells::{build_receiver_stats, build_socket_stats};
 use crate::generated::stats_srt::build_srt_stats;
 use crate::handle::OwnedRegistry;
 use crate::jutil::socket_addr_array;
@@ -39,6 +41,8 @@ struct RxHandles {
     local_addr: Option<SocketAddr>,
     /// Where the transport's datagrams come from, for the transports that record it.
     source: Option<SourceHandle>,
+    /// The RTP counters of an `rtp://` transport, taken before it was boxed.
+    rtp_stats: Option<RtpStatsHandle>,
 }
 
 static REGISTRY: LazyLock<OwnedRegistry<Shell, Snapshot<RxHandles>>> =
@@ -62,16 +66,23 @@ jni_native! {
         let Some(url) = read_url(env, &url) else {
             return 0;
         };
-        let Some(opened) = open_recv(env, &url, oc.as_ref()) else {
+        let Some((opened, rtp_stats)) = open_recv(env, &url, oc.as_ref()) else {
             return 0;
         };
-        register(opened)
+        register_with(opened, rtp_stats)
     }
 }
 
 /// Wrap an opened receive transport in a receiver and register it. Shared by
 /// `nOpen` and by `srt.Socket.intoReceiver`.
 pub(crate) fn register(opened: Opened<Box<dyn RecvTransport>>) -> jlong {
+    register_with(opened, None)
+}
+
+fn register_with(
+    opened: Opened<Box<dyn RecvTransport>>,
+    rtp_stats: Option<RtpStatsHandle>,
+) -> jlong {
     let Opened {
         transport,
         cancel,
@@ -88,7 +99,11 @@ pub(crate) fn register(opened: Opened<Box<dyn RecvTransport>>) -> jlong {
         cancel,
         Snapshot {
             domain,
-            handles: RxHandles { local_addr, source },
+            handles: RxHandles {
+                local_addr,
+                source,
+                rtp_stats,
+            },
         },
     );
     if let Some(h) = end_reason {
@@ -229,6 +244,41 @@ jni_native! {
 }
 
 jni_native! {
+    /// The four receive counters as a `ReceiverStats`. Null on a JNI builder error.
+    fn Java_org_tstrans_shells_Receiver_nStats<'local>(
+        env,
+        _class,
+        handle: jlong,
+    ) -> JObject<'local> = JObject::null() => {
+        // counters live inside the shell and have no value to report while a parked call holds it
+        let stats = match REGISTRY.with_ref_blocking(
+            handle as u64,
+            BlockingReason::NoAnswerWithoutSlot,
+            |r| r.stats(),
+        ) {
+            Ok(v) => v,
+            Err(state) => {
+                throw_handle_state(env, "Receiver", &state);
+                return JObject::null();
+            }
+        };
+        build_receiver_stats(env, &stats).unwrap_or_else(|_| JObject::null())
+    }
+}
+
+jni_native! {
+    /// The RTP counters of an `rtp://` receiver; null for every other transport
+    /// and for an absent key (the Java side keeps the last value). Reads the
+    /// snapshot, never the slot.
+    fn Java_org_tstrans_shells_Receiver_nRtpStats(env, _class, handle: jlong) -> jobject = std::ptr::null_mut() => {
+        match REGISTRY.snapshot(handle as u64, |s| s.handles.rtp_stats.clone()) {
+            Some(Some(h)) => rtp_stats_object(env, &h),
+            _ => std::ptr::null_mut(),
+        }
+    }
+}
+
+jni_native! {
     /// The SRT-rich `SrtStats` record. `UnsupportedOperationException` unless the
     /// shell was opened from an `srt://` URL.
     fn Java_org_tstrans_shells_Receiver_nSrtStats<'local>(
@@ -297,14 +347,22 @@ jni_native! {
 jni_native! {
     /// Close the receiver. Cancel first, so a `recvBytes` parked on another
     /// thread ends with the transport's `CLOSED`. Returns the end-reason snapshot
-    /// (`EndReasonSnapshot`), null when the close lost the race.
+    /// (`EndReasonSnapshot`), null when the close lost the race. Writes an RTP
+    /// receiver's counters, read after the take, into `rtpOut[0..2]`.
     fn Java_org_tstrans_shells_Receiver_nClose<'local>(
         env,
         _class,
         handle: jlong,
+        rtp_out: JLongArray<'local>,
     ) -> JObject<'local> = JObject::null() => {
+        let rtp_stats = REGISTRY.snapshot(handle as u64, |s| s.handles.rtp_stats.clone()).flatten();
         match REGISTRY.close_with_end_reason(handle as u64, |mut r| r.close()) {
-            Some(reason) => build_close_snapshot(env, reason).unwrap_or_else(|_| JObject::null()),
+            Some(reason) => {
+                if let Some(h) = &rtp_stats {
+                    write_rtp_stats_out(env, &rtp_out, h);
+                }
+                build_close_snapshot(env, reason).unwrap_or_else(|_| JObject::null())
+            }
             None => JObject::null(),
         }
     }

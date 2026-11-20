@@ -52,11 +52,8 @@ import org.tstrans.shells.SocketStats;
  *
  * <p>Three complementary views, mirroring {@code tst_rtp::H264Receiver}:
  * <ul>
- *   <li>{@link #socketStats()} — wire-level throughput (bytes/packets received).
- *       Note: unlike {@link org.tstrans.shells.DemuxReceiver#stats()}, this returns {@link SocketStats}
- *       directly (not wrapped in a {@code TransportStats}). The Rust/Python surface
- *       has the same asymmetry — {@code H264Receiver.socket_stats()} returns a bare
- *       {@code SocketStats}; {@code DemuxReceiver.stats()} returns a combined view.
+ *   <li>{@link #socketStats()} — wire-level throughput (bytes/packets received), the
+ *       same {@link SocketStats} the receiving shells' {@code socketStats()} return.
  *   <li>{@link #rtpStats()} — protocol-level counters (malformed packets, and
  *       datagrams rejected by a {@code ?source=} pin).
  *   <li>{@link #depayStats()} — RFC 6184 depacketizer internals (AU counts, seq
@@ -278,11 +275,8 @@ public final class H264Receiver extends NativeHandle implements Iterable<H264Acc
     /**
      * Wire-level throughput statistics (bytes / packets received).
      *
-     * <p><b>Asymmetry note:</b> this method returns {@link SocketStats} directly,
-     * matching {@code tst_rtp::H264Receiver::socket_stats()} and tst-py's
-     * {@code H264Receiver.socket_stats()}. The {@link org.tstrans.shells.DemuxReceiver} wrapper
-     * returns {@link TransportStats} (a combined view). The difference reflects
-     * the Rust API shape, not a binding inconsistency.
+     * <p>The same {@link SocketStats} the receiving shells' {@code socketStats()}
+     * return, matching {@code tst_rtp::H264Receiver::socket_stats()}.
      *
      * @throws IllegalStateException if the receiver is closed
      */

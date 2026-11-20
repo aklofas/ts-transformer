@@ -70,7 +70,7 @@ use tst_srt::{SrtTransport, SrtUrl, url::Mode};
 
 use crate::error::throw_handle_state;
 use crate::generated::stats_mpegts::build_muxer_stats;
-use crate::generated::stats_shells::build_socket_stats;
+use crate::generated::stats_shells::{build_demux_receiver_stats, build_socket_stats};
 use crate::handle::OwnedRegistry;
 use crate::jutil::{checked_u8, read_bytes};
 use crate::mpegts::muxer::{build_muxer_config_from_arrays, throw_mux_error};
@@ -1111,6 +1111,30 @@ jni_native! {
             Ok(obj) => obj,
             Err(_) => JObject::null(),
         }
+    }
+}
+
+jni_native! {
+    /// `nStats(handle)` — the six receive counters as a `DemuxReceiverStats`.
+    /// Null on a JNI builder error.
+    fn Java_org_tstrans_srt_ManagedDemuxReceiver_nStats<'local>(
+        env,
+        _class,
+        handle: jlong,
+    ) -> JObject<'local> = JObject::null() => {
+        // counters live inside the shell and have no value to report while a parked call holds it
+        let stats = match REGISTRY_DEMUX.with_ref_blocking(
+            handle as u64,
+            BlockingReason::NoAnswerWithoutSlot,
+            |jstruct| jstruct.inner.stats(),
+        ) {
+            Ok(v) => v,
+            Err(state) => {
+                throw_handle_state(env, "ManagedDemuxReceiver", &state);
+                return JObject::null();
+            }
+        };
+        build_demux_receiver_stats(env, &stats).unwrap_or_else(|_| JObject::null())
     }
 }
 

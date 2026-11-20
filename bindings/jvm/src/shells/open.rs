@@ -12,6 +12,7 @@ use tst_core::cancel::CancelSlot;
 use tst_core::transport::{RecvTransport, Transport};
 use tst_core::url::redact_url;
 use tst_pipeline::binding::{BindingError, BindingErrorKind, Domain, OpenCancel, Opened};
+use tst_rtp::RtpStatsHandle;
 
 use super::open_cancel::{begin, closed, finish};
 use crate::error::throw_binding;
@@ -86,15 +87,16 @@ pub(super) fn open_send(
     }
 }
 
-/// Open a receive transport for a shell. An `srt://` open hands its first
-/// accept the slot the caller's `OpenCancel` gave it, so the object's
-/// `cancel()` ends that accept; without an object the slot is a fresh one
-/// nothing fires, and the accept waits for a peer.
-pub(super) fn open_recv(
-    env: &mut Env,
-    url: &str,
-    oc: Option<&OpenCancel>,
-) -> Option<Opened<Box<dyn RecvTransport>>> {
+/// An opened receive transport, with the reader of its RTP counters for an
+/// `rtp://` URL.
+pub(super) type OpenedRecv = (Opened<Box<dyn RecvTransport>>, Option<RtpStatsHandle>);
+
+/// Open a receive transport for a shell, with the reader of its RTP counters
+/// for an `rtp://` URL (taken before the transport was boxed). An `srt://`
+/// open hands its first accept the slot the caller's `OpenCancel` gave it, so
+/// the object's `cancel()` ends that accept; without an object the slot is a
+/// fresh one nothing fires, and the accept waits for a peer.
+pub(super) fn open_recv(env: &mut Env, url: &str, oc: Option<&OpenCancel>) -> Option<OpenedRecv> {
     let Some(domain) = domain_of(url) else {
         unsupported(env, url);
         return None;
@@ -104,11 +106,12 @@ pub(super) fn open_recv(
         Domain::Srt => match &slot {
             Some(slot) => tst_srt::opener::open_recv(url, slot),
             None => tst_srt::opener::open_recv(url, &Arc::new(CancelSlot::new())),
-        },
-        Domain::Rtp => tst_rtp::opener::open_recv(url),
-        Domain::Udp => tst_udp::opener::open_recv(url),
-        Domain::Tcp => tst_tcp::opener::open_recv(url),
-        Domain::Rist => tst_rist::opener::open_recv(url),
+        }
+        .map(|o| (o, None)),
+        Domain::Rtp => tst_rtp::opener::open_recv_with_stats(url).map(|(o, h)| (o, Some(h))),
+        Domain::Udp => tst_udp::opener::open_recv(url).map(|o| (o, None)),
+        Domain::Tcp => tst_tcp::opener::open_recv(url).map(|o| (o, None)),
+        Domain::Rist => tst_rist::opener::open_recv(url).map(|o| (o, None)),
         _ => unreachable_scheme(),
     };
     match finish(slot, opened, closed()) {

@@ -32,20 +32,19 @@ use tst_pipeline::{
     TsBytesDemuxedHandle,
 };
 
+use tst_rtp::RtpStatsHandle;
+
 use super::cancel::cancel_view_handle;
 use super::end_reason::{build_close_snapshot, detail, wire_value};
-use super::mux_sender::build_transport_stats;
 use super::open::{open_recv, read_url};
 use super::open_cancel::object_of;
 use super::{domain_or_closed, throw_state};
 use crate::error::{throw_binding, throw_handle_state};
-use crate::generated::stats_mpegts::build_muxer_stats;
-use crate::generated::stats_shells::build_socket_stats;
+use crate::generated::stats_rtp::build_rtp_stats;
+use crate::generated::stats_shells::{build_demux_receiver_stats, build_socket_stats};
 use crate::handle::OwnedRegistry;
 use crate::jutil::socket_addr_array;
-use crate::mpegts::{
-    build_demux_config_from_args, convert_event, shell_muxer_stats, throw_demux_error,
-};
+use crate::mpegts::{build_demux_config_from_args, convert_event, throw_demux_error};
 
 /// Native backing for `org.tstrans.shells.DemuxReceiver`.
 struct JniDemuxReceiver {
@@ -84,6 +83,8 @@ struct RxSnap {
     local_addr: Option<std::net::SocketAddr>,
     /// Where the transport's datagrams come from, for the transports that record it.
     source: Option<SourceHandle>,
+    /// The RTP counters of an `rtp://` or RTSP transport, taken before it was boxed.
+    rtp_stats: Option<RtpStatsHandle>,
 }
 
 static REGISTRY: LazyLock<OwnedRegistry<JniDemuxReceiver, Snapshot<RxSnap>>> =
@@ -100,6 +101,29 @@ pub(crate) fn write_counter_out(env: &mut Env, out: &JLongArray, v: u64) {
         return;
     }
     let _ = out.set_region(env, 0, &[counter_to_jlong(v)]);
+}
+
+/// The RTP counters as a Java `RtpStats`; null with nothing pending when JNI
+/// cannot build it (the getter then keeps its last value).
+pub(crate) fn rtp_stats_object(env: &mut Env, h: &RtpStatsHandle) -> jobject {
+    build_rtp_stats(env, &h.stats()).map_or(std::ptr::null_mut(), JObject::into_raw)
+}
+
+/// Write the RTP counters into `out[0..2]` (malformed, source-rejected); a
+/// null or short array is left alone.
+pub(crate) fn write_rtp_stats_out(env: &mut Env, out: &JLongArray, h: &RtpStatsHandle) {
+    if out.is_null() || !out.len(env).is_ok_and(|n| n >= 2) {
+        return;
+    }
+    let s = h.stats();
+    let _ = out.set_region(
+        env,
+        0,
+        &[
+            counter_to_jlong(s.malformed_packets),
+            counter_to_jlong(s.source_rejected),
+        ],
+    );
 }
 
 /// Throw a `recv_event` failure: demux-sourced ones keep `DemuxException`;
@@ -134,10 +158,10 @@ fn open_with(
     let Some(url) = read_url(env, url) else {
         return 0;
     };
-    let Some(opened) = open_recv(env, &url, oc.as_ref()) else {
+    let Some((opened, rtp_stats)) = open_recv(env, &url, oc.as_ref()) else {
         return 0;
     };
-    register(opened, opts)
+    register_with(opened, opts, None, rtp_stats)
 }
 
 /// Wrap an opened receive transport in a `DemuxReceiver` (with or without
@@ -147,23 +171,34 @@ pub(crate) fn register(
     opened: Opened<Box<dyn RecvTransport>>,
     opts: Option<tst_core::mpegts::demux::DemuxerConfig>,
 ) -> jlong {
-    register_with(opened, opts, None)
+    register_with(opened, opts, None, None)
 }
 
-/// [`register`] for the transport of a publish mount, whose cancel latch the
-/// mount's `cancel()` sets.
+/// [`register`] for an RTP transport whose counters `rtp_stats` reads.
+pub(crate) fn register_rtp(
+    opened: Opened<Box<dyn RecvTransport>>,
+    opts: Option<tst_core::mpegts::demux::DemuxerConfig>,
+    rtp_stats: RtpStatsHandle,
+) -> jlong {
+    register_with(opened, opts, None, Some(rtp_stats))
+}
+
+/// [`register_rtp`] for the transport of a publish mount, whose cancel latch
+/// the mount's `cancel()` sets.
 pub(crate) fn register_publish_mount(
     opened: Opened<Box<dyn RecvTransport>>,
     opts: Option<tst_core::mpegts::demux::DemuxerConfig>,
+    rtp_stats: RtpStatsHandle,
 ) -> jlong {
     let mount_cancel = Arc::clone(&opened.cancel);
-    register_with(opened, opts, Some(mount_cancel))
+    register_with(opened, opts, Some(mount_cancel), Some(rtp_stats))
 }
 
 fn register_with(
     opened: Opened<Box<dyn RecvTransport>>,
     opts: Option<tst_core::mpegts::demux::DemuxerConfig>,
     mount_cancel: Option<Arc<dyn TransportCancel>>,
+    rtp_stats: Option<RtpStatsHandle>,
 ) -> jlong {
     let Opened {
         transport,
@@ -191,6 +226,7 @@ fn register_with(
                 mount_cancel,
                 local_addr,
                 source,
+                rtp_stats,
             },
         },
     );
@@ -402,18 +438,15 @@ jni_native! {
 }
 
 jni_native! {
-    /// `nStats(handle)` — `(SocketStats, MuxerStats)` projection. The socket stats
-    /// carry only the pipeline-tracked byte/packet counters (a partial
-    /// `SocketStats`); the demux side is reshaped as a `MuxerStats` projection so
-    /// callers read the same `TransportStats` shape on `MuxSender` and
-    /// `DemuxReceiver`. Null on a JNI builder error.
+    /// `nStats(handle)` — the six receive counters as a `DemuxReceiverStats`.
+    /// Null on a JNI builder error.
     fn Java_org_tstrans_shells_DemuxReceiver_nStats<'local>(
         env,
         _class,
         handle: jlong,
     ) -> JObject<'local> = JObject::null() => {
         // counters live inside the shell and have no value to report while a parked call holds it
-        let combined = match REGISTRY.with_ref_blocking(
+        let stats = match REGISTRY.with_ref_blocking(
             handle as u64,
             BlockingReason::NoAnswerWithoutSlot,
             |jdr| jdr.inner.stats(),
@@ -424,28 +457,19 @@ jni_native! {
                 return JObject::null();
             }
         };
+        build_demux_receiver_stats(env, &stats).unwrap_or_else(|_| JObject::null())
+    }
+}
 
-        let mut sock = tst_core::transport::SocketStats::default();
-        sock.bytes_received = combined.bytes_received;
-        sock.packets_received = combined.packets_received;
-
-        let sock_obj = match build_socket_stats(env, &sock) {
-            Ok(o) => o,
-            Err(_) => return JObject::null(),
-        };
-        let mux_obj = match build_muxer_stats(
-            env,
-            &shell_muxer_stats(
-                combined.packets_received,
-                combined.bytes_received,
-                combined.program_maps_seen,
-                0,
-            ),
-        ) {
-            Ok(o) => o,
-            Err(_) => return JObject::null(),
-        };
-        build_transport_stats(env, &sock_obj, &mux_obj).unwrap_or_else(|_| JObject::null())
+jni_native! {
+    /// `nRtpStats(handle)` — the RTP counters of an `rtp://` or RTSP receiver;
+    /// null for every other transport and for an absent key (the Java side
+    /// keeps the last value). Reads the snapshot, never the slot.
+    fn Java_org_tstrans_shells_DemuxReceiver_nRtpStats(env, _class, handle: jlong) -> jobject = std::ptr::null_mut() => {
+        match REGISTRY.snapshot(handle as u64, |s| s.handles.rtp_stats.clone()) {
+            Some(Some(h)) => rtp_stats_object(env, &h),
+            _ => std::ptr::null_mut(),
+        }
     }
 }
 
@@ -479,23 +503,30 @@ jni_native! {
 }
 
 jni_native! {
-    /// `nClose(handle, tsBytesOut)` — cancel first, then take the receiver and close it.
+    /// `nClose(handle, tsBytesOut, rtpOut)` — cancel first, then take the receiver and close it.
     /// Returns the end-reason snapshot (`EndReasonSnapshot`), null when the
     /// close lost the race (a double `close()` is safe). Writes the fed-byte
-    /// count, read after the registry take, into `tsBytesOut[0]`.
+    /// count, read after the registry take, into `tsBytesOut[0]`, and an RTP
+    /// receiver's counters, read then too, into `rtpOut[0..2]`.
     fn Java_org_tstrans_shells_DemuxReceiver_nClose<'local>(
         env,
         _class,
         handle: jlong,
         ts_bytes_out: JLongArray<'local>,
+        rtp_out: JLongArray<'local>,
     ) -> JObject<'local> = JObject::null() => {
-        let ts_bytes = REGISTRY.snapshot(handle as u64, |s| s.handles.ts_bytes_demuxed.clone());
+        let handles = REGISTRY.snapshot(handle as u64, |s| {
+            (s.handles.ts_bytes_demuxed.clone(), s.handles.rtp_stats.clone())
+        });
         let closed = REGISTRY.close_with_end_reason(handle as u64, |mut jdr| jdr.inner.close());
         // The take is done: the shell has stopped feeding the demuxer.
         if closed.is_some()
-            && let Some(counter) = &ts_bytes
+            && let Some((counter, rtp_stats)) = &handles
         {
             write_counter_out(env, &ts_bytes_out, counter.get());
+            if let Some(h) = rtp_stats {
+                write_rtp_stats_out(env, &rtp_out, h);
+            }
         }
         match closed {
             Some(reason) => build_close_snapshot(env, reason).unwrap_or_else(|_| JObject::null()),

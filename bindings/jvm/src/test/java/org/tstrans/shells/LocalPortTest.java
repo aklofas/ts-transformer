@@ -106,6 +106,51 @@ class LocalPortTest {
         }
     }
 
+    /** One RTP packet (version 2, payload type 33) carrying seven TS packets. */
+    private static byte[] rtpMp2t() {
+        byte[] d = new byte[12 + 188 * 7];
+        d[0] = (byte) 0x80;
+        d[1] = 33;
+        for (int i = 0; i < 7; i++) d[12 + i * 188] = 0x47;
+        return d;
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"Receiver", "DemuxReceiver"})
+    void localPortOverRtpIsTheBoundPort(String shell) throws Exception {
+        try (ShellPeers.Cleanup c = new ShellPeers.Cleanup()) {
+            ShellPeers.Rx rx = c.add(ShellPeers.openRx(shell, "rtp://127.0.0.1:0"));
+            int port = rx.localPort().getAsInt();
+            assertTrue(port > 0 && port < 65536, "port " + port);
+            assertEquals(port, rx.localAddr().orElseThrow().getPort());
+            if (shell.equals("Receiver")) {
+                // A packet sent to that port is the one received.
+                DatagramSocket tx = c.add(new DatagramSocket());
+                byte[] d = rtpMp2t();
+                tx.send(new DatagramPacket(d, d.length, InetAddress.getLoopbackAddress(), port));
+                try (ShellPeers.Watchdog w = new ShellPeers.Watchdog(rx.cancelHandle(), scaledMs(10_000))) {
+                    rx.recvOnce();
+                }
+            }
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"Receiver", "DemuxReceiver"})
+    void localPortOverAnSrtListenerAfterTheAccept(String shell) throws Exception {
+        try (ShellPeers.Cleanup c = new ShellPeers.Cleanup()) {
+            int port = TestSupport.freeUdpPort();
+            ShellPeers.Pending<ShellPeers.Rx> listening = ShellPeers.openInBackground(
+                () -> ShellPeers.openRx(shell, "srt://127.0.0.1:" + port + "?mode=listener"));
+            c.add(ShellPeers.retryCaller(() -> Sender.open("srt://127.0.0.1:" + port + "?mode=caller")));
+            ShellPeers.Rx rx = c.add(listening.await());
+            // The listener's own port, known only once a caller connected.
+            assertEquals(OptionalInt.of(port), rx.localPort());
+            assertEquals(port, rx.localAddr().orElseThrow().getPort());
+            assertEquals(InetAddress.getByName("127.0.0.1"), rx.localAddr().orElseThrow().getAddress());
+        }
+    }
+
     @Test
     void aCallerShellHasNoLocalPort() throws Exception {
         try (ShellPeers.Cleanup c = new ShellPeers.Cleanup()) {

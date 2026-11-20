@@ -34,16 +34,19 @@ pub(crate) fn rtp_cancel(
 }
 
 /// Wrap the SETUP-time receive transport an RTSP session hands over in a
-/// `DemuxReceiver` shell (default or explicit demux options) and register it.
+/// `DemuxReceiver` shell (default or explicit demux options) and register it,
+/// with the reader of its RTP counters taken before the transport is boxed.
 /// A transport with no cancel handle is a tst-rtp bug, reported as `Internal`.
 pub(crate) fn demux_receiver_handle_from_transport(
     transport: RtpRecvTransport,
     opts: Option<tst_core::mpegts::demux::DemuxerConfig>,
 ) -> Result<jlong, BindingError> {
     let cancel = rtp_cancel(RecvTransport::cancel_handle(&transport), "RtpRecvTransport")?;
-    Ok(crate::shells::demux_receiver::register(
+    let rtp_stats = transport.stats_handle();
+    Ok(crate::shells::demux_receiver::register_rtp(
         Opened::new(Box::new(transport), cancel, Domain::Rtp),
         opts,
+        rtp_stats,
     ))
 }
 
@@ -55,8 +58,10 @@ pub(crate) fn demux_receiver_handle_from_mount_transport(
     opts: Option<tst_core::mpegts::demux::DemuxerConfig>,
 ) -> Result<jlong, BindingError> {
     let cancel = rtp_cancel(RecvTransport::cancel_handle(&transport), "RtpRecvTransport")?;
+    let rtp_stats = transport.stats_handle();
     Ok(crate::shells::demux_receiver::register_publish_mount(
         Opened::new(Box::new(transport), cancel, Domain::Rtp),
         opts,
+        rtp_stats,
     ))
 }
