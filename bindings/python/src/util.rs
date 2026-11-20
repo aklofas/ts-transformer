@@ -15,15 +15,15 @@ use tst_pipeline::binding::{BindingError, BindingErrorKind, Close, CloseFailure,
 ///
 /// Fast path for `bytes`: zero-copy clone of the bound reference.
 /// Fallback: calls Python's `bytes()` built-in to coerce the argument,
-/// which copies the data once into an immutable `bytes` object.
+/// which copies the data once into an immutable `bytes` object; it also
+/// materializes an iterable of ints (`bytes([1, 2, 3])`).
 ///
-/// The `bytes()` fallback accepts strictly more than the stubs'
-/// `_BytesLike` promise: an `int` yields that many zero bytes and any
-/// iterable of ints is materialized (`bytes(5)`, `bytes([1, 2, 3])`).
-/// That widening is deliberate — every transport sender has coerced this
-/// way since the pattern was introduced, and narrowing here would make
-/// `Muxer.push_*` reject inputs its wrapping senders accept. The stubs'
-/// `_BytesLike` annotation is the static-analysis guard against misuse.
+/// An object whose `__index__` succeeds (an `int`, a `bool`, a NumPy
+/// integer scalar or 0-d integer array) is refused with `TypeError`:
+/// `bytes()` reads it as a length, `bytes(5)` being five zero bytes. This
+/// runtime refusal is the guard: the stubs' `_BytesLike` includes `Any`
+/// (a NumPy array has no stub type to name), so no type checker catches
+/// an integer.
 ///
 /// PyO3 cannot extract `&[u8]` from `bytearray` or `memoryview` — only
 /// from `bytes`; `PyBuffer`, in the stable ABI from the 3.11 floor, is the
@@ -33,7 +33,8 @@ use tst_pipeline::binding::{BindingError, BindingErrorKind, Close, CloseFailure,
 /// makes it safe to pass the resulting `&[u8]` across a subsequent
 /// `py.detach()` call.
 ///
-/// Raises `TypeError` if `arg` cannot be passed to `bytes()`.
+/// Raises `TypeError` for an integer and if `arg` cannot be passed to
+/// `bytes()`.
 pub(crate) fn coerce_bytes_like<'py>(
     py: Python<'py>,
     arg: &Bound<'py, PyAny>,
@@ -41,11 +42,41 @@ pub(crate) fn coerce_bytes_like<'py>(
     if let Ok(b) = arg.cast::<PyBytes>() {
         return Ok(b.clone());
     }
+    if reads_as_a_length(py, arg)? {
+        return Err(pyo3::exceptions::PyTypeError::new_err(format!(
+            "a bytes-like object is required, not {} (an integer would be read as \
+             that many zero bytes)",
+            arg.get_type().name()?
+        )));
+    }
     py.import("builtins")?
         .getattr(intern!(py, "bytes"))?
         .call1((arg,))?
         .cast_into::<PyBytes>()
         .map_err(|e| e.into())
+}
+
+/// Whether `bytes(arg)` would take `arg` as a length: its `__index__`
+/// succeeds (CPython's `bytes()` tries it before the buffer protocol, so a
+/// NumPy integer scalar, which has a buffer too, is a length).
+fn reads_as_a_length(py: Python<'_>, arg: &Bound<'_, PyAny>) -> PyResult<bool> {
+    if arg.is_instance_of::<pyo3::types::PyInt>() {
+        return Ok(true);
+    }
+    if !arg.hasattr(intern!(py, "__index__"))? {
+        return Ok(false);
+    }
+    match py
+        .import("operator")?
+        .getattr(intern!(py, "index"))?
+        .call1((arg,))
+    {
+        Ok(_) => Ok(true),
+        // A NumPy array that is not a 0-d integer array has `__index__`
+        // and refuses it: `bytes()` then reads its buffer.
+        Err(e) if e.is_instance_of::<pyo3::exceptions::PyTypeError>(py) => Ok(false),
+        Err(e) => Err(e),
+    }
 }
 
 // ---------------------------------------------------------------------------

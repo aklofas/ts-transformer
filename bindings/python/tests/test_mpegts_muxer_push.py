@@ -1314,3 +1314,103 @@ def test_push_video_misp_to_with_dts():
         misp=ts_in,
     )
     assert m.pending_packets() > 0
+
+
+# ---------------------------------------------------------------------------
+# A byte argument refuses an integer
+#
+# `bytes(5)` is five zero bytes: an integer handed where bytes belong was
+# once read that way. Every byte argument goes through one helper, which now
+# refuses an object whose `__index__` succeeds (an int, a bool, a NumPy
+# integer scalar or 0-d integer array); bytes, bytearray, memoryview,
+# buffer objects and iterables of ints keep working.
+# ---------------------------------------------------------------------------
+
+
+def _integers() -> list:
+    values: list = [5, True]
+    try:
+        import numpy as np
+    except ImportError:
+        return values
+    return values + [np.int64(5), np.array(5, dtype=np.uint8)]
+
+
+@pytest.fixture
+def _udp_sink():
+    import socket
+
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+        s.bind(("127.0.0.1", 0))
+        yield s.getsockname()[1]
+
+
+def _byte_callers(port: int) -> dict:
+    from _builders.mux_programs import video_only_program
+    from tstrans import codec, rtp, shells, udp
+    from tstrans.mpegts import AudioCodec, MuxerProgramConfigBuilder, VideoCodec
+
+    sps = bytes([0x67, 0x42, 0x00, 0x1E, 0x95, 0xA8, 0x14, 0x01, 0x6E, 0x40])
+    return {
+        "Muxer.push_video": lambda v: Muxer(_simple_config()).push_video(
+            v, pts=Pts90khz.from_raw(0)
+        ),
+        "Muxer.push_klv": lambda v: Muxer(_simple_config()).push_klv(
+            v, pts=Pts90khz.from_raw(0)
+        ),
+        "shells.Sender.send_bytes": lambda v: shells.Sender.open(
+            f"udp://127.0.0.1:{port}"
+        ).send_bytes(v),
+        "shells.MuxSender.send_video": lambda v: shells.MuxSender.open(
+            f"udp://127.0.0.1:{port}", video_only_program()
+        ).send_video(v, pts=Pts90khz.from_raw(0)),
+        "udp.Transport.send": lambda v: udp.Transport.builder()
+        .url(f"udp://127.0.0.1:{port}")
+        .build()
+        .send(v),
+        "rtp.Transport.send": lambda v: rtp.Transport(f"rtp://127.0.0.1:{port}").send(v),
+        "PushDescription.h264_from_key_frame": lambda v: rtp.PushDescription.h264_from_key_frame(v),
+        "PushDescription.h264": lambda v: rtp.PushDescription.h264([sps, v]),
+        "add_audio_with_language": lambda v: MuxerProgramConfigBuilder(
+            1, 0x1000
+        ).add_audio_with_language(0x101, AudioCodec.AAC, language=v),
+        "codec.extract_misp_timestamp": lambda v: codec.extract_misp_timestamp(
+            v, VideoCodec.H264
+        ),
+    }
+
+
+@pytest.mark.parametrize("value", _integers(), ids=repr)
+@pytest.mark.parametrize(
+    "caller",
+    [
+        "Muxer.push_video",
+        "Muxer.push_klv",
+        "shells.Sender.send_bytes",
+        "shells.MuxSender.send_video",
+        "udp.Transport.send",
+        "rtp.Transport.send",
+        "PushDescription.h264_from_key_frame",
+        "PushDescription.h264",
+        "add_audio_with_language",
+        "codec.extract_misp_timestamp",
+    ],
+)
+def test_a_byte_argument_refuses_an_integer(caller, value, _udp_sink) -> None:
+    with pytest.raises(TypeError, match="integer"):
+        _byte_callers(_udp_sink)[caller](value)
+
+
+def test_byte_arguments_still_take_bytes_like_objects_and_iterables() -> None:
+    nal = _minimal_h264_nal_aud()
+    for wrap in (bytes, bytearray, memoryview, list):
+        m = Muxer(_simple_config())
+        m.push_video(wrap(nal), pts=Pts90khz.from_raw(0))
+        assert m.pending_packets() > 0, wrap
+    try:
+        import numpy as np
+    except ImportError:
+        return
+    m = Muxer(_simple_config())
+    m.push_video(np.frombuffer(nal, dtype=np.uint8), pts=Pts90khz.from_raw(0))
+    assert m.pending_packets() > 0

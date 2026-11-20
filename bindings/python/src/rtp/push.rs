@@ -26,9 +26,8 @@
 
 use std::sync::Arc;
 
-use pyo3::exceptions::{PyRuntimeError, PyTypeError, PyValueError};
+use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::PyInt;
 
 use tst_core::transport::{Transport, TransportCancel};
 use tst_pipeline::binding::parking::{ParkingSlot, Peek, SlotRefused};
@@ -147,16 +146,10 @@ impl PyPushDescription {
     }
 }
 
-/// A copy of a bytes-like argument. An `int` is refused with `TypeError`:
-/// `bytes()` would read it as that many zero bytes, and a `bytes` object
-/// passed where the list of parameter sets goes arrives here as its ints.
+/// A copy of a bytes-like argument. A `bytes` object passed where the list
+/// of parameter sets goes arrives here as its ints, which the helper
+/// refuses with `TypeError`.
 fn owned_bytes(py: Python<'_>, arg: &Bound<'_, PyAny>) -> PyResult<Vec<u8>> {
-    if arg.is_instance_of::<PyInt>() {
-        return Err(PyTypeError::new_err(format!(
-            "a parameter set must be a bytes-like object, not {}",
-            arg.get_type().name()?
-        )));
-    }
     Ok(coerce_bytes_like(py, arg)?.as_bytes().to_vec())
 }
 

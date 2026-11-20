@@ -2300,7 +2300,10 @@ counters without touching demuxer stats.
   `bytearray` is first copied through `bytes()`. The second path predates
   the 3.11 floor; the stable ABI exposes the buffer protocol from 3.11,
   so the copy is no longer forced by the ABI. The Python API is uniform —
-  you can pass `bytes`, `bytearray`, or a `memoryview` and it works.
+  you can pass `bytes`, `bytearray`, a `memoryview`, a NumPy `uint8` array
+  or a list of ints and it works. An integer is refused with `TypeError`
+  (an `int`, a `bool`, a NumPy integer scalar or 0-d integer array):
+  `bytes(5)` would read it as five zero bytes.
 - **`tstrans._native` is private.** Use `tstrans.X` (or `tstrans.mpegts.X`
   / `tstrans.klv.X` / ...) — never `tstrans._native.X`. The `_native`
   submodule may reorganize between versions.
