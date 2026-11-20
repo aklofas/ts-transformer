@@ -220,6 +220,33 @@ as a typed kind, …) runs in the native `Muxer` constructor and surfaces as
 unit's decode time; `MuxerConfig.Builder.pcrLeadMs(ms)` sets another lead
 (0 to 1000).
 
+`Muxer.reconfigure(MuxerConfig)` replaces the running program in place: streams
+match by PID, and one whose stream type and codec are unchanged keeps its handle,
+its continuity counter and the program's PCR and PSI cadence; a removed stream's
+handle is refused with `INVALID_USAGE`, and a new stream's handle comes from the
+`*Handles()` getters after the call. A config that moves a PMT PID, changes a
+PID's stream type or codec, moves a PID to another program number, or changes a
+muxer-wide setting (`pcrIntervalMs`, `pcrLeadMs`, `psiIntervalMs`,
+`bufferPackets`, `av1Carriage`) throws `MuxException(CONFIG_INVALID)` and
+changes nothing. The single-program config means the program list itself cannot
+grow here; the Rust and Python muxers take several programs.
+
+<!-- compile: java-statements -->
+```java
+import org.tstrans.mpegts.*;
+
+MuxerConfig base = MuxerConfig.builder().programNumber(1).pmtPid(0x100)
+    .addVideo(0x101, VideoCodec.H264).build();
+try (Muxer m = new Muxer(base)) {
+    VideoStreamHandle video = m.videoHandles().get(0);
+    // Add a KLV stream; the video keeps its handle and its counters.
+    m.reconfigure(MuxerConfig.builder().programNumber(1).pmtPid(0x100)
+        .addVideo(0x101, VideoCodec.H264)
+        .addKlv(0x102, KlvStreamType.SYNCHRONOUS_METADATA, true).build());
+    KlvStreamHandle klv = m.klvHandles().get(0);
+}
+```
+
 > **Scope.** This binding's `MuxerConfig` is single-program; multi-program
 > configs are deferred. DVB-subtitle codec configuration is deferred;
 > `addSubtitle` accepts the no-config codecs (`CEA708_STANDALONE` /

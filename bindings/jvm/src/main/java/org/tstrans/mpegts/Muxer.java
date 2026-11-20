@@ -55,6 +55,45 @@ public final class Muxer extends NativeHandle {
     }
 
     /**
+     * Replace the running program with {@code cfg}'s, in place. The JVM
+     * {@link MuxerConfig} holds one program, so this adds, removes and re-describes
+     * the streams of that program; a config with another program number replaces the
+     * program (the old one is removed, the new one added).
+     *
+     * <p>Streams match by PID. A stream whose PID, stream type and codec are unchanged
+     * survives: it keeps its handle, its continuity counter and the program's PCR and
+     * PSI cadence, and its descriptors may change. A removed stream's handle is refused
+     * by every {@code push*To} with {@code INVALID_USAGE}; a new stream's handle comes
+     * from the {@code *Handles()} getters after the call, so re-read them. Packets
+     * already queued still drain. The next push emits the new PAT and PMT first, with
+     * their versions raised where they changed.
+     *
+     * @param cfg the new configuration
+     * @throws MuxException {@code CONFIG_INVALID} when the config is invalid, a PID in
+     *     both configs changed its stream type or codec or moved to another program, the
+     *     program kept its number but moved its PMT PID or its PCR PID while the old PCR
+     *     stream stays, or a muxer-wide setting ({@code pcrIntervalMs},
+     *     {@code pcrLeadMs}, {@code psiIntervalMs}, {@code bufferPackets},
+     *     {@code av1Carriage}) differs from the running one; the muxer, its output and
+     *     its handles are then exactly as they were
+     * @throws NullPointerException if {@code cfg} is {@code null}
+     * @throws IllegalStateException if the muxer is closed
+     */
+    public void reconfigure(MuxerConfig cfg) throws MuxException {
+        ensureOpen("Muxer is closed");
+        java.util.Objects.requireNonNull(cfg, "cfg");
+        // The AV1 carriage as the explicit code av1_mode reads (0 = MPEG-2 TS binding).
+        int av1 = cfg.av1Carriage() == Av1CarriageMode.MPEG2_TS_BINDING ? 0 : 1;
+        nReconfigure(peekHandle(),
+            cfg.programNumber(), cfg.pmtPid(), cfg.pcrPid(),
+            cfg.pcrIntervalMs(), cfg.pcrLeadMs(), cfg.psiIntervalMs(), cfg.bufferPackets(),
+            av1,
+            cfg.streamPids(), cfg.streamKinds(), cfg.streamCodecs(),
+            cfg.streamTypeCodes(), cfg.streamCarriesPts(),
+            cfg.dataDescBytes(), cfg.dataDescLens());
+    }
+
+    /**
      * Push one H.264/H.265/H.266 access unit (Annex-B framing) or AV1 OBU
      * bitstream onto the lone configured video stream.
      *
@@ -514,6 +553,11 @@ public final class Muxer extends NativeHandle {
             int[] streamPids, int[] streamKinds, int[] streamCodecs,
             int[] streamTypeCodes, boolean[] streamCarriesPts,
             byte[] dataDescBytes, int[] dataDescLens) throws MuxException;
+    private static native void nReconfigure(long handle, int programNumber, int pmtPid,
+        int pcrPid, int pcrIntervalMs, int pcrLeadMs, int psiIntervalMs, int bufferPackets,
+        int av1Carriage, int[] streamPids, int[] streamKinds, int[] streamCodecs,
+        int[] streamTypeCodes, boolean[] streamCarriesPts, byte[] dataDescBytes,
+        int[] dataDescLens) throws MuxException;
     private static native void nPushVideo(long handle, byte[] nal, long pts, boolean keyFrame)
             throws MuxException;
     private static native void nPushVideoWire(long handle, byte[] wire, long pts, boolean keyFrame)

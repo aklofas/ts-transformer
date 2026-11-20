@@ -119,6 +119,56 @@ jni_native! {
     }
 }
 
+jni_native! {
+    /// `nReconfigure(handle, ...config arrays as nOpen...)` — `Muxer::reconfigure`
+    /// with the config built as `nOpen` builds it. A refused config throws
+    /// `MuxException(CONFIG_INVALID)` and leaves the muxer as it was; a closed
+    /// handle is `IllegalStateException`.
+    #[allow(clippy::too_many_arguments)]
+    fn Java_org_tstrans_mpegts_Muxer_nReconfigure<'local>(
+        env,
+        _class,
+        handle: jlong,
+        program_number: jint,
+        pmt_pid: jint,
+        pcr_pid: jint,
+        pcr_interval_ms: jint,
+        pcr_lead_ms: jint,
+        psi_interval_ms: jint,
+        buffer_packets: jint,
+        av1_carriage: jint,
+        stream_pids: JIntArray<'local>,
+        stream_kinds: JIntArray<'local>,
+        stream_codecs: JIntArray<'local>,
+        stream_type_codes: JIntArray<'local>,
+        stream_carries_pts: JBooleanArray<'local>,
+        data_desc_bytes: JByteArray<'local>,
+        data_desc_lens: JIntArray<'local>,
+    ) = () => {
+        let Ok(cfg) = build_muxer_config_from_arrays(
+            env,
+            program_number,
+            pmt_pid,
+            pcr_pid,
+            pcr_interval_ms,
+            pcr_lead_ms,
+            psi_interval_ms,
+            buffer_packets,
+            av1_carriage,
+            &stream_pids,
+            &stream_kinds,
+            &stream_codecs,
+            &stream_type_codes,
+            &stream_carries_pts,
+            &data_desc_bytes,
+            &data_desc_lens,
+        ) else {
+            return; // MuxException pending
+        };
+        with_mux_push(env, handle, |mux| mux.reconfigure(cfg));
+    }
+}
+
 /// Build a [`MuxerConfig`] from the parallel-array config description that both
 /// `Muxer::nOpen` and the srt `MuxSender` / `Socket::intoMuxSender` JNI paths
 /// marshal in a single call. The per-stream arrays (`stream_pids` /
