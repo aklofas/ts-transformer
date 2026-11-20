@@ -14,7 +14,12 @@
 #   - the function a `wrap_pyfunction!(…)` names (resolved to its
 #     `#[pyfunction]`; a gated wrap of a function the rail cannot find fails);
 #   - the class an `add_class::<…>()` names;
-#   - a method of a `#[pymethods]` impl.
+#   - a method of a `#[pymethods]` impl;
+#   - a value set by `.add("<name>", …)` or `.setattr("<name>", …)`.
+# Not seen: such a call whose name is not a string literal, `add_wrapped`,
+# a closure (`PyCFunction::new_closure`), and a gated `add_submodule` of a
+# module whose functions are registered without the gate. A hook registered
+# that way must be given a suffix and listed in EXPECTED by hand.
 # A gated `#[pyclass]` that is never added to a module is a hook's return
 # type, not a module attribute: it needs a suffix but is not in EXPECTED.
 # A cfg or cfg_attr naming the feature in any other shape (`not(`, `any(`)
@@ -217,6 +222,7 @@ pyclasses = []    # (file, line, ident, name, gated)
 methods = []      # (file, line, name)
 wraps = []        # (file, line, path)
 classes_added = []  # (file, line, path)
+values = []       # (file, line, name)
 
 files = []
 for d, _, names in os.walk(root):
@@ -274,6 +280,9 @@ for path in sorted(files):
                 seg.append(toks[k][1])
                 k += 1
             wraps.append((rel, t[2], "".join(seg)))
+        elif is_gated and text in ("add", "setattr") and i > 0 and toks[i - 1][1] == "." \
+                and toks[i + 1][1] == "(" and toks[i + 2][0] == "str":
+            values.append((rel, t[2], toks[i + 2][1]))
         elif is_gated and text == "add_class" and toks[i + 1][1] == "::" and toks[i + 2][1] == "<":
             k, seg = i + 3, []
             while toks[k][1] != ">":
@@ -329,7 +338,7 @@ for f, line, p in classes_added:
     d = resolve(pyclasses, f, p, "add_class::<>")
     if d:
         registered.setdefault(d[3], f"{d[0]}:{d[1]}")
-for f, line, name in methods:
+for f, line, name in methods + values:
     registered[name] = f"{f}:{line}"
 
 suffixed = dict(registered)

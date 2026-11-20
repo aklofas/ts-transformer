@@ -462,7 +462,7 @@ expect "address tuples: no address-returning function fails closed" 1 env AT_ROO
 # ---- Python test hook names (scripts/check/python/test-hook-names.sh) ------
 # Every name a `py-test-hooks` build registers ends in a suffix the wheel
 # check walks for, and the set equals hook_names.py's EXPECTED: a gated
-# function without a suffix fails, so does a suffixed one missing from
+# function or module value without a suffix fails, so does a suffixed one missing from
 # EXPECTED, an EXPECTED name nothing registers, a hook cfg the rail cannot
 # classify, and a tree with no hook at all.
 HN="$DIR/../check/python/test-hook-names.sh"
@@ -482,6 +482,7 @@ cat > "$tmp/hn/clean/lib.rs" <<'EOF'
 // `#[cfg(feature = "py-test-hooks")]` in a comment is no hook.
 fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(util::redact_url_py, m)?)?;
+    m.add("__version__", "1")?;
     #[cfg(feature = "py-test-hooks")]
     m.add_function(wrap_pyfunction!(util::addr_tuple_for_test, m)?)?;
     #[cfg(all(feature = "py-test-hooks", feature = "webrtc"))]
@@ -558,6 +559,14 @@ fn hold_slot() {}
 fn _extra_for_test() {}
 EOF
 plant "$tmp/hn/bad/lib.rs" 'server::loopback_viewer_probe' 'server::other'
+cat >> "$tmp/hn/bad/lib.rs" <<'EOF'
+
+fn more(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    #[cfg(feature = "py-test-hooks")]
+    m.add("_tag_value", 1)?;
+    Ok(())
+}
+EOF
 cat > "$tmp/hn/notcfg/lib.rs" <<'EOF'
 #[cfg(feature = "py-test-hooks")]
 #[pyfunction]
@@ -576,6 +585,7 @@ expect_out "hook names: the count" "all 5 test-only names"
 expect "hook names: a name without a suffix, or outside EXPECTED, fails" 1 env HN_ROOT="$tmp/hn/bad" HN_EXPECTED="$tmp/hn/expected.py" bash "$HN"
 expect_out "hook names: a gated function without a suffix" "_hold_slot"
 expect_out "hook names: a suffixed name missing from EXPECTED" "_extra_for_test"
+expect_out "hook names: a gated module value set by name" "_tag_value"
 expect_out "hook names: a gated wrap of an unknown function" "cannot resolve wrap_pyfunction!(server::other)"
 cp -R "$tmp/hn/clean" "$tmp/hn/renamed"
 plant "$tmp/hn/renamed/shells/mod.rs" '_push_release_for_test' '_push_released_for_test'
