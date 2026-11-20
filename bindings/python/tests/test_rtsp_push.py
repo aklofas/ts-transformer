@@ -23,6 +23,7 @@ import base64
 import gc
 import os
 import socket
+import struct
 import subprocess
 import sys
 import textwrap
@@ -118,7 +119,8 @@ class ScriptedRecordServer:
     Interleaved frames are read and dropped; `rtp_frames` counts those on
     an even (RTP) channel. With `stop_reading`, nothing more is read after
     the RECORD reply, so the client's writes back up. With `answer_pause`
-    false a PAUSE is read and never answered."""
+    false a PAUSE is read and never answered. `after_record(conn)`, when
+    given, runs on the server's thread right after the RECORD reply."""
 
     def __init__(
         self,
@@ -126,10 +128,12 @@ class ScriptedRecordServer:
         teardown_status: int = 200,
         stop_reading: bool = False,
         answer_pause: bool = True,
+        after_record: Optional[Callable[[socket.socket], None]] = None,
     ) -> None:
         self.teardown_status = teardown_status
         self.stop_reading = stop_reading
         self.answer_pause = answer_pause
+        self.after_record = after_record
         self.methods: list[str] = []
         self.rtp_frames = 0
         self.done = threading.Event()
@@ -205,6 +209,8 @@ class ScriptedRecordServer:
             if method == "SETUP":
                 reply += f"Transport: {headers.get('transport', '')}\r\n"
             conn.sendall((reply + "\r\n").encode())
+            if method == "RECORD" and self.after_record is not None:
+                self.after_record(conn)
         return buf
 
     def close(self) -> None:
@@ -818,6 +824,45 @@ def test_stats_and_end_reason_after_close() -> None:
         assert _wait_for(lambda: mount.stats().rtp_packets_received == 5), mount.stats()
         assert push.stats().packets_sent == 5
         assert push.end_reason() is EndReason.CLEAN_TEARDOWN
+
+
+def test_close_with_media_still_queued_counts_it_as_dropped_at_close() -> None:
+    """The server stops reading, the client's queue fills behind a parked
+    send, and `close()` drops what is queued: `frames_dropped_at_close`
+    counts it; nothing came in, so `frames_dropped_inbound` stays 0."""
+    server = ScriptedRecordServer(stop_reading=True)
+    push = RtspClient.push(RtspClientConfig(server.url), PushDescription.mp2t())
+    try:
+        state = _push_until_parked(push)
+        push.close()
+        assert state["ended"].wait(WAIT_S), "the parked send did not end"
+        s = push.stats()
+        assert s.frames_dropped_at_close > 0, s
+        assert s.frames_dropped_inbound == 0, s
+    finally:
+        server.close()
+        push.close()
+
+
+def test_frames_the_server_sends_on_a_media_channel_count_as_dropped_inbound() -> None:
+    """Two interleaved frames on the push's RTP channel (0) are read and
+    dropped: `frames_dropped_inbound` counts them, `frames_dropped_at_close`
+    stays 0 through a clean close."""
+
+    def two_frames(conn: socket.socket) -> None:
+        conn.sendall((b"$\x00" + (4).to_bytes(2, "big") + b"abcd") * 2)
+
+    server = ScriptedRecordServer(after_record=two_frames)
+    push = RtspClient.push(RtspClientConfig(server.url), PushDescription.mp2t())
+    try:
+        assert _wait_for(lambda: push.stats().frames_dropped_inbound == 2), push.stats()
+        push.close()
+        s = push.stats()
+        assert s.frames_dropped_inbound == 2, s
+        assert s.frames_dropped_at_close == 0, s
+    finally:
+        server.close()
+        push.close()
 
 
 def test_stats_and_end_reason_after_into_sender() -> None:
