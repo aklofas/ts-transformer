@@ -23,6 +23,16 @@ def _server() -> RtspServer:
     return RtspServer.start(RtspServerConfig(bind_addr="127.0.0.1:0", graceful_shutdown_drain_ms=50))
 
 
+def _assert_stopped(server: RtspServer) -> None:
+    """An ended server refuses a mount edit with `RtspError(CLOSED)`."""
+    from _builders.mux_programs import video_only_program
+    from tstrans.exceptions import RtspError, RtspErrorKind
+
+    with pytest.raises(RtspError) as ei:
+        server.add_unicast_mount("/after", video_only_program())
+    assert ei.value.kind == RtspErrorKind.CLOSED
+
+
 def test_stop_with_drain_ms_warns() -> None:
     server = _server()
     with pytest.warns(
@@ -32,8 +42,7 @@ def test_stop_with_drain_ms_warns() -> None:
         server.stop(drain_ms=10)
     assert len(rec) == 1
     assert rec[0].filename == __file__
-    # It stopped as stop() does: a second stop is a no-op.
-    server.stop()
+    _assert_stopped(server)
 
 
 def test_stop_without_drain_ms_does_not_warn() -> None:
@@ -41,6 +50,7 @@ def test_stop_without_drain_ms_does_not_warn() -> None:
     with warnings.catch_warnings():
         warnings.simplefilter("error")
         server.stop()
+    _assert_stopped(server)
 
 
 def _udp_receiver() -> tuple[shells.Receiver, int]:
@@ -121,9 +131,10 @@ def test_managed_srt_stats_warns_then_raises(side: str) -> None:
         with pytest.warns(
             DeprecationWarning,
             match=rf"{name}\.srt_stats\(\) is deprecated: it always raises; use socket_stats\(\); removed in 0\.12\.0",
-        ):
+        ) as rec:
             with pytest.raises(SrtError) as ei:
                 shell.srt_stats()
+        assert len(rec) == 1
         assert ei.value.kind == SrtErrorKind.IO
     finally:
         sender.close()
@@ -134,12 +145,14 @@ def test_tls_config_warns() -> None:
     with pytest.warns(
         DeprecationWarning,
         match=r"tcp\.TlsConfig is deprecated: no method accepts it; removed in 0\.12\.0",
-    ):
+    ) as rec:
         cfg = tcp.TlsConfig(ca_pem=b"CA")
+    assert len(rec) == 1
     assert cfg.ca_pem == b"CA"
     with pytest.warns(
         DeprecationWarning,
         match=r"tcp\.ClientCert is deprecated: no method accepts it; removed in 0\.12\.0",
-    ):
+    ) as rec:
         cert = tcp.ClientCert(cert_pem=b"C", key_pem=b"K")
+    assert len(rec) == 1
     assert cert.cert_pem == b"C"
