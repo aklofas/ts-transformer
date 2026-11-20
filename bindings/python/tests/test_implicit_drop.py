@@ -493,7 +493,7 @@ def _h264_receiver_of_a_collected_session(peer: _H264Peer):  # type: ignore[no-u
         )
     ).into_h264_receiver()
     gc.collect()
-    assert peer.playing.is_set()
+    assert peer.playing.wait(5.0), "the peer never answered PLAY"
     return rx
 
 
