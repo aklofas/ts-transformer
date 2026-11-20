@@ -1006,6 +1006,40 @@ class RtspPushTest {
         }
     }
 
+    /** Every request of a push carries the configured user agent. */
+    @Test
+    @Timeout(30)
+    void aPushSendsTheConfiguredUserAgent() throws Exception {
+        try (ScriptedRecordServer peer = new ScriptedRecordServer(200, false)) {
+            RtspClientConfig cfg = RtspClientConfig.builder(peer.url())
+                .keepalive(false).userAgent("example-agent/1").build();
+            try (RtspPushSession push = RtspClient.push(cfg, PushDescription.mp2t())) {
+                assertEquals(List.of("ANNOUNCE", "SETUP", "RECORD"), peer.methods);
+            }
+            for (String head : peer.heads) {
+                assertEquals("example-agent/1", RawRtspPeer.header(head, "User-Agent"), head);
+            }
+        }
+    }
+
+    /** An {@code rtsps://} server that accepts and never answers the handshake. */
+    @Test
+    @Timeout(30)
+    void aPushHandshakeThePeerNeverAnswersEndsAtTheConnectTimeout() throws Exception {
+        try (ServerSocket ss = new ServerSocket(0, 1, InetAddress.getLoopbackAddress())) {
+            RtspClientConfig cfg = RtspClientConfig.builder(
+                    "rtsps://127.0.0.1:" + ss.getLocalPort() + "/pub")
+                .connectTimeoutMs(300).build();
+            long t0 = System.nanoTime();
+            RtspException e = assertThrows(RtspException.class,
+                () -> RtspClient.push(cfg, PushDescription.mp2t()));
+            long ms = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - t0);
+            assertEquals(RtspException.Kind.IO, e.kind(), e.getMessage());
+            // The default budget is 10 s: far above this bound.
+            assertTrue(ms < scaledMs(5_000), "took " + ms + " ms");
+        }
+    }
+
     /**
      * A teardown that finds a conversion took the push tore nothing down: it throws
      * CLOSED, and the session's statistics keep following the push its new owner ends.
@@ -1290,6 +1324,8 @@ class RtspPushTest {
         private volatile Socket conn;
         /** The methods of the requests read, in order. */
         final List<String> methods = new CopyOnWriteArrayList<>();
+        /** The heads of the requests read, in order. */
+        final List<String> heads = new CopyOnWriteArrayList<>();
         /** Interleaved frames read. */
         final AtomicLong framesRead = new AtomicLong();
         /** Interleaved frames read on an even (RTP) channel. */
@@ -1367,6 +1403,7 @@ class RtspPushTest {
                     int length = contentLength(req);
                     if (length > 0) in.skipNBytes(length);
                     String method = req.split(" ", 2)[0];
+                    heads.add(req);
                     methods.add(method);
                     int status = 200;
                     String extra = "";
