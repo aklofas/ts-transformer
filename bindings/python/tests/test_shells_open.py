@@ -5,7 +5,7 @@ from __future__ import annotations
 import contextlib
 import socket
 import threading
-from typing import Any, Iterator
+from typing import Any, Iterator, Optional
 
 import pytest
 
@@ -14,7 +14,7 @@ import tomllib
 from conftest import scenarios_dir
 from tstrans import _native, exceptions
 from tstrans.mpegts import Pts90khz
-from tstrans.shells import CancelHandle, DemuxReceiver, EndReason, MuxSender, Receiver, Sender
+from tstrans.shells import CancelHandle, DemuxReceiver, EndReason, MuxSender, OpenCancel, Receiver, Sender
 
 from _builders.mux_programs import video_only_program
 from _builders.nal import minimal_h264_au
@@ -90,10 +90,11 @@ def _free_even_udp_port() -> int:
 
 
 @contextlib.contextmanager
-def _shell_url(scheme: str, direction: str) -> Iterator[str]:
+def _shell_url(scheme: str, direction: str) -> Iterator[tuple[str, Optional[OpenCancel]]]:
     """A loopback URL of `scheme` the shells open in `direction` without
-    waiting: an srt sender (a caller) gets a listening peer and an srt
-    receiver (a listener) a dialing one; a tcp caller gets a peer that
+    waiting, and the `OpenCancel` to open it with: an srt sender (a caller)
+    gets a listening peer and an srt receiver (a listener) a dialing one,
+    which cancels the open if its dial fails; a tcp caller gets a peer that
     accepts and closes (a tcps handshake then fails with a TcpError)."""
     if scheme == "srt" and direction == "send":
         from tstrans import srt
@@ -101,7 +102,7 @@ def _shell_url(scheme: str, direction: str) -> Iterator[str]:
         port = free_udp_port()
         peer = srt.Builder(f"srt://127.0.0.1:{port}?mode=listener").listen()
         try:
-            yield f"srt://127.0.0.1:{port}"
+            yield f"srt://127.0.0.1:{port}", None
         finally:
             peer.close()
     elif scheme == "srt":
@@ -111,19 +112,26 @@ def _shell_url(scheme: str, direction: str) -> Iterator[str]:
         # listener's bind lands.
         port = free_udp_port()
         dialed: list[Any] = []
+        failed: list[BaseException] = []
+        cancel = OpenCancel()
 
         def dial() -> None:
-            with contextlib.suppress(exceptions.SrtError):
+            try:
                 dialed.append(srt.Builder(f"srt://127.0.0.1:{port}", connect_timeout_ms=5000).connect())
+            except exceptions.SrtError as e:
+                failed.append(e)
+                cancel.cancel()
 
         caller = threading.Thread(target=dial, daemon=True)
         caller.start()
         try:
-            yield f"srt://127.0.0.1:{port}?mode=listener"
+            yield f"srt://127.0.0.1:{port}?mode=listener", cancel
         finally:
             caller.join(10)
             for sock in dialed:
                 sock.close()
+        if failed:
+            pytest.fail(f"the srt peer did not connect: {failed[0]!r}")
     elif scheme in ("tcp", "tcps"):
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
             listener.bind(("127.0.0.1", 0))
@@ -135,13 +143,13 @@ def _shell_url(scheme: str, direction: str) -> Iterator[str]:
 
             peer = threading.Thread(target=drop, daemon=True)
             peer.start()
-            yield f"{scheme}://127.0.0.1:{listener.getsockname()[1]}"
+            yield f"{scheme}://127.0.0.1:{listener.getsockname()[1]}", None
         peer.join(5)
     elif scheme == "rist":
         port = _free_even_udp_port()
-        yield f"rist://127.0.0.1:{port}" if direction == "send" else f"rist://@127.0.0.1:{port}"
+        yield (f"rist://127.0.0.1:{port}" if direction == "send" else f"rist://@127.0.0.1:{port}"), None
     else:
-        yield f"{scheme}://127.0.0.1:{free_udp_port()}"
+        yield f"{scheme}://127.0.0.1:{free_udp_port()}", None
 
 
 @pytest.mark.parametrize("direction", ["send", "recv"])
@@ -155,9 +163,9 @@ def test_every_shell_scheme_opens_in_both_directions_without_internal(scheme: st
         pytest.skip(f"{scheme}: this build has no {domain.lower()} transport")
     error = getattr(exceptions, f"{domain}Error")
     shell = Sender if direction == "send" else Receiver
-    with _shell_url(scheme, direction) as url:
+    with _shell_url(scheme, direction) as (url, cancel):
         try:
-            shell.open(url).close()
+            shell.open(url, cancel=cancel).close()
         except Exception as exc:
             assert isinstance(exc, error), f"{scheme} {direction} {url}: {type(exc).__name__}: {exc}"
             assert exc.kind.name != "INTERNAL", f"{scheme} {direction} {url}: {exc}"
