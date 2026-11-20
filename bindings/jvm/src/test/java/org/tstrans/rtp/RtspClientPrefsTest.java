@@ -196,6 +196,35 @@ class RtspClientPrefsTest {
         }
     }
 
+    /**
+     * {@code connectH264} passes the four settings in their places: three distinct
+     * millisecond values, so two swapped arguments show as a missing ping, an early
+     * timeout or a late one.
+     */
+    @Test
+    @Timeout(30)
+    void connectH264HonoursEachSetting() throws Exception {
+        // The peer reads a PAUSE and never answers it.
+        try (RawRtspPeer peer = new RawRtspPeer(RawRtspPeer.H264_SDP, false, null, 200)) {
+            RtspClientConfig cfg = RtspClientConfig.builder(peer.url())
+                .transportPref(TransportPref.TCP).keepaliveIntervalMs(200)
+                .connectTimeoutMs(9_000).requestTimeoutMs(4_000)
+                .userAgent("example-agent/1").build();
+            try (RtspSession s = RtspClient.connectH264(cfg)) {
+                assertTrue(waitFor(() -> pingsAfterPlay(peer.requests) >= 2),
+                    () -> "no pings after PLAY: " + methods(peer.requests));
+                long t0 = System.nanoTime();
+                RtspException e = assertThrows(RtspException.class, s::pause);
+                long ms = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - t0);
+                assertEquals(RtspException.Kind.TIMEOUT, e.kind());
+                // A deadline never fires early; the 9 s connect budget would be later still.
+                assertTrue(ms >= 3_500, "the request deadline fired after " + ms + " ms");
+                assertTrue(ms < org.tstrans.TestSupport.scaledMs(8_000), "took " + ms + " ms");
+            }
+            for (String r : peer.requests) assertEquals("example-agent/1", header(r, "User-Agent"), r);
+        }
+    }
+
     /** An {@code rtsps://} server that accepts and never answers the handshake. */
     @Test
     @Timeout(30)
