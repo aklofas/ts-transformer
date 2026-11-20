@@ -32,8 +32,11 @@
 #    runs `jvm-hook-guard.sh check` over `.jar` files. A file named
 #    `python-wheels.yml` with no wheel job, or `jvm-jar.yml` with no job using
 #    the build action or uploading a JAR, fails: the rule would check nothing.
-#    Lines whose first character is `#` are not read inside a `run:`; the
-#    paths the guards are given are not compared with the paths uploaded.
+#    A guard step counts only when it has no `if:` and no `continue-on-error:`
+#    other than `false`; a `run` is read with each line cut at its first `#`
+#    that starts a line or follows a blank. Text matching only: a step that
+#    echoes the command passes, and the paths the guards are given are not
+#    compared with the paths uploaded.
 #
 # A condition is read once per reader: drop a trailing comment and a
 # `${{ ... }}` wrapper, refuse `||`, split at depth-0 `&&`, strip balanced outer
@@ -72,8 +75,11 @@ EXPECT_CHECK = re.compile(r'jvm-hook-guard\.sh[ \t]+check[ \t]+--expect-hooks')
 JAR_CHECK = re.compile(r'jvm-hook-guard\.sh[ \t]+check[ \t]+[^ \t]*\.jar')
 
 def run_of(step):
-    """A step's `run`, without the lines that start with `#`."""
-    return '\n'.join(l for l in str(step.get('run', '')).splitlines() if not l.lstrip().startswith('#'))
+    """A guard step's `run` with its shell comments cut; '' for a step that
+    may be skipped (`if:`) or may fail without failing the job."""
+    if 'if' in step or step.get('continue-on-error', False) is not False:
+        return ''
+    return '\n'.join(re.sub(r'(^|[ \t])#.*', '', l) for l in str(step.get('run', '')).splitlines())
 
 def uses_of(step):
     return str(step.get('uses', ''))
@@ -262,6 +268,7 @@ for f in "${files[@]}"; do
         # flags of a step (ST_*) fold into those of its job (J_*) when it ends.
         function step_end() {
             if (!ST_OPEN) return
+            if (ST_COND) ST_HN = ST_AI = ST_SHIP = ST_EXPECT = ST_JAR = 0
             if (ST_MAT && !ST_SDIST) J_WHEEL = 1
             if (ST_HN && ST_AI) J_HOOK = 1
             if (ST_UP && ST_JARPATH) J_JARUP = 1
@@ -269,10 +276,11 @@ for f in "${files[@]}"; do
             if (ST_SHIP && !J_UPSEEN) J_SHIPBEFORE = 1
             if (ST_UP) J_UPSEEN = 1
             if (ST_EXPECT) J_EXPECT = 1
-            ST_OPEN = ST_MAT = ST_SDIST = ST_HN = ST_AI = ST_UP = ST_JARPATH = ST_JAR = ST_SHIP = ST_EXPECT = ST_INRUN = 0
+            ST_OPEN = ST_MAT = ST_SDIST = ST_HN = ST_AI = ST_UP = ST_JARPATH = ST_JAR = ST_SHIP = ST_EXPECT = ST_INRUN = ST_COND = 0
         }
         function steps_reset() { step_end(); J_WHEEL = J_HOOK = J_JARUP = J_JARCHECK = J_SHIPBEFORE = J_UPSEEN = J_EXPECT = 0 }
         function run_text(t) {
+            sub(/(^|[ \t])#.*$/, "", t)
             if (t ~ /hook_names\.py/) ST_HN = 1
             if (t ~ /(^|[ \t])absent-in([ \t]|$)/) ST_AI = 1
             if (t ~ /jvm-hook-guard\.sh[ \t]+check[ \t]+[^- \t]/) ST_SHIP = 1
@@ -287,6 +295,8 @@ for f in "${files[@]}"; do
             if (!ST_OPEN || substr(t, 1, 1) == "#") return
             if (ind == si + 2) {
                 ST_INRUN = 0
+                if (t ~ /^if:/) ST_COND = 1
+                if (t ~ /^continue-on-error:/ && t !~ /^continue-on-error:[ \t]*false[ \t]*(#.*)?$/) ST_COND = 1
                 if (t ~ /^uses:/ && t ~ /maturin-action/) ST_MAT = 1
                 if (t ~ /^uses:/ && t ~ /upload-artifact/) ST_UP = 1
                 if (t ~ /^run:/) { ST_INRUN = 1; run_text(substr(t, 5)) }
