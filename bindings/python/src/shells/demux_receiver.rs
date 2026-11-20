@@ -191,6 +191,7 @@ impl PyDemuxReceiver {
 
     /// [`Self::from_opened`] for the transport of a publish mount, whose
     /// cancel latch the mount's `cancel()` sets.
+    #[cfg(feature = "rtp")]
     pub(crate) fn from_publish_mount(
         py: Python<'_>,
         opened: OpenedRecv,

@@ -1101,7 +1101,7 @@ demux_config=None)`. Both also expose `stats()`, `cancel_handle()` and
 the receiver's a `DemuxReceiverStats` (the receive counters by name:
 `bytes_received`, `packets_received`, `program_maps_seen`,
 `pmt_versions_seen`, `discontinuities`, `nonconformant`; the wire counters
-stay `socket_stats()`). Their `rtp_stats()` reads the RTP counters
+stay `socket_stats()`). The receiver's `rtp_stats()` reads the RTP counters
 (`malformed_packets`, `source_rejected`) without waiting for a receive in
 progress:
 
