@@ -1011,10 +1011,14 @@ def test_a_conversion_does_not_wait_behind_a_recv_on_another_thread() -> None:
             ended.append(e.kind)
 
     held = shells_hook("_slot_held_for_test")
+    held_while_idle = held(accepted)
     reader = threading.Thread(target=recv_once, daemon=True)
     try:
         reader.start()
+        assert not held_while_idle, "an idle transport read as held"
         wait_for("the recv() holding the transport", lambda: held(accepted), 10.0)
+        # Nothing was sent yet: the recv is parked, not returned.
+        assert reader.is_alive() and ended == [], ended
         blocked, outcome = call_with_hang_deadline(accepted.into_receiver, 10.0)
         if blocked:
             accepted.cancel_handle().cancel()
@@ -1027,6 +1031,7 @@ def test_a_conversion_does_not_wait_behind_a_recv_on_another_thread() -> None:
         client.sendall(_PAYLOAD)
         reader.join(5.0)
         assert ended == [len(_PAYLOAD)]
+        assert not held(accepted), "the transport still read as held after the recv() returned"
     finally:
         accepted.close()
         reader.join(5.0)
