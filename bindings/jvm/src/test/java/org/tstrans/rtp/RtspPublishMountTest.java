@@ -213,7 +213,8 @@ class RtspPublishMountTest {
              PublishMount mount = server.addPublishMount("/cam");
              DemuxReceiver rx = mount.intoDemuxReceiver()) {
             Parked<DemuxEvent> parked = park(rx::recvEvent);
-            awaitInNative(parked.thread, "nNext", JOIN_MS);
+            awaitInNative(parked.thread, "nNext", JOIN_MS,
+                () -> "value " + parked.value.get() + ", error " + parked.error.get());
             Parked<Object> closer = park(() -> { rx.close(); return null; });
             if (!(closer.join() && parked.join())) {
                 mount.cancel(); // unpark so the suite does not hang
@@ -491,8 +492,10 @@ class RtspPublishMountTest {
             Parked<Optional<PublishMount>> next = park(() -> server.nextPublisher(PARK_MS));
             Parked<DemuxEvent> recv = park(rx::recvEvent);
             // Close only once both calls are inside their native waits.
-            awaitInNative(next.thread, "nNextPublisher", JOIN_MS);
-            awaitInNative(recv.thread, "nNext", JOIN_MS);
+            awaitInNative(next.thread, "nNextPublisher", JOIN_MS,
+                () -> "value " + next.value.get() + ", error " + next.error.get());
+            awaitInNative(recv.thread, "nNext", JOIN_MS,
+                () -> "value " + recv.value.get() + ", error " + recv.error.get());
             Parked<Object> closer = park(() -> { server.close(); return null; });
             boolean woke = closer.join() && next.join() && recv.join();
             if (!woke) {
@@ -527,7 +530,8 @@ class RtspPublishMountTest {
         RtspServer server = start(true);
         try {
             Parked<Optional<PublishMount>> next = park(() -> server.nextPublisher(PARK_MS));
-            awaitInNative(next.thread, "nNextPublisher", JOIN_MS);
+            awaitInNative(next.thread, "nNextPublisher", JOIN_MS,
+                () -> "value " + next.value.get() + ", error " + next.error.get());
             // Other server calls answer while it waits.
             Parked<ServerStats> stats = park(server::stats);
             boolean answered = stats.join(TimeUnit.SECONDS.toMillis(4));
@@ -552,7 +556,8 @@ class RtspPublishMountTest {
         RtspServer server = start(true);
         try (RtspServerCancelHandle cancel = server.cancelHandle()) {
             Parked<Optional<PublishMount>> next = park(() -> server.nextPublisher(PARK_MS));
-            awaitInNative(next.thread, "nNextPublisher", JOIN_MS);
+            awaitInNative(next.thread, "nNextPublisher", JOIN_MS,
+                () -> "value " + next.value.get() + ", error " + next.error.get());
             cancel.cancel();
             if (!next.join(WAKE_MS)) {
                 server.close();
@@ -581,7 +586,8 @@ class RtspPublishMountTest {
         DemuxReceiver rx = mount.intoDemuxReceiver();
         try (RtspServerCancelHandle cancel = server.cancelHandle()) {
             Parked<DemuxEvent> recv = park(rx::recvEvent);
-            awaitInNative(recv.thread, "nNext", JOIN_MS);
+            awaitInNative(recv.thread, "nNext", JOIN_MS,
+                () -> "value " + recv.value.get() + ", error " + recv.error.get());
             cancel.cancel();
             if (!recv.join(WAKE_MS)) {
                 server.close();

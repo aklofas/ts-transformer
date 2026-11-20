@@ -19,6 +19,18 @@ class ParkedTest {
     }
 
     @Test
+    void aCallThatHasEndedIsNoLongerParked() throws Exception {
+        try (Receiver rx = Receiver.open("udp://127.0.0.1:" + TestSupport.freeUdpPort());
+             ShellPeers.Parked parked = new ShellPeers.Parked(rx, rx.cancelHandle(), "returned", rx::recvBytes)) {
+            parked.assertStillParked();
+            TestSupport.cancelNow(rx::cancelHandle);
+            parked.awaitEnd(TestSupport.scaledMs(5_000));
+            AssertionError e = assertThrows(AssertionError.class, parked::assertStillParked);
+            assertTrue(e.getMessage().contains("no longer holds its park"), e.getMessage());
+        }
+    }
+
+    @Test
     void aThreadAliveOutsideTheCallIsNotTakenForParked() throws Exception {
         CountDownLatch release = new CountDownLatch(1);
         try (Receiver rx = Receiver.open("udp://127.0.0.1:" + TestSupport.freeUdpPort())) {
