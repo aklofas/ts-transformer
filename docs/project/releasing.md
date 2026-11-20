@@ -681,6 +681,11 @@ Release; the committed record stays the one step 10 collected.
      (the v0.1.0 failure mode).
    - **jvm-jar.yml** builds the 4 native libs, assembles the fat jar, then the
      `publish` job uploads a signed bundle to the **Central Portal (staged)**.
+     The tag-only publish tasks, and the macOS, Windows and Linux ARM legs,
+     meet the Gradle dependency verification for the first time on a runner:
+     a verification failure there means regenerating the metadata on that
+     platform and reviewing the diff (`CONTRIBUTING.md`), never switching
+     verification off.
 3. **Release Maven manually:** https://central.sonatype.com → Deployments,
    inspect the staged `org.tstrans:tstrans-jvm:X.Y.Z` bundle (validation must
    pass), then click **Publish**. It appears on Maven Central shortly after.
