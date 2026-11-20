@@ -227,15 +227,14 @@ class DataStreamTest {
     }
 
     @Test
-    void malformedDescriptorTlvRejectedAtOpen() {
-        // length byte claims 10, only 2 payload bytes follow -> blob walk fails
+    void malformedDescriptorTlvRejectedAtBuild() {
+        // length byte claims 10, only 2 payload bytes follow
         byte[] bad = {(byte) 0x05, 10, 'A', 'B'};
-        MuxerConfig cfg = MuxerConfig.builder()
+        MuxerConfig.Builder b = MuxerConfig.builder()
             .addVideo(0x1011, VideoCodec.H264)
             .addData(0x0100, 0xF0, true)
-            .streamDescriptorsForData(0, new byte[][] {bad})
-            .build();
-        MuxException e = assertThrows(MuxException.class, () -> new Muxer(cfg).close());
-        assertEquals(MuxException.Kind.CONFIG_INVALID, e.kind());
+            .streamDescriptorsForData(0, new byte[][] {bad});
+        IllegalArgumentException e = assertThrows(IllegalArgumentException.class, b::build);
+        assertTrue(e.getMessage().startsWith("streamDescriptorsForData element 0:"), e.getMessage());
     }
 }

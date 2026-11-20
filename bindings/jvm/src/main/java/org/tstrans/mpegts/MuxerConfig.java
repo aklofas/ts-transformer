@@ -291,8 +291,8 @@ public final class MuxerConfig {
         /**
          * Set the program-level PMT descriptors (the program info loop, before
          * the per-stream entries). Each element is one complete descriptor TLV
-         * (tag, length, payload), emitted verbatim; TLV well-formedness is
-         * validated at {@code new Muxer(...)} ({@code CONFIG_INVALID}).
+         * (tag, length, payload), emitted verbatim; one that is not is refused at
+         * {@link #build()} ({@code IllegalArgumentException}).
          */
         public Builder programDescriptors(byte[][] descs) {
             this.programDescs = checkedDescriptors(descs);
@@ -304,8 +304,8 @@ public final class MuxerConfig {
          * (zero-indexed among {@link #addVideo} calls, in call order); the
          * caller's descriptors follow the muxer's own (an AV1 stream's AV01
          * registration is not repeated when the caller supplies one).
-         * {@code videoIdx} is range-checked at {@link #build()}; TLV
-         * well-formedness at {@code new Muxer(...)}.
+         * {@code videoIdx} and each element's TLV form (one descriptor) are
+         * checked at {@link #build()}.
          */
         public Builder streamDescriptorsForVideo(int videoIdx, byte[][] descs) {
             return addTarget(KIND_VIDEO, videoIdx, descs, "streamDescriptorsForVideo", "videoIdx");
@@ -317,8 +317,8 @@ public final class MuxerConfig {
          * {@code metadata_descriptor} (tag 0x26) replaces the muxer's own,
          * which declares {@code metadata_service_id} 0; two
          * {@code SYNCHRONOUS_METADATA} streams in one TS must declare distinct
-         * service ids. {@code klvIdx} is range-checked at {@link #build()};
-         * TLV well-formedness and the service-id rule at
+         * service ids. {@code klvIdx} and each element's TLV form (one
+         * descriptor) are checked at {@link #build()}; the service-id rule at
          * {@code new Muxer(...)}.
          */
         public Builder streamDescriptorsForKlv(int klvIdx, byte[][] descs) {
@@ -328,8 +328,8 @@ public final class MuxerConfig {
         /**
          * Set the PMT descriptor loop for the {@code audioIdx}-th audio stream
          * (zero-indexed among {@link #addAudio} calls, in call order).
-         * {@code audioIdx} is range-checked at {@link #build()}; TLV
-         * well-formedness at {@code new Muxer(...)}.
+         * {@code audioIdx} and each element's TLV form (one descriptor) are
+         * checked at {@link #build()}.
          */
         public Builder streamDescriptorsForAudio(int audioIdx, byte[][] descs) {
             return addTarget(KIND_AUDIO, audioIdx, descs, "streamDescriptorsForAudio", "audioIdx");
@@ -339,8 +339,8 @@ public final class MuxerConfig {
          * Set the PMT descriptor loop for the {@code subtitleIdx}-th subtitle
          * stream (zero-indexed among {@link #addSubtitle} calls, in call
          * order). A recognised subtitle codec marker among them replaces the
-         * muxer's own. {@code subtitleIdx} is range-checked at
-         * {@link #build()}; TLV well-formedness at {@code new Muxer(...)}.
+         * muxer's own. {@code subtitleIdx} and each element's TLV form (one
+         * descriptor) are checked at {@link #build()}.
          */
         public Builder streamDescriptorsForSubtitle(int subtitleIdx, byte[][] descs) {
             return addTarget(
@@ -351,8 +351,8 @@ public final class MuxerConfig {
          * Set the PMT descriptor loop for the {@code dataIdx}-th data stream
          * (zero-indexed among {@link #addData} calls, in call order). Each element
          * is one complete descriptor TLV (tag, length, payload), emitted verbatim.
-         * {@code dataIdx} is range-checked at {@link #build()}; TLV well-formedness
-         * and classification rules are validated at {@code new Muxer(...)}.
+         * {@code dataIdx} and each element's TLV form (one descriptor) are checked
+         * at {@link #build()}; the classification rules at {@code new Muxer(...)}.
          */
         public Builder streamDescriptorsForData(int dataIdx, byte[][] descs) {
             return addTarget(KIND_DATA, dataIdx, descs, "streamDescriptorsForData", "dataIdx");
@@ -363,8 +363,8 @@ public final class MuxerConfig {
          * every {@code add*} call of this program, in call order. A later
          * {@code streamDescriptorsFor*} call naming the same stream replaces
          * this one, and this one replaces an earlier one.
-         * {@code streamIdx} is range-checked at {@link #build()}; TLV
-         * well-formedness at {@code new Muxer(...)}.
+         * {@code streamIdx} and each element's TLV form (one descriptor) are
+         * checked at {@link #build()}.
          */
         public Builder streamDescriptorsForStream(int streamIdx, byte[][] descs) {
             return addTarget(-1, streamIdx, descs, "streamDescriptorsForStream", "streamIdx");
@@ -422,13 +422,44 @@ public final class MuxerConfig {
             carriesPts.add(carriesPtsFlag);
         }
 
-        /** Finalize. Requires ≥1 stream. Deep validation happens in {@code Muxer::new}. */
+        /**
+         * Finalize. Requires ≥1 stream, every descriptor index in range and every
+         * descriptor element one well-formed descriptor. Deep validation happens in
+         * {@code Muxer::new}.
+         *
+         * @throws IllegalArgumentException for no stream, an index past its kind's
+         *     count, or an element that is not exactly one descriptor (tag, length,
+         *     that many bytes), naming the setter and the element's index
+         */
         public MuxerConfig build() {
             if (pids.isEmpty()) {
                 throw new IllegalArgumentException("at least one stream is required");
             }
+            if (programDescs != null) requireOneDescriptorEach("programDescriptors", programDescs);
+            for (DescriptorTarget t : streamDescs) requireOneDescriptorEach(t.setter(), t.descs());
             resolveStreamDescriptors();
             return new MuxerConfig(this);
+        }
+
+        /**
+         * The elements are concatenated on their way to the native, which splits them
+         * again by their length bytes, so a malformed element would merge with its
+         * neighbour; each is checked here on its own, as the core checks a list.
+         */
+        private static void requireOneDescriptorEach(String setter, byte[][] descs) {
+            for (int i = 0; i < descs.length; i++) {
+                byte[] d = descs[i];
+                if (d.length < 2) {
+                    throw new IllegalArgumentException(setter + " element " + i
+                        + ": a descriptor is at least 2 bytes (tag, length), got " + d.length);
+                }
+                int declared = d[1] & 0xFF;
+                if (declared != d.length - 2) {
+                    throw new IllegalArgumentException(setter + " element " + i
+                        + ": the length byte declares " + declared + " payload bytes, "
+                        + (d.length - 2) + " follow");
+                }
+            }
         }
     }
 }

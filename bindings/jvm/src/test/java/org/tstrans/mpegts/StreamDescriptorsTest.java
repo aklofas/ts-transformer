@@ -202,22 +202,53 @@ class StreamDescriptorsTest {
     }
 
     @Test
-    void aMalformedDescriptorIsConfigInvalid() {
+    void aMalformedDescriptorIsRefusedAtBuild() {
         // The length byte claims 10 payload bytes; one follows.
         byte[][] truncated = {{(byte) 0xE0, 10, 1}};
-        MuxerConfig onStream = MuxerConfig.builder()
-            .addVideo(0x1011, VideoCodec.H264)
-            .streamDescriptorsForVideo(0, truncated)
-            .build();
-        MuxException e = assertThrows(MuxException.class, () -> new Muxer(onStream).close());
-        assertEquals(MuxException.Kind.CONFIG_INVALID, e.kind());
+        IllegalArgumentException s = assertThrows(IllegalArgumentException.class,
+            () -> MuxerConfig.builder()
+                .addVideo(0x1011, VideoCodec.H264)
+                .streamDescriptorsForVideo(0, truncated)
+                .build());
+        assertTrue(s.getMessage().startsWith("streamDescriptorsForVideo element 0:"), s.getMessage());
+        IllegalArgumentException p = assertThrows(IllegalArgumentException.class,
+            () -> MuxerConfig.builder()
+                .addVideo(0x1011, VideoCodec.H264)
+                .programDescriptors(truncated)
+                .build());
+        assertTrue(p.getMessage().startsWith("programDescriptors element 0:"), p.getMessage());
+    }
 
-        MuxerConfig onProgram = MuxerConfig.builder()
-            .addVideo(0x1011, VideoCodec.H264)
-            .programDescriptors(truncated)
-            .build();
-        MuxException p = assertThrows(MuxException.class, () -> new Muxer(onProgram).close());
-        assertEquals(MuxException.Kind.CONFIG_INVALID, p.kind());
+    /**
+     * Each element is one descriptor: two halves of one are refused, though together they
+     * would read as one, and so is an empty element.
+     */
+    @Test
+    void eachElementMustBeExactlyOneDescriptor() {
+        byte[][] halves = {{0x05}, {0x00}};
+        byte[][] empty = {new byte[0]};
+        byte[][] two = {{(byte) 0xE0, 0, (byte) 0xE1, 0}};
+        for (byte[][] bad : java.util.List.of(halves, empty, two)) {
+            IllegalArgumentException p = assertThrows(IllegalArgumentException.class,
+                () -> MuxerConfig.builder().addVideo(0x1011, VideoCodec.H264)
+                    .programDescriptors(bad).build());
+            assertTrue(p.getMessage().startsWith("programDescriptors element 0:"), p.getMessage());
+            IllegalArgumentException d = assertThrows(IllegalArgumentException.class,
+                () -> MuxerConfig.builder().addVideo(0x1011, VideoCodec.H264)
+                    .addData(0x0100, 0xF0, true)
+                    .streamDescriptorsForData(0, bad).build());
+            assertTrue(d.getMessage().startsWith("streamDescriptorsForData element 0:"), d.getMessage());
+        }
+        // The second element names its index.
+        IllegalArgumentException second = assertThrows(IllegalArgumentException.class,
+            () -> MuxerConfig.builder().addVideo(0x1011, VideoCodec.H264)
+                .streamDescriptorsForStream(0, new byte[][] {{(byte) 0xE0, 1, 7}, {(byte) 0xE1}})
+                .build());
+        assertTrue(second.getMessage().startsWith("streamDescriptorsForStream element 1:"),
+            second.getMessage());
+        // A zero-length payload is one descriptor.
+        assertNotNull(MuxerConfig.builder().addVideo(0x1011, VideoCodec.H264)
+            .programDescriptors(new byte[][] {{(byte) 0xE0, 0}}).build());
     }
 
     @Test
