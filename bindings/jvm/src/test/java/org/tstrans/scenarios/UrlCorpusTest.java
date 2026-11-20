@@ -1,6 +1,6 @@
 package org.tstrans.scenarios;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 import static org.tstrans.TestSupport.isLinux;
@@ -11,6 +11,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.net.DatagramSocket;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.ServerSocket;
@@ -64,9 +65,9 @@ import org.tstrans.webrtc.WhepServer;
 /**
  * The JVM leg of the URL corpus. Every row goes through the JVM entry point the corpus header's
  * {@code [legs.jvm]} table names for its scheme and role. The JVM exposes no parsed URL, so only
- * the outcome is compared: a refused row must throw the scheme's exception with the expected
- * kind; an accepted row must not throw one of the scheme's URL kinds (a refused connect is fine).
- * For the wire schemes (rtsp) a valid row is also connected to a recording peer, and the request
+ * the outcome is compared: a row must open, or throw the scheme's exception with the expected
+ * kind, unless its {@code open} table states other outcomes for this leg. The row's
+ * {@code {port}} and {@code {dir}} placeholders are filled first. For the wire schemes (rtsp) a valid row is also connected to a recording peer, and the request
  * heads must show the record's credentials and keys.
  *
  * <p>The corpus is read from the JSON twin {@code gen-scenarios} writes into the scenario's
@@ -156,12 +157,34 @@ class UrlCorpusTest {
         return "srt://" + host + ":" + port;
     }
 
+    private static final Pattern PASSPHRASE = Pattern.compile("[?&]passphrase=([^&]*)");
+
+    /**
+     * A builder for the peer of {@code url}: it takes the URL's passphrase, so a valid encrypted
+     * row connects. A passphrase the builder refuses is left out: the open under test refuses
+     * the URL before it dials.
+     */
+    static Builder srtPeer(String peerUrl, String url) {
+        Builder b = new Builder(peerUrl);
+        Matcher m = PASSPHRASE.matcher(url);
+        if (m.find()) b.passphrase(m.group(1));
+        return b;
+    }
+
+    static Listener srtListenerPeer(String peerUrl, String url) throws SrtException {
+        try {
+            return srtPeer(peerUrl + "?mode=listener", url).listen();
+        } catch (SrtException e) {
+            return new Builder(peerUrl + "?mode=listener").listen();
+        }
+    }
+
     static void openSrtCaller(String url) throws Exception {
         // An SRT caller would wait out its connect timeout against a closed port, so the URL's
-        // address gets a loopback listener. The peer sets no options: a handshake it rejects (a
-        // passphrase it lacks) still returns at once, as a connect failure.
+        // address gets a loopback listener with the URL's passphrase; any other option it lacks
+        // fails the handshake at once, as a connect failure.
         String peerUrl = srtPeerUrl(url);
-        Listener peer = peerUrl == null ? null : new Builder(peerUrl + "?mode=listener").listen();
+        Listener peer = peerUrl == null ? null : srtListenerPeer(peerUrl, url);
         try (Sender s = Sender.open(url)) {
             // opened: nothing to send
         } finally {
@@ -178,7 +201,7 @@ class UrlCorpusTest {
         if (peerUrl != null) {
             caller = new Thread(() -> {
                 try {
-                    dialed.add(new Builder(peerUrl).connectTimeoutMs((int) scaledMs(5000)).connect());
+                    dialed.add(srtPeer(peerUrl, url).connectTimeoutMs((int) scaledMs(5000)).connect());
                 } catch (SrtException ignored) {
                     // the open under test reports the outcome
                 }
@@ -207,7 +230,7 @@ class UrlCorpusTest {
         } catch (TimeoutException e) {
             if (peerUrl != null) {
                 try {
-                    dialed.add(new Builder(peerUrl).connectTimeoutMs((int) scaledMs(2000)).connect());
+                    dialed.add(srtPeer(peerUrl, url).connectTimeoutMs((int) scaledMs(2000)).connect());
                 } catch (SrtException ignored) {
                     // the accept stays parked; the daemon thread dies with the JVM
                 }
@@ -227,7 +250,7 @@ class UrlCorpusTest {
      * on Windows, so the tcp caller rows and the rtsps refusal row dial one of these instead.
      */
     static final class DropPeer implements AutoCloseable {
-        private static final Set<Integer> SHARED = new TreeSet<>();
+        private static DropPeer shared;
         final ServerSocket listener;
 
         DropPeer(int port) throws IOException {
@@ -245,28 +268,15 @@ class UrlCorpusTest {
             t.start();
         }
 
-        /** A peer on {@code port} for the rest of the run, started once per port. */
-        static synchronized void shared(int port) throws IOException {
-            if (SHARED.add(port)) new DropPeer(port);
+        /** The port of one peer on a port the kernel picked, started once for the whole run. */
+        static synchronized int sharedPort() throws IOException {
+            if (shared == null) shared = new DropPeer(0);
+            return shared.port();
         }
 
         int port() { return listener.getLocalPort(); }
 
         @Override public void close() throws IOException { listener.close(); }
-    }
-
-    /** The port written in {@code url}'s authority, or -1 when there is none. */
-    static int urlPort(String url) {
-        Matcher m = AUTHORITY.matcher(url);
-        if (!m.find() || m.group(2) == null) return -1;
-        int port = Integer.parseInt(m.group(2));
-        return port > 0 && port <= 65535 ? port : -1;
-    }
-
-    static void openTcpCaller(String url) throws Exception {
-        int port = urlPort(url);
-        if (port > 0) DropPeer.shared(port);
-        try (Sender s = Sender.open(url)) { }
     }
 
     static void openRtspRefusalOnly(String url) throws Exception {
@@ -298,6 +308,7 @@ class UrlCorpusTest {
             try (RtspSession s = RtspClient.connect(RtspClientConfig.of(url))) { }
         },
         "hls.HlsPublisherBuilder.build", UrlCorpusTest::openHls,
+        "tcp.Listener.open", url -> { try (org.tstrans.tcp.Listener l = org.tstrans.tcp.Listener.open(url)) { } },
         "webrtc.WhepServer.bind", url -> { try (WhepServer w = WhepServer.bind(url)) { } });
 
     /** Open the row's URL through {@code entry}; the refused kind's name, or null. */
@@ -311,8 +322,6 @@ class UrlCorpusTest {
                 case "shells.Receiver.open" -> UrlCorpusTest::openSrtListener;
                 default -> throw new AssertionError("no srt probe for " + entry);
             };
-        } else if (family.equals("tcp") && entry.equals("shells.Sender.open")) {
-            run = UrlCorpusTest::openTcpCaller;
         } else if (family.equals("rtsp") && valid) {
             // An invalid row keeps its own port: rewriting it could change how the URL parses.
             run = UrlCorpusTest::openRtspRefusalOnly;
@@ -583,14 +592,83 @@ class UrlCorpusTest {
         assertTrue(mismatches.isEmpty(), label(row) + " on the wire: " + String.join("; ", mismatches));
     }
 
-    /** The error kinds this family's refused rows name. */
-    static Set<String> urlKinds(String family) {
-        Set<String> kinds = new TreeSet<>();
-        for (Map<String, Object> r : rows()) {
-            Object k = expect(r).get("error_kind");
-            if (k != null && family(r).equals(family)) kinds.add((String) k);
+    // ── Placeholders and stated outcomes ─────────────────────────────────────
+
+    static final String LEG = "jvm";
+
+    /**
+     * {@code row} with its {@code {port}} and {@code {dir}} placeholders filled; closing it
+     * removes the certificate directory. A tcp caller gets the drop peer's port, every other
+     * row a free UDP port on the URL's loopback host (the srt peer or the open under test binds
+     * it); {@code {dir}} is a fresh directory holding the suite's self-signed pair as
+     * {@code server.crt} and {@code server.key}.
+     */
+    static final class Filled implements AutoCloseable {
+        final Map<String, Object> row;
+        final Path dir;
+
+        Filled(Map<String, Object> source) throws IOException {
+            String url = (String) source.get("url");
+            if (url.contains("{port}")) {
+                int port = family(source).equals("tcp") && "caller".equals(source.get("role"))
+                    ? DropPeer.sharedPort()
+                    : freeUdpPort(url.contains("[::1]") ? "::1" : "127.0.0.1");
+                url = url.replace("{port}", Integer.toString(port));
+            }
+            if (url.contains("{dir}")) {
+                dir = Files.createTempDirectory("tst-url-corpus-tls");
+                copyResource("/hls/cert.pem", dir.resolve("server.crt"));
+                copyResource("/hls/key.pem", dir.resolve("server.key"));
+                url = url.replace("{dir}", dir.toString());
+            } else {
+                dir = null;
+            }
+            row = new LinkedHashMap<>(source);
+            row.put("url", url);
         }
-        return kinds;
+
+        private static void copyResource(String name, Path to) throws IOException {
+            try (InputStream in = UrlCorpusTest.class.getResourceAsStream(name)) {
+                if (in == null) throw new AssertionError("missing test resource " + name);
+                Files.copy(in, to);
+            }
+        }
+
+        @Override public void close() throws IOException {
+            if (dir == null) return;
+            try (Stream<Path> walk = Files.walk(dir)) {
+                for (Path p : walk.sorted((a, b) -> b.compareTo(a)).toList()) Files.delete(p);
+            }
+        }
+    }
+
+    static int freeUdpPort(String host) throws IOException {
+        try (DatagramSocket s = new DatagramSocket(new InetSocketAddress(host, 0))) {
+            return s.getLocalPort();
+        }
+    }
+
+    /**
+     * The outcomes this leg may see for {@code row}: the words of {@code open.jvm} when the row
+     * states them, else its expected kind, else {@code ok}.
+     */
+    @SuppressWarnings("unchecked")
+    static List<String> outcomes(Map<String, Object> row) {
+        Map<String, Object> open = (Map<String, Object>) row.get("open");
+        if (open != null && open.get(LEG) != null) {
+            return List.of(((String) open.get(LEG)).trim().split("\\s+"));
+        }
+        Object kind = expect(row).get("error_kind");
+        return List.of(kind == null ? "ok" : (String) kind);
+    }
+
+    /** Fail unless {@code observed} (a kind name, or {@code ok}) is one of the row's outcomes. */
+    static void judge(Map<String, Object> row, String entry, String observed) {
+        List<String> allowed = outcomes(row);
+        if (!allowed.contains(observed)) {
+            throw new AssertionError(label(row) + " via " + entry + ": expected "
+                + String.join(" or ", allowed) + ", observed " + observed);
+        }
     }
 
     static boolean checkOutcome(Map<String, Object> row) throws Exception {
@@ -600,13 +678,7 @@ class UrlCorpusTest {
         }
         if (entry.equals("absent")) return false;
         String observed = probe(entry, row);
-        String expected = (String) expect(row).get("error_kind");
-        if (expected != null) {
-            assertEquals(expected, observed, label(row) + " via " + entry);
-        } else {
-            assertTrue(observed == null || !urlKinds(family(row)).contains(observed),
-                label(row) + " via " + entry + ": expected the URL to be accepted, observed " + observed);
-        }
+        judge(row, entry, observed == null ? "ok" : observed);
         return true;
     }
 
@@ -625,14 +697,17 @@ class UrlCorpusTest {
      * scheme, what reached the wire); false when the corpus declares no JVM entry point for the
      * row's role or the row is gated off this platform.
      */
-    static boolean checkRow(Map<String, Object> row) throws Exception {
-        if (gated(row) != null) return false;
-        List<String> fields = wireFields(row);
-        if (fields != null && expect(row).get("error_kind") == null) {
-            checkWire(row, fields);
-            return true;
+    static boolean checkRow(Map<String, Object> source) throws Exception {
+        if (gated(source) != null) return false;
+        try (Filled filled = new Filled(source)) {
+            Map<String, Object> row = filled.row;
+            List<String> fields = wireFields(row);
+            if (fields != null && expect(row).get("error_kind") == null) {
+                checkWire(row, fields);
+                return true;
+            }
+            return checkOutcome(row);
         }
-        return checkOutcome(row);
     }
 
     static Stream<Arguments> corpusRows() {
@@ -668,6 +743,50 @@ class UrlCorpusTest {
                 assertTrue(entry.equals("absent") || ENTRIES.containsKey(entry) || srtProbe,
                     "[legs.jvm] " + e.getKey() + " " + role + " names " + entry + ", which no probe runs");
             }
+        }
+    }
+
+    static Map<String, Object> row(String scheme, String role, String url) {
+        return rows().stream()
+            .filter(r -> r.get("scheme").equals(scheme) && r.get("role").equals(role) && r.get("url").equals(url))
+            .findFirst().orElseThrow(() -> new AssertionError("no corpus row " + url));
+    }
+
+    /** A valid row whose open reports a configuration kind fails: an accepted row must open. */
+    @Test
+    void aValidRowReportingInvalidConfigFails() {
+        Map<String, Object> valid = row("udp", "send", "udp://127.0.0.1:31301");
+        AssertionError e = assertThrows(AssertionError.class,
+            () -> judge(valid, "shells.Sender.open", "INVALID_CONFIG"));
+        assertTrue(e.getMessage().contains("expected ok, observed INVALID_CONFIG"), e.getMessage());
+    }
+
+    /** A row stating another outcome for this leg is held to it: an open that succeeds fails. */
+    @Test
+    void aRowStatingAnotherOutcomeForThisLegIsHeldToIt() {
+        Map<String, Object> stated = new LinkedHashMap<>(row("udp", "send", "udp://127.0.0.1:31301"));
+        stated.put("open", Map.of(LEG, "IO"));
+        AssertionError e = assertThrows(AssertionError.class, () -> judge(stated, "shells.Sender.open", "ok"));
+        assertTrue(e.getMessage().contains("expected IO, observed ok"), e.getMessage());
+        judge(stated, "shells.Sender.open", "IO");
+    }
+
+    @Test
+    void placeholdersAreFilledAndTheCertificateDirectoryIsRemoved() throws Exception {
+        Map<String, Object> tls = row("tcps", "listener",
+            "tcps://127.0.0.1:0?listen=1&cert={dir}/server.crt&key={dir}/server.key");
+        Path dir;
+        try (Filled f = new Filled(tls)) {
+            dir = f.dir;
+            String url = (String) f.row.get("url");
+            assertTrue(Files.isRegularFile(dir.resolve("server.crt")), url);
+            assertTrue(Files.isRegularFile(dir.resolve("server.key")), url);
+            assertTrue(url.equals("tcps://127.0.0.1:0?listen=1&cert=" + dir + "/server.crt&key=" + dir + "/server.key"), url);
+        }
+        assertTrue(Files.notExists(dir), dir + " outlived the row");
+        try (Filled f = new Filled(row("srt", "caller", "srt://127.0.0.1:{port}"))) {
+            assertTrue(((String) f.row.get("url")).matches("srt://127\\.0\\.0\\.1:\\d+"), (String) f.row.get("url"));
+            assertTrue(f.dir == null);
         }
     }
 
