@@ -133,6 +133,32 @@ while (n := m.pull(buf)) > 0:
 For the common file-write case, `write_file` (returning a `MuxerFileSink`)
 is the canonical path — no manual `pull` loop needed.
 
+`Muxer.reconfigure(config)` swaps the program list of a running muxer, to
+add or drop a program or a stream without restarting the output:
+
+```python
+m.reconfigure(
+    MuxerConfigBuilder()
+    .add_program(prog)  # program 1 survives: same handles, no CC jump
+    .add_program(
+        MuxerProgramConfigBuilder(program_number=2, pmt_pid=0x200)
+        .add_video(0x201, VideoCodec.H264)
+        .build()
+    )
+    .build()
+)
+[cam2] = m.video_handles_for_program(2)
+```
+
+Programs match by number and streams by PID: a stream whose PID, stream
+type and codec are unchanged keeps its handle, continuity counter and
+timers, and the next push carries the new PAT and PMTs. A removed stream's
+handle raises `MuxError(INVALID_USAGE)`. A config the call refuses (a PID
+that moved program or changed codec, a moved PMT or PCR PID, a different
+muxer-wide setting) raises `MuxError(CONFIG_INVALID)` and leaves the
+running config and every handle unchanged. The shells (`MuxSender` and its
+managed and push forms) have no `reconfigure`.
+
 ## First receive
 
 Demux a file and dispatch on typed events with a `match` statement:

@@ -669,6 +669,22 @@ class AudioStreamCodecStats(StreamCodecStats):
 @final
 class Muxer:
     def __new__(cls, config: MuxerConfig) -> Muxer: ...
+    def reconfigure(self, config: MuxerConfig) -> None:
+        """Replace the program list of the running muxer with ``config``'s.
+
+        Programs match by program number, streams by PID: a stream whose
+        PID, stream type and codec are unchanged survives with its handle,
+        continuity counter and timers. New streams take handles (read them
+        with the ``*_handles_for_program`` getters after the call); a
+        removed stream's handle raises ``MuxError(INVALID_USAGE)``. The next
+        push carries the new PAT and every live PMT.
+
+        Raises ``MuxError(CONFIG_INVALID)``, leaving the running config and
+        every handle as they were, when a PID moved to another program or
+        changed its stream type or codec, a surviving program's PMT PID or
+        PCR PID changed, or a muxer-wide setting differs.
+        """
+        ...
     def pull(self, out: bytearray) -> int: ...
     def pending_packets(self) -> int: ...
     def capacity_packets(self) -> int: ...

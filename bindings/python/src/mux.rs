@@ -1183,6 +1183,31 @@ impl PyMuxer {
             .map_err(|e| crate::errors::mux_error_to_pyerr(py, e))
     }
 
+    /// Replace the program list of the running muxer with `config`'s.
+    ///
+    /// Programs match by program number and streams by PID; a stream whose
+    /// PID, stream type and codec are unchanged survives with its handle,
+    /// continuity counter and timers. New streams take handles (read them
+    /// with the `*_handles_for_program` getters after the call); a removed
+    /// stream's handle raises `MuxError(INVALID_USAGE)`. The next push
+    /// carries the new PAT and every live PMT.
+    ///
+    /// Raises `MuxError(CONFIG_INVALID)` and leaves the running config and
+    /// every handle as they were when `config` is refused: a PID moved to
+    /// another program or changed its stream type or codec, a surviving
+    /// program's PMT PID or PCR PID changed, or a muxer-wide setting
+    /// differs from the running one.
+    pub fn reconfigure(
+        &mut self,
+        py: Python<'_>,
+        config: PyRef<'_, PyMuxerConfig>,
+    ) -> PyResult<()> {
+        let cfg = config.inner.clone();
+        // In-memory work on owned values, like the push family.
+        let res = py.detach(|| self.inner.reconfigure(cfg));
+        res.map_err(|e| crate::errors::mux_error_to_pyerr(py, e))
+    }
+
     /// Drain ready TS packets into `out`. Returns the number of bytes
     /// written: either 0 or a positive multiple of 188. A return of 0
     /// indicates either an empty queue or `len(out) < 188`.
