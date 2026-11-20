@@ -2850,11 +2850,19 @@ Rules the types do not enforce:
   must know that everything was written, send through `sendTs` and call
   `teardown()`, which throws unless the queued media was written and the
   server accepted the TEARDOWN.
-- **Keepalive is on or off.** `RtspClientConfig.builder(url).keepalive(...)`
-  (on by default) sends OPTIONS pings at half the session timeout the server
-  advertises; there is no interval setting. mediamtx 1.21.4 ends a recording
-  publisher after 10 s without a byte while it advertises 55 s, so keep
-  media flowing.
+- **Keepalive pings.** `RtspClientConfig.builder(url).keepalive(...)`
+  (on by default) sends pings at half the session timeout the server
+  advertises, or every `keepaliveIntervalMs(ms)` when that is set. mediamtx
+  1.21.4 ends a recording publisher after 10 s without a byte while it
+  advertises 55 s, so keep media flowing or set an interval below 10 s. The
+  same builder sets `connectTimeoutMs(ms)` (TCP connect plus TLS handshake;
+  expiry `RtspException(IO)`), `requestTimeoutMs(ms)` (each request's reply;
+  expiry `TIMEOUT`) and `userAgent(text)` (one holding a CR or LF is refused
+  with `PROTOCOL` before anything is written); unset, each keeps the client's
+  default (10 s, 10 s, `tst-rtp/0.1`). `build()` refuses a value of 0 or
+  below, and an interval with `keepalive(false)`, with
+  `IllegalArgumentException`. They apply to `connect`, `connectH264` and
+  `push` alike.
 - **After `pause()` the data calls still send**, and some servers end the
   session for that (mediamtx 1.21.4 closes the connection). `resume()` does
   not wait for queued media.

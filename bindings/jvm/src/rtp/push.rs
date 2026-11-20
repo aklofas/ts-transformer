@@ -271,7 +271,8 @@ fn description(
 
 jni_native! {
     /// `RtspClient.nPush(url, authUser, authPassword, digestOnly, keepalive,
-    /// tlsRootCertsPem, kind, klv, parameterSets)`: connect, ANNOUNCE, SETUP every
+    /// tlsRootCertsPem, keepaliveIntervalMs, connectTimeoutMs, requestTimeoutMs,
+    /// userAgent, kind, klv, parameterSets)`: connect, ANNOUNCE, SETUP every
     /// track for recording and RECORD (`RtspPush::connect`); the session's key, or 0
     /// with a pending `RtspException`.
     #[allow(clippy::too_many_arguments)]
@@ -284,6 +285,10 @@ jni_native! {
         digest_only: jboolean,
         keepalive: jboolean,
         tls_root_certs_pem: JByteArray<'local>,
+        keepalive_interval_ms: jlong,
+        connect_timeout_ms: jlong,
+        request_timeout_ms: jlong,
+        user_agent: JString<'local>,
         kind: jint,
         klv: jboolean,
         parameter_sets: JObjectArray<'local>,
@@ -294,6 +299,12 @@ jni_native! {
         let Some(desc) = description(env, kind, klv, sets) else {
             return 0;
         };
+        let settings = super::client::ClientSettings {
+            keepalive_interval_ms,
+            connect_timeout_ms,
+            request_timeout_ms,
+            user_agent: &user_agent,
+        };
         let Some(builder) = client_builder(
             env,
             &url,
@@ -301,6 +312,7 @@ jni_native! {
             &auth_password,
             digest_only,
             keepalive,
+            &settings,
             &tls_root_certs_pem,
         ) else {
             return 0; // exception pending

@@ -20,10 +20,11 @@ import org.junit.jupiter.api.Timeout;
 import org.tstrans.RtspException;
 
 /**
- * {@link RtspClientConfig#transportPref()} and {@link RtspClientConfig#rtspVersion()}
- * reach the wire. A scripted server answers OPTIONS and DESCRIBE, records the
- * SETUP request and refuses it, so the test reads exactly what the client asked
- * for without a media session.
+ * The {@link RtspClientConfig} settings reach the wire. For the transport preference,
+ * the RTSP version and the user agent a scripted server answers OPTIONS and DESCRIBE,
+ * records the SETUP request and refuses it, so the test reads exactly what the client
+ * asked for without a media session; the keepalive interval and the two timeouts run
+ * against a {@link RawRtspPeer} session.
  */
 class RtspClientPrefsTest {
 
@@ -137,5 +138,101 @@ class RtspClientPrefsTest {
         List<String> requests = connectAndRecord(url ->
             RtspClientConfig.builder(url).rtspVersion(RtspVersion.V2_0).build());
         assertEquals("RTSP/2.0", requests.get(0).split("\r\n")[0].split(" ")[2]);
+    }
+
+    @Test
+    @Timeout(30)
+    void theUserAgentIsSent() throws Exception {
+        List<String> requests = connectAndRecord(url ->
+            RtspClientConfig.builder(url).userAgent("example-agent/1").build());
+        assertTrue(!requests.isEmpty());
+        for (String r : requests) assertEquals("example-agent/1", header(r, "User-Agent"), r);
+    }
+
+    /** A user agent that would split the header is refused before any byte is written. */
+    @Test
+    @Timeout(30)
+    void aUserAgentWithACrLfIsRefusedBeforeConnecting() throws Exception {
+        try (RawRtspPeer peer = new RawRtspPeer(RawRtspPeer.MP2T_SDP, false, 200, 200)) {
+            RtspClientConfig cfg = RtspClientConfig.builder(peer.url())
+                .userAgent("x\r\nAuthorization: Basic injected").build();
+            RtspException e = assertThrows(RtspException.class, () -> RtspClient.connect(cfg));
+            assertEquals(RtspException.Kind.PROTOCOL, e.kind());
+            assertTrue(peer.requests.isEmpty(), "a request was written: " + peer.requests);
+        }
+    }
+
+    @Test
+    @Timeout(30)
+    void anExplicitIntervalSendsAPingWithinIt() throws Exception {
+        try (RawRtspPeer peer = new RawRtspPeer(RawRtspPeer.MP2T_SDP, false, 200, 200)) {
+            RtspClientConfig cfg = RtspClientConfig.builder(peer.url())
+                .transportPref(TransportPref.TCP).keepaliveIntervalMs(200).build();
+            try (RtspSession s = RtspClient.connect(cfg)) {
+                // The SETUP reply says timeout=60, so without the interval the first ping
+                // would come after 30 s.
+                assertTrue(waitFor(() -> pingsAfterPlay(peer.requests) >= 2),
+                    () -> "no pings after PLAY: " + methods(peer.requests));
+            }
+        }
+    }
+
+    @Test
+    @Timeout(30)
+    void aRequestTheServerNeverAnswersEndsAtTheRequestTimeout() throws Exception {
+        // The peer reads a PAUSE and never answers it.
+        try (RawRtspPeer peer = new RawRtspPeer(RawRtspPeer.MP2T_SDP, false, null, 200)) {
+            RtspClientConfig cfg = RtspClientConfig.builder(peer.url())
+                .transportPref(TransportPref.TCP).keepalive(false).requestTimeoutMs(300).build();
+            try (RtspSession s = RtspClient.connect(cfg)) {
+                long t0 = System.nanoTime();
+                RtspException e = assertThrows(RtspException.class, s::pause);
+                long ms = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - t0);
+                assertEquals(RtspException.Kind.TIMEOUT, e.kind());
+                assertTrue(peer.awaitPause(0), "the PAUSE was written");
+                // The default deadline is 10 s: far above this bound.
+                assertTrue(ms < org.tstrans.TestSupport.scaledMs(5_000), "took " + ms + " ms");
+            }
+        }
+    }
+
+    /** An {@code rtsps://} server that accepts and never answers the handshake. */
+    @Test
+    @Timeout(30)
+    void aHandshakeTheServerNeverAnswersEndsAtTheConnectTimeout() throws Exception {
+        try (ServerSocket ss = new ServerSocket(0, 1, InetAddress.getLoopbackAddress())) {
+            RtspClientConfig cfg = RtspClientConfig.builder(
+                    "rtsps://127.0.0.1:" + ss.getLocalPort() + "/x")
+                .connectTimeoutMs(300).build();
+            long t0 = System.nanoTime();
+            RtspException e = assertThrows(RtspException.class, () -> RtspClient.connect(cfg));
+            long ms = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - t0);
+            assertEquals(RtspException.Kind.IO, e.kind(), e.getMessage());
+            // The default budget is 10 s: far above this bound.
+            assertTrue(ms < org.tstrans.TestSupport.scaledMs(5_000), "took " + ms + " ms");
+        }
+    }
+
+    /** OPTIONS or GET_PARAMETER requests read after the PLAY. */
+    static long pingsAfterPlay(List<String> requests) {
+        List<String> m = methods(requests);
+        int play = m.indexOf("PLAY");
+        if (play < 0) return 0;
+        return m.subList(play + 1, m.size()).stream()
+            .filter(x -> x.equals("OPTIONS") || x.equals("GET_PARAMETER")).count();
+    }
+
+    static List<String> methods(List<String> requests) {
+        return requests.stream().map(r -> r.split(" ", 2)[0]).toList();
+    }
+
+    private static boolean waitFor(java.util.function.BooleanSupplier cond) throws InterruptedException {
+        long deadline = System.nanoTime()
+            + TimeUnit.MILLISECONDS.toNanos(org.tstrans.TestSupport.scaledMs(5_000));
+        while (System.nanoTime() < deadline) {
+            if (cond.getAsBoolean()) return true;
+            Thread.sleep(20);
+        }
+        return cond.getAsBoolean();
     }
 }

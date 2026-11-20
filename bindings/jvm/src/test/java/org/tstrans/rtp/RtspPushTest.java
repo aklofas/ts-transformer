@@ -265,6 +265,31 @@ class RtspPushTest {
 
     @Test
     @Timeout(30)
+    void aPushHonoursTheInterval() throws Exception {
+        try (ScriptedRecordServer peer = new ScriptedRecordServer(200, false)) {
+            RtspClientConfig cfg = RtspClientConfig.builder(peer.url())
+                .keepaliveIntervalMs(200).userAgent("example-agent/1").build();
+            try (RtspPushSession push = RtspClient.push(cfg, PushDescription.mp2t())) {
+                // The SETUP reply says timeout=60: without the interval the first ping
+                // would come after 30 s.
+                assertTrue(waitFor(() -> pingsAfterRecord(peer.methods) >= 2),
+                    () -> "no pings after RECORD: " + peer.methods);
+                assertTrue(push.isSessionAlive());
+            }
+        }
+    }
+
+    /** OPTIONS or GET_PARAMETER requests read after the RECORD. */
+    private static long pingsAfterRecord(List<String> methods) {
+        List<String> m = List.copyOf(methods);
+        int record = m.indexOf("RECORD");
+        if (record < 0) return 0;
+        return m.subList(record + 1, m.size()).stream()
+            .filter(x -> x.equals("OPTIONS") || x.equals("GET_PARAMETER")).count();
+    }
+
+    @Test
+    @Timeout(30)
     void teardownAcceptedReturnsAndClosesTheSession() throws Exception {
         try (ScriptedRecordServer peer = new ScriptedRecordServer(200, false)) {
             RtspPushSession push = RtspClient.push(peer.config(), PushDescription.mp2t());

@@ -2,6 +2,7 @@ package org.tstrans.rtp;
 
 import java.util.Objects;
 import java.util.Optional;
+import java.util.OptionalLong;
 import org.tstrans.Redact;
 
 /**
@@ -13,6 +14,12 @@ import org.tstrans.Redact;
  * {@code ?transport=} / {@code ?rtsp_version=} when not at their defaults.
  * {@code tlsRootCertsPem} is read at connect too: a PEM bundle of custom trust
  * anchors for {@code rtsps://} servers with a private CA; see {@link RtspClient}.
+ *
+ * <p>The keepalive interval, the connect and request timeouts and the user agent are
+ * empty until set; empty keeps the client's own default (an interval of half the
+ * session timeout the SETUP reply names, 10&nbsp;s for each timeout, {@code tst-rtp/0.1}).
+ * They apply to {@link RtspClient#connect}, {@link RtspClient#connectH264} and
+ * {@link RtspClient#push} alike.
  */
 public final class RtspClientConfig {
     private final String url;
@@ -21,6 +28,10 @@ public final class RtspClientConfig {
     private final byte[] tlsRootCertsPem; // nullable; defensively copied
     private final boolean keepalive;
     private final RtspVersion rtspVersion;
+    private final Long keepaliveIntervalMs; // null = the client's default
+    private final Long connectTimeoutMs;
+    private final Long requestTimeoutMs;
+    private final String userAgent;
 
     private RtspClientConfig(Builder b) {
         this.url = b.url;
@@ -29,6 +40,10 @@ public final class RtspClientConfig {
         this.tlsRootCertsPem = b.tlsRootCertsPem == null ? null : b.tlsRootCertsPem.clone();
         this.keepalive = b.keepalive;
         this.rtspVersion = b.rtspVersion;
+        this.keepaliveIntervalMs = b.keepaliveIntervalMs;
+        this.connectTimeoutMs = b.connectTimeoutMs;
+        this.requestTimeoutMs = b.requestTimeoutMs;
+        this.userAgent = b.userAgent;
     }
 
     /** All-defaults config for {@code url}. */
@@ -52,13 +67,33 @@ public final class RtspClientConfig {
 
     public RtspVersion rtspVersion() { return rtspVersion; }
 
+    /** @return the keepalive ping interval in milliseconds, if set. */
+    public OptionalLong keepaliveIntervalMs() { return optional(keepaliveIntervalMs); }
+
+    /** @return the connect budget in milliseconds, if set. */
+    public OptionalLong connectTimeoutMs() { return optional(connectTimeoutMs); }
+
+    /** @return the per-request deadline in milliseconds, if set. */
+    public OptionalLong requestTimeoutMs() { return optional(requestTimeoutMs); }
+
+    /** @return the {@code User-Agent} header value, if set. */
+    public Optional<String> userAgent() { return Optional.ofNullable(userAgent); }
+
+    private static OptionalLong optional(Long v) {
+        return v == null ? OptionalLong.empty() : OptionalLong.of(v);
+    }
+
     @Override public String toString() {
         return "RtspClientConfig(url=" + Redact.url(url)
             + ", auth=" + (auth != null ? "<auth>" : "None")
             + ", transportPref=" + transportPref
             + ", tlsRootCertsPem=" + (tlsRootCertsPem != null ? "<bytes>" : "None")
             + ", keepalive=" + keepalive
-            + ", rtspVersion=" + rtspVersion + ")";
+            + ", rtspVersion=" + rtspVersion
+            + ", keepaliveIntervalMs=" + (keepaliveIntervalMs != null ? keepaliveIntervalMs : "None")
+            + ", connectTimeoutMs=" + (connectTimeoutMs != null ? connectTimeoutMs : "None")
+            + ", requestTimeoutMs=" + (requestTimeoutMs != null ? requestTimeoutMs : "None")
+            + ", userAgent=" + (userAgent != null ? userAgent : "None") + ")";
     }
 
     /** Builder for {@link RtspClientConfig}. */
@@ -69,6 +104,10 @@ public final class RtspClientConfig {
         private byte[] tlsRootCertsPem;
         private boolean keepalive = true;
         private RtspVersion rtspVersion = RtspVersion.V1_0;
+        private Long keepaliveIntervalMs;
+        private Long connectTimeoutMs;
+        private Long requestTimeoutMs;
+        private String userAgent;
 
         private Builder(String url) {
             Objects.requireNonNull(url, "url");
@@ -99,6 +138,60 @@ public final class RtspClientConfig {
             this.rtspVersion = Objects.requireNonNull(v); return this;
         }
 
-        public RtspClientConfig build() { return new RtspClientConfig(this); }
+        /**
+         * How often the client pings the server (OPTIONS or GET_PARAMETER) to keep the
+         * session alive; unset, half the session timeout the SETUP reply names. A server
+         * that ends a quiet session sooner than that (mediamtx: 10&nbsp;s for a publisher)
+         * needs a shorter one.
+         *
+         * @param ms the interval, positive; checked at {@link #build()}
+         */
+        public Builder keepaliveIntervalMs(long ms) { this.keepaliveIntervalMs = ms; return this; }
+
+        /**
+         * The connect budget: the TCP connect and, for {@code rtsps://}, the TLS handshake
+         * together; unset, 10&nbsp;s. Expiry is {@code RtspException(IO)}.
+         *
+         * @param ms the budget, positive; checked at {@link #build()}
+         */
+        public Builder connectTimeoutMs(long ms) { this.connectTimeoutMs = ms; return this; }
+
+        /**
+         * How long each request waits for its reply, the write included; unset, 10&nbsp;s.
+         * Expiry is {@code RtspException(TIMEOUT)}.
+         *
+         * @param ms the deadline, positive; checked at {@link #build()}
+         */
+        public Builder requestTimeoutMs(long ms) { this.requestTimeoutMs = ms; return this; }
+
+        /**
+         * The {@code User-Agent} header value; unset, {@code tst-rtp/0.1}. A value holding a
+         * control byte (a CR or LF that would start another header) is refused at connect
+         * with {@code RtspException(PROTOCOL)}, before anything is written.
+         */
+        public Builder userAgent(String ua) {
+            this.userAgent = Objects.requireNonNull(ua, "userAgent"); return this;
+        }
+
+        /**
+         * @throws IllegalArgumentException for an interval or timeout of 0 or below, or an
+         *     interval together with {@code keepalive(false)}
+         */
+        public RtspClientConfig build() {
+            positive(keepaliveIntervalMs, "keepaliveIntervalMs");
+            positive(connectTimeoutMs, "connectTimeoutMs");
+            positive(requestTimeoutMs, "requestTimeoutMs");
+            if (keepaliveIntervalMs != null && !keepalive) {
+                throw new IllegalArgumentException(
+                    "keepaliveIntervalMs is set but keepalive(false) turns the pings off");
+            }
+            return new RtspClientConfig(this);
+        }
+
+        private static void positive(Long v, String name) {
+            if (v != null && v <= 0) {
+                throw new IllegalArgumentException(name + " must be positive, got " + v);
+            }
+        }
     }
 }

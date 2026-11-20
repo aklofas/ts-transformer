@@ -73,6 +73,39 @@ class RtspClientTest {
     }
 
     // ---- RtspClientConfig ----
+    @Test void theNewSettingsAreEmptyUntilSet() {
+        var unset = RtspClientConfig.of("rtsp://h/p");
+        assertEquals(java.util.OptionalLong.empty(), unset.keepaliveIntervalMs());
+        assertEquals(java.util.OptionalLong.empty(), unset.connectTimeoutMs());
+        assertEquals(java.util.OptionalLong.empty(), unset.requestTimeoutMs());
+        assertEquals(java.util.Optional.empty(), unset.userAgent());
+        var set = RtspClientConfig.builder("rtsp://h/p").keepaliveIntervalMs(200)
+            .connectTimeoutMs(3_000).requestTimeoutMs(4_000).userAgent("example-agent/1").build();
+        assertEquals(java.util.OptionalLong.of(200), set.keepaliveIntervalMs());
+        assertEquals(java.util.OptionalLong.of(3_000), set.connectTimeoutMs());
+        assertEquals(java.util.OptionalLong.of(4_000), set.requestTimeoutMs());
+        assertEquals(java.util.Optional.of("example-agent/1"), set.userAgent());
+        assertTrue(set.toString().contains("keepaliveIntervalMs=200"), set.toString());
+    }
+    @Test void aZeroIntervalIsRefused() {
+        for (long v : new long[] {0, -1}) {
+            assertThrows(IllegalArgumentException.class,
+                () -> RtspClientConfig.builder("rtsp://h/p").keepaliveIntervalMs(v).build());
+            assertThrows(IllegalArgumentException.class,
+                () -> RtspClientConfig.builder("rtsp://h/p").connectTimeoutMs(v).build());
+            assertThrows(IllegalArgumentException.class,
+                () -> RtspClientConfig.builder("rtsp://h/p").requestTimeoutMs(v).build());
+        }
+    }
+    @Test void anIntervalWithKeepaliveOffIsRefused() {
+        var b = RtspClientConfig.builder("rtsp://h/p").keepaliveIntervalMs(200).keepalive(false);
+        IllegalArgumentException e = assertThrows(IllegalArgumentException.class, b::build);
+        assertTrue(e.getMessage().contains("keepalive"), e.getMessage());
+    }
+    @Test void aNullUserAgentIsRefused() {
+        assertThrows(NullPointerException.class,
+            () -> RtspClientConfig.builder("rtsp://h/p").userAgent(null));
+    }
     @Test void configDefaults() {
         var cfg = RtspClientConfig.of("rtsp://127.0.0.1:8554/live");
         assertEquals("rtsp://127.0.0.1:8554/live", cfg.url());

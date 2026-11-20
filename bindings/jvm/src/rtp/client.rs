@@ -8,6 +8,7 @@ use crate::panic::jni_native;
 use std::sync::LazyLock;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError, TryLockError};
+use std::time::Duration;
 
 use jni::Env;
 use jni::jni_str;
@@ -72,10 +73,29 @@ fn apply_tls_roots(
     }
 }
 
+/// The optional settings of `RtspClientConfig` the client factories pass on: a
+/// millisecond value of 0 is unset (the Java config refuses 0 and below, so 0
+/// only stands for unset), a null user agent is unset. Unset keeps the
+/// builder's default.
+pub(crate) struct ClientSettings<'a, 'l> {
+    pub(crate) keepalive_interval_ms: jlong,
+    pub(crate) connect_timeout_ms: jlong,
+    pub(crate) request_timeout_ms: jlong,
+    pub(crate) user_agent: &'a JString<'l>,
+}
+
+/// `ms` as a duration, `None` for unset (0 or below).
+fn set_ms(ms: jlong) -> Option<Duration> {
+    u64::try_from(ms)
+        .ok()
+        .filter(|&v| v > 0)
+        .map(Duration::from_millis)
+}
+
 /// The `RtspClientBuilder` every client factory starts from (`RtspClient.nConnect`,
 /// `nConnectH264` and `nPush`): the URL parsed, the credentials when `auth_user` is
-/// not null, keepalive pings unless `keepalive` is false, and the custom trust
-/// roots of a non-null `tls_root_certs_pem`. `None` with a pending exception:
+/// not null, keepalive pings unless `keepalive` is false, the `settings` that are
+/// set, and the custom trust roots of a non-null `tls_root_certs_pem`. `None` with a pending exception:
 /// `RtspException` for a URL the builder refuses or a PEM bundle `apply_tls_roots`
 /// refuses, `RuntimeException` for a Java string JNI cannot read.
 ///
@@ -83,6 +103,7 @@ fn apply_tls_roots(
 /// passed: the client picks it from the server's `WWW-Authenticate` header.
 /// `digest_only` (a `DigestAuth` credential) refuses a challenge that offers no
 /// Digest.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn client_builder(
     env: &mut Env,
     url: &JString<'_>,
@@ -90,6 +111,7 @@ pub(super) fn client_builder(
     auth_password: &JString<'_>,
     digest_only: jboolean,
     keepalive: jboolean,
+    settings: &ClientSettings<'_, '_>,
     tls_root_certs_pem: &JByteArray<'_>,
 ) -> Option<RtspClientBuilder> {
     let url_str: String = match url.try_to_string(env) {
@@ -132,6 +154,25 @@ pub(super) fn client_builder(
     }
     if !keepalive {
         builder = builder.no_auto_keepalive(true);
+    }
+    if let Some(t) = set_ms(settings.keepalive_interval_ms) {
+        builder = builder.keepalive_interval(t);
+    }
+    if let Some(t) = set_ms(settings.connect_timeout_ms) {
+        builder = builder.connect_timeout(t);
+    }
+    if let Some(t) = set_ms(settings.request_timeout_ms) {
+        builder = builder.request_timeout(Some(t));
+    }
+    if !settings.user_agent.is_null() {
+        match settings.user_agent.try_to_string(env) {
+            // A control byte in it is refused by `connect`, before any I/O.
+            Ok(ua) => builder = builder.user_agent(ua),
+            Err(e) => {
+                throw_runtime_unless_pending(env, e.to_string());
+                return None;
+            }
+        }
     }
     // Before any connect I/O.
     apply_tls_roots(env, builder, tls_root_certs_pem)
@@ -224,7 +265,8 @@ struct JniRtspSession {
 }
 
 jni_native! {
-    /// `RtspClient.nConnect(url, authUser, authPassword, digestOnly, keepalive, tlsRootCertsPem)`
+    /// `RtspClient.nConnect(url, authUser, authPassword, digestOnly, keepalive, tlsRootCertsPem,
+    /// keepaliveIntervalMs, connectTimeoutMs, requestTimeoutMs, userAgent)`
     /// — run OPTIONS/DESCRIBE/SETUP/PLAY, return a `Box<JniRtspSession>` handle, or 0
     /// with a pending `RtspException` on failure. Ports `PyRtspClient::connect`.
     fn Java_org_tstrans_rtp_RtspClient_nConnect(
@@ -236,7 +278,17 @@ jni_native! {
         digest_only: jboolean,
         keepalive: jboolean,
         tls_root_certs_pem: JByteArray<'_>,
+        keepalive_interval_ms: jlong,
+        connect_timeout_ms: jlong,
+        request_timeout_ms: jlong,
+        user_agent: JString<'_>,
     ) -> jlong = 0 => {
+        let settings = ClientSettings {
+            keepalive_interval_ms,
+            connect_timeout_ms,
+            request_timeout_ms,
+            user_agent: &user_agent,
+        };
         let Some(builder) = client_builder(
             env,
             &url,
@@ -244,6 +296,7 @@ jni_native! {
             &auth_password,
             digest_only,
             keepalive,
+            &settings,
             &tls_root_certs_pem,
         ) else {
             return 0; // exception pending
@@ -279,7 +332,8 @@ jni_native! {
 }
 
 jni_native! {
-    /// `RtspClient.nConnectH264(url, authUser, authPassword, digestOnly, keepalive, tlsRootCertsPem)`
+    /// `RtspClient.nConnectH264(url, authUser, authPassword, digestOnly, keepalive, tlsRootCertsPem,
+    /// keepaliveIntervalMs, connectTimeoutMs, requestTimeoutMs, userAgent)`
     /// — run OPTIONS/DESCRIBE/SETUP for H.264 media/PLAY; return a `JniRtspSession`
     /// handle with the session slot holding an `H264DepayConfig`. Ports
     /// `PyRtspClient::connect_h264`.
@@ -292,7 +346,17 @@ jni_native! {
         digest_only: jboolean,
         keepalive: jboolean,
         tls_root_certs_pem: JByteArray<'_>,
+        keepalive_interval_ms: jlong,
+        connect_timeout_ms: jlong,
+        request_timeout_ms: jlong,
+        user_agent: JString<'_>,
     ) -> jlong = 0 => {
+        let settings = ClientSettings {
+            keepalive_interval_ms,
+            connect_timeout_ms,
+            request_timeout_ms,
+            user_agent: &user_agent,
+        };
         let Some(builder) = client_builder(
             env,
             &url,
@@ -300,6 +364,7 @@ jni_native! {
             &auth_password,
             digest_only,
             keepalive,
+            &settings,
             &tls_root_certs_pem,
         ) else {
             return 0; // exception pending

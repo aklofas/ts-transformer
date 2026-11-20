@@ -46,6 +46,8 @@ final class RawRtspPeer implements AutoCloseable {
     private volatile RtspCancelHandle watched;
     /** The watched handle's {@code isCancelled()} when the peer read the TEARDOWN. */
     final AtomicReference<Boolean> cancelledAtTeardown = new AtomicReference<>();
+    /** The requests read, in order, each its whole head. */
+    final java.util.List<String> requests = new java.util.concurrent.CopyOnWriteArrayList<>();
 
     /**
      * @param sdp the DESCRIBE body
@@ -67,10 +69,15 @@ final class RawRtspPeer implements AutoCloseable {
 
     /** A TCP-interleaved session URL on this peer, keepalive pings off. */
     RtspClientConfig config() {
-        return RtspClientConfig.builder("rtsp://127.0.0.1:" + listener.getLocalPort() + "/x")
+        return RtspClientConfig.builder(url())
             .transportPref(TransportPref.TCP)
             .keepalive(false)
             .build();
+    }
+
+    /** The session URL on this peer. */
+    String url() {
+        return "rtsp://127.0.0.1:" + listener.getLocalPort() + "/x";
     }
 
     /** Closes the sockets and fails if the peer's thread is still running after 5 s. */
@@ -116,6 +123,7 @@ final class RawRtspPeer implements AutoCloseable {
             while (true) {
                 String req = readRequest(in);
                 if (req == null) return;
+                requests.add(req);
                 String method = req.split(" ", 2)[0];
                 int status = 200;
                 String extra = "";

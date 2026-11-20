@@ -39,7 +39,9 @@ public final class RtspClient {
         ClientAuth auth = ClientAuth.of(config);
         byte[] tlsRoots = config.tlsRootCertsPem().orElse(null);
         long h = nConnect(effectiveUrl(config), auth.user(), auth.password(), auth.digestOnly(),
-            config.keepalive(), tlsRoots);
+            config.keepalive(), tlsRoots, config.keepaliveIntervalMs().orElse(0),
+            config.connectTimeoutMs().orElse(0), config.requestTimeoutMs().orElse(0),
+            config.userAgent().orElse(null));
         if (h == 0) {
             throw new RtspException(RtspException.Kind.PROTOCOL,
                 "nConnect returned 0 without throwing");
@@ -76,7 +78,9 @@ public final class RtspClient {
         ClientAuth auth = ClientAuth.of(config);
         byte[] tlsRoots = config.tlsRootCertsPem().orElse(null);
         long h = nConnectH264(effectiveUrl(config), auth.user(), auth.password(), auth.digestOnly(),
-            config.keepalive(), tlsRoots);
+            config.keepalive(), tlsRoots, config.keepaliveIntervalMs().orElse(0),
+            config.connectTimeoutMs().orElse(0), config.requestTimeoutMs().orElse(0),
+            config.userAgent().orElse(null));
         if (h == 0) {
             throw new RtspException(RtspException.Kind.PROTOCOL,
                 "nConnectH264 returned 0 without throwing");
@@ -124,7 +128,9 @@ public final class RtspClient {
         ClientAuth auth = ClientAuth.of(config);
         byte[] tlsRoots = config.tlsRootCertsPem().orElse(null);
         long h = nPush(effectiveUrl(config), auth.user(), auth.password(), auth.digestOnly(),
-            config.keepalive(), tlsRoots, description.kind(), description.klv(),
+            config.keepalive(), tlsRoots, config.keepaliveIntervalMs().orElse(0),
+            config.connectTimeoutMs().orElse(0), config.requestTimeoutMs().orElse(0),
+            config.userAgent().orElse(null), description.kind(), description.klv(),
             description.parameterSets());
         if (h == 0) {
             throw new RtspException(RtspException.Kind.PROTOCOL, "nPush returned 0 without throwing");
@@ -172,15 +178,19 @@ public final class RtspClient {
     // challenge handler picks it from the server's WWW-Authenticate header (matches
     // tst-py, which captures DigestAuth.algorithm for introspection only).
     // digestOnly true (a DigestAuth credential) refuses a challenge that offers no Digest.
-    // tlsRootCertsPem null means platform native trust roots.
+    // tlsRootCertsPem null means platform native trust roots. The three millisecond
+    // values are 0 and userAgent null where the config leaves them unset.
     private static native long nConnect(String url, String authUser, String authPassword,
-        boolean digestOnly, boolean keepalive, byte[] tlsRootCertsPem) throws RtspException;
+        boolean digestOnly, boolean keepalive, byte[] tlsRootCertsPem, long keepaliveIntervalMs,
+        long connectTimeoutMs, long requestTimeoutMs, String userAgent) throws RtspException;
 
     private static native long nConnectH264(String url, String authUser, String authPassword,
-        boolean digestOnly, boolean keepalive, byte[] tlsRootCertsPem) throws RtspException;
+        boolean digestOnly, boolean keepalive, byte[] tlsRootCertsPem, long keepaliveIntervalMs,
+        long connectTimeoutMs, long requestTimeoutMs, String userAgent) throws RtspException;
 
     // kind is a PushDescription.KIND_* code; parameterSets as PushDescription keeps them.
     private static native long nPush(String url, String authUser, String authPassword,
-        boolean digestOnly, boolean keepalive, byte[] tlsRootCertsPem, int kind, boolean klv,
+        boolean digestOnly, boolean keepalive, byte[] tlsRootCertsPem, long keepaliveIntervalMs,
+        long connectTimeoutMs, long requestTimeoutMs, String userAgent, int kind, boolean klv,
         byte[][] parameterSets) throws RtspException;
 }
