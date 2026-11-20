@@ -60,6 +60,9 @@ class ManagedCancelHandleClosedUnderneathTest {
             } finally {
                 forgetKey(rx);
             }
+        } finally {
+            // Closes a receiver the test body never reached; one still opening is left.
+            if (rxFuture.isDone() && !rxFuture.isCompletedExceptionally()) rxFuture.join().close();
         }
     }
 }

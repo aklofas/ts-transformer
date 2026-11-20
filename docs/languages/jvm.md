@@ -1250,12 +1250,12 @@ falls into two groups.
 so it takes as long as `stop()` (a parked `nextPublisher` does not hold it
 up). `OpenCancel.close()` frees the object only.
 
-One rule covers a closed object: a call on it throws
-`IllegalStateException("<Class> is closed")`, also when another thread's
-`close()` lands between the call's own open check and its native work. Only
-a call that was already parked when the close or a cancel landed ends with
-the transport's `CLOSED` instead. (`RtspPushSession.isSessionAlive()` is the
-one getter that answers `false` instead of throwing.)
+One rule covers a closed object: every call the table above does not list
+as answering once closed throws `IllegalStateException("<Class> is closed")`,
+also when another thread's `close()` lands between the call's own open check
+and its native work. Only a call that was already parked when the close or a
+cancel landed ends with the transport's `CLOSED` instead.
+`RtspPushSession.isSessionAlive()`, like `isAlive()`, answers `false`.
 
 `RtspSession` differs. Its `close()` cancels only a `pause()` / `play()` /
 `teardown()` in progress on another thread (that call throws `CLOSED`, and
