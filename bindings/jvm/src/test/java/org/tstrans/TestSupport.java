@@ -119,9 +119,17 @@ public final class TestSupport {
      * does not get there within {@code ms}.
      */
     public static void awaitInNative(Thread t, String method, long ms) throws InterruptedException {
+        awaitInNative(t, method, ms, () -> "");
+    }
+
+    /** {@link #awaitInNative(Thread, String, long)}, naming {@code ended} when {@code t} ends first. */
+    public static void awaitInNative(Thread t, String method, long ms, Supplier<String> ended)
+            throws InterruptedException {
         long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(ms);
         while (!inNative(t, method)) {
-            if (!t.isAlive()) throw new AssertionError(t.getName() + " ended before it reached " + method);
+            if (!t.isAlive()) {
+                throw new AssertionError(t.getName() + " ended before it reached " + method + ": " + ended.get());
+            }
             if (System.nanoTime() >= deadline) {
                 throw new AssertionError(t.getName() + " never reached " + method + " within " + ms + " ms");
             }
