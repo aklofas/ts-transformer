@@ -8,8 +8,9 @@ use pyo3::prelude::*;
 /// Cumulative stats snapshot for a RIST transport handle.
 ///
 /// Send-side counters are zero on a receive-only handle and vice-versa. The
-/// round-trip time is a smoothed value that stays 0 until the first RTCP
-/// exchange.
+/// round-trip time is a smoothed value. librist measures it in whole
+/// milliseconds, so it reads 0 until the first RTCP exchange and while the
+/// round trip is under 1 ms.
 #[pyclass(
     frozen,
     from_py_object,

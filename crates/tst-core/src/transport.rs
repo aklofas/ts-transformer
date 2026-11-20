@@ -105,10 +105,11 @@ crate::binding_record! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
     #[non_exhaustive]
     pub struct SocketStats {
-        /// Smoothed round-trip time in microseconds. `0` means "not yet
-        /// measured" (no samples observed). Transports that don't expose RTT
-        /// report `0`; saturates at the 32-bit maximum (about 71 minutes) where the
-        /// underlying value exceeds the field range.
+        /// Smoothed round-trip time in microseconds. `0` when the transport
+        /// has no RTT, has not measured one yet, or measures whole
+        /// milliseconds and the round trip is under 1 ms (RIST); saturates at
+        /// the 32-bit maximum (about 71 minutes) where the underlying value
+        /// exceeds the field range.
         pub rtt_us: u32,
 
         /// Send-rate estimate in bits per second (application-observed, not

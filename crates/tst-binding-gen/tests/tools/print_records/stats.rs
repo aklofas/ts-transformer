@@ -45,7 +45,9 @@ pub fn stats_records() -> Vec<Entry> {
     use tst_core::transport::SocketStats;
     use tst_hls::HlsStats;
     use tst_pipeline::ext::pairing::PairerStats;
-    use tst_pipeline::{ManagedTransportStats, MuxPublisherStats};
+    use tst_pipeline::{
+        DemuxReceiverStats, ManagedTransportStats, MuxPublisherStats, ReceiverStats,
+    };
     use tst_rist::RistStats;
     use tst_rtp::{H264DepayStats, MountStats, PublishMountStats, RtpStats, ServerStats};
     use tst_srt::SrtStats;
@@ -69,6 +71,41 @@ pub fn stats_records() -> Vec<Entry> {
             "self.bytes_received",
             "self.packets_received",
             "self.rtt_us",
+        ],
+    ));
+
+    let mut demux_receiver = stats(
+        "stats_shells",
+        "tstrans.shells",
+        "org/tstrans/shells",
+        "tst_pipeline::DemuxReceiverStats",
+        DemuxReceiverStats::BINDING_SCHEMA,
+    );
+    demux_receiver.py_repr = Some((
+        "DemuxReceiverStats(bytes_received={}, packets_received={}, program_maps_seen={}, pmt_versions_seen={}, discontinuities={}, nonconformant={})",
+        &[
+            "self.bytes_received",
+            "self.packets_received",
+            "self.program_maps_seen",
+            "self.pmt_versions_seen",
+            "self.discontinuities",
+            "self.nonconformant",
+        ],
+    ));
+    let mut receiver = stats(
+        "stats_shells",
+        "tstrans.shells",
+        "org/tstrans/shells",
+        "tst_pipeline::ReceiverStats",
+        ReceiverStats::BINDING_SCHEMA,
+    );
+    receiver.py_repr = Some((
+        "ReceiverStats(bytes_received={}, bytes_skipped_for_sync={}, resync_events={}, packets_received={})",
+        &[
+            "self.bytes_received",
+            "self.bytes_skipped_for_sync",
+            "self.resync_events",
+            "self.packets_received",
         ],
     ));
 
@@ -376,6 +413,8 @@ pub fn stats_records() -> Vec<Entry> {
 
     vec![
         socket,
+        demux_receiver,
+        receiver,
         muxer,
         demuxer,
         srt,

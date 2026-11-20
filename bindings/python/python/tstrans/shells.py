@@ -50,14 +50,18 @@ DemuxReceiver = _shells.DemuxReceiver
 CancelHandle = _shells.CancelHandle
 OpenCancel = _shells.OpenCancel
 SocketStats = _shells.SocketStats
+DemuxReceiverStats = _shells.DemuxReceiverStats
+ReceiverStats = _shells.ReceiverStats
 
 __all__ = [
     "CancelHandle",
     "DemuxReceiver",
+    "DemuxReceiverStats",
     "EndReason",
     "MuxSender",
     "OpenCancel",
     "Receiver",
+    "ReceiverStats",
     "Sender",
     "SocketStats",
 ]

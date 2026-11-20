@@ -13,9 +13,10 @@ package org.tstrans.shells;
  * Unsigned 64-bit values are carried as the bit pattern of a signed {@code long}: a value of 2^63
  * or more reads as negative.
  *
- * @param rttUs Smoothed round-trip time in microseconds. {@code 0} means "not yet measured" (no
- *     samples observed). Transports that don't expose RTT report {@code 0}; saturates at the 32-bit
- *     maximum (about 71 minutes) where the underlying value exceeds the field range.
+ * @param rttUs Smoothed round-trip time in microseconds. {@code 0} when the transport has no RTT,
+ *     has not measured one yet, or measures whole milliseconds and the round trip is under 1 ms
+ *     (RIST); saturates at the 32-bit maximum (about 71 minutes) where the underlying value exceeds
+ *     the field range.
  * @param sendBandwidthBps Send-rate estimate in bits per second (application-observed, not
  *     link-layer). {@code 0} when the transport doesn't compute this.
  * @param recvBandwidthBps Receive-rate estimate in bits per second. {@code 0} when not computed.

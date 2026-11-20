@@ -650,23 +650,53 @@ impl crate::shell_error::ShellError for DemuxReceiverError {
     }
 }
 
-/// Stats snapshot for [`DemuxReceiver`]. Composes the underlying
-/// [`crate::receiver::ReceiverStats`] (bytes/packets received, sync-recovery
-/// counters) with the [`tst_core::mpegts::demux::DemuxerStats`] (events emitted,
-/// per-PID counters). Sync-recovery counters (`bytes_skipped_for_sync`,
-/// `resync_events`) live only on `ReceiverStats` — call
-/// `Receiver::stats()` directly to read them.
-#[must_use]
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-#[non_exhaustive]
-pub struct DemuxReceiverStats {
-    pub bytes_received: u64,
-    pub packets_received: u64,
-    pub program_maps_seen: u64,
-    pub pmt_versions_seen: u64,
-    pub discontinuities: u64,
-    pub nonconformant: u64,
-    pub per_stream: BTreeMap<u16, tst_core::mpegts::stats::StreamStats>,
+tst_core::binding_record! {
+    /// Counters of a demuxing receiver: the aligned TS packets it received
+    /// and what its demuxer saw in them. Counters are cumulative since the
+    /// receiver was built or its stats were last reset.
+    ///
+    /// <!-- rust-only -->
+    /// Stats snapshot for [`DemuxReceiver`]. Composes the underlying
+    /// [`crate::receiver::ReceiverStats`] (bytes/packets received) with the
+    /// [`tst_core::mpegts::demux::DemuxerStats`] (events emitted, per-PID
+    /// counters). The sync-recovery counters (`bytes_skipped_for_sync`,
+    /// `resync_events`) live only on `ReceiverStats`.
+    #[must_use]
+    #[derive(Debug, Clone, Default, PartialEq, Eq)]
+    #[non_exhaustive]
+    pub struct DemuxReceiverStats {
+        /// Bytes of the aligned 188-byte TS packets the receiver took from
+        /// its transport, `packets_received` times 188. A managed receiver
+        /// also counts the one packet it drops at each reconnect. A stats
+        /// reset zeroes it; the receiver's demuxed-bytes count is the one
+        /// that never resets and never waits for the receiver.
+        ///
+        /// <!-- rust-only -->
+        /// [`DemuxReceiver::reset_stats`] zeroes it;
+        /// [`DemuxReceiver::ts_bytes_demuxed`] is the never-waiting count.
+        pub bytes_received: u64,
+        /// Aligned 188-byte TS packets the receiver took from its transport.
+        /// A stats reset zeroes it.
+        pub packets_received: u64,
+        /// Program maps the demuxer reported, one per new PMT version of each
+        /// program.
+        /// A stats reset zeroes it.
+        pub program_maps_seen: u64,
+        /// Distinct PMT versions seen, the first sighting included; a repeat
+        /// of the known version is not counted. A stats reset zeroes it and
+        /// keeps the known version, so a repeat after the reset is not
+        /// counted either.
+        pub pmt_versions_seen: u64,
+        /// Discontinuities the demuxer reported, over every PID. A stats
+        /// reset zeroes it.
+        pub discontinuities: u64,
+        /// Non-conformant inputs the demuxer reported, over every PID. A
+        /// stats reset zeroes it.
+        pub nonconformant: u64,
+        /// Per-PID counters, copied from the demuxer's stats.
+        @[skip]
+        pub per_stream: BTreeMap<u16, tst_core::mpegts::stats::StreamStats>,
+    }
 }
 
 impl<R: RecvTransport> DemuxReceiver<R> {
@@ -771,6 +801,32 @@ mod stats_tests {
         fn close(&mut self) {
             self.alive = false;
         }
+    }
+
+    #[test]
+    fn demux_receiver_stats_schema_lists_the_six_counters() {
+        let schema = DemuxReceiverStats::BINDING_SCHEMA;
+        let names: Vec<&str> = schema.fields.iter().map(|f| f.name).collect();
+        assert_eq!(
+            names,
+            [
+                "bytes_received",
+                "packets_received",
+                "program_maps_seen",
+                "pmt_versions_seen",
+                "discontinuities",
+                "nonconformant",
+                "per_stream",
+            ]
+        );
+        let crossing: Vec<&str> = schema
+            .fields
+            .iter()
+            .filter(|f| f.mark != tst_core::binding_schema::FieldMark::Skip)
+            .map(|f| f.name)
+            .collect();
+        assert_eq!(crossing.len(), 6, "{crossing:?}");
+        assert!(!crossing.contains(&"per_stream"));
     }
 
     #[test]

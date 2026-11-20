@@ -22,10 +22,11 @@ use pyo3::prelude::*;
 )]
 #[derive(Debug, Clone, Copy)]
 pub struct SocketStats {
-    /// Smoothed round-trip time in microseconds. `0` means "not yet
-    /// measured" (no samples observed). Transports that don't expose RTT
-    /// report `0`; saturates at the 32-bit maximum (about 71 minutes) where
-    /// the underlying value exceeds the field range.
+    /// Smoothed round-trip time in microseconds. `0` when the transport has
+    /// no RTT, has not measured one yet, or measures whole milliseconds and
+    /// the round trip is under 1 ms (RIST); saturates at the 32-bit maximum
+    /// (about 71 minutes) where the underlying value exceeds the field
+    /// range.
     pub rtt_us: u32,
     /// Send-rate estimate in bits per second (application-observed, not
     /// link-layer). `0` when the transport doesn't compute this.
@@ -108,8 +109,123 @@ impl From<&tst_core::transport::SocketStats> for SocketStats {
     }
 }
 
+/// Counters of a demuxing receiver: the aligned TS packets it received and
+/// what its demuxer saw in them. Counters are cumulative since the receiver
+/// was built or its stats were last reset.
+#[pyclass(
+    frozen,
+    from_py_object,
+    get_all,
+    name = "DemuxReceiverStats",
+    module = "tstrans.shells"
+)]
+#[derive(Debug, Clone, Copy)]
+pub struct DemuxReceiverStats {
+    /// Bytes of the aligned 188-byte TS packets the receiver took from its
+    /// transport, `packets_received` times 188. A managed receiver also
+    /// counts the one packet it drops at each reconnect. A stats reset
+    /// zeroes it; the receiver's demuxed-bytes count is the one that never
+    /// resets and never waits for the receiver.
+    pub bytes_received: u64,
+    /// Aligned 188-byte TS packets the receiver took from its transport. A
+    /// stats reset zeroes it.
+    pub packets_received: u64,
+    /// Program maps the demuxer reported, one per new PMT version of each
+    /// program. A stats reset zeroes it.
+    pub program_maps_seen: u64,
+    /// Distinct PMT versions seen, the first sighting included; a repeat of
+    /// the known version is not counted. A stats reset zeroes it and keeps
+    /// the known version, so a repeat after the reset is not counted
+    /// either.
+    pub pmt_versions_seen: u64,
+    /// Discontinuities the demuxer reported, over every PID. A stats reset
+    /// zeroes it.
+    pub discontinuities: u64,
+    /// Non-conformant inputs the demuxer reported, over every PID. A stats
+    /// reset zeroes it.
+    pub nonconformant: u64,
+}
+
+#[pymethods]
+impl DemuxReceiverStats {
+    fn __repr__(&self) -> String {
+        format!(
+            "DemuxReceiverStats(bytes_received={}, packets_received={}, program_maps_seen={}, pmt_versions_seen={}, discontinuities={}, nonconformant={})",
+            self.bytes_received,
+            self.packets_received,
+            self.program_maps_seen,
+            self.pmt_versions_seen,
+            self.discontinuities,
+            self.nonconformant
+        )
+    }
+}
+
+impl From<&tst_pipeline::DemuxReceiverStats> for DemuxReceiverStats {
+    fn from(r: &tst_pipeline::DemuxReceiverStats) -> Self {
+        Self {
+            bytes_received: r.bytes_received,
+            packets_received: r.packets_received,
+            program_maps_seen: r.program_maps_seen,
+            pmt_versions_seen: r.pmt_versions_seen,
+            discontinuities: r.discontinuities,
+            nonconformant: r.nonconformant,
+        }
+    }
+}
+
+/// Counters of a TS receiver: the aligned packets it handed out and what
+/// its sync recovery dropped to find them. Counters are cumulative since
+/// the receiver was built or its stats were last reset.
+#[pyclass(
+    frozen,
+    from_py_object,
+    get_all,
+    name = "ReceiverStats",
+    module = "tstrans.shells"
+)]
+#[derive(Debug, Clone, Copy)]
+pub struct ReceiverStats {
+    /// Total bytes returned to callers as valid 188-byte TS packets.
+    pub bytes_received: u64,
+    /// Bytes discarded while scanning for the 0x47 sync byte (HUNT and
+    /// failed-VERIFY drops combined).
+    pub bytes_skipped_for_sync: u64,
+    /// Number of times the syncer transitioned from HUNT/VERIFY to LOCKED —
+    /// counts both the initial lock-on and any re-locks after sync loss.
+    pub resync_events: u64,
+    /// Number of 188-byte TS packets returned to callers.
+    pub packets_received: u64,
+}
+
+#[pymethods]
+impl ReceiverStats {
+    fn __repr__(&self) -> String {
+        format!(
+            "ReceiverStats(bytes_received={}, bytes_skipped_for_sync={}, resync_events={}, packets_received={})",
+            self.bytes_received,
+            self.bytes_skipped_for_sync,
+            self.resync_events,
+            self.packets_received
+        )
+    }
+}
+
+impl From<&tst_pipeline::ReceiverStats> for ReceiverStats {
+    fn from(r: &tst_pipeline::ReceiverStats) -> Self {
+        Self {
+            bytes_received: r.bytes_received,
+            bytes_skipped_for_sync: r.bytes_skipped_for_sync,
+            resync_events: r.resync_events,
+            packets_received: r.packets_received,
+        }
+    }
+}
+
 /// Adds every generated class to `m`.
 pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<SocketStats>()?;
+    m.add_class::<DemuxReceiverStats>()?;
+    m.add_class::<ReceiverStats>()?;
     Ok(())
 }

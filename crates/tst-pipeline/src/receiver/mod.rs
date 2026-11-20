@@ -26,27 +26,34 @@ use tst_core::transport::TransportError;
 use crate::binding::kind::{coarsen, kind_of_transport};
 use crate::shell_error::ShellErrorKind;
 
-/// Application-level stats for [`Receiver`].
-///
-/// Mirrors the shape of [`crate::SenderStats`] on the receive
-/// side. The sync-recovery counters (`bytes_skipped_for_sync`,
-/// `resync_events`) reflect the [`sync::Syncer`] state machine: bytes
-/// drained while hunting for alignment, and successful lock acquisitions
-/// (initial lock-on and re-locks after losing sync mid-stream).
-#[must_use]
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-#[non_exhaustive]
-pub struct ReceiverStats {
-    /// Total bytes returned to callers as valid 188-byte TS packets.
-    pub bytes_received: u64,
-    /// Bytes discarded while scanning for the 0x47 sync byte (HUNT and
-    /// failed-VERIFY drops combined).
-    pub bytes_skipped_for_sync: u64,
-    /// Number of times the syncer transitioned from HUNT/VERIFY to LOCKED —
-    /// counts both the initial lock-on and any re-locks after sync loss.
-    pub resync_events: u64,
-    /// Number of 188-byte TS packets returned to callers.
-    pub packets_received: u64,
+tst_core::binding_record! {
+    /// Counters of a TS receiver: the aligned packets it handed out and
+    /// what its sync recovery dropped to find them. Counters are cumulative
+    /// since the receiver was built or its stats were last reset.
+    ///
+    /// <!-- rust-only -->
+    /// Application-level stats for [`Receiver`].
+    ///
+    /// Mirrors the shape of [`crate::SenderStats`] on the receive
+    /// side. The sync-recovery counters (`bytes_skipped_for_sync`,
+    /// `resync_events`) reflect the [`sync::Syncer`] state machine: bytes
+    /// drained while hunting for alignment, and successful lock acquisitions
+    /// (initial lock-on and re-locks after losing sync mid-stream).
+    #[must_use]
+    #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+    #[non_exhaustive]
+    pub struct ReceiverStats {
+        /// Total bytes returned to callers as valid 188-byte TS packets.
+        pub bytes_received: u64,
+        /// Bytes discarded while scanning for the 0x47 sync byte (HUNT and
+        /// failed-VERIFY drops combined).
+        pub bytes_skipped_for_sync: u64,
+        /// Number of times the syncer transitioned from HUNT/VERIFY to LOCKED —
+        /// counts both the initial lock-on and any re-locks after sync loss.
+        pub resync_events: u64,
+        /// Number of 188-byte TS packets returned to callers.
+        pub packets_received: u64,
+    }
 }
 
 /// Receive shell that emits one 188-byte TS packet per call, with automatic
@@ -456,6 +463,24 @@ mod stats_tests {
         let mut v = vec![0x47];
         v.extend_from_slice(&[0u8; 187]);
         v
+    }
+
+    #[test]
+    fn receiver_stats_schema_lists_the_four_counters() {
+        let names: Vec<&str> = ReceiverStats::BINDING_SCHEMA
+            .fields
+            .iter()
+            .map(|f| f.name)
+            .collect();
+        assert_eq!(
+            names,
+            [
+                "bytes_received",
+                "bytes_skipped_for_sync",
+                "resync_events",
+                "packets_received",
+            ]
+        );
     }
 
     #[test]
