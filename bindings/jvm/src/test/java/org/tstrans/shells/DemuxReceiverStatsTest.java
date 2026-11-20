@@ -317,6 +317,39 @@ class DemuxReceiverStatsTest {
         assertFalse(t.isAlive());
     }
 
+    /** One RTP packet (version 2, payload type 33) carrying {@code ts}. */
+    private static byte[] rtpPacket(byte[] ts) {
+        byte[] d = new byte[12 + ts.length];
+        d[0] = (byte) 0x80;
+        d[1] = 33;
+        System.arraycopy(ts, 0, d, 12, ts.length);
+        return d;
+    }
+
+    /**
+     * Datagrams the receive dropped before any {@code rtpStats()} call are counted after
+     * {@code close()}: the close's own read is the only one. A well-formed datagram sent
+     * after the malformed ones is received, which proves the receive consumed them first
+     * (one socket queue, in order); {@code rtpStats()} is first called after the close.
+     */
+    @ParameterizedTest
+    @ValueSource(strings = {"Receiver", "DemuxReceiver"})
+    void rtpStatsAfterCloseCountsDatagramsNeverReadBefore(String shell) throws Exception {
+        int port = freeUdpPort();
+        RtpRx rx = open(shell, "rtp://127.0.0.1:" + port);
+        try {
+            for (int i = 0; i < 3; i++) sendDatagram(port, versionOneDatagram());
+            sendDatagram(port, rtpPacket(concat(statsCapture())));
+            ShellPeers.within(WAIT_MS, "the well-formed datagram", () -> {
+                rx.recvOnce();
+                return null;
+            });
+        } finally {
+            rx.close();
+        }
+        assertEquals(3, rx.rtpStats().orElseThrow().malformedPackets());
+    }
+
     @ParameterizedTest
     @ValueSource(strings = {"Receiver", "DemuxReceiver"})
     void rtpStatsIsEmptyOffRtp(String shell) throws Exception {
