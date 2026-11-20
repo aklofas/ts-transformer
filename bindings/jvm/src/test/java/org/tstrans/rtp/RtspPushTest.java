@@ -1007,6 +1007,37 @@ class RtspPushTest {
     }
 
     @Test
+    @Timeout(60)
+    @EnabledIfSystemProperty(named = "tst.jniTestHooks", matches = "true")
+    void aSecondCloseKeepsTheValuesTheSessionEndedWith() throws Exception {
+        for (String ending : List.of("close", "teardown")) {
+            try (ScriptedRecordServer peer = new ScriptedRecordServer(200, false)) {
+                RtspPushSession push = RtspClient.push(peer.config(), PushDescription.mp2t());
+                for (int i = 0; i < 5; i++) push.sendTs(NULL_BUNDLE);
+                Side holder = Side.start("query-holder", () -> PushProbe.nHoldAsReader(push.nativeHandleForTest()));
+                try {
+                    assertTrue(waitFor(PushProbe::nReaderHolds), "the probe never held the session");
+                    long rounds = PushProbe.nWaitRounds();
+                    Side first = Side.start("first-" + ending, ending.equals("close") ? push::close : push::teardown);
+                    // The first call has met the held session and has not ended it yet.
+                    awaitWaitRound(first, rounds);
+                    // A second close returns at once and must not fix the values early.
+                    push.close();
+                    assertEquals(Optional.empty(), push.endReason(), ending);
+                    PushProbe.nRelease();
+                    first.assertEndedNormally();
+                } finally {
+                    PushProbe.nRelease();
+                }
+                holder.assertEndedNormally();
+                assertEquals(Optional.of(EndReason.CLEAN_TEARDOWN), push.endReason(), ending);
+                assertEquals(5L, push.stats().packetsSent(), ending);
+                assertEquals(peer.rtpFramesRead.get(), push.stats().packetsSent(), ending);
+            }
+        }
+    }
+
+    @Test
     @Timeout(30)
     void finishAfterIntoSenderDeliversEveryPacket() throws Exception {
         try (ScriptedRecordServer peer = new ScriptedRecordServer(200, false)) {

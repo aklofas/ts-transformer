@@ -97,6 +97,8 @@ public final class RtspPushSession extends NativeHandle {
     // What the reader said last before it was freed.
     private volatile RtspPushStats lastStats;
     private volatile EndReasonSnapshot lastEnd;
+    // Set once a conversion took the push: then this object's close() frees the reader.
+    private volatile boolean converted;
 
     RtspPushSession(long h) {
         setHandle(h);
@@ -224,10 +226,15 @@ public final class RtspPushSession extends NativeHandle {
         ensureOpen(CLOSED);
         long h = consumeHandle();
         if (h == 0) throw new IllegalStateException(CLOSED);
+        boolean ended = false;
         try {
             nTeardown(h);
+            ended = true;
+        } catch (RtspException e) {
+            ended = true;   // the TEARDOWN ran and was refused or failed
+            throw e;
         } finally {
-            releaseStats();
+            if (ended) releaseStats();
         }
     }
 
@@ -296,7 +303,8 @@ public final class RtspPushSession extends NativeHandle {
     }
 
     // Keep what the reader says now, then free it; a reader racing this answers with
-    // the kept values once the key is gone.
+    // the kept values once the key is gone. Called only by the call that ended the
+    // session (or, after a conversion, by close()), so the values kept are final.
     private void releaseStats() {
         long k = statsKey.get();
         if (k == 0) return;
@@ -358,8 +366,8 @@ public final class RtspPushSession extends NativeHandle {
      * @param config the muxer program configuration
      * @return a {@code MuxSender} that owns the session
      * @throws MuxException {@code CONFIG_INVALID} if the muxer refuses the configuration
-     * @throws RtspException not thrown today; kept so a later conversion failure needs no
-     *     signature change
+     * @throws RtspException {@code CLOSED} on a session a panic poisoned (see the class);
+     *     nothing is consumed
      * @throws IllegalArgumentException on a session announced with a video track
      * @throws IllegalStateException if the session is closed, or while a send,
      *     {@code pause()} or {@code resume()} is running on another thread
@@ -378,6 +386,7 @@ public final class RtspPushSession extends NativeHandle {
             config.streamKinds(), config.streamCodecs(), config.streamTypeCodes(),
             config.streamCarriesPts(), config.dataDescBytes(), config.dataDescLens());
         consumeHandle();
+        converted = true;
         return ShellAdapters.muxSender(h);
     }
 
@@ -403,8 +412,8 @@ public final class RtspPushSession extends NativeHandle {
      * follow the push the sender owns.
      *
      * @return a {@code Sender} that owns the session
-     * @throws RtspException not thrown today; kept so a later conversion failure needs no
-     *     signature change
+     * @throws RtspException {@code CLOSED} on a session a panic poisoned (see the class);
+     *     nothing is consumed
      * @throws IllegalArgumentException on a session announced with a video track
      * @throws IllegalStateException if the session is closed, or while a send,
      *     {@code pause()} or {@code resume()} is running on another thread
@@ -414,6 +423,7 @@ public final class RtspPushSession extends NativeHandle {
         // Claimed after the native has taken the session (see intoMuxSender).
         long h = nIntoSender(peekHandle());
         consumeHandle();
+        converted = true;
         return ShellAdapters.sender(h);
     }
 
@@ -436,10 +446,12 @@ public final class RtspPushSession extends NativeHandle {
      */
     @Override public void close() {
         super.close();
-        releaseStats();
+        if (converted) releaseStats();
     }
 
-    @Override protected void nativeClose(long h) { nClose(h); }
+    @Override protected void nativeClose(long h) {
+        if (nClose(h)) releaseStats();
+    }
 
     // Test-only: the raw registry key, for the jni-test-hooks probes.
     long nativeHandleForTest() { return peekHandle(); }
@@ -463,5 +475,5 @@ public final class RtspPushSession extends NativeHandle {
         int[] streamTypeCodes, boolean[] streamCarriesPts, byte[] dataDescBytes,
         int[] dataDescLens) throws RtspException, MuxException;
     private static native long nIntoSender(long handle) throws RtspException;
-    private static native void nClose(long handle);
+    private static native boolean nClose(long handle);
 }

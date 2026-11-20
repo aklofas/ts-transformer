@@ -498,13 +498,16 @@ jni_native! {
 jni_native! {
     /// `RtspPushSession.nClose(handle)`: `RtspPush::close` (the queued media written,
     /// TEARDOWN under 500 ms, the client's thread stopped), silent. Idempotent: only
-    /// the close that wins the registry entry runs it.
-    fn Java_org_tstrans_rtp_RtspPushSession_nClose(_env, _class, handle: jlong) = () => {
+    /// the close that wins the registry entry runs it. `true` when this call ended the
+    /// push, `false` when a conversion had taken it.
+    fn Java_org_tstrans_rtp_RtspPushSession_nClose(_env, _class, handle: jlong) -> jboolean = false => {
         if let Some(entry) = REGISTRY_PUSH.close(handle as u64)
             && let Some(push) = take_for_close(&entry, handle)
         {
             let _ = push.close();
+            return true;
         }
+        false
     }
 }
 

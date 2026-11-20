@@ -2828,7 +2828,8 @@ The surface:
   `stats()`, `endReason()` and `endDetail()` never wait and never throw:
   they answer while a send is waiting, after `close()` and `teardown()`
   with the values the session ended with, and after a conversion they
-  follow the push the sender owns until this session's `close()`.
+  follow the push the sender owns until this session's `close()`: close the
+  converted session object too (a try-with-resources around it does).
 
 How each call ends:
 
