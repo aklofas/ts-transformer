@@ -437,7 +437,10 @@ it into 7-packet (1316-byte) SRT bundles internally. Call `flush()` after
 the last push to emit a partial bundle, or end with `finish()`: it
 flushes, closes the transport without cancelling first and raises the
 flush's error, so a transport that queues (an RTSP push) writes what it
-holds. `socket_stats()` returns the
+holds. A stream of one or two aligned TS packets is not delivered by
+either, and nothing reports it: the sender forwards bytes only once three
+aligned packets have confirmed the TS alignment; three or more are
+delivered. `socket_stats()` returns the
 scheme-neutral 16-field `SocketStats`; `srt_stats()` returns the
 libsrt-rich `SrtStats` (estimated bandwidth, symmetric send/recv-side loss
 split).

@@ -227,7 +227,12 @@ class Sender:
     def send_bytes(self, data: _BytesLike) -> None:
         """After ``cancel_handle().cancel()`` this raises ``CLOSED``, buffered data included."""
     def flush(self) -> None:
-        """After ``cancel_handle().cancel()`` this raises ``CLOSED``, buffered data included."""
+        """After ``cancel_handle().cancel()`` this raises ``CLOSED``, buffered data included.
+
+        A stream of one or two aligned TS packets is not delivered, and
+        nothing reports it: the sender forwards bytes only once three
+        aligned packets have confirmed the TS alignment. Three or more are
+        delivered."""
     def cancel_handle(self) -> CancelHandle: ...
     def socket_stats(self) -> SocketStats: ...
     def srt_stats(self) -> SrtStats:
@@ -242,7 +247,12 @@ class Sender:
         nothing, and a `finish()` after `close()` is quiet. Waits behind a
         `send_bytes()` parked on another thread. After
         ``cancel_handle().cancel()`` this raises ``CLOSED``, buffered data
-        included."""
+        included.
+
+        A stream of one or two aligned TS packets is not delivered, and
+        nothing reports it: the sender forwards bytes only once three
+        aligned packets have confirmed the TS alignment. Three or more are
+        delivered."""
     def is_alive(self) -> bool: ...
     def __enter__(self) -> Sender: ...
     def __exit__(

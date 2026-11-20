@@ -118,6 +118,11 @@ impl PySender {
     /// the GIL. Call it before `close()` when the tail matters: `close()`
     /// cancels first and does not drain the framing buffer; `finish()`
     /// flushes and closes without a cancel.
+    ///
+    /// A stream of one or two aligned TS packets is not delivered, and
+    /// nothing reports it: the sender forwards bytes only once three
+    /// aligned packets have confirmed the TS alignment. Three or more are
+    /// delivered.
     fn flush(&self, py: Python<'_>) -> PyResult<()> {
         let res = crate::util::allow_threads_parking(py, || {
             self.owned.with_mut_unless_cancelled(|s| s.flush())
@@ -195,6 +200,11 @@ impl PySender {
     /// the shell and `finish()` waits behind it; `close()` instead if that
     /// is not wanted. After `cancel_handle().cancel()` it raises `CLOSED`,
     /// buffered data included.
+    ///
+    /// A stream of one or two aligned TS packets is not delivered, and
+    /// nothing reports it: the sender forwards bytes only once three
+    /// aligned packets have confirmed the TS alignment. Three or more are
+    /// delivered.
     fn finish(&self, py: Python<'_>) -> PyResult<()> {
         // lossless shutdown: drains through the transport, documented to wait behind a send in flight
         match crate::util::allow_threads_parking(py, || {
