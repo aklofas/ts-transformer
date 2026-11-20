@@ -114,24 +114,17 @@ fn run_port(entry: &str, row: &Row) -> u16 {
     }
 }
 
-/// The directory that stands for the corpus's certificate placeholder,
-/// written once: a self-signed certificate and its key.
-fn tls_dir() -> &'static str {
-    static DIR: OnceLock<(tempfile::TempDir, String)> = OnceLock::new();
-    &DIR.get_or_init(|| {
-        let cert = rcgen::generate_simple_self_signed(vec![
-            "127.0.0.1".to_string(),
-            "localhost".to_string(),
-        ])
-        .expect("generate a self-signed certificate");
-        let dir = tempfile::tempdir().expect("a directory for the certificate");
-        let [crt, key] = TLS_FILES;
-        std::fs::write(dir.path().join(crt), cert.cert.pem()).unwrap();
-        std::fs::write(dir.path().join(key), cert.signing_key.serialize_pem()).unwrap();
-        let path = dir.path().display().to_string();
-        (dir, path)
-    })
-    .1
+/// A directory for the corpus's certificate placeholder: a self-signed
+/// certificate and its key. Removed when dropped.
+fn tls_dir() -> tempfile::TempDir {
+    let cert =
+        rcgen::generate_simple_self_signed(vec!["127.0.0.1".to_string(), "localhost".to_string()])
+            .expect("generate a self-signed certificate");
+    let dir = tempfile::tempdir().expect("a directory for the certificate");
+    let [crt, key] = TLS_FILES;
+    std::fs::write(dir.path().join(crt), cert.cert.pem()).unwrap();
+    std::fs::write(dir.path().join(key), cert.signing_key.serialize_pem()).unwrap();
+    dir
 }
 
 /// The last-error code after an open returned null (or a negative status).
@@ -522,6 +515,7 @@ fn run_family(family: &str) {
     let mut mismatches = Vec::new();
     let mut timings = Vec::new();
     let (mut absent, mut wire_rows) = (0, 0);
+    let mut tls: Option<tempfile::TempDir> = None;
     for row in &rows {
         let (entry, _probe) = corpus.entry("c", row);
         if entry == "absent" {
@@ -533,8 +527,12 @@ fn run_family(family: &str) {
         } else {
             0
         };
-        let dir = if row.needs_dir() { tls_dir() } else { DIR };
-        let row = &row.resolve(port, dir);
+        let dir = if row.needs_dir() {
+            tls.get_or_insert_with(tls_dir).path().display().to_string()
+        } else {
+            DIR.to_string()
+        };
+        let row = &row.resolve(port, &dir);
         let row_started = Instant::now();
         let observed = probe(entry, row);
         if let Err(why) = url::check_outcome_code(row, "c", observed) {
