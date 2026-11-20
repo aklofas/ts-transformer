@@ -1001,6 +1001,8 @@ def test_a_close_racing_a_conversion_never_hands_out_a_cancelled_shell() -> None
 
 
 def test_a_conversion_does_not_wait_behind_a_recv_on_another_thread() -> None:
+    # Looked up first: a build without the hook skips before any socket opens.
+    held = shells_hook("_slot_held_for_test")
     client, accepted, listener = _accepted_pair()
     ended: list[object] = []
 
@@ -1010,7 +1012,6 @@ def test_a_conversion_does_not_wait_behind_a_recv_on_another_thread() -> None:
         except TcpError as e:
             ended.append(e.kind)
 
-    held = shells_hook("_slot_held_for_test")
     held_while_idle = held(accepted)
     reader = threading.Thread(target=recv_once, daemon=True)
     try:
