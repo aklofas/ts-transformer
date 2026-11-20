@@ -107,13 +107,13 @@ impl Publisher {
 EOF
 GLF="$tmp/gl/held/shell.rs"
 printf '# none\n' > "$tmp/gl/empty.tsv"
-printf '%s\t%s\t%s\n' "$GLF" Publisher::push "fixture" "$GLF" Publisher::local_addr "fixture" \
-                      "$GLF" Publisher::add_sink "fixture" "$GLF" Handle::local_addr "fixture" > "$tmp/gl/listed.tsv"
-printf '%s\t%s\t%s\n' "$GLF" Publisher::push "fixture" "$GLF" Publisher::local_addr "fixture" \
-                      "$GLF" Publisher::add_sink "fixture" > "$tmp/gl/othertype.tsv"
-{ cat "$tmp/gl/listed.tsv"; printf '%s\t%s\t%s\n' "$GLF" Publisher::stats "fixture"; } > "$tmp/gl/stale.tsv"
-{ grep -v 'Handle::' "$tmp/gl/listed.tsv"; printf '%s\t%s\n' "$GLF" Handle::local_addr; } > "$tmp/gl/noreason.tsv"
-{ cat "$tmp/gl/listed.tsv"; printf '%s\t%s\t%s\n' "$GLF" Publisher::recv "fixture"; } > "$tmp/gl/stale_parking.tsv"
+printf '%s\t%s\t%s\t%s\n' "$GLF" Publisher::push inner "fixture" "$GLF" Publisher::local_addr inner "fixture" \
+                      "$GLF" Publisher::add_sink errors "fixture" "$GLF" Handle::local_addr inner "fixture" > "$tmp/gl/listed.tsv"
+printf '%s\t%s\t%s\t%s\n' "$GLF" Publisher::push inner "fixture" "$GLF" Publisher::local_addr inner "fixture" \
+                      "$GLF" Publisher::add_sink errors "fixture" > "$tmp/gl/othertype.tsv"
+{ cat "$tmp/gl/listed.tsv"; printf '%s\t%s\t%s\t%s\n' "$GLF" Publisher::stats inner "fixture"; } > "$tmp/gl/stale.tsv"
+{ grep -v 'Handle::' "$tmp/gl/listed.tsv"; printf '%s\t%s\t%s\n' "$GLF" Handle::local_addr inner; } > "$tmp/gl/noreason.tsv"
+{ cat "$tmp/gl/listed.tsv"; printf '%s\t%s\t%s\t%s\n' "$GLF" Publisher::recv inner "fixture"; } > "$tmp/gl/stale_parking.tsv"
 
 expect "gil locks: a .lock() taken with the GIL held is caught"         1 env SG_ONLY_LOCKS=1 SG_LOCK_ROOTS="$tmp/gl/held"  SG_LOCK_ALLOWLIST="$tmp/gl/empty.tsv"     bash "$SG"
 expect "gil locks: the same functions, allowlisted, pass"               0 env SG_ONLY_LOCKS=1 SG_LOCK_ROOTS="$tmp/gl/held"  SG_LOCK_ALLOWLIST="$tmp/gl/listed.tsv"    bash "$SG"
@@ -158,9 +158,9 @@ impl Session {
 }
 EOF
 GLS="$tmp/gl/slot/shell.rs"
-printf '%s\t%s\t%s\n' "$GLS" Session::data "fixture" "$GLS" Session::count "fixture" \
-                      "$GLS" Session::close "fixture" "$GLS" Session::into_sender "fixture" > "$tmp/gl/slot.tsv"
-{ cat "$tmp/gl/slot.tsv"; printf '%s\t%s\t%s\n' "$GLS" Session::pause "fixture"; } > "$tmp/gl/slot_stale.tsv"
+printf '%s\t%s\t%s\t%s\n' "$GLS" Session::data slot "fixture" "$GLS" Session::count slot "fixture" \
+                      "$GLS" Session::close slot "fixture" "$GLS" Session::into_sender slot "fixture" > "$tmp/gl/slot.tsv"
+{ cat "$tmp/gl/slot.tsv"; printf '%s\t%s\t%s\t%s\n' "$GLS" Session::pause slot "fixture"; } > "$tmp/gl/slot_stale.tsv"
 expect "gil locks: a ParkingSlot wait with the GIL held is caught" 1 env SG_ONLY_LOCKS=1 SG_LOCK_ROOTS="$tmp/gl/slot" SG_LOCK_ALLOWLIST="$tmp/gl/empty.tsv" bash "$SG"
 for w in Session::data Session::count Session::close Session::into_sender; do
     expect_out "gil locks: the slot wait in $w" "$w"
@@ -191,10 +191,10 @@ impl Publisher {
     }
 }
 EOF
-printf '%s\t%s\t%s\n' "$tmp/gl/rwlock/shell.rs" Publisher::local_addr "fixture" \
-                      "$tmp/gl/rwlock/shell.rs" Publisher::set_name  "fixture" \
-                      "$tmp/gl/rwlock/shell.rs" Publisher::peek      "fixture" \
-                      "$tmp/gl/rwlock/shell.rs" Publisher::ufcs      "fixture" > "$tmp/gl/rwlock-allow.tsv"
+printf '%s\t%s\t%s\t%s\n' "$tmp/gl/rwlock/shell.rs" Publisher::local_addr inner "fixture" \
+                      "$tmp/gl/rwlock/shell.rs" Publisher::set_name  inner "fixture" \
+                      "$tmp/gl/rwlock/shell.rs" Publisher::peek      inner "fixture" \
+                      "$tmp/gl/rwlock/shell.rs" Publisher::ufcs      inner "fixture" > "$tmp/gl/rwlock-allow.tsv"
 cat > "$tmp/gl/macro/shell.rs" <<'EOF'
 macro_rules! held_guard {
     ($m:expr) => { $m.lock().unwrap() };
@@ -211,7 +211,7 @@ fn allowed() {
     drop(guard);
 }
 EOF
-printf '%s\t%s\t%s\n' "$tmp/gl/macro/shell.rs" allowed 'SAFE has no holder that releases the GIL' > "$tmp/gl/macro-allow.tsv"
+printf '%s\t%s\t%s\t%s\n' "$tmp/gl/macro/shell.rs" allowed SAFE 'SAFE has no holder that releases the GIL' > "$tmp/gl/macro-allow.tsv"
 
 # `fn` was never reset at a closing brace, so a macro_rules! body AFTER a
 # function inherited that function's name and
@@ -229,7 +229,7 @@ macro_rules! held_guard {
     ($m:expr) => { $m.lock().unwrap() };
 }
 EOF
-printf '%s\t%s\t%s\n' "$tmp/gl/macro-after-fn/shell.rs" allowed 'SAFE has no holder that releases the GIL' > "$tmp/gl/macro-after-fn-allow.tsv"
+printf '%s\t%s\t%s\t%s\n' "$tmp/gl/macro-after-fn/shell.rs" allowed SAFE 'SAFE has no holder that releases the GIL' > "$tmp/gl/macro-after-fn-allow.tsv"
 
 expect "gil locks: .read()/.write()/.try_lock()/UFCS spellings are caught" 1 env SG_ONLY_LOCKS=1 SG_LOCK_ROOTS="$tmp/gl/rwlock" SG_LOCK_ALLOWLIST="$tmp/gl/empty.tsv" bash "$SG"
 expect "gil locks: allowlisting all four rwlock/UFCS functions passes"    0 env SG_ONLY_LOCKS=1 SG_LOCK_ROOTS="$tmp/gl/rwlock" SG_LOCK_ALLOWLIST="$tmp/gl/rwlock-allow.tsv" bash "$SG"
@@ -259,7 +259,7 @@ impl Publisher {
     }
 }
 EOF
-printf '%s\t%s\t%s\n' "$tmp/gl/ufcs-paren/shell.rs" Publisher::outside "fixture" > "$tmp/gl/ufcs-paren-allow.tsv"
+printf '%s\t%s\t%s\t%s\n' "$tmp/gl/ufcs-paren/shell.rs" Publisher::outside x "fixture" > "$tmp/gl/ufcs-paren-allow.tsv"
 
 expect "gil locks: a UFCS lock immediately followed by another, both inside detach, is never a finding (only the outside one is)" 1 env SG_ONLY_LOCKS=1 SG_LOCK_ROOTS="$tmp/gl/ufcs-paren" SG_LOCK_ALLOWLIST="$tmp/gl/empty.tsv" bash "$SG"
 expect "gil locks: allowlisting only the outside UFCS lock passes"                                                                      0 env SG_ONLY_LOCKS=1 SG_LOCK_ROOTS="$tmp/gl/ufcs-paren" SG_LOCK_ALLOWLIST="$tmp/gl/ufcs-paren-allow.tsv" bash "$SG"
@@ -285,13 +285,74 @@ impl Publisher {
 }
 EOF
 GLA="$tmp/gl/anchor/shell.rs"
-printf '%s\t%s\t%s\n' "$GLA" Publisher::fake_release "fixture" "$GLA" Publisher::real_attach "fixture" > "$tmp/gl/anchor-allow.tsv"
-printf '%s\t%s\t%s\n' "$GLA" Publisher::real_attach "fixture" > "$tmp/gl/anchor-nofake.tsv"
-{ cat "$tmp/gl/anchor-allow.tsv"; printf '%s\t%s\t%s\n' "$GLA" Publisher::reattach_inside "fixture"; } > "$tmp/gl/anchor-stale.tsv"
+printf '%s\t%s\t%s\t%s\n' "$GLA" Publisher::fake_release x "fixture" "$GLA" Publisher::real_attach x "fixture" > "$tmp/gl/anchor-allow.tsv"
+printf '%s\t%s\t%s\t%s\n' "$GLA" Publisher::real_attach x "fixture" > "$tmp/gl/anchor-nofake.tsv"
+{ cat "$tmp/gl/anchor-allow.tsv"; printf '%s\t%s\t%s\t%s\n' "$GLA" Publisher::reattach_inside x "fixture"; } > "$tmp/gl/anchor-stale.tsv"
 
 expect "gil locks: py.detach( and Python::attach( still match as whole names" 0 env SG_ONLY_LOCKS=1 SG_LOCK_ROOTS="$tmp/gl/anchor" SG_LOCK_ALLOWLIST="$tmp/gl/anchor-allow.tsv"  bash "$SG"
 expect "gil locks: foo_detach( is not a GIL release"                         1 env SG_ONLY_LOCKS=1 SG_LOCK_ROOTS="$tmp/gl/anchor" SG_LOCK_ALLOWLIST="$tmp/gl/anchor-nofake.tsv" bash "$SG"
 expect "gil locks: reattach( is not a GIL re-acquire (stale row fails)"      1 env SG_ONLY_LOCKS=1 SG_LOCK_ROOTS="$tmp/gl/anchor" SG_LOCK_ALLOWLIST="$tmp/gl/anchor-stale.tsv"  bash "$SG"
+
+# ---- gil locks: a slot query through any receiver -----------------------
+# A slot query is matched as `.run(`, whatever the receiver: a local that
+# borrows the slot, or a field not named `slot`, with or without `move`.
+mkdir -p "$tmp/gl/receiver"
+cat > "$tmp/gl/receiver/shell.rs" <<'EOF'
+impl Session {
+    fn stats(&self) -> u64 {
+        let session = &self.slot;
+        session.run(|live| live.count()).unwrap()
+    }
+    fn peek(&self) -> u64 {
+        self.push_slot.run(move |live| live.count()).unwrap()
+    }
+    fn parked(&self, py: Python<'_>) -> u64 {
+        crate::util::allow_threads_parking(py, || self.push_slot.run(|live| live.count())).unwrap()
+    }
+}
+EOF
+GLR="$tmp/gl/receiver/shell.rs"
+printf '%s\t%s\t%s\t%s\n' "$GLR" Session::stats session "fixture" "$GLR" Session::peek push_slot "fixture" > "$tmp/gl/receiver.tsv"
+expect "gil locks: a slot query through another receiver is caught" 1 env SG_ONLY_LOCKS=1 SG_LOCK_ROOTS="$tmp/gl/receiver" SG_LOCK_ALLOWLIST="$tmp/gl/empty.tsv" bash "$SG"
+expect_out "gil locks: the query through a local" "Session::stats"
+expect_out "gil locks: the query through another field" "Session::peek"
+expect "gil locks: the two queries, allowlisted by their receivers, pass" 0 env SG_ONLY_LOCKS=1 SG_LOCK_ROOTS="$tmp/gl/receiver" SG_LOCK_ALLOWLIST="$tmp/gl/receiver.tsv" bash "$SG"
+
+# ---- gil locks: a row allows one lock, not the function ------------------
+# A row names the lock it allows (the receiver before the lock call, found
+# across line breaks; a UFCS lock's argument), so a second lock taken in a
+# listed function is reported and a row whose lock the function no longer
+# takes is stale.
+mkdir -p "$tmp/gl/twolocks"
+cat > "$tmp/gl/twolocks/shell.rs" <<'EOF'
+fn poison_for_test(s: &Session, py: Python<'_>) {
+    let _plane = s.data_plane.lock();
+    let _client = s.client.lock();
+}
+impl Publisher {
+    fn split(&self) -> u64 {
+        let n = self
+            .inner
+            .lock()
+            .unwrap()
+            .count;
+        n + Mutex::lock(&self.other).unwrap().count
+    }
+}
+EOF
+GLT="$tmp/gl/twolocks/shell.rs"
+printf '%s\t%s\t%s\t%s\n' "$GLT" poison_for_test data_plane "fixture" "$GLT" poison_for_test client "fixture" \
+                          "$GLT" Publisher::split inner "fixture" "$GLT" Publisher::split other "fixture" > "$tmp/gl/twolocks.tsv"
+grep -v "client" "$tmp/gl/twolocks.tsv" > "$tmp/gl/twolocks-noclient.tsv"
+grep -v "other" "$tmp/gl/twolocks.tsv" > "$tmp/gl/twolocks-noother.tsv"
+{ cat "$tmp/gl/twolocks.tsv"; printf '%s\t%s\t%s\t%s\n' "$GLT" poison_for_test gone "fixture"; } > "$tmp/gl/twolocks-stale.tsv"
+expect "gil locks: every lock of a function, allowlisted by name, passes" 0 env SG_ONLY_LOCKS=1 SG_LOCK_ROOTS="$tmp/gl/twolocks" SG_LOCK_ALLOWLIST="$tmp/gl/twolocks.tsv" bash "$SG"
+expect "gil locks: a second lock in a listed function is caught" 1 env SG_ONLY_LOCKS=1 SG_LOCK_ROOTS="$tmp/gl/twolocks" SG_LOCK_ALLOWLIST="$tmp/gl/twolocks-noclient.tsv" bash "$SG"
+expect_out "gil locks: the unlisted lock is named" "$(printf 'poison_for_test\tclient')"
+expect "gil locks: a UFCS lock is named by its argument" 1 env SG_ONLY_LOCKS=1 SG_LOCK_ROOTS="$tmp/gl/twolocks" SG_LOCK_ALLOWLIST="$tmp/gl/twolocks-noother.tsv" bash "$SG"
+expect_out "gil locks: the UFCS lock is named" "$(printf 'Publisher::split\tother')"
+expect "gil locks: a row naming a lock the function no longer takes is stale" 1 env SG_ONLY_LOCKS=1 SG_LOCK_ROOTS="$tmp/gl/twolocks" SG_LOCK_ALLOWLIST="$tmp/gl/twolocks-stale.tsv" bash "$SG"
+expect_out "gil locks: the stale lock row" "$(printf 'poison_for_test\tgone')"
 
 # ---- duplicate test helpers (scripts/check/repo/no-duplicate-test-helpers.sh) ----
 # One helper body in two test files is caught (renamed copies too) unless it
