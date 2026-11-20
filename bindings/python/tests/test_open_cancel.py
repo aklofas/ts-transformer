@@ -27,18 +27,11 @@ from tstrans.shells import OpenCancel
 from _builders.mux_programs import masquerade_program, video_only_program
 from _builders.native_hooks import shells_hook
 from _builders.ports import free_udp_port
+from _builders.wait import wait_for
 
 # Far longer than any healthy wake takes: a test fails, it does not hang.
 DEADLINE_S = 10.0
 TS_PACKET = b"\x47" + bytes(187)
-
-
-def _wait_for(what: str, cond: Callable[[], bool], limit: float = DEADLINE_S) -> None:
-    end = time.monotonic() + limit
-    while not cond():
-        if time.monotonic() > end:
-            pytest.fail(f"timed out after {limit}s waiting for {what}")
-        time.sleep(0.01)
 
 
 def _udp_port_bound(port: int) -> bool:
@@ -123,7 +116,7 @@ def _park(open_fn: Callable[[str, OpenCancel], Any], oc: OpenCancel) -> tuple[in
     for _ in range(5):
         port = free_udp_port()
         o = _Open(lambda: open_fn(f"srt://127.0.0.1:{port}?mode=listener", oc))
-        _wait_for("the open to bind its port", lambda: _udp_port_bound(port) or o.done.is_set())
+        wait_for("the open to bind its port", lambda: _udp_port_bound(port) or o.done.is_set(), DEADLINE_S)
         if o.done.is_set() and isinstance(o.error, exceptions.SrtError) and str(o.error).startswith("bind: "):
             continue
         break
@@ -141,7 +134,7 @@ def test_cancel_ends_a_parked_first_accept(name: str) -> None:
         _assert_closed(o.error)
         assert o.result is None
         assert oc.is_cancelled()
-        _wait_for("the port to be released", lambda: not _udp_port_bound(port))
+        wait_for("the port to be released", lambda: not _udp_port_bound(port), DEADLINE_S)
     finally:
         _rescue(port, [o])
 
@@ -581,7 +574,7 @@ def test_an_accept_that_succeeds_after_the_cancel_is_closed_again(name: str) -> 
     peer = None
     try:
         canceller.start()
-        _wait_for("the latch", oc.is_cancelled)
+        wait_for("the latch", oc.is_cancelled, DEADLINE_S)
         assert not o.done.is_set(), "the accept ended before a peer connected"
 
         def dial_and_recv() -> Any:
@@ -673,14 +666,14 @@ def test_a_cancel_after_a_managed_receiver_opened_leaves_its_reconnects_going() 
         pump.start()
         tx.send_bytes(TS_PACKET * 7)
         tx.flush()
-        _wait_for("data before the reconnect", lambda: len(got) > 0 or bool(pump_err))
+        wait_for("data before the reconnect", lambda: len(got) > 0 or bool(pump_err), DEADLINE_S)
         assert not pump_err, pump_err
 
         # The peer leaves; the receiver re-accepts on the slot the object no
         # longer reaches, and a new peer's data arrives.
         tx.close()
         tx = None
-        _wait_for("a reconnect attempt", lambda: rx.reconnect_attempts() >= 1 or bool(pump_err))
+        wait_for("a reconnect attempt", lambda: rx.reconnect_attempts() >= 1 or bool(pump_err), DEADLINE_S)
         before = len(got)
         tx = _connect_with_retry(lambda: srt.ManagedSender.from_url(caller))
 
@@ -691,7 +684,7 @@ def test_a_cancel_after_a_managed_receiver_opened_leaves_its_reconnects_going() 
             tx.flush()
             return False
 
-        _wait_for("data after the reconnect", more)
+        wait_for("data after the reconnect", more, DEADLINE_S)
         assert not pump_err, pump_err
         rx.close()
         pump.join(DEADLINE_S)

@@ -61,6 +61,7 @@ from tstrans.shells import EndReason, MuxSender, Sender
 from _builders.mux_programs import masquerade_program, video_only_program
 from _builders.hang_deadline import call_with_hang_deadline
 from _builders.native_hooks import rtp_hook
+from _builders.wait import wait_until
 import tstrans
 
 TS_PACKET = bytes([0x47, 0x1F, 0xFF, 0x10]) + b"\xff" * 184
@@ -91,16 +92,6 @@ def _url(server: RtspServer, path: str) -> str:
     addr = server.local_addr()
     assert addr is not None
     return f"rtsp://127.0.0.1:{addr[1]}{path}"
-
-
-def _wait_for(cond: Callable[[], bool], limit: float = WAIT_S) -> bool:
-    """Poll `cond` every 10 ms until it holds or `limit` seconds pass."""
-    deadline = time.monotonic() + limit
-    while time.monotonic() < deadline:
-        if cond():
-            return True
-        time.sleep(0.01)
-    return cond()
 
 
 def _access_unit(i: int) -> bytes:
@@ -310,7 +301,7 @@ def test_mp2t_push_through_mux_sender_reaches_the_mount() -> None:
             assert START + b"\x65" in video.raw, video.raw[:16].hex()
             sender.close()
             # Closing the sender closes the push: the mount is free again.
-            assert _wait_for(lambda: mount.publisher() is None)
+            assert wait_until(lambda: mount.publisher() is None, WAIT_S)
             # The session gave its push to the sender.
             with pytest.raises(RtpError) as ei:
                 push.send_ts(TS_BUNDLE)
@@ -334,9 +325,9 @@ def test_h264_klv_push_reaches_the_mount_with_sender_report_alignment() -> None:
                 push.send_video(_access_unit(i), pts=pts)
                 push.send_klv(KLV_UNIT + bytes([i]), pts=pts)
             # The last access unit is held until the next one starts.
-            assert _wait_for(
+            assert wait_until(
                 lambda: mount.stats().aus_emitted >= units - 1
-                and mount.stats().klv_units_emitted >= units - 1
+                and mount.stats().klv_units_emitted >= units - 1, WAIT_S
             ), mount.stats()
             s = mount.stats()
             assert s.malformed_packets == 0
@@ -356,9 +347,9 @@ def test_with_exit_drains_and_closes() -> None:
             for _ in range(bundles):
                 push.send_ts(TS_BUNDLE)
         # Every queued packet was written before the TEARDOWN.
-        assert _wait_for(lambda: mount.stats().rtp_packets_received == bundles), mount.stats()
+        assert wait_until(lambda: mount.stats().rtp_packets_received == bundles, WAIT_S), mount.stats()
         assert mount.stats().malformed_packets == 0
-        assert _wait_for(lambda: mount.publisher() is None)
+        assert wait_until(lambda: mount.publisher() is None, WAIT_S)
         # The closed client's cancel is set, as for every closed client.
         assert handle.is_cancelled()
 
@@ -437,10 +428,10 @@ def test_close_while_stats_is_read_does_not_cancel() -> None:
                     t.join(WAIT_S)
                 push.close()
             assert not any(t.is_alive() for t in threads), f"a stats() reader hung in round {r}"
-            assert _wait_for(
-                lambda: mount.stats().rtp_packets_received == bundles
+            assert wait_until(
+                lambda: mount.stats().rtp_packets_received == bundles, WAIT_S
             ), (r, mount.stats())
-            assert _wait_for(lambda: mount.publisher() is None), r
+            assert wait_until(lambda: mount.publisher() is None, WAIT_S), r
 
 
 def test_pause_then_resume_against_the_library_server() -> None:
@@ -452,7 +443,7 @@ def test_pause_then_resume_against_the_library_server() -> None:
             push.send_ts(TS_BUNDLE)
             push.pause()
             # The pause wrote the queued media first.
-            assert _wait_for(lambda: mount.stats().rtp_packets_received == 1), mount.stats()
+            assert wait_until(lambda: mount.stats().rtp_packets_received == 1, WAIT_S), mount.stats()
             with pytest.raises(RtspError) as ei:
                 push.pause()  # already paused: refused locally
             assert ei.value.kind is RtspErrorKind.PROTOCOL
@@ -461,7 +452,7 @@ def test_pause_then_resume_against_the_library_server() -> None:
                 push.resume()  # not paused
             assert ei.value.kind is RtspErrorKind.PROTOCOL
             push.send_ts(TS_BUNDLE)
-            assert _wait_for(lambda: mount.stats().rtp_packets_received == 2), mount.stats()
+            assert wait_until(lambda: mount.stats().rtp_packets_received == 2, WAIT_S), mount.stats()
             assert push.is_session_alive()
 
 
@@ -516,7 +507,7 @@ def test_into_mux_sender_on_an_elementary_push_is_value_error_and_keeps_the_sess
             for i in range(3):
                 push.send_video(_access_unit(i), pts=Pts90khz.from_raw(i * 3003))
             assert push.is_session_alive()
-            assert _wait_for(lambda: mount.stats().aus_emitted >= 2), mount.stats()
+            assert wait_until(lambda: mount.stats().aus_emitted >= 2, WAIT_S), mount.stats()
 
 
 def test_a_refused_program_config_keeps_the_session() -> None:
@@ -528,15 +519,15 @@ def test_a_refused_program_config_keeps_the_session() -> None:
         assert ei.value.kind is MuxErrorKind.CONFIG_INVALID
         # Still the session's: it sends, and converts once the config is good.
         push.send_ts(TS_BUNDLE)
-        assert _wait_for(lambda: mount.stats().rtp_packets_received == 1), mount.stats()
+        assert wait_until(lambda: mount.stats().rtp_packets_received == 1, WAIT_S), mount.stats()
         sender = push.into_sender()
         assert isinstance(sender, Sender)
         sender.send_bytes(TS_BUNDLE)
         # The sender's close() cancels first and may drop a packet queued a
         # moment before: wait for it to arrive.
-        assert _wait_for(lambda: mount.stats().rtp_packets_received == 2), mount.stats()
+        assert wait_until(lambda: mount.stats().rtp_packets_received == 2, WAIT_S), mount.stats()
         sender.close()
-        assert _wait_for(lambda: mount.publisher() is None)
+        assert wait_until(lambda: mount.publisher() is None, WAIT_S)
         push.close()  # nothing left to close
 
 
@@ -555,7 +546,7 @@ def test_send_klv_without_a_klv_track_is_value_error() -> None:
             assert push.stats().packets_sent == 0
             push.send_video(_access_unit(0), pts=Pts90khz.from_raw(0))
             push.send_video(_access_unit(1), pts=Pts90khz.from_raw(3003))
-            assert _wait_for(lambda: mount.stats().aus_emitted >= 1), mount.stats()
+            assert wait_until(lambda: mount.stats().aus_emitted >= 1, WAIT_S), mount.stats()
         # On an MPEG-TS push the elementary calls name a track it lacks.
         with RtspClient.push(
             RtspClientConfig(_url(server, "/cam")), PushDescription.mp2t()
@@ -593,7 +584,7 @@ def test_transport_udp_is_unsupported_transport() -> None:
         with pytest.raises(RtspError) as ei:
             RtspClient.push(cfg, PushDescription.mp2t())
         assert ei.value.kind is RtspErrorKind.UNSUPPORTED_TRANSPORT
-        assert _wait_for(lambda: mount.publisher() is None)
+        assert wait_until(lambda: mount.publisher() is None, WAIT_S)
 
 
 def test_a_transport_udp_url_is_unsupported_transport() -> None:
@@ -603,7 +594,7 @@ def test_a_transport_udp_url_is_unsupported_transport() -> None:
         with pytest.raises(RtspError) as ei:
             RtspClient.push(cfg, PushDescription.mp2t())
         assert ei.value.kind is RtspErrorKind.UNSUPPORTED_TRANSPORT
-        assert _wait_for(lambda: mount.publisher() is None)
+        assert wait_until(lambda: mount.publisher() is None, WAIT_S)
 
 
 def test_rtsp_version_2_is_refused_locally() -> None:
@@ -636,7 +627,7 @@ def test_a_gc_dropped_session_cancels() -> None:
         gc.collect()
         assert handle.is_cancelled()
         # The dropped client wrote its TEARDOWN: the mount is free.
-        assert _wait_for(lambda: mount.publisher() is None)
+        assert wait_until(lambda: mount.publisher() is None, WAIT_S)
 
 
 # ---------------------------------------------------------------------------
@@ -786,7 +777,7 @@ def test_end_reason_after_a_server_close() -> None:
         assert push.end_reason() is None
         assert push.end_detail() is None
         server.close()  # the server closes the connection
-        assert _wait_for(lambda: push.end_reason() is not None), "no end recorded"
+        assert wait_until(lambda: push.end_reason() is not None, WAIT_S), "no end recorded"
         assert push.end_reason() is EndReason.CLEAN_TEARDOWN
         assert push.end_detail() is None
         assert push.is_session_alive() is False
@@ -803,7 +794,7 @@ def test_stats_and_end_reason_after_close() -> None:
             push.send_ts(TS_BUNDLE)
         kept = push.stats()
         push.close()
-        assert _wait_for(lambda: mount.stats().rtp_packets_received == 10), mount.stats()
+        assert wait_until(lambda: mount.stats().rtp_packets_received == 10, WAIT_S), mount.stats()
         s = push.stats()
         assert s.packets_sent == 10
         assert s.bytes_sent == 10 * (12 + len(TS_BUNDLE))
@@ -821,7 +812,7 @@ def test_stats_and_end_reason_after_close() -> None:
         for _ in range(5):
             push.send_ts(TS_BUNDLE)
         assert push.teardown() is None
-        assert _wait_for(lambda: mount.stats().rtp_packets_received == 5), mount.stats()
+        assert wait_until(lambda: mount.stats().rtp_packets_received == 5, WAIT_S), mount.stats()
         assert push.stats().packets_sent == 5
         assert push.end_reason() is EndReason.CLEAN_TEARDOWN
 
@@ -855,7 +846,7 @@ def test_frames_the_server_sends_on_a_media_channel_count_as_dropped_inbound() -
     server = ScriptedRecordServer(after_record=two_frames)
     push = RtspClient.push(RtspClientConfig(server.url), PushDescription.mp2t())
     try:
-        assert _wait_for(lambda: push.stats().frames_dropped_inbound == 2), push.stats()
+        assert wait_until(lambda: push.stats().frames_dropped_inbound == 2, WAIT_S), push.stats()
         push.close()
         s = push.stats()
         assert s.frames_dropped_inbound == 2, s
@@ -877,7 +868,7 @@ def test_a_reset_by_the_server_ends_the_push_with_a_detail() -> None:
     server = ScriptedRecordServer(after_record=reset)
     push = RtspClient.push(RtspClientConfig(server.url), PushDescription.mp2t())
     try:
-        assert _wait_for(lambda: push.end_reason() is not None), "no end recorded"
+        assert wait_until(lambda: push.end_reason() is not None, WAIT_S), "no end recorded"
         assert push.end_reason() is EndReason.TRANSPORT_FAILED
         detail = push.end_detail()
         assert isinstance(detail, str) and detail, detail
@@ -898,7 +889,7 @@ def test_stats_and_end_reason_after_into_sender() -> None:
         sender = push.into_sender()
         assert push.stats().packets_sent == 0
         sender.send_bytes(TS_BUNDLE)
-        assert _wait_for(lambda: server.rtp_frames == 1), server.rtp_frames
+        assert wait_until(lambda: server.rtp_frames == 1, WAIT_S), server.rtp_frames
         assert push.stats().packets_sent == 1
         assert push.end_reason() is None
         sender.close()
@@ -916,8 +907,8 @@ def test_stats_and_end_reason_after_into_mux_sender() -> None:
         mux = push.into_mux_sender(video_only_program())
         for i in range(3):
             mux.send_video(_access_unit(i), pts=Pts90khz.from_raw(i * 3000), key_frame=(i == 0))
-        assert _wait_for(lambda: server.rtp_frames >= 1), server.rtp_frames
-        assert _wait_for(lambda: push.stats().packets_sent == server.rtp_frames)
+        assert wait_until(lambda: server.rtp_frames >= 1, WAIT_S), server.rtp_frames
+        assert wait_until(lambda: push.stats().packets_sent == server.rtp_frames, WAIT_S)
         assert push.end_reason() is None
         mux.close()
         assert push.end_reason() is EndReason.CANCELLED
@@ -948,10 +939,10 @@ def test_stats_racing_close_never_fails() -> None:
 
             t = threading.Thread(target=read, daemon=True)
             t.start()
-            assert _wait_for(lambda: len(answers) > 0)
+            assert wait_until(lambda: len(answers) > 0, WAIT_S)
             push.close()
             n = len(answers)
-            assert _wait_for(lambda: len(answers) > n)
+            assert wait_until(lambda: len(answers) > n, WAIT_S)
             stop.set()
             t.join(WAIT_S)
             assert not t.is_alive()
@@ -991,7 +982,7 @@ def test_a_poisoned_session_refuses_calls_but_closes() -> None:
         assert push.is_session_alive() is False
         assert push.stats().packets_sent == 1
         push.close()
-        assert _wait_for(lambda: "TEARDOWN" in server.methods), server.methods
+        assert wait_until(lambda: "TEARDOWN" in server.methods, WAIT_S), server.methods
         assert server.rtp_frames == 1
         with pytest.raises(RtpError) as rtp_ei:
             push.send_ts(TS_BUNDLE)
@@ -1023,7 +1014,7 @@ def test_finish_after_into_sender_delivers_every_packet() -> None:
             sender.send_bytes(TS_BUNDLE)
         sender.send_bytes(TS_PACKET * 3)  # a partial bundle, held by the sender
         assert sender.finish() is None
-        assert _wait_for(lambda: "TEARDOWN" in server.methods), server.methods
+        assert wait_until(lambda: "TEARDOWN" in server.methods, WAIT_S), server.methods
         assert server.rtp_frames == bundles + 1, server.rtp_frames
         assert push.end_reason() is EndReason.CLEAN_TEARDOWN
         s = push.stats()
@@ -1046,7 +1037,7 @@ def test_finish_raises_the_drain_error_and_still_closes() -> None:
         sender = push.into_sender()
         sender.send_bytes(TS_PACKET * 3)
         server.close()
-        assert _wait_for(lambda: push.end_reason() is not None), "no end recorded"
+        assert wait_until(lambda: push.end_reason() is not None, WAIT_S), "no end recorded"
         with pytest.raises(RtpError) as ei:
             sender.finish()
         assert ei.value.kind is RtpErrorKind.BROKEN
@@ -1072,7 +1063,7 @@ def test_a_push_honours_the_interval() -> None:
             after = m[m.index("RECORD") + 1 :] if "RECORD" in m else []
             return sum(1 for x in after if x in ("OPTIONS", "GET_PARAMETER"))
 
-        assert _wait_for(lambda: pings() >= 2, limit=10.0), server.methods
+        assert wait_until(lambda: pings() >= 2, limit=10.0), server.methods
     finally:
         push.close()
         server.close()
@@ -1118,9 +1109,9 @@ def test_a_conversion_behind_a_query_waits_for_it_and_converts() -> None:
     try:
         holder = _Side(lambda: hold(push))
         try:
-            assert _wait_for(reader_holds), "the probe never held the session"
+            assert wait_until(reader_holds, WAIT_S), "the probe never held the session"
             converting = _Side(push.into_sender)
-            assert _wait_for(lambda: conversion_rounds() >= 1), "the conversion never met the hold"
+            assert wait_until(lambda: conversion_rounds() >= 1, WAIT_S), "the conversion never met the hold"
             release()
             assert converting.outcome() is None, converting.exc
         finally:
@@ -1130,7 +1121,7 @@ def test_a_conversion_behind_a_query_waits_for_it_and_converts() -> None:
         assert isinstance(sender, Sender)
         assert push.is_session_alive() is False
         sender.send_bytes(TS_BUNDLE)
-        assert _wait_for(lambda: server.rtp_frames == 1), server.rtp_frames
+        assert wait_until(lambda: server.rtp_frames == 1, WAIT_S), server.rtp_frames
         sender.close()
     finally:
         release()
@@ -1146,7 +1137,7 @@ def test_close_during_a_pause_awaiting_its_reply_cancels_first() -> None:
         pausing = _Side(push.pause)
         # The PAUSE is on the wire and its reply never comes: the call
         # waits for its request timeout unless the close cancels it.
-        assert _wait_for(lambda: "PAUSE" in server.methods), "the PAUSE was never written"
+        assert wait_until(lambda: "PAUSE" in server.methods, WAIT_S), "the PAUSE was never written"
         close_at = time.monotonic()
         push.close()
         assert time.monotonic() - close_at < 4.0
@@ -1176,13 +1167,13 @@ def test_a_teardown_behind_a_query_does_not_cancel_for_a_send_waiting_for_the_se
             push.send_ts(TS_BUNDLE)
         holder = _Side(lambda: hold(push))
         try:
-            assert _wait_for(reader_holds), "the probe never held the session"
+            assert wait_until(reader_holds, WAIT_S), "the probe never held the session"
             # A call in flight counts as live, and the probe does not wait.
             assert push.is_session_alive() is True
             sender = _Side(lambda: push.send_ts(TS_BUNDLE))
-            assert _wait_for(lambda: parking_waiters() == 1), "the send never waited"
+            assert wait_until(lambda: parking_waiters() == 1, WAIT_S), "the send never waited"
             tearing = _Side(push.teardown)
-            assert _wait_for(lambda: close_rounds() >= 1), "the teardown never met the hold"
+            assert wait_until(lambda: close_rounds() >= 1, WAIT_S), "the teardown never met the hold"
             release()
             assert tearing.outcome() is None, tearing.exc
             exc = sender.outcome()

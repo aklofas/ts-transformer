@@ -117,6 +117,14 @@ pub(crate) struct PyDemuxReceiver {
     keep_alive: Mutex<Option<KeepAlive>>,
 }
 
+/// Whether a call on another thread holds the slot. Test-only.
+#[cfg(feature = "py-test-hooks")]
+impl PyDemuxReceiver {
+    pub(crate) fn slot_held(&self) -> bool {
+        self.owned.is_held()
+    }
+}
+
 /// An owner a receiver keeps alive until it closes.
 pub(crate) type KeepAlive = Arc<dyn std::any::Any + Send + Sync>;
 

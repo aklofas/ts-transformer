@@ -33,7 +33,7 @@ import sys
 import threading
 import time
 from time import perf_counter
-from typing import Any, Callable, Optional
+from typing import Any, Optional
 
 import pytest
 from conftest import rtsp_header
@@ -58,6 +58,8 @@ from tstrans.rtp import (
     RtspServerConfig,
 )
 from tstrans.shells import DemuxReceiver, EndReason
+
+from _builders.wait import wait_until
 
 SDP_MP2T = (
     "v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=publish\r\nc=IN IP4 127.0.0.1\r\n"
@@ -92,16 +94,6 @@ def _port(server: RtspServer) -> int:
     addr = server.local_addr()
     assert addr is not None
     return addr[1]
-
-
-def _wait_for(cond: Callable[[], bool], limit: float = 5.0) -> bool:
-    """Poll `cond` every 20 ms until it holds or `limit` seconds pass."""
-    deadline = time.monotonic() + limit
-    while time.monotonic() < deadline:
-        if cond():
-            return True
-        time.sleep(0.02)
-    return cond()
 
 
 class RawPublisher:
@@ -164,7 +156,6 @@ class RawPublisher:
 
 def _status(resp: str) -> int:
     return int(resp.split()[1])
-
 
 
 def _muxed_bundles(n: int) -> list[bytes]:
@@ -329,8 +320,8 @@ def test_cancel_beats_events_already_queued():
             bundles = _muxed_bundles(20)
             for bundle in bundles:
                 pub.send_rtp(bundle)
-            assert _wait_for(
-                lambda: mount.stats().rtp_packets_received == len(bundles)
+            assert wait_until(
+                lambda: mount.stats().rtp_packets_received == len(bundles), 5.0
             ), mount.stats()
             # One read pulls a whole bundle into the shell, so more events
             # are already queued behind the one returned.
@@ -412,7 +403,7 @@ def test_publisher_exit_ends_the_receiver_per_mount_or_server_default(
             t, out = _next_in_thread(rx)
             pub = RawPublisher(_port(server), "/cam")
             pub.close()  # dropping the connection ends the publisher
-            assert _wait_for(lambda: mount.generation() == 1)
+            assert wait_until(lambda: mount.generation() == 1, 5.0)
             t.join(JOIN_S if expect_end else 0.5)
             if expect_end:
                 assert not t.is_alive(), "receiver did not end"
@@ -475,7 +466,7 @@ def test_raw_publisher_null_bundles_reach_stats_and_publisher_info():
             try:
                 for _ in range(5):
                     pub.send_rtp(NULL_BUNDLE)
-                assert _wait_for(lambda: mount.stats().rtp_packets_received >= 5), mount.stats()
+                assert wait_until(lambda: mount.stats().rtp_packets_received >= 5, 5.0), mount.stats()
                 s = mount.stats()
                 assert s.rtp_packets_received == 5
                 assert s.bytes_received == 5 * (12 + len(NULL_BUNDLE))
@@ -502,8 +493,8 @@ def test_raw_publisher_null_bundles_reach_stats_and_publisher_info():
         finally:
             pub.close()
         # The publisher's end bumps the generation and frees the slot.
-        assert _wait_for(lambda: mount.generation() == 1), mount.generation()
-        assert _wait_for(lambda: mount.publisher() is None)
+        assert wait_until(lambda: mount.generation() == 1, 5.0), mount.generation()
+        assert wait_until(lambda: mount.publisher() is None, 5.0)
 
 
 def test_muxed_bundles_produce_a_video_event():
@@ -547,7 +538,7 @@ def test_next_publisher_returns_the_on_demand_mount():
             rx = mount.into_demux_receiver()
             try:
                 pub.send_rtp(NULL_BUNDLE)
-                assert _wait_for(lambda: mount.stats().rtp_packets_received >= 1)
+                assert wait_until(lambda: mount.stats().rtp_packets_received >= 1, 5.0)
             finally:
                 rx.close()
             server.remove_mount("/auto")

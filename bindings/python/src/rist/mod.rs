@@ -486,6 +486,14 @@ pub(crate) struct PyRistRecvTransport {
     cancel: Arc<CancelSource>,
 }
 
+/// Whether a call on another thread holds the slot. Test-only.
+#[cfg(feature = "py-test-hooks")]
+impl PyRistRecvTransport {
+    pub(crate) fn slot_held(&self) -> bool {
+        self.owned.is_held()
+    }
+}
+
 impl Drop for PyRistRecvTransport {
     fn drop(&mut self) {
         drop_owned(&RIST, &self.owned);

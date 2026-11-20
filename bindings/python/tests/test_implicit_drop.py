@@ -33,6 +33,7 @@ import tstrans
 
 from _builders.ports import free_udp_port as _free_udp_port
 from _builders.native_hooks import shells_hook as _hook
+from _builders.wait import wait_for
 
 PKG_PARENT = str(Path(tstrans.__file__).resolve().parent.parent)
 
@@ -244,14 +245,6 @@ def test_gc_dropped_rtsp_session_tears_down():
 _IDR_NAL = b"\x00\x00\x00\x01\x65\xbb"
 
 
-def _wait_until(what: str, cond: Callable[[], bool], limit: float = 5.0) -> None:
-    end = time.monotonic() + limit
-    while not cond():
-        if time.monotonic() > end:
-            pytest.fail(f"timed out after {limit}s waiting for {what}")
-        time.sleep(0.02)
-
-
 class _Pusher:
     """Pushes an IDR access unit to `mount` every 20 ms until `stop()`."""
 
@@ -355,7 +348,7 @@ def test_gc_dropped_session_leaves_its_live_receiver_receiving(release: str):
             else:
                 del rx
                 gc.collect()
-            _wait_until("the server to see the client go", lambda: server.stats().active_sessions == 0)
+            wait_for("the server to see the client go", lambda: server.stats().active_sessions == 0, 5.0)
         finally:
             pusher.stop()
     finally:
@@ -386,7 +379,7 @@ def test_closing_the_session_still_ends_its_receiver():
             for _ in rx:
                 pass
             assert rx.end_reason() == EndReason.CLEAN_TEARDOWN
-            _wait_until("the server to see the client go", lambda: server.stats().active_sessions == 0)
+            wait_for("the server to see the client go", lambda: server.stats().active_sessions == 0, 5.0)
         finally:
             rx.close()
     finally:
