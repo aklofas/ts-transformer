@@ -90,7 +90,7 @@ kind = "rust"
 crate = "tst-core"
 item = "tst_core::mpegts::mux::Muxer::reconfigure"
 owning_tests = ["crates/tst-core/tests/mpegts/mux_reconfigure.rs"]
-bindings = ["c:deferred(0.11.0 c-surface parity batch)", "python:Muxer.reconfigure", "java:deferred(0.11.0 binding-surface parity batch)", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:deferred(0.11.0 c-surface parity batch)", "python:Muxer.reconfigure", "java:org.tstrans.mpegts.Muxer.reconfigure", "swift:deferred", "kotlin:deferred"]
 tier = "A"
 
 [[surface]]
@@ -1946,7 +1946,7 @@ kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::sender::Sender::finish"
 owning_tests = ["crates/tst-pipeline/src/sender/mod.rs"]
-bindings = ["c:deferred(no C finish on the plain sender)", "python:deferred(the binding finish comes with the shells' close rules)", "java:deferred(the binding finish comes with the shells' close rules)", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:deferred(no C finish on the plain sender)", "python:tstrans.shells.Sender.finish", "java:org.tstrans.shells.Sender.finish", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -2284,6 +2284,33 @@ crate = "tst-pipeline"
 item = "tst_pipeline::ManagedDemuxReceiver::ts_bytes_demuxed_handle"
 owning_tests = ["crates/tst-pipeline/tests/managed/managed_demux_receiver_reconnect.rs"]
 bindings = ["c:n/a(Rust-only handle; the C getter reads the counter through the receiver)", "python:n/a(Rust-only handle; the binding reads the counter through the receiver)", "java:n/a(Rust-only handle; the binding reads the counter through the receiver)", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-pipeline"
+item = "tst_pipeline::DemuxReceiver::stats"
+owning_tests = ["crates/tst-pipeline/src/demux_receiver.rs", "crates/tst-pipeline/tests/shells/pipeline_receiver.rs"]
+bindings = ["c:tst_demux_receiver_get_stats", "python:tstrans.shells.DemuxReceiver.stats", "java:org.tstrans.shells.DemuxReceiver.stats", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-pipeline"
+item = "tst_pipeline::ManagedDemuxReceiver::stats"
+owning_tests = ["crates/tst-pipeline/tests/managed/managed_demux_receiver_reconnect.rs"]
+bindings = ["c:tst_managed_demux_receiver_get_stats", "python:tstrans.srt.ManagedDemuxReceiver.stats", "java:org.tstrans.srt.ManagedDemuxReceiver.stats", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-pipeline"
+item = "tst_pipeline::Receiver::stats"
+owning_tests = ["crates/tst-pipeline/src/receiver/mod.rs"]
+bindings = ["c:tst_receiver_get_stats", "python:tstrans.shells.Receiver.stats", "java:org.tstrans.shells.Receiver.stats", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -2636,7 +2663,7 @@ kind = "rust"
 crate = "tst-rist"
 item = "tst_rist::recv::RistRecvTransport::local_addr"
 owning_tests = ["crates/tst-rist/tests/net_local_addr.rs", "bindings/jvm/src/test/java/org/tstrans/shells/LocalPortTest.java"]
-bindings = ["c:deferred(no C consumer yet)", "python:deferred(tstrans.rist.RecvTransport has no bound-address getter)", "java:org.tstrans.shells.Receiver.localPort", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:deferred(no C consumer yet)", "python:tstrans.rist.RecvTransport.local_addr", "java:org.tstrans.shells.Receiver.localPort", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -2755,7 +2782,34 @@ kind = "rust"
 crate = "tst-rtp"
 item = "tst_rtp::rtsp::client::builder::RtspClientBuilder::request_timeout"
 owning_tests = ["crates/tst-rtp/src/rtsp/client/builder.rs", "crates/tst-rtp/tests/rtsp_client/builder_timeouts.rs"]
-bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:deferred(the C builder has no request deadline setter)", "python:tstrans.rtp.RtspClientConfig.request_timeout_ms", "java:org.tstrans.rtp.RtspClientConfig.Builder.requestTimeoutMs", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-rtp"
+item = "tst_rtp::rtsp::client::builder::RtspClientBuilder::keepalive_interval"
+owning_tests = ["crates/tst-rtp/src/rtsp/client/builder.rs", "crates/tst-rtp/tests/rtsp_client/keepalive_retune.rs"]
+bindings = ["c:deferred(the C builder turns keepalive on or off and sets no interval)", "python:tstrans.rtp.RtspClientConfig.keepalive_interval_ms", "java:org.tstrans.rtp.RtspClientConfig.Builder.keepaliveIntervalMs", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-rtp"
+item = "tst_rtp::rtsp::client::builder::RtspClientBuilder::connect_timeout"
+owning_tests = ["crates/tst-rtp/tests/rtsp_client/builder_timeouts.rs"]
+bindings = ["c:deferred(the C builder has no connect budget setter)", "python:tstrans.rtp.RtspClientConfig.connect_timeout_ms", "java:org.tstrans.rtp.RtspClientConfig.Builder.connectTimeoutMs", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-rtp"
+item = "tst_rtp::rtsp::client::builder::RtspClientBuilder::user_agent"
+owning_tests = ["crates/tst-rtp/tests/rtsp_client/builder_timeouts.rs"]
+bindings = ["c:deferred(the C builder has no user agent setter)", "python:tstrans.rtp.RtspClientConfig.user_agent", "java:org.tstrans.rtp.RtspClientConfig.Builder.userAgent", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -2891,7 +2945,7 @@ kind = "rust"
 crate = "tst-rtp"
 item = "tst_rtp::RtpStatsHandle"
 owning_tests = ["crates/tst-rtp/tests/rtp/loopback_unicast.rs"]
-bindings = ["c:n/a(the C RTP receivers report socket stats only)", "python:deferred(binding receivers read it through the shells)", "java:deferred(binding receivers read it through the shells)", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:n/a(the C RTP receivers report socket stats only)", "python:tstrans.shells.DemuxReceiver.rtp_stats", "python:tstrans.shells.Receiver.rtp_stats", "java:org.tstrans.shells.DemuxReceiver.rtpStats", "java:org.tstrans.shells.Receiver.rtpStats", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -2900,7 +2954,7 @@ kind = "rust"
 crate = "tst-rtp"
 item = "tst_rtp::transport::RtpStatsHandle"
 owning_tests = ["crates/tst-rtp/tests/rtp/loopback_unicast.rs"]
-bindings = ["c:n/a(the C RTP receivers report socket stats only)", "python:deferred(binding receivers read it through the shells)", "java:deferred(binding receivers read it through the shells)", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:n/a(the C RTP receivers report socket stats only)", "python:tstrans.shells.DemuxReceiver.rtp_stats", "python:tstrans.shells.Receiver.rtp_stats", "java:org.tstrans.shells.DemuxReceiver.rtpStats", "java:org.tstrans.shells.Receiver.rtpStats", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -2909,7 +2963,7 @@ kind = "rust"
 crate = "tst-rtp"
 item = "tst_rtp::RtpStatsHandle::stats"
 owning_tests = ["crates/tst-rtp/tests/rtp/loopback_unicast.rs"]
-bindings = ["c:n/a(the C RTP receivers report socket stats only)", "python:deferred(binding receivers read it through the shells)", "java:deferred(binding receivers read it through the shells)", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:n/a(the C RTP receivers report socket stats only)", "python:tstrans.shells.DemuxReceiver.rtp_stats", "python:tstrans.shells.Receiver.rtp_stats", "java:org.tstrans.shells.DemuxReceiver.rtpStats", "java:org.tstrans.shells.Receiver.rtpStats", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -2918,7 +2972,7 @@ kind = "rust"
 crate = "tst-rtp"
 item = "tst_rtp::RtpRecvTransport::stats_handle"
 owning_tests = ["crates/tst-rtp/tests/rtp/loopback_unicast.rs"]
-bindings = ["c:n/a(the C RTP receivers report socket stats only)", "python:deferred(binding receivers read it through the shells)", "java:deferred(binding receivers read it through the shells)", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:n/a(the C RTP receivers report socket stats only)", "python:tstrans.shells.DemuxReceiver.rtp_stats", "python:tstrans.shells.Receiver.rtp_stats", "java:org.tstrans.shells.DemuxReceiver.rtpStats", "java:org.tstrans.shells.Receiver.rtpStats", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -2927,7 +2981,7 @@ kind = "rust"
 crate = "tst-rtp"
 item = "tst_rtp::RtpRecvTransport::local_addr"
 owning_tests = ["crates/tst-rtp/tests/rtp/loopback_unicast.rs", "crates/tst-rtp/src/transport/recv.rs"]
-bindings = ["c:n/a(the C RTP receivers report no local address)", "python:deferred(binding receivers read it through the shells)", "java:org.tstrans.shells.Receiver.localPort", "java:org.tstrans.shells.DemuxReceiver.localPort", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:n/a(the C RTP receivers report no local address)", "python:tstrans.shells.Receiver.local_addr", "python:tstrans.shells.DemuxReceiver.local_addr", "java:org.tstrans.shells.Receiver.localPort", "java:org.tstrans.shells.DemuxReceiver.localPort", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -2936,7 +2990,7 @@ kind = "rust"
 crate = "tst-rtp"
 item = "tst_rtp::opener::open_recv_with_stats"
 owning_tests = ["crates/tst-rtp/tests/rtp/loopback_unicast.rs"]
-bindings = ["c:n/a(a binding opener; the C ABI opens through its own constructors)", "python:deferred(binding receivers read it through the shells)", "java:deferred(binding receivers read it through the shells)", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:n/a(a binding opener; the C ABI opens through its own constructors)", "python:tstrans.shells.DemuxReceiver.rtp_stats", "python:tstrans.shells.Receiver.rtp_stats", "java:org.tstrans.shells.DemuxReceiver.rtpStats", "java:org.tstrans.shells.Receiver.rtpStats", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -3771,7 +3825,7 @@ kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::binding::opened::Opened"
 owning_tests = ["crates/tst-udp/tests/net_loopback_unicast.rs", "crates/tst-rist/tests/net_local_addr.rs", "crates/tst-tcp/tests/net_loopback.rs", "bindings/jvm/src/test/java/org/tstrans/shells/LocalPortTest.java"]
-bindings = ["c:n/a(the C ABI opens its transports without the binding openers)", "python:deferred(the Python shells do not report the bound port)", "java:org.tstrans.shells.Receiver.localPort", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:n/a(the C ABI opens its transports without the binding openers)", "python:tstrans.shells.Receiver.local_port", "java:org.tstrans.shells.Receiver.localPort", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -4122,7 +4176,7 @@ kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::binding::Diagnostics::reject_code"
 owning_tests = ["crates/tst-srt/src/binding_kind.rs"]
-bindings = ["c:n/a(the C ABI returns only the error code of a refused connection)", "python:deferred(SrtError does not carry the reject reason yet)", "java:deferred(SrtException does not carry the reject reason yet)", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:n/a(the C ABI returns only the error code of a refused connection)", "python:tstrans.exceptions.SrtError.reject_reason", "java:org.tstrans.SrtException.rejectReason", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -6205,7 +6259,7 @@ kind = "rust"
 crate = "tst-rtp"
 item = "tst_rtp::RtspPush::end_reason"
 owning_tests = ["crates/tst-rtp/src/rtsp/client/push/tests.rs", "crates/tst-rtp/tests/rtsp_push/ends.rs", "crates/tst-rtp/tests/rtsp_push/refusals.rs"]
-bindings = ["c:deferred(the RTSP push client in the C API: docs/project/deferred-features.md)", "python:deferred(RtspPushSession has no end-reason getter)", "java:deferred(RtspPushSession has no end-reason getter)", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:deferred(the RTSP push client in the C API: docs/project/deferred-features.md)", "python:tstrans.rtp.RtspPushSession.end_reason", "java:org.tstrans.rtp.RtspPushSession.endReason", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -6325,7 +6379,7 @@ kind = "rust"
 crate = "tst-rtp"
 item = "tst_rtp::PushStatsHandle"
 owning_tests = ["crates/tst-rtp/src/rtsp/client/push/tests.rs"]
-bindings = ["c:deferred(the RTSP push client in the C API: docs/project/deferred-features.md)", "python:deferred(RtspPushSession reads the push under its lock)", "java:deferred(RtspPushSession reads the push under its lock)", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:deferred(the RTSP push client in the C API: docs/project/deferred-features.md)", "python:tstrans.rtp.RtspPushSession.stats", "java:org.tstrans.rtp.RtspPushSession.stats", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -6334,7 +6388,7 @@ kind = "rust"
 crate = "tst-rtp"
 item = "tst_rtp::rtsp::client::push::PushStatsHandle"
 owning_tests = ["crates/tst-rtp/src/rtsp/client/push/tests.rs"]
-bindings = ["c:deferred(the RTSP push client in the C API: docs/project/deferred-features.md)", "python:deferred(RtspPushSession reads the push under its lock)", "java:deferred(RtspPushSession reads the push under its lock)", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:deferred(the RTSP push client in the C API: docs/project/deferred-features.md)", "python:tstrans.rtp.RtspPushSession.stats", "java:org.tstrans.rtp.RtspPushSession.stats", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -6343,7 +6397,7 @@ kind = "rust"
 crate = "tst-rtp"
 item = "tst_rtp::rtsp::client::push::PushStatsHandle::stats"
 owning_tests = ["crates/tst-rtp/src/rtsp/client/push/tests.rs"]
-bindings = ["c:deferred(the RTSP push client in the C API: docs/project/deferred-features.md)", "python:deferred(RtspPushSession reads the push under its lock)", "java:deferred(RtspPushSession reads the push under its lock)", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:deferred(the RTSP push client in the C API: docs/project/deferred-features.md)", "python:tstrans.rtp.RtspPushSession.stats", "java:org.tstrans.rtp.RtspPushSession.stats", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -6352,7 +6406,7 @@ kind = "rust"
 crate = "tst-rtp"
 item = "tst_rtp::rtsp::client::push::PushStatsHandle::end_reason"
 owning_tests = ["crates/tst-rtp/src/rtsp/client/push/tests.rs"]
-bindings = ["c:deferred(the RTSP push client in the C API: docs/project/deferred-features.md)", "python:deferred(RtspPushSession reads the push under its lock)", "java:deferred(RtspPushSession reads the push under its lock)", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:deferred(the RTSP push client in the C API: docs/project/deferred-features.md)", "python:tstrans.rtp.RtspPushSession.end_reason", "java:org.tstrans.rtp.RtspPushSession.endReason", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -6361,7 +6415,7 @@ kind = "rust"
 crate = "tst-rtp"
 item = "tst_rtp::RtspPush::stats_handle"
 owning_tests = ["crates/tst-rtp/src/rtsp/client/push/tests.rs"]
-bindings = ["c:deferred(the RTSP push client in the C API: docs/project/deferred-features.md)", "python:deferred(RtspPushSession reads the push under its lock)", "java:deferred(RtspPushSession reads the push under its lock)", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:deferred(the RTSP push client in the C API: docs/project/deferred-features.md)", "python:tstrans.rtp.RtspPushSession.stats", "java:org.tstrans.rtp.RtspPushSession.stats", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
