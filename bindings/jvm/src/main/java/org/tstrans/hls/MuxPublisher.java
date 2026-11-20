@@ -4,6 +4,7 @@ import org.tstrans.HlsException;
 import org.tstrans.MuxException;
 import org.tstrans.NativeHandle;
 import org.tstrans.NativeLoader;
+import org.tstrans.codec.MispTimeKind;
 import org.tstrans.codec.MispTimestamp;
 import org.tstrans.mpegts.MuxerConfig;
 
@@ -126,8 +127,9 @@ public final class MuxPublisher extends NativeHandle {
             throws MuxException, HlsException {
         java.util.Objects.requireNonNull(misp, "misp");
         ensureOpen("MuxPublisher is closed");
-        nSendVideoMisp(peekHandle(), nal, pts, keyFrame,
-            misp.kind().ordinal(), misp.timeStatus(), misp.value());
+        // The native's MISP kind codes: 0 = micro, 1 = nano.
+        int kind = misp.kind() == MispTimeKind.NANO ? 1 : 0;
+        nSendVideoMisp(peekHandle(), nal, pts, keyFrame, kind, misp.timeStatus(), misp.value());
     }
 
     /**
