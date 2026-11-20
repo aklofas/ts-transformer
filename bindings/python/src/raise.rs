@@ -108,6 +108,13 @@ pub(crate) fn raise(py: Python<'_>, d: &Domain, e: BindingError) -> PyErr {
         let kwargs = PyDict::new(py);
         kwargs.set_item(intern!(py, "kind"), value)?;
         kwargs.set_item(intern!(py, "message"), e.detail.as_str())?;
+        // A refused SRT connection's reject code; `SrtError` names it.
+        #[cfg(feature = "srt")]
+        if *d == SRT
+            && let Some(code) = e.diagnostics.reject_code
+        {
+            kwargs.set_item(intern!(py, "reject_reason"), code)?;
+        }
         Ok(PyErr::from_value(cls.call((), Some(&kwargs))?))
     })();
     built.unwrap_or_else(|err| err)

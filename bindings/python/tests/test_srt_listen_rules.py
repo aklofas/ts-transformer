@@ -226,7 +226,8 @@ def test_validation() -> None:
 def test_reject_reason_table_matches_native() -> None:
     native = dict(tstrans.srt._native_reject_reason_table())
     assert native == {m.value: m.name for m in RejectReason}
-    assert len(native) == 21
+    # libsrt's 18 internal codes (0..=17) and the 21 predefined ones.
+    assert len(native) == 39
 
 
 def test_gc_dropped_listener_closes_retained_rules() -> None:
@@ -245,3 +246,69 @@ def test_gc_dropped_listener_closes_retained_rules() -> None:
     with pytest.raises(SrtError) as ei:
         rules.remove("a")
     assert ei.value.kind == SrtErrorKind.CLOSED
+
+
+# ---------------------------------------------------------------------------
+# SrtError.reject_reason
+# ---------------------------------------------------------------------------
+
+
+def _refused_by(rule: ListenRule, **caller: object) -> tuple[SrtError, _AcceptThread]:
+    lst, port = _listen()
+    try:
+        lst.rules().set("s", rule)
+        acc = _AcceptThread(lst, 2000)
+        with pytest.raises(SrtError) as ei:
+            tstrans.srt.Builder(f"srt://127.0.0.1:{port}?streamid=s", **caller).connect()
+        acc.join()
+        return ei.value, acc
+    finally:
+        lst.close()
+
+
+def test_reject_rule_reason_is_typed() -> None:
+    err, _acc = _refused_by(ListenRule.reject(RejectReason.FORBIDDEN))
+    assert err.kind == SrtErrorKind.CONNECT_FAILED
+    assert err.reject_reason == RejectReason.FORBIDDEN
+    assert err.reject_reason is RejectReason.FORBIDDEN
+    assert "Forbidden" in str(err)
+
+
+def test_user_defined_reject_reason_is_the_int() -> None:
+    err, _acc = _refused_by(ListenRule.reject(user_defined(4242)))
+    assert err.reject_reason == 4242
+    assert type(err.reject_reason) is int
+
+
+def test_a_wrong_passphrase_is_bad_secret() -> None:
+    """libsrt's own internal code 10: a caller whose passphrase does not
+    match. The listener never hands that caller to `accept`, which ends at
+    its own timeout with no reason."""
+    err, acc = _refused_by(
+        ListenRule.accept_with("secretsecretsecret"), passphrase="wrongwrongwrong"
+    )
+    assert err.reject_reason is RejectReason.BAD_SECRET
+    assert int(err.reject_reason) == 10
+    assert isinstance(acc.err, SrtError)
+    assert acc.err.kind == SrtErrorKind.TIMEOUT
+    assert acc.err.reject_reason is None
+
+
+def test_non_reject_errors_have_no_reason() -> None:
+    port = _free_udp_port()
+    with pytest.raises(SrtError) as ei:
+        tstrans.srt.Builder(f"srt://127.0.0.1:{port}?connect_timeout=300").connect()
+    assert ei.value.reject_reason is None
+    with pytest.raises(SrtError) as ei:
+        tstrans.srt.Builder("srt://127.0.0.1:notaport").connect()
+    assert ei.value.kind == SrtErrorKind.CONFIG_INVALID
+    assert ei.value.reject_reason is None
+    assert SrtError(kind=SrtErrorKind.IO, message="m").reject_reason is None
+
+
+def test_reject_reason_names_every_rust_code() -> None:
+    internal = {m.value: m.name for m in RejectReason if m.value < 1000}
+    assert sorted(internal) == list(range(18))
+    assert internal[10] == "BAD_SECRET"
+    assert internal[9] == "RDV_COOKIE"
+    assert internal[12] == "MESSAGE_API"

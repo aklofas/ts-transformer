@@ -300,8 +300,27 @@ class Listener:
 
 
 class RejectReason(enum.IntEnum):
-    """The predefined SRT reject codes (`SRT_REJX_*`, 1000..=1999)."""
+    """The SRT reject codes: libsrt's internal ones (`SRT_REJ_*`, 0..=17)
+    and the predefined ones (`SRT_REJX_*`, 1000..=1999)."""
 
+    UNKNOWN = 0
+    SYSTEM = 1
+    PEER = 2
+    RESOURCE = 3
+    ROGUE = 4
+    BACKLOG = 5
+    IPE = 6
+    CLOSE = 7
+    VERSION = 8
+    RDV_COOKIE = 9
+    BAD_SECRET = 10
+    UNSECURE = 11
+    MESSAGE_API = 12
+    CONGESTION = 13
+    FILTER = 14
+    GROUP = 15
+    TIMEOUT = 16
+    CRYPTO = 17
     FALLBACK = 1000
     KEY_NOT_SUPPORTED = 1001
     FILEPATH = 1002

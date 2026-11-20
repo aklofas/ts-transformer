@@ -29,13 +29,51 @@ fn reason_from_code(code: i32) -> RejectReason {
         .unwrap_or(RejectReason::Other(code))
 }
 
-/// `(code, name)` for each predefined reject reason, in code order.
+/// libsrt's internal reasons (`SRT_REJ_*`, 0..=17), in code order.
+const INTERNAL: [RejectReason; 18] = [
+    RejectReason::Unknown,
+    RejectReason::System,
+    RejectReason::Peer,
+    RejectReason::Resource,
+    RejectReason::Rogue,
+    RejectReason::Backlog,
+    RejectReason::Ipe,
+    RejectReason::Close,
+    RejectReason::Version,
+    RejectReason::RdvCookie,
+    RejectReason::BadSecret,
+    RejectReason::Unsecure,
+    RejectReason::MessageApi,
+    RejectReason::Congestion,
+    RejectReason::Filter,
+    RejectReason::Group,
+    RejectReason::Timeout,
+    RejectReason::Crypto,
+];
+
+/// `BadSecret` -> `BAD_SECRET`: Rust's variant name as a Python member name.
+fn screaming_snake(camel: &str) -> String {
+    let mut out = String::new();
+    for (i, c) in camel.chars().enumerate() {
+        if c.is_ascii_uppercase() && i > 0 {
+            out.push('_');
+        }
+        out.push(c.to_ascii_uppercase());
+    }
+    out
+}
+
+/// `(code, name)` for every typed reject reason, internal and predefined,
+/// in code order: what `tstrans.srt.RejectReason` must hold.
 #[pyfunction]
-fn _reject_reason_table() -> Vec<(i32, &'static str)> {
-    RejectReason::PREDEFINED
+fn _reject_reason_table() -> Vec<(i32, String)> {
+    let internal = INTERNAL
         .iter()
-        .filter_map(|r| r.name().map(|n| (r.raw(), n)))
-        .collect()
+        .map(|r| (r.raw(), screaming_snake(&format!("{r:?}"))));
+    let predefined = RejectReason::PREDEFINED
+        .iter()
+        .filter_map(|r| r.name().map(|n| (r.raw(), n.to_owned())));
+    internal.chain(predefined).collect()
 }
 
 /// The rule as written; the passphrase is validated when the rule is

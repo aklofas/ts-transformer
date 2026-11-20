@@ -11,10 +11,12 @@ Field-level KLV parse warnings are NOT raised — they live on the
 parsed object as `field_errors`, matching Rust's "best-effort parse"
 semantics for ST 0601 in the field.
 
-Since 0.7.0 every `*ErrorKind` member below is a
+Since 0.7.0 every `*ErrorKind` member NAME below is a
 `tst_pipeline::binding::BindingErrorKind::name()` string — the one
 Rust-side kind table shared by the C, Python and JVM bindings, with the
 domain prefix stripped (`BindingErrorKind::UdpIo` → `UdpErrorKind.IO`).
+The members are ints (`IntEnum`), except `DemuxErrorKind` and
+`KlvErrorKind`, whose values are strings.
 The native extension resolves every member it can raise at
 `import tstrans`, so a table/enum mismatch is an `ImportError`, never a
 surprise in an `except` clause. Members retired by that alignment were kept as
@@ -25,7 +27,10 @@ CHANGELOG has the old→new table).
 """
 
 import enum
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Optional, Union
+
+if TYPE_CHECKING:
+    from tstrans.srt import RejectReason
 
 
 class TstError(Exception):
@@ -541,9 +546,31 @@ class SrtErrorKind(enum.IntEnum):
 
 
 class SrtError(_KindMessageError):
-    """Raised by `tstrans.srt` operations. Discriminate via `.kind`."""
+    """Raised by `tstrans.srt` operations. Discriminate via `.kind`.
+
+    `reject_reason` is the reason a refused connection carried: a
+    `tstrans.srt.RejectReason` member for a code it names (libsrt's own,
+    such as `BAD_SECRET` for a wrong passphrase, or a predefined one), the
+    bare `int` for an application's code, `None` when the error is not a
+    reject. It is set on a caller's refused connect and on a listener's
+    accept of a caller that rejected; the managed opens retry a reject and
+    report none."""
 
     kind: SrtErrorKind
+    reject_reason: "Optional[Union[RejectReason, int]]"
+
+    def __init__(
+        self, *, kind: Any, message: str, reject_reason: Optional[int] = None
+    ) -> None:
+        super().__init__(kind=kind, message=message)
+        if reject_reason is not None:
+            try:
+                from tstrans.srt import RejectReason
+
+                reject_reason = RejectReason(reject_reason)
+            except (ImportError, ValueError):
+                pass
+        self.reject_reason = reject_reason
 
 
 # ── udp / tcp / hls / rist transport error classes ──────────────────────

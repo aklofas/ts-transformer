@@ -545,7 +545,12 @@ ID or rule key. Every `ListenRules` method raises `SrtError(CLOSED)` once the li
 `accept()` returns does not cover a caller whose handshake already
 completed, so keep your own check after `accept()` when it matters. A
 refused caller's connect fails with `SrtError(CONNECT_FAILED)`, with the
-reason name in the message. The semantics, including the passphrase and
+reason name in the message and typed in `err.reject_reason`: a
+`RejectReason` member for a code it names (libsrt's own `0..=17`, such as
+`BAD_SECRET` for a wrong passphrase, and the predefined ones), the bare
+`int` for an application code, `None` for an error that is not a reject.
+The listener never hands a refused caller to `accept()`, so its side sees
+no reason; the managed opens retry a reject and report none. The semantics, including the passphrase and
 key-length rules, are those of the Rust listener in the
 [SRT guide](/docs/guides/srt.md#listen-rules).
 

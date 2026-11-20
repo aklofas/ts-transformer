@@ -50,11 +50,31 @@ _native_reject_reason_table = _srt._reject_reason_table
 
 
 class RejectReason(_enum.IntEnum):
-    """The predefined SRT reject codes (`SRT_REJX_*`, 1000..=1999) a
-    `ListenRule.reject` can carry; the caller's connect error names the
-    reason. `ListenRule.reject` also takes any other int >= 1000; use
+    """The SRT reject codes: libsrt's internal ones (`SRT_REJ_*`, 0..=17,
+    such as `BAD_SECRET` for a wrong passphrase) and the predefined ones
+    (`SRT_REJX_*`, 1000..=1999). `SrtError.reject_reason` is a member for
+    any of them. A `ListenRule.reject` carries a predefined code or any
+    other int >= 1000 (an internal code raises `ValueError`); use
     `user_defined` for application codes (2000 and up)."""
 
+    UNKNOWN = 0
+    SYSTEM = 1
+    PEER = 2
+    RESOURCE = 3
+    ROGUE = 4
+    BACKLOG = 5
+    IPE = 6
+    CLOSE = 7
+    VERSION = 8
+    RDV_COOKIE = 9
+    BAD_SECRET = 10
+    UNSECURE = 11
+    MESSAGE_API = 12
+    CONGESTION = 13
+    FILTER = 14
+    GROUP = 15
+    TIMEOUT = 16
+    CRYPTO = 17
     FALLBACK = 1000
     KEY_NOT_SUPPORTED = 1001
     FILEPATH = 1002

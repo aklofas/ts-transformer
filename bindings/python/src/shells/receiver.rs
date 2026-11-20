@@ -74,6 +74,8 @@ impl PyReceiver {
 
     /// Wrap an already-opened transport (the `open` and
     /// `Socket.into_receiver()` paths meet here).
+    // Only the srt and tcp conversions open a shell without RTP counters.
+    #[cfg_attr(not(any(feature = "srt", feature = "tcp")), allow(dead_code))]
     pub(crate) fn from_opened(
         py: Python<'_>,
         opened: Opened<Box<dyn RecvTransport>>,
