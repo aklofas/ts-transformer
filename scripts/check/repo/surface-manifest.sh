@@ -60,8 +60,8 @@ SURFACE_JAVA_DIR="${SURFACE_JAVA_DIR:-$ROOT/bindings/jvm/src/main/java}"
 # [[exempt]] row names, pinned by count and by the sha256 of their sorted
 # list. The 2026-06-03 bootstrap left them uncatalogued. Giving one a row
 # shrinks the set: re-pin both values with --print-baseline in that change.
-UNAUDITED_COUNT=1027
-UNAUDITED_SHA256=c4ec4261a07c44631fd24577c734277e8b270adb47df5067442e26269e35e6a1
+UNAUDITED_COUNT=1021
+UNAUDITED_SHA256=79ef4c9371555ef421ad2d6dc0d2a946a571a53ca1b11d295d98f34f60d8ed38
 
 # Rule (b3): the most :unaudited cells each binding column may hold, in the
 # order "c python java". The number may only fall: auditing a cell lowers it,

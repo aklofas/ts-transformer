@@ -90,7 +90,7 @@ kind = "rust"
 crate = "tst-core"
 item = "tst_core::mpegts::mux::Muxer::reconfigure"
 owning_tests = ["crates/tst-core/tests/mpegts/mux_reconfigure.rs"]
-bindings = ["c:deferred(0.11.0 c-surface parity batch)", "python:deferred(0.11.0 binding-surface parity batch)", "java:deferred(0.11.0 binding-surface parity batch)", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:deferred(0.11.0 c-surface parity batch)", "python:Muxer.reconfigure", "java:deferred(0.11.0 binding-surface parity batch)", "swift:deferred", "kotlin:deferred"]
 tier = "A"
 
 [[surface]]
@@ -1978,6 +1978,60 @@ bindings = ["c:tst_mux_config_set_stream_descriptors_for_data", "c:tst_mux_confi
 scenario_ids = []
 tier = "A"
 
+[[surface]]
+kind = "rust"
+crate = "tst-core"
+item = "tst_core::mpegts::mux::MuxerProgramConfigBuilder::program_descriptors"
+owning_tests = ["crates/tst-core/tests/mpegts/mux_reconfigure.rs"]
+bindings = ["c:tst_mux_config_set_program_descriptors", "python:MuxerProgramConfigBuilder.program_descriptors", "java:org.tstrans.mpegts.MuxerConfig.Builder.programDescriptors", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-core"
+item = "tst_core::mpegts::mux::MuxerProgramConfigBuilder::stream_descriptors_for_video"
+owning_tests = ["crates/tst-core/tests/mpegts/mux_descriptors_roundtrip.rs", "crates/tst-core/tests/mpegts/mux_builder_errors.rs"]
+bindings = ["c:tst_mux_config_set_stream_descriptors_for_video", "python:MuxerProgramConfigBuilder.stream_descriptors_for_video", "java:org.tstrans.mpegts.MuxerConfig.Builder.streamDescriptorsForVideo", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-core"
+item = "tst_core::mpegts::mux::MuxerProgramConfigBuilder::stream_descriptors_for_klv"
+owning_tests = ["crates/tst-core/tests/mpegts/mux_descriptors_roundtrip.rs", "crates/tst-core/tests/mpegts/mux_builder_errors.rs"]
+bindings = ["c:tst_mux_config_set_stream_descriptors_for_klv", "python:MuxerProgramConfigBuilder.stream_descriptors_for_klv", "java:org.tstrans.mpegts.MuxerConfig.Builder.streamDescriptorsForKlv", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-core"
+item = "tst_core::mpegts::mux::MuxerProgramConfigBuilder::stream_descriptors_for_audio"
+owning_tests = ["crates/tst-core/tests/mpegts/mux_descriptors_roundtrip.rs", "crates/tst-core/tests/mpegts/mux_builder_errors.rs"]
+bindings = ["c:tst_mux_config_add_audio_descriptor", "python:MuxerProgramConfigBuilder.stream_descriptors_for_audio", "java:org.tstrans.mpegts.MuxerConfig.Builder.streamDescriptorsForAudio", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-core"
+item = "tst_core::mpegts::mux::MuxerProgramConfigBuilder::stream_descriptors_for_subtitle"
+owning_tests = ["crates/tst-core/tests/mpegts/mux_builder_errors.rs"]
+bindings = ["c:tst_mux_config_add_subtitle_descriptor", "python:MuxerProgramConfigBuilder.stream_descriptors_for_subtitle", "java:org.tstrans.mpegts.MuxerConfig.Builder.streamDescriptorsForSubtitle", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-core"
+item = "tst_core::mpegts::mux::MuxerProgramConfigBuilder::stream_descriptors_for_stream"
+owning_tests = ["crates/tst-core/tests/mpegts/mux_builder_errors.rs"]
+bindings = ["c:n/a(the C config sets descriptors per stream kind)", "python:MuxerProgramConfigBuilder.stream_descriptors_for_stream", "java:org.tstrans.mpegts.MuxerConfig.Builder.streamDescriptorsForStream", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
 
 # io_classify (2026-09-14): the shared TCP/UDP send-error classifier.
 # classify_send_error and its SendClass are consumed only via the
@@ -2456,15 +2510,14 @@ bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred
 # collapses the struct line AND every one of its methods (with_config,
 # push_video, push_klv, push_audio, push_subtitle, push_data, push_video_misp,
 # cut_segment, finish, stats, publisher_stats) onto this one item key — there
-# is no per-method row to graduate separately. push_data and push_video_misp
-# have no binding twin in Python or JVM today and are deliberately absent from
-# the columns below; every other method's JVM/Python twin is named.
+# is no per-method row to graduate separately; every method's JVM/Python twin
+# is named.
 [[surface]]
 kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::mux_publisher::MuxPublisher"
 owning_tests = ["bindings/jvm/src/test/java/org/tstrans/hls/MuxPublisherTest.java"]
-bindings = ["java:org.tstrans.hls.MuxPublisher", "java:org.tstrans.hls.MuxPublisher.withConfigHls", "java:org.tstrans.hls.MuxPublisher.pushVideo", "java:org.tstrans.hls.MuxPublisher.pushVideoWithDts", "java:org.tstrans.hls.MuxPublisher.pushKlv", "java:org.tstrans.hls.MuxPublisher.pushAudio", "java:org.tstrans.hls.MuxPublisher.pushSubtitle", "java:org.tstrans.hls.MuxPublisher.cutSegment", "java:org.tstrans.hls.MuxPublisher.finishIntoPublisher", "java:org.tstrans.hls.MuxPublisher.stats", "java:org.tstrans.hls.MuxPublisher.publisherStats", "python:tstrans.hls.MuxPublisher", "python:tstrans.hls.MuxPublisher.with_config_hls", "python:tstrans.hls.MuxPublisher.push_video", "python:tstrans.hls.MuxPublisher.push_video_with_dts", "python:tstrans.hls.MuxPublisher.push_klv", "python:tstrans.hls.MuxPublisher.push_audio", "python:tstrans.hls.MuxPublisher.push_subtitle", "python:tstrans.hls.MuxPublisher.cut_segment", "python:tstrans.hls.MuxPublisher.finish_into_publisher", "python:tstrans.hls.MuxPublisher.stats", "python:tstrans.hls.MuxPublisher.publisher_stats", "c:unaudited", "swift:deferred", "kotlin:deferred"]
+bindings = ["java:org.tstrans.hls.MuxPublisher", "java:org.tstrans.hls.MuxPublisher.withConfigHls", "java:org.tstrans.hls.MuxPublisher.pushVideo", "java:org.tstrans.hls.MuxPublisher.pushVideoWithDts", "java:org.tstrans.hls.MuxPublisher.pushKlv", "java:org.tstrans.hls.MuxPublisher.pushAudio", "java:org.tstrans.hls.MuxPublisher.pushSubtitle", "java:org.tstrans.hls.MuxPublisher.pushData", "java:org.tstrans.hls.MuxPublisher.pushVideoMisp", "java:org.tstrans.hls.MuxPublisher.cutSegment", "java:org.tstrans.hls.MuxPublisher.finishIntoPublisher", "java:org.tstrans.hls.MuxPublisher.stats", "java:org.tstrans.hls.MuxPublisher.publisherStats", "python:tstrans.hls.MuxPublisher", "python:tstrans.hls.MuxPublisher.with_config_hls", "python:tstrans.hls.MuxPublisher.push_video", "python:tstrans.hls.MuxPublisher.push_video_with_dts", "python:tstrans.hls.MuxPublisher.push_klv", "python:tstrans.hls.MuxPublisher.push_audio", "python:tstrans.hls.MuxPublisher.push_subtitle", "python:tstrans.hls.MuxPublisher.push_data", "python:tstrans.hls.MuxPublisher.push_video_misp", "python:tstrans.hls.MuxPublisher.cut_segment", "python:tstrans.hls.MuxPublisher.finish_into_publisher", "python:tstrans.hls.MuxPublisher.stats", "python:tstrans.hls.MuxPublisher.publisher_stats", "c:unaudited", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -2874,7 +2927,7 @@ kind = "rust"
 crate = "tst-rtp"
 item = "tst_rtp::RtpRecvTransport::local_addr"
 owning_tests = ["crates/tst-rtp/tests/rtp/loopback_unicast.rs", "crates/tst-rtp/src/transport/recv.rs"]
-bindings = ["c:n/a(the C RTP receivers report no local address)", "python:deferred(binding receivers read it through the shells)", "java:deferred(binding receivers read it through the shells)", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:n/a(the C RTP receivers report no local address)", "python:deferred(binding receivers read it through the shells)", "java:org.tstrans.shells.Receiver.localPort", "java:org.tstrans.shells.DemuxReceiver.localPort", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -3089,7 +3142,7 @@ kind = "rust"
 crate = "tst-tcp"
 item = "tst_tcp::builder::TcpListenerBuilder::from_url"
 owning_tests = ["crates/tst-tcp/src/builder.rs", "bindings/jvm/src/test/java/org/tstrans/tcp/ListenerTest.java"]
-bindings = ["c:n/a(the C listener opens through TcpListener::from_url: tst_tcp_listener_from_url)", "python:tstrans.tcp.ListenerBuilder.build", "java:org.tstrans.tcp.Listener.open", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:n/a(the C listener opens through TcpListener::from_url: tst_tcp_listener_from_url)", "python:tstrans.tcp.ListenerBuilder.build", "python:tstrans.tcp.Listener.open", "java:org.tstrans.tcp.Listener.open", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
