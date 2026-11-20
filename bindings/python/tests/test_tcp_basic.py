@@ -21,6 +21,8 @@ from tstrans.mpegts import DemuxerConfig, Pts90khz
 
 from _builders.hang_deadline import call_with_hang_deadline
 from _builders.mux_programs import masquerade_program, video_only_program
+from _builders.native_hooks import shells_hook
+from _builders.wait import wait_for
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -1008,25 +1010,23 @@ def test_a_conversion_does_not_wait_behind_a_recv_on_another_thread() -> None:
         except TcpError as e:
             ended.append(e.kind)
 
+    held = shells_hook("_slot_held_for_test")
     reader = threading.Thread(target=recv_once, daemon=True)
     try:
         reader.start()
+        wait_for("the recv() holding the transport", lambda: held(accepted), 10.0)
         blocked, outcome = call_with_hang_deadline(accepted.into_receiver, 10.0)
         if blocked:
             accepted.cancel_handle().cancel()
         assert not blocked, "the conversion waited behind the recv()"
-        if "exc" in outcome:
-            # The recv held the connection: nothing was consumed.
-            assert isinstance(outcome["exc"], RuntimeError), outcome["exc"]
-            assert accepted.peer_addr() == client.getsockname()
-            client.sendall(_PAYLOAD)
-            reader.join(5.0)
-            assert ended == [len(_PAYLOAD)]
-        else:
-            # The conversion ran first: the recv found the transport consumed.
-            reader.join(5.0)
-            assert ended == [TcpErrorKind.CLOSED]
-            outcome["value"].close()  # type: ignore[attr-defined]
+        # The recv held the connection: the conversion refused and consumed
+        # nothing.
+        assert isinstance(outcome.get("exc"), RuntimeError), outcome
+        assert held(accepted), "the recv() let go of the transport during the conversion"
+        assert accepted.peer_addr() == client.getsockname()
+        client.sendall(_PAYLOAD)
+        reader.join(5.0)
+        assert ended == [len(_PAYLOAD)]
     finally:
         accepted.close()
         reader.join(5.0)
