@@ -1092,6 +1092,30 @@ class RtspPushTest {
         }
     }
 
+    /**
+     * A close that finds a conversion took the push ends nothing and must not fix the
+     * statistics: they keep following the push its new owner ends.
+     */
+    @Test
+    @Timeout(30)
+    @EnabledIfSystemProperty(named = "tst.jniTestHooks", matches = "true")
+    void aCloseThatLostThePushToAConversionKeepsFollowingIt() throws Exception {
+        try (ScriptedRecordServer peer = new ScriptedRecordServer(200, false)) {
+            RtspPushSession push = RtspClient.push(peer.config(), PushDescription.mp2t());
+            push.sendTs(NULL_BUNDLE);
+            PushProbe.nTakeAsConversion(push.nativeHandleForTest());
+            try {
+                push.close();
+                assertEquals(Optional.empty(), push.endReason());
+            } finally {
+                PushProbe.nCloseTaken();
+            }
+            assertTrue(peer.awaitMethod("TEARDOWN"), "the push's owner wrote no TEARDOWN");
+            assertEquals(Optional.of(EndReason.CLEAN_TEARDOWN), push.endReason());
+            assertEquals(1L, push.stats().packetsSent());
+        }
+    }
+
     @Test
     @Timeout(60)
     @EnabledIfSystemProperty(named = "tst.jniTestHooks", matches = "true")
