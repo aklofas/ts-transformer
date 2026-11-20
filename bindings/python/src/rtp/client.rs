@@ -878,11 +878,12 @@ fn poisoned() -> BindingError {
     )
 }
 
-/// A session collected without `close()`: the client's own drop sends a
-/// best-effort TEARDOWN with the GIL released, then tells the client's
-/// thread to stop without waiting for it; that thread closes the
-/// connection on its own. Collection must not wait, so it does not call
-/// `RtspClient::close`.
+/// A session collected without `close()` drops only its share of the
+/// client: a receiver taken from it keeps the client. Once the last share
+/// goes, the client's own drop sends a best-effort TEARDOWN with the GIL
+/// released, then tells the client's thread to stop without waiting for
+/// it; that thread closes the connection on its own. Collection must not
+/// wait, so it does not call `RtspClient::close`.
 impl Drop for PyRtspSession {
     fn drop(&mut self) {
         // Only this session's share of the client: a receiver taken from it
