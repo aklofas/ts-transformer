@@ -2786,7 +2786,6 @@ dependencies = [
  "libc",
  "rcgen",
  "secrecy",
- "thiserror",
  "tst-core",
  "tst-hls",
  "tst-pipeline",
@@ -2961,7 +2960,6 @@ dependencies = [
 name = "tst-rist"
 version = "0.10.0"
 dependencies = [
- "libc",
  "secrecy",
  "thiserror",
  "tracing",
@@ -3051,7 +3049,6 @@ dependencies = [
  "libc",
  "socket2",
  "thiserror",
- "tracing",
  "tst-core",
  "tst-pipeline",
  "tst-test-helpers",
