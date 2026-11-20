@@ -232,20 +232,21 @@ impl PyDemuxReceiver {
         }
     }
 
-    /// The one open path: translate the config dataclass with the GIL held,
-    /// then open the transport.
+    /// The one open path: translate the config dataclass with the GIL held
+    /// (after the cancelled-object check, before the URL), then open the
+    /// transport.
     fn open_with(
         py: Python<'_>,
         url: &str,
         demux_config: Option<&Bound<'_, PyAny>>,
         cancel: Option<&Bound<'_, PyOpenCancel>>,
     ) -> PyResult<Self> {
-        let demux_opts = match demux_config {
-            None => None,
-            Some(cfg_obj) => Some(crate::mpegts::build_demuxer_config(py, cfg_obj)?),
-        };
         let oc = object_of(cancel);
-        let opened = crate::shells::open::open_recv(py, url, &oc)?;
+        let (opened, demux_opts) = crate::shells::open::open_recv(py, url, &oc, || {
+            demux_config
+                .map(|cfg_obj| crate::mpegts::build_demuxer_config(py, cfg_obj))
+                .transpose()
+        })?;
         Self::from_recv(py, opened, demux_opts)
     }
 }
@@ -263,10 +264,12 @@ impl PyDemuxReceiver {
     /// is cancelled through an `OpenCancel` made beforehand: its
     /// `cancel()` from another thread ends the accept with
     /// `SrtError(CLOSED)`, and an object already cancelled refuses the
-    /// open with the transport's `CLOSED` before the URL is parsed.
+    /// open with the transport's `CLOSED` before `demux_config` and the URL
+    /// are looked at.
     ///
-    /// Raises `ValueError` for an unsupported scheme and the transport's
-    /// error class for a bad URL. An `srt://` bind or accept fault raises
+    /// Raises `ValueError` for an unsupported scheme, then the field error of
+    /// a `demux_config` it cannot read, then the transport's error class for
+    /// a bad URL. An `srt://` bind or accept fault raises
     /// `SrtError(kind=BROKEN)` with the message prefixed `bind: ` or
     /// `accept: `.
     #[classmethod]

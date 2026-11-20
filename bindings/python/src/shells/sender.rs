@@ -98,7 +98,8 @@ impl PySender {
         cancel: Option<&Bound<'_, PyOpenCancel>>,
     ) -> PyResult<Self> {
         let oc = object_of(cancel);
-        Self::from_opened(py, crate::shells::open::open_send(py, url, &oc)?)
+        let (opened, ()) = crate::shells::open::open_send(py, url, &oc, || Ok(()))?;
+        Self::from_opened(py, opened)
     }
 
     /// Send one pre-muxed TS chunk (any bytes-like). Releases the GIL

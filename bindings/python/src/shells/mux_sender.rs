@@ -93,20 +93,10 @@ impl Drop for PyMuxSender {
 }
 
 impl PyMuxSender {
-    /// Wrap an already-opened transport with a muxer built from
-    /// `program_config` (the `open` path).
-    pub(crate) fn from_opened(
-        py: Python<'_>,
-        opened: Opened<Box<dyn Transport>>,
-        program_config: &PyMuxerProgramConfig,
-    ) -> PyResult<Self> {
-        let muxer_cfg = Self::muxer_config_for(py, program_config)?;
-        Self::from_opened_with_config(py, opened, muxer_cfg)
-    }
-
-    /// Build the single-program `MuxerConfig` for `program_config`. A
-    /// consuming conversion calls this before it takes its source handle,
-    /// so a refused config leaves the source usable.
+    /// Build the single-program `MuxerConfig` for `program_config`. `open`
+    /// calls this before it connects, and a consuming conversion before it
+    /// takes its source handle, so a refused config dials nothing and
+    /// leaves the source usable.
     pub(crate) fn muxer_config_for(
         py: Python<'_>,
         program_config: &PyMuxerProgramConfig,
@@ -117,7 +107,8 @@ impl PyMuxSender {
     }
 
     /// Wrap an already-opened transport with a muxer built from an
-    /// already-validated `muxer_cfg` (the `Socket.into_mux_sender()` path).
+    /// already-validated `muxer_cfg` (the `open` and `into_mux_sender()`
+    /// paths).
     pub(crate) fn from_opened_with_config(
         py: Python<'_>,
         opened: Opened<Box<dyn Transport>>,
@@ -149,10 +140,12 @@ impl PyMuxSender {
     ///
     /// Raises `ValueError` for an unsupported scheme; the transport's error
     /// class for a bad URL or a connect failure; `MuxError(CONFIG_INVALID)`
-    /// if the muxer rejects the program config.
+    /// if the muxer rejects the program config, before the URL is parsed
+    /// and without connecting.
     ///
     /// `cancel`: an `OpenCancel` already cancelled refuses the open with
-    /// the transport's `CLOSED` before the URL is parsed; one cancelled
+    /// the transport's `CLOSED` before the program config and the URL are
+    /// looked at; one cancelled
     /// while the connect runs does not interrupt it, but the open then
     /// raises `CLOSED` and the connection is closed again.
     #[classmethod]
@@ -165,8 +158,10 @@ impl PyMuxSender {
         cancel: Option<&Bound<'_, PyOpenCancel>>,
     ) -> PyResult<Self> {
         let oc = object_of(cancel);
-        let opened = crate::shells::open::open_send(py, url, &oc)?;
-        Self::from_opened(py, opened, &program_config)
+        let (opened, muxer_cfg) = crate::shells::open::open_send(py, url, &oc, || {
+            Self::muxer_config_for(py, &program_config)
+        })?;
+        Self::from_opened_with_config(py, opened, muxer_cfg)
     }
 
     // ── Push family — single-stream variants ──────────────────────────────

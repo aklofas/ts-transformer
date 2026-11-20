@@ -641,8 +641,11 @@ The rules:
   still raises `ValueError`, as there is no transport to name. The managed
   `from_url`s are SRT only and raise `SrtError(CLOSED)` whatever the URL
   says. With an already-cancelled object an open is refused with `CLOSED`
-  before its URL is parsed; an invalid configuration object may be
-  reported first.
+  before its configuration and its URL are looked at. Every open checks
+  in one order: the scheme (`ValueError`), the cancelled object
+  (`CLOSED`), the muxer or demuxer configuration, the URL, then the
+  connect or bind; so `MuxSender.open` refuses a program configuration
+  without connecting.
 - It ends a listener-mode first accept at any time. It does not interrupt
   a caller-mode connect, but an open that finishes after the cancel raises
   `CLOSED` whatever it did, and a connection it had just made is closed

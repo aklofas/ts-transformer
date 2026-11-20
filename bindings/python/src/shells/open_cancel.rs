@@ -7,13 +7,17 @@
 use pyo3::prelude::*;
 
 use tst_core::transport::TransportError;
-use tst_pipeline::binding::{BindingError, OpenCancel, OpenSlot};
+use tst_pipeline::binding::{BindingError, Domain, OpenCancel, OpenSlot};
+
+use crate::raise::raise;
 
 /// A sticky cancel for opens in progress: `cancel()` ends every open
 /// parked in a listener-mode first accept with it, and every open given it
 /// later raises `CLOSED` without opening anything. With an
-/// already-cancelled object an open is refused with `CLOSED` before its URL
-/// is parsed; an invalid configuration object may be reported first.
+/// already-cancelled object an open is refused with `CLOSED` before its
+/// configuration and its URL are looked at. Ctrl-C does not interrupt an
+/// open parked in a first accept; cancel it from another thread through
+/// this object.
 #[pyclass(frozen, name = "OpenCancel", module = "tstrans.shells")]
 pub(crate) struct PyOpenCancel {
     inner: OpenCancel,
@@ -91,6 +95,17 @@ pub(crate) fn finish<T>(slot: OpenSlot, r: Result<T, BindingError>) -> Result<T,
 /// GIL held.
 pub(crate) fn refuse(slot: OpenSlot, e: BindingError) -> BindingError {
     finish(slot, Err::<(), _>(e)).unwrap_err()
+}
+
+/// [`refuse`] for a configuration the open refused with a Python exception
+/// (`MuxError`, or a field `TypeError` / `ValueError` / `OverflowError`):
+/// the domain's `CLOSED` when the object was cancelled by now, else `e`.
+pub(crate) fn refuse_config(py: Python<'_>, domain: &Domain, slot: OpenSlot, e: PyErr) -> PyErr {
+    if slot.finish() {
+        raise(py, domain, closed())
+    } else {
+        e
+    }
 }
 
 /// `_open_cancel_with_slow_open_for_test(delay_ms)` -> an `OpenCancel` with

@@ -54,7 +54,9 @@ use crate::raise::{SRT, pyok, raise};
 use crate::shells::cancel::PyCancelHandle;
 use crate::shells::demux_receiver::demux_recv_err;
 use crate::shells::mux_sender::mux_sender_err;
-use crate::shells::open_cancel::{PyOpenCancel, begin, closed, finish, object_of, refuse};
+use crate::shells::open_cancel::{
+    PyOpenCancel, begin, closed, finish, object_of, refuse, refuse_config,
+};
 use crate::srt::policy::PyReconnectPolicy;
 use crate::util::{CancelSource, close_owned, drop_owned};
 
@@ -133,11 +135,11 @@ impl PyManagedMuxSender {
     /// `SrtError(CONFIG_INVALID)` on URL parse / bad-mode failure;
     /// `SrtError(CONNECT_FAILED)` / `SrtError(TIMEOUT)` on handshake
     /// failure; `MuxError(CONFIG_INVALID)` if the muxer construction
-    /// rejects the program config.
+    /// rejects the program config (checked before the URL).
     ///
     /// `cancel`: an `OpenCancel` already cancelled refuses the open with
-    /// `SrtError(CLOSED)` before the URL is parsed (a program configuration
-    /// the muxer refuses is reported first); one cancelled while the
+    /// `SrtError(CLOSED)` before the program config and the URL are looked
+    /// at; one cancelled while the
     /// connect runs does not interrupt it, but the open then raises
     /// `SrtError(CLOSED)` and the connection is closed again.
     #[staticmethod]
@@ -149,12 +151,14 @@ impl PyManagedMuxSender {
         policy: Option<PyReconnectPolicy>,
         cancel: Option<&Bound<'_, PyOpenCancel>>,
     ) -> PyResult<Self> {
-        let mut cfg_builder = tst_core::mpegts::mux::MuxerConfig::builder();
-        cfg_builder.add_program(program_config.inner.clone());
-        let muxer_cfg = cfg_builder.build().map_err(|e| mux_error_to_pyerr(py, e))?;
-
         let oc = object_of(cancel);
         let slot = begin(&oc).ok_or_else(|| raise(py, &SRT, closed()))?;
+        let mut cfg_builder = tst_core::mpegts::mux::MuxerConfig::builder();
+        cfg_builder.add_program(program_config.inner.clone());
+        let muxer_cfg = match cfg_builder.build() {
+            Ok(cfg) => cfg,
+            Err(e) => return Err(refuse_config(py, &SRT, slot, mux_error_to_pyerr(py, e))),
+        };
         let parsed = match SrtUrl::parse(url) {
             Ok(parsed) => parsed,
             Err(e) => return Err(raise(py, &SRT, refuse(slot, BindingError::from(e)))),
@@ -726,7 +730,9 @@ impl PyManagedDemuxReceiver {
     /// `cancel`: no handle exists until this returns, so the first accept
     /// is cancelled through an `OpenCancel` made beforehand: its `cancel()`
     /// from another thread ends the accept with `SrtError(CLOSED)`, and an
-    /// object already cancelled refuses the open before the URL is parsed.
+    /// object already cancelled refuses the open before `demux_config` and
+    /// the URL are looked at (a `demux_config` it cannot read is reported
+    /// before a bad URL).
     /// A caller-mode connect is not interrupted by it, but an open that
     /// ends after the cancel raises `SrtError(CLOSED)` and the connection
     /// is closed again. Interpreter exit wakes the first accept too, with
@@ -744,14 +750,17 @@ impl PyManagedDemuxReceiver {
     ) -> PyResult<Self> {
         let oc = object_of(cancel);
         let slot = begin(&oc).ok_or_else(|| raise(py, &SRT, closed()))?;
+        // Translate the DemuxerConfig dataclass with the GIL held.
+        let demux_opts = match demux_config
+            .map(|cfg_obj| crate::mpegts::build_demuxer_config(py, cfg_obj))
+            .transpose()
+        {
+            Ok(opts) => opts,
+            Err(e) => return Err(refuse_config(py, &SRT, slot, e)),
+        };
         let parsed = match SrtUrl::parse(url) {
             Ok(parsed) => parsed,
             Err(e) => return Err(raise(py, &SRT, refuse(slot, BindingError::from(e)))),
-        };
-        // Translate the DemuxerConfig dataclass with the GIL held.
-        let demux_opts = match demux_config {
-            None => None,
-            Some(cfg_obj) => Some(crate::mpegts::build_demuxer_config(py, cfg_obj)?),
         };
         let policy_inner = policy.map(|p| p.inner).unwrap_or_default();
         // `tst_srt::shells` dispatches on `url.mode` (both modes are legal

@@ -139,7 +139,8 @@ impl PyReceiver {
         cancel: Option<&Bound<'_, PyOpenCancel>>,
     ) -> PyResult<Self> {
         let oc = object_of(cancel);
-        Self::from_recv(py, crate::shells::open::open_recv(py, url, &oc)?)
+        let (opened, ()) = crate::shells::open::open_recv(py, url, &oc, || Ok(()))?;
+        Self::from_recv(py, opened)
     }
 
     /// One 188-byte TS packet per call. Releases the GIL while parked;

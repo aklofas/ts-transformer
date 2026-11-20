@@ -8,7 +8,7 @@ use tst_core::url::redact_url;
 use tst_pipeline::binding::{BindingError, BindingErrorKind, Domain, OpenCancel, Opened};
 
 use crate::raise::raise;
-use crate::shells::open_cancel::{begin, closed, finish};
+use crate::shells::open_cancel::{begin, closed, finish, refuse_config};
 
 /// The transports this build includes.
 const BUILT: &[Domain] = &[
@@ -48,13 +48,22 @@ fn unreachable_scheme<T>() -> Result<T, BindingError> {
 /// open's cancel object (see [`crate::shells::open_cancel`]): a sender
 /// takes no slot, so only a cancel before or during the connect is seen,
 /// as `CLOSED` once it ends.
-pub(crate) fn open_send(
+///
+/// The checks run in one order for every open: the scheme (`ValueError`),
+/// the cancelled object (`CLOSED`), then `config` (the shell's
+/// configuration, built with the GIL held), then the URL, then the connect.
+pub(crate) fn open_send<C>(
     py: Python<'_>,
     url: &str,
     oc: &OpenCancel,
-) -> PyResult<Opened<Box<dyn Transport>>> {
+    config: impl FnOnce() -> PyResult<C>,
+) -> PyResult<(Opened<Box<dyn Transport>>, C)> {
     let d = domain_of(url).ok_or_else(|| unsupported(url))?;
     let slot = begin(oc).ok_or_else(|| raise(py, &d, closed()))?;
+    let config = match config() {
+        Ok(c) => c,
+        Err(e) => return Err(refuse_config(py, &d, slot, e)),
+    };
     let r = crate::util::allow_threads_parking(py, || {
         let r = match d {
             #[cfg(feature = "srt")]
@@ -71,7 +80,7 @@ pub(crate) fn open_send(
         };
         finish(slot, r)
     });
-    r.map_err(|e| raise(py, &d, e))
+    r.map(|o| (o, config)).map_err(|e| raise(py, &d, e))
 }
 
 /// The RTP counters' handle of a receive transport, which a shell reads
@@ -102,10 +111,20 @@ impl OpenedRecv {
 /// Open a receive transport for a shell, with the GIL released. An `srt://`
 /// open hands the slot `oc` gave it to its first accept and registers it,
 /// so both `oc.cancel()` and the interpreter-exit hook end a first accept
-/// that no caller holds a handle to yet.
-pub(crate) fn open_recv(py: Python<'_>, url: &str, oc: &OpenCancel) -> PyResult<OpenedRecv> {
+/// that no caller holds a handle to yet. The checks run in
+/// [`open_send`]'s order, `config` before the URL.
+pub(crate) fn open_recv<C>(
+    py: Python<'_>,
+    url: &str,
+    oc: &OpenCancel,
+    config: impl FnOnce() -> PyResult<C>,
+) -> PyResult<(OpenedRecv, C)> {
     let d = domain_of(url).ok_or_else(|| unsupported(url))?;
     let slot = begin(oc).ok_or_else(|| raise(py, &d, closed()))?;
+    let config = match config() {
+        Ok(c) => c,
+        Err(e) => return Err(refuse_config(py, &d, slot, e)),
+    };
     let r = crate::util::allow_threads_parking(py, || {
         let r = match d {
             #[cfg(feature = "srt")]
@@ -130,5 +149,5 @@ pub(crate) fn open_recv(py: Python<'_>, url: &str, oc: &OpenCancel) -> PyResult<
         };
         finish(slot, r)
     });
-    r.map_err(|e| raise(py, &d, e))
+    r.map(|o| (o, config)).map_err(|e| raise(py, &d, e))
 }

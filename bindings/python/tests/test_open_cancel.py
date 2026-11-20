@@ -21,9 +21,10 @@ import pytest
 
 import tstrans.srt as srt
 from tstrans import exceptions, shells
+from tstrans.mpegts import DemuxerConfig
 from tstrans.shells import OpenCancel
 
-from _builders.mux_programs import video_only_program
+from _builders.mux_programs import masquerade_program, video_only_program
 from _builders.native_hooks import shells_hook
 from _builders.ports import free_udp_port
 
@@ -310,6 +311,133 @@ def test_an_unsupported_scheme_is_a_value_error_even_with_a_cancelled_object() -
         shells.MuxSender.open("http://127.0.0.1:1", video_only_program(), cancel=oc)
     with pytest.raises(ValueError, match="unsupported URL scheme"):
         shells.DemuxReceiver.open("http://127.0.0.1:1", cancel=oc)
+
+
+# ---------------------------------------------------------------------------
+# The order of the checks: scheme, CLOSED, configuration, URL, dial.
+# ---------------------------------------------------------------------------
+
+
+def _refused_demux_config() -> DemuxerConfig:
+    """A `DemuxerConfig` whose cap no open accepts (`OverflowError`); the
+    dataclass's own check refuses a negative cap, so it is set past it."""
+    cfg = DemuxerConfig()
+    object.__setattr__(cfg, "pes_cap_per_pid", -1)
+    return cfg
+
+
+class _CancellingDemuxConfig:
+    """Reads as a `DemuxerConfig`, but reading its cap cancels `oc` and
+    yields a cap no open accepts: a cancel that lands while the open
+    translates its configuration."""
+
+    def __init__(self, oc: OpenCancel) -> None:
+        self._oc = oc
+        self._cfg = DemuxerConfig()
+
+    @property
+    def pes_cap_per_pid(self) -> int:
+        self._oc.cancel()
+        return -1
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._cfg, name)
+
+
+# Each open that takes a configuration, with one it refuses.
+REFUSED_CONFIG_OPENS: dict[str, Callable[[str, OpenCancel | None], Any]] = {
+    "MuxSender.open": lambda url, oc: shells.MuxSender.open(url, masquerade_program(), cancel=oc),
+    "DemuxReceiver.open": lambda url, oc: shells.DemuxReceiver.open(
+        url, _refused_demux_config(), cancel=oc
+    ),
+    "ManagedMuxSender.from_url": lambda url, oc: srt.ManagedMuxSender.from_url(
+        url, masquerade_program(), cancel=oc
+    ),
+    "ManagedDemuxReceiver.from_url": lambda url, oc: srt.ManagedDemuxReceiver.from_url(
+        url, demux_config=_refused_demux_config(), cancel=oc
+    ),
+}
+
+
+def _assert_config_refused(name: str, exc: BaseException) -> None:
+    if name.startswith(("MuxSender", "ManagedMuxSender")):
+        assert isinstance(exc, exceptions.MuxError), f"expected MuxError, got {exc!r}"
+        assert exc.kind is exceptions.MuxErrorKind.CONFIG_INVALID
+    else:
+        assert isinstance(exc, OverflowError), f"expected OverflowError, got {exc!r}"
+
+
+@pytest.mark.parametrize("name", list(REFUSED_CONFIG_OPENS))
+def test_a_cancelled_open_with_a_refused_config_is_closed(name: str) -> None:
+    """A cancelled object is reported before the configuration is looked
+    at; nothing is dialled or bound (the URL would dial or bind)."""
+    oc = OpenCancel()
+    oc.cancel()
+    mode = "caller" if "Sender" in name else "listener"
+    with pytest.raises(exceptions.SrtError) as raised:
+        REFUSED_CONFIG_OPENS[name](f"srt://127.0.0.1:{free_udp_port()}?mode={mode}", oc)
+    _assert_closed(raised.value)
+
+
+@pytest.mark.parametrize("name", list(REFUSED_CONFIG_OPENS))
+def test_a_refused_config_is_reported_before_a_bad_url(name: str) -> None:
+    """Without a cancel, the configuration is checked before the URL."""
+    with pytest.raises(BaseException) as raised:
+        REFUSED_CONFIG_OPENS[name]("srt://127.0.0.1:notaport?no_such_key=1", None)
+    _assert_config_refused(name, raised.value)
+
+
+def test_an_unsupported_scheme_is_reported_before_a_refused_config() -> None:
+    oc = OpenCancel()
+    oc.cancel()
+    for name in ("MuxSender.open", "DemuxReceiver.open"):
+        with pytest.raises(ValueError, match="unsupported URL scheme"):
+            REFUSED_CONFIG_OPENS[name]("http://127.0.0.1:1", oc)
+
+
+def test_mux_sender_open_with_a_refused_config_never_dials() -> None:
+    """The program configuration is validated before the connect: a TCP
+    listener has no connection waiting once the refused open returned (a
+    loopback connect completes into the backlog before `open` returns)."""
+    lst = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    lst.bind(("127.0.0.1", 0))
+    lst.listen(4)
+    port = lst.getsockname()[1]
+    try:
+        with pytest.raises(exceptions.MuxError) as raised:
+            shells.MuxSender.open(f"tcp://127.0.0.1:{port}", masquerade_program())
+        assert raised.value.kind is exceptions.MuxErrorKind.CONFIG_INVALID
+        lst.setblocking(False)
+        with pytest.raises(BlockingIOError):
+            conn, _ = lst.accept()
+            conn.close()
+    finally:
+        lst.close()
+
+
+def test_managed_demux_from_url_with_a_bad_config_refuses_its_slot() -> None:
+    """A cancel that lands while the open translates its configuration wins
+    over the configuration error: the open reports CLOSED."""
+    oc = OpenCancel()
+    port = free_udp_port()
+    with pytest.raises(exceptions.SrtError) as raised:
+        srt.ManagedDemuxReceiver.from_url(
+            f"srt://127.0.0.1:{port}?mode=listener", demux_config=_CancellingDemuxConfig(oc), cancel=oc
+        )
+    _assert_closed(raised.value)
+    assert oc.is_cancelled()
+    assert not _udp_port_bound(port)
+
+
+def test_demux_receiver_open_with_a_bad_config_refuses_its_slot() -> None:
+    oc = OpenCancel()
+    port = free_udp_port()
+    with pytest.raises(exceptions.SrtError) as raised:
+        shells.DemuxReceiver.open(
+            f"srt://127.0.0.1:{port}?mode=listener", _CancellingDemuxConfig(oc), cancel=oc
+        )
+    _assert_closed(raised.value)
+    assert not _udp_port_bound(port)
 
 
 # ---------------------------------------------------------------------------

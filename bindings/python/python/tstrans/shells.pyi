@@ -184,8 +184,9 @@ class OpenCancel:
       this build does not support still raises `ValueError`. The managed
       `from_url`s are SRT only and raise `SrtError(CLOSED)` whatever the
       URL says. With an already-cancelled object an open is refused with
-      `CLOSED` before its URL is parsed; an invalid configuration object
-      may be reported first.
+      `CLOSED` before its configuration and its URL are looked at: an
+      open checks the scheme, then the object, then its configuration,
+      then the URL, then connects.
     - `cancel()` ends a listener-mode first accept at any time: the open
       raises `SrtError(CLOSED)` and the port is released.
     - It does not interrupt a caller-mode connect, but an open that
@@ -199,7 +200,8 @@ class OpenCancel:
     `cancel()` releases the GIL while it closes listening sockets. Every
     method is safe from any thread, any number of times. The
     interpreter-exit hook still ends a parked first accept, with or
-    without this object.
+    without this object. Ctrl-C does not interrupt an open parked in a
+    first accept; cancel it from another thread through this object.
     """
 
     def __init__(self) -> None: ...
