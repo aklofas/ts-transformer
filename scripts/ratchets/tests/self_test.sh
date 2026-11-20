@@ -400,6 +400,7 @@ impl PySocket {
     }
     fn local_port(&self) -> PyResult<u16> {
         let _why = "a string naming .ip() is no finding";
+        let _quote = ('"', ".ip()", '\"');
         Ok(self.local()?.port())
     }
 }

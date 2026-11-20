@@ -7,7 +7,8 @@
 # address can be opened on loopback.
 #
 # Two checks over bindings/python/src, util.rs excepted (the helper's home).
-# Comments and one-line string literals are blanked before either check.
+# Comments, one-line string literals and the char literal `'"'` are blanked
+# before either check.
 #
 # 1. FAIL on `.ip()`, `.scope_id()` or `.to_ipv4_mapped()`, or the same
 #    method called by path (`SocketAddr::ip(&a)`): taking an address apart
@@ -48,9 +49,11 @@ trap 'rm -rf "$tmp"' EXIT
 
 find "$ROOT" -type f -name '*.rs' ! -path "$ROOT/util.rs" | LC_ALL=C sort > "$tmp/files"
 
-# The code of a line: string literals emptied, then a comment cut.
+# The code of a line: a quote char literal and string literals emptied, then
+# a comment cut.
 CODE='
     function code(s) {
+        gsub(/'"'"'\\?"'"'"'/, "'"''"'", s)
         gsub(/"([^"\\]|\\.)*"/, "\"\"", s)
         sub(/^[ \t]+/, "", s)
         if (s ~ /^\/\//) return ""
