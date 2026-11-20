@@ -82,7 +82,7 @@ import hashlib
 import json
 import tomllib
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import pytest
 
@@ -1085,6 +1085,36 @@ def _scenario_ids() -> list[str]:
 def test_scenario_matches_committed_golden(scenario_id: str) -> None:
     """For each scenario in scenarios.toml, run the Python adapter and assert
     the result equals the committed golden.json."""
+    _check_scenario(scenario_id)
+
+
+# One value of each golden whose extensions this leg observes, changed.
+_EXTENSION_EDITS: dict[str, Callable[[dict[str, Any]], None]] = {
+    "demux-receiver-stats": lambda ext: ext["stats"].update(
+        nonconformant=ext["stats"]["nonconformant"] + 1
+    ),
+    "srt-reject-reason": lambda ext: ext["reject_reason"].update(name="NOT_A_REASON"),
+}
+
+
+@pytest.mark.parametrize("scenario_id", sorted(_EXTENSION_EDITS))
+def test_observed_extensions_are_compared_not_copied(scenario_id: str) -> None:
+    """With one value of the golden's ``extensions`` changed (in memory), the
+    scenario fails: its extensions come from the run, not from the golden."""
+
+    def edit(golden: dict[str, Any]) -> None:
+        _EXTENSION_EDITS[scenario_id](golden["extensions"])
+
+    with pytest.raises(AssertionError, match="differs from committed golden"):
+        _check_scenario(scenario_id, edit_golden=edit)
+
+
+def _check_scenario(
+    scenario_id: str,
+    edit_golden: Callable[[dict[str, Any]], None] | None = None,
+) -> None:
+    """Run one scenario and assert the result equals its golden, after
+    ``edit_golden`` (if given) has changed the golden as read."""
     if scenario_id.startswith("__error__:"):
         pytest.fail(
             "scenario collection failed: "
@@ -1108,6 +1138,8 @@ def test_scenario_matches_committed_golden(scenario_id: str) -> None:
 
     with open(golden_path) as fh:
         committed = json.load(fh)
+    if edit_golden is not None:
+        edit_golden(committed)
 
     _validate_golden_tags(committed, scenario_id)
 
