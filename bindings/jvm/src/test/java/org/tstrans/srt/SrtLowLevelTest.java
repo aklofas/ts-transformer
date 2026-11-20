@@ -237,16 +237,19 @@ class SrtLowLevelTest {
             assertEquals(LOOPBACK_V4, at.getAddress());
             assertTrue(at.getPort() > 0);
             caller = new Builder("srt://127.0.0.1:" + at.getPort()).caller().connect();
-            accepted = lst.accept(5000);
-            assertNotNull(accepted);
             try {
-                InetSocketAddress mine = caller.localAddr();
-                assertFalse(mine.isUnresolved());
-                assertTrue(mine.getPort() > 0);
-                assertEquals(at, accepted.localAddr());
+                accepted = lst.accept(5000);
+                assertNotNull(accepted);
+                try {
+                    InetSocketAddress mine = caller.localAddr();
+                    assertFalse(mine.isUnresolved());
+                    assertTrue(mine.getPort() > 0);
+                    assertEquals(at, accepted.localAddr());
+                } finally {
+                    accepted.close();
+                }
             } finally {
                 caller.close();
-                accepted.close();
             }
         } finally {
             lst.close();
