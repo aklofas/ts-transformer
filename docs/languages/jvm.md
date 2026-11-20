@@ -3018,6 +3018,12 @@ HlsPublisher back = shell.finishIntoPublisher();        // consumes the shell
 back.finish();                                          // or back.finishServing() to keep serving
 ```
 
+`MuxPublisher` also has `pushVideoMisp(nal, pts, keyFrame, mispTimestamp)`
+(a MISB ST 0604 MISP timestamp SEI spliced before the first VCL NAL) and
+`pushData(data, pts)` (a data stream's PES pass-through); like
+`pushVideoWithDts`, each needs exactly one stream of its kind in the config
+(else `MuxException(INVALID_USAGE)`).
+
 Pre-muxed TS goes straight in with `publisher.pushTs(bytes)` (whole 188-byte
 packets, else `HlsException(UNALIGNED_PUSH_TS)`) and `cutSegment()` /
 `cutSegmentWithDuration(us)`. `finishServing()` returns an `HlsServerHandle`

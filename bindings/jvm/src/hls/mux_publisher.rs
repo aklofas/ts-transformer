@@ -27,7 +27,7 @@ use tst_pipeline::{MuxPublisher as RustMuxPublisher, MuxPublisherError};
 use crate::error::throw_closed;
 use crate::handle::HandleRegistry;
 use crate::jutil::{checked_u8, read_bytes};
-use crate::mpegts::muxer::build_muxer_config_from_arrays;
+use crate::mpegts::muxer::{build_misp, build_muxer_config_from_arrays};
 
 use super::errors::mux_publisher_error;
 use super::publisher::{REGISTRY as REGISTRY_HLS, build_publisher_stats, register as register_hls};
@@ -201,6 +201,49 @@ jni_native! {
             return;
         };
         with_shell(env, handle, |s| s.push_subtitle(&buf, Pts90khz::new(pts)));
+    }
+}
+
+jni_native! {
+    /// `nSendVideoMisp(handle, nal, pts, keyFrame, mispKind, timeStatus, value)`:
+    /// the single video stream's push with a MISP SEI; the scalars are the
+    /// `MispTimestamp` fields `Muxer.pushVideoMispTo` passes.
+    #[allow(clippy::too_many_arguments)]
+    fn Java_org_tstrans_hls_MuxPublisher_nSendVideoMisp<'local>(
+        env,
+        _class,
+        handle: jlong,
+        nal: JByteArray<'local>,
+        pts: jlong,
+        key_frame: jboolean,
+        misp_kind: jint,
+        time_status: jint,
+        value: jlong,
+    ) = () => {
+        let Some(misp) = build_misp(env, misp_kind, time_status, value) else {
+            return;
+        };
+        let Some(buf) = read_bytes(env, &nal) else {
+            return;
+        };
+        with_shell(env, handle, |s| {
+            s.push_video_misp(&buf, Pts90khz::new(pts), key_frame, &misp)
+        });
+    }
+}
+
+jni_native! {
+    fn Java_org_tstrans_hls_MuxPublisher_nSendData<'local>(
+        env,
+        _class,
+        handle: jlong,
+        data: JByteArray<'local>,
+        pts: jlong,
+    ) = () => {
+        let Some(buf) = read_bytes(env, &data) else {
+            return;
+        };
+        with_shell(env, handle, |s| s.push_data(&buf, Pts90khz::new(pts)));
     }
 }
 

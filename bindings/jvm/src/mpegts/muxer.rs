@@ -1085,7 +1085,7 @@ jni_native! {
 /// Construct a `MispTimestamp` from the JNI scalar fields (kind ordinal 0/1,
 /// timeStatus as a byte, value as unsigned reinterpret). Returns `None`
 /// (with a `MuxException(INVALID_USAGE)` thrown) when `kind` is out of range.
-fn build_misp(
+pub(crate) fn build_misp(
     env: &mut Env,
     kind: jint,
     time_status: jint,

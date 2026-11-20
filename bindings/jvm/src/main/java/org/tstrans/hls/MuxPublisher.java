@@ -4,6 +4,7 @@ import org.tstrans.HlsException;
 import org.tstrans.MuxException;
 import org.tstrans.NativeHandle;
 import org.tstrans.NativeLoader;
+import org.tstrans.codec.MispTimestamp;
 import org.tstrans.mpegts.MuxerConfig;
 
 /**
@@ -111,6 +112,38 @@ public final class MuxPublisher extends NativeHandle {
         nSendSubtitle(peekHandle(), payload, pts);
     }
 
+    /**
+     * {@link #pushVideo} with a MISB ST 0604 MISP timestamp SEI spliced in front
+     * of the first VCL NAL. Requires exactly one configured video stream (H.264
+     * or H.265). {@code misp}'s {@code value} is read as unsigned 64-bit.
+     *
+     * @throws MuxException {@code INVALID_USAGE} when the config does not hold
+     *     exactly one video stream; {@code INPUT_MALFORMED} for a non-Annex-B
+     *     access unit or one without a VCL NAL; {@code MISP_TIME} for a
+     *     {@link org.tstrans.codec.MispTimeKind#NANO} timestamp on H.264
+     */
+    public void pushVideoMisp(byte[] nal, long pts, boolean keyFrame, MispTimestamp misp)
+            throws MuxException, HlsException {
+        java.util.Objects.requireNonNull(misp, "misp");
+        ensureOpen("MuxPublisher is closed");
+        nSendVideoMisp(peekHandle(), nal, pts, keyFrame,
+            misp.kind().ordinal(), misp.timeStatus(), misp.value());
+    }
+
+    /**
+     * Push one payload on the config's single data stream: a PES pass-through,
+     * no AU-cell wrap and no framing; {@code pts} is written into the PES header
+     * only for a stream added with {@code carriesPts = true}.
+     *
+     * @throws MuxException {@code INVALID_USAGE} when the config does not hold
+     *     exactly one data stream; {@code INPUT_MALFORMED} for a payload too large
+     *     for one PES
+     */
+    public void pushData(byte[] data, long pts) throws MuxException, HlsException {
+        ensureOpen("MuxPublisher is closed");
+        nSendData(peekHandle(), data, pts);
+    }
+
     /** Explicit segment-cut hint. */
     public void cutSegment() throws MuxException, HlsException {
         ensureOpen("MuxPublisher is closed");
@@ -161,6 +194,11 @@ public final class MuxPublisher extends NativeHandle {
     private static native void nSendAudio(long handle, byte[] frames, long pts)
         throws MuxException, HlsException;
     private static native void nSendSubtitle(long handle, byte[] payload, long pts)
+        throws MuxException, HlsException;
+    private static native void nSendVideoMisp(long handle, byte[] nal, long pts,
+        boolean keyFrame, int mispKind, int timeStatus, long value)
+        throws MuxException, HlsException;
+    private static native void nSendData(long handle, byte[] data, long pts)
         throws MuxException, HlsException;
     private static native void nCutSegment(long handle) throws MuxException, HlsException;
     // Only HlsException is declared: MuxPublisher::finish() in tst-pipeline is
