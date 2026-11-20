@@ -105,6 +105,10 @@ rules.set(streamId, originalRule);
   refuses them. The caller sees the refusal immediately as
   `SrtConnectError::Rejected` carrying your reason, for example 1404 for
   `NotFound`, 1409 for `Conflict`, 1403 for `Forbidden`, 1402 for `Overload`.
+  In Python the caller's `SrtError` carries it as `reject_reason` (a
+  `RejectReason` member, or the `int` of a code of your own), on the JVM
+  `SrtException.rejectReason()` (`Optional<RejectReason>`). The listener's
+  side sees no reason: libsrt never hands a refused caller to `accept()`.
 - **`AcceptWith` carries a passphrase only.** The key length follows the
   caller's key material. A caller with the wrong passphrase is refused by
   libsrt with `BadSecret`.

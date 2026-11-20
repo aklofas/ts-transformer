@@ -1299,9 +1299,8 @@ class H264Receiver:
     failed control connection also gives `None`, and
     `end_reason()` names it). `timeout_ms=N`
     bounds a single call; expiry raises `RtpError(BACKPRESSURE)` — the
-    receiver stays open, call again to retry. After a cancel, once its
-    `RtspSession` is collected, or after a `teardown()` on a session whose
-    cancel had fired, the AUs already
+    receiver stays open, call again to retry. After a cancel, or after a
+    `teardown()` on a session whose cancel had fired, the AUs already
     buffered are returned first, then `RtpError(CLOSED)` is raised. A
     `close()` from another thread lets a parked call return one
     held AU if there is one (a queued AU, or the one the cancel flushes);

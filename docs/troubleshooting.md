@@ -352,7 +352,7 @@ Diagnosis: `ss -uamp` (look at the `d<N>` drop counter in `skmem`) or the `drops
 
 Fix: raise the receive buffer on the URL, e.g. `rtp://0.0.0.0:5004?rcvbuf=8M` (same key on `udp://`). Linux clamps the request to `net.core.rmem_max`; a warning is logged when that happens — raise it with `sysctl -w net.core.rmem_max=16777216`.
 
-To accept datagrams from one sending host only, add `?source=<ip>` to the `rtp://` receive URL; datagrams from any other IP are dropped silently on every receive path. The drop count is `RtpStats::source_rejected`, readable from `RtpRecvTransport::rtp_stats()` (Rust) and from `H264Receiver` `rtp_stats()` in Rust, Python and JVM (`rtpStats().sourceRejected()`). It is not yet surfaced through `DemuxReceiver` or the Python/JVM MPEG-TS receivers — the same gap `malformed_packets` has.
+To accept datagrams from one sending host only, add `?source=<ip>` to the `rtp://` receive URL; datagrams from any other IP are dropped silently on every receive path. The drop count is `RtpStats::source_rejected`, readable from `RtpRecvTransport::rtp_stats()` (Rust) and from `H264Receiver` `rtp_stats()` in Rust, Python and JVM (`rtpStats().sourceRejected()`). On an MPEG-TS receiver (`rtp://` through a shell, or taken from an RTSP session or a publish mount) read it, with `malformed_packets`, from `rtp_stats()` on Python's `shells.Receiver` / `shells.DemuxReceiver` and `rtpStats()` on the JVM's (`Optional`, empty off RTP, never waiting behind a parked receive).
 
 ## All `UnpairedVideo`, zero `Paired`
 
@@ -637,10 +637,10 @@ Set `TSTRANS_LOG=tst_rtp=debug` (`EnvFilter` syntax, same as
 
 **JVM** (`org.tstrans.rtp` / `org.tstrans.shells`) mirrors this too: `Receiver`,
 `DemuxReceiver`, and `H264Receiver` each expose `endReason()` (an
-`org.tstrans.shells.EndReason` member, or `null`) and `endDetail()` (the free-text
-message for `KEEPALIVE_FAILED` / `TRANSPORT_FAILED` /
-`PROTOCOL_ERROR`, `null` otherwise) — both stay readable after
-`close()`:
+`Optional<org.tstrans.shells.EndReason>`, empty while the stream is live) and
+`endDetail()` (an `Optional<String>`: the free-text message for
+`KEEPALIVE_FAILED` / `TRANSPORT_FAILED` / `PROTOCOL_ERROR`, empty otherwise) —
+both stay readable after `close()`:
 
 ```java
 import org.tstrans.rtp.*;
@@ -652,11 +652,11 @@ try (RtspSession session = RtspClient.connectH264(cfg);
         // ...
     }
     // loop exited (EOS or a caught error) — ask why
-    EndReason reason = rx.endReason();
+    EndReason reason = rx.endReason().orElse(null);
     if (reason == EndReason.SESSION_EXPIRED) {
         // re-DESCRIBE + SETUP
     } else if (reason == EndReason.KEEPALIVE_FAILED || reason == EndReason.TRANSPORT_FAILED) {
-        System.out.println("stream died: " + rx.endDetail());
+        System.out.println("stream died: " + rx.endDetail().orElse(""));
     }
 }
 ```
@@ -696,8 +696,10 @@ the first ping would come after the close. A client made by
 **Fix:** keep media flowing; any byte resets that server's clock. In Rust,
 build the client with `RtspClientBuilder::keepalive_interval` below the
 server's timeout (`Duration::from_secs(5)` for mediamtx's 10 s); pings come
-only from a builder-made client. Python's and the JVM's configs have pings on
-or off (on by default) and no interval: there, keep sending media.
+only from a builder-made client. In Python pass
+`RtspClientConfig(url, keepalive_interval_ms=5000)`, and on the JVM
+`RtspClientConfig.builder(url).keepaliveIntervalMs(5000)`, to `push`;
+both keep pings on by default and refuse an interval with keepalive off.
 
 **The session ends right after `pause()`**
 

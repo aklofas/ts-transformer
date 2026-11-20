@@ -1605,6 +1605,21 @@ mean **Deferred**. An entry whose feature has shipped must never read
   stopped between its pushes and which then needs `tick` to keep its
   clock.
 
+## `MuxSender::reconfigure` in the bindings
+
+- **Status:** Deferred. `Muxer::reconfigure` is in Python
+  (`mpegts.Muxer.reconfigure`) and on the JVM (`Muxer.reconfigure`,
+  single-program like the JVM's `MuxerConfig`); the C binding has none.
+  `MuxSender::reconfigure` has no form in any binding, and neither have
+  the managed SRT mux senders, the RTSP mounts or `MuxPublisher`.
+- **Why deferred:** a binding's `MuxSender` reads its stream handles once,
+  when it is built, and its `send_*` calls address streams through them;
+  a reconfigure that adds or removes streams would leave those handles
+  stale. Exposing it needs a change in how the shells hold their streams.
+- **Trigger to revisit:** a binding user who has to add or withdraw a
+  stream or a program on a live `MuxSender` without restarting the output
+  (a sensor announced and withdrawn while the main video runs).
+
 ## Per-program PSI cadence
 
 - **Status:** Deferred. A PSI tick sends the PAT and the PMT of every
@@ -2110,19 +2125,20 @@ and the two below.
   protocol's own field name, or one the scheme-neutral record does not
   carry.
 
-## Bound port on `rtp://` and `srt://` shells
+## Bound port of an `srt://` listener shell before its first caller
 
-- **Status:** Deferred. `localPort()` on `org.tstrans.shells.Receiver` and
-  `DemuxReceiver` is empty for an `rtp://` or `srt://` receiver; it reports
-  the port only for `udp://` and `rist://@…`.
-- **Why deferred:** the raw RTP receiver has no local-address getter, so
-  its opener has no bound address to report. An `srt://` listener shell
-  accepts its one peer inside `open`, so a port picked by the kernel could
-  not be read before a sender has to reach it; `org.tstrans.srt.Listener`
-  reports its bound address with `localAddr()`.
-- **Trigger to revisit:** a consumer that binds an `rtp://` receiver on
-  port 0. Once the raw RTP receiver reports its address, the shell needs
-  one line in its opener.
+- **Status:** Deferred in part. Shipped in 0.11.0: the receiving shells'
+  `localPort()` / `localAddr()` (JVM) and `local_port()` / `local_addr()`
+  (Python) report an `rtp://` receiver's bound port, and an `srt://`
+  listener's address once its first caller has connected, beside `udp://`
+  and `rist://@…`. Not built: reading the port the kernel picked for an
+  `srt://` listener shell on port 0 before that caller connects.
+- **Why deferred:** an `srt://` listener shell accepts its one peer inside
+  `open`, so the port is known only once a caller has reached it;
+  `org.tstrans.srt.Listener.localAddr()` and `tstrans.srt.Listener.local_addr()`
+  report a low-level listener's bound address before any accept.
+- **Trigger to revisit:** a consumer that opens an `srt://` listener shell
+  on port 0 and has to tell its caller the port.
 
 ## `org.tstrans.tcp.Transport.intoMuxSender`
 
@@ -2415,7 +2431,7 @@ Shipped 0.6.0 (C ABI minor 20): `ReconnectMode::Background` and the send-side re
 
 ### Last-activity-wall-clock gauges per stream (C / Python / JVM) — RESOLVED 2026-08-21
 
-Shipped 0.6.0 (C ABI minor 20): `tst_*_get_stream_last_seen_micros` on six C demux-receiver families (`0` = never seen) and `last_seen_micros` / `lastSeenMicros` on the three Python and JVM receivers (`None` / `null`).
+Shipped 0.6.0 (C ABI minor 20): `tst_*_get_stream_last_seen_micros` on six C demux-receiver families (`0` = never seen) and `last_seen_micros` / `lastSeenMicros` on the three Python and JVM receivers (`None` / `null`). Since 0.11.0 the bindings read it as a time type, `last_seen(pid)` (an aware UTC `datetime`) in Python and `lastSeen(int)` (`Optional<Instant>`) on the JVM; the counts are deprecated, removed in 0.12.0.
 
 ### Per-stream PMT descriptor surface at the C ABI
 

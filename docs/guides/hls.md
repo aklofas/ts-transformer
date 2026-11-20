@@ -115,7 +115,8 @@ publisher = (
     .segment_duration_ms(4000)
     .build()
 )
-print("serving http://%s/playlist.m3u8" % publisher.local_addr())
+host, port = publisher.local_addr()   # None with no_server()
+print(f"serving http://{host}:{port}/playlist.m3u8")
 
 program = (
     MuxerProgramConfigBuilder(program_number=1, pmt_pid=0x1000)
@@ -139,6 +140,7 @@ pub.finish()
 The JVM surface mirrors the Rust and Python ones under `org.tstrans.hls`:
 
 ```java
+import java.net.InetSocketAddress;
 import org.tstrans.hls.HlsMode;
 import org.tstrans.hls.HlsPublisher;
 import org.tstrans.hls.MuxPublisher;
@@ -153,7 +155,8 @@ HlsPublisher publisher = HlsPublisher.builder()
     .playlistWindow(6)
     .mode(HlsMode.LIVE)
     .build();
-System.out.println("serving http://" + publisher.localAddr().orElseThrow() + "/playlist.m3u8");
+InetSocketAddress addr = publisher.localAddr().orElseThrow(); // empty with noServer()
+System.out.println("serving http://" + addr.getHostString() + ":" + addr.getPort() + "/playlist.m3u8");
 
 MuxerConfig program = MuxerConfig.builder()
     .programNumber(1).pmtPid(0x100)
@@ -193,7 +196,9 @@ handle.shutdown();
 ```
 
 In Python, `HlsPublisher.finish_serving()` returns the same
-`HlsServerHandle` (with `local_addr()` / `shutdown()`).
+`HlsServerHandle` (with `local_addr()`, a `(host, port)` tuple, and
+`shutdown()`); on the JVM `finishServing()` returns one whose
+`localAddr()` is an `InetSocketAddress`.
 
 ## Serving in production
 

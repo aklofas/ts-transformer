@@ -11,9 +11,10 @@
  * has a {@link org.tstrans.shells.CancelHandle}; an open that has not returned a shell
  * yet is cancelled through an {@link org.tstrans.shells.OpenCancel} given to it. The
  * receivers report why a
- * session ended through {@link org.tstrans.shells.EndReason}. A {@code udp://} or
- * {@code rist://@host:port} receiver reports the port it bound with
- * {@code localPort()}, so it can be opened on port 0. A shell over a TCP connection
+ * session ended through {@link org.tstrans.shells.EndReason}. A {@code udp://},
+ * {@code rist://@host:port} or {@code rtp://} receiver reports the port it bound with
+ * {@code localPort()}, so it can be opened on port 0; an {@code srt://} listener
+ * reports the address of the connection it accepted. A shell over a TCP connection
  * a server accepted comes from {@link org.tstrans.tcp.Listener}.
  */
 package org.tstrans.shells;

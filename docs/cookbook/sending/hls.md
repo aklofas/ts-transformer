@@ -105,7 +105,8 @@ handle.shutdown();
 ```java
 HlsPublisher back = shell.finishIntoPublisher();
 HlsServerHandle handle = back.finishServing();  // #EXT-X-ENDLIST written (Event/Vod modes); server stays up
-System.out.println("VOD at http://" + handle.localAddr() + "/playlist.m3u8");
+InetSocketAddress addr = handle.localAddr();       // java.net.InetSocketAddress
+System.out.println("VOD at http://" + addr.getHostString() + ":" + addr.getPort() + "/playlist.m3u8");
 // ... hold the handle for as long as clients should be able to fetch ...
 handle.shutdown();
 ```

@@ -204,6 +204,28 @@ outcome are listed once, in
   through `close_without_cancel()`, which closes and wakes without
   latching; `SrtSocket::close()` and a cross-thread `cancel()` latch.
 
+**Reads that never wait.** A getter that has to answer while a data call
+is parked on another thread does not take the lock that call holds. It
+reads either a value captured when the object was opened (a local or peer
+address) or a `Sync` handle the object took when it was built, a view over
+counters the call in progress updates: `RtpStatsHandle` from
+`RtpRecvTransport::stats_handle()`, `PushStatsHandle` from
+`RtspPush::stats_handle()`, `TsBytesDemuxedHandle` from
+`DemuxReceiver::ts_bytes_demuxed_handle()`, `SourceHandle` from
+`RecvTransport::source_handle()`. A binding object keeps its handle, so a
+read through one can also answer after `close()`, with the last values, and,
+on a push session, after a conversion into a shell, with the values of the
+push the shell now owns. In the bindings these are the receiving shells'
+`rtp_stats()` / `rtpStats()` (answers after `close()`), `peer_addr()` /
+`peerAddr()`, `source_rejected()` / `sourceRejected()` and `local_addr()` /
+`local_port()` (`localAddr()` / `localPort()`; each language guide says
+which of these refuse a closed shell), and a push session's `stats()`, `end_reason()` / `endReason()`, `end_detail()` /
+`endDetail()`, `is_session_alive()` / `isSessionAlive()` and cancel handle.
+Every other getter waits for the parked call (a shell's `stats()` and
+`socket_stats()`, `last_seen()` / `lastSeen()`); each language guide lists
+both kinds ([Python](/docs/languages/python.md#what-answers-while-another-thread-is-parked),
+[JVM](/docs/languages/jvm.md#what-answers-while-another-thread-is-parked)).
+
 **What each close, stop and drop waits for.**
 
 - `cancel()` on a flag transport is one atomic store (two on TCP: the
@@ -225,6 +247,15 @@ outcome are listed once, in
   closes the transport. `MuxSender::finish()` cancels nothing: it waits
   behind a parked send, and each of its drain sends can take as long as
   the transport's send does.
+- `Sender::finish()` cancels nothing either: it waits behind a parked
+  send, flushes the partial bundle and any bundle the transport refused,
+  closes the transport and returns the flush's error; a later `close()`
+  does nothing. `Sender::close()` flushes and closes the same way and
+  swallows the error. Python's and the JVM's `Sender.finish()` run
+  `finish()`, with no cancel first, where their `close()` cancels first.
+  A stream of one or two aligned TS packets is delivered by neither: the
+  sender forwards bytes only once three aligned packets have confirmed the
+  alignment.
 - `Drop` of a `MuxSender` or a `Sender` sends what is still buffered and
   then closes the transport, with no cancel first, so it takes as long as
   that send and close take. The other shells' `Drop` adds nothing to the
@@ -251,8 +282,10 @@ outcome are listed once, in
   call in progress on another thread cancels it first, so the session
   ends as a cancel. `teardown()` in Python and the JVM stays the reporting
   call: it waits up to the request timeout, reports a refused TEARDOWN and
-  keeps the client. A Python session collected without `close()` is a
-  plain drop of the client, which does not wait for the thread.
+  keeps the client. A receiver taken from a Python session holds the
+  client too: a session collected without `close()` drops its share, and
+  the client is dropped, without a wait for its thread, once the session
+  object and every receiver taken from it are gone.
 - An `RtspPush` (the RTSP push client) waits for its queued media before
   its TEARDOWN, and that wait has no total bound: it ends early only on the
   cancel or the session's end. `close()` then sends TEARDOWN under one
@@ -365,13 +398,18 @@ page's contract, so the push's close finds its queue wait cancelled: media
 queued a moment before can be dropped, and the TEARDOWN is written.
 `MuxSender::finish()` cancels nothing: it sends what the shell holds and
 closes the push, which, while the session is up, writes its queue before the
-TEARDOWN. In Rust, `Sender::close()` and the `Drop` of a `MuxSender` or a
-`Sender` close the push without a cancel too. A binding's `close()` of either
-shell cancels first. No shell reports whether the push's queue was written:
+TEARDOWN. `Sender::finish()` (Python's and the JVM's `Sender.finish()`) does the same
+for a plain `Sender`. In Rust, `Sender::close()` and the `Drop` of a
+`MuxSender` or a `Sender` close the push without a cancel too. A binding's
+`close()` of either shell cancels first: end a binding's shell over a push
+with `finish()`. No shell reports whether the push's queue was written:
 `Transport::close` returns nothing, so a session that ended first drops the
 queue and the shell's close or `finish()` still succeeds. Only the session's
 own close reports it (`RtspPush::close()`; `teardown()` in Python and on
 the JVM), so a caller who must know sends through the session's `send_ts`.
+The session object's `stats()` follows the push into the shell, so its
+`frames_dropped_at_close` (`framesDroppedAtClose()`) shows afterwards what a
+shell's end dropped (on the JVM until the session object is closed).
 
 **Python and the JVM.** `RtspPushSession.close()` (the `with` exit,
 try-with-resources) runs `RtspPush::close()` and reports nothing;
@@ -380,14 +418,23 @@ Either one fires the cancel first only when a send, `pause()` or `resume()`
 holds the session on another thread: that call ends with `CLOSED` and the
 queue is dropped. A send, `pause()` or `resume()` still waiting for the
 session is not cancelled and not waited for: it gets the session after the
-close began, runs nothing and ends with `CLOSED`. A close that finds only
-a `stats()` in progress waits for it and closes as an idle session does.
-`is_session_alive()` (`isSessionAlive()`) and the cancel handle never wait.
+close began, runs nothing and ends with `CLOSED`. A close that finds the
+session held only by a read (an `is_session_alive()` looking at it) waits for
+it and closes as an idle session does. `stats()`, `end_reason()` /
+`endReason()` and `end_detail()` / `endDetail()` read the push's
+`PushStatsHandle` and never wait (see
+[Reads that never wait](#threading-guarantees)); `is_session_alive()`
+(`isSessionAlive()`) and the cancel handle never wait either.
 The conversions into a sender shell (`into_mux_sender` / `into_sender`,
 `intoMuxSender` / `intoSender`) do not wait for a send, `pause()` or
 `resume()`: they raise `RuntimeError` (throw `IllegalStateException`),
-consume nothing and leave the session usable; a `stats()` in progress they
-wait for. A Python session collected without `close()` is the `Drop` row.
+consume nothing and leave the session usable; a read holding the session
+they wait for. These are the rules of
+`tst_pipeline::binding::parking::ParkingSlot`, which both bindings' push
+sessions hold the push in. After a panic inside a call the slot refuses
+every call that takes the session (`RtspError(CLOSED)`,
+`RtspException(CLOSED)`), and `close()` and `teardown()` still end the push.
+A Python session collected without `close()` is the `Drop` row.
 
 **One exception to "`Broken` means the end".** `TransportError::Broken`
 reads "Transport is dead. Caller must rebuild it (or rely on a managed

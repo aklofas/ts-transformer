@@ -1152,9 +1152,61 @@ moves to another of its streams because the stream that carried it was
 removed, and no discontinuity is signalled. A program that is new in the
 call starts its own clock with its first push.
 
-The C, Python and JVM bindings do not expose `reconfigure` yet; it reaches
-them in a later binding parity batch. The full contract is the rustdoc on
-`Muxer::reconfigure`.
+### In the bindings
+
+Python's `mpegts.Muxer.reconfigure(config)` and the JVM's
+`Muxer.reconfigure(MuxerConfig)` call `Muxer::reconfigure` under the same
+rules. A refused config raises `MuxError(CONFIG_INVALID)` (throws
+`MuxException(CONFIG_INVALID)`) and changes nothing; a removed stream's
+handle (and, in Python, `video_handles_for_program` on a removed program)
+is refused with `INVALID_USAGE` until a later call reuses the slot. The toggle above in
+Python:
+
+```python
+from tstrans.mpegts import Muxer, MuxerConfigBuilder, MuxerProgramConfigBuilder, VideoCodec
+
+def visible():
+    return MuxerProgramConfigBuilder(1, 0x1000).add_video(0x1011, VideoCodec.H264).build()
+
+def thermal():
+    return MuxerProgramConfigBuilder(2, 0x1100).add_video(0x1111, VideoCodec.H264).build()
+
+def config(*programs):
+    b = MuxerConfigBuilder()
+    for p in programs:
+        b = b.add_program(p)
+    return b.build()
+
+m = Muxer(config(visible()))
+[visible_video] = m.video_handles_for_program(1)
+m.reconfigure(config(visible(), thermal()))   # announce program 2
+[thermal_video] = m.video_handles_for_program(2)
+m.reconfigure(config(visible()))              # withdraw it; visible_video stays valid
+```
+
+The JVM's `MuxerConfig` describes one program, so its `reconfigure` adds,
+removes and re-describes that program's streams, and a config with another
+program number, on PIDs of its own, replaces the program; announcing a
+second program beside the first, as above, has no JVM form:
+
+```java
+MuxerConfig base = MuxerConfig.builder().programNumber(1).pmtPid(0x100)
+    .addVideo(0x101, VideoCodec.H264).build();
+try (Muxer m = new Muxer(base)) {
+    VideoStreamHandle video = m.videoHandles().get(0);
+    // Add a KLV stream; the video keeps its handle and its counters.
+    m.reconfigure(MuxerConfig.builder().programNumber(1).pmtPid(0x100)
+        .addVideo(0x101, VideoCodec.H264)
+        .addKlv(0x102, KlvStreamType.SYNCHRONOUS_METADATA, true).build());
+    KlvStreamHandle klv = m.klvHandles().get(0);
+}
+```
+
+The C binding has no `reconfigure`, and `MuxSender::reconfigure` has no
+form in any binding: a binding's shell keeps the stream handles it read
+when it was built (see
+[deferred-features.md](/docs/project/deferred-features.md)). The full
+contract is the rustdoc on `Muxer::reconfigure`.
 
 ## Audio output
 

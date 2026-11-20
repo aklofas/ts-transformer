@@ -166,7 +166,8 @@ try (RtspPushSession es = RtspClient.push(cfg, desc)) {
 ```
 
 The RTSP steps and the control calls declare `RtspException`, the session's
-data calls `RtpException`, and the `MuxSender` calls `MuxException` and
+data calls `RtpException` and `RtspException` (thrown `CLOSED` only by a
+session a panic poisoned), and the `MuxSender` calls `MuxException` and
 `BindingException`; `close()` is silent.
 
 ---
@@ -206,8 +207,9 @@ ten seconds of media in a burst reaches its readers as a burst.
 | `Transport::close` (Rust; what a shell's close and `finish()` call) | the queued media, then up to 500 ms for TEARDOWN and its reply; does not wait for the thread | the same | nothing; `stats().frames_dropped_at_close` and `end_reason()` say what happened |
 | Drop of an `RtspPush`, collection of a Python session | nothing | TEARDOWN, without waiting for its reply | nothing; what was queued is discarded |
 
-Over a sender shell, end a stream with `finish()`: it cancels nothing, sends
-what the shell holds and closes the push, which, while the session is up,
+Over a sender shell, end a stream with `finish()` (`MuxSender::finish()`,
+`Sender::finish()`, and `finish()` on Python's and the JVM's `MuxSender` and
+`Sender`): it cancels nothing, sends what the shell holds and closes the push, which, while the session is up,
 writes everything queued and then sends TEARDOWN. `finish()` cannot tell you
 whether that happened. The push's own close reports nothing through the
 shell, so a session that ended first (the server closed it, the connection
@@ -216,7 +218,13 @@ what was still queued, up to 1 024 frames, and `finish()` still returns
 without an error. When you must know, send through the session itself
 (`send_ts`) and read the result of its close: `RtspPush::close()` returns
 `Ok(())` only when the queued media was written and the server accepted the
-TEARDOWN; in Python and on the JVM, `teardown()` raises otherwise.
+TEARDOWN; in Python and on the JVM, `teardown()` raises otherwise. The
+session object's `stats()` follows the push into the shell, so after a
+shell's end its `frames_dropped_at_close` (`framesDroppedAtClose()`) counts
+what was dropped (on the JVM until the session object is closed). A plain
+`Sender` does not deliver a stream of one or two aligned TS packets at all:
+it forwards bytes only once three aligned packets have confirmed the
+alignment.
 `MuxSender::close()` fires the push's cancel first, and in Python and on the
 JVM so does the `close()` of either shell (`MuxSender` or `Sender`), so it
 can drop packets queued a moment before. In Rust, `Sender::close()` and a dropped `MuxSender` or
@@ -226,14 +234,18 @@ can drop packets queued a moment before. In Rust, `Sender::close()` and a droppe
 `pause()` or `resume()` is running on another thread, fire the cancel first:
 that call ends with `CLOSED` and what was queued is dropped. A call that is
 only waiting for the session is not cancelled: it runs nothing and ends with
-`CLOSED`. A `stats()` in progress is waited for, and called while nothing is
-in progress, the close writes the queue. `is_session_alive()`
-(`isSessionAlive()`) never waits: a call in progress counts as live, and it
-reads false once the session is closed or converted. The conversions
+`CLOSED`. Called while nothing is in progress, the close writes the queue.
+`stats()`, `end_reason()` (`endReason()`) and `end_detail()` (`endDetail()`)
+never wait and never raise: they read the push's counters while a send waits
+for room, and after `close()`, `teardown()` and a conversion.
+`is_session_alive()` (`isSessionAlive()`) never waits: a call in progress
+counts as live, and it reads false once the session is closed or converted. The conversions
 (`into_mux_sender` / `into_sender`, `intoMuxSender` / `intoSender`) do not
 wait for a send, `pause()` or `resume()` running on another thread: they
 raise `RuntimeError` (throw `IllegalStateException`) and consume nothing,
-and the session stays usable; a `stats()` in progress they wait for.
+and the session stays usable. After a panic inside a call, every call that
+takes the session raises `RtspError(CLOSED)` (throws
+`RtspException(CLOSED)`), and `close()` and `teardown()` still end the push.
 
 ### Keepalive and silence
 
@@ -244,8 +256,9 @@ continuously needs nothing. A push that can go quiet needs pings more often
 than every 10 s: in Rust, `RtspClientBuilder::keepalive_interval`. The
 default cadence is half the advertised session timeout (27.5 s against
 mediamtx), too late. Only a client made by `RtspClientBuilder` pings; one
-made by `RtspClient::connect` does not. Python's and the JVM's configs turn
-pings on or off (`keepalive`, on by default) and have no interval: keep media
+made by `RtspClient::connect` does not. Python's and the JVM's configs keep
+pings on by default and take the interval as `keepalive_interval_ms` /
+`keepaliveIntervalMs` (5000 against mediamtx's 10 s); without one, keep media
 flowing, or expect the end described in
 [Troubleshooting](/docs/troubleshooting.md#rtsp-push).
 
