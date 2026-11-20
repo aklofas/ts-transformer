@@ -132,7 +132,8 @@ final class ScenarioContractLegs {
             if (Modifier.isStatic(f.getModifiers()) && f.getType() == RejectReason.class) {
                 RejectReason r = (RejectReason) f.get(null);
                 assertEquals(f.getName(), r.name(), "constant " + f.getName() + " carries another name");
-                constants.put(r.code(), r.name());
+                assertNull(constants.put(r.code(), r.name()),
+                    "two RejectReason constants carry code " + r.code());
             }
         }
         assertEquals(table, constants, "the JVM's RejectReason constants differ from the golden's table");
@@ -141,8 +142,8 @@ final class ScenarioContractLegs {
         String core = GoldenSupport.eventObject(golden, "error");
         String reason = GoldenSupport.objectField(golden, "reject_reason");
         try (Listener listener = new Builder("srt://127.0.0.1:0?mode=listener").listener().listen()) {
-            // The reason is fixed here, as in the other legs: read from the golden, a wrong
-            // golden reason would pass.
+            // The rule's reason is fixed here, as in the other legs, so a golden whose reason
+            // drifted fails the comparison below instead of being echoed back.
             listener.rules().set(streamId, ListenRule.reject(RejectReason.FORBIDDEN));
             Builder caller = new Builder("srt://127.0.0.1:" + listener.localAddr().getPort())
                 .caller().streamId(streamId).connectTimeoutMs((int) scaledMs(5_000));

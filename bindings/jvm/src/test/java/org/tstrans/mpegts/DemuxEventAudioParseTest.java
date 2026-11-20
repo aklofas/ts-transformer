@@ -107,15 +107,15 @@ class DemuxEventAudioParseTest {
         // Non-syncword garbage: strict (frames) throws on the first bad frame;
         // lenient (frames_with_resync) resyncs past it and returns an empty list.
         byte[] garbage = new byte[] {0, 0, 0, 0, 0, 0, 0, 0};
-        int aacOrdinal = AudioCodec.AAC.ordinal();
+        int aacCode = AudioCodec.AAC.code();
 
         List<AudioFrame> lenient = assertDoesNotThrow(
-            () -> DemuxEventAudioNatives.nParseAudio(garbage, aacOrdinal, false),
+            () -> DemuxEventAudioNatives.nParseAudio(garbage, aacCode, false),
             "lenient parse of garbage must not throw");
         assertTrue(lenient.isEmpty(), "lenient parse of pure garbage yields no frames");
 
         assertThrows(CodecParseException.class,
-            () -> DemuxEventAudioNatives.nParseAudio(garbage, aacOrdinal, true),
+            () -> DemuxEventAudioNatives.nParseAudio(garbage, aacCode, true),
             "strict parse of garbage must throw CodecParseException");
     }
 

@@ -2,7 +2,9 @@ package org.tstrans.rtp;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
+import static org.tstrans.TestSupport.awaitInNative;
 import static org.tstrans.TestSupport.cancelNow;
+import static org.tstrans.TestSupport.inNative;
 import static org.tstrans.TestSupport.isLinux;
 
 import java.util.Optional;
@@ -528,7 +530,8 @@ class H264ReceiverTest {
         reader.start();
         try {
             assertTrue(entered.await(5, TimeUnit.SECONDS), "recvAu() never started");
-            Thread.sleep(300); // inside the native receive, holding the resource lock
+            awaitInNative(reader, "nRecvAu", org.tstrans.TestSupport.scaledMs(10_000),
+                () -> String.valueOf(returned.getNow(null)));
             assertFalse(returned.isDone(), "recvAu() returned on its own; nothing was sent");
 
             CompletableFuture<Object[]> answer = CompletableFuture.supplyAsync(
@@ -546,6 +549,7 @@ class H264ReceiverTest {
                 return;
             }
             assertFalse(returned.isDone(), "recvAu() ended before the getters answered");
+            assertTrue(inNative(reader, "nRecvAu"), "recvAu() left the native receive before the getters answered");
             assertEquals(Optional.empty(), got[0], "the session has not ended while a receive is in flight");
             assertEquals(Optional.empty(), got[1]);
         } finally {
