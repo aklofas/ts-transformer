@@ -13,7 +13,10 @@
 #      flags match its pass, none continue-on-error;
 #   4. every member manifest inherits the lint table;
 #   5. scripts/dev/cargo-deny-all.sh, which ci.yml's deny job runs, checks every
-#      fuzz workspace (crates/*/fuzz), and each manifest it lists exists in this tree.
+#      fuzz workspace (crates/*/fuzz), and each manifest it lists exists in this tree;
+#   6. ci.yml's python-core job runs every scripts/check/python/*.sh as
+#      `run: bash scripts/check/python/<rail>` in a step with no `if:` and no
+#      `continue-on-error:` other than false (a rail no step runs checks nothing).
 # RSYNC_FILES_ROOT points 1-3 and 5 at copies of those files (self_test.sh).
 # Linux/bash 3.2-portable: no mapfile, no sed -i; runs on the linux-x86_64 leg.
 set -euo pipefail
@@ -143,6 +146,20 @@ for m in $deny_paths; do
 done
 job_text deny | grep -qE '^[[:space:]]+run: bash scripts/dev/cargo-deny-all\.sh[[:space:]]*$' \
   || bad "ci.yml's deny job does not run scripts/dev/cargo-deny-all.sh"
+
+python_core="$(job_text python-core)"
+for rail in "$ROOT"/scripts/check/python/*.sh; do
+  n="scripts/check/python/${rail##*/}"
+  awk -v want="run: bash $n" '
+    function step_end() { if (hit && !cond) ok = 1; hit = cond = 0 }
+    /^      - / { step_end() }
+    { t = $0; sub(/^[ -]*/, "", t); sub(/[ \t]+$/, "", t) }
+    /^      (- |  )if:/ { cond = 1 }
+    /^      (- |  )continue-on-error:/ && t !~ /^continue-on-error:[ \t]*false$/ { cond = 1 }
+    t == want { hit = 1 }
+    END { step_end(); exit !ok }' <<<"$python_core" \
+    || bad "ci.yml's python-core job has no unconditional step running $n"
+done
 
 [ "$fail" -eq 0 ] && echo "roster-sync: OK"
 exit "$fail"
