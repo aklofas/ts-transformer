@@ -97,14 +97,9 @@ impl PyDemuxer {
             let res = py.detach(|| self.inner.feed(slice));
             return res.map_err(|e| demux_error_to_pyerr(py, &e));
         }
-        // Fallback: coerce via the Python `bytes()` builtin. Accepts
-        // `bytearray`, `memoryview`, and any object exposing the
-        // buffer protocol; raises `TypeError` if not bytes-like.
-        let coerced: Bound<'_, PyBytes> = py
-            .import("builtins")?
-            .getattr(intern!(py, "bytes"))?
-            .call1((bytes,))?
-            .cast_into::<PyBytes>()?;
+        // Fallback: `bytearray`, `memoryview`, any buffer object; an
+        // integer or a non-bytes-like object raises `TypeError`.
+        let coerced: Bound<'_, PyBytes> = crate::util::coerce_bytes_like(py, bytes)?;
         // `coerced` is `!Ungil` (contains `Python<'_>`), but the
         // underlying `&[u8]` is — extract the slice first and let
         // `coerced` (the strong `Py<PyBytes>` reference) keep it alive

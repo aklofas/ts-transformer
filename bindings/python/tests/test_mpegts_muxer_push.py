@@ -1337,18 +1337,34 @@ def _integers() -> list:
 
 
 @pytest.fixture
-def _udp_sink():
+def _peers():
+    """A UDP sink and a TCP listener for the callers that need a peer; the
+    objects a case builds are closed after it."""
     import socket
 
-    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
-        s.bind(("127.0.0.1", 0))
-        yield s.getsockname()[1]
+    from tstrans import tcp
+
+    made: list = []
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sink:
+        sink.bind(("127.0.0.1", 0))
+        listener = tcp.Listener.builder().bind("127.0.0.1:0").build()
+        try:
+            yield sink.getsockname()[1], listener.local_port(), made
+        finally:
+            for obj in made:
+                obj.close()
+            listener.close()
 
 
-def _byte_callers(port: int) -> dict:
+def _byte_callers(udp_port: int, tcp_port: int, made: list) -> dict:
     from _builders.mux_programs import video_only_program
-    from tstrans import codec, rtp, shells, udp
-    from tstrans.mpegts import AudioCodec, MuxerProgramConfigBuilder, VideoCodec
+    from tstrans import codec, rtp, shells, tcp, udp
+    from tstrans.mpegts import AudioCodec, Demuxer, MuxerProgramConfigBuilder, VideoCodec
+    from tstrans.pipeline import Pairer
+
+    def keep(obj):
+        made.append(obj)
+        return obj
 
     sps = bytes([0x67, 0x42, 0x00, 0x1E, 0x95, 0xA8, 0x14, 0x01, 0x6E, 0x40])
     return {
@@ -1358,17 +1374,21 @@ def _byte_callers(port: int) -> dict:
         "Muxer.push_klv": lambda v: Muxer(_simple_config()).push_klv(
             v, pts=Pts90khz.from_raw(0)
         ),
-        "shells.Sender.send_bytes": lambda v: shells.Sender.open(
-            f"udp://127.0.0.1:{port}"
+        "Demuxer.feed": lambda v: Demuxer().feed(v),
+        "Pairer.feed": lambda v: Pairer(0x101, 0x102).feed(v),
+        "shells.Sender.send_bytes": lambda v: keep(
+            shells.Sender.open(f"udp://127.0.0.1:{udp_port}")
         ).send_bytes(v),
-        "shells.MuxSender.send_video": lambda v: shells.MuxSender.open(
-            f"udp://127.0.0.1:{port}", video_only_program()
+        "shells.MuxSender.send_video": lambda v: keep(
+            shells.MuxSender.open(f"udp://127.0.0.1:{udp_port}", video_only_program())
         ).send_video(v, pts=Pts90khz.from_raw(0)),
-        "udp.Transport.send": lambda v: udp.Transport.builder()
-        .url(f"udp://127.0.0.1:{port}")
-        .build()
-        .send(v),
-        "rtp.Transport.send": lambda v: rtp.Transport(f"rtp://127.0.0.1:{port}").send(v),
+        "udp.Transport.send": lambda v: keep(
+            udp.Transport.builder().url(f"udp://127.0.0.1:{udp_port}").build()
+        ).send(v),
+        "rtp.Transport.send": lambda v: keep(rtp.Transport(f"rtp://127.0.0.1:{udp_port}")).send(v),
+        "tcp.Transport.send": lambda v: keep(
+            tcp.Transport.builder().url(f"tcp://127.0.0.1:{tcp_port}").build()
+        ).send(v),
         "PushDescription.h264_from_key_frame": lambda v: rtp.PushDescription.h264_from_key_frame(v),
         "PushDescription.h264": lambda v: rtp.PushDescription.h264([sps, v]),
         "add_audio_with_language": lambda v: MuxerProgramConfigBuilder(
@@ -1386,19 +1406,22 @@ def _byte_callers(port: int) -> dict:
     [
         "Muxer.push_video",
         "Muxer.push_klv",
+        "Demuxer.feed",
+        "Pairer.feed",
         "shells.Sender.send_bytes",
         "shells.MuxSender.send_video",
         "udp.Transport.send",
         "rtp.Transport.send",
+        "tcp.Transport.send",
         "PushDescription.h264_from_key_frame",
         "PushDescription.h264",
         "add_audio_with_language",
         "codec.extract_misp_timestamp",
     ],
 )
-def test_a_byte_argument_refuses_an_integer(caller, value, _udp_sink) -> None:
+def test_a_byte_argument_refuses_an_integer(caller, value, _peers) -> None:
     with pytest.raises(TypeError, match="integer"):
-        _byte_callers(_udp_sink)[caller](value)
+        _byte_callers(*_peers)[caller](value)
 
 
 def test_byte_arguments_still_take_bytes_like_objects_and_iterables() -> None:

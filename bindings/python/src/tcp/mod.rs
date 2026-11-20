@@ -57,7 +57,7 @@ use tst_pipeline::binding::view::BlockingReason;
 use pyo3::exceptions::PyValueError;
 use pyo3::intern;
 use pyo3::prelude::*;
-use pyo3::types::{PyBytes, PyMemoryView};
+use pyo3::types::PyMemoryView;
 
 use tst_core::transport::{RecvTransport, Transport, TransportCancel};
 use tst_core::url::redact_url;
@@ -208,15 +208,11 @@ impl PyTcpTransport {
         let owned: Vec<u8> = if let Ok(slice) = payload.extract::<&[u8]>() {
             slice.to_vec()
         } else {
-            // Fallback: bytearray / memoryview / etc. -- coerce through Python
-            // `bytes()` builtin (one C copy). Written before the 3.11 floor
-            // put PyBuffer in the stable ABI; see `util::coerce_bytes_like`.
-            let coerced: Bound<'_, PyBytes> = py
-                .import("builtins")?
-                .getattr(intern!(py, "bytes"))?
-                .call1((payload,))?
-                .cast_into::<PyBytes>()?;
-            coerced.as_bytes().to_vec()
+            // Fallback: bytearray / memoryview / etc. (one copy); an integer
+            // raises `TypeError` (see `util::coerce_bytes_like`).
+            crate::util::coerce_bytes_like(py, payload)?
+                .as_bytes()
+                .to_vec()
         };
         pyres(
             py,
