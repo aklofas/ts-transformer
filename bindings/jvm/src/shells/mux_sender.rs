@@ -583,3 +583,9 @@ jni_native! {
         REGISTRY.is_alive(handle as u64, |inner| inner.is_alive())
     }
 }
+
+/// Test hook: whether a call holds the slot of `handle`.
+#[cfg(feature = "jni-test-hooks")]
+pub(crate) fn held(handle: jlong) -> bool {
+    REGISTRY.is_held(handle as u64)
+}

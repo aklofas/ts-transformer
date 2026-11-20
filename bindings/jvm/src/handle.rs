@@ -441,6 +441,13 @@ impl<T: Send + 'static, S: Send + Sync + 'static> OwnedRegistry<T, S> {
         self.lease(id).and_then(|e| e.owned.take()).is_some()
     }
 
+    /// Test hook: whether a call holds `id`'s slot right now ([`Owned::is_held`]);
+    /// `false` for an absent id. Never waits.
+    #[cfg(feature = "jni-test-hooks")]
+    pub(crate) fn is_held(&self, id: u64) -> bool {
+        self.lease(id).is_some_and(|e| e.owned.is_held())
+    }
+
     /// Mutator path (push / send / recv / next / flush): [`Owned::with_mut`]
     /// — refuses a poisoned slot, isolates a panic without poisoning.
     ///

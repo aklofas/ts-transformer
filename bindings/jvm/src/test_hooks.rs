@@ -322,3 +322,38 @@ jni_native! {
         crate::rtp::h264_receiver::empty_slot_keep_id(handle)
     }
 }
+
+jni_native! {
+    /// `org.tstrans.internal.SlotProbe.nHeld(String, long)` — whether a call holds
+    /// the slot of the shell `handle` names in the registry of the Java class
+    /// `type` (handles are numbered per class); never waits. An unknown class
+    /// throws `IllegalArgumentException`.
+    fn Java_org_tstrans_internal_SlotProbe_nHeld<'local>(
+        env,
+        _class,
+        type_name: jni::objects::JString<'local>,
+        handle: jlong,
+    ) -> jni::sys::jboolean = false => {
+        let name: String = match type_name.try_to_string(env) {
+            Ok(s) => s,
+            Err(e) => {
+                let _ = env.throw_new(FindClass(jni_str!("java/lang/RuntimeException")), JNIString::from(e.to_string()));
+                return false;
+            }
+        };
+        match name.as_str() {
+            "org.tstrans.shells.Sender" => crate::shells::sender::held(handle),
+            "org.tstrans.shells.Receiver" => crate::shells::receiver::held(handle),
+            "org.tstrans.shells.MuxSender" => crate::shells::mux_sender::held(handle),
+            "org.tstrans.shells.DemuxReceiver" => crate::shells::demux_receiver::held(handle),
+            "org.tstrans.tcp.Listener" => crate::tcp::held(handle),
+            other => {
+                let _ = env.throw_new(
+                    FindClass(jni_str!("java/lang/IllegalArgumentException")),
+                    JNIString::from(format!("no slot probe for {other}")),
+                );
+                false
+            }
+        }
+    }
+}
