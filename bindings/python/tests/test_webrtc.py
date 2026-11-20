@@ -443,6 +443,8 @@ def test_session_stats_remote_addr_is_a_tuple_or_none(server):
     assert seen, "no session listed after the viewer connected"
     for addr in seen:
         assert addr is None or isinstance(addr, tuple)
-    host, port = next(a for a in seen if a is not None)
+    addr = next((a for a in seen if a is not None), None)
+    assert addr is not None, f"no session had an address within 10 s: {seen}"
+    host, port = addr
     assert host == "127.0.0.1"
     assert isinstance(port, int) and port > 0

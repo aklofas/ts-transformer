@@ -272,7 +272,8 @@ class Listener:
     def cancel_handle(self) -> CancelHandle: ...
     def local_addr(self) -> Tuple[str, int]:
         """The bound address as `(host, port)`. An IPv6 host carries
-        `%<scope id>` when the address is scoped."""
+        `%<scope id>` when the address is scoped; an IPv4-mapped address
+        is reported in IPv4 form."""
         ...
     def close(self) -> None: ...
     def rules(self) -> ListenRules:
