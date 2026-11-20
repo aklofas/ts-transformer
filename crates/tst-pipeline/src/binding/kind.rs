@@ -839,6 +839,11 @@ pub struct Diagnostics {
     pub offset: Option<u64>,
     /// A codec parse failure's per-variant fields, by their host attribute name.
     pub attrs: Vec<(&'static str, DiagValue)>,
+    /// The SRT reject reason code of a refused connection, any code: libsrt's
+    /// internal ones (0..=17), the predefined ones (1000..=1507) and an
+    /// application's own (SRT `SrtConnectError::Rejected` /
+    /// `AcceptError::PeerRejected`).
+    pub reject_code: Option<i32>,
 }
 
 /// A per-field value of a codec error (`attrs`): an integer, or a static name

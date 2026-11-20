@@ -6,16 +6,23 @@
 //! SRT keeps its eight-name classification (`CONFIG_INVALID`,
 //! `CONNECT_FAILED`, `ACCEPT_FAILED`, `TIMEOUT`, `CLOSED`, `BROKEN`,
 //! `BACKPRESSURE`, `IO`): `SrtError` is an umbrella over seven sub-enums whose
-//! leaf names (`System`, `Other`, `TimedOut` ×4) are not kinds. The routing is
-//! the one `bindings/python/src/srt/errors.rs` and `bindings/jvm/src/srt/errors.rs`
-//! agreed on, except that `Backpressure` is `BACKPRESSURE` (not
-//! `WOULD_BLOCK`) and `TooLarge` is `TOO_LARGE` (not `CONFIG_INVALID`).
+//! leaf names (`System`, `Other`, `TimedOut` ×4) are not kinds. `Backpressure`
+//! is `BACKPRESSURE` (not `WOULD_BLOCK`) and `TooLarge` is `TOO_LARGE` (not
+//! `CONFIG_INVALID`). A refused connection's reject reason travels in
+//! `Diagnostics::reject_code`.
 
 use crate::error::{
     AcceptError, BindError, IoError, OptionError, RecvError, SendError, SrtConnectError, SrtError,
 };
 use crate::url::SrtUrlError;
-use tst_pipeline::binding::{BindingError, BindingErrorKind as K};
+use tst_pipeline::binding::{BindingError, BindingErrorKind as K, Diagnostics};
+
+/// A binding error carrying the reject reason code of a refused connection.
+fn rejected(kind: K, detail: String, reject_code: i32) -> BindingError {
+    let mut diagnostics = Diagnostics::default();
+    diagnostics.reject_code = Some(reject_code);
+    BindingError::new(kind, detail).with_diagnostics(diagnostics)
+}
 
 /// Every `SrtUrlError` variant is caller misconfiguration (no match: the enum
 /// is `#[non_exhaustive]` and there is nothing to discriminate).
@@ -52,6 +59,9 @@ impl From<SrtConnectError> for BindingError {
             | SrtConnectError::System(_)
             | SrtConnectError::Other { .. } => K::SrtConnectFailed,
         };
+        if let SrtConnectError::Rejected { reason, .. } = &e {
+            return rejected(kind, e.to_string(), reason.raw());
+        }
         BindingError::new(kind, e.to_string())
     }
 }
@@ -78,6 +88,9 @@ impl From<AcceptError> for BindingError {
             | AcceptError::System(_)
             | AcceptError::Other { .. } => K::SrtAcceptFailed,
         };
+        if let AcceptError::PeerRejected { reason, .. } = &e {
+            return rejected(kind, e.to_string(), reason.raw());
+        }
         BindingError::new(kind, e.to_string())
     }
 }
@@ -142,7 +155,8 @@ impl From<SrtError> for BindingError {
 #[cfg(test)]
 mod tests {
     use crate::error::{
-        AcceptError, BindError, IoError, RecvError, SendError, SrtConnectError, SrtError,
+        AcceptError, BindError, IoError, RecvError, RejectReason, SendError, SrtConnectError,
+        SrtError,
     };
     use std::io;
     use tst_core::transport::TransportError;
@@ -229,5 +243,69 @@ mod tests {
         assert_eq!(K::SrtConnectFailed.name(), "CONNECT_FAILED");
         assert_eq!(K::SrtConnectFailed.variant_name(), "SRT_CONNECT_FAILED");
         assert_eq!(K::SrtConnectFailed.c_projection(), -8);
+    }
+
+    fn rejected(reason: RejectReason) -> SrtConnectError {
+        SrtConnectError::Rejected {
+            reason,
+            detail: "test".into(),
+        }
+    }
+
+    #[test]
+    fn a_rejected_connect_carries_its_reject_code() {
+        let e = BindingError::from(rejected(RejectReason::Forbidden));
+        assert_eq!(e.kind, K::SrtConnectFailed);
+        assert_eq!(e.diagnostics.reject_code, Some(1403));
+        // Through the umbrella too: the plain shell open's path.
+        let e: BindingError = SrtError::from(rejected(RejectReason::Forbidden)).into();
+        assert_eq!(e.diagnostics.reject_code, Some(1403));
+    }
+
+    #[test]
+    fn a_user_defined_reject_code_passes_through() {
+        let e = BindingError::from(rejected(RejectReason::Other(4242)));
+        assert_eq!(e.diagnostics.reject_code, Some(4242));
+    }
+
+    #[test]
+    fn an_internal_reject_code_passes_through() {
+        let e = BindingError::from(rejected(RejectReason::BadSecret));
+        assert_eq!(e.diagnostics.reject_code, Some(10));
+    }
+
+    #[test]
+    fn a_peer_rejected_accept_carries_its_code() {
+        let e = BindingError::from(AcceptError::PeerRejected {
+            reason: RejectReason::Forbidden,
+            detail: "test".into(),
+        });
+        assert_eq!(e.kind, K::SrtAcceptFailed);
+        assert_eq!(e.diagnostics.reject_code, Some(1403));
+        let e: BindingError = SrtError::from(AcceptError::PeerRejected {
+            reason: RejectReason::BadSecret,
+            detail: "test".into(),
+        })
+        .into();
+        assert_eq!(e.diagnostics.reject_code, Some(10));
+    }
+
+    #[test]
+    fn other_errors_carry_none() {
+        for e in [
+            BindingError::from(SrtConnectError::Refused),
+            BindingError::from(SrtConnectError::TimedOut),
+            BindingError::from(SrtConnectError::BadEncryption {
+                detail: "test".into(),
+            }),
+            BindingError::from(AcceptError::TimedOut),
+            BindingError::from(AcceptError::ListenerClosed),
+            BindingError::from(BindError::AddressInUse),
+            BindingError::from(SendError::ConnectionBroken),
+            BindingError::from(IoError::SocketClosed),
+            SrtError::from(TransportError::ExplicitClose).into(),
+        ] {
+            assert_eq!(e.diagnostics.reject_code, None, "{e:?}");
+        }
     }
 }

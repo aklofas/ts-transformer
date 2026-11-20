@@ -4061,6 +4061,18 @@ bindings = ["c:n/a(the C binding takes no open cancel; its listener opens stay a
 scenario_ids = []
 tier = "A"
 
+# Diagnostics::reject_code: the SRT reject reason code of a refused
+# connection (caller connect and listener accept), any code; filled by
+# tst-srt's binding conversions (unit tests in binding_kind.rs).
+[[surface]]
+kind = "rust"
+crate = "tst-pipeline"
+item = "tst_pipeline::binding::Diagnostics::reject_code"
+owning_tests = ["crates/tst-srt/src/binding_kind.rs"]
+bindings = ["c:n/a(the C ABI returns only the error code of a refused connection)", "python:deferred(SrtError does not carry the reject reason yet)", "java:deferred(SrtException does not carry the reject reason yet)", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
 # `ParkingSlot`: a session object whose calls may park (a push's sends,
 # PAUSE), and the one close rule both bindings' push sessions follow: a
 # close cancels only a parking holder, a waiting call runs nothing after

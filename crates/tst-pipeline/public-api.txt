@@ -282,6 +282,7 @@ pub tst_pipeline::binding::kind::Diagnostics::input_consumed: core::option::Opti
 pub tst_pipeline::binding::kind::Diagnostics::native_code: core::option::Option<i32>
 pub tst_pipeline::binding::kind::Diagnostics::offset: core::option::Option<u64>
 pub tst_pipeline::binding::kind::Diagnostics::pid: core::option::Option<u16>
+pub tst_pipeline::binding::kind::Diagnostics::reject_code: core::option::Option<i32>
 pub tst_pipeline::binding::kind::Diagnostics::tag: core::option::Option<u64>
 impl core::clone::Clone for tst_pipeline::binding::kind::Diagnostics
 pub fn tst_pipeline::binding::kind::Diagnostics::clone(&self) -> tst_pipeline::binding::kind::Diagnostics
@@ -929,6 +930,7 @@ pub tst_pipeline::binding::Diagnostics::input_consumed: core::option::Option<boo
 pub tst_pipeline::binding::Diagnostics::native_code: core::option::Option<i32>
 pub tst_pipeline::binding::Diagnostics::offset: core::option::Option<u64>
 pub tst_pipeline::binding::Diagnostics::pid: core::option::Option<u16>
+pub tst_pipeline::binding::Diagnostics::reject_code: core::option::Option<i32>
 pub tst_pipeline::binding::Diagnostics::tag: core::option::Option<u64>
 impl core::clone::Clone for tst_pipeline::binding::kind::Diagnostics
 pub fn tst_pipeline::binding::kind::Diagnostics::clone(&self) -> tst_pipeline::binding::kind::Diagnostics
