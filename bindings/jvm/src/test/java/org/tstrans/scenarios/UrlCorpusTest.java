@@ -67,8 +67,9 @@ import org.tstrans.webrtc.WhepServer;
  * {@code [legs.jvm]} table names for its scheme and role. The JVM exposes no parsed URL, so only
  * the outcome is compared: a row must open, or throw the scheme's exception with the expected
  * kind, unless its {@code open} table states other outcomes for this leg. The row's
- * {@code {port}} and {@code {dir}} placeholders are filled first. For the wire schemes (rtsp) a valid row is also connected to a recording peer, and the request
- * heads must show the record's credentials and keys.
+ * {@code {port}} and {@code {dir}} placeholders are filled first. For the wire schemes (rtsp) a
+ * valid row is also connected to a recording peer, and the request heads must show the record's
+ * credentials and keys.
  *
  * <p>The corpus is read from the JSON twin {@code gen-scenarios} writes into the scenario's
  * golden ({@code extensions.corpus}), because the test classpath has no TOML reader.
@@ -171,17 +172,24 @@ public class UrlCorpusTest {
     private static final Pattern PASSPHRASE = Pattern.compile("[?&]passphrase=([^&]*)");
 
     /**
-     * A builder for the peer of {@code url}: it takes the URL's passphrase, so a valid encrypted
-     * row connects. A passphrase the builder refuses is left out: the open under test refuses
-     * the URL before it dials.
+     * A builder for the peer of {@code url}: it takes the URL's passphrase (percent-decoded, as
+     * the URL parser reads it), so a valid encrypted row connects. On a listener row a dialing
+     * peer whose passphrase the builder refuses fails its own connect, which is ignored: the
+     * open under test reports the outcome.
      */
     static Builder srtPeer(String peerUrl, String url) {
         Builder b = new Builder(peerUrl);
         Matcher m = PASSPHRASE.matcher(url);
-        if (m.find()) b.passphrase(m.group(1));
+        if (m.find()) {
+            b.passphrase(java.net.URLDecoder.decode(m.group(1).replace("+", "%2B"), StandardCharsets.UTF_8));
+        }
         return b;
     }
 
+    /**
+     * The listening peer of a caller row. A passphrase the builder refuses is left out: the open
+     * under test refuses the URL before it dials.
+     */
     static Listener srtListenerPeer(String peerUrl, String url) throws SrtException {
         try {
             return srtPeer(peerUrl + "?mode=listener", url).listen();
