@@ -2822,12 +2822,19 @@ class A {
         cancelNow(rx::cancelHandle);
         assertThrows(IllegalStateException.class, rx::cancelHandle);
         c.add(within(1, "x", rx::cancelHandle));
+        String u = "srt://127.0.0.1:1"; try (CancelHandle h = rx.cancelHandle()) { }
+        try (Receiver r = open("srt://127.0.0.1:1");
+             // a comment between two resources: the header goes on
+             CancelHandle h = r.cancelHandle()) { h.cancel(); }
     }
-    CancelHandle g() { return s.cancelHandle(); }
+    @Override public CancelHandle cancelHandle() { return s.cancelHandle(); }
+    public CancelHandle cancelHandle() throws Exception {
+        return inner.cancelHandle();
+    }
 }
 JAVA
 expect "cancel handles: every closing form passes" 0 env CANCEL_HANDLE_JAVA_DIR="$ch/ok" bash "$CH"
-expect_out "cancel handles: strings and comments are not sites" "all 13 cancelHandle sites"
+expect_out "cancel handles: strings and comments are not sites, a // in a string is no comment" "all 16 cancelHandle sites"
 cat > "$ch/leak/org/x/B.java" <<'JAVA'
 class B {
     void f(Rx rx) {
@@ -2838,7 +2845,9 @@ class B {
         try (CancelHandle ok = rx.cancelHandle()) { }
         keep.add(rx.cancelHandle());
         Optional.of(rx).map(Receiver::cancelHandle);
+        Supplier<CancelHandle> s = () -> { return rx.cancelHandle(); };
     }
+    static CancelHandle grab(Rx r) { return r.cancelHandle(); }
 }
 JAVA
 expect "cancel handles: unclosed sites fail" 1 env CANCEL_HANDLE_JAVA_DIR="$ch/leak" bash "$CH"
@@ -2848,7 +2857,9 @@ expect_out "cancel handles: an argument to anything else" "FAIL: cancel-handle-c
 expect_out "cancel handles: a marker without a reason" "FAIL: cancel-handle-closed: org/x/B.java:6:"
 expect_out "cancel handles: a list is not a Cleanup" "FAIL: cancel-handle-closed: org/x/B.java:8: keep.add(rx.cancelHandle());"
 expect_out "cancel handles: a method reference to anything else" "FAIL: cancel-handle-closed: org/x/B.java:9: Optional.of(rx).map(Receiver::cancelHandle);"
-expect_out "cancel handles: the count" "6 of 7 cancelHandle sites are never closed"
+expect_out "cancel handles: a lambda returning a handle" "FAIL: cancel-handle-closed: org/x/B.java:10: Supplier<CancelHandle> s = () -> { return rx.cancelHandle(); };"
+expect_out "cancel handles: a helper of another name returning a handle" "FAIL: cancel-handle-closed: org/x/B.java:12: static CancelHandle grab(Rx r) { return r.cancelHandle(); }"
+expect_out "cancel handles: the count" "8 of 9 cancelHandle sites are never closed"
 printf 'class C {\n    void f() { }\n}\n' > "$ch/none/org/x/C.java"
 expect "cancel handles: a tree with no site fails closed" 2 env CANCEL_HANDLE_JAVA_DIR="$ch/none" bash "$CH"
 expect "cancel handles: a tree with no Java file fails closed" 2 env CANCEL_HANDLE_JAVA_DIR="$ch/empty" bash "$CH"

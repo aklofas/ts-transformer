@@ -13,7 +13,9 @@
 #     argument) or `c.add(` / `cleanup.add(` (a Cleanup), which close it, or
 #     of `cancelNow(` (as `() -> x.cancelHandle()`),
 #   - closed at once (`x.cancelHandle().close();`),
-#   - returned (`return x.cancelHandle();`: the caller's own site is checked),
+#   - returned by a method that is itself `CancelHandle cancelHandle()`
+#     (`return x.cancelHandle();` on the declaring line or the line after
+#     it), so the caller's own `.cancelHandle()` site is checked,
 #   - or marked `// cancel-handle: <reason>` on its line or the line above.
 # A method reference `x::cancelHandle` passes as the argument of `cancelNow(`,
 # anywhere after a `c.add(` / `cleanup.add(` or an `assertThrows(` on its line
@@ -22,7 +24,10 @@
 # What a line scanner cannot see: a receiver chain split across lines (the
 # site fails; put `x.cancelHandle()` on one line), whether the try resource
 # or the Cleanup entry is the handle itself rather than something made from
-# it, and whether a variable named `c` or `cleanup` is a Cleanup.
+# it, and whether a variable named `c` or `cleanup` is a Cleanup. A handle
+# returned by a helper of another name or by a lambda is a site (the rail
+# does not follow it to the helper's callers), and a `cancelHandle()`
+# declaration whose `return` sits further down its body fails the same way.
 #
 # Run it:       bash scripts/check/jvm/cancel-handle-closed.sh
 # Overridable (the ratchet self-test points it at fixtures):
@@ -78,6 +83,7 @@ result="$(printf '%s\n' "$files" | while IFS= read -r f; do
     { lines[NR] = $0; codes[NR] = code($0) }
     END {
       recv = "[A-Za-z_][A-Za-z0-9_.()]*"
+      ret = "return[ \t]+" recv "$"
       decl = "[A-Za-z_][A-Za-z0-9_.<>]*[ \t]+[A-Za-z_][A-Za-z0-9_]*[ \t]*=[ \t]*" recv "$"
       cleanup = "(^|[^A-Za-z0-9_])(c|cleanup)\\.add[ \t]*\\("
       arg = "(new[ \t]+(ShellPeers\\.)?(Watchdog|Parked)|(^|[^A-Za-z0-9_])(c|cleanup)\\.add|cancelNow)[ \t]*\\([ \t]*([A-Za-z_][A-Za-z0-9_.]*[ \t]*,[ \t]*)?(\\([ \t]*\\)[ \t]*->[ \t]*)?" recv "$"
@@ -93,7 +99,8 @@ result="$(printf '%s\n' "$files" | while IFS= read -r f; do
           post = substr(c, off + p + length(".cancelHandle()"))
           if (marked(lines[k]) || (k > 1 && marked(lines[k - 1]))) ok = 1
           else if (post ~ /^[ \t]*\.close\(\)/) ok = 1
-          else if (pre ~ /return[ \t]+[A-Za-z_][A-Za-z0-9_.()]*$/) ok = 1
+          else if (pre ~ ("CancelHandle[ \t]+cancelHandle[ \t]*\\([ \t]*\\)[^{;]*\\{[ \t]*" ret)) ok = 1
+          else if (pre ~ ("^[ \t]*" ret) && k > 1 && codes[k - 1] ~ /CancelHandle[ \t]+cancelHandle[ \t]*\([ \t]*\)[^{;]*\{[ \t]*$/) ok = 1
           else if (pre ~ arg) ok = 1
           else if (pre ~ decl) {
             if (pre ~ /try[ \t]*\(/) ok = 1
