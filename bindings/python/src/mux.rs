@@ -1189,8 +1189,9 @@ impl PyMuxer {
     /// PID, stream type and codec are unchanged survives with its handle,
     /// continuity counter and timers. New streams take handles (read them
     /// with the `*_handles_for_program` getters after the call); a removed
-    /// stream's handle raises `MuxError(INVALID_USAGE)`. The next push
-    /// carries the new PAT and every live PMT.
+    /// stream's handle raises `MuxError(INVALID_USAGE)` until a later
+    /// `reconfigure` reuses its slot, so re-read handles after each call.
+    /// The next push carries the new PAT and every live PMT.
     ///
     /// Raises `MuxError(CONFIG_INVALID)` and leaves the running config and
     /// every handle as they were when `config` is refused: a PID moved to
