@@ -4,6 +4,10 @@
 //! the row's. C exposes no parsed URL, so only the outcome is compared: `ok`
 //! for a valid row, the expected kind's `TST_E_*` code for a refused one,
 //! unless the row's `open` table states other outcomes for the `c` leg.
+//! The rows state a `tls` build's outcomes; in a build without `tls` every
+//! `tcps://` row must be refused with `TST_E_TCP_TLS` and say TLS is not
+//! built in ([`tls_absent_outcome`]). The `rtsps://` and `hlss://` rows go
+//! through builders that only parse, so their outcome is the same either way.
 //! For the wire schemes (rtsp) a valid row is also connected to a recording
 //! peer, and the request heads must show the record's credentials and keys.
 
@@ -31,7 +35,7 @@ use std::time::{Duration, Instant};
 use tst_integration::scenarios::url::{self, DIR, Record, Row, TLS_FILES};
 use tst_srt::{SrtListenerBuilder, SrtSocketBuilder};
 use tstrans::config::{tst_sender_config_free, tst_sender_config_new};
-use tstrans::error::{tst_clear_last_error, tst_get_last_error};
+use tstrans::error::{TstError, tst_clear_last_error, tst_get_last_error};
 use tstrans::hls::{
     tst_hls_publisher_builder_free, tst_hls_publisher_builder_from_url,
     tst_hls_publisher_builder_new,
@@ -553,6 +557,25 @@ fn rtsp_wire_mismatches(row: &Row, fields: &[String]) -> Vec<String> {
         .collect()
 }
 
+/// The stable part of the last error a `tcps://` open leaves in a build
+/// without `tls`.
+const TLS_NOT_BUILT: &str = "TLS feature disabled but URL uses 'tcps://'";
+
+/// The outcome of a `tcps://` row in a build without `tls`, whatever the row
+/// states for a `tls` build: refused with `TST_E_TCP_TLS`, and the last
+/// error says TLS is not built in. Opening, or a refusal of any other code
+/// or text, fails the row.
+fn tls_absent_outcome(observed: Option<i32>, last_error: &str) -> Result<(), String> {
+    let want = TstError::TcpTls as i32;
+    if observed == Some(want) && last_error.contains(TLS_NOT_BUILT) {
+        return Ok(());
+    }
+    Err(format!(
+        "built without tls: expected code {want} saying {TLS_NOT_BUILT:?}, observed {}",
+        observed.map_or("ok".to_string(), |c| format!("code {c}"))
+    ))
+}
+
 /// The scheme families the C leg opens; each has its own test (and so its
 /// own time budget), and a failure names the family.
 const FAMILIES: [&str; 7] = ["srt", "rtp", "rtsp", "udp", "tcp", "hls", "rist"];
@@ -587,7 +610,12 @@ fn run_family(family: &str) {
         let row = &row.resolve(port, &dir);
         let row_started = Instant::now();
         let (observed, last_error) = probe_reporting(entry, row);
-        if let Err(why) = url::check_outcome_code(row, "c", observed) {
+        let verdict = if row.scheme == "tcps" && !cfg!(feature = "tls") {
+            tls_absent_outcome(observed, &last_error)
+        } else {
+            url::check_outcome_code(row, "c", observed)
+        };
+        if let Err(why) = verdict {
             mismatches.push(format!("{} via {entry}: {why}: {last_error}", row.label()));
         }
         if let Some(fields) = corpus.wire_fields("c", row)
