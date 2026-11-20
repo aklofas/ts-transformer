@@ -243,31 +243,36 @@ fn probe(entry: &str, row: &Row) -> Option<i32> {
     }
 }
 
-/// How long a tcp caller row's open may take. The drop peer answers a plain
-/// dial at once and ends a TLS handshake by closing, so only a peer that never
-/// answers reaches it.
-const TCP_CALLER_BOUND: Duration = Duration::from_secs(5);
+/// How long an open that waits on its peer may take: a tcp caller row's (the
+/// drop peer answers a plain dial at once and ends a TLS handshake by
+/// closing) and an srt listener row's (the loopback caller connects within
+/// milliseconds of the bind). Only a peer that never answers reaches it.
+const PEER_BOUND: Duration = Duration::from_secs(5);
 
 /// `probe`, and the last error's text read on the thread that opened. A tcp
-/// caller row opens on a worker under `TCP_CALLER_BOUND`: a miss fails the
-/// row by name instead of the whole family by the runner's timeout. The C
-/// open has no cancel before it returns, so a missed worker is left parked.
+/// caller row and an srt listener row open on a worker under `PEER_BOUND`: a
+/// miss fails the row by name instead of the whole family by the runner's
+/// timeout. The C open has no cancel before it returns, so a missed worker is
+/// left parked (an srt one is closed by tst-srt's exit guard at exit).
 fn probe_reporting(entry: &str, row: &Row) -> (Option<i32>, String) {
-    if entry != "tst_tcp_sender_open" {
-        let code = probe(entry, row);
-        return (code, common::last_error_msg());
-    }
+    let missed = match entry {
+        "tst_tcp_sender_open" => "the peer never answered the connection",
+        "tst_receiver_open_listener" => "no caller reached the listener",
+        _ => {
+            let code = probe(entry, row);
+            return (code, common::last_error_msg());
+        }
+    };
     let (tx, rx) = mpsc::channel();
     let (worker_entry, worker_row) = (entry.to_string(), row.clone());
     std::thread::spawn(move || {
         let code = probe(&worker_entry, &worker_row);
         let _ = tx.send((code, common::last_error_msg()));
     });
-    let bound = common::scaled(TCP_CALLER_BOUND);
+    let bound = common::scaled(PEER_BOUND);
     rx.recv_timeout(bound).unwrap_or_else(|_| {
         panic!(
-            "{} via {entry}: the open did not return within {bound:?}; \
-             the peer never answered the connection",
+            "{} via {entry}: the open did not return within {bound:?}; {missed}",
             row.label()
         )
     })
