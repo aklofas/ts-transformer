@@ -1738,8 +1738,9 @@ YML
 sed 's/dry_run: false/dry_run: true/' "$pg/caller-bad.yml" > "$pg/caller-good.yml"
 # publish-guards, artefact guards: a wheel job runs the hook-name check, the
 # JVM build action guards its library before the upload, a JAR upload's job
-# guards the JARs; a python-wheels.yml or jvm-jar.yml with nothing to check
-# fails closed.
+# guards the JARs; a guard step under `if:` or `continue-on-error: true`, or
+# named only after a shell `#`, does not count; a python-wheels.yml or
+# jvm-jar.yml with nothing to check fails closed.
 WHEEL_MSG='builds a wheel but no step runs `hook_names.py absent-in` on it'
 SHIP_MSG='runs no `jvm-hook-guard.sh check` on the library before its upload step'
 EXPECT_MSG='runs no `jvm-hook-guard.sh check --expect-hooks` on the hook build'
@@ -1805,7 +1806,14 @@ runs:
         path: upload/
 YML
 }
-for t in good wheel-nocheck wheel-comment noship shiplate noexpect nojar empty; do wire_tree "$pg/wire-$t"; done
+for t in good wheel-nocheck wheel-comment wheel-if noship shiplate ship-coe ship-trailing noexpect nojar jar-trailing empty; do wire_tree "$pg/wire-$t"; done
+# after <file> <ERE> <line> : insert <line> after every line matching <ERE>.
+after() { awk -v re="$2" -v add="$3" '{print} $0 ~ re {print add}' "$1" > "$1.new" && mv "$1.new" "$1"; }
+after "$pg/wire-good/.github/workflows/python-wheels.yml" 'name: No test-only names' '        continue-on-error: false'
+after "$pg/wire-wheel-if/.github/workflows/python-wheels.yml" 'name: No test-only names' '        if: false'
+after "$pg/wire-ship-coe/.github/actions/jvm-build/action.yml" 'name: Shipped native lib' '      continue-on-error: true'
+plant "$pg/wire-ship-trailing/.github/actions/jvm-build/action.yml" 'run: bash scripts/ci/jvm-hook-guard.sh check upload/' 'run: echo skip # bash scripts/ci/jvm-hook-guard.sh check upload/'
+plant "$pg/wire-jar-trailing/.github/workflows/jvm-jar.yml" '          bash scripts/ci/jvm-hook-guard.sh check build' '          echo ok # bash scripts/ci/jvm-hook-guard.sh check build'
 plant "$pg/wire-wheel-nocheck/.github/workflows/python-wheels.yml" 'absent-in' 'present-in'
 plant "$pg/wire-wheel-comment/.github/workflows/python-wheels.yml" 'python "$check" absent-in' '# python "$check" absent-in'
 plant "$pg/wire-noship/.github/actions/jvm-build/action.yml" 'check upload/' 'version upload/'
@@ -1893,12 +1901,12 @@ for mode in python awk; do
   expect_out "publish-guards ($mode): local-nested" "$pg/repo/.github/workflows/local-nested.yml: job 'attest' uses ./.github/actions/outer, whose step uses the local action ./.github/actions/setup, which this rail does not follow"
   W="$pg/wire-good/.github/workflows"
   expect "publish-guards ($mode): every artefact guard in place passes" 0 "${pre[@]}" bash $PGS "$W/python-wheels.yml" "$W/jvm-jar.yml"
-  for t in wheel-nocheck wheel-comment; do
+  for t in wheel-nocheck wheel-comment wheel-if; do
     W="$pg/wire-$t/.github/workflows"
     expect "publish-guards ($mode): $t fails" 1 "${pre[@]}" bash $PGS "$W/python-wheels.yml"
     expect_out "publish-guards ($mode): $t" "$W/python-wheels.yml: job 'linux-wheel' $WHEEL_MSG"
   done
-  for t in noship shiplate; do
+  for t in noship shiplate ship-coe ship-trailing; do
     W="$pg/wire-$t/.github/workflows"
     expect "publish-guards ($mode): $t fails" 1 "${pre[@]}" bash $PGS "$W/jvm-jar.yml"
     expect_out "publish-guards ($mode): $t" "$W/jvm-jar.yml: job 'build' uses ./.github/actions/jvm-build, which $SHIP_MSG"
@@ -1906,9 +1914,11 @@ for mode in python awk; do
   W="$pg/wire-noexpect/.github/workflows"
   expect "publish-guards ($mode): noexpect fails" 1 "${pre[@]}" bash $PGS "$W/jvm-jar.yml"
   expect_out "publish-guards ($mode): noexpect" "$W/jvm-jar.yml: job 'build' uses ./.github/actions/jvm-build, which $EXPECT_MSG"
-  W="$pg/wire-nojar/.github/workflows"
-  expect "publish-guards ($mode): nojar fails" 1 "${pre[@]}" bash $PGS "$W/jvm-jar.yml"
-  expect_out "publish-guards ($mode): nojar" "$W/jvm-jar.yml: job 'assemble' $JAR_MSG"
+  for t in nojar jar-trailing; do
+    W="$pg/wire-$t/.github/workflows"
+    expect "publish-guards ($mode): $t fails" 1 "${pre[@]}" bash $PGS "$W/jvm-jar.yml"
+    expect_out "publish-guards ($mode): $t" "$W/jvm-jar.yml: job 'assemble' $JAR_MSG"
+  done
   W="$pg/wire-empty/.github/workflows"
   expect "publish-guards ($mode): a python-wheels.yml building no wheel fails closed" 1 "${pre[@]}" bash $PGS "$W/python-wheels.yml"
   expect_out "publish-guards ($mode): no wheel" "$W/python-wheels.yml: no job builds a wheel, so the hook-name rule checks nothing"
