@@ -2,11 +2,17 @@
 
 from __future__ import annotations
 
+import contextlib
+import socket
 import threading
+from typing import Any, Iterator
 
 import pytest
 
-from tstrans import exceptions
+import tomllib
+
+from conftest import scenarios_dir
+from tstrans import _native, exceptions
 from tstrans.mpegts import Pts90khz
 from tstrans.shells import CancelHandle, DemuxReceiver, EndReason, MuxSender, Receiver, Sender
 
@@ -50,6 +56,111 @@ def test_a_multibyte_char_before_a_scheme_is_a_value_error() -> None:
     message = str(raised.value)
     assert "<redacted>" in message
     assert ":p@" not in message
+
+
+def _shell_schemes() -> dict[str, str]:
+    """The corpus's `[shell_schemes]` table: every scheme the shells open,
+    with its domain (the Rust list `SHELL_SCHEMES`)."""
+    with open(scenarios_dir() / "url-corpus" / "corpus.toml", "rb") as fh:
+        return dict(tomllib.load(fh)["shell_schemes"])
+
+
+SHELL_SCHEMES = _shell_schemes()
+
+
+def _built(domain: str) -> bool:
+    """Whether this build includes `domain`'s transport (its submodule)."""
+    return hasattr(_native, domain.lower())
+
+
+def test_the_unsupported_scheme_message_names_the_schemes_this_build_opens() -> None:
+    built = ", ".join(s for s, d in SHELL_SCHEMES.items() if _built(d))
+    with pytest.raises(ValueError) as raised:
+        Sender.open("http://127.0.0.1:1")
+    assert f"expected one of: {built} (the schemes this build includes)" in str(raised.value)
+
+
+def _free_even_udp_port() -> int:
+    # librist's Simple profile takes even ports only.
+    for _ in range(64):
+        port = free_udp_port()
+        if port % 2 == 0:
+            return port
+    pytest.fail("no free even UDP port in 64 tries")
+
+
+@contextlib.contextmanager
+def _shell_url(scheme: str, direction: str) -> Iterator[str]:
+    """A loopback URL of `scheme` the shells open in `direction` without
+    waiting: an srt sender (a caller) gets a listening peer and an srt
+    receiver (a listener) a dialing one; a tcp caller gets a peer that
+    accepts and closes (a tcps handshake then fails with a TcpError)."""
+    if scheme == "srt" and direction == "send":
+        from tstrans import srt
+
+        port = free_udp_port()
+        peer = srt.Builder(f"srt://127.0.0.1:{port}?mode=listener").listen()
+        try:
+            yield f"srt://127.0.0.1:{port}"
+        finally:
+            peer.close()
+    elif scheme == "srt":
+        from tstrans import srt
+
+        # A receive shell listens; the caller's handshake retries until the
+        # listener's bind lands.
+        port = free_udp_port()
+        dialed: list[Any] = []
+
+        def dial() -> None:
+            with contextlib.suppress(exceptions.SrtError):
+                dialed.append(srt.Builder(f"srt://127.0.0.1:{port}", connect_timeout_ms=5000).connect())
+
+        caller = threading.Thread(target=dial, daemon=True)
+        caller.start()
+        try:
+            yield f"srt://127.0.0.1:{port}?mode=listener"
+        finally:
+            caller.join(10)
+            for sock in dialed:
+                sock.close()
+    elif scheme in ("tcp", "tcps"):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
+            listener.bind(("127.0.0.1", 0))
+            listener.listen(4)
+
+            def drop() -> None:
+                with contextlib.suppress(OSError):
+                    listener.accept()[0].close()
+
+            peer = threading.Thread(target=drop, daemon=True)
+            peer.start()
+            yield f"{scheme}://127.0.0.1:{listener.getsockname()[1]}"
+        peer.join(5)
+    elif scheme == "rist":
+        port = _free_even_udp_port()
+        yield f"rist://127.0.0.1:{port}" if direction == "send" else f"rist://@127.0.0.1:{port}"
+    else:
+        yield f"{scheme}://127.0.0.1:{free_udp_port()}"
+
+
+@pytest.mark.parametrize("direction", ["send", "recv"])
+@pytest.mark.parametrize("scheme", list(SHELL_SCHEMES))
+def test_every_shell_scheme_opens_in_both_directions_without_internal(scheme: str, direction: str) -> None:
+    """Every scheme of the Rust list reaches its transport's opener: the open
+    returns, or fails in the scheme's domain, never with the unsupported-scheme
+    ValueError and never INTERNAL (a scheme with no dispatch arm)."""
+    domain = SHELL_SCHEMES[scheme]
+    if not _built(domain):
+        pytest.skip(f"{scheme}: this build has no {domain.lower()} transport")
+    error = getattr(exceptions, f"{domain}Error")
+    shell = Sender if direction == "send" else Receiver
+    with _shell_url(scheme, direction) as url:
+        try:
+            shell.open(url).close()
+        except Exception as exc:
+            assert isinstance(exc, error), f"{scheme} {direction} {url}: {type(exc).__name__}: {exc}"
+            assert exc.kind.name != "INTERNAL", f"{scheme} {direction} {url}: {exc}"
 
 
 def test_closed_errors_are_raised_in_the_transport_domain() -> None:

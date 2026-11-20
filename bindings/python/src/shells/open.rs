@@ -5,7 +5,9 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use tst_core::transport::{RecvTransport, Transport};
 use tst_core::url::redact_url;
-use tst_pipeline::binding::{BindingError, BindingErrorKind, Domain, OpenCancel, Opened};
+use tst_pipeline::binding::{
+    BindingError, BindingErrorKind, Domain, OpenCancel, Opened, SHELL_SCHEMES,
+};
 
 use crate::raise::raise;
 use crate::shells::open_cancel::{begin, closed, finish, refuse_config};
@@ -30,9 +32,15 @@ fn domain_of(url: &str) -> Option<Domain> {
 }
 
 fn unsupported(url: &str) -> PyErr {
+    let built: Vec<&str> = SHELL_SCHEMES
+        .iter()
+        .filter(|(_, d)| BUILT.contains(d))
+        .map(|(s, _)| *s)
+        .collect();
     PyValueError::new_err(format!(
-        "unsupported URL scheme in {:?}; expected one of: srt, rtp, udp, tcp, tcps, rist (the schemes this build includes)",
-        redact_url(url)
+        "unsupported URL scheme in {:?}; expected one of: {} (the schemes this build includes)",
+        redact_url(url),
+        built.join(", ")
     ))
 }
 
