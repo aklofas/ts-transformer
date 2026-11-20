@@ -27,11 +27,11 @@ CancelHandle
     Cross-thread cancel handle from ``Transport.cancel_handle()`` /
     ``Listener.cancel_handle()``.
 TlsConfig
-    Forward-compat TLS configuration dataclass. Working ``tcps://`` knobs:
-    ``?ca=`` URL param for callers, ``ListenerBuilder.tls(cert, key)`` for
-    listeners.
+    Deprecated (no method accepts it; removed in 0.12.0). The working
+    ``tcps://`` knobs: the ``?ca=`` URL param for callers,
+    ``ListenerBuilder.tls(cert, key)`` for listeners.
 ClientCert
-    PEM-encoded client certificate + key for mutual TLS.
+    Deprecated (no method accepts it; removed in 0.12.0).
 TcpError
     Base exception for all ``tstrans.tcp`` errors; available in
     ``tstrans.exceptions`` as well.

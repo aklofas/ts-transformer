@@ -137,7 +137,7 @@ from tstrans.shells import Receiver, Sender
 # Listener side (run on one host / thread):
 def listen_side() -> None:
     with Receiver.open("srt://0.0.0.0:9000?mode=listener") as rx:
-        chunk = rx.recv_bytes(max_len=1500)
+        chunk = rx.recv_bytes()
         print(f"received {len(chunk)} bytes; sync byte = {chunk[0]:#04x}")
 
 threading.Thread(target=listen_side, daemon=True).start()
@@ -224,7 +224,7 @@ with tstrans.srt.ManagedReceiver.from_url(
 ) as rx:
     while True:
         try:
-            chunk = rx.recv_bytes(max_len=1500)
+            chunk = rx.recv_bytes()
             print(f"received {len(chunk)} bytes; "
                   f"reconnects so far = {rx.reconnect_attempts()}")
         except KeyboardInterrupt:
