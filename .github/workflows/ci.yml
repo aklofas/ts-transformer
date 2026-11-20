@@ -1720,12 +1720,22 @@ jobs:
           .venv/bin/pip install --require-hashes -r ../../scripts/ci/requirements-test-tools.txt
 
       - name: Build tst-py (maturin develop --release)
-        # `py-test-hooks` adds the WebRTC loopback viewer probe that
-        # test_webrtc.py drives; the wheels never enable it.
+        # `py-test-hooks` adds the test-only functions the tests drive
+        # (tests/_builders/hook_names.py lists them); the wheels never enable it.
         run: |
           cd bindings/python
           source .venv/bin/activate
           maturin develop --release --features py-test-hooks
+
+      - name: The test-only names are all in this build
+        # The control for python-wheels.yml's check that a wheel has none of
+        # them: both of its ways (the import walk and the binary scan) must
+        # find every name in a build with the hooks.
+        timeout-minutes: 5
+        run: |
+          cd bindings/python
+          .venv/bin/python tests/_builders/hook_names.py present
+          .venv/bin/python tests/_builders/hook_names.py present-in python/tstrans/_native.abi3.so
 
       - name: check-py-stubtest
         # Verifies every .pyi stub (core io/codec/klv/mpegts + the six
@@ -1748,8 +1758,8 @@ jobs:
         # `python-pandas-extra` job; missing-extra ImportError smoke also
         # lives there (patches sys.modules to be extra-agnostic).
         # `ulimit` is per-shell, so it is set again here.
-        # TSTRANS_EXPECT_TEST_HOOKS makes the WebRTC loopback test fail,
-        # not skip, when the build above lacks the probe.
+        # TSTRANS_EXPECT_TEST_HOOKS makes a test that needs a test hook
+        # fail, not skip, when the build above lacks it.
         shell: bash -e {0}
         env:
           TSTRANS_EXPECT_TEST_HOOKS: "1"

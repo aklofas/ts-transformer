@@ -121,14 +121,7 @@ pub(crate) fn make_kinded_error_with_pid(
 /// Test-only: raise `member` (a `BindingErrorKind::name()` string) through
 /// the real raise path, so the pytest kind-wiring suites exercise `raise.rs`
 /// instead of a parallel literal-string mapper.
-#[cfg(any(
-    feature = "srt",
-    feature = "udp",
-    feature = "tcp",
-    feature = "hls",
-    feature = "rist",
-    feature = "webrtc"
-))]
+#[cfg(feature = "py-test-hooks")]
 fn raise_for_test(py: Python<'_>, d: &crate::raise::Domain, member: &str, message: &str) -> PyErr {
     match crate::raise::kind_by_name(d, member) {
         Some(k) => crate::raise::raise(py, d, tst_pipeline::binding::BindingError::new(k, message)),
@@ -142,6 +135,7 @@ fn raise_for_test(py: Python<'_>, d: &crate::raise::Domain, member: &str, messag
 /// Test helper: forces a `MuxError` raise from Rust, used by
 /// `test_error_wiring.py` to confirm end-to-end wiring. Exposed only
 /// under the `_native._raise_mux_error_for_test` name.
+#[cfg(feature = "py-test-hooks")]
 #[pyfunction]
 #[pyo3(name = "_raise_mux_error_for_test")]
 pub fn raise_mux_error_for_test(py: Python<'_>, message: &str) -> PyResult<()> {
@@ -159,7 +153,7 @@ pub fn raise_mux_error_for_test(py: Python<'_>, message: &str) -> PyResult<()> {
 /// confirm end-to-end wiring for a caller-supplied kind. The kind is a
 /// `BindingErrorKind::name()` member string resolved against the domain's
 /// `KINDS` table, so an unknown member is a `ValueError`, not a silent pass.
-#[cfg(feature = "srt")]
+#[cfg(all(feature = "py-test-hooks", feature = "srt"))]
 #[pyfunction]
 #[pyo3(name = "_raise_srt_error_for_test")]
 pub fn raise_srt_error_for_test(py: Python<'_>, kind: &str, message: &str) -> PyResult<()> {
@@ -170,7 +164,7 @@ pub fn raise_srt_error_for_test(py: Python<'_>, kind: &str, message: &str) -> Py
 /// `_native._raise_udp_error_for_test` so `test_error_wiring.py` can
 /// confirm end-to-end wiring for a caller-supplied kind (a
 /// `BindingErrorKind::name()` member string; see the `srt` helper above).
-#[cfg(feature = "udp")]
+#[cfg(all(feature = "py-test-hooks", feature = "udp"))]
 #[pyfunction]
 #[pyo3(name = "_raise_udp_error_for_test")]
 pub fn raise_udp_error_for_test(py: Python<'_>, kind: &str, message: &str) -> PyResult<()> {
@@ -181,7 +175,7 @@ pub fn raise_udp_error_for_test(py: Python<'_>, kind: &str, message: &str) -> Py
 /// `_native._raise_tcp_error_for_test` so `test_error_wiring.py` can
 /// confirm end-to-end wiring for a caller-supplied kind (a
 /// `BindingErrorKind::name()` member string; see the `srt` helper above).
-#[cfg(feature = "tcp")]
+#[cfg(all(feature = "py-test-hooks", feature = "tcp"))]
 #[pyfunction]
 #[pyo3(name = "_raise_tcp_error_for_test")]
 pub fn raise_tcp_error_for_test(py: Python<'_>, kind: &str, message: &str) -> PyResult<()> {
@@ -192,7 +186,7 @@ pub fn raise_tcp_error_for_test(py: Python<'_>, kind: &str, message: &str) -> Py
 /// `_native._raise_hls_error_for_test` so `test_error_wiring.py` can
 /// confirm end-to-end wiring for a caller-supplied kind (a
 /// `BindingErrorKind::name()` member string; see the `srt` helper above).
-#[cfg(feature = "hls")]
+#[cfg(all(feature = "py-test-hooks", feature = "hls"))]
 #[pyfunction]
 #[pyo3(name = "_raise_hls_error_for_test")]
 pub fn raise_hls_error_for_test(py: Python<'_>, kind: &str, message: &str) -> PyResult<()> {
@@ -203,7 +197,7 @@ pub fn raise_hls_error_for_test(py: Python<'_>, kind: &str, message: &str) -> Py
 /// `_native._raise_rist_error_for_test` so `test_error_wiring.py` can
 /// confirm end-to-end wiring for a caller-supplied kind (a
 /// `BindingErrorKind::name()` member string; see the `srt` helper above).
-#[cfg(feature = "rist")]
+#[cfg(all(feature = "py-test-hooks", feature = "rist"))]
 #[pyfunction]
 #[pyo3(name = "_raise_rist_error_for_test")]
 pub fn raise_rist_error_for_test(py: Python<'_>, kind: &str, message: &str) -> PyResult<()> {
@@ -214,7 +208,7 @@ pub fn raise_rist_error_for_test(py: Python<'_>, kind: &str, message: &str) -> P
 /// `_native._raise_webrtc_error_for_test` so `test_webrtc.py` can confirm
 /// end-to-end wiring for a caller-supplied kind (a
 /// `BindingErrorKind::name()` member string; see the `srt` helper above).
-#[cfg(feature = "webrtc")]
+#[cfg(all(feature = "py-test-hooks", feature = "webrtc"))]
 #[pyfunction]
 #[pyo3(name = "_raise_webrtc_error_for_test")]
 pub fn raise_webrtc_error_for_test(py: Python<'_>, kind: &str, message: &str) -> PyResult<()> {

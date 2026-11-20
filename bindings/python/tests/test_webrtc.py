@@ -32,6 +32,8 @@ from tstrans.webrtc import (
     WhepServer,
 )
 
+from _builders.native_hooks import native_hook
+
 # A minimal Annex-B access unit: SPS, PPS and an IDR slice header.
 _TINY_IDR_AU = bytes(
     [
@@ -348,7 +350,7 @@ def test_push_errors(server):
 def test_raise_for_test_reaches_every_kind():
     for member in WebrtcErrorKind:
         with pytest.raises(WebrtcError) as exc:
-            _native._raise_webrtc_error_for_test(member.name, f"test {member.name}")
+            native_hook("_raise_webrtc_error_for_test")(member.name, f"test {member.name}")
         assert exc.value.kind == member
         assert f"test {member.name}" in str(exc.value)
     assert len(WebrtcErrorKind) == 8

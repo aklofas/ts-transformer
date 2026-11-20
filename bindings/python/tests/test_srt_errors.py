@@ -15,9 +15,14 @@ from __future__ import annotations
 import pytest
 
 import tstrans
-from tstrans._native import _raise_srt_error_for_test
 from tstrans.exceptions import SrtError, SrtErrorKind
 from tstrans.shells import Receiver, Sender
+
+from _builders.native_hooks import native_hook
+
+
+def _raise_srt_error_for_test(kind: str, message: str) -> None:
+    native_hook("_raise_srt_error_for_test")(kind, message)
 
 
 # --------------------------------------------------------------------------- #

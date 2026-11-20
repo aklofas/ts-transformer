@@ -165,7 +165,9 @@ def test_udp_error_kind_count() -> None:
 
 def test_udp_error_wiring_via_test_helper() -> None:
     """Verify the raise path wiring for every canonical kind via test helper."""
-    from tstrans._native import _raise_udp_error_for_test
+    from _builders.native_hooks import native_hook
+
+    _raise_udp_error_for_test = native_hook("_raise_udp_error_for_test")
 
     for kind in UdpErrorKind:
         with pytest.raises(UdpError) as excinfo:

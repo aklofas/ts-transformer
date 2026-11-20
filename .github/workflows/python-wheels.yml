@@ -197,6 +197,23 @@ jobs:
             "$venv/bin/python" -c "import sys, tstrans, tstrans.srt; print(sys.version, tstrans.__version__)"
           done
 
+      # The wheels are built without `py-test-hooks`, so no name that only the
+      # hooks build (tests/_builders/hook_names.py lists them) may be in one.
+      # ci.yml's python-core job runs the same check on a build with the hooks
+      # and needs every name there: the control that this check sees them.
+      - name: No test-only names in the wheel
+        shell: bash
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          check="$GITHUB_WORKSPACE/bindings/python/tests/_builders/hook_names.py"
+          dist="$GITHUB_WORKSPACE/bindings/python/dist"
+          cd "$RUNNER_TEMP"
+          python -m venv hooks-check
+          hooks-check/bin/python -m pip install --no-index --find-links "$dist" tstrans
+          hooks-check/bin/python "$check" absent
+          hooks-check/bin/python "$check" absent-in "$dist"/*.whl
+
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: wheel-linux-${{ matrix.target }}
@@ -267,6 +284,13 @@ jobs:
         env:
           SRT_FORCE_VENDORED: "1"
           RIST_FORCE_VENDORED: "1"
+
+      # An x86_64 runner cannot import this wheel, so the check reads the
+      # extension binary for the names instead (see the x86_64 leg's step).
+      - name: No test-only names in the wheel
+        shell: bash
+        timeout-minutes: 5
+        run: python bindings/python/tests/_builders/hook_names.py absent-in bindings/python/dist/*.whl
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
@@ -359,6 +383,16 @@ jobs:
           python -m pip install --no-index --find-links bindings/python/dist tstrans
           python -c "import tstrans, tstrans.rist, tstrans.srt, tstrans.webrtc; print(tstrans.__version__)"
 
+      # The installed wheel carries no test-only name (see the linux x86_64
+      # leg's step).
+      - name: No test-only names in the wheel
+        shell: bash
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          python bindings/python/tests/_builders/hook_names.py absent
+          python bindings/python/tests/_builders/hook_names.py absent-in bindings/python/dist/*.whl
+
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: wheel-macos-${{ matrix.target }}
@@ -428,6 +462,16 @@ jobs:
           python -c "import sys; assert sys.version_info >= (3, 11)"
           python -m pip install --no-index --find-links bindings/python/dist tstrans
           python -c "import tstrans, tstrans.rist, tstrans.srt, tstrans.webrtc; print(tstrans.__version__)"
+
+      # The installed wheel carries no test-only name (see the linux x86_64
+      # leg's step).
+      - name: No test-only names in the wheel
+        shell: bash
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          python bindings/python/tests/_builders/hook_names.py absent
+          python bindings/python/tests/_builders/hook_names.py absent-in bindings/python/dist/*.whl
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
