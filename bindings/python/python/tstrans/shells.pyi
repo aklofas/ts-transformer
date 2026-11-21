@@ -238,9 +238,11 @@ class Sender:
 
         A flush while the first 188 to 376 bytes only look aligned (``0x47``
         at offset 0, and at 188 when more is held) sends them although they
-        are not packets, and loses a real packet they cover (a stream joined
-        mid-packet); the sender then stays on that grid, so one more
-        non-packet can follow before it resyncs. Never without a flush (or
+        are not packets, and loses every real packet that starts inside them
+        (one for 188 bytes, two for 376; a stream joined mid-packet); the
+        sender then stays on that grid, so each later push or flush can send
+        another 188 non-packet bytes, and lose one more real packet, while
+        the next boundary reads ``0x47``; then it resyncs. Never without a flush (or
         ``finish()``) inside the first 376 bytes; about one random start in
         256."""
     def cancel_handle(self) -> CancelHandle: ...

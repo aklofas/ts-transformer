@@ -141,13 +141,14 @@ impl PySender {
     /// bytes only look aligned (`0x47` at offset 0, and at offset 188 when
     /// more than 188 bytes are held) and are flushed before a third
     /// boundary could refute them, those 188 or 376 bytes are sent although
-    /// they are not packets, and a real packet they cover (a stream joined
-    /// mid-packet whose first byte happens to read `0x47`) is lost with
-    /// them; without the flush the sender would have found the real
-    /// packets and sent that one. The sender then stays on the first
-    /// byte's grid, so a later `send_bytes()` or `flush()` can send one
-    /// more 188 bytes that are not a packet before a boundary fails and it
-    /// resyncs. This never happens without a flush (or `finish()`) inside
+    /// they are not packets, and every real packet that starts inside them
+    /// (a stream joined mid-packet whose first byte happens to read `0x47`)
+    /// is lost with them: one for 188 bytes, two for 376; without the flush
+    /// the sender would have found the real grid and sent them. The sender
+    /// then stays on the first byte's grid, so a later `send_bytes()` or
+    /// `flush()` sends another 188 bytes that are not a packet whenever
+    /// their first byte reads `0x47`, each costing the real packet that
+    /// starts inside it, until a boundary fails and it resyncs. This never happens without a flush (or `finish()`) inside
     /// the first 376 bytes, a flush with fewer than 188 bytes held sends
     /// nothing, and for random bytes it takes about one start in 256.
     fn flush(&self, py: Python<'_>) -> PyResult<()> {

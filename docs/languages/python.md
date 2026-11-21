@@ -469,8 +469,11 @@ transport's class) if bytes are left that it could not send as whole TS
 packets: a partial last packet, a short run behind damage, bytes that are
 not TS. A `flush()` early in a stream that only looks aligned (a `0x47`
 at offset 0, and at 188 when more is held, in front of bytes off that
-grid) sends those 188 or 376 bytes although they are not packets; it
-never happens without a flush or `finish()` inside the first 376 bytes.
+grid) sends those 188 or 376 bytes although they are not packets and
+loses the real packets that start inside them, one for 188 bytes and two
+for 376 (and one more for each further 188 non-packet bytes a later push or
+flush sends before the sender resyncs); it never happens without a flush or
+`finish()` inside the first 376 bytes.
 `socket_stats()` returns the
 scheme-neutral 16-field `SocketStats`; `srt_stats()` returns the
 libsrt-rich `SrtStats` (estimated bandwidth, symmetric send/recv-side loss
@@ -507,6 +510,10 @@ reads `0x47` (the first byte of a trailing partial packet included): a
 stream of one to three packets arrives, and so does the tail after a
 mid-stream resync when the receiver had found its start. They come before
 the end is reported, also when the transport ends with a `BROKEN` error.
+A cancel (`cancel_handle().cancel()`) or `close()` refuses every call after
+the one it interrupted, so at a cancel you get at most the first of those
+packets, and none after `close()`; the peer's end, a `BROKEN` transport and
+a managed receiver's give-up deliver all of them.
 
 The receiving shells (`Receiver`, `DemuxReceiver`) report the address
 their open bound: `local_addr()` is `(host, port)` and `local_port()` its
