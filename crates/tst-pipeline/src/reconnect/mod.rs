@@ -79,6 +79,12 @@ pub struct ReconnectPolicy {
     ///   connection runs a budget of its own and returns at its first
     ///   successful reconnect. The `Background` worker starts a fresh
     ///   budget after every successful reconnect.
+    ///
+    ///   An armed sender (see [`ManagedTransport::with_silent_peer_timeout`])
+    ///   counts every attempt of an outage until a new connection has
+    ///   answered: a peer that accepts connections and never answers runs
+    ///   out the budget like one that refuses them. A give-up, or an answer,
+    ///   starts the next outage with a fresh budget.
     /// - `ManagedRecvTransport` (receive): every rebuild attempt of one
     ///   `recv_bytes` call, the ones that connected included. A connection
     ///   that breaks before it delivers anything uses one attempt, and the
@@ -379,8 +385,9 @@ impl ManagedStatsHandle {
 ///   `TooLarge` synchronously to the caller for that same message.
 ///   `max_attempts` bounds one continuous outage of this sender (the
 ///   worker's budget resets after every successful reconnect, exactly as
-///   it does per-call in `Blocking` mode; a managed RECEIVER counts
-///   differently, see [`ReconnectPolicy::max_attempts`]). If the worker
+///   it does per-call in `Blocking` mode, except for an armed sender, whose
+///   outage lasts until a new connection has answered; a managed RECEIVER
+///   counts differently, see [`ReconnectPolicy::max_attempts`]). If the worker
 ///   exhausts that budget — or terminates
 ///   abnormally (an unwind inside the factory, or an unrecoverable
 ///   poisoned lock) — the give-up is reported exactly once, as a single
@@ -902,7 +909,7 @@ impl<T: Transport + 'static> ManagedTransport<T> {
                         let Some(trip) = self
                             .silent
                             .as_deref()
-                            .and_then(|s| sample_after_send(s, &*transport))
+                            .and_then(|s| sample_after_send(s, &*transport, &self.shared))
                         else {
                             return Ok(());
                         };
@@ -1182,7 +1189,18 @@ impl<T: Transport + 'static> ManagedTransport<T> {
     }
 
     fn reconnect_and_drain(&self) -> Result<(), TransportError> {
-        let mut attempt: u32 = 0;
+        // An armed sender's cycle starts where its outage stands: attempts
+        // on connections that never answered still count (see
+        // `ReconnectPolicy::max_attempts`). Read once, never inside the run
+        // of failed dials below.
+        let armed = self.silent.is_some();
+        let mut attempt: u32 = if armed {
+            self.shared
+                .unanswered_attempts
+                .load(std::sync::atomic::Ordering::Relaxed)
+        } else {
+            0
+        };
         // Why the latest factory call of this budget failed, for the
         // give-up line.
         let mut last_error: Option<TransportError> = None;
@@ -1203,6 +1221,12 @@ impl<T: Transport + 'static> ManagedTransport<T> {
                     last_error = last_error.as_ref().map(tracing::field::display),
                     "reconnect gave up — propagating final error to caller",
                 );
+                if armed {
+                    // A give-up ends the outage: the next one starts afresh.
+                    self.shared
+                        .unanswered_attempts
+                        .store(0, std::sync::atomic::Ordering::Relaxed);
+                }
                 return Err(TransportError::Broken {
                     msg: format!("reconnect gave up after {max} attempts"),
                     errno_code: None,
@@ -1242,7 +1266,14 @@ impl<T: Transport + 'static> ManagedTransport<T> {
                         self.silent.as_deref(),
                         new_inner,
                     ) {
-                        Install::Installed => {}
+                        Install::Installed => {
+                            if armed {
+                                // Recovered only once the new peer answers.
+                                self.shared
+                                    .unanswered_attempts
+                                    .store(attempt, std::sync::atomic::Ordering::Relaxed);
+                            }
+                        }
                         Install::Closed => return Err(self.latch.error()),
                         // A poisoned inner lock means a previous panic left
                         // the wrapper in an unknown state. Route to
@@ -1313,7 +1344,7 @@ impl<T: Transport + 'static> ManagedTransport<T> {
                     {
                         // The first sample on an inner just installed (its
                         // rule was reset there), so it cannot trip.
-                        let trip = sample_after_send(silent, &*transport);
+                        let trip = sample_after_send(silent, &*transport, &self.shared);
                         debug_assert!(trip.is_none(), "a fresh inner tripped at its first send");
                     }
                     sent

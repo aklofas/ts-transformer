@@ -14,7 +14,7 @@
 //! `closed` and `explicit_close` flags are plain fields of its own, because
 //! `recv_bytes` is `&mut self` and no worker shares them.
 
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
@@ -218,6 +218,11 @@ pub(crate) struct ManagedShared {
     /// is benign: the drain's own `TooLarge` handling drops a queued
     /// message the rebuilt transport can no longer carry.
     pub(crate) max_payload: AtomicUsize,
+    /// An armed sender's attempts spent in the current outage on
+    /// connections that never answered: where the next reconnect cycle's
+    /// budget starts. Zeroed by an answer and by a give-up. Read and
+    /// written only when silent-peer detection is armed.
+    pub(crate) unanswered_attempts: AtomicU32,
 }
 
 impl Default for ManagedShared {
@@ -234,6 +239,7 @@ impl Default for ManagedShared {
             // initial inner's real ceiling immediately, so this constant
             // is only ever the pre-construction placeholder.
             max_payload: AtomicUsize::new(SRT_TS_BUNDLE_BYTES),
+            unanswered_attempts: AtomicU32::new(0),
         }
     }
 }
@@ -259,9 +265,11 @@ pub(crate) struct Trip {
 /// held: the clock, then the inner's reading when the rule asks for one.
 /// The rule's lock is a leaf (locking invariant 6), so it is released
 /// before the reading is taken. `Some` when the peer has stopped answering.
+/// The inner's first answer gives the reconnect budget back.
 pub(crate) fn sample_after_send<T: Transport>(
     silent: &Mutex<SilentPeer>,
     transport: &T,
+    shared: &ManagedShared,
 ) -> Option<Trip> {
     let now = Instant::now();
     let lock = || silent.lock().unwrap_or_else(PoisonError::into_inner);
@@ -275,7 +283,11 @@ pub(crate) fn sample_after_send<T: Transport>(
             window: rule.window(),
             unanswered,
         }),
-        Verdict::Healthy | Verdict::Answered => None,
+        Verdict::Answered => {
+            shared.unanswered_attempts.store(0, Ordering::Relaxed);
+            None
+        }
+        Verdict::Healthy => None,
     }
 }
 

@@ -187,7 +187,14 @@ pub(crate) fn worker_run<T: Transport>(ctx: WorkerCtx<T>) {
     // successful install. `max_attempts` bounds attempts per outage, not
     // per transport lifetime — matching Blocking, where every
     // `send_bytes` call ran a fresh `reconnect_and_drain` budget.
-    let mut attempt: u32 = 0;
+    //
+    // An armed sender's outage instead lasts until a new connection has
+    // answered: its attempts carry across installs (`unanswered_attempts`),
+    // read at the start of the worker and at each return from the drain,
+    // never inside a run of failed dials.
+    let armed = ctx.silent.is_some();
+    let carried = || ctx.shared.unanswered_attempts.load(Ordering::Relaxed);
+    let mut attempt: u32 = if armed { carried() } else { 0 };
     // Why the latest factory call of this outage failed, for the give-up
     // line.
     let mut last_error: Option<TransportError> = None;
@@ -205,6 +212,9 @@ pub(crate) fn worker_run<T: Transport>(ctx: WorkerCtx<T>) {
                 last_error = last_error.as_ref().map(tracing::field::display),
                 "background reconnect gave up — next send_bytes reports Broken",
             );
+            if armed {
+                ctx.shared.unanswered_attempts.store(0, Ordering::Relaxed);
+            }
             // gave_up before returning: keeps the give-up cycle's report
             // deterministic for the send path's swap-consume (the guard
             // clears bg_active afterward, on the way out).
@@ -273,7 +283,13 @@ pub(crate) fn worker_run<T: Transport>(ctx: WorkerCtx<T>) {
                 return;
             }
         }
-        attempt = 0; // fresh budget for any subsequent break
+        if armed {
+            ctx.shared
+                .unanswered_attempts
+                .store(attempt, Ordering::Relaxed);
+        } else {
+            attempt = 0; // fresh budget for any subsequent break
+        }
         last_error = None;
 
         // ---- drain phase ----
@@ -338,7 +354,9 @@ pub(crate) fn worker_run<T: Transport>(ctx: WorkerCtx<T>) {
                         // Sampled before the gap lock is re-taken: the
                         // rule's lock is a leaf under `inner` alone.
                         let trip = match (&outcome, ctx.silent.as_deref()) {
-                            (Ok(()), Some(silent)) => sample_after_send(silent, &*transport),
+                            (Ok(()), Some(silent)) => {
+                                sample_after_send(silent, &*transport, &ctx.shared)
+                            }
                             _ => None,
                         };
                         // Re-take the gap lock ONLY to settle the entry.
@@ -423,10 +441,18 @@ pub(crate) fn worker_run<T: Transport>(ctx: WorkerCtx<T>) {
                         return;
                     }
                 }
-                DrainStep::Broken => continue 'reconnect,
+                DrainStep::Broken => {
+                    if armed {
+                        attempt = carried();
+                    }
+                    continue 'reconnect;
+                }
                 DrainStep::Silent(old, trip) => {
                     // Both locks are released here.
                     retire_silent(old, trip);
+                    if armed {
+                        attempt = carried();
+                    }
                     continue 'reconnect;
                 }
                 DrainStep::Cancelled => {
