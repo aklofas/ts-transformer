@@ -3,6 +3,9 @@
 //!
 //! The sender's framer and the receiver's syncer use the strict rule (every
 //! stride must match); the demuxer's re-acquisition uses an N-of-M rule.
+//!
+//! [`aligned_packets_at_end`] is the rule for the bytes still waiting on
+//! their strides when the input ends.
 
 use super::common::{TS_PACKET_SIZE, TS_SYNC_BYTE};
 
@@ -92,9 +95,35 @@ impl TsSync {
     }
 }
 
+/// The number of whole packets at the front of `buf` that are accepted at a
+/// declared end of input.
+///
+/// Every byte one packet apart that is present (`buf[0]`, `buf[188]`,
+/// `buf[376]`, and so on, the first byte of a trailing partial packet
+/// included) must carry the sync byte; then all `buf.len() / 188` whole
+/// packets are accepted. If one of them differs, none is. A buffer shorter
+/// than one packet holds no whole packet, so the answer is 0.
+///
+/// A declared end means no later byte can refute the candidates: the bytes
+/// present are all the evidence there will ever be. That makes this rule
+/// weaker than [`TsSync::strict`], which waits for its strides, so it is to
+/// be called only at an end of input, never while more bytes may come.
+pub fn aligned_packets_at_end(buf: &[u8]) -> usize {
+    if buf
+        .iter()
+        .step_by(TS_PACKET_SIZE)
+        .all(|&b| b == TS_SYNC_BYTE)
+    {
+        buf.len() / TS_PACKET_SIZE
+    } else {
+        0
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::TsSync;
+    use super::{TsSync, aligned_packets_at_end};
+    use crate::test_prelude::*;
     use proptest::prelude::*;
 
     const STRIDE: usize = 188;
@@ -130,7 +159,77 @@ mod tests {
         None
     }
 
+    /// `len` filler bytes with the sync byte at every stride present.
+    fn aligned(len: usize) -> Vec<u8> {
+        let mut buf = vec![0xAA; len];
+        for at in (0..len).step_by(STRIDE) {
+            buf[at] = 0x47;
+        }
+        buf
+    }
+
+    #[test]
+    fn one_two_and_three_aligned_packets_are_accepted_at_an_end() {
+        for n in 1..=3 {
+            assert_eq!(aligned_packets_at_end(&aligned(n * STRIDE)), n);
+        }
+    }
+
+    #[test]
+    fn a_trailing_partial_packet_must_start_with_the_sync_byte() {
+        for n in 1..=3 {
+            for partial in [1, 100, STRIDE - 1] {
+                let mut buf = aligned(n * STRIDE + partial);
+                assert_eq!(aligned_packets_at_end(&buf), n);
+                buf[n * STRIDE] = 0x00;
+                assert_eq!(aligned_packets_at_end(&buf), 0);
+            }
+        }
+    }
+
+    #[test]
+    fn one_failing_stride_rejects_every_packet() {
+        for broken in 0..3 {
+            let mut buf = aligned(3 * STRIDE);
+            buf[broken * STRIDE] = 0x46;
+            assert_eq!(aligned_packets_at_end(&buf), 0, "stride {broken}");
+        }
+    }
+
+    #[test]
+    fn an_empty_or_short_buffer_accepts_nothing() {
+        assert_eq!(aligned_packets_at_end(&[]), 0);
+        for len in [1, 100, STRIDE - 1] {
+            assert_eq!(aligned_packets_at_end(&aligned(len)), 0);
+        }
+    }
+
     proptest! {
+        #[test]
+        fn the_end_rule_accepts_exactly_the_buffers_whose_present_strides_all_match(
+            mut buf in proptest::collection::vec(any::<u8>(), 0..2000),
+            broken in proptest::option::of(any::<proptest::sample::Index>()),
+        ) {
+            for at in (0..buf.len()).step_by(STRIDE) {
+                buf[at] = 0x47;
+            }
+            if let Some(index) = broken
+                && !buf.is_empty()
+            {
+                let stride = index.index(buf.len().div_ceil(STRIDE));
+                buf[stride * STRIDE] = 0x00;
+            }
+            let mut expected = buf.len() / STRIDE;
+            let mut at = 0;
+            while at < buf.len() {
+                if buf[at] != 0x47 {
+                    expected = 0;
+                }
+                at += STRIDE;
+            }
+            prop_assert_eq!(aligned_packets_at_end(&buf), expected);
+        }
+
         #[test]
         fn strict_finds_a_planted_run_iff_it_is_long_enough(
             prefix in proptest::collection::vec(non_sync(), 0..400),
