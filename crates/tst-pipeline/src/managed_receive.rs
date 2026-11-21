@@ -70,8 +70,7 @@
 //!   higher-level shell (`DemuxReceiver`) is responsible for calling
 //!   `Demuxer::flush()` to drain any partial PES at end-of-stream.
 
-use crate::reconnect::background::Shutdown;
-use crate::reconnect::latch::Latch;
+use crate::reconnect::state::{Latch, Shutdown};
 use crate::reconnect::{ReconnectMode, ReconnectPolicy, ReconnectPolicyError};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};

@@ -11,13 +11,13 @@
 //! per-outage worker thread (`ReconnectMode::Background`). On
 //! reconnect success, drains the gap buffer before resuming new sends.
 
-pub(crate) mod background;
+mod background;
 mod gap_buffer;
-pub(crate) mod latch;
+pub(crate) mod state;
 
 pub use gap_buffer::{GapBuffer, OverflowPolicy};
 
-use background::{Install, ManagedShared, Shutdown, install_fresh_inner};
+use state::{Install, Latch, ManagedShared, Shutdown, install_fresh_inner};
 
 use std::time::Duration;
 
@@ -458,7 +458,7 @@ pub struct ManagedTransport<T: Transport> {
     /// a cancel, so a cancel is reported as `ExplicitClose` and an own close
     /// as `Closed`. The reconnect loop checks `closed` each iteration so a
     /// cancel mid-retry breaks out instead of waiting through the backoff.
-    latch: Arc<latch::Latch>,
+    latch: Arc<Latch>,
     /// Wakes any backoff wait (blocking loop or background worker) when
     /// `close()` / `cancel()` / `Drop` latch shutdown. `closed` stays the
     /// semantic flag; this is the wakeup channel.
@@ -513,7 +513,7 @@ impl<T: Transport + 'static> ManagedTransport<T> {
             factory: Arc::new(factory),
             policy,
             gap: Arc::new(Mutex::new(gap)),
-            latch: Arc::new(latch::Latch::new()),
+            latch: Arc::new(Latch::new()),
             shutdown: Arc::new(Shutdown::new()),
             shared,
             bg_thread: Mutex::new(None),
@@ -1329,7 +1329,7 @@ mod before_gap_lock {
 }
 
 struct ManagedCancel {
-    latch: Arc<latch::Latch>,
+    latch: Arc<Latch>,
     shutdown: Arc<Shutdown>,
     active: Arc<CancelSlot>,
 }
