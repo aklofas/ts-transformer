@@ -224,8 +224,14 @@ push the shell now owns. In the bindings these are the receiving shells'
 `rtp_stats()` / `rtpStats()` (answers after `close()`), `peer_addr()` /
 `peerAddr()`, `source_rejected()` / `sourceRejected()` and `local_addr()` /
 `local_port()` (`localAddr()` / `localPort()`; each language guide says
-which of these refuse a closed shell), and a push session's `stats()`, `end_reason()` / `endReason()`, `end_detail()` /
-`endDetail()`, `is_session_alive()` / `isSessionAlive()` and cancel handle.
+which of these refuse a closed shell), a push session's `stats()`, `end_reason()` / `endReason()`, `end_detail()` /
+`endDetail()`, `close_outcome()` / `closeOutcome()`, `is_session_alive()` /
+`isSessionAlive()` and cancel handle, and the muxing shells'
+`video_handle()` / `videoHandle()` and its four siblings (also while a
+`reconfigure` holds the sender). `hls.MuxPublisher.stats()` never waits
+for a push either, but it refuses a finished shell (Python
+`HlsError(CLOSED)`, the JVM `IllegalStateException`); its
+`publisher_stats()` / `publisherStats()` waits, as in Rust.
 Every other getter waits for the parked call (a shell's `stats()` and
 `socket_stats()`, `last_seen()` / `lastSeen()`); each language guide lists
 both kinds ([Python](/docs/languages/python.md#what-answers-while-another-thread-is-parked),
@@ -418,9 +424,13 @@ In Rust the push keeps how its close ended: take `stats_handle()` before
 the push goes under the shell and read `close_outcome()` once the shell
 has finished (`Clean`, `MediaLost`, `TeardownRefused { code, reason }`,
 `TeardownTimedOut`, `Failed`; `Cancelled` after `MuxSender::close()`,
-which cancels first). In Python and on the JVM only the session's own
-close reports it (`teardown()`), so a caller there who must know sends
-through the session's `send_ts`.
+which cancels first). In Python and on the JVM the push session keeps
+the same case for its `close_outcome()` / `closeOutcome()` (a
+`PushCloseOutcome` whose kind is `CLEAN`, `CANCELLED`, `MEDIA_LOST`,
+`TEARDOWN_REFUSED`, `TEARDOWN_TIMED_OUT` or `FAILED`), read after the
+shell's `finish()`; a binding shell's `close()` cancels first, so it
+reads `CANCELLED`. The session's own `teardown()` still raises or throws
+what its close reports.
 The session object's `stats()` follows the push into the shell, so its
 `frames_dropped_at_close` (`framesDroppedAtClose()`) shows afterwards what a
 shell's end dropped (on the JVM until the session object is closed).

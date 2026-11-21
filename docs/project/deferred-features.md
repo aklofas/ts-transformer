@@ -1605,19 +1605,17 @@ mean **Deferred**. An entry whose feature has shipped must never read
   stopped between its pushes and which then needs `tick` to keep its
   clock.
 
-## `MuxSender::reconfigure` in the bindings
+## `reconfigure` in the C binding
 
-- **Status:** Deferred. `Muxer::reconfigure` is in Python
-  (`mpegts.Muxer.reconfigure`) and on the JVM (`Muxer.reconfigure`,
-  single-program like the JVM's `MuxerConfig`); the C binding has none.
-  `MuxSender::reconfigure` has no form in any binding, and neither have
-  the managed SRT mux senders, the RTSP mounts or `MuxPublisher`.
-- **Why deferred:** a binding's `MuxSender` reads its stream handles once,
-  when it is built, and its `send_*` calls address streams through them;
-  a reconfigure that adds or removes streams would leave those handles
-  stale. Exposing it needs a change in how the shells hold their streams.
-- **Trigger to revisit:** a binding user who has to add or withdraw a
-  stream or a program on a live `MuxSender` without restarting the output
+- **Status:** Deferred. Python and the JVM have `Muxer.reconfigure` and
+  `MuxSender.reconfigure` (on `shells.MuxSender`, `srt.ManagedMuxSender`
+  and a `MuxSender` made by a conversion); the C binding has neither, on
+  its muxer or on its mux senders. In no binding do the RTSP mounts or
+  `MuxPublisher` have one.
+- **Why deferred:** the C binding's catch-up with the Rust surface is a
+  package of its own, and `reconfigure` is part of it.
+- **Trigger to revisit:** a C user who has to add or withdraw a stream or
+  a program on a live muxer or mux sender without restarting the output
   (a sensor announced and withdrawn while the main video runs).
 
 ## Per-program PSI cadence

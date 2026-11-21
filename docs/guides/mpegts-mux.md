@@ -1202,9 +1202,22 @@ try (Muxer m = new Muxer(base)) {
 }
 ```
 
-The C binding has no `reconfigure`, and `MuxSender::reconfigure` has no
-form in any binding: a binding's shell keeps the stream handles it read
-when it was built (see
+The muxing shells take the same call: `shells.MuxSender.reconfigure` and
+`srt.ManagedMuxSender.reconfigure` in Python (a `MuxerProgramConfig`) and
+on the JVM (a `MuxerConfig`), also on a `MuxSender` made by a conversion
+such as an RTSP push session's `into_mux_sender` / `intoMuxSender`. They
+apply `MuxSender::reconfigure` under the rules above. The call holds the
+sender as a send does and first writes what an earlier failed send left,
+so it can wait in the transport; `close()` from another thread ends that
+wait with `CLOSED`. Afterwards `video_handle()` / `videoHandle()` and its
+four siblings return the handles of the configuration in force, and they
+never wait, also while a reconfigure is parked. On the JVM the settings a
+`MuxerConfig` carries beside the program (`pcrIntervalMs`, `pcrLeadMs`,
+`psiIntervalMs`, `bufferPackets`, `av1Carriage`) must be the values the
+sender was opened with, or the call throws `CONFIG_INVALID` and changes
+nothing.
+
+The C binding has no `reconfigure`, on its muxer or its mux senders (see
 [deferred-features.md](/docs/project/deferred-features.md)). The full
 contract is the rustdoc on `Muxer::reconfigure`.
 

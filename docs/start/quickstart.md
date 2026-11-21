@@ -279,8 +279,8 @@ Useful filter targets:
 | `tst_pipeline::demux_receiver`  | DemuxReceiver lifecycle                                     |
 | `tst_pipeline::receiver`        | Receiver lifecycle                                          |
 | `tst_pipeline::raw_receiver`    | RawReceiver lifecycle                                       |
-| `tst_pipeline::reconnect`       | Sender-side managed-transport reconnect attempts + give-up  |
-| `tst_pipeline::managed_receive` | Receiver-side managed-transport reconnect attempts          |
+| `tst_pipeline::reconnect`       | Sender-side managed-transport reconnect attempts, why each failed one failed (`warn`), + give-up |
+| `tst_pipeline::managed_receive` | Receiver-side managed-transport reconnect attempts, why each failed one failed (`warn`), + give-up |
 | `srt`                           | libsrt-internal logs (forwarded from the C library)         |
 | `tst_core::codec`               | Codec parser warnings (e.g., H.265 SPS parse failures)      |
 

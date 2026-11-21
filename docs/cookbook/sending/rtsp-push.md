@@ -98,7 +98,7 @@ URL (`rtsp://user:pass@host/path`) or through the builder's `auth`;
 
 ```python
 from tstrans.mpegts import KlvStreamType, MuxerProgramConfigBuilder, Pts90khz, VideoCodec
-from tstrans.rtp import PushDescription, RtspClient, RtspClientConfig
+from tstrans.rtp import PushCloseKind, PushDescription, RtspClient, RtspClientConfig
 
 cfg = RtspClientConfig("rtsp://127.0.0.1:8554/cam")  # keepalive=True by default
 
@@ -115,8 +115,12 @@ with push.into_mux_sender(program) as sender:  # the sender now owns the push
         pts = Pts90khz.from_raw(i * 3000)
         sender.send_video(au, pts=pts, key_frame=(i % 30 == 0))
         sender.send_klv(klv, pts=pts)
-    sender.finish()  # no cancel; cannot report a lost tail (see "Ending a push")
+    sender.finish()  # no cancel; its own result cannot report a lost tail
 # The with exit frees the sender; without finish() it would cancel first.
+# The push's close ran inside finish(); the session still reads how it ended.
+outcome = push.close_outcome()
+if outcome is None or outcome.kind != PushCloseKind.CLEAN:
+    print("the push did not end cleanly:", outcome)
 
 # H.264 + KLV through the session itself.
 desc = PushDescription.h264_from_key_frame(first_key_frame, klv=True)
@@ -157,7 +161,11 @@ try (RtspPushSession push = RtspClient.push(cfg, PushDescription.mp2t());
         tx.sendVideo(frames.get(i), pts, i % 30 == 0);
         tx.sendKlv(klv.get(i), pts, 0);
     }
-    tx.finish(); // no cancel, unlike close(); cannot report a lost tail
+    tx.finish(); // no cancel, unlike close(); its own result cannot report a lost tail
+    // The push's close ran inside finish(); the session still reads how it ended.
+    push.closeOutcome()
+        .filter(o -> o.kind() != PushCloseOutcome.Kind.CLEAN)
+        .ifPresent(o -> System.err.println("the push did not end cleanly: " + o));
 }
 
 // H.264 + KLV through the session itself.
@@ -211,7 +219,7 @@ ten seconds of media in a burst reaches its readers as a burst.
 |---|---|---|---|
 | `RtspPush::close()` (Rust), `teardown()` (Python, JVM) | the queued media to be written, then up to 500 ms for TEARDOWN and its reply, then up to 2 s for the I/O thread | a last sender report per track, TEARDOWN | success only when the queued media was written and the server accepted the TEARDOWN; otherwise the first of: the cancel, once it has fired (`LocalCancel`; `CLOSED` in the bindings); `Protocol` with status `454` when the server had forgotten the session and queued media was dropped, whatever the TEARDOWN is answered; the TEARDOWN's own result (a refusal is `Protocol` with its status) |
 | `close()` (Python, JVM), the `with` exit, try-with-resources | the same | the same | nothing |
-| `Transport::close` (Rust; what a shell's close and `finish()` call) | the queued media, then up to 500 ms for TEARDOWN and its reply; does not wait for the thread | the same | nothing; `stats().frames_dropped_at_close` and `end_reason()` say what happened, and in Rust `PushStatsHandle::close_outcome()` keeps how the close ended |
+| `Transport::close` (Rust; what a shell's close and `finish()` call) | the queued media, then up to 500 ms for TEARDOWN and its reply; does not wait for the thread | the same | nothing; `stats().frames_dropped_at_close` and `end_reason()` say what happened, and `PushStatsHandle::close_outcome()` (Python `close_outcome()`, JVM `closeOutcome()` on the session) keeps how the close ended |
 | Drop of an `RtspPush`, collection of a Python session | nothing | TEARDOWN, without waiting for its reply | nothing; what was queued is discarded |
 
 Over a sender shell, end a stream with `finish()` (`MuxSender::finish()`,
@@ -228,9 +236,12 @@ until a close has finished, then `Clean`, `MediaLost` (the server had
 forgotten the session and queued media was dropped), `TeardownRefused {
 code, reason }`, `TeardownTimedOut`, `Failed { detail }` or `Cancelled`
 (always after `MuxSender::close()`, which cancels first). In Python and on
-the JVM, when you must know, send through the session itself (`send_ts`)
-and call `teardown()`, which raises unless the queued media was written and
-the server accepted the TEARDOWN. The session object's `stats()` follows
+the JVM the session reads the same case after the shell's `finish()`:
+`close_outcome()` / `closeOutcome()` returns `None` / empty until a close
+has finished, then a `PushCloseOutcome` whose kind is `CLEAN`,
+`CANCELLED`, `MEDIA_LOST`, `TEARDOWN_REFUSED` (with the status),
+`TEARDOWN_TIMED_OUT` or `FAILED` (with the text); a binding shell's
+`close()` cancels first and reads `CANCELLED`. The session object's `stats()` follows
 the push into the shell, so after a shell's end its
 `frames_dropped_at_close` (`framesDroppedAtClose()`) counts what was dropped
 (on the JVM until the session object is closed). A plain `Sender` sends a
@@ -247,8 +258,8 @@ can drop packets queued a moment before. In Rust, `Sender::close()` and a droppe
 that call ends with `CLOSED` and what was queued is dropped. A call that is
 only waiting for the session is not cancelled: it runs nothing and ends with
 `CLOSED`. Called while nothing is in progress, the close writes the queue.
-`stats()`, `end_reason()` (`endReason()`) and `end_detail()` (`endDetail()`)
-never wait and never raise: they read the push's counters while a send waits
+`stats()`, `end_reason()` (`endReason()`), `end_detail()` (`endDetail()`)
+and `close_outcome()` (`closeOutcome()`) never wait and never raise: they read the push's counters while a send waits
 for room, and after `close()`, `teardown()` and a conversion.
 `is_session_alive()` (`isSessionAlive()`) never waits: a call in progress
 counts as live, and it reads false once the session is closed or converted. The conversions
