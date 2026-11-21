@@ -4,8 +4,10 @@
 //! rejects any key for which this library doesn't yet expose a builder
 //! setter, with a clear "known but unsupported" error).
 //!
-//! Plus two `tst-c`-flavor extensions: `x-recvtimeout` / `x-sendtimeout`
-//! (no libsrt-URL precedent; `SRTO_RCVTIMEO` / `SRTO_SNDTIMEO`).
+//! Plus three `x-` extensions with no libsrt-URL precedent: `x-recvtimeout` /
+//! `x-sendtimeout` (`SRTO_RCVTIMEO` / `SRTO_SNDTIMEO`) and
+//! `x-silentpeertimeout` (a managed sender's silent-peer window, refused by
+//! every other open).
 //!
 //! See `/docs/guides/srt.md`'s URL keys section for the full user-facing key
 //! reference.
@@ -411,10 +413,21 @@ impl SrtUrl {
     ///   `cancel` was cancelled before or during the accept.
     /// - [`SrtError::Transport`]`(`[`TransportError::Broken`]`)` — bind or
     ///   accept fault; the message carries `bind: …` / `accept: …`.
+    /// - [`SrtError::Option`] — the URL carries `x-silentpeertimeout`, which
+    ///   only a managed sender can use; refused before the bind (a cancelled
+    ///   `cancel` is reported first).
     ///
     /// [`TransportError::ExplicitClose`]: tst_core::transport::TransportError::ExplicitClose
     /// [`TransportError::Broken`]: tst_core::transport::TransportError::Broken
     pub fn accept_one(&self, cancel: &CancelSlot) -> Result<SrtTransport, SrtError> {
+        // A cancelled open reports the cancel before anything about its
+        // configuration, as a caller-mode open does.
+        if cancel.is_cancelled() {
+            return Err(SrtError::Transport(
+                tst_core::transport::TransportError::ExplicitClose,
+            ));
+        }
+        crate::config::refuse_silent_peer_window(&self.config)?;
         let cfg = self.listener_config();
         let bind_host = if self.host.is_empty() {
             "0.0.0.0"
@@ -536,6 +549,25 @@ fn set_peer_idle_timeout(c: &mut SrtSocketConfig, _key: &str, value: &str) -> Ap
         });
     }
     c.peer_idle_timeout = Some(Duration::from_millis(n as u64));
+    Ok(())
+}
+
+/// The smallest `x-silentpeertimeout`, in milliseconds.
+const MIN_SILENT_PEER_TIMEOUT_MS: u32 = 1_000;
+
+fn set_silent_peer_timeout(c: &mut SrtSocketConfig, _key: &str, value: &str) -> Applied {
+    const KEY: &str = "x-silentpeertimeout";
+    let n: u32 = parse_int_nonneg(KEY, value)?;
+    // The top is the one `peeridletimeo` has: a window that long never
+    // fires before libsrt's own break.
+    let top = crate::socket::MAX_PEER_IDLE_TIMEOUT_MS;
+    if !(MIN_SILENT_PEER_TIMEOUT_MS..=top).contains(&n) {
+        return Err(SrtUrlError::InvalidValue {
+            key: KEY.to_string(),
+            detail: format!("must be {MIN_SILENT_PEER_TIMEOUT_MS} to {top} (ms), got {n}"),
+        });
+    }
+    c.silent_peer_timeout = Some(Duration::from_millis(u64::from(n)));
     Ok(())
 }
 
@@ -893,6 +925,13 @@ pub const URL_KEYS: &[QueryKey<SrtSocketConfig, SrtUrlError>] = &[
         "Send timeout",
         "milliseconds",
         set_send_timeout,
+    ),
+    QueryKey::new(
+        "x-silentpeertimeout",
+        &[],
+        "Abandon a managed sender's connection when the peer has answered none of its sends for this window",
+        "milliseconds, 1000 to 2147483; managed senders only",
+        set_silent_peer_timeout,
     ),
 ];
 

@@ -343,6 +343,32 @@ fn x_sendtimeout_query() {
 }
 
 #[test]
+fn silent_peer_timeout_parses_at_the_floor_and_the_top() {
+    let u = SrtUrl::parse("srt://1.2.3.4:9000?x-silentpeertimeout=1000").unwrap();
+    assert_eq!(
+        u.config.silent_peer_timeout,
+        Some(Duration::from_millis(1_000))
+    );
+    let u = SrtUrl::parse("srt://1.2.3.4:9000?x-silentpeertimeout=2147483").unwrap();
+    assert_eq!(
+        u.config.silent_peer_timeout,
+        Some(Duration::from_millis(2_147_483))
+    );
+}
+
+#[test]
+fn silent_peer_timeout_refuses_zero_below_the_floor_above_the_top_and_non_numbers() {
+    for v in ["0", "999", "2147484", "x", "+1000", "01000"] {
+        let e = SrtUrl::parse(&format!("srt://1.2.3.4:9000?x-silentpeertimeout={v}")).expect_err(v);
+        assert!(
+            matches!(e, SrtUrlError::InvalidValue { ref key, .. } if key == "x-silentpeertimeout"),
+            "{v}: {e:?}"
+        );
+        assert!(e.to_string().contains("x-silentpeertimeout"), "{v}: {e}");
+    }
+}
+
+#[test]
 fn x_unknown_extension_rejects() {
     // x- prefix is reserved but not a free-for-all.
     let e = SrtUrl::parse("srt://1.2.3.4:9000?x-foo=bar").unwrap_err();

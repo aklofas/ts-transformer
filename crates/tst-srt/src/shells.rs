@@ -309,8 +309,12 @@ fn managed_transport_from_url(
         return Err(callers_only());
     }
     policy.validate().map_err(policy_refused)?;
+    // The silent-peer window belongs to the wrapper, not to the socket:
+    // every SRT open refuses a config that carries it, so the first dial
+    // and every re-dial go without it.
+    let mut url = url.clone();
+    let _window = url.config.silent_peer_timeout.take();
     let initial = url.connect()?;
-    let url = url.clone();
     ManagedTransport::new(
         initial,
         move || url.connect().map_err(open_error_to_transport),

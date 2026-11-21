@@ -179,6 +179,11 @@ impl SrtSocket {
     /// against a silent address costs at least one second, and a budget
     /// below about a second per address may not reach a later address.
     ///
+    /// A config that carries a
+    /// [`silent_peer_timeout`](SrtSocketConfig::silent_peer_timeout) is
+    /// refused with [`SrtConnectError::InvalidOption`] before the address is
+    /// resolved.
+    ///
     /// # Panics
     ///
     /// On the very first libsrt-touching call in the process, this
@@ -191,6 +196,7 @@ impl SrtSocket {
         config: &SrtSocketConfig,
         addr: impl ToSocketAddrs,
     ) -> Result<Self, SrtConnectError> {
+        crate::config::refuse_silent_peer_window(config).map_err(SrtConnectError::InvalidOption)?;
         // Resolved before the operation starts: a lookup can block for
         // seconds, makes no libsrt call, and nothing can wake it, so it
         // must not be something the process-exit guard waits for.

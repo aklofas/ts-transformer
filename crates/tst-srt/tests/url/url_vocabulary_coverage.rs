@@ -34,7 +34,7 @@ const GROUP1_KEYS: &[&str] = &[
     "udpsndbuf",
 ];
 
-const GROUP2_KEYS: &[&str] = &["x-recvtimeout", "x-sendtimeout"];
+const GROUP2_KEYS: &[&str] = &["x-recvtimeout", "x-sendtimeout", "x-silentpeertimeout"];
 
 const GROUP3_KEYS: &[&str] = &[
     "bindtodevice",
