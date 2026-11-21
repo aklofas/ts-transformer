@@ -2367,7 +2367,11 @@ counters without touching demuxer stats.
 
 A signalled discontinuity (a set `discontinuity_indicator` on the video
 PID, the KLV PID, or the program's PCR PID when that PID also carries a
-stream) starts a new time base in either mode: nothing pairs across it.
+stream) starts a new time base in either mode: nothing pairs across it,
+with one limit: samples of the old clock still in flight behind the flag
+are not marked, so with KLV muxed more than one sample behind its video and
+a new clock within the pairing tolerance of the old one, such a KLV sample
+can still pair with a new frame.
 What the pairer held from before it leaves first: buffered video is paired
 against the KLV seen before the boundary or leaves as `UnpairedVideo`, and
 KLV that never paired leaves as `UnpairedKlv`. `Pairer` owns its demuxer, so
