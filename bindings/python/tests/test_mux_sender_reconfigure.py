@@ -24,8 +24,6 @@ import pytest
 from tstrans import shells
 from tstrans.exceptions import MuxError, MuxErrorKind, SrtError, SrtErrorKind, TcpError, TcpErrorKind
 from tstrans.mpegts import (
-    Demuxer,
-    DemuxerConfig,
     DemuxEvent,
     KlvStreamType,
     MuxerProgramConfigBuilder,
@@ -36,7 +34,10 @@ from tstrans.mpegts import (
 from _builders.hang_deadline import call_with_hang_deadline
 from _builders.parked import slot_held
 from _builders.ports import free_udp_port
-from _builders.wait import wait_for, wait_until
+from _builders.tcp_reader import TcpReader
+from _builders.wait import wait_for
+from test_cross_thread_close import _stream_handles as _handles
+from test_mux_reconfigure import _events
 
 # An IDR slice NAL long enough to span several TS packets, so a continuity
 # counter that restarted would show as a jump.
@@ -70,26 +71,9 @@ def _video_klv_program() -> object:
     )
 
 
-def _handles(tx: object) -> tuple:
-    return (
-        tx.video_handle(),
-        tx.klv_handle(),
-        tx.audio_handle(),
-        tx.subtitle_handle(),
-        tx.data_handle(),
-    )
-
-
 def _send_frames(tx: object, first_pts: int, count: int) -> None:
     for i in range(count):
         tx.send_video(NAL_IDR, pts=Pts90khz.from_raw(first_pts + i * 3000), key_frame=i == 0)
-
-
-def _events(ts: bytes) -> list:
-    d = Demuxer(DemuxerConfig())
-    d.feed(ts)
-    d.flush()
-    return list(d)
 
 
 def _pmt_versions(ts: bytes) -> list[int]:
@@ -110,42 +94,6 @@ def _pmt_versions(ts: bytes) -> list[int]:
         if not out or out[-1] != version:
             out.append(version)
     return out
-
-
-class _TcpPeer:
-    """A plain TCP listener that accepts one connection and reads it to its
-    end on a thread; `bytes()` waits (bounded) for that end."""
-
-    def __init__(self) -> None:
-        self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.sock.bind(("127.0.0.1", 0))
-        self.sock.listen(1)
-        self.sock.settimeout(WAIT_S)
-        self.url = f"tcp://127.0.0.1:{self.sock.getsockname()[1]}"
-        self.data = bytearray()
-        self.error: Optional[BaseException] = None
-        self.ended = threading.Event()
-        threading.Thread(target=self._run, daemon=True).start()
-
-    def _run(self) -> None:
-        try:
-            conn, _ = self.sock.accept()
-            with conn:
-                conn.settimeout(WAIT_S)
-                while chunk := conn.recv(65536):
-                    self.data.extend(chunk)
-        except BaseException as exc:  # noqa: BLE001
-            self.error = exc
-        finally:
-            self.ended.set()
-
-    def bytes(self) -> bytes:
-        assert self.ended.wait(WAIT_S), "the peer did not read to the end"
-        assert self.error is None, self.error
-        return bytes(self.data)
-
-    def close(self) -> None:
-        self.sock.close()
 
 
 def _udp_port_bound(port: int) -> bool:
@@ -172,10 +120,10 @@ class _SrtPeer:
         self.ended = threading.Event()
         self.read = read
         self.url = f"srt://:{port}?mode=listener{knobs}"
-        threading.Thread(target=self._run, daemon=True).start()
+        threading.Thread(target=self._serve, daemon=True).start()
         wait_for("the srt listener bound", lambda: _udp_port_bound(port), WAIT_S)
 
-    def _run(self) -> None:
+    def _serve(self) -> None:
         try:
             self.rx = shells.Receiver.open(self.url)
             self.accepted.set()
@@ -237,7 +185,7 @@ def _check_added_klv(tx: object, finish: Callable[[], bytes]) -> None:
 
 
 def test_reconfigure_keeps_the_survivor_without_a_discontinuity_and_moves_the_pmt_version() -> None:
-    peer = _TcpPeer()
+    peer = TcpReader(WAIT_S)
     try:
         tx = shells.MuxSender.open(peer.url, _video_program())
         v = tx.video_handle()
@@ -247,20 +195,20 @@ def test_reconfigure_keeps_the_survivor_without_a_discontinuity_and_moves_the_pm
         _send_frames(tx, 90_000 + 5 * 3000, 5)
         tx.finish()
         tx.close()
-        _check_survivor_and_pmt_version(peer.bytes())
+        _check_survivor_and_pmt_version(peer.to_end())
     finally:
         peer.close()
 
 
 def test_reconfigure_adds_a_klv_stream_and_klv_handle_reads_it() -> None:
-    peer = _TcpPeer()
+    peer = TcpReader(WAIT_S)
     try:
         tx = shells.MuxSender.open(peer.url, _video_program())
 
         def finish() -> bytes:
             tx.finish()
             tx.close()
-            return peer.bytes()
+            return peer.to_end()
 
         _check_added_klv(tx, finish)
     finally:
@@ -268,7 +216,7 @@ def test_reconfigure_adds_a_klv_stream_and_klv_handle_reads_it() -> None:
 
 
 def test_a_removed_streams_kept_handle_is_refused() -> None:
-    peer = _TcpPeer()
+    peer = TcpReader(WAIT_S)
     try:
         tx = shells.MuxSender.open(peer.url, _video_klv_program())
         k = tx.klv_handle()
@@ -286,7 +234,7 @@ def test_a_removed_streams_kept_handle_is_refused() -> None:
 
 
 def test_a_refused_config_changes_nothing() -> None:
-    peer = _TcpPeer()
+    peer = TcpReader(WAIT_S)
     try:
         tx = shells.MuxSender.open(peer.url, _video_klv_program())
         before = _handles(tx)
@@ -307,7 +255,7 @@ def test_a_refused_config_changes_nothing() -> None:
         tx.send_klv(KLV_LS, pts=Pts90khz.from_raw(96_000))
         tx.finish()
         tx.close()
-        ts = peer.bytes()
+        ts = peer.to_end()
         assert _pmt_versions(ts) == [0]
         events = _events(ts)
         assert len([e for e in events if isinstance(e, DemuxEvent.Video)]) == 4
@@ -317,7 +265,7 @@ def test_a_refused_config_changes_nothing() -> None:
 
 
 def test_reconfigure_after_close_raises_closed() -> None:
-    peer = _TcpPeer()
+    peer = TcpReader(WAIT_S)
     try:
         tx = shells.MuxSender.open(peer.url, _video_program())
         tx.close()
@@ -327,7 +275,7 @@ def test_reconfigure_after_close_raises_closed() -> None:
     finally:
         peer.close()
     # A cancelled sender refuses it the same way.
-    peer = _TcpPeer()
+    peer = TcpReader(WAIT_S)
     try:
         tx = shells.MuxSender.open(peer.url, _video_program())
         tx.cancel_handle().cancel()
