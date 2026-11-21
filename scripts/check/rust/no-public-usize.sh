@@ -38,6 +38,7 @@ ALLOWLIST_PATTERNS=(
     'pub fn encoded_len(_with|_standalone)?\b'              # encode-helper sizing (Rust-only)
     'pub fn ber_(oid_)?len(_u64)?\b'                        # BER length helpers (Rust-only; u64 sibling same rationale)
     'pub fn pull\(&mut self, out: &mut \[u8\]\) -> usize'   # Muxer::pull (bytes-written, Read::read-shaped)
+    'pub fn aligned_packets_at_end\(buf: &\[u8\]\) -> usize' # mpegts/sync.rs (#[doc(hidden)] module): a packet count the caller turns into a slice length, Rust-only (never crosses FFI)
 
     # Tuning-knob fields on pub config structs (bucket (b)): caller-supplied
     # capacity / threshold, FFI wrappers convert at the C boundary. Keep
