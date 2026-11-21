@@ -266,6 +266,12 @@ pub(crate) struct Trip {
 /// The rule's lock is a leaf (locking invariant 6), so it is released
 /// before the reading is taken. `Some` when the peer has stopped answering.
 /// The inner's first answer gives the reconnect budget back.
+///
+/// Cold: inlined into the send paths, it made every direct send of an
+/// UNARMED sender about 12 instructions dearer than one without the
+/// feature (callgrind, `managed_send_direct`), cold about 5; an armed
+/// sender pays one call per send for it.
+#[cold]
 pub(crate) fn sample_after_send<T: Transport>(
     silent: &Mutex<SilentPeer>,
     transport: &T,
