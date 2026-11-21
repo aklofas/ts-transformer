@@ -507,24 +507,24 @@ mod tests {
         });
         let sock = TcpStream::connect(("127.0.0.1", port)).unwrap();
         let watch = sock.try_clone().unwrap();
-        let t0 = Instant::now();
         // The handshake reads the clock at the top of its loop and again
         // after the ClientHello's write: the second reading holds it until
-        // the reset has arrived.
+        // the reset has arrived. The clock is the real one, so a handshake
+        // that does not end fails at the deadline.
         let mut readings = 0;
         let mut clock = || {
             readings += 1;
             if readings == 2 {
                 await_reset(&watch);
             }
-            t0
+            Instant::now()
         };
         let r = TlsStream::connect_with_clock(
             &url(port),
             sock,
             Some(rustls::RootCertStore::empty()),
             Duration::from_millis(100),
-            Some(t0 + Duration::from_secs(10)),
+            Some(Instant::now() + Duration::from_secs(30)),
             &mut clock,
         );
         peer.join().unwrap();
