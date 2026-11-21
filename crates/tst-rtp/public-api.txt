@@ -692,6 +692,31 @@ impl core::marker::UnsafeUnpin for tst_rtp::rtsp::client::play::RtpInfo
 impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::rtsp::client::play::RtpInfo
 impl core::panic::unwind_safe::UnwindSafe for tst_rtp::rtsp::client::play::RtpInfo
 pub mod tst_rtp::rtsp::client::push
+#[non_exhaustive] pub enum tst_rtp::rtsp::client::push::PushCloseOutcome
+pub tst_rtp::rtsp::client::push::PushCloseOutcome::Cancelled
+pub tst_rtp::rtsp::client::push::PushCloseOutcome::Clean
+pub tst_rtp::rtsp::client::push::PushCloseOutcome::Failed
+pub tst_rtp::rtsp::client::push::PushCloseOutcome::Failed::detail: alloc::string::String
+pub tst_rtp::rtsp::client::push::PushCloseOutcome::MediaLost
+pub tst_rtp::rtsp::client::push::PushCloseOutcome::TeardownRefused
+pub tst_rtp::rtsp::client::push::PushCloseOutcome::TeardownRefused::code: u16
+pub tst_rtp::rtsp::client::push::PushCloseOutcome::TeardownRefused::reason: alloc::string::String
+pub tst_rtp::rtsp::client::push::PushCloseOutcome::TeardownTimedOut
+impl core::clone::Clone for tst_rtp::rtsp::client::push::PushCloseOutcome
+pub fn tst_rtp::rtsp::client::push::PushCloseOutcome::clone(&self) -> tst_rtp::rtsp::client::push::PushCloseOutcome
+impl core::cmp::Eq for tst_rtp::rtsp::client::push::PushCloseOutcome
+impl core::cmp::PartialEq for tst_rtp::rtsp::client::push::PushCloseOutcome
+pub fn tst_rtp::rtsp::client::push::PushCloseOutcome::eq(&self, &tst_rtp::rtsp::client::push::PushCloseOutcome) -> bool
+impl core::fmt::Debug for tst_rtp::rtsp::client::push::PushCloseOutcome
+pub fn tst_rtp::rtsp::client::push::PushCloseOutcome::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for tst_rtp::rtsp::client::push::PushCloseOutcome
+impl core::marker::Freeze for tst_rtp::rtsp::client::push::PushCloseOutcome
+impl core::marker::Send for tst_rtp::rtsp::client::push::PushCloseOutcome
+impl core::marker::Sync for tst_rtp::rtsp::client::push::PushCloseOutcome
+impl core::marker::Unpin for tst_rtp::rtsp::client::push::PushCloseOutcome
+impl core::marker::UnsafeUnpin for tst_rtp::rtsp::client::push::PushCloseOutcome
+impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::rtsp::client::push::PushCloseOutcome
+impl core::panic::unwind_safe::UnwindSafe for tst_rtp::rtsp::client::push::PushCloseOutcome
 #[non_exhaustive] pub enum tst_rtp::rtsp::client::push::PushDescription
 pub tst_rtp::rtsp::client::push::PushDescription::Elementary
 pub tst_rtp::rtsp::client::push::PushDescription::Elementary::klv: bool
@@ -776,6 +801,7 @@ impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::rtsp::client::push::Pu
 impl core::panic::unwind_safe::UnwindSafe for tst_rtp::rtsp::client::push::PushStats
 pub struct tst_rtp::rtsp::client::push::PushStatsHandle
 impl tst_rtp::rtsp::client::push::PushStatsHandle
+pub fn tst_rtp::rtsp::client::push::PushStatsHandle::close_outcome(&self) -> core::option::Option<tst_rtp::rtsp::client::push::PushCloseOutcome>
 pub fn tst_rtp::rtsp::client::push::PushStatsHandle::end_reason(&self) -> core::option::Option<tst_core::transport::EndReason>
 pub fn tst_rtp::rtsp::client::push::PushStatsHandle::stats(&self) -> tst_rtp::rtsp::client::push::PushStats
 impl core::clone::Clone for tst_rtp::rtsp::client::push::PushStatsHandle
@@ -1815,6 +1841,31 @@ impl core::marker::Unpin for tst_rtp::rtsp::server::publish::PublishShape
 impl core::marker::UnsafeUnpin for tst_rtp::rtsp::server::publish::PublishShape
 impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::rtsp::server::publish::PublishShape
 impl core::panic::unwind_safe::UnwindSafe for tst_rtp::rtsp::server::publish::PublishShape
+#[non_exhaustive] pub enum tst_rtp::PushCloseOutcome
+pub tst_rtp::PushCloseOutcome::Cancelled
+pub tst_rtp::PushCloseOutcome::Clean
+pub tst_rtp::PushCloseOutcome::Failed
+pub tst_rtp::PushCloseOutcome::Failed::detail: alloc::string::String
+pub tst_rtp::PushCloseOutcome::MediaLost
+pub tst_rtp::PushCloseOutcome::TeardownRefused
+pub tst_rtp::PushCloseOutcome::TeardownRefused::code: u16
+pub tst_rtp::PushCloseOutcome::TeardownRefused::reason: alloc::string::String
+pub tst_rtp::PushCloseOutcome::TeardownTimedOut
+impl core::clone::Clone for tst_rtp::rtsp::client::push::PushCloseOutcome
+pub fn tst_rtp::rtsp::client::push::PushCloseOutcome::clone(&self) -> tst_rtp::rtsp::client::push::PushCloseOutcome
+impl core::cmp::Eq for tst_rtp::rtsp::client::push::PushCloseOutcome
+impl core::cmp::PartialEq for tst_rtp::rtsp::client::push::PushCloseOutcome
+pub fn tst_rtp::rtsp::client::push::PushCloseOutcome::eq(&self, &tst_rtp::rtsp::client::push::PushCloseOutcome) -> bool
+impl core::fmt::Debug for tst_rtp::rtsp::client::push::PushCloseOutcome
+pub fn tst_rtp::rtsp::client::push::PushCloseOutcome::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for tst_rtp::rtsp::client::push::PushCloseOutcome
+impl core::marker::Freeze for tst_rtp::rtsp::client::push::PushCloseOutcome
+impl core::marker::Send for tst_rtp::rtsp::client::push::PushCloseOutcome
+impl core::marker::Sync for tst_rtp::rtsp::client::push::PushCloseOutcome
+impl core::marker::Unpin for tst_rtp::rtsp::client::push::PushCloseOutcome
+impl core::marker::UnsafeUnpin for tst_rtp::rtsp::client::push::PushCloseOutcome
+impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::rtsp::client::push::PushCloseOutcome
+impl core::panic::unwind_safe::UnwindSafe for tst_rtp::rtsp::client::push::PushCloseOutcome
 #[non_exhaustive] pub enum tst_rtp::PushDescription
 pub tst_rtp::PushDescription::Elementary
 pub tst_rtp::PushDescription::Elementary::klv: bool
@@ -2494,6 +2545,7 @@ impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::rtsp::client::push::Pu
 impl core::panic::unwind_safe::UnwindSafe for tst_rtp::rtsp::client::push::PushStats
 pub struct tst_rtp::PushStatsHandle
 impl tst_rtp::rtsp::client::push::PushStatsHandle
+pub fn tst_rtp::rtsp::client::push::PushStatsHandle::close_outcome(&self) -> core::option::Option<tst_rtp::rtsp::client::push::PushCloseOutcome>
 pub fn tst_rtp::rtsp::client::push::PushStatsHandle::end_reason(&self) -> core::option::Option<tst_core::transport::EndReason>
 pub fn tst_rtp::rtsp::client::push::PushStatsHandle::stats(&self) -> tst_rtp::rtsp::client::push::PushStats
 impl core::clone::Clone for tst_rtp::rtsp::client::push::PushStatsHandle

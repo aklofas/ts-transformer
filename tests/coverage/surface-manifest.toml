@@ -1940,14 +1940,38 @@ bindings = ["java:org.tstrans.shells.Sender", "c:unaudited", "python:unaudited",
 scenario_ids = ["h264-st0601-mp"]
 tier = "A"
 
-# finish: flush, mark closed, close the transport, no cancel first; returns
-# the flush's error. Unit tests over a transport that queues until close.
+# finish: flush and the end-of-stream pass, mark closed, close the transport,
+# no cancel first; returns the first send error, else UnsentTail for bytes it
+# could not send as TS. Unit tests over a transport that queues until close.
 [[surface]]
 kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::sender::Sender::finish"
 owning_tests = ["crates/tst-pipeline/src/sender/mod.rs"]
 bindings = ["c:deferred(no C finish on the plain sender)", "python:tstrans.shells.Sender.finish", "java:org.tstrans.shells.Sender.finish", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+# TsFraming::finish: the end-of-stream pass of the send-side framer: flush,
+# then go on scanning what is held with the three-packet rule; what cannot be
+# verified stays buffered. Unit tests in the framer's own module.
+[[surface]]
+kind = "rust"
+crate = "tst-pipeline"
+item = "tst_pipeline::sender::TsFraming::finish"
+owning_tests = ["crates/tst-pipeline/src/sender/framing.rs"]
+bindings = ["c:n/a(the framer is not bound; a sender's flush and close reach it)", "python:n/a(the framer is not bound; Sender.finish reaches it)", "java:n/a(the framer is not bound; Sender.finish reaches it)", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+# TsFraming::buffered_bytes: the bytes the framer holds unsent; after the
+# end-of-stream pass they are what Sender::finish reports as UnsentTail.
+[[surface]]
+kind = "rust"
+crate = "tst-pipeline"
+item = "tst_pipeline::sender::TsFraming::buffered_bytes"
+owning_tests = ["crates/tst-pipeline/src/sender/framing.rs"]
+bindings = ["c:n/a(the framer is not bound)", "python:n/a(the framer is not bound)", "java:n/a(the framer is not bound)", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -2537,7 +2561,7 @@ bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred
 # MuxPublisher<P> is generic, so cargo public-api's bracket truncation
 # collapses the struct line AND every one of its methods (with_config,
 # push_video, push_klv, push_audio, push_subtitle, push_data, push_video_misp,
-# cut_segment, finish, stats, publisher_stats) onto this one item key — there
+# cut_segment, finish, stats, publisher_stats, stats_handle) onto this one item key — there
 # is no per-method row to graduate separately; every method's JVM/Python twin
 # is named.
 [[surface]]
@@ -2546,6 +2570,36 @@ crate = "tst-pipeline"
 item = "tst_pipeline::mux_publisher::MuxPublisher"
 owning_tests = ["bindings/jvm/src/test/java/org/tstrans/hls/MuxPublisherTest.java"]
 bindings = ["java:org.tstrans.hls.MuxPublisher", "java:org.tstrans.hls.MuxPublisher.withConfigHls", "java:org.tstrans.hls.MuxPublisher.pushVideo", "java:org.tstrans.hls.MuxPublisher.pushVideoWithDts", "java:org.tstrans.hls.MuxPublisher.pushKlv", "java:org.tstrans.hls.MuxPublisher.pushAudio", "java:org.tstrans.hls.MuxPublisher.pushSubtitle", "java:org.tstrans.hls.MuxPublisher.pushData", "java:org.tstrans.hls.MuxPublisher.pushVideoMisp", "java:org.tstrans.hls.MuxPublisher.cutSegment", "java:org.tstrans.hls.MuxPublisher.finishIntoPublisher", "java:org.tstrans.hls.MuxPublisher.stats", "java:org.tstrans.hls.MuxPublisher.publisherStats", "python:tstrans.hls.MuxPublisher", "python:tstrans.hls.MuxPublisher.with_config_hls", "python:tstrans.hls.MuxPublisher.push_video", "python:tstrans.hls.MuxPublisher.push_video_with_dts", "python:tstrans.hls.MuxPublisher.push_klv", "python:tstrans.hls.MuxPublisher.push_audio", "python:tstrans.hls.MuxPublisher.push_subtitle", "python:tstrans.hls.MuxPublisher.push_data", "python:tstrans.hls.MuxPublisher.push_video_misp", "python:tstrans.hls.MuxPublisher.cut_segment", "python:tstrans.hls.MuxPublisher.finish_into_publisher", "python:tstrans.hls.MuxPublisher.stats", "python:tstrans.hls.MuxPublisher.publisher_stats", "c:unaudited", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+# MuxPublisherStatsHandle: the publisher's counters read without waiting for a
+# push in progress (MuxPublisher::stats_handle, which shares the key of the
+# struct's other methods above).
+[[surface]]
+kind = "rust"
+crate = "tst-pipeline"
+item = "tst_pipeline::mux_publisher::MuxPublisherStatsHandle"
+owning_tests = ["crates/tst-pipeline/src/mux_publisher.rs"]
+bindings = ["c:deferred(tst_mux_publisher_get_stats reads the handle once the C binding takes it)", "python:deferred(tstrans.hls.MuxPublisher.stats reads the handle once the Python binding takes it)", "java:deferred(org.tstrans.hls.MuxPublisher.stats reads the handle once the JVM binding takes it)", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-pipeline"
+item = "tst_pipeline::MuxPublisherStatsHandle"
+owning_tests = ["crates/tst-pipeline/src/mux_publisher.rs"]
+bindings = ["c:deferred(tst_mux_publisher_get_stats reads the handle once the C binding takes it)", "python:deferred(tstrans.hls.MuxPublisher.stats reads the handle once the Python binding takes it)", "java:deferred(org.tstrans.hls.MuxPublisher.stats reads the handle once the JVM binding takes it)", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-pipeline"
+item = "tst_pipeline::mux_publisher::MuxPublisherStatsHandle::stats"
+owning_tests = ["crates/tst-pipeline/src/mux_publisher.rs"]
+bindings = ["c:deferred(tst_mux_publisher_get_stats reads the handle once the C binding takes it)", "python:deferred(tstrans.hls.MuxPublisher.stats reads the handle once the Python binding takes it)", "java:deferred(org.tstrans.hls.MuxPublisher.stats reads the handle once the JVM binding takes it)", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -3646,6 +3700,44 @@ crate = "tst-pipeline"
 item = "tst_pipeline::binding::Owned"
 owning_tests = ["crates/tst-pipeline/src/binding/owned.rs"]
 bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+# StreamHandlesCell: the stream handles a MuxSender exposes, kept current across
+# a reconfigure so a binding's getters never hold a stale list.
+[[surface]]
+kind = "rust"
+crate = "tst-pipeline"
+item = "tst_pipeline::binding::view::StreamHandlesCell"
+owning_tests = ["crates/tst-pipeline/src/binding/view.rs"]
+bindings = ["c:n/a(the C mux senders expose no stream-handle getter that a reconfigure could make stale; a C reconfigure is the c-surface package's)", "python:deferred(tstrans.shells.MuxSender.reconfigure refreshes the cell once the Python binding takes it)", "java:deferred(org.tstrans.shells.MuxSender.reconfigure refreshes the cell once the JVM binding takes it)", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-pipeline"
+item = "tst_pipeline::binding::view::StreamHandlesCell::new"
+owning_tests = ["crates/tst-pipeline/src/binding/view.rs"]
+bindings = ["c:n/a(internal: a binding builds the cell when it opens the shell)", "python:n/a(internal: a binding builds the cell when it opens the shell)", "java:n/a(internal: a binding builds the cell when it opens the shell)", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-pipeline"
+item = "tst_pipeline::binding::view::StreamHandlesCell::get"
+owning_tests = ["crates/tst-pipeline/src/binding/view.rs"]
+bindings = ["c:n/a(the C mux senders expose no stream-handle getter that a reconfigure could make stale; a C reconfigure is the c-surface package's)", "python:deferred(tstrans.shells.MuxSender.video_handle and its siblings read the cell once the Python binding takes it)", "java:deferred(org.tstrans.shells.MuxSender's handle getters read the cell once the JVM binding takes it)", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-pipeline"
+item = "tst_pipeline::binding::view::StreamHandlesCell::refresh"
+owning_tests = ["crates/tst-pipeline/src/binding/view.rs"]
+bindings = ["c:n/a(the C mux senders expose no stream-handle getter that a reconfigure could make stale; a C reconfigure is the c-surface package's)", "python:deferred(tstrans.shells.MuxSender.reconfigure refreshes the cell once the Python binding takes it)", "java:deferred(org.tstrans.shells.MuxSender.reconfigure refreshes the cell once the JVM binding takes it)", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -6439,6 +6531,35 @@ crate = "tst-rtp"
 item = "tst_rtp::rtsp::client::push::PushStatsHandle::end_reason"
 owning_tests = ["crates/tst-rtp/src/rtsp/client/push/tests.rs"]
 bindings = ["c:deferred(the RTSP push client in the C API: docs/project/deferred-features.md)", "python:tstrans.rtp.RtspPushSession.end_reason", "java:org.tstrans.rtp.RtspPushSession.endReason", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+# PushCloseOutcome: how a push's close ended, read through the handle after a
+# shell finished, after the push was dropped and while a close is running.
+[[surface]]
+kind = "rust"
+crate = "tst-rtp"
+item = "tst_rtp::PushCloseOutcome"
+owning_tests = ["crates/tst-rtp/src/rtsp/client/push/tests.rs"]
+bindings = ["c:deferred(the RTSP push client in the C API: docs/project/deferred-features.md)", "python:deferred(the push session reports its close outcome once the Python binding takes it)", "java:deferred(the push session reports its close outcome once the JVM binding takes it)", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-rtp"
+item = "tst_rtp::rtsp::client::push::PushCloseOutcome"
+owning_tests = ["crates/tst-rtp/src/rtsp/client/push/tests.rs"]
+bindings = ["c:deferred(the RTSP push client in the C API: docs/project/deferred-features.md)", "python:deferred(the push session reports its close outcome once the Python binding takes it)", "java:deferred(the push session reports its close outcome once the JVM binding takes it)", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-rtp"
+item = "tst_rtp::rtsp::client::push::PushStatsHandle::close_outcome"
+owning_tests = ["crates/tst-rtp/src/rtsp/client/push/tests.rs"]
+bindings = ["c:deferred(the RTSP push client in the C API: docs/project/deferred-features.md)", "python:deferred(the push session reports its close outcome once the Python binding takes it)", "java:deferred(the push session reports its close outcome once the JVM binding takes it)", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
