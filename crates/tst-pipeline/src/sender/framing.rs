@@ -113,11 +113,11 @@ pub struct TsFraming {
     /// Set by [`Self::push_strict`]: every boundary in `buffer` has been
     /// checked, so `flush` may emit it before the sync threshold.
     strict: bool,
-    /// RECOVER mode: true until a byte is skipped. While it holds and the
-    /// state is UNSYNCED, the buffer starts at the stream's first byte.
-    /// A boundary that fails after sync needs no write here: its byte
-    /// stays at the buffer's head, where it refuses the early flush until
-    /// the scan skips it.
+    /// RECOVER mode: true until a byte is skipped. While it holds, an
+    /// UNSYNCED buffer starts at the stream's first byte or, once sync was
+    /// lost, at the boundary that failed. That byte is not 0x47, so it
+    /// refuses the early flush until the scan skips it, which clears
+    /// this: no write is needed where a boundary fails.
     aligned_from_start: bool,
     /// Test builds only: bytes the sync scan has looked at, to pin that
     /// its work is linear in its input.
