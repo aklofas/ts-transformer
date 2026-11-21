@@ -755,19 +755,69 @@ fn assert_same_trace(seed: u64, case: &Case, shell: &[Entry], model: &[Entry]) {
     );
 }
 
+/// The seeds compared with the model: the recorded ones, or more when
+/// `TST_RECEIVE_TRACE_CASES` says so (the long run by hand is 10 000).
+fn seeds() -> u64 {
+    let recorded = RECORDED.len() as u64;
+    std::env::var("TST_RECEIVE_TRACE_CASES")
+        .ok()
+        .and_then(|n| n.parse().ok())
+        .map_or(recorded, |n: u64| n.max(recorded))
+}
+
+/// With `TST_RECEIVE_TRACE_RECORD` set, the digests are printed as the table
+/// at the end of this file instead of being compared with it.
 #[test]
 fn the_shell_yields_the_models_trace_and_the_recorded_one() {
-    for (seed, recorded) in RECORDED.iter().enumerate() {
-        let seed = seed as u64;
+    let record = std::env::var_os("TST_RECEIVE_TRACE_RECORD").is_some();
+    let mut printed = Vec::new();
+    for seed in 0..seeds() {
         let case = Case::generate(seed);
         let shell = shell_trace(&case);
         assert_same_trace(seed, &case, &shell, &model_trace(&case));
-        assert_eq!(
-            digest(&shell),
-            *recorded,
-            "seed {seed} ({}): the trace is not the recorded one",
-            case.describe()
-        );
+        let Some(recorded) = RECORDED.get(seed as usize) else {
+            continue;
+        };
+        if record {
+            printed.push(format!("0x{:016X},", digest(&shell)));
+        } else {
+            assert_eq!(
+                digest(&shell),
+                *recorded,
+                "seed {seed} ({}): the trace is not the recorded one",
+                case.describe()
+            );
+        }
+    }
+    if record {
+        println!("const RECORDED: [u64; {}] = [", RECORDED.len());
+        for row in printed.chunks(4) {
+            println!("    {}", row.join(" "));
+        }
+        println!("];");
+    }
+}
+
+/// The model's syncer against the public one: the same packets after every
+/// read of every case.
+#[test]
+fn the_models_syncer_agrees_with_the_public_one() {
+    use tst_pipeline::receiver::sync::Syncer;
+    for seed in 0..RECORDED.len() as u64 {
+        let case = Case::generate(seed);
+        let (mut model, mut public) = (ModelSyncer::default(), Syncer::new());
+        for step in case.connections.iter().flatten() {
+            let Step::Bytes(bytes) = step else { continue };
+            model.buf.extend_from_slice(bytes);
+            public.push(bytes);
+            loop {
+                let (m, p) = (model.next_packet(), public.next_packet());
+                assert_eq!(m, p, "seed {seed}");
+                if m.is_none() {
+                    break;
+                }
+            }
+        }
     }
 }
 
@@ -825,31 +875,6 @@ fn the_recorded_seeds_cover_every_class_of_case() {
     ] {
         assert!(n >= 40, "{counts}");
     }
-}
-
-/// The long run: the model against the shell on many more cases than have a
-/// recorded digest. `cargo test -- --ignored` runs it.
-#[test]
-#[ignore = "ten thousand cases; run by hand"]
-fn the_shell_yields_the_models_trace_on_ten_thousand_cases() {
-    for seed in 0..10_000 {
-        let case = Case::generate(seed);
-        assert_same_trace(seed, &case, &shell_trace(&case), &model_trace(&case));
-    }
-}
-
-/// Prints the table below from the shell as it is.
-#[test]
-#[ignore = "prints the digest table; run by hand to record it"]
-fn print_the_digest_table() {
-    println!("const RECORDED: [u64; {}] = [", RECORDED.len());
-    let digests: Vec<String> = (0..RECORDED.len() as u64)
-        .map(|seed| format!("0x{:016X},", digest(&shell_trace(&Case::generate(seed)))))
-        .collect();
-    for row in digests.chunks(4) {
-        println!("    {}", row.join(" "));
-    }
-    println!("];");
 }
 
 /// One digest per seed, the seed being the index.
