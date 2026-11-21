@@ -181,8 +181,9 @@ failed) on the same evidence: the whole packets held are sent when every
 boundary present reads `0x47`, the first byte of a partial packet
 included, so one stray trailing byte that is not `0x47` holds a one- or
 two-packet stream back (`finish` reports it). Once a byte has been
-skipped or a boundary has failed, only three consecutive sync bytes
-send anything.
+skipped or a boundary has failed, only three consecutive packet starts
+that read the sync byte send anything: two whole packets and the first
+byte of a third are enough.
 
 A flush is the caller's word that what it sent so far is a stream, and
 it costs something when the start only looks aligned. A `flush` while
@@ -203,14 +204,16 @@ random bytes it happens about once in 256 starts. STRICT sends the same
 bytes and then refuses what follows with an error.
 
 `finish` ends the stream: it sends what `flush` sends, then makes one
-end-of-stream pass over what is still held, so three or more
-consecutive good packets behind damage, which a later `send_ts` would
-have verified, are sent now (the pass scans everything held, also
+end-of-stream pass over what is still held, so good packets behind
+damage that three consecutive packet starts confirm (two whole packets
+and the first byte of a third are enough), which a later `send_ts`
+would have verified, are sent now (the pass scans everything held, also
 behind more garbage than `max_unsynced_bytes`). Then it closes the
 transport without cancelling it and returns the first send error, or
 else `TsFramingError::UnsentTail { bytes }` (kind `InputMalformed`) for
 what it could not send as whole aligned TS packets: a partial last
-packet (in both modes), fewer than three packets behind skipped bytes,
+packet (in both modes), one or two packets behind skipped bytes that no
+third packet start confirms,
 bytes that are not TS. The count is what was still held at the end;
 bytes the scan skipped on the way, a good packet in front of early
 damage among them, show only in `bytes_skipped_for_sync`. A send that
@@ -1038,7 +1041,7 @@ in the cookbook) when:
 | Async-KLV (1–10 Hz) against video frames | `Pairer::last_before_pts(...)` | n/a (past-only) |
 | EO + IR sharing one async-KLV stream | Two `Pairer::last_before_pts` instances side-by-side | n/a |
 
-Both strategies clear their history at a reconnect (`ReconnectDiscontinuity`) and at a signalled discontinuity on the video, KLV or program-clock PID (the program-clock PID counts only when it also carries an elementary stream): the KLV that never paired leaves as `UnpairedKlv` ahead of the passed-through event, and nothing pairs across it. In `PairerMode::Buffered` the held video is first classified against the old history. The first KLV and the first video completing after a flag within two seconds of the pre-flag clock leave unpaired, and a new clock landing that close loses its first KLV sample and its first video frame the same way (with `last_before_pts`, every frame until the next KLV sample is then unpaired). A flag on any other PID and a silent encoder restart are invisible, so flush the pairer yourself there. A PID that carries only PCR produces no demuxer event, so flush at a restart on it too. A `PairingDemuxer` (the pairer of the Python and JVM bindings) owns a plain demuxer and never sees a `ReconnectDiscontinuity`; only the signalled discontinuity reaches it.
+Both strategies clear their history at a reconnect (`ReconnectDiscontinuity`) and at a signalled discontinuity on the video, KLV or program-clock PID (the program-clock PID counts only when it also carries an elementary stream): the KLV that never paired leaves as `UnpairedKlv` ahead of the passed-through event, and nothing pairs across it, with one limit at a signalled discontinuity: samples of the old clock still in flight behind the flag are not marked, only the first on each PID leaves unpaired, so with KLV muxed more than one sample behind its video and a new clock within the pairing tolerance of the old one, a later old-clock KLV sample can still pair with a new frame. In `PairerMode::Buffered` the held video is first classified against the old history. The first KLV and the first video completing after a flag within two seconds of the pre-flag clock leave unpaired, and a new clock landing that close loses its first KLV sample and its first video frame the same way (with `last_before_pts`, every frame until the next KLV sample is then unpaired). A flag on any other PID and a silent encoder restart are invisible, so flush the pairer yourself there. A PID that carries only PCR produces no demuxer event, so flush at a restart on it too. A `PairingDemuxer` (the pairer of the Python and JVM bindings) owns a plain demuxer and never sees a `ReconnectDiscontinuity`; only the signalled discontinuity reaches it.
 
 See the `Pairer` recipes in the [cookbook's pairing section](../cookbook/index.md#-pairing--align-klv-with-video-frames) for runnable patterns.
 

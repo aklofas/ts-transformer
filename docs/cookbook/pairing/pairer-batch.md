@@ -11,7 +11,9 @@ encoders), Realtime mode misses the pairing. Buffered mode holds video
 briefly to look ahead. At a reconnect or a signalled discontinuity the
 video it holds is classified against the old KLV history first (paired
 if a sample is in tolerance, else `UnpairedVideo`), then the KLV that
-never paired leaves as `UnpairedKlv`: nothing pairs across the boundary.
+never paired leaves as `UnpairedKlv`: nothing pairs across the boundary,
+apart from the limit the guide's pairing section states for KLV muxed
+more than one sample behind its video.
 
 ```rust,no_run
 use std::time::Duration;

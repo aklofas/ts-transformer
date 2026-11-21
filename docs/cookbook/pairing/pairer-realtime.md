@@ -15,7 +15,10 @@ on the output. One addition: the pairer starts a new time base at a
 `discontinuity_indicator`) on the video PID, the KLV PID or the video
 program's PCR PID, where the inline pattern keeps its history: the KLV
 that never paired leaves as `UnpairedKlv` and nothing pairs across the
-boundary (the guide's pairing section has the full rule).
+boundary, apart from one limit at a signalled discontinuity: with KLV
+muxed more than one sample behind its video and a new clock within the
+tolerance of the old one, a later old-clock KLV sample can still pair
+with a new frame (the guide's pairing section has the full rule).
 
 ```rust,no_run
 use std::fs;
