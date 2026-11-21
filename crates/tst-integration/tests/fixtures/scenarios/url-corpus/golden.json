@@ -221,7 +221,7 @@
         },
         "srt": {
           "aliases": 9,
-          "keys": 24,
+          "keys": 25,
           "no_invalid": []
         },
         "tcp": {
@@ -684,6 +684,28 @@
           "role": "caller",
           "scheme": "srt",
           "url": "srt://127.0.0.1:{port}?x-sendtimeout=2000"
+        },
+        {
+          "case": "explicit",
+          "expect": {
+            "host": "127.0.0.1",
+            "keys": {
+              "mode": "caller",
+              "x-silentpeertimeout": "1500"
+            },
+            "port": "{port}",
+            "scheme": "srt"
+          },
+          "key": "x-silentpeertimeout",
+          "open": {
+            "c": "CONFIG_INVALID",
+            "jvm": "CONFIG_INVALID",
+            "python": "CONFIG_INVALID"
+          },
+          "open_why": "the key arms managed senders only; this leg opens a plain sender (`tst_sender_open` / `shells.Sender.open`), which refuses it",
+          "role": "caller",
+          "scheme": "srt",
+          "url": "srt://127.0.0.1:{port}?x-silentpeertimeout=1500"
         },
         {
           "case": "explicit",
@@ -1298,6 +1320,26 @@
           "role": "caller",
           "scheme": "srt",
           "url": "srt://127.0.0.1:{port}?x-sendtimeout=x"
+        },
+        {
+          "case": "invalid",
+          "expect": {
+            "error_kind": "CONFIG_INVALID"
+          },
+          "key": "x-silentpeertimeout",
+          "role": "caller",
+          "scheme": "srt",
+          "url": "srt://127.0.0.1:{port}?x-silentpeertimeout=999"
+        },
+        {
+          "case": "invalid",
+          "expect": {
+            "error_kind": "CONFIG_INVALID"
+          },
+          "key": "x-silentpeertimeout",
+          "role": "caller",
+          "scheme": "srt",
+          "url": "srt://127.0.0.1:{port}?x-silentpeertimeout=x"
         },
         {
           "case": "invalid",
