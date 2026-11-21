@@ -106,15 +106,19 @@
 #    `.take_for_*`), or a GIL release (`detach(`, `allow_threads_parking`:
 #    a getter that releases the GIL is waiting for something). Such a
 #    getter reads a snapshot, a cell of atomics or a statistics handle
-#    instead. A listed function that is not found fails too, so a rename
-#    cannot drop it from the check.
+#    instead. The getter's own body is scanned, and the bodies of the
+#    methods of the same type it calls as `self.<name>(` (one level, not
+#    their callees, nor a free function or another type's method). A listed
+#    function that is not found fails too, so a rename cannot drop it from
+#    the check; a getter that is not listed is not checked.
 
 # Portable: bash 3.2, POSIX awk, no GNU-only flags (the macOS legs run it).
 #
 # Test hooks (scripts/ratchets/tests/self_test.sh): SG_LOCK_ROOTS overrides
 # the directories check 2 scans, SG_LOCK_ALLOWLIST its allowlist, and
 # SG_ONLY_LOCKS=1 runs check 2 alone. SG_NEVER_WAIT_ROOT is the directory
-# check 3's paths are read under (the repository root by default).
+# check 3's paths are read under (the repository root by default), and
+# SG_ONLY_NEVER_WAIT=1 runs check 3 alone.
 set -euo pipefail
 # Byte semantics for every awk/sort below: BSD awk on the macOS legs runs
 # under the runner's UTF-8 locale and dies ("towc: multibyte conversion
@@ -132,7 +136,7 @@ fi
 status=0
 
 # ---- check 1: constant getters inside a slot-taking closure ---------------
-if [ "${SG_ONLY_LOCKS:-}" != "1" ]; then
+if [ "${SG_ONLY_LOCKS:-}" != "1" ] && [ "${SG_ONLY_NEVER_WAIT:-}" != "1" ]; then
     # Multiline, non-greedy: from the closure's `|…|` up to the first `;`,
     # flagging a getter call in between.
     PATTERN='with_(inner_)?(mut|ref|ref_blocking)\s*\([^|;]*\|[^|]*\|[^;]*?\b(local_addr|local_port|repr)\s*\('
@@ -182,18 +186,12 @@ bindings/python/src/rtp/push.rs	PyRtspPushSession	end_reason
 bindings/python/src/rtp/push.rs	PyRtspPushSession	end_detail
 bindings/python/src/rtp/push.rs	PyRtspPushSession	close_outcome
 LIST
-    never_wait_failed=0
-    while IFS="$(printf '\t')" read -r path type fn; do
-        f="$NEVER_WAIT_ROOT/$path"
-        if [ ! -f "$f" ]; then
-            echo "FAIL: never-waiting getter $type::$fn: $path not found"
-            never_wait_failed=1
-            continue
-        fi
-        # The body of `fn <fn>(` inside an `impl ... <type>` block, from its
-        # `fn` line to the line that closes its braces. Comment lines are
-        # skipped. Prints FOUND once the function was seen.
-        out=$(awk -v want_type="$type" -v want_fn="$fn" '
+    # fn_body <file> <type> <fn>: the lines of `fn <fn>(` inside an
+    # `impl ... <type>` block, from its `fn` line to the line that closes
+    # its braces, each printed as `NR<TAB>line`; comment lines skipped.
+    # Prints nothing when the function is not there.
+    fn_body() {
+        awk -v want_type="$2" -v want_fn="$3" '
             /^impl[ <]/ {
                 t = $0
                 sub(/^impl(<[^>]*>)?[ \t]+/, "", t)
@@ -212,7 +210,6 @@ LIST
                     body = 1
                     depth = 0
                     opened = 0
-                    print "FOUND"
                 }
                 if (!body) next
                 for (k = 1; k <= length(line); k++) {
@@ -220,19 +217,38 @@ LIST
                     if (c == "{") { depth++; opened = 1 }
                     else if (c == "}") depth--
                 }
-                print "BODY\t" NR "\t" line
+                print NR "\t" line
                 if (opened && depth == 0) body = 0
             }
-        ' "$f")
-        if ! printf '%s\n' "$out" | grep -q '^FOUND$'; then
+        ' "$1"
+    }
+    WAITS='\.(lock|read|write|try_lock)\(\)|with_(mut|ref|inner)|try_with_ref|\.run(_parking)?\(|\.take_for_|allow_threads_parking|(^|[^A-Za-z0-9_])detach\('
+    never_wait_failed=0
+    while IFS="$(printf '\t')" read -r path type fn; do
+        f="$NEVER_WAIT_ROOT/$path"
+        if [ ! -f "$f" ]; then
+            echo "FAIL: never-waiting getter $type::$fn: $path not found"
+            never_wait_failed=1
+            continue
+        fi
+        body=$(fn_body "$f" "$type" "$fn")
+        if [ -z "$body" ]; then
             echo "FAIL: never-waiting getter $type::$fn not found in $path (renamed? update check 3's list)"
             never_wait_failed=1
             continue
         fi
-        bad=$(printf '%s\n' "$out" | grep '^BODY' | grep -E '\.(lock|read|write|try_lock)\(\)|with_(mut|ref|inner)|try_with_ref|\.run(_parking)?\(|\.take_for_|allow_threads_parking|(^|[^A-Za-z0-9_])detach\(' || true)
+        # One level down: the bodies of the methods of the same type the
+        # getter calls as `self.<name>(`.
+        helpers=$(printf '%s\n' "$body" | grep -oE 'self\.[a-z_][a-z0-9_]*\(' | sed 's/^self\.//; s/($//' | LC_ALL=C sort -u || true)
+        for h in $helpers; do
+            [ "$h" = "$fn" ] && continue
+            body="$body
+$(fn_body "$f" "$type" "$h")"
+        done
+        bad=$(printf '%s\n' "$body" | grep -E "$WAITS" || true)
         if [ -n "$bad" ]; then
             echo "FAIL: $type::$fn ($path) is documented as never waiting but takes a lock, the slot or releases the GIL:"
-            printf '%s\n' "$bad" | awk -F '\t' -v p="$path" '{ print "    " p ":" $2 ": " $3 }'
+            printf '%s\n' "$bad" | awk -F '\t' -v p="$path" '{ print "    " p ":" $1 ": " $2 }'
             never_wait_failed=1
         fi
     done < "$tmp/never_wait"
@@ -241,6 +257,9 @@ LIST
     else
         status=1
     fi
+fi
+if [ "${SG_ONLY_NEVER_WAIT:-}" = "1" ]; then
+    exit "$status"
 fi
 
 # ---- check 2: locks taken while holding the GIL must be allowlisted --------

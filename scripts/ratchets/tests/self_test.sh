@@ -2865,5 +2865,66 @@ expect "cancel handles: a tree with no site fails closed" 2 env CANCEL_HANDLE_JA
 expect "cancel handles: a tree with no Java file fails closed" 2 env CANCEL_HANDLE_JAVA_DIR="$ch/empty" bash "$CH"
 expect "cancel handles: a missing root fails closed" 2 env CANCEL_HANDLE_JAVA_DIR="$ch/absent" bash "$CH"
 
+# ---- getters that never wait (same script, check 3) ------------------------
+# The listed getters take no lock and no slot and keep the GIL, in their own
+# body and in a method of their type they call; a listed getter that is not
+# found fails. A synthetic tree holds the four files check 3 reads.
+nw="$tmp/nw/bindings/python/src"
+mkdir -p "$nw/shells" "$nw/srt" "$nw/hls" "$nw/rtp"
+for t in PyMuxSender:shells/mux_sender.rs PyManagedMuxSender:srt/managed_convenience.rs; do
+    {
+        echo "impl ${t%%:*} {"
+        for k in video klv audio subtitle data; do
+            printf '    fn %s_handle(&self) -> Option<H> {\n        self.owned.open_snapshot().and_then(get_%s).map(H)\n    }\n' "$k" "$k"
+        done
+        echo "}"
+    } > "$nw/${t#*:}"
+done
+cat > "$nw/hls/mux_publisher.rs" <<'EOF'
+impl PyMuxPublisher {
+    fn stats(&self, py: Python<'_>) -> PyResult<S> {
+        if self.finished.load(Ordering::Acquire) {
+            return Err(gone(py));
+        }
+        Ok(S::from(&self.stats.stats()))
+    }
+    fn locked_stats(&self, py: Python<'_>) -> PyResult<S> {
+        self.with_inner(py)
+    }
+}
+EOF
+cat > "$nw/rtp/push.rs" <<'EOF'
+impl PyRtspPushSession {
+    fn stats(&self) -> S {
+        S::from(&self.stats.stats())
+    }
+    fn end_reason(&self) -> Option<E> {
+        self.stats.end_reason()
+    }
+    fn end_detail(&self) -> Option<String> {
+        self.stats.end_reason().map(detail)
+    }
+    fn close_outcome(&self, py: Python<'_>) -> Option<O> {
+        self.stats.close_outcome()
+    }
+}
+EOF
+expect "never-wait getters: a tree that keeps the rule passes" 0 env SG_ONLY_NEVER_WAIT=1 SG_NEVER_WAIT_ROOT="$tmp/nw" bash "$SG"
+cp -R "$tmp/nw" "$tmp/nw-lock"
+plant "$tmp/nw-lock/bindings/python/src/hls/mux_publisher.rs" 'Ok(S::from(.self.stats.stats()))' 'self.with_inner(py)'
+expect "never-wait getters: stats() taking the shell's lock is caught" 1 env SG_ONLY_NEVER_WAIT=1 SG_NEVER_WAIT_ROOT="$tmp/nw-lock" bash "$SG"
+expect_out "never-wait getters: the lock is named" "FAIL: PyMuxPublisher::stats"
+cp -R "$tmp/nw" "$tmp/nw-helper"
+plant "$tmp/nw-helper/bindings/python/src/hls/mux_publisher.rs" 'Ok(S::from(.self.stats.stats()))' 'self.locked_stats(py)'
+expect "never-wait getters: a lock in a method the getter calls is caught" 1 env SG_ONLY_NEVER_WAIT=1 SG_NEVER_WAIT_ROOT="$tmp/nw-helper" bash "$SG"
+cp -R "$tmp/nw" "$tmp/nw-renamed"
+plant "$tmp/nw-renamed/bindings/python/src/shells/mux_sender.rs" 'fn audio_handle' 'fn audio_handle_renamed'
+expect "never-wait getters: a renamed getter fails as not found" 1 env SG_ONLY_NEVER_WAIT=1 SG_NEVER_WAIT_ROOT="$tmp/nw-renamed" bash "$SG"
+expect_out "never-wait getters: the missing getter is named" "PyMuxSender::audio_handle not found"
+cp -R "$tmp/nw" "$tmp/nw-gil"
+plant "$tmp/nw-gil/bindings/python/src/rtp/push.rs" 'self.stats.close_outcome()' 'allow_threads_parking(py, read)'
+expect "never-wait getters: a getter releasing the GIL is caught" 1 env SG_ONLY_NEVER_WAIT=1 SG_NEVER_WAIT_ROOT="$tmp/nw-gil" bash "$SG"
+expect_out "never-wait getters: the GIL release is named" "FAIL: PyRtspPushSession::close_outcome"
+
 if [[ "$fail" == 0 ]]; then echo "self-test: ALL OK"; fi
 exit "$fail"
