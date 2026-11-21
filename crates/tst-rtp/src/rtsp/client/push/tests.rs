@@ -2802,3 +2802,78 @@ fn the_close_outcome_answers_none_while_the_close_holds_the_push() {
     assert_eq!(handle.close_outcome(), Some(PushCloseOutcome::Clean));
     joined(peer);
 }
+
+/// What an outcome keeps of a refusal whose reason phrase is `reason`.
+fn kept_reason(reason: &str) -> String {
+    let refused = Err(RtspError::Protocol {
+        code: 500,
+        reason: reason.to_string(),
+    });
+    let PushCloseOutcome::TeardownRefused { reason, .. } = PushCloseOutcome::of(&refused, false)
+    else {
+        panic!("expected the refusal");
+    };
+    reason
+}
+
+/// A line or paragraph separator would start a new line where the text
+/// is printed.
+#[test]
+fn a_kept_reason_has_no_line_or_paragraph_separator() {
+    assert_eq!(kept_reason("a\u{2028}b\u{2029}c"), "a\u{fffd}b\u{fffd}c");
+}
+
+/// Zero-width characters and directional marks hide or reorder text.
+#[test]
+fn a_kept_reason_has_no_zero_width_character_or_directional_mark() {
+    assert_eq!(
+        kept_reason("\u{200b}\u{200c}\u{200d}\u{200e}\u{200f}"),
+        "\u{fffd}".repeat(5)
+    );
+}
+
+/// An embedding or override makes text print in another order than it is
+/// read in.
+#[test]
+fn a_kept_reason_has_no_bidirectional_embedding_or_override() {
+    assert_eq!(
+        kept_reason("ok\u{202a}\u{202b}\u{202c}\u{202d}\u{202e}ok"),
+        format!("ok{}ok", "\u{fffd}".repeat(5))
+    );
+}
+
+/// The block from the word joiner on holds invisible operators,
+/// directional isolates and deprecated format characters.
+#[test]
+fn a_kept_reason_has_no_joiner_isolate_or_invisible_operator() {
+    let sent: String = ('\u{2060}'..='\u{206f}').collect();
+    assert_eq!(kept_reason(&sent), "\u{fffd}".repeat(16));
+}
+
+/// A byte order mark inside a text is a zero-width no-break space.
+#[test]
+fn a_kept_reason_has_no_byte_order_mark() {
+    assert_eq!(kept_reason("\u{feff}Bad"), "\u{fffd}Bad");
+}
+
+/// The characters next to each replaced range are ordinary text and are
+/// kept, and the count of 256 is in characters.
+#[test]
+fn a_kept_reason_keeps_the_neighbours_of_the_replaced_ranges() {
+    let neighbours = "\u{200a}\u{2010}\u{2027}\u{202f}\u{205f}\u{2070}\u{fefe}\u{ff01}";
+    assert_eq!(kept_reason(neighbours), neighbours);
+    assert_eq!(
+        kept_reason(&"\u{2028}".repeat(300)),
+        "\u{fffd}".repeat(256)
+    );
+}
+
+/// A failure's detail is kept by the same rule as a refusal's reason.
+#[test]
+fn a_kept_detail_is_cleaned_like_a_reason() {
+    let failed = Err(RtspError::Tls("x\u{202e}y\u{2028}z".to_string()));
+    let PushCloseOutcome::Failed { detail } = PushCloseOutcome::of(&failed, false) else {
+        panic!("expected a failure");
+    };
+    assert!(detail.contains("x\u{fffd}y\u{fffd}z"), "{detail:?}");
+}

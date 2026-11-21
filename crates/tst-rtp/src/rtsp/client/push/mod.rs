@@ -191,8 +191,9 @@ pub enum PushCloseOutcome {
         /// The status code of the server's answer.
         code: u16,
         /// Its reason phrase, as far as it is kept: the first 256
-        /// characters, each control character replaced by U+FFFD. The
-        /// server chooses this text.
+        /// characters, with control, bidirectional-format and
+        /// line-separator characters replaced by U+FFFD. The server
+        /// chooses this text.
         reason: String,
     },
     /// The TEARDOWN was not written and answered within its 500 ms bound
@@ -202,7 +203,8 @@ pub enum PushCloseOutcome {
     /// ended.
     Failed {
         /// The error's text, kept as a refusal's reason is: at most 256
-        /// characters and no control character.
+        /// characters, with control, bidirectional-format and
+        /// line-separator characters replaced by U+FFFD.
         detail: String,
     },
 }
@@ -210,20 +212,42 @@ pub enum PushCloseOutcome {
 /// The most characters of a text an outcome keeps.
 const KEPT_TEXT_CHARS: usize = 256;
 
-/// `text` as an outcome keeps it. An outcome lives as long as any handle
+/// `text` as an outcome keeps it: the first [`KEPT_TEXT_CHARS`]
+/// characters, with control, bidirectional-format and line-separator
+/// characters replaced by U+FFFD. An outcome lives as long as any handle
 /// and is read by callers that print it, and a server's reason phrase can
-/// be as long as a message and hold anything but a line end.
+/// be as long as a message and hold anything but a CR or LF: a character
+/// that starts a line, reorders or hides the text around it would change
+/// what the printed line shows.
 fn kept_text(text: &str) -> String {
     text.chars()
         .take(KEPT_TEXT_CHARS)
         .map(|c| {
-            if c.is_control() {
+            if is_replaced_in_kept_text(c) {
                 char::REPLACEMENT_CHARACTER
             } else {
                 c
             }
         })
         .collect()
+}
+
+/// Whether [`kept_text`] replaces `c`: a control character (Unicode Cc),
+/// a line or paragraph separator, a zero-width character or directional
+/// mark, a bidirectional embedding or override, a character of the block
+/// from the word joiner on (invisible operators, directional isolates,
+/// deprecated format characters), or a byte order mark.
+fn is_replaced_in_kept_text(c: char) -> bool {
+    c.is_control()
+        || matches!(
+            c,
+            '\u{2028}'
+                | '\u{2029}'
+                | '\u{200b}'..='\u{200f}'
+                | '\u{202a}'..='\u{202e}'
+                | '\u{2060}'..='\u{206f}'
+                | '\u{feff}'
+        )
 }
 
 impl PushCloseOutcome {
