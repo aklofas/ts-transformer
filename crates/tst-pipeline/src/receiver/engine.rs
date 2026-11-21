@@ -47,6 +47,22 @@ enum Ended {
     Failed(Option<TransportError>),
 }
 
+impl Ended {
+    /// What the caller is told now. Out of line: a stream ends once, and
+    /// `poll` runs for every packet.
+    #[cold]
+    fn answer(&mut self) -> Result<(), TransportError> {
+        match self {
+            Ended::Clean => Ok(()),
+            Ended::Cancelled => Err(TransportError::ExplicitClose),
+            Ended::Failed(unreported) => match unreported.take() {
+                Some(e) => Err(e),
+                None => Ok(()),
+            },
+        }
+    }
+}
+
 pub(crate) struct ReceiveEngine {
     demux: Demuxer,
     /// A reconnect was handed in and its marker has not been handed out. A
@@ -86,12 +102,7 @@ impl ReceiveEngine {
         }
         match &mut self.ended {
             None => Step::NeedInput,
-            Some(Ended::Clean) => Step::Ended(Ok(())),
-            Some(Ended::Cancelled) => Step::Ended(Err(TransportError::ExplicitClose)),
-            Some(Ended::Failed(unreported)) => Step::Ended(match unreported.take() {
-                Some(e) => Err(e),
-                None => Ok(()),
-            }),
+            Some(ended) => Step::Ended(ended.answer()),
         }
     }
 

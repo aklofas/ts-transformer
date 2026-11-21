@@ -149,15 +149,19 @@ impl Syncer {
     /// candidate is tried. That is weaker evidence than the four packets
     /// the lock rule wants, accepted only because the stream is over. It
     /// counts as one lock acquisition. In HUNT and LOCKED nothing changes.
-    pub(crate) fn end_of_input(&mut self) {
+    ///
+    /// Returns whether packets were released.
+    pub(crate) fn end_of_input(&mut self) -> bool {
         if self.state != SyncState::Verify {
-            return;
+            return false;
         }
         let live = &self.buf[self.head..self.head + self.len];
-        if aligned_packets_at_end(live) > 0 {
-            self.state = SyncState::Locked;
-            self.resync_events += 1;
+        if aligned_packets_at_end(live) == 0 {
+            return false;
         }
+        self.state = SyncState::Locked;
+        self.resync_events += 1;
+        true
     }
 
     /// Zero the sync-recovery counters. Called by `Receiver::reset_stats`.

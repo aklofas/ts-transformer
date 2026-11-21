@@ -299,6 +299,34 @@ impl<R: RecvTransport> DemuxReceiver<R> {
         });
     }
 
+    /// What a read that brought no packet does to the packets the syncer
+    /// holds: [`Receiver::release_at_end`], except that a stream which ends
+    /// behind a reconnect not yet acted on (no packet was read since)
+    /// releases nothing. What the syncer holds then was held across the
+    /// reconnect and is dropped; the end goes on to flush what the demuxer
+    /// has of the old connection, and no marker is owed for a connection
+    /// that delivered no packet.
+    #[cold]
+    fn release_at_end(
+        &mut self,
+        e: crate::receiver::ReceiverError,
+    ) -> Option<crate::receiver::ReceiverError> {
+        #[cfg(feature = "std")]
+        if let Some(ep) = &self.reconnect_epoch
+            && ep.counter.load(Ordering::Acquire) > ep.last
+            && matches!(
+                e.kind,
+                ShellErrorKind::EndOfStream
+                    | ShellErrorKind::TransportBroken
+                    | ShellErrorKind::Closed
+            )
+        {
+            self.ts.reset_sync();
+            return Some(e);
+        }
+        self.ts.release_at_end(e)
+    }
+
     /// The epoch observer, asked after each `next_packet`: `true` when the
     /// counter rose since the last turn (the caller then resets state and
     /// drops the packet it just read). Always `false` without an observer
@@ -447,24 +475,15 @@ impl<R: RecvTransport> DemuxReceiver<R> {
                     return Ok(None);
                 }
             }
-            // Pull the next aligned 188-byte TS packet. A stream that ends
-            // with a reconnect not yet acted on (no packet was read since)
-            // releases nothing: what the syncer holds was held across the
-            // reconnect. The end then flushes what the demuxer has of the
-            // old connection, and no marker is owed for a connection that
-            // delivered no packet.
-            #[cfg(feature = "std")]
-            let epoch = &self.reconnect_epoch;
-            let next = self.ts.next_packet_releasing(|| {
-                #[cfg(feature = "std")]
-                if let Some(ep) = epoch {
-                    return ep.counter.load(Ordering::Acquire) == ep.last;
-                }
-                true
-            });
-            let pkt = match next {
+            // Pull the next aligned 188-byte TS packet.
+            let pkt = match self.ts.read_packet() {
                 Ok(p) => p,
                 Err(e) => {
+                    // An end first releases the packets the syncer holds;
+                    // it comes back here when they are out.
+                    let Some(e) = self.release_at_end(e) else {
+                        continue;
+                    };
                     let ReceiverErrorSource::Transport(te) = e.source;
                     match e.kind {
                         // Peer end-of-stream.
