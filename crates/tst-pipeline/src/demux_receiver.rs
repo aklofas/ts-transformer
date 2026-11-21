@@ -337,6 +337,23 @@ impl<R: RecvTransport> DemuxReceiver<R> {
         &mut self,
         e: crate::receiver::ReceiverError,
     ) -> Option<crate::receiver::ReceiverError> {
+        // Whether a cancel was already latched is decided where the stream
+        // ends, not when the end is reported: a cancel fired while the
+        // caller takes the events the end produced is still the caller's to
+        // hear after them. Only a clean end is protected from one that was
+        // already latched (a success wins); after a failure any latched
+        // cancel is reported once the failure has been.
+        if self.cancelled_at_the_end.is_none()
+            && matches!(
+                e.kind,
+                ShellErrorKind::EndOfStream
+                    | ShellErrorKind::TransportBroken
+                    | ShellErrorKind::Closed
+            )
+        {
+            self.cancelled_at_the_end =
+                Some(e.kind == ShellErrorKind::EndOfStream && self.ts.cancel_latched());
+        }
         #[cfg(feature = "std")]
         if let Some(ep) = &self.reconnect_epoch
             && ep.counter.load(Ordering::Acquire) > ep.last
@@ -505,24 +522,6 @@ impl<R: RecvTransport> DemuxReceiver<R> {
             let pkt = match self.ts.read_packet() {
                 Ok(p) => p,
                 Err(e) => {
-                    // Whether a cancel was already latched is decided here,
-                    // where the stream ends, not when the end is reported:
-                    // a cancel fired while the caller takes the events the
-                    // end produced is still the caller's to hear after them.
-                    // Only a clean end is protected from one that was
-                    // already latched (a success wins); after a failure any
-                    // latched cancel is reported once the failure has been.
-                    if self.cancelled_at_the_end.is_none()
-                        && matches!(
-                            e.kind,
-                            ShellErrorKind::EndOfStream
-                                | ShellErrorKind::TransportBroken
-                                | ShellErrorKind::Closed
-                        )
-                    {
-                        self.cancelled_at_the_end =
-                            Some(e.kind == ShellErrorKind::EndOfStream && self.ts.cancel_latched());
-                    }
                     // An end first releases the packets the syncer holds;
                     // it comes back here when they are out.
                     let Some(e) = self.release_at_end(e) else {
