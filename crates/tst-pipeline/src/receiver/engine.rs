@@ -56,8 +56,10 @@ impl ReceiveEngine {
     /// first, so no event of the new connection precedes it; then what the
     /// demuxer has queued, the events of the final flush included; then the
     /// end.
+    #[inline]
     pub(crate) fn poll(&mut self) -> Step {
-        if core::mem::take(&mut self.marker_owed) {
+        if self.marker_owed {
+            self.marker_owed = false;
             return Step::Event(DemuxEvent::ReconnectDiscontinuity);
         }
         if let Some(event) = self.demux.next_event() {
@@ -72,6 +74,7 @@ impl ReceiveEngine {
     /// Feed one aligned packet. An error is the demuxer's refusal of this
     /// packet (a strict mode's, or a missing sync byte) and does not end
     /// the stream.
+    #[inline]
     pub(crate) fn handle_packet(&mut self, packet: &[u8; 188]) -> Result<(), DemuxError> {
         if self.ended.is_some() {
             return Ok(());
