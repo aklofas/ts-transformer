@@ -245,12 +245,9 @@ impl LastBeforeState {
 
 #[cfg(test)]
 mod tests {
+    use super::super::test_support::{af_discontinuity, cc_jump, program_map};
     use super::*;
-    use tst_core::mpegts::common::StreamTypeCode;
-    use tst_core::mpegts::demux::{
-        DiscontinuityKind, MetadataKind, ProgramMap, SamplePayload, StreamId, StreamInfo,
-        StreamKind, VideoCodec,
-    };
+    use tst_core::mpegts::demux::{MetadataKind, SamplePayload, StreamId, StreamKind, VideoCodec};
     use tst_core::shared::SharedBytes;
 
     const VIDEO_PID: u16 = 0x100;
@@ -284,31 +281,6 @@ mod tests {
             pts: Pts90khz::new(pts),
             kind: MetadataKind::KlvAsync,
             payload: vec![0xAA, 0xBB],
-        }
-    }
-
-    fn af_discontinuity(pid: u16) -> DemuxEvent {
-        DemuxEvent::Discontinuity {
-            stream: StreamId {
-                pid,
-                kind: StreamKind::Video(VideoCodec::H264),
-                program_number: 1,
-            },
-            kind: DiscontinuityKind::AdaptationFieldFlag,
-        }
-    }
-
-    fn cc_jump(pid: u16) -> DemuxEvent {
-        DemuxEvent::Discontinuity {
-            stream: StreamId {
-                pid,
-                kind: StreamKind::Video(VideoCodec::H264),
-                program_number: 1,
-            },
-            kind: DiscontinuityKind::ContinuityJump {
-                expected: 1,
-                observed: 5,
-            },
         }
     }
 
@@ -347,25 +319,6 @@ mod tests {
             matches!(&out[..], [PairerOutput::UnpairedVideo(_)]),
             "got {out:?}"
         );
-    }
-
-    fn program_map(program_number: u16, pcr_pid: u16, pids: &[u16]) -> DemuxEvent {
-        DemuxEvent::ProgramMap(ProgramMap {
-            program_number,
-            pcr_pid,
-            pmt_pid: 0x20,
-            streams: pids
-                .iter()
-                .map(|&pid| StreamInfo {
-                    pid,
-                    stream_type: StreamTypeCode::from_byte(0x1B),
-                    kind: StreamKind::Video(VideoCodec::H264),
-                    program_number,
-                    raw_descriptors: Vec::new(),
-                })
-                .collect(),
-            klv_links: Vec::new(),
-        })
     }
 
     #[test]

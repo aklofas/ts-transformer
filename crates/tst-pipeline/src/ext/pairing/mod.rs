@@ -89,6 +89,8 @@
 mod demuxer;
 mod last_before;
 mod nearest;
+#[cfg(test)]
+mod test_support;
 mod types;
 
 pub use demuxer::{PairingDemuxer, PairingDemuxerConfig};
