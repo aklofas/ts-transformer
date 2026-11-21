@@ -765,6 +765,13 @@ impl<T: Transport + 'static> ManagedTransport<T> {
                     self.spawn_worker();
                 }
                 if refused {
+                    #[cfg(test)]
+                    before_refusal::run();
+                    // A cancel that landed since the check under the gap lock
+                    // is what this refused call reports.
+                    if self.latch.is_closed() {
+                        return Err(self.latch.error());
+                    }
                     return Err(TransportError::Backpressure {
                         msg: "gap buffer full".into(),
                         errno_code: None,
@@ -920,7 +927,16 @@ impl<T: Transport + 'static> ManagedTransport<T> {
             self.spawn_worker();
             return match queued {
                 Ok(_) => Ok(()),
-                Err(gap_buffer::GapBufferError::Full) => Err(gap_full()),
+                Err(gap_buffer::GapBufferError::Full) => {
+                    #[cfg(test)]
+                    before_refusal::run();
+                    // As for the refusal under the gap lock above: a cancel
+                    // that landed since the check is reported by this call.
+                    if self.latch.is_closed() {
+                        return Err(self.latch.error());
+                    }
+                    Err(gap_full())
+                }
             };
         }
         // `Blocking` never meets `Full` here: capacity 0 left by the branch
@@ -1406,6 +1422,28 @@ impl<T: Transport> Drop for ManagedTransport<T> {
 /// test arms it for its own next send and nothing else sees it.
 #[cfg(test)]
 mod before_gap_lock {
+    use std::cell::RefCell;
+
+    thread_local! {
+        static HOOK: RefCell<Option<Box<dyn FnOnce()>>> = const { RefCell::new(None) };
+    }
+
+    pub(super) fn arm(hook: impl FnOnce() + 'static) {
+        HOOK.with(|h| *h.borrow_mut() = Some(Box::new(hook)));
+    }
+
+    pub(super) fn run() {
+        if let Some(hook) = HOOK.with(|h| h.borrow_mut().take()) {
+            hook();
+        }
+    }
+}
+
+/// Test-only checkpoint at the two places a `Background` send is refused by a
+/// full `Reject` buffer, just before it reports `Backpressure`: where a cancel
+/// can land after the gap-locked check. Per thread and one-shot.
+#[cfg(test)]
+mod before_refusal {
     use std::cell::RefCell;
 
     thread_local! {
@@ -1991,6 +2029,54 @@ mod cancel_tests {
 
         assert_eq!(result, Err(TransportError::ExplicitClose));
         assert_eq!(stats.stats().expect("no poison").gap_len, 1);
+    }
+
+    /// A full `Reject` buffer refuses the send; a cancel that lands after the
+    /// gap-locked check and before the refusal returns is what the call
+    /// reports. Nothing is queued or counted for the refused message.
+    #[test]
+    fn background_cancel_after_a_refusal_under_the_gap_lock_is_the_cancel() {
+        let mut managed = background_in_outage(1, OverflowPolicy::Reject);
+        let stats = managed.stats_handle();
+        let cancel = managed.cancel_handle().expect("managed has a handle");
+        before_refusal::arm(move || cancel.cancel());
+
+        let result = managed.send_bytes(b"late");
+
+        assert_eq!(result, Err(TransportError::ExplicitClose));
+        let s = stats.stats().expect("no poison");
+        assert_eq!((s.gap_len, s.gap_messages_dropped), (1, 0));
+    }
+
+    /// Same, for the refusal after a direct send failed (capacity 0: the
+    /// message is refused outright and a worker takes over the reconnect).
+    #[test]
+    fn background_cancel_after_a_refusal_behind_a_failed_send_is_the_cancel() {
+        let factory = || -> Result<BrokenT, TransportError> {
+            Err(TransportError::Broken {
+                msg: "factory down".into(),
+                errno_code: None,
+                cause: BrokenCause::Unspecified,
+            })
+        };
+        let policy = ReconnectPolicy {
+            max_attempts: None,
+            backoff: BackoffStrategy::Constant(std::time::Duration::from_secs(30)),
+            gap_buffer_capacity: 0,
+            overflow_policy: OverflowPolicy::Reject,
+            mode: ReconnectMode::Background,
+        };
+        let mut managed =
+            ManagedTransport::new(BrokenT, factory, policy).expect("the policy validates");
+        let stats = managed.stats_handle();
+        let cancel = managed.cancel_handle().expect("managed has a handle");
+        before_refusal::arm(move || cancel.cancel());
+
+        let result = managed.send_bytes(b"late");
+
+        assert_eq!(result, Err(TransportError::ExplicitClose));
+        let s = stats.stats().expect("no poison");
+        assert_eq!((s.gap_len, s.gap_messages_dropped), (0, 0));
     }
 
     /// The wrapper's own `close()` in that window is reported as `Closed`.
