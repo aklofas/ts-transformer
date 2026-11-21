@@ -730,6 +730,17 @@ mod tests {
     }
 
     #[test]
+    fn a_flag_after_flush_is_not_judged_against_the_flushed_clock() {
+        let mut p = public_pairer();
+        p.feed(klv_event(90_000));
+        p.feed(video_event(90_000));
+        p.flush();
+        p.feed(af_discontinuity(VIDEO_PID));
+        assert!(p.feed(klv_event(93_000)).is_empty());
+        assert_paired(&p.feed(video_event(93_000)));
+    }
+
+    #[test]
     fn flush_idempotent() {
         let mut s = LastBeforeState::new(VIDEO_PID, KLV_PID, None);
         let _ = s.feed(klv_event(0));

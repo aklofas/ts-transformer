@@ -891,6 +891,19 @@ mod tests {
             matches!(&out[..], [PairerOutput::Paired { .. }]),
             "got {out:?}"
         );
+
+        // A flag after the flush has no earlier PTS to judge against.
+        let mut s = nearest_realtime();
+        s.feed(klv_event(90_000));
+        s.feed(video_event(90_000));
+        s.flush();
+        s.feed(af_discontinuity(VIDEO_PID));
+        assert!(s.feed(klv_event(93_000)).is_empty());
+        let out = s.feed(video_event(93_000));
+        assert!(
+            matches!(&out[..], [PairerOutput::Paired { .. }]),
+            "got {out:?}"
+        );
     }
 
     #[test]
@@ -916,6 +929,40 @@ mod tests {
         let out = p.flush();
         assert!(
             matches!(&out[..], [PairerOutput::UnpairedKlv(k)] if k.pts.as_ticks() == 1000),
+            "got {out:?}"
+        );
+    }
+
+    #[test]
+    fn buffered_video_held_at_a_flag_never_pairs_with_later_klv() {
+        let mut p = buffered_pairer(/*tolerance*/ 100, /*max_lag*/ 9000);
+        assert!(p.feed(klv_event(500)).is_empty());
+        // Buffered: 500 ticks from the only KLV, inside the wait window.
+        assert!(p.feed(video_event(1000)).is_empty());
+        let out = p.feed(af_discontinuity(KLV_PID));
+        assert!(
+            matches!(
+                &out[..],
+                [
+                    PairerOutput::UnpairedVideo(v),
+                    PairerOutput::UnpairedKlv(k),
+                    PairerOutput::PassThrough(DemuxEvent::Discontinuity { .. })
+                ] if v.pts.as_ticks() == 1000 && k.pts.as_ticks() == 500
+            ),
+            "got {out:?}"
+        );
+        // The KLV PES in flight at the flag, which the held frame was
+        // waiting for, completes on the old clock.
+        let out = p.feed(klv_event(1000));
+        assert!(
+            matches!(&out[..], [PairerOutput::UnpairedKlv(k)] if k.pts.as_ticks() == 1000),
+            "got {out:?}"
+        );
+        // The next sample is taken as the new clock's and finds no frame.
+        assert!(p.feed(klv_event(1050)).is_empty());
+        let out = p.flush();
+        assert!(
+            matches!(&out[..], [PairerOutput::UnpairedKlv(k)] if k.pts.as_ticks() == 1050),
             "got {out:?}"
         );
     }
