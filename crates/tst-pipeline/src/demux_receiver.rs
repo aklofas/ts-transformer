@@ -198,6 +198,10 @@ pub struct DemuxReceiver<R: RecvTransport> {
     /// in its own close (SRT does); after the stream has ended that latch
     /// is then no sign of a cancel.
     closed: bool,
+    /// Whether the transport's cancel handle had fired when the end of the
+    /// stream was first reported; `None` until then. A cancel is reported
+    /// after the end only if it fired after it.
+    cancelled_at_the_end: Option<bool>,
     /// Lifetime span — see [`crate::shell_error::ShellSpan`] for the
     /// unwind-safe rationale. Private; never exposed publicly.
     _span: crate::shell_error::ShellSpan,
@@ -251,6 +255,7 @@ impl<R: RecvTransport> DemuxReceiver<R> {
             #[cfg(feature = "std")]
             reconnect_epoch: None,
             closed: false,
+            cancelled_at_the_end: None,
             _span: core::panic::AssertUnwindSafe(span),
         }
     }
@@ -297,6 +302,24 @@ impl<R: RecvTransport> DemuxReceiver<R> {
             counter: reconnects,
             last: 0,
         });
+    }
+
+    /// Asked when the engine answers with the end. The first such answer is
+    /// the transport's own and is passed on as it is. From then on a clean
+    /// answer (a clean end, or what follows a reported failure) gives way
+    /// to a cancel that fired since: it is still the caller's to hear, as
+    /// it would be from the transport. The handle is asked; the transport
+    /// is not read.
+    #[cold]
+    fn cancel_fired_after_the_end(&mut self, clean_answer: bool) -> bool {
+        match self.cancelled_at_the_end {
+            None => {
+                self.cancelled_at_the_end = Some(self.ts.cancel_latched());
+                false
+            }
+            Some(false) => clean_answer && !self.closed && self.ts.cancel_latched(),
+            Some(true) => false,
+        }
     }
 
     /// What a read that brought no packet does to the packets the syncer
@@ -461,18 +484,15 @@ impl<R: RecvTransport> DemuxReceiver<R> {
             match self.engine.poll() {
                 Step::Event(e) => return Ok(Some(e)),
                 Step::NeedInput => {}
-                // The failure that ended the stream, once; or a cancel.
-                Step::Ended(Err(te)) => return Err(te.into()),
-                // A clean end, or what follows a reported failure. A cancel
-                // fired since then is still the caller's to hear, as it
-                // would be from the transport: its handle is asked, the
-                // transport is not read.
-                Step::Ended(Ok(())) => {
-                    if !self.closed && self.ts.cancel_latched() {
+                Step::Ended(end) => {
+                    if self.cancel_fired_after_the_end(end.is_ok()) {
                         self.engine.handle_end(End::Cancelled);
                         continue;
                     }
-                    return Ok(None);
+                    return match end {
+                        Ok(()) => Ok(None),
+                        Err(te) => Err(te.into()),
+                    };
                 }
             }
             // Pull the next aligned 188-byte TS packet.

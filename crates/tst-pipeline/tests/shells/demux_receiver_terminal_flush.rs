@@ -529,6 +529,9 @@ struct Cancellable {
     end: Option<TransportError>,
     cancelled: std::sync::Arc<std::sync::atomic::AtomicBool>,
     closed: bool,
+    /// Reads go on as if nothing had happened after a cancel: a transport
+    /// that does not look at its own latch.
+    deaf: bool,
     reads: std::sync::Arc<std::sync::atomic::AtomicU32>,
 }
 
@@ -538,7 +541,7 @@ impl tst_core::transport::RecvTransport for Cancellable {
         if self.closed {
             return Err(TransportError::Closed);
         }
-        if self.cancelled.load(std::sync::atomic::Ordering::SeqCst) {
+        if !self.deaf && self.cancelled.load(std::sync::atomic::Ordering::SeqCst) {
             return Err(TransportError::ExplicitClose);
         }
         match self.packets.pop_front() {
@@ -586,6 +589,7 @@ fn after_the_end(
         end: Some(end),
         cancelled: std::sync::Arc::default(),
         closed: false,
+        deaf: false,
         reads: reads.clone(),
     });
     let outcome = |r: Result<Option<DemuxEvent>, tst_pipeline::DemuxReceiverError>| match r {
@@ -657,4 +661,25 @@ fn the_receivers_own_close_after_the_end_is_not_a_cancel() {
             0
         )
     );
+}
+
+/// The first terminal result is the transport's own. A transport that ends
+/// its stream cleanly although its cancel latch is already set (none of the
+/// socket transports does) is taken at its word, then and on later calls:
+/// only a cancel fired after the end is added to it.
+#[test]
+fn a_cancel_that_fired_before_a_clean_end_does_not_change_it() {
+    let cancelled = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let mut rx = DemuxReceiver::new(Cancellable {
+        packets: marked_stream(&[0xA1]).into(),
+        end: Some(TransportError::Closed),
+        cancelled,
+        closed: false,
+        deaf: true,
+        reads: std::sync::Arc::default(),
+    });
+    while let Some(_event) = rx.recv_event().expect("a clean stream") {}
+    for call in 0..3 {
+        assert!(matches!(rx.recv_event(), Ok(None)), "call {call}");
+    }
 }

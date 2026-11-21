@@ -549,6 +549,13 @@ mod tests {
         assert_eq!((drain(&mut s), s.state()), (0, SyncState::Hunt));
         assert_eq!(s.resync_events, 0);
 
+        // HUNT again, with aligned packets pushed that it has not looked at:
+        // they are the lock rule's to judge, not the end's.
+        let mut s = Syncer::new();
+        s.push(&packets(2));
+        assert!(!s.end_of_input());
+        assert_eq!((s.state(), s.resync_events), (SyncState::Hunt, 0));
+
         // LOCKED, with the start of a further packet buffered.
         let mut s = Syncer::new();
         s.push(&packets(5));
@@ -557,6 +564,13 @@ mod tests {
         s.end_of_input();
         assert_eq!((drain(&mut s), s.state()), (0, SyncState::Locked));
         assert_eq!(s.resync_events, 1);
+
+        // LOCKED, with whole packets not yet handed out: no second lock.
+        let mut s = Syncer::new();
+        s.push(&packets(5));
+        assert!(s.next_packet().is_some());
+        assert!(!s.end_of_input());
+        assert_eq!((drain(&mut s), s.resync_events), (4, 1));
     }
 
     /// Whatever was pushed, a syncer that has handed out all it can holds
