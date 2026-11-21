@@ -20,12 +20,12 @@
 //! flush on `EndOfStream` **and** `Closed`, the deferred terminal error,
 //! stats — is the plain shell's, one contract for both.
 //!
-//! # The bug this fixes
+//! # What the hand composition lacks
 //!
-//! Today's `DemuxReceiver<ManagedRecvTransport<T>>` composition keeps
-//! the `Receiver`'s syncer buffer and the `Demuxer`'s PSI/PES state
-//! across reconnects. Bytes from the dropped connection carry into the
-//! new connection's framing:
+//! A plain `DemuxReceiver<ManagedRecvTransport<T>>` keeps the `Receiver`'s
+//! syncer buffer and the `Demuxer`'s PSI/PES state across reconnects, so
+//! bytes from the dropped connection carry into the new connection's
+//! framing:
 //!
 //! - The syncer's `[u8]` ring may hold a fractional packet from the
 //!   dead connection. The next bytes from the new connection get
@@ -41,9 +41,12 @@
 //!   from a different version of the PAT/PMT.
 //! - Continuity counters carry over → bogus CC jump events fire.
 //!
-//! `ManagedDemuxReceiver` calls [`crate::receiver::Receiver::reset_sync`] and
-//! [`tst_core::mpegts::demux::Demuxer::reset_sync`] when the reconnect
-//! counter rises, then queues a [`DemuxEvent::ReconnectDiscontinuity`]
+//! This type watches the transport's reconnect counter from the value it has
+//! when the transport is handed over (reconnects before that are not seen
+//! as one). When the counter rises it calls
+//! [`crate::receiver::Receiver::reset_sync`] and
+//! [`tst_core::mpegts::demux::Demuxer::reset_sync`], then queues a
+//! [`DemuxEvent::ReconnectDiscontinuity`]
 //! event for the next `recv_event` call so the consumer sees the
 //! boundary explicitly.
 //!

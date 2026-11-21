@@ -978,3 +978,58 @@ fn reconnecting_flag_true_during_outage_false_after_rebuild_latched_after_giveup
         "one gated rebuild + two failed attempts before give-up"
     );
 }
+
+/// A managed transport that has already reconnected once when the shell
+/// takes it over (its owner read from it first): the shell starts from the
+/// counter's current value, so it emits no `ReconnectDiscontinuity` and
+/// drops nothing.
+#[test]
+fn a_transport_that_reconnected_before_it_was_wrapped_starts_clean() {
+    use tst_core::transport::RecvTransport;
+
+    const PACKETS: usize = 12;
+    let calls = Arc::new(AtomicU32::new(0));
+    let factory = {
+        let calls = Arc::clone(&calls);
+        Box::new(move || -> Result<ScriptedRecv, TransportError> {
+            if calls.fetch_add(1, Ordering::SeqCst) > 0 {
+                return Err(broken("no second rebuild"));
+            }
+            // The rebuilt connection: four bytes the owner reads itself,
+            // then the stream, one packet per read.
+            let mut chunks = vec![b"peek".to_vec()];
+            chunks.extend((0..PACKETS).map(|i| ts_packet_tei(0x100, i as u8).to_vec()));
+            Ok(ScriptedRecv::new(chunks, TransportError::Closed).with_max_payload(188))
+        })
+    };
+    let mut managed = ManagedRecvTransport::new(
+        ScriptedRecv::failing(broken("the first connection is dead")).with_alive(true),
+        factory,
+        fast_policy(Some(1)),
+    )
+    .expect("the policy validates");
+
+    let mut peek = [0u8; 188];
+    assert_eq!(managed.recv_bytes(&mut peek), Ok(4));
+    assert_eq!(managed.reconnects_count(), 1, "one rebuild before the wrap");
+
+    let mut rx = ManagedDemuxReceiver::new(managed, ManagedDemuxReceiverConfig::default());
+    let mut discontinuities = 0usize;
+    let mut packets = 0usize;
+    for _ in 0..1000 {
+        match rx.recv_event() {
+            Ok(Some(DemuxEvent::ReconnectDiscontinuity)) => discontinuities += 1,
+            Ok(Some(DemuxEvent::NonConformant {
+                issue: tst_core::mpegts::demux::NonConformantIssue::TransportErrorPacket { .. },
+                ..
+            })) => packets += 1,
+            Ok(Some(_)) => {}
+            Ok(None) | Err(_) => break,
+        }
+    }
+    assert_eq!(
+        (discontinuities, packets),
+        (0, PACKETS),
+        "no reconnect happened under the shell: no marker, no packet dropped"
+    );
+}

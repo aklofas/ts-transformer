@@ -294,13 +294,16 @@ impl<R: RecvTransport> DemuxReceiver<R> {
     /// packets, the just-read packet is discarded, the sync/demux state is
     /// reset, and the next `recv_event` yields
     /// `DemuxEvent::ReconnectDiscontinuity` first. Installed by
-    /// `ManagedDemuxReceiver` at construction; the snapshot starts at 0
-    /// (the counter is 0 for a freshly built managed transport).
+    /// `ManagedDemuxReceiver` at construction; the snapshot starts at the
+    /// counter's current value, so reconnects that happened before the
+    /// transport was handed over (its owner may have read from it) are not
+    /// seen as one under the shell.
     #[cfg(feature = "std")]
     pub(crate) fn set_reconnect_epoch(&mut self, reconnects: Arc<AtomicU64>) {
+        let last = reconnects.load(Ordering::Acquire);
         self.reconnect_epoch = Some(ReconnectEpoch {
             counter: reconnects,
-            last: 0,
+            last,
         });
     }
 
