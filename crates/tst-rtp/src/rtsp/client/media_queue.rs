@@ -38,6 +38,9 @@ struct State {
     unsent: u64,
     #[cfg(test)]
     high_water: usize,
+    /// Callers inside a wait.
+    #[cfg(test)]
+    parked: usize,
     /// The most unsent bytes the thread has published (read only by tests
     /// that run on Linux).
     #[cfg(all(test, target_os = "linux"))]
@@ -74,11 +77,28 @@ impl MediaQueue {
 
     /// One slice of a caller's wait: until a signal, or the time after
     /// which the cancel is looked at again.
-    fn park<'a>(&self, st: MutexGuard<'a, State>) -> MutexGuard<'a, State> {
-        self.changed
+    fn park<'a>(
+        &self,
+        #[cfg_attr(not(test), allow(unused_mut))] mut st: MutexGuard<'a, State>,
+    ) -> MutexGuard<'a, State> {
+        // Counted under the lock on both sides of the wait, and a waiter
+        // keeps the lock from one slice to the next: whoever reads the
+        // count sees a caller for as long as it waits.
+        #[cfg(test)]
+        {
+            st.parked += 1;
+        }
+        #[cfg_attr(not(test), allow(unused_mut))]
+        let mut st = self
+            .changed
             .wait_timeout(st, CANCEL_POLL_INTERVAL)
             .map(|(st, _)| st)
-            .unwrap_or_else(|e| e.into_inner().0)
+            .unwrap_or_else(|e| e.into_inner().0);
+        #[cfg(test)]
+        {
+            st.parked -= 1;
+        }
+        st
     }
 
     /// Queue `frame` behind the frames queued before, waiting while the
@@ -184,6 +204,13 @@ impl MediaQueue {
     #[cfg(test)]
     pub(crate) fn len(&self) -> usize {
         self.lock().frames.len()
+    }
+
+    /// How many callers are inside a wait of [`Self::push`] or
+    /// [`Self::wait_drained`] now.
+    #[cfg(test)]
+    pub(crate) fn parked(&self) -> usize {
+        self.lock().parked
     }
 
     /// The most frames the queue has held.

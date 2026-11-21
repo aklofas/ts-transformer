@@ -2373,6 +2373,7 @@ fn the_stats_handle_answers_while_a_send_holds_the_push() {
         (refused, push)
     });
     eventually("the media queue full", || queue.len() == MEDIA_QUEUE_BOUND);
+    eventually("the send parked on the queue", || queue.parked() == 1);
     let (tx, rx) = mpsc::channel();
     let reader = {
         let handle = handle.clone();
@@ -2750,7 +2751,11 @@ fn the_close_outcome_answers_none_while_the_close_holds_the_push() {
     let (mut push, open, peer) = recording_gated(&elementary(true), |peer| peer.until_teardown());
     fill_the_queue(&mut push);
     let handle = push.stats_handle();
+    let queue = push.client().driver.media_queue();
     let closer = std::thread::spawn(move || push.close());
+    // The close is inside its wait for the queue, and stays there until
+    // the server reads.
+    eventually("the close parked on the queue", || queue.parked() == 1);
     let (tx, rx) = mpsc::channel();
     let reader = {
         let handle = handle.clone();
