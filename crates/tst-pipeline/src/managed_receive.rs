@@ -40,6 +40,15 @@
 //! decorator latches `closed = true` and all subsequent `recv_bytes` return
 //! `Closed`.
 //!
+//! `max_attempts` is counted per `recv_bytes` call, and every rebuild
+//! attempt of that call counts, the ones that connected included: a peer
+//! that accepts the connection and breaks it before delivering a byte uses
+//! one attempt each time, so a call ends with `Closed` after `max_attempts`
+//! such rounds instead of dialling for ever on the caller's thread. The
+//! count starts again with the next call, that is whenever a call returned
+//! bytes or a timeout. (The send side differs: there a successful rebuild
+//! starts a fresh budget, see [`ManagedTransport`][crate::reconnect::ManagedTransport].)
+//!
 //! Backpressure (`TransportError::Backpressure`) is propagated unchanged —
 //! it indicates a recv-timeout on a still-alive transport, no reconnect.
 //! `TransportError::TooLarge` is not produced by `recv_bytes` (a recv-side

@@ -237,3 +237,90 @@ fn an_empty_receive_is_ok_zero_after_close_cancel_and_exhaustion() {
         "non-empty result unchanged"
     );
 }
+
+/// The budget is per `recv_bytes` call and counts every rebuild attempt of
+/// that call, successful or not: a peer that connects and breaks before it
+/// delivers a byte uses one attempt each time, so the call ends instead of
+/// dialling for ever on the caller's thread.
+#[test]
+fn a_rebuild_that_breaks_before_delivering_counts_against_the_budget() {
+    let calls = Arc::new(AtomicU32::new(0));
+    let factory = {
+        let calls = Arc::clone(&calls);
+        Box::new(move || -> Result<Scripted, TransportError> {
+            calls.fetch_add(1, Ordering::SeqCst);
+            // Connects every time, and breaks on its first read.
+            Ok(Scripted { good: false })
+        })
+    };
+    let mut managed =
+        ManagedRecvTransport::new(Scripted { good: false }, factory, fast_policy(Some(2)))
+            .expect("the policy validates");
+    let reconnects = managed.reconnects_handle();
+
+    let mut buf = [0u8; 16];
+    assert_eq!(managed.recv_bytes(&mut buf), Err(TransportError::Closed));
+    assert_eq!(calls.load(Ordering::SeqCst), 2, "the budget, no more");
+    assert_eq!(reconnects.load(Ordering::Acquire), 2, "both connected");
+    assert!(!managed.is_alive());
+}
+
+#[test]
+fn a_factory_that_keeps_failing_still_exhausts_the_budget() {
+    let calls = Arc::new(AtomicU32::new(0));
+    let factory = {
+        let calls = Arc::clone(&calls);
+        Box::new(move || -> Result<Scripted, TransportError> {
+            calls.fetch_add(1, Ordering::SeqCst);
+            Err(broken("factory down"))
+        })
+    };
+    let mut managed =
+        ManagedRecvTransport::new(Scripted { good: false }, factory, fast_policy(Some(2)))
+            .expect("the policy validates");
+
+    let mut buf = [0u8; 16];
+    assert_eq!(managed.recv_bytes(&mut buf), Err(TransportError::Closed));
+    assert_eq!(calls.load(Ordering::SeqCst), 2, "the budget, no more");
+    assert!(!managed.is_alive());
+}
+
+/// A call that returned bytes ended its outage: the next break gets a whole
+/// budget again.
+#[test]
+fn the_budget_starts_again_with_the_next_call() {
+    let calls = Arc::new(AtomicU32::new(0));
+    // Every rebuilt inner delivers one read and then breaks.
+    struct OneRead(bool);
+    impl RecvTransport for OneRead {
+        fn recv_bytes(&mut self, buf: &mut [u8]) -> Result<usize, TransportError> {
+            if std::mem::replace(&mut self.0, false) {
+                buf[0] = 7;
+                Ok(1)
+            } else {
+                Err(broken("broken (test)"))
+            }
+        }
+        fn max_payload(&self) -> usize {
+            1316
+        }
+        fn is_alive(&self) -> bool {
+            true
+        }
+    }
+    let factory = {
+        let calls = Arc::clone(&calls);
+        Box::new(move || -> Result<OneRead, TransportError> {
+            calls.fetch_add(1, Ordering::SeqCst);
+            Ok(OneRead(true))
+        })
+    };
+    let mut managed = ManagedRecvTransport::new(OneRead(false), factory, fast_policy(Some(1)))
+        .expect("the policy validates");
+
+    let mut buf = [0u8; 16];
+    for round in 1..=5u32 {
+        assert_eq!(managed.recv_bytes(&mut buf), Ok(1), "round {round}");
+        assert_eq!(calls.load(Ordering::SeqCst), round);
+    }
+}
