@@ -357,9 +357,13 @@ What may precede or override the CLOSED outcome:
   there a binding hands out the whole tail.
 - After a Rust `DemuxReceiver`'s own `close()`, whenever it was called, a
   cancel fired later, or one that no call had reported before the close,
-  is not reported: the receiver answers its end. A cancel that fires after the end,
-  with no close, is reported once the events already produced are handed
-  out. (A binding refuses every call after its close, and after a cancel
+  is not reported: after the end the receiver answers its end; after a
+  close before the end it answers what its transport says to a read after
+  its own close (the end for the plain transports, the `Closed` kind for
+  a `ManagedRecvTransport`), on every later call. A cancel that fires
+  after the end, with no close, is reported once the events already
+  produced are handed out, and a cancel latched when the stream failed is
+  reported from the call after the failure. (A binding refuses every call after its close, and after a cancel
   at the `Owned` entry, so this order is a Rust caller's only.)
 
 ## Host naming grammar

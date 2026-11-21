@@ -992,11 +992,16 @@ After the call that reports the end, the receiver reads its transport
 no more and flushes its demuxer no more. Later calls return `Ok(None)`
 after a clean end, the `Closed` error after a cancel (for ever), and
 `Ok(None)` after a `TransportBroken` error, which is reported once, so a
-`for` loop over a failed receiver ends. A cancel fired after the end is
-reported once the events already produced are handed out, on every
-transport. After the receiver's own `close()`, whenever it was called, a
-cancel fired later, or one no call had reported before the close, does
-not change the answer. In the bindings a cancel or a close refuses every
+`for` loop over a failed receiver ends (unless a cancel has latched by
+then or since: it is reported from the next call on, for ever, so stop
+at the first `Err`). A cancel fired after the end is reported once the
+events already produced are handed out, on every transport. After the
+receiver's own `close()`, whenever it was called, a cancel fired later,
+or one no call had reported before the close, does not change the
+answer. A `close()` before the end leaves the answer to the transport's
+reply to a read after its own close: the end for the plain transports,
+the `Closed` kind for a `ManagedRecvTransport`, and that answer
+repeats. In the bindings a cancel or a close refuses every
 call after the one it interrupted, so of the packets an end releases a
 binding caller gets at most the first after a cancel, and none in a call
 made after a close; the peer's end, a broken transport and a managed
