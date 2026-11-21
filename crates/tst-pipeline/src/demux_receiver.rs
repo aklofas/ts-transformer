@@ -339,7 +339,9 @@ impl<R: RecvTransport> DemuxReceiver<R> {
     /// `Closed`, is final: the transport is not read again and every later
     /// call returns that same result, whatever the transport would answer
     /// by then (an error is rebuilt from the transport error that ended the
-    /// stream). `Backpressure` and `InputMalformed` are not ends.
+    /// stream). That includes a cancel fired after the end: the stream had
+    /// already ended, and the call still reports how. `Backpressure` and
+    /// `InputMalformed` are not ends.
     ///
     /// # MalformedPes note
     ///
@@ -520,6 +522,11 @@ impl<R: RecvTransport> DemuxReceiver<R> {
 /// or `.collect()` patterns. EOF (`Ok(None)`) terminates the iterator.
 /// Errors are surfaced as `Some(Err(e))` so the caller can distinguish a
 /// transport error from a clean end of stream.
+///
+/// A stream that ended with an error (`TransportBroken`, `Closed`) yields
+/// that error from every later `next()`: the iterator never returns `None`
+/// after one. A loop that goes on after an error, which is right for
+/// `Backpressure` and `InputMalformed`, must break on those two kinds.
 impl<R: RecvTransport> Iterator for DemuxReceiver<R> {
     type Item = Result<DemuxEvent, DemuxReceiverError>;
 

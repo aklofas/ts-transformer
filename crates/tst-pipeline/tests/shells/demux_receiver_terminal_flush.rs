@@ -498,3 +498,81 @@ fn after_a_terminal_error_the_same_error_is_reported_again() {
         );
     }
 }
+
+/// Answers like a socket transport: its packets, then `end` once, then
+/// `Closed`; and `ExplicitClose` at its entry once the cancel has fired.
+struct Cancellable {
+    packets: std::collections::VecDeque<[u8; 188]>,
+    end: Option<TransportError>,
+    cancelled: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl tst_core::transport::RecvTransport for Cancellable {
+    fn recv_bytes(&mut self, buf: &mut [u8]) -> Result<usize, TransportError> {
+        if self.cancelled.load(std::sync::atomic::Ordering::SeqCst) {
+            return Err(TransportError::ExplicitClose);
+        }
+        match self.packets.pop_front() {
+            Some(packet) => {
+                buf[..188].copy_from_slice(&packet);
+                Ok(188)
+            }
+            None => Err(self.end.take().unwrap_or(TransportError::Closed)),
+        }
+    }
+
+    fn max_payload(&self) -> usize {
+        188
+    }
+
+    fn is_alive(&self) -> bool {
+        true
+    }
+
+    fn cancel_handle(
+        &self,
+    ) -> Option<std::sync::Arc<dyn tst_core::transport::TransportCancel + Send + Sync>> {
+        Some(std::sync::Arc::new(crate::common::FlagCancel(
+            self.cancelled.clone(),
+        )))
+    }
+}
+
+/// The receiver's results from its first terminal one on, with the cancel
+/// fired after that first one.
+fn cancelled_after_the_end(end: TransportError) -> Vec<String> {
+    let mut rx = DemuxReceiver::new(Cancellable {
+        packets: marked_stream(&[0xA1]).into(),
+        end: Some(end),
+        cancelled: std::sync::Arc::default(),
+    });
+    let outcome = |r: Result<Option<DemuxEvent>, tst_pipeline::DemuxReceiverError>| match r {
+        Ok(Some(_)) => "event".to_string(),
+        Ok(None) => "end".to_string(),
+        Err(e) => format!("{:?}", e.kind),
+    };
+    let first = loop {
+        let o = outcome(rx.recv_event());
+        if o != "event" {
+            break o;
+        }
+    };
+    rx.cancel_handle().expect("the transport has one").cancel();
+    vec![first, outcome(rx.recv_event()), outcome(rx.recv_event())]
+}
+
+/// A cancel that fires after the stream has ended does not turn the end
+/// into a cancel: the receiver answers from its record and does not ask the
+/// transport, whose own answer by then would be the cancel.
+#[test]
+fn a_cancel_after_a_clean_end_still_reads_the_end() {
+    assert_eq!(cancelled_after_the_end(TransportError::Closed), ["end"; 3]);
+}
+
+#[test]
+fn a_cancel_after_a_failure_still_reads_the_failure() {
+    assert_eq!(
+        cancelled_after_the_end(broken("the link died")),
+        ["TransportBroken"; 3]
+    );
+}
