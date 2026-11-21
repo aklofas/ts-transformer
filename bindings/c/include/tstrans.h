@@ -1228,7 +1228,8 @@ typedef struct tst_mux_config_t tst_mux_config_t;
  * Opaque handle for an HLS-backed `MuxPublisher`.
  *
  * Returned by [`tst_mux_publisher_with_config_hls`]. Freed with
- * [`tst_mux_publisher_free`]. The inner is `None` only while
+ * [`tst_mux_publisher_free`]. The inner is `None` after a caught
+ * panic in a mutating call retired the publisher, or while
  * [`tst_mux_publisher_finish_into_publisher`] runs, which then frees the
  * handle.
  */
@@ -2195,10 +2196,12 @@ typedef struct tst_raw_send_stats_t {
  *   from the underlying `tst_pipeline::receiver::sync::Syncer`. Non-zero
  *   `resync_events` indicates the syncer hit HUNT/VERIFY mid-stream
  *   (either initial lock-on or re-lock after corruption). When the
- *   transport ends, the receiver hands over the last one to three whole
- *   packets it still holds (the stream's tail, or a stream shorter than
- *   the four packets a lock needs); that release counts once in
- *   `resync_events`.
+ *   transport ends with one to three whole packets still held (the
+ *   stream's tail, or a stream shorter than the four packets a lock needs)
+ *   and every packet boundary present, a trailing partial packet's first
+ *   byte included, reads `0x47`, the receiver hands those packets over and
+ *   the release counts once in `resync_events`; one boundary that does not
+ *   refuses them all.
  */
 typedef struct tst_receiver_stats_t {
   uint64_t bytes_received;
@@ -8152,9 +8155,21 @@ int tst_rist_receiver_recv_ts(struct TstRistReceiver *p,
 /**
  * Send any buffered partial bundle now.
  *
- * In the default recover mode the sender emits nothing until it has seen
- * three consecutive sync bytes 188 bytes apart. Fewer buffered packets stay
- * in the sender: `_flush` does not send them and `_close` discards them.
+ * In the default recover mode the sender holds a stream's first packets
+ * back until three consecutive sync bytes 188 bytes apart confirm them.
+ * `_flush` sends the whole packets it holds, a stream of one or two packets
+ * included, when no byte has been skipped and every packet boundary held
+ * reads the sync byte (`0x47`); once bytes were skipped it sends nothing
+ * until three consecutive sync bytes confirm the alignment again. `_close`
+ * discards what is held.
+ *
+ * A flush is the caller's word that what was sent so far is a stream. If
+ * the first 188 to 376 bytes only look aligned (`0x47` at offset 0, and at
+ * offset 188 when more are held) and are flushed before a third boundary
+ * could refute them, they are sent although they are not packets, and when
+ * they were the head of a real stream lying off that grid the real packet
+ * they cover is lost with them. A flush with fewer than 188 bytes held
+ * sends nothing.
  *
  * Call before `tst_rist_sender_close`: `_close` is cancel-first and
  * discards what is buffered: up to six packets not yet bundled, plus any
@@ -9212,9 +9227,21 @@ int tst_rtp_receiver_recv_ts(struct TstRtpReceiver *p,
 /**
  * Send any buffered partial bundle now.
  *
- * In the default recover mode the sender emits nothing until it has seen
- * three consecutive sync bytes 188 bytes apart. Fewer buffered packets stay
- * in the sender: `_flush` does not send them and `_close` discards them.
+ * In the default recover mode the sender holds a stream's first packets
+ * back until three consecutive sync bytes 188 bytes apart confirm them.
+ * `_flush` sends the whole packets it holds, a stream of one or two packets
+ * included, when no byte has been skipped and every packet boundary held
+ * reads the sync byte (`0x47`); once bytes were skipped it sends nothing
+ * until three consecutive sync bytes confirm the alignment again. `_close`
+ * discards what is held.
+ *
+ * A flush is the caller's word that what was sent so far is a stream. If
+ * the first 188 to 376 bytes only look aligned (`0x47` at offset 0, and at
+ * offset 188 when more are held) and are flushed before a third boundary
+ * could refute them, they are sent although they are not packets, and when
+ * they were the head of a real stream lying off that grid the real packet
+ * they cover is lost with them. A flush with fewer than 188 bytes held
+ * sends nothing.
  *
  * Call before `tst_rtp_sender_close`: `_close` is cancel-first and
  * discards what is buffered: up to six packets not yet bundled, plus any
@@ -12362,9 +12389,21 @@ int tst_tcp_receiver_recv_ts(struct TstTcpReceiver *p,
 /**
  * Send any buffered partial bundle now.
  *
- * In the default recover mode the sender emits nothing until it has seen
- * three consecutive sync bytes 188 bytes apart. Fewer buffered packets stay
- * in the sender: `_flush` does not send them and `_close` discards them.
+ * In the default recover mode the sender holds a stream's first packets
+ * back until three consecutive sync bytes 188 bytes apart confirm them.
+ * `_flush` sends the whole packets it holds, a stream of one or two packets
+ * included, when no byte has been skipped and every packet boundary held
+ * reads the sync byte (`0x47`); once bytes were skipped it sends nothing
+ * until three consecutive sync bytes confirm the alignment again. `_close`
+ * discards what is held.
+ *
+ * A flush is the caller's word that what was sent so far is a stream. If
+ * the first 188 to 376 bytes only look aligned (`0x47` at offset 0, and at
+ * offset 188 when more are held) and are flushed before a third boundary
+ * could refute them, they are sent although they are not packets, and when
+ * they were the head of a real stream lying off that grid the real packet
+ * they cover is lost with them. A flush with fewer than 188 bytes held
+ * sends nothing.
  *
  * Call before `tst_tcp_sender_close`: `_close` is cancel-first and
  * discards what is buffered: up to six packets not yet bundled, plus any
@@ -13424,9 +13463,21 @@ int tst_udp_receiver_recv_ts(struct TstUdpReceiver *p,
 /**
  * Send any buffered partial bundle now.
  *
- * In the default recover mode the sender emits nothing until it has seen
- * three consecutive sync bytes 188 bytes apart. Fewer buffered packets stay
- * in the sender: `_flush` does not send them and `_close` discards them.
+ * In the default recover mode the sender holds a stream's first packets
+ * back until three consecutive sync bytes 188 bytes apart confirm them.
+ * `_flush` sends the whole packets it holds, a stream of one or two packets
+ * included, when no byte has been skipped and every packet boundary held
+ * reads the sync byte (`0x47`); once bytes were skipped it sends nothing
+ * until three consecutive sync bytes confirm the alignment again. `_close`
+ * discards what is held.
+ *
+ * A flush is the caller's word that what was sent so far is a stream. If
+ * the first 188 to 376 bytes only look aligned (`0x47` at offset 0, and at
+ * offset 188 when more are held) and are flushed before a third boundary
+ * could refute them, they are sent although they are not packets, and when
+ * they were the head of a real stream lying off that grid the real packet
+ * they cover is lost with them. A flush with fewer than 188 bytes held
+ * sends nothing.
  *
  * Call before `tst_udp_sender_close`: `_close` is cancel-first and
  * discards what is buffered: up to six packets not yet bundled, plus any

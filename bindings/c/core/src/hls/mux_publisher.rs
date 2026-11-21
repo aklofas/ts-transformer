@@ -16,7 +16,7 @@
 //! `#EXT-X-ENDLIST` close.
 //!
 //! The C handle is a `CHandle<MuxPublisher<HlsPublisher>>`: every entry
-//! point takes the handle lock, and `finish_into_publisher` moves the
+//! point but `tst_mux_publisher_get_stats` takes the handle lock, and `finish_into_publisher` moves the
 //! publisher out with `CHandle::take` and frees the outer allocation on
 //! both its success and its failure path, so the pointer must not be used
 //! again after the call.
@@ -42,7 +42,8 @@ use crate::stats::{TstMuxPublisherStats, TstPublisherStats};
 /// Opaque handle for an HLS-backed `MuxPublisher`.
 ///
 /// Returned by [`tst_mux_publisher_with_config_hls`]. Freed with
-/// [`tst_mux_publisher_free`]. The inner is `None` only while
+/// [`tst_mux_publisher_free`]. The inner is `None` after a caught
+/// panic in a mutating call retired the publisher, or while
 /// [`tst_mux_publisher_finish_into_publisher`] runs, which then frees the
 /// handle.
 pub struct TstMuxPublisher {

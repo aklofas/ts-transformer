@@ -170,10 +170,12 @@ impl From<&tst_pipeline::RawReceiverStats> for TstRawRecvStats {
 ///   from the underlying `tst_pipeline::receiver::sync::Syncer`. Non-zero
 ///   `resync_events` indicates the syncer hit HUNT/VERIFY mid-stream
 ///   (either initial lock-on or re-lock after corruption). When the
-///   transport ends, the receiver hands over the last one to three whole
-///   packets it still holds (the stream's tail, or a stream shorter than
-///   the four packets a lock needs); that release counts once in
-///   `resync_events`.
+///   transport ends with one to three whole packets still held (the
+///   stream's tail, or a stream shorter than the four packets a lock needs)
+///   and every packet boundary present, a trailing partial packet's first
+///   byte included, reads `0x47`, the receiver hands those packets over and
+///   the release counts once in `resync_events`; one boundary that does not
+///   refuses them all.
 #[repr(C)]
 #[derive(Default, Clone, Copy)]
 pub struct TstReceiverStats {

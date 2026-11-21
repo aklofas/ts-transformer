@@ -131,9 +131,21 @@ pub unsafe extern "C" fn tst_rtp_sender_send_ts(
 
 /// Send any buffered partial bundle now.
 ///
-/// In the default recover mode the sender emits nothing until it has seen
-/// three consecutive sync bytes 188 bytes apart. Fewer buffered packets stay
-/// in the sender: `_flush` does not send them and `_close` discards them.
+/// In the default recover mode the sender holds a stream's first packets
+/// back until three consecutive sync bytes 188 bytes apart confirm them.
+/// `_flush` sends the whole packets it holds, a stream of one or two packets
+/// included, when no byte has been skipped and every packet boundary held
+/// reads the sync byte (`0x47`); once bytes were skipped it sends nothing
+/// until three consecutive sync bytes confirm the alignment again. `_close`
+/// discards what is held.
+///
+/// A flush is the caller's word that what was sent so far is a stream. If
+/// the first 188 to 376 bytes only look aligned (`0x47` at offset 0, and at
+/// offset 188 when more are held) and are flushed before a third boundary
+/// could refute them, they are sent although they are not packets, and when
+/// they were the head of a real stream lying off that grid the real packet
+/// they cover is lost with them. A flush with fewer than 188 bytes held
+/// sends nothing.
 ///
 /// Call before `tst_rtp_sender_close`: `_close` is cancel-first and
 /// discards what is buffered: up to six packets not yet bundled, plus any
