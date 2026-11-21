@@ -1,13 +1,14 @@
 # Instruction-count growth accepted between two releases.
 #
-# scripts/dev/bench-ir.sh compares tst-core's instructions per iteration with
-# the previous release tag and fails when a workload grew by more than 3 %
-# unless a row here accepts it. A row applies only while `since` is the
+# scripts/dev/bench-ir.sh compares the instructions per iteration of every
+# workload (crates/*/benches/ir.rs) with the previous release tag and fails
+# when a workload grew by more than 3 % unless a row here accepts it. A row applies only while `since` is the
 # comparison base; rows for older bases stay as the record of what each
 # release paid and why.
 #
-#   workload            a name from `ir list`, or "*" when the harness does
-#                       not build against `since` and nothing can be compared
+#   workload            a name from `ir list`, or "*" when a harness does not
+#                       build against `since` and its workloads cannot be
+#                       compared
 #   since               the old ref the growth is measured from
 #   max_growth_percent  the growth this row accepts (not needed for "*")
 #   reason              what the instructions buy

@@ -77,6 +77,19 @@ class Judge(unittest.TestCase):
         with self.assertRaises(bench_ir.InputError):
             status([("decode", 100, 100_000, 100_000)], star)
 
+    def test_a_star_row_accepts_only_the_workloads_of_a_harness_that_did_not_build(self):
+        results = [("decode", 100, 100_000, 100_000), ("recv", 10, None, 5_000)]
+        st, passed = status(results)
+        self.assertEqual(st, {"decode": "ok", "recv": "not compared"})
+        self.assertFalse(passed)
+        star = '[[accepted]]\nworkload = "*"\nsince = "v1"\nreason = "the receive harness is new"\n'
+        st, passed = status(results, star)
+        self.assertEqual(st, {"decode": "ok", "recv": "not compared, accepted"})
+        self.assertTrue(passed)
+        st, passed = status([("decode", 100, 100_000, 125_000), ("recv", 10, None, 5_000)], star)
+        self.assertEqual(st, {"decode": "over the threshold", "recv": "not compared, accepted"})
+        self.assertFalse(passed)
+
     def test_malformed_rows_are_refused(self):
         for text in ('[[accepted]]\nworkload = "decode"\nsince = "v1"\nmax_growth_percent = 5\n',
                      '[[accepted]]\nworkload = "decode"\nsince = "v1"\nreason = "x"\n',

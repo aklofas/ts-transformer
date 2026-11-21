@@ -5,21 +5,21 @@ usage: bench_ir.py --results <tsv> --old <ref> --new <ref> --accepted <toml>
                    [--threshold <percent>] [--json <file>]
 
 <tsv> rows: workload, iterations, old instructions, new instructions (totals for
-the whole run; an empty old column means the harness did not build against the
-old commit).
+the whole run; an empty old column means the workload's harness did not build
+against the old commit).
 
 A workload whose instructions per iteration grew by more than the threshold
 fails unless <toml> accepts it for this comparison base:
 
     [[accepted]]
-    workload = "st0601_decode"        # or "*": the harness does not build against `since`
+    workload = "st0601_decode"        # or "*": a harness does not build against `since`
     since = "v0.9.0"                  # the old ref the growth is measured from
     max_growth_percent = 26
     reason = "one sentence"
 
 Rows with another `since` are history and are ignored. A row for this base that
-names no workload of the run, or a "*" row when the old side was counted, is an
-error, so the file cannot rot.
+names no workload of the run, or a "*" row when every workload was counted on
+the old side, is an error, so the file cannot rot.
 
 Exit 0 pass, 1 fail, 2 bad input.
 """
@@ -79,8 +79,8 @@ def judge(results, accepted, threshold=DEFAULT_THRESHOLD):
     stale = sorted(set(accepted) - names - {"*"})
     if stale:
         raise InputError("accepted rows name workloads this run does not have: " + ", ".join(stale))
-    if "*" in accepted and any(r[2] is not None for r in results):
-        raise InputError('the "*" accepted row is stale: the harness built against the old ref')
+    if "*" in accepted and all(r[2] is not None for r in results):
+        raise InputError('the "*" accepted row is stale: every harness built against the old ref')
     workloads = []
     for name, iters, old, new in results:
         rec = {"name": name, "iterations": iters, "new_instructions": round(new / iters, 1)}

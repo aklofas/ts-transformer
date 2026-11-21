@@ -60,5 +60,11 @@ harness = false
 name    = "pairer"
 harness = false
 
+# Fixed-iteration workloads for instruction counting; driven by
+# scripts/dev/bench-ir.sh, not by criterion.
+[[bench]]
+name    = "ir"
+harness = false
+
 [lints]
 workspace = true

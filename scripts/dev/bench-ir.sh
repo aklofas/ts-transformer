@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
-# Compare tst-core's instruction counts between two commits.
+# Compare instruction counts between two commits.
 #
 # Wall-clock benches cannot gate a release: the placement of unchanged code
 # moves a criterion number by up to a fifth between two builds. Instruction
 # counts do not move with placement, so this script builds the fixed-iteration
-# harness (crates/tst-core/benches/ir.rs) against both commits, runs every
-# workload under `valgrind --tool=callgrind` and hands the totals to
-# scripts/dev/bench_ir.py. A workload that grew by more than the threshold
-# fails unless tests/coverage/bench-accepted.toml accepts it.
+# harnesses (crates/<crate>/benches/ir.rs for each crate in HARNESS_CRATES)
+# against both commits, runs every workload under `valgrind --tool=callgrind`
+# and hands the totals to scripts/dev/bench_ir.py. A workload that grew by
+# more than the threshold fails unless tests/coverage/bench-accepted.toml
+# accepts it.
 #
 # usage: scripts/dev/bench-ir.sh <old-ref> <new-ref> [--out <dir>] [--threshold <percent>]
 #   <out>/results.tsv   workload, iterations, old total, new total
@@ -16,10 +17,10 @@
 # Both commits are built in detached worktrees under <out> and run on this
 # machine in this invocation, with the toolchain this checkout pins, so the
 # libc, valgrind and the compiler are the same on both sides; no absolute
-# count is ever stored. The harness source and the judge come from the
-# checkout this script runs from and are compiled against both commits. When
-# the harness does not build against the old commit nothing is compared, and
-# that fails unless the accepted file says so.
+# count is ever stored. The harness sources and the judge come from the
+# checkout this script runs from and are compiled against both commits. The
+# workloads of a harness that does not build against the old commit are not
+# compared, and that fails unless the accepted file says so.
 #
 # Limits: instruction counts do not see cache, alignment or branch-prediction
 # effects. Because both sides use this checkout's compiler, a toolchain bump
@@ -35,12 +36,14 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+# The crates with a harness. Workload names are unique across them.
+HARNESS_CRATES="tst-core tst-pipeline"
 old_ref=""; new_ref=""; out=""; threshold=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --out) out="$2"; shift 2 ;;
     --threshold) threshold="$2"; shift 2 ;;
-    -h|--help) sed -n '2,33p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,34p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     -*) echo "bench-ir: unknown argument $1" >&2; exit 2 ;;
     *) if [ -z "$old_ref" ]; then old_ref="$1"; elif [ -z "$new_ref" ]; then new_ref="$1"; else
          echo "bench-ir: unexpected argument $1" >&2; exit 2; fi; shift ;;
@@ -77,18 +80,22 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# Build the harness of this checkout against one commit; print the executable.
+# Check out one commit and build every harness of this checkout against it.
+# The executable of each harness that built is named in <out>/bin-<side>-<crate>.
 build() { # <side> <sha>
-  local side="$1" wt="$out/$1" manifest
+  local side="$1" wt="$out/$1" crate manifest
+  rm -f "$out"/bin-"$side"-*
   git -C "$ROOT" worktree add --detach "$wt" "$2" >/dev/null 2>&1 || return 1
-  cp "$ROOT/crates/tst-core/benches/ir.rs" "$wt/crates/tst-core/benches/ir.rs"
-  manifest="$wt/crates/tst-core/Cargo.toml"
-  if ! grep -Eq '^name *= *"ir"$' "$manifest"; then
-    printf '\n[[bench]]\nname    = "ir"\nharness = false\n' >> "$manifest"
-  fi
-  ( cd "$wt" && CARGO_TARGET_DIR="$out/target-$side" \
-      cargo bench -p tst-core --bench ir --no-run --message-format=json 2> "$out/build-$side.log" ) \
-    | python3 -c '
+  for crate in $HARNESS_CRATES; do
+    mkdir -p "$wt/crates/$crate/benches"
+    cp "$ROOT/crates/$crate/benches/ir.rs" "$wt/crates/$crate/benches/ir.rs"
+    manifest="$wt/crates/$crate/Cargo.toml"
+    if ! grep -Eq '^name *= *"ir"$' "$manifest"; then
+      printf '\n[[bench]]\nname    = "ir"\nharness = false\n' >> "$manifest"
+    fi
+    ( cd "$wt" && CARGO_TARGET_DIR="$out/target-$side" \
+        cargo bench -p "$crate" --bench ir --no-run --message-format=json 2> "$out/build-$side-$crate.log" ) \
+      | python3 -c '
 import json, sys
 exe = ""
 for line in sys.stdin:
@@ -98,24 +105,33 @@ for line in sys.stdin:
         continue
     if m.get("reason") == "compiler-artifact" and m.get("target", {}).get("name") == "ir" and m.get("executable"):
         exe = m["executable"]
-print(exe)'
+if exe:
+    print(exe)' > "$out/bin-$side-$crate"
+    [ -s "$out/bin-$side-$crate" ] || rm -f "$out/bin-$side-$crate"
+  done
+}
+# The executable of one harness on one side; empty when it did not build.
+bin() { # <side> <crate>
+  cat "$out/bin-$1-$2" 2>/dev/null || true
 }
 
 # The build log's tail goes to stderr: on a CI runner the file itself is gone
 # with the job.
-new_bin="$(build new "$new_sha" || true)"
-if [ -z "$new_bin" ]; then
-  echo "bench-ir: the harness does not build against $new_ref:" >&2
-  tail -n 40 "$out/build-new.log" >&2 || true
-  exit 2
-fi
-old_bin="$(build old "$old_sha" || true)"
-if [ -z "$old_bin" ]; then
-  echo "bench-ir: the harness does not build against $old_ref, so nothing is compared:" >&2
-  tail -n 40 "$out/build-old.log" >&2 || true
-fi
+build new "$new_sha" || true
+build old "$old_sha" || true
+for crate in $HARNESS_CRATES; do
+  if [ -z "$(bin new "$crate")" ]; then
+    echo "bench-ir: the $crate harness does not build against $new_ref:" >&2
+    tail -n 40 "$out/build-new-$crate.log" >&2 || true
+    exit 2
+  fi
+  if [ -z "$(bin old "$crate")" ]; then
+    echo "bench-ir: the $crate harness does not build against $old_ref, so its workloads are not compared:" >&2
+    tail -n 40 "$out/build-old-$crate.log" >&2 || true
+  fi
+done
 
-"$new_bin" gen-stream "$out/stream.ts"
+"$(bin new tst-core)" gen-stream "$out/stream.ts"
 
 # Total instructions of one workload run under callgrind; empty when the
 # workload failed. valgrind passes the program's exit status on and prints a
@@ -127,13 +143,18 @@ count() { # <side> <binary> <workload> <iterations>
   fi
 }
 
-"$new_bin" list > "$out/workloads.txt"
+: > "$out/workloads.txt"
+for crate in $HARNESS_CRATES; do
+  "$(bin new "$crate")" list | sed "s/^/$crate /" >> "$out/workloads.txt"
+done
+twice="$(cut -d' ' -f2 "$out/workloads.txt" | sort | uniq -d)"
+[ -z "$twice" ] || { echo "bench-ir: two harnesses name a workload $twice" >&2; exit 2; }
 jobs_max="$(nproc 2>/dev/null || echo 2)"
-while read -r workload iterations; do
+while read -r crate workload iterations; do
   {
-    new="$(count new "$new_bin" "$workload" "$iterations")"
+    new="$(count new "$(bin new "$crate")" "$workload" "$iterations")"
     old=""
-    [ -z "$old_bin" ] || old="$(count old "$old_bin" "$workload" "$iterations")"
+    [ -z "$(bin old "$crate")" ] || old="$(count old "$(bin old "$crate")" "$workload" "$iterations")"
     printf '%s\t%s\t%s\t%s\n' "$workload" "$iterations" "$old" "$new" > "$out/count-$workload.tsv"
   } &
   while [ "$(jobs -rp | wc -l)" -ge "$jobs_max" ]; do wait -n || true; done
@@ -143,9 +164,9 @@ wait
 # an error with the workload's name, never a row the judge might read as
 # absent or as a large improvement.
 : > "$out/results.tsv"
-while read -r workload _; do
+while read -r crate workload _; do
   IFS=$'\t' read -r _ _ old new < "$out/count-$workload.tsv" || true
-  for side in new ${old_bin:+old}; do
+  for side in new $([ -z "$(bin old "$crate")" ] || echo old); do
     if [ -z "${!side}" ]; then
       echo "bench-ir: workload $workload failed on the $side side:" >&2
       tail -n 20 "$out/valgrind-$side-$workload.log" >&2 || true
