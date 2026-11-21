@@ -527,7 +527,7 @@ fn a_failure_is_reported_once_and_then_the_end() {
 struct Cancellable {
     packets: std::collections::VecDeque<[u8; 188]>,
     end: Option<TransportError>,
-    cancelled: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    cancel: std::sync::Arc<crate::common::FlagCancel>,
     closed: bool,
     /// Reads go on as if nothing had happened after a cancel: a transport
     /// that does not look at its own latch.
@@ -541,7 +541,7 @@ impl tst_core::transport::RecvTransport for Cancellable {
         if self.closed {
             return Err(TransportError::Closed);
         }
-        if !self.deaf && self.cancelled.load(std::sync::atomic::Ordering::SeqCst) {
+        if !self.deaf && tst_core::transport::TransportCancel::is_cancelled(&*self.cancel) {
             return Err(TransportError::ExplicitClose);
         }
         match self.packets.pop_front() {
@@ -563,16 +563,13 @@ impl tst_core::transport::RecvTransport for Cancellable {
 
     fn close(&mut self) {
         self.closed = true;
-        self.cancelled
-            .store(true, std::sync::atomic::Ordering::SeqCst);
+        tst_core::transport::TransportCancel::cancel(&*self.cancel);
     }
 
     fn cancel_handle(
         &self,
     ) -> Option<std::sync::Arc<dyn tst_core::transport::TransportCancel + Send + Sync>> {
-        Some(std::sync::Arc::new(crate::common::FlagCancel(
-            self.cancelled.clone(),
-        )))
+        Some(self.cancel.clone())
     }
 }
 
@@ -587,7 +584,7 @@ fn after_the_end(
     let mut rx = DemuxReceiver::new(Cancellable {
         packets: marked_stream(&[0xA1]).into(),
         end: Some(end),
-        cancelled: std::sync::Arc::default(),
+        cancel: std::sync::Arc::new(crate::common::FlagCancel(crate::common::flag(false))),
         closed: false,
         deaf: false,
         reads: reads.clone(),
@@ -669,11 +666,10 @@ fn the_receivers_own_close_after_the_end_is_not_a_cancel() {
 /// only a cancel fired after the end is added to it.
 #[test]
 fn a_cancel_that_fired_before_a_clean_end_does_not_change_it() {
-    let cancelled = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
     let mut rx = DemuxReceiver::new(Cancellable {
         packets: marked_stream(&[0xA1]).into(),
         end: Some(TransportError::Closed),
-        cancelled,
+        cancel: std::sync::Arc::new(crate::common::FlagCancel(crate::common::flag(true))),
         closed: false,
         deaf: true,
         reads: std::sync::Arc::default(),
