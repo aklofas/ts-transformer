@@ -13,6 +13,9 @@
 
 mod background;
 mod gap_buffer;
+// Not called by the send paths yet.
+#[cfg_attr(not(test), allow(dead_code))]
+mod silent_peer;
 pub(crate) mod state;
 
 pub use gap_buffer::{GapBuffer, OverflowPolicy};
