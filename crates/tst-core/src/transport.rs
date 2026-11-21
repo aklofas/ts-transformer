@@ -419,9 +419,10 @@ pub trait Transport: Send {
     ///
     /// Only a change matters, never the value: any change counts as the
     /// peer having answered, a wrap through `u64::MAX` included. The number
-    /// must never return to an earlier value by itself: a gauge that reads
-    /// back and forth (for example one that reads 0 when a lock could not
-    /// be taken) counts as answers, so it would hide a silent peer.
+    /// must never return to an earlier value by itself (a wrap excepted: it
+    /// comes with an answer): a gauge that reads back and forth (for example
+    /// one that reads 0 when a lock could not be taken) counts as answers,
+    /// so it would hide a silent peer.
     ///
     /// A transport that sometimes cannot tell returns `None` consistently,
     /// not now and then: a reader that sees an occasional `None` keeps
@@ -430,6 +431,11 @@ pub trait Transport: Send {
     /// its ordinary reconnect budget.
     ///
     /// Called on the send path: it must not block and must be cheap.
+    ///
+    /// A wrapper that may carry a transport with a reading must forward
+    /// this to its inner transport (the `Box<T>` impl does); a wrapper that
+    /// keeps the default hides the reading, so a managed wrapper above it
+    /// never trips.
     fn peer_activity(&self) -> Option<u64> {
         None
     }
@@ -442,8 +448,14 @@ pub trait Transport: Send {
     /// [API stability reference](https://github.com/aklofas/ts-transformer/blob/main/docs/reference/api-stability.md).
     ///
     /// The default is [`Self::close`], which for a transport that lingers
-    /// on close may wait. A managed wrapper calls this with none of its
+    /// on close may wait. An override must not wait for the peer, and like
+    /// `close` it is idempotent: calling it on a closed, cancelled or broken
+    /// transport is fine. A managed wrapper calls this with none of its
     /// locks held. After it, the transport behaves as after `close`.
+    ///
+    /// A wrapper that may carry a transport that lingers must forward this
+    /// to its inner transport (the `Box<T>` impl does); a wrapper that keeps
+    /// the default closes its inner transport with that linger.
     fn abandon(&mut self) {
         self.close()
     }
