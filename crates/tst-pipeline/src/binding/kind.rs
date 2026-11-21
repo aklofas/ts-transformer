@@ -1423,9 +1423,9 @@ pub(crate) fn coarsen(k: BindingErrorKind) -> ShellErrorKind {
 impl From<TsFramingError> for BindingError {
     fn from(e: TsFramingError) -> Self {
         let kind = match e {
-            TsFramingError::SyncLost { .. } | TsFramingError::NoSyncAfterLimit { .. } => {
-                BindingErrorKind::InputMalformed
-            }
+            TsFramingError::SyncLost { .. }
+            | TsFramingError::NoSyncAfterLimit { .. }
+            | TsFramingError::UnsentTail { .. } => BindingErrorKind::InputMalformed,
         };
         BindingError::new(kind, e.to_string())
     }

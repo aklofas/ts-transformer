@@ -108,9 +108,9 @@ impl From<TsFramingError> for SenderError {
     fn from(e: TsFramingError) -> Self {
         Self {
             kind: match &e {
-                TsFramingError::SyncLost { .. } | TsFramingError::NoSyncAfterLimit { .. } => {
-                    ShellErrorKind::InputMalformed
-                }
+                TsFramingError::SyncLost { .. }
+                | TsFramingError::NoSyncAfterLimit { .. }
+                | TsFramingError::UnsentTail { .. } => ShellErrorKind::InputMalformed,
             },
             source: SenderErrorSource::Framing(e),
             input_consumed: None,
