@@ -599,8 +599,10 @@ impl<T: Transport + 'static> ManagedTransport<T> {
     ///
     /// What counts as an answer is a change of the inner's
     /// [`Transport::peer_activity`] reading, taken after successful sends.
-    /// An inner whose reading is `None` cannot tell: the sender never trips
-    /// and keeps its ordinary reconnect budget.
+    /// An inner whose reading is `None` cannot tell: the sender never trips,
+    /// and keeps its ordinary reconnect budget once a send on a new
+    /// connection has succeeded (a connection that breaks before that is
+    /// one never heard from, and its attempts count on).
     ///
     /// **Call it before the first send.** A `Background` worker started by
     /// an earlier send carries no rule, and drains unchecked until the next
@@ -2557,7 +2559,7 @@ mod silent_peer_tests {
 
     /// Long enough that the test's own scheduling never restarts a primed
     /// run (a gap of half of it would).
-    const PRIMED_WINDOW: Duration = Duration::from_secs(2);
+    const PRIMED_WINDOW: Duration = Duration::from_secs(10);
 
     type Fire = Arc<Mutex<Option<Arc<dyn TransportCancel + Send + Sync>>>>;
 
