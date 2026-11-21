@@ -23,8 +23,10 @@ const MSG: [u8; 1316] = [0x47; 1316];
 /// sender is dropped or sent on (or the hold runs out).
 struct HeldPeer {
     port: u16,
-    accept: AcceptHandle<()>,
+    // Declared before `accept`, so a test that panics releases the peer
+    // first and the accept thread's join does not wait out its hold.
     release: mpsc::Sender<()>,
+    accept: AcceptHandle<()>,
     accepted: mpsc::Receiver<()>,
 }
 
@@ -142,24 +144,38 @@ fn a_normal_close_still_lingers_on_unacknowledged_data() {
     require_loopback!();
     let peer = held_peer();
     let relay = Relay::start(loopback(peer.port));
-    let mut t = sender_to(relay.addr(), &peer);
+    // The preset with a 2 s linger instead of 5 s: the same close path, a
+    // shorter test.
+    let mut cfg = SrtSocketConfig::sender_defaults();
+    cfg.linger = Some(Duration::from_secs(2));
+    let socket = SrtSocket::connect_with(&cfg, relay.addr()).expect("connect");
+    peer.wait_accepted();
+    let mut t = SrtTransport::new(socket);
 
     assert_eq!(relay.mute_existing(), 1, "the sender's flow is muted");
-    for _ in 0..30 {
+    let muted = Instant::now();
+    // A few sends into the silence: accepted into libsrt's send buffer and
+    // never acknowledged, which is what a lingering close waits for.
+    for _ in 0..5 {
         t.send_bytes(&MSG)
             .expect("a send to a silent peer still succeeds");
-        thread::sleep(Duration::from_millis(33));
     }
 
-    // Only `abandon` turns linger off: a plain close keeps the preset's
-    // linger and waits for the unacknowledged data. A lower bound, so a
-    // slow machine can only make it pass more easily.
-    let started = Instant::now();
+    // Only `abandon` turns linger off. With linger on, libsrt's close waits
+    // while unsent data is held and the connection is not broken, until
+    // the linger time has passed since the close (2 s here); libsrt breaks
+    // the connection only after 5 s without a packet from the peer, and the
+    // last one came at most about a second before the mute (an idle
+    // connection hears a keepalive about once a second). Either way a
+    // lingering close returns at least 2 s after the mute, and timers that
+    // fire late on a slow machine only make that later. A close without
+    // linger returns as soon as the five sends are done: milliseconds here,
+    // still far under the bound on a machine ten times slower.
     t.close();
-    let took = started.elapsed();
+    let since_mute = muted.elapsed();
     assert!(
-        took >= Duration::from_millis(1_500),
-        "close returned after {took:?}: it did not linger"
+        since_mute >= Duration::from_millis(1_500),
+        "close returned {since_mute:?} after the mute: it did not linger"
     );
 
     drop(relay);
