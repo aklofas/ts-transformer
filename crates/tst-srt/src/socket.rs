@@ -510,6 +510,30 @@ impl SrtSocket {
         set_int(self.handle, srt_sys::SRT_SOCKOPT_SRTO_RCVTIMEO, ms)
     }
 
+    /// A number that moves whenever the peer was heard from: the
+    /// acknowledgements, loss reports and data packets received so far
+    /// (see [`peer_activity_of`]). `None` once process exit has started, or
+    /// when libsrt cannot report: it refuses statistics on a socket it has
+    /// broken or closed.
+    pub(crate) fn peer_activity(&self) -> Option<u64> {
+        let _op = crate::exit_guard::enter()?;
+        let mut perf: srt_sys::CBytePerfMon = unsafe { mem::zeroed() };
+        let rc = unsafe { srt_sys::srt_bistats(self.handle, &raw mut perf, 0, 0) };
+        if rc < 0 {
+            return None;
+        }
+        Some(peer_activity_of(&perf))
+    }
+
+    /// Turn linger off, so the close that follows returns at once and
+    /// discards what is still unsent.
+    pub(crate) fn disable_linger(&mut self) -> Result<(), OptionError> {
+        let Some(_op) = crate::exit_guard::enter() else {
+            return Err(OptionError::InvalidState);
+        };
+        set_linger(self.handle, Duration::ZERO)
+    }
+
     /// Explicit close; rare. Drop handles the normal path.
     ///
     /// Infallible: the underlying `srt_close` return code is consumed by the
@@ -1033,6 +1057,18 @@ pub(crate) fn read_payload_size(handle: srt_sys::SRTSOCKET) -> usize {
         return SRT_TS_BUNDLE_BYTES;
     }
     value as usize
+}
+
+/// The silent-peer reading of one statistics snapshot: the wrapping sum of
+/// the ACKs, NAKs and data packets received in the socket's lifetime, each
+/// widened through its unsigned twin first. Every one of them only grows
+/// while the peer answers. The buffer gauges are left out: libsrt reads
+/// them 0 whenever it cannot take its connection lock, so they go back and
+/// forth with no packet from the peer.
+fn peer_activity_of(p: &srt_sys::CBytePerfMon) -> u64 {
+    u64::from(p.pktRecvACKTotal as u32)
+        .wrapping_add(u64::from(p.pktRecvNAKTotal as u32))
+        .wrapping_add(p.pktRecvTotal as u64)
 }
 
 pub(crate) fn perf_to_stats(p: &srt_sys::CBytePerfMon) -> SrtStats {
@@ -1584,5 +1620,91 @@ mod tests {
             }
             other => panic!("expected OutOfRange, got {other:?}"),
         }
+    }
+
+    /// `SRTO_LINGER` as libsrt reads it back: `(l_onoff, l_linger)`.
+    fn linger_of(handle: srt_sys::SRTSOCKET) -> (i64, i64) {
+        let mut lin = super::LingerOpt {
+            l_onoff: 0,
+            l_linger: 0,
+        };
+        let mut len = std::mem::size_of::<super::LingerOpt>() as super::c_int;
+        let rc = unsafe {
+            srt_sys::srt_getsockopt(
+                handle,
+                0,
+                srt_sys::SRT_SOCKOPT_SRTO_LINGER,
+                (&raw mut lin).cast(),
+                &raw mut len,
+            )
+        };
+        assert!(rc >= 0, "srt_getsockopt(SRTO_LINGER) failed");
+        (i64::from(lin.l_onoff), i64::from(lin.l_linger))
+    }
+
+    #[test]
+    fn disable_linger_turns_linger_off_on_a_connected_socket_loopback() {
+        if std::env::var_os("SKIP_LOOPBACK").is_some()
+            || std::net::TcpListener::bind("127.0.0.1:0").is_err()
+        {
+            eprintln!("SKIP: loopback unavailable");
+            return;
+        }
+        let mut listener = crate::SrtListener::bind_with(
+            &crate::config::SrtListenerConfig::default(),
+            "127.0.0.1:0",
+        )
+        .expect("bind");
+        let addr = listener.local_addr().expect("listener address");
+        let wake = listener.cancel_handle();
+        let (release, released) = std::sync::mpsc::channel::<()>();
+        let peer = std::thread::spawn(move || {
+            // Held until the test is done with the caller, so the
+            // connection stays CONNECTED while linger is changed.
+            let accepted = listener.accept();
+            let _ = released.recv_timeout(std::time::Duration::from_secs(10));
+            drop(accepted);
+        });
+        let connected =
+            super::SrtSocket::connect_with(&super::SrtSocketConfig::sender_defaults(), addr);
+        let mut socket = match connected {
+            Ok(s) => s,
+            Err(e) => {
+                wake.cancel();
+                let _ = peer.join();
+                panic!("connect: {e}");
+            }
+        };
+
+        assert_eq!(
+            linger_of(socket.handle),
+            (1, 5),
+            "the sender preset lingers 5 s"
+        );
+        socket.disable_linger().expect("disable_linger");
+        assert_eq!(linger_of(socket.handle).0, 0, "linger is off");
+
+        drop(socket);
+        drop(release);
+        peer.join().expect("peer thread");
+    }
+
+    #[test]
+    fn peer_activity_sums_acks_naks_and_packets_received() {
+        let mut p: srt_sys::CBytePerfMon = unsafe { std::mem::zeroed() };
+        p.pktRecvACKTotal = 3;
+        p.pktRecvNAKTotal = 5;
+        p.pktRecvTotal = 7;
+        assert_eq!(super::peer_activity_of(&p), 15);
+
+        // A counter libsrt has wrapped negative is read as its unsigned
+        // twin, and the sum wraps instead of panicking.
+        p.pktRecvACKTotal = -1;
+        p.pktRecvNAKTotal = 0;
+        p.pktRecvTotal = -1;
+        assert_eq!(
+            super::peer_activity_of(&p),
+            u64::MAX.wrapping_add(u64::from(u32::MAX))
+        );
     }
 }
