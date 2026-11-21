@@ -1,5 +1,20 @@
 //! Arithmetic on RTP timestamps that reads no clock.
 
+use std::time::Duration;
+
+/// The 90 kHz RTP timestamp `elapsed` after the instant whose timestamp is
+/// `start_ticks`, modulo 2^32.
+///
+/// Whole microseconds are counted (one tick is 11.1 us). The
+/// microsecond count saturates at `u64::MAX`, over 500 millennia, so
+/// the saturation is purely defensive.
+pub(crate) fn ticks_after(start_ticks: u32, elapsed: Duration) -> u32 {
+    let micros = u64::try_from(elapsed.as_micros()).unwrap_or(u64::MAX);
+    // 90 kHz: micros * 90 / 1000.
+    let elapsed_ticks = micros.saturating_mul(90) / 1_000;
+    start_ticks.wrapping_add(elapsed_ticks as u32)
+}
+
 /// Nearest-continuation unwrap of a 32-bit RTP timestamp into `i64`.
 ///
 /// Each call takes the wrapping 32-bit delta from the previous raw value,
@@ -31,6 +46,43 @@ impl Unwrap32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ticks_after_no_time_are_the_start_ticks() {
+        assert_eq!(ticks_after(12_345, Duration::ZERO), 12_345);
+        assert_eq!(ticks_after(u32::MAX, Duration::ZERO), u32::MAX);
+    }
+
+    #[test]
+    fn ticks_wrap_at_the_u32_boundary() {
+        // 1 ms is 90 ticks: 11 of them reach 0, the other 79 follow.
+        assert_eq!(ticks_after(u32::MAX - 10, Duration::from_millis(1)), 79);
+    }
+
+    #[test]
+    fn ticks_advance_at_90_khz() {
+        let table: [(Duration, u32); 8] = [
+            // Below one tick (11.1 us) nothing is counted.
+            (Duration::from_micros(11), 0),
+            (Duration::from_micros(12), 1),
+            // Whole microseconds are counted, the rest of one is not.
+            (Duration::from_nanos(999_999), 89),
+            (Duration::from_millis(1), 90),
+            (Duration::from_millis(50), 4_500),
+            (Duration::from_secs(1), 90_000),
+            (Duration::from_secs(3 * 3_600), 972_000_000),
+            // 14 hours are 4 536 000 000 ticks, past one turn of 2^32.
+            (Duration::from_secs(14 * 3_600), 241_032_704),
+        ];
+        for (elapsed, ticks) in table {
+            assert_eq!(ticks_after(0, elapsed), ticks, "after {elapsed:?}");
+            assert_eq!(
+                ticks_after(1_000, elapsed),
+                ticks.wrapping_add(1_000),
+                "after {elapsed:?} from 1000"
+            );
+        }
+    }
 
     #[test]
     fn unwrap32_first_call_anchors_at_raw() {
