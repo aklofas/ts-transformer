@@ -126,6 +126,53 @@ public class MuxSender extends NativeHandle {
             programConfig.dataDescBytes(), programConfig.dataDescLens(), cancel);
     }
 
+    /**
+     * Replace the running program with {@code config}'s, in place, and keep sending. The
+     * rules are those of {@link org.tstrans.mpegts.Muxer#reconfigure}: streams match by
+     * PID; a stream whose PID, stream type and codec are unchanged survives (its handle,
+     * its continuity counter and the program's clock carry on); a removed stream's handle
+     * is refused by every {@code send*To} with {@code INVALID_USAGE} until a later
+     * reconfigure reuses its slot; the next send puts the new PAT and PMT on the wire first,
+     * with their versions raised where they changed. The handle getters
+     * ({@link #videoHandle()} and its four siblings) return the handles of the
+     * configuration in force from the moment this call has returned.
+     *
+     * <p>A {@link MuxerConfig} also carries the settings that are not the program's
+     * ({@code pcrIntervalMs}, {@code pcrLeadMs}, {@code psiIntervalMs},
+     * {@code bufferPackets}, {@code av1Carriage}). Each must be the value the sender was
+     * opened with: a different one is refused with {@code CONFIG_INVALID} and nothing
+     * changes.
+     *
+     * <p>The call holds the sender as a send does and sends what an earlier refused send
+     * left, so it can wait on a slow transport like a send; {@link #close()} from another
+     * thread ends that wait as it ends a send's (the call then throws the transport's
+     * {@code CLOSED}). After {@code cancelHandle().cancel()} this throws the transport's
+     * {@code CLOSED} and changes nothing.
+     *
+     * @param config the new configuration
+     * @throws MuxException {@code CONFIG_INVALID} when the config is invalid, a PID in both
+     *     configs changed its stream type or codec or moved to another program, the program
+     *     kept its number but moved its PMT PID or its PCR PID while the old PCR stream
+     *     stays, or a setting that is not the program's differs from the running one; the
+     *     sender, its output and its handles are then exactly as they were
+     * @throws BindingException the transport's exception when what an earlier send left
+     *     cannot be sent (nothing changed), or when the output of this call cannot be
+     *     (the new configuration is in force)
+     * @throws NullPointerException if {@code config} is {@code null}
+     * @throws IllegalStateException if the sender is closed
+     */
+    public void reconfigure(MuxerConfig config) throws MuxException, BindingException {
+        ensureOpen("MuxSender is closed");
+        java.util.Objects.requireNonNull(config, "config");
+        nReconfigure(peekHandle(),
+            config.programNumber(), config.pmtPid(), config.pcrPid(),
+            config.pcrIntervalMs(), config.pcrLeadMs(), config.psiIntervalMs(),
+            config.bufferPackets(), config.av1Carriage().code(),
+            config.streamPids(), config.streamKinds(), config.streamCodecs(),
+            config.streamTypeCodes(), config.streamCarriesPts(),
+            config.dataDescBytes(), config.dataDescLens());
+    }
+
     // ── Send family — single-stream variants ──────────────────────────────
 
     /**
@@ -339,10 +386,14 @@ public class MuxSender extends NativeHandle {
     }
 
     // ── Handle getters ────────────────────────────────────────────────────
+    //
+    // Each returns the first handle of its kind in the configuration in force: the
+    // one the sender was opened with, or the last one reconfigure() accepted.
+    // None of them waits for a send or a reconfigure running on another thread.
 
     /**
-     * First configured video stream handle, or {@link Optional#empty()} if no
-     * video stream is configured.
+     * First video stream handle of the configuration in force, or
+     * {@link Optional#empty()} if it has no video stream. Never waits.
      *
      * @return the first video handle, if any
      * @throws IllegalStateException if the sender is closed
@@ -354,7 +405,8 @@ public class MuxSender extends NativeHandle {
     }
 
     /**
-     * First configured KLV stream handle, or {@link Optional#empty()}.
+     * First KLV stream handle of the configuration in force, or
+     * {@link Optional#empty()}. Never waits.
      *
      * @return the first KLV handle, if any
      * @throws IllegalStateException if the sender is closed
@@ -366,7 +418,8 @@ public class MuxSender extends NativeHandle {
     }
 
     /**
-     * First configured audio stream handle, or {@link Optional#empty()}.
+     * First audio stream handle of the configuration in force, or
+     * {@link Optional#empty()}. Never waits.
      *
      * @return the first audio handle, if any
      * @throws IllegalStateException if the sender is closed
@@ -378,7 +431,8 @@ public class MuxSender extends NativeHandle {
     }
 
     /**
-     * First configured subtitle stream handle, or {@link Optional#empty()}.
+     * First subtitle stream handle of the configuration in force, or
+     * {@link Optional#empty()}. Never waits.
      *
      * @return the first subtitle handle, if any
      * @throws IllegalStateException if the sender is closed
@@ -390,7 +444,8 @@ public class MuxSender extends NativeHandle {
     }
 
     /**
-     * First configured data stream handle, or {@link Optional#empty()}.
+     * First data stream handle of the configuration in force, or
+     * {@link Optional#empty()}. Never waits.
      *
      * @return the first data handle, if any
      * @throws IllegalStateException if the sender is closed
@@ -491,6 +546,12 @@ public class MuxSender extends NativeHandle {
         boolean[] streamCarriesPts,
         byte[] dataDescBytes, int[] dataDescLens, OpenCancel cancel)
         throws BindingException, MuxException;
+
+    private static native void nReconfigure(long handle, int programNumber, int pmtPid,
+        int pcrPid, int pcrIntervalMs, int pcrLeadMs, int psiIntervalMs, int bufferPackets,
+        int av1Carriage, int[] streamPids, int[] streamKinds, int[] streamCodecs,
+        int[] streamTypeCodes, boolean[] streamCarriesPts, byte[] dataDescBytes,
+        int[] dataDescLens) throws MuxException, BindingException;
 
     private static native void nSendVideo(long handle, byte[] nal, long pts, boolean keyFrame)
         throws MuxException, BindingException;

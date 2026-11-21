@@ -142,6 +142,34 @@ public final class ManagedMuxSender extends NativeHandle {
         return new ManagedMuxSender(h);
     }
 
+    /**
+     * Replace the running program with {@code config}'s, in place, and keep sending:
+     * the rules of {@link org.tstrans.shells.MuxSender#reconfigure}, settings that are not
+     * the program's included (each must be the value the sender was opened with). The
+     * handle getters return the handles of the configuration in force from the moment this
+     * call has returned. The call holds the sender as a send does: one waiting in a
+     * Blocking reconnect is ended by {@link #close()} from another thread, and then throws
+     * {@code SrtException(CLOSED)}.
+     *
+     * @param config the new configuration
+     * @throws MuxException {@code CONFIG_INVALID} for a configuration the running muxer
+     *     refuses; the sender, its output and its handles are then exactly as they were
+     * @throws SrtException on transport failure, as a send's
+     * @throws NullPointerException if {@code config} is {@code null}
+     * @throws IllegalStateException if the sender is closed
+     */
+    public void reconfigure(MuxerConfig config) throws MuxException, SrtException {
+        ensureOpen("ManagedMuxSender is closed");
+        java.util.Objects.requireNonNull(config, "config");
+        nReconfigure(peekHandle(),
+            config.programNumber(), config.pmtPid(), config.pcrPid(),
+            config.pcrIntervalMs(), config.pcrLeadMs(), config.psiIntervalMs(),
+            config.bufferPackets(), config.av1Carriage().code(),
+            config.streamPids(), config.streamKinds(), config.streamCodecs(),
+            config.streamTypeCodes(), config.streamCarriesPts(),
+            config.dataDescBytes(), config.dataDescLens());
+    }
+
     // ── Send family — single-stream variants ──────────────────────────────
 
     /**
@@ -354,7 +382,8 @@ public final class ManagedMuxSender extends NativeHandle {
     // ── Handle getters ────────────────────────────────────────────────────
 
     /**
-     * First configured video stream handle, or {@link Optional#empty()}.
+     * First video stream handle of the configuration in force, or
+     * {@link Optional#empty()}. Never waits.
      *
      * @return the first video handle, if any
      */
@@ -365,7 +394,8 @@ public final class ManagedMuxSender extends NativeHandle {
     }
 
     /**
-     * First configured KLV stream handle, or {@link Optional#empty()}.
+     * First KLV stream handle of the configuration in force, or
+     * {@link Optional#empty()}. Never waits.
      *
      * @return the first KLV handle, if any
      */
@@ -376,7 +406,8 @@ public final class ManagedMuxSender extends NativeHandle {
     }
 
     /**
-     * First configured audio stream handle, or {@link Optional#empty()}.
+     * First audio stream handle of the configuration in force, or
+     * {@link Optional#empty()}. Never waits.
      *
      * @return the first audio handle, if any
      */
@@ -387,7 +418,8 @@ public final class ManagedMuxSender extends NativeHandle {
     }
 
     /**
-     * First configured subtitle stream handle, or {@link Optional#empty()}.
+     * First subtitle stream handle of the configuration in force, or
+     * {@link Optional#empty()}. Never waits.
      *
      * @return the first subtitle handle, if any
      */
@@ -398,7 +430,8 @@ public final class ManagedMuxSender extends NativeHandle {
     }
 
     /**
-     * First configured data stream handle, or {@link Optional#empty()}.
+     * First data stream handle of the configuration in force, or
+     * {@link Optional#empty()}. Never waits.
      *
      * @return the first data handle, if any
      */
@@ -540,6 +573,12 @@ public final class ManagedMuxSender extends NativeHandle {
         int backoffKind, long backoffBaseMs, long backoffMaxMs,
         int gapBufferCapacity, int overflowPolicy, int mode, OpenCancel cancel)
         throws SrtException, MuxException;
+
+    private static native void nReconfigure(long handle, int programNumber, int pmtPid,
+        int pcrPid, int pcrIntervalMs, int pcrLeadMs, int psiIntervalMs, int bufferPackets,
+        int av1Carriage, int[] streamPids, int[] streamKinds, int[] streamCodecs,
+        int[] streamTypeCodes, boolean[] streamCarriesPts, byte[] dataDescBytes,
+        int[] dataDescLens) throws MuxException, SrtException;
 
     private static native void nSendVideo(long handle, byte[] nal, long pts, boolean keyFrame)
         throws MuxException, SrtException;

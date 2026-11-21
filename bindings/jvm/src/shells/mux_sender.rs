@@ -8,10 +8,12 @@
 //! with `Muxer::nOpen`); each push ends in a transport send.
 //!
 //! The handle is a `jlong` key into an [`OwnedRegistry`] with
-//! `S = Snapshot<StreamHandles>`: the stream set and the transport's error
-//! domain are fixed at construction, so the `n*Handle` getters never take the
-//! slot a parked `send*` holds and a failed push throws through the right
-//! domain even after a concurrent `close()` removed the key. Every
+//! `S = Snapshot<StreamHandlesCell>`: the transport's error domain is fixed at
+//! construction and the stream handles are stored again by each
+//! `nReconfigure` inside its slot hold, so the `n*Handle` getters never take
+//! the slot a parked `send*` or `reconfigure` holds and a failed push throws
+//! through the right domain even after a concurrent `close()` removed the
+//! key. Every
 //! `MuxSender::send_*` takes `&self` and serialises internally. `nClose`
 //! cancels BEFORE it takes the slot, so a `send*` parked on another thread
 //! ends with the transport's `CLOSED` instead of holding `close()` hostage.
@@ -34,7 +36,7 @@ use tst_core::mpegts::mux::{
     AudioStreamHandle, DataStreamHandle, KlvStreamHandle, SubtitleStreamHandle, VideoStreamHandle,
 };
 use tst_core::transport::Transport;
-use tst_pipeline::binding::view::{BlockingReason, Snapshot, StreamHandles};
+use tst_pipeline::binding::view::{BlockingReason, Snapshot, StreamHandles, StreamHandlesCell};
 use tst_pipeline::binding::{BindingError, BindingErrorKind, Domain, HandleState, Opened, Owned};
 use tst_pipeline::{MuxSender as RustMuxSender, MuxSenderError, MuxSenderErrorSource};
 
@@ -51,7 +53,7 @@ use crate::mpegts::shell_muxer_stats;
 
 type Inner = RustMuxSender<Box<dyn Transport>>;
 
-static REGISTRY: LazyLock<OwnedRegistry<Inner, Snapshot<StreamHandles>>> =
+static REGISTRY: LazyLock<OwnedRegistry<Inner, Snapshot<StreamHandlesCell>>> =
     LazyLock::new(OwnedRegistry::new);
 
 /// Map a `MuxSenderError` (from any `send_*`) to a thrown Java exception.
@@ -92,14 +94,17 @@ fn with_push(env: &mut Env, handle: jlong, op: impl FnOnce(&Inner) -> Result<(),
     }
 }
 
-/// Return the first handle-of-kind from the construction-time snapshot (`-1`
-/// if none). A closed handle throws `IllegalStateException` and returns `-1`.
+/// Return the first handle-of-kind of the configuration in force (`-1` if
+/// none), read from the cell, never the slot. A closed handle throws
+/// `IllegalStateException` and returns `-1`.
 fn first_handle(
     env: &mut Env,
     handle: jlong,
     pick: impl FnOnce(&StreamHandles) -> Option<u32>,
 ) -> jlong {
-    crate::handle::first_handle(env, &REGISTRY, handle, "MuxSender", |s| pick(&s.handles))
+    crate::handle::first_handle(env, &REGISTRY, handle, "MuxSender", |s| {
+        pick(&s.handles.get())
+    })
 }
 
 jni_native! {
@@ -176,13 +181,70 @@ pub(crate) fn register(
         Ok(sender) => {
             // Read before the sender moves into the slot: the handle
             // getters answer from this, never from the slot a parked send holds.
-            let handles = StreamHandles::of(&sender);
+            let handles = StreamHandlesCell::new(StreamHandles::of(&sender));
             REGISTRY.insert(Owned::new(sender, cancel, Snapshot { domain, handles })) as jlong
         }
         Err(e) => {
             throw_mux_error(env, &e);
             0
         }
+    }
+}
+
+jni_native! {
+    /// `nReconfigure(handle, ...config arrays as nOpen...)` — `MuxSender::reconfigure`
+    /// with the config built as `nOpen` builds it. It takes the slot as a send
+    /// does (so `nClose` cancels one parked in the transport) and stores the
+    /// stream handles again before it lets the slot go. A refused config throws
+    /// `MuxException(CONFIG_INVALID)` and changes nothing.
+    #[allow(clippy::too_many_arguments)]
+    fn Java_org_tstrans_shells_MuxSender_nReconfigure<'local>(
+        env,
+        _class,
+        handle: jlong,
+        program_number: jint,
+        pmt_pid: jint,
+        pcr_pid: jint,
+        pcr_interval_ms: jint,
+        pcr_lead_ms: jint,
+        psi_interval_ms: jint,
+        buffer_packets: jint,
+        av1_carriage: jint,
+        stream_pids: JIntArray<'local>,
+        stream_kinds: JIntArray<'local>,
+        stream_codecs: JIntArray<'local>,
+        stream_type_codes: JIntArray<'local>,
+        stream_carries_pts: JBooleanArray<'local>,
+        data_desc_bytes: JByteArray<'local>,
+        data_desc_lens: JIntArray<'local>,
+    ) = () => {
+        let Ok(cfg) = build_muxer_config_from_arrays(
+            env,
+            program_number,
+            pmt_pid,
+            pcr_pid,
+            pcr_interval_ms,
+            pcr_lead_ms,
+            psi_interval_ms,
+            buffer_packets,
+            av1_carriage,
+            &stream_pids,
+            &stream_kinds,
+            &stream_codecs,
+            &stream_type_codes,
+            &stream_carries_pts,
+            &data_desc_bytes,
+            &data_desc_lens,
+        ) else {
+            return; // MuxException pending
+        };
+        with_push(env, handle, |inner| {
+            let result = inner.reconfigure(cfg);
+            // Also after a failed drain: the new configuration may already be
+            // in force then, and a refused one leaves the handles as they were.
+            REGISTRY.snapshot(handle as u64, |s| s.handles.refresh(inner));
+            result
+        });
     }
 }
 

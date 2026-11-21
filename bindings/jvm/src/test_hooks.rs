@@ -357,3 +357,140 @@ jni_native! {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// org.tstrans.internal.GatedMuxSender — a `MuxSender` over a transport that
+// refuses its first send with `Backpressure` (the sender keeps that output)
+// and makes every later send wait until the shell's cancel fires. The next
+// call that has output to send (a `reconfigure` first sends what the refused
+// send left) then parks in the transport holding the slot, which no socket
+// transport can be made to do without depending on its buffer sizes.
+// ---------------------------------------------------------------------------
+
+mod gated_mux_sender {
+    use crate::mpegts::muxer::build_muxer_config_from_arrays;
+    use crate::panic::jni_native;
+    use jni::objects::{JBooleanArray, JByteArray, JIntArray};
+    use jni::sys::{jint, jlong};
+    use std::sync::{Arc, Condvar, Mutex, MutexGuard};
+    use tst_core::transport::{Transport, TransportCancel, TransportError};
+    use tst_pipeline::binding::{Domain, Opened};
+
+    #[derive(Default)]
+    struct State {
+        refused_one: bool,
+        cancelled: bool,
+        closed: bool,
+    }
+
+    #[derive(Default)]
+    struct Gate {
+        state: Mutex<State>,
+        wake: Condvar,
+    }
+
+    impl Gate {
+        fn state(&self) -> MutexGuard<'_, State> {
+            self.state.lock().unwrap_or_else(|e| e.into_inner())
+        }
+    }
+
+    impl TransportCancel for Gate {
+        fn cancel(&self) {
+            self.state().cancelled = true;
+            self.wake.notify_all();
+        }
+
+        fn is_cancelled(&self) -> bool {
+            self.state().cancelled
+        }
+    }
+
+    struct GatedTransport(Arc<Gate>);
+
+    impl Transport for GatedTransport {
+        fn send_bytes(&mut self, _msg: &[u8]) -> Result<(), TransportError> {
+            let mut s = self.0.state();
+            if !s.refused_one {
+                s.refused_one = true;
+                return Err(TransportError::Backpressure {
+                    msg: "the gated transport refuses its first send".to_string(),
+                    errno_code: None,
+                });
+            }
+            while !s.cancelled && !s.closed {
+                s = self.0.wake.wait(s).unwrap_or_else(|e| e.into_inner());
+            }
+            Err(if s.cancelled {
+                TransportError::ExplicitClose
+            } else {
+                TransportError::Closed
+            })
+        }
+
+        fn max_payload(&self) -> usize {
+            1316
+        }
+
+        fn is_alive(&self) -> bool {
+            let s = self.0.state();
+            !s.cancelled && !s.closed
+        }
+
+        fn close(&mut self) {
+            self.0.state().closed = true;
+            self.0.wake.notify_all();
+        }
+    }
+
+    jni_native! {
+        /// `org.tstrans.internal.GatedMuxSender.nOpen(...config arrays as
+        /// MuxSender.nOpen...)` — a `MuxSender` handle (in the shells'
+        /// registry) over a fresh gated transport in the TCP error domain.
+        #[allow(clippy::too_many_arguments)]
+        fn Java_org_tstrans_internal_GatedMuxSender_nOpen<'local>(
+            env,
+            _class,
+            program_number: jint,
+            pmt_pid: jint,
+            pcr_pid: jint,
+            pcr_interval_ms: jint,
+            pcr_lead_ms: jint,
+            psi_interval_ms: jint,
+            buffer_packets: jint,
+            av1_carriage: jint,
+            stream_pids: JIntArray<'local>,
+            stream_kinds: JIntArray<'local>,
+            stream_codecs: JIntArray<'local>,
+            stream_type_codes: JIntArray<'local>,
+            stream_carries_pts: JBooleanArray<'local>,
+            data_desc_bytes: JByteArray<'local>,
+            data_desc_lens: JIntArray<'local>,
+        ) -> jlong = 0 => {
+            let Ok(cfg) = build_muxer_config_from_arrays(
+                env,
+                program_number,
+                pmt_pid,
+                pcr_pid,
+                pcr_interval_ms,
+                pcr_lead_ms,
+                psi_interval_ms,
+                buffer_packets,
+                av1_carriage,
+                &stream_pids,
+                &stream_kinds,
+                &stream_codecs,
+                &stream_type_codes,
+                &stream_carries_pts,
+                &data_desc_bytes,
+                &data_desc_lens,
+            ) else {
+                return 0; // MuxException pending
+            };
+            let gate = Arc::new(Gate::default());
+            let transport: Box<dyn Transport> = Box::new(GatedTransport(Arc::clone(&gate)));
+            let opened = Opened::new(transport, gate, Domain::Tcp);
+            crate::shells::mux_sender::register(env, opened, cfg)
+        }
+    }
+}

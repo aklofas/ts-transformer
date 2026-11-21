@@ -232,6 +232,16 @@ muxer-wide setting (`pcrIntervalMs`, `pcrLeadMs`, `psiIntervalMs`,
 changes nothing. The single-program config means the program list itself cannot
 grow here; the Rust and Python muxers take several programs.
 
+The muxing shells take the same call: `MuxSender.reconfigure(MuxerConfig)` and
+`ManagedMuxSender.reconfigure(MuxerConfig)` (also on the `MuxSender` that
+`RtspPushSession.intoMuxSender` returns) apply these rules to the running
+sender, and the next send puts the new PAT and PMT on the wire. Their
+`videoHandle()` … `dataHandle()` getters then return the handles of the new
+configuration, and never wait for a send or a reconfigure on another thread.
+A reconfigure holds the sender as a send does: it first sends what an earlier
+refused send left, so it can wait on a slow transport, and `close()` from
+another thread ends that wait as it ends a send's (`CLOSED`).
+
 <!-- compile: java-statements -->
 ```java
 import org.tstrans.mpegts.*;
@@ -1291,7 +1301,7 @@ falls into two groups.
 | `rtpStats()` (`Receiver`, `DemuxReceiver`) | the RTP counters as they stand; empty off RTP | the counters as the close left them |
 | `tsBytesDemuxed()` (`DemuxReceiver`, `ManagedDemuxReceiver`) | the count as it stands | the count at close |
 | `peerAddr()` (`tcp.Transport`) | the address captured at accept | throws `IllegalStateException`, also once the connection is converted into a shell |
-| `videoHandle()` … `dataHandle()` on the three `MuxSender` classes | the handles of the `MuxerConfig` the sender was built from | throws `IllegalStateException` |
+| `videoHandle()` … `dataHandle()` on `MuxSender`, `ManagedMuxSender` and `MountHandle` | the handles of the configuration in force: the one the sender was built from, or the last one `reconfigure` accepted (`MountHandle` has no `reconfigure`) | throws `IllegalStateException` |
 | `reconnectAttempts()`, `reconnectStats()` on the managed shells | live counters kept outside the object | throws `IllegalStateException` |
 | `stats()`, `endReason()`, `endDetail()` (`RtspPushSession`) | read outside the session, so a waiting send does not hold them up | the values the session ended with |
 | `endReason()` / `endDetail()` | the recorded reason, or empty; `H264Receiver` answers empty while a `recvAu()` is in flight | the reason recorded at close |
