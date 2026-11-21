@@ -4,6 +4,7 @@
 //! Bindings (UniFFI dictionaries, JNI POJOs, cbindgen C structs) consume
 //! these directly.
 
+use crate::error::OptionError;
 use crate::options::{
     Congestion, KeyLength, MaxBandwidth, PacketFilter, Passphrase, Role, StreamId,
 };
@@ -68,6 +69,13 @@ pub struct SrtSocketConfig {
     /// connections break. A longer value delays the `ManagedTransport`
     /// reconnect, and with it the host re-resolve, after a silent peer.
     pub peer_idle_timeout: Option<Duration>,
+    /// A managed sender's silent-peer window: its connection is abandoned
+    /// when the peer has answered none of its sends for this long. Set by
+    /// the `x-silentpeertimeout` URL key; refused by every SRT open;
+    /// `managed_*_sender_from_url` (in [`crate::shells`]) reads it and dials
+    /// without it. Arm a hand-built `ManagedTransport` with
+    /// `ManagedTransport::with_silent_peer_timeout` and leave this `None`.
+    pub silent_peer_timeout: Option<Duration>,
     /// SRT linger timeout. `None` preserves libsrt's default — which is
     /// `l_onoff=0, l_linger=0` (linger off; close returns immediately and
     /// data still queued in the send buffer is dropped). Note: this differs
@@ -171,6 +179,7 @@ impl SrtSocketConfig {
             recv_timeout,
             connect_timeout,
             peer_idle_timeout,
+            silent_peer_timeout,
             linger,
             latency,
             peer_latency,
@@ -279,6 +288,20 @@ impl SrtSocketConfig {
     }
 }
 
+/// The refusal every SRT open gives a config that carries a silent-peer
+/// window: only a managed sender can use one, and it takes the window out
+/// before it dials. Checked before any address is resolved.
+pub(crate) fn refuse_silent_peer_window(cfg: &SrtSocketConfig) -> Result<(), OptionError> {
+    if cfg.silent_peer_timeout.is_some() {
+        return Err(OptionError::OutOfRange(
+            "x-silentpeertimeout: managed SRT senders only \
+             (a managed sender opened from an srt:// URL)"
+                .to_string(),
+        ));
+    }
+    Ok(())
+}
+
 /// Configuration for a listener (passive) socket.
 ///
 /// The socket options are a [`SrtSocketConfig`] in [`socket`](Self::socket);
@@ -290,7 +313,8 @@ impl SrtSocketConfig {
 /// `udp_send_buffer_bytes`, `loss_max_ttl`, `too_late_packet_drop`,
 /// `packet_filter`, `congestion`, `recv_timeout`, `peer_idle_timeout` and
 /// `linger`. The rest (`connect_timeout`, `stream_id`, `role`) are
-/// caller-side and are stored but not applied. `send_timeout` is not applied
+/// caller-side and are stored but not applied; a `silent_peer_timeout` is
+/// refused (see [`SrtSocketConfig::silent_peer_timeout`]). `send_timeout` is not applied
 /// to the listener either, but accepted sockets get it, and `recv_timeout`,
 /// from this config.
 /// Accepted sockets inherit the PRE options through libsrt.

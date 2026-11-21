@@ -1439,3 +1439,199 @@ fn a_failed_receive_redial_logs_its_cause_and_no_passphrase() {
     logs_assert(|lines: &[&str]| redial::two_cause_lines(lines, "tst_pipeline::managed_receive"));
     redial::assert_no_secret_was_logged();
 }
+
+// ------------------------------------------------------------------------
+// `x-silentpeertimeout`: only a managed sender can use it.
+// ------------------------------------------------------------------------
+
+const SILENT_PEER_KEY: &str = "x-silentpeertimeout";
+
+/// `url.accept_one` on its own thread, bounded: if the refusal under test
+/// were missing, the accept would park with no peer coming, so the slot is
+/// cancelled and the test fails instead of hanging.
+fn accept_one_within(url: SrtUrl) -> Result<SrtTransport, SrtError> {
+    let slot = Arc::new(tst_core::cancel::CancelSlot::new());
+    let (tx, rx) = mpsc::channel();
+    let worker = {
+        let slot = Arc::clone(&slot);
+        std::thread::spawn(move || {
+            let _ = tx.send(url.accept_one(&slot));
+        })
+    };
+    match rx.recv_timeout(scaled(WATCHDOG)) {
+        Ok(r) => {
+            worker.join().expect("accept thread");
+            r
+        }
+        Err(_) => {
+            slot.cancel();
+            let _ = worker.join();
+            panic!("accept_one did not refuse the key: it bound and waited for a peer");
+        }
+    }
+}
+
+fn listener_url_with_the_key() -> SrtUrl {
+    let port = crate::common::reserve_port();
+    SrtUrl::parse(&format!(
+        "srt://127.0.0.1:{port}?mode=listener&{SILENT_PEER_KEY}=1500"
+    ))
+    .expect("parse")
+}
+
+#[test]
+fn connect_with_refuses_a_config_that_carries_the_window() {
+    require_loopback!();
+    let (_dead, port) = dead_port();
+    let mut cfg = tst_srt::SrtSocketConfig::default();
+    cfg.silent_peer_timeout = Some(Duration::from_millis(1_500));
+    cfg.connect_timeout = Some(Duration::from_millis(500));
+    let err = tst_srt::SrtSocket::connect_with(&cfg, format!("127.0.0.1:{port}"))
+        .expect_err("a config with the window must be refused");
+    assert!(
+        matches!(err, tst_srt::SrtConnectError::InvalidOption(_)),
+        "{err:?}"
+    );
+    assert!(err.to_string().contains(SILENT_PEER_KEY), "{err}");
+}
+
+#[test]
+fn bind_with_refuses_a_config_that_carries_the_window() {
+    require_loopback!();
+    let mut cfg = tst_srt::SrtListenerConfig::default();
+    cfg.socket.silent_peer_timeout = Some(Duration::from_millis(1_500));
+    let err = tst_srt::SrtListener::bind_with(&cfg, "127.0.0.1:0")
+        .expect_err("a config with the window must be refused");
+    assert!(
+        matches!(err, tst_srt::BindError::InvalidOption(_)),
+        "{err:?}"
+    );
+    assert!(err.to_string().contains(SILENT_PEER_KEY), "{err}");
+}
+
+#[test]
+fn a_listener_url_with_the_key_is_refused_as_config_invalid() {
+    require_loopback!();
+    let err = accept_one_within(listener_url_with_the_key())
+        .err()
+        .expect("a listener URL with the key must be refused");
+    assert!(matches!(err, SrtError::Option(_)), "{err:?}");
+    let binding = tst_pipeline::binding::BindingError::from(err);
+    assert_eq!(binding.kind, BindingErrorKind::ConfigInvalid, "{binding:?}");
+    assert!(binding.detail.contains(SILENT_PEER_KEY), "{binding:?}");
+}
+
+#[test]
+fn a_cancelled_listener_open_with_the_key_reports_the_cancel() {
+    let slot = tst_core::cancel::CancelSlot::new();
+    slot.cancel();
+    let err = listener_url_with_the_key()
+        .accept_one(&slot)
+        .err()
+        .expect("a cancelled open must not succeed");
+    assert!(
+        matches!(
+            err,
+            SrtError::Transport(tst_pipeline::TransportError::ExplicitClose)
+        ),
+        "the cancel comes before the configuration: {err:?}"
+    );
+}
+
+#[test]
+fn a_plain_sender_url_with_the_key_is_refused() {
+    require_loopback!();
+    let (_dead, port) = dead_port();
+    let err = tst_srt::opener::open_sender(&format!(
+        "srt://127.0.0.1:{port}?conntimeo=500&{SILENT_PEER_KEY}=1500"
+    ))
+    .err()
+    .expect("a plain sender URL with the key must be refused");
+    assert_eq!(err.kind, BindingErrorKind::ConfigInvalid, "{err:?}");
+    assert!(err.detail.contains(SILENT_PEER_KEY), "{err:?}");
+}
+
+#[test]
+fn a_managed_receiver_url_with_the_key_is_refused() {
+    require_loopback!();
+    let (_dead, port) = dead_port();
+    let caller = SrtUrl::parse(&format!(
+        "srt://127.0.0.1:{port}?conntimeo=500&{SILENT_PEER_KEY}=1500"
+    ))
+    .expect("parse");
+    for url in [caller, listener_url_with_the_key()] {
+        let mode = url.mode;
+        let err = managed_receiver_from_url(&url, no_reconnect())
+            .err()
+            .unwrap_or_else(|| panic!("{mode:?}: a managed receiver must refuse the key"));
+        let binding = tst_pipeline::binding::BindingError::from(err);
+        assert_eq!(
+            binding.kind,
+            BindingErrorKind::ConfigInvalid,
+            "{mode:?}: {binding:?}"
+        );
+        assert!(
+            binding.detail.contains(SILENT_PEER_KEY),
+            "{mode:?}: {binding:?}"
+        );
+    }
+}
+
+#[test]
+fn the_refusal_names_the_key_and_no_secret() {
+    require_loopback!();
+    let (_dead, port) = dead_port();
+    let secrets = "passphrase=do-not-print-this&streamid=hidden-stream-name";
+    let caller = SrtUrl::parse(&format!(
+        "srt://127.0.0.1:{port}?conntimeo=500&{secrets}&{SILENT_PEER_KEY}=1500"
+    ))
+    .expect("parse");
+    let listener = SrtUrl::parse(&format!(
+        "srt://127.0.0.1:{}?mode=listener&{secrets}&{SILENT_PEER_KEY}=1500",
+        crate::common::reserve_port()
+    ))
+    .expect("parse");
+    let refusals = [
+        caller.connect().err().expect("caller refused").to_string(),
+        accept_one_within(listener)
+            .err()
+            .expect("listener refused")
+            .to_string(),
+    ];
+    for text in refusals {
+        assert!(text.contains(SILENT_PEER_KEY), "{text}");
+        for secret in ["do-not-print-this", "hidden-stream-name", "127.0.0.1"] {
+            assert!(
+                !text.contains(secret),
+                "the refusal carries {secret}: {text}"
+            );
+        }
+    }
+}
+
+#[test]
+fn the_managed_sender_open_accepts_the_key() {
+    require_loopback!();
+    let lb = crate::common::Loopback::bind();
+    let port = lb.port;
+    let accept = lb.spawn_accept(|mut sock| {
+        let mut buf = [0u8; 1500];
+        let n = sock.recv(&mut buf).expect("recv");
+        buf[..n].to_vec()
+    });
+    accept.wait_ready();
+
+    let url =
+        SrtUrl::parse(&format!("srt://127.0.0.1:{port}?{SILENT_PEER_KEY}=1500")).expect("parse");
+    let (mut tx, _handles, _stats) = managed_raw_sender_from_url(
+        &url,
+        ReconnectPolicy::default(),
+        tst_pipeline::RawSenderConfig::default(),
+    )
+    .expect("a managed sender opens with the key");
+    tx.send(b"sent by a sender opened with the key")
+        .expect("send");
+
+    assert_eq!(accept.join(), b"sent by a sender opened with the key");
+    tx.close();
+}

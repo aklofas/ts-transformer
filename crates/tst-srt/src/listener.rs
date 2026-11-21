@@ -107,6 +107,11 @@ impl SrtListener {
     /// disabled on the interface), so we fall through to v4. Mirrors
     /// ffmpeg's `ai_next` walk.
     ///
+    /// A config that carries a
+    /// [`silent_peer_timeout`](crate::SrtSocketConfig::silent_peer_timeout)
+    /// is refused with [`BindError::InvalidOption`] before the address is
+    /// resolved.
+    ///
     /// # Panics
     ///
     /// On the very first libsrt-touching call in the process, this
@@ -119,6 +124,8 @@ impl SrtListener {
         config: &SrtListenerConfig,
         addr: impl ToSocketAddrs,
     ) -> Result<Self, BindError> {
+        crate::config::refuse_silent_peer_window(&config.socket)
+            .map_err(BindError::InvalidOption)?;
         // Resolved before the operation starts — see `SrtSocket::connect_with`.
         let addrs: Vec<SocketAddr> = addr
             .to_socket_addrs()

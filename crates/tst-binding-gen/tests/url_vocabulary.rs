@@ -910,6 +910,7 @@ const SRT_PARSE: &[Row] = &[
             ("congestion", "None"),
             ("x-recvtimeout", "none"),
             ("x-sendtimeout", "none"),
+            ("x-silentpeertimeout", "none"),
             ("conntimeo", "none"),
             ("peeridletimeo", "none"),
             ("linger", "none"),
@@ -1258,6 +1259,48 @@ const SRT_PARSE: &[Row] = &[
             "invalid value for 'x-sendtimeout': expected a decimal integer without sign or leading zeros, got 'x'",
         ),
     ),
+    (
+        "srt://192.0.2.10:9000?x-silentpeertimeout=1500",
+        A(&[("x-silentpeertimeout", "1500")]),
+    ),
+    (
+        "srt://192.0.2.10:9000?x-silentpeertimeout=1000",
+        A(&[("x-silentpeertimeout", "1000")]),
+    ),
+    (
+        "srt://192.0.2.10:9000?x-silentpeertimeout=2147483",
+        A(&[("x-silentpeertimeout", "2147483")]),
+    ),
+    (
+        "srt://192.0.2.10:9000?x-silentpeertimeout=0",
+        R("invalid value for 'x-silentpeertimeout': must be 1000 to 2147483 (ms), got 0"),
+    ),
+    (
+        "srt://192.0.2.10:9000?x-silentpeertimeout=999",
+        R("invalid value for 'x-silentpeertimeout': must be 1000 to 2147483 (ms), got 999"),
+    ),
+    (
+        "srt://192.0.2.10:9000?x-silentpeertimeout=2147484",
+        R("invalid value for 'x-silentpeertimeout': must be 1000 to 2147483 (ms), got 2147484"),
+    ),
+    (
+        "srt://192.0.2.10:9000?x-silentpeertimeout=x",
+        R(
+            "invalid value for 'x-silentpeertimeout': expected a decimal integer without sign or leading zeros, got 'x'",
+        ),
+    ),
+    (
+        "srt://192.0.2.10:9000?x-silentpeertimeout=+1000",
+        R(
+            "invalid value for 'x-silentpeertimeout': expected a decimal integer without sign or leading zeros, got '+1000'",
+        ),
+    ),
+    (
+        "srt://192.0.2.10:9000?x-silentpeertimeout=01000",
+        R(
+            "invalid value for 'x-silentpeertimeout': expected a decimal integer without sign or leading zeros, got '01000'",
+        ),
+    ),
     // libsrt keys this library recognises but does not expose.
     (
         "srt://192.0.2.10:9000?bindtodevice=eth0",
@@ -1528,6 +1571,7 @@ fn effective_srt(url: &str) -> Effective {
         ("congestion", format!("{:?}", cfg.congestion)),
         ("x-recvtimeout", ms(cfg.recv_timeout)),
         ("x-sendtimeout", ms(cfg.send_timeout)),
+        ("x-silentpeertimeout", ms(cfg.silent_peer_timeout)),
         ("conntimeo", ms(cfg.connect_timeout)),
         ("peeridletimeo", ms(cfg.peer_idle_timeout)),
         ("linger", secs(cfg.linger)),
