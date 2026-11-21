@@ -597,3 +597,62 @@ fn drop_oldest_policy_does_not_surface_backpressure_on_overflow() {
         "the evicted message is never delivered; the survivors are, in order"
     );
 }
+
+/// `Blocking` over an initial inner whose send fires the wrapper's own cancel
+/// and then fails the way a socket closed under a write does; the factory
+/// always refuses.
+fn cancelling_send_over(
+    capacity: usize,
+    overflow: OverflowPolicy,
+    max_attempts: u32,
+) -> ManagedTransport<Hooked> {
+    let cancel: Arc<Mutex<Option<Arc<dyn TransportCancel + Send + Sync>>>> = Arc::default();
+    let initial = Hooked(Box::new({
+        let cancel = Arc::clone(&cancel);
+        move || {
+            if let Some(handle) = cancel.lock().unwrap().take() {
+                handle.cancel();
+            }
+            Err(broken("socket closed under the write (test)"))
+        }
+    }));
+    let factory = || -> Result<Hooked, TransportError> { Err(broken("factory down (test)")) };
+    let policy = ReconnectPolicy::default()
+        .with_max_attempts(Some(max_attempts))
+        .with_backoff(BackoffStrategy::Constant(Duration::ZERO))
+        .with_gap_buffer_capacity(capacity)
+        .with_overflow_policy(overflow)
+        .with_mode(ReconnectMode::Blocking);
+    let managed = ManagedTransport::new(initial, factory, policy).expect("the policy validates");
+    *cancel.lock().unwrap() = managed.cancel_handle();
+    managed
+}
+
+/// `Blocking`: a cancel that lands during the inner send is what the call
+/// reports, and the message is not left queued behind a wrapper that will
+/// never send again (nor does it evict a live entry).
+#[test]
+fn a_cancel_during_the_inner_send_leaves_nothing_queued() {
+    for overflow in [OverflowPolicy::Reject, OverflowPolicy::DropOldest] {
+        let mut managed = cancelling_send_over(4, overflow, 3);
+        let stats = managed.stats_handle();
+        assert_eq!(
+            managed.send_bytes(b"x"),
+            Err(TransportError::ExplicitClose),
+            "{overflow:?}"
+        );
+        assert_eq!(
+            stats.stats().expect("gap lock not poisoned").gap_len,
+            0,
+            "{overflow:?}"
+        );
+    }
+}
+
+/// `Blocking`, capacity 0: with no reconnect attempts allowed the call still
+/// reports the cancel, not a give-up.
+#[test]
+fn a_cancel_during_the_inner_send_at_capacity_zero_is_the_cancel_not_a_give_up() {
+    let mut managed = cancelling_send_over(0, OverflowPolicy::Reject, 0);
+    assert_eq!(managed.send_bytes(b"x"), Err(TransportError::ExplicitClose));
+}
