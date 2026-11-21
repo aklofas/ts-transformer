@@ -15,8 +15,9 @@
 //! boundary has failed, [`TsFraming::flush`] sends the whole packets held
 //! when every boundary present reads 0x47 (the check STRICT mode makes on
 //! every push), so a stream of one or two packets is delivered. After the
-//! first skipped byte or failed boundary only the three-packet rule sends
-//! anything. The price is paid by a start that only looks aligned (0x47 at
+//! first skipped byte or failed boundary only the three-start rule sends
+//! anything: three consecutive packet starts must read 0x47, so two whole
+//! packets and the first byte of a third are enough. The price is paid by a start that only looks aligned (0x47 at
 //! offset 0, and at 188 when that byte is held) and is flushed inside its
 //! first 376 bytes: those 188 or 376 bytes are sent although they are not
 //! packets, every real packet that starts inside them is lost (one for 188
@@ -33,12 +34,12 @@
 //! thrown away with it.
 //!
 //! End of stream: [`TsFraming::finish`] flushes and then goes on scanning
-//! what is left with the same three-packet rule, because no later push
+//! what is left with the same three-start rule, because no later push
 //! will. It scans everything held: the limit that makes a push give up on
 //! input that does not look like TS is not applied, so the result does not
 //! depend on where the limit happened to interrupt a push. What still
-//! cannot be verified (a partial packet, fewer than three packets behind
-//! damage, bytes that are not TS) stays buffered and is counted by
+//! cannot be verified (a partial packet, packets behind damage that fewer
+//! than three sync bytes confirm, bytes that are not TS) stays buffered and is counted by
 //! [`TsFraming::buffered_bytes`]; it is never sent.
 //!
 //! STRICT mode checks every boundary of a call before committing any of
@@ -426,13 +427,15 @@ impl TsFraming {
     }
 
     /// End of stream: [`Self::flush`], then go on scanning what is left
-    /// with the ordinary three-packet rule until nothing more verifies,
+    /// with the ordinary three-start rule until nothing more verifies,
     /// because no later push will do it. Whole bundles leave as a push
     /// would have framed them, the last packets as a flush emits them.
     ///
     /// What still cannot be verified stays buffered, is never sent and is
-    /// counted by [`Self::buffered_bytes`]: a partial last packet, fewer
-    /// than three packets behind skipped bytes, bytes that are not TS.
+    /// counted by [`Self::buffered_bytes`]: a partial last packet, packets
+    /// behind skipped bytes that fewer than three sync bytes confirm (two
+    /// whole packets and a first byte reading 0x47 do confirm), bytes that
+    /// are not TS.
     ///
     /// The scan limit of [`Self::new`] does not stop this pass, whether a
     /// push left it pending or the pass itself crosses it: everything held
@@ -863,6 +866,24 @@ mod tests {
         assert_eq!(f.flush(), vec![good3]);
         assert_eq!(f.buffered_bytes(), 0);
         assert_eq!(counters(&f), (664, 100, 0));
+    }
+
+    #[test]
+    fn two_packets_and_the_first_byte_of_a_third_behind_garbage_are_sent() {
+        let two = clean_packets(0, 2);
+        let mut input = vec![0x00; 100];
+        input.extend_from_slice(&two);
+        input.push(0x47);
+        let mut f = pushed(&input);
+        assert_eq!(f.buffered_bytes(), 377);
+
+        // Three sync bytes one packet apart confirm the alignment: the two
+        // whole packets go out, the lone byte stays.
+        assert_eq!(f.flush(), vec![two]);
+        assert!(f.finish().is_empty());
+        assert_eq!(f.buffered_bytes(), 1);
+        assert_eq!(counters(&f), (477, 100, 0));
+        assert_eq!(f.stats().packets_sent, 2);
     }
 
     #[test]

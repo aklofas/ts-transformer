@@ -533,7 +533,8 @@ impl<T: Transport> Sender<T> {
     /// [`Self::close`]. It sends what [`Self::flush`] sends and then makes
     /// one end-of-stream pass over what the framer still holds: packets
     /// behind damage that a later `send_ts` would have verified (three
-    /// consecutive sync bytes) are sent now, because no later call comes.
+    /// consecutive packet starts reading `0x47`: two whole packets and the
+    /// first byte of a third are enough) are sent now, because no later call comes.
     /// Nothing is cancelled first, so the sends go to the still-live
     /// transport and the transport's own close runs uncancelled (a queuing
     /// transport writes its queue). Idempotent: `Ok(())` on a sender that
@@ -549,8 +550,10 @@ impl<T: Transport> Sender<T> {
     ///   sent are abandoned.
     /// - Otherwise [`TsFramingError::UnsentTail`] (kind `InputMalformed`)
     ///   when bytes are left that could not be sent as whole aligned TS
-    ///   packets: a partial last packet (in both framing modes), fewer
-    ///   than three packets behind skipped bytes, bytes that are not TS.
+    ///   packets: a partial last packet (in both framing modes), packets
+    ///   behind skipped bytes that fewer than three sync bytes confirm (two
+    ///   whole packets and a first byte reading `0x47` do confirm), bytes
+    ///   that are not TS.
     ///   Everything that could be verified was sent first, also behind
     ///   more garbage than [`SenderConfig::max_unsynced_bytes`]: the end
     ///   pass scans all the sender holds. The count is
