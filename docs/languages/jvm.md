@@ -1846,10 +1846,11 @@ the same port.
 `recvBytes()` returns aligned TS packets (one 188-byte packet per call),
 whatever datagram size the publisher sends. `Receiver.recvBytes(int)` and
 `srt.ManagedReceiver.recvBytes(int)` ignore their argument: they are
-deprecated and removed in 0.12.0. A receiving shell returns its
-first packet once it has found four sync bytes 188 bytes apart (the
-starts of four aligned TS packets), and again after it lost the alignment.
-When the stream ends (the peer's end of stream or a broken transport) the
+deprecated and removed in 0.12.0.
+
+A receiving shell returns its first packet once it has found four sync
+bytes 188 bytes apart (the starts of four aligned TS packets), and again
+after it lost the alignment. When the stream ends (the peer's end of stream or a broken transport) the
 one to three packets still waiting are delivered before the end, when every
 packet boundary present reads `0x47`, the first byte of a trailing partial
 packet included: a stream of one, two or three packets arrives (a
