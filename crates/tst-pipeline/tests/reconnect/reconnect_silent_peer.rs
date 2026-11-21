@@ -559,3 +559,95 @@ fn a_cancel_after_a_trip_does_not_fire_the_abandoned_connection() {
         "the abandoned connection's wake handle stayed published"
     );
 }
+
+#[test]
+fn a_trip_inside_the_background_drain_keeps_the_message_and_reconnects() {
+    let (initial, old) = Scripted::new(Reading::Frozen(1));
+    // The first replacement is silent too, and slow enough that draining
+    // the backlog into it takes many windows; each send stays far under
+    // half the window, so the drain's own sends never restart the count.
+    let (mut slow, _) = Scripted::new(Reading::Frozen(1));
+    slow.pause = W / 10;
+    let factory = Factory::with([slow]);
+    let p = policy(ReconnectMode::Background)
+        .with_gap_buffer_capacity(512)
+        // The backlog is queued while the worker waits out its first step.
+        .with_backoff(BackoffStrategy::Constant(Duration::from_millis(200)));
+    let mut m = armed(initial, &factory, p, W);
+    let stats = m.stats_handle();
+    let mut next = 0;
+    assert!(send_until(&mut m, &mut next, |_| old
+        .abandons
+        .load(Ordering::SeqCst)
+        == 1));
+    for _ in 0..400 {
+        m.send_bytes(&msg(next)).expect("queued");
+        next += 1;
+    }
+    assert!(
+        wait_for(scaled(Duration::from_secs(5)), || factory.calls() == 2),
+        "the drain never gave up on the silent replacement"
+    );
+    assert!(wait_for(scaled(Duration::from_secs(5)), || {
+        stats
+            .stats()
+            .is_some_and(|s| s.reconnect_successes == 2 && !s.reconnecting && s.gap_len == 0)
+    }));
+    let second = factory.made(0);
+    assert_eq!(second.abandons.load(Ordering::SeqCst), 1);
+    assert_eq!(second.closes.load(Ordering::SeqCst), 0);
+    let second = second.log();
+    let third = factory.made(1).log();
+    // The message at the front when the drain tripped was accepted by the
+    // silent replacement, kept at the front, and is the third connection's
+    // first, once.
+    let front = second.last().expect("the drain sent into it").clone();
+    assert_eq!(third.first(), Some(&front));
+    assert_eq!(third.iter().filter(|b| **b == front).count(), 1);
+    let from = u32::from_be_bytes(front[..4].try_into().unwrap());
+    assert_eq!(third, (from..next).map(msg).collect::<Vec<_>>());
+    assert_eq!(stats.stats().unwrap().gap_messages_dropped, 0);
+}
+
+#[test]
+fn a_trip_behind_a_full_reject_backlog_restarts_the_worker() {
+    let window = Duration::from_millis(30);
+    let (mut initial, _) = Scripted::new(Reading::Frozen(1));
+    initial.break_after = Some(0);
+    // The replacement is silent and drains slower than the producer
+    // offers, so its backlog stays full until it trips.
+    let (mut slow, _) = Scripted::new(Reading::Frozen(1));
+    slow.pause = window / 10;
+    let factory = Factory::with([slow]);
+    let p = policy(ReconnectMode::Background)
+        .with_gap_buffer_capacity(4)
+        .with_overflow_policy(OverflowPolicy::Reject);
+    let mut m = armed(initial, &factory, p, window);
+    let stats = m.stats_handle();
+    let mut refused = 0u32;
+    let deadline = Instant::now() + scaled(Duration::from_secs(5));
+    let mut n = 0u32;
+    while factory.calls() < 2 {
+        assert!(
+            Instant::now() < deadline,
+            "the silent replacement was never replaced"
+        );
+        if matches!(
+            m.send_bytes(&msg(n)),
+            Err(TransportError::Backpressure { .. })
+        ) {
+            refused += 1;
+        }
+        n += 1;
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    assert!(refused > 0, "the backlog was full");
+    assert_eq!(factory.made(0).abandons.load(Ordering::SeqCst), 1);
+    assert!(wait_for(scaled(Duration::from_secs(5)), || {
+        stats
+            .stats()
+            .is_some_and(|s| s.reconnect_successes == 2 && !s.reconnecting && s.gap_len == 0)
+    }));
+    m.send_bytes(&msg(n)).expect("delivered");
+    assert_eq!(factory.made(1).log().last(), Some(&msg(n)));
+}
