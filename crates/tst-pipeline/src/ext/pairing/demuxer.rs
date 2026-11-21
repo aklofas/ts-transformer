@@ -39,6 +39,12 @@ pub struct PairingDemuxerConfig {
 /// arrived after the last video AU), and in
 /// [`PairerMode::Buffered`](super::PairerMode::Buffered) the buffered video
 /// AUs are additionally force-drained (best-effort matched).
+///
+/// A signalled discontinuity in the bytes starts a new epoch in the pairer,
+/// as the ["Epochs" section of `Pairer`](super::Pairer#epochs) describes. The
+/// owned demuxer emits no `ReconnectDiscontinuity`, so a reconnect of the
+/// byte source is invisible here, like an encoder restart that signals
+/// nothing.
 pub struct PairingDemuxer {
     demuxer: Demuxer,
     pairer: Pairer,
