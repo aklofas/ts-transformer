@@ -1033,12 +1033,12 @@ class PushCloseKind(enum.IntEnum):
     """How a push's close ended (`PushCloseOutcome.kind`). Pure-Python
     IntEnum, one member per case of the Rust `PushCloseOutcome`."""
 
-    CLEAN = 1
-    CANCELLED = 2
-    MEDIA_LOST = 3
-    TEARDOWN_REFUSED = 4
-    TEARDOWN_TIMED_OUT = 5
-    FAILED = 6
+    CLEAN = 0
+    CANCELLED = 1
+    MEDIA_LOST = 2
+    TEARDOWN_REFUSED = 3
+    TEARDOWN_TIMED_OUT = 4
+    FAILED = 5
 
 
 @dataclass(frozen=True)
@@ -1046,8 +1046,9 @@ class PushCloseOutcome:
     """Pure-Python frozen dataclass — how a push's close ended, from
     `RtspPushSession.close_outcome()`. `status`: the RTSP status of a
     refused TEARDOWN, else `None`. `detail`: the refusal's reason phrase or
-    a failed close's text (at most 256 characters, control characters
-    replaced), else empty."""
+    a failed close's text (at most 256 characters, control,
+    bidirectional-format and line-separator characters replaced), else
+    empty."""
 
     kind: PushCloseKind
     status: Optional[int]

@@ -1406,8 +1406,9 @@ def test_close_outcome_never_waits_behind_a_parked_send() -> None:
 
 def test_push_close_kind_has_one_member_per_rust_case() -> None:
     """The member names are the Rust `PushCloseOutcome` variants in
-    SCREAMING_SNAKE_CASE, in order: a variant added in Rust needs a member
-    here (and a case in the binding's conversion)."""
+    SCREAMING_SNAKE_CASE, in order, numbered from 0 as the JVM's
+    `Kind.code()` is: a variant added in Rust needs a member here (and a
+    case in the binding's conversion)."""
     import re
     from pathlib import Path
 
@@ -1426,3 +1427,4 @@ def test_push_close_kind_has_one_member_per_rust_case() -> None:
     assert variants, "no variant read"
     snake = [re.sub(r"(?<!^)(?=[A-Z])", "_", v).upper() for v in variants]
     assert [k.name for k in PushCloseKind] == snake
+    assert [k.value for k in PushCloseKind] == list(range(len(snake)))
