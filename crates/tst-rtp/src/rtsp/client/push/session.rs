@@ -162,6 +162,10 @@ pub struct RtspPush {
     /// Added to the time the report schedule reads.
     #[cfg(test)]
     pub(super) clock_skew: std::time::Duration,
+    /// What [`Self::end_reason`] read at the moment the close outcome was
+    /// set: `None` until a close sets it.
+    #[cfg(test)]
+    pub(super) end_reason_at_outcome: Option<Option<EndReason>>,
 }
 
 impl std::fmt::Debug for RtspPush {
@@ -281,6 +285,8 @@ impl RtspPush {
             close_outcome: Arc::default(),
             #[cfg(test)]
             clock_skew: std::time::Duration::ZERO,
+            #[cfg(test)]
+            end_reason_at_outcome: None,
         }
     }
 
@@ -521,7 +527,8 @@ impl RtspPush {
     /// What both closes do and report: wait for the queued media, end the
     /// session through `tear_down`, and work out the report in the order
     /// [`Self::close`] documents. The first close's report is kept as the
-    /// close outcome.
+    /// close outcome, last: whatever `tear_down` records is seen by a
+    /// reader of the outcome.
     fn close_with(
         &mut self,
         tear_down: impl FnOnce(&mut RtspClient) -> Result<(), RtspError>,
@@ -551,6 +558,10 @@ impl RtspPush {
                 reason: "Session Not Found".into(),
             })
         };
+        #[cfg(test)]
+        if self.close_outcome.get().is_none() {
+            self.end_reason_at_outcome = Some(self.client.end_reason.get());
+        }
         let _ = self.close_outcome.set(PushCloseOutcome::of(&report, lost));
         report
     }
@@ -848,11 +859,17 @@ impl Transport for RtspPush {
         if self.closed {
             return;
         }
-        let _ = self.close_with(|client| client.teardown_within(CLOSE_TEARDOWN_BOUND));
-        // A TEARDOWN the server accepted has recorded the clean end; any
-        // other outcome is the caller ending the session.
-        record_end(&self.client.end_reason, EndReason::Cancelled);
-        self.client.driver.stop();
+        // The end is recorded and the thread told to stop inside the step
+        // that ends the session, before `close_with` keeps the outcome: a
+        // reader that sees the outcome also sees the end.
+        let _ = self.close_with(|client| {
+            let torn_down = client.teardown_within(CLOSE_TEARDOWN_BOUND);
+            // A TEARDOWN the server accepted has recorded the clean end; any
+            // other outcome is the caller ending the session.
+            record_end(&client.end_reason, EndReason::Cancelled);
+            client.driver.stop();
+            torn_down
+        });
         self.closed = true;
     }
 

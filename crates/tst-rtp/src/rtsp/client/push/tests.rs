@@ -2874,3 +2874,22 @@ fn a_kept_detail_is_cleaned_like_a_reason() {
     };
     assert!(detail.contains("x\u{fffd}y\u{fffd}z"), "{detail:?}");
 }
+
+/// A reader that sees the outcome of a shell's close also sees why the
+/// session ended: the end is recorded before the outcome is kept.
+#[test]
+fn the_end_reason_is_recorded_before_a_transport_close_keeps_its_outcome() {
+    let (mut push, peer) = recording_whose_teardown_gets(Some("500 Internal Server Error"));
+    Transport::close(&mut push);
+    assert_eq!(
+        push.end_reason_at_outcome,
+        Some(Some(EndReason::Cancelled)),
+        "the end reason as it read when the outcome was kept"
+    );
+    assert_eq!(
+        push.stats_handle().close_outcome(),
+        refused(500, "Internal Server Error")
+    );
+    drop(push);
+    joined(peer);
+}
