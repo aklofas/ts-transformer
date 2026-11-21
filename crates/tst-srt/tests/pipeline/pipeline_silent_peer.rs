@@ -21,22 +21,53 @@ const MSG: [u8; 1316] = [0x47; 1316];
 
 /// A listener whose accepted peer is held open, unread, until the returned
 /// sender is dropped or sent on (or the hold runs out).
-fn held_peer() -> (u16, AcceptHandle<()>, mpsc::Sender<()>) {
+struct HeldPeer {
+    port: u16,
+    accept: AcceptHandle<()>,
+    release: mpsc::Sender<()>,
+    accepted: mpsc::Receiver<()>,
+}
+
+fn held_peer() -> HeldPeer {
     let lb = Loopback::bind();
     let port = lb.port;
     let (release, released) = mpsc::channel::<()>();
+    let (accepted_tx, accepted) = mpsc::channel::<()>();
     let accept = lb.spawn_accept(move |peer| {
+        let _ = accepted_tx.send(());
         let _ = released.recv_timeout(scaled(Duration::from_secs(15)));
         drop(peer);
     });
     accept.wait_ready();
-    (port, accept, release)
+    HeldPeer {
+        port,
+        accept,
+        release,
+        accepted,
+    }
 }
 
-/// An SRT sender with the sender preset (5 s linger), dialled to `addr`.
-fn sender_to(addr: SocketAddr) -> SrtTransport {
+impl HeldPeer {
+    /// Wait until the listener holds the connection. A caller that closed
+    /// before the accept could leave it with nothing to accept.
+    fn wait_accepted(&self) {
+        self.accepted
+            .recv_timeout(scaled(Duration::from_secs(10)))
+            .expect("the listener never accepted the connection");
+    }
+
+    fn finish(self) {
+        drop(self.release);
+        self.accept.join();
+    }
+}
+
+/// An SRT sender with the sender preset (5 s linger), dialled to `addr`,
+/// once `peer` holds the connection.
+fn sender_to(addr: SocketAddr, peer: &HeldPeer) -> SrtTransport {
     let socket =
         SrtSocket::connect_with(&SrtSocketConfig::sender_defaults(), addr).expect("connect");
+    peer.wait_accepted();
     SrtTransport::new(socket)
 }
 
@@ -47,8 +78,8 @@ fn loopback(port: u16) -> SocketAddr {
 #[test]
 fn peer_activity_moves_once_the_peer_acknowledges() {
     require_loopback!();
-    let (port, accept, release) = held_peer();
-    let mut t = sender_to(loopback(port));
+    let peer = held_peer();
+    let mut t = sender_to(loopback(peer.port), &peer);
 
     let before = t.peer_activity();
     assert!(before.is_some(), "a connected SRT transport has a reading");
@@ -63,27 +94,25 @@ fn peer_activity_moves_once_the_peer_acknowledges() {
     }
 
     t.close();
-    drop(release);
-    accept.join();
+    peer.finish();
 }
 
 #[test]
 fn peer_activity_is_none_once_closed() {
     require_loopback!();
-    let (port, accept, release) = held_peer();
-    let mut t = sender_to(loopback(port));
+    let peer = held_peer();
+    let mut t = sender_to(loopback(peer.port), &peer);
     t.close();
     assert_eq!(t.peer_activity(), None);
-    drop(release);
-    accept.join();
+    peer.finish();
 }
 
 #[test]
 fn abandon_does_not_wait_for_unacknowledged_data() {
     require_loopback!();
-    let (port, accept, release) = held_peer();
-    let relay = Relay::start(loopback(port));
-    let mut t = sender_to(relay.addr());
+    let peer = held_peer();
+    let relay = Relay::start(loopback(peer.port));
+    let mut t = sender_to(relay.addr(), &peer);
 
     assert_eq!(relay.mute_existing(), 1, "the sender's flow is muted");
     // One second of sends at 30 a second into the silence: every one is
@@ -105,15 +134,57 @@ fn abandon_does_not_wait_for_unacknowledged_data() {
     assert!(!t.is_alive());
 
     drop(relay);
-    drop(release);
-    accept.join();
+    peer.finish();
+}
+
+#[test]
+fn a_normal_close_still_lingers_on_unacknowledged_data() {
+    require_loopback!();
+    let peer = held_peer();
+    let relay = Relay::start(loopback(peer.port));
+    let mut t = sender_to(relay.addr(), &peer);
+
+    assert_eq!(relay.mute_existing(), 1, "the sender's flow is muted");
+    for _ in 0..30 {
+        t.send_bytes(&MSG)
+            .expect("a send to a silent peer still succeeds");
+        thread::sleep(Duration::from_millis(33));
+    }
+
+    // Only `abandon` turns linger off: a plain close keeps the preset's
+    // linger and waits for the unacknowledged data. A lower bound, so a
+    // slow machine can only make it pass more easily.
+    let started = Instant::now();
+    t.close();
+    let took = started.elapsed();
+    assert!(
+        took >= Duration::from_millis(1_500),
+        "close returned after {took:?}: it did not linger"
+    );
+
+    drop(relay);
+    peer.finish();
+}
+
+#[test]
+fn peer_activity_is_none_once_cancelled() {
+    require_loopback!();
+    let peer = held_peer();
+    let t = sender_to(loopback(peer.port), &peer);
+    assert!(t.peer_activity().is_some());
+    // The cancel closes the socket but leaves it in the transport's slot,
+    // so the reading asks libsrt, which refuses statistics on it.
+    t.srt_cancel_handle().cancel();
+    assert_eq!(t.peer_activity(), None, "a cancelled socket has no reading");
+    drop(t);
+    peer.finish();
 }
 
 #[test]
 fn abandon_after_a_cancel_closes_without_error() {
     require_loopback!();
-    let (port, accept, release) = held_peer();
-    let mut t = sender_to(loopback(port));
+    let peer = held_peer();
+    let mut t = sender_to(loopback(peer.port), &peer);
     t.srt_cancel_handle().cancel();
 
     t.abandon();
@@ -124,6 +195,5 @@ fn abandon_after_a_cancel_closes_without_error() {
         "a send after abandon reads Closed"
     );
 
-    drop(release);
-    accept.join();
+    peer.finish();
 }
