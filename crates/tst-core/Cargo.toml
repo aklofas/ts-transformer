@@ -15,7 +15,7 @@ default = ["std", "file"]
 # `std` pulls in everything that needs the standard library: file I/O,
 # the net helpers, the thread/Barrier cancel path, and the std-only
 # serialization deps. Without it the crate is #![no_std] + alloc.
-std  = ["file", "serde/std", "tracing/std", "dep:serde_json", "dep:toml", "portable-atomic/std", "dep:socket2"]
+std  = ["file", "serde/std", "tracing/std", "dep:serde_json", "dep:toml", "portable-atomic/std", "dep:socket2", "dep:libc"]
 file = ["std"]  # std::fs-using helpers in io_file (must imply std)
 # The transport conformance kit (`transport::conformance`): test
 # infrastructure the transport crates enable from their dev-dependencies.
@@ -24,15 +24,19 @@ conformance = ["std"]
 # rtsps://. Implies std. Off by default; the transport crates' own `tls`
 # features turn it on.
 tls = ["std", "dep:rustls", "dep:rustls-pemfile"]
+# The maintainer tool `strip-conformance-parameter-sets` checks the sha256 of
+# every archive it downloads. No library code hashes, so `sha2` comes only
+# with this feature. Off by default.
+fixture-tools = ["std", "dep:sha2"]
 
 [dependencies]
 thiserror    = { workspace = true }
-libc         = { workspace = true }  # raw setsockopt in net::udp_socket (cfg(unix) helpers)
+libc         = { workspace = true, optional = true }  # raw setsockopt in net::udp_socket (cfg(unix) helpers); on with `std`
 tracing      = { workspace = true }
 serde        = { version = "1", default-features = false, features = ["derive", "alloc"] }
 serde_json   = { version = "1", optional = true }
 toml         = { version = "1", optional = true }
-sha2         = { version = "0.11", default-features = false }
+sha2         = { version = "0.11", default-features = false, optional = true }  # on with `fixture-tools`
 hashbrown    = { version = "0.17", default-features = false, features = ["default-hasher"] }
 # Float math (log2/ceil/powf/floor/round) used by KLV IMAPB / ST 0601 mapping.
 # core has no float intrinsics, so the no_std build routes through libm; under
@@ -146,9 +150,10 @@ name  = "corpus-to-fixture"
 required-features = ["std"]
 path  = "tests/tools/corpus_to_fixture.rs"
 
+# Needs `--features fixture-tools` (its archive hash check uses `sha2`).
 [[bin]]
 name  = "strip-conformance-parameter-sets"
-required-features = ["std"]
+required-features = ["fixture-tools"]
 path  = "tests/tools/strip_conformance_parameter_sets.rs"
 bench = false
 doc   = false

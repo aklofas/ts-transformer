@@ -64,7 +64,7 @@ The committed `.bin` files are derived from `manifest.toml`. To regenerate:
 From the workspace root, run:
 
 ```
-cargo run -p tst-core --bin strip-conformance-parameter-sets
+cargo run -p tst-core --features fixture-tools --bin strip-conformance-parameter-sets
 ```
 
 The tool downloads each upstream archive into `_cache/` (gitignored),
@@ -78,7 +78,7 @@ when `_cache/` is warm.
 2. Download the archive, run `sha256sum`, capture the hash.
 3. Add an entry to `manifest.toml` with the URL, sha256, inner filename,
    `kind`, and `expected` fields.
-4. Run `cargo run -p tst-core --bin strip-conformance-parameter-sets` to
+4. Run `cargo run -p tst-core --features fixture-tools --bin strip-conformance-parameter-sets` to
    produce the `.bin` and `.json` sidecar.
 5. Commit the new `.bin` + `.json` files.
 

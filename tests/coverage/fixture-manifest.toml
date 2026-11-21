@@ -48,7 +48,7 @@ no_private_corpus = true
 [[group]]
 root = "crates/tst-core/tests/fixtures/conformance"
 origin = "derived"
-generator = "cargo run -p tst-core --bin strip-conformance-parameter-sets (RBSP bodies stripped from official ITU-T JVT/JCT-VC/JVET + AOMedia conformance bitstreams; see conformance/manifest.toml for upstream URLs + sha256)"
+generator = "cargo run -p tst-core --features fixture-tools --bin strip-conformance-parameter-sets (RBSP bodies stripped from official ITU-T JVT/JCT-VC/JVET + AOMedia conformance bitstreams; see conformance/manifest.toml for upstream URLs + sha256)"
 no_private_corpus = true
 
 [[group]]
