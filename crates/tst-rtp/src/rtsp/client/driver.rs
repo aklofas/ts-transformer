@@ -326,6 +326,14 @@ enum Flow {
     Stop,
 }
 
+/// The 16 bytes `fill` draws, or `None` when it fails. A failed fill
+/// leaves the buffer unspecified, and a cnonce an observer could guess
+/// must not go out: nothing of the buffer is used then.
+fn cnonce_from(fill: impl FnOnce(&mut [u8]) -> Result<(), getrandom::Error>) -> Option<Cnonce> {
+    let mut bytes: Cnonce = [0; 16];
+    fill(&mut bytes).ok().map(|()| bytes)
+}
+
 struct Driver {
     poll: Poll,
     events: Events,
@@ -520,11 +528,10 @@ impl Driver {
     /// so nothing is drawn for a read, a frame or a request that builds
     /// no Digest answer.
     fn hand_in_cnonce(&mut self) {
-        let mut bytes: Cnonce = [0; 16];
-        let drawn = getrandom::fill(&mut bytes).is_ok();
+        let cnonce = cnonce_from(getrandom::fill);
         #[cfg(test)]
         self.shared.cnonces_drawn.fetch_add(1, Ordering::Relaxed);
-        self.engine.handle_cnonce(drawn.then_some(bytes));
+        self.engine.handle_cnonce(cnonce);
     }
 
     fn read(&mut self) {

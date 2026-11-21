@@ -270,6 +270,30 @@ fn round_trip(h: &Harness, peer: &mut impl ReadWrite, rest: &mut Vec<u8>) {
 trait ReadWrite: Read + Write {}
 impl<T: Read + Write> ReadWrite for T {}
 
+/// A draw that fails is no cnonce at all, whatever the failed call left in
+/// the buffer: the request then fails, and no value an observer could
+/// guess is sent in its place.
+#[test]
+fn a_failed_draw_is_no_cnonce() {
+    let failing = |buf: &mut [u8]| {
+        buf.fill(0xff);
+        Err(getrandom::Error::UNSUPPORTED)
+    };
+    assert_eq!(cnonce_from(failing), None);
+    let untouched = |_: &mut [u8]| Err(getrandom::Error::UNSUPPORTED);
+    assert_eq!(cnonce_from(untouched), None);
+    let drawn = |buf: &mut [u8]| {
+        for (i, byte) in buf.iter_mut().enumerate() {
+            *byte = i as u8 + 1;
+        }
+        Ok(())
+    };
+    assert_eq!(
+        cnonce_from(drawn),
+        Some([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16])
+    );
+}
+
 /// The thread draws a cnonce for each Digest answer it builds: the second
 /// attempt after a `401`, and the cached challenge's answer on the next
 /// request and on every ping. It draws for nothing else: not for a request
