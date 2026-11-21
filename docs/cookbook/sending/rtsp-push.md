@@ -204,27 +204,32 @@ ten seconds of media in a burst reaches its readers as a burst.
 |---|---|---|---|
 | `RtspPush::close()` (Rust), `teardown()` (Python, JVM) | the queued media to be written, then up to 500 ms for TEARDOWN and its reply, then up to 2 s for the I/O thread | a last sender report per track, TEARDOWN | success only when the queued media was written and the server accepted the TEARDOWN; otherwise the first of: the cancel, once it has fired (`LocalCancel`; `CLOSED` in the bindings); `Protocol` with status `454` when the server had forgotten the session and queued media was dropped, whatever the TEARDOWN is answered; the TEARDOWN's own result (a refusal is `Protocol` with its status) |
 | `close()` (Python, JVM), the `with` exit, try-with-resources | the same | the same | nothing |
-| `Transport::close` (Rust; what a shell's close and `finish()` call) | the queued media, then up to 500 ms for TEARDOWN and its reply; does not wait for the thread | the same | nothing; `stats().frames_dropped_at_close` and `end_reason()` say what happened |
+| `Transport::close` (Rust; what a shell's close and `finish()` call) | the queued media, then up to 500 ms for TEARDOWN and its reply; does not wait for the thread | the same | nothing; `stats().frames_dropped_at_close` and `end_reason()` say what happened, and in Rust `PushStatsHandle::close_outcome()` keeps how the close ended |
 | Drop of an `RtspPush`, collection of a Python session | nothing | TEARDOWN, without waiting for its reply | nothing; what was queued is discarded |
 
 Over a sender shell, end a stream with `finish()` (`MuxSender::finish()`,
 `Sender::finish()`, and `finish()` on Python's and the JVM's `MuxSender` and
 `Sender`): it cancels nothing, sends what the shell holds and closes the push, which, while the session is up,
-writes everything queued and then sends TEARDOWN. `finish()` cannot tell you
-whether that happened. The push's own close reports nothing through the
-shell, so a session that ended first (the server closed it, the connection
-failed or took no byte for 5 s, a keepalive ping was answered `454`) drops
-what was still queued, up to 1 024 frames, and `finish()` still returns
-without an error. When you must know, send through the session itself
-(`send_ts`) and read the result of its close: `RtspPush::close()` returns
-`Ok(())` only when the queued media was written and the server accepted the
-TEARDOWN; in Python and on the JVM, `teardown()` raises otherwise. The
-session object's `stats()` follows the push into the shell, so after a
-shell's end its `frames_dropped_at_close` (`framesDroppedAtClose()`) counts
-what was dropped (on the JVM until the session object is closed). A plain
-`Sender` does not deliver a stream of one or two aligned TS packets at all:
-it forwards bytes only once three aligned packets have confirmed the
-alignment.
+writes everything queued and then sends TEARDOWN. `finish()`'s own result
+cannot tell you whether that happened. The push's own close reports nothing
+through the shell, so a session that ended first (the server closed it, the
+connection failed or took no byte for 5 s, a keepalive ping was answered
+`454`) drops what was still queued, up to 1 024 frames, and `finish()` still
+returns without an error. In Rust, take `push.stats_handle()` before the push
+goes under the shell and read `close_outcome()` after `finish()`: `None`
+until a close has finished, then `Clean`, `MediaLost` (the server had
+forgotten the session and queued media was dropped), `TeardownRefused {
+code, reason }`, `TeardownTimedOut`, `Failed { detail }` or `Cancelled`
+(always after `MuxSender::close()`, which cancels first). In Python and on
+the JVM, when you must know, send through the session itself (`send_ts`)
+and call `teardown()`, which raises unless the queued media was written and
+the server accepted the TEARDOWN. The session object's `stats()` follows
+the push into the shell, so after a shell's end its
+`frames_dropped_at_close` (`framesDroppedAtClose()`) counts what was dropped
+(on the JVM until the session object is closed). A plain `Sender` sends a
+stream of one or two aligned TS packets too, and its `finish()` reports
+(`INPUT_MALFORMED` in the bindings) bytes it could not send as whole
+packets, such as a partial last packet.
 `MuxSender::close()` fires the push's cancel first, and in Python and on the
 JVM so does the `close()` of either shell (`MuxSender` or `Sender`), so it
 can drop packets queued a moment before. In Rust, `Sender::close()` and a dropped `MuxSender` or

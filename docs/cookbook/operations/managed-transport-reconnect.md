@@ -66,6 +66,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 Runnable: [examples/operations/managed_reconnect.rs](/examples/operations/managed_reconnect.rs).
 
+Every factory call that fails is logged at `warn` (`reconnect attempt
+failed`, target `tst_pipeline::reconnect`) with the text of the error it
+returned, and the give-up warning repeats the last one as `last_error`.
+That is where to look when the wrapper gives up, and it is why the
+factory's error must carry no secret: no passphrase, and no URL with
+credentials (pass a URL through `tst_core::url::redact_url` before you
+put it into the message).
+
 <a id="background-mode-never-stall-the-producer"></a>
 
 ## Background mode: reconnect without waiting on the producer

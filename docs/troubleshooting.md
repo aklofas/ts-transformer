@@ -276,11 +276,11 @@ After the run, check `Sender::stats()` and inspect `bytes_skipped_for_sync` and 
 
 Fix: if the receiver is still seeing garble despite zero stats, the corruption is happening downstream of the sender — check the network path and any intermediate transcoders.
 
-**`Receiver` / `DemuxReceiver` emits nothing on a very short stream, or the last few packets after a corruption never arrive**
+**`Receiver` / `DemuxReceiver` loses the last packets after a corruption, or emits a stray packet at the end**
 
-The receive-side syncer locks only after it has seen four aligned TS packets (four `0x47` bytes at 188-byte strides — 752 bytes) and emits nothing before that. The confirmation is peek-only, so on a healthy stream nothing is lost. But a stream shorter than four packets never emits, and after any sync loss the last one to three packets before end-of-stream stay buffered awaiting confirmation and are dropped when the transport closes — on `DemuxReceiver` that can be the final access unit. `ReceiverStats::resync_events` counts each lock (initial and re-locks); `bytes_skipped_for_sync` counts HUNT and failed-VERIFY drops combined.
+The receive-side syncer locks only after it has seen four aligned TS packets (four `0x47` bytes at 188-byte strides — 752 bytes) and emits nothing before that while the stream goes on. The confirmation is peek-only, so on a healthy stream nothing is lost. When the transport ends, the one to three whole packets still waiting are delivered before the end, but only when every byte one packet apart that is present reads `0x47`, the first byte of a trailing partial packet included: so a stream shorter than four packets arrives, and so does the tail after a mid-stream resync. Still lost: a tail in which one boundary fails (a single stray trailing byte that is not `0x47` refuses the whole tail) and a single good packet behind damage that itself holds a `0x47` within the 187 bytes before it; on `DemuxReceiver` that can be the final access unit. The other way round, before the first lock or after a resync, a junk tail with a `0x47` exactly one, two or three packets before its last byte is handed to the demuxer as up to three packets, which in lenient mode is at most a `NonConformant` event. `Backpressure` and a managed reconnect release nothing. `ReceiverStats::resync_events` counts each lock (initial, re-locks, and one for a release at the end); `bytes_skipped_for_sync` counts HUNT and failed-VERIFY drops combined.
 
-Fix: feed at least four packets per session (test fixtures included) and treat the final packets after a mid-stream corruption as best-effort. If you need every packet of a finite capture, feed the bytes to `tst_core::mpegts::demux::Demuxer::feed` directly — it accepts an initial `0x47` with no confirmation and only demands a 5-of-7 stride check after a sync loss.
+Fix: treat the final packets after a mid-stream corruption as best-effort. If you drive a `Syncer` yourself, it has no way to know that the input ended: use `Receiver`, which does. If you need every packet of a finite capture, feed the bytes to `tst_core::mpegts::demux::Demuxer::feed` directly — it accepts an initial `0x47` with no confirmation and only demands a 5-of-7 stride check after a sync loss.
 
 **Receiver sees double-wrapped KLV (legacy callers from older library versions)**
 
@@ -312,7 +312,15 @@ Fix (`Background`): size `gap_buffer_capacity` to your worst-case disconnect win
 
 The policy's retry budget for this outage is spent. On the send side (`ManagedTransport`) this is not a dead end: the wrapper doesn't latch closed, so the very next `send_bytes` call starts a fresh reconnect cycle (with a fresh attempt budget). The message whose send returned the error is not kept in the gap buffer: the caller owns it and decides whether to send it again (`MuxSender` and `Sender` retain it and re-offer it on the next call by themselves). Under `ReconnectMode::Background`, the give-up itself surfaces exactly once — as a `Broken` on the *following* `send_bytes` call after the worker quits, and that call's own bytes are not queued. (The receive side behaves differently: `ManagedRecvTransport` has no gap buffer to retry against, so give-up latches the decorator closed and every subsequent `recv_bytes` returns `TransportError::Closed`.)
 
+Why each attempt failed is in the log: every failed factory call writes a `warn` line `reconnect attempt failed` (`background reconnect attempt failed` from a `Background` worker; target `tst_pipeline::reconnect`, or `tst_pipeline::managed_receive` on the receive side) with the factory's error as `error`, and the give-up line carries the last one as `last_error`.
+
 Fix: increase `max_attempts`, or set it to `None` to retry forever — only safe if your transport factory is itself rate-limited, otherwise a permanent peer outage produces a hot reconnect loop. The default is `Some(10)` which gives roughly 10 attempts with exponential backoff, on the order of a few minutes of real time before giving up.
+
+**A send blocks for the whole outage with `gap_buffer_capacity` 0**
+
+Under `ReconnectMode::Blocking` a capacity of 0 stages nothing, so the send that meets the outage reconnects on the caller's thread and then sends its message on the new connection, under either `OverflowPolicy`: it returns only when the reconnect has succeeded (with that connection's answer), the policy gives up (`TransportError::Broken`, with the message still yours), or a cancel fires. Without `max_attempts` that can be as long as the outage.
+
+Fix: if the producer must not wait, use `ReconnectMode::Background`: there a capacity of 0 drops (`DropOldest`, counted in `gap_messages_dropped`) or refuses (`Reject`, `Backpressure`) the message that meets the outage while a worker reconnects. Otherwise bound the wait with `max_attempts`, or end it from another thread through the cancel handle.
 
 **Sends succeed but nothing arrives (Background mode)**
 

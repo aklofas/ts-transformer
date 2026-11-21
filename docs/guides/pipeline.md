@@ -156,6 +156,7 @@ impl<T: Transport> Sender<T> {
     pub fn new(transport: T, config: SenderConfig) -> Self;
     pub fn send_ts(&mut self, bytes: &[u8]) -> Result<(), SenderError>;
     pub fn flush(&mut self) -> Result<(), SenderError>;
+    pub fn finish(&mut self) -> Result<(), SenderError>;
     pub fn stats(&self) -> SenderStats;
     pub fn close(&mut self);
     pub fn is_alive(&self) -> bool;
@@ -173,10 +174,51 @@ for a later call. `flush` emits any buffered partial bundle so the tail
 of a finite input reaches the wire, and it checks every packet's sync
 byte before sending: on damage it sends the packets before it, counts
 one `resync_events` and keeps the rest buffered for the next `send_ts`
-to resync. A RECOVER stream shorter than three packets never acquires
-sync and `flush` emits nothing; STRICT mode has already checked every
-boundary, so its one- or two-packet stream does go out. Drop also
-best-effort flushes.
+to resync. A stream of one or two packets goes out too. STRICT mode
+has already checked every boundary. RECOVER mode flushes a stream that
+has been aligned since its first byte (no byte skipped, no boundary
+failed) on the same evidence: the whole packets held are sent when every
+boundary present reads `0x47`, the first byte of a partial packet
+included. Once a byte has been skipped or a boundary has failed, only
+three consecutive sync bytes send anything.
+
+A flush is the caller's word that what it sent so far is a stream, and
+it costs something when the start only looks aligned. A `flush` while
+the sender holds the stream's first 188 to 376 bytes, with `0x47` at
+offset 0 and (when more than 188 bytes are held) at offset 188, sends
+those bytes as one or two packets although they are not packets. When
+they were the head of a real stream lying off that 188-byte grid (a
+stream joined mid-packet whose first byte happens to read `0x47`), the
+real packet they cover is lost; without the flush the sender finds the
+real grid and delivers it. The sender is then in sync on the wrong
+grid, so a later `send_ts` or `flush` can send one more 188 bytes that
+are not a packet, when their first byte reads `0x47`, before a boundary
+fails and it resyncs. This needs a flush (or an end) inside the first
+376 bytes; a flush with fewer than 188 bytes held sends nothing; for
+random bytes it happens about once in 256 starts. STRICT sends the same
+bytes and then refuses what follows with an error.
+
+`finish` ends the stream: it sends what `flush` sends, then makes one
+end-of-stream pass over what is still held, so three or more
+consecutive good packets behind damage, which a later `send_ts` would
+have verified, are sent now (the pass scans everything held, also
+behind more garbage than `max_unsynced_bytes`). Then it closes the
+transport without cancelling it and returns the first send error, or
+else `TsFramingError::UnsentTail { bytes }` (kind `InputMalformed`) for
+what it could not send as whole aligned TS packets: a partial last
+packet (in both modes), fewer than three packets behind skipped bytes,
+bytes that are not TS. The count is what was still held at the end;
+bytes the scan skipped on the way, a good packet in front of early
+damage among them, show only in `bytes_skipped_for_sync`. A send that
+the transport refuses during `finish` is its result, and what it left
+is abandoned with the sender: `finish` makes one attempt. To retry a
+refused send, call `flush` until it succeeds before `finish`; packets
+that only the end-of-stream pass recovers still get one attempt.
+`close` and drop make the same end-of-stream pass and report nothing: a
+send error is dropped, and bytes they could not send leave one
+`tracing` warning with their count. A binding's `close()` cancels first and sends nothing
+buffered; end a binding's sender with `finish()` (C has none: flush,
+then close).
 
 `SenderConfig` has two knobs:
 
@@ -404,7 +446,14 @@ The factory closure is what the manager calls to rebuild the inner
 transport. Most callers wire it as a closure running
 `SrtSocketBuilder::new()...connect(addr).map(SrtTransport::new)`. The
 closure must be `Fn + Send + Sync + 'static` so the manager can hold
-it in an `Arc<dyn Fn …>`.
+it in an `Arc<dyn Fn …>`. Every call that fails is logged at `warn`
+(`reconnect attempt failed`, or `background reconnect attempt failed`
+from a `Background` worker; target `tst_pipeline::reconnect`; with
+`attempt`, `max_attempts`, `errno_code` and the error's text as
+`error`), and the give-up warning carries the last error as
+`last_error`, so keep secrets out of the error the closure returns: no
+passphrase, no URL with credentials (`tst_core::url::redact_url` strips
+them from a URL).
 
 Behaviour on `send_bytes`: drain any queued gap-buffer bytes first,
 then try the new bytes. `Backpressure` and `TooLarge` propagate to
@@ -418,8 +467,9 @@ that failed is the caller's to retry, and nothing is left queued to be
 delivered behind its back. Either way the gap buffer is empty again
 when a `Blocking` call returns: it only ever holds the one message
 whose send found the link broken, so in this mode
-`gap_buffer_capacity` and `overflow_policy` change nothing except at
-capacity 0.
+`gap_buffer_capacity` and `overflow_policy` change nothing. At capacity
+0 nothing is staged: the call waits for the reconnect and then sends
+its message on the new connection, under either policy.
 
 `ReconnectPolicy.mode` picks where that reconnect loop runs. The
 default, `ReconnectMode::Blocking`, runs it on the calling thread — a
@@ -525,9 +575,13 @@ freshness (telemetry, control-plane messages, audit-logged events).
 The policy only has something to decide under
 `ReconnectMode::Background`, where sends keep arriving while the link
 is down. Under `ReconnectMode::Blocking` the buffer holds one message
-at a time and never fills; the one exception is
-`gap_buffer_capacity: 0`, where `DropOldest` drops the interrupted
-message and `Reject` refuses it.
+at a time and never fills, and with `gap_buffer_capacity: 0` the call
+that meets the outage waits for the reconnect and sends its message
+after it, under either policy (a give-up returns `Broken`, with the
+message still the caller's). Under `Background` a capacity of 0 holds
+nothing: `DropOldest` drops and counts the message that meets the
+outage, `Reject` refuses it with `Backpressure`, and the worker
+reconnects in both cases.
 
 ## Choosing a backoff and gap-buffer size
 
@@ -612,10 +666,22 @@ counterpart to `Transport`).
   packet per `next_packet` call. Internal sync recovery via the
   HUNT/VERIFY/LOCKED state machine: VERIFY locks after four aligned
   packets (four `0x47` bytes at 188-byte strides, 752 bytes) and emits
-  nothing before that, so a session shorter than four packets yields
-  nothing, and after any sync loss the last one to three packets before
-  end-of-stream stay unconfirmed and are dropped. `ReceiverStats`
-  (`resync_events`, `bytes_skipped_for_sync`) shows when that happened.
+  nothing before that while the stream goes on. When the transport ends
+  (end of stream, a break, a close or a cancel; not `Backpressure`, not
+  a managed reconnect) the one to three whole packets still waiting are
+  delivered before the end is reported, if every byte one packet apart
+  that is present reads `0x47`, the first byte of a trailing partial
+  packet included: a session shorter than four packets arrives, and so
+  does the tail after a mid-stream resync. One failing boundary (one
+  stray trailing byte that is not `0x47`) refuses the whole tail, and a
+  single good packet behind damage that holds a `0x47` within the 187
+  bytes before it is still lost. The release counts once in
+  `resync_events`. This end rule is weaker evidence than the lock rule:
+  before the first lock or after a resync, bytes that are not TS reach
+  the demuxer as up to three packets at an end when a `0x47` sits
+  exactly one, two or three packets before the last byte. `ReceiverStats` (`resync_events`, `bytes_skipped_for_sync`)
+  shows when a resync happened. A caller that drives a `Syncer` itself
+  gets none of the end handling.
   Use when you want to feed bytes into your own demuxer (FFmpeg,
   JavaCV, Bento4). `DemuxReceiver` inherits the same lock rule.
 - **One byte vec per recv → `RawReceiver`.** No TS framing, no demux —
@@ -691,6 +757,7 @@ and it keeps its last value after close. The C getters are
 | Situation | `ts_bytes_demuxed` | `stats().bytes_received` |
 |---|---|---|
 | Syncer not yet locked (garbage before 4 aligned packets) | not counted | same |
+| One to three packets released when the transport ends (see "Picking a receiver") | +188 each, before parsing | +188 each |
 | Each aligned packet fed to the demuxer, a strict-mode rejection included | +188, before parsing | +188 |
 | The packet read across a reconnect (managed), and bytes the sync reset drops | not counted | the packet counted, the dropped bytes not |
 | After a reconnect | continues from the old value | continues |
@@ -835,7 +902,15 @@ which costs at most one re-VERIFY pass on the syncer.
 The factory is `Box<dyn FnMut + Send>` rather than the send-side
 `Arc<dyn Fn + Send + Sync>` because `recv_bytes(&mut self, …)` is
 exclusive-mutable — there's no concurrent close-from-any-thread
-requirement to design around.
+requirement to design around. A failed factory call is logged as on
+the send side (`reconnect attempt failed`, target
+`tst_pipeline::managed_receive`, the error's text as `error`), so the
+same rule holds: no secret in the error it returns.
+
+One retry budget (`max_attempts`) covers every rebuild attempt of one
+`recv_bytes` call, the ones that connected included: a connection that
+breaks before it delivers anything uses one attempt, and the count
+starts again with the next call.
 
 ### `ManagedDemuxReceiver<R>`
 
@@ -893,11 +968,21 @@ The receive surface distinguishes three end-of-stream signals:
   these into one `Broken` surface by design — it lets a managed-receive
   decorator distinguish a self-initiated close (`Closed`) from a peer-
   initiated break (`Broken`). On `Broken` the demuxer is still flushed
-  first: any events the flush recovers are returned before the error.
+  first: any events the flush recovers are returned before the error,
+  after the events of the packets the end releases.
 - **`Err` whose `source` is `DemuxReceiverErrorSource::Demux(_)`.** Strict mode rejected the
   stream: `StrictRejection` for a non-conformant issue, `MalformedPes` for a
   malformed PES header. In the default lenient mode a malformed PES
   surfaces as a `NonConformant` event and the stream continues.
+
+After the call that reports the end, the receiver reads its transport
+no more and flushes its demuxer no more. Later calls return `Ok(None)`
+after a clean end, the `Closed` error after a cancel (for ever), and
+`Ok(None)` after a `TransportBroken` error, which is reported once, so a
+`for` loop over a failed receiver ends. A cancel fired after the end is
+reported once the events already produced are handed out, on every
+transport. After the receiver's own `close()`, whenever it was called, a
+cancel fired later does not change the answer.
 
 ## KLV ↔ video pairing (`tst_pipeline::ext::pairing`)
 
@@ -938,7 +1023,7 @@ in the cookbook) when:
 | Async-KLV (1–10 Hz) against video frames | `Pairer::last_before_pts(...)` | n/a (past-only) |
 | EO + IR sharing one async-KLV stream | Two `Pairer::last_before_pts` instances side-by-side | n/a |
 
-`last_before_pts` clears its history at a reconnect and at a signalled discontinuity on the video, KLV or program-clock PID (the program-clock PID counts only when it also carries an elementary stream); the first KLV and the first video completing after a flag within two seconds of the pre-flag clock leave unpaired, and a new clock landing that close loses its first KLV sample (every frame until the next sample is unpaired) and its first video frame the same way. A flag on any other PID and a silent encoder restart are invisible, so flush it yourself there. A PID that carries only PCR produces no demuxer event, so flush at a restart on it too.
+Both strategies clear their history at a reconnect (`ReconnectDiscontinuity`) and at a signalled discontinuity on the video, KLV or program-clock PID (the program-clock PID counts only when it also carries an elementary stream): the KLV that never paired leaves as `UnpairedKlv` ahead of the passed-through event, and nothing pairs across it. In `PairerMode::Buffered` the held video is first classified against the old history. The first KLV and the first video completing after a flag within two seconds of the pre-flag clock leave unpaired, and a new clock landing that close loses its first KLV sample and its first video frame the same way (with `last_before_pts`, every frame until the next KLV sample is then unpaired). A flag on any other PID and a silent encoder restart are invisible, so flush the pairer yourself there. A PID that carries only PCR produces no demuxer event, so flush at a restart on it too. A `PairingDemuxer` (the pairer of the Python and JVM bindings) owns a plain demuxer and never sees a `ReconnectDiscontinuity`; only the signalled discontinuity reaches it.
 
 See the `Pairer` recipes in the [cookbook's pairing section](../cookbook/index.md#-pairing--align-klv-with-video-frames) for runnable patterns.
 

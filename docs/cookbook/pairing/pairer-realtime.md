@@ -10,7 +10,12 @@
 The [nearest-PTS](/docs/cookbook/pairing/pair-klv-by-pts.md) inline pattern in ~20 lines, expressed through
 the opt-in `tst_pipeline::ext::pairing::Pairer`. Same semantics, with
 bounded KLV history, telemetry counters, and typed projection structs
-on the output.
+on the output. One addition: the pairer starts a new time base at a
+`ReconnectDiscontinuity` and at a signalled discontinuity (a set
+`discontinuity_indicator`) on the video PID, the KLV PID or the video
+program's PCR PID, where the inline pattern keeps its history: the KLV
+that never paired leaves as `UnpairedKlv` and nothing pairs across the
+boundary (the guide's pairing section has the full rule).
 
 ```rust,no_run
 use std::fs;

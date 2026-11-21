@@ -580,7 +580,7 @@ the cookbook recipe, with what mediamtx and ffmpeg do with a push, is
 | `send_video(annexb, pts)`, `send_klv(klv, pts)` | One access unit in Annex B form (decoding order; NAL units over 1 400 bytes fragmented), one whole KLV unit (one RTP packet up to 65 523 bytes). `PushError::Transport` once the push is closed, cancelled or has ended; `NoSuchTrack` or `Empty` with nothing sent. |
 | `pause()`, `resume()` | PAUSE after the queued media is written; RECORD again. |
 | `close(self)` | Writes the queue, TEARDOWN (500 ms bound), waits up to 2 s for the client's thread; returns the TEARDOWN's result. |
-| `cancel_handle()`, `is_session_alive()`, `end_reason()`, `stats()`, `stats_handle()`, `session_id()` | `stats()` returns `PushStats`: packets, bytes and sender reports handed to the client's thread, receiver reports the server sent and their loss figures, frames dropped inbound and at close. `stats_handle()` returns a `PushStatsHandle` whose `stats()` and `end_reason()` answer from any thread without taking the push, also while a send waits and after the push is closed or dropped. |
+| `cancel_handle()`, `is_session_alive()`, `end_reason()`, `stats()`, `stats_handle()`, `session_id()` | `stats()` returns `PushStats`: packets, bytes and sender reports handed to the client's thread, receiver reports the server sent and their loss figures, frames dropped inbound and at close. `stats_handle()` returns a `PushStatsHandle` whose `stats()` and `end_reason()` answer from any thread without taking the push, also while a send waits and after the push is closed or dropped; its `close_outcome()` is `None` until a close has finished, then the first close's `PushCloseOutcome` (`Clean`, `Cancelled`, `MediaLost`, `TeardownRefused { code, reason }`, `TeardownTimedOut`, `Failed { detail }`). |
 | `impl Transport for RtspPush` | `send_bytes` is `send_ts`, `max_payload` is 1 316, so `MuxSender` and `Sender` run over an MPEG-TS push. `socket_stats` reports bytes and packets sent and `packets_lost_send`. |
 
 ### Rules worth knowing
@@ -611,18 +611,24 @@ the cookbook recipe, with what mediamtx and ffmpeg do with a push, is
   `Transport` in scope, `push.close()` on a `&mut RtspPush` is
   `Transport::close`; call this one as `RtspPush::close(push)`. `Transport::close` (what a
   shell's close and `finish()` call) waits the same way but does not wait
-  for the thread and reports nothing. Dropping the push discards the queue
+  for the thread and reports nothing; the push keeps the case for
+  `PushStatsHandle::close_outcome()`. Dropping the push discards the queue
   and writes TEARDOWN without waiting. See
   [the cancel and close contract](/docs/reference/srt-cancel-handle.md#rtsp-push-what-a-cancel-and-each-close-do).
 - **Shells over a push.** End a `MuxSender` with `finish()`: `close()`
   cancels first and can drop packets queued a moment before. End a `Sender`
-  with `Sender::finish()`, which returns the flush's error; `Sender::close()`
-  and dropping either shell close the push without a cancel too. None of them
-  can report whether the push's queue was written: a session that ended
-  first drops it and the shell still returns without an error. When that
-  matters, send through `RtspPush::send_ts` and call `RtspPush::close()`,
-  which returns `Ok(())` only when the queued media was written and the
-  server accepted the TEARDOWN.
+  with `Sender::finish()`, which returns the first send error, or
+  `UnsentTail` for bytes it could not send as whole TS packets;
+  `Sender::close()` and dropping either shell close the push without a
+  cancel too. None of them reports whether the push's queue was written: a
+  session that ended first drops it and the shell still returns without an
+  error. When that matters, take `stats_handle()` before the push goes
+  under the shell and read `close_outcome()` once the shell has finished
+  (`MediaLost`, `TeardownRefused`, `TeardownTimedOut`, `Failed`, or
+  `Cancelled` after `MuxSender::close()`), or send through
+  `RtspPush::send_ts` and call `RtspPush::close()`, which returns `Ok(())`
+  only when the queued media was written and the server accepted the
+  TEARDOWN.
 - **Keepalive comes from the builder.** A client made by
   `RtspClientBuilder::connect` sends OPTIONS pings at half the advertised
   session timeout unless `keepalive_interval` sets another cadence; one made

@@ -210,9 +210,14 @@ reads either a value captured when the object was opened (a local or peer
 address) or a `Sync` handle the object took when it was built, a view over
 counters the call in progress updates: `RtpStatsHandle` from
 `RtpRecvTransport::stats_handle()`, `PushStatsHandle` from
-`RtspPush::stats_handle()`, `TsBytesDemuxedHandle` from
+`RtspPush::stats_handle()` (its `close_outcome()` too: `None` while a
+close is still running), `TsBytesDemuxedHandle` from
 `DemuxReceiver::ts_bytes_demuxed_handle()`, `SourceHandle` from
-`RecvTransport::source_handle()`. A binding object keeps its handle, so a
+`RecvTransport::source_handle()`, `MuxPublisherStatsHandle` from
+`MuxPublisher::stats_handle()`. `MuxPublisher::stats()` reads the same
+counters and does not wait either; `MuxPublisher::publisher_stats()`
+does, because that record is the publisher's own and lives behind the
+sender's lock, which a push holds. A binding object keeps its handle, so a
 read through one can also answer after `close()`, with the last values, and,
 on a push session, after a conversion into a shell, with the values of the
 push the shell now owns. In the bindings these are the receiving shells'
@@ -248,16 +253,20 @@ both kinds ([Python](/docs/languages/python.md#what-answers-while-another-thread
   behind a parked send, and each of its drain sends can take as long as
   the transport's send does.
 - `Sender::finish()` cancels nothing either: it waits behind a parked
-  send, flushes the partial bundle and any bundle the transport refused,
-  closes the transport and returns the flush's error; a later `close()`
-  does nothing. `Sender::close()` flushes and closes the same way and
-  swallows the error. Python's and the JVM's `Sender.finish()` run
+  send, sends any bundle the transport refused, the partial bundle and
+  what its end-of-stream pass over the bytes still held verifies, closes
+  the transport and returns the first send error, else
+  `TsFramingError::UnsentTail` (`InputMalformed`) for bytes it could not
+  send as whole aligned TS packets (a partial last packet among them);
+  a later `close()` does nothing. It makes one attempt: what a refused
+  send left is abandoned. `Sender::close()` sends and closes the same way
+  and reports nothing. Python's and the JVM's `Sender.finish()` run
   `finish()`, with no cancel first, where their `close()` cancels first.
-  A stream of one or two aligned TS packets is delivered by neither: the
-  sender forwards bytes only once three aligned packets have confirmed the
-  alignment.
-- `Drop` of a `MuxSender` or a `Sender` sends what is still buffered and
-  then closes the transport, with no cancel first, so it takes as long as
+  A stream of one or two aligned TS packets is sent by every `finish()`
+  and by Rust's `close()`.
+- `Drop` of a `MuxSender` or a `Sender` sends what is still buffered (a
+  `Sender`: what its end-of-stream pass can verify) and then closes the
+  transport, with no cancel first, so it takes as long as
   that send and close take. The other shells' `Drop` adds nothing to the
   transport's own.
 - A binding's `close()` (`Owned::close`) cancels, waits for the call
@@ -390,7 +399,7 @@ on a cancelled push writes its TEARDOWN, drops what was queued and returns
 | Call | Waits for | Then | Reports |
 |---|---|---|---|
 | `RtspPush::close()` | the queue to be written (a last sender report per track queued first) | TEARDOWN, one 500 ms bound over writing it and its reply; up to 2 s for the client's thread | `Ok(())` when the queued media was written and the server accepted the TEARDOWN; otherwise the first of: `LocalCancel` once the cancel has fired; `Protocol { code: 454 }` when the server had forgotten the session and queued media was dropped, whatever the TEARDOWN is answered; the TEARDOWN's result |
-| `Transport::close` | the same | TEARDOWN under the same bound; tells the thread to stop without waiting | nothing (`stats().frames_dropped_at_close`, `end_reason()`) |
+| `Transport::close` | the same | TEARDOWN under the same bound; tells the thread to stop without waiting | nothing; the case of what `RtspPush::close()` would have returned is kept as `PushStatsHandle::close_outcome()` (beside `stats().frames_dropped_at_close` and `end_reason()`) |
 | `Drop` | nothing | sets the cancel, discards the queue, writes TEARDOWN without waiting for its reply | nothing |
 
 **The shells over a push.** `MuxSender::close()` cancels first, by this
@@ -402,11 +411,16 @@ TEARDOWN. `Sender::finish()` (Python's and the JVM's `Sender.finish()`) does the
 for a plain `Sender`. In Rust, `Sender::close()` and the `Drop` of a
 `MuxSender` or a `Sender` close the push without a cancel too. A binding's
 `close()` of either shell cancels first: end a binding's shell over a push
-with `finish()`. No shell reports whether the push's queue was written:
-`Transport::close` returns nothing, so a session that ended first drops the
-queue and the shell's close or `finish()` still succeeds. Only the session's
-own close reports it (`RtspPush::close()`; `teardown()` in Python and on
-the JVM), so a caller who must know sends through the session's `send_ts`.
+with `finish()`. A shell's own result does not say whether the push's queue
+was written: `Transport::close` returns nothing, so a session that ended
+first drops the queue and the shell's close or `finish()` still succeeds.
+In Rust the push keeps how its close ended: take `stats_handle()` before
+the push goes under the shell and read `close_outcome()` once the shell
+has finished (`Clean`, `MediaLost`, `TeardownRefused { code, reason }`,
+`TeardownTimedOut`, `Failed`; `Cancelled` after `MuxSender::close()`,
+which cancels first). In Python and on the JVM only the session's own
+close reports it (`teardown()`), so a caller there who must know sends
+through the session's `send_ts`.
 The session object's `stats()` follows the push into the shell, so its
 `frames_dropped_at_close` (`framesDroppedAtClose()`) shows afterwards what a
 shell's end dropped (on the JVM until the session object is closed).

@@ -347,7 +347,15 @@ What may precede or override the CLOSED outcome:
 - The SRT `Listener` iterator maps CLOSED to `StopIteration`.
 - A flushed access unit is delivered before CLOSED: by the Rust shells,
   and by the H.264 receiver in Python and the JVM (its queued complete access
-  units, then the open one if it completes cleanly).
+  units, then the open one if it completes cleanly). The one to three
+  packets the receive shells release when a cancel ends the stream come
+  first too, with their events.
+- After a Rust `DemuxReceiver`'s own `close()`, whenever it was called, a
+  cancel fired later, or one that no call had reported before the close,
+  is not reported: the receiver answers its end. A cancel that fires after the end,
+  with no close, is reported once the events already produced are handed
+  out. (A binding refuses every call after its close, and after a cancel
+  at the `Owned` entry, so this order is a Rust caller's only.)
 
 ## Host naming grammar
 
