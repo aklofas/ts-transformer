@@ -63,6 +63,8 @@ __all__: list[str] = [
     "RtspClient",
     "RtspSession",
     "PushDescription",
+    "PushCloseKind",
+    "PushCloseOutcome",
     "RtspPushSession",
     "RtspPushStats",
     "RtspClientConfig",
@@ -689,6 +691,16 @@ class RtspPushSession:
     def end_detail(self) -> Optional[str]:
         """Free-text detail for `end_reason()`, or `None`."""
         ...
+    def close_outcome(self) -> Optional[PushCloseOutcome]:
+        """How the push's close ended, or `None` until a close has finished:
+        this session's `close()` or `teardown()`, or the close a sender
+        shell that took the push runs when it is finished or closed. From
+        then on the first close's outcome. Never waits and never raises:
+        `None` while a send is parked or a close is still running; kept
+        after `close()` and after a conversion. After a sender's `finish()`
+        it says how the TEARDOWN went; a sender's `close()` cancels first,
+        so it reads `CANCELLED`."""
+        ...
     @property
     def session_id(self) -> str:
         """The session id the server named at SETUP."""
@@ -708,8 +720,10 @@ class RtspPushSession:
         while a send, `pause()` or `resume()` on another thread holds the
         session, each leaving the session as it was; an
         `is_session_alive()` peeking at it is waited for. The sender's
-        `close()` cancels first; `finish()` cancels nothing. `stats()` and
-        `end_reason()` keep answering for the push the sender owns."""
+        `close()` cancels first; `finish()` cancels nothing and ends without
+        loss. `stats()`, `end_reason()` and `close_outcome()` keep answering
+        for the push the sender owns; after the sender's `finish()`,
+        `close_outcome()` says how the TEARDOWN went."""
         ...
     def into_sender(self) -> Sender:
         """Move an MPEG-TS push into a `Sender`; the session is closed
@@ -718,9 +732,10 @@ class RtspPushSession:
         thread holds the session, both leaving the session as it was; an
         `is_session_alive()` peeking at it is waited for. The sender's
         `close()` cancels first; its `finish()` cancels nothing, writes what
-        the sender and the push hold, then sends TEARDOWN, without
-        reporting the TEARDOWN's answer. `stats()` and `end_reason()` keep
-        answering for the push the sender owns."""
+        the sender and the push hold, then sends TEARDOWN: the end without
+        loss. `stats()`, `end_reason()` and `close_outcome()` keep answering
+        for the push the sender owns; after the sender's `finish()`,
+        `close_outcome()` says how the TEARDOWN went."""
         ...
     def __enter__(self) -> RtspPushSession: ...
     def __exit__(
@@ -1012,6 +1027,31 @@ class RtspServerConfig:
     publish_idle_timeout_ms: Optional[int] = ...
 
     def __post_init__(self) -> None: ...
+
+
+class PushCloseKind(enum.IntEnum):
+    """How a push's close ended (`PushCloseOutcome.kind`). Pure-Python
+    IntEnum, one member per case of the Rust `PushCloseOutcome`."""
+
+    CLEAN = 1
+    CANCELLED = 2
+    MEDIA_LOST = 3
+    TEARDOWN_REFUSED = 4
+    TEARDOWN_TIMED_OUT = 5
+    FAILED = 6
+
+
+@dataclass(frozen=True)
+class PushCloseOutcome:
+    """Pure-Python frozen dataclass — how a push's close ended, from
+    `RtspPushSession.close_outcome()`. `status`: the RTSP status of a
+    refused TEARDOWN, else `None`. `detail`: the refusal's reason phrase or
+    a failed close's text (at most 256 characters, control characters
+    replaced), else empty."""
+
+    kind: PushCloseKind
+    status: Optional[int]
+    detail: str
 
 
 class PublishShape(enum.IntEnum):

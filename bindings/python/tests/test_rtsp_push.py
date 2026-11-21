@@ -1270,3 +1270,159 @@ def test_interpreter_exit_cancels_an_open_session() -> None:
     assert "BEFORE=False" in r.stdout, f"{r.stdout}\n{r.stderr}"
     assert "AFTER=True" in r.stdout, f"{r.stdout}\n{r.stderr}"
     assert r.returncode == 0, f"exit={r.returncode}\n{r.stdout}\n{r.stderr}"
+
+
+# ---------------------------------------------------------------------------
+# close_outcome(): how the push's close ended
+# ---------------------------------------------------------------------------
+
+
+def _outcome(kind: Any, status: Optional[int] = None, detail: str = "") -> Any:
+    from tstrans.rtp import PushCloseOutcome
+
+    return PushCloseOutcome(kind=kind, status=status, detail=detail)
+
+
+def test_close_outcome_is_none_while_open() -> None:
+    from tstrans.rtp import PushCloseKind
+
+    server = ScriptedRecordServer()
+    push = RtspClient.push(RtspClientConfig(server.url), PushDescription.mp2t())
+    try:
+        assert push.close_outcome() is None
+        push.send_ts(TS_BUNDLE)
+        assert push.close_outcome() is None
+        push.close()
+        assert push.close_outcome() == _outcome(PushCloseKind.CLEAN)
+    finally:
+        server.close()
+        push.close()
+
+
+def test_a_mux_sender_finish_then_the_session_reads_a_clean_close() -> None:
+    from tstrans.rtp import PushCloseKind
+
+    server = ScriptedRecordServer()
+    push = RtspClient.push(RtspClientConfig(server.url), PushDescription.mp2t())
+    try:
+        mux = push.into_mux_sender(video_only_program())
+        for i in range(3):
+            mux.send_video(_access_unit(i), pts=Pts90khz.from_raw(i * 3000), key_frame=(i == 0))
+        assert push.close_outcome() is None
+        assert mux.finish() is None
+        assert push.close_outcome() == _outcome(PushCloseKind.CLEAN)
+        assert "TEARDOWN" in server.methods
+        # The first close's outcome is kept.
+        mux.close()
+        assert push.close_outcome() == _outcome(PushCloseKind.CLEAN)
+    finally:
+        server.close()
+        push.close()
+
+
+def test_a_refused_teardown_is_read_with_its_status() -> None:
+    from tstrans.rtp import PushCloseKind
+
+    refused = _outcome(PushCloseKind.TEARDOWN_REFUSED, 501, "X")
+    # A sender shell's `finish()` cannot report the refusal; the session can.
+    server = ScriptedRecordServer(teardown_status=501)
+    push = RtspClient.push(RtspClientConfig(server.url), PushDescription.mp2t())
+    try:
+        sender = push.into_sender()
+        sender.send_bytes(TS_BUNDLE)
+        assert sender.finish() is None
+        assert push.close_outcome() == refused
+        sender.close()
+    finally:
+        server.close()
+        push.close()
+    # The session's own silent `close()` keeps it too.
+    server = ScriptedRecordServer(teardown_status=501)
+    push = RtspClient.push(RtspClientConfig(server.url), PushDescription.mp2t())
+    try:
+        push.send_ts(TS_BUNDLE)
+        assert push.close() is None
+        assert push.close_outcome() == refused
+    finally:
+        server.close()
+        push.close()
+
+
+def test_close_outcome_after_into_sender_and_finish() -> None:
+    from tstrans.rtp import PushCloseKind
+
+    server = ScriptedRecordServer()
+    push = RtspClient.push(RtspClientConfig(server.url), PushDescription.mp2t())
+    try:
+        sender = push.into_sender()
+        assert push.close_outcome() is None
+        sender.send_bytes(TS_BUNDLE)
+        assert push.close_outcome() is None
+        assert sender.finish() is None
+        assert push.close_outcome() == _outcome(PushCloseKind.CLEAN)
+        sender.close()
+        push.close()
+        assert push.close_outcome() == _outcome(PushCloseKind.CLEAN)
+    finally:
+        server.close()
+        push.close()
+    # A sender's `close()` cancels first: the push reads the cancel.
+    server = ScriptedRecordServer()
+    push = RtspClient.push(RtspClientConfig(server.url), PushDescription.mp2t())
+    try:
+        sender = push.into_sender()
+        sender.send_bytes(TS_BUNDLE)
+        sender.close()
+        assert push.close_outcome() == _outcome(PushCloseKind.CANCELLED)
+    finally:
+        server.close()
+        push.close()
+
+
+def test_close_outcome_never_waits_behind_a_parked_send() -> None:
+    from tstrans.rtp import PushCloseKind
+
+    from _builders.parked import slot_held
+
+    server = ScriptedRecordServer(stop_reading=True)
+    push = RtspClient.push(RtspClientConfig(server.url), PushDescription.mp2t())
+    try:
+        state = _push_until_parked(push)
+        assert slot_held(push), "the send does not hold the session"
+        blocked, got = call_with_hang_deadline(push.close_outcome, 2.5)
+        still_parked = slot_held(push) and not state["ended"].is_set()
+        push.close()
+        assert state["ended"].wait(WAIT_S), "the parked send did not end"
+        assert not blocked, "close_outcome() waited behind the parked send"
+        assert still_parked, "the send was not parked when close_outcome() answered"
+        assert "exc" not in got, got
+        assert got["value"] is None
+        # The close found a send holding the session and fired the cancel.
+        assert push.close_outcome() == _outcome(PushCloseKind.CANCELLED)
+    finally:
+        server.close()
+        push.close()
+
+
+def test_push_close_kind_has_one_member_per_rust_case() -> None:
+    """The member names are the Rust `PushCloseOutcome` variants in
+    SCREAMING_SNAKE_CASE, in order: a variant added in Rust needs a member
+    here (and a case in the binding's conversion)."""
+    import re
+    from pathlib import Path
+
+    from tstrans.rtp import PushCloseKind
+
+    here = Path(__file__).resolve()
+    roots = [p for p in here.parents if (p / "crates" / "tst-rtp").is_dir()]
+    assert roots, "the workspace's crates/tst-rtp was not found above the test"
+    src = (roots[0] / "crates/tst-rtp/src/rtsp/client/push/mod.rs").read_text()
+    m = re.search(r"pub enum PushCloseOutcome \{(.*?)\n\}", src, re.S)
+    assert m, "pub enum PushCloseOutcome not found"
+    body = "\n".join(
+        line for line in m.group(1).splitlines() if not line.strip().startswith("//")
+    )
+    variants = re.findall(r"^    ([A-Z][A-Za-z0-9]*)\b", body, re.M)
+    assert variants, "no variant read"
+    snake = [re.sub(r"(?<!^)(?=[A-Z])", "_", v).upper() for v in variants]
+    assert [k.name for k in PushCloseKind] == snake

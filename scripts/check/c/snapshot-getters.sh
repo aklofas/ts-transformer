@@ -180,6 +180,7 @@ bindings/python/src/hls/mux_publisher.rs	PyMuxPublisher	stats
 bindings/python/src/rtp/push.rs	PyRtspPushSession	stats
 bindings/python/src/rtp/push.rs	PyRtspPushSession	end_reason
 bindings/python/src/rtp/push.rs	PyRtspPushSession	end_detail
+bindings/python/src/rtp/push.rs	PyRtspPushSession	close_outcome
 LIST
     never_wait_failed=0
     while IFS="$(printf '\t')" read -r path type fn; do

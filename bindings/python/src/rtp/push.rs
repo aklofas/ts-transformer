@@ -18,16 +18,18 @@
 //! the slot takes it with the GIL released and builds its exception after
 //! it let go; `is_session_alive()` only peeks.
 //!
-//! `stats()`, `end_reason()` and `end_detail()` read the push's
-//! `PushStatsHandle`, taken at build, so they never wait for a send and
-//! answer after `close()`, `teardown()` and a conversion.
+//! `stats()`, `end_reason()`, `end_detail()` and `close_outcome()` read the
+//! push's `PushStatsHandle`, taken at build, so they never wait for a send
+//! and answer after `close()`, `teardown()` and a conversion.
 
 #![allow(unsafe_op_in_unsafe_fn, clippy::useless_conversion)]
 
 use std::sync::Arc;
 
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
+use pyo3::intern;
 use pyo3::prelude::*;
+use pyo3::types::PyDict;
 
 use tst_core::transport::{Transport, TransportCancel};
 use tst_pipeline::binding::parking::{ParkingSlot, Peek, SlotRefused};
@@ -35,8 +37,8 @@ use tst_pipeline::binding::{BindingError, BindingErrorKind, Domain, Opened};
 use tst_rtp::error::RtspError as RustRtspError;
 use tst_rtp::rtsp::client::RtspCancelHandle as RustRtspCancelHandle;
 use tst_rtp::{
-    PushDescription as RustPushDescription, PushError, PushStatsHandle, RtspPush as RustRtspPush,
-    VideoTrack,
+    PushCloseOutcome, PushDescription as RustPushDescription, PushError, PushStatsHandle,
+    RtspPush as RustRtspPush, VideoTrack,
 };
 
 use crate::generated::stats_rtp::RtspPushStats;
@@ -241,6 +243,14 @@ pub struct PyRtspPushSession {
     session_id: String,
     /// Whether the push announced the MPEG-TS track.
     mp2t: bool,
+}
+
+/// Whether a call on another thread holds the session. Test-only.
+#[cfg(feature = "py-test-hooks")]
+impl PyRtspPushSession {
+    pub(crate) fn slot_held(&self) -> bool {
+        matches!(self.slot.try_peek(|_| ()), Peek::Held)
+    }
 }
 
 /// A session collected without `close()`: the push's own drop, with the GIL
@@ -526,6 +536,22 @@ impl PyRtspPushSession {
         end_detail(&reason).map(str::to_owned)
     }
 
+    /// How the push's close ended, as a `PushCloseOutcome`, or `None` until
+    /// a close has finished: this session's `close()` or `teardown()`, or
+    /// the close a sender shell that took the push runs when it is
+    /// finished or closed; from then on the first close's outcome. Never
+    /// waits: read without the session, so it answers `None` while a send
+    /// is parked or a close is still running, and it answers after
+    /// `close()` and after a conversion. After a sender's `finish()` it
+    /// says how the TEARDOWN went; a sender's `close()` cancels first, so
+    /// it reads `CANCELLED`.
+    fn close_outcome(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
+        match self.stats.close_outcome() {
+            Some(outcome) => close_outcome_to_py(py, &outcome).map(Some),
+            None => Ok(None),
+        }
+    }
+
     /// The session id the server named at SETUP.
     #[getter]
     fn session_id(&self) -> &str {
@@ -553,8 +579,10 @@ impl PyRtspPushSession {
     /// while a send, `pause()` or `resume()` on another thread holds the
     /// session, each leaving the session as it was; an `is_session_alive()`
     /// peeking at it is waited for. The sender's `close()` cancels first;
-    /// `finish()` cancels nothing. `stats()` and `end_reason()` keep
-    /// answering on this session, for the push the sender now owns.
+    /// `finish()` cancels nothing and ends without loss. `stats()`,
+    /// `end_reason()` and `close_outcome()` keep answering on this session,
+    /// for the push the sender now owns; after the sender's `finish()`,
+    /// `close_outcome()` says how the TEARDOWN went.
     #[allow(clippy::wrong_self_convention)]
     fn into_mux_sender(
         &self,
@@ -574,11 +602,11 @@ impl PyRtspPushSession {
     /// thread holds the session, both leaving the session as it was; an
     /// `is_session_alive()` peeking at it is waited for. The sender's
     /// `close()` cancels first; its `finish()` cancels nothing, writes
-    /// what the sender and the push hold, then sends TEARDOWN (it cannot
-    /// report the TEARDOWN's answer: `end_reason()` and `stats()` here
-    /// tell how the push ended and what a close dropped). `stats()` and
-    /// `end_reason()` keep answering on this session, for the push the
-    /// sender now owns.
+    /// what the sender and the push hold, then sends TEARDOWN: the end
+    /// without loss. `stats()`, `end_reason()` and `close_outcome()` keep
+    /// answering on this session, for the push the sender now owns; after
+    /// the sender's `finish()`, `close_outcome()` says how the TEARDOWN
+    /// went.
     #[allow(clippy::wrong_self_convention)]
     fn into_sender(&self, py: Python<'_>) -> PyResult<PySender> {
         self.refuse_conversion(py, "into_sender")?;
@@ -603,6 +631,33 @@ impl PyRtspPushSession {
         self.close(py);
         Ok(false)
     }
+}
+
+/// `outcome` as a `tstrans.rtp.PushCloseOutcome`. `PushCloseOutcome` is
+/// `#[non_exhaustive]`: a case this binding does not know yet reads
+/// `FAILED` with its debug text as the detail.
+fn close_outcome_to_py(py: Python<'_>, outcome: &PushCloseOutcome) -> PyResult<Py<PyAny>> {
+    let (kind, status, detail) = match outcome {
+        PushCloseOutcome::Clean => ("CLEAN", None, String::new()),
+        PushCloseOutcome::Cancelled => ("CANCELLED", None, String::new()),
+        PushCloseOutcome::MediaLost => ("MEDIA_LOST", None, String::new()),
+        PushCloseOutcome::TeardownRefused { code, reason } => {
+            ("TEARDOWN_REFUSED", Some(*code), reason.clone())
+        }
+        PushCloseOutcome::TeardownTimedOut => ("TEARDOWN_TIMED_OUT", None, String::new()),
+        PushCloseOutcome::Failed { detail } => ("FAILED", None, detail.clone()),
+        other => ("FAILED", None, format!("{other:?}")),
+    };
+    let rtp = py.import(intern!(py, "tstrans.rtp"))?;
+    let kind = rtp.getattr(intern!(py, "PushCloseKind"))?.getattr(kind)?;
+    let kwargs = PyDict::new(py);
+    kwargs.set_item("kind", kind)?;
+    kwargs.set_item("status", status)?;
+    kwargs.set_item("detail", detail)?;
+    Ok(rtp
+        .getattr(intern!(py, "PushCloseOutcome"))?
+        .call((), Some(&kwargs))?
+        .unbind())
 }
 
 pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {

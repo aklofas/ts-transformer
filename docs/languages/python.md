@@ -785,6 +785,7 @@ falls into two groups.
 | `peer_addr()`, `source_rejected()` on the receiving shells, `udp.RecvTransport` and `rist.RecvTransport` | the publisher's address and the count of what the `source` pin turned away, as they stand (the same count in `stats().source_rejected` waits, like `stats()`) | the shells keep answering; the two transports raise `CLOSED` |
 | `rtp_stats()` on the receiving shells (`shells.Receiver`, `shells.DemuxReceiver`) | the RTP counters as they stand; `None` off `rtp://`, RTSP and a publish mount | the last value |
 | `RtspPushSession.stats()` | the push's counters as they stand | the last value, also after a conversion |
+| `RtspPushSession.close_outcome()` | `None` (no close has finished) | the first close's outcome, also after a conversion |
 | `video_handle()` … `data_handle()` on the three `MuxSender` classes | the handles of the current program config: as built, or as the last `reconfigure` left it | `None` |
 | `reconnect_attempts()`, `reconnect_stats()` on the managed shells | live counters kept outside the object | `reconnect_attempts()` keeps its last value; `reconnect_stats()` raises `CLOSED` |
 | `end_reason()` / `end_detail()` | the recorded reason, or `None`; `H264Receiver` answers `None` while a `recv_au()` is in flight | the reason recorded at close |
@@ -1604,11 +1605,20 @@ The surface:
   MPEG-TS push), `send_video(annexb, *, pts)`, `send_klv(klv, *, pts)`.
 - `pause()`, `resume()`, `teardown()`, `close()`, `cancel_handle()`,
   `stats() -> RtspPushStats`, `end_reason() -> Optional[EndReason]`,
-  `end_detail()`, `is_session_alive()`, the `session_id` property, and the
-  context manager. `stats()`, `end_reason()` and `end_detail()` read the
-  push's counters and end without the session: they never wait and keep
-  answering after `close()`, `teardown()` and a conversion (for the push
-  the sender then owns).
+  `end_detail()`, `close_outcome() -> Optional[PushCloseOutcome]`,
+  `is_session_alive()`, the `session_id` property, and the context
+  manager. `stats()`, `end_reason()`, `end_detail()` and `close_outcome()`
+  read the push's counters and end without the session: they never wait
+  and keep answering after `close()`, `teardown()` and a conversion (for
+  the push the sender then owns).
+- `PushCloseOutcome` (frozen): `kind` (a `PushCloseKind`: `CLEAN`,
+  `CANCELLED`, `MEDIA_LOST`, `TEARDOWN_REFUSED`, `TEARDOWN_TIMED_OUT`,
+  `FAILED`), `status` (the RTSP status of a refused TEARDOWN, else
+  `None`) and `detail` (the refusal's reason phrase or a failed close's
+  text, at most 256 characters with control characters replaced, else
+  empty). `close_outcome()` is `None` until a close has finished (the
+  session's `close()` or `teardown()`, or a sender shell's `finish()` or
+  `close()`), then the first close's outcome.
 - `into_mux_sender(program_config) -> MuxSender` and `into_sender() ->
   Sender` move an MPEG-TS push into a sender shell; the session is closed
   afterwards. Both raise `ValueError` on an elementary push, and
@@ -1664,15 +1674,17 @@ Rules the types do not enforce:
 - **Ending a push through a shell.** `MuxSender.finish()` and
   `Sender.finish()` cancel nothing: each writes what the sender holds and
   closes the push, which, while the session is up, writes its queue and
-  then sends TEARDOWN. Neither reports the TEARDOWN's answer: a session
+  then sends TEARDOWN. Neither raises the TEARDOWN's answer: a session
   that ended first drops what was queued (a `Sender` whose push the
   server already ended raises the send's error). The session's
-  `end_reason()` and `stats().frames_dropped_at_close` tell afterwards
-  how the push ended and what a close dropped. A shell's `close()` cancels
-  first, so it can drop packets queued a moment before. When you must know
-  that everything was written, send through the session's `send_ts` and
-  call `teardown()`, which raises unless the queued media was written and
-  the server accepted the TEARDOWN.
+  `close_outcome()` says afterwards how that close went (`CLEAN` only when
+  the queued media was written and the server accepted the TEARDOWN;
+  `MEDIA_LOST`, `TEARDOWN_REFUSED` with the status, `TEARDOWN_TIMED_OUT`,
+  `FAILED`), and `end_reason()` and `stats().frames_dropped_at_close` how
+  the push ended and what a close dropped. A shell's `close()` cancels
+  first, so it can drop packets queued a moment before, and the outcome
+  reads `CANCELLED`. Sending through the session's `send_ts` and calling
+  `teardown()` raises the same cases instead.
 - **Keepalive.** `keepalive=True` (the default) sends OPTIONS pings at
   half the session timeout the server advertises, or every
   `keepalive_interval_ms` when the config sets it. mediamtx 1.21.4 ends a

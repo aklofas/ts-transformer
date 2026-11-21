@@ -44,7 +44,8 @@ pub(crate) fn register(parent: &Bound<'_, PyModule>) -> PyResult<()> {
 
 /// `_slot_held_for_test(obj)`: whether a call on another thread holds the
 /// slot of `obj` (a shell, a udp or rist receive transport, a tcp
-/// transport), so a test reads a getter only once that call is parked.
+/// transport, an RTSP push session), so a test reads a getter only once
+/// that call is parked.
 /// Never waits.
 #[cfg(feature = "py-test-hooks")]
 #[pyfunction]
@@ -73,6 +74,10 @@ fn slot_held_for_test(obj: &Bound<'_, PyAny>) -> PyResult<bool> {
     #[cfg(feature = "tcp")]
     if let Ok(s) = obj.cast::<crate::tcp::PyTcpTransport>() {
         return Ok(s.borrow().slot_held());
+    }
+    #[cfg(feature = "rtp")]
+    if let Ok(s) = obj.cast::<crate::rtp::push::PyRtspPushSession>() {
+        return Ok(s.get().slot_held());
     }
     Err(pyo3::exceptions::PyTypeError::new_err(format!(
         "no slot probe for {}",

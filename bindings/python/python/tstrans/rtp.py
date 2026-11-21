@@ -300,6 +300,47 @@ class RtspServerConfig:
             )
 
 
+class PushCloseKind(enum.IntEnum):
+    """How a push's close ended: one member per case of
+    `tst_rtp::PushCloseOutcome`. Read through
+    `RtspPushSession.close_outcome()`. Pure Python: it only ever flows
+    Rust→Python as a return value."""
+
+    CLEAN = 1
+    """The server accepted the TEARDOWN (a 2xx, or 454 for a session it no
+    longer knew) and no queued media is known lost."""
+    CANCELLED = 2
+    """The push's cancel had fired: what was still queued was dropped and
+    the TEARDOWN's reply was not awaited. A sender shell's `close()` fires
+    it first; its `finish()` does not."""
+    MEDIA_LOST = 3
+    """The server had forgotten the session and media queued by earlier
+    sends was dropped before it was written, whatever the TEARDOWN was
+    answered."""
+    TEARDOWN_REFUSED = 4
+    """The server refused the TEARDOWN; `status` holds its status code."""
+    TEARDOWN_TIMED_OUT = 5
+    """The TEARDOWN was not written and answered within its 500 ms bound."""
+    FAILED = 6
+    """The close failed another way, for instance on a connection that had
+    ended; `detail` says how."""
+
+
+@dataclass(frozen=True)
+class PushCloseOutcome:
+    """How a push's close ended, from `RtspPushSession.close_outcome()`.
+
+    `status` is the RTSP status of a refused TEARDOWN (`TEARDOWN_REFUSED`
+    only), else `None`. `detail` is the server's reason phrase of a refused
+    TEARDOWN or the text of a `FAILED` close, else empty: at most 256
+    characters, each control character replaced by U+FFFD (the server
+    chooses the phrase)."""
+
+    kind: PushCloseKind
+    status: Optional[int]
+    detail: str
+
+
 __all__: list[str] = [
     # raw transports
     "Transport",
@@ -316,6 +357,8 @@ __all__: list[str] = [
     "TransportPref",
     "RtspVersion",
     "PushDescription",
+    "PushCloseKind",
+    "PushCloseOutcome",
     "RtspPushSession",
     "RtspPushStats",
     # RTSP server
