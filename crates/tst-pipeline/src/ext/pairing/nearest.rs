@@ -3,7 +3,17 @@
 //! Realtime mode: video events trigger immediate pairing against KLV
 //! history. Buffered mode adds a bounded video buffer with lookahead
 //! drain, and releases that buffer when the raw 33-bit PTS wraps.
+//!
+//! Both modes close out their state at an epoch boundary (a reconnect, or
+//! a signalled discontinuity on the video PID, the KLV PID or their
+//! program's PCR PID), ahead of the passed-through event: buffered videos
+//! are classified against the history held so far, then its never-used
+//! entries leave as `UnpairedKlv`, so nothing pairs across the boundary.
+//! The first KLV sample and the first video sample after a signalled
+//! discontinuity may be the old-clock PES in flight and then leave
+//! unpaired. [`EpochTracker`] has both rules.
 
+use super::EpochTracker;
 use super::types::{KlvSample, PairerOutput, VideoSample};
 use std::collections::VecDeque;
 use tst_core::mpegts::demux::DemuxEvent;
@@ -43,6 +53,7 @@ pub(super) struct NearestState {
     /// Largest PTS fed on either route since the last wrap (Buffered
     /// mode only).
     newest_pts: Option<i64>,
+    epochs: EpochTracker,
 }
 
 struct KlvEntry {
@@ -67,23 +78,61 @@ impl NearestState {
             klv_history: VecDeque::with_capacity(max_klv_history),
             video_buffer: VecDeque::new(),
             newest_pts: None,
+            epochs: EpochTracker::new(video_pid, klv_pid),
         }
     }
 
     pub(super) fn feed(&mut self, event: DemuxEvent) -> Vec<PairerOutput> {
         match super::classify(event, self.video_pid, self.klv_pid) {
+            // An old-clock sample in flight leaves before `observe_pts`: its
+            // PTS must not become the wrap reference of the new clock.
             super::EventClass::Video(v) => {
+                if self.epochs.video_is_old(v.pts) {
+                    return vec![PairerOutput::UnpairedVideo(v)];
+                }
                 let mut out = self.observe_pts(v.pts.as_ticks());
                 out.extend(self.handle_video(v));
                 out
             }
             super::EventClass::Klv(k) => {
+                if self.epochs.klv_is_old(k.pts) {
+                    return vec![PairerOutput::UnpairedKlv(k)];
+                }
                 let mut out = self.observe_pts(k.pts.as_ticks());
                 out.extend(self.handle_klv(k));
                 out
             }
-            super::EventClass::Other(other) => vec![PairerOutput::PassThrough(other)],
+            super::EventClass::Other(other) => {
+                let mut out = if self.epochs.starts_epoch(&other) {
+                    self.close_out()
+                } else {
+                    Vec::new()
+                };
+                out.push(PairerOutput::PassThrough(other));
+                out
+            }
         }
+    }
+
+    /// Ends the current time base: classifies every buffered video against
+    /// the history held so far, then empties the history, its never-used
+    /// entries leaving as `UnpairedKlv`. The order keeps a video from
+    /// meeting KLV of the next time base.
+    fn close_out(&mut self) -> Vec<PairerOutput> {
+        let mut out = Vec::new();
+        // Every Buffered feed already drains in-tolerance videos, so the
+        // paired branch here is a safety net; in practice these come out
+        // as `UnpairedVideo`.
+        while let Some(v) = self.video_buffer.pop_front() {
+            out.extend(self.match_video_against_history(v));
+        }
+        while let Some(entry) = self.klv_history.pop_front() {
+            if !entry.used {
+                out.push(PairerOutput::UnpairedKlv(entry.sample));
+            }
+        }
+        self.newest_pts = None;
+        out
     }
 
     /// Buffered mode: track the newest PTS and, when `pts` lies more
@@ -96,31 +145,22 @@ impl NearestState {
         if matches!(self.mode, InternalMode::Realtime) {
             return Vec::new();
         }
-        let mut out = Vec::new();
-        if let Some(newest) = self.newest_pts
+        let out = if let Some(newest) = self.newest_pts
             && (0..1 << 33).contains(&pts)
             && (0..1 << 33).contains(&newest)
             && newest - pts > WRAP_JUMP_TICKS
         {
-            // Every Buffered feed already drains in-tolerance videos, so
-            // the paired branch here is a safety net; in practice these
-            // come out as `UnpairedVideo`.
-            while let Some(v) = self.video_buffer.pop_front() {
-                out.extend(self.match_video_against_history(v));
-            }
-            while let Some(entry) = self.klv_history.pop_front() {
-                if !entry.used {
-                    out.push(PairerOutput::UnpairedKlv(entry.sample));
-                }
-            }
-            self.newest_pts = None;
-        }
+            self.close_out()
+        } else {
+            Vec::new()
+        };
         self.newest_pts = Some(self.newest_pts.map_or(pts, |n| n.max(pts)));
         out
     }
 
     pub(super) fn flush(&mut self) -> Vec<PairerOutput> {
         self.newest_pts = None;
+        self.epochs.forget_clock();
         let mut out = self.drain_buffered(true);
         // Drain remaining KLV history; emit UnpairedKlv for any !used.
         while let Some(entry) = self.klv_history.pop_front() {
@@ -277,6 +317,8 @@ impl NearestState {
 
 #[cfg(test)]
 mod tests {
+    use super::super::OLD_CLOCK_WINDOW;
+    use super::super::test_support::{af_discontinuity, cc_jump, program_map};
     use super::*;
     use tst_core::mpegts::common::Pts90khz;
     use tst_core::mpegts::demux::{MetadataKind, SamplePayload, StreamId, StreamKind, VideoCodec};
@@ -688,6 +730,229 @@ mod tests {
         let _ = s.feed(klv_event(100));
         let out = s.feed(video_event(100));
         assert!(matches!(&out[0], PairerOutput::Paired { .. }));
+    }
+
+    // --- epochs ---
+
+    #[test]
+    fn a_reconnect_clears_the_history() {
+        let mut s = nearest_realtime();
+        assert!(s.feed(klv_event(90_000)).is_empty());
+        let out = s.feed(DemuxEvent::ReconnectDiscontinuity);
+        assert!(
+            matches!(
+                &out[..],
+                [
+                    PairerOutput::UnpairedKlv(k),
+                    PairerOutput::PassThrough(DemuxEvent::ReconnectDiscontinuity)
+                ] if k.pts.as_ticks() == 90_000
+            ),
+            "got {out:?}"
+        );
+        // The replacement stream's first frame arrives before its first KLV.
+        let out = s.feed(video_event(90_000));
+        assert!(
+            matches!(&out[..], [PairerOutput::UnpairedVideo(_)]),
+            "got {out:?}"
+        );
+    }
+
+    #[test]
+    fn a_flag_on_the_video_klv_or_pcr_pid_clears_the_history() {
+        const PCR_PID: u16 = 0x101;
+        for flagged in [VIDEO_PID, KLV_PID, PCR_PID] {
+            let mut s = nearest_realtime();
+            s.feed(program_map(1, PCR_PID, &[VIDEO_PID, PCR_PID, KLV_PID]));
+            s.feed(klv_event(90_000));
+            let out = s.feed(af_discontinuity(flagged));
+            assert!(
+                matches!(
+                    &out[..],
+                    [
+                        PairerOutput::UnpairedKlv(k),
+                        PairerOutput::PassThrough(DemuxEvent::Discontinuity { .. })
+                    ] if k.pts.as_ticks() == 90_000
+                ),
+                "flag on {flagged:#x}: got {out:?}"
+            );
+            // No frame preceded the flag, so none can be in flight: this one
+            // is judged against the history alone.
+            let out = s.feed(video_event(90_000));
+            assert!(
+                matches!(&out[..], [PairerOutput::UnpairedVideo(_)]),
+                "flag on {flagged:#x}: got {out:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_used_entry_leaves_silently_at_an_epoch() {
+        let mut s = nearest_realtime();
+        s.feed(klv_event(0));
+        s.feed(video_event(10)); // marks PTS 0 used
+        let out = s.feed(DemuxEvent::ReconnectDiscontinuity);
+        assert!(
+            matches!(&out[..], [PairerOutput::PassThrough(_)]),
+            "got {out:?}"
+        );
+        let out = s.feed(video_event(20));
+        assert!(
+            matches!(&out[..], [PairerOutput::UnpairedVideo(_)]),
+            "got {out:?}"
+        );
+    }
+
+    #[test]
+    fn the_first_klv_and_frame_after_a_flag_follow_the_in_flight_rule() {
+        let near = 90_000 + OLD_CLOCK_WINDOW;
+
+        // The old-clock KLV PES in flight, then a second cell of the same PES.
+        let mut s = nearest_realtime();
+        s.feed(klv_event(90_000));
+        s.feed(af_discontinuity(VIDEO_PID));
+        for _ in 0..2 {
+            let out = s.feed(klv_event(near));
+            assert!(
+                matches!(&out[..], [PairerOutput::UnpairedKlv(k)] if k.pts.as_ticks() == near),
+                "got {out:?}"
+            );
+        }
+        // It stayed out of the history.
+        let out = s.feed(video_event(near));
+        assert!(
+            matches!(&out[..], [PairerOutput::UnpairedVideo(_)]),
+            "got {out:?}"
+        );
+        // The next PES is on the new clock and pairs.
+        s.feed(klv_event(900_000));
+        let out = s.feed(video_event(900_000));
+        assert!(
+            matches!(&out[..], [PairerOutput::Paired { klv, .. }] if klv.pts.as_ticks() == 900_000),
+            "got {out:?}"
+        );
+
+        // One tick past the window the first KLV is on the new clock.
+        let mut s = nearest_realtime();
+        s.feed(klv_event(90_000));
+        s.feed(af_discontinuity(KLV_PID));
+        assert!(s.feed(klv_event(near + 1)).is_empty());
+        let out = s.feed(video_event(near + 1));
+        assert!(
+            matches!(&out[..], [PairerOutput::Paired { klv, .. }] if klv.pts.as_ticks() == near + 1),
+            "got {out:?}"
+        );
+
+        // The old-clock frame in flight completes after a new-clock KLV that
+        // lies one tick from it.
+        let mut s = nearest_realtime();
+        s.feed(klv_event(900_000));
+        s.feed(video_event(900_000));
+        s.feed(af_discontinuity(KLV_PID));
+        let old_frame = 900_000 + OLD_CLOCK_WINDOW;
+        assert!(s.feed(klv_event(old_frame + 1)).is_empty());
+        let out = s.feed(video_event(old_frame));
+        assert!(
+            matches!(&out[..], [PairerOutput::UnpairedVideo(v)] if v.pts.as_ticks() == old_frame),
+            "got {out:?}"
+        );
+        // Only the first frame after the flag is judged.
+        let out = s.feed(video_event(old_frame + 2));
+        assert!(
+            matches!(&out[..], [PairerOutput::Paired { klv, .. }] if klv.pts.as_ticks() == old_frame + 1),
+            "got {out:?}"
+        );
+    }
+
+    #[test]
+    fn a_reconnect_leaves_nothing_in_flight() {
+        let mut s = nearest_realtime();
+        s.feed(klv_event(90_000));
+        s.feed(video_event(90_000));
+        s.feed(af_discontinuity(VIDEO_PID));
+        s.feed(DemuxEvent::ReconnectDiscontinuity);
+        assert!(s.feed(klv_event(93_000)).is_empty());
+        let out = s.feed(video_event(93_000));
+        assert!(
+            matches!(&out[..], [PairerOutput::Paired { .. }]),
+            "got {out:?}"
+        );
+    }
+
+    #[test]
+    fn flush_forgets_the_old_clock() {
+        let mut s = nearest_realtime();
+        s.feed(klv_event(90_000));
+        s.feed(video_event(90_000));
+        s.feed(af_discontinuity(VIDEO_PID));
+        s.flush();
+        assert!(s.feed(klv_event(93_000)).is_empty());
+        let out = s.feed(video_event(93_000));
+        assert!(
+            matches!(&out[..], [PairerOutput::Paired { .. }]),
+            "got {out:?}"
+        );
+    }
+
+    #[test]
+    fn buffered_old_video_never_pairs_with_new_klv() {
+        let mut p = buffered_pairer(/*tolerance*/ 100, /*max_lag*/ 9000);
+        assert!(p.feed(klv_event(500)).is_empty());
+        // Buffered: 500 ticks from the only KLV, inside the wait window.
+        assert!(p.feed(video_event(1000)).is_empty());
+        let out = p.feed(DemuxEvent::ReconnectDiscontinuity);
+        assert!(
+            matches!(
+                &out[..],
+                [
+                    PairerOutput::UnpairedVideo(v),
+                    PairerOutput::UnpairedKlv(k),
+                    PairerOutput::PassThrough(DemuxEvent::ReconnectDiscontinuity)
+                ] if v.pts.as_ticks() == 1000 && k.pts.as_ticks() == 500
+            ),
+            "got {out:?}"
+        );
+        // The replacement stream's KLV at the old frame's PTS finds no frame.
+        assert!(p.feed(klv_event(1000)).is_empty());
+        let out = p.flush();
+        assert!(
+            matches!(&out[..], [PairerOutput::UnpairedKlv(k)] if k.pts.as_ticks() == 1000),
+            "got {out:?}"
+        );
+    }
+
+    #[test]
+    fn a_continuity_jump_keeps_the_history() {
+        let mut s = nearest_realtime();
+        s.feed(klv_event(50));
+        let out = s.feed(cc_jump(VIDEO_PID));
+        assert!(
+            matches!(&out[..], [PairerOutput::PassThrough(_)]),
+            "got {out:?}"
+        );
+        assert!(matches!(
+            &s.feed(video_event(100))[..],
+            [PairerOutput::Paired { .. }]
+        ));
+    }
+
+    #[test]
+    fn a_flag_on_another_pid_keeps_the_history() {
+        let mut s = nearest_realtime();
+        // Another program's PCR PID is not the paired program's.
+        s.feed(program_map(1, VIDEO_PID, &[VIDEO_PID, KLV_PID]));
+        s.feed(program_map(2, 0x201, &[0x201, 0x202]));
+        s.feed(klv_event(50));
+        for other in [0x200, 0x201] {
+            let out = s.feed(af_discontinuity(other));
+            assert!(
+                matches!(&out[..], [PairerOutput::PassThrough(_)]),
+                "flag on {other:#x}: got {out:?}"
+            );
+        }
+        assert!(matches!(
+            &s.feed(video_event(100))[..],
+            [PairerOutput::Paired { .. }]
+        ));
     }
 
     // --- PTS saturation regression tests ---

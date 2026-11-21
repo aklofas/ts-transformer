@@ -5,10 +5,11 @@
 //! sequence — proving the composite is a faithful, lossless wrapper.
 
 use crate::common::{build_h264_au, drain_mux, dummy_klv};
+use crate::pairing_round_trip::flag_discontinuity_on_nth_pusi;
 
 use std::time::Duration;
 use tst_core::mpegts::common::Pts90khz;
-use tst_core::mpegts::demux::{Demuxer, DemuxerConfig};
+use tst_core::mpegts::demux::{DemuxEvent, Demuxer, DemuxerConfig, DiscontinuityKind};
 use tst_core::mpegts::mux::{
     KlvStreamType, Muxer, MuxerConfig, MuxerProgramConfigBuilder, VideoCodec as MuxVideoCodec,
 };
@@ -181,6 +182,83 @@ fn buffered_mode_flush_drains_via_oracle() {
     let mut got = during_feed;
     got.extend(during_flush);
     assert_eq!(got, expected, "buffered flush diverged from oracle");
+}
+
+/// A signalled discontinuity on the video PID, fed as bytes to the default
+/// (nearest) strategy. The demuxer reports the flag before it completes the
+/// previous unbounded video PES (the flagged packet's PUSI is what ends it),
+/// so the frame in flight leaves unpaired; the frames of the replacement
+/// source, which arrive before its first KLV, do not pair with the KLV from
+/// before the flag although it lies inside their tolerance.
+#[test]
+fn with_config_clears_at_a_signalled_video_discontinuity() {
+    let cfg = {
+        let mut prog = MuxerProgramConfigBuilder::new(1, 0x1000);
+        prog.add_video(VIDEO_PID, MuxVideoCodec::H264);
+        prog.add_klv(KLV_PID, KlvStreamType::PrivateData, true);
+        let mut b = MuxerConfig::builder();
+        b.add_program(prog.build());
+        b.build().unwrap()
+    };
+    let mut mux = Muxer::new(cfg).unwrap();
+    // Before the flag: two frames, each preceded by its KLV.
+    for pts in [90_000, 93_000] {
+        mux.push_klv(&dummy_klv(), Pts90khz::new(pts), 0x00)
+            .unwrap();
+        mux.push_video(&build_h264_au(0xAA), Pts90khz::new(pts), true)
+            .unwrap();
+    }
+    // After it: two frames within the 100 ms tolerance of the KLV at 93 000,
+    // and no KLV of their own. The first is the flagged packet.
+    for pts in [96_000, 99_000] {
+        mux.push_video(&build_h264_au(0xBB), Pts90khz::new(pts), true)
+            .unwrap();
+    }
+    let mut bytes = drain_mux(&mut mux);
+    flag_discontinuity_on_nth_pusi(&mut bytes, VIDEO_PID, 2);
+
+    let mut cfg = PairingDemuxerConfig::default();
+    cfg.pairer = nearest_config();
+    let mut pd = PairingDemuxer::with_config(VIDEO_PID, KLV_PID, cfg);
+    let mut got = pd.feed(&bytes).unwrap();
+    got.extend(pd.flush());
+
+    // Project to (video PTS, KLV PTS) shapes; keep only the video-PID
+    // signalled discontinuity among the pass-throughs.
+    let shape: Vec<String> = got
+        .iter()
+        .filter_map(|o| match o {
+            PairerOutput::Paired { video, klv } => Some(format!(
+                "paired {} {}",
+                video.pts.as_ticks(),
+                klv.pts.as_ticks()
+            )),
+            PairerOutput::UnpairedVideo(v) => Some(format!("video {}", v.pts.as_ticks())),
+            PairerOutput::UnpairedKlv(k) => Some(format!("klv {}", k.pts.as_ticks())),
+            PairerOutput::PassThrough(DemuxEvent::Discontinuity {
+                stream,
+                kind: DiscontinuityKind::AdaptationFieldFlag,
+            }) if stream.pid == VIDEO_PID => Some("discontinuity".to_owned()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        shape,
+        [
+            "paired 90000 90000",
+            "klv 93000",
+            "discontinuity",
+            "video 93000",
+            "video 96000",
+            "video 99000",
+        ],
+        "full output: {got:?}"
+    );
+    let stats = pd.stats();
+    assert_eq!(
+        (stats.paired, stats.unpaired_video, stats.unpaired_klv),
+        (1, 3, 1)
+    );
 }
 
 #[test]

@@ -160,7 +160,7 @@ fn last_before_pts_pairs_async_klv_at_lower_cadence() {
 /// Set `discontinuity_indicator` on the `nth` (0-based) payload-unit-start
 /// packet of `pid`. The muxer's one-packet test PES carries a stuffing
 /// adaptation field, so the flag byte already exists.
-fn flag_discontinuity_on_nth_pusi(bytes: &mut [u8], pid: u16, nth: usize) {
+pub(super) fn flag_discontinuity_on_nth_pusi(bytes: &mut [u8], pid: u16, nth: usize) {
     let mut seen = 0;
     for pkt in bytes.chunks_exact_mut(188) {
         let pkt_pid = (u16::from(pkt[1] & 0x1F) << 8) | u16::from(pkt[2]);

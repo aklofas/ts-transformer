@@ -58,6 +58,10 @@
 //!   — the emitted timeline is unwrapped, never jumps back by `2^32`,
 //!   and the pairer's saturating i64 arithmetic handles the extended
 //!   range.
+//! - **A reconnect or a signalled discontinuity starts a new time base.**
+//!   PTS values on either side of it are unrelated, so both strategies
+//!   drop their history there and pair nothing across it; see the
+//!   "Epochs" section of [`Pairer`].
 //!
 //! Internal arithmetic uses `saturating_add` / `saturating_sub` against
 //! `i64::MAX` so non-conformant sources feeding raw 33-bit PTS values
@@ -352,6 +356,36 @@ impl EpochTracker {
 /// outputs; only a KLV that leaves the history without ever pairing is
 /// emitted as `UnpairedKlv`. Off-route events surface as `PassThrough`.
 ///
+/// # Epochs
+///
+/// Every strategy drops its history when the demuxer signals a new time
+/// base: at `DemuxEvent::ReconnectDiscontinuity` (emitted by
+/// `ManagedDemuxReceiver` after a reconnect) and at a
+/// `Discontinuity { kind: AdaptationFieldFlag }` on the video PID, the KLV
+/// PID or the PCR PID of the program carrying the video (a set
+/// `discontinuity_indicator`, H.222.0 §2.4.3.5; the PCR PID is learned from
+/// that program's `ProgramMap`). In `PairerMode::Buffered` the buffered
+/// video AUs are first classified against the history held so far (`Paired`
+/// if in tolerance, else `UnpairedVideo`); then the KLV entries that never
+/// paired are emitted as `UnpairedKlv`; then the event is passed through.
+/// Nothing pairs across the boundary.
+///
+/// The PES in flight at a flag completes after it on the old clock. The
+/// first KLV sample and the first video sample completing after a flag
+/// leave unpaired (`UnpairedKlv`, `UnpairedVideo`) when their PTS lies
+/// within two seconds of the newest PTS before the flag (for KLV, of the
+/// newest KLV or video PTS). A new clock that lands within two seconds of
+/// the old one loses its first KLV sample and its first video frame the
+/// same way. A reconnect resets the demuxer, so nothing is in flight after
+/// one.
+///
+/// A `ContinuityJump` (packet loss), a flag on any other PID, and an encoder
+/// restart that signals nothing (a silent clock jump) are not epochs; the
+/// last two are invisible to the pairer: call [`Self::flush`] at that
+/// boundary yourself. The video program's PCR PID counts only when that PID
+/// also carries an elementary stream; a PID that carries only PCR produces
+/// no demuxer event, so call [`Self::flush`] at such a restart.
+///
 /// # Closing
 ///
 /// `Pairer` is a passive aggregator — it owns no transport and no OS
@@ -396,6 +430,14 @@ impl Pairer {
     /// and 32-entry video / 32-entry KLV history caps. Use
     /// [`Self::with_config`] to override any of these.
     ///
+    /// # Epochs
+    ///
+    /// At a reconnect and at a signalled discontinuity the pairer emits the
+    /// KLV history that never paired as `UnpairedKlv`, ahead of the
+    /// passed-through event, and pairs nothing across it. An encoder restart
+    /// that signals nothing is invisible to it: call [`Self::flush`] there.
+    /// The full rule is in the [type's "Epochs" section](Pairer#epochs).
+    ///
     /// # Example
     ///
     /// ```
@@ -422,6 +464,21 @@ impl Pairer {
     /// In [`PairerMode::Buffered`], up to `opts.max_buffered_video`
     /// video AUs are held while looking ahead for a within-tolerance
     /// match.
+    ///
+    /// # Epochs
+    ///
+    /// A reconnect (`DemuxEvent::ReconnectDiscontinuity`) and a signalled
+    /// discontinuity on the video PID, the KLV PID or their program's PCR
+    /// PID start a new time base. Ahead of the passed-through event the
+    /// pairer classifies the video AUs it holds (`PairerMode::Buffered`)
+    /// against the history held so far and emits the KLV that never paired
+    /// as `UnpairedKlv`; nothing pairs across the boundary. After a
+    /// signalled discontinuity the first KLV sample and the first video AU
+    /// leave unpaired when their PTS lies within two seconds of the newest
+    /// PTS before it (they may be the old clock's last). An encoder restart
+    /// that signals nothing is invisible to the pairer: call [`Self::flush`]
+    /// at that boundary yourself. The full rule is in the
+    /// [type's "Epochs" section](Pairer#epochs).
     ///
     /// # Panics
     ///
@@ -506,26 +563,17 @@ impl Pairer {
     ///
     /// # Epochs
     ///
-    /// The KLV history is cleared when the demuxer signals a new time base: at
-    /// `DemuxEvent::ReconnectDiscontinuity` (emitted by `ManagedDemuxReceiver`
-    /// after a reconnect) and at a `Discontinuity { kind: AdaptationFieldFlag }`
-    /// on the video PID, the KLV PID or the PCR PID of the program carrying the
-    /// video (a set `discontinuity_indicator`, H.222.0 §2.4.3.5; the PCR PID is
-    /// learned from that program's `ProgramMap`). Entries that never paired are
-    /// emitted as `UnpairedKlv` ahead of the passed-through event.
-    ///
-    /// The PES in flight at a flag completes after it on the old clock. The
-    /// first KLV sample and the first video sample completing after a flag
-    /// leave unpaired (`UnpairedKlv`, `UnpairedVideo`) when their PTS lies
-    /// within two seconds of the newest PTS before the flag (for KLV, of the
-    /// newest KLV or video PTS). A new clock that lands within two seconds of
-    /// the old one loses its first KLV sample (every frame until the next sample
-    /// is unpaired) and its first video frame the same way. A flag on any other
-    /// PID, and an encoder restart that signals nothing (a silent clock jump),
-    /// are invisible to the pairer: call [`Self::flush`] at that boundary
-    /// yourself. The video program's PCR PID counts only when that PID also
-    /// carries an elementary stream; a PID that carries only PCR produces no
-    /// demuxer event, so call [`Self::flush`] at such a restart.
+    /// The KLV history is cleared at a reconnect and at a signalled
+    /// discontinuity on the video PID, the KLV PID or their program's PCR PID;
+    /// entries that never paired are emitted as `UnpairedKlv` ahead of the
+    /// passed-through event. After a signalled discontinuity the first KLV
+    /// sample and the first video sample leave unpaired when their PTS lies
+    /// within two seconds of the newest PTS before it (they may be the old
+    /// clock's last); a new clock that loses its first KLV sample this way has
+    /// every frame until the next sample unpaired. An encoder restart that
+    /// signals nothing is invisible to the pairer: call [`Self::flush`] at that
+    /// boundary yourself. The full rule is in the
+    /// [type's "Epochs" section](Pairer#epochs).
     ///
     /// # Example
     ///
@@ -906,6 +954,23 @@ mod tests {
     #[test]
     fn epoch_clear_is_tallied() {
         let mut p = Pairer::last_before_pts(VIDEO_PID, KLV_PID, None);
+        for pts in [0, 10, 20] {
+            let _ = p.feed(klv_async_event(KLV_PID, pts));
+        }
+        let out = p.feed(DemuxEvent::ReconnectDiscontinuity);
+        assert_eq!(
+            out.len(),
+            4,
+            "three unpaired KLV and the pass-through: {out:?}"
+        );
+        let s = p.stats();
+        assert_eq!(s.unpaired_klv, 3);
+        assert_eq!(s.pass_through, 1);
+    }
+
+    #[test]
+    fn nearest_epoch_clear_is_tallied() {
+        let mut p = make_pairer_stats();
         for pts in [0, 10, 20] {
             let _ = p.feed(klv_async_event(KLV_PID, pts));
         }
