@@ -2700,6 +2700,33 @@ fn the_inherent_close_and_the_outcome_agree() {
     check(result, &handle, Some(PushCloseOutcome::MediaLost));
 }
 
+/// The server chooses the reason phrase: the outcome, which lives as long
+/// as any handle, keeps a short copy with no control character in it. The
+/// error the close returns carries the phrase as sent.
+#[test]
+fn a_refused_teardowns_reason_is_kept_short_and_without_control_characters() {
+    let sent = format!("Bad\u{1b}[2J\u{0}\u{7f}\u{85}{}", "\u{e9}".repeat(20_000));
+    let status: &'static str = format!("500 {sent}").leak();
+    let (push, peer) = recording_whose_teardown_gets(Some(status));
+    let handle = push.stats_handle();
+    let result = push.close();
+    joined(peer);
+    assert!(
+        matches!(&result, Err(RtspError::Protocol { code: 500, reason }) if *reason == sent),
+        "the error's reason is the server's"
+    );
+    let Some(PushCloseOutcome::TeardownRefused { code: 500, reason }) = handle.close_outcome()
+    else {
+        panic!("expected the refusal");
+    };
+    assert_eq!(reason.chars().count(), 256);
+    let kept = format!(
+        "Bad\u{fffd}[2J\u{fffd}\u{fffd}\u{fffd}{}",
+        "\u{e9}".repeat(256 - 10)
+    );
+    assert_eq!(reason, kept);
+}
+
 #[test]
 fn the_first_close_outcome_is_kept() {
     let (mut push, peer) = recording_whose_teardown_gets(Some("500 Internal Server Error"));

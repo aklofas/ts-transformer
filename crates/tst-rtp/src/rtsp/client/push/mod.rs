@@ -190,7 +190,9 @@ pub enum PushCloseOutcome {
     TeardownRefused {
         /// The status code of the server's answer.
         code: u16,
-        /// Its reason phrase.
+        /// Its reason phrase, as far as it is kept: the first 256
+        /// characters, each control character replaced by U+FFFD. The
+        /// server chooses this text.
         reason: String,
     },
     /// The TEARDOWN was not written and answered within its 500 ms bound
@@ -199,9 +201,29 @@ pub enum PushCloseOutcome {
     /// The close failed another way, for instance on a connection that had
     /// ended.
     Failed {
-        /// The error's text.
+        /// The error's text, kept as a refusal's reason is: at most 256
+        /// characters and no control character.
         detail: String,
     },
+}
+
+/// The most characters of a text an outcome keeps.
+const KEPT_TEXT_CHARS: usize = 256;
+
+/// `text` as an outcome keeps it. An outcome lives as long as any handle
+/// and is read by callers that print it, and a server's reason phrase can
+/// be as long as a message and hold anything but a line end.
+fn kept_text(text: &str) -> String {
+    text.chars()
+        .take(KEPT_TEXT_CHARS)
+        .map(|c| {
+            if c.is_control() {
+                char::REPLACEMENT_CHARACTER
+            } else {
+                c
+            }
+        })
+        .collect()
 }
 
 impl PushCloseOutcome {
@@ -214,11 +236,11 @@ impl PushCloseOutcome {
             Err(RtspError::Protocol { .. }) if lost => Self::MediaLost,
             Err(RtspError::Protocol { code, reason }) => Self::TeardownRefused {
                 code: *code,
-                reason: reason.clone(),
+                reason: kept_text(reason),
             },
             Err(RtspError::Timeout) => Self::TeardownTimedOut,
             Err(e) => Self::Failed {
-                detail: e.to_string(),
+                detail: kept_text(&e.to_string()),
             },
         }
     }
