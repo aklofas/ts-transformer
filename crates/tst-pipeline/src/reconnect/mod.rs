@@ -88,12 +88,12 @@ pub struct ReconnectPolicy {
     /// `capacity`.
     ///
     /// A capacity of 0 buffers nothing, which only shows while the
-    /// connection is down (a live connection is sent to directly). Under
-    /// `DropOldest` a message that meets the outage is dropped and counted
-    /// as it arrives. Under [`OverflowPolicy::Reject`] it is never taken
-    /// over: a `Background` send is refused with `Backpressure` while the
-    /// worker reconnects, and a `Blocking` send reconnects inline and then
-    /// sends its message on the fresh connection.
+    /// connection is down (a live connection is sent to directly). A
+    /// `Blocking` send that meets the outage reconnects inline and then
+    /// sends its message on the fresh connection, under either overflow
+    /// policy. A `Background` send is dropped and counted as it arrives
+    /// under `DropOldest`, and refused with `Backpressure` under
+    /// [`OverflowPolicy::Reject`]; the worker reconnects in both cases.
     pub gap_buffer_capacity: usize,
 
     /// What to do when gap buffer is full and a new message arrives.
@@ -339,9 +339,9 @@ impl ManagedStatsHandle {
 ///   observed `Broken`. That call blocks until reconnect succeeds or the
 ///   policy's `max_attempts` budget is exhausted. The gap buffer holds
 ///   that one call's message and is empty again when the call returns,
-///   so `gap_buffer_capacity` / `overflow_policy` only matter here at
-///   capacity 0 (under `Reject` nothing is staged there: the call
-///   reconnects, then sends its message on the fresh connection).
+///   so `gap_buffer_capacity` / `overflow_policy` do not matter here. At
+///   capacity 0 nothing is staged: the call reconnects, then sends its
+///   message on the fresh connection.
 /// - **`ReconnectMode::Background`** — a per-outage worker thread owns
 ///   the factory/backoff/drain loop instead. While that worker is active,
 ///   or the gap buffer is non-empty, `send_bytes` never touches the inner
@@ -836,17 +836,19 @@ impl<T: Transport + 'static> ManagedTransport<T> {
         // empty buffer and no worker), so `Full` means capacity 0, and a
         // refusal that skipped the reconnect would meet the same dead inner
         // on every later call. `Background`: a worker reconnects, finds
-        // nothing to drain and leaves; this call is refused. `Blocking`:
-        // nothing is staged, the call reconnects and sends its own message
-        // on the fresh inner (just below).
+        // nothing to drain and leaves; this call is refused.
         //
         // `OverflowPolicy::DropOldest` continues to return `Ok(())` from
         // `enqueue` (it evicts and pushes) so this path is unchanged for
         // that policy.
-        if self.policy.mode == ReconnectMode::Blocking
-            && self.policy.gap_buffer_capacity == 0
-            && self.policy.overflow_policy == OverflowPolicy::Reject
-        {
+        //
+        // `Blocking` at capacity 0 stages nothing, under either policy: the
+        // call reconnects and sends its own message on the fresh inner.
+        // `Ok(())` means delivered in this mode, which rules out both
+        // answers the buffer has for a message it cannot hold (`DropOldest`
+        // would drop it behind an `Ok(())`, `Reject` would refuse it without
+        // a reconnect).
+        if self.policy.mode == ReconnectMode::Blocking && self.policy.gap_buffer_capacity == 0 {
             // `reconnect_and_drain` checks the latch before it dials, so a
             // cancel still outranks everything here.
             self.reconnect_and_drain()?;

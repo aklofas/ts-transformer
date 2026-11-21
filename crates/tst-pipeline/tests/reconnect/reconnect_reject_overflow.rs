@@ -216,6 +216,66 @@ fn capacity_zero_reject_blocking_a_fresh_inner_that_breaks_reports_broken() {
     assert_eq!(rig.wire(), vec![b"first".to_vec()]);
 }
 
+/// `Blocking`, capacity 0, `DropOldest`: `Ok(())` means delivered in this
+/// mode, so the message that meets the outage goes out on the fresh
+/// connection; it is not dropped behind an `Ok(())`.
+#[test]
+fn capacity_zero_drop_oldest_blocking_does_not_report_a_dropped_message_as_sent() {
+    let (mut managed, rig) =
+        capacity_zero(ReconnectMode::Blocking, OverflowPolicy::DropOldest, 3, 0);
+    let stats = managed.stats_handle();
+
+    managed
+        .send_bytes(b"first")
+        .expect("the reconnect succeeds");
+    assert_eq!(
+        rig.wire(),
+        vec![b"first".to_vec()],
+        "a send reported as Ok was delivered"
+    );
+    let s = stats.stats().unwrap();
+    assert_eq!((s.gap_len, s.gap_messages_dropped), (0, 0));
+}
+
+/// The same call when the reconnect gives up: the caller is told and keeps
+/// its message, so it is not counted as dropped as well.
+#[test]
+fn capacity_zero_drop_oldest_blocking_give_up_hands_the_message_back_uncounted() {
+    let (mut managed, rig) =
+        capacity_zero(ReconnectMode::Blocking, OverflowPolicy::DropOldest, 2, 2);
+    let stats = managed.stats_handle();
+
+    let first = managed.send_bytes(b"first");
+    assert!(
+        matches!(first, Err(TransportError::Broken { .. })),
+        "got {first:?}"
+    );
+    let s = stats.stats().unwrap();
+    assert_eq!((s.gap_len, s.gap_messages_dropped), (0, 0));
+    assert!(rig.wire().is_empty());
+}
+
+/// `Background`, capacity 0, `DropOldest`: `Ok(())` means accepted there, and
+/// the message that meets the outage is dropped and counted, as documented.
+#[test]
+fn capacity_zero_drop_oldest_background_drops_and_counts_the_interrupted_message() {
+    let (mut managed, rig) =
+        capacity_zero(ReconnectMode::Background, OverflowPolicy::DropOldest, 3, 0);
+    let stats = managed.stats_handle();
+
+    managed.send_bytes(b"first").expect("accepted");
+    assert!(
+        wait_for(RESCUE, || !stats.stats().unwrap().reconnecting),
+        "the worker never left"
+    );
+    let s = stats.stats().unwrap();
+    assert_eq!((s.gap_len, s.gap_messages_dropped), (0, 1));
+    assert!(rig.wire().is_empty(), "the dropped message is never sent");
+
+    managed.send_bytes(b"second").expect("direct");
+    assert_eq!(rig.wire(), vec![b"second".to_vec()]);
+}
+
 /// A send transport that does whatever its closure says.
 struct Hooked(Box<dyn FnMut() -> Result<(), TransportError> + Send>);
 
