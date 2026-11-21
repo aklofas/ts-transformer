@@ -9,10 +9,10 @@
 //! bare sleep.
 //!
 //! Every test sends a full seven-packet bundle first. The receive shell's
-//! sync filter locks on four aligned TS packets before it delivers any, so a
-//! stream of fewer than four packets reaches the application as nothing at
-//! all; the full bundle locks it and the buffered tail of three packets that
-//! follows is what the flush and close are judged on.
+//! sync filter locks on four aligned TS packets before it delivers any, and
+//! holds fewer back until its transport ends; the full bundle locks it, so the
+//! buffered tail of three packets that follows arrives at once and is what the
+//! flush and close are judged on.
 //!
 //! `rist_destroy` does NOT drain: librist's sender loop exits on the shutdown
 //! flag without a final send pass, and the sender teardown then frees every

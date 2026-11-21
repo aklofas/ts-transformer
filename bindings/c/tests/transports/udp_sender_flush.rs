@@ -50,6 +50,42 @@ fn udp_sender_flush_delivers_the_buffered_tail() {
     assert_eq!(lengths, [1316, 564]);
 }
 
+/// A plain sender holds the start of a stream back until it has seen
+/// enough packets to be sure of their alignment; a flush declares the end
+/// of what the caller has, so a stream of one or two whole packets goes out.
+fn flushed_datagram_lengths(packets: usize) -> Vec<usize> {
+    let (rx, tx) = open_pair();
+    rx.set_read_timeout(Some(scaled(Duration::from_secs(2))))
+        .unwrap();
+    let pkt = ts_null_packet();
+    for i in 0..packets {
+        let rc = unsafe { tst_udp_sender_send_ts(tx, pkt.as_ptr(), pkt.len()) };
+        assert_eq!(rc, 0, "send {i}: {}", last_error_msg());
+    }
+    let rc = unsafe { tst_udp_sender_flush(tx) };
+    unsafe { tst_udp_sender_close(tx) };
+    assert_eq!(rc, 0, "flush: {}", last_error_msg());
+    let mut buf = [0u8; 2048];
+    let mut lengths = vec![rx.recv(&mut buf).expect("datagram within the bound")];
+    // Whatever else the flush sent is already on the loopback socket.
+    rx.set_read_timeout(Some(Duration::from_millis(200)))
+        .unwrap();
+    while let Ok(n) = rx.recv(&mut buf) {
+        lengths.push(n);
+    }
+    lengths
+}
+
+#[test]
+fn a_flush_after_one_packet_sends_it() {
+    assert_eq!(flushed_datagram_lengths(1), [188]);
+}
+
+#[test]
+fn a_flush_after_two_packets_sends_both() {
+    assert_eq!(flushed_datagram_lengths(2).iter().sum::<usize>(), 376);
+}
+
 #[test]
 fn udp_sender_flush_on_an_empty_buffer_returns_zero() {
     let (_rx, tx) = open_pair();
