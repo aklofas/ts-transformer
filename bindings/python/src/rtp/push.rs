@@ -635,7 +635,8 @@ impl PyRtspPushSession {
 
 /// `outcome` as a `tstrans.rtp.PushCloseOutcome`. `PushCloseOutcome` is
 /// `#[non_exhaustive]`: a case this binding does not know yet reads
-/// `FAILED` with its debug text as the detail.
+/// `FAILED` with its debug text as the detail, kept as the outcome's own
+/// texts are (it may carry a server's words).
 fn close_outcome_to_py(py: Python<'_>, outcome: &PushCloseOutcome) -> PyResult<Py<PyAny>> {
     let (kind, status, detail) = match outcome {
         PushCloseOutcome::Clean => ("CLEAN", None, String::new()),
@@ -646,7 +647,7 @@ fn close_outcome_to_py(py: Python<'_>, outcome: &PushCloseOutcome) -> PyResult<P
         }
         PushCloseOutcome::TeardownTimedOut => ("TEARDOWN_TIMED_OUT", None, String::new()),
         PushCloseOutcome::Failed { detail } => ("FAILED", None, detail.clone()),
-        other => ("FAILED", None, format!("{other:?}")),
+        other => ("FAILED", None, kept_text(&format!("{other:?}"))),
     };
     let rtp = py.import(intern!(py, "tstrans.rtp"))?;
     let kind = rtp.getattr(intern!(py, "PushCloseKind"))?.getattr(kind)?;
@@ -658,6 +659,21 @@ fn close_outcome_to_py(py: Python<'_>, outcome: &PushCloseOutcome) -> PyResult<P
         .getattr(intern!(py, "PushCloseOutcome"))?
         .call((), Some(&kwargs))?
         .unbind())
+}
+
+/// The first 256 characters of `text`, each control character replaced by
+/// U+FFFD: what `PushCloseOutcome` keeps of a reason or a detail.
+fn kept_text(text: &str) -> String {
+    text.chars()
+        .take(256)
+        .map(|c| {
+            if c.is_control() {
+                char::REPLACEMENT_CHARACTER
+            } else {
+                c
+            }
+        })
+        .collect()
 }
 
 pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {

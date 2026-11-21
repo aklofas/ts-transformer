@@ -53,10 +53,11 @@ pub(crate) fn mux_sender_err(py: Python<'_>, domain: &Domain, e: MuxSenderError)
 }
 
 /// Run `sender.reconfigure(cfg)` and store the sender's handles in
-/// `handles`, inside the caller's hold of the slot, so two reconfigures
-/// cannot store their handles out of order. The store follows every
-/// attempt: a refused one leaves the muxer, and so the cell, as it was,
-/// and one whose drain failed after it took effect is current too.
+/// `handles`, inside the caller's hold of the slot, so the cell is current
+/// when the call returns and no other call runs between the change and the
+/// store. The store follows every attempt: a refused one leaves the muxer,
+/// and so the cell, as it was, and one whose drain failed after it took
+/// effect is current too.
 pub(crate) fn reconfigure_and_refresh<T: Transport>(
     sender: &RustMuxSender<T>,
     handles: &StreamHandlesCell,
