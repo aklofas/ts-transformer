@@ -723,6 +723,109 @@ fn a_cancel_fired_while_a_failures_events_are_handed_out_is_reported_after_the_f
     assert_eq!(tail, ["TransportBroken", "Closed", "Closed"], "{results:?}");
 }
 
+/// Like `Cancellable`, but its own `close()` changes nothing a read sees and
+/// fires no latch, so the receiver's close can come before the stream ends.
+struct QuietClose {
+    packets: std::collections::VecDeque<[u8; 188]>,
+    cancel: std::sync::Arc<crate::common::FlagCancel>,
+}
+
+impl tst_core::transport::RecvTransport for QuietClose {
+    fn recv_bytes(&mut self, buf: &mut [u8]) -> Result<usize, TransportError> {
+        if tst_core::transport::TransportCancel::is_cancelled(&*self.cancel) {
+            return Err(TransportError::ExplicitClose);
+        }
+        match self.packets.pop_front() {
+            Some(packet) => {
+                buf[..188].copy_from_slice(&packet);
+                Ok(188)
+            }
+            None => Err(TransportError::Closed),
+        }
+    }
+
+    fn max_payload(&self) -> usize {
+        188
+    }
+
+    fn is_alive(&self) -> bool {
+        true
+    }
+
+    fn close(&mut self) {}
+
+    fn cancel_handle(
+        &self,
+    ) -> Option<std::sync::Arc<dyn tst_core::transport::TransportCancel + Send + Sync>> {
+        Some(self.cancel.clone())
+    }
+}
+
+fn quiet_close_receiver() -> DemuxReceiver<QuietClose> {
+    DemuxReceiver::new(QuietClose {
+        packets: marked_stream(&[0xA1]).into(),
+        cancel: std::sync::Arc::new(crate::common::FlagCancel(crate::common::flag(false))),
+    })
+}
+
+/// `recv_event` until it answers anything but an event.
+fn until_the_answer(rx: &mut DemuxReceiver<QuietClose>) -> String {
+    loop {
+        match rx.recv_event() {
+            Ok(Some(_)) => {}
+            Ok(None) => return "end".into(),
+            Err(e) => return format!("{:?}", e.kind),
+        }
+    }
+}
+
+fn answer(rx: &mut DemuxReceiver<QuietClose>) -> String {
+    match rx.recv_event() {
+        Ok(Some(_)) => "event".into(),
+        Ok(None) => "end".into(),
+        Err(e) => format!("{:?}", e.kind),
+    }
+}
+
+fn cancel_quiet(rx: &mut DemuxReceiver<QuietClose>) {
+    rx.cancel_handle().expect("the transport has one").cancel();
+}
+
+/// Once the owner has closed the receiver, whenever that was, the cancel
+/// handle is not asked again: a cancel fired after the end reads as the end.
+#[test]
+fn a_cancel_fired_after_the_end_of_a_receiver_closed_before_it_is_not_reported() {
+    let mut rx = quiet_close_receiver();
+    rx.close();
+    assert_eq!(until_the_answer(&mut rx), "end");
+    cancel_quiet(&mut rx);
+    for call in 0..3 {
+        assert_eq!(answer(&mut rx), "end", "call {call}");
+    }
+}
+
+/// A cancel that no call has reported yet is lost to a `close()` that comes
+/// first; one that a call has reported stays for ever.
+#[test]
+fn the_receivers_own_close_ends_what_an_unreported_cancel_can_change() {
+    let mut rx = quiet_close_receiver();
+    assert_eq!(until_the_answer(&mut rx), "end");
+    cancel_quiet(&mut rx);
+    rx.close();
+    for call in 0..3 {
+        assert_eq!(answer(&mut rx), "end", "call {call}");
+    }
+
+    let mut rx = quiet_close_receiver();
+    assert_eq!(until_the_answer(&mut rx), "end");
+    cancel_quiet(&mut rx);
+    assert_eq!(answer(&mut rx), "Closed");
+    rx.close();
+    for call in 0..3 {
+        assert_eq!(answer(&mut rx), "Closed", "call {call}");
+    }
+}
+
 /// The first terminal result is the transport's own. A transport that ends
 /// its stream cleanly although its cancel latch is already set (none of the
 /// socket transports does) is taken at its word, then and on later calls:

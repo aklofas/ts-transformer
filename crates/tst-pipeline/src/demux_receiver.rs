@@ -396,10 +396,11 @@ impl<R: RecvTransport> DemuxReceiver<R> {
     /// transport would if it were asked: `Ok(None)` after a clean end, for
     /// ever; the `Closed` error after a cancel, for ever; after a
     /// `TransportBroken` error, which is reported once, `Ok(None)` for
-    /// ever. A cancel that fires after the end is reported from then on (the
-    /// transport's cancel handle is asked, without a read), except after
-    /// this receiver's own [`Self::close`]. `Backpressure` and
-    /// `InputMalformed` are not ends.
+    /// ever. A cancel that fires after the stream ended is reported once the
+    /// events already produced have been handed out, and from then on (the
+    /// transport's cancel handle is asked, without a read). After this
+    /// receiver's own [`Self::close`], whenever it was called, the handle is
+    /// not asked again. `Backpressure` and `InputMalformed` are not ends.
     ///
     /// # MalformedPes note
     ///
@@ -583,7 +584,9 @@ impl<R: RecvTransport> DemuxReceiver<R> {
     /// Close the underlying transport. Idempotent.
     ///
     /// After close, the next `recv_event` call will flush the demuxer and
-    /// return `Ok(None)` once the event queue is drained.
+    /// return `Ok(None)` once the event queue is drained. A cancel that fires
+    /// after the stream ended and that no call has reported yet is not
+    /// reported once the receiver is closed.
     pub fn close(&mut self) {
         self.closed = true;
         self.ts.close();
