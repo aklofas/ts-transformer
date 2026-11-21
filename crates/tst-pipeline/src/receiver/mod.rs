@@ -344,6 +344,17 @@ impl<R: RecvTransport> Receiver<R> {
     /// # }
     /// ```
     pub fn next_packet(&mut self) -> Result<[u8; 188], ReceiverError> {
+        self.next_packet_releasing(|| true)
+    }
+
+    /// [`Self::next_packet`], with the caller's say on what an end does to
+    /// the packets the syncer holds. `release` is asked when a read ends
+    /// the stream: `true` hands them out before the end, as `next_packet`
+    /// does; `false` drops them and reports the end at once.
+    pub(crate) fn next_packet_releasing(
+        &mut self,
+        release: impl Fn() -> bool,
+    ) -> Result<[u8; 188], ReceiverError> {
         loop {
             if let Some(pkt) = self.syncer.next_packet() {
                 self.bytes_received += TS_PACKET_SIZE as u64;
@@ -351,45 +362,59 @@ impl<R: RecvTransport> Receiver<R> {
                 return Ok(pkt);
             }
             // The packets an end released are out: now the end itself.
-            if let Some(end) = self.held_end.take() {
-                return Err(end);
+            if self.held_end.is_some() {
+                return Err(self.held_end.take().expect("checked above"));
             }
-            let err: ReceiverError = match self.transport.recv_bytes(&mut self.recv_buf) {
-                // The RecvTransport contract says closed/broken transports
-                // return Err(Closed), not Ok(0). Defensively treating Ok(0)
-                // as closed guards against implementors that follow the
-                // io::Read convention instead, and makes the loop terminate
-                // rather than spin.
-                Ok(0) => TransportError::Closed.into(),
-                Ok(n) => {
-                    self.syncer.push(&self.recv_buf[..n]);
-                    continue;
-                }
-                Err(e) => e.into(),
-            };
-            if !matches!(
-                err.kind,
-                ShellErrorKind::EndOfStream
-                    | ShellErrorKind::TransportBroken
-                    | ShellErrorKind::Closed
-            ) {
-                // `Backpressure`: more bytes may come, so what the syncer
-                // holds goes on waiting for them.
-                return Err(err);
+            match self.transport.recv_bytes(&mut self.recv_buf) {
+                Ok(n) if n > 0 => self.syncer.push(&self.recv_buf[..n]),
+                read => self.read_ended(read, &release)?,
             }
-            // The stream is over: nothing can confirm the held packets any
-            // more, so the syncer decides on the bytes it has. Those it
-            // releases go out first, the end after them.
-            self.syncer.end_of_input();
-            self.held_end = Some(err);
         }
     }
 
-    /// `true` while the stream has ended and the packets that end released
-    /// are still being handed out: the next `next_packet` returns one of
-    /// them, or the end.
-    pub(crate) fn end_pending(&self) -> bool {
-        self.held_end.is_some()
+    /// A read that brought no bytes. `Backpressure` is handed to the caller:
+    /// more bytes may come, so what the syncer holds goes on waiting for
+    /// them. An end (the peer's, a broken transport, a close or a cancel)
+    /// is kept and reported by `next_packet` after the packets it releases:
+    /// nothing can confirm the held packets any more, so the syncer decides
+    /// on the bytes it has. When `release` says no, the held bytes are
+    /// dropped and the end is reported at once.
+    #[cold]
+    fn read_ended(
+        &mut self,
+        read: Result<usize, TransportError>,
+        release: &dyn Fn() -> bool,
+    ) -> Result<(), ReceiverError> {
+        let err: ReceiverError = match read {
+            // The RecvTransport contract says closed/broken transports
+            // return Err(Closed), not Ok(0). Defensively treating Ok(0) as
+            // closed guards against implementors that follow the io::Read
+            // convention instead, and makes the loop terminate rather than
+            // spin.
+            Ok(_) => TransportError::Closed.into(),
+            Err(e) => e.into(),
+        };
+        if !matches!(
+            err.kind,
+            ShellErrorKind::EndOfStream | ShellErrorKind::TransportBroken | ShellErrorKind::Closed
+        ) {
+            return Err(err);
+        }
+        if !release() {
+            self.syncer.reset();
+            return Err(err);
+        }
+        self.syncer.end_of_input();
+        self.held_end = Some(err);
+        Ok(())
+    }
+
+    /// Whether the transport's cancel handle has fired, asked without a
+    /// read. `false` for a transport that has no handle.
+    pub(crate) fn cancel_latched(&self) -> bool {
+        self.transport
+            .cancel_handle()
+            .is_some_and(|c| c.is_cancelled())
     }
 
     /// Advisory liveness check. Delegates to the underlying transport.

@@ -445,70 +445,99 @@ fn asked_again_after(end: TransportError) -> (Vec<String>, u32, u32) {
 }
 
 /// After its first terminal result a `DemuxReceiver` never reads its
-/// transport again and answers every later call with that same result,
-/// whatever the transport would have said next.
+/// transport again, whatever the transport would have said next, and
+/// answers what a socket transport answers when asked again: a clean end
+/// every time, a cancel every time, a failure once and then the end.
 #[test]
 fn the_latch_stops_reading_a_transport_that_would_go_on() {
+    let broken_text = "TransportBroken: transport broken: the link died";
+    let cancel_text = "Closed: transport explicitly closed by caller";
     for (end, expected) in [
-        (TransportError::Closed, "end"),
-        (
-            broken("the link died"),
-            "TransportBroken: transport broken: the link died",
-        ),
-        (
-            TransportError::ExplicitClose,
-            "Closed: transport explicitly closed by caller",
-        ),
+        (TransportError::Closed, ["end"; 4]),
+        (broken("the link died"), [broken_text, "end", "end", "end"]),
+        (TransportError::ExplicitClose, [cancel_text; 4]),
     ] {
         let (results, reads_at_the_end, reads_after) = asked_again_after(end);
-        assert_eq!(results, [expected; 4]);
+        assert_eq!(results, expected);
         assert_eq!(
             reads_after, reads_at_the_end,
-            "{expected}: the transport was read after the end"
+            "{expected:?}: the transport was read after the end"
         );
     }
 }
 
-/// A transport that answers `Broken` once and `Closed` from then on, as the
-/// socket transports do once they have latched dead: the receiver reports
-/// the failure on every call, never a clean end after it.
+/// A transport that answers `Broken` for ever (none in this tree does: the
+/// socket transports answer `Closed` once they have latched dead) is heard
+/// once; the receiver does not ask it again.
 #[test]
-fn after_a_terminal_error_the_same_error_is_reported_again() {
-    let packets = marked_stream(&[0xA1, 0xB2]);
-    let answers = packets
-        .iter()
-        .copied()
-        .map(Ok)
-        .chain([Err(broken("the link died"))]);
-    let mut rx = DemuxReceiver::new(Answers::new(answers));
+fn a_failure_is_reported_once_and_then_the_end() {
+    struct AlwaysBroken(std::collections::VecDeque<[u8; 188]>);
+    impl tst_core::transport::RecvTransport for AlwaysBroken {
+        fn recv_bytes(&mut self, buf: &mut [u8]) -> Result<usize, TransportError> {
+            match self.0.pop_front() {
+                Some(packet) => {
+                    buf[..188].copy_from_slice(&packet);
+                    Ok(188)
+                }
+                None => Err(broken("the link died")),
+            }
+        }
+        fn max_payload(&self) -> usize {
+            188
+        }
+        fn is_alive(&self) -> bool {
+            true
+        }
+    }
+
+    let mut rx = DemuxReceiver::new(AlwaysBroken(marked_stream(&[0xA1, 0xB2]).into()));
     while let Ok(Some(_)) = rx.recv_event() {}
+    // The loop above consumed the failure; from here on the end.
     for call in 0..3 {
-        let e = rx
-            .recv_event()
-            .expect_err("a failed stream does not end cleanly later");
-        assert_eq!(e.kind, ShellErrorKind::TransportBroken, "call {call}");
         assert!(
-            matches!(
-                &e.source,
-                DemuxReceiverErrorSource::Transport(TransportError::Broken { msg, .. })
-                    if msg == "the link died"
-            ),
-            "call {call}: {:?}",
-            e.source
+            matches!(rx.recv_event(), Ok(None)),
+            "call {call} after the failure"
         );
     }
+
+    let mut rx = DemuxReceiver::new(AlwaysBroken(marked_stream(&[0xA1, 0xB2]).into()));
+    let e = loop {
+        match rx.recv_event() {
+            Ok(Some(_)) => {}
+            Ok(None) => panic!("the stream failed; it did not end cleanly"),
+            Err(e) => break e,
+        }
+    };
+    assert_eq!(e.kind, ShellErrorKind::TransportBroken);
+    assert!(
+        matches!(
+            &e.source,
+            DemuxReceiverErrorSource::Transport(TransportError::Broken { msg, .. })
+                if msg == "the link died"
+        ),
+        "{:?}",
+        e.source
+    );
 }
 
 /// Answers like a socket transport: its packets, then `end` once, then
 /// `Closed`; and `ExplicitClose` at its entry once the cancel has fired.
+/// Its own `close()` fires the cancel latch too and is told apart by a flag
+/// of its own, as SRT's does.
 struct Cancellable {
     packets: std::collections::VecDeque<[u8; 188]>,
     end: Option<TransportError>,
     cancelled: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    closed: bool,
+    reads: std::sync::Arc<std::sync::atomic::AtomicU32>,
 }
 
 impl tst_core::transport::RecvTransport for Cancellable {
     fn recv_bytes(&mut self, buf: &mut [u8]) -> Result<usize, TransportError> {
+        self.reads.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        if self.closed {
+            return Err(TransportError::Closed);
+        }
         if self.cancelled.load(std::sync::atomic::Ordering::SeqCst) {
             return Err(TransportError::ExplicitClose);
         }
@@ -529,6 +558,12 @@ impl tst_core::transport::RecvTransport for Cancellable {
         true
     }
 
+    fn close(&mut self) {
+        self.closed = true;
+        self.cancelled
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
     fn cancel_handle(
         &self,
     ) -> Option<std::sync::Arc<dyn tst_core::transport::TransportCancel + Send + Sync>> {
@@ -538,13 +573,20 @@ impl tst_core::transport::RecvTransport for Cancellable {
     }
 }
 
-/// The receiver's results from its first terminal one on, with the cancel
-/// fired after that first one.
-fn cancelled_after_the_end(end: TransportError) -> Vec<String> {
+/// The receiver's first terminal result and its next two, with `then` run
+/// on the receiver after the first; and the transport reads `then` and the
+/// two later calls cost.
+fn after_the_end(
+    end: TransportError,
+    then: impl FnOnce(&mut DemuxReceiver<Cancellable>),
+) -> (Vec<String>, u32) {
+    let reads = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
     let mut rx = DemuxReceiver::new(Cancellable {
         packets: marked_stream(&[0xA1]).into(),
         end: Some(end),
         cancelled: std::sync::Arc::default(),
+        closed: false,
+        reads: reads.clone(),
     });
     let outcome = |r: Result<Option<DemuxEvent>, tst_pipeline::DemuxReceiverError>| match r {
         Ok(Some(_)) => "event".to_string(),
@@ -557,22 +599,62 @@ fn cancelled_after_the_end(end: TransportError) -> Vec<String> {
             break o;
         }
     };
+    let reads_at_the_end = reads.load(std::sync::atomic::Ordering::SeqCst);
+    then(&mut rx);
+    let results = vec![first, outcome(rx.recv_event()), outcome(rx.recv_event())];
+    (
+        results,
+        reads.load(std::sync::atomic::Ordering::SeqCst) - reads_at_the_end,
+    )
+}
+
+fn cancel(rx: &mut DemuxReceiver<Cancellable>) {
     rx.cancel_handle().expect("the transport has one").cancel();
-    vec![first, outcome(rx.recv_event()), outcome(rx.recv_event())]
 }
 
-/// A cancel that fires after the stream has ended does not turn the end
-/// into a cancel: the receiver answers from its record and does not ask the
-/// transport, whose own answer by then would be the cancel.
+/// A cancel that fires after the stream has ended is still reported, as the
+/// transport itself would report it, and without reading the transport.
 #[test]
-fn a_cancel_after_a_clean_end_still_reads_the_end() {
-    assert_eq!(cancelled_after_the_end(TransportError::Closed), ["end"; 3]);
-}
-
-#[test]
-fn a_cancel_after_a_failure_still_reads_the_failure() {
+fn a_cancel_after_the_end_is_still_reported() {
     assert_eq!(
-        cancelled_after_the_end(broken("the link died")),
-        ["TransportBroken"; 3]
+        after_the_end(TransportError::Closed, cancel),
+        (vec!["end".into(), "Closed".into(), "Closed".into()], 0)
+    );
+    assert_eq!(
+        after_the_end(broken("the link died"), cancel),
+        (
+            vec!["TransportBroken".into(), "Closed".into(), "Closed".into()],
+            0
+        )
+    );
+    // With no cancel, the same two streams go on answering the end.
+    assert_eq!(
+        after_the_end(TransportError::Closed, |_| {}),
+        (vec!["end".into(); 3], 0)
+    );
+    assert_eq!(
+        after_the_end(broken("the link died"), |_| {}),
+        (
+            vec!["TransportBroken".into(), "end".into(), "end".into()],
+            0
+        )
+    );
+}
+
+/// The receiver's own `close()` after the end is not a cancel, although a
+/// transport may fire its cancel latch when it is closed: the end goes on
+/// being the end.
+#[test]
+fn the_receivers_own_close_after_the_end_is_not_a_cancel() {
+    assert_eq!(
+        after_the_end(TransportError::Closed, DemuxReceiver::close),
+        (vec!["end".into(); 3], 0)
+    );
+    assert_eq!(
+        after_the_end(broken("the link died"), DemuxReceiver::close),
+        (
+            vec!["TransportBroken".into(), "end".into(), "end".into()],
+            0
+        )
     );
 }

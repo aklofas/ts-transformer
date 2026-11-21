@@ -194,6 +194,10 @@ pub struct DemuxReceiver<R: RecvTransport> {
     /// See [`ReconnectEpoch`]; installed via `set_reconnect_epoch`.
     #[cfg(feature = "std")]
     reconnect_epoch: Option<ReconnectEpoch>,
+    /// [`Self::close`] was called. A transport may latch its cancel handle
+    /// in its own close (SRT does); after the stream has ended that latch
+    /// is then no sign of a cancel.
+    closed: bool,
     /// Lifetime span — see [`crate::shell_error::ShellSpan`] for the
     /// unwind-safe rationale. Private; never exposed publicly.
     _span: crate::shell_error::ShellSpan,
@@ -246,6 +250,7 @@ impl<R: RecvTransport> DemuxReceiver<R> {
             ts_bytes_demuxed: Arc::new(AtomicU64::new(0)),
             #[cfg(feature = "std")]
             reconnect_epoch: None,
+            closed: false,
             _span: core::panic::AssertUnwindSafe(span),
         }
     }
@@ -335,12 +340,14 @@ impl<R: RecvTransport> DemuxReceiver<R> {
     ///
     /// # After the end
     ///
-    /// The first `Ok(None)`, or the first error of kind `TransportBroken` or
-    /// `Closed`, is final: the transport is not read again and every later
-    /// call returns that same result, whatever the transport would answer
-    /// by then (an error is rebuilt from the transport error that ended the
-    /// stream). That includes a cancel fired after the end: the stream had
-    /// already ended, and the call still reports how. `Backpressure` and
+    /// Once a call has reported the end, the transport is not read again
+    /// and the demuxer not flushed again. Later calls answer what a socket
+    /// transport would if it were asked: `Ok(None)` after a clean end, for
+    /// ever; the `Closed` error after a cancel, for ever; after a
+    /// `TransportBroken` error, which is reported once, `Ok(None)` for
+    /// ever. A cancel that fires after the end is reported from then on (the
+    /// transport's cancel handle is asked, without a read), except after
+    /// this receiver's own [`Self::close`]. `Backpressure` and
     /// `InputMalformed` are not ends.
     ///
     /// # MalformedPes note
@@ -425,23 +432,49 @@ impl<R: RecvTransport> DemuxReceiver<R> {
             // an end the transport is not read again.
             match self.engine.poll() {
                 Step::Event(e) => return Ok(Some(e)),
-                Step::Ended(Ok(())) => return Ok(None),
-                Step::Ended(Err(te)) => return Err(te.into()),
                 Step::NeedInput => {}
+                // The failure that ended the stream, once; or a cancel.
+                Step::Ended(Err(te)) => return Err(te.into()),
+                // A clean end, or what follows a reported failure. A cancel
+                // fired since then is still the caller's to hear, as it
+                // would be from the transport: its handle is asked, the
+                // transport is not read.
+                Step::Ended(Ok(())) => {
+                    if !self.closed && self.ts.cancel_latched() {
+                        self.engine.handle_end(End::Cancelled);
+                        continue;
+                    }
+                    return Ok(None);
+                }
             }
-            // Pull the next aligned 188-byte TS packet.
-            let pkt = match self.ts.next_packet() {
+            // Pull the next aligned 188-byte TS packet. A stream that ends
+            // with a reconnect not yet acted on (no packet was read since)
+            // releases nothing: what the syncer holds was held across the
+            // reconnect. The end then flushes what the demuxer has of the
+            // old connection, and no marker is owed for a connection that
+            // delivered no packet.
+            #[cfg(feature = "std")]
+            let epoch = &self.reconnect_epoch;
+            let next = self.ts.next_packet_releasing(|| {
+                #[cfg(feature = "std")]
+                if let Some(ep) = epoch {
+                    return ep.counter.load(Ordering::Acquire) == ep.last;
+                }
+                true
+            });
+            let pkt = match next {
                 Ok(p) => p,
                 Err(e) => {
                     let ReceiverErrorSource::Transport(te) = e.source;
                     match e.kind {
                         // Peer end-of-stream.
                         ShellErrorKind::EndOfStream => self.engine.handle_end(End::Clean),
-                        // Terminal, but not a clean peer EOS: the socket
-                        // died, or a caller closed/cancelled from another
-                        // thread while this call was blocked. Either way no
-                        // further `next_packet` call will make progress.
-                        ShellErrorKind::TransportBroken | ShellErrorKind::Closed => {
+                        // A caller closed or cancelled from another thread
+                        // while this call was blocked.
+                        ShellErrorKind::Closed => self.engine.handle_end(End::Cancelled),
+                        // The socket died. No further `next_packet` call
+                        // will make progress.
+                        ShellErrorKind::TransportBroken => {
                             self.engine.handle_end(End::Failed(te));
                         }
                         // `Backpressure` means "retry", not "the loop is
@@ -464,14 +497,7 @@ impl<R: RecvTransport> DemuxReceiver<R> {
             // trustworthy.
             if self.observe_reconnect() {
                 self.ts.reset_sync();
-                // A packet the END released was held across the reconnect,
-                // so it is dropped like any other; but nothing of the new
-                // connection was read before the stream ended, so there is
-                // no boundary to mark, and what the demuxer has of the old
-                // connection is still flushed by the end that follows.
-                if !self.ts.end_pending() {
-                    self.engine.handle_reconnect();
-                }
+                self.engine.handle_reconnect();
                 continue;
             }
             // Counted here, after the splice drop above: a dropped packet
@@ -506,6 +532,7 @@ impl<R: RecvTransport> DemuxReceiver<R> {
     /// After close, the next `recv_event` call will flush the demuxer and
     /// return `Ok(None)` once the event queue is drained.
     pub fn close(&mut self) {
+        self.closed = true;
         self.ts.close();
     }
 
@@ -523,10 +550,10 @@ impl<R: RecvTransport> DemuxReceiver<R> {
 /// Errors are surfaced as `Some(Err(e))` so the caller can distinguish a
 /// transport error from a clean end of stream.
 ///
-/// A stream that ended with an error (`TransportBroken`, `Closed`) yields
-/// that error from every later `next()`: the iterator never returns `None`
-/// after one. A loop that goes on after an error, which is right for
-/// `Backpressure` and `InputMalformed`, must break on those two kinds.
+/// After a `TransportBroken` error the next `next()` is `None`. After a
+/// cancel (`Closed`) every `next()` is that error: a loop that goes on after
+/// an error, which is right for `Backpressure` and `InputMalformed`, must
+/// break on `Closed`.
 impl<R: RecvTransport> Iterator for DemuxReceiver<R> {
     type Item = Result<DemuxEvent, DemuxReceiverError>;
 

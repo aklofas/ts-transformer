@@ -1,6 +1,8 @@
 //! The demux receiver's state without its transport: it is handed aligned
 //! packets, reconnects and the end of the stream, and hands back events and
 //! that end. It opens no socket, reads no transport and takes no clock.
+//! After an end it asks for nothing more: the transport is not read again
+//! and the demuxer not flushed again.
 //!
 //! One clock read remains beneath it. The [`Demuxer`] it owns stamps each
 //! stream's `last_seen` with the wall clock on a `std` build
@@ -19,7 +21,10 @@ use tst_core::transport::TransportError;
 pub(crate) enum End {
     /// The peer ended the stream.
     Clean,
-    /// The transport broke, or the caller closed or cancelled it.
+    /// The caller cancelled or closed the receive
+    /// (`TransportError::ExplicitClose`).
+    Cancelled,
+    /// The transport broke.
     Failed(TransportError),
 }
 
@@ -29,9 +34,17 @@ pub(crate) enum Step {
     /// Nothing is queued and the stream has not ended: hand in a packet, a
     /// reconnect or the end.
     NeedInput,
-    /// The stream has ended, cleanly or with the error that ended it. Every
-    /// later `poll` gives this answer again.
+    /// The stream has ended; what the caller is told now. The engine wants
+    /// no further input.
     Ended(Result<(), TransportError>),
+}
+
+/// The end the engine was handed, and what is still to be said about it.
+enum Ended {
+    Clean,
+    Cancelled,
+    /// `Some` until the failure has been reported.
+    Failed(Option<TransportError>),
 }
 
 pub(crate) struct ReceiveEngine {
@@ -40,7 +53,7 @@ pub(crate) struct ReceiveEngine {
     /// flag, not a queued event: the reconnect clears the demuxer's queue.
     marker_owed: bool,
     /// The first end handed in.
-    ended: Option<Result<(), TransportError>>,
+    ended: Option<Ended>,
 }
 
 impl ReceiveEngine {
@@ -56,6 +69,12 @@ impl ReceiveEngine {
     /// first, so no event of the new connection precedes it; then what the
     /// demuxer has queued, the events of the final flush included; then the
     /// end.
+    ///
+    /// After an end the answer is `Ended` for good, and it is what the
+    /// socket transports themselves answer when asked again: a clean end
+    /// every time; a cancel every time; a failure once, and a clean end
+    /// from then on. A transport that would have repeated its failure for
+    /// ever is therefore heard once.
     #[inline]
     pub(crate) fn poll(&mut self) -> Step {
         if self.marker_owed {
@@ -65,9 +84,14 @@ impl ReceiveEngine {
         if let Some(event) = self.demux.next_event() {
             return Step::Event(event);
         }
-        match &self.ended {
-            Some(end) => Step::Ended(end.clone()),
+        match &mut self.ended {
             None => Step::NeedInput,
+            Some(Ended::Clean) => Step::Ended(Ok(())),
+            Some(Ended::Cancelled) => Step::Ended(Err(TransportError::ExplicitClose)),
+            Some(Ended::Failed(unreported)) => Step::Ended(match unreported.take() {
+                Some(e) => Err(e),
+                None => Ok(()),
+            }),
         }
     }
 
@@ -95,16 +119,22 @@ impl ReceiveEngine {
 
     /// The stream ended. The demuxer is flushed once, so an access unit that
     /// only its successor or the end can close comes out, and the end is
-    /// kept. A second end changes nothing.
+    /// kept. A second end changes nothing, with one exception: a cancel
+    /// that comes after a clean end or a failure is from then on what the
+    /// caller is told, as it is by a transport asked after its cancel.
     pub(crate) fn handle_end(&mut self, end: End) {
-        if self.ended.is_some() {
-            return;
+        match (&self.ended, end) {
+            (None, end) => {
+                self.demux.flush();
+                self.ended = Some(match end {
+                    End::Clean => Ended::Clean,
+                    End::Cancelled => Ended::Cancelled,
+                    End::Failed(e) => Ended::Failed(Some(e)),
+                });
+            }
+            (Some(_), End::Cancelled) => self.ended = Some(Ended::Cancelled),
+            (Some(_), _) => {}
         }
-        self.demux.flush();
-        self.ended = Some(match end {
-            End::Clean => Ok(()),
-            End::Failed(e) => Err(e),
-        });
     }
 
     pub(crate) fn demuxer(&self) -> &Demuxer {
@@ -171,7 +201,7 @@ mod tests {
 
     /// One `poll` answer in a form that compares: a sample is the number of
     /// bytes it holds of each of the two markers the tests use.
-    #[derive(Debug, PartialEq, Eq)]
+    #[derive(Clone, Debug, PartialEq, Eq)]
     enum Polled {
         Marker,
         ProgramMap,
@@ -310,6 +340,8 @@ mod tests {
         // Neither a new outcome nor a new event.
         e.handle_end(End::Failed(broken("too late")));
         assert_eq!(drain(&mut e), [Polled::Ended(Ok(()))]);
+        e.handle_end(End::Clean);
+        assert_eq!(drain(&mut e), [Polled::Ended(Ok(()))]);
     }
 
     #[test]
@@ -321,13 +353,66 @@ mod tests {
         }
     }
 
+    /// What a socket transport answers when asked again after it broke: the
+    /// failure once, then its own end.
     #[test]
-    fn the_latch_repeats_the_first_error() {
+    fn the_latch_reports_a_failure_once_and_then_the_end() {
         let mut e = engine();
         e.handle_end(End::Failed(broken("the link died")));
+        assert_eq!(poll(&mut e), Polled::Ended(Err(broken("the link died"))));
         for _ in 0..3 {
-            assert_eq!(poll(&mut e), Polled::Ended(Err(broken("the link died"))));
+            assert_eq!(poll(&mut e), Polled::Ended(Ok(())));
         }
+    }
+
+    #[test]
+    fn the_latch_repeats_a_cancel() {
+        let mut e = engine();
+        e.handle_end(End::Cancelled);
+        for _ in 0..3 {
+            assert_eq!(
+                poll(&mut e),
+                Polled::Ended(Err(TransportError::ExplicitClose))
+            );
+        }
+    }
+
+    /// A cancel is reported from the moment it is handed in, also behind a
+    /// clean end and behind a failure, reported or not.
+    #[test]
+    fn a_cancel_after_the_end_is_reported_from_then_on() {
+        let cancelled = Polled::Ended(Err(TransportError::ExplicitClose));
+
+        let mut e = engine();
+        e.handle_end(End::Clean);
+        assert_eq!(poll(&mut e), Polled::Ended(Ok(())));
+        e.handle_end(End::Cancelled);
+        assert_eq!(
+            [poll(&mut e), poll(&mut e)],
+            [cancelled.clone(), cancelled.clone()]
+        );
+
+        let mut e = engine();
+        e.handle_end(End::Failed(broken("the link died")));
+        e.handle_end(End::Cancelled);
+        assert_eq!(
+            [poll(&mut e), poll(&mut e)],
+            [cancelled.clone(), cancelled.clone()]
+        );
+
+        // The cancel does not flush again or drop what the flush queued.
+        let mut e = engine();
+        feed(&mut e, &stream(&[0xA1]));
+        e.handle_end(End::Failed(broken("the link died")));
+        e.handle_end(End::Cancelled);
+        assert_eq!(
+            drain(&mut e),
+            [
+                Polled::ProgramMap,
+                Polled::Sample { a1: AU_LEN, c3: 0 },
+                cancelled,
+            ]
+        );
     }
 
     #[test]

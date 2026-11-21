@@ -3,16 +3,15 @@
 //! A case is one muxed stream (video and KLV, access units that span several
 //! packets), optional damage, a chunking, zero or more reconnects and one way
 //! the transport ends. The trace of a case is every `recv_event` result up to
-//! and including the first terminal one, each with the two packet counters
-//! read right after it.
+//! the first terminal one and the three calls after it, each with the two
+//! packet counters read right after it.
 //!
 //! Two oracles judge the shell. The model is the receive loop written out
 //! rule by rule, with its own syncer over a plain byte buffer and the public
 //! `Demuxer`; it says what the trace must be. The recorded digests say that
 //! the trace did not move: two per seed, from before the shells delivered
 //! the packets held at an end and from now, so that the cases that rule
-//! changed can be counted and checked to be the ones it is for. What a shell
-//! answers after its first terminal result is outside both.
+//! changed can be counted and checked to be the ones it is for.
 
 use std::collections::VecDeque;
 
@@ -412,7 +411,8 @@ fn digest(trace: &[Entry]) -> u64 {
 // The shell
 // ---------------------------------------------------------------------------
 
-/// Serves its steps, then repeats its end for ever.
+/// Serves its steps, then its end, as the socket transports give theirs: a
+/// cancel and a clean end for ever, a failure once and `Closed` after it.
 struct Scripted {
     steps: VecDeque<Step>,
     end: TransportError,
@@ -431,7 +431,13 @@ impl RecvTransport for Scripted {
                 errno_code: None,
             }),
             None if self.zero_read => Ok(0),
-            None => Err(self.end.clone()),
+            None => {
+                let end = self.end.clone();
+                if matches!(end, TransportError::Broken { .. }) {
+                    self.end = TransportError::Closed;
+                }
+                Err(end)
+            }
         }
     }
 
@@ -470,6 +476,8 @@ impl Shell for ManagedDemuxReceiver<Scripted> {
 /// More results than any case can produce: a shell that never ends fails
 /// here instead of hanging the test.
 const MAX_RESULTS: usize = 100_000;
+/// The calls made after the first terminal result.
+const CALLS_AFTER_THE_END: usize = 3;
 
 fn drive(shell: &mut dyn Shell) -> Vec<Entry> {
     let mut trace = Vec::new();
@@ -484,10 +492,21 @@ fn drive(shell: &mut dyn Shell) -> Vec<Entry> {
         let (demuxed, packets) = shell.counters();
         trace.push((outcome, demuxed, packets));
         if done {
-            return trace;
+            break;
         }
         assert!(trace.len() < MAX_RESULTS, "the shell never ended");
     }
+    for _ in 0..CALLS_AFTER_THE_END {
+        let outcome = match shell.recv() {
+            Ok(Some(e)) => Outcome::Event(event_key(&e)),
+            Ok(None) => Outcome::End,
+            Err(e) if e.kind == ShellErrorKind::Backpressure => Outcome::Backpressure,
+            Err(e) => Outcome::Failed(format!("{:?}", e.kind)),
+        };
+        let (demuxed, packets) = shell.counters();
+        trace.push((outcome, demuxed, packets));
+    }
+    trace
 }
 
 fn shell_trace(case: &Case) -> Vec<Entry> {
@@ -615,15 +634,10 @@ impl ModelSyncer {
 
     /// The input has ended. Whole packets waiting behind the candidate are
     /// accepted when every packet boundary present reads the sync byte.
-    /// Returns whether any were waiting, accepted or not.
-    fn end_of_input(&mut self) -> bool {
-        if self.locked {
-            return false;
-        }
-        if aligned_packets_at_end(&self.buf) > 0 {
+    fn end_of_input(&mut self) {
+        if !self.locked && aligned_packets_at_end(&self.buf) > 0 {
             self.locked = true;
         }
-        self.buf.len() >= PACKET
     }
 }
 
@@ -639,14 +653,22 @@ struct Model<'a> {
     deferred: Option<Outcome>,
     /// An end whose released packets are still being handed out.
     held_end: Option<Ending>,
-    /// Whether whole packets were waiting in the syncer at the first end.
-    waiting_at_the_end: Option<bool>,
+    /// The first terminal result has been given; what every later call
+    /// answers.
+    after_the_end: Option<Outcome>,
+    /// Whether an end releases the packets the syncer holds. Without it
+    /// the model is the shell as it was before that rule.
+    end_rule: bool,
+    /// At the first end: whether whole packets were waiting in the syncer
+    /// for the end to release, and whether they were there but held across
+    /// a reconnect, which releases nothing.
+    waiting_at_the_end: Option<(bool, bool)>,
     packets_received: u64,
     ts_bytes_demuxed: u64,
 }
 
 impl<'a> Model<'a> {
-    fn new(case: &'a Case) -> Self {
+    fn new(case: &'a Case, end_rule: bool) -> Self {
         Self {
             source: ModelSource {
                 case,
@@ -660,6 +682,8 @@ impl<'a> Model<'a> {
             marker: false,
             deferred: None,
             held_end: None,
+            after_the_end: None,
+            end_rule,
             waiting_at_the_end: None,
             packets_received: 0,
             ts_bytes_demuxed: 0,
@@ -667,6 +691,23 @@ impl<'a> Model<'a> {
     }
 
     fn recv_event(&mut self) -> Outcome {
+        // 0. After the first terminal result nothing is read or flushed any
+        //    more. A clean end and a cancel are repeated; a failure was
+        //    reported once and reads as a clean end from then on.
+        if let Some(answer) = &self.after_the_end {
+            return answer.clone();
+        }
+        let outcome = self.before_the_end();
+        self.after_the_end = match &outcome {
+            Outcome::End => Some(Outcome::End),
+            Outcome::Failed(kind) if kind == "Closed" => Some(outcome.clone()),
+            Outcome::Failed(_) => Some(Outcome::End),
+            _ => None,
+        };
+        outcome
+    }
+
+    fn before_the_end(&mut self) -> Outcome {
         loop {
             // 1. The reconnect marker comes before anything else.
             if std::mem::take(&mut self.marker) {
@@ -699,11 +740,20 @@ impl<'a> Model<'a> {
                         //    again.
                         Read::Backpressure => return Outcome::Backpressure,
                         // 6. An end first releases the whole packets the
-                        //    syncer still holds; the end itself waits
-                        //    behind them.
+                        //    syncer still holds, and waits behind them.
+                        //    Behind a reconnect that no packet was read
+                        //    after, it releases nothing: they were held
+                        //    across the reconnect and are dropped.
                         Read::End(ending) => {
-                            let waiting = self.syncer.end_of_input();
-                            self.waiting_at_the_end.get_or_insert(waiting);
+                            let whole = !self.syncer.locked && self.syncer.buf.len() >= PACKET;
+                            let reconnected = self.source.reconnects > self.seen_reconnects;
+                            self.waiting_at_the_end
+                                .get_or_insert((whole && !reconnected, whole && reconnected));
+                            if reconnected {
+                                self.syncer.reset();
+                            } else if self.end_rule {
+                                self.syncer.end_of_input();
+                            }
                             self.held_end = Some(ending);
                             continue;
                         }
@@ -729,18 +779,13 @@ impl<'a> Model<'a> {
                 };
             };
             // 8. A packet read across a reconnect is dropped, uncounted by
-            //    the demuxed-bytes counter, with everything the syncer
-            //    holds. If the end released it, no packet of the new
-            //    connection was read: the demuxer keeps what it has for the
-            //    flush and no marker is owed. Otherwise what the demuxer
-            //    held goes too and the marker is owed.
+            //    the demuxed-bytes counter; what the syncer and the demuxer
+            //    held goes with it and the marker is owed.
             if self.source.reconnects > self.seen_reconnects {
                 self.seen_reconnects = self.source.reconnects;
+                self.marker = true;
                 self.syncer.reset();
-                if self.held_end.is_none() {
-                    self.marker = true;
-                    self.demux.reset_sync();
-                }
+                self.demux.reset_sync();
                 continue;
             }
             // 9. Any other packet is counted, then fed.
@@ -752,25 +797,46 @@ impl<'a> Model<'a> {
     }
 }
 
-/// The model's trace, and whether whole packets were waiting in its syncer
-/// when the stream ended.
-fn model_run(case: &Case) -> (Vec<Entry>, bool) {
-    let mut model = Model::new(case);
+/// What the model saw at the first end of a case.
+struct AtTheEnd {
+    /// Whole packets were waiting in the syncer for the end to release.
+    waiting: bool,
+    /// Whole packets were in the syncer, held across a reconnect that no
+    /// packet was read after: nothing is released.
+    held_across_a_reconnect: bool,
+}
+
+/// The model's trace and what it saw at the end. `end_rule` off gives the
+/// shell as it was before an end released anything.
+fn model_run(case: &Case, end_rule: bool) -> (Vec<Entry>, AtTheEnd) {
+    let mut model = Model::new(case, end_rule);
     let mut trace = Vec::new();
     loop {
         let outcome = model.recv_event();
         let done = outcome.is_terminal();
         trace.push((outcome, model.ts_bytes_demuxed, model.packets_received));
         if done {
-            let waiting = model.waiting_at_the_end.expect("a trace ends at an end");
-            return (trace, waiting);
+            break;
         }
         assert!(trace.len() < MAX_RESULTS, "the model never ended");
     }
+    for _ in 0..CALLS_AFTER_THE_END {
+        let outcome = model.recv_event();
+        trace.push((outcome, model.ts_bytes_demuxed, model.packets_received));
+    }
+    let (waiting, held_across_a_reconnect) =
+        model.waiting_at_the_end.expect("a trace ends at an end");
+    (
+        trace,
+        AtTheEnd {
+            waiting,
+            held_across_a_reconnect,
+        },
+    )
 }
 
 fn model_trace(case: &Case) -> Vec<Entry> {
-    model_run(case).0
+    model_run(case, true).0
 }
 
 // ---------------------------------------------------------------------------
@@ -806,33 +872,41 @@ fn seeds() -> u64 {
         .map_or(recorded, |n: u64| n.max(recorded))
 }
 
-/// With `TST_RECEIVE_TRACE_RECORD` set, the digests are printed as the table
-/// at the end of this file instead of being compared with it.
+/// `TST_RECEIVE_TRACE_RECORD=now` prints the table at the end of this file
+/// with its second column taken from the shell as it is, instead of
+/// comparing with it. `=before` is for a checkout of the shell from before
+/// an end released anything: it compares that shell with the model without
+/// the rule and prints the table with its first column taken from it.
 #[test]
 fn the_shell_yields_the_models_trace_and_the_recorded_one() {
-    let record = std::env::var_os("TST_RECEIVE_TRACE_RECORD").is_some();
+    let record = std::env::var("TST_RECEIVE_TRACE_RECORD").ok();
+    let end_rule = record.as_deref() != Some("before");
     let mut printed = Vec::new();
     for seed in 0..seeds() {
         let case = Case::generate(seed);
         let shell = shell_trace(&case);
-        assert_same_trace(seed, &case, &shell, &model_trace(&case));
+        assert_same_trace(seed, &case, &shell, &model_run(&case, end_rule).0);
         let Some(&(before, now)) = RECORDED.get(seed as usize) else {
             continue;
         };
-        if record {
-            printed.push(format!("(0x{before:016X}, 0x{:016X}),", digest(&shell)));
-        } else {
-            assert_eq!(
+        match record.as_deref() {
+            Some("before") => printed.push((digest(&shell), now)),
+            Some(_) => printed.push((before, digest(&shell))),
+            None => assert_eq!(
                 digest(&shell),
                 now,
                 "seed {seed} ({}): the trace is not the recorded one",
                 case.describe()
-            );
+            ),
         }
     }
-    if record {
+    if record.is_some() {
         println!("const RECORDED: [(u64, u64); {}] = [", RECORDED.len());
         for row in printed.chunks(2) {
+            let row: Vec<String> = row
+                .iter()
+                .map(|(before, now)| format!("(0x{before:016X}, 0x{now:016X}),"))
+                .collect();
             println!("    {}", row.join(" "));
         }
         println!("];");
@@ -840,31 +914,35 @@ fn the_shell_yields_the_models_trace_and_the_recorded_one() {
 }
 
 /// Delivering the packets held at an end may change a trace only where
-/// whole packets were waiting in the syncer when the stream ended. The
-/// counts per ending are printed.
+/// whole packets were waiting in the syncer for the end to release. In
+/// particular a stream that ends behind a reconnect, with packets held
+/// across it and an access unit of the old connection still to be flushed,
+/// must read exactly as it did. The counts per ending are printed.
 #[test]
 fn the_end_rule_moved_only_the_traces_with_packets_waiting_at_the_end() {
     let mut moved = [0usize; 4];
-    let mut waiting_unmoved = 0;
+    let (mut waiting_unmoved, mut held_across_a_reconnect) = (0, 0);
     for (seed, &(before, now)) in RECORDED.iter().enumerate() {
         let case = Case::generate(seed as u64);
-        let (_, waiting) = model_run(&case);
+        let (_, at_the_end) = model_run(&case, true);
+        held_across_a_reconnect += usize::from(at_the_end.held_across_a_reconnect);
         if before != now {
             assert!(
-                waiting,
-                "seed {seed} ({}): the trace moved with nothing waiting",
+                at_the_end.waiting,
+                "seed {seed} ({}): the trace moved with nothing waiting to be released",
                 case.describe()
             );
             moved[case.ending as usize] += 1;
-        } else if waiting {
+        } else if at_the_end.waiting {
             waiting_unmoved += 1;
         }
     }
     println!(
         "moved, by ending [clean, broken, cancel, zero read]: {moved:?}; waiting but unmoved: \
-         {waiting_unmoved}"
+         {waiting_unmoved}; held across a reconnect: {held_across_a_reconnect}"
     );
     assert!(moved.iter().all(|&n| n >= 5), "{moved:?}");
+    assert!(held_across_a_reconnect >= 5, "{held_across_a_reconnect}");
 }
 
 /// The model's syncer against the public one: the same packets after every
@@ -916,10 +994,12 @@ fn the_recorded_seeds_cover_every_class_of_case() {
         reconnected += usize::from(has("ReconnectDiscontinuity"));
         samples += usize::from(has("Sample"));
         backpressure += usize::from(trace.iter().any(|(o, _, _)| *o == Outcome::Backpressure));
-        let last = trace.last().expect("a trace has its terminal result");
+        // The first terminal result; the calls after it follow.
+        let n = trace.len() - CALLS_AFTER_THE_END;
+        let last = &trace[n - 1];
+        assert!(last.0.is_terminal());
         nothing_delivered += usize::from(last.2 == 0);
         // A failure that came after events its own flush produced.
-        let n = trace.len();
         deferred_failure += usize::from(
             n >= 2
                 && matches!(last.0, Outcome::Failed(_))
@@ -950,260 +1030,260 @@ fn the_recorded_seeds_cover_every_class_of_case() {
 /// shells delivered the packets held at an end, and the trace now.
 #[rustfmt::skip]
 const RECORDED: [(u64, u64); 512] = [
-    (0x3D28A5EDD55BEC5C, 0x3D28A5EDD55BEC5C), (0x9CD190F83ECFCE12, 0x9CD190F83ECFCE12),
-    (0x44669A5E6A5172B8, 0x44669A5E6A5172B8), (0xBBF64AC0778487A2, 0xBBF64AC0778487A2),
-    (0x7A0CDA7B53462B84, 0x7A0CDA7B53462B84), (0x14DC3DC989531C41, 0x14DC3DC989531C41),
-    (0xC9730BE9E1F75A55, 0xC9730BE9E1F75A55), (0x28BDF27C97B28847, 0x072F16610674D69E),
-    (0x93C7BD9011CC6025, 0x93C7BD9011CC6025), (0xCC67AB9EF4C77E18, 0xCC67AB9EF4C77E18),
-    (0x5855D28D577D767B, 0x5855D28D577D767B), (0x38D234D4BA2A4E0E, 0x38D234D4BA2A4E0E),
-    (0x4B55AC83F4B80B3B, 0x4B55AC83F4B80B3B), (0xD8C6CEBF3410C55A, 0x0C4BC7EF125F20DC),
-    (0x2BC568E98BBBBEA8, 0x2BC568E98BBBBEA8), (0xF625301A8460E08F, 0xF625301A8460E08F),
-    (0xEC1ADE68146B5452, 0xCD20175F097C0A31), (0x3E9EC6E248AC02DF, 0x65C355A2FC20FBF8),
-    (0x9CD190F83ECFCE12, 0x9CD190F83ECFCE12), (0x428BBB9E519ACBE2, 0x428BBB9E519ACBE2),
-    (0xF352C6FF5210A94A, 0xF352C6FF5210A94A), (0x00D6A654D3E19960, 0x37AFFACD3FAE975A),
-    (0x662E9A31231DC125, 0x662E9A31231DC125), (0xCC75FCCE1D257312, 0x0AAD2AD30C864825),
-    (0x5BF726830D643992, 0x23CCB42C5B042F22), (0x12F52EDCC47686B1, 0x12F52EDCC47686B1),
-    (0x91BB97CEE67E4C32, 0xB0B65ED7F16D9653), (0xC582C904F3B46B7D, 0xC582C904F3B46B7D),
-    (0xBCD1E43A6D20DA52, 0xE14A4A8CBEB55F50), (0xA5496E7188A29B28, 0xA5496E7188A29B28),
-    (0xD78875073A66E8A3, 0xD78875073A66E8A3), (0x9CD190F83ECFCE12, 0x9CD190F83ECFCE12),
-    (0x24C3525C870D5BE0, 0x24C3525C870D5BE0), (0x735AEC9ACE55D7B2, 0x9255B3A3D94521D3),
-    (0x91BB97CEE67E4C32, 0x91BB97CEE67E4C32), (0x7CD5E13F490696CA, 0x7CD5E13F490696CA),
-    (0xB865B45FC56DC67A, 0xB865B45FC56DC67A), (0xC439E956119E3C9B, 0xC439E956119E3C9B),
-    (0x44669A5E6A5172B8, 0xBB5D11384FF12131), (0x9DA57C509B5CECBD, 0x9DA57C509B5CECBD),
-    (0xA30019489582093F, 0xA30019489582093F), (0x0C42F685E3BD491C, 0x0C42F685E3BD491C),
-    (0xEFB1BDE71C14BF19, 0xEFB1BDE71C14BF19), (0xD51797980D8EC5FA, 0xD51797980D8EC5FA),
-    (0x1115990AF37BB492, 0x1115990AF37BB492), (0xF207263D6B540436, 0xF207263D6B540436),
-    (0x9CD190F83ECFCE12, 0x9CD190F83ECFCE12), (0x827046BDB275819F, 0x5B3BDB8E8CEB20A7),
-    (0x9B84A14CDEAB40FA, 0x9B84A14CDEAB40FA), (0x5C804A314652A3E2, 0x5C804A314652A3E2),
-    (0x9DA205A5BE9DA942, 0x9B20C49F12C96971), (0x91BB97CEE67E4C32, 0x91BB97CEE67E4C32),
-    (0x1115990AF37BB492, 0x9FCEF92F46DD05B6), (0x5AC7A15011D17698, 0x5AC7A15011D17698),
-    (0x496E8BA653C73D58, 0xC14E530032EC670E), (0x9CD190F83ECFCE12, 0x9CD190F83ECFCE12),
-    (0x92D83D76086F9ADE, 0x92D83D76086F9ADE), (0x86BDC43915B50596, 0xB22434873BB349A3),
-    (0x012EBDB615334DE9, 0x012EBDB615334DE9), (0xB13C85B15A33B3AC, 0xB13C85B15A33B3AC),
-    (0x9CD190F83ECFCE12, 0x9CD190F83ECFCE12), (0x86BDC43915B50596, 0x86BDC43915B50596),
-    (0x678B6D93C2F2E49E, 0x678B6D93C2F2E49E), (0x86BDC43915B50596, 0xC146BD476752B8B3),
-    (0x9CD190F83ECFCE12, 0xE08BD5D9D5819ECF), (0xF18BEBAC872D82CF, 0xF18BEBAC872D82CF),
-    (0x078C0871776B0231, 0x0ADA4ED3EA706F55), (0xFAE7151BC6F3C794, 0xFAE7151BC6F3C794),
-    (0x5202519E38E68F1C, 0x5202519E38E68F1C), (0x8BD7E7E858AD312C, 0x8BD7E7E858AD312C),
-    (0x77787C3C8F865295, 0x77787C3C8F865295), (0xE0EBC172F3341A54, 0xE0EBC172F3341A54),
-    (0x496E8BA653C73D58, 0x496E8BA653C73D58), (0xF1A62923BC797E51, 0xF1A62923BC797E51),
-    (0x91BB97CEE67E4C32, 0x91BB97CEE67E4C32), (0x16E1395C8F087A2C, 0x16E1395C8F087A2C),
-    (0xF5C3A2D80745BCEA, 0xF5C3A2D80745BCEA), (0xF207263D6B540436, 0xF207263D6B540436),
-    (0x29E740046E2F0E75, 0x29E740046E2F0E75), (0xBFFFA3950E6975BC, 0xBFFFA3950E6975BC),
-    (0x44669A5E6A5172B8, 0x44669A5E6A5172B8), (0x2EFFAA0E67B5EA48, 0x2EFFAA0E67B5EA48),
-    (0xCC56D106F9BBFD73, 0xCC56D106F9BBFD73), (0x91BB97CEE67E4C32, 0x91BB97CEE67E4C32),
-    (0xA1B9240EFF64FBDD, 0xA1B9240EFF64FBDD), (0xEDD7AF2A810584D8, 0xEDD7AF2A810584D8),
-    (0x2665FB1FA251D30B, 0x2665FB1FA251D30B), (0x18B81CED74573F38, 0x18B81CED74573F38),
-    (0x811B3A3408FC5A74, 0x811B3A3408FC5A74), (0xCCA6BE4970B08BE8, 0xCCA6BE4970B08BE8),
-    (0x44669A5E6A5172B8, 0x44669A5E6A5172B8), (0x86BDC43915B50596, 0x86BDC43915B50596),
-    (0x86BDC43915B50596, 0x86BDC43915B50596), (0x1115990AF37BB492, 0x1115990AF37BB492),
-    (0xBA5386969DF2B1A6, 0xBA5386969DF2B1A6), (0x496E8BA653C73D58, 0x34DFE464AFF93639),
-    (0x9CD190F83ECFCE12, 0x9CD190F83ECFCE12), (0x4E3A6AD3B5FC09DD, 0x4E3A6AD3B5FC09DD),
-    (0xECD5ABA58B4D9520, 0xECD5ABA58B4D9520), (0x88FD454886D54A3C, 0x88FD454886D54A3C),
-    (0xF207263D6B540436, 0xF207263D6B540436), (0x4295B0ADC06067C0, 0x3E339CB7A4871CA6),
-    (0xD2DE8888BD39C452, 0xD2DE8888BD39C452), (0x9C3ACBF89B0EF949, 0x314412B01C196A19),
-    (0x4983D2E639A0DFD8, 0x4983D2E639A0DFD8), (0x7FDC77F7A29D18DA, 0x7FDC77F7A29D18DA),
-    (0xC2ADC68FDF0F7B2C, 0xC2ADC68FDF0F7B2C), (0x4983D2E639A0DFD8, 0x86BA85B9DCFEACBC),
-    (0x47C4D212FDE02B8A, 0x57813393BD927EB6), (0xC6B29687EADA69F3, 0x4113E9C425621E68),
-    (0x65BBE7395926D81F, 0x65BBE7395926D81F), (0xB9FD51A282A7C498, 0xB9FD51A282A7C498),
-    (0x98753C130837B763, 0xDB23579F8A6E0108), (0x496E8BA653C73D58, 0x6557808601B77CFE),
-    (0x537203DE95386EF3, 0x537203DE95386EF3), (0x55E273D2BEF814B5, 0x55E273D2BEF814B5),
-    (0x7FF930D0E330978C, 0x7FF930D0E330978C), (0x9CD190F83ECFCE12, 0x9CD190F83ECFCE12),
-    (0x4BAC9FA55450EC6B, 0x2CB1D89C4961A24A), (0xD195DBFC22C693E6, 0xD195DBFC22C693E6),
-    (0x91BB97CEE67E4C32, 0x91BB97CEE67E4C32), (0x899C7B2D84CB0372, 0x6AA1B42479DBB951),
-    (0x1946697D52981C9F, 0x1946697D52981C9F), (0xA549D6B7A009F793, 0xA549D6B7A009F793),
-    (0x733CD8E1CF2CE177, 0xFB2EA25B97979F11), (0x86BDC43915B50596, 0xD139417558BBC13D),
-    (0x8762A83ABB0C8068, 0x19E3AC052EB7C0CA), (0x44669A5E6A5172B8, 0x636161677540BCD9),
-    (0x168C84AD19235F6F, 0xA28AF0D1E41A6C8B), (0x86BDC43915B50596, 0x86BDC43915B50596),
-    (0xF3C57D37390F3769, 0xF3C57D37390F3769), (0x44669A5E6A5172B8, 0xD8BA10BA0A6BAF25),
-    (0x9AA9130D5F24D87E, 0x9AA9130D5F24D87E), (0x9CD190F83ECFCE12, 0x9CD190F83ECFCE12),
-    (0x9CD190F83ECFCE12, 0xE08BD5D9D5819ECF), (0xBBFECAFD7C8E66FD, 0xBBFECAFD7C8E66FD),
-    (0x8D82910709993160, 0x2364F764D111A45C), (0x91BB97CEE67E4C32, 0x91BB97CEE67E4C32),
-    (0x23F4AC2138F576DF, 0x23F4AC2138F576DF), (0x91BB97CEE67E4C32, 0xB0B65ED7F16D9653),
-    (0x1946697D52981C9F, 0xB9BE15742E4C6E80), (0xEF86990B26D9E671, 0xEF86990B26D9E671),
-    (0x2678CA5621C30E6A, 0x2678CA5621C30E6A), (0xE16916DC8DE82508, 0xE16916DC8DE82508),
-    (0x7D4F26350754B9A6, 0x7D4F26350754B9A6), (0xDC650A8784A4B983, 0xDC650A8784A4B983),
-    (0xD3C5C182EC91672A, 0xD3C5C182EC91672A), (0xF207263D6B540436, 0xFE4B4AD9A41702AB),
-    (0xBE6C9FCE32E2753C, 0xBE6C9FCE32E2753C), (0x9CD190F83ECFCE12, 0x9CD190F83ECFCE12),
-    (0x91BB97CEE67E4C32, 0x15F06AABB7EA0CAF), (0x202157D2F85D7109, 0x202157D2F85D7109),
-    (0x91BB97CEE67E4C32, 0x91BB97CEE67E4C32), (0x92E6F02A3CA0C935, 0x92E6F02A3CA0C935),
-    (0x91BB97CEE67E4C32, 0x91BB97CEE67E4C32), (0x91BB97CEE67E4C32, 0x91BB97CEE67E4C32),
-    (0xAEADF97115B61361, 0x1776BCFF24CF1358), (0xC31FDBD2CB32E3FC, 0xC31FDBD2CB32E3FC),
-    (0x05312EF67A885523, 0x38A6015CB8098C8E), (0xC6C8939920A45F81, 0x808375A66AA562D3),
-    (0x44669A5E6A5172B8, 0x44669A5E6A5172B8), (0xF42A5E34E2DB3C38, 0x1325253DEDCA8659),
-    (0x44669A5E6A5172B8, 0xD12BE723928EAD0A), (0x38B13553613842CA, 0x38B13553613842CA),
-    (0xBC4CDF3D57494B72, 0xBC4CDF3D57494B72), (0xEC1ADE68146B5452, 0xCD20175F097C0A31),
-    (0xD5C968C1B2A1BA44, 0xD5C968C1B2A1BA44), (0xEF7DFBFDA9E3DFDD, 0xEF7DFBFDA9E3DFDD),
-    (0x74169CAA3288F164, 0x74169CAA3288F164), (0x9CD190F83ECFCE12, 0x9CD190F83ECFCE12),
-    (0x5953227B2CD1FBEC, 0x5953227B2CD1FBEC), (0xEA394144C9E9D7E6, 0xEA394144C9E9D7E6),
-    (0x4983D2E639A0DFD8, 0x687E99EF449029F9), (0x5CD5FBE7C17BEF9D, 0x5CD5FBE7C17BEF9D),
-    (0x65155081D9ABE5D1, 0x461A8978CEBC9BB0), (0x8F12C6479A889A60, 0x8F12C6479A889A60),
-    (0x3C12D3A31254ECE5, 0x3C12D3A31254ECE5), (0xCAC3ED380B9E1964, 0xCAC3ED380B9E1964),
-    (0xE0A16E2B7B15F855, 0xE0A16E2B7B15F855), (0x496E8BA653C73D58, 0x496E8BA653C73D58),
-    (0x20F8F1155A64B303, 0x20F8F1155A64B303), (0xE86748B67D06D17F, 0xE86748B67D06D17F),
-    (0x1115990AF37BB492, 0x1115990AF37BB492), (0x496E8BA653C73D58, 0x496E8BA653C73D58),
-    (0xB55A2AA0E6FADE73, 0xB55A2AA0E6FADE73), (0x96927F18A77B2841, 0x96927F18A77B2841),
-    (0xF3ABC3D54E0C33F9, 0xF3ABC3D54E0C33F9), (0xDF0C9FEF87D00F18, 0xDF0C9FEF87D00F18),
-    (0x1115990AF37BB492, 0x1115990AF37BB492), (0x88707B004C012716, 0x88707B004C012716),
-    (0xD033FF1B87F1AE84, 0x983A4873659577E3), (0xADE61F2DC3C3481F, 0xADE61F2DC3C3481F),
-    (0xABB4509D4D385D75, 0xABB4509D4D385D75), (0x10E0416ECB824B6B, 0x10E0416ECB824B6B),
-    (0xF3E83F1CA4128440, 0x0579D093D3EC1511), (0x07A6CCFBC8C82A2C, 0x07A6CCFBC8C82A2C),
-    (0x5C1BFB8AAD102E74, 0x5C1BFB8AAD102E74), (0xABDA855E7527C49A, 0xABDA855E7527C49A),
-    (0xAA967104D6B255FF, 0xAA967104D6B255FF), (0x9CEF13A60C09580C, 0x9CEF13A60C09580C),
-    (0x6ACB2FDDC15EBE22, 0x6ACB2FDDC15EBE22), (0x98C8DDE93A71FA29, 0x98C8DDE93A71FA29),
-    (0xED95E40F4F59395C, 0xED95E40F4F59395C), (0x91BB97CEE67E4C32, 0x91BB97CEE67E4C32),
-    (0x44669A5E6A5172B8, 0x77304743A7FAC31E), (0xDD55B72983097D68, 0xDD55B72983097D68),
-    (0x9CD190F83ECFCE12, 0x9CD190F83ECFCE12), (0x94524069050100DE, 0x94524069050100DE),
-    (0xC19FA893263FB326, 0xC19FA893263FB326), (0x44669A5E6A5172B8, 0x44669A5E6A5172B8),
-    (0x91BB97CEE67E4C32, 0x15F06AABB7EA0CAF), (0x9E4A770472CA8D43, 0x9E4A770472CA8D43),
-    (0x44669A5E6A5172B8, 0x44669A5E6A5172B8), (0x44669A5E6A5172B8, 0x44669A5E6A5172B8),
-    (0x3052D10D97C5E3CD, 0x3052D10D97C5E3CD), (0xD9F82D5E07743442, 0x180D16AED18926B5),
-    (0x1115990AF37BB492, 0x1115990AF37BB492), (0xBBF1DC94907BDF50, 0xBBF1DC94907BDF50),
-    (0x91BB97CEE67E4C32, 0xB0B65ED7F16D9653), (0x509290B0C5994475, 0x509290B0C5994475),
-    (0x0DE114A39F750FF3, 0x0DE114A39F750FF3), (0x64CF82EE86FC5B5E, 0x64CF82EE86FC5B5E),
-    (0x91BB97CEE67E4C32, 0x91BB97CEE67E4C32), (0x6B402F9551D4BED6, 0x6B402F9551D4BED6),
-    (0x7FFA9A50507165A2, 0x7FFA9A50507165A2), (0x9CD190F83ECFCE12, 0x9CD190F83ECFCE12),
-    (0x4AF7D9D89E199835, 0x4AF7D9D89E199835), (0x40C6F839048828B2, 0x40C6F839048828B2),
-    (0x5146A2FEF05F8549, 0x5146A2FEF05F8549), (0x1115990AF37BB492, 0x52E5A5FF9F45C64F),
-    (0x1A1ADD876A583699, 0x1A1ADD876A583699), (0x1EB07943F57EA2E6, 0x1EB07943F57EA2E6),
-    (0x91BB97CEE67E4C32, 0x91BB97CEE67E4C32), (0xEC1ADE68146B5452, 0xEC1ADE68146B5452),
-    (0x046BDACDEF761921, 0x046BDACDEF761921), (0xBCF8187B1D72C9E6, 0xBCF8187B1D72C9E6),
-    (0xC2133E2B66F0BA51, 0xC2133E2B66F0BA51), (0x8437D6FC1BA0D8BE, 0x8437D6FC1BA0D8BE),
-    (0x9CD190F83ECFCE12, 0x9CD190F83ECFCE12), (0xE04E5F0ABB04D255, 0xE04E5F0ABB04D255),
-    (0x91BB97CEE67E4C32, 0x91BB97CEE67E4C32), (0x641BBCFB8F93FAED, 0x641BBCFB8F93FAED),
-    (0x533BFFE5A85FCB0E, 0x533BFFE5A85FCB0E), (0x9CD190F83ECFCE12, 0xBBCC580149BF1833),
-    (0x4ED7EDB407742213, 0x4ED7EDB407742213), (0x5C5103AA5E6DE141, 0x5C5103AA5E6DE141),
-    (0x30F72EC878D43631, 0xF7F3F598145D3F9E), (0x86BDC43915B50596, 0x7188367E737815CE),
-    (0x328DC2F3124592F1, 0x328DC2F3124592F1), (0x86BDC43915B50596, 0x0DF0093EEA8A6C6B),
-    (0x862F205D3E565F1D, 0xF20924AA3A159057), (0x5FFE6BC34F174B4F, 0x5FFE6BC34F174B4F),
-    (0x86BDC43915B50596, 0x509D22ED28D6554B), (0xA3DAD47EC1816764, 0xA3DAD47EC1816764),
-    (0x91BB97CEE67E4C32, 0x300DC5CC869BD49F), (0x4F288BDAC2685F9E, 0x4F288BDAC2685F9E),
-    (0x966659DCDD6B7332, 0x966659DCDD6B7332), (0x9CD190F83ECFCE12, 0x9CD190F83ECFCE12),
-    (0x9CD190F83ECFCE12, 0x9CD190F83ECFCE12), (0x187FC2FD9F2BE06E, 0x187FC2FD9F2BE06E),
-    (0x1115990AF37BB492, 0x30106013FE6AFEB3), (0x44669A5E6A5172B8, 0x636161677540BCD9),
-    (0xE0EBE45990E5F9A6, 0x8E173E02131EF98F), (0x8759157E7B2B5962, 0x8759157E7B2B5962),
-    (0x95A7C1B1A3401916, 0x1CDA06B778157FEB), (0x91BB97CEE67E4C32, 0x91BB97CEE67E4C32),
-    (0x44669A5E6A5172B8, 0x636161677540BCD9), (0xF207263D6B540436, 0xF207263D6B540436),
-    (0xB498FBD4989FBACB, 0xB498FBD4989FBACB), (0x4983D2E639A0DFD8, 0x4983D2E639A0DFD8),
-    (0x57B6C54B74F6FD07, 0x57B6C54B74F6FD07), (0x980FC003607855D1, 0x980FC003607855D1),
-    (0x1B65922EE48287F7, 0x1B65922EE48287F7), (0x47E91DD254C51B72, 0x47E91DD254C51B72),
-    (0x9CD190F83ECFCE12, 0x9CD190F83ECFCE12), (0x44669A5E6A5172B8, 0x636161677540BCD9),
-    (0xEA1F9B669943C081, 0xEA1F9B669943C081), (0x53663786506FA5E1, 0x53663786506FA5E1),
-    (0x496E8BA653C73D58, 0xC8B791FACE8DDDE3), (0x13AE5FF0860A5313, 0x13AE5FF0860A5313),
-    (0xB0C2C85465A94095, 0xB0C2C85465A94095), (0x32D69EDBBB41BCF6, 0x32D69EDBBB41BCF6),
-    (0x78F096B155DC5E63, 0x78F096B155DC5E63), (0x5F3EED2DA7C480FB, 0x5F3EED2DA7C480FB),
-    (0x9CD190F83ECFCE12, 0x9CD190F83ECFCE12), (0x9CD190F83ECFCE12, 0x9CD190F83ECFCE12),
-    (0xD05FCFA06474287A, 0xD05FCFA06474287A), (0x3BC92D99A2EE1DFA, 0x3BC92D99A2EE1DFA),
-    (0x6F3BF711B78097FB, 0x6F3BF711B78097FB), (0x4BE124F664A56062, 0x4BE124F664A56062),
-    (0xEB32A0B33805FA3D, 0xEB32A0B33805FA3D), (0x4E3F3FEDC7FCB7E7, 0xF14EEAD2A72ED984),
-    (0xB32120310531BF69, 0xB32120310531BF69), (0x1115990AF37BB492, 0x1115990AF37BB492),
-    (0x91BB97CEE67E4C32, 0x91BB97CEE67E4C32), (0x9CD190F83ECFCE12, 0xE1D1255A7DD69913),
-    (0xF207263D6B540436, 0xF207263D6B540436), (0xF207263D6B540436, 0xF207263D6B540436),
-    (0x756F185180E85860, 0x756F185180E85860), (0x91BB97CEE67E4C32, 0x9BADD0B8F498318D),
-    (0x44669A5E6A5172B8, 0x44669A5E6A5172B8), (0xF207263D6B540436, 0xF207263D6B540436),
-    (0x058D402770CFAF28, 0x058D402770CFAF28), (0x8545C89D9582B10D, 0x8545C89D9582B10D),
-    (0xD8AD440D1C64FE3F, 0xD8AD440D1C64FE3F), (0x9CD190F83ECFCE12, 0x9CD190F83ECFCE12),
-    (0x91BB97CEE67E4C32, 0xAD006444FDDA0B0B), (0x05E5585A16447B66, 0x05E5585A16447B66),
-    (0x078C0871776B0231, 0x2686CF7A825A4C52), (0xA13FD3AB65A175C9, 0xA13FD3AB65A175C9),
-    (0xD62549A90860F36B, 0xD62549A90860F36B), (0x694141067B35EEE5, 0x694141067B35EEE5),
-    (0xFC051937B77C620A, 0xFC051937B77C620A), (0x19272763B3642831, 0x19272763B3642831),
-    (0x0E319DD4872A097F, 0x0E319DD4872A097F), (0x583774A7600840BC, 0x583774A7600840BC),
-    (0x86BDC43915B50596, 0x86BDC43915B50596), (0xDC145D383630E374, 0xA63AA15C65986702),
-    (0xE3D57EE92371D880, 0xE3D57EE92371D880), (0x194382D460B49B4D, 0x194382D460B49B4D),
-    (0xD9A1A9634D86EEF8, 0xD9A1A9634D86EEF8), (0xADDF85150EBEA047, 0xADDF85150EBEA047),
-    (0x1946697D52981C9F, 0x1946697D52981C9F), (0xC99B7E4879D967C6, 0xC99B7E4879D967C6),
-    (0xB7419DF10571416F, 0xB7419DF10571416F), (0x1828C87F66728969, 0x1828C87F66728969),
-    (0x04CBBB2DF5263ACB, 0x04CBBB2DF5263ACB), (0x912A5B10C9DC8BC0, 0x912A5B10C9DC8BC0),
-    (0x2C75D515A38F5329, 0x2C75D515A38F5329), (0x4E5F0747BEB39D11, 0x4E5F0747BEB39D11),
-    (0x496E8BA653C73D58, 0x76DDC5B808F201FE), (0x2CAA82C48197947C, 0x2CAA82C48197947C),
-    (0xBE78F0CA90B5EA79, 0xBE78F0CA90B5EA79), (0x56E91FFDE37192F3, 0x56E91FFDE37192F3),
-    (0x1ECC01DFE83FC4B4, 0x1ECC01DFE83FC4B4), (0xB6BA17817EDBFE9A, 0xB6BA17817EDBFE9A),
-    (0x4983D2E639A0DFD8, 0x687E99EF449029F9), (0x44669A5E6A5172B8, 0x44669A5E6A5172B8),
-    (0x0813C9DB4DF2A2E6, 0x0813C9DB4DF2A2E6), (0xEF6D272DF33F65E6, 0xEF6D272DF33F65E6),
-    (0x1115990AF37BB492, 0xC4F03B9E99772662), (0x28DF99B708046CAB, 0x5ED2D58E3ECC9104),
-    (0x9CD190F83ECFCE12, 0x4964940142E69BB6), (0x2E81CFC2BA6F8686, 0x2E81CFC2BA6F8686),
-    (0xA8444C3975258516, 0xA8444C3975258516), (0x7D1A5AE5D9957ED0, 0x7D1A5AE5D9957ED0),
-    (0x0ED864DACF0B2CC4, 0x0ED864DACF0B2CC4), (0x690128FC6A2390FB, 0x690128FC6A2390FB),
-    (0xE65AE1A08C563441, 0xE65AE1A08C563441), (0x4E91AC3CE73AB95E, 0x4E91AC3CE73AB95E),
-    (0x31BBB83138D573B0, 0x31BBB83138D573B0), (0x8A72DCEF70DC7555, 0x8A72DCEF70DC7555),
-    (0x278D204C8E30FE9F, 0x278D204C8E30FE9F), (0xE7D79E6889461F60, 0xE7D79E6889461F60),
-    (0xF424A29CC7E378D6, 0xF424A29CC7E378D6), (0x3B74960E6DDD9227, 0x1731E0DC0C323EAB),
-    (0x496E8BA653C73D58, 0x9B5D3C19CE3FCB05), (0x078C0871776B0231, 0x078C0871776B0231),
-    (0xC52E6299E7F139EC, 0xC52E6299E7F139EC), (0x32CC82571A952D06, 0x32CC82571A952D06),
-    (0x71353D6981FB2AF2, 0x7449642E0E85C33C), (0x4D96B2F837B5500B, 0x4D96B2F837B5500B),
-    (0xC70128042552280A, 0xC70128042552280A), (0x00ADA4B20D0FB6AE, 0x00ADA4B20D0FB6AE),
-    (0xDB3C9843EEDCE3AB, 0xDB3C9843EEDCE3AB), (0x496E8BA653C73D58, 0x5EE8C859084B2B6D),
-    (0x23E9420A6EEF8EE7, 0x23E9420A6EEF8EE7), (0x496E8BA653C73D58, 0x496E8BA653C73D58),
-    (0x86E7220D9E273B18, 0x86E7220D9E273B18), (0xB284C064D6708121, 0xB284C064D6708121),
-    (0x078C0871776B0231, 0xD4DDA3410AA4AC40), (0x1115990AF37BB492, 0x1115990AF37BB492),
-    (0x0D7C2F773BA6B8EF, 0x0D7C2F773BA6B8EF), (0x44669A5E6A5172B8, 0x44669A5E6A5172B8),
-    (0x719C1A69D0375EA1, 0x719C1A69D0375EA1), (0x91BB97CEE67E4C32, 0x92A9ED3C5E68DDF2),
-    (0x91BB97CEE67E4C32, 0x1735BA2C603F06F3), (0x9CD190F83ECFCE12, 0x9CD190F83ECFCE12),
-    (0x91BB97CEE67E4C32, 0xB0B65ED7F16D9653), (0xF7AB9F76BA01671E, 0xF7AB9F76BA01671E),
-    (0xFDDD13372C3E86F3, 0xFDDD13372C3E86F3), (0xF050DF03939BE1C7, 0xF050DF03939BE1C7),
-    (0x72E1B5F36DABD26D, 0x72E1B5F36DABD26D), (0x4983D2E639A0DFD8, 0x4983D2E639A0DFD8),
-    (0xF207263D6B540436, 0xF207263D6B540436), (0x91BB97CEE67E4C32, 0x91BB97CEE67E4C32),
-    (0x548D84A9C21CB897, 0x548D84A9C21CB897), (0xE4ECA2F0F3330717, 0xE4ECA2F0F3330717),
-    (0xD24006E0D0FECEA4, 0xD24006E0D0FECEA4), (0x91BB97CEE67E4C32, 0x91BB97CEE67E4C32),
-    (0x616376C649A54790, 0x616376C649A54790), (0x078C0871776B0231, 0x078C0871776B0231),
-    (0x758BE1D2C24254F0, 0x758BE1D2C24254F0), (0x5FAF70FC46E26550, 0x5FAF70FC46E26550),
-    (0x46C4D572918CAFA2, 0x46C4D572918CAFA2), (0x33ED3735450AE3EE, 0x33ED3735450AE3EE),
-    (0xC3D6A3EA7F47FE23, 0xC3D6A3EA7F47FE23), (0x23000BBC357C23CE, 0x23000BBC357C23CE),
-    (0x1EC901C6C07994BE, 0x1EC901C6C07994BE), (0x0E5E7786C53EF7B1, 0x0E5E7786C53EF7B1),
-    (0x91BB97CEE67E4C32, 0xB0B65ED7F16D9653), (0xFC612B7E23C94FA8, 0x8F29177526F1B31A),
-    (0x09AA53C4C9B5209F, 0x09AA53C4C9B5209F), (0x496E8BA653C73D58, 0x496E8BA653C73D58),
-    (0x1115990AF37BB492, 0x1115990AF37BB492), (0x44669A5E6A5172B8, 0x636161677540BCD9),
-    (0xFFD2AF7F509E113D, 0xD79DC44E53D3826F), (0x9976A23FDACBE62D, 0x9976A23FDACBE62D),
-    (0x569F6350D4EAFA25, 0x569F6350D4EAFA25), (0x44669A5E6A5172B8, 0xD58A894C772EF5E1),
-    (0x9CD190F83ECFCE12, 0xDCF8039D4384B8A9), (0x1ABBF3B57B246794, 0x1ABBF3B57B246794),
-    (0xCFB79FDA17941701, 0xCFB79FDA17941701), (0x4ED289ED19CDD154, 0x4ED289ED19CDD154),
-    (0x9B8EA8B030E0CA5D, 0x9CA13E0ED2CDC203), (0x1115990AF37BB492, 0x1115990AF37BB492),
-    (0x9CD190F83ECFCE12, 0x9CD190F83ECFCE12), (0xF207263D6B540436, 0xB9B3F93E7AE35ACB),
-    (0xD21960FC111A6B11, 0xD21960FC111A6B11), (0x496E8BA653C73D58, 0x496E8BA653C73D58),
-    (0xEBEE04C0E4B81057, 0xEF7DD3419FFBF691), (0x0147E4611E398A1C, 0x0147E4611E398A1C),
-    (0x91BB97CEE67E4C32, 0xB0B65ED7F16D9653), (0x4983D2E639A0DFD8, 0x4983D2E639A0DFD8),
-    (0x4909AFC31CEFC6D1, 0xD6CB38373FCED352), (0x44669A5E6A5172B8, 0x636161677540BCD9),
-    (0x1946697D52981C9F, 0x1946697D52981C9F), (0x91BB97CEE67E4C32, 0x91BB97CEE67E4C32),
-    (0x95A7C1B1A3401916, 0x61715852A14927CB), (0x226D82279FA23D70, 0x226D82279FA23D70),
-    (0x91BB97CEE67E4C32, 0x91BB97CEE67E4C32), (0xFD60AFF52DFECACB, 0xFD60AFF52DFECACB),
-    (0xFDDD2864E2B03F9E, 0xFDDD2864E2B03F9E), (0xAD885D6838F65C46, 0xAD885D6838F65C46),
-    (0x496E8BA653C73D58, 0x496E8BA653C73D58), (0x60D3655D55ECCF47, 0x60D3655D55ECCF47),
-    (0x91BB97CEE67E4C32, 0x91BB97CEE67E4C32), (0xAA8EE8658897CAE2, 0xAA8EE8658897CAE2),
-    (0x1E0FE2951A404C49, 0x1E0FE2951A404C49), (0x3BD2338C62BA0E69, 0x3BD2338C62BA0E69),
-    (0x2E97EE8CF7CC7EC2, 0x2E97EE8CF7CC7EC2), (0x73263F0B3A4A0631, 0x73263F0B3A4A0631),
-    (0xBCD05FEB8F8801FA, 0xBCD05FEB8F8801FA), (0x3E0C458D788C12CA, 0x3E0C458D788C12CA),
-    (0x29E0A090814AD0CA, 0x48DB67998C3A1AEB), (0x329299296765A893, 0x329299296765A893),
-    (0x47FEDFC259EFB231, 0x47FEDFC259EFB231), (0x39F8F06CD3FA409C, 0x39F8F06CD3FA409C),
-    (0x44669A5E6A5172B8, 0xD8BA10BA0A6BAF25), (0x86BDC43915B50596, 0x86BDC43915B50596),
-    (0x9CD190F83ECFCE12, 0x2403D5FE13A534E7), (0x66A7953F3B78C771, 0x66A7953F3B78C771),
-    (0x91BB97CEE67E4C32, 0xB0B65ED7F16D9653), (0x8AC9BF44C0FE90C3, 0x79C0464EF54F7E9A),
-    (0x8FC2CEBDC9DD451C, 0x8FC2CEBDC9DD451C), (0x496E8BA653C73D58, 0x496E8BA653C73D58),
-    (0x91BB97CEE67E4C32, 0x91BB97CEE67E4C32), (0x2CF000B323E46975, 0xB97F29B1F8075015),
-    (0x883A2612FBBF8355, 0x883A2612FBBF8355), (0x27725572E8A45253, 0x27725572E8A45253),
-    (0x9CD190F83ECFCE12, 0x2403D5FE13A534E7), (0xB18252EAD299B5C3, 0xB18252EAD299B5C3),
-    (0x91BB97CEE67E4C32, 0x91BB97CEE67E4C32), (0x8C11DD42BEF906FF, 0x8C11DD42BEF906FF),
-    (0x496E8BA653C73D58, 0x747F29F0AFA80B7B), (0x868423055BF22190, 0x868423055BF22190),
-    (0x9CD190F83ECFCE12, 0xBBCC580149BF1833), (0xFB65C616CFAA7545, 0xFB65C616CFAA7545),
-    (0x9CD190F83ECFCE12, 0x2403D5FE13A534E7), (0x1EE29EEDB781F405, 0x1EE29EEDB781F405),
-    (0x4983D2E639A0DFD8, 0x687E99EF449029F9), (0x9CD190F83ECFCE12, 0x9CD190F83ECFCE12),
-    (0x496E8BA653C73D58, 0x9B5D3C19CE3FCB05), (0xF207263D6B540436, 0xF207263D6B540436),
-    (0x91BB97CEE67E4C32, 0x59BEAB74BD7C30E8), (0x81C98EFE9BDF52C5, 0x81C98EFE9BDF52C5),
-    (0x2F0DBAFF26A73CC2, 0x311B4F8CEDD216D4), (0x1C13695F47D2E951, 0x1C13695F47D2E951),
-    (0xA8822F8FBB8940E4, 0xA8822F8FBB8940E4), (0x94CEF0ACF075C394, 0x94CEF0ACF075C394),
-    (0x9CD190F83ECFCE12, 0x9CD190F83ECFCE12), (0x8286CAFEB3C3E875, 0x8286CAFEB3C3E875),
-    (0xD356E84BF564692C, 0xD356E84BF564692C), (0x735AEC9ACE55D7B2, 0x9255B3A3D94521D3),
-    (0x4A89323880994D7B, 0x4A89323880994D7B), (0x86BDC43915B50596, 0x86BDC43915B50596),
-    (0x9377D01E5DB1EECB, 0x9377D01E5DB1EECB), (0x9CD190F83ECFCE12, 0x9CD190F83ECFCE12),
-    (0x1115990AF37BB492, 0x1115990AF37BB492), (0x5CD109CD131E429E, 0x5CD109CD131E429E),
-    (0x3B3204EF033CD5B8, 0x3B3204EF033CD5B8), (0xAA0C1FAE31A5EFEC, 0xAA0C1FAE31A5EFEC),
-    (0x171A217CA1E891D2, 0x171A217CA1E891D2), (0x44669A5E6A5172B8, 0x636161677540BCD9),
-    (0x5F6440DC1A2AB325, 0x5F6440DC1A2AB325), (0xE07397DFBE4CA109, 0xB2A4E19A14DFAB0A),
-    (0x980FC003607855D1, 0x980FC003607855D1), (0x9CD190F83ECFCE12, 0x9CD190F83ECFCE12),
-    (0xC761B95EA18E3A2E, 0xC761B95EA18E3A2E), (0x496E8BA653C73D58, 0x496E8BA653C73D58),
-    (0x9CD190F83ECFCE12, 0x9CD190F83ECFCE12), (0x3B252DE561060D89, 0x3B252DE561060D89),
-    (0x9CD190F83ECFCE12, 0x4E1B38E8C08D8336), (0x9CD190F83ECFCE12, 0x9CD190F83ECFCE12),
-    (0x28A2C35923F721A2, 0xCFAE65AD53FD7EC6), (0x5FFE6BC34F174B4F, 0x5FFE6BC34F174B4F),
-    (0x7A12C1EDCDF295B7, 0x7A12C1EDCDF295B7), (0x527CDE026EF8BCC2, 0x527CDE026EF8BCC2),
-    (0x91BB97CEE67E4C32, 0x91BB97CEE67E4C32), (0x735AEC9ACE55D7B2, 0x9255B3A3D94521D3),
-    (0x686A74465CA67CA4, 0x9426165A33BA254E), (0x078C0871776B0231, 0x078C0871776B0231),
+    (0xCBA96314C2D05806, 0xCBA96314C2D05806), (0xBF6049797E872BF9, 0xBF6049797E872BF9),
+    (0x8F9B5030C46BF52D, 0x8F9B5030C46BF52D), (0x5CD8AE4E964AAD41, 0x5CD8AE4E964AAD41),
+    (0xFDC8EE9C87CD97E1, 0xFDC8EE9C87CD97E1), (0x5B0486CB1686A80B, 0x5B0486CB1686A80B),
+    (0xE50B7D6914C4BB34, 0xE50B7D6914C4BB34), (0x28245F95B39CCE08, 0x3F17B2B06A129D14),
+    (0x98CA8DEF0B7EB161, 0x98CA8DEF0B7EB161), (0x780902C5B23BBCF6, 0x780902C5B23BBCF6),
+    (0x87AF15B7E11A9C40, 0x87AF15B7E11A9C40), (0xFBEA71ADCD150EA1, 0xFBEA71ADCD150EA1),
+    (0x6EA395ADCF74A408, 0x6EA395ADCF74A408), (0x3C6B4BE9E7A61B41, 0xBA68B807DBBDB7B8),
+    (0x864B525D19AAA887, 0x864B525D19AAA887), (0xDDC3B4C8CA60BC21, 0xDDC3B4C8CA60BC21),
+    (0xAB1E9DBC311F6A82, 0xAB1E9DBC311F6A82), (0xCECAC93FA77BAE84, 0xCECAC93FA77BAE84),
+    (0xBF6049797E872BF9, 0xBF6049797E872BF9), (0x79793BB00AAFEC88, 0x79793BB00AAFEC88),
+    (0xCE14268B1672E84E, 0xCE14268B1672E84E), (0xF6491ACC0C4179F2, 0x14BCE8D45990E3C4),
+    (0x5F5238A71DEA124F, 0x5F5238A71DEA124F), (0xC64AE7EE98F74DBF, 0x75E2E2EC7113F10E),
+    (0x37725E019A255DEE, 0x9C0184E080534CFE), (0x2304EEF79287F3AD, 0x2304EEF79287F3AD),
+    (0x103D4121F4EDB359, 0x103D4121F4EDB359), (0xEA412C6EF8E9893B, 0xEA412C6EF8E9893B),
+    (0xB39ABAFAF78CBF28, 0xFCEBDD1EA0B914F2), (0x07DA3A7F208A89CE, 0x07DA3A7F208A89CE),
+    (0xCF5EF191768960BD, 0xCF5EF191768960BD), (0xBF6049797E872BF9, 0xBF6049797E872BF9),
+    (0x7F0034B644879C52, 0x7F0034B644879C52), (0x1D96E1FE8C7FC1D9, 0x1D96E1FE8C7FC1D9),
+    (0x103D4121F4EDB359, 0x103D4121F4EDB359), (0xB2050D364E9E055B, 0xB2050D364E9E055B),
+    (0x5CBB3EFFF786CAC5, 0x5CBB3EFFF786CAC5), (0x8DA2763405FD0428, 0x8DA2763405FD0428),
+    (0x8F9B5030C46BF52D, 0x629A23F124D569AD), (0xE3E6A1E88CDEC9D6, 0xE3E6A1E88CDEC9D6),
+    (0x2187D7CFAB5F132C, 0x2187D7CFAB5F132C), (0x3C3CBDF439C9E19F, 0x3C3CBDF439C9E19F),
+    (0x591F2EDA2969FF73, 0x591F2EDA2969FF73), (0xF66DBC2DA3E1D2FD, 0xF66DBC2DA3E1D2FD),
+    (0x823677677E8AC379, 0x823677677E8AC379), (0x8105482367BE3705, 0x8105482367BE3705),
+    (0xBF6049797E872BF9, 0xBF6049797E872BF9), (0xF0154346056F4214, 0x0EE1F3846E54A423),
+    (0x4AF9F899B5F26537, 0x4AF9F899B5F26537), (0xADB43C93D5D64916, 0xADB43C93D5D64916),
+    (0xC1C2C32D04347F0F, 0x58C50F8839CA9FEF), (0x103D4121F4EDB359, 0x103D4121F4EDB359),
+    (0x823677677E8AC379, 0xC669C20526BF936E), (0xD7EFC1299056C37F, 0xD7EFC1299056C37F),
+    (0x29DC7B2B1DA17D4D, 0x4C4A877E9120043E), (0xBF6049797E872BF9, 0xBF6049797E872BF9),
+    (0x3A949B76C6AAB118, 0x3A949B76C6AAB118), (0xCBF4D523687EBA25, 0xDB33F356BDBEDB5D),
+    (0x323201DAD3ED2D8F, 0x323201DAD3ED2D8F), (0xBAFB25A11E54273B, 0xBAFB25A11E54273B),
+    (0xBF6049797E872BF9, 0xBF6049797E872BF9), (0xCBF4D523687EBA25, 0xCBF4D523687EBA25),
+    (0xE45A0190F9BC8BBA, 0xE45A0190F9BC8BBA), (0xCBF4D523687EBA25, 0x658BFA51725BDAAD),
+    (0xBF6049797E872BF9, 0xC818B2BA4C7F7AED), (0x074AD8DFF66C3E19, 0x074AD8DFF66C3E19),
+    (0x6AA947C697E2931B, 0xF55C6FE1DBA9B90E), (0x7FAEBF63AC281ECB, 0x7FAEBF63AC281ECB),
+    (0x9F8CEF4116E56BB9, 0x9F8CEF4116E56BB9), (0xE2F851852146F8F4, 0xE2F851852146F8F4),
+    (0xBE8CB7CDCA3CAC0E, 0xBE8CB7CDCA3CAC0E), (0x6FC71EAF3DCFF2E7, 0x6FC71EAF3DCFF2E7),
+    (0x29DC7B2B1DA17D4D, 0x29DC7B2B1DA17D4D), (0x849076301D1B447B, 0x849076301D1B447B),
+    (0x103D4121F4EDB359, 0x103D4121F4EDB359), (0xE87585D1FC73426E, 0xE87585D1FC73426E),
+    (0x7F8CACFB73339B37, 0x7F8CACFB73339B37), (0x8105482367BE3705, 0x8105482367BE3705),
+    (0x748E80AE25DD7184, 0x748E80AE25DD7184), (0xEFB095A4663DF615, 0xEFB095A4663DF615),
+    (0x8F9B5030C46BF52D, 0x8F9B5030C46BF52D), (0x4B3EE6AFC3CE5A03, 0x4B3EE6AFC3CE5A03),
+    (0x6DE2AFF694ACE946, 0x6DE2AFF694ACE946), (0x103D4121F4EDB359, 0x103D4121F4EDB359),
+    (0x4B0DEE2B85615320, 0x4B0DEE2B85615320), (0xB5B3FD72BCC1E18A, 0xB5B3FD72BCC1E18A),
+    (0xEAE5FAFDC2CBDCC6, 0xEAE5FAFDC2CBDCC6), (0x069CE379851C9F17, 0x069CE379851C9F17),
+    (0x03E1C2FBF51E800D, 0x03E1C2FBF51E800D), (0xF405570C2717B0A6, 0xF405570C2717B0A6),
+    (0x8F9B5030C46BF52D, 0x8F9B5030C46BF52D), (0xCBF4D523687EBA25, 0xCBF4D523687EBA25),
+    (0xCBF4D523687EBA25, 0xCBF4D523687EBA25), (0x823677677E8AC379, 0x823677677E8AC379),
+    (0x608AC577E1051C9B, 0x608AC577E1051C9B), (0x29DC7B2B1DA17D4D, 0xC3ECF56F61E4152D),
+    (0xBF6049797E872BF9, 0xBF6049797E872BF9), (0x8CC8717B172E4576, 0x8CC8717B172E4576),
+    (0xE2B36D90089B7FFE, 0xE2B36D90089B7FFE), (0xE3E0B4450D0F8BDE, 0xE3E0B4450D0F8BDE),
+    (0x8105482367BE3705, 0x8105482367BE3705), (0x8983A433CE68F8B6, 0x8983A433CE68F8B6),
+    (0x7E998A68606FE4F7, 0x7E998A68606FE4F7), (0x991CC6A2BF1444F8, 0x959F68DD591856CE),
+    (0x1CC79B35CF6682CD, 0x1CC79B35CF6682CD), (0xF6EB02F905C0C771, 0xF6EB02F905C0C771),
+    (0x20F703845C7CE6F4, 0x20F703845C7CE6F4), (0x1CC79B35CF6682CD, 0xCC71F5463CDFDD78),
+    (0xBD12E52B7E44B638, 0xF179C5D614B8D5A0), (0xB088F9D816CA9131, 0x0D1C1252C37E8649),
+    (0x22D3B8F2AB4D4028, 0x22D3B8F2AB4D4028), (0xADB955CA44606E33, 0xADB955CA44606E33),
+    (0xA427DA4663142D74, 0xF9F0A021D98E4861), (0x29DC7B2B1DA17D4D, 0xD056A3C70083E062),
+    (0x665630C9E61B5C1B, 0x665630C9E61B5C1B), (0x5CBF84CDBDCD52A2, 0x5CBF84CDBDCD52A2),
+    (0x5A3172CA3AF1CA2D, 0x5A3172CA3AF1CA2D), (0xBF6049797E872BF9, 0xBF6049797E872BF9),
+    (0x8A4EA3292C03EDEE, 0x8A4EA3292C03EDEE), (0xD4A3FBF9F6E2F195, 0xD4A3FBF9F6E2F195),
+    (0x103D4121F4EDB359, 0x103D4121F4EDB359), (0x004CBFBF4373ECE2, 0x004CBFBF4373ECE2),
+    (0x6BD45A09C95DC483, 0x6BD45A09C95DC483), (0xED76DD66888F836D, 0xED76DD66888F836D),
+    (0x64690003551DBA50, 0xDE868AFCF76B2D08), (0xCBF4D523687EBA25, 0xE40538D9459894A7),
+    (0x05CEC3172020ADBF, 0x10DB8B9484014E2F), (0x8F9B5030C46BF52D, 0x8F9B5030C46BF52D),
+    (0x047AE916B188D424, 0xC1AC83497F26793F), (0xCBF4D523687EBA25, 0xCBF4D523687EBA25),
+    (0xB99AC0BAEC5282AD, 0xB99AC0BAEC5282AD), (0x8F9B5030C46BF52D, 0x1E365DB6D185EF85),
+    (0xAE726F362256DB07, 0xAE726F362256DB07), (0xBF6049797E872BF9, 0xBF6049797E872BF9),
+    (0xBF6049797E872BF9, 0xC818B2BA4C7F7AED), (0x966E1930FDD18744, 0x966E1930FDD18744),
+    (0x541867C78164EDF0, 0x58B45AA1966A7C21), (0x103D4121F4EDB359, 0x103D4121F4EDB359),
+    (0x86B43078D597C1B6, 0x86B43078D597C1B6), (0x103D4121F4EDB359, 0x103D4121F4EDB359),
+    (0x6BD45A09C95DC483, 0xA295B335498969CB), (0x52C1177FB62CAC2A, 0x52C1177FB62CAC2A),
+    (0x7B3608FDA4D414F5, 0x7B3608FDA4D414F5), (0x67BA0CA185C22685, 0x67BA0CA185C22685),
+    (0x12229BE7C505EFE9, 0x12229BE7C505EFE9), (0x640CB8C0605EE036, 0x640CB8C0605EE036),
+    (0x78B78C0B12E78E5F, 0x78B78C0B12E78E5F), (0x8105482367BE3705, 0x90613EE8CA7116F9),
+    (0xFC24CF873FF49ABA, 0xFC24CF873FF49ABA), (0xBF6049797E872BF9, 0xBF6049797E872BF9),
+    (0x103D4121F4EDB359, 0x3297C6EC5566304D), (0x3FBBE536E52DCF90, 0x3FBBE536E52DCF90),
+    (0x103D4121F4EDB359, 0x103D4121F4EDB359), (0x4FBDDA6C8EE24BE1, 0x4FBDDA6C8EE24BE1),
+    (0x103D4121F4EDB359, 0x103D4121F4EDB359), (0x103D4121F4EDB359, 0x103D4121F4EDB359),
+    (0x1019D95B2B221CDD, 0xD678F6D056FFB6CB), (0xEAEC02883814CA2E, 0xEAEC02883814CA2E),
+    (0xED4B03DD1AC3E38E, 0x1DC31C525B7F2C0B), (0xB87EE24E99E3313C, 0x4BA87723FF2182D7),
+    (0x8F9B5030C46BF52D, 0x8F9B5030C46BF52D), (0x2832EA5E77061BAD, 0x2832EA5E77061BAD),
+    (0x8F9B5030C46BF52D, 0xEA3AD6CAD55094E6), (0x7184F208BF036565, 0x7184F208BF036565),
+    (0xF908C909B5A40CBD, 0xF908C909B5A40CBD), (0xAB1E9DBC311F6A82, 0xAB1E9DBC311F6A82),
+    (0xCF216CB58C192C94, 0xCF216CB58C192C94), (0x38F76A20D39521D1, 0x38F76A20D39521D1),
+    (0x997090B202FD2B29, 0x997090B202FD2B29), (0xBF6049797E872BF9, 0xBF6049797E872BF9),
+    (0xC1E45ED86C4FDCBF, 0xC1E45ED86C4FDCBF), (0xC824A15E2B88D6C2, 0xC824A15E2B88D6C2),
+    (0x1CC79B35CF6682CD, 0x1CC79B35CF6682CD), (0xBAC3E2E08B65AE78, 0xBAC3E2E08B65AE78),
+    (0x09A0FE25946D6B7F, 0x09A0FE25946D6B7F), (0x024B5956B2F685D9, 0x024B5956B2F685D9),
+    (0x6271B4211D36320E, 0x6271B4211D36320E), (0x5E96B5D24E8959F3, 0x5E96B5D24E8959F3),
+    (0x37C83B5126A50216, 0x37C83B5126A50216), (0x29DC7B2B1DA17D4D, 0x29DC7B2B1DA17D4D),
+    (0x3B88FEDBB17699A1, 0x3B88FEDBB17699A1), (0xC309648F12EEDF69, 0xC309648F12EEDF69),
+    (0x823677677E8AC379, 0x823677677E8AC379), (0x29DC7B2B1DA17D4D, 0x29DC7B2B1DA17D4D),
+    (0x215F6A89F999AE00, 0x215F6A89F999AE00), (0xD532812D542F2EFC, 0xD532812D542F2EFC),
+    (0x9A17BCD7AC9FCA70, 0x9A17BCD7AC9FCA70), (0xD8D7E674668BD9A5, 0xD8D7E674668BD9A5),
+    (0x823677677E8AC379, 0x823677677E8AC379), (0x08D9811C32EADBF7, 0x08D9811C32EADBF7),
+    (0x621ADB6E4750847F, 0xF50EEC806701363B), (0xE8ACB8F286041E8E, 0xE8ACB8F286041E8E),
+    (0xF33E6FAF30371625, 0xF33E6FAF30371625), (0x46D28F45910521A8, 0x46D28F45910521A8),
+    (0xE89817C9DA1B150D, 0xC00544973A515995), (0x02DAB43B3CD008CB, 0x02DAB43B3CD008CB),
+    (0xFAFEE1807016EF23, 0xFAFEE1807016EF23), (0x1B714F25DE8829B4, 0x1B714F25DE8829B4),
+    (0xFBC7D6FF97168D53, 0xFBC7D6FF97168D53), (0x4DBC6C33AF96D286, 0x4DBC6C33AF96D286),
+    (0xED57D762D0834507, 0xED57D762D0834507), (0xA50888183B0F9BC2, 0xA50888183B0F9BC2),
+    (0xEB5F851A9BC40706, 0xEB5F851A9BC40706), (0x103D4121F4EDB359, 0x103D4121F4EDB359),
+    (0x8F9B5030C46BF52D, 0x956FE4B782D842EE), (0xAA35EC523CCC26BB, 0xAA35EC523CCC26BB),
+    (0xBF6049797E872BF9, 0xBF6049797E872BF9), (0x115B3BC7F58AD718, 0x115B3BC7F58AD718),
+    (0xAD7A557F2F7293DE, 0xAD7A557F2F7293DE), (0x8F9B5030C46BF52D, 0x8F9B5030C46BF52D),
+    (0x103D4121F4EDB359, 0x3297C6EC5566304D), (0xB571D72063AEB22E, 0xB571D72063AEB22E),
+    (0x8F9B5030C46BF52D, 0x8F9B5030C46BF52D), (0x8F9B5030C46BF52D, 0x8F9B5030C46BF52D),
+    (0x86DDF78240A2EA26, 0x86DDF78240A2EA26), (0xE620CBF2AA171912, 0x2AE6884650F6A54A),
+    (0x823677677E8AC379, 0x823677677E8AC379), (0x957681C35A3FFFF1, 0x957681C35A3FFFF1),
+    (0x103D4121F4EDB359, 0x103D4121F4EDB359), (0x83A220CFE96D0941, 0x83A220CFE96D0941),
+    (0x506BA21172AA5E1A, 0x506BA21172AA5E1A), (0xFBEF8EF02E334985, 0xFBEF8EF02E334985),
+    (0x103D4121F4EDB359, 0x103D4121F4EDB359), (0x57C47AF031C0E959, 0x57C47AF031C0E959),
+    (0x8331F0887BB0931B, 0x8331F0887BB0931B), (0xBF6049797E872BF9, 0xBF6049797E872BF9),
+    (0x94C2DF7A6C387418, 0x94C2DF7A6C387418), (0x0D6CFD72AAE6F9A2, 0x0D6CFD72AAE6F9A2),
+    (0x147FDA430D852AA1, 0x147FDA430D852AA1), (0x823677677E8AC379, 0x2DB7C05ED969986D),
+    (0xB77914AFE4BC80E2, 0xB77914AFE4BC80E2), (0x3C633BA4EAD7E960, 0x3C633BA4EAD7E960),
+    (0x103D4121F4EDB359, 0x103D4121F4EDB359), (0xAB1E9DBC311F6A82, 0xAB1E9DBC311F6A82),
+    (0x7FDA340E795D9C8B, 0x7FDA340E795D9C8B), (0x81F18DFE17F5703C, 0x81F18DFE17F5703C),
+    (0xCCBC232048C66356, 0xCCBC232048C66356), (0xD85F9AA11B761F8B, 0xD85F9AA11B761F8B),
+    (0xBF6049797E872BF9, 0xBF6049797E872BF9), (0xEB9A9DB8C793494E, 0xEB9A9DB8C793494E),
+    (0x103D4121F4EDB359, 0x103D4121F4EDB359), (0x2BAC6B7F1DFD7599, 0x2BAC6B7F1DFD7599),
+    (0x0538D92456A9156C, 0x0538D92456A9156C), (0xBF6049797E872BF9, 0xBF6049797E872BF9),
+    (0x8DFAF18CA4E4A620, 0x8DFAF18CA4E4A620), (0x3C47BF8FD0C112CA, 0x3C47BF8FD0C112CA),
+    (0xF2BB3E1F752F4291, 0xE6D8C68D450F6BA5), (0xCBF4D523687EBA25, 0x6406622D4EF45266),
+    (0x49FE2049F4141125, 0x49FE2049F4141125), (0xCBF4D523687EBA25, 0x725235273D4BEA21),
+    (0x3FB4A6CA384F9618, 0x3FB4A6CA384F9618), (0x76BEC3B8D814D938, 0x76BEC3B8D814D938),
+    (0xCBF4D523687EBA25, 0xCEFA85B666965F99), (0x8E4F083605CA0965, 0x8E4F083605CA0965),
+    (0x103D4121F4EDB359, 0xCF3536E8A2F750A9), (0xAADE33BFE83B22BB, 0xAADE33BFE83B22BB),
+    (0x6FBB6036367F2520, 0x6FBB6036367F2520), (0xBF6049797E872BF9, 0xBF6049797E872BF9),
+    (0xBF6049797E872BF9, 0xBF6049797E872BF9), (0xB33B820009D8D8FD, 0xB33B820009D8D8FD),
+    (0x823677677E8AC379, 0x823677677E8AC379), (0x8F9B5030C46BF52D, 0x8F9B5030C46BF52D),
+    (0xF399307BD1DDAE2B, 0x5D2A44A326E12BC6), (0xEDCC29554B17C8E8, 0xEDCC29554B17C8E8),
+    (0xDA79F1CD620EA0A5, 0x80D751D136DBD0A1), (0x103D4121F4EDB359, 0x103D4121F4EDB359),
+    (0x8F9B5030C46BF52D, 0x8F9B5030C46BF52D), (0x8105482367BE3705, 0x8105482367BE3705),
+    (0x13AF45768150A135, 0x13AF45768150A135), (0x1CC79B35CF6682CD, 0x1CC79B35CF6682CD),
+    (0x80599409C85625C6, 0x80599409C85625C6), (0x85A786B5320816FB, 0x85A786B5320816FB),
+    (0x4A8A03C0360A1104, 0x4A8A03C0360A1104), (0xB85C63B0C430F99B, 0xB85C63B0C430F99B),
+    (0xBF6049797E872BF9, 0xBF6049797E872BF9), (0x8F9B5030C46BF52D, 0x8F9B5030C46BF52D),
+    (0x155A95F29D3C244E, 0x155A95F29D3C244E), (0xD37FBA9DB7DF9376, 0xD37FBA9DB7DF9376),
+    (0x29DC7B2B1DA17D4D, 0xC3629B48B3F82133), (0x35313A98DD3CD5C5, 0x35313A98DD3CD5C5),
+    (0x1951BF495675A893, 0x1951BF495675A893), (0x646DB24970EEDC19, 0x646DB24970EEDC19),
+    (0xF8BAC8DA63335D14, 0xF8BAC8DA63335D14), (0x725F24C9FFD2BB44, 0x725F24C9FFD2BB44),
+    (0xBF6049797E872BF9, 0xBF6049797E872BF9), (0xBF6049797E872BF9, 0xBF6049797E872BF9),
+    (0x5DD46A908B94C72E, 0x5DD46A908B94C72E), (0x6C487B9353187A45, 0x6C487B9353187A45),
+    (0xCE720BAAB30931DA, 0xCE720BAAB30931DA), (0x799D386AD54EB2AC, 0x799D386AD54EB2AC),
+    (0xB88CCE05867F4B7C, 0xB88CCE05867F4B7C), (0xA649DB4E8436CE59, 0xA649DB4E8436CE59),
+    (0xFBBD37CDEFE00246, 0xFBBD37CDEFE00246), (0x823677677E8AC379, 0x823677677E8AC379),
+    (0x103D4121F4EDB359, 0x103D4121F4EDB359), (0xBF6049797E872BF9, 0x8BE6E665BFB9DC0D),
+    (0x8105482367BE3705, 0x8105482367BE3705), (0x8105482367BE3705, 0x8105482367BE3705),
+    (0xB793099E19EFFA69, 0xB793099E19EFFA69), (0x103D4121F4EDB359, 0xF7A722D64F853B1F),
+    (0x8F9B5030C46BF52D, 0x8F9B5030C46BF52D), (0x8105482367BE3705, 0x8105482367BE3705),
+    (0x5CFEFFCA897B3799, 0x5CFEFFCA897B3799), (0xE36B737D9CB3F648, 0xE36B737D9CB3F648),
+    (0x51E8DAB7D5F3AFA3, 0x51E8DAB7D5F3AFA3), (0xBF6049797E872BF9, 0xBF6049797E872BF9),
+    (0x103D4121F4EDB359, 0xA17ACA682D23AC95), (0x23D45E9E45BE5627, 0x23D45E9E45BE5627),
+    (0x6AA947C697E2931B, 0x6AA947C697E2931B), (0x0D2299BC3253C123, 0x0D2299BC3253C123),
+    (0xBB9A5178EEFAD0B2, 0xBB9A5178EEFAD0B2), (0xE51414903A889E28, 0xE51414903A889E28),
+    (0x29B29B5A231D907C, 0x29B29B5A231D907C), (0x5C43F69D0CDD4821, 0x5C43F69D0CDD4821),
+    (0xFC73FF4BC5D8299C, 0xFC73FF4BC5D8299C), (0x7FFFEDC0DD24431D, 0x7FFFEDC0DD24431D),
+    (0xCBF4D523687EBA25, 0xCBF4D523687EBA25), (0xFF4B938DB3825B31, 0xFF4B938DB3825B31),
+    (0x874403522E22FA8E, 0x874403522E22FA8E), (0x101AE258297601C1, 0x101AE258297601C1),
+    (0x09233F556954321B, 0x09233F556954321B), (0xEEFDC3C0F8B3112E, 0xEEFDC3C0F8B3112E),
+    (0x6BD45A09C95DC483, 0x6BD45A09C95DC483), (0xF1175A996BB8C30F, 0xF1175A996BB8C30F),
+    (0xB166C41C44AA6DDF, 0xB166C41C44AA6DDF), (0xC02FCDEE1DE0CC43, 0xC02FCDEE1DE0CC43),
+    (0x031591FD0B75EA75, 0x031591FD0B75EA75), (0x8857673535B6F943, 0x8857673535B6F943),
+    (0x1AF5BA9596C2DF94, 0x1AF5BA9596C2DF94), (0x03825DD7CA8DFA06, 0x03825DD7CA8DFA06),
+    (0x29DC7B2B1DA17D4D, 0x3D88AE0766E9E38E), (0xB8926B4EED7E0AEE, 0xB8926B4EED7E0AEE),
+    (0xE644E7AD1C81519F, 0xE644E7AD1C81519F), (0xCEC292DDDF531A2D, 0xCEC292DDDF531A2D),
+    (0x64108F2898EF2B16, 0x64108F2898EF2B16), (0x475D9D260C17D376, 0x475D9D260C17D376),
+    (0x1CC79B35CF6682CD, 0x1CC79B35CF6682CD), (0x8F9B5030C46BF52D, 0x8F9B5030C46BF52D),
+    (0x4B80F6FBD260B974, 0x4B80F6FBD260B974), (0xBC48E8C951F5BC9B, 0xBC48E8C951F5BC9B),
+    (0x823677677E8AC379, 0x954AC44DE142C6D2), (0xD71D1A140BB67B88, 0x996085CF428BEAB6),
+    (0xBF6049797E872BF9, 0xECB62118A3798C9A), (0xDE3D1DCB493E4435, 0xDE3D1DCB493E4435),
+    (0x4EB3DACC27552735, 0x4EB3DACC27552735), (0x6ACC0D2C04930A46, 0x6ACC0D2C04930A46),
+    (0x0BD65130451FC20D, 0x0BD65130451FC20D), (0xE86F1B2A39C24DC2, 0xE86F1B2A39C24DC2),
+    (0x9170FA6F47509D33, 0x9170FA6F47509D33), (0x111F0774C8F184E2, 0x111F0774C8F184E2),
+    (0xDFE4393005997189, 0xDFE4393005997189), (0xB3A699A25043D80A, 0xB3A699A25043D80A),
+    (0xADF8208969E31833, 0xADF8208969E31833), (0x440007C2BF8204AD, 0x440007C2BF8204AD),
+    (0x487D77F209A3D9C0, 0x487D77F209A3D9C0), (0xC0867BDB0D2937FF, 0xC4DEE0AF7A132CEF),
+    (0x29DC7B2B1DA17D4D, 0x8686B02240B42E25), (0x6AA947C697E2931B, 0x6AA947C697E2931B),
+    (0x5CA0CF76F038B489, 0x5CA0CF76F038B489), (0xAD0C99BAA3FC9DBB, 0xAD0C99BAA3FC9DBB),
+    (0xED7D19C7B5FC3195, 0xE570C9E63D9DEFC1), (0x0045D2AB313E9973, 0x0045D2AB313E9973),
+    (0xECD5DEF2EB453731, 0xECD5DEF2EB453731), (0x882B0EEF65E0E053, 0x882B0EEF65E0E053),
+    (0x8836A3DA02F4B85B, 0x8836A3DA02F4B85B), (0x29DC7B2B1DA17D4D, 0xACA6957761589ED9),
+    (0x53B6C99393FF9F76, 0x53B6C99393FF9F76), (0x29DC7B2B1DA17D4D, 0x29DC7B2B1DA17D4D),
+    (0x492AFDF4A6C483CE, 0x492AFDF4A6C483CE), (0xCC96374543897D31, 0xCC96374543897D31),
+    (0x6AA947C697E2931B, 0xE0061D07EE96570F), (0x823677677E8AC379, 0x823677677E8AC379),
+    (0xE5728AC14663BED3, 0xE5728AC14663BED3), (0x8F9B5030C46BF52D, 0x8F9B5030C46BF52D),
+    (0x947901104C15DA8C, 0x947901104C15DA8C), (0x103D4121F4EDB359, 0x7ABCD21195327006),
+    (0x103D4121F4EDB359, 0x9E949CC133E52F6D), (0xBF6049797E872BF9, 0xBF6049797E872BF9),
+    (0x103D4121F4EDB359, 0x103D4121F4EDB359), (0xDA69727694BE0358, 0xDA69727694BE0358),
+    (0x58CE5F2880B4FCB3, 0x58CE5F2880B4FCB3), (0x3364E652ACBA0842, 0x3364E652ACBA0842),
+    (0xAC59C882043EE326, 0xAC59C882043EE326), (0x1CC79B35CF6682CD, 0x1CC79B35CF6682CD),
+    (0x8105482367BE3705, 0x8105482367BE3705), (0x103D4121F4EDB359, 0x103D4121F4EDB359),
+    (0x6D71F48A0C4F3213, 0x6D71F48A0C4F3213), (0x4DE89F3CA76E4D4F, 0x4DE89F3CA76E4D4F),
+    (0xD370CFC6955AFC5B, 0xD370CFC6955AFC5B), (0x103D4121F4EDB359, 0x103D4121F4EDB359),
+    (0x144064DC81100B40, 0x144064DC81100B40), (0x6AA947C697E2931B, 0x6AA947C697E2931B),
+    (0x3A2C5E8B77BCF61D, 0x3A2C5E8B77BCF61D), (0x6E11F3C89E2BD512, 0x6E11F3C89E2BD512),
+    (0x33E590C171D7A8D3, 0x33E590C171D7A8D3), (0xE8EA05168582AE13, 0xE8EA05168582AE13),
+    (0xC436FB9FDD567260, 0xC436FB9FDD567260), (0xCF70565BA082E7F3, 0xCF70565BA082E7F3),
+    (0xA217B6AF9F2783F0, 0xA217B6AF9F2783F0), (0x067E4BB6EB99C776, 0x067E4BB6EB99C776),
+    (0x103D4121F4EDB359, 0x103D4121F4EDB359), (0x349393944E8B44D5, 0xEB0885B300F992A1),
+    (0xB94134825A4EB257, 0xB94134825A4EB257), (0x29DC7B2B1DA17D4D, 0x29DC7B2B1DA17D4D),
+    (0x823677677E8AC379, 0x823677677E8AC379), (0x8F9B5030C46BF52D, 0x8F9B5030C46BF52D),
+    (0x47787CED1618A9A4, 0xDDE07B9B8CE88214), (0x499A4436E8A65157, 0x499A4436E8A65157),
+    (0xA01952C94C3F679C, 0xA01952C94C3F679C), (0x8F9B5030C46BF52D, 0x44B3D02408559A45),
+    (0xBF6049797E872BF9, 0x0087A71B5CFB2D7B), (0xD9103FE904EDC1CC, 0xD9103FE904EDC1CC),
+    (0xFA9711851C6BF4DF, 0xFA9711851C6BF4DF), (0x0A3F23148D48D11D, 0x0A3F23148D48D11D),
+    (0x74B56718C3C11FF6, 0x74B56718C3C11FF6), (0x823677677E8AC379, 0x823677677E8AC379),
+    (0xBF6049797E872BF9, 0xBF6049797E872BF9), (0x8105482367BE3705, 0xFFA58C300EC5A501),
+    (0xC9F9421444CE3A96, 0xC9F9421444CE3A96), (0x29DC7B2B1DA17D4D, 0x29DC7B2B1DA17D4D),
+    (0x6328D1376060EF4D, 0xF61FFA593724230F), (0x901B54C0A8D4B1DA, 0x901B54C0A8D4B1DA),
+    (0x103D4121F4EDB359, 0x103D4121F4EDB359), (0x1CC79B35CF6682CD, 0x1CC79B35CF6682CD),
+    (0x26CD5B963B1C44CB, 0xD0113599FC20B867), (0x8F9B5030C46BF52D, 0x8F9B5030C46BF52D),
+    (0x6BD45A09C95DC483, 0x6BD45A09C95DC483), (0x103D4121F4EDB359, 0x103D4121F4EDB359),
+    (0xDA79F1CD620EA0A5, 0x3AB6C2A9D33FC019), (0x0AECD24C64AC8ED0, 0x0AECD24C64AC8ED0),
+    (0x103D4121F4EDB359, 0x103D4121F4EDB359), (0x266224A4642CD394, 0x266224A4642CD394),
+    (0x82B429C15D95B797, 0x82B429C15D95B797), (0x486DE680E859CD63, 0x486DE680E859CD63),
+    (0x29DC7B2B1DA17D4D, 0x29DC7B2B1DA17D4D), (0x2889C05482ACBEA1, 0x2889C05482ACBEA1),
+    (0x103D4121F4EDB359, 0x103D4121F4EDB359), (0x3D6ECE4FE025A069, 0x3D6ECE4FE025A069),
+    (0x71BE1E2898F4065B, 0x71BE1E2898F4065B), (0x667CEFCF4DD8DDB4, 0x667CEFCF4DD8DDB4),
+    (0x1FE5ED23AB86DB9A, 0x1FE5ED23AB86DB9A), (0x96E54904F85B3C25, 0x96E54904F85B3C25),
+    (0x3B2FC1FE3F4FB96F, 0x3B2FC1FE3F4FB96F), (0xFA94D2DA4098D77E, 0xFA94D2DA4098D77E),
+    (0x1EDFDF86EA976721, 0x1EDFDF86EA976721), (0xC9D9F19D9C4A0C8F, 0xC9D9F19D9C4A0C8F),
+    (0xAFA5E6F9D87DBACE, 0xAFA5E6F9D87DBACE), (0x858277627A1F4311, 0x858277627A1F4311),
+    (0x8F9B5030C46BF52D, 0x1E365DB6D185EF85), (0xCBF4D523687EBA25, 0xCBF4D523687EBA25),
+    (0xBF6049797E872BF9, 0xD74621A3075C1335), (0x828F5FCA58E220F5, 0x828F5FCA58E220F5),
+    (0x103D4121F4EDB359, 0x103D4121F4EDB359), (0x8F01E9364DC0D2B4, 0xB9F757B307F99E08),
+    (0xD424EC2C62563536, 0xD424EC2C62563536), (0x29DC7B2B1DA17D4D, 0x29DC7B2B1DA17D4D),
+    (0x103D4121F4EDB359, 0x103D4121F4EDB359), (0x7300E40876E58494, 0xEB960B7A2F710F4C),
+    (0x23879C434B68BB41, 0x23879C434B68BB41), (0xB3945AA293120653, 0xB3945AA293120653),
+    (0xBF6049797E872BF9, 0xD74621A3075C1335), (0x3CF5431AEEA813D6, 0x3CF5431AEEA813D6),
+    (0x103D4121F4EDB359, 0x103D4121F4EDB359), (0x75A3BEA16BC69103, 0x75A3BEA16BC69103),
+    (0x29DC7B2B1DA17D4D, 0x6D15C8C4EE1D034B), (0x97093E88E464EF50, 0x97093E88E464EF50),
+    (0xBF6049797E872BF9, 0xBF6049797E872BF9), (0xE320821C62AD5F3E, 0xE320821C62AD5F3E),
+    (0xBF6049797E872BF9, 0xD74621A3075C1335), (0x0A242F8B66C70499, 0x0A242F8B66C70499),
+    (0x1CC79B35CF6682CD, 0x1CC79B35CF6682CD), (0xBF6049797E872BF9, 0xBF6049797E872BF9),
+    (0x29DC7B2B1DA17D4D, 0x8686B02240B42E25), (0x8105482367BE3705, 0x8105482367BE3705),
+    (0x103D4121F4EDB359, 0xF07D7EEE27BF5C44), (0xFE03DA23E622D1F1, 0xFE03DA23E622D1F1),
+    (0xEC4AC171A1BFC049, 0x5AAB19C021567B2D), (0x9FE0E0F19E47F68E, 0x9FE0E0F19E47F68E),
+    (0xBECF849D754D2532, 0xBECF849D754D2532), (0xD57B82E11B85B403, 0xD57B82E11B85B403),
+    (0xBF6049797E872BF9, 0xBF6049797E872BF9), (0xB7BAD93E62E49D4D, 0xB7BAD93E62E49D4D),
+    (0xEF6DD4F08FDCA38E, 0xEF6DD4F08FDCA38E), (0x1D96E1FE8C7FC1D9, 0x1D96E1FE8C7FC1D9),
+    (0xF014DD0F78A270F8, 0xF014DD0F78A270F8), (0xCBF4D523687EBA25, 0xCBF4D523687EBA25),
+    (0xED42F65BBE5DD2A0, 0xED42F65BBE5DD2A0), (0xBF6049797E872BF9, 0xBF6049797E872BF9),
+    (0x823677677E8AC379, 0x823677677E8AC379), (0xF809C8499F016D03, 0xF809C8499F016D03),
+    (0xFD85BA098CA9764C, 0xFD85BA098CA9764C), (0x108C16627A37256C, 0x108C16627A37256C),
+    (0xF05D6AB0500A0BBD, 0xF05D6AB0500A0BBD), (0x8F9B5030C46BF52D, 0x8F9B5030C46BF52D),
+    (0x8C298519B8802CEE, 0x8C298519B8802CEE), (0xBB5C325716391ECD, 0x4FE80ECCBAB2F0A4),
+    (0x85A786B5320816FB, 0x85A786B5320816FB), (0xBF6049797E872BF9, 0xBF6049797E872BF9),
+    (0x5364A3696DAA0680, 0x5364A3696DAA0680), (0x29DC7B2B1DA17D4D, 0x29DC7B2B1DA17D4D),
+    (0xBF6049797E872BF9, 0xBF6049797E872BF9), (0xA485F88823131832, 0xA485F88823131832),
+    (0xBF6049797E872BF9, 0xD32CE0E03C63C7EE), (0xBF6049797E872BF9, 0xBF6049797E872BF9),
+    (0x100DE850C8C630FA, 0xBC027404D5248B07), (0x76BEC3B8D814D938, 0x76BEC3B8D814D938),
+    (0x63037D30FE0CCEBD, 0x63037D30FE0CCEBD), (0x734BA4A11A1A4AF3, 0x734BA4A11A1A4AF3),
+    (0x103D4121F4EDB359, 0x103D4121F4EDB359), (0x1D96E1FE8C7FC1D9, 0x1D96E1FE8C7FC1D9),
+    (0xB92EADB2BCCE4256, 0x8D86C081BFEB3947), (0x6AA947C697E2931B, 0x6AA947C697E2931B),
 ];
