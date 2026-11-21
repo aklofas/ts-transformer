@@ -447,6 +447,39 @@ mod tests {
         assert_eq!(errors, 1);
     }
 
+    /// A connection the peer reset before the handshake's first write fails
+    /// the handshake as a TLS failure on every platform. macOS refuses a
+    /// socket option on a connection that has ended (`EINVAL`), and that
+    /// refusal is not what the caller should read.
+    #[test]
+    fn a_connection_reset_before_the_handshake_is_a_tls_failure() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let sock = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        let (peer, _) = listener.accept().unwrap();
+        socket2::SockRef::from(&peer)
+            .set_linger(Some(Duration::ZERO))
+            .unwrap();
+        drop(peer);
+        // The reset has arrived once a non-blocking peek stops answering
+        // "nothing yet".
+        sock.set_nonblocking(true).unwrap();
+        let t0 = Instant::now();
+        while matches!(sock.peek(&mut [0u8; 1]), Err(e) if e.kind() == io::ErrorKind::WouldBlock) {
+            assert!(t0.elapsed() < Duration::from_secs(10), "no reset seen");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        sock.set_nonblocking(false).unwrap();
+        let r = TlsStream::connect(
+            &url(port),
+            sock,
+            Some(rustls::RootCertStore::empty()),
+            Duration::from_millis(100),
+            Some(Instant::now() + Duration::from_secs(10)),
+        );
+        assert!(matches!(r, Err(RtspError::Tls(_))), "{r:?}");
+    }
+
     /// The handshake's result moves to the client's thread, so it must
     /// stay `Send`.
     #[test]
