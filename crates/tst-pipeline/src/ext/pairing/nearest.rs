@@ -921,6 +921,51 @@ mod tests {
     }
 
     #[test]
+    fn an_old_sample_in_flight_does_not_become_the_wrap_reference() {
+        // An old clock near the top of the 33-bit range, a new one near zero.
+        let old = (1 << 33) - 1000;
+
+        // The old frame completes after the new clock's first KLV. Taken as
+        // the newest PTS, it would make the next new-clock frame look like a
+        // wrap and throw that KLV out.
+        let mut p = buffered_pairer(/*tolerance*/ 100, /*max_lag*/ 9000);
+        p.feed(klv_event(old));
+        p.feed(video_event(old));
+        p.feed(af_discontinuity(KLV_PID));
+        assert!(p.feed(klv_event(0)).is_empty());
+        let out = p.feed(video_event(old + 500));
+        assert!(
+            matches!(&out[..], [PairerOutput::UnpairedVideo(v)] if v.pts.as_ticks() == old + 500),
+            "got {out:?}"
+        );
+        let out = p.feed(video_event(50));
+        assert!(
+            matches!(&out[..], [PairerOutput::Paired { video, klv }]
+                if video.pts.as_ticks() == 50 && klv.pts.as_ticks() == 0),
+            "got {out:?}"
+        );
+
+        // The old KLV completes after the new clock's first frame, which is
+        // buffered and waits for its own KLV.
+        let mut p = buffered_pairer(100, 9000);
+        p.feed(klv_event(old));
+        p.feed(video_event(old));
+        p.feed(af_discontinuity(VIDEO_PID));
+        assert!(p.feed(video_event(50)).is_empty());
+        let out = p.feed(klv_event(old + 500));
+        assert!(
+            matches!(&out[..], [PairerOutput::UnpairedKlv(k)] if k.pts.as_ticks() == old + 500),
+            "got {out:?}"
+        );
+        let out = p.feed(klv_event(60));
+        assert!(
+            matches!(&out[..], [PairerOutput::Paired { video, klv }]
+                if video.pts.as_ticks() == 50 && klv.pts.as_ticks() == 60),
+            "got {out:?}"
+        );
+    }
+
+    #[test]
     fn a_continuity_jump_keeps_the_history() {
         let mut s = nearest_realtime();
         s.feed(klv_event(50));
