@@ -13,15 +13,16 @@
 
 mod background;
 mod gap_buffer;
-// Not called by the send paths yet.
-#[cfg_attr(not(test), allow(dead_code))]
 mod silent_peer;
 pub(crate) mod state;
 
 pub use gap_buffer::{GapBuffer, OverflowPolicy};
 
 use silent_peer::SilentPeer;
-use state::{Install, Latch, ManagedShared, Shutdown, broken_errno, install_fresh_inner};
+use state::{
+    Install, Latch, ManagedShared, Shutdown, broken_errno, install_fresh_inner, retire_silent,
+    sample_after_send,
+};
 
 use std::time::Duration;
 
@@ -401,6 +402,14 @@ impl ManagedStatsHandle {
 /// closed with [`Transport::abandon`] once `inner` is released, and
 /// replaced as if its send had failed with `Broken`. Unarmed, the send
 /// path reads nothing.
+///
+/// The message whose send found the silence was accepted by the abandoned
+/// connection; it is queued for the new connection under the gap buffer's
+/// rules (handed back in `Blocking` mode if the reconnect gives up). A trip
+/// turns a send the connection accepted into a failure: under a latched
+/// cancel the cancel is reported and the caller keeps the message, since
+/// nothing will send it again. A gap of half the window or more between two
+/// sends restarts the count, so a sender that slow never trips.
 ///
 /// # Locking
 ///
@@ -878,6 +887,9 @@ impl<T: Transport + 'static> ManagedTransport<T> {
         // reentrant. Holding it deadlocks only a successful-reconnect path,
         // which a test with an always-failing factory never takes.
         let mut inner_cancelled = false;
+        // A connection the silent-peer rule gave up on, carried out of the
+        // lock scope to be abandoned there.
+        let mut retired = None;
         {
             let mut transport_guard = self.inner.lock().map_err(|_| TransportError::Broken {
                 msg: "reconnect: inner lock poisoned during in-line send peek".into(),
@@ -886,7 +898,20 @@ impl<T: Transport + 'static> ManagedTransport<T> {
             })?;
             if let Some(transport) = transport_guard.as_mut() {
                 match transport.send_bytes(bytes) {
-                    Ok(()) => return Ok(()),
+                    Ok(()) => {
+                        let Some(trip) = self
+                            .silent
+                            .as_deref()
+                            .and_then(|s| sample_after_send(s, &*transport))
+                        else {
+                            return Ok(());
+                        };
+                        // The peer stopped answering: this send counts as one
+                        // that broke the connection. Un-publish its wake
+                        // handle with it, as the drain does for a broken one.
+                        retired = transport_guard.take().map(|t| (t, trip));
+                        self.active.clear();
+                    }
                     Err(TransportError::Backpressure { errno_code, .. }) => {
                         // Backpressure is recoverable without reconnect — propagate.
                         // Caller may retry the same bytes. Forward the inner
@@ -916,6 +941,9 @@ impl<T: Transport + 'static> ManagedTransport<T> {
                 }
             }
         } // transport_guard dropped here — inner lock released before reconnect_and_drain
+        if let Some((old, trip)) = retired {
+            retire_silent(old, trip);
+        }
         if inner_cancelled {
             // Nothing is queued: the caller is told the send failed and
             // keeps its message, in either mode.
@@ -1278,7 +1306,18 @@ impl<T: Transport + 'static> ManagedTransport<T> {
                 cause: BrokenCause::Unspecified,
             })?;
             match transport_guard.as_mut() {
-                Some(transport) => transport.send_bytes(bytes),
+                Some(transport) => {
+                    let sent = transport.send_bytes(bytes);
+                    if sent.is_ok()
+                        && let Some(silent) = self.silent.as_deref()
+                    {
+                        // The first sample on an inner just installed (its
+                        // rule was reset there), so it cannot trip.
+                        let trip = sample_after_send(silent, &*transport);
+                        debug_assert!(trip.is_none(), "a fresh inner tripped at its first send");
+                    }
+                    sent
+                }
                 None => Err(TransportError::Closed),
             }
         }; // `inner` released: a wake handle is never fired under it
@@ -2377,6 +2416,8 @@ mod validate_tests {
 mod silent_peer_tests {
     use super::silent_peer::Verdict;
     use super::*;
+    use std::sync::atomic::{AtomicU32, Ordering};
+    use std::sync::mpsc;
     use std::time::Instant;
 
     /// An inner that accepts every send and keeps every provided default.
@@ -2459,5 +2500,153 @@ mod silent_peer_tests {
         );
         assert!(s.sent(at(230)), "a fresh inner has not answered yet");
         assert_eq!(s.reading(at(230), Some(3)), Verdict::Answered);
+    }
+
+    /// Leaves the rule one sample short of a trip on reading `v`: a first
+    /// reading of `v` two windows ago, then a send every quarter window up
+    /// to a millisecond ago. The next sample on reading `v` trips, unless
+    /// half a window passes first.
+    fn prime_to_trip(silent: &Mutex<SilentPeer>, v: u64) {
+        let mut s = silent.lock().unwrap();
+        let w = s.window();
+        let now = Instant::now();
+        let start = now
+            .checked_sub(w * 2)
+            .expect("the clock is two windows past its origin");
+        s.sent(start);
+        s.reading(start, Some(v));
+        let last = now - Duration::from_millis(1);
+        let mut t = start + w / 4;
+        while t < last {
+            s.sent(t);
+            t += w / 4;
+        }
+        s.sent(last);
+    }
+
+    /// Long enough that the test's own scheduling never restarts a primed
+    /// run (a gap of half of it would).
+    const PRIMED_WINDOW: Duration = Duration::from_secs(2);
+
+    type Fire = Arc<Mutex<Option<Arc<dyn TransportCancel + Send + Sync>>>>;
+
+    /// An inner whose peer never answers. Its `abandon` is counted, and can
+    /// announce itself and wait on a gate; a handle put in `fire` is fired
+    /// by its next send, which still succeeds.
+    #[derive(Default)]
+    struct Gated {
+        abandons: Arc<AtomicU32>,
+        closes: Arc<AtomicU32>,
+        entered: Option<mpsc::Sender<()>>,
+        gate: Option<Arc<(Mutex<bool>, std::sync::Condvar)>>,
+        fire: Fire,
+    }
+    impl Transport for Gated {
+        fn send_bytes(&mut self, _: &[u8]) -> Result<(), TransportError> {
+            if let Some(h) = self.fire.lock().unwrap().take() {
+                h.cancel();
+            }
+            Ok(())
+        }
+        fn max_payload(&self) -> usize {
+            1316
+        }
+        fn is_alive(&self) -> bool {
+            true
+        }
+        fn close(&mut self) {
+            self.closes.fetch_add(1, Ordering::SeqCst);
+        }
+        fn abandon(&mut self) {
+            self.abandons.fetch_add(1, Ordering::SeqCst);
+            if let Some(tx) = &self.entered {
+                let _ = tx.send(());
+            }
+            if let Some(gate) = &self.gate {
+                let (open, cv) = &**gate;
+                let mut open = open.lock().unwrap();
+                while !*open {
+                    open = cv.wait(open).unwrap();
+                }
+            }
+        }
+        fn peer_activity(&self) -> Option<u64> {
+            Some(1)
+        }
+    }
+
+    fn gated_sender(
+        inner: Gated,
+        mode: ReconnectMode,
+    ) -> (ManagedTransport<Gated>, Arc<AtomicU32>) {
+        let calls = Arc::new(AtomicU32::new(0));
+        let c = Arc::clone(&calls);
+        let m = ManagedTransport::new(
+            inner,
+            move || {
+                c.fetch_add(1, Ordering::SeqCst);
+                Ok(Gated::default())
+            },
+            ReconnectPolicy::default()
+                .with_mode(mode)
+                .with_backoff(BackoffStrategy::Constant(Duration::ZERO)),
+        )
+        .expect("the policy validates")
+        .with_silent_peer_timeout(PRIMED_WINDOW);
+        (m, calls)
+    }
+
+    #[test]
+    fn a_retired_connection_is_abandoned_with_the_inner_lock_free() {
+        let (tx, rx) = mpsc::channel();
+        let gate = Arc::new((Mutex::new(false), std::sync::Condvar::new()));
+        let abandons = Arc::new(AtomicU32::new(0));
+        let inner = Gated {
+            abandons: Arc::clone(&abandons),
+            entered: Some(tx),
+            gate: Some(Arc::clone(&gate)),
+            ..Gated::default()
+        };
+        let (m, calls) = gated_sender(inner, ReconnectMode::Blocking);
+        let m = Arc::new(m);
+        prime_to_trip(m.silent.as_deref().expect("armed"), 1);
+        let sender = {
+            let m = Arc::clone(&m);
+            std::thread::spawn(move || m.send_managed(b"trips"))
+        };
+        rx.recv_timeout(tst_test_helpers::timing::scaled(Duration::from_secs(5)))
+            .expect("the tripped connection is abandoned");
+        let free = m.inner.try_lock().is_ok();
+        *gate.0.lock().unwrap() = true;
+        gate.1.notify_all();
+        let sent = sender.join().expect("the sender does not panic");
+        assert!(free, "abandon ran with `inner` held");
+        assert!(sent.is_ok(), "{sent:?}");
+        assert_eq!(abandons.load(Ordering::SeqCst), 1);
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn a_trip_with_the_cancel_latched_reports_the_cancel_and_dials_nothing() {
+        for mode in [ReconnectMode::Blocking, ReconnectMode::Background] {
+            let fire = Fire::default();
+            let abandons = Arc::new(AtomicU32::new(0));
+            let inner = Gated {
+                abandons: Arc::clone(&abandons),
+                fire: Arc::clone(&fire),
+                ..Gated::default()
+            };
+            let (m, calls) = gated_sender(inner, mode);
+            *fire.lock().unwrap() = m.cancel_handle();
+            prime_to_trip(m.silent.as_deref().expect("armed"), 1);
+            let sent = m.send_managed(b"trips under a cancel");
+            assert!(
+                matches!(sent, Err(TransportError::ExplicitClose)),
+                "{mode:?}: {sent:?}"
+            );
+            assert_eq!(abandons.load(Ordering::SeqCst), 1, "{mode:?}: retired");
+            assert_eq!(calls.load(Ordering::SeqCst), 0, "{mode:?}: dialled");
+            assert_eq!(m.stats_handle().stats().unwrap().gap_len, 0, "{mode:?}");
+        }
     }
 }

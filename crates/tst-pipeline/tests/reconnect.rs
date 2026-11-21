@@ -24,5 +24,7 @@ mod reconnect_blocking_stats_observer;
 mod reconnect_cancel_parked_send;
 #[path = "reconnect/reconnect_reject_overflow.rs"]
 mod reconnect_reject_overflow;
+#[path = "reconnect/reconnect_silent_peer.rs"]
+mod reconnect_silent_peer;
 #[path = "reconnect/reconnect_tracing.rs"]
 mod reconnect_tracing;
