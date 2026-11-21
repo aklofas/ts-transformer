@@ -66,8 +66,11 @@ fn count(counter: &AtomicU64, n: u64) {
 /// [`MuxPublisher::abort`] or a drop. Obtain it with
 /// [`MuxPublisher::stats_handle`].
 ///
-/// Each counter is read on its own, so a read made during a push can show
-/// that push in one counter and not yet in another.
+/// What a record guarantees: no counter ever decreases from one read to
+/// the next. A record read while a push or cut is running on another thread
+/// may show one counter ahead of another, because each counter is read on
+/// its own. A record read after the pushing call has returned holds all of
+/// that call and is exact, and so are the values read after the shell's end.
 #[derive(Clone, Debug)]
 pub struct MuxPublisherStatsHandle(Arc<Counters>);
 
