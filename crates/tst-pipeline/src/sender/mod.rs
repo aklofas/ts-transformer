@@ -402,12 +402,14 @@ impl<T: Transport> Sender<T> {
     /// a third boundary could refute them, those 188 or 376 bytes are sent
     /// although they are not packets. When they were the head of a real
     /// stream that lies off that 188-byte grid (a stream joined mid-packet
-    /// whose first byte happens to read `0x47`), the real packet they cover
-    /// is lost with them; without the flush the sender finds the real grid
-    /// and delivers that packet. After such a flush the sender is in sync
-    /// on the first byte's grid, so a later `send_ts` or `flush` can send
-    /// one more 188 bytes that are not a packet, when their first byte
-    /// reads `0x47`, before a boundary fails and the sender resyncs. This
+    /// whose first byte happens to read `0x47`), every real packet that
+    /// starts inside them is lost with them (one for 188 bytes, two for
+    /// 376); without the flush the sender finds the real grid and delivers
+    /// them. After such a flush the sender is in sync on the first byte's
+    /// grid, so a later `send_ts` or `flush` can send one more 188 bytes
+    /// that are not a packet, when their first byte reads `0x47`, before a
+    /// boundary fails and the sender resyncs; each costs the real packet
+    /// that starts inside it. This
     /// never happens without a `flush` (or the end of the stream) inside
     /// the first 376 bytes, and a flush with fewer than 188 bytes held
     /// sends nothing; for random bytes it takes about one start in 256.

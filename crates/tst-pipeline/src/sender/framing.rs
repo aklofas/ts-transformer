@@ -19,8 +19,10 @@
 //! anything. The price is paid by a start that only looks aligned (0x47 at
 //! offset 0, and at 188 when that byte is held) and is flushed inside its
 //! first 376 bytes: those 188 or 376 bytes are sent although they are not
-//! packets, a real packet they cut into is lost, and the framer is then
-//! SYNCED on that grid until a boundary fails ([`TsFraming::flush`]).
+//! packets, every real packet that starts inside them is lost (one for 188
+//! bytes, two for 376), and the framer is then SYNCED on that grid until a
+//! boundary fails, which a later push or flush can pay for again
+//! ([`TsFraming::flush`]).
 //!
 //! Loss detection (SYNCED): every 188-byte boundary in the staging
 //! buffer must read 0x47. When boundary `i` of a candidate bundle fails,
@@ -381,12 +383,13 @@ impl TsFraming {
     /// 188 when more than 188 bytes are held), flushed before a third
     /// boundary could refute it. Then the 188 or 376 bytes go out although
     /// they are not packets; if they were the head of a real stream off
-    /// that grid, the real packet they cover is lost with them (without
-    /// the flush the scan finds the real grid and that packet is
-    /// delivered); and because the framer is SYNCED afterwards, a later
-    /// push or flush emits one more 188 bytes that are not a packet when
-    /// their first byte reads 0x47, before a boundary fails and the scan
-    /// resyncs. It takes a flush, or [`Self::finish`], with 188 to 376
+    /// that grid, every real packet that starts inside them is lost with
+    /// them (one for 188 bytes, two for 376; without the flush the scan
+    /// finds the real grid and they are delivered); and because the framer
+    /// is SYNCED afterwards, a later push or flush emits one more 188 bytes
+    /// that are not a packet when their first byte reads 0x47, before a
+    /// boundary fails and the scan resyncs; each such 188 bytes costs the
+    /// real packet that starts inside it. It takes a flush, or [`Self::finish`], with 188 to 376
     /// bytes of such a start held: fewer than 188 bytes emit nothing, and
     /// pushes alone never do this. About one random start in 256 passes.
     pub fn flush(&mut self) -> Vec<Vec<u8>> {
@@ -1158,6 +1161,63 @@ mod tests {
         assert_eq!(flushed.finish(), vec![real[188..].to_vec()]);
         assert_eq!(flushed.buffered_bytes(), 0);
         assert_eq!(counters(&flushed), (991, 51, 1));
+    }
+
+    /// Eight real packets lying 51 bytes off the grid of a first byte that
+    /// reads 0x47, with a second 0x47 at offset 188, so that the first 376
+    /// bytes look aligned.
+    fn looks_aligned_over_a_real_stream() -> (Vec<u8>, Vec<u8>) {
+        let real = clean_packets(0, 8);
+        let mut stream = vec![0x11; 51];
+        stream[0] = 0x47;
+        stream.extend_from_slice(&real);
+        stream[188] = 0x47;
+        (stream, real)
+    }
+
+    #[test]
+    fn a_flush_of_two_packets_worth_that_only_looks_aligned_costs_both_real_packets() {
+        let (stream, real) = looks_aligned_over_a_real_stream();
+
+        // The real packets start at 51 and 239: both inside the 376 bytes
+        // that the flush sends as two packets.
+        let mut f = pushed(&stream[..376]);
+        assert_eq!(f.flush(), vec![stream[..376].to_vec()]);
+        let mut sent = stream[..376].to_vec();
+        let (bundles, _) = f.push(&stream[376..]).unwrap();
+        sent.extend(bundles.concat());
+        sent.extend(f.flush().concat());
+        sent.extend(f.finish().concat());
+
+        // The sender is on the wrong grid, the boundary at 376 fails, and
+        // the real packets from the third on arrive.
+        assert_eq!(sent, [&stream[..376], &real[376..]].concat());
+        assert_eq!(f.buffered_bytes(), 0);
+        assert_eq!(counters(&f), (1555, 51, 1));
+    }
+
+    #[test]
+    fn after_an_early_flush_on_a_wrong_grid_a_later_push_can_cost_one_more_real_packet() {
+        let (stream, real) = looks_aligned_over_a_real_stream();
+
+        // A flush of 188 bytes sends one packet, the first real packet is
+        // lost with it.
+        let mut f = pushed(&stream[..188]);
+        assert_eq!(f.flush(), vec![stream[..188].to_vec()]);
+
+        // The sender is SYNCED on that grid and the next boundary reads
+        // 0x47: the push sends another 188 bytes that are not a packet, and
+        // the second real packet, which starts inside them, is lost too.
+        let (bundles, _) = f.push(&stream[188..]).unwrap();
+        assert_eq!(bundles, vec![stream[188..376].to_vec()]);
+
+        // The boundary at 376 fails: the rest resyncs on the real grid.
+        let mut sent = stream[..376].to_vec();
+        sent.extend(f.flush().concat());
+        sent.extend(f.finish().concat());
+        assert_eq!(sent, [&stream[..376], &real[376..]].concat());
+        assert_eq!(f.buffered_bytes(), 0);
+        assert_eq!(counters(&f), (1555, 51, 1));
     }
 
     #[test]
