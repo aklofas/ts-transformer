@@ -390,12 +390,29 @@ impl<T: Transport> Sender<T> {
     /// far) is flushed on the same evidence before three packets have
     /// confirmed it: the whole packets held are sent when every boundary
     /// present reads `0x47`, the first byte of a partial packet included.
+    /// Once a byte was skipped or a boundary failed, `flush` sends nothing
+    /// more until three consecutive sync bytes have confirmed the alignment
+    /// again; what it then holds back is sent or reported by
+    /// [`Self::finish`].
+    ///
     /// A flush is therefore the caller's word that what was sent so far is
-    /// a stream: bytes that merely begin with `0x47` and are flushed inside
-    /// their first 376 bytes go out as one or two packets. Once a byte was
-    /// skipped or a boundary failed, `flush` sends nothing more until three
-    /// consecutive sync bytes have confirmed the alignment again; what it
-    /// then holds back is sent or reported by [`Self::finish`].
+    /// a stream, and it has a cost when that word is wrong. If the first
+    /// 188 to 376 bytes only look aligned (`0x47` at offset 0, and at
+    /// offset 188 when more than 188 bytes are held) and are flushed before
+    /// a third boundary could refute them, those 188 or 376 bytes are sent
+    /// although they are not packets. When they were the head of a real
+    /// stream that lies off that 188-byte grid (a stream joined mid-packet
+    /// whose first byte happens to read `0x47`), the real packet they cover
+    /// is lost with them; without the flush the sender finds the real grid
+    /// and delivers that packet. After such a flush the sender is in sync
+    /// on the first byte's grid, so a later `send_ts` or `flush` can send
+    /// one more 188 bytes that are not a packet, when their first byte
+    /// reads `0x47`, before a boundary fails and the sender resyncs. This
+    /// never happens without a `flush` (or the end of the stream) inside
+    /// the first 376 bytes, and a flush with fewer than 188 bytes held
+    /// sends nothing; for random bytes it takes about one start in 256.
+    /// [`TsFramingMode::Strict`] sends the same bytes and then refuses
+    /// what follows with an error instead of resyncing.
     ///
     /// Bundles are sent in whole-packet slices that fit `max_payload()`; a
     /// ceiling below one TS packet returns `TooLarge` and keeps the bundle
@@ -1373,19 +1390,29 @@ mod tests {
             "finish reports, it does not log"
         );
 
-        // close() and drop say it in the log instead, with the count only.
-        let (mut s, _state) = sender_with(&input, TsFramingMode::Recover);
-        s.close();
-        logs_assert(|lines: &[&str]| {
-            let count = format!("bytes={tail}");
-            match lines
+        // close() and drop say it in the log instead, with the count only:
+        // one WARN line each.
+        let count = format!("bytes={tail}");
+        let warnings = |lines: &[&str]| {
+            lines
                 .iter()
                 .filter(|l| l.contains("WARN") && l.contains(&count))
                 .count()
-            {
-                1 => Ok(()),
-                n => Err(format!("{n} warnings with {count}")),
-            }
+        };
+        let (mut s, _state) = sender_with(&input, TsFramingMode::Recover);
+        s.close();
+        logs_assert(|lines: &[&str]| match warnings(lines) {
+            1 => Ok(()),
+            n => Err(format!("{n} warnings with {count} after a close")),
+        });
+        drop(s);
+        let (s, _state) = sender_with(&input, TsFramingMode::Recover);
+        drop(s);
+        logs_assert(|lines: &[&str]| match warnings(lines) {
+            2 => Ok(()),
+            n => Err(format!(
+                "{n} warnings with {count} after a close and a drop"
+            )),
         });
         assert!(!logs_contain("SECRET"));
     }

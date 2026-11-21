@@ -16,7 +16,11 @@
 //! when every boundary present reads 0x47 (the check STRICT mode makes on
 //! every push), so a stream of one or two packets is delivered. After the
 //! first skipped byte or failed boundary only the three-packet rule sends
-//! anything.
+//! anything. The price is paid by a start that only looks aligned (0x47 at
+//! offset 0, and at 188 when that byte is held) and is flushed inside its
+//! first 376 bytes: those 188 or 376 bytes are sent although they are not
+//! packets, a real packet they cut into is lost, and the framer is then
+//! SYNCED on that grid until a boundary fails ([`TsFraming::flush`]).
 //!
 //! Loss detection (SYNCED): every 188-byte boundary in the staging
 //! buffer must read 0x47. When boundary `i` of a candidate bundle fails,
@@ -371,13 +375,28 @@ impl TsFraming {
     /// partial packet at the end included. Once a byte was skipped or a
     /// boundary failed, flush emits nothing until three consecutive sync
     /// bytes have confirmed the alignment again.
+    ///
+    /// That early rule declares sync on the first byte's grid, and it is
+    /// wrong for a start that only looks aligned: 0x47 at offset 0 (and at
+    /// 188 when more than 188 bytes are held), flushed before a third
+    /// boundary could refute it. Then the 188 or 376 bytes go out although
+    /// they are not packets; if they were the head of a real stream off
+    /// that grid, the real packet they cover is lost with them (without
+    /// the flush the scan finds the real grid and that packet is
+    /// delivered); and because the framer is SYNCED afterwards, a later
+    /// push or flush emits one more 188 bytes that are not a packet when
+    /// their first byte reads 0x47, before a boundary fails and the scan
+    /// resyncs. It takes a flush, or [`Self::finish`], with 188 to 376
+    /// bytes of such a start held: fewer than 188 bytes emit nothing, and
+    /// pushes alone never do this. About one random start in 256 passes.
     pub fn flush(&mut self) -> Vec<Vec<u8>> {
         if self.buffer.is_empty() {
             return Vec::new();
         }
         if self.state == State::Unsynced && !self.strict {
-            // Fewer than 377 bytes are held here (a push verifies or
-            // skips as soon as it has them), so the slice is short.
+            // The slice is short: fewer than 377 bytes before sync (a
+            // push verifies or skips as soon as it has them), less than
+            // one bundle after a flush that met a failed boundary.
             if !self.aligned_from_start
                 || aligned_packets_at_end(self.buffer.make_contiguous()) == 0
             {
@@ -977,6 +996,28 @@ mod tests {
     }
 
     #[test]
+    fn the_end_pass_goes_on_after_a_second_damaged_region() {
+        // A bundle, a garbage byte, three packets, a garbage byte, three
+        // packets: the second damage is met by the pass's own flush, and
+        // the pass must scan on past it.
+        let all = clean_packets(0, 13);
+        let mut input = all[..7 * 188].to_vec();
+        input.push(0x00);
+        input.extend_from_slice(&all[7 * 188..10 * 188]);
+        input.push(0x00);
+        input.extend_from_slice(&all[10 * 188..]);
+        let mut f = TsFraming::new(18_800);
+        assert_eq!(f.push(&input).unwrap().0, vec![all[..7 * 188].to_vec()]);
+        assert_eq!(
+            f.finish(),
+            vec![all[7 * 188..10 * 188].to_vec(), all[10 * 188..].to_vec()]
+        );
+        assert_eq!(f.buffered_bytes(), 0);
+        assert_eq!(counters(&f), (13 * 188 + 2, 2, 2));
+        assert_eq!(f.stats().packets_sent, 13);
+    }
+
+    #[test]
     fn the_end_pass_leaves_two_packets_behind_garbage() {
         let (mut f, _) = bundle_garbage_then(2);
         assert!(f.finish().is_empty());
@@ -1284,9 +1325,12 @@ mod tests {
                 );
             }
 
-            /// A flush declares the packets held so far a stream: on a
-            /// damaged stream it can add the first one or two packets,
-            /// which the uncut stream never verified, and nothing else.
+            /// A flush declares the packets held so far a stream. When
+            /// the damage is garbage without a sync byte, it can add the
+            /// first one or two packets, which the uncut stream never
+            /// verified, and nothing else. Garbage that holds a sync byte
+            /// can cost a packet too:
+            /// `a_flush_inside_a_start_that_only_looks_aligned_costs_the_packet_it_covers`.
             #[test]
             fn flushing_a_damaged_stream_can_only_add_its_first_packets(
                 pieces in pieces(any::<u8>().prop_map(|b| if b == 0x47 { 0x48 } else { b })),
