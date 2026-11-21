@@ -663,7 +663,7 @@ fn the_receivers_own_close_after_the_end_is_not_a_cancel() {
 /// Every result of a receiver over three access units and `end`, with a
 /// cancel fired right after the first result that came once the transport's
 /// end had been read: the caller is still taking the events the end made, and
-/// the cancel is not hers to hear until they are out. Three calls after the
+/// the cancel is not the caller's to hear until they are out. Three calls after the
 /// last event are kept; the events before are folded into one `event` each.
 fn cancel_while_the_end_is_handed_out(end: TransportError) -> Vec<String> {
     let packets = marked_stream(&[0xA1, 0xB2, 0xC3]);
@@ -791,8 +791,8 @@ fn cancel_quiet(rx: &mut DemuxReceiver<QuietClose>) {
     rx.cancel_handle().expect("the transport has one").cancel();
 }
 
-/// Once the owner has closed the receiver, whenever that was, the cancel
-/// handle is not asked again: a cancel fired after the end reads as the end.
+/// Once the owner has closed the receiver, whenever that was, a cancel fired
+/// later does not change its answer: after the end it reads as the end.
 #[test]
 fn a_cancel_fired_after_the_end_of_a_receiver_closed_before_it_is_not_reported() {
     let mut rx = quiet_close_receiver();

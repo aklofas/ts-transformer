@@ -398,9 +398,11 @@ impl<R: RecvTransport> DemuxReceiver<R> {
     /// `TransportBroken` error, which is reported once, `Ok(None)` for
     /// ever. A cancel that fires after the stream ended is reported once the
     /// events already produced have been handed out, and from then on (the
-    /// transport's cancel handle is asked, without a read). After this
-    /// receiver's own [`Self::close`], whenever it was called, the handle is
-    /// not asked again. `Backpressure` and `InputMalformed` are not ends.
+    /// transport's cancel handle is asked, without a read). After a failure
+    /// the failure is reported first, once, and a cancel fired meanwhile
+    /// from the next call on. After this receiver's own [`Self::close`],
+    /// whenever it was called, a cancel fired later does not change what
+    /// it answers. `Backpressure` and `InputMalformed` are not ends.
     ///
     /// # MalformedPes note
     ///
@@ -503,7 +505,7 @@ impl<R: RecvTransport> DemuxReceiver<R> {
                     // Whether a cancel was already latched is decided here,
                     // where the stream ends, not when the end is reported:
                     // a cancel fired while the caller takes the events the
-                    // end produced is still hers to hear after them.
+                    // end produced is still the caller's to hear after them.
                     if self.cancelled_at_the_end.is_none()
                         && matches!(
                             e.kind,
