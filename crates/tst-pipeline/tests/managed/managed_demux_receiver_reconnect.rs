@@ -428,6 +428,103 @@ fn no_media_event_precedes_the_reconnect_marker() {
     );
 }
 
+/// Which TEI packets reached the demuxer, by PID, and whether the marker
+/// came: everything else a test below sees.
+fn tei_pids_and_markers(events: &[DemuxEvent]) -> Vec<String> {
+    events
+        .iter()
+        .map(|e| match e {
+            DemuxEvent::NonConformant {
+                issue: tst_core::mpegts::demux::NonConformantIssue::TransportErrorPacket { pid },
+                ..
+            } => format!("tei {pid:#06x}"),
+            DemuxEvent::ReconnectDiscontinuity => "reconnect".to_string(),
+            other => format!("{other:?}"),
+        })
+        .collect()
+}
+
+/// A reconnect is not an end. Three packets of the old connection are held
+/// by the syncer when it dies; the reconnect succeeds, and they are dropped
+/// with the first packet read across it, never released.
+#[test]
+fn a_reconnect_drops_the_held_packets_and_releases_nothing() {
+    let old: Vec<[u8; 188]> = (0..3).map(|i| ts_packet_tei(0x0100, i)).collect();
+    let new: Vec<[u8; 188]> = (0..7).map(|i| ts_packet_tei(0x0200, i)).collect();
+    let inner =
+        ScriptedRecv::new([pack_chunk(&old)], broken("the link died")).with_max_payload(4096);
+    let mut second = Some(
+        ScriptedRecv::new(
+            [pack_chunk(&new[..2]), pack_chunk(&new[2..])],
+            broken("the link died"),
+        )
+        .with_max_payload(4096),
+    );
+    let factory = Box::new(move || second.take().ok_or_else(|| broken("nobody answers")));
+    let managed = ManagedRecvTransport::new(inner, factory, fast_policy(Some(2)))
+        .expect("the policy validates");
+    let mut rx = ManagedDemuxReceiver::new(managed, ManagedDemuxReceiverConfig::default());
+
+    let mut events = Vec::new();
+    while let Some(e) = rx.recv_event().expect("a give-up is a clean end") {
+        events.push(e);
+    }
+    // The first read of the new connection completes a lock over old and new
+    // bytes; the packet it yields is dropped with everything buffered. The
+    // second read's five packets are the new connection's alone.
+    let mut expected = vec!["reconnect".to_string()];
+    expected.extend(std::iter::repeat_n("tei 0x0200".to_string(), 5));
+    assert_eq!(tei_pids_and_markers(&events), expected);
+}
+
+/// A reconnect and the end of the stream with no delivered packet between
+/// them, in two shapes.
+///
+/// The new connection completes one packet and ends: that packet is the one
+/// read across the reconnect, so it is dropped, with the half unit the old
+/// connection left; the marker, then the end.
+///
+/// The new connection delivers nothing at all (the reconnect and the end
+/// come out of one read) while the syncer holds two packets of the old one
+/// behind damage: the end releases them, but they were held across a
+/// reconnect, so they are dropped like any packet read across one. Nothing
+/// of a new connection was read: no marker, and the unit the old connection
+/// had completed is still flushed, as it was before the end released
+/// anything.
+#[test]
+fn a_reconnect_then_an_end_in_one_read_delivers_nothing_spliced() {
+    let run = |old: Vec<u8>, new: Vec<Vec<u8>>| {
+        let inner = ScriptedRecv::new([old], broken("the link died")).with_max_payload(4096);
+        let mut second =
+            Some(ScriptedRecv::new(new, broken("the link died")).with_max_payload(4096));
+        let factory = Box::new(move || second.take().ok_or_else(|| broken("nobody answers")));
+        let managed = ManagedRecvTransport::new(inner, factory, fast_policy(Some(2)))
+            .expect("the policy validates");
+        let mut rx = ManagedDemuxReceiver::new(managed, ManagedDemuxReceiverConfig::default());
+        let mut events = Vec::new();
+        while let Some(e) = rx.recv_event().expect("a give-up is a clean end") {
+            events.push(seen(&e));
+        }
+        assert_eq!(rx.reconnects_count(), 1);
+        events
+    };
+    let unit_a = pack_chunk(&marked_stream(&[0xA1]));
+
+    let one_packet = pack_chunk(&[ts_packet_tei(0x0200, 0)]);
+    assert_eq!(
+        run(unit_a.clone(), vec![one_packet]),
+        [Seen::ProgramMap, Seen::Reconnect]
+    );
+
+    let mut old = unit_a;
+    old.extend_from_slice(&[0xAA; 10]);
+    old.extend_from_slice(&pack_chunk(&[
+        ts_packet_tei(0x0300, 0),
+        ts_packet_tei(0x0300, 1),
+    ]));
+    assert_eq!(run(old, vec![]), [Seen::ProgramMap, whole(0xA1)]);
+}
+
 // ---------------------------------------------------------------------------
 // Test 4 — Clean reconnect still drops the first post-reconnect packet
 // ---------------------------------------------------------------------------

@@ -8,7 +8,10 @@
 //!   We require 4 confirming sync bytes total (count 1..=4) before locking.
 //!   VERIFY is peek-only: no bytes are consumed from the buffer. That means
 //!   every byte fed during verification is still available for LOCKED to drain
-//!   as real packets.
+//!   as real packets. Fewer than four whole packets wait here for ever; a
+//!   stream that ends while they wait hands them out through the end entry
+//!   the receive shells call, which a caller driving a `Syncer` by hand does
+//!   not have (use [`Receiver`][crate::Receiver] for a stream that can end).
 //! - **LOCKED** — confirmed alignment. Emit 188-byte packets one at a time,
 //!   consuming from the front of the buffer. If the front byte ever stops
 //!   being 0x47, fall back to HUNT.
@@ -19,7 +22,7 @@
 
 use alloc::vec::Vec;
 use tst_core::mpegts::common::{SRT_TS_BUNDLE_BYTES, TS_PACKET_SIZE, TS_SYNC_BYTE};
-use tst_core::mpegts::sync::TsSync;
+use tst_core::mpegts::sync::{TsSync, aligned_packets_at_end};
 
 /// The lock rule: the candidate plus three more aligned sync bytes.
 const LOCK: TsSync = TsSync::strict(4);
@@ -120,17 +123,41 @@ impl Syncer {
     /// Intended for reconnect scenarios where the underlying transport has
     /// been re-established: bytes left over from a dead connection cannot
     /// straddle the reconnect boundary and must not contribute to the new
-    /// alignment search. Higher-level shells (a future `ManagedReceiver`)
-    /// call this after a transport rebuild before feeding fresh bytes.
+    /// alignment search. `ManagedDemuxReceiver` does this, through
+    /// [`Receiver::reset_sync`][crate::Receiver::reset_sync], when it sees
+    /// that its transport was rebuilt.
     ///
-    /// Does NOT reset stat counters — those are owned by
-    /// [`Receiver`][crate::Receiver] and reset via
+    /// Does NOT reset the two sync counters; a
+    /// [`Receiver`][crate::Receiver] zeroes them in
     /// [`Receiver::reset_stats`][crate::Receiver::reset_stats].
     pub fn reset(&mut self) {
         self.head = 0;
         self.len = 0;
         self.buf.clear();
         self.state = SyncState::Hunt;
+    }
+
+    /// The input has ended: no later byte will confirm or refute the
+    /// candidate. Call it when [`next_packet`][Self::next_packet] has
+    /// returned `None` and the source has reported its end.
+    ///
+    /// In VERIFY the whole packets waiting behind the candidate (three at
+    /// most) are accepted when every byte one packet apart that is present
+    /// carries the sync byte, the first byte of a trailing partial packet
+    /// included; `next_packet` then hands them out and what follows them
+    /// stays buffered. One byte that differs refuses them all, and no later
+    /// candidate is tried. That is weaker evidence than the four packets
+    /// the lock rule wants, accepted only because the stream is over. It
+    /// counts as one lock acquisition. In HUNT and LOCKED nothing changes.
+    pub(crate) fn end_of_input(&mut self) {
+        if self.state != SyncState::Verify {
+            return;
+        }
+        let live = &self.buf[self.head..self.head + self.len];
+        if aligned_packets_at_end(live) > 0 {
+            self.state = SyncState::Locked;
+            self.resync_events += 1;
+        }
     }
 
     /// Zero the sync-recovery counters. Called by `Receiver::reset_stats`.
@@ -444,5 +471,139 @@ mod tests {
             "all four packets must emit once VERIFY reaches count 4"
         );
         assert_eq!(s.state(), SyncState::Locked);
+    }
+
+    fn packets(n: u16) -> Vec<u8> {
+        (0..n).flat_map(ts_packet).collect()
+    }
+
+    fn drain(s: &mut Syncer) -> usize {
+        let mut got = 0;
+        while s.next_packet().is_some() {
+            got += 1;
+        }
+        got
+    }
+
+    /// One, two or three aligned packets wait in VERIFY for a fourth that
+    /// an ended input will never bring; the end entry releases them, with
+    /// or without the start of a further packet behind them, as one lock.
+    #[test]
+    fn end_of_input_releases_one_two_and_three_aligned_packets() {
+        for n in 1..=3u16 {
+            for partial in [0usize, 1, 100] {
+                let mut s = Syncer::new();
+                s.push(&packets(n));
+                s.push(&ts_packet(9)[..partial]);
+                assert_eq!(drain(&mut s), 0, "{n} packets wait");
+                assert_eq!(s.resync_events, 0);
+                s.end_of_input();
+                assert_eq!(drain(&mut s), usize::from(n), "{n} packets + {partial}");
+                assert_eq!(s.state(), SyncState::Locked);
+                assert_eq!(s.resync_events, 1);
+                assert_eq!(s.bytes_skipped_for_sync, 0);
+            }
+        }
+    }
+
+    /// The only stride an end can still refuse on is a trailing partial
+    /// packet's first byte: every whole packet in VERIFY starts with the
+    /// sync byte already. One that differs refuses all of them.
+    #[test]
+    fn end_of_input_refuses_a_failing_stride() {
+        for n in 1..=3u16 {
+            let mut s = Syncer::new();
+            s.push(&packets(n));
+            s.push(&[0xAB; 100]);
+            assert_eq!(drain(&mut s), 0);
+            s.end_of_input();
+            assert_eq!(drain(&mut s), 0, "{n} packets + a partial that is not TS");
+            assert_eq!(s.state(), SyncState::Verify);
+            assert_eq!(s.resync_events, 0);
+        }
+    }
+
+    #[test]
+    fn one_stray_trailing_byte_refuses_the_whole_tail() {
+        let mut s = Syncer::new();
+        s.push(&packets(3));
+        s.push(&[0x00]);
+        assert_eq!(drain(&mut s), 0);
+        s.end_of_input();
+        assert_eq!(drain(&mut s), 0);
+    }
+
+    #[test]
+    fn end_of_input_does_nothing_while_hunting_or_locked() {
+        // HUNT: nothing pushed, then bytes without a sync byte.
+        let mut s = Syncer::new();
+        s.end_of_input();
+        assert_eq!((drain(&mut s), s.state()), (0, SyncState::Hunt));
+        s.push(&[0xAA; 300]);
+        assert_eq!(drain(&mut s), 0);
+        s.end_of_input();
+        assert_eq!((drain(&mut s), s.state()), (0, SyncState::Hunt));
+        assert_eq!(s.resync_events, 0);
+
+        // LOCKED, with the start of a further packet buffered.
+        let mut s = Syncer::new();
+        s.push(&packets(5));
+        s.push(&ts_packet(9)[..100]);
+        assert_eq!(drain(&mut s), 5);
+        s.end_of_input();
+        assert_eq!((drain(&mut s), s.state()), (0, SyncState::Locked));
+        assert_eq!(s.resync_events, 1);
+    }
+
+    /// Whatever was pushed, a syncer that has handed out all it can holds
+    /// fewer than four whole packets, so an end adds three at most.
+    #[test]
+    fn the_end_rule_releases_at_most_three_packets() {
+        for n in 0..=12u16 {
+            for partial in [0usize, 187] {
+                let mut s = Syncer::new();
+                s.push(&packets(n));
+                s.push(&ts_packet(9)[..partial]);
+                let before = drain(&mut s);
+                s.end_of_input();
+                let released = drain(&mut s);
+                assert!(released <= 3, "{n} packets: {released} released");
+                assert_eq!(before + released, usize::from(n));
+            }
+        }
+    }
+
+    #[test]
+    fn an_end_after_four_or_more_buffered_packets_adds_nothing() {
+        for n in 4..=7u16 {
+            let mut s = Syncer::new();
+            s.push(&packets(n));
+            assert_eq!(drain(&mut s), usize::from(n));
+            s.end_of_input();
+            assert_eq!(drain(&mut s), 0);
+            assert_eq!(s.resync_events, 1, "the end is not a second lock");
+        }
+    }
+
+    /// After damage the syncer takes the first sync byte it meets as its
+    /// candidate. When that is a stray one inside the damage and only ONE
+    /// good packet follows, the end finds the candidate's next stride inside
+    /// the good packet and refuses: the packet is lost, as before. With two
+    /// good packets the stray candidate is refuted before the end and the
+    /// tail is released.
+    #[test]
+    fn a_stray_sync_byte_before_a_one_packet_tail_delivers_nothing() {
+        let mut damage = [0xAAu8; 100];
+        damage[50] = 0x47;
+        for (good, released) in [(1u16, 0usize), (2, 2), (3, 3)] {
+            let mut s = Syncer::new();
+            s.push(&packets(6));
+            assert_eq!(drain(&mut s), 6);
+            s.push(&damage);
+            s.push(&packets(good));
+            assert_eq!(drain(&mut s), 0);
+            s.end_of_input();
+            assert_eq!(drain(&mut s), released, "{good} good packets");
+        }
     }
 }

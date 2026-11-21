@@ -51,6 +51,11 @@ tst_core::binding_record! {
         pub bytes_skipped_for_sync: u64,
         /// Number of times the syncer transitioned from HUNT/VERIFY to LOCKED —
         /// counts both the initial lock-on and any re-locks after sync loss.
+        ///
+        /// <!-- rust-only -->
+        /// The release of the last one to three packets when the transport
+        /// ends (see [`Receiver`]'s "Sync lock and the end of a stream")
+        /// counts as one.
         pub resync_events: u64,
         /// Number of 188-byte TS packets returned to callers.
         pub packets_received: u64,
@@ -66,23 +71,43 @@ tst_core::binding_record! {
 /// message; `Receiver` then feeds those bytes through the TS syncer to
 /// extract correctly-aligned 188-byte packets.
 ///
-/// # Sync lock and the trailing window
+/// # Sync lock and the end of a stream
 ///
 /// The syncer locks after four aligned packets — the candidate `0x47`
 /// plus three more at 188-byte strides (752 bytes) — and emits nothing
 /// before that. The confirmation is peek-only, so on a healthy stream no
 /// packet is lost; the first packet of a session (or the first after a
-/// resync) is simply delayed by three packets' worth of bytes. The cost
-/// shows at the *end* of a stream: fewer than four packets never emit,
-/// and after any sync loss the last one to three packets before
-/// end-of-stream stay buffered awaiting confirmation and are dropped
-/// when the transport closes. Feed at least four packets per session and
-/// treat the final packets after a mid-stream corruption as best-effort;
+/// resync) is simply delayed by three packets' worth of bytes.
+///
+/// When the transport ends, nothing more can arrive to confirm the packets
+/// still waiting (a stream shorter than four packets, or the last one to
+/// three after a mid-stream resync). They are delivered, one per
+/// `next_packet` call, when every byte one packet apart that is present
+/// reads `0x47`: the first byte of each whole packet and of a trailing
+/// partial packet, whose own bytes are dropped. The end is reported after
+/// them. An end is the peer's end of stream, a broken transport, a close or
+/// a cancel (`EndOfStream`, `TransportBroken`, `Closed`); `Backpressure` is
+/// not one and releases nothing, and neither is a reconnect underneath a
+/// managed receiver, which drops what was held.
+///
+/// This is weaker evidence than the lock rule: one to three sync bytes
+/// instead of four, on a tail that nothing can refute any more. Before the
+/// first lock that is what `tst_core::mpegts::demux::Demuxer::feed`, used
+/// directly, accepts too (an initial `0x47` with no confirmation); after a
+/// sync loss `feed` demands a 5-of-7 stride check, so there the end rule is
+/// the weaker of the two. Bytes that are not TS can therefore reach the
+/// caller as a packet at an end: a tail in which a `0x47` sits exactly one,
+/// two or three packets before the last byte. The tail is refused whole when
+/// one boundary fails, and the syncer does not look for a later start: a
+/// single good packet behind damage that itself holds a `0x47` within the
+/// 187 bytes before it is still lost. Treat the final packets after a
+/// mid-stream corruption as best-effort;
 /// [`ReceiverStats::resync_events`] and
 /// [`ReceiverStats::bytes_skipped_for_sync`] show when that happened.
-/// `tst_core::mpegts::demux::Demuxer::feed`, used directly, accepts an
-/// initial `0x47` with no confirmation and demands a 5-of-7 stride check
-/// only after a sync loss.
+///
+/// A caller that drives a [`sync::Syncer`] directly gets none of this (it
+/// has no way to say that its input ended); use `Receiver` for a stream
+/// that can end.
 ///
 /// # Closing
 ///
@@ -129,6 +154,10 @@ pub struct Receiver<R: RecvTransport> {
     /// each `stats()` call.
     bytes_received: u64,
     packets_received: u64,
+    /// The error of the read that ended the stream, kept while the packets
+    /// that end released are handed out; `next_packet` reports it once the
+    /// syncer is empty.
+    held_end: Option<ReceiverError>,
     /// Lifetime span — see [`crate::shell_error::ShellSpan`] for the
     /// unwind-safe rationale. Private; never exposed publicly.
     _span: crate::shell_error::ShellSpan,
@@ -234,6 +263,7 @@ impl<R: RecvTransport> Receiver<R> {
             recv_buf: vec![0u8; cap],
             bytes_received: 0,
             packets_received: 0,
+            held_end: None,
             _span: core::panic::AssertUnwindSafe(span),
         }
     }
@@ -252,6 +282,9 @@ impl<R: RecvTransport> Receiver<R> {
     /// 2. If not, call `recv_bytes` once to pull more data from the transport,
     ///    feed the bytes to the syncer, then retry.
     /// 3. Repeat until a packet is available or the transport closes.
+    /// 4. When the transport ends, hand out the whole packets the syncer
+    ///    still holds, one per call, then report the end (see "Sync lock
+    ///    and the end of a stream" on the type).
     ///
     /// # Errors
     ///
@@ -260,6 +293,11 @@ impl<R: RecvTransport> Receiver<R> {
     /// - [`ShellErrorKind::Closed`] — caller invoked `close()` (or for
     ///   `ManagedRecvTransport`, the cancel signal fired).
     /// - [`ShellErrorKind::EndOfStream`] — peer closed the connection.
+    /// - [`ShellErrorKind::Backpressure`] — nothing arrived in time; call
+    ///   again.
+    ///
+    /// The first three are ends. `Receiver` keeps no record of one: a call
+    /// made after an end was reported reads the transport again.
     ///
     /// # Example
     /// ```
@@ -312,16 +350,46 @@ impl<R: RecvTransport> Receiver<R> {
                 self.packets_received += 1;
                 return Ok(pkt);
             }
-            let n = self.transport.recv_bytes(&mut self.recv_buf)?;
-            // The RecvTransport contract says closed/broken transports return
-            // Err(Closed), not Ok(0). Defensively treating Ok(0) as closed
-            // guards against implementors that follow the io::Read convention
-            // instead, and makes the loop terminate rather than spin.
-            if n == 0 {
-                return Err(TransportError::Closed.into());
+            // The packets an end released are out: now the end itself.
+            if let Some(end) = self.held_end.take() {
+                return Err(end);
             }
-            self.syncer.push(&self.recv_buf[..n]);
+            let err: ReceiverError = match self.transport.recv_bytes(&mut self.recv_buf) {
+                // The RecvTransport contract says closed/broken transports
+                // return Err(Closed), not Ok(0). Defensively treating Ok(0)
+                // as closed guards against implementors that follow the
+                // io::Read convention instead, and makes the loop terminate
+                // rather than spin.
+                Ok(0) => TransportError::Closed.into(),
+                Ok(n) => {
+                    self.syncer.push(&self.recv_buf[..n]);
+                    continue;
+                }
+                Err(e) => e.into(),
+            };
+            if !matches!(
+                err.kind,
+                ShellErrorKind::EndOfStream
+                    | ShellErrorKind::TransportBroken
+                    | ShellErrorKind::Closed
+            ) {
+                // `Backpressure`: more bytes may come, so what the syncer
+                // holds goes on waiting for them.
+                return Err(err);
+            }
+            // The stream is over: nothing can confirm the held packets any
+            // more, so the syncer decides on the bytes it has. Those it
+            // releases go out first, the end after them.
+            self.syncer.end_of_input();
+            self.held_end = Some(err);
         }
+    }
+
+    /// `true` while the stream has ended and the packets that end released
+    /// are still being handed out: the next `next_packet` returns one of
+    /// them, or the end.
+    pub(crate) fn end_pending(&self) -> bool {
+        self.held_end.is_some()
     }
 
     /// Advisory liveness check. Delegates to the underlying transport.
@@ -338,6 +406,10 @@ impl<R: RecvTransport> Receiver<R> {
     /// Note that `ManagedRecvTransport` itself does **not** own the
     /// `Receiver` (it lives one layer up, inside `DemuxReceiver`);
     /// `ManagedDemuxReceiver` calls this on the reconnect-detected path.
+    ///
+    /// Called while the packets an end released are being handed out, it
+    /// drops those not yet handed out and keeps the end: the next
+    /// `next_packet` reports it without another read.
     pub fn reset_sync(&mut self) {
         self.syncer.reset();
     }

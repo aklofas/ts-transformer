@@ -179,3 +179,49 @@ fn managed_demux_receiver_ts_bytes_demuxed_counts_every_parsed_packet() {
         Some(EndReason::ReconnectExhausted)
     );
 }
+
+/// The inner breaks with a whole three-packet stream received and the
+/// reconnect gives up: that is the end of the stream, so the three packets
+/// the syncer was still holding are delivered before it.
+#[test]
+fn a_give_up_delivers_the_held_packets_then_ends() {
+    let cfg = {
+        let mut prog = MuxerProgramConfigBuilder::new(1, 0x1000);
+        prog.add_video(0x100, VideoCodec::H264);
+        let mut b = MuxerConfig::builder();
+        b.add_program(prog.build());
+        b.build().unwrap()
+    };
+    let mut mux = Muxer::new(cfg).unwrap();
+    mux.push_video(&build_h264_au(7), Pts90khz::new(90_000), true)
+        .unwrap();
+    let packets = to_ts_packets(&drain_mux(&mut mux));
+    assert_eq!(packets.len(), 3, "PAT, PMT and one video packet");
+
+    let inner = crate::common::ScriptedRecv::packets(packets, broken("the link died"));
+    let factory = Box::new(|| Err(broken("nobody answers")));
+    let managed = ManagedRecvTransport::new(inner, factory, fast_policy(Some(2)))
+        .expect("the policy validates");
+    let mut rx = ManagedDemuxReceiver::new(managed, ManagedDemuxReceiverConfig::default());
+
+    let mut seen = Vec::new();
+    while let Some(e) = rx.recv_event().expect("a give-up is a clean end") {
+        seen.push(match e {
+            DemuxEvent::ProgramMap(_) => "program map".to_string(),
+            DemuxEvent::Sample {
+                payload: SamplePayload::Video { raw, .. },
+                ..
+            } => {
+                assert_eq!(raw.to_vec(), build_h264_au(7));
+                "sample".to_string()
+            }
+            other => format!("{other:?}"),
+        });
+    }
+    assert_eq!(seen, ["program map", "sample"]);
+    assert_eq!((rx.ts_bytes_demuxed(), rx.reconnects_count()), (3 * 188, 0));
+    assert_eq!(
+        rx.end_reason_handle().get(),
+        Some(EndReason::ReconnectExhausted)
+    );
+}

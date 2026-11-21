@@ -136,12 +136,17 @@ struct ReconnectEpoch {
 /// # Sync lock
 ///
 /// Packets reach the demuxer through the inner [`Receiver`], which locks
-/// only after four aligned TS packets (752 bytes) and, after any sync
-/// loss, strands up to three unconfirmed trailing packets at
-/// end-of-stream — see [`Receiver`]'s "Sync lock and the trailing
-/// window". A session of fewer than four packets therefore yields no
-/// events at all, and the last access unit after a mid-stream corruption
-/// may never complete.
+/// only after four aligned TS packets (752 bytes). When the transport ends,
+/// the one to three whole packets still waiting for that lock (a session
+/// shorter than four packets, or the tail after a mid-stream sync loss) are
+/// fed to the demuxer before its final flush, when every packet boundary
+/// present reads the sync byte: a short session yields its events. See
+/// [`Receiver`]'s "Sync lock and the end of a stream" for the evidence this
+/// rests on, what it can let through, and the one-packet tail it still
+/// loses. `Backpressure` releases nothing. A reconnect under a managed
+/// receiver is not an end: what the syncer held across it is dropped,
+/// also when the stream then ends before a packet of the new connection
+/// was read.
 ///
 /// # Closing
 ///
@@ -457,7 +462,14 @@ impl<R: RecvTransport> DemuxReceiver<R> {
             // trustworthy.
             if self.observe_reconnect() {
                 self.ts.reset_sync();
-                self.engine.handle_reconnect();
+                // A packet the END released was held across the reconnect,
+                // so it is dropped like any other; but nothing of the new
+                // connection was read before the stream ended, so there is
+                // no boundary to mark, and what the demuxer has of the old
+                // connection is still flushed by the end that follows.
+                if !self.ts.end_pending() {
+                    self.engine.handle_reconnect();
+                }
                 continue;
             }
             // Counted here, after the splice drop above: a dropped packet
@@ -990,9 +1002,9 @@ mod stats_tests {
         assert_eq!(recorded % 188, 0);
     }
 
+    /// Three null packets and `tail`, in one read, then the end.
     #[cfg(feature = "std")]
-    #[test]
-    fn ts_bytes_demuxed_is_zero_before_sync_lock() {
+    fn counters_after_three_packets_and(tail: &[u8]) -> (u64, u64) {
         let mut bytes = Vec::new();
         for _ in 0..3 {
             let mut p = [0xFFu8; 188];
@@ -1002,12 +1014,32 @@ mod stats_tests {
             p[3] = 0x10;
             bytes.extend_from_slice(&p);
         }
-        bytes.extend_from_slice(&[0xAB; 100]);
+        bytes.extend_from_slice(tail);
         let mut r = DemuxReceiver::new(CannedRecv {
             chunks: VecDeque::from([bytes]),
             alive: true,
         });
         assert!(r.recv_event().unwrap().is_none());
-        assert_eq!((r.ts_bytes_demuxed(), r.stats().bytes_received), (0, 0));
+        (r.ts_bytes_demuxed(), r.stats().bytes_received)
+    }
+
+    /// The partial packet behind them does not start with the sync byte: a
+    /// boundary that is present fails, so the end releases none of the three.
+    #[cfg(feature = "std")]
+    #[test]
+    fn three_packets_before_bytes_that_are_not_a_packet_start_are_not_demuxed() {
+        assert_eq!(counters_after_three_packets_and(&[0xAB; 100]), (0, 0));
+    }
+
+    #[cfg(feature = "std")]
+    #[test]
+    fn three_packets_alone_or_before_the_start_of_a_fourth_are_demuxed_at_the_end() {
+        assert_eq!(counters_after_three_packets_and(&[]), (564, 564));
+        let mut start_of_a_fourth = [0xAB; 100];
+        start_of_a_fourth[0] = 0x47;
+        assert_eq!(
+            counters_after_three_packets_and(&start_of_a_fourth),
+            (564, 564)
+        );
     }
 }
