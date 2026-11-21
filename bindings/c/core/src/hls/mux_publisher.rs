@@ -21,10 +21,13 @@
 //! both its success and its failure path, so the pointer must not be used
 //! again after the call.
 
+use alloc::sync::Arc;
+
+use tst_core::cancel::FlagCancel;
 use tst_core::mpegts::common::Pts90khz;
 use tst_hls::HlsPublisher;
 use tst_pipeline::binding::BindingError;
-use tst_pipeline::{MuxPublisher, MuxPublisherError};
+use tst_pipeline::{MuxPublisher, MuxPublisherError, MuxPublisherStatsHandle};
 
 use crate::config::TstMuxConfig;
 use crate::error::{TstError, record_binding_error, record_mux_error, set_last_error};
@@ -43,7 +46,9 @@ use crate::stats::{TstMuxPublisherStats, TstPublisherStats};
 /// [`tst_mux_publisher_finish_into_publisher`] runs, which then frees the
 /// handle.
 pub struct TstMuxPublisher {
-    inner: CHandle<MuxPublisher<HlsPublisher>>,
+    // The snapshot is the counters' reader: `tst_mux_publisher_get_stats` uses
+    // it without taking the slot.
+    inner: CHandle<MuxPublisher<HlsPublisher>, MuxPublisherStatsHandle>,
 }
 
 /// A closed slot keeps the documented `TST_E_HLS_FINISHED` instead of the
@@ -133,9 +138,12 @@ pub unsafe extern "C" fn tst_mux_publisher_with_config_hls(
         };
         // `boxed` (inner now None) drops when the closure ends: no double close.
         match MuxPublisher::with_config(hls_pub, muxer_cfg) {
-            Ok(mp) => Box::into_raw(Box::new(TstMuxPublisher {
-                inner: CHandle::offline(mp),
-            })),
+            Ok(mp) => {
+                let stats = mp.stats_handle();
+                Box::into_raw(Box::new(TstMuxPublisher {
+                    inner: CHandle::new(mp, Arc::new(FlagCancel::new()), stats),
+                }))
+            }
             Err(e) => {
                 record_mux_publisher_error(e);
                 std::ptr::null_mut()
@@ -188,9 +196,9 @@ unsafe fn with_mux_publisher(
     })
 }
 
-/// Reader twin of [`with_mux_publisher`] for the stats getters: a caught
-/// panic in `f` leaves the publisher in place. It takes the same slot lock
-/// as a send, so it still waits for a send in progress.
+/// Reader twin of [`with_mux_publisher`] for the publisher-side stats getter:
+/// a caught panic in `f` leaves the publisher in place. It takes the same
+/// slot lock as a send, so it still waits for a send in progress.
 ///
 /// SAFETY: as [`with_mux_publisher`].
 unsafe fn with_mux_publisher_ref(
@@ -414,9 +422,11 @@ pub unsafe extern "C" fn tst_mux_publisher_finish_into_publisher(
 /// Snapshot the mux-publisher cumulative stats into `*out`.
 ///
 /// Returns 0 on success, `TST_E_INVALID_CONFIG` if either pointer is null,
-/// or `TST_E_HLS_FINISHED` if the mux publisher was finished. A read waits
-/// for a send in progress on another thread. A panic caught inside it
-/// returns `TST_E_PANIC_CAUGHT` and leaves the publisher usable.
+/// or `TST_E_HLS_FINISHED` if a panic in an earlier call retired the mux
+/// publisher. It never waits for a send in progress on another thread: the
+/// counters are read on their own, each at its own moment, so a record read
+/// during a send may show part of it. A record read after the sending call
+/// has returned is exact.
 ///
 /// # Safety
 ///
@@ -431,19 +441,29 @@ pub unsafe extern "C" fn tst_mux_publisher_get_stats(
         set_last_error(TstError::InvalidConfig, "null out pointer");
         return TstError::InvalidConfig as i32;
     }
-    unsafe {
-        with_mux_publisher_ref(p, |mp| {
-            *out = TstMuxPublisherStats::from(&mp.stats());
-            0
-        })
-    }
+    crate::panic::ffi_catch(TstError::Internal as i32, || {
+        let Some(handle) = (unsafe { p.as_ref() }) else {
+            set_last_error(TstError::InvalidConfig, "null mux publisher pointer");
+            return TstError::InvalidConfig as i32;
+        };
+        // `open_snapshot` never takes the slot a send holds; it is `None`
+        // once the slot is empty, which only a retired publisher leaves here.
+        match handle.inner.open_snapshot() {
+            Some(stats) => {
+                unsafe { *out = TstMuxPublisherStats::from(&stats.stats()) };
+                0
+            }
+            None => finished(TstError::Closed as i32),
+        }
+    })
 }
 
 /// Snapshot the universal publisher-side stats into `*out`.
 ///
 /// Returns 0 on success, `TST_E_INVALID_CONFIG` if either pointer is null,
-/// or `TST_E_HLS_FINISHED` if the mux publisher was finished. A read waits
-/// for a send in progress on another thread. A panic caught inside it
+/// or `TST_E_HLS_FINISHED` if a panic in an earlier call retired the mux
+/// publisher. A read waits for a send in progress on another thread (the
+/// publisher's own record lives behind the same lock). A panic caught inside it
 /// returns `TST_E_PANIC_CAUGHT` and leaves the publisher usable.
 ///
 /// # Safety
@@ -537,6 +557,50 @@ mod tests {
             unsafe { tst_mux_publisher_get_publisher_stats(mp, &mut pstats) },
             TstError::HlsFinished as i32
         );
+        unsafe { tst_mux_publisher_free(mp) };
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// `tst_mux_publisher_get_stats` reads counters that live outside the
+    /// publisher's lock, so it answers while another call holds the
+    /// publisher. The publisher-side getter still waits for that call.
+    #[test]
+    fn stats_answer_while_another_call_holds_the_publisher() {
+        use std::sync::mpsc;
+        use std::time::Duration;
+
+        let (mp, dir) = loopback_mux_publisher("stats-held");
+        let addr = mp as usize;
+        let (entered_tx, entered_rx) = mpsc::channel::<()>();
+        let (gate_tx, gate_rx) = mpsc::channel::<()>();
+        let holder = std::thread::spawn(move || {
+            let mp = addr as *mut TstMuxPublisher;
+            unsafe {
+                with_mux_publisher(mp, |_| {
+                    entered_tx.send(()).unwrap();
+                    // Hold the publisher until the reader below has answered.
+                    let _ = gate_rx.recv_timeout(Duration::from_secs(30));
+                    0
+                })
+            }
+        });
+        entered_rx
+            .recv_timeout(Duration::from_secs(10))
+            .expect("the holder never entered the publisher");
+        let reader = std::thread::spawn(move || {
+            let mp = addr as *mut TstMuxPublisher;
+            let mut stats = TstMuxPublisherStats::default();
+            unsafe { tst_mux_publisher_get_stats(mp, &mut stats) }
+        });
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while !reader.is_finished() && std::time::Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let answered = reader.is_finished();
+        gate_tx.send(()).unwrap();
+        assert!(answered, "the stats read waited behind the holding call");
+        assert_eq!(reader.join().unwrap(), 0);
+        assert_eq!(holder.join().unwrap(), 0);
         unsafe { tst_mux_publisher_free(mp) };
         let _ = std::fs::remove_dir_all(&dir);
     }

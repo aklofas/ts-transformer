@@ -2194,7 +2194,11 @@ typedef struct tst_raw_send_stats_t {
  * * `bytes_skipped_for_sync` / `resync_events` — sync-recovery state
  *   from the underlying `tst_pipeline::receiver::sync::Syncer`. Non-zero
  *   `resync_events` indicates the syncer hit HUNT/VERIFY mid-stream
- *   (either initial lock-on or re-lock after corruption).
+ *   (either initial lock-on or re-lock after corruption). When the
+ *   transport ends, the receiver hands over the last one to three whole
+ *   packets it still holds (the stream's tail, or a stream shorter than
+ *   the four packets a lock needs); that release counts once in
+ *   `resync_events`.
  */
 typedef struct tst_receiver_stats_t {
   uint64_t bytes_received;
@@ -5556,8 +5560,9 @@ int tst_mux_config_set_stream_descriptors_for_video(struct tst_mux_config_t *cfg
  * Snapshot the universal publisher-side stats into `*out`.
  *
  * Returns 0 on success, `TST_E_INVALID_CONFIG` if either pointer is null,
- * or `TST_E_HLS_FINISHED` if the mux publisher was finished. A read waits
- * for a send in progress on another thread. A panic caught inside it
+ * or `TST_E_HLS_FINISHED` if a panic in an earlier call retired the mux
+ * publisher. A read waits for a send in progress on another thread (the
+ * publisher's own record lives behind the same lock). A panic caught inside it
  * returns `TST_E_PANIC_CAUGHT` and leaves the publisher usable.
  *
  * # Safety
@@ -5575,9 +5580,11 @@ int tst_mux_publisher_get_publisher_stats(struct TstMuxPublisher *p,
  * Snapshot the mux-publisher cumulative stats into `*out`.
  *
  * Returns 0 on success, `TST_E_INVALID_CONFIG` if either pointer is null,
- * or `TST_E_HLS_FINISHED` if the mux publisher was finished. A read waits
- * for a send in progress on another thread. A panic caught inside it
- * returns `TST_E_PANIC_CAUGHT` and leaves the publisher usable.
+ * or `TST_E_HLS_FINISHED` if a panic in an earlier call retired the mux
+ * publisher. It never waits for a send in progress on another thread: the
+ * counters are read on their own, each at its own moment, so a record read
+ * during a send may show part of it. A record read after the sending call
+ * has returned is exact.
  *
  * # Safety
  *

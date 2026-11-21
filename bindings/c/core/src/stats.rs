@@ -169,7 +169,11 @@ impl From<&tst_pipeline::RawReceiverStats> for TstRawRecvStats {
 /// * `bytes_skipped_for_sync` / `resync_events` — sync-recovery state
 ///   from the underlying `tst_pipeline::receiver::sync::Syncer`. Non-zero
 ///   `resync_events` indicates the syncer hit HUNT/VERIFY mid-stream
-///   (either initial lock-on or re-lock after corruption).
+///   (either initial lock-on or re-lock after corruption). When the
+///   transport ends, the receiver hands over the last one to three whole
+///   packets it still holds (the stream's tail, or a stream shorter than
+///   the four packets a lock needs); that release counts once in
+///   `resync_events`.
 #[repr(C)]
 #[derive(Default, Clone, Copy)]
 pub struct TstReceiverStats {
