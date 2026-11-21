@@ -661,13 +661,23 @@ fn close_outcome_to_py(py: Python<'_>, outcome: &PushCloseOutcome) -> PyResult<P
         .unbind())
 }
 
-/// The first 256 characters of `text`, each control character replaced by
-/// U+FFFD: what `PushCloseOutcome` keeps of a reason or a detail.
+/// The first 256 characters of `text`, each control, bidirectional-format
+/// and line-separator character replaced by U+FFFD: what
+/// `PushCloseOutcome` keeps of a reason or a detail.
 fn kept_text(text: &str) -> String {
     text.chars()
         .take(256)
         .map(|c| {
-            if c.is_control() {
+            let hidden = matches!(
+                c,
+                '\u{200B}'..='\u{200F}'
+                    | '\u{2028}'
+                    | '\u{2029}'
+                    | '\u{202A}'..='\u{202E}'
+                    | '\u{2060}'..='\u{206F}'
+                    | '\u{FEFF}'
+            );
+            if c.is_control() || hidden {
                 char::REPLACEMENT_CHARACTER
             } else {
                 c

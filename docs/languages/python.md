@@ -1637,8 +1637,8 @@ The surface:
   `CANCELLED`, `MEDIA_LOST`, `TEARDOWN_REFUSED`, `TEARDOWN_TIMED_OUT`,
   `FAILED`), `status` (the RTSP status of a refused TEARDOWN, else
   `None`) and `detail` (the refusal's reason phrase or a failed close's
-  text, at most 256 characters with control characters replaced, else
-  empty). `close_outcome()` is `None` until a close has finished (the
+  text, at most 256 characters with control, bidirectional-format and
+  line-separator characters replaced, else empty). `close_outcome()` is `None` until a close has finished (the
   session's `close()` or `teardown()`, or a sender shell's `finish()` or
   `close()`), then the first close's outcome.
 - `into_mux_sender(program_config) -> MuxSender` and `into_sender() ->
