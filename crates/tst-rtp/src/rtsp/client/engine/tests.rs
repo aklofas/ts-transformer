@@ -126,6 +126,7 @@ fn challenged(creds: Option<(&str, &str)>, www: &str) -> ClientEngine {
     let a = e.submit(spec(RtspMethod::Options, URI), None, t0).unwrap();
     let first = one(&mut e);
     let c = cseq(&first);
+    feed(&mut e);
     e.handle_reply(
         resp(
             format!("RTSP/1.0 401 Unauthorized\r\nCSeq: {c}\r\nWWW-Authenticate: {www}\r\n\r\n")
@@ -295,6 +296,7 @@ fn a_retry_refused_at_encoding_uses_no_cseq() {
     assert_eq!(cseq(&one(&mut e)), 1);
     // A challenge whose realm carries a control byte cannot be echoed in
     // the retry's `Authorization` header.
+    feed(&mut e);
     e.handle_reply(
         resp(b"RTSP/1.0 401 Unauthorized\r\nCSeq: 1\r\nWWW-Authenticate: Digest realm=\"R\x01\", nonce=\"n\"\r\n\r\n"),
         t0,
@@ -496,6 +498,7 @@ fn a_cached_challenge_signs_setup_against_its_control_uri() {
         r#"Digest realm="tstrans", nonce="abc123""#,
     );
     let control = "rtsp://cam.example/live/trackID=0";
+    feed(&mut e);
     e.submit(spec(RtspMethod::Setup, control), None, Instant::now())
         .unwrap();
     let t = one(&mut e);
@@ -531,6 +534,7 @@ fn the_nonce_count_counts_per_header_and_restarts_on_a_new_challenge() {
     // The challenge's own retry used nc=1.
     let mut ncs = Vec::new();
     for m in [RtspMethod::Describe, RtspMethod::Setup, RtspMethod::Play] {
+        feed(&mut e);
         e.submit(spec(m, URI), None, t0).unwrap();
         let a = authz(&one(&mut e)).unwrap();
         assert!(a.contains("qop=auth"), "{a}");
@@ -540,8 +544,10 @@ fn the_nonce_count_counts_per_header_and_restarts_on_a_new_challenge() {
     assert_eq!(ncs, ["00000002", "00000003", "00000004"]);
 
     // A different challenge (new nonce) restarts the count: its retry is nc=1.
+    feed(&mut e);
     e.submit(spec(RtspMethod::Setup, URI), None, t0).unwrap();
     let c = cseq(&one(&mut e));
+    feed(&mut e);
     e.handle_reply(
         resp(
             format!(
@@ -567,9 +573,306 @@ fn the_nonce_count_counts_per_header_and_restarts_on_a_new_challenge() {
         t0,
     );
     events(&mut e);
+    feed(&mut e);
     e.submit(spec(RtspMethod::Play, URI), None, t0).unwrap();
     let a = authz(&one(&mut e)).unwrap();
     assert_eq!((param(&a, "nonce"), param(&a, "nc")), ("n2", "00000002"));
+}
+
+// --- the Digest cnonce ---
+
+/// The bytes a test hands the engine as a cnonce, and their form on the
+/// wire.
+const CNONCE: Cnonce = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
+const CNONCE_HEX: &str = "000102030405060708090a0b0c0d0e0f";
+
+/// Hand the engine a cnonce ahead of a step that builds a Digest answer.
+fn feed(e: &mut ClientEngine) {
+    e.handle_cnonce(Some(CNONCE));
+}
+
+const QOP_WWW: &str = r#"Digest realm="R", nonce="n1", qop="auth""#;
+
+fn unauthorized(cseq: u32, www: &str) -> RtspResponse {
+    resp(
+        format!("RTSP/1.0 401 Unauthorized\r\nCSeq: {cseq}\r\nWWW-Authenticate: {www}\r\n\r\n")
+            .as_bytes(),
+    )
+}
+
+fn ok(cseq: u32) -> RtspResponse {
+    resp(format!("RTSP/1.0 200 OK\r\nCSeq: {cseq}\r\n\r\n").as_bytes())
+}
+
+/// RFC 7616 §3.4.1 for MD5 with `qop=auth`, written out:
+/// `H(H(user:realm:password):nonce:nc:cnonce:auth:H(method:uri))`.
+#[allow(clippy::too_many_arguments)]
+fn qop_auth_md5_response(
+    user: &str,
+    realm: &str,
+    password: &str,
+    nonce: &str,
+    nc: &str,
+    cnonce: &str,
+    method: &str,
+    uri: &str,
+) -> String {
+    let ha1 = md5_hex(&format!("{user}:{realm}:{password}"));
+    let ha2 = md5_hex(&format!("{method}:{uri}"));
+    md5_hex(&format!("{ha1}:{nonce}:{nc}:{cnonce}:auth:{ha2}"))
+}
+
+#[test]
+fn a_fixed_cnonce_gives_the_rfc_7616_response() {
+    // The user, password, realm and nonce of RFC 7616 §3.9.1.
+    const NONCE: &str = "7ypf/xlj9XXwfDPEoM4URrv/xwf94BcCAzFZH4GiTo0v";
+    let www = format!(
+        r#"Digest realm="http-auth@example.org", qop="auth", algorithm=MD5, nonce="{NONCE}""#
+    );
+    let expected = |nc: &str, method: &str| {
+        qop_auth_md5_response(
+            "Mufasa",
+            "http-auth@example.org",
+            "Circle of Life",
+            NONCE,
+            nc,
+            CNONCE_HEX,
+            method,
+            URI,
+        )
+    };
+    let t0 = Instant::now();
+    let mut e = ClientEngine::new(cfg(Some(("Mufasa", "Circle of Life"))));
+    let a = e.submit(spec(RtspMethod::Describe, URI), None, t0).unwrap();
+    let c = cseq(&one(&mut e));
+    e.handle_reply(unauthorized(c, &www), t0);
+    // The answer waits for its cnonce: nothing is written, nothing reported.
+    assert!(e.wants_cnonce());
+    assert!(e.poll_transmit().is_none());
+    assert!(e.poll_event().is_none());
+    e.handle_cnonce(Some(CNONCE));
+    assert!(!e.wants_cnonce());
+    let retry = one(&mut e);
+    let h = authz(&retry).unwrap();
+    assert_eq!(param(&h, "cnonce"), CNONCE_HEX);
+    assert_eq!(param(&h, "nc"), "00000001");
+    assert_eq!(param(&h, "response"), expected("00000001", "DESCRIBE"));
+    e.handle_reply(ok(cseq(&retry)), t0);
+    assert_eq!(reply(&mut e, a).unwrap().status, 200);
+
+    // The cached challenge's answer on the next request.
+    let next = spec(RtspMethod::Setup, URI);
+    assert!(e.submit_wants_cnonce(&next));
+    e.handle_cnonce(Some(CNONCE));
+    assert!(!e.submit_wants_cnonce(&next), "one is at hand");
+    e.submit(next, None, t0).unwrap();
+    let h = authz(&one(&mut e)).unwrap();
+    assert_eq!(param(&h, "cnonce"), CNONCE_HEX);
+    assert_eq!(param(&h, "response"), expected("00000002", "SETUP"));
+
+    // And on a ping.
+    e.enable_keepalive(Some(Duration::from_secs(1)), t0);
+    assert!(
+        !e.timeout_wants_cnonce(ms(t0, 999), false),
+        "no ping is due"
+    );
+    assert!(e.timeout_wants_cnonce(ms(t0, 1000), false));
+    e.handle_cnonce(Some(CNONCE));
+    e.handle_timeout(ms(t0, 1000), false);
+    let pings: Vec<_> = transmits(&mut e)
+        .into_iter()
+        .filter(|t| t.is_ping)
+        .collect();
+    assert_eq!(pings.len(), 1);
+    let h = authz(&pings[0]).unwrap();
+    assert_eq!(param(&h, "cnonce"), CNONCE_HEX);
+    assert_eq!(param(&h, "response"), expected("00000003", "OPTIONS"));
+}
+
+#[test]
+fn a_random_source_failure_fails_the_request_as_before() {
+    let t0 = Instant::now();
+    // The retry after a `401`: the request fails, nothing is written.
+    let mut e = ClientEngine::new(cfg(Some(("user", "pass"))));
+    let a = e.submit(spec(RtspMethod::Describe, URI), None, t0).unwrap();
+    let c = cseq(&one(&mut e));
+    e.handle_reply(unauthorized(c, QOP_WWW), t0);
+    assert!(e.wants_cnonce());
+    e.handle_cnonce(None);
+    assert!(!e.wants_cnonce());
+    assert!(matches!(
+        reply(&mut e, a),
+        Err(RtspError::Io(io::ErrorKind::Other))
+    ));
+    assert!(e.poll_transmit().is_none());
+
+    // The cached challenge's answer: the request is refused and takes no CSeq.
+    assert!(matches!(
+        e.submit(spec(RtspMethod::Setup, URI), None, t0),
+        Err(RtspError::Io(io::ErrorKind::Other))
+    ));
+    assert!(e.poll_transmit().is_none());
+    // A ping goes out without a header.
+    e.enable_keepalive(Some(Duration::from_secs(1)), t0);
+    e.handle_timeout(ms(t0, 1000), false);
+    let ping = one(&mut e);
+    assert!(ping.is_ping);
+    assert_eq!(authz(&ping), None);
+    assert_eq!(cseq(&ping), c + 1);
+    // So does a TEARDOWN.
+    e.submit(spec(RtspMethod::Teardown, URI), None, t0).unwrap();
+    assert_eq!(authz(&one(&mut e)), None);
+}
+
+/// The driver draws a cnonce only when the engine asks, so the engine must
+/// ask exactly when its next step builds a Digest answer.
+#[test]
+fn a_cnonce_is_asked_for_only_when_a_digest_answer_is_built() {
+    let t0 = Instant::now();
+    let options = || spec(RtspMethod::Options, URI);
+
+    // No challenge yet, with or without credentials.
+    for creds in [None, Some(("user", "pass"))] {
+        let mut e = ClientEngine::new(cfg(creds));
+        e.enable_keepalive(Some(Duration::from_secs(1)), t0);
+        assert!(!e.submit_wants_cnonce(&options()));
+        assert!(!e.timeout_wants_cnonce(ms(t0, 1000), false));
+        assert!(!e.wants_cnonce());
+    }
+
+    // A Digest challenge and no credentials: the request fails at once.
+    let mut e = ClientEngine::new(cfg(None));
+    let a = e.submit(options(), None, t0).unwrap();
+    let c = cseq(&one(&mut e));
+    e.handle_reply(unauthorized(c, QOP_WWW), t0);
+    assert!(!e.wants_cnonce());
+    assert!(matches!(reply(&mut e, a), Err(RtspError::AuthFailed)));
+    assert!(!e.submit_wants_cnonce(&options()));
+
+    // A Basic challenge is answered without one, at once and later.
+    let mut e = ClientEngine::new(cfg(Some(("user", "pass"))));
+    e.submit(options(), None, t0).unwrap();
+    let c = cseq(&one(&mut e));
+    e.handle_reply(unauthorized(c, r#"Basic realm="cam""#), t0);
+    assert!(!e.wants_cnonce());
+    assert!(authz(&one(&mut e)).is_some_and(|a| a.starts_with("Basic ")));
+    assert!(!e.submit_wants_cnonce(&options()));
+
+    // A Digest challenge with credentials.
+    let mut e = ClientEngine::new(cfg(Some(("user", "pass"))));
+    let a = e.submit(options(), None, t0).unwrap();
+    let c = cseq(&one(&mut e));
+    e.handle_reply(unauthorized(c, QOP_WWW), t0);
+    assert!(e.wants_cnonce());
+    e.handle_cnonce(Some(CNONCE));
+    let retry = one(&mut e);
+    // A second `401` is the end of the request, not another answer.
+    e.handle_reply(unauthorized(cseq(&retry), QOP_WWW), t0);
+    assert!(!e.wants_cnonce());
+    assert!(matches!(reply(&mut e, a), Err(RtspError::AuthFailed)));
+    // A request the engine refuses builds no answer.
+    assert!(e.submit_wants_cnonce(&options()));
+    assert!(!e.submit_wants_cnonce(&spec(RtspMethod::Record, URI)));
+    // Nor does a ping that is not due, or a cancelled client's.
+    e.enable_keepalive(Some(Duration::from_secs(1)), t0);
+    assert!(!e.timeout_wants_cnonce(ms(t0, 999), false));
+    assert!(!e.timeout_wants_cnonce(ms(t0, 1000), true));
+    assert!(e.timeout_wants_cnonce(ms(t0, 1000), false));
+    // A `401` to a ping only refreshes the challenge.
+    e.handle_cnonce(Some(CNONCE));
+    e.handle_timeout(ms(t0, 1000), false);
+    let ping = one(&mut e);
+    e.handle_reply(
+        unauthorized(cseq(&ping), r#"Digest realm="R", nonce="n2", qop="auth""#),
+        ms(t0, 1000),
+    );
+    assert!(!e.wants_cnonce());
+    assert!(e.poll_transmit().is_none());
+    // Nothing is asked for once the stream has ended.
+    e.handle_closed(StreamEnd::PeerClosed);
+    assert!(!e.submit_wants_cnonce(&options()));
+    assert!(!e.timeout_wants_cnonce(ms(t0, 2000), false));
+}
+
+#[test]
+fn a_cnonce_handed_in_before_the_401_is_used_without_asking() {
+    let t0 = Instant::now();
+    let mut e = ClientEngine::new(cfg(Some(("user", "pass"))));
+    e.submit(spec(RtspMethod::Options, URI), None, t0).unwrap();
+    let c = cseq(&one(&mut e));
+    e.handle_cnonce(Some(CNONCE));
+    e.handle_reply(unauthorized(c, QOP_WWW), t0);
+    assert!(!e.wants_cnonce());
+    let h = authz(&one(&mut e)).unwrap();
+    assert_eq!(param(&h, "cnonce"), CNONCE_HEX);
+}
+
+/// While its answer waits for a cnonce the request is still the caller's:
+/// it times out, ends with the stream and is replaced like any other, and
+/// no reply is taken for it.
+#[test]
+fn a_request_waiting_for_its_cnonce_is_still_the_callers() {
+    let t0 = Instant::now();
+    let waiting = |deadline: Option<Instant>| {
+        let mut e = ClientEngine::new(cfg(Some(("user", "pass"))));
+        let a = e
+            .submit(spec(RtspMethod::Options, URI), deadline, t0)
+            .unwrap();
+        let c = cseq(&one(&mut e));
+        e.handle_reply(unauthorized(c, QOP_WWW), t0);
+        assert!(e.wants_cnonce());
+        (e, a, c)
+    };
+
+    // A reply under the first attempt's CSeq is not its reply.
+    let (mut e, a, c) = waiting(None);
+    e.handle_reply(ok(c), t0);
+    assert_eq!(e.counters().unmatched_replies, 1);
+    assert!(e.poll_event().is_none());
+    e.handle_cnonce(Some(CNONCE));
+    let retry = one(&mut e);
+    assert_eq!(cseq(&retry), c + 1);
+    e.handle_reply(ok(c + 1), t0);
+    assert_eq!(reply(&mut e, a).unwrap().status, 200);
+
+    // Its deadline still runs.
+    let (mut e, a, _) = waiting(Some(ms(t0, 100)));
+    e.handle_timeout(ms(t0, 100), false);
+    assert!(matches!(reply(&mut e, a), Err(RtspError::Timeout)));
+    assert!(!e.wants_cnonce());
+    e.handle_cnonce(Some(CNONCE));
+    assert!(e.poll_transmit().is_none(), "nothing left to answer");
+
+    // The stream's end answers it.
+    let (mut e, a, _) = waiting(None);
+    e.handle_closed(StreamEnd::PeerClosed);
+    assert!(!e.wants_cnonce());
+    let ev = events(&mut e);
+    assert!(
+        ev.iter().any(|ev| matches!(
+            ev,
+            Event::Reply { txn, result: Err(RtspError::Io(io::ErrorKind::UnexpectedEof)) } if *txn == a
+        )),
+        "{ev:?}"
+    );
+
+    // A TEARDOWN takes its place. With no cnonce at hand it goes out
+    // without a header, and a cnonce that comes later answers nothing.
+    let (mut e, _, c) = waiting(None);
+    let b = e.submit(spec(RtspMethod::Teardown, URI), None, t0).unwrap();
+    assert!(!e.wants_cnonce());
+    let teardown = one(&mut e);
+    assert_eq!(sent(&teardown).method, RtspMethod::Teardown);
+    assert_eq!(cseq(&teardown), c + 1);
+    e.handle_cnonce(Some(CNONCE));
+    assert!(e.poll_transmit().is_none(), "the replaced request is gone");
+    e.handle_reply(ok(c + 1), t0);
+    let ev = events(&mut e);
+    assert!(
+        ev.iter()
+            .any(|ev| matches!(ev, Event::Reply { txn, result: Ok(_) } if *txn == b)),
+        "{ev:?}"
+    );
 }
 
 // --- session and keepalive timing ---
@@ -624,6 +927,7 @@ fn a_ping_carries_its_cseq_user_agent_session_and_a_preemptive_header() {
         r#"Digest realm="R", nonce="n1", qop="auth""#,
     );
     e.enable_keepalive(Some(Duration::from_secs(1)), t0);
+    feed(&mut e);
     e.handle_timeout(ms(t0, 1000), false);
     let p = one(&mut e);
     assert!(
@@ -639,8 +943,10 @@ fn a_ping_carries_its_cseq_user_agent_session_and_a_preemptive_header() {
     assert!(a.contains(&format!("uri=\"{URI}\"")), "{a}");
     assert_eq!(param(a, "nc"), "00000002");
 
+    feed(&mut e);
     run_setup(&mut e, "abc;timeout=60", ms(t0, 1500));
     // The override holds the 1 s cadence; later pings carry the session.
+    feed(&mut e);
     e.handle_timeout(ms(t0, 2000), false);
     let r = sent(&one(&mut e));
     // The SETUP took 4.
@@ -860,6 +1166,7 @@ fn a_ping_401_refreshes_the_challenge() {
     );
     assert!(events(&mut e).is_empty());
     assert!(e.poll_transmit().is_none(), "a ping is never retried");
+    feed(&mut e);
     e.submit(spec(RtspMethod::Play, URI), None, t0).unwrap();
     let a = authz(&one(&mut e)).expect("the ping's challenge signs the next request");
     assert_eq!(param(&a, "nonce"), "fresh");
@@ -1360,11 +1667,13 @@ fn a_ping_401_between_request_and_reply_rotates_the_nonce_once() {
         r#"Digest realm="R", nonce="n1", qop="auth""#,
     );
     e.enable_keepalive(Some(Duration::from_secs(1)), t0);
+    feed(&mut e);
     let a = e
         .submit(spec(RtspMethod::Describe, URI), None, ms(t0, 900))
         .unwrap();
     let req = one(&mut e);
     assert_eq!(param(&authz(&req).unwrap(), "nonce"), "n1");
+    feed(&mut e);
     e.handle_timeout(ms(t0, 1000), false);
     let ping = one(&mut e);
     assert_eq!(param(&authz(&ping).unwrap(), "nonce"), "n1");
@@ -1376,6 +1685,7 @@ fn a_ping_401_between_request_and_reply_rotates_the_nonce_once() {
     );
     assert!(events(&mut e).is_empty());
     // ...then the request's, with the same new challenge.
+    feed(&mut e);
     e.handle_reply(
         resp(N2_401.replace("{}", &cseq(&req).to_string()).as_bytes()),
         ms(t0, 1020),
@@ -1389,6 +1699,7 @@ fn a_ping_401_between_request_and_reply_rotates_the_nonce_once() {
     );
     assert_eq!(reply(&mut e, a).unwrap().status, 200);
     // The count went on from the retry: the rotation reset it once.
+    feed(&mut e);
     e.handle_timeout(ms(t0, 2000), false);
     let pa = authz(&one(&mut e)).unwrap();
     assert_eq!((param(&pa, "nonce"), param(&pa, "nc")), ("n2", "00000002"));
@@ -1407,8 +1718,10 @@ fn no_nonce_count_is_used_twice() {
     for round in 0..40u64 {
         let now = ms(t0, 100 * (round + 1));
         // A request and a ping in flight together.
+        feed(&mut e);
         e.submit(spec(RtspMethod::GetParameter, URI), None, now)
             .unwrap();
+        feed(&mut e);
         e.handle_timeout(now, false);
         let out = transmits(&mut e);
         assert_eq!(out.len(), 2);
@@ -1429,6 +1742,8 @@ fn no_nonce_count_is_used_twice() {
                     .as_bytes(),
                 )
             };
+            // For the request's second attempt.
+            feed(&mut e);
             if round % 2 == 0 {
                 e.handle_reply(challenge(cseq(ping)), now);
                 e.handle_reply(challenge(cseq(req)), now);
@@ -2925,6 +3240,7 @@ fn the_401_retry_resends_the_identical_body() {
         .unwrap();
     let first = one(&mut e);
     let c = cseq(&first);
+    feed(&mut e);
     e.handle_reply(
         resp(
             format!(

@@ -718,6 +718,8 @@ impl RtspClient {
                 exit_gate: params.exit_gate,
                 #[cfg(test)]
                 pass_gate: Default::default(),
+                #[cfg(test)]
+                cnonces_drawn: Default::default(),
             },
         )
         .map_err(|e| RtspError::Io(e.kind()))?;

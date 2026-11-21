@@ -1,7 +1,8 @@
 //! The RTSP client's protocol state, without a socket: it is handed
-//! replies, the current time and requests, and hands back the bytes to
-//! write, events and its next deadline. Nothing here reads a clock, opens
-//! a socket or spawns a thread.
+//! replies, the current time, requests and the random bytes of a Digest
+//! answer, and hands back the bytes to write, events and its next
+//! deadline. Nothing here reads a clock or a random source, opens a
+//! socket or spawns a thread.
 
 use std::collections::VecDeque;
 use std::io;
@@ -12,7 +13,7 @@ use secrecy::SecretString;
 use tst_core::transport::EndReason;
 
 use crate::error::RtspError;
-use crate::rtsp::auth::{AuthSchemes, build_authorization};
+use crate::rtsp::auth::{AuthSchemes, answers_with_digest, build_authorization};
 use crate::rtsp::client::{AuthState, duration_ms_saturating};
 use crate::rtsp::message::{RtspMethod, RtspRequest, RtspResponse};
 use crate::rtsp::transport_negotiation::{RtspTransportKind, parse_transport_response};
@@ -20,6 +21,13 @@ use crate::url::RtspVersion;
 
 mod inbound;
 use inbound::FrontScan;
+
+/// The random bytes of one Digest answer's `cnonce`. The engine's owner
+/// draws them from the OS when the engine asks
+/// ([`ClientEngine::submit_wants_cnonce`],
+/// [`ClientEngine::timeout_wants_cnonce`], [`ClientEngine::wants_cnonce`])
+/// and hands them in with [`ClientEngine::handle_cnonce`].
+pub(crate) type Cnonce = [u8; 16];
 
 /// The user name and password the client answers a challenge with.
 #[derive(Debug)]
@@ -269,11 +277,16 @@ struct CallerTxn {
     spec: RequestSpec,
     deadline: Option<Instant>,
     retried: bool,
+    /// The `401` challenge whose Digest answer waits for a cnonce. While
+    /// it is set no attempt is in flight, so no reply is this request's.
+    challenge: Option<String>,
 }
 
 pub(crate) struct ClientEngine {
     cfg: EngineConfig,
     auth: AuthState,
+    /// The cnonce handed in for the next Digest answer.
+    cnonce: Option<Cnonce>,
     /// Last CSeq used, by a caller request or a ping: one counter, because
     /// some servers end the connection unless each request's CSeq is one
     /// above the last.
@@ -359,6 +372,7 @@ impl ClientEngine {
         Self {
             cfg,
             auth,
+            cnonce: None,
             cseq: 0,
             next_txn: 0,
             caller: None,
@@ -377,6 +391,48 @@ impl ClientEngine {
             push_tracks: 0,
             push_torn_down: false,
             pulled: false,
+        }
+    }
+
+    /// Whether [`Self::submit`] of `spec` will answer the cached challenge
+    /// with Digest and no cnonce is at hand: hand one in first.
+    pub(crate) fn submit_wants_cnonce(&self, spec: &RequestSpec) -> bool {
+        self.cnonce.is_none()
+            && self.closed.is_none()
+            && self.refusal(spec).is_none()
+            && self.answers_cached_digest()
+    }
+
+    /// Whether [`Self::handle_timeout`] with the same arguments will send
+    /// a ping that answers the cached challenge with Digest, and no cnonce
+    /// is at hand: hand one in first.
+    pub(crate) fn timeout_wants_cnonce(&self, now: Instant, cancelled: bool) -> bool {
+        self.cnonce.is_none()
+            && self.closed.is_none()
+            && !cancelled
+            && self.ping_due(now)
+            && self.answers_cached_digest()
+    }
+
+    /// Whether the caller's request was answered `401` with a Digest
+    /// challenge and its second attempt waits for a cnonce. Asked after
+    /// input was handled; [`Self::handle_cnonce`] ends the wait.
+    pub(crate) fn wants_cnonce(&self) -> bool {
+        self.caller.as_ref().is_some_and(|t| t.challenge.is_some())
+    }
+
+    /// A cnonce the engine asked for, or `None` when the random source
+    /// failed. A request waiting for one makes its second attempt now, and
+    /// without a cnonce fails as any Digest answer does; otherwise the
+    /// cnonce is kept for the next Digest answer.
+    pub(crate) fn handle_cnonce(&mut self, cnonce: Option<Cnonce>) {
+        if cnonce.is_some() {
+            self.cnonce = cnonce;
+        }
+        if let Some(mut txn) = self.caller.take_if(|t| t.challenge.is_some())
+            && let Some(www) = txn.challenge.take()
+        {
+            self.retry(txn, &www);
         }
     }
 
@@ -426,6 +482,7 @@ impl ClientEngine {
             spec,
             deadline: reply_deadline,
             retried: false,
+            challenge: None,
         });
         self.transmits.push_back(Transmit {
             bytes: bytes.into(),
@@ -467,7 +524,7 @@ impl ClientEngine {
             // can be taken for the request's. One whose `CSeq` does not parse
             // answers nothing.
             match self.caller.take() {
-                Some(txn) if !resp.headers.contains_key("cseq") => {
+                Some(txn) if txn.challenge.is_none() && !resp.headers.contains_key("cseq") => {
                     self.handle_caller_reply(txn, resp, now);
                 }
                 other => {
@@ -484,7 +541,9 @@ impl ClientEngine {
             return;
         }
         match self.caller.take() {
-            Some(txn) if txn.cseq == cseq => self.handle_caller_reply(txn, resp, now),
+            Some(txn) if txn.challenge.is_none() && txn.cseq == cseq => {
+                self.handle_caller_reply(txn, resp, now)
+            }
             other => {
                 self.caller = other;
                 self.counters.unmatched_replies += 1;
@@ -510,14 +569,14 @@ impl ClientEngine {
             self.keepalive = Keepalive::Off;
             return;
         }
-        if let Keepalive::On {
-            next_due: Some(due),
-            ..
-        } = self.keepalive
-            && now >= due
-        {
+        if self.ping_due(now) {
             self.send_ping(now);
         }
+    }
+
+    /// Whether the keepalive is on and its next ping is due at `now`.
+    fn ping_due(&self, now: Instant) -> bool {
+        matches!(self.keepalive, Keepalive::On { next_due: Some(due), .. } if now >= due)
     }
 
     /// An earlier ping is not wholly written yet: a ping due at `now` is
@@ -752,7 +811,9 @@ impl ClientEngine {
     }
 
     /// An `Authorization` value for `method` at `uri` answering `www`,
-    /// under the next nonce count. `AuthFailed` without credentials.
+    /// under the next nonce count. `AuthFailed` without credentials. A
+    /// Digest answer uses up the cnonce at hand, and without one is the
+    /// random source's failure, `Io(Other)`.
     fn authorization(
         &mut self,
         method: RtspMethod,
@@ -761,6 +822,11 @@ impl ClientEngine {
     ) -> Result<String, RtspError> {
         let creds = self.cfg.credentials.as_ref().ok_or(RtspError::AuthFailed)?;
         self.auth.nc = self.auth.nc.wrapping_add(1);
+        let cnonce = if answers_with_digest(www) {
+            self.cnonce.take()
+        } else {
+            None
+        };
         build_authorization(
             method,
             uri,
@@ -769,7 +835,19 @@ impl ClientEngine {
             &creds.password,
             self.auth.nc,
             self.auth.schemes,
+            cnonce.as_ref(),
         )
+    }
+
+    /// Whether a request or ping sent now answers the cached challenge
+    /// with Digest.
+    fn answers_cached_digest(&self) -> bool {
+        self.cfg.credentials.is_some()
+            && self
+                .auth
+                .challenge
+                .as_deref()
+                .is_some_and(answers_with_digest)
     }
 
     /// The cached challenge's answer, or `None` without a challenge or
@@ -826,18 +904,23 @@ impl ClientEngine {
                 self.reply(txn.id, Err(RtspError::AuthFailed));
                 return;
             }
-            match self.retry_with_challenge(&mut txn, &resp) {
-                Ok(bytes) => {
-                    // The caller was told "written" on the first attempt.
-                    self.transmits.push_back(Transmit {
-                        bytes: bytes.into(),
-                        txn: None,
-                        is_ping: false,
-                    });
-                    self.caller = Some(txn);
-                }
-                Err(e) => self.reply(txn.id, Err(e)),
+            let Some(www) = resp.headers.get("www-authenticate") else {
+                self.reply(
+                    txn.id,
+                    Err(RtspError::BadResponse {
+                        detail: "401 without WWW-Authenticate header",
+                    }),
+                );
+                return;
+            };
+            self.auth.cache_challenge(www.clone());
+            if self.cnonce.is_none() && self.cfg.credentials.is_some() && answers_with_digest(www) {
+                // The second attempt is made when the cnonce is handed in.
+                txn.challenge = Some(www.clone());
+                self.caller = Some(txn);
+                return;
             }
+            self.retry(txn, www);
             return;
         }
         let mut setup = None;
@@ -980,25 +1063,26 @@ impl ClientEngine {
         Ok(())
     }
 
-    /// Cache the `401`'s challenge and encode `txn`'s second attempt.
-    fn retry_with_challenge(
-        &mut self,
-        txn: &mut CallerTxn,
-        resp: &RtspResponse,
-    ) -> Result<Bytes, RtspError> {
-        let www = resp
-            .headers
-            .get("www-authenticate")
-            .ok_or(RtspError::BadResponse {
-                detail: "401 without WWW-Authenticate header",
-            })?
-            .clone();
-        self.auth.cache_challenge(www.clone());
-        let authorization = self.authorization(txn.spec.method, &txn.spec.uri, &www)?;
-        let (bytes, cseq) = self.encode_caller_request(&txn.spec, Some(authorization))?;
-        txn.cseq = cseq;
-        txn.retried = true;
-        Ok(bytes)
+    /// Queue `txn`'s second attempt, answering the `401`'s challenge
+    /// `www`; a second attempt that cannot be built is the request's reply.
+    fn retry(&mut self, mut txn: CallerTxn, www: &str) {
+        let attempt = self
+            .authorization(txn.spec.method, &txn.spec.uri, www)
+            .and_then(|authorization| self.encode_caller_request(&txn.spec, Some(authorization)));
+        match attempt {
+            Ok((bytes, cseq)) => {
+                txn.cseq = cseq;
+                txn.retried = true;
+                // The caller was told "written" on the first attempt.
+                self.transmits.push_back(Transmit {
+                    bytes: bytes.into(),
+                    txn: None,
+                    is_ping: false,
+                });
+                self.caller = Some(txn);
+            }
+            Err(e) => self.reply(txn.id, Err(e)),
+        }
     }
 
     /// Record a SETUP reply's session and retune a keepalive the caller did

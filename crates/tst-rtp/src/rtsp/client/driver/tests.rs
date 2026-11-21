@@ -7,18 +7,24 @@ use tst_core::transport::EndReason;
 use tst_test_helpers::timing::scaled;
 
 use crate::rtsp::auth::AuthSchemes;
-use crate::rtsp::client::engine::{EngineConfig, RouteKind, SetupAccepted, SetupRoute};
+use crate::rtsp::client::engine::{
+    Credentials, EngineConfig, RouteKind, SetupAccepted, SetupRoute,
+};
 use crate::rtsp::message::{RtspMethod, RtspRequest, RtspResponse};
 use crate::url::RtspVersion;
 
 const URI: &str = "rtsp://127.0.0.1/x";
 
 fn engine() -> ClientEngine {
+    engine_with(None)
+}
+
+fn engine_with(credentials: Option<Credentials>) -> ClientEngine {
     ClientEngine::new(EngineConfig {
         uri: URI.to_string(),
         version: RtspVersion::V1_0,
         user_agent: "tst-rtp/test".to_string(),
-        credentials: None,
+        credentials,
         schemes: AuthSchemes::Automatic,
     })
 }
@@ -46,6 +52,8 @@ struct Harness {
     media: Arc<MediaQueue>,
     /// The thread's `Shared::pass_gate`.
     pass_gate: PassGate,
+    /// The thread's `Shared::cnonces_drawn`.
+    cnonces_drawn: Arc<AtomicU64>,
 }
 
 fn drive(stream: Stream) -> Harness {
@@ -53,6 +61,10 @@ fn drive(stream: Stream) -> Harness {
 }
 
 fn drive_with(stream: Stream, write_stall: Duration) -> Harness {
+    drive_engine(stream, engine(), write_stall)
+}
+
+fn drive_engine(stream: Stream, engine: ClientEngine, write_stall: Duration) -> Harness {
     let shared = Shared {
         cancel: FlagCancel::new(),
         session_dead: Arc::new(AtomicBool::new(false)),
@@ -61,14 +73,16 @@ fn drive_with(stream: Stream, write_stall: Duration) -> Harness {
         frames_dropped_inbound: Arc::new(AtomicU64::new(0)),
         exit_gate: None,
         pass_gate: Arc::default(),
+        cnonces_drawn: Arc::default(),
     };
     let cancel = shared.cancel.clone();
     let pass_gate = shared.pass_gate.clone();
+    let cnonces_drawn = shared.cnonces_drawn.clone();
     let session_dead = shared.session_dead.clone();
     let end_reason = shared.end_reason.clone();
     let media_dropped = shared.media_dropped.clone();
     let frames_dropped_inbound = shared.frames_dropped_inbound.clone();
-    let handle = spawn_with(stream, engine(), shared, write_stall).unwrap();
+    let handle = spawn_with(stream, engine, shared, write_stall).unwrap();
     Harness {
         cancel,
         session_dead,
@@ -77,6 +91,7 @@ fn drive_with(stream: Stream, write_stall: Duration) -> Harness {
         frames_dropped_inbound,
         media: handle.media_queue(),
         pass_gate,
+        cnonces_drawn,
         handle,
     }
 }
@@ -254,6 +269,98 @@ fn round_trip(h: &Harness, peer: &mut impl ReadWrite, rest: &mut Vec<u8>) {
 
 trait ReadWrite: Read + Write {}
 impl<T: Read + Write> ReadWrite for T {}
+
+/// The thread draws a cnonce for each Digest answer it builds: the second
+/// attempt after a `401`, and the cached challenge's answer on the next
+/// request and on every ping. It draws for nothing else: not for a request
+/// before the challenge, a reply or an inbound frame.
+#[test]
+fn a_cnonce_is_drawn_once_for_each_digest_answer() {
+    use secrecy::SecretString;
+
+    fn request(head: &[u8]) -> RtspRequest {
+        RtspRequest::parse(head).unwrap().0
+    }
+    /// The cnonce of a request's Digest answer.
+    fn cnonce(head: &[u8]) -> String {
+        let authorization = &request(head).headers["authorization"];
+        let at = authorization.find("cnonce=\"").expect("a cnonce") + 8;
+        let cnonce = &authorization[at..at + 32];
+        assert!(
+            cnonce.bytes().all(|b| b.is_ascii_hexdigit()),
+            "{authorization}"
+        );
+        cnonce.to_string()
+    }
+
+    let (stream, mut peer) = plain_pair();
+    let credentials = Credentials {
+        username: "user".to_string(),
+        password: SecretString::new("pass".into()),
+    };
+    let h = drive_engine(
+        stream,
+        engine_with(Some(credentials)),
+        CONTROL_WRITE_TIMEOUT,
+    );
+    let drawn = || h.cnonces_drawn.load(Ordering::Relaxed);
+    let mut rest = Vec::new();
+
+    // No challenge yet.
+    round_trip(&h, &mut peer, &mut rest);
+    assert_eq!(drawn(), 0);
+
+    // A `401` with a Digest challenge: one cnonce, for the second attempt.
+    let rx = h.request(options());
+    assert!(matches!(next(&rx), Progress::Written));
+    let first = read_head(&mut peer, &mut rest);
+    assert!(!request(&first).headers.contains_key("authorization"));
+    peer.write_all(
+        format!(
+            "RTSP/1.0 401 Unauthorized\r\nCSeq: {}\r\nWWW-Authenticate: Digest realm=\"R\", nonce=\"n1\", qop=\"auth\"\r\n\r\n",
+            cseq(&first)
+        )
+        .as_bytes(),
+    )
+    .unwrap();
+    let retry = read_head(&mut peer, &mut rest);
+    let retry_cnonce = cnonce(&retry);
+    assert_eq!(drawn(), 1);
+    peer.write_all(&ok_reply(cseq(&retry))).unwrap();
+    assert_eq!(done_ok(next(&rx)).status, 200);
+    assert_eq!(drawn(), 1, "nothing is drawn for a reply");
+
+    // The next request answers the cached challenge: one more, and fresh.
+    let rx = h.request(options());
+    assert!(matches!(next(&rx), Progress::Written));
+    let second = read_head(&mut peer, &mut rest);
+    assert_ne!(cnonce(&second), retry_cnonce);
+    assert_eq!(drawn(), 2);
+    // Frames ahead of the reply are read without one.
+    peer.write_all(b"$\x00\x00\x02ab$\x01\x00\x01c").unwrap();
+    peer.write_all(&ok_reply(cseq(&second))).unwrap();
+    assert_eq!(done_ok(next(&rx)).status, 200);
+    assert_eq!(drawn(), 2);
+
+    // Every ping answers it too. With the thread held, each cnonce drawn
+    // since is a ping on the wire that carries it.
+    h.handle
+        .send(Command::EnableKeepalive(Some(Duration::from_millis(20))))
+        .unwrap();
+    let mut seen = vec![cnonce(&read_head(&mut peer, &mut rest))];
+    let release = h.hold_between_passes();
+    let pings = usize::try_from(drawn() - 2).unwrap();
+    assert!(pings >= 1);
+    while seen.len() < pings {
+        let ping = read_head(&mut peer, &mut rest);
+        assert_eq!(request(&ping).method, RtspMethod::Options);
+        let c = cnonce(&ping);
+        assert!(!seen.contains(&c), "a cnonce was used twice");
+        seen.push(c);
+    }
+    drop(release);
+    h.stop_and_join();
+}
 
 #[test]
 fn a_request_gets_written_then_its_reply() {

@@ -357,6 +357,14 @@ pub enum AuthSchemes {
     DigestOnly,
 }
 
+/// Whether [`build_authorization`] answers `www_auth` with Digest, and so
+/// needs a cnonce: it does whenever the challenge offers Digest at all.
+pub(crate) fn answers_with_digest(www_auth: &str) -> bool {
+    parse_challenges(www_auth)
+        .iter()
+        .any(|c| matches!(c, AuthChallenge::Digest(_)))
+}
+
 /// Build an `Authorization:` header value for `method` at `uri` from a raw
 /// `WWW-Authenticate` challenge string and credentials. Prefers Digest over
 /// Basic when both are offered; `schemes` may forbid Basic.
@@ -370,11 +378,17 @@ pub enum AuthSchemes {
 /// across requests MUST pass a strictly increasing `nc` so a `qop=auth`
 /// server does not reject later requests as replays.
 ///
+/// `cnonce` is 16 bytes from the caller's random source, fresh for each
+/// Digest answer ([`answers_with_digest`] tells whether `www_auth` gets
+/// one); a Basic answer reads none. Nothing here draws random bytes.
+///
 /// # Errors
 ///
 /// - [`RtspError::AuthUnsupported`] if no recognized scheme is present, or
 ///   only Basic is offered and `schemes` is [`AuthSchemes::DigestOnly`].
-/// - [`RtspError::Io`] if the OS RNG fails while generating the cnonce.
+/// - [`RtspError::Io`] for a Digest answer without a `cnonce`: the
+///   caller's random source failed.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn build_authorization(
     method: RtspMethod,
     uri: &str,
@@ -383,6 +397,7 @@ pub(crate) fn build_authorization(
     password: &SecretString,
     nc: u32,
     schemes: AuthSchemes,
+    cnonce: Option<&[u8; 16]>,
 ) -> Result<String, RtspError> {
     let challenges = parse_challenges(www_auth);
     // Prefer Digest over Basic when both are offered.
@@ -410,13 +425,11 @@ pub(crate) fn build_authorization(
     Ok(match challenge {
         AuthChallenge::Basic { .. } => build_basic_response(username, password),
         AuthChallenge::Digest(d) => {
-            // Random cnonce — used only by the qop=auth path; ignored by the
-            // RFC 2617 no-qop variant gortsplib/MediaMTX send.
-            let mut cnonce_bytes = [0u8; 16];
-            getrandom::fill(&mut cnonce_bytes)
-                .map_err(|_| RtspError::Io(std::io::ErrorKind::Other))?;
+            // Used only by the qop=auth path; ignored by the RFC 2617
+            // no-qop variant gortsplib/MediaMTX send.
+            let cnonce_bytes = cnonce.ok_or(RtspError::Io(std::io::ErrorKind::Other))?;
             let mut cnonce = String::with_capacity(32);
-            for b in &cnonce_bytes {
+            for b in cnonce_bytes {
                 use std::fmt::Write as _;
                 let _ = write!(cnonce, "{b:02x}");
             }
@@ -438,7 +451,16 @@ pub(crate) fn build_authorization(
 mod scheme_policy_tests {
     use super::*;
 
-    fn authz(www: &str, schemes: AuthSchemes) -> Result<String, RtspError> {
+    const CNONCE: [u8; 16] = [
+        0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee,
+        0xff,
+    ];
+
+    fn authz_with(
+        www: &str,
+        schemes: AuthSchemes,
+        cnonce: Option<&[u8; 16]>,
+    ) -> Result<String, RtspError> {
         build_authorization(
             RtspMethod::Describe,
             "rtsp://cam/x",
@@ -447,7 +469,72 @@ mod scheme_policy_tests {
             &SecretString::new("p".into()),
             1,
             schemes,
+            cnonce,
         )
+    }
+
+    fn authz(www: &str, schemes: AuthSchemes) -> Result<String, RtspError> {
+        authz_with(www, schemes, Some(&CNONCE))
+    }
+
+    #[test]
+    fn a_digest_answer_carries_the_supplied_cnonce_in_hex() {
+        let www = r#"Digest realm="r", nonce="n", qop="auth""#;
+        let h = authz(www, AuthSchemes::Automatic).unwrap();
+        assert!(
+            h.contains(r#"cnonce="00112233445566778899aabbccddeeff""#),
+            "got {h:?}"
+        );
+        // The same bytes give the same header: nothing else is random.
+        assert_eq!(h, authz(www, AuthSchemes::Automatic).unwrap());
+        let ctx_challenge = match parse_challenges(www).remove(0) {
+            AuthChallenge::Digest(d) => d,
+            other => panic!("not a digest challenge: {other:?}"),
+        };
+        let pw = SecretString::new("p".into());
+        let by_hand = build_digest_response(&DigestContext {
+            username: "u",
+            password: &pw,
+            method: "DESCRIBE",
+            uri: "rtsp://cam/x",
+            nc: 1,
+            cnonce: "00112233445566778899aabbccddeeff",
+            challenge: &ctx_challenge,
+        });
+        assert_eq!(h, by_hand);
+    }
+
+    #[test]
+    fn a_digest_answer_without_a_cnonce_is_the_random_source_failure() {
+        for www in [
+            r#"Digest realm="r", nonce="n", qop="auth""#,
+            r#"Digest realm="r", nonce="n""#,
+            BOTH,
+        ] {
+            let err = authz_with(www, AuthSchemes::Automatic, None).unwrap_err();
+            assert!(
+                matches!(err, RtspError::Io(std::io::ErrorKind::Other)),
+                "{www}: got {err:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_basic_answer_needs_no_cnonce() {
+        let h = authz_with(BASIC, AuthSchemes::Automatic, None).unwrap();
+        assert!(h.starts_with("Basic "), "got {h:?}");
+    }
+
+    #[test]
+    fn a_challenge_is_answered_with_digest_whenever_it_offers_digest() {
+        assert!(answers_with_digest(r#"Digest realm="r", nonce="n""#));
+        assert!(answers_with_digest(BOTH));
+        assert!(answers_with_digest(
+            r#"Digest realm="r", nonce="n", Basic realm="r""#
+        ));
+        assert!(!answers_with_digest(BASIC));
+        assert!(!answers_with_digest(r#"Bearer realm="r""#));
+        assert!(!answers_with_digest(""));
     }
 
     const BASIC: &str = r#"Basic realm="r""#;

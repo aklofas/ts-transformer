@@ -18,8 +18,8 @@ use tst_core::transport::{EndReason, EndReasonHandle};
 
 use super::CONTROL_WRITE_TIMEOUT;
 use super::engine::{
-    ClientEngine, Event, MAX_ROUTES, PushPhase, ReplyOutcome, RequestSpec, RouteId, StreamEnd,
-    TxnId,
+    ClientEngine, Cnonce, Event, MAX_ROUTES, PushPhase, ReplyOutcome, RequestSpec, RouteId,
+    StreamEnd, TxnId,
 };
 use super::media_queue::{MEDIA_WATERMARK, MediaQueue, MediaWaitEnd};
 use super::stream::{ReadState, Stream};
@@ -118,6 +118,9 @@ pub(crate) struct Shared {
     /// on the first and waits on the second.
     #[cfg(test)]
     pub pass_gate: PassGate,
+    /// How many cnonces the thread has drawn from the OS.
+    #[cfg(test)]
+    pub cnonces_drawn: Arc<AtomicU64>,
 }
 
 /// Where a test puts the pair that holds the thread at the top of its loop
@@ -402,8 +405,11 @@ impl Driver {
             if self.pings_unwritten > 0 {
                 self.engine.defer_ping(now);
             }
-            self.engine
-                .handle_timeout(now, self.shared.cancel.is_cancelled());
+            let cancelled = self.shared.cancel.is_cancelled();
+            if self.engine.timeout_wants_cnonce(now, cancelled) {
+                self.hand_in_cnonce();
+            }
+            self.engine.handle_timeout(now, cancelled);
             if readable || self.read_more {
                 self.read();
             }
@@ -481,6 +487,9 @@ impl Driver {
                     // The engine forgets a replaced request: its caller
                     // sees the channel close.
                     self.caller = None;
+                    if self.engine.submit_wants_cnonce(&spec) {
+                        self.hand_in_cnonce();
+                    }
                     match self.engine.submit(spec, reply_deadline, Instant::now()) {
                         Ok(txn) => {
                             self.caller = Some(Caller {
@@ -505,6 +514,19 @@ impl Driver {
         }
     }
 
+    /// Draw the cnonce the engine has asked for and hand it in: 16 bytes
+    /// from the OS, or `None` when the random source fails, which fails
+    /// the request the answer was for. Called only when the engine asks,
+    /// so nothing is drawn for a read, a frame or a request that builds
+    /// no Digest answer.
+    fn hand_in_cnonce(&mut self) {
+        let mut bytes: Cnonce = [0; 16];
+        let drawn = getrandom::fill(&mut bytes).is_ok();
+        #[cfg(test)]
+        self.shared.cnonces_drawn.fetch_add(1, Ordering::Relaxed);
+        self.engine.handle_cnonce(drawn.then_some(bytes));
+    }
+
     fn read(&mut self) {
         self.read_more = false;
         let Some(stream) = self.stream.as_mut() else {
@@ -514,6 +536,9 @@ impl Driver {
         let r = stream.read_available(&mut self.inbuf);
         if !self.inbuf.is_empty() {
             self.engine.handle_input(&self.inbuf, Instant::now());
+            if self.engine.wants_cnonce() {
+                self.hand_in_cnonce();
+            }
         }
         match r {
             Ok(ReadState::Open) => {}
