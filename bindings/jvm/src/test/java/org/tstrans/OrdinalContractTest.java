@@ -29,6 +29,7 @@ import org.tstrans.mpegts.SubtitleCodec;
 import org.tstrans.mpegts.VideoCodec;
 import org.tstrans.rtp.H264Receiver;
 import org.tstrans.rtp.ParameterSetInjection;
+import org.tstrans.rtp.PushCloseOutcome;
 import org.tstrans.shells.OpenCancel;
 import org.tstrans.srt.ManagedSender;
 import org.tstrans.srt.OverflowPolicy;
@@ -80,7 +81,10 @@ class OrdinalContractTest {
             row(ReconnectMode.class, ReconnectMode::code, Map.of("BLOCKING", 0, "BACKGROUND", 1)),  // srt/mod.rs
             row(ParameterSetInjection.class, ParameterSetInjection::code,
                 Map.of("NONE", 0, "BEFORE_IDR", 1)),                                              // rtp/h264_receiver.rs
-            row(HlsMode.class, HlsMode::code, Map.of("LIVE", 0, "EVENT", 1, "VOD", 2)));          // hls/publisher.rs
+            row(HlsMode.class, HlsMode::code, Map.of("LIVE", 0, "EVENT", 1, "VOD", 2)),           // hls/publisher.rs
+            row(PushCloseOutcome.Kind.class, PushCloseOutcome.Kind::code,
+                Map.of("CLEAN", 0, "CANCELLED", 1, "MEDIA_LOST", 2, "TEARDOWN_REFUSED", 3,
+                    "TEARDOWN_TIMED_OUT", 4, "FAILED", 5)));                                      // rtp/push.rs (encoder)
     }
 
     /**

@@ -36,8 +36,9 @@ import org.tstrans.shells.EndReason;
  * <p><b>Thread safety.</b> The data and control calls run one at a time: a call made
  * while another is in progress on another thread waits for it. {@link #cancelHandle()},
  * {@link #isSessionAlive()}, {@link #sessionId()}, {@link #stats()},
- * {@link #endReason()} and {@link #endDetail()} answer at once from any thread, also
- * while a send is waiting; the cancel handle is the way to end a waiting send.
+ * {@link #endReason()}, {@link #endDetail()} and {@link #closeOutcome()} answer at once
+ * from any thread, also while a send is waiting; the cancel handle is the way to end a
+ * waiting send.
  * {@link #intoMuxSender} and {@link #intoSender} never wait for a send, {@code pause()}
  * or {@code resume()} running on another thread: they throw
  * {@link IllegalStateException} and consume nothing. {@link #close()} and
@@ -53,7 +54,8 @@ import org.tstrans.shells.EndReason;
  * byte for 5&nbsp;s, a keepalive ping was answered {@code 454}, or the server broke the
  * framing, a data call throws kind {@code BROKEN}. A call on a closed session throws
  * {@link IllegalStateException}, except {@link #stats()}, {@link #endReason()},
- * {@link #endDetail()} and {@link #isSessionAlive()}, which answer; a send that was
+ * {@link #endDetail()}, {@link #closeOutcome()} and {@link #isSessionAlive()}, which
+ * answer; a send that was
  * waiting for the session when a {@code close()} on another thread began throws
  * {@code RtpException(CLOSED)} and sends nothing.
  *
@@ -66,7 +68,10 @@ import org.tstrans.shells.EndReason;
  * queued media before the TEARDOWN, and so do {@code MuxSender.finish()} after
  * {@link #intoMuxSender} and {@code Sender.finish()} after {@link #intoSender}. A
  * sender's {@code close()} alone cancels first and can drop frames queued a moment
- * before.
+ * before. {@link #teardown()} reports how the TEARDOWN went; after a sender's
+ * {@code finish()} (which cannot) {@link #closeOutcome()} tells it: accepted, refused
+ * with its status, timed out, or queued media lost to a session the server had
+ * forgotten.
  *
  * <p><b>Pause.</b> After {@link #pause()} the data calls still queue and write their
  * packets; some servers end the session on a packet sent while it is paused.
@@ -97,6 +102,7 @@ public final class RtspPushSession extends NativeHandle {
     // What the reader said last before it was freed.
     private volatile RtspPushStats lastStats;
     private volatile EndReasonSnapshot lastEnd;
+    private volatile PushCloseOutcome lastOutcome;
     // Set once a conversion took the push: then this object's close() frees the reader.
     private volatile boolean converted;
 
@@ -303,6 +309,26 @@ public final class RtspPushSession extends NativeHandle {
         return Optional.ofNullable(end().detail());
     }
 
+    /**
+     * How the push's first close ended; empty while no close has run. Same rule as
+     * {@link #stats()}: it never waits and never throws, and answers after a close, a
+     * teardown and a conversion (then it follows the push the sender owns, until this
+     * object's {@code close()}).
+     *
+     * <p>The close is whichever ended the push first: this session's {@link #close()} or
+     * {@link #teardown()}, or after a conversion the sender's {@code finish()} or
+     * {@code close()}. A sender's {@code close()} fires the cancel first, so it reads
+     * {@link PushCloseOutcome.Kind#CANCELLED}; its {@code finish()} leaves the TEARDOWN's
+     * own case. A {@link #teardown()} that threw reads the same case it threw.
+     *
+     * @return the outcome, or empty
+     */
+    public Optional<PushCloseOutcome> closeOutcome() {
+        long k = statsKey.get();
+        PushCloseOutcome o = k == 0 ? null : nCloseOutcomeOf(k);
+        return Optional.ofNullable(o != null ? o : lastOutcome);
+    }
+
     private EndReasonSnapshot end() {
         long k = statsKey.get();
         EndReasonSnapshot e = k == 0 ? null : nEndOf(k);
@@ -319,6 +345,8 @@ public final class RtspPushSession extends NativeHandle {
         if (s != null) lastStats = s;
         EndReasonSnapshot e = nEndOf(k);
         if (e != null) lastEnd = e;
+        PushCloseOutcome o = nCloseOutcomeOf(k);
+        if (o != null) lastOutcome = o;
         if (statsKey.compareAndSet(k, 0)) nFreeStats(k);
     }
 
@@ -359,7 +387,8 @@ public final class RtspPushSession extends NativeHandle {
      * the media queued in the session, then sends TEARDOWN. The sender's {@code close()}
      * cancels the session first, as it does for every transport: media still queued is
      * dropped and TEARDOWN is written without that wait. Call {@code finish()} before
-     * {@code close()} for a lossless end.
+     * {@code close()} for a lossless end; it does not report the TEARDOWN's answer,
+     * {@link #closeOutcome()} on this session does.
      *
      * <p>Called while a send, {@code pause()} or {@code resume()} is running on another
      * thread (a send waiting for a slow server, for example), it does not wait: it throws
@@ -406,9 +435,8 @@ public final class RtspPushSession extends NativeHandle {
      *
      * <p>{@link org.tstrans.shells.Sender#finish()} ends it without that loss: it
      * flushes the sender, then the session writes its queue and sends TEARDOWN. Like
-     * {@code MuxSender.finish()} it cannot tell you whether the queue was written (a
-     * session that ended first drops it); to know that, send with {@link #sendTs} and
-     * call {@link #teardown()}.
+     * {@code MuxSender.finish()} it does not report the TEARDOWN's answer or a queue
+     * the server's end dropped; {@link #closeOutcome()} on this session tells both.
      *
      * <p>Called while a send, {@code pause()} or {@code resume()} is running on another
      * thread, it does not wait: it throws {@link IllegalStateException} and consumes
@@ -474,6 +502,7 @@ public final class RtspPushSession extends NativeHandle {
     private static native long nStatsKey(long handle);
     private static native RtspPushStats nStatsOf(long statsKey);
     private static native EndReasonSnapshot nEndOf(long statsKey);
+    private static native PushCloseOutcome nCloseOutcomeOf(long statsKey);
     private static native void nFreeStats(long statsKey);
     private static native String nSessionId(long handle);
     private static native boolean nIsSessionAlive(long handle);

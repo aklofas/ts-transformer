@@ -1175,6 +1175,138 @@ class RtspPushTest {
 
     // ── helpers ──────────────────────────────────────────────────────────────
 
+    // ── How the close ended ─────────────────────────────────────────────────
+
+    private static PushCloseOutcome outcome(RtspPushSession push) {
+        return push.closeOutcome().orElseThrow(() -> new AssertionError("no close outcome"));
+    }
+
+    @Test
+    @Timeout(30)
+    void closeOutcomeIsEmptyWhileOpen() throws Exception {
+        try (ScriptedRecordServer peer = new ScriptedRecordServer(200, false)) {
+            RtspPushSession push = RtspClient.push(peer.config(), PushDescription.mp2t());
+            assertEquals(Optional.empty(), push.closeOutcome());
+            push.sendTs(NULL_BUNDLE);
+            assertEquals(Optional.empty(), push.closeOutcome());
+            // A fired cancel is not a close.
+            try (RtspCancelHandle h = push.cancelHandle()) {
+                h.cancel();
+            }
+            assertEquals(Optional.empty(), push.closeOutcome());
+            push.close();
+            assertEquals(PushCloseOutcome.Kind.CANCELLED, outcome(push).kind());
+            push.close();
+            assertEquals(PushCloseOutcome.Kind.CANCELLED, outcome(push).kind(), "a second close changes nothing");
+        }
+        try (ScriptedRecordServer peer = new ScriptedRecordServer(200, false)) {
+            RtspPushSession push = RtspClient.push(peer.config(), PushDescription.mp2t());
+            push.sendTs(NULL_BUNDLE);
+            push.close();
+            PushCloseOutcome clean = outcome(push);
+            assertEquals(PushCloseOutcome.Kind.CLEAN, clean.kind());
+            assertEquals(java.util.OptionalInt.empty(), clean.status());
+            assertEquals("", clean.detail());
+        }
+    }
+
+    @Test
+    @Timeout(30)
+    void aMuxSenderFinishThenTheSessionReadsACleanClose() throws Exception {
+        try (ScriptedRecordServer peer = new ScriptedRecordServer(200, false)) {
+            RtspPushSession push = RtspClient.push(peer.config(), PushDescription.mp2t());
+            try (MuxSender tx = push.intoMuxSender(roundtripConfig())) {
+                for (int i = 0; i < 10; i++) tx.sendVideo(syntheticH264Idr(), i * 3000L, true);
+                assertEquals(Optional.empty(), push.closeOutcome());
+                tx.finish();
+                assertTrue(peer.awaitMethod("TEARDOWN"));
+                assertEquals(PushCloseOutcome.Kind.CLEAN, outcome(push).kind());
+            }
+            // The sender's close after its finish closes nothing more: the first close is kept.
+            assertEquals(PushCloseOutcome.Kind.CLEAN, outcome(push).kind());
+            push.close();
+            assertEquals(PushCloseOutcome.Kind.CLEAN, outcome(push).kind(), "kept after this object's close");
+        }
+    }
+
+    @Test
+    @Timeout(30)
+    void aRefusedTeardownIsReadWithItsStatus() throws Exception {
+        // Through a sender's finish(), which reports nothing of it.
+        try (ScriptedRecordServer peer = new ScriptedRecordServer(501, false)) {
+            RtspPushSession push = RtspClient.push(peer.config(), PushDescription.mp2t());
+            try (MuxSender tx = push.intoMuxSender(roundtripConfig())) {
+                tx.sendVideo(syntheticH264Idr(), 0L, true);
+                tx.finish();
+            }
+            PushCloseOutcome o = outcome(push);
+            assertEquals(PushCloseOutcome.Kind.TEARDOWN_REFUSED, o.kind());
+            assertEquals(java.util.OptionalInt.of(501), o.status());
+            assertEquals("Refused", o.detail());
+            push.close();
+            assertEquals(o, outcome(push));
+        }
+        // Through teardown(), which throws it: the outcome says the same.
+        try (ScriptedRecordServer peer = new ScriptedRecordServer(501, false)) {
+            RtspPushSession push = RtspClient.push(peer.config(), PushDescription.mp2t());
+            push.sendTs(NULL_BUNDLE);
+            RtspException e = assertThrows(RtspException.class, push::teardown);
+            assertEquals(RtspException.Kind.PROTOCOL, e.kind());
+            PushCloseOutcome o = outcome(push);
+            assertEquals(PushCloseOutcome.Kind.TEARDOWN_REFUSED, o.kind());
+            assertEquals(java.util.OptionalInt.of(501), o.status());
+            push.close();
+        }
+    }
+
+    @Test
+    @Timeout(30)
+    void closeOutcomeAfterIntoSenderAndFinish() throws Exception {
+        try (ScriptedRecordServer peer = new ScriptedRecordServer(200, false)) {
+            RtspPushSession push = RtspClient.push(peer.config(), PushDescription.mp2t());
+            try (Sender tx = push.intoSender()) {
+                for (int i = 0; i < 3; i++) tx.sendBytes(NULL_BUNDLE);
+                tx.finish();
+                assertEquals(PushCloseOutcome.Kind.CLEAN, outcome(push).kind());
+            }
+            assertEquals(PushCloseOutcome.Kind.CLEAN, outcome(push).kind());
+            push.close();
+            assertEquals(PushCloseOutcome.Kind.CLEAN, outcome(push).kind());
+        }
+        // A sender's close() alone cancels first: the outcome says so.
+        try (ScriptedRecordServer peer = new ScriptedRecordServer(200, false)) {
+            RtspPushSession push = RtspClient.push(peer.config(), PushDescription.mp2t());
+            try (Sender tx = push.intoSender()) {
+                tx.sendBytes(NULL_BUNDLE);
+            }
+            assertEquals(PushCloseOutcome.Kind.CANCELLED, outcome(push).kind());
+            push.close();
+            assertEquals(PushCloseOutcome.Kind.CANCELLED, outcome(push).kind());
+        }
+    }
+
+    @Test
+    @Timeout(30)
+    void closeOutcomeNeverWaitsBehindAParkedSend() throws Exception {
+        try (ScriptedRecordServer peer = new ScriptedRecordServer(200, true);
+             RtspPushSession push = RtspClient.push(peer.config(), PushDescription.mp2t())) {
+            Sending sending = Sending.start(push);
+            sending.awaitParked();
+            awaitInNative(sending.thread, "nSendTs", scaledMs(5_000));
+            AtomicReference<Optional<PushCloseOutcome>> got = new AtomicReference<>();
+            Side reading = Side.start("reading", () -> got.set(push.closeOutcome()));
+            reading.thread.join(scaledMs(2_500));
+            assertFalse(reading.thread.isAlive(), "closeOutcome() waited for the parked send");
+            reading.assertEndedNormally();
+            assertEquals(Optional.empty(), got.get());
+            assertTrue(sending.thread.isAlive(), "the send ended before the answer");
+            try (RtspCancelHandle h = push.cancelHandle()) {
+                h.cancel();
+            }
+            assertTrue(sending.join(scaledMs(5_000)), "the parked send did not end");
+        }
+    }
+
     private static void assumeLinux() {
         assumeTrue(isLinux(), "RTSP publish mounts gated to Linux (real sockets + tokio runtime)");
     }

@@ -10,26 +10,28 @@
 //! inside a call poisons the slot: every later call that takes the session throws
 //! `RtspException(CLOSED)`, and a close still ends the push.
 //!
-//! The counters and the end reason are read through the push's `PushStatsHandle`,
-//! never the slot, so they answer while a send is parked. The Java object holds the
-//! handle under a key of its own (`nStatsKey`), kept past a close or a conversion
-//! until its `close()`, so `stats()` answers after both.
+//! The counters, the end reason and the close outcome are read through the push's
+//! `PushStatsHandle`, never the slot, so they answer while a send is parked. The Java
+//! object holds the handle under a key of its own (`nStatsKey`), kept past a close or a
+//! conversion until its `close()`, so `stats()` answers after both.
 
 use crate::jutil::FindClass;
 use crate::panic::jni_native;
 use std::sync::{Arc, LazyLock};
 
-use jni::objects::{JBooleanArray, JByteArray, JIntArray, JObject, JObjectArray, JString};
+use jni::objects::{JBooleanArray, JByteArray, JIntArray, JObject, JObjectArray, JString, JValue};
 use jni::strings::JNIString;
 use jni::sys::{jboolean, jint, jlong, jobject, jobjectArray, jstring};
-use jni::{Env, jni_str};
+use jni::{Env, jni_sig, jni_str};
 
 use tst_core::mpegts::common::Pts90khz;
 use tst_core::transport::{Transport, TransportCancel, TransportError};
 use tst_pipeline::binding::parking::{ParkingSlot, Peek, SlotRefused};
 use tst_pipeline::binding::{BindingErrorKind, Domain, Opened};
 use tst_rtp::rtsp::client::RtspCancelHandle as RustRtspCancel;
-use tst_rtp::{PushDescription, PushError, PushStatsHandle, RtspPush, VideoTrack};
+use tst_rtp::{
+    PushCloseOutcome, PushDescription, PushError, PushStatsHandle, RtspPush, VideoTrack,
+};
 
 use crate::handle::HandleRegistry;
 use crate::mpegts::muxer::build_muxer_config_from_arrays;
@@ -566,6 +568,56 @@ jni_native! {
         };
         let reason = handle.end_reason();
         match build_close_snapshot(env, reason) {
+            Ok(o) => o.into_raw(),
+            Err(e) => {
+                throw_runtime_unless_pending(env, e.to_string());
+                std::ptr::null_mut()
+            }
+        }
+    }
+}
+
+/// `PushCloseOutcome.Kind.code()`, the status (-1 for none) and the detail ("" for
+/// none) of `outcome`, as the Java constructor takes them. A variant added later
+/// than this binding reads as `FAILED` with its debug text.
+fn close_outcome_parts(outcome: &PushCloseOutcome) -> (jint, jint, String) {
+    match outcome {
+        PushCloseOutcome::Clean => (0, -1, String::new()),
+        PushCloseOutcome::Cancelled => (1, -1, String::new()),
+        PushCloseOutcome::MediaLost => (2, -1, String::new()),
+        PushCloseOutcome::TeardownRefused { code, reason } => {
+            (3, jint::from(*code), reason.clone())
+        }
+        PushCloseOutcome::TeardownTimedOut => (4, -1, String::new()),
+        PushCloseOutcome::Failed { detail } => (5, -1, detail.clone()),
+        other => (5, -1, format!("{other:?}")),
+    }
+}
+
+jni_native! {
+    /// `RtspPushSession.nCloseOutcomeOf(statsKey)`: how the push's first close ended,
+    /// as an `org.tstrans.rtp.PushCloseOutcome`; null while no close has run, and for a
+    /// freed key. Read through the handle, never the slot.
+    fn Java_org_tstrans_rtp_RtspPushSession_nCloseOutcomeOf(env, _class, key: jlong) -> jobject = std::ptr::null_mut() => {
+        let Some(handle) = REGISTRY_PUSH_STATS.with(key as u64, |h| h.clone()) else {
+            return std::ptr::null_mut();
+        };
+        let Some(outcome) = handle.close_outcome() else {
+            return std::ptr::null_mut();
+        };
+        let (kind, status, detail) = close_outcome_parts(&outcome);
+        let built = env.new_string(detail).and_then(|detail| {
+            env.new_object(
+                FindClass(jni_str!("org/tstrans/rtp/PushCloseOutcome")),
+                jni_sig!("(IILjava/lang/String;)V"),
+                &[
+                    JValue::Int(kind),
+                    JValue::Int(status),
+                    JValue::Object(&detail),
+                ],
+            )
+        });
+        match built {
             Ok(o) => o.into_raw(),
             Err(e) => {
                 throw_runtime_unless_pending(env, e.to_string());
