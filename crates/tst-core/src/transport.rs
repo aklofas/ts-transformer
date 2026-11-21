@@ -411,6 +411,43 @@ pub trait Transport: Send {
         None
     }
 
+    /// A number that changes whenever the peer was heard from, and at no
+    /// other time. `None` means this transport cannot tell (the default).
+    ///
+    /// **Stability: Provisional** — see the
+    /// [API stability reference](https://github.com/aklofas/ts-transformer/blob/main/docs/reference/api-stability.md).
+    ///
+    /// Only a change matters, never the value: any change counts as the
+    /// peer having answered, a wrap through `u64::MAX` included. The number
+    /// must never return to an earlier value by itself: a gauge that reads
+    /// back and forth (for example one that reads 0 when a lock could not
+    /// be taken) counts as answers, so it would hide a silent peer.
+    ///
+    /// A transport that sometimes cannot tell returns `None` consistently,
+    /// not now and then: a reader that sees an occasional `None` keeps
+    /// asking at every send. A managed wrapper armed for silent-peer
+    /// detection over a transport that returns `None` never trips and keeps
+    /// its ordinary reconnect budget.
+    ///
+    /// Called on the send path: it must not block and must be cheap.
+    fn peer_activity(&self) -> Option<u64> {
+        None
+    }
+
+    /// Close now, because the connection is being given up while the peer
+    /// may still hold it. Data not yet sent is discarded, and the call does
+    /// not wait for the peer.
+    ///
+    /// **Stability: Provisional** — see the
+    /// [API stability reference](https://github.com/aklofas/ts-transformer/blob/main/docs/reference/api-stability.md).
+    ///
+    /// The default is [`Self::close`], which for a transport that lingers
+    /// on close may wait. A managed wrapper calls this with none of its
+    /// locks held. After it, the transport behaves as after `close`.
+    fn abandon(&mut self) {
+        self.close()
+    }
+
     /// The concrete transport, for a binding that must reach a
     /// transport-specific accessor through a type-erased shell (e.g. SRT's
     /// libsrt statistics). `None` unless the transport opts in.
@@ -734,6 +771,12 @@ impl<T: Transport + ?Sized> Transport for Box<T> {
     fn socket_stats(&self) -> Option<SocketStats> {
         (**self).socket_stats()
     }
+    fn peer_activity(&self) -> Option<u64> {
+        (**self).peer_activity()
+    }
+    fn abandon(&mut self) {
+        (**self).abandon()
+    }
     fn as_any(&self) -> Option<&dyn core::any::Any> {
         (**self).as_any()
     }
@@ -817,6 +860,90 @@ mod blanket_impl_tests {
         }
         let t: Box<dyn Transport> = Box::new(DummyTransport);
         assert!(t.socket_stats().is_none());
+    }
+
+    /// A transport that keeps every provided method's default and counts
+    /// its `close` calls.
+    struct Plain {
+        closes: u32,
+    }
+    impl Transport for Plain {
+        fn send_bytes(&mut self, _: &[u8]) -> Result<(), TransportError> {
+            Ok(())
+        }
+        fn max_payload(&self) -> usize {
+            1316
+        }
+        fn is_alive(&self) -> bool {
+            true
+        }
+        fn close(&mut self) {
+            self.closes += 1;
+        }
+    }
+
+    /// A transport that overrides both silent-peer methods and counts
+    /// `abandon` apart from `close`.
+    struct Answering {
+        closes: Arc<core::sync::atomic::AtomicU32>,
+        abandons: Arc<core::sync::atomic::AtomicU32>,
+    }
+    impl Transport for Answering {
+        fn send_bytes(&mut self, _: &[u8]) -> Result<(), TransportError> {
+            Ok(())
+        }
+        fn max_payload(&self) -> usize {
+            1316
+        }
+        fn is_alive(&self) -> bool {
+            true
+        }
+        fn close(&mut self) {
+            self.closes
+                .fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+        }
+        fn peer_activity(&self) -> Option<u64> {
+            Some(7)
+        }
+        fn abandon(&mut self) {
+            self.abandons
+                .fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+        }
+    }
+
+    #[test]
+    fn the_default_peer_activity_is_none() {
+        assert_eq!(Plain { closes: 0 }.peer_activity(), None);
+    }
+
+    #[test]
+    fn the_default_abandon_closes() {
+        let mut t = Plain { closes: 0 };
+        t.abandon();
+        assert_eq!(t.closes, 1);
+    }
+
+    #[test]
+    fn a_boxed_transport_forwards_peer_activity() {
+        let t: Box<dyn Transport> = Box::new(Answering {
+            closes: Arc::default(),
+            abandons: Arc::default(),
+        });
+        assert_eq!(t.peer_activity(), Some(7));
+    }
+
+    #[test]
+    fn a_boxed_transport_forwards_abandon() {
+        use core::sync::atomic::Ordering;
+        let closes = Arc::<core::sync::atomic::AtomicU32>::default();
+        let abandons = Arc::<core::sync::atomic::AtomicU32>::default();
+        let mut t: Box<dyn Transport> = Box::new(Answering {
+            closes: Arc::clone(&closes),
+            abandons: Arc::clone(&abandons),
+        });
+        t.abandon();
+        assert_eq!(abandons.load(Ordering::Relaxed), 1);
+        assert_eq!(closes.load(Ordering::Relaxed), 0);
     }
 }
 
