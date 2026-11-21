@@ -428,6 +428,9 @@ pub unsafe extern "C" fn tst_mux_publisher_finish_into_publisher(
 /// counters are read on their own, each at its own moment, so a record read
 /// during a send may show part of it. A record read after the sending call
 /// has returned is exact.
+/// A panic caught inside it returns `TST_E_INTERNAL` with
+/// `TST_E_PANIC_CAUGHT` in the last-error code, and leaves the publisher
+/// usable.
 ///
 /// # Safety
 ///

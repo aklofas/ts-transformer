@@ -97,6 +97,27 @@ pub unsafe extern "C" fn tst_sender_send_ts(
     })
 }
 
+/// Send any buffered partial bundle now.
+///
+/// In the default recover mode the sender holds a stream's first packets
+/// back until three consecutive sync bytes 188 bytes apart confirm them.
+/// `_flush` sends the whole packets it holds, a stream of one or two packets
+/// included, when no byte has been skipped and every packet boundary held
+/// reads the sync byte (`0x47`); once bytes were skipped it sends nothing
+/// until three consecutive sync bytes confirm the alignment again. `_close`
+/// discards what is held, so `_flush` then `_close` is the lossless end.
+///
+/// A flush is the caller's word that what was sent so far is a stream. If
+/// the first 188 to 376 bytes only look aligned (`0x47` at offset 0, and at
+/// offset 188 when more are held) and are flushed before a third boundary
+/// could refute them, they are sent although they are not packets, and when
+/// they were the head of a real stream lying off that grid every real
+/// packet that starts inside them is lost with them (one for 188 bytes, two
+/// for 376). A later send or flush can then put a further 188 bytes that are
+/// not a packet on the wire, each costing the real packet that starts inside
+/// it, until a boundary fails and the sender resyncs. A flush of such a
+/// start with fewer than 188 bytes held sends nothing.
+///
 /// After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
 /// bytes are still buffered; a call already past its send when the
 /// cancel lands may still return its result.
@@ -291,6 +312,27 @@ pub unsafe extern "C" fn tst_managed_sender_send_ts(
     })
 }
 
+/// Send any buffered partial bundle now.
+///
+/// In the default recover mode the sender holds a stream's first packets
+/// back until three consecutive sync bytes 188 bytes apart confirm them.
+/// `_flush` sends the whole packets it holds, a stream of one or two packets
+/// included, when no byte has been skipped and every packet boundary held
+/// reads the sync byte (`0x47`); once bytes were skipped it sends nothing
+/// until three consecutive sync bytes confirm the alignment again. `_close`
+/// discards what is held, so `_flush` then `_close` is the lossless end.
+///
+/// A flush is the caller's word that what was sent so far is a stream. If
+/// the first 188 to 376 bytes only look aligned (`0x47` at offset 0, and at
+/// offset 188 when more are held) and are flushed before a third boundary
+/// could refute them, they are sent although they are not packets, and when
+/// they were the head of a real stream lying off that grid every real
+/// packet that starts inside them is lost with them (one for 188 bytes, two
+/// for 376). A later send or flush can then put a further 188 bytes that are
+/// not a packet on the wire, each costing the real packet that starts inside
+/// it, until a boundary fails and the sender resyncs. A flush of such a
+/// start with fewer than 188 bytes held sends nothing.
+///
 /// After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
 /// bytes are still buffered; a call already past its send when the
 /// cancel lands may still return its result.
