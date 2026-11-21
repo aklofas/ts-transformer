@@ -9,45 +9,380 @@
 //! shells map it to `ShellErrorKind::Backpressure` and `tst-c` to
 //! `TST_E_BUFFER_FULL`.
 
-use crate::common::{ScriptedSend, broken};
+use crate::common::{ScriptedSend, SendStep, broken, wait_for};
 
-use std::sync::atomic::AtomicU32;
+use std::collections::VecDeque;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
+use tst_core::transport::TransportCancel;
 use tst_pipeline::reconnect::OverflowPolicy;
 use tst_pipeline::{
     BackoffStrategy, ManagedTransport, ReconnectMode, ReconnectPolicy, Transport, TransportError,
 };
 
-/// With `OverflowPolicy::Reject` and no room in the buffer, a send must
-/// surface `TransportError::Backpressure { msg: "gap buffer full", errno_code: None }` rather than
-/// silently dropping the new bytes.
-///
-/// Capacity 0: in `Blocking` mode a send that fails takes its message back
-/// out of the buffer, so a failed send cannot be what fills it.
+/// A capacity-0 wrapper whose initial inner breaks on its first send. The
+/// factory counts its calls, refuses the first `failing_calls` of them and
+/// then hands back inners that follow `fresh_script` (empty: every send is
+/// delivered to `wire`).
+struct ZeroRig {
+    wire: Arc<Mutex<Vec<Vec<u8>>>>,
+    factory_calls: Arc<AtomicU32>,
+    fresh_script: Arc<Mutex<VecDeque<SendStep>>>,
+}
+
+fn capacity_zero(
+    mode: ReconnectMode,
+    overflow: OverflowPolicy,
+    max_attempts: u32,
+    failing_calls: u32,
+) -> (ManagedTransport<ScriptedSend>, ZeroRig) {
+    let wire = Arc::new(Mutex::new(Vec::new()));
+    let factory_calls = Arc::new(AtomicU32::new(0));
+    let fresh_script: Arc<Mutex<VecDeque<SendStep>>> = Arc::default();
+    let initial = ScriptedSend::scripted(
+        Arc::new(Mutex::new(VecDeque::from([SendStep::Broken]))),
+        Arc::clone(&wire),
+    );
+    let factory = {
+        let wire = Arc::clone(&wire);
+        let calls = Arc::clone(&factory_calls);
+        let fresh_script = Arc::clone(&fresh_script);
+        move || -> Result<ScriptedSend, TransportError> {
+            if calls.fetch_add(1, Ordering::SeqCst) < failing_calls {
+                return Err(broken("factory down (test)"));
+            }
+            Ok(ScriptedSend::scripted(
+                Arc::clone(&fresh_script),
+                Arc::clone(&wire),
+            ))
+        }
+    };
+    let policy = ReconnectPolicy::default()
+        .with_max_attempts(Some(max_attempts))
+        .with_backoff(BackoffStrategy::Constant(Duration::from_millis(1)))
+        .with_gap_buffer_capacity(0)
+        .with_overflow_policy(overflow)
+        .with_mode(mode);
+    (
+        ManagedTransport::new(initial, factory, policy).expect("the policy validates"),
+        ZeroRig {
+            wire,
+            factory_calls,
+            fresh_script,
+        },
+    )
+}
+
+impl ZeroRig {
+    fn calls(&self) -> u32 {
+        self.factory_calls.load(Ordering::SeqCst)
+    }
+
+    fn wire(&self) -> Vec<Vec<u8>> {
+        self.wire.lock().unwrap().clone()
+    }
+}
+
+fn is_gap_full(r: &Result<(), TransportError>) -> bool {
+    matches!(r, Err(TransportError::Backpressure { msg, .. }) if msg.contains("gap buffer full"))
+}
+
+/// With `OverflowPolicy::Reject` and no room in the buffer, a `Background`
+/// send must surface `TransportError::Backpressure { msg: "gap buffer full",
+/// errno_code: None }` rather than silently dropping the new bytes. The
+/// refusal is about admission only: the broken connection is still
+/// re-dialled.
 #[test]
 fn reject_policy_surfaces_backpressure_when_gap_full() {
-    let factory =
-        || -> Result<ScriptedSend, TransportError> { Err(broken("factory always fails")) };
-    // The buffer refuses BEFORE any reconnect is attempted.
+    // One attempt, and the factory refuses it.
+    let (mut managed, rig) = capacity_zero(
+        ReconnectMode::Background,
+        OverflowPolicy::Reject,
+        1,
+        u32::MAX,
+    );
+    let stats = managed.stats_handle();
+
+    let first = managed.send_bytes(b"first");
+    assert!(
+        is_gap_full(&first),
+        "expected Backpressure(\"gap buffer full\"), got {first:?}"
+    );
+    assert!(
+        wait_for(RESCUE, || !stats.stats().unwrap().reconnecting),
+        "the worker never finished its budget"
+    );
+    assert_eq!(rig.calls(), 1, "the refused send still started a reconnect");
+    // The worker's give-up is reported once, as it is at any capacity.
+    let second = managed.send_bytes(b"second");
+    assert!(
+        matches!(second, Err(TransportError::Broken { .. })),
+        "got {second:?}"
+    );
+    assert!(rig.wire().is_empty(), "nothing was delivered");
+}
+
+/// `Blocking`, nothing can be buffered: the call that meets the break
+/// reconnects inline and puts its own message on the fresh connection, so
+/// `Ok(())` still means delivered.
+#[test]
+fn capacity_zero_reject_blocking_reconnects_and_delivers() {
+    let (mut managed, rig) = capacity_zero(ReconnectMode::Blocking, OverflowPolicy::Reject, 3, 0);
+    let stats = managed.stats_handle();
+
+    managed
+        .send_bytes(b"first")
+        .expect("delivered after the reconnect");
+    assert_eq!(rig.calls(), 1, "one reconnect");
+    assert_eq!(rig.wire(), vec![b"first".to_vec()]);
+    assert!(managed.is_alive());
+
+    managed.send_bytes(b"second").expect("a live inner: direct");
+    assert_eq!(rig.calls(), 1, "no further reconnect");
+    assert_eq!(rig.wire(), vec![b"first".to_vec(), b"second".to_vec()]);
+    let s = stats.stats().unwrap();
+    assert_eq!(
+        (s.gap_len, s.gap_messages_dropped, s.reconnect_successes),
+        (0, 0, 1)
+    );
+}
+
+/// `Blocking`, the factory refuses a whole budget: the usual give-up. The
+/// caller keeps its message, and the next call runs a fresh budget.
+#[test]
+fn capacity_zero_reject_blocking_give_up_reports_broken_and_queues_nothing() {
+    let (mut managed, rig) = capacity_zero(ReconnectMode::Blocking, OverflowPolicy::Reject, 2, 2);
+    let stats = managed.stats_handle();
+
+    let first = managed.send_bytes(b"first");
+    assert!(
+        matches!(first, Err(TransportError::Broken { ref msg, .. }) if msg.contains("gave up")),
+        "got {first:?}"
+    );
+    assert_eq!(rig.calls(), 2, "the whole budget was used");
+    assert_eq!(stats.stats().unwrap().gap_len, 0);
+    assert!(rig.wire().is_empty());
+
+    managed
+        .send_bytes(b"second")
+        .expect("a fresh budget; the factory is back");
+    assert_eq!(rig.calls(), 3);
+    assert_eq!(rig.wire(), vec![b"second".to_vec()]);
+}
+
+/// `Blocking`: what the fresh connection answers to the call's own message
+/// is what the call returns. `Backpressure` hands the message back; the
+/// identical retry is delivered once, without another reconnect.
+#[test]
+fn capacity_zero_reject_blocking_backpressure_on_the_fresh_inner_is_handed_back() {
+    let (mut managed, rig) = capacity_zero(ReconnectMode::Blocking, OverflowPolicy::Reject, 3, 0);
+    rig.fresh_script
+        .lock()
+        .unwrap()
+        .push_back(SendStep::Backpressure);
+
+    let first = managed.send_bytes(b"first");
+    assert!(
+        matches!(first, Err(TransportError::Backpressure { .. })) && !is_gap_full(&first),
+        "the fresh inner's own refusal, got {first:?}"
+    );
+    assert!(rig.wire().is_empty());
+
+    managed.send_bytes(b"first").expect("the retry");
+    assert_eq!(rig.calls(), 1);
+    assert_eq!(rig.wire(), vec![b"first".to_vec()]);
+}
+
+/// `Blocking`: a fresh connection that breaks on the call's message ends the
+/// call with `Broken` (one call, one reconnect); the next call reconnects.
+#[test]
+fn capacity_zero_reject_blocking_a_fresh_inner_that_breaks_reports_broken() {
+    let (mut managed, rig) = capacity_zero(ReconnectMode::Blocking, OverflowPolicy::Reject, 3, 0);
+    rig.fresh_script.lock().unwrap().push_back(SendStep::Broken);
+
+    let first = managed.send_bytes(b"first");
+    assert!(
+        matches!(first, Err(TransportError::Broken { .. })),
+        "got {first:?}"
+    );
+    assert_eq!(rig.calls(), 1, "one reconnect per call");
+    assert!(rig.wire().is_empty());
+
+    managed
+        .send_bytes(b"first")
+        .expect("the next call reconnects");
+    assert_eq!(rig.calls(), 2);
+    assert_eq!(rig.wire(), vec![b"first".to_vec()]);
+}
+
+/// A send transport that does whatever its closure says.
+struct Hooked(Box<dyn FnMut() -> Result<(), TransportError> + Send>);
+
+impl Transport for Hooked {
+    fn send_bytes(&mut self, _msg: &[u8]) -> Result<(), TransportError> {
+        (self.0)()
+    }
+
+    fn max_payload(&self) -> usize {
+        1316
+    }
+
+    fn is_alive(&self) -> bool {
+        true
+    }
+
+    fn close(&mut self) {}
+}
+
+/// `Blocking`, capacity 0, `Reject`: the initial inner is dead and every
+/// inner the factory builds answers its sends with `fresh_send`.
+fn capacity_zero_blocking_over(
+    fresh_send: impl Fn() -> Result<(), TransportError> + Send + Sync + 'static,
+) -> ManagedTransport<Hooked> {
+    let fresh_send = Arc::new(fresh_send);
+    let factory = move || -> Result<Hooked, TransportError> {
+        let fresh_send = Arc::clone(&fresh_send);
+        Ok(Hooked(Box::new(move || fresh_send())))
+    };
     let policy = ReconnectPolicy::default()
-        .with_max_attempts(Some(1))
-        .with_backoff(BackoffStrategy::Constant(Duration::from_millis(0)))
+        .with_max_attempts(Some(3))
+        .with_backoff(BackoffStrategy::Constant(Duration::from_millis(1)))
         .with_gap_buffer_capacity(0)
         .with_overflow_policy(OverflowPolicy::Reject);
+    let initial = Hooked(Box::new(|| Err(broken("dead (test)"))));
+    ManagedTransport::new(initial, factory, policy).expect("the policy validates")
+}
 
-    let inner = ScriptedSend::always(broken("always broken (test)"))
-        .with_counter(Arc::new(AtomicU32::new(0)));
-    let mut managed = ManagedTransport::new(inner, factory, policy).expect("the policy validates");
-
-    // The transport returns Broken and the bytes have nowhere to queue.
-    // With Reject policy they MUST surface as Backpressure rather than be
-    // silently dropped.
-    let err = managed.send_bytes(b"first").unwrap_err();
+/// `Blocking`: a fresh connection that says `Closed` is a dead connection,
+/// not the wrapper's own close.
+#[test]
+fn capacity_zero_reject_blocking_a_fresh_inner_that_answers_closed_reports_broken() {
+    let mut managed = capacity_zero_blocking_over(|| Err(TransportError::Closed));
+    let first = managed.send_bytes(b"first");
     assert!(
-        matches!(err, TransportError::Backpressure { ref msg, .. } if msg.contains("gap buffer full")),
-        "expected Backpressure(\"gap buffer full\"), got {err:?}"
+        matches!(first, Err(TransportError::Broken { .. })),
+        "got {first:?}"
     );
+    assert!(managed.is_alive(), "the wrapper is not closed");
+}
+
+/// `Blocking`: a cancel that lands while the call's message is being sent on
+/// the fresh connection makes that send fail like a dead link; the call
+/// reports the cancel.
+#[test]
+fn capacity_zero_reject_blocking_cancel_during_the_send_after_the_reconnect_reports_the_cancel() {
+    let cancel: Arc<Mutex<Option<Arc<dyn TransportCancel + Send + Sync>>>> = Arc::default();
+    let mut managed = capacity_zero_blocking_over({
+        let cancel = Arc::clone(&cancel);
+        move || {
+            cancel
+                .lock()
+                .unwrap()
+                .as_ref()
+                .expect("published before the send")
+                .cancel();
+            Err(broken("socket closed under the write (test)"))
+        }
+    });
+    *cancel.lock().unwrap() = managed.cancel_handle();
+
+    let first = managed.send_bytes(b"first");
+    assert!(
+        matches!(first, Err(TransportError::ExplicitClose)),
+        "got {first:?}"
+    );
+}
+
+/// `Blocking`: a fresh connection that was itself cancelled ends the
+/// wrapper, as a cancelled inner does on every other path.
+#[test]
+fn capacity_zero_reject_blocking_a_cancelled_fresh_inner_ends_the_wrapper() {
+    let mut managed = capacity_zero_blocking_over(|| Err(TransportError::ExplicitClose));
+    let first = managed.send_bytes(b"first");
+    assert!(
+        matches!(first, Err(TransportError::ExplicitClose)),
+        "got {first:?}"
+    );
+    assert!(!managed.is_alive(), "latched");
+    assert!(matches!(
+        managed.send_bytes(b"second"),
+        Err(TransportError::ExplicitClose)
+    ));
+}
+
+/// `Blocking`: a cancel that fires while the call waits in its reconnect is
+/// what the call reports, and the fresh connection carries nothing.
+#[test]
+fn capacity_zero_reject_blocking_cancel_during_the_reconnect_reports_the_cancel() {
+    let wire: Arc<Mutex<Vec<Vec<u8>>>> = Arc::default();
+    let cancel: Arc<Mutex<Option<Arc<dyn TransportCancel + Send + Sync>>>> = Arc::default();
+    let factory = {
+        let wire = Arc::clone(&wire);
+        let cancel = Arc::clone(&cancel);
+        move || -> Result<ScriptedSend, TransportError> {
+            // The cancel lands while the send is inside its re-dial.
+            cancel
+                .lock()
+                .unwrap()
+                .as_ref()
+                .expect("published before the send")
+                .cancel();
+            Ok(ScriptedSend::scripted(Arc::default(), Arc::clone(&wire)))
+        }
+    };
+    let policy = ReconnectPolicy::default()
+        .with_max_attempts(Some(3))
+        .with_backoff(BackoffStrategy::Constant(Duration::from_millis(1)))
+        .with_gap_buffer_capacity(0)
+        .with_overflow_policy(OverflowPolicy::Reject);
+    let initial = ScriptedSend::scripted(
+        Arc::new(Mutex::new(VecDeque::from([SendStep::Broken]))),
+        Arc::clone(&wire),
+    );
+    let mut managed =
+        ManagedTransport::new(initial, factory, policy).expect("the policy validates");
+    *cancel.lock().unwrap() = managed.cancel_handle();
+
+    let first = managed.send_bytes(b"first");
+    assert!(
+        matches!(first, Err(TransportError::ExplicitClose)),
+        "got {first:?}"
+    );
+    assert!(wire.lock().unwrap().is_empty(), "nothing was sent");
+    assert!(!managed.is_alive());
+}
+
+/// `Background`, nothing can be buffered: the send that meets the break is
+/// refused, a worker re-dials all the same, and once it is done sends go
+/// straight to the fresh connection.
+#[test]
+fn capacity_zero_reject_background_reconnects_and_a_later_send_arrives() {
+    let (mut managed, rig) = capacity_zero(ReconnectMode::Background, OverflowPolicy::Reject, 3, 0);
+    let stats = managed.stats_handle();
+
+    let first = managed.send_bytes(b"first");
+    assert!(is_gap_full(&first), "got {first:?}");
+    assert!(
+        wait_for(RESCUE, || !stats.stats().unwrap().reconnecting),
+        "the worker never left"
+    );
+    assert_eq!(rig.calls(), 1, "the worker re-dialled once");
+    assert!(managed.is_alive());
+
+    // `Backpressure`: the caller offers the same bytes again.
+    managed
+        .send_bytes(b"first")
+        .expect("direct, on the fresh inner");
+    managed.send_bytes(b"second").expect("direct");
+    assert!(
+        wait_for(RESCUE, || rig.wire().len() == 2),
+        "the later sends never arrived"
+    );
+    assert_eq!(rig.wire(), vec![b"first".to_vec(), b"second".to_vec()]);
+    let s = stats.stats().unwrap();
+    assert_eq!((s.gap_len, s.gap_messages_dropped), (0, 0));
+    assert_eq!(rig.calls(), 1);
 }
 
 /// Inner for the overflow counter-test: the initial one breaks on every

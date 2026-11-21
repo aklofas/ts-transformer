@@ -409,3 +409,58 @@ fn sender_over_blocking_managed_resplits_a_bundle_after_the_ceiling_shrinks() {
     assert_eq!((s.gap_messages_dropped, s.gap_bytes_dropped), (0, 0));
     assert_eq!(s.gap_len, 0);
 }
+
+/// The same ownership rule under `OverflowPolicy::Reject`: a give-up hands
+/// the message back and leaves the buffer empty, so the one-message buffer
+/// is not full for the call that follows.
+#[test]
+fn blocking_reject_give_up_leaves_nothing_queued() {
+    let wire = Arc::new(Mutex::new(Vec::new()));
+    let factory_calls = Arc::new(AtomicU32::new(0));
+    let initial = ScriptedSend::scripted(
+        Arc::new(Mutex::new(VecDeque::from([SendStep::Broken]))),
+        Arc::clone(&wire),
+    );
+    let factory = {
+        let wire = Arc::clone(&wire);
+        let calls = Arc::clone(&factory_calls);
+        move || -> Result<ScriptedSend, TransportError> {
+            // One whole budget (two attempts) is refused.
+            if calls.fetch_add(1, Ordering::SeqCst) < 2 {
+                return Err(broken("factory down"));
+            }
+            Ok(ScriptedSend::scripted(Arc::default(), Arc::clone(&wire)))
+        }
+    };
+    let policy = ReconnectPolicy::default()
+        .with_max_attempts(Some(2))
+        .with_backoff(BackoffStrategy::Constant(Duration::from_millis(0)))
+        .with_gap_buffer_capacity(1)
+        .with_overflow_policy(OverflowPolicy::Reject)
+        .with_mode(ReconnectMode::Blocking);
+    let mut managed =
+        ManagedTransport::new(initial, factory, policy).expect("the policy validates");
+    let stats = managed.stats_handle();
+
+    let first = managed.send_bytes(b"A");
+    assert!(
+        matches!(first, Err(TransportError::Broken { .. })),
+        "precondition: the reconnect gives up, got {first:?}"
+    );
+    assert_eq!(factory_calls.load(Ordering::SeqCst), 2);
+    assert_eq!(
+        stats.stats().expect("not poisoned").gap_len,
+        0,
+        "the message whose send failed went back to the caller"
+    );
+
+    managed
+        .send_bytes(b"B")
+        .expect("the buffer has room and the factory is back");
+    assert_eq!(
+        *wire.lock().unwrap(),
+        vec![b"B".to_vec()],
+        "B once, and no copy of A left behind to go out ahead of it"
+    );
+    assert_eq!(stats.stats().expect("not poisoned").gap_len, 0);
+}

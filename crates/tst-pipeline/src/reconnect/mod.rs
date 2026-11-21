@@ -87,9 +87,13 @@ pub struct ReconnectPolicy {
     /// transport. The next completed send brings the length back within
     /// `capacity`.
     ///
-    /// A capacity of 0 buffers nothing: under `DropOldest` every message
-    /// is dropped and counted as it arrives, and under
-    /// [`OverflowPolicy::Reject`] every message is refused.
+    /// A capacity of 0 buffers nothing, which only shows while the
+    /// connection is down (a live connection is sent to directly). Under
+    /// `DropOldest` a message that meets the outage is dropped and counted
+    /// as it arrives. Under [`OverflowPolicy::Reject`] it is never taken
+    /// over: a `Background` send is refused with `Backpressure` while the
+    /// worker reconnects, and a `Blocking` send reconnects inline and then
+    /// sends its message on the fresh connection.
     pub gap_buffer_capacity: usize,
 
     /// What to do when gap buffer is full and a new message arrives.
@@ -336,7 +340,8 @@ impl ManagedStatsHandle {
 ///   policy's `max_attempts` budget is exhausted. The gap buffer holds
 ///   that one call's message and is empty again when the call returns,
 ///   so `gap_buffer_capacity` / `overflow_policy` only matter here at
-///   capacity 0.
+///   capacity 0 (under `Reject` nothing is staged there: the call
+///   reconnects, then sends its message on the fresh connection).
 /// - **`ReconnectMode::Background`** — a per-outage worker thread owns
 ///   the factory/backoff/drain loop instead. While that worker is active,
 ///   or the gap buffer is non-empty, `send_bytes` never touches the inner
@@ -823,14 +828,30 @@ impl<T: Transport + 'static> ManagedTransport<T> {
         // `GapBufferError::Full` as
         // `TransportError::Backpressure { msg: "gap buffer full", errno_code: None }` so the caller's
         // shell maps it to `ShellErrorKind::Backpressure` (and `tst-c` to
-        // `TST_E_BUFFER_FULL`) instead of silently dropping the bytes. We
-        // also skip the reconnect attempt on this path: the buffer rejection
-        // is about local capacity, not transport liveness, and a reconnect
-        // wouldn't change the buffer state.
+        // `TST_E_BUFFER_FULL`) instead of silently dropping the bytes.
+        //
+        // The refusal is about admission only; the dead inner is replaced
+        // all the same. On this path the buffer is empty (`Blocking` empties
+        // it before every call returns; `Background` comes here only with an
+        // empty buffer and no worker), so `Full` means capacity 0, and a
+        // refusal that skipped the reconnect would meet the same dead inner
+        // on every later call. `Background`: a worker reconnects, finds
+        // nothing to drain and leaves; this call is refused. `Blocking`:
+        // nothing is staged, the call reconnects and sends its own message
+        // on the fresh inner (just below).
         //
         // `OverflowPolicy::DropOldest` continues to return `Ok(())` from
         // `enqueue` (it evicts and pushes) so this path is unchanged for
         // that policy.
+        if self.policy.mode == ReconnectMode::Blocking
+            && self.policy.gap_buffer_capacity == 0
+            && self.policy.overflow_policy == OverflowPolicy::Reject
+        {
+            // `reconnect_and_drain` checks the latch before it dials, so a
+            // cancel still outranks everything here.
+            self.reconnect_and_drain()?;
+            return self.send_after_reconnect(bytes);
+        }
         let queued = {
             // The gap-accumulator is invariant-critical. A poisoned lock
             // means a previous panic happened while modifying the buffer's
@@ -856,28 +877,29 @@ impl<T: Transport + 'static> ManagedTransport<T> {
             if self.latch.is_closed() {
                 return Err(self.latch.error());
             }
-            let queued = match gap.enqueue_tracked(bytes.to_vec()) {
-                Ok(seq) => seq,
-                Err(gap_buffer::GapBufferError::Full) => {
-                    return Err(TransportError::Backpressure {
-                        msg: "gap buffer full".into(),
-                        errno_code: None,
-                    });
-                }
-            };
+            let queued = gap.enqueue_tracked(bytes.to_vec());
             if self.policy.mode == ReconnectMode::Background {
                 // Under the gap lock (invariant 2); spawn happens after
-                // the lock drops (invariant 3).
+                // the lock drops (invariant 3). Also for a refused message:
+                // the worker is what replaces the inner.
                 self.shared
                     .bg_active
                     .store(true, std::sync::atomic::Ordering::Release);
             }
             queued
         };
+        let gap_full = || TransportError::Backpressure {
+            msg: "gap buffer full".into(),
+            errno_code: None,
+        };
         if self.policy.mode == ReconnectMode::Background {
             self.spawn_worker();
-            return Ok(());
+            return match queued {
+                Ok(_) => Ok(()),
+                Err(gap_buffer::GapBufferError::Full) => Err(gap_full()),
+            };
         }
+        let queued = queued.map_err(|gap_buffer::GapBufferError::Full| gap_full())?;
         let result = self.reconnect_and_drain();
         if let (Err(_), Some(seq)) = (&result, queued) {
             // An error hands the message back to the caller, whichever
@@ -1110,6 +1132,39 @@ impl<T: Transport + 'static> ManagedTransport<T> {
                     continue; // try again
                 }
             }
+        }
+    }
+
+    /// `Blocking` with nothing staged in the gap buffer: put the call's own
+    /// message on the inner `reconnect_and_drain` just installed and report
+    /// what that inner answers, so `Ok(())` means delivered. One call, one
+    /// reconnect: a fresh inner that breaks here is reported, and the next
+    /// call reconnects.
+    fn send_after_reconnect(&self, bytes: &[u8]) -> Result<(), TransportError> {
+        let outcome = {
+            let mut transport_guard = self.inner.lock().map_err(|_| TransportError::Broken {
+                msg: "reconnect: inner lock poisoned during the send after reconnect".into(),
+                errno_code: None,
+                cause: BrokenCause::Unspecified,
+            })?;
+            match transport_guard.as_mut() {
+                Some(transport) => transport.send_bytes(bytes),
+                None => Err(TransportError::Closed),
+            }
+        }; // `inner` released: a wake handle is never fired under it
+        match outcome {
+            Ok(()) => Ok(()),
+            Err(TransportError::ExplicitClose) => Err(self.inner_cancelled()),
+            // A failure under a latched close is that close's to report.
+            Err(_) if self.latch.is_closed() => Err(self.latch.error()),
+            // An inner's own `Closed` is a dead connection, not the
+            // wrapper's close (the drain reports it the same way).
+            Err(TransportError::Closed) => Err(TransportError::Broken {
+                msg: "transport closed right after reconnect".into(),
+                errno_code: None,
+                cause: BrokenCause::Unspecified,
+            }),
+            Err(e) => Err(e),
         }
     }
 
