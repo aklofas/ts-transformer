@@ -1509,6 +1509,62 @@ fn bind_with_refuses_a_config_that_carries_the_window() {
     assert!(err.to_string().contains(SILENT_PEER_KEY), "{err}");
 }
 
+/// A host under `.invalid` never resolves (RFC 6761): a refusal that came
+/// after the lookup would read as an address error instead.
+#[test]
+fn the_window_is_refused_before_the_address_is_resolved() {
+    let mut cfg = tst_srt::SrtSocketConfig::default();
+    cfg.silent_peer_timeout = Some(Duration::from_millis(1_500));
+    let err = tst_srt::SrtSocket::connect_with(&cfg, "no-such-host.invalid:9000")
+        .expect_err("a config with the window must be refused");
+    assert!(
+        matches!(err, tst_srt::SrtConnectError::InvalidOption(_)),
+        "{err:?}"
+    );
+
+    let mut lcfg = tst_srt::SrtListenerConfig::default();
+    lcfg.socket.silent_peer_timeout = Some(Duration::from_millis(1_500));
+    let err = tst_srt::SrtListener::bind_with(&lcfg, "no-such-host.invalid:9000")
+        .expect_err("a config with the window must be refused");
+    assert!(
+        matches!(err, tst_srt::BindError::InvalidOption(_)),
+        "{err:?}"
+    );
+}
+
+/// The low-level accept has no configuration error to report: like every
+/// other refused listener option, the window comes back as the bind's
+/// `Broken`, naming the key, and nothing is bound.
+#[test]
+fn accept_one_cancellable_refuses_the_window_as_a_bind_failure() {
+    require_loopback!();
+    let mut cfg = tst_srt::SrtListenerConfig::default();
+    cfg.socket.silent_peer_timeout = Some(Duration::from_millis(1_500));
+    let slot = Arc::new(tst_core::cancel::CancelSlot::new());
+    let (tx, rx) = mpsc::channel();
+    let worker = {
+        let slot = Arc::clone(&slot);
+        std::thread::spawn(move || {
+            let r = tst_srt::SrtListener::accept_one_cancellable(&cfg, "127.0.0.1:0", &slot);
+            let _ = tx.send(r.err());
+        })
+    };
+    let Ok(err) = rx.recv_timeout(scaled(WATCHDOG)) else {
+        // Bound and waiting for a peer: the refusal is missing.
+        slot.cancel();
+        let _ = worker.join();
+        panic!("accept_one_cancellable bound a listener for a config with the window");
+    };
+    worker.join().expect("accept thread");
+    match err {
+        Some(tst_pipeline::TransportError::Broken { ref msg, .. }) => {
+            assert!(msg.starts_with("bind: "), "{msg}");
+            assert!(msg.contains(SILENT_PEER_KEY), "{msg}");
+        }
+        other => panic!("expected the bind's Broken, got {other:?}"),
+    }
+}
+
 #[test]
 fn a_listener_url_with_the_key_is_refused_as_config_invalid() {
     require_loopback!();
