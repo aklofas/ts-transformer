@@ -2926,5 +2926,8 @@ plant "$tmp/nw-gil/bindings/python/src/rtp/push.rs" 'self.stats.close_outcome()'
 expect "never-wait getters: a getter releasing the GIL is caught" 1 env SG_ONLY_NEVER_WAIT=1 SG_NEVER_WAIT_ROOT="$tmp/nw-gil" bash "$SG"
 expect_out "never-wait getters: the GIL release is named" "FAIL: PyRtspPushSession::close_outcome"
 
+expect "getter rail: both narrowing switches at once run nothing and fail" 2 env SG_ONLY_LOCKS=1 SG_ONLY_NEVER_WAIT=1 bash "$SG"
+expect_out "getter rail: the refusal says why" "would run no check"
+
 if [[ "$fail" == 0 ]]; then echo "self-test: ALL OK"; fi
 exit "$fail"

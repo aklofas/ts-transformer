@@ -135,6 +135,11 @@ fi
 
 status=0
 
+if [ "${SG_ONLY_LOCKS:-}" = "1" ] && [ "${SG_ONLY_NEVER_WAIT:-}" = "1" ]; then
+    echo "FAIL: SG_ONLY_LOCKS=1 and SG_ONLY_NEVER_WAIT=1 together would run no check" >&2
+    exit 2
+fi
+
 # ---- check 1: constant getters inside a slot-taking closure ---------------
 if [ "${SG_ONLY_LOCKS:-}" != "1" ] && [ "${SG_ONLY_NEVER_WAIT:-}" != "1" ]; then
     # Multiline, non-greedy: from the closure's `|…|` up to the first `;`,
