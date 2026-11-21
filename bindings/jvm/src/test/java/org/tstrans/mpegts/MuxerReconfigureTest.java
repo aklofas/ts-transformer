@@ -4,7 +4,9 @@ import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.tstrans.TestSupport.demuxAll;
 import static org.tstrans.TestSupport.drain;
+import static org.tstrans.TestSupport.longH264Idr;
 
 import java.io.ByteArrayOutputStream;
 import java.nio.ByteBuffer;
@@ -23,20 +25,13 @@ import org.tstrans.MuxException;
 class MuxerReconfigureTest {
     // An IDR slice NAL long enough to span several TS packets, so a counter that
     // restarted would show as a continuity jump.
-    private static final byte[] NAL_IDR = nalIdr();
+    private static final byte[] NAL_IDR = longH264Idr();
     private static final byte[] KLV_LS = {
         0x06, 0x0e, 0x2b, 0x34, 0x02, 0x0b, 0x01, 0x01,
         0x0e, 0x01, 0x03, 0x01, 0x01, 0x00, 0x00, 0x00,
         0x03, 0x02, 0x01, 0x02,
     };
 
-    private static byte[] nalIdr() {
-        byte[] b = new byte[5 + 1024];
-        b[3] = 1;
-        b[4] = 0x65;
-        for (int i = 0; i < 1024; i++) b[5 + i] = (byte) i;
-        return b;
-    }
 
     private static MuxerConfig video(int program, int pmtPid, int videoPid, VideoCodec codec) {
         return MuxerConfig.builder().programNumber(program).pmtPid(pmtPid)
@@ -53,15 +48,6 @@ class MuxerReconfigureTest {
             .addKlv(klvPid, KlvStreamType.SYNCHRONOUS_METADATA, true).build();
     }
 
-    private static List<DemuxEvent> events(byte[] ts) throws Exception {
-        List<DemuxEvent> out = new ArrayList<>();
-        try (Demuxer d = new Demuxer()) {
-            d.feed(ts);
-            d.flush();
-            for (DemuxEvent e : d) out.add(e);
-        }
-        return out;
-    }
 
     private static byte[] pushFrames(Muxer m, VideoStreamHandle v, long firstPts, int count)
             throws MuxException {
@@ -90,7 +76,7 @@ class MuxerReconfigureTest {
             assertEquals(List.of(v), m.videoHandles());
             ts.writeBytes(pushFrames(m, v, 90_000 + 5 * 3000, 5));
 
-            List<DemuxEvent> events = events(ts.toByteArray());
+            List<DemuxEvent> events = demuxAll(ts.toByteArray());
             long jumps = events.stream().filter(e -> e instanceof DemuxEvent.Discontinuity d
                 && d.stream().pid() == 0x101).count();
             assertEquals(0, jumps);
@@ -118,7 +104,7 @@ class MuxerReconfigureTest {
             m.pushKlvTo(k, KLV_LS, 90_000, 0);
             m.pushVideoTo(v, NAL_IDR, 93_000, false);
             List<byte[]> metadata = new ArrayList<>();
-            for (DemuxEvent e : events(drain(m))) {
+            for (DemuxEvent e : demuxAll(drain(m))) {
                 if (e instanceof DemuxEvent.Metadata md && md.stream().pid() == 0x102) {
                     metadata.add(bytes(md.payload()));
                 }
@@ -157,7 +143,7 @@ class MuxerReconfigureTest {
             m.pushKlvTo(old, KLV_LS, 90_000, 0);
             m.pushVideoTo(v, NAL_IDR, 93_000, false);
             List<byte[]> metadata = new ArrayList<>();
-            for (DemuxEvent e : events(drain(m))) {
+            for (DemuxEvent e : demuxAll(drain(m))) {
                 if (e instanceof DemuxEvent.Metadata md && md.stream().pid() == 0x102) {
                     metadata.add(bytes(md.payload()));
                 }

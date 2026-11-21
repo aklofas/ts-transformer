@@ -344,6 +344,30 @@ public final class TestSupport {
             + ":" + a.getPort();
     }
 
+    /**
+     * An H.264 IDR access unit (start code, IDR slice header byte, 1&nbsp;024 counting bytes)
+     * long enough to span several TS packets, so a continuity counter that restarted shows
+     * as a jump.
+     */
+    public static byte[] longH264Idr() {
+        byte[] b = new byte[5 + 1024];
+        b[3] = 1;
+        b[4] = 0x65;
+        for (int i = 0; i < 1024; i++) b[5 + i] = (byte) i;
+        return b;
+    }
+
+    /** Every event a fresh {@link Demuxer} yields for {@code ts}, flushed at its end. */
+    public static List<DemuxEvent> demuxAll(byte[] ts) throws Exception {
+        List<DemuxEvent> out = new java.util.ArrayList<>();
+        try (Demuxer d = new Demuxer()) {
+            d.feed(ts);
+            d.flush();
+            for (DemuxEvent e : d) out.add(e);
+        }
+        return out;
+    }
+
     /** Drain every buffered TS byte from {@code m}. */
     public static byte[] drain(Muxer m) {
         ByteArrayOutputStream acc = new ByteArrayOutputStream();

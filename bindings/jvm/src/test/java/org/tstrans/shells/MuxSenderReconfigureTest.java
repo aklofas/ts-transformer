@@ -25,7 +25,6 @@ import org.tstrans.TestSupport;
 import org.tstrans.internal.GatedMuxSender;
 import org.tstrans.mpegts.Av1CarriageMode;
 import org.tstrans.mpegts.DemuxEvent;
-import org.tstrans.mpegts.Demuxer;
 import org.tstrans.mpegts.KlvStreamHandle;
 import org.tstrans.mpegts.KlvStreamType;
 import org.tstrans.mpegts.MuxerConfig;
@@ -43,20 +42,13 @@ class MuxSenderReconfigureTest {
     private static final long END_MS = TestSupport.scaledMs(10_000);
     // An IDR slice long enough to span several TS packets, so a continuity counter that
     // restarted shows as a jump.
-    private static final byte[] NAL_IDR = nalIdr();
+    private static final byte[] NAL_IDR = TestSupport.longH264Idr();
     private static final byte[] KLV_LS = {
         0x06, 0x0e, 0x2b, 0x34, 0x02, 0x0b, 0x01, 0x01,
         0x0e, 0x01, 0x03, 0x01, 0x01, 0x00, 0x00, 0x00,
         0x03, 0x02, 0x01, 0x02,
     };
 
-    private static byte[] nalIdr() {
-        byte[] b = new byte[5 + 1024];
-        b[3] = 1;
-        b[4] = 0x65;
-        for (int i = 0; i < 1024; i++) b[5 + i] = (byte) i;
-        return b;
-    }
 
     private static MuxerConfig.Builder program(int program, int pmtPid) {
         return MuxerConfig.builder().programNumber(program).pmtPid(pmtPid);
@@ -75,15 +67,6 @@ class MuxSenderReconfigureTest {
         for (int i = 0; i < count; i++) s.sendVideo(NAL_IDR, firstPts + i * 3000L, i == 0);
     }
 
-    private static List<DemuxEvent> events(byte[] ts) throws Exception {
-        List<DemuxEvent> out = new ArrayList<>();
-        try (Demuxer d = new Demuxer()) {
-            d.feed(ts);
-            d.flush();
-            for (DemuxEvent e : d) out.add(e);
-        }
-        return out;
-    }
 
     private static byte[] bytes(ByteBuffer b) {
         byte[] out = new byte[b.remaining()];
@@ -130,7 +113,7 @@ class MuxSenderReconfigureTest {
 
     /** What the survivor carries after a reconfigure: ten whole frames, no counter jump. */
     private static void assertTheSurvivorIsWhole(byte[] wire) throws Exception {
-        List<DemuxEvent> events = events(wire);
+        List<DemuxEvent> events = TestSupport.demuxAll(wire);
         assertEquals(0, discontinuities(events, 0x101), "a continuity jump on the surviving video");
         List<DemuxEvent.Video> vids = videos(events, 0x101);
         assertEquals(10, vids.size());
@@ -168,7 +151,7 @@ class MuxSenderReconfigureTest {
             s.sendKlvTo(k, KLV_LS, 96_000, 0);
             sendFrames(s, 99_000, 1);
             s.finish();
-            List<byte[]> md = metadata(events(sink.awaitEnd(END_MS)), 0x102);
+            List<byte[]> md = metadata(TestSupport.demuxAll(sink.awaitEnd(END_MS)), 0x102);
             assertEquals(2, md.size());
             for (byte[] m : md) assertArrayEquals(KLV_LS, m);
         }
@@ -372,7 +355,7 @@ class MuxSenderReconfigureTest {
             assertEquals(Optional.of(v), s.videoHandle());
             sendManagedFrames(s, 90_000 + 5 * 3000, 5);
         });
-        List<DemuxEvent> events = events(wire);
+        List<DemuxEvent> events = TestSupport.demuxAll(wire);
         int videoPid = TestSupport.roundtripConfig().streamPids()[0];
         assertEquals(0, discontinuities(events, videoPid));
         assertEquals(10, videos(events, videoPid).size());
@@ -395,7 +378,7 @@ class MuxSenderReconfigureTest {
             s.sendKlvTo(k, KLV_LS, 96_000, 0);
             sendManagedFrames(s, 99_000, 2);
         });
-        List<byte[]> md = metadata(events(wire), KLV_PID);
+        List<byte[]> md = metadata(TestSupport.demuxAll(wire), KLV_PID);
         assertEquals(2, md.size());
         for (byte[] m : md) assertArrayEquals(KLV_LS, m);
     }
