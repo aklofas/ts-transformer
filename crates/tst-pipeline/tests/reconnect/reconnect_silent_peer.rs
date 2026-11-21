@@ -32,6 +32,11 @@ enum Reading {
     Controlled(Arc<AtomicU64>),
     /// `None`: the transport cannot tell.
     CannotTell,
+    /// `None` at the first reading (it failed), this value after.
+    NoneThenFrozen(u64),
+    /// The number of sends so far, up to this many: a peer that answers
+    /// the first sends, then goes silent.
+    MovesThenFrozen(u32),
 }
 
 /// What a test sees of one scripted inner.
@@ -139,6 +144,12 @@ impl Transport for Scripted {
             Reading::MovesEverySend => Some(u64::from(self.seen.sends.load(Ordering::SeqCst))),
             Reading::Controlled(v) => Some(v.load(Ordering::SeqCst)),
             Reading::CannotTell => None,
+            Reading::NoneThenFrozen(v) => {
+                (self.seen.reads.load(Ordering::SeqCst) > 1).then_some(*v)
+            }
+            Reading::MovesThenFrozen(n) => {
+                Some(u64::from(self.seen.sends.load(Ordering::SeqCst).min(*n)))
+            }
         }
     }
 }
@@ -149,6 +160,8 @@ impl Transport for Scripted {
 #[derive(Clone, Default)]
 struct Factory {
     calls: Arc<AtomicU32>,
+    /// Calls still to refuse, before any inner is handed out.
+    failures: Arc<AtomicU32>,
     script: Arc<Mutex<VecDeque<Scripted>>>,
     made: Arc<Mutex<Vec<Arc<Seen>>>>,
 }
@@ -161,6 +174,13 @@ impl Factory {
     }
     fn make(&self) -> Result<Scripted, TransportError> {
         self.calls.fetch_add(1, Ordering::SeqCst);
+        if self
+            .failures
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1))
+            .is_ok()
+        {
+            return Err(broken("factory down (test)"));
+        }
         let inner = self
             .script
             .lock()
@@ -650,4 +670,317 @@ fn a_trip_behind_a_full_reject_backlog_restarts_the_worker() {
     }));
     m.send_bytes(&msg(n)).expect("delivered");
     assert_eq!(factory.made(1).log().last(), Some(&msg(n)));
+}
+
+// ---- the reconnect budget of an armed sender ----
+
+const MODES: [ReconnectMode; 2] = [ReconnectMode::Blocking, ReconnectMode::Background];
+
+/// An inner whose peer never answers and that breaks after four sends: a
+/// server that accepts a connection and drops it.
+fn dropping(reading: Reading) -> Scripted {
+    let (mut s, _) = Scripted::new(reading);
+    s.break_after = Some(4);
+    s
+}
+
+/// Sends numbered messages a millisecond apart until one is refused with
+/// `Broken` (the give-up: returned by the call in `Blocking`, reported by
+/// the next call in `Background`), or `done` holds. Returns the refusal.
+fn send_until_refused(
+    m: &mut ManagedTransport<Scripted>,
+    mut done: impl FnMut() -> bool,
+) -> Option<TransportError> {
+    let deadline = Instant::now() + scaled(Duration::from_secs(5));
+    let mut n = 0u32;
+    while !done() {
+        assert!(Instant::now() < deadline, "neither a give-up nor the goal");
+        if let Err(e @ TransportError::Broken { .. }) = m.send_bytes(&msg(n)) {
+            return Some(e);
+        }
+        n += 1;
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    None
+}
+
+fn is_give_up(e: &Option<TransportError>, max: u32) -> bool {
+    let expected = format!("gave up after {max} attempts");
+    matches!(e, Some(TransportError::Broken { msg, .. }) if msg.contains(&expected))
+}
+
+#[test]
+fn an_unarmed_sender_starts_every_outage_with_a_fresh_budget() {
+    for mode in MODES {
+        let factory = Factory::with((0..10).map(|_| dropping(Reading::Frozen(1))));
+        let f = factory.clone();
+        let mut m = ManagedTransport::new(
+            dropping(Reading::Frozen(1)),
+            move || f.make(),
+            policy(mode).with_max_attempts(Some(3)),
+        )
+        .expect("the policy validates");
+        let stats = m.stats_handle();
+        let refused = send_until_refused(&mut m, || {
+            stats.stats().is_some_and(|s| s.reconnect_successes == 10)
+        });
+        assert!(refused.is_none(), "{mode:?}: {refused:?}");
+    }
+}
+
+#[test]
+fn a_server_that_accepts_and_drops_every_connection_runs_out_the_budget() {
+    for mode in MODES {
+        let factory = Factory::with((0..3).map(|_| dropping(Reading::Frozen(1))));
+        // A window no outage here reaches: the connections break first.
+        let mut m = armed(
+            dropping(Reading::Frozen(1)),
+            &factory,
+            policy(mode).with_max_attempts(Some(3)),
+            Duration::from_secs(60),
+        );
+        let refused = send_until_refused(&mut m, || false);
+        assert!(is_give_up(&refused, 3), "{mode:?}: {refused:?}");
+        assert_eq!(factory.calls(), 3, "{mode:?}");
+    }
+}
+
+#[test]
+fn a_peer_that_never_answers_any_connection_runs_out_the_budget() {
+    for mode in MODES {
+        let window = Duration::from_millis(30);
+        let factory = Factory::with((0..3).map(|_| Scripted::new(Reading::Frozen(1)).0));
+        let mut m = armed(
+            Scripted::new(Reading::Frozen(1)).0,
+            &factory,
+            policy(mode).with_max_attempts(Some(3)),
+            window,
+        );
+        let refused = send_until_refused(&mut m, || false);
+        assert!(is_give_up(&refused, 3), "{mode:?}: {refused:?}");
+        assert_eq!(factory.calls(), 3, "{mode:?}");
+    }
+}
+
+#[test]
+fn an_answer_on_the_new_connection_restores_the_budget() {
+    for mode in MODES {
+        let reading = Arc::new(AtomicU64::new(0));
+        let (second, second_seen) = Scripted::new(Reading::Controlled(Arc::clone(&reading)));
+        let factory = Factory::with([second]);
+        let mut m = armed(
+            Scripted::new(Reading::Frozen(1)).0,
+            &factory,
+            policy(mode).with_max_attempts(Some(1)),
+            W,
+        );
+        let stats = m.stats_handle();
+        let installed = |n: u64| {
+            move |s: &tst_pipeline::ManagedStatsHandle| {
+                s.stats()
+                    .is_some_and(|s| s.reconnect_successes == n && !s.reconnecting)
+            }
+        };
+        // The first connection never answers: one trip, one reconnect.
+        let refused = send_until_refused(&mut m, || installed(1)(&stats));
+        assert!(refused.is_none(), "{mode:?}: {refused:?}");
+        // The second answers: its reading moves between two reads...
+        let deadline = Instant::now() + scaled(Duration::from_secs(5));
+        let mut n = 0u32;
+        while second_seen.reads.load(Ordering::SeqCst) < 2 {
+            assert!(Instant::now() < deadline, "{mode:?}: never read twice");
+            reading.fetch_add(1, Ordering::SeqCst);
+            m.send_bytes(&msg(n)).unwrap();
+            n += 1;
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        // ...then goes silent: that outage has a whole budget again.
+        let refused = send_until_refused(&mut m, || installed(2)(&stats));
+        assert!(refused.is_none(), "{mode:?}: {refused:?}");
+        assert_eq!(factory.calls(), 2, "{mode:?}");
+    }
+}
+
+#[test]
+fn a_failed_first_read_restores_the_unarmed_budget_rule() {
+    for mode in MODES {
+        let factory = Factory::with((0..6).map(|_| dropping(Reading::NoneThenFrozen(1))));
+        let mut m = armed(
+            dropping(Reading::NoneThenFrozen(1)),
+            &factory,
+            policy(mode).with_max_attempts(Some(2)),
+            Duration::from_secs(60),
+        );
+        let stats = m.stats_handle();
+        let refused = send_until_refused(&mut m, || {
+            stats.stats().is_some_and(|s| s.reconnect_successes == 6)
+        });
+        assert!(refused.is_none(), "{mode:?}: {refused:?}");
+    }
+}
+
+#[test]
+fn a_failed_redial_after_a_trip_counts_toward_the_same_budget() {
+    for mode in MODES {
+        for (max, recovers) in [(2, true), (1, false)] {
+            let factory = Factory::default();
+            factory.failures.store(1, Ordering::SeqCst);
+            let mut m = armed(
+                Scripted::new(Reading::Frozen(1)).0,
+                &factory,
+                policy(mode).with_max_attempts(Some(max)),
+                W,
+            );
+            let stats = m.stats_handle();
+            let refused = send_until_refused(&mut m, || {
+                stats.stats().is_some_and(|s| s.reconnect_successes == 1)
+            });
+            if recovers {
+                assert!(refused.is_none(), "{mode:?}, {max}: {refused:?}");
+                assert_eq!(factory.calls(), 2, "{mode:?}, {max}");
+            } else {
+                assert!(is_give_up(&refused, max), "{mode:?}, {max}: {refused:?}");
+                assert_eq!(factory.calls(), 1, "{mode:?}, {max}");
+            }
+        }
+    }
+}
+
+#[test]
+fn a_give_up_starts_the_next_outage_with_a_fresh_budget() {
+    for mode in MODES {
+        // Two connections that never answer, then one that does.
+        let factory = Factory::with([Scripted::new(Reading::Frozen(1)).0]);
+        let mut m = armed(
+            Scripted::new(Reading::Frozen(1)).0,
+            &factory,
+            policy(mode).with_max_attempts(Some(1)),
+            W,
+        );
+        let stats = m.stats_handle();
+        let refused = send_until_refused(&mut m, || false);
+        assert!(is_give_up(&refused, 1), "{mode:?}: {refused:?}");
+        assert_eq!(factory.calls(), 1, "{mode:?}");
+        // The next outage dials again, with a budget of its own.
+        let refused = send_until_refused(&mut m, || {
+            stats.stats().is_some_and(|s| s.reconnect_successes == 2)
+        });
+        assert!(refused.is_none(), "{mode:?}: {refused:?}");
+        assert_eq!(factory.calls(), 2, "{mode:?}");
+    }
+}
+
+/// A replacement that drains slowly, so a backlog queued behind it lasts
+/// many windows.
+fn slow(reading: Reading) -> Scripted {
+    let (mut s, _) = Scripted::new(reading);
+    s.pause = W / 10;
+    s
+}
+
+/// Trips the initial connection, then queues `n` messages behind the
+/// worker without waiting.
+fn trip_then_queue(m: &mut ManagedTransport<Scripted>, initial: &Seen, n: u32) {
+    let mut next = 0;
+    assert!(send_until(m, &mut next, |_| initial
+        .abandons
+        .load(Ordering::SeqCst)
+        == 1));
+    for _ in 0..n {
+        m.send_bytes(&msg(next)).expect("queued");
+        next += 1;
+    }
+}
+
+#[test]
+fn a_drain_that_trips_on_every_replacement_runs_out_the_budget() {
+    let (initial, initial_seen) = Scripted::new(Reading::Frozen(1));
+    let factory = Factory::with((0..3).map(|_| slow(Reading::Frozen(1))));
+    let mut m = armed(
+        initial,
+        &factory,
+        policy(ReconnectMode::Background).with_max_attempts(Some(3)),
+        W,
+    );
+    let stats = m.stats_handle();
+    trip_then_queue(&mut m, &initial_seen, 100);
+    assert!(
+        wait_for(scaled(Duration::from_secs(5)), || stats
+            .stats()
+            .is_some_and(|s| !s.reconnecting)),
+        "the worker never ended"
+    );
+    let refused = m.send_bytes(&msg(u32::MAX)).err();
+    assert!(is_give_up(&refused, 3), "{refused:?}");
+    assert_eq!(factory.calls(), 3);
+}
+
+#[test]
+fn a_drain_into_connections_that_drop_runs_out_the_budget() {
+    let (mut initial, initial_seen) = Scripted::new(Reading::Frozen(1));
+    initial.break_after = Some(0);
+    let factory = Factory::with((0..3).map(|_| {
+        let mut s = slow(Reading::Frozen(1));
+        s.break_after = Some(4);
+        s
+    }));
+    let mut m = armed(
+        initial,
+        &factory,
+        policy(ReconnectMode::Background).with_max_attempts(Some(3)),
+        Duration::from_secs(60),
+    );
+    let stats = m.stats_handle();
+    // The broken initial connection starts the worker; the backlog behind
+    // it outlasts every replacement.
+    for n in 0..100 {
+        m.send_bytes(&msg(n)).expect("queued");
+    }
+    assert_eq!(initial_seen.sends.load(Ordering::SeqCst), 0);
+    assert!(
+        wait_for(scaled(Duration::from_secs(5)), || stats
+            .stats()
+            .is_some_and(|s| !s.reconnecting)),
+        "the worker never ended"
+    );
+    let refused = m.send_bytes(&msg(u32::MAX)).err();
+    assert!(is_give_up(&refused, 3), "{refused:?}");
+    assert_eq!(factory.calls(), 3);
+}
+
+#[test]
+fn an_answer_inside_the_drain_restores_the_budget() {
+    // A replacement that answers its first drained messages, then breaks
+    // inside the drain; and one that answers, then goes silent there.
+    let breaks = {
+        let mut s = slow(Reading::MovesEverySend);
+        s.break_after = Some(5);
+        s
+    };
+    let falls_silent = slow(Reading::MovesThenFrozen(3));
+    for (what, replacement) in [("breaks", breaks), ("falls silent", falls_silent)] {
+        let (initial, initial_seen) = Scripted::new(Reading::Frozen(1));
+        let factory = Factory::with([replacement]);
+        let mut m = armed(
+            initial,
+            &factory,
+            policy(ReconnectMode::Background).with_max_attempts(Some(1)),
+            W,
+        );
+        let stats = m.stats_handle();
+        trip_then_queue(&mut m, &initial_seen, 50);
+        assert!(
+            wait_for(scaled(Duration::from_secs(5)), || stats
+                .stats()
+                .is_some_and(|s| s.reconnect_successes == 2
+                    && !s.reconnecting
+                    && s.gap_len == 0)),
+            "{what}: the outage after an answer had no budget left"
+        );
+        assert!(
+            factory.made(0).sends.load(Ordering::SeqCst) < 50,
+            "{what}: it ended inside the drain"
+        );
+        m.send_bytes(&msg(u32::MAX)).expect("delivered");
+    }
 }
