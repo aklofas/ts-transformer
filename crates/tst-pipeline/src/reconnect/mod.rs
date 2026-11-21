@@ -661,6 +661,14 @@ impl<T: Transport + 'static> ManagedTransport<T> {
                 // max_attempts: None policy can still abnormally give up
                 // (a panic ignores the budget entirely), so this must not
                 // default to the budget-phrased message.
+                #[cfg(test)]
+                cancel_window::run();
+                // A cancel that landed since the entry gate is what this
+                // call reports; the give-up was already consumed, and the
+                // next call reports the cancel as well.
+                if self.latch.is_closed() {
+                    return Err(self.latch.error());
+                }
                 let abnormal = self
                     .shared
                     .gave_up_abnormal
@@ -766,7 +774,7 @@ impl<T: Transport + 'static> ManagedTransport<T> {
                 }
                 if refused {
                     #[cfg(test)]
-                    before_refusal::run();
+                    cancel_window::run();
                     // A cancel that landed since the check under the gap lock
                     // is what this refused call reports.
                     if self.latch.is_closed() {
@@ -929,7 +937,7 @@ impl<T: Transport + 'static> ManagedTransport<T> {
                 Ok(_) => Ok(()),
                 Err(gap_buffer::GapBufferError::Full) => {
                     #[cfg(test)]
-                    before_refusal::run();
+                    cancel_window::run();
                     // As for the refusal under the gap lock above: a cancel
                     // that landed since the check is reported by this call.
                     if self.latch.is_closed() {
@@ -1439,11 +1447,12 @@ mod before_gap_lock {
     }
 }
 
-/// Test-only checkpoint at the two places a `Background` send is refused by a
-/// full `Reject` buffer, just before it reports `Backpressure`: where a cancel
-/// can land after the gap-locked check. Per thread and one-shot.
+/// Test-only checkpoint at the places a `Background` send is about to report
+/// a refusal or a give-up (`Backpressure`, the worker's `Broken`) after the
+/// checks that precede it: where a cancel can land late. Per thread and
+/// one-shot.
 #[cfg(test)]
-mod before_refusal {
+mod cancel_window {
     use std::cell::RefCell;
 
     thread_local! {
@@ -2039,7 +2048,7 @@ mod cancel_tests {
         let mut managed = background_in_outage(1, OverflowPolicy::Reject);
         let stats = managed.stats_handle();
         let cancel = managed.cancel_handle().expect("managed has a handle");
-        before_refusal::arm(move || cancel.cancel());
+        cancel_window::arm(move || cancel.cancel());
 
         let result = managed.send_bytes(b"late");
 
@@ -2070,13 +2079,57 @@ mod cancel_tests {
             ManagedTransport::new(BrokenT, factory, policy).expect("the policy validates");
         let stats = managed.stats_handle();
         let cancel = managed.cancel_handle().expect("managed has a handle");
-        before_refusal::arm(move || cancel.cancel());
+        cancel_window::arm(move || cancel.cancel());
 
         let result = managed.send_bytes(b"late");
 
         assert_eq!(result, Err(TransportError::ExplicitClose));
         let s = stats.stats().expect("no poison");
         assert_eq!((s.gap_len, s.gap_messages_dropped), (0, 0));
+    }
+
+    /// A send that finds the worker's give-up reports a cancel that landed
+    /// since the entry gate, not the give-up. Its message is not queued.
+    #[test]
+    fn background_cancel_before_the_give_up_report_is_the_cancel() {
+        let factory = || -> Result<BrokenT, TransportError> {
+            Err(TransportError::Broken {
+                msg: "factory down".into(),
+                errno_code: None,
+                cause: BrokenCause::Unspecified,
+            })
+        };
+        let policy = ReconnectPolicy {
+            max_attempts: Some(1),
+            backoff: BackoffStrategy::Constant(std::time::Duration::ZERO),
+            gap_buffer_capacity: 4,
+            overflow_policy: OverflowPolicy::Reject,
+            mode: ReconnectMode::Background,
+        };
+        let mut managed =
+            ManagedTransport::new(BrokenT, factory, policy).expect("the policy validates");
+        managed
+            .send_bytes(b"queued")
+            .expect("the break is accepted into the gap buffer");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while !managed.shared.gave_up.load(Ordering::Acquire) {
+            assert!(std::time::Instant::now() < deadline, "the worker gave up");
+            std::thread::yield_now();
+        }
+        let stats = managed.stats_handle();
+        let cancel = managed.cancel_handle().expect("managed has a handle");
+        cancel_window::arm(move || cancel.cancel());
+
+        let result = managed.send_bytes(b"late");
+
+        assert_eq!(result, Err(TransportError::ExplicitClose));
+        let s = stats.stats().expect("no poison");
+        assert_eq!((s.gap_len, s.gap_messages_dropped), (1, 0));
+        assert_eq!(
+            managed.send_bytes(b"next"),
+            Err(TransportError::ExplicitClose),
+            "the next call reports the cancel too"
+        );
     }
 
     /// The wrapper's own `close()` in that window is reported as `Closed`.
