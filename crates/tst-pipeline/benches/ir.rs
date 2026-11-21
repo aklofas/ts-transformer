@@ -1,4 +1,5 @@
-//! Fixed-iteration workloads of the receive shells for instruction counting.
+//! Fixed-iteration workloads of the receive shells and the managed send for
+//! instruction counting.
 //!
 //! The twin of `crates/tst-core/benches/ir.rs`, with the same command line:
 //! `scripts/dev/bench-ir.sh` builds this file against two commits, runs every
@@ -18,17 +19,39 @@
 use std::hint::black_box;
 use tst_core::mpegts::common::Pts90khz;
 use tst_core::mpegts::mux::{Muxer, MuxerConfig};
-use tst_core::transport::{RecvTransport, TransportError};
-use tst_pipeline::{DemuxReceiver, Receiver, ReceiverConfig};
+use tst_core::transport::{RecvTransport, Transport, TransportError};
+use tst_pipeline::{DemuxReceiver, ManagedTransport, Receiver, ReceiverConfig, ReconnectPolicy};
 
-/// Workload names with the iteration count the script uses. One iteration is
-/// a whole stream through a fresh shell, its end included; the counts keep a
+/// Workload names with the iteration count the script uses. One iteration of
+/// a receive workload is a whole stream through a fresh shell, its end
+/// included; one of `managed_send_direct` is one send. The counts keep a
 /// callgrind run to a few seconds.
 const WORKLOADS: &[(&str, usize)] = &[
     ("receiver_next_packet", 2_000),
     ("demux_receiver_recv_event", 300),
     ("demux_receiver_recv_event_single_packet_reads", 300),
+    ("managed_send_direct", 100_000),
 ];
+
+/// Accepts every send: what remains is the managed wrapper's own cost.
+struct Sink;
+
+impl Transport for Sink {
+    fn send_bytes(&mut self, msg: &[u8]) -> Result<(), TransportError> {
+        black_box(msg);
+        Ok(())
+    }
+
+    fn max_payload(&self) -> usize {
+        1316
+    }
+
+    fn is_alive(&self) -> bool {
+        true
+    }
+
+    fn close(&mut self) {}
+}
 
 /// Serves one stream in reads of a fixed size, then reports a clean end.
 struct Stream {
@@ -111,6 +134,14 @@ fn run(workload: &str, iters: usize, stream_file: Option<&str>) {
         }
         "demux_receiver_recv_event" => demux(1316),
         "demux_receiver_recv_event_single_packet_reads" => demux(188),
+        "managed_send_direct" => {
+            let mut tx = ManagedTransport::new(Sink, || Ok(Sink), ReconnectPolicy::default())
+                .expect("the default policy validates");
+            let msg = [0x47u8; 1316];
+            for _ in 0..iters {
+                tx.send_bytes(black_box(&msg)).expect("the sink accepts");
+            }
+        }
         other => {
             eprintln!("ir: unknown workload {other}");
             std::process::exit(2);
