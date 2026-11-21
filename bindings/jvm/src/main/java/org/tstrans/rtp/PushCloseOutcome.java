@@ -83,8 +83,8 @@ public final class PushCloseOutcome {
 
     /**
      * The server's reason phrase of a refused TEARDOWN, or the error's text of a
-     * {@link Kind#FAILED} close; empty for every other kind. At most 256 characters, each
-     * control character replaced by U+FFFD; the server chooses a reason phrase.
+     * {@link Kind#FAILED} close; empty for every other kind. At most 256 code points,
+     * each control character replaced by U+FFFD; the server chooses a reason phrase.
      *
      * @return the text, never {@code null}
      */

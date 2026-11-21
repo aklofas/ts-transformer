@@ -12,11 +12,12 @@ import org.tstrans.mpegts.DemuxerStats;
  * {@code tst_pipeline::ext::pairing::PairingDemuxer}. Single-threaded — the
  * consumer owns concurrency (the {@code org.tstrans.mpegts.Demuxer} contract).
  *
- * <p>A signalled discontinuity in the bytes (a set {@code discontinuity_indicator}
- * on the video PID, the KLV PID, or the program's PCR PID when it also carries a
- * stream) starts a new time base: nothing pairs across it, so the samples around it
- * leave as {@code UnpairedVideo} / {@code UnpairedKlv}. A restart of the source that
- * signals nothing, a reconnect of the byte source included, is not seen here.
+ * <p>A signalled discontinuity in the bytes (a set {@code discontinuity_indicator} on
+ * the video PID, the KLV PID, or the program's PCR PID when it also carries a stream)
+ * starts a new time base, and nothing pairs across it: the KLV samples held from
+ * before it leave as {@code UnpairedKlv}, and a sample right after it that still
+ * carries the old clock leaves unpaired. A restart of the source that signals
+ * nothing, a reconnect of the byte source included, is not seen here.
  *
  * <pre>{@code
  * try (Pairer p = new Pairer(0x101, 0x102)) {

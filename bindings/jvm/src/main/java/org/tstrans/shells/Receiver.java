@@ -40,17 +40,20 @@ import org.tstrans.srt.SrtStats;
 
  * <p><b>The start and the end of a stream:</b> the receiver hands out its first
  * packet once it has found four sync bytes ({@code 0x47}) 188 bytes apart, and again
- * after it lost the alignment. When the transport ends (the peer's end of stream or
- * a broken transport) the one to three packets still waiting for that confirmation
- * are delivered first and the end after them, when every packet boundary present
- * reads {@code 0x47}, the first byte of a trailing partial packet included (that
- * partial packet's own bytes are dropped). So a stream of one, two or three packets
- * arrives. One boundary that fails refuses the whole tail, a single trailing byte
- * that is not {@code 0x47} included, and a single packet right behind damage is lost
- * when a {@code 0x47} lies in the 187 bytes before it. This is weaker evidence than
- * four sync bytes: bytes that are not TS can be handed out as a packet at an end. A
- * {@code BACKPRESSURE} tick is not an end, and after a cancel nothing held is handed
- * out.
+ * after it lost the alignment. When the transport ends (the peer's end of stream, a
+ * broken transport or a managed receiver's give-up) the one to three packets still
+ * waiting for that confirmation are delivered first and the end after them, when
+ * every packet boundary present reads {@code 0x47}, the first byte of a trailing
+ * partial packet included (that partial packet's own bytes are dropped). So a stream
+ * of one, two or three packets arrives. One boundary that fails refuses the whole
+ * tail, a single trailing byte that is not {@code 0x47} included, and a single packet
+ * right behind damage is lost when a {@code 0x47} lies in the 187 bytes before it.
+ * This is weaker evidence than four sync bytes: bytes that are not TS can be handed
+ * out as a packet at an end. A cancel, or {@link #close()} from another thread, ends
+ * the stream too: the call it interrupts may still return the first of those packets,
+ * and every later call throws {@code CLOSED} (after {@code close()},
+ * {@code IllegalStateException}), so the rest are lost. A {@code BACKPRESSURE} tick
+ * is not an end.
  *
  * <p>Mirrors {@code tstrans.shells.Receiver} in tst-py.
  */

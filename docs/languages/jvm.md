@@ -1037,9 +1037,11 @@ been skipped and no packet boundary has failed, the whole packets held go out
 when every boundary present reads `0x47`. That is the caller's word that the
 bytes are a stream: a `flush()` while the first 188 to 376 bytes only look
 aligned (a `0x47` that is not a packet start, real packets off that 188-byte
-grid) sends 188 or 376 bytes that are not packets and loses the real packet
-they cover, which the sender would otherwise have found; it takes a flush or
-the end inside the first 376 bytes, and about one random start in 256.
+grid) sends 188 or 376 bytes that are not packets and loses the real packets
+that start inside them (one for 188 bytes, two for 376, and one more for each
+further 188 non-packet bytes sent before the sender finds the real grid),
+which the sender would otherwise have found; it takes a flush or the end
+inside the first 376 bytes, and about one random start in 256.
 `close()` cancels first and sends nothing the sender holds.
 
 ### RecvTransport hello
@@ -1848,16 +1850,21 @@ whatever datagram size the publisher sends. `Receiver.recvBytes(int)` and
 `srt.ManagedReceiver.recvBytes(int)` ignore their argument: they are
 deprecated and removed in 0.12.0.
 
-A receiving shell returns its first packet once it has found four sync
-bytes 188 bytes apart (the starts of four aligned TS packets), and again
-after it lost the alignment. When the stream ends (the peer's end of stream or a broken transport) the
-one to three packets still waiting are delivered before the end, when every
-packet boundary present reads `0x47`, the first byte of a trailing partial
-packet included: a stream of one, two or three packets arrives (a
-`DemuxReceiver` yields their events, then `null`). One failing boundary, a
-single trailing byte that is not `0x47` included, refuses the whole tail,
-and a single packet right behind damage is lost when a `0x47` lies in the
-187 bytes before it. A `udp://` receive blocks until a packet is ready or the
+A receiving shell returns its first packet once it has found four sync bytes
+188 bytes apart (the starts of four aligned TS packets), and again after it
+lost the alignment. When the stream ends (the peer's end of stream, a broken
+transport or a managed receiver's give-up) the one to three packets still
+waiting are delivered before the end, when every packet boundary present
+reads `0x47`, the first byte of a trailing partial packet included: a stream
+of one, two or three packets arrives (a `DemuxReceiver` yields their events,
+then `null`). One failing boundary, a single trailing byte that is not
+`0x47` included, refuses the whole tail, and a single packet right behind
+damage is lost when a `0x47` lies in the 187 bytes before it. A cancel, or
+`close()` from another thread, ends the stream too: the call it interrupts
+may still return the first of those packets (`DemuxReceiver`: the first
+event they yield), and every later call throws `CLOSED` (after `close()`,
+`IllegalStateException`), so the rest are lost.
+A `udp://` receive blocks until a packet is ready or the
 shell is cancelled or closed. A `rist://` receive throws
 `RistException(BACKPRESSURE)` about every 100 ms while nothing arrives; the
 receiver stays open, so call it again:
@@ -2933,7 +2940,7 @@ The surface:
   run: `kind()` (`CLEAN`, `CANCELLED`, `MEDIA_LOST`, `TEARDOWN_REFUSED`,
   `TEARDOWN_TIMED_OUT`, `FAILED`), `status()` (an `OptionalInt`: the status
   code of a refused TEARDOWN) and `detail()` (the server's reason phrase of
-  a refused TEARDOWN or a failure's text, at most 256 characters with each
+  a refused TEARDOWN or a failure's text, at most 256 code points with each
   control character replaced; empty otherwise). A `MuxSender` or `Sender`
   that owns the push closes it in its `finish()` (the TEARDOWN's own case)
   or its `close()` (`CANCELLED`: it fires the cancel first).

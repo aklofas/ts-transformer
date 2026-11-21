@@ -121,19 +121,19 @@ public class Sender extends NativeHandle {
      * reports what is then held back.
      *
      * <p>A flush is your word that what was sent so far is a stream, and it costs
-     * something when that is wrong. If the first 188 to 376 bytes only look
-     * aligned ({@code 0x47} at offset 0, and at offset 188 when more than 188 bytes
-     * are held) and are flushed before a third boundary could refute them, those
-     * 188 or 376 bytes are sent although they are not packets. When they were the
-     * head of a real stream that lies off that 188-byte grid (a stream joined
-     * mid-packet whose first byte happens to read {@code 0x47}), the real packet
-     * they cover is lost with them; without the flush the sender finds the real
-     * grid and sends it. The sender is then in step with the first byte's grid, so
-     * a later {@code sendBytes} or {@code flush} can send one more 188 bytes that
-     * are not a packet before a boundary fails and it finds the alignment again.
-     * It takes a flush (or the end of the stream) inside the first 376 bytes, a
-     * flush with fewer than 188 bytes held sends nothing, and for random bytes it
-     * happens to about one start in 256.
+     * something when that is wrong. If the first 188 to 376 bytes only look aligned
+     * ({@code 0x47} at offset 0, and at offset 188 when more than 188 bytes are held) and
+     * are flushed before a third boundary could refute them, those 188 or 376 bytes are
+     * sent although they are not packets, and when they were the head of a real stream
+     * off that grid (a stream joined mid-packet whose first byte happens to read
+     * {@code 0x47}), the real packets that start inside them are lost with them: one for
+     * 188 bytes, two for 376; without the flush the sender finds the real grid and sends
+     * them. The sender is then in step with the first byte's grid, so a later
+     * {@code sendBytes} or {@code flush} can send 188 more bytes that are not a packet
+     * before a boundary fails, and that costs the real packet that starts inside them
+     * too. It takes a flush (or the end of the stream) inside the first 376 bytes, a
+     * flush with fewer than 188 bytes held sends nothing, and for random bytes it happens
+     * to about one start in 256.
      *
      * <p>After {@code cancelHandle().cancel()} this throws the transport's
      * {@code CLOSED}, buffered data included.
