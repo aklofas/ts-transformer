@@ -1691,3 +1691,47 @@ fn the_managed_sender_open_accepts_the_key() {
     assert_eq!(accept.join(), b"sent by a sender opened with the key");
     tx.close();
 }
+
+/// The Rust twin of each binding's test of the key: what a C, Python or JVM
+/// user opens goes through these same functions, and this runs on every
+/// platform a pull request builds.
+#[test]
+fn a_managed_sender_open_accepts_the_key_and_a_receiver_refuses_it() {
+    require_loopback!();
+    let lb = crate::common::Loopback::bind();
+    let port = lb.port;
+    let accept = lb.spawn_accept(|mut sock| {
+        let mut buf = [0u8; 1500];
+        let n = sock.recv(&mut buf).expect("recv");
+        buf[..n].to_vec()
+    });
+    accept.wait_ready();
+    let url =
+        SrtUrl::parse(&format!("srt://127.0.0.1:{port}?{SILENT_PEER_KEY}=1000")).expect("parse");
+    let (mut tx, _handles, stats) = managed_raw_sender_from_url(
+        &url,
+        ReconnectPolicy::default(),
+        tst_pipeline::RawSenderConfig::default(),
+    )
+    .expect("a managed sender opens with the key at its floor");
+    tx.send(b"armed").expect("send");
+    assert_eq!(accept.join(), b"armed");
+    assert_eq!(stats.stats().expect("no poison").reconnect_attempts, 0);
+    tx.close();
+
+    let below = SrtUrl::parse(&format!("srt://127.0.0.1:{port}?{SILENT_PEER_KEY}=999"))
+        .expect_err("a value under the floor is refused");
+    let below = tst_pipeline::binding::BindingError::from(below);
+    assert_eq!(below.kind, BindingErrorKind::ConfigInvalid, "{below:?}");
+    assert!(below.detail.contains(SILENT_PEER_KEY), "{below:?}");
+
+    let (_dead, dead) = dead_port();
+    let receiver = SrtUrl::parse(&format!(
+        "srt://127.0.0.1:{dead}?conntimeo=500&{SILENT_PEER_KEY}=1000"
+    ))
+    .expect("parse");
+    let refused = managed_receiver_from_url(&receiver, no_reconnect())
+        .expect_err("a managed receiver refuses the key");
+    let refused = tst_pipeline::binding::BindingError::from(refused);
+    assert_eq!(refused.kind, BindingErrorKind::ConfigInvalid, "{refused:?}");
+}
