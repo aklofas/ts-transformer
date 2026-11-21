@@ -98,7 +98,7 @@ pub use types::{KlvSample, PairerConfig, PairerMode, PairerOutput, PairerStats, 
 
 use std::time::Duration;
 use tst_core::mpegts::common::Pts90khz;
-use tst_core::mpegts::demux::{DemuxEvent, SamplePayload};
+use tst_core::mpegts::demux::{DemuxEvent, DiscontinuityKind, SamplePayload};
 
 /// Convert a `Duration` to MPEG-TS 90 kHz PTS ticks. Saturating —
 /// inputs larger than `i64::MAX / 90_000` seconds clamp to `i64::MAX`.
@@ -175,6 +175,170 @@ pub(super) fn classify(event: DemuxEvent, video_pid: u16, klv_pid: u16) -> Event
 /// the result clamps to `i64::MAX` rather than panicking or wrapping.
 pub(super) fn pts_distance(a: Pts90khz, b: Pts90khz) -> i64 {
     a.as_ticks().saturating_sub(b.as_ticks()).saturating_abs()
+}
+
+/// How near the newest pre-flag PTS the first KLV or video PES after a
+/// signalled discontinuity must be to count as the old-clock PES in flight: two
+/// seconds, past the sample interval of a 1 Hz KLV feed plus its jitter.
+const OLD_CLOCK_WINDOW: i64 = 2 * 90_000;
+
+/// Whether the next KLV sample may be the old-clock PES in flight.
+#[derive(Clone, Copy)]
+enum InFlight {
+    /// Nothing old can be in flight.
+    No,
+    /// A discontinuity was signalled; holds the newest KLV and video PTS
+    /// before it (at least one is `Some`).
+    Suspect {
+        klv: Option<Pts90khz>,
+        video: Option<Pts90khz>,
+    },
+    /// The old-clock PES was found; its further cells share this PTS.
+    Old(Pts90khz),
+}
+
+/// The epoch state both pairing strategies keep: which off-route events
+/// start a new time base, and which samples after one still carry the old.
+///
+/// An epoch boundary is `ReconnectDiscontinuity`, or
+/// `Discontinuity { kind: AdaptationFieldFlag }` on the video PID, the KLV PID
+/// or the PCR PID of the program carrying the video (learned from its
+/// `ProgramMap`). The strategy empties its history there, ahead of the
+/// passed-through event. A flag on any other PID, and a silent restart, are
+/// invisible: the caller flushes. The PCR PID counts only when that PID also
+/// carries an elementary stream; a PID that carries only PCR produces no
+/// demuxer event, so the caller flushes at such a restart.
+///
+/// A signalled discontinuity does not end the PES in flight on the KLV or
+/// video PID: it completes after the flag, on the old clock its header was
+/// coded on (H.222.0 §2.4.3.5), whichever PID carried the flag. Only one PES
+/// is in flight per PID, so only the first KLV sample and the first video
+/// sample completing after the flag can be old. A KLV sample is taken as old
+/// when its PTS lies within [`OLD_CLOCK_WINDOW`] of the newest KLV PTS or the
+/// newest video PTS before the flag (the video reference covers KLV sent
+/// rarely or on change, and a flag before any KLV); a video sample, within
+/// [`OLD_CLOCK_WINDOW`] of the newest video PTS. The strategy lets each leave
+/// as `UnpairedKlv` or `UnpairedVideo`, and a KLV one does not enter the
+/// history. A new clock that lands within the window of the old one loses its
+/// first KLV sample and its first video frame the same way.
+pub(super) struct EpochTracker {
+    video_pid: u16,
+    klv_pid: u16,
+    /// PCR PID of the program carrying `video_pid`, once its program map has
+    /// passed. Kept when a later map drops the video PID. A flag there resets
+    /// the time base both paired PIDs run on.
+    pcr_pid: Option<u16>,
+    /// PTS of the newest KLV sample since the last reconnect.
+    last_klv_pts: Option<Pts90khz>,
+    /// PTS of the newest video sample since the last reconnect.
+    last_video_pts: Option<Pts90khz>,
+    in_flight: InFlight,
+    /// The newest video PTS before a signalled discontinuity, until the first
+    /// video after it is judged against it.
+    video_in_flight: Option<Pts90khz>,
+}
+
+impl EpochTracker {
+    pub(super) fn new(video_pid: u16, klv_pid: u16) -> Self {
+        Self {
+            video_pid,
+            klv_pid,
+            pcr_pid: None,
+            last_klv_pts: None,
+            last_video_pts: None,
+            in_flight: InFlight::No,
+            video_in_flight: None,
+        }
+    }
+
+    /// Takes note of an off-route event. True when it starts a new epoch: the
+    /// caller empties its history before passing the event through.
+    pub(super) fn starts_epoch(&mut self, event: &DemuxEvent) -> bool {
+        if let DemuxEvent::ProgramMap(pmt) = event
+            && pmt.streams.iter().any(|s| s.pid == self.video_pid)
+        {
+            self.pcr_pid = Some(pmt.pcr_pid);
+        }
+        if !self.is_epoch_boundary(event) {
+            return false;
+        }
+        // A reconnect resets the demuxer, so no PES survives it.
+        if matches!(event, DemuxEvent::ReconnectDiscontinuity) {
+            self.last_klv_pts = None;
+            self.last_video_pts = None;
+            self.in_flight = InFlight::No;
+            self.video_in_flight = None;
+            // The new connection may lay its programs out differently; the
+            // PCR PID is relearned from its video program map.
+            self.pcr_pid = None;
+        } else if self.last_klv_pts.is_some() || self.last_video_pts.is_some() {
+            self.in_flight = InFlight::Suspect {
+                klv: self.last_klv_pts,
+                video: self.last_video_pts,
+            };
+            self.video_in_flight = self.last_video_pts;
+        }
+        true
+    }
+
+    /// True for the events that start a new epoch: a transport reconnect, or
+    /// a signalled discontinuity on the video PID, the KLV PID or the PCR PID
+    /// of their program. A `ContinuityJump` (packet loss) and any event on
+    /// another PID are not epochs.
+    fn is_epoch_boundary(&self, event: &DemuxEvent) -> bool {
+        match event {
+            DemuxEvent::ReconnectDiscontinuity => true,
+            DemuxEvent::Discontinuity {
+                stream,
+                kind: DiscontinuityKind::AdaptationFieldFlag,
+            } => {
+                stream.pid == self.video_pid
+                    || stream.pid == self.klv_pid
+                    || self.pcr_pid == Some(stream.pid)
+            }
+            _ => false,
+        }
+    }
+
+    /// Records a video sample's PTS. True when it is the old-clock PES in
+    /// flight at a signalled discontinuity: it leaves as `UnpairedVideo`.
+    pub(super) fn video_is_old(&mut self, pts: Pts90khz) -> bool {
+        self.last_video_pts = Some(pts);
+        matches!(
+            self.video_in_flight.take(),
+            Some(before) if pts_distance(pts, before) <= OLD_CLOCK_WINDOW
+        )
+    }
+
+    /// Records a KLV sample's PTS. True when it is (a cell of) the old-clock
+    /// PES in flight at a signalled discontinuity: it leaves as `UnpairedKlv`
+    /// and stays out of the history.
+    pub(super) fn klv_is_old(&mut self, pts: Pts90khz) -> bool {
+        self.last_klv_pts = Some(pts);
+        let old = match self.in_flight {
+            InFlight::No => false,
+            InFlight::Suspect { klv, video } => [klv, video]
+                .into_iter()
+                .flatten()
+                .any(|before| pts_distance(pts, before) <= OLD_CLOCK_WINDOW),
+            InFlight::Old(old_pts) => pts == old_pts,
+        };
+        self.in_flight = if old {
+            InFlight::Old(pts)
+        } else {
+            InFlight::No
+        };
+        old
+    }
+
+    /// Forgets the clock and whatever was in flight, so the next sample starts
+    /// clean. The program's PCR PID is kept.
+    pub(super) fn forget_clock(&mut self) {
+        self.in_flight = InFlight::No;
+        self.last_klv_pts = None;
+        self.last_video_pts = None;
+        self.video_in_flight = None;
+    }
 }
 
 /// Stateful KLV ↔ video pairer. Construct with one of the strategy

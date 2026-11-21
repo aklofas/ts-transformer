@@ -7,77 +7,31 @@
 //! lets a reordered frame (a B-frame whose PTS is below the newest
 //! KLV's) still find the sample that preceded it.
 //!
-//! The history is cleared at an epoch boundary: `ReconnectDiscontinuity`, or
-//! `Discontinuity { kind: AdaptationFieldFlag }` on the video PID, the KLV PID
-//! or the PCR PID of the program carrying the video (learned from its
-//! `ProgramMap`); never-used entries leave as `UnpairedKlv` ahead of the
-//! passed-through event. A flag on any other PID, and a silent restart, are
-//! invisible: the caller flushes. The PCR PID counts only when that PID also
-//! carries an elementary stream; a PID that carries only PCR produces no
-//! demuxer event, so the caller flushes at such a restart.
-//!
-//! A signalled discontinuity does not end the PES in flight on the KLV or
-//! video PID: it completes after the flag, on the old clock its header was
-//! coded on (H.222.0 §2.4.3.5), whichever PID carried the flag. Only one PES
-//! is in flight per PID, so only the first KLV sample and the first video
-//! sample completing after the flag can be old. A KLV sample is taken as old
-//! when its PTS lies within [`OLD_CLOCK_WINDOW`] of the newest KLV PTS or the
-//! newest video PTS before the flag (the video reference covers KLV sent
-//! rarely or on change, and a flag before any KLV); a video sample, within
-//! [`OLD_CLOCK_WINDOW`] of the newest video PTS. Each leaves as `UnpairedKlv`
-//! or `UnpairedVideo`, and a KLV one does not enter the history. A new clock
-//! that lands within the window of the old one loses its first KLV sample
-//! (every frame until the next sample is unpaired) and its first video frame
-//! the same way.
+//! The history is cleared at an epoch boundary (a reconnect, or a signalled
+//! discontinuity on the video PID, the KLV PID or their program's PCR PID);
+//! never-used entries leave as `UnpairedKlv` ahead of the passed-through
+//! event. The first KLV sample and the first video sample after a signalled
+//! discontinuity may be the old-clock PES in flight and then leave unpaired;
+//! losing the first KLV sample of a new clock leaves every frame until the
+//! next sample unpaired. [`EpochTracker`] has both rules.
 
+use super::EpochTracker;
 use super::types::{KlvSample, PairerOutput, VideoSample};
 use std::collections::VecDeque;
-use tst_core::mpegts::common::Pts90khz;
-use tst_core::mpegts::demux::{DemuxEvent, DiscontinuityKind};
+use tst_core::mpegts::demux::DemuxEvent;
 
 /// KLV samples kept for pairing reordered frames. Eight covers the
 /// reorder depth of common GOP structures at typical KLV rates.
 const LAST_BEFORE_DEPTH: usize = 8;
 
-/// How near the newest pre-flag PTS the first KLV or video PES after a
-/// signalled discontinuity must be to count as the old-clock PES in flight: two
-/// seconds, past the sample interval of a 1 Hz KLV feed plus its jitter.
-const OLD_CLOCK_WINDOW: i64 = 2 * 90_000;
-
-/// Whether the next KLV sample may be the old-clock PES in flight.
-#[derive(Clone, Copy)]
-enum InFlight {
-    /// Nothing old can be in flight.
-    No,
-    /// A discontinuity was signalled; holds the newest KLV and video PTS
-    /// before it (at least one is `Some`).
-    Suspect {
-        klv: Option<Pts90khz>,
-        video: Option<Pts90khz>,
-    },
-    /// The old-clock PES was found; its further cells share this PTS.
-    Old(Pts90khz),
-}
-
 pub(super) struct LastBeforeState {
     video_pid: u16,
     klv_pid: u16,
-    /// PCR PID of the program carrying `video_pid`, once its program map has
-    /// passed. Kept when a later map drops the video PID. A flag there resets
-    /// the time base both paired PIDs run on.
-    pcr_pid: Option<u16>,
     freshness_ticks: Option<i64>,
     /// Oldest at the front. An entry stays after it pairs; one that
     /// leaves (eviction or flush) without ever pairing is `UnpairedKlv`.
     history: VecDeque<KlvSlot>,
-    /// PTS of the newest KLV sample since the last reconnect.
-    last_klv_pts: Option<Pts90khz>,
-    /// PTS of the newest video sample since the last reconnect.
-    last_video_pts: Option<Pts90khz>,
-    in_flight: InFlight,
-    /// The newest video PTS before a signalled discontinuity, until the first
-    /// video after it is judged against it.
-    video_in_flight: Option<Pts90khz>,
+    epochs: EpochTracker,
 }
 
 struct KlvSlot {
@@ -90,13 +44,9 @@ impl LastBeforeState {
         Self {
             video_pid,
             klv_pid,
-            pcr_pid: None,
             freshness_ticks,
             history: VecDeque::with_capacity(LAST_BEFORE_DEPTH + 1),
-            last_klv_pts: None,
-            last_video_pts: None,
-            in_flight: InFlight::No,
-            video_in_flight: None,
+            epochs: EpochTracker::new(video_pid, klv_pid),
         }
     }
 
@@ -105,28 +55,7 @@ impl LastBeforeState {
             super::EventClass::Video(v) => self.handle_video(v),
             super::EventClass::Klv(k) => self.handle_klv(k),
             super::EventClass::Other(other) => {
-                if let DemuxEvent::ProgramMap(pmt) = &other
-                    && pmt.streams.iter().any(|s| s.pid == self.video_pid)
-                {
-                    self.pcr_pid = Some(pmt.pcr_pid);
-                }
-                if self.is_epoch_boundary(&other) {
-                    // A reconnect resets the demuxer, so no PES survives it.
-                    if matches!(other, DemuxEvent::ReconnectDiscontinuity) {
-                        self.last_klv_pts = None;
-                        self.last_video_pts = None;
-                        self.in_flight = InFlight::No;
-                        self.video_in_flight = None;
-                        // The new connection may lay its programs out differently; the
-                        // PCR PID is relearned from its video program map.
-                        self.pcr_pid = None;
-                    } else if self.last_klv_pts.is_some() || self.last_video_pts.is_some() {
-                        self.in_flight = InFlight::Suspect {
-                            klv: self.last_klv_pts,
-                            video: self.last_video_pts,
-                        };
-                        self.video_in_flight = self.last_video_pts;
-                    }
+                if self.epochs.starts_epoch(&other) {
                     let mut out = self.drain_history();
                     out.push(PairerOutput::PassThrough(other));
                     out
@@ -137,33 +66,11 @@ impl LastBeforeState {
         }
     }
 
-    /// True for the events that start a new epoch: a transport reconnect, or
-    /// a signalled discontinuity on the video PID, the KLV PID or the PCR PID
-    /// of their program. A `ContinuityJump` (packet loss) and any event on
-    /// another PID are not epochs.
-    fn is_epoch_boundary(&self, event: &DemuxEvent) -> bool {
-        match event {
-            DemuxEvent::ReconnectDiscontinuity => true,
-            DemuxEvent::Discontinuity {
-                stream,
-                kind: DiscontinuityKind::AdaptationFieldFlag,
-            } => {
-                stream.pid == self.video_pid
-                    || stream.pid == self.klv_pid
-                    || self.pcr_pid == Some(stream.pid)
-            }
-            _ => false,
-        }
-    }
-
     /// End-of-stream drain that also forgets the epoch state, so the next
     /// feed starts clean.
     pub(super) fn flush(&mut self) -> Vec<PairerOutput> {
         let out = self.drain_history();
-        self.in_flight = InFlight::No;
-        self.last_klv_pts = None;
-        self.last_video_pts = None;
-        self.video_in_flight = None;
+        self.epochs.forget_clock();
         out
     }
 
@@ -178,11 +85,8 @@ impl LastBeforeState {
     }
 
     fn handle_video(&mut self, v: VideoSample) -> Vec<PairerOutput> {
-        self.last_video_pts = Some(v.pts);
         // The history holds only post-flag KLV here (the flag drained it).
-        if let Some(before) = self.video_in_flight.take()
-            && super::pts_distance(v.pts, before) <= OLD_CLOCK_WINDOW
-        {
+        if self.epochs.video_is_old(v.pts) {
             return vec![PairerOutput::UnpairedVideo(v)];
         }
         // The latest-timestamped entry at or before the video, not the
@@ -215,20 +119,9 @@ impl LastBeforeState {
     }
 
     fn handle_klv(&mut self, k: KlvSample) -> Vec<PairerOutput> {
-        self.last_klv_pts = Some(k.pts);
-        let old = match self.in_flight {
-            InFlight::No => false,
-            InFlight::Suspect { klv, video } => [klv, video]
-                .into_iter()
-                .flatten()
-                .any(|before| super::pts_distance(k.pts, before) <= OLD_CLOCK_WINDOW),
-            InFlight::Old(pts) => k.pts == pts,
-        };
-        if old {
-            self.in_flight = InFlight::Old(k.pts);
+        if self.epochs.klv_is_old(k.pts) {
             return vec![PairerOutput::UnpairedKlv(k)];
         }
-        self.in_flight = InFlight::No;
         self.history.push_back(KlvSlot {
             sample: k,
             used: false,
@@ -245,8 +138,10 @@ impl LastBeforeState {
 
 #[cfg(test)]
 mod tests {
+    use super::super::OLD_CLOCK_WINDOW;
     use super::super::test_support::{af_discontinuity, cc_jump, program_map};
     use super::*;
+    use tst_core::mpegts::common::Pts90khz;
     use tst_core::mpegts::demux::{MetadataKind, SamplePayload, StreamId, StreamKind, VideoCodec};
     use tst_core::shared::SharedBytes;
 
