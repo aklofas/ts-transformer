@@ -98,9 +98,10 @@ tst_core::binding_record! {
 /// the weaker of the two. Bytes that are not TS can therefore reach the
 /// caller as a packet at an end: a tail in which a `0x47` sits exactly one,
 /// two or three packets before the last byte. The tail is refused whole when
-/// one boundary fails, and the syncer does not look for a later start: a
-/// single good packet behind damage that itself holds a `0x47` within the
-/// 187 bytes before it is still lost. Treat the final packets after a
+/// one boundary fails, and the syncer does not look for a later start: when
+/// the damage in front of a single good packet holds a `0x47` anywhere in
+/// the 187 bytes before that packet, the syncer waits on a start that never
+/// completes and the good packet is still lost. Treat the final packets after a
 /// mid-stream corruption as best-effort;
 /// [`ReceiverStats::resync_events`] and
 /// [`ReceiverStats::bytes_skipped_for_sync`] show when that happened.
