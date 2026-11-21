@@ -27,7 +27,7 @@ use pyo3::prelude::*;
 use pyo3::types::PyType;
 
 use tst_core::transport::Transport;
-use tst_pipeline::binding::view::{BlockingReason, Snapshot, StreamHandles};
+use tst_pipeline::binding::view::{BlockingReason, Snapshot, StreamHandles, StreamHandlesCell};
 use tst_pipeline::binding::{BindingError, Domain, HandleState, Opened, Owned};
 use tst_pipeline::{MuxSender as RustMuxSender, MuxSenderError, MuxSenderErrorSource};
 
@@ -50,6 +50,21 @@ pub(crate) fn mux_sender_err(py: Python<'_>, domain: &Domain, e: MuxSenderError)
         MuxSenderErrorSource::Mux(mux_err) => mux_error_to_pyerr(py, mux_err),
         _ => raise(py, domain, BindingError::from(e)),
     }
+}
+
+/// Run `sender.reconfigure(cfg)` and store the sender's handles in
+/// `handles`, inside the caller's hold of the slot, so two reconfigures
+/// cannot store their handles out of order. The store follows every
+/// attempt: a refused one leaves the muxer, and so the cell, as it was,
+/// and one whose drain failed after it took effect is current too.
+pub(crate) fn reconfigure_and_refresh<T: Transport>(
+    sender: &RustMuxSender<T>,
+    handles: &StreamHandlesCell,
+    cfg: tst_core::mpegts::mux::MuxerConfig,
+) -> Result<(), MuxSenderError> {
+    let r = sender.reconfigure(cfg);
+    handles.refresh(sender);
+    r
 }
 
 /// Python mux sender over any transport: owns a `Muxer` and a transport.
@@ -81,7 +96,7 @@ pub(crate) struct PyMuxSender {
     /// only inside `with_mut`, always under `py.detach`, so a push
     /// in flight on another thread never trips PyO3's borrow check and
     /// `close()` (cancel-first) ends it instead of waiting behind it.
-    owned: Owned<RustMuxSender<Box<dyn Transport>>, Snapshot<StreamHandles>>,
+    owned: Owned<RustMuxSender<Box<dyn Transport>>, Snapshot<StreamHandlesCell>>,
     /// Shared cancel state — see `crate::util::CancelSource`.
     cancel: Arc<CancelSource>,
 }
@@ -132,8 +147,8 @@ impl PyMuxSender {
         let sender =
             RustMuxSender::new(transport, muxer_cfg).map_err(|e| mux_error_to_pyerr(py, e))?;
         // Read before the sender moves into the slot: the handle getters
-        // answer from this, never from the slot a parked send holds.
-        let handles = StreamHandles::of(&sender);
+        // answer from this cell, never from the slot a parked send holds.
+        let handles = StreamHandlesCell::new(StreamHandles::of(&sender));
         Ok(Self {
             owned: Owned::new(sender, cancel.as_dyn(), Snapshot { domain, handles }),
             cancel,
@@ -463,54 +478,98 @@ impl PyMuxSender {
         }
     }
 
+    // ── Reconfigure ───────────────────────────────────────────────────────
+
+    /// Replace the running sender's program with `program_config`, as
+    /// `Muxer.reconfigure` does for its config: streams match by PID, and a
+    /// stream whose PID, stream type and codec are unchanged keeps its
+    /// handle, continuity counter and timers; new streams take handles;
+    /// the next send carries the new PAT and PMT. The `*_handle()` getters
+    /// then return the handles of the new configuration; a removed
+    /// stream's handle raises `MuxError(INVALID_USAGE)` when sent to.
+    ///
+    /// Releases the GIL and holds the sender as a send does: it first
+    /// writes output an earlier failed send left, so it can wait in the
+    /// transport like a send, and a `close()` on another thread ends it
+    /// with the transport's `CLOSED` kind.
+    ///
+    /// Raises `MuxError(CONFIG_INVALID)`, changing nothing, when the muxer
+    /// refuses the change (a PID that changed its stream type or codec, a
+    /// moved PMT PID, a moved PCR PID while the old PCR stream stays); the
+    /// transport's error class when that earlier output cannot be written
+    /// (the configuration is then unchanged); the transport's `CLOSED`
+    /// after `close()` or a cancel.
+    #[pyo3(signature = (program_config))]
+    fn reconfigure(
+        &self,
+        py: Python<'_>,
+        program_config: PyRef<'_, PyMuxerProgramConfig>,
+    ) -> PyResult<()> {
+        let cfg = Self::muxer_config_for(py, &program_config)?;
+        let handles = &self.owned.snapshot().handles;
+        let res = crate::util::allow_threads_parking(py, || {
+            self.owned
+                .with_mut_unless_cancelled(|s| reconfigure_and_refresh(s, handles, cfg))
+        });
+        match res {
+            Ok(r) => r.map_err(|e| mux_sender_err(py, &self.owned.snapshot().domain, e)),
+            Err(state) => Err(raise(
+                py,
+                &self.owned.snapshot().domain,
+                BindingError::from(state),
+            )),
+        }
+    }
+
     // ── Handle getters ────────────────────────────────────────────────────
     //
     // Single-program convenience — return the first configured handle
     // of each kind across all programs (which for our single-program
     // ctor is also the only program).
     //
-    // Answered from the construction-time snapshot, never the slot: the
-    // stream set cannot change after the sender is built, so these do not
-    // wait behind a `send_*` parked on another thread. A closed sender
-    // answers `None`.
+    // Answered from the snapshot's cell, never the slot, so these do not
+    // wait behind a `send_*` or a `reconfigure` parked on another thread;
+    // `reconfigure` stores the new handles in the cell before it lets go
+    // of the slot. A closed sender answers `None`.
 
-    /// First configured video stream handle, or `None`.
+    /// First video stream handle of the current configuration, or `None`.
     fn video_handle(&self) -> Option<PyVideoStreamHandle> {
         self.owned
             .open_snapshot()
-            .and_then(|s| s.handles.video)
+            .and_then(|s| s.handles.get().video)
             .map(PyVideoStreamHandle)
     }
 
-    /// First configured KLV stream handle, or `None`.
+    /// First KLV stream handle of the current configuration, or `None`.
     fn klv_handle(&self) -> Option<PyKlvStreamHandle> {
         self.owned
             .open_snapshot()
-            .and_then(|s| s.handles.klv)
+            .and_then(|s| s.handles.get().klv)
             .map(PyKlvStreamHandle)
     }
 
-    /// First configured audio stream handle, or `None`.
+    /// First audio stream handle of the current configuration, or `None`.
     fn audio_handle(&self) -> Option<PyAudioStreamHandle> {
         self.owned
             .open_snapshot()
-            .and_then(|s| s.handles.audio)
+            .and_then(|s| s.handles.get().audio)
             .map(PyAudioStreamHandle)
     }
 
-    /// First configured subtitle stream handle, or `None`.
+    /// First subtitle stream handle of the current configuration, or
+    /// `None`.
     fn subtitle_handle(&self) -> Option<PySubtitleStreamHandle> {
         self.owned
             .open_snapshot()
-            .and_then(|s| s.handles.subtitle)
+            .and_then(|s| s.handles.get().subtitle)
             .map(PySubtitleStreamHandle)
     }
 
-    /// First configured data stream handle, or `None`.
+    /// First data stream handle of the current configuration, or `None`.
     fn data_handle(&self) -> Option<PyDataStreamHandle> {
         self.owned
             .open_snapshot()
-            .and_then(|s| s.handles.data)
+            .and_then(|s| s.handles.get().data)
             .map(PyDataStreamHandle)
     }
 

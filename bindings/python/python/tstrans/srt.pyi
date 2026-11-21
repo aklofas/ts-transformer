@@ -736,7 +736,18 @@ class ManagedMuxSender:
         pts: Pts90khz,
     ) -> None: ...
 
-    # Stream handle accessors.
+    def reconfigure(self, program_config: MuxerProgramConfig) -> None:
+        """Replace the running program with ``program_config``, as
+        ``tstrans.shells.MuxSender.reconfigure`` does: surviving streams keep
+        their handles and continuity counters, and the ``*_handle()``
+        getters then return the new configuration's handles. Holds the
+        sender as a send does (GIL released); ``close()`` on another thread
+        ends it with ``SrtError(CLOSED)``. Raises
+        ``MuxError(CONFIG_INVALID)``, changing nothing, for a refused
+        change."""
+
+    # Stream handle accessors (first of each kind in the current
+    # configuration; they never wait for a call in progress).
     def video_handle(self) -> Optional[VideoStreamHandle]: ...
     def klv_handle(self) -> Optional[KlvStreamHandle]: ...
     def audio_handle(self) -> Optional[AudioStreamHandle]: ...

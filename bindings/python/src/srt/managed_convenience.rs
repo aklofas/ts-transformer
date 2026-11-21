@@ -30,7 +30,7 @@
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use tst_pipeline::binding::view::{BlockingReason, StreamHandles};
+use tst_pipeline::binding::view::{BlockingReason, StreamHandles, StreamHandlesCell};
 
 use pyo3::Py;
 use pyo3::prelude::*;
@@ -53,7 +53,7 @@ use crate::mux::{
 use crate::raise::{SRT, pyok, raise};
 use crate::shells::cancel::PyCancelHandle;
 use crate::shells::demux_receiver::demux_recv_err;
-use crate::shells::mux_sender::mux_sender_err;
+use crate::shells::mux_sender::{PyMuxSender, mux_sender_err, reconfigure_and_refresh};
 use crate::shells::open_cancel::{
     PyOpenCancel, begin, closed, finish, object_of, refuse, refuse_config,
 };
@@ -100,7 +100,7 @@ pub(crate) struct PyManagedMuxSender {
     /// the close raising `RuntimeError: Already borrowed`. `Option` so
     /// `close()` / `__exit__` can drop the inner shell while keeping the
     /// PyClass addressable for idempotent closes.
-    owned: Owned<RustMuxSender<ManagedTransport<SrtTransport>>, StreamHandles>,
+    owned: Owned<RustMuxSender<ManagedTransport<SrtTransport>>, StreamHandlesCell>,
     /// Shared cancel state: the same `Arc` every
     /// `CancelHandle` this shell hands out holds, so `close()` here and
     /// `cancel()` through any handle flip one observable flag.
@@ -192,8 +192,8 @@ impl PyManagedMuxSender {
         .map_err(|e| raise(py, &SRT, e))?;
         let cancel = CancelSource::new(handles.cancel);
         // Read before the sender moves into the slot: the handle getters
-        // answer from this, never from the slot a parked send holds.
-        let streams = StreamHandles::of(&sender);
+        // answer from this cell, never from the slot a parked send holds.
+        let streams = StreamHandlesCell::new(StreamHandles::of(&sender));
         Ok(Self {
             owned: Owned::new(sender, cancel.as_dyn(), streams),
             cancel,
@@ -429,45 +429,79 @@ impl PyManagedMuxSender {
         }
     }
 
+    // ── Reconfigure ───────────────────────────────────────────────────────
+
+    /// Replace the running sender's program with `program_config`, as
+    /// `tstrans.shells.MuxSender.reconfigure` does: surviving streams keep
+    /// their handles and continuity counters, the next send carries the
+    /// new PAT and PMT, and the `*_handle()` getters return the handles of
+    /// the new configuration.
+    ///
+    /// Releases the GIL and holds the sender as a send does: it first
+    /// writes output an earlier failed send left, so it can wait in the
+    /// transport like a send, and a `close()` on another thread ends it
+    /// with `SrtError(CLOSED)`. Raises
+    /// `MuxError(CONFIG_INVALID)`, changing nothing, when the muxer
+    /// refuses the change; `SrtError` when the earlier output cannot be
+    /// written (the configuration is then unchanged); `SrtError(CLOSED)`
+    /// after `close()` or a cancel.
+    #[pyo3(signature = (program_config))]
+    fn reconfigure(
+        &self,
+        py: Python<'_>,
+        program_config: PyRef<'_, PyMuxerProgramConfig>,
+    ) -> PyResult<()> {
+        let cfg = PyMuxSender::muxer_config_for(py, &program_config)?;
+        let handles = self.owned.snapshot();
+        let res = crate::util::allow_threads_parking(py, || {
+            self.owned
+                .with_mut_unless_cancelled(|s| reconfigure_and_refresh(s, handles, cfg))
+        });
+        match res {
+            Ok(r) => r.map_err(|e| mux_sender_err(py, &SRT, e)),
+            Err(state) => Err(raise(py, &SRT, BindingError::from(state))),
+        }
+    }
+
     // ── Handle getters ────────────────────────────────────────────────────
     //
-    // Answered from the construction-time snapshot, never the slot: the
-    // stream set cannot change after the sender is built, so these do not
-    // wait behind a `send_*` parked on another thread. A closed sender
-    // answers `None`.
+    // Answered from the snapshot's cell, never the slot, so these do not
+    // wait behind a `send_*` or a `reconfigure` parked on another thread;
+    // `reconfigure` stores the new handles in the cell before it lets go
+    // of the slot. A closed sender answers `None`.
 
     fn video_handle(&self) -> Option<PyVideoStreamHandle> {
         self.owned
             .open_snapshot()
-            .and_then(|s| s.video)
+            .and_then(|s| s.get().video)
             .map(PyVideoStreamHandle)
     }
 
     fn klv_handle(&self) -> Option<PyKlvStreamHandle> {
         self.owned
             .open_snapshot()
-            .and_then(|s| s.klv)
+            .and_then(|s| s.get().klv)
             .map(PyKlvStreamHandle)
     }
 
     fn audio_handle(&self) -> Option<PyAudioStreamHandle> {
         self.owned
             .open_snapshot()
-            .and_then(|s| s.audio)
+            .and_then(|s| s.get().audio)
             .map(PyAudioStreamHandle)
     }
 
     fn subtitle_handle(&self) -> Option<PySubtitleStreamHandle> {
         self.owned
             .open_snapshot()
-            .and_then(|s| s.subtitle)
+            .and_then(|s| s.get().subtitle)
             .map(PySubtitleStreamHandle)
     }
 
     fn data_handle(&self) -> Option<PyDataStreamHandle> {
         self.owned
             .open_snapshot()
-            .and_then(|s| s.data)
+            .and_then(|s| s.get().data)
             .map(PyDataStreamHandle)
     }
 

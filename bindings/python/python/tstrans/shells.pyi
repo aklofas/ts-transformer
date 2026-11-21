@@ -429,7 +429,24 @@ class MuxSender:
         pts: Pts90khz,
     ) -> None: ...
 
-    # Stream handle accessors (first-of-kind).
+    def reconfigure(self, program_config: MuxerProgramConfig) -> None:
+        """Replace the running program with ``program_config``, as
+        ``Muxer.reconfigure`` does: a stream whose PID, stream type and codec
+        are unchanged keeps its handle and continuity counter, new streams
+        take handles, and the next send carries the new PAT and PMT. The
+        ``*_handle()`` getters then return the new configuration's handles;
+        a removed stream's handle raises ``MuxError(INVALID_USAGE)``.
+
+        Holds the sender as a send does (GIL released): it first writes
+        output an earlier failed send left, so it can wait in the
+        transport, and ``close()`` on another thread ends it with
+        ``CLOSED``. Raises ``MuxError(CONFIG_INVALID)``, changing nothing,
+        for a refused change; the transport's error class when that earlier
+        output cannot be written (the configuration is then unchanged);
+        ``CLOSED`` after ``close()`` or a cancel."""
+
+    # Stream handle accessors (first of each kind in the current
+    # configuration; they never wait for a call in progress).
     def video_handle(self) -> Optional[VideoStreamHandle]: ...
     def klv_handle(self) -> Optional[KlvStreamHandle]: ...
     def audio_handle(self) -> Optional[AudioStreamHandle]: ...

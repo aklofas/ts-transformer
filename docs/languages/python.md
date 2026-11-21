@@ -159,8 +159,30 @@ that moved program or changed codec, a moved PMT PID, a moved PCR PID while
 the old PCR stream stays in the program, a different muxer-wide setting)
 raises `MuxError(CONFIG_INVALID)` and leaves the running config and every
 handle unchanged. Removing the PCR stream in the same call lets the PCR move
-to another stream of the program; its clock carries on. The shells (`MuxSender` and its
-managed and push forms) have no `reconfigure`.
+to another stream of the program; its clock carries on.
+
+The muxing shells take the same change for their one program:
+`MuxSender.reconfigure(program_config)` on `shells.MuxSender` (also the one
+`RtspPushSession.into_mux_sender()` returns) and on `srt.ManagedMuxSender`.
+The same rules apply, and `video_handle()` … `data_handle()` then return the
+handles of the new configuration:
+
+```python
+with MuxSender.open("tcp://127.0.0.1:7000", prog) as tx:
+    tx.send_video(nal, pts=Pts90khz.from_raw(0), key_frame=True)
+    tx.reconfigure(
+        MuxerProgramConfigBuilder(program_number=1, pmt_pid=0x100)
+        .add_video(0x101, VideoCodec.H264)  # survives: same handle, no CC jump
+        .add_klv(0x102, KlvStreamType.SYNCHRONOUS_METADATA, carries_pts=True)
+        .build()
+    )
+    tx.send_klv(klv, pts=Pts90khz.from_raw(0))  # tx.klv_handle() is no longer None
+```
+
+`reconfigure` holds the sender as a send does, with the GIL released: it
+first writes what an earlier failed send left, so it can wait in the
+transport, and a `close()` on another thread ends it with `CLOSED`. A
+refused config raises `MuxError(CONFIG_INVALID)` and changes nothing.
 
 ## First receive
 
@@ -763,7 +785,7 @@ falls into two groups.
 | `peer_addr()`, `source_rejected()` on the receiving shells, `udp.RecvTransport` and `rist.RecvTransport` | the publisher's address and the count of what the `source` pin turned away, as they stand (the same count in `stats().source_rejected` waits, like `stats()`) | the shells keep answering; the two transports raise `CLOSED` |
 | `rtp_stats()` on the receiving shells (`shells.Receiver`, `shells.DemuxReceiver`) | the RTP counters as they stand; `None` off `rtp://`, RTSP and a publish mount | the last value |
 | `RtspPushSession.stats()` | the push's counters as they stand | the last value, also after a conversion |
-| `video_handle()` … `data_handle()` on the three `MuxSender` classes | the handles of the program config the sender was built from | `None` |
+| `video_handle()` … `data_handle()` on the three `MuxSender` classes | the handles of the current program config: as built, or as the last `reconfigure` left it | `None` |
 | `reconnect_attempts()`, `reconnect_stats()` on the managed shells | live counters kept outside the object | `reconnect_attempts()` keeps its last value; `reconnect_stats()` raises `CLOSED` |
 | `end_reason()` / `end_detail()` | the recorded reason, or `None`; `H264Receiver` answers `None` while a `recv_au()` is in flight | the reason recorded at close |
 
