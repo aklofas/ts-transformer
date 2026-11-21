@@ -1811,3 +1811,56 @@ fn a_redial_of_an_armed_managed_sender_dials_without_the_window() {
     wake.cancel();
     peer.join().expect("peer thread");
 }
+
+/// Every listener-mode door refuses the key before it binds: with no caller
+/// at all, each open returns the configuration error at once (the bound is a
+/// hang guard: an open that bound would wait for a caller), and the port is
+/// left free (a listener binds it right after). The URL is the URL corpus's
+/// own listener row; the doors are what the bindings call for it: the C
+/// listener opens (`SrtUrl::accept_one`), the Python and JVM shells
+/// (`opener::open_recv`), and every managed listener-mode receiver
+/// (`managed_recv_transport_from_url`).
+#[test]
+fn a_listener_open_with_the_key_refuses_at_once_and_leaves_the_port_free() {
+    require_loopback!();
+    type Door = fn(&str, &Arc<tst_core::cancel::CancelSlot>) -> Option<BindingErrorKind>;
+    let doors: [(&str, Door); 3] = [
+        ("SrtUrl::accept_one", |url, slot| {
+            let url = SrtUrl::parse(url).expect("parse");
+            url.accept_one(slot)
+                .err()
+                .map(|e| tst_pipeline::binding::BindingError::from(e).kind)
+        }),
+        ("opener::open_recv", |url, slot| {
+            tst_srt::opener::open_recv(url, slot).err().map(|e| e.kind)
+        }),
+        ("managed_recv_transport_from_url", |url, slot| {
+            let url = SrtUrl::parse(url).expect("parse");
+            managed_recv_transport_from_url(&url, no_reconnect(), Arc::clone(slot))
+                .err()
+                .map(|e| tst_pipeline::binding::BindingError::from(e).kind)
+        }),
+    ];
+    for (name, door) in doors {
+        let port = crate::common::reserve_port();
+        let url = format!("srt://127.0.0.1:{port}?mode=listener&{SILENT_PEER_KEY}=1500");
+        let slot = Arc::new(tst_core::cancel::CancelSlot::new());
+        let (tx, rx) = mpsc::channel();
+        let worker = {
+            let slot = Arc::clone(&slot);
+            std::thread::spawn(move || {
+                let _ = tx.send(door(&url, &slot));
+            })
+        };
+        let Ok(kind) = rx.recv_timeout(scaled(Duration::from_secs(2))) else {
+            slot.cancel();
+            let _ = worker.join();
+            panic!("{name}: the open bound and waited for a caller instead of refusing");
+        };
+        worker.join().expect("open thread");
+        assert_eq!(kind, Some(BindingErrorKind::ConfigInvalid), "{name}");
+        SrtListenerBuilder::new()
+            .bind(format!("127.0.0.1:{port}"))
+            .unwrap_or_else(|e| panic!("{name}: the port is still held: {e}"));
+    }
+}
