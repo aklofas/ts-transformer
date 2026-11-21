@@ -1735,3 +1735,79 @@ fn a_managed_sender_open_accepts_the_key_and_a_receiver_refuses_it() {
     let refused = tst_pipeline::binding::BindingError::from(refused);
     assert_eq!(refused.kind, BindingErrorKind::ConfigInvalid, "{refused:?}");
 }
+
+/// Every re-dial of a managed sender opened with the key goes without it:
+/// a re-dial that still carried the window would be refused at once (an
+/// option error, logged as the failed attempt's cause) and this test fails
+/// in well under a second with that cause in its message. The peer takes
+/// one message and drops the connection, so the re-dial comes right away.
+#[tracing_test::traced_test]
+#[test]
+fn a_redial_of_an_armed_managed_sender_dials_without_the_window() {
+    require_loopback!();
+    let mut b = SrtListenerBuilder::new();
+    b.recv_timeout(scaled(WATCHDOG));
+    let mut listener = b.bind("127.0.0.1:0").expect("bind");
+    let port = listener.local_addr().expect("listener address").port();
+    let wake = listener.cancel_handle();
+    let (got_tx, got) = mpsc::channel::<usize>();
+    let (release, released) = mpsc::channel::<()>();
+    let peer = std::thread::spawn(move || {
+        // The first connection: one message, then gone. The second: one
+        // message reported to the test, then held until the test is done.
+        let mut held = None;
+        for conn in 0..2 {
+            let Ok((mut sock, _)) = listener.accept() else {
+                return;
+            };
+            let mut buf = [0u8; 1500];
+            if sock.recv(&mut buf).is_ok() {
+                let _ = got_tx.send(conn);
+            }
+            if conn == 1 {
+                held = Some(sock);
+            }
+        }
+        let _ = released.recv_timeout(scaled(WATCHDOG));
+        drop(held);
+    });
+
+    let url =
+        SrtUrl::parse(&format!("srt://127.0.0.1:{port}?{SILENT_PEER_KEY}=1000")).expect("parse");
+    let policy = ReconnectPolicy::default()
+        .with_max_attempts(Some(3))
+        .with_backoff(BackoffStrategy::Constant(Duration::from_millis(50)));
+    let (mut tx, _handles, stats) =
+        managed_raw_sender_from_url(&url, policy, tst_pipeline::RawSenderConfig::default())
+            .expect("a managed sender opens with the key");
+
+    let deadline = Instant::now() + scaled(WATCHDOG);
+    let mut seen = Vec::new();
+    while seen != [0, 1] {
+        assert!(
+            Instant::now() < deadline,
+            "hang guard: connections that delivered: {seen:?}"
+        );
+        if let Err(e) = tx.send(b"through the re-dial") {
+            logs_assert(|lines: &[&str]| {
+                let causes: Vec<&str> = lines
+                    .iter()
+                    .copied()
+                    .filter(|l| l.contains("reconnect attempt failed"))
+                    .collect();
+                Err(format!(
+                    "the send failed ({e}); failed re-dials: {causes:?}"
+                ))
+            });
+        }
+        while let Ok(conn) = got.try_recv() {
+            seen.push(conn);
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert!(stats.stats().expect("no poison").reconnect_successes >= 1);
+    tx.close();
+    drop(release);
+    wake.cancel();
+    peer.join().expect("peer thread");
+}
