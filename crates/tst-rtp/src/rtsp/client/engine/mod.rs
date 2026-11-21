@@ -29,8 +29,9 @@ use inbound::FrontScan;
 /// and hands them in with [`ClientEngine::handle_cnonce`]. It answers
 /// [`ClientEngine::wants_cnonce`] in the pass that handled the input,
 /// before it waits for the stream again: a request whose second attempt
-/// waits moves on nothing else but its own reply deadline, and one without
-/// a deadline would wait for ever.
+/// waits is ended by nothing but its own reply deadline, the stream's end
+/// or a request that replaces it (a TEARDOWN); on a live stream, one
+/// without a deadline would wait for ever.
 pub(crate) type Cnonce = [u8; 16];
 
 /// The user name and password the client answers a challenge with.
