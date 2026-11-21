@@ -531,11 +531,10 @@ impl<T: Transport> Sender<T> {
     /// - Otherwise [`TsFramingError::UnsentTail`] (kind `InputMalformed`)
     ///   when bytes are left that could not be sent as whole aligned TS
     ///   packets: a partial last packet (in both framing modes), fewer
-    ///   than three packets behind skipped bytes, bytes that are not TS,
-    ///   and whatever lies behind more skipped bytes than
-    ///   [`SenderConfig::max_unsynced_bytes`] allows (the pass stops
-    ///   there and does not search on).
-    ///   Everything that could be verified was sent first. The count is
+    ///   than three packets behind skipped bytes, bytes that are not TS.
+    ///   Everything that could be verified was sent first, also behind
+    ///   more garbage than [`SenderConfig::max_unsynced_bytes`]: the end
+    ///   pass scans all the sender holds. The count is
     ///   what was still held at the end, not everything the stream lost:
     ///   bytes the scan skipped on the way, a good packet in front of
     ///   early damage among them, are in
@@ -1240,11 +1239,11 @@ mod tests {
     }
 
     #[test]
-    fn finish_reports_packets_behind_more_garbage_than_the_scan_limit() {
+    fn finish_recovers_packets_behind_more_garbage_than_the_scan_limit() {
         // A bundle, then garbage with a false candidate past a scan limit
         // of 50, then five good packets: `send_ts` framed a bundle, so the
-        // limit's error waits for a next call; `finish` does not search
-        // past it and reports what it left.
+        // limit's error waits for a next call. `finish` scans on and sends
+        // the five.
         let all = ts_packets(12);
         let mut input = all[..7 * 188].to_vec();
         input.extend_from_slice(&[0x00; 100]);
@@ -1258,11 +1257,9 @@ mod tests {
         };
         let mut s = Sender::new(t, cfg);
         s.send_ts(&input).unwrap();
-        let e = s.finish().unwrap_err();
-        assert_eq!(e.kind, ShellErrorKind::InputMalformed);
-        assert_eq!(unsent_tail(&e), Some(399 + 5 * 188), "{e:?}");
+        s.finish().expect("five packets behind the garbage verify");
         let st = state.lock().unwrap();
-        assert_eq!(st.delivered, all[..7 * 188]);
+        assert_eq!(st.delivered, all);
         assert_eq!(st.closes, 1);
     }
 
