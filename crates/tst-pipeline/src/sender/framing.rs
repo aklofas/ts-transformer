@@ -29,8 +29,9 @@
 //! End of stream: [`TsFraming::finish`] flushes and then goes on scanning
 //! what is left with the same three-packet rule, because no later push
 //! will. What still cannot be verified (a partial packet, fewer than three
-//! packets behind damage, bytes that are not TS) stays buffered and is
-//! counted by [`TsFraming::buffered_bytes`]; it is never sent.
+//! packets behind damage, bytes that are not TS, whatever lies behind more
+//! skipped bytes than the scan limit allows) stays buffered and is counted
+//! by [`TsFraming::buffered_bytes`]; it is never sent.
 //!
 //! STRICT mode checks every boundary of a call before committing any of
 //! it, so a rejected call leaves the framer exactly as it was.
@@ -394,19 +395,22 @@ impl TsFraming {
     /// What still cannot be verified stays buffered, is never sent and is
     /// counted by [`Self::buffered_bytes`]: a partial last packet, fewer
     /// than three packets behind skipped bytes, bytes that are not TS.
-    /// The scan limit ([`TsFramingError::NoSyncAfterLimit`]) does not stop
-    /// this pass: no later call could raise it, and the bytes left are
-    /// the report.
+    ///
+    /// The scan limit of [`Self::new`] ends this pass as it ends a push's
+    /// scan, without an error: once more than `max_unsynced_bytes` have
+    /// been skipped without sync, in this pass or by the last push when it
+    /// left the limit pending, the scan stops and what lies behind stays
+    /// buffered too. It is not searched, whatever it holds. A second call
+    /// then skips nothing.
     pub fn finish(&mut self) -> Vec<Vec<u8>> {
         let mut out = self.flush();
         loop {
             match self.state {
-                State::Unsynced => match self.try_acquire(false) {
-                    Ok(true) => {}
-                    Ok(false) => break,
-                    // The limit's counter was reset; scan on.
-                    Err(_) => {}
-                },
+                State::Unsynced => {
+                    if !matches!(self.try_acquire(true), Ok(true)) {
+                        break;
+                    }
+                }
                 State::Synced => {
                     if !self.try_emit(&mut out) {
                         out.extend(self.flush());
@@ -940,12 +944,48 @@ mod tests {
         assert_eq!(f.stats().packets_sent, 7);
     }
 
+    /// A sync byte with nothing one packet on, 60 zeros, the same again
+    /// and 399 zeros: 461 bytes that a scan limit of 50 stops in.
+    fn garbage_with_two_false_candidates() -> Vec<u8> {
+        let mut garbage = vec![0x00; 461];
+        garbage[0] = 0x47;
+        garbage[61] = 0x47;
+        garbage
+    }
+
     #[test]
     fn the_end_pass_frames_whole_bundles_like_a_push() {
-        // Twenty packets behind garbage, held back by the scan limit a
-        // push defers: the end pass hands them out in the messages a push
-        // would have made, not as one.
-        let all = clean_packets(0, 27);
+        // Twenty packets behind garbage that a push gave up on: the end
+        // pass hands them out in the messages a push would have made, not
+        // as one.
+        let packets = clean_packets(0, 20);
+        let mut input = garbage_with_two_false_candidates();
+        input.extend_from_slice(&packets);
+        let mut f = TsFraming::new(50);
+        assert_eq!(
+            f.push(&input),
+            Err(TsFramingError::NoSyncAfterLimit { max: 50 })
+        );
+        assert_eq!(f.buffered_bytes(), 399 + 20 * 188);
+        assert_eq!(
+            f.finish(),
+            vec![
+                packets[..7 * 188].to_vec(),
+                packets[7 * 188..14 * 188].to_vec(),
+                packets[14 * 188..].to_vec(),
+            ]
+        );
+        assert_eq!(f.buffered_bytes(), 0);
+        assert_eq!(counters(&f), (input.len() as u64, 461, 0));
+    }
+
+    #[test]
+    fn the_end_pass_scans_nothing_behind_a_limit_the_last_push_left_pending() {
+        // Garbage behind a bundle, with one false candidate past a scan
+        // limit of 50: the push returns its bundle and leaves the limit's
+        // error for the next call. No next call comes, and the end pass
+        // does not search on.
+        let all = clean_packets(0, 12);
         let mut input = all[..7 * 188].to_vec();
         input.extend_from_slice(&[0x00; 100]);
         input.push(0x47);
@@ -953,17 +993,24 @@ mod tests {
         input.extend_from_slice(&all[7 * 188..]);
         let mut f = TsFraming::new(50);
         assert_eq!(f.push(&input).unwrap().0, vec![all[..7 * 188].to_vec()]);
-        assert_eq!(f.buffered_bytes(), 399 + 20 * 188);
+        assert_eq!(f.buffered_bytes(), 399 + 5 * 188);
+        assert_eq!(counters(&f), (input.len() as u64, 101, 1));
+
+        assert!(f.finish().is_empty());
+        assert_eq!(f.buffered_bytes(), 399 + 5 * 188);
+        assert_eq!(counters(&f), (input.len() as u64, 101, 1));
+
+        // Where the limit falls depends on the calls made: one more push,
+        // which raises the pending error and starts the count again, lets
+        // the end pass reach the five packets.
+        let mut g = TsFraming::new(50);
+        assert_eq!(g.push(&input).unwrap().0.len(), 1);
         assert_eq!(
-            f.finish(),
-            vec![
-                all[7 * 188..14 * 188].to_vec(),
-                all[14 * 188..21 * 188].to_vec(),
-                all[21 * 188..].to_vec(),
-            ]
+            g.push(&[]),
+            Err(TsFramingError::NoSyncAfterLimit { max: 50 })
         );
-        assert_eq!(f.buffered_bytes(), 0);
-        assert_eq!(counters(&f), (input.len() as u64, 500, 1));
+        assert_eq!(g.finish(), vec![all[7 * 188..].to_vec()]);
+        assert_eq!(g.buffered_bytes(), 0);
     }
 
     #[test]
@@ -1033,32 +1080,38 @@ mod tests {
     }
 
     #[test]
-    fn the_end_pass_is_linear_in_the_buffered_bytes() {
-        // Every byte of every other 188-byte run is a candidate, and none
-        // has a sync byte one packet on. A caller that ignores the scan
-        // limit's error can leave any amount of this buffered.
-        const LEN: usize = 2 * 1024 * 1024;
+    fn the_end_pass_stops_at_the_unsynced_limit() {
+        // 188 candidates, none with a sync byte one packet on, then 376
+        // zeros, over and over: nothing in it ever verifies.
+        const LEN: usize = 4 * 1024 * 1024;
         let hostile: Vec<u8> = (0..LEN)
-            .map(|i| if (i / 188) % 2 == 0 { 0x47 } else { 0x00 })
+            .map(|i| if i % 564 < 188 { 0x47 } else { 0x00 })
             .collect();
         let mut f = TsFraming::new(18_800);
-        assert!(matches!(
+        assert_eq!(
             f.push(&hostile),
             Err(TsFramingError::NoSyncAfterLimit { max: 18_800 })
-        ));
-        assert!(f.buffered_bytes() > LEN - 20_000);
+        );
+        let skipped_by_push = f.stats().bytes_skipped_for_sync;
+        assert_eq!(f.buffered_bytes() as u64, LEN as u64 - skipped_by_push);
 
-        let started = std::time::Instant::now();
-        let out = f.finish();
-        let took = started.elapsed();
-        assert!(out.is_empty());
-        assert!(f.buffered_bytes() < 377, "{} left", f.buffered_bytes());
+        // The limit is checked after a step of the scan, and a run with no
+        // candidate is one step: the pass stops one such run past it.
+        assert!(f.finish().is_empty());
+        let skipped_by_end = f.stats().bytes_skipped_for_sync - skipped_by_push;
+        assert_eq!(skipped_by_end, 18_800 + 376);
+        assert_eq!(
+            f.buffered_bytes() as u64,
+            LEN as u64 - skipped_by_push - skipped_by_end
+        );
+        assert_eq!(f.stats().packets_sent, 0);
+
+        // The limit stays pending: a second pass skips nothing.
+        assert!(f.finish().is_empty());
         assert_eq!(
             f.stats().bytes_skipped_for_sync,
-            (LEN - f.buffered_bytes()) as u64
+            skipped_by_push + skipped_by_end
         );
-        let limit = tst_test_helpers::timing::scaled(std::time::Duration::from_secs(30));
-        assert!(took < limit, "the end pass took {took:?}");
     }
 
     mod chunking {
@@ -1074,17 +1127,14 @@ mod tests {
         }
 
         /// Push `stream` cut at `cuts`, flushing after a chunk whose flag
-        /// is set, then end it.
-        fn run(stream: &[u8], cuts: &[(usize, bool)], max_unsynced: usize) -> Run {
-            let mut f = TsFraming::new(max_unsynced);
+        /// is set, then end it. The streams here are shorter than the
+        /// scan limit, so it never interrupts a scan.
+        fn run(stream: &[u8], cuts: &[(usize, bool)]) -> Run {
+            let mut f = TsFraming::new(18_800);
             let mut sent = Vec::new();
             let mut at = 0;
             for &(cut, flush) in cuts.iter().chain(&[(stream.len(), false)]) {
-                // The scan limit's error loses nothing: the bytes are in
-                // the buffer and the call framed no bundle.
-                if let Ok((bundles, _)) = f.push(&stream[at..cut]) {
-                    sent.extend(bundles.concat());
-                }
+                sent.extend(f.push(&stream[at..cut]).unwrap().0.concat());
                 if flush {
                     sent.extend(f.flush().concat());
                 }
@@ -1154,24 +1204,20 @@ mod tests {
         proptest! {
             #![proptest_config(ProptestConfig::with_cases(256))]
 
-            /// Without a flush between the chunks, how a stream is cut and
-            /// where the scan limit interrupts change nothing.
+            /// Without a flush between the chunks, how a stream is cut
+            /// changes nothing.
             #[test]
             fn cutting_a_stream_without_a_flush_changes_nothing(
                 pieces in pieces(any::<u8>()),
                 tail in tail(),
                 picks in picks(),
-                max_unsynced in prop_oneof![Just(0usize), Just(64), Just(18_800)],
             ) {
                 let stream = stream_of(&pieces, tail);
                 let cuts: Vec<(usize, bool)> = cuts(stream.len(), &picks)
                     .into_iter()
                     .map(|(at, _)| (at, false))
                     .collect();
-                prop_assert_eq!(
-                    run(&stream, &cuts, max_unsynced),
-                    run(&stream, &[], usize::MAX)
-                );
+                prop_assert_eq!(run(&stream, &cuts), run(&stream, &[]));
             }
 
             /// A stream of packets and a partial tail comes out the same
@@ -1184,10 +1230,7 @@ mod tests {
             ) {
                 let stream = stream_of(&[Piece::Packets(packets)], tail);
                 let cuts = cuts(stream.len(), &picks);
-                prop_assert_eq!(
-                    run(&stream, &cuts, 18_800),
-                    run(&stream, &[], 18_800)
-                );
+                prop_assert_eq!(run(&stream, &cuts), run(&stream, &[]));
             }
 
             /// A flush declares the packets held so far a stream: on a
@@ -1200,8 +1243,8 @@ mod tests {
                 picks in picks(),
             ) {
                 let stream = stream_of(&pieces, tail);
-                let uncut = run(&stream, &[], 18_800).sent;
-                let flushed = run(&stream, &cuts(stream.len(), &picks), 18_800).sent;
+                let uncut = run(&stream, &[]).sent;
+                let flushed = run(&stream, &cuts(stream.len(), &picks)).sent;
                 let added = flushed.len() - uncut.len().min(flushed.len());
                 prop_assert!(added == 0 || added == 188 || added == 376, "added {}", added);
                 prop_assert_eq!(&flushed[..added], &stream[..added]);
