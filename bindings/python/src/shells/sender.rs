@@ -132,8 +132,9 @@ impl PySender {
     /// boundary failed), the whole packets held are sent when every
     /// boundary present reads `0x47`, the first byte of a partial packet
     /// included. Once a byte was skipped or a boundary failed, `flush()`
-    /// sends nothing more until three consecutive sync bytes have confirmed
-    /// the alignment again; `finish()` sends or reports what it then holds
+    /// sends nothing more until three consecutive packet starts read the
+    /// sync byte again (two whole packets and the first byte of a third are
+    /// enough); `finish()` sends or reports what it then holds
     /// back.
     ///
     /// A flush is the caller's word that what was sent so far is a stream,
@@ -219,8 +220,9 @@ impl PySender {
 
     /// End the stream, then close: send what `flush()` sends, then make one
     /// end-of-stream pass over what the sender still holds, so packets
-    /// behind damage that three consecutive sync bytes verify are sent now
-    /// (no later call would). Closes the transport without cancelling
+    /// behind damage that three consecutive packet starts reading `0x47`
+    /// verify (two whole packets and the first byte of a third are enough)
+    /// are sent now (no later call would). Closes the transport without cancelling
     /// first: the lossless end, also over a transport that queues (an RTSP
     /// push writes its queue, then TEARDOWN). The sender is closed either
     /// way; a later `finish()` or `close()` does nothing, and a `finish()`
@@ -230,8 +232,9 @@ impl PySender {
     /// not yet sent is then abandoned. Without one, raises the transport's
     /// `INPUT_MALFORMED` after sending everything it could, when bytes are
     /// left that could not be sent as whole aligned TS packets: a partial
-    /// last packet, fewer than three packets behind skipped bytes, bytes
-    /// that are not TS. Bytes the sender skipped on the way to finding its
+    /// last packet, packets behind skipped bytes that fewer than three
+    /// sync bytes confirm (two whole packets and a first byte reading
+    /// `0x47` do confirm), bytes that are not TS. Bytes the sender skipped on the way to finding its
     /// alignment, a good packet in front of early damage among them, are
     /// not part of that report.
     ///

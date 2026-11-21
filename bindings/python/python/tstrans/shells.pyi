@@ -233,7 +233,8 @@ class Sender:
         been aligned since its first byte, the whole packets held are sent
         when every boundary present reads ``0x47``, the first byte of a
         partial packet included. After a skipped byte or a failed boundary,
-        nothing more is sent until three consecutive sync bytes confirm the
+        nothing more is sent until three consecutive packet starts (two
+        whole packets and the first byte of a third) confirm the
         alignment; ``finish()`` sends or reports what is then held back.
 
         A flush while the first 188 to 376 bytes only look aligned (``0x47``
@@ -262,11 +263,13 @@ class Sender:
         included.
 
         Before closing it makes one end-of-stream pass over what is held:
-        packets behind damage that three consecutive sync bytes verify are
+        packets behind damage that three consecutive packet starts verify
+        (two whole packets and the first byte of a third are enough) are
         sent. Then, if no send failed, it raises the transport's
         ``INPUT_MALFORMED`` when bytes are left that could not be sent as
-        whole aligned TS packets (a partial last packet, fewer than three
-        packets behind skipped bytes, bytes that are not TS), after sending
+        whole aligned TS packets (a partial last packet, packets behind
+        skipped bytes that fewer than three sync bytes confirm, bytes that
+        are not TS), after sending
         everything it could. Bytes skipped on the way to the alignment are
         not part of that report."""
     def is_alive(self) -> bool: ...

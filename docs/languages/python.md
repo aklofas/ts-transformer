@@ -463,11 +463,12 @@ flushes, closes the transport without cancelling first and raises the
 flush's error, so a transport that queues (an RTSP push) writes what it
 holds. Both send a stream of any length that has been aligned since its
 first byte, one or two packets included. `finish()` also makes one last
-pass over what the sender holds (good packets behind damage that three
-sync bytes verify are sent) and then raises `INPUT_MALFORMED` (the
+pass over what the sender holds (good packets behind damage are sent once
+three consecutive packet starts read `0x47`: two whole packets and the
+first byte of a third are enough) and then raises `INPUT_MALFORMED` (the
 transport's class) if bytes are left that it could not send as whole TS
-packets: a partial last packet, a short run behind damage, bytes that are
-not TS. A `flush()` early in a stream that only looks aligned (a `0x47`
+packets: a partial last packet, packets behind damage that fewer than
+three sync bytes confirm, bytes that are not TS. A `flush()` early in a stream that only looks aligned (a `0x47`
 at offset 0, and at 188 when more is held, in front of bytes off that
 grid) sends those 188 or 376 bytes although they are not packets and
 loses the real packets that start inside them, one for 188 bytes and two
