@@ -723,6 +723,38 @@ fn a_cancel_fired_while_a_failures_events_are_handed_out_is_reported_after_the_f
     assert_eq!(tail, ["TransportBroken", "Closed", "Closed"], "{results:?}");
 }
 
+/// A stream that fails while its cancel latch already reads set: the failure
+/// is reported once, then the cancel, for ever. (Only a clean end is taken at
+/// its word over a latched cancel.)
+#[test]
+fn a_latched_cancel_is_reported_after_a_failure() {
+    let mut rx = DemuxReceiver::new(Cancellable {
+        packets: marked_stream(&[0xA1]).into(),
+        end: Some(broken("the link died")),
+        cancel: std::sync::Arc::new(crate::common::FlagCancel(crate::common::flag(true))),
+        closed: false,
+        deaf: true,
+        reads: std::sync::Arc::default(),
+    });
+    let mut results = Vec::new();
+    while results.len() < 40 {
+        match rx.recv_event() {
+            Ok(Some(_)) => {}
+            Ok(None) => {
+                results.push("end".to_string());
+                break;
+            }
+            Err(e) => {
+                results.push(format!("{:?}", e.kind));
+                if results.len() == 3 {
+                    break;
+                }
+            }
+        }
+    }
+    assert_eq!(results, ["TransportBroken", "Closed", "Closed"]);
+}
+
 /// Like `Cancellable`, but its own `close()` changes nothing a read sees and
 /// fires no latch, so the receiver's close can come before the stream ends.
 struct QuietClose {

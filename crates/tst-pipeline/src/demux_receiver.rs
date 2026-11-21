@@ -402,8 +402,8 @@ impl<R: RecvTransport> DemuxReceiver<R> {
     /// ever. A cancel that fires after the stream ended is reported once the
     /// events already produced have been handed out, and from then on (the
     /// transport's cancel handle is asked, without a read). After a failure
-    /// the failure is reported first, once, and a cancel fired meanwhile
-    /// from the next call on. After this receiver's own [`Self::close`],
+    /// the failure is reported first, once, and a cancel latched by then or
+    /// since from the next call on. After this receiver's own [`Self::close`],
     /// whenever it was called, a cancel fired later does not change what
     /// it answers. `Backpressure` and `InputMalformed` are not ends.
     ///
@@ -509,6 +509,9 @@ impl<R: RecvTransport> DemuxReceiver<R> {
                     // where the stream ends, not when the end is reported:
                     // a cancel fired while the caller takes the events the
                     // end produced is still the caller's to hear after them.
+                    // Only a clean end is protected from one that was
+                    // already latched (a success wins); after a failure any
+                    // latched cancel is reported once the failure has been.
                     if self.cancelled_at_the_end.is_none()
                         && matches!(
                             e.kind,
@@ -517,7 +520,8 @@ impl<R: RecvTransport> DemuxReceiver<R> {
                                 | ShellErrorKind::Closed
                         )
                     {
-                        self.cancelled_at_the_end = Some(self.ts.cancel_latched());
+                        self.cancelled_at_the_end =
+                            Some(e.kind == ShellErrorKind::EndOfStream && self.ts.cancel_latched());
                     }
                     // An end first releases the packets the syncer holds;
                     // it comes back here when they are out.
@@ -588,10 +592,13 @@ impl<R: RecvTransport> DemuxReceiver<R> {
 
     /// Close the underlying transport. Idempotent.
     ///
-    /// After close, the next `recv_event` call will flush the demuxer and
-    /// return `Ok(None)` once the event queue is drained. A cancel that fires
-    /// after the stream ended and that no call has reported yet is not
-    /// reported once the receiver is closed.
+    /// After close, the next `recv_event` call flushes the demuxer and, once
+    /// the event queue is drained, answers what the transport answers to a
+    /// read after its own close: the end for the plain transports, the cancel
+    /// kind for a [`ManagedRecvTransport`](crate::ManagedRecvTransport). That
+    /// answer then repeats. A cancel that fires after the stream ended and
+    /// that no call has reported yet is not reported once the receiver is
+    /// closed.
     pub fn close(&mut self) {
         self.closed = true;
         self.ts.close();
@@ -606,15 +613,16 @@ impl<R: RecvTransport> DemuxReceiver<R> {
     }
 }
 
-/// `DemuxReceiver` implements `Iterator` so callers can use `for result in &mut rx`
-/// or `.collect()` patterns. EOF (`Ok(None)`) terminates the iterator.
+/// `DemuxReceiver` implements `Iterator` so callers can use
+/// `for result in &mut rx`. A clean end (`Ok(None)`) ends the iterator.
 /// Errors are surfaced as `Some(Err(e))` so the caller can distinguish a
 /// transport error from a clean end of stream.
 ///
-/// After a `TransportBroken` error the next `next()` is `None`. After a
-/// cancel (`Closed`) every `next()` is that error: a loop that goes on after
-/// an error, which is right for `Backpressure` and `InputMalformed`, must
-/// break on `Closed`.
+/// After a `TransportBroken` error, yielded once, the next `next()` is
+/// `None`. After a cancel (`Closed`) every `next()` is that error, so the
+/// iterator never ends by itself: stop at the first `Err` (`collect()` into
+/// a `Result` does), as for any error that is not `Backpressure` or
+/// `InputMalformed`.
 impl<R: RecvTransport> Iterator for DemuxReceiver<R> {
     type Item = Result<DemuxEvent, DemuxReceiverError>;
 
