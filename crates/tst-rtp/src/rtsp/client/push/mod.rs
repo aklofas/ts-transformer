@@ -218,7 +218,9 @@ const KEPT_TEXT_CHARS: usize = 256;
 /// and is read by callers that print it, and a server's reason phrase can
 /// be as long as a message and hold anything but a CR or LF: a character
 /// that starts a line, reorders or hides the text around it would change
-/// what the printed line shows.
+/// what the printed line shows. The Python and JVM bindings keep their
+/// own copy of this rule, for an outcome they do not know, since this
+/// function is private: a change here is made there too.
 fn kept_text(text: &str) -> String {
     text.chars()
         .take(KEPT_TEXT_CHARS)
