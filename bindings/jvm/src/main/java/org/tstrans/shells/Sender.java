@@ -112,13 +112,13 @@ public class Sender extends NativeHandle {
      * Flush any buffered partial TS bundle. Use after the last {@link #sendBytes}
      * call in a logical unit to ensure all bytes reach the peer.
      *
-     * <p>A stream of one or two TS packets is sent too. While no byte has been
-     * skipped and no packet boundary has failed, the whole packets held are sent
-     * when every packet boundary present reads the sync byte {@code 0x47}, the
-     * first byte of a trailing partial packet included. Once a byte was skipped
-     * or a boundary failed, a flush sends nothing more until three consecutive
-     * sync bytes have confirmed the alignment again; {@link #finish()} sends or
-     * reports what is then held back.
+     * <p>A stream of one or two TS packets is sent too. While no byte has been skipped
+     * and no packet boundary has failed, the whole packets held are sent when every
+     * packet boundary present reads the sync byte {@code 0x47}, the first byte of a
+     * trailing partial packet included. Once a byte was skipped or a boundary failed, a
+     * flush sends nothing more until three consecutive packet starts read the sync byte
+     * (two whole packets and the first byte of a third are enough); {@link #finish()}
+     * sends or reports what is then held back.
      *
      * <p>A flush is your word that what was sent so far is a stream, and it costs
      * something when that is wrong. If the first 188 to 376 bytes only look aligned
@@ -149,23 +149,24 @@ public class Sender extends NativeHandle {
     /**
      * End the stream, then close the transport: the lossless counterpart to
      * {@link #close()}. It sends what {@link #flush()} sends, then makes one
-     * end-of-stream pass over what the sender still holds: packets behind damage
-     * that a later {@link #sendBytes} would have confirmed (three consecutive sync
-     * bytes) are sent now, because no later call comes. It does NOT cancel
-     * first, so a transport that queues (an RTSP push from
-     * {@code RtspPushSession.intoSender()}) writes its queue before it ends; a
-     * {@link #sendBytes} parked on another thread holds the sender and
-     * {@code finish()} waits behind it. The sender is closed either way; a second
-     * call, and a call after {@link #close()}, do nothing. The handle still needs
+     * end-of-stream pass over what the sender still holds: packets behind damage that a
+     * later {@link #sendBytes} would have confirmed (three consecutive packet starts
+     * reading {@code 0x47}: two whole packets and the first byte of a third are enough)
+     * are sent now, because no later call comes. It does NOT cancel first, so a transport
+     * that queues (an RTSP push from {@code RtspPushSession.intoSender()}) writes its
+     * queue before it ends; a {@link #sendBytes} parked on another thread holds the
+     * sender and {@code finish()} waits behind it. The sender is closed either way; a
+     * second call, and a call after {@link #close()}, do nothing. The handle still needs
      * {@link #close()} afterwards, which then does nothing more.
      *
-     * <p>It throws the first send error (what was not yet sent is then
-     * abandoned). Without one, it throws the transport's exception with kind
-     * {@code INPUT_MALFORMED} when bytes are left that it could not send as whole
-     * aligned TS packets, after sending everything it could: a partial last
-     * packet, fewer than three packets behind skipped bytes, bytes that are not
-     * TS. Bytes the scan skipped on the way (a good packet in front of damage
-     * early in the stream among them) are dropped without that report.
+     * <p>It throws the first send error (what was not yet sent is then abandoned).
+     * Without one, it throws the transport's exception with kind {@code INPUT_MALFORMED}
+     * when bytes are left that it could not send as whole aligned TS packets, after
+     * sending everything it could: a partial last packet, packets behind skipped bytes
+     * that three packet starts reading {@code 0x47} do not confirm (two whole packets and
+     * a first byte reading {@code 0x47} do), bytes that are not TS. Bytes the scan
+     * skipped on the way (a good packet in front of damage early in the stream among
+     * them) are dropped without that report.
      *
      * <p>After {@code cancelHandle().cancel()} every call throws the transport's
      * {@code CLOSED}, a repeated one included.

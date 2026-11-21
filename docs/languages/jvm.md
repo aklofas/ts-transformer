@@ -1025,13 +1025,15 @@ try (var tx = Sender.open(
 them into 7-packet (1316-byte) SRT bundles. Call `flush()` after the last push
 to emit any partial bundle, or `finish()` to end the stream: it sends what a
 flush sends and makes one end-of-stream pass over what the sender still holds
-(packets behind damage that three sync bytes confirm), then closes the
+(packets behind damage that three consecutive packet starts reading `0x47`
+confirm: two whole packets and the first byte of a third are enough), then closes the
 transport without cancelling it first (so a transport that queues, an RTSP
 push, writes its queue), and leaves the handle for `close()`, which then does
 nothing more. `finish()` throws the first send error; without one it throws
 the transport's `INPUT_MALFORMED` when bytes are left that it could not send
-as whole aligned TS packets (a partial last packet, fewer than three packets
-behind skipped bytes, bytes that are not TS), after sending everything it
+as whole aligned TS packets (a partial last packet, packets behind skipped
+bytes that three packet starts reading `0x47` do not confirm, bytes that are
+not TS), after sending everything it
 could. A stream of one or two TS packets is sent by either: while no byte has
 been skipped and no packet boundary has failed, the whole packets held go out
 when every boundary present reads `0x47`. That is the caller's word that the
