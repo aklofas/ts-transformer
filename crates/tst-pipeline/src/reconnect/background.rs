@@ -42,6 +42,7 @@ use tracing::{info, warn};
 use tst_core::cancel::CancelSlot;
 use tst_core::transport::{Transport, TransportError};
 
+use super::silent_peer::SilentPeer;
 use super::state::{Install, Latch, ManagedShared, Shutdown, broken_errno, install_fresh_inner};
 use super::{GapBuffer, ReconnectPolicy};
 
@@ -65,6 +66,8 @@ pub(crate) struct WorkerCtx<T: Transport> {
     /// installs and clears it when one is torn down, so a cancel reaches a
     /// parked drain send without touching `inner` (invariant 5).
     pub(crate) active: Arc<CancelSlot>,
+    /// The wrapper's silent-peer rule, when it is armed.
+    pub(crate) silent: Option<Arc<Mutex<SilentPeer>>>,
 }
 
 enum DrainStep {
@@ -237,7 +240,14 @@ pub(crate) fn worker_run<T: Transport>(ctx: WorkerCtx<T>) {
                 continue 'reconnect;
             }
         };
-        match install_fresh_inner(&ctx.inner, &ctx.active, &ctx.latch, &ctx.shared, new_inner) {
+        match install_fresh_inner(
+            &ctx.inner,
+            &ctx.active,
+            &ctx.latch,
+            &ctx.shared,
+            ctx.silent.as_deref(),
+            new_inner,
+        ) {
             Install::Installed => {}
             // close()/cancel() landed while the factory ran: the fresh
             // inner is already closed and nothing may be drained into it.
