@@ -1033,3 +1033,33 @@ fn a_transport_that_reconnected_before_it_was_wrapped_starts_clean() {
         "no reconnect happened under the shell: no marker, no packet dropped"
     );
 }
+
+/// A receiver closed by its owner before the stream ended answers, over a
+/// managed transport, the cancel kind (the wrapper's answer to a read after
+/// its own close), and that answer repeats.
+#[test]
+fn a_close_before_the_end_makes_a_managed_receiver_answer_the_cancel_kind() {
+    let inner = ScriptedRecv::new(
+        (0..4).map(|i| ts_packet_tei(0x100, i).to_vec()),
+        TransportError::Closed,
+    )
+    .with_max_payload(188);
+    let factory =
+        Box::new(|| -> Result<ScriptedRecv, TransportError> { Err(broken("no rebuild")) });
+    let managed = ManagedRecvTransport::new(inner, factory, fast_policy(Some(1)))
+        .expect("the policy validates");
+    let mut rx = ManagedDemuxReceiver::new(managed, ManagedDemuxReceiverConfig::default());
+    rx.close();
+    let mut kinds = Vec::new();
+    for _ in 0..40 {
+        match rx.recv_event() {
+            Ok(Some(_)) => {}
+            Ok(None) => kinds.push("end".to_string()),
+            Err(e) => kinds.push(format!("{:?}", e.kind)),
+        }
+        if kinds.len() == 3 {
+            break;
+        }
+    }
+    assert_eq!(kinds, ["Closed"; 3]);
+}
