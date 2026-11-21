@@ -105,7 +105,11 @@ pub unsafe extern "C" fn tst_sender_send_ts(
 /// included, when no byte has been skipped and every packet boundary held
 /// reads the sync byte (`0x47`); once bytes were skipped it sends nothing
 /// until three consecutive sync bytes confirm the alignment again. `_close`
-/// discards what is held, so `_flush` then `_close` is the lossless end.
+/// discards what is held, so `_flush` then `_close` is the end that sends
+/// everything a flush can verify. C has no end-of-stream pass for this
+/// sender: what a flush cannot verify is lost without a report, namely a
+/// partial last packet, bytes that are not TS, and packets behind skipped
+/// bytes that fewer than three consecutive sync bytes confirm.
 ///
 /// A flush is the caller's word that what was sent so far is a stream. If
 /// the first 188 to 376 bytes only look aligned (`0x47` at offset 0, and at
@@ -320,7 +324,11 @@ pub unsafe extern "C" fn tst_managed_sender_send_ts(
 /// included, when no byte has been skipped and every packet boundary held
 /// reads the sync byte (`0x47`); once bytes were skipped it sends nothing
 /// until three consecutive sync bytes confirm the alignment again. `_close`
-/// discards what is held, so `_flush` then `_close` is the lossless end.
+/// discards what is held, so `_flush` then `_close` is the end that sends
+/// everything a flush can verify. C has no end-of-stream pass for this
+/// sender: what a flush cannot verify is lost without a report, namely a
+/// partial last packet, bytes that are not TS, and packets behind skipped
+/// bytes that fewer than three consecutive sync bytes confirm.
 ///
 /// A flush is the caller's word that what was sent so far is a stream. If
 /// the first 188 to 376 bytes only look aligned (`0x47` at offset 0, and at

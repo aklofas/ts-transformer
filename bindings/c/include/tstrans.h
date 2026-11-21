@@ -4940,7 +4940,11 @@ struct tst_managed_receiver_t *tst_managed_receiver_open_listener(const char *sr
  * included, when no byte has been skipped and every packet boundary held
  * reads the sync byte (`0x47`); once bytes were skipped it sends nothing
  * until three consecutive sync bytes confirm the alignment again. `_close`
- * discards what is held, so `_flush` then `_close` is the lossless end.
+ * discards what is held, so `_flush` then `_close` is the end that sends
+ * everything a flush can verify. C has no end-of-stream pass for this
+ * sender: what a flush cannot verify is lost without a report, namely a
+ * partial last packet, bytes that are not TS, and packets behind skipped
+ * bytes that fewer than three consecutive sync bytes confirm.
  *
  * A flush is the caller's word that what was sent so far is a stream. If
  * the first 188 to 376 bytes only look aligned (`0x47` at offset 0, and at
@@ -8185,7 +8189,10 @@ int tst_rist_receiver_recv_ts(struct TstRistReceiver *p,
  * included, when no byte has been skipped and every packet boundary held
  * reads the sync byte (`0x47`); once bytes were skipped it sends nothing
  * until three consecutive sync bytes confirm the alignment again. `_close`
- * discards what is held.
+ * discards what is held. C has no end-of-stream pass for this sender, so what
+ * a flush cannot verify (a partial last packet, bytes that are not TS, packets
+ * behind skipped bytes that fewer than three consecutive sync bytes confirm)
+ * is lost without a report.
  *
  * A flush is the caller's word that what was sent so far is a stream. If
  * the first 188 to 376 bytes only look aligned (`0x47` at offset 0, and at
@@ -9260,7 +9267,10 @@ int tst_rtp_receiver_recv_ts(struct TstRtpReceiver *p,
  * included, when no byte has been skipped and every packet boundary held
  * reads the sync byte (`0x47`); once bytes were skipped it sends nothing
  * until three consecutive sync bytes confirm the alignment again. `_close`
- * discards what is held.
+ * discards what is held. C has no end-of-stream pass for this sender, so what
+ * a flush cannot verify (a partial last packet, bytes that are not TS, packets
+ * behind skipped bytes that fewer than three consecutive sync bytes confirm)
+ * is lost without a report.
  *
  * A flush is the caller's word that what was sent so far is a stream. If
  * the first 188 to 376 bytes only look aligned (`0x47` at offset 0, and at
@@ -11268,7 +11278,11 @@ struct TstRtpDemuxReceiver *tst_rtsp_session_into_demux_receiver(struct TstRtspS
  * included, when no byte has been skipped and every packet boundary held
  * reads the sync byte (`0x47`); once bytes were skipped it sends nothing
  * until three consecutive sync bytes confirm the alignment again. `_close`
- * discards what is held, so `_flush` then `_close` is the lossless end.
+ * discards what is held, so `_flush` then `_close` is the end that sends
+ * everything a flush can verify. C has no end-of-stream pass for this
+ * sender: what a flush cannot verify is lost without a report, namely a
+ * partial last packet, bytes that are not TS, and packets behind skipped
+ * bytes that fewer than three consecutive sync bytes confirm.
  *
  * A flush is the caller's word that what was sent so far is a stream. If
  * the first 188 to 376 bytes only look aligned (`0x47` at offset 0, and at
@@ -12446,7 +12460,10 @@ int tst_tcp_receiver_recv_ts(struct TstTcpReceiver *p,
  * included, when no byte has been skipped and every packet boundary held
  * reads the sync byte (`0x47`); once bytes were skipped it sends nothing
  * until three consecutive sync bytes confirm the alignment again. `_close`
- * discards what is held.
+ * discards what is held. C has no end-of-stream pass for this sender, so what
+ * a flush cannot verify (a partial last packet, bytes that are not TS, packets
+ * behind skipped bytes that fewer than three consecutive sync bytes confirm)
+ * is lost without a report.
  *
  * A flush is the caller's word that what was sent so far is a stream. If
  * the first 188 to 376 bytes only look aligned (`0x47` at offset 0, and at
@@ -13523,7 +13540,10 @@ int tst_udp_receiver_recv_ts(struct TstUdpReceiver *p,
  * included, when no byte has been skipped and every packet boundary held
  * reads the sync byte (`0x47`); once bytes were skipped it sends nothing
  * until three consecutive sync bytes confirm the alignment again. `_close`
- * discards what is held.
+ * discards what is held. C has no end-of-stream pass for this sender, so what
+ * a flush cannot verify (a partial last packet, bytes that are not TS, packets
+ * behind skipped bytes that fewer than three consecutive sync bytes confirm)
+ * is lost without a report.
  *
  * A flush is the caller's word that what was sent so far is a stream. If
  * the first 188 to 376 bytes only look aligned (`0x47` at offset 0, and at

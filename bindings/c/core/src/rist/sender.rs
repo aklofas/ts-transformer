@@ -199,7 +199,10 @@ pub unsafe extern "C" fn tst_rist_sender_send_ts(
 /// included, when no byte has been skipped and every packet boundary held
 /// reads the sync byte (`0x47`); once bytes were skipped it sends nothing
 /// until three consecutive sync bytes confirm the alignment again. `_close`
-/// discards what is held.
+/// discards what is held. C has no end-of-stream pass for this sender, so what
+/// a flush cannot verify (a partial last packet, bytes that are not TS, packets
+/// behind skipped bytes that fewer than three consecutive sync bytes confirm)
+/// is lost without a report.
 ///
 /// A flush is the caller's word that what was sent so far is a stream. If
 /// the first 188 to 376 bytes only look aligned (`0x47` at offset 0, and at
