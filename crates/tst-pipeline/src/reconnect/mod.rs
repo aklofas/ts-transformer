@@ -67,6 +67,18 @@ pub struct ReconnectPolicy {
     /// Maximum reconnect attempts before giving up. None = retry forever.
     /// Default: `Some(10)`.
     ///
+    /// What one budget covers depends on the wrapper:
+    ///
+    /// - [`ManagedTransport`] (send): the factory calls of one outage. In
+    ///   `Blocking` mode every `send_bytes` call that meets a broken
+    ///   connection runs a budget of its own and returns at its first
+    ///   successful reconnect. The `Background` worker starts a fresh
+    ///   budget after every successful reconnect.
+    /// - `ManagedRecvTransport` (receive): every rebuild attempt of one
+    ///   `recv_bytes` call, the ones that connected included. A connection
+    ///   that breaks before it delivers anything uses one attempt, and the
+    ///   count starts again with the next call.
+    ///
     /// `None` with a zero backoff (a zero `Constant`, or an `Exponential`
     /// with a zero base or a zero cap) is refused by
     /// [`ReconnectPolicy::validate`] and by every managed constructor: it
@@ -358,9 +370,11 @@ impl ManagedStatsHandle {
 ///   transport's `max_payload` — dropped during drain rather than
 ///   wedging it forever; `Blocking` mode would instead return
 ///   `TooLarge` synchronously to the caller for that same message.
-///   `max_attempts` bounds one continuous outage (the budget resets after every
-///   successful reconnect, exactly as it does per-call in `Blocking`
-///   mode). If the worker exhausts that budget — or terminates
+///   `max_attempts` bounds one continuous outage of this sender (the
+///   worker's budget resets after every successful reconnect, exactly as
+///   it does per-call in `Blocking` mode; a managed RECEIVER counts
+///   differently, see [`ReconnectPolicy::max_attempts`]). If the worker
+///   exhausts that budget — or terminates
 ///   abnormally (an unwind inside the factory, or an unrecoverable
 ///   poisoned lock) — the give-up is reported exactly once, as a single
 ///   `TransportError::Broken` on the next `send_bytes` call; that call's
