@@ -365,14 +365,16 @@ def test_handle_getters_answer_while_a_reconfigure_is_parked() -> None:
 def test_close_ends_a_parked_reconfigure() -> None:
     tx, peer = _srt_sender_with_pending_output()
     try:
+        started = time.monotonic()
         call = _Call(lambda: tx.reconfigure(_video_klv_program()))
         wait_for("the reconfigure holding the sender", lambda: slot_held(tx), WAIT_S)
         assert not call.done.is_set()
-        closed_at = time.monotonic()
         tx.close()
         assert call.done.wait(WAIT_S), "the parked reconfigure did not end"
-        # Ended by the close's cancel, well inside the send timeout.
-        assert time.monotonic() - closed_at < SEND_TIMEOUT_MS / 1000.0
+        # Ended by the close's cancel, well before its own send timeout. The
+        # kind cannot tell the two apart: a send that times out while the
+        # cancel is latched reads CLOSED too, so the time decides.
+        assert time.monotonic() - started < SEND_TIMEOUT_MS / 1000.0 / 2
         assert isinstance(call.exc, SrtError), call.exc
         assert call.exc.kind == SrtErrorKind.CLOSED
         assert _handles(tx) == (None,) * 5
