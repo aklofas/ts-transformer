@@ -16,8 +16,12 @@ import org.tstrans.mpegts.DemuxerStats;
  * the video PID, the KLV PID, or the program's PCR PID when it also carries a stream)
  * starts a new time base, and nothing pairs across it: the KLV samples held from
  * before it leave as {@code UnpairedKlv}, and a sample right after it that still
- * carries the old clock leaves unpaired. A restart of the source that signals
- * nothing, a reconnect of the byte source included, is not seen here.
+ * carries the old clock leaves unpaired. One limit: the old clock's samples still in
+ * flight behind the boundary are not marked, only the first on each PID leaves
+ * unpaired, so with KLV muxed more than one sample behind its video and a new clock
+ * within the pairing tolerance of the old one, a later old-clock KLV sample can still
+ * pair with a new frame. A restart of the source that signals nothing, a reconnect of
+ * the byte source included, is not seen here.
  *
  * <pre>{@code
  * try (Pairer p = new Pairer(0x101, 0x102)) {
