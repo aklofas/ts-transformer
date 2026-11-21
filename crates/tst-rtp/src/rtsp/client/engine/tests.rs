@@ -4652,3 +4652,56 @@ fn a_session_named_by_a_record_or_pause_reply_is_ignored() {
     e.handle_timeout(ms(t0, 30_000), false);
     assert_eq!(sent(&one(&mut e)).headers["session"], "P1");
 }
+
+/// The engine's contract: a cnonce asked for by [`ClientEngine::wants_cnonce`]
+/// is handed in before the next submit. An owner that asks for a submit's
+/// cnonce while a request still waits for its own gives that cnonce to the
+/// waiting request's second attempt; the submit then finds none and fails
+/// as a failed random source does.
+#[test]
+fn a_cnonce_handed_in_while_a_request_waits_goes_to_that_request_not_to_the_next_submit() {
+    let t0 = Instant::now();
+    let mut e = ClientEngine::new(cfg(Some(("user", "pass"))));
+    e.submit(spec(RtspMethod::Options, URI), None, t0).unwrap();
+    let c = cseq(&one(&mut e));
+    e.handle_reply(unauthorized(c, QOP_WWW), t0);
+    assert!(e.wants_cnonce());
+    let next = spec(RtspMethod::Describe, URI);
+    assert!(e.submit_wants_cnonce(&next));
+    e.handle_cnonce(Some(CNONCE));
+    assert!(matches!(
+        e.submit(next, None, t0),
+        Err(RtspError::Io(io::ErrorKind::Other))
+    ));
+    let sent_now = transmits(&mut e);
+    assert_eq!(sent_now.len(), 1);
+    assert_eq!(sent(&sent_now[0]).method, RtspMethod::Options);
+    assert_eq!(cseq(&sent_now[0]), c + 1);
+    let h = authz(&sent_now[0]).unwrap();
+    assert_eq!(param(&h, "cnonce"), CNONCE_HEX);
+}
+
+/// The same for a ping: the cnonce asked for by
+/// [`ClientEngine::timeout_wants_cnonce`] while a request waits answers
+/// that request, and the ping goes out without an answer to the challenge.
+#[test]
+fn a_cnonce_handed_in_while_a_request_waits_goes_to_that_request_not_to_the_ping() {
+    let t0 = Instant::now();
+    let mut e = ClientEngine::new(cfg(Some(("user", "pass"))));
+    e.enable_keepalive(Some(Duration::from_secs(1)), t0);
+    e.submit(spec(RtspMethod::Options, URI), None, t0).unwrap();
+    let c = cseq(&one(&mut e));
+    e.handle_reply(unauthorized(c, QOP_WWW), t0);
+    assert!(e.wants_cnonce());
+    assert!(e.timeout_wants_cnonce(ms(t0, 1000), false));
+    e.handle_cnonce(Some(CNONCE));
+    e.handle_timeout(ms(t0, 1000), false);
+    let sent_now = transmits(&mut e);
+    assert_eq!(sent_now.len(), 2);
+    assert!(!sent_now[0].is_ping);
+    assert_eq!(cseq(&sent_now[0]), c + 1);
+    let h = authz(&sent_now[0]).unwrap();
+    assert_eq!(param(&h, "cnonce"), CNONCE_HEX);
+    assert!(sent_now[1].is_ping);
+    assert!(authz(&sent_now[1]).is_none());
+}

@@ -28,10 +28,16 @@ use inbound::FrontScan;
 /// [`ClientEngine::timeout_wants_cnonce`], [`ClientEngine::wants_cnonce`])
 /// and hands them in with [`ClientEngine::handle_cnonce`]. It answers
 /// [`ClientEngine::wants_cnonce`] in the pass that handled the input,
-/// before it waits for the stream again: a request whose second attempt
-/// waits is ended by nothing but its own reply deadline, the stream's end
-/// or a request that replaces it (a TEARDOWN); on a live stream, one
-/// without a deadline would wait for ever.
+/// before it waits for the stream again and before its next submit or
+/// timeout: a request whose second attempt waits is ended by nothing but
+/// its own reply deadline, the stream's end or a request that replaces it
+/// (a TEARDOWN); on a live stream, one without a deadline would wait for
+/// ever. While a request waits, a cnonce handed in goes to that request
+/// whoever asked for it: one drawn because
+/// [`ClientEngine::submit_wants_cnonce`] or
+/// [`ClientEngine::timeout_wants_cnonce`] asked would answer the waiting
+/// request, and the submit would then fail as on a failed random source,
+/// the ping go out without an answer to the challenge.
 pub(crate) type Cnonce = [u8; 16];
 
 /// The user name and password the client answers a challenge with.
@@ -431,7 +437,8 @@ impl ClientEngine {
     /// A cnonce the engine asked for, or `None` when the random source
     /// failed. A request waiting for one makes its second attempt now, and
     /// without a cnonce fails as any Digest answer does; otherwise the
-    /// cnonce is kept for the next Digest answer.
+    /// cnonce is kept for the next Digest answer. The waiting request takes
+    /// it whichever question asked for it (see [`Cnonce`]).
     pub(crate) fn handle_cnonce(&mut self, cnonce: Option<Cnonce>) {
         if cnonce.is_some() {
             self.cnonce = cnonce;
