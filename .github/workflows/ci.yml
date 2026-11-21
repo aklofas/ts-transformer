@@ -619,6 +619,12 @@ jobs:
         if: matrix.name == 'linux-x86_64'
         run: cargo clippy -p tst-jni --all-targets --features jni-test-hooks -- -D warnings
 
+      # The workspace clippy above skips tst-core's fixture tool: its binaries
+      # need the off-by-default fixture-tools feature.
+      - name: cargo clippy (tst-core, fixture-tools)
+        if: matrix.name == 'linux-x86_64'
+        run: cargo clippy -p tst-core --all-targets --features fixture-tools -- -D warnings
+
       - name: Lint fixtures (clippy rejects each planted violation)
         # The binding rules once kept by grep rails are clippy lints now;
         # this proves each one still fires. One platform is enough.
