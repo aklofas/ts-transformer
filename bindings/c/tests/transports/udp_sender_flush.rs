@@ -53,12 +53,17 @@ fn udp_sender_flush_delivers_the_buffered_tail() {
 /// A plain sender holds the start of a stream back until it has seen
 /// enough packets to be sure of their alignment; a flush declares the end
 /// of what the caller has, so a stream of one or two whole packets goes out.
-fn flushed_datagram_lengths(packets: usize) -> Vec<usize> {
+/// Returns the packets sent and every datagram that arrived, in order.
+fn flush_after(packets: usize) -> (Vec<u8>, Vec<Vec<u8>>) {
     let (rx, tx) = open_pair();
     rx.set_read_timeout(Some(scaled(Duration::from_secs(2))))
         .unwrap();
-    let pkt = ts_null_packet();
+    let mut sent = Vec::new();
     for i in 0..packets {
+        // Distinct payloads, so a datagram cannot match by length alone.
+        let mut pkt = ts_null_packet();
+        pkt[4] = i as u8;
+        sent.extend_from_slice(&pkt);
         let rc = unsafe { tst_udp_sender_send_ts(tx, pkt.as_ptr(), pkt.len()) };
         assert_eq!(rc, 0, "send {i}: {}", last_error_msg());
     }
@@ -66,24 +71,29 @@ fn flushed_datagram_lengths(packets: usize) -> Vec<usize> {
     unsafe { tst_udp_sender_close(tx) };
     assert_eq!(rc, 0, "flush: {}", last_error_msg());
     let mut buf = [0u8; 2048];
-    let mut lengths = vec![rx.recv(&mut buf).expect("datagram within the bound")];
+    let n = rx.recv(&mut buf).expect("datagram within the bound");
+    let mut datagrams = vec![buf[..n].to_vec()];
     // Whatever else the flush sent is already on the loopback socket.
     rx.set_read_timeout(Some(Duration::from_millis(200)))
         .unwrap();
     while let Ok(n) = rx.recv(&mut buf) {
-        lengths.push(n);
+        datagrams.push(buf[..n].to_vec());
     }
-    lengths
+    (sent, datagrams)
 }
 
 #[test]
 fn a_flush_after_one_packet_sends_it() {
-    assert_eq!(flushed_datagram_lengths(1), [188]);
+    let (sent, datagrams) = flush_after(1);
+    assert_eq!(datagrams, [sent]);
 }
 
+/// The flush sends the held packets as one bundle: one datagram, both
+/// packets, in order.
 #[test]
 fn a_flush_after_two_packets_sends_both() {
-    assert_eq!(flushed_datagram_lengths(2).iter().sum::<usize>(), 376);
+    let (sent, datagrams) = flush_after(2);
+    assert_eq!(datagrams, [sent]);
 }
 
 #[test]
