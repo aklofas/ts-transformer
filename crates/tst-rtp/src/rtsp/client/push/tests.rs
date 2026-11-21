@@ -2862,10 +2862,7 @@ fn a_kept_reason_has_no_byte_order_mark() {
 fn a_kept_reason_keeps_the_neighbours_of_the_replaced_ranges() {
     let neighbours = "\u{200a}\u{2010}\u{2027}\u{202f}\u{205f}\u{2070}\u{fefe}\u{ff01}";
     assert_eq!(kept_reason(neighbours), neighbours);
-    assert_eq!(
-        kept_reason(&"\u{2028}".repeat(300)),
-        "\u{fffd}".repeat(256)
-    );
+    assert_eq!(kept_reason(&"\u{2028}".repeat(300)), "\u{fffd}".repeat(256));
 }
 
 /// A failure's detail is kept by the same rule as a refusal's reason.
