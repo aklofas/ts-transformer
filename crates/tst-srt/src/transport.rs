@@ -369,8 +369,8 @@ impl Transport for SrtTransport {
     }
 
     fn abandon(&mut self) {
-        // A cancelled socket has been closed already: nothing is left to
-        // linger, and its handle is no longer ours to set options on.
+        // A cancelled socket is closed by whoever cancelled it; `close()`
+        // below then finds nothing to close and returns at once.
         if !self.cancel.is_cancelled()
             && let Some(socket) = self.socket.as_mut()
         {
