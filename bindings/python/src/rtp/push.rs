@@ -664,6 +664,7 @@ fn close_outcome_to_py(py: Python<'_>, outcome: &PushCloseOutcome) -> PyResult<P
 /// The first 256 characters of `text`, each control, bidirectional-format
 /// and line-separator character replaced by U+FFFD: what
 /// `PushCloseOutcome` keeps of a reason or a detail.
+// A copy of the outcome's own text rule, which its crate keeps private.
 fn kept_text(text: &str) -> String {
     text.chars()
         .take(256)
@@ -828,5 +829,70 @@ mod probe {
         m.add_function(wrap_pyfunction!(close_rounds, m)?)?;
         m.add_function(wrap_pyfunction!(conversion_rounds, m)?)?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod kept_text_tests {
+    use super::kept_text;
+
+    const R: char = char::REPLACEMENT_CHARACTER;
+
+    fn replaced(c: char) -> bool {
+        kept_text(&format!("a{c}b")) == format!("a{R}b")
+    }
+
+    #[test]
+    fn control_characters_are_replaced() {
+        for c in ['\u{0}', '\u{1b}', '\u{7f}', '\u{85}'] {
+            assert!(replaced(c), "{:04X}", c as u32);
+        }
+    }
+
+    #[test]
+    fn line_and_paragraph_separators_are_replaced() {
+        for c in ['\u{2028}', '\u{2029}'] {
+            assert!(replaced(c), "{:04X}", c as u32);
+        }
+    }
+
+    #[test]
+    fn zero_width_and_directional_marks_are_replaced() {
+        for c in '\u{200B}'..='\u{200F}' {
+            assert!(replaced(c), "{:04X}", c as u32);
+        }
+    }
+
+    #[test]
+    fn bidirectional_embeddings_and_overrides_are_replaced() {
+        for c in '\u{202A}'..='\u{202E}' {
+            assert!(replaced(c), "{:04X}", c as u32);
+        }
+    }
+
+    #[test]
+    fn word_joiners_isolates_and_invisible_operators_are_replaced() {
+        for c in '\u{2060}'..='\u{206F}' {
+            assert!(replaced(c), "{:04X}", c as u32);
+        }
+    }
+
+    #[test]
+    fn the_byte_order_mark_is_replaced() {
+        assert!(replaced('\u{FEFF}'));
+    }
+
+    #[test]
+    fn neighbours_and_ordinary_text_are_kept() {
+        for c in [
+            '\u{200A}', '\u{2027}', '\u{202F}', '\u{2070}', '\u{FEFE}', 'é', '中',
+        ] {
+            assert!(!replaced(c), "{:04X}", c as u32);
+        }
+    }
+
+    #[test]
+    fn the_text_is_cut_at_256_characters() {
+        assert_eq!(kept_text(&"é".repeat(300)).chars().count(), 256);
     }
 }
