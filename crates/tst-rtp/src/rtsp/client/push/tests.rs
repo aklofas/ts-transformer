@@ -13,7 +13,10 @@ use tst_core::mpegts::common::Pts90khz;
 use tst_core::transport::{BrokenCause, EndReason, Transport, TransportError};
 use tst_test_helpers::timing::scaled;
 
-use super::{PUSH_MP2T_MAX_PAYLOAD, PushDescription, PushError, RtspPush, VideoTrack};
+use super::{
+    PUSH_MP2T_MAX_PAYLOAD, PushCloseOutcome, PushDescription, PushError, PushStatsHandle, RtspPush,
+    VideoTrack,
+};
 use crate::error::RtspError;
 use crate::packet::RtpHeader;
 use crate::rtcp::{ReceiverReport, ReportBlock, SenderReport};
@@ -1895,6 +1898,15 @@ fn close_delivers_every_queued_frame_then_teardown() {
 fn close_after_expiry_dropped_media(
     teardown_status: Option<&'static str>,
 ) -> Result<(), RtspError> {
+    closed_after_expiry_dropped_media(teardown_status, RtspPush::close).0
+}
+
+/// [`close_after_expiry_dropped_media`] with `close` as the way the push
+/// is closed; returns what `close` did and the push's handle.
+fn closed_after_expiry_dropped_media<T>(
+    teardown_status: Option<&'static str>,
+    close: impl FnOnce(RtspPush) -> T,
+) -> (T, PushStatsHandle) {
     let (held, holding) = mpsc::channel::<()>();
     let (open, gate) = mpsc::channel::<RtspCancelHandle>();
     let (port, peer) = serve(move |peer| {
@@ -1943,13 +1955,13 @@ fn close_after_expiry_dropped_media(
     });
     let dropped = push.stats().frames_dropped_at_close;
     assert_eq!(handle.stats().frames_dropped_at_close, dropped);
-    let r = push.close();
+    let r = close(push);
     assert_eq!(queue.dropped_at_close(), dropped);
     // The handle keeps the loss readable once the push is gone.
     assert_eq!(handle.stats().frames_dropped_at_close, dropped);
     // The server read the TEARDOWN: its script ends there.
     joined(peer);
-    r
+    (r, handle)
 }
 
 /// A session the server forgot while media was queued: the frames are
@@ -2341,6 +2353,7 @@ fn the_transport_impl_reports_max_payload_1316_and_is_alive() {
 const _: fn() = || {
     fn sync<T: Sync + Send + Clone + std::fmt::Debug>() {}
     sync::<super::PushStatsHandle>();
+    sync::<super::PushCloseOutcome>();
 };
 
 /// A send parks against a server that reads nothing: the handle answers on
@@ -2464,5 +2477,296 @@ fn end_reason_through_the_handle_after_a_server_close() {
     assert_eq!(handle.stats(), push.stats());
     drop(push);
     assert_eq!(handle.end_reason(), Some(EndReason::CleanTeardown));
+    joined(peer);
+}
+
+// ---- how a close ended, through the handle ------------------------------
+
+/// A muxing shell over `push`, as a caller builds one.
+fn shell(push: RtspPush) -> tst_pipeline::MuxSender<RtspPush> {
+    use tst_core::mpegts::mux::{MuxerConfig, MuxerProgramConfigBuilder, VideoCodec};
+    let mut program = MuxerProgramConfigBuilder::new(1, 0x1000);
+    program.add_video(0x1011, VideoCodec::H264);
+    let mut config = MuxerConfig::builder();
+    config.add_program(program.build());
+    tst_pipeline::MuxSender::new(push, config.build().unwrap()).unwrap()
+}
+
+/// A recording push whose server answers the TEARDOWN with `status`, or
+/// with nothing when there is none, and reads on until the hang-up.
+fn recording_whose_teardown_gets(status: Option<&'static str>) -> (RtspPush, JoinHandle<()>) {
+    let (port, peer) = serve(move |peer| {
+        peer.accept_push();
+        loop {
+            let unit = peer.read_unit().expect("a TEARDOWN before the hang-up");
+            let Unit::Request(request) = unit else {
+                continue;
+            };
+            if request.method == RtspMethod::Teardown {
+                if let Some(status) = status {
+                    peer.answer(&request, status, "");
+                }
+                break;
+            }
+            peer.answer(&request, "200 OK", "");
+        }
+        peer.until_hangup();
+    });
+    let push = RtspPush::connect(builder(port, "/live"), &PushDescription::Mp2t).unwrap();
+    (push, peer)
+}
+
+fn refused(code: u16, reason: &str) -> Option<PushCloseOutcome> {
+    Some(PushCloseOutcome::TeardownRefused {
+        code,
+        reason: reason.to_string(),
+    })
+}
+
+/// Whether `result`, what [`RtspPush::close`] returned, and `outcome`
+/// describe the same case.
+fn same_case(result: &Result<(), RtspError>, outcome: &PushCloseOutcome) -> bool {
+    use PushCloseOutcome as O;
+    match (result, outcome) {
+        (Ok(()), O::Clean) => true,
+        (Err(RtspError::LocalCancel), O::Cancelled) => true,
+        (Err(RtspError::Timeout), O::TeardownTimedOut) => true,
+        // A TEARDOWN answered `454` is accepted: as an error it is the loss.
+        (Err(RtspError::Protocol { code: 454, .. }), O::MediaLost) => true,
+        (Err(RtspError::Protocol { code, reason }), O::TeardownRefused { code: c, reason: r }) => {
+            *code != 454 && code == c && reason == r
+        }
+        (
+            Err(RtspError::LocalCancel | RtspError::Timeout | RtspError::Protocol { .. }),
+            O::Failed { .. },
+        ) => false,
+        (Err(e), O::Failed { detail }) => *detail == e.to_string(),
+        _ => false,
+    }
+}
+
+#[test]
+fn the_close_outcome_is_none_before_a_close() {
+    let (mut push, peer) = recording(&PushDescription::Mp2t);
+    let handle = push.stats_handle();
+    assert_eq!(handle.close_outcome(), None);
+    push.send_ts(&ts(7, 0)).unwrap();
+    // A cancel ends the data calls; it is not a close.
+    push.cancel_handle().cancel();
+    assert_eq!(push.send_ts(&ts(7, 0)), Err(TransportError::ExplicitClose));
+    assert_eq!(push.end_reason(), Some(EndReason::Cancelled));
+    assert_eq!(handle.close_outcome(), None);
+    // Nor is dropping the push, though it writes a TEARDOWN.
+    drop(push);
+    joined(peer);
+    assert_eq!(handle.close_outcome(), None);
+
+    // Nor the session's end from the server's side.
+    let (push, peer) = ended_by(|_| {});
+    let handle = push.stats_handle();
+    assert_eq!(handle.end_reason(), Some(EndReason::CleanTeardown));
+    assert_eq!(handle.close_outcome(), None);
+    drop(push);
+    joined(peer);
+}
+
+#[test]
+fn a_clean_shell_close_records_clean() {
+    let (push, peer) = recording(&PushDescription::Mp2t);
+    let handle = push.stats_handle();
+    let sender = shell(push);
+    sender.finish().unwrap();
+    assert_eq!(handle.close_outcome(), Some(PushCloseOutcome::Clean));
+    assert_eq!(handle.end_reason(), Some(EndReason::CleanTeardown));
+    joined(peer);
+}
+
+#[test]
+fn a_shell_close_with_a_refused_teardown_records_the_refusal_and_its_status() {
+    let (push, peer) = recording_whose_teardown_gets(Some("500 Internal Server Error"));
+    let handle = push.stats_handle();
+    let sender = shell(push);
+    // The shell's own result has no place for the server's answer.
+    sender.finish().unwrap();
+    assert_eq!(
+        handle.close_outcome(),
+        refused(500, "Internal Server Error")
+    );
+    // The end reason alone does not tell a refusal from a cancel.
+    assert_eq!(handle.end_reason(), Some(EndReason::Cancelled));
+    drop(sender);
+    joined(peer);
+}
+
+/// A session the server forgot while media was queued, closed through a
+/// shell: the loss is recorded, whatever the TEARDOWN is answered.
+#[test]
+fn a_shell_close_after_a_forgotten_session_records_the_lost_media() {
+    for status in ["454 Session Not Found", "501 Not Implemented"] {
+        let (finished, handle) = closed_after_expiry_dropped_media(Some(status), |push| {
+            let sender = shell(push);
+            sender.finish()
+        });
+        finished.unwrap();
+        assert_eq!(
+            handle.close_outcome(),
+            Some(PushCloseOutcome::MediaLost),
+            "{status}"
+        );
+        assert_eq!(handle.end_reason(), Some(EndReason::SessionExpired));
+    }
+}
+
+/// The cancel is set before the close, never during it.
+#[test]
+fn a_cancelled_close_records_the_cancel() {
+    // The transport's close under a cancel the caller fired.
+    let (mut push, peer) = recording_whose_teardown_gets(None);
+    let handle = push.stats_handle();
+    push.cancel_handle().cancel();
+    Transport::close(&mut push);
+    assert_eq!(handle.close_outcome(), Some(PushCloseOutcome::Cancelled));
+    drop(push);
+    joined(peer);
+
+    // A muxing shell's `close` fires the cancel itself, then closes.
+    let (push, peer) = recording_whose_teardown_gets(Some("200 OK"));
+    let handle = push.stats_handle();
+    let sender = shell(push);
+    sender.close();
+    assert_eq!(handle.close_outcome(), Some(PushCloseOutcome::Cancelled));
+    drop(sender);
+    joined(peer);
+}
+
+/// Each shape of a close, through the inherent `close`: what it returns
+/// and the outcome it leaves describe the same case.
+#[test]
+fn the_inherent_close_and_the_outcome_agree() {
+    let check = |result: Result<(), RtspError>,
+                 handle: &PushStatsHandle,
+                 expected: Option<PushCloseOutcome>| {
+        let outcome = handle.close_outcome().expect("a close has run");
+        assert!(same_case(&result, &outcome), "{result:?} and {outcome:?}");
+        if let Some(expected) = expected {
+            assert_eq!(outcome, expected);
+        }
+    };
+    let close = |status: Option<&'static str>, cancelled: bool| {
+        let (push, peer) = recording_whose_teardown_gets(status);
+        let handle = push.stats_handle();
+        if cancelled {
+            push.cancel_handle().cancel();
+        }
+        let result = push.close();
+        joined(peer);
+        (result, handle)
+    };
+
+    // Accepted, by `200` and by `454` (the session is gone, as asked).
+    for status in ["200 OK", "454 Session Not Found"] {
+        let (result, handle) = close(Some(status), false);
+        assert!(result.is_ok(), "{status}: {result:?}");
+        check(result, &handle, Some(PushCloseOutcome::Clean));
+    }
+    // Refused.
+    let (result, handle) = close(Some("501 Not Implemented"), false);
+    check(result, &handle, refused(501, "Not Implemented"));
+    // Not answered within the TEARDOWN's bound.
+    let (result, handle) = close(None, false);
+    check(result, &handle, Some(PushCloseOutcome::TeardownTimedOut));
+    // Cancelled before the close.
+    let (result, handle) = close(None, true);
+    check(result, &handle, Some(PushCloseOutcome::Cancelled));
+    // The connection had ended: the TEARDOWN cannot be written.
+    let (push, peer) = ended_by(|_| {});
+    let handle = push.stats_handle();
+    let result = push.close();
+    joined(peer);
+    assert!(matches!(result, Err(RtspError::Io(_))), "{result:?}");
+    assert!(
+        matches!(
+            handle.close_outcome(),
+            Some(PushCloseOutcome::Failed { .. })
+        ),
+        "{:?}",
+        handle.close_outcome()
+    );
+    check(result, &handle, None);
+    // Media lost to a session the server forgot.
+    let (result, handle) =
+        closed_after_expiry_dropped_media(Some("454 Session Not Found"), RtspPush::close);
+    check(result, &handle, Some(PushCloseOutcome::MediaLost));
+}
+
+#[test]
+fn the_first_close_outcome_is_kept() {
+    let (mut push, peer) = recording_whose_teardown_gets(Some("500 Internal Server Error"));
+    let handle = push.stats_handle();
+    Transport::close(&mut push);
+    assert_eq!(
+        handle.close_outcome(),
+        refused(500, "Internal Server Error")
+    );
+    // A second close does nothing and reports nothing new.
+    Transport::close(&mut push);
+    assert_eq!(
+        handle.close_outcome(),
+        refused(500, "Internal Server Error")
+    );
+    // Nor does the inherent close of a push that is closed already: it has
+    // no session left to end, so it succeeds.
+    RtspPush::close(push).unwrap();
+    assert_eq!(
+        handle.close_outcome(),
+        refused(500, "Internal Server Error")
+    );
+    joined(peer);
+}
+
+#[test]
+fn the_outcome_answers_after_the_push_was_dropped() {
+    let (push, peer) = recording(&PushDescription::Mp2t);
+    let handle = push.stats_handle();
+    let later = push.stats_handle();
+    let sender = shell(push);
+    sender.finish().unwrap();
+    drop(sender);
+    joined(peer);
+    assert_eq!(handle.close_outcome(), Some(PushCloseOutcome::Clean));
+    // Every handle reads the one outcome, clones included.
+    assert_eq!(later.close_outcome(), Some(PushCloseOutcome::Clean));
+    assert_eq!(
+        handle.clone().close_outcome(),
+        Some(PushCloseOutcome::Clean)
+    );
+}
+
+/// A close parked on a server that reads nothing: the handle answers on
+/// another thread, with no outcome yet, while the close still holds the
+/// push.
+#[test]
+fn the_close_outcome_answers_none_while_the_close_holds_the_push() {
+    let (mut push, open, peer) = recording_gated(&elementary(true), |peer| peer.until_teardown());
+    fill_the_queue(&mut push);
+    let handle = push.stats_handle();
+    let closer = std::thread::spawn(move || push.close());
+    let (tx, rx) = mpsc::channel();
+    let reader = {
+        let handle = handle.clone();
+        std::thread::spawn(move || {
+            let _ = tx.send(handle.close_outcome());
+        })
+    };
+    let outcome = rx
+        .recv_timeout(scaled(Duration::from_secs(5)))
+        .expect("the handle answered while the close held the push");
+    reader.join().unwrap();
+    assert!(!closer.is_finished(), "the close still holds the push");
+    assert_eq!(outcome, None);
+
+    open.send(()).unwrap();
+    closer.join().unwrap().unwrap();
+    assert_eq!(handle.close_outcome(), Some(PushCloseOutcome::Clean));
     joined(peer);
 }

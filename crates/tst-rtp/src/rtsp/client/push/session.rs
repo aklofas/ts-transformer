@@ -1,8 +1,8 @@
 //! [`RtspPush`]: a recording session and its data calls.
 
 use std::collections::VecDeque;
-use std::sync::Arc;
 use std::sync::atomic::Ordering;
+use std::sync::{Arc, OnceLock};
 use std::time::{Instant, SystemTime};
 
 use bytes::Bytes;
@@ -13,8 +13,8 @@ use tst_core::transport::{
 };
 
 use super::{
-    PUSH_MP2T_MAX_PAYLOAD, PushCounters, PushDescription, PushError, PushStats, PushStatsHandle,
-    Track, TrackKind, push_stats,
+    PUSH_MP2T_MAX_PAYLOAD, PushCloseOutcome, PushCounters, PushDescription, PushError, PushStats,
+    PushStatsHandle, Track, TrackKind, push_stats,
 };
 use crate::clock::RtpClock;
 use crate::error::RtspError;
@@ -157,6 +157,8 @@ pub struct RtspPush {
     paused: bool,
     /// [`Transport::close`] has run.
     closed: bool,
+    /// How the first close ended, shared with every [`PushStatsHandle`].
+    close_outcome: Arc<OnceLock<PushCloseOutcome>>,
     /// Added to the time the report schedule reads.
     #[cfg(test)]
     pub(super) clock_skew: std::time::Duration,
@@ -276,6 +278,7 @@ impl RtspPush {
             queued: QueuedKinds::default(),
             paused: false,
             closed: false,
+            close_outcome: Arc::default(),
             #[cfg(test)]
             clock_skew: std::time::Duration::ZERO,
         }
@@ -507,7 +510,22 @@ impl RtspPush {
     ///   has ended [`RtspError::Io`].
     ///
     /// The client's thread is stopped on every outcome.
+    ///
+    /// The case of the result is kept as the push's close outcome
+    /// ([`PushStatsHandle::close_outcome`]), unless an earlier
+    /// [`Transport::close`] left one.
     pub fn close(mut self) -> Result<(), RtspError> {
+        self.close_with(|client| client.end_within(CLOSE_JOIN_BOUND))
+    }
+
+    /// What both closes do and report: wait for the queued media, end the
+    /// session through `tear_down`, and work out the report in the order
+    /// [`Self::close`] documents. The first close's report is kept as the
+    /// close outcome.
+    fn close_with(
+        &mut self,
+        tear_down: impl FnOnce(&mut RtspClient) -> Result<(), RtspError>,
+    ) -> Result<(), RtspError> {
         let drained = if self.closed { Ok(()) } else { self.flush() };
         // A session that expired leaves its connection open: the TEARDOWN
         // below is written, perhaps with media dropped before it.
@@ -517,22 +535,24 @@ impl RtspPush {
             &self.queued,
             self.client.driver.frames_dropped_at_close(),
         );
-        let torn_down = self.client.end_within(CLOSE_JOIN_BOUND);
+        let torn_down = tear_down(&mut self.client);
         // Read before the client is dropped: its drop sets the cancel.
         let cancelled = self.client.cancel.is_cancelled();
         // The loss, whatever the TEARDOWN came to: a caller that reads any
         // other result takes every queued packet as written. A cancel that
         // has fired comes before it, as for every call that fails.
-        if !lost {
-            return torn_down;
-        }
-        if cancelled {
-            return Err(RtspError::LocalCancel);
-        }
-        Err(RtspError::Protocol {
-            code: 454,
-            reason: "Session Not Found".into(),
-        })
+        let report = if !lost {
+            torn_down
+        } else if cancelled {
+            Err(RtspError::LocalCancel)
+        } else {
+            Err(RtspError::Protocol {
+                code: 454,
+                reason: "Session Not Found".into(),
+            })
+        };
+        let _ = self.close_outcome.set(PushCloseOutcome::of(&report, lost));
+        report
     }
 
     /// A handle that ends a waiting data call, `pause` or `close` from
@@ -567,9 +587,10 @@ impl RtspPush {
         )
     }
 
-    /// A reader of [`Self::stats`] and [`Self::end_reason`] that outlives
-    /// the push and never waits for it: take it before the push moves to
-    /// the thread that sends, into a shell, or behind a binding's lock.
+    /// A reader of [`Self::stats`], [`Self::end_reason`] and the outcome
+    /// of the push's close that outlives the push and never waits for it:
+    /// take it before the push moves to the thread that sends, into a
+    /// shell, or behind a binding's lock.
     #[must_use]
     pub fn stats_handle(&self) -> PushStatsHandle {
         PushStatsHandle {
@@ -578,6 +599,7 @@ impl RtspPush {
             media: self.client.driver.media_queue(),
             rtcp: self.tracks.iter().map(|t| Arc::clone(&t.rtcp)).collect(),
             end_reason: self.client.end_reason.clone(),
+            close_outcome: Arc::clone(&self.close_outcome),
         }
     }
 
@@ -811,8 +833,13 @@ impl Transport for RtspPush {
     /// data calls return [`TransportError::Closed`]. A second call does
     /// nothing.
     ///
-    /// It reports nothing: whether media was dropped (the wait ended on a
-    /// cancel or on the session's end) is in
+    /// It returns nothing. What [`RtspPush::close`] would have returned
+    /// in its place (the server refused the TEARDOWN or did not answer it,
+    /// queued media was lost, the cancel had fired) is kept as the push's
+    /// close outcome: take a [`PushStatsHandle`] before the push goes
+    /// under a shell and read [`PushStatsHandle::close_outcome`] once the
+    /// shell has finished. Whether media was dropped (the wait ended on a
+    /// cancel or on the session's end) is also in
     /// [`PushStats::frames_dropped_at_close`], and why the session ended
     /// in [`RtspPush::end_reason`].
     fn close(&mut self) {
@@ -821,8 +848,7 @@ impl Transport for RtspPush {
         if self.closed {
             return;
         }
-        let _ = self.flush();
-        let _ = self.client.teardown_within(CLOSE_TEARDOWN_BOUND);
+        let _ = self.close_with(|client| client.teardown_within(CLOSE_TEARDOWN_BOUND));
         // A TEARDOWN the server accepted has recorded the clean end; any
         // other outcome is the caller ending the session.
         record_end(&self.client.end_reason, EndReason::Cancelled);

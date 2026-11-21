@@ -10,7 +10,7 @@ pub use session::RtspPush;
 
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use bytes::Bytes;
 use tst_core::transport::{EndReason, EndReasonHandle, TransportError};
@@ -163,6 +163,67 @@ tst_core::binding_record! {
     }
 }
 
+/// How a push's close ended: the case of what [`RtspPush::close`] returns,
+/// kept so that it can be read after a close that returns nothing. A
+/// sender shell that owns a push (`MuxSender`, `Sender`) closes it through
+/// [`Transport::close`](tst_core::transport::Transport::close) when it is
+/// finished, closed or dropped, and has no place for the server's answer
+/// in its own result. Read it with [`PushStatsHandle::close_outcome`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum PushCloseOutcome {
+    /// The close succeeded ([`RtspPush::close`] returns `Ok(())`): the
+    /// server accepted the TEARDOWN (a `2xx`, or `454` for a session it no
+    /// longer knew) and no queued media is known lost.
+    Clean,
+    /// The push's cancel had fired ([`RtspError::LocalCancel`]): what was
+    /// still queued was dropped, and the TEARDOWN's reply was not awaited.
+    /// A `MuxSender` fires the cancel itself in its `close`, though not in
+    /// its `finish`.
+    Cancelled,
+    /// The server had forgotten the session and RTP packets queued by
+    /// earlier data calls were dropped before being written
+    /// ([`RtspError::Protocol`] with code `454`), whatever the TEARDOWN
+    /// was answered.
+    MediaLost,
+    /// The server refused the TEARDOWN ([`RtspError::Protocol`]).
+    TeardownRefused {
+        /// The status code of the server's answer.
+        code: u16,
+        /// Its reason phrase.
+        reason: String,
+    },
+    /// The TEARDOWN was not written and answered within its 500 ms bound
+    /// ([`RtspError::Timeout`]).
+    TeardownTimedOut,
+    /// The close failed another way, for instance on a connection that had
+    /// ended.
+    Failed {
+        /// The error's text.
+        detail: String,
+    },
+}
+
+impl PushCloseOutcome {
+    /// The case of `report`, what a close reports. `lost` is whether the
+    /// close lost media: only then is a `454` the loss.
+    pub(crate) fn of(report: &Result<(), RtspError>, lost: bool) -> Self {
+        match report {
+            Ok(()) => Self::Clean,
+            Err(RtspError::LocalCancel) => Self::Cancelled,
+            Err(RtspError::Protocol { .. }) if lost => Self::MediaLost,
+            Err(RtspError::Protocol { code, reason }) => Self::TeardownRefused {
+                code: *code,
+                reason: reason.clone(),
+            },
+            Err(RtspError::Timeout) => Self::TeardownTimedOut,
+            Err(e) => Self::Failed {
+                detail: e.to_string(),
+            },
+        }
+    }
+}
+
 /// The counters a push increments as it sends, shared with every
 /// [`PushStatsHandle`].
 #[derive(Debug, Default)]
@@ -172,9 +233,10 @@ pub(crate) struct PushCounters {
     pub(crate) sender_reports_sent: AtomicU64,
 }
 
-/// A reader of an [`RtspPush`]'s counters and end that does not borrow the
-/// push: it never waits for a send in progress, and it keeps answering the
-/// last values after the push is closed, dropped or moved into a shell.
+/// A reader of an [`RtspPush`]'s counters, its end and the outcome of its
+/// close that does not borrow the push: it never waits for a send or a
+/// close in progress, and it keeps answering the last values after the
+/// push is closed, dropped or moved into a shell.
 /// Obtain it with [`RtspPush::stats_handle`].
 #[derive(Clone)]
 pub struct PushStatsHandle {
@@ -184,6 +246,7 @@ pub struct PushStatsHandle {
     /// Each track's receiver-report counters, held only for a copy.
     rtcp: Vec<Arc<Mutex<RtcpStats>>>,
     end_reason: EndReasonHandle,
+    close_outcome: Arc<OnceLock<PushCloseOutcome>>,
 }
 
 impl std::fmt::Debug for PushStatsHandle {
@@ -191,6 +254,7 @@ impl std::fmt::Debug for PushStatsHandle {
         f.debug_struct("PushStatsHandle")
             .field("stats", &self.stats())
             .field("end_reason", &self.end_reason())
+            .field("close_outcome", &self.close_outcome())
             .finish()
     }
 }
@@ -211,6 +275,19 @@ impl PushStatsHandle {
     /// reports.
     pub fn end_reason(&self) -> Option<EndReason> {
         self.end_reason.get()
+    }
+
+    /// How the push's close ended: `None` until a close has finished, then
+    /// the outcome of the first close for good. A close is
+    /// [`RtspPush::close`] or
+    /// [`Transport::close`](tst_core::transport::Transport::close), which
+    /// a sender shell over the push runs when it is finished, closed or
+    /// dropped; dropping the push itself is not one. After a shell's
+    /// `finish()` this tells whether the server accepted the TEARDOWN,
+    /// refused it (and with which status), did not answer it in time, or
+    /// whether queued media was lost.
+    pub fn close_outcome(&self) -> Option<PushCloseOutcome> {
+        self.close_outcome.get().cloned()
     }
 }
 
