@@ -101,9 +101,11 @@ pub struct ReconnectPolicy {
     ///
     /// A capacity of 0 buffers nothing, which only shows while the
     /// connection is down (a live connection is sent to directly). A
-    /// `Blocking` send that meets the outage reconnects inline and then
-    /// sends its message on the fresh connection, under either overflow
-    /// policy. A `Background` send is dropped and counted as it arrives
+    /// `Blocking` send that meets the outage waits for the reconnect and
+    /// then sends its message on the fresh connection, under either
+    /// overflow policy: it is neither refused nor counted as dropped, and
+    /// a reconnect that gives up returns `Broken` with the message still
+    /// the caller's. A `Background` send is dropped and counted as it arrives
     /// under `DropOldest`, and refused with `Backpressure` under
     /// [`OverflowPolicy::Reject`]; the worker reconnects in both cases.
     pub gap_buffer_capacity: usize,
@@ -502,6 +504,12 @@ pub struct ManagedTransport<T: Transport> {
 impl<T: Transport + 'static> ManagedTransport<T> {
     /// Wrap `inner`, rebuilding it with `factory` under `policy`.
     ///
+    /// When a reconnect attempt fails, the error `factory` returned is
+    /// written to the log as text (at `warn`, for every failed attempt, and
+    /// the latest one again when the reconnect gives up). It must not carry
+    /// a secret: no passphrase, no URL with credentials in its message
+    /// (`tst_core::url::redact_url` strips them from a URL).
+    ///
     /// # Errors
     ///
     /// [`ReconnectPolicyError::UnpacedUnlimitedRetry`] when the policy has
@@ -852,9 +860,9 @@ impl<T: Transport + 'static> ManagedTransport<T> {
         // on every later call. `Background`: a worker reconnects, finds
         // nothing to drain and leaves; this call is refused.
         //
-        // `OverflowPolicy::DropOldest` continues to return `Ok(())` from
-        // `enqueue` (it evicts and pushes) so this path is unchanged for
-        // that policy.
+        // `OverflowPolicy::DropOldest` never refuses: `enqueue` evicts and
+        // pushes, and at capacity 0 (reached here in `Background` only) it
+        // drops and counts the incoming message itself.
         //
         // `Blocking` at capacity 0 stages nothing, under either policy: the
         // call reconnects and sends its own message on the fresh inner.
@@ -915,6 +923,8 @@ impl<T: Transport + 'static> ManagedTransport<T> {
                 Err(gap_buffer::GapBufferError::Full) => Err(gap_full()),
             };
         }
+        // `Blocking` never meets `Full` here: capacity 0 left by the branch
+        // above, and any other buffer is empty at this point.
         let queued = queued.map_err(|gap_buffer::GapBufferError::Full| gap_full())?;
         let result = self.reconnect_and_drain();
         if let (Err(_), Some(seq)) = (&result, queued) {

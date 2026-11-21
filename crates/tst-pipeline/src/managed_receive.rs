@@ -213,6 +213,12 @@ impl<R: RecvTransport> ManagedRecvTransport<R> {
     /// `recv_bytes` it is not consulted because `inner` is provided
     /// up-front. Subsequent reconnects build via `factory` only.
     ///
+    /// When a rebuild attempt fails, the error `factory` returned is written
+    /// to the log as text (at `warn`, for every failed attempt, and the
+    /// latest one again when the reconnect gives up). It must not carry a
+    /// secret: no passphrase, no URL with credentials in its message
+    /// (`tst_core::url::redact_url` strips them from a URL).
+    ///
     /// # Errors
     ///
     /// [`ReconnectPolicyError::UnpacedUnlimitedRetry`]: zero backoff with
@@ -229,7 +235,8 @@ impl<R: RecvTransport> ManagedRecvTransport<R> {
     /// the factory so a cancel can reach a factory that blocks (a
     /// listener-mode re-accept). The managed transport's cancel handle
     /// fires the slot; the factory installs its wake handle into it around
-    /// its blocking call.
+    /// its blocking call. The factory's errors are logged as text, as for
+    /// [`new`](Self::new): keep secrets out of them.
     ///
     /// # Errors
     ///

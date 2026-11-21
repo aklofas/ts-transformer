@@ -271,7 +271,7 @@ fn the_background_give_up_warning_names_the_last_cause() {
 }
 
 /// An unlimited budget has no limit to print: the attempt line carries no
-/// `max_attempts` field (it used to print `max_attempts=0`).
+/// `max_attempts` field, since a `0` there would read as "no attempts".
 #[traced_test]
 #[test]
 fn an_unlimited_budget_logs_no_max_attempts() {
