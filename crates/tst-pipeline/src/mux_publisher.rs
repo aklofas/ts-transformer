@@ -1182,6 +1182,96 @@ mod tests {
         assert_eq!(fields(handle.stats()), fields(before));
     }
 
+    /// A publisher that counts the bytes it is handed and says when it is
+    /// dropped, both through cells the test keeps.
+    struct WatchedPublisher {
+        handed: Arc<AtomicU64>,
+        dropped: Arc<std::sync::atomic::AtomicBool>,
+    }
+
+    impl Drop for WatchedPublisher {
+        fn drop(&mut self) {
+            self.dropped.store(true, Ordering::SeqCst);
+        }
+    }
+
+    impl Publisher for WatchedPublisher {
+        type Error = MemErr;
+        fn push_ts(&mut self, ts: &[u8]) -> Result<(), MemErr> {
+            self.handed.fetch_add(ts.len() as u64, Ordering::SeqCst);
+            Ok(())
+        }
+        fn cut_segment(&mut self) -> Result<(), MemErr> {
+            Ok(())
+        }
+        fn finish(self) -> Result<(), MemErr> {
+            Ok(())
+        }
+        fn stats(&self) -> PublisherStats {
+            PublisherStats::default()
+        }
+    }
+
+    type Watched = (
+        MuxPublisher<WatchedPublisher>,
+        Arc<AtomicU64>,
+        Arc<std::sync::atomic::AtomicBool>,
+    );
+
+    fn watched_publisher() -> Watched {
+        let handed = Arc::new(AtomicU64::new(0));
+        let dropped = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let mp = MuxPublisher::with_config(
+            WatchedPublisher {
+                handed: handed.clone(),
+                dropped: dropped.clone(),
+            },
+            test_muxer_config(),
+        )
+        .unwrap();
+        (mp, handed, dropped)
+    }
+
+    #[test]
+    fn the_handle_answers_the_last_values_after_the_publisher_is_dropped() {
+        let (mp, handed, _dropped) = watched_publisher();
+        let handle = mp.stats_handle();
+        mp.push_video(&h264_au(), Pts90khz::new(0), true).unwrap();
+        mp.push_video(&h264_au(), Pts90khz::new(3000), true)
+            .unwrap();
+        let before = mp.stats();
+        assert!(before.bytes_pushed > 0 && before.cut_calls == 1);
+
+        // Neither finished nor aborted: the shell just goes away.
+        drop(mp);
+
+        let after = handle.stats();
+        // Whatever the drop's own drain sent is counted too.
+        assert_eq!(after.bytes_pushed, handed.load(Ordering::SeqCst));
+        assert!(after.bytes_pushed >= before.bytes_pushed);
+        assert!(after.drain_calls >= before.drain_calls);
+        assert_eq!(after.cut_calls, before.cut_calls, "a drop cuts nothing");
+        assert_eq!(fields(handle.stats()), fields(after));
+    }
+
+    #[test]
+    fn a_live_handle_does_not_keep_the_publisher_alive() {
+        let (mp, _handed, dropped) = watched_publisher();
+        let handle = mp.stats_handle();
+        let second = handle.clone();
+        mp.push_video(&h264_au(), Pts90khz::new(0), true).unwrap();
+        assert!(!dropped.load(Ordering::SeqCst));
+
+        drop(mp);
+
+        assert!(
+            dropped.load(Ordering::SeqCst),
+            "the publisher outlived its shell because a statistics handle exists"
+        );
+        assert!(handle.stats().bytes_pushed > 0);
+        assert_eq!(fields(second.stats()), fields(handle.stats()));
+    }
+
     /// A publisher that takes its first push and panics inside the second.
     struct PanicsOnSecondPush(u32);
 
