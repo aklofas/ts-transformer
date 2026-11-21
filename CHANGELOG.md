@@ -267,6 +267,7 @@ Each carries `@Deprecated(since = "0.11.0", forRemoval = true)` and works as bef
 
 ### Fixed — tst-rtp
 
+- **A peer reset during the `rtsps://` handshake is a TLS error on macOS.** macOS refuses a socket option on a connection that has ended, and the client's handshake set a read or write timeout before each step and reported that refusal: a reset that arrived between two steps came back as `RtspError::Io(InvalidInput)` (binding kind IO), depending on timing. The handshake now goes on to the read or write, which reports how the connection ended as `RtspError::Tls` (binding kind TLS), as on Linux and Windows.
 - **An RTSP URL with a user name and no password authenticates.** `rtsp://admin@host/…` never answered a challenge, because the client sent credentials only when a password was present. It now answers with the user name and an empty password, as `rtsp://admin:@host/…` does, for Basic and Digest.
 - **Interleaved frames sent right behind a SETUP reply are delivered.** On a TCP-interleaved session the client read the SETUP reply into a buffer it discarded once the reply was parsed, so RTP and RTCP frames the server wrote right behind the reply were lost, uncounted, when they arrived in the same read. The client now installs the session's channels when it accepts the reply and routes every frame after it, whichever read brought it.
 
