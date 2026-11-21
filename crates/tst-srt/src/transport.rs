@@ -50,6 +50,17 @@ const SRT_LIVE_MAX_PAYLOAD: usize = 1456;
 /// | `send_buffer_packets` | `pktSndBuf` | spot reading |
 /// | `recv_buffer_packets` | `pktRcvBuf` | spot reading |
 ///
+/// # Silent-peer reading and abandon
+///
+/// [`Transport::peer_activity`] is the wrapping sum of the ACKs, NAKs and
+/// data packets received from the peer (`pktRecvACKTotal`,
+/// `pktRecvNAKTotal`, `pktRecvTotal`): it moves whenever the peer was heard
+/// from. It is `None` once the socket is gone, and when libsrt refuses
+/// statistics, which it does for a connection it has broken.
+/// [`Transport::abandon`] turns `SRTO_LINGER` off and then closes, so the
+/// close drops what is still unsent and does not wait; [`Transport::close`]
+/// and drop keep the configured linger (5 s in the sender preset).
+///
 /// # `TransportError::Backpressure` / `Broken` `errno_code` mapping
 ///
 /// For [`SrtTransport`], `errno_code` carries the libsrt `MJ_*` major
@@ -351,6 +362,23 @@ impl Transport for SrtTransport {
         let socket = self.socket.as_ref()?;
         let s = socket.stats().ok()?;
         Some(map_stats(&s))
+    }
+
+    fn peer_activity(&self) -> Option<u64> {
+        self.socket.as_ref()?.peer_activity()
+    }
+
+    fn abandon(&mut self) {
+        // A cancelled socket has been closed already: nothing is left to
+        // linger, and its handle is no longer ours to set options on.
+        if !self.cancel.is_cancelled()
+            && let Some(socket) = self.socket.as_mut()
+        {
+            // Refused only on a socket libsrt has already broken, which
+            // does not linger anyway.
+            let _ = socket.disable_linger();
+        }
+        self.close();
     }
 }
 
