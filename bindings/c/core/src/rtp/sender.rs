@@ -144,8 +144,10 @@ pub unsafe extern "C" fn tst_rtp_sender_send_ts(
 /// offset 188 when more are held) and are flushed before a third boundary
 /// could refute them, they are sent although they are not packets, and when
 /// they were the head of a real stream lying off that grid the real packet
-/// they cover is lost with them. A flush with fewer than 188 bytes held
-/// sends nothing.
+/// they cover is lost with them, and a later send or flush can put one more
+/// 188 bytes that are not a packet on the wire before a boundary fails and
+/// the sender resyncs. A flush of such a start with fewer than 188 bytes
+/// held sends nothing.
 ///
 /// Call before `tst_rtp_sender_close`: `_close` is cancel-first and
 /// discards what is buffered: up to six packets not yet bundled, plus any
