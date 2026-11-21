@@ -137,8 +137,9 @@ impl TlsStream {
             let wait = remaining.map_or(read_timeout, |left| {
                 read_timeout.min(left.max(Duration::from_millis(1)))
             });
-            sock.set_read_timeout(Some(wait))
-                .map_err(|e| RtspError::Io(e.kind()))?;
+            // As for the write timeout: the read reports an ended
+            // connection.
+            let _ = sock.set_read_timeout(Some(wait));
             match conn.read_tls(&mut sock) {
                 Ok(0) => {
                     return Err(RtspError::Tls(
