@@ -42,7 +42,7 @@ use tracing::{info, warn};
 use tst_core::cancel::CancelSlot;
 use tst_core::transport::{Transport, TransportError};
 
-use super::state::{Install, Latch, ManagedShared, Shutdown, install_fresh_inner};
+use super::state::{Install, Latch, ManagedShared, Shutdown, broken_errno, install_fresh_inner};
 use super::{GapBuffer, ReconnectPolicy};
 
 /// Backpressure retry cadence while draining on the worker — there is no
@@ -179,6 +179,9 @@ pub(crate) fn worker_run<T: Transport>(ctx: WorkerCtx<T>) {
     // per transport lifetime — matching Blocking, where every
     // `send_bytes` call ran a fresh `reconnect_and_drain` budget.
     let mut attempt: u32 = 0;
+    // Why the latest factory call of this outage failed, for the give-up
+    // line.
+    let mut last_error: Option<TransportError> = None;
     'reconnect: loop {
         if ctx.latch.is_closed() {
             return;
@@ -190,6 +193,7 @@ pub(crate) fn worker_run<T: Transport>(ctx: WorkerCtx<T>) {
                 target: "tst_pipeline::reconnect",
                 attempts_made = attempt - 1,
                 max_attempts = max,
+                last_error = last_error.as_ref().map(tracing::field::display),
                 "background reconnect gave up — next send_bytes reports Broken",
             );
             // gave_up before returning: keeps the give-up cycle's report
@@ -201,7 +205,8 @@ pub(crate) fn worker_run<T: Transport>(ctx: WorkerCtx<T>) {
         info!(
             target: "tst_pipeline::reconnect",
             attempt,
-            max_attempts = ctx.policy.max_attempts.unwrap_or(0),
+            // Recorded only when there is a limit.
+            max_attempts = ctx.policy.max_attempts,
             backoff_ms = wait.as_millis() as u64,
             "background reconnect attempt",
         );
@@ -219,7 +224,18 @@ pub(crate) fn worker_run<T: Transport>(ctx: WorkerCtx<T>) {
                 ctx.latch.inner_cancel(&ctx.shutdown, &ctx.active);
                 return;
             }
-            Err(_) => continue 'reconnect,
+            Err(e) => {
+                warn!(
+                    target: "tst_pipeline::reconnect",
+                    attempt,
+                    max_attempts = ctx.policy.max_attempts,
+                    errno_code = broken_errno(&e),
+                    error = %e,
+                    "background reconnect attempt failed",
+                );
+                last_error = Some(e);
+                continue 'reconnect;
+            }
         };
         match install_fresh_inner(&ctx.inner, &ctx.active, &ctx.latch, &ctx.shared, new_inner) {
             Install::Installed => {}
@@ -242,6 +258,7 @@ pub(crate) fn worker_run<T: Transport>(ctx: WorkerCtx<T>) {
             }
         }
         attempt = 0; // fresh budget for any subsequent break
+        last_error = None;
 
         // ---- drain phase ----
         loop {

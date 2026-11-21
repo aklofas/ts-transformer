@@ -70,7 +70,7 @@
 //!   higher-level shell (`DemuxReceiver`) is responsible for calling
 //!   `Demuxer::flush()` to drain any partial PES at end-of-stream.
 
-use crate::reconnect::state::{Latch, Shutdown};
+use crate::reconnect::state::{Latch, Shutdown, broken_errno};
 use crate::reconnect::{ReconnectMode, ReconnectPolicy, ReconnectPolicyError};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -355,6 +355,8 @@ impl<R: RecvTransport> RecvTransport for ManagedRecvTransport<R> {
             return Err(TransportError::Closed);
         }
         let mut attempt: u32 = 0;
+        // Why the latest factory call failed, for the give-up line.
+        let mut last_error: Option<TransportError> = None;
         loop {
             if self.cancelled.is_cancelled() {
                 // Cross-thread cancel fired mid-loop. Latch both flags:
@@ -378,6 +380,7 @@ impl<R: RecvTransport> RecvTransport for ManagedRecvTransport<R> {
                         target: "tst_pipeline::managed_receive",
                         attempts_made = attempt - 1,
                         max_attempts = max,
+                        last_error = last_error.as_ref().map(tracing::field::display),
                         "reconnect gave up — propagating final error to caller",
                     );
                     // Peer is unreachable beyond the reconnect budget — semantically
@@ -391,7 +394,8 @@ impl<R: RecvTransport> RecvTransport for ManagedRecvTransport<R> {
                 info!(
                     target: "tst_pipeline::managed_receive",
                     attempt,
-                    max_attempts = self.policy.max_attempts.unwrap_or(0),
+                    // Recorded only when there is a limit.
+                    max_attempts = self.policy.max_attempts,
                     backoff_ms = delay.as_millis() as u64,
                     "reconnect attempt",
                 );
@@ -474,7 +478,18 @@ impl<R: RecvTransport> RecvTransport for ManagedRecvTransport<R> {
                         self.explicit_close = true;
                         return Err(TransportError::ExplicitClose);
                     }
-                    Err(_) => continue,
+                    Err(e) => {
+                        warn!(
+                            target: "tst_pipeline::managed_receive",
+                            attempt,
+                            max_attempts = self.policy.max_attempts,
+                            errno_code = broken_errno(&e),
+                            error = %e,
+                            "reconnect attempt failed",
+                        );
+                        last_error = Some(e);
+                        continue;
+                    }
                 }
             }
 

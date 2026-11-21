@@ -234,6 +234,16 @@ impl Default for ManagedShared {
     }
 }
 
+/// The transport's own error code of a failed factory call, for the log
+/// line of that attempt. Read from `Broken` only: that is how a factory
+/// reports a dial that was refused.
+pub(crate) fn broken_errno(e: &TransportError) -> Option<i32> {
+    match e {
+        TransportError::Broken { errno_code, .. } => *errno_code,
+        _ => None,
+    }
+}
+
 /// Outcome of [`install_fresh_inner`].
 pub(crate) enum Install {
     /// The fresh inner is installed, its wake handle published, and the

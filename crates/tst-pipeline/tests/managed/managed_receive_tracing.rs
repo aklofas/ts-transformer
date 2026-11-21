@@ -99,3 +99,77 @@ fn receiver_background_mode_warns_and_behaves_as_blocking() {
         "give-up flow must be identical to the Blocking test above"
     );
 }
+
+/// A managed receiver whose inner is dead and whose factory answers every
+/// call with `factory_answer`; three attempts, no backoff.
+fn dead_receiver(factory_answer: TransportError) -> ManagedRecvTransport<ScriptedRecv> {
+    let factory =
+        Box::new(move || -> Result<ScriptedRecv, TransportError> { Err(factory_answer.clone()) });
+    let policy = ReconnectPolicy::default()
+        .with_max_attempts(Some(3))
+        .with_backoff(BackoffStrategy::Constant(Duration::from_millis(0)));
+    let inner = ScriptedRecv::failing(broken("always broken (test)")).with_alive(true);
+    ManagedRecvTransport::new(inner, factory, policy).expect("the policy validates")
+}
+
+#[traced_test]
+#[test]
+fn a_failed_receive_rebuild_logs_its_cause() {
+    let mut managed = dead_receiver(broken("test factory always fails"));
+    let mut buf = [0u8; 8];
+    managed.recv_bytes(&mut buf).unwrap_err();
+
+    assert!(
+        logs_contain("test factory always fails"),
+        "the factory's error reaches the log"
+    );
+    logs_assert(|lines: &[&str]| {
+        let failed = lines
+            .iter()
+            .filter(|l| {
+                l.contains("WARN")
+                    && l.contains("tst_pipeline::managed_receive")
+                    && l.contains("reconnect attempt failed")
+                    && l.contains("max_attempts=3")
+                    && l.contains("test factory always fails")
+            })
+            .count();
+        if failed == 3 {
+            Ok(())
+        } else {
+            Err(format!("one line per failed call, got {failed}"))
+        }
+    });
+}
+
+/// A re-accept that was cancelled was not refused: it ends the receiver and
+/// is not reported as a failed attempt.
+#[traced_test]
+#[test]
+fn a_cancelled_dial_is_not_logged_as_a_failed_attempt() {
+    let mut managed = dead_receiver(TransportError::ExplicitClose);
+    let mut buf = [0u8; 8];
+    let err = managed.recv_bytes(&mut buf).unwrap_err();
+    assert_eq!(err, TransportError::ExplicitClose);
+    assert!(logs_contain("reconnect attempt"), "the attempt was logged");
+    assert!(!logs_contain("reconnect attempt failed"));
+}
+
+#[traced_test]
+#[test]
+fn the_give_up_warning_names_the_last_cause() {
+    let mut managed = dead_receiver(broken("test factory always fails"));
+    let mut buf = [0u8; 8];
+    managed.recv_bytes(&mut buf).unwrap_err();
+    logs_assert(|lines: &[&str]| {
+        lines
+            .iter()
+            .any(|l| {
+                l.contains("WARN")
+                    && l.contains("reconnect gave up")
+                    && l.contains("test factory always fails")
+            })
+            .then_some(())
+            .ok_or_else(|| "the give-up line does not name the last cause".to_string())
+    });
+}

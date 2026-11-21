@@ -17,7 +17,7 @@ pub(crate) mod state;
 
 pub use gap_buffer::{GapBuffer, OverflowPolicy};
 
-use state::{Install, Latch, ManagedShared, Shutdown, install_fresh_inner};
+use state::{Install, Latch, ManagedShared, Shutdown, broken_errno, install_fresh_inner};
 
 use std::time::Duration;
 
@@ -1042,6 +1042,9 @@ impl<T: Transport + 'static> ManagedTransport<T> {
 
     fn reconnect_and_drain(&self) -> Result<(), TransportError> {
         let mut attempt: u32 = 0;
+        // Why the latest factory call of this budget failed, for the
+        // give-up line.
+        let mut last_error: Option<TransportError> = None;
         loop {
             if self.latch.is_closed() {
                 return Err(self.latch.error());
@@ -1056,6 +1059,7 @@ impl<T: Transport + 'static> ManagedTransport<T> {
                     target: "tst_pipeline::reconnect",
                     attempts_made = attempt - 1,
                     max_attempts = max,
+                    last_error = last_error.as_ref().map(tracing::field::display),
                     "reconnect gave up — propagating final error to caller",
                 );
                 return Err(TransportError::Broken {
@@ -1067,7 +1071,8 @@ impl<T: Transport + 'static> ManagedTransport<T> {
             info!(
                 target: "tst_pipeline::reconnect",
                 attempt,
-                max_attempts = self.policy.max_attempts.unwrap_or(0),
+                // Recorded only when there is a limit.
+                max_attempts = self.policy.max_attempts,
                 backoff_ms = wait.as_millis() as u64,
                 "reconnect attempt",
             );
@@ -1130,7 +1135,16 @@ impl<T: Transport + 'static> ManagedTransport<T> {
                     // The dial was cancelled, not refused: stop dialling.
                     return Err(self.inner_cancelled());
                 }
-                Err(_) => {
+                Err(e) => {
+                    warn!(
+                        target: "tst_pipeline::reconnect",
+                        attempt,
+                        max_attempts = self.policy.max_attempts,
+                        errno_code = broken_errno(&e),
+                        error = %e,
+                        "reconnect attempt failed",
+                    );
+                    last_error = Some(e);
                     continue; // try again
                 }
             }
