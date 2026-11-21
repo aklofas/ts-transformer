@@ -660,7 +660,10 @@ fn a_trip_behind_a_full_reject_backlog_restarts_the_worker() {
     slow.pause = window / 10;
     let factory = Factory::with([slow]);
     let p = policy(ReconnectMode::Background)
-        .with_gap_buffer_capacity(4)
+        // Twenty held messages at 3 ms each outlast the 30 ms window twice,
+        // so the drain into the silent replacement trips on the held
+        // backlog alone.
+        .with_gap_buffer_capacity(20)
         .with_overflow_policy(OverflowPolicy::Reject);
     let mut m = armed(initial, &factory, p, window);
     let stats = m.stats_handle();
