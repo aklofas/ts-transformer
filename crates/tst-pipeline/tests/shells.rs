@@ -31,5 +31,7 @@ mod pipeline_receiver;
 mod pipeline_sender_unit;
 #[path = "shells/pipeline_ts_sender.rs"]
 mod pipeline_ts_sender;
+#[path = "shells/receive_trace_differential.rs"]
+mod receive_trace_differential;
 #[path = "shells/shell_lifetime_spans.rs"]
 mod shell_lifetime_spans;
