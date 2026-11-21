@@ -131,7 +131,9 @@ pub use managed_demux_receiver::{ManagedDemuxReceiver, ManagedDemuxReceiverConfi
 #[cfg(feature = "std")]
 pub use managed_receive::{FactoryCancel, ManagedRecvTransport};
 #[cfg(feature = "std")]
-pub use mux_publisher::{MuxPublisher, MuxPublisherError, MuxPublisherStats};
+pub use mux_publisher::{
+    MuxPublisher, MuxPublisherError, MuxPublisherStats, MuxPublisherStatsHandle,
+};
 pub use mux_sender::{MuxSender, MuxSenderError, MuxSenderErrorSource, MuxSenderStats};
 // Pairing is intentionally NOT re-exported at the crate root. It lives
 // under `ext::pairing` to signal its opt-in, extension-module nature.

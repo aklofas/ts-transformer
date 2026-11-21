@@ -4,6 +4,8 @@
 //! **Stability: Provisional** — see the
 //! [API stability reference](https://github.com/aklofas/ts-transformer/blob/main/docs/reference/api-stability.md).
 
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use tst_core::error::MuxError;
@@ -29,6 +31,50 @@ tst_core::binding_record! {
         /// video access unit (on a keyframe, forced to hold the target, on a
         /// forward gap, or on an encoder reset).
         pub cut_calls: u64,
+    }
+}
+
+/// The [`MuxPublisherStats`] counters of one shell: atomics, so they are read
+/// while a push holds the sender. Only the [`Segmented`] transport writes
+/// them, inside the sender's lock.
+#[derive(Debug, Default)]
+struct Counters {
+    bytes_pushed: AtomicU64,
+    drain_calls: AtomicU64,
+    cut_calls: AtomicU64,
+}
+
+impl Counters {
+    fn snapshot(&self) -> MuxPublisherStats {
+        MuxPublisherStats {
+            bytes_pushed: self.bytes_pushed.load(Ordering::Relaxed),
+            drain_calls: self.drain_calls.load(Ordering::Relaxed),
+            cut_calls: self.cut_calls.load(Ordering::Relaxed),
+        }
+    }
+}
+
+/// Add `n` to a counter that has one writer at a time.
+fn count(counter: &AtomicU64, n: u64) {
+    let now = counter.load(Ordering::Relaxed).saturating_add(n);
+    counter.store(now, Ordering::Relaxed);
+}
+
+/// A reader of a [`MuxPublisher`]'s [`MuxPublisherStats`] that does not
+/// borrow the shell: it never waits for a push in progress, and it keeps
+/// answering the last values after [`MuxPublisher::finish`],
+/// [`MuxPublisher::abort`] or a drop. Obtain it with
+/// [`MuxPublisher::stats_handle`].
+///
+/// Each counter is read on its own, so a read made during a push can show
+/// that push in one counter and not yet in another.
+#[derive(Clone, Debug)]
+pub struct MuxPublisherStatsHandle(Arc<Counters>);
+
+impl MuxPublisherStatsHandle {
+    /// The counters now; the same values [`MuxPublisher::stats`] reports.
+    pub fn stats(&self) -> MuxPublisherStats {
+        self.0.snapshot()
     }
 }
 
@@ -107,9 +153,7 @@ pub struct Segmented<P: Publisher> {
     min_segment: Option<Duration>,
     /// Whether a media-time forced cut has been logged at warn level yet.
     warned_forced_cut: bool,
-    cut_calls: u64,
-    bytes_pushed: u64,
-    drain_calls: u64,
+    counters: Arc<Counters>,
     /// The publisher error behind the last `TransportError::Broken` this
     /// transport returned, kept typed for [`MuxPublisher`] to hand back. It
     /// is stored under the failing thread's id inside the sender's critical
@@ -140,9 +184,7 @@ impl<P: Publisher> Segmented<P> {
             last_gap_ticks: 0,
             min_segment,
             warned_forced_cut: false,
-            cut_calls: 0,
-            bytes_pushed: 0,
-            drain_calls: 0,
+            counters: Arc::default(),
             last_error: Vec::new(),
             keep_typed_errors,
         }
@@ -215,7 +257,7 @@ impl<P: Publisher> Segmented<P> {
         } else {
             self.publisher.cut_segment_with_duration(media_dur)?;
         }
-        self.cut_calls = self.cut_calls.saturating_add(1);
+        count(&self.counters.cut_calls, 1);
         self.segment_start_pts = None;
         Ok(())
     }
@@ -225,8 +267,8 @@ impl<P: Publisher + Send> Transport for Segmented<P> {
     fn send_bytes(&mut self, msg: &[u8]) -> Result<(), TransportError> {
         match self.publisher.push_ts(msg) {
             Ok(()) => {
-                self.bytes_pushed = self.bytes_pushed.saturating_add(msg.len() as u64);
-                self.drain_calls = self.drain_calls.saturating_add(1);
+                count(&self.counters.bytes_pushed, msg.len() as u64);
+                count(&self.counters.drain_calls, 1);
                 Ok(())
             }
             Err(e) => Err(self.fail(e)),
@@ -352,13 +394,13 @@ enum Cut {
 /// No method panics on a poisoned inner mutex. If a prior call panicked
 /// mid-mutation and poisoned the lock, each method falls back gracefully:
 /// fallible methods (`push_*`, `cut_segment`) return
-/// [`MuxPublisherError::LockPoisoned`]; infallible methods (`stats`,
-/// `publisher_stats`) recover the poisoned guard and return the last
-/// observed value. `finish` recovers the poisoned guard and returns the
-/// owned publisher — the publisher's state may be partial if the panic
-/// occurred during a push, but the caller receives it for its own
-/// disposal.
-pub struct MuxPublisher<P: Publisher + Send>(MuxSender<Segmented<P>>);
+/// [`MuxPublisherError::LockPoisoned`]; the infallible methods return the
+/// last observed value (`stats` reads counters kept outside the lock,
+/// `publisher_stats` recovers the poisoned guard). `finish` recovers the
+/// poisoned guard and returns the owned publisher — the publisher's state
+/// may be partial if the panic occurred during a push, but the caller
+/// receives it for its own disposal.
+pub struct MuxPublisher<P: Publisher + Send>(MuxSender<Segmented<P>>, Arc<Counters>);
 
 impl<P: Publisher + Send> std::fmt::Debug for MuxPublisher<P> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -372,8 +414,10 @@ impl<P: Publisher + Send> MuxPublisher<P> {
         publisher: P,
         config: MuxerConfig,
     ) -> Result<Self, MuxPublisherError<P::Error>> {
-        MuxSender::new(Segmented::for_shell(publisher), config)
-            .map(Self)
+        let segmented = Segmented::for_shell(publisher);
+        let counters = Arc::clone(&segmented.counters);
+        MuxSender::new(segmented, config)
+            .map(|sender| Self(sender, counters))
             .map_err(MuxPublisherError::Mux)
     }
 
@@ -545,16 +589,28 @@ impl<P: Publisher + Send> MuxPublisher<P> {
         }
     }
 
-    /// Snapshot stats.
+    /// Snapshot stats. Never waits for a push in progress on another
+    /// thread: the counters live outside the sender's lock, and each is read
+    /// on its own (see [`MuxPublisherStatsHandle`]).
     pub fn stats(&self) -> MuxPublisherStats {
-        self.0.with_transport(|t| MuxPublisherStats {
-            bytes_pushed: t.bytes_pushed,
-            drain_calls: t.drain_calls,
-            cut_calls: t.cut_calls,
-        })
+        self.1.snapshot()
+    }
+
+    /// A reader of [`Self::stats`] that outlives the shell and never waits
+    /// for it: it answers during a push and after [`Self::finish`] or
+    /// [`Self::abort`].
+    #[must_use]
+    pub fn stats_handle(&self) -> MuxPublisherStatsHandle {
+        MuxPublisherStatsHandle(Arc::clone(&self.1))
     }
 
     /// Publisher-side stats (universal subset across publisher impls).
+    ///
+    /// Unlike [`Self::stats`], this waits for a push in progress on another
+    /// thread: the record is the publisher's own, and the publisher lives
+    /// behind the sender's lock, which a push holds until the publisher has
+    /// taken its bytes. A publisher may also guard the record with a lock of
+    /// its own.
     pub fn publisher_stats(&self) -> PublisherStats {
         self.0.with_transport(|t| t.publisher.stats())
     }
@@ -635,8 +691,8 @@ pub enum MuxPublisherError<E: std::error::Error + Send + Sync + 'static> {
 
     /// The inner mutex was poisoned because a previous call panicked
     /// mid-mutation. All subsequent fallible calls on this shell return
-    /// this error. Infallible methods (`stats`, `publisher_stats`) recover
-    /// the poisoned guard and return the last observed value.
+    /// this error. The infallible methods (`stats`, `publisher_stats`)
+    /// return the last observed value.
     #[error("MuxPublisher lock poisoned")]
     LockPoisoned,
 }
@@ -975,6 +1031,192 @@ mod tests {
         // finish recovers the poisoned guard and returns the publisher.
         pub_.finish()
             .expect("finish must succeed even on a poisoned lock");
+    }
+
+    /// A publisher whose `push_ts` says it was entered and then waits until
+    /// the test drops the gate's sender: a push parked inside the sender's
+    /// lock for as long as the test wants.
+    struct GatedPublisher {
+        entered: std::sync::mpsc::Sender<()>,
+        gate: std::sync::mpsc::Receiver<()>,
+    }
+
+    impl Publisher for GatedPublisher {
+        type Error = MemErr;
+        fn push_ts(&mut self, _ts: &[u8]) -> Result<(), MemErr> {
+            let _ = self.entered.send(());
+            // An error is the dropped sender: the gate is open for good.
+            let _ = self.gate.recv();
+            Ok(())
+        }
+        fn cut_segment(&mut self) -> Result<(), MemErr> {
+            Ok(())
+        }
+        fn finish(self) -> Result<(), MemErr> {
+            Ok(())
+        }
+        fn stats(&self) -> PublisherStats {
+            PublisherStats::default()
+        }
+    }
+
+    fn fields(s: MuxPublisherStats) -> (u64, u64, u64) {
+        (s.bytes_pushed, s.drain_calls, s.cut_calls)
+    }
+
+    #[test]
+    fn stats_answer_while_a_push_holds_the_sender() {
+        use std::sync::mpsc;
+        let (entered_tx, entered_rx) = mpsc::channel();
+        let (gate_tx, gate_rx) = mpsc::channel::<()>();
+        let mp = MuxPublisher::with_config(
+            GatedPublisher {
+                entered: entered_tx,
+                gate: gate_rx,
+            },
+            test_muxer_config(),
+        )
+        .unwrap();
+        let handle = mp.stats_handle();
+        let deadline = tst_test_helpers::timing::scaled(Duration::from_secs(5));
+        let (answer_tx, answer_rx) = mpsc::channel();
+        std::thread::scope(|s| {
+            let pusher = s.spawn(|| mp.push_video(&h264_au(), Pts90khz::new(0), true));
+            entered_rx
+                .recv_timeout(deadline)
+                .expect("the push reached the publisher");
+            // The push is now parked in `push_ts`, inside the sender's lock.
+            s.spawn(|| {
+                let _ = answer_tx.send(mp.stats());
+            });
+            let during = answer_rx.recv_timeout(deadline);
+            let parked = !pusher.is_finished();
+            // Open the gate before any assertion: the scope joins both
+            // threads, and a reader still waiting for the lock needs the
+            // push to end.
+            drop(gate_tx);
+            pusher.join().unwrap().unwrap();
+            let during = during.expect("stats() answered while the push held the sender");
+            assert!(parked, "the push ended before the read was made");
+            assert_eq!(
+                fields(during),
+                (0, 0, 0),
+                "the parked push had not counted anything yet"
+            );
+        });
+        assert!(mp.stats().bytes_pushed > 0);
+        assert_eq!(fields(handle.stats()), fields(mp.stats()));
+    }
+
+    #[test]
+    fn the_stats_handle_is_send_sync_clone_and_debug() {
+        fn check<T: Send + Sync + Clone + std::fmt::Debug>() {}
+        check::<MuxPublisherStatsHandle>();
+    }
+
+    #[test]
+    fn the_handle_and_stats_agree_after_every_push_and_cut() {
+        let mp =
+            MuxPublisher::with_config(MemoryPublisher { buffers: vec![] }, test_muxer_config())
+                .unwrap();
+        let handle = mp.stats_handle();
+        // `MemoryPublisher` counts the bytes it was handed and opens a
+        // buffer per cut: a record of the same pushes kept by other code.
+        let check = |cuts: u64| {
+            let s = handle.stats();
+            assert_eq!(fields(s), fields(mp.stats()));
+            assert_eq!(s.bytes_pushed, mp.publisher_stats().bytes_written);
+            assert_eq!(s.cut_calls, cuts);
+            s
+        };
+        assert_eq!(fields(check(0)), (0, 0, 0));
+        let mut last = 0;
+        let mut cuts = 0;
+        for i in 0..6 {
+            // Every keyframe after the first cuts: this publisher has no
+            // segment duration.
+            let key_frame = i % 2 == 0;
+            mp.push_video(&h264_au(), Pts90khz::new(i * 3000), key_frame)
+                .unwrap();
+            if key_frame && i > 0 {
+                cuts += 1;
+            }
+            let s = check(cuts);
+            assert!(s.bytes_pushed > last, "push {i} added no bytes");
+            assert!(s.drain_calls > 0);
+            last = s.bytes_pushed;
+        }
+        mp.cut_segment().unwrap();
+        assert_eq!(check(cuts + 1).cut_calls, 3);
+    }
+
+    #[test]
+    fn the_handle_answers_after_finish_and_after_abort() {
+        let build = || {
+            let mp =
+                MuxPublisher::with_config(MemoryPublisher { buffers: vec![] }, test_muxer_config())
+                    .unwrap();
+            mp.push_video(&h264_au(), Pts90khz::new(0), true).unwrap();
+            mp.push_video(&h264_au(), Pts90khz::new(3000), false)
+                .unwrap();
+            let handle = mp.stats_handle();
+            let before = handle.stats();
+            assert!(before.bytes_pushed > 0);
+            (mp, handle, before)
+        };
+
+        let (mp, handle, before) = build();
+        let publisher = mp.finish().unwrap();
+        let after = handle.stats();
+        // `finish` closes the open segment: one more cut, no byte lost.
+        assert_eq!(after.cut_calls, before.cut_calls + 1);
+        assert_eq!(after.bytes_pushed, publisher.stats().bytes_written);
+        drop(publisher);
+        assert_eq!(fields(handle.clone().stats()), fields(after));
+
+        let (mp, handle, before) = build();
+        drop(mp.abort());
+        assert_eq!(fields(handle.stats()), fields(before));
+    }
+
+    /// A publisher that takes its first push and panics inside the second.
+    struct PanicsOnSecondPush(u32);
+
+    impl Publisher for PanicsOnSecondPush {
+        type Error = MemErr;
+        fn push_ts(&mut self, _ts: &[u8]) -> Result<(), MemErr> {
+            self.0 += 1;
+            assert!(self.0 < 2, "intentional panic to poison the sender's lock");
+            Ok(())
+        }
+        fn cut_segment(&mut self) -> Result<(), MemErr> {
+            Ok(())
+        }
+        fn finish(self) -> Result<(), MemErr> {
+            Ok(())
+        }
+        fn stats(&self) -> PublisherStats {
+            PublisherStats::default()
+        }
+    }
+
+    #[test]
+    fn the_handle_answers_after_the_senders_lock_was_poisoned() {
+        let mp = MuxPublisher::with_config(PanicsOnSecondPush(0), test_muxer_config()).unwrap();
+        let handle = mp.stats_handle();
+        mp.push_video(&h264_au(), Pts90khz::new(0), true).unwrap();
+        let before = handle.stats();
+        assert_eq!(before.drain_calls, 1);
+        let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _ = mp.push_video(&h264_au(), Pts90khz::new(3000), false);
+        }));
+        assert!(panicked.is_err(), "the second push panics in the publisher");
+        assert!(matches!(
+            mp.push_video(&h264_au(), Pts90khz::new(6000), false),
+            Err(MuxPublisherError::LockPoisoned)
+        ));
+        assert_eq!(fields(handle.stats()), fields(before));
+        assert_eq!(fields(mp.stats()), fields(before));
     }
 
     struct RecordingPublisher {
