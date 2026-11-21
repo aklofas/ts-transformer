@@ -314,13 +314,13 @@ The policy's retry budget for this outage is spent. On the send side (`ManagedTr
 
 Why each attempt failed is in the log: every failed factory call writes a `warn` line `reconnect attempt failed` (`background reconnect attempt failed` from a `Background` worker; target `tst_pipeline::reconnect`, or `tst_pipeline::managed_receive` on the receive side) with the factory's error as `error`, and the give-up line carries the last one as `last_error`.
 
-Fix: increase `max_attempts`, or set it to `None` to retry forever — only safe if your transport factory is itself rate-limited, otherwise a permanent peer outage produces a hot reconnect loop. The default is `Some(10)` which gives roughly 10 attempts with exponential backoff, on the order of a few minutes of real time before giving up.
+Fix: increase `max_attempts`, or set it to `None` to retry forever — only safe if your transport factory is itself rate-limited, otherwise a permanent peer outage produces a hot reconnect loop. The default is `Some(10)` with exponential backoff from 100 ms to a 10 s cap: up to 42.7 s of waits plus the ten factory calls before giving up.
 
 **A send blocks for the whole outage with `gap_buffer_capacity` 0**
 
 Under `ReconnectMode::Blocking` a capacity of 0 stages nothing, so the send that meets the outage reconnects on the caller's thread and then sends its message on the new connection, under either `OverflowPolicy`: it returns only when the reconnect has succeeded (with that connection's answer), the policy gives up (`TransportError::Broken`, with the message still yours), or a cancel fires. Without `max_attempts` that can be as long as the outage.
 
-Fix: if the producer must not wait, use `ReconnectMode::Background`: there a capacity of 0 drops (`DropOldest`, counted in `gap_messages_dropped`) or refuses (`Reject`, `Backpressure`) the message that meets the outage while a worker reconnects. Otherwise bound the wait with `max_attempts`, or end it from another thread through the cancel handle.
+Fix: if the producer must not wait, use `ReconnectMode::Background`: there a capacity of 0 drops (`DropOldest`, counted in `gap_messages_dropped`) or refuses (`Reject`, `Backpressure`) every message sent during the outage while a worker reconnects, and sends after it has reconnected go to the new connection. Otherwise bound the wait with `max_attempts`, or end it from another thread through the cancel handle.
 
 **Sends succeed but nothing arrives (Background mode)**
 

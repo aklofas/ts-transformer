@@ -349,7 +349,12 @@ What may precede or override the CLOSED outcome:
   and by the H.264 receiver in Python and the JVM (its queued complete access
   units, then the open one if it completes cleanly). The one to three
   packets the receive shells release when a cancel ends the stream come
-  first too, with their events.
+  first too, with their events, in the Rust shells; in a binding only
+  the receive the cancel interrupted can return one of them (the first
+  packet, or the first event), and the next call is CLOSED at the
+  `Owned` entry. A call made after a binding's close gets none. The
+  peer's end, a broken transport and a managed give-up set no cancel, so
+  there a binding hands out the whole tail.
 - After a Rust `DemuxReceiver`'s own `close()`, whenever it was called, a
   cancel fired later, or one that no call had reported before the close,
   is not reported: the receiver answers its end. A cancel that fires after the end,

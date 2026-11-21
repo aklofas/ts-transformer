@@ -179,8 +179,10 @@ has already checked every boundary. RECOVER mode flushes a stream that
 has been aligned since its first byte (no byte skipped, no boundary
 failed) on the same evidence: the whole packets held are sent when every
 boundary present reads `0x47`, the first byte of a partial packet
-included. Once a byte has been skipped or a boundary has failed, only
-three consecutive sync bytes send anything.
+included, so one stray trailing byte that is not `0x47` holds a one- or
+two-packet stream back (`finish` reports it). Once a byte has been
+skipped or a boundary has failed, only three consecutive sync bytes
+send anything.
 
 A flush is the caller's word that what it sent so far is a stream, and
 it costs something when the start only looks aligned. A `flush` while
@@ -189,11 +191,13 @@ offset 0 and (when more than 188 bytes are held) at offset 188, sends
 those bytes as one or two packets although they are not packets. When
 they were the head of a real stream lying off that 188-byte grid (a
 stream joined mid-packet whose first byte happens to read `0x47`), the
-real packet they cover is lost; without the flush the sender finds the
-real grid and delivers it. The sender is then in sync on the wrong
-grid, so a later `send_ts` or `flush` can send one more 188 bytes that
-are not a packet, when their first byte reads `0x47`, before a boundary
-fails and it resyncs. This needs a flush (or an end) inside the first
+real packets that start inside them are lost with them: one when 188
+bytes are sent, two when 376 are; without the flush the sender finds the
+real grid and delivers them. The sender is then in sync on the wrong
+grid, so a later `send_ts` or `flush` can send another 188 bytes that
+are not a packet (each further one when its first byte reads `0x47`)
+before a boundary fails and it resyncs, and each costs the real packet
+that starts inside it. This needs a flush (or an end) inside the first
 376 bytes; a flush with fewer than 188 bytes held sends nothing; for
 random bytes it happens about once in 256 starts. STRICT sends the same
 bytes and then refuses what follows with an error.
@@ -215,8 +219,9 @@ is abandoned with the sender: `finish` makes one attempt. To retry a
 refused send, call `flush` until it succeeds before `finish`; packets
 that only the end-of-stream pass recovers still get one attempt.
 `close` and drop make the same end-of-stream pass and report nothing: a
-send error is dropped, and bytes they could not send leave one
-`tracing` warning with their count. A binding's `close()` cancels first and sends nothing
+send error is dropped, with what it left, without a log line; otherwise
+bytes they could not send leave one `tracing` warning with their
+count. A binding's `close()` cancels first and sends nothing
 buffered; end a binding's sender with `finish()` (C has none: flush,
 then close).
 
@@ -579,9 +584,10 @@ at a time and never fills, and with `gap_buffer_capacity: 0` the call
 that meets the outage waits for the reconnect and sends its message
 after it, under either policy (a give-up returns `Broken`, with the
 message still the caller's). Under `Background` a capacity of 0 holds
-nothing: `DropOldest` drops and counts the message that meets the
-outage, `Reject` refuses it with `Backpressure`, and the worker
-reconnects in both cases.
+nothing: every message sent during the outage is dropped and counted
+(`DropOldest`) or refused with `Backpressure` (`Reject`) while the
+worker reconnects, and sends after it has reconnected go to the new
+connection.
 
 ## Choosing a backoff and gap-buffer size
 
@@ -982,7 +988,12 @@ after a clean end, the `Closed` error after a cancel (for ever), and
 `for` loop over a failed receiver ends. A cancel fired after the end is
 reported once the events already produced are handed out, on every
 transport. After the receiver's own `close()`, whenever it was called, a
-cancel fired later does not change the answer.
+cancel fired later, or one no call had reported before the close, does
+not change the answer. In the bindings a cancel or a close refuses every
+call after the one it interrupted, so of the packets an end releases a
+binding caller gets at most the first after a cancel, and none in a call
+made after a close; the peer's end, a broken transport and a managed
+give-up deliver the whole tail there too.
 
 ## KLV ↔ video pairing (`tst_pipeline::ext::pairing`)
 

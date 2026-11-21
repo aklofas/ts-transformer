@@ -38,7 +38,7 @@ use std::time::Duration;
 use tst_core::mpegts::common::Pts90khz;
 use tst_core::mpegts::mux::{KlvStreamType, MuxerConfig, MuxerProgramConfigBuilder, VideoCodec};
 use tst_pipeline::MuxSender;
-use tst_rtp::{PushDescription, RtspClientBuilder, RtspPush};
+use tst_rtp::{PushCloseOutcome, PushDescription, RtspClientBuilder, RtspPush};
 
 # fn frames() -> Vec<(Vec<u8>, Vec<u8>, Pts90khz, bool)> { Vec::new() }
 let builder = RtspClientBuilder::new("rtsp://127.0.0.1:8554/cam")?
@@ -46,6 +46,8 @@ let builder = RtspClientBuilder::new("rtsp://127.0.0.1:8554/cam")?
     // (mediamtx: 10 s without a byte). Only a builder-made client pings.
     .keepalive_interval(Duration::from_secs(5));
 let push = RtspPush::connect(builder, &PushDescription::Mp2t)?; // ANNOUNCE, SETUP, RECORD
+// Taken before the shell owns the push: it reads how the push's close ended.
+let push_stats = push.stats_handle();
 // H.264 and KLV, each KLV record with a PTS so a receiver can pair it.
 let mut program = MuxerProgramConfigBuilder::new(1, 0x1000);
 program.add_video(0x1011, VideoCodec::H264);
@@ -57,7 +59,12 @@ for (au, klv, pts, key_frame) in frames() {
     sender.send_video(&au, pts, key_frame)?;
     sender.send_klv(&klv, pts, 0)?;
 }
-sender.finish()?; // no cancel; cannot report a lost tail (see "Ending a push")
+sender.finish()?; // no cancel; its own result cannot report a lost tail
+// The push's close ran inside `finish()`; see "Ending a push" for the cases.
+match push_stats.close_outcome() {
+    Some(PushCloseOutcome::Clean) => {}
+    other => eprintln!("the push did not end cleanly: {other:?}"),
+}
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
