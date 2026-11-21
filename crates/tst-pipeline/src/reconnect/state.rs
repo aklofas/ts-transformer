@@ -22,7 +22,9 @@ use tst_core::cancel::CancelSlot;
 use tst_core::mpegts::common::SRT_TS_BUNDLE_BYTES;
 use tst_core::transport::{Transport, TransportError};
 
-use super::silent_peer::SilentPeer;
+use tracing::warn;
+
+use super::silent_peer::{SilentPeer, Verdict};
 
 /// Interruptible sleep. `wait_timeout(dur)` parks up to `dur`, returning
 /// early (`true`) if `signal()` fired. A poisoned mutex reads as signaled
@@ -244,6 +246,50 @@ pub(crate) fn broken_errno(e: &TransportError) -> Option<i32> {
         TransportError::Broken { errno_code, .. } => *errno_code,
         _ => None,
     }
+}
+
+/// A connection the silent-peer rule gave up on: its window and how long
+/// its sends went unanswered, for the retire's log line.
+pub(crate) struct Trip {
+    pub(crate) window: Duration,
+    pub(crate) unanswered: Duration,
+}
+
+/// The silent-peer sample after an inner send returned `Ok`, with `inner`
+/// held: the clock, then the inner's reading when the rule asks for one.
+/// The rule's lock is a leaf (locking invariant 6), so it is released
+/// before the reading is taken. `Some` when the peer has stopped answering.
+pub(crate) fn sample_after_send<T: Transport>(
+    silent: &Mutex<SilentPeer>,
+    transport: &T,
+) -> Option<Trip> {
+    let now = Instant::now();
+    let lock = || silent.lock().unwrap_or_else(PoisonError::into_inner);
+    if !lock().sent(now) {
+        return None;
+    }
+    let reading = transport.peer_activity();
+    let mut rule = lock();
+    match rule.reading(now, reading) {
+        Verdict::Silent { unanswered } => Some(Trip {
+            window: rule.window(),
+            unanswered,
+        }),
+        Verdict::Healthy | Verdict::Answered => None,
+    }
+}
+
+/// Close a connection the silent-peer rule gave up on, without waiting for
+/// its unsent data, and say so. Called with no lock held.
+pub(crate) fn retire_silent<T: Transport>(mut old: T, trip: Trip) {
+    old.abandon();
+    let ms = |d: Duration| u64::try_from(d.as_millis()).unwrap_or(u64::MAX);
+    warn!(
+        target: "tst_pipeline::reconnect",
+        window_ms = ms(trip.window),
+        unanswered_ms = ms(trip.unanswered),
+        "peer silent: abandoning the connection",
+    );
 }
 
 /// Outcome of [`install_fresh_inner`].
