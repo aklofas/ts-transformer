@@ -28,4 +28,5 @@ pub(crate) use common::last_error_msg;
 mod demux_receiver;
 mod mux_sender;
 mod raw_sender;
+mod silent_peer_key;
 mod ts_sender;
