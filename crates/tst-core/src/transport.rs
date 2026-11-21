@@ -427,8 +427,10 @@ pub trait Transport: Send {
     /// A transport that sometimes cannot tell returns `None` consistently,
     /// not now and then: a reader that sees an occasional `None` keeps
     /// asking at every send. A managed wrapper armed for silent-peer
-    /// detection over a transport that returns `None` never trips and keeps
-    /// its ordinary reconnect budget.
+    /// detection over a transport that returns `None` never trips, and keeps
+    /// its ordinary reconnect budget once a send on a new connection has
+    /// succeeded (a connection that breaks before that is one never heard
+    /// from, and its attempts count on).
     ///
     /// Called on the send path: it must not block and must be cheap.
     ///
