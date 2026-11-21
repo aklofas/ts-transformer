@@ -76,7 +76,7 @@
 schema_version = 0
 
 [schemes.srt]
-keys = 24        # 23 table keys + `mode`, which the URL level consumes
+keys = 25        # 24 table keys + `mode`, which the URL level consumes
 aliases = 9
 no_invalid = []
 
@@ -438,6 +438,16 @@ case = "explicit"
 key = "x-sendtimeout"
 url = "srt://127.0.0.1:{port}?x-sendtimeout=2000"
 expect = { scheme = "srt", host = "127.0.0.1", port = "{port}", keys = { mode = "caller", x-sendtimeout = "2000" } }
+
+[[url]]
+scheme = "srt"
+role = "caller"
+case = "explicit"
+key = "x-silentpeertimeout"
+url = "srt://127.0.0.1:{port}?x-silentpeertimeout=1500"
+expect = { scheme = "srt", host = "127.0.0.1", port = "{port}", keys = { mode = "caller", x-silentpeertimeout = "1500" } }
+open = { c = "CONFIG_INVALID", python = "CONFIG_INVALID", jvm = "CONFIG_INVALID" }
+open_why = "the key arms managed senders only; this leg opens a plain sender (`tst_sender_open` / `shells.Sender.open`), which refuses it"
 
 [[url]]
 scheme = "srt"
@@ -828,6 +838,22 @@ role = "caller"
 case = "invalid"
 key = "x-sendtimeout"
 url = "srt://127.0.0.1:{port}?x-sendtimeout=x"
+expect = { error_kind = "CONFIG_INVALID" }
+
+[[url]]
+scheme = "srt"
+role = "caller"
+case = "invalid"
+key = "x-silentpeertimeout"
+url = "srt://127.0.0.1:{port}?x-silentpeertimeout=999"
+expect = { error_kind = "CONFIG_INVALID" }
+
+[[url]]
+scheme = "srt"
+role = "caller"
+case = "invalid"
+key = "x-silentpeertimeout"
+url = "srt://127.0.0.1:{port}?x-silentpeertimeout=x"
 expect = { error_kind = "CONFIG_INVALID" }
 
 [[url]]

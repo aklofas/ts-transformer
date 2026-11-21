@@ -893,6 +893,7 @@ mod url_corpus_leg {
         put_opt(&mut k, "udpsndbuf", c.udp_send_buffer_bytes);
         put_opt(&mut k, "x-recvtimeout", c.recv_timeout.map(ms));
         put_opt(&mut k, "x-sendtimeout", c.send_timeout.map(ms));
+        put_opt(&mut k, "x-silentpeertimeout", c.silent_peer_timeout.map(ms));
         record("srt", &u.host, u.port, k)
     }
 
