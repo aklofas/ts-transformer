@@ -23,7 +23,9 @@
 //! GIL: every method that needs the shell takes the mutex inside
 //! `py.detach` (`with_inner`), never while holding the GIL — a
 //! `push_*` on another thread holds that mutex with the GIL released and
-//! needs the GIL back to let go of it. `__repr__` takes no lock.
+//! needs the GIL back to let go of it. `__repr__` and `stats()` take no
+//! lock: `stats()` reads the shell's statistics handle, kept beside the
+//! mutex.
 
 #![allow(unsafe_op_in_unsafe_fn, clippy::useless_conversion)]
 
@@ -34,7 +36,7 @@ use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 
 use tst_hls::HlsPublisher;
-use tst_pipeline::{MuxPublisher as RustMuxPublisher, MuxPublisherError};
+use tst_pipeline::{MuxPublisher as RustMuxPublisher, MuxPublisherError, MuxPublisherStatsHandle};
 
 use crate::generated::stats_hls::MuxPublisherStats;
 use crate::hls::publisher::PyHlsPublisher;
@@ -80,8 +82,12 @@ pub(crate) struct PyMuxPublisher {
     /// drops, so a thread waiting for it with the GIL held would freeze
     /// the interpreter.
     inner: Mutex<Option<RustMuxPublisher<HlsPublisher>>>,
-    /// Latched when `inner` is moved out, so `__repr__` never takes it.
+    /// Latched when `inner` is moved out, so `__repr__` and `stats()`
+    /// never take it.
     finished: AtomicBool,
+    /// The shell's counters, taken before it moved into `inner`: read
+    /// without the mutex, so `stats()` never waits for a push.
+    stats: MuxPublisherStatsHandle,
 }
 
 /// A `MuxPublisher` collected without `finish_into_publisher()` is
@@ -182,9 +188,11 @@ impl PyMuxPublisher {
         // 3. Hand publisher + config to the pipeline shell.
         let mp = RustMuxPublisher::with_config(hls, muxer_cfg)
             .map_err(|e| map_mux_publisher_error(py, e))?;
+        let stats = mp.stats_handle();
         Ok(Self {
             inner: Mutex::new(Some(mp)),
             finished: AtomicBool::new(false),
+            stats,
         })
     }
 
@@ -318,13 +326,22 @@ impl PyMuxPublisher {
 
     // ── Stats ────────────────────────────────────────────────────────────────
 
-    /// Shell-level stats (`MuxPublisherStats`).
+    /// Shell-level stats (`MuxPublisherStats`). Never waits for a push in
+    /// progress on another thread: the counters are read one by one, so a
+    /// read made during a push may show it in one counter and not yet in
+    /// another; no counter ever decreases, and a read made after the push
+    /// returned holds all of it. Raises `HlsError(CLOSED)` after
+    /// `finish_into_publisher()`.
     fn stats(&self, py: Python<'_>) -> PyResult<MuxPublisherStats> {
-        let stats = self.with_inner(py, |mp| Ok(mp.stats()))?;
-        Ok(MuxPublisherStats::from(&stats))
+        if self.finished.load(Ordering::Acquire) {
+            return Err(Self::raise_locked(py, Locked::Gone));
+        }
+        Ok(MuxPublisherStats::from(&self.stats.stats()))
     }
 
-    /// Publisher-side universal stats (`PublisherStats`).
+    /// Publisher-side universal stats (`PublisherStats`). Waits (GIL
+    /// released) for a push in progress on another thread: the record is
+    /// the publisher's own, kept behind the shell's lock.
     fn publisher_stats(&self, py: Python<'_>) -> PyResult<PyPublisherStats> {
         let stats = self.with_inner(py, |mp| Ok(mp.publisher_stats()))?;
         Ok(PyPublisherStats::from_core(stats))

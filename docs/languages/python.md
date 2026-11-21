@@ -815,7 +815,8 @@ finish, not for a peer.
 |---|---|---|
 | `HlsPublisher.local_addr()` / `local_port()` | the address captured when the publisher was built | raises `HlsError(FINISHED)` |
 | `repr()` on both classes | the `open` form | the `finished` form |
-| `HlsPublisher.stats()` / `hls_stats()` / `render_playlist()`, `MuxPublisher.stats()` / `publisher_stats()` | waits for the push, GIL released | raises `FINISHED` (`MuxPublisher`: `CLOSED`) |
+| `MuxPublisher.stats()` | the counters as they stand, read one by one (a push in flight may show in one before another; none ever decreases) | raises `CLOSED` |
+| `HlsPublisher.stats()` / `hls_stats()` / `render_playlist()`, `MuxPublisher.publisher_stats()` | waits for the push, GIL released | raises `FINISHED` (`MuxPublisher`: `CLOSED`) |
 | `push_ts()`, `cut_segment()`, `send_*()` from a second thread | waits its turn, GIL released; calls are serialized, never interleaved | raises `FINISHED` / `CLOSED` |
 | `finish()`, `finish_serving()`, `close()`, `finish_into_publisher()` | waits for the push, then consumes the publisher | `close()` is quiet, the others raise |
 

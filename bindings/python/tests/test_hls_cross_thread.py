@@ -163,3 +163,64 @@ def test_local_addr_and_repr_answer_from_the_construction_snapshot(tmp_path: Pat
         with pytest.raises(HlsError) as ei:
             getter()
         assert ei.value.kind == HlsErrorKind.FINISHED
+
+
+# `MuxPublisher.stats()` reads the shell's statistics handle, not the shell:
+# that it does not wait for a push in progress is proven by the Rust tests
+# of `MuxPublisherStatsHandle` and the C binding's getter test, which hold
+# the sender's lock (a push here is disk work and cannot be parked). These
+# pin what the handle answers through this binding.
+
+
+def _mux_publisher(tmp_path: Path):
+    from tstrans.hls import HlsPublisher, MuxPublisher
+    from tstrans.mpegts import MuxerProgramConfigBuilder, VideoCodec
+
+    pub = HlsPublisher.builder().bind("127.0.0.1:0").output_dir(str(tmp_path)).build()
+    program = MuxerProgramConfigBuilder(1, 0x100).add_video(0x101, VideoCodec.H264).build()
+    return MuxPublisher.with_config_hls(pub, program)
+
+
+_NAL = b"\x00\x00\x00\x01\x65" + b"\xbb" * 4096
+
+
+def test_stats_after_finish_still_raises_closed(tmp_path: Path) -> None:
+    from tstrans.exceptions import HlsError, HlsErrorKind
+    from tstrans.mpegts import Pts90khz
+
+    mp = _mux_publisher(tmp_path)
+    mp.push_video(_NAL, pts=Pts90khz.from_raw(0), key_frame=True)
+    assert mp.stats().bytes_pushed > 0
+    hls = mp.finish_into_publisher()
+    try:
+        for _ in range(2):
+            with pytest.raises(HlsError) as ei:
+                mp.stats()
+            assert ei.value.kind == HlsErrorKind.CLOSED
+    finally:
+        hls.close()
+
+
+def test_stats_equals_the_pushes_made(tmp_path: Path) -> None:
+    from tstrans.mpegts import Pts90khz
+
+    mp = _mux_publisher(tmp_path)
+    s = mp.stats()
+    assert (s.bytes_pushed, s.drain_calls, s.cut_calls) == (0, 0, 0)
+    for i in range(6):
+        mp.push_video(_NAL, pts=Pts90khz.from_raw(i * 3000), key_frame=i == 0)
+        s = mp.stats()
+        # Every push muxed whole packets and handed them to the publisher in
+        # one drain; what the shell counts is what the publisher received.
+        assert s.drain_calls == i + 1
+        assert s.bytes_pushed % 188 == 0
+        assert s.bytes_pushed == mp.publisher_stats().bytes_written
+    assert s.cut_calls == 0
+    mp.cut_segment()
+    s = mp.stats()
+    assert s.cut_calls == 1
+    hls = mp.finish_into_publisher()
+    try:
+        assert hls.stats().bytes_written == s.bytes_pushed
+    finally:
+        hls.close()
