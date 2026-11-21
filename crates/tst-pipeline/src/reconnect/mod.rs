@@ -2414,7 +2414,7 @@ mod validate_tests {
 
 #[cfg(test)]
 mod silent_peer_tests {
-    use super::silent_peer::Verdict;
+    use super::silent_peer::{SilentPeer, Verdict};
     use super::*;
     use std::sync::atomic::{AtomicU32, Ordering};
     use std::sync::mpsc;
@@ -2533,6 +2533,9 @@ mod silent_peer_tests {
     /// An inner whose peer never answers. Its `abandon` is counted, and can
     /// announce itself and wait on a gate; a handle put in `fire` is fired
     /// by its next send, which still succeeds.
+    ///
+    /// `broken` fails every send; `prime` primes that rule to trip from
+    /// inside the next send, so the sample right after it trips.
     #[derive(Default)]
     struct Gated {
         abandons: Arc<AtomicU32>,
@@ -2540,11 +2543,23 @@ mod silent_peer_tests {
         entered: Option<mpsc::Sender<()>>,
         gate: Option<Arc<(Mutex<bool>, std::sync::Condvar)>>,
         fire: Fire,
+        broken: bool,
+        prime: Option<Arc<Mutex<SilentPeer>>>,
     }
     impl Transport for Gated {
         fn send_bytes(&mut self, _: &[u8]) -> Result<(), TransportError> {
+            if self.broken {
+                return Err(TransportError::Broken {
+                    msg: "scripted break".into(),
+                    errno_code: None,
+                    cause: BrokenCause::Unspecified,
+                });
+            }
             if let Some(h) = self.fire.lock().unwrap().take() {
                 h.cancel();
+            }
+            if let Some(rule) = self.prime.take() {
+                prime_to_trip(&rule, 1);
             }
             Ok(())
         }
@@ -2624,6 +2639,62 @@ mod silent_peer_tests {
         assert!(sent.is_ok(), "{sent:?}");
         assert_eq!(abandons.load(Ordering::SeqCst), 1);
         assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn a_connection_retired_by_the_drain_is_abandoned_with_the_inner_lock_free() {
+        let (tx, rx) = mpsc::channel();
+        let gate = Arc::new((Mutex::new(false), std::sync::Condvar::new()));
+        let abandons = Arc::new(AtomicU32::new(0));
+        // The worker's first replacement: primed by its first drain send.
+        let first: Arc<Mutex<Option<Gated>>> = Arc::default();
+        let calls = Arc::new(AtomicU32::new(0));
+        let m = {
+            let first = Arc::clone(&first);
+            let calls = Arc::clone(&calls);
+            ManagedTransport::new(
+                Gated {
+                    broken: true,
+                    ..Gated::default()
+                },
+                move || {
+                    calls.fetch_add(1, Ordering::SeqCst);
+                    Ok(first.lock().unwrap().take().unwrap_or_default())
+                },
+                ReconnectPolicy::default()
+                    .with_mode(ReconnectMode::Background)
+                    .with_backoff(BackoffStrategy::Constant(Duration::ZERO)),
+            )
+            .expect("the policy validates")
+            .with_silent_peer_timeout(PRIMED_WINDOW)
+        };
+        *first.lock().unwrap() = Some(Gated {
+            abandons: Arc::clone(&abandons),
+            entered: Some(tx),
+            gate: Some(Arc::clone(&gate)),
+            prime: m.silent.clone(),
+            ..Gated::default()
+        });
+        // The initial connection is broken: the message is queued and the
+        // worker drains it into the primed replacement, which trips.
+        assert!(m.send_managed(b"queued").is_ok());
+        rx.recv_timeout(tst_test_helpers::timing::scaled(Duration::from_secs(5)))
+            .expect("the drain's tripped connection is abandoned");
+        let free = m.inner.try_lock().is_ok();
+        *gate.0.lock().unwrap() = true;
+        gate.1.notify_all();
+        assert!(free, "abandon ran with `inner` held");
+        let stats = m.stats_handle();
+        let deadline = Instant::now() + tst_test_helpers::timing::scaled(Duration::from_secs(5));
+        while !stats
+            .stats()
+            .is_some_and(|s| s.reconnect_successes == 2 && !s.reconnecting && s.gap_len == 0)
+        {
+            assert!(Instant::now() < deadline, "the worker did not reconnect");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(abandons.load(Ordering::SeqCst), 1);
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
     }
 
     #[test]

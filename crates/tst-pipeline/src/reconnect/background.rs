@@ -43,7 +43,10 @@ use tst_core::cancel::CancelSlot;
 use tst_core::transport::{Transport, TransportError};
 
 use super::silent_peer::SilentPeer;
-use super::state::{Install, Latch, ManagedShared, Shutdown, broken_errno, install_fresh_inner};
+use super::state::{
+    Install, Latch, ManagedShared, Shutdown, Trip, broken_errno, install_fresh_inner,
+    retire_silent, sample_after_send,
+};
 use super::{GapBuffer, ReconnectPolicy};
 
 /// Backpressure retry cadence while draining on the worker — there is no
@@ -70,13 +73,16 @@ pub(crate) struct WorkerCtx<T: Transport> {
     pub(crate) silent: Option<Arc<Mutex<SilentPeer>>>,
 }
 
-enum DrainStep {
+enum DrainStep<T> {
     Sent,
     Empty,
     Backpressure,
     Broken,
     /// The inner reported `ExplicitClose`: terminal, no rebuild.
     Cancelled,
+    /// The silent-peer rule gave up on the inner, carried here out of the
+    /// lock scope to be abandoned; then rebuild, as for `Broken`.
+    Silent(T, Trip),
 }
 
 /// What the drain step's first (gap-locked) phase decided. Split out so
@@ -329,6 +335,12 @@ pub(crate) fn worker_run<T: Transport>(ctx: WorkerCtx<T>) {
                             .as_mut()
                             .expect("checked is_some above; only this worker clears it");
                         let outcome = transport.send_bytes(&msg);
+                        // Sampled before the gap lock is re-taken: the
+                        // rule's lock is a leaf under `inner` alone.
+                        let trip = match (&outcome, ctx.silent.as_deref()) {
+                            (Ok(()), Some(silent)) => sample_after_send(silent, &*transport),
+                            _ => None,
+                        };
                         // Re-take the gap lock ONLY to settle the entry.
                         // The message is still at the front: eviction
                         // skips an in-flight entry.
@@ -337,10 +349,24 @@ pub(crate) fn worker_run<T: Transport>(ctx: WorkerCtx<T>) {
                             .lock()
                             .expect("BUG: gap lock poisoned — gap buffer is invariant-critical");
                         match outcome {
-                            Ok(()) => {
-                                gap.finish_send(seq);
-                                DrainStep::Sent
-                            }
+                            Ok(()) => match trip {
+                                None => {
+                                    gap.finish_send(seq);
+                                    DrainStep::Sent
+                                }
+                                Some(trip) => {
+                                    // As a break: the message stays at the
+                                    // front for the rebuilt inner, and the
+                                    // dead inner's wake handle goes with it.
+                                    gap.abort_send(seq);
+                                    drop(gap);
+                                    let old = transport_guard.take().expect(
+                                        "checked is_some above; only this worker clears it",
+                                    );
+                                    ctx.active.clear();
+                                    DrainStep::Silent(old, trip)
+                                }
+                            },
                             Err(TransportError::Backpressure { .. }) => {
                                 gap.abort_send(seq);
                                 DrainStep::Backpressure
@@ -398,6 +424,11 @@ pub(crate) fn worker_run<T: Transport>(ctx: WorkerCtx<T>) {
                     }
                 }
                 DrainStep::Broken => continue 'reconnect,
+                DrainStep::Silent(old, trip) => {
+                    // Both locks are released here.
+                    retire_silent(old, trip);
+                    continue 'reconnect;
+                }
                 DrainStep::Cancelled => {
                     ctx.latch.inner_cancel(&ctx.shutdown, &ctx.active);
                     return; // the guard clears bg_active on the way out
