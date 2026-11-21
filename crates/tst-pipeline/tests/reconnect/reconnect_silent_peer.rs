@@ -164,6 +164,8 @@ struct Factory {
     failures: Arc<AtomicU32>,
     script: Arc<Mutex<VecDeque<Scripted>>>,
     made: Arc<Mutex<Vec<Arc<Seen>>>>,
+    /// While `true`, every call waits (see `hold`).
+    held: Arc<(Mutex<bool>, std::sync::Condvar)>,
 }
 
 impl Factory {
@@ -174,6 +176,13 @@ impl Factory {
     }
     fn make(&self) -> Result<Scripted, TransportError> {
         self.calls.fetch_add(1, Ordering::SeqCst);
+        {
+            let (held, cv) = &*self.held;
+            let mut held = held.lock().unwrap();
+            while *held {
+                held = cv.wait(held).unwrap();
+            }
+        }
         if self
             .failures
             .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1))
@@ -189,6 +198,14 @@ impl Factory {
             .unwrap_or_else(|| Scripted::new(Reading::MovesEverySend).0);
         self.made.lock().unwrap().push(Arc::clone(&inner.seen));
         Ok(inner)
+    }
+    /// Calls wait until `release`.
+    fn hold(&self) {
+        *self.held.0.lock().unwrap() = true;
+    }
+    fn release(&self) {
+        *self.held.0.lock().unwrap() = false;
+        self.held.1.notify_all();
     }
     fn calls(&self) -> u32 {
         self.calls.load(Ordering::SeqCst)
@@ -385,9 +402,12 @@ fn a_transport_that_cannot_tell_never_trips() {
     let (initial, seen) = Scripted::new(Reading::CannotTell);
     let factory = Factory::default();
     let mut m = armed(initial, &factory, policy(ReconnectMode::Blocking), window);
+    // Ten windows AND twenty sends: the twentieth send comes at least
+    // 19 ms after the first, past the quarter window at which an answered
+    // connection is read again, however the sends are spaced.
     let start = Instant::now();
     let mut n = 0;
-    while start.elapsed() < window * 10 {
+    while start.elapsed() < window * 10 || n < 20 {
         m.send_bytes(&msg(n)).unwrap();
         n += 1;
         std::thread::sleep(Duration::from_millis(1));
@@ -635,7 +655,7 @@ fn a_trip_behind_a_full_reject_backlog_restarts_the_worker() {
     let (mut initial, _) = Scripted::new(Reading::Frozen(1));
     initial.break_after = Some(0);
     // The replacement is silent and drains slower than the producer
-    // offers, so its backlog stays full until it trips.
+    // offers, so its backlog stays full while the producer keeps up.
     let (mut slow, _) = Scripted::new(Reading::Frozen(1));
     slow.pause = window / 10;
     let factory = Factory::with([slow]);
@@ -644,24 +664,32 @@ fn a_trip_behind_a_full_reject_backlog_restarts_the_worker() {
         .with_overflow_policy(OverflowPolicy::Reject);
     let mut m = armed(initial, &factory, p, window);
     let stats = m.stats_handle();
-    let mut refused = 0u32;
     let deadline = Instant::now() + scaled(Duration::from_secs(5));
+    // The worker's dial is held until the backlog is full and a message
+    // has been refused, so the drain starts behind a full backlog however
+    // the threads are scheduled.
+    factory.hold();
+    let mut refused = false;
     let mut n = 0u32;
+    while !refused {
+        assert!(Instant::now() < deadline, "the backlog never filled");
+        match m.send_bytes(&msg(n)) {
+            Ok(()) => {}
+            Err(TransportError::Backpressure { .. }) => refused = true,
+            Err(e) => panic!("{e:?}"),
+        }
+        n += 1;
+    }
+    factory.release();
     while factory.calls() < 2 {
         assert!(
             Instant::now() < deadline,
             "the silent replacement was never replaced"
         );
-        if matches!(
-            m.send_bytes(&msg(n)),
-            Err(TransportError::Backpressure { .. })
-        ) {
-            refused += 1;
-        }
+        let _ = m.send_bytes(&msg(n));
         n += 1;
         std::thread::sleep(Duration::from_millis(1));
     }
-    assert!(refused > 0, "the backlog was full");
     assert_eq!(factory.made(0).abandons.load(Ordering::SeqCst), 1);
     assert!(wait_for(scaled(Duration::from_secs(5)), || {
         stats
@@ -878,6 +906,12 @@ fn slow(reading: Reading) -> Scripted {
     s
 }
 
+/// A backlog that outlasts the drain trips it is queued for by two orders
+/// of magnitude (a trip takes about ten 5 ms drain sends), so a slow
+/// machine can postpone those trips but not push them past its end. A
+/// test that passes ends its worker long before it is drained.
+const BACKLOG: u32 = 1_000;
+
 /// Trips the initial connection, then queues `n` messages behind the
 /// worker without waiting.
 fn trip_then_queue(m: &mut ManagedTransport<Scripted>, initial: &Seen, n: u32) {
@@ -899,11 +933,13 @@ fn a_drain_that_trips_on_every_replacement_runs_out_the_budget() {
     let mut m = armed(
         initial,
         &factory,
-        policy(ReconnectMode::Background).with_max_attempts(Some(3)),
+        policy(ReconnectMode::Background)
+            .with_max_attempts(Some(3))
+            .with_gap_buffer_capacity(BACKLOG as usize),
         W,
     );
     let stats = m.stats_handle();
-    trip_then_queue(&mut m, &initial_seen, 100);
+    trip_then_queue(&mut m, &initial_seen, BACKLOG);
     assert!(
         wait_for(scaled(Duration::from_secs(5)), || stats
             .stats()
@@ -964,11 +1000,13 @@ fn an_answer_inside_the_drain_restores_the_budget() {
         let mut m = armed(
             initial,
             &factory,
-            policy(ReconnectMode::Background).with_max_attempts(Some(1)),
+            policy(ReconnectMode::Background)
+                .with_max_attempts(Some(1))
+                .with_gap_buffer_capacity(BACKLOG as usize),
             W,
         );
         let stats = m.stats_handle();
-        trip_then_queue(&mut m, &initial_seen, 50);
+        trip_then_queue(&mut m, &initial_seen, BACKLOG);
         assert!(
             wait_for(scaled(Duration::from_secs(5)), || stats
                 .stats()
@@ -978,7 +1016,7 @@ fn an_answer_inside_the_drain_restores_the_budget() {
             "{what}: the outage after an answer had no budget left"
         );
         assert!(
-            factory.made(0).sends.load(Ordering::SeqCst) < 50,
+            factory.made(0).sends.load(Ordering::SeqCst) < BACKLOG,
             "{what}: it ended inside the drain"
         );
         m.send_bytes(&msg(u32::MAX)).expect("delivered");
