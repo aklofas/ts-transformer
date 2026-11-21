@@ -27,6 +27,14 @@
 //! managed receiver the next re-dial is refused), and if it fails the
 //! open returns `ExplicitClose`.
 //!
+//! A sender URL with `x-silentpeertimeout=<ms>` arms the managed decorator
+//! for silent-peer detection
+//! ([`ManagedTransport::with_silent_peer_timeout`]): the connection is
+//! abandoned and re-dialled when the peer has answered none of its sends
+//! for that window. The window is taken out of the URL before it is
+//! dialled, because every SRT open refuses a config that carries it; the
+//! receivers refuse the key.
+//!
 //! Senders are caller-only: `?mode=listener` is refused before any
 //! socket is touched (see `docs/project/deferred-features.md`, "SRT URL
 //! `mode=listener` / `mode=rendezvous` dispatch"). Receivers accept both
@@ -313,14 +321,19 @@ fn managed_transport_from_url(
     // every SRT open refuses a config that carries it, so the first dial
     // and every re-dial go without it.
     let mut url = url.clone();
-    let _window = url.config.silent_peer_timeout.take();
+    let window = url.config.silent_peer_timeout.take();
     let initial = url.connect()?;
-    ManagedTransport::new(
+    let managed = ManagedTransport::new(
         initial,
         move || url.connect().map_err(open_error_to_transport),
         policy,
     )
-    .map_err(policy_refused)
+    .map_err(policy_refused)?;
+    // Armed before the shell exists, so before any send.
+    Ok(match window {
+        Some(w) => managed.with_silent_peer_timeout(w),
+        None => managed,
+    })
 }
 
 /// The observers for a send-side decorator, taken BEFORE it moves into a
