@@ -96,11 +96,10 @@ mod tests {
         packetize(&[1], 0);
     }
 
-    #[cfg(feature = "rtsp-server")]
     mod round_trip {
         use super::*;
+        use crate::klv::depacketizer::KlvDepacketizer;
         use crate::packet::RtpHeader;
-        use crate::rtsp::server::publish::klv_depacketizer::KlvDepacketizer;
         use proptest::prelude::*;
 
         proptest! {

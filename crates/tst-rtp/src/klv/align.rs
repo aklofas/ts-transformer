@@ -83,10 +83,34 @@
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
-use super::klv_depacketizer::KlvUnit;
-use super::mount::ClockAlignment;
-use crate::clock::Unwrap32;
+use super::depacketizer::KlvUnit;
 use crate::rtcp::SenderReport;
+use crate::timestamp::Unwrap32;
+
+/// How a publish mount aligns the timestamps of its announced tracks to
+/// one clock. Only elementary shapes with a metadata (KLV) track need it;
+/// an MP2T or video-only mount reads `NotApplicable`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
+pub enum ClockAlignment {
+    /// Nothing to align: the mount's shape carries its own timing (MP2T),
+    /// the publisher announced video only, or no publisher has announced
+    /// yet.
+    #[default]
+    NotApplicable,
+    /// The publisher announced a KLV track, but its clock is not yet
+    /// related to the video clock: KLV units are held (not emitted) until
+    /// RTCP sender reports arrive for both tracks or the two-second
+    /// first-packet-coincidence fallback engages. Also reported after a
+    /// video or KLV source restart (an SSRC change) until alignment is
+    /// re-established. A mount that stays here receives no KLV.
+    Pending,
+    /// Tracks are aligned by first-packet coincidence because RTCP sender
+    /// reports for every track did not arrive in time.
+    Provisional,
+    /// Tracks are aligned through RTCP sender reports (RFC 3550 §6.4.1).
+    SenderReport,
+}
 
 /// How long [`Aligner`] waits, from the oldest held KLV unit, for sender
 /// reports on both tracks before falling back to first-packet coincidence.
@@ -110,15 +134,13 @@ pub(crate) const PLACED_WAIT_MAX_TICKS: i64 = PLACED_WAIT_MAX.as_millis() as i64
 /// Maximum number of KLV units [`Aligner`] holds, waiting for alignment
 /// and placed but waiting for the video together. Bounded, drop-oldest —
 /// see [`Aligner::on_klv_unit`].
-pub(crate) const ALIGN_HOLD_MAX_UNITS: usize =
-    super::limits::PublishLimits::DEFAULT.align_hold_units;
+pub(crate) const ALIGN_HOLD_MAX_UNITS: usize = 4096;
 
 /// Maximum total payload bytes [`Aligner`] holds, waiting for alignment
 /// and placed but waiting for the video together, drop-oldest. With units capped at the muxer's KLV ceiling
 /// (`MAX_KLV_UNIT_BYTES`, about 64 KiB) this is the bound that binds for
 /// large units; [`ALIGN_HOLD_MAX_UNITS`] binds for small ones.
-pub(crate) const ALIGN_HOLD_MAX_BYTES: usize =
-    super::limits::PublishLimits::DEFAULT.align_hold_bytes;
+pub(crate) const ALIGN_HOLD_MAX_BYTES: usize = 4 * 1024 * 1024;
 
 /// A new sender-report mapping that moves the KLV-to-video offset by at
 /// most this many ticks (1 ms at 90 kHz) replaces the old one without
@@ -282,6 +304,8 @@ pub(crate) struct Aligner {
     dropped_placed: u64,
 }
 
+// Only the RTSP server's publish path builds an aligner.
+#[cfg_attr(not(feature = "rtsp-server"), allow(dead_code))]
 impl Aligner {
     pub(crate) fn new() -> Self {
         Self {

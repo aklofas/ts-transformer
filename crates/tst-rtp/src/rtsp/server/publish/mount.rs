@@ -36,6 +36,7 @@ use bytes::Bytes;
 
 use crate::cancel::RtpCancelHandle;
 use crate::error::RtspServerError;
+use crate::klv::align::ClockAlignment;
 use crate::transport::RtpRecvTransport;
 use tst_core::transport::{EndReason, EndReasonHandle};
 
@@ -505,31 +506,6 @@ pub struct PublisherInfo {
     /// The mount's publisher generation while this publisher holds it
     /// (the count of publishers that ended on this mount before it).
     pub generation: u64,
-}
-
-/// How a publish mount aligns the timestamps of its announced tracks to
-/// one clock. Only elementary shapes with a metadata (KLV) track need it;
-/// an MP2T or video-only mount reads `NotApplicable`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-#[non_exhaustive]
-pub enum ClockAlignment {
-    /// Nothing to align: the mount's shape carries its own timing (MP2T),
-    /// the publisher announced video only, or no publisher has announced
-    /// yet.
-    #[default]
-    NotApplicable,
-    /// The publisher announced a KLV track, but its clock is not yet
-    /// related to the video clock: KLV units are held (not emitted) until
-    /// RTCP sender reports arrive for both tracks or the two-second
-    /// first-packet-coincidence fallback engages. Also reported after a
-    /// video or KLV source restart (an SSRC change) until alignment is
-    /// re-established. A mount that stays here receives no KLV.
-    Pending,
-    /// Tracks are aligned by first-packet coincidence because RTCP sender
-    /// reports for every track did not arrive in time.
-    Provisional,
-    /// Tracks are aligned through RTCP sender reports (RFC 3550 §6.4.1).
-    SenderReport,
 }
 
 /// Internal stats accumulator. Public [`PublishMountStats`] snapshot

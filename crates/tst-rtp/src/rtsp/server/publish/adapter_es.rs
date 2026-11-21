@@ -55,14 +55,14 @@ use tst_core::mpegts::mux::{
 };
 
 use crate::h264::{H264Au, H264Depacketizer, H264DepayConfig, ParameterSetInjection};
+use crate::klv::align::{Aligner, ClockAlignment};
+use crate::klv::depacketizer::{KlvDepacketizer, KlvUnit};
 use crate::packet::{RTP_HEADER_LEN, RtpHeader};
 use crate::rtcp::SenderReport;
 use crate::rtsp::server::mount::RTP_PAYLOAD_SIZE;
 
 use super::adapter::{PublishAdapter, synth_rtp_packet};
-use super::align::Aligner;
-use super::klv_depacketizer::{KlvDepacketizer, KlvUnit};
-use super::mount::{ClockAlignment, PublishMountState};
+use super::mount::PublishMountState;
 use super::shape::AnnouncedTrack;
 
 /// TS layout of the re-muxed program.
@@ -630,9 +630,7 @@ mod tests {
     use super::*;
     use crate::rtcp::SenderReport;
     use crate::rtsp::server::publish::adapter::PublishAdapter;
-    use crate::rtsp::server::publish::mount::{
-        ClockAlignment, PublishMountHandle, PublishMountState,
-    };
+    use crate::rtsp::server::publish::mount::{PublishMountHandle, PublishMountState};
     use crate::rtsp::server::publish::shape::{AnnouncedTrack, TrackKind};
 
     const VIDEO_PT: u8 = 96;
@@ -1237,7 +1235,7 @@ mod tests {
         // takes: a unit at the cap muxes, one byte more is KlvTooLarge.
         let mount = PublishMountState::new("/p", 8, Default::default());
         let mut a = EsAdapter::new(mount, &video_track(), Some(&klv_track())).unwrap();
-        let max = crate::rtsp::server::publish::klv_depacketizer::MAX_KLV_UNIT_BYTES;
+        let max = crate::klv::depacketizer::MAX_KLV_UNIT_BYTES;
         a.muxer
             .push_klv(&vec![0u8; max], Pts90khz::new(0), 0)
             .expect("a unit at the cap muxes");

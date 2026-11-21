@@ -6,4 +6,6 @@
 //!
 //! The inverse is the RTSP server's KLV depacketizer.
 
+pub(crate) mod align;
+pub(crate) mod depacketizer;
 pub mod packetizer;

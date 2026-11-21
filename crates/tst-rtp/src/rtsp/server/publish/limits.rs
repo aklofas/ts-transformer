@@ -5,6 +5,7 @@
 //! setter yet; the constants the publish path uses are read from
 //! [`PublishLimits::DEFAULT`].
 
+use crate::klv::align::{ALIGN_HOLD_MAX_BYTES, ALIGN_HOLD_MAX_UNITS};
 use crate::rtsp::server::mount::RTP_PAYLOAD_SIZE;
 
 /// Bounds of the publish path.
@@ -35,8 +36,8 @@ impl PublishLimits {
     pub(crate) const DEFAULT: Self = {
         let limits = Self {
             max_au_bytes: 8 * 1024 * 1024,
-            align_hold_units: 4096,
-            align_hold_bytes: 4 * 1024 * 1024,
+            align_hold_units: ALIGN_HOLD_MAX_UNITS,
+            align_hold_bytes: ALIGN_HOLD_MAX_BYTES,
             publish_queue: 64,
             on_demand_mounts: 256,
         };

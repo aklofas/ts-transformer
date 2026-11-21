@@ -5,22 +5,19 @@
 
 pub(crate) mod adapter;
 pub(crate) mod adapter_es;
-pub(crate) mod align;
 pub(crate) mod handlers;
-pub(crate) mod klv_depacketizer;
 pub(crate) mod limits;
 pub(crate) mod mount;
 pub(crate) mod session;
 pub(crate) mod shape;
 pub(crate) mod udp_ingest;
 
+pub use crate::klv::align::ClockAlignment;
 // Hidden: `pub` only so the fuzz workspace's `rtp_klv_depacketize`
 // target reaches the depacketizer; not part of the supported surface.
 #[doc(hidden)]
-pub use klv_depacketizer::{KlvDepacketizer, KlvUnit};
-pub use mount::{
-    ClockAlignment, PublishMountConfig, PublishMountHandle, PublishMountStats, PublisherInfo,
-};
+pub use crate::klv::depacketizer::{KlvDepacketizer, KlvUnit};
+pub use mount::{PublishMountConfig, PublishMountHandle, PublishMountStats, PublisherInfo};
 // Hidden: `pub` only so the fuzz workspace's `sdp_announce_classify`
 // target reaches the ANNOUNCE classifier; not part of the supported surface.
 #[doc(hidden)]

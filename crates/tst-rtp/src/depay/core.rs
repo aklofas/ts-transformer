@@ -8,9 +8,9 @@ use std::collections::VecDeque;
 
 use tst_core::mpegts::common::Pts90khz;
 
-use crate::clock::Unwrap32;
 use crate::depay::{AccessUnit, DepayConfig, DepayStats, ParameterSetInjection};
 use crate::packet::RtpHeader;
+use crate::timestamp::Unwrap32;
 
 /// What one RTP payload is, from its payload header.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

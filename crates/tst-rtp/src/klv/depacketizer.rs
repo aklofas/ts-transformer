@@ -117,7 +117,7 @@ pub(crate) struct KlvDepayStats {
 /// `feed` never panics on any input byte pattern — adversarial payloads are
 /// handled by silently discarding and ticking the appropriate stat counter.
 ///
-/// See the `klv_depacketizer` module doc for the full 7-rule state-machine
+/// See the `depacketizer` module doc for the full 7-rule state-machine
 /// contract.
 pub struct KlvDepacketizer {
     /// RTP timestamp of the open unit, if one is open.
@@ -160,6 +160,8 @@ impl Default for KlvDepacketizer {
     }
 }
 
+// Only the RTSP server's publish path builds a depacketizer.
+#[cfg_attr(not(feature = "rtsp-server"), allow(dead_code))]
 impl KlvDepacketizer {
     /// Construct a new, empty depacketizer.
     pub fn new() -> Self {

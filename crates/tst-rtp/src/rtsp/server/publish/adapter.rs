@@ -10,10 +10,11 @@ use std::sync::Arc;
 
 use bytes::{BufMut, Bytes, BytesMut};
 
+use crate::klv::align::ClockAlignment;
 use crate::packet::{RTP_HEADER_LEN, RTP_PT_MP2T, RtpHeader};
 use crate::rtsp::server::mount::RTP_PAYLOAD_SIZE;
 
-use super::mount::{ClockAlignment, PublishMountState};
+use super::mount::PublishMountState;
 
 /// Adapts incoming RTP/RTCP packets on a published mount into demuxed
 /// events.
@@ -174,7 +175,7 @@ mod tests {
 
     #[test]
     fn an_mp2t_publisher_resets_a_previous_publishers_alignment() {
-        use crate::rtsp::server::publish::mount::ClockAlignment;
+        use crate::klv::align::ClockAlignment;
         let m = mount();
         // A previous elementary publisher left the mount aligned.
         m.tick(|s| s.alignment = ClockAlignment::SenderReport);
