@@ -499,6 +499,20 @@ impl<R: RecvTransport> DemuxReceiver<R> {
             let pkt = match self.ts.read_packet() {
                 Ok(p) => p,
                 Err(e) => {
+                    // Whether a cancel was already latched is decided here,
+                    // where the stream ends, not when the end is reported:
+                    // a cancel fired while the caller takes the events the
+                    // end produced is still hers to hear after them.
+                    if self.cancelled_at_the_end.is_none()
+                        && matches!(
+                            e.kind,
+                            ShellErrorKind::EndOfStream
+                                | ShellErrorKind::TransportBroken
+                                | ShellErrorKind::Closed
+                        )
+                    {
+                        self.cancelled_at_the_end = Some(self.ts.cancel_latched());
+                    }
                     // An end first releases the packets the syncer holds;
                     // it comes back here when they are out.
                     let Some(e) = self.release_at_end(e) else {

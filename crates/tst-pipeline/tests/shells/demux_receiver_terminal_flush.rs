@@ -660,6 +660,69 @@ fn the_receivers_own_close_after_the_end_is_not_a_cancel() {
     );
 }
 
+/// Every result of a receiver over three access units and `end`, with a
+/// cancel fired right after the first result that came once the transport's
+/// end had been read: the caller is still taking the events the end made, and
+/// the cancel is not hers to hear until they are out. Three calls after the
+/// last event are kept; the events before are folded into one `event` each.
+fn cancel_while_the_end_is_handed_out(end: TransportError) -> Vec<String> {
+    let packets = marked_stream(&[0xA1, 0xB2, 0xC3]);
+    let stream_len = packets.len() as u32;
+    let reads = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
+    let mut rx = DemuxReceiver::new(Cancellable {
+        packets: packets.into(),
+        end: Some(end),
+        cancel: std::sync::Arc::new(crate::common::FlagCancel(crate::common::flag(false))),
+        closed: false,
+        deaf: false,
+        reads: reads.clone(),
+    });
+    let outcome = |r: Result<Option<DemuxEvent>, tst_pipeline::DemuxReceiverError>| match r {
+        Ok(Some(_)) => "event".to_string(),
+        Ok(None) => "end".to_string(),
+        Err(e) => format!("{:?}", e.kind),
+    };
+    let mut fired_after_an_event = false;
+    let mut results = Vec::new();
+    while results.len() < 40 {
+        let o = outcome(rx.recv_event());
+        let event = o == "event";
+        results.push(o);
+        if !fired_after_an_event && reads.load(std::sync::atomic::Ordering::SeqCst) > stream_len {
+            assert!(event, "the end was read by a call that handed out no event");
+            cancel(&mut rx);
+            fired_after_an_event = true;
+        }
+        if !event && results.iter().filter(|r| *r != "event").count() == 3 {
+            break;
+        }
+    }
+    assert!(fired_after_an_event);
+    results
+}
+
+/// A cancel fired while the caller is still taking the events the end
+/// produced is reported after them, and from then on.
+#[test]
+fn a_cancel_fired_while_a_clean_ends_events_are_handed_out_is_reported_after_them() {
+    let results = cancel_while_the_end_is_handed_out(TransportError::Closed);
+    let (events, tail) = results.split_at(results.len() - 3);
+    assert!(events.iter().all(|r| r == "event"), "{results:?}");
+    assert!(events.len() > 1, "{results:?}");
+    assert_eq!(tail, ["Closed"; 3], "{results:?}");
+}
+
+/// The same for a stream that ended in failure: the failure is reported
+/// once, then the cancel.
+#[test]
+fn a_cancel_fired_while_a_failures_events_are_handed_out_is_reported_after_the_failure() {
+    let results = cancel_while_the_end_is_handed_out(broken("the link died"));
+    let (events, tail) = results.split_at(results.len() - 3);
+    assert!(events.iter().all(|r| r == "event"), "{results:?}");
+    assert!(events.len() > 1, "{results:?}");
+    assert_eq!(tail, ["TransportBroken", "Closed", "Closed"], "{results:?}");
+}
+
 /// The first terminal result is the transport's own. A transport that ends
 /// its stream cleanly although its cancel latch is already set (none of the
 /// socket transports does) is taken at its word, then and on later calls:
