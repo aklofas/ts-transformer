@@ -708,6 +708,7 @@ FFmpeg, GStreamer, etc.) — use builder-style config if portability matters.
 |---|---|---|---|
 | `x-recvtimeout` | `SRTO_RCVTIMEO` | INT (ms) | bounds blocking recv on a connected/accepted socket; on a Listener this sets the timeout inherited by accepted sockets, but does **not** bound the `accept` call itself — libsrt ignores `SRTO_RCVTIMEO` on `srt_accept` |
 | `x-sendtimeout` | `SRTO_SNDTIMEO` | INT (ms) | bounds blocking send; use `conntimeo` / `connect_timeout` for the whole-connect budget |
+| `x-silentpeertimeout` | none | INT (ms), 1000 to 2147483 | arms silent-peer detection on a managed SRT sender opened from a URL; every other SRT open refuses it (CONFIG_INVALID) |
 
 ### Mode and authority
 
