@@ -108,6 +108,26 @@ fn ts_sender_recover_mode_errors_after_max_unsynced_bytes() {
     }
 }
 
+/// The far side is the transport's raw log: a syncing receiver of this
+/// library needs four packets to lock and would hide the result.
+#[test]
+fn finish_over_a_one_packet_stream_delivers_it() {
+    let transport = MockTransport::new(1316);
+    let log = transport.log();
+    let mut sender = Sender::new(transport, SenderConfig::default());
+    let packet = synthetic_ts_packets(1);
+
+    sender.send_ts(&packet).unwrap();
+    assert!(log.lock().unwrap().is_empty(), "1 < 7: no bundle yet");
+    sender
+        .finish()
+        .expect("a one-packet stream ends without error");
+
+    assert_eq!(*log.lock().unwrap(), vec![packet]);
+    assert_eq!(sender.stats().packets_sent, 1);
+    assert!(!sender.is_alive());
+}
+
 fn wire_sizes(t: &crate::common::ScriptedSend) -> Vec<usize> {
     t.wire.lock().unwrap().iter().map(Vec::len).collect()
 }

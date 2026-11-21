@@ -235,6 +235,7 @@ fn framing_rows() -> Vec<(TsFramingError, ShellErrorKind)> {
             TsFramingError::NoSyncAfterLimit { max: 4096 },
             InputMalformed,
         ),
+        (TsFramingError::UnsentTail { bytes: 100 }, InputMalformed),
     ]
 }
 

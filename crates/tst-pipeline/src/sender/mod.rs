@@ -65,8 +65,10 @@ use crate::shell_error::ShellErrorKind;
 ///
 /// # Reachable kinds
 ///
-/// `Sender` can produce: `InputMalformed` (STRICT-mode framing failure),
-/// `Backpressure`, `TransportBroken`, `Closed`. `ConfigInvalid` and
+/// `Sender` can produce: `InputMalformed` (a framing failure: STRICT-mode
+/// misalignment, RECOVER mode's scan limit, bytes [`Sender::finish`] could
+/// not send as TS), `Backpressure`, `TransportBroken`, `Closed`.
+/// `ConfigInvalid` and
 /// `EndOfStream` are unreachable (no muxer, sender-only).
 #[non_exhaustive]
 #[derive(Debug, thiserror::Error)]
@@ -84,7 +86,7 @@ pub struct SenderError {
     ///   NOT push the same input again. Also `Some(true)` for RECOVER
     ///   mode's `NoSyncAfterLimit` — see `send_ts`'s Retention contract.
     /// - `None` — the error did not originate from a `send_ts` input
-    ///   path (e.g. `flush`, which has no per-call input).
+    ///   path (e.g. `flush` and `finish`, which have no per-call input).
     pub input_consumed: Option<bool>,
 }
 
@@ -148,15 +150,19 @@ impl crate::shell_error::ShellError for SenderError {
 /// `Sender` supports four shutdown patterns:
 ///
 /// 1. **Drop** — the [`Drop`] impl best-effort flushes any buffered
-///    partial bundle and closes the underlying transport. Synchronous:
-///    it takes as long as that flush send and the transport's own close
+///    partial bundle, makes the same end-of-stream pass as
+///    [`Self::finish`] and closes the underlying transport. It reports
+///    nothing: bytes it could not send as TS are dropped, with one
+///    `tracing` warning that carries their count. Synchronous:
+///    it takes as long as those sends and the transport's own close
 ///    take; see the transport's docs. A binding object dropped without
 ///    `close()` (a C handle freed, a JVM or Python object collected)
 ///    cancels the transport first, so this flush fails fast instead of
 ///    parking in a `ManagedTransport` reconnect loop against a
 ///    lost peer; the buffered partial bundle is not sent.
 /// 2. **Explicit close** — call [`Self::close`]. Best-effort flushes
-///    any buffered partial bundle (same as Drop), marks the sender
+///    any buffered partial bundle and ends the stream (same as Drop,
+///    as silently), marks the sender
 ///    closed so subsequent `send_ts` / `flush` calls return
 ///    [`SenderErrorSource::Transport`]`(`[`tst_core::transport::TransportError::Closed`]`)`,
 ///    then closes the transport. Idempotent. Called directly in Rust it
@@ -165,10 +171,12 @@ impl crate::shell_error::ShellError for SenderError {
 ///    the transport first and then closes, so a partial bundle buffered
 ///    against a lost peer is dropped rather than replayed through a
 ///    reconnect.
-/// 3. **Graceful finish** — call [`Self::finish`]. Flushes the partial
-///    bundle (in the default recover mode, not a stream of fewer than
-///    three TS packets: see [`Self::flush`]) and the retained bundles to the still-live transport
-///    (fallible: the caller learns whether the tail went out), marks the
+/// 3. **Graceful finish** — call [`Self::finish`]. Sends the retained
+///    bundles, the partial bundle and whatever its end-of-stream pass
+///    still verifies to the still-live transport, and reports what it
+///    could not send: a transport error, or `InputMalformed` for a
+///    partial last packet and for bytes that never confirmed their
+///    alignment. Marks the
 ///    sender closed, then closes the transport, with no cancel first, so a
 ///    transport that queues (an RTSP push) writes what it holds. A binding's
 ///    `finish()` calls it without cancelling. A later `close()` or Drop
@@ -314,9 +322,9 @@ impl<T: Transport> Sender<T> {
     /// cfg.framing_mode = TsFramingMode::Strict;
     /// let mut sender = Sender::new(Sink(Vec::new()), cfg);
     ///
-    /// // Three whole TS packets — STRICT-mode sync-verify needs 0x47 at
-    /// // offsets 0, 188, and 376 before declaring the stream synced, so
-    /// // a 2-packet input would buffer without entering SYNCED.
+    /// // Three whole TS packets. STRICT mode checks that every packet of
+    /// // a call starts with 0x47; an input of one or two packets would
+    /// // be sent by `flush` just the same.
     /// let mut bytes = Vec::new();
     /// for _ in 0..3 {
     ///     bytes.push(0x47);
@@ -375,12 +383,19 @@ impl<T: Transport> Sender<T> {
 
     /// Emit any buffered partial bundle.
     ///
-    /// In the default [`TsFramingMode::Recover`] a sender forwards bytes
-    /// only once three aligned TS packets have confirmed the alignment, so
-    /// for a stream of one or two packets `flush` sends nothing and reports
-    /// nothing: those bytes stay buffered and are lost at close. In
-    /// [`TsFramingMode::Strict`] every packet boundary is checked on push,
-    /// so the whole packets of a short stream are sent.
+    /// A stream of one or two TS packets is sent too. In
+    /// [`TsFramingMode::Strict`] every packet boundary is checked on push.
+    /// In the default [`TsFramingMode::Recover`] a stream that has been
+    /// aligned since its first byte (no byte skipped, no boundary failed so
+    /// far) is flushed on the same evidence before three packets have
+    /// confirmed it: the whole packets held are sent when every boundary
+    /// present reads `0x47`, the first byte of a partial packet included.
+    /// A flush is therefore the caller's word that what was sent so far is
+    /// a stream: bytes that merely begin with `0x47` and are flushed inside
+    /// their first 376 bytes go out as one or two packets. Once a byte was
+    /// skipped or a boundary failed, `flush` sends nothing more until three
+    /// consecutive sync bytes have confirmed the alignment again; what it
+    /// then holds back is sent or reported by [`Self::finish`].
     ///
     /// Bundles are sent in whole-packet slices that fit `max_payload()`; a
     /// ceiling below one TS packet returns `TooLarge` and keeps the bundle
@@ -407,6 +422,12 @@ impl<T: Transport> Sender<T> {
         }
         self.drain_pending()?;
         let bundles = self.framing.flush();
+        self.send_framed(bundles)
+    }
+
+    /// Send the bundles the framer handed out. On a failed send the
+    /// bundles not yet attempted are retained behind the failed one.
+    fn send_framed(&mut self, bundles: Vec<Vec<u8>>) -> Result<(), SenderError> {
         let mut iter = bundles.into_iter();
         for bundle in &mut iter {
             if let Err(e) = self.send_fitted(bundle) {
@@ -489,47 +510,89 @@ impl<T: Transport> Sender<T> {
         self.transport.socket_stats()
     }
 
-    /// Flush, then close: the fallible counterpart to [`Self::close`].
-    /// What the flush delivers is what [`Self::flush`] delivers: in the
-    /// default [`TsFramingMode::Recover`] a stream of one or two TS packets
-    /// never confirmed its alignment, so `finish` sends none of it and still
-    /// returns `Ok(())`.
-    /// Nothing is cancelled first, so the flush sends go to the still-live
+    /// End the stream, then close: the fallible counterpart to
+    /// [`Self::close`]. It sends what [`Self::flush`] sends and then makes
+    /// one end-of-stream pass over what the framer still holds: packets
+    /// behind damage that a later `send_ts` would have verified (three
+    /// consecutive sync bytes) are sent now, because no later call comes.
+    /// Nothing is cancelled first, so the sends go to the still-live
     /// transport and the transport's own close runs uncancelled (a queuing
     /// transport writes its queue). Idempotent: `Ok(())` on a sender that
     /// is already closed. Mirrors [`crate::MuxSender::finish`].
     ///
-    /// **May block** as long as the flush sends and the transport's close
+    /// **May block** as long as the sends and the transport's close
     /// take; a watchdog holding [`Self::cancel_handle`] can end it from
     /// another thread, and the parked send's error is returned.
     ///
     /// # Errors
     ///
-    /// The flush's error ([`Self::flush`]); the bundles not yet sent are
-    /// abandoned. The sender is marked closed and the transport closed
-    /// whatever the flush returned.
+    /// - The first send error (as [`Self::flush`]); the bundles not yet
+    ///   sent are abandoned.
+    /// - Otherwise [`TsFramingError::UnsentTail`] (kind `InputMalformed`)
+    ///   when bytes are left that could not be sent as whole aligned TS
+    ///   packets: a partial last packet (in both framing modes), fewer
+    ///   than three packets behind skipped bytes, bytes that are not TS,
+    ///   and whatever lies behind more skipped bytes than
+    ///   [`SenderConfig::max_unsynced_bytes`] allows (the pass stops
+    ///   there and does not search on).
+    ///   Everything that could be verified was sent first. The count is
+    ///   what was still held at the end, not everything the stream lost:
+    ///   bytes the scan skipped on the way, a good packet in front of
+    ///   early damage among them, are in
+    ///   [`SenderStats::bytes_skipped_for_sync`] only.
+    ///
+    /// The sender is marked closed and the transport closed whatever is
+    /// returned.
     pub fn finish(&mut self) -> Result<(), SenderError> {
         if self.closed {
             return Ok(());
         }
-        let flushed = self.flush();
-        self.closed = true;
-        self.transport.close();
-        flushed
+        self.end()
     }
 
+    /// Ends the stream as [`Self::finish`] does, best-effort and without
+    /// a report: a send error is dropped, and bytes that could not be sent
+    /// as TS leave one `tracing` warning with their count. Mirrors Drop,
+    /// so explicit close == drop for AutoCloseable / __exit__ / .use { } /
+    /// tst_sender_close(...) idioms.
     pub fn close(&mut self) {
         if self.closed {
             return;
         }
-        // Best-effort flush of any buffered partial bundle BEFORE marking
-        // closed (otherwise the subsequent flush() would early-return on
-        // the `self.closed` guard). Mirrors Drop semantics so explicit
-        // close == drop for AutoCloseable / __exit__ / .use { } /
-        // tst_sender_close(...) idioms.
-        let _ = self.flush();
+        self.end_quietly();
+    }
+
+    /// The end of the stream, shared by `finish`, `close` and drop: one
+    /// attempt at everything a flush sends and everything the framer's
+    /// end-of-stream pass still verifies, then the sender is closed and
+    /// the transport with it. A send error is the result; without one,
+    /// bytes the framer could not verify are.
+    fn end(&mut self) -> Result<(), SenderError> {
+        let sent = self.drain_pending().and_then(|()| {
+            let bundles = self.framing.finish();
+            self.send_framed(bundles)
+        });
+        let left = self.framing.buffered_bytes();
         self.closed = true;
         self.transport.close();
+        sent?;
+        if left > 0 {
+            return Err(TsFramingError::UnsentTail { bytes: left as u64 }.into());
+        }
+        Ok(())
+    }
+
+    fn end_quietly(&mut self) {
+        if let Err(SenderError {
+            source: SenderErrorSource::Framing(TsFramingError::UnsentTail { bytes }),
+            ..
+        }) = self.end()
+        {
+            tracing::warn!(
+                bytes,
+                "Sender closed with bytes it could not send as whole aligned TS packets"
+            );
+        }
     }
 
     #[must_use]
@@ -560,15 +623,13 @@ impl<T: Transport> Sender<T> {
     }
 }
 
-/// Drop flushes any buffered partial bundle (best-effort), then closes
-/// the transport. Equivalent to calling [`Sender::close`] explicitly —
-/// FFI bindings may use either idiom.
+/// Drop ends the stream (best-effort: the buffered partial bundle and the
+/// end-of-stream pass), then closes the transport. Equivalent to calling
+/// [`Sender::close`] explicitly — FFI bindings may use either idiom.
 impl<T: Transport> Drop for Sender<T> {
     fn drop(&mut self) {
         if !self.closed {
-            // Best-effort flush; ignore errors.
-            let _ = self.flush();
-            self.transport.close();
+            self.end_quietly();
         }
         let _enter = self._span.0.enter();
         tracing::info!("Sender closed");
@@ -578,6 +639,9 @@ impl<T: Transport> Drop for Sender<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    // The log-capture macro and the error-text assertions name these; a
+    // test build without `std` has no prelude that brings them.
+    use alloc::string::{String, ToString};
     use tst_core::transport::{Transport, TransportError};
 
     struct Mem;
@@ -931,6 +995,8 @@ mod tests {
         delivered: Vec<u8>,
         dropped_at_close: usize,
         closes: usize,
+        /// Every `send_bytes` call, refused ones included.
+        sends: usize,
     }
     struct Queuing {
         state: std::sync::Arc<std::sync::Mutex<QueuingState>>,
@@ -957,6 +1023,7 @@ mod tests {
     }
     impl Transport for Queuing {
         fn send_bytes(&mut self, b: &[u8]) -> Result<(), TransportError> {
+            self.state.lock().unwrap().sends += 1;
             if self.broken {
                 return Err(TransportError::Broken {
                     msg: "test broken".into(),
@@ -996,6 +1063,315 @@ mod tests {
         {
             Some(self.cancel.clone())
         }
+    }
+
+    fn unsent_tail(e: &SenderError) -> Option<u64> {
+        match e.source {
+            SenderErrorSource::Framing(TsFramingError::UnsentTail { bytes }) => Some(bytes),
+            _ => None,
+        }
+    }
+
+    /// A sender over a queuing transport that accepts everything, after
+    /// `input` went in as one `send_ts`.
+    fn sender_with(
+        input: &[u8],
+        mode: TsFramingMode,
+    ) -> (
+        Sender<Queuing>,
+        std::sync::Arc<std::sync::Mutex<QueuingState>>,
+    ) {
+        let (t, state) = Queuing::new(0, false);
+        let cfg = SenderConfig {
+            framing_mode: mode,
+            ..SenderConfig::default()
+        };
+        let mut s = Sender::new(t, cfg);
+        s.send_ts(input).unwrap();
+        (s, state)
+    }
+
+    /// `input` with 100 bytes of garbage in front.
+    fn behind_garbage(input: &[u8]) -> Vec<u8> {
+        let mut v = vec![0x00; 100];
+        v.extend_from_slice(input);
+        v
+    }
+
+    /// Seven packets (one bundle), 100 bytes of garbage, three packets.
+    fn damaged_ten() -> (Vec<u8>, Vec<u8>) {
+        let all = ts_packets(10);
+        let mut input = all[..7 * 188].to_vec();
+        input.extend_from_slice(&[0x00; 100]);
+        input.extend_from_slice(&all[7 * 188..]);
+        (input, all)
+    }
+
+    #[test]
+    fn finish_sends_a_one_packet_stream() {
+        for n in [1, 2] {
+            let input = ts_packets(n);
+            let (mut s, state) = sender_with(&input, TsFramingMode::Recover);
+            assert!(state.lock().unwrap().queued.is_empty());
+            s.finish().expect("a clean short stream ends without error");
+            let st = state.lock().unwrap();
+            assert_eq!(st.delivered, input, "{n} packet(s)");
+            assert_eq!(st.closes, 1);
+        }
+    }
+
+    #[test]
+    fn close_alone_sends_a_two_packet_stream() {
+        for n in [1, 2] {
+            let input = ts_packets(n);
+            let (mut s, state) = sender_with(&input, TsFramingMode::Recover);
+            s.close();
+            let st = state.lock().unwrap();
+            assert_eq!(st.delivered, input, "{n} packet(s)");
+            assert_eq!(st.closes, 1);
+        }
+    }
+
+    #[test]
+    fn drop_alone_sends_a_one_packet_stream() {
+        for n in [1, 2] {
+            let input = ts_packets(n);
+            let (s, state) = sender_with(&input, TsFramingMode::Recover);
+            drop(s);
+            let st = state.lock().unwrap();
+            assert_eq!(st.delivered, input, "{n} packet(s)");
+            assert_eq!(st.closes, 1);
+        }
+    }
+
+    #[test]
+    fn flush_sends_a_short_stream_at_once() {
+        let input = ts_packets(1);
+        let (mut s, state) = sender_with(&input, TsFramingMode::Recover);
+        s.flush().unwrap();
+        assert_eq!(state.lock().unwrap().queued, input);
+        assert_eq!(s.stats().packets_sent, 1);
+    }
+
+    #[test]
+    fn finish_reports_packets_it_could_not_verify() {
+        let mut damaged_third = ts_packets(3);
+        damaged_third[376] = 0x00;
+        let mut non_ts = vec![0x11; 300];
+        non_ts[0] = 0x47;
+        let mut stray_byte = ts_packets(1);
+        stray_byte.push(0x00);
+        for (input, left) in [
+            (behind_garbage(&ts_packets(1)), 188),
+            (behind_garbage(&ts_packets(2)), 376),
+            (damaged_third, 376),
+            (non_ts, 300),
+            (stray_byte, 189),
+        ] {
+            let (mut s, state) = sender_with(&input, TsFramingMode::Recover);
+            let e = s.finish().unwrap_err();
+            assert_eq!(e.kind, ShellErrorKind::InputMalformed, "{e:?}");
+            assert_eq!(unsent_tail(&e), Some(left), "{e:?}");
+            assert_eq!(e.input_consumed, None);
+            let st = state.lock().unwrap();
+            assert!(st.delivered.is_empty(), "{left} bytes left: none is sent");
+            assert_eq!(st.closes, 1);
+            drop(st);
+            assert!(!s.is_alive());
+        }
+    }
+
+    #[test]
+    fn finish_reports_a_partial_last_packet_in_both_modes() {
+        let all = ts_packets(4);
+        for mode in [TsFramingMode::Recover, TsFramingMode::Strict] {
+            for n in 1..=3 {
+                let (mut s, state) = sender_with(&all[..n * 188 + 100], mode);
+                let e = s.finish().unwrap_err();
+                assert_eq!(e.kind, ShellErrorKind::InputMalformed, "{mode:?} {n}");
+                assert_eq!(unsent_tail(&e), Some(100), "{mode:?} {n}: {e:?}");
+                let st = state.lock().unwrap();
+                assert_eq!(st.delivered, all[..n * 188], "{mode:?} {n}");
+                assert_eq!(st.closes, 1);
+            }
+        }
+    }
+
+    #[test]
+    fn finish_recovers_the_packets_behind_damage() {
+        let (input, all) = damaged_ten();
+        let (mut s, state) = sender_with(&input, TsFramingMode::Recover);
+        assert_eq!(state.lock().unwrap().queued, all[..7 * 188]);
+        s.finish().expect("three packets behind the damage verify");
+        let st = state.lock().unwrap();
+        assert_eq!(st.delivered, all);
+        assert_eq!(st.closes, 1);
+        drop(st);
+        assert_eq!(s.stats().bytes_skipped_for_sync, 100);
+        assert_eq!(s.stats().packets_sent, 10);
+    }
+
+    #[test]
+    fn close_recovers_the_packets_behind_damage_silently() {
+        let (input, all) = damaged_ten();
+        let (mut s, state) = sender_with(&input, TsFramingMode::Recover);
+        s.close();
+        assert_eq!(state.lock().unwrap().delivered, all);
+        assert_eq!(state.lock().unwrap().closes, 1);
+
+        let (s, state) = sender_with(&input, TsFramingMode::Recover);
+        drop(s);
+        assert_eq!(state.lock().unwrap().delivered, all);
+        assert_eq!(state.lock().unwrap().closes, 1);
+    }
+
+    #[test]
+    fn a_good_packet_before_early_damage_is_skipped_not_reported() {
+        // One packet, garbage, three packets: the scan never verified the
+        // first one, so it is skipped and counted like the garbage.
+        let all = ts_packets(4);
+        let mut input = all[..188].to_vec();
+        input.extend_from_slice(&[0x00; 100]);
+        input.extend_from_slice(&all[188..]);
+        let (mut s, state) = sender_with(&input, TsFramingMode::Recover);
+        s.finish().expect("nothing is left buffered");
+        assert_eq!(state.lock().unwrap().delivered, all[188..]);
+        assert_eq!(s.stats().bytes_skipped_for_sync, 288);
+    }
+
+    #[test]
+    fn finish_reports_packets_behind_more_garbage_than_the_scan_limit() {
+        // A bundle, then garbage with a false candidate past a scan limit
+        // of 50, then five good packets: `send_ts` framed a bundle, so the
+        // limit's error waits for a next call; `finish` does not search
+        // past it and reports what it left.
+        let all = ts_packets(12);
+        let mut input = all[..7 * 188].to_vec();
+        input.extend_from_slice(&[0x00; 100]);
+        input.push(0x47);
+        input.extend_from_slice(&[0x00; 399]);
+        input.extend_from_slice(&all[7 * 188..]);
+        let (t, state) = Queuing::new(0, false);
+        let cfg = SenderConfig {
+            max_unsynced_bytes: 50,
+            ..SenderConfig::default()
+        };
+        let mut s = Sender::new(t, cfg);
+        s.send_ts(&input).unwrap();
+        let e = s.finish().unwrap_err();
+        assert_eq!(e.kind, ShellErrorKind::InputMalformed);
+        assert_eq!(unsent_tail(&e), Some(399 + 5 * 188), "{e:?}");
+        let st = state.lock().unwrap();
+        assert_eq!(st.delivered, all[..7 * 188]);
+        assert_eq!(st.closes, 1);
+    }
+
+    #[test]
+    fn finish_under_backpressure_reports_the_backpressure() {
+        // The end pass's bundle is refused, and a partial packet is left
+        // as well: the refusal is the report.
+        let mut input = behind_garbage(&ts_packets(4));
+        input.truncate(100 + 3 * 188 + 100);
+        let (t, state) = Queuing::new(1, false);
+        let mut s = Sender::new(t, SenderConfig::default());
+        s.send_ts(&input).unwrap();
+        let e = s.finish().unwrap_err();
+        assert_eq!(e.kind, ShellErrorKind::Backpressure, "{e:?}");
+        assert!(
+            matches!(
+                e.source,
+                SenderErrorSource::Transport(TransportError::Backpressure { .. })
+            ),
+            "{e:?}"
+        );
+        {
+            let st = state.lock().unwrap();
+            assert!(st.delivered.is_empty());
+            assert_eq!((st.sends, st.closes), (1, 1));
+        }
+        assert!(s.finish().is_ok(), "a second finish is a no-op");
+        assert_eq!(state.lock().unwrap().sends, 1, "and sends nothing");
+
+        // A bundle retained from an earlier refusal is refused again: the
+        // packets still in the framer are not reported as unsendable.
+        let (t, state) = Queuing::new(2, false);
+        let mut s = Sender::new(t, SenderConfig::default());
+        s.send_ts(&ts_packets(9)).unwrap_err();
+        let e = s.finish().unwrap_err();
+        assert_eq!(e.kind, ShellErrorKind::Backpressure, "{e:?}");
+        assert_eq!(unsent_tail(&e), None);
+        assert_eq!(state.lock().unwrap().closes, 1);
+    }
+
+    #[test]
+    fn a_second_finish_reports_nothing() {
+        let (mut s, state) = sender_with(&ts_packets(1)[..100], TsFramingMode::Recover);
+        assert_eq!(unsent_tail(&s.finish().unwrap_err()), Some(100));
+        assert!(s.finish().is_ok(), "the report is made once");
+        s.close();
+        drop(s);
+        let st = state.lock().unwrap();
+        assert_eq!(st.closes, 1, "neither finish, close nor drop closes again");
+        assert_eq!(st.sends, 0);
+    }
+
+    #[test]
+    fn drop_runs_the_end_pass_once_and_never_retries() {
+        // Two packets wait in the framer; the transport refuses every send.
+        let (t, state) = Queuing::new(usize::MAX, false);
+        let mut s = Sender::new(t, SenderConfig::default());
+        s.send_ts(&ts_packets(2)).unwrap();
+        assert_eq!(state.lock().unwrap().sends, 0);
+        drop(s);
+        {
+            let st = state.lock().unwrap();
+            assert_eq!(st.sends, 1, "one attempt, no retry");
+            assert_eq!(st.closes, 1);
+        }
+
+        // A retained bundle is refused again: the pass stops there, with
+        // the framer's packets never attempted.
+        let (t, state) = Queuing::new(usize::MAX, false);
+        let mut s = Sender::new(t, SenderConfig::default());
+        s.send_ts(&ts_packets(9)).unwrap_err();
+        assert_eq!(state.lock().unwrap().sends, 1);
+        s.close();
+        let st = state.lock().unwrap();
+        assert_eq!(st.sends, 2, "one attempt, no retry");
+        assert_eq!(st.closes, 1);
+    }
+
+    #[test]
+    #[tracing_test::traced_test]
+    fn the_unsent_tail_error_text_carries_no_payload_bytes() {
+        let mut input = ts_packets(1);
+        input.push(0x47);
+        input.extend_from_slice(b"SECRET-PAYLOAD-SECRET-PAYLOAD");
+        let tail = (input.len() - 188) as u64;
+
+        let (mut s, _state) = sender_with(&input, TsFramingMode::Recover);
+        let e = s.finish().unwrap_err();
+        assert_eq!(
+            e.to_string(),
+            format!(
+                "Sender error (InputMalformed): {tail} byte(s) at the end of the stream \
+                 were not sent: not whole aligned TS packets"
+            )
+        );
+        assert_eq!(
+            format!("{:?}", e.source),
+            format!("Framing(UnsentTail {{ bytes: {tail} }})")
+        );
+        assert!(
+            !logs_contain("were not sent"),
+            "finish reports, it does not log"
+        );
+
+        // close() and drop say it in the log instead, with the count only.
+        let (mut s, _state) = sender_with(&input, TsFramingMode::Recover);
+        s.close();
+        assert!(logs_contain(&format!("bytes={tail}")));
+        assert!(!logs_contain("SECRET"));
     }
 
     #[test]
