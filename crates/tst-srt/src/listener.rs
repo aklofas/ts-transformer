@@ -607,7 +607,12 @@ impl SrtListener {
     ///   or during the accept.
     /// - [`TransportError::Broken`] — bind or accept fault. `errno_code` is
     ///   `None`: these are not libsrt `MJ_*` errnos in the typed sense, so
-    ///   the message carries the detail.
+    ///   the message carries the detail. A `cfg` that carries a
+    ///   [`silent_peer_timeout`](crate::SrtSocketConfig::silent_peer_timeout)
+    ///   is refused this way too, `Broken { "bind: …" }`, before anything is
+    ///   bound: this function has no configuration error to give.
+    ///   [`SrtUrl::accept_one`](crate::SrtUrl::accept_one) refuses it as an
+    ///   option error first.
     pub fn accept_one_cancellable(
         cfg: &SrtListenerConfig,
         addr: &str,
