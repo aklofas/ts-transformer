@@ -577,20 +577,56 @@ jni_native! {
     }
 }
 
+/// The most code points of an outcome's text this binding hands to Java.
+const KEPT_TEXT_CHARS: usize = 256;
+
+/// `text` as `PushCloseOutcome.detail()` promises it: at most 256 code points,
+/// and each control, bidirectional-format or line-separator character replaced
+/// by U+FFFD. tst-rtp keeps the texts of the variants it knows the same way;
+/// this binding applies the rule itself so that a variant it does not know,
+/// whose debug text it passes, keeps it too. A text already kept is unchanged.
+fn kept_text(text: &str) -> String {
+    text.chars()
+        .take(KEPT_TEXT_CHARS)
+        .map(|c| {
+            if replaced(c) {
+                char::REPLACEMENT_CHARACTER
+            } else {
+                c
+            }
+        })
+        .collect()
+}
+
+/// A character a printed reason phrase must not carry: one that moves, hides
+/// or breaks the text around it.
+fn replaced(c: char) -> bool {
+    c.is_control()
+        || matches!(
+            c,
+            '\u{2028}' | '\u{2029}'
+                | '\u{200B}'..='\u{200F}'
+                | '\u{202A}'..='\u{202E}'
+                | '\u{2060}'..='\u{206F}'
+                | '\u{FEFF}'
+        )
+}
+
 /// `PushCloseOutcome.Kind.code()`, the status (-1 for none) and the detail ("" for
 /// none) of `outcome`, as the Java constructor takes them. A variant added later
-/// than this binding reads as `FAILED` with its debug text.
+/// than this binding reads as `FAILED` with its debug text. Every text goes
+/// through [`kept_text`].
 fn close_outcome_parts(outcome: &PushCloseOutcome) -> (jint, jint, String) {
     match outcome {
         PushCloseOutcome::Clean => (0, -1, String::new()),
         PushCloseOutcome::Cancelled => (1, -1, String::new()),
         PushCloseOutcome::MediaLost => (2, -1, String::new()),
         PushCloseOutcome::TeardownRefused { code, reason } => {
-            (3, jint::from(*code), reason.clone())
+            (3, jint::from(*code), kept_text(reason))
         }
         PushCloseOutcome::TeardownTimedOut => (4, -1, String::new()),
-        PushCloseOutcome::Failed { detail } => (5, -1, detail.clone()),
-        other => (5, -1, format!("{other:?}")),
+        PushCloseOutcome::Failed { detail } => (5, -1, kept_text(detail)),
+        other => (5, -1, kept_text(&format!("{other:?}"))),
     }
 }
 
@@ -968,11 +1004,73 @@ jni_native! {
 
 #[cfg(test)]
 mod tests {
-    use super::close_outcome_parts;
+    use super::{close_outcome_parts, kept_text};
     use tst_rtp::PushCloseOutcome;
 
     /// The codes are `PushCloseOutcome.Kind.code()` (pinned on the Java side by
     /// `OrdinalContractTest`); a swap here would hand Java the wrong kind.
+    #[test]
+    fn kept_text_cuts_at_256_code_points() {
+        // Characters outside the BMP count once each, as Rust's `char` does.
+        let long: String = std::iter::repeat_n('\u{1F600}', 300).collect();
+        let kept = kept_text(&long);
+        assert_eq!(kept.chars().count(), 256);
+        assert!(kept.chars().all(|c| c == '\u{1F600}'));
+        assert_eq!(kept_text("short"), "short");
+    }
+
+    /// One case per class of character the binding replaces, and the
+    /// neighbours of each range, which pass.
+    #[test]
+    fn kept_text_replaces_control_format_and_separator_characters() {
+        let classes: [(&str, &[char]); 6] = [
+            (
+                "control",
+                &['\u{0}', '\u{1B}', '\u{7F}', '\u{85}', '\u{9F}'],
+            ),
+            ("line and paragraph separator", &['\u{2028}', '\u{2029}']),
+            (
+                "zero width and marks",
+                &['\u{200B}', '\u{200C}', '\u{200D}', '\u{200E}', '\u{200F}'],
+            ),
+            (
+                "bidirectional embedding",
+                &['\u{202A}', '\u{202B}', '\u{202C}', '\u{202D}', '\u{202E}'],
+            ),
+            (
+                "word joiner, isolates and invisible operators",
+                &['\u{2060}', '\u{2066}', '\u{2069}', '\u{206F}'],
+            ),
+            ("byte order mark", &['\u{FEFF}']),
+        ];
+        for (class, chars) in classes {
+            for &c in chars {
+                let text = format!("a{c}b");
+                assert_eq!(
+                    kept_text(&text),
+                    "a\u{FFFD}b",
+                    "{class}: U+{:04X}",
+                    c as u32
+                );
+            }
+        }
+        let kept = "\u{200A}\u{2010}\u{2027}\u{202F}\u{205F}\u{2070}\u{FEFE}\u{FF00}é\u{1F600}";
+        assert_eq!(kept_text(kept), kept, "the neighbours of each range pass");
+    }
+
+    #[test]
+    fn every_outcome_text_goes_through_the_kept_text_rule() {
+        let refused = PushCloseOutcome::TeardownRefused {
+            code: 500,
+            reason: "x\u{202E}y".to_string(),
+        };
+        assert_eq!(close_outcome_parts(&refused).2, "x\u{FFFD}y");
+        let failed = PushCloseOutcome::Failed {
+            detail: "x\u{2028}y".to_string(),
+        };
+        assert_eq!(close_outcome_parts(&failed).2, "x\u{FFFD}y");
+    }
+
     #[test]
     fn every_close_outcome_is_encoded_with_its_java_code() {
         let cases = [
