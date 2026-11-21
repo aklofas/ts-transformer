@@ -9,6 +9,8 @@ import java.net.Socket;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicLong;
+import org.tstrans.TestSupport;
 
 /**
  * A plain loopback TCP peer for a sender shell: it accepts one connection and reads every
@@ -18,6 +20,7 @@ import java.util.concurrent.TimeoutException;
 final class TcpSink implements AutoCloseable {
     private final ServerSocket server;
     private final CompletableFuture<byte[]> received = new CompletableFuture<>();
+    private final AtomicLong count = new AtomicLong();
 
     TcpSink() throws IOException {
         server = new ServerSocket(0, 1, InetAddress.getLoopbackAddress());
@@ -31,7 +34,10 @@ final class TcpSink implements AutoCloseable {
             ByteArrayOutputStream acc = new ByteArrayOutputStream();
             byte[] buf = new byte[65536];
             int n;
-            while ((n = in.read(buf)) >= 0) acc.write(buf, 0, n);
+            while ((n = in.read(buf)) >= 0) {
+                acc.write(buf, 0, n);
+                count.addAndGet(n);
+            }
             received.complete(acc.toByteArray());
         } catch (IOException e) {
             received.completeExceptionally(e);
@@ -41,6 +47,11 @@ final class TcpSink implements AutoCloseable {
     /** A {@code tcp://} URL that reaches this peer. */
     String url() {
         return "tcp://127.0.0.1:" + server.getLocalPort();
+    }
+
+    /** Wait until the peer has read at least {@code n} bytes, the connection still open. */
+    void awaitBytes(long n, long ms) throws InterruptedException {
+        TestSupport.waitFor(n + " bytes at the peer (read " + count.get() + ")", () -> count.get() >= n, ms);
     }
 
     /** Every byte the peer read, once the sender closed the connection; fails after {@code ms}. */

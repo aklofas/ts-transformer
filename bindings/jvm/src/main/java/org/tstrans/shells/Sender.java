@@ -112,9 +112,28 @@ public class Sender extends NativeHandle {
      * Flush any buffered partial TS bundle. Use after the last {@link #sendBytes}
      * call in a logical unit to ensure all bytes reach the peer.
      *
-     * <p>A stream of one or two aligned TS packets is not sent, and nothing
-     * reports it: the sender forwards bytes only once three aligned packets have
-     * confirmed the TS alignment. Three or more are sent.
+     * <p>A stream of one or two TS packets is sent too. While no byte has been
+     * skipped and no packet boundary has failed, the whole packets held are sent
+     * when every packet boundary present reads the sync byte {@code 0x47}, the
+     * first byte of a trailing partial packet included. Once a byte was skipped
+     * or a boundary failed, a flush sends nothing more until three consecutive
+     * sync bytes have confirmed the alignment again; {@link #finish()} sends or
+     * reports what is then held back.
+     *
+     * <p>A flush is your word that what was sent so far is a stream, and it costs
+     * something when that is wrong. If the first 188 to 376 bytes only look
+     * aligned ({@code 0x47} at offset 0, and at offset 188 when more than 188 bytes
+     * are held) and are flushed before a third boundary could refute them, those
+     * 188 or 376 bytes are sent although they are not packets. When they were the
+     * head of a real stream that lies off that 188-byte grid (a stream joined
+     * mid-packet whose first byte happens to read {@code 0x47}), the real packet
+     * they cover is lost with them; without the flush the sender finds the real
+     * grid and sends it. The sender is then in step with the first byte's grid, so
+     * a later {@code sendBytes} or {@code flush} can send one more 188 bytes that
+     * are not a packet before a boundary fails and it finds the alignment again.
+     * It takes a flush (or the end of the stream) inside the first 376 bytes, a
+     * flush with fewer than 188 bytes held sends nothing, and for random bytes it
+     * happens to about one start in 256.
      *
      * <p>After {@code cancelHandle().cancel()} this throws the transport's
      * {@code CLOSED}, buffered data included.
@@ -128,8 +147,11 @@ public class Sender extends NativeHandle {
     }
 
     /**
-     * Flush what the sender holds, report the first flush error, then close the
-     * transport: the lossless counterpart to {@link #close()}. It does NOT cancel
+     * End the stream, then close the transport: the lossless counterpart to
+     * {@link #close()}. It sends what {@link #flush()} sends, then makes one
+     * end-of-stream pass over what the sender still holds: packets behind damage
+     * that a later {@link #sendBytes} would have confirmed (three consecutive sync
+     * bytes) are sent now, because no later call comes. It does NOT cancel
      * first, so a transport that queues (an RTSP push from
      * {@code RtspPushSession.intoSender()}) writes its queue before it ends; a
      * {@link #sendBytes} parked on another thread holds the sender and
@@ -137,14 +159,19 @@ public class Sender extends NativeHandle {
      * call, and a call after {@link #close()}, do nothing. The handle still needs
      * {@link #close()} afterwards, which then does nothing more.
      *
-     * <p>A stream of one or two aligned TS packets is not sent by this call
-     * either, and nothing reports it: the sender forwards bytes only once three
-     * aligned packets have confirmed the TS alignment. Three or more are sent.
+     * <p>It throws the first send error (what was not yet sent is then
+     * abandoned). Without one, it throws the transport's exception with kind
+     * {@code INPUT_MALFORMED} when bytes are left that it could not send as whole
+     * aligned TS packets, after sending everything it could: a partial last
+     * packet, fewer than three packets behind skipped bytes, bytes that are not
+     * TS. Bytes the scan skipped on the way (a good packet in front of damage
+     * early in the stream among them) are dropped without that report.
      *
      * <p>After {@code cancelHandle().cancel()} every call throws the transport's
      * {@code CLOSED}, a repeated one included.
      *
-     * @throws BindingException the transport's exception for the first flush error
+     * @throws BindingException the transport's exception: the first send error,
+     *     else {@code INPUT_MALFORMED} for bytes it could not send as TS
      */
     public void finish() throws BindingException {
         long h = peekHandle();

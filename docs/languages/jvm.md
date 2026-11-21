@@ -1023,13 +1023,24 @@ try (var tx = Sender.open(
 
 `sendBytes` accepts raw TS bytes of any length; the sender internally frames
 them into 7-packet (1316-byte) SRT bundles. Call `flush()` after the last push
-to emit any partial bundle, or `finish()` to end the stream: it flushes, then
-closes the transport without cancelling it first (so a transport that queues,
-an RTSP push, writes its queue), throws the first flush error, and leaves the
-handle for `close()`, which then does nothing more. A stream of one or two
-aligned TS packets is not sent by either, and nothing reports it: the sender
-forwards bytes only once three aligned packets have confirmed the TS
-alignment; three or more are sent.
+to emit any partial bundle, or `finish()` to end the stream: it sends what a
+flush sends and makes one end-of-stream pass over what the sender still holds
+(packets behind damage that three sync bytes confirm), then closes the
+transport without cancelling it first (so a transport that queues, an RTSP
+push, writes its queue), and leaves the handle for `close()`, which then does
+nothing more. `finish()` throws the first send error; without one it throws
+the transport's `INPUT_MALFORMED` when bytes are left that it could not send
+as whole aligned TS packets (a partial last packet, fewer than three packets
+behind skipped bytes, bytes that are not TS), after sending everything it
+could. A stream of one or two TS packets is sent by either: while no byte has
+been skipped and no packet boundary has failed, the whole packets held go out
+when every boundary present reads `0x47`. That is the caller's word that the
+bytes are a stream: a `flush()` while the first 188 to 376 bytes only look
+aligned (a `0x47` that is not a packet start, real packets off that 188-byte
+grid) sends 188 or 376 bytes that are not packets and loses the real packet
+they cover, which the sender would otherwise have found; it takes a flush or
+the end inside the first 376 bytes, and about one random start in 256.
+`close()` cancels first and sends nothing the sender holds.
 
 ### RecvTransport hello
 
@@ -1836,9 +1847,16 @@ the same port.
 whatever datagram size the publisher sends. `Receiver.recvBytes(int)` and
 `srt.ManagedReceiver.recvBytes(int)` ignore their argument: they are
 deprecated and removed in 0.12.0. A receiving shell returns its
-first packet only once it has found four sync bytes 188 bytes apart (the
-starts of four aligned TS packets); a stream shorter than that yields
-nothing. A `udp://` receive blocks until a packet is ready or the
+first packet once it has found four sync bytes 188 bytes apart (the
+starts of four aligned TS packets), and again after it lost the alignment.
+When the stream ends (the peer's end of stream or a broken transport) the
+one to three packets still waiting are delivered before the end, when every
+packet boundary present reads `0x47`, the first byte of a trailing partial
+packet included: a stream of one, two or three packets arrives (a
+`DemuxReceiver` yields their events, then `null`). One failing boundary, a
+single trailing byte that is not `0x47` included, refuses the whole tail,
+and a single packet right behind damage is lost when a `0x47` lies in the
+187 bytes before it. A `udp://` receive blocks until a packet is ready or the
 shell is cancelled or closed. A `rist://` receive throws
 `RistException(BACKPRESSURE)` about every 100 ms while nothing arrives; the
 receiver stays open, so call it again:

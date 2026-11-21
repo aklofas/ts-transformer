@@ -42,11 +42,12 @@ import org.tstrans.shells.Receiver;
  *
  * <h2>Send payload padding</h2>
  * The scenario {@code input.ts} is exactly 4 × 188 = 752 bytes. The JVM
- * pipeline receiver ({@code tst_pipeline::Receiver}) contains a TS-sync
- * verification window that requires at least {@code 4 × 188 + 1 = 753} bytes
- * before it can lock on sync and emit packets. To satisfy this constraint and
- * also trigger the sender-side framer to emit a full SRT bundle (which requires
- * exactly {@code 7 × 188 = 1316} bytes), the test pads the payload to
+ * pipeline receiver ({@code tst_pipeline::Receiver}) hands a packet out once
+ * four sync bytes 188 bytes apart have confirmed the alignment; packets still
+ * waiting for that are handed out only when the stream ends, and the test
+ * reads while the link is up. So it sends one full SRT bundle, which the
+ * sender-side framer emits during {@code sendBytes} at
+ * {@code 7 × 188 = 1316} bytes: the test pads the payload to
  * {@code 7 × 188 = 1316} bytes with three MPEG-TS null/stuffing packets
  * (PID 0x1FFF, header {@code 0x47 0x1F 0xFF 0x10}). The demuxer drops PID
  * 0x1FFF entirely, so these packets never affect the byte-faithful or SHA
@@ -93,10 +94,11 @@ class SrtLoopbackScenarioTest {
      *       internal buffer reaches {@code SRT_TS_BUNDLE_BYTES = 7 × 188 = 1316}
      *       bytes. Sending exactly 1316 bytes triggers emission during
      *       {@code sendBytes} rather than requiring a {@code flush()} call.</li>
-     *   <li>The {@code tst_pipeline::Receiver} sync window needs at least
-     *       {@code 4 × 188 + 1 = 753} bytes to lock on TS alignment. With a full
-     *       1316-byte SRT message the sync window is always satisfied on the
-     *       first {@code srt_recv} call.</li>
+     *   <li>The {@code tst_pipeline::Receiver} hands packets out once four sync
+     *       bytes 188 bytes apart have confirmed the TS alignment (what is still
+     *       waiting for that is released only at the end of the stream). With a
+     *       full 1316-byte SRT message all seven packets are confirmed on the
+     *       first {@code srt_recv} call, while the link is up.</li>
      * </ol>
      *
      * <p>The three padding packets use the standard MPEG-TS null packet header
