@@ -368,7 +368,13 @@ impl EpochTracker {
 /// video AUs are first classified against the history held so far (`Paired`
 /// if in tolerance, else `UnpairedVideo`); then the KLV entries that never
 /// paired are emitted as `UnpairedKlv`; then the event is passed through.
-/// Nothing pairs across the boundary.
+/// The history the pairer holds never pairs across the boundary.
+///
+/// Samples of the old clock that complete after a flag are not marked,
+/// except the first of each kind (next paragraph). With KLV muxed more than
+/// one sample behind its video and a new clock within the pairing tolerance
+/// of the old one, a second old-clock KLV sample can enter the new history
+/// and pair with new-clock frames.
 ///
 /// The PES in flight at a flag completes after it on the old clock. The
 /// first KLV sample and the first video sample completing after a flag
@@ -472,7 +478,7 @@ impl Pairer {
     /// PID start a new time base. Ahead of the passed-through event the
     /// pairer classifies the video AUs it holds (`PairerMode::Buffered`)
     /// against the history held so far and emits the KLV that never paired
-    /// as `UnpairedKlv`; nothing pairs across the boundary. After a
+    /// as `UnpairedKlv`; the history held never pairs across the boundary. After a
     /// signalled discontinuity the first KLV sample and the first video AU
     /// leave unpaired when their PTS lies within two seconds of the newest
     /// PTS before it (they may be the old clock's last). An encoder restart

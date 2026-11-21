@@ -8,10 +8,13 @@
 //! a signalled discontinuity on the video PID, the KLV PID or their
 //! program's PCR PID), ahead of the passed-through event: buffered videos
 //! are classified against the history held so far, then its never-used
-//! entries leave as `UnpairedKlv`, so nothing pairs across the boundary.
-//! The first KLV sample and the first video sample after a signalled
-//! discontinuity may be the old-clock PES in flight and then leave
-//! unpaired. [`EpochTracker`] has both rules.
+//! entries leave as `UnpairedKlv`, so the history held never pairs across
+//! the boundary. The first KLV sample and the first video sample after a
+//! signalled discontinuity may be the old-clock PES in flight and then
+//! leave unpaired; a later old-clock sample is not marked (KLV muxed more
+//! than one sample behind its video, with a new clock within the tolerance
+//! of the old, can pair a second old-clock KLV sample with new frames).
+//! [`EpochTracker`] has both rules.
 
 use super::EpochTracker;
 use super::types::{KlvSample, PairerOutput, VideoSample};
@@ -1166,5 +1169,61 @@ mod tests {
             "a well-formed AU should produce no issues, got {:?}",
             issues
         );
+    }
+
+    #[test]
+    fn a_klv_sample_two_behind_its_video_can_pair_across_a_flag() {
+        // KLV muxed two frames behind its video (30 fps), a flag on the
+        // video PID, and a new clock 100 ms after the old one's last frame,
+        // inside the 300 ms tolerance. The first old-clock KLV after the
+        // flag is the one the in-flight rule catches; the second one is not
+        // marked, enters the new history and pairs with new-clock frames.
+        const FRAME: i64 = 3000;
+        const OLD: i64 = 900_000;
+        let new = OLD + 9 * FRAME + 9000;
+        for mode in [
+            InternalMode::Realtime,
+            InternalMode::Buffered {
+                max_video_buffer: 32,
+                max_lag_ticks: 90_000,
+            },
+        ] {
+            let mut s = NearestState::new(VIDEO_PID, KLV_PID, 300 * 90, 32, mode);
+            for n in 0..10 {
+                s.feed(video_event(OLD + n * FRAME));
+                if n >= 2 {
+                    s.feed(klv_event(OLD + (n - 2) * FRAME));
+                }
+            }
+            let mut after = s.feed(af_discontinuity(VIDEO_PID));
+            // The two old-clock KLV samples still in flight behind the flag.
+            after.extend(s.feed(klv_event(OLD + 8 * FRAME)));
+            after.extend(s.feed(klv_event(OLD + 9 * FRAME)));
+            for n in 0..6 {
+                after.extend(s.feed(video_event(new + n * FRAME)));
+                if n >= 2 {
+                    after.extend(s.feed(klv_event(new + (n - 2) * FRAME)));
+                }
+            }
+            after.extend(s.flush());
+
+            let crossed: Vec<(i64, i64)> = after
+                .iter()
+                .filter_map(|o| match o {
+                    PairerOutput::Paired { video, klv } if video.pts.as_ticks() >= new => {
+                        Some((video.pts.as_ticks(), klv.pts.as_ticks()))
+                    }
+                    _ => None,
+                })
+                .filter(|&(_, k)| k < new)
+                .collect();
+            assert_eq!(
+                crossed,
+                vec![
+                    (new + FRAME, OLD + 9 * FRAME),
+                    (new + 2 * FRAME, OLD + 9 * FRAME)
+                ],
+            );
+        }
     }
 }
