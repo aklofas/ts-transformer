@@ -319,7 +319,8 @@ public final class RtspPushSession extends NativeHandle {
      * {@link #teardown()}, or after a conversion the sender's {@code finish()} or
      * {@code close()}. A sender's {@code close()} fires the cancel first, so it reads
      * {@link PushCloseOutcome.Kind#CANCELLED}; its {@code finish()} leaves the TEARDOWN's
-     * own case. A {@link #teardown()} that threw reads the same case it threw.
+     * own case. A {@link #teardown()} that closed the push and threw reads the same case
+     * it threw.
      *
      * @return the outcome, or empty
      */

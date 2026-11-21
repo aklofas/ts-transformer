@@ -2940,8 +2940,9 @@ The surface:
   run: `kind()` (`CLEAN`, `CANCELLED`, `MEDIA_LOST`, `TEARDOWN_REFUSED`,
   `TEARDOWN_TIMED_OUT`, `FAILED`), `status()` (an `OptionalInt`: the status
   code of a refused TEARDOWN) and `detail()` (the server's reason phrase of
-  a refused TEARDOWN or a failure's text, at most 256 code points with each
-  control character replaced; empty otherwise). A `MuxSender` or `Sender`
+  a refused TEARDOWN or a failure's text, at most 256 code points with
+  control, bidirectional-format and line-separator characters replaced;
+  empty otherwise). A `MuxSender` or `Sender`
   that owns the push closes it in its `finish()` (the TEARDOWN's own case)
   or its `close()` (`CANCELLED`: it fires the cancel first).
 - `stats()`, `endReason()`, `endDetail()` and `closeOutcome()` never wait
