@@ -844,6 +844,29 @@ mod tests {
     }
 
     #[test]
+    fn every_kind_of_skipped_byte_ends_the_early_rule() {
+        // Garbage in a push of its own, discarded whole before the packet
+        // arrives.
+        let mut f = pushed(&[0x00; 100]);
+        assert_eq!(f.buffered_bytes(), 0);
+        assert!(f.push(&clean_packets(0, 1)).unwrap().0.is_empty());
+        assert!(f.flush().is_empty());
+        assert!(f.finish().is_empty());
+        assert_eq!(f.buffered_bytes(), 188);
+        assert_eq!(counters(&f), (288, 100, 0));
+
+        // One stray sync byte right before two packets: it is dropped as
+        // a false candidate and the packets sit at the buffer's head.
+        let mut input = vec![0x47];
+        input.extend(clean_packets(0, 2));
+        let mut f = pushed(&input);
+        assert!(f.flush().is_empty());
+        assert!(f.finish().is_empty());
+        assert_eq!(f.buffered_bytes(), 376);
+        assert_eq!(counters(&f), (377, 1, 0));
+    }
+
+    #[test]
     fn a_sync_byte_inside_the_garbage_does_not_release_the_packets_behind_it() {
         let mut input = vec![0x00; 100];
         input[50] = 0x47;

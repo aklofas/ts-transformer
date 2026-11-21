@@ -1181,6 +1181,15 @@ mod tests {
     }
 
     #[test]
+    fn a_binding_reads_the_unsent_tail_as_input_malformed() {
+        use crate::binding::kind::{BindingError, BindingErrorKind};
+        let (mut s, _state) = sender_with(&ts_packets(1)[..100], TsFramingMode::Recover);
+        let b: BindingError = s.finish().unwrap_err().into();
+        assert_eq!(b.kind, BindingErrorKind::InputMalformed);
+        assert_eq!(b.diagnostics.input_consumed, None);
+    }
+
+    #[test]
     fn finish_reports_a_partial_last_packet_in_both_modes() {
         let all = ts_packets(4);
         for mode in [TsFramingMode::Recover, TsFramingMode::Strict] {

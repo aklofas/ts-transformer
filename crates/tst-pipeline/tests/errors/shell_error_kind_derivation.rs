@@ -3,9 +3,9 @@
 //! `ShellErrorKind`. The tables below pin the value of each variant. A failure names the variant (`{e:?}`)
 //! and, for transport rows, the shell it went through.
 //!
-//! 49 rows: 32 `MuxError`; 5 `TransportError` through each of the three
+//! 50 rows: 32 `MuxError`; 5 `TransportError` through each of the three
 //! sender shells and the same 5 through each of the three receiver shells;
-//! 5 `DemuxError`; 2 `TsFramingError`.
+//! 5 `DemuxError`; 3 `TsFramingError`.
 
 use tst_core::error::{DemuxError, MuxError};
 use tst_core::mpegts::mux::{MuxStreamKind, TeletextField};
