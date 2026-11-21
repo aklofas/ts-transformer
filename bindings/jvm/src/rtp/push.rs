@@ -965,3 +965,41 @@ jni_native! {
         }));
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::close_outcome_parts;
+    use tst_rtp::PushCloseOutcome;
+
+    /// The codes are `PushCloseOutcome.Kind.code()` (pinned on the Java side by
+    /// `OrdinalContractTest`); a swap here would hand Java the wrong kind.
+    #[test]
+    fn every_close_outcome_is_encoded_with_its_java_code() {
+        let cases = [
+            (PushCloseOutcome::Clean, (0, -1, "")),
+            (PushCloseOutcome::Cancelled, (1, -1, "")),
+            (PushCloseOutcome::MediaLost, (2, -1, "")),
+            (
+                PushCloseOutcome::TeardownRefused {
+                    code: 501,
+                    reason: "Refused".to_string(),
+                },
+                (3, 501, "Refused"),
+            ),
+            (PushCloseOutcome::TeardownTimedOut, (4, -1, "")),
+            (
+                PushCloseOutcome::Failed {
+                    detail: "the connection had ended".to_string(),
+                },
+                (5, -1, "the connection had ended"),
+            ),
+        ];
+        for (outcome, (code, status, detail)) in cases {
+            assert_eq!(
+                close_outcome_parts(&outcome),
+                (code, status, detail.to_string()),
+                "{outcome:?}"
+            );
+        }
+    }
+}

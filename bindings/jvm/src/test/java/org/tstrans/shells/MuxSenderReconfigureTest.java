@@ -192,7 +192,9 @@ class MuxSenderReconfigureTest {
     @Test
     void aRefusedConfigChangesNothing() throws Exception {
         Map<String, MuxerConfig> refused = new LinkedHashMap<>();
-        refused.put("pmt-pid-moved", program(1, 0x110).addVideo(0x101, VideoCodec.H264).build());
+        // Applied, this one would add a KLV stream: the handle checks would see it.
+        refused.put("pmt-pid-moved", program(1, 0x110).addVideo(0x101, VideoCodec.H264)
+            .addKlv(0x102, KlvStreamType.SYNCHRONOUS_METADATA, true).build());
         refused.put("codec-changed", program(1, 0x100).addVideo(0x101, VideoCodec.H265).build());
         refused.put("pid-moved-program", program(2, 0x100).addVideo(0x101, VideoCodec.H264).build());
         for (Map.Entry<String, MuxerConfig> c : refused.entrySet()) {

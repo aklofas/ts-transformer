@@ -137,6 +137,7 @@ class ShortStreamTest {
     }
 
     @Test
+    @Timeout(30)
     void theEndIsReportedAfterTheReleasedPackets() throws Exception {
         // Three packets, then a partial packet whose first byte is the sync byte: all three
         // arrive, then the end. The partial packet's own bytes are dropped.
