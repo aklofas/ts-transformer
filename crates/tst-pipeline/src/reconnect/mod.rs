@@ -20,6 +20,7 @@ pub(crate) mod state;
 
 pub use gap_buffer::{GapBuffer, OverflowPolicy};
 
+use silent_peer::SilentPeer;
 use state::{Install, Latch, ManagedShared, Shutdown, broken_errno, install_fresh_inner};
 
 use std::time::Duration;
@@ -390,6 +391,17 @@ impl ManagedStatsHandle {
 ///   `false` once `close()` or `cancel()` has latched, regardless of
 ///   what the inner transport or a still-exiting worker reports.
 ///
+/// # Silent-peer detection
+///
+/// [`Self::with_silent_peer_timeout`] arms a window. After a successful
+/// inner send the wrapper reads the inner's [`Transport::peer_activity`]
+/// (at every send until the connection has answered once, then at most
+/// every quarter window); a reading that has not moved while sends kept
+/// going for a whole window trips. The tripped connection is taken out,
+/// closed with [`Transport::abandon`] once `inner` is released, and
+/// replaced as if its send had failed with `Broken`. Unarmed, the send
+/// path reads nothing.
+///
 /// # Locking
 ///
 /// 1. Lock order where both are held: `inner` → `gap` (matches
@@ -419,6 +431,10 @@ impl ManagedStatsHandle {
 ///    useful while a send is in flight — i.e. exactly while `inner` is
 ///    held — so reading the handle out of `inner` would queue the cancel
 ///    behind the call it was asked to interrupt.
+/// 6. The silent-peer rule's lock (see "Silent-peer detection") is a leaf:
+///    taken only while `inner` is held, and no lock is taken while it is.
+///    A poisoned one is recovered: the rule's arithmetic cannot panic.
+///    The Background enqueue branch takes neither `inner` nor this lock.
 ///
 /// # Closing
 ///
@@ -502,6 +518,10 @@ pub struct ManagedTransport<T: Transport> {
     /// The slot latches, so a cancel racing a reconnect fires the fresh
     /// inner's handle the moment it is installed.
     active: Arc<CancelSlot>,
+    /// The silent-peer rule, `None` while unarmed. Its lock is a leaf
+    /// (locking invariant 6). Not in `ManagedShared`: a stats handle may
+    /// already share that when the sender is armed.
+    silent: Option<Arc<Mutex<SilentPeer>>>,
 }
 
 impl<T: Transport + 'static> ManagedTransport<T> {
@@ -548,7 +568,49 @@ impl<T: Transport + 'static> ManagedTransport<T> {
             shared,
             bg_thread: Mutex::new(None),
             active,
+            silent: None,
         })
+    }
+
+    /// Arm silent-peer detection: when none of this sender's sends has
+    /// been answered by its peer for `window`, the connection is treated as
+    /// broken, abandoned without waiting for its unsent data
+    /// ([`Transport::abandon`]) and replaced through the reconnect this
+    /// wrapper already has.
+    ///
+    /// **Stability: Provisional** — see the
+    /// [API stability reference](https://github.com/aklofas/ts-transformer/blob/main/docs/reference/api-stability.md).
+    ///
+    /// What counts as an answer is a change of the inner's
+    /// [`Transport::peer_activity`] reading, taken after successful sends.
+    /// An inner whose reading is `None` cannot tell: the sender never trips
+    /// and keeps its ordinary reconnect budget.
+    ///
+    /// **Call it before the first send.** A `Background` worker started by
+    /// an earlier send carries no rule, and drains unchecked until the next
+    /// outage.
+    ///
+    /// `Duration::ZERO` leaves the sender unarmed. There is no floor here
+    /// (the `x-silentpeertimeout` URL key's is 1 000 ms); a window shorter
+    /// than a few send periods never trips (see the gap rule below).
+    ///
+    /// Limits:
+    ///
+    /// - Silence is judged against sends: nothing is detected while the
+    ///   caller sends nothing, nor while it is parked inside the inner
+    ///   send.
+    /// - A gap of `window / 2` or more between two sends (a burst every
+    ///   `window / 2` or more, or a send that itself blocks `window / 2` or
+    ///   more) restarts the count, so such a sender never trips.
+    /// - Silence is detected, not low throughput: a peer that answers just
+    ///   often enough keeps the connection.
+    /// - What the abandoned connection still held is lost: everything sent
+    ///   between the moment the peer went silent and the trip, about
+    ///   `window` plus a fraction of it. No statistic counts it.
+    #[must_use]
+    pub fn with_silent_peer_timeout(mut self, window: Duration) -> Self {
+        self.silent = (!window.is_zero()).then(|| Arc::new(Mutex::new(SilentPeer::new(window))));
+        self
     }
 
     /// Obtain a cloneable stats observer. Call **before** moving this
@@ -1149,6 +1211,7 @@ impl<T: Transport + 'static> ManagedTransport<T> {
                         &self.active,
                         &self.latch,
                         &self.shared,
+                        self.silent.as_deref(),
                         new_inner,
                     ) {
                         Install::Installed => {}
@@ -1257,6 +1320,7 @@ impl<T: Transport + 'static> ManagedTransport<T> {
             shared: Arc::clone(&self.shared),
             policy: self.policy.clone(),
             active: Arc::clone(&self.active),
+            silent: self.silent.clone(),
         };
         match thread::Builder::new()
             .name("tst-reconnect".into())
@@ -2306,5 +2370,94 @@ mod validate_tests {
             Err(ReconnectPolicyError::UnpacedUnlimitedRetry)
         ));
         assert!(dropped.load(Ordering::SeqCst), "inner was dropped");
+    }
+}
+
+#[cfg(test)]
+mod silent_peer_tests {
+    use super::silent_peer::Verdict;
+    use super::*;
+    use std::time::Instant;
+
+    /// An inner that accepts every send and keeps every provided default.
+    struct Plain;
+    impl Transport for Plain {
+        fn send_bytes(&mut self, _: &[u8]) -> Result<(), TransportError> {
+            Ok(())
+        }
+        fn max_payload(&self) -> usize {
+            1316
+        }
+        fn is_alive(&self) -> bool {
+            true
+        }
+        fn close(&mut self) {}
+    }
+
+    fn managed(policy: ReconnectPolicy) -> ManagedTransport<Plain> {
+        ManagedTransport::new(Plain, || Ok(Plain), policy).expect("the policy validates")
+    }
+
+    fn window_of(m: &ManagedTransport<Plain>) -> Option<Duration> {
+        m.silent
+            .as_ref()
+            .map(|s| s.lock().expect("not poisoned").window())
+    }
+
+    #[test]
+    fn with_silent_peer_timeout_arms_and_a_zero_window_does_not() {
+        assert_eq!(window_of(&managed(ReconnectPolicy::default())), None);
+        let armed = managed(ReconnectPolicy::default())
+            .with_silent_peer_timeout(Duration::from_millis(1500));
+        assert_eq!(window_of(&armed), Some(Duration::from_millis(1500)));
+        let zero = managed(ReconnectPolicy::default()).with_silent_peer_timeout(Duration::ZERO);
+        assert_eq!(window_of(&zero), None);
+    }
+
+    #[test]
+    fn an_install_resets_the_silent_peer_rule() {
+        let w = Duration::from_millis(100);
+        let m = managed(ReconnectPolicy::default()).with_silent_peer_timeout(w);
+        let silent = m.silent.as_deref().expect("armed");
+        let base = Instant::now();
+        let at = |ms: u64| base + Duration::from_millis(ms);
+        // Prime: an answered inner, then a frozen run two windows old.
+        {
+            let mut s = silent.lock().unwrap();
+            s.sent(at(0));
+            s.reading(at(0), Some(1));
+            s.sent(at(5));
+            assert_eq!(s.reading(at(5), Some(2)), Verdict::Answered);
+            let mut t = 10;
+            while t <= 210 {
+                s.sent(at(t));
+                t += 10;
+            }
+            // Primed: the next equal reading on this inner trips.
+            assert!(matches!(
+                s.reading(at(215), Some(2)),
+                Verdict::Silent { .. }
+            ));
+        }
+        assert!(matches!(
+            install_fresh_inner(
+                &m.inner,
+                &m.active,
+                &m.latch,
+                &m.shared,
+                Some(silent),
+                Plain
+            ),
+            Install::Installed
+        ));
+        let mut s = silent.lock().unwrap();
+        assert!(s.sent(at(220)), "a fresh inner is read at its first send");
+        assert_eq!(
+            s.reading(at(220), Some(2)),
+            Verdict::Healthy,
+            "the run of the old inner carried over"
+        );
+        assert!(s.sent(at(230)), "a fresh inner has not answered yet");
+        assert_eq!(s.reading(at(230), Some(3)), Verdict::Answered);
     }
 }

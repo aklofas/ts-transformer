@@ -15,12 +15,14 @@
 //! `recv_bytes` is `&mut self` and no worker shares them.
 
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use tst_core::cancel::CancelSlot;
 use tst_core::mpegts::common::SRT_TS_BUNDLE_BYTES;
 use tst_core::transport::{Transport, TransportError};
+
+use super::silent_peer::SilentPeer;
 
 /// Interruptible sleep. `wait_timeout(dur)` parks up to `dur`, returning
 /// early (`true`) if `signal()` fired. A poisoned mutex reads as signaled
@@ -270,11 +272,16 @@ pub(crate) enum Install {
 /// ceiling. Before this the worker counted the success first and left the
 /// (already socket-cancelled) fresh inner installed; the inline path
 /// neither counted nor kept it.
+///
+/// An armed sender's silent-peer rule (`silent`) is reset in the same
+/// `inner` critical section that installs the fresh inner, so no sample
+/// ever measures the new inner against the old one's run.
 pub(crate) fn install_fresh_inner<T: Transport>(
     inner: &Mutex<Option<T>>,
     active: &CancelSlot,
     latch: &Latch,
     shared: &ManagedShared,
+    silent: Option<&Mutex<SilentPeer>>,
     new_inner: T,
 ) -> Install {
     // Take the wake handle (and read the ceiling) before the transport
@@ -288,6 +295,13 @@ pub(crate) fn install_fresh_inner<T: Transport>(
             return Install::InnerPoisoned;
         };
         *guard = Some(new_inner);
+        if let Some(silent) = silent {
+            // A leaf lock under `inner` (locking invariant 6).
+            silent
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .reset();
+        }
     }
     if let Some(h) = new_cancel {
         active.install(h);
