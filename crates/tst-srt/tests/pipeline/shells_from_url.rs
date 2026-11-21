@@ -1289,3 +1289,76 @@ fn open_cancel_racing_the_end_of_a_managed_open_gives_one_whole_outcome() {
     assert_eq!(reconnects_checked, 3, "too few whole rounds: {outcomes:?}");
     eprintln!("outcomes per mode, [finish false, finish true]: {outcomes:?}");
 }
+
+/// A re-dial that fails says why in the log, and the line is built from the
+/// connect error alone: neither the URL's `passphrase` nor its stream id is
+/// in anything the run logged (libsrt's own lines included).
+#[cfg(feature = "mbedtls")]
+#[tracing_test::traced_test]
+#[test]
+fn a_failed_redial_logs_its_cause_and_no_passphrase() {
+    require_loopback!();
+    const PASSPHRASE: &str = "redial-passphrase-7Qx2-do-not-log";
+    const STREAM_SECRET: &str = "redial-streamid-token-9Kd4";
+
+    let mut b = SrtListenerBuilder::new();
+    b.passphrase(tst_srt::Passphrase::new(PASSPHRASE).expect("a valid passphrase"));
+    b.recv_timeout(scaled(WATCHDOG));
+    let lb = crate::common::Loopback::bind_with(b);
+    let port = lb.port;
+    // One accepted connection, one message, then the peer and its listener
+    // are gone: every re-dial runs to its connect timeout.
+    let accept = lb.spawn_accept(|mut sock| {
+        let mut buf = [0u8; 1500];
+        sock.recv(&mut buf).expect("the first message")
+    });
+    accept.wait_ready();
+
+    let url = SrtUrl::parse(&format!(
+        "srt://127.0.0.1:{port}?passphrase={PASSPHRASE}&streamid=publish/cam1/{STREAM_SECRET}&conntimeo=300"
+    ))
+    .expect("parse");
+    let policy = ReconnectPolicy::default()
+        .with_max_attempts(Some(2))
+        .with_backoff(BackoffStrategy::Constant(Duration::ZERO));
+    let (mut tx, _handles, stats) =
+        managed_raw_sender_from_url(&url, policy, tst_pipeline::RawSenderConfig::default())
+            .expect("the first connect, encrypted");
+    tx.send(b"first").expect("send");
+    assert_eq!(accept.join(), b"first".len());
+
+    // Send until the break is seen and the two re-dials have failed.
+    let deadline = Instant::now() + scaled(WATCHDOG);
+    let gave_up = loop {
+        assert!(Instant::now() < deadline, "the sender never gave up");
+        match tx.send(b"after the peer left") {
+            Ok(()) => std::thread::sleep(PEER_TICK),
+            Err(e) => break e,
+        }
+    };
+    assert_eq!(gave_up.kind, ShellErrorKind::TransportBroken, "{gave_up:?}");
+    assert_eq!(stats.stats().expect("no poison").reconnect_attempts, 2);
+    tx.close();
+
+    logs_assert(|lines: &[&str]| {
+        let failed = lines
+            .iter()
+            .filter(|l| l.contains("reconnect attempt failed") && l.contains("connect: "))
+            .count();
+        if failed == 2 {
+            Ok(())
+        } else {
+            Err(format!("one cause line per failed re-dial, got {failed}"))
+        }
+    });
+    // Every captured line of the process, not only this test's span.
+    let captured = tracing_test::internal::global_buf().lock().unwrap().clone();
+    let captured = String::from_utf8_lossy(&captured);
+    for secret in [PASSPHRASE, STREAM_SECRET] {
+        assert!(
+            !captured.contains(secret),
+            "{secret:?} reached the log: {:?}",
+            captured.lines().find(|l| l.contains(secret))
+        );
+    }
+}
