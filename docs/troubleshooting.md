@@ -318,9 +318,9 @@ Fix: increase `max_attempts`, or set it to `None` to retry forever — only safe
 
 **A send blocks for the whole outage with `gap_buffer_capacity` 0**
 
-Under `ReconnectMode::Blocking` a capacity of 0 stages nothing, so the send that meets the outage reconnects on the caller's thread and then sends its message on the new connection, under either `OverflowPolicy`: it returns only when the reconnect has succeeded (with that connection's answer), the policy gives up (`TransportError::Broken`, with the message still yours), or a cancel fires. Without `max_attempts` that can be as long as the outage.
+Under `ReconnectMode::Blocking` a capacity of 0 stages nothing, so the send that meets the outage reconnects on the caller's thread and then sends its message on the new connection, under either `OverflowPolicy`: it returns only when the reconnect has succeeded (with that connection's answer), the policy gives up (`TransportError::Broken`, with the message still yours), or a cancel fires (a cancel ends the backoff wait at once; a factory dial already in progress runs to its own end, and an SRT caller-mode dial is not interrupted). Without `max_attempts` that can be as long as the outage.
 
-Fix: if the producer must not wait, use `ReconnectMode::Background`: there a capacity of 0 drops (`DropOldest`, counted in `gap_messages_dropped`) or refuses (`Reject`, `Backpressure`) every message sent during the outage while a worker reconnects, and sends after it has reconnected go to the new connection. Otherwise bound the wait with `max_attempts`, or end it from another thread through the cancel handle.
+Fix: if the producer must not wait, use `ReconnectMode::Background`: there a capacity of 0 drops (`DropOldest`, counted in `gap_messages_dropped`) or refuses (`Reject`, `Backpressure`) every message sent during the outage while a worker reconnects, and sends after it has reconnected go to the new connection; with a finite `max_attempts` the first send after the worker gives up returns `Broken` instead (see "`max_attempts` exhausted" above). Otherwise bound the wait with `max_attempts`, or end it from another thread through the cancel handle (at the latest when a dial in progress returns).
 
 **Sends succeed but nothing arrives (Background mode)**
 

@@ -587,7 +587,11 @@ message still the caller's). Under `Background` a capacity of 0 holds
 nothing: every message sent during the outage is dropped and counted
 (`DropOldest`) or refused with `Backpressure` (`Reject`) while the
 worker reconnects, and sends after it has reconnected go to the new
-connection.
+connection. The one exception holds at every capacity in `Background`
+mode: with a finite `max_attempts`, the first send after the worker has
+given up returns `Broken` ("reconnect gave up after N attempts"), its
+message neither queued nor counted as dropped, and the send after it
+starts a new reconnect cycle.
 
 ## Choosing a backoff and gap-buffer size
 
