@@ -12,9 +12,15 @@
 //! re-registers the inner publisher as a fresh `HlsPublisher` handle. Sends
 //! take `&self` (the shell serialises internally), so they lease with the
 //! non-poisoning `with`.
+//!
+//! `nStats` reads the shell's statistics handle, kept beside the registry
+//! under the shell's key, so it never takes the entry's lock, which a push
+//! in progress holds. `nPublisherStats` still takes it (the publisher's own
+//! record lives behind that lock).
 
 use crate::panic::jni_native;
-use std::sync::LazyLock;
+use std::collections::HashMap;
+use std::sync::{LazyLock, Mutex};
 
 use jni::Env;
 use jni::objects::{JBooleanArray, JByteArray, JIntArray};
@@ -22,7 +28,7 @@ use jni::sys::{jboolean, jint, jlong, jobject};
 
 use tst_core::mpegts::common::Pts90khz;
 use tst_hls::{HlsError, HlsPublisher};
-use tst_pipeline::{MuxPublisher as RustMuxPublisher, MuxPublisherError};
+use tst_pipeline::{MuxPublisher as RustMuxPublisher, MuxPublisherError, MuxPublisherStatsHandle};
 
 use crate::error::throw_closed;
 use crate::handle::HandleRegistry;
@@ -35,6 +41,16 @@ use super::publisher::{REGISTRY as REGISTRY_HLS, build_publisher_stats, register
 type Inner = RustMuxPublisher<HlsPublisher>;
 
 static REGISTRY: LazyLock<HandleRegistry<Inner>> = LazyLock::new(HandleRegistry::new);
+
+/// The statistics handle of each live shell, under the shell's `REGISTRY` key:
+/// inserted with the shell, removed before the shell is taken by a close or a
+/// `finishIntoPublisher`. Held only for a lookup, never across a push.
+static STATS: LazyLock<Mutex<HashMap<u64, MuxPublisherStatsHandle>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+fn stats_table() -> std::sync::MutexGuard<'static, HashMap<u64, MuxPublisherStatsHandle>> {
+    STATS.lock().unwrap_or_else(|e| e.into_inner())
+}
 
 fn with_shell(
     env: &mut Env,
@@ -106,7 +122,12 @@ jni_native! {
             return 0;
         };
         match RustMuxPublisher::with_config(publisher, cfg) {
-            Ok(shell) => REGISTRY.insert(shell) as jlong,
+            Ok(shell) => {
+                let stats = shell.stats_handle();
+                let id = REGISTRY.insert(shell);
+                stats_table().insert(id, stats);
+                id as jlong
+            }
             Err(e) => {
                 mux_publisher_error(env, e);
                 0
@@ -261,6 +282,7 @@ jni_native! {
         _class,
         handle: jlong,
     ) -> jlong = 0 => {
+        stats_table().remove(&(handle as u64));
         match REGISTRY.close(handle as u64) {
             Some(shell) => match shell.finish() {
                 Ok(publisher) => register_hls(publisher),
@@ -278,12 +300,15 @@ jni_native! {
 }
 
 jni_native! {
+    /// `nStats(handle)` — the shell's counters, read through its statistics
+    /// handle: never waits for a push in progress.
     fn Java_org_tstrans_hls_MuxPublisher_nStats<'local>(
         env,
         _class,
         handle: jlong,
     ) -> jobject = std::ptr::null_mut() => {
-        match REGISTRY.with(handle as u64, |s| s.stats()) {
+        let stats = stats_table().get(&(handle as u64)).map(MuxPublisherStatsHandle::stats);
+        match stats {
             Some(st) => crate::generated::stats_hls::build_mux_publisher_stats(env, &st)
                 .map(|o| o.into_raw())
                 .unwrap_or(std::ptr::null_mut()),
@@ -296,6 +321,8 @@ jni_native! {
 }
 
 jni_native! {
+    /// `nPublisherStats(handle)` — the publisher's own record; waits for a
+    /// push in progress, which holds the shell.
     fn Java_org_tstrans_hls_MuxPublisher_nPublisherStats<'local>(
         env,
         _class,
@@ -317,6 +344,7 @@ jni_native! {
     /// `nClose(handle)` — quiet: finish the shell AND the inner publisher, errors
     /// dropped, idempotent.
     fn Java_org_tstrans_hls_MuxPublisher_nClose<'local>(_env, _class, handle: jlong) = () => {
+        stats_table().remove(&(handle as u64));
         if let Some(shell) = REGISTRY.close(handle as u64)
             && let Ok(publisher) = shell.finish() {
                 let _ = tst_core::publisher::Publisher::finish(publisher);

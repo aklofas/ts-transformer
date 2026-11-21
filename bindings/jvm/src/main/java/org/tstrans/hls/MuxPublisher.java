@@ -161,13 +161,26 @@ public final class MuxPublisher extends NativeHandle {
         return new HlsPublisher(ph);
     }
 
-    /** Shell-level stats. */
+    /**
+     * Shell-level stats. Never waits: a push in progress on another thread does not hold
+     * this up. A record read while such a push runs may show one counter ahead of
+     * another; one read after the push has returned holds all of it.
+     *
+     * @return the counters now
+     * @throws IllegalStateException once the shell is closed or finished
+     */
     public MuxPublisherStats stats() {
         ensureOpen("MuxPublisher is closed");
         return nStats(peekHandle());
     }
 
-    /** Publisher-side universal stats. */
+    /**
+     * Publisher-side universal stats. Unlike {@link #stats()} this waits for a push in
+     * progress on another thread: the publisher's own record lives behind the shell.
+     *
+     * @return the publisher's record
+     * @throws IllegalStateException once the shell is closed or finished
+     */
     public PublisherStats publisherStats() {
         ensureOpen("MuxPublisher is closed");
         return nPublisherStats(peekHandle());

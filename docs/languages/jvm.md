@@ -3167,7 +3167,10 @@ back.finish();                                          // or back.finishServing
 (a MISB ST 0604 MISP timestamp SEI spliced before the first VCL NAL) and
 `pushData(data, pts)` (a data stream's PES pass-through); like
 `pushVideoWithDts`, each needs exactly one stream of its kind in the config
-(else `MuxException(INVALID_USAGE)`).
+(else `MuxException(INVALID_USAGE)`). `MuxPublisher.stats()` never waits for a
+push running on another thread; `publisherStats()` does (the publisher's own
+record lives behind the shell). Both throw `IllegalStateException` once the
+shell is closed or finished.
 
 Pre-muxed TS goes straight in with `publisher.pushTs(bytes)` (whole 188-byte
 packets, else `HlsException(UNALIGNED_PUSH_TS)`) and `cutSegment()` /

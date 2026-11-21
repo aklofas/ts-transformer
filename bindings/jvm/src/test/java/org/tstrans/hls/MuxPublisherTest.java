@@ -323,4 +323,68 @@ class MuxPublisherTest {
         assertTrue(sawClosed.get(), "pusher must observe the consume");
         mp.finishIntoPublisher().finish();
     }
+
+    /**
+     * After {@code close()} and after {@code finishIntoPublisher()} {@code stats()} throws, also
+     * when the call reaches the native with the key a close removed. The statistics are read
+     * outside the shell's lock (a push in progress does not hold them up); that read is proven
+     * not to wait by the Rust tests, this pins what a closed shell answers.
+     */
+    @Test
+    void statsAfterCloseStillThrows(@TempDir Path dir) throws Exception {
+        MuxPublisher closed = MuxPublisher.withConfigHls(pub(dir.resolve("a"), HlsMode.LIVE), video());
+        closed.pushVideo(syntheticH264Idr(), 0L, true);
+        assertTrue(closed.stats().bytesPushed() > 0);
+        org.tstrans.TestSupport.closeUnderneath(closed);
+        assertThrows(IllegalStateException.class, closed::stats, "the native refuses a closed key");
+        org.tstrans.TestSupport.forgetKey(closed);
+        assertThrows(IllegalStateException.class, closed::stats);
+
+        MuxPublisher finished = MuxPublisher.withConfigHls(pub(dir.resolve("b"), HlsMode.LIVE), video());
+        finished.pushVideo(syntheticH264Idr(), 0L, true);
+        java.util.concurrent.atomic.AtomicLong key = handleOf(finished);
+        long k = key.get();
+        finished.finishIntoPublisher().finish();
+        assertThrows(IllegalStateException.class, finished::stats);
+        key.set(k);   // the key finishIntoPublisher() consumed reaches the native again
+        assertThrows(IllegalStateException.class, finished::stats, "the native refuses a finished key");
+        key.set(0);
+        finished.close();
+        assertThrows(IllegalStateException.class, finished::stats);
+    }
+
+    private static java.util.concurrent.atomic.AtomicLong handleOf(org.tstrans.NativeHandle h)
+            throws ReflectiveOperationException {
+        java.lang.reflect.Field f = org.tstrans.NativeHandle.class.getDeclaredField("handle");
+        f.setAccessible(true);
+        return (java.util.concurrent.atomic.AtomicLong) f.get(h);
+    }
+
+    /** The counters are the shell's own: every byte a segment holds was counted, nothing else. */
+    @Test
+    void statsEqualThePushesMade(@TempDir Path dir) throws Exception {
+        MuxPublisher mp = MuxPublisher.withConfigHls(pub(dir, HlsMode.VOD), videoKlv());
+        assertEquals(0, mp.stats().bytesPushed());
+        long last = 0;
+        for (int i = 0; i < 4; i++) {
+            mp.pushVideo(syntheticH264Idr(), i * 90_000L, true);
+            mp.pushKlv(KLV, i * 90_000L, 0);
+            long now = mp.stats().bytesPushed();
+            assertTrue(now > last, "every push drains to the publisher");
+            last = now;
+        }
+        mp.cutSegment();
+        MuxPublisherStats st = mp.stats();
+        assertEquals(st, mp.stats(), "nothing moves between two reads with no push");
+        assertEquals(0, st.bytesPushed() % 188, "whole TS packets");
+        assertTrue(st.drainCalls() >= 8, st.toString());
+        mp.finishIntoPublisher().finish();
+        long onDisk = 0;
+        try (Stream<Path> files = Files.list(dir)) {
+            for (Path p : (Iterable<Path>) files.filter(f -> f.toString().endsWith(".ts"))::iterator) {
+                onDisk += Files.size(p);
+            }
+        }
+        assertEquals(onDisk, st.bytesPushed(), "the segments hold exactly the bytes counted");
+    }
 }
