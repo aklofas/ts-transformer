@@ -1376,7 +1376,17 @@ mod tests {
         // close() and drop say it in the log instead, with the count only.
         let (mut s, _state) = sender_with(&input, TsFramingMode::Recover);
         s.close();
-        assert!(logs_contain(&format!("bytes={tail}")));
+        logs_assert(|lines: &[&str]| {
+            let count = format!("bytes={tail}");
+            match lines
+                .iter()
+                .filter(|l| l.contains("WARN") && l.contains(&count))
+                .count()
+            {
+                1 => Ok(()),
+                n => Err(format!("{n} warnings with {count}")),
+            }
+        });
         assert!(!logs_contain("SECRET"));
     }
 
