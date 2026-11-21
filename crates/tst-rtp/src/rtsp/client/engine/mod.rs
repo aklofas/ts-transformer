@@ -26,7 +26,11 @@ use inbound::FrontScan;
 /// draws them from the OS when the engine asks
 /// ([`ClientEngine::submit_wants_cnonce`],
 /// [`ClientEngine::timeout_wants_cnonce`], [`ClientEngine::wants_cnonce`])
-/// and hands them in with [`ClientEngine::handle_cnonce`].
+/// and hands them in with [`ClientEngine::handle_cnonce`]. It answers
+/// [`ClientEngine::wants_cnonce`] in the pass that handled the input,
+/// before it waits for the stream again: a request whose second attempt
+/// waits moves on nothing else but its own reply deadline, and one without
+/// a deadline would wait for ever.
 pub(crate) type Cnonce = [u8; 16];
 
 /// The user name and password the client answers a challenge with.
@@ -277,9 +281,11 @@ struct CallerTxn {
     spec: RequestSpec,
     deadline: Option<Instant>,
     retried: bool,
-    /// The `401` challenge whose Digest answer waits for a cnonce. While
-    /// it is set no attempt is in flight, so no reply is this request's.
-    challenge: Option<String>,
+    /// The `401` challenge whose Digest answer waits for a cnonce, and
+    /// the nonce count taken for that answer when the `401` was read.
+    /// While it is set no attempt is in flight, so no reply is this
+    /// request's.
+    challenge: Option<(String, u32)>,
 }
 
 pub(crate) struct ClientEngine {
@@ -430,9 +436,9 @@ impl ClientEngine {
             self.cnonce = cnonce;
         }
         if let Some(mut txn) = self.caller.take_if(|t| t.challenge.is_some())
-            && let Some(www) = txn.challenge.take()
+            && let Some((www, nc)) = txn.challenge.take()
         {
-            self.retry(txn, &www);
+            self.retry(txn, &www, Some(nc));
         }
     }
 
@@ -820,8 +826,28 @@ impl ClientEngine {
         uri: &str,
         www: &str,
     ) -> Result<String, RtspError> {
-        let creds = self.cfg.credentials.as_ref().ok_or(RtspError::AuthFailed)?;
+        if self.cfg.credentials.is_none() {
+            return Err(RtspError::AuthFailed);
+        }
+        let nc = self.next_nonce_count();
+        self.authorization_under(method, uri, www, nc)
+    }
+
+    /// Take the next nonce count of the cached challenge.
+    fn next_nonce_count(&mut self) -> u32 {
         self.auth.nc = self.auth.nc.wrapping_add(1);
+        self.auth.nc
+    }
+
+    /// [`Self::authorization`] under a nonce count taken before.
+    fn authorization_under(
+        &mut self,
+        method: RtspMethod,
+        uri: &str,
+        www: &str,
+        nc: u32,
+    ) -> Result<String, RtspError> {
+        let creds = self.cfg.credentials.as_ref().ok_or(RtspError::AuthFailed)?;
         let cnonce = if answers_with_digest(www) {
             self.cnonce.take()
         } else {
@@ -833,7 +859,7 @@ impl ClientEngine {
             www,
             &creds.username,
             &creds.password,
-            self.auth.nc,
+            nc,
             self.auth.schemes,
             cnonce.as_ref(),
         )
@@ -915,12 +941,14 @@ impl ClientEngine {
             };
             self.auth.cache_challenge(www.clone());
             if self.cnonce.is_none() && self.cfg.credentials.is_some() && answers_with_digest(www) {
-                // The second attempt is made when the cnonce is handed in.
-                txn.challenge = Some(www.clone());
+                // The second attempt is made when the cnonce is handed in,
+                // under the count it would have taken here: a challenge
+                // cached meanwhile starts its own count.
+                txn.challenge = Some((www.clone(), self.next_nonce_count()));
                 self.caller = Some(txn);
                 return;
             }
-            self.retry(txn, www);
+            self.retry(txn, www, None);
             return;
         }
         let mut setup = None;
@@ -1064,10 +1092,14 @@ impl ClientEngine {
     }
 
     /// Queue `txn`'s second attempt, answering the `401`'s challenge
-    /// `www`; a second attempt that cannot be built is the request's reply.
-    fn retry(&mut self, mut txn: CallerTxn, www: &str) {
-        let attempt = self
-            .authorization(txn.spec.method, &txn.spec.uri, www)
+    /// `www` under the nonce count `taken` for it, or under the next one;
+    /// a second attempt that cannot be built is the request's reply.
+    fn retry(&mut self, mut txn: CallerTxn, www: &str, taken: Option<u32>) {
+        let authorization = match taken {
+            Some(nc) => self.authorization_under(txn.spec.method, &txn.spec.uri, www, nc),
+            None => self.authorization(txn.spec.method, &txn.spec.uri, www),
+        };
+        let attempt = authorization
             .and_then(|authorization| self.encode_caller_request(&txn.spec, Some(authorization)));
         match attempt {
             Ok((bytes, cseq)) => {

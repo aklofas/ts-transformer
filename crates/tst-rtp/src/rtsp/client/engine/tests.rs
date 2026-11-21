@@ -126,7 +126,6 @@ fn challenged(creds: Option<(&str, &str)>, www: &str) -> ClientEngine {
     let a = e.submit(spec(RtspMethod::Options, URI), None, t0).unwrap();
     let first = one(&mut e);
     let c = cseq(&first);
-    feed(&mut e);
     e.handle_reply(
         resp(
             format!("RTSP/1.0 401 Unauthorized\r\nCSeq: {c}\r\nWWW-Authenticate: {www}\r\n\r\n")
@@ -134,6 +133,7 @@ fn challenged(creds: Option<(&str, &str)>, www: &str) -> ClientEngine {
         ),
         t0,
     );
+    feed(&mut e);
     if creds.is_some() {
         let retry = one(&mut e);
         e.handle_reply(
@@ -296,11 +296,11 @@ fn a_retry_refused_at_encoding_uses_no_cseq() {
     assert_eq!(cseq(&one(&mut e)), 1);
     // A challenge whose realm carries a control byte cannot be echoed in
     // the retry's `Authorization` header.
-    feed(&mut e);
     e.handle_reply(
         resp(b"RTSP/1.0 401 Unauthorized\r\nCSeq: 1\r\nWWW-Authenticate: Digest realm=\"R\x01\", nonce=\"n\"\r\n\r\n"),
         t0,
     );
+    feed(&mut e);
     assert!(matches!(
         reply(&mut e, a),
         Err(RtspError::InvalidHeader { .. })
@@ -547,7 +547,6 @@ fn the_nonce_count_counts_per_header_and_restarts_on_a_new_challenge() {
     feed(&mut e);
     e.submit(spec(RtspMethod::Setup, URI), None, t0).unwrap();
     let c = cseq(&one(&mut e));
-    feed(&mut e);
     e.handle_reply(
         resp(
             format!(
@@ -557,6 +556,7 @@ fn the_nonce_count_counts_per_header_and_restarts_on_a_new_challenge() {
         ),
         t0,
     );
+    feed(&mut e);
     let retry = one(&mut e);
     let a = authz(&retry).unwrap();
     assert_eq!((param(&a, "nonce"), param(&a, "nc")), ("n2", "00000001"));
@@ -586,7 +586,9 @@ fn the_nonce_count_counts_per_header_and_restarts_on_a_new_challenge() {
 const CNONCE: Cnonce = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
 const CNONCE_HEX: &str = "000102030405060708090a0b0c0d0e0f";
 
-/// Hand the engine a cnonce ahead of a step that builds a Digest answer.
+/// Hand the engine a cnonce: ahead of a request or a ping that answers the
+/// cached challenge, and after a `401` whose second attempt waits for it,
+/// as the engine's driver does.
 fn feed(e: &mut ClientEngine) {
     e.handle_cnonce(Some(CNONCE));
 }
@@ -807,6 +809,42 @@ fn a_cnonce_handed_in_before_the_401_is_used_without_asking() {
     assert_eq!(param(&h, "cnonce"), CNONCE_HEX);
 }
 
+/// A nonce's count is taken where its `401` is read, although the answer
+/// is built later: a ping's `401` behind it in the same read, naming a
+/// newer nonce, leaves that nonce its first count for the next request.
+#[test]
+fn a_ping_401_behind_the_requests_401_leaves_the_newer_nonce_its_first_count() {
+    let www = |nonce: &str| format!(r#"Digest realm="R", nonce="{nonce}", qop="auth""#);
+    let t0 = Instant::now();
+    let mut e = challenged(Some(("user", "pass")), &www("n1"));
+    e.enable_keepalive(Some(Duration::from_secs(1)), t0);
+    feed(&mut e);
+    let a = e
+        .submit(spec(RtspMethod::Describe, URI), None, ms(t0, 900))
+        .unwrap();
+    let request = one(&mut e);
+    feed(&mut e);
+    e.handle_timeout(ms(t0, 1000), false);
+    let ping = one(&mut e);
+    // One read: the request's `401`, then the ping's. No cnonce is at hand.
+    e.handle_reply(unauthorized(cseq(&request), &www("n2")), ms(t0, 1010));
+    e.handle_reply(unauthorized(cseq(&ping), &www("n3")), ms(t0, 1010));
+    assert!(e.wants_cnonce());
+    assert!(e.poll_transmit().is_none());
+    feed(&mut e);
+    let retry = one(&mut e);
+    let h = authz(&retry).unwrap();
+    assert_eq!((param(&h, "nonce"), param(&h, "nc")), ("n2", "00000001"));
+    e.handle_reply(ok(cseq(&retry)), ms(t0, 1020));
+    assert_eq!(reply(&mut e, a).unwrap().status, 200);
+    // The first request under the ping's nonce.
+    feed(&mut e);
+    e.submit(spec(RtspMethod::Play, URI), None, ms(t0, 1030))
+        .unwrap();
+    let h = authz(&one(&mut e)).unwrap();
+    assert_eq!((param(&h, "nonce"), param(&h, "nc")), ("n3", "00000001"));
+}
+
 /// While its answer waits for a cnonce the request is still the caller's:
 /// it times out, ends with the stream and is replaced like any other, and
 /// no reply is taken for it.
@@ -824,11 +862,16 @@ fn a_request_waiting_for_its_cnonce_is_still_the_callers() {
         (e, a, c)
     };
 
-    // A reply under the first attempt's CSeq is not its reply.
+    // A reply under the first attempt's CSeq is not its reply, nor is one
+    // without a CSeq: no attempt is in flight for either to answer.
     let (mut e, a, c) = waiting(None);
     e.handle_reply(ok(c), t0);
     assert_eq!(e.counters().unmatched_replies, 1);
     assert!(e.poll_event().is_none());
+    e.handle_reply(resp(b"RTSP/1.0 200 OK\r\n\r\n"), t0);
+    assert_eq!(e.counters().unmatched_replies, 2);
+    assert!(e.poll_event().is_none());
+    assert!(e.wants_cnonce());
     e.handle_cnonce(Some(CNONCE));
     let retry = one(&mut e);
     assert_eq!(cseq(&retry), c + 1);
@@ -1685,11 +1728,11 @@ fn a_ping_401_between_request_and_reply_rotates_the_nonce_once() {
     );
     assert!(events(&mut e).is_empty());
     // ...then the request's, with the same new challenge.
-    feed(&mut e);
     e.handle_reply(
         resp(N2_401.replace("{}", &cseq(&req).to_string()).as_bytes()),
         ms(t0, 1020),
     );
+    feed(&mut e);
     let retry = one(&mut e);
     let ra = authz(&retry).unwrap();
     assert_eq!((param(&ra, "nonce"), param(&ra, "nc")), ("n2", "00000001"));
@@ -1742,8 +1785,6 @@ fn no_nonce_count_is_used_twice() {
                     .as_bytes(),
                 )
             };
-            // For the request's second attempt.
-            feed(&mut e);
             if round % 2 == 0 {
                 e.handle_reply(challenge(cseq(ping)), now);
                 e.handle_reply(challenge(cseq(req)), now);
@@ -1751,6 +1792,8 @@ fn no_nonce_count_is_used_twice() {
                 e.handle_reply(challenge(cseq(req)), now);
                 e.handle_reply(challenge(cseq(ping)), now);
             }
+            // The request's second attempt, once both were read.
+            feed(&mut e);
         }
         for t in out.iter().chain(transmits(&mut e).iter()) {
             if let Some(a) = authz(t) {
@@ -3240,7 +3283,6 @@ fn the_401_retry_resends_the_identical_body() {
         .unwrap();
     let first = one(&mut e);
     let c = cseq(&first);
-    feed(&mut e);
     e.handle_reply(
         resp(
             format!(
@@ -3250,6 +3292,7 @@ fn the_401_retry_resends_the_identical_body() {
         ),
         t0,
     );
+    feed(&mut e);
     assert!(events(&mut e).is_empty());
     let retry = one(&mut e);
     assert_eq!(cseq(&retry), c + 1);
