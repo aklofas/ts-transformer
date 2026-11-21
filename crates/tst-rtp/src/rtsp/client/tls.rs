@@ -116,8 +116,9 @@ impl TlsStream {
             // before polling for the server's answer.
             let mut flushed = true;
             while conn.wants_write() {
-                sock.set_write_timeout(Some(write_wait(remaining)))
-                    .map_err(|e| RtspError::Io(e.kind()))?;
+                // macOS refuses a socket option on a connection that has
+                // ended (`EINVAL`); the write then reports how it ended.
+                let _ = sock.set_write_timeout(Some(write_wait(remaining)));
                 match conn.write_tls(&mut sock) {
                     Ok(_) => {}
                     Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
@@ -447,6 +448,18 @@ mod tests {
         assert_eq!(errors, 1);
     }
 
+    /// Returns once the peer's reset has reached `sock`: a non-blocking
+    /// peek then stops answering "nothing yet". `sock` is left blocking.
+    fn await_reset(sock: &TcpStream) {
+        sock.set_nonblocking(true).unwrap();
+        let t0 = Instant::now();
+        while matches!(sock.peek(&mut [0u8; 1]), Err(e) if e.kind() == io::ErrorKind::WouldBlock) {
+            assert!(t0.elapsed() < Duration::from_secs(10), "no reset seen");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        sock.set_nonblocking(false).unwrap();
+    }
+
     /// A connection the peer reset before the handshake's first write fails
     /// the handshake as a TLS failure on every platform. macOS refuses a
     /// socket option on a connection that has ended (`EINVAL`), and that
@@ -461,15 +474,7 @@ mod tests {
             .set_linger(Some(Duration::ZERO))
             .unwrap();
         drop(peer);
-        // The reset has arrived once a non-blocking peek stops answering
-        // "nothing yet".
-        sock.set_nonblocking(true).unwrap();
-        let t0 = Instant::now();
-        while matches!(sock.peek(&mut [0u8; 1]), Err(e) if e.kind() == io::ErrorKind::WouldBlock) {
-            assert!(t0.elapsed() < Duration::from_secs(10), "no reset seen");
-            std::thread::sleep(Duration::from_millis(1));
-        }
-        sock.set_nonblocking(false).unwrap();
+        await_reset(&sock);
         let r = TlsStream::connect(
             &url(port),
             sock,
@@ -477,6 +482,51 @@ mod tests {
             Duration::from_millis(100),
             Some(Instant::now() + Duration::from_secs(10)),
         );
+        assert!(matches!(r, Err(RtspError::Tls(_))), "{r:?}");
+    }
+
+    /// The same for a reset that arrives after the ClientHello has been
+    /// written, where the refused option is the read timeout.
+    #[test]
+    fn a_connection_reset_after_the_client_hello_is_a_tls_failure() {
+        use std::io::Read;
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let peer = std::thread::spawn(move || {
+            let (mut conn, _) = listener.accept().unwrap();
+            // The ClientHello is one TLS record: five bytes of header, then
+            // the length the header names.
+            let mut header = [0u8; 5];
+            conn.read_exact(&mut header).unwrap();
+            let mut body = vec![0u8; usize::from(u16::from_be_bytes([header[3], header[4]]))];
+            conn.read_exact(&mut body).unwrap();
+            socket2::SockRef::from(&conn)
+                .set_linger(Some(Duration::ZERO))
+                .unwrap();
+        });
+        let sock = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        let watch = sock.try_clone().unwrap();
+        let t0 = Instant::now();
+        // The handshake reads the clock at the top of its loop and again
+        // after the ClientHello's write: the second reading holds it until
+        // the reset has arrived.
+        let mut readings = 0;
+        let mut clock = || {
+            readings += 1;
+            if readings == 2 {
+                await_reset(&watch);
+            }
+            t0
+        };
+        let r = TlsStream::connect_with_clock(
+            &url(port),
+            sock,
+            Some(rustls::RootCertStore::empty()),
+            Duration::from_millis(100),
+            Some(t0 + Duration::from_secs(10)),
+            &mut clock,
+        );
+        peer.join().unwrap();
         assert!(matches!(r, Err(RtspError::Tls(_))), "{r:?}");
     }
 
