@@ -1290,6 +1290,70 @@ fn open_cancel_racing_the_end_of_a_managed_open_gives_one_whole_outcome() {
     eprintln!("outcomes per mode, [finish false, finish true]: {outcomes:?}");
 }
 
+/// What the two re-dial log tests share: an encrypted listener, a URL that
+/// carries two secrets, and the checks on what was logged.
+#[cfg(feature = "mbedtls")]
+mod redial {
+    use super::*;
+
+    pub const PASSPHRASE: &str = "redial-passphrase-7Qx2-do-not-log";
+    pub const STREAM_SECRET: &str = "redial-streamid-token-9Kd4";
+
+    /// A listener that admits only callers holding `PASSPHRASE`.
+    pub fn encrypted_listener() -> crate::common::Loopback {
+        let mut b = SrtListenerBuilder::new();
+        b.passphrase(tst_srt::Passphrase::new(PASSPHRASE).expect("a valid passphrase"));
+        b.recv_timeout(scaled(WATCHDOG));
+        b.send_timeout(scaled(WATCHDOG));
+        crate::common::Loopback::bind_with(b)
+    }
+
+    /// The caller's URL: both secrets, and a connect timeout that keeps a
+    /// re-dial to a port nobody listens on short.
+    pub fn url(port: u16, more: &str) -> SrtUrl {
+        SrtUrl::parse(&format!(
+            "srt://127.0.0.1:{port}?passphrase={PASSPHRASE}&streamid=publish/cam1/{STREAM_SECRET}&conntimeo=300{more}"
+        ))
+        .expect("parse")
+    }
+
+    pub fn two_redials() -> ReconnectPolicy {
+        ReconnectPolicy::default()
+            .with_max_attempts(Some(2))
+            .with_backoff(BackoffStrategy::Constant(Duration::ZERO))
+    }
+
+    /// One line with the connect error per failed re-dial, from `target`.
+    pub fn two_cause_lines(lines: &[&str], target: &str) -> Result<(), String> {
+        let failed = lines
+            .iter()
+            .filter(|l| {
+                l.contains(target)
+                    && l.contains("reconnect attempt failed")
+                    && l.contains("connect: ")
+            })
+            .count();
+        if failed == 2 {
+            Ok(())
+        } else {
+            Err(format!("one cause line per failed re-dial, got {failed}"))
+        }
+    }
+
+    /// Every captured line of the process, not only the calling test's span.
+    pub fn assert_no_secret_was_logged() {
+        let captured = tracing_test::internal::global_buf().lock().unwrap().clone();
+        let captured = String::from_utf8_lossy(&captured);
+        for secret in [PASSPHRASE, STREAM_SECRET] {
+            assert!(
+                !captured.contains(secret),
+                "{secret:?} reached the log: {:?}",
+                captured.lines().find(|l| l.contains(secret))
+            );
+        }
+    }
+}
+
 /// A re-dial that fails says why in the log, and the line is built from the
 /// connect error alone: neither the URL's `passphrase` nor its stream id is
 /// in anything the run logged (libsrt's own lines included).
@@ -1298,13 +1362,7 @@ fn open_cancel_racing_the_end_of_a_managed_open_gives_one_whole_outcome() {
 #[test]
 fn a_failed_redial_logs_its_cause_and_no_passphrase() {
     require_loopback!();
-    const PASSPHRASE: &str = "redial-passphrase-7Qx2-do-not-log";
-    const STREAM_SECRET: &str = "redial-streamid-token-9Kd4";
-
-    let mut b = SrtListenerBuilder::new();
-    b.passphrase(tst_srt::Passphrase::new(PASSPHRASE).expect("a valid passphrase"));
-    b.recv_timeout(scaled(WATCHDOG));
-    let lb = crate::common::Loopback::bind_with(b);
+    let lb = redial::encrypted_listener();
     let port = lb.port;
     // One accepted connection, one message, then the peer and its listener
     // are gone: every re-dial runs to its connect timeout.
@@ -1314,16 +1372,12 @@ fn a_failed_redial_logs_its_cause_and_no_passphrase() {
     });
     accept.wait_ready();
 
-    let url = SrtUrl::parse(&format!(
-        "srt://127.0.0.1:{port}?passphrase={PASSPHRASE}&streamid=publish/cam1/{STREAM_SECRET}&conntimeo=300"
-    ))
-    .expect("parse");
-    let policy = ReconnectPolicy::default()
-        .with_max_attempts(Some(2))
-        .with_backoff(BackoffStrategy::Constant(Duration::ZERO));
-    let (mut tx, _handles, stats) =
-        managed_raw_sender_from_url(&url, policy, tst_pipeline::RawSenderConfig::default())
-            .expect("the first connect, encrypted");
+    let (mut tx, _handles, stats) = managed_raw_sender_from_url(
+        &redial::url(port, ""),
+        redial::two_redials(),
+        tst_pipeline::RawSenderConfig::default(),
+    )
+    .expect("the first connect, encrypted");
     tx.send(b"first").expect("send");
     assert_eq!(accept.join(), b"first".len());
 
@@ -1340,25 +1394,48 @@ fn a_failed_redial_logs_its_cause_and_no_passphrase() {
     assert_eq!(stats.stats().expect("no poison").reconnect_attempts, 2);
     tx.close();
 
-    logs_assert(|lines: &[&str]| {
-        let failed = lines
-            .iter()
-            .filter(|l| l.contains("reconnect attempt failed") && l.contains("connect: "))
-            .count();
-        if failed == 2 {
-            Ok(())
-        } else {
-            Err(format!("one cause line per failed re-dial, got {failed}"))
+    logs_assert(|lines: &[&str]| redial::two_cause_lines(lines, "tst_pipeline::reconnect"));
+    redial::assert_no_secret_was_logged();
+}
+
+/// The receiving twin: a managed receiver's failed re-dial goes through the
+/// same connect error, and logs as little of the URL.
+#[cfg(feature = "mbedtls")]
+#[tracing_test::traced_test]
+#[test]
+fn a_failed_receive_redial_logs_its_cause_and_no_passphrase() {
+    require_loopback!();
+    let lb = redial::encrypted_listener();
+    let port = lb.port;
+    let stop = Arc::new(AtomicBool::new(false));
+    let peer_stop = Arc::clone(&stop);
+    let accept = lb.spawn_accept(move |sock| send_until(sock, null_ts_bundle(), peer_stop));
+    accept.wait_ready();
+
+    let (mut rx, handles) = managed_receiver_from_url(
+        &redial::url(port, "&x-recvtimeout=1000"),
+        redial::two_redials(),
+    )
+    .expect("the first connect, encrypted");
+    rx.next_packet().expect("the stream is live before the cut");
+
+    // The peer and its listener go away: every re-dial runs to its connect
+    // timeout, and the stream ends when both have failed.
+    stop.store(true, Ordering::SeqCst);
+    accept.join();
+    let deadline = Instant::now() + scaled(WATCHDOG);
+    loop {
+        assert!(Instant::now() < deadline, "the receiver never gave up");
+        match rx.next_packet() {
+            Ok(_) => {}
+            // A receive timeout is not the end of the stream.
+            Err(e) if e.kind == ShellErrorKind::Backpressure => {}
+            Err(_) => break,
         }
-    });
-    // Every captured line of the process, not only this test's span.
-    let captured = tracing_test::internal::global_buf().lock().unwrap().clone();
-    let captured = String::from_utf8_lossy(&captured);
-    for secret in [PASSPHRASE, STREAM_SECRET] {
-        assert!(
-            !captured.contains(secret),
-            "{secret:?} reached the log: {:?}",
-            captured.lines().find(|l| l.contains(secret))
-        );
     }
+    assert_eq!(handles.attempts.load(Ordering::Acquire), 2);
+    rx.close();
+
+    logs_assert(|lines: &[&str]| redial::two_cause_lines(lines, "tst_pipeline::managed_receive"));
+    redial::assert_no_secret_was_logged();
 }
