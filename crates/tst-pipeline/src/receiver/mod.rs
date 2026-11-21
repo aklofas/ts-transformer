@@ -51,11 +51,12 @@ tst_core::binding_record! {
         pub bytes_skipped_for_sync: u64,
         /// Number of times the syncer transitioned from HUNT/VERIFY to LOCKED —
         /// counts both the initial lock-on and any re-locks after sync loss.
+        /// When the transport ends with one to three whole packets still held
+        /// and they are released to the caller, that release counts as one.
         ///
         /// <!-- rust-only -->
-        /// The release of the last one to three packets when the transport
-        /// ends (see [`Receiver`]'s "Sync lock and the end of a stream")
-        /// counts as one.
+        /// See [`Receiver`]'s "Sync lock and the end of a stream" for when
+        /// the release happens.
         pub resync_events: u64,
         /// Number of 188-byte TS packets returned to callers.
         pub packets_received: u64,

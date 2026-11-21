@@ -196,6 +196,8 @@ pub struct ReceiverStats {
     pub bytes_skipped_for_sync: u64,
     /// Number of times the syncer transitioned from HUNT/VERIFY to LOCKED —
     /// counts both the initial lock-on and any re-locks after sync loss.
+    /// When the transport ends with one to three whole packets still held
+    /// and they are released to the caller, that release counts as one.
     pub resync_events: u64,
     /// Number of 188-byte TS packets returned to callers.
     pub packets_received: u64,

@@ -12,7 +12,9 @@ package org.tstrans.shells;
  * @param bytesSkippedForSync Bytes discarded while scanning for the 0x47 sync byte (HUNT and
  *     failed-VERIFY drops combined).
  * @param resyncEvents Number of times the syncer transitioned from HUNT/VERIFY to LOCKED — counts
- *     both the initial lock-on and any re-locks after sync loss.
+ *     both the initial lock-on and any re-locks after sync loss. When the transport ends with one
+ *     to three whole packets still held and they are released to the caller, that release counts as
+ *     one.
  * @param packetsReceived Number of 188-byte TS packets returned to callers.
  */
 public record ReceiverStats(long bytesReceived, long bytesSkippedForSync, long resyncEvents, long packetsReceived) {
