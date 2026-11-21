@@ -2581,7 +2581,7 @@ kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::mux_publisher::MuxPublisherStatsHandle"
 owning_tests = ["crates/tst-pipeline/src/mux_publisher.rs"]
-bindings = ["c:deferred(tst_mux_publisher_get_stats reads the handle once the C binding takes it)", "python:deferred(tstrans.hls.MuxPublisher.stats reads the handle once the Python binding takes it)", "java:deferred(org.tstrans.hls.MuxPublisher.stats reads the handle once the JVM binding takes it)", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:tst_mux_publisher_get_stats", "python:tstrans.hls.MuxPublisher.stats", "java:org.tstrans.hls.MuxPublisher.stats", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -2590,7 +2590,7 @@ kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::MuxPublisherStatsHandle"
 owning_tests = ["crates/tst-pipeline/src/mux_publisher.rs"]
-bindings = ["c:deferred(tst_mux_publisher_get_stats reads the handle once the C binding takes it)", "python:deferred(tstrans.hls.MuxPublisher.stats reads the handle once the Python binding takes it)", "java:deferred(org.tstrans.hls.MuxPublisher.stats reads the handle once the JVM binding takes it)", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:tst_mux_publisher_get_stats", "python:tstrans.hls.MuxPublisher.stats", "java:org.tstrans.hls.MuxPublisher.stats", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -2599,7 +2599,7 @@ kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::mux_publisher::MuxPublisherStatsHandle::stats"
 owning_tests = ["crates/tst-pipeline/src/mux_publisher.rs"]
-bindings = ["c:deferred(tst_mux_publisher_get_stats reads the handle once the C binding takes it)", "python:deferred(tstrans.hls.MuxPublisher.stats reads the handle once the Python binding takes it)", "java:deferred(org.tstrans.hls.MuxPublisher.stats reads the handle once the JVM binding takes it)", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:tst_mux_publisher_get_stats", "python:tstrans.hls.MuxPublisher.stats", "java:org.tstrans.hls.MuxPublisher.stats", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -2620,7 +2620,7 @@ kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::mux_sender::MuxSender::reconfigure"
 owning_tests = ["crates/tst-pipeline/tests/shells/mux_sender_reconfigure.rs"]
-bindings = ["c:deferred(0.11.0 c-surface parity batch)", "python:deferred(a shell keeps the stream handles it read at construction; needs a shell design change)", "java:deferred(a shell keeps the stream handles it read at construction; needs a shell design change)", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:deferred(0.11.0 c-surface parity batch)", "python:tstrans.shells.MuxSender.reconfigure", "java:org.tstrans.shells.MuxSender.reconfigure", "swift:deferred", "kotlin:deferred"]
 tier = "A"
 
 [[surface]]
@@ -3710,7 +3710,7 @@ kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::binding::view::StreamHandlesCell"
 owning_tests = ["crates/tst-pipeline/src/binding/view.rs"]
-bindings = ["c:n/a(the C mux senders expose no stream-handle getter that a reconfigure could make stale; a C reconfigure is the c-surface package's)", "python:deferred(tstrans.shells.MuxSender.reconfigure refreshes the cell once the Python binding takes it)", "java:deferred(org.tstrans.shells.MuxSender.reconfigure refreshes the cell once the JVM binding takes it)", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:n/a(the C mux senders expose no stream-handle getter that a reconfigure could make stale; a C reconfigure is the c-surface package's)", "python:tstrans.shells.MuxSender.reconfigure", "python:tstrans.srt.ManagedMuxSender.reconfigure", "java:org.tstrans.shells.MuxSender.reconfigure", "java:org.tstrans.srt.ManagedMuxSender.reconfigure", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -3728,7 +3728,7 @@ kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::binding::view::StreamHandlesCell::get"
 owning_tests = ["crates/tst-pipeline/src/binding/view.rs"]
-bindings = ["c:n/a(the C mux senders expose no stream-handle getter that a reconfigure could make stale; a C reconfigure is the c-surface package's)", "python:deferred(tstrans.shells.MuxSender.video_handle and its siblings read the cell once the Python binding takes it)", "java:deferred(org.tstrans.shells.MuxSender's handle getters read the cell once the JVM binding takes it)", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:n/a(the C mux senders expose no stream-handle getter that a reconfigure could make stale; a C reconfigure is the c-surface package's)", "python:tstrans.shells.MuxSender.video_handle", "python:tstrans.srt.ManagedMuxSender.video_handle", "python:tstrans.shells.MuxSender.klv_handle", "python:tstrans.srt.ManagedMuxSender.klv_handle", "python:tstrans.shells.MuxSender.audio_handle", "python:tstrans.srt.ManagedMuxSender.audio_handle", "python:tstrans.shells.MuxSender.subtitle_handle", "python:tstrans.srt.ManagedMuxSender.subtitle_handle", "python:tstrans.shells.MuxSender.data_handle", "python:tstrans.srt.ManagedMuxSender.data_handle", "java:org.tstrans.shells.MuxSender.videoHandle", "java:org.tstrans.shells.MuxSender.klvHandle", "java:org.tstrans.shells.MuxSender.audioHandle", "java:org.tstrans.shells.MuxSender.subtitleHandle", "java:org.tstrans.shells.MuxSender.dataHandle", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -3737,7 +3737,7 @@ kind = "rust"
 crate = "tst-pipeline"
 item = "tst_pipeline::binding::view::StreamHandlesCell::refresh"
 owning_tests = ["crates/tst-pipeline/src/binding/view.rs"]
-bindings = ["c:n/a(the C mux senders expose no stream-handle getter that a reconfigure could make stale; a C reconfigure is the c-surface package's)", "python:deferred(tstrans.shells.MuxSender.reconfigure refreshes the cell once the Python binding takes it)", "java:deferred(org.tstrans.shells.MuxSender.reconfigure refreshes the cell once the JVM binding takes it)", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:n/a(the C mux senders expose no stream-handle getter that a reconfigure could make stale; a C reconfigure is the c-surface package's)", "python:tstrans.shells.MuxSender.reconfigure", "python:tstrans.srt.ManagedMuxSender.reconfigure", "java:org.tstrans.shells.MuxSender.reconfigure", "java:org.tstrans.srt.ManagedMuxSender.reconfigure", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -6541,7 +6541,7 @@ kind = "rust"
 crate = "tst-rtp"
 item = "tst_rtp::PushCloseOutcome"
 owning_tests = ["crates/tst-rtp/src/rtsp/client/push/tests.rs"]
-bindings = ["c:deferred(the RTSP push client in the C API: docs/project/deferred-features.md)", "python:deferred(the push session reports its close outcome once the Python binding takes it)", "java:deferred(the push session reports its close outcome once the JVM binding takes it)", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:deferred(the RTSP push client in the C API: docs/project/deferred-features.md)", "python:tstrans.rtp.PushCloseOutcome", "python:tstrans.rtp.PushCloseKind", "java:org.tstrans.rtp.PushCloseOutcome", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -6550,7 +6550,7 @@ kind = "rust"
 crate = "tst-rtp"
 item = "tst_rtp::rtsp::client::push::PushCloseOutcome"
 owning_tests = ["crates/tst-rtp/src/rtsp/client/push/tests.rs"]
-bindings = ["c:deferred(the RTSP push client in the C API: docs/project/deferred-features.md)", "python:deferred(the push session reports its close outcome once the Python binding takes it)", "java:deferred(the push session reports its close outcome once the JVM binding takes it)", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:deferred(the RTSP push client in the C API: docs/project/deferred-features.md)", "python:tstrans.rtp.PushCloseOutcome", "python:tstrans.rtp.PushCloseKind", "java:org.tstrans.rtp.PushCloseOutcome", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -6559,7 +6559,7 @@ kind = "rust"
 crate = "tst-rtp"
 item = "tst_rtp::rtsp::client::push::PushStatsHandle::close_outcome"
 owning_tests = ["crates/tst-rtp/src/rtsp/client/push/tests.rs"]
-bindings = ["c:deferred(the RTSP push client in the C API: docs/project/deferred-features.md)", "python:deferred(the push session reports its close outcome once the Python binding takes it)", "java:deferred(the push session reports its close outcome once the JVM binding takes it)", "swift:deferred", "kotlin:deferred"]
+bindings = ["c:deferred(the RTSP push client in the C API: docs/project/deferred-features.md)", "python:tstrans.rtp.RtspPushSession.close_outcome", "java:org.tstrans.rtp.RtspPushSession.closeOutcome", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
