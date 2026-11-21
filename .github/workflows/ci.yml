@@ -927,6 +927,7 @@ jobs:
           # 238->241 (2026-11-03): +MuxerStats, DemuxerStats, PairerStats.
           # 243->247 (2026-11-19): +PushDescription, VideoTrack, PushError, PushStats.
           # 247->250: +SlotRefused, Peek, ParkingEvent.
+          # 250->251: +tst_rtp::PushCloseOutcome.
           BASELINE=251
           OBSERVED=$(rg -c '^\s*#\[non_exhaustive\]' crates/ bindings/ --type rust | awk -F: '{sum += $2} END {print sum}')
           if [ "$OBSERVED" -lt "$BASELINE" ]; then
