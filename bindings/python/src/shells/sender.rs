@@ -127,10 +127,29 @@ impl PySender {
     /// cancels first and does not drain the framing buffer; `finish()`
     /// flushes and closes without a cancel.
     ///
-    /// A stream of one or two aligned TS packets is not delivered, and
-    /// nothing reports it: the sender forwards bytes only once three
-    /// aligned packets have confirmed the TS alignment. Three or more are
-    /// delivered.
+    /// A stream of one or two TS packets is sent too. While the stream has
+    /// been aligned since its first byte (no byte skipped, no packet
+    /// boundary failed), the whole packets held are sent when every
+    /// boundary present reads `0x47`, the first byte of a partial packet
+    /// included. Once a byte was skipped or a boundary failed, `flush()`
+    /// sends nothing more until three consecutive sync bytes have confirmed
+    /// the alignment again; `finish()` sends or reports what it then holds
+    /// back.
+    ///
+    /// A flush is the caller's word that what was sent so far is a stream,
+    /// and it costs something when that is wrong. If the first 188 to 376
+    /// bytes only look aligned (`0x47` at offset 0, and at offset 188 when
+    /// more than 188 bytes are held) and are flushed before a third
+    /// boundary could refute them, those 188 or 376 bytes are sent although
+    /// they are not packets, and a real packet they cover (a stream joined
+    /// mid-packet whose first byte happens to read `0x47`) is lost with
+    /// them; without the flush the sender would have found the real
+    /// packets and sent that one. The sender then stays on the first
+    /// byte's grid, so a later `send_bytes()` or `flush()` can send one
+    /// more 188 bytes that are not a packet before a boundary fails and it
+    /// resyncs. This never happens without a flush (or `finish()`) inside
+    /// the first 376 bytes, a flush with fewer than 188 bytes held sends
+    /// nothing, and for random bytes it takes about one start in 256.
     fn flush(&self, py: Python<'_>) -> PyResult<()> {
         let res = crate::util::allow_threads_parking(py, || {
             self.owned.with_mut_unless_cancelled(|s| s.flush())
@@ -197,22 +216,28 @@ impl PySender {
         close_owned(py, &self.owned.snapshot().domain, &self.owned)
     }
 
-    /// Flush the partial and retained bundles, close the transport without
-    /// cancelling first, and raise the flush's error (the transport's
-    /// error class): the lossless end, also over a transport that queues
-    /// (an RTSP push writes its queue, then TEARDOWN). The sender is closed
-    /// either way; a later `finish()` or `close()` does nothing, and a
-    /// `finish()` after `close()` is quiet.
+    /// End the stream, then close: send what `flush()` sends, then make one
+    /// end-of-stream pass over what the sender still holds, so packets
+    /// behind damage that three consecutive sync bytes verify are sent now
+    /// (no later call would). Closes the transport without cancelling
+    /// first: the lossless end, also over a transport that queues (an RTSP
+    /// push writes its queue, then TEARDOWN). The sender is closed either
+    /// way; a later `finish()` or `close()` does nothing, and a `finish()`
+    /// after `close()` is quiet.
+    ///
+    /// Raises the first send error (the transport's error class); what was
+    /// not yet sent is then abandoned. Without one, raises the transport's
+    /// `INPUT_MALFORMED` after sending everything it could, when bytes are
+    /// left that could not be sent as whole aligned TS packets: a partial
+    /// last packet, fewer than three packets behind skipped bytes, bytes
+    /// that are not TS. Bytes the sender skipped on the way to finding its
+    /// alignment, a good packet in front of early damage among them, are
+    /// not part of that report.
     ///
     /// It does not cancel: a `send_bytes` parked on another thread keeps
     /// the shell and `finish()` waits behind it; `close()` instead if that
     /// is not wanted. After `cancel_handle().cancel()` it raises `CLOSED`,
     /// buffered data included.
-    ///
-    /// A stream of one or two aligned TS packets is not delivered, and
-    /// nothing reports it: the sender forwards bytes only once three
-    /// aligned packets have confirmed the TS alignment. Three or more are
-    /// delivered.
     fn finish(&self, py: Python<'_>) -> PyResult<()> {
         // lossless shutdown: drains through the transport, documented to wait behind a send in flight
         match crate::util::allow_threads_parking(py, || {

@@ -461,10 +461,17 @@ it into 7-packet (1316-byte) SRT bundles internally. Call `flush()` after
 the last push to emit a partial bundle, or end with `finish()`: it
 flushes, closes the transport without cancelling first and raises the
 flush's error, so a transport that queues (an RTSP push) writes what it
-holds. A stream of one or two aligned TS packets is not delivered by
-either, and nothing reports it: the sender forwards bytes only once three
-aligned packets have confirmed the TS alignment; three or more are
-delivered. `socket_stats()` returns the
+holds. Both send a stream of any length that has been aligned since its
+first byte, one or two packets included. `finish()` also makes one last
+pass over what the sender holds (good packets behind damage that three
+sync bytes verify are sent) and then raises `INPUT_MALFORMED` (the
+transport's class) if bytes are left that it could not send as whole TS
+packets: a partial last packet, a short run behind damage, bytes that are
+not TS. A `flush()` early in a stream that only looks aligned (a `0x47`
+at offset 0, and at 188 when more is held, in front of bytes off that
+grid) sends those 188 or 376 bytes although they are not packets; it
+never happens without a flush or `finish()` inside the first 376 bytes.
+`socket_stats()` returns the
 scheme-neutral 16-field `SocketStats`; `srt_stats()` returns the
 libsrt-rich `SrtStats` (estimated bandwidth, symmetric send/recv-side loss
 split).
@@ -492,6 +499,14 @@ with Receiver.open("srt://:9000?mode=listener") as rx:
         if e.kind not in (SrtErrorKind.CLOSED, SrtErrorKind.BROKEN):
             raise
 ```
+
+A receiving shell hands out packets once four sync bytes 188 bytes apart
+have confirmed the alignment. When the transport ends it first delivers the
+one to three whole packets it still holds, if every packet boundary present
+reads `0x47` (the first byte of a trailing partial packet included): a
+stream of one to three packets arrives, and so does the tail after a
+mid-stream resync when the receiver had found its start. They come before
+the end is reported, also when the transport ends with a `BROKEN` error.
 
 The receiving shells (`Receiver`, `DemuxReceiver`) report the address
 their open bound: `local_addr()` is `(host, port)` and `local_port()` its
@@ -2342,6 +2357,15 @@ each return a `list[PairerOutput]`; `feed` raises
 `tstrans.exceptions.DemuxError` on non-conformant input. `stats()` and
 `demuxer_stats()` return dicts; `reset_stats()` zeroes the pairing
 counters without touching demuxer stats.
+
+A signalled discontinuity (a set `discontinuity_indicator` on the video
+PID, the KLV PID, or the program's PCR PID when that PID also carries a
+stream) starts a new time base in either mode: nothing pairs across it.
+What the pairer held from before it leaves first: buffered video is paired
+against the KLV seen before the boundary or leaves as `UnpairedVideo`, and
+KLV that never paired leaves as `UnpairedKlv`. `Pairer` owns its demuxer, so
+a reconnect of whatever feeds it bytes is invisible to it, like an encoder
+restart that signals nothing: call `flush()` there yourself.
 
 ## Language-specific gotchas
 

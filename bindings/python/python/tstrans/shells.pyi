@@ -229,10 +229,20 @@ class Sender:
     def flush(self) -> None:
         """After ``cancel_handle().cancel()`` this raises ``CLOSED``, buffered data included.
 
-        A stream of one or two aligned TS packets is not delivered, and
-        nothing reports it: the sender forwards bytes only once three
-        aligned packets have confirmed the TS alignment. Three or more are
-        delivered."""
+        A stream of one or two TS packets is sent too: while the stream has
+        been aligned since its first byte, the whole packets held are sent
+        when every boundary present reads ``0x47``, the first byte of a
+        partial packet included. After a skipped byte or a failed boundary,
+        nothing more is sent until three consecutive sync bytes confirm the
+        alignment; ``finish()`` sends or reports what is then held back.
+
+        A flush while the first 188 to 376 bytes only look aligned (``0x47``
+        at offset 0, and at 188 when more is held) sends them although they
+        are not packets, and loses a real packet they cover (a stream joined
+        mid-packet); the sender then stays on that grid, so one more
+        non-packet can follow before it resyncs. Never without a flush (or
+        ``finish()``) inside the first 376 bytes; about one random start in
+        256."""
     def cancel_handle(self) -> CancelHandle: ...
     def socket_stats(self) -> SocketStats: ...
     def srt_stats(self) -> SrtStats:
@@ -249,10 +259,14 @@ class Sender:
         ``cancel_handle().cancel()`` this raises ``CLOSED``, buffered data
         included.
 
-        A stream of one or two aligned TS packets is not delivered, and
-        nothing reports it: the sender forwards bytes only once three
-        aligned packets have confirmed the TS alignment. Three or more are
-        delivered."""
+        Before closing it makes one end-of-stream pass over what is held:
+        packets behind damage that three consecutive sync bytes verify are
+        sent. Then, if no send failed, it raises the transport's
+        ``INPUT_MALFORMED`` when bytes are left that could not be sent as
+        whole aligned TS packets (a partial last packet, fewer than three
+        packets behind skipped bytes, bytes that are not TS), after sending
+        everything it could. Bytes skipped on the way to the alignment are
+        not part of that report."""
     def is_alive(self) -> bool: ...
     def __enter__(self) -> Sender: ...
     def __exit__(

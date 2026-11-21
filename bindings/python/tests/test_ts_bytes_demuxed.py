@@ -161,8 +161,8 @@ def _serve_once(payload: bytes) -> tuple[socket.socket, int]:
 
 
 def _muxed_stream(aus: int = 5) -> bytes:
-    """PAT/PMT and `aus` video AUs. The `Receiver` emits nothing before its
-    syncer has locked on four aligned packets, so the stream must be longer."""
+    """PAT/PMT and `aus` video AUs: long enough that the `Receiver`'s
+    syncer locks on four aligned packets mid-stream, not only at the end."""
     mux = Muxer(MuxerConfigBuilder().add_program(_video_only_program()).build())
     for i in range(aus):
         mux.push_video(NAL_IDR, pts=Pts90khz.from_raw(i * 3000), key_frame=True)

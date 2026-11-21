@@ -53,6 +53,12 @@ use crate::mpegts::{
 /// `reset_stats()`. Construction takes the video + KLV PIDs and an
 /// optional `PairingDemuxerConfig` (Python-side dataclass) translated
 /// to Rust at construction time.
+///
+/// A signalled discontinuity in the bytes (a set `discontinuity_indicator`
+/// on the video PID, the KLV PID, or the program's PCR PID when that PID
+/// also carries a stream) starts a new time base: nothing pairs across it.
+/// The pairer owns its demuxer, so a reconnect of the byte source is
+/// invisible here, like an encoder restart that signals nothing.
 #[pyclass(name = "Pairer", module = "tstrans.pipeline")]
 pub struct PyPairer {
     inner: PairingDemuxer,
