@@ -87,6 +87,7 @@
 //! from hostile or interrupted wire data.
 
 use crate::binding::kind::{coarsen, kind_of_demux, kind_of_transport};
+use crate::receiver::engine::{End, ReceiveEngine, Step};
 use crate::receiver::{Receiver, ReceiverConfig, ReceiverErrorSource};
 use crate::shell_error::ShellErrorKind;
 use alloc::collections::BTreeMap;
@@ -111,12 +112,6 @@ struct ReconnectEpoch {
     /// Counter snapshot from the last loop iteration; a rise means a
     /// reconnect fired since the previous `recv_event`.
     last: u64,
-    /// Set when a reconnect was detected mid-loop; consumed by the next
-    /// loop turn to yield `DemuxEvent::ReconnectDiscontinuity` before any
-    /// post-reconnect event. A `bool` rather than a queued event because
-    /// `Demuxer::reset_sync` clears the demuxer's queue and the marker
-    /// must survive that clear.
-    pending: bool,
 }
 
 /// Full receive shell: `RecvTransport → Receiver → Demuxer`.
@@ -184,17 +179,13 @@ struct ReconnectEpoch {
 /// See [`docs/reference/srt-cancel-handle.md`](https://github.com/aklofas/ts-transformer/blob/main/docs/reference/srt-cancel-handle.md) for the full cancel-handle pattern.
 pub struct DemuxReceiver<R: RecvTransport> {
     ts: Receiver<R>,
-    demux: Demuxer,
+    /// The demuxer, the owed reconnect marker and the end of the stream;
+    /// `recv_event` is its driver.
+    engine: ReceiveEngine,
     /// Aligned TS bytes handed to the demuxer; see
     /// [`DemuxReceiver::ts_bytes_demuxed`].
     #[cfg(feature = "std")]
     ts_bytes_demuxed: Arc<AtomicU64>,
-    /// Set when a terminal transport error (`TransportBroken` / `Closed`)
-    /// is observed but `Demuxer::flush` produced queued events first — the
-    /// events drain through `recv_event`'s normal fast path on subsequent
-    /// calls, and this error is returned once that queue is empty. See
-    /// the "Stream-end flush" module docs.
-    terminal_error: Option<DemuxReceiverError>,
     /// See [`ReconnectEpoch`]; installed via `set_reconnect_epoch`.
     #[cfg(feature = "std")]
     reconnect_epoch: Option<ReconnectEpoch>,
@@ -245,10 +236,9 @@ impl<R: RecvTransport> DemuxReceiver<R> {
         drop(_enter);
         Self {
             ts: Receiver::new(transport, ReceiverConfig::default()),
-            demux: Demuxer::with_config(options),
+            engine: ReceiveEngine::new(Demuxer::with_config(options)),
             #[cfg(feature = "std")]
             ts_bytes_demuxed: Arc::new(AtomicU64::new(0)),
-            terminal_error: None,
             #[cfg(feature = "std")]
             reconnect_epoch: None,
             _span: core::panic::AssertUnwindSafe(span),
@@ -285,18 +275,10 @@ impl<R: RecvTransport> DemuxReceiver<R> {
         TsBytesDemuxedHandle(Arc::clone(&self.ts_bytes_demuxed))
     }
 
-    /// Drop the syncer's buffered bytes and the demuxer's PSI/PES/CC state
-    /// — the reconnect boundary reset `ManagedDemuxReceiver` performs.
-    /// Available on every build; the no_std receiver shells never call it.
-    pub(crate) fn reset_for_reconnect(&mut self) {
-        self.ts.reset_sync();
-        self.demux.reset_sync();
-    }
-
     /// Watch a transport's reconnect counter: when it rises between
     /// packets, the just-read packet is discarded, the sync/demux state is
-    /// reset via [`Self::reset_for_reconnect`], and the next `recv_event`
-    /// yields `DemuxEvent::ReconnectDiscontinuity` first. Installed by
+    /// reset, and the next `recv_event` yields
+    /// `DemuxEvent::ReconnectDiscontinuity` first. Installed by
     /// `ManagedDemuxReceiver` at construction; the snapshot starts at 0
     /// (the counter is 0 for a freshly built managed transport).
     #[cfg(feature = "std")]
@@ -304,32 +286,13 @@ impl<R: RecvTransport> DemuxReceiver<R> {
         self.reconnect_epoch = Some(ReconnectEpoch {
             counter: reconnects,
             last: 0,
-            pending: false,
         });
     }
 
-    /// Loop-top half of the epoch observer: hand out the pending
-    /// discontinuity marker exactly once. Always `false` without an
-    /// observer (and on no_std builds, which have none).
-    #[cfg(feature = "std")]
-    fn take_pending_reconnect(&mut self) -> bool {
-        match self.reconnect_epoch.as_mut() {
-            Some(ep) if ep.pending => {
-                ep.pending = false;
-                true
-            }
-            _ => false,
-        }
-    }
-
-    #[cfg(not(feature = "std"))]
-    fn take_pending_reconnect(&mut self) -> bool {
-        false
-    }
-
-    /// Post-`next_packet` half of the epoch observer: `true` when the
-    /// counter rose since the last turn (the marker is then armed and the
-    /// caller resets state and drops the packet it just read).
+    /// The epoch observer, asked after each `next_packet`: `true` when the
+    /// counter rose since the last turn (the caller then resets state and
+    /// drops the packet it just read). Always `false` without an observer
+    /// (and on no_std builds, which have none).
     #[cfg(feature = "std")]
     fn observe_reconnect(&mut self) -> bool {
         let Some(ep) = self.reconnect_epoch.as_mut() else {
@@ -338,7 +301,6 @@ impl<R: RecvTransport> DemuxReceiver<R> {
         let current = ep.counter.load(Ordering::Acquire);
         if current > ep.last {
             ep.last = current;
-            ep.pending = true;
             true
         } else {
             false
@@ -365,6 +327,14 @@ impl<R: RecvTransport> DemuxReceiver<R> {
     /// - The demuxer rejects a packet in strict mode → `Err(e)` with `e.kind`
     ///   of `InputMalformed` — inspect `e.source` for the inner
     ///   [`DemuxReceiverErrorSource::Demux`] variant.
+    ///
+    /// # After the end
+    ///
+    /// The first `Ok(None)`, or the first error of kind `TransportBroken` or
+    /// `Closed`, is final: the transport is not read again and every later
+    /// call returns that same result, whatever the transport would answer
+    /// by then (an error is rebuilt from the transport error that ended the
+    /// stream). `Backpressure` and `InputMalformed` are not ends.
     ///
     /// # MalformedPes note
     ///
@@ -442,67 +412,38 @@ impl<R: RecvTransport> DemuxReceiver<R> {
     /// ```
     pub fn recv_event(&mut self) -> Result<Option<DemuxEvent>, DemuxReceiverError> {
         loop {
-            // Managed shells only: a reconnect detected on the previous turn
-            // is surfaced BEFORE the demuxer's queue — after the reset that
-            // queue is empty, but ordering the boundary marker first is
-            // what guarantees no post-reconnect event precedes it.
-            if self.take_pending_reconnect() {
-                return Ok(Some(DemuxEvent::ReconnectDiscontinuity));
-            }
-            // Fast path: demuxer already has a queued event.
-            if let Some(e) = self.demux.next_event() {
-                return Ok(Some(e));
-            }
-            // A previous call hit a terminal transport error and flushed the
-            // demuxer; the events that produced have now drained through the
-            // fast path above. Surface the error that ended the loop.
-            if let Some(err) = self.terminal_error.take() {
-                return Err(err);
+            // The engine's order: a reconnect marker before anything of the
+            // new connection, then the demuxer's queue (after an end, the
+            // events its flush produced), then the end itself. Once it has
+            // an end the transport is not read again.
+            match self.engine.poll() {
+                Step::Event(e) => return Ok(Some(e)),
+                Step::Ended(Ok(())) => return Ok(None),
+                Step::Ended(Err(te)) => return Err(te.into()),
+                Step::NeedInput => {}
             }
             // Pull the next aligned 188-byte TS packet.
             let pkt = match self.ts.next_packet() {
                 Ok(p) => p,
-                Err(e) if e.kind == crate::shell_error::ShellErrorKind::EndOfStream => {
-                    // Stream end: flush any partial PES sitting in reassembly
-                    // (e.g. the final video AU whose PES length field is 0).
-                    self.demux.flush();
-                    // Drain any events the flush produced before signaling EOF.
-                    if let Some(ev) = self.demux.next_event() {
-                        return Ok(Some(ev));
-                    }
-                    return Ok(None);
-                }
-                Err(e)
-                    if matches!(
-                        e.kind,
-                        crate::shell_error::ShellErrorKind::TransportBroken
-                            | crate::shell_error::ShellErrorKind::Closed
-                    ) =>
-                {
-                    // Terminal, but not a clean peer EOS: the socket died, or
-                    // a caller closed/cancelled from another thread while
-                    // this call was blocked. Either way no further
-                    // `next_packet` call will make progress, so flush the
-                    // same partial-PES state the EndOfStream path recovers —
-                    // see the "Stream-end flush" module docs — before
-                    // surfacing the error. `Backpressure` deliberately does
-                    // NOT hit this arm: it means "retry", not "the loop is
-                    // over", and flushing there would prematurely finalize
-                    // an access unit that's still being received.
-                    self.demux.flush();
-                    let ReceiverErrorSource::Transport(te) = e.source;
-                    let err = DemuxReceiverError::from(te);
-                    if let Some(ev) = self.demux.next_event() {
-                        self.terminal_error = Some(err);
-                        return Ok(Some(ev));
-                    }
-                    return Err(err);
-                }
                 Err(e) => {
-                    // Re-classify via DemuxReceiverError's From<TransportError>
-                    // impl so kind routing is applied.
                     let ReceiverErrorSource::Transport(te) = e.source;
-                    return Err(te.into());
+                    match e.kind {
+                        // Peer end-of-stream.
+                        ShellErrorKind::EndOfStream => self.engine.handle_end(End::Clean),
+                        // Terminal, but not a clean peer EOS: the socket
+                        // died, or a caller closed/cancelled from another
+                        // thread while this call was blocked. Either way no
+                        // further `next_packet` call will make progress.
+                        ShellErrorKind::TransportBroken | ShellErrorKind::Closed => {
+                            self.engine.handle_end(End::Failed(te));
+                        }
+                        // `Backpressure` means "retry", not "the loop is
+                        // over": the engine is not told, so nothing is
+                        // flushed (that would finalize an access unit still
+                        // being received) and nothing is kept.
+                        _ => return Err(te.into()),
+                    }
+                    continue;
                 }
             };
             // Managed shells only: the reconnect check sits AFTER
@@ -515,7 +456,8 @@ impl<R: RecvTransport> DemuxReceiver<R> {
             // The dropped packet was never parsed and its bytes are not
             // trustworthy.
             if self.observe_reconnect() {
-                self.reset_for_reconnect();
+                self.ts.reset_sync();
+                self.engine.handle_reconnect();
                 continue;
             }
             // Counted here, after the splice drop above: a dropped packet
@@ -533,8 +475,8 @@ impl<R: RecvTransport> DemuxReceiver<R> {
             // MalformedPes is converted to a NonConformant event by the inner
             // demuxer. In strict mode it can also return StrictRejection or
             // MalformedPes.
-            self.demux
-                .feed_aligned(&pkt)
+            self.engine
+                .handle_packet(&pkt)
                 .map_err(DemuxReceiverError::from)?;
         }
     }
@@ -707,7 +649,7 @@ impl<R: RecvTransport> DemuxReceiver<R> {
     /// the inner `Demuxer`.
     pub fn stats(&self) -> DemuxReceiverStats {
         let ts = self.ts.stats();
-        let dx = self.demux.stats();
+        let dx = self.engine.demuxer().stats();
         DemuxReceiverStats {
             bytes_received: ts.bytes_received,
             packets_received: ts.packets_received,
@@ -756,14 +698,14 @@ impl<R: RecvTransport> DemuxReceiver<R> {
         &self,
         pid: u16,
     ) -> Option<tst_core::mpegts::stats::StreamCodecStats> {
-        self.demux.stream_codec_stats(pid)
+        self.engine.demuxer().stream_codec_stats(pid)
     }
 
     /// Reset all counters to zero. Delegates to both the inner `Receiver`
     /// and the inner `Demuxer`.
     pub fn reset_stats(&mut self) {
         self.ts.reset_stats();
-        self.demux.reset_stats();
+        self.engine.demuxer_mut().reset_stats();
     }
 }
 

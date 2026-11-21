@@ -283,3 +283,218 @@ fn demux_receiver_flushes_pending_audio_pid_on_transport_broken() {
          corrupted)"
     );
 }
+
+// ---------------------------------------------------------------------------
+// What is not an end, and what follows one
+// ---------------------------------------------------------------------------
+
+/// Serves its answers in order, one per read, then `Closed` for ever.
+/// `reads` counts every call.
+struct Answers {
+    answers: std::collections::VecDeque<Result<[u8; 188], TransportError>>,
+    reads: std::sync::Arc<std::sync::atomic::AtomicU32>,
+}
+
+impl Answers {
+    fn new(answers: impl IntoIterator<Item = Result<[u8; 188], TransportError>>) -> Self {
+        Self {
+            answers: answers.into_iter().collect(),
+            reads: std::sync::Arc::default(),
+        }
+    }
+}
+
+impl tst_core::transport::RecvTransport for Answers {
+    fn recv_bytes(&mut self, buf: &mut [u8]) -> Result<usize, TransportError> {
+        self.reads.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        match self.answers.pop_front() {
+            Some(Ok(packet)) => {
+                buf[..188].copy_from_slice(&packet);
+                Ok(188)
+            }
+            Some(Err(e)) => Err(e),
+            None => Err(TransportError::Closed),
+        }
+    }
+
+    fn max_payload(&self) -> usize {
+        188
+    }
+
+    fn is_alive(&self) -> bool {
+        true
+    }
+}
+
+/// Payload bytes of one marked access unit: four TS packets.
+const AU_LEN: usize = 600;
+
+/// One H.264 program; each access unit is `AU_LEN` copies of its marker.
+fn marked_stream(markers: &[u8]) -> Vec<[u8; 188]> {
+    let mut prog = MuxerProgramConfigBuilder::new(1, 0x1000);
+    prog.add_video(0x100, VideoCodec::H264);
+    let mut b = MuxerConfig::builder();
+    b.add_program(prog.build());
+    let mut mux = Muxer::new(b.build().unwrap()).unwrap();
+    let mut bytes = Vec::new();
+    for (i, &marker) in markers.iter().enumerate() {
+        let mut au = vec![0x00, 0x00, 0x00, 0x01, 0x65];
+        au.resize(5 + AU_LEN, marker);
+        mux.push_video(&au, Pts90khz::new(i as i64 * 3003), true)
+            .unwrap();
+        bytes.extend_from_slice(&drain_mux(&mut mux));
+    }
+    to_ts_packets(&bytes)
+}
+
+/// How many bytes of `raw` are `marker`.
+fn count(raw: &[u8], marker: u8) -> usize {
+    raw.iter().filter(|&&b| b == marker).count()
+}
+
+/// `Backpressure` arrives with half of an access unit received (two of its
+/// four packets). It is handed to the caller and finalises nothing: the unit
+/// comes out once, whole, when the rest has arrived. A flush at that point
+/// would hand out the first half as one sample and the second as another.
+#[test]
+fn backpressure_inside_a_pes_finalises_nothing() {
+    let packets = marked_stream(&[0xA1, 0xB2]);
+    // PAT, PMT and the first two packets of unit A, then the pause.
+    let pause_at = 4;
+    assert!(
+        packets[2][1] & 0x40 != 0 && packets[3..6].iter().all(|p| p[1] & 0x40 == 0),
+        "test setup: unit A is packets 2 to 5"
+    );
+    let mut answers: Vec<Result<[u8; 188], TransportError>> =
+        packets.iter().copied().map(Ok).collect();
+    answers.insert(
+        pause_at,
+        Err(TransportError::Backpressure {
+            msg: "nothing yet".into(),
+            errno_code: None,
+        }),
+    );
+    let mut rx = DemuxReceiver::new(Answers::new(answers));
+
+    let mut trace: Vec<String> = Vec::new();
+    loop {
+        match rx.recv_event() {
+            Ok(Some(DemuxEvent::Sample {
+                payload: SamplePayload::Video { raw, .. },
+                ..
+            })) => trace.push(format!(
+                "sample A1x{} B2x{}",
+                count(&raw, 0xA1),
+                count(&raw, 0xB2)
+            )),
+            Ok(Some(DemuxEvent::ProgramMap(_))) => trace.push("program map".into()),
+            Ok(Some(other)) => trace.push(format!("{other:?}")),
+            Ok(None) => break,
+            Err(e) if e.kind == ShellErrorKind::Backpressure => trace.push("backpressure".into()),
+            Err(e) => panic!("the stream ends cleanly: {e}"),
+        }
+    }
+
+    assert_eq!(
+        trace,
+        [
+            "program map",
+            "backpressure",
+            "sample A1x600 B2x0",
+            "sample A1x0 B2x600",
+        ]
+    );
+}
+
+/// The first terminal result of each kind, then the same transport asked
+/// again: one that would go on answering DATA after its end.
+fn asked_again_after(end: TransportError) -> (Vec<String>, u32, u32) {
+    let packets = marked_stream(&[0xA1, 0xB2, 0xC3, 0xD4]);
+    let (head, tail) = packets.split_at(8);
+    let answers = head
+        .iter()
+        .copied()
+        .map(Ok)
+        .chain([Err(end)])
+        .chain(tail.iter().copied().map(Ok));
+    let transport = Answers::new(answers);
+    let reads = transport.reads.clone();
+    let mut rx = DemuxReceiver::new(transport);
+
+    let outcome = |r: Result<Option<DemuxEvent>, tst_pipeline::DemuxReceiverError>| match r {
+        Ok(Some(_)) => "event".to_string(),
+        Ok(None) => "end".to_string(),
+        Err(e) => format!("{:?}: {}", e.kind, e.source),
+    };
+    let first = loop {
+        let o = outcome(rx.recv_event());
+        if o != "event" {
+            break o;
+        }
+    };
+    let reads_at_the_end = reads.load(std::sync::atomic::Ordering::SeqCst);
+    let mut results = vec![first];
+    for _ in 0..3 {
+        results.push(outcome(rx.recv_event()));
+    }
+    (
+        results,
+        reads_at_the_end,
+        reads.load(std::sync::atomic::Ordering::SeqCst),
+    )
+}
+
+/// After its first terminal result a `DemuxReceiver` never reads its
+/// transport again and answers every later call with that same result,
+/// whatever the transport would have said next.
+#[test]
+fn the_latch_stops_reading_a_transport_that_would_go_on() {
+    for (end, expected) in [
+        (TransportError::Closed, "end"),
+        (
+            broken("the link died"),
+            "TransportBroken: transport broken: the link died",
+        ),
+        (
+            TransportError::ExplicitClose,
+            "Closed: transport explicitly closed by caller",
+        ),
+    ] {
+        let (results, reads_at_the_end, reads_after) = asked_again_after(end);
+        assert_eq!(results, [expected; 4]);
+        assert_eq!(
+            reads_after, reads_at_the_end,
+            "{expected}: the transport was read after the end"
+        );
+    }
+}
+
+/// A transport that answers `Broken` once and `Closed` from then on, as the
+/// socket transports do once they have latched dead: the receiver reports
+/// the failure on every call, never a clean end after it.
+#[test]
+fn after_a_terminal_error_the_same_error_is_reported_again() {
+    let packets = marked_stream(&[0xA1, 0xB2]);
+    let answers = packets
+        .iter()
+        .copied()
+        .map(Ok)
+        .chain([Err(broken("the link died"))]);
+    let mut rx = DemuxReceiver::new(Answers::new(answers));
+    while let Ok(Some(_)) = rx.recv_event() {}
+    for call in 0..3 {
+        let e = rx
+            .recv_event()
+            .expect_err("a failed stream does not end cleanly later");
+        assert_eq!(e.kind, ShellErrorKind::TransportBroken, "call {call}");
+        assert!(
+            matches!(
+                &e.source,
+                DemuxReceiverErrorSource::Transport(TransportError::Broken { msg, .. })
+                    if msg == "the link died"
+            ),
+            "call {call}: {:?}",
+            e.source
+        );
+    }
+}

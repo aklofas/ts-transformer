@@ -13,6 +13,7 @@
 //! time. On a network gap or resync, the syncer silently re-hunts and
 //! returns the next aligned packet.
 
+pub(crate) mod engine;
 pub mod sync;
 
 use alloc::sync::Arc;
