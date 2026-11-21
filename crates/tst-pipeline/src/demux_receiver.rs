@@ -619,8 +619,9 @@ impl<R: RecvTransport> DemuxReceiver<R> {
 /// transport error from a clean end of stream.
 ///
 /// After a `TransportBroken` error, yielded once, the next `next()` is
-/// `None`. After a cancel (`Closed`) every `next()` is that error, so the
-/// iterator never ends by itself: stop at the first `Err` (`collect()` into
+/// `None`, unless a cancel is latched by then or since: it is then that
+/// error on every call. After a cancel (`Closed`) every `next()` is that
+/// error, so the iterator never ends by itself: stop at the first `Err` (`collect()` into
 /// a `Result` does), as for any error that is not `Backpressure` or
 /// `InputMalformed`.
 impl<R: RecvTransport> Iterator for DemuxReceiver<R> {
