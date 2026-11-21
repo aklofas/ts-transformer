@@ -12,12 +12,14 @@
 //! injection — no SRT loopback, no temp files, no sleep beyond the
 //! policy backoff (zero in tests).
 
-use crate::common::{ScriptedRecv, broken, fast_policy};
+use crate::common::{ScriptedRecv, broken, drain_mux, fast_policy, to_ts_packets};
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
-use tst_core::mpegts::demux::DemuxEvent;
+use tst_core::mpegts::common::Pts90khz;
+use tst_core::mpegts::demux::{DemuxEvent, SamplePayload};
+use tst_core::mpegts::mux::{Muxer, MuxerConfig, MuxerProgramConfigBuilder, VideoCodec};
 use tst_core::transport::{EndReason, TransportError};
 use tst_pipeline::{ManagedDemuxReceiver, ManagedDemuxReceiverConfig, ManagedRecvTransport};
 
@@ -239,91 +241,191 @@ fn reconnect_event_is_observable_via_public_api() {
 }
 
 // ---------------------------------------------------------------------------
-// Test 3 — Reconnect during partial PES (multi-packet sample)
+// Test 3 — A reconnect inside a PES
 // ---------------------------------------------------------------------------
 
-/// Build a 2-program PAT + PMT pair that declares a video PID with a
-/// known stream type. Returns the PAT + PMT packets so the test can
-/// inject them as the leading packets of each phase.
-///
-/// This is the closest a small unit-style fixture can get to "a
-/// partial PES on a known video PID": without a full PSI fixture the
-/// demuxer never knows the PES PID and silently drops its packets
-/// (which is its job for unknown PIDs). With the PAT+PMT, the demuxer
-/// classifies the packets and starts PES reassembly — making
-/// `reset_sync` observable.
-///
-/// We don't fully exercise the PES reassembly path here (that's
-/// covered by `pipeline_receiver.rs` and the fixtures-based tests);
-/// the test asserts the easier-to-verify property: NO panic, no
-/// stream-type-confusion event after a reconnect that interrupts a
-/// PMT in flight.
-#[test]
-fn reconnect_during_in_flight_psi_drops_partial_state() {
-    // First connection: PAT-only chunk that DOES NOT include the PMT (so the
-    // demuxer's PSI assembler holds a registered PMT PID but no
-    // assembled PMT section).
-    //
-    // For a true PSI in-flight test we'd build a multi-packet PMT
-    // truncated mid-section. The synthetic-fixture toolchain at
-    // crates/tst-core/tests/tools is too heavyweight to import here;
-    // instead we use the simpler invariant: any aligned-but-
-    // semantically-empty stream survives reconnect and surfaces only
-    // a ReconnectDiscontinuity (not a phantom PMT, no garbage Sample,
-    // no Unrecoverable).
-    let p1_packets: Vec<[u8; 188]> = (0..5).map(|i| ts_packet(0x0FFF, i as u8)).collect();
-    let p1 = pack_chunk(&p1_packets);
-    let inner = ScriptedRecv::new(vec![p1], broken("phase 1 end")).with_max_payload(4096);
+/// Payload bytes of one video access unit: four TS packets.
+const AU_LEN: usize = 600;
 
-    let calls = Arc::new(AtomicU32::new(0));
-    let calls_cl = calls.clone();
-    let factory = Box::new(move || -> Result<ScriptedRecv, TransportError> {
-        let n = calls_cl.fetch_add(1, Ordering::SeqCst);
-        if n == 0 {
-            let p2_packets: Vec<[u8; 188]> = (0..5).map(|i| ts_packet(0x0EEE, i as u8)).collect();
-            Ok(
-                ScriptedRecv::new(vec![pack_chunk(&p2_packets)], broken("phase 2 end"))
-                    .with_max_payload(4096),
-            )
-        } else {
-            Err(broken("exhaust"))
+/// An access unit whose payload is `AU_LEN` copies of `marker`, so a sample
+/// says which unit, and so which connection, each of its bytes came from.
+fn marked_au(marker: u8) -> Vec<u8> {
+    let mut au = vec![0x00, 0x00, 0x00, 0x01, 0x65];
+    au.resize(5 + AU_LEN, marker);
+    au
+}
+
+/// One connection's stream from its own muxer: PAT and PMT before every
+/// access unit, one unit per marker.
+fn marked_stream(markers: &[u8]) -> Vec<[u8; 188]> {
+    let mut prog = MuxerProgramConfigBuilder::new(1, 0x1000);
+    prog.add_video(0x100, VideoCodec::H264);
+    let mut b = MuxerConfig::builder();
+    b.add_program(prog.build());
+    b.psi_interval_ms(10);
+    let mut mux = Muxer::new(b.build().unwrap()).unwrap();
+    let mut out = Vec::new();
+    for (i, &marker) in markers.iter().enumerate() {
+        mux.push_video(&marked_au(marker), Pts90khz::new(i as i64 * 3003), true)
+            .unwrap();
+        out.extend(to_ts_packets(&drain_mux(&mut mux)));
+    }
+    out
+}
+
+/// What the tests below read off an event: a sample's distinct marker bytes
+/// and how many marker bytes it holds, or the event's kind.
+#[derive(Debug, PartialEq, Eq)]
+enum Seen {
+    ProgramMap,
+    Reconnect,
+    Sample {
+        markers: Vec<u8>,
+        marker_bytes: usize,
+    },
+    Other,
+}
+
+const MARKERS: [u8; 6] = [0xA1, 0xB2, 0xC3, 0xD4, 0xE5, 0xF6];
+
+fn seen(e: &DemuxEvent) -> Seen {
+    match e {
+        DemuxEvent::ProgramMap(_) => Seen::ProgramMap,
+        DemuxEvent::ReconnectDiscontinuity => Seen::Reconnect,
+        DemuxEvent::Sample {
+            payload: SamplePayload::Video { raw, .. },
+            ..
+        } => {
+            let mut markers: Vec<u8> = raw
+                .iter()
+                .copied()
+                .filter(|b| MARKERS.contains(b))
+                .collect();
+            let marker_bytes = markers.len();
+            markers.sort_unstable();
+            markers.dedup();
+            Seen::Sample {
+                markers,
+                marker_bytes,
+            }
         }
-    });
+        _ => Seen::Other,
+    }
+}
 
-    let managed = ManagedRecvTransport::new(inner, factory, fast_policy(Some(2)))
+/// A whole access unit of one marker.
+fn whole(marker: u8) -> Seen {
+    Seen::Sample {
+        markers: vec![marker],
+        marker_bytes: AU_LEN,
+    }
+}
+
+/// Every event of a managed receiver over `first` and then `second`, until
+/// the reconnect budget gives up.
+fn events_over_two_connections(first: ScriptedRecv, second: ScriptedRecv) -> Vec<Seen> {
+    let mut second = Some(second);
+    let factory = Box::new(move || second.take().ok_or_else(|| broken("nobody answers")));
+    let managed = ManagedRecvTransport::new(first, factory, fast_policy(Some(2)))
         .expect("the policy validates");
     let mut rx = ManagedDemuxReceiver::new(managed, ManagedDemuxReceiverConfig::default());
-
-    let mut iters = 0;
-    let mut emitted_reconnect = false;
-    let mut emitted_sample = false;
-    let mut emitted_nonconformant = false;
-    loop {
-        iters += 1;
-        assert!(iters < 1000, "test loop should bound");
-        match rx.recv_event() {
-            Ok(Some(DemuxEvent::ReconnectDiscontinuity)) => emitted_reconnect = true,
-            Ok(Some(DemuxEvent::Sample { .. })) => emitted_sample = true,
-            Ok(Some(DemuxEvent::NonConformant { .. })) => emitted_nonconformant = true,
-            Ok(Some(_)) => {}
-            Ok(None) => break,
-            Err(_) => break,
-        }
+    let mut events = Vec::new();
+    while let Some(e) = rx.recv_event().expect("a give-up is a clean end") {
+        events.push(seen(&e));
+        assert!(events.len() < 1000, "the receiver never ended");
     }
-    assert!(emitted_reconnect);
-    // PIDs 0x0FFF and 0x0EEE are unknown to the demuxer (no PAT/PMT
-    // declares them), so it MUST NOT emit phantom Sample events.
-    // This is the critical invariant: cross-reconnect state would
-    // have caused either a fake assembled sample or a malformed
-    // event.
+    assert_eq!(rx.reconnects_count(), 1);
+    events
+}
+
+/// The connection dies with an access unit half received: two of unit B's
+/// four packets, behind a real PAT and PMT and a whole unit A. The next
+/// connection brings units C, D and E from a muxer of its own.
+///
+/// Nothing may be built from bytes of both connections. The half of B is
+/// dropped: it is neither delivered nor closed by the next connection's
+/// first unit start. The program of the old connection is forgotten, so the
+/// new connection's PMT is announced again, and C, which arrives before the
+/// first PAT that survives the reconnect, is the documented loss.
+#[test]
+fn a_reconnect_inside_a_pes_delivers_no_unit_built_from_both_connections() {
+    let mut old = marked_stream(&[0xA1, 0xB2]);
+    let b_starts = old.len() - 4;
     assert!(
-        !emitted_sample,
-        "no PAT/PMT was provided — Sample events would indicate stream-type confusion"
+        old[b_starts][1] & 0x40 != 0 && old[b_starts + 1..].iter().all(|p| p[1] & 0x40 == 0),
+        "test setup: unit B is the last four packets"
     );
-    // NonConformant events for transport_error_indicator or invalid
-    // adaptation-field bits are NOT expected on these well-formed
-    // packets either.
-    assert!(!emitted_nonconformant);
+    old.truncate(b_starts + 2);
+    let new = marked_stream(&[0xC3, 0xD4, 0xE5]);
+
+    let events = events_over_two_connections(
+        ScriptedRecv::packets(old, broken("the link died")),
+        ScriptedRecv::packets(new, broken("the link died")),
+    );
+
+    assert_eq!(
+        events,
+        [
+            Seen::ProgramMap,
+            whole(0xA1),
+            Seen::Reconnect,
+            Seen::ProgramMap,
+            whole(0xD4),
+            whole(0xE5),
+        ]
+    );
+}
+
+/// With reads of seven packets and a connection that dies inside a TS
+/// packet: every sample before the marker holds bytes of the old connection
+/// only, every sample after it bytes of the new one only, and each side has
+/// one. A media event of the new connection ahead of the marker, or a unit
+/// spliced across it, fails here.
+#[test]
+fn no_media_event_precedes_the_reconnect_marker() {
+    let mut old = pack_chunk(&marked_stream(&[0xA1, 0xB2]));
+    // The start of one more packet: the dead tail the syncer is left with.
+    old.extend_from_slice(&marked_stream(&[0xF6])[2][..100]);
+    let new = pack_chunk(&marked_stream(&[0xC3, 0xD4, 0xE5, 0xF6]));
+    let reads = |bytes: &[u8]| -> Vec<Vec<u8>> { bytes.chunks(1316).map(<[u8]>::to_vec).collect() };
+
+    let events = events_over_two_connections(
+        ScriptedRecv::new(reads(&old), broken("the link died")),
+        ScriptedRecv::new(reads(&new), broken("the link died")),
+    );
+
+    let markers: Vec<usize> = (0..events.len())
+        .filter(|&i| events[i] == Seen::Reconnect)
+        .collect();
+    assert_eq!(markers.len(), 1, "{events:?}");
+    let samples = |side: &[Seen]| -> Vec<Vec<u8>> {
+        side.iter()
+            .filter_map(|e| match e {
+                Seen::Sample { markers, .. } => Some(markers.clone()),
+                _ => None,
+            })
+            .collect()
+    };
+    let (before, after) = (
+        samples(&events[..markers[0]]),
+        samples(&events[markers[0]..]),
+    );
+    assert!(!before.is_empty() && !after.is_empty(), "{events:?}");
+    assert!(
+        before.iter().flatten().all(|m| [0xA1, 0xB2].contains(m)),
+        "a sample ahead of the marker holds bytes of the new connection: {events:?}"
+    );
+    assert!(
+        after
+            .iter()
+            .flatten()
+            .all(|m| [0xC3, 0xD4, 0xE5, 0xF6].contains(m)),
+        "a sample behind the marker holds bytes of the old connection: {events:?}"
+    );
+    assert!(
+        before.iter().chain(&after).all(|m| m.len() == 1),
+        "a sample holds bytes of two units: {events:?}"
+    );
 }
 
 // ---------------------------------------------------------------------------
