@@ -27,13 +27,14 @@ pub(crate) fn reader_setup(mut p: RawPublisher, path: &str, transport: &str) -> 
     p.read_responses(1)
 }
 
-/// A started server with a unicast local mount `/live` and two publish
-/// mounts, `/pub` and `/pub2`.
+/// A started server with a unicast local mount `/live` and three publish
+/// mounts, `/pub`, `/pub2` and `/pub3`.
 pub(crate) fn started(b: RtspServerBuilder) -> RtspServer {
     let server = b.build().unwrap();
     server.add_mount("/live", make_muxer_cfg()).unwrap();
     server.add_publish_mount("/pub").unwrap();
     server.add_publish_mount("/pub2").unwrap();
+    server.add_publish_mount("/pub3").unwrap();
     server.start().unwrap();
     server
 }
@@ -74,6 +75,16 @@ pub(crate) fn every_spelling(connect: impl Fn() -> RawPublisher) -> Vec<(&'stati
             "reader interleaved",
             &reader_setup(connect(), "/live", "RTP/AVP/TCP;unicast;interleaved=0-1"),
         ),
+        // The kind decides, not the parameters: an interleaved request that
+        // also names a `client_port` is interleaved.
+        row(
+            "reader interleaved with a client_port",
+            &reader_setup(
+                connect(),
+                "/live",
+                &format!("RTP/AVP/TCP;unicast;interleaved=0-1;client_port={cp}"),
+            ),
+        ),
     ];
     let mut udp_publisher = connect();
     assert_eq!(udp_publisher.announce("/pub", SDP_MP2T), 200);
@@ -85,11 +96,23 @@ pub(crate) fn every_spelling(connect: impl Fn() -> RawPublisher) -> Vec<(&'stati
     assert_eq!(tcp_publisher.announce("/pub2", SDP_MP2T), 200);
     let (st, _) = tcp_publisher.setup_interleaved("/pub2", "streamid=0");
     rows.push(("publisher interleaved mode=record", st, false));
+    let mut stray_port_publisher = connect();
+    assert_eq!(stray_port_publisher.announce("/pub3", SDP_MP2T), 200);
+    let req = format!(
+        "SETUP {}/streamid=0 RTSP/1.0\r\nCSeq: 9\r\n\
+         Transport: RTP/AVP/TCP;unicast;interleaved=0-1;client_port={cp};mode=record\r\n\r\n",
+        stray_port_publisher.uri("/pub3")
+    );
+    stray_port_publisher.write_raw(req.as_bytes());
+    rows.push(row(
+        "publisher interleaved with a client_port mode=record",
+        &stray_port_publisher.read_responses(1),
+    ));
     rows
 }
 
 /// What a server that does not allow UDP media answers.
-pub(crate) const REFUSED: [(&str, u16, bool); 5] = [
+pub(crate) const REFUSED: [(&str, u16, bool); 7] = [
     ("reader unicast UDP", 461, false),
     (
         "reader multicast word with client_port, unicast mount",
@@ -97,12 +120,18 @@ pub(crate) const REFUSED: [(&str, u16, bool); 5] = [
         false,
     ),
     ("reader interleaved", 200, false),
+    ("reader interleaved with a client_port", 200, false),
     ("publisher UDP mode=record", 461, false),
     ("publisher interleaved mode=record", 200, false),
+    (
+        "publisher interleaved with a client_port mode=record",
+        200,
+        false,
+    ),
 ];
 
 /// What a server that allows UDP media answers.
-pub(crate) const ALLOWED: [(&str, u16, bool); 5] = [
+pub(crate) const ALLOWED: [(&str, u16, bool); 7] = [
     ("reader unicast UDP", 200, true),
     (
         "reader multicast word with client_port, unicast mount",
@@ -110,8 +139,14 @@ pub(crate) const ALLOWED: [(&str, u16, bool); 5] = [
         true,
     ),
     ("reader interleaved", 200, false),
+    ("reader interleaved with a client_port", 200, false),
     ("publisher UDP mode=record", 200, true),
     ("publisher interleaved mode=record", 200, false),
+    (
+        "publisher interleaved with a client_port mode=record",
+        200,
+        false,
+    ),
 ];
 
 #[test]
