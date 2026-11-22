@@ -1,6 +1,8 @@
 //! Helpers for the network (`net_*`) tst-c test binaries only: they open sockets,
 //! so the non-network binaries must not include this file.
 
+use std::io::{Read, Write};
+use std::net::TcpStream;
 use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
@@ -49,4 +51,25 @@ pub(crate) fn parked<T: 'static>(
 pub(crate) fn free_udp_port() -> u16 {
     let s = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
     s.local_addr().unwrap().port()
+}
+
+/// Write one RTSP request and read the response head (up to CRLFCRLF).
+pub(crate) fn request(tcp: &mut TcpStream, req: &str) -> String {
+    tcp.write_all(req.as_bytes()).expect("request written");
+    let mut buf = Vec::new();
+    let mut chunk = [0u8; 1024];
+    while !buf.windows(4).any(|w| w == b"\r\n\r\n") {
+        let n = tcp.read(&mut chunk).expect("server answered in time");
+        assert!(n > 0, "server closed before answering {req:?}");
+        buf.extend_from_slice(&chunk[..n]);
+    }
+    String::from_utf8_lossy(&buf).into_owned()
+}
+
+/// The status code of a response head.
+pub(crate) fn status(resp: &str) -> u16 {
+    resp.split_whitespace()
+        .nth(1)
+        .and_then(|s| s.parse().ok())
+        .unwrap_or_else(|| panic!("no status line in {resp:?}"))
 }

@@ -17,6 +17,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
+use crate::common_net::{request, status};
 use tst_core::mpegts::common::Pts90khz;
 use tst_core::mpegts::mux::{MuxerConfig, MuxerProgramConfigBuilder, VideoCodec};
 
@@ -68,26 +69,6 @@ fn start_server(accept_unregistered: bool) -> (*mut tstrans::TstRtspServer, u16)
         }
     }
     panic!("could not start an RTSP server on a loopback port");
-}
-
-/// Write one request and read the response head (up to CRLFCRLF).
-fn request(tcp: &mut TcpStream, req: &str) -> String {
-    tcp.write_all(req.as_bytes()).expect("request written");
-    let mut buf = Vec::new();
-    let mut chunk = [0u8; 1024];
-    while !buf.windows(4).any(|w| w == b"\r\n\r\n") {
-        let n = tcp.read(&mut chunk).expect("server answered in time");
-        assert!(n > 0, "server closed before answering {req:?}");
-        buf.extend_from_slice(&chunk[..n]);
-    }
-    String::from_utf8_lossy(&buf).into_owned()
-}
-
-fn status(resp: &str) -> u16 {
-    resp.split_whitespace()
-        .nth(1)
-        .and_then(|s| s.parse().ok())
-        .unwrap_or_else(|| panic!("no status line in {resp:?}"))
 }
 
 /// A minimal MP2T publisher: ANNOUNCE, SETUP `mode=record` over

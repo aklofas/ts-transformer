@@ -30,6 +30,7 @@ use tstrans::{
 };
 
 use crate::common::{last_error_msg, scaled};
+use crate::common_net::{request, status};
 
 /// A builder for a plain server on a kernel-picked loopback port.
 fn builder() -> *mut TstRtspServerBuilder {
@@ -73,26 +74,6 @@ fn connect(port: u16) -> TcpStream {
     tcp.set_read_timeout(Some(scaled(Duration::from_secs(5))))
         .unwrap();
     tcp
-}
-
-/// Write one request and read the response head (up to CRLFCRLF).
-fn request(tcp: &mut TcpStream, req: &str) -> String {
-    tcp.write_all(req.as_bytes()).expect("request written");
-    let mut buf = Vec::new();
-    let mut chunk = [0u8; 1024];
-    while !buf.windows(4).any(|w| w == b"\r\n\r\n") {
-        let n = tcp.read(&mut chunk).expect("server answered in time");
-        assert!(n > 0, "server closed before answering {req:?}");
-        buf.extend_from_slice(&chunk[..n]);
-    }
-    String::from_utf8_lossy(&buf).into_owned()
-}
-
-fn status(resp: &str) -> u16 {
-    resp.split_whitespace()
-        .nth(1)
-        .and_then(|s| s.parse().ok())
-        .unwrap_or_else(|| panic!("no status line in {resp:?}"))
 }
 
 fn header<'a>(resp: &'a str, name: &str) -> Option<&'a str> {
