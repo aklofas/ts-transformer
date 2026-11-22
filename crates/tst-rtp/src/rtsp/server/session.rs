@@ -71,8 +71,8 @@ fn publish_window<'a>(
 
 /// A session deadline that has run out.
 enum Expired {
-    /// No SETUP and no request that passed a credential check within
-    /// `READ_IDLE_TIMEOUT` of the request loop starting.
+    /// No session within `READ_IDLE_TIMEOUT` of the request loop starting
+    /// or of the end of the connection's last session.
     Admission,
     /// A recording publisher received no media for its publish idle timeout.
     PublishIdle(std::time::Duration),
@@ -2083,11 +2083,12 @@ mod session_tests {
     }
 
     /// After a request that passed a credential check, interleaved frames on
-    /// the still-`Idle` connection are not activity: it is closed 30 s after
-    /// its last request (the admission deadline, which a credential does
-    /// not lift, and the per-read idle bound with no session both run out).
+    /// the still-`Idle` connection do not keep it: it is closed at the
+    /// admission deadline, 30 s after it opened (a credential does not lift
+    /// the deadline; frames are not a session).
     #[tokio::test(start_paused = true)]
-    async fn interleaved_frames_do_not_rearm_the_idle_bound_of_an_authenticated_idle_connection() {
+    async fn interleaved_frames_do_not_keep_an_authenticated_idle_connection_past_the_admission_deadline()
+     {
         use std::time::Duration;
         use tokio::io::AsyncWriteExt;
         let (mut c, _task) = duplex_session(make_state_with_basic_auth());
@@ -2158,6 +2159,66 @@ mod session_tests {
             closed_at >= Duration::from_secs(29) && closed_at <= Duration::from_secs(32),
             "closed {closed_at:?} after it opened; the admission deadline is 30 s"
         );
+    }
+
+    /// An authenticated publisher that ANNOUNCEd and set nothing up holds no
+    /// session yet (its id comes with its first SETUP), so it is closed at
+    /// the admission deadline and its claim on the mount ends with it: a
+    /// fresh ANNOUNCE of the path is then admitted. The same for a plain
+    /// MPEG-TS and an elementary-stream ANNOUNCE.
+    #[tokio::test(start_paused = true)]
+    async fn an_announced_publisher_without_a_setup_is_closed_at_the_admission_deadline() {
+        use crate::rtsp::server::mount::MountEntry;
+        use std::time::Duration;
+        const SDP_ES: &str = "v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=x\r\nc=IN IP4 127.0.0.1\r\nt=0 0\r\nm=video 0 RTP/AVP 96\r\na=rtpmap:96 H264/90000\r\na=control:streamid=0\r\n";
+        // "user:secret" in base64.
+        let announce = |sdp: &str| {
+            format!(
+                "ANNOUNCE rtsp://h/pub RTSP/1.0\r\nCSeq: 1\r\nAuthorization: Basic dXNlcjpzZWNyZXQ=\r\nContent-Type: application/sdp\r\nContent-Length: {}\r\n\r\n{sdp}",
+                sdp.len()
+            )
+        };
+        for sdp in [SDP_MP2T, SDP_ES] {
+            let state = make_state_with_basic_auth();
+            let mount = publish::mount::PublishMountState::new("/pub", 8, Default::default());
+            state
+                .mounts
+                .lock()
+                .unwrap()
+                .insert("/pub".into(), MountEntry::Publish(mount));
+            let (mut c, _task) = duplex_session(state.clone());
+            let t0 = tokio::time::Instant::now();
+            let r = duplex_exchange(&mut c, &announce(sdp)).await;
+            assert!(r.starts_with("RTSP/1.0 200"), "authenticated ANNOUNCE: {r}");
+            // OPTIONS every 7 s, so no request falls on the 30 s mark itself.
+            let mut closed_at = None;
+            for cseq in 2..=7u32 {
+                if duplex_closed_within(&mut c, Duration::from_secs(7))
+                    .await
+                    .is_some()
+                {
+                    closed_at = Some(t0.elapsed());
+                    break;
+                }
+                let r = duplex_exchange(
+                    &mut c,
+                    &format!("OPTIONS rtsp://h/pub RTSP/1.0\r\nCSeq: {cseq}\r\n\r\n"),
+                )
+                .await;
+                assert!(r.starts_with("RTSP/1.0 200"), "OPTIONS {cseq}: {r}");
+            }
+            let closed_at = closed_at.expect("an announced publisher with no SETUP outlived 42 s");
+            assert!(
+                closed_at >= Duration::from_secs(29) && closed_at <= Duration::from_secs(32),
+                "closed {closed_at:?} after it opened; the admission deadline is 30 s"
+            );
+            let (mut c, _task) = duplex_session(state);
+            let r = duplex_exchange(&mut c, &announce(sdp)).await;
+            assert!(
+                r.starts_with("RTSP/1.0 200"),
+                "the closed publisher's claim ended: {r}"
+            );
+        }
     }
 
     /// A connection whose session ended while it stays open (a refusal on
