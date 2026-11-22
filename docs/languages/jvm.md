@@ -2659,7 +2659,9 @@ try (RtspSession session = RtspClient.connect(cfg);
   an empty bundle throw `RtspException` of kind `TLS` before any network I/O.
 - **`transportPref` and `rtspVersion` apply.** A non-default value overrides the URL's
   `?transport=udp|tcp` / `?rtsp_version=` query (`AUTO` and `V1_0` leave the URL in
-  charge), as in tst-py and the C builder. Left in charge, an `rtsp://` URL asks
+  charge), as in tst-py. The C builder has no such value: calling
+  `tst_rtsp_client_builder_transport_pref`, with 0 included, overrides the URL,
+  and only not calling it leaves the URL in charge. Left in charge, an `rtsp://` URL asks
   for UDP first with TCP fallback on 461, and an `rtsps://` URL asks for
   TCP-interleaved only, so the media stays inside the TLS connection (through
   0.10.0 it asked for UDP first and, where the server agreed, received the

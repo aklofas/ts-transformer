@@ -1323,7 +1323,7 @@ from tstrans.rtp import (
 cfg = RtspClientConfig(
     "rtsp://cam.local:554/stream1",
     auth=DigestAuth("admin", "secret"),     # BasicAuth | DigestAuth | None
-    transport_pref=TransportPref.AUTO,      # UDP-first, TCP fallback on 461
+    transport_pref=TransportPref.AUTO,      # the URL decides: on rtsp:// UDP first, TCP fallback on 461
 )
 
 with RtspClient.connect(cfg) as session:
@@ -1336,7 +1336,10 @@ with RtspClient.connect(cfg) as session:
 - **Transport and version.** `transport_pref` and `rtsp_version` override the
   URL's `?transport=` / `?rtsp_version=` when set to a non-default value;
   the defaults (`TransportPref.AUTO`, `RtspVersion.V1_0`) leave the URL in
-  charge.
+  charge. Left in charge, an `rtsp://` URL asks for UDP first with TCP
+  fallback on 461 and an `rtsps://` URL for TCP-interleaved only, so the
+  media stays inside the TLS connection; `?transport=udp` or
+  `TransportPref.UDP` asks for UDP.
 - **Keepalive, timeouts, user agent.** `keepalive_interval_ms` pins the
   keepalive cadence (default: half the session timeout the server
   advertises); `connect_timeout_ms` bounds the TCP connect and the TLS
@@ -1494,12 +1497,14 @@ its SETUP to the end of its role (TEARDOWN, a refusal on its own mount, the
 end of its connection), readers of a multicast mount count and publishers do
 not, and a reader's SETUP over the cap is answered `453 Not Enough
 Bandwidth` and its connection closed. Set it below `max_sessions` so readers
-cannot use up every connection of a server that also takes publishers. Three
+cannot use up every connection of a server that also takes publishers. Four
 gotchas: `max_readers=0` means no readers at all (an ingest-only server),
 while `max_sessions` must be at least 1; a cap at or above `max_sessions`
-protects nothing; and a connection without a session still holds one of the
+protects nothing; a connection without a session still holds one of the
 `max_sessions` for up to 30 s, so a publisher's connection is not
-promised. For a credentialed server pass
+promised; and `allow_udp_media=True` on an `rtsps://` server re-opens the
+unencrypted path whatever the cap: the cap does not change what readers
+are sent over. For a credentialed server pass
 `auth=BasicAuth("user", "pass", "realm")` — the realm is required
 server-side, and a `BasicAuth` user name that contains `:` is refused at
 `start()` with `RtspError(MOUNT)` (Basic splits user and password at the first
