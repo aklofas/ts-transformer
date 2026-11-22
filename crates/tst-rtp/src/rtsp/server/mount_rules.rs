@@ -78,7 +78,8 @@ impl fmt::Debug for MountCredential {
 pub enum RefuseStatus {
     /// `403 Forbidden`.
     Forbidden,
-    /// `404 Not Found`.
+    /// `404 Not Found`. Not every request of such a path reads like one of
+    /// a missing path: see [`MountPolicy::Refuse`].
     NotFound,
     /// `453 Not Enough Bandwidth`.
     NotEnoughBandwidth,
@@ -137,6 +138,20 @@ pub enum MountPolicy {
     /// Allow a client that presents one of these credentials.
     Require(Vec<MountCredential>),
     /// Refuse with this status.
+    ///
+    /// The rule answers before the request's handler runs, so a refused
+    /// path does not always read like a missing one. On a server whose
+    /// default rule is open, a DESCRIBE or SETUP of a `Refuse(NotFound)`
+    /// path reads like one of a missing path, and so does an ANNOUNCE with
+    /// a usable SDP body on a server that creates no mount on demand. A
+    /// request the handler would have answered otherwise shows that the
+    /// path has a rule: an ANNOUNCE without a body reads `404` where a
+    /// missing path reads `400` (`455` from a reader), and an `Idle`
+    /// connection's PLAY, PAUSE, RECORD or TEARDOWN reads the rule's status
+    /// where a missing path reads `454`, `454`, `455` or `200`. On a server
+    /// whose default rule asks for a credential, a
+    /// request without one reads the rule's status where every other path
+    /// reads `401`.
     Refuse(RefuseStatus),
 }
 
@@ -363,7 +378,14 @@ impl Pause {
 /// meets that rule.
 ///
 /// A clone is the same table. Usable from any thread, including while the
-/// server runs; an edit applies from the next request on. After the server
+/// server runs; an edit applies from the next request on. A session already
+/// admitted meets an edit only at its next gated request (DESCRIBE,
+/// ANNOUNCE, SETUP, PLAY, PAUSE, RECORD, TEARDOWN; the OPTIONS and
+/// GET_PARAMETER keepalives are never checked): a reader that is playing
+/// and only keeps alive streams on after its mount's rule turns to
+/// `Require` or `Refuse`, as a recording publisher does. To end such a
+/// session, remove its mount with
+/// [`RtspServer::remove_mount`](crate::RtspServer::remove_mount). After the server
 /// shuts down (stopped, hard-cancelled or dropped), edits return
 /// [`MountRuleError::Closed`] and the table no longer changes, while `len`,
 /// `is_empty` and `is_closed` keep answering. An edit that began before a
