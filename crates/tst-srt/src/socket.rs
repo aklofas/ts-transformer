@@ -1690,37 +1690,6 @@ mod tests {
         }
     }
 
-    /// The exit guard's flag is process-wide and never reset, so a test
-    /// that sets it runs alone in a child process: this returns `true` in
-    /// the child; in the parent it re-runs this test binary on `test_name`
-    /// alone, requires a clean exit, and returns `false`.
-    fn in_own_process(test_name: &str) -> bool {
-        const CHILD: &str = "TST_SRT_SOCKET_TEST_CHILD";
-        if std::env::var_os(CHILD).is_some() {
-            return true;
-        }
-        let exe = std::env::current_exe().expect("current_exe");
-        let mut child = std::process::Command::new(exe)
-            .args([test_name, "--exact", "--nocapture", "--test-threads=1"])
-            .env(CHILD, "1")
-            .stdin(std::process::Stdio::null())
-            .spawn()
-            .expect("spawn the child test process");
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(12);
-        loop {
-            if let Some(status) = child.try_wait().expect("try_wait") {
-                assert_eq!(status.code(), Some(0), "{test_name}: the child failed");
-                return false;
-            }
-            if std::time::Instant::now() >= deadline {
-                let _ = child.kill();
-                let _ = child.wait();
-                panic!("{test_name}: the child did not exit in time");
-            }
-            std::thread::sleep(std::time::Duration::from_millis(20));
-        }
-    }
-
     #[test]
     fn disable_linger_turns_linger_off_on_a_connected_socket_loopback() {
         let Some((mut socket, release, peer)) = connected_preset_sender() else {
@@ -1744,7 +1713,7 @@ mod tests {
     /// refused and the socket keeps its linger.
     #[test]
     fn disable_linger_is_refused_once_process_exit_has_started_on_loopback() {
-        if !in_own_process(
+        if !crate::exit_guard::tests::in_own_process(
             "socket::tests::disable_linger_is_refused_once_process_exit_has_started_on_loopback",
         ) {
             return;
@@ -1772,7 +1741,7 @@ mod tests {
     /// is `None` where the connected socket read `Some` just before.
     #[test]
     fn peer_activity_is_none_once_process_exit_has_started_on_loopback() {
-        if !in_own_process(
+        if !crate::exit_guard::tests::in_own_process(
             "socket::tests::peer_activity_is_none_once_process_exit_has_started_on_loopback",
         ) {
             return;
