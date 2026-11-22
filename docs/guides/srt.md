@@ -657,6 +657,107 @@ cancel surfaces as `TransportError::ExplicitClose`. The full contract —
 including the pipeline shells' `cancel_handle()` — is in
 [reference/srt-cancel-handle.md](/docs/reference/srt-cancel-handle.md).
 
+## Detecting a silent peer
+
+libsrt ends a connection whose peer has gone silent only after about 5.1 s
+(see `peeridletimeo` above, which cannot make that sooner). A managed
+sender can notice sooner: open it from a URL with
+`x-silentpeertimeout=<ms>` (whole milliseconds, 1 000 to 2 147 483) and it
+treats its connection as broken when the peer has answered none of its
+sends for that window. It then abandons the connection, discarding what
+the socket has not sent yet without waiting for the peer, and re-dials
+through its reconnect policy, as after any other break. Any change of
+the acknowledgement, loss-report or received-packet counts libsrt keeps
+for the connection counts as an answer.
+
+```text
+srt://relay.example:9000?x-silentpeertimeout=1500
+```
+
+**Where it works.** Only a managed SRT sender opened from a URL arms
+detection: `tst_srt::shells::managed_*_sender_from_url` in Rust,
+`tst_managed_sender_open` / `tst_managed_raw_sender_open` /
+`tst_managed_mux_sender_open` in C, `srt.ManagedSender.from_url` /
+`srt.ManagedMuxSender.from_url` in Python, `srt.ManagedSender.fromUrl` /
+`srt.ManagedMuxSender.fromUrl` on the JVM. Every other SRT open (a plain
+sender, every receiver, managed or not, caller or listener, and the
+low-level builders' `connect()` / `listen()` in Python and on the JVM)
+refuses the key as a configuration error that names it, before an address
+is resolved or a socket created, and so does a value outside the range.
+The key belongs to `srt://`: the `udp://`, `tcp(s)://`, `hls(s)://` and
+`rist://` parsers ignore every key they do not document, so on those URLs
+it opens a sender that is not armed. In Rust a hand-built
+`ManagedTransport` is armed with `with_silent_peer_timeout` (see the
+[pipeline guide](/docs/guides/pipeline.md)).
+
+**What you see.** A trip writes one `warn` line, target
+`tst_pipeline::reconnect`, "peer silent: abandoning the connection", with
+`window_ms` and `unanswered_ms`, followed by the usual reconnect lines;
+the reconnect counters move as for any break. No statistic counts what
+the trip lost.
+
+**Choosing the window.** Measured on loopback through a relay that
+emulates a link (Linux x86-64, `Blocking` mode, 30 messages a second):
+
+| Window | The trip came after the peer went silent | Messages lost |
+|---|---|---|
+| 1 000 ms | 1.1 to 1.5 s (later as the round trip grows: 1.2 s at 50 ms, 1.4 s at 300 ms) | 37 to 44 |
+| 1 500 ms | 1.6 to 1.9 s | 48 to 58 |
+| none (libsrt's own break) | about 5.1 s | about 150 |
+
+There was no false trip at the 1 000 ms floor with round trips of 50, 150
+and 300 ms, with everything dropped both ways for 100, 300 or 600 ms every
+5 s, or with a sender of 5 messages a second. Keep the window well above
+the link's round-trip time: a new connection whose first answer takes
+longer than the window trips every time. 1 500 to 3 000 ms leaves room on
+a local network; give a long or loaded path more. Not measured: jitter,
+reordering, random loss, round trips over 300 ms, `Background` mode, a
+re-dial the peer refuses, and any platform but Linux x86-64.
+
+**What a trip loses.** Everything sent between the moment the peer went
+silent and the trip, about the window plus a fraction of it, is lost with
+the abandoned connection. The message whose send found the silence is
+queued for the new connection under the gap buffer's rules: in `Blocking`
+mode it is sent after the reconnect, or handed back with the error if the
+reconnect gives up; at gap capacity 0 in `Background` mode it is dropped
+and counted under `DropOldest`, refused with `Backpressure` under
+`Reject`. When only the peer's answers were lost (the data still reached
+it), the measured runs lost 3 messages around the trip and delivered none
+twice; a duplicate is not ruled out by design, it was not seen. Only the
+abandoned connection is closed without lingering: a normal close of an
+armed sender keeps its linger.
+
+**Limits.**
+
+- Silence is judged against sends: nothing is detected while the caller
+  sends nothing, nor while a send is parked in a full send buffer.
+- A gap of half the window or more between two sends restarts the count,
+  so a sender that sends a burst every half window or more (a
+  low-frame-rate or keyframe-only source), or whose sends each block that
+  long, never trips.
+- Silence is detected, not low throughput: a peer that answers just
+  often enough keeps the connection.
+- The reconnect budget of an armed sender covers an outage until a new
+  connection has answered: a server that accepts each connection and drops
+  it, or a peer that never answers, runs out `max_attempts`. A give-up or
+  an answer starts the next outage with a fresh budget.
+- A peer or middlebox that answers the first packet of every connection
+  and then goes silent makes the sender re-dial about every window plus
+  one backoff step for ever (about one cycle per 1.1 s at the floor), and
+  `max_attempts` does not end it, because each first answer counts as a
+  recovery.
+- A server that refuses a second publisher on the same stream (mediamtx
+  with `overridePublisher: false`) accepts each early re-dial and closes it
+  134 ms later until it lets the old publisher go (10 s, its read
+  timeout), so detecting sooner gains nothing there; with mediamtx's
+  default settings the new publisher is taken at once.
+- With the return path dead for the re-dials too, each re-dial waits the
+  sender preset's connect timeout (15.2 s measured, `conntimeo`), and in
+  `Blocking` mode the caller's send stays inside the reconnect all that
+  time.
+- An unarmed sender pays one check per send for the feature and is
+  otherwise unchanged.
+
 ## URL parsing
 
 Senders accept `srt://host:port?key=value&...` URLs in addition to
@@ -698,7 +799,7 @@ it well above the burst length or healthy connections break.
 
 ### `ts-transformer` extension keys (Group 2)
 
-These two keys have no libsrt-URL precedent and are specific to this
+These three keys have no libsrt-URL precedent and are specific to this
 library. The `x-` prefix marks them as extensions and reserves the
 namespace from accidental collision with future libsrt URL keys. These
 keys are **not portable to other SRT tooling** (`srt-live-transmit`,
@@ -708,7 +809,7 @@ FFmpeg, GStreamer, etc.) — use builder-style config if portability matters.
 |---|---|---|---|
 | `x-recvtimeout` | `SRTO_RCVTIMEO` | INT (ms) | bounds blocking recv on a connected/accepted socket; on a Listener this sets the timeout inherited by accepted sockets, but does **not** bound the `accept` call itself — libsrt ignores `SRTO_RCVTIMEO` on `srt_accept` |
 | `x-sendtimeout` | `SRTO_SNDTIMEO` | INT (ms) | bounds blocking send; use `conntimeo` / `connect_timeout` for the whole-connect budget |
-| `x-silentpeertimeout` | none | INT (ms), 1000 to 2147483 | arms silent-peer detection on a managed SRT sender opened from a URL; every other SRT open refuses it (CONFIG_INVALID) |
+| `x-silentpeertimeout` | none | INT (ms), 1000 to 2147483 | arms silent-peer detection on a managed SRT sender opened from a URL; every other SRT open refuses it (CONFIG_INVALID), as it refuses a value outside the range; see [Detecting a silent peer](#detecting-a-silent-peer) |
 
 ### Mode and authority
 
@@ -781,6 +882,7 @@ Each item below maps to an entry in
   verbatim today.
 - Peer-address decisions at SRT handshake time — the rules table is keyed by stream ID, so a decision that needs the caller's address stays after `accept()`; see [deferred features](/docs/project/deferred-features.md).
 - Custom congestion-controller selection — `Live` and `File` ship.
+- Silent-peer detection on the receive side and on transports other than SRT — a managed SRT sender has it (see [Detecting a silent peer](#detecting-a-silent-peer)).
 
 ## See also
 

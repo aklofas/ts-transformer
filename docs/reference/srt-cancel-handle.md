@@ -245,7 +245,10 @@ both kinds ([Python](/docs/languages/python.md#what-answers-while-another-thread
   the linger time (see [The pattern](#the-pattern)). On a managed wrapper
   it latches, wakes the backoff wait and fires the live inner transport's
   handle, so it costs what that inner's cancel costs.
-- A transport's own `close()`: SRT runs `srt_close`, linger included;
+- A transport's own `close()`: SRT runs `srt_close`, linger included
+  (a managed SRT sender armed for silent-peer detection closes the
+  connection it abandons with `Transport::abandon`, linger off, without
+  waiting for the peer; its own `close()` keeps the linger);
   RIST runs `rist_destroy`, which joins librist's protocol thread. UDP
   only marks the transport closed: its socket stays open, and its port
   bound, until the transport is dropped. TCP marks it closed and shuts the

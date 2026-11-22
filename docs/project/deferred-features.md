@@ -224,16 +224,24 @@ mean **Deferred**. An entry whose feature has shipped must never read
 - **Trigger to revisit:** A design that prevents or hides the duplicate
   caller from the listener's side.
 
-## Sub-5 s silent-peer detection
+## Sub-5 s silent-peer detection beyond the managed SRT sender
 
-- **Status:** Not available. libsrt's own `SRTO_PEERIDLETIMEO` cannot break a
-  silent connection before about 5.1 s, because it also waits for more than
-  16 expiry timers at their 300 ms minimum interval, so `peer_idle_timeout`
-  only lengthens detection.
-- **Why deferred:** A faster detector has to live above libsrt, for example a
-  `ManagedTransport` watchdog on socket statistics: no packet or ACK received
-  for a configured window marks the link broken and triggers a reconnect.
-- **Trigger to revisit:** A consumer that needs failover in under 5 s.
+- **Status:** Partly available. A managed SRT sender detects a silent peer
+  in about its window: the `x-silentpeertimeout` URL key (1 000 to
+  2 147 483 ms), or `ManagedTransport::with_silent_peer_timeout` in Rust
+  (see the SRT guide's "Detecting a silent peer" for the measured figures
+  and the limits). Not available: detection on the receive side (a managed
+  receiver still waits for libsrt's own break, about 5.1 s, which
+  `peeridletimeo` cannot shorten), and on transports other than SRT (no
+  other transport reports a `Transport::peer_activity` reading, so an armed
+  `ManagedTransport` over one never trips).
+- **Why deferred:** The send side was the case asked for; a receiver can
+  judge silence only against its own reads, which needs a rule of its own.
+  The other transports have no counter of the peer's answers that this
+  library reads today.
+- **Trigger to revisit:** A consumer that needs a receiver to notice a
+  silent sender in under 5 s, or a transport other than SRT under a
+  managed sender that must fail over sooner than its own error comes.
 
 ## Peer-address decisions at SRT handshake time
 

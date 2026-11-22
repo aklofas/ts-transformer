@@ -256,7 +256,11 @@ once and fails hard on disconnect. To get exponential-backoff reconnect
 send side or `ManagedRecvTransport<T>` / `ManagedDemuxReceiver<T>` on
 the receive side. The reconnect policy is a single `ReconnectPolicy`
 struct — see [`/docs/guides/pipeline.md`](/docs/guides/pipeline.md) for
-the full state machine.
+the full state machine. A managed SRT sender can also notice a silent
+peer sooner than libsrt's own break (about 5 s): `x-silentpeertimeout=<ms>`
+on the URL of `tst_srt::shells::managed_*_sender_from_url`, or
+`ManagedTransport::with_silent_peer_timeout` on a hand-built wrapper
+(Provisional; see [Detecting a silent peer](/docs/guides/srt.md#detecting-a-silent-peer)).
 
 **Feature flag interactions.** `--no-default-features` on `tst-srt`
 disables mbedTLS and turns the libsrt build into unencrypted-only.

@@ -566,6 +566,18 @@ connected peer may stay silent; libsrt does not detect a silent peer sooner
 than about 5 s, whatever the value. The [SRT guide](/docs/guides/srt.md)
 has the detail.
 
+`x-silentpeertimeout=<ms>` (1000 to 2147483) on the URL of
+`srt.ManagedSender.from_url` or `srt.ManagedMuxSender.from_url` arms
+silent-peer detection (Provisional): when the peer has answered none of
+the sender's sends for that window, the sender abandons the connection
+and reconnects under its policy, instead of waiting for libsrt's own
+break. Managed senders only: a value outside the range, a managed
+receiver, `shells.Sender.open` / `shells.Receiver.open` on an `srt://`
+URL, and the low-level `Builder.connect()` / `listen()` refuse the key
+with `SrtError` kind `CONFIG_INVALID` naming it. What a trip loses and
+the limits are in
+[Detecting a silent peer](/docs/guides/srt.md#detecting-a-silent-peer).
+
 ### Listen rules
 
 `listener.rules()` returns a `ListenRules` handle that decides each caller
