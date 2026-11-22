@@ -430,6 +430,7 @@ Return codes worth branching on:
 | `TST_E_END_OF_STREAM` (−12) | `tst_rtp_demux_receiver_next_event` | The mount ended after its recording publisher left with end-on-exit on, or was closed by `tst_rtsp_server_remove_mount`, `tst_rtsp_server_stop` or the hard cancel; what was already queued is delivered first. |
 | `TST_E_RTSP_MOUNT` (−25) | `_add_publish_mount`, `_remove_mount` | Duplicate or invalid path, or no mount registered at the path. |
 | `TST_E_RTSP_MOUNT` (−25) | `tst_rtsp_server_builder_start` (NULL) | A configuration the server refuses: a bind URL that carries a user name or a password (`_new` and `_bind` take it), or a `_auth_basic` user name that contains `:`. The text names the field, never the value. |
+| `TST_E_RTSP_MOUNT` (−25) | `tst_rtsp_server_add_multicast_mount` (NULL) | The server does not allow UDP media (an `rtsps://` server unless `tst_rtsp_server_builder_allow_udp_media(builder, true)`). |
 
 Rules the types do not enforce:
 
@@ -453,7 +454,7 @@ void tst_rtsp_server_builder_allow_udp_media(struct TstRtspServerBuilder *builde
 void tst_rtsp_server_builder_accept_digest_without_qop(struct TstRtspServerBuilder *builder, bool yes);
 ```
 
-- **UDP media.** A server that does not allow media over UDP answers `461 Unsupported Transport` to every SETUP, reader or publisher, whose transport is not TCP-interleaved; an interleaved SETUP is served as before. Left uncalled, an `rtsp://` server allows it and an `rtsps://` server does NOT, so an `rtsps://` server sends and takes media only inside the TLS connection. `yes = true` on an `rtsps://` server brings back the unencrypted UDP media of 0.10.0; `yes = false` makes a plain server TCP-only.
+- **UDP media.** A server that does not allow media over UDP answers `461 Unsupported Transport` to every SETUP, reader or publisher, whose transport is not TCP-interleaved, and `tst_rtsp_server_add_multicast_mount` returns NULL with `TST_E_RTSP_MOUNT` (a multicast mount sends to its group without any session); an interleaved SETUP is served as before. Left uncalled, an `rtsp://` server allows it and an `rtsps://` server does NOT, so an `rtsps://` server sends and takes media only inside the TLS connection. `yes = true` on an `rtsps://` server brings back the unencrypted UDP media of 0.10.0; `yes = false` makes a plain server TCP-only.
 - **Digest answers without `qop`.** GStreamer 1.24's `rtspsrc` and `rtspclientsink` answer a Digest challenge in the RFC 2069 form, without `qop`, and the server refuses that with `401` by default. With `tst_rtsp_server_builder_accept_digest_without_qop(builder, true)` it is accepted, for Digest MD5 and SHA-256 alike; the challenge is unchanged and an answer with `qop` is checked as before. What is given up, only for such clients: replay protection inside one connection (the nonce is still per connection and never accepted on another). GStreamer 1.24 authenticates with Basic, or with Digest MD5 under this option, never with Digest SHA-256.
 
 ## UDP and RIST ingest: the publisher's address (`TST_HAS_UDP`, `TST_HAS_RIST`)

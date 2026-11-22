@@ -10330,6 +10330,11 @@ int tst_rtsp_publish_mount_publisher_info(const struct tst_rtsp_publish_mount_t 
  *
  * `mux_cfg` is borrowed — the caller retains ownership and must free it.
  *
+ * A server that does not allow UDP media (`tst_rtsp_server_builder_allow_udp_media`;
+ * an `rtsps://` server by default) refuses a multicast mount, because it
+ * sends to its group without any session: NULL with last-error
+ * `TST_E_RTSP_MOUNT`, before any socket is opened.
+ *
  * Returns a non-NULL `tst_rtsp_mount_handle_t*` on success, NULL on failure
  * with last-error set (`TST_E_CLOSED` once the server is stopped or
  * hard-cancelled). NULL for `iface_name` is valid (no interface override).

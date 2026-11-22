@@ -178,6 +178,11 @@ pub unsafe extern "C" fn tst_rtsp_server_add_unicast_mount(
 ///
 /// `mux_cfg` is borrowed — the caller retains ownership and must free it.
 ///
+/// A server that does not allow UDP media (`tst_rtsp_server_builder_allow_udp_media`;
+/// an `rtsps://` server by default) refuses a multicast mount, because it
+/// sends to its group without any session: NULL with last-error
+/// `TST_E_RTSP_MOUNT`, before any socket is opened.
+///
 /// Returns a non-NULL `tst_rtsp_mount_handle_t*` on success, NULL on failure
 /// with last-error set (`TST_E_CLOSED` once the server is stopped or
 /// hard-cancelled). NULL for `iface_name` is valid (no interface override).
@@ -1083,6 +1088,50 @@ mod tests {
             }
         );
         unsafe { tst_rtsp_mount_handle_free(mount) };
+        unsafe { crate::config::tst_mux_config_free(cfg) };
+        unsafe { crate::rtsp::server::stop::tst_rtsp_server_free(server) };
+    }
+
+    /// A server that does not allow UDP media takes no multicast mount: the
+    /// refusal comes before any socket, with the code every configuration
+    /// the server refuses reads in C (the binding kind table puts a
+    /// server's `InvalidConfig` with the mount errors).
+    #[test]
+    fn a_multicast_mount_is_refused_where_udp_media_is_off() {
+        let b = TstRtspServerBuilder::from_url("rtsp://127.0.0.1:0").expect("test url parses");
+        let raw_b = TstRtspServerBuilder::into_raw(Box::new(b));
+        unsafe {
+            crate::rtsp::server::builder::tst_rtsp_server_builder_allow_udp_media(raw_b, false)
+        };
+        let server = unsafe { crate::rtsp::server::start::tst_rtsp_server_builder_start(raw_b) };
+        assert!(!server.is_null(), "{}", crate::error::test_last_error_msg());
+        let cfg = make_mux_cfg();
+        let path = std::ffi::CString::new("/mc").unwrap();
+        let group = std::ffi::CString::new("239.0.0.1:5004").unwrap();
+        crate::error::clear_last_error_for_test();
+        let mount = unsafe {
+            tst_rtsp_server_add_multicast_mount(
+                server,
+                path.as_ptr(),
+                group.as_ptr(),
+                8,
+                std::ptr::null(),
+                cfg as *const _,
+            )
+        };
+        assert!(mount.is_null(), "a multicast mount on a TCP-only server");
+        assert_eq!(
+            crate::error::test_last_error_code(),
+            TstError::RtspMount as i32
+        );
+        let msg = crate::error::test_last_error_msg();
+        assert!(msg.contains("UDP media"), "{msg}");
+        let mut stats = crate::stats::TstServerStats::default();
+        assert_eq!(
+            unsafe { crate::rtsp::server::stop::tst_rtsp_server_get_stats(server, &mut stats) },
+            0
+        );
+        assert_eq!(stats.mounts, 0, "the refused mount is not in the table");
         unsafe { crate::config::tst_mux_config_free(cfg) };
         unsafe { crate::rtsp::server::stop::tst_rtsp_server_free(server) };
     }
