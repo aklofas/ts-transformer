@@ -261,12 +261,11 @@ pub enum MountError {
 
     /// The server that owns the mount is ending or has ended
     /// (`RtspServer::stop`, from the moment it begins; a hard cancel through
-    /// `RtspServer::cancel_handle`; or the server being dropped), or the
-    /// mount's muxer lock is poisoned (an earlier push
-    /// panicked while holding it). The refused push is not muxed or
-    /// counted. Removing the mount with `RtspServer::remove_mount` does not
-    /// produce this: the handle of a removed mount keeps accepting pushes,
-    /// which reach nobody, until the server ends.
+    /// `RtspServer::cancel_handle`; or the server being dropped), the mount
+    /// was removed with `RtspServer::remove_mount`, or the mount's muxer
+    /// lock is poisoned (an earlier push panicked while holding it).
+    /// Returned by the pushes and by `MountHandle::flush`; the refused call
+    /// is not muxed or counted.
     #[error("mount closed")]
     Closed,
 }

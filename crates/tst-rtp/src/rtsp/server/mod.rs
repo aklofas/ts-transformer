@@ -882,12 +882,11 @@ impl RtspServer {
     ///   feed it.
     ///
     /// This is also how an application removes idle on-demand mounts
-    /// (see [`RtspServerBuilder::accept_unregistered_publishers`]),
-    /// including one whose ANNOUNCE created it and then failed later in
-    /// the same request (for example a `500` while building the
-    /// elementary-stream re-muxer): that mount stays in the table, idle,
-    /// with its handle queued for [`Self::next_publisher`], until this
-    /// call removes it. Removing an on-demand mount whose handle is still
+    /// (see [`RtspServerBuilder::accept_unregistered_publishers`]). An
+    /// ANNOUNCE that fails before its mount exists (a `500` while building
+    /// the elementary-stream re-muxer) leaves nothing to remove: the
+    /// re-muxer is built before the mount is created and queued. Removing
+    /// an on-demand mount whose handle is still
     /// queued does not withdraw the handle: [`Self::next_publisher`] can
     /// still return it, and its transport reads `TransportError::Closed`
     /// at once. Treat such a handle as already expired.

@@ -217,8 +217,12 @@ fn spawn_demux_thread(mount: PublishMountHandle) -> thread::JoinHandle<()> {
         // `RtspServerError::TransportTaken`.
         //
         // The transport outlives publishers. When one leaves, it goes
-        // quiet; when the next one arrives, bytes resume and the demuxer
-        // sees ordinary continuity discontinuities. It ends only on
+        // quiet; when the next one arrives, bytes resume. A next publisher
+        // with the same tracks shows as ordinary continuity discontinuities;
+        // one with other tracks is not seen by this demuxer at all when
+        // both PMTs carry the same version number (the server's re-muxer
+        // always writes version 0), so give each track layout its own
+        // mount name. It ends only on
         // `cancel()` (`ExplicitClose`), `remove_mount` or `stop()`
         // (`Closed`).
         let transport = match mount.into_recv_transport() {
@@ -295,9 +299,10 @@ fn spawn_demux_thread(mount: PublishMountHandle) -> thread::JoinHandle<()> {
                         );
                     }
                 }
-                // A publisher change shows up here as continuity breaks on
-                // each PID. Applications that care which publisher a frame
-                // came from read `publisher()` / `generation()`.
+                // A publisher change with the same tracks shows up here as
+                // continuity breaks on each PID. Applications that care
+                // which publisher a frame came from read `publisher()` /
+                // `generation()`.
                 DemuxEvent::Discontinuity { stream, kind } => {
                     println!("[{path}] discontinuity PID=0x{:04X} {kind:?}", stream.pid);
                 }

@@ -123,9 +123,11 @@ fn main() -> Result<(), Box<dyn Error>> {
     //      `RtspError::UnsupportedPacketizationMode(2)`. Modes 0 (single-NALU)
     //      and 1 (non-interleaved FU-A / STAP-A) proceed normally. Most cameras
     //      advertise mode 1.
-    //   c) Issues SETUP over UDP (tries RTP_AVP first, auto-falls-back to
-    //      TCP-interleaved on a 461 response, or immediately if `?transport=tcp`
-    //      is in the URL). Returns the negotiated `RtspSession` + an
+    //   c) Issues SETUP: on `rtsp://` over UDP first (RTP_AVP, falling back
+    //      to TCP-interleaved on a 461 response, or TCP-interleaved at once if
+    //      `?transport=tcp` is in the URL); on `rtsps://` TCP-interleaved
+    //      only unless the URL says `?transport=udp`. Returns the negotiated
+    //      `RtspSession` + an
     //      `H264DepayConfig` ready for `into_h264_receiver`.
     //
     // What sprop-parameter-sets is:

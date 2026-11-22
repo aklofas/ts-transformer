@@ -24,8 +24,11 @@
 //! Many IP cameras are deployed behind NAT/firewalls that block UDP.
 //! Adding `?transport=tcp` to the URL forces the TCP-interleaved path
 //! (RFC 7826 §14), where RTP rides the same TCP connection as RTSP
-//! control. The negotiation in `setup_mp2t_auto` also auto-falls-back
-//! to TCP-interleaved on a 461 response.
+//! control. On an `rtsp://` URL the negotiation in `setup_mp2t_auto`
+//! tries UDP first and falls back to TCP-interleaved on a 461 response;
+//! on an `rtsps://` URL it asks for TCP-interleaved only, so the media
+//! stays inside the TLS connection (`?transport=udp` asks for UDP, whose
+//! media is then unencrypted).
 //!
 //! Run with:
 //!   cargo run -p tst-examples --example recv_rtsp_camera -- \
@@ -78,9 +81,10 @@ fn main() -> Result<(), Box<dyn Error>> {
     eprintln!("SDP: {} m-lines", sdp.media.len());
 
     // (3) SETUP — pick the unique MP2T m-line and negotiate transport.
-    // The negotiator tries UDP unicast first (RTP_AVP), then falls back
-    // to TCP-interleaved (RTP_AVP/TCP) on a 461 response. Pass
-    // `?transport=tcp` in the URL to skip UDP entirely.
+    // On `rtsp://` the negotiator tries UDP unicast first (RTP_AVP), then
+    // falls back to TCP-interleaved (RTP_AVP/TCP) on a 461 response; pass
+    // `?transport=tcp` in the URL to skip UDP entirely. On `rtsps://` it
+    // asks for TCP-interleaved only unless the URL says `?transport=udp`.
     let session = client.setup_mp2t_auto(&sdp)?;
     eprintln!("Negotiated transport: {:?}", session.transport_kind());
 
