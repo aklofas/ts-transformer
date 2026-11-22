@@ -116,8 +116,9 @@ impl PyRtspServerCancelHandle {
 /// proceeds. A push raises `RtspError(MOUNT)` when the muxer refuses the
 /// frame, and `RtspError(CLOSED)` once the server has ended (`stop()`, from
 /// the moment it begins; a `cancel()` on its `cancel_handle()`; or the
-/// server being collected),
-/// whether or not the mount was removed first.
+/// server being collected) or the mount was removed (`remove_mount`), and
+/// so does `flush()`. The getters, `stats()` and `reset_stats()` keep
+/// answering after either.
 #[pyclass(name = "MountHandle", module = "tstrans.rtp", frozen)]
 #[derive(Clone)]
 pub struct PyMountHandle {
@@ -513,11 +514,13 @@ impl PyMountHandle {
     // ── Lifecycle helpers ──────────────────────────────────────────────────
 
     /// Drain any TS packets queued in the inner muxer and broadcast them
-    /// through the mount's fanout channel. Always safe to call.
-    pub fn flush(&self, py: Python<'_>) {
-        crate::util::allow_threads_parking(py, || {
-            let _ = self.inner.flush();
-        });
+    /// through the mount's fanout channel. Every push drains the muxer
+    /// before it returns, so on a live mount this has nothing to send.
+    /// Raises `RtspError(CLOSED)`, like the pushes, once the server has
+    /// ended or the mount was removed.
+    pub fn flush(&self, py: Python<'_>) -> PyResult<()> {
+        crate::util::allow_threads_parking(py, || self.inner.flush())
+            .map_err(|e| raise(py, &RTSP, BindingError::from(e)))
     }
 
     /// Reset all flow counters on the mount to zero.
@@ -609,7 +612,10 @@ impl PyRtspServer {
     /// surface as `RtspError(IO)` (bind or listener start failures),
     /// `RtspError(TLS)` (cert/key parse failures), `RtspError(PROTOCOL)`
     /// (URL parse), or `RtspError(MOUNT)` (an invalid default mount rule,
-    /// an invalid auth realm or an empty auth user name).
+    /// an invalid auth realm, an empty auth user name, a `BasicAuth` user
+    /// name that contains `:`, or a `bind_addr` that carries a user name or
+    /// a password: the server's credential is `auth`, never the bind
+    /// address; the error text names neither).
     ///
     /// The GIL is released while the server is built and started. Returns
     /// once the listener reports its bind (i.e. `local_addr()` is
@@ -904,10 +910,12 @@ impl PyRtspServer {
     /// Remove the mount at `path`, of any kind, and free the path. A
     /// publish mount's publisher is sent the Notice 5402 teardown and its
     /// `DemuxReceiver` stops iterating (`StopIteration`); the `PublishMount`
-    /// stays usable for `stats()`. A local mount's `MountHandle` keeps
-    /// accepting pushes that reach nobody until the server ends (`stop()`
-    /// begins, a hard cancel, or collection); then they raise
-    /// `RtspError(CLOSED)`. Also how idle on-demand mounts are removed.
+    /// stays usable for `stats()`. A local mount is closed: its kept
+    /// `MountHandle`'s pushes and `flush()` raise `RtspError(CLOSED)`, a
+    /// multicast mount stops sending to its group, and the handle's getters
+    /// and `stats()` still answer. A mount added later at the same path is a
+    /// new mount; the old handle does not feed it. Also how idle on-demand
+    /// mounts are removed.
     ///
     /// Errors:
     /// - `RtspError(MOUNT)` when no mount is registered at `path`.

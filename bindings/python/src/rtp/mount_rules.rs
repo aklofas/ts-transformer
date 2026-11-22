@@ -231,9 +231,14 @@ impl PyMountRules {
         self.rules.clear().map_err(|e| rule_err(py, e))
     }
 
-    /// Set the scheme (an `AuthScheme` member) and realm a `require` policy
-    /// challenges with. Without a server credential the challenge is Digest
-    /// (MD5) with realm `tstrans`.
+    /// Set the scheme (an `AuthScheme` member) and realm of every 401 the
+    /// server sends, and so the scheme a credential is checked in: a
+    /// `require` policy's and, on a server whose config carries `auth`, that
+    /// credential's too. The table starts with `auth`'s scheme and realm, or
+    /// Digest (MD5) with realm `tstrans` without one. A change applies from
+    /// the next request on; a Digest answer computed for the old realm is
+    /// then refused. A user name that contains `:` cannot authenticate
+    /// while the challenge is Basic, the config's own credential included.
     fn set_challenge(&self, py: Python<'_>, scheme: u8, realm: &str) -> PyResult<()> {
         let scheme = match scheme {
             0 => AuthScheme::Basic,

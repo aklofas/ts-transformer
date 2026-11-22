@@ -1440,8 +1440,10 @@ while `MuxSender` uses `send_*` (transport-bound op). The `MountHandle` is
 `Arc`-shared, so multiple producer threads may push concurrently. A push
 raises `RtspError(MOUNT)` when the muxer refuses the frame, and
 `RtspError(CLOSED)` from the moment `stop()` begins (also the `with` exit),
-and after `cancel_handle().cancel()` or the server being collected, whether
-or not the mount was removed first.
+after `cancel_handle().cancel()` or the server being collected, and after
+`remove_mount(path)` removed the mount (a removed multicast mount stops
+sending to its group). `flush()` raises `RtspError(CLOSED)` in the same
+cases; the handle's getters, `stats()` and `reset_stats()` keep answering.
 
 ```python
 from tstrans.rtp import RtspServer, RtspServerConfig
@@ -1470,7 +1472,10 @@ For an `rtsps://`
 server, bind `bind_addr="rtsps://host:port"` and set `tls_cert` /
 `tls_key` to PEM certificate-chain / private-key file paths (set
 together, or `__post_init__` raises `ValueError`; unreadable paths raise
-`RtspError(TLS)` at `start()`). An `rtsps://` server sends and takes media
+`RtspError(TLS)` at `start()`). `start()` refuses a `bind_addr` that
+carries a user name or a password (`"admin:secret@host:port"`) with
+`RtspError(MOUNT)`: the server's credential is `auth`, and such an address
+started an open server through 0.10.0. An `rtsps://` server sends and takes media
 only inside the TLS connection: it answers `461 Unsupported Transport` to a
 reader's or a publisher's SETUP that asks for UDP (clients such as
 GStreamer's `rtspsrc` then fall back to TCP-interleaved by themselves).
@@ -1478,7 +1483,10 @@ GStreamer's `rtspsrc` then fall back to TCP-interleaved by themselves).
 0.10.0; `allow_udp_media=False` makes a plain `rtsp://` server TCP-only;
 the default `None` decides by the bind's scheme. For a credentialed server pass
 `auth=BasicAuth("user", "pass", "realm")` — the realm is required
-server-side. GStreamer 1.24 answers a Digest MD5 challenge without `qop`
+server-side, and a `BasicAuth` user name that contains `:` is refused at
+`start()` with `RtspError(MOUNT)` (Basic splits user and password at the first
+colon, so it could never authenticate). An empty password is a password: the
+server then admits `user:` and still challenges a client with no credential. GStreamer 1.24 answers a Digest MD5 challenge without `qop`
 (the RFC 2069 form), which the server refuses unless
 `accept_digest_without_qop=True`; with it, replay protection inside one
 connection is given up for such answers, and GStreamer still cannot answer
@@ -1564,7 +1572,11 @@ The surface:
   guards the first ANNOUNCE. A path rule's `Inherit` side uses the table's default rule; the default's `Inherit` uses the server-wide builder setting (`auth_*`). A bad path raises
   `RtspError(MOUNT)`; `MountPolicy.require()` with no credentials raises
   `ValueError` before the server is consulted; a credential with an empty
-  username is refused by the server with `RtspError(MOUNT)`. From the moment
+  username is refused by the server with `RtspError(MOUNT)`.
+  `set_challenge` sets the scheme and realm of every 401 the server sends,
+  also on a server whose config carries `auth`; that credential is then
+  checked in the new scheme. A user name that contains `:` cannot
+  authenticate while the challenge is Basic. From the moment
   `stop()` begins (also the `with` exit), and after a hard cancel, an edit
   raises `RtspError(CLOSED)`; `len(rules)` still answers. A server nobody edits behaves as before; see the
   [publish-ingest recipe](/docs/cookbook/receiving/rtsp-publish-ingest.md#per-name-credentials-and-refusing-a-publisher)

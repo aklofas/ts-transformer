@@ -1050,3 +1050,140 @@ def test_an_answer_without_qop_is_accepted_only_with_the_option():
     challenge, answered = _rfc2069_describe(False)
     assert 'qop="auth"' in challenge
     assert _status_of(answered) == 401, answered
+
+
+# ---------------------------------------------------------------------------
+# What start() refuses, and a mount handle after its server or its mount
+# ended.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "bind_addr",
+    [
+        "admin:secret@127.0.0.1:0",
+        "rtsp://admin:secret@127.0.0.1:0",
+        "rtsp://admin@127.0.0.1:0",
+        "rtsps://admin:secret@127.0.0.1:0",
+    ],
+)
+def test_a_bind_address_with_userinfo_does_not_start(bind_addr):
+    kw = {}
+    if bind_addr.startswith("rtsps://"):
+        kw["tls_cert"], kw["tls_key"] = _tls_fixture_paths()
+    cfg = RtspServerConfig(bind_addr=bind_addr, graceful_shutdown_drain_ms=50, **kw)
+    with pytest.raises(RtspError) as ei:
+        RtspServer.start(cfg)
+    assert ei.value.kind == RtspErrorKind.MOUNT
+    text = str(ei.value)
+    assert "bind URL" in text
+    assert "admin" not in text and "secret" not in text
+
+
+def test_a_basic_auth_user_name_with_a_colon_does_not_start():
+    cfg = RtspServerConfig(
+        bind_addr="127.0.0.1:0",
+        auth=BasicAuth(user="a:b", password="secret", realm="r"),
+        graceful_shutdown_drain_ms=50,
+    )
+    with pytest.raises(RtspError) as ei:
+        RtspServer.start(cfg)
+    assert ei.value.kind == RtspErrorKind.MOUNT
+    assert "secret" not in str(ei.value)
+
+
+def test_flush_after_the_server_ended_is_closed():
+    cfg = RtspServerConfig(bind_addr="127.0.0.1:0", graceful_shutdown_drain_ms=50)
+    server = RtspServer.start(cfg)
+    mount = server.add_unicast_mount("/live", _single_video_program())
+    mount.flush()
+    server.stop()
+    with pytest.raises(RtspError) as ei:
+        mount.flush()
+    assert ei.value.kind == RtspErrorKind.CLOSED
+    mount.reset_stats()
+
+
+def test_flush_after_the_hard_cancel_is_closed():
+    cfg = RtspServerConfig(bind_addr="127.0.0.1:0", graceful_shutdown_drain_ms=50)
+    with RtspServer.start(cfg) as server:
+        mount = server.add_unicast_mount("/live", _single_video_program())
+        server.cancel_handle().cancel()
+        with pytest.raises(RtspError) as ei:
+            mount.flush()
+        assert ei.value.kind == RtspErrorKind.CLOSED
+
+
+def test_a_removed_mounts_handle_is_closed_and_its_getters_answer():
+    cfg = RtspServerConfig(bind_addr="127.0.0.1:0", graceful_shutdown_drain_ms=50)
+    with RtspServer.start(cfg) as server:
+        mount = server.add_unicast_mount("/live", _single_video_program())
+        mount.push_video(_IDR_NAL, pts=Pts90khz(0), key_frame=True)
+        pushed = mount.stats().bytes_pushed
+        server.remove_mount("/live")
+        for call in (
+            lambda: mount.push_video(_IDR_NAL, pts=Pts90khz(3000), key_frame=True),
+            mount.flush,
+        ):
+            with pytest.raises(RtspError) as ei:
+                call()
+            assert ei.value.kind == RtspErrorKind.CLOSED
+        assert mount.mount_path() == "/live"
+        assert mount.stats().bytes_pushed == pushed
+        assert mount.video_handle() is not None
+        # The path is free again, and the new mount's handle pushes.
+        again = server.add_unicast_mount("/live", _single_video_program())
+        again.push_video(_IDR_NAL, pts=Pts90khz(0), key_frame=True)
+
+
+def _describe(port: int, authorization: str | None = None) -> str:
+    import socket
+
+    with socket.create_connection(("127.0.0.1", port), timeout=5.0) as sock:
+        auth = f"Authorization: {authorization}\r\n" if authorization else ""
+        sock.sendall(
+            f"DESCRIBE rtsp://127.0.0.1:{port}/live RTSP/1.0\r\nCSeq: 1\r\n{auth}\r\n".encode()
+        )
+        return _read_head(sock)
+
+
+def _basic(user: str, password: str) -> str:
+    import base64
+
+    return "Basic " + base64.b64encode(f"{user}:{password}".encode()).decode()
+
+
+def test_set_challenge_takes_effect_with_a_config_credential():
+    from conftest import rtsp_header
+
+    from tstrans.rtp import AuthScheme
+
+    cfg = RtspServerConfig(
+        bind_addr="127.0.0.1:0",
+        auth=DigestAuth(user="admin", password="secret", realm="realm"),
+        graceful_shutdown_drain_ms=50,
+    )
+    with RtspServer.start(cfg) as server:
+        server.add_unicast_mount("/live", _single_video_program())
+        port = server.local_addr()[1]
+        assert rtsp_header(_describe(port), "WWW-Authenticate").startswith("Digest")
+        server.mount_rules().set_challenge(AuthScheme.BASIC, "lab")
+        challenge = rtsp_header(_describe(port), "WWW-Authenticate")
+        assert challenge.startswith("Basic") and 'realm="lab"' in challenge
+        # The config's credential is checked in the new scheme.
+        assert _status_of(_describe(port, _basic("admin", "secret"))) == 200
+        assert _status_of(_describe(port, _basic("admin", "wrong"))) == 401
+
+
+def test_a_config_credential_with_an_empty_password_admits_only_it():
+    cfg = RtspServerConfig(
+        bind_addr="127.0.0.1:0",
+        auth=BasicAuth(user="admin", password="", realm="r"),
+        graceful_shutdown_drain_ms=50,
+    )
+    with RtspServer.start(cfg) as server:
+        server.add_unicast_mount("/live", _single_video_program())
+        port = server.local_addr()[1]
+        assert _status_of(_describe(port)) == 401
+        assert _status_of(_describe(port, _basic("admin", "x"))) == 401
+        assert _status_of(_describe(port, _basic("admin", ""))) == 200

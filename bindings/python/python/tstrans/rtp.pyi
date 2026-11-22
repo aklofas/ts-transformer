@@ -839,8 +839,9 @@ class MountHandle:
     proceeds. `pts` is keyword-only. A push raises `RtspError(MOUNT)` when
     the muxer refuses the frame, and `RtspError(CLOSED)` once the server has
     ended (`stop()`, from the moment it begins; a `cancel()` on its
-    `cancel_handle()`; or the server being collected), whether or not the
-    mount was removed first.
+    `cancel_handle()`; or the server being collected) or the mount was
+    removed (`remove_mount`), and so does `flush()`. The getters, `stats()`
+    and `reset_stats()` keep answering after either.
     """
 
     # Identity / introspection.
@@ -928,7 +929,11 @@ class MountHandle:
     def data_handles(self) -> List[DataStreamHandle]: ...
 
     # Lifecycle.
-    def flush(self) -> None: ...
+    def flush(self) -> None:
+        """Drain the mount's muxer (nothing to send on a live mount: every
+        push drains it). Raises `RtspError(CLOSED)` once the server has
+        ended or the mount was removed."""
+        ...
     def reset_stats(self) -> None: ...
     def __repr__(self) -> str: ...
 
