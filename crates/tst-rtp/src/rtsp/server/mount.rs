@@ -101,6 +101,11 @@ impl MountState {
             server_ended,
         }))
     }
+
+    /// The owning server has ended: the pushes and `flush` refuse from here.
+    pub(crate) fn closed(&self) -> bool {
+        self.server_ended.is_ended()
+    }
 }
 
 /// One entry in `ServerState::mounts` — either a muxer-backed local mount
@@ -275,7 +280,7 @@ impl MountHandle {
     {
         // Before the lock, so a refused push leaves the muxer and the stats
         // untouched; a push already holding the lock completes.
-        if self.state.server_ended.is_ended() {
+        if self.state.closed() {
             return Err(crate::error::MountError::Closed);
         }
         let mut muxer = self
@@ -534,17 +539,26 @@ impl MountHandle {
     /// Drain any TS packets queued in the inner muxer and broadcast them
     /// through the mount's fanout channel.
     ///
-    /// Call after finishing a batch of `push_*` calls to ensure all
-    /// buffered TS output is flushed to subscribers before e.g. a sleep or
-    /// a stats snapshot. This is a no-op when the muxer has no pending
-    /// output; it is always safe to call.
+    /// On a mount `flush()` has nothing to do after a successful push:
+    /// every push drains the muxer before it returns, and a refused push
+    /// queues nothing. It is a no-op when the muxer has no pending output.
     ///
-    /// Returns silently on a poisoned mutex (same interpretation as
-    /// `stats()`: the mount is closed).
-    pub fn flush(&self) {
-        if let Ok(mut muxer) = self.state.muxer.lock() {
-            drain_and_broadcast(&mut muxer, &self.state);
+    /// # Errors
+    /// - [`crate::error::MountError::Closed`] once the server has ended, as
+    ///   for the pushes (see [`Self::push_video`]), or when the inner mutex
+    ///   is poisoned. Nothing is drained then and [`Self::stats`] is
+    ///   unchanged.
+    pub fn flush(&self) -> Result<(), crate::error::MountError> {
+        if self.state.closed() {
+            return Err(crate::error::MountError::Closed);
         }
+        let mut muxer = self
+            .state
+            .muxer
+            .lock()
+            .map_err(|_| crate::error::MountError::Closed)?;
+        drain_and_broadcast(&mut muxer, &self.state);
+        Ok(())
     }
 
     /// Reset all flow counters on the mount to zero.
@@ -555,7 +569,8 @@ impl MountHandle {
     /// per-stream counters. Per-stream entries are preserved (same
     /// semantics as `Muxer::reset_stats`).
     ///
-    /// Silent no-op on mutex poison.
+    /// A counter operation, not a push: like the getters it still works
+    /// once the server has ended. Silent no-op on mutex poison.
     pub fn reset_stats(&self) {
         if let Ok(mut muxer) = self.state.muxer.lock() {
             muxer.reset_stats();

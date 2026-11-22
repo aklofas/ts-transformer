@@ -515,7 +515,9 @@ impl PyMountHandle {
     /// Drain any TS packets queued in the inner muxer and broadcast them
     /// through the mount's fanout channel. Always safe to call.
     pub fn flush(&self, py: Python<'_>) {
-        crate::util::allow_threads_parking(py, || self.inner.flush());
+        crate::util::allow_threads_parking(py, || {
+            let _ = self.inner.flush();
+        });
     }
 
     /// Reset all flow counters on the mount to zero.

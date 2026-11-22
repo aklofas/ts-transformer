@@ -835,7 +835,7 @@ pub unsafe extern "C" fn tst_rtsp_mount_flush(handle: *mut TstRtspMountHandle) -
             set_last_error(TstError::Closed, "mount handle has been cancelled");
             return TstError::Closed as i32;
         }
-        h.inner.flush();
+        let _ = h.inner.flush();
         0
     })
 }

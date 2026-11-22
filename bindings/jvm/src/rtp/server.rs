@@ -1431,7 +1431,9 @@ jni_native! {
 jni_native! {
     /// `MountHandle.nFlush(handle)` — drain + broadcast buffered TS.
     fn Java_org_tstrans_rtp_MountHandle_nFlush(env, _class, handle: jlong) = () => {
-        with_mount_poisoning(env, handle, |inner| inner.flush());
+        with_mount_poisoning(env, handle, |inner| {
+            let _ = inner.flush();
+        });
     }
 }
 

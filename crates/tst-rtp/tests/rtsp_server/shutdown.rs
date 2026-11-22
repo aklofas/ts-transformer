@@ -400,3 +400,60 @@ fn a_stop_in_progress_admits_nobody() {
     assert!(!stopping.is_finished(), "stop() returned too early to tell");
     stopping.join().unwrap().unwrap();
 }
+
+/// `flush()` reads the server's end as the pushes do, and changes nothing:
+/// after `stop()`, after a hard cancel on a server never started, and after
+/// the server was dropped.
+#[test]
+fn flush_after_the_server_ended_is_closed() {
+    let server = RtspServer::bind("rtsp://127.0.0.1:0").unwrap();
+    let mount = server.add_mount("/live", make_muxer_cfg()).unwrap();
+    server.start().unwrap();
+    push_once(&mount).unwrap();
+    let before = mount.stats();
+    server.stop().unwrap();
+    let r = mount.flush();
+    assert!(matches!(r, Err(MountError::Closed)), "after stop(): {r:?}");
+    assert_eq!(mount.stats(), before);
+
+    let server = RtspServer::bind("rtsp://127.0.0.1:0").unwrap();
+    let mount = server.add_mount("/live", make_muxer_cfg()).unwrap();
+    server.cancel_handle().cancel();
+    let r = mount.flush();
+    assert!(
+        matches!(r, Err(MountError::Closed)),
+        "after a hard cancel: {r:?}"
+    );
+
+    let server = RtspServer::bind("rtsp://127.0.0.1:0").unwrap();
+    let mount = server.add_mount("/live", make_muxer_cfg()).unwrap();
+    server.start().unwrap();
+    drop(server);
+    let r = mount.flush();
+    assert!(matches!(r, Err(MountError::Closed)), "after Drop: {r:?}");
+}
+
+#[test]
+fn flush_on_a_live_mount_is_ok() {
+    let server = RtspServer::bind("rtsp://127.0.0.1:0").unwrap();
+    let mount = server.add_mount("/live", make_muxer_cfg()).unwrap();
+    mount.flush().expect("before start()");
+    server.start().unwrap();
+    push_once(&mount).unwrap();
+    mount.flush().expect("on a started server");
+    server.stop().unwrap();
+}
+
+/// `reset_stats()` is a counter operation: like the getters it still answers
+/// once the server has ended.
+#[test]
+fn reset_stats_still_answers_after_the_end() {
+    let server = RtspServer::bind("rtsp://127.0.0.1:0").unwrap();
+    let mount = server.add_mount("/live", make_muxer_cfg()).unwrap();
+    server.start().unwrap();
+    push_once(&mount).unwrap();
+    server.stop().unwrap();
+    assert!(mount.stats().bytes_pushed > 0);
+    mount.reset_stats();
+    assert_eq!(mount.stats(), tst_rtp::MountStats::default());
+}
