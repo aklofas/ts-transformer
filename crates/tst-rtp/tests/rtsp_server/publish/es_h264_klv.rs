@@ -49,14 +49,18 @@ const KLV_SR: (u64, u32) = (((NTP_SECS as u64) << 32) | (1 << 31), KLV_TS0);
 /// pts_k     = video_rtp - video_rtp_origin
 /// ```
 ///
-/// in 32.32 NTP fixed point, rounded down to whole ticks. The server adds a
-/// guard of two NTP units, so a unit may land one tick after this value; the
-/// assertions below allow that.
+/// computed exactly and rounded down to a whole tick once, at the end. Both
+/// reports here name an NTP time that falls on a whole tick of both clocks,
+/// the way this library's own sender writes them, so the server must place
+/// each unit at exactly this value: never early (the rounding of each
+/// report's NTP time that the server's guard makes up for), never late.
 fn spec_klv_pts(t_k: u32) -> i64 {
     let (ntp_v, rtp_v) = (VIDEO_SR.0 as i128, VIDEO_SR.1 as i128);
     let (ntp_k_sr, rtp_k_sr) = (KLV_SR.0 as i128, KLV_SR.1 as i128);
-    let ntp_k = ntp_k_sr + (((t_k as i128 - rtp_k_sr) << 32) / 90_000);
-    let video_rtp = rtp_v + (((ntp_k - ntp_v) * 90_000) >> 32);
+    // (ntp_k - ntp_v) * 90000 in 32.32 fixed point, with ntp_k taken
+    // exactly from the KLV report rather than cut to an NTP unit first.
+    let ticks_x2_32 = (ntp_k_sr - ntp_v) * 90_000 + ((t_k as i128 - rtp_k_sr) << 32);
+    let video_rtp = rtp_v + (ticks_x2_32 >> 32);
     (video_rtp - VIDEO_TS0 as i128) as i64
 }
 
@@ -169,9 +173,9 @@ fn klv_is_aligned_to_video_by_sender_reports() {
         let t_k = KLV_TS0 + j as u32 * KLV_STEP;
         let want = spec_klv_pts(t_k);
         let got = pts - video[0];
-        assert!(
-            (got - want).abs() <= 1,
-            "KLV unit {j}: PTS {got} past the first video sample, spec formula says {want}"
+        assert_eq!(
+            got, want,
+            "KLV unit {j}: PTS past the first video sample against the spec formula"
         );
         assert_eq!(payload, &units[j], "KLV unit {j} bytes");
     }
@@ -304,10 +308,10 @@ fn klv_falls_back_to_provisional_alignment_without_sender_reports() {
     let klv = klv_events(&events);
     assert_eq!(klv.len(), 1);
     let want = spec_klv_pts(KLV_TS0 + j * KLV_STEP);
-    assert!(
-        (klv[0].0 - video[0] - want).abs() <= 1,
-        "late-report KLV PTS {} past the first video sample, spec formula says {want}",
-        klv[0].0 - video[0]
+    assert_eq!(
+        klv[0].0 - video[0],
+        want,
+        "late-report KLV PTS past the first video sample against the spec formula"
     );
     assert_eq!(klv[0].1, units[j as usize]);
     assert_eq!(p.teardown("/pub"), 200);
