@@ -83,8 +83,9 @@
 #          an on-demand publish mount's creation (a count over the table
 #          and a queue try_send, which never blocks);
 #          MountRules.set / remove / set_default / clear / set_challenge,
-#          len() and __repr__: the rules table's rwlocks, held for one map
-#          operation (clear empties the map);
+#          auth_failures / default_auth_failures, len() and __repr__: the
+#          rules table's rwlocks, held for one map operation (clear empties
+#          the map);
 #          shells.OpenCancel.is_cancelled / __repr__, and every open's
 #          check of its `cancel=` object before it parses its URL
 #          (`open_cancel::begin`): tst-pipeline's `OpenCancel` mutex,

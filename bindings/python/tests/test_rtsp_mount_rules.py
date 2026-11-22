@@ -64,6 +64,21 @@ def _announce(port: int, path: str, authorization: str | None = None) -> str:
         return buf.decode(errors="replace")
 
 
+def _describe(port: int, path: str, authorization: str | None = None) -> str:
+    """One DESCRIBE on a fresh connection; returns the response head."""
+    with socket.create_connection(("127.0.0.1", port), timeout=5.0) as sock:
+        auth = f"Authorization: {authorization}\r\n" if authorization else ""
+        sock.sendall(
+            f"DESCRIBE rtsp://127.0.0.1:{port}{path} RTSP/1.0\r\nCSeq: 1\r\n{auth}\r\n".encode()
+        )
+        buf = b""
+        while b"\r\n\r\n" not in buf:
+            chunk = sock.recv(1024)
+            assert chunk, "server closed before answering"
+            buf += chunk
+        return buf.decode(errors="replace")
+
+
 def _status(resp: str) -> int:
     return int(resp.split()[1])
 
@@ -114,6 +129,14 @@ def test_refused_credentials_are_counted_on_their_rule():
         counts = rules.auth_failures("/amber")
         assert (counts.publish, counts.read) == (2, 0)
         assert "publish=2" in repr(counts)
+
+        # A refused read counts in the read direction.
+        rules.set("/eyes", MountRule(read=MountPolicy.require(MountCredential("u", "pw"))))
+        assert _status(_describe(port, "/eyes")) == 401
+        assert _status(_describe(port, "/eyes", _basic("u", "bad"))) == 401
+        eyes = rules.auth_failures("/eyes")
+        assert (eyes.publish, eyes.read) == (0, 1)
+        assert type(eyes.read) is int
 
         # A path without a rule of its own counts on the default rule.
         assert _status(_announce(port, "/elsewhere", _basic("other", "wrong"))) == 401
