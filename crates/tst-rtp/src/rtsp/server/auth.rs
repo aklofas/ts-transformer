@@ -59,6 +59,16 @@ pub(crate) struct Credential<'a> {
     pub password: &'a SecretString,
 }
 
+/// What a verification checks an `Authorization` header against besides the
+/// credentials: the scheme, the realm and the form of Digest answer taken.
+pub(crate) struct VerifyContext<'a> {
+    pub scheme: AuthScheme,
+    pub realm: &'a str,
+    /// Take a Digest answer that carries no `qop` (RFC 2069, the form
+    /// GStreamer sends). Off: such an answer is refused as a downgrade.
+    pub accept_digest_without_qop: bool,
+}
+
 /// Build the `WWW-Authenticate:` header value for the configured scheme.
 ///
 /// `nonce` is only consumed for the Digest schemes; Basic ignores it.
@@ -157,19 +167,38 @@ pub(crate) fn verify_credentials(
     expected_nonce: &str,
     nc_hwm: &mut u32,
 ) -> Result<(), AuthVerifyError> {
-    let auth = auth_header.ok_or(AuthVerifyError::Missing)?;
-    match scheme {
-        AuthScheme::Basic => verify_basic(auth, credentials),
-        AuthScheme::DigestMd5 | AuthScheme::DigestSha256 => verify_digest(
-            auth,
-            method,
-            uri,
-            credentials,
-            realm,
+    verify_credentials_with(
+        auth_header,
+        method,
+        uri,
+        &VerifyContext {
             scheme,
-            expected_nonce,
-            nc_hwm,
-        ),
+            realm,
+            accept_digest_without_qop: false,
+        },
+        credentials,
+        expected_nonce,
+        nc_hwm,
+    )
+}
+
+/// [`verify_credentials`] with the scheme, the realm and the accepted
+/// answer forms given as one [`VerifyContext`].
+pub(crate) fn verify_credentials_with(
+    auth_header: Option<&str>,
+    method: &str,
+    uri: &str,
+    ctx: &VerifyContext<'_>,
+    credentials: &[Credential<'_>],
+    expected_nonce: &str,
+    nc_hwm: &mut u32,
+) -> Result<(), AuthVerifyError> {
+    let auth = auth_header.ok_or(AuthVerifyError::Missing)?;
+    match ctx.scheme {
+        AuthScheme::Basic => verify_basic(auth, credentials),
+        AuthScheme::DigestMd5 | AuthScheme::DigestSha256 => {
+            verify_digest(auth, method, uri, credentials, ctx, expected_nonce, nc_hwm)
+        }
     }
 }
 
@@ -216,17 +245,16 @@ fn verify_basic(auth_header: &str, credentials: &[Credential<'_>]) -> Result<(),
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn verify_digest(
     auth_header: &str,
     method: &str,
     uri: &str,
     credentials: &[Credential<'_>],
-    expected_realm: &str,
-    scheme: AuthScheme,
+    ctx: &VerifyContext<'_>,
     expected_nonce: &str,
     nc_hwm: &mut u32,
 ) -> Result<(), AuthVerifyError> {
+    let (scheme, expected_realm) = (ctx.scheme, ctx.realm);
     let value = auth_header
         .strip_prefix("Digest ")
         .ok_or(AuthVerifyError::SchemeMismatch)?;
@@ -260,10 +288,20 @@ fn verify_digest(
         });
     }
 
-    // Reject nc replays and regressions.
-    // The server always offers qop=auth, so nc MUST be present when qop is
-    // non-empty. If nc is absent or unparseable, treat as a syntax error.
-    if !qop.is_empty() {
+    // An answer without `qop` is the RFC 2069 form: it carries no nonce
+    // count to check, so the count is neither read nor advanced. The server
+    // always offers qop=auth, so unless the caller allowed this form it is a
+    // downgrade and is refused.
+    let without_qop = qop.is_empty();
+    if without_qop && !ctx.accept_digest_without_qop {
+        return Err(AuthVerifyError::BadDigestSyntax {
+            detail: "qop downgrade rejected: server offered qop=auth".to_string(),
+        });
+    }
+
+    // Reject nc replays and regressions. nc MUST be present when qop is
+    // non-empty; if it is absent or unparseable, treat as a syntax error.
+    if !without_qop {
         let nc_val =
             u32::from_str_radix(nc_str, 16).map_err(|_| AuthVerifyError::BadDigestSyntax {
                 detail: format!("nc '{nc_str}' is not a valid hex counter"),
@@ -284,16 +322,6 @@ fn verify_digest(
         // closes after 3 401s without an authenticated 2xx between them) and
         // by the hwm reset on nonce rotation.
         *nc_hwm = nc_val;
-    }
-
-    // Reject the RFC 2617 no-qop downgrade when the server
-    // challenge offered qop=auth. Our build_challenge always adds
-    // qop="auth" for DigestMd5/DigestSha256; a client that omits qop is
-    // deliberately downgrading (or is a broken implementation).
-    if qop.is_empty() {
-        return Err(AuthVerifyError::BadDigestSyntax {
-            detail: "qop downgrade rejected: server offered qop=auth".to_string(),
-        });
     }
 
     if uri_attr != uri {
@@ -930,6 +958,159 @@ mod tests {
             matches!(e, AuthVerifyError::BadDigestSyntax { .. }),
             "expected BadDigestSyntax for qop downgrade, got {e:?}"
         );
+    }
+
+    /// An RFC 2069 answer (no `qop`, no `nc`, no `cnonce`), the form
+    /// GStreamer sends.
+    fn no_qop_header(
+        scheme: AuthScheme,
+        user: &str,
+        password: &SecretString,
+        nonce: &str,
+        uri: &str,
+    ) -> String {
+        let (response, alg) = (
+            compute_digest_response(
+                scheme, user, "tst-rtp", password, "DESCRIBE", uri, nonce, "", "", "",
+            ),
+            if scheme == AuthScheme::DigestSha256 {
+                "SHA-256"
+            } else {
+                "MD5"
+            },
+        );
+        format!(
+            "Digest username=\"{user}\", realm=\"tst-rtp\", nonce=\"{nonce}\", \
+             uri=\"{uri}\", response=\"{response}\", algorithm={alg}"
+        )
+    }
+
+    fn check_with(
+        header: &str,
+        scheme: AuthScheme,
+        accept_without_qop: bool,
+        nonce: &str,
+        hwm: &mut u32,
+    ) -> Result<(), AuthVerifyError> {
+        let secret = SecretString::new("secret".into());
+        let ctx = VerifyContext {
+            scheme,
+            realm: "tst-rtp",
+            accept_digest_without_qop: accept_without_qop,
+        };
+        verify_credentials_with(
+            Some(header),
+            "DESCRIBE",
+            "rtsp://server/live",
+            &ctx,
+            &[Credential {
+                username: "admin",
+                password: &secret,
+            }],
+            nonce,
+            hwm,
+        )
+    }
+
+    #[test]
+    fn an_answer_without_qop_is_accepted_only_when_allowed() {
+        let pw = SecretString::new("secret".into());
+        let h = no_qop_header(
+            AuthScheme::DigestMd5,
+            "admin",
+            &pw,
+            "n1",
+            "rtsp://server/live",
+        );
+        check_with(&h, AuthScheme::DigestMd5, true, "n1", &mut 0).unwrap();
+        let e = check_with(&h, AuthScheme::DigestMd5, false, "n1", &mut 0).unwrap_err();
+        assert!(
+            matches!(e, AuthVerifyError::BadDigestSyntax { .. }),
+            "{e:?}"
+        );
+        // The nonce count is neither read nor advanced.
+        let mut hwm = 7;
+        check_with(&h, AuthScheme::DigestMd5, true, "n1", &mut hwm).unwrap();
+        assert_eq!(hwm, 7);
+    }
+
+    #[test]
+    fn an_answer_without_qop_and_a_wrong_password_is_refused() {
+        let pw = SecretString::new("not-the-secret".into());
+        let h = no_qop_header(
+            AuthScheme::DigestMd5,
+            "admin",
+            &pw,
+            "n1",
+            "rtsp://server/live",
+        );
+        let e = check_with(&h, AuthScheme::DigestMd5, true, "n1", &mut 0).unwrap_err();
+        assert!(matches!(e, AuthVerifyError::WrongDigestResponse), "{e:?}");
+    }
+
+    #[test]
+    fn an_unknown_user_without_qop_fails_like_a_wrong_password() {
+        let pw = SecretString::new("secret".into());
+        let h = no_qop_header(
+            AuthScheme::DigestMd5,
+            "nobody",
+            &pw,
+            "n1",
+            "rtsp://server/live",
+        );
+        let e = check_with(&h, AuthScheme::DigestMd5, true, "n1", &mut 0).unwrap_err();
+        assert!(matches!(e, AuthVerifyError::WrongDigestResponse), "{e:?}");
+    }
+
+    #[test]
+    fn an_answer_with_qop_is_still_nonce_counted_when_the_option_is_on() {
+        let cfg = digest_md5_cfg();
+        let h = digest_header("admin", "admin", &cfg.password);
+        let mut hwm = 0;
+        check_with(&h, AuthScheme::DigestMd5, true, "abc123", &mut hwm).unwrap();
+        assert_eq!(hwm, 1);
+        let e = check_with(&h, AuthScheme::DigestMd5, true, "abc123", &mut hwm).unwrap_err();
+        assert!(
+            matches!(e, AuthVerifyError::BadDigestSyntax { .. }),
+            "{e:?}"
+        );
+    }
+
+    #[test]
+    fn a_foreign_nonce_without_qop_is_stale() {
+        let pw = SecretString::new("secret".into());
+        let h = no_qop_header(
+            AuthScheme::DigestMd5,
+            "admin",
+            &pw,
+            "other",
+            "rtsp://server/live",
+        );
+        let e = check_with(&h, AuthScheme::DigestMd5, true, "n1", &mut 0).unwrap_err();
+        assert!(matches!(e, AuthVerifyError::StaleNonce), "{e:?}");
+    }
+
+    #[test]
+    fn a_sha256_server_takes_a_sha256_answer_without_qop_and_refuses_an_md5_one() {
+        let pw = SecretString::new("secret".into());
+        let right = no_qop_header(
+            AuthScheme::DigestSha256,
+            "admin",
+            &pw,
+            "n1",
+            "rtsp://server/live",
+        );
+        check_with(&right, AuthScheme::DigestSha256, true, "n1", &mut 0).unwrap();
+        // What GStreamer 1.24 sends to a SHA-256 challenge: the MD5 form.
+        let md5 = no_qop_header(
+            AuthScheme::DigestMd5,
+            "admin",
+            &pw,
+            "n1",
+            "rtsp://server/live",
+        );
+        let e = check_with(&md5, AuthScheme::DigestSha256, true, "n1", &mut 0).unwrap_err();
+        assert!(matches!(e, AuthVerifyError::WrongDigestResponse), "{e:?}");
     }
 
     #[test]
