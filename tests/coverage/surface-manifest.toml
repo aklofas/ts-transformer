@@ -4881,6 +4881,50 @@ tier = "A"
 item = "tst_core::Transport::on_video_au"
 reason = "top-level re-export of tst_core::transport::Transport::on_video_au; see that entry for coverage"
 
+[[surface]]
+kind = "rust"
+crate = "tst-core"
+item = "tst_core::transport::Transport::peer_activity"
+owning_tests = ["crates/tst-core/src/transport.rs", "crates/tst-pipeline/tests/reconnect/reconnect_silent_peer.rs"]
+bindings = ["c:n/a(Rust transport hook; the bindings arm silent-peer detection through the x-silentpeertimeout URL key)", "python:n/a(Rust transport hook; the bindings arm silent-peer detection through the x-silentpeertimeout URL key)", "java:n/a(Rust transport hook; the bindings arm silent-peer detection through the x-silentpeertimeout URL key)", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[exempt]]
+item = "tst_core::Transport::peer_activity"
+reason = "top-level re-export of tst_core::transport::Transport::peer_activity; see that entry for coverage"
+
+[[surface]]
+kind = "rust"
+crate = "tst-core"
+item = "tst_core::transport::Transport::abandon"
+owning_tests = ["crates/tst-core/src/transport.rs", "crates/tst-pipeline/tests/reconnect/reconnect_silent_peer.rs"]
+bindings = ["c:n/a(Rust transport hook; the bindings arm silent-peer detection through the x-silentpeertimeout URL key)", "python:n/a(Rust transport hook; the bindings arm silent-peer detection through the x-silentpeertimeout URL key)", "java:n/a(Rust transport hook; the bindings arm silent-peer detection through the x-silentpeertimeout URL key)", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[exempt]]
+item = "tst_core::Transport::abandon"
+reason = "top-level re-export of tst_core::transport::Transport::abandon; see that entry for coverage"
+
+[[surface]]
+kind = "rust"
+crate = "tst-srt"
+item = "tst_srt::transport::SrtTransport::peer_activity"
+owning_tests = ["crates/tst-srt/tests/pipeline/pipeline_silent_peer.rs"]
+bindings = ["c:n/a(Rust transport hook; the bindings arm silent-peer detection through the x-silentpeertimeout URL key)", "python:n/a(Rust transport hook; the bindings arm silent-peer detection through the x-silentpeertimeout URL key)", "java:n/a(Rust transport hook; the bindings arm silent-peer detection through the x-silentpeertimeout URL key)", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-srt"
+item = "tst_srt::transport::SrtTransport::abandon"
+owning_tests = ["crates/tst-srt/tests/pipeline/pipeline_silent_peer.rs"]
+bindings = ["c:n/a(Rust transport hook; the bindings arm silent-peer detection through the x-silentpeertimeout URL key)", "python:n/a(Rust transport hook; the bindings arm silent-peer detection through the x-silentpeertimeout URL key)", "java:n/a(Rust transport hook; the bindings arm silent-peer detection through the x-silentpeertimeout URL key)", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
 [[exempt]]
 item = "tst_pipeline::mux_publisher::Segmented"
 reason = "the transport in MuxPublisher's generic position (MuxSender<Segmented<P>>); public only because the newtype's inner type is, constructed by MuxPublisher alone — every binding holds MuxPublisher<HlsPublisher>, whose rows carry the coverage"

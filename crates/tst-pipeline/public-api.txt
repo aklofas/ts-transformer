@@ -2186,6 +2186,7 @@ pub fn tst_pipeline::reconnect::ManagedTransport<T>::new<F>(T, F, tst_pipeline::
 pub fn tst_pipeline::reconnect::ManagedTransport<T>::reconnecting_handle(&self) -> alloc::sync::Arc<core::sync::atomic::AtomicBool>
 pub fn tst_pipeline::reconnect::ManagedTransport<T>::reconnects_handle(&self) -> alloc::sync::Arc<core::sync::atomic::AtomicU64>
 pub fn tst_pipeline::reconnect::ManagedTransport<T>::stats_handle(&self) -> tst_pipeline::reconnect::ManagedStatsHandle
+pub fn tst_pipeline::reconnect::ManagedTransport<T>::with_silent_peer_timeout(self, core::time::Duration) -> Self
 impl<T: tst_core::transport::Transport + 'static> tst_core::transport::Transport for tst_pipeline::reconnect::ManagedTransport<T>
 pub fn tst_pipeline::reconnect::ManagedTransport<T>::cancel_handle(&self) -> core::option::Option<alloc::sync::Arc<(dyn tst_core::transport::TransportCancel + core::marker::Send + core::marker::Sync)>>
 pub fn tst_pipeline::reconnect::ManagedTransport<T>::close(&mut self)
@@ -2936,6 +2937,7 @@ pub fn tst_pipeline::reconnect::ManagedTransport<T>::new<F>(T, F, tst_pipeline::
 pub fn tst_pipeline::reconnect::ManagedTransport<T>::reconnecting_handle(&self) -> alloc::sync::Arc<core::sync::atomic::AtomicBool>
 pub fn tst_pipeline::reconnect::ManagedTransport<T>::reconnects_handle(&self) -> alloc::sync::Arc<core::sync::atomic::AtomicU64>
 pub fn tst_pipeline::reconnect::ManagedTransport<T>::stats_handle(&self) -> tst_pipeline::reconnect::ManagedStatsHandle
+pub fn tst_pipeline::reconnect::ManagedTransport<T>::with_silent_peer_timeout(self, core::time::Duration) -> Self
 impl<T: tst_core::transport::Transport + 'static> tst_core::transport::Transport for tst_pipeline::reconnect::ManagedTransport<T>
 pub fn tst_pipeline::reconnect::ManagedTransport<T>::cancel_handle(&self) -> core::option::Option<alloc::sync::Arc<(dyn tst_core::transport::TransportCancel + core::marker::Send + core::marker::Sync)>>
 pub fn tst_pipeline::reconnect::ManagedTransport<T>::close(&mut self)
