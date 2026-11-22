@@ -71,6 +71,14 @@ pub(crate) struct ServerState {
     /// Graceful-shutdown signal. `stop()` flips this; per-session tasks
     /// observe via `.cancelled()` await.
     pub(crate) cancel_token: CancellationToken,
+    /// `stop()` fires this as it begins, before it notifies the sessions:
+    /// the listener closes its listening socket at once and goes on reaping
+    /// sessions until `cancel_token`, which ends them.
+    pub(crate) stop_accepting: CancellationToken,
+    /// Turns `true` once the listener has closed its listening socket on
+    /// `stop_accepting`. `stop()` waits on it before it takes the session
+    /// snapshot it notifies.
+    pub(crate) listener_closed: tokio::sync::watch::Sender<bool>,
     /// Turns `true` once the listener task has drained every connection
     /// handler it spawned (bounded by `graceful_shutdown_drain`) and exited.
     /// `stop()` waits on it. The fanout, multicast and UDP-ingest tasks a
@@ -348,11 +356,10 @@ pub(crate) fn unregister_session(state: &Arc<ServerState>, entry: &Arc<ActiveSes
 ///    [`crate::rtsp::server::publish::PublishMountHandle::into_recv_transport`])
 ///    ends with `TransportError::Closed`, as with [`Self::stop`], even
 ///    while a clone of its handle is still alive.
-/// 2. **Graceful — `stop()`** — sends an RTSP Notice (5402) to each
-///    active session, allows up to
+/// 2. **Graceful — `stop()`** — closes the listening socket first, sends
+///    an RTSP Notice (5402) to each active session, allows up to
 ///    `RtspServerBuilder::graceful_shutdown_drain` for in-flight RTP to
-///    drain, then closes the listener and ends the sessions; the runtime
-///    shuts down on `Drop`. Returns once drain is done. A publisher
+///    drain, then ends the sessions; the runtime shuts down on `Drop`. Returns once drain is done. A publisher
 ///    session that outlives the drain window loses what it flushes later,
 ///    and that loss is not counted in any drop counter.
 /// 3. **Hard cross-thread — `cancel_handle()`** — returns an
@@ -548,6 +555,8 @@ pub(crate) fn test_state_with(builder: RtspServerBuilder) -> Arc<ServerState> {
     Arc::new(ServerState {
         builder,
         cancel_token: CancellationToken::new(),
+        stop_accepting: CancellationToken::new(),
+        listener_closed: tokio::sync::watch::channel(false).0,
         sessions_ended: Arc::new(tokio::sync::watch::channel(false).0),
         hard_cancel,
         mounts: std::sync::Mutex::new(std::collections::HashMap::new()),
@@ -676,6 +685,8 @@ impl RtspServer {
         let state = Arc::new(ServerState {
             builder: b,
             cancel_token: CancellationToken::new(),
+            stop_accepting: CancellationToken::new(),
+            listener_closed: tokio::sync::watch::channel(false).0,
             sessions_ended: Arc::new(tokio::sync::watch::channel(false).0),
             hard_cancel,
             mounts: std::sync::Mutex::new(std::collections::HashMap::new()),
@@ -1241,13 +1252,19 @@ impl RtspServer {
         }
     }
 
-    /// Graceful shutdown. Sends an RFC 7826 §13.5.1 Notice 5402
+    /// Graceful shutdown. From the moment `stop()` begins the server
+    /// accepts no new connection; when it returns the listening socket is
+    /// closed. It sends an RFC 7826 §13.5.1 Notice 5402
     /// ("Server-Initiated TEARDOWN") ANNOUNCE over each session's TCP
     /// control channel, then cancels each session's per-session token,
-    /// fires the global `cancel_token` so the listener stops accepting
-    /// new connections, and waits for every session task to end — at most
-    /// `graceful_shutdown_drain` plus 500 ms — to let in-flight RTP drain.
-    /// Idempotent — a second call after a completed first call is a no-op.
+    /// fires the global `cancel_token`, and waits for every session task to
+    /// end — at most `graceful_shutdown_drain` plus 500 ms — to let
+    /// in-flight RTP drain. Idempotent — a second call after a completed
+    /// first call is a no-op.
+    ///
+    /// A connection the server accepted just before `stop()` began, whose
+    /// session has not started yet (a TLS handshake still running, for
+    /// one), can miss the Notice and is ended with the others.
     ///
     /// The ANNOUNCE write is best-effort: a per-session write failure
     /// (peer already disconnected, TCP reset, etc.) logs a warning and
@@ -1298,12 +1315,29 @@ impl RtspServer {
         if self.state.shutdown.swap(true, Ordering::AcqRel) {
             return Ok(());
         }
+        // Nobody is admitted from here on: a connection accepted while the
+        // Notices below are written (up to 1 s per session that does not
+        // read) would get none and be cut off a moment later.
+        self.state.stop_accepting.cancel();
         // New publish work is refused first: a parked `next_publisher` wakes
         // with `Shutdown`, an on-demand ANNOUNCE answers 503, and rule edits
         // are refused. The application transports stay open until the
         // sessions have drained (below), so a publisher session's final
         // adapter flush still reaches them.
         self.state.refuse_publish_work();
+        // The snapshot is taken once the listening socket is closed, so it
+        // holds every session the listener accepted. The margin covers the
+        // listener's scheduling, as the drain's does below.
+        if let Some(rt) = self.runtime.as_ref() {
+            let mut closed = self.state.listener_closed.subscribe();
+            rt.block_on(async {
+                let _ = tokio::time::timeout(
+                    Duration::from_millis(500),
+                    closed.wait_for(|closed| *closed),
+                )
+                .await;
+            });
+        }
         // Snapshot the active session list. Iterate + send Notice 5402
         // ANNOUNCE + cancel each. The per-session task is responsible
         // for flushing any in-flight RTP + closing the TCP cleanly
@@ -1315,8 +1349,8 @@ impl RtspServer {
             .map(|g| g.clone())
             .unwrap_or_default();
         self.notify_and_cancel(&sessions);
-        // Also fire the global cancel so the listener stops accepting
-        // new connections and any per-task observers exit promptly.
+        // Also fire the global cancel so the listener drains the sessions
+        // and any per-task observers exit promptly.
         self.state.cancel_token.cancel();
         // Wait for every session task to end, but no longer than the
         // drain window — sessions observe their per-session cancel, flush,

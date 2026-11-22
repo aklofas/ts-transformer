@@ -65,9 +65,8 @@ fn a_mount_rule_refusing_publish_refuses_the_announce_403() {
 
 /// After `stop()` the server holds no connection and takes none: a
 /// connection opened before the stop is closed under the ANNOUNCE, and a
-/// push cannot reach the server: its connection is refused, or taken by a
-/// listener that `stop()` has told to end but that has not closed yet and
-/// then reset.
+/// push's connection is refused, because the listening socket is closed
+/// when `stop()` returns.
 #[test]
 fn a_push_after_stop_finds_no_server() {
     let s = Served::new();
@@ -78,7 +77,10 @@ fn a_push_after_stop_finds_no_server() {
     assert!(matches!(&r, Err(RtspError::Io(_))), "{r:?}");
     let r = RtspPush::connect(s.builder(), &PushDescription::Mp2t);
     assert!(
-        matches!(&r, Err(RtspError::Io(_))),
+        matches!(
+            &r,
+            Err(RtspError::Io(std::io::ErrorKind::ConnectionRefused))
+        ),
         "{:?}",
         r.map(|_| "a push")
     );

@@ -20,7 +20,7 @@ use std::time::{Duration, Instant};
 use tst_test_helpers::timing::scaled;
 
 use tst_core::mpegts::common::Pts90khz;
-use tst_rtp::RtspServer;
+use tst_rtp::{MountHandle, RtspServer};
 
 use crate::fixtures::raw_rtsp::{make_muxer_cfg, request, session_id};
 use crate::fixtures::{push_until_fanout_parks, wait_for};
@@ -94,19 +94,28 @@ fn slow_peer_does_not_block_muxer() {
     server.stop().ok();
 }
 
-/// A TCP-interleaved peer that played `/live` and then stopped reading, with
-/// its server-side fanout parked on the full socket (holding the session's
-/// writer lock). Pushes until the server's write probe shows that parked
-/// write; panics if it never does.
+/// A started server with `/live` and a [`stall_a_playing_peer`] on it, the
+/// mount's only peer.
+fn stalled_playing_peer() -> (RtspServer, TcpStream, u16) {
+    let server = RtspServer::bind("rtsp://127.0.0.1:0").unwrap();
+    let mount = server.add_mount("/live", make_muxer_cfg()).unwrap();
+    server.start().unwrap();
+    let port = server.local_addr().unwrap().port();
+    let peer = stall_a_playing_peer(&server, &mount);
+    assert_eq!(mount.stats().peer_count, 1, "the peer is not subscribed");
+    (server, peer, port)
+}
+
+/// A TCP-interleaved peer that played `/live` on `server` (whose `mount`
+/// it is) and then stopped reading, with its server-side fanout parked on
+/// the full socket (holding the session's writer lock). Pushes until the
+/// server's write probe shows that parked write; panics if it never does.
 ///
 /// Pushed bytes alone do not prove the stall: the broadcast drops frames a
 /// lagging fanout has not read, so a mount can push far more than ever
 /// reaches the socket. The peer's small receive buffer only makes the
 /// socket fill sooner.
-fn stalled_playing_peer() -> (RtspServer, TcpStream, u16) {
-    let server = RtspServer::bind("rtsp://127.0.0.1:0").unwrap();
-    let mount = server.add_mount("/live", make_muxer_cfg()).unwrap();
-    server.start().unwrap();
+pub(crate) fn stall_a_playing_peer(server: &RtspServer, mount: &MountHandle) -> TcpStream {
     let port = server.local_addr().unwrap().port();
     let base = format!("rtsp://127.0.0.1:{port}/live");
 
@@ -141,7 +150,7 @@ fn stalled_playing_peer() -> (RtspServer, TcpStream, u16) {
     let mut nal = vec![0xBB; 32 * 1024];
     nal[..5].copy_from_slice(&[0x00, 0x00, 0x00, 0x01, 0x65]);
     let mut i = 0i64;
-    push_until_fanout_parks(&server, scaled(Duration::from_secs(6)), || {
+    push_until_fanout_parks(server, scaled(Duration::from_secs(6)), || {
         for _ in 0..8 {
             mount
                 .push_video(&nal, Pts90khz::new(i * 3000), true)
@@ -149,8 +158,7 @@ fn stalled_playing_peer() -> (RtspServer, TcpStream, u16) {
             i += 1;
         }
     });
-    assert_eq!(mount.stats().peer_count, 1, "the peer is not subscribed");
-    (server, peer, port)
+    peer
 }
 
 /// A session whose peer stopped reading must still end on stop(), whatever

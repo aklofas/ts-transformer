@@ -17,10 +17,23 @@ use crate::rtsp::server::ServerState;
 ///
 /// Reports the bind outcome (address or typed error) through
 /// `state.startup_tx`, the one-shot channel `RtspServer::start` blocks on.
-/// Sets `state.local_addr` once the listener binds. Continues accepting
-/// until the server's cancellation token fires: `stop()`, Drop, or the
-/// server's hard-cancel watcher once the hard cancel handle is flipped.
+/// Sets `state.local_addr` once the listener binds. Accepts until
+/// `state.stop_accepting` fires (`stop()` has begun), then closes the
+/// listening socket, reports it through `state.listener_closed` and goes on
+/// reaping sessions; returns once the server's cancellation token fires:
+/// `stop()`, Drop, or the server's hard-cancel watcher once the hard cancel
+/// handle is flipped.
 pub(crate) async fn run_listener(state: Arc<ServerState>) -> Result<(), RtspServerError> {
+    run_listener_with(state, tokio::task::JoinSet::new()).await
+}
+
+/// [`run_listener`] with the set of session tasks it starts with: a test
+/// puts a task there that outlives the cancel, to see what the drain waits
+/// for.
+async fn run_listener_with(
+    state: Arc<ServerState>,
+    mut sessions: tokio::task::JoinSet<()>,
+) -> Result<(), RtspServerError> {
     // Bind. `state.builder.bind_url` is guaranteed to be IP-literal at
     // builder time (validate_for_server_bind enforced it).
     let bind_addr = format!(
@@ -82,11 +95,12 @@ pub(crate) async fn run_listener(state: Arc<ServerState>) -> Result<(), RtspServ
     #[cfg(feature = "rtsp-server-tls")]
     let tls_config = state.tls_config.lock().unwrap().take();
 
-    // Every session task, so a shutdown can wait for them.
-    let mut sessions: tokio::task::JoinSet<()> = tokio::task::JoinSet::new();
+    // `None` once `stop()` has begun: the socket is closed and nothing is
+    // accepted, while the sessions live on to be sent their Notice.
+    let mut listener = Some(listener);
     loop {
         tokio::select! {
-            accept_res = listener.accept() => {
+            accept_res = accept(listener.as_ref()) => {
                 match accept_res {
                     Ok((tcp, peer)) => {
                         // Max-sessions guard — reserve the slot ATOMICALLY here,
@@ -205,6 +219,11 @@ pub(crate) async fn run_listener(state: Arc<ServerState>) -> Result<(), RtspServ
                     }
                 }
             }
+            () = state.stop_accepting.cancelled(), if listener.is_some() => {
+                tracing::info!(target: "tst_rtp::server", "server stopping; listener closed");
+                listener = None;
+                state.listener_closed.send_replace(true);
+            }
             _ = state.cancel_token.cancelled() => {
                 tracing::info!(target: "tst_rtp::server", "server cancel observed; listener exiting");
                 // Close the socket before the drain: `SessionsEnded` reports
@@ -219,6 +238,16 @@ pub(crate) async fn run_listener(state: Arc<ServerState>) -> Result<(), RtspServ
             // count.
             Some(_) = sessions.join_next(), if !sessions.is_empty() => {}
         }
+    }
+}
+
+/// The next connection on `listener`; never resolves once it is closed.
+async fn accept(
+    listener: Option<&TcpListener>,
+) -> std::io::Result<(tokio::net::TcpStream, std::net::SocketAddr)> {
+    match listener {
+        Some(l) => l.accept().await,
+        None => std::future::pending().await,
     }
 }
 
@@ -239,4 +268,64 @@ async fn drain_sessions(sessions: &mut tokio::task::JoinSet<()>, drain: std::tim
     let all_ended = async { while sessions.join_next().await.is_some() {} };
     let _ = tokio::time::timeout(drain, all_ended).await;
     sessions.detach_all();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::rtsp::server::builder::RtspServerBuilder;
+    use crate::rtsp::server::test_state_with;
+    use std::time::Duration;
+    use tokio::time::{Instant, timeout};
+
+    /// The token alone ends the listener on a hard cancel or Drop: the
+    /// listening socket is closed while the drain still waits for a session
+    /// task that outlives the cancel, not when the task returns.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn the_listening_socket_is_closed_before_the_session_drain() {
+        let mut builder = RtspServerBuilder::new("rtsp://127.0.0.1:0").unwrap();
+        builder.graceful_shutdown_drain(Duration::from_secs(60));
+        let state = test_state_with(builder);
+        let (startup_tx, startup_rx) = std::sync::mpsc::channel();
+        *state.startup_tx.lock().unwrap() = Some(startup_tx);
+        let (release, released) = tokio::sync::oneshot::channel::<()>();
+        let mut sessions = tokio::task::JoinSet::new();
+        sessions.spawn(async move {
+            let _ = released.await;
+        });
+        let listener = tokio::spawn(run_listener_with(state.clone(), sessions));
+        let addr =
+            tokio::task::spawn_blocking(move || startup_rx.recv_timeout(Duration::from_secs(10)))
+                .await
+                .unwrap()
+                .expect("the listener reported its bind")
+                .expect("the listener bound");
+        let connect = || timeout(Duration::from_secs(5), tokio::net::TcpStream::connect(addr));
+        // Control: the address takes connections before the cancel.
+        drop(connect().await.expect("connect in time").expect("accepted"));
+
+        state.cancel_token.cancel();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            if let Ok(Err(e)) = connect().await
+                && e.kind() == std::io::ErrorKind::ConnectionRefused
+            {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "the listening socket outlived the cancel while the drain waited"
+            );
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        assert!(
+            !*state.sessions_ended.borrow(),
+            "the drain no longer waits for the session task"
+        );
+        assert!(!listener.is_finished());
+
+        release.send(()).unwrap();
+        listener.await.unwrap().unwrap();
+        assert!(*state.sessions_ended.borrow());
+    }
 }

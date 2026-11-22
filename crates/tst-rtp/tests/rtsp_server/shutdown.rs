@@ -2,8 +2,12 @@
 //! registry/cancel path; the RFC 7826 §13.5.1 Notice 5402 wire
 //! transmission is covered by `notice_5402.rs`.
 
+use std::io::{Read, Write};
+use std::time::{Duration, Instant};
+
 use crate::fixtures::raw_rtsp::scaled;
 use crate::fixtures::raw_rtsp::{make_muxer_cfg, request, session_id};
+use crate::lagging_peer::stall_a_playing_peer;
 use tst_core::mpegts::common::Pts90khz;
 use tst_rtp::{MountError, RtspServer, RtspServerError};
 
@@ -302,4 +306,97 @@ fn start_after_a_hard_cancel_is_refused() {
     let server = RtspServer::bind("rtsp://127.0.0.1:0").unwrap();
     server.cancel_handle().cancel();
     assert!(matches!(server.start(), Err(RtspServerError::Shutdown)));
+}
+
+/// Whether a connection made now is served: connected and its OPTIONS
+/// answered. A refused connect is not; neither is a connection to whatever
+/// else may hold the port, which answers no RTSP.
+fn a_new_connection_is_served(port: u16) -> bool {
+    let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
+    let Ok(mut tcp) = std::net::TcpStream::connect_timeout(&addr, scaled(Duration::from_secs(2)))
+    else {
+        return false;
+    };
+    tcp.set_read_timeout(Some(scaled(Duration::from_secs(2))))
+        .unwrap();
+    let req = format!("OPTIONS rtsp://127.0.0.1:{port}/live RTSP/1.0\r\nCSeq: 1\r\n\r\n");
+    if tcp.write_all(req.as_bytes()).is_err() {
+        return false;
+    }
+    let mut head = [0u8; 12];
+    tcp.read_exact(&mut head).is_ok() && head.starts_with(b"RTSP/1.0 200")
+}
+
+/// `stop()` admits nobody from the moment it begins. A reading reader and
+/// then a reader that stopped reading: `stop()` writes the first one's
+/// Notice and then waits up to a second on the second one's, and a
+/// connection made in that second is not served.
+#[test]
+fn a_stop_in_progress_admits_nobody() {
+    let server = RtspServer::bind("rtsp://127.0.0.1:0").unwrap();
+    let mount = server.add_mount("/live", make_muxer_cfg()).unwrap();
+    server.start().unwrap();
+    let port = server.local_addr().unwrap().port();
+    let base = format!("rtsp://127.0.0.1:{port}/live");
+
+    // First in the registry, so its Notice is written first. Its media goes
+    // over UDP, so its control connection carries the replies and the
+    // Notice only.
+    let rtp = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+    let rtp_port = rtp.local_addr().unwrap().port();
+    let mut reading = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+    reading
+        .set_read_timeout(Some(scaled(Duration::from_secs(5))))
+        .unwrap();
+    let setup = request(
+        &mut reading,
+        &format!(
+            "SETUP {base} RTSP/1.0\r\nCSeq: 1\r\n\
+             Transport: RTP/AVP;unicast;client_port={rtp_port}-{}\r\n\r\n",
+            rtp_port + 1
+        ),
+    );
+    assert!(setup.starts_with("RTSP/1.0 200"), "{setup}");
+    let sid = session_id(&setup);
+    let play = request(
+        &mut reading,
+        &format!("PLAY {base} RTSP/1.0\r\nCSeq: 2\r\nSession: {sid}\r\n\r\n"),
+    );
+    assert!(play.starts_with("RTSP/1.0 200"), "{play}");
+
+    let _stalled = stall_a_playing_peer(&server, &mount);
+    assert_eq!(mount.stats().peer_count, 2);
+    assert!(a_new_connection_is_served(port), "control: before stop()");
+
+    let server = std::sync::Arc::new(server);
+    let stopping = {
+        let server = std::sync::Arc::clone(&server);
+        std::thread::spawn(move || server.stop())
+    };
+
+    // The listening socket is closed before the first Notice is written, so
+    // the first reader's Notice is the sign that nobody can come in.
+    let deadline = Instant::now() + scaled(Duration::from_secs(10));
+    let mut seen = Vec::new();
+    while !seen.windows(4).any(|w| w == b"5402") {
+        assert!(Instant::now() < deadline, "no Notice: {seen:?}");
+        let mut chunk = [0u8; 1024];
+        match reading.read(&mut chunk) {
+            Ok(0) => panic!("closed before the Notice: {seen:?}"),
+            Ok(n) => seen.extend_from_slice(&chunk[..n]),
+            Err(e) => panic!("read: {e}"),
+        }
+    }
+    // Only the listener's scheduling stands between `stop()` beginning and
+    // its socket closing; the stalled reader's Notice holds `stop()` for a
+    // second, far longer.
+    let closed_by = Instant::now() + Duration::from_millis(300);
+    while a_new_connection_is_served(port) {
+        assert!(
+            Instant::now() < closed_by,
+            "a connection made while stop() ran was served"
+        );
+    }
+    assert!(!stopping.is_finished(), "stop() returned too early to tell");
+    stopping.join().unwrap().unwrap();
 }
