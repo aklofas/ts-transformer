@@ -31,6 +31,7 @@ use crate::rtsp::server::ServerState;
 use crate::rtsp::server::auth::generate_nonce;
 use crate::rtsp::server::fanout::PeerDropCounter;
 use crate::rtsp::server::handlers;
+use crate::rtsp::server::mount::MountIdentity;
 use crate::rtsp::server::publish;
 use crate::rtsp::server::publish::session::PublishSession;
 use crate::rtsp::transport_negotiation::TransportResponse;
@@ -323,6 +324,9 @@ pub(crate) enum Playback {
 pub(crate) struct ReaderSession {
     pub(crate) session_id: String,
     pub(crate) mount_path: String,
+    /// The mount the SETUP found at `mount_path`: PLAY plays it only while
+    /// it is still the one at that path.
+    pub(crate) mount: MountIdentity,
     pub(crate) transport: ReaderTransport,
     pub(crate) playback: Playback,
 }
@@ -509,6 +513,7 @@ impl ServerSessionState {
             self.role = Role::Reader(ReaderSession {
                 session_id: String::new(),
                 mount_path: String::new(),
+                mount: MountIdentity::none(),
                 transport: ReaderTransport::Multicast,
                 playback: Playback::Ready,
             });

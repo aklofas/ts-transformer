@@ -594,6 +594,7 @@ mod tests {
         s.set_role(Role::Reader(ReaderSession {
             session_id: "1".into(),
             mount_path: "/live".into(),
+            mount: crate::rtsp::server::mount::MountIdentity::none(),
             transport: ReaderTransport::Multicast,
             playback: Playback::Ready,
         }));

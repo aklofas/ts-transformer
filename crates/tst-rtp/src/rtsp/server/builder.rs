@@ -223,8 +223,9 @@ impl RtspServerBuilder {
     }
 
     /// Cap on reader sessions at once. A reader holds a slot from its SETUP
-    /// to the end of its role: its TEARDOWN, a refusal on its own mount or
-    /// the end of its connection. A reader set up again on its own or
+    /// to the end of its role: its TEARDOWN, a refusal on its own mount
+    /// (a PLAY that finds that mount removed is one) or the end of its
+    /// connection. A reader set up again on its own or
     /// another mount keeps the one slot it holds. Readers of a multicast
     /// mount count; publishers do not. A reader's SETUP over the cap is
     /// answered `453 Not Enough Bandwidth` and its connection is closed

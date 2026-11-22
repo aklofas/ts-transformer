@@ -901,11 +901,15 @@ impl RtspServer {
     /// if a publish mount has been registered at the path again, `461` if
     /// a local mount has). An ANNOUNCE that found the mount before it left
     /// the table and claims it afterwards is refused with `403`. A SETUP
-    /// answered while this call runs can still complete: a reader then
-    /// receives nothing further, because no push reaches a removed mount,
-    /// and ends by its own session timeout; a publisher's RECORD is refused
-    /// with `455` because the closed mount no longer holds its publisher
-    /// slot.
+    /// answered while this call runs can still complete. Such a reader
+    /// receives nothing further, because no push reaches a removed mount;
+    /// it keeps its session (and its reader slot) until its TEARDOWN, its
+    /// session timeout (which its keepalives postpone) or its next PLAY.
+    /// That PLAY, once the mount rules admit it, is answered `404` and
+    /// ends its role, also when a mount has been added at the path again:
+    /// it never plays a mount it did not set up. A publisher's RECORD is
+    /// refused with `455` because the closed mount no longer holds its
+    /// publisher slot.
     ///
     /// # Errors
     /// - [`RtspServerError::MountNotFound`] — no mount is registered at

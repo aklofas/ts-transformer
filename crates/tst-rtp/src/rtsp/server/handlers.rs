@@ -625,6 +625,7 @@ pub(crate) fn handle_setup(
     session.set_role(Role::Reader(ReaderSession {
         session_id: session_id.clone(),
         mount_path,
+        mount: mount.identity(),
         transport: reader_transport,
         playback: Playback::Ready,
     }));
@@ -717,7 +718,9 @@ pub(crate) fn compute_udp_play_target(peer: SocketAddr, client_rtp_port: u16) ->
 /// - 454 Session Not Found — the session is `Idle` (PLAY before SETUP).
 /// - 455 Method Not Valid in This State — the session announced a
 ///   publisher (one role per connection).
-/// - 404 Not Found — mount disappeared between SETUP and PLAY (rare).
+/// - 404 Not Found — the reader's mount was removed after its SETUP, or
+///   the path now holds another mount; the reader's role ends with it
+///   (its reader slot is freed) and the connection stays open.
 /// - 500 Internal Server Error — mounts mutex poisoned, or required
 ///   UDP socket pair missing despite the transport being UDP.
 ///
@@ -734,13 +737,14 @@ pub(crate) fn handle_play(
     state: &Arc<ServerState>,
     session: &mut ServerSessionState,
 ) -> RtspResponse {
-    let (session_id, mount_path, transport) = match &session.role {
+    let (session_id, mount_path, own_mount, transport) = match &session.role {
         // A publisher session never plays (one role per session).
         Role::Publisher(_) => return handle_not_valid_in_state(req),
         Role::Idle => return error_response(req, 454, "Session Not Found"),
         Role::Reader(r) => (
             r.session_id.clone(),
             r.mount_path.clone(),
+            r.mount.clone(),
             r.transport.clone(),
         ),
     };
@@ -749,8 +753,16 @@ pub(crate) fn handle_play(
         Err(_) => return error_response(req, 500, "Internal Server Error"),
     };
     let mount = match mounts.get(&mount_path) {
-        Some(m) => m.clone(),
-        None => return error_response(req, 404, "Not Found"),
+        Some(m) if m.is(&own_mount) => m.clone(),
+        // The reader's own mount was removed (a SETUP answered while
+        // `remove_mount` ran is not among the sessions it ends), and the
+        // path may hold a mount this reader never set up: a refusal on the
+        // reader's own mount, so it ends the role and frees the reader slot.
+        _ => {
+            drop(mounts);
+            session.end_role_keeping_the_connection();
+            return error_response(req, 404, "Not Found");
+        }
     };
     drop(mounts);
 
@@ -2122,6 +2134,95 @@ mod tests {
         assert_eq!(resp.status, 454);
     }
 
+    /// A unicast mount at `/live` on a server with room for one reader.
+    fn make_state_with_one_reader_slot() -> Arc<ServerState> {
+        let mut builder = crate::RtspServerBuilder::new("rtsp://127.0.0.1:0").unwrap();
+        builder.max_readers(1);
+        let state = crate::rtsp::server::test_state_with(builder);
+        add_live_mount(&state);
+        state
+    }
+
+    fn add_live_mount(state: &Arc<ServerState>) {
+        let mount_state = MountState::new(
+            "/live",
+            MountKind::Unicast,
+            test_muxer_cfg(),
+            256,
+            state.ended(),
+        )
+        .expect("mount state constructs");
+        state
+            .mounts
+            .lock()
+            .unwrap()
+            .insert("/live".into(), MountEntry::Local(mount_state));
+    }
+
+    /// Take `/live` out of the table as `RtspServer::remove_mount` does.
+    fn remove_live_mount(state: &Arc<ServerState>) {
+        let entry = state.mounts.lock().unwrap().remove("/live").unwrap();
+        let MountEntry::Local(m) = entry else {
+            unreachable!("a local mount")
+        };
+        m.removed.cancel();
+    }
+
+    /// The rest of a test whose reader `a` lost its own mount: its PLAY
+    /// reads 404 and ends its role, so its slot is free for a second reader
+    /// under a cap of one, and its next PLAY reads like one from a session
+    /// that never set up.
+    fn assert_a_play_on_a_lost_mount_ends_the_role(
+        state: &Arc<ServerState>,
+        a: &mut ServerSessionState,
+    ) {
+        let play = make_req(RtspMethod::Play, "rtsp://127.0.0.1:8554/live");
+        assert_eq!(handle_play(&play, state, a).status, 404);
+        assert!(matches!(a.role, Role::Idle), "the reader's role ended");
+        assert!(a.reader_slot.is_none());
+        assert_eq!(state.active_readers.load(Ordering::Relaxed), 0);
+
+        if !state.mounts.lock().unwrap().contains_key("/live") {
+            add_live_mount(state);
+        }
+        let mut b = ServerSessionState::new();
+        let resp = handle_setup(&interleaved_setup_request(), state, &mut b);
+        assert_eq!(resp.status, 200, "a second reader gets the freed slot");
+
+        assert_eq!(handle_play(&play, state, a).status, 454);
+    }
+
+    /// A reader whose SETUP completed while its mount was being removed is
+    /// not among the sessions the removal ends; its PLAY finds the mount
+    /// gone and ends its role.
+    #[test]
+    fn a_play_that_finds_its_own_mount_removed_ends_the_role_and_frees_the_slot() {
+        let state = make_state_with_one_reader_slot();
+        let mut a = ServerSessionState::new();
+        assert_eq!(
+            handle_setup(&interleaved_setup_request(), &state, &mut a).status,
+            200
+        );
+        assert_eq!(state.active_readers.load(Ordering::Relaxed), 1);
+        remove_live_mount(&state);
+        assert_a_play_on_a_lost_mount_ends_the_role(&state, &mut a);
+    }
+
+    /// A mount added again at the reader's path is not the one it set up:
+    /// its PLAY does not play the new mount, it ends the role as above.
+    #[test]
+    fn a_play_after_its_mount_was_replaced_at_the_same_path_ends_the_role() {
+        let state = make_state_with_one_reader_slot();
+        let mut a = ServerSessionState::new();
+        assert_eq!(
+            handle_setup(&interleaved_setup_request(), &state, &mut a).status,
+            200
+        );
+        remove_live_mount(&state);
+        add_live_mount(&state);
+        assert_a_play_on_a_lost_mount_ends_the_role(&state, &mut a);
+    }
+
     /// TEARDOWN clears session state and returns 200 OK even after only
     /// SETUP (no PLAY). No fanout handle was ever set, so the cleanup
     /// path takes the `Option::take` → `None` branch.
@@ -2133,6 +2234,7 @@ mod tests {
         session.set_role(Role::Reader(ReaderSession {
             session_id: "abc123".into(),
             mount_path: "/live".into(),
+            mount: crate::rtsp::server::mount::MountIdentity::none(),
             transport: ReaderTransport::Multicast,
             playback: Playback::Ready,
         }));

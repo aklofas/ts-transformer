@@ -14,6 +14,7 @@ use std::collections::BTreeMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::Mutex;
+use std::sync::Weak;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use bytes::Bytes;
@@ -178,6 +179,44 @@ impl MountEntry {
             },
             MountEntry::Publish(_) => None,
         }
+    }
+
+    /// This mount's identity, for a reader to keep (see [`MountIdentity`]).
+    pub(crate) fn identity(&self) -> MountIdentity {
+        match self {
+            MountEntry::Local(m) => MountIdentity::Local(Arc::downgrade(m)),
+            MountEntry::Publish(m) => MountIdentity::Publish(Arc::downgrade(m)),
+        }
+    }
+
+    /// Whether this is the mount `id` was taken from.
+    pub(crate) fn is(&self, id: &MountIdentity) -> bool {
+        match (self, id) {
+            (MountEntry::Local(m), MountIdentity::Local(w)) => {
+                std::ptr::eq(Arc::as_ptr(m), w.as_ptr())
+            }
+            (MountEntry::Publish(m), MountIdentity::Publish(w)) => {
+                std::ptr::eq(Arc::as_ptr(m), w.as_ptr())
+            }
+            _ => false,
+        }
+    }
+}
+
+/// Which mount a reader set up, so its PLAY can tell that mount from one
+/// added later at the same path. Weak: it keeps no mount, and no fanout,
+/// alive, while its allocation keeps the address from being reused.
+#[derive(Clone)]
+pub(crate) enum MountIdentity {
+    Local(Weak<MountState>),
+    Publish(Weak<PublishMountState>),
+}
+
+#[cfg(test)]
+impl MountIdentity {
+    /// An identity no mount has, for a reader built by hand in a test.
+    pub(crate) fn none() -> Self {
+        MountIdentity::Local(Weak::new())
     }
 }
 
