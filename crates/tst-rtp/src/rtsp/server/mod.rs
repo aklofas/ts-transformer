@@ -14,6 +14,7 @@ pub(crate) mod listener;
 pub mod mount;
 pub mod mount_rules;
 pub(crate) mod multicast;
+mod path;
 pub mod publish;
 pub(crate) mod session;
 #[cfg(feature = "rtsp-server-tls")]
@@ -401,7 +402,7 @@ impl std::fmt::Debug for RtspServer {
 /// `add_publish_mount`, `MountRules::set` / `remove` and the on-demand
 /// ANNOUNCE: must start with `/`, avoid the URL-reserved characters and
 /// control bytes, and be canonical. A path is canonical when the request
-/// normalizer (`handlers::extract_mount_path`) returns it unchanged and it
+/// normalizer (`path::extract_mount_path`) returns it unchanged and it
 /// has no empty segment, so a mount, a rule and a request lookup can only
 /// meet under one key.
 pub(crate) fn validate_mount_path(path: &str) -> Result<(), RtspServerError> {
@@ -435,7 +436,7 @@ pub(crate) fn validate_mount_path(path: &str) -> Result<(), RtspServerError> {
         });
     }
     // Safe to echo: the control-byte check above already ran.
-    let canonical = handlers::extract_mount_path(path);
+    let canonical = path::extract_mount_path(path);
     if canonical != path {
         return Err(RtspServerError::InvalidMountPath {
             detail: format!("path is not canonical; use {canonical:?}"),

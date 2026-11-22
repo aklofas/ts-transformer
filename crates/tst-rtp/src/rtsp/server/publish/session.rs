@@ -154,7 +154,7 @@ impl PublishSession {
     /// prefix-aware resolution, which also covers the no-`a=control`,
     /// bare-mount-URI, single-track case.
     pub(crate) fn track_for_raw_segment(&self, segment: &str) -> Option<usize> {
-        use crate::rtsp::server::handlers::{absolute_control_path, last_path_segment};
+        use crate::rtsp::server::path::{absolute_control_path, last_path_segment};
         self.tracks
             .iter()
             .position(|t| match t.announced.control.as_deref() {
@@ -169,7 +169,7 @@ impl PublishSession {
     }
 
     /// Resolve a SETUP URI's control segment (see
-    /// [`crate::rtsp::server::handlers::control_segment`]) to a track
+    /// [`crate::rtsp::server::path::control_segment`]) to a track
     /// index. A single-track announce accepts a SETUP with no control
     /// segment at all (some clients SETUP the bare mount URI when
     /// there's only one track to disambiguate); otherwise the segment

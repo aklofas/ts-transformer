@@ -16,10 +16,13 @@ use std::time::SystemTime;
 
 use crate::rtsp::message::{RtspRequest, RtspResponse};
 use crate::rtsp::server::handlers::{
-    bind_server_udp_pair, check_auth, control_segment, error_response, extract_mount_path,
-    generate_session_id, handle_not_valid_in_state, last_path_segment, request_path,
+    bind_server_udp_pair, check_auth, error_response, generate_session_id,
+    handle_not_valid_in_state,
 };
 use crate::rtsp::server::mount::MountEntry;
+use crate::rtsp::server::path::{
+    control_segment, extract_mount_path, last_path_segment, request_path,
+};
 use crate::rtsp::server::session::{Role, ServerSessionState};
 use crate::rtsp::server::{ServerState, validate_mount_path};
 use crate::rtsp::transport_negotiation::{RtspTransportKind, TransportResponse};
