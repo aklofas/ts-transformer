@@ -558,8 +558,13 @@ const MIN_SILENT_PEER_TIMEOUT_MS: u32 = 1_000;
 fn set_silent_peer_timeout(c: &mut SrtSocketConfig, _key: &str, value: &str) -> Applied {
     const KEY: &str = "x-silentpeertimeout";
     let n: u32 = parse_int_nonneg(KEY, value)?;
-    // The top is the one `peeridletimeo` has: a window that long never
-    // fires before libsrt's own break.
+    // The top is the one `peeridletimeo` has. A window at or above
+    // libsrt's own break of a silent connection (about 5 s unless
+    // `peeridletimeo` raises it) never fires first; one at or below the
+    // link's round trip plus its jitter trips every new connection before
+    // its first answer can arrive. The floor does not protect a long-delay
+    // link: the window must still exceed its round trip (measured on Linux
+    // loopback only).
     let top = crate::socket::MAX_PEER_IDLE_TIMEOUT_MS;
     if !(MIN_SILENT_PEER_TIMEOUT_MS..=top).contains(&n) {
         return Err(SrtUrlError::InvalidValue {
