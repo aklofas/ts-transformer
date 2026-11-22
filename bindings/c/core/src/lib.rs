@@ -185,9 +185,11 @@ pub use rtsp::server::builder::tst_rtsp_server_builder_new;
 pub use rtsp::server::builder::tst_rtsp_server_builder_accept_unregistered_publishers;
 // The server options of `transports::rtsp_server_options`.
 #[cfg(feature = "rtp")]
+pub use rtsp::client::builder::tst_rtsp_client_builder_tls_root_cert_pem;
+#[cfg(feature = "rtp")]
 pub use rtsp::server::builder::{
     tst_rtsp_server_builder_accept_digest_without_qop, tst_rtsp_server_builder_allow_udp_media,
-    tst_rtsp_server_builder_auth_digest_md5,
+    tst_rtsp_server_builder_auth_digest_md5, tst_rtsp_server_builder_tls_cert_pem,
 };
 #[cfg(feature = "rtp")]
 pub use rtsp::server::publish::{

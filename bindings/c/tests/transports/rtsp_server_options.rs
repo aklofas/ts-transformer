@@ -216,3 +216,92 @@ fn a_digest_answer_without_qop_is_refused_without_the_option() {
     assert!(challenge.contains(r#"qop="auth""#), "{challenge}");
     assert_eq!(answered, 401);
 }
+
+/// The same option on an `rtsps://` server, where leaving it uncalled means
+/// NO: the media then never leaves the TLS connection.
+#[cfg(feature = "tls")]
+mod rtsps {
+    use std::ffi::CString;
+
+    use tstrans::handle::TstRtspClientBuilder;
+    use tstrans::{
+        TstRtspMountHandle, TstRtspServer, tst_rtsp_client_builder_connect,
+        tst_rtsp_client_builder_new, tst_rtsp_client_builder_tls_root_cert_pem,
+        tst_rtsp_client_builder_transport_pref, tst_rtsp_server_builder_allow_udp_media,
+        tst_rtsp_server_builder_new, tst_rtsp_server_builder_tls_cert_pem,
+        tst_rtsp_session_teardown_and_free,
+    };
+
+    use super::{start, stop};
+    use crate::common::last_error_msg;
+
+    /// A started `rtsps://` server with a self-signed certificate for
+    /// 127.0.0.1 and the mount `/live`; `allow` is the UDP-media setter's
+    /// argument, `None` when it is never called. Returns the server, the
+    /// mount, the port and the certificate a client trusts.
+    pub(super) fn tls_server(
+        allow: Option<bool>,
+    ) -> (*mut TstRtspServer, *mut TstRtspMountHandle, u16, String) {
+        let cert = rcgen::generate_simple_self_signed(vec!["127.0.0.1".to_string()])
+            .expect("a self-signed certificate");
+        let (cert_pem, key_pem) = (cert.cert.pem(), cert.signing_key.serialize_pem());
+        let url = CString::new("rtsps://127.0.0.1:0").unwrap();
+        let b = unsafe { tst_rtsp_server_builder_new(url.as_ptr()) };
+        assert!(!b.is_null(), "{}", last_error_msg());
+        unsafe {
+            tst_rtsp_server_builder_tls_cert_pem(
+                b,
+                cert_pem.as_ptr(),
+                cert_pem.len(),
+                key_pem.as_ptr(),
+                key_pem.len(),
+            )
+        };
+        if let Some(yes) = allow {
+            unsafe { tst_rtsp_server_builder_allow_udp_media(b, yes) };
+        }
+        let (server, mount, port) = start(b);
+        (server, mount, port, cert_pem)
+    }
+
+    /// A client builder for `rtsps://127.0.0.1:<port>/live` that trusts `cert_pem`.
+    pub(super) fn tls_client(port: u16, cert_pem: &str) -> *mut TstRtspClientBuilder {
+        let url = CString::new(format!("rtsps://127.0.0.1:{port}/live")).unwrap();
+        let b = unsafe { tst_rtsp_client_builder_new(url.as_ptr()) };
+        assert!(!b.is_null(), "{}", last_error_msg());
+        unsafe { tst_rtsp_client_builder_tls_root_cert_pem(b, cert_pem.as_ptr(), cert_pem.len()) };
+        b
+    }
+
+    /// A client forced to UDP (transport preference 1, no fallback) against
+    /// `server`'s port: the session, or NULL.
+    fn udp_pull(port: u16, cert_pem: &str) -> *mut tstrans::TstRtspSession {
+        let b = tls_client(port, cert_pem);
+        unsafe { tst_rtsp_client_builder_transport_pref(b, 1) };
+        unsafe { tst_rtsp_client_builder_connect(b) }
+    }
+
+    #[test]
+    fn an_rtsps_server_left_at_its_default_refuses_udp_media() {
+        let (server, mount, port, cert) = tls_server(None);
+        let session = udp_pull(port, &cert);
+        assert!(session.is_null(), "a UDP SETUP was served on rtsps://");
+        let msg = last_error_msg();
+        assert_eq!(
+            unsafe { tstrans::error::tst_get_last_error() },
+            tstrans::error::TstError::RtspProtocol as i32,
+            "{msg}"
+        );
+        assert!(msg.contains("461"), "{msg}");
+        stop(server, mount);
+    }
+
+    #[test]
+    fn an_rtsps_server_that_allows_udp_media_serves_it() {
+        let (server, mount, port, cert) = tls_server(Some(true));
+        let session = udp_pull(port, &cert);
+        assert!(!session.is_null(), "{}", last_error_msg());
+        unsafe { tst_rtsp_session_teardown_and_free(session) };
+        stop(server, mount);
+    }
+}
