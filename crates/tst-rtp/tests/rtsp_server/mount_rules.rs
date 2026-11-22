@@ -1572,12 +1572,12 @@ fn attempt(port: u16, method: &str, path: &str, user: &str, password: &str) -> S
 }
 
 /// A started server with local mounts `/a` and `/b` and publish mounts
-/// `/pub1` to `/pub3`.
+/// `/pub1` to `/pub6`, three for each of two passes of [`class_answers`].
 fn served_for_classes(b: RtspServerBuilder) -> RtspServer {
     let server = b.build().unwrap();
     server.add_mount("/a", make_muxer_cfg()).unwrap();
     server.add_mount("/b", make_muxer_cfg()).unwrap();
-    for i in 1..=3 {
+    for i in 1..=6 {
         server.add_publish_mount(&format!("/pub{i}")).unwrap();
     }
     server.start().unwrap();
@@ -1587,14 +1587,17 @@ fn served_for_classes(b: RtspServerBuilder) -> RtspServer {
 /// What one class of server answers: a DESCRIBE of `/a` and of `/b` and an
 /// ANNOUNCE (each on a publish mount of its own, as a won ANNOUNCE holds its
 /// slot), each without a credential and then with `admin:secret`,
-/// `viewer:pw` and `admin:WRONG`.
-fn class_answers(server: &RtspServer) -> Vec<String> {
+/// `viewer:pw` and `admin:WRONG`. A second `pass` on the same server
+/// announces on mounts the first pass never used: a first-pass publisher
+/// holds its mount until the server has reaped its closed connection, which
+/// another thread does at a time of its own.
+fn class_answers(server: &RtspServer, pass: u32) -> Vec<String> {
     let port = server.local_addr().unwrap().port();
     let mut lines = Vec::new();
     for (method, base) in [("DESCRIBE", "/a"), ("DESCRIBE", "/b"), ("ANNOUNCE", "/pub")] {
         let path = |i: u32| {
             if method == "ANNOUNCE" {
-                format!("{base}{i}")
+                format!("{base}{}", 3 * pass + i)
             } else {
                 base.to_string()
             }
@@ -1634,7 +1637,7 @@ fn set_challenge_takes_effect_on_a_server_built_with_a_credential() {
         .set_challenge(AuthScheme::DigestSha256, "lab")
         .unwrap();
     assert_eq!(
-        class_answers(&server),
+        class_answers(&server, 0),
         [
             r#"DESCRIBE /a 401 [Digest realm="lab" algorithm=SHA-256] 200 viewer=401 wrong=401"#,
             r#"DESCRIBE /b 401 [Digest realm="lab" algorithm=SHA-256] 401 viewer=200 wrong=401"#,
@@ -1655,7 +1658,7 @@ fn set_challenge_takes_effect_on_a_server_built_with_a_credential_from_digest_to
     rules.set("/b", require_viewer()).unwrap();
     rules.set_challenge(AuthScheme::Basic, "lab").unwrap();
     assert_eq!(
-        class_answers(&server),
+        class_answers(&server, 0),
         [
             r#"DESCRIBE /a 401 [Basic realm="lab"] 200 viewer=401 wrong=401"#,
             r#"DESCRIBE /b 401 [Basic realm="lab"] 401 viewer=200 wrong=401"#,
@@ -1683,7 +1686,7 @@ fn the_measured_credential_classes_are_unchanged() {
     };
     let basic_realm = r#"Basic realm="realm""#;
     let check = |class: &str, server: RtspServer, want: &[String]| {
-        assert_eq!(class_answers(&server), want, "{class}");
+        assert_eq!(class_answers(&server, 0), want, "{class}");
         server.stop().unwrap();
     };
     let owned = |rows: [&str; 3]| rows.map(str::to_owned);
@@ -1721,18 +1724,19 @@ fn the_measured_credential_classes_are_unchanged() {
         ]
     };
     assert_eq!(
-        class_answers(&s),
+        class_answers(&s, 0),
         k2(r#"Digest realm="tstrans" algorithm=MD5"#),
         "a Require path, the table's first challenge"
     );
     s.mount_rules()
         .set_challenge(AuthScheme::Basic, "lab")
         .unwrap();
-    check(
-        "a Require path after set_challenge",
-        s,
-        &k2(r#"Basic realm="lab""#),
+    assert_eq!(
+        class_answers(&s, 1),
+        k2(r#"Basic realm="lab""#),
+        "a Require path after set_challenge"
     );
+    s.stop().unwrap();
 
     // No builder credential; the default rule requires.
     let s = served_for_classes(RtspServerBuilder::new("rtsp://127.0.0.1:0").unwrap());
@@ -1816,18 +1820,19 @@ fn the_measured_credential_classes_are_unchanged() {
         .set_default(MountRule::both(MountPolicy::Open))
         .unwrap();
     assert_eq!(
-        class_answers(&s),
+        class_answers(&s, 0),
         owned(OPEN),
         "builder credential, runtime default Open"
     );
     // A runtime reset of the default rule still requires the server's
     // credential.
     s.mount_rules().set_default(MountRule::default()).unwrap();
-    check(
-        "builder credential, runtime default reset",
-        s,
-        &builder_only(basic_realm),
+    assert_eq!(
+        class_answers(&s, 1),
+        builder_only(basic_realm),
+        "builder credential, runtime default reset"
     );
+    s.stop().unwrap();
 
     // A builder credential, a runtime default of `Refuse(403)`, `/b`
     // open.
