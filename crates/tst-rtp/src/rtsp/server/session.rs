@@ -1347,6 +1347,53 @@ mod session_tests {
         crate::rtsp::server::test_state_with(builder)
     }
 
+    /// Every method on a server with a credential, from a peer that sends
+    /// none: the seven gated methods are answered 401 before their handler
+    /// looks at the request (an ANNOUNCE whose body is not SDP is not a
+    /// 400, a DESCRIBE of a path with no mount is not a 404, a SETUP
+    /// without a Transport header is not a 400); OPTIONS and GET_PARAMETER
+    /// are never gated.
+    #[test]
+    fn every_gated_method_is_refused_before_its_handler_runs() {
+        let state = make_state_with_basic_auth();
+        let cases = [
+            (RtspMethod::Options, 200),
+            (RtspMethod::Describe, 401),
+            (RtspMethod::Announce, 401),
+            (RtspMethod::Setup, 401),
+            (RtspMethod::Play, 401),
+            (RtspMethod::Record, 401),
+            (RtspMethod::Pause, 401),
+            (RtspMethod::Teardown, 401),
+            (RtspMethod::GetParameter, 200),
+        ];
+        for (method, expected) in cases {
+            let mut headers = std::collections::HashMap::new();
+            headers.insert("cseq".into(), "1".into());
+            let body = if method == RtspMethod::Announce {
+                headers.insert("content-type".into(), "application/sdp".into());
+                bytes::Bytes::from_static(b"not an SDP body")
+            } else {
+                bytes::Bytes::new()
+            };
+            let req = RtspRequest {
+                method,
+                uri: "rtsp://127.0.0.1:8554/no-such-mount".into(),
+                version: crate::url::RtspVersion::V1_0,
+                headers,
+                body,
+            };
+            let mut session = ServerSessionState::new();
+            let resp = dispatch(&req, &state, &mut session);
+            assert_eq!(resp.status, expected, "{method:?}");
+            assert_eq!(
+                resp.headers.contains_key("www-authenticate"),
+                expected == 401,
+                "{method:?}"
+            );
+        }
+    }
+
     /// An OPTIONS request (which never requires auth and always returns 200)
     /// must NOT reset the auth-failure counter. Without this guard an attacker
     /// can alternate OPTIONS with bad-auth DESCRIBE requests and never reach
