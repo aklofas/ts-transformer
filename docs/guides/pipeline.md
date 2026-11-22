@@ -512,15 +512,18 @@ deferred-features list; see
 **Silent-peer detection (Provisional).** `with_silent_peer_timeout(window)`
 arms the wrapper: after each successful inner send it reads the inner's
 `Transport::peer_activity()`, a number that changes whenever the peer was
-heard from, at every send until the connection has answered once and
-then at most every quarter window. When the reading has not moved while
+heard from, at every send until the connection has answered once, then
+every quarter window, and at every send once a window has gone
+unanswered. When the reading has not moved while
 sends went on for a whole window, the connection is taken out, closed
 with `Transport::abandon()` (which discards unsent data and does not wait;
 the default is `close()`) once the wrapper's lock is released, and
 replaced as if its send had failed with `Broken`. Call it before the
 first send (a `Background` worker started earlier carries no rule);
 `Duration::ZERO` leaves the wrapper unarmed, and the method has no floor
-(the `x-silentpeertimeout` URL key's is 1 000 ms). An inner whose reading
+(the `x-silentpeertimeout` URL key's is 1 000 ms); the window must be
+longer than the link's round trip plus its jitter, or every new
+connection trips before its first answer arrives. An inner whose reading
 is `None` (the default: it cannot tell) never trips; `SrtTransport`
 reports one. A wrapper transport placed between the two must forward
 both methods, as `Box<T>` does, or the managed wrapper above it never
@@ -559,8 +562,13 @@ Defaults (`ReconnectPolicy::default()`):
   connection has answered, so a peer that accepts connections and never
   answers runs it out like one that refuses them; a give-up or an answer
   starts the next outage with a fresh budget. A peer that answers the
-  first packet of every connection and then goes silent is re-dialled
-  for ever: each first answer counts as a recovery.
+  first packet of every connection and then goes silent is re-dialled for
+  ever in `Background` mode and in `Blocking` mode at gap capacity 0 (the
+  new connection is read right after its first send, so the answer that
+  follows counts as a recovery); in `Blocking` mode with a gap buffer the
+  replayed message is not followed by a reading, an answer that arrived by
+  the next send is the connection's first reading and does not count, and
+  `max_attempts` ends the loop.
 - `backoff: BackoffStrategy::Exponential { base: 100ms, max: 10s }` —
   see [`BackoffStrategy`](#backoffstrategy) for the variants.
 - `gap_buffer_capacity: 256` — messages. Accumulates an outage's
