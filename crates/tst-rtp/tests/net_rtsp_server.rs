@@ -43,6 +43,8 @@ mod notice_5402;
 mod session_keepalive;
 #[path = "rtsp_server/reader_rtcp.rs"]
 mod reader_rtcp;
+#[path = "rtsp_server/reader_cap.rs"]
+mod reader_cap;
 #[path = "rtsp_server/shutdown.rs"]
 mod shutdown;
 #[path = "rtsp_server/tls.rs"]

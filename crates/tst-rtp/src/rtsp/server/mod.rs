@@ -96,6 +96,9 @@ pub(crate) struct ServerState {
     pub(crate) mount_rules: crate::rtsp::server::mount_rules::MountRules,
     /// Live count of accepted (and not-yet-closed) client sessions.
     pub(crate) active_sessions: AtomicUsize,
+    /// Reader slots held (see `session::ReaderSlot`), against
+    /// `max_readers`.
+    pub(crate) active_readers: AtomicUsize,
     /// RTP packets and bytes sent to every reader and multicast group,
     /// shared with every fanout and multicast sender task.
     pub(crate) rtp_sent: Arc<crate::rtsp::server::fanout::SentCounters>,
@@ -561,6 +564,7 @@ pub(crate) fn test_state_with(builder: RtspServerBuilder) -> Arc<ServerState> {
         mounts: std::sync::Mutex::new(std::collections::HashMap::new()),
         mount_rules,
         active_sessions: AtomicUsize::new(0),
+        active_readers: AtomicUsize::new(0),
         rtp_sent: Arc::default(),
         publish_counters: Arc::default(),
         interleaved_writes: Arc::default(),
@@ -690,6 +694,7 @@ impl RtspServer {
             mounts: std::sync::Mutex::new(std::collections::HashMap::new()),
             mount_rules,
             active_sessions: AtomicUsize::new(0),
+            active_readers: AtomicUsize::new(0),
             rtp_sent: Arc::default(),
             publish_counters: Arc::default(),
             interleaved_writes: Arc::default(),

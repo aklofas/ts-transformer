@@ -378,6 +378,10 @@ pub(crate) fn next_interleaved_pair() -> Option<(u8, u8)> {
 ///   TCP-interleaved against a multicast mount (RFC 7826 §13.3); or
 ///   `mode=record` against a local (muxer-backed) mount — only a publish
 ///   mount accepts a publisher.
+/// - 453 Not Enough Bandwidth — a reader's SETUP while every reader slot
+///   is held ([`RtspServerBuilder::max_readers`](crate::RtspServerBuilder::max_readers));
+///   the connection is closed after the reply. Checked last, so a request
+///   refused by any status above takes no slot.
 /// - 500 Internal Server Error — UDP socket bind failure, interleaved
 ///   channel allocator exhaustion, or poisoned mutex.
 ///
@@ -600,6 +604,24 @@ pub(crate) fn handle_setup(
         }
     }
 
+    // The last step before the role: a reader holds one of the server's
+    // reader slots until its role ends. A reader set up again keeps the one
+    // it holds, so re-pointing it never needs a second slot.
+    if session.reader_slot.is_none() {
+        match crate::rtsp::server::session::ReaderSlot::reserve(state) {
+            Some(slot) => session.reader_slot = Some(slot),
+            None => {
+                tracing::warn!(
+                    target: "tst_rtp::server",
+                    peer = %session.peer_addr,
+                    max_readers = state.builder.max_readers.unwrap_or_default(),
+                    "max readers reached; refusing a reader SETUP and closing the connection"
+                );
+                session.close_after_reply = true;
+                return error_response(req, 453, "Not Enough Bandwidth");
+            }
+        }
+    }
     session.set_role(Role::Reader(ReaderSession {
         session_id: session_id.clone(),
         mount_path,

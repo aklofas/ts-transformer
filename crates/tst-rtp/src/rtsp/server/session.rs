@@ -102,7 +102,7 @@ fn warn_expired(peer: SocketAddr, expired: &Expired) {
             target: "tst_rtp::server",
             peer = %peer,
             timeout_secs = READ_IDLE_TIMEOUT.as_secs(),
-            "no SETUP or authenticated request within the admission deadline; closing session"
+            "no session within the admission deadline; closing session"
         ),
         Expired::PublishIdle(t) => tracing::warn!(
             target: "tst_rtp::server",
@@ -229,11 +229,46 @@ impl Drop for SessionSlot {
     }
 }
 
+/// RAII guard for one of the server's reader slots
+/// ([`RtspServerBuilder::max_readers`](super::RtspServerBuilder::max_readers)),
+/// held by a session from its reader SETUP to the end of its role.
+pub(crate) struct ReaderSlot(Arc<ServerState>);
+
+impl ReaderSlot {
+    /// Reserve a slot: a compare-exchange loop that increments only while
+    /// below the cap (the accept loop's pattern), so a burst of SETUPs never
+    /// takes more than the cap. `None` when every slot is held.
+    pub(crate) fn reserve(state: &Arc<ServerState>) -> Option<Self> {
+        let cap = state.builder.max_readers.unwrap_or(usize::MAX);
+        let mut n = state.active_readers.load(Ordering::Relaxed);
+        loop {
+            if n >= cap {
+                return None;
+            }
+            match state.active_readers.compare_exchange_weak(
+                n,
+                n + 1,
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => return Some(Self(Arc::clone(state))),
+                Err(current) => n = current,
+            }
+        }
+    }
+}
+
+impl Drop for ReaderSlot {
+    fn drop(&mut self) {
+        self.0.active_readers.fetch_sub(1, Ordering::Relaxed);
+    }
+}
+
 /// Per-read idle bound BEFORE a session exists (pre-SETUP): closes the
 /// slow-loris window on a connection that has nothing to keep alive yet.
-/// It is also the admission deadline: a connection that has neither
-/// completed a SETUP nor passed a credential check this long after its
-/// request loop started is closed, whatever it sends meanwhile.
+/// It is also the admission deadline: a connection that holds no session
+/// this long after its request loop started (or after its last session
+/// ended) is closed, whatever it sends meanwhile.
 /// Once SETUP has advertised a timeout the window is deliberately the
 /// longer `timeout + grace` of [`post_setup_idle_bound`] (90 s at the
 /// default) per RFC 7826 §18.49 — do not shorten it back to this constant;
@@ -363,6 +398,14 @@ pub struct ServerSessionState {
     /// `serve_requests` copies the ids onto the `ActiveSession` entry when
     /// it is set (see [`Self::take_role_change`]).
     role_changed: bool,
+    /// The reader slot a reader role holds. Kept when a reader is set up
+    /// again (so re-pointing never needs a second slot); released when the
+    /// role ends ([`Self::end_role`]) and by the session's `Drop`. Only a
+    /// reader holds one: a publisher's role is entered from `Idle`.
+    pub(crate) reader_slot: Option<ReaderSlot>,
+    /// Set when a reader's SETUP was refused for want of a reader slot:
+    /// the connection is closed once that reply is written.
+    pub(crate) close_after_reply: bool,
 }
 
 impl ServerSessionState {
@@ -378,6 +421,8 @@ impl ServerSessionState {
             peer_addr: std::net::SocketAddr::from(([0, 0, 0, 0], 0)),
             role: Role::Idle,
             role_changed: false,
+            reader_slot: None,
+            close_after_reply: false,
         }
     }
 
@@ -446,6 +491,7 @@ impl ServerSessionState {
     /// publisher (once), and drop the transport state with it.
     pub(crate) fn end_role(&mut self) {
         self.retire_fanout();
+        self.reader_slot = None;
         if let Role::Publisher(mut p) = std::mem::replace(&mut self.role, Role::Idle) {
             // Frees the mount's publisher slot (bumping its generation) so a
             // fresh ANNOUNCE can claim it right away; the `Drop` that follows
@@ -643,13 +689,15 @@ where
     // connections refuse every new peer before any of them authenticates.
     // A message must frame within the same bound a silent peer gets.
     let mut msg_started: Option<tokio::time::Instant> = None;
-    // Until SETUP gives the connection a session, or one of its requests
-    // passes a credential check, it holds a session slot on nothing but its
-    // own say-so. This absolute deadline bounds that however many OPTIONS,
+    // Until SETUP gives the connection a session it holds a session slot on
+    // nothing but its own say-so, whatever credential it presented (a
+    // credential for one path is no reason to hold a connection with no
+    // role). This absolute deadline bounds that however many OPTIONS,
     // GET_PARAMETERs or interleaved frames it sends, however slowly it reads
     // the replies: `expired_deadline` is checked before every read and every
-    // request, and reply writes are cut to what is left of it. Once cleared
-    // it stays cleared for the connection.
+    // request, and reply writes are cut to what is left of it. A session
+    // clears it; a session that ends while the connection stays arms it
+    // again from that moment.
     let mut admission_deadline = Some(tokio::time::Instant::now() + READ_IDLE_TIMEOUT);
     // Base of the per-read idle wait while no message is in progress. Every
     // read moves it, except a read that an `Idle` connection spent only on
@@ -679,9 +727,10 @@ where
         // The per-read bound closes that window: `READ_IDLE_TIMEOUT` before
         // SETUP, `post_setup_idle_bound` (the advertised session timeout
         // plus grace) once a session exists — so a conformant client's
-        // keepalives at `timeout / 2` are never raced. Before SETUP or a
-        // credential check, the admission deadline caps the whole
-        // connection at `READ_IDLE_TIMEOUT` from the start of this loop.
+        // keepalives at `timeout / 2` are never raced. Without a session,
+        // the admission deadline caps the whole connection at
+        // `READ_IDLE_TIMEOUT` from the start of this loop (or from the end of
+        // its last session).
         let idle_bound = if session.session_id().is_some() {
             post_setup_idle_bound(state.builder.session_timeout)
         } else {
@@ -954,8 +1003,12 @@ where
             rtsp_consumed = true;
             session.request_authenticated = false;
             let response = dispatch(&req, &state, &mut session);
-            if session.request_authenticated || session.session_id().is_some() {
+            if session.session_id().is_some() {
                 admission_deadline = None;
+            } else if admission_deadline.is_none() {
+                // The session ended and the connection stays: it holds a
+                // slot on nothing again.
+                admission_deadline = Some(tokio::time::Instant::now() + READ_IDLE_TIMEOUT);
             }
             // Mirror the session's `session_id` + `mount_path` onto the
             // public `ActiveSession` registry entry when a transition
@@ -1015,6 +1068,9 @@ where
                     }
                     break 'serve;
                 }
+            }
+            if session.close_after_reply {
+                return Ok(());
             }
             if response.status == 401 {
                 session.auth_failures = session.auth_failures.saturating_add(1);
@@ -2026,10 +2082,10 @@ mod session_tests {
         );
     }
 
-    /// After a request that passed a credential check the deadline no longer
-    /// applies, but interleaved frames on the still-`Idle` connection are not
-    /// activity: the per-read idle bound (30 s with no session) runs from the
-    /// last request and closes it.
+    /// After a request that passed a credential check, interleaved frames on
+    /// the still-`Idle` connection are not activity: it is closed 30 s after
+    /// its last request (the admission deadline, which a credential does
+    /// not lift, and the per-read idle bound with no session both run out).
     #[tokio::test(start_paused = true)]
     async fn interleaved_frames_do_not_rearm_the_idle_bound_of_an_authenticated_idle_connection() {
         use std::time::Duration;
@@ -2062,36 +2118,138 @@ mod session_tests {
         );
     }
 
-    /// Controls: a request that passed a credential check lifts the
-    /// deadline, so OPTIONS every 10 s keep that connection past 30 s; and a
-    /// connection that reaches SETUP well inside the deadline outlives it on
-    /// keepalives (the post-SETUP bound is 90 s at the default timeout).
+    /// A credential does not lift the deadline: a connection whose
+    /// requests pass a credential check but that sets up no session is
+    /// closed 30 s after it opened, however many OPTIONS it sends.
+    /// Otherwise a peer holding a read credential would keep a connection
+    /// with no role for ever, never counted as a reader.
     #[tokio::test(start_paused = true)]
-    async fn an_authenticated_or_set_up_connection_outlives_the_admission_deadline() {
-        use crate::rtsp::server::mount::MountEntry;
+    async fn an_authenticated_connection_without_a_session_is_closed_at_the_admission_deadline() {
         use std::time::Duration;
 
         let (mut c, _task) = duplex_session(make_state_with_basic_auth());
+        let t0 = tokio::time::Instant::now();
         let r = duplex_exchange(
             &mut c,
             "DESCRIBE rtsp://127.0.0.1/none RTSP/1.0\r\nCSeq: 1\r\nAuthorization: Basic dXNlcjpzZWNyZXQ=\r\n\r\n",
         )
         .await;
         assert!(r.starts_with("RTSP/1.0 404"), "authenticated DESCRIBE: {r}");
-        for cseq in 2..=5u32 {
-            assert!(
-                duplex_closed_within(&mut c, Duration::from_secs(10))
-                    .await
-                    .is_none(),
-                "an authenticated connection was closed before OPTIONS {cseq}"
-            );
+        // OPTIONS every 7 s, so no request falls on the 30 s mark itself.
+        let mut closed_at = None;
+        for cseq in 2..=7u32 {
+            if duplex_closed_within(&mut c, Duration::from_secs(7))
+                .await
+                .is_some()
+            {
+                closed_at = Some(t0.elapsed());
+                break;
+            }
             let r = duplex_exchange(
                 &mut c,
-                &format!("OPTIONS rtsp://h/ RTSP/1.0\r\nCSeq: {cseq}\r\n\r\n"),
+                &format!("OPTIONS rtsp://h/ RTSP/1.0\r\nCSeq: {cseq}\r\nAuthorization: Basic dXNlcjpzZWNyZXQ=\r\n\r\n"),
             )
             .await;
             assert!(r.starts_with("RTSP/1.0 200"), "OPTIONS {cseq}: {r}");
         }
+        let closed_at =
+            closed_at.expect("an authenticated connection with no session outlived 42 s");
+        assert!(
+            closed_at >= Duration::from_secs(29) && closed_at <= Duration::from_secs(32),
+            "closed {closed_at:?} after it opened; the admission deadline is 30 s"
+        );
+    }
+
+    /// A connection whose session ended while it stays open (a refusal on
+    /// its own mount) is under the admission deadline again, 30 s from the
+    /// end of its session; while the session lived it was not.
+    #[tokio::test(start_paused = true)]
+    async fn a_connection_whose_session_ended_gets_a_new_admission_deadline() {
+        use crate::rtsp::server::mount::MountEntry;
+        use crate::rtsp::server::mount_rules::{MountPolicy, MountRule, RefuseStatus};
+        use std::time::Duration;
+
+        let state = crate::rtsp::server::test_state();
+        let mount = publish::mount::PublishMountState::new("/pub", 8, Default::default());
+        state
+            .mounts
+            .lock()
+            .unwrap()
+            .insert("/pub".into(), MountEntry::Publish(mount));
+        let (mut c, _task) = duplex_session(state.clone());
+        let r = duplex_exchange(&mut c, &announce_request("/pub", SDP_MP2T)).await;
+        assert!(r.starts_with("RTSP/1.0 200"), "ANNOUNCE: {r}");
+        let r = duplex_exchange(
+            &mut c,
+            "SETUP rtsp://h/pub/streamid=0 RTSP/1.0\r\nCSeq: 2\r\nTransport: RTP/AVP/TCP;unicast;interleaved=0-1;mode=record\r\n\r\n",
+        )
+        .await;
+        assert!(r.starts_with("RTSP/1.0 200"), "SETUP: {r}");
+        let sid = session_header(&r);
+        for cseq in 3..=4u32 {
+            assert!(
+                duplex_closed_within(&mut c, Duration::from_secs(20))
+                    .await
+                    .is_none(),
+                "a set-up connection was closed before keepalive {cseq}"
+            );
+            let r = duplex_exchange(
+                &mut c,
+                &format!("OPTIONS rtsp://h/pub RTSP/1.0\r\nCSeq: {cseq}\r\nSession: {sid}\r\n\r\n"),
+            )
+            .await;
+            assert!(r.starts_with("RTSP/1.0 200"), "keepalive {cseq}: {r}");
+        }
+        // 40 s in: the rule turns to Refuse and the publisher's next gated
+        // request ends its role; the connection stays.
+        state
+            .mount_rules
+            .set(
+                "/pub",
+                MountRule::both(MountPolicy::Refuse(RefuseStatus::Forbidden)),
+            )
+            .unwrap();
+        let r = duplex_exchange(
+            &mut c,
+            &format!("RECORD rtsp://h/pub RTSP/1.0\r\nCSeq: 5\r\nSession: {sid}\r\n\r\n"),
+        )
+        .await;
+        assert!(
+            r.starts_with("RTSP/1.0 403"),
+            "RECORD after the refusal: {r}"
+        );
+        let t_end = tokio::time::Instant::now();
+        // OPTIONS every 7 s, so no request falls on the 30 s mark itself.
+        let mut closed_at = None;
+        for cseq in 6..=11u32 {
+            if duplex_closed_within(&mut c, Duration::from_secs(7))
+                .await
+                .is_some()
+            {
+                closed_at = Some(t_end.elapsed());
+                break;
+            }
+            let r = duplex_exchange(
+                &mut c,
+                &format!("OPTIONS rtsp://h/pub RTSP/1.0\r\nCSeq: {cseq}\r\n\r\n"),
+            )
+            .await;
+            assert!(r.starts_with("RTSP/1.0 200"), "OPTIONS {cseq}: {r}");
+        }
+        let closed_at = closed_at.expect("a connection whose session ended outlived 42 s");
+        assert!(
+            closed_at >= Duration::from_secs(29) && closed_at <= Duration::from_secs(32),
+            "closed {closed_at:?} after its session ended; the admission deadline is 30 s"
+        );
+    }
+
+    /// Control: a connection that reaches SETUP well inside the deadline
+    /// outlives it on keepalives (the post-SETUP bound is 90 s at the
+    /// default timeout).
+    #[tokio::test(start_paused = true)]
+    async fn a_set_up_connection_outlives_the_admission_deadline() {
+        use crate::rtsp::server::mount::MountEntry;
+        use std::time::Duration;
 
         let state = crate::rtsp::server::test_state();
         let mount = publish::mount::PublishMountState::new("/pub", 8, Default::default());

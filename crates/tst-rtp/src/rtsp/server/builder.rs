@@ -56,6 +56,7 @@ impl std::fmt::Debug for ServerAuthConfig {
 /// # Defaults
 ///
 /// - `max_sessions`: 64
+/// - `max_readers`: no cap
 /// - `session_timeout`: 60 s
 /// - `fanout_capacity`: 256 frames (broadcast channel size; slow peers
 ///   drop oldest beyond this)
@@ -72,6 +73,7 @@ pub struct RtspServerBuilder {
     pub(crate) auth: Option<ServerAuthConfig>,
     pub(crate) default_mount_rule: Option<MountRule>,
     pub(crate) max_sessions: usize,
+    pub(crate) max_readers: Option<usize>,
     pub(crate) session_timeout: Duration,
     pub(crate) fanout_capacity: usize,
     pub(crate) graceful_shutdown_drain: Duration,
@@ -123,6 +125,7 @@ impl RtspServerBuilder {
             auth: None,
             default_mount_rule: None,
             max_sessions: 64,
+            max_readers: None,
             session_timeout: Duration::from_secs(60),
             fanout_capacity: 256,
             graceful_shutdown_drain: Duration::from_millis(100),
@@ -207,14 +210,41 @@ impl RtspServerBuilder {
     /// is closed, so a trickling peer cannot hold a session slot or a
     /// publisher slot past that bound.
     ///
-    /// A connection that has neither completed a SETUP nor passed a
-    /// credential check is closed 30 s after its request loop starts (after
-    /// the TLS handshake on `rtsps://`), however many OPTIONS,
-    /// GET_PARAMETERs or interleaved frames it sends and however slowly it
-    /// reads the replies, so peers that never authenticate cannot keep the
-    /// slots.
+    /// A connection that has not completed a SETUP is closed 30 s after its
+    /// request loop starts (after the TLS handshake on `rtsps://`), however
+    /// many OPTIONS, GET_PARAMETERs or interleaved frames it sends, however
+    /// slowly it reads the replies and whatever credential it presented,
+    /// so peers that never set up a session cannot keep the slots. A
+    /// connection whose session ends while it stays open (a refusal on its
+    /// own mount) is closed 30 s later unless it sets up again.
     pub fn max_sessions(&mut self, n: usize) -> &mut Self {
         self.max_sessions = n.max(1);
+        self
+    }
+
+    /// Cap on reader sessions at once. A reader holds a slot from its SETUP
+    /// to the end of its role: its TEARDOWN, a refusal on its own mount or
+    /// the end of its connection. A reader set up again on its own or
+    /// another mount keeps the one slot it holds. Readers of a multicast
+    /// mount count; publishers do not. A reader's SETUP over the cap is
+    /// answered `453 Not Enough Bandwidth` and its connection is closed
+    /// after the reply.
+    ///
+    /// Unset (the default): no cap besides [`Self::max_sessions`]. `0`: no
+    /// readers at all, an ingest-only server (unlike `max_sessions(0)`,
+    /// which counts as 1). With `n` below `max_sessions` the difference can
+    /// never be held by readers, so readers cannot use up every connection
+    /// of a server that also takes publishers; a cap at or above
+    /// `max_sessions` protects nothing. A connection without a session
+    /// still holds one of the `max_sessions` until its admission deadline
+    /// (30 s, see [`Self::max_sessions`]), so a publisher's connection is
+    /// not promised. On an `rtsps://` server,
+    /// [`allow_udp_media(true)`](Self::allow_udp_media) is a separate
+    /// choice: the cap does not change what readers are sent over.
+    ///
+    /// **Stability: Provisional.**
+    pub fn max_readers(&mut self, n: usize) -> &mut Self {
+        self.max_readers = Some(n);
         self
     }
 
