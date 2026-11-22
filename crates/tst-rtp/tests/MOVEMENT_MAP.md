@@ -90,6 +90,7 @@ unchanged (310) and the test leaf-name multiset is byte-identical before/after
 | `rtsp_server_loopback_udp.rs` | `rtsp_server/loopback_udp.rs` |
 | `rtsp_server_mixed_transports.rs` | DELETED — was an empty no-op placeholder for a mixed UDP+multicast assertion; both legs are covered in isolation (`loopback_udp.rs`, `multicast.rs`) and the scenario adds no new server behavior |
 | `rtsp_server_mount.rs` | `rtsp_server/mount.rs` |
+| (new) | `rtsp_server/auth_table.rs` |
 | (new) | `rtsp_server/mount_rules.rs` |
 | `rtsp_server_multicast.rs` | `rtsp_server/multicast.rs` |
 | `rtsp_server_notice_5402.rs` | `rtsp_server/notice_5402.rs` |

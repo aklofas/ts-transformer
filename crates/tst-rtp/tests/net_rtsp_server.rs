@@ -19,6 +19,8 @@ mod fixtures;
 mod auth_basic;
 #[path = "rtsp_server/auth_digest.rs"]
 mod auth_digest;
+#[path = "rtsp_server/auth_table.rs"]
+mod auth_table;
 #[path = "rtsp_server/bind.rs"]
 mod bind;
 #[path = "rtsp_server/concurrent.rs"]
