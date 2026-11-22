@@ -119,6 +119,22 @@ pub(crate) fn handle_announce(
     if state.is_shut_down() {
         return error_response(req, 503, "Service Unavailable");
     }
+    // The elementary shape's muxer is built before any mount is created or
+    // claimed, so a refusal leaves the table and the queue as they were.
+    let muxer = match announced.shape {
+        PublishShape::Elementary { klv } => match EsAdapter::build_muxer(klv) {
+            Ok(m) => Some(m),
+            Err(e) => {
+                tracing::error!(
+                    target: "tst_rtp::server::publish",
+                    error = %e,
+                    "publish muxer construction failed"
+                );
+                return error_response(req, 500, "Internal Server Error");
+            }
+        },
+        PublishShape::Mp2t => None,
+    };
     let mount_path = extract_mount_path(&req.uri);
     let info = PublisherInfo {
         peer: session.peer_addr,
@@ -171,18 +187,13 @@ pub(crate) fn handle_announce(
             let track = |kind| announced.tracks.iter().find(|t| t.kind == kind);
             let video = track(TrackKind::H264).expect("classified: one H.264 track");
             let klv_track = klv.then(|| track(TrackKind::Klv).expect("classified: one KLV track"));
-            match EsAdapter::new(mount.clone(), video, klv_track) {
-                Ok(a) => Box::new(a),
-                Err(e) => {
-                    tracing::error!(
-                        target: "tst_rtp::server::publish",
-                        error = %e,
-                        "publish muxer construction failed"
-                    );
-                    mount.rollback_claim();
-                    return error_response(req, 500, "Internal Server Error");
-                }
-            }
+            let muxer = muxer.expect("built above for the elementary shape");
+            Box::new(EsAdapter::with_muxer(
+                mount.clone(),
+                video,
+                klv_track,
+                muxer,
+            ))
         }
     };
     session.set_role(Role::Publisher(PublishSession::new(
@@ -269,7 +280,9 @@ fn create_on_demand_mount(
 /// - 404 Not Found — the SETUP URI's control segment doesn't name any
 ///   track this ANNOUNCE declared.
 /// - 461 Unsupported Transport — a unicast UDP SETUP with no
-///   `client_port=` (mirrors the reader path's same refusal).
+///   `client_port=` (mirrors the reader path's same refusal), or any
+///   transport other than TCP-interleaved on a server that does not allow
+///   UDP media (refused by `handle_setup` before this function runs).
 /// - 500 Internal Server Error — UDP bind failure, no free interleaved
 ///   channel pair, or `local_addr` not yet set.
 pub(crate) fn handle_setup_record(
@@ -1351,6 +1364,33 @@ mod tests {
         assert_eq!(queued.path, "/new");
         assert!(queued.publisher.lock().unwrap().info.is_some());
         assert!(s.publisher().is_some());
+    }
+
+    #[test]
+    fn a_failed_adapter_build_leaves_no_mount_and_no_queue_entry() {
+        use crate::rtsp::server::publish::adapter_es::FAIL_BUILD_MUXER;
+        const SDP_ES: &str = "v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=x\r\nc=IN IP4 127.0.0.1\r\nt=0 0\r\nm=video 0 RTP/AVP 96\r\na=rtpmap:96 H264/90000\r\na=control:streamid=0\r\n";
+        let active = |st: &Arc<ServerState>| {
+            st.publish_counters
+                .active_publishers
+                .load(std::sync::atomic::Ordering::Relaxed)
+        };
+        let (st, rx) = crate::rtsp::server::test_state_on_demand(true);
+        FAIL_BUILD_MUXER.with(|f| f.set(true));
+        let mut s = ServerSessionState::new();
+        let r = handle_announce(&announce("rtsp://h/new", SDP_ES), &st, &mut s);
+        FAIL_BUILD_MUXER.with(|f| f.set(false));
+        assert_eq!(r.status, 500);
+        assert!(st.mounts.lock().unwrap().is_empty());
+        assert!(rx.try_recv().is_err());
+        assert_eq!(active(&st), 0);
+        assert!(s.publisher().is_none());
+
+        let r = handle_announce(&announce("rtsp://h/new", SDP_ES), &st, &mut s);
+        assert_eq!(r.status, 200);
+        assert!(rx.try_recv().is_ok());
+        assert!(rx.try_recv().is_err(), "exactly one handle is queued");
+        assert_eq!(active(&st), 1);
     }
 
     fn publisher_info() -> PublisherInfo {

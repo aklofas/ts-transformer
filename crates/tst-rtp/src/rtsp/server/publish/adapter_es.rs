@@ -153,31 +153,56 @@ pub(crate) struct EsAdapter {
     now: Box<dyn Fn() -> Instant + Send>,
 }
 
+#[cfg(test)]
+thread_local! {
+    /// Test-only: make [`EsAdapter::build_muxer`] fail on this thread.
+    pub(super) static FAIL_BUILD_MUXER: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
 impl EsAdapter {
-    /// Build the adapter for `video` (and `klv`, when announced).
+    /// The muxer an adapter for a stream with or without a KLV track
+    /// writes through. Built apart from the adapter so `handle_announce`
+    /// can fail before it creates or claims a mount.
     ///
     /// # Errors
     /// The muxer configuration is fixed, so this only fails if the muxer
-    /// rejects it — a programming error, answered with 500 by
+    /// rejects it: a programming error, answered with 500 by
     /// `handle_announce`.
-    pub(crate) fn new(
-        mount: Arc<PublishMountState>,
-        video: &AnnouncedTrack,
-        klv: Option<&AnnouncedTrack>,
-    ) -> Result<Self, MuxError> {
+    pub(super) fn build_muxer(with_klv: bool) -> Result<Muxer, MuxError> {
+        #[cfg(test)]
+        if FAIL_BUILD_MUXER.with(std::cell::Cell::get) {
+            // Two programs on one PMT PID: a configuration the muxer refuses.
+            let mut bad = MuxerConfig::builder();
+            for _ in 0..2 {
+                let mut p = MuxerProgramConfigBuilder::new(PROGRAM_NUMBER, PMT_PID);
+                p.add_video(VIDEO_PID, VideoCodec::H264);
+                bad.add_program(p.build());
+            }
+            return Muxer::new(bad.build()?);
+        }
         let mut prog = MuxerProgramConfigBuilder::new(PROGRAM_NUMBER, PMT_PID);
         prog.add_video(VIDEO_PID, VideoCodec::H264);
-        if klv.is_some() {
+        if with_klv {
             prog.add_klv(KLV_PID, KlvStreamType::PrivateData, true);
         }
         let mut cfg = MuxerConfig::builder();
         cfg.add_program(prog.build())
             .buffer_packets(muxer_buffer_packets());
+        Muxer::new(cfg.build()?)
+    }
+
+    /// Test-only: build the adapter for `video` (and `klv`, when announced).
+    #[cfg(test)]
+    fn new(
+        mount: Arc<PublishMountState>,
+        video: &AnnouncedTrack,
+        klv: Option<&AnnouncedTrack>,
+    ) -> Result<Self, MuxError> {
         Ok(Self::with_muxer(
             mount,
             video,
             klv,
-            Muxer::new(cfg.build()?)?,
+            Self::build_muxer(klv.is_some())?,
         ))
     }
 
@@ -193,7 +218,7 @@ impl EsAdapter {
         Self::with_muxer(mount, video, klv, Muxer::new(cfg).unwrap())
     }
 
-    fn with_muxer(
+    pub(super) fn with_muxer(
         mount: Arc<PublishMountState>,
         video: &AnnouncedTrack,
         klv: Option<&AnnouncedTrack>,
