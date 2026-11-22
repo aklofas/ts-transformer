@@ -2793,7 +2793,11 @@ try (RtspServer server = RtspServer.start(cfg);
   or fails). `RtspServerConfig.builder().allowUdpMedia(true)` serves UDP
   there again, unencrypted, as through 0.10.0; `allowUdpMedia(false)` makes
   a plain `rtsp://` server TCP-only. Unset (`allowUdpMedia()` is empty), a
-  plain server allows UDP media.
+  plain server allows UDP media. A server that does not allow it also
+  refuses `addMulticastMount` with `RtspException(MOUNT)` (a multicast mount
+  sends to its group without any session). Gotcha: `allowUdpMedia(true)` on
+  `rtsps://` re-opens the clear path for readers, publishers and multicast
+  mounts alike.
 
 ## RTSP publisher ingest (`org.tstrans.rtp`)
 

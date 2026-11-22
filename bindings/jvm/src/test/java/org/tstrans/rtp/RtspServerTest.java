@@ -198,6 +198,21 @@ class RtspServerTest {
         }
     }
 
+    /** A server that does not allow UDP media refuses a multicast mount before it exists. */
+    @Test @Timeout(15)
+    void aMulticastMountIsRefusedWhereUdpMediaIsOff() throws Exception {
+        try (RtspServer s = RtspServer.start(RtspServerConfig.builder()
+                .bindAddr("127.0.0.1:0").allowUdpMedia(false).build())) {
+            MuxerConfig cfg = MuxerConfig.builder()
+                .programNumber(1).pmtPid(0x1000).addVideo(0x1011, VideoCodec.H264).build();
+            RtspException e = assertThrows(RtspException.class,
+                () -> s.addMulticastMount("/mc", "239.0.0.1", 5004, cfg));
+            assertEquals(RtspException.Kind.MOUNT, e.kind(), e.getMessage());
+            assertTrue(e.getMessage().contains("UDP media"), e.getMessage());
+            assertEquals(0, s.stats().mounts());
+        }
+    }
+
     /**
      * No client in this suite reads a mount's raw TS, so the lead is probed through
      * the muxer's range check instead of the wire. 1001 is out of range for the lead

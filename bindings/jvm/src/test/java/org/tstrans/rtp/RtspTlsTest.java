@@ -267,6 +267,40 @@ class RtspTlsTest {
         }
     }
 
+    /**
+     * An {@code rtsps://} server refuses a multicast mount (it would send its media to the
+     * group in the clear) unless UDP media is allowed.
+     */
+    @Test
+    @Timeout(TIMEOUT_SEC)
+    void rtspsServerRefusesAMulticastMountUnlessUdpMediaIsAllowed() throws Exception {
+        assumeTrue(isLinux(), "live RTSP tests gated to Linux");
+        Path cert = fixtureDir().resolve("cert.pem");
+        Path key = fixtureDir().resolve("key.pem");
+        assumeTrue(Files.isRegularFile(cert) && Files.isRegularFile(key),
+            "committed TLS fixture not reachable from test workingDir");
+        for (boolean allow : new boolean[] {false, true}) {
+            var b = RtspServerConfig.builder()
+                .bindAddr("rtsps://127.0.0.1:0")
+                .tlsCert(cert.toString()).tlsKey(key.toString());
+            if (allow) b.allowUdpMedia(true);
+            try (RtspServer server = RtspServer.start(b.build())) {
+                if (allow) {
+                    try (MountHandle m = server.addMulticastMount("/mc", "239.0.0.1", 5004,
+                            roundtripConfig())) {
+                        assertEquals("multicast", m.mountKind());
+                    }
+                } else {
+                    RtspException e = assertThrows(RtspException.class,
+                        () -> server.addMulticastMount("/mc", "239.0.0.1", 5004,
+                            roundtripConfig()));
+                    assertEquals(RtspException.Kind.MOUNT, e.kind(), e.getMessage());
+                    assertEquals(0, server.stats().mounts());
+                }
+            }
+        }
+    }
+
     /** A TLS context that trusts the committed self-signed fixture certificate alone. */
     private static SSLContext trusting(Path cert) throws Exception {
         KeyStore store = KeyStore.getInstance(KeyStore.getDefaultType());

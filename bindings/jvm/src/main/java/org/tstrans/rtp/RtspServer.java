@@ -174,7 +174,9 @@ public final class RtspServer extends NativeHandle {
      * name), or {@code null}.
      *
      * @throws RtspException {@code MOUNT} for an invalid/duplicate mount path or invalid
-     *     group/address; {@code CLOSED} if the server is stopped
+     *     group/address, or on a server that does not allow UDP media ({@link
+     *     RtspServerConfig#allowUdpMedia()}: by default an {@code rtsps://} server);
+     *     {@code CLOSED} if the server is stopped
      * @throws MuxException if the muxer rejects {@code programConfig}
      */
     public MountHandle addMulticastMount(String path, String group, int port, int ttl,
