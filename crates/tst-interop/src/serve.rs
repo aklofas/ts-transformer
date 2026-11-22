@@ -37,7 +37,7 @@ use tst_core::mpegts::common::Pts90khz;
 use tst_core::url::redact_url;
 use tst_hls::{HlsMode, HlsPublisherBuilder};
 use tst_pipeline::MuxPublisher;
-use tst_rtp::RtspServer;
+use tst_rtp::{RtspServerBuilder, RtspUrl, SecretString};
 
 use crate::fixtures::{self, AuSizeMode, KlvSet};
 use crate::mux_setup;
@@ -221,6 +221,7 @@ fn run_hls_inner(
 /// `push_video_misp`/`push_video_misp_to`. A `KlvMode::AsyncWithMisp`
 /// profile (only `misp` in the registry) is rejected up front with a
 /// clear error rather than silently served without its MISP SEI.
+#[allow(clippy::too_many_arguments)]
 pub fn run_rtsp(
     p: &Profile,
     bind_addr: SocketAddr,
@@ -229,6 +230,7 @@ pub fn run_rtsp(
     klv: KlvSet,
     klv_seed: u64,
     au_sizes: AuSizeMode,
+    credential: Option<Credential>,
 ) -> Result<(), String> {
     if p.klv == KlvMode::AsyncWithMisp {
         return Err(format!(
@@ -239,7 +241,13 @@ pub fn run_rtsp(
     }
 
     let cfg = mux_setup::build_config(p, au_sizes);
-    let server = RtspServer::bind(&format!("rtsp://{bind_addr}"))
+    let mut builder = RtspServerBuilder::new(&format!("rtsp://{bind_addr}"))
+        .map_err(|e| format!("RtspServer::bind: {e}"))?;
+    if let Some(credential) = credential {
+        credential.require_on(&mut builder);
+    }
+    let server = builder
+        .build()
         .map_err(|e| format!("RtspServer::bind: {e}"))?;
     let mount_handle = server
         .add_mount(mount, cfg)
@@ -294,6 +302,36 @@ pub fn run_rtsp(
         .stop()
         .map_err(|e| format!("RtspServer::stop: {e}"))?;
     Ok(())
+}
+
+/// The credential a harness RTSP server asks for, taken from the user
+/// name and password of the URL the cell names (`rtsp://user:pass@host:port/…`).
+/// The server's bind URL never carries it: the library refuses a bind URL
+/// with userinfo, so the credential goes to the builder instead.
+pub struct Credential {
+    username: String,
+    password: SecretString,
+}
+
+impl Credential {
+    /// The URL's credential, or `None` for a URL without a user name (an
+    /// empty user name is no credentials, as everywhere in the library).
+    pub fn of(url: &RtspUrl) -> Option<Self> {
+        let username = url.username.clone().filter(|u| !u.is_empty())?;
+        let password = url
+            .password
+            .clone()
+            .unwrap_or_else(|| SecretString::from(String::new()));
+        Some(Self { username, password })
+    }
+
+    /// Ask for Digest MD5, and accept the RFC 2069 answer (no `qop`) that
+    /// GStreamer's `rtspsrc` and `rtspclientsink` send.
+    pub fn require_on(self, builder: &mut RtspServerBuilder) {
+        builder
+            .auth_digest_md5("tstrans-interop", &self.username, self.password)
+            .accept_digest_without_qop(true);
+    }
 }
 
 /// Which serve (bind) mode a URL's scheme selects, or `None` if
@@ -378,5 +416,14 @@ pub fn run_rtsp_url(
         .parse()
         .map_err(|e| format!("rtsp url {shown}: host '{host}' is not a literal IP: {e}"))?;
     let bind_addr = SocketAddr::new(ip, parsed.port);
-    run_rtsp(p, bind_addr, &parsed.path, seconds, klv, klv_seed, au_sizes)
+    run_rtsp(
+        p,
+        bind_addr,
+        &parsed.path,
+        seconds,
+        klv,
+        klv_seed,
+        au_sizes,
+        Credential::of(&parsed),
+    )
 }

@@ -872,7 +872,19 @@ impl RtspPublishListener {
             .ok_or_else(|| {
                 format!("rtsp-publish URL needs a mount path (host:port/mount): {shown}")
             })?;
-        let server = tst_rtp::RtspServer::bind(&format!("rtsp://{authority}"))
+        let mut bind = tst_rtp::RtspUrl::parse(&format!("rtsp://{authority}"))
+            .map_err(|e| format!("rtsp-publish bind {shown}: {e}"))?;
+        let credential = crate::serve::Credential::of(&bind);
+        bind.username = None;
+        bind.password = None;
+        bind.validate_for_server_bind()
+            .map_err(|e| format!("rtsp-publish bind {shown}: {e}"))?;
+        let mut builder = tst_rtp::RtspServerBuilder::with_url(bind);
+        if let Some(credential) = credential {
+            credential.require_on(&mut builder);
+        }
+        let server = builder
+            .build()
             .map_err(|e| format!("rtsp-publish bind {shown}: {e}"))?;
         let handle = server
             .add_publish_mount(&format!("/{mount}"))
@@ -1431,6 +1443,53 @@ mod tests {
             .err()
             .expect("ftp is no send scheme");
         assert_eq!(err, "unsupported scheme for send: ftp://");
+    }
+
+    /// The status line and `WWW-Authenticate` header the publish listener
+    /// answers to an ANNOUNCE that carries no credential.
+    fn announce_without_credential(url: &str) -> (String, Option<String>) {
+        use std::io::{Read, Write};
+        let listener = RtspPublishListener::start(url, PublishMountProbe::default()).unwrap();
+        let addr = listener.local_addr().unwrap();
+        let mut conn = std::net::TcpStream::connect(addr).unwrap();
+        conn.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        write!(
+            conn,
+            "ANNOUNCE rtsp://{addr}/mount RTSP/1.0\r\nCSeq: 1\r\n\
+             Content-Type: application/sdp\r\nContent-Length: 0\r\n\r\n"
+        )
+        .unwrap();
+        let mut buf = [0u8; 1024];
+        let n = conn.read(&mut buf).unwrap();
+        let text = String::from_utf8_lossy(&buf[..n]).into_owned();
+        let status = text.lines().next().unwrap_or_default().to_string();
+        let challenge = text
+            .lines()
+            .find(|l| l.to_ascii_lowercase().starts_with("www-authenticate:"))
+            .map(str::to_string);
+        (status, challenge)
+    }
+
+    /// A user name in the publish URL makes the server ask for it: the
+    /// bind URL given to the library carries none (the library refuses
+    /// that), so the credential has to reach the builder.
+    #[test]
+    fn a_credentialled_publish_url_asks_for_a_digest_credential() {
+        let (status, challenge) =
+            announce_without_credential("rtsp-publish://admin:s3cret@127.0.0.1:0/mount");
+        assert!(status.contains("401"), "{status}");
+        let challenge = challenge.expect("a 401 carries a challenge");
+        assert!(challenge.contains("Digest"), "{challenge}");
+        assert!(!challenge.contains("s3cret"), "{challenge}");
+    }
+
+    /// The same URL without a user name serves an open mount: the same
+    /// request is not asked for a credential.
+    #[test]
+    fn a_publish_url_without_a_user_name_asks_for_nothing() {
+        let (status, challenge) = announce_without_credential("rtsp-publish://127.0.0.1:0/mount");
+        assert!(!status.contains("401"), "{status}");
+        assert!(challenge.is_none(), "{challenge:?}");
     }
 
     /// The error text of a refused open, whatever the Ok type.

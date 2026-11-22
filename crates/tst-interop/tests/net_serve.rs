@@ -338,6 +338,7 @@ fn rtsp_serve_round_trip_via_own_client() {
             KlvSet::Compact,
             0,
             AuSizeMode::Compact,
+            None,
         )
     });
 

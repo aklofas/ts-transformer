@@ -446,6 +446,13 @@ run_send_peer_recv() {
   fi
 }
 
+# redact_creds — stdin to stdout with the password of any URL's user:password@
+# replaced, so a cell's log never holds a credential (the Rust side prints
+# its URLs through redact_url).
+redact_creds() {
+  sed -E 's#(://[^/:@ ]+):[^/@ ]*@#\1:<redacted>@#g'
+}
+
 # run_peer_send_recv <id> <peer> <tier> <our_url> [--remuxed] [--expect P] [--klv-digest-of FILE] -- <peer_cmd...>
 #
 # The peer pushes (from $GEN_FILE, already baked into peer_cmd by the
@@ -515,7 +522,7 @@ run_peer_send_recv() {
   budget=$(cell_timeout "$SECONDS_ARG")
 
   echo "=== cell: $id (tier=$tier, profile=$PROFILE) ===" >>"$log"
-  echo "--- us: recv (listening on $our_url, expect $expect_profile${recv_extra[*]:+, ${recv_extra[*]}}) ---" >>"$log"
+  echo "--- us: recv (listening on $our_url, expect $expect_profile${recv_extra[*]:+, ${recv_extra[*]}}) ---" | redact_creds >>"$log"
 
   local recv_json="$WORK/$(slug "$id")-recv.json"
   # --strict only for the transparent (byte-identical) tier: a lossy/
@@ -537,9 +544,12 @@ run_peer_send_recv() {
     printf '+ '
     printf '%q ' "${peer_cmd[@]}"
     echo
-  } >>"$log"
+  } | redact_creds >>"$log"
   local peer_rc=0
-  timeout --kill-after=5 "${budget}s" "${peer_cmd[@]}" >>"$log" 2>&1 || peer_rc=$?
+  local peer_log="$WORK/$(slug "$id")-peer.log"
+  timeout --kill-after=5 "${budget}s" "${peer_cmd[@]}" >"$peer_log" 2>&1 || peer_rc=$?
+  redact_creds <"$peer_log" >>"$log"
+  rm -f "$peer_log"
 
   local recv_rc=0
   wait "$recv_pid" || recv_rc=$?
@@ -652,7 +662,7 @@ run_serve_peer_pull() {
   pbudget=$(cell_timeout "$SECONDS_ARG")
 
   echo "=== cell: $id (tier=$tier, profile=$PROFILE) ===" >>"$log"
-  echo "--- us: serve ($our_serve_url) ---" >>"$log"
+  echo "--- us: serve ($our_serve_url) ---" | redact_creds >>"$log"
 
   timeout --kill-after=5 "${sbudget}s" \
     "$BIN" send --profile "$PROFILE" --url "$our_serve_url" --seconds "$SECONDS_ARG" \
@@ -666,9 +676,12 @@ run_serve_peer_pull() {
     printf '+ '
     printf '%q ' "${peer_cmd[@]}"
     echo
-  } >>"$log"
+  } | redact_creds >>"$log"
   local peer_rc=0
-  timeout --kill-after=5 "${pbudget}s" "${peer_cmd[@]}" >>"$log" 2>&1 || peer_rc=$?
+  local peer_log="$WORK/$(slug "$id")-peer.log"
+  timeout --kill-after=5 "${pbudget}s" "${peer_cmd[@]}" >"$peer_log" 2>&1 || peer_rc=$?
+  redact_creds <"$peer_log" >>"$log"
+  rm -f "$peer_log"
 
   local serve_rc=0
   wait "$serve_pid" || serve_rc=$?
@@ -1126,6 +1139,12 @@ hls_cells() {
     tsp -I hls "http://127.0.0.1:$port/playlist.m3u8" -O file "$WORK/hls_tsp-pull.ts"
 }
 
+# The credential the two Digest cells use: a throwaway pair that exists
+# only for the cell. It is in the cell's URLs, so every logged line goes
+# through redact_creds.
+RTSP_CELL_USER=interop-user
+RTSP_CELL_PASS=interop-pass-0123
+
 rtsp_cells() {
   local port
 
@@ -1141,6 +1160,19 @@ rtsp_cells() {
     "rtsp://127.0.0.1:$port/mount" -- \
     cvlc --intf dummy --play-and-exit --no-audio \
     "--run-time=$SECONDS_ARG" "rtsp://127.0.0.1:$port/mount"
+
+  # GStreamer pulls from a server that asks for a credential. rtspsrc
+  # answers the Digest challenge in the RFC 2069 form (no qop), which the
+  # server takes only when told to; the harness's serve mode asks for
+  # Digest MD5 whenever the URL names a user. A peer the server turns
+  # away (a 401) writes nothing, so the cell fails on a wrong password.
+  port=$(free_port tcp)
+  run_serve_peer_pull "rtsp-serve/gst-pull-digest" gst-launch-1.0 remux \
+    "rtsp://$RTSP_CELL_USER:$RTSP_CELL_PASS@127.0.0.1:$port/mount" \
+    "$WORK/rtsp-serve_gst-pull-digest.ts" -- \
+    gst-launch-1.0 -e -q rtspsrc \
+    "location=rtsp://$RTSP_CELL_USER:$RTSP_CELL_PASS@127.0.0.1:$port/mount" protocols=tcp ! \
+    rtpmp2tdepay ! filesink "location=$WORK/rtsp-serve_gst-pull-digest.ts"
 
   # Best-effort: peer-to-peer only (vlc serves, ffmpeg consumes) — our
   # own `recv`/transport::make_recv has no rtsp:// connect-side support
@@ -1236,6 +1268,16 @@ rtsp_publish_cells() {
     "rtsp-publish://127.0.0.1:$port/mount" -- \
     gst-launch-1.0 filesrc "location=$GEN_FILE" ! tsparse set-timestamps=true ! \
     rtspclientsink "location=rtsp://127.0.0.1:$port/mount" protocols=tcp
+
+  # The same push to a mount that asks for Digest credentials: the
+  # publisher answers the 401 with the RFC 2069 form GStreamer sends (the
+  # server takes it because the harness's server is told to), and the
+  # stream must arrive byte-identical as in the open cell.
+  port=$(free_port tcp)
+  run_peer_send_recv "rtsp-publish/gst-push-digest" gst-launch-1.0 transparent \
+    "rtsp-publish://$RTSP_CELL_USER:$RTSP_CELL_PASS@127.0.0.1:$port/mount" -- \
+    gst-launch-1.0 filesrc "location=$GEN_FILE" ! tsparse set-timestamps=true ! \
+    rtspclientsink "location=rtsp://$RTSP_CELL_USER:$RTSP_CELL_PASS@127.0.0.1:$port/mount" protocols=tcp
 
   # Elementary streams: H.264 (RFC 6184) + KLV (RFC 6597) on one
   # session, re-muxed by the server onto its own PIDs (video 0x100, KLV
