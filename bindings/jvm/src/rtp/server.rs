@@ -148,6 +148,7 @@ jni_native! {
     /// `RtspServer.nStart(...)` — build the RtspServerBuilder from config primitives,
     /// build()+start(). Returns a `Box<RtspServer>` handle, or 0 with a pending exception.
     /// `authScheme`: -1 none / 0 basic / 1 digest-md5 / 2 digest-sha256.
+    /// `allowUdpMedia`: -1 unset (decided by the bind's scheme) / 0 no / 1 yes.
     #[allow(clippy::too_many_arguments)]
     fn Java_org_tstrans_rtp_RtspServer_nStart<'local>(
         env,
@@ -166,6 +167,8 @@ jni_native! {
         accept_unregistered_publishers: jboolean,
         end_publish_mount_on_publisher_exit: jboolean,
         publish_idle_timeout_ms: jlong,
+        allow_udp_media: jint,
+        accept_digest_without_qop: jboolean,
         def_pub_kind: jint,
         def_pub_status: jint,
         def_pub_users: JObjectArray<'local>,
@@ -261,6 +264,10 @@ jni_native! {
                 ))
                 .accept_unregistered_publishers(accept_unregistered_publishers)
                 .end_publish_mount_on_publisher_exit(end_publish_mount_on_publisher_exit);
+            if allow_udp_media >= 0 {
+                builder.allow_udp_media(allow_udp_media > 0);
+            }
+            builder.accept_digest_without_qop(accept_digest_without_qop);
             if publish_idle_timeout_ms > 0 {
                 builder.publish_idle_timeout(Duration::from_millis(publish_idle_timeout_ms as u64));
             }

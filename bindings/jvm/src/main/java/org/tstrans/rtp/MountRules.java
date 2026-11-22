@@ -1,6 +1,7 @@
 package org.tstrans.rtp;
 
 import java.util.Objects;
+import java.util.Optional;
 import org.tstrans.NativeHandle;
 import org.tstrans.NativeLoader;
 import org.tstrans.RtspException;
@@ -18,8 +19,9 @@ import org.tstrans.RtspException;
  * <p><b>Lifetime.</b> This object shares the server's table but not its lifetime: closing
  * the server does not close it. Once the server has stopped, been cancelled or been
  * closed, the editing methods throw
- * {@link RtspException} with {@code Kind.CLOSED}, while {@link #size()} and {@link
- * #isClosed()} keep answering. Close it to free its native handle.
+ * {@link RtspException} with {@code Kind.CLOSED}, while {@link #size()}, {@link
+ * #isClosed()} and the refused-credential counts keep answering. Close it to free its
+ * native handle.
  */
 public final class MountRules extends NativeHandle {
     static { NativeLoader.load(); }
@@ -91,6 +93,32 @@ public final class MountRules extends NativeHandle {
         nSetChallenge(peekHandle(), scheme.code(), realm);
     }
 
+    /**
+     * The requests refused for their credential on {@code path}'s own rule (see {@link
+     * MountRuleAuthFailures}). A request for a path without a rule counts on the default
+     * rule. A rule's counts are kept when {@link #set} replaces it and dropped by {@link
+     * #remove} and {@link #clear}. Answers after the server has stopped.
+     *
+     * @return empty when {@code path} has no rule of its own
+     */
+    public Optional<MountRuleAuthFailures> authFailures(String path) {
+        Objects.requireNonNull(path, "path");
+        ensureOpen("MountRules is closed");
+        long[] c = nAuthFailures(peekHandle(), path);
+        return c == null ? Optional.empty() : Optional.of(new MountRuleAuthFailures(c[0], c[1]));
+    }
+
+    /**
+     * The requests refused for their credential on the default rule: those for every path
+     * without a rule of its own (see {@link MountRuleAuthFailures}). Answers after the server
+     * has stopped.
+     */
+    public MountRuleAuthFailures defaultAuthFailures() {
+        ensureOpen("MountRules is closed");
+        long[] c = nDefaultAuthFailures(peekHandle());
+        return new MountRuleAuthFailures(c[0], c[1]);
+    }
+
     /** Number of path rules (the default rule is not counted). */
     public int size() {
         ensureOpen("MountRules is closed");
@@ -117,6 +145,9 @@ public final class MountRules extends NativeHandle {
     private static native void nClear(long rules) throws RtspException;
     private static native void nSetChallenge(long rules, int scheme, String realm)
         throws RtspException;
+    // `{publish, read}`; null when the path has no rule of its own.
+    private static native long[] nAuthFailures(long rules, String path);
+    private static native long[] nDefaultAuthFailures(long rules);
     private static native int nSize(long rules);
     private static native boolean nIsClosed(long rules);
     private static native void nClose(long rules);

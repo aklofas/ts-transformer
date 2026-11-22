@@ -31,6 +31,8 @@ public final class RtspServerConfig {
     private final boolean endPublishMountOnPublisherExit;
     private final long publishIdleTimeoutMs;
     private final MountRule defaultMountRule;  // nullable
+    private final Boolean allowUdpMedia;       // nullable: decided by the bind's scheme
+    private final boolean acceptDigestWithoutQop;
 
     private RtspServerConfig(Builder b) {
         this.bindAddr = b.bindAddr;
@@ -45,6 +47,8 @@ public final class RtspServerConfig {
         this.endPublishMountOnPublisherExit = b.endPublishMountOnPublisherExit;
         this.publishIdleTimeoutMs = b.publishIdleTimeoutMs;
         this.defaultMountRule = b.defaultMountRule;
+        this.allowUdpMedia = b.allowUdpMedia;
+        this.acceptDigestWithoutQop = b.acceptDigestWithoutQop;
     }
 
     /** Config with the default field set, bound to {@code bindAddr}. */
@@ -104,6 +108,22 @@ public final class RtspServerConfig {
      */
     public Optional<MountRule> defaultMountRule() { return Optional.ofNullable(defaultMountRule); }
 
+    /**
+     * Whether sessions may carry media over UDP, if set: a reader's or a publisher's SETUP
+     * with a transport that is not TCP-interleaved, and multicast mounts. A server that does
+     * not allow it answers such a SETUP {@code 461 Unsupported Transport}. Empty (the
+     * default) means yes on an {@code rtsp://} bind and NO on an {@code rtsps://} bind, so
+     * that an {@code rtsps://} server sends and takes media only inside the TLS connection.
+     */
+    public Optional<Boolean> allowUdpMedia() { return Optional.ofNullable(allowUdpMedia); }
+
+    /**
+     * Whether a Digest answer that carries no {@code qop} is accepted (the RFC 2069 form
+     * GStreamer 1.24 sends). Default {@code false}. See {@link
+     * Builder#acceptDigestWithoutQop(boolean)}.
+     */
+    public boolean acceptDigestWithoutQop() { return acceptDigestWithoutQop; }
+
     @Override public String toString() {
         return "RtspServerConfig(bindAddr=" + Redact.url(bindAddr)
             + ", auth=" + (auth != null ? "<auth>" : "None")
@@ -116,7 +136,9 @@ public final class RtspServerConfig {
             + ", acceptUnregisteredPublishers=" + acceptUnregisteredPublishers
             + ", endPublishMountOnPublisherExit=" + endPublishMountOnPublisherExit
             + ", publishIdleTimeoutMs=" + publishIdleTimeoutMs
-            + ", defaultMountRule=" + (defaultMountRule != null ? defaultMountRule : "None") + ")";
+            + ", defaultMountRule=" + (defaultMountRule != null ? defaultMountRule : "None")
+            + ", allowUdpMedia=" + (allowUdpMedia != null ? allowUdpMedia : "None")
+            + ", acceptDigestWithoutQop=" + acceptDigestWithoutQop + ")";
     }
 
     /** Builder for {@link RtspServerConfig}. Defaults match tst-py. */
@@ -133,6 +155,8 @@ public final class RtspServerConfig {
         private boolean endPublishMountOnPublisherExit;
         private long publishIdleTimeoutMs;
         private MountRule defaultMountRule;
+        private Boolean allowUdpMedia;
+        private boolean acceptDigestWithoutQop;
 
         private Builder() {}
 
@@ -202,6 +226,45 @@ public final class RtspServerConfig {
          */
         public Builder defaultMountRule(MountRule rule) {
             this.defaultMountRule = rule;
+            return this;
+        }
+
+        /**
+         * Allow or refuse media over UDP: a reader's or a publisher's SETUP with a transport
+         * that is not TCP-interleaved (refused with {@code 461 Unsupported Transport}), and
+         * multicast mounts. Unset, it is allowed on an {@code rtsp://} bind and refused on an
+         * {@code rtsps://} bind. {@code allowUdpMedia(true)} on an {@code rtsps://} server
+         * restores the behaviour of 0.10.0, in which the media travels unencrypted; {@code
+         * allowUdpMedia(false)} makes a plain server TCP-only.
+         *
+         * <p><b>Stability: Provisional.</b>
+         */
+        public Builder allowUdpMedia(boolean v) {
+            this.allowUdpMedia = v;
+            return this;
+        }
+
+        /**
+         * Accept a Digest answer that carries no {@code qop}: the RFC 2069 form, which
+         * GStreamer 1.24's {@code rtspsrc} and {@code rtspclientsink} send. Applies to both
+         * Digest schemes, the server's own credential and every mount rule's; the challenge
+         * still offers {@code qop="auth"}, and an answer with {@code qop} is checked as
+         * before, its nonce count included. Default {@code false}, so such an answer is
+         * refused as a downgrade.
+         *
+         * <p>What is given up, only for a client that sends no {@code qop} and only with this
+         * on: replay protection inside one connection. Such an answer has no nonce count, so
+         * a captured {@code Authorization} value for one method and URI can be sent again on
+         * the same connection while it lives. The nonce is still 128 random bits per TCP
+         * connection and is never accepted on another.
+         *
+         * <p>GStreamer 1.24 authenticates with Basic, or with Digest MD5 under this option,
+         * never with Digest SHA-256: it answers a SHA-256 challenge with an MD5 response.
+         *
+         * <p><b>Stability: Provisional.</b>
+         */
+        public Builder acceptDigestWithoutQop(boolean v) {
+            this.acceptDigestWithoutQop = v;
             return this;
         }
 

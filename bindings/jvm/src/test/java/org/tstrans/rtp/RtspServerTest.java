@@ -1,8 +1,23 @@
 package org.tstrans.rtp;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.tstrans.TestSupport.rtspHeader;
+import static org.tstrans.TestSupport.roundtripConfig;
 import static org.tstrans.TestSupport.syntheticH264Idr;
 
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.net.DatagramSocket;
+import java.net.InetAddress;
+import java.net.InetSocketAddress;
+import java.net.Socket;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.util.Base64;
+import java.util.HexFormat;
+import java.util.Locale;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.tstrans.MuxException;
@@ -286,4 +301,153 @@ class RtspServerTest {
         }
     }
 
+
+    // ── what the server's options and credentials do on the wire ─────────────
+
+    /** A plain server told not to allow UDP media answers 461 to a UDP SETUP. */
+    @Test @Timeout(15)
+    void aServerWithoutUdpMediaAnswers461ToUdpAndServesInterleaved() throws Exception {
+        RtspServerConfig cfg = RtspServerConfig.builder()
+            .bindAddr("127.0.0.1:0").allowUdpMedia(false).build();
+        try (RtspServer s = RtspServer.start(cfg);
+             MountHandle m = s.addUnicastMount("/live", roundtripConfig());
+             DatagramSocket media = new DatagramSocket(0, InetAddress.getLoopbackAddress())) {
+            int port = port(s);
+            String udp = readerSetup(Raw.connect(port), port, udpTransport(media));
+            assertEquals(461, Raw.status(udp), udp);
+            String tcp = readerSetup(Raw.connect(port), port,
+                "RTP/AVP/TCP;unicast;interleaved=0-1");
+            assertEquals(200, Raw.status(tcp), tcp);
+        }
+    }
+
+    /** Unset, a plain {@code rtsp://} server serves a reader over UDP. */
+    @Test @Timeout(15)
+    void aPlainServerServesUdpMediaByDefault() throws Exception {
+        try (RtspServer s = RtspServer.start(RtspServerConfig.of("127.0.0.1:0"));
+             MountHandle m = s.addUnicastMount("/live", roundtripConfig());
+             DatagramSocket media = new DatagramSocket(0, InetAddress.getLoopbackAddress())) {
+            int port = port(s);
+            String udp = readerSetup(Raw.connect(port), port, udpTransport(media));
+            assertEquals(200, Raw.status(udp), udp);
+            assertTrue(rtspHeader(udp, "Transport").contains("server_port"), udp);
+        }
+    }
+
+    /**
+     * The Digest answer GStreamer 1.24 sends (the RFC 2069 form: no {@code qop}, {@code nc}
+     * or {@code cnonce}) is accepted only with {@code acceptDigestWithoutQop}; the challenge
+     * offers {@code qop="auth"} either way.
+     */
+    @Test @Timeout(15)
+    void aDigestAnswerWithoutQopIsAcceptedOnlyWithTheOption() throws Exception {
+        for (boolean option : new boolean[] {true, false}) {
+            RtspServerConfig cfg = RtspServerConfig.builder()
+                .bindAddr("127.0.0.1:0")
+                .auth(new DigestAuth("admin", "secret", DigestAlgorithm.MD5, "test-realm"))
+                .acceptDigestWithoutQop(option)
+                .build();
+            try (RtspServer s = RtspServer.start(cfg);
+                 MountHandle m = s.addUnicastMount("/live", roundtripConfig());
+                 Raw raw = Raw.connect(port(s))) {
+                String uri = "rtsp://127.0.0.1:" + port(s) + "/live";
+                String first = raw.request("DESCRIBE " + uri, "");
+                assertEquals(401, Raw.status(first), first);
+                String challenge = rtspHeader(first, "WWW-Authenticate");
+                assertTrue(challenge.contains("qop=\"auth\""), challenge);
+                String nonce = challenge.split("nonce=\"")[1].split("\"")[0];
+                String ha1 = md5("admin:test-realm:secret");
+                String ha2 = md5("DESCRIBE:" + uri);
+                String answer = "Authorization: Digest username=\"admin\", realm=\"test-realm\", "
+                    + "nonce=\"" + nonce + "\", uri=\"" + uri + "\", response=\""
+                    + md5(ha1 + ":" + nonce + ":" + ha2) + "\"\r\n";
+                String answered = raw.request("DESCRIBE " + uri, answer);
+                assertEquals(option ? 200 : 401, Raw.status(answered),
+                    "acceptDigestWithoutQop(" + option + "): " + answered);
+            }
+        }
+    }
+
+    // ── helpers ──────────────────────────────────────────────────────────────
+
+    private static int port(RtspServer s) {
+        return s.localAddr().orElseThrow(() -> new AssertionError("server must be bound"))
+            .getPort();
+    }
+
+    private static String udpTransport(DatagramSocket media) {
+        int p = media.getLocalPort();
+        return "RTP/AVP;unicast;client_port=" + p + "-" + (p + 1);
+    }
+
+    /** One reader SETUP of {@code /live} on {@code raw}, which it closes. */
+    static String readerSetup(Raw raw, int port, String transport) throws IOException {
+        try (raw) {
+            return raw.request("SETUP rtsp://127.0.0.1:" + port + "/live/trackID=0",
+                "Transport: " + transport + "\r\n");
+        }
+    }
+
+    static String md5(String s) throws Exception {
+        return HexFormat.of().formatHex(
+            MessageDigest.getInstance("MD5").digest(s.getBytes(StandardCharsets.UTF_8)));
+    }
+
+    static String basic(String user, String password) {
+        return "Authorization: Basic " + Base64.getEncoder()
+            .encodeToString((user + ":" + password).getBytes(StandardCharsets.UTF_8)) + "\r\n";
+    }
+
+    /**
+     * One RTSP connection spoken by hand: each request gets the next CSeq and its whole
+     * response, body included, is read with a 5 s deadline per read.
+     */
+    static final class Raw implements AutoCloseable {
+        private final Socket sock;
+        private final InputStream in;
+        private final OutputStream out;
+        private int cseq = 1;
+
+        Raw(Socket sock) throws IOException {
+            this.sock = sock;
+            sock.setSoTimeout(5000);
+            in = sock.getInputStream();
+            out = sock.getOutputStream();
+        }
+
+        static Raw connect(int port) throws IOException {
+            Socket sock = new Socket();
+            sock.connect(new InetSocketAddress("127.0.0.1", port), 5000);
+            return new Raw(sock);
+        }
+
+        /** Send {@code start RTSP/1.0}, the CSeq and {@code headers}; the response head. */
+        String request(String start, String headers) throws IOException {
+            String req = start + " RTSP/1.0\r\nCSeq: " + (cseq++) + "\r\n" + headers + "\r\n";
+            out.write(req.getBytes(StandardCharsets.US_ASCII));
+            out.flush();
+            ByteArrayOutputStream head = new ByteArrayOutputStream();
+            int matched = 0;
+            byte[] end = {13, 10, 13, 10};
+            while (matched < 4) {
+                int b = in.read();
+                if (b < 0) throw new IOException("server closed before answering " + start);
+                head.write(b);
+                matched = b == end[matched] ? matched + 1 : (b == 13 ? 1 : 0);
+            }
+            String resp = head.toString(StandardCharsets.US_ASCII);
+            for (String line : resp.split("\r\n")) {
+                if (line.toLowerCase(Locale.ROOT).startsWith("content-length:")) {
+                    in.readNBytes(Integer.parseInt(line.substring(line.indexOf(':') + 1).trim()));
+                }
+            }
+            return resp;
+        }
+
+        static int status(String resp) {
+            return Integer.parseInt(resp.split(" ")[1]);
+        }
+
+        @Override public void close() throws IOException { sock.close(); }
+    }
 }

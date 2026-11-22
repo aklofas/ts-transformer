@@ -9,11 +9,14 @@ use std::sync::LazyLock;
 
 use jni::Env;
 use jni::jni_str;
-use jni::objects::{JObjectArray, JString};
+use jni::objects::{JLongArray, JObjectArray, JString};
 use jni::strings::JNIString;
 use jni::sys::{jboolean, jint, jlong};
 use secrecy::SecretString;
-use tst_rtp::{AuthScheme, MountCredential, MountPolicy, MountRule, MountRules, RefuseStatus};
+use tst_rtp::{
+    AuthScheme, MountCredential, MountPolicy, MountRule, MountRuleAuthFailures, MountRules,
+    RefuseStatus,
+};
 
 use super::errors::mount_rule_error_to_jvm;
 use crate::handle::HandleRegistry;
@@ -232,6 +235,48 @@ jni_native! {
         };
         if let Some(Err(e)) = with_rules(env, handle, |rules| rules.set_challenge(scheme, &realm)) {
             mount_rule_error_to_jvm(env, e);
+        }
+    }
+}
+
+/// `{publish, read}` as a Java `long[]`, or null with an exception pending.
+fn auth_failures_array<'local>(
+    env: &mut Env<'local>,
+    c: MountRuleAuthFailures,
+) -> JLongArray<'local> {
+    let Ok(arr) = env.new_long_array(2) else {
+        return JLongArray::null();
+    };
+    // Unsigned counts travel as the bit pattern of a signed `long`.
+    let _ = arr.set_region(env, 0, &[c.publish as i64, c.read as i64]);
+    arr
+}
+
+jni_native! {
+    /// `MountRules.nAuthFailures(rules, path)` — null when the path has no rule of its own.
+    fn Java_org_tstrans_rtp_MountRules_nAuthFailures<'local>(
+        env,
+        _class,
+        handle: jlong,
+        path: JString<'local>,
+    ) -> JLongArray<'local> = JLongArray::null() => {
+        let Ok(path) = path.try_to_string(env) else { return JLongArray::null() };
+        match with_rules(env, handle, |rules| rules.auth_failures(&path)) {
+            Some(Some(c)) => auth_failures_array(env, c),
+            _ => JLongArray::null(),
+        }
+    }
+}
+
+jni_native! {
+    fn Java_org_tstrans_rtp_MountRules_nDefaultAuthFailures<'local>(
+        env,
+        _class,
+        handle: jlong,
+    ) -> JLongArray<'local> = JLongArray::null() => {
+        match with_rules(env, handle, |rules| rules.default_auth_failures()) {
+            Some(c) => auth_failures_array(env, c),
+            None => JLongArray::null(),
         }
     }
 }

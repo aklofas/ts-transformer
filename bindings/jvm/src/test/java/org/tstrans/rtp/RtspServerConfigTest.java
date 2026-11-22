@@ -20,6 +20,25 @@ class RtspServerConfigTest {
         assertFalse(c.acceptUnregisteredPublishers());
         assertFalse(c.endPublishMountOnPublisherExit());
         assertEquals(0L, c.publishIdleTimeoutMs());
+        assertTrue(c.allowUdpMedia().isEmpty());
+        assertFalse(c.acceptDigestWithoutQop());
+    }
+
+    @Test
+    void allowUdpMediaRoundTrips() {
+        RtspServerConfig off = RtspServerConfig.builder().allowUdpMedia(false).build();
+        assertEquals(java.util.Optional.of(false), off.allowUdpMedia());
+        assertTrue(off.toString().contains("allowUdpMedia=false"));
+        RtspServerConfig on = RtspServerConfig.builder().allowUdpMedia(true).build();
+        assertEquals(java.util.Optional.of(true), on.allowUdpMedia());
+        assertTrue(RtspServerConfig.builder().build().toString().contains("allowUdpMedia=None"));
+    }
+
+    @Test
+    void acceptDigestWithoutQopRoundTrips() {
+        RtspServerConfig on = RtspServerConfig.builder().acceptDigestWithoutQop(true).build();
+        assertTrue(on.acceptDigestWithoutQop());
+        assertTrue(on.toString().contains("acceptDigestWithoutQop=true"));
     }
 
     @Test

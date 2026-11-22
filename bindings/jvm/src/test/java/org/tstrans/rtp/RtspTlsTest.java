@@ -3,20 +3,28 @@ package org.tstrans.rtp;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 import static org.tstrans.TestSupport.isLinux;
+import static org.tstrans.TestSupport.rtspHeader;
 import static org.tstrans.TestSupport.roundtripConfig;
 import static org.tstrans.TestSupport.syntheticH264Idr;
 
 import java.io.DataInputStream;
+import java.io.InputStream;
+import java.net.DatagramSocket;
 import java.net.InetAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.security.KeyStore;
+import java.security.cert.CertificateFactory;
 import java.time.Duration;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
+import javax.net.ssl.SSLContext;
+import javax.net.ssl.SSLSocket;
+import javax.net.ssl.TrustManagerFactory;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.tstrans.RtspException;
@@ -217,5 +225,69 @@ class RtspTlsTest {
                 producer.join(TimeUnit.SECONDS.toMillis(5));
             }
         }
+    }
+
+    /**
+     * An {@code rtsps://} server sends and takes media only inside its TLS connection unless
+     * told otherwise: a reader's UDP SETUP reads 461 and binds no port, an interleaved one
+     * 200; {@code allowUdpMedia(true)} serves UDP again.
+     */
+    @Test
+    @Timeout(TIMEOUT_SEC)
+    void rtspsServerRefusesUdpMediaUnlessAllowed() throws Exception {
+        assumeTrue(isLinux(), "live RTSP tests gated to Linux");
+        Path cert = fixtureDir().resolve("cert.pem");
+        Path key = fixtureDir().resolve("key.pem");
+        assumeTrue(Files.isRegularFile(cert) && Files.isRegularFile(key),
+            "committed TLS fixture not reachable from test workingDir");
+        SSLContext tls = trusting(cert);
+        for (Boolean allow : new Boolean[] {null, true}) {
+            var b = RtspServerConfig.builder()
+                .bindAddr("rtsps://127.0.0.1:0")
+                .tlsCert(cert.toString()).tlsKey(key.toString());
+            if (allow != null) b.allowUdpMedia(allow);
+            try (RtspServer server = RtspServer.start(b.build());
+                 MountHandle mount = server.addUnicastMount("/live", roundtripConfig());
+                 DatagramSocket media = new DatagramSocket(0, InetAddress.getLoopbackAddress())) {
+                int port = server.localAddr().orElseThrow().getPort();
+                String udp = RtspServerTest.readerSetup(tlsRaw(tls, port), port,
+                    "RTP/AVP;unicast;client_port=" + media.getLocalPort() + "-"
+                        + (media.getLocalPort() + 1));
+                String tcp = RtspServerTest.readerSetup(tlsRaw(tls, port), port,
+                    "RTP/AVP/TCP;unicast;interleaved=0-1");
+                assertEquals(200, RtspServerTest.Raw.status(tcp), tcp);
+                if (allow == null) {
+                    assertEquals(461, RtspServerTest.Raw.status(udp), udp);
+                    assertFalse(udp.contains("server_port"), udp);
+                } else {
+                    assertEquals(200, RtspServerTest.Raw.status(udp), udp);
+                    assertTrue(rtspHeader(udp, "Transport").contains("server_port"), udp);
+                }
+            }
+        }
+    }
+
+    /** A TLS context that trusts the committed self-signed fixture certificate alone. */
+    private static SSLContext trusting(Path cert) throws Exception {
+        KeyStore store = KeyStore.getInstance(KeyStore.getDefaultType());
+        store.load(null, null);
+        try (InputStream in = Files.newInputStream(cert)) {
+            store.setCertificateEntry("fixture",
+                CertificateFactory.getInstance("X.509").generateCertificate(in));
+        }
+        TrustManagerFactory tmf =
+            TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
+        tmf.init(store);
+        SSLContext ctx = SSLContext.getInstance("TLS");
+        ctx.init(null, tmf.getTrustManagers(), null);
+        return ctx;
+    }
+
+    private static RtspServerTest.Raw tlsRaw(SSLContext tls, int port) throws Exception {
+        SSLSocket sock = (SSLSocket) tls.getSocketFactory().createSocket();
+        sock.connect(new java.net.InetSocketAddress("127.0.0.1", port), 5000);
+        sock.setSoTimeout(5000);
+        sock.startHandshake();
+        return new RtspServerTest.Raw(sock);
     }
 }

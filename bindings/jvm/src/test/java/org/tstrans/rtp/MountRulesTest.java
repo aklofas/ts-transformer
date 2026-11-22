@@ -118,6 +118,38 @@ class MountRulesTest {
         rules.close();
     }
 
+    /**
+     * The requests a rule refused for their credential are counted on it, in their
+     * direction: a bare first challenge is not, two wrong passwords are. A path without a
+     * rule of its own has no counts.
+     */
+    @Test
+    @Timeout(30)
+    void refusedCredentialsAreCountedOnTheirRule() throws Exception {
+        assumeLinux();
+        try (RtspServer server = start(RtspServerConfig.builder().bindAddr("127.0.0.1:0")
+                .gracefulShutdownDrainMs(50).build());
+             MountRules rules = server.mountRules()) {
+            rules.set("/a", MountRule.both(
+                MountPolicy.require(MountCredential.of("viewer", "pw"))));
+            rules.setChallenge(AuthScheme.BASIC, "lab");
+            int port = port(server);
+            String uri = "rtsp://127.0.0.1:" + port + "/a";
+            try (RtspServerTest.Raw raw = RtspServerTest.Raw.connect(port)) {
+                assertEquals(401, status(raw.request("DESCRIBE " + uri, "")));
+                assertEquals(java.util.Optional.of(new MountRuleAuthFailures(0, 0)),
+                    rules.authFailures("/a"), "a bare challenge is not counted");
+                String wrong = RtspServerTest.basic("viewer", "nope");
+                assertEquals(401, status(raw.request("DESCRIBE " + uri, wrong)));
+                assertEquals(401, status(raw.request("DESCRIBE " + uri, wrong)));
+            }
+            assertEquals(java.util.Optional.of(new MountRuleAuthFailures(0, 2)),
+                rules.authFailures("/a"));
+            assertTrue(rules.authFailures("/nope").isEmpty());
+            assertEquals(new MountRuleAuthFailures(0, 0), rules.defaultAuthFailures());
+        }
+    }
+
     @Test
     void toStringRedactsPasswords() {
         String s = MountRule.both(MountPolicy.require(MountCredential.of("amber", "pw")))

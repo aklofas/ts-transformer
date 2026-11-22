@@ -2728,7 +2728,8 @@ try (RtspServer server = RtspServer.start(cfg);
   tune individual fields: `bindAddr`, `auth`, `maxSessions`,
   `sessionTimeoutSecs`, `fanoutCapacity`, `gracefulShutdownDrainMs`,
   `tlsCert`, `tlsKey`, `acceptUnregisteredPublishers`,
-  `endPublishMountOnPublisherExit`, `publishIdleTimeoutMs`.
+  `endPublishMountOnPublisherExit`, `publishIdleTimeoutMs`, `allowUdpMedia`,
+  `acceptDigestWithoutQop`.
 - **Mount errors are `RtspException`.** All `pushVideo`/`pushKlv`/
   `pushAudio`/`pushSubtitle`/`pushData` calls on `MountHandle` throw `RtspException` of kind
   `MOUNT` when the muxer refuses the frame (e.g. a stream the config does not
@@ -2766,6 +2767,12 @@ try (RtspServer server = RtspServer.start(cfg);
   `new DigestAuth("user", "pass", DigestAlgorithm.SHA256, "realm")` to
   `RtspServerConfig.builder().auth(...)`. The realm is required for server-side
   auth; omitting it throws `IllegalArgumentException` at `start()`.
+  `acceptDigestWithoutQop(true)` accepts a Digest answer that carries no
+  `qop` (the RFC 2069 form GStreamer 1.24's `rtspsrc` and `rtspclientsink`
+  send; default `false`, such an answer is refused). It applies to both Digest
+  schemes; the challenge is unchanged. What it gives up, only for such a
+  client: replay protection inside one connection. GStreamer 1.24 never
+  authenticates with Digest SHA-256 (it answers a SHA-256 challenge in MD5).
 - **TLS (`rtsps://`) is supported.** Bind with an explicit `rtsps://` address
   and set `tlsCert`/`tlsKey` on the config — PEM certificate-chain and
   private-key **file paths** (both or neither; `build()` enforces). The
@@ -2773,6 +2780,13 @@ try (RtspServer server = RtspServer.start(cfg);
   a missing or malformed file throws `RtspException` of kind `TLS` from
   `RtspServer.start(config)` — never a server that looks started but can't
   complete a handshake.
+- **UDP media.** An `rtsps://` server sends and takes media only inside its
+  TLS connection: a reader's or a publisher's SETUP that asks for UDP reads
+  `461 Unsupported Transport` (a client then falls back to TCP-interleaved
+  or fails). `RtspServerConfig.builder().allowUdpMedia(true)` serves UDP
+  there again, unencrypted, as through 0.10.0; `allowUdpMedia(false)` makes
+  a plain `rtsp://` server TCP-only. Unset (`allowUdpMedia()` is empty), a
+  plain server allows UDP media.
 
 ## RTSP publisher ingest (`org.tstrans.rtp`)
 
@@ -2833,8 +2847,8 @@ The surface:
   mounts, so set `auth` where that matters.
 - `RtspServer.mountRules() -> MountRules` is a per-path table, editable while
   the server runs: `set(path, rule)`, `remove(path)`, `setDefault(rule)`,
-  `clear()`, `setChallenge(scheme, realm)`, `size()`, `isClosed()` and
-  `close()`. `MountRule.of(publish, read)` takes a `MountPolicy`
+  `clear()`, `setChallenge(scheme, realm)`, `size()`, `isClosed()`,
+  `authFailures(path)`, `defaultAuthFailures()` and `close()`. `MountRule.of(publish, read)` takes a `MountPolicy`
   (`inherit()`, `open()`, `require(MountCredential...)` or
   `refuse(RefuseStatus.NOT_FOUND)`); `RtspServerConfig.builder().defaultMountRule(...)`
   guards the first ANNOUNCE. A path rule's `Inherit` side uses the table's default rule; the default's `Inherit` uses the server-wide builder setting (`auth_*`). A bad path throws
@@ -2845,6 +2859,16 @@ The surface:
   cancel, an edit throws kind `CLOSED`; `size()` still answers. A server nobody edits behaves as before; see the
   [publish-ingest recipe](/docs/cookbook/receiving/rtsp-publish-ingest.md#per-name-credentials-and-refusing-a-publisher)
   for when a change takes effect.
+- `MountRules.authFailures(path) -> Optional<MountRuleAuthFailures>` and
+  `defaultAuthFailures() -> MountRuleAuthFailures` (a record of `publish`
+  and `read`) count, per rule and direction, the requests that carried an
+  `Authorization` header and were refused: not the first challenge every
+  client gets, not a stale nonce, not a `refuse` rule's status. A path
+  without a rule of its own counts on the default rule (`authFailures` is
+  empty for it). A rule's counts survive `set` on its path; `remove` and
+  `clear` drop them; they answer after the server stopped. It is a rate
+  signal: an unauthenticated peer can raise it at will, so a lock-out built
+  on one name's count can be triggered against that name's owner.
 - `RtspServer.removeMount(path)` removes a mount of any kind. A live
   publisher gets the RTSP Notice 5402 and is disconnected. On-demand mounts
   stay registered after their publisher leaves until this removes them.
