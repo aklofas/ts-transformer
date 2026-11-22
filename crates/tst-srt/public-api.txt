@@ -216,6 +216,7 @@ pub tst_srt::config::SrtSocketConfig::recv_timeout: core::option::Option<core::t
 pub tst_srt::config::SrtSocketConfig::role: tst_srt::options::Role
 pub tst_srt::config::SrtSocketConfig::send_buf_bytes: core::option::Option<u32>
 pub tst_srt::config::SrtSocketConfig::send_timeout: core::option::Option<core::time::Duration>
+pub tst_srt::config::SrtSocketConfig::silent_peer_timeout: core::option::Option<core::time::Duration>
 pub tst_srt::config::SrtSocketConfig::stream_id: core::option::Option<tst_srt::options::StreamId>
 pub tst_srt::config::SrtSocketConfig::too_late_packet_drop: core::option::Option<bool>
 pub tst_srt::config::SrtSocketConfig::udp_recv_buffer_bytes: core::option::Option<u32>
@@ -988,11 +989,13 @@ pub fn tst_srt::transport::SrtTransport::max_payload(&self) -> usize
 pub fn tst_srt::transport::SrtTransport::recv_bytes(&mut self, &mut [u8]) -> core::result::Result<usize, tst_core::transport::TransportError>
 pub fn tst_srt::transport::SrtTransport::socket_stats(&self) -> core::option::Option<tst_core::transport::SocketStats>
 impl tst_core::transport::Transport for tst_srt::transport::SrtTransport
+pub fn tst_srt::transport::SrtTransport::abandon(&mut self)
 pub fn tst_srt::transport::SrtTransport::as_any(&self) -> core::option::Option<&dyn core::any::Any>
 pub fn tst_srt::transport::SrtTransport::cancel_handle(&self) -> core::option::Option<alloc::sync::Arc<(dyn tst_core::transport::TransportCancel + core::marker::Send + core::marker::Sync)>>
 pub fn tst_srt::transport::SrtTransport::close(&mut self)
 pub fn tst_srt::transport::SrtTransport::is_alive(&self) -> bool
 pub fn tst_srt::transport::SrtTransport::max_payload(&self) -> usize
+pub fn tst_srt::transport::SrtTransport::peer_activity(&self) -> core::option::Option<u64>
 pub fn tst_srt::transport::SrtTransport::send_bytes(&mut self, &[u8]) -> core::result::Result<(), tst_core::transport::TransportError>
 pub fn tst_srt::transport::SrtTransport::socket_stats(&self) -> core::option::Option<tst_core::transport::SocketStats>
 impl core::marker::Freeze for tst_srt::transport::SrtTransport
@@ -1771,6 +1774,7 @@ pub tst_srt::SrtSocketConfig::recv_timeout: core::option::Option<core::time::Dur
 pub tst_srt::SrtSocketConfig::role: tst_srt::options::Role
 pub tst_srt::SrtSocketConfig::send_buf_bytes: core::option::Option<u32>
 pub tst_srt::SrtSocketConfig::send_timeout: core::option::Option<core::time::Duration>
+pub tst_srt::SrtSocketConfig::silent_peer_timeout: core::option::Option<core::time::Duration>
 pub tst_srt::SrtSocketConfig::stream_id: core::option::Option<tst_srt::options::StreamId>
 pub tst_srt::SrtSocketConfig::too_late_packet_drop: core::option::Option<bool>
 pub tst_srt::SrtSocketConfig::udp_recv_buffer_bytes: core::option::Option<u32>
@@ -1842,11 +1846,13 @@ pub fn tst_srt::transport::SrtTransport::max_payload(&self) -> usize
 pub fn tst_srt::transport::SrtTransport::recv_bytes(&mut self, &mut [u8]) -> core::result::Result<usize, tst_core::transport::TransportError>
 pub fn tst_srt::transport::SrtTransport::socket_stats(&self) -> core::option::Option<tst_core::transport::SocketStats>
 impl tst_core::transport::Transport for tst_srt::transport::SrtTransport
+pub fn tst_srt::transport::SrtTransport::abandon(&mut self)
 pub fn tst_srt::transport::SrtTransport::as_any(&self) -> core::option::Option<&dyn core::any::Any>
 pub fn tst_srt::transport::SrtTransport::cancel_handle(&self) -> core::option::Option<alloc::sync::Arc<(dyn tst_core::transport::TransportCancel + core::marker::Send + core::marker::Sync)>>
 pub fn tst_srt::transport::SrtTransport::close(&mut self)
 pub fn tst_srt::transport::SrtTransport::is_alive(&self) -> bool
 pub fn tst_srt::transport::SrtTransport::max_payload(&self) -> usize
+pub fn tst_srt::transport::SrtTransport::peer_activity(&self) -> core::option::Option<u64>
 pub fn tst_srt::transport::SrtTransport::send_bytes(&mut self, &[u8]) -> core::result::Result<(), tst_core::transport::TransportError>
 pub fn tst_srt::transport::SrtTransport::socket_stats(&self) -> core::option::Option<tst_core::transport::SocketStats>
 impl core::marker::Freeze for tst_srt::transport::SrtTransport
