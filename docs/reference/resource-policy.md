@@ -64,10 +64,11 @@ frames on a connection that has not announced or set up (no publisher or
 reader role) are dropped and do not count as activity for the idle bound.
 
 **Reader slot.** With `max_readers` set, a reader's SETUP reserves one
-reader slot with the same compare-exchange, as the last step before the
-reader role is installed, after every check that can refuse the SETUP. The
-slot is held by the session while its reader role lives and released when
-the role ends: its TEARDOWN, a refusal on its own mount, or the end of the
+reader slot with the same compare-exchange, after every check of the
+request itself and before its transport is allocated (a failure after that
+frees the slot). The slot is held by the session while its reader role
+lives and released when the role ends: its TEARDOWN, a refusal on its own
+mount (a PLAY that finds that mount removed is one), or the end of the
 connection. A reader set up again, on its own or another mount, keeps the
 slot it holds and reserves no second one. Readers of a multicast mount
 count; publishers never take a reader slot. A SETUP that finds the cap
