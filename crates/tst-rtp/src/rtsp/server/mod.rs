@@ -1261,7 +1261,8 @@ impl RtspServer {
 
     /// Graceful shutdown. From the moment `stop()` begins the server
     /// accepts no new connection; when it returns the listening socket is
-    /// closed. It sends an RFC 7826 §13.5.1 Notice 5402
+    /// closed. A connection still waiting in the socket's backlog when it
+    /// closes is reset without an answer. It sends an RFC 7826 §13.5.1 Notice 5402
     /// ("Server-Initiated TEARDOWN") ANNOUNCE over each session's TCP
     /// control channel, then cancels each session's per-session token,
     /// fires the global `cancel_token`, and waits for every session task to

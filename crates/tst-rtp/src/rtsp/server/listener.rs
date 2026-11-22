@@ -334,4 +334,81 @@ mod tests {
         listener.await.unwrap().unwrap();
         assert!(*state.sessions_ended.borrow());
     }
+
+    /// Once the stop-accepting signal has fired, the accept loop takes the
+    /// stop arm before another connection: during a burst of connects at
+    /// most the one accept already past its `select!` is counted after the
+    /// signal. Without the loop's bias a ready accept arm can be picked again
+    /// and again. Linux only: a round holds about 1 800 descriptors.
+    #[cfg(target_os = "linux")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn at_most_one_connection_is_accepted_after_the_stop_signal() {
+        use std::sync::atomic::AtomicBool;
+        use std::time::Instant as StdInstant;
+        for round in 0..20 {
+            let mut builder = RtspServerBuilder::new("rtsp://127.0.0.1:0").unwrap();
+            builder.max_sessions(100_000);
+            builder.graceful_shutdown_drain(Duration::from_millis(10));
+            let state = test_state_with(builder);
+            let (startup_tx, startup_rx) = std::sync::mpsc::channel();
+            *state.startup_tx.lock().unwrap() = Some(startup_tx);
+            let listener = tokio::spawn(run_listener_with(
+                state.clone(),
+                tokio::task::JoinSet::new(),
+            ));
+            let addr = tokio::task::spawn_blocking(move || {
+                startup_rx.recv_timeout(Duration::from_secs(10))
+            })
+            .await
+            .unwrap()
+            .expect("the listener reported its bind")
+            .expect("the listener bound");
+
+            // Connects as fast as it can until told to stop.
+            let done = Arc::new(AtomicBool::new(false));
+            let connector = {
+                let done = Arc::clone(&done);
+                std::thread::spawn(move || {
+                    let mut held = Vec::new();
+                    while !done.load(Ordering::Relaxed) && held.len() < 900 {
+                        if let Ok(tcp) = std::net::TcpStream::connect(addr) {
+                            held.push(tcp);
+                        }
+                    }
+                    held
+                })
+            };
+            // In the middle of the burst: fire the signal, count, wait for
+            // the listener's report, count again.
+            let st = Arc::clone(&state);
+            let (at_signal, at_report) = tokio::task::spawn_blocking(move || {
+                let deadline = StdInstant::now() + Duration::from_secs(10);
+                while st.active_sessions.load(Ordering::Relaxed) < 200 {
+                    assert!(StdInstant::now() < deadline, "the burst never reached 200");
+                    std::hint::spin_loop();
+                }
+                st.stop_accepting.cancel();
+                let at_signal = st.active_sessions.load(Ordering::Relaxed);
+                while !*st.listener_closed.borrow() {
+                    assert!(StdInstant::now() < deadline, "the listener never reported");
+                    std::hint::spin_loop();
+                }
+                (at_signal, st.active_sessions.load(Ordering::Relaxed))
+            })
+            .await
+            .unwrap();
+            done.store(true, Ordering::Relaxed);
+            let held = tokio::task::spawn_blocking(move || connector.join().unwrap())
+                .await
+                .unwrap();
+            assert!(
+                at_report <= at_signal + 1,
+                "round {round}: {} connections accepted after the stop signal",
+                at_report - at_signal
+            );
+            state.cancel_token.cancel();
+            drop(held);
+            listener.await.unwrap().unwrap();
+        }
+    }
 }
