@@ -65,9 +65,12 @@ pub enum RtspError {
     #[error("malformed SDP from server: {detail}")]
     BadSdp { detail: String },
 
-    /// The server's SETUP reply named a transport this client cannot use
-    /// (a malformed, reversed or out-of-range port or channel pair). A
-    /// server's `461 Unsupported Transport` is not this: it is
+    /// The client cannot use the transport: the server's SETUP reply named
+    /// a port or channel pair that is malformed, reversed or out of range,
+    /// or the client's own UDP port pair would overflow (its RTCP port is
+    /// the RTP port plus one, which past port 65535 does not exist). A
+    /// server's
+    /// `461 Unsupported Transport` is not this: it is
     /// [`RtspError::Protocol`] with `code: 461`, after the TCP retry when
     /// the URL left the transport to the client. Also what
     /// [`RtspClient::setup_record`](crate::RtspClient::setup_record)
