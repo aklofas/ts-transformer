@@ -660,7 +660,7 @@ including the pipeline shells' `cancel_handle()` — is in
 ## Detecting a silent peer
 
 libsrt ends a connection whose peer has gone silent only after about 5.1 s
-(see `peeridletimeo` above, which cannot make that sooner). A managed
+(see `peeridletimeo` under "URL parsing" below, which cannot make that sooner). A managed
 sender can notice sooner: open it from a URL with
 `x-silentpeertimeout=<ms>` (whole milliseconds, 1 000 to 2 147 483) and it
 treats its connection as broken when the peer has answered none of its
@@ -684,9 +684,11 @@ sender, every receiver, managed or not, caller or listener, and the
 low-level builders' `connect()` / `listen()` in Python and on the JVM)
 refuses the key as a configuration error that names it, before an address
 is resolved or a socket created, and so does a value outside the range.
-The key belongs to `srt://`: the `udp://`, `tcp(s)://`, `hls(s)://` and
+The key belongs to `srt://`. The `udp://`, `tcp://`, `hls(s)://` and
 `rist://` parsers ignore every key they do not document, so on those URLs
-it opens a sender that is not armed. In Rust a hand-built
+it opens a sender that is not armed; `tcps://`, `rtp://`, `rtsp(s)://` and
+`whep(s)://` refuse it as an unknown key, as they refuse every key they do
+not document. In Rust a hand-built
 `ManagedTransport` is armed with `with_silent_peer_timeout` (see the
 [pipeline guide](/docs/guides/pipeline.md)).
 
@@ -696,23 +698,36 @@ it opens a sender that is not armed. In Rust a hand-built
 the reconnect counters move as for any break. No statistic counts what
 the trip lost.
 
-**Choosing the window.** Measured on loopback through a relay that
-emulates a link (Linux x86-64, `Blocking` mode, 30 messages a second):
+**Choosing the window.** Measured on Linux x86-64 loopback through a
+relay that emulates a link (`Blocking` mode, 30 messages a second, both
+directions muted):
 
 | Window | The trip came after the peer went silent | Messages lost |
 |---|---|---|
-| 1 000 ms | 1.1 to 1.5 s (later as the round trip grows: 1.2 s at 50 ms, 1.4 s at 300 ms) | 37 to 44 |
+| 1 000 ms | 1.2 to 1.5 s (later as the round trip grows: 1.2 s at 50 ms, 1.4 s at 300 ms) | 37 to 44 |
 | 1 500 ms | 1.6 to 1.9 s | 48 to 58 |
 | none (libsrt's own break) | about 5.1 s | about 150 |
 
 There was no false trip at the 1 000 ms floor with round trips of 50, 150
 and 300 ms, with everything dropped both ways for 100, 300 or 600 ms every
-5 s, or with a sender of 5 messages a second. Keep the window well above
-the link's round-trip time: a new connection whose first answer takes
-longer than the window trips every time. 1 500 to 3 000 ms leaves room on
-a local network; give a long or loaded path more. Not measured: jitter,
-reordering, random loss, round trips over 300 ms, `Background` mode, a
-re-dial the peer refuses, and any platform but Linux x86-64.
+5 s, or with a sender of 5 messages a second (which tripped 1.4 s after
+a mute).
+
+The window must be longer than the link's round trip plus its jitter. An
+answer comes a round trip (plus the peer's acknowledgement interval)
+after a send, so with a shorter window every new connection is abandoned
+before its first answer can arrive: a working link then reconnects for
+ever without an attempt limit, and gives up at `max_attempts` with one. A
+satellite or other long-delay link needs a window well above its round
+trip. A model of the rule, not a measurement: at a 1 000 ms window and a
+send every 33 ms, no trip up to a round trip of about 1 050 ms, and a
+trip after every connect at 1 200 ms. A window of 1 500 to 3 000 ms
+should leave room on a local network; that is reasoning, not a
+measurement: the runs were on loopback with round trips of 50 to 300 ms. A
+window at or above libsrt's own break (about 5 s unless `peeridletimeo`
+raises it) never fires first. Not measured: jitter, reordering, random
+loss, round trips over 300 ms, `Background` mode, a re-dial the peer
+refuses, a real link, and any platform but Linux x86-64.
 
 **What a trip loses.** Everything sent between the moment the peer went
 silent and the trip, about the window plus a fraction of it, is lost with
@@ -742,12 +757,18 @@ armed sender keeps its linger.
   it, or a peer that never answers, runs out `max_attempts`. A give-up or
   an answer starts the next outage with a fresh budget.
 - A peer or middlebox that answers the first packet of every connection
-  and then goes silent makes the sender re-dial about every window plus
-  one backoff step for ever (about one cycle per 1.1 s at the floor), and
-  `max_attempts` does not end it, because each first answer counts as a
-  recovery.
+  and then goes silent is re-dialled about every window to 1.25 windows
+  plus one backoff step (about 1.1 to 1.35 s at the floor, derived, not
+  measured). In `Background` mode, and in `Blocking` mode at gap capacity
+  0, that goes on for ever and `max_attempts` does not end it: the wrapper
+  reads the new connection right after its first send, so the answer that
+  follows counts as a recovery. In `Blocking` mode with a gap buffer (the
+  default) the replayed message is not followed by a reading, so an answer
+  that has arrived by the caller's next send is that connection's first
+  reading and does not count: the attempts count on and `max_attempts`
+  ends the loop.
 - A server that refuses a second publisher on the same stream (mediamtx
-  with `overridePublisher: false`) accepts each early re-dial and closes it
+  v1.21.4 with `overridePublisher: false`) accepts each early re-dial and closes it
   134 ms later until it lets the old publisher go (10 s, its read
   timeout), so detecting sooner gains nothing there; with mediamtx's
   default settings the new publisher is taken at once.
@@ -809,7 +830,7 @@ FFmpeg, GStreamer, etc.) — use builder-style config if portability matters.
 |---|---|---|---|
 | `x-recvtimeout` | `SRTO_RCVTIMEO` | INT (ms) | bounds blocking recv on a connected/accepted socket; on a Listener this sets the timeout inherited by accepted sockets, but does **not** bound the `accept` call itself — libsrt ignores `SRTO_RCVTIMEO` on `srt_accept` |
 | `x-sendtimeout` | `SRTO_SNDTIMEO` | INT (ms) | bounds blocking send; use `conntimeo` / `connect_timeout` for the whole-connect budget |
-| `x-silentpeertimeout` | none | INT (ms), 1000 to 2147483 | arms silent-peer detection on a managed SRT sender opened from a URL; every other SRT open refuses it (CONFIG_INVALID), as it refuses a value outside the range; see [Detecting a silent peer](#detecting-a-silent-peer) |
+| `x-silentpeertimeout` | none | INT (ms), 1000 to 2147483 | arms silent-peer detection on a managed SRT sender opened from a URL; every other SRT open refuses it (CONFIG_INVALID; `TST_E_INVALID_CONFIG` in C), as it refuses a value outside the range; the window must be longer than the link's round trip plus its jitter, and one at or above libsrt's own break (about 5 s) never fires first; see [Detecting a silent peer](#detecting-a-silent-peer) |
 
 ### Mode and authority
 

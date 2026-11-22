@@ -226,10 +226,11 @@ mean **Deferred**. An entry whose feature has shipped must never read
 
 ## Sub-5 s silent-peer detection beyond the managed SRT sender
 
-- **Status:** Partly available. A managed SRT sender detects a silent peer
-  in about its window: the `x-silentpeertimeout` URL key (1 000 to
-  2 147 483 ms), or `ManagedTransport::with_silent_peer_timeout` in Rust
-  (see the SRT guide's "Detecting a silent peer" for the measured figures
+- **Status:** Deferred. Shipped so far: a managed SRT sender detects a
+  silent peer in its window plus a fraction of it (1.2 to 1.5 s at
+  the 1 000 ms floor, measured on Linux loopback): the
+  `x-silentpeertimeout` URL key (1 000 to 2 147 483 ms), or
+  `ManagedTransport::with_silent_peer_timeout` in Rust (see the SRT guide's "Detecting a silent peer" for the measured figures
   and the limits). Not available: detection on the receive side (a managed
   receiver still waits for libsrt's own break, about 5.1 s, which
   `peeridletimeo` cannot shorten), and on transports other than SRT (no

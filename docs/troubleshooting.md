@@ -324,11 +324,11 @@ Fix: if the producer must not wait, use `ReconnectMode::Background`: there a cap
 
 **A `warn` line "peer silent: abandoning the connection" (target `tst_pipeline::reconnect`)**
 
-A managed SRT sender armed with `x-silentpeertimeout` (or `ManagedTransport::with_silent_peer_timeout`) heard nothing from its peer for `window_ms` while it kept sending (`unanswered_ms` is how long it waited), abandoned the connection without waiting for its unsent data and is reconnecting; the reconnect lines that follow are the usual ones. Everything sent between the moment the peer went silent and the trip is lost, and no statistic counts it. See [Detecting a silent peer](/docs/guides/srt.md#detecting-a-silent-peer).
+A managed SRT sender armed with `x-silentpeertimeout` (or `ManagedTransport::with_silent_peer_timeout`) heard nothing from its peer for `window_ms` while it kept sending (`unanswered_ms` is how long it waited), abandoned the connection without waiting for its unsent data and is reconnecting; the reconnect lines that follow are the usual ones. Everything sent between the moment the peer went silent and the trip is lost (when only the answers were lost and the data still reached the peer, only the last few: 3 messages in the measured runs), and no statistic counts it. See [Detecting a silent peer](/docs/guides/srt.md#detecting-a-silent-peer).
 
-Fix: nothing, when the peer had really gone. If it trips while the link is healthy, the window is too close to the round-trip time: raise it.
+Fix: nothing, when the peer had really gone. If it trips while the link is healthy, the window is not longer than the link's round trip plus its jitter: an answer comes a round trip after a send, so every new connection is abandoned before its first answer arrives and the sender reconnects for ever (or gives up at `max_attempts`). Raise the window well above the round trip; a satellite or other long-delay link needs much more than the 1 000 ms floor. A window at or above libsrt's own break (about 5 s unless `peeridletimeo` raises it) never fires first. The measured figures (on Linux loopback, round trips of 50 to 300 ms) are in the SRT guide.
 
-**An SRT URL with `x-silentpeertimeout` is refused (`CONFIG_INVALID`, the message names the key)**
+**An SRT URL with `x-silentpeertimeout` is refused (`CONFIG_INVALID` in Python and the JVM, `TST_E_INVALID_CONFIG` in C; the message names the key)**
 
 The key is for managed SRT senders only. A plain sender, every receiver (managed or not, caller or listener) and the low-level builders' `connect()` / `listen()` refuse it, as does a value outside 1 000 to 2 147 483.
 
@@ -338,7 +338,7 @@ Fix: remove the key from that URL, or open the stream with a managed sender (`ts
 
 - A gap of half the window or more between two sends restarts the count, so a sender that sends a burst every half window or more (a low-frame-rate or keyframe-only source), or whose sends each block that long, never trips. Send more often, or raise the window past twice the gap.
 - Nothing is detected while the caller sends nothing, nor while a send is parked in a full send buffer (libsrt's own break, about 5 s, ends that).
-- The key is read on `srt://` only: on a `udp://`, `tcp(s)://`, `hls(s)://` or `rist://` URL it is ignored, as every key those schemes do not document is, and the sender opens unarmed.
+- The key is read on `srt://` only: on a `udp://`, `tcp://`, `hls(s)://` or `rist://` URL it is ignored, as every key those schemes do not document is, and the sender opens unarmed (`tcps://`, `rtp://`, `rtsp(s)://` and `whep(s)://` refuse it as an unknown key).
 - A peer that keeps answering, however rarely, is not silent.
 
 **An armed sender gives up against a server that accepts connections**
@@ -349,9 +349,9 @@ Fix: give the policy enough attempts and backoff for the server's own timeout, o
 
 **An armed sender re-dials about once a second for ever**
 
-A peer or middlebox that answers the first packet of every connection and then goes silent makes an armed sender re-dial about every window plus one backoff step (about 1.1 s at the 1 000 ms floor), each cycle with one "peer silent" warning. `max_attempts` does not end it: each first answer counts as a recovery.
+A peer or middlebox that answers the first packet of every connection and then goes silent makes an armed sender re-dial about every window to 1.25 windows plus one backoff step (about 1.1 to 1.35 s at the 1 000 ms floor, derived, not measured), each cycle with one "peer silent" warning. In `Background` mode, and in `Blocking` mode at gap capacity 0, `max_attempts` does not end it: the new connection is read right after its first send, so the answer that follows counts as a recovery. In `Blocking` mode with a gap buffer (the default) the replayed message is not followed by a reading, an answer that has arrived by the caller's next send is that connection's first reading and does not count, and `max_attempts` ends the loop. A window shorter than the link's round trip plus its jitter looks the same on a working link: see the "peer silent" entry above.
 
-Fix: this is the peer's behaviour, not the library's; an unarmed sender (no `x-silentpeertimeout`) waits for libsrt's own break instead, about once every 5.2 s.
+Fix: if the peer does this, it is the peer's behaviour, not the library's; an unarmed sender (no `x-silentpeertimeout`) waits for libsrt's own break instead, about once every 5.2 s. If the link works, raise the window.
 
 **A send blocks for 15 s at a time while the peer is unreachable**
 

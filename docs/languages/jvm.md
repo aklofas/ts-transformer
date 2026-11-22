@@ -1201,8 +1201,12 @@ has the detail.
 `ManagedSender.fromUrl` or `ManagedMuxSender.fromUrl` arms silent-peer
 detection (Provisional): when the peer has answered none of the sender's
 sends for that window, the sender abandons the connection and reconnects
-under its policy, instead of waiting for libsrt's own break. Managed
-senders only: a value outside the range, `ManagedReceiver.fromUrl`, every
+under its policy, instead of waiting for libsrt's own break. The window
+must be longer than the link's round trip plus its jitter: with a shorter
+one every new connection is abandoned before its first answer arrives,
+and a working link reconnects for ever (or gives up at `max_attempts`); a
+window at or above libsrt's own break (about 5 s) never fires first.
+Managed senders only: a value outside the range, `ManagedReceiver.fromUrl`, every
 other SRT open and the low-level `Builder.connect()` / `listen()` refuse
 the key with `SrtException` kind `CONFIG_INVALID` naming it. What a trip
 loses and the limits are in

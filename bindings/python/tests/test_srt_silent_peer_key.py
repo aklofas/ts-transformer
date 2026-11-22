@@ -4,9 +4,12 @@ The key arms silent-peer detection on a managed SRT sender opened from a
 URL (`ManagedSender.from_url`, `ManagedMuxSender.from_url`). Every other
 SRT open refuses it with `CONFIG_INVALID` and names the key: a value under
 the 1 000 ms floor, a managed receiver, and the low-level `srt.Builder`'s
-`connect()` and `listen()`. The arming itself is proven in Rust; these
-tests pin that the key reaches it through each Python door and that each
-refusal keeps its kind.
+`connect()` and `listen()`. Nothing a Python caller can read tells an
+armed sender from an unarmed one without a multi-second live trip, so
+the open tests assert what a caller sees: the open succeeds and a send
+arrives. That the key arms the sender and that the window trips is
+pinned at the Rust level in `tst-srt`; these tests pin that each Python
+door accepts or refuses the key and that each refusal keeps its kind.
 """
 
 from __future__ import annotations

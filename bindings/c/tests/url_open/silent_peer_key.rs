@@ -1,5 +1,5 @@
 //! C-ABI tests for the `x-silentpeertimeout` URL key: a managed sender opened
-//! from a URL takes it, every other SRT open refuses it as `TST_E_CONFIG_INVALID`
+//! from a URL takes it, every other SRT open refuses it as `TST_E_INVALID_CONFIG`
 //! with the key named in the message.
 //!
 //! Nothing a C caller can read tells an armed sender from an unarmed one
@@ -29,7 +29,7 @@ use super::last_error_msg;
 
 const KEY: &str = "x-silentpeertimeout";
 
-/// The calling thread's last error must be CONFIG_INVALID and name the key.
+/// The calling thread's last error must be `TST_E_INVALID_CONFIG` and name the key.
 fn assert_config_invalid_naming_the_key(what: &str) {
     let code = unsafe { tst_get_last_error() };
     assert_eq!(

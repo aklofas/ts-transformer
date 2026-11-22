@@ -153,8 +153,9 @@ instead surface synchronously to the caller as `TooLarge`.
 **Give-up reporting.** If the worker exhausts `max_attempts` for one
 continuous outage (the budget resets after every successful
 reconnect; for a sender armed with the silent-peer window the attempts
-count on until the wrapper has read a new connection after a successful
-send on it, see
+count on until a new connection has answered, and over a transport that
+cannot tell until the wrapper has read a new connection after a
+successful send on it, see
 [Detecting a silent peer](/docs/guides/srt.md#detecting-a-silent-peer)),
 the give-up surfaces exactly once: the *next* `send_bytes`
 call after the worker quits returns `TransportError::Broken` instead
