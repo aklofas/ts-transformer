@@ -71,7 +71,8 @@ fn ok_response(req: &RtspRequest, session_id: Option<&str>) -> RtspResponse {
 ///   (muxer-backed) mount, which never accepts a publisher.
 /// - 403 Forbidden — the mount already has a publisher.
 /// - 500 Internal Server Error — the elementary shape's muxer could not
-///   be built (the publisher slot is released again).
+///   be built. It is built before any mount is created or claimed, so
+///   nothing was.
 pub(crate) fn handle_announce(
     req: &RtspRequest,
     state: &Arc<ServerState>,
