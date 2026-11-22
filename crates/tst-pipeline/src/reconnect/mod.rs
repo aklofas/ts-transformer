@@ -637,8 +637,8 @@ impl<T: Transport + 'static> ManagedTransport<T> {
     ///   acknowledgement interval and jitter) after a send. With a shorter
     ///   window every new connection is abandoned before its first answer
     ///   can arrive, a working link is re-dialled every window, and, as no
-    ///   connection answers, `max_attempts` ends it with a give-up (with
-    ///   `None`, never).
+    ///   connection answers, `max_attempts` ends each outage with a give-up
+    ///   (the next send starts a fresh budget; with `None`, never).
     /// - A window at or above the inner's own break detection never fires
     ///   first (libsrt breaks a silent connection after about 5 s unless
     ///   its peer-idle timeout is raised).
@@ -646,14 +646,15 @@ impl<T: Transport + 'static> ManagedTransport<T> {
     ///   goes silent: in `Background` mode, and in `Blocking` mode at gap
     ///   capacity 0, the first send on each new connection is read, its
     ///   answer is seen, the budget is given back, and the sender re-dials
-    ///   about every window plus one backoff step without end:
-    ///   `max_attempts` does not end it. In `Blocking` mode with a gap
+    ///   about every window to 1.25 windows plus one backoff step without
+    ///   end: `max_attempts` does not end it. In `Blocking` mode with a gap
     ///   buffer the replay after the reconnect is not read: when its answer
     ///   is already in at the caller's next send (a round trip shorter than
-    ///   the send period), it is that connection's starting value, the
-    ///   connection never answered, its attempts count on and `max_attempts`
-    ///   ends it with a give-up; with a longer round trip the answer is seen
-    ///   and the re-dials are endless as in the other modes.
+    ///   the time to that send), it is that connection's starting value,
+    ///   the connection never answered, its attempts count on and
+    ///   `max_attempts` ends each outage with a give-up; with a longer round
+    ///   trip the answer is seen and the re-dials are endless as in the
+    ///   other modes.
     /// - A transport whose reading is `None` once its connection has broken
     ///   (SRT's is) can read `None` at a new connection's first reading if
     ///   the connection broke just after a successful send: that counts as
