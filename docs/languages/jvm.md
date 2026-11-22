@@ -2925,7 +2925,7 @@ How each call ends:
 | `nextPublisher(timeoutMs)` | `Optional.empty()` | No mount arrived in time. Always the result when on-demand publishers are off. |
 | `nextPublisher`, `addPublishMount`, `removeMount` | `RtspException(CLOSED)` | The server is stopped (from the moment `stop()` or `close()` begins) or hard-cancelled. A `nextPublisher` parked on another thread wakes with it when `stop()` or `close()` runs. After `close()` the object itself refuses calls with `IllegalStateException`. |
 | `addPublishMount`, `removeMount` | `RtspException(MOUNT)` | Duplicate or invalid path, or no mount registered at the path. |
-| `RtspServer.start` | `RtspException(MOUNT)` | Also when the bind address carries a user name or a password, or a `BasicAuth` user name contains `:`; the message names neither. |
+| `RtspServer.start` | `RtspException(MOUNT)` | A refused configuration: the default mount rule, the auth realm, an empty auth user name, a bind address that carries a user name or a password, or a `BasicAuth` user name that contains `:`; the message names no credential. |
 | `MountHandle` `push*`, `flush()` | `RtspException(CLOSED)` | The mount was removed (`removeMount`) or the server ended; the getters and `resetStats()` still answer. |
 | `intoDemuxReceiver` | `RtspException(CLOSED)` | The mount's transport was already taken, through this or any other handle to the mount. |
 | `DemuxReceiver.recvEvent()` | `null` | End of stream: the mount was removed, the server stopped or was hard-cancelled, or its recording publisher left with end-on-exit on. What was already queued is delivered first. `endReason()` reads `CLEAN_TEARDOWN`. |

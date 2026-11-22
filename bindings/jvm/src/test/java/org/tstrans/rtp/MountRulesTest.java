@@ -120,8 +120,9 @@ class MountRulesTest {
 
     /**
      * The requests a rule refused for their credential are counted on it, in their
-     * direction: a bare first challenge is not, two wrong passwords are. A path without a
-     * rule of its own has no counts.
+     * direction: a bare first challenge is not, two wrong passwords on DESCRIBE and one on
+     * ANNOUNCE are. A path without a rule of its own has no counts and counts on the default
+     * rule.
      */
     @Test
     @Timeout(30)
@@ -143,10 +144,21 @@ class MountRulesTest {
                 assertEquals(401, status(raw.request("DESCRIBE " + uri, wrong)));
                 assertEquals(401, status(raw.request("DESCRIBE " + uri, wrong)));
             }
-            assertEquals(java.util.Optional.of(new MountRuleAuthFailures(0, 2)),
+            assertEquals(401, status(announce(port, "/a", RtspServerTest.basic("viewer", "nope"))));
+            assertEquals(java.util.Optional.of(new MountRuleAuthFailures(1, 2)),
                 rules.authFailures("/a"));
-            assertTrue(rules.authFailures("/nope").isEmpty());
             assertEquals(new MountRuleAuthFailures(0, 0), rules.defaultAuthFailures());
+
+            rules.setDefault(MountRule.both(
+                MountPolicy.require(MountCredential.of("viewer", "pw"))));
+            try (RtspServerTest.Raw raw = RtspServerTest.Raw.connect(port)) {
+                assertEquals(401, status(raw.request("DESCRIBE rtsp://127.0.0.1:" + port
+                    + "/other", RtspServerTest.basic("viewer", "nope"))));
+            }
+            assertTrue(rules.authFailures("/other").isEmpty());
+            MountRuleAuthFailures dflt = rules.defaultAuthFailures();
+            assertEquals(0, dflt.publish());
+            assertEquals(1, dflt.read());
         }
     }
 
