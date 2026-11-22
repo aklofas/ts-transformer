@@ -18,6 +18,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use bytes::Bytes;
 use tokio::sync::broadcast;
+use tokio_util::sync::CancellationToken;
 
 use tst_core::mpegts::mux::{Muxer, MuxerConfig};
 
@@ -64,6 +65,9 @@ pub(crate) struct MountState {
     pub(crate) frames_dropped: Arc<AtomicU64>,
     /// The owning server's end signal: a push after it fires is refused.
     pub(crate) server_ended: ServerEnded,
+    /// Fired by `RtspServer::remove_mount`: the pushes refuse from then on,
+    /// and a multicast mount's sender task ends on it.
+    pub(crate) removed: CancellationToken,
 }
 
 /// Internal stats accumulator. Public `MountStats` snapshot derived from this.
@@ -99,12 +103,14 @@ impl MountState {
             stats: Mutex::new(MountStatsInner::default()),
             frames_dropped: Arc::new(AtomicU64::new(0)),
             server_ended,
+            removed: CancellationToken::new(),
         }))
     }
 
-    /// The owning server has ended: the pushes and `flush` refuse from here.
+    /// The owning server has ended or the mount was removed: the pushes and
+    /// `flush` refuse from here.
     pub(crate) fn closed(&self) -> bool {
-        self.server_ended.is_ended()
+        self.server_ended.is_ended() || self.removed.is_cancelled()
     }
 }
 
@@ -299,7 +305,8 @@ impl MountHandle {
     // signatures — same argument order, same semantics. Internally each
     // push:
     //   0. Refuses with `MountError::Closed` once the server has ended
-    //      (`stop()` from its first line, its hard cancel, or Drop).
+    //      (`stop()` from its first line, its hard cancel, or Drop) or the
+    //      mount was removed with `RtspServer::remove_mount`.
     //   1. Locks the inner Muxer (Mutex<Muxer>; mutex poisoning maps to
     //      `MountError::Closed`).
     //   2. Calls the matching Muxer::push_* method (any MuxError surfaces
@@ -311,9 +318,7 @@ impl MountHandle {
     // `broadcast::Sender::send` returns `Err` only when there are no
     // subscribers — that's the pre-PLAY state, NOT an error. We silently
     // drop those bytes; the muxer still consumed them so producers
-    // remain free to push without first connecting a peer, and to keep
-    // pushing to a mount removed with `RtspServer::remove_mount` until
-    // the server ends.
+    // remain free to push without first connecting a peer.
 
     /// Push one video access unit. Mirror of
     /// `tst_pipeline::MuxSender::send_video`.
@@ -330,8 +335,9 @@ impl MountHandle {
     ///   ([`crate::RtspServer::stop`] on a started server, from the moment
     ///   it begins; a hard cancel
     ///   through [`crate::RtspServer::cancel_handle`] or the server being
-    ///   dropped, started or not), whether or not the mount was removed
-    ///   first; also if the inner mutex is poisoned (a push panicked while
+    ///   dropped, started or not), or once the mount was removed with
+    ///   [`crate::RtspServer::remove_mount`]; also if the inner mutex is
+    ///   poisoned (a push panicked while
     ///   holding the lock). An ended server is reported ahead of an invalid
     ///   frame, and the refused push leaves the muxer and [`Self::stats`]
     ///   unchanged.
@@ -544,9 +550,9 @@ impl MountHandle {
     /// queues nothing. It is a no-op when the muxer has no pending output.
     ///
     /// # Errors
-    /// - [`crate::error::MountError::Closed`] once the server has ended, as
-    ///   for the pushes (see [`Self::push_video`]), or when the inner mutex
-    ///   is poisoned. Nothing is drained then and [`Self::stats`] is
+    /// - [`crate::error::MountError::Closed`] once the server has ended or
+    ///   the mount was removed, as for the pushes (see [`Self::push_video`]),
+    ///   or when the inner mutex is poisoned. Nothing is drained then and [`Self::stats`] is
     ///   unchanged.
     pub fn flush(&self) -> Result<(), crate::error::MountError> {
         if self.state.closed() {
@@ -570,7 +576,7 @@ impl MountHandle {
     /// semantics as `Muxer::reset_stats`).
     ///
     /// A counter operation, not a push: like the getters it still works
-    /// once the server has ended. Silent no-op on mutex poison.
+    /// once the server has ended or the mount was removed. Silent no-op on mutex poison.
     pub fn reset_stats(&self) {
         if let Ok(mut muxer) = self.state.muxer.lock() {
             muxer.reset_stats();

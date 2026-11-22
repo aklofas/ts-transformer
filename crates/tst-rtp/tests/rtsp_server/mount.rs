@@ -123,10 +123,9 @@ fn peer_count_zero_without_playing_clients() {
 }
 
 /// `remove_mount` on a local mount ends its PLAY reader's stream and frees
-/// the path; the caller's `MountHandle` keeps accepting pushes, which reach
-/// nobody.
+/// the path; the caller's `MountHandle` is closed.
 #[test]
-fn remove_local_mount_ends_readers_and_handle_pushes_reach_nobody() {
+fn remove_local_mount_ends_readers_and_closes_its_handle() {
     use std::time::{Duration, Instant};
     use tst_core::transport::{RecvTransport, TransportError};
     use tst_rtp::RtspClient;
@@ -176,9 +175,8 @@ fn remove_local_mount_ends_readers_and_handle_pushes_reach_nobody() {
     );
 
     let nal = [0x00u8, 0x00, 0x00, 0x01, 0x65, 0xBB];
-    mount
-        .push_video(&nal, Pts90khz::new(0), true)
-        .expect("a removed mount's handle still accepts pushes");
+    let r = mount.push_video(&nal, Pts90khz::new(0), true);
+    assert!(matches!(r, Err(tst_rtp::MountError::Closed)), "{r:?}");
     // The reader saw its socket close, but the session task drops its fanout
     // receiver as it unwinds, a moment later on another thread. Latch-and-poll
     // — no duration assertion.
@@ -216,6 +214,75 @@ fn remove_local_mount_ends_readers_and_handle_pushes_reach_nobody() {
     server.stop().ok();
     let e = server.remove_mount("/live").unwrap_err();
     assert!(matches!(e, RtspServerError::Shutdown), "got {e:?}");
+}
+
+/// A removed mount is closed: its handle's pushes and `flush()` say so and
+/// change nothing, and the getters still answer.
+#[test]
+fn a_push_through_a_removed_mount_is_closed() {
+    let server = RtspServer::bind("rtsp://127.0.0.1:0").unwrap();
+    let mount = server.add_mount("/live", make_muxer_cfg()).unwrap();
+    let nal = [0x00u8, 0x00, 0x00, 0x01, 0x65, 0xBB];
+    mount.push_video(&nal, Pts90khz::new(0), true).unwrap();
+    let before = mount.stats();
+    let handles = mount.video_handles();
+    server.remove_mount("/live").unwrap();
+    let r = mount.push_video(&nal, Pts90khz::new(3003), true);
+    assert!(matches!(r, Err(tst_rtp::MountError::Closed)), "push: {r:?}");
+    let r = mount.flush();
+    assert!(
+        matches!(r, Err(tst_rtp::MountError::Closed)),
+        "flush: {r:?}"
+    );
+    assert_eq!(mount.stats(), before);
+    assert_eq!(mount.mount_path(), "/live");
+    assert!(matches!(mount.mount_kind(), MountKind::Unicast));
+    assert_eq!(mount.video_handles(), handles);
+}
+
+/// A mount added again at a removed mount's path is fed by its own handle;
+/// the old handle stays closed and reaches nobody.
+#[test]
+fn a_mount_added_again_is_fed_by_its_new_handle_only() {
+    use std::time::{Duration, Instant};
+    use tst_core::transport::{RecvTransport, TransportError};
+    use tst_rtp::RtspClient;
+
+    let server = RtspServer::bind("rtsp://127.0.0.1:0").unwrap();
+    let old = server.add_mount("/live", make_muxer_cfg()).unwrap();
+    server.start().unwrap();
+    let port = server.local_addr().unwrap().port();
+    server.remove_mount("/live").unwrap();
+    let new = server.add_mount("/live", make_muxer_cfg()).unwrap();
+
+    let mut reader =
+        RtspClient::connect(&format!("rtsp://127.0.0.1:{port}/live?transport=tcp")).unwrap();
+    let sdp = reader.describe().unwrap();
+    let mut reader_t = reader.setup_mp2t_auto(&sdp).unwrap().into_recv_transport();
+    reader_t.set_recv_timeout(Some(Duration::from_millis(500)));
+    reader.play().unwrap();
+
+    let nal = [0x00u8, 0x00, 0x00, 0x01, 0x65, 0xBB];
+    let r = old.push_video(&nal, Pts90khz::new(0), true);
+    assert!(matches!(r, Err(tst_rtp::MountError::Closed)), "{r:?}");
+    // Push an IDR per attempt until bytes arrive (the retry only absorbs
+    // scheduling), bounded by a deadline.
+    let mut buf = vec![0u8; 65536];
+    let deadline = Instant::now() + scaled(Duration::from_secs(10));
+    let mut pts = 0i64;
+    loop {
+        new.push_video(&nal, Pts90khz::new(pts), true)
+            .expect("push to the new mount");
+        pts += 3003;
+        match reader_t.recv_bytes(&mut buf) {
+            Ok(n) if n > 0 => break,
+            Err(TransportError::Backpressure { .. }) | Ok(_) if Instant::now() < deadline => {}
+            end => panic!("the new mount's reader got nothing: {end:?}"),
+        }
+    }
+    assert_eq!(old.stats().bytes_pushed, 0);
+    assert_eq!(old.peer_count(), 0);
+    server.stop().ok();
 }
 
 /// The order of the registration checks: shutdown, then the path, then the

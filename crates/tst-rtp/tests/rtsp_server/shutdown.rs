@@ -259,15 +259,16 @@ fn mount_push_after_the_server_is_dropped_is_closed() {
     assert!(matches!(r, Err(MountError::Closed)), "{r:?}");
 }
 
-/// A removed mount's handle keeps pushing to nobody while the server
-/// lives, and is refused like any other once the server ends.
+/// A removed mount's handle is refused while the server lives, and stays
+/// refused once the server ends.
 #[test]
-fn removed_mount_push_succeeds_until_the_server_ends() {
+fn removed_mount_push_is_closed_before_and_after_the_server_ends() {
     let server = RtspServer::bind("rtsp://127.0.0.1:0").unwrap();
     let mount = server.add_mount("/live", make_muxer_cfg()).unwrap();
     server.start().unwrap();
     server.remove_mount("/live").unwrap();
-    push_once(&mount).expect("a removed mount's push reaches nobody, successfully");
+    let r = push_once(&mount);
+    assert!(matches!(r, Err(MountError::Closed)), "{r:?}");
     server.stop().unwrap();
     let r = push_once(&mount);
     assert!(matches!(r, Err(MountError::Closed)), "{r:?}");

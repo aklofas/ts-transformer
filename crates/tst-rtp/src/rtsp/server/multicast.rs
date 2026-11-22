@@ -264,10 +264,15 @@ pub(crate) async fn build_multicast_send_socket(
 /// `ssrc` is fixed per-mount (not per-peer) — multicast peers see the
 /// same SSRC, which is RFC 3550 §6.3.3-compatible (group senders share
 /// the SSRC space; collision detection is the receiver's responsibility).
+///
+/// Ends on the server's `cancel` or on the mount's `removed`, so a removed
+/// mount stops sending to its group and a mount added again on that group
+/// is its only sender.
 pub(crate) fn spawn_multicast_sender(
     mut rx: broadcast::Receiver<Bytes>,
     socket: Arc<UdpSocket>,
     cancel: CancellationToken,
+    removed: CancellationToken,
     ssrc: u32,
     initial_seq: u16,
     drop_counter: Arc<PeerDropCounter>,
@@ -305,6 +310,7 @@ pub(crate) fn spawn_multicast_sender(
                     Err(broadcast::error::RecvError::Closed) => return,
                 },
                 _ = cancel.cancelled() => return,
+                () = removed.cancelled() => return,
             }
         }
     })

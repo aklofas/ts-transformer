@@ -224,3 +224,161 @@ fn hard_cancel_stops_the_multicast_sender_of_a_never_started_server() {
         );
     }
 }
+
+/// A socket joined to `group:port` on loopback, or `None` after
+/// `skip_unless_required` when the host has no multicast there.
+#[cfg(target_os = "linux")]
+fn joined(group: std::net::Ipv4Addr, port: u16) -> Option<std::net::UdpSocket> {
+    use std::net::{Ipv4Addr, UdpSocket};
+    match UdpSocket::bind((group, port)).and_then(|s| {
+        s.join_multicast_v4(&group, &Ipv4Addr::LOCALHOST)
+            .map(|()| s)
+    }) {
+        Ok(s) => Some(s),
+        Err(e) => {
+            tst_test_helpers::capability::skip_unless_required(
+                "MULTICAST",
+                format_args!("bind/join failed: {e:?}. Likely no multicast routing on lo."),
+            );
+            None
+        }
+    }
+}
+
+/// Pushes through `mount` until a datagram reaches `sock`, or `false` after
+/// `skip_unless_required` when none does (a kernel filter on lo).
+#[cfg(target_os = "linux")]
+fn latch_delivery(mount: &MountHandle, sock: &std::net::UdpSocket, pts: &mut i64) -> bool {
+    let nal = [0x00, 0x00, 0x00, 0x01, 0x65, 0xBB];
+    let mut buf = [0u8; 2048];
+    sock.set_read_timeout(Some(Duration::from_millis(50)))
+        .unwrap();
+    let deadline = Instant::now() + scaled(Duration::from_secs(10));
+    loop {
+        *pts += 3_000;
+        mount.push_video(&nal, Pts90khz::new(*pts), true).unwrap();
+        if sock.recv(&mut buf).is_ok() {
+            return true;
+        }
+        if Instant::now() >= deadline {
+            tst_test_helpers::capability::skip_unless_required(
+                "MULTICAST",
+                "no datagram reached the group — kernel filter on lo",
+            );
+            return false;
+        }
+    }
+}
+
+/// Reads what is still in flight to `sock` until it has been quiet for
+/// 200 ms.
+#[cfg(target_os = "linux")]
+fn drain(sock: &std::net::UdpSocket) {
+    let mut buf = [0u8; 2048];
+    sock.set_read_timeout(Some(Duration::from_millis(200)))
+        .unwrap();
+    while sock.recv(&mut buf).is_ok() {}
+}
+
+/// A removed multicast mount stops sending to its group: its sender task
+/// ends (the mount's subscription goes), its pushes are refused, and
+/// nothing more reaches the group.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_removed_multicast_mount_stops_sending() {
+    const GROUP: std::net::Ipv4Addr = std::net::Ipv4Addr::new(239, 55, 55, 8);
+    let Some(sock) = joined(GROUP, 55042) else {
+        return;
+    };
+    let server = RtspServer::bind("rtsp://127.0.0.1:0").unwrap();
+    let mount = server
+        .add_multicast_mount(
+            "/mc",
+            make_muxer_cfg(),
+            "rtp://239.55.55.8:55042?ttl=1&iface=127.0.0.1",
+        )
+        .unwrap();
+    warm_mount(&mount);
+    server.start().unwrap();
+    let mut pts = 0i64;
+    if !latch_delivery(&mount, &sock, &mut pts) {
+        return;
+    }
+
+    server.remove_mount("/mc").unwrap();
+    let deadline = Instant::now() + scaled(Duration::from_secs(5));
+    while mount.peer_count() != 0 {
+        assert!(
+            Instant::now() < deadline,
+            "the multicast sender task is still subscribed after the removal"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    drain(&sock);
+    let nal = [0x00, 0x00, 0x00, 0x01, 0x65, 0xBB];
+    let mut buf = [0u8; 2048];
+    sock.set_read_timeout(Some(Duration::from_millis(50)))
+        .unwrap();
+    let quiet = Instant::now() + Duration::from_millis(300);
+    while Instant::now() < quiet {
+        pts += 3_000;
+        let r = mount.push_video(&nal, Pts90khz::new(pts), true);
+        assert!(matches!(r, Err(tst_rtp::MountError::Closed)), "{r:?}");
+        assert!(
+            sock.recv(&mut buf).is_err(),
+            "a datagram reached the group after the removal"
+        );
+    }
+    server.stop().ok();
+}
+
+/// A multicast mount added again on a removed one's group is the group's
+/// only sender: one SSRC reaches the group, whichever handle is pushed.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_multicast_mount_added_again_has_one_sender() {
+    const GROUP: std::net::Ipv4Addr = std::net::Ipv4Addr::new(239, 55, 55, 9);
+    const URL: &str = "rtp://239.55.55.9:55044?ttl=1&iface=127.0.0.1";
+    let Some(sock) = joined(GROUP, 55044) else {
+        return;
+    };
+    let server = RtspServer::bind("rtsp://127.0.0.1:0").unwrap();
+    let old = server
+        .add_multicast_mount("/mc", make_muxer_cfg(), URL)
+        .unwrap();
+    warm_mount(&old);
+    server.start().unwrap();
+    let mut pts = 0i64;
+    if !latch_delivery(&old, &sock, &mut pts) {
+        return;
+    }
+    server.remove_mount("/mc").unwrap();
+    drain(&sock);
+    let new = server
+        .add_multicast_mount("/mc", make_muxer_cfg(), URL)
+        .unwrap();
+    warm_mount(&new);
+
+    // Both handles pushed alternately: the old one's pushes are refused
+    // (or, if it still sent, its SSRC would be the second one).
+    let nal = [0x00, 0x00, 0x00, 0x01, 0x65, 0xBB];
+    let mut buf = [0u8; 2048];
+    sock.set_read_timeout(Some(Duration::from_millis(50)))
+        .unwrap();
+    let mut ssrcs = std::collections::BTreeSet::new();
+    let mut received = 0;
+    let deadline = Instant::now() + scaled(Duration::from_secs(10));
+    while received < 40 {
+        assert!(Instant::now() < deadline, "only {received} datagrams");
+        pts += 3_000;
+        let _ = old.push_video(&nal, Pts90khz::new(pts), true);
+        new.push_video(&nal, Pts90khz::new(pts), true).unwrap();
+        while let Ok(n) = sock.recv(&mut buf) {
+            assert!(n >= 12, "a datagram shorter than an RTP header");
+            ssrcs.insert(u32::from_be_bytes([buf[8], buf[9], buf[10], buf[11]]));
+            received += 1;
+        }
+    }
+    assert_eq!(ssrcs.len(), 1, "senders on the group: {ssrcs:x?}");
+    server.stop().ok();
+}

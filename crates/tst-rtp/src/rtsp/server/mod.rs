@@ -871,11 +871,13 @@ impl RtspServer {
     ///   ends: a parked or later `recv_bytes` on it returns
     ///   `TransportError::Closed`. The mount's handles stay usable for
     ///   `stats()` and `generation()`; no publisher reaches it again.
-    /// - A local mount's [`crate::rtsp::server::mount::MountHandle`] keeps
-    ///   accepting pushes, which reach nobody: no session can find the
-    ///   path any more. Once the server ends they return
-    ///   [`crate::error::MountError::Closed`]. A mount added later at the
-    ///   same path is a new mount; the old handle does not feed it.
+    /// - A local mount is closed: a kept
+    ///   [`crate::rtsp::server::mount::MountHandle`]'s pushes and `flush()`
+    ///   return [`crate::error::MountError::Closed`], a multicast mount
+    ///   stops sending to its group, and the handle's getters (`stats()`,
+    ///   `mount_path()`, the stream handles) still answer. A mount added
+    ///   later at the same path is a new mount; the old handle does not
+    ///   feed it.
     ///
     /// This is also how an application removes idle on-demand mounts
     /// (see [`RtspServerBuilder::accept_unregistered_publishers`]),
@@ -899,9 +901,10 @@ impl RtspServer {
     /// a local mount has). An ANNOUNCE that found the mount before it left
     /// the table and claims it afterwards is refused with `403`. A SETUP
     /// answered while this call runs can still complete: a reader then
-    /// keeps its subscription to the removed mount's fanout until it ends
-    /// on its own, and a publisher's RECORD is refused with `455` because
-    /// the closed mount no longer holds its publisher slot.
+    /// receives nothing further, because no push reaches a removed mount,
+    /// and ends by its own session timeout; a publisher's RECORD is refused
+    /// with `455` because the closed mount no longer holds its publisher
+    /// slot.
     ///
     /// # Errors
     /// - [`RtspServerError::MountNotFound`] — no mount is registered at
@@ -928,8 +931,11 @@ impl RtspServer {
         // snapshot misses is refused (455), and a session that recorded
         // before this point has its mount mirror set and is in the
         // snapshot.
-        if let crate::rtsp::server::mount::MountEntry::Publish(m) = &entry {
-            m.close();
+        match &entry {
+            crate::rtsp::server::mount::MountEntry::Publish(m) => m.close(),
+            // A local mount is closed too: its handle's pushes are refused
+            // from here and a multicast mount's sender task ends.
+            crate::rtsp::server::mount::MountEntry::Local(m) => m.removed.cancel(),
         }
         let sessions: Vec<Arc<ActiveSession>> = self
             .state
@@ -947,9 +953,8 @@ impl RtspServer {
             })
             .unwrap_or_default();
         self.notify_and_cancel(&sessions);
-        // A local mount needs nothing more: its broadcast sender lives in
-        // `MountState`, which outstanding `MountHandle`s keep alive, and its
-        // readers ended with their sessions.
+        // A local mount needs nothing more: its readers ended with their
+        // sessions, and nothing is pushed into its fanout any more.
         Ok(())
     }
 
@@ -1095,6 +1100,7 @@ impl RtspServer {
         let rt = self.runtime.as_ref().expect("runtime present until Drop");
         let mount_clone = mount_state.clone();
         let cancel = self.state.cancel_token.clone();
+        let removed = mount_state.removed.clone();
         let group = mcast.addr;
         let ttl = mcast.ttl;
         let iface = mcast.iface.clone();
@@ -1116,13 +1122,14 @@ impl RtspServer {
                         rx,
                         sock,
                         cancel,
+                        removed,
                         rand_ssrc(),
                         rand_seq(),
                         drop_counter,
                     );
                     // The spawn_multicast_sender returns a JoinHandle we
-                    // intentionally drop — the task lives until cancel
-                    // or broadcast::Closed (which happens when MountState
+                    // intentionally drop — the task lives until cancel,
+                    // the mount's removal, or broadcast::Closed (which happens when MountState
                     // is dropped → fanout sender drops → all subscribers
                     // get Closed).
                 }
