@@ -1049,7 +1049,10 @@ impl RtspServer {
     ///   malformed or the host isn't multicast.
     /// - [`RtspServerError::DuplicateMount`] — path already registered.
     /// - [`RtspServerError::InvalidConfig`] — `MuxerConfig` validation
-    ///   failed.
+    ///   failed, or the server does not allow UDP media
+    ///   ([`RtspServerBuilder::allow_udp_media`]; by default an `rtsps://`
+    ///   server does not): a multicast mount's media would leave the TLS
+    ///   connection, sent to its group without any session.
     /// - [`RtspServerError::Shutdown`] — server stopped.
     ///
     /// # Panics
@@ -1066,6 +1069,14 @@ impl RtspServer {
         group_url: &str,
     ) -> Result<crate::rtsp::server::mount::MountHandle, RtspServerError> {
         let (mount_state, mcast) = self.register_mount(path, || {
+            // A multicast mount sends to its group without any session, so
+            // where readers and publishers may not use UDP media it is not
+            // taken either.
+            if !self.state.builder.udp_media_allowed() {
+                return Err(RtspServerError::InvalidConfig {
+                    detail: "multicast mount: this server does not allow UDP media".into(),
+                });
+            }
             let mcast = crate::url::MulticastGroup::parse(group_url).map_err(|e| {
                 RtspServerError::InvalidMulticastGroup {
                     addr: group_url.to_string(),
@@ -1888,6 +1899,57 @@ mod add_mount_tests {
 #[cfg(test)]
 mod add_multicast_mount_tests {
     use super::*;
+
+    /// A multicast mount sends to its group without any session, so a
+    /// server that does not allow UDP media refuses it before a socket or
+    /// a task exists.
+    #[test]
+    fn a_multicast_mount_is_refused_where_udp_media_is_off() {
+        let mut b = RtspServerBuilder::new("rtsp://127.0.0.1:0").unwrap();
+        b.allow_udp_media(false);
+        let server = b.build().unwrap();
+        let e = server
+            .add_multicast_mount("/mc", test_muxer_cfg(), "rtp://239.0.0.1:5004")
+            .unwrap_err();
+        assert!(
+            matches!(&e, RtspServerError::InvalidConfig { detail } if detail.contains("UDP media")),
+            "{e:?}"
+        );
+        assert_eq!(server.stats().mounts, 0, "no mount was registered");
+    }
+
+    /// An `rtsps://` server does not allow UDP media unless told to, so it
+    /// refuses a multicast mount by default.
+    #[test]
+    fn a_tls_server_refuses_a_multicast_mount_by_default() {
+        let server = RtspServerBuilder::new("rtsps://127.0.0.1:0")
+            .unwrap()
+            .build()
+            .unwrap();
+        let e = server
+            .add_multicast_mount("/mc", test_muxer_cfg(), "rtp://239.0.0.1:5004")
+            .unwrap_err();
+        assert!(matches!(e, RtspServerError::InvalidConfig { .. }), "{e:?}");
+        assert_eq!(server.stats().mounts, 0, "no mount was registered");
+    }
+
+    /// The opt-out: an `rtsps://` server that allows UDP media takes a
+    /// multicast mount. The mount is registered whether or not the host can
+    /// route the group (the sender's socket is built on the runtime), so the
+    /// test needs no multicast capability.
+    #[test]
+    fn a_tls_server_accepts_a_multicast_mount_when_udp_media_is_allowed() {
+        let mut b = RtspServerBuilder::new("rtsps://127.0.0.1:0").unwrap();
+        b.allow_udp_media(true);
+        let server = b.build().unwrap();
+        let mount = server
+            .add_multicast_mount("/mc", test_muxer_cfg(), "rtp://239.0.0.1:5004")
+            .unwrap();
+        assert!(matches!(
+            mount.mount_kind(),
+            crate::rtsp::server::mount::MountKind::Multicast { .. }
+        ));
+    }
     #[test]
     fn add_multicast_mount_returns_handle_for_v4_group() {
         let server = RtspServer::bind("rtsp://127.0.0.1:0").unwrap();
