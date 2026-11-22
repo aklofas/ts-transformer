@@ -251,6 +251,10 @@ fn verify_basic(auth_header: &str, credentials: &[Credential<'_>]) -> Result<(),
     }
 }
 
+/// Check a Digest answer. An answer with `qop` and no `cnonce` is verified
+/// with an empty `cnonce`: RFC 7616 requires the parameter, and the server
+/// is lenient here on purpose until decided otherwise (the answer still
+/// needs the password, the server's nonce and a fresh nonce count).
 fn verify_digest(
     auth_header: &str,
     method: &str,
@@ -1080,6 +1084,46 @@ mod tests {
             matches!(e, AuthVerifyError::BadDigestSyntax { .. }),
             "{e:?}"
         );
+    }
+
+    #[test]
+    fn an_answer_with_qop_and_no_cnonce_is_verified_with_an_empty_one() {
+        // RFC 7616 requires `cnonce` with `qop`; the server is lenient here on
+        // purpose until decided otherwise.
+        let pw = SecretString::new("secret".into());
+        let (nonce, nc, uri) = ("abc123", "00000001", "rtsp://server/live");
+        let header = |cnonce: &str| {
+            let response = compute_digest_response(
+                AuthScheme::DigestMd5,
+                "admin",
+                "tst-rtp",
+                &pw,
+                "DESCRIBE",
+                uri,
+                nonce,
+                nc,
+                cnonce,
+                "auth",
+            );
+            format!(
+                "Digest username=\"admin\", realm=\"tst-rtp\", nonce=\"{nonce}\", \
+                 uri=\"{uri}\", response=\"{response}\", algorithm=MD5, nc={nc}, qop=auth"
+            )
+        };
+        let mut hwm = 0;
+        check_with(&header(""), AuthScheme::DigestMd5, false, nonce, &mut hwm).unwrap();
+        assert_eq!(hwm, 1);
+        // A response computed over a cnonce the header then leaves out fails.
+        let mut hwm = 0;
+        let e = check_with(
+            &header("deadbeef"),
+            AuthScheme::DigestMd5,
+            false,
+            nonce,
+            &mut hwm,
+        )
+        .unwrap_err();
+        assert!(matches!(e, AuthVerifyError::WrongDigestResponse), "{e:?}");
     }
 
     #[test]
