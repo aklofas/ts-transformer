@@ -2585,7 +2585,7 @@ import org.tstrans.RtspException;
 
 var cfg = RtspClientConfig.builder("rtsp://cam.local:554/stream1")
     .auth(new DigestAuth("admin", "secret"))   // BasicAuth | DigestAuth | (none)
-    .transportPref(TransportPref.AUTO)         // UDP-first, TCP fallback on 461
+    .transportPref(TransportPref.AUTO)         // the URL decides: on rtsp:// UDP first, TCP fallback on 461
     .build();
 
 try (RtspSession session = RtspClient.connect(cfg);

@@ -268,7 +268,9 @@ class RtspServerConfig:
     of a server that also takes publishers; a cap at or above
     `max_sessions` protects nothing. A connection without a session still
     holds one of the `max_sessions` for up to 30 s, so a publisher's
-    connection is not promised."""
+    connection is not promised. `allow_udp_media=True` on an `rtsps://`
+    server re-opens the unencrypted path whatever the cap: the cap does not
+    change what readers are sent over."""
 
     def __repr__(self) -> str:
         # A bind URL can carry a password or a token; the generated
