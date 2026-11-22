@@ -1086,8 +1086,9 @@ fn a_playing_reader_keeps_its_stream_after_a_refused_setup_elsewhere() {
     server.stop().unwrap();
 }
 
-/// Behind a reader's own role, a SETUP of a `Refuse(NotFound)` mount and one
-/// of a path with no mount at all read alike, now and in what follows.
+/// Behind a reader's own role, a SETUP or a DESCRIBE of a `Refuse(NotFound)`
+/// mount and one of a path with no mount at all read alike, now and in what
+/// follows.
 #[test]
 fn a_refused_setup_elsewhere_reads_like_a_missing_mount() {
     let (server, _open) = open_and_secret();
@@ -1099,10 +1100,13 @@ fn a_refused_setup_elsewhere_reads_like_a_missing_mount() {
         let mut seen = vec![status(&r)];
         seen.push(status(&setup_reader(&mut tcp, port, elsewhere, 2, &sid)));
         seen.push(status(&in_session(
-            &mut tcp, port, "PLAY", "/open", 3, &sid,
+            &mut tcp, port, "DESCRIBE", elsewhere, 3, &sid,
         )));
         seen.push(status(&in_session(
-            &mut tcp, port, "PAUSE", "/open", 4, &sid,
+            &mut tcp, port, "PLAY", "/open", 4, &sid,
+        )));
+        seen.push(status(&in_session(
+            &mut tcp, port, "PAUSE", "/open", 5, &sid,
         )));
         seen
     };
@@ -1112,7 +1116,37 @@ fn a_refused_setup_elsewhere_reads_like_a_missing_mount() {
         hidden, missing,
         "a hidden mount told apart from a missing one"
     );
-    assert_eq!(missing, [200, 404, 200, 200]);
+    assert_eq!(missing, [200, 404, 404, 200, 200]);
+    server.stop().unwrap();
+}
+
+/// A publisher's DESCRIBE of a `Refuse(NotFound)` mount reads like one of a
+/// path with no mount, and neither costs the publisher its announced mount:
+/// its track SETUP is still served.
+#[test]
+fn a_publishers_refused_describe_elsewhere_keeps_its_mount() {
+    let (server, _open) = open_and_secret();
+    server.add_publish_mount("/pub-a").unwrap();
+    server.add_publish_mount("/pub-b").unwrap();
+    let port = server.local_addr().unwrap().port();
+    let statuses = |own: &str, elsewhere: &str| {
+        let mut p = RawPublisher::connect(port);
+        let mut seen = vec![p.announce(own, SDP_MP2T)];
+        let uri = p.uri(elsewhere);
+        p.write_raw(format!("DESCRIBE {uri} RTSP/1.0\r\nCSeq: 50\r\n\r\n").as_bytes());
+        seen.push(status(&p.read_responses(1)));
+        seen.push(p.setup_interleaved(own, "streamid=0").0);
+        seen
+    };
+    // Each run announces a path of its own: the first connection's claim
+    // is released only once the server has seen that connection close.
+    let hidden = statuses("/pub-a", "/secret");
+    let missing = statuses("/pub-b", "/nope");
+    assert_eq!(
+        hidden, missing,
+        "a hidden mount told apart from a missing one"
+    );
+    assert_eq!(missing, [200, 404, 200]);
     server.stop().unwrap();
 }
 
