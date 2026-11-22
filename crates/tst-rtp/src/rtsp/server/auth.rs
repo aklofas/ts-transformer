@@ -1077,6 +1077,53 @@ mod tests {
     }
 
     #[test]
+    fn an_answer_with_qop_but_no_nc_is_refused_when_the_option_is_on() {
+        let cfg = digest_md5_cfg();
+        let h = digest_header("admin", "admin", &cfg.password).replace("nc=00000001, ", "");
+        assert!(!h.contains("nc="));
+        let mut hwm = 0;
+        let e = check_with(&h, AuthScheme::DigestMd5, true, "abc123", &mut hwm).unwrap_err();
+        assert!(
+            matches!(e, AuthVerifyError::BadDigestSyntax { .. }),
+            "{e:?}"
+        );
+        assert_eq!(hwm, 0);
+    }
+
+    #[test]
+    fn a_stray_nc_on_an_answer_without_qop_is_ignored() {
+        let pw = SecretString::new("secret".into());
+        let h = no_qop_header(
+            AuthScheme::DigestMd5,
+            "admin",
+            &pw,
+            "n1",
+            "rtsp://server/live",
+        );
+        let h = format!("{h}, nc=00000001, cnonce=\"x\"");
+        let mut hwm = 7;
+        check_with(&h, AuthScheme::DigestMd5, true, "n1", &mut hwm).unwrap();
+        assert_eq!(hwm, 7);
+    }
+
+    #[test]
+    fn an_answer_without_qop_for_another_uri_is_refused() {
+        let pw = SecretString::new("secret".into());
+        let h = no_qop_header(
+            AuthScheme::DigestMd5,
+            "admin",
+            &pw,
+            "n1",
+            "rtsp://other/live",
+        );
+        let e = check_with(&h, AuthScheme::DigestMd5, true, "n1", &mut 0).unwrap_err();
+        assert!(
+            matches!(e, AuthVerifyError::BadDigestSyntax { .. }),
+            "{e:?}"
+        );
+    }
+
+    #[test]
     fn a_foreign_nonce_without_qop_is_stale() {
         let pw = SecretString::new("secret".into());
         let h = no_qop_header(
