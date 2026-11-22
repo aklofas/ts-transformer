@@ -433,17 +433,6 @@ impl MountRules {
         read(&self.inner.challenge).clone()
     }
 
-    /// An unedited table with the builder's defaults, for tests that build
-    /// a `ServerState` by hand.
-    #[cfg(test)]
-    pub(crate) fn for_tests() -> Self {
-        Self::new(
-            MountRule::default(),
-            (AuthScheme::DigestMd5, "tstrans".to_string()),
-            RtspServerCancelHandle::new(),
-        )
-    }
-
     pub(crate) fn close(&self) {
         self.inner.closed.store(true, Ordering::Release);
     }
