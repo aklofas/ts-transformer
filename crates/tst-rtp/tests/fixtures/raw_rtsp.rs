@@ -47,6 +47,24 @@ pub fn request_bytes<S: Read + Write>(tcp: &mut S, req: &[u8]) -> String {
     String::from_utf8_lossy(&buf).into_owned()
 }
 
+/// `method path` on `127.0.0.1:port` with `Session: sid`; returns the
+/// response head.
+pub fn in_session<S: Read + Write>(
+    tcp: &mut S,
+    port: u16,
+    method: &str,
+    path: &str,
+    cseq: u32,
+    sid: &str,
+) -> String {
+    request(
+        tcp,
+        &format!(
+            "{method} rtsp://127.0.0.1:{port}{path} RTSP/1.0\r\nCSeq: {cseq}\r\nSession: {sid}\r\n\r\n"
+        ),
+    )
+}
+
 /// The value of header `name` (case-insensitive), trimmed, if present.
 pub fn try_header<'a>(response: &'a str, name: &str) -> Option<&'a str> {
     response.lines().find_map(|l| {

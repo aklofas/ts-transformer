@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 use secrecy::SecretString;
 use tst_rtp::{MountPolicy, MountRule, RefuseStatus, RtspServer, RtspServerBuilder};
 
-use crate::fixtures::raw_rtsp::{make_muxer_cfg, request, scaled, session_id};
+use crate::fixtures::raw_rtsp::{in_session, make_muxer_cfg, request, scaled, session_id};
 use crate::fixtures::raw_rtsp_publisher::{RawPublisher, SDP_MP2T};
 
 fn status(resp: &str) -> u16 {
@@ -39,23 +39,6 @@ fn setup(tcp: &mut TcpStream, port: u16, path: &str, cseq: u32, sid: &str) -> St
         &format!(
             "SETUP rtsp://127.0.0.1:{port}{path}/trackID=0 RTSP/1.0\r\nCSeq: {cseq}\r\n\
              {session}Transport: RTP/AVP/TCP;unicast;interleaved=0-1\r\n\r\n"
-        ),
-    )
-}
-
-/// `method path` with `Session: sid`; returns the response head.
-fn in_session(
-    tcp: &mut TcpStream,
-    port: u16,
-    method: &str,
-    path: &str,
-    cseq: u32,
-    sid: &str,
-) -> String {
-    request(
-        tcp,
-        &format!(
-            "{method} rtsp://127.0.0.1:{port}{path} RTSP/1.0\r\nCSeq: {cseq}\r\nSession: {sid}\r\n\r\n"
         ),
     )
 }
