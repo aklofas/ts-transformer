@@ -134,6 +134,31 @@ fn readers_at_the_cap_do_not_shut_a_publisher_out() {
     server.stop().unwrap();
 }
 
+/// A publisher holds no reader slot: with room for one reader, a publisher
+/// that announces, sets up and records leaves that slot to a reader, and
+/// with the one reader in, another publisher is still admitted.
+#[test]
+fn a_publisher_never_takes_a_reader_slot() {
+    let server = start(|b| {
+        b.max_readers(1);
+    });
+    server.add_publish_mount("/ingest2").unwrap();
+    let port = server.local_addr().unwrap().port();
+
+    let mut first = RawPublisher::connect(port);
+    assert_eq!(first.announce("/ingest", SDP_MP2T), 200);
+    assert_eq!(first.setup_interleaved("/ingest", "streamid=0").0, 200);
+    assert_eq!(first.record("/ingest"), 200);
+    let _reader = reader(port, "/live");
+    assert_full(port);
+
+    let mut second = RawPublisher::connect(port);
+    assert_eq!(second.announce("/ingest2", SDP_MP2T), 200);
+    assert_eq!(second.setup_interleaved("/ingest2", "streamid=0").0, 200);
+    assert_eq!(second.record("/ingest2"), 200);
+    server.stop().unwrap();
+}
+
 /// A reader refused by the cap is disconnected after the 453, also when it
 /// passed a credential check first (which once lifted the connection's
 /// admission deadline for good).
