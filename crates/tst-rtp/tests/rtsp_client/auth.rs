@@ -52,10 +52,10 @@ mod userinfo {
     use std::time::Duration;
 
     use base64::Engine as _;
-    use md5::{Digest as _, Md5};
     use tst_rtp::{RtspClient, RtspClientBuilder, RtspError, SecretString};
     use tst_test_helpers::timing::scaled;
 
+    use crate::fixtures::md5_hex;
     use crate::fixtures::raw_rtsp::try_header;
     use crate::fixtures::raw_rtsp_server::digest_param as param;
     use crate::fixtures::raw_rtsp_server::{SDP_BODY, cseq_of, method_of};
@@ -166,13 +166,6 @@ mod userinfo {
         requests
             .iter()
             .filter(|r| method_of(r) == "DESCRIBE")
-            .collect()
-    }
-
-    fn md5_hex(s: &str) -> String {
-        Md5::digest(s.as_bytes())
-            .iter()
-            .map(|b| format!("{b:02x}"))
             .collect()
     }
 

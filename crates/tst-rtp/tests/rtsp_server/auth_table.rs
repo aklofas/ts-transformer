@@ -11,13 +11,13 @@ use std::net::TcpStream;
 use std::time::Duration;
 
 use base64::Engine;
-use md5::{Digest, Md5};
 use secrecy::SecretString;
 use tst_rtp::{
     AuthScheme, MountCredential, MountPolicy, MountRule, MountRuleError, RtspClient,
     RtspClientBuilder, RtspError, RtspServer, RtspServerBuilder, RtspServerError,
 };
 
+use crate::fixtures::md5_hex;
 use crate::fixtures::raw_rtsp::{header, make_muxer_cfg, try_header};
 
 const REALM: &str = "table";
@@ -313,13 +313,6 @@ fn an_empty_user_name_is_refused_where_it_is_configured() {
 
 fn b64(bytes: &[u8]) -> String {
     base64::engine::general_purpose::STANDARD.encode(bytes)
-}
-
-fn md5_hex(s: &str) -> String {
-    Md5::digest(s.as_bytes())
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect()
 }
 
 fn connect(server: &RtspServer) -> TcpStream {

@@ -15,6 +15,16 @@ pub mod tcp_relay;
 #[cfg(feature = "tls")]
 pub mod tls_certs;
 
+/// Lowercase hex of the MD5 of `s`, the form every field of a Digest
+/// answer is written in.
+pub fn md5_hex(s: &str) -> String {
+    use md5::{Digest, Md5};
+    Md5::digest(s.as_bytes())
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}
+
 /// Poll `f` every 20 ms until it returns `Some`, or panic after `budget`.
 /// For tests that race a background thread (the RTSP client's thread
 /// pinging or reading, a server reaping a dropped connection) against their
