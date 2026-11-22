@@ -31,6 +31,8 @@ mod rtp_sender_flush;
 mod rtsp_client_connect;
 #[path = "transports/rtsp_publish_smoke.rs"]
 mod rtsp_publish_smoke;
+#[path = "transports/rtsp_server_options.rs"]
+mod rtsp_server_options;
 #[path = "transports/tcp_open_smoke.rs"]
 mod tcp_open_smoke;
 #[path = "transports/tcps_loopback.rs"]

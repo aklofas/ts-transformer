@@ -85,7 +85,7 @@ Every release exposes two pairs of macros in `tstrans.h` plus matching runtime a
 #define TST_VERSION_MINOR        10
 #define TST_VERSION_PATCH        0
 #define TST_ABI_VERSION_MAJOR    0   // C ABI contract version
-#define TST_ABI_VERSION_MINOR    31
+#define TST_ABI_VERSION_MINOR    32
 ```
 
 The **ABI** pair is what binding consumers should pin against. Minor bumps are additive (new entry points / new enum variants); a future major bump will be breaking (none yet — sitting at `0` pre-1.0). Check at process startup:
@@ -442,6 +442,17 @@ Rules the types do not enforce:
 ffmpeg pushes elementary tracks and cannot push KLV over RTSP; GStreamer's `rtspclientsink` can push MPEG-TS or H.264 + KLV. The C example [`recv_rtsp_publish.c`](/bindings/c/examples/receiving/recv_rtsp_publish.c) runs the whole loop, with push commands in its header; the [publisher ingest recipe](/docs/cookbook/receiving/rtsp-publish-ingest.md) covers the same flow from Rust.
 
 The other direction, publishing to an RTSP server with ANNOUNCE / RECORD, is not in the C API yet: Rust, Python and the JVM have the push client ([Push to an RTSP server](/docs/cookbook/sending/rtsp-push.md); [deferred features](/docs/project/deferred-features.md#the-rtsp-push-client-in-the-c-api)).
+
+### Server options: UDP media and Digest answers (ABI 32)
+
+<!-- compile: c-statements -->
+```c
+void tst_rtsp_server_builder_allow_udp_media(struct TstRtspServerBuilder *builder, bool yes);
+void tst_rtsp_server_builder_accept_digest_without_qop(struct TstRtspServerBuilder *builder, bool yes);
+```
+
+- **UDP media.** A server that does not allow media over UDP answers `461 Unsupported Transport` to every SETUP, reader or publisher, whose transport is not TCP-interleaved; an interleaved SETUP is served as before. Left uncalled, an `rtsp://` server allows it and an `rtsps://` server does NOT, so an `rtsps://` server sends and takes media only inside the TLS connection. `yes = true` on an `rtsps://` server brings back the unencrypted UDP media of 0.10.0; `yes = false` makes a plain server TCP-only.
+- **Digest answers without `qop`.** GStreamer 1.24's `rtspsrc` and `rtspclientsink` answer a Digest challenge in the RFC 2069 form, without `qop`, and the server refuses that with `401` by default. With `tst_rtsp_server_builder_accept_digest_without_qop(builder, true)` it is accepted, for Digest MD5 and SHA-256 alike; the challenge is unchanged and an answer with `qop` is checked as before. What is given up, only for such clients: replay protection inside one connection (the nonce is still per connection and never accepted on another). GStreamer 1.24 authenticates with Basic, or with Digest MD5 under this option, never with Digest SHA-256.
 
 ## UDP and RIST ingest: the publisher's address (`TST_HAS_UDP`, `TST_HAS_RIST`)
 

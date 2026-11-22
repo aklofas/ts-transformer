@@ -408,6 +408,74 @@ pub unsafe extern "C" fn tst_rtsp_server_builder_publish_idle_timeout(
     });
 }
 
+/// Whether sessions may carry media over UDP: a reader's or a publisher's
+/// SETUP with a transport that is not TCP-interleaved, and multicast
+/// mounts. A server that does not allow it answers such a SETUP
+/// `461 Unsupported Transport`; an interleaved SETUP is served as before.
+///
+/// Default (when this is never called): yes on an `rtsp://` bind, NO on an
+/// `rtsps://` bind, so that an `rtsps://` server sends and takes media only
+/// inside the TLS connection. `yes = true` on an `rtsps://` server restores
+/// the behaviour of 0.10.0, in which the media travels unencrypted;
+/// `yes = false` makes a plain server TCP-only. The last call wins.
+///
+/// Must be called before `tst_rtsp_server_builder_start`. A NULL `builder`
+/// sets last-error `TST_E_INVALID_CONFIG`.
+///
+/// **Stability: Provisional.**
+///
+/// # Safety
+///
+/// `builder` must be NULL or returned by `tst_rtsp_server_builder_new`, not
+/// yet freed or consumed.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tst_rtsp_server_builder_allow_udp_media(
+    builder: *mut TstRtspServerBuilder,
+    yes: bool,
+) {
+    ffi_catch((), || match unsafe { builder.as_mut() } {
+        Some(b) => b.allow_udp_media = Some(yes),
+        None => set_last_error(TstError::InvalidConfig, "builder is null"),
+    });
+}
+
+/// Accept a Digest answer that carries no `qop`: the RFC 2069 form, which
+/// GStreamer 1.24's `rtspsrc` and `rtspclientsink` send. Applies to both
+/// Digest schemes; the challenge still offers `qop="auth"`, and an answer
+/// WITH `qop` is checked as before, its nonce count included. Default:
+/// false, so such an answer is refused as a downgrade (`401`).
+///
+/// What is given up, only for a client that sends no `qop` and only with
+/// this on: replay protection inside one connection. Such an answer has no
+/// nonce count, so a captured `Authorization` value for one method and URI
+/// can be sent again on the same connection while it lives. The nonce is
+/// still 128 random bits per TCP connection and is never accepted on
+/// another.
+///
+/// GStreamer 1.24 authenticates with Basic, or with Digest MD5 under this
+/// option, never with Digest SHA-256: it answers a SHA-256 challenge with
+/// an MD5 response.
+///
+/// Must be called before `tst_rtsp_server_builder_start`. A NULL `builder`
+/// sets last-error `TST_E_INVALID_CONFIG`.
+///
+/// **Stability: Provisional.**
+///
+/// # Safety
+///
+/// `builder` must be NULL or returned by `tst_rtsp_server_builder_new`, not
+/// yet freed or consumed.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tst_rtsp_server_builder_accept_digest_without_qop(
+    builder: *mut TstRtspServerBuilder,
+    yes: bool,
+) {
+    ffi_catch((), || match unsafe { builder.as_mut() } {
+        Some(b) => b.accept_digest_without_qop = yes,
+        None => set_last_error(TstError::InvalidConfig, "builder is null"),
+    });
+}
+
 /// Set the session timeout in seconds.
 ///
 /// The server advertises this value to clients in the `Session:
@@ -611,4 +679,25 @@ pub(crate) enum TstRtspServerAuthScheme {
     Basic,
     DigestMd5,
     DigestSha256,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_server_options_refuse_a_null_builder() {
+        let setters: [unsafe extern "C" fn(*mut TstRtspServerBuilder, bool); 2] = [
+            tst_rtsp_server_builder_allow_udp_media,
+            tst_rtsp_server_builder_accept_digest_without_qop,
+        ];
+        for set in setters {
+            crate::error::clear_last_error_for_test();
+            unsafe { set(ptr::null_mut(), true) };
+            assert_eq!(
+                crate::error::test_last_error_code(),
+                TstError::InvalidConfig as i32
+            );
+        }
+    }
 }

@@ -2767,6 +2767,7 @@ version = "0.10.0"
 dependencies = [
  "cbindgen",
  "libc",
+ "md-5",
  "rcgen",
  "socket2",
  "tempfile",

@@ -318,6 +318,11 @@ pub struct TstRtspServerBuilder {
     pub(crate) end_publish_mount_on_publisher_exit: bool,
     /// Seconds without media that end a recording publisher; 0 = unset.
     pub(crate) publish_idle_timeout_secs: u32,
+    /// Whether media may travel over UDP; `None` = the scheme decides (yes on
+    /// `rtsp://`, no on `rtsps://`).
+    pub(crate) allow_udp_media: Option<bool>,
+    /// Whether a Digest answer without `qop` is accepted. Default: false.
+    pub(crate) accept_digest_without_qop: bool,
 }
 
 #[cfg(feature = "rtp")]
@@ -350,6 +355,8 @@ impl TstRtspServerBuilder {
             accept_unregistered_publishers: false,
             end_publish_mount_on_publisher_exit: false,
             publish_idle_timeout_secs: 0,
+            allow_udp_media: None,
+            accept_digest_without_qop: false,
         })
     }
 
@@ -417,6 +424,11 @@ impl TstRtspServerBuilder {
         if self.publish_idle_timeout_secs > 0 {
             b.publish_idle_timeout(Duration::from_secs(self.publish_idle_timeout_secs as u64));
         }
+        // Unset leaves the scheme's default in place.
+        if let Some(yes) = self.allow_udp_media {
+            b.allow_udp_media(yes);
+        }
+        b.accept_digest_without_qop(self.accept_digest_without_qop);
 
         // TLS bytes from tst_rtsp_server_builder_tls_cert_pem. With the `tls`
         // feature they are handed to the server, which loads them at start()

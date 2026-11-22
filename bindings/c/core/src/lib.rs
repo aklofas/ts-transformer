@@ -13,7 +13,7 @@
 //! transport surfaces are gated on the `rtp` cargo feature. The
 //! offline byte-feeding `tst_demuxer_*` surface is unconditional (no
 //! feature gate), as is the offline `tst_muxer_*` surface (un-gated from
-//! `srt` in ABI 0.9). ABI minor is `0.31` (see [`TST_ABI_VERSION_MINOR`]).
+//! `srt` in ABI 0.9). ABI minor is `0.32` (see [`TST_ABI_VERSION_MINOR`]).
 
 #![cfg_attr(not(feature = "std"), no_std)]
 // every extern "C" fn has a /// header documenting the contract
@@ -183,6 +183,12 @@ pub use rtsp::server::builder::tst_rtsp_server_builder_new;
 // `transports::rtsp_publish_smoke` integration test.
 #[cfg(feature = "rtp")]
 pub use rtsp::server::builder::tst_rtsp_server_builder_accept_unregistered_publishers;
+// The server options of `transports::rtsp_server_options`.
+#[cfg(feature = "rtp")]
+pub use rtsp::server::builder::{
+    tst_rtsp_server_builder_accept_digest_without_qop, tst_rtsp_server_builder_allow_udp_media,
+    tst_rtsp_server_builder_auth_digest_md5,
+};
 #[cfg(feature = "rtp")]
 pub use rtsp::server::publish::{
     tst_rtsp_publish_mount_cancel, tst_rtsp_publish_mount_free, tst_rtsp_publish_mount_generation,
@@ -262,12 +268,12 @@ pub const TST_ABI_VERSION_MAJOR: crate::c_types::c_int = 0;
 /// Minor version of the C ABI contract. See [`TST_ABI_VERSION_MAJOR`]
 /// for the bump policy.
 ///
-/// Cbindgen emits this as `#define TST_ABI_VERSION_MINOR 31` in the
+/// Cbindgen emits this as `#define TST_ABI_VERSION_MINOR 32` in the
 /// generated header. Runtime accessor: [`tst_get_abi_version_minor`].
 ///
 /// What each minor added is recorded once, in the repository's
 /// `docs/reference/binding-authors.md` § "Versioning".
-pub const TST_ABI_VERSION_MINOR: crate::c_types::c_int = 31;
+pub const TST_ABI_VERSION_MINOR: crate::c_types::c_int = 32;
 
 // =========================================================================
 // Runtime version accessors

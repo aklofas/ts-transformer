@@ -64,13 +64,13 @@
  * Minor version of the C ABI contract. See [`TST_ABI_VERSION_MAJOR`]
  * for the bump policy.
  *
- * Cbindgen emits this as `#define TST_ABI_VERSION_MINOR 31` in the
+ * Cbindgen emits this as `#define TST_ABI_VERSION_MINOR 32` in the
  * generated header. Runtime accessor: [`tst_get_abi_version_minor`].
  *
  * What each minor added is recorded once, in the repository's
  * `docs/reference/binding-authors.md` § "Versioning".
  */
-#define TST_ABI_VERSION_MINOR 31
+#define TST_ABI_VERSION_MINOR 32
 
 #define TST_CODEC_KIND_AUDIO 3
 
@@ -10410,6 +10410,40 @@ struct TstRtspMountHandle *tst_rtsp_server_add_unicast_mount(struct TstRtspServe
 
 #if defined(TST_HAS_RTP)
 /**
+ * Accept a Digest answer that carries no `qop`: the RFC 2069 form, which
+ * GStreamer 1.24's `rtspsrc` and `rtspclientsink` send. Applies to both
+ * Digest schemes; the challenge still offers `qop="auth"`, and an answer
+ * WITH `qop` is checked as before, its nonce count included. Default:
+ * false, so such an answer is refused as a downgrade (`401`).
+ *
+ * What is given up, only for a client that sends no `qop` and only with
+ * this on: replay protection inside one connection. Such an answer has no
+ * nonce count, so a captured `Authorization` value for one method and URI
+ * can be sent again on the same connection while it lives. The nonce is
+ * still 128 random bits per TCP connection and is never accepted on
+ * another.
+ *
+ * GStreamer 1.24 authenticates with Basic, or with Digest MD5 under this
+ * option, never with Digest SHA-256: it answers a SHA-256 challenge with
+ * an MD5 response.
+ *
+ * Must be called before `tst_rtsp_server_builder_start`. A NULL `builder`
+ * sets last-error `TST_E_INVALID_CONFIG`.
+ *
+ * **Stability: Provisional.**
+ *
+ * # Safety
+ *
+ * `builder` must be NULL or returned by `tst_rtsp_server_builder_new`, not
+ * yet freed or consumed.
+ */
+
+void tst_rtsp_server_builder_accept_digest_without_qop(struct TstRtspServerBuilder *builder,
+                                                       bool yes);
+#endif
+
+#if defined(TST_HAS_RTP)
+/**
  * Let an ANNOUNCE to an unregistered path create a publish mount on
  * demand. Each such mount is handed out once by
  * `tst_rtsp_server_next_publisher`; the announcing publisher already holds
@@ -10435,6 +10469,32 @@ struct TstRtspMountHandle *tst_rtsp_server_add_unicast_mount(struct TstRtspServe
 
 void tst_rtsp_server_builder_accept_unregistered_publishers(struct TstRtspServerBuilder *builder,
                                                             bool accept);
+#endif
+
+#if defined(TST_HAS_RTP)
+/**
+ * Whether sessions may carry media over UDP: a reader's or a publisher's
+ * SETUP with a transport that is not TCP-interleaved, and multicast
+ * mounts. A server that does not allow it answers such a SETUP
+ * `461 Unsupported Transport`; an interleaved SETUP is served as before.
+ *
+ * Default (when this is never called): yes on an `rtsp://` bind, NO on an
+ * `rtsps://` bind, so that an `rtsps://` server sends and takes media only
+ * inside the TLS connection. `yes = true` on an `rtsps://` server restores
+ * the behaviour of 0.10.0, in which the media travels unencrypted;
+ * `yes = false` makes a plain server TCP-only. The last call wins.
+ *
+ * Must be called before `tst_rtsp_server_builder_start`. A NULL `builder`
+ * sets last-error `TST_E_INVALID_CONFIG`.
+ *
+ * **Stability: Provisional.**
+ *
+ * # Safety
+ *
+ * `builder` must be NULL or returned by `tst_rtsp_server_builder_new`, not
+ * yet freed or consumed.
+ */
+ void tst_rtsp_server_builder_allow_udp_media(struct TstRtspServerBuilder *builder, bool yes);
 #endif
 
 #if defined(TST_HAS_RTP)
