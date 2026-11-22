@@ -123,3 +123,64 @@ fn server_stats_tracks_mounts_and_sessions() {
 
     server.stop().ok();
 }
+
+/// Every RTP packet sent to a UDP reader is counted in `ServerStats`, its
+/// 12-byte header included: the totals equal what the reader received.
+#[test]
+fn the_server_counts_the_rtp_it_sent_over_udp() {
+    use crate::fixtures::raw_rtsp::{request, session_id};
+    use crate::fixtures::wait_for;
+    use std::net::{TcpStream, UdpSocket};
+
+    let server = RtspServer::bind("rtsp://127.0.0.1:0").unwrap();
+    let mount = server.add_mount("/live", make_muxer_cfg()).unwrap();
+    server.start().unwrap();
+    let port = server.local_addr().unwrap().port();
+    let budget = scaled(Duration::from_secs(5));
+
+    let rtp = UdpSocket::bind("127.0.0.1:0").unwrap();
+    rtp.set_read_timeout(Some(budget)).unwrap();
+    let cp = rtp.local_addr().unwrap().port();
+    let mut tcp = TcpStream::connect(("127.0.0.1", port)).unwrap();
+    tcp.set_read_timeout(Some(budget)).unwrap();
+    let r = request(
+        &mut tcp,
+        &format!(
+            "SETUP rtsp://127.0.0.1:{port}/live/trackID=0 RTSP/1.0\r\nCSeq: 1\r\n\
+             Transport: RTP/AVP;unicast;client_port={cp}-{}\r\n\r\n",
+            cp.saturating_add(1)
+        ),
+    );
+    assert!(r.starts_with("RTSP/1.0 200"), "{r}");
+    let sid = session_id(&r);
+    let r = request(
+        &mut tcp,
+        &format!("PLAY rtsp://127.0.0.1:{port}/live RTSP/1.0\r\nCSeq: 2\r\nSession: {sid}\r\n\r\n"),
+    );
+    assert!(r.starts_with("RTSP/1.0 200"), "{r}");
+
+    let nal = [0x00, 0x00, 0x00, 0x01, 0x65, 0xBB];
+    for i in 0..5 {
+        mount
+            .push_video(&nal, Pts90khz::new(i * 3000), true)
+            .unwrap();
+    }
+    let pushed = mount.stats();
+    assert!(pushed.packets_pushed > 0);
+
+    let mut buf = [0u8; 2048];
+    let mut received = 0u64;
+    for _ in 0..pushed.packets_pushed {
+        received += rtp.recv(&mut buf).expect("an RTP datagram") as u64;
+    }
+    // The fanout adds after its send returned, so the client can be ahead
+    // of the counters for a moment: wait for each total.
+    wait_for(budget, || {
+        (server.stats().total_rtp_packets_sent == pushed.packets_pushed).then_some(())
+    });
+    wait_for(budget, || {
+        (server.stats().total_rtp_bytes_sent == received).then_some(())
+    });
+    assert_eq!(received, pushed.bytes_pushed + 12 * pushed.packets_pushed);
+    server.stop().ok();
+}

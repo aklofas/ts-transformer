@@ -16,7 +16,7 @@ use tokio_util::sync::CancellationToken;
 use crate::clock::RtpClock;
 use crate::error::RtspServerError;
 use crate::packet::{RTP_HEADER_LEN, RtpHeader};
-use crate::rtsp::server::fanout::PeerDropCounter;
+use crate::rtsp::server::fanout::{PeerDropCounter, SentCounters};
 
 /// Resolve a network interface name (e.g. `"eth0"`, `"lo"`) to its
 /// kernel ifindex via `if_nametoindex(3)`. Returns `Err(detail)` on
@@ -268,6 +268,12 @@ pub(crate) async fn build_multicast_send_socket(
 /// Ends on the server's `cancel` or on the mount's `removed`, so a removed
 /// mount stops sending to its group and a mount added again on that group
 /// is its only sender.
+///
+/// `sent` counts each RTP packet once, when its send to the group returned
+/// `Ok`, however many readers the group has.
+// Eight positional arguments, each a spawn-time constant with one caller
+// (`add_multicast_mount`), as for `spawn_peer_fanout`.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn spawn_multicast_sender(
     mut rx: broadcast::Receiver<Bytes>,
     socket: Arc<UdpSocket>,
@@ -276,6 +282,7 @@ pub(crate) fn spawn_multicast_sender(
     ssrc: u32,
     initial_seq: u16,
     drop_counter: Arc<PeerDropCounter>,
+    sent: Arc<SentCounters>,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         let clock = RtpClock::new(0);
@@ -298,6 +305,7 @@ pub(crate) fn spawn_multicast_sender(
                             );
                             return;
                         }
+                        sent.add(datagram.len());
                     }
                     Err(broadcast::error::RecvError::Lagged(n)) => {
                         drop_counter.add(n);
@@ -403,6 +411,66 @@ mod tests {
             err.contains("if_nametoindex"),
             "expected if_nametoindex in detail, got: {err}"
         );
+    }
+
+    /// Each packet the sender sends is counted once, header included. The
+    /// sender only calls `send` on its connected socket, so a socket
+    /// connected to a unicast receiver stands in for a group and the test
+    /// needs no multicast route.
+    #[tokio::test]
+    async fn a_multicast_send_is_counted_once_per_packet() {
+        let receiver = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        socket
+            .connect(receiver.local_addr().unwrap())
+            .await
+            .unwrap();
+        let (tx, rx) = broadcast::channel::<Bytes>(8);
+        let sent = Arc::new(SentCounters::default());
+        let cancel = CancellationToken::new();
+        let _task = spawn_multicast_sender(
+            rx,
+            Arc::new(socket),
+            cancel.clone(),
+            CancellationToken::new(),
+            0x1234_5678,
+            7,
+            Arc::new(PeerDropCounter::default()),
+            Arc::clone(&sent),
+        );
+        let payloads = [188usize, 376, 1316];
+        for len in payloads {
+            tx.send(Bytes::from(vec![0x47; len])).unwrap();
+        }
+        let mut buf = [0u8; 2048];
+        let mut received = 0u64;
+        for _ in payloads {
+            let n =
+                tokio::time::timeout(std::time::Duration::from_secs(10), receiver.recv(&mut buf))
+                    .await
+                    .expect("a datagram within the deadline")
+                    .unwrap();
+            received += n as u64;
+        }
+        assert_eq!(
+            received,
+            (payloads.iter().sum::<usize>() + 3 * RTP_HEADER_LEN) as u64
+        );
+        // The add follows the send, so wait for it with a deadline.
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+        while sent.packets.load(std::sync::atomic::Ordering::Acquire) < 3 {
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "packets not counted"
+            );
+            tokio::task::yield_now().await;
+        }
+        assert_eq!(sent.packets.load(std::sync::atomic::Ordering::Acquire), 3);
+        assert_eq!(
+            sent.bytes.load(std::sync::atomic::Ordering::Relaxed),
+            received
+        );
+        cancel.cancel();
     }
 
     // NOTE: an end-to-end "build_multicast_send_socket succeeds with

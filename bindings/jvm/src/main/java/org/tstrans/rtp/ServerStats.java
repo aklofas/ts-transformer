@@ -8,8 +8,11 @@ package org.tstrans.rtp;
  * or more reads as negative.
  *
  * @param activeSessions Live count of accepted, not yet closed client sessions.
- * @param totalRtpPacketsSent Cumulative RTP packets sent across all peers and all mounts.
- * @param totalRtpBytesSent Cumulative RTP bytes sent across all peers and all mounts.
+ * @param totalRtpPacketsSent RTP packets sent to readers and multicast groups, cumulative over the
+ *     server's life: one per packet a send or write delivered to the operating system, per reader
+ *     (a multicast mount's packet counts once, whatever its audience). RTCP is not counted.
+ * @param totalRtpBytesSent Bytes of those RTP packets, headers included (without the 4-byte
+ *     TCP-interleaved prefix); same consistency as {@code totalRtpPacketsSent}.
  * @param mounts Number of registered mounts, of every kind.
  * @param activePublishers Publish mounts that currently have a publisher (an ANNOUNCE that claimed
  *     the mount and has not yet ended by TEARDOWN, a dropped connection, the mount's removal or the

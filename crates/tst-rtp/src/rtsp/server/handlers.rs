@@ -810,6 +810,7 @@ pub(crate) fn handle_play(
         initial_seq,
         clock,
         drop_counter.clone(),
+        Arc::clone(&state.rtp_sent),
     );
     if let Role::Reader(r) = &mut session.role {
         r.playback = Playback::Playing {

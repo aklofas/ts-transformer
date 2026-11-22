@@ -96,10 +96,9 @@ pub(crate) struct ServerState {
     pub(crate) mount_rules: crate::rtsp::server::mount_rules::MountRules,
     /// Live count of accepted (and not-yet-closed) client sessions.
     pub(crate) active_sessions: AtomicUsize,
-    /// Cumulative RTP packets sent across all peers + all mounts.
-    pub(crate) total_rtp_packets_sent: AtomicU64,
-    /// Cumulative RTP bytes sent across all peers + all mounts.
-    pub(crate) total_rtp_bytes_sent: AtomicU64,
+    /// RTP packets and bytes sent to every reader and multicast group,
+    /// shared with every fanout and multicast sender task.
+    pub(crate) rtp_sent: Arc<crate::rtsp::server::fanout::SentCounters>,
     /// Publisher counters, shared with every publish mount so its receive
     /// path ticks them lock-free.
     pub(crate) publish_counters: Arc<crate::rtsp::server::publish::mount::ServerCounters>,
@@ -562,8 +561,7 @@ pub(crate) fn test_state_with(builder: RtspServerBuilder) -> Arc<ServerState> {
         mounts: std::sync::Mutex::new(std::collections::HashMap::new()),
         mount_rules,
         active_sessions: AtomicUsize::new(0),
-        total_rtp_packets_sent: AtomicU64::new(0),
-        total_rtp_bytes_sent: AtomicU64::new(0),
+        rtp_sent: Arc::default(),
         publish_counters: Arc::default(),
         interleaved_writes: Arc::default(),
         started: AtomicBool::new(true),
@@ -692,8 +690,7 @@ impl RtspServer {
             mounts: std::sync::Mutex::new(std::collections::HashMap::new()),
             mount_rules,
             active_sessions: AtomicUsize::new(0),
-            total_rtp_packets_sent: AtomicU64::new(0),
-            total_rtp_bytes_sent: AtomicU64::new(0),
+            rtp_sent: Arc::default(),
             publish_counters: Arc::default(),
             interleaved_writes: Arc::default(),
             started: AtomicBool::new(false),
@@ -1107,6 +1104,7 @@ impl RtspServer {
         let drop_counter = crate::rtsp::server::fanout::PeerDropCounter::with_mount_total(
             std::sync::Arc::clone(&mount_state.frames_dropped),
         );
+        let rtp_sent = Arc::clone(&self.state.rtp_sent);
         rt.spawn(async move {
             match crate::rtsp::server::multicast::build_multicast_send_socket(
                 group,
@@ -1126,6 +1124,7 @@ impl RtspServer {
                         rand_ssrc(),
                         rand_seq(),
                         drop_counter,
+                        rtp_sent,
                     );
                     // The spawn_multicast_sender returns a JoinHandle we
                     // intentionally drop — the task lives until cancel,
@@ -1573,8 +1572,10 @@ impl RtspServer {
     pub fn stats(&self) -> ServerStats {
         ServerStats {
             active_sessions: self.state.active_sessions.load(Ordering::Relaxed),
-            total_rtp_packets_sent: self.state.total_rtp_packets_sent.load(Ordering::Relaxed),
-            total_rtp_bytes_sent: self.state.total_rtp_bytes_sent.load(Ordering::Relaxed),
+            // Packets first, with `Acquire`: the bytes then cover every
+            // packet counted (`SentCounters::add`).
+            total_rtp_packets_sent: self.state.rtp_sent.packets.load(Ordering::Acquire),
+            total_rtp_bytes_sent: self.state.rtp_sent.bytes.load(Ordering::Relaxed),
             mounts: self.state.mounts.lock().map(|m| m.len()).unwrap_or(0),
             active_publishers: self
                 .state
@@ -1626,9 +1627,14 @@ tst_core::binding_record! {
     pub struct ServerStats {
         /// Live count of accepted, not yet closed client sessions.
         pub active_sessions: usize,
-        /// Cumulative RTP packets sent across all peers and all mounts.
+        /// RTP packets sent to readers and multicast groups, cumulative over
+        /// the server's life: one per packet a send or write delivered to
+        /// the operating system, per reader (a multicast mount's packet
+        /// counts once, whatever its audience). RTCP is not counted.
         pub total_rtp_packets_sent: u64,
-        /// Cumulative RTP bytes sent across all peers and all mounts.
+        /// Bytes of those RTP packets, headers included (without the 4-byte
+        /// TCP-interleaved prefix); same consistency as
+        /// `total_rtp_packets_sent`.
         pub total_rtp_bytes_sent: u64,
         /// Number of registered mounts, of every kind.
         pub mounts: usize,

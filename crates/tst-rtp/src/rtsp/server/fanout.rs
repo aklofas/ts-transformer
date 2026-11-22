@@ -67,6 +67,24 @@ impl Drop for InFlight<'_> {
     }
 }
 
+/// The server's totals of the RTP it sent, shared with every fanout and
+/// multicast sender task and read by `RtspServer::stats`.
+#[derive(Default)]
+pub(crate) struct SentCounters {
+    pub(crate) packets: AtomicU64,
+    pub(crate) bytes: AtomicU64,
+}
+
+impl SentCounters {
+    /// One RTP packet of `len` bytes was sent. The bytes are added first and
+    /// the packet with `Release`, so a reader that loads `packets` with
+    /// `Acquire` and then `bytes` never counts a packet whose bytes it lacks.
+    pub(crate) fn add(&self, len: usize) {
+        self.bytes.fetch_add(len as u64, Ordering::Relaxed);
+        self.packets.fetch_add(1, Ordering::Release);
+    }
+}
+
 /// Per-peer dropped-frame counter, observable from outside the task.
 ///
 /// When constructed with [`Self::with_mount_total`], every `add` also
@@ -125,8 +143,10 @@ impl PeerDropCounter {
 /// that value in the PLAY `RTP-Info` `rtptime` field (RFC 7826 §18.45),
 /// so the RTP timestamps in the first packets correspond to what the
 /// client was told to expect.
-// Eight positional arguments: the two cancel tokens, the three RTP seeds
-// and the two shared handles are each spawn-time constants with one
+///
+/// `sent` counts each RTP packet once its send or write returned `Ok`.
+// Nine positional arguments: the two cancel tokens, the three RTP seeds
+// and the three shared handles are each spawn-time constants with one
 // caller (`handle_play`); a struct would only move the same list.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn spawn_peer_fanout(
@@ -138,6 +158,7 @@ pub(crate) fn spawn_peer_fanout(
     initial_seq: u16,
     clock: RtpClock,
     drop_counter: Arc<PeerDropCounter>,
+    sent: Arc<SentCounters>,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
         let mut seq = initial_seq;
@@ -183,6 +204,7 @@ pub(crate) fn spawn_peer_fanout(
                                     );
                                     return;
                                 }
+                                sent.add(datagram.len());
                             }
                             PeerTransport::Interleaved { writer, rtp_channel, probe } => {
                                 // RFC 7826 §14: `$<channel:u8><length:u16-BE><payload>`.
@@ -203,6 +225,7 @@ pub(crate) fn spawn_peer_fanout(
                                 }
                                 drop(in_flight);
                                 probe.written.fetch_add(1, Ordering::Relaxed);
+                                sent.add(datagram.len());
                             }
                         }
                     }
@@ -255,6 +278,7 @@ mod tests {
             1000,
             RtpClock::new(0),
             drop_counter.clone(),
+            Arc::default(),
         );
 
         // Push 3 payloads of 16 bytes each.
@@ -312,6 +336,7 @@ mod tests {
             1,
             RtpClock::new(0),
             drop_counter.clone(),
+            Arc::default(),
         );
 
         // Give the task a moment to wake + observe lag.
@@ -354,6 +379,7 @@ mod tests {
             1,
             RtpClock::new(0),
             drop_counter.clone(),
+            Arc::default(),
         );
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
@@ -393,6 +419,7 @@ mod tests {
             0,
             RtpClock::new(0),
             drop_counter,
+            Arc::default(),
         );
         cancel.cancel();
         // Should exit within a reasonable bound.
@@ -427,6 +454,7 @@ mod tests {
             0,
             RtpClock::new(0),
             drop_counter,
+            Arc::default(),
         );
         server_cancel.cancel();
         // Should exit within a reasonable bound.
@@ -471,6 +499,7 @@ mod tests {
             initial_seq,
             clock,
             drop_counter,
+            Arc::default(),
         );
 
         tx.send(Bytes::from(vec![0xAAu8; 8])).unwrap();

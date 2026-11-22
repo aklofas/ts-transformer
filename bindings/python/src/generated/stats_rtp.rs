@@ -196,9 +196,14 @@ impl From<&tst_rtp::PushStats> for RtspPushStats {
 pub struct ServerStats {
     /// Live count of accepted, not yet closed client sessions.
     pub active_sessions: u64,
-    /// Cumulative RTP packets sent across all peers and all mounts.
+    /// RTP packets sent to readers and multicast groups, cumulative over
+    /// the server's life: one per packet a send or write delivered to the
+    /// operating system, per reader (a multicast mount's packet counts
+    /// once, whatever its audience). RTCP is not counted.
     pub total_rtp_packets_sent: u64,
-    /// Cumulative RTP bytes sent across all peers and all mounts.
+    /// Bytes of those RTP packets, headers included (without the 4-byte
+    /// TCP-interleaved prefix); same consistency as
+    /// `total_rtp_packets_sent`.
     pub total_rtp_bytes_sent: u64,
     /// Number of registered mounts, of every kind.
     pub mounts: u64,
