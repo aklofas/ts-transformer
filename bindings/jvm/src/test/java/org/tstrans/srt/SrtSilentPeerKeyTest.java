@@ -2,9 +2,9 @@ package org.tstrans.srt;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
-import static org.tstrans.TestSupport.freeUdpPort;
 import static org.tstrans.TestSupport.isLinux;
 import static org.tstrans.TestSupport.roundtripConfig;
+import static org.tstrans.TestSupport.scaledMs;
 import static org.tstrans.TestSupport.syntheticH264Idr;
 import static org.tstrans.TestSupport.waitUntil;
 
@@ -79,7 +79,7 @@ class SrtSilentPeerKeyTest {
         assumeTrue(isLinux(), "SRT live-socket test gated to Linux (as the other managed pairs)");
         try (Peer peer = new Peer(); ManagedSender tx = ManagedSender.fromUrl(peer.url("&" + KEY + "=1500"))) {
             byte[] chunk = tsNullPacketsOnPid1fff(7);
-            for (int i = 0; i < 100 && !peer.gotBytes.get(); i++) {
+            for (int i = 0; i < scaledMs(30_000) / 50 && !peer.gotBytes.get(); i++) {
                 tx.sendBytes(chunk);
                 waitUntil(peer.gotBytes::get, 50);
             }
@@ -95,7 +95,7 @@ class SrtSilentPeerKeyTest {
         try (Peer peer = new Peer();
              ManagedMuxSender tx = ManagedMuxSender.fromUrl(peer.url("&" + KEY + "=1500"), roundtripConfig())) {
             long pts = 0;
-            for (int i = 0; i < 100 && !peer.gotBytes.get(); i++) {
+            for (int i = 0; i < scaledMs(30_000) / 50 && !peer.gotBytes.get(); i++) {
                 for (int k = 0; k < 6; k++, pts += 3000L) {
                     tx.sendVideo(syntheticH264Idr(), pts, true);
                 }
@@ -107,23 +107,20 @@ class SrtSilentPeerKeyTest {
 
     @Test
     @Timeout(60)
-    void managedSendersRefuseAWindowBelowTheFloor() throws Exception {
-        assumeTrue(isLinux(), "SRT live-socket test gated to Linux (as the other managed pairs)");
-        try (Peer peer = new Peer()) {
-            assertRefusedNamingKey(assertThrows(SrtException.class,
-                () -> ManagedSender.fromUrl(peer.url("&" + KEY + "=999"))));
-            assertRefusedNamingKey(assertThrows(SrtException.class,
-                () -> ManagedMuxSender.fromUrl(peer.url("&" + KEY + "=999"), roundtripConfig())));
-        }
+    void managedSendersRefuseAWindowBelowTheFloor() {
+        // Refused while the URL is parsed, before any dial, so no peer and no platform gate.
+        String url = "srt://127.0.0.1:9?mode=caller&" + KEY + "=999";
+        assertRefusedNamingKey(assertThrows(SrtException.class, () -> ManagedSender.fromUrl(url)));
+        assertRefusedNamingKey(assertThrows(SrtException.class,
+            () -> ManagedMuxSender.fromUrl(url, roundtripConfig())));
     }
 
     @Test
     @Timeout(60)
-    void managedReceiverRefusesTheKey() throws Exception {
-        assumeTrue(isLinux(), "SRT live-socket test gated to Linux (as the other managed pairs)");
-        int port = freeUdpPort();
+    void managedReceiverRefusesTheKey() {
+        // Refused before the listener binds or resolves anything, so no platform gate.
         assertRefusedNamingKey(assertThrows(SrtException.class,
-            () -> ManagedReceiver.fromUrl("srt://127.0.0.1:" + port + "?mode=listener&" + KEY + "=1500")));
+            () -> ManagedReceiver.fromUrl("srt://127.0.0.1:9?mode=listener&" + KEY + "=1500")));
     }
 
     @Test
