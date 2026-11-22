@@ -1278,9 +1278,14 @@ impl RtspServer {
     }
 
     /// Graceful shutdown. From the moment `stop()` begins the server
-    /// accepts no new connection; when it returns the listening socket is
-    /// closed. A connection still waiting in the socket's backlog when it
-    /// closes is reset without an answer. It sends an RFC 7826 §13.5.1 Notice 5402
+    /// accepts no new connection, apart from at most the one accept already
+    /// in progress, which is ended with the other sessions. The listening
+    /// socket is closed before the Notices below are written: `stop()` waits
+    /// up to 500 ms for the server's runtime to close it, so when it returns
+    /// the socket is closed unless that runtime was too busy to run the
+    /// listener in time (it then closes as soon as it runs). A connection
+    /// still waiting in the socket's backlog when it closes is reset without
+    /// an answer. It sends an RFC 7826 §13.5.1 Notice 5402
     /// ("Server-Initiated TEARDOWN") ANNOUNCE over each session's TCP
     /// control channel, then cancels each session's per-session token,
     /// fires the global `cancel_token`, and waits for every session task to
@@ -1294,9 +1299,13 @@ impl RtspServer {
     ///
     /// The ANNOUNCE write is best-effort: a per-session write failure
     /// (peer already disconnected, TCP reset, etc.) logs a warning and
-    /// continues. A 1 s per-session write timeout bounds the worst case
-    /// (a stuck peer that has stopped reading) so `stop()` can't hang
-    /// arbitrarily on a slow client.
+    /// continues. A 1 s per-session write timeout bounds each Notice (a
+    /// stuck peer that has stopped reading), and the sessions are written
+    /// one after another: peers that have stopped reading hold `stop()` up
+    /// to about 1 s EACH (twelve such readers: about 12 s), and a session
+    /// that outlives the drain up to 500 ms more for its write-half shutdown
+    /// at the end. The total therefore grows with the number of sessions,
+    /// up to [`RtspServerBuilder::max_sessions`].
     ///
     /// Sessions for which `mount_path` and `session_id` haven't been
     /// populated yet (the client hasn't completed a SETUP) are skipped
@@ -1317,7 +1326,12 @@ impl RtspServer {
     /// After a hard cancel through [`Self::cancel_handle`], started or not,
     /// it sends no Notice and waits for nothing: it ends what the cancel
     /// ends (see [`Self::cancel_handle`]) and returns `Ok(())` with every
-    /// publish mount's application transport already reading `Closed`.
+    /// publish mount's application transport already reading `Closed`. The
+    /// listening socket is then NOT closed at return: the cancel token
+    /// `stop()` fires ends the listener when the server's runtime next runs
+    /// it (without a `stop()` call, the hard-cancel watcher fires that token
+    /// within 100 ms of the cancel), so a connect made just after `stop()`
+    /// returns can still be accepted, and is then reset without an answer.
     ///
     /// Blocks the calling thread on the server's runtime, drain included:
     /// never call it from inside a tokio runtime (see [`RtspServer`]).
