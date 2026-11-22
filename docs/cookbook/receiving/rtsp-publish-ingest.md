@@ -227,6 +227,11 @@ credential the server does not use.
 - **Refusal happens before any mount exists.** Every gated request is
   checked once, before its handler runs, so a refused or unauthenticated
   ANNOUNCE is answered before an on-demand mount is created or queued.
+- **A rule edit does not reach a reader that is already playing until its
+  next gated request.** A reader that keeps alive with OPTIONS or
+  GET_PARAMETER sends none, so turning its mount to `Require` or `Refuse`
+  does not stop the stream; its next SETUP, PLAY, PAUSE or TEARDOWN is judged
+  by the edited rule, and `server.remove_mount(path)` ends it now.
 - **A rule change reaches a streaming publisher at its next gated request.**
   OPTIONS and GET_PARAMETER are never gated, so a publisher that is already
   streaming keeps going until it sends SETUP, RECORD, PLAY, PAUSE or (usually)
@@ -244,9 +249,12 @@ credential the server does not use.
   answered by that mount's rule first (`404`, `401`, ...), and by `455` from
   the handler when the rule admits it.
 - **What a `Refuse` rule hides, and what it does not.** On a server whose
-  default rule is open, a DESCRIBE, SETUP or ANNOUNCE of a
+  default rule is open, a DESCRIBE or SETUP of a
   `Refuse(RefuseStatus::NotFound)` path reads like one of a missing path.
-  Two things still tell them apart for a peer with no credential: a PLAY,
+  Three things still tell them apart for a peer with no credential: an
+  ANNOUNCE without a valid SDP body answers `404` on a `Refuse` path, where
+  a path with no rule answers `400` (the rule is judged before the body is
+  read); a PLAY,
   PAUSE, RECORD or TEARDOWN on a connection with no session answers the
   rule's status on a `Refuse` path, where a path with no mount and no rule
   answers `454`, `454`, `455` and `200`; and where the other paths ask for a
