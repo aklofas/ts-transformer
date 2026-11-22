@@ -566,9 +566,10 @@ Defaults (`ReconnectPolicy::default()`):
   ever in `Background` mode and in `Blocking` mode at gap capacity 0 (the
   new connection is read right after its first send, so the answer that
   follows counts as a recovery); in `Blocking` mode with a gap buffer the
-  replayed message is not followed by a reading, an answer that arrived by
-  the next send is the connection's first reading and does not count, and
-  `max_attempts` ends the loop.
+  replayed message is not followed by a reading, so an answer already in
+  at the next send is the connection's starting value and does not count
+  (`max_attempts` ends the loop), while one that comes later is counted
+  and the re-dials go on.
 - `backoff: BackoffStrategy::Exponential { base: 100ms, max: 10s }` —
   see [`BackoffStrategy`](#backoffstrategy) for the variants.
 - `gap_buffer_capacity: 256` — messages. Accumulates an outage's

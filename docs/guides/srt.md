@@ -763,10 +763,11 @@ armed sender keeps its linger.
   0, that goes on for ever and `max_attempts` does not end it: the wrapper
   reads the new connection right after its first send, so the answer that
   follows counts as a recovery. In `Blocking` mode with a gap buffer (the
-  default) the replayed message is not followed by a reading, so an answer
-  that has arrived by the caller's next send is that connection's first
-  reading and does not count: the attempts count on and `max_attempts`
-  ends the loop.
+  default) the replayed message is not followed by a reading: an answer
+  already in at the caller's next send (a round trip shorter than the send
+  period) is that connection's starting value and does not count, so the
+  attempts count on and `max_attempts` ends the loop; an answer that comes
+  later is counted, and the re-dials go on as in the other modes.
 - A server that refuses a second publisher on the same stream (mediamtx
   v1.21.4 with `overridePublisher: false`) accepts each early re-dial and closes it
   134 ms later until it lets the old publisher go (10 s, its read
