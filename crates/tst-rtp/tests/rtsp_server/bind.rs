@@ -103,3 +103,105 @@ fn start_surfaces_bind_addr_in_use() {
         "expected BindAddrInUse, got {err:?}"
     );
 }
+
+/// Every way a bind URL can carry user info: a user and a password, a user
+/// alone, an empty user with a password, empty user info, an empty pair, and
+/// a user with an empty password; on both schemes.
+const USERINFO_BIND_URLS: &[&str] = &[
+    "rtsp://admin:secret@127.0.0.1:0",
+    "rtsp://admin@127.0.0.1:0",
+    "rtsp://:secret@127.0.0.1:0",
+    "rtsp://@127.0.0.1:0",
+    "rtsp://:@127.0.0.1:0",
+    "rtsp://admin:@127.0.0.1:0",
+    "rtsps://admin:secret@127.0.0.1:0",
+    "rtsps://admin@127.0.0.1:0",
+    "rtsps://:secret@127.0.0.1:0",
+    "rtsps://@127.0.0.1:0",
+    "rtsps://:@127.0.0.1:0",
+    "rtsps://admin:@127.0.0.1:0",
+];
+
+fn is_invalid_config(res: Result<RtspServer, RtspServerError>) -> bool {
+    matches!(res, Err(RtspServerError::InvalidConfig { .. }))
+}
+
+/// A server never takes its credential from the bind URL: the URL cannot say
+/// a scheme or a realm, so user info there would be silently dropped and the
+/// server would start open. It is refused at `build()`, through every door,
+/// with or without a credential configured separately.
+#[test]
+fn a_bind_url_with_userinfo_is_refused() {
+    for &url in USERINFO_BIND_URLS {
+        for with_auth in [false, true] {
+            let configure = |b: &mut RtspServerBuilder| {
+                if with_auth {
+                    b.auth_basic(
+                        "realm",
+                        "admin",
+                        secrecy::SecretString::new("secret".into()),
+                    );
+                }
+            };
+            let mut b = RtspServerBuilder::new(url).expect("URL parse");
+            configure(&mut b);
+            assert!(is_invalid_config(b.build()), "new({url}), auth {with_auth}");
+
+            let mut b = RtspServerBuilder::with_url(tst_rtp::RtspUrl::parse(url).expect("parse"));
+            configure(&mut b);
+            assert!(
+                is_invalid_config(b.build()),
+                "with_url({url}), auth {with_auth}"
+            );
+        }
+        assert!(is_invalid_config(RtspServer::bind(url)), "bind({url})");
+        assert!(
+            is_invalid_config(RtspServer::bind_with(
+                tst_rtp::RtspUrl::parse(url).expect("parse")
+            )),
+            "bind_with({url})"
+        );
+    }
+}
+
+/// The refusal says what is wrong without repeating the credential.
+#[test]
+fn the_bind_url_refusal_names_no_credential() {
+    let e = RtspServer::bind("rtsp://admin:secret@127.0.0.1:0").expect_err("refused");
+    for text in [e.to_string(), format!("{e:?}")] {
+        assert!(text.contains("bind URL"), "{text}");
+        assert!(!text.contains("admin"), "{text}");
+        assert!(!text.contains("secret"), "{text}");
+    }
+}
+
+/// Basic sends `user:password` and the server splits at the first colon, so a
+/// Basic user name with a colon could never authenticate.
+#[test]
+fn a_basic_user_name_with_a_colon_is_refused_at_build() {
+    let mut b = RtspServerBuilder::new("rtsp://127.0.0.1:0").expect("URL parse");
+    b.auth_basic(
+        "realm",
+        "ad:min",
+        secrecy::SecretString::new("secret".into()),
+    );
+    let e = b.build().expect_err("refused");
+    assert!(matches!(e, RtspServerError::InvalidConfig { .. }), "{e:?}");
+    assert!(!e.to_string().contains("ad:min"), "{e}");
+    assert!(!e.to_string().contains("secret"), "{e}");
+}
+
+/// Digest carries the user name as a quoted parameter, so a colon in it works.
+#[test]
+fn a_digest_user_name_with_a_colon_is_accepted() {
+    for sha256 in [false, true] {
+        let mut b = RtspServerBuilder::new("rtsp://127.0.0.1:0").expect("URL parse");
+        let password = secrecy::SecretString::new("secret".into());
+        if sha256 {
+            b.auth_digest_sha256("realm", "ad:min", password);
+        } else {
+            b.auth_digest_md5("realm", "ad:min", password);
+        }
+        assert!(b.build().is_ok(), "sha256 {sha256}");
+    }
+}

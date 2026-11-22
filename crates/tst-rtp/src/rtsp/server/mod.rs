@@ -537,8 +537,10 @@ pub(crate) fn test_state() -> Arc<ServerState> {
 }
 
 /// [`test_state`] for `builder`: a started server whose rules table is
-/// built from the builder exactly as a real server's is, so a credential,
-/// a default rule or a bind URL set on the builder reaches the table too.
+/// built from the builder exactly as a real server's is, so a credential
+/// or a default rule set on the builder reaches the table too. Unlike
+/// [`RtspServer::from_builder`] it runs none of the builder's checks and
+/// loads no TLS configuration.
 #[cfg(test)]
 pub(crate) fn test_state_with(builder: RtspServerBuilder) -> Arc<ServerState> {
     let hard_cancel = RtspServerCancelHandle::new();
@@ -640,6 +642,25 @@ impl RtspServer {
         if b.auth.as_ref().is_some_and(|a| a.username.is_empty()) {
             return Err(RtspServerError::InvalidConfig {
                 detail: "auth username: must not be empty".into(),
+            });
+        }
+        // Basic carries `user:password` and the pair is split at its first
+        // colon, so such a user name could never authenticate.
+        if b.auth
+            .as_ref()
+            .is_some_and(|a| a.scheme == AuthScheme::Basic && a.username.contains(':'))
+        {
+            return Err(RtspServerError::InvalidConfig {
+                detail: "auth username: must not contain ':' with Basic authentication".into(),
+            });
+        }
+        // The URL cannot say a scheme or a realm, so user info there is never
+        // the server's credential; dropping it would start an open server.
+        if b.bind_url.username.is_some() || b.bind_url.password.is_some() {
+            return Err(RtspServerError::InvalidConfig {
+                detail: "bind URL: must not carry a user name or a password \
+                         (configure the server's credential separately)"
+                    .into(),
             });
         }
         let runtime = tokio::runtime::Builder::new_multi_thread()
