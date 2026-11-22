@@ -481,11 +481,23 @@ fn malformed_authorization_headers_are_challenged_again() {
         ),
         ("an empty value", Box::new(|_| String::new())),
     ];
+    // The nonce belongs to the connection: every new connection is offered
+    // one never offered before, and a refused answer is challenged again
+    // with that same nonce, except a Digest answer whose nonce is not the
+    // connection's, which is taken as stale and challenged with a new one.
+    // (`Digest ` with nothing after it arrives trimmed to a bare scheme
+    // word, so it is refused as another scheme, not as stale.)
+    let stale_rows = ["garbage after the scheme"];
+    let mut nonces_seen = std::collections::HashSet::new();
     for (label, build) in &digest_rows {
         let mut tcp = connect(&digest);
         let first = try_request(&mut tcp, &describe_request(port, 1, None)).expect("first answer");
         assert_challenged(&first, "Digest", "the unauthenticated request");
         let nonce = param(header(&first, "WWW-Authenticate"), "nonce");
+        assert!(
+            nonces_seen.insert(nonce.clone()),
+            "{label}: a new connection was offered a nonce already used: {nonce:?}"
+        );
         let answer = build(&nonce);
         let response = try_request(&mut tcp, &describe_request(port, 2, Some(&answer)))
             .unwrap_or_else(|| panic!("{label}: the connection closed instead of answering"));
@@ -497,6 +509,18 @@ fn malformed_authorization_headers_are_challenged_again() {
             );
         } else {
             assert_challenged(&response, "Digest", label);
+            let again = param(header(&response, "WWW-Authenticate"), "nonce");
+            if stale_rows.contains(label) {
+                assert!(
+                    nonces_seen.insert(again.clone()),
+                    "{label}: a stale answer was not offered a new nonce: {again:?}"
+                );
+            } else {
+                assert_eq!(
+                    again, nonce,
+                    "{label}: the second challenge does not carry the connection's nonce"
+                );
+            }
         }
     }
     digest.stop().ok();
