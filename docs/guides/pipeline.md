@@ -443,6 +443,7 @@ impl<T: Transport + 'static> ManagedTransport<T> {
     pub fn new<F>(inner: T, factory: F, policy: ReconnectPolicy)
         -> Result<Self, ReconnectPolicyError>
     where F: Fn() -> Result<T, TransportError> + Send + Sync + 'static;
+    pub fn with_silent_peer_timeout(self, window: Duration) -> Self; // Provisional
 }
 ```
 
@@ -508,6 +509,30 @@ for when to reach for it. True async/reactor exposure remains on the
 deferred-features list; see
 [project/deferred-features.md](/docs/project/deferred-features.md).
 
+**Silent-peer detection (Provisional).** `with_silent_peer_timeout(window)`
+arms the wrapper: after each successful inner send it reads the inner's
+`Transport::peer_activity()`, a number that changes whenever the peer was
+heard from, at every send until the connection has answered once and
+then at most every quarter window. When the reading has not moved while
+sends went on for a whole window, the connection is taken out, closed
+with `Transport::abandon()` (which discards unsent data and does not wait;
+the default is `close()`) once the wrapper's lock is released, and
+replaced as if its send had failed with `Broken`. Call it before the
+first send (a `Background` worker started earlier carries no rule);
+`Duration::ZERO` leaves the wrapper unarmed, and the method has no floor
+(the `x-silentpeertimeout` URL key's is 1 000 ms). An inner whose reading
+is `None` (the default: it cannot tell) never trips; `SrtTransport`
+reports one. A wrapper transport placed between the two must forward
+both methods, as `Box<T>` does, or the managed wrapper above it never
+trips and abandons with a lingering close. The message whose send found
+the silence is queued for the new connection under the gap buffer's
+rules (handed back in `Blocking` mode if the reconnect gives up); under a
+latched cancel the cancel is reported and the caller keeps the message.
+A trip is one `warn` line, "peer silent: abandoning the connection". An
+unarmed wrapper reads nothing on the send path. The rule's limits, the
+measured figures and the URL key are in the
+[SRT guide](/docs/guides/srt.md#detecting-a-silent-peer).
+
 ## `ReconnectPolicy`
 
 ```rust,ignore
@@ -529,7 +554,13 @@ Defaults (`ReconnectPolicy::default()`):
 
 - `max_attempts: Some(10)` — give up after ten reconnect attempts and
   surface `Broken("reconnect gave up after 10 attempts")` to the
-  caller. Set to `None` to retry forever.
+  caller. Set to `None` to retry forever. For a sender armed with
+  `with_silent_peer_timeout` one budget covers an outage until a new
+  connection has answered, so a peer that accepts connections and never
+  answers runs it out like one that refuses them; a give-up or an answer
+  starts the next outage with a fresh budget. A peer that answers the
+  first packet of every connection and then goes silent is re-dialled
+  for ever: each first answer counts as a recovery.
 - `backoff: BackoffStrategy::Exponential { base: 100ms, max: 10s }` —
   see [`BackoffStrategy`](#backoffstrategy) for the variants.
 - `gap_buffer_capacity: 256` — messages. Accumulates an outage's

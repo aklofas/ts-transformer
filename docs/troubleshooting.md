@@ -322,6 +322,43 @@ Under `ReconnectMode::Blocking` a capacity of 0 stages nothing, so the send that
 
 Fix: if the producer must not wait, use `ReconnectMode::Background`: there a capacity of 0 drops (`DropOldest`, counted in `gap_messages_dropped`) or refuses (`Reject`, `Backpressure`) every message sent during the outage while a worker reconnects, and sends after it has reconnected go to the new connection; with a finite `max_attempts` the first send after the worker gives up returns `Broken` instead (see "`max_attempts` exhausted" above). Otherwise bound the wait with `max_attempts`, or end it from another thread through the cancel handle (at the latest when a dial in progress returns).
 
+**A `warn` line "peer silent: abandoning the connection" (target `tst_pipeline::reconnect`)**
+
+A managed SRT sender armed with `x-silentpeertimeout` (or `ManagedTransport::with_silent_peer_timeout`) heard nothing from its peer for `window_ms` while it kept sending (`unanswered_ms` is how long it waited), abandoned the connection without waiting for its unsent data and is reconnecting; the reconnect lines that follow are the usual ones. Everything sent between the moment the peer went silent and the trip is lost, and no statistic counts it. See [Detecting a silent peer](/docs/guides/srt.md#detecting-a-silent-peer).
+
+Fix: nothing, when the peer had really gone. If it trips while the link is healthy, the window is too close to the round-trip time: raise it.
+
+**An SRT URL with `x-silentpeertimeout` is refused (`CONFIG_INVALID`, the message names the key)**
+
+The key is for managed SRT senders only. A plain sender, every receiver (managed or not, caller or listener) and the low-level builders' `connect()` / `listen()` refuse it, as does a value outside 1 000 to 2 147 483.
+
+Fix: remove the key from that URL, or open the stream with a managed sender (`tst_managed_*sender_open`, `srt.ManagedSender` / `srt.ManagedMuxSender`, `managed_*_sender_from_url`).
+
+**An armed sender never trips**
+
+- A gap of half the window or more between two sends restarts the count, so a sender that sends a burst every half window or more (a low-frame-rate or keyframe-only source), or whose sends each block that long, never trips. Send more often, or raise the window past twice the gap.
+- Nothing is detected while the caller sends nothing, nor while a send is parked in a full send buffer (libsrt's own break, about 5 s, ends that).
+- The key is read on `srt://` only: on a `udp://`, `tcp(s)://`, `hls(s)://` or `rist://` URL it is ignored, as every key those schemes do not document is, and the sender opens unarmed.
+- A peer that keeps answering, however rarely, is not silent.
+
+**An armed sender gives up against a server that accepts connections**
+
+An armed sender counts every attempt of an outage until a new connection has answered, so a server that accepts each connection and drops it (mediamtx with `overridePublisher: false` does, 134 ms after the handshake, while it still holds the old publisher), or a peer that completes the handshake and never answers, runs out `max_attempts` as one that refuses the connection would. Against mediamtx with that setting the early re-dials gain nothing until it lets the old publisher go, about 10 s after the silence.
+
+Fix: give the policy enough attempts and backoff for the server's own timeout, or set `max_attempts` to `None`.
+
+**An armed sender re-dials about once a second for ever**
+
+A peer or middlebox that answers the first packet of every connection and then goes silent makes an armed sender re-dial about every window plus one backoff step (about 1.1 s at the 1 000 ms floor), each cycle with one "peer silent" warning. `max_attempts` does not end it: each first answer counts as a recovery.
+
+Fix: this is the peer's behaviour, not the library's; an unarmed sender (no `x-silentpeertimeout`) waits for libsrt's own break instead, about once every 5.2 s.
+
+**A send blocks for 15 s at a time while the peer is unreachable**
+
+In `Blocking` mode the reconnect runs inside the send. When the path back from the peer is dead, each re-dial waits the connect timeout (the sender preset's 15 s; measured 15.2 s per re-dial) before it fails, so the send stays inside the reconnect for the whole outage.
+
+Fix: lower `conntimeo` for a faster re-dial cycle, use `ReconnectMode::Background` so the producer does not wait, or bound the outage with `max_attempts`.
+
 **Sends succeed but nothing arrives (Background mode)**
 
 Under `ReconnectMode::Background`, `send_bytes` returns `Ok(())` the instant the worker accepts bytes into the gap buffer — that is not confirmation the sink received them. If the sink stays down long enough for the outage to outlast `gap_buffer_capacity`, the default `OverflowPolicy::DropOldest` silently evicts queued messages to make room for new ones.
