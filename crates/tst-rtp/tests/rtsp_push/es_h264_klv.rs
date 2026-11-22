@@ -94,7 +94,8 @@ fn push_and_check_klv_alignment(aus: usize, klv_first: bool) {
         let sent = i as i64 * AU_STEP + KLV_OFFSET;
         let early = sent - (pts - video[0]);
         assert_eq!(
-            early, 0,
+            early,
+            0,
             "KLV unit {i} at {} past the first video sample, sent at {sent}",
             pts - video[0]
         );

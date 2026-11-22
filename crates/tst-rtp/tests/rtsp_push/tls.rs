@@ -125,7 +125,8 @@ fn an_rtsps_h264_klv_push_aligns() {
         let sent = i as i64 * AU_STEP + KLV_OFFSET;
         let early = sent - (at - video[0]);
         assert_eq!(
-            early, 0,
+            early,
+            0,
             "KLV unit {i} at {} past the first video sample, sent at {sent}",
             at - video[0]
         );

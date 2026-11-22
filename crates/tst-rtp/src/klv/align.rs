@@ -901,7 +901,11 @@ mod tests {
                 let (t_v, t_k) = (rnd() % (10u64 << 32), rnd() % (10u64 << 32));
                 let rtp_of = |t: u64| {
                     let ticks = (t as f64) * 90_000.0 / 4_294_967_296.0;
-                    (if nearest { ticks.round() } else { ticks.floor() }) as u32
+                    (if nearest {
+                        ticks.round()
+                    } else {
+                        ticks.floor()
+                    }) as u32
                 };
                 let mut a = Aligner::new();
                 a.on_video_sr(&sr(t_v >> 32, t_v as u32, rtp_of(t_v)));
