@@ -1087,35 +1087,7 @@ mod tests {
     use crate::rtsp::message::RtspMethod;
     use crate::url::RtspVersion;
     use std::collections::HashMap;
-    use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize};
-    use tokio_util::sync::CancellationToken;
-
-    fn make_state() -> Arc<ServerState> {
-        let builder =
-            crate::rtsp::server::builder::RtspServerBuilder::new("rtsp://127.0.0.1:0").unwrap();
-        Arc::new(ServerState {
-            builder,
-            cancel_token: CancellationToken::new(),
-            sessions_ended: Arc::new(tokio::sync::watch::channel(false).0),
-            hard_cancel: crate::rtsp::server::cancel::RtspServerCancelHandle::new(),
-            mounts: std::sync::Mutex::new(std::collections::HashMap::new()),
-            mount_rules: crate::rtsp::server::mount_rules::MountRules::for_tests(),
-            active_sessions: AtomicUsize::new(0),
-            total_rtp_packets_sent: AtomicU64::new(0),
-            total_rtp_bytes_sent: AtomicU64::new(0),
-            publish_counters: Default::default(),
-            interleaved_writes: Default::default(),
-            started: AtomicBool::new(true),
-            shutdown: Arc::default(),
-            local_addr: std::sync::Mutex::new(Some("127.0.0.1:8554".parse().unwrap())),
-            sessions: std::sync::Mutex::new(Vec::new()),
-            notice_cseq: AtomicU64::new(1_000_000),
-            #[cfg(feature = "rtsp-server-tls")]
-            tls_config: std::sync::Mutex::new(None),
-            startup_tx: std::sync::Mutex::new(None),
-            publish_queue_tx: std::sync::Mutex::new(None),
-        })
-    }
+    use std::sync::atomic::AtomicBool;
 
     fn make_req(method: RtspMethod, uri: &str) -> RtspRequest {
         let mut headers = HashMap::new();
@@ -1139,7 +1111,7 @@ mod tests {
 
     #[test]
     fn options_response_lists_public_methods() {
-        let state = make_state();
+        let state = crate::rtsp::server::test_state();
         let req = make_req(RtspMethod::Options, "rtsp://127.0.0.1:8554/*");
         let resp = handle_options(&req, &state);
         assert_eq!(resp.status, 200);
@@ -1161,7 +1133,7 @@ mod tests {
 
     #[test]
     fn options_response_includes_cseq_and_server() {
-        let state = make_state();
+        let state = crate::rtsp::server::test_state();
         let req = make_req(RtspMethod::Options, "rtsp://127.0.0.1:8554/");
         let resp = handle_options(&req, &state);
         assert_eq!(resp.headers.get("cseq").map(String::as_str), Some("1"));
@@ -1175,7 +1147,7 @@ mod tests {
 
     #[test]
     fn describe_unknown_mount_returns_404() {
-        let state = make_state();
+        let state = crate::rtsp::server::test_state();
         let req = make_req(RtspMethod::Describe, "rtsp://127.0.0.1:8554/nope");
         let mut session = ServerSessionState::new();
         let resp = handle_describe(&req, &state, &mut session);
@@ -1188,28 +1160,7 @@ mod tests {
         let mut builder =
             crate::rtsp::server::builder::RtspServerBuilder::new("rtsp://127.0.0.1:0").unwrap();
         builder.auth_digest_md5("tst", "admin", SecretString::new("secret".into()));
-        let state = Arc::new(ServerState {
-            builder,
-            cancel_token: CancellationToken::new(),
-            sessions_ended: Arc::new(tokio::sync::watch::channel(false).0),
-            hard_cancel: crate::rtsp::server::cancel::RtspServerCancelHandle::new(),
-            mounts: std::sync::Mutex::new(std::collections::HashMap::new()),
-            mount_rules: crate::rtsp::server::mount_rules::MountRules::for_tests(),
-            active_sessions: AtomicUsize::new(0),
-            total_rtp_packets_sent: AtomicU64::new(0),
-            total_rtp_bytes_sent: AtomicU64::new(0),
-            publish_counters: Default::default(),
-            interleaved_writes: Default::default(),
-            started: AtomicBool::new(true),
-            shutdown: Arc::default(),
-            local_addr: std::sync::Mutex::new(Some("127.0.0.1:8554".parse().unwrap())),
-            sessions: std::sync::Mutex::new(Vec::new()),
-            notice_cseq: AtomicU64::new(1_000_000),
-            #[cfg(feature = "rtsp-server-tls")]
-            tls_config: std::sync::Mutex::new(None),
-            startup_tx: std::sync::Mutex::new(None),
-            publish_queue_tx: std::sync::Mutex::new(None),
-        });
+        let state = crate::rtsp::server::test_state_with(builder);
         let req = make_req(RtspMethod::Describe, "rtsp://127.0.0.1:8554/live");
         let mut session = ServerSessionState::new();
         let resp = handle_describe(&req, &state, &mut session);
@@ -1225,28 +1176,7 @@ mod tests {
         let mut builder =
             crate::rtsp::server::builder::RtspServerBuilder::new("rtsp://127.0.0.1:0").unwrap();
         builder.auth_digest_md5("ts \"q\"", "admin", SecretString::new("secret".into()));
-        let state = Arc::new(ServerState {
-            builder,
-            cancel_token: CancellationToken::new(),
-            sessions_ended: Arc::new(tokio::sync::watch::channel(false).0),
-            hard_cancel: crate::rtsp::server::cancel::RtspServerCancelHandle::new(),
-            mounts: std::sync::Mutex::new(std::collections::HashMap::new()),
-            mount_rules: crate::rtsp::server::mount_rules::MountRules::for_tests(),
-            active_sessions: AtomicUsize::new(0),
-            total_rtp_packets_sent: AtomicU64::new(0),
-            total_rtp_bytes_sent: AtomicU64::new(0),
-            publish_counters: Default::default(),
-            interleaved_writes: Default::default(),
-            started: AtomicBool::new(true),
-            shutdown: Arc::default(),
-            local_addr: std::sync::Mutex::new(Some("127.0.0.1:8554".parse().unwrap())),
-            sessions: std::sync::Mutex::new(Vec::new()),
-            notice_cseq: AtomicU64::new(1_000_000),
-            #[cfg(feature = "rtsp-server-tls")]
-            tls_config: std::sync::Mutex::new(None),
-            startup_tx: std::sync::Mutex::new(None),
-            publish_queue_tx: std::sync::Mutex::new(None),
-        });
+        let state = crate::rtsp::server::test_state_with(builder);
         let req = make_req(RtspMethod::Describe, "rtsp://127.0.0.1:8554/live");
         let mut session = ServerSessionState::new();
         let resp = handle_describe(&req, &state, &mut session);
@@ -1424,7 +1354,7 @@ mod tests {
             k.sort_unstable();
             k
         }
-        let state = make_state();
+        let state = crate::rtsp::server::test_state();
         let mut session = ServerSessionState::new();
 
         let opt = handle_options(&make_req(RtspMethod::Options, "/"), &state);
@@ -1518,7 +1448,7 @@ mod tests {
     use crate::rtsp::server::test_muxer_cfg;
 
     fn make_state_with_mount() -> Arc<ServerState> {
-        let state = make_state();
+        let state = crate::rtsp::server::test_state();
         let mount_state = MountState::new(
             "/live",
             MountKind::Unicast,
@@ -1540,7 +1470,7 @@ mod tests {
     }
 
     fn make_state_with_multicast_mount_at_port(group_port: u16) -> Arc<ServerState> {
-        let state = make_state();
+        let state = crate::rtsp::server::test_state();
         let mount_state = MountState::new(
             "/mc",
             MountKind::Multicast {

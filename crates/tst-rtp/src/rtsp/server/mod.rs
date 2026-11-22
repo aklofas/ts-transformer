@@ -532,14 +532,23 @@ pub(crate) fn build_notice_5402_announce(
 /// so they don't duplicate the (fairly long) field list.
 #[cfg(test)]
 pub(crate) fn test_state() -> Arc<ServerState> {
-    let builder = RtspServerBuilder::new("rtsp://127.0.0.1:0").unwrap();
+    test_state_with(RtspServerBuilder::new("rtsp://127.0.0.1:0").unwrap())
+}
+
+/// [`test_state`] for `builder`: a started server whose rules table is
+/// built from the builder exactly as a real server's is, so a credential,
+/// a default rule or a bind URL set on the builder reaches the table too.
+#[cfg(test)]
+pub(crate) fn test_state_with(builder: RtspServerBuilder) -> Arc<ServerState> {
+    let hard_cancel = RtspServerCancelHandle::new();
+    let mount_rules = initial_mount_rules(&builder, hard_cancel.clone());
     Arc::new(ServerState {
         builder,
         cancel_token: CancellationToken::new(),
         sessions_ended: Arc::new(tokio::sync::watch::channel(false).0),
-        hard_cancel: RtspServerCancelHandle::new(),
+        hard_cancel,
         mounts: std::sync::Mutex::new(std::collections::HashMap::new()),
-        mount_rules: crate::rtsp::server::mount_rules::MountRules::for_tests(),
+        mount_rules,
         active_sessions: AtomicUsize::new(0),
         total_rtp_packets_sent: AtomicU64::new(0),
         total_rtp_bytes_sent: AtomicU64::new(0),
@@ -569,9 +578,8 @@ pub(crate) fn test_state_on_demand(
     let mut builder = RtspServerBuilder::new("rtsp://127.0.0.1:0").unwrap();
     builder.accept_unregistered_publishers(accept);
     let (tx, rx) = std::sync::mpsc::sync_channel(PUBLISH_QUEUE_BOUND);
-    let st = test_state();
+    let st = test_state_with(builder);
     let st = Arc::new(ServerState {
-        builder,
         publish_queue_tx: std::sync::Mutex::new(Some(tx)),
         ..Arc::try_unwrap(st).ok().expect("fresh test state")
     });
@@ -590,6 +598,26 @@ pub(crate) fn test_muxer_cfg() -> tst_core::mpegts::mux::MuxerConfig {
     let mut b = MuxerConfig::builder();
     b.add_program(prog.build());
     b.build().unwrap()
+}
+
+/// The rules table a server built from `b` starts with: the builder's
+/// default rule (or the default), and the builder credential's scheme and
+/// realm as the challenge (Digest MD5, realm `tstrans`, without one). The
+/// table shares the server's hard cancel so it reads closed the moment the
+/// cancel fires, started or not.
+pub(crate) fn initial_mount_rules(
+    b: &RtspServerBuilder,
+    hard_cancel: RtspServerCancelHandle,
+) -> MountRules {
+    let challenge = b.auth.as_ref().map_or_else(
+        || (AuthScheme::DigestMd5, "tstrans".to_string()),
+        |a| (a.scheme, a.realm.clone()),
+    );
+    MountRules::new(
+        b.default_mount_rule.clone().unwrap_or_default(),
+        challenge,
+        hard_cancel,
+    )
 }
 
 impl RtspServer {
@@ -621,18 +649,8 @@ impl RtspServer {
             .map_err(|e| RtspServerError::Io(e.kind()))?;
         let (publish_queue_tx, publish_queue_rx) =
             std::sync::mpsc::sync_channel(PUBLISH_QUEUE_BOUND);
-        let challenge = b.auth.as_ref().map_or_else(
-            || (AuthScheme::DigestMd5, "tstrans".to_string()),
-            |a| (a.scheme, a.realm.clone()),
-        );
-        // The table shares the server's hard cancel so it reads closed the
-        // moment the cancel fires, started or not.
         let hard_cancel = RtspServerCancelHandle::new();
-        let mount_rules = MountRules::new(
-            b.default_mount_rule.clone().unwrap_or_default(),
-            challenge,
-            hard_cancel.clone(),
-        );
+        let mount_rules = initial_mount_rules(&b, hard_cancel.clone());
         let state = Arc::new(ServerState {
             builder: b,
             cancel_token: CancellationToken::new(),

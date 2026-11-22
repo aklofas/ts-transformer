@@ -1244,28 +1244,7 @@ mod session_tests {
             // Build a minimal ServerState for the test.
             let builder =
                 crate::rtsp::server::builder::RtspServerBuilder::new("rtsp://127.0.0.1:0").unwrap();
-            let state = std::sync::Arc::new(crate::rtsp::server::ServerState {
-                builder,
-                cancel_token: tokio_util::sync::CancellationToken::new(),
-                sessions_ended: std::sync::Arc::new(tokio::sync::watch::channel(false).0),
-                hard_cancel: crate::rtsp::server::cancel::RtspServerCancelHandle::new(),
-                mounts: std::sync::Mutex::new(std::collections::HashMap::new()),
-                mount_rules: crate::rtsp::server::mount_rules::MountRules::for_tests(),
-                active_sessions: std::sync::atomic::AtomicUsize::new(0),
-                total_rtp_packets_sent: std::sync::atomic::AtomicU64::new(0),
-                total_rtp_bytes_sent: std::sync::atomic::AtomicU64::new(0),
-                publish_counters: Default::default(),
-                interleaved_writes: Default::default(),
-                started: std::sync::atomic::AtomicBool::new(true),
-                shutdown: Default::default(),
-                local_addr: std::sync::Mutex::new(None),
-                sessions: std::sync::Mutex::new(Vec::new()),
-                notice_cseq: std::sync::atomic::AtomicU64::new(1_000_000),
-                #[cfg(feature = "rtsp-server-tls")]
-                tls_config: std::sync::Mutex::new(None),
-                startup_tx: std::sync::Mutex::new(None),
-                publish_queue_tx: std::sync::Mutex::new(None),
-            });
+            let state = crate::rtsp::server::test_state_with(builder);
             // Mimic the accept loop: reserve a slot, then move the guard
             // into the session task.
             state
@@ -1317,28 +1296,7 @@ mod session_tests {
             let (tcp, peer) = listener.accept().await.unwrap();
             let builder =
                 crate::rtsp::server::builder::RtspServerBuilder::new("rtsp://127.0.0.1:0").unwrap();
-            let state = std::sync::Arc::new(crate::rtsp::server::ServerState {
-                builder,
-                cancel_token: tokio_util::sync::CancellationToken::new(),
-                sessions_ended: std::sync::Arc::new(tokio::sync::watch::channel(false).0),
-                hard_cancel: crate::rtsp::server::cancel::RtspServerCancelHandle::new(),
-                mounts: std::sync::Mutex::new(std::collections::HashMap::new()),
-                mount_rules: crate::rtsp::server::mount_rules::MountRules::for_tests(),
-                active_sessions: std::sync::atomic::AtomicUsize::new(0),
-                total_rtp_packets_sent: std::sync::atomic::AtomicU64::new(0),
-                total_rtp_bytes_sent: std::sync::atomic::AtomicU64::new(0),
-                publish_counters: Default::default(),
-                interleaved_writes: Default::default(),
-                started: std::sync::atomic::AtomicBool::new(true),
-                shutdown: Default::default(),
-                local_addr: std::sync::Mutex::new(None),
-                sessions: std::sync::Mutex::new(Vec::new()),
-                notice_cseq: std::sync::atomic::AtomicU64::new(1_000_000),
-                #[cfg(feature = "rtsp-server-tls")]
-                tls_config: std::sync::Mutex::new(None),
-                startup_tx: std::sync::Mutex::new(None),
-                publish_queue_tx: std::sync::Mutex::new(None),
-            });
+            let state = crate::rtsp::server::test_state_with(builder);
             // Mimic the accept loop: reserve a slot, then move the guard
             // into the session task.
             state
@@ -1386,28 +1344,7 @@ mod session_tests {
             "user",
             secrecy::SecretString::from("secret".to_owned()),
         );
-        Arc::new(ServerState {
-            builder,
-            cancel_token: tokio_util::sync::CancellationToken::new(),
-            sessions_ended: std::sync::Arc::new(tokio::sync::watch::channel(false).0),
-            hard_cancel: crate::rtsp::server::cancel::RtspServerCancelHandle::new(),
-            mounts: std::sync::Mutex::new(std::collections::HashMap::new()),
-            mount_rules: crate::rtsp::server::mount_rules::MountRules::for_tests(),
-            active_sessions: std::sync::atomic::AtomicUsize::new(0),
-            total_rtp_packets_sent: std::sync::atomic::AtomicU64::new(0),
-            total_rtp_bytes_sent: std::sync::atomic::AtomicU64::new(0),
-            publish_counters: Default::default(),
-            interleaved_writes: Default::default(),
-            started: std::sync::atomic::AtomicBool::new(true),
-            shutdown: Default::default(),
-            local_addr: std::sync::Mutex::new(None),
-            sessions: std::sync::Mutex::new(Vec::new()),
-            notice_cseq: std::sync::atomic::AtomicU64::new(1_000_000),
-            #[cfg(feature = "rtsp-server-tls")]
-            tls_config: std::sync::Mutex::new(None),
-            startup_tx: std::sync::Mutex::new(None),
-            publish_queue_tx: std::sync::Mutex::new(None),
-        })
+        crate::rtsp::server::test_state_with(builder)
     }
 
     /// An OPTIONS request (which never requires auth and always returns 200)
@@ -2316,12 +2253,7 @@ mod session_tests {
         let mut builder =
             crate::rtsp::server::builder::RtspServerBuilder::new("rtsp://127.0.0.1:0").unwrap();
         builder.publish_idle_timeout(timeout);
-        let state = Arc::new(ServerState {
-            builder,
-            ..Arc::try_unwrap(crate::rtsp::server::test_state())
-                .ok()
-                .expect("fresh test state")
-        });
+        let state = crate::rtsp::server::test_state_with(builder);
         let mount = publish::mount::PublishMountState::new("/pub", 8, Default::default());
         state
             .mounts
