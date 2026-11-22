@@ -432,16 +432,22 @@ impl Paced {
     }
 }
 
-/// The causes of the failed re-dials logged so far, for a failure message.
-/// Empty unless the test runs under `traced_test`.
+/// The causes of the failed re-dials logged so far in this test binary, for
+/// a failure message. Empty unless the test runs under `traced_test`. The
+/// lines are not filtered by test: a Background worker's lines carry no
+/// test's span, so a filter could hide the real cause. Under nextest each
+/// test is its own process, so in practice the lines are this test's.
 fn failed_redials() -> String {
+    // `logs_assert` and `logs_contain` exist only inside the test function
+    // that `traced_test` expands; this helper runs from `Paced::send`, so it
+    // reads the buffer they read.
     let buf = tracing_test::internal::global_buf().lock().unwrap().clone();
     let causes: Vec<String> = String::from_utf8_lossy(&buf)
         .lines()
         .filter(|l| l.contains("reconnect attempt failed"))
         .map(str::to_string)
         .collect();
-    format!("failed re-dials: {causes:?}")
+    format!("re-dial failures logged in this binary: {causes:?}")
 }
 
 /// The order every armed test asserts, decided when the second connection
