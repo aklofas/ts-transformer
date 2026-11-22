@@ -566,6 +566,44 @@ mod tests {
     }
 
     #[test]
+    fn an_answered_connection_is_read_again_at_exactly_a_quarter_window() {
+        let c = Clock::new();
+        // Answered, last read at 33 ms; this send anchors a fresh run.
+        let mut p = answered_inner(&c);
+        let t0 = ms(33);
+        assert!(!p.sent(c.at(t0 + W / 4 - ms(1))), "a millisecond early");
+        assert!(p.sent(c.at(t0 + W / 4)), "at exactly a quarter window");
+    }
+
+    #[test]
+    fn a_send_a_window_after_the_anchor_is_read_and_trips() {
+        let c = Clock::new();
+        let mut p = answered_inner(&c);
+        // The run is anchored at 66 ms; sends every 33 ms, read when asked.
+        let a = ms(66);
+        let mut t = a;
+        while t < a + W - ms(2) {
+            if p.sent(c.at(t)) {
+                assert_eq!(p.reading(c.at(t), Some(2)), Verdict::Healthy);
+            }
+            t += STEP;
+        }
+        // A read two milliseconds short of the window keeps the reads
+        // recent, so only the window can ask for the next one.
+        p.sent(c.at(a + W - ms(2)));
+        assert_eq!(p.reading(c.at(a + W - ms(2)), Some(2)), Verdict::Healthy);
+        assert!(
+            !p.sent(c.at(a + W - ms(1))),
+            "a millisecond short of the window"
+        );
+        assert!(p.sent(c.at(a + W)), "at exactly the window");
+        assert_eq!(
+            p.reading(c.at(a + W), Some(2)),
+            Verdict::Silent { unanswered: W }
+        );
+    }
+
+    #[test]
     fn a_still_reading_trips_at_exactly_the_window_and_not_a_millisecond_before() {
         let c = Clock::new();
         let mut p = answered_inner(&c);
