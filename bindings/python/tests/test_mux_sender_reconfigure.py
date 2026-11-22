@@ -108,28 +108,39 @@ def _udp_port_bound(port: int) -> bool:
 
 
 class _SrtPeer:
-    """A listener-mode `shells.Receiver` on its own thread. With `read`, it
-    collects every packet until its receive raises; without, it never
-    reads after the accept."""
+    """A listener-mode `shells.Receiver` on its own thread, on a free port
+    it picks (`port`). With `read`, it collects every packet until its
+    receive raises; without, it never reads after the accept."""
 
-    def __init__(self, port: int, *, read: bool, knobs: str = "") -> None:
+    def __init__(self, *, read: bool, knobs: str = "") -> None:
         self.packets: list[bytes] = []
         self.rx: Optional[shells.Receiver] = None
-        self.error: Optional[BaseException] = None
-        self.accepted = threading.Event()
-        self.ended = threading.Event()
         self.read = read
-        self.url = f"srt://:{port}?mode=listener{knobs}"
-        threading.Thread(target=self._serve, daemon=True).start()
-        # A failed open ends the wait and is the failure shown; waiting for
-        # the port alone would time out and hide the open's error.
-        wait_for(
-            "the srt listener bound, or its open failed",
-            lambda: _udp_port_bound(port) or self.ended.is_set(),
-            WAIT_S,
-        )
+        # A free port can be taken before the listener binds it, by another
+        # process or by this wait's own probe, which binds the port to see
+        # whether it is taken; that bind failure is retried on a new port,
+        # since it is not what any test here is about.
+        for _ in range(5):
+            self.port = free_udp_port()
+            self.error: Optional[BaseException] = None
+            self.accepted = threading.Event()
+            self.ended = threading.Event()
+            self.url = f"srt://:{self.port}?mode=listener{knobs}"
+            threading.Thread(target=self._serve, daemon=True).start()
+            wait_for(
+                "the srt listener bound, or its open failed",
+                lambda: _udp_port_bound(self.port) or self.ended.is_set(),
+                WAIT_S,
+            )
+            lost_the_port = (
+                self.ended.is_set()
+                and isinstance(self.error, SrtError)
+                and str(self.error).startswith("bind: ")
+            )
+            if not lost_the_port:
+                break
         if self.error is not None:
-            pytest.fail(f"the srt listener did not open on port {port}: {self.error!r}")
+            pytest.fail(f"the srt listener did not open on port {self.port}: {self.error!r}")
 
     def _serve(self) -> None:
         try:
@@ -305,10 +316,9 @@ def _srt_sender_with_pending_output() -> tuple[shells.MuxSender, _SrtPeer]:
     """An `srt://` `MuxSender` to a peer that never reads, opened with a send
     timeout, after a send that timed out: its output is retained, so the
     next call on the sender writes it first and waits in the transport."""
-    port = free_udp_port()
-    peer = _SrtPeer(port, read=False, knobs="&tlpktdrop=0")
+    peer = _SrtPeer(read=False, knobs="&tlpktdrop=0")
     tx = shells.MuxSender.open(
-        f"srt://127.0.0.1:{port}?mode=caller&x-sendtimeout={SEND_TIMEOUT_MS}",
+        f"srt://127.0.0.1:{peer.port}?mode=caller&x-sendtimeout={SEND_TIMEOUT_MS}",
         _video_program(),
     )
     assert peer.accepted.wait(WAIT_S), "the srt listener did not accept"
@@ -399,9 +409,8 @@ def test_close_ends_a_parked_reconfigure() -> None:
 def _managed_pair(program: object):
     from tstrans.srt import ManagedMuxSender
 
-    port = free_udp_port()
-    peer = _SrtPeer(port, read=True)
-    tx = ManagedMuxSender.from_url(f"srt://127.0.0.1:{port}?mode=caller", program)
+    peer = _SrtPeer(read=True)
+    tx = ManagedMuxSender.from_url(f"srt://127.0.0.1:{peer.port}?mode=caller", program)
     assert peer.accepted.wait(WAIT_S), "the srt listener did not accept"
     return tx, peer
 
