@@ -380,10 +380,13 @@ pub(crate) fn next_interleaved_pair() -> Option<(u8, u8)> {
 ///   mount accepts a publisher.
 /// - 453 Not Enough Bandwidth — a reader's SETUP while every reader slot
 ///   is held ([`RtspServerBuilder::max_readers`](crate::RtspServerBuilder::max_readers));
-///   the connection is closed after the reply. Checked last, so a request
-///   refused by any status above takes no slot.
+///   the connection is closed after the reply. Checked after every status
+///   above and before the transport is allocated, so a request refused by
+///   any status above takes no slot and a reader over the cap binds no UDP
+///   port pair.
 /// - 500 Internal Server Error — UDP socket bind failure, interleaved
-///   channel allocator exhaustion, or poisoned mutex.
+///   channel allocator exhaustion, or poisoned mutex. A slot taken for the
+///   request is freed again.
 ///
 /// On 200, mutates `session` with: `session_id`, `mount_path`,
 /// `transport`, and either `udp_sockets` (unicast UDP) or
@@ -516,9 +519,44 @@ pub(crate) fn handle_setup(
         return error_response(req, 461, "Unsupported Transport");
     }
 
+    use crate::rtsp::transport_negotiation::RtspTransportKind;
+    // Unicast UDP REQUIRES a valid client_port pair — the server fans RTP
+    // out to client_port.0 (RTP) and RTCP to client_port.1. A missing
+    // client_port can't be silently defaulted to 0-0 (that would point the
+    // fan-out at privileged port 0). Reject with 461 Unsupported
+    // Transport. (Malformed/reversed/out-of-range pairs are already
+    // rejected as 400 by parse_transport_response above; this guards the
+    // *absent* case.)
+    if parsed.kind == RtspTransportKind::Udp && !is_multicast && parsed.client_port.is_none() {
+        return error_response(req, 461, "Unsupported Transport");
+    }
+
+    // A reader holds one of the server's reader slots until its role ends.
+    // The slot is taken after every refusal of the request itself and
+    // before any transport is allocated, so a reader over the cap binds no
+    // UDP port pair; a later failure drops the guard and frees the slot. A
+    // reader set up again keeps the one it holds, so re-pointing it never
+    // needs a second slot.
+    let new_slot = if session.reader_slot.is_some() {
+        None
+    } else {
+        match crate::rtsp::server::session::ReaderSlot::reserve(state) {
+            Some(slot) => Some(slot),
+            None => {
+                tracing::warn!(
+                    target: "tst_rtp::server",
+                    peer = %session.peer_addr,
+                    max_readers = state.builder.max_readers.unwrap_or_default(),
+                    "max readers reached; refusing a reader SETUP and closing the connection"
+                );
+                session.close_after_reply = true;
+                return error_response(req, 453, "Not Enough Bandwidth");
+            }
+        }
+    };
+
     // Allocate transport-specific server state + build the response
     // header.
-    use crate::rtsp::transport_negotiation::RtspTransportKind;
     let session_id = generate_session_id();
     let transport_response_header: String;
     let reader_transport: ReaderTransport;
@@ -549,17 +587,8 @@ pub(crate) fn handle_setup(
                 );
                 reader_transport = ReaderTransport::Multicast;
             } else {
-                // Unicast UDP REQUIRES a valid client_port pair — the
-                // server fans RTP out to client_port.0 (RTP) and RTCP to
-                // client_port.1. A missing client_port can't be silently
-                // defaulted to 0-0 (that would point the fan-out at
-                // privileged port 0). Reject with 461 Unsupported
-                // Transport. (Malformed/reversed/out-of-range pairs are
-                // already rejected as 400 by parse_transport_response
-                // above; this guards the *absent* case.)
-                let client_port = match parsed.client_port {
-                    Some(cp) => cp,
-                    None => return error_response(req, 461, "Unsupported Transport"),
+                let Some(client_port) = parsed.client_port else {
+                    unreachable!("an absent client_port is refused above")
                 };
                 // Unicast UDP: bind a server-side RTP+RTCP port pair.
                 let local_ip = match *state.local_addr.lock().unwrap() {
@@ -604,23 +633,8 @@ pub(crate) fn handle_setup(
         }
     }
 
-    // The last step before the role: a reader holds one of the server's
-    // reader slots until its role ends. A reader set up again keeps the one
-    // it holds, so re-pointing it never needs a second slot.
-    if session.reader_slot.is_none() {
-        match crate::rtsp::server::session::ReaderSlot::reserve(state) {
-            Some(slot) => session.reader_slot = Some(slot),
-            None => {
-                tracing::warn!(
-                    target: "tst_rtp::server",
-                    peer = %session.peer_addr,
-                    max_readers = state.builder.max_readers.unwrap_or_default(),
-                    "max readers reached; refusing a reader SETUP and closing the connection"
-                );
-                session.close_after_reply = true;
-                return error_response(req, 453, "Not Enough Bandwidth");
-            }
-        }
+    if let Some(slot) = new_slot {
+        session.reader_slot = Some(slot);
     }
     session.set_role(Role::Reader(ReaderSession {
         session_id: session_id.clone(),
@@ -2062,6 +2076,27 @@ mod tests {
         let resp = handle_setup(&req, &state, &mut session);
         assert_eq!(resp.status, 461);
         assert!(matches!(session.role, Role::Idle));
+    }
+
+    /// The reader slot is taken after the refusals of the request itself:
+    /// on a server with no reader slots a UDP SETUP without a client_port
+    /// still reads 461 and keeps its connection.
+    #[test]
+    fn a_setup_refused_for_its_transport_reads_that_refusal_at_the_reader_cap() {
+        let mut builder = crate::RtspServerBuilder::new("rtsp://127.0.0.1:0").unwrap();
+        builder.max_readers(0);
+        let state = crate::rtsp::server::test_state_with(builder);
+        add_live_mount(&state);
+        let mut req = make_req(RtspMethod::Setup, "rtsp://127.0.0.1:8554/live");
+        req.headers
+            .insert("transport".into(), "RTP/AVP;unicast".into());
+        let mut session = ServerSessionState::new();
+        assert_eq!(handle_setup(&req, &state, &mut session).status, 461);
+        assert!(!session.close_after_reply);
+
+        let resp = handle_setup(&interleaved_setup_request(), &state, &mut session);
+        assert_eq!(resp.status, 453, "the cap itself is still enforced");
+        assert!(session.close_after_reply);
     }
 
     /// client_port=65535 has no valid RTCP companion (65536 overflows
