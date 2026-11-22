@@ -1673,33 +1673,33 @@ fn the_measured_credential_classes_are_unchanged() {
     };
     let basic_realm = r#"Basic realm="realm""#;
     let check = |class: &str, server: RtspServer, want: &[String]| {
-        assert_eq!(class_answers(&server), want, "class {class}");
+        assert_eq!(class_answers(&server), want, "{class}");
         server.stop().unwrap();
     };
     let owned = |rows: [&str; 3]| rows.map(str::to_owned);
 
-    // K1: a builder credential alone, each scheme.
+    // A builder credential alone, each scheme.
     check(
-        "K1 basic",
+        "builder Basic",
         served_for_classes(builder_basic()),
         &builder_only(basic_realm),
     );
     let mut b = RtspServerBuilder::new("rtsp://127.0.0.1:0").unwrap();
     b.auth_digest_md5("realm", "admin", pw("secret"));
     check(
-        "K1 digest-md5",
+        "builder Digest MD5",
         served_for_classes(b),
         &builder_only(r#"Digest realm="realm" algorithm=MD5"#),
     );
     let mut b = RtspServerBuilder::new("rtsp://127.0.0.1:0").unwrap();
     b.auth_digest_sha256("realm", "admin", pw("secret"));
     check(
-        "K1 digest-sha256",
+        "builder Digest SHA-256",
         served_for_classes(b),
         &builder_only(r#"Digest realm="realm" algorithm=SHA-256"#),
     );
 
-    // K2a, K2b: no builder credential; `/b` requires a rule credential,
+    // No builder credential; `/b` requires a rule credential,
     // with the table's challenge and after `set_challenge`.
     let s = served_for_classes(RtspServerBuilder::new("rtsp://127.0.0.1:0").unwrap());
     s.mount_rules().set("/b", require_viewer()).unwrap();
@@ -1713,19 +1713,23 @@ fn the_measured_credential_classes_are_unchanged() {
     assert_eq!(
         class_answers(&s),
         k2(r#"Digest realm="tstrans" algorithm=MD5"#),
-        "class K2a"
+        "a Require path, the table's first challenge"
     );
     s.mount_rules()
         .set_challenge(AuthScheme::Basic, "lab")
         .unwrap();
-    check("K2b", s, &k2(r#"Basic realm="lab""#));
+    check(
+        "a Require path after set_challenge",
+        s,
+        &k2(r#"Basic realm="lab""#),
+    );
 
-    // K2c: no builder credential; the default rule requires.
+    // No builder credential; the default rule requires.
     let s = served_for_classes(RtspServerBuilder::new("rtsp://127.0.0.1:0").unwrap());
     s.mount_rules().set_default(require_viewer()).unwrap();
     let ch = r#"Digest realm="tstrans" algorithm=MD5"#;
     check(
-        "K2c",
+        "a Require default",
         s,
         &[
             format!("DESCRIBE /a 401 [{ch}] 401 viewer=200 wrong=401"),
@@ -1734,14 +1738,22 @@ fn the_measured_credential_classes_are_unchanged() {
         ],
     );
 
-    // K3: a builder credential and a `Require` path, Digest and Basic.
+    // A builder credential and a `Require` path, Digest and Basic.
     for (class, ch, b) in [
-        ("K3 digest-md5", r#"Digest realm="realm" algorithm=MD5"#, {
-            let mut b = RtspServerBuilder::new("rtsp://127.0.0.1:0").unwrap();
-            b.auth_digest_md5("realm", "admin", pw("secret"));
-            b
-        }),
-        ("K3 basic", basic_realm, builder_basic()),
+        (
+            "builder Digest MD5 and a Require path",
+            r#"Digest realm="realm" algorithm=MD5"#,
+            {
+                let mut b = RtspServerBuilder::new("rtsp://127.0.0.1:0").unwrap();
+                b.auth_digest_md5("realm", "admin", pw("secret"));
+                b
+            },
+        ),
+        (
+            "builder Basic and a Require path",
+            basic_realm,
+            builder_basic(),
+        ),
     ] {
         let s = served_for_classes(b);
         s.mount_rules().set("/b", require_viewer()).unwrap();
@@ -1756,26 +1768,30 @@ fn the_measured_credential_classes_are_unchanged() {
         );
     }
 
-    // K5: nothing requires, `set_challenge` called anyway.
+    // Nothing requires, `set_challenge` called anyway.
     let s = served_for_classes(RtspServerBuilder::new("rtsp://127.0.0.1:0").unwrap());
     s.mount_rules()
         .set_challenge(AuthScheme::Basic, "lab")
         .unwrap();
-    check("K5", s, &owned(OPEN));
+    check("set_challenge with nothing that requires", s, &owned(OPEN));
 
-    // K6a: a builder credential and a builder default rule of `Open`.
+    // A builder credential and a builder default rule of `Open`.
     let mut b = builder_basic();
     b.default_mount_rule(MountRule::both(MountPolicy::Open));
-    check("K6a", served_for_classes(b), &owned(OPEN));
+    check(
+        "builder credential, builder default Open",
+        served_for_classes(b),
+        &owned(OPEN),
+    );
 
-    // K6b: a builder credential, a builder default rule that requires a rule
+    // A builder credential, a builder default rule that requires a rule
     // credential, and `/b` inheriting it.
     let mut b = builder_basic();
     b.default_mount_rule(require_viewer());
     let s = served_for_classes(b);
     s.mount_rules().set("/b", MountRule::default()).unwrap();
     check(
-        "K6b",
+        "builder credential, builder default Require",
         s,
         &[
             format!("DESCRIBE /a 401 [{basic_realm}] 401 viewer=200 wrong=401"),
@@ -1784,18 +1800,26 @@ fn the_measured_credential_classes_are_unchanged() {
         ],
     );
 
-    // K6c-1, K6c-2: a runtime default of `Open`, then reset.
+    // A runtime default of `Open`, then reset.
     let s = served_for_classes(builder_basic());
     s.mount_rules()
         .set_default(MountRule::both(MountPolicy::Open))
         .unwrap();
-    assert_eq!(class_answers(&s), owned(OPEN), "class K6c-1");
+    assert_eq!(
+        class_answers(&s),
+        owned(OPEN),
+        "builder credential, runtime default Open"
+    );
     // A runtime reset of the default rule still requires the server's
     // credential.
     s.mount_rules().set_default(MountRule::default()).unwrap();
-    check("K6c-2", s, &builder_only(basic_realm));
+    check(
+        "builder credential, runtime default reset",
+        s,
+        &builder_only(basic_realm),
+    );
 
-    // K6d: a builder credential, a runtime default of `Refuse(403)`, `/b`
+    // A builder credential, a runtime default of `Refuse(403)`, `/b`
     // open.
     let s = served_for_classes(builder_basic());
     s.mount_rules()
@@ -1807,7 +1831,7 @@ fn the_measured_credential_classes_are_unchanged() {
         .set("/b", MountRule::both(MountPolicy::Open))
         .unwrap();
     check(
-        "K6d",
+        "builder credential, runtime default Refuse, /b Open",
         s,
         &owned([
             "DESCRIBE /a 403 [-] - viewer=- wrong=-",
@@ -1816,7 +1840,7 @@ fn the_measured_credential_classes_are_unchanged() {
         ]),
     );
 
-    // K6e: a builder credential, `/b` read-open and publish-inheriting.
+    // A builder credential, `/b` read-open and publish-inheriting.
     let s = served_for_classes(builder_basic());
     s.mount_rules()
         .set(
@@ -1826,11 +1850,11 @@ fn the_measured_credential_classes_are_unchanged() {
         .unwrap();
     let mut want = builder_only(basic_realm);
     want[1] = OPEN[1].to_owned();
-    check("K6e", s, &want);
+    check("builder credential, /b read Open", s, &want);
 
-    // K7: no credential anywhere.
+    // No credential anywhere.
     check(
-        "K7",
+        "no credential",
         served_for_classes(RtspServerBuilder::new("rtsp://127.0.0.1:0").unwrap()),
         &owned(OPEN),
     );
