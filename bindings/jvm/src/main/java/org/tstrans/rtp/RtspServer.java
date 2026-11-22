@@ -276,7 +276,9 @@ public final class RtspServer extends NativeHandle {
      * mount is closed: its kept {@link MountHandle}'s pushes and {@code flush()} throw
      * {@code RtspException(CLOSED)} (its getters still answer), and a multicast mount
      * stops sending to its group. A reader whose SETUP completed while this call ran
-     * receives nothing further and ends by its own session timeout. This is
+     * receives nothing further; it ends at its TEARDOWN, at its session timeout
+     * (which its keepalives postpone), or at its next PLAY, which is answered 404
+     * and ends its session, also when a mount has been added at the path again. This is
      * also how idle on-demand mounts are removed: they stay registered after their
      * publisher leaves. Blocks for the Notice writes (at most 1 s per session), and
      * other calls on this server object wait behind it meanwhile, as they do behind
