@@ -1047,6 +1047,16 @@ fn a_playing_reader_keeps_its_stream_after_a_refused_setup_elsewhere() {
     let r = setup_reader(&mut tcp, port, "/open", 1, "");
     assert_eq!(status(&r), 200, "{r}");
     let sid = session_id(&r);
+    // The server picks the channel pair (from a counter shared by every
+    // reader in the process), whatever pair the SETUP asked for.
+    let rtp_channel: u8 = try_header(&r, "Transport")
+        .and_then(|t| {
+            t.split(';')
+                .find_map(|p| p.trim().strip_prefix("interleaved="))
+        })
+        .and_then(|pair| pair.split('-').next())
+        .and_then(|ch| ch.parse().ok())
+        .unwrap_or_else(|| panic!("no interleaved pair granted: {r}"));
     let r = in_session(&mut tcp, port, "PLAY", "/open", 2, &sid);
     assert_eq!(status(&r), 200, "{r}");
     assert!(eventually(|| open.peer_count() == 1), "the reader plays");
@@ -1073,7 +1083,7 @@ fn a_playing_reader_keeps_its_stream_after_a_refused_setup_elsewhere() {
         let deadline = std::time::Instant::now() + scaled(Duration::from_secs(5));
         let mut seen = false;
         while !seen && std::time::Instant::now() < deadline {
-            seen = matches!(wire.next(&mut tcp), Wire::Frame(0));
+            seen = matches!(wire.next(&mut tcp), Wire::Frame(ch) if ch == rtp_channel);
         }
         stop.store(true, Ordering::Release);
         seen
@@ -1911,5 +1921,66 @@ fn refused_answers_on_one_connection_are_counted_on_the_rule() {
         rules.default_auth_failures(),
         MountRuleAuthFailures::default()
     );
+    server.stop().unwrap();
+}
+
+/// A Digest answer computed for the challenge in force before
+/// `set_challenge` changed it is refused on a server built with a
+/// credential: a 401 that offers the new challenge without `stale`, and an
+/// answer in the new challenge on the same connection is admitted.
+#[test]
+fn an_answer_for_the_old_challenge_is_refused_after_set_challenge() {
+    let mut b = RtspServerBuilder::new("rtsp://127.0.0.1:0").unwrap();
+    b.auth_digest_md5("realm", "admin", pw("secret"));
+    let server = started_with_mount(b);
+    let port = server.local_addr().unwrap().port();
+    let uri = format!("rtsp://127.0.0.1:{port}/a");
+    let describe = |tcp: &mut TcpStream, cseq: u32, auth: &str| {
+        request(
+            tcp,
+            &format!("DESCRIBE {uri} RTSP/1.0\r\nCSeq: {cseq}\r\n{auth}\r\n"),
+        )
+    };
+    let nc = Cell::new(0);
+    let mut tcp = connect(port);
+    let r = describe(&mut tcp, 1, "");
+    assert_eq!(status(&r), 401, "{r}");
+    let old = try_header(&r, "WWW-Authenticate").unwrap().to_owned();
+    assert_eq!(challenge_param(&old, "realm").as_deref(), Some("realm"));
+
+    server
+        .mount_rules()
+        .set_challenge(AuthScheme::DigestSha256, "lab")
+        .unwrap();
+    let r = describe(
+        &mut tcp,
+        2,
+        &digest_md5(&old, &nc, "admin", "secret", "DESCRIBE", &uri),
+    );
+    assert_eq!(status(&r), 401, "an answer for the old challenge: {r}");
+    let new = try_header(&r, "WWW-Authenticate").unwrap().to_owned();
+    assert_eq!(
+        challenge_param(&new, "realm").as_deref(),
+        Some("lab"),
+        "{new}"
+    );
+    assert_eq!(
+        challenge_param(&new, "algorithm").as_deref(),
+        Some("SHA-256"),
+        "{new}"
+    );
+    assert_eq!(challenge_param(&new, "stale"), None, "{new}");
+    assert_eq!(
+        challenge_param(&new, "nonce"),
+        challenge_param(&old, "nonce"),
+        "not re-challenged as stale"
+    );
+
+    let r = describe(
+        &mut tcp,
+        3,
+        &digest_sha256(&new, &nc, "admin", "secret", "DESCRIBE", &uri),
+    );
+    assert_eq!(status(&r), 200, "an answer in the new challenge: {r}");
     server.stop().unwrap();
 }
