@@ -288,7 +288,13 @@ pub(crate) fn spawn_multicast_sender(
         let clock = RtpClock::new(0);
         let mut seq = initial_seq;
         loop {
+            // Biased, the ends first: frames still queued when the mount is
+            // removed (or the server ends) are not sent to the group after
+            // the sender has seen it.
             tokio::select! {
+                biased;
+                _ = cancel.cancelled() => return,
+                () = removed.cancelled() => return,
                 res = rx.recv() => match res {
                     Ok(payload) => {
                         let mut datagram = Vec::with_capacity(RTP_HEADER_LEN + payload.len());
@@ -317,8 +323,6 @@ pub(crate) fn spawn_multicast_sender(
                     }
                     Err(broadcast::error::RecvError::Closed) => return,
                 },
-                _ = cancel.cancelled() => return,
-                () = removed.cancelled() => return,
             }
         }
     })
@@ -548,6 +552,48 @@ mod tests {
             2 * (RTP_HEADER_LEN as u64 + 8)
         );
         cancel.cancel();
+    }
+
+    /// A removed mount's sender sends none of the frames still queued for
+    /// it: with the removal already seen, every round ends with nothing
+    /// sent. An unbiased choice would send the first frame in about half
+    /// the rounds.
+    #[tokio::test]
+    async fn a_removed_mount_sends_none_of_its_queued_frames() {
+        let receiver = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        for round in 0..64 {
+            let socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+            socket
+                .connect(receiver.local_addr().unwrap())
+                .await
+                .unwrap();
+            let (tx, rx) = broadcast::channel::<Bytes>(8);
+            for _ in 0..4 {
+                tx.send(Bytes::from_static(&[0x47; 188])).unwrap();
+            }
+            let removed = CancellationToken::new();
+            removed.cancel();
+            let sent = Arc::new(SentCounters::default());
+            let task = spawn_multicast_sender(
+                rx,
+                Arc::new(socket),
+                CancellationToken::new(),
+                removed,
+                1,
+                1,
+                Arc::new(PeerDropCounter::default()),
+                Arc::clone(&sent),
+            );
+            tokio::time::timeout(std::time::Duration::from_secs(10), task)
+                .await
+                .expect("the sender ends on the removal")
+                .unwrap();
+            assert_eq!(
+                sent.packets.load(std::sync::atomic::Ordering::Acquire),
+                0,
+                "round {round}: a queued frame was sent after the removal"
+            );
+        }
     }
 
     // NOTE: an end-to-end "build_multicast_send_socket succeeds with
