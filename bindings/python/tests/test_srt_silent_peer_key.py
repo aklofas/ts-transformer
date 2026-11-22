@@ -52,8 +52,9 @@ def _dial(open_sender: Callable[[], T]) -> T:
     while True:
         try:
             return open_sender()
-        except SrtError:
-            if time.monotonic() >= deadline:
+        except SrtError as exc:
+            # Only the connect race is retried; a refused configuration is final.
+            if exc.kind == SrtErrorKind.CONFIG_INVALID or time.monotonic() >= deadline:
                 raise
             time.sleep(0.05)
 
