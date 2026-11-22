@@ -16,8 +16,7 @@ use std::time::SystemTime;
 
 use crate::rtsp::message::{RtspRequest, RtspResponse};
 use crate::rtsp::server::handlers::{
-    bind_server_udp_pair, check_auth, error_response, generate_session_id,
-    handle_not_valid_in_state,
+    bind_server_udp_pair, error_response, generate_session_id, handle_not_valid_in_state,
 };
 use crate::rtsp::server::mount::MountEntry;
 use crate::rtsp::server::path::{
@@ -78,9 +77,6 @@ pub(crate) fn handle_announce(
     state: &Arc<ServerState>,
     session: &mut ServerSessionState,
 ) -> RtspResponse {
-    if let Err(c) = check_auth(req, state, session, "ANNOUNCE") {
-        return c;
-    }
     // One role per connection: no second publisher, and no publisher on
     // a connection that already set up (or is playing) as a reader.
     if !matches!(session.role, Role::Idle) {
@@ -259,8 +255,9 @@ fn create_on_demand_mount(
 }
 
 /// SETUP (`mode=record`) handler — reached only via
-/// [`crate::rtsp::server::handlers::handle_setup`]'s routing match, which
-/// has already run `check_auth(req, state, session, "SETUP")` and
+/// [`crate::rtsp::server::handlers::handle_setup`]'s routing match, after
+/// the session loop admitted the SETUP
+/// ([`crate::rtsp::server::handlers::authorize_request`]) and the handler
 /// resolved `mount_path`/`parsed` — this function does not repeat either.
 ///
 /// Rejection codes:
@@ -427,9 +424,6 @@ pub(crate) fn handle_record(
     state: &Arc<ServerState>,
     session: &mut ServerSessionState,
 ) -> RtspResponse {
-    if let Err(c) = check_auth(req, state, session, "RECORD") {
-        return c;
-    }
     let peer_ip = session.peer_addr.ip();
     let Some(publish) = session.publisher_mut() else {
         return handle_not_valid_in_state(req);
@@ -632,7 +626,11 @@ mod tests {
                 ),
             )
             .unwrap();
-        let r = handle_record(&req(RtspMethod::Record, "rtsp://h/pub"), &st, &mut s);
+        let r = crate::rtsp::server::session::dispatch(
+            &req(RtspMethod::Record, "rtsp://h/pub"),
+            &st,
+            &mut s,
+        );
         assert_eq!(r.status, 403);
         assert!(!r.headers.contains_key("www-authenticate"));
         assert!(matches!(s.role, Role::Idle));

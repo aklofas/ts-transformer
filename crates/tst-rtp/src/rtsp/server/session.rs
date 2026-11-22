@@ -488,8 +488,7 @@ impl ServerSessionState {
     /// aborting it there releases the lock with a partial `$` frame on the
     /// wire, which the next RTSP response then completes with RTSP text
     /// (framing desync). A reader that was playing becomes `Paused`.
-    /// Callers that allow a later PLAY replace `peer_cancel` with a fresh
-    /// token afterwards.
+    /// Callers that allow a later PLAY use [`Self::retire_fanout_and_rearm`].
     pub(crate) fn retire_fanout(&mut self) {
         self.peer_cancel.cancel();
         if let Role::Reader(r) = &mut self.role
@@ -499,6 +498,21 @@ impl ServerSessionState {
             self.retired_fanouts.retain(|h| !h.is_finished());
             self.retired_fanouts.push(fanout);
         }
+    }
+
+    /// [`Self::retire_fanout`], then a fresh `peer_cancel`, so a later PLAY's
+    /// fanout does not start cancelled (the retired fanout holds the old
+    /// token and still exits). PAUSE and a second PLAY.
+    pub(crate) fn retire_fanout_and_rearm(&mut self) {
+        self.retire_fanout();
+        self.peer_cancel = tokio_util::sync::CancellationToken::new();
+    }
+
+    /// [`Self::end_role`] for a connection that stays open and may set up a
+    /// new role: a fresh `peer_cancel`, as [`Self::retire_fanout_and_rearm`].
+    pub(crate) fn end_role_keeping_the_connection(&mut self) {
+        self.end_role();
+        self.peer_cancel = tokio_util::sync::CancellationToken::new();
     }
 }
 
@@ -1021,21 +1035,8 @@ where
                 // requests to bypass the 3-strike limit indefinitely.
                 // 3xx is excluded: no handler emits a redirect on a gated method,
                 // and a redirect is not an auth success.
-                match req.method {
-                    RtspMethod::Describe
-                    | RtspMethod::Setup
-                    | RtspMethod::Play
-                    | RtspMethod::Pause
-                    | RtspMethod::Teardown
-                    | RtspMethod::Announce
-                    | RtspMethod::Record => {
-                        if session.request_authenticated {
-                            session.auth_failures = 0;
-                        }
-                    }
-                    RtspMethod::Options | RtspMethod::GetParameter => {
-                        // Non-auth-gated: do not touch the failure counter.
-                    }
+                if handlers::gated_method(req.method).is_some() && session.request_authenticated {
+                    session.auth_failures = 0;
                 }
             }
             if req.method == RtspMethod::Teardown && response.status == 200 {
@@ -1180,12 +1181,19 @@ fn unparseable_reply_bytes(reply: &crate::rtsp::message::UnparseableRequestReply
     .encode()
 }
 
-/// Dispatch an RTSP request to the appropriate handler.
-fn dispatch(
+/// Dispatch an RTSP request to the appropriate handler, after admitting
+/// it: a gated method passes the mount rules here, once, before its
+/// handler reads anything else of the request.
+pub(crate) fn dispatch(
     req: &RtspRequest,
     state: &Arc<ServerState>,
     session: &mut ServerSessionState,
 ) -> crate::rtsp::message::RtspResponse {
+    if let Some(method) = handlers::gated_method(req.method)
+        && let Err(refusal) = handlers::authorize_request(req, state, session, method)
+    {
+        return refusal;
+    }
     match req.method {
         RtspMethod::Options => handlers::handle_options(req, state),
         RtspMethod::Describe => handlers::handle_describe(req, state, session),

@@ -141,11 +141,29 @@ pub(crate) fn rule_key_and_direction(
     }
 }
 
-/// Check a gated request against the mount rules. Returns `Ok(())` if the
-/// request may proceed; otherwise the response to send: the `Refuse`
-/// status (no challenge; it is not a 401, so it never counts toward the
-/// three-401 close) or a 401 challenge.
-pub(crate) fn check_auth(
+/// The method's text for the Digest check when `method` is admitted
+/// through the mount rules; `None` for OPTIONS and GET_PARAMETER, which
+/// never are. No wildcard arm: a new method does not compile until it is
+/// classified here.
+pub(crate) fn gated_method(method: RtspMethod) -> Option<&'static str> {
+    match method {
+        RtspMethod::Describe => Some("DESCRIBE"),
+        RtspMethod::Announce => Some("ANNOUNCE"),
+        RtspMethod::Setup => Some("SETUP"),
+        RtspMethod::Play => Some("PLAY"),
+        RtspMethod::Record => Some("RECORD"),
+        RtspMethod::Pause => Some("PAUSE"),
+        RtspMethod::Teardown => Some("TEARDOWN"),
+        RtspMethod::Options | RtspMethod::GetParameter => None,
+    }
+}
+
+/// Admit a gated request against the mount rules, before its handler runs.
+/// Returns `Ok(())` if the request may proceed; otherwise the response to
+/// send: the `Refuse` status (no challenge; it is not a 401, so it never
+/// counts toward the three-401 close) or a 401 challenge. `method_str` is
+/// [`gated_method`]'s text for the request.
+pub(crate) fn authorize_request(
     req: &RtspRequest,
     state: &Arc<ServerState>,
     session: &mut ServerSessionState,
@@ -161,12 +179,9 @@ pub(crate) fn check_auth(
             // refused: a publisher refused at RECORD or TEARDOWN stops.
             let keyed_on_role = !matches!(req.method, RtspMethod::Announce | RtspMethod::Describe);
             if keyed_on_role && !matches!(session.role, Role::Idle) {
-                session.end_role();
                 // Unlike TEARDOWN, a refusal keeps the connection open, so
-                // it may set up a new role: re-arm the token `end_role`
-                // cancelled (the retired fanout holds the old one and still
-                // exits), or a later PLAY's fanout would start cancelled.
-                session.peer_cancel = tokio_util::sync::CancellationToken::new();
+                // it may set up a new role.
+                session.end_role_keeping_the_connection();
             }
             return Err(error_response(req, status.code(), status.reason()));
         }
@@ -233,7 +248,8 @@ pub(crate) fn handle_options(req: &RtspRequest, state: &Arc<ServerState>) -> Rts
 
 /// DESCRIBE handler — RFC 7826 §10.2.
 ///
-/// 1. Auth check (401 if missing/wrong/stale).
+/// 1. Admitted before this runs ([`authorize_request`]: 401 if
+///    missing/wrong/stale).
 /// 2. Extract mount path from request URI; look up in state.mounts.
 /// 3. 404 if mount not registered.
 /// 4. 200 OK with `Content-Type: application/sdp` + SDP body from
@@ -241,12 +257,8 @@ pub(crate) fn handle_options(req: &RtspRequest, state: &Arc<ServerState>) -> Rts
 pub(crate) fn handle_describe(
     req: &RtspRequest,
     state: &Arc<ServerState>,
-    session: &mut ServerSessionState,
+    _session: &mut ServerSessionState,
 ) -> RtspResponse {
-    if let Err(challenge) = check_auth(req, state, session, "DESCRIBE") {
-        return challenge;
-    }
-
     // Extract mount path. URI may be a full rtsp://host/path or a
     // path-only "/path" form (some cameras send relative URIs).
     let mount_path = extract_mount_path(&req.uri);
@@ -320,7 +332,7 @@ pub(crate) fn next_interleaved_pair() -> Option<(u8, u8)> {
 /// parsed, below.
 ///
 /// Rejection codes:
-/// - 401 Unauthorized — auth check fails (via `check_auth`).
+/// - 401 Unauthorized — auth check fails (via `authorize_request`).
 /// - 404 Not Found — mount path not registered, or a publisher session's
 ///   SETUP outside the mount it announced (answered like a missing mount).
 /// - 400 Bad Request — Transport header missing or malformed.
@@ -344,10 +356,6 @@ pub(crate) fn handle_setup(
     state: &Arc<ServerState>,
     session: &mut ServerSessionState,
 ) -> RtspResponse {
-    if let Err(challenge) = check_auth(req, state, session, "SETUP") {
-        return challenge;
-    }
-
     // Look up the mount. A session that has already announced a
     // publisher gets first crack at resolving the path via its own
     // announced `a=control` values (handles non-standard control
@@ -653,9 +661,6 @@ pub(crate) fn handle_play(
     state: &Arc<ServerState>,
     session: &mut ServerSessionState,
 ) -> RtspResponse {
-    if let Err(challenge) = check_auth(req, state, session, "PLAY") {
-        return challenge;
-    }
     let (session_id, mount_path, transport) = match &session.role {
         // A publisher session never plays (one role per session).
         Role::Publisher(_) => return handle_not_valid_in_state(req),
@@ -734,8 +739,7 @@ pub(crate) fn handle_play(
     // task exits at its next frame boundary; the session's Drop is the
     // backstop for a peer that never reads.
     if session.is_playing() {
-        session.retire_fanout();
-        session.peer_cancel = tokio_util::sync::CancellationToken::new();
+        session.retire_fanout_and_rearm();
     }
     // Snapshot the initial RTP seq and clock timestamp before spawning.
     // These values are handed to both spawn_peer_fanout (which uses them
@@ -816,12 +820,9 @@ fn play_response_ok(
 /// - 454 Session Not Found — PAUSE before SETUP.
 pub(crate) fn handle_pause(
     req: &RtspRequest,
-    state: &Arc<ServerState>,
+    _state: &Arc<ServerState>,
     session: &mut ServerSessionState,
 ) -> RtspResponse {
-    if let Err(challenge) = check_auth(req, state, session, "PAUSE") {
-        return challenge;
-    }
     let Some(session_id) = session.session_id().map(str::to_owned) else {
         return error_response(req, 454, "Session Not Found");
     };
@@ -841,8 +842,7 @@ pub(crate) fn handle_pause(
     // never reads defers that boundary exit indefinitely (the task stays
     // parked in its frame write, holding the writer); the session's Drop
     // aborts retired fanouts and is the backstop for that case.
-    session.retire_fanout();
-    session.peer_cancel = tokio_util::sync::CancellationToken::new();
+    session.retire_fanout_and_rearm();
     if let Role::Reader(r) = &mut session.role {
         r.playback = Playback::Paused;
     }
@@ -865,12 +865,9 @@ pub(crate) fn handle_pause(
 /// - 401 Unauthorized — auth check fails.
 pub(crate) fn handle_teardown(
     req: &RtspRequest,
-    state: &Arc<ServerState>,
+    _state: &Arc<ServerState>,
     session: &mut ServerSessionState,
 ) -> RtspResponse {
-    if let Err(challenge) = check_auth(req, state, session, "TEARDOWN") {
-        return challenge;
-    }
     let session_id = session.session_id().unwrap_or_default().to_owned();
     // Retire the reader's fanout and end a publisher — `PublishSession::end`
     // flushes the adapter, cancels any UDP ingest tasks, and frees the
@@ -977,7 +974,7 @@ mod tests {
         let state = crate::rtsp::server::test_state_with(builder);
         let req = make_req(RtspMethod::Describe, "rtsp://127.0.0.1:8554/live");
         let mut session = ServerSessionState::new();
-        let resp = handle_describe(&req, &state, &mut session);
+        let resp = crate::rtsp::server::session::dispatch(&req, &state, &mut session);
         assert_eq!(resp.status, 401);
         let www_auth = resp.headers.get("www-authenticate").unwrap();
         assert!(www_auth.starts_with("Digest"));
@@ -993,7 +990,7 @@ mod tests {
         let state = crate::rtsp::server::test_state_with(builder);
         let req = make_req(RtspMethod::Describe, "rtsp://127.0.0.1:8554/live");
         let mut session = ServerSessionState::new();
-        let resp = handle_describe(&req, &state, &mut session);
+        let resp = crate::rtsp::server::session::dispatch(&req, &state, &mut session);
         assert_eq!(resp.status, 401);
         let wire = String::from_utf8(resp.encode().to_vec()).unwrap();
         let lines: Vec<&str> = wire
