@@ -35,9 +35,10 @@ pub(crate) struct SilentPeer {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Verdict {
     Healthy,
-    /// The first sign of life from this inner: its first reading that
-    /// differs from an earlier one, or a first reading that cannot tell.
-    /// Given once per inner.
+    /// The first sign of life from this inner: its first `Some` reading
+    /// that differs from the `Some` reading just before it (a `None` between
+    /// them makes the next one a first reading), or a first reading that
+    /// cannot tell. Given once per inner.
     Answered,
     /// No send since `unanswered` ago has been answered, and that span is
     /// at least the window.

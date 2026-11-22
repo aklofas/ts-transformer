@@ -425,8 +425,9 @@ pub trait Transport: Send {
     /// so it would hide a silent peer.
     ///
     /// A transport that sometimes cannot tell returns `None` consistently,
-    /// not now and then: a reader that sees an occasional `None` keeps
-    /// asking at every send. A managed wrapper armed for silent-peer
+    /// not now and then: a `None` between two readings makes the next one a
+    /// first reading again, so a connection that has not answered yet may
+    /// never be seen to answer, and is read at every send. A managed wrapper armed for silent-peer
     /// detection over a transport that returns `None` never trips, and keeps
     /// its ordinary reconnect budget once it has read a new connection after
     /// a successful send on it (a connection that breaks before it was read

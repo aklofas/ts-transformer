@@ -403,9 +403,10 @@ impl ManagedStatsHandle {
 ///
 /// [`Self::with_silent_peer_timeout`] arms a window. After a successful
 /// inner send the wrapper reads the inner's [`Transport::peer_activity`]
-/// (at every send until the connection has answered once, then at most
-/// every quarter window); a reading that has not moved while sends kept
-/// going for a whole window trips. The tripped connection is taken out,
+/// (at every send until the connection has answered once, then every
+/// quarter window, and at every send once a send has gone a whole window
+/// unanswered); a reading that has not moved while sends kept going for a
+/// whole window trips. The tripped connection is taken out,
 /// closed with [`Transport::abandon`] once `inner` is released, and
 /// replaced as if its send had failed with `Broken`. Unarmed, the send
 /// path reads nothing.
@@ -458,9 +459,11 @@ impl ManagedStatsHandle {
 /// [`Self::cancel_handle`]'s `cancel()` all run the same terminal
 /// transition: latch closed, wake a backoff wait, and fire the live
 /// inner's wake handle. `close()` then joins any active background
-/// worker; that join is bounded by an in-flight `factory()` call at
-/// most — a drain send parked in the inner transport is interrupted by
-/// the fired handle, and backoff waits are interruptible in both modes.
+/// worker; that join is bounded by an in-flight `factory()` call, or an
+/// in-flight [`Transport::abandon`] of a connection the worker gave up on
+/// (which must not wait), at most — a drain send parked in the inner
+/// transport is interrupted by the fired handle, and backoff waits are
+/// interruptible in both modes.
 /// `Drop` never blocks: it fires the same signal and detaches, leaving
 /// the worker to observe it and exit on its own.
 ///
@@ -617,9 +620,10 @@ impl<T: Transport + 'static> ManagedTransport<T> {
     ///
     /// Limits:
     ///
-    /// - Silence is judged against sends: nothing is detected while the
-    ///   caller sends nothing, nor while it is parked inside the inner
-    ///   send.
+    /// - Silence is judged against sends that succeeded: nothing is
+    ///   detected while the caller sends nothing, while it is parked inside
+    ///   the inner send, or while its sends return `Backpressure` (those are
+    ///   not sampled).
     /// - A gap of `window / 2` or more between two sends (a burst every
     ///   `window / 2` or more, or a send that itself blocks `window / 2` or
     ///   more) restarts the count, so such a sender never trips.
@@ -628,6 +632,32 @@ impl<T: Transport + 'static> ManagedTransport<T> {
     /// - What the abandoned connection still held is lost: everything sent
     ///   between the moment the peer went silent and the trip, about
     ///   `window` plus a fraction of it. No statistic counts it.
+    /// - **The window must be longer than the link's round trip** plus one
+    ///   send period: an answer arrives a round trip (plus the peer's
+    ///   acknowledgement interval and jitter) after a send. With a shorter
+    ///   window every new connection is abandoned before its first answer
+    ///   can arrive, a working link is re-dialled every window, and, as no
+    ///   connection answers, `max_attempts` ends it with a give-up (with
+    ///   `None`, never).
+    /// - A window at or above the inner's own break detection never fires
+    ///   first (libsrt breaks a silent connection after about 5 s unless
+    ///   its peer-idle timeout is raised).
+    /// - A peer that answers the first packet of every connection and then
+    ///   goes silent: in `Background` mode, and in `Blocking` mode at gap
+    ///   capacity 0, the first send on each new connection is read, its
+    ///   answer is seen, the budget is given back, and the sender re-dials
+    ///   about every window plus one backoff step without end:
+    ///   `max_attempts` does not end it. In `Blocking` mode with a gap
+    ///   buffer the replay after the reconnect is not read: when its answer
+    ///   is already in at the caller's next send (a round trip shorter than
+    ///   the send period), it is that connection's starting value, the
+    ///   connection never answered, its attempts count on and `max_attempts`
+    ///   ends it with a give-up; with a longer round trip the answer is seen
+    ///   and the re-dials are endless as in the other modes.
+    /// - A transport whose reading is `None` once its connection has broken
+    ///   (SRT's is) can read `None` at a new connection's first reading if
+    ///   the connection broke just after a successful send: that counts as
+    ///   "cannot tell" and gives the reconnect budget back once.
     #[must_use]
     pub fn with_silent_peer_timeout(mut self, window: Duration) -> Self {
         self.silent = (!window.is_zero()).then(|| Arc::new(Mutex::new(SilentPeer::new(window))));
