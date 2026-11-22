@@ -86,8 +86,9 @@ fn an_rtsps_mp2t_push_arrives_byte_identical() {
 /// The KLV units sit half a frame after their access unit, so the server
 /// can place them only from the sender reports. As over `rtsp://`, the
 /// server maps a KLV time to the video clock through the reports' NTP
-/// times in 32.32 fixed point and rounds down to a whole tick, so a unit
-/// may land one tick early.
+/// times in 32.32 fixed point and rounds down to a whole tick (with a guard
+/// for the push's own truncation), so a unit lands exactly where it was
+/// sent.
 #[test]
 fn an_rtsps_h264_klv_push_aligns() {
     const AUS: usize = 30;
@@ -123,8 +124,8 @@ fn an_rtsps_h264_klv_push_aligns() {
     for (i, ((at, payload), unit)) in klv.iter().zip(&units).enumerate() {
         let sent = i as i64 * AU_STEP + KLV_OFFSET;
         let early = sent - (at - video[0]);
-        assert!(
-            (0..=1).contains(&early),
+        assert_eq!(
+            early, 0,
             "KLV unit {i} at {} past the first video sample, sent at {sent}",
             at - video[0]
         );

@@ -20,9 +20,10 @@
 //! is abandoned for the fallback (counted as one step; the same offset is
 //! not re-adopted). A mapping that has validated is kept through later
 //! video stalls. A unit placed less than [`STEP_TOLERANCE_TICKS`] before
-//! PTS 0 lands on PTS 0: the report offset is rounded to whole ticks, so
-//! the unit captured at the video origin can otherwise be implied a tick
-//! early. A later report pair always recomputes
+//! PTS 0 lands on PTS 0: the report offset is rounded to whole ticks (down,
+//! so a unit is never placed later than its sender sent it, and exactly for
+//! a sender whose reports are tick-exact), so the unit captured at the
+//! video origin can otherwise be implied a tick early. A later report pair always recomputes
 //! the mapping and may move KLV units' PTS as a result (no continuity
 //! requirement for metadata); a move of more than
 //! [`STEP_TOLERANCE_TICKS`] ticks [`Aligner::steps`].
@@ -205,7 +206,8 @@ struct VideoOrigin {
 /// KLV-to-video `offset` and the video origin's unwrapped RTP time.
 ///
 /// The sender-report offset is rounded to whole ticks (each report's RTP
-/// stamp is rounded on its own, and the NTP delta floors), so the unit
+/// stamp is rounded on its own, and the NTP delta floors, never rounding up
+/// past the sender's own instant), so the unit
 /// captured at the video origin can be implied a tick or two before PTS 0,
 /// which the adapter drops as "placed before the video origin". Within
 /// [`STEP_TOLERANCE_TICKS`] before the origin (less than 1 ms, so exactly that many ticks is excluded) it IS the origin; anything
@@ -424,8 +426,12 @@ impl Aligner {
             return;
         };
         // NTP values are 32.32 fixed-point seconds; the delta in 90 kHz
-        // ticks is computed in i128 to avoid overflow, then narrowed.
-        let ntp_delta_ticks = (((ntp_k as i128) - (ntp_v as i128)) * 90_000) >> 32;
+        // ticks is computed in i128 to avoid overflow, then narrowed. The
+        // shift floors, so the offset is never late. The guard of two NTP
+        // units (each report's time was itself cut to one) lifts a delta that
+        // the sender's own truncation left just under a whole tick, and is
+        // far too small to lift one that is really short.
+        let ntp_delta_ticks = ((((ntp_k as i128) - (ntp_v as i128)) * 90_000) + 180_000) >> 32;
         let candidate = (rtp_v - rtp_k) + ntp_delta_ticks as i64;
         if self
             .rejected_offset
@@ -801,6 +807,108 @@ mod tests {
         ) -> Vec<(KlvUnit, i64)> {
             self.on_klv_sr(sr);
             self.release(now)
+        }
+    }
+
+    /// Where the aligner puts a KLV unit sent at `pts_unit`, minus `pts_unit`,
+    /// when both tracks' reports are made the way the push client makes them:
+    /// every NTP time comes from one `PushTimeline`, whose anchor is the first
+    /// time asked for.
+    fn placement_error(
+        anchor: i64,
+        pts_v: i64,
+        pts_k: i64,
+        pts_unit: i64,
+        base: std::time::SystemTime,
+    ) -> i64 {
+        let (base_v, base_k) = (1_000_000u32, 77_000_000u32);
+        let mut timeline = crate::rtcp::sender::PushTimeline::new(base);
+        let _ = timeline.ntp_at(anchor);
+        let report = |ntp: u64, rtp: u32| crate::rtcp::SenderReport {
+            ssrc: 1,
+            ntp_timestamp: ntp,
+            rtp_timestamp: rtp,
+            sender_packet_count: 0,
+            sender_octet_count: 0,
+            report_blocks: vec![],
+        };
+        let mut a = Aligner::caught_up();
+        a.on_video_au(base_v.wrapping_add(anchor as u32), 0);
+        a.on_video_sr(&report(
+            timeline.ntp_at(pts_v),
+            base_v.wrapping_add(pts_v as u32),
+        ));
+        a.on_klv_sr(&report(
+            timeline.ntp_at(pts_k),
+            base_k.wrapping_add(pts_k as u32),
+        ));
+        let placed = a.on_klv_unit(
+            KlvUnit {
+                bytes: vec![1],
+                rtp_timestamp: base_k.wrapping_add(pts_unit as u32),
+            },
+            Instant::now(),
+        );
+        assert_eq!(placed.len(), 1);
+        assert_eq!(a.mode(), ClockAlignment::SenderReport);
+        placed[0].1 - (pts_unit - anchor)
+    }
+
+    #[test]
+    fn report_pairs_as_the_push_client_makes_them_place_every_unit_exactly() {
+        let base = std::time::SystemTime::UNIX_EPOCH + Duration::new(1_795_000_000, 123_456_789);
+        let anchor = 9_000i64;
+        let mut rows = 0;
+        // 29.97, 30 and 59.94 frames a second; the KLV unit half a frame
+        // after, on, or before its access unit.
+        for (step, half) in [(3003i64, 1501i64), (3000, 1500), (1501, 750)] {
+            for klv_off in [half, 0, -half] {
+                // Report points on both sides of the anchor, so the two NTP
+                // times' truncation errors have every sign.
+                for i in -40..=40i64 {
+                    for j in [-3i64, -1, 0, 1, 2, 40] {
+                        let pts_v = anchor + i * step;
+                        let pts_k = pts_v + j * step + klv_off;
+                        // Well after the video origin, so no clamp to it is involved.
+                        let pts_unit = anchor + 90_000;
+                        assert_eq!(
+                            placement_error(anchor, pts_v, pts_k, pts_unit, base),
+                            0,
+                            "step {step}, KLV offset {klv_off}, video report {pts_v}, KLV report {pts_k}"
+                        );
+                        rows += 1;
+                    }
+                }
+            }
+        }
+        assert!(rows > 1_000);
+    }
+
+    #[test]
+    fn a_report_pair_from_independent_clocks_never_places_a_unit_late() {
+        // Two reports stamped at arbitrary instants of one wall clock, each
+        // RTP stamp rounded to nearest or floored, each NTP time cut to
+        // 32.32: the true offset is zero, so a positive one is a late unit.
+        let mut seed = 0x9E37_79B9_7F4A_7C15u64;
+        let mut rnd = || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed
+        };
+        for nearest in [true, false] {
+            for _ in 0..100_000 {
+                let (t_v, t_k) = (rnd() % (10u64 << 32), rnd() % (10u64 << 32));
+                let rtp_of = |t: u64| {
+                    let ticks = (t as f64) * 90_000.0 / 4_294_967_296.0;
+                    (if nearest { ticks.round() } else { ticks.floor() }) as u32
+                };
+                let mut a = Aligner::new();
+                a.on_video_sr(&sr(t_v >> 32, t_v as u32, rtp_of(t_v)));
+                a.on_klv_sr(&sr(t_k >> 32, t_k as u32, rtp_of(t_k)));
+                let offset = a.offset.expect("both reports are known");
+                assert!(offset <= 0, "offset {offset} for {t_v} and {t_k}");
+            }
         }
     }
 

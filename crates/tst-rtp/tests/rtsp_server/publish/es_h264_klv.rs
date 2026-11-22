@@ -49,7 +49,9 @@ const KLV_SR: (u64, u32) = (((NTP_SECS as u64) << 32) | (1 << 31), KLV_TS0);
 /// pts_k     = video_rtp - video_rtp_origin
 /// ```
 ///
-/// in 32.32 NTP fixed point, rounded down to whole ticks.
+/// in 32.32 NTP fixed point, rounded down to whole ticks. The server adds a
+/// guard of two NTP units, so a unit may land one tick after this value; the
+/// assertions below allow that.
 fn spec_klv_pts(t_k: u32) -> i64 {
     let (ntp_v, rtp_v) = (VIDEO_SR.0 as i128, VIDEO_SR.1 as i128);
     let (ntp_k_sr, rtp_k_sr) = (KLV_SR.0 as i128, KLV_SR.1 as i128);

@@ -56,9 +56,9 @@ const KLV_OFFSET: i64 = AU_STEP / 2;
 /// unit, measured from the first video sample.
 ///
 /// The server maps a KLV time to the video clock through the reports' NTP
-/// times in 32.32 fixed point and rounds down to a whole tick, so a unit
-/// may land one tick early; the push's own NTP times are within one NTP
-/// unit of exact, far too little to move it more.
+/// times in 32.32 fixed point and rounds down to a whole tick, with a guard
+/// of two NTP units for the truncation of the push's own NTP times: for this
+/// client's reports the unit lands exactly where it was sent.
 fn push_and_check_klv_alignment(aus: usize, klv_first: bool) {
     let s = Served::ending_on_exit();
     let app = s.app();
@@ -93,8 +93,8 @@ fn push_and_check_klv_alignment(aus: usize, klv_first: bool) {
     for (i, ((pts, payload), unit)) in klv.iter().zip(&units).enumerate() {
         let sent = i as i64 * AU_STEP + KLV_OFFSET;
         let early = sent - (pts - video[0]);
-        assert!(
-            (0..=1).contains(&early),
+        assert_eq!(
+            early, 0,
             "KLV unit {i} at {} past the first video sample, sent at {sent}",
             pts - video[0]
         );
