@@ -373,12 +373,16 @@ impl Drop for Recorder {
     }
 }
 
-/// The policy a user of the key would run: no attempt limit, an
-/// exponential backoff from 100 ms to 1 s, a 256-message gap buffer that
-/// drops its oldest.
+/// The policy a user of the key would run (an exponential backoff from
+/// 100 ms to 1 s, a 256-message gap buffer that drops its oldest) with a
+/// budget of five attempts instead of none: in Blocking mode the reconnect
+/// runs inside the send, so a re-dial that can never succeed would keep the
+/// send, and the test, waiting for ever. With a budget it ends as a failed
+/// send within about 2.5 s, and [`Paced::send`] reports why. A healthy run
+/// needs one attempt per outage.
 fn users_policy(mode: ReconnectMode) -> ReconnectPolicy {
     ReconnectPolicy::default()
-        .with_max_attempts(None)
+        .with_max_attempts(Some(5))
         .with_backoff(BackoffStrategy::Exponential {
             base: Duration::from_millis(100),
             max: Duration::from_secs(1),
@@ -406,7 +410,9 @@ impl Paced {
         let mut msg = MSG;
         msg[..4].copy_from_slice(&self.seq.to_be_bytes());
         self.seq += 1;
-        self.tx.send(&msg).expect("a managed send");
+        if let Err(e) = self.tx.send(&msg) {
+            panic!("a managed send failed ({e}); {}", failed_redials());
+        }
         thread::sleep(PERIOD);
     }
 
@@ -424,6 +430,18 @@ impl Paced {
     fn reconnect_successes(&self) -> u64 {
         self.stats.stats().expect("stats").reconnect_successes
     }
+}
+
+/// The causes of the failed re-dials logged so far, for a failure message.
+/// Empty unless the test runs under `traced_test`.
+fn failed_redials() -> String {
+    let buf = tracing_test::internal::global_buf().lock().unwrap().clone();
+    let causes: Vec<String> = String::from_utf8_lossy(&buf)
+        .lines()
+        .filter(|l| l.contains("reconnect attempt failed"))
+        .map(str::to_string)
+        .collect();
+    format!("failed re-dials: {causes:?}")
 }
 
 /// The order every armed test asserts, decided when the second connection
@@ -470,16 +488,19 @@ fn reconnects_before_libsrt_breaks(mode: ReconnectMode) {
     drop(relay);
 }
 
+#[tracing_test::traced_test]
 #[test]
 fn an_armed_managed_sender_reconnects_long_before_libsrt_breaks_a_silent_peer() {
     reconnects_before_libsrt_breaks(ReconnectMode::Blocking);
 }
 
+#[tracing_test::traced_test]
 #[test]
 fn an_armed_managed_sender_reconnects_long_before_libsrt_breaks_a_silent_peer_in_background_mode() {
     reconnects_before_libsrt_breaks(ReconnectMode::Background);
 }
 
+#[tracing_test::traced_test]
 #[test]
 fn an_armed_encrypted_sender_does_not_trip_while_healthy_and_trips_when_muted() {
     require_loopback!();
@@ -508,6 +529,7 @@ fn an_armed_encrypted_sender_does_not_trip_while_healthy_and_trips_when_muted() 
     drop(relay);
 }
 
+#[tracing_test::traced_test]
 #[test]
 fn an_armed_sender_that_pauses_longer_than_the_window_does_not_reconnect() {
     require_loopback!();
@@ -547,6 +569,7 @@ fn an_armed_sender_that_pauses_longer_than_the_window_does_not_reconnect() {
     tx.tx.close();
 }
 
+#[tracing_test::traced_test]
 #[test]
 fn an_unarmed_managed_sender_still_waits_for_libsrt() {
     require_loopback!();
