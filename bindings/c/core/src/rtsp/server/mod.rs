@@ -9,7 +9,8 @@
 //!   (`_bind`, `_auth_basic`, `_auth_digest_md5`, `_auth_digest_sha256`,
 //!   `_max_sessions`, `_session_timeout`, `_fanout_capacity`,
 //!   `_graceful_shutdown_drain_ms`, `_tls_cert_pem`,
-//!   `_accept_unregistered_publishers`) + `_free`.
+//!   `_accept_unregistered_publishers`, `_allow_udp_media`,
+//!   `_accept_digest_without_qop`) + `_free`.
 //! - `start`: `tst_rtsp_server_builder_start` + the opaque `TstRtspServer`
 //!   scaffold.
 //! - `mount` / `mount_getters`: mount creation (`_add_unicast_mount`,

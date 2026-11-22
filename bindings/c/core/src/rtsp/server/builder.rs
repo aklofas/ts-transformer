@@ -50,6 +50,8 @@
 //! - `tst_rtsp_server_builder_fanout_capacity` — broadcast channel capacity
 //! - `tst_rtsp_server_builder_graceful_shutdown_drain_ms` — drain window in ms
 //! - `tst_rtsp_server_builder_tls_cert_pem` — TLS cert chain + private key PEM
+//! - `tst_rtsp_server_builder_allow_udp_media` — whether media may travel over UDP
+//! - `tst_rtsp_server_builder_accept_digest_without_qop` — accept the RFC 2069 Digest answer
 //! - `tst_rtsp_server_builder_free` — discard without starting
 
 use std::os::raw::c_char;
