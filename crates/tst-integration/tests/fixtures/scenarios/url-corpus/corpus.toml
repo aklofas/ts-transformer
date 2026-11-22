@@ -1154,7 +1154,7 @@ case = "default"
 open = { python = "IO", jvm = "TLS" }
 open_why = "no RTSP peer speaks TLS: Python dials the default port 322, where nothing listens; the JVM dials a drop peer, which closes the connection during the handshake"
 url = "rtsps://127.0.0.1/live"
-expect = { scheme = "rtsps", host = "127.0.0.1", port = 322, path = "/live", keys = { rtsp_version = "1.0" } }
+expect = { scheme = "rtsps", host = "127.0.0.1", port = 322, path = "/live", keys = { rtsp_version = "1.0", transport = "tcp" } }
 
 [[url]]
 scheme = "rtsp"

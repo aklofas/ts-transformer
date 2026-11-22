@@ -59,6 +59,7 @@ unchanged (310) and the test leaf-name multiset is byte-identical before/after
 | old `tests/…` | new `tests/…` |
 | --- | --- |
 | `rtsp_client_auth.rs` | `rtsp_client/auth.rs` |
+| (new) | `rtsp_client/default_transport.rs` |
 | `rtsp_client_fallback.rs` | `rtsp_client/fallback.rs` |
 | `rtsp_client_interleaved_e2e.rs` | `rtsp_client/interleaved_e2e.rs` |
 | (new) | `rtsp_client/interleaved_rtcp.rs` |

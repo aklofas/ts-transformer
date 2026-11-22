@@ -1764,7 +1764,8 @@
           "expect": {
             "host": "127.0.0.1",
             "keys": {
-              "rtsp_version": "1.0"
+              "rtsp_version": "1.0",
+              "transport": "tcp"
             },
             "path": "/live",
             "port": 322,

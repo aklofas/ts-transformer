@@ -510,13 +510,16 @@ impl RtspVersion {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum RtspTransportPref {
-    /// `?transport=` absent — try UDP first; on 461, auto-fall-back to
-    /// TCP-interleaved.
+    /// `?transport=` absent on `rtsp://` — try UDP first; on 461,
+    /// auto-fall-back to TCP-interleaved. (`rtsps://` without the key is
+    /// [`ForceTcp`](Self::ForceTcp); this value there is an explicit choice
+    /// to send media in the clear.)
     PreferUdp,
     /// `?transport=udp` — try UDP only; on 461, surface
     /// `RtspError::UnsupportedTransport` without TCP retry.
     ForceUdp,
-    /// `?transport=tcp` — skip the UDP attempt; SETUP directly with
+    /// `?transport=tcp`, or an `rtsps://` URL without the key — skip the UDP
+    /// attempt; SETUP directly with
     /// `RTP/AVP/TCP;interleaved=0-1`.
     ForceTcp,
 }
@@ -566,7 +569,7 @@ impl RtspUrl {
     ///
     /// Accepted query parameters:
     /// - `transport=tcp|udp` — see [`RtspTransportPref`]; absent ==
-    ///   `PreferUdp`.
+    ///   `PreferUdp` on `rtsp://`, `ForceTcp` on `rtsps://`.
     /// - `rtsp_version=1.0|2.0` — see [`RtspVersion`]; absent == `V1_0`.
     /// - `tcp_keepalive=N` — enable `SO_KEEPALIVE` on the control-channel
     ///   TCP socket with an `N`-second idle time; absent == OS default
@@ -613,7 +616,12 @@ impl RtspUrl {
             path: parsed.path.to_string(),
             username: None,
             password: None,
-            transport_preference: RtspTransportPref::PreferUdp,
+            // Media over UDP leaves the TLS tunnel in the clear: an `rtsps://`
+            // URL asks for TCP-interleaved unless it says `transport=udp`.
+            transport_preference: match scheme {
+                RtspScheme::Rtsp => RtspTransportPref::PreferUdp,
+                RtspScheme::Rtsps => RtspTransportPref::ForceTcp,
+            },
             rtsp_version: RtspVersion::V1_0,
             tcp_keepalive: None,
             recv_timeout: None,
@@ -1111,6 +1119,14 @@ mod rtsp_tests {
         assert_eq!(u.rtsp_version, RtspVersion::V1_0);
         assert!(u.username.is_none());
         assert!(u.password.is_none());
+    }
+
+    #[test]
+    fn rtsps_url_defaults_to_tcp_interleaved() {
+        let u = RtspUrl::parse("rtsps://cam.lan/h264").unwrap();
+        assert_eq!(u.transport_preference, RtspTransportPref::ForceTcp);
+        let u = RtspUrl::parse("rtsps://cam.lan/h264?transport=udp").unwrap();
+        assert_eq!(u.transport_preference, RtspTransportPref::ForceUdp);
     }
 
     #[test]
