@@ -60,27 +60,19 @@ pub(crate) fn handle_not_valid_in_state(req: &RtspRequest) -> RtspResponse {
     error_response(req, 455, "Method Not Valid in This State")
 }
 
-/// The scheme and realm a 401 offers: the builder's when it configured a
-/// credential, else the rules table's challenge.
-fn challenge_scheme_and_realm(state: &ServerState) -> (AuthScheme, String) {
-    match state.builder.auth.as_ref() {
-        Some(cfg) => (cfg.scheme, cfg.realm.clone()),
-        None => state.mount_rules.challenge(),
-    }
-}
-
 /// Build a 401 Unauthorized response with a fresh `WWW-Authenticate`
-/// challenge (scheme and realm per [`challenge_scheme_and_realm`]), so a
-/// `Require` path is challenged even on a server without a builder
-/// credential. Mutates `session.auth_nonce` if `stale = true` (rotates the
-/// nonce for a stale-challenge retry per RFC 7616 §3.5). Also resets
-/// `session.auth_nc_hwm` to 0 when the nonce is rotated so nc tracking
-/// starts fresh for the new nonce.
+/// challenge in `scheme` and `realm`, the pair the request was checked
+/// under, so a `Require` path is challenged even on a server without a
+/// builder credential. Mutates `session.auth_nonce` if `stale = true`
+/// (rotates the nonce for a stale-challenge retry per RFC 7616 §3.5). Also
+/// resets `session.auth_nc_hwm` to 0 when the nonce is rotated so nc
+/// tracking starts fresh for the new nonce.
 pub(crate) fn challenge_response(
     req: &RtspRequest,
-    state: &Arc<ServerState>,
     session: &mut ServerSessionState,
     stale: bool,
+    scheme: AuthScheme,
+    realm: &str,
 ) -> RtspResponse {
     let mut response = error_response(req, 401, "Unauthorized");
     if stale {
@@ -90,8 +82,7 @@ pub(crate) fn challenge_response(
         session.auth_nonce = crate::rtsp::server::auth::generate_nonce();
         session.auth_nc_hwm = 0;
     }
-    let (scheme, realm) = challenge_scheme_and_realm(state);
-    let challenge = build_challenge(scheme, &realm, &session.auth_nonce);
+    let challenge = build_challenge(scheme, realm, &session.auth_nonce);
     response
         .headers
         .insert("www-authenticate".into(), challenge);
@@ -172,7 +163,14 @@ pub(crate) fn authorize_request(
     let (path, dir) = rule_key_and_direction(req, session);
     let auth_header = req.headers.get("authorization").map(String::as_str);
     let credential_checked: bool;
-    let verified = match state.mount_rules.policy_for(&path, dir) {
+    // One reading of the table: the policy, and the challenge the check and
+    // its 401 use. The builder's pair still wins where it set a credential.
+    let decision = state.mount_rules.decision(&path, dir);
+    let (scheme, realm) = match state.builder.auth.as_ref() {
+        Some(cfg) => (cfg.scheme, cfg.realm.clone()),
+        None => (decision.scheme, decision.realm),
+    };
+    let verified = match decision.policy {
         MountPolicy::Refuse(status) => {
             // A request keyed on the session's own role (all but ANNOUNCE
             // and DESCRIBE, which name their own path) ends that role when
@@ -202,7 +200,6 @@ pub(crate) fn authorize_request(
         }
         MountPolicy::Require(creds) => {
             credential_checked = true;
-            let (scheme, realm) = challenge_scheme_and_realm(state);
             let creds: Vec<Credential<'_>> = creds.iter().map(Credential::from).collect();
             verify_credentials(
                 auth_header,
@@ -216,6 +213,10 @@ pub(crate) fn authorize_request(
             )
         }
     };
+    #[cfg(test)]
+    if verified.is_err() {
+        state.mount_rules.pause_before_challenge();
+    }
     match verified {
         Ok(()) => {
             // Tells the session loop this request passed a credential check,
@@ -226,9 +227,9 @@ pub(crate) fn authorize_request(
         Err(AuthVerifyError::StaleNonce) => {
             // Surface stale=true so the client knows to retry with the
             // new nonce instead of treating it as a credentials error.
-            Err(challenge_response(req, state, session, true))
+            Err(challenge_response(req, session, true, scheme, &realm))
         }
-        Err(_) => Err(challenge_response(req, state, session, false)),
+        Err(_) => Err(challenge_response(req, session, false, scheme, &realm)),
     }
 }
 
@@ -999,6 +1000,51 @@ mod tests {
             .collect();
         assert_eq!(lines.len(), 1, "{wire}");
         assert!(lines[0].contains(r#"realm="ts \"q\"""#), "{}", lines[0]);
+    }
+
+    #[test]
+    fn a_401_carries_the_challenge_its_request_was_checked_under() {
+        use crate::rtsp::server::mount_rules::{MountCredential, MountPolicy, MountRule};
+        use secrecy::SecretString;
+        let state = crate::rtsp::server::test_state();
+        state
+            .mount_rules
+            .set(
+                "/live",
+                MountRule::both(MountPolicy::Require(vec![MountCredential::new(
+                    "viewer",
+                    SecretString::new("pw".into()),
+                )])),
+            )
+            .unwrap();
+        let (reached, go_on) = state.mount_rules.arm_challenge_pause();
+        let request = {
+            let state = state.clone();
+            std::thread::spawn(move || {
+                let req = make_req(RtspMethod::Describe, "rtsp://127.0.0.1:8554/live");
+                let mut session = ServerSessionState::new();
+                crate::rtsp::server::session::dispatch(&req, &state, &mut session)
+            })
+        };
+        reached
+            .recv_timeout(tst_test_helpers::timing::scaled(
+                std::time::Duration::from_secs(10),
+            ))
+            .expect("the request reached the point between its check and its 401");
+        // The operator changes the challenge after the request was checked
+        // under the table's Digest pair and before its 401 is built.
+        state
+            .mount_rules
+            .set_challenge(AuthScheme::Basic, "lab")
+            .unwrap();
+        go_on.send(()).unwrap();
+        let resp = request.join().unwrap();
+        assert_eq!(resp.status, 401);
+        let www = &resp.headers["www-authenticate"];
+        assert!(
+            www.starts_with("Digest") && www.contains(r#"realm="tstrans""#),
+            "the 401 offered a challenge its request was not checked under: {www}"
+        );
     }
 
     #[test]

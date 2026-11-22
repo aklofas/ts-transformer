@@ -245,6 +245,9 @@ struct PausePoints {
     decision: std::sync::Mutex<Option<Pause>>,
     /// In every edit, right after its closed check.
     edit: std::sync::Mutex<Option<Pause>>,
+    /// In the request path, between a failed credential check and the
+    /// building of its 401.
+    challenge: std::sync::Mutex<Option<Pause>>,
 }
 
 /// One armed stop: the thread that reaches it says so on `reached`, then
@@ -492,20 +495,6 @@ impl MountRules {
         self.inner.hard_cancel.is_cancelled() || read(&self.inner.table).closed
     }
 
-    /// The policy for `dir` on `path`: the path's own rule, else (no rule, or
-    /// the rule's `Inherit` for `dir`) the default rule's policy for `dir`.
-    pub(crate) fn policy_for(&self, path: &str, dir: Direction) -> MountPolicy {
-        self.decision(path, dir).policy
-    }
-
-    /// The scheme and realm a `Require` challenge offers when the builder
-    /// configured no credential.
-    pub(crate) fn challenge(&self) -> (AuthScheme, String) {
-        // The challenge is the table's whatever the path.
-        let Decision { scheme, realm, .. } = self.decision("", Direction::Read);
-        (scheme, realm)
-    }
-
     /// The policy for `dir` on `path` (the path's own rule, else, with no
     /// rule or the rule's `Inherit` for `dir`, the default rule's policy for
     /// `dir`) and the challenge's scheme and realm.
@@ -535,12 +524,38 @@ impl MountRules {
     pub(crate) fn close(&self) {
         write(&self.inner.table).closed = true;
     }
+
+    /// Arm the stop a request reaches between a failed credential check and
+    /// the building of its 401.
+    #[cfg(test)]
+    pub(crate) fn arm_challenge_pause(
+        &self,
+    ) -> (std::sync::mpsc::Receiver<()>, std::sync::mpsc::Sender<()>) {
+        Pause::arm(&self.inner.pauses.challenge)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn pause_before_challenge(&self) {
+        Pause::hit(&self.inner.pauses.challenge);
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::RtspServerBuilder;
+
+    impl MountRules {
+        /// The policy a request for `dir` on `path` is decided by.
+        fn policy_for(&self, path: &str, dir: Direction) -> MountPolicy {
+            self.decision(path, dir).policy
+        }
+
+        /// The table's challenge, read without passing a pause point.
+        fn challenge(&self) -> (AuthScheme, String) {
+            read(&self.inner.table).challenge.clone()
+        }
+    }
 
     #[test]
     fn from_code_round_trips_every_refuse_status() {
