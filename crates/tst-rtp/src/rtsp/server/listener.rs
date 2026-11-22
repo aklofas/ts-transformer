@@ -207,6 +207,11 @@ pub(crate) async fn run_listener(state: Arc<ServerState>) -> Result<(), RtspServ
             }
             _ = state.cancel_token.cancelled() => {
                 tracing::info!(target: "tst_rtp::server", "server cancel observed; listener exiting");
+                // Close the socket before the drain: `SessionsEnded` reports
+                // "done" to `stop()` when this task returns, and the socket
+                // must not outlive that report, or a connect made right after
+                // `stop()` returns is accepted by the kernel and then reset.
+                drop(listener);
                 drain_sessions(&mut sessions, state.builder.graceful_shutdown_drain).await;
                 return Ok(());
             }
