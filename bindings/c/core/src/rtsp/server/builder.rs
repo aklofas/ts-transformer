@@ -69,6 +69,10 @@ use crate::panic::ffi_catch;
 /// specifying the bind address and port (e.g. `"rtsp://0.0.0.0:8554"`).
 /// The host must be a literal IP address — DNS names are rejected at this
 /// step because the OS kernel, not a resolver, performs the actual bind.
+/// A bind URL must not carry a user name or a password: this call takes it,
+/// and `tst_rtsp_server_builder_start` refuses it (NULL, last-error
+/// `TST_E_RTSP_MOUNT`). Configure the server's credential with
+/// `_auth_basic` or `_auth_digest_*`.
 ///
 /// Auth, TLS, session limits, and drain policy may be set with the
 /// `_auth_*`, `_tls_cert_pem`, `_max_sessions`, `_session_timeout`,
@@ -120,7 +124,9 @@ pub unsafe extern "C" fn tst_rtsp_server_builder_new(
 /// `addr` must be a NUL-terminated `rtsp://` or `rtsps://` URL string.
 /// Replaces the address set at `tst_rtsp_server_builder_new` time.  Call
 /// this to redirect the server to a different interface or port without
-/// allocating a new builder.
+/// allocating a new builder. As for `_new`, a URL that carries a user name
+/// or a password is taken here and refused by
+/// `tst_rtsp_server_builder_start` (`TST_E_RTSP_MOUNT`).
 ///
 /// No-op (with last-error set to `TST_E_INVALID_CONFIG`) if `builder` is
 /// NULL, `addr` is NULL, or the URL fails to parse.
@@ -173,6 +179,10 @@ pub unsafe extern "C" fn tst_rtsp_server_builder_bind(
 /// Calling any `_auth_*` entry point multiple times overwrites the
 /// previous selection — the last call wins (matches
 /// `RtspServerBuilder::auth_basic` behavior).
+///
+/// A user name that contains `:` is refused by
+/// `tst_rtsp_server_builder_start` (NULL, last-error `TST_E_RTSP_MOUNT`):
+/// Basic authentication cannot carry it (RFC 7617 §2).
 ///
 /// No-op (with last-error set to `TST_E_INVALID_CONFIG`) if `builder`,
 /// `user`, or `pass` is NULL, or if either string is not valid UTF-8.
@@ -699,5 +709,87 @@ mod tests {
                 TstError::InvalidConfig as i32
             );
         }
+    }
+
+    fn new_builder(url: &str) -> *mut TstRtspServerBuilder {
+        let url = std::ffi::CString::new(url).unwrap();
+        let b = unsafe { tst_rtsp_server_builder_new(url.as_ptr()) };
+        assert!(!b.is_null(), "{}", crate::error::test_last_error_msg());
+        b
+    }
+
+    /// Starts `b` and expects the refusal at build: NULL, a text that names
+    /// `field`, and `TST_E_RTSP_MOUNT`, the code every configuration the
+    /// server's build refuses reads in C (the binding kind table puts a
+    /// server's `InvalidConfig` with the mount errors). Returns the text.
+    fn refused_at_start(b: *mut TstRtspServerBuilder, field: &str) -> String {
+        crate::error::clear_last_error_for_test();
+        let server = unsafe { crate::rtsp::server::start::tst_rtsp_server_builder_start(b) };
+        if !server.is_null() {
+            unsafe { crate::rtsp::server::stop::tst_rtsp_server_free(server) };
+            panic!("the server started");
+        }
+        assert_eq!(
+            crate::error::test_last_error_code(),
+            TstError::RtspMount as i32
+        );
+        let msg = crate::error::test_last_error_msg();
+        assert!(msg.contains(field), "{msg}");
+        msg
+    }
+
+    /// The URL is taken by `_new` and `_bind` (it parses) and refused when
+    /// the server is built, through either door, with or without a
+    /// credential of the server's own; the text carries no part of it.
+    #[test]
+    fn a_bind_url_with_userinfo_is_refused_at_start() {
+        let urls = [
+            "rtsp://admin:secret@127.0.0.1:0",
+            "rtsp://admin@127.0.0.1:0",
+            "rtsp://:secret@127.0.0.1:0",
+            "rtsps://admin:secret@127.0.0.1:0",
+        ];
+        for url in urls {
+            for with_auth in [false, true] {
+                let through_new = new_builder(url);
+                let through_bind = new_builder("rtsp://127.0.0.1:0");
+                let bound = std::ffi::CString::new(url).unwrap();
+                crate::error::clear_last_error_for_test();
+                unsafe { tst_rtsp_server_builder_bind(through_bind, bound.as_ptr()) };
+                assert_eq!(crate::error::test_last_error_code(), 0, "_bind took {url}");
+                for b in [through_new, through_bind] {
+                    if with_auth {
+                        let (u, p) = (c"viewer", c"pw");
+                        unsafe {
+                            tst_rtsp_server_builder_auth_digest_md5(b, u.as_ptr(), p.as_ptr())
+                        };
+                    }
+                    let msg = refused_at_start(b, "bind URL");
+                    assert!(
+                        !msg.contains("admin") && !msg.contains("secret"),
+                        "{url}: {msg}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_basic_user_name_with_a_colon_is_refused_at_start() {
+        let b = new_builder("rtsp://127.0.0.1:0");
+        let (u, p) = (c"a:b", c"x");
+        unsafe { tst_rtsp_server_builder_auth_basic(b, u.as_ptr(), p.as_ptr()) };
+        refused_at_start(b, "auth username");
+    }
+
+    /// Digest carries the user name quoted, so a colon in it is fine.
+    #[test]
+    fn a_digest_user_name_with_a_colon_is_accepted() {
+        let b = new_builder("rtsp://127.0.0.1:0");
+        let (u, p) = (c"a:b", c"x");
+        unsafe { tst_rtsp_server_builder_auth_digest_md5(b, u.as_ptr(), p.as_ptr()) };
+        let server = unsafe { crate::rtsp::server::start::tst_rtsp_server_builder_start(b) };
+        assert!(!server.is_null(), "{}", crate::error::test_last_error_msg());
+        unsafe { crate::rtsp::server::stop::tst_rtsp_server_free(server) };
     }
 }

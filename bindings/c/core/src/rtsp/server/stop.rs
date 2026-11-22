@@ -275,11 +275,15 @@ pub unsafe extern "C" fn tst_rtsp_cancel_handle_free(handle: *mut TstRtspCancelH
 
 /// Graceful shutdown — two-phase (stop then free).
 ///
+/// From the moment `stop` begins the server accepts no new connection; when
+/// it returns the listening socket is closed. A connection still waiting in
+/// the socket's backlog when it closes is reset without an answer.
+///
 /// 1. For each active session: sends RFC 7826 §13.5.1 Notice 5402
 ///    "Server-Initiated TEARDOWN" ANNOUNCE over the session's TCP
 ///    control channel (best-effort, at most 1 s per session, sessions
 ///    notified serially), then cancels the per-session token.
-/// 2. Fires the global cancel token so the listener stops accepting.
+/// 2. Fires the global cancel token, which ends the sessions.
 /// 3. Waits for the session tasks to end, bounded by the builder's
 ///    `graceful_shutdown_drain_ms` (default 100 ms) plus a 500 ms
 ///    scheduling margin.

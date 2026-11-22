@@ -652,10 +652,14 @@ pub(crate) fn codec_stats_to_c(
 ///   Decrements when a session sends TEARDOWN or drops its TCP connection.
 /// - `mounts` — registered mount paths (unicast + multicast);
 ///   `tst_rtsp_server_remove_mount` decrements it.
-/// - `total_rtp_packets_sent` — cumulative RTP packets sent across all
-///   peers and all mounts since the server started.
-/// - `total_rtp_bytes_sent` — cumulative RTP payload bytes (not including
-///   UDP + IP headers) sent across all peers and all mounts.
+/// - `total_rtp_packets_sent` — cumulative RTP packets sent since the
+///   server started: one per successful send to one reader (N readers of a
+///   mount count a pushed packet N times), one per packet on a multicast
+///   mount whatever its audience; RTCP is not counted.
+/// - `total_rtp_bytes_sent` — the bytes of those RTP packets, the 12-byte
+///   RTP header included, without the 4-byte interleaved prefix and without
+///   UDP + IP headers (what `tst_rtsp_server_total_rtp_bytes_received` counts
+///   for the other direction).
 #[repr(C)]
 #[derive(Default, Clone, Copy)]
 pub struct TstServerStats {

@@ -329,8 +329,9 @@ pub unsafe extern "C" fn tst_rtsp_mount_handle_free(handle: *mut TstRtspMountHan
 /// `TST_E_RTSP_MOUNT` (`MuxError::AmbiguousTarget`) if more than one video
 /// stream is present — use `tst_rtsp_mount_push_video_to` in that case.
 ///
-/// Returns `0` on success, `TST_E_CLOSED` after `tst_rtsp_mount_cancel` or
-/// once the server has ended (`tst_rtsp_server_stop`, from the moment it
+/// Returns `0` on success, `TST_E_CLOSED` after `tst_rtsp_mount_cancel`,
+/// once `tst_rtsp_server_remove_mount` removed the mount, or once the
+/// server has ended (`tst_rtsp_server_stop`, from the moment it
 /// begins; `tst_rtsp_cancel_handle_cancel`; or `tst_rtsp_server_free`),
 /// `TST_E_RTSP_MOUNT` on muxer errors, `TST_E_INVALID_CONFIG` if `handle`
 /// is null.
@@ -377,8 +378,9 @@ pub unsafe extern "C" fn tst_rtsp_mount_push_video(
 /// **Do not pre-wrap the AU cell on the caller side.** The current API uses
 /// `metadata_service_id = 0x00` per ST 1402.2 App. B Table 2.
 ///
-/// Returns `0` on success, `TST_E_CLOSED` after `tst_rtsp_mount_cancel` or
-/// once the server has ended (`tst_rtsp_server_stop`, from the moment it
+/// Returns `0` on success, `TST_E_CLOSED` after `tst_rtsp_mount_cancel`,
+/// once `tst_rtsp_server_remove_mount` removed the mount, or once the
+/// server has ended (`tst_rtsp_server_stop`, from the moment it
 /// begins; `tst_rtsp_cancel_handle_cancel`; or `tst_rtsp_server_free`),
 /// `TST_E_RTSP_MOUNT` on muxer errors, `TST_E_INVALID_CONFIG` if `handle`
 /// is null.
@@ -427,8 +429,9 @@ pub unsafe extern "C" fn tst_rtsp_mount_push_klv(
 /// ADTS or MPEG audio frames concatenated). `pts_90khz` is the presentation
 /// timestamp in 90 kHz ticks.
 ///
-/// Returns `0` on success, `TST_E_CLOSED` after `tst_rtsp_mount_cancel` or
-/// once the server has ended (`tst_rtsp_server_stop`, from the moment it
+/// Returns `0` on success, `TST_E_CLOSED` after `tst_rtsp_mount_cancel`,
+/// once `tst_rtsp_server_remove_mount` removed the mount, or once the
+/// server has ended (`tst_rtsp_server_stop`, from the moment it
 /// begins; `tst_rtsp_cancel_handle_cancel`; or `tst_rtsp_server_free`),
 /// `TST_E_RTSP_MOUNT` on muxer errors, `TST_E_INVALID_CONFIG` if `handle`
 /// is null.
@@ -472,8 +475,9 @@ pub unsafe extern "C" fn tst_rtsp_mount_push_audio(
 /// teletext data field, CEA-708 service block, or WebVTT cue). `pts_90khz`
 /// is the presentation timestamp in 90 kHz ticks.
 ///
-/// Returns `0` on success, `TST_E_CLOSED` after `tst_rtsp_mount_cancel` or
-/// once the server has ended (`tst_rtsp_server_stop`, from the moment it
+/// Returns `0` on success, `TST_E_CLOSED` after `tst_rtsp_mount_cancel`,
+/// once `tst_rtsp_server_remove_mount` removed the mount, or once the
+/// server has ended (`tst_rtsp_server_stop`, from the moment it
 /// begins; `tst_rtsp_cancel_handle_cancel`; or `tst_rtsp_server_free`),
 /// `TST_E_RTSP_MOUNT` on muxer errors, `TST_E_INVALID_CONFIG` if `handle`
 /// is null.
@@ -516,8 +520,9 @@ pub unsafe extern "C" fn tst_rtsp_mount_push_subtitle(
 /// Pass-through: `data` lands verbatim as one PES packet on `stream_id`
 /// 0xBD. PTS is written only for `carries_pts = true` streams.
 ///
-/// Returns `0` on success, `TST_E_CLOSED` after `tst_rtsp_mount_cancel` or
-/// once the server has ended (`tst_rtsp_server_stop`, from the moment it
+/// Returns `0` on success, `TST_E_CLOSED` after `tst_rtsp_mount_cancel`,
+/// once `tst_rtsp_server_remove_mount` removed the mount, or once the
+/// server has ended (`tst_rtsp_server_stop`, from the moment it
 /// begins; `tst_rtsp_cancel_handle_cancel`; or `tst_rtsp_server_free`),
 /// `TST_E_RTSP_MOUNT` on muxer errors, `TST_E_INVALID_CONFIG` if `handle`
 /// is null.
@@ -811,15 +816,17 @@ pub unsafe extern "C" fn tst_rtsp_mount_push_data_to(
 /// Drain any TS packets buffered in the mount's inner muxer and broadcast
 /// them through the mount's fanout channel.
 ///
-/// Call after finishing a batch of `push_*` calls to ensure all queued TS
-/// output is flushed to active subscribers. No-op when the muxer has no
-/// pending output. Safe to call concurrently with other `push_*` calls on
-/// separate threads; each call acquires the inner muxer mutex independently.
+/// On a mount there is nothing to drain after a successful push: every push
+/// drains the muxer before it returns, and a refused push queues nothing.
+/// No-op when the muxer has no pending output. Safe to call concurrently
+/// with other `push_*` calls on separate threads; each call acquires the
+/// inner muxer mutex independently.
 ///
-/// Returns `0` on success, `TST_E_CLOSED` after `tst_rtsp_mount_cancel`,
-/// `TST_E_INVALID_CONFIG` if `handle` is null. Once the server has ended
-/// (stopped, hard-cancelled or freed) it still returns `0`: it does not
-/// read the server's state.
+/// Returns `0` on success, `TST_E_INVALID_CONFIG` if `handle` is null, and
+/// `TST_E_CLOSED`, as the pushes do, after `tst_rtsp_mount_cancel`, once the
+/// mount was removed with `tst_rtsp_server_remove_mount`, and from the
+/// moment the server ends (`tst_rtsp_server_stop` begins, the hard cancel,
+/// `tst_rtsp_server_free`). Nothing is drained then.
 ///
 /// # Safety
 ///
@@ -835,8 +842,10 @@ pub unsafe extern "C" fn tst_rtsp_mount_flush(handle: *mut TstRtspMountHandle) -
             set_last_error(TstError::Closed, "mount handle has been cancelled");
             return TstError::Closed as i32;
         }
-        let _ = h.inner.flush();
-        0
+        match h.inner.flush() {
+            Ok(()) => 0,
+            Err(e) => crate::error::record_with_context(e, "flush failed"),
+        }
     })
 }
 
@@ -849,8 +858,9 @@ pub unsafe extern "C" fn tst_rtsp_mount_flush(handle: *mut TstRtspMountHandle) -
 /// A handle names one registration, not a path. While a path is
 /// registered, a second `add_*_mount` on it fails; after
 /// `tst_rtsp_server_remove_mount` the path can be registered again, and a
-/// handle kept from the removed registration stays valid but reaches
-/// nobody. Cancelling it does not touch the new mount.
+/// handle kept from the removed registration stays valid for the getters
+/// while its pushes and `tst_rtsp_mount_flush` return `TST_E_CLOSED`.
+/// Cancelling it does not touch the new mount.
 ///
 /// Safe to call from any thread. Idempotent — calling twice is harmless.
 /// The handle must still be freed via `tst_rtsp_mount_handle_free` to
@@ -1214,16 +1224,91 @@ mod tests {
         unsafe { crate::rtsp::server::stop::tst_rtsp_server_free(server) };
     }
 
-    /// The C side cannot see that the server ended, so flush keeps
-    /// answering 0 there (documented on `tst_rtsp_mount_flush`).
+    /// Once the server has ended, flush reads CLOSED like the pushes, on
+    /// every way of ending it; the getters and reset still answer.
     #[test]
-    fn stop_then_flush_returns_zero() {
+    fn flush_after_the_server_ended_returns_closed() {
+        use crate::rtsp::server::stop::{
+            tst_rtsp_cancel_handle_cancel, tst_rtsp_cancel_handle_free,
+            tst_rtsp_server_cancel_handle, tst_rtsp_server_free, tst_rtsp_server_stop,
+        };
+        type End = fn(*mut TstRtspServer);
+        let ends: [(&str, End); 3] = [
+            ("stop", |s| {
+                assert_eq!(unsafe { tst_rtsp_server_stop(s, 0) }, 0)
+            }),
+            ("hard cancel", |s| unsafe {
+                let c = tst_rtsp_server_cancel_handle(s);
+                assert!(!c.is_null());
+                tst_rtsp_cancel_handle_cancel(c);
+                tst_rtsp_cancel_handle_free(c);
+            }),
+            ("free", |s| unsafe { tst_rtsp_server_free(s) }),
+        ];
+        for (how, end) in ends {
+            let (server, mount) = open_unicast_mount();
+            end(server);
+            crate::error::clear_last_error_for_test();
+            assert_eq!(
+                unsafe { tst_rtsp_mount_flush(mount) },
+                TstError::Closed as i32,
+                "flush after {how}"
+            );
+            assert_eq!(
+                crate::error::test_last_error_code(),
+                TstError::Closed as i32,
+                "last-error after {how}"
+            );
+            assert_eq!(unsafe { tst_rtsp_mount_reset_stats(mount) }, 0);
+            let mut stats = crate::stats::TstMountStats::default();
+            assert_eq!(
+                unsafe {
+                    crate::rtsp::server::mount_getters::tst_rtsp_mount_get_stats(mount, &mut stats)
+                },
+                0
+            );
+            unsafe { tst_rtsp_mount_handle_free(mount) };
+            if how != "free" {
+                unsafe { tst_rtsp_server_free(server) };
+            }
+        }
+    }
+
+    /// A handle kept after its mount was removed reads CLOSED on every push
+    /// and on flush, while the server lives; its getters still answer.
+    #[test]
+    fn a_handle_kept_after_remove_mount_is_closed_and_its_getters_answer() {
         let (server, mount) = open_unicast_mount();
+        let path = std::ffi::CString::new("/live").unwrap();
         assert_eq!(
-            unsafe { crate::rtsp::server::stop::tst_rtsp_server_stop(server, 0) },
+            unsafe {
+                crate::rtsp::server::publish::tst_rtsp_server_remove_mount(server, path.as_ptr())
+            },
             0
         );
-        assert_eq!(unsafe { tst_rtsp_mount_flush(mount) }, 0);
+        let nal = [0x00u8, 0x00, 0x00, 0x01, 0x65, 0xBB];
+        assert_eq!(
+            unsafe { tst_rtsp_mount_push_video(mount, nal.as_ptr(), nal.len(), 0, true) },
+            TstError::Closed as i32,
+            "a push through a removed mount"
+        );
+        assert_eq!(
+            unsafe { tst_rtsp_mount_push_klv(mount, [0u8; 4].as_ptr(), 4, 0) },
+            TstError::Closed as i32
+        );
+        assert_eq!(
+            unsafe { tst_rtsp_mount_flush(mount) },
+            TstError::Closed as i32,
+            "flush on a removed mount"
+        );
+        let mut stats = crate::stats::TstMountStats::default();
+        assert_eq!(
+            unsafe {
+                crate::rtsp::server::mount_getters::tst_rtsp_mount_get_stats(mount, &mut stats)
+            },
+            0
+        );
+        assert_eq!(stats.bytes_pushed, 0, "nothing reached the mount");
         unsafe { tst_rtsp_mount_handle_free(mount) };
         unsafe { crate::rtsp::server::stop::tst_rtsp_server_free(server) };
     }

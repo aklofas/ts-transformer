@@ -2418,10 +2418,14 @@ typedef struct tst_rtsp_publisher_info_t {
  *   Decrements when a session sends TEARDOWN or drops its TCP connection.
  * - `mounts` — registered mount paths (unicast + multicast);
  *   `tst_rtsp_server_remove_mount` decrements it.
- * - `total_rtp_packets_sent` — cumulative RTP packets sent across all
- *   peers and all mounts since the server started.
- * - `total_rtp_bytes_sent` — cumulative RTP payload bytes (not including
- *   UDP + IP headers) sent across all peers and all mounts.
+ * - `total_rtp_packets_sent` — cumulative RTP packets sent since the
+ *   server started: one per successful send to one reader (N readers of a
+ *   mount count a pushed packet N times), one per packet on a multicast
+ *   mount whatever its audience; RTCP is not counted.
+ * - `total_rtp_bytes_sent` — the bytes of those RTP packets, the 12-byte
+ *   RTP header included, without the 4-byte interleaved prefix and without
+ *   UDP + IP headers (what `tst_rtsp_server_total_rtp_bytes_received` counts
+ *   for the other direction).
  */
 typedef struct tst_server_stats_t {
   uint64_t active_sessions;
@@ -9723,8 +9727,9 @@ void tst_rtsp_client_builder_transport_pref(struct tst_rtsp_client_builder_t *bu
  * A handle names one registration, not a path. While a path is
  * registered, a second `add_*_mount` on it fails; after
  * `tst_rtsp_server_remove_mount` the path can be registered again, and a
- * handle kept from the removed registration stays valid but reaches
- * nobody. Cancelling it does not touch the new mount.
+ * handle kept from the removed registration stays valid for the getters
+ * while its pushes and `tst_rtsp_mount_flush` return `TST_E_CLOSED`.
+ * Cancelling it does not touch the new mount.
  *
  * Safe to call from any thread. Idempotent — calling twice is harmless.
  * The handle must still be freed via `tst_rtsp_mount_handle_free` to
@@ -9744,15 +9749,17 @@ void tst_rtsp_client_builder_transport_pref(struct tst_rtsp_client_builder_t *bu
  * Drain any TS packets buffered in the mount's inner muxer and broadcast
  * them through the mount's fanout channel.
  *
- * Call after finishing a batch of `push_*` calls to ensure all queued TS
- * output is flushed to active subscribers. No-op when the muxer has no
- * pending output. Safe to call concurrently with other `push_*` calls on
- * separate threads; each call acquires the inner muxer mutex independently.
+ * On a mount there is nothing to drain after a successful push: every push
+ * drains the muxer before it returns, and a refused push queues nothing.
+ * No-op when the muxer has no pending output. Safe to call concurrently
+ * with other `push_*` calls on separate threads; each call acquires the
+ * inner muxer mutex independently.
  *
- * Returns `0` on success, `TST_E_CLOSED` after `tst_rtsp_mount_cancel`,
- * `TST_E_INVALID_CONFIG` if `handle` is null. Once the server has ended
- * (stopped, hard-cancelled or freed) it still returns `0`: it does not
- * read the server's state.
+ * Returns `0` on success, `TST_E_INVALID_CONFIG` if `handle` is null, and
+ * `TST_E_CLOSED`, as the pushes do, after `tst_rtsp_mount_cancel`, once the
+ * mount was removed with `tst_rtsp_server_remove_mount`, and from the
+ * moment the server ends (`tst_rtsp_server_stop` begins, the hard cancel,
+ * `tst_rtsp_server_free`). Nothing is drained then.
  *
  * # Safety
  *
@@ -9827,8 +9834,9 @@ int tst_rtsp_mount_get_stats(const struct TstRtspMountHandle *handle,
  * ADTS or MPEG audio frames concatenated). `pts_90khz` is the presentation
  * timestamp in 90 kHz ticks.
  *
- * Returns `0` on success, `TST_E_CLOSED` after `tst_rtsp_mount_cancel` or
- * once the server has ended (`tst_rtsp_server_stop`, from the moment it
+ * Returns `0` on success, `TST_E_CLOSED` after `tst_rtsp_mount_cancel`,
+ * once `tst_rtsp_server_remove_mount` removed the mount, or once the
+ * server has ended (`tst_rtsp_server_stop`, from the moment it
  * begins; `tst_rtsp_cancel_handle_cancel`; or `tst_rtsp_server_free`),
  * `TST_E_RTSP_MOUNT` on muxer errors, `TST_E_INVALID_CONFIG` if `handle`
  * is null.
@@ -9874,8 +9882,9 @@ int tst_rtsp_mount_push_audio_to(struct TstRtspMountHandle *handle,
  * Pass-through: `data` lands verbatim as one PES packet on `stream_id`
  * 0xBD. PTS is written only for `carries_pts = true` streams.
  *
- * Returns `0` on success, `TST_E_CLOSED` after `tst_rtsp_mount_cancel` or
- * once the server has ended (`tst_rtsp_server_stop`, from the moment it
+ * Returns `0` on success, `TST_E_CLOSED` after `tst_rtsp_mount_cancel`,
+ * once `tst_rtsp_server_remove_mount` removed the mount, or once the
+ * server has ended (`tst_rtsp_server_stop`, from the moment it
  * begins; `tst_rtsp_cancel_handle_cancel`; or `tst_rtsp_server_free`),
  * `TST_E_RTSP_MOUNT` on muxer errors, `TST_E_INVALID_CONFIG` if `handle`
  * is null.
@@ -9924,8 +9933,9 @@ int tst_rtsp_mount_push_data_to(struct TstRtspMountHandle *handle,
  * **Do not pre-wrap the AU cell on the caller side.** The current API uses
  * `metadata_service_id = 0x00` per ST 1402.2 App. B Table 2.
  *
- * Returns `0` on success, `TST_E_CLOSED` after `tst_rtsp_mount_cancel` or
- * once the server has ended (`tst_rtsp_server_stop`, from the moment it
+ * Returns `0` on success, `TST_E_CLOSED` after `tst_rtsp_mount_cancel`,
+ * once `tst_rtsp_server_remove_mount` removed the mount, or once the
+ * server has ended (`tst_rtsp_server_stop`, from the moment it
  * begins; `tst_rtsp_cancel_handle_cancel`; or `tst_rtsp_server_free`),
  * `TST_E_RTSP_MOUNT` on muxer errors, `TST_E_INVALID_CONFIG` if `handle`
  * is null.
@@ -9976,8 +9986,9 @@ int tst_rtsp_mount_push_klv_to(struct TstRtspMountHandle *handle,
  * teletext data field, CEA-708 service block, or WebVTT cue). `pts_90khz`
  * is the presentation timestamp in 90 kHz ticks.
  *
- * Returns `0` on success, `TST_E_CLOSED` after `tst_rtsp_mount_cancel` or
- * once the server has ended (`tst_rtsp_server_stop`, from the moment it
+ * Returns `0` on success, `TST_E_CLOSED` after `tst_rtsp_mount_cancel`,
+ * once `tst_rtsp_server_remove_mount` removed the mount, or once the
+ * server has ended (`tst_rtsp_server_stop`, from the moment it
  * begins; `tst_rtsp_cancel_handle_cancel`; or `tst_rtsp_server_free`),
  * `TST_E_RTSP_MOUNT` on muxer errors, `TST_E_INVALID_CONFIG` if `handle`
  * is null.
@@ -10029,8 +10040,9 @@ int tst_rtsp_mount_push_subtitle_to(struct TstRtspMountHandle *handle,
  * `TST_E_RTSP_MOUNT` (`MuxError::AmbiguousTarget`) if more than one video
  * stream is present — use `tst_rtsp_mount_push_video_to` in that case.
  *
- * Returns `0` on success, `TST_E_CLOSED` after `tst_rtsp_mount_cancel` or
- * once the server has ended (`tst_rtsp_server_stop`, from the moment it
+ * Returns `0` on success, `TST_E_CLOSED` after `tst_rtsp_mount_cancel`,
+ * once `tst_rtsp_server_remove_mount` removed the mount, or once the
+ * server has ended (`tst_rtsp_server_stop`, from the moment it
  * begins; `tst_rtsp_cancel_handle_cancel`; or `tst_rtsp_server_free`),
  * `TST_E_RTSP_MOUNT` on muxer errors, `TST_E_INVALID_CONFIG` if `handle`
  * is null.
@@ -10509,6 +10521,10 @@ void tst_rtsp_server_builder_accept_unregistered_publishers(struct TstRtspServer
  * previous selection — the last call wins (matches
  * `RtspServerBuilder::auth_basic` behavior).
  *
+ * A user name that contains `:` is refused by
+ * `tst_rtsp_server_builder_start` (NULL, last-error `TST_E_RTSP_MOUNT`):
+ * Basic authentication cannot carry it (RFC 7617 §2).
+ *
  * No-op (with last-error set to `TST_E_INVALID_CONFIG`) if `builder`,
  * `user`, or `pass` is NULL, or if either string is not valid UTF-8.
  * Must be called before `tst_rtsp_server_builder_start`.
@@ -10588,7 +10604,9 @@ void tst_rtsp_server_builder_auth_digest_sha256(struct TstRtspServerBuilder *bui
  * `addr` must be a NUL-terminated `rtsp://` or `rtsps://` URL string.
  * Replaces the address set at `tst_rtsp_server_builder_new` time.  Call
  * this to redirect the server to a different interface or port without
- * allocating a new builder.
+ * allocating a new builder. As for `_new`, a URL that carries a user name
+ * or a password is taken here and refused by
+ * `tst_rtsp_server_builder_start` (`TST_E_RTSP_MOUNT`).
  *
  * No-op (with last-error set to `TST_E_INVALID_CONFIG`) if `builder` is
  * NULL, `addr` is NULL, or the URL fails to parse.
@@ -10725,6 +10743,10 @@ void tst_rtsp_server_builder_graceful_shutdown_drain_ms(struct TstRtspServerBuil
  * specifying the bind address and port (e.g. `"rtsp://0.0.0.0:8554"`).
  * The host must be a literal IP address — DNS names are rejected at this
  * step because the OS kernel, not a resolver, performs the actual bind.
+ * A bind URL must not carry a user name or a password: this call takes it,
+ * and `tst_rtsp_server_builder_start` refuses it (NULL, last-error
+ * `TST_E_RTSP_MOUNT`). Configure the server's credential with
+ * `_auth_basic` or `_auth_digest_*`.
  *
  * Auth, TLS, session limits, and drain policy may be set with the
  * `_auth_*`, `_tls_cert_pem`, `_max_sessions`, `_session_timeout`,
@@ -11020,9 +11042,12 @@ int tst_rtsp_server_next_publisher(struct TstRtspServer *server,
  * with their sessions, and a demux receiver taken from it reads
  * `TST_E_END_OF_STREAM` once it has drained what was already queued. Its
  * `tst_rtsp_publish_mount_t` handles stay valid for the getters and
- * [`tst_rtsp_publish_mount_free`]. A unicast or multicast mount's handle
- * keeps accepting pushes, which reach nobody, until the server ends; then
- * they return `TST_E_CLOSED`.
+ * [`tst_rtsp_publish_mount_free`]. A unicast or multicast mount is closed
+ * too: its readers end with their sessions, a multicast mount stops
+ * sending to its group, and a kept `tst_rtsp_mount_handle_t` answers its
+ * getters while every `tst_rtsp_mount_push_*` and `tst_rtsp_mount_flush`
+ * returns `TST_E_CLOSED`. A reader whose SETUP completed while this call
+ * ran receives nothing further and ends by its own session timeout.
  *
  * This is how an application removes idle on-demand mounts; freeing a
  * handle does not.
@@ -11046,11 +11071,15 @@ int tst_rtsp_server_next_publisher(struct TstRtspServer *server,
 /**
  * Graceful shutdown — two-phase (stop then free).
  *
+ * From the moment `stop` begins the server accepts no new connection; when
+ * it returns the listening socket is closed. A connection still waiting in
+ * the socket's backlog when it closes is reset without an answer.
+ *
  * 1. For each active session: sends RFC 7826 §13.5.1 Notice 5402
  *    "Server-Initiated TEARDOWN" ANNOUNCE over the session's TCP
  *    control channel (best-effort, at most 1 s per session, sessions
  *    notified serially), then cancels the per-session token.
- * 2. Fires the global cancel token so the listener stops accepting.
+ * 2. Fires the global cancel token, which ends the sessions.
  * 3. Waits for the session tasks to end, bounded by the builder's
  *    `graceful_shutdown_drain_ms` (default 100 ms) plus a 500 ms
  *    scheduling margin.

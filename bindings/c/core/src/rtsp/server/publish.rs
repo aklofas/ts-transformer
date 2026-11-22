@@ -280,9 +280,12 @@ pub unsafe extern "C" fn tst_rtsp_server_next_publisher(
 /// with their sessions, and a demux receiver taken from it reads
 /// `TST_E_END_OF_STREAM` once it has drained what was already queued. Its
 /// `tst_rtsp_publish_mount_t` handles stay valid for the getters and
-/// [`tst_rtsp_publish_mount_free`]. A unicast or multicast mount's handle
-/// keeps accepting pushes, which reach nobody, until the server ends; then
-/// they return `TST_E_CLOSED`.
+/// [`tst_rtsp_publish_mount_free`]. A unicast or multicast mount is closed
+/// too: its readers end with their sessions, a multicast mount stops
+/// sending to its group, and a kept `tst_rtsp_mount_handle_t` answers its
+/// getters while every `tst_rtsp_mount_push_*` and `tst_rtsp_mount_flush`
+/// returns `TST_E_CLOSED`. A reader whose SETUP completed while this call
+/// ran receives nothing further and ends by its own session timeout.
 ///
 /// This is how an application removes idle on-demand mounts; freeing a
 /// handle does not.
