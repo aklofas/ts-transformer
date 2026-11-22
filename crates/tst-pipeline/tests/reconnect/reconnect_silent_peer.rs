@@ -37,6 +37,10 @@ enum Reading {
     /// The number of sends so far, up to this many: a peer that answers
     /// the first sends, then goes silent.
     MovesThenFrozen(u32),
+    /// 0 until this many sends were made, 1 after: a peer that answers the
+    /// first packet of the connection (the answer visible from that send
+    /// on), then never again.
+    AnswersOnceFrom(u32),
 }
 
 /// What a test sees of one scripted inner.
@@ -146,6 +150,9 @@ impl Transport for Scripted {
             Reading::CannotTell => None,
             Reading::NoneThenFrozen(v) => {
                 (self.seen.reads.load(Ordering::SeqCst) > 1).then_some(*v)
+            }
+            Reading::AnswersOnceFrom(n) => {
+                Some(u64::from(self.seen.sends.load(Ordering::SeqCst) >= *n))
             }
             Reading::MovesThenFrozen(n) => {
                 Some(u64::from(self.seen.sends.load(Ordering::SeqCst).min(*n)))
@@ -610,7 +617,7 @@ fn a_trip_inside_the_background_drain_keeps_the_message_and_reconnects() {
     slow.pause = W / 10;
     let factory = Factory::with([slow]);
     let p = policy(ReconnectMode::Background)
-        .with_gap_buffer_capacity(512)
+        .with_gap_buffer_capacity(BACKLOG as usize)
         // The backlog is queued while the worker waits out its first step.
         .with_backoff(BackoffStrategy::Constant(Duration::from_millis(200)));
     let mut m = armed(initial, &factory, p, W);
@@ -620,7 +627,8 @@ fn a_trip_inside_the_background_drain_keeps_the_message_and_reconnects() {
         .abandons
         .load(Ordering::SeqCst)
         == 1));
-    for _ in 0..400 {
+    // With the tripping message, the backlog fills the buffer exactly.
+    for _ in 1..BACKLOG {
         m.send_bytes(&msg(next)).expect("queued");
         next += 1;
     }
@@ -795,7 +803,9 @@ fn a_peer_that_never_answers_any_connection_runs_out_the_budget() {
 
 #[test]
 fn an_answer_on_the_new_connection_restores_the_budget() {
-    for mode in MODES {
+    // `late`: the reconnect is held 10 ms, so a Background worker drains
+    // (and reads) messages queued behind it before the answer below.
+    for (mode, late) in MODES.into_iter().flat_map(|m| [(m, false), (m, true)]) {
         let reading = Arc::new(AtomicU64::new(0));
         let (second, second_seen) = Scripted::new(Reading::Controlled(Arc::clone(&reading)));
         let factory = Factory::with([second]);
@@ -806,6 +816,17 @@ fn an_answer_on_the_new_connection_restores_the_budget() {
             W,
         );
         let stats = m.stats_handle();
+        let releaser = late.then(|| {
+            factory.hold();
+            let f = factory.clone();
+            std::thread::spawn(move || {
+                while f.calls() == 0 {
+                    std::thread::sleep(Duration::from_millis(1));
+                }
+                std::thread::sleep(Duration::from_millis(10));
+                f.release();
+            })
+        });
         let installed = |n: u64| {
             move |s: &tst_pipeline::ManagedStatsHandle| {
                 s.stats()
@@ -814,11 +835,16 @@ fn an_answer_on_the_new_connection_restores_the_budget() {
         };
         // The first connection never answers: one trip, one reconnect.
         let refused = send_until_refused(&mut m, || installed(1)(&stats));
-        assert!(refused.is_none(), "{mode:?}: {refused:?}");
-        // The second answers: its reading moves between two reads...
+        if let Some(r) = releaser {
+            r.join().expect("the releaser does not panic");
+        }
+        assert!(refused.is_none(), "{mode:?}, late {late}: {refused:?}");
+        // The second answers: its reading moves between two reads taken from
+        // here on (a worker's drain may have read it already)...
         let deadline = Instant::now() + scaled(Duration::from_secs(5));
         let mut n = 0u32;
-        while second_seen.reads.load(Ordering::SeqCst) < 2 {
+        let read_before = second_seen.reads.load(Ordering::SeqCst);
+        while second_seen.reads.load(Ordering::SeqCst) < read_before + 2 {
             assert!(Instant::now() < deadline, "{mode:?}: never read twice");
             reading.fetch_add(1, Ordering::SeqCst);
             m.send_bytes(&msg(n)).unwrap();
@@ -827,8 +853,8 @@ fn an_answer_on_the_new_connection_restores_the_budget() {
         }
         // ...then goes silent: that outage has a whole budget again.
         let refused = send_until_refused(&mut m, || installed(2)(&stats));
-        assert!(refused.is_none(), "{mode:?}: {refused:?}");
-        assert_eq!(factory.calls(), 2, "{mode:?}");
+        assert!(refused.is_none(), "{mode:?}, late {late}: {refused:?}");
+        assert_eq!(factory.calls(), 2, "{mode:?}, late {late}");
     }
 }
 
@@ -1024,4 +1050,60 @@ fn an_answer_inside_the_drain_restores_the_budget() {
         );
         m.send_bytes(&msg(u32::MAX)).expect("delivered");
     }
+}
+
+// ---- a peer that answers the first packet of every connection, then never ----
+
+/// Runs a sender whose every replacement answers once (the answer visible
+/// from its `answer_from`-th send on) and then goes silent, until the
+/// reconnect gives up or `connections` replacements were used. Returns the
+/// give-up, if one came, and the replacements used.
+fn answer_once_per_connection(
+    p: ReconnectPolicy,
+    answer_from: u32,
+    connections: usize,
+) -> (Option<TransportError>, u32) {
+    let factory = Factory::with(
+        (0..connections).map(|_| Scripted::new(Reading::AnswersOnceFrom(answer_from)).0),
+    );
+    let mut m = armed(
+        Scripted::new(Reading::Frozen(1)).0,
+        &factory,
+        p.with_max_attempts(Some(3)),
+        W,
+    );
+    let f = factory.clone();
+    let refused = send_until_refused(&mut m, || f.calls() as usize > connections);
+    (refused, factory.calls())
+}
+
+#[test]
+fn blocking_with_a_gap_buffer_misses_an_answer_to_the_replayed_message_and_gives_up() {
+    // The replay after a reconnect is not read; an answer visible at the
+    // first read becomes that connection's baseline, so it never answered.
+    let (refused, calls) = answer_once_per_connection(policy(ReconnectMode::Blocking), 2, 10);
+    assert!(is_give_up(&refused, 3), "{refused:?}");
+    assert_eq!(calls, 3);
+    // An answer that comes after the first read is seen: no give-up.
+    let (refused, calls) = answer_once_per_connection(policy(ReconnectMode::Blocking), 3, 10);
+    assert!(refused.is_none(), "{refused:?}");
+    assert_eq!(calls, 11, "every replacement used, then the fallback");
+}
+
+#[test]
+fn blocking_at_capacity_zero_sees_the_answer_and_redials_without_end() {
+    // The send after the reconnect is read before the answer: every
+    // connection answers once, every outage starts a fresh budget.
+    let p = policy(ReconnectMode::Blocking).with_gap_buffer_capacity(0);
+    let (refused, calls) = answer_once_per_connection(p, 2, 10);
+    assert!(refused.is_none(), "{refused:?}");
+    assert_eq!(calls, 11, "every replacement used, then the fallback");
+}
+
+#[test]
+fn background_sees_the_answer_and_redials_without_end() {
+    // The worker's drain is read: as at capacity 0.
+    let (refused, calls) = answer_once_per_connection(policy(ReconnectMode::Background), 2, 10);
+    assert!(refused.is_none(), "{refused:?}");
+    assert_eq!(calls, 11, "every replacement used, then the fallback");
 }
