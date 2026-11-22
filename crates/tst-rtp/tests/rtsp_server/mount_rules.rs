@@ -1835,3 +1835,57 @@ fn the_measured_credential_classes_are_unchanged() {
         &owned(OPEN),
     );
 }
+
+/// The requests a rule refused for their credential are counted on it, in
+/// their direction, before each reply is written: a bare first challenge
+/// is not, two wrong passwords are, and the third 401 closes the
+/// connection.
+#[test]
+fn refused_answers_on_one_connection_are_counted_on_the_rule() {
+    use tst_rtp::rtsp::server::mount_rules::MountRuleAuthFailures;
+    let server = started_with_mount(RtspServerBuilder::new("rtsp://127.0.0.1:0").unwrap());
+    let rules = server.mount_rules();
+    rules
+        .set(
+            "/a",
+            MountRule::both(MountPolicy::Require(vec![cred("viewer", "pw")])),
+        )
+        .unwrap();
+    rules.set_challenge(AuthScheme::Basic, "lab").unwrap();
+    let port = server.local_addr().unwrap().port();
+    let describe = |tcp: &mut TcpStream, cseq: u32, auth: &str| {
+        request(
+            tcp,
+            &format!("DESCRIBE rtsp://127.0.0.1:{port}/a RTSP/1.0\r\nCSeq: {cseq}\r\n{auth}\r\n"),
+        )
+    };
+    let count = || rules.auth_failures("/a").map(|c| c.read);
+
+    let mut tcp = connect(port);
+    assert_eq!(status(&describe(&mut tcp, 1, "")), 401);
+    assert_eq!(count(), Some(0), "a bare challenge is not counted");
+    assert_eq!(
+        status(&describe(&mut tcp, 2, &basic("viewer", "nope"))),
+        401
+    );
+    assert_eq!(count(), Some(1));
+    assert_eq!(
+        status(&describe(&mut tcp, 3, &basic("viewer", "nope"))),
+        401
+    );
+    assert_eq!(count(), Some(2));
+    assert_eq!(rules.auth_failures("/a").unwrap().publish, 0);
+    // The third 401 in a row closed the connection.
+    use std::io::Read as _;
+    let mut rest = [0u8; 16];
+    let closed = match tcp.read(&mut rest) {
+        Ok(n) => n == 0,
+        Err(e) => e.kind() == std::io::ErrorKind::ConnectionReset,
+    };
+    assert!(closed, "the connection is closed");
+    assert_eq!(
+        rules.default_auth_failures(),
+        MountRuleAuthFailures::default()
+    );
+    server.stop().unwrap();
+}

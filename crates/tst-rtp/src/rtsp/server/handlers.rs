@@ -182,8 +182,8 @@ pub(crate) fn authorize_request(
     // realm) that the check and its 401 use, the server's own credential
     // included.
     let decision = state.mount_rules.decision(&path, dir);
-    let (scheme, realm) = (decision.scheme, decision.realm);
-    let verified = match decision.policy {
+    let (scheme, realm) = (decision.scheme, decision.realm.as_str());
+    let verified = match &decision.policy {
         MountPolicy::Refuse(status) => {
             // A refusal keyed on the session's own role ends that role: a
             // publisher refused at RECORD or TEARDOWN stops. One that
@@ -207,7 +207,7 @@ pub(crate) fn authorize_request(
                 method_str,
                 &req.uri,
                 scheme,
-                &realm,
+                realm,
                 &[Credential {
                     username: &auth_cfg.username,
                     password: &auth_cfg.password,
@@ -224,7 +224,7 @@ pub(crate) fn authorize_request(
                 method_str,
                 &req.uri,
                 scheme,
-                &realm,
+                realm,
                 &creds,
                 &session.auth_nonce,
                 &mut session.auth_nc_hwm,
@@ -245,9 +245,17 @@ pub(crate) fn authorize_request(
         Err(AuthVerifyError::StaleNonce) => {
             // Surface stale=true so the client knows to retry with the
             // new nonce instead of treating it as a credentials error.
-            Err(challenge_response(req, session, true, scheme, &realm))
+            Err(challenge_response(req, session, true, scheme, realm))
         }
-        Err(_) => Err(challenge_response(req, session, false, scheme, &realm)),
+        Err(_) => {
+            // A credential that was sent and refused counts on the rule; the
+            // first challenge every client gets (no header) and a stale
+            // nonce (re-challenged, not a guess) do not.
+            if auth_header.is_some() {
+                decision.count_refused_credential(dir);
+            }
+            Err(challenge_response(req, session, false, scheme, realm))
+        }
     }
 }
 
@@ -1082,6 +1090,215 @@ mod tests {
             www.starts_with("Digest") && www.contains(r#"realm="tstrans""#),
             "the 401 offered a challenge its request was not checked under: {www}"
         );
+    }
+
+    /// A Digest MD5 answer for `user:password` to the table's default
+    /// challenge (realm `tstrans`) under `nonce`.
+    fn digest_answer(user: &str, password: &str, method: &str, uri: &str, nonce: &str) -> String {
+        use crate::rtsp::digest::{Algo, ha1, response};
+        use secrecy::SecretString;
+        let ha1 = ha1(
+            Algo::Md5,
+            user,
+            "tstrans",
+            &SecretString::new(password.into()),
+        );
+        let resp = response(
+            Algo::Md5,
+            &ha1,
+            method,
+            uri,
+            nonce,
+            "00000001",
+            "cafe",
+            "auth",
+        );
+        format!(
+            "Digest username=\"{user}\", realm=\"tstrans\", nonce=\"{nonce}\", uri=\"{uri}\", \
+             response=\"{resp}\", algorithm=MD5, qop=auth, nc=00000001, cnonce=\"cafe\""
+        )
+    }
+
+    #[test]
+    fn a_refused_credential_counts_on_its_rule_and_a_bare_challenge_does_not() {
+        use crate::rtsp::server::mount_rules::{
+            MountCredential, MountPolicy, MountRule, MountRuleAuthFailures, RefuseStatus,
+        };
+        use secrecy::SecretString;
+        let state = crate::rtsp::server::test_state();
+        let rules = &state.mount_rules;
+        rules
+            .set(
+                "/live",
+                MountRule::both(MountPolicy::Require(vec![MountCredential::new(
+                    "viewer",
+                    SecretString::new("pw".into()),
+                )])),
+            )
+            .unwrap();
+        rules
+            .set(
+                "/refused",
+                MountRule::both(MountPolicy::Refuse(RefuseStatus::Forbidden)),
+            )
+            .unwrap();
+        let uri = "rtsp://127.0.0.1:8554/live";
+        // (what, method, the Authorization header given the session's nonce,
+        // the status, the counts of /live after it).
+        type Header = fn(&str) -> Option<String>;
+        type Row = (&'static str, RtspMethod, Header, u16, (u64, u64));
+        let rows: [Row; 9] = [
+            ("no header", RtspMethod::Describe, |_| None, 401, (0, 0)),
+            (
+                "a stale nonce",
+                RtspMethod::Describe,
+                |_| {
+                    Some(digest_answer(
+                        "viewer",
+                        "pw",
+                        "DESCRIBE",
+                        "rtsp://127.0.0.1:8554/live",
+                        "not-this-sessions",
+                    ))
+                },
+                401,
+                (0, 0),
+            ),
+            (
+                "a wrong password",
+                RtspMethod::Describe,
+                |n| {
+                    Some(digest_answer(
+                        "viewer",
+                        "nope",
+                        "DESCRIBE",
+                        "rtsp://127.0.0.1:8554/live",
+                        n,
+                    ))
+                },
+                401,
+                (0, 1),
+            ),
+            (
+                "an unknown user",
+                RtspMethod::Describe,
+                |n| {
+                    Some(digest_answer(
+                        "nobody",
+                        "pw",
+                        "DESCRIBE",
+                        "rtsp://127.0.0.1:8554/live",
+                        n,
+                    ))
+                },
+                401,
+                (0, 2),
+            ),
+            (
+                // The verifier reads a Digest header without this
+                // connection's nonce as stale, whatever else it holds.
+                "a Digest header without a nonce",
+                RtspMethod::Describe,
+                |_| Some("Digest garbage".into()),
+                401,
+                (0, 2),
+            ),
+            (
+                "a malformed header",
+                RtspMethod::Describe,
+                |n| Some(format!("Digest username=\"viewer\", nonce=\"{n}\"")),
+                401,
+                (0, 3),
+            ),
+            (
+                "the wrong scheme",
+                RtspMethod::Describe,
+                |_| Some("Basic dmlld2VyOnB3".into()),
+                401,
+                (0, 4),
+            ),
+            (
+                "a wrong password on ANNOUNCE",
+                RtspMethod::Announce,
+                |n| {
+                    Some(digest_answer(
+                        "viewer",
+                        "nope",
+                        "ANNOUNCE",
+                        "rtsp://127.0.0.1:8554/live",
+                        n,
+                    ))
+                },
+                401,
+                (1, 4),
+            ),
+            (
+                "the right credential",
+                RtspMethod::Describe,
+                |n| {
+                    Some(digest_answer(
+                        "viewer",
+                        "pw",
+                        "DESCRIBE",
+                        "rtsp://127.0.0.1:8554/live",
+                        n,
+                    ))
+                },
+                // Admitted: the handler answers for a path with no mount.
+                404,
+                (1, 4),
+            ),
+        ];
+        for (what, method, header, status, (publish, read)) in rows {
+            let mut session = ServerSessionState::new();
+            let mut req = make_req(method, uri);
+            if let Some(h) = header(&session.auth_nonce) {
+                req.headers.insert("authorization".into(), h);
+            }
+            let resp = crate::rtsp::server::session::dispatch(&req, &state, &mut session);
+            assert_eq!(resp.status, status, "{what}");
+            let want = MountRuleAuthFailures { publish, read };
+            assert_eq!(rules.auth_failures("/live"), Some(want), "{what}");
+        }
+        let mut session = ServerSessionState::new();
+        let mut req = make_req(RtspMethod::Describe, "rtsp://127.0.0.1:8554/refused");
+        req.headers
+            .insert("authorization".into(), "Basic dmlld2VyOnB3".into());
+        let resp = crate::rtsp::server::session::dispatch(&req, &state, &mut session);
+        assert_eq!(resp.status, 403, "a Refuse rule");
+        assert_eq!(
+            rules.auth_failures("/refused"),
+            Some(MountRuleAuthFailures::default())
+        );
+        assert_eq!(
+            rules.default_auth_failures(),
+            MountRuleAuthFailures::default()
+        );
+    }
+
+    #[test]
+    fn refused_credentials_on_invented_paths_allocate_nothing() {
+        use crate::rtsp::server::mount_rules::{MountCredential, MountPolicy, MountRule};
+        use secrecy::SecretString;
+        let state = crate::rtsp::server::test_state();
+        let rules = &state.mount_rules;
+        rules
+            .set_default(MountRule::both(MountPolicy::Require(vec![
+                MountCredential::new("viewer", SecretString::new("pw".into())),
+            ])))
+            .unwrap();
+        for i in 0..1000 {
+            let mut session = ServerSessionState::new();
+            let mut req = make_req(RtspMethod::Describe, &format!("rtsp://127.0.0.1:8554/p{i}"));
+            req.headers
+                .insert("authorization".into(), "Basic Zm9vOmJhcg==".into());
+            let resp = crate::rtsp::server::session::dispatch(&req, &state, &mut session);
+            assert_eq!(resp.status, 401);
+        }
+        assert_eq!(rules.len(), 0);
+        assert_eq!(rules.auth_failures("/p7"), None);
+        assert_eq!(rules.default_auth_failures().read, 1000);
+        assert_eq!(rules.default_auth_failures().publish, 0);
     }
 
     #[test]

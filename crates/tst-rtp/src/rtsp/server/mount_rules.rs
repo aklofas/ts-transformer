@@ -16,6 +16,7 @@
 
 use std::collections::HashMap;
 use std::fmt;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use secrecy::SecretString;
@@ -207,6 +208,51 @@ pub enum MountRuleError {
     Closed,
 }
 
+/// How many requests one rule refused for the credential they carried, per
+/// direction, from [`MountRules::auth_failures`] and
+/// [`MountRules::default_auth_failures`].
+///
+/// A request counts when it carried an `Authorization` header and was
+/// answered 401 for any reason but a stale nonce: a wrong password, an
+/// unknown user, a malformed header, the wrong scheme. The first challenge
+/// every client gets (no header yet), a stale nonce (a Digest header that
+/// does not carry the connection's current nonce, malformed or not) and a
+/// `Refuse` rule's status never count. An honest client's first answer after
+/// [`MountRules::set_challenge`] changed the scheme or the realm does.
+///
+/// A rate signal: an unauthenticated peer can raise it at will (three
+/// refused answers per connection under Basic, two under Digest after the
+/// bare first challenge, any number of connections), and a peer that holds
+/// one valid credential resets its strikes with it and can try other
+/// credentials without bound on one connection. A lock-out built on one
+/// name's count can therefore be triggered against that name's owner.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub struct MountRuleAuthFailures {
+    /// Refused requests that publish (`ANNOUNCE`, and the requests of a
+    /// session that announced).
+    pub publish: u64,
+    /// Refused requests that read (`DESCRIBE`, and the requests of a reader
+    /// or an idle session).
+    pub read: u64,
+}
+
+/// The refused-credential counts of one rule (or of the default rule).
+#[derive(Debug, Default)]
+struct Counts {
+    publish: AtomicU64,
+    read: AtomicU64,
+}
+
+impl Counts {
+    fn snapshot(&self) -> MountRuleAuthFailures {
+        MountRuleAuthFailures {
+            publish: self.publish.load(Ordering::Relaxed),
+            read: self.read.load(Ordering::Relaxed),
+        }
+    }
+}
+
 /// Which side of a mount a request belongs to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Direction {
@@ -220,7 +266,10 @@ pub(crate) enum Direction {
 #[derive(Clone)]
 struct Table {
     rules: HashMap<String, MountRule>,
+    /// The refused-credential counts of each path in `rules`, same keys.
+    counts: HashMap<String, Arc<Counts>>,
     default: MountRule,
+    default_counts: Arc<Counts>,
     challenge: (AuthScheme, String),
     closed: bool,
 }
@@ -241,6 +290,22 @@ pub(crate) struct Decision {
     pub policy: MountPolicy,
     pub scheme: AuthScheme,
     pub realm: String,
+    /// The counts of the rule the decision came from: the path's own when
+    /// it has one (whatever its policy, `Inherit` included), else the
+    /// default rule's.
+    counts: Arc<Counts>,
+}
+
+impl Decision {
+    /// Count one request refused for the credential it carried, in `dir`.
+    /// No lock: the counts are atomics shared with the table.
+    pub(crate) fn count_refused_credential(&self, dir: Direction) {
+        match dir {
+            Direction::Publish => &self.counts.publish,
+            Direction::Read => &self.counts.read,
+        }
+        .fetch_add(1, Ordering::Relaxed);
+    }
 }
 
 /// Test-only stops inside a table's read and edit paths. They belong to one
@@ -378,7 +443,9 @@ impl MountRules {
             inner: Arc::new(Inner {
                 table: RwLock::new(Table {
                     rules: HashMap::new(),
+                    counts: HashMap::new(),
                     default,
+                    default_counts: Arc::default(),
                     challenge,
                     closed: false,
                 }),
@@ -405,7 +472,8 @@ impl MountRules {
         apply(&mut t)
     }
 
-    /// Set the rule for `path`, replacing any earlier one.
+    /// Set the rule for `path`, replacing any earlier one. A path that
+    /// already had a rule keeps its refused-credential counts.
     ///
     /// # Errors
     /// - [`MountRuleError::InvalidMountPath`] if `path` is not a valid mount
@@ -423,12 +491,14 @@ impl MountRules {
             check_path(path)?;
             check_rule(&rule)?;
             t.rules.insert(path.to_string(), rule);
+            t.counts.entry(path.to_string()).or_default();
             Ok(())
         })
     }
 
-    /// Remove the rule for `path`; the path then follows the default.
-    /// Returns whether a rule was present.
+    /// Remove the rule for `path`; the path then follows the default. Its
+    /// refused-credential counts go with it. Returns whether a rule was
+    /// present.
     ///
     /// # Errors
     /// - [`MountRuleError::InvalidMountPath`] if `path` is not a valid mount
@@ -438,6 +508,7 @@ impl MountRules {
     pub fn remove(&self, path: &str) -> Result<bool, MountRuleError> {
         self.edit(|t| {
             check_path(path)?;
+            t.counts.remove(path);
             Ok(t.rules.remove(path).is_some())
         })
     }
@@ -458,13 +529,15 @@ impl MountRules {
         })
     }
 
-    /// Remove every path rule. The default rule and the challenge stay.
+    /// Remove every path rule, and their refused-credential counts. The
+    /// default rule, its counts and the challenge stay.
     ///
     /// # Errors
     /// - [`MountRuleError::Closed`] after the server shut down.
     pub fn clear(&self) -> Result<(), MountRuleError> {
         self.edit(|t| {
             t.rules.clear();
+            t.counts.clear();
             Ok(())
         })
     }
@@ -505,6 +578,24 @@ impl MountRules {
         read(&self.inner.table).rules.is_empty()
     }
 
+    /// The requests refused for their credential on `path`'s own rule
+    /// (see [`MountRuleAuthFailures`]); `None` when `path` has no rule of
+    /// its own. A request for a path without a rule counts on the default
+    /// rule. Answers after the server shut down.
+    pub fn auth_failures(&self, path: &str) -> Option<MountRuleAuthFailures> {
+        read(&self.inner.table)
+            .counts
+            .get(path)
+            .map(|c| c.snapshot())
+    }
+
+    /// The requests refused for their credential on the default rule: those
+    /// for every path without a rule of its own (see
+    /// [`MountRuleAuthFailures`]). Answers after the server shut down.
+    pub fn default_auth_failures(&self) -> MountRuleAuthFailures {
+        read(&self.inner.table).default_counts.snapshot()
+    }
+
     /// Whether the server has shut down, after which edits are refused.
     pub fn is_closed(&self) -> bool {
         self.inner.hard_cancel.is_cancelled() || read(&self.inner.table).closed
@@ -527,10 +618,12 @@ impl MountRules {
             _ => pick(&t.default),
         };
         let (scheme, realm) = t.challenge.clone();
+        let counts = t.counts.get(path).unwrap_or(&t.default_counts).clone();
         Decision {
             policy,
             scheme,
             realm,
+            counts,
         }
     }
 
@@ -851,6 +944,72 @@ mod tests {
         );
         let s = format!("{t:?}");
         assert!(s.contains(r#"challenge: (DigestSha256, "lab")"#), "{s}");
+    }
+
+    fn counts(read: u64, publish: u64) -> Option<MountRuleAuthFailures> {
+        Some(MountRuleAuthFailures { publish, read })
+    }
+
+    #[test]
+    fn a_rules_counts_survive_set_and_are_dropped_by_remove_and_clear() {
+        let t = table();
+        t.set("/a", MountRule::both(MountPolicy::Open)).unwrap();
+        let refuse = |n: usize| {
+            for _ in 0..n {
+                t.decision("/a", Direction::Read)
+                    .count_refused_credential(Direction::Read);
+            }
+        };
+        refuse(2);
+        t.set(
+            "/a",
+            MountRule::both(MountPolicy::Refuse(RefuseStatus::NotFound)),
+        )
+        .unwrap();
+        assert_eq!(t.auth_failures("/a"), counts(2, 0), "set keeps the counts");
+        assert!(t.remove("/a").unwrap());
+        assert_eq!(t.auth_failures("/a"), None);
+        t.set("/a", MountRule::both(MountPolicy::Open)).unwrap();
+        assert_eq!(
+            t.auth_failures("/a"),
+            counts(0, 0),
+            "a removed rule's counts are gone"
+        );
+        refuse(1);
+        t.clear().unwrap();
+        assert_eq!(t.auth_failures("/a"), None);
+        assert_eq!(t.default_auth_failures(), MountRuleAuthFailures::default());
+    }
+
+    #[test]
+    fn a_path_rule_that_says_inherit_still_counts_on_itself() {
+        let t = table();
+        t.set_default(MountRule::both(MountPolicy::Open)).unwrap();
+        t.set("/a", MountRule::default()).unwrap();
+        t.decision("/a", Direction::Publish)
+            .count_refused_credential(Direction::Publish);
+        t.decision("/other", Direction::Read)
+            .count_refused_credential(Direction::Read);
+        assert_eq!(t.auth_failures("/a"), counts(0, 1));
+        assert_eq!(t.auth_failures("/other"), None);
+        assert_eq!(
+            t.default_auth_failures(),
+            MountRuleAuthFailures {
+                publish: 0,
+                read: 1
+            }
+        );
+    }
+
+    #[test]
+    fn counts_stay_readable_after_the_table_closed() {
+        let t = table();
+        t.set("/a", MountRule::default()).unwrap();
+        t.decision("/a", Direction::Read)
+            .count_refused_credential(Direction::Read);
+        t.close();
+        assert_eq!(t.auth_failures("/a"), counts(1, 0));
+        assert_eq!(t.default_auth_failures(), MountRuleAuthFailures::default());
     }
 
     #[test]
