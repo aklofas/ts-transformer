@@ -179,7 +179,9 @@ tst_core::binding_record! {
     /// counters reported by lagging subscribers.
     ///
     /// <!-- rust-only -->
-    /// Snapshot of [`MountHandle::stats`].
+    /// Snapshot of [`MountHandle::stats`]. `per_stream` is always empty (see
+    /// the field). On a multicast mount `peer_count` counts the mount's own
+    /// sender (1 while the mount lives), not readers.
     #[must_use]
     #[derive(Debug, Clone, Default, PartialEq, Eq)]
     #[non_exhaustive]
@@ -193,6 +195,8 @@ tst_core::binding_record! {
         /// Sum of the per-peer dropped-frame counters reported by lagging
         /// subscribers.
         pub frames_dropped_total: u64,
+        /// Always empty: an RTSP mount does not count per stream. The field
+        /// is kept until its removal before 1.0.
         @[skip]
         pub per_stream: BTreeMap<u16, tst_core::mpegts::stats::StreamStats>,
     }

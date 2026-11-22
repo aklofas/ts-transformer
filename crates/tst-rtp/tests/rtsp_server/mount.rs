@@ -81,6 +81,8 @@ fn push_video_updates_stats() {
         after.packets_pushed > 0,
         "packets_pushed should grow after push"
     );
+    // Documented as always empty; the day it fills, its doc changes too.
+    assert!(after.per_stream.is_empty(), "{:?}", after.per_stream);
 }
 
 #[test]
