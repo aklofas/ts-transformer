@@ -1220,6 +1220,45 @@ fn an_idle_play_tells_a_refused_path_from_a_missing_one() {
     server.stop().unwrap();
 }
 
+/// What a `Refuse` rule does not hide, ANNOUNCE's half: the rule answers
+/// before the handler reads the body or the session's state, so an ANNOUNCE
+/// without a body reads the rule's status for a refused path and the
+/// handler's for a path with no rule (400 from an Idle connection, 455 from
+/// a reader's).
+#[test]
+fn an_announce_tells_a_refused_path_from_a_missing_one() {
+    let (server, _open) = open_and_secret();
+    let port = server.local_addr().unwrap().port();
+    server
+        .mount_rules()
+        .set(
+            "/secret",
+            MountRule::both(MountPolicy::Refuse(RefuseStatus::NotFound)),
+        )
+        .unwrap();
+    let idle = |path: &str| {
+        let mut tcp = connect(port);
+        status(&request(
+            &mut tcp,
+            &format!("ANNOUNCE rtsp://127.0.0.1:{port}{path} RTSP/1.0\r\nCSeq: 1\r\n\r\n"),
+        ))
+    };
+    let as_reader = |path: &str| {
+        let mut tcp = connect(port);
+        let r = setup_reader(&mut tcp, port, "/open", 1, "");
+        assert_eq!(status(&r), 200, "{r}");
+        let sid = session_id(&r);
+        status(&in_session(&mut tcp, port, "ANNOUNCE", path, 2, &sid))
+    };
+    assert_eq!((idle("/secret"), idle("/nope")), (404, 400), "Idle");
+    assert_eq!(
+        (as_reader("/secret"), as_reader("/nope")),
+        (404, 455),
+        "a reader's connection"
+    );
+    server.stop().unwrap();
+}
+
 /// A refused SETUP on the reader's own mount ends its role and leaves the
 /// connection open, and the connection can then set up an allowed mount
 /// and play it: the RTP actually arrives, so the ended role left no
