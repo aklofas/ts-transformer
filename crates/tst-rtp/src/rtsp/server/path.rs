@@ -17,8 +17,9 @@ use crate::rtsp::server::session::ServerSessionState;
 /// that `rtsp://host/live/` and `rtsp://host/live` both resolve to the
 /// same mount registered at `"/live"`. Without this, a client that
 /// appends a trailing slash to the DESCRIBE URI would get a 404 for a
-/// perfectly valid mount. DESCRIBE, SETUP, and PLAY all go through this
-/// function, so the normalization is consistent across the whole session.
+/// perfectly valid mount. DESCRIBE, ANNOUNCE and SETUP go through this
+/// function and PLAY uses the mount the reader's SETUP stored, so the
+/// normalization is consistent across the whole session.
 ///
 /// The result is a fixed point: it has no trailing `/` and no trailing
 /// control segment, so `extract_mount_path(&extract_mount_path(u))` equals
