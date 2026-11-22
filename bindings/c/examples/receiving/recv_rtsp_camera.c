@@ -29,10 +29,13 @@
  *     ephemeral port).  TCP-interleaved rides the already-established RTSP
  *     control TCP connection, so nothing new passes the firewall.
  *
- *   The "auto" transport mode (transport pref = 0 = PreferUdp) tries UDP
- *   first; if the server responds 461 Unsupported Transport it retries with
- *   TCP-interleaved automatically.  This is the recommended default for
- *   programs that need to work in both network environments.
+ *   Without --transport this example lets the URL choose: an rtsp:// URL
+ *   tries UDP first and, if the server responds 461 Unsupported Transport,
+ *   retries with TCP-interleaved automatically; an rtsps:// URL asks for
+ *   TCP-interleaved only, so the media stays inside the TLS connection
+ *   (UDP media would travel unencrypted beside it).  "--transport auto"
+ *   (transport pref = 0) asks UDP first with that 461 fallback on ANY
+ *   scheme, rtsps:// included.
  *
  *   STANAG 4609 / MISB ST 1402 context:
  *     ISR video streams carry KLV metadata (MISB ST 0601 GPS, sensor
@@ -60,7 +63,9 @@
  *   --url       <rtsp://...>    default: rtsp://127.0.0.1:554/live
  *   --user      <username>      if set, enables Digest MD5 auth
  *   --pass      <password>      required when --user is present
- *   --transport udp|tcp|auto    default: auto  (PreferUdp with 461 fallback)
+ *   --transport udp|tcp|auto    default: none, the URL decides (rtsp://
+ *                               UDP first with 461 fallback, rtsps://
+ *                               TCP-interleaved only)
  *
  * Build (from the ts-transformer workspace root). The committed header's
  * config declares no transport, so including bindings/c/include directly
@@ -111,8 +116,9 @@ static void handle_signal(int sig) {
  *   1 = ForceUdp    — UDP only; surface error on 461
  *   2 = ForceTcp    — TCP-interleaved only; skip UDP attempt entirely
  *
- * "auto" is an alias for PreferUdp (0) because it transparently handles
- * both network topologies without user intervention.
+ * "auto" is an alias for PreferUdp (0): UDP first, TCP on 461, whatever
+ * the URL's scheme.  The example calls the setter only when --transport is
+ * given; see Step 3 in main().
  * ---------------------------------------------------------------------- */
 static int parse_transport(const char *name, uint32_t *out) {
     if (strcmp(name, "auto") == 0 || strcmp(name, "prefer-udp") == 0) {
@@ -344,7 +350,8 @@ int main(int argc, char **argv) {
     const char *url       = "rtsp://127.0.0.1:554/live";
     const char *user      = NULL;
     const char *pass      = NULL;
-    uint32_t    transport = 0;   /* 0 = PreferUdp (auto fallback to TCP) */
+    uint32_t    transport = 0;   /* meaningful only when transport_set */
+    int         transport_set = 0; /* 0 = no --transport: the URL decides */
 
     /* ------------------------------------------------------------------
      * Minimal flag parser.  Order: --url, --user, --pass, --transport.
@@ -360,6 +367,7 @@ int main(int argc, char **argv) {
             if (parse_transport(argv[++i], &transport) != 0) {
                 return 1;
             }
+            transport_set = 1;
         } else if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
             fprintf(stderr,
                     "usage: %s [--url <rtsp://...>] [--user U] [--pass P]"
@@ -383,13 +391,13 @@ int main(int argc, char **argv) {
             "RTSP client camera example\n"
             "  url:       %s\n"
             "  user:      %s\n"
-            "  transport: %s (pref=%u)\n",
+            "  transport: %s\n",
             url_shown(url, shown, sizeof(shown)),
             user ? user : "(none — no auth)",
-            transport == 0 ? "auto (PreferUdp→TCP fallback)"
+            !transport_set ? "the URL's default (rtsps:// = TCP-interleaved only)"
+          : transport == 0 ? "auto (PreferUdp→TCP fallback)"
           : transport == 1 ? "force-udp"
-          :                  "force-tcp-interleaved",
-            transport);
+          :                  "force-tcp-interleaved");
 
     /* ------------------------------------------------------------------
      * Install SIGINT + SIGTERM handler.
@@ -449,7 +457,14 @@ int main(int argc, char **argv) {
     }
 
     /* ------------------------------------------------------------------
-     * Step 3 — transport preference.
+     * Step 3 — transport preference, only when --transport was given.
+     *
+     * Not calling the setter leaves the URL in charge: its ?transport= key
+     * if it has one, else UDP first with TCP fallback for rtsp:// and
+     * TCP-interleaved only for rtsps://, so an rtsps:// session keeps its
+     * media inside the TLS connection.  Calling the setter overrides that
+     * default, 0 included: on rtsps:// a server that grants UDP then sends
+     * the media in clear datagrams.
      *
      * pref=0 (PreferUdp / "auto"):
      *   The client sends SETUP with Transport: RTP/AVP;unicast first.
@@ -459,14 +474,17 @@ int main(int argc, char **argv) {
      *
      * pref=1 (ForceUdp):
      *   UDP only.  If the server replies 461, the connect call returns
-     *   TST_E_RTSP_UNSUPPORTED rather than falling back.
+     *   NULL with TST_E_RTSP_PROTOCOL (the text names the 461) rather
+     *   than falling back.
      *
      * pref=2 (ForceTcp):
      *   TCP-interleaved only.  Skips the UDP SETUP attempt.  Use when
      *   you know the network topology requires it and want to avoid
      *   the unnecessary round-trip.
      * ---------------------------------------------------------------- */
-    tst_rtsp_client_builder_transport_pref(builder, transport);
+    if (transport_set) {
+        tst_rtsp_client_builder_transport_pref(builder, transport);
+    }
 
     /* ------------------------------------------------------------------
      * Step 4 — keepalive pings.
