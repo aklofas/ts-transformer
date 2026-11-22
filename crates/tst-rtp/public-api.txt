@@ -923,7 +923,9 @@ impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::rtsp::server::builder:
 impl core::panic::unwind_safe::UnwindSafe for tst_rtp::rtsp::server::builder::AuthScheme
 pub struct tst_rtp::rtsp::server::builder::RtspServerBuilder
 impl tst_rtp::rtsp::server::builder::RtspServerBuilder
+pub fn tst_rtp::rtsp::server::builder::RtspServerBuilder::accept_digest_without_qop(&mut self, bool) -> &mut Self
 pub fn tst_rtp::rtsp::server::builder::RtspServerBuilder::accept_unregistered_publishers(&mut self, bool) -> &mut Self
+pub fn tst_rtp::rtsp::server::builder::RtspServerBuilder::allow_udp_media(&mut self, bool) -> &mut Self
 pub fn tst_rtp::rtsp::server::builder::RtspServerBuilder::auth_basic(&mut self, &str, &str, secrecy::SecretString) -> &mut Self
 pub fn tst_rtp::rtsp::server::builder::RtspServerBuilder::auth_digest_md5(&mut self, &str, &str, secrecy::SecretString) -> &mut Self
 pub fn tst_rtp::rtsp::server::builder::RtspServerBuilder::auth_digest_sha256(&mut self, &str, &str, secrecy::SecretString) -> &mut Self
@@ -932,6 +934,7 @@ pub fn tst_rtp::rtsp::server::builder::RtspServerBuilder::default_mount_rule(&mu
 pub fn tst_rtp::rtsp::server::builder::RtspServerBuilder::end_publish_mount_on_publisher_exit(&mut self, bool) -> &mut Self
 pub fn tst_rtp::rtsp::server::builder::RtspServerBuilder::fanout_capacity(&mut self, usize) -> &mut Self
 pub fn tst_rtp::rtsp::server::builder::RtspServerBuilder::graceful_shutdown_drain(&mut self, core::time::Duration) -> &mut Self
+pub fn tst_rtp::rtsp::server::builder::RtspServerBuilder::max_readers(&mut self, usize) -> &mut Self
 pub fn tst_rtp::rtsp::server::builder::RtspServerBuilder::max_sessions(&mut self, usize) -> &mut Self
 pub fn tst_rtp::rtsp::server::builder::RtspServerBuilder::new(&str) -> core::result::Result<Self, tst_rtp::error::RtspServerError>
 pub fn tst_rtp::rtsp::server::builder::RtspServerBuilder::publish_idle_timeout(&mut self, core::time::Duration) -> &mut Self
@@ -971,7 +974,7 @@ pub struct tst_rtp::rtsp::server::mount::MountHandle
 impl tst_rtp::rtsp::server::mount::MountHandle
 pub fn tst_rtp::rtsp::server::mount::MountHandle::audio_handles(&self) -> alloc::vec::Vec<tst_core::mpegts::mux::types::AudioStreamHandle>
 pub fn tst_rtp::rtsp::server::mount::MountHandle::data_handles(&self) -> alloc::vec::Vec<tst_core::mpegts::mux::types::DataStreamHandle>
-pub fn tst_rtp::rtsp::server::mount::MountHandle::flush(&self)
+pub fn tst_rtp::rtsp::server::mount::MountHandle::flush(&self) -> core::result::Result<(), tst_rtp::error::MountError>
 pub fn tst_rtp::rtsp::server::mount::MountHandle::klv_handles(&self) -> alloc::vec::Vec<tst_core::mpegts::mux::types::KlvStreamHandle>
 pub fn tst_rtp::rtsp::server::mount::MountHandle::mount_kind(&self) -> &tst_rtp::rtsp::server::mount::MountKind
 pub fn tst_rtp::rtsp::server::mount::MountHandle::mount_path(&self) -> &str
@@ -1125,9 +1128,32 @@ impl core::marker::Unpin for tst_rtp::rtsp::server::mount_rules::MountRule
 impl core::marker::UnsafeUnpin for tst_rtp::rtsp::server::mount_rules::MountRule
 impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::rtsp::server::mount_rules::MountRule
 impl core::panic::unwind_safe::UnwindSafe for tst_rtp::rtsp::server::mount_rules::MountRule
+#[non_exhaustive] pub struct tst_rtp::rtsp::server::mount_rules::MountRuleAuthFailures
+pub tst_rtp::rtsp::server::mount_rules::MountRuleAuthFailures::publish: u64
+pub tst_rtp::rtsp::server::mount_rules::MountRuleAuthFailures::read: u64
+impl core::clone::Clone for tst_rtp::rtsp::server::mount_rules::MountRuleAuthFailures
+pub fn tst_rtp::rtsp::server::mount_rules::MountRuleAuthFailures::clone(&self) -> tst_rtp::rtsp::server::mount_rules::MountRuleAuthFailures
+impl core::cmp::Eq for tst_rtp::rtsp::server::mount_rules::MountRuleAuthFailures
+impl core::cmp::PartialEq for tst_rtp::rtsp::server::mount_rules::MountRuleAuthFailures
+pub fn tst_rtp::rtsp::server::mount_rules::MountRuleAuthFailures::eq(&self, &tst_rtp::rtsp::server::mount_rules::MountRuleAuthFailures) -> bool
+impl core::default::Default for tst_rtp::rtsp::server::mount_rules::MountRuleAuthFailures
+pub fn tst_rtp::rtsp::server::mount_rules::MountRuleAuthFailures::default() -> tst_rtp::rtsp::server::mount_rules::MountRuleAuthFailures
+impl core::fmt::Debug for tst_rtp::rtsp::server::mount_rules::MountRuleAuthFailures
+pub fn tst_rtp::rtsp::server::mount_rules::MountRuleAuthFailures::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for tst_rtp::rtsp::server::mount_rules::MountRuleAuthFailures
+impl core::marker::StructuralPartialEq for tst_rtp::rtsp::server::mount_rules::MountRuleAuthFailures
+impl core::marker::Freeze for tst_rtp::rtsp::server::mount_rules::MountRuleAuthFailures
+impl core::marker::Send for tst_rtp::rtsp::server::mount_rules::MountRuleAuthFailures
+impl core::marker::Sync for tst_rtp::rtsp::server::mount_rules::MountRuleAuthFailures
+impl core::marker::Unpin for tst_rtp::rtsp::server::mount_rules::MountRuleAuthFailures
+impl core::marker::UnsafeUnpin for tst_rtp::rtsp::server::mount_rules::MountRuleAuthFailures
+impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::rtsp::server::mount_rules::MountRuleAuthFailures
+impl core::panic::unwind_safe::UnwindSafe for tst_rtp::rtsp::server::mount_rules::MountRuleAuthFailures
 pub struct tst_rtp::rtsp::server::mount_rules::MountRules
 impl tst_rtp::rtsp::server::mount_rules::MountRules
+pub fn tst_rtp::rtsp::server::mount_rules::MountRules::auth_failures(&self, &str) -> core::option::Option<tst_rtp::rtsp::server::mount_rules::MountRuleAuthFailures>
 pub fn tst_rtp::rtsp::server::mount_rules::MountRules::clear(&self) -> core::result::Result<(), tst_rtp::rtsp::server::mount_rules::MountRuleError>
+pub fn tst_rtp::rtsp::server::mount_rules::MountRules::default_auth_failures(&self) -> tst_rtp::rtsp::server::mount_rules::MountRuleAuthFailures
 pub fn tst_rtp::rtsp::server::mount_rules::MountRules::is_closed(&self) -> bool
 pub fn tst_rtp::rtsp::server::mount_rules::MountRules::is_empty(&self) -> bool
 pub fn tst_rtp::rtsp::server::mount_rules::MountRules::len(&self) -> usize
@@ -2306,7 +2332,7 @@ pub struct tst_rtp::MountHandle
 impl tst_rtp::rtsp::server::mount::MountHandle
 pub fn tst_rtp::rtsp::server::mount::MountHandle::audio_handles(&self) -> alloc::vec::Vec<tst_core::mpegts::mux::types::AudioStreamHandle>
 pub fn tst_rtp::rtsp::server::mount::MountHandle::data_handles(&self) -> alloc::vec::Vec<tst_core::mpegts::mux::types::DataStreamHandle>
-pub fn tst_rtp::rtsp::server::mount::MountHandle::flush(&self)
+pub fn tst_rtp::rtsp::server::mount::MountHandle::flush(&self) -> core::result::Result<(), tst_rtp::error::MountError>
 pub fn tst_rtp::rtsp::server::mount::MountHandle::klv_handles(&self) -> alloc::vec::Vec<tst_core::mpegts::mux::types::KlvStreamHandle>
 pub fn tst_rtp::rtsp::server::mount::MountHandle::mount_kind(&self) -> &tst_rtp::rtsp::server::mount::MountKind
 pub fn tst_rtp::rtsp::server::mount::MountHandle::mount_path(&self) -> &str
@@ -2357,9 +2383,32 @@ impl core::marker::Unpin for tst_rtp::rtsp::server::mount_rules::MountRule
 impl core::marker::UnsafeUnpin for tst_rtp::rtsp::server::mount_rules::MountRule
 impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::rtsp::server::mount_rules::MountRule
 impl core::panic::unwind_safe::UnwindSafe for tst_rtp::rtsp::server::mount_rules::MountRule
+#[non_exhaustive] pub struct tst_rtp::MountRuleAuthFailures
+pub tst_rtp::MountRuleAuthFailures::publish: u64
+pub tst_rtp::MountRuleAuthFailures::read: u64
+impl core::clone::Clone for tst_rtp::rtsp::server::mount_rules::MountRuleAuthFailures
+pub fn tst_rtp::rtsp::server::mount_rules::MountRuleAuthFailures::clone(&self) -> tst_rtp::rtsp::server::mount_rules::MountRuleAuthFailures
+impl core::cmp::Eq for tst_rtp::rtsp::server::mount_rules::MountRuleAuthFailures
+impl core::cmp::PartialEq for tst_rtp::rtsp::server::mount_rules::MountRuleAuthFailures
+pub fn tst_rtp::rtsp::server::mount_rules::MountRuleAuthFailures::eq(&self, &tst_rtp::rtsp::server::mount_rules::MountRuleAuthFailures) -> bool
+impl core::default::Default for tst_rtp::rtsp::server::mount_rules::MountRuleAuthFailures
+pub fn tst_rtp::rtsp::server::mount_rules::MountRuleAuthFailures::default() -> tst_rtp::rtsp::server::mount_rules::MountRuleAuthFailures
+impl core::fmt::Debug for tst_rtp::rtsp::server::mount_rules::MountRuleAuthFailures
+pub fn tst_rtp::rtsp::server::mount_rules::MountRuleAuthFailures::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for tst_rtp::rtsp::server::mount_rules::MountRuleAuthFailures
+impl core::marker::StructuralPartialEq for tst_rtp::rtsp::server::mount_rules::MountRuleAuthFailures
+impl core::marker::Freeze for tst_rtp::rtsp::server::mount_rules::MountRuleAuthFailures
+impl core::marker::Send for tst_rtp::rtsp::server::mount_rules::MountRuleAuthFailures
+impl core::marker::Sync for tst_rtp::rtsp::server::mount_rules::MountRuleAuthFailures
+impl core::marker::Unpin for tst_rtp::rtsp::server::mount_rules::MountRuleAuthFailures
+impl core::marker::UnsafeUnpin for tst_rtp::rtsp::server::mount_rules::MountRuleAuthFailures
+impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::rtsp::server::mount_rules::MountRuleAuthFailures
+impl core::panic::unwind_safe::UnwindSafe for tst_rtp::rtsp::server::mount_rules::MountRuleAuthFailures
 pub struct tst_rtp::MountRules
 impl tst_rtp::rtsp::server::mount_rules::MountRules
+pub fn tst_rtp::rtsp::server::mount_rules::MountRules::auth_failures(&self, &str) -> core::option::Option<tst_rtp::rtsp::server::mount_rules::MountRuleAuthFailures>
 pub fn tst_rtp::rtsp::server::mount_rules::MountRules::clear(&self) -> core::result::Result<(), tst_rtp::rtsp::server::mount_rules::MountRuleError>
+pub fn tst_rtp::rtsp::server::mount_rules::MountRules::default_auth_failures(&self) -> tst_rtp::rtsp::server::mount_rules::MountRuleAuthFailures
 pub fn tst_rtp::rtsp::server::mount_rules::MountRules::is_closed(&self) -> bool
 pub fn tst_rtp::rtsp::server::mount_rules::MountRules::is_empty(&self) -> bool
 pub fn tst_rtp::rtsp::server::mount_rules::MountRules::len(&self) -> usize
@@ -2932,7 +2981,9 @@ impl core::panic::unwind_safe::RefUnwindSafe for tst_rtp::rtsp::server::RtspServ
 impl core::panic::unwind_safe::UnwindSafe for tst_rtp::rtsp::server::RtspServer
 pub struct tst_rtp::RtspServerBuilder
 impl tst_rtp::rtsp::server::builder::RtspServerBuilder
+pub fn tst_rtp::rtsp::server::builder::RtspServerBuilder::accept_digest_without_qop(&mut self, bool) -> &mut Self
 pub fn tst_rtp::rtsp::server::builder::RtspServerBuilder::accept_unregistered_publishers(&mut self, bool) -> &mut Self
+pub fn tst_rtp::rtsp::server::builder::RtspServerBuilder::allow_udp_media(&mut self, bool) -> &mut Self
 pub fn tst_rtp::rtsp::server::builder::RtspServerBuilder::auth_basic(&mut self, &str, &str, secrecy::SecretString) -> &mut Self
 pub fn tst_rtp::rtsp::server::builder::RtspServerBuilder::auth_digest_md5(&mut self, &str, &str, secrecy::SecretString) -> &mut Self
 pub fn tst_rtp::rtsp::server::builder::RtspServerBuilder::auth_digest_sha256(&mut self, &str, &str, secrecy::SecretString) -> &mut Self
@@ -2941,6 +2992,7 @@ pub fn tst_rtp::rtsp::server::builder::RtspServerBuilder::default_mount_rule(&mu
 pub fn tst_rtp::rtsp::server::builder::RtspServerBuilder::end_publish_mount_on_publisher_exit(&mut self, bool) -> &mut Self
 pub fn tst_rtp::rtsp::server::builder::RtspServerBuilder::fanout_capacity(&mut self, usize) -> &mut Self
 pub fn tst_rtp::rtsp::server::builder::RtspServerBuilder::graceful_shutdown_drain(&mut self, core::time::Duration) -> &mut Self
+pub fn tst_rtp::rtsp::server::builder::RtspServerBuilder::max_readers(&mut self, usize) -> &mut Self
 pub fn tst_rtp::rtsp::server::builder::RtspServerBuilder::max_sessions(&mut self, usize) -> &mut Self
 pub fn tst_rtp::rtsp::server::builder::RtspServerBuilder::new(&str) -> core::result::Result<Self, tst_rtp::error::RtspServerError>
 pub fn tst_rtp::rtsp::server::builder::RtspServerBuilder::publish_idle_timeout(&mut self, core::time::Duration) -> &mut Self
