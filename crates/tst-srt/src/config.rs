@@ -75,6 +75,15 @@ pub struct SrtSocketConfig {
     /// `managed_*_sender_from_url` (in [`crate::shells`]) reads it and dials
     /// without it. Arm a hand-built `ManagedTransport` with
     /// `ManagedTransport::with_silent_peer_timeout` and leave this `None`.
+    ///
+    /// The window must be longer than the link's round trip plus its
+    /// jitter: an answer comes a round trip after a send, so with a shorter
+    /// window every new connection is abandoned before its first answer can
+    /// arrive, and a link that works keeps reconnecting (until
+    /// `max_attempts`, if the policy has one). A window at or above
+    /// libsrt's own break of a silent connection (about 5 s, unless
+    /// [`peer_idle_timeout`](Self::peer_idle_timeout) raises it) never
+    /// fires first. The behaviour was measured on Linux loopback only.
     pub silent_peer_timeout: Option<Duration>,
     /// SRT linger timeout. `None` preserves libsrt's default — which is
     /// `l_onoff=0, l_linger=0` (linger off; close returns immediately and
