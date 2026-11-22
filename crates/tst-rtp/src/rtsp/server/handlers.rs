@@ -132,6 +132,23 @@ pub(crate) fn rule_key_and_direction(
     }
 }
 
+/// Whether a refusal of this request, keyed on `path`, ends the session's
+/// role: only when the key is the role's own mount. ANNOUNCE and DESCRIBE
+/// name their own path and an `Idle` session has no role; a reader's SETUP
+/// keys on the mount it names, which is its own only when it equals the
+/// reader's mount (`/open/trackID=1` from a reader of `/open` is); every
+/// other request of a session with a role keys on that role's mount.
+fn keyed_on_own_role(req: &RtspRequest, session: &ServerSessionState, path: &str) -> bool {
+    if matches!(req.method, RtspMethod::Announce | RtspMethod::Describe) {
+        return false;
+    }
+    match &session.role {
+        Role::Idle => false,
+        Role::Reader(r) if req.method == RtspMethod::Setup => r.mount_path == path,
+        Role::Reader(_) | Role::Publisher(_) => true,
+    }
+}
+
 /// The method's text for the Digest check when `method` is admitted
 /// through the mount rules; `None` for OPTIONS and GET_PARAMETER, which
 /// never are. No wildcard arm: a new method does not compile until it is
@@ -172,11 +189,11 @@ pub(crate) fn authorize_request(
     };
     let verified = match decision.policy {
         MountPolicy::Refuse(status) => {
-            // A request keyed on the session's own role (all but ANNOUNCE
-            // and DESCRIBE, which name their own path) ends that role when
-            // refused: a publisher refused at RECORD or TEARDOWN stops.
-            let keyed_on_role = !matches!(req.method, RtspMethod::Announce | RtspMethod::Describe);
-            if keyed_on_role && !matches!(session.role, Role::Idle) {
+            // A refusal keyed on the session's own role ends that role: a
+            // publisher refused at RECORD or TEARDOWN stops. One that
+            // concerns another mount (a reader's SETUP elsewhere) leaves
+            // the role and its stream alone.
+            if keyed_on_own_role(req, session, &path) {
                 // Unlike TEARDOWN, a refusal keeps the connection open, so
                 // it may set up a new role.
                 session.end_role_keeping_the_connection();

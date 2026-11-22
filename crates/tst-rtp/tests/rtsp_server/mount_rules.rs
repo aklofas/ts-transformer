@@ -896,81 +896,9 @@ fn a_readers_teardown_is_keyed_on_its_setup_mount() {
     server.stop().unwrap();
 }
 
-/// A reader that has set up one mount and SETUPs another is judged on the
-/// mount the second SETUP names, not the one it is leaving: a refused
-/// second SETUP answers the Refuse status and ends the reader's role.
-#[test]
-fn a_readers_second_setup_is_keyed_on_the_mount_it_names() {
-    let server = RtspServerBuilder::new("rtsp://127.0.0.1:0")
-        .unwrap()
-        .build()
-        .unwrap();
-    server.add_mount("/open", make_muxer_cfg()).unwrap();
-    let secret = server.add_mount("/secret", make_muxer_cfg()).unwrap();
-    server.start().unwrap();
-    let rules = server.mount_rules();
-    rules
-        .set(
-            "/open",
-            MountRule::new(MountPolicy::Inherit, MountPolicy::Open),
-        )
-        .unwrap();
-    rules
-        .set(
-            "/secret",
-            MountRule::new(
-                MountPolicy::Inherit,
-                MountPolicy::Refuse(RefuseStatus::NotFound),
-            ),
-        )
-        .unwrap();
-    let port = server.local_addr().unwrap().port();
-
-    let mut tcp = connect(port);
-    let r = request(
-        &mut tcp,
-        &format!(
-            "SETUP rtsp://127.0.0.1:{port}/open/trackID=0 RTSP/1.0\r\nCSeq: 1\r\n\
-             Transport: RTP/AVP/TCP;unicast;interleaved=0-1\r\n\r\n"
-        ),
-    );
-    assert_eq!(status(&r), 200, "{r}");
-    let sid = session_id(&r);
-
-    let r = request(
-        &mut tcp,
-        &format!(
-            "SETUP rtsp://127.0.0.1:{port}/secret/trackID=0 RTSP/1.0\r\nCSeq: 2\r\n\
-             Session: {sid}\r\nTransport: RTP/AVP/TCP;unicast;interleaved=2-3\r\n\r\n"
-        ),
-    );
-    assert_eq!(status(&r), 404, "keyed on /secret, not /open: {r}");
-
-    // A PLAY on the open mount it first set up finds no session: the
-    // refused SETUP ended the role rather than leaving it on /open.
-
-    let r = request(
-        &mut tcp,
-        &format!("PLAY rtsp://127.0.0.1:{port}/open RTSP/1.0\r\nCSeq: 3\r\nSession: {sid}\r\n\r\n"),
-    );
-    assert_eq!(
-        status(&r),
-        454,
-        "the refused SETUP ended the reader's role: {r}"
-    );
-    assert_eq!(secret.peer_count(), 0);
-    server.stop().unwrap();
-}
-
-/// A refused SETUP that ends a reader's role leaves the connection open, and
-/// the connection can then set up an allowed mount and play it: the RTP
-/// actually arrives, so the ended role left no cancelled state behind.
-#[test]
-fn a_reader_refused_mid_session_can_play_another_mount_on_the_same_connection() {
-    use std::io::Read as _;
-    use std::sync::atomic::{AtomicBool, Ordering};
-    use tst_core::mpegts::common::Pts90khz;
-
+/// A server with two muxer-backed mounts, `/open` (read `Open`) and
+/// `/secret` (read `Refuse(NotFound)`); `/open`'s handle is returned.
+fn open_and_secret() -> (RtspServer, tst_rtp::MountHandle) {
     let server = RtspServerBuilder::new("rtsp://127.0.0.1:0")
         .unwrap()
         .build()
@@ -994,25 +922,318 @@ fn a_reader_refused_mid_session_can_play_another_mount_on_the_same_connection() 
             ),
         )
         .unwrap();
-    let port = server.local_addr().unwrap().port();
-    let setup = |tcp: &mut TcpStream, path: &str, cseq: u32, session: &str| {
-        request(
-            tcp,
-            &format!(
-                "SETUP rtsp://127.0.0.1:{port}{path}/trackID=0 RTSP/1.0\r\nCSeq: {cseq}\r\n\
-                 {session}Transport: RTP/AVP/TCP;unicast;interleaved=0-1\r\n\r\n"
-            ),
-        )
+    (server, open)
+}
+
+/// A reader's interleaved SETUP of `path` (with `session` if given).
+fn setup_reader(tcp: &mut TcpStream, port: u16, path: &str, cseq: u32, session: &str) -> String {
+    let session = if session.is_empty() {
+        String::new()
+    } else {
+        format!("Session: {session}\r\n")
     };
+    request(
+        tcp,
+        &format!(
+            "SETUP rtsp://127.0.0.1:{port}{path}/trackID=0 RTSP/1.0\r\nCSeq: {cseq}\r\n\
+             {session}Transport: RTP/AVP/TCP;unicast;interleaved=0-1\r\n\r\n"
+        ),
+    )
+}
+
+/// A request naming `path` with `Session: sid`, method `method`.
+fn in_session(
+    tcp: &mut TcpStream,
+    port: u16,
+    method: &str,
+    path: &str,
+    cseq: u32,
+    sid: &str,
+) -> String {
+    request(
+        tcp,
+        &format!(
+            "{method} rtsp://127.0.0.1:{port}{path} RTSP/1.0\r\nCSeq: {cseq}\r\nSession: {sid}\r\n\r\n"
+        ),
+    )
+}
+
+/// What a TCP-interleaved reader's connection carries next.
+enum Wire {
+    /// A `$` frame on this channel.
+    Frame(u8),
+    /// An RTSP reply (no body).
+    Reply(String),
+    /// Nothing within the socket's read timeout.
+    Quiet,
+}
+
+/// Reads `$` frames and RTSP replies off one connection, in order.
+struct WireReader {
+    buf: Vec<u8>,
+}
+
+impl WireReader {
+    fn next(&mut self, tcp: &mut TcpStream) -> Wire {
+        use std::io::Read as _;
+        loop {
+            if self.buf.first() == Some(&b'$') {
+                if self.buf.len() >= 4 {
+                    let len = u16::from_be_bytes([self.buf[2], self.buf[3]]) as usize;
+                    if self.buf.len() >= 4 + len {
+                        let ch = self.buf[1];
+                        self.buf.drain(..4 + len);
+                        return Wire::Frame(ch);
+                    }
+                }
+            } else if let Some(end) = self.buf.windows(4).position(|w| w == b"\r\n\r\n") {
+                let reply = String::from_utf8_lossy(&self.buf[..end + 4]).into_owned();
+                self.buf.drain(..end + 4);
+                return Wire::Reply(reply);
+            }
+            let mut chunk = [0u8; 4096];
+            match tcp.read(&mut chunk) {
+                Ok(0) => panic!("the server closed the connection"),
+                Ok(n) => self.buf.extend_from_slice(&chunk[..n]),
+                Err(_) => return Wire::Quiet,
+            }
+        }
+    }
+
+    /// The next RTSP reply, skipping media frames.
+    fn reply(&mut self, tcp: &mut TcpStream) -> String {
+        let deadline = std::time::Instant::now() + scaled(Duration::from_secs(5));
+        while std::time::Instant::now() < deadline {
+            if let Wire::Reply(r) = self.next(tcp) {
+                return r;
+            }
+        }
+        panic!("no reply within the deadline");
+    }
+}
+
+/// A reader that has set up `/open` and SETUPs `/secret` is judged on the
+/// mount the second SETUP names: it answers `/secret`'s Refuse status. The
+/// refusal concerns another mount, so the reader keeps its role on `/open`
+/// and can still PLAY it.
+#[test]
+fn a_ready_reader_keeps_its_role_after_a_refused_setup_elsewhere() {
+    let (server, _open) = open_and_secret();
+    let port = server.local_addr().unwrap().port();
 
     let mut tcp = connect(port);
-    let r = setup(&mut tcp, "/open", 1, "");
+    let r = setup_reader(&mut tcp, port, "/open", 1, "");
     assert_eq!(status(&r), 200, "{r}");
     let sid = session_id(&r);
-    let r = setup(&mut tcp, "/secret", 2, &format!("Session: {sid}\r\n"));
+    let r = setup_reader(&mut tcp, port, "/secret", 2, &sid);
+    assert_eq!(status(&r), 404, "keyed on /secret, not /open: {r}");
+    let r = in_session(&mut tcp, port, "PLAY", "/open", 3, &sid);
+    assert_eq!(status(&r), 200, "the reader kept its role on /open: {r}");
+    server.stop().unwrap();
+}
+
+/// A playing reader's SETUP of a refused mount is answered with that
+/// mount's status and leaves its stream running: media pushed after the
+/// refusal still reaches it, and a PAUSE of its own mount is answered.
+#[test]
+fn a_playing_reader_keeps_its_stream_after_a_refused_setup_elsewhere() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use tst_core::mpegts::common::Pts90khz;
+
+    let (server, open) = open_and_secret();
+    let port = server.local_addr().unwrap().port();
+
+    let mut tcp = connect(port);
+    let r = setup_reader(&mut tcp, port, "/open", 1, "");
+    assert_eq!(status(&r), 200, "{r}");
+    let sid = session_id(&r);
+    let r = in_session(&mut tcp, port, "PLAY", "/open", 2, &sid);
+    assert_eq!(status(&r), 200, "{r}");
+    assert!(eventually(|| open.peer_count() == 1), "the reader plays");
+    // Nothing has been pushed yet, so the next reply is the SETUP's.
+    let r = setup_reader(&mut tcp, port, "/secret", 3, &sid);
+    assert_eq!(status(&r), 404, "{r}");
+    assert_eq!(open.peer_count(), 1, "the refusal touched no fanout");
+
+    tcp.set_read_timeout(Some(Duration::from_millis(100)))
+        .unwrap();
+    let mut wire = WireReader { buf: Vec::new() };
+    let stop = AtomicBool::new(false);
+    let got_rtp = std::thread::scope(|s| {
+        s.spawn(|| {
+            let mut nal = vec![0u8; 1024];
+            nal[..5].copy_from_slice(&[0x00, 0x00, 0x00, 0x01, 0x65]);
+            let mut pts = 0i64;
+            while !stop.load(Ordering::Acquire) {
+                open.push_video(&nal, Pts90khz::new(pts), true).unwrap();
+                pts += 3600;
+                std::thread::sleep(Duration::from_millis(20));
+            }
+        });
+        let deadline = std::time::Instant::now() + scaled(Duration::from_secs(5));
+        let mut seen = false;
+        while !seen && std::time::Instant::now() < deadline {
+            seen = matches!(wire.next(&mut tcp), Wire::Frame(0));
+        }
+        stop.store(true, Ordering::Release);
+        seen
+    });
+    assert!(got_rtp, "the stream went on after the refused SETUP");
+
+    use std::io::Write as _;
+    tcp.write_all(
+        format!("PAUSE rtsp://127.0.0.1:{port}/open RTSP/1.0\r\nCSeq: 4\r\nSession: {sid}\r\n\r\n")
+            .as_bytes(),
+    )
+    .unwrap();
+    let r = wire.reply(&mut tcp);
+    assert_eq!(status(&r), 200, "{r}");
+    server.stop().unwrap();
+}
+
+/// Behind a reader's own role, a SETUP of a `Refuse(NotFound)` mount and one
+/// of a path with no mount at all read alike, now and in what follows.
+#[test]
+fn a_refused_setup_elsewhere_reads_like_a_missing_mount() {
+    let (server, _open) = open_and_secret();
+    let port = server.local_addr().unwrap().port();
+    let statuses = |elsewhere: &str| {
+        let mut tcp = connect(port);
+        let r = setup_reader(&mut tcp, port, "/open", 1, "");
+        let sid = session_id(&r);
+        let mut seen = vec![status(&r)];
+        seen.push(status(&setup_reader(&mut tcp, port, elsewhere, 2, &sid)));
+        seen.push(status(&in_session(
+            &mut tcp, port, "PLAY", "/open", 3, &sid,
+        )));
+        seen.push(status(&in_session(
+            &mut tcp, port, "PAUSE", "/open", 4, &sid,
+        )));
+        seen
+    };
+    let hidden = statuses("/secret");
+    let missing = statuses("/nope");
+    assert_eq!(
+        hidden, missing,
+        "a hidden mount told apart from a missing one"
+    );
+    assert_eq!(missing, [200, 404, 200, 200]);
+    server.stop().unwrap();
+}
+
+/// A refusal on the reader's own mount still ends its role: `/open` turns
+/// to `Refuse` while a READY reader holds it, its track SETUP is answered
+/// with the Refuse status, and once the rule opens again the old session is
+/// gone.
+#[test]
+fn a_reader_refused_on_its_own_mount_loses_its_role() {
+    let (server, _open) = open_and_secret();
+    let port = server.local_addr().unwrap().port();
+    let rules = server.mount_rules();
+
+    let mut tcp = connect(port);
+    let r = setup_reader(&mut tcp, port, "/open", 1, "");
+    assert_eq!(status(&r), 200, "{r}");
+    let sid = session_id(&r);
+    rules
+        .set(
+            "/open",
+            MountRule::new(
+                MountPolicy::Inherit,
+                MountPolicy::Refuse(RefuseStatus::Forbidden),
+            ),
+        )
+        .unwrap();
+    let r = request(
+        &mut tcp,
+        &format!(
+            "SETUP rtsp://127.0.0.1:{port}/open/trackID=1 RTSP/1.0\r\nCSeq: 2\r\n\
+             Session: {sid}\r\nTransport: RTP/AVP/TCP;unicast;interleaved=2-3\r\n\r\n"
+        ),
+    );
+    assert_eq!(status(&r), 403, "{r}");
+    rules
+        .set(
+            "/open",
+            MountRule::new(MountPolicy::Inherit, MountPolicy::Open),
+        )
+        .unwrap();
+    let r = in_session(&mut tcp, port, "PLAY", "/open", 3, &sid);
+    assert_eq!(status(&r), 454, "the refusal ended the reader's role: {r}");
+    server.stop().unwrap();
+}
+
+/// What a `Refuse` rule does not hide: on an Idle connection, PLAY, PAUSE,
+/// RECORD and TEARDOWN of a `Refuse(NotFound)` path answer the rule's
+/// status, where the same requests for a path with no rule answer by the
+/// session's state.
+#[test]
+fn an_idle_play_tells_a_refused_path_from_a_missing_one() {
+    let (server, _open) = open_and_secret();
+    let port = server.local_addr().unwrap().port();
+    let answer = |method: &str, path: &str| {
+        // One connection per request: an Idle TEARDOWN answered 200 closes it.
+        let mut tcp = connect(port);
+        status(&request(
+            &mut tcp,
+            &format!("{method} rtsp://127.0.0.1:{port}{path} RTSP/1.0\r\nCSeq: 1\r\n\r\n"),
+        ))
+    };
+    for (method, missing) in [
+        ("PLAY", 454),
+        ("PAUSE", 454),
+        ("RECORD", 455),
+        ("TEARDOWN", 200),
+    ] {
+        assert_eq!(answer(method, "/secret"), 404, "{method} /secret");
+        assert_eq!(answer(method, "/nope"), missing, "{method} /nope");
+    }
+    server.stop().unwrap();
+}
+
+/// A refused SETUP on the reader's own mount ends its role and leaves the
+/// connection open, and the connection can then set up an allowed mount
+/// and play it: the RTP actually arrives, so the ended role left no
+/// cancelled state behind.
+#[test]
+fn a_reader_refused_mid_session_can_play_another_mount_on_the_same_connection() {
+    use std::io::Read as _;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use tst_core::mpegts::common::Pts90khz;
+
+    let server = RtspServerBuilder::new("rtsp://127.0.0.1:0")
+        .unwrap()
+        .build()
+        .unwrap();
+    let open = server.add_mount("/open", make_muxer_cfg()).unwrap();
+    server.add_mount("/secret", make_muxer_cfg()).unwrap();
+    server.start().unwrap();
+    let rules = server.mount_rules();
+    rules
+        .set(
+            "/open",
+            MountRule::new(MountPolicy::Inherit, MountPolicy::Open),
+        )
+        .unwrap();
+    let port = server.local_addr().unwrap().port();
+
+    let mut tcp = connect(port);
+    let r = setup_reader(&mut tcp, port, "/secret", 1, "");
+    assert_eq!(status(&r), 200, "{r}");
+    let sid = session_id(&r);
+    rules
+        .set(
+            "/secret",
+            MountRule::new(
+                MountPolicy::Inherit,
+                MountPolicy::Refuse(RefuseStatus::NotFound),
+            ),
+        )
+        .unwrap();
+    let r = setup_reader(&mut tcp, port, "/secret", 2, &sid);
     assert_eq!(status(&r), 404, "the refused SETUP ends the role: {r}");
 
-    let r = setup(&mut tcp, "/open", 3, "");
+    let r = setup_reader(&mut tcp, port, "/open", 3, "");
     assert_eq!(status(&r), 200, "{r}");
     let sid = session_id(&r);
     let r = request(
