@@ -741,6 +741,20 @@ RECORD, then RTP interleaved on the control connection. The recipe is
 | mediamtx 1.21.4 | ✅ | In the interop matrix (MPEG-TS, and H.264 + KLV, read back by GStreamer). Sends no receiver reports to a TCP publisher; closes a recording publisher after 10 s without a byte, and the connection on any frame after PAUSE. |
 | ffmpeg 6.1, `-rtsp_flags listen` | ⚠️ | In the interop matrix (MPEG-TS). Answers TEARDOWN `501`, which `close()` reports as a refused TEARDOWN; no credentials, no TLS in listen mode; its MPEG-TS output misses the last access unit. |
 
+### RTSP server: clients with credentials and TLS
+
+What this library's `RtspServer` does with other clients when it asks for a
+credential or serves `rtsps://`. The credential and challenge rules are in
+the [publish-ingest recipe](/docs/cookbook/receiving/rtsp-publish-ingest.md#per-name-credentials-and-refusing-a-publisher).
+
+| Client / case | Status | Notes |
+|---|---|---|
+| GStreamer 1.24 `rtspsrc` / `rtspclientsink`, Basic | ✅ | Pull and push authenticate. |
+| GStreamer 1.24, Digest MD5 | ⚙️ | Opt-in: GStreamer answers without `qop` (the RFC 2069 form), which the server takes only with `accept_digest_without_qop(true)`; then pull and push authenticate (interop cells `rtsp-serve/gst-pull-digest`, `rtsp-publish/gst-push-digest`). Without it every answer is refused. |
+| GStreamer 1.24, Digest SHA-256 | ❌ | GStreamer answers a SHA-256 challenge with an MD5 response, which no option accepts. Use Basic over `rtsps://`, or Digest MD5. |
+| UDP media on an `rtsps://` server | ⚙️ | Off by default: every SETUP that is not TCP-interleaved, a reader's or a publisher's, is answered `461`, and a multicast mount is refused. `allow_udp_media(true)` turns it on; the media then travels unencrypted. GStreamer's `rtspsrc` asks for UDP first and falls back to TCP-interleaved on the `461`; ffmpeg 6.1 asks for TCP on `rtsps://`; this library's client asks for TCP-interleaved on `rtsps://` unless told otherwise. |
+| A client that keeps an authenticated connection with no session | ⚠️ | Closed 30 s after its request loop starts unless it sets up a session; only a session keeps a connection past that deadline. |
+
 **Intentional per-language conveniences.** A small set of APIs exist only in
 one binding by design: `transmux` (Python-only convenience that bridges a
 `Demuxer` and `Muxer` in one call; Rust callers compose them directly);

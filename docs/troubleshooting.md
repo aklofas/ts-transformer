@@ -716,6 +716,84 @@ stream-end reason" entry in
 [deferred-features.md](/docs/project/deferred-features.md) for the
 bindings-parity history.
 
+## RTSP server
+
+These entries are about this library's `RtspServer`. The
+[publish-ingest recipe](/docs/cookbook/receiving/rtsp-publish-ingest.md) has
+the rules they come from.
+
+**A client that forces UDP gets `461` from an `rtsps://` server**
+
+**Symptom:** a reader's or a publisher's SETUP to an `rtsps://` server is
+answered `461 Unsupported Transport`. This library's client reports
+`RtspError::Protocol { code: 461 }` (C `TST_E_RTSP_PROTOCOL` with `461` in
+the last-error text, Python `RtspError` and the JVM `RtspException` of kind
+`PROTOCOL`).
+
+**Diagnosis:** an `rtsps://` server allows no media over UDP by default,
+since that media would leave the TLS connection unencrypted. It answers
+`461` to every SETUP whose transport is not TCP-interleaved, and refuses to
+add a multicast mount. A client that asks for UDP first and falls back
+(GStreamer's `rtspsrc`) gets TCP-interleaved on the same connection; one that
+forces UDP (`?transport=udp`, `TransportPref.UDP`, C transport preference 1)
+is refused.
+
+**Fix:** let the client use TCP-interleaved (drop `?transport=udp`, or use
+the default `TransportPref.AUTO`; GStreamer `protocols=tcp`). If the media may travel
+unencrypted, build the server with `allow_udp_media(true)` (Python
+`allow_udp_media=True`, JVM `allowUdpMedia(true)`, C
+`tst_rtsp_server_builder_allow_udp_media(builder, true)`).
+
+**GStreamer gets `401` with the right password**
+
+**Symptom:** `rtspsrc` or `rtspclientsink` with the right user name and
+password stops with `Unauthorized (401)` against a server that asks for
+Digest MD5, where ffprobe 6.1 and this library's client authenticate.
+
+**Diagnosis:** GStreamer 1.24 answers a Digest challenge in the RFC 2069
+form, without `qop`, and the server refuses such an answer as a downgrade.
+Against a Digest SHA-256 challenge GStreamer sends an MD5 response, which
+never matches.
+
+**Fix:** build the server with `accept_digest_without_qop(true)` (Python
+`accept_digest_without_qop=True`, JVM `acceptDigestWithoutQop(true)`, C
+`tst_rtsp_server_builder_accept_digest_without_qop(builder, true)`) and a
+Digest MD5 challenge, or use Basic over `rtsps://`. The option gives up
+replay protection inside one connection for answers without `qop`.
+
+**A reader is answered `453 Not Enough Bandwidth` and disconnected**
+
+**Symptom:** a reader's SETUP is answered `453` and the server closes the
+connection; this library's client reports `RtspError::Protocol { code: 453 }`
+(`PROTOCOL` in the bindings, C `TST_E_RTSP_PROTOCOL` from the connect).
+
+**Diagnosis:** the server's reader cap (`max_readers`) is reached: every
+reader slot is held by a reader that has set up and not yet ended its
+role. A `453` from a mount rule (`Refuse(RefuseStatus::NotEnoughBandwidth)`)
+leaves the connection open instead.
+
+**Fix:** retry once a reader has left, or raise `max_readers`. A cap of `0`
+admits no reader at all.
+
+**My server refuses its bind URL**
+
+**Symptom:** `RtspServerBuilder::build()` (C
+`tst_rtsp_server_builder_start`, Python and JVM `RtspServer.start`) fails
+with `InvalidConfig` (C `TST_E_RTSP_MOUNT`, kind `MOUNT` in Python and the
+JVM), and the message names the bind URL.
+
+**Diagnosis:** the bind URL carries a user name or a password
+(`rtsp://admin:secret@0.0.0.0:8554`, also `rtsp://admin@…` and an empty
+one). The server never read it as a credential, and through 0.10.0 such a
+server started with no credential at all. The same error with a message
+about the user name means an `auth_basic` user name that contains `:`,
+which Basic cannot carry.
+
+**Fix:** take the user info out of the URL and configure the credential with
+`auth_basic` / `auth_digest_*` (the config's `auth` in Python and the JVM,
+`tst_rtsp_server_builder_auth_*` in C) or a mount rule. For Basic, choose a
+user name without `:`.
+
 ## RTSP push
 
 These entries are about publishing to an RTSP server with `RtspPush`

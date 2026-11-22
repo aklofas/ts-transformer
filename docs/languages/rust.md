@@ -457,8 +457,12 @@ the cookbook recipe is
 | `RtspServerBuilder::end_publish_mount_on_publisher_exit(bool)` | Off by default. On: a mount closes when a publisher that reached RECORD leaves; on-demand mounts inherit it. |
 | `RtspServerBuilder::publish_idle_timeout(Duration)` | Off by default; zero leaves it unset. Ends a recording publisher's session after this long without a valid RTP packet of an announced payload type. |
 | `RtspServer::next_publisher(timeout)` | Takes the next on-demand mount; `Ok(None)` when the timeout passes; `Err(Shutdown)` after `stop()` or the hard cancel (a parked call returns it within 100 ms of the cancel). |
-| `RtspServer::remove_mount(path)` | Removes a mount of any kind: every session on it gets the server-initiated TEARDOWN notice and is closed, and the path is freed. `MountNotFound` for an unknown path. |
-| `RtspServer::stats()` | `ServerStats` with `active_publishers`, `total_rtp_packets_received`, `total_rtp_bytes_received`. |
+| `RtspServer::remove_mount(path)` | Removes a mount of any kind: every session on it gets the server-initiated TEARDOWN notice and is closed, and the path is freed. A kept `MountHandle` of a removed local mount is closed: its pushes and `flush()` return `MountError::Closed`. `MountNotFound` for an unknown path. |
+| `RtspServer::stats()` | `ServerStats` with `active_publishers`, `total_rtp_packets_received`, `total_rtp_bytes_received`, and `total_rtp_packets_sent` / `total_rtp_bytes_sent` (once per reader, RTP headers included). |
+| `RtspServerBuilder::allow_udp_media(bool)` | Provisional. Whether SETUPs over UDP and multicast mounts are allowed; unset, yes on `rtsp://` and no on `rtsps://` (a SETUP that is not TCP-interleaved is answered `461`). |
+| `RtspServerBuilder::accept_digest_without_qop(bool)` | Provisional, off. Accepts the Digest answer without `qop` that GStreamer sends, giving up replay protection inside one connection for such answers. |
+| `RtspServerBuilder::max_readers(usize)` | Provisional, unset. A cap on reader sessions, taken at SETUP; over it the SETUP is answered `453` and the connection closed. `0` means no readers. |
+| `MountRules::auth_failures(path)`, `default_auth_failures()` | Experimental. The credentials a rule refused, per direction (`MountRuleAuthFailures { publish, read }`); see the [recipe](/docs/cookbook/receiving/rtsp-publish-ingest.md#refused-credential-counts). |
 | `PublishMountHandle` | Cheap `Clone`. `mount_path()`, `peer_count()` (PLAY readers), `generation()`, `publisher()`, `stats()`, `cancel()`, `into_recv_transport()`. |
 | `PublisherInfo` | The current publisher: `peer` (control-connection address), `shape`, `since`, `generation`. |
 | `PublishShape` | `Mp2t` or `Elementary { klv }`. |
@@ -515,6 +519,11 @@ klv`); to push KLV, use GStreamer (`rtpmp2tpay`, or `rtph264pay` plus
   refusal per path and direction; see the [publish-ingest
   recipe](/docs/cookbook/receiving/rtsp-publish-ingest.md#per-name-credentials-and-refusing-a-publisher)).
   A path rule's `Inherit` side uses the table's default rule; the default's `Inherit` uses the server-wide builder setting (`auth_*`).
+  Every `401` offers the table's challenge (`MountRules::set_challenge`; it
+  starts as the builder credential's scheme and realm, else Digest MD5 and
+  realm `tstrans`), and every credential is checked in it, the builder's
+  included. `build()` refuses a bind URL that carries a user name or a
+  password, and an `auth_basic` user name that contains `:`.
 - **Client credentials.** URL userinfo (`rtsp://user:pass@host/…`, percent-decoded)
   answers a challenge unless `RtspClientBuilder::auth` overrides it; a user
   name without a password (`rtsp://admin@host/…`) answers with an empty

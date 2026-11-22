@@ -320,7 +320,9 @@ both kinds ([Python](/docs/languages/python.md#what-answers-while-another-thread
   shortened by a hard cancel fired while it runs: the cancel closes the
   publish side within 100 ms, but the Notice writes, the drain wait and
   the shutdown of each session's connection do not read it. For an end
-  without the Notice, fire the cancel before the stop.
+  without the Notice, fire the cancel before the stop. `stop()` closes the
+  listening socket before it writes the first Notice, so it accepts no
+  connection while it runs.
 
 No call promises an absolute shutdown time: a close waits for the active
 operation to honour the cancel.

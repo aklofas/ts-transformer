@@ -10,6 +10,7 @@ queue table before it ships.
 | Bound | Default | Where |
 |---|---|---|
 | Sessions per server | 64 | `RtspServerBuilder::max_sessions` |
+| Reader sessions per server | no cap | `RtspServerBuilder::max_readers` |
 | Largest elementary access unit | 8 MiB | depacketizer `max_au_bytes` |
 | KLV alignment hold | 4 096 units / 4 MiB | publish path |
 | On-demand publish mounts not yet taken | 64 | `accept_unregistered_publishers` |
@@ -53,12 +54,30 @@ never exceeds the cap even for a moment. A connection that finds the cap
 reached is closed and logged. On success the reservation moves into a
 `SessionSlot` guard owned by the session task. The guard's `Drop` releases
 the slot on every exit, including a TLS handshake that fails or times out
-before any session runs. A connection that has neither completed a SETUP
-nor passed a credential check is closed 30 s after its request loop starts
-(after the TLS handshake on `rtsps://`), whatever it sends meanwhile and
-however slowly it reads the replies, and its slot is released; interleaved
+before any session runs. A connection that has not completed a SETUP is
+closed 30 s after its request loop starts (after the TLS handshake on
+`rtsps://`), whatever it sends meanwhile, however slowly it reads the
+replies and whatever credential it presented, and its slot is released; a
+connection whose session ends while it stays open is closed 30 s later
+unless it sets up again. Interleaved
 frames on a connection that has not announced or set up (no publisher or
 reader role) are dropped and do not count as activity for the idle bound.
+
+**Reader slot.** With `max_readers` set, a reader's SETUP reserves one
+reader slot with the same compare-exchange, as the last step before the
+reader role is installed, after every check that can refuse the SETUP. The
+slot is held by the session while its reader role lives and released when
+the role ends: its TEARDOWN, a refusal on its own mount, or the end of the
+connection. A reader set up again, on its own or another mount, keeps the
+slot it holds and reserves no second one. Readers of a multicast mount
+count; publishers never take a reader slot. A SETUP that finds the cap
+reached is answered `453 Not Enough Bandwidth`, one warning is logged, and
+the connection is closed after the reply. With `max_readers` below
+`max_sessions` the difference can never be held by readers; a connection
+with no session still holds a session slot until its admission deadline,
+so a publisher's connection is not promised. `max_readers(0)` refuses
+every reader (`max_sessions(0)` counts as 1), and a cap at or above
+`max_sessions` protects nothing.
 
 **Publisher slot.** A publish mount allows one publisher at a time. ANNOUNCE
 claims the slot (`PublisherSlot`, a generation number under one mutex) and
@@ -85,6 +104,7 @@ Rust takes a `Duration`, C seconds, Python and the JVM milliseconds.
 | Queue | Bound | When full | Counter |
 |---|---|---|---|
 | Sessions | `max_sessions`, 64 | refuse: the new connection is closed | none; a warning is logged and `ServerStats::active_sessions` reads the occupancy |
+| Reader sessions | `max_readers`, no cap by default | refuse: the SETUP is answered `453` and the connection is closed | none; a warning is logged |
 | Reader fan-out, per mount | `fanout_capacity`, 256 frames | drop oldest for the lagging reader; other readers are unaffected | `frames_dropped_total` on a local mount, `frames_dropped_readers` on a publish mount |
 | Publish-mount application queue | 6 577 frames | drop newest; the publisher is never blocked | `frames_dropped_app` |
 | KLV alignment hold | 4 096 units / 4 MiB | drop oldest | `klv_units_dropped` |
