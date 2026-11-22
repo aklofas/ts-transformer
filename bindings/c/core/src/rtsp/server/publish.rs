@@ -285,7 +285,10 @@ pub unsafe extern "C" fn tst_rtsp_server_next_publisher(
 /// sending to its group, and a kept `tst_rtsp_mount_handle_t` answers its
 /// getters while every `tst_rtsp_mount_push_*` and `tst_rtsp_mount_flush`
 /// returns `TST_E_CLOSED`. A reader whose SETUP completed while this call
-/// ran receives nothing further and ends by its own session timeout.
+/// ran receives nothing further; it ends at its TEARDOWN, at its session
+/// timeout (which its keepalives postpone), or at its next PLAY, which is
+/// answered 404 and ends its session, also when a mount has been added at
+/// the path again.
 ///
 /// This is how an application removes idle on-demand mounts; freeing a
 /// handle does not.
