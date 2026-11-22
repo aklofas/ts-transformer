@@ -323,6 +323,8 @@ pub struct TstRtspServerBuilder {
     pub(crate) allow_udp_media: Option<bool>,
     /// Whether a Digest answer without `qop` is accepted. Default: false.
     pub(crate) accept_digest_without_qop: bool,
+    /// Cap on reader sessions; `None` = no cap besides `max_sessions`.
+    pub(crate) max_readers: Option<u32>,
 }
 
 #[cfg(feature = "rtp")]
@@ -357,6 +359,7 @@ impl TstRtspServerBuilder {
             publish_idle_timeout_secs: 0,
             allow_udp_media: None,
             accept_digest_without_qop: false,
+            max_readers: None,
         })
     }
 
@@ -429,6 +432,9 @@ impl TstRtspServerBuilder {
             b.allow_udp_media(yes);
         }
         b.accept_digest_without_qop(self.accept_digest_without_qop);
+        if let Some(n) = self.max_readers {
+            b.max_readers(n as usize);
+        }
 
         // TLS bytes from tst_rtsp_server_builder_tls_cert_pem. With the `tls`
         // feature they are handed to the server, which loads them at start()

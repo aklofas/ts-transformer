@@ -446,16 +446,18 @@ ffmpeg pushes elementary tracks and cannot push KLV over RTSP; GStreamer's `rtsp
 
 The other direction, publishing to an RTSP server with ANNOUNCE / RECORD, is not in the C API yet: Rust, Python and the JVM have the push client ([Push to an RTSP server](/docs/cookbook/sending/rtsp-push.md); [deferred features](/docs/project/deferred-features.md#the-rtsp-push-client-in-the-c-api)).
 
-### Server options: UDP media and Digest answers (ABI 32)
+### Server options: UDP media, Digest answers, a reader cap (ABI 32)
 
 <!-- compile: c-statements -->
 ```c
 void tst_rtsp_server_builder_allow_udp_media(struct TstRtspServerBuilder *builder, bool yes);
 void tst_rtsp_server_builder_accept_digest_without_qop(struct TstRtspServerBuilder *builder, bool yes);
+void tst_rtsp_server_builder_max_readers(struct TstRtspServerBuilder *builder, uint32_t n);
 ```
 
 - **UDP media.** A server that does not allow media over UDP answers `461 Unsupported Transport` to every SETUP, reader or publisher, whose transport is not TCP-interleaved, and `tst_rtsp_server_add_multicast_mount` returns NULL with `TST_E_RTSP_MOUNT` (a multicast mount sends to its group without any session); an interleaved SETUP is served as before. Left uncalled, an `rtsp://` server allows it and an `rtsps://` server does NOT, so an `rtsps://` server sends and takes media only inside the TLS connection. `yes = true` on an `rtsps://` server brings back the unencrypted UDP media of 0.10.0; `yes = false` makes a plain server TCP-only.
 - **Digest answers without `qop`.** GStreamer 1.24's `rtspsrc` and `rtspclientsink` answer a Digest challenge in the RFC 2069 form, without `qop`, and the server refuses that with `401` by default. With `tst_rtsp_server_builder_accept_digest_without_qop(builder, true)` it is accepted, for Digest MD5 and SHA-256 alike; the challenge is unchanged and an answer with `qop` is checked as before. What is given up, only for such clients: replay protection inside one connection (the nonce is still per connection and never accepted on another). GStreamer 1.24 authenticates with Basic, or with Digest MD5 under this option, never with Digest SHA-256.
+- **A reader cap.** `tst_rtsp_server_builder_max_readers(builder, n)` lets at most `n` reader sessions hold a slot at once, from a reader's SETUP to the end of its role (TEARDOWN, a refusal on its own mount, the end of its connection); readers of a multicast mount count, publishers do not. A reader's SETUP over the cap is answered `453 Not Enough Bandwidth` and its connection is closed; a C client's `tst_rtsp_client_builder_connect` then returns NULL with `TST_E_RTSP_PROTOCOL`. Not calling it leaves no cap besides `_max_sessions`; `n = 0` admits no reader at all (an ingest-only server), whereas `_max_sessions` floors 0 to 1. With `n` below `max_sessions` readers cannot take every connection of a server that also takes publishers; a cap at or above `max_sessions` protects nothing, and a connection without a session still holds one of the `max_sessions` for up to 30 s.
 
 ## UDP and RIST ingest: the publisher's address (`TST_HAS_UDP`, `TST_HAS_RIST`)
 

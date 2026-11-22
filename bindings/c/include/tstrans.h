@@ -10722,6 +10722,40 @@ void tst_rtsp_server_builder_graceful_shutdown_drain_ms(struct TstRtspServerBuil
 
 #if defined(TST_HAS_RTP)
 /**
+ * Set the cap on reader sessions at once. A reader holds a slot from its
+ * SETUP to the end of its role: its TEARDOWN, a refusal on its own mount
+ * or the end of its connection. A reader set up again on its own or
+ * another mount keeps the one slot it holds. Readers of a multicast mount
+ * count; publishers do not. A reader's SETUP over the cap is answered
+ * `453 Not Enough Bandwidth` and its connection is closed after the reply
+ * (a C client's `tst_rtsp_client_builder_connect` then returns NULL with
+ * `TST_E_RTSP_PROTOCOL`).
+ *
+ * Not calling it (the default): no cap besides
+ * `tst_rtsp_server_builder_max_sessions`. `n = 0`: no readers at all, an
+ * ingest-only server (unlike `_max_sessions`, which floors 0 to 1). With
+ * `n` below `max_sessions` the difference can never be held by readers,
+ * so readers cannot use up every connection of a server that also takes
+ * publishers; a cap at or above `max_sessions` protects nothing. A
+ * connection without a session still holds one of the `max_sessions`
+ * until its 30 s admission deadline, so a publisher's connection is not
+ * promised. The last call wins.
+ *
+ * Must be called before `tst_rtsp_server_builder_start`. A NULL `builder`
+ * sets last-error `TST_E_INVALID_CONFIG`.
+ *
+ * **Stability: Provisional.**
+ *
+ * # Safety
+ *
+ * `builder` must be NULL or returned by `tst_rtsp_server_builder_new`, not
+ * yet freed or consumed.
+ */
+ void tst_rtsp_server_builder_max_readers(struct TstRtspServerBuilder *builder, uint32_t n);
+#endif
+
+#if defined(TST_HAS_RTP)
+/**
  * Set the maximum number of concurrent client sessions.
  *
  * When the cap is reached, new incoming connections are accepted at the TCP

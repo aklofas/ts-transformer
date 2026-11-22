@@ -52,6 +52,7 @@
 //! - `tst_rtsp_server_builder_tls_cert_pem` — TLS cert chain + private key PEM
 //! - `tst_rtsp_server_builder_allow_udp_media` — whether media may travel over UDP
 //! - `tst_rtsp_server_builder_accept_digest_without_qop` — accept the RFC 2069 Digest answer
+//! - `tst_rtsp_server_builder_max_readers` — cap on reader sessions
 //! - `tst_rtsp_server_builder_free` — discard without starting
 
 use std::os::raw::c_char;
@@ -328,6 +329,45 @@ pub unsafe extern "C" fn tst_rtsp_server_builder_max_sessions(
 ) {
     ffi_catch((), || match unsafe { builder.as_mut() } {
         Some(b) => b.max_sessions = n.max(1),
+        None => set_last_error(TstError::InvalidConfig, "builder is null"),
+    });
+}
+
+/// Set the cap on reader sessions at once. A reader holds a slot from its
+/// SETUP to the end of its role: its TEARDOWN, a refusal on its own mount
+/// or the end of its connection. A reader set up again on its own or
+/// another mount keeps the one slot it holds. Readers of a multicast mount
+/// count; publishers do not. A reader's SETUP over the cap is answered
+/// `453 Not Enough Bandwidth` and its connection is closed after the reply
+/// (a C client's `tst_rtsp_client_builder_connect` then returns NULL with
+/// `TST_E_RTSP_PROTOCOL`).
+///
+/// Not calling it (the default): no cap besides
+/// `tst_rtsp_server_builder_max_sessions`. `n = 0`: no readers at all, an
+/// ingest-only server (unlike `_max_sessions`, which floors 0 to 1). With
+/// `n` below `max_sessions` the difference can never be held by readers,
+/// so readers cannot use up every connection of a server that also takes
+/// publishers; a cap at or above `max_sessions` protects nothing. A
+/// connection without a session still holds one of the `max_sessions`
+/// until its 30 s admission deadline, so a publisher's connection is not
+/// promised. The last call wins.
+///
+/// Must be called before `tst_rtsp_server_builder_start`. A NULL `builder`
+/// sets last-error `TST_E_INVALID_CONFIG`.
+///
+/// **Stability: Provisional.**
+///
+/// # Safety
+///
+/// `builder` must be NULL or returned by `tst_rtsp_server_builder_new`, not
+/// yet freed or consumed.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tst_rtsp_server_builder_max_readers(
+    builder: *mut TstRtspServerBuilder,
+    n: u32,
+) {
+    ffi_catch((), || match unsafe { builder.as_mut() } {
+        Some(b) => b.max_readers = Some(n),
         None => set_last_error(TstError::InvalidConfig, "builder is null"),
     });
 }
@@ -711,6 +751,12 @@ mod tests {
                 TstError::InvalidConfig as i32
             );
         }
+        crate::error::clear_last_error_for_test();
+        unsafe { tst_rtsp_server_builder_max_readers(ptr::null_mut(), 1) };
+        assert_eq!(
+            crate::error::test_last_error_code(),
+            TstError::InvalidConfig as i32
+        );
     }
 
     fn new_builder(url: &str) -> *mut TstRtspServerBuilder {

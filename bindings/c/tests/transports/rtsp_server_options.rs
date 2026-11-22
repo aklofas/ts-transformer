@@ -18,13 +18,15 @@ use tstrans::config::{
     TstVideoCodec, tst_mux_config_add_program, tst_mux_config_add_video_stream,
     tst_mux_config_free, tst_mux_config_new,
 };
+use tstrans::error::{TstError, tst_get_last_error};
 use tstrans::handle::TstRtspServerBuilder;
 use tstrans::{
-    TstRtspMountHandle, TstRtspServer, tst_rtsp_mount_handle_free,
-    tst_rtsp_server_add_unicast_mount, tst_rtsp_server_builder_accept_digest_without_qop,
-    tst_rtsp_server_builder_allow_udp_media, tst_rtsp_server_builder_auth_digest_md5,
+    TstRtspMountHandle, TstRtspServer, tst_rtsp_client_builder_connect,
+    tst_rtsp_client_builder_new, tst_rtsp_mount_handle_free, tst_rtsp_server_add_unicast_mount,
+    tst_rtsp_server_builder_accept_digest_without_qop, tst_rtsp_server_builder_allow_udp_media,
+    tst_rtsp_server_builder_auth_digest_md5, tst_rtsp_server_builder_max_readers,
     tst_rtsp_server_builder_new, tst_rtsp_server_builder_start, tst_rtsp_server_free,
-    tst_rtsp_server_local_addr,
+    tst_rtsp_server_local_addr, tst_rtsp_session_play, tst_rtsp_session_teardown_and_free,
 };
 
 use crate::common::{last_error_msg, scaled};
@@ -215,6 +217,101 @@ fn a_digest_answer_without_qop_is_refused_without_the_option() {
     let (challenge, answered) = rfc2069_describe(false);
     assert!(challenge.contains(r#"qop="auth""#), "{challenge}");
     assert_eq!(answered, 401);
+}
+
+/// A reader SETUP of `/live` over TCP-interleaved on a fresh connection:
+/// the status, and whether the server then closed the connection (a read
+/// that ends, is reset or aborted, rather than one that times out on an
+/// open connection). The connection is returned so a reader that got its
+/// slot keeps it.
+fn interleaved_reader(port: u16) -> (u16, bool, TcpStream) {
+    let mut tcp = connect(port);
+    let r = request(
+        &mut tcp,
+        &format!(
+            "SETUP rtsp://127.0.0.1:{port}/live/trackID=0 RTSP/1.0\r\nCSeq: 1\r\nTransport: {INTERLEAVED}\r\n\r\n"
+        ),
+    );
+    // Long enough for the close to arrive on a loaded machine; a reader
+    // under the cap waits it out once.
+    tcp.set_read_timeout(Some(scaled(Duration::from_secs(1))))
+        .unwrap();
+    let mut byte = [0u8; 1];
+    let closed = match tcp.read(&mut byte) {
+        Ok(0) => true,
+        Ok(_) => false,
+        Err(e) => matches!(
+            e.kind(),
+            std::io::ErrorKind::ConnectionReset
+                | std::io::ErrorKind::ConnectionAborted
+                | std::io::ErrorKind::BrokenPipe
+        ),
+    };
+    (status(&r), closed, tcp)
+}
+
+#[test]
+fn max_readers_answers_453_to_the_reader_over_the_cap_and_closes_its_connection() {
+    let b = builder();
+    unsafe { tst_rtsp_server_builder_max_readers(b, 1) };
+    let (server, mount, port) = start(b);
+    let (first, first_closed, _held) = interleaved_reader(port);
+    assert_eq!(
+        (first, first_closed),
+        (200, false),
+        "the reader under the cap"
+    );
+    let (second, second_closed, _) = interleaved_reader(port);
+    assert_eq!(
+        (second, second_closed),
+        (453, true),
+        "the reader over the cap"
+    );
+    stop(server, mount);
+}
+
+#[test]
+fn max_readers_zero_refuses_every_reader() {
+    let b = builder();
+    unsafe { tst_rtsp_server_builder_max_readers(b, 0) };
+    let (server, mount, port) = start(b);
+    let (status, closed, _) = interleaved_reader(port);
+    assert_eq!((status, closed), (453, true));
+    stop(server, mount);
+}
+
+/// Through the C client: the reader under the cap connects and plays, the
+/// one over it is refused at connect (its SETUP reads 453).
+#[test]
+fn a_c_client_over_the_reader_cap_is_refused_and_one_under_it_plays() {
+    let b = builder();
+    unsafe { tst_rtsp_server_builder_max_readers(b, 1) };
+    let (server, mount, port) = start(b);
+    let url = CString::new(format!("rtsp://127.0.0.1:{port}/live")).unwrap();
+    let pull = || {
+        let cb = unsafe { tst_rtsp_client_builder_new(url.as_ptr()) };
+        assert!(!cb.is_null(), "{}", last_error_msg());
+        unsafe { tst_rtsp_client_builder_connect(cb) }
+    };
+    let first = pull();
+    assert!(!first.is_null(), "{}", last_error_msg());
+    assert_eq!(
+        unsafe { tst_rtsp_session_play(first) },
+        0,
+        "{}",
+        last_error_msg()
+    );
+    let second = pull();
+    assert!(second.is_null(), "a second reader over a cap of 1");
+    let msg = last_error_msg();
+    assert_eq!(
+        unsafe { tst_get_last_error() },
+        TstError::RtspProtocol as i32,
+        "{msg}"
+    );
+    assert!(msg.contains("453"), "{msg}");
+    unsafe { tst_rtsp_session_teardown_and_free(first) };
+    stop(server, mount);
 }
 
 /// The same option on an `rtsps://` server, where leaving it uncalled means
