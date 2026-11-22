@@ -319,18 +319,29 @@ fn a_c_client_over_the_reader_cap_is_refused_and_one_under_it_plays() {
 #[cfg(feature = "tls")]
 mod rtsps {
     use std::ffi::CString;
+    use std::io::{Read, Write};
+    use std::net::{Shutdown, TcpListener, TcpStream};
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+    use std::time::{Duration, Instant};
 
+    use tstrans::event::{TstEvent, TstEventKind};
     use tstrans::handle::TstRtspClientBuilder;
+    use tstrans::rtp::{
+        tst_rtp_demux_receiver_cancel, tst_rtp_demux_receiver_close,
+        tst_rtp_demux_receiver_next_event,
+    };
     use tstrans::{
         TstRtspMountHandle, TstRtspServer, tst_rtsp_client_builder_connect,
         tst_rtsp_client_builder_new, tst_rtsp_client_builder_tls_root_cert_pem,
-        tst_rtsp_client_builder_transport_pref, tst_rtsp_server_builder_allow_udp_media,
-        tst_rtsp_server_builder_new, tst_rtsp_server_builder_tls_cert_pem,
-        tst_rtsp_session_teardown_and_free,
+        tst_rtsp_client_builder_transport_pref, tst_rtsp_mount_push_video,
+        tst_rtsp_server_builder_allow_udp_media, tst_rtsp_server_builder_new,
+        tst_rtsp_server_builder_tls_cert_pem, tst_rtsp_session_into_demux_receiver,
+        tst_rtsp_session_play, tst_rtsp_session_teardown_and_free,
     };
 
     use super::{start, stop};
-    use crate::common::last_error_msg;
+    use crate::common::{last_error_msg, scaled};
 
     /// A started `rtsps://` server with a self-signed certificate for
     /// 127.0.0.1 and the mount `/live`; `allow` is the UDP-media setter's
@@ -400,5 +411,159 @@ mod rtsps {
         assert!(!session.is_null(), "{}", last_error_msg());
         unsafe { tst_rtsp_session_teardown_and_free(session) };
         stop(server, mount);
+    }
+
+    /// One SPS + PPS + IDR access unit.
+    const H264_AU: &[u8] = &[
+        0x00, 0x00, 0x00, 0x01, 0x67, 0x42, 0x00, 0x1f, 0x96, 0x54, 0x05, 0x01, // SPS
+        0x00, 0x00, 0x00, 0x01, 0x68, 0xce, 0x3c, 0x80, // PPS
+        0x00, 0x00, 0x00, 0x01, 0x65, 0x88, 0x80, 0x40, // IDR
+    ];
+
+    /// A raw C handle moved to a helper thread.
+    struct SendPtr<T>(*mut T);
+    // SAFETY: the pushes and the receiver's cancel are documented as safe
+    // from another thread.
+    unsafe impl<T> Send for SendPtr<T> {}
+    impl<T> SendPtr<T> {
+        fn get(&self) -> *mut T {
+            self.0
+        }
+    }
+
+    /// A TCP forwarder in front of `server_port` for one connection. It
+    /// cannot read the TLS records, but it counts the bytes the server sends
+    /// on the control connection (before passing them on), which is where
+    /// TCP-interleaved media travels and UDP media does not.
+    fn counting_forwarder(server_port: u16) -> (u16, Arc<AtomicU64>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let count = Arc::new(AtomicU64::new(0));
+        let counted = Arc::clone(&count);
+        std::thread::spawn(move || {
+            let Ok((client, _)) = listener.accept() else {
+                return;
+            };
+            let server = TcpStream::connect(("127.0.0.1", server_port)).unwrap();
+            let (mut from_client, mut to_server) =
+                (client.try_clone().unwrap(), server.try_clone().unwrap());
+            std::thread::spawn(move || {
+                let _ = std::io::copy(&mut from_client, &mut to_server);
+                let _ = to_server.shutdown(Shutdown::Write);
+            });
+            let (mut from_server, mut to_client) = (server, client);
+            let mut buf = [0u8; 16 * 1024];
+            while let Ok(n) = from_server.read(&mut buf) {
+                if n == 0 {
+                    break;
+                }
+                counted.fetch_add(n as u64, Ordering::SeqCst);
+                if to_client.write_all(&buf[..n]).is_err() {
+                    break;
+                }
+            }
+            let _ = to_client.shutdown(Shutdown::Both);
+        });
+        (port, count)
+    }
+
+    /// Pulls `/live` from an `rtsps://` server that allows UDP media, through
+    /// a counting forwarder, with the client's transport preference `pref`
+    /// (`None`: the setter is never called). Returns how many bytes the
+    /// server sent on the control connection between PLAY's reply and the
+    /// fifth video sample the receiver handed out.
+    fn control_bytes_while_media_flows(pref: Option<u32>) -> u64 {
+        const SAMPLES: usize = 5;
+        let (server, mount, port, cert) = tls_server(Some(true));
+        let (fwd, count) = counting_forwarder(port);
+        let b = tls_client(fwd, &cert);
+        if let Some(p) = pref {
+            unsafe { tst_rtsp_client_builder_transport_pref(b, p) };
+        }
+        let session = unsafe { tst_rtsp_client_builder_connect(b) };
+        assert!(!session.is_null(), "{}", last_error_msg());
+        assert_eq!(
+            unsafe { tst_rtsp_session_play(session) },
+            0,
+            "{}",
+            last_error_msg()
+        );
+        let rx = unsafe { tst_rtsp_session_into_demux_receiver(session, std::ptr::null()) };
+        assert!(!rx.is_null(), "{}", last_error_msg());
+        // The PLAY reply was read, so it is counted already.
+        let before = count.load(Ordering::SeqCst);
+        let stop_pushing = Arc::new(AtomicBool::new(false));
+        let pusher = {
+            let (mount, stop) = (SendPtr(mount), Arc::clone(&stop_pushing));
+            std::thread::spawn(move || {
+                let mut pts: i64 = 0;
+                while !stop.load(Ordering::SeqCst) {
+                    let rc = unsafe {
+                        tst_rtsp_mount_push_video(
+                            mount.get(),
+                            H264_AU.as_ptr(),
+                            H264_AU.len(),
+                            pts,
+                            true,
+                        )
+                    };
+                    assert_eq!(rc, 0, "push_video: {}", last_error_msg());
+                    pts += 3600;
+                    // Pacing, not synchronisation: about 25 access units a second.
+                    std::thread::sleep(Duration::from_millis(40));
+                }
+            })
+        };
+        // A receiver that never delivers is cancelled, so the test fails
+        // instead of hanging.
+        let watchdog = {
+            let (rx, stop) = (SendPtr(rx), Arc::clone(&stop_pushing));
+            let deadline = Instant::now() + scaled(Duration::from_secs(10));
+            std::thread::spawn(move || {
+                while !stop.load(Ordering::SeqCst) {
+                    if Instant::now() >= deadline {
+                        unsafe { tst_rtp_demux_receiver_cancel(rx.get()) };
+                        return;
+                    }
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+            })
+        };
+        let mut samples = 0;
+        let mut ev = TstEvent::default();
+        while samples < SAMPLES {
+            let rc = unsafe { tst_rtp_demux_receiver_next_event(rx, &mut ev) };
+            assert_eq!(rc, 0, "only {samples} video samples: {}", last_error_msg());
+            if ev.kind == TstEventKind::Sample as i32 && unsafe { ev.u.sample.pid } == 0x1011 {
+                samples += 1;
+            }
+        }
+        let during = count.load(Ordering::SeqCst) - before;
+        stop_pushing.store(true, Ordering::SeqCst);
+        pusher.join().unwrap();
+        watchdog.join().unwrap();
+        unsafe { tst_rtp_demux_receiver_close(rx) };
+        stop(server, mount);
+        during
+    }
+
+    /// A pull left at its default on `rtsps://` asks for TCP-interleaved,
+    /// although this server would grant UDP: the media comes inside the TLS
+    /// connection (each sample is at least one 188-byte TS packet there).
+    #[test]
+    fn an_rtsps_pull_left_at_its_default_ends_on_tcp_interleaved() {
+        let during = control_bytes_while_media_flows(None);
+        assert!(
+            during >= 5 * 188,
+            "{during} bytes on the control connection"
+        );
+    }
+
+    /// Calling the setter with 0 overrides the URL's default: UDP first, and
+    /// this server grants it, so no media crosses the control connection.
+    #[test]
+    fn an_rtsps_pull_with_transport_pref_0_asks_for_udp_first() {
+        let during = control_bytes_while_media_flows(Some(0));
+        assert!(during < 188, "{during} bytes on the control connection");
     }
 }

@@ -109,9 +109,16 @@ pub unsafe extern "C" fn tst_rtsp_client_builder_new(
 /// Set the RTSP transport preference.
 ///
 /// `pref` values:
-/// - `0` — prefer UDP; fall back to TCP-interleaved on 461 (default)
+/// - `0` — UDP first; fall back to TCP-interleaved on 461
 /// - `1` — force UDP; surface an error on 461 instead of falling back
 /// - `2` — force TCP-interleaved; skip the UDP attempt entirely
+///
+/// Calling this overrides the URL's own default, `0` included. Not calling
+/// it leaves the URL in charge: its `?transport=` key if it has one, else
+/// UDP first with TCP fallback on 461 for `rtsp://` and TCP-interleaved
+/// only for `rtsps://`, so the media never leaves the TLS connection. On an
+/// `rtsps://` URL `0` and `1` ask for UDP, and a server that grants it sends
+/// the media unencrypted.
 ///
 /// Must be called before `tst_rtsp_client_builder_connect`.
 /// No-op (with last-error set to `TST_E_INVALID_CONFIG`) if `pref` is
