@@ -358,9 +358,13 @@ pub(crate) fn next_interleaved_pair() -> Option<(u8, u8)> {
 /// - 455 Method Not Valid in This State — a reader-direction SETUP (no
 ///   `mode=record`) on a session that announced a publisher; one
 ///   connection holds one role.
-/// - 461 Unsupported Transport — TCP-interleaved against a multicast
-///   mount (RFC 7826 §13.3), or `mode=record` against a local
-///   (muxer-backed) mount — only a publish mount accepts a publisher.
+/// - 461 Unsupported Transport — a transport that is not TCP-interleaved
+///   on a server that does not allow media over UDP
+///   ([`RtspServerBuilder::allow_udp_media`](crate::RtspServerBuilder::allow_udp_media);
+///   by default an `rtsps://` server), reader or publisher;
+///   TCP-interleaved against a multicast mount (RFC 7826 §13.3); or
+///   `mode=record` against a local (muxer-backed) mount — only a publish
+///   mount accepts a publisher.
 /// - 500 Internal Server Error — UDP socket bind failure, interleaved
 ///   channel allocator exhaustion, or poisoned mutex.
 ///
@@ -430,6 +434,21 @@ pub(crate) fn handle_setup(
             return error_response(req, 400, "Bad Request");
         }
     };
+
+    // A server that does not allow media over UDP (by default an `rtsps://`
+    // one, whose media would otherwise leave the TLS connection) refuses
+    // every transport that is not interleaved, reader or publisher. Here,
+    // after admission and the lookup, it reveals nothing about the path.
+    if !state.builder.udp_media_allowed()
+        && parsed.kind != crate::rtsp::transport_negotiation::RtspTransportKind::TcpInterleaved
+    {
+        tracing::debug!(
+            target: "tst_rtp::server",
+            transport = ?transport_str,
+            "SETUP rejected 461: this server does not allow media over UDP"
+        );
+        return error_response(req, 461, "Unsupported Transport");
+    }
 
     // Route a publisher's SETUP (`mode=record`) to the publish handlers;
     // a reader's SETUP (no `mode=`, or any value other than "record")
@@ -1281,6 +1300,45 @@ mod tests {
             })
         ));
         assert_eq!(session.mount_path(), Some("/live"));
+    }
+
+    /// An `rtsps://` server by default, and a plain one told so, answer a
+    /// SETUP that is not TCP-interleaved with 461 and set up nothing.
+    #[test]
+    fn setup_over_udp_is_461_where_udp_media_is_off() {
+        use crate::rtsp::server::builder::RtspServerBuilder;
+        let tls = RtspServerBuilder::new("rtsps://127.0.0.1:0").unwrap();
+        let mut plain = RtspServerBuilder::new("rtsp://127.0.0.1:0").unwrap();
+        plain.allow_udp_media(false);
+        for builder in [tls, plain] {
+            let state = crate::rtsp::server::test_state_with(builder);
+            let mount = MountState::new(
+                "/live",
+                MountKind::Unicast,
+                test_muxer_cfg(),
+                256,
+                state.ended(),
+            )
+            .expect("mount state constructs");
+            state
+                .mounts
+                .lock()
+                .unwrap()
+                .insert("/live".into(), MountEntry::Local(mount));
+            let mut req = make_req(RtspMethod::Setup, "rtsp://127.0.0.1:8554/live");
+            req.headers.insert(
+                "transport".into(),
+                "RTP/AVP;unicast;client_port=5004-5005".into(),
+            );
+            let mut session = ServerSessionState::new();
+            let resp = handle_setup(&req, &state, &mut session);
+            assert_eq!(
+                (resp.status, resp.reason.as_str()),
+                (461, "Unsupported Transport")
+            );
+            assert!(!resp.headers.contains_key("transport"));
+            assert!(matches!(session.role, Role::Idle));
+        }
     }
 
     /// A second PLAY without PAUSE replaces the fanout instead of

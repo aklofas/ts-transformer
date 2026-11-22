@@ -57,6 +57,8 @@ mod orphan_fanout;
 mod idle_timeout;
 #[path = "rtsp_server/interleaved_frame_boundary.rs"]
 mod interleaved_frame_boundary;
+#[path = "rtsp_server/udp_media.rs"]
+mod udp_media;
 #[path = "rtsp_server/unsupported_method.rs"]
 mod unsupported_method;
 #[path = "rtsp_server/publish/auth.rs"]

@@ -61,10 +61,7 @@ fn rtsps_handshake_succeeds_with_trusted_root() {
     let port = server.local_addr().expect("local_addr").port();
     let url = format!("rtsps://127.0.0.1:{port}/live");
 
-    // Build a RootCertStore from the test cert PEM. Once
-    // `RtspClient::connect_with` forwards a `Option<RootCertStore>` from
-    // the builder, the line below will wire through; today it's still
-    // discarded.
+    // The client trusts the self-signed cert through `tls_root_certs`.
     let roots =
         tst_core::net::tls::load_root_store(certs.root_pem.as_bytes()).expect("trust bundle");
     let mut cb = tst_rtp::RtspClientBuilder::new(&url).expect("client builder");
@@ -518,4 +515,94 @@ fn a_hard_cancel_during_a_graceful_drain_closes_publish_transports_at_once() {
         );
         stopping.join().unwrap().unwrap();
     });
+}
+
+/// A started `rtsps://` server with `crate::udp_media`'s mounts, and
+/// `allow_udp_media(yes)` when `allow` is given.
+fn tls_server(certs: &SelfSignedCert, allow: Option<bool>) -> tst_rtp::RtspServer {
+    let mut b = RtspServerBuilder::new("rtsps://127.0.0.1:0").expect("URL parse");
+    b.tls_cert(certs.cert_path.clone(), certs.key_path.clone());
+    if let Some(yes) = allow {
+        b.allow_udp_media(yes);
+    }
+    crate::udp_media::started(b)
+}
+
+fn roots(certs: &SelfSignedCert) -> rustls::RootCertStore {
+    tst_core::net::tls::load_root_store(certs.root_pem.as_bytes()).expect("trust bundle")
+}
+
+/// An `rtsps://` server sends and takes media only inside its TLS
+/// connection unless told otherwise: every SETUP that is not
+/// TCP-interleaved, reader or publisher, reads 461 and binds no UDP port.
+#[test]
+fn a_tls_server_refuses_udp_media_in_every_spelling() {
+    use crate::fixtures::raw_rtsp_publisher::RawPublisher;
+    let certs = SelfSignedCert::generate();
+    let server = tls_server(&certs, None);
+    let port = server.local_addr().expect("local_addr").port();
+    assert_eq!(
+        crate::udp_media::every_spelling(|| RawPublisher::connect_tls(port, roots(&certs))),
+        crate::udp_media::REFUSED
+    );
+    server.stop().ok();
+}
+
+/// The opt-out: `allow_udp_media(true)` on an `rtsps://` server serves a
+/// reader over UDP, as through 0.10.0.
+#[test]
+fn a_tls_server_with_udp_media_allowed_serves_it() {
+    use crate::fixtures::raw_rtsp::try_header;
+    use crate::fixtures::raw_rtsp_publisher::RawPublisher;
+    let certs = SelfSignedCert::generate();
+    let server = tls_server(&certs, Some(true));
+    let port = server.local_addr().expect("local_addr").port();
+    let r = crate::udp_media::reader_setup(
+        RawPublisher::connect_tls(port, roots(&certs)),
+        "/live",
+        "RTP/AVP;unicast;client_port=5000-5001",
+    );
+    assert!(r.starts_with("RTSP/1.0 200"), "{r}");
+    assert!(
+        try_header(&r, "Transport").is_some_and(|t| t.contains("server_port")),
+        "{r}"
+    );
+    server.stop().ok();
+}
+
+/// This library's client asking for UDP first takes the 461 and falls back
+/// to TCP-interleaved; told to use UDP only, it reports the 461.
+#[test]
+fn this_librarys_client_ends_on_interleaved_against_a_tls_server() {
+    use tst_rtp::{RtspError, RtspTransportKind, RtspTransportPref};
+    let certs = SelfSignedCert::generate();
+    let server = tls_server(&certs, None);
+    let port = server.local_addr().expect("local_addr").port();
+    let url = format!("rtsps://127.0.0.1:{port}/live");
+
+    let mut client = tst_rtp::RtspClientBuilder::new(&url)
+        .expect("client builder")
+        .tls_root_certs(roots(&certs))
+        .transport_preference(RtspTransportPref::PreferUdp)
+        .connect()
+        .expect("rtsps connect");
+    let sdp = client.describe().expect("DESCRIBE");
+    let session = client.setup_mp2t_auto(&sdp).expect("SETUP falls back");
+    assert_eq!(session.transport_kind(), RtspTransportKind::TcpInterleaved);
+
+    let mut forced = tst_rtp::RtspClientBuilder::new(&format!("{url}?transport=udp"))
+        .expect("client builder")
+        .tls_root_certs(roots(&certs))
+        .connect()
+        .expect("rtsps connect");
+    let sdp = forced.describe().expect("DESCRIBE");
+    match forced.setup_mp2t_auto(&sdp) {
+        Err(RtspError::Protocol { code: 461, .. }) => {}
+        Err(e) => panic!("expected Protocol 461, got {e:?}"),
+        Ok(s) => panic!(
+            "a forced UDP SETUP was served over {:?}",
+            s.transport_kind()
+        ),
+    }
+    server.stop().ok();
 }

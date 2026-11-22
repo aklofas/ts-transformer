@@ -98,6 +98,7 @@ unchanged (310) and the test leaf-name multiset is byte-identical before/after
 | `rtsp_server_shutdown.rs` | `rtsp_server/shutdown.rs` |
 | `rtsp_server_tls.rs` | `rtsp_server/tls.rs` |
 | (new) | `rtsp_server/tls_handshake_timeout.rs` |
+| (new) | `rtsp_server/udp_media.rs` |
 
 ### `rtsp_server/publish/` — RTSP publisher role (ANNOUNCE / SETUP `mode=record` / RECORD), MP2T
 

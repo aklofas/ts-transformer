@@ -13,7 +13,7 @@ use secrecy::SecretString;
 
 use crate::error::RtspServerError;
 use crate::rtsp::server::mount_rules::MountRule;
-use crate::url::RtspUrl;
+use crate::url::{RtspScheme, RtspUrl};
 
 /// Challenge scheme the server offers a client that must authenticate.
 #[non_exhaustive]
@@ -64,6 +64,7 @@ impl std::fmt::Debug for ServerAuthConfig {
 /// - `accept_unregistered_publishers`: off
 /// - `end_publish_mount_on_publisher_exit`: off
 /// - `publish_idle_timeout`: off
+/// - `allow_udp_media`: yes on an `rtsp://` bind, no on an `rtsps://` bind
 /// - No auth, no TLS — caller adds via `auth_*()` / `tls_cert()`.
 pub struct RtspServerBuilder {
     pub(crate) bind_url: RtspUrl,
@@ -76,6 +77,7 @@ pub struct RtspServerBuilder {
     pub(crate) accept_unregistered_publishers: bool,
     pub(crate) end_publish_mount_on_publisher_exit: bool,
     pub(crate) publish_idle_timeout: Option<Duration>,
+    pub(crate) allow_udp_media: Option<bool>,
     #[cfg(feature = "rtsp-server-tls")]
     pub(crate) tls_cert_path: Option<PathBuf>,
     #[cfg(feature = "rtsp-server-tls")]
@@ -91,6 +93,10 @@ impl RtspServerBuilder {
     /// `rtsp://` or `rtsps://` and a host that parses as an IP literal
     /// (no DNS resolution server-side).
     ///
+    /// A bind URL must not carry a user name or a password: `build()`
+    /// refuses it. Configure the server's credential with `auth_basic` or
+    /// `auth_digest_*`.
+    ///
     /// # Errors
     ///
     /// - [`RtspServerError::UrlParse`] if `url` cannot be parsed as RTSP
@@ -105,6 +111,10 @@ impl RtspServerBuilder {
 
     /// Start building from an already-parsed [`RtspUrl`]. Skips the
     /// `validate_for_server_bind` check — caller is responsible.
+    ///
+    /// A bind URL must not carry a user name or a password: `build()`
+    /// refuses it. Configure the server's credential with `auth_basic` or
+    /// `auth_digest_*`.
     pub fn with_url(url: RtspUrl) -> Self {
         Self {
             bind_url: url,
@@ -117,6 +127,7 @@ impl RtspServerBuilder {
             accept_unregistered_publishers: false,
             end_publish_mount_on_publisher_exit: false,
             publish_idle_timeout: None,
+            allow_udp_media: None,
             #[cfg(feature = "rtsp-server-tls")]
             tls_cert_path: None,
             #[cfg(feature = "rtsp-server-tls")]
@@ -136,6 +147,10 @@ impl RtspServerBuilder {
     /// The scheme and realm are the server's first challenge;
     /// [`MountRules::set_challenge`](crate::MountRules::set_challenge)
     /// changes it for every 401, this credential's included.
+    ///
+    /// A user name that contains `:` is refused by `build()`: it cannot
+    /// authenticate while the challenge is Basic (RFC 7617 §2), the server's
+    /// own credential included.
     pub fn auth_basic(&mut self, realm: &str, username: &str, password: SecretString) -> &mut Self {
         self.auth = Some(ServerAuthConfig {
             scheme: AuthScheme::Basic,
@@ -293,6 +308,30 @@ impl RtspServerBuilder {
     pub fn publish_idle_timeout(&mut self, t: Duration) -> &mut Self {
         self.publish_idle_timeout = (!t.is_zero()).then_some(t);
         self
+    }
+
+    /// Whether sessions may carry media over UDP: a reader's or a
+    /// publisher's SETUP with a transport that is not TCP-interleaved, and
+    /// multicast mounts. A server that does not allow it answers such a
+    /// SETUP `461 Unsupported Transport`.
+    ///
+    /// Default: yes on an `rtsp://` bind, NO on an `rtsps://` bind, so that
+    /// an `rtsps://` server sends and takes media only inside the TLS
+    /// connection. `allow_udp_media(true)` on an `rtsps://` server restores
+    /// the behaviour of 0.10.0, in which the media travels unencrypted;
+    /// `allow_udp_media(false)` makes a plain server TCP-only.
+    ///
+    /// **Stability: Provisional.**
+    pub fn allow_udp_media(&mut self, yes: bool) -> &mut Self {
+        self.allow_udp_media = Some(yes);
+        self
+    }
+
+    /// Whether this server allows media over UDP: the value set with
+    /// [`Self::allow_udp_media`], else whether the bind is `rtsp://`.
+    pub(crate) fn udp_media_allowed(&self) -> bool {
+        self.allow_udp_media
+            .unwrap_or(!matches!(self.bind_url.scheme(), RtspScheme::Rtsps))
     }
 
     /// Set the rule every mount path without its own entry in
