@@ -884,3 +884,169 @@ def test_server_local_addr_is_a_tuple():
         host, port = addr
         assert host == "127.0.0.1"
         assert isinstance(port, int) and port > 0
+
+
+# ---------------------------------------------------------------------------
+# UDP media and the Digest answer without `qop`: what the config's options
+# make the server answer on the wire.
+# ---------------------------------------------------------------------------
+
+
+def _read_head(sock) -> str:
+    buf = b""
+    while b"\r\n\r\n" not in buf:
+        chunk = sock.recv(4096)
+        assert chunk, "the server closed before answering"
+        buf += chunk
+    return buf.decode(errors="replace")
+
+
+def _status_of(head: str) -> int:
+    return int(head.split()[1])
+
+
+def _wrap_tls(sock):
+    import ssl
+
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    return ctx.wrap_socket(sock)
+
+
+def _reader_setup(port: int, transport: str, *, tls: bool = False) -> str:
+    """One reader SETUP of `/live` asking for `transport`, on a fresh
+    connection; returns the response head."""
+    import socket
+
+    scheme = "rtsps" if tls else "rtsp"
+    raw = socket.create_connection(("127.0.0.1", port), timeout=5.0)
+    with _wrap_tls(raw) if tls else raw as sock:
+        sock.sendall(
+            (
+                f"SETUP {scheme}://127.0.0.1:{port}/live/trackID=0 RTSP/1.0\r\n"
+                f"CSeq: 1\r\nTransport: {transport}\r\n\r\n"
+            ).encode()
+        )
+        return _read_head(sock)
+
+
+def _udp_transport() -> str:
+    import socket
+
+    # Only the port number goes into the request; nothing is sent to it.
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as udp:
+        udp.bind(("127.0.0.1", 0))
+        p = udp.getsockname()[1]
+    return f"RTP/AVP;unicast;client_port={p}-{p + 1}"
+
+
+_INTERLEAVED = "RTP/AVP/TCP;unicast;interleaved=0-1"
+
+
+def _transport_of(head: str) -> str:
+    from conftest import rtsp_header
+
+    return rtsp_header(head, "Transport")
+
+
+def test_config_udp_media_and_digest_options_default():
+    cfg = RtspServerConfig()
+    assert cfg.allow_udp_media is None
+    assert cfg.accept_digest_without_qop is False
+    with pytest.raises(TypeError, match="allow_udp_media"):
+        RtspServerConfig(allow_udp_media=1)  # type: ignore[arg-type]
+    with pytest.raises(TypeError, match="accept_digest_without_qop"):
+        RtspServerConfig(accept_digest_without_qop=None)  # type: ignore[arg-type]
+
+
+def test_a_server_without_udp_media_answers_461_to_a_udp_setup():
+    cfg = RtspServerConfig(
+        bind_addr="127.0.0.1:0", allow_udp_media=False, graceful_shutdown_drain_ms=50
+    )
+    with RtspServer.start(cfg) as server:
+        server.add_unicast_mount("/live", _single_video_program())
+        port = server.local_addr()[1]
+        refused = _reader_setup(port, _udp_transport())
+        assert _status_of(refused) == 461, refused
+        assert "server_port" not in refused
+        assert _status_of(_reader_setup(port, _INTERLEAVED)) == 200
+
+
+def test_a_plain_server_allows_udp_media_by_default():
+    cfg = RtspServerConfig(bind_addr="127.0.0.1:0", graceful_shutdown_drain_ms=50)
+    with RtspServer.start(cfg) as server:
+        server.add_unicast_mount("/live", _single_video_program())
+        head = _reader_setup(server.local_addr()[1], _udp_transport())
+        assert _status_of(head) == 200, head
+        assert "server_port" in _transport_of(head)
+
+
+def test_an_rtsps_server_refuses_udp_media_unless_allowed():
+    cert, key = _tls_fixture_paths()
+    for allow, want in ((None, 461), (True, 200)):
+        cfg = RtspServerConfig(
+            bind_addr="rtsps://127.0.0.1:0",
+            tls_cert=cert,
+            tls_key=key,
+            allow_udp_media=allow,
+            graceful_shutdown_drain_ms=50,
+        )
+        with RtspServer.start(cfg) as server:
+            server.add_unicast_mount("/live", _single_video_program())
+            port = server.local_addr()[1]
+            head = _reader_setup(port, _udp_transport(), tls=True)
+            assert _status_of(head) == want, (allow, head)
+            assert _status_of(_reader_setup(port, _INTERLEAVED, tls=True)) == 200
+
+
+def _rfc2069_describe(accept_digest_without_qop: bool) -> tuple[str, str]:
+    """A DESCRIBE without a credential, then the same DESCRIBE answered in
+    the RFC 2069 form (no `qop`, `nc` or `cnonce`), as GStreamer 1.24 answers
+    a Digest MD5 challenge. Returns the challenge and the answered head."""
+    import hashlib
+    import socket
+
+    from conftest import rtsp_header
+
+    realm = "lab"
+    cfg = RtspServerConfig(
+        bind_addr="127.0.0.1:0",
+        auth=DigestAuth(user="admin", password="secret", realm=realm),
+        accept_digest_without_qop=accept_digest_without_qop,
+        graceful_shutdown_drain_ms=50,
+    )
+    with RtspServer.start(cfg) as server:
+        server.add_unicast_mount("/live", _single_video_program())
+        port = server.local_addr()[1]
+        uri = f"rtsp://127.0.0.1:{port}/live"
+        with socket.create_connection(("127.0.0.1", port), timeout=5.0) as sock:
+            sock.sendall(f"DESCRIBE {uri} RTSP/1.0\r\nCSeq: 1\r\n\r\n".encode())
+            first = _read_head(sock)
+            assert _status_of(first) == 401, first
+            challenge = rtsp_header(first, "WWW-Authenticate")
+            nonce = challenge.split('nonce="', 1)[1].split('"', 1)[0]
+
+            def md5(s: str) -> str:
+                return hashlib.md5(s.encode()).hexdigest()
+
+            ha1 = md5(f"admin:{realm}:secret")
+            ha2 = md5(f"DESCRIBE:{uri}")
+            response = md5(f"{ha1}:{nonce}:{ha2}")
+            sock.sendall(
+                (
+                    f"DESCRIBE {uri} RTSP/1.0\r\nCSeq: 2\r\n"
+                    f'Authorization: Digest username="admin", realm="{realm}", '
+                    f'nonce="{nonce}", uri="{uri}", response="{response}"\r\n\r\n'
+                ).encode()
+            )
+            return challenge, _read_head(sock)
+
+
+def test_an_answer_without_qop_is_accepted_only_with_the_option():
+    challenge, answered = _rfc2069_describe(True)
+    assert 'qop="auth"' in challenge
+    assert _status_of(answered) == 200, answered
+    challenge, answered = _rfc2069_describe(False)
+    assert 'qop="auth"' in challenge
+    assert _status_of(answered) == 401, answered

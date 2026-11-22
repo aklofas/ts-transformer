@@ -13,7 +13,8 @@ Submodule contents are populated by `tstrans._native.rtp`:
 - `RtspServer`, `MountHandle`, `RtspServerConfig`,
   `ServerStats`, `MountStats`, `RtspServerCancelHandle`
 - `MountRules`, `MountRule`, `MountPolicy`, `MountCredential`,
-  `RefuseStatus`, `AuthScheme` (the per-mount-path rules table)
+  `RefuseStatus`, `AuthScheme`, `MountRuleAuthFailures` (the
+  per-mount-path rules table)
 - `PublishMount`, `PublishMountStats`, `PublisherInfo`, `PublishShape`,
   `ClockAlignment` (the RTSP publisher role)
 
@@ -133,6 +134,7 @@ MountCredential = _rtp.MountCredential
 MountPolicy = _rtp.MountPolicy
 MountRule = _rtp.MountRule
 MountRules = _rtp.MountRules
+MountRuleAuthFailures = _rtp.MountRuleAuthFailures
 
 # RTSP publisher role (ANNOUNCE / RECORD ingest on RtspServer).
 PublishMount = _rtp.PublishMount
@@ -230,6 +232,30 @@ class RtspServerConfig:
     RTSP requests while sending no media is ended by this timeout, not the
     session timeout."""
 
+    allow_udp_media: Optional[bool] = None
+    """Whether sessions may carry media over UDP: a reader's or a
+    publisher's SETUP with a transport that is not TCP-interleaved, and
+    multicast mounts. A server that does not allow it answers such a SETUP
+    `461 Unsupported Transport`. `None` (the default) allows it on an
+    `rtsp://` bind and NOT on an `rtsps://` bind, so that an `rtsps://`
+    server sends and takes media only inside the TLS connection. `True` on
+    an `rtsps://` server lets the media travel unencrypted, as through
+    0.10.0; `False` makes a plain server TCP-only."""
+
+    accept_digest_without_qop: bool = False
+    """Accept a Digest answer that carries no `qop`: the RFC 2069 form,
+    which GStreamer 1.24's `rtspsrc` and `rtspclientsink` send. Applies to
+    both Digest schemes, the server's own `auth` credential and every mount
+    rule's; the challenge still offers `qop="auth"`, and an answer with
+    `qop` is checked as before, its nonce count included. Off by default, so
+    such an answer is refused as a downgrade. What is given up, only for a
+    client that sends no `qop` and only with this on: replay protection
+    inside one connection (such an answer has no nonce count, so a captured
+    `Authorization` value for one method and URI can be sent again on the
+    same connection while it lives; the nonce is never accepted on another
+    connection). GStreamer 1.24 answers a Digest SHA-256 challenge with an
+    MD5 response, so this does not help it there."""
+
     def __repr__(self) -> str:
         # A bind URL can carry a password or a token; the generated
         # dataclass repr would print it verbatim.
@@ -270,6 +296,16 @@ class RtspServerConfig:
             raise TypeError(
                 f"RtspServerConfig.end_publish_mount_on_publisher_exit must be a bool; "
                 f"got {type(self.end_publish_mount_on_publisher_exit).__name__}"
+            )
+        if self.allow_udp_media is not None and not isinstance(self.allow_udp_media, bool):
+            raise TypeError(
+                f"RtspServerConfig.allow_udp_media must be a bool or None; "
+                f"got {type(self.allow_udp_media).__name__}"
+            )
+        if not isinstance(self.accept_digest_without_qop, bool):
+            raise TypeError(
+                f"RtspServerConfig.accept_digest_without_qop must be a bool; "
+                f"got {type(self.accept_digest_without_qop).__name__}"
             )
         if self.publish_idle_timeout_ms is not None:
             if isinstance(self.publish_idle_timeout_ms, bool) or not isinstance(
@@ -373,6 +409,7 @@ __all__: list[str] = [
     "MountPolicy",
     "MountRule",
     "MountRules",
+    "MountRuleAuthFailures",
     "RefuseStatus",
     "AuthScheme",
     # RTSP publisher role

@@ -20,6 +20,7 @@ from tstrans.rtp import (
     MountCredential,
     MountPolicy,
     MountRule,
+    MountRuleAuthFailures,
     MountRules,
     RefuseStatus,
     RtspServer,
@@ -92,6 +93,41 @@ def test_require_on_publish_challenges_then_admits_basic():
 
         assert _status(_announce(port, "/amber", _basic("amber", "wrong"))) == 401
         assert _status(_announce(port, "/amber", _basic("amber", "pw"))) == 200
+
+
+def test_refused_credentials_are_counted_on_their_rule():
+    with _start() as server:
+        rules = server.mount_rules()
+        rules.set_challenge(AuthScheme.BASIC, "lab")
+        rules.set("/amber", MountRule(publish=MountPolicy.require(MountCredential("amber", "pw"))))
+        rules.set_default(MountRule(publish=MountPolicy.require(MountCredential("other", "pw"))))
+        port = _port(server)
+        counts = rules.auth_failures("/amber")
+        assert isinstance(counts, MountRuleAuthFailures)
+        assert (counts.publish, counts.read) == (0, 0)
+
+        # The bare first challenge is not counted; two wrong passwords are.
+        assert _status(_announce(port, "/amber")) == 401
+        assert rules.auth_failures("/amber").publish == 0
+        assert _status(_announce(port, "/amber", _basic("amber", "wrong"))) == 401
+        assert _status(_announce(port, "/amber", _basic("nobody", "pw"))) == 401
+        counts = rules.auth_failures("/amber")
+        assert (counts.publish, counts.read) == (2, 0)
+        assert "publish=2" in repr(counts)
+
+        # A path without a rule of its own counts on the default rule.
+        assert _status(_announce(port, "/elsewhere", _basic("other", "wrong"))) == 401
+        assert rules.auth_failures("/elsewhere") is None
+        default = rules.default_auth_failures()
+        assert (default.publish, default.read) == (1, 0)
+
+        # `set` on the same path keeps the counts; `remove` drops them.
+        rules.set("/amber", MountRule(publish=MountPolicy.require(MountCredential("amber", "new"))))
+        assert rules.auth_failures("/amber").publish == 2
+        rules.remove("/amber")
+        assert rules.auth_failures("/amber") is None
+    # The counts answer after the server ended.
+    assert rules.default_auth_failures().publish == 1
 
 
 def test_refuse_answers_before_any_mount_exists():

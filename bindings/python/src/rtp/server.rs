@@ -679,7 +679,12 @@ impl PyRtspServer {
                     .fanout_capacity(cfg.fanout_capacity)
                     .graceful_shutdown_drain(Duration::from_millis(cfg.graceful_shutdown_drain_ms))
                     .accept_unregistered_publishers(cfg.accept_unregistered_publishers)
-                    .end_publish_mount_on_publisher_exit(cfg.end_publish_mount_on_publisher_exit);
+                    .end_publish_mount_on_publisher_exit(cfg.end_publish_mount_on_publisher_exit)
+                    .accept_digest_without_qop(cfg.accept_digest_without_qop);
+                // Unset leaves the default to the bind URL's scheme.
+                if let Some(yes) = cfg.allow_udp_media {
+                    builder.allow_udp_media(yes);
+                }
                 if let Some(ms) = cfg.publish_idle_timeout_ms {
                     builder.publish_idle_timeout(Duration::from_millis(ms));
                 }
@@ -1050,6 +1055,8 @@ struct ServerConfigExtract {
     end_publish_mount_on_publisher_exit: bool,
     publish_idle_timeout_ms: Option<u64>,
     default_mount_rule: Option<tst_rtp::MountRule>,
+    allow_udp_media: Option<bool>,
+    accept_digest_without_qop: bool,
 }
 
 // Hand-written so a `{:?}` never prints the password.
@@ -1089,6 +1096,8 @@ impl std::fmt::Debug for ServerConfigExtract {
             )
             .field("publish_idle_timeout_ms", &self.publish_idle_timeout_ms)
             .field("default_mount_rule", &self.default_mount_rule)
+            .field("allow_udp_media", &self.allow_udp_media)
+            .field("accept_digest_without_qop", &self.accept_digest_without_qop)
             .finish()
     }
 }
@@ -1138,6 +1147,11 @@ impl ServerConfigExtract {
         } else {
             Some(rule_obj.extract::<PyRef<'_, PyMountRule>>()?.rule.clone())
         };
+        let allow_udp_media: Option<bool> =
+            obj.getattr(intern!(py, "allow_udp_media"))?.extract()?;
+        let accept_digest_without_qop: bool = obj
+            .getattr(intern!(py, "accept_digest_without_qop"))?
+            .extract()?;
 
         Ok(Self {
             bind_url,
@@ -1152,6 +1166,8 @@ impl ServerConfigExtract {
             end_publish_mount_on_publisher_exit,
             publish_idle_timeout_ms,
             default_mount_rule,
+            allow_udp_media,
+            accept_digest_without_qop,
         })
     }
 }

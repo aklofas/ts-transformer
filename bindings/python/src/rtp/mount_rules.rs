@@ -12,7 +12,8 @@ use secrecy::SecretString;
 
 use tst_pipeline::binding::BindingError;
 use tst_rtp::{
-    AuthScheme, MountCredential, MountPolicy, MountRule, MountRuleError, MountRules, RefuseStatus,
+    AuthScheme, MountCredential, MountPolicy, MountRule, MountRuleAuthFailures, MountRuleError,
+    MountRules, RefuseStatus,
 };
 
 use crate::raise::{RTSP, raise};
@@ -140,6 +141,50 @@ impl PyMountRule {
     }
 }
 
+/// How many requests one rule refused for the credential they carried, per
+/// direction, from `MountRules.auth_failures(path)` and
+/// `MountRules.default_auth_failures()`. Frozen snapshot.
+///
+/// A request counts when it carried an `Authorization` header and was
+/// answered 401 for any reason but a stale nonce: a wrong password, an
+/// unknown user, a malformed header, the wrong scheme. The first challenge
+/// every client gets (no header yet), a stale nonce and a `refuse` policy's
+/// status never count. An honest client's first answer after
+/// `set_challenge` changed the scheme or the realm does.
+///
+/// A rate signal: a peer with no credential can raise it at will, and a
+/// peer that holds one valid credential can try others without bound on one
+/// connection, so a lock-out built on one name's count can be triggered
+/// against that name's owner.
+#[pyclass(name = "MountRuleAuthFailures", module = "tstrans.rtp", frozen)]
+pub(crate) struct PyMountRuleAuthFailures {
+    inner: MountRuleAuthFailures,
+}
+
+#[pymethods]
+impl PyMountRuleAuthFailures {
+    /// Refused requests that publish (`ANNOUNCE`, and the requests of a
+    /// session that announced).
+    #[getter]
+    fn publish(&self) -> u64 {
+        self.inner.publish
+    }
+
+    /// Refused requests that read (`DESCRIBE`, and the requests of a reader
+    /// or an idle session).
+    #[getter]
+    fn read(&self) -> u64 {
+        self.inner.read
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "MountRuleAuthFailures(publish={}, read={})",
+            self.inner.publish, self.inner.read
+        )
+    }
+}
+
 /// One server's per-mount-path rules, from `RtspServer.mount_rules()`. An
 /// edit applies to the next request and is safe while the server runs. Once
 /// the server is stopped, cancelled or garbage-collected every edit raises
@@ -205,6 +250,26 @@ impl PyMountRules {
             .map_err(|e| rule_err(py, e))
     }
 
+    /// The requests refused for their credential on `path`'s own rule
+    /// (see `MountRuleAuthFailures`); `None` when `path` has no rule of its
+    /// own, as a request for such a path counts on the default rule. A
+    /// rule's counts survive `set` on the same path; `remove` and `clear`
+    /// drop them. Answers after the server shut down.
+    fn auth_failures(&self, path: &str) -> Option<PyMountRuleAuthFailures> {
+        self.rules
+            .auth_failures(path)
+            .map(|inner| PyMountRuleAuthFailures { inner })
+    }
+
+    /// The requests refused for their credential on the default rule: those
+    /// for every path without a rule of its own. Answers after the server
+    /// shut down.
+    fn default_auth_failures(&self) -> PyMountRuleAuthFailures {
+        PyMountRuleAuthFailures {
+            inner: self.rules.default_auth_failures(),
+        }
+    }
+
     /// Whether the server has shut down, after which edits raise.
     fn is_closed(&self) -> bool {
         self.rules.is_closed()
@@ -229,5 +294,6 @@ pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyMountPolicy>()?;
     m.add_class::<PyMountRule>()?;
     m.add_class::<PyMountRules>()?;
+    m.add_class::<PyMountRuleAuthFailures>()?;
     Ok(())
 }

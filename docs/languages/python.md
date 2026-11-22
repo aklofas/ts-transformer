@@ -1465,13 +1465,24 @@ with RtspServer.start(cfg) as server:
 `max_sessions`, `session_timeout_secs`, `fanout_capacity`,
 `graceful_shutdown_drain_ms`, `tls_cert`, `tls_key`,
 `accept_unregistered_publishers`, `end_publish_mount_on_publisher_exit`,
-`publish_idle_timeout_ms`). For an `rtsps://`
+`publish_idle_timeout_ms`, `allow_udp_media`, `accept_digest_without_qop`).
+For an `rtsps://`
 server, bind `bind_addr="rtsps://host:port"` and set `tls_cert` /
 `tls_key` to PEM certificate-chain / private-key file paths (set
 together, or `__post_init__` raises `ValueError`; unreadable paths raise
-`RtspError(TLS)` at `start()`). For a credentialed server pass
+`RtspError(TLS)` at `start()`). An `rtsps://` server sends and takes media
+only inside the TLS connection: it answers `461 Unsupported Transport` to a
+reader's or a publisher's SETUP that asks for UDP (clients such as
+GStreamer's `rtspsrc` then fall back to TCP-interleaved by themselves).
+`allow_udp_media=True` allows UDP media there, unencrypted, as through
+0.10.0; `allow_udp_media=False` makes a plain `rtsp://` server TCP-only;
+the default `None` decides by the bind's scheme. For a credentialed server pass
 `auth=BasicAuth("user", "pass", "realm")` — the realm is required
-server-side. `server.cancel_handle()` returns an `RtspServerCancelHandle`
+server-side. GStreamer 1.24 answers a Digest MD5 challenge without `qop`
+(the RFC 2069 form), which the server refuses unless
+`accept_digest_without_qop=True`; with it, replay protection inside one
+connection is given up for such answers, and GStreamer still cannot answer
+a Digest SHA-256 challenge (it answers it with MD5). `server.cancel_handle()` returns an `RtspServerCancelHandle`
 for a hard teardown: no Notice 5402 and no drain window. Its `cancel()`
 sets a flag and returns. Mount pushes, mount registration and removal,
 rule edits and a new `next_publisher` raise `RtspError(CLOSED)` at once; a
@@ -1540,6 +1551,13 @@ The surface:
 - `RtspServer.mount_rules() -> MountRules` is a per-path table, editable while
   the server runs: `set(path, rule)`, `remove(path)`, `set_default(rule)`,
   `clear()`, `set_challenge(scheme, realm)` and `is_closed()`, plus `len(rules)`.
+  `auth_failures(path) -> MountRuleAuthFailures | None` and
+  `default_auth_failures()` count, per direction (`publish`, `read`), the
+  requests a rule refused for the credential they carried (not the first
+  challenge every client gets, not a stale nonce, not a `refuse` status); a
+  path without a rule of its own returns `None` and counts on the default
+  rule. The count is a rate signal: anyone who reaches the port can raise
+  it, so a lock-out built on it can be triggered against a name's owner.
   `MountRule(publish=..., read=...)` takes a `MountPolicy`
   (`inherit()`, `open()`, `require(*MountCredential)` or
   `refuse(RefuseStatus.NOT_FOUND)`); `RtspServerConfig(default_mount_rule=...)`
