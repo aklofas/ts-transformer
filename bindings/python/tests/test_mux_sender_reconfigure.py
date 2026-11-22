@@ -121,7 +121,15 @@ class _SrtPeer:
         self.read = read
         self.url = f"srt://:{port}?mode=listener{knobs}"
         threading.Thread(target=self._serve, daemon=True).start()
-        wait_for("the srt listener bound", lambda: _udp_port_bound(port), WAIT_S)
+        # A failed open ends the wait and is the failure shown; waiting for
+        # the port alone would time out and hide the open's error.
+        wait_for(
+            "the srt listener bound, or its open failed",
+            lambda: _udp_port_bound(port) or self.ended.is_set(),
+            WAIT_S,
+        )
+        if self.error is not None:
+            pytest.fail(f"the srt listener did not open on port {port}: {self.error!r}")
 
     def _serve(self) -> None:
         try:
