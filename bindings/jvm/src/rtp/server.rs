@@ -115,14 +115,6 @@ type ServerInner = Arc<RustRtspServer>;
 /// `next_publisher`), with no Notice 5402.
 static REGISTRY_SERVER: LazyLock<HandleRegistry<ServerInner>> = LazyLock::new(HandleRegistry::new);
 
-/// Read a JString, returning "" for null/error (auth fields).
-fn jstring_or_empty(env: &mut Env, s: &JString) -> String {
-    if s.is_null() {
-        return String::new();
-    }
-    s.try_to_string(env).unwrap_or_default()
-}
-
 /// Read a nullable JString → Ok(None) for null, Ok(Some) for a read
 /// string. A get_string FAILURE (invalid reference — distinct from
 /// null) throws RuntimeException and returns Err so the native aborts
@@ -194,11 +186,18 @@ jni_native! {
         };
 
         // Read auth strings up front (avoids borrowing env inside the build closure).
+        // A failed read aborts the start: taken as "", a password the JVM could not
+        // hand over would start the server with an empty one.
         let auth = if auth_scheme >= 0 {
-            let realm = jstring_or_empty(env, &auth_realm);
-            let user = jstring_or_empty(env, &auth_user);
-            let pass = jstring_or_empty(env, &auth_password);
-            Some((auth_scheme, realm, user, pass))
+            let Ok(realm) = jstring_opt(env, &auth_realm) else { return 0 };
+            let Ok(user) = jstring_opt(env, &auth_user) else { return 0 };
+            let Ok(pass) = jstring_opt(env, &auth_password) else { return 0 };
+            Some((
+                auth_scheme,
+                realm.unwrap_or_default(),
+                user.unwrap_or_default(),
+                pass.unwrap_or_default(),
+            ))
         } else {
             None
         };
@@ -355,9 +354,9 @@ fn with_server<R>(env: &mut Env, handle: jlong, f: impl FnOnce(&ServerInner) -> 
 /// runtime via `Drop`. [`MountHandle`](super::server)s already created from this
 /// server live in the **separate** `REGISTRY_MOUNT` and are **not** poisoned at
 /// that point. After a server-side panic, those handles remain leasable: once the
-/// server is dropped their next `push*` returns `MountError::Closed`
-/// (`RtspException(CLOSED)`, as after any server end) and `flush` /
-/// `reset_stats` still run, rather than throwing an `IllegalStateException`
+/// server is dropped their next `push*` or `flush` returns `MountError::Closed`
+/// (`RtspException(CLOSED)`, as after any server end) and `reset_stats` still
+/// runs, rather than throwing an `IllegalStateException`
 /// at server-invalidation time. This is **memory-safe** (no use-after-free; the
 /// `Arc`-shared mount wrapper outlives the server's runtime). The failure surfaces at
 /// the next mount operation rather than at poison time. This scenario requires an
@@ -471,7 +470,8 @@ type MountInner = RustMountHandle;
 
 /// Per-type leased-handle registry for `org.tstrans.rtp.MountHandle`. No cancel
 /// hook (push/flush calls don't park indefinitely); `close` just frees the
-/// handle wrapper — the mount itself persists in the server until stop()/close().
+/// handle wrapper — the mount itself persists in the server until `removeMount`
+/// or the server's end.
 static REGISTRY_MOUNT: LazyLock<HandleRegistry<MountInner>> = LazyLock::new(HandleRegistry::new);
 
 /// Lease the mount for `handle` and run `f` on it under the entry's resource
@@ -495,8 +495,8 @@ fn with_mount<R>(env: &mut Env, handle: jlong, f: impl FnOnce(&MountInner) -> R)
 /// mutating mount natives (the `push*`/`flush`/`reset_stats` family); the
 /// identity/introspection/handle-accessor getters stay on the non-poisoning
 /// [`with_mount`]. `MountHandle`'s `Drop` is benign (the mount persists in the
-/// server until stop()), so poisoning a torn push just invalidates the Java
-/// `MountHandle` wrapper.
+/// server until it is removed or the server ends), so poisoning a torn push
+/// just invalidates the Java `MountHandle` wrapper.
 fn with_mount_poisoning<R>(
     env: &mut Env,
     handle: jlong,
@@ -1436,11 +1436,15 @@ jni_native! {
 // ── MountHandle: lifecycle ──────────────────────────────────────────────────
 
 jni_native! {
-    /// `MountHandle.nFlush(handle)` — drain + broadcast buffered TS.
+    /// `MountHandle.nFlush(handle)` — drain + broadcast buffered TS;
+    /// `RtspException(CLOSED)` once the server ended or the mount was removed.
     fn Java_org_tstrans_rtp_MountHandle_nFlush(env, _class, handle: jlong) = () => {
-        with_mount_poisoning(env, handle, |inner| {
-            let _ = inner.flush();
-        });
+        let Some(res) = with_mount_poisoning(env, handle, |inner| inner.flush()) else {
+            return;
+        };
+        if let Err(e) = res {
+            mount_error_to_jvm(env, e);
+        }
     }
 }
 
@@ -1453,10 +1457,10 @@ jni_native! {
 
 jni_native! {
     /// `MountHandle.nClose(handle)` — free the handle-wrapper box (the mount itself
-    /// persists in the server until stop()/close()). No-op on a zero handle.
+    /// persists in the server until removed or the server ends). No-op on a zero handle.
     fn Java_org_tstrans_rtp_MountHandle_nClose(_env, _class, handle: jlong) = () => {
         // Atomic + idempotent: only the winning close gets the handle wrapper back to
-        // drop. No cancel hook — the mount persists in the server until stop()/close().
+        // drop. No cancel hook — the mount persists in the server until removed or ended.
         let _ = REGISTRY_MOUNT.close(handle as u64);
     }
 }

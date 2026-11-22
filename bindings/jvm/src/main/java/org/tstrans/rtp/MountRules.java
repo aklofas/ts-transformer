@@ -82,7 +82,13 @@ public final class MountRules extends NativeHandle {
     }
 
     /**
-     * Choose the challenge a {@link MountPolicy#require} policy sends.
+     * Choose the challenge every 401 of the server sends, and the scheme and realm a
+     * credential is checked in: a {@link MountPolicy#require} rule's, and on a path whose
+     * rule resolves to {@link MountPolicy#inherit()} the config's own {@link
+     * RtspServerConfig#auth()} credential too. It takes effect on every server, one whose
+     * config carries a credential included (the challenge starts as that credential's
+     * scheme and realm). A user name that contains {@code :} cannot authenticate while the
+     * challenge is Basic, the server's own credential included.
      *
      * @throws RtspException {@code CLOSED} once the server has stopped
      */

@@ -142,9 +142,60 @@ class RtspServerEndTest {
             RtspException e = assertThrows(RtspException.class,
                 () -> mount.pushVideo(syntheticH264Idr(), 3003L, true));
             assertEquals(RtspException.Kind.CLOSED, e.kind());
-            // flush() and resetStats() are not refused.
-            mount.flush();
+            // flush() is refused like the pushes; resetStats() still runs.
+            RtspException f = assertThrows(RtspException.class, mount::flush);
+            assertEquals(RtspException.Kind.CLOSED, f.kind());
             mount.resetStats();
+        } finally {
+            server.close();
+        }
+    }
+
+    @Test
+    @Timeout(30)
+    void flushAfterStopOrCloseThrowsClosed() throws Exception {
+        assumeLinux();
+        for (boolean close : new boolean[] {false, true}) {
+            RtspServer server = startServer();
+            try (MountHandle mount = server.addUnicastMount("/live", roundtripConfig())) {
+                mount.pushVideo(syntheticH264Idr(), 0L, true);
+                mount.flush();
+                MountStats before = mount.stats();
+                if (close) server.close(); else server.stop();
+                RtspException e = assertThrows(RtspException.class, mount::flush,
+                    close ? "after close()" : "after stop()");
+                assertEquals(RtspException.Kind.CLOSED, e.kind());
+                assertEquals(before, mount.stats());
+            } finally {
+                server.close();
+            }
+        }
+    }
+
+    /**
+     * A {@link MountHandle} kept after {@link RtspServer#removeMount} is closed: its pushes
+     * and {@code flush()} throw {@code CLOSED} while the server runs, and its getters still
+     * answer.
+     */
+    @Test
+    @Timeout(30)
+    void aHandleKeptAfterRemoveMountIsClosed() throws Exception {
+        assumeLinux();
+        RtspServer server = startServer();
+        try (MountHandle mount = server.addUnicastMount("/live", roundtripConfig())) {
+            mount.pushVideo(syntheticH264Idr(), 0L, true);
+            MountStats before = mount.stats();
+            server.removeMount("/live");
+            RtspException push = assertThrows(RtspException.class,
+                () -> mount.pushVideo(syntheticH264Idr(), 3003L, true));
+            assertEquals(RtspException.Kind.CLOSED, push.kind());
+            RtspException flush = assertThrows(RtspException.class, mount::flush);
+            assertEquals(RtspException.Kind.CLOSED, flush.kind());
+            assertEquals(before, mount.stats());
+            assertEquals("/live", mount.mountPath());
+            assertEquals("unicast", mount.mountKind());
+            assertTrue(mount.videoHandle().isPresent());
+            assertEquals(0, server.stats().mounts());
         } finally {
             server.close();
         }

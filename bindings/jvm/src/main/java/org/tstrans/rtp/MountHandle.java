@@ -28,16 +28,17 @@ import org.tstrans.mpegts.VideoStreamHandle;
  * <p><b>Closing:</b> {@code MountHandle} is {@link AutoCloseable} as a JVM-only
  * lifecycle convenience (tst-py relies on Python GC; the JVM has no refcount-driven
  * native free). {@link #close()} frees ONLY this handle wrapper — the mount itself
- * persists in the server (and keeps fanning out) until {@link RtspServer#stop()} /
- * {@link RtspServer#close()}.
+ * persists in the server (and keeps fanning out) until {@link RtspServer#removeMount},
+ * {@link RtspServer#stop()} or {@link RtspServer#close()}.
  *
  * <p><b>Push errors</b> surface as {@link RtspException}: of kind {@code MOUNT} when the
  * muxer rejects the push (the failure originates in the mount push path) — this differs
  * from {@link org.tstrans.shells.MuxSender}, whose muxer errors are {@code MuxException} —
- * and of kind {@code CLOSED} once the server has ended ({@link RtspServer#stop()}, from the
- * moment it begins; its hard cancel; or {@link RtspServer#close()}), whether or not the mount
- * was removed first. {@link #flush()} and {@link #resetStats()} are not refused after the
- * server ended: they return normally.
+ * and of kind {@code CLOSED} once the mount was removed ({@link RtspServer#removeMount}) or
+ * the server has ended ({@link RtspServer#stop()}, from the moment it begins; its hard
+ * cancel; or {@link RtspServer#close()}). {@link #flush()} throws {@code CLOSED} then too;
+ * {@link #resetStats()} and the getters ({@link #mountPath()}, {@link #mountKind()}, {@link
+ * #stats()}, the stream handles) still answer.
  *
  * <p><b>Server failure isolation (rare):</b> {@code MountHandle} objects live in their
  * own registry, independent of their originating {@link RtspServer}. If the server is
@@ -172,8 +173,16 @@ public final class MountHandle extends NativeHandle {
     }
 
     // ── Lifecycle ─────────────────────────────────────────────────────────
-    /** Drain buffered TS and broadcast to subscribers. Always safe. */
-    public void flush() { ensureOpen("MountHandle is closed"); nFlush(peekHandle()); }
+    /**
+     * Drain buffered TS and broadcast to subscribers. Every push drains the muxer before it
+     * returns, so after a successful push there is nothing left to drain.
+     *
+     * @throws RtspException {@code CLOSED} once the mount was removed or the server has ended,
+     *     as the pushes
+     */
+    public void flush() throws RtspException {
+        ensureOpen("MountHandle is closed"); nFlush(peekHandle());
+    }
     /** Reset all flow counters to zero. */
     public void resetStats() { ensureOpen("MountHandle is closed"); nResetStats(peekHandle()); }
 
@@ -226,7 +235,7 @@ public final class MountHandle extends NativeHandle {
     private static native long[] nAudioHandles(long handle);
     private static native long[] nSubtitleHandles(long handle);
     private static native long[] nDataHandles(long handle);
-    private static native void nFlush(long handle);
+    private static native void nFlush(long handle) throws RtspException;
     private static native void nResetStats(long handle);
     private static native void nClose(long handle);
 }

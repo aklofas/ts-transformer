@@ -51,8 +51,11 @@ public final class RtspServer extends NativeHandle {
      * @throws RtspException {@code IO} on bind/start failure, {@code PROTOCOL}
      *     on bind-URL parse failure, {@code TLS} if {@code config.tlsCert()}/{@code
      *     tlsKey()} name a bad PEM path (an {@code rtsps://} bind now works), {@code
-     *     MOUNT} if the server refuses the default mount rule, the auth realm or an
-     *     empty auth user name
+     *     MOUNT} if the server refuses the default mount rule, the auth realm, an
+     *     empty auth user name, a {@link BasicAuth} user name that contains {@code :}
+     *     (Basic cannot carry it), or a bind address that carries a user name or a
+     *     password (set the server's credential with {@link RtspServerConfig.Builder#auth};
+     *     the message names neither)
      * @throws IllegalArgumentException if {@code config.auth()} is set without a realm
      */
     public static RtspServer start(RtspServerConfig config) throws RtspException {
@@ -268,8 +271,10 @@ public final class RtspServer extends NativeHandle {
      * mount's publisher is sent the RTSP Notice 5402 and disconnected, and its
      * {@link org.tstrans.shells.DemuxReceiver} reads end of stream ({@code recvEvent()} returns {@code
      * null}); the {@link PublishMount} stays usable for {@code stats()}. A local
-     * mount's {@link MountHandle} keeps accepting pushes that reach nobody until the
-     * server ends; then they throw {@code RtspException(CLOSED)}. This is
+     * mount is closed: its kept {@link MountHandle}'s pushes and {@code flush()} throw
+     * {@code RtspException(CLOSED)} (its getters still answer), and a multicast mount
+     * stops sending to its group. A reader whose SETUP completed while this call ran
+     * receives nothing further and ends by its own session timeout. This is
      * also how idle on-demand mounts are removed: they stay registered after their
      * publisher leaves. Blocks for the Notice writes (at most 1 s per session), and
      * other calls on this server object wait behind it meanwhile, as they do behind

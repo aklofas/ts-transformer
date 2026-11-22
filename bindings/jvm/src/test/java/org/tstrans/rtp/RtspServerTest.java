@@ -368,6 +368,67 @@ class RtspServerTest {
         }
     }
 
+    /**
+     * A bind address that carries a user name or a password does not start a server (through
+     * 0.10.0 the credential was dropped and the server ran open); the message names neither.
+     */
+    @Test @Timeout(15)
+    void aBindAddressWithUserinfoIsRefused() {
+        String[] forms = {
+            "rtsp://admin:secret@127.0.0.1:0", "rtsp://admin@127.0.0.1:0",
+            "admin:secret@127.0.0.1:0", "rtsps://admin:secret@127.0.0.1:0",
+        };
+        for (String bind : forms) {
+            for (boolean auth : new boolean[] {false, true}) {
+                RtspServerConfig.Builder b = RtspServerConfig.builder().bindAddr(bind);
+                if (auth) b.auth(new BasicAuth("admin", "secret", "realm"));
+                RtspException e = assertThrows(RtspException.class,
+                    () -> RtspServer.start(b.build()), bind);
+                assertEquals(RtspException.Kind.MOUNT, e.kind(), bind + ": " + e.getMessage());
+                assertTrue(e.getMessage().contains("bind URL"), e.getMessage());
+                assertFalse(e.getMessage().contains("admin"), e.getMessage());
+                assertFalse(e.getMessage().contains("secret"), e.getMessage());
+            }
+        }
+    }
+
+    /** Basic splits {@code user:password} at the first colon; Digest carries the name quoted. */
+    @Test @Timeout(15)
+    void aBasicUserNameWithAColonIsRefusedAndADigestOneStarts() throws Exception {
+        RtspException e = assertThrows(RtspException.class, () -> RtspServer.start(
+            RtspServerConfig.builder().bindAddr("127.0.0.1:0")
+                .auth(new BasicAuth("ad:min", "secret", "realm")).build()));
+        assertEquals(RtspException.Kind.MOUNT, e.kind(), e.getMessage());
+        assertFalse(e.getMessage().contains("ad:min"), e.getMessage());
+        assertFalse(e.getMessage().contains("secret"), e.getMessage());
+        for (DigestAlgorithm alg : DigestAlgorithm.values()) {
+            try (RtspServer s = RtspServer.start(RtspServerConfig.builder()
+                    .bindAddr("127.0.0.1:0")
+                    .auth(new DigestAuth("ad:min", "secret", alg, "realm")).build())) {
+                assertTrue(s.localAddr().isPresent(), alg.toString());
+            }
+        }
+    }
+
+    /** An empty password is a password: it admits its user, and "no credentials" stays refused. */
+    @Test @Timeout(15)
+    void anEmptyPasswordAdmitsItsUserAndRefusesNone() throws Exception {
+        RtspServerConfig cfg = RtspServerConfig.builder()
+            .bindAddr("127.0.0.1:0").auth(new BasicAuth("viewer", "", "realm")).build();
+        try (RtspServer s = RtspServer.start(cfg);
+             MountHandle m = s.addUnicastMount("/live", roundtripConfig())) {
+            String uri = "rtsp://127.0.0.1:" + port(s) + "/live";
+            try (Raw raw = Raw.connect(port(s))) {
+                assertEquals(401, Raw.status(raw.request("DESCRIBE " + uri, "")));
+                assertEquals(200, Raw.status(raw.request("DESCRIBE " + uri, basic("viewer", ""))));
+            }
+            try (Raw raw = Raw.connect(port(s))) {
+                assertEquals(401,
+                    Raw.status(raw.request("DESCRIBE " + uri, basic("viewer", "secret"))));
+            }
+        }
+    }
+
     // ── helpers ──────────────────────────────────────────────────────────────
 
     private static int port(RtspServer s) {

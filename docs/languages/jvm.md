@@ -2733,9 +2733,10 @@ try (RtspServer server = RtspServer.start(cfg);
 - **Mount errors are `RtspException`.** All `pushVideo`/`pushKlv`/
   `pushAudio`/`pushSubtitle`/`pushData` calls on `MountHandle` throw `RtspException` of kind
   `MOUNT` when the muxer refuses the frame (e.g. a stream the config does not
-  have), and of kind `CLOSED` once the server ends (`stop()` or `close()`,
-  from the moment it begins, or its hard cancel), whether or not the mount
-  was removed first; `flush()` and `resetStats()` are not refused after it.
+  have), and of kind `CLOSED` once the mount was removed (`removeMount`) or
+  the server ends (`stop()` or `close()`, from the moment it begins, or its
+  hard cancel). `flush()` throws `RtspException(CLOSED)` then too (it declares
+  `throws RtspException`); `resetStats()` and the getters still answer.
   This differs from `MuxSender`, which throws `MuxException`.
 - **`MountHandle` carries private data too.** `pushData` / `pushDataTo`
   have the same pass-through and PTS semantics as `Muxer.pushData`.
@@ -2747,8 +2748,8 @@ try (RtspServer server = RtspServer.start(cfg);
   itself stays live in the server (still accepts new connections and fans out to
   existing ones) until `RtspServer.removeMount(path)`, `RtspServer.close()` or
   `stop()`. `removeMount` sends its sessions the Notice 5402 teardown and frees
-  the path; the `MountHandle` keeps accepting pushes that reach nobody until the
-  server ends.
+  the path; the kept `MountHandle` is closed (its pushes and `flush()` throw
+  `CLOSED`) and a multicast mount stops sending to its group.
 - **Hard-cancel.** `server.cancelHandle()` returns a cross-thread
   `RtspServerCancelHandle`; `cancel()` ends the server without the Notice
   5402 teardown and without the drain. From that moment mount pushes, mount
@@ -2766,7 +2767,13 @@ try (RtspServer server = RtspServer.start(cfg);
 - **Auth.** Pass `new BasicAuth("user", "pass", "realm")` or
   `new DigestAuth("user", "pass", DigestAlgorithm.SHA256, "realm")` to
   `RtspServerConfig.builder().auth(...)`. The realm is required for server-side
-  auth; omitting it throws `IllegalArgumentException` at `start()`.
+  auth; omitting it throws `IllegalArgumentException` at `start()`. The
+  credential is never taken from the bind address: a bind address that
+  carries a user name or a password (`rtsp://user:pass@0.0.0.0:8554`) makes
+  `start()` throw `RtspException` of kind `MOUNT` (through 0.10.0 the server
+  dropped it and ran without authentication), and so does a `BasicAuth` user
+  name that contains `:` (Basic cannot carry it; a `DigestAuth` one works).
+  An empty password is a password: it admits its user and nobody else.
   `acceptDigestWithoutQop(true)` accepts a Digest answer that carries no
   `qop` (the RFC 2069 form GStreamer 1.24's `rtspsrc` and `rtspclientsink`
   send; default `false`, such an answer is refused). It applies to both Digest
@@ -2848,7 +2855,10 @@ The surface:
 - `RtspServer.mountRules() -> MountRules` is a per-path table, editable while
   the server runs: `set(path, rule)`, `remove(path)`, `setDefault(rule)`,
   `clear()`, `setChallenge(scheme, realm)`, `size()`, `isClosed()`,
-  `authFailures(path)`, `defaultAuthFailures()` and `close()`. `MountRule.of(publish, read)` takes a `MountPolicy`
+  `authFailures(path)`, `defaultAuthFailures()` and `close()`. `setChallenge`
+  sets the challenge of every 401, and the scheme and realm every credential
+  is checked in, the config's own `auth` credential included (it seeds the
+  challenge). `MountRule.of(publish, read)` takes a `MountPolicy`
   (`inherit()`, `open()`, `require(MountCredential...)` or
   `refuse(RefuseStatus.NOT_FOUND)`); `RtspServerConfig.builder().defaultMountRule(...)`
   guards the first ANNOUNCE. A path rule's `Inherit` side uses the table's default rule; the default's `Inherit` uses the server-wide builder setting (`auth_*`). A bad path throws
@@ -2894,6 +2904,8 @@ How each call ends:
 | `nextPublisher(timeoutMs)` | `Optional.empty()` | No mount arrived in time. Always the result when on-demand publishers are off. |
 | `nextPublisher`, `addPublishMount`, `removeMount` | `RtspException(CLOSED)` | The server is stopped (from the moment `stop()` or `close()` begins) or hard-cancelled. A `nextPublisher` parked on another thread wakes with it when `stop()` or `close()` runs. After `close()` the object itself refuses calls with `IllegalStateException`. |
 | `addPublishMount`, `removeMount` | `RtspException(MOUNT)` | Duplicate or invalid path, or no mount registered at the path. |
+| `RtspServer.start` | `RtspException(MOUNT)` | Also when the bind address carries a user name or a password, or a `BasicAuth` user name contains `:`; the message names neither. |
+| `MountHandle` `push*`, `flush()` | `RtspException(CLOSED)` | The mount was removed (`removeMount`) or the server ended; the getters and `resetStats()` still answer. |
 | `intoDemuxReceiver` | `RtspException(CLOSED)` | The mount's transport was already taken, through this or any other handle to the mount. |
 | `DemuxReceiver.recvEvent()` | `null` | End of stream: the mount was removed, the server stopped or was hard-cancelled, or its recording publisher left with end-on-exit on. What was already queued is delivered first. `endReason()` reads `CLEAN_TEARDOWN`. |
 | `DemuxReceiver.recvEvent()` | `RtpException(CLOSED)` | The application cancelled it: `PublishMount.cancel()` or `DemuxReceiver.close()`. `endReason()` reads `CANCELLED`. |

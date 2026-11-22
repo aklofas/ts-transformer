@@ -150,6 +150,34 @@ class MountRulesTest {
         }
     }
 
+    /**
+     * {@link MountRules#setChallenge} takes effect on a server whose config carries a
+     * credential: every 401 offers the new challenge, and the config's own credential is
+     * checked in it.
+     */
+    @Test
+    @Timeout(30)
+    void setChallengeTakesEffectWithAConfigCredential() throws Exception {
+        assumeLinux();
+        try (RtspServer server = start(RtspServerConfig.builder().bindAddr("127.0.0.1:0")
+                .gracefulShutdownDrainMs(50)
+                .auth(new DigestAuth("admin", "secret", DigestAlgorithm.MD5, "realm")).build());
+             MountHandle mount = server.addUnicastMount("/live",
+                 org.tstrans.TestSupport.roundtripConfig());
+             MountRules rules = server.mountRules()) {
+            rules.setChallenge(AuthScheme.BASIC, "lab");
+            int port = port(server);
+            String uri = "rtsp://127.0.0.1:" + port + "/live";
+            try (RtspServerTest.Raw raw = RtspServerTest.Raw.connect(port)) {
+                String refused = raw.request("DESCRIBE " + uri, "");
+                assertEquals(401, status(refused));
+                assertEquals("Basic realm=\"lab\"", rtspHeader(refused, "WWW-Authenticate"));
+                assertEquals(200, status(raw.request("DESCRIBE " + uri,
+                    RtspServerTest.basic("admin", "secret"))));
+            }
+        }
+    }
+
     @Test
     void toStringRedactsPasswords() {
         String s = MountRule.both(MountPolicy.require(MountCredential.of("amber", "pw")))
