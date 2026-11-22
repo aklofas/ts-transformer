@@ -322,7 +322,9 @@ both kinds ([Python](/docs/languages/python.md#what-answers-while-another-thread
   the shutdown of each session's connection do not read it. For an end
   without the Notice, fire the cancel before the stop. `stop()` closes the
   listening socket before it writes the first Notice, so it accepts no
-  connection while it runs.
+  new connection while it runs, apart from at most the one accept already
+  in progress. It waits up to 500 ms for the socket to close; after a hard
+  cancel the socket is not closed at its return but within 100 ms.
 
 No call promises an absolute shutdown time: a close waits for the active
 operation to honour the cancel.
