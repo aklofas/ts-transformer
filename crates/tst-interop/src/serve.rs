@@ -198,7 +198,7 @@ fn run_hls_inner(
     Ok(())
 }
 
-/// Serve `p`'s synthetic traffic over RTSP: bind an [`RtspServer`] at
+/// Serve `p`'s synthetic traffic over RTSP: bind a [`tst_rtp::RtspServer`] at
 /// `bind_addr`, register `mount`, and push the profile's video/KLV/audio
 /// through the resulting `MountHandle`, wall-clock paced. PTS-only (no
 /// DTS) — `MountHandle::push_video_to_with_dts` exists but DTS parity
