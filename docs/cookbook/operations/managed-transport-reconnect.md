@@ -152,7 +152,11 @@ instead surface synchronously to the caller as `TooLarge`.
 
 **Give-up reporting.** If the worker exhausts `max_attempts` for one
 continuous outage (the budget resets after every successful
-reconnect), the give-up surfaces exactly once: the *next* `send_bytes`
+reconnect; for a sender armed with the silent-peer window the attempts
+count on until the wrapper has read a new connection after a successful
+send on it, see
+[Detecting a silent peer](/docs/guides/srt.md#detecting-a-silent-peer)),
+the give-up surfaces exactly once: the *next* `send_bytes`
 call after the worker quits returns `TransportError::Broken` instead
 of the usual `Ok(())`. That call's own bytes are **not** queued — the
 caller sees the error and owns the resend decision. Set
