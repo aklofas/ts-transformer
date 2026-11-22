@@ -368,7 +368,7 @@ pub(crate) fn set_exiting_for_test() {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     fn registered(id: u64) -> bool {
@@ -393,7 +393,7 @@ mod tests {
     /// exiting flag or reads the operation count needs a process of its
     /// own. Returns `true` in the child; in the parent it re-executes this
     /// test binary on `test_name` and requires a clean exit.
-    fn in_own_process(test_name: &str) -> bool {
+    pub(crate) fn in_own_process(test_name: &str) -> bool {
         in_own_process_capturing_stderr(test_name).is_none()
     }
 
