@@ -71,11 +71,11 @@ pub enum RtspError {
     /// the RTP port plus one, which past port 65535 does not exist). A
     /// server's
     /// `461 Unsupported Transport` is not this: it is
-    /// [`RtspError::Protocol`] with `code: 461`, after the TCP retry when
-    /// the URL left the transport to the client. Also what
+    /// [`RtspError::Protocol`] with `code: 461`, after the TCP retry under
+    /// `PreferUdp`. Also what
     /// [`RtspClient::setup_record`](crate::RtspClient::setup_record)
     /// returns, with nothing written, on a `?transport=udp` URL
-    /// (publishing over UDP is not implemented).
+    /// or `RtspTransportPref::ForceUdp` (publishing over UDP is not implemented).
     #[error("RTSP server does not support a transport we accept")]
     UnsupportedTransport,
 

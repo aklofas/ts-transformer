@@ -253,8 +253,8 @@ fn verify_basic(auth_header: &str, credentials: &[Credential<'_>]) -> Result<(),
 
 /// Check a Digest answer. An answer with `qop` and no `cnonce` is verified
 /// with an empty `cnonce`: RFC 7616 requires the parameter, and the server
-/// is lenient here on purpose until decided otherwise (the answer still
-/// needs the password, the server's nonce and a fresh nonce count).
+/// is lenient here on purpose: the answer still needs the password, the
+/// server's nonce and a fresh nonce count.
 fn verify_digest(
     auth_header: &str,
     method: &str,
@@ -1089,7 +1089,8 @@ mod tests {
     #[test]
     fn an_answer_with_qop_and_no_cnonce_is_verified_with_an_empty_one() {
         // RFC 7616 requires `cnonce` with `qop`; the server is lenient here on
-        // purpose until decided otherwise.
+        // purpose: the answer still needs the password, the server's nonce
+        // and a fresh nonce count.
         let pw = SecretString::new("secret".into());
         let (nonce, nc, uri) = ("abc123", "00000001", "rtsp://server/live");
         let header = |cnonce: &str| {
