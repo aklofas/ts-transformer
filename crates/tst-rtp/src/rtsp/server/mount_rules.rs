@@ -1004,6 +1004,54 @@ mod tests {
     }
 
     #[test]
+    fn an_edit_waiting_for_the_table_when_the_cancel_fires_is_refused() {
+        let cancel = RtspServerCancelHandle::new();
+        let t = MountRules::new(
+            MountRule::default(),
+            (AuthScheme::DigestMd5, "tstrans".into()),
+            cancel.clone(),
+        );
+        let (reached, go_on) = Pause::arm(&t.inner.pauses.edit);
+        let first = {
+            let t = t.clone();
+            std::thread::spawn(move || t.set("/a", MountRule::both(MountPolicy::Open)))
+        };
+        reached
+            .recv_timeout(deadline())
+            .expect("the first edit reached its pause point");
+        // The first edit holds the table; the second waits for it.
+        let (second_done, second_done_rx) = mpsc::channel();
+        let second = {
+            let t = t.clone();
+            std::thread::spawn(move || {
+                let r = t.set("/b", MountRule::both(MountPolicy::Open));
+                let _ = second_done.send(());
+                r
+            })
+        };
+        let second_returned_early = second_done_rx.recv_timeout(STAYS_BLOCKED).is_ok();
+        cancel.cancel();
+        assert!(t.is_closed());
+        go_on.send(()).unwrap();
+        let first = first.join().unwrap();
+        let second = second.join().unwrap();
+        assert!(
+            !second_returned_early,
+            "an edit passed a table another edit held"
+        );
+        assert!(first.is_ok(), "{first:?}");
+        assert!(
+            matches!(second, Err(MountRuleError::Closed)),
+            "an edit that got the table after the cancel fired returned {second:?}"
+        );
+        assert_eq!(t.len(), 1);
+        assert!(matches!(
+            t.policy_for("/b", Direction::Read),
+            MountPolicy::Inherit
+        ));
+    }
+
+    #[test]
     fn is_closed_reads_true_at_once_after_a_hard_cancel() {
         let cancel = RtspServerCancelHandle::new();
         let t = MountRules::new(
