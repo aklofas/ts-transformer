@@ -8,7 +8,7 @@
 #![cfg(feature = "rtp")]
 
 use std::ffi::CString;
-use std::io::{Read, Write};
+use std::io::Read;
 use std::net::{TcpStream, UdpSocket};
 use std::time::Duration;
 
