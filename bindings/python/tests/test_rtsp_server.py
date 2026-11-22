@@ -1187,3 +1187,209 @@ def test_a_config_credential_with_an_empty_password_admits_only_it():
         assert _status_of(_describe(port)) == 401
         assert _status_of(_describe(port, _basic("admin", "x"))) == 401
         assert _status_of(_describe(port, _basic("admin", ""))) == 200
+
+
+# ---------------------------------------------------------------------------
+# A multicast mount where UDP media is off; the reader cap; this library's
+# client on rtsps://.
+# ---------------------------------------------------------------------------
+
+
+def test_a_multicast_mount_is_refused_where_udp_media_is_off():
+    cert, key = _tls_fixture_paths()
+    tls = {"tls_cert": cert, "tls_key": key}
+    for bind, extra, refused in (
+        ("127.0.0.1:0", {"allow_udp_media": False}, True),
+        ("rtsps://127.0.0.1:0", tls, True),
+        ("rtsps://127.0.0.1:0", {**tls, "allow_udp_media": True}, False),
+    ):
+        cfg = RtspServerConfig(bind_addr=bind, graceful_shutdown_drain_ms=50, **extra)
+        with RtspServer.start(cfg) as server:
+            add = lambda: server.add_multicast_mount(  # noqa: E731
+                "/mc", "239.0.0.1", 5004, program_config=_single_video_program()
+            )
+            if refused:
+                with pytest.raises(RtspError) as ei:
+                    add()
+                assert ei.value.kind == RtspErrorKind.MOUNT, (bind, extra)
+                assert server.stats().mounts == 0
+            else:
+                assert add().mount_kind() == "multicast"
+
+
+def test_config_max_readers():
+    assert RtspServerConfig().max_readers is None
+    assert RtspServerConfig(max_readers=0).max_readers == 0
+    with pytest.raises(ValueError, match="max_readers"):
+        RtspServerConfig(max_readers=-1)
+    with pytest.raises(TypeError, match="max_readers"):
+        RtspServerConfig(max_readers=True)  # type: ignore[arg-type]
+    # Too large for the server, refused at start() like max_sessions.
+    for field in ("max_sessions", "max_readers"):
+        cfg = RtspServerConfig(bind_addr="127.0.0.1:0", **{field: 2**70})
+        with pytest.raises(OverflowError):
+            RtspServer.start(cfg)
+
+
+def _session_id(head: str) -> str:
+    from conftest import rtsp_header
+
+    return rtsp_header(head, "Session").split(";", 1)[0]
+
+
+def test_a_reader_over_the_cap_is_refused_and_one_under_it_plays():
+    import socket
+
+    from tstrans.rtp import RtspClient, RtspClientConfig
+
+    cfg = RtspServerConfig(
+        bind_addr="127.0.0.1:0", max_readers=1, graceful_shutdown_drain_ms=50
+    )
+    with RtspServer.start(cfg) as server:
+        mount = server.add_unicast_mount("/live", _single_video_program())
+        port = server.local_addr()[1]
+        uri = f"rtsp://127.0.0.1:{port}/live"
+        with socket.create_connection(("127.0.0.1", port), timeout=5.0) as reader:
+            reader.sendall(
+                f"SETUP {uri}/trackID=0 RTSP/1.0\r\nCSeq: 1\r\n"
+                f"Transport: {_INTERLEAVED}\r\n\r\n".encode()
+            )
+            setup = _read_head(reader)
+            assert _status_of(setup) == 200, setup
+            reader.sendall(
+                f"PLAY {uri} RTSP/1.0\r\nCSeq: 2\r\n"
+                f"Session: {_session_id(setup)}\r\n\r\n".encode()
+            )
+            buf = b""
+            while b"\r\n\r\n" not in buf:
+                chunk = reader.recv(4096)
+                assert chunk, "the server closed before answering PLAY"
+                buf += chunk
+            head, _, rest = buf.partition(b"\r\n\r\n")
+            assert _status_of(head.decode()) == 200, head
+            mount.push_video(_IDR_NAL, pts=Pts90khz(0), key_frame=True)
+            # The reader under the cap is sent the media, interleaved.
+            while b"$" not in rest:
+                chunk = reader.recv(4096)
+                assert chunk, "the server closed instead of sending media"
+                rest += chunk
+
+            # A second reader is over the cap: 453, then the connection ends.
+            with socket.create_connection(("127.0.0.1", port), timeout=5.0) as over:
+                over.sendall(
+                    f"SETUP {uri}/trackID=0 RTSP/1.0\r\nCSeq: 1\r\n"
+                    f"Transport: {_INTERLEAVED}\r\n\r\n".encode()
+                )
+                refused = _read_head(over)
+                assert _status_of(refused) == 453, refused
+                tail = b""
+                while True:
+                    try:
+                        chunk = over.recv(4096)
+                    except ConnectionResetError:
+                        break
+                    if not chunk:
+                        break
+                    tail += chunk
+                assert b"RTSP/1.0" not in tail
+
+            # This library's client over the cap reads the 453 as PROTOCOL.
+            client_cfg = RtspClientConfig(url=uri, keepalive=False)
+            with pytest.raises(RtspError) as ei:
+                RtspClient.connect(client_cfg)
+            assert ei.value.kind == RtspErrorKind.PROTOCOL
+            assert "453" in str(ei.value)
+
+
+def test_max_readers_zero_refuses_every_reader():
+    cfg = RtspServerConfig(
+        bind_addr="127.0.0.1:0", max_readers=0, graceful_shutdown_drain_ms=50
+    )
+    with RtspServer.start(cfg) as server:
+        server.add_unicast_mount("/live", _single_video_program())
+        head = _reader_setup(server.local_addr()[1], _INTERLEAVED)
+        assert _status_of(head) == 453, head
+
+
+def _scripted_rtsps_peer(cert: str, key: str):
+    """A one-connection `rtsps://` peer that answers DESCRIBE with an MP2T
+    SDP and every SETUP with 461, and records each SETUP's Transport.
+    Returns (port, recorded transports, thread)."""
+    import socket
+    import ssl
+
+    from conftest import rtsp_header
+
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    ctx.load_cert_chain(cert, key)
+    listener = socket.create_server(("127.0.0.1", 0))
+    listener.settimeout(10.0)
+    port = listener.getsockname()[1]
+    transports: list[str] = []
+    sdp = (
+        "v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=x\r\nc=IN IP4 127.0.0.1\r\nt=0 0\r\n"
+        "m=video 0 RTP/AVP 33\r\na=rtpmap:33 MP2T/90000\r\na=control:trackID=0\r\n"
+    )
+
+    def serve() -> None:
+        with listener:
+            conn, _ = listener.accept()
+        with ctx.wrap_socket(conn, server_side=True) as tls:
+            tls.settimeout(10.0)
+            buf = b""
+            while True:
+                while b"\r\n\r\n" not in buf:
+                    chunk = tls.recv(4096)
+                    if not chunk:
+                        return
+                    buf += chunk
+                head, _, buf = buf.partition(b"\r\n\r\n")
+                req = head.decode(errors="replace") + "\r\n"
+                method = req.split(" ", 1)[0]
+                cseq = rtsp_header(req, "CSeq")
+                if method == "DESCRIBE":
+                    reply = (
+                        f"RTSP/1.0 200 OK\r\nCSeq: {cseq}\r\n"
+                        f"Content-Type: application/sdp\r\n"
+                        f"Content-Length: {len(sdp)}\r\n\r\n{sdp}"
+                    )
+                elif method == "SETUP":
+                    transports.append(rtsp_header(req, "Transport"))
+                    reply = f"RTSP/1.0 461 Unsupported Transport\r\nCSeq: {cseq}\r\n\r\n"
+                else:
+                    reply = f"RTSP/1.0 200 OK\r\nCSeq: {cseq}\r\n\r\n"
+                tls.sendall(reply.encode())
+
+    t = threading.Thread(target=serve, daemon=True)
+    t.start()
+    return port, transports, t
+
+
+def test_an_rtsps_pull_asks_for_interleaved_by_default():
+    import pathlib
+
+    from tstrans.rtp import RtspClient, RtspClientConfig, TransportPref
+
+    cert, key = _tls_fixture_paths()
+    pem = pathlib.Path(cert).read_bytes()
+    for extra, want in (
+        ({}, ["RTP/AVP/TCP"]),
+        ({"transport_pref": TransportPref.UDP}, ["RTP/AVP;"]),
+    ):
+        port, transports, t = _scripted_rtsps_peer(cert, key)
+        cfg = RtspClientConfig(
+            url=f"rtsps://127.0.0.1:{port}/live",
+            tls_root_certs_pem=pem,
+            keepalive=False,
+            **extra,
+        )
+        with pytest.raises(RtspError) as ei:
+            RtspClient.connect(cfg)
+        assert "461" in str(ei.value)
+        t.join(10.0)
+        assert not t.is_alive()
+        # One SETUP, and no second one over another transport.
+        assert len(transports) == 1, transports
+        assert transports[0].startswith(want[0]), transports
+        if not extra:
+            assert "interleaved" in transports[0]

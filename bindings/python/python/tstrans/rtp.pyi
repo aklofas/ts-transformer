@@ -189,8 +189,11 @@ class RtspVersion:
 class TransportPref:
     """Transport preference at SETUP time (IntEnum-shaped PyClass).
 
-    `AUTO` = UDP-first with TCP fallback on 461 Unsupported Transport.
-    `UDP` / `TCP` force a single transport (no fallback).
+    `AUTO` leaves the URL in charge: on `rtsp://` UDP first with TCP
+    fallback on 461 Unsupported Transport, on `rtsps://` TCP-interleaved only
+    (media never leaves the TLS tunnel). `UDP` / `TCP` force a single
+    transport (no fallback), and `UDP` on `rtsps://` sends media in the
+    clear.
     """
 
     AUTO: TransportPref
@@ -1053,6 +1056,7 @@ class RtspServerConfig:
     publish_idle_timeout_ms: Optional[int] = ...
     allow_udp_media: Optional[bool] = ...
     accept_digest_without_qop: bool = ...
+    max_readers: Optional[int] = ...
 
     def __post_init__(self) -> None: ...
 

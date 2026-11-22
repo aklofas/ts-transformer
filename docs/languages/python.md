@@ -1467,7 +1467,8 @@ with RtspServer.start(cfg) as server:
 `max_sessions`, `session_timeout_secs`, `fanout_capacity`,
 `graceful_shutdown_drain_ms`, `tls_cert`, `tls_key`,
 `accept_unregistered_publishers`, `end_publish_mount_on_publisher_exit`,
-`publish_idle_timeout_ms`, `allow_udp_media`, `accept_digest_without_qop`).
+`publish_idle_timeout_ms`, `allow_udp_media`, `accept_digest_without_qop`,
+`max_readers`).
 For an `rtsps://`
 server, bind `bind_addr="rtsps://host:port"` and set `tls_cert` /
 `tls_key` to PEM certificate-chain / private-key file paths (set
@@ -1478,10 +1479,27 @@ carries a user name or a password (`"admin:secret@host:port"`) with
 started an open server through 0.10.0. An `rtsps://` server sends and takes media
 only inside the TLS connection: it answers `461 Unsupported Transport` to a
 reader's or a publisher's SETUP that asks for UDP (clients such as
-GStreamer's `rtspsrc` then fall back to TCP-interleaved by themselves).
-`allow_udp_media=True` allows UDP media there, unencrypted, as through
-0.10.0; `allow_udp_media=False` makes a plain `rtsp://` server TCP-only;
-the default `None` decides by the bind's scheme. For a credentialed server pass
+GStreamer's `rtspsrc` then fall back to TCP-interleaved by themselves), and
+`add_multicast_mount` raises `RtspError(MOUNT)` there (a multicast mount
+sends to its group without any session). `allow_udp_media=True` allows UDP
+media there, unencrypted, as through 0.10.0, and re-opens that clear path;
+`allow_udp_media=False` makes a plain `rtsp://` server TCP-only; the default
+`None` decides by the bind's scheme. This library's own client
+(`RtspClient`) pulls an `rtsps://` URL over TCP-interleaved by default and
+never falls back to UDP; `?transport=udp` or `TransportPref.UDP` asks for
+UDP, whose media is then unencrypted.
+
+`max_readers` caps the reader sessions at once: a reader holds a slot from
+its SETUP to the end of its role (TEARDOWN, a refusal on its own mount, the
+end of its connection), readers of a multicast mount count and publishers do
+not, and a reader's SETUP over the cap is answered `453 Not Enough
+Bandwidth` and its connection closed. Set it below `max_sessions` so readers
+cannot use up every connection of a server that also takes publishers. Three
+gotchas: `max_readers=0` means no readers at all (an ingest-only server),
+while `max_sessions` must be at least 1; a cap at or above `max_sessions`
+protects nothing; and a connection without a session still holds one of the
+`max_sessions` for up to 30 s, so a publisher's connection is not
+promised. For a credentialed server pass
 `auth=BasicAuth("user", "pass", "realm")` — the realm is required
 server-side, and a `BasicAuth` user name that contains `:` is refused at
 `start()` with `RtspError(MOUNT)` (Basic splits user and password at the first

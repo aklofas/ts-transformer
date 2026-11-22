@@ -88,9 +88,11 @@ impl PyRtspVersion {
     }
 }
 
-/// Transport preference at SETUP time. AUTO = UDP-first with TCP
-/// fallback on 461 Unsupported Transport. UDP / TCP force a single
-/// transport (no fallback).
+/// Transport preference at SETUP time. AUTO leaves the URL in charge: on
+/// `rtsp://` UDP first with TCP fallback on 461 Unsupported Transport, on
+/// `rtsps://` TCP-interleaved only (media never leaves the TLS tunnel).
+/// UDP / TCP force a single transport (no fallback), and UDP on `rtsps://`
+/// sends media in the clear.
 ///
 /// Variant names are SHOUTY_SNAKE to match the Python-side convention
 /// for IntEnum-shaped pyclasses; `#[allow(clippy::upper_case_acronyms)]`

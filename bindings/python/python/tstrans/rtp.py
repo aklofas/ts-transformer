@@ -256,6 +256,20 @@ class RtspServerConfig:
     connection). GStreamer 1.24 answers a Digest SHA-256 challenge with an
     MD5 response, so this does not help it there."""
 
+    max_readers: Optional[int] = None
+    """Cap on reader sessions at once. A reader holds a slot from its
+    SETUP to the end of its role (its TEARDOWN, a refusal on its own mount
+    or the end of its connection); readers of a multicast mount count,
+    publishers do not. A reader's SETUP over the cap is answered
+    `453 Not Enough Bandwidth` and its connection is closed after the reply.
+    `None` (the default): no cap besides `max_sessions`. `0`: no readers at
+    all, an ingest-only server (unlike `max_sessions`, which must be > 0).
+    With a cap below `max_sessions` readers cannot use up every connection
+    of a server that also takes publishers; a cap at or above
+    `max_sessions` protects nothing. A connection without a session still
+    holds one of the `max_sessions` for up to 30 s, so a publisher's
+    connection is not promised."""
+
     def __repr__(self) -> str:
         # A bind URL can carry a password or a token; the generated
         # dataclass repr would print it verbatim.
@@ -272,6 +286,17 @@ class RtspServerConfig:
             raise ValueError(
                 f"RtspServerConfig.max_sessions must be > 0; got {self.max_sessions}"
             )
+        if self.max_readers is not None:
+            if isinstance(self.max_readers, bool) or not isinstance(self.max_readers, int):
+                raise TypeError(
+                    f"RtspServerConfig.max_readers must be an int or None; "
+                    f"got {type(self.max_readers).__name__}"
+                )
+            if self.max_readers < 0:
+                raise ValueError(
+                    f"RtspServerConfig.max_readers must be None or >= 0; "
+                    f"got {self.max_readers}"
+                )
         if self.session_timeout_secs <= 0:
             raise ValueError(
                 f"RtspServerConfig.session_timeout_secs must be > 0; "

@@ -691,6 +691,9 @@ impl PyRtspServer {
                 if let Some(yes) = cfg.allow_udp_media {
                     builder.allow_udp_media(yes);
                 }
+                if let Some(n) = cfg.max_readers {
+                    builder.max_readers(n);
+                }
                 if let Some(ms) = cfg.publish_idle_timeout_ms {
                     builder.publish_idle_timeout(Duration::from_millis(ms));
                 }
@@ -782,6 +785,12 @@ impl PyRtspServer {
     /// `ttl` defaults to 1 (link-local); `iface` may be set to a local
     /// IPv4 literal (`"192.168.1.50"`) or IPv6 interface name to pin
     /// outgoing traffic to a specific NIC.
+    ///
+    /// A multicast mount sends to its group without any session, so a
+    /// server that does not allow UDP media (an `rtsps://` server unless
+    /// `RtspServerConfig.allow_udp_media=True`, or any server with
+    /// `allow_udp_media=False`) refuses it with `RtspError(MOUNT)`, before a
+    /// socket exists.
     #[pyo3(signature = (path, group, port, *, ttl = 1, iface = None, program_config))]
     #[allow(clippy::too_many_arguments)] // 8 args is the Python signature.
     pub fn add_multicast_mount(
@@ -1053,6 +1062,7 @@ struct AuthExtract {
 struct ServerConfigExtract {
     bind_url: String,
     max_sessions: usize,
+    max_readers: Option<usize>,
     session_timeout_secs: u64,
     fanout_capacity: usize,
     graceful_shutdown_drain_ms: u64,
@@ -1085,6 +1095,7 @@ impl std::fmt::Debug for ServerConfigExtract {
         f.debug_struct("ServerConfigExtract")
             .field("bind_url", &redact_url(&self.bind_url))
             .field("max_sessions", &self.max_sessions)
+            .field("max_readers", &self.max_readers)
             .field("session_timeout_secs", &self.session_timeout_secs)
             .field("fanout_capacity", &self.fanout_capacity)
             .field(
@@ -1123,6 +1134,7 @@ impl ServerConfigExtract {
             format!("rtsp://{bind_addr}")
         };
         let max_sessions: usize = obj.getattr(intern!(py, "max_sessions"))?.extract()?;
+        let max_readers: Option<usize> = obj.getattr(intern!(py, "max_readers"))?.extract()?;
         let session_timeout_secs: u64 = obj
             .getattr(intern!(py, "session_timeout_secs"))?
             .extract()?;
@@ -1164,6 +1176,7 @@ impl ServerConfigExtract {
         Ok(Self {
             bind_url,
             max_sessions,
+            max_readers,
             session_timeout_secs,
             fanout_capacity,
             graceful_shutdown_drain_ms,
