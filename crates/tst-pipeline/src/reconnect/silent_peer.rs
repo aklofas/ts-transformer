@@ -351,6 +351,18 @@ mod tests {
             trace[1..].iter().all(|(_, v)| *v == Verdict::Healthy),
             "{trace:?}"
         );
+        // Read every quarter window, as an answering connection is: each
+        // `None` ends the run, so no send is ever a window unanswered.
+        let mut expected = vec![ms(0)];
+        let mut t = ms(0);
+        while t < ms(10_000) {
+            if t >= *expected.last().unwrap() + W / 4 {
+                expected.push(t);
+            }
+            t += STEP;
+        }
+        let read_at: Vec<Duration> = trace.iter().map(|(t, _)| *t).collect();
+        assert_eq!(read_at, expected);
     }
 
     #[test]
