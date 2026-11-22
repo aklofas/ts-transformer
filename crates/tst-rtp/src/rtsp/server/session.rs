@@ -707,7 +707,11 @@ where
     // Base of the per-read idle wait while no message is in progress. Every
     // read moves it, except a read that an `Idle` connection spent only on
     // interleaved frames: those belong to no session and are dropped, so
-    // they are not activity.
+    // they are not activity. An `Idle` connection is always under the
+    // admission deadline too, which starts no later than this base and is
+    // as long as the wait, so the deadline closes it first and this rule
+    // cannot be seen from outside; it keeps the per-read wait right on its
+    // own.
     let mut quiet_since = tokio::time::Instant::now();
 
     'serve: loop {

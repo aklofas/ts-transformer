@@ -23,9 +23,9 @@
 //! PTS 0 lands on PTS 0: the report offset is rounded to whole ticks (down,
 //! so a unit is never placed later than its sender sent it, and exactly for
 //! a sender whose reports are tick-exact), so the unit captured at the
-//! video origin can otherwise be implied a tick early. A later report pair always recomputes
-//! the mapping and may move KLV units' PTS as a result (no continuity
-//! requirement for metadata); a move of more than
+//! video origin can otherwise be implied a tick early. A later report pair
+//! always recomputes the mapping and may move KLV units' PTS as a result
+//! (no continuity requirement for metadata); a move of more than
 //! [`STEP_TOLERANCE_TICKS`] ticks [`Aligner::steps`].
 //!
 //! The alignment mode ([`Aligner::mode`]) moves like this:
@@ -207,9 +207,9 @@ struct VideoOrigin {
 ///
 /// The sender-report offset is rounded to whole ticks (each report's RTP
 /// stamp is rounded on its own, and the NTP delta floors, never rounding up
-/// past the sender's own instant), so the unit
-/// captured at the video origin can be implied a tick or two before PTS 0,
-/// which the adapter drops as "placed before the video origin". Within
+/// past the sender's own instant), so the unit captured at the video origin
+/// can be implied a tick or two before PTS 0, which the adapter drops as
+/// "placed before the video origin". Within
 /// [`STEP_TOLERANCE_TICKS`] before the origin (less than 1 ms, so exactly that many ticks is excluded) it IS the origin; anything
 /// earlier keeps its negative PTS for the adapter to drop.
 fn placed_pts(t_k: i64, offset: i64, origin: i64) -> i64 {
