@@ -65,6 +65,7 @@ impl std::fmt::Debug for ServerAuthConfig {
 /// - `end_publish_mount_on_publisher_exit`: off
 /// - `publish_idle_timeout`: off
 /// - `allow_udp_media`: yes on an `rtsp://` bind, no on an `rtsps://` bind
+/// - `accept_digest_without_qop`: off
 /// - No auth, no TLS — caller adds via `auth_*()` / `tls_cert()`.
 pub struct RtspServerBuilder {
     pub(crate) bind_url: RtspUrl,
@@ -78,6 +79,7 @@ pub struct RtspServerBuilder {
     pub(crate) end_publish_mount_on_publisher_exit: bool,
     pub(crate) publish_idle_timeout: Option<Duration>,
     pub(crate) allow_udp_media: Option<bool>,
+    pub(crate) accept_digest_without_qop: bool,
     #[cfg(feature = "rtsp-server-tls")]
     pub(crate) tls_cert_path: Option<PathBuf>,
     #[cfg(feature = "rtsp-server-tls")]
@@ -128,6 +130,7 @@ impl RtspServerBuilder {
             end_publish_mount_on_publisher_exit: false,
             publish_idle_timeout: None,
             allow_udp_media: None,
+            accept_digest_without_qop: false,
             #[cfg(feature = "rtsp-server-tls")]
             tls_cert_path: None,
             #[cfg(feature = "rtsp-server-tls")]
@@ -324,6 +327,30 @@ impl RtspServerBuilder {
     /// **Stability: Provisional.**
     pub fn allow_udp_media(&mut self, yes: bool) -> &mut Self {
         self.allow_udp_media = Some(yes);
+        self
+    }
+
+    /// Accept a Digest answer that carries no `qop`: the RFC 2069 form, which
+    /// GStreamer 1.24's `rtspsrc` and `rtspclientsink` send. Applies to both
+    /// Digest schemes, the server's own credential and every mount rule's;
+    /// the challenge still offers `qop="auth"`, and an answer WITH `qop` is
+    /// checked as before, its nonce count included. Default: off, so such an
+    /// answer is refused as a downgrade.
+    ///
+    /// What is given up, only for a client that sends no `qop` and only with
+    /// this on: replay protection inside one connection. Such an answer has
+    /// no nonce count, so a captured `Authorization` value for one method and
+    /// URI can be sent again on the same connection while it lives. The
+    /// nonce is still 128 random bits per TCP connection and is never
+    /// accepted on another.
+    ///
+    /// GStreamer 1.24 authenticates with Basic, or with Digest MD5 under this
+    /// option, never with Digest SHA-256: it answers a SHA-256 challenge
+    /// with an MD5 response.
+    ///
+    /// **Stability: Provisional.**
+    pub fn accept_digest_without_qop(&mut self, yes: bool) -> &mut Self {
+        self.accept_digest_without_qop = yes;
         self
     }
 

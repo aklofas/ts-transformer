@@ -16,7 +16,9 @@ use bytes::Bytes;
 
 use crate::rtsp::message::{RtspMethod, RtspRequest, RtspResponse};
 use crate::rtsp::server::ServerState;
-use crate::rtsp::server::auth::{AuthVerifyError, Credential, build_challenge, verify_credentials};
+use crate::rtsp::server::auth::{
+    AuthVerifyError, Credential, VerifyContext, build_challenge, verify_credentials_with,
+};
 use crate::rtsp::server::builder::AuthScheme;
 use crate::rtsp::server::mount::MountEntry;
 use crate::rtsp::server::mount_rules::{Direction, MountPolicy};
@@ -183,6 +185,11 @@ pub(crate) fn authorize_request(
     // included.
     let decision = state.mount_rules.decision(&path, dir);
     let (scheme, realm) = (decision.scheme, decision.realm.as_str());
+    let ctx = VerifyContext {
+        scheme,
+        realm,
+        accept_digest_without_qop: state.builder.accept_digest_without_qop,
+    };
     let verified = match &decision.policy {
         MountPolicy::Refuse(status) => {
             // A refusal keyed on the session's own role ends that role: a
@@ -202,12 +209,11 @@ pub(crate) fn authorize_request(
                 return Ok(()); // No auth configured — allow.
             };
             credential_checked = true;
-            verify_credentials(
+            verify_credentials_with(
                 auth_header,
                 method_str,
                 &req.uri,
-                scheme,
-                realm,
+                &ctx,
                 &[Credential {
                     username: &auth_cfg.username,
                     password: &auth_cfg.password,
@@ -219,12 +225,11 @@ pub(crate) fn authorize_request(
         MountPolicy::Require(creds) => {
             credential_checked = true;
             let creds: Vec<Credential<'_>> = creds.iter().map(Credential::from).collect();
-            verify_credentials(
+            verify_credentials_with(
                 auth_header,
                 method_str,
                 &req.uri,
-                scheme,
-                realm,
+                &ctx,
                 &creds,
                 &session.auth_nonce,
                 &mut session.auth_nc_hwm,

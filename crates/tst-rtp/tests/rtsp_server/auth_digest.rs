@@ -155,3 +155,84 @@ fn digest_md5_quoted_realm_round_trips() {
     assert!(!sdp.media.is_empty());
     server.stop().ok();
 }
+
+/// One DESCRIBE without a credential, then the same DESCRIBE answered the
+/// way GStreamer 1.24's `rtspsrc` and `rtspclientsink` answer a Digest MD5
+/// challenge: the RFC 2069 form, no `qop`, `nc` or `cnonce`, no `algorithm`.
+/// Returns the challenge and the answered response head.
+fn gstreamer_style_describe(accept_without_qop: bool) -> (String, String) {
+    use crate::fixtures::raw_rtsp::{request, scaled, try_header};
+    use md5::{Digest as _, Md5};
+    let mut b = RtspServerBuilder::new("rtsp://127.0.0.1:0").expect("URL parse");
+    b.auth_digest_md5("test-realm", "admin", SecretString::new("secret".into()));
+    b.accept_digest_without_qop(accept_without_qop);
+    let server = b.build().expect("server build");
+    server
+        .add_mount("/live", make_muxer_cfg())
+        .expect("add_mount");
+    server.start().expect("server start");
+    let port = server.local_addr().expect("local_addr").port();
+    let uri = format!("rtsp://127.0.0.1:{port}/live");
+    let mut tcp = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+    tcp.set_read_timeout(Some(scaled(std::time::Duration::from_secs(5))))
+        .unwrap();
+    let r = request(
+        &mut tcp,
+        &format!("DESCRIBE {uri} RTSP/1.0\r\nCSeq: 1\r\n\r\n"),
+    );
+    let challenge = try_header(&r, "WWW-Authenticate")
+        .expect("a challenge")
+        .to_owned();
+    let nonce = challenge
+        .split(',')
+        .find_map(|p| {
+            p.trim()
+                .trim_start_matches("Digest ")
+                .strip_prefix("nonce=")
+        })
+        .expect("a nonce")
+        .trim_matches('"')
+        .to_owned();
+    let md5 = |s: String| -> String {
+        Md5::digest(s.as_bytes())
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect()
+    };
+    let ha1 = md5("admin:test-realm:secret".to_owned());
+    let ha2 = md5(format!("DESCRIBE:{uri}"));
+    let response = md5(format!("{ha1}:{nonce}:{ha2}"));
+    let answered = request(
+        &mut tcp,
+        &format!(
+            "DESCRIBE {uri} RTSP/1.0\r\nCSeq: 2\r\nAuthorization: Digest username=\"admin\", \
+             realm=\"test-realm\", nonce=\"{nonce}\", uri=\"{uri}\", response=\"{response}\"\r\n\r\n"
+        ),
+    );
+    server.stop().ok();
+    (challenge, answered)
+}
+
+#[test]
+fn gstreamers_digest_answer_is_accepted_with_the_option() {
+    let (challenge, answered) = gstreamer_style_describe(true);
+    assert!(challenge.contains(r#"qop="auth""#), "{challenge}");
+    assert!(answered.starts_with("RTSP/1.0 200"), "{answered}");
+}
+
+#[test]
+fn gstreamers_digest_answer_is_refused_without_it() {
+    use crate::fixtures::raw_rtsp::try_header;
+    let (challenge, answered) = gstreamer_style_describe(false);
+    assert!(challenge.contains(r#"qop="auth""#), "{challenge}");
+    assert!(answered.starts_with("RTSP/1.0 401"), "{answered}");
+    // The same nonce: refused as a downgrade, not as a stale answer.
+    let again = try_header(&answered, "WWW-Authenticate").expect("a challenge");
+    let nonce = |c: &str| {
+        c.split("nonce=\"")
+            .nth(1)
+            .and_then(|r| r.split('"').next())
+            .map(str::to_owned)
+    };
+    assert_eq!(nonce(again), nonce(&challenge), "{again}");
+}

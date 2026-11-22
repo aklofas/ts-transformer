@@ -159,6 +159,7 @@ pub(crate) fn verify_authorization(
 /// and the syntax checks run before the lookup, so they answer the same for
 /// every username; an unknown user otherwise fails exactly like a wrong
 /// password, so a probe cannot tell listed and unlisted users apart.
+#[cfg(test)]
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn verify_credentials(
     auth_header: Option<&str>,
