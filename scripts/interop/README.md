@@ -627,7 +627,7 @@ similar at a glance:
 
 ### Transport axis: the RTSP publisher cells
 
-The two `rtsp-publish/*` cells point a real publisher at `tst-interop
+The three `rtsp-publish/*` cells point a real publisher at `tst-interop
 recv --url rtsp-publish://127.0.0.1:<port>/mount`, a harness-only scheme
 that binds an `RtspServer` with one publish mount and judges what the
 mount delivers. `recv` starts first; a publisher that ends leaves the
@@ -638,6 +638,15 @@ Each publisher cell's record carries the mount's own counters (`metrics.publish_
 |---|---|---|---|
 | `rtsp-publish/gst-push-mp2t` | GStreamer `tsparse ! rtspclientsink` (MP2T, PT 33) | transparent | `baseline`, byte-identical |
 | `rtsp-publish/gst-push-es-klv` | GStreamer `tsdemux` H.264 + KLV `! rtspclientsink` | remux | `klv-sync`, `--remuxed` |
+| `rtsp-publish/gst-push-digest` | the `gst-push-mp2t` push to a mount that asks for a Digest credential | transparent | `baseline`, byte-identical |
+
+The pull side has the matching cell, `rtsp-serve/gst-pull-digest`: GStreamer's
+`rtspsrc` pulls from a harness server that asks for a Digest credential, and a
+peer the server turns away (a `401`) writes nothing, so the cell fails. A
+`*-digest` cell hands its credential to the server through the builder: the
+user name and password in the cell's URL become `auth_digest_md5` plus
+`accept_digest_without_qop(true)` (GStreamer answers in the RFC 2069 form,
+without `qop`), and the bind URL carries none.
 
 `rtspclientsink` payloads its input itself (it picks `rtpmp2tpay`,
 `rtph264pay`, `rtpklvpay` by caps); putting a payloader in front of it

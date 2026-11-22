@@ -1139,9 +1139,9 @@ hls_cells() {
     tsp -I hls "http://127.0.0.1:$port/playlist.m3u8" -O file "$WORK/hls_tsp-pull.ts"
 }
 
-# The credential the two Digest cells use: a throwaway pair that exists
-# only for the cell. It is in the cell's URLs, so every logged line goes
-# through redact_creds.
+# The credential the two Digest cells use: a fixed test constant, never a
+# real secret. It is in the cell's URLs and so in the peer's command line
+# for the cell's duration; every logged line goes through redact_creds.
 RTSP_CELL_USER=interop-user
 RTSP_CELL_PASS=interop-pass-0123
 
