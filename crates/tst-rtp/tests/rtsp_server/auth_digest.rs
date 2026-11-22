@@ -164,7 +164,10 @@ fn digest_md5_quoted_realm_round_trips() {
 /// The credential is the server's own (`auth_digest_md5`, realm
 /// `test-realm`) or, with `on_rule`, a `Require` rule's on `/live` under the
 /// rules table's challenge (Digest MD5, realm `tstrans`).
-fn gstreamer_style_describe(accept_without_qop: bool, on_rule: bool) -> (String, String) {
+///
+/// `accept_without_qop` is handed to `accept_digest_without_qop`; `None`
+/// never calls it, so the builder's own default decides.
+fn gstreamer_style_describe(accept_without_qop: Option<bool>, on_rule: bool) -> (String, String) {
     use crate::fixtures::raw_rtsp::{request, scaled, try_header};
     use md5::{Digest as _, Md5};
     use tst_rtp::{MountCredential, MountPolicy, MountRule};
@@ -173,7 +176,9 @@ fn gstreamer_style_describe(accept_without_qop: bool, on_rule: bool) -> (String,
     if !on_rule {
         b.auth_digest_md5(realm, "admin", SecretString::new("secret".into()));
     }
-    b.accept_digest_without_qop(accept_without_qop);
+    if let Some(yes) = accept_without_qop {
+        b.accept_digest_without_qop(yes);
+    }
     let server = b.build().expect("server build");
     server
         .add_mount("/live", make_muxer_cfg())
@@ -235,7 +240,7 @@ fn gstreamer_style_describe(accept_without_qop: bool, on_rule: bool) -> (String,
 
 #[test]
 fn gstreamers_digest_answer_is_accepted_with_the_option() {
-    let (challenge, answered) = gstreamer_style_describe(true, false);
+    let (challenge, answered) = gstreamer_style_describe(Some(true), false);
     assert!(challenge.contains(r#"qop="auth""#), "{challenge}");
     assert!(answered.starts_with("RTSP/1.0 200"), "{answered}");
 }
@@ -243,7 +248,8 @@ fn gstreamers_digest_answer_is_accepted_with_the_option() {
 #[test]
 fn gstreamers_digest_answer_is_refused_without_it() {
     use crate::fixtures::raw_rtsp::try_header;
-    let (challenge, answered) = gstreamer_style_describe(false, false);
+    // The setter is never called: refusing is the default.
+    let (challenge, answered) = gstreamer_style_describe(None, false);
     assert!(challenge.contains(r#"qop="auth""#), "{challenge}");
     assert!(answered.starts_with("RTSP/1.0 401"), "{answered}");
     // The same nonce: refused as a downgrade, not as a stale answer.
@@ -262,13 +268,13 @@ fn gstreamers_digest_answer_is_refused_without_it() {
 /// through the rules table).
 #[test]
 fn gstreamers_digest_answer_to_a_require_rule_is_accepted_with_the_option() {
-    let (challenge, answered) = gstreamer_style_describe(true, true);
+    let (challenge, answered) = gstreamer_style_describe(Some(true), true);
     assert!(challenge.contains(r#"realm="tstrans""#), "{challenge}");
     assert!(answered.starts_with("RTSP/1.0 200"), "{answered}");
 }
 
 #[test]
 fn gstreamers_digest_answer_to_a_require_rule_is_refused_without_it() {
-    let (_, answered) = gstreamer_style_describe(false, true);
+    let (_, answered) = gstreamer_style_describe(Some(false), true);
     assert!(answered.starts_with("RTSP/1.0 401"), "{answered}");
 }
