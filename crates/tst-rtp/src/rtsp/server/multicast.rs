@@ -473,6 +473,83 @@ mod tests {
         cancel.cancel();
     }
 
+    /// A send that fails ends the sender and counts nothing: a socket that
+    /// was never connected has no group to send to.
+    #[tokio::test]
+    async fn a_failed_multicast_send_is_not_counted() {
+        let socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let (tx, rx) = broadcast::channel::<Bytes>(8);
+        let sent = Arc::new(SentCounters::default());
+        let task = spawn_multicast_sender(
+            rx,
+            Arc::new(socket),
+            CancellationToken::new(),
+            CancellationToken::new(),
+            1,
+            1,
+            Arc::new(PeerDropCounter::default()),
+            Arc::clone(&sent),
+        );
+        tx.send(Bytes::from_static(&[0x47; 188])).unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(10), task)
+            .await
+            .expect("the sender ends on the failed send")
+            .unwrap();
+        assert_eq!(sent.packets.load(std::sync::atomic::Ordering::Acquire), 0);
+        assert_eq!(sent.bytes.load(std::sync::atomic::Ordering::Relaxed), 0);
+    }
+
+    /// Frames dropped for a lagging sender are not sent, so they are not
+    /// counted: a backlog of five on a channel of two sends and counts two.
+    #[tokio::test]
+    async fn a_lagged_multicast_frame_is_not_counted_as_sent() {
+        let receiver = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        socket
+            .connect(receiver.local_addr().unwrap())
+            .await
+            .unwrap();
+        let (tx, rx) = broadcast::channel::<Bytes>(2);
+        for i in 0..5u8 {
+            let _ = tx.send(Bytes::from(vec![i; 8]));
+        }
+        let drops = Arc::new(PeerDropCounter::default());
+        let sent = Arc::new(SentCounters::default());
+        let cancel = CancellationToken::new();
+        let _task = spawn_multicast_sender(
+            rx,
+            Arc::new(socket),
+            cancel.clone(),
+            CancellationToken::new(),
+            1,
+            1,
+            Arc::clone(&drops),
+            Arc::clone(&sent),
+        );
+        let mut buf = [0u8; 64];
+        for _ in 0..2 {
+            tokio::time::timeout(std::time::Duration::from_secs(10), receiver.recv(&mut buf))
+                .await
+                .expect("a datagram within the deadline")
+                .unwrap();
+        }
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+        while sent.packets.load(std::sync::atomic::Ordering::Acquire) < 2 {
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "packets not counted"
+            );
+            tokio::task::yield_now().await;
+        }
+        assert_eq!(drops.dropped.load(std::sync::atomic::Ordering::Relaxed), 3);
+        assert_eq!(sent.packets.load(std::sync::atomic::Ordering::Acquire), 2);
+        assert_eq!(
+            sent.bytes.load(std::sync::atomic::Ordering::Relaxed),
+            2 * (RTP_HEADER_LEN as u64 + 8)
+        );
+        cancel.cancel();
+    }
+
     // NOTE: an end-to-end "build_multicast_send_socket succeeds with
     // iface='lo'" test was deliberately omitted — the function's final
     // `socket.connect(group)` step depends on the host's IPv6 routing

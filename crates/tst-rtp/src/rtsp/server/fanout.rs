@@ -349,6 +349,126 @@ mod tests {
         let _ = handle.await;
     }
 
+    /// Frames dropped for a lagging peer are not sent, so they are not
+    /// counted as sent: with a backlog of five on a channel of two, the two
+    /// delivered packets are counted and the three dropped are not.
+    #[tokio::test]
+    async fn a_lagged_frame_is_not_counted_as_sent() {
+        let send_sock = Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap());
+        let peer = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let peer_addr = peer.local_addr().unwrap();
+        let (tx, rx) = broadcast::channel::<Bytes>(2);
+        for i in 0..5u8 {
+            let _ = tx.send(Bytes::from(vec![i; 8]));
+        }
+        let cancel = CancellationToken::new();
+        let drop_counter = Arc::new(PeerDropCounter::default());
+        let sent = Arc::new(SentCounters::default());
+        let handle = spawn_peer_fanout(
+            rx,
+            PeerTransport::Udp {
+                socket: send_sock,
+                peer_addr,
+            },
+            cancel.clone(),
+            CancellationToken::new(),
+            0xCAFEBABE,
+            1,
+            RtpClock::new(0),
+            drop_counter.clone(),
+            Arc::clone(&sent),
+        );
+        let mut buf = [0u8; 64];
+        for _ in 0..2 {
+            tokio::time::timeout(std::time::Duration::from_secs(10), peer.recv(&mut buf))
+                .await
+                .expect("a datagram within the deadline")
+                .unwrap();
+        }
+        // The add follows the send: wait for both with a deadline.
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+        while sent.packets.load(Ordering::Acquire) < 2 {
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "packets not counted"
+            );
+            tokio::task::yield_now().await;
+        }
+        assert_eq!(drop_counter.dropped.load(Ordering::Relaxed), 3);
+        assert_eq!(sent.packets.load(Ordering::Acquire), 2);
+        assert_eq!(
+            sent.bytes.load(Ordering::Relaxed),
+            2 * (RTP_HEADER_LEN as u64 + 8)
+        );
+        cancel.cancel();
+        let _ = handle.await;
+    }
+
+    /// A UDP send that fails ends the fanout and counts nothing. A socket
+    /// bound to an IPv4 address cannot send to an IPv6 one, on every
+    /// platform.
+    #[tokio::test]
+    async fn a_failed_udp_send_is_not_counted() {
+        let send_sock = Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap());
+        let (tx, rx) = broadcast::channel::<Bytes>(8);
+        let sent = Arc::new(SentCounters::default());
+        let handle = spawn_peer_fanout(
+            rx,
+            PeerTransport::Udp {
+                socket: send_sock,
+                peer_addr: "[::1]:9".parse().unwrap(),
+            },
+            CancellationToken::new(),
+            CancellationToken::new(),
+            1,
+            1,
+            RtpClock::new(0),
+            Arc::new(PeerDropCounter::default()),
+            Arc::clone(&sent),
+        );
+        tx.send(Bytes::from_static(&[0x47; 188])).unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(10), handle)
+            .await
+            .expect("the fanout ends on the failed send")
+            .unwrap();
+        assert_eq!(sent.packets.load(Ordering::Acquire), 0);
+        assert_eq!(sent.bytes.load(Ordering::Relaxed), 0);
+    }
+
+    /// An interleaved write that fails ends the fanout and counts nothing:
+    /// the session's stream is a duplex whose other end is gone.
+    #[tokio::test]
+    async fn a_failed_interleaved_write_is_not_counted() {
+        let (ours, theirs) = tokio::io::duplex(4096);
+        drop(theirs);
+        let (tx, rx) = broadcast::channel::<Bytes>(8);
+        let sent = Arc::new(SentCounters::default());
+        let probe = Arc::new(InterleavedWriteProbe::default());
+        let handle = spawn_peer_fanout(
+            rx,
+            PeerTransport::Interleaved {
+                writer: crate::rtsp::server::session::session_writer(ours),
+                rtp_channel: 0,
+                probe: Arc::clone(&probe),
+            },
+            CancellationToken::new(),
+            CancellationToken::new(),
+            1,
+            1,
+            RtpClock::new(0),
+            Arc::new(PeerDropCounter::default()),
+            Arc::clone(&sent),
+        );
+        tx.send(Bytes::from_static(&[0x47; 188])).unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(10), handle)
+            .await
+            .expect("the fanout ends on the failed write")
+            .unwrap();
+        assert_eq!(probe.written.load(Ordering::Relaxed), 0, "the write failed");
+        assert_eq!(sent.packets.load(Ordering::Acquire), 0);
+        assert_eq!(sent.bytes.load(Ordering::Relaxed), 0);
+    }
+
     /// A peer counter built with `with_mount_total` aggregates its drops
     /// into the shared mount-level total in real time — the wiring behind
     /// `MountStats::frames_dropped_total`. Same deterministic push-before-
