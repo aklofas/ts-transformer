@@ -698,6 +698,31 @@ mod tests {
         assert_eq!(state.path, "/test");
     }
 
+    /// A push that panicked under the muxer lock leaves the mount closed:
+    /// `flush()` and the pushes read `Closed` on the poisoned lock.
+    #[test]
+    fn a_poisoned_muxer_lock_reads_closed() {
+        let state = mock_unicast_mount_state();
+        let poisoner = Arc::clone(&state);
+        std::thread::spawn(move || {
+            let _guard = poisoner.muxer.lock().unwrap();
+            panic!("a push panicked under the muxer lock");
+        })
+        .join()
+        .expect_err("the thread panicked");
+        assert!(state.muxer.is_poisoned());
+        let handle = MountHandle { state };
+        assert!(matches!(
+            handle.flush(),
+            Err(crate::error::MountError::Closed)
+        ));
+        let nal = [0x00, 0x00, 0x00, 0x01, 0x65, 0xBB];
+        assert!(matches!(
+            handle.push_video(&nal, tst_core::mpegts::common::Pts90khz::new(0), true),
+            Err(crate::error::MountError::Closed)
+        ));
+    }
+
     #[test]
     fn mount_handle_path() {
         let state = mock_unicast_mount_state();

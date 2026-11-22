@@ -100,6 +100,27 @@ async fn run_listener_with(
     let mut listener = Some(listener);
     loop {
         tokio::select! {
+            // Biased, in this order: once `stop()` has begun no connection
+            // waiting in the backlog may be accepted (a random pick could take
+            // the accept arm first), and a hard cancel racing `stop()` is
+            // taken after the stop arm, which reports the closed socket that
+            // `stop()` waits for.
+            biased;
+            () = state.stop_accepting.cancelled(), if listener.is_some() => {
+                tracing::info!(target: "tst_rtp::server", "server stopping; listener closed");
+                listener = None;
+                state.listener_closed.send_replace(true);
+            }
+            _ = state.cancel_token.cancelled() => {
+                tracing::info!(target: "tst_rtp::server", "server cancel observed; listener exiting");
+                // Close the socket before the drain: `SessionsEnded` reports
+                // "done" to `stop()` when this task returns, and the socket
+                // must not outlive that report, or a connect made right after
+                // `stop()` returns is accepted by the kernel and then reset.
+                drop(listener);
+                drain_sessions(&mut sessions, state.builder.graceful_shutdown_drain).await;
+                return Ok(());
+            }
             accept_res = accept(listener.as_ref()) => {
                 match accept_res {
                     Ok((tcp, peer)) => {
@@ -218,21 +239,6 @@ async fn run_listener_with(
                         );
                     }
                 }
-            }
-            () = state.stop_accepting.cancelled(), if listener.is_some() => {
-                tracing::info!(target: "tst_rtp::server", "server stopping; listener closed");
-                listener = None;
-                state.listener_closed.send_replace(true);
-            }
-            _ = state.cancel_token.cancelled() => {
-                tracing::info!(target: "tst_rtp::server", "server cancel observed; listener exiting");
-                // Close the socket before the drain: `SessionsEnded` reports
-                // "done" to `stop()` when this task returns, and the socket
-                // must not outlive that report, or a connect made right after
-                // `stop()` returns is accepted by the kernel and then reset.
-                drop(listener);
-                drain_sessions(&mut sessions, state.builder.graceful_shutdown_drain).await;
-                return Ok(());
             }
             // Reap finished sessions so the set stays as small as the live
             // count.

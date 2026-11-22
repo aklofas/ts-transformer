@@ -1332,9 +1332,11 @@ impl RtspServer {
         // sessions have drained (below), so a publisher session's final
         // adapter flush still reaches them.
         self.state.refuse_publish_work();
-        // The snapshot is taken once the listening socket is closed, so it
-        // holds every session the listener accepted. The margin covers the
-        // listener's scheduling, as the drain's does below.
+        // The snapshot is taken once the listening socket is closed, so the
+        // listener accepts nothing while the Notices are written. A session it
+        // accepted earlier that has not registered yet is not in it and gets
+        // no Notice (the window the rustdoc states). The bound covers the
+        // listener's scheduling, as the drain's margin does below.
         if let Some(rt) = self.runtime.as_ref() {
             let mut closed = self.state.listener_closed.subscribe();
             rt.block_on(async {

@@ -309,13 +309,13 @@ fn start_after_a_hard_cancel_is_refused() {
     assert!(matches!(server.start(), Err(RtspServerError::Shutdown)));
 }
 
-/// Whether a connection made now is served: connected and its OPTIONS
-/// answered. A refused connect is not; neither is a connection to whatever
-/// else may hold the port, which answers no RTSP.
-fn a_new_connection_is_served(port: u16) -> bool {
+/// Whether a connection made now is served: connected within `connect`
+/// and its OPTIONS answered. A refused or timed-out connect is not; neither
+/// is a connection to whatever else may hold the port, which answers no
+/// RTSP.
+fn a_new_connection_is_served(port: u16, connect: Duration) -> bool {
     let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
-    let Ok(mut tcp) = std::net::TcpStream::connect_timeout(&addr, scaled(Duration::from_secs(2)))
-    else {
+    let Ok(mut tcp) = std::net::TcpStream::connect_timeout(&addr, connect) else {
         return false;
     };
     tcp.set_read_timeout(Some(scaled(Duration::from_secs(2))))
@@ -367,7 +367,10 @@ fn a_stop_in_progress_admits_nobody() {
 
     let _stalled = stall_a_playing_peer(&server, &mount);
     assert_eq!(mount.stats().peer_count, 2);
-    assert!(a_new_connection_is_served(port), "control: before stop()");
+    assert!(
+        a_new_connection_is_served(port, scaled(Duration::from_secs(2))),
+        "control: before stop()"
+    );
 
     let server = std::sync::Arc::new(server);
     let stopping = {
@@ -391,8 +394,11 @@ fn a_stop_in_progress_admits_nobody() {
     // Only the listener's scheduling stands between `stop()` beginning and
     // its socket closing; the stalled reader's Notice holds `stop()` for a
     // second, far longer.
+    // A short connect bound: a listening loopback socket answers at once,
+    // while Windows takes about 2 s to report a refused one, longer than
+    // `stop()` has left to run.
     let closed_by = Instant::now() + Duration::from_millis(300);
-    while a_new_connection_is_served(port) {
+    while a_new_connection_is_served(port, Duration::from_millis(250)) {
         assert!(
             Instant::now() < closed_by,
             "a connection made while stop() ran was served"
