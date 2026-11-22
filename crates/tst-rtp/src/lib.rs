@@ -107,7 +107,8 @@ pub use rtsp::server::cancel::RtspServerCancelHandle;
 pub use rtsp::server::mount::{MountHandle, MountKind, MountStats};
 #[cfg(feature = "rtsp-server")]
 pub use rtsp::server::mount_rules::{
-    MountCredential, MountPolicy, MountRule, MountRuleError, MountRules, RefuseStatus,
+    MountCredential, MountPolicy, MountRule, MountRuleAuthFailures, MountRuleError, MountRules,
+    RefuseStatus,
 };
 #[cfg(feature = "rtsp-server")]
 pub use rtsp::server::publish::{
