@@ -101,6 +101,15 @@ impl RtspServerBuilder {
     /// refuses it. Configure the server's credential with `auth_basic` or
     /// `auth_digest_*`.
     ///
+    /// The server reads the URL's scheme, host and port only. Its path is
+    /// ignored, and so is every query key: the keys an [`RtspUrl`] accepts
+    /// are a client's (an unknown key is still refused by the parse), and
+    /// none of them configures the server. In particular `transport=` does
+    /// not choose what media goes over: `?transport=tcp` does not make an
+    /// `rtsp://` server TCP-only, and `rtsps://…?transport=udp` does not
+    /// let an `rtsps://` server send media over UDP. That is
+    /// [`Self::allow_udp_media`].
+    ///
     /// # Errors
     ///
     /// - [`RtspServerError::UrlParse`] if `url` cannot be parsed as RTSP
@@ -119,6 +128,11 @@ impl RtspServerBuilder {
     /// A bind URL must not carry a user name or a password: `build()`
     /// refuses it. Configure the server's credential with `auth_basic` or
     /// `auth_digest_*`.
+    ///
+    /// As for [`Self::new`], only the URL's scheme, host and port are read:
+    /// its path and its client settings (the transport preference among
+    /// them) are ignored; [`Self::allow_udp_media`] decides whether media
+    /// may go over UDP.
     pub fn with_url(url: RtspUrl) -> Self {
         Self {
             bind_url: url,

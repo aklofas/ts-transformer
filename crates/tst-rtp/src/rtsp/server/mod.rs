@@ -730,7 +730,8 @@ impl RtspServer {
         self.state.mount_rules.clone()
     }
 
-    /// Convenience: `RtspServerBuilder::new(url)?.build()`.
+    /// Convenience: `RtspServerBuilder::new(url)?.build()`. The URL's path
+    /// and query are ignored (see [`RtspServerBuilder::new`]).
     pub fn bind(url: &str) -> Result<Self, RtspServerError> {
         RtspServerBuilder::new(url)?.build()
     }
