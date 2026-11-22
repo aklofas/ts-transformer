@@ -13,7 +13,6 @@
 
 use std::collections::HashMap;
 use std::fmt;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use secrecy::SecretString;
@@ -207,14 +206,74 @@ pub(crate) enum Direction {
     Read,
 }
 
+/// Everything a request reads and an edit writes, under one lock: a request
+/// sees the table before an edit or after it, never a mix, and the closed
+/// flag is checked under the same guard the edit then writes through.
+#[derive(Clone)]
+struct Table {
+    rules: HashMap<String, MountRule>,
+    default: MountRule,
+    challenge: (AuthScheme, String),
+    closed: bool,
+}
+
 struct Inner {
-    rules: RwLock<HashMap<String, MountRule>>,
-    default: RwLock<MountRule>,
-    challenge: RwLock<(AuthScheme, String)>,
-    closed: AtomicBool,
+    table: RwLock<Table>,
     /// The owning server's hard cancel: the table is closed once it fires,
-    /// even on a server whose listener never ran to close it.
+    /// even on a server whose listener never ran to close it. Kept outside
+    /// the lock so that firing it stays one atomic store.
     hard_cancel: RtspServerCancelHandle,
+    #[cfg(test)]
+    pauses: PausePoints,
+}
+
+/// The policy and the challenge a request is decided by, read together.
+#[derive(Debug)]
+pub(crate) struct Decision {
+    pub policy: MountPolicy,
+    pub scheme: AuthScheme,
+    pub realm: String,
+}
+
+/// Test-only stops inside a table's read and edit paths. They belong to one
+/// table, so tests that run as threads of one process never meet each
+/// other's, and the thread that reaches one need not be the one that armed it.
+#[cfg(test)]
+#[derive(Default)]
+struct PausePoints {
+    /// In `decision`, between the pick of the path rule and of the default.
+    decision: std::sync::Mutex<Option<Pause>>,
+    /// In every edit, right after its closed check.
+    edit: std::sync::Mutex<Option<Pause>>,
+}
+
+/// One armed stop: the thread that reaches it says so on `reached`, then
+/// waits on `go_on`. It fires once.
+#[cfg(test)]
+struct Pause {
+    reached: std::sync::mpsc::Sender<()>,
+    go_on: std::sync::mpsc::Receiver<()>,
+}
+
+#[cfg(test)]
+impl Pause {
+    /// Arm `slot`; the test keeps the returned ends.
+    fn arm(
+        slot: &std::sync::Mutex<Option<Pause>>,
+    ) -> (std::sync::mpsc::Receiver<()>, std::sync::mpsc::Sender<()>) {
+        let (reached, reached_rx) = std::sync::mpsc::channel();
+        let (go_on_tx, go_on) = std::sync::mpsc::channel();
+        *slot.lock().unwrap() = Some(Pause { reached, go_on });
+        (reached_rx, go_on_tx)
+    }
+
+    fn hit(slot: &std::sync::Mutex<Option<Pause>>) {
+        let armed = slot.lock().unwrap().take();
+        if let Some(p) = armed {
+            let _ = p.reached.send(());
+            let _ = p.go_on.recv();
+        }
+    }
 }
 
 /// Handle to one server's per-path rules, from
@@ -230,8 +289,9 @@ struct Inner {
 /// A clone is the same table. Usable from any thread, including while the
 /// server runs; an edit applies from the next request on. After the server
 /// shuts down (stopped, hard-cancelled or dropped), edits return
-/// [`MountRuleError::Closed`] while `len`, `is_empty` and `is_closed` keep
-/// answering.
+/// [`MountRuleError::Closed`] and the table no longer changes, while `len`,
+/// `is_empty` and `is_closed` keep answering. An edit that began before a
+/// hard cancel may complete; none begins after it.
 #[derive(Clone)]
 pub struct MountRules {
     inner: Arc<Inner>,
@@ -239,11 +299,15 @@ pub struct MountRules {
 
 impl fmt::Debug for MountRules {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // Copy out first: the caller's formatter may be slow, and an edit
+        // must not wait for it.
+        let t = read(&self.inner.table).clone();
+        let closed = t.closed || self.inner.hard_cancel.is_cancelled();
         f.debug_struct("MountRules")
-            .field("rules", &*read(&self.inner.rules))
-            .field("default", &*read(&self.inner.default))
-            .field("challenge", &*read(&self.inner.challenge))
-            .field("closed", &self.is_closed())
+            .field("rules", &t.rules)
+            .field("default", &t.default)
+            .field("challenge", &t.challenge)
+            .field("closed", &closed)
             .finish()
     }
 }
@@ -301,21 +365,33 @@ impl MountRules {
     ) -> Self {
         Self {
             inner: Arc::new(Inner {
-                rules: RwLock::new(HashMap::new()),
-                default: RwLock::new(default),
-                challenge: RwLock::new(challenge),
-                closed: AtomicBool::new(false),
+                table: RwLock::new(Table {
+                    rules: HashMap::new(),
+                    default,
+                    challenge,
+                    closed: false,
+                }),
                 hard_cancel,
+                #[cfg(test)]
+                pauses: PausePoints::default(),
             }),
         }
     }
 
-    fn ensure_open(&self) -> Result<(), MountRuleError> {
-        if self.is_closed() {
-            Err(MountRuleError::Closed)
-        } else {
-            Ok(())
+    /// Run `apply` under the write guard, unless the table is closed. The
+    /// check is made under the same guard, so no edit lands after `close`
+    /// returned.
+    fn edit<R>(
+        &self,
+        apply: impl FnOnce(&mut Table) -> Result<R, MountRuleError>,
+    ) -> Result<R, MountRuleError> {
+        let mut t = write(&self.inner.table);
+        if t.closed || self.inner.hard_cancel.is_cancelled() {
+            return Err(MountRuleError::Closed);
         }
+        #[cfg(test)]
+        Pause::hit(&self.inner.pauses.edit);
+        apply(&mut t)
     }
 
     /// Set the rule for `path`, replacing any earlier one.
@@ -332,11 +408,12 @@ impl MountRules {
     ///   username more than once.
     /// - [`MountRuleError::Closed`] after the server shut down.
     pub fn set(&self, path: &str, rule: MountRule) -> Result<(), MountRuleError> {
-        self.ensure_open()?;
-        check_path(path)?;
-        check_rule(&rule)?;
-        write(&self.inner.rules).insert(path.to_string(), rule);
-        Ok(())
+        self.edit(|t| {
+            check_path(path)?;
+            check_rule(&rule)?;
+            t.rules.insert(path.to_string(), rule);
+            Ok(())
+        })
     }
 
     /// Remove the rule for `path`; the path then follows the default.
@@ -348,9 +425,10 @@ impl MountRules {
     ///   `remove("/amber/")` is refused with `InvalidMountPath`; use `/amber`.
     /// - [`MountRuleError::Closed`] after the server shut down.
     pub fn remove(&self, path: &str) -> Result<bool, MountRuleError> {
-        self.ensure_open()?;
-        check_path(path)?;
-        Ok(write(&self.inner.rules).remove(path).is_some())
+        self.edit(|t| {
+            check_path(path)?;
+            Ok(t.rules.remove(path).is_some())
+        })
     }
 
     /// Set the rule every path without its own entry follows.
@@ -362,10 +440,11 @@ impl MountRules {
     ///   username more than once.
     /// - [`MountRuleError::Closed`] after the server shut down.
     pub fn set_default(&self, rule: MountRule) -> Result<(), MountRuleError> {
-        self.ensure_open()?;
-        check_rule(&rule)?;
-        *write(&self.inner.default) = rule;
-        Ok(())
+        self.edit(|t| {
+            check_rule(&rule)?;
+            t.default = rule;
+            Ok(())
+        })
     }
 
     /// Remove every path rule. The default rule and the challenge stay.
@@ -373,9 +452,10 @@ impl MountRules {
     /// # Errors
     /// - [`MountRuleError::Closed`] after the server shut down.
     pub fn clear(&self) -> Result<(), MountRuleError> {
-        self.ensure_open()?;
-        write(&self.inner.rules).clear();
-        Ok(())
+        self.edit(|t| {
+            t.rules.clear();
+            Ok(())
+        })
     }
 
     /// Set the scheme and realm a [`MountPolicy::Require`] challenge offers.
@@ -386,55 +466,74 @@ impl MountRules {
     /// - [`MountRuleError::InvalidRealm`] if `realm` holds a control byte.
     /// - [`MountRuleError::Closed`] after the server shut down.
     pub fn set_challenge(&self, scheme: AuthScheme, realm: &str) -> Result<(), MountRuleError> {
-        self.ensure_open()?;
-        if !crate::rtsp::server::auth::realm_is_valid(realm) {
-            return Err(MountRuleError::InvalidRealm {
-                realm: realm.to_string(),
-            });
-        }
-        *write(&self.inner.challenge) = (scheme, realm.to_string());
-        Ok(())
+        self.edit(|t| {
+            if !crate::rtsp::server::auth::realm_is_valid(realm) {
+                return Err(MountRuleError::InvalidRealm {
+                    realm: realm.to_string(),
+                });
+            }
+            t.challenge = (scheme, realm.to_string());
+            Ok(())
+        })
     }
 
     /// The number of path rules (the default rule is not counted).
     pub fn len(&self) -> usize {
-        read(&self.inner.rules).len()
+        read(&self.inner.table).rules.len()
     }
 
     /// Whether no path has a rule.
     pub fn is_empty(&self) -> bool {
-        read(&self.inner.rules).is_empty()
+        read(&self.inner.table).rules.is_empty()
     }
 
     /// Whether the server has shut down, after which edits are refused.
     pub fn is_closed(&self) -> bool {
-        self.inner.closed.load(Ordering::Acquire) || self.inner.hard_cancel.is_cancelled()
+        self.inner.hard_cancel.is_cancelled() || read(&self.inner.table).closed
     }
 
     /// The policy for `dir` on `path`: the path's own rule, else (no rule, or
     /// the rule's `Inherit` for `dir`) the default rule's policy for `dir`.
     pub(crate) fn policy_for(&self, path: &str, dir: Direction) -> MountPolicy {
-        let pick = |rule: &MountRule| match dir {
-            Direction::Publish => rule.publish.clone(),
-            Direction::Read => rule.read.clone(),
-        };
-        // Bind the path rule's pick first so the `rules` guard is released
-        // before `default` is read.
-        let own = read(&self.inner.rules).get(path).map(pick);
-        match own {
-            Some(policy) if !matches!(policy, MountPolicy::Inherit) => policy,
-            _ => pick(&read(&self.inner.default)),
-        }
+        self.decision(path, dir).policy
     }
 
     /// The scheme and realm a `Require` challenge offers when the builder
     /// configured no credential.
     pub(crate) fn challenge(&self) -> (AuthScheme, String) {
-        read(&self.inner.challenge).clone()
+        // The challenge is the table's whatever the path.
+        let Decision { scheme, realm, .. } = self.decision("", Direction::Read);
+        (scheme, realm)
     }
 
+    /// The policy for `dir` on `path` (the path's own rule, else, with no
+    /// rule or the rule's `Inherit` for `dir`, the default rule's policy for
+    /// `dir`) and the challenge's scheme and realm.
+    pub(crate) fn decision(&self, path: &str, dir: Direction) -> Decision {
+        let pick = |rule: &MountRule| match dir {
+            Direction::Publish => rule.publish.clone(),
+            Direction::Read => rule.read.clone(),
+        };
+        let t = read(&self.inner.table);
+        let own = t.rules.get(path).map(pick);
+        #[cfg(test)]
+        Pause::hit(&self.inner.pauses.decision);
+        let policy = match own {
+            Some(policy) if !matches!(policy, MountPolicy::Inherit) => policy,
+            _ => pick(&t.default),
+        };
+        let (scheme, realm) = t.challenge.clone();
+        Decision {
+            policy,
+            scheme,
+            realm,
+        }
+    }
+
+    /// Close the table. An edit that holds the guard finishes first; every
+    /// later one reads `Closed`.
     pub(crate) fn close(&self) {
-        self.inner.closed.store(true, Ordering::Release);
+        write(&self.inner.table).closed = true;
     }
 }
 
@@ -758,5 +857,221 @@ mod tests {
         let mut b = RtspServerBuilder::new("rtsp://127.0.0.1:0").unwrap();
         b.default_mount_rule(MountRule::both(MountPolicy::Open));
         assert!(b.build().is_ok());
+    }
+
+    use std::sync::mpsc;
+    use std::time::Duration;
+    use tst_test_helpers::timing::scaled;
+
+    /// How long a thread gets to reach a pause point or to finish once
+    /// nothing holds it back.
+    fn deadline() -> Duration {
+        scaled(Duration::from_secs(10))
+    }
+
+    /// How long a call that must stay blocked is watched. On a correct
+    /// table no wait can see it return, so this is an input of the test,
+    /// not a race with the code under test.
+    const STAYS_BLOCKED: Duration = Duration::from_millis(300);
+
+    fn is_refuse(p: &MountPolicy) -> bool {
+        matches!(p, MountPolicy::Refuse(_))
+    }
+
+    #[test]
+    fn a_request_between_two_edits_sees_one_of_the_two_tables() {
+        let t = table();
+        t.set("/amber", MountRule::default()).unwrap();
+        t.set_default(MountRule::both(MountPolicy::Refuse(RefuseStatus::NotFound)))
+            .unwrap();
+        // Every state the operator's two edits pass through refuses /amber.
+        let (reached, go_on) = Pause::arm(&t.inner.pauses.decision);
+        let reader = {
+            let t = t.clone();
+            std::thread::spawn(move || t.decision("/amber", Direction::Read).policy)
+        };
+        reached
+            .recv_timeout(deadline())
+            .expect("the reader reached its pause point");
+        let (first_done, first_done_rx) = mpsc::channel();
+        let editor = {
+            let t = t.clone();
+            std::thread::spawn(move || {
+                t.set(
+                    "/amber",
+                    MountRule::both(MountPolicy::Refuse(RefuseStatus::Forbidden)),
+                )
+                .unwrap();
+                let _ = first_done.send(());
+                t.set_default(MountRule::both(MountPolicy::Open)).unwrap();
+            })
+        };
+        let first_returned_while_parked = first_done_rx.recv_timeout(STAYS_BLOCKED).is_ok();
+        go_on.send(()).unwrap();
+        let policy = reader.join().unwrap();
+        editor.join().unwrap();
+        assert!(
+            !first_returned_while_parked,
+            "an edit completed while a request was halfway through its read"
+        );
+        assert!(is_refuse(&policy), "the request was decided by {policy:?}");
+    }
+
+    #[test]
+    fn the_table_does_not_change_after_its_close_returned() {
+        let t = table();
+        let (reached, go_on) = Pause::arm(&t.inner.pauses.edit);
+        let edit = {
+            let t = t.clone();
+            std::thread::spawn(move || t.set("/b", MountRule::both(MountPolicy::Open)))
+        };
+        reached
+            .recv_timeout(deadline())
+            .expect("the edit reached its pause point");
+        let (closed, closed_rx) = mpsc::channel();
+        let closer = {
+            let t = t.clone();
+            std::thread::spawn(move || {
+                t.close();
+                let _ = closed.send(t.len());
+            })
+        };
+        let close_returned_during_the_edit = closed_rx.recv_timeout(STAYS_BLOCKED).is_ok();
+        go_on.send(()).unwrap();
+        let edit_result = edit.join().unwrap();
+        closer.join().unwrap();
+        assert!(
+            !close_returned_during_the_edit,
+            "close() returned while an edit that passed its check was still to land"
+        );
+        assert!(edit_result.is_ok(), "{edit_result:?}");
+        assert_eq!(t.len(), 1, "the edit that held the table landed");
+        assert!(matches!(
+            t.policy_for("/b", Direction::Read),
+            MountPolicy::Open
+        ));
+        let len_at_close = t.len();
+        assert!(matches!(
+            t.set("/c", MountRule::default()),
+            Err(MountRuleError::Closed)
+        ));
+        assert!(matches!(t.remove("/b"), Err(MountRuleError::Closed)));
+        assert!(matches!(t.clear(), Err(MountRuleError::Closed)));
+        assert_eq!(t.len(), len_at_close);
+        assert!(matches!(
+            t.policy_for("/b", Direction::Read),
+            MountPolicy::Open
+        ));
+    }
+
+    #[test]
+    fn an_edit_begun_after_a_hard_cancel_is_refused() {
+        let cancel = RtspServerCancelHandle::new();
+        let t = MountRules::new(
+            MountRule::default(),
+            (AuthScheme::DigestMd5, "tstrans".into()),
+            cancel.clone(),
+        );
+        t.set("/a", MountRule::both(MountPolicy::Open)).unwrap();
+        cancel.cancel();
+        assert!(matches!(
+            t.set("/b", MountRule::default()),
+            Err(MountRuleError::Closed)
+        ));
+        assert!(matches!(t.remove("/a"), Err(MountRuleError::Closed)));
+        assert!(matches!(
+            t.set_default(MountRule::both(MountPolicy::Open)),
+            Err(MountRuleError::Closed)
+        ));
+        assert!(matches!(t.clear(), Err(MountRuleError::Closed)));
+        assert!(matches!(
+            t.set_challenge(AuthScheme::Basic, "x"),
+            Err(MountRuleError::Closed)
+        ));
+        assert_eq!(t.len(), 1);
+        assert!(matches!(
+            t.policy_for("/a", Direction::Read),
+            MountPolicy::Open
+        ));
+        assert!(matches!(
+            t.policy_for("/zzz", Direction::Read),
+            MountPolicy::Inherit
+        ));
+        assert_eq!(
+            t.challenge(),
+            (AuthScheme::DigestMd5, "tstrans".to_string())
+        );
+    }
+
+    #[test]
+    fn is_closed_reads_true_at_once_after_a_hard_cancel() {
+        let cancel = RtspServerCancelHandle::new();
+        let t = MountRules::new(
+            MountRule::default(),
+            (AuthScheme::DigestMd5, "tstrans".into()),
+            cancel.clone(),
+        );
+        assert!(!t.is_closed());
+        cancel.cancel();
+        assert!(t.is_closed());
+    }
+
+    /// A `fmt::Write` that parks the first time it is handed `needle`.
+    struct ParkingWriter {
+        needle: &'static str,
+        reached: mpsc::Sender<()>,
+        go_on: mpsc::Receiver<()>,
+        parked: bool,
+    }
+
+    impl fmt::Write for ParkingWriter {
+        fn write_str(&mut self, s: &str) -> fmt::Result {
+            if !self.parked && s == self.needle {
+                self.parked = true;
+                let _ = self.reached.send(());
+                let _ = self.go_on.recv();
+            }
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn debug_formats_without_holding_the_table() {
+        let t = table();
+        t.set("/a", MountRule::both(MountPolicy::Open)).unwrap();
+        let (reached, reached_rx) = mpsc::channel();
+        let (go_on, go_on_rx) = mpsc::channel();
+        let formatter = {
+            let t = t.clone();
+            std::thread::spawn(move || {
+                let mut w = ParkingWriter {
+                    needle: "rules",
+                    reached,
+                    go_on: go_on_rx,
+                    parked: false,
+                };
+                fmt::write(&mut w, format_args!("{t:?}")).unwrap();
+                w.parked
+            })
+        };
+        reached_rx
+            .recv_timeout(deadline())
+            .expect("the formatter parked at the field name");
+        let (edited, edited_rx) = mpsc::channel();
+        let editor = {
+            let t = t.clone();
+            std::thread::spawn(move || {
+                let _ = edited.send(t.set("/b", MountRule::both(MountPolicy::Open)));
+            })
+        };
+        let edit = edited_rx.recv_timeout(deadline());
+        go_on.send(()).unwrap();
+        assert!(formatter.join().unwrap(), "the formatter never parked");
+        editor.join().unwrap();
+        assert!(
+            matches!(edit, Ok(Ok(()))),
+            "an edit waited behind a slow formatter: {edit:?}"
+        );
+        assert_eq!(t.len(), 2);
     }
 }
