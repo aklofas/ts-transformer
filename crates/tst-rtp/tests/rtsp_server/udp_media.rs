@@ -101,6 +101,19 @@ pub(crate) const REFUSED: [(&str, u16, bool); 5] = [
     ("publisher interleaved mode=record", 200, false),
 ];
 
+/// What a server that allows UDP media answers.
+pub(crate) const ALLOWED: [(&str, u16, bool); 5] = [
+    ("reader unicast UDP", 200, true),
+    (
+        "reader multicast word with client_port, unicast mount",
+        200,
+        true,
+    ),
+    ("reader interleaved", 200, false),
+    ("publisher UDP mode=record", 200, true),
+    ("publisher interleaved mode=record", 200, false),
+];
+
 #[test]
 fn a_server_without_udp_media_refuses_it_in_every_spelling() {
     let mut b = RtspServerBuilder::new("rtsp://127.0.0.1:0").unwrap();
@@ -146,15 +159,6 @@ fn the_udp_refusal_comes_after_admission_and_after_the_lookup() {
 fn a_plain_server_allows_udp_media_by_default() {
     let server = started(RtspServerBuilder::new("rtsp://127.0.0.1:0").unwrap());
     let port = server.local_addr().unwrap().port();
-    let r = reader_setup(
-        RawPublisher::connect(port),
-        "/live",
-        "RTP/AVP;unicast;client_port=5000-5001",
-    );
-    assert_eq!(status(&r), 200, "{r}");
-    assert!(
-        try_header(&r, "Transport").is_some_and(|t| t.contains("server_port")),
-        "{r}"
-    );
+    assert_eq!(every_spelling(|| RawPublisher::connect(port)), ALLOWED);
     server.stop().unwrap();
 }

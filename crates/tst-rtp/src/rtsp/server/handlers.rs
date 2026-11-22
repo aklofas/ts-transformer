@@ -1211,7 +1211,11 @@ mod tests {
             (
                 "a malformed header",
                 RtspMethod::Describe,
-                |n| Some(format!("Digest username=\"viewer\", nonce=\"{n}\"")),
+                |n| {
+                    Some(format!(
+                        "Digest username=\"viewer\", realm=\"tstrans\", nonce=\"{n}\""
+                    ))
+                },
                 401,
                 (0, 3),
             ),
@@ -1278,6 +1282,24 @@ mod tests {
         assert_eq!(
             rules.default_auth_failures(),
             MountRuleAuthFailures::default()
+        );
+
+        // An honest client's answer computed for the realm in force before
+        // `set_challenge` changed it is a refused credential too.
+        rules.set_challenge(AuthScheme::DigestMd5, "other").unwrap();
+        let mut session = ServerSessionState::new();
+        let mut req = make_req(RtspMethod::Describe, uri);
+        let answer = digest_answer("viewer", "pw", "DESCRIBE", uri, &session.auth_nonce);
+        req.headers.insert("authorization".into(), answer);
+        let resp = crate::rtsp::server::session::dispatch(&req, &state, &mut session);
+        assert_eq!(resp.status, 401, "an answer for the old realm");
+        assert_eq!(
+            rules.auth_failures("/live"),
+            Some(MountRuleAuthFailures {
+                publish: 1,
+                read: 5
+            }),
+            "an answer for the old realm"
         );
     }
 

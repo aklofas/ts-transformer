@@ -548,24 +548,17 @@ fn a_tls_server_refuses_udp_media_in_every_spelling() {
     server.stop().ok();
 }
 
-/// The opt-out: `allow_udp_media(true)` on an `rtsps://` server serves a
-/// reader over UDP, as through 0.10.0.
+/// The opt-out: `allow_udp_media(true)` on an `rtsps://` server serves media
+/// over UDP to readers and from publishers, as through 0.10.0.
 #[test]
 fn a_tls_server_with_udp_media_allowed_serves_it() {
-    use crate::fixtures::raw_rtsp::try_header;
     use crate::fixtures::raw_rtsp_publisher::RawPublisher;
     let certs = SelfSignedCert::generate();
     let server = tls_server(&certs, Some(true));
     let port = server.local_addr().expect("local_addr").port();
-    let r = crate::udp_media::reader_setup(
-        RawPublisher::connect_tls(port, roots(&certs)),
-        "/live",
-        "RTP/AVP;unicast;client_port=5000-5001",
-    );
-    assert!(r.starts_with("RTSP/1.0 200"), "{r}");
-    assert!(
-        try_header(&r, "Transport").is_some_and(|t| t.contains("server_port")),
-        "{r}"
+    assert_eq!(
+        crate::udp_media::every_spelling(|| RawPublisher::connect_tls(port, roots(&certs))),
+        crate::udp_media::ALLOWED
     );
     server.stop().ok();
 }

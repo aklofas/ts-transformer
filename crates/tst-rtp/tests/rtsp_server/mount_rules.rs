@@ -1914,7 +1914,13 @@ fn refused_answers_on_one_connection_are_counted_on_the_rule() {
     let mut rest = [0u8; 16];
     let closed = match tcp.read(&mut rest) {
         Ok(n) => n == 0,
-        Err(e) => e.kind() == std::io::ErrorKind::ConnectionReset,
+        // Windows reports the server's close as an abort.
+        Err(e) => matches!(
+            e.kind(),
+            std::io::ErrorKind::ConnectionReset
+                | std::io::ErrorKind::ConnectionAborted
+                | std::io::ErrorKind::BrokenPipe
+        ),
     };
     assert!(closed, "the connection is closed");
     assert_eq!(

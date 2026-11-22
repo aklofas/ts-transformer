@@ -160,16 +160,36 @@ fn digest_md5_quoted_realm_round_trips() {
 /// way GStreamer 1.24's `rtspsrc` and `rtspclientsink` answer a Digest MD5
 /// challenge: the RFC 2069 form, no `qop`, `nc` or `cnonce`, no `algorithm`.
 /// Returns the challenge and the answered response head.
-fn gstreamer_style_describe(accept_without_qop: bool) -> (String, String) {
+///
+/// The credential is the server's own (`auth_digest_md5`, realm
+/// `test-realm`) or, with `on_rule`, a `Require` rule's on `/live` under the
+/// rules table's challenge (Digest MD5, realm `tstrans`).
+fn gstreamer_style_describe(accept_without_qop: bool, on_rule: bool) -> (String, String) {
     use crate::fixtures::raw_rtsp::{request, scaled, try_header};
     use md5::{Digest as _, Md5};
+    use tst_rtp::{MountCredential, MountPolicy, MountRule};
     let mut b = RtspServerBuilder::new("rtsp://127.0.0.1:0").expect("URL parse");
-    b.auth_digest_md5("test-realm", "admin", SecretString::new("secret".into()));
+    let realm = if on_rule { "tstrans" } else { "test-realm" };
+    if !on_rule {
+        b.auth_digest_md5(realm, "admin", SecretString::new("secret".into()));
+    }
     b.accept_digest_without_qop(accept_without_qop);
     let server = b.build().expect("server build");
     server
         .add_mount("/live", make_muxer_cfg())
         .expect("add_mount");
+    if on_rule {
+        server
+            .mount_rules()
+            .set(
+                "/live",
+                MountRule::both(MountPolicy::Require(vec![MountCredential::new(
+                    "admin",
+                    SecretString::new("secret".into()),
+                )])),
+            )
+            .expect("rules.set");
+    }
     server.start().expect("server start");
     let port = server.local_addr().expect("local_addr").port();
     let uri = format!("rtsp://127.0.0.1:{port}/live");
@@ -199,14 +219,14 @@ fn gstreamer_style_describe(accept_without_qop: bool) -> (String, String) {
             .map(|b| format!("{b:02x}"))
             .collect()
     };
-    let ha1 = md5("admin:test-realm:secret".to_owned());
+    let ha1 = md5(format!("admin:{realm}:secret"));
     let ha2 = md5(format!("DESCRIBE:{uri}"));
     let response = md5(format!("{ha1}:{nonce}:{ha2}"));
     let answered = request(
         &mut tcp,
         &format!(
             "DESCRIBE {uri} RTSP/1.0\r\nCSeq: 2\r\nAuthorization: Digest username=\"admin\", \
-             realm=\"test-realm\", nonce=\"{nonce}\", uri=\"{uri}\", response=\"{response}\"\r\n\r\n"
+             realm=\"{realm}\", nonce=\"{nonce}\", uri=\"{uri}\", response=\"{response}\"\r\n\r\n"
         ),
     );
     server.stop().ok();
@@ -215,7 +235,7 @@ fn gstreamer_style_describe(accept_without_qop: bool) -> (String, String) {
 
 #[test]
 fn gstreamers_digest_answer_is_accepted_with_the_option() {
-    let (challenge, answered) = gstreamer_style_describe(true);
+    let (challenge, answered) = gstreamer_style_describe(true, false);
     assert!(challenge.contains(r#"qop="auth""#), "{challenge}");
     assert!(answered.starts_with("RTSP/1.0 200"), "{answered}");
 }
@@ -223,7 +243,7 @@ fn gstreamers_digest_answer_is_accepted_with_the_option() {
 #[test]
 fn gstreamers_digest_answer_is_refused_without_it() {
     use crate::fixtures::raw_rtsp::try_header;
-    let (challenge, answered) = gstreamer_style_describe(false);
+    let (challenge, answered) = gstreamer_style_describe(false, false);
     assert!(challenge.contains(r#"qop="auth""#), "{challenge}");
     assert!(answered.starts_with("RTSP/1.0 401"), "{answered}");
     // The same nonce: refused as a downgrade, not as a stale answer.
@@ -235,4 +255,20 @@ fn gstreamers_digest_answer_is_refused_without_it() {
             .map(str::to_owned)
     };
     assert_eq!(nonce(again), nonce(&challenge), "{again}");
+}
+
+/// The same answer to a `Require` rule's challenge: the option holds for a
+/// rule's credential as for the server's own (a publisher ingest set up
+/// through the rules table).
+#[test]
+fn gstreamers_digest_answer_to_a_require_rule_is_accepted_with_the_option() {
+    let (challenge, answered) = gstreamer_style_describe(true, true);
+    assert!(challenge.contains(r#"realm="tstrans""#), "{challenge}");
+    assert!(answered.starts_with("RTSP/1.0 200"), "{answered}");
+}
+
+#[test]
+fn gstreamers_digest_answer_to_a_require_rule_is_refused_without_it() {
+    let (_, answered) = gstreamer_style_describe(false, true);
+    assert!(answered.starts_with("RTSP/1.0 401"), "{answered}");
 }
