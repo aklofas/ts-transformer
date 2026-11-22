@@ -364,13 +364,30 @@ mod tests {
             .expect("the listener reported its bind")
             .expect("the listener bound");
 
-            // Connects as fast as it can until told to stop.
+            // Connects as fast as it can until told to stop, keeping fewer
+            // than 100 connections unaccepted: a full backlog (128) makes the
+            // kernel drop SYNs, and each connect then waits out a 1 s retry.
             let done = Arc::new(AtomicBool::new(false));
+            // Set however the round ends, so a failed round's connector stops.
+            struct Done(Arc<AtomicBool>);
+            impl Drop for Done {
+                fn drop(&mut self) {
+                    self.0.store(true, Ordering::Relaxed);
+                }
+            }
+            let _done = Done(Arc::clone(&done));
             let connector = {
                 let done = Arc::clone(&done);
+                let st = Arc::clone(&state);
                 std::thread::spawn(move || {
                     let mut held = Vec::new();
                     while !done.load(Ordering::Relaxed) && held.len() < 900 {
+                        if held.len() - st.active_sessions.load(Ordering::Relaxed).min(held.len())
+                            >= 100
+                        {
+                            std::thread::yield_now();
+                            continue;
+                        }
                         if let Ok(tcp) = std::net::TcpStream::connect(addr) {
                             held.push(tcp);
                         }
@@ -385,13 +402,13 @@ mod tests {
                 let deadline = StdInstant::now() + Duration::from_secs(10);
                 while st.active_sessions.load(Ordering::Relaxed) < 200 {
                     assert!(StdInstant::now() < deadline, "the burst never reached 200");
-                    std::hint::spin_loop();
+                    std::thread::yield_now();
                 }
                 st.stop_accepting.cancel();
                 let at_signal = st.active_sessions.load(Ordering::Relaxed);
                 while !*st.listener_closed.borrow() {
                     assert!(StdInstant::now() < deadline, "the listener never reported");
-                    std::hint::spin_loop();
+                    std::thread::yield_now();
                 }
                 (at_signal, st.active_sessions.load(Ordering::Relaxed))
             })
