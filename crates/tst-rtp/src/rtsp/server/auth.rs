@@ -154,11 +154,8 @@ pub(crate) fn verify_authorization(
     )
 }
 
-/// Like [`verify_authorization`], but accepts any credential in
-/// `credentials`, chosen by the username in the header. For Digest the nonce
-/// and the syntax checks run before the lookup, so they answer the same for
-/// every username; an unknown user otherwise fails exactly like a wrong
-/// password, so a probe cannot tell listed and unlisted users apart.
+/// [`verify_credentials_with`] with the scheme and the realm given apart and
+/// a Digest answer without `qop` refused.
 #[cfg(test)]
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn verify_credentials(
@@ -186,8 +183,12 @@ pub(crate) fn verify_credentials(
     )
 }
 
-/// [`verify_credentials`] with the scheme, the realm and the accepted
-/// answer forms given as one [`VerifyContext`].
+/// Verify the client's `Authorization:` header against any credential in
+/// `credentials`, chosen by the username in the header, under the scheme,
+/// the realm and the answer forms of `ctx`. For Digest the nonce and the
+/// syntax checks run before the lookup, so they answer the same for every
+/// username; an unknown user otherwise fails exactly like a wrong password,
+/// so a probe cannot tell listed and unlisted users apart.
 pub(crate) fn verify_credentials_with(
     auth_header: Option<&str>,
     method: &str,
