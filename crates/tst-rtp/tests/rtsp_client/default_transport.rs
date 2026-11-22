@@ -10,7 +10,7 @@ use std::sync::Arc;
 use std::thread::JoinHandle;
 
 use crate::fixtures::raw_rtsp_server::SDP_BODY;
-use tst_rtp::{RtspClientBuilder, RtspError};
+use tst_rtp::{PushDescription, RtspClientBuilder, RtspError, RtspPush};
 
 /// A peer that answers every SETUP with 461 and hands back each SETUP's
 /// `Transport` header, in order, when the connection ends. TLS when `tls`
@@ -58,6 +58,17 @@ fn serve<S: Read + Write>(mut stream: S) -> Vec<String> {
                 })
                 .unwrap_or_default()
         };
+        // A push's ANNOUNCE carries its SDP as a body: skip it, so the next
+        // request is read from its first line.
+        let body = header("Content-Length").parse::<usize>().unwrap_or(0);
+        while buf.len() < body {
+            let mut chunk = [0u8; 2048];
+            match stream.read(&mut chunk) {
+                Ok(0) | Err(_) => return transports,
+                Ok(n) => buf.extend_from_slice(&chunk[..n]),
+            }
+        }
+        buf.drain(..body);
         let cseq = header("CSeq");
         let reply = match req.split(' ').next().unwrap_or("") {
             "DESCRIBE" => format!(
@@ -84,6 +95,30 @@ fn first_setups(
     query: &str,
     builder: impl FnOnce(RtspClientBuilder) -> RtspClientBuilder,
 ) -> (Result<(), RtspError>, Vec<String>) {
+    with_peer(scheme, query, |b| {
+        let mut client = builder(b).connect().unwrap();
+        let sdp = client.describe().unwrap();
+        let result = client.setup_mp2t_auto(&sdp).map(|_| ());
+        drop(client);
+        result
+    })
+}
+
+/// Push MPEG-TS to `url_path_and_query` on a peer that refuses every SETUP:
+/// the push's outcome, and the `Transport` of each SETUP the peer saw.
+fn push_setups(scheme: &str, query: &str) -> (Result<(), RtspError>, Vec<String>) {
+    with_peer(scheme, query, |b| {
+        RtspPush::connect(b, &PushDescription::Mp2t).map(|_| ())
+    })
+}
+
+/// Run `client` against a fresh scripted peer at
+/// `<scheme>://127.0.0.1:<port>/x<query>`; its result, and what the peer saw.
+fn with_peer(
+    scheme: &str,
+    query: &str,
+    client: impl FnOnce(RtspClientBuilder) -> Result<(), RtspError>,
+) -> (Result<(), RtspError>, Vec<String>) {
     let certs = crate::fixtures::tls_certs::SelfSignedCert::generate();
     let tls = (scheme == "rtsps").then(|| {
         let key_pem = std::fs::read(&certs.key_path).unwrap();
@@ -99,10 +134,7 @@ fn first_setups(
         .unwrap()
         .no_auto_keepalive(true)
         .tls_root_certs(roots);
-    let mut client = builder(b).connect().unwrap();
-    let sdp = client.describe().unwrap();
-    let result = client.setup_mp2t_auto(&sdp).map(|_| ());
-    drop(client);
+    let result = client(b);
     (result, peer.join().unwrap())
 }
 
@@ -156,4 +188,43 @@ fn an_rtsp_url_still_prefers_udp() {
     assert_eq!(setups.len(), 2, "{setups:?}");
     assert!(!is_interleaved(&setups[0]), "{setups:?}");
     assert!(is_interleaved(&setups[1]), "{setups:?}");
+}
+
+#[test]
+fn an_rtsps_url_with_transport_tcp_asks_for_interleaved_only() {
+    let (result, setups) = first_setups("rtsps", "?transport=tcp", |b| b);
+    assert!(
+        matches!(result, Err(RtspError::Protocol { code: 461, .. })),
+        "{result:?}"
+    );
+    assert_eq!(setups.len(), 1, "{setups:?}");
+    assert!(is_interleaved(&setups[0]), "{setups:?}");
+}
+
+/// A push records over TCP-interleaved on either scheme; on `rtsps://` it
+/// asks for nothing else and does not try UDP after a refusal.
+#[test]
+fn an_rtsps_push_asks_for_interleaved_record() {
+    let (result, setups) = push_setups("rtsps", "");
+    assert!(
+        matches!(result, Err(RtspError::Protocol { code: 461, .. })),
+        "{result:?}"
+    );
+    assert_eq!(setups.len(), 1, "{setups:?}");
+    assert!(
+        is_interleaved(&setups[0]) && setups[0].contains("mode=record"),
+        "{setups:?}"
+    );
+}
+
+/// Told to use UDP, a push is refused by the client itself: recording over
+/// UDP is not supported, so no SETUP reaches the server.
+#[test]
+fn an_rtsps_push_told_to_use_udp_sends_no_setup() {
+    let (result, setups) = push_setups("rtsps", "?transport=udp");
+    assert!(
+        matches!(result, Err(RtspError::UnsupportedTransport)),
+        "{result:?}"
+    );
+    assert!(setups.is_empty(), "{setups:?}");
 }
