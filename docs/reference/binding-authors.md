@@ -506,7 +506,7 @@ baseline (by design)" for the full rationale.
   incompatible change to the ABI shape. **0** today.
 - `TST_ABI_VERSION_MINOR` — incremented on additive, source-compatible
   changes (new event kinds, new C entry points, new error codes).
-  **31** today. History (additive bumps only — major stays at 0 pre-1.0):
+  **32** today. History (additive bumps only — major stays at 0 pre-1.0):
     - `1`: receiver-surface initial drop.
     - `2`: `ManagedDemuxReceiver` wired into
       `tst-c`; `TST_EVENT_KIND_RECONNECT_DISCONTINUITY = 6` added; TS-bytes
@@ -829,6 +829,15 @@ baseline (by design)" for the full rationale.
       data was delivered last) and the matching
       `tst_*_get_source_rejected` (what the URL's `source` pin turned
       away). No existing symbol, layout, enum value or error code changed.
+    - `32` — new symbols `tst_rtsp_server_builder_allow_udp_media`
+      (whether an RTSP server carries media over UDP; left uncalled, an
+      `rtsps://` server does not), `tst_rtsp_server_builder_accept_digest_without_qop`
+      (accept the RFC 2069 Digest answer GStreamer sends) and
+      `tst_rtsp_server_builder_max_readers` (a cap on reader sessions,
+      taken at SETUP). No layout, enum value or error code changed and no
+      symbol was removed; `tst_rtsp_mount_flush` now returns the existing
+      `TST_E_CLOSED` once the server has ended or the mount was removed (a
+      behaviour change, listed in the CHANGELOG).
 - `TST_ABI_VERSION_PATCH` — incremented on internal fixes that
   preserve both shape and behaviour.
 
