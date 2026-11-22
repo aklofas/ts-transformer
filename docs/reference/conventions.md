@@ -379,7 +379,7 @@ rejected by `srt`, `tcps`, `rtp`, `rtsp(s)` and `whep(s)` URLs.
 | `ttl` | Multicast TTL / hop limit (send) | 1..=255; default 1 (unicast), 8 (multicast) | `rtp` |
 | `rtsp_version` | Version written on request lines | `1.0` or `2.0`; default `1.0` | `rtsp(s)` |
 | `tcp_keepalive` | `SO_KEEPALIVE` idle time for the control socket | seconds; default OS keepalive off | `rtsp(s)` |
-| `transport` | SETUP transport preference | `tcp` or `udp`; default prefer UDP with TCP fallback | `rtsp(s)` |
+| `transport` | SETUP transport preference | `tcp` or `udp`; default by scheme: `rtsp://` tries UDP first with TCP fallback, `rtsps://` uses TCP-interleaved | `rtsp(s)` |
 | `ca` | Custom trust anchors for a caller (the system roots otherwise) | PEM file path; `tcps` only | `tcp(s)` |
 | `cert` | Server certificate | PEM file path; `tcps` only, a listener | `tcp(s)` |
 | `connect_timeout` | TCP connect timeout per resolved address; name resolution is not bounded | seconds | `tcp(s)` |

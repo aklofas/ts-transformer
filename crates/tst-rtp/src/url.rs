@@ -515,8 +515,8 @@ pub enum RtspTransportPref {
     /// [`ForceTcp`](Self::ForceTcp); this value there is an explicit choice
     /// to send media in the clear.)
     PreferUdp,
-    /// `?transport=udp` — try UDP only; on 461, surface
-    /// `RtspError::UnsupportedTransport` without TCP retry.
+    /// `?transport=udp` — try UDP only; a 461 is returned as
+    /// `RtspError::Protocol { code: 461, .. }`, without a TCP retry.
     ForceUdp,
     /// `?transport=tcp`, or an `rtsps://` URL without the key — skip the UDP
     /// attempt; SETUP directly with
@@ -730,7 +730,7 @@ pub const URL_KEYS_RTSP: &[QueryKey<RtspUrl, RtpUrlError>] = &[
         "transport",
         &[],
         "SETUP transport preference",
-        "`tcp` or `udp`; default prefer UDP with TCP fallback",
+        "`tcp` or `udp`; default by scheme: `rtsp://` tries UDP first with TCP fallback, `rtsps://` uses TCP-interleaved",
         set_transport,
     ),
     QueryKey::new(
