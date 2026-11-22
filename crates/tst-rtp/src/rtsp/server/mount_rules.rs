@@ -9,6 +9,9 @@
 //! rule's `Inherit` takes the table's default rule for that direction; the
 //! default rule's `Inherit` is the server-wide setting.
 //!
+//! The table's challenge ([`MountRules::set_challenge`]) is the scheme and
+//! realm of every 401 the server sends, the builder credential's included.
+//!
 //! **Stability: Experimental.**
 
 use std::collections::HashMap;
@@ -23,6 +26,9 @@ use crate::rtsp::server::builder::AuthScheme;
 use crate::rtsp::server::validate_mount_path;
 
 /// One username and password a client may present.
+///
+/// A user name that contains `:` cannot authenticate while the challenge is
+/// Basic.
 ///
 /// The password never leaves the table: there is no getter, and `Debug`
 /// prints `<redacted>`.
@@ -118,7 +124,9 @@ impl RefuseStatus {
 #[derive(Clone, Debug)]
 pub enum MountPolicy {
     /// The server-wide setting: the builder's credential if one was
-    /// configured, else open.
+    /// configured, checked under the table's challenge
+    /// ([`MountRules::set_challenge`]), else open. No rule edit removes the
+    /// builder's credential.
     ///
     /// A path rule's `Inherit` takes the table's default rule for that
     /// direction; the default rule's `Inherit` is the server-wide setting.
@@ -461,9 +469,16 @@ impl MountRules {
         })
     }
 
-    /// Set the scheme and realm a [`MountPolicy::Require`] challenge offers.
-    /// Without a builder credential the challenge is Digest (MD5) with realm
-    /// `tstrans`; with one it is the builder's scheme and realm.
+    /// Set the scheme and realm of every 401 the server sends, and so the
+    /// scheme a credential is checked in: a [`MountPolicy::Require`] path's
+    /// and, on a server built with `auth_*`, the server's own credential's.
+    /// The table starts with the builder credential's scheme and realm, or
+    /// Digest (MD5) with realm `tstrans` without one. A change applies from
+    /// the next request on; a Digest answer computed for the old realm is
+    /// then refused.
+    ///
+    /// A user name that contains `:` cannot authenticate while the challenge
+    /// is Basic, the server's own credential included.
     ///
     /// # Errors
     /// - [`MountRuleError::InvalidRealm`] if `realm` holds a control byte.
@@ -821,6 +836,21 @@ mod tests {
         ));
         t.set_challenge(AuthScheme::Basic, "lab").unwrap();
         assert_eq!(t.challenge(), (AuthScheme::Basic, "lab".to_string()));
+    }
+
+    #[test]
+    fn debug_shows_the_challenge_in_use() {
+        let mut b = RtspServerBuilder::new("rtsp://127.0.0.1:0").unwrap();
+        b.auth_basic("realm", "admin", pw("secret"));
+        let t = crate::rtsp::server::initial_mount_rules(&b, RtspServerCancelHandle::new());
+        t.set_challenge(AuthScheme::DigestSha256, "lab").unwrap();
+        let d = t.decision("/a", Direction::Read);
+        assert_eq!(
+            (d.scheme, d.realm.as_str()),
+            (AuthScheme::DigestSha256, "lab")
+        );
+        let s = format!("{t:?}");
+        assert!(s.contains(r#"challenge: (DigestSha256, "lab")"#), "{s}");
     }
 
     #[test]

@@ -16,9 +16,7 @@ use bytes::Bytes;
 
 use crate::rtsp::message::{RtspMethod, RtspRequest, RtspResponse};
 use crate::rtsp::server::ServerState;
-use crate::rtsp::server::auth::{
-    AuthVerifyError, Credential, build_challenge, verify_authorization, verify_credentials,
-};
+use crate::rtsp::server::auth::{AuthVerifyError, Credential, build_challenge, verify_credentials};
 use crate::rtsp::server::builder::AuthScheme;
 use crate::rtsp::server::mount::MountEntry;
 use crate::rtsp::server::mount_rules::{Direction, MountPolicy};
@@ -180,13 +178,11 @@ pub(crate) fn authorize_request(
     let (path, dir) = rule_key_and_direction(req, session);
     let auth_header = req.headers.get("authorization").map(String::as_str);
     let credential_checked: bool;
-    // One reading of the table: the policy, and the challenge the check and
-    // its 401 use. The builder's pair still wins where it set a credential.
+    // One reading of the table: the policy, and the challenge (scheme and
+    // realm) that the check and its 401 use, the server's own credential
+    // included.
     let decision = state.mount_rules.decision(&path, dir);
-    let (scheme, realm) = match state.builder.auth.as_ref() {
-        Some(cfg) => (cfg.scheme, cfg.realm.clone()),
-        None => (decision.scheme, decision.realm),
-    };
+    let (scheme, realm) = (decision.scheme, decision.realm);
     let verified = match decision.policy {
         MountPolicy::Refuse(status) => {
             // A refusal keyed on the session's own role ends that role: a
@@ -206,11 +202,16 @@ pub(crate) fn authorize_request(
                 return Ok(()); // No auth configured — allow.
             };
             credential_checked = true;
-            verify_authorization(
+            verify_credentials(
                 auth_header,
                 method_str,
                 &req.uri,
-                auth_cfg,
+                scheme,
+                &realm,
+                &[Credential {
+                    username: &auth_cfg.username,
+                    password: &auth_cfg.password,
+                }],
                 &session.auth_nonce,
                 &mut session.auth_nc_hwm,
             )

@@ -1479,3 +1479,359 @@ fn hard_cancel_on_a_never_started_server_closes_the_rules_table() {
         Err(tst_rtp::RtspServerError::Shutdown)
     ));
 }
+
+/// A Digest-SHA-256 `Authorization` line answering `challenge`, as
+/// [`digest_md5`].
+fn digest_sha256(
+    challenge: &str,
+    nc: &Cell<u32>,
+    user: &str,
+    password: &str,
+    method: &str,
+    uri: &str,
+) -> String {
+    let sha = |s: &str| -> String {
+        sha2::Sha256::digest(s.as_bytes())
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect()
+    };
+    let realm = challenge_param(challenge, "realm").unwrap();
+    let nonce = challenge_param(challenge, "nonce").unwrap();
+    nc.set(nc.get() + 1);
+    let nc = format!("{:08x}", nc.get());
+    let ha1 = sha(&format!("{user}:{realm}:{password}"));
+    let ha2 = sha(&format!("{method}:{uri}"));
+    let resp = sha(&format!("{ha1}:{nonce}:{nc}:cafebabe:auth:{ha2}"));
+    format!(
+        r#"Authorization: Digest username="{user}", realm="{realm}", nonce="{nonce}", uri="{uri}", response="{resp}", algorithm=SHA-256, qop=auth, nc={nc}, cnonce="cafebabe""#
+    ) + "\r\n"
+}
+
+/// An `Authorization` line answering `challenge` in the scheme it offers.
+fn answer(
+    challenge: &str,
+    nc: &Cell<u32>,
+    user: &str,
+    password: &str,
+    method: &str,
+    uri: &str,
+) -> String {
+    if challenge.starts_with("Basic") {
+        basic(user, password)
+    } else if challenge_param(challenge, "algorithm").as_deref() == Some("SHA-256") {
+        digest_sha256(challenge, nc, user, password, method, uri)
+    } else {
+        digest_md5(challenge, nc, user, password, method, uri)
+    }
+}
+
+/// On one fresh connection: `method` on `path` without a credential, then
+/// (when challenged) answered with `user:password` in the scheme the
+/// challenge offers. Returns the first status, the challenge without its
+/// nonce (`-` when none) and the answered status (`-` when not challenged).
+fn attempt(port: u16, method: &str, path: &str, user: &str, password: &str) -> String {
+    let uri = format!("rtsp://127.0.0.1:{port}{path}");
+    let send = |tcp: &mut TcpStream, cseq: u32, auth: &str| {
+        if method == "ANNOUNCE" {
+            announce(tcp, &uri, cseq, auth)
+        } else {
+            request(
+                tcp,
+                &format!("{method} {uri} RTSP/1.0\r\nCSeq: {cseq}\r\n{auth}\r\n"),
+            )
+        }
+    };
+    let mut tcp = connect(port);
+    let r = send(&mut tcp, 1, "");
+    let Some(ch) = try_header(&r, "WWW-Authenticate").map(str::to_owned) else {
+        return format!("{} [-] -", status(&r));
+    };
+    let shape = if ch.starts_with("Basic") {
+        ch.clone()
+    } else {
+        format!(
+            "Digest realm={:?} algorithm={}",
+            challenge_param(&ch, "realm").unwrap_or_default(),
+            challenge_param(&ch, "algorithm").unwrap_or_default()
+        )
+    };
+    let nc = Cell::new(0);
+    let answered = send(&mut tcp, 2, &answer(&ch, &nc, user, password, method, &uri));
+    format!("{} [{shape}] {}", status(&r), status(&answered))
+}
+
+/// A started server with local mounts `/a` and `/b` and publish mounts
+/// `/pub1` to `/pub3`.
+fn served_for_classes(b: RtspServerBuilder) -> RtspServer {
+    let server = b.build().unwrap();
+    server.add_mount("/a", make_muxer_cfg()).unwrap();
+    server.add_mount("/b", make_muxer_cfg()).unwrap();
+    for i in 1..=3 {
+        server.add_publish_mount(&format!("/pub{i}")).unwrap();
+    }
+    server.start().unwrap();
+    server
+}
+
+/// What one class of server answers: a DESCRIBE of `/a` and of `/b` and an
+/// ANNOUNCE (each on a publish mount of its own, as a won ANNOUNCE holds its
+/// slot), each without a credential and then with `admin:secret`,
+/// `viewer:pw` and `admin:WRONG`.
+fn class_answers(server: &RtspServer) -> Vec<String> {
+    let port = server.local_addr().unwrap().port();
+    let mut lines = Vec::new();
+    for (method, base) in [("DESCRIBE", "/a"), ("DESCRIBE", "/b"), ("ANNOUNCE", "/pub")] {
+        let path = |i: u32| {
+            if method == "ANNOUNCE" {
+                format!("{base}{i}")
+            } else {
+                base.to_string()
+            }
+        };
+        let admin = attempt(port, method, &path(1), "admin", "secret");
+        let viewer = attempt(port, method, &path(2), "viewer", "pw");
+        let wrong = attempt(port, method, &path(3), "admin", "WRONG");
+        let last = |s: &str| s.rsplit(' ').next().unwrap().to_owned();
+        lines.push(format!(
+            "{method} {base} {admin} viewer={} wrong={}",
+            last(&viewer),
+            last(&wrong)
+        ));
+    }
+    lines
+}
+
+fn builder_basic() -> RtspServerBuilder {
+    let mut b = RtspServerBuilder::new("rtsp://127.0.0.1:0").unwrap();
+    b.auth_basic("realm", "admin", pw("secret"));
+    b
+}
+
+fn require_viewer() -> MountRule {
+    MountRule::both(MountPolicy::Require(vec![cred("viewer", "pw")]))
+}
+
+/// On a server built with a credential, `set_challenge` sets the challenge
+/// of every 401, and both the server's own credential (on an `Inherit`
+/// path) and a rule's (on a `Require` path) are checked in it.
+#[test]
+fn set_challenge_takes_effect_on_a_server_built_with_a_credential() {
+    let server = served_for_classes(builder_basic());
+    let rules = server.mount_rules();
+    rules.set("/b", require_viewer()).unwrap();
+    rules
+        .set_challenge(AuthScheme::DigestSha256, "lab")
+        .unwrap();
+    assert_eq!(
+        class_answers(&server),
+        [
+            r#"DESCRIBE /a 401 [Digest realm="lab" algorithm=SHA-256] 200 viewer=401 wrong=401"#,
+            r#"DESCRIBE /b 401 [Digest realm="lab" algorithm=SHA-256] 401 viewer=200 wrong=401"#,
+            r#"ANNOUNCE /pub 401 [Digest realm="lab" algorithm=SHA-256] 200 viewer=401 wrong=401"#,
+        ]
+    );
+    server.stop().unwrap();
+}
+
+/// The twin: a server built with a Digest credential, `set_challenge` to
+/// Basic.
+#[test]
+fn set_challenge_takes_effect_on_a_server_built_with_a_credential_from_digest_to_basic() {
+    let mut b = RtspServerBuilder::new("rtsp://127.0.0.1:0").unwrap();
+    b.auth_digest_md5("realm", "admin", pw("secret"));
+    let server = served_for_classes(b);
+    let rules = server.mount_rules();
+    rules.set("/b", require_viewer()).unwrap();
+    rules.set_challenge(AuthScheme::Basic, "lab").unwrap();
+    assert_eq!(
+        class_answers(&server),
+        [
+            r#"DESCRIBE /a 401 [Basic realm="lab"] 200 viewer=401 wrong=401"#,
+            r#"DESCRIBE /b 401 [Basic realm="lab"] 401 viewer=200 wrong=401"#,
+            r#"ANNOUNCE /pub 401 [Basic realm="lab"] 200 viewer=401 wrong=401"#,
+        ]
+    );
+    server.stop().unwrap();
+}
+
+/// Every class of credential configuration that `set_challenge` taking
+/// effect must not move answers as it did before.
+#[test]
+fn the_measured_credential_classes_are_unchanged() {
+    const OPEN: [&str; 3] = [
+        "DESCRIBE /a 200 [-] - viewer=- wrong=-",
+        "DESCRIBE /b 200 [-] - viewer=- wrong=-",
+        "ANNOUNCE /pub 200 [-] - viewer=- wrong=-",
+    ];
+    let builder_only = |ch: &str| {
+        [
+            format!("DESCRIBE /a 401 [{ch}] 200 viewer=401 wrong=401"),
+            format!("DESCRIBE /b 401 [{ch}] 200 viewer=401 wrong=401"),
+            format!("ANNOUNCE /pub 401 [{ch}] 200 viewer=401 wrong=401"),
+        ]
+    };
+    let basic_realm = r#"Basic realm="realm""#;
+    let check = |class: &str, server: RtspServer, want: &[String]| {
+        assert_eq!(class_answers(&server), want, "class {class}");
+        server.stop().unwrap();
+    };
+    let owned = |rows: [&str; 3]| rows.map(str::to_owned);
+
+    // K1: a builder credential alone, each scheme.
+    check(
+        "K1 basic",
+        served_for_classes(builder_basic()),
+        &builder_only(basic_realm),
+    );
+    let mut b = RtspServerBuilder::new("rtsp://127.0.0.1:0").unwrap();
+    b.auth_digest_md5("realm", "admin", pw("secret"));
+    check(
+        "K1 digest-md5",
+        served_for_classes(b),
+        &builder_only(r#"Digest realm="realm" algorithm=MD5"#),
+    );
+    let mut b = RtspServerBuilder::new("rtsp://127.0.0.1:0").unwrap();
+    b.auth_digest_sha256("realm", "admin", pw("secret"));
+    check(
+        "K1 digest-sha256",
+        served_for_classes(b),
+        &builder_only(r#"Digest realm="realm" algorithm=SHA-256"#),
+    );
+
+    // K2a, K2b: no builder credential; `/b` requires a rule credential,
+    // with the table's challenge and after `set_challenge`.
+    let s = served_for_classes(RtspServerBuilder::new("rtsp://127.0.0.1:0").unwrap());
+    s.mount_rules().set("/b", require_viewer()).unwrap();
+    let k2 = |ch: &str| {
+        [
+            OPEN[0].to_owned(),
+            format!("DESCRIBE /b 401 [{ch}] 401 viewer=200 wrong=401"),
+            OPEN[2].to_owned(),
+        ]
+    };
+    assert_eq!(
+        class_answers(&s),
+        k2(r#"Digest realm="tstrans" algorithm=MD5"#),
+        "class K2a"
+    );
+    s.mount_rules()
+        .set_challenge(AuthScheme::Basic, "lab")
+        .unwrap();
+    check("K2b", s, &k2(r#"Basic realm="lab""#));
+
+    // K2c: no builder credential; the default rule requires.
+    let s = served_for_classes(RtspServerBuilder::new("rtsp://127.0.0.1:0").unwrap());
+    s.mount_rules().set_default(require_viewer()).unwrap();
+    let ch = r#"Digest realm="tstrans" algorithm=MD5"#;
+    check(
+        "K2c",
+        s,
+        &[
+            format!("DESCRIBE /a 401 [{ch}] 401 viewer=200 wrong=401"),
+            format!("DESCRIBE /b 401 [{ch}] 401 viewer=200 wrong=401"),
+            format!("ANNOUNCE /pub 401 [{ch}] 401 viewer=200 wrong=401"),
+        ],
+    );
+
+    // K3: a builder credential and a `Require` path, Digest and Basic.
+    for (class, ch, b) in [
+        ("K3 digest-md5", r#"Digest realm="realm" algorithm=MD5"#, {
+            let mut b = RtspServerBuilder::new("rtsp://127.0.0.1:0").unwrap();
+            b.auth_digest_md5("realm", "admin", pw("secret"));
+            b
+        }),
+        ("K3 basic", basic_realm, builder_basic()),
+    ] {
+        let s = served_for_classes(b);
+        s.mount_rules().set("/b", require_viewer()).unwrap();
+        check(
+            class,
+            s,
+            &[
+                format!("DESCRIBE /a 401 [{ch}] 200 viewer=401 wrong=401"),
+                format!("DESCRIBE /b 401 [{ch}] 401 viewer=200 wrong=401"),
+                format!("ANNOUNCE /pub 401 [{ch}] 200 viewer=401 wrong=401"),
+            ],
+        );
+    }
+
+    // K5: nothing requires, `set_challenge` called anyway.
+    let s = served_for_classes(RtspServerBuilder::new("rtsp://127.0.0.1:0").unwrap());
+    s.mount_rules()
+        .set_challenge(AuthScheme::Basic, "lab")
+        .unwrap();
+    check("K5", s, &owned(OPEN));
+
+    // K6a: a builder credential and a builder default rule of `Open`.
+    let mut b = builder_basic();
+    b.default_mount_rule(MountRule::both(MountPolicy::Open));
+    check("K6a", served_for_classes(b), &owned(OPEN));
+
+    // K6b: a builder credential, a builder default rule that requires a rule
+    // credential, and `/b` inheriting it.
+    let mut b = builder_basic();
+    b.default_mount_rule(require_viewer());
+    let s = served_for_classes(b);
+    s.mount_rules().set("/b", MountRule::default()).unwrap();
+    check(
+        "K6b",
+        s,
+        &[
+            format!("DESCRIBE /a 401 [{basic_realm}] 401 viewer=200 wrong=401"),
+            format!("DESCRIBE /b 401 [{basic_realm}] 401 viewer=200 wrong=401"),
+            format!("ANNOUNCE /pub 401 [{basic_realm}] 401 viewer=200 wrong=401"),
+        ],
+    );
+
+    // K6c-1, K6c-2: a runtime default of `Open`, then reset.
+    let s = served_for_classes(builder_basic());
+    s.mount_rules()
+        .set_default(MountRule::both(MountPolicy::Open))
+        .unwrap();
+    assert_eq!(class_answers(&s), owned(OPEN), "class K6c-1");
+    // A runtime reset of the default rule still requires the server's
+    // credential.
+    s.mount_rules().set_default(MountRule::default()).unwrap();
+    check("K6c-2", s, &builder_only(basic_realm));
+
+    // K6d: a builder credential, a runtime default of `Refuse(403)`, `/b`
+    // open.
+    let s = served_for_classes(builder_basic());
+    s.mount_rules()
+        .set_default(MountRule::both(MountPolicy::Refuse(
+            RefuseStatus::Forbidden,
+        )))
+        .unwrap();
+    s.mount_rules()
+        .set("/b", MountRule::both(MountPolicy::Open))
+        .unwrap();
+    check(
+        "K6d",
+        s,
+        &owned([
+            "DESCRIBE /a 403 [-] - viewer=- wrong=-",
+            "DESCRIBE /b 200 [-] - viewer=- wrong=-",
+            "ANNOUNCE /pub 403 [-] - viewer=- wrong=-",
+        ]),
+    );
+
+    // K6e: a builder credential, `/b` read-open and publish-inheriting.
+    let s = served_for_classes(builder_basic());
+    s.mount_rules()
+        .set(
+            "/b",
+            MountRule::new(MountPolicy::Inherit, MountPolicy::Open),
+        )
+        .unwrap();
+    let mut want = builder_only(basic_realm);
+    want[1] = OPEN[1].to_owned();
+    check("K6e", s, &want);
+
+    // K7: no credential anywhere.
+    check(
+        "K7",
+        served_for_classes(RtspServerBuilder::new("rtsp://127.0.0.1:0").unwrap()),
+        &owned(OPEN),
+    );
+}

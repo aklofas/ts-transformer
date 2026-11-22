@@ -132,6 +132,10 @@ impl RtspServerBuilder {
     /// `auth_digest_*` methods — calling twice overwrites; calling with
     /// a different scheme at `build()` time has the final-call wins
     /// behavior (the server holds one credential).
+    ///
+    /// The scheme and realm are the server's first challenge;
+    /// [`MountRules::set_challenge`](crate::MountRules::set_challenge)
+    /// changes it for every 401, this credential's included.
     pub fn auth_basic(&mut self, realm: &str, username: &str, password: SecretString) -> &mut Self {
         self.auth = Some(ServerAuthConfig {
             scheme: AuthScheme::Basic,
@@ -142,7 +146,8 @@ impl RtspServerBuilder {
         self
     }
 
-    /// Require Digest MD5 (RFC 7616 §3.4).
+    /// Require Digest MD5 (RFC 7616 §3.4). The scheme and realm are the
+    /// server's first challenge, as for [`Self::auth_basic`].
     pub fn auth_digest_md5(
         &mut self,
         realm: &str,
@@ -158,7 +163,8 @@ impl RtspServerBuilder {
         self
     }
 
-    /// Require Digest SHA-256 (RFC 7616 §3.4).
+    /// Require Digest SHA-256 (RFC 7616 §3.4). The scheme and realm are the
+    /// server's first challenge, as for [`Self::auth_basic`].
     pub fn auth_digest_sha256(
         &mut self,
         realm: &str,
@@ -293,7 +299,9 @@ impl RtspServerBuilder {
     /// [`RtspServer::mount_rules`](crate::rtsp::server::RtspServer::mount_rules)
     /// falls back to, and the rule a path rule's `Inherit` direction takes.
     /// The default is [`MountRule::default`], which inherits the server-wide
-    /// credential for both directions. The rule is checked
+    /// credential for both directions; the rule is not taken from `auth_*`,
+    /// whose credential `Inherit` reaches and no rule edit removes. The rule
+    /// is checked
     /// at [`build`](Self::build), as
     /// [`MountRules::set_default`](crate::MountRules::set_default) checks it.
     pub fn default_mount_rule(&mut self, rule: MountRule) -> &mut Self {

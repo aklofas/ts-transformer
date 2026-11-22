@@ -9,7 +9,9 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 use secrecy::{ExposeSecret, SecretString};
 
-use crate::rtsp::server::builder::{AuthScheme, ServerAuthConfig};
+use crate::rtsp::server::builder::AuthScheme;
+#[cfg(test)]
+use crate::rtsp::server::builder::ServerAuthConfig;
 
 /// Verification result. `Ok(())` means the request is authorized; any
 /// error means the request handler should reply 401 (typically with a
@@ -128,6 +130,7 @@ pub(crate) fn build_challenge(scheme: AuthScheme, realm: &str, nonce: &str) -> S
 /// Authorization header can never be replayed (see the note at the
 /// update site in `verify_digest`). Reset it to 0 whenever the nonce
 /// is rotated.
+#[cfg(test)]
 pub(crate) fn verify_authorization(
     auth_header: Option<&str>,
     method: &str,
