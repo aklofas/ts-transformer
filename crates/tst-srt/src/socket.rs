@@ -1648,13 +1648,20 @@ mod tests {
         (i64::from(lin.l_onoff), i64::from(lin.l_linger))
     }
 
-    #[test]
-    fn disable_linger_turns_linger_off_on_a_connected_socket_loopback() {
+    /// A sender with the preset (5 s linger), connected to a loopback
+    /// listener whose peer thread holds the connection until the returned
+    /// sender is dropped; join the returned thread after that. `None` when
+    /// loopback is unavailable.
+    fn connected_preset_sender() -> Option<(
+        super::SrtSocket,
+        std::sync::mpsc::Sender<()>,
+        std::thread::JoinHandle<()>,
+    )> {
         if std::env::var_os("SKIP_LOOPBACK").is_some()
             || std::net::TcpListener::bind("127.0.0.1:0").is_err()
         {
             eprintln!("SKIP: loopback unavailable");
-            return;
+            return None;
         }
         let mut listener = crate::SrtListener::bind_with(
             &crate::config::SrtListenerConfig::default(),
@@ -1666,20 +1673,58 @@ mod tests {
         let (release, released) = std::sync::mpsc::channel::<()>();
         let peer = std::thread::spawn(move || {
             // Held until the test is done with the caller, so the
-            // connection stays CONNECTED while linger is changed.
+            // connection stays CONNECTED while the test works on it.
             let accepted = listener.accept();
             let _ = released.recv_timeout(std::time::Duration::from_secs(10));
             drop(accepted);
         });
         let connected =
             super::SrtSocket::connect_with(&super::SrtSocketConfig::sender_defaults(), addr);
-        let mut socket = match connected {
-            Ok(s) => s,
+        match connected {
+            Ok(socket) => Some((socket, release, peer)),
             Err(e) => {
                 wake.cancel();
                 let _ = peer.join();
                 panic!("connect: {e}");
             }
+        }
+    }
+
+    /// The exit guard's flag is process-wide and never reset, so a test
+    /// that sets it runs alone in a child process: this returns `true` in
+    /// the child; in the parent it re-runs this test binary on `test_name`
+    /// alone, requires a clean exit, and returns `false`.
+    fn in_own_process(test_name: &str) -> bool {
+        const CHILD: &str = "TST_SRT_SOCKET_TEST_CHILD";
+        if std::env::var_os(CHILD).is_some() {
+            return true;
+        }
+        let exe = std::env::current_exe().expect("current_exe");
+        let mut child = std::process::Command::new(exe)
+            .args([test_name, "--exact", "--nocapture", "--test-threads=1"])
+            .env(CHILD, "1")
+            .stdin(std::process::Stdio::null())
+            .spawn()
+            .expect("spawn the child test process");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(12);
+        loop {
+            if let Some(status) = child.try_wait().expect("try_wait") {
+                assert_eq!(status.code(), Some(0), "{test_name}: the child failed");
+                return false;
+            }
+            if std::time::Instant::now() >= deadline {
+                let _ = child.kill();
+                let _ = child.wait();
+                panic!("{test_name}: the child did not exit in time");
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+    }
+
+    #[test]
+    fn disable_linger_turns_linger_off_on_a_connected_socket_loopback() {
+        let Some((mut socket, release, peer)) = connected_preset_sender() else {
+            return;
         };
 
         assert_eq!(
@@ -1689,6 +1734,63 @@ mod tests {
         );
         socket.disable_linger().expect("disable_linger");
         assert_eq!(linger_of(socket.handle).0, 0, "linger is off");
+
+        drop(socket);
+        drop(release);
+        peer.join().expect("peer thread");
+    }
+
+    /// Once process exit has started nothing new enters libsrt: the set is
+    /// refused and the socket keeps its linger.
+    #[test]
+    fn disable_linger_is_refused_once_process_exit_has_started_on_loopback() {
+        if !in_own_process(
+            "socket::tests::disable_linger_is_refused_once_process_exit_has_started_on_loopback",
+        ) {
+            return;
+        }
+        let Some((mut socket, release, peer)) = connected_preset_sender() else {
+            return;
+        };
+        crate::exit_guard::set_exiting_for_test();
+
+        assert!(
+            matches!(
+                socket.disable_linger(),
+                Err(crate::error::OptionError::InvalidState)
+            ),
+            "disable_linger reached libsrt after exit had started"
+        );
+        assert_eq!(linger_of(socket.handle), (1, 5), "linger is unchanged");
+
+        drop(socket);
+        drop(release);
+        peer.join().expect("peer thread");
+    }
+
+    /// Once process exit has started the reading does not enter libsrt: it
+    /// is `None` where the connected socket read `Some` just before.
+    #[test]
+    fn peer_activity_is_none_once_process_exit_has_started_on_loopback() {
+        if !in_own_process(
+            "socket::tests::peer_activity_is_none_once_process_exit_has_started_on_loopback",
+        ) {
+            return;
+        }
+        let Some((socket, release, peer)) = connected_preset_sender() else {
+            return;
+        };
+        assert!(
+            socket.peer_activity().is_some(),
+            "a connected socket has a reading"
+        );
+        crate::exit_guard::set_exiting_for_test();
+
+        assert_eq!(
+            socket.peer_activity(),
+            None,
+            "the reading entered libsrt after exit had started"
+        );
 
         drop(socket);
         drop(release);
