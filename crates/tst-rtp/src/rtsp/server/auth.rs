@@ -121,7 +121,8 @@ pub(crate) fn build_challenge(scheme: AuthScheme, realm: &str, nonce: &str) -> S
 /// For Digest auth, `expected_nonce` is the value the server most
 /// recently emitted in `WWW-Authenticate: ... nonce=...` for this
 /// session. Mismatches surface as `AuthVerifyError::StaleNonce`, which
-/// the request handler should re-challenge with `stale=true`.
+/// the request handler answers with a fresh nonce in a new challenge
+/// (without a `stale=` parameter).
 ///
 /// `nc_hwm` is the per-session nonce-count high-water mark used to
 /// reject nc replays. It advances whenever a structurally valid Digest

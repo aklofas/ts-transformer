@@ -248,8 +248,9 @@ pub(crate) fn authorize_request(
             Ok(())
         }
         Err(AuthVerifyError::StaleNonce) => {
-            // Surface stale=true so the client knows to retry with the
-            // new nonce instead of treating it as a credentials error.
+            // A 401 with a fresh nonce (the old one is rotated out). The
+            // challenge carries no `stale=` parameter, so the client cannot
+            // tell this 401 from a refused credential.
             Err(challenge_response(req, session, true, scheme, realm))
         }
         Err(_) => {
