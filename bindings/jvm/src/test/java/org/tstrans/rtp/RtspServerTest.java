@@ -198,6 +198,41 @@ class RtspServerTest {
         }
     }
 
+    /**
+     * With {@code maxReaders(1)} below {@code maxSessions(4)}, one reader plays and the next
+     * reader's SETUP reads 453 and its connection is closed; this library's client reports it
+     * as {@code PROTOCOL}. Swapping the two values (a cap of 4, one session) fails both halves.
+     */
+    @Test @Timeout(15)
+    void aReaderOverTheCapIsRefusedAndOneUnderItPlays() throws Exception {
+        RtspServerConfig cfg = RtspServerConfig.builder()
+            .bindAddr("127.0.0.1:0").maxSessions(4).maxReaders(1).build();
+        try (RtspServer s = RtspServer.start(cfg);
+             MountHandle m = s.addUnicastMount("/live", roundtripConfig());
+             Raw first = Raw.connect(port(s))) {
+            int port = port(s);
+            String uri = "rtsp://127.0.0.1:" + port + "/live";
+            String setup = first.request("SETUP " + uri + "/trackID=0",
+                "Transport: RTP/AVP/TCP;unicast;interleaved=0-1\r\n");
+            assertEquals(200, Raw.status(setup), setup);
+            String sid = rtspHeader(setup, "Session").split(";")[0].trim();
+            String play = first.request("PLAY " + uri, "Session: " + sid + "\r\n");
+            assertEquals(200, Raw.status(play), play);
+
+            try (Raw second = Raw.connect(port)) {
+                String refused = second.request("SETUP " + uri + "/trackID=0",
+                    "Transport: RTP/AVP/TCP;unicast;interleaved=0-1\r\n");
+                assertEquals(453, Raw.status(refused), refused);
+                assertTrue(second.closedByPeer(), "the refused reader's connection stays open");
+            }
+            RtspClientConfig client = RtspClientConfig.builder(uri)
+                .transportPref(TransportPref.TCP).keepalive(false).build();
+            RtspException e = assertThrows(RtspException.class, () -> RtspClient.connect(client));
+            assertEquals(RtspException.Kind.PROTOCOL, e.kind(), e.getMessage());
+            assertTrue(e.getMessage().contains("453"), e.getMessage());
+        }
+    }
+
     /** A server that does not allow UDP media refuses a multicast mount before it exists. */
     @Test @Timeout(15)
     void aMulticastMountIsRefusedWhereUdpMediaIsOff() throws Exception {
@@ -518,6 +553,20 @@ class RtspServerTest {
                 }
             }
             return resp;
+        }
+
+        /**
+         * Whether the server ends the connection: a read returns the end of the stream, or a
+         * reset where the platform reports one; false when bytes or nothing arrive in 5 s.
+         */
+        boolean closedByPeer() throws IOException {
+            try {
+                return in.read() < 0;
+            } catch (java.net.SocketTimeoutException e) {
+                return false;
+            } catch (IOException reset) {
+                return true;
+            }
         }
 
         static int status(String resp) {

@@ -1,6 +1,7 @@
 package org.tstrans.rtp;
 
 import java.util.Optional;
+import java.util.OptionalInt;
 import org.tstrans.Redact;
 
 /**
@@ -22,6 +23,7 @@ public final class RtspServerConfig {
     private final String bindAddr;
     private final Object auth;            // BasicAuth | DigestAuth | null
     private final int maxSessions;
+    private final int maxReaders;   // -1: unset
     private final long sessionTimeoutSecs;
     private final int fanoutCapacity;
     private final long gracefulShutdownDrainMs;
@@ -38,6 +40,7 @@ public final class RtspServerConfig {
         this.bindAddr = b.bindAddr;
         this.auth = b.auth;
         this.maxSessions = b.maxSessions;
+        this.maxReaders = b.maxReaders == null ? -1 : b.maxReaders;
         this.sessionTimeoutSecs = b.sessionTimeoutSecs;
         this.fanoutCapacity = b.fanoutCapacity;
         this.gracefulShutdownDrainMs = b.gracefulShutdownDrainMs;
@@ -64,6 +67,14 @@ public final class RtspServerConfig {
     public Optional<Object> auth() { return Optional.ofNullable(auth); }
 
     public int maxSessions() { return maxSessions; }
+
+    /**
+     * The cap on reader sessions at once, if set (see {@link Builder#maxReaders(int)});
+     * empty (the default) means no cap besides {@link #maxSessions()}.
+     */
+    public OptionalInt maxReaders() {
+        return maxReaders < 0 ? OptionalInt.empty() : OptionalInt.of(maxReaders);
+    }
     public long sessionTimeoutSecs() { return sessionTimeoutSecs; }
     public int fanoutCapacity() { return fanoutCapacity; }
     public long gracefulShutdownDrainMs() { return gracefulShutdownDrainMs; }
@@ -128,6 +139,7 @@ public final class RtspServerConfig {
         return "RtspServerConfig(bindAddr=" + Redact.url(bindAddr)
             + ", auth=" + (auth != null ? "<auth>" : "None")
             + ", maxSessions=" + maxSessions
+            + ", maxReaders=" + (maxReaders < 0 ? "None" : Integer.toString(maxReaders))
             + ", sessionTimeoutSecs=" + sessionTimeoutSecs
             + ", fanoutCapacity=" + fanoutCapacity
             + ", gracefulShutdownDrainMs=" + gracefulShutdownDrainMs
@@ -146,6 +158,7 @@ public final class RtspServerConfig {
         private String bindAddr = "0.0.0.0:8554";
         private Object auth;
         private int maxSessions = 100;
+        private Integer maxReaders;   // null: unset
         private long sessionTimeoutSecs = 60;
         private int fanoutCapacity = 256;
         private long gracefulShutdownDrainMs = 2000;
@@ -175,6 +188,27 @@ public final class RtspServerConfig {
         }
 
         public Builder maxSessions(int v) { this.maxSessions = v; return this; }
+
+        /**
+         * Cap on reader sessions at once. A reader holds a slot from its SETUP to the end of
+         * its role: its TEARDOWN, a refusal on its own mount or the end of its connection; a
+         * reader set up again keeps the one slot it holds. Readers of a multicast mount count;
+         * publishers do not. A reader's SETUP over the cap is answered {@code 453 Not Enough
+         * Bandwidth} and its connection is closed after the reply (this library's client
+         * reports it as {@code RtspException} of kind {@code PROTOCOL}).
+         *
+         * <p>Unset (the default): no cap besides {@link #maxSessions(int)}. {@code 0}: no
+         * readers at all, an ingest-only server. With {@code n} below {@code maxSessions} the
+         * difference can never be held by readers, so readers cannot use up every connection
+         * of a server that also takes publishers; a cap at or above {@code maxSessions}
+         * protects nothing. A connection without a session still holds one of the {@code
+         * maxSessions} for up to 30&nbsp;s, so a publisher's connection is not promised.
+         *
+         * <p><b>Stability: Provisional.</b>
+         *
+         * @param v the cap, {@code 0} or more ({@link #build()} refuses a negative one)
+         */
+        public Builder maxReaders(int v) { this.maxReaders = v; return this; }
         public Builder sessionTimeoutSecs(long v) { this.sessionTimeoutSecs = v; return this; }
         public Builder fanoutCapacity(int v) { this.fanoutCapacity = v; return this; }
         public Builder gracefulShutdownDrainMs(long v) { this.gracefulShutdownDrainMs = v; return this; }
@@ -271,6 +305,8 @@ public final class RtspServerConfig {
         public RtspServerConfig build() {
             if (maxSessions <= 0)
                 throw new IllegalArgumentException("maxSessions must be > 0; got " + maxSessions);
+            if (maxReaders != null && maxReaders < 0)
+                throw new IllegalArgumentException("maxReaders must be >= 0; got " + maxReaders);
             if (sessionTimeoutSecs <= 0)
                 throw new IllegalArgumentException(
                     "sessionTimeoutSecs must be > 0; got " + sessionTimeoutSecs);

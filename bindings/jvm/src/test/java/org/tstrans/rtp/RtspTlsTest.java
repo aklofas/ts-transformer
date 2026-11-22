@@ -9,20 +9,31 @@ import static org.tstrans.TestSupport.syntheticH264Idr;
 
 import java.io.DataInputStream;
 import java.io.InputStream;
+import java.io.OutputStream;
+import java.nio.charset.StandardCharsets;
 import java.net.DatagramSocket;
 import java.net.InetAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.security.KeyFactory;
 import java.security.KeyStore;
+import java.security.PrivateKey;
+import java.security.cert.Certificate;
 import java.security.cert.CertificateFactory;
+import java.security.spec.PKCS8EncodedKeySpec;
+import java.util.Base64;
+import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.time.Duration;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
+import javax.net.ssl.KeyManagerFactory;
 import javax.net.ssl.SSLContext;
+import javax.net.ssl.SSLServerSocket;
 import javax.net.ssl.SSLSocket;
 import javax.net.ssl.TrustManagerFactory;
 import org.junit.jupiter.api.Test;
@@ -299,6 +310,104 @@ class RtspTlsTest {
                 }
             }
         }
+    }
+
+    /**
+     * An {@code rtsps://} pull with the default configuration ({@link TransportPref#AUTO}, no
+     * {@code transport} key) asks for TCP-interleaved media in its first SETUP: the media
+     * stays inside the TLS connection. The peer is a TLS listener that records the SETUPs
+     * and answers every request 200.
+     */
+    @Test
+    @Timeout(TIMEOUT_SEC)
+    void rtspsPullWithTheDefaultConfigAsksForInterleaved() throws Exception {
+        assumeTrue(isLinux(), "live RTSP tests gated to Linux");
+        Path cert = fixtureDir().resolve("cert.pem");
+        Path key = fixtureDir().resolve("key.pem");
+        assumeTrue(Files.isRegularFile(cert) && Files.isRegularFile(key),
+            "committed TLS fixture not reachable from test workingDir");
+        List<String> setups = new CopyOnWriteArrayList<>();
+        try (SSLServerSocket listener = (SSLServerSocket) serving(cert, key)
+                .getServerSocketFactory()
+                .createServerSocket(0, 1, InetAddress.getLoopbackAddress())) {
+            Thread peer = new Thread(() -> answerEverything(listener, setups), "rtsps-peer");
+            peer.setDaemon(true);
+            peer.start();
+            String url = "rtsps://127.0.0.1:" + listener.getLocalPort() + "/x";
+            var cfg = RtspClientConfig.builder(url)
+                .tlsRootCertsPem(Files.readAllBytes(cert)).keepalive(false).build();
+            assertEquals(TransportPref.AUTO, cfg.transportPref());
+            try (RtspSession session = RtspClient.connect(cfg)) {
+                assertFalse(session.isTornDown());
+            }
+            peer.join(TimeUnit.SECONDS.toMillis(5));
+        }
+        assertFalse(setups.isEmpty(), "no SETUP reached the peer");
+        String first = RawRtspPeer.header(setups.get(0), "Transport");
+        assertTrue(first.startsWith("RTP/AVP/TCP") && first.contains("interleaved="), first);
+        assertEquals(1, setups.size(), () -> "more than one SETUP: " + setups);
+    }
+
+    /** One TLS connection: every request is answered 200; a SETUP is recorded and echoed. */
+    private static void answerEverything(SSLServerSocket listener, List<String> setups) {
+        try (Socket sock = listener.accept()) {
+            sock.setSoTimeout(10_000);
+            InputStream in = sock.getInputStream();
+            OutputStream out = sock.getOutputStream();
+            String req;
+            while ((req = RawRtspPeer.readRequest(in)) != null) {
+                String method = req.split(" ", 2)[0];
+                String extra = "";
+                byte[] body = new byte[0];
+                switch (method) {
+                    case "OPTIONS" ->
+                        extra = "Public: OPTIONS, DESCRIBE, SETUP, PLAY, TEARDOWN\r\n";
+                    case "DESCRIBE" -> {
+                        body = RawRtspPeer.MP2T_SDP.getBytes(StandardCharsets.US_ASCII);
+                        extra = "Content-Type: application/sdp\r\nContent-Length: " + body.length
+                            + "\r\n";
+                    }
+                    case "SETUP" -> {
+                        setups.add(req);
+                        extra = "Session: DEADBEEF;timeout=60\r\nTransport: "
+                            + RawRtspPeer.header(req, "Transport") + "\r\n";
+                    }
+                    default -> extra = "Session: DEADBEEF\r\n";
+                }
+                out.write(("RTSP/1.0 200 OK\r\nCSeq: " + RawRtspPeer.header(req, "CSeq") + "\r\n"
+                    + extra + "\r\n").getBytes(StandardCharsets.US_ASCII));
+                out.write(body);
+                out.flush();
+            }
+        } catch (Exception ignored) {
+            // the client closed the connection; the assertions read what was recorded
+        }
+    }
+
+    /** A TLS context that serves the committed fixture certificate and its PKCS#8 key. */
+    private static SSLContext serving(Path cert, Path key) throws Exception {
+        String pem = Files.readString(key)
+            .replaceAll("-----[A-Z ]+-----", "").replaceAll("\\s", "");
+        PKCS8EncodedKeySpec spec = new PKCS8EncodedKeySpec(Base64.getDecoder().decode(pem));
+        PrivateKey pk;
+        try {
+            pk = KeyFactory.getInstance("EC").generatePrivate(spec);
+        } catch (java.security.spec.InvalidKeySpecException notEc) {
+            pk = KeyFactory.getInstance("RSA").generatePrivate(spec);
+        }
+        Certificate c;
+        try (InputStream in = Files.newInputStream(cert)) {
+            c = CertificateFactory.getInstance("X.509").generateCertificate(in);
+        }
+        KeyStore store = KeyStore.getInstance(KeyStore.getDefaultType());
+        store.load(null, null);
+        store.setKeyEntry("fixture", pk, new char[0], new Certificate[] {c});
+        KeyManagerFactory kmf =
+            KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm());
+        kmf.init(store, new char[0]);
+        SSLContext ctx = SSLContext.getInstance("TLS");
+        ctx.init(kmf.getKeyManagers(), null, null);
+        return ctx;
     }
 
     /** A TLS context that trusts the committed self-signed fixture certificate alone. */

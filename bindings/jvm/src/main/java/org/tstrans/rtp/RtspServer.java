@@ -80,7 +80,7 @@ public final class RtspServer extends NativeHandle {
         MountPolicy dr = dflt == null ? null : dflt.read();
         long h = nStart(
             config.bindAddr(),
-            config.maxSessions(), config.sessionTimeoutSecs(),
+            config.maxSessions(), config.maxReaders().orElse(-1), config.sessionTimeoutSecs(),
             config.fanoutCapacity(), config.gracefulShutdownDrainMs(),
             authScheme, realm, user, password,
             config.tlsCert().orElse(null), config.tlsKey().orElse(null),
@@ -352,7 +352,8 @@ public final class RtspServer extends NativeHandle {
 
     @Override protected void nativeClose(long h) { nClose(h); }
 
-    private static native long nStart(String bindAddr, long maxSessions, long sessionTimeoutSecs,
+    private static native long nStart(String bindAddr, long maxSessions, long maxReaders,
+        long sessionTimeoutSecs,
         long fanoutCapacity, long gracefulShutdownDrainMs, int authScheme, String authRealm,
         String authUser, String authPassword, String tlsCert, String tlsKey,
         boolean acceptUnregisteredPublishers, boolean endPublishMountOnPublisherExit,

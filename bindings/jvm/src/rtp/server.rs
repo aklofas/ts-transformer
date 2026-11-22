@@ -141,12 +141,14 @@ jni_native! {
     /// build()+start(). Returns a `Box<RtspServer>` handle, or 0 with a pending exception.
     /// `authScheme`: -1 none / 0 basic / 1 digest-md5 / 2 digest-sha256.
     /// `allowUdpMedia`: -1 unset (decided by the bind's scheme) / 0 no / 1 yes.
+    /// `maxReaders`: -1 unset (no reader cap).
     #[allow(clippy::too_many_arguments)]
     fn Java_org_tstrans_rtp_RtspServer_nStart<'local>(
         env,
         _class,
         bind_addr: JString<'local>,
         max_sessions: jlong,
+        max_readers: jlong,
         session_timeout_secs: jlong,
         fanout_capacity: jlong,
         graceful_shutdown_drain_ms: jlong,
@@ -263,6 +265,9 @@ jni_native! {
                 ))
                 .accept_unregistered_publishers(accept_unregistered_publishers)
                 .end_publish_mount_on_publisher_exit(end_publish_mount_on_publisher_exit);
+            if max_readers >= 0 {
+                builder.max_readers(max_readers as usize);
+            }
             if allow_udp_media >= 0 {
                 builder.allow_udp_media(allow_udp_media > 0);
             }

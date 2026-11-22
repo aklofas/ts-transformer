@@ -21,6 +21,7 @@ class RtspServerConfigTest {
         assertFalse(c.endPublishMountOnPublisherExit());
         assertEquals(0L, c.publishIdleTimeoutMs());
         assertTrue(c.allowUdpMedia().isEmpty());
+        assertTrue(c.maxReaders().isEmpty());
         assertFalse(c.acceptDigestWithoutQop());
     }
 
@@ -32,6 +33,18 @@ class RtspServerConfigTest {
         RtspServerConfig on = RtspServerConfig.builder().allowUdpMedia(true).build();
         assertEquals(java.util.Optional.of(true), on.allowUdpMedia());
         assertTrue(RtspServerConfig.builder().build().toString().contains("allowUdpMedia=None"));
+    }
+
+    @Test
+    void maxReadersRoundTripsAndRefusesANegativeCap() {
+        RtspServerConfig two = RtspServerConfig.builder().maxReaders(2).build();
+        assertEquals(java.util.OptionalInt.of(2), two.maxReaders());
+        assertTrue(two.toString().contains("maxReaders=2"));
+        assertEquals(java.util.OptionalInt.of(0),
+            RtspServerConfig.builder().maxReaders(0).build().maxReaders());
+        assertTrue(RtspServerConfig.builder().build().toString().contains("maxReaders=None"));
+        assertThrows(IllegalArgumentException.class,
+            () -> RtspServerConfig.builder().maxReaders(-1).build());
     }
 
     @Test

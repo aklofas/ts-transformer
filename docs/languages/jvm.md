@@ -2659,7 +2659,12 @@ try (RtspSession session = RtspClient.connect(cfg);
   an empty bundle throw `RtspException` of kind `TLS` before any network I/O.
 - **`transportPref` and `rtspVersion` apply.** A non-default value overrides the URL's
   `?transport=udp|tcp` / `?rtsp_version=` query (`AUTO` and `V1_0` leave the URL in
-  charge), as in tst-py and the C builder. `DigestAuth.algorithm` is
+  charge), as in tst-py and the C builder. Left in charge, an `rtsp://` URL asks
+  for UDP first with TCP fallback on 461, and an `rtsps://` URL asks for
+  TCP-interleaved only, so the media stays inside the TLS connection (through
+  0.10.0 it asked for UDP first and, where the server agreed, received the
+  media unencrypted); `?transport=udp` or `TransportPref.UDP` asks for UDP.
+  `DigestAuth.algorithm` is
   retained for introspection only; the server's
   `WWW-Authenticate` challenge selects the actual digest algorithm.
 - **`stats()`** returns a zeroed `RtspStats` for now (RTCP counters wire in later).
@@ -2729,7 +2734,19 @@ try (RtspServer server = RtspServer.start(cfg);
   `sessionTimeoutSecs`, `fanoutCapacity`, `gracefulShutdownDrainMs`,
   `tlsCert`, `tlsKey`, `acceptUnregisteredPublishers`,
   `endPublishMountOnPublisherExit`, `publishIdleTimeoutMs`, `allowUdpMedia`,
-  `acceptDigestWithoutQop`.
+  `acceptDigestWithoutQop`, `maxReaders`.
+- **`maxReaders(n)` caps reader sessions.** A reader holds a slot from its
+  SETUP to the end of its role (TEARDOWN, a refusal on its own mount, the end
+  of its connection); readers of a multicast mount count, publishers do not.
+  A reader over the cap is answered `453 Not Enough Bandwidth` and
+  disconnected (this library's client reports `RtspException` of kind
+  `PROTOCOL`). Unset (`maxReaders()` empty) means no cap; a negative value
+  makes `build()` throw `IllegalArgumentException`. Gotchas: `maxReaders(0)`
+  means no readers at all (an ingest-only server), while `maxSessions(0)` is
+  refused by `build()`; a cap at or above `maxSessions` protects nothing,
+  only one below it keeps connections free for publishers; a connection
+  without a session still holds one of the `maxSessions` for up to 30 s, so
+  a publisher's connection is not promised.
 - **Mount errors are `RtspException`.** All `pushVideo`/`pushKlv`/
   `pushAudio`/`pushSubtitle`/`pushData` calls on `MountHandle` throw `RtspException` of kind
   `MOUNT` when the muxer refuses the frame (e.g. a stream the config does not
