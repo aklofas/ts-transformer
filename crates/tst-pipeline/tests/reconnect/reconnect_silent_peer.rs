@@ -1,7 +1,7 @@
 //! Silent-peer detection on a managed sender (`with_silent_peer_timeout`),
 //! driven by a scripted inner whose peer reading the test controls.
 //!
-//! The windows are 20 to 100 ms. A test that waits for a trip waits on a
+//! The windows are 20 to 200 ms. A test that waits for a trip waits on a
 //! counter with a deadline: load can only delay a trip. A test that asserts
 //! that NO trip happens sends one message after its pause and checks that
 //! very send, so a preempted thread cannot make it fail.
@@ -607,20 +607,31 @@ fn a_cancel_after_a_trip_does_not_fire_the_abandoned_connection() {
     );
 }
 
+/// The window of the tests whose trip comes from a worker draining into a
+/// slow replacement. A trip needs one window of drain sends with no gap of
+/// half the window between two of them: a longer gap restarts the count.
+/// Each drain send sleeps `DRAIN_PAUSE`, so a send can wake up to 95 ms late
+/// and still keep the count. The window is not small because the drain is
+/// paced by sleeps: a 50 ms window leaves 20 ms of slack, and a loaded
+/// runner that wakes a sleeping thread that late again and again postpones
+/// the trip by seconds, or past the deadline.
+const DRAIN_W: Duration = Duration::from_millis(200);
+
+/// The pause inside each send of a slow replacement.
+const DRAIN_PAUSE: Duration = Duration::from_millis(5);
+
 #[test]
 fn a_trip_inside_the_background_drain_keeps_the_message_and_reconnects() {
     let (initial, old) = Scripted::new(Reading::Frozen(1));
     // The first replacement is silent too, and slow enough that draining
     // the backlog into it takes many windows; each send stays far under
     // half the window, so the drain's own sends never restart the count.
-    let (mut slow, _) = Scripted::new(Reading::Frozen(1));
-    slow.pause = W / 10;
-    let factory = Factory::with([slow]);
+    let factory = Factory::with([slow(Reading::Frozen(1))]);
     let p = policy(ReconnectMode::Background)
         .with_gap_buffer_capacity(BACKLOG as usize)
         // The backlog is queued while the worker waits out its first step.
         .with_backoff(BackoffStrategy::Constant(Duration::from_millis(200)));
-    let mut m = armed(initial, &factory, p, W);
+    let mut m = armed(initial, &factory, p, DRAIN_W);
     let stats = m.stats_handle();
     let mut next = 0;
     assert!(send_until(&mut m, &mut next, |_| old
@@ -659,21 +670,19 @@ fn a_trip_inside_the_background_drain_keeps_the_message_and_reconnects() {
 
 #[test]
 fn a_trip_behind_a_full_reject_backlog_restarts_the_worker() {
-    let window = Duration::from_millis(30);
     let (mut initial, _) = Scripted::new(Reading::Frozen(1));
     initial.break_after = Some(0);
     // The replacement is silent and drains slower than the producer
     // offers, so its backlog stays full while the producer keeps up.
-    let (mut slow, _) = Scripted::new(Reading::Frozen(1));
-    slow.pause = window / 10;
-    let factory = Factory::with([slow]);
+    let factory = Factory::with([slow(Reading::Frozen(1))]);
     let p = policy(ReconnectMode::Background)
-        // Twenty held messages at 3 ms each outlast the 30 ms window twice,
-        // so the drain into the silent replacement trips on the held
-        // backlog alone.
-        .with_gap_buffer_capacity(20)
+        // A hundred held messages at 5 ms each (500 ms) outlast the 200 ms
+        // window twice, so the drain into the silent replacement trips on
+        // the held backlog alone; each of its sends has 95 ms of slack
+        // before a late wake-up would restart the count (see `DRAIN_W`).
+        .with_gap_buffer_capacity(100)
         .with_overflow_policy(OverflowPolicy::Reject);
-    let mut m = armed(initial, &factory, p, window);
+    let mut m = armed(initial, &factory, p, DRAIN_W);
     let stats = m.stats_handle();
     let deadline = Instant::now() + scaled(Duration::from_secs(5));
     // The worker's dial is held until the backlog is full and a message
@@ -931,15 +940,16 @@ fn a_give_up_starts_the_next_outage_with_a_fresh_budget() {
 /// many windows.
 fn slow(reading: Reading) -> Scripted {
     let (mut s, _) = Scripted::new(reading);
-    s.pause = W / 10;
+    s.pause = DRAIN_PAUSE;
     s
 }
 
 /// A backlog that outlasts the drain trips it is queued for by two orders
-/// of magnitude (a trip takes about ten 5 ms drain sends), so a slow
-/// machine can postpone those trips but not push them past its end. A
-/// test that passes ends its worker long before it is drained.
-const BACKLOG: u32 = 1_000;
+/// of magnitude (a trip takes about forty drain sends: `DRAIN_W` over
+/// `DRAIN_PAUSE`), so a slow machine can postpone those trips but not push
+/// them past its end. A test that passes ends its worker long before it is
+/// drained.
+const BACKLOG: u32 = 4_000;
 
 /// Trips the initial connection, then queues `n` messages behind the
 /// worker without waiting.
@@ -965,7 +975,7 @@ fn a_drain_that_trips_on_every_replacement_runs_out_the_budget() {
         policy(ReconnectMode::Background)
             .with_max_attempts(Some(3))
             .with_gap_buffer_capacity(BACKLOG as usize),
-        W,
+        DRAIN_W,
     );
     let stats = m.stats_handle();
     trip_then_queue(&mut m, &initial_seen, BACKLOG);
@@ -1032,7 +1042,7 @@ fn an_answer_inside_the_drain_restores_the_budget() {
             policy(ReconnectMode::Background)
                 .with_max_attempts(Some(1))
                 .with_gap_buffer_capacity(BACKLOG as usize),
-            W,
+            DRAIN_W,
         );
         let stats = m.stats_handle();
         trip_then_queue(&mut m, &initial_seen, BACKLOG);
