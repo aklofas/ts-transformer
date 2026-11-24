@@ -210,7 +210,9 @@ impl MuxerConfig {
     /// Strict by default: any stream the muxer cannot represent — DVB
     /// subtitling/teletext streams (whose per-stream parameters such as
     /// language and page IDs are not recoverable from the PMT entry
-    /// alone) — fails the conversion with
+    /// alone), and unknown streams whose stream type is carried in
+    /// sections (0x05, 0x13, 0x16, 0x2C, 0x2F, 0x30: a Data stream writes
+    /// PES) — fails the conversion with
     /// [`MuxError::ConfigInvalid`](crate::error::MuxError::ConfigInvalid)
     /// naming every offender. Pass the offenders' kinds in `drop` (e.g.
     /// `&[StreamKindTag::Subtitle]`) to exclude those streams instead; see
@@ -255,13 +257,19 @@ impl MuxerConfig {
     ///   bytes via
     ///   [`Muxer::push_video_wire_to`](crate::mpegts::mux::Muxer::push_video_wire_to)
     ///   to preserve the original PES framing.
-    /// - **PMT descriptor preservation**: raw PMT descriptors are preserved
-    ///   byte-for-byte (tag, length, body, and order) for ALL stream kinds —
-    ///   video, audio, KLV (sync and async), CEA-708, WebVTT, and Unknown/Data.
-    ///   Auto-emitted descriptors (KLVA/AV01/AC-3 Registration, ISO-639 0x0A,
-    ///   subtitle codec markers) are suppressed when the caller-supplied
-    ///   descriptor set already contains an equivalent, so there are no
-    ///   duplicate descriptors in the output PMT.
+    /// - **PMT descriptor preservation**: the stream loops' raw PMT
+    ///   descriptors are preserved byte-for-byte (tag, length, body, and
+    ///   order) for ALL stream kinds — video, audio, KLV (sync and async),
+    ///   CEA-708, WebVTT, and Unknown/Data. Auto-emitted descriptors
+    ///   (KLVA/AV01/AC-3 Registration, ISO-639 0x0A, subtitle codec markers)
+    ///   are suppressed when the caller-supplied descriptor set already
+    ///   contains an equivalent, so there are no duplicate descriptors in the
+    ///   output PMT.
+    /// - **Not carried**: the PMT's program_info loop, the PAT's
+    ///   transport_stream_id and the table versions. Add program descriptors
+    ///   by hand through
+    ///   [`MuxerProgramConfig::program_descriptors`] on the returned
+    ///   config.
     /// - **PCR copy rule**: the demuxed `pcr_pid` is copied iff it equals
     ///   the PID of a kept video or audio stream. KLV, data, and subtitle
     ///   PIDs are PCR-ineligible — the PCR pin is not copied (an explicit
@@ -405,6 +413,14 @@ impl MuxerConfig {
                      recoverable from the PMT)",
                     s.pid
                 )),
+                // The muxer writes PES on a Data stream; a source PID whose
+                // stream type carries sections cannot be copied.
+                DemuxKind::Unknown(st) if SECTION_STREAM_TYPES.contains(st) => {
+                    offenders.push(format!(
+                        "pid 0x{:04X} (stream_type 0x{st:02X} is carried in sections)",
+                        s.pid
+                    ))
+                }
                 DemuxKind::Unknown(st) => {
                     // carries_pts: a PES-level property the PMT cannot
                     // declare; true is the observed norm for private data
@@ -731,6 +747,14 @@ impl MuxerConfig {
                     pid, stream_type, ..
                 } = spec
                 {
+                    if SECTION_STREAM_TYPES.contains(stream_type) {
+                        return Err(MuxError::ConfigInvalid {
+                            reason: format!(
+                                "data stream pid 0x{pid:04X}: stream_type 0x{stream_type:02X} is \
+                                 carried in sections (H.222.0 Table 2-34); Data streams emit PES",
+                            ),
+                        });
+                    }
                     // tlv[0] / tlv[2..] are safe: the well-formedness walk
                     // above already rejected any TLV shorter than 2 bytes.
                     let descs: Vec<RawDescriptor> = prog.stream_descriptors[i]
@@ -1343,6 +1367,9 @@ fn raw_descriptor_to_tlv(
     tlv.extend_from_slice(&d.data);
     Ok(tlv)
 }
+
+/// H.222.0 Table 2-34 stream types whose payload is sections, never PES.
+const SECTION_STREAM_TYPES: [u8; 6] = [0x05, 0x13, 0x16, 0x2C, 0x2F, 0x30];
 
 /// ISO 639-2 language codes per ETSI EN 300 468 §6.2.41/§6.2.43 ride the
 /// wire as 3 ISO/IEC 8859-1 bytes. Spec doesn't mandate lowercase; we
