@@ -147,6 +147,11 @@ impl Muxer {
     ///   start code or is not structurally composed of start-code-delimited
     ///   NAL units (only checked for H.264 / H.265 / H.266; AV1 OBU
     ///   payloads pass through this check).
+    /// - [`MuxError::InvalidAv1Obu`] in the MPEG-2 TS binding carriage (the
+    ///   default) if a non-empty AV1 `nal` is not a sequence of whole OBUs,
+    ///   each with `obu_has_size_field = 1`; nothing is queued. A sample
+    ///   taken from MP4, Matroska or RTP whose last OBU has no size field
+    ///   must have one added before the push.
     /// - [`MuxError::BufferFull`] if the resulting TS packets would exceed
     ///   `MuxerConfig::buffer_packets`.
     pub fn push_video_to(
@@ -200,6 +205,11 @@ impl Muxer {
     ///   start code or is not structurally composed of start-code-delimited
     ///   NAL units (only checked for H.264 / H.265 / H.266; AV1 OBU
     ///   payloads pass through this check).
+    /// - [`MuxError::InvalidAv1Obu`] in the MPEG-2 TS binding carriage (the
+    ///   default) if a non-empty AV1 `nal` is not a sequence of whole OBUs,
+    ///   each with `obu_has_size_field = 1`; nothing is queued. A sample
+    ///   taken from MP4, Matroska or RTP whose last OBU has no size field
+    ///   must have one added before the push.
     /// - [`MuxError::BufferFull`] if the resulting TS packets would exceed
     ///   `MuxerConfig::buffer_packets`.
     pub fn push_video_to_with_dts(

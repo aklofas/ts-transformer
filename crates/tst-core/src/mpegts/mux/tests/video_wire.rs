@@ -150,3 +150,79 @@ fn the_pes_packet_length_matches_the_header_written() {
     assert_eq!(u16::from_be_bytes([out[4], out[5]]), 3 + 5 + 100);
     assert_eq!(out[8], 5);
 }
+
+// ── AV1 elementary input ──────────────────────────────────────────────────
+
+/// A temporal delimiter (`12 00`) then a sequence-header OBU of four body
+/// bytes (`32 04 ..`): two whole OBUs with a size field each.
+const TWO_OBU_AU: [u8; 8] = [0x12, 0x00, 0x32, 0x04, 0x10, 0x00, 0x00, 0x00];
+
+#[test]
+fn av1_binding_rejects_every_truncated_prefix() {
+    let mut refused: Vec<Vec<u8>> = [1, 3, 4, 5, 6, 7]
+        .iter()
+        .map(|&cut| TWO_OBU_AU[..cut].to_vec())
+        .collect();
+    refused.extend(
+        [
+            &[0x0A][..],         // a header whose size byte is missing
+            &[0x0A, 0x01],       // a size of 1 and no body
+            &[0x16],             // the extension flag and no extension byte
+            &[0x10],             // no size field
+            &[0x12, 0x80],       // a size that continues past the end
+            &[0x12, 0x00, 0x00], // one stray zero byte after a whole OBU
+        ]
+        .map(<[u8]>::to_vec),
+    );
+    for au in refused {
+        let mut m = one_video_muxer(VideoCodec::Av1, None);
+        let h = m.video_stream_handle(0).unwrap();
+        m.push_video_to(h, &TWO_OBU_AU, Pts90khz::new(90_000), true)
+            .unwrap();
+        let pending = m.pending_packets();
+        let stats = m.stream_codec_stats(VIDEO_PID);
+        assert_eq!(
+            m.push_video_to(h, &au, Pts90khz::new(93_600), true),
+            Err(MuxError::InvalidAv1Obu),
+            "{au:02x?}"
+        );
+        assert_eq!(m.pending_packets(), pending, "{au:02x?}: nothing queued");
+        assert_eq!(m.stream_codec_stats(VIDEO_PID), stats, "{au:02x?}");
+    }
+}
+
+#[test]
+fn av1_binding_accepts_whole_obus() {
+    for cut in [2, 8] {
+        let mut m = one_video_muxer(VideoCodec::Av1, None);
+        let h = m.video_stream_handle(0).unwrap();
+        m.push_video_to(h, &TWO_OBU_AU[..cut], Pts90khz::new(90_000), true)
+            .unwrap();
+    }
+}
+
+#[test]
+fn av1_binding_never_panics_on_arbitrary_bytes() {
+    let mut m = one_video_muxer(VideoCodec::Av1, None);
+    let h = m.video_stream_handle(0).unwrap();
+    let mut buf = vec![0u8; 188 * 64];
+    let mut seed: u64 = 0x9E37_79B9_7F4A_7C15;
+    let mut next = || {
+        seed ^= seed << 13;
+        seed ^= seed >> 7;
+        seed ^= seed << 17;
+        seed
+    };
+    let (mut accepted, mut refused) = (0u32, 0u32);
+    for i in 0..10_000i64 {
+        let len = (next() % 65) as usize;
+        let au: Vec<u8> = (0..len).map(|_| next() as u8).collect();
+        match m.push_video_to(h, &au, Pts90khz::new(90_000 + i * 3_600), false) {
+            Ok(()) => accepted += 1,
+            Err(MuxError::InvalidAv1Obu) => refused += 1,
+            Err(e) => panic!("{au:02x?}: {e:?}"),
+        }
+        while m.pull(&mut buf) > 0 {}
+    }
+    assert!(accepted > 0 && refused > 0, "{accepted} / {refused}");
+}

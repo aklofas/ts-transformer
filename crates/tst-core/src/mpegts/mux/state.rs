@@ -199,7 +199,8 @@ pub(super) fn escape_obu_unit_body(unit_bytes: &[u8], out: &mut Vec<u8>) {
 /// is applied **once per OBU**, NOT once per access unit. This function
 /// walks the caller-supplied low-overhead OBU bytestream — each OBU is
 /// `header(1) + optional_extension(1) + obu_size(LEB128) + body` per
-/// AV1 spec §5.3 with `obu_has_size_field=1` (required by binding §3.1)
+/// AV1 spec §5.3 with `obu_has_size_field=1` (required by the AV1
+/// specification for the low-overhead bitstream format)
 /// — and for every OBU emits the 3-byte [`AV1_TS_OBU_START_CODE`]
 /// followed by an escape-encoded copy of the WHOLE OBU (header through
 /// body). Each escape application is independent — the zero-run state
@@ -215,9 +216,9 @@ pub(super) fn escape_obu_unit_body(unit_bytes: &[u8], out: &mut Vec<u8>) {
 ///
 /// On malformed input (truncated header / extension / LEB128, or
 /// `obu_size` running past buffer end, or an OBU without
-/// `obu_has_size_field=1`) the walk stops at the last good boundary and
-/// returns what's been written so far — mirrors `split_obus`'s lenient
-/// stance on the demux side. Does NOT panic.
+/// `obu_has_size_field=1`) the walk stops at the last good boundary,
+/// leaves what it has written in `out` and returns `false`. Does NOT
+/// panic.
 ///
 /// Empty input → empty output (no start codes, no escape bytes).
 ///
@@ -242,32 +243,30 @@ pub(super) fn wrap_av1_obus_binding(obu_bytes: &[u8], out: &mut Vec<u8>) -> bool
         i += 1;
         if extension_flag {
             if i >= obu_bytes.len() {
-                // Truncated extension — stop. Lenient: emit nothing for
-                // this partial OBU and bail out.
-                break;
+                // Truncated extension.
+                return false;
             }
             i += 1;
         }
         if !has_size_field {
-            // AV1 §5.2 requires obu_has_size_field = 1 in the low-overhead
-            // format, which binding §3.1 mandates for the elementary input;
-            // without it we can't find the next OBU boundary to start-code.
-            // Bail out lenient-stance (same as split_obus on the demux side).
-            break;
+            // The AV1 specification's low-overhead bitstream format (the
+            // form of the elementary input) requires obu_has_size_field = 1;
+            // without it the next OBU boundary cannot be found.
+            return false;
         }
         let (obu_size, consumed) =
             match crate::codec::av1::decode::leb128::read_leb128(obu_bytes, i) {
                 Ok(t) => t,
-                Err(_) => break, // truncated LEB128 — stop
+                Err(_) => return false, // truncated or over-long LEB128
             };
         i += consumed;
         let obu_size = match usize::try_from(obu_size) {
             Ok(n) => n,
-            Err(_) => break,
+            Err(_) => return false,
         };
         let body_end = match i.checked_add(obu_size) {
             Some(end) if end <= obu_bytes.len() => end,
-            _ => break,
+            _ => return false, // the body runs past the input
         };
         let obu_slice = &obu_bytes[obu_start..body_end];
         i = body_end;
@@ -278,7 +277,7 @@ pub(super) fn wrap_av1_obus_binding(obu_bytes: &[u8], out: &mut Vec<u8>) -> bool
         out.extend_from_slice(&AV1_TS_OBU_START_CODE);
         escape_obu_unit_body(obu_slice, out);
     }
-    i == obu_bytes.len()
+    true
 }
 
 /// True iff `caller_descs` contains any descriptor that the receiver-side
