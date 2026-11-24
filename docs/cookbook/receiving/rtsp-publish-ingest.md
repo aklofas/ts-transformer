@@ -275,8 +275,10 @@ wrong scheme, and an honest client's first answer after `set_challenge`
 changed the scheme or the realm. The first challenge every client gets (no
 header yet), a stale nonce (a Digest header that does not carry the
 connection's current nonce, malformed or not) and a `Refuse` status never
-count. A request for a path without a rule counts on the default rule, so a
-peer cannot create a counter; `set` on a path keeps its counts, `remove` and
+count. A stale nonce is answered `401` with a new nonce and `stale=true`: the
+client answers again with the credential it has, and that `401` is not one of
+the three that close a connection. A request for a path without a rule
+counts on the default rule, so a peer cannot create a counter; `set` on a path keeps its counts, `remove` and
 `clear` drop them.
 
 Read the counts as a rate, not as a reason to lock a name: anyone can raise
