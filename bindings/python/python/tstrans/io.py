@@ -404,11 +404,14 @@ class Transmuxer:
     - Audio → `push_audio_to(handle, raw, pts)` (the mux push API
       carries no audio dts; dts≠pts audio does not occur for
       MP2/AAC/AC-3).
-    - Klv → `push_klv_to(handle, payload, pts)`. Payloads are raw KLV
-      LS bytes in BOTH directions: the demuxer strips the sync-metadata
-      AU-cell header and the muxer re-wraps it — never pre-wrap. The AU
-      cell's `metadata_service_id` is not recoverable from the demux
-      event, so the muxer default applies on the way out.
+    - Klv → `push_klv_to(handle, payload, pts, metadata_service_id)`.
+      Payloads are raw KLV LS bytes in BOTH directions: the demuxer
+      strips the sync-metadata AU-cell header and the muxer re-wraps it
+      — never pre-wrap. A synchronous event's `metadata_service_id` is
+      passed on, so the output's AU cells carry the source's service id,
+      which the copied PMT entry declares; the muxer refuses a source
+      unit whose id its own PMT entry does not declare (`MuxError`,
+      INVALID_USAGE).
     - Subtitle → `push_subtitle_to(handle, payload, pts)` (kept
       CEA-708/WebVTT streams; DVB offenders must be dropped or fail
       config).
@@ -742,7 +745,12 @@ class Transmuxer:
         handle = self._handle_for(ev)
         if handle is None:
             return
-        self._proxy.push_klv_to(handle, payload, pts=ev.pts)
+        if ev.metadata_service_id is None:
+            self._proxy.push_klv_to(handle, payload, pts=ev.pts)
+        else:
+            self._proxy.push_klv_to(
+                handle, payload, pts=ev.pts, metadata_service_id=ev.metadata_service_id
+            )
 
 
 __all__: list[str] = [
