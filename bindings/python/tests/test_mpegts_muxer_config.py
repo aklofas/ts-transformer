@@ -433,3 +433,71 @@ def test_mux_error_without_a_pid_keeps_pid_none():
     with pytest.raises(MuxError) as ei:
         MuxerConfigBuilder().add_program(b.build()).build()
     assert ei.value.pid is None
+
+
+# --- The PAT's transport_stream_id and the first PSI version ---
+
+
+def _first_section(ts: bytes, pid: int) -> bytes:
+    """The first PSI section that starts in a packet of `pid` (pointer
+    field honoured; every section the muxer writes fits one packet)."""
+    for i in range(0, len(ts), 188):
+        p = ts[i : i + 188]
+        if ((p[1] & 0x1F) << 8 | p[2]) == pid and p[1] & 0x40:
+            start = 5 + p[4]
+            return p[start:]
+    raise AssertionError(f"no section on pid {pid:#x}")
+
+
+def _first_tables(cfg: MuxerConfig) -> tuple[bytes, bytes]:
+    from tstrans.mpegts import Muxer, Pts90khz
+
+    m = Muxer(cfg)
+    m.push_video(b"\x00\x00\x00\x01\x65\x88\x84\x00", pts=Pts90khz.from_raw(90_000), key_frame=True)
+    buf = bytearray(int(m.pending_packets()) * 188)
+    ts = bytes(buf[: m.pull(buf)])
+    return _first_section(ts, 0x0000), _first_section(ts, 0x100)
+
+
+def test_transport_stream_id_and_psi_version_base_reach_the_wire():
+    prog = MuxerProgramConfigBuilder(1, 0x100).add_video(0x101, VideoCodec.H264).build()
+    default = MuxerConfigBuilder().add_program(prog).build()
+    assert default.transport_stream_id == 1
+    assert default.psi_version_base == 0
+
+    cfg = (
+        MuxerConfigBuilder()
+        .add_program(prog)
+        .transport_stream_id(0x1234)
+        .psi_version_base(7)
+        .build()
+    )
+    assert type(cfg.transport_stream_id) is int and cfg.transport_stream_id == 0x1234
+    assert type(cfg.psi_version_base) is int and cfg.psi_version_base == 7
+
+    pat, pmt = _first_tables(cfg)
+    assert pat[0] == 0x00 and pat[3:5] == b"\x12\x34"
+    assert (pat[5] >> 1) & 0x1F == 7
+    assert pmt[0] == 0x02 and (pmt[5] >> 1) & 0x1F == 7
+
+    pat, pmt = _first_tables(default)
+    assert pat[3:5] == b"\x00\x01"
+    assert (pat[5] >> 1) & 0x1F == 0 and (pmt[5] >> 1) & 0x1F == 0
+
+
+def test_psi_version_base_above_31_is_config_invalid():
+    prog = MuxerProgramConfigBuilder(1, 0x100).add_video(0x101, VideoCodec.H264).build()
+    assert MuxerConfigBuilder().add_program(prog).psi_version_base(31).build().psi_version_base == 31
+    for base in (32, 255):
+        with pytest.raises(MuxError) as ei:
+            MuxerConfigBuilder().add_program(prog).psi_version_base(base).build()
+        assert ei.value.kind is MuxErrorKind.CONFIG_INVALID
+        assert "psi_version_base" in str(ei.value)
+    # Outside the 8-bit and 16-bit fields the argument conversion refuses,
+    # as for every other unsigned argument of the builders.
+    with pytest.raises(OverflowError):
+        MuxerConfigBuilder().psi_version_base(256)
+    with pytest.raises(OverflowError):
+        MuxerConfigBuilder().transport_stream_id(0x10000)
+    with pytest.raises(OverflowError):
+        MuxerConfigBuilder().transport_stream_id(-1)
