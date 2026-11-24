@@ -95,7 +95,12 @@ public final class MuxPublisher extends NativeHandle {
      * Push raw KLV LS bytes (the muxer adds the AU-cell header on sync streams).
      * {@code streamIndex} is the metadata service id written into the Metadata AU
      * cell for synchronous carriage; it is ignored for PrivateData and does not
-     * select a stream.
+     * select a stream. On a synchronous stream whose descriptors do not declare
+     * that service id (the automatic descriptor declares 0) the push is refused
+     * and queues nothing.
+     *
+     * @throws MuxException {@code INVALID_USAGE} when a synchronous stream does not
+     *     declare {@code streamIndex} as a metadata service
      */
     public void pushKlv(byte[] klv, long pts, int streamIndex) throws MuxException, HlsException {
         ensureOpen("MuxPublisher is closed");

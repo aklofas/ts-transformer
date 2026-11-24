@@ -411,7 +411,9 @@ raise `MuxError` naming the offenders (other section-carried types, the
 DSM-CC types 0x0A to 0x0D and 0x17 to 0x19 and SCTE 35's 0x86, are copied
 as PES data streams); a config error tied to one PID also sets `MuxError.pid`.
 A synchronous KLV event's `metadata_service_id` is passed on, so the
-output's AU cells carry the service id the copied PMT entry declares.
+output's AU cells carry the service id the copied PMT entry declares; a
+source whose cells carry an id its PMT does not declare makes `transmux`
+raise `MuxError` (INVALID_USAGE) at the first such unit.
 Other private/application data streams (unknown stream types) pass through
 byte-faithfully: `MuxerConfig.from_program_map` reproduces their PMT
 entry (raw stream_type byte + descriptor loop verbatim) and each

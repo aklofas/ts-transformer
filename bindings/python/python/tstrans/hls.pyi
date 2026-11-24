@@ -448,7 +448,10 @@ class MuxPublisher:
     def push_klv(self, klv: _BytesLike, *, pts: Any, stream_index: int = ...) -> None:
         """Push one KLV blob. ``stream_index`` is the metadata service id written
         into the Metadata AU cell for synchronous carriage; it is ignored for
-        PrivateData and does not select a stream."""
+        PrivateData and does not select a stream. On a synchronous stream
+        whose descriptors do not declare that service id (the automatic
+        descriptor declares 0) the push raises ``MuxError(INVALID_USAGE)``
+        and queues nothing."""
         ...
 
     def push_audio(self, frames: _BytesLike, *, pts: Any) -> None:
