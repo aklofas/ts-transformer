@@ -101,14 +101,16 @@ impl RtspServerBuilder {
     /// refuses it. Configure the server's credential with `auth_basic` or
     /// `auth_digest_*`.
     ///
-    /// The server reads the URL's scheme, host and port only. Its path is
-    /// ignored, and so is every query key: the keys an [`RtspUrl`] accepts
-    /// are a client's (an unknown key is still refused by the parse), and
-    /// none of them configures the server. In particular `transport=` does
-    /// not choose what media goes over: `?transport=tcp` does not make an
-    /// `rtsp://` server TCP-only, and `rtsps://…?transport=udp` does not
-    /// let an `rtsps://` server send media over UDP. That is
-    /// [`Self::allow_udp_media`].
+    /// A bind URL says where to listen and nothing else: a scheme, a host
+    /// and a port. `build()` refuses one that carries a path other than `/`,
+    /// or a query, an empty `?` included. A mount is added with
+    /// [`RtspServer::add_mount`](crate::rtsp::server::RtspServer::add_mount)
+    /// and its siblings, never named in the bind URL; and the keys an
+    /// [`RtspUrl`] accepts are a client's, none of them configures a server.
+    /// In particular `transport=` does not choose what media goes over:
+    /// that is [`Self::allow_udp_media`]. A key no RTSP URL knows, and a
+    /// known key with a value it does not take, are refused here, by the
+    /// parse.
     ///
     /// # Errors
     ///
@@ -129,10 +131,10 @@ impl RtspServerBuilder {
     /// refuses it. Configure the server's credential with `auth_basic` or
     /// `auth_digest_*`.
     ///
-    /// As for [`Self::new`], only the URL's scheme, host and port are read:
-    /// its path and its client settings (the transport preference among
-    /// them) are ignored; [`Self::allow_udp_media`] decides whether media
-    /// may go over UDP.
+    /// As for [`Self::new`], the URL may say only where to listen:
+    /// `build()` refuses one that was parsed with a path other than `/` or
+    /// with a query. [`Self::allow_udp_media`] decides whether media may go
+    /// over UDP.
     pub fn with_url(url: RtspUrl) -> Self {
         Self {
             bind_url: url,
@@ -477,7 +479,7 @@ impl RtspServerBuilder {
     ///   username listed twice; if an `auth_*` realm holds a control byte; if
     ///   the `auth_*` user name is empty, or contains `:` with
     ///   [`auth_basic`](Self::auth_basic); or if the bind URL carries a user
-    ///   name or a password
+    ///   name or a password, a path other than `/`, or a query
     ///
     /// TLS cert/key paths are NOT validated here — they are loaded at
     /// [`RtspServer::start`](crate::rtsp::server::RtspServer::start), which

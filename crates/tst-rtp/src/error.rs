@@ -240,8 +240,8 @@ pub enum RtspServerError {
     InvalidConfig { detail: String },
 
     /// `build()` refused one of the builder's own settings: the default
-    /// mount rule, the `auth_*` realm or user name, or the bind URL. No
-    /// server was built. A refused mount is
+    /// mount rule, the `auth_*` realm or user name, or the bind URL (user
+    /// info, a path, a query). No server was built. A refused mount is
     /// [`InvalidConfig`](Self::InvalidConfig).
     #[error("invalid server config: {detail}")]
     InvalidServerConfig { detail: String },

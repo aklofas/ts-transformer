@@ -170,6 +170,136 @@ fn a_bind_url_with_userinfo_is_refused() {
     }
 }
 
+/// Bind URLs that carry a path: one segment, several, a doubled slash, and
+/// a `#` (the URL type has no fragment, so it stays in the path).
+const PATH_BIND_URLS: &[&str] = &[
+    "rtsp://127.0.0.1:0/live",
+    "rtsps://127.0.0.1:0/live",
+    "rtsp://127.0.0.1:0/a/b",
+    "rtsp://127.0.0.1:0//",
+    "rtsp://127.0.0.1:0/#frag",
+    "rtsp://[::1]:0/live",
+];
+
+/// Bind URLs that carry a query: each key a client URL knows, a value that
+/// only restates the default, and an empty query, with and without a slash.
+const QUERY_BIND_URLS: &[&str] = &[
+    "rtsp://127.0.0.1:0?transport=tcp",
+    "rtsp://127.0.0.1:0?transport=udp",
+    "rtsps://127.0.0.1:0?transport=tcp",
+    "rtsps://127.0.0.1:0?transport=udp",
+    "rtsp://127.0.0.1:0?rtsp_version=1.0",
+    "rtsp://127.0.0.1:0?tcp_keepalive=5",
+    "rtsp://127.0.0.1:0?recv_timeout=100",
+    "rtsp://127.0.0.1:0?",
+    "rtsp://127.0.0.1:0/?",
+    "rtsp://127.0.0.1:0/?transport=tcp",
+];
+
+/// The detail of the refusal `build()` gives for `url`, through each of the
+/// four ways a server is built from a URL; they must agree.
+fn bind_url_refusal(url: &str) -> String {
+    let detail = |res: Result<RtspServer, RtspServerError>, door: &str| match res {
+        Err(RtspServerError::InvalidServerConfig { detail }) => detail,
+        Err(e) => panic!("{door}({url}): expected InvalidServerConfig, got {e:?}"),
+        Ok(_) => panic!("{door}({url}): the server was built"),
+    };
+    let parsed = || tst_rtp::RtspUrl::parse(url).expect("parse");
+    let through_new = detail(
+        RtspServerBuilder::new(url).expect("URL parse").build(),
+        "new",
+    );
+    for (other, door) in [
+        (RtspServerBuilder::with_url(parsed()).build(), "with_url"),
+        (RtspServer::bind(url), "bind"),
+        (RtspServer::bind_with(parsed()), "bind_with"),
+    ] {
+        assert_eq!(detail(other, door), through_new, "{door}({url})");
+    }
+    through_new
+}
+
+/// A bind URL says where to listen and nothing else: a path would read like
+/// a mount and is none.
+#[test]
+fn a_bind_url_with_a_path_is_refused() {
+    for &url in PATH_BIND_URLS {
+        let detail = bind_url_refusal(url);
+        assert!(detail.contains("bind URL"), "{url}: {detail}");
+        assert!(detail.contains("path"), "{url}: {detail}");
+    }
+}
+
+/// The query keys are a client's and none configures a server, so any query
+/// is refused, also an empty one and one that restates a default; the text
+/// points at the setting that does decide UDP media.
+#[test]
+fn a_bind_url_with_a_query_is_refused() {
+    for &url in QUERY_BIND_URLS {
+        let detail = bind_url_refusal(url);
+        assert!(detail.contains("bind URL"), "{url}: {detail}");
+        assert!(detail.contains("query"), "{url}: {detail}");
+        assert!(detail.contains("allow_udp_media"), "{url}: {detail}");
+    }
+}
+
+/// No path and a bare `/` are the same bind URL, on both schemes.
+#[test]
+fn a_bind_url_without_a_path_or_with_a_bare_slash_builds() {
+    for url in [
+        "rtsp://127.0.0.1:0",
+        "rtsp://127.0.0.1:0/",
+        "rtsps://127.0.0.1:0",
+        "rtsps://127.0.0.1:0/",
+        "rtsp://[::1]:0/",
+    ] {
+        RtspServerBuilder::new(url)
+            .expect("URL parse")
+            .build()
+            .unwrap_or_else(|e| panic!("{url}: {e:?}"));
+        RtspServer::bind_with(tst_rtp::RtspUrl::parse(url).expect("parse"))
+            .unwrap_or_else(|e| panic!("{url}: {e:?}"));
+    }
+}
+
+/// What the URL parse refuses stays a parse error from `new`, before any
+/// builder exists: a key no RTSP URL knows, a known key with a bad value,
+/// and a `#` straight after the port.
+#[test]
+fn a_bind_url_the_parse_refuses_is_a_url_parse_error() {
+    use tst_rtp::RtpUrlError;
+    assert!(matches!(
+        RtspServerBuilder::new("rtsp://127.0.0.1:0?mount=live").err(),
+        Some(RtspServerError::UrlParse(
+            RtpUrlError::UnknownQueryKey { .. }
+        ))
+    ));
+    assert!(matches!(
+        RtspServerBuilder::new("rtsp://127.0.0.1:0?transport=quic").err(),
+        Some(RtspServerError::UrlParse(RtpUrlError::BadQuery { .. }))
+    ));
+    assert!(matches!(
+        RtspServerBuilder::new("rtsp://127.0.0.1:0#frag").err(),
+        Some(RtspServerError::UrlParse(RtpUrlError::Syntax(_)))
+    ));
+}
+
+/// User info is refused first, so a URL that also carries a path and a query
+/// still names no credential.
+#[test]
+fn a_bind_url_with_userinfo_and_a_path_names_no_credential() {
+    let e = RtspServer::bind("rtsp://admin:secret@127.0.0.1:0/live?transport=tcp")
+        .expect_err("refused");
+    assert!(
+        matches!(e, RtspServerError::InvalidServerConfig { .. }),
+        "{e:?}"
+    );
+    for text in [e.to_string(), format!("{e:?}")] {
+        assert!(!text.contains("admin"), "{text}");
+        assert!(!text.contains("secret"), "{text}");
+    }
+}
+
 /// The refusal says what is wrong without repeating the credential.
 #[test]
 fn the_bind_url_refusal_names_no_credential() {
