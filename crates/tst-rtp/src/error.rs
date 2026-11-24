@@ -231,10 +231,20 @@ pub enum RtspServerError {
     #[error("no mount at path '{path}'")]
     MountNotFound { path: String },
 
-    /// `MuxerConfig` failed validation (no programs declared, etc.) or
-    /// some other configuration-time invariant was violated.
+    /// A mount call on a built server was refused for its configuration:
+    /// the mount's `MuxerConfig` failed validation (no programs declared,
+    /// etc.), or a multicast mount was added to a server that does not
+    /// allow UDP media. A refused setting of the server itself is
+    /// [`InvalidServerConfig`](Self::InvalidServerConfig).
     #[error("invalid mount config: {detail}")]
     InvalidConfig { detail: String },
+
+    /// `build()` refused one of the builder's own settings: the default
+    /// mount rule, the `auth_*` realm or user name, or the bind URL. No
+    /// server was built. A refused mount is
+    /// [`InvalidConfig`](Self::InvalidConfig).
+    #[error("invalid server config: {detail}")]
+    InvalidServerConfig { detail: String },
 
     /// `start()` called twice without an intervening `stop()`.
     #[error("RTSP server already started")]

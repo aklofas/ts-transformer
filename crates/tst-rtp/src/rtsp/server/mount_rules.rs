@@ -889,10 +889,10 @@ mod tests {
         let mut b = RtspServerBuilder::new("rtsp://127.0.0.1:0").unwrap();
         b.default_mount_rule(dup);
         match b.build() {
-            Err(crate::error::RtspServerError::InvalidConfig { detail }) => {
+            Err(crate::error::RtspServerError::InvalidServerConfig { detail }) => {
                 assert!(detail.contains("amber"), "{detail}");
             }
-            other => panic!("expected InvalidConfig, got {other:?}"),
+            other => panic!("expected InvalidServerConfig, got {other:?}"),
         }
     }
 
@@ -1083,7 +1083,7 @@ mod tests {
             b.default_mount_rule(rule);
             assert!(matches!(
                 b.build(),
-                Err(RtspServerError::InvalidConfig { .. })
+                Err(RtspServerError::InvalidServerConfig { .. })
             ));
         }
         let mut b = RtspServerBuilder::new("rtsp://127.0.0.1:0").unwrap();

@@ -69,6 +69,10 @@ impl From<RtspServerError> for BindingError {
             | RtspServerError::DuplicateMount { .. }
             | RtspServerError::MountNotFound { .. }
             | RtspServerError::InvalidConfig { .. } => K::RtspMount,
+            // The server's own configuration was refused and nothing was
+            // built: the cross-domain configuration kind, as a refused URL
+            // key or muxer config reads.
+            RtspServerError::InvalidServerConfig { .. } => K::ConfigInvalid,
             RtspServerError::AlreadyStarted | RtspServerError::NotStarted => K::RtspServer,
             // An ended server (stopped, hard-cancelled or dropped) is the
             // closed-handle outcome every binding reports for a call after
@@ -261,6 +265,10 @@ mod tests {
             K::RtspServer
         );
         assert_eq!(
+            BindingError::from(RtspServerError::InvalidConfig { detail: "x".into() }).kind,
+            K::RtspMount
+        );
+        assert_eq!(
             BindingError::from(RtspServerError::TransportTaken).kind,
             K::Closed
         );
@@ -269,6 +277,18 @@ mod tests {
             BindingError::from(MountError::Mux(tst_core::error::MuxError::InvalidNal)).kind,
             K::RtspMount
         );
+    }
+
+    /// A refused server configuration is the configuration kind every
+    /// binding already has, with a text that names the server.
+    #[test]
+    fn a_refused_server_configuration_is_the_configuration_kind() {
+        let e = BindingError::from(RtspServerError::InvalidServerConfig {
+            detail: "bind URL".into(),
+        });
+        assert_eq!(e.kind, K::ConfigInvalid);
+        assert_eq!(e.detail, "invalid server config: bind URL");
+        assert_eq!(K::ConfigInvalid.c_projection(), -1);
     }
 
     #[test]

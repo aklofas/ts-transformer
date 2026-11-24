@@ -640,18 +640,18 @@ impl RtspServer {
     pub(crate) fn from_builder(b: RtspServerBuilder) -> Result<Self, RtspServerError> {
         if let Some(rule) = &b.default_mount_rule {
             crate::rtsp::server::mount_rules::check_rule(rule).map_err(|e| {
-                RtspServerError::InvalidConfig {
+                RtspServerError::InvalidServerConfig {
                     detail: format!("default mount rule: {e}"),
                 }
             })?;
         }
         if let Some(a) = b.auth.as_ref().filter(|a| !auth::realm_is_valid(&a.realm)) {
-            return Err(RtspServerError::InvalidConfig {
+            return Err(RtspServerError::InvalidServerConfig {
                 detail: format!("auth realm {:?}: control bytes are not allowed", a.realm),
             });
         }
         if b.auth.as_ref().is_some_and(|a| a.username.is_empty()) {
-            return Err(RtspServerError::InvalidConfig {
+            return Err(RtspServerError::InvalidServerConfig {
                 detail: "auth username: must not be empty".into(),
             });
         }
@@ -661,14 +661,14 @@ impl RtspServer {
             .as_ref()
             .is_some_and(|a| a.scheme == AuthScheme::Basic && a.username.contains(':'))
         {
-            return Err(RtspServerError::InvalidConfig {
+            return Err(RtspServerError::InvalidServerConfig {
                 detail: "auth username: must not contain ':' with Basic authentication".into(),
             });
         }
         // The URL cannot say a scheme or a realm, so user info there is never
         // the server's credential; dropping it would start an open server.
         if b.bind_url.username.is_some() || b.bind_url.password.is_some() {
-            return Err(RtspServerError::InvalidConfig {
+            return Err(RtspServerError::InvalidServerConfig {
                 detail: "bind URL: must not carry a user name or a password \
                          (configure the server's credential separately)"
                     .into(),

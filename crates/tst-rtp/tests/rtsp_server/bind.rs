@@ -122,8 +122,8 @@ const USERINFO_BIND_URLS: &[&str] = &[
     "rtsps://admin:@127.0.0.1:0",
 ];
 
-fn is_invalid_config(res: Result<RtspServer, RtspServerError>) -> bool {
-    matches!(res, Err(RtspServerError::InvalidConfig { .. }))
+fn is_invalid_server_config(res: Result<RtspServer, RtspServerError>) -> bool {
+    matches!(res, Err(RtspServerError::InvalidServerConfig { .. }))
 }
 
 /// A server never takes its credential from the bind URL: the URL cannot say
@@ -145,18 +145,24 @@ fn a_bind_url_with_userinfo_is_refused() {
             };
             let mut b = RtspServerBuilder::new(url).expect("URL parse");
             configure(&mut b);
-            assert!(is_invalid_config(b.build()), "new({url}), auth {with_auth}");
+            assert!(
+                is_invalid_server_config(b.build()),
+                "new({url}), auth {with_auth}"
+            );
 
             let mut b = RtspServerBuilder::with_url(tst_rtp::RtspUrl::parse(url).expect("parse"));
             configure(&mut b);
             assert!(
-                is_invalid_config(b.build()),
+                is_invalid_server_config(b.build()),
                 "with_url({url}), auth {with_auth}"
             );
         }
-        assert!(is_invalid_config(RtspServer::bind(url)), "bind({url})");
         assert!(
-            is_invalid_config(RtspServer::bind_with(
+            is_invalid_server_config(RtspServer::bind(url)),
+            "bind({url})"
+        );
+        assert!(
+            is_invalid_server_config(RtspServer::bind_with(
                 tst_rtp::RtspUrl::parse(url).expect("parse")
             )),
             "bind_with({url})"
@@ -186,7 +192,10 @@ fn a_basic_user_name_with_a_colon_is_refused_at_build() {
         secrecy::SecretString::new("secret".into()),
     );
     let e = b.build().expect_err("refused");
-    assert!(matches!(e, RtspServerError::InvalidConfig { .. }), "{e:?}");
+    assert!(
+        matches!(e, RtspServerError::InvalidServerConfig { .. }),
+        "{e:?}"
+    );
     assert!(!e.to_string().contains("ad:min"), "{e}");
     assert!(!e.to_string().contains("secret"), "{e}");
 }

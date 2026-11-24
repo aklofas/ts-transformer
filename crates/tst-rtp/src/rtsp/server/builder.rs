@@ -471,10 +471,13 @@ impl RtspServerBuilder {
     /// # Errors
     ///
     /// - [`RtspServerError::Io`] on Runtime construction failure (rare)
-    /// - [`RtspServerError::InvalidConfig`] if the
+    /// - [`RtspServerError::InvalidServerConfig`] if the
     ///   [`default_mount_rule`](Self::default_mount_rule) holds a `Require`
     ///   policy with no credential, a credential with an empty username or a
-    ///   username listed twice, or an `auth_*` realm holding a control byte
+    ///   username listed twice; if an `auth_*` realm holds a control byte; if
+    ///   the `auth_*` user name is empty, or contains `:` with
+    ///   [`auth_basic`](Self::auth_basic); or if the bind URL carries a user
+    ///   name or a password
     ///
     /// TLS cert/key paths are NOT validated here — they are loaded at
     /// [`RtspServer::start`](crate::rtsp::server::RtspServer::start), which
@@ -537,7 +540,7 @@ mod tests {
         b.auth_basic("a\nb", "admin", SecretString::new("p".into()));
         assert!(matches!(
             b.build(),
-            Err(RtspServerError::InvalidConfig { .. })
+            Err(RtspServerError::InvalidServerConfig { .. })
         ));
     }
 
@@ -553,7 +556,7 @@ mod tests {
             };
             assert!(matches!(
                 b.build(),
-                Err(RtspServerError::InvalidConfig { .. })
+                Err(RtspServerError::InvalidServerConfig { .. })
             ));
         }
     }
