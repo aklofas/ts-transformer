@@ -950,8 +950,10 @@ impl PyMuxerConfig {
     /// topology (program number, PMT PID, stream PIDs, codecs).
     ///
     /// Strict by default: streams the muxer cannot represent (DVB
-    /// subtitling/teletext) raise `tstrans.exceptions.MuxError`
-    /// (CONFIG_INVALID) naming every offender. Pass their
+    /// subtitling/teletext, and unknown streams whose stream type is
+    /// carried in sections: 0x05, 0x13, 0x16, 0x2C, 0x2F, 0x30) raise
+    /// `tstrans.exceptions.MuxError` (CONFIG_INVALID) naming every
+    /// offender. Pass their
     /// `StreamKindTag` members in `drop` to exclude them instead — the
     /// filter is kind-coarse (`StreamKindTag.SUBTITLE` drops *every*
     /// subtitle stream). UNKNOWN stream types are not offenders: they
@@ -972,7 +974,12 @@ impl PyMuxerConfig {
     /// field is left unset, and the builder default applies
     /// (first video → first audio; KLV/data/subtitle are never
     /// auto-selected). `klv_links` are ignored — the muxer re-derives
-    /// metadata linkage from its own configuration. Mirrors Rust's
+    /// metadata linkage from its own configuration. Not carried: the
+    /// PMT's program_info loop, the PAT's transport_stream_id and the
+    /// table versions; add program descriptors by hand. A copied stream
+    /// loop that could not replace the muxer's own signalling (for
+    /// example a registration that is not `KLVA` on a KLV stream) fails
+    /// the conversion with CONFIG_INVALID naming the PID. Mirrors Rust's
     /// `MuxerConfig::from_program_map`.
     ///
     /// `av1_carriage` — optional `Av1CarriageMode` enum member (or `None`
@@ -1044,6 +1051,18 @@ impl PyMuxerConfig {
         self.inner.psi_interval_ms
     }
 
+    /// The PAT's `transport_stream_id` (default 1).
+    #[getter]
+    pub fn transport_stream_id(&self) -> u16 {
+        self.inner.transport_stream_id
+    }
+
+    /// The version number the PAT and every PMT PID start at (default 0).
+    #[getter]
+    pub fn psi_version_base(&self) -> u8 {
+        self.inner.psi_version_base
+    }
+
     /// Maximum buffered TS packets before push returns backpressure.
     #[getter]
     pub fn buffer_packets(&self) -> usize {
@@ -1111,8 +1130,38 @@ impl PyMuxerConfigBuilder {
         Ok(slf)
     }
 
+    /// Set the PAT/PMT re-emission interval in milliseconds (default 100).
+    /// `build()` refuses a value below 10, and above 200 when any program
+    /// carries a KLV stream (ST 1402 asks for the PAT and PMT more than
+    /// four times a second). Each program measures the interval on its
+    /// own clock.
     pub fn psi_interval_ms(mut slf: PyRefMut<'_, Self>, ms: u32) -> PyResult<PyRefMut<'_, Self>> {
         slf.get_mut()?.psi_interval_ms(ms);
+        Ok(slf)
+    }
+
+    /// Set the PAT's `transport_stream_id` (default 1; every 16-bit value
+    /// is valid). A `Muxer.reconfigure` cannot change it.
+    pub fn transport_stream_id(
+        mut slf: PyRefMut<'_, Self>,
+        id: u16,
+    ) -> PyResult<PyRefMut<'_, Self>> {
+        slf.get_mut()?.transport_stream_id(id);
+        Ok(slf)
+    }
+
+    /// Set the version number the PAT and every PMT PID start at (default
+    /// 0; `build()` refuses a value above 31). Each table counts on from it
+    /// modulo 32 when it changes; a `Muxer.reconfigure` cannot change the
+    /// base. For a producer that replaces another on one channel: pick a
+    /// value different from every version the previous muxer last sent on
+    /// the PAT and on each PMT PID this one reuses (the previous highest
+    /// plus one is the simple case). One base serves the PAT and every PMT.
+    pub fn psi_version_base(
+        mut slf: PyRefMut<'_, Self>,
+        version: u8,
+    ) -> PyResult<PyRefMut<'_, Self>> {
+        slf.get_mut()?.psi_version_base(version);
         Ok(slf)
     }
 
