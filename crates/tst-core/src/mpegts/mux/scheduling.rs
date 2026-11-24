@@ -47,6 +47,7 @@ impl ClockPlan {
             random_access,
             pcr: self.pcr,
             discontinuity: self.discontinuity,
+            es_priority: false,
         }
     }
 }

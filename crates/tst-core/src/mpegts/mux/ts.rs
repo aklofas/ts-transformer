@@ -67,11 +67,14 @@ pub(crate) struct AdaptationField {
     /// Set the `discontinuity_indicator` flag: this packet carries the first
     /// PCR of a new system time base (H.222.0 §2.4.3.5).
     pub discontinuity: bool,
+    /// Set the `elementary_stream_priority_indicator` flag: this packet's
+    /// payload has a higher priority than other packets of its PID.
+    pub es_priority: bool,
 }
 
 impl AdaptationField {
     pub fn is_empty(&self) -> bool {
-        !self.random_access && self.pcr.is_none() && !self.discontinuity
+        !self.random_access && self.pcr.is_none() && !self.discontinuity && !self.es_priority
     }
 
     /// Number of bytes the adaptation field occupies excluding stuffing,
@@ -167,10 +170,11 @@ pub(crate) fn write_packet(
         cursor += 1;
 
         if af_min > 0 {
-            // Flags byte: discontinuity, random_access, ES_priority=0,
+            // Flags byte: discontinuity, random_access, ES_priority,
             // PCR_flag, OPCR=0, splicing=0, transport_private=0, AF_extension=0
             let flags: u8 = ((adaptation.discontinuity as u8) << 7)
                 | ((adaptation.random_access as u8) << 6)
+                | ((adaptation.es_priority as u8) << 5)
                 | ((adaptation.pcr.is_some() as u8) << 4);
             out[cursor] = flags;
             cursor += 1;
@@ -539,6 +543,7 @@ mod tests {
             random_access: true,
             pcr: Some(Pcr27mhz::from_pts(Pts90khz::new(91_000))),
             discontinuity: true,
+            es_priority: false,
         };
         write_packet(&mut pkt, 0x100, true, af, &[0xAA; 10], &mut c);
         assert_eq!(pkt[3] & 0x30, 0x30);
@@ -558,6 +563,37 @@ mod tests {
         assert_eq!(r.payload_consumed, 182); // 184 - length byte - flags byte
         assert_eq!(pkt[4], 1); // adaptation_field_length: the flags byte only
         assert_eq!(pkt[5], 0x80);
+    }
+
+    /// H.222.0 §2.4.3.4: elementary_stream_priority_indicator is bit 5 of
+    /// the adaptation-field flags byte.
+    #[test]
+    fn adaptation_flags_carry_es_priority() {
+        let mut c = ContinuityCounters::new();
+        let mut pkt = [0u8; 188];
+        let af = AdaptationField {
+            es_priority: true,
+            ..Default::default()
+        };
+        write_packet(&mut pkt, 0x100, true, af, &[0xAA; 10], &mut c);
+        assert_eq!(pkt[3] & 0x30, 0x30);
+        assert_eq!(pkt[5] & 0x20, 0x20);
+        assert_eq!(pkt[5], 0x20, "no other flag is set");
+    }
+
+    #[test]
+    fn es_priority_alone_makes_a_non_empty_adaptation_field() {
+        let mut c = ContinuityCounters::new();
+        let mut pkt = [0u8; 188];
+        let af = AdaptationField {
+            es_priority: true,
+            ..Default::default()
+        };
+        assert!(!af.is_empty());
+        let r = write_packet(&mut pkt, 0x100, true, af, &[0xAA; 184], &mut c);
+        assert_eq!(r.payload_consumed, 182); // 184 - length byte - flags byte
+        assert_eq!(pkt[4], 1); // adaptation_field_length: the flags byte only
+        assert_eq!(pkt[5], 0x20);
     }
 
     #[test]
