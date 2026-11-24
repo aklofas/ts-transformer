@@ -70,6 +70,7 @@ fn py_values(d: Domain) -> Option<&'static [(BindingErrorKind, i64)]> {
             (K::RtspServer, 9),
             (K::RtspMount, 10),
             (K::Closed, 11),
+            (K::ConfigInvalid, 12),
         ],
         Domain::Udp => &[
             (K::UdpUrl, 0),

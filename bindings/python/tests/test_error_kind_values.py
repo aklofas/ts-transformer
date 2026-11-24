@@ -118,6 +118,8 @@ EXPECTED = {
         ("SERVER", 9),
         ("MOUNT", 10),
         ("CLOSED", 11),
+        # Appended for a refused server configuration; every earlier pair is unchanged.
+        ("CONFIG_INVALID", 12),
     ],
     "SrtErrorKind": [
         ("CONNECT_FAILED", 0),

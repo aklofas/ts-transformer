@@ -607,6 +607,7 @@ impl Domain {
                 K::RtspServer,
                 K::RtspMount,
                 K::Closed,
+                K::ConfigInvalid,
             ],
             Domain::Udp => &[
                 K::UdpUrl,
