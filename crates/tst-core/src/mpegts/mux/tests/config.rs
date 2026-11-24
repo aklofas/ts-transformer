@@ -14,18 +14,6 @@ fn default_config_validates() {
 }
 
 #[test]
-fn audio_codec_real_variants() {
-    let codecs = [
-        AudioCodec::Mp2,
-        AudioCodec::Aac,
-        AudioCodec::AacLatm,
-        AudioCodec::Ac3,
-    ];
-    // Trivially constructible; equality holds.
-    assert_ne!(codecs[0], codecs[1]);
-}
-
-#[test]
 fn stream_spec_audio_variant() {
     let spec = StreamSpec::Audio {
         pid: 0x300,
@@ -237,39 +225,52 @@ fn accepts_async_with_pts_combo() {
     let _ = cfg.expect("0x06 + PTS is valid");
 }
 
+/// The PID of the first packet that carries a PCR after one KLV and one
+/// video push (KLV first, so a muxer that put the PCR on the KLV PID would
+/// show it there).
+fn first_pcr_pid(mux: &mut Muxer) -> u16 {
+    mux.push_klv(&[0x06, 0x0E, 0x2B, 0x34], Pts90khz::new(90_000), 0)
+        .unwrap();
+    mux.push_video(
+        &[0x00, 0x00, 0x00, 0x01, 0x65, 0x88],
+        Pts90khz::new(90_000),
+        true,
+    )
+    .unwrap();
+    let mut buf = vec![0u8; 188 * mux.pending_packets() as usize];
+    let n = mux.pull(&mut buf);
+    buf[..n]
+        .chunks_exact(188)
+        .find(|p| p[3] & 0x20 != 0 && p[4] > 0 && p[5] & 0x10 != 0)
+        .map(|p| u16::from(p[1] & 0x1F) << 8 | u16::from(p[2]))
+        .expect("a packet carries a PCR")
+}
+
 #[test]
 fn resolved_pcr_pid_default() {
+    // Default config: video at 0x1011, KLV at 0x1031, no PCR PID named; the
+    // muxer resolves the PCR to the first video PID.
     let cfg = MuxerConfig::default();
-    // Default config has video at 0x1011; PCR falls to the first video PID.
-    let prog = &cfg.programs[0];
-    assert!(prog.pcr_pid.is_none());
-    // The first video pid from streams
-    let first_video = prog
-        .streams
-        .iter()
-        .find_map(|s| {
-            if let StreamSpec::Video { pid, .. } = s {
-                Some(*pid)
-            } else {
-                None
-            }
-        })
-        .unwrap();
-    assert_eq!(first_video, 0x1011);
+    assert!(cfg.programs[0].pcr_pid.is_none());
+    let mut mux = Muxer::new(cfg).unwrap();
+    assert_eq!(mux.pcr_pid_for_program(0), Some(0x1011));
+    assert_eq!(first_pcr_pid(&mut mux), 0x1011);
 }
 
 #[test]
 fn resolved_pcr_pid_explicit() {
     let cfg = {
         let mut prog = MuxerProgramConfigBuilder::new(1, 0x1000);
-        prog.add_video(0x200, VideoCodec::H264);
         prog.add_klv(0x101, KlvStreamType::PrivateData, false);
+        prog.add_video(0x200, VideoCodec::H264);
         prog.pcr_pid(0x200);
         let mut b = MuxerConfig::builder();
         b.add_program(prog.build());
         b.build().unwrap()
     };
-    assert_eq!(cfg.programs[0].pcr_pid, Some(0x200));
+    let mut mux = Muxer::new(cfg).unwrap();
+    assert_eq!(mux.pcr_pid_for_program(0), Some(0x200));
+    assert_eq!(first_pcr_pid(&mut mux), 0x200);
 }
 
 #[test]

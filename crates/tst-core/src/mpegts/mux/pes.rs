@@ -600,13 +600,13 @@ mod tests {
         let mut buf = [0u8; MAX_PES_HEADER_SIZE];
         let n = write_pes_header(
             &mut buf,
-            STREAM_ID_KLV,
+            STREAM_ID_PRIVATE_STREAM_1,
             PesPtsField::None,
             Some(20),
             PesFlags::default(),
         );
         assert_eq!(n, 9);
-        assert_eq!(buf[3], STREAM_ID_KLV);
+        assert_eq!(buf[3], 0xBD);
         // PES_packet_length = 3 + 0 + 20 = 23
         assert_eq!(buf[4], 0);
         assert_eq!(buf[5], 23);

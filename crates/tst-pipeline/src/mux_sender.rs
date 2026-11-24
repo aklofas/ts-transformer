@@ -2203,19 +2203,20 @@ mod input_consumed_tests {
         }
     }
 
+    fn cfg() -> MuxerConfig {
+        let mut prog = MuxerProgramConfigBuilder::new(1, 0x1000);
+        prog.add_video(0x1011, VideoCodec::H264);
+        prog.pcr_pid(0x1011);
+        let mut b = MuxerConfig::builder();
+        b.add_program(prog.build());
+        b.build().unwrap()
+    }
+
     fn mk_sender(
         failing: Arc<AtomicBool>,
         sink: Arc<Mutex<Vec<u8>>>,
     ) -> MuxSender<SwitchableTransport> {
-        let cfg = {
-            let mut prog = MuxerProgramConfigBuilder::new(1, 0x1000);
-            prog.add_video(0x1011, VideoCodec::H264);
-            prog.pcr_pid(0x1011);
-            let mut b = MuxerConfig::builder();
-            b.add_program(prog.build());
-            b.build().unwrap()
-        };
-        MuxSender::new(SwitchableTransport { failing, sink }, cfg).unwrap()
+        MuxSender::new(SwitchableTransport { failing, sink }, cfg()).unwrap()
     }
 
     const NAL: [u8; 6] = [0x00, 0x00, 0x00, 0x01, 0x67, 0xBB];
@@ -2251,10 +2252,19 @@ mod input_consumed_tests {
 
         failing.store(false, Ordering::SeqCst);
         s.send_video(&NAL, Pts90khz::new(3000), true).unwrap();
-        // Both AUs delivered; pending drained exactly once (byte count is
-        // a multiple of 188 and strictly more than one AU's packets).
-        let n = sink.lock().unwrap().len();
-        assert!(n > 0 && n % 188 == 0);
+        // Both AUs delivered, the retained one exactly once: the sink holds
+        // what a plain muxer makes of the same two pushes.
+        let mut reference = Muxer::new(cfg()).unwrap();
+        let mut expected = Vec::new();
+        for pts in [0, 3000] {
+            reference
+                .push_video(&NAL, Pts90khz::new(pts), true)
+                .unwrap();
+            let mut buf = vec![0u8; 188 * reference.pending_packets() as usize];
+            let n = reference.pull(&mut buf);
+            expected.extend_from_slice(&buf[..n]);
+        }
+        assert_eq!(*sink.lock().unwrap(), expected);
     }
 
     /// Phase-1 failure: retained bytes fail to drain BEFORE the new input

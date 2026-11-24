@@ -15,29 +15,9 @@ fn audio_stream_handle_pack_unpack_round_trip() {
 #[test]
 fn audio_stream_handle_from_raw() {
     let h = AudioStreamHandle::pack(3, 7);
-    let raw: u32 = unsafe { std::mem::transmute_copy(&h) };
+    let raw: u32 = h.raw();
     let h2 = AudioStreamHandle::from_raw(raw);
     assert_eq!(h, h2);
-}
-
-#[test]
-fn subtitle_codec_real_variants() {
-    let dvb_sub = SubtitleCodec::DvbSubtitling {
-        language: *b"eng",
-        subtitling_type: 0x10,
-        composition_page_id: 1,
-        ancillary_page_id: 1,
-    };
-    let dvb_tt = SubtitleCodec::DvbTeletext {
-        language: *b"eng",
-        teletext_type: 0x02,
-        magazine_number: 1,
-        page_number: 0x88,
-    };
-    let cea = SubtitleCodec::Cea708Standalone;
-    let vtt = SubtitleCodec::WebVttInTs;
-    assert_ne!(dvb_sub, dvb_tt);
-    assert_ne!(cea, vtt);
 }
 
 #[test]
