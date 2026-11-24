@@ -466,3 +466,62 @@ fn metadata_descriptor_service_id_parses_short_and_long_forms() {
     assert_eq!(id(&[0x26, 0x02, 0x01, 0x00]), None);
     assert_eq!(id(&crate::mpegts::descriptors::metadata_std(0, 0, 0)), None);
 }
+
+/// The default configuration (PMT 0x1000) with `descs` as its
+/// program_info loop.
+fn with_program_descriptors(descs: Vec<Vec<u8>>) -> MuxerConfig {
+    let mut cfg = MuxerConfig::default();
+    cfg.programs[0].program_descriptors = descs;
+    cfg
+}
+
+#[test]
+fn rejects_malformed_program_descriptor() {
+    let cases: [&[u8]; 5] = [
+        &[0x05, 0x04],
+        &[0x05, 0xFF],
+        &[0x05],
+        &[0x05, 0x02, b'K', b'L', b'V', b'A'],
+        &[],
+    ];
+    for tlv in cases {
+        match with_program_descriptors(vec![tlv.to_vec()]).validate() {
+            Err(MuxError::ConfigInvalid { reason }) => assert!(
+                reason.contains("program 1 program_descriptors[0]"),
+                "{tlv:02X?}: {reason}"
+            ),
+            other => panic!("{tlv:02X?}: expected ConfigInvalid, got {other:?}"),
+        }
+    }
+    // The index names the offending element, not the first one.
+    match with_program_descriptors(vec![b"\x05\x04KLVA".to_vec(), vec![0x05]]).validate() {
+        Err(MuxError::ConfigInvalid { reason }) => {
+            assert!(reason.contains("program_descriptors[1]"), "{reason}")
+        }
+        other => panic!("expected ConfigInvalid, got {other:?}"),
+    }
+}
+
+#[test]
+fn valid_program_descriptor_serialises_unchanged() {
+    let desc = b"\x05\x04KLVA".to_vec();
+    let mut m = Muxer::new(with_program_descriptors(vec![desc.clone()])).unwrap();
+    let h = m.video_stream_handle(0).unwrap();
+    m.push_video_to(
+        h,
+        &[0, 0, 0, 1, 0x65, 0x88, 0x84, 0x00],
+        crate::mpegts::common::Pts90khz::new(0),
+        true,
+    )
+    .unwrap();
+    let mut buf = [0u8; 188 * 16];
+    let n = m.pull(&mut buf);
+    let pmt = buf[..n]
+        .chunks(188)
+        .find(|p| ((u16::from(p[1] & 0x1F) << 8) | u16::from(p[2])) == 0x1000)
+        .expect("a PMT packet");
+    // TS header (4) + pointer (1); program_info_length at [15..17].
+    let program_info_length = (usize::from(pmt[15] & 0x0F) << 8) | usize::from(pmt[16]);
+    assert_eq!(program_info_length, 6);
+    assert_eq!(&pmt[17..23], &desc[..]);
+}
