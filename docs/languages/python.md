@@ -1478,7 +1478,7 @@ server, bind `bind_addr="rtsps://host:port"` and set `tls_cert` /
 together, or `__post_init__` raises `ValueError`; unreadable paths raise
 `RtspError(TLS)` at `start()`). `start()` refuses a `bind_addr` that
 carries a user name or a password (`"admin:secret@host:port"`) with
-`RtspError(MOUNT)`: the server's credential is `auth`, and such an address
+`RtspError(CONFIG_INVALID)`: the server's credential is `auth`, and such an address
 started an open server through 0.10.0. An `rtsps://` server sends and takes media
 only inside the TLS connection: it answers `461 Unsupported Transport` to a
 reader's or a publisher's SETUP that asks for UDP (clients such as
@@ -1507,7 +1507,7 @@ unencrypted path whatever the cap: the cap does not change what readers
 are sent over. For a credentialed server pass
 `auth=BasicAuth("user", "pass", "realm")` — the realm is required
 server-side, and a `BasicAuth` user name that contains `:` is refused at
-`start()` with `RtspError(MOUNT)` (Basic splits user and password at the first
+`start()` with `RtspError(CONFIG_INVALID)` (Basic splits user and password at the first
 colon, so it could never authenticate). An empty password is a password: the
 server then admits `user:` and still challenges a client with no credential. GStreamer 1.24 answers a Digest MD5 challenge without `qop`
 (the RFC 2069 form), which the server refuses unless

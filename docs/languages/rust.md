@@ -523,7 +523,9 @@ klv`); to push KLV, use GStreamer (`rtpmp2tpay`, or `rtph264pay` plus
   starts as the builder credential's scheme and realm, else Digest MD5 and
   realm `tstrans`), and every credential is checked in it, the builder's
   included. `build()` refuses a bind URL that carries a user name or a
-  password, and an `auth_basic` user name that contains `:`.
+  password, and an `auth_basic` user name that contains `:`, with
+  `RtspServerError::InvalidServerConfig` (a refused mount is
+  `InvalidConfig`).
 - **Client credentials.** URL userinfo (`rtsp://user:pass@host/…`, percent-decoded)
   answers a challenge unless `RtspClientBuilder::auth` overrides it; a user
   name without a password (`rtsp://admin@host/…`) answers with an empty
