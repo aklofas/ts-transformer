@@ -119,9 +119,11 @@ pub unsafe extern "C" fn tst_mux_sender_send_video(
 /// streams configured as `TST_KLV_STREAM_TYPE_PRIVATE_DATA`, the payload
 /// is emitted as-is.
 ///
-/// `pts_90khz` is the presentation timestamp in 90 kHz ticks. The current
-/// API uses `metadata_service_id = 0x00` per ST 1402.2 App. B Table 2; a
-/// future entry will expose the field explicitly.
+/// `pts_90khz` is the presentation timestamp in 90 kHz ticks.
+///
+/// A C push always names metadata service 0: on a synchronous KLV stream
+/// whose descriptors do not declare service 0 the push is refused with
+/// `TST_E_INVALID_USAGE` and queues nothing.
 ///
 /// Single-stream form: the mux sender must have exactly one KLV stream
 /// configured. Multi-stream callers use `tst_mux_sender_send_klv_to` with
@@ -136,7 +138,8 @@ pub unsafe extern "C" fn tst_mux_sender_send_video(
 /// Routed through `tst_get_last_error()` via the inner `MuxSender`
 /// shell's `record_shell_error`. Common codes:
 ///
-/// - `TST_E_INVALID_USAGE` — no KLV stream configured or ambiguous target.
+/// - `TST_E_INVALID_USAGE` — no KLV stream configured, ambiguous target, or
+///   a synchronous stream that does not declare metadata service 0.
 /// - `TST_E_KLV_TOO_LARGE` — payload exceeds the per-frame KLV size limit.
 /// - `TST_E_TRANSPORT` — transport-layer failure (closed, timeout, broken pipe).
 /// - `TST_E_INVALID_CONFIG` — `klv` is null with non-zero `len`.
@@ -206,6 +209,10 @@ pub unsafe extern "C" fn tst_mux_sender_send_video_to(
 ///
 /// On a single-stream sender, prefer `tst_mux_sender_send_klv` — same
 /// effect, no handle required.
+///
+/// A C push always names metadata service 0: on a synchronous KLV stream
+/// whose descriptors do not declare service 0 the push is refused with
+/// `TST_E_INVALID_USAGE` and queues nothing.
 ///
 /// After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
 /// bytes are still buffered; a call already past its send when the
@@ -892,8 +899,11 @@ pub unsafe extern "C" fn tst_managed_mux_sender_send_video(
 /// Set bytes**, muxer auto-wraps the AU cell for SynchronousMetadata
 /// streams. Do not pre-wrap.
 ///
-/// `pts_90khz` is the presentation timestamp in 90 kHz ticks. The current
-/// API uses `metadata_service_id = 0x00`.
+/// `pts_90khz` is the presentation timestamp in 90 kHz ticks.
+///
+/// A C push always names metadata service 0: on a synchronous KLV stream
+/// whose descriptors do not declare service 0 the push is refused with
+/// `TST_E_INVALID_USAGE` and queues nothing.
 ///
 /// Single-stream form: see `tst_managed_mux_sender_send_klv_to` for the
 /// multi-stream variant.
@@ -977,6 +987,10 @@ pub unsafe extern "C" fn tst_managed_mux_sender_send_video_to(
 ///
 /// On a single-stream sender, prefer `tst_managed_mux_sender_send_klv` —
 /// same effect, no handle required.
+///
+/// A C push always names metadata service 0: on a synchronous KLV stream
+/// whose descriptors do not declare service 0 the push is refused with
+/// `TST_E_INVALID_USAGE` and queues nothing.
 ///
 /// After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
 /// bytes are still buffered; a call already past its send when the

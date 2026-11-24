@@ -380,8 +380,12 @@ pub unsafe extern "C" fn tst_rtsp_mount_push_video(
 /// `klv` must point to **raw MISB Local Set bytes**. For streams configured
 /// as `TST_KLV_STREAM_TYPE_SYNCHRONOUS_METADATA`, the muxer prepends a
 /// 5-byte `Metadata_AU_cell` header per ITU-T H.222.0 V9 §2.12.4.2.
-/// **Do not pre-wrap the AU cell on the caller side.** The current API uses
-/// `metadata_service_id = 0x00` per ST 1402.2 App. B Table 2.
+/// **Do not pre-wrap the AU cell on the caller side.**
+///
+/// A C push always names metadata service 0: on a synchronous KLV stream
+/// whose descriptors do not declare service 0 the push is refused with
+/// `TST_E_RTSP_MOUNT` (the mount's code for every muxer error) and queues
+/// nothing.
 ///
 /// Returns `0` on success, `TST_E_CLOSED` after `tst_rtsp_mount_cancel`,
 /// once `tst_rtsp_server_remove_mount` removed the mount, or once the
@@ -628,6 +632,11 @@ pub unsafe extern "C" fn tst_rtsp_mount_push_video_to(
 /// §2.12.4.2. **Do not pre-wrap on the caller side.**
 ///
 /// On a single-stream mount, prefer `tst_rtsp_mount_push_klv`.
+///
+/// A C push always names metadata service 0: on a synchronous KLV stream
+/// whose descriptors do not declare service 0 the push is refused with
+/// `TST_E_RTSP_MOUNT` (the mount's code for every muxer error) and queues
+/// nothing.
 ///
 /// Returns the codes `tst_rtsp_mount_push_klv` returns.
 ///
