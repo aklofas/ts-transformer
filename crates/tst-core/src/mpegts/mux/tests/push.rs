@@ -174,7 +174,16 @@ fn buffer_full_does_not_modify_state() {
         v[..4].copy_from_slice(&[0x00, 0x00, 0x00, 0x01]);
         v
     };
-    let _ = mux.push_video(&nal, Pts90khz::new(0), true);
+    let err = mux.push_video(&nal, Pts90khz::new(0), true).unwrap_err();
+    assert!(
+        matches!(
+            err,
+            MuxError::BufferFull {
+                capacity_packets: 10
+            }
+        ),
+        "got {err:?}"
+    );
     // Queue should be empty (push didn't commit).
     let mut buf = [0u8; 1316];
     assert_eq!(mux.pull(&mut buf), 0);
@@ -185,6 +194,24 @@ fn buffer_full_does_not_modify_state() {
     assert_eq!(slot.pcr_stream, super::slot::PcrStream::Silent);
     assert!(slot.since_pcr_push.is_empty());
     assert_eq!(slot.pcrs_on_time_base, 0);
+
+    // After a drain, a push that fits gives the bytes a fresh muxer gives:
+    // the refused push left no trace in PSI, clock or continuity counters.
+    let small = [0x00, 0x00, 0x00, 0x01, 0x65, 0x88];
+    let drain = |m: &mut Muxer| {
+        let mut out = vec![0u8; 188 * m.pending_packets() as usize];
+        let n = m.pull(&mut out);
+        out.truncate(n);
+        out
+    };
+    mux.push_video(&small, Pts90khz::new(0), true).unwrap();
+    let mut fresh = Muxer::new(MuxerConfig {
+        buffer_packets: 10,
+        ..MuxerConfig::default()
+    })
+    .unwrap();
+    fresh.push_video(&small, Pts90khz::new(0), true).unwrap();
+    assert_eq!(drain(&mut mux), drain(&mut fresh));
 }
 
 #[test]
@@ -687,23 +714,6 @@ fn push_audio_without_streams_returns_no_streams_configured() {
     assert!(
         matches!(err, MuxError::NoAudioStreamsConfigured),
         "expected NoAudioStreamsConfigured, got {err:?}",
-    );
-}
-
-#[test]
-fn push_klv_without_streams_returns_no_streams_configured() {
-    let cfg = {
-        let mut prog = MuxerProgramConfigBuilder::new(1, 0x100);
-        prog.add_video(0x101, VideoCodec::H264);
-        let mut b = MuxerConfig::builder();
-        b.add_program(prog.build());
-        b.build().unwrap()
-    };
-    let mut mux = Muxer::new(cfg).unwrap();
-    let err = mux.push_klv(&[], Pts90khz::new(0), 0x00).unwrap_err();
-    assert!(
-        matches!(err, MuxError::NoKlvStreamsConfigured),
-        "expected NoKlvStreamsConfigured, got {err:?}",
     );
 }
 

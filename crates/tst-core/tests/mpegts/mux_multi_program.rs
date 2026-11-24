@@ -66,7 +66,7 @@ fn trigger_psi(mux: &mut Muxer) -> Vec<u8> {
 fn pat_carries_two_program_entries() {
     let mut muxer = Muxer::new(two_program_config()).unwrap();
 
-    // Push a video frame on prog 0 — psi_last[0] == None so PSI is due immediately.
+    // Push a video frame on prog 0 — a new muxer's PSI is due at once.
     let out = trigger_psi(&mut muxer);
 
     let pat_packet = out
@@ -132,7 +132,7 @@ fn both_pmts_emitted_per_psi_tick() {
 
 #[test]
 fn pmt2_carries_correct_program_number() {
-    // Verify that the PMT emitted on PID 0x2000 encodes program_number=2 in
+    // Verify that the PMT emitted on PID 0x1100 encodes program_number=2 in
     // its section header (bytes 8..9 of the PMT section body, which starts at
     // payload[1] = packet[5]).
     let mut muxer = Muxer::new(two_program_config()).unwrap();
@@ -149,7 +149,7 @@ fn pmt2_carries_correct_program_number() {
     let program_number = u16::from_be_bytes([pmt2_packet[8], pmt2_packet[9]]);
     assert_eq!(
         program_number, 2,
-        "PMT on PID 0x2000 must encode program_number=2"
+        "PMT on PID 0x1100 must encode program_number=2"
     );
 }
 
@@ -497,7 +497,7 @@ fn four_program_video_config() -> MuxerConfig {
 #[test]
 fn psi_reservation_accounts_for_one_pat_plus_n_pmts() {
     // Defect: each push path reserved a hardcoded 2 PSI
-    // packets, but `maybe_emit_psi` emits 1 PAT + N PMTs. With N ≥ 3 programs
+    // packets, but a PSI set is 1 PAT + N PMTs. With N ≥ 3 programs
     // and a tight `buffer_packets`, a push that the bug accepted on the basis
     // of "2 reserved" would actually overflow the queue past
     // `buffer_packets`. The fix reserves `1 + programs.len()` and surfaces
@@ -545,15 +545,13 @@ fn psi_reservation_accounts_for_one_pat_plus_n_pmts() {
 
 #[test]
 fn psi_emit_updates_psi_last_for_all_programs() {
-    // Defect: `maybe_emit_psi` only wrote
-    // `self.psi_last[prog_idx] = Some(masked_pts)` for the triggering program.
-    // With other programs' `psi_last[i]` still `None`, a subsequent push on
-    // program `i` inside the same PSI window re-fired the entire PAT+PMTs set
-    // because `psi_due(i, ..)` returns true for any None entry.
+    // Defect: a PSI set marked only the triggering program as served. The
+    // other programs still read "due", so a push on program `i` inside the
+    // same PSI window re-fired the entire PAT+PMTs set.
     //
-    // The fix writes the masked timestamp to every entry of `self.psi_last`
-    // on emit, so a push on a different program inside the interval window
-    // does NOT re-fire PSI.
+    // A set now marks every other program as having seen it (`emit_psi`),
+    // so a push on a different program inside the interval window does NOT
+    // re-fire PSI.
     //
     // Setup: 2-program config. Push on program 0 at PTS=0 → PSI fires.
     // Drain. Push on program 1 at PTS=1000 (well inside the 9000-tick PSI
@@ -571,8 +569,8 @@ fn psi_emit_updates_psi_last_for_all_programs() {
     let _ = drain_all(&mut muxer);
 
     // Second push on program 1 (different program) at PTS well inside the
-    // 9000-tick PSI interval. The fix must mark psi_last[1] = masked(0)
-    // during the first push, so psi_due(1, 1000) returns false here.
+    // 9000-tick PSI interval. Program 1 saw the first push's set, so its
+    // push at 1000 sends none.
     muxer
         .push_video_to(
             VideoStreamHandle::pack(1, 0),
@@ -590,7 +588,7 @@ fn psi_emit_updates_psi_last_for_all_programs() {
     assert_eq!(
         pat_count, 0,
         "PSI must NOT re-fire on program 1 inside the same interval window: \
-         psi_last must be updated for all programs on emit (got {pat_count} PATs)"
+         a set must mark every program as served (got {pat_count} PATs)"
     );
 }
 
@@ -951,6 +949,125 @@ fn three_programs_that_each_pass_the_interval_at_every_push_send_one_set_a_round
                 "round {round}: sets sent by programs {senders:?}"
             );
             assert_eq!(*pmts, 3, "round {round}");
+        }
+    }
+}
+
+fn pats_in(bytes: &[u8]) -> usize {
+    bytes
+        .chunks_exact(188)
+        .filter(|k| k[1] & 0x1F == 0 && k[2] == 0)
+        .count()
+}
+
+/// Push one access unit of `prog` (number) at `ts` and drain.
+fn push_one(mux: &mut Muxer, prog: u16, ts: i64) -> Vec<u8> {
+    let au = synthetic_nal::h264_au(64, true);
+    let h = mux.video_handles_for_program(prog).unwrap()[0];
+    mux.push_video_to(h, &au, Pts90khz::new(ts), true).unwrap();
+    drain_all(mux)
+}
+
+#[test]
+fn a_program_that_only_ticks_takes_over_without_a_second_set() {
+    // Program 1 pushes until 3 s, its stamps 5 s ahead; program 2 never
+    // pushes and only ticks every 40 ms on its own timeline behind.
+    let mut evs = video_every(0, E0 + 5 * SEC, FRAME, 0, 3 * SEC, 0);
+    evs.extend((0..250).map(|i| {
+        let at = 20 * MS + i * FRAME;
+        Ev {
+            at,
+            order: 1,
+            act: Act::Tick(1, at + E0),
+        }
+    }));
+    let out = run_schedule(video_programs(2, 100, false), evs);
+    let sets: Vec<i64> = out
+        .iter()
+        .filter(|(_, b)| pats_in(b) > 0)
+        .map(|(t, _)| *t)
+        .collect();
+    for w in sets.windows(2) {
+        assert!(
+            w[1] - w[0] >= 80 * MS,
+            "sets {} ms apart at {} ms",
+            (w[1] - w[0]) / MS,
+            w[0] / MS
+        );
+    }
+    for p in 0..2 {
+        let gap = longest(&psi_gaps(&out, pmt_pid_of(p)));
+        assert!(
+            gap <= 160,
+            "program {} went {gap} ms without its PMT",
+            p + 1
+        );
+    }
+}
+
+#[test]
+fn a_program_added_by_reconfigure_after_a_set_measures_on_its_own_clock() {
+    let mut mux = Muxer::new(video_programs(2, 100, false)).unwrap();
+    assert_eq!(pats_in(&push_one(&mut mux, 1, E0)), 1);
+    // Program 2 has seen that set; a reconfigure adds program 3.
+    mux.reconfigure(video_programs(3, 100, false)).unwrap();
+    let b = push_one(&mut mux, 2, E0 + 5 * SEC);
+    assert_eq!(pats_in(&b), 1, "a reconfigure makes every program due");
+    for p in 0..3 {
+        assert!(carries_pid(&b, pmt_pid_of(p)), "PMT of program {}", p + 1);
+    }
+    assert_eq!(pats_in(&push_one(&mut mux, 3, E0 + 50 * SEC)), 0);
+    assert_eq!(pats_in(&push_one(&mut mux, 1, E0 + 40 * MS)), 0);
+    // The new program then measures the interval on its own stamps.
+    assert_eq!(pats_in(&push_one(&mut mux, 3, E0 + 50 * SEC + 50 * MS)), 0);
+    assert_eq!(pats_in(&push_one(&mut mux, 3, E0 + 50 * SEC + 100 * MS)), 1);
+}
+
+#[test]
+fn a_restart_on_a_program_that_saw_a_set_sends_a_set_at_once() {
+    let mut mux = Muxer::new(video_programs(2, 100, false)).unwrap();
+    // Five rounds, so that program 2 has PCRs on its time base.
+    for r in 0..5 {
+        push_one(&mut mux, 1, E0 + r * 50 * MS);
+        push_one(&mut mux, 2, E0 + 5 * SEC + r * 50 * MS);
+    }
+    // Program 1's interval passed: it sends a set, program 2 has seen it.
+    assert_eq!(pats_in(&push_one(&mut mux, 1, E0 + 400 * MS)), 1);
+    // Program 2 steps 4 s back: a new time base, PSI at once.
+    let b = push_one(&mut mux, 2, E0 + SEC);
+    assert_eq!(pats_in(&b), 1, "a restart sends the set at once");
+    let video = pmt_pid_of(1) + 0x11;
+    let first = b
+        .chunks_exact(188)
+        .find(|k| ((u16::from(k[1]) & 0x1F) << 8 | u16::from(k[2])) == video && k[1] & 0x40 != 0)
+        .expect("program 2's video PES start");
+    assert!(
+        first[3] & 0x20 != 0 && first[5] & 0x80 != 0,
+        "the discontinuity bit is set"
+    );
+}
+
+#[test]
+fn stamps_that_jump_by_two_to_the_32_never_send_two_sets_in_one_push() {
+    // A step of exactly 2^32 reads as -2^32 on the 33-bit clock: a time-base
+    // restart once two PCRs are on the time base, which sends a set by design.
+    // Whatever the mix, no push sends more than one set, and a set is whole.
+    let mut mux = Muxer::new(video_programs(3, 100, false)).unwrap();
+    let au = synthetic_nal::h264_au(64, false);
+    let mut ts = [E0, E0 + 7 * SEC, E0 + 99 * SEC];
+    for i in 0..300 {
+        let p = i % 3;
+        ts[p] = (ts[p] + (1i64 << 32)).rem_euclid(1 << 33);
+        let h = mux.video_handles_for_program(p as u16 + 1).unwrap()[0];
+        mux.push_video_to(h, &au, Pts90khz::new(ts[p]), false)
+            .unwrap();
+        let b = drain_all(&mut mux);
+        let pats = pats_in(&b);
+        assert!(pats <= 1, "push {i}: {pats} sets");
+        if pats == 1 {
+            for q in 0..3 {
+                assert!(carries_pid(&b, pmt_pid_of(q)), "push {i}: PMT {}", q + 1);
+            }
         }
     }
 }

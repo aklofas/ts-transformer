@@ -338,7 +338,7 @@ fn da_mux_2_recognized_subtitle_descriptor_suppresses_estimator_auto_emit() {
             ancillary_page_id: 1,
         },
     );
-    prog.stream_descriptors_for_subtitle(0, vec![sub_desc_0x59, padding])
+    prog.stream_descriptors_for_subtitle(0, vec![sub_desc_0x59.clone(), padding])
         .unwrap();
     let mut builder = MuxerConfig::builder();
     builder.add_program(prog.build());
@@ -346,8 +346,29 @@ fn da_mux_2_recognized_subtitle_descriptor_suppresses_estimator_auto_emit() {
         .build()
         .expect("recognized subtitle descriptor suppresses auto-emit; config must fit budget");
     // Muxer::new must also succeed — the emitter validates the same budget.
-    Muxer::new(config)
+    let mut mux = Muxer::new(config)
         .expect("Muxer::new must accept a near-budget config with suppressed subtitle auto-emit");
+    // The PMT the first push writes fills its section exactly and carries
+    // the caller's subtitling descriptor once (no automatic twin).
+    mux.push_video(
+        &[0x00, 0x00, 0x00, 0x01, 0x65, 0x88],
+        crate::mpegts::common::Pts90khz::new(9000),
+        true,
+    )
+    .unwrap();
+    let mut buf = vec![0u8; 188 * mux.pending_packets() as usize];
+    let n = mux.pull(&mut buf);
+    let pmt = buf[..n]
+        .chunks_exact(188)
+        .find(|p| u16::from(p[1] & 0x1F) << 8 | u16::from(p[2]) == 0x1000)
+        .expect("a PMT packet");
+    let section_length = usize::from(pmt[6] & 0x0F) << 8 | usize::from(pmt[7]);
+    assert_eq!(3 + section_length, 183, "the section uses the whole packet");
+    let copies = pmt[5..]
+        .windows(sub_desc_0x59.len())
+        .filter(|w| *w == &sub_desc_0x59[..])
+        .count();
+    assert_eq!(copies, 1);
 }
 
 /// Guard against over-counting: an AC-3 config that genuinely fits the
@@ -366,11 +387,13 @@ fn ac3_pmt_within_budget_builds_and_pushes() {
     let mut mux = Muxer::new(config).expect("Muxer::new");
     let handle = mux.audio_handles()[0];
     // The first push triggers PSI emission; must not panic.
-    let _ = mux.push_audio_to(
+    mux.push_audio_to(
         handle,
         crate::mpegts::common::Pts90khz::new(9000),
         &[0x0B, 0x77, 0, 0, 0, 0],
-    );
+    )
+    .expect("the AC-3 push fits");
+    assert!(mux.pending_packets() > 0);
 }
 
 /// Program 1 = video 0x101 + sync KLV 0x102 (no descriptors); program 2
@@ -503,6 +526,12 @@ fn rejects_malformed_program_descriptor() {
 }
 
 #[test]
+fn a_program_descriptor_with_an_empty_body_is_well_formed() {
+    let descs = vec![b"\x05\x04KLVA".to_vec(), vec![0xFF, 0x00]];
+    assert!(with_program_descriptors(descs).validate().is_ok());
+}
+
+#[test]
 fn valid_program_descriptor_serialises_unchanged() {
     let desc = b"\x05\x04KLVA".to_vec();
     let mut m = Muxer::new(with_program_descriptors(vec![desc.clone()])).unwrap();
@@ -615,6 +644,27 @@ fn a_klva_registration_with_additional_identification_info_builds() {
         let _ = klv_with(st, vec![b"\x05\x08KLVA\x01\x02\x03\x04".to_vec()])
             .expect("KLVA followed by four bytes of additional identification info");
     }
+}
+
+/// The descriptor loop real synchronous-KLV sources carry: a KLVA
+/// registration, a metadata_descriptor for service 0 and a
+/// metadata_std_descriptor. It builds, and a push for service 0 goes out.
+#[test]
+fn a_klva_registration_with_metadata_descriptors_on_sync_klv_builds_and_pushes() {
+    let descs = vec![
+        KLVA.to_vec(),
+        crate::mpegts::descriptors::metadata_klva(0),
+        crate::mpegts::descriptors::metadata_std(0, 0, 0),
+    ];
+    let cfg = klv_with(KlvStreamType::SynchronousMetadata, descs).expect("the capture shape");
+    let mut m = Muxer::new(cfg).unwrap();
+    m.push_klv(
+        &[0x06, 0x0E, 0x2B, 0x34],
+        crate::mpegts::common::Pts90khz::new(90_000),
+        0,
+    )
+    .expect("service 0 is declared");
+    assert!(m.pending_packets() > 0);
 }
 
 #[test]

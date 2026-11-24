@@ -878,6 +878,33 @@ mod blanket_impl_tests {
         assert!(t.socket_stats().is_none());
     }
 
+    /// A transport that overrides `socket_stats` is read through the box,
+    /// not through the provided default.
+    #[test]
+    fn box_dyn_transport_forwards_an_overridden_socket_stats() {
+        struct Measuring;
+        impl Transport for Measuring {
+            fn send_bytes(&mut self, _: &[u8]) -> Result<(), TransportError> {
+                Ok(())
+            }
+            fn max_payload(&self) -> usize {
+                1316
+            }
+            fn is_alive(&self) -> bool {
+                true
+            }
+            fn close(&mut self) {}
+            fn socket_stats(&self) -> Option<SocketStats> {
+                Some(SocketStats {
+                    rtt_us: 1234,
+                    ..SocketStats::default()
+                })
+            }
+        }
+        let t: Box<dyn Transport> = Box::new(Measuring);
+        assert_eq!(t.socket_stats().map(|s| s.rtt_us), Some(1234));
+    }
+
     /// A transport that keeps every provided method's default and counts
     /// its `close` calls.
     struct Plain {

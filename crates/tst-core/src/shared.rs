@@ -118,8 +118,10 @@ mod tests {
         let b = SharedBytes::from_vec(vec![10, 11, 12, 13, 14]);
         let mid = b.slice(1..4);
         assert_eq!(&*mid, &[11, 12, 13]);
+        assert_eq!(mid.as_ptr(), b[1..].as_ptr(), "the slice copied its bytes");
         let c = mid.clone();
         assert_eq!(&*c, &[11, 12, 13]);
+        assert_eq!(c.as_ptr(), b[1..].as_ptr(), "the clone copied its bytes");
     }
 
     #[test]
