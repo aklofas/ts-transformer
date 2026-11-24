@@ -625,7 +625,7 @@ fn audio_language_is_validated_like_subtitle_language() {
         }
     }
     for code in [*b"eng", *b"ENG"] {
-        with_language(code).expect("ASCII letters build");
+        let _ = with_language(code).expect("ASCII letters build");
     }
 }
 
