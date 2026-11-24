@@ -237,8 +237,9 @@ pub fn descriptor_with_tag_unchecked(tag: u8, payload: &[u8]) -> Result<Vec<u8>,
 /// is `0x20` or above is written as it is (the default table reads it
 /// the same); any other text (a non-ASCII character anywhere, or a first
 /// byte below `0x20`) is written as UTF-8 behind the one-byte selector
-/// `0x15`. Table A.3's UTF-8 row names the Basic Multilingual Plane; a
-/// receiver may not render characters outside it.
+/// `0x15`. Text that already starts with that selector (U+0015) is written
+/// as given, with no second one. Table A.3's UTF-8 row names the Basic
+/// Multilingual Plane; a receiver may not render characters outside it.
 ///
 /// # Errors
 ///
@@ -246,8 +247,9 @@ pub fn descriptor_with_tag_unchecked(tag: u8, payload: &[u8]) -> Result<Vec<u8>,
 ///   `0xF`, or when `stream_content ∈ 0x1..=0x8` and `stream_content_ext
 ///   != 0xF` (EN 300 468 §6.2.8 requires `ext=0xF` for legacy content).
 /// - [`DescriptorError::TooLarge`] when `text.len()` (in UTF-8 bytes)
-///   is over 249 for text written as it is, or over 248 for text written
-///   behind the selector (255-byte `descriptor_length` ceiling minus 6
+///   is over 249 for text written as it is (a caller's own leading
+///   selector included), or over 248 for text written behind the
+///   selector (255-byte `descriptor_length` ceiling minus 6
 ///   bytes of leading fields, minus the selector byte). Text over the
 ///   cap is refused whole, never cut.
 pub fn component(
@@ -278,8 +280,10 @@ pub fn component(
     // EN 300 468 Annex A: a first byte of 0x20..=0xFF selects the default
     // (Latin) table and a first byte below 0x20 is itself a selector, so
     // UTF-8 text is written behind 0x15 unless it is ASCII that starts at
-    // 0x20 or above.
-    let selector = !text.is_ascii() || text_bytes.first().is_some_and(|b| *b < 0x20);
+    // 0x20 or above. Text that already starts with 0x15 was selected by the
+    // caller and goes out as given.
+    let selector = !text_bytes.starts_with(&[0x15])
+        && (!text.is_ascii() || text_bytes.first().is_some_and(|b| *b < 0x20));
     let max = COMPONENT_TEXT_MAX - usize::from(selector);
     if text_bytes.len() > max {
         return Err(DescriptorError::TooLarge {
@@ -848,8 +852,41 @@ mod tests {
         let bytes = component(0xF, 0x05, 0x01, 0x42, *b"eng", "\u{1}x").expect("within cap");
         assert_eq!(bytes[1], 6 + 1 + 2);
         assert_eq!(&bytes[8..], &[0x15, 0x01, b'x']);
-        let bytes = component(0xF, 0x05, 0x01, 0x42, *b"eng", "\u{15}x").expect("within cap");
-        assert_eq!(&bytes[8..], &[0x15, 0x15, b'x']);
+    }
+
+    #[test]
+    fn component_text_that_starts_with_the_utf8_selector_is_written_as_given() {
+        // A caller that selected UTF-8 itself gets no second selector.
+        let bytes = component(0xF, 0x05, 0x01, 0x42, *b"eng", "\u{15}Caméra").expect("within cap");
+        assert_eq!(
+            bytes,
+            vec![
+                0x50, 0x0e, 0xf5, 0x01, 0x42, 0x65, 0x6e, 0x67, 0x15, 0x43, 0x61, 0x6d, 0xc3, 0xa9,
+                0x72, 0x61
+            ]
+        );
+        // A reader takes that byte as the selector, not as text.
+        let descs = crate::mpegts::demux::low_level::walk_descriptors(&bytes).expect("one whole");
+        assert_eq!(
+            crate::mpegts::demux::low_level::extract_user_label(&descs).as_deref(),
+            Some("Caméra")
+        );
+        // The caller's selector is the one counted against the cap: 249 bytes
+        // of text including it fit, 250 do not.
+        let text = alloc::format!("\u{15}{}", "é".repeat(124));
+        assert_eq!(text.len(), 249);
+        let bytes = component(0xF, 0x09, 0x00, 0x42, *b"eng", &text).expect("249 bytes fit");
+        assert_eq!(bytes[1], 255);
+        assert_eq!(&bytes[8..10], &[0x15, 0xc3]);
+        let text = alloc::format!("{text}A");
+        assert_eq!(
+            component(0xF, 0x09, 0x00, 0x42, *b"eng", &text).unwrap_err(),
+            DescriptorError::TooLarge {
+                tag: 0x50,
+                len: 250,
+                max: 249,
+            }
+        );
     }
 
     #[test]
@@ -909,7 +946,6 @@ mod tests {
             "日本語",
             "EO/IR 🛰",
             "\u{1}x",
-            "\u{15}x",
             "\u{80}",
         ] {
             let bytes = component(0xF, 0x05, 0x01, 0x42, *b"eng", text).expect("within cap");
