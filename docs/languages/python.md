@@ -113,6 +113,10 @@ Leaving the block flushes and finalizes the file automatically.
 
 The muxer's PCR runs 100 ms behind each access unit's decode time;
 `MuxerConfigBuilder.pcr_lead_ms(ms)` sets another lead (`0..=1000`).
+A producer that replaces another on one channel can set the PAT's
+`transport_stream_id(id)` (default 1) and `psi_version_base(v)` (`0..=31`,
+default 0), the version the PAT and every PMT start at, so that a receiver
+reads its tables as new.
 
 When you need the TS bytes in memory rather than writing to a file, use
 `Muxer.pull()` directly. `pull` fills a preallocated `bytearray` and
@@ -401,9 +405,12 @@ with tio.transmux("in.ts", "out.ts", atomic=True) as tx:
 ```
 
 Strict by default: streams the muxer cannot represent (DVB
-subtitling/teletext) raise `MuxError` naming the offenders; a config
-error tied to one PID also sets `MuxError.pid`.
-Private/application data streams (unknown stream types) pass through
+subtitling/teletext, and unknown streams whose stream type is carried in
+sections: 0x05, 0x13, 0x16, 0x2C, 0x2F, 0x30) raise `MuxError` naming the
+offenders; a config error tied to one PID also sets `MuxError.pid`.
+A synchronous KLV event's `metadata_service_id` is passed on, so the
+output's AU cells carry the service id the copied PMT entry declares.
+Other private/application data streams (unknown stream types) pass through
 byte-faithfully: `MuxerConfig.from_program_map` reproduces their PMT
 entry (raw stream_type byte + descriptor loop verbatim) and each
 `DemuxEvent.UnknownSample` payload is re-emitted as-is via
