@@ -11,6 +11,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.nio.file.attribute.FileTime;
 import java.util.ArrayList;
 import java.util.List;
@@ -136,6 +137,34 @@ class NativeLoaderExtractTest {
         Path dir = hashDir(tmp, bytes);
         Files.write(dir.resolve("libtstjni.so"), new byte[] {5, 6}); // truncated by a crash
         Path target = NativeLoader.extractToStableDir(bytes, "so", tmp);
+        assertArrayEquals(bytes, Files.readAllBytes(target));
+    }
+
+    /**
+     * A caller that lost the race to publish leaves the winner's copy alone: on
+     * Windows a file that is being superseded cannot be opened, and the winner
+     * may be loading it at that instant.
+     */
+    @Test
+    void publishDoesNotSupersedeAnIntactCopy(@TempDir Path tmp) throws IOException {
+        byte[] bytes = {9, 8, 7, 6, 5};
+        Path dir = hashDir(tmp, bytes);
+        Path target = dir.resolve("libtstjni.so");
+        Files.write(target, bytes);
+        var before = Files.readAttributes(target, BasicFileAttributes.class);
+        Path staging = Files.createTempFile(dir, "libtstjni.so.", ".part");
+        Files.write(staging, bytes);
+
+        NativeLoader.publish(staging, target, bytes, tmp);
+
+        var after = Files.readAttributes(target, BasicFileAttributes.class);
+        // The file key names the file itself where the platform has one (POSIX);
+        // elsewhere the creation time tells a replaced file from the original.
+        if (before.fileKey() != null) {
+            assertEquals(before.fileKey(), after.fileKey(), "the intact copy was replaced");
+        } else {
+            assertEquals(before.creationTime(), after.creationTime(), "the intact copy was replaced");
+        }
         assertArrayEquals(bytes, Files.readAllBytes(target));
     }
 

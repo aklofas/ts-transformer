@@ -61,8 +61,9 @@ import java.util.Set;
  * cache root or the random fallback directory and put its own in place.
  *
  * <p>Each JVM writes its own uniquely named owner-only staging file and
- * publishes it with an atomic move, so JVMs starting together never share a
- * partial file. An existing target is reused only when it is a regular file
+ * publishes it with a rename, so JVMs starting together never share a
+ * partial file, and the first one to publish wins: a complete copy in place is
+ * not replaced. An existing target is reused only when it is a regular file
  * (not a symbolic link) owned by the current user whose size and SHA-256 match the resource, so a file
  * truncated by a crash is replaced. The loader never deletes a
  * {@code tstrans-native-*} entry: another JVM may be about to load it, and
@@ -190,7 +191,7 @@ public final class NativeLoader {
             return target;
         }
         // A per-call staging name keeps concurrent JVMs off each other's partial
-        // writes; the atomic move means target is either absent or complete.
+        // writes; the rename means target is either absent or complete.
         // createTempFile is owner-only on POSIX, and the library stays that way.
         Path staging = Files.createTempFile(targetDir, "libtstjni." + ext + ".", ".part");
         try {
@@ -292,14 +293,21 @@ public final class NativeLoader {
      * Moves {@code staging} onto {@code target}, or accepts a complete copy that
      * another JVM published first.
      *
+     * <p>An intact copy that is already in place is never superseded: on Windows
+     * a file that is being replaced cannot be opened, and the JVM that published
+     * it may be loading it at that instant. Only a target that is not an intact
+     * copy is replaced.
+     *
      * <p>On Windows two replace-renames onto the same name race: one fails with
      * ACCESS_DENIED while the other is still superseding the old file, and for
      * that instant the target reads as absent or locked. That is not a reason to
      * fail the load, so a failed move is retried briefly until it succeeds or an
      * intact copy (published by the other JVM, loaded and locked or not) is in
      * place.
+     *
+     * <p>Package-private for unit testing.
      */
-    private static void publish(Path staging, Path target, byte[] bytes, Path tmpBase)
+    static void publish(Path staging, Path target, byte[] bytes, Path tmpBase)
             throws IOException {
         IOException last = null;
         for (int attempt = 0; attempt < 20; attempt++) {
@@ -313,6 +321,20 @@ public final class NativeLoader {
                 }
             }
             try {
+                // No REPLACE_EXISTING: the first publisher wins. A caller that
+                // lost the race must not supersede the winner's copy, which
+                // the winner may be opening at this instant.
+                Files.move(staging, target);
+                return;
+            } catch (IOException e) {
+                if (matches(target, bytes, tmpBase)) {
+                    return;
+                }
+                last = e;
+            }
+            try {
+                // What is in place is not an intact copy (truncated by a crash,
+                // foreign, unreadable): replace it.
                 Files.move(staging, target, StandardCopyOption.ATOMIC_MOVE,
                         StandardCopyOption.REPLACE_EXISTING);
                 return;
