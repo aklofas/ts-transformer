@@ -525,3 +525,314 @@ fn valid_program_descriptor_serialises_unchanged() {
     assert_eq!(program_info_length, 6);
     assert_eq!(&pmt[17..23], &desc[..]);
 }
+
+// ─── Caller descriptors that replace automatic signalling ───────────────────
+
+/// Video 0x100 + a KLV stream 0x101 of `stream_type` carrying `descs`.
+fn klv_with(stream_type: KlvStreamType, descs: Vec<Vec<u8>>) -> Result<MuxerConfig, MuxError> {
+    let mut prog = MuxerProgramConfigBuilder::new(1, 0x1000);
+    prog.add_video(0x100, VideoCodec::H264);
+    prog.add_klv(
+        0x101,
+        stream_type,
+        stream_type == KlvStreamType::SynchronousMetadata,
+    );
+    prog.stream_descriptors_for_klv(0, descs).unwrap();
+    let mut b = MuxerConfig::builder();
+    b.add_program(prog.build());
+    b.build()
+}
+
+/// Video 0x100 + a subtitle stream 0x200 of `codec` carrying `descs`.
+fn subtitle_with(codec: SubtitleCodec, descs: Vec<Vec<u8>>) -> Result<MuxerConfig, MuxError> {
+    let mut prog = MuxerProgramConfigBuilder::new(1, 0x1000);
+    prog.add_video(0x100, VideoCodec::H264);
+    prog.add_subtitle(0x200, codec);
+    prog.stream_descriptors_for_subtitle(0, descs).unwrap();
+    let mut b = MuxerConfig::builder();
+    b.add_program(prog.build());
+    b.build()
+}
+
+/// Video 0x100 of AV1 carrying `descs`.
+fn av1_with(descs: Vec<Vec<u8>>) -> Result<MuxerConfig, MuxError> {
+    let mut prog = MuxerProgramConfigBuilder::new(1, 0x1000);
+    prog.add_video(0x100, VideoCodec::Av1);
+    prog.stream_descriptors_for_video(0, descs).unwrap();
+    let mut b = MuxerConfig::builder();
+    b.add_program(prog.build());
+    b.build()
+}
+
+#[track_caller]
+fn assert_refused(result: Result<MuxerConfig, MuxError>, pid: &str) {
+    match result {
+        Err(MuxError::ConfigInvalid { reason }) => assert!(reason.contains(pid), "{reason}"),
+        other => panic!("expected ConfigInvalid naming {pid}, got {other:?}"),
+    }
+}
+
+const KLVA: &[u8] = b"\x05\x04KLVA";
+
+fn dvb_subtitling() -> SubtitleCodec {
+    SubtitleCodec::DvbSubtitling {
+        language: *b"eng",
+        subtitling_type: 0x10,
+        composition_page_id: 1,
+        ancillary_page_id: 1,
+    }
+}
+
+fn dvb_teletext() -> SubtitleCodec {
+    SubtitleCodec::DvbTeletext {
+        language: *b"eng",
+        teletext_type: 0x02,
+        magazine_number: 1,
+        page_number: 0x00,
+    }
+}
+
+/// A well-formed subtitling_descriptor entry for `lang`.
+fn subtitling_entry(lang: &[u8; 3]) -> Vec<u8> {
+    vec![0x59, 0x08, lang[0], lang[1], lang[2], 0x10, 0, 1, 0, 1]
+}
+
+/// A well-formed teletext_descriptor entry for `lang` under `tag`.
+fn teletext_entry(tag: u8, lang: &[u8; 3]) -> Vec<u8> {
+    vec![tag, 0x05, lang[0], lang[1], lang[2], 0x10, 0x00]
+}
+
+#[test]
+fn a_non_klva_registration_on_a_klv_stream_is_refused() {
+    for st in [
+        KlvStreamType::PrivateData,
+        KlvStreamType::SynchronousMetadata,
+    ] {
+        assert_refused(klv_with(st, vec![b"\x05\x04ABCD".to_vec()]), "0x0101");
+        assert_refused(klv_with(st, vec![b"\x05\x05KLVA\x00".to_vec()]), "0x0101");
+        assert_refused(klv_with(st, vec![b"\x05\x02KL".to_vec()]), "0x0101");
+        // A second registration is refused in either order.
+        assert_refused(
+            klv_with(st, vec![KLVA.to_vec(), b"\x05\x04ABCD".to_vec()]),
+            "0x0101",
+        );
+        assert_refused(
+            klv_with(st, vec![b"\x05\x04ABCD".to_vec(), KLVA.to_vec()]),
+            "0x0101",
+        );
+        let _ = klv_with(st, vec![KLVA.to_vec()]).expect("a KLVA registration");
+        let _ = klv_with(
+            st,
+            vec![crate::mpegts::descriptors::user_private(b"label").unwrap()],
+        )
+        .expect("a user-private label");
+    }
+    // KLVA twice is not refused: the PMT then carries both, as given.
+    let cfg = klv_with(KlvStreamType::PrivateData, vec![KLVA.to_vec(); 2]).unwrap();
+    let muxer = Muxer::new(cfg).unwrap();
+    assert_eq!(
+        muxer.slots[0].pmt_descriptor_cache[1],
+        [KLVA, KLVA].concat()
+    );
+}
+
+#[test]
+fn a_truncated_metadata_descriptor_on_sync_klv_is_refused() {
+    let sync = KlvStreamType::SynchronousMetadata;
+    // metadata_service_id is TLV byte 9 after a 2-byte application format
+    // and the KLVA format identifier; byte 13 when the application format is
+    // 0xFFFF plus its 4-byte identifier. Every cut before it is refused.
+    let short = crate::mpegts::descriptors::metadata_klva(3);
+    let long: &[u8] = &[
+        0x26, 0x0D, 0xFF, 0xFF, 0x01, 0x02, 0x03, 0x04, 0xFF, b'K', b'L', b'V', b'A', 0x09, 0x0F,
+    ];
+    for (full, service_at) in [(&short[..], 9usize), (long, 13)] {
+        for cut in 2..=service_at {
+            let mut d = full[..cut].to_vec();
+            d[1] = (cut - 2) as u8;
+            assert_refused(klv_with(sync, vec![d]), "0x0101");
+        }
+        let mut whole = full[..=service_at].to_vec();
+        whole[1] = (service_at - 1) as u8;
+        let _ =
+            klv_with(sync, vec![whole]).expect("a metadata_descriptor that reaches its service id");
+    }
+    let _ = klv_with(sync, vec![short.clone()]).expect("metadata_klva(3)");
+    let _ = klv_with(
+        sync,
+        vec![
+            crate::mpegts::descriptors::metadata_klva(3),
+            crate::mpegts::descriptors::metadata_klva(4),
+        ],
+    )
+    .expect("one metadata_descriptor per service");
+    // Asynchronous KLV writes no metadata_descriptor of its own.
+    let _ = klv_with(KlvStreamType::PrivateData, vec![vec![0x26, 0x00]]).expect("async KLV");
+}
+
+#[test]
+fn a_second_or_malformed_metadata_std_descriptor_is_refused() {
+    let sync = KlvStreamType::SynchronousMetadata;
+    let std = crate::mpegts::descriptors::metadata_std(0, 0, 0);
+    assert_eq!(std.len(), 11);
+    assert_refused(klv_with(sync, vec![std.clone(), std.clone()]), "0x0101");
+    let mut short = std[..10].to_vec();
+    short[1] = 8;
+    assert_refused(klv_with(sync, vec![short]), "0x0101");
+    let mut long = std.clone();
+    long.push(0);
+    long[1] = 10;
+    assert_refused(klv_with(sync, vec![long]), "0x0101");
+    let _ = klv_with(sync, vec![std]).expect("exactly one well-formed metadata_std_descriptor");
+}
+
+#[test]
+fn an_over_long_av01_registration_is_refused() {
+    let av01 = crate::mpegts::descriptors::format_identifier_av01();
+    assert_refused(av1_with(vec![b"\x05\x05AV01\x00".to_vec()]), "0x0100");
+    assert_refused(
+        av1_with(vec![
+            crate::mpegts::descriptors::user_private(b"x").unwrap(),
+            b"\x05\x06AV01\x00\x00".to_vec(),
+        ]),
+        "0x0100",
+    );
+    let label = crate::mpegts::descriptors::user_private(b"x").unwrap();
+    let cfg = av1_with(vec![label.clone(), av01.clone()]).expect("the 6-byte AV01 anywhere");
+    let muxer = Muxer::new(cfg).unwrap();
+    assert_eq!(
+        muxer.slots[0].pmt_descriptor_cache[0],
+        [&av01[..], &label[..]].concat(),
+        "the caller's AV01 still goes first"
+    );
+    let _ = av1_with(vec![b"\x05\x04ABCD".to_vec()]).expect("another registration on AV1");
+}
+
+#[test]
+fn a_subtitle_marker_of_another_codec_is_refused() {
+    let ga94 = b"\x05\x04GA94".to_vec();
+    let vttc = b"\x05\x04VTTC".to_vec();
+    assert_refused(
+        subtitle_with(dvb_teletext(), vec![subtitling_entry(b"eng")]),
+        "0x0200",
+    );
+    assert_refused(
+        subtitle_with(dvb_subtitling(), vec![teletext_entry(0x56, b"eng")]),
+        "0x0200",
+    );
+    assert_refused(
+        subtitle_with(dvb_subtitling(), vec![teletext_entry(0x46, b"eng")]),
+        "0x0200",
+    );
+    for codec in [dvb_subtitling(), dvb_teletext()] {
+        assert_refused(
+            subtitle_with(
+                codec,
+                vec![subtitling_entry(b"eng"), teletext_entry(0x56, b"eng")],
+            ),
+            "0x0200",
+        );
+    }
+    assert_refused(
+        subtitle_with(SubtitleCodec::WebVttInTs, vec![ga94.clone()]),
+        "0x0200",
+    );
+    assert_refused(
+        subtitle_with(SubtitleCodec::Cea708Standalone, vec![vttc.clone()]),
+        "0x0200",
+    );
+    assert_refused(
+        subtitle_with(dvb_subtitling(), vec![ga94.clone()]),
+        "0x0200",
+    );
+    // The configured codec's own marker stays accepted.
+    let _ = subtitle_with(SubtitleCodec::Cea708Standalone, vec![ga94]).expect("GA94 on CEA-708");
+    let _ = subtitle_with(SubtitleCodec::WebVttInTs, vec![vttc]).expect("VTTC on WebVTT");
+}
+
+#[test]
+fn a_malformed_subtitle_marker_is_refused() {
+    assert_refused(
+        subtitle_with(dvb_subtitling(), vec![vec![0x59, 0x01, 0x00]]),
+        "0x0200",
+    );
+    assert_refused(
+        subtitle_with(dvb_subtitling(), vec![vec![0x59, 0x00]]),
+        "0x0200",
+    );
+    assert_refused(
+        subtitle_with(dvb_teletext(), vec![vec![0x56, 0x01, 0x00]]),
+        "0x0200",
+    );
+    assert_refused(
+        subtitle_with(dvb_teletext(), vec![vec![0x56, 0x00]]),
+        "0x0200",
+    );
+    assert_refused(
+        subtitle_with(dvb_teletext(), vec![vec![0x46, 0x00]]),
+        "0x0200",
+    );
+    let mut nine = subtitling_entry(b"eng");
+    nine.push(0);
+    nine[1] = 9;
+    assert_refused(subtitle_with(dvb_subtitling(), vec![nine]), "0x0200");
+    // Whole entries for other languages are accepted.
+    let mut two = subtitling_entry(b"eng");
+    two.extend_from_slice(&subtitling_entry(b"deu")[2..]);
+    two[1] = 16;
+    let _ = subtitle_with(dvb_subtitling(), vec![two]).expect("two subtitling entries");
+    let mut tt = teletext_entry(0x56, b"fra");
+    tt.extend_from_slice(&teletext_entry(0x56, b"deu")[2..]);
+    tt[1] = 10;
+    let _ = subtitle_with(dvb_teletext(), vec![tt]).expect("two teletext entries");
+    let _ =
+        subtitle_with(dvb_teletext(), vec![teletext_entry(0x46, b"eng")]).expect("VBI teletext");
+}
+
+#[test]
+fn reconfigure_with_a_refused_override_changes_nothing() {
+    let cfg = klv_with(KlvStreamType::PrivateData, vec![]).unwrap();
+    let mut m = Muxer::new(cfg.clone()).unwrap();
+    let h = m.video_stream_handle(0).unwrap();
+    let au = [0u8, 0, 0, 1, 0x65, 0x88, 0x84, 0x00];
+    m.push_video_to(h, &au, crate::mpegts::common::Pts90khz::new(0), true)
+        .unwrap();
+    let mut buf = [0u8; 188 * 32];
+    let n = m.pull(&mut buf);
+    let pmt_before: Vec<u8> = buf[..n]
+        .chunks(188)
+        .find(|p| ((u16::from(p[1] & 0x1F) << 8) | u16::from(p[2])) == 0x1000)
+        .expect("a PMT")[4..]
+        .to_vec();
+
+    let mut bad = cfg;
+    bad.programs[0].stream_descriptors[1] = vec![b"\x05\x04ABCD".to_vec()];
+    assert!(matches!(
+        m.reconfigure(bad),
+        Err(MuxError::ConfigInvalid { .. })
+    ));
+    m.request_psi();
+    m.push_video_to(h, &au, crate::mpegts::common::Pts90khz::new(3_600), true)
+        .unwrap();
+    let n = m.pull(&mut buf);
+    let pmt_after = buf[..n]
+        .chunks(188)
+        .find(|p| ((u16::from(p[1] & 0x1F) << 8) | u16::from(p[2])) == 0x1000)
+        .expect("a PMT")[4..]
+        .to_vec();
+    // Same table at the same version: only the continuity counter moved.
+    assert_eq!(pmt_after, pmt_before);
+}
+
+#[test]
+fn a_too_large_pmt_with_well_formed_descriptors_still_reports_pmt_too_large() {
+    let mut descs = vec![
+        crate::mpegts::descriptors::metadata_klva(0),
+        crate::mpegts::descriptors::metadata_std(0, 0, 0),
+    ];
+    descs.extend((0..8).map(|_| crate::mpegts::descriptors::user_private(&[0u8; 20]).unwrap()));
+    assert!(matches!(
+        klv_with(KlvStreamType::SynchronousMetadata, descs),
+        Err(MuxError::PmtTooLarge { .. })
+    ));
+}
