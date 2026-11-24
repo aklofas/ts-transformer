@@ -611,7 +611,7 @@ impl PyRtspServer {
     /// then `build()` + `start()` are called. Errors during any of those
     /// surface as `RtspError(IO)` (bind or listener start failures),
     /// `RtspError(TLS)` (cert/key parse failures), `RtspError(PROTOCOL)`
-    /// (URL parse), or `RtspError(MOUNT)` (an invalid default mount rule,
+    /// (URL parse), or `RtspError(CONFIG_INVALID)` (an invalid default mount rule,
     /// an invalid auth realm, an empty auth user name, a `BasicAuth` user
     /// name that contains `:`, or a `bind_addr` that carries a user name or
     /// a password: the server's credential is `auth`, never the bind

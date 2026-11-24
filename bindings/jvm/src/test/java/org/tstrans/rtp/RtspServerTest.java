@@ -434,7 +434,9 @@ class RtspServerTest {
                 if (auth) b.auth(new BasicAuth("admin", "secret", "realm"));
                 RtspException e = assertThrows(RtspException.class,
                     () -> RtspServer.start(b.build()), bind);
-                assertEquals(RtspException.Kind.MOUNT, e.kind(), bind + ": " + e.getMessage());
+                assertEquals(RtspException.Kind.CONFIG_INVALID, e.kind(),
+                    bind + ": " + e.getMessage());
+                assertTrue(e.getMessage().contains("invalid server config"), e.getMessage());
                 assertTrue(e.getMessage().contains("bind URL"), e.getMessage());
                 assertFalse(e.getMessage().contains("admin"), e.getMessage());
                 assertFalse(e.getMessage().contains("secret"), e.getMessage());
@@ -448,7 +450,7 @@ class RtspServerTest {
         RtspException e = assertThrows(RtspException.class, () -> RtspServer.start(
             RtspServerConfig.builder().bindAddr("127.0.0.1:0")
                 .auth(new BasicAuth("ad:min", "secret", "realm")).build()));
-        assertEquals(RtspException.Kind.MOUNT, e.kind(), e.getMessage());
+        assertEquals(RtspException.Kind.CONFIG_INVALID, e.kind(), e.getMessage());
         assertFalse(e.getMessage().contains("ad:min"), e.getMessage());
         assertFalse(e.getMessage().contains("secret"), e.getMessage());
         for (DigestAlgorithm alg : DigestAlgorithm.values()) {

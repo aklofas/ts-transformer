@@ -1074,8 +1074,9 @@ def test_a_bind_address_with_userinfo_does_not_start(bind_addr):
     cfg = RtspServerConfig(bind_addr=bind_addr, graceful_shutdown_drain_ms=50, **kw)
     with pytest.raises(RtspError) as ei:
         RtspServer.start(cfg)
-    assert ei.value.kind == RtspErrorKind.MOUNT
+    assert ei.value.kind == RtspErrorKind.CONFIG_INVALID
     text = str(ei.value)
+    assert "invalid server config" in text
     assert "bind URL" in text
     assert "admin" not in text and "secret" not in text
 
@@ -1088,7 +1089,7 @@ def test_a_basic_auth_user_name_with_a_colon_does_not_start():
     )
     with pytest.raises(RtspError) as ei:
         RtspServer.start(cfg)
-    assert ei.value.kind == RtspErrorKind.MOUNT
+    assert ei.value.kind == RtspErrorKind.CONFIG_INVALID
     assert "secret" not in str(ei.value)
 
 

@@ -72,7 +72,8 @@ pub(crate) fn rtsp_error_to_jvm(env: &mut Env, e: RtspError) {
 }
 
 /// RTSP server errors — the shared `From<RtspServerError>` (`Shutdown`, the server
-/// ended, → `CLOSED`).
+/// ended, → `CLOSED`; `InvalidServerConfig`, a setting the build refuses, →
+/// `CONFIG_INVALID`).
 pub(crate) fn server_error_to_jvm(env: &mut Env, e: RtspServerError) {
     throw_binding(env, Domain::Rtsp, &BindingError::from(e));
 }
