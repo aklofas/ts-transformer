@@ -602,6 +602,21 @@ fn teletext_entry(tag: u8, lang: &[u8; 3]) -> Vec<u8> {
     vec![tag, 0x05, lang[0], lang[1], lang[2], 0x10, 0x00]
 }
 
+/// H.222.0 lets a registration carry additional identification info behind
+/// its format identifier, and the demuxer classifies such a stream as KLV.
+#[test]
+fn a_klva_registration_with_additional_identification_info_builds() {
+    for st in [
+        KlvStreamType::PrivateData,
+        KlvStreamType::SynchronousMetadata,
+    ] {
+        let _ = klv_with(st, vec![b"\x05\x05KLVA\x00".to_vec()])
+            .expect("KLVA followed by one byte of additional identification info");
+        let _ = klv_with(st, vec![b"\x05\x08KLVA\x01\x02\x03\x04".to_vec()])
+            .expect("KLVA followed by four bytes of additional identification info");
+    }
+}
+
 #[test]
 fn a_non_klva_registration_on_a_klv_stream_is_refused() {
     for st in [
@@ -609,7 +624,7 @@ fn a_non_klva_registration_on_a_klv_stream_is_refused() {
         KlvStreamType::SynchronousMetadata,
     ] {
         assert_refused(klv_with(st, vec![b"\x05\x04ABCD".to_vec()]), "0x0101");
-        assert_refused(klv_with(st, vec![b"\x05\x05KLVA\x00".to_vec()]), "0x0101");
+        assert_refused(klv_with(st, vec![b"\x05\x04KLVB".to_vec()]), "0x0101");
         assert_refused(klv_with(st, vec![b"\x05\x02KL".to_vec()]), "0x0101");
         // A second registration is refused in either order.
         assert_refused(
