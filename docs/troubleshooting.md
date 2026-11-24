@@ -779,8 +779,8 @@ admits no reader at all.
 
 **Symptom:** `RtspServerBuilder::build()` (C
 `tst_rtsp_server_builder_start`, Python and JVM `RtspServer.start`) fails
-with `InvalidConfig` (C `TST_E_RTSP_MOUNT`, kind `MOUNT` in Python and the
-JVM), and the message names the bind URL.
+with `InvalidServerConfig` (C `TST_E_INVALID_CONFIG`, kind `CONFIG_INVALID`
+in Python and the JVM), and the message names the bind URL.
 
 **Diagnosis:** the bind URL carries a user name or a password
 (`rtsp://admin:secret@0.0.0.0:8554`, also `rtsp://admin@…` and an empty

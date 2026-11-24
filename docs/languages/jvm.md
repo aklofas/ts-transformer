@@ -2789,7 +2789,7 @@ try (RtspServer server = RtspServer.start(cfg);
   auth; omitting it throws `IllegalArgumentException` at `start()`. The
   credential is never taken from the bind address: a bind address that
   carries a user name or a password (`rtsp://user:pass@0.0.0.0:8554`) makes
-  `start()` throw `RtspException` of kind `MOUNT` (through 0.10.0 the server
+  `start()` throw `RtspException` of kind `CONFIG_INVALID` (through 0.10.0 the server
   dropped it and ran without authentication), and so does a `BasicAuth` user
   name that contains `:` (Basic cannot carry it; a `DigestAuth` one works).
   An empty password is a password: it admits its user and nobody else.
@@ -2927,7 +2927,7 @@ How each call ends:
 | `nextPublisher(timeoutMs)` | `Optional.empty()` | No mount arrived in time. Always the result when on-demand publishers are off. |
 | `nextPublisher`, `addPublishMount`, `removeMount` | `RtspException(CLOSED)` | The server is stopped (from the moment `stop()` or `close()` begins) or hard-cancelled. A `nextPublisher` parked on another thread wakes with it when `stop()` or `close()` runs. After `close()` the object itself refuses calls with `IllegalStateException`. |
 | `addPublishMount`, `removeMount` | `RtspException(MOUNT)` | Duplicate or invalid path, or no mount registered at the path. |
-| `RtspServer.start` | `RtspException(MOUNT)` | A refused configuration: the default mount rule, the auth realm, an empty auth user name, a bind address that carries a user name or a password, or a `BasicAuth` user name that contains `:`; the message names no credential. |
+| `RtspServer.start` | `RtspException(CONFIG_INVALID)` | A refused configuration: the default mount rule, the auth realm, an empty auth user name, a bind address that carries a user name or a password, or a `BasicAuth` user name that contains `:`; the message names no credential. |
 | `MountHandle` `push*`, `flush()` | `RtspException(CLOSED)` | The mount was removed (`removeMount`) or the server ended; the getters and `resetStats()` still answer. |
 | `intoDemuxReceiver` | `RtspException(CLOSED)` | The mount's transport was already taken, through this or any other handle to the mount. |
 | `DemuxReceiver.recvEvent()` | `null` | End of stream: the mount was removed, the server stopped or was hard-cancelled, or its recording publisher left with end-on-exit on. What was already queued is delivered first. `endReason()` reads `CLEAN_TEARDOWN`. |
