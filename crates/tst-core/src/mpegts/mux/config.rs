@@ -738,6 +738,10 @@ impl MuxerConfig {
                 }
             }
 
+            for (spec, descs) in prog.streams.iter().zip(&prog.stream_descriptors) {
+                validate_signalling_overrides(spec, descs)?;
+            }
+
             // Data streams must classify as Unknown under the demux
             // cascade — both directions of the contract: a Data stream
             // re-demuxes as Unknown, and typed payloads can't ride a
@@ -1366,6 +1370,102 @@ fn raw_descriptor_to_tlv(
     tlv.push(len);
     tlv.extend_from_slice(&d.data);
     Ok(tlv)
+}
+
+/// A caller descriptor whose tag takes the place of the muxer's automatic
+/// signalling (see `build_pmt_descriptor_cache`) must be able to do that
+/// signalling's job; otherwise receivers misread or lose the stream.
+/// Descriptors are already known to be well-formed TLVs.
+fn validate_signalling_overrides(spec: &StreamSpec, descs: &[Vec<u8>]) -> Result<(), MuxError> {
+    let refuse = |what: &str| MuxError::ConfigInvalid {
+        reason: format!("stream pid 0x{:04X}: {what}", spec.pid()),
+    };
+    match spec {
+        StreamSpec::Klv { stream_type, .. } => {
+            if descs
+                .iter()
+                .any(|d| d[0] == 0x05 && d[..] != [0x05, 0x04, b'K', b'L', b'V', b'A'])
+            {
+                return Err(refuse(
+                    "a registration_descriptor on a KLV stream must be the 4-byte \
+                     format_identifier \"KLVA\" (ST 1402)",
+                ));
+            }
+            if *stream_type == KlvStreamType::SynchronousMetadata {
+                if descs.iter().any(|d| {
+                    d[0] == 0x26 && super::state::metadata_descriptor_service_id(d).is_none()
+                }) {
+                    return Err(refuse(
+                        "a metadata_descriptor ends before its metadata_service_id \
+                         (H.222.0 Table 2-89)",
+                    ));
+                }
+                let mut stds = descs.iter().filter(|d| d[0] == 0x27);
+                let first = stds.next();
+                if stds.next().is_some() || first.is_some_and(|d| d.len() != 11) {
+                    return Err(refuse(
+                        "synchronous KLV takes a single metadata_std_descriptor with a \
+                         9-byte body (ST 1402, H.222.0 2.6.62)",
+                    ));
+                }
+            }
+        }
+        StreamSpec::Video {
+            codec: VideoCodec::Av1,
+            ..
+        } => {
+            if descs
+                .iter()
+                .any(|d| d.len() > 6 && d[0] == 0x05 && &d[2..6] == b"AV01")
+            {
+                return Err(refuse(
+                    "an AV01 registration_descriptor has descriptor_length 4 \
+                     (AV1 in MPEG-2 TS)",
+                ));
+            }
+        }
+        StreamSpec::Subtitle { codec, .. } => {
+            // The markers a receiver classifies a subtitle PID by, and the
+            // entry size of the DVB ones (EN 300 468 6.2.41, 6.2.43).
+            #[derive(PartialEq)]
+            enum Marker {
+                DvbSubtitling,
+                DvbTeletext,
+                Cea708,
+                WebVtt,
+            }
+            let own = match codec {
+                SubtitleCodec::DvbSubtitling { .. } => Marker::DvbSubtitling,
+                SubtitleCodec::DvbTeletext { .. } => Marker::DvbTeletext,
+                SubtitleCodec::Cea708Standalone => Marker::Cea708,
+                SubtitleCodec::WebVttInTs => Marker::WebVtt,
+            };
+            for d in descs {
+                let (marker, entry) = match d[0] {
+                    0x59 => (Marker::DvbSubtitling, 8),
+                    0x56 | 0x46 => (Marker::DvbTeletext, 5),
+                    0x05 if d.len() >= 6 && &d[2..6] == b"GA94" => (Marker::Cea708, 0),
+                    0x05 if d.len() >= 6 && &d[2..6] == b"VTTC" => (Marker::WebVtt, 0),
+                    _ => continue,
+                };
+                if marker != own {
+                    return Err(refuse(
+                        "a caller descriptor marks the stream as another subtitle codec than \
+                         the one configured",
+                    ));
+                }
+                let body = d.len() - 2;
+                if entry != 0 && (body == 0 || body % entry != 0) {
+                    return Err(refuse(
+                        "a subtitling or teletext descriptor holds whole entries \
+                         (EN 300 468 6.2.41, 6.2.43)",
+                    ));
+                }
+            }
+        }
+        _ => {}
+    }
+    Ok(())
 }
 
 /// H.222.0 Table 2-34 stream types whose payload is sections, never PES.
