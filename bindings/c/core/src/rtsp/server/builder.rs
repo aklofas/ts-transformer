@@ -74,7 +74,7 @@ use crate::panic::ffi_catch;
 /// step because the OS kernel, not a resolver, performs the actual bind.
 /// A bind URL must not carry a user name or a password: this call takes it,
 /// and `tst_rtsp_server_builder_start` refuses it (NULL, last-error
-/// `TST_E_RTSP_MOUNT`). Configure the server's credential with
+/// `TST_E_INVALID_CONFIG`). Configure the server's credential with
 /// `_auth_basic` or `_auth_digest_*`.
 ///
 /// Auth, TLS, session limits, and drain policy may be set with the
@@ -129,7 +129,7 @@ pub unsafe extern "C" fn tst_rtsp_server_builder_new(
 /// this to redirect the server to a different interface or port without
 /// allocating a new builder. As for `_new`, a URL that carries a user name
 /// or a password is taken here and refused by
-/// `tst_rtsp_server_builder_start` (`TST_E_RTSP_MOUNT`).
+/// `tst_rtsp_server_builder_start` (`TST_E_INVALID_CONFIG`).
 ///
 /// No-op (with last-error set to `TST_E_INVALID_CONFIG`) if `builder` is
 /// NULL, `addr` is NULL, or the URL fails to parse.
@@ -184,7 +184,7 @@ pub unsafe extern "C" fn tst_rtsp_server_builder_bind(
 /// `RtspServerBuilder::auth_basic` behavior).
 ///
 /// A user name that contains `:` is refused by
-/// `tst_rtsp_server_builder_start` (NULL, last-error `TST_E_RTSP_MOUNT`):
+/// `tst_rtsp_server_builder_start` (NULL, last-error `TST_E_INVALID_CONFIG`):
 /// Basic authentication cannot carry it (RFC 7617 §2).
 ///
 /// No-op (with last-error set to `TST_E_INVALID_CONFIG`) if `builder`,
@@ -767,9 +767,8 @@ mod tests {
     }
 
     /// Starts `b` and expects the refusal at build: NULL, a text that names
-    /// `field`, and `TST_E_RTSP_MOUNT`, the code every configuration the
-    /// server's build refuses reads in C (the binding kind table puts a
-    /// server's `InvalidConfig` with the mount errors). Returns the text.
+    /// the server and `field`, and `TST_E_INVALID_CONFIG`, the code every
+    /// setting the server's build refuses reads in C. Returns the text.
     fn refused_at_start(b: *mut TstRtspServerBuilder, field: &str) -> String {
         crate::error::clear_last_error_for_test();
         let server = unsafe { crate::rtsp::server::start::tst_rtsp_server_builder_start(b) };
@@ -779,9 +778,10 @@ mod tests {
         }
         assert_eq!(
             crate::error::test_last_error_code(),
-            TstError::RtspMount as i32
+            TstError::InvalidConfig as i32
         );
         let msg = crate::error::test_last_error_msg();
+        assert!(msg.contains("invalid server config"), "{msg}");
         assert!(msg.contains(field), "{msg}");
         msg
     }
@@ -827,6 +827,14 @@ mod tests {
         let b = new_builder("rtsp://127.0.0.1:0");
         let (u, p) = (c"a:b", c"x");
         unsafe { tst_rtsp_server_builder_auth_basic(b, u.as_ptr(), p.as_ptr()) };
+        refused_at_start(b, "auth username");
+    }
+
+    #[test]
+    fn an_empty_auth_user_name_is_refused_at_start() {
+        let b = new_builder("rtsp://127.0.0.1:0");
+        let (u, p) = (c"", c"x");
+        unsafe { tst_rtsp_server_builder_auth_digest_md5(b, u.as_ptr(), p.as_ptr()) };
         refused_at_start(b, "auth username");
     }
 
