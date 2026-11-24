@@ -134,8 +134,24 @@ pub struct MuxerConfig {
     /// the PCR = PTS output of 0.10.0 and earlier.
     pub pcr_lead_ms: u32,
 
-    /// PAT/PMT re-emission interval, in milliseconds. Default 100. Validation >= 10.
-    /// One PAT + N PMTs emitted per tick.
+    /// PAT/PMT re-emission interval, in milliseconds. Default 100.
+    /// Validation: >= 10, and <= 200 when any program carries a KLV stream
+    /// (ST 1402 asks for the PAT and PMT more than four times a second).
+    ///
+    /// Each program measures this interval on its own clock. A set is one
+    /// PAT and one PMT per live program, whichever program's push sent it.
+    /// The effective interval is the first whole number of the pushing
+    /// program's push steps at or above this value (120 ms at 25 units a
+    /// second for the default of 100). While a program pushes with stamps
+    /// that advance, when a slower program takes over sending the sets, the
+    /// first gap can reach that program's interval in whole push steps plus
+    /// one more step; `tick` on that program removes it. A backward step
+    /// under one second holds that program's clock, and its PSI with it,
+    /// for the size of the step.
+    ///
+    /// The bound is on the configured value: a PCR stream that pushes every
+    /// 125 ms or slower still sends fewer than five sets a second at
+    /// 200 ms; use `tick`.
     pub psi_interval_ms: u32,
 
     /// Maximum buffered TS packets before push returns `BufferFull`.
@@ -899,6 +915,19 @@ impl MuxerConfig {
         }
         if self.psi_interval_ms < 10 {
             return Err(MuxError::InvalidConfig("psi_interval_ms must be >= 10"));
+        }
+        // ST 1402: a stream that carries KLV repeats its PAT and PMT more
+        // than four times a second.
+        if self.psi_interval_ms > 200
+            && self.programs.iter().any(|p| {
+                p.streams
+                    .iter()
+                    .any(|s| matches!(s, StreamSpec::Klv { .. }))
+            })
+        {
+            return Err(MuxError::InvalidConfig(
+                "psi_interval_ms must be <= 200 when a program carries KLV",
+            ));
         }
         if self.buffer_packets < 10 {
             return Err(MuxError::InvalidConfig("buffer_packets must be >= 10"));
