@@ -632,13 +632,21 @@ pub(crate) fn convert_event<'local>(
         } => {
             let stream_obj = build_stream_id(env, stream)?;
             let (kind_obj, was_reassembled, cell_count) = metadata_kind(env, kind)?;
+            let service_id = match kind {
+                MetadataKind::KlvSyncAuCell {
+                    metadata_service_id,
+                    ..
+                } => Some(*metadata_service_id),
+                MetadataKind::KlvAsync | MetadataKind::Unknown(_) => None,
+            };
+            let service_obj = opt_int(env, service_id)?;
             // Raw KLV LS bytes (AU-cell header already stripped). Heap-copied,
             // JVM-owned (same safety story as the sample records).
             let buf = wrap_heap_byte_buffer(env, payload)?;
             let obj = env
                 .new_object(
                     FindClass(jni_str!("org/tstrans/mpegts/DemuxEvent$Metadata")),
-                    jni_sig!("(Lorg/tstrans/mpegts/StreamId;JLorg/tstrans/mpegts/MetadataKind;Ljava/nio/ByteBuffer;ZI)V"),
+                    jni_sig!("(Lorg/tstrans/mpegts/StreamId;JLorg/tstrans/mpegts/MetadataKind;Ljava/nio/ByteBuffer;ZILjava/util/OptionalInt;)V"),
                     &[
                         JValue::Object(&stream_obj),
                         JValue::Long(pts.as_ticks()),
@@ -646,6 +654,7 @@ pub(crate) fn convert_event<'local>(
                         JValue::Object(&buf),
                         JValue::Bool(was_reassembled),
                         JValue::Int(cell_count as i32),
+                        JValue::Object(&service_obj),
                     ],
                 )
                 .map_err(|_| ())?;
@@ -891,6 +900,23 @@ pub(crate) fn opt_long<'local>(
             .map_err(|_| ()),
         None => Ok(JObject::null()),
     }
+}
+
+/// An `Option<u8>` as a `java.util.OptionalInt` (`OptionalInt.of` /
+/// `OptionalInt.empty`). Used for `DemuxEvent$Metadata`'s `metadataServiceId`.
+fn opt_int<'local>(env: &mut Env<'local>, v: Option<u8>) -> Result<JObject<'local>, ()> {
+    let class = FindClass(jni_str!("java/util/OptionalInt"));
+    let sig = jni_sig!("(I)Ljava/util/OptionalInt;");
+    let value = match v {
+        Some(id) => env.call_static_method(class, jni_str!("of"), sig, &[JValue::Int(id.into())]),
+        None => env.call_static_method(
+            class,
+            jni_str!("empty"),
+            jni_sig!("()Ljava/util/OptionalInt;"),
+            &[],
+        ),
+    };
+    value.map_err(|_| ())?.l().map_err(|_| ())
 }
 
 /// Build a `java.util.List<Integer>` (an `ArrayList`) of boxed PIDs.

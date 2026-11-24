@@ -2,6 +2,7 @@ package org.tstrans.mpegts;
 
 import java.nio.ByteBuffer;
 import java.util.List;
+import java.util.OptionalInt;
 import org.tstrans.CodecParseException;
 import org.tstrans.DemuxException;
 import org.tstrans.codec.AudioFrame;
@@ -248,9 +249,21 @@ public sealed interface DemuxEvent
      *                       for async / unknown metadata)
      * @param cellCount      number of AU cells that contributed to this event
      *                       ({@code 1} for single-cell / async / unknown)
+     * @param metadataServiceId the AU cell's {@code metadata_service_id} for a
+     *                       {@link MetadataKind#KLV_SYNC_AU_CELL} event; empty for
+     *                       async / unknown metadata. A remuxer passes it to
+     *                       {@link Muxer#pushKlv} so that the output names the
+     *                       service its PMT declares.
      */
     record Metadata(StreamId stream, long pts, MetadataKind kind, ByteBuffer payload,
-                    boolean wasReassembled, int cellCount) implements DemuxEvent {}
+                    boolean wasReassembled, int cellCount, OptionalInt metadataServiceId)
+            implements DemuxEvent {
+        /** An event without a service id ({@code metadataServiceId} empty). */
+        public Metadata(StreamId stream, long pts, MetadataKind kind, ByteBuffer payload,
+                        boolean wasReassembled, int cellCount) {
+            this(stream, pts, kind, payload, wasReassembled, cellCount, OptionalInt.empty());
+        }
+    }
 
     /**
      * A stream-conformance diagnostic emitted by the demuxer. Mirrors tst-py's
