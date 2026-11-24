@@ -168,7 +168,7 @@ pub enum StreamSpec {
         pid: u16,
         /// Audio codec — drives PMT stream_type (0x03 MP2, 0x0F AAC, 0x11 LATM, 0x81 AC-3).
         codec: AudioCodec,
-        /// Optional ISO 639-2 language code (3 lowercase ASCII bytes, e.g. `*b"eng"`).
+        /// Optional ISO 639-2 language code (3 ASCII letters, e.g. `*b"eng"`).
         ///
         /// When `Some`, the muxer auto-emits an `iso_639_language_descriptor`
         /// (tag `0x0A`, ISO/IEC 13818-1 §2.6.18-19) with `audio_type=0x00`

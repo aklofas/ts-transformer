@@ -603,11 +603,18 @@ impl MuxerConfig {
                 }
             }
 
-            // Subtitle-specific validation: reject PCR-PID pinning to a
-            // subtitle PID (subtitles are too sparse for PCR pacing) and
-            // validate per-codec parameter ranges (language code shape,
-            // teletext field bit-widths).
+            // Audio language codes, and subtitle-specific validation: reject
+            // PCR-PID pinning to a subtitle PID (subtitles are too sparse for
+            // PCR pacing) and validate per-codec parameter ranges (language
+            // code shape, teletext field bit-widths).
             for s in &prog.streams {
+                if let StreamSpec::Audio {
+                    language: Some(code),
+                    ..
+                } = s
+                {
+                    validate_language_code(*code)?;
+                }
                 if let StreamSpec::Subtitle { pid, codec } = s {
                     if prog.pcr_pid == Some(*pid) {
                         return Err(MuxError::SubtitlePidUsedAsPcrPid { pid: *pid });

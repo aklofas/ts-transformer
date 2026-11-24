@@ -609,3 +609,35 @@ fn teletext_field_display() {
 const _: fn() = || {
     let _ = Pts90khz::new(0);
 };
+
+#[test]
+fn audio_language_is_validated_like_subtitle_language() {
+    let with_language = |code: [u8; 3]| {
+        let mut prog = MuxerProgramConfigBuilder::new(1, 0x1000);
+        prog.add_video(0x101, VideoCodec::H264);
+        prog.add_audio_with_language(0x102, AudioCodec::Aac, code);
+        build_cfg(prog.build())
+    };
+    for code in [[0, 1, 2], *b"e1g", *b"en ", *b"   "] {
+        match with_language(code) {
+            Err(MuxError::InvalidLanguageCode { code: got }) => assert_eq!(got, code),
+            other => panic!("{code:02X?}: expected InvalidLanguageCode, got {other:?}"),
+        }
+    }
+    for code in [*b"eng", *b"ENG"] {
+        with_language(code).expect("ASCII letters build");
+    }
+}
+
+#[test]
+fn invalid_language_code_names_the_code_as_text() {
+    let shown = |code: [u8; 3]| MuxError::InvalidLanguageCode { code }.to_string();
+    assert_eq!(
+        shown(*b"e1g"),
+        "invalid ISO 639-2 language code \"e1g\" (must be 3 ASCII letters)"
+    );
+    assert_eq!(
+        shown([0, 1, b'g']),
+        "invalid ISO 639-2 language code \"\\x00\\x01g\" (must be 3 ASCII letters)"
+    );
+}
