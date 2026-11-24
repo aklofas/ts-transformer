@@ -33,6 +33,8 @@ mod multi_program_event_identity;
 mod multi_stream;
 #[path = "muxing/pcr_lead.rs"]
 mod pcr_lead;
+#[path = "muxing/refusals_at_open.rs"]
+mod refusals_at_open;
 #[path = "muxing/stats.rs"]
 mod stats;
 #[path = "muxing/demuxer_offline.rs"]
