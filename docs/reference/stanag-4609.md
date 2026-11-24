@@ -25,6 +25,10 @@ Class 1 Motion Imagery in an MPEG-2 Transport Stream (MISP-2015.1-50).
 - Carries H.264 / H.265 video and synchronous or asynchronous KLV in MPEG-TS
   per ST 1402, with the PMT descriptors and AU cell wrapping listed in the
   matrix.
+- Sends the PAT and PMTs at least five times a second when a program carries
+  KLV: `MuxerConfig::psi_interval_ms` above 200 is refused there (ST 1402
+  asks for more than four times a second), and each program measures the
+  interval on its own clock.
 - Writes the ST 0604 Precision Time Stamp (or, on H.265, the Nano Precision
   Time Stamp) as a `user_data_unregistered` SEI in front of the first VCL NAL
   when you push through `Muxer::push_video_misp_to`,
@@ -59,8 +63,10 @@ Class 1 Motion Imagery in an MPEG-2 Transport Stream (MISP-2015.1-50).
   (ST 1402-15). The automatic descriptor declares service 0. For a further
   synchronous stream, supply a distinct `metadata_klva(id)` with
   `stream_descriptors_for_klv`; duplicate declared ids fail with
-  `ConfigInvalid`, across programs too. The muxer does not cross-check each
-  pushed payload's service id against its descriptor, so keep those equal.
+  `ConfigInvalid`, across programs too. The muxer checks each pushed unit's
+  service id against the ids the stream's descriptors declare and refuses an
+  undeclared one (`MuxError::UndeclaredMetadataService`, kind
+  `InvalidUsage`) before anything is queued.
 - **A regular push cadence, or `tick`.** PAT/PMT and PCR are written only as
   part of a push, so a source whose PCR stream pushes less often than every
   100 ms cannot meet the H.222.0 PCR interval from pushes alone. In Rust,

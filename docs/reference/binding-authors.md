@@ -506,7 +506,7 @@ baseline (by design)" for the full rationale.
   incompatible change to the ABI shape. **0** today.
 - `TST_ABI_VERSION_MINOR` — incremented on additive, source-compatible
   changes (new event kinds, new C entry points, new error codes).
-  **32** today. History (additive bumps only — major stays at 0 pre-1.0):
+  **33** today. History (additive bumps only — major stays at 0 pre-1.0):
     - `1`: receiver-surface initial drop.
     - `2`: `ManagedDemuxReceiver` wired into
       `tst-c`; `TST_EVENT_KIND_RECONNECT_DISCONTINUITY = 6` added; TS-bytes
@@ -610,7 +610,8 @@ baseline (by design)" for the full rationale.
       `tst_muxer_push_video_to_with_dts` and
       `tst_muxer_push_video_wire_to_with_dts` add a `dts_90khz` parameter
       to the targeted video push, emitting PES with `PTS_DTS_flags = '11'`
-      (ISO/IEC 13818-1 §2.4.3.6). Additive — no symbol removed, no
+      unless the two stamps are equal, which is written as PTS only
+      (ISO/IEC 13818-1 §2.4.3.6, §2.7.5). Additive — no symbol removed, no
       signature or struct layout changed.
       The live shells have no C DTS push; Rust, Java and Python carry
       the single-stream `push_video_with_dts` on `MuxPublisher` and the
@@ -838,6 +839,13 @@ baseline (by design)" for the full rationale.
       symbol was removed; `tst_rtsp_mount_flush` now returns the existing
       `TST_E_CLOSED` once the server has ended or the mount was removed (a
       behaviour change, listed in the CHANGELOG).
+    - `33` — new symbols `tst_mux_config_set_transport_stream_id` (the
+      PAT's transport stream id, default 1) and
+      `tst_mux_config_set_psi_version_base` (the version the PAT and every
+      PMT start at, default 0, 0..=31). No existing symbol, layout, enum
+      value or error code changed. The muxer refuses more configurations
+      and pushes in the same release, with existing codes (listed in the
+      CHANGELOG).
 - `TST_ABI_VERSION_PATCH` — incremented on internal fixes that
   preserve both shape and behaviour.
 
