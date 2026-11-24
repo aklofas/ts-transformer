@@ -787,12 +787,17 @@ in Python and the JVM), and the message names the bind URL.
 one). The server never read it as a credential, and through 0.10.0 such a
 server started with no credential at all. The same error with a message
 about the user name means an `auth_basic` user name that contains `:`,
-which Basic cannot carry.
+which Basic cannot carry. A message about a path or a query means the bind
+URL carries one (`rtsp://0.0.0.0:8554/live`, `rtsp://0.0.0.0:8554?transport=tcp`,
+also an empty `?`): through 0.10.0 the server ignored both, so the path
+named no mount and `transport=` chose nothing.
 
 **Fix:** take the user info out of the URL and configure the credential with
 `auth_basic` / `auth_digest_*` (the config's `auth` in Python and the JVM,
 `tst_rtsp_server_builder_auth_*` in C) or a mount rule. For Basic, choose a
-user name without `:`.
+user name without `:`. Drop the path and the query from the bind URL: add
+mounts with the mount calls, and choose whether media may go over UDP with
+`allow_udp_media`.
 
 ## RTSP push
 

@@ -1479,7 +1479,10 @@ together, or `__post_init__` raises `ValueError`; unreadable paths raise
 `RtspError(TLS)` at `start()`). `start()` refuses a `bind_addr` that
 carries a user name or a password (`"admin:secret@host:port"`) with
 `RtspError(CONFIG_INVALID)`: the server's credential is `auth`, and such an address
-started an open server through 0.10.0. An `rtsps://` server sends and takes media
+started an open server through 0.10.0. A `bind_addr` that carries a path
+other than `/` or a query (`"0.0.0.0:8554/live"`, `"…?transport=tcp"`) is
+refused the same way: mounts are added with the `add_*_mount` calls, and
+`allow_udp_media` decides whether media may go over UDP. An `rtsps://` server sends and takes media
 only inside the TLS connection: it answers `461 Unsupported Transport` to a
 reader's or a publisher's SETUP that asks for UDP (clients such as
 GStreamer's `rtspsrc` then fall back to TCP-interleaved by themselves), and
