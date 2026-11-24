@@ -1500,6 +1500,10 @@ muxer prepends/appends the envelope.
   `(N × 184) − 6` total `PES_packet_length` is whole stuffing data units
   (`data_unit_id` `0xFF`), never bare `0xFF` bytes (EN 300 472 §4.2).
   Pass the identifier (optional) followed by whole teletext data units.
+  A payload that leaves the identifier out and starts with a data unit id
+  in `0x80..=0xFE` (a user-defined unit, or an EN 301 775 VBI data unit
+  such as VPS `0xC3` or WSS `0xC4`) has that first byte read as the
+  identifier: put `0x10` (or the identifier you mean) first.
   `0xFF` cannot be passed as a user-defined identifier (it reads as the
   stuffing unit id). The one payload size whose PES would leave a single
   spare byte at the 16-bit length cap is refused with `SubtitleTooLarge`
@@ -1514,7 +1518,7 @@ muxer prepends/appends the envelope.
 - ≤16 subtitle streams per program (`MAX_SUBTITLE_STREAMS_PER_PROGRAM`).
 - Subtitle PIDs cannot serve as the PCR PID — too sparse for PCR pacing.
 - `push_subtitle` payload max: 65527 bytes (PES packet length budget).
-- DVB subtitling `subtitling_type` ∈ `0x10..=0x16` / `0x20..=0x26` and DVB-teletext `teletext_type` ∈ `0x01..=0x05` (the codes EN 300 468 assigns; another is refused with `MuxError::UnassignedSubtitleType`, a teletext type above 0x1F with `InvalidTeletextField`; use a raw descriptor override for a code a later edition assigns); DVB-teletext `magazine_number` ∈ 0..=7; ISO 639-2 language codes are 3 ASCII alphabetic bytes (per EN 300 468 §6.2.41/§6.2.43; both lowercase and uppercase accepted).
+- DVB subtitling `subtitling_type` ∈ `0x10..=0x16` / `0x20..=0x26` and DVB-teletext `teletext_type` ∈ `0x01..=0x05` (the DVB subtitle codes of EN 300 468's component_type table, and the teletext types it assigns; another is refused, a subtitling type `0x01..=0x03` or `0x30` / `0x31` included, with `MuxError::UnassignedSubtitleType`, a teletext type above 0x1F with `InvalidTeletextField`; use a raw descriptor override for a code a later edition assigns); DVB-teletext `magazine_number` ∈ 0..=7; ISO 639-2 language codes are 3 ASCII alphabetic bytes (per EN 300 468 §6.2.41/§6.2.43; both lowercase and uppercase accepted).
 
 ### Multi-stream and multi-program
 

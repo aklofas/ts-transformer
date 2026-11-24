@@ -619,12 +619,16 @@ pub enum MuxError {
     },
 
     /// `MuxerConfig::validate` rejects a DVB subtitling type (descriptor tag
-    /// `0x59`, EN 300 468 Table 26) outside `0x10..=0x16` / `0x20..=0x26`, or
-    /// a teletext type (tag `0x56`, EN 300 468 Table 102) outside
-    /// `0x01..=0x05`: values the standard does not assign. A code a later
-    /// edition assigns goes through a raw descriptor override.
+    /// `0x59`, EN 300 468 Table 26) outside `0x10..=0x16` / `0x20..=0x26`,
+    /// the DVB subtitle codes of that table (the other values it assigns,
+    /// such as `0x01..=0x03` for teletext and VBI and `0x30` / `0x31` for
+    /// sign language, are not DVB subtitle types), or a teletext type (tag
+    /// `0x56`, EN 300 468 Table 102) outside `0x01..=0x05`, the values that
+    /// table assigns. A code a later edition assigns goes through a raw
+    /// descriptor override.
     #[error(
-        "DVB {} type 0x{value:02X} is not assigned by EN 300 468",
+        "{} 0x{value:02X} is not a DVB {} type (EN 300 468)",
+        if *.descriptor_tag == 0x59 { "subtitling_type" } else { "teletext_type" },
         if *.descriptor_tag == 0x59 { "subtitling" } else { "teletext" }
     )]
     UnassignedSubtitleType { descriptor_tag: u8, value: u8 },

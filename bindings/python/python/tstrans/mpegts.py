@@ -246,8 +246,9 @@ class DvbSubtitlingConfig:
 
     - `language` — 3-byte ISO 639-2/B code of three ASCII letters (e.g. `b"eng"`).
     - `subtitling_type` — ETSI EN 300 468 Table 26 codepoint
-      (u8, 0..=255). The muxer accepts only the assigned codes,
-      0x10..=0x16 and 0x20..=0x26, and refuses another when it is built.
+      (u8, 0..=255). The muxer accepts only the DVB subtitle codes the
+      table assigns, 0x10..=0x16 and 0x20..=0x26, and refuses another when
+      it is built.
       Common values: 0x10 (DVB sub, no AR signalling),
       0x14 (DVB sub for 4:3 aspect-ratio).
     - `composition_page_id` — u16, 0..=0xFFFF.
