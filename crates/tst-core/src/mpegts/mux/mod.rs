@@ -151,7 +151,8 @@ impl Muxer {
         let mut per_stream: BTreeMap<u16, crate::mpegts::stats::StreamStats> = BTreeMap::new();
 
         for prog in &config.programs {
-            let slot = ProgramSlot::from_program(prog);
+            let mut slot = ProgramSlot::from_program(prog);
+            slot.pmt_version = config.psi_version_base;
             state::initialize_stats(
                 prog,
                 &slot.video,
@@ -167,7 +168,7 @@ impl Muxer {
         let mut pmt_versions_by_pid = BTreeMap::new();
         for slot in &slots {
             if let Some(p) = &slot.live {
-                pmt_versions_by_pid.insert(p.pmt_pid, 0);
+                pmt_versions_by_pid.insert(p.pmt_pid, config.psi_version_base);
             }
         }
         let pat_identity = slots
@@ -177,11 +178,12 @@ impl Muxer {
             .collect();
 
         let program_order = (0..config.programs.len()).collect();
+        let pat_version = config.psi_version_base;
         Ok(Self {
             config,
             slots,
             program_order,
-            pat_version: 0,
+            pat_version,
             pat_identity,
             pmt_versions_by_pid,
             pcr_interval_90khz,

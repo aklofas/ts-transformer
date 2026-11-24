@@ -30,6 +30,7 @@ pub(crate) fn psi_version_byte(version: u8) -> u8 {
 pub(crate) fn write_pat_packet(
     out: &mut [u8; 188],
     entries: &[(u16, u16)],
+    transport_stream_id: u16,
     version: u8,
     counters: &mut ContinuityCounters,
 ) {
@@ -56,9 +57,7 @@ pub(crate) fn write_pat_packet(
     payload[idx] = 0xB0 | (((section_length >> 8) as u8) & 0x0F);
     payload[idx + 1] = (section_length & 0xFF) as u8;
     idx += 2;
-    // transport_stream_id = 0x0001
-    payload[idx] = 0x00;
-    payload[idx + 1] = 0x01;
+    payload[idx..idx + 2].copy_from_slice(&transport_stream_id.to_be_bytes());
     idx += 2;
     // reserved(2)=11 | version_number(5) | current_next_indicator=1
     payload[idx] = psi_version_byte(version);
@@ -315,7 +314,7 @@ mod tests {
             .iter()
             .map(|p| (p.program_number, p.pmt_pid))
             .collect();
-        write_pat_packet(&mut buf, &entries, 0, &mut cc);
+        write_pat_packet(&mut buf, &entries, 1, 0, &mut cc);
 
         // TS header sanity
         assert_eq!(buf[0], 0x47);
