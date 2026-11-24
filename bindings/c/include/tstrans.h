@@ -5130,8 +5130,9 @@ tst_audio_stream_handle_t tst_mux_config_add_audio_stream(struct tst_mux_config_
 /**
  * Add an audio elementary stream with an ISO 639-2 language tag.
  *
- * `language` MUST be a non-null pointer to a 3-byte array of lowercase
- * ASCII bytes (e.g. `"eng"`, `"fra"`, `"spa"`). The muxer auto-emits an
+ * `language` MUST be a non-null pointer to a 3-byte array of ASCII
+ * letters, either case (e.g. `"eng"`, `"fra"`, `"spa"`); any other byte is
+ * refused with `TST_E_INVALID_CONFIG` at `_open` time. The muxer auto-emits an
  * `iso_639_language_descriptor` (tag `0x0A`) in the PMT for this stream
  * with `audio_type = 0x00` (undefined / clean main).
  *
@@ -5176,7 +5177,9 @@ int tst_mux_config_add_data_descriptor(struct tst_mux_config_t *cfg,
  * PMT verbatim. The `(stream_type, descriptors)` pair must classify as
  * Unknown under the demux cascade (no typed stream_type codepoints, no
  * classifying descriptors) — that anti-masquerade rule is enforced at
- * `_open` time (config validation), not here.
+ * `_open` time (config validation), not here. The six stream types
+ * H.222.0 carries in sections (0x05, 0x13, 0x16, 0x2C, 0x2F, 0x30) are
+ * refused there too (`TST_E_INVALID_CONFIG`): a data stream emits PES.
  *
  * `carries_pts`: when `true` the PES header carries the PTS passed to
  * each `push_data_to`; when `false` the PES omits the PTS field entirely.
@@ -5279,10 +5282,13 @@ tst_subtitle_stream_handle_t tst_mux_config_add_subtitle_stream_cea708(struct ts
  * return its handle. Drives PMT `stream_type = 0x06` with an auto-emitted
  * subtitling_descriptor (ETSI EN 300 468 §6.2.41 + ETSI EN 300 743).
  *
- * `language` MUST be a non-null pointer to a 3-byte array of lowercase
- * ASCII bytes (ISO 639-2 language code, e.g. `"eng"`).
+ * `language` MUST be a non-null pointer to a 3-byte array of ASCII
+ * letters, either case (ISO 639-2 language code, e.g. `"eng"`).
  * `subtitling_type` is per ETSI EN 300 468 Table 26 (common values:
- * 0x10 = DVB sub no AR signalling, 0x14 = DVB sub for 4:3 aspect-ratio).
+ * 0x10 = DVB sub no AR signalling, 0x14 = DVB sub for 4:3 aspect-ratio);
+ * only the DVB subtitle codes the table assigns, 0x10..=0x16 and
+ * 0x20..=0x26, are accepted: any other value is refused with
+ * `TST_E_INVALID_CONFIG` at `_open` time.
  * `composition_page_id` and `ancillary_page_id` are 16-bit page
  * identifiers.
  *
@@ -5305,7 +5311,10 @@ tst_subtitle_stream_handle_t tst_mux_config_add_subtitle_stream_dvb_subtitling(s
  * ETSI EN 300 706).
  *
  * `language` MUST be a non-null pointer to a 3-byte ISO 639-2 array.
- * `teletext_type` is 5 bits (common: 0x01 initial page, 0x02 subtitle).
+ * `teletext_type` is one of the codes EN 300 468 assigns, 0x01..=0x05
+ * (0x01 initial page, 0x02 subtitle page, 0x03 additional information,
+ * 0x04 programme schedule, 0x05 hearing-impaired subtitle page); any
+ * other value surfaces as `TST_E_INVALID_CONFIG` at `_open` time.
  * `magazine_number` is 0..=7 (3-bit field — values outside this range
  * surface as `TST_E_INVALID_CONFIG` at `_open` time).
  * `page_number` is BCD-encoded (0x00..=0x99).
@@ -5478,7 +5487,8 @@ int tst_mux_config_set_program_descriptors(struct tst_mux_config_t *cfg,
 
 /**
  * Set the PAT/PMT re-emission interval for this mux config. Default 100 ms.
- * Must be >= 10.
+ * At least 10; at most 200 when a program carries a KLV stream. An
+ * out-of-range value is reported when the muxer or sender is opened.
  */
  int tst_mux_config_set_psi_interval_ms(struct tst_mux_config_t *p, uint32_t ms);
 
@@ -6366,6 +6376,11 @@ int tst_muxer_push_data_to(struct tst_muxer_t *p,
  * `pts_90khz` is the presentation timestamp in 90 kHz ticks, lives in
  * the PES header, and is the same value pulled by demux-side consumers.
  *
+ * A C push always names metadata service 0: declare service 0 (the
+ * default) on a synchronous KLV stream pushed from C. A synchronous push
+ * on a stream whose descriptors do not declare service 0 is refused with
+ * `TST_E_INVALID_USAGE` and queues nothing.
+ *
  * Single-stream form: the muxer must have exactly one KLV stream
  * configured. Multi-stream callers use `tst_muxer_push_klv_to` with an
  * explicit `TstKlvStreamHandle`.
@@ -6375,6 +6390,8 @@ int tst_muxer_push_data_to(struct tst_muxer_t *p,
  * - `TST_E_INVALID_USAGE` — no KLV stream configured (`NoKlvStreamsConfigured`).
  * - `TST_E_INVALID_USAGE` — more than one KLV stream configured
  *   (`AmbiguousTarget` — caller must use `_to` variant).
+ * - `TST_E_INVALID_USAGE` — a synchronous stream whose descriptors do not
+ *   declare metadata service 0 (`UndeclaredMetadataService`).
  * - `TST_E_KLV_TOO_LARGE` — payload exceeds the per-frame KLV size limit
  *   (`KlvTooLarge`).
  * - `TST_E_INVALID_CONFIG` — `klv` is null with non-zero `len`.
@@ -6396,6 +6413,11 @@ int tst_muxer_push_data_to(struct tst_muxer_t *p,
  * V9 § 2.12.4.2 (5 bytes prepended; PTS surfaced in the PES header).
  * For `KlvStreamType::PrivateData` streams, the caller's bytes pass
  * through unchanged.
+ *
+ * A C push always names metadata service 0: declare service 0 (the
+ * default) on a synchronous KLV stream pushed from C. A synchronous push
+ * on a stream whose descriptors do not declare service 0 is refused with
+ * `TST_E_INVALID_USAGE` (`UndeclaredMetadataService`) and queues nothing.
  */
 
 int tst_muxer_push_klv_to(struct tst_muxer_t *p,
@@ -6528,7 +6550,8 @@ int tst_muxer_push_video_to(struct tst_muxer_t *p,
  * codecs that emit reordered output (B-frames in H.264/H.265/H.266/AV1).
  *
  * Emits PES with `PTS_DTS_flags = '11'` per ISO/IEC 13818-1 §2.4.3.6
- * (10-byte PES header carrying both PTS and DTS). `handle` is obtained
+ * (10-byte PES header carrying both PTS and DTS); equal stamps (also
+ * equal modulo 2^33) are written as PTS only. `handle` is obtained
  * from `tst_mux_config_add_video_stream`. The muxer does not enforce
  * `dts <= pts`; receivers reject inverted timestamps. There is no
  * single-stream shorthand — resolve the lone stream's handle from

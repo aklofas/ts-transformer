@@ -164,7 +164,9 @@ pub unsafe extern "C" fn tst_mux_config_add_klv_stream(
 /// PMT verbatim. The `(stream_type, descriptors)` pair must classify as
 /// Unknown under the demux cascade (no typed stream_type codepoints, no
 /// classifying descriptors) — that anti-masquerade rule is enforced at
-/// `_open` time (config validation), not here.
+/// `_open` time (config validation), not here. The six stream types
+/// H.222.0 carries in sections (0x05, 0x13, 0x16, 0x2C, 0x2F, 0x30) are
+/// refused there too (`TST_E_INVALID_CONFIG`): a data stream emits PES.
 ///
 /// `carries_pts`: when `true` the PES header carries the PTS passed to
 /// each `push_data_to`; when `false` the PES omits the PTS field entirely.
@@ -261,8 +263,9 @@ pub unsafe extern "C" fn tst_mux_config_add_audio_stream(
 
 /// Add an audio elementary stream with an ISO 639-2 language tag.
 ///
-/// `language` MUST be a non-null pointer to a 3-byte array of lowercase
-/// ASCII bytes (e.g. `"eng"`, `"fra"`, `"spa"`). The muxer auto-emits an
+/// `language` MUST be a non-null pointer to a 3-byte array of ASCII
+/// letters, either case (e.g. `"eng"`, `"fra"`, `"spa"`); any other byte is
+/// refused with `TST_E_INVALID_CONFIG` at `_open` time. The muxer auto-emits an
 /// `iso_639_language_descriptor` (tag `0x0A`) in the PMT for this stream
 /// with `audio_type = 0x00` (undefined / clean main).
 ///
@@ -361,10 +364,13 @@ unsafe fn add_audio_stream_inner(
 /// return its handle. Drives PMT `stream_type = 0x06` with an auto-emitted
 /// subtitling_descriptor (ETSI EN 300 468 §6.2.41 + ETSI EN 300 743).
 ///
-/// `language` MUST be a non-null pointer to a 3-byte array of lowercase
-/// ASCII bytes (ISO 639-2 language code, e.g. `"eng"`).
+/// `language` MUST be a non-null pointer to a 3-byte array of ASCII
+/// letters, either case (ISO 639-2 language code, e.g. `"eng"`).
 /// `subtitling_type` is per ETSI EN 300 468 Table 26 (common values:
-/// 0x10 = DVB sub no AR signalling, 0x14 = DVB sub for 4:3 aspect-ratio).
+/// 0x10 = DVB sub no AR signalling, 0x14 = DVB sub for 4:3 aspect-ratio);
+/// only the DVB subtitle codes the table assigns, 0x10..=0x16 and
+/// 0x20..=0x26, are accepted: any other value is refused with
+/// `TST_E_INVALID_CONFIG` at `_open` time.
 /// `composition_page_id` and `ancillary_page_id` are 16-bit page
 /// identifiers.
 ///
@@ -415,7 +421,10 @@ pub unsafe extern "C" fn tst_mux_config_add_subtitle_stream_dvb_subtitling(
 /// ETSI EN 300 706).
 ///
 /// `language` MUST be a non-null pointer to a 3-byte ISO 639-2 array.
-/// `teletext_type` is 5 bits (common: 0x01 initial page, 0x02 subtitle).
+/// `teletext_type` is one of the codes EN 300 468 assigns, 0x01..=0x05
+/// (0x01 initial page, 0x02 subtitle page, 0x03 additional information,
+/// 0x04 programme schedule, 0x05 hearing-impaired subtitle page); any
+/// other value surfaces as `TST_E_INVALID_CONFIG` at `_open` time.
 /// `magazine_number` is 0..=7 (3-bit field — values outside this range
 /// surface as `TST_E_INVALID_CONFIG` at `_open` time).
 /// `page_number` is BCD-encoded (0x00..=0x99).
@@ -600,7 +609,8 @@ pub unsafe extern "C" fn tst_mux_config_set_pcr_lead_ms(
 }
 
 /// Set the PAT/PMT re-emission interval for this mux config. Default 100 ms.
-/// Must be >= 10.
+/// At least 10; at most 200 when a program carries a KLV stream. An
+/// out-of-range value is reported when the muxer or sender is opened.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tst_mux_config_set_psi_interval_ms(
     p: *mut TstMuxConfig,

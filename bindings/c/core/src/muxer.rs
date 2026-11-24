@@ -140,6 +140,11 @@ pub unsafe extern "C" fn tst_muxer_push_video(
 /// `pts_90khz` is the presentation timestamp in 90 kHz ticks, lives in
 /// the PES header, and is the same value pulled by demux-side consumers.
 ///
+/// A C push always names metadata service 0: declare service 0 (the
+/// default) on a synchronous KLV stream pushed from C. A synchronous push
+/// on a stream whose descriptors do not declare service 0 is refused with
+/// `TST_E_INVALID_USAGE` and queues nothing.
+///
 /// Single-stream form: the muxer must have exactly one KLV stream
 /// configured. Multi-stream callers use `tst_muxer_push_klv_to` with an
 /// explicit `TstKlvStreamHandle`.
@@ -149,6 +154,8 @@ pub unsafe extern "C" fn tst_muxer_push_video(
 /// - `TST_E_INVALID_USAGE` — no KLV stream configured (`NoKlvStreamsConfigured`).
 /// - `TST_E_INVALID_USAGE` — more than one KLV stream configured
 ///   (`AmbiguousTarget` — caller must use `_to` variant).
+/// - `TST_E_INVALID_USAGE` — a synchronous stream whose descriptors do not
+///   declare metadata service 0 (`UndeclaredMetadataService`).
 /// - `TST_E_KLV_TOO_LARGE` — payload exceeds the per-frame KLV size limit
 ///   (`KlvTooLarge`).
 /// - `TST_E_INVALID_CONFIG` — `klv` is null with non-zero `len`.
@@ -316,7 +323,8 @@ pub unsafe extern "C" fn tst_muxer_push_video_wire_to(
 /// codecs that emit reordered output (B-frames in H.264/H.265/H.266/AV1).
 ///
 /// Emits PES with `PTS_DTS_flags = '11'` per ISO/IEC 13818-1 §2.4.3.6
-/// (10-byte PES header carrying both PTS and DTS). `handle` is obtained
+/// (10-byte PES header carrying both PTS and DTS); equal stamps (also
+/// equal modulo 2^33) are written as PTS only. `handle` is obtained
 /// from `tst_mux_config_add_video_stream`. The muxer does not enforce
 /// `dts <= pts`; receivers reject inverted timestamps. There is no
 /// single-stream shorthand — resolve the lone stream's handle from
@@ -510,6 +518,11 @@ pub unsafe extern "C" fn tst_muxer_push_video_wire_to_with_dts(
 /// V9 § 2.12.4.2 (5 bytes prepended; PTS surfaced in the PES header).
 /// For `KlvStreamType::PrivateData` streams, the caller's bytes pass
 /// through unchanged.
+///
+/// A C push always names metadata service 0: declare service 0 (the
+/// default) on a synchronous KLV stream pushed from C. A synchronous push
+/// on a stream whose descriptors do not declare service 0 is refused with
+/// `TST_E_INVALID_USAGE` (`UndeclaredMetadataService`) and queues nothing.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tst_muxer_push_klv_to(
     p: *mut TstMuxer,

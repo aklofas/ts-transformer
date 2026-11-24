@@ -208,6 +208,8 @@ int main(int argc, char **argv) {
 
 For KLV: **pass raw MISB Local Set bytes** — the muxer auto-wraps the H.222.0 § 2.12.4.2 AU cell header for `SYNCHRONOUS_METADATA` streams. Don't pre-wrap.
 
+A C push always names metadata service 0, which is what the muxer's own descriptor for a `SYNCHRONOUS_METADATA` stream declares. If you replace that descriptor with your own (`tst_mux_config_add_klv_descriptor` or `tst_mux_config_set_stream_descriptors_for_klv`), it must declare service 0: a synchronous push on a stream that does not is refused with `TST_E_INVALID_USAGE` and queues nothing.
+
 Multi-stream variants (`tst_mux_sender_send_video_to(handle, ...)`, `tst_mux_sender_send_klv_to(handle, ...)`) target a specific elementary stream when you have more than one video or KLV stream configured. See [`examples/muxing/mux_dual_camera.c`](../../bindings/c/examples/muxing/mux_dual_camera.c) for the EO + IR + KLV fan-out shape.
 
 ### DTS-aware video push (offline muxer)
@@ -245,8 +247,8 @@ there is no single-stream DTS shorthand; use the targeted
 > (no B frames) and need only PTS. The DTS variants are for sources that
 > require a decode ordering different from presentation ordering — typically
 > H.264/H.265 Baseline/Main with B frames, or AV1 with film-grain synthesis.
-> When PTS and DTS are equal, prefer the non-DTS variants for a smaller PES
-> header (5 bytes shorter — no DTS field written).
+> When PTS and DTS are equal (also equal modulo 2^33) the muxer writes the
+> PTS only, so either form gives the same PES header.
 
 Both functions are added in **ABI 17** (additive; no existing symbol or struct
 changed).
@@ -254,6 +256,8 @@ changed).
 The muxer's PCR runs 100 ms behind each access unit's decode time (the DTS
 when you push one, else the PTS). `tst_mux_config_set_pcr_lead_ms(cfg, ms)`
 sets another lead (`0..=1000`; **ABI 30**).
+
+A producer that replaces another on one channel can choose the PAT's transport stream id and the version its PAT and PMTs start at, so that a receiver reads its tables as new: `tst_mux_config_set_transport_stream_id(cfg, id)` (default 1, any 16-bit value) and `tst_mux_config_set_psi_version_base(cfg, v)` (default 0, `0..=31`; pick a value the previous producer did not last send; **ABI 33**).
 
 ### Private/application data streams
 
@@ -269,7 +273,7 @@ tst_mux_sender_send_data(snd, payload, payload_len, pts_90khz);
 
 - **Pass-through semantics.** No AU-cell wrap, no framing, no payload inspection — the bytes land verbatim as the payload of exactly one PES packet (`stream_id` `0xBD`, `private_stream_1`) on the configured PID. Record boundaries within a payload are your convention. Payloads are capped by the `PES_packet_length` ceiling: 65532 bytes without PTS, 65527 with.
 - **PTS contract.** `pts_90khz` is written into the PES header only when the stream was configured with `carries_pts = true`; it is **always** the push's time for the program clock (PSI and PCR pacing) regardless. With `carries_pts = false` the PES omits the PTS field entirely (this library's demuxer surfaces such samples with `pts == 0`).
-- **`stream_type` is the raw PMT byte** (e.g. `0xF0`/`0xF1` user-private, bare `0x06`) — no enum. The `(stream_type, descriptors)` pair must still classify as Unknown under the demux cascade (you can't masquerade as a typed video/KLV/audio stream); that's validated at `_open` time. Per-PID PMT descriptors go through `tst_mux_config_add_data_descriptor` / `tst_mux_config_set_stream_descriptors_for_data`, same contract as the video/KLV descriptor setters.
+- **`stream_type` is the raw PMT byte** (e.g. `0xF0`/`0xF1` user-private, bare `0x06`) — no enum. The `(stream_type, descriptors)` pair must still classify as Unknown under the demux cascade (you can't masquerade as a typed video/KLV/audio stream); that's validated at `_open` time, as is the rule that a data stream cannot take one of the six stream types H.222.0 carries in sections (0x05, 0x13, 0x16, 0x2C, 0x2F, 0x30). Per-PID PMT descriptors go through `tst_mux_config_add_data_descriptor` / `tst_mux_config_set_stream_descriptors_for_data`, same contract as the video/KLV descriptor setters.
 - **`_to` routing.** With more than one data stream configured, `tst_mux_sender_send_data_to(snd, ds, ...)` targets a specific one, mirroring `tst_mux_sender_send_klv_to`.
 
 The config entry points and the offline `tst_muxer_push_data` / `tst_muxer_push_data_to` pair are unconditional; the `tst_mux_sender_send_data` / `tst_mux_sender_send_data_to` pair lives behind `TST_HAS_SRT` like the rest of the SRT mux-sender surface (build with `--features srt`).
