@@ -113,6 +113,22 @@ tier = "A"
 [[surface]]
 kind = "rust"
 crate = "tst-core"
+item = "tst_core::mpegts::mux::MuxerConfigBuilder::transport_stream_id"
+owning_tests = ["crates/tst-core/src/mpegts/mux/tests/config.rs", "crates/tst-core/tests/mpegts/mux_reconfigure.rs", "bindings/c/tests/muxing/identity.rs", "bindings/python/tests/test_mpegts_muxer_config.py"]
+bindings = ["c:tst_mux_config_set_transport_stream_id", "python:MuxerConfigBuilder.transport_stream_id", "java:org.tstrans.mpegts.MuxerConfig.Builder.transportStreamId", "swift:deferred", "kotlin:deferred"]
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-core"
+item = "tst_core::mpegts::mux::MuxerConfigBuilder::psi_version_base"
+owning_tests = ["crates/tst-core/src/mpegts/mux/tests/config.rs", "crates/tst-core/tests/mpegts/mux_reconfigure.rs", "bindings/c/tests/muxing/identity.rs", "bindings/python/tests/test_mpegts_muxer_config.py"]
+bindings = ["c:tst_mux_config_set_psi_version_base", "python:MuxerConfigBuilder.psi_version_base", "java:org.tstrans.mpegts.MuxerConfig.Builder.psiVersionBase", "swift:deferred", "kotlin:deferred"]
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-core"
 item = "tst_core::klv::st0601::decode"
 owning_tests = ["crates/tst-core/tests/klv/st0601.rs"]
 bindings = ["python:decode_uas_datalink", "java:org.tstrans.klv.Klv.decodeUasDatalink", "c:unaudited", "swift:deferred", "kotlin:deferred"]
