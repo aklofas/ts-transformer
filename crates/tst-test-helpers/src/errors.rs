@@ -12,7 +12,7 @@ use tst_core::error::{DemuxError, MuxError};
 use tst_core::mpegts::mux::{MuxStreamKind, TeletextField};
 use tst_core::transport::{BrokenCause, TransportError};
 
-/// All 39 `MuxError` variants, in `crates/tst-core/src/error.rs` order.
+/// All 40 `MuxError` variants, in `crates/tst-core/src/error.rs` order.
 pub fn every_mux_error() -> Vec<MuxError> {
     vec![
         MuxError::InvalidConfig("bad"),
@@ -94,6 +94,10 @@ pub fn every_mux_error() -> Vec<MuxError> {
             abs_idx: 9,
             len: 3,
             program_number: 1,
+        },
+        MuxError::UndeclaredMetadataService {
+            pid: 0x101,
+            service_id: 3,
         },
     ]
 }
@@ -254,7 +258,7 @@ mod tests {
 
     #[test]
     fn every_mux_error_sample_count_is_pinned() {
-        assert_eq!(every_mux_error().len(), 39);
+        assert_eq!(every_mux_error().len(), 40);
     }
 
     #[test]

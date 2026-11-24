@@ -514,8 +514,13 @@ fn metadata_service_id_propagates_from_push_klv_to_au_cell() {
     // header in the emitted PES payload, rather than being silently
     // overwritten with the former hardcoded 0x00 default.
     use tst_core::mpegts::au_cell::read_metadata_au_cell;
+    use tst_core::mpegts::descriptors::metadata_klva;
     use tst_core::mpegts::mux::{KlvStreamType, Muxer, MuxerConfig, VideoCodec};
 
+    // Use a non-zero service_id (0x42) so the test can distinguish between
+    // "value was plumbed" and "value was coincidentally 0x00 from the old
+    // hardcoded default". The stream declares it, as a push must.
+    let service_id: u8 = 0x42;
     let cfg = {
         let mut prog = MuxerProgramConfigBuilder::new(1, 0x100);
         prog.add_video(0x101, VideoCodec::H264);
@@ -526,6 +531,8 @@ fn metadata_service_id_propagates_from_push_klv_to_au_cell() {
             KlvStreamType::SynchronousMetadata,
             /*carries_pts=*/ true,
         );
+        prog.stream_descriptors_for_klv(0, vec![metadata_klva(service_id)])
+            .unwrap();
         let mut b = MuxerConfig::builder();
         b.add_program(prog.build());
         b.build().unwrap()
@@ -554,10 +561,6 @@ fn metadata_service_id_propagates_from_push_klv_to_au_cell() {
         mux.push_video(&nal, Pts90khz::new(pts), false).unwrap();
     }
 
-    // Use a non-zero service_id (0x42) so the test can distinguish between
-    // "value was plumbed" and "value was coincidentally 0x00 from the old
-    // hardcoded default".
-    let service_id: u8 = 0x42;
     mux.push_klv(&raw_klv, Pts90khz::new(9000), service_id)
         .unwrap();
 

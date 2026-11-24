@@ -1117,6 +1117,13 @@ mod tests {
             ),
             (MuxError::NoDataStreamsConfigured, TstError::InvalidUsage),
             (
+                MuxError::UndeclaredMetadataService {
+                    pid: 0x0101,
+                    service_id: 3,
+                },
+                TstError::InvalidUsage,
+            ),
+            (
                 MuxError::TooManyDataStreams { count: 17, cap: 16 },
                 TstError::InvalidConfig,
             ),

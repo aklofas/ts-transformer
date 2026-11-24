@@ -747,6 +747,19 @@ pub enum MuxError {
         len: u32,
         program_number: u16,
     },
+
+    /// A push on a synchronous KLV stream (stream_type 0x15) named a
+    /// `metadata_service_id` that no `metadata_descriptor` of that stream's
+    /// PMT entry declares (ST 1402: the PMT carries one for each service in
+    /// the stream). The automatic descriptor declares service 0; caller
+    /// `metadata_descriptor`s replace it and declare their own. Nothing was
+    /// queued. Declare the service (`descriptors::metadata_klva(id)`) or push
+    /// a declared id.
+    #[error(
+        "synchronous KLV push on pid 0x{pid:04X} names metadata_service_id {service_id}, \
+         which no metadata_descriptor of the stream declares"
+    )]
+    UndeclaredMetadataService { pid: u16, service_id: u8 },
 }
 
 /// Categorical reason for a [`MuxError`], suitable for action-discriminating
@@ -838,9 +851,11 @@ pub enum MuxErrorKind {
     /// ([`MuxError::AmbiguousTarget`]), invoking shorthand with no
     /// streams of that kind ([`MuxError::NoKlvStreamsConfigured`] etc.),
     /// referencing an unknown program ([`MuxError::ProgramNotFound`]),
-    /// or passing an out-of-range descriptor / absolute stream index
+    /// passing an out-of-range descriptor / absolute stream index
     /// ([`MuxError::DescriptorIndexOutOfRange`],
-    /// [`MuxError::AbsIndexOutOfRange`]).
+    /// [`MuxError::AbsIndexOutOfRange`]), or naming a synchronous-KLV
+    /// service the PMT does not declare
+    /// ([`MuxError::UndeclaredMetadataService`]).
     ///
     /// **Action:** the muxer state is unchanged. Fix the API call site
     /// and retry; the muxer remains usable. Distinct from
@@ -939,7 +954,7 @@ impl MuxError {
             MuxError::MalformedDescriptor { .. } => ConfigInvalid,
             MuxError::PmtTooLarge { .. } => ConfigInvalid,
 
-            // === InvalidUsage (9 variants) ===
+            // === InvalidUsage (10 variants) ===
             // Caller is using the muxer API incorrectly on a working muxer.
             MuxError::InvalidStreamHandle { .. } => InvalidUsage,
             MuxError::AmbiguousTarget { .. } => InvalidUsage,
@@ -950,6 +965,7 @@ impl MuxError {
             MuxError::ProgramNotFound { .. } => InvalidUsage,
             MuxError::DescriptorIndexOutOfRange { .. } => InvalidUsage,
             MuxError::AbsIndexOutOfRange { .. } => InvalidUsage,
+            MuxError::UndeclaredMetadataService { .. } => InvalidUsage,
         }
     }
 }

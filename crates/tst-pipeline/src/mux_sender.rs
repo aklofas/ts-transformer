@@ -447,7 +447,8 @@ impl<T: Transport> MuxSender<T> {
     /// ITU-T H.222.0 V9 §2.12.4.2 / ST 1402.2 App. B Table 2 only for
     /// [`tst_core::mpegts::mux::KlvStreamType::SynchronousMetadata`] streams;
     /// ignored on [`tst_core::mpegts::mux::KlvStreamType::PrivateData`]
-    /// streams. The spec default is `0x00`.
+    /// streams. On a synchronous stream it must be an id the stream's PMT
+    /// entry declares (`0x00` with the automatic `metadata_descriptor`).
     ///
     /// # C ABI
     ///
@@ -457,7 +458,9 @@ impl<T: Transport> MuxSender<T> {
     /// - [`MuxSenderErrorSource::Mux`] wraps [`MuxError`] from the inner muxer:
     ///   [`MuxError::NoKlvStreamsConfigured`] if no KLV streams exist;
     ///   [`MuxError::AmbiguousTarget`] when more than one is configured
-    ///   (use [`Self::send_klv_to`]); [`MuxError::KlvTooLarge`] if the
+    ///   (use [`Self::send_klv_to`]); [`MuxError::UndeclaredMetadataService`]
+    ///   if the stream is synchronous and does not declare
+    ///   `metadata_service_id`; [`MuxError::KlvTooLarge`] if the
     ///   blob would overflow `PES_packet_length`;
     ///   [`MuxError::BufferFull`] if the muxer's outbound queue is at
     ///   `MuxerConfig::buffer_packets`.
@@ -644,7 +647,8 @@ impl<T: Transport> MuxSender<T> {
     /// ITU-T H.222.0 V9 §2.12.4.2 / ST 1402.2 App. B Table 2 only for
     /// [`tst_core::mpegts::mux::KlvStreamType::SynchronousMetadata`] streams;
     /// ignored on [`tst_core::mpegts::mux::KlvStreamType::PrivateData`]
-    /// streams. The spec default is `0x00`.
+    /// streams. On a synchronous stream it must be an id the stream's PMT
+    /// entry declares (`0x00` with the automatic `metadata_descriptor`).
     ///
     /// # C ABI
     ///
@@ -653,7 +657,10 @@ impl<T: Transport> MuxSender<T> {
     /// # Errors
     /// - [`MuxSenderErrorSource::Mux`] wraps [`MuxError`] from the inner muxer:
     ///   [`MuxError::InvalidStreamHandle`] if `handle`'s index is out of
-    ///   range for this muxer's KLV streams; [`MuxError::KlvTooLarge`]
+    ///   range for this muxer's KLV streams;
+    ///   [`MuxError::UndeclaredMetadataService`] if the stream is
+    ///   synchronous and does not declare `metadata_service_id`;
+    ///   [`MuxError::KlvTooLarge`]
     ///   if the blob would overflow `PES_packet_length` (with a 5-byte
     ///   AU cell header reservation for `SynchronousMetadata` streams);
     ///   [`MuxError::BufferFull`] if the muxer's outbound queue is at

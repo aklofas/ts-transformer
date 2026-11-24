@@ -29,9 +29,11 @@ impl Muxer {
     /// (stream_type 0x15). For [`KlvStreamType::PrivateData`] (0x06) streams
     /// the payload passes through verbatim and this parameter is ignored.
     ///
-    /// The spec default is `0x00`. Pass `0x00` unless you have a specific
-    /// reason to use a non-zero service_id (e.g. to mirror the `service_id`
-    /// byte of a `metadata_klva` PMT descriptor you supplied at config time).
+    /// On a synchronous stream the id must be one the stream's PMT entry
+    /// declares: `0x00` with the automatic `metadata_descriptor`, or the
+    /// `metadata_service_id` of a caller `metadata_descriptor`
+    /// ([`crate::mpegts::descriptors::metadata_klva`]), which replaces the
+    /// automatic one.
     ///
     /// # C ABI
     ///
@@ -42,6 +44,7 @@ impl Muxer {
     ///   configured on this muxer.
     /// - [`MuxError::AmbiguousTarget`] when more than one KLV stream is
     ///   configured — call [`Self::push_klv_to`] with an explicit handle.
+    /// - [`MuxError::UndeclaredMetadataService`] as for [`Self::push_klv_to`].
     /// - [`MuxError::KlvTooLarge`] if `klv.len()` would overflow
     ///   `PES_packet_length` (with a 5-byte AU cell header reservation
     ///   for `SynchronousMetadata` streams).
@@ -120,11 +123,12 @@ impl Muxer {
     /// that path.
     ///
     /// `metadata_service_id` lands in the AU cell header per
-    /// ITU-T H.222.0 V9 §2.12.4.2 / ST 1402.2 App. B Table 2.
-    /// The spec default is `0x00`. Pass `0x00` unless you have a
-    /// specific reason to use a non-zero service_id (e.g. to mirror
-    /// the `service_id` byte of a `metadata_klva` PMT descriptor you
-    /// supplied at config time).
+    /// ITU-T H.222.0 V9 §2.12.4.2 / ST 1402.2 App. B Table 2, and must be
+    /// one the stream's PMT entry declares (ST 1402: the PMT carries a
+    /// `metadata_descriptor` for each service in the stream): `0x00` with
+    /// the automatic descriptor, or the id of a caller `metadata_descriptor`
+    /// ([`crate::mpegts::descriptors::metadata_klva`]), which replaces the
+    /// automatic one.
     ///
     /// # C ABI
     ///
@@ -133,6 +137,9 @@ impl Muxer {
     /// # Errors
     /// - [`MuxError::InvalidStreamHandle`] if `handle`'s index is out of
     ///   range for this muxer's configured KLV stream count.
+    /// - [`MuxError::UndeclaredMetadataService`] if the stream is
+    ///   synchronous and no `metadata_descriptor` of it declares
+    ///   `metadata_service_id`. Nothing is queued.
     /// - [`MuxError::KlvTooLarge`] if `klv.len()` would overflow
     ///   `PES_packet_length` (with a 5-byte AU cell header reservation
     ///   for `SynchronousMetadata` streams).
@@ -160,6 +167,12 @@ impl Muxer {
         let klv_pid = k.pid;
         let klv_carries_pts = k.carries_pts;
         let is_sync = k.stream_type == KlvStreamType::SynchronousMetadata;
+        if is_sync && !k.declared_service_ids.contains(&metadata_service_id) {
+            return Err(MuxError::UndeclaredMetadataService {
+                pid: klv_pid,
+                service_id: metadata_service_id,
+            });
+        }
 
         // Auto-wrap sync KLV in an H.222.0 §2.12.4.2 Metadata_AU_cell header.
         // PrivateData streams pass payload through as-is (caller controls shape).
