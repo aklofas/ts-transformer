@@ -187,6 +187,61 @@ fn buffer_full_does_not_modify_state() {
     assert_eq!(slot.pcrs_on_time_base, 0);
 }
 
+#[test]
+fn a_refused_push_on_a_program_that_saw_a_set_takes_no_anchor() {
+    use super::slot::PsiAnchor;
+    let config = || {
+        let mut b = MuxerConfig::builder();
+        b.buffer_packets(10);
+        for i in 0..2u16 {
+            let mut prog = MuxerProgramConfigBuilder::new(i + 1, 0x1000 + 0x100 * i);
+            prog.add_video(0x1011 + 0x100 * i, VideoCodec::H264);
+            b.add_program(prog.build());
+        }
+        b.build().unwrap()
+    };
+    let small = [0x00, 0x00, 0x00, 0x01, 0x65, 0x88];
+    let mut big = vec![0x11u8; 50_000];
+    big[..5].copy_from_slice(&[0x00, 0x00, 0x00, 0x01, 0x65]);
+    let (first, second) = (VideoStreamHandle::pack(0, 0), VideoStreamHandle::pack(1, 0));
+    let mut buf = vec![0u8; 188 * 16];
+
+    // Program 1 sends a set; program 2's stamps are seconds above its own.
+    let mut refused = Muxer::new(config()).unwrap();
+    refused
+        .push_video_to(first, &small, Pts90khz::new(0), true)
+        .unwrap();
+    assert_eq!(refused.slots[1].psi_last, PsiAnchor::SetSeen);
+    let pending = refused.pending_packets();
+    let res = refused.push_video_to(second, &big, Pts90khz::new(450_000), true);
+    assert!(matches!(res, Err(MuxError::BufferFull { .. })), "{res:?}");
+    assert_eq!(refused.pending_packets(), pending);
+    assert_eq!(refused.slots[1].psi_last, PsiAnchor::SetSeen);
+    while refused.pull(&mut buf) > 0 {}
+
+    let mut fresh = Muxer::new(config()).unwrap();
+    fresh
+        .push_video_to(first, &small, Pts90khz::new(0), true)
+        .unwrap();
+    while fresh.pull(&mut buf) > 0 {}
+
+    // 200 ms of program 2's stamps after the refused push: a set would be due
+    // had the refused push taken the anchor.
+    for mux in [&mut refused, &mut fresh] {
+        mux.push_video_to(second, &small, Pts90khz::new(468_000), true)
+            .unwrap();
+    }
+    let mut a = vec![0u8; 188 * 16];
+    let mut b = vec![0u8; 188 * 16];
+    let (na, nb) = (refused.pull(&mut a), fresh.pull(&mut b));
+    assert_eq!(
+        a[..na],
+        b[..nb],
+        "the push after the drain differs from a fresh run"
+    );
+    assert_eq!(refused.slots[1].psi_last, fresh.slots[1].psi_last);
+}
+
 // ── PSI emission cadence ──────────────────────────────────────────────────
 
 #[test]
