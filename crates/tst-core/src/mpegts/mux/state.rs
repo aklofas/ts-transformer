@@ -497,8 +497,8 @@ pub(super) fn resolve_pcr_pid(prog: &MuxerProgramConfig) -> u16 {
         .expect("validate() guarantees ≥1 PCR-eligible stream per program")
 }
 
-/// Emit tracing warnings for caller-supplied descriptor conflicts on KLV, AV1,
-/// and AC-3 streams. Kept out of `build_pmt_descriptor_cache` so that
+/// Emit tracing warnings for caller-supplied descriptor conflicts on AV1 and
+/// AC-3 streams. Kept out of `build_pmt_descriptor_cache` so that
 /// function is pure (no side effects). Called after `validate()` from
 /// `Muxer::new` and from `Muxer::reconfigure` for every planned program, so
 /// an identical reconfigure repeats the warnings; at most ≤16 programs × ≤16
@@ -506,19 +506,6 @@ pub(super) fn resolve_pcr_pid(prog: &MuxerProgramConfig) -> u16 {
 pub(super) fn warn_on_descriptor_conflicts(prog: &MuxerProgramConfig) {
     for (i, spec) in prog.streams.iter().enumerate() {
         let caller_descs = &prog.stream_descriptors[i];
-
-        if matches!(spec, StreamSpec::Klv { .. }) {
-            for tlv in caller_descs {
-                if tlv.len() >= 6 && tlv[0] == 0x05 && &tlv[2..6] != b"KLVA" {
-                    tracing::warn!(
-                        "caller-supplied Registration descriptor on KLV PID has \
-                         non-KLVA format_identifier ({:?}); receivers may not \
-                         recognize the stream as KLV",
-                        core::str::from_utf8(&tlv[2..6]).unwrap_or("?")
-                    );
-                }
-            }
-        }
 
         if let StreamSpec::Video {
             codec: VideoCodec::Av1,
@@ -578,7 +565,8 @@ pub(super) fn build_pmt_descriptor_cache(prog: &MuxerProgramConfig) -> Vec<Vec<u
         // Receivers gate KLV classification on the descriptor
         // regardless of stream_type. Sync KLV with metadata_descriptor
         // (tag 0x26) doesn't *replace* KLVA — TSDuck + ffmpeg
-        // consume both side-by-side.
+        // consume both side-by-side. A caller registration replaces it;
+        // `validate()` accepts none on a KLV stream but the exact KLVA one.
         if matches!(
             spec,
             StreamSpec::Klv {
