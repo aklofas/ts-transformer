@@ -51,7 +51,7 @@ public final class RtspServer extends NativeHandle {
      * @throws RtspException {@code IO} on bind/start failure, {@code PROTOCOL}
      *     on bind-URL parse failure, {@code TLS} if {@code config.tlsCert()}/{@code
      *     tlsKey()} name a bad PEM path (an {@code rtsps://} bind now works), {@code
-     *     MOUNT} if the server refuses the default mount rule, the auth realm, an
+     *     CONFIG_INVALID} if the server refuses the default mount rule, the auth realm, an
      *     empty auth user name, a {@link BasicAuth} user name that contains {@code :}
      *     (Basic cannot carry it), or a bind address that carries a user name or a
      *     password (set the server's credential with {@link RtspServerConfig.Builder#auth};
