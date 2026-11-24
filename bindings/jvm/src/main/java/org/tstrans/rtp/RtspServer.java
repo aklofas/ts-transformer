@@ -53,9 +53,11 @@ public final class RtspServer extends NativeHandle {
      *     tlsKey()} name a bad PEM path (an {@code rtsps://} bind now works), {@code
      *     CONFIG_INVALID} if the server refuses the default mount rule, the auth realm, an
      *     empty auth user name, a {@link BasicAuth} user name that contains {@code :}
-     *     (Basic cannot carry it), or a bind address that carries a user name or a
+     *     (Basic cannot carry it), a bind address that carries a user name or a
      *     password (set the server's credential with {@link RtspServerConfig.Builder#auth};
-     *     the message names neither)
+     *     the message names neither), or a bind address that carries a path other than
+     *     {@code /} or a query (add mounts with the {@code add*Mount} calls and choose UDP
+     *     media with {@link RtspServerConfig.Builder#allowUdpMedia})
      * @throws IllegalArgumentException if {@code config.auth()} is set without a realm
      */
     public static RtspServer start(RtspServerConfig config) throws RtspException {

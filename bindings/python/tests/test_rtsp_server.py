@@ -1081,6 +1081,47 @@ def test_a_bind_address_with_userinfo_does_not_start(bind_addr):
     assert "admin" not in text and "secret" not in text
 
 
+@pytest.mark.parametrize(
+    "bind_addr, what",
+    [
+        ("127.0.0.1:0/live", "path"),
+        ("rtsp://127.0.0.1:0/live", "path"),
+        ("rtsps://127.0.0.1:0/live", "path"),
+        ("127.0.0.1:0?transport=tcp", "query"),
+        ("rtsp://127.0.0.1:0?transport=udp", "query"),
+        ("rtsps://127.0.0.1:0?transport=udp", "query"),
+        ("rtsp://127.0.0.1:0?", "query"),
+    ],
+)
+def test_a_bind_address_with_a_path_or_a_query_does_not_start(bind_addr, what):
+    kw = {}
+    if bind_addr.startswith("rtsps://"):
+        kw["tls_cert"], kw["tls_key"] = _tls_fixture_paths()
+    cfg = RtspServerConfig(bind_addr=bind_addr, graceful_shutdown_drain_ms=50, **kw)
+    with pytest.raises(RtspError) as ei:
+        RtspServer.start(cfg)
+    assert ei.value.kind == RtspErrorKind.CONFIG_INVALID
+    text = str(ei.value)
+    assert "bind URL" in text
+    assert what in text
+
+
+def test_a_bind_address_with_an_unknown_query_key_is_a_url_error():
+    # The parse refuses it before the server's own check of the bind URL.
+    cfg = RtspServerConfig(
+        bind_addr="rtsp://127.0.0.1:0?mount=live", graceful_shutdown_drain_ms=50
+    )
+    with pytest.raises(RtspError) as ei:
+        RtspServer.start(cfg)
+    assert ei.value.kind == RtspErrorKind.PROTOCOL
+
+
+def test_a_bind_address_with_a_bare_slash_starts():
+    cfg = RtspServerConfig(bind_addr="rtsp://127.0.0.1:0/", graceful_shutdown_drain_ms=50)
+    with RtspServer.start(cfg) as server:
+        assert server.local_addr()[1] != 0
+
+
 def test_a_basic_auth_user_name_with_a_colon_does_not_start():
     cfg = RtspServerConfig(
         bind_addr="127.0.0.1:0",

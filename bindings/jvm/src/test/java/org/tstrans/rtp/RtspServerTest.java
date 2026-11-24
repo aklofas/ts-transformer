@@ -444,6 +444,34 @@ class RtspServerTest {
         }
     }
 
+    /**
+     * A bind address says where to listen: one that carries a path or a query (also an empty
+     * one) does not start a server, and a bare {@code /} is no path.
+     */
+    @Test @Timeout(15)
+    void aBindAddressWithAPathOrAQueryIsRefused() throws Exception {
+        String[][] cases = {
+            {"127.0.0.1:0/live", "path"}, {"rtsp://127.0.0.1:0/live", "path"},
+            {"127.0.0.1:0?transport=tcp", "query"}, {"rtsp://127.0.0.1:0?transport=udp", "query"},
+            {"rtsp://127.0.0.1:0?", "query"},
+        };
+        for (String[] c : cases) {
+            RtspException e = assertThrows(RtspException.class,
+                () -> RtspServer.start(RtspServerConfig.builder().bindAddr(c[0]).build()), c[0]);
+            assertEquals(RtspException.Kind.CONFIG_INVALID, e.kind(), c[0] + ": " + e.getMessage());
+            assertTrue(e.getMessage().contains("bind URL"), e.getMessage());
+            assertTrue(e.getMessage().contains(c[1]), e.getMessage());
+        }
+        // A key no RTSP URL knows is refused earlier, by the URL parse.
+        RtspException unknown = assertThrows(RtspException.class, () -> RtspServer.start(
+            RtspServerConfig.builder().bindAddr("rtsp://127.0.0.1:0?mount=live").build()));
+        assertEquals(RtspException.Kind.PROTOCOL, unknown.kind(), unknown.getMessage());
+        try (RtspServer s = RtspServer.start(
+                RtspServerConfig.builder().bindAddr("rtsp://127.0.0.1:0/").build())) {
+            assertTrue(s.localAddr().isPresent());
+        }
+    }
+
     /** Basic splits {@code user:password} at the first colon; Digest carries the name quoted. */
     @Test @Timeout(15)
     void aBasicUserNameWithAColonIsRefusedAndADigestOneStarts() throws Exception {

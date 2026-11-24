@@ -173,6 +173,11 @@ public final class RtspServerConfig {
 
         private Builder() {}
 
+        /**
+         * The bind URL, or {@code host:port} (taken as {@code rtsp://}). It says only where
+         * to listen: {@link RtspServer#start} refuses one that carries a path other than
+         * {@code /}, a query, or a user name or a password.
+         */
         public Builder bindAddr(String v) {
             this.bindAddr = java.util.Objects.requireNonNull(v, "bindAddr");
             return this;
