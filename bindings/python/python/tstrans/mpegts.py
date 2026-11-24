@@ -185,8 +185,9 @@ class KlvStreamSpec(StreamSpec):
 @dataclass(frozen=True, slots=True)
 class AudioStreamSpec(StreamSpec):
     """Audio elementary stream — `pid`, `codec`, optional `language`
-    (3-byte ISO 639-2 lowercase ASCII, e.g. `b"eng"`; None omits the
-    ISO 639 language descriptor)."""
+    (3-byte ISO 639-2 code of three ASCII letters, e.g. `b"eng"`; any
+    other byte is refused when the muxer is built; None omits the ISO 639
+    language descriptor)."""
 
     codec: AudioCodec
     language: Optional[bytes] = None
@@ -231,7 +232,7 @@ class DataStreamSpec(StreamSpec):
 #
 # Field naming matches the Rust struct fields exactly (snake_case);
 # DVB language is the ISO 639-2/B 3-letter code as a 3-byte `bytes`
-# value (lowercase ASCII), mirroring `[u8; 3]` on the Rust side.
+# value (three ASCII letters), mirroring `[u8; 3]` on the Rust side.
 # `__post_init__` enforces all wire-spec ranges so misuse fails at
 # construction time, not later inside the muxer.
 
@@ -243,9 +244,11 @@ class DvbSubtitlingConfig:
 
     Fields mirror `tst_core::mpegts::mux::SubtitleCodec::DvbSubtitling`:
 
-    - `language` — 3-byte ISO 639-2/B lowercase ASCII (e.g. `b"eng"`).
+    - `language` — 3-byte ISO 639-2/B code of three ASCII letters (e.g. `b"eng"`).
     - `subtitling_type` — ETSI EN 300 468 Table 26 codepoint
-      (u8, 0..=255). Common values: 0x10 (DVB sub, no AR signalling),
+      (u8, 0..=255). The muxer accepts only the assigned codes,
+      0x10..=0x16 and 0x20..=0x26, and refuses another when it is built.
+      Common values: 0x10 (DVB sub, no AR signalling),
       0x14 (DVB sub for 4:3 aspect-ratio).
     - `composition_page_id` — u16, 0..=0xFFFF.
     - `ancillary_page_id` — u16, 0..=0xFFFF.
@@ -309,8 +312,10 @@ class DvbTeletextConfig:
 
     Fields mirror `tst_core::mpegts::mux::SubtitleCodec::DvbTeletext`:
 
-    - `language` — 3-byte ISO 639-2/B lowercase ASCII.
-    - `teletext_type` — 5-bit teletext_type, 0..=31. Common values:
+    - `language` — 3-byte ISO 639-2/B code of three ASCII letters.
+    - `teletext_type` — 5-bit teletext_type, 0..=31; the muxer accepts
+      only the assigned codes, 0x01..=0x05, and refuses another when it is
+      built. Common values:
       0x01 (initial page), 0x02 (subtitle page), 0x05 (programme
       schedule).
     - `magazine_number` — 3-bit magazine number, 0..=7. Note: the
