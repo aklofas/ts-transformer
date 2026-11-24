@@ -112,9 +112,13 @@ impl Muxer {
         );
 
         let audio_packets = ts_packets_for(self.pes_scratch.len());
-        let plan = self.reserve_preamble(prog_idx, pts, audio_pid, audio_packets, false)?;
+        // A random access point forces a PCR as well as RAI: on the PCR PID
+        // H.222.0 §2.4.3.5 allows RAI only in a packet that carries a PCR
+        // (the forced PCR has no effect on any other PID).
+        let rap = is_random_access_point(audio_codec, frames);
+        let plan = self.reserve_preamble(prog_idx, pts, audio_pid, audio_packets, rap)?;
         self.count_if_late(prog_idx, audio_pid, pts, &plan);
-        self.drain_pes_scratch(audio_pid, plan.first_af(false));
+        self.drain_pes_scratch(audio_pid, plan.first_af(rap));
 
         // Count on the Ok path only — after all early-returns above.
         if let Some(s) = self.per_stream.get_mut(&audio_pid) {
@@ -179,5 +183,27 @@ impl Muxer {
             program_number,
             AudioStreamHandle::pack,
         )
+    }
+}
+
+/// Whether an audio push starts at a random access point, judged on its
+/// first frame (RAI speaks for the PES that starts in the packet).
+///
+/// TS 101 154 §4.1.5.1 asks for `random_access_indicator` at every AAC
+/// random access point. An ADTS frame carries its whole header, so every
+/// one is a RAP. A LOAS frame is one (§6.5.1.1) only when its
+/// `AudioMuxElement` carries `StreamMuxConfig`, i.e. `useSameStreamMux`,
+/// the first bit after the 3-byte LOAS header, is 0; bytes that do not
+/// read as LOAS are not. Other codecs are never marked.
+fn is_random_access_point(codec: crate::mpegts::mux::AudioCodec, frames: &[u8]) -> bool {
+    match codec {
+        crate::mpegts::mux::AudioCodec::Aac => true,
+        crate::mpegts::mux::AudioCodec::AacLatm => {
+            frames.len() > 3
+                && frames[0] == 0x56
+                && frames[1] & 0xE0 == 0xE0
+                && frames[3] & 0x80 == 0
+        }
+        _ => false,
     }
 }
