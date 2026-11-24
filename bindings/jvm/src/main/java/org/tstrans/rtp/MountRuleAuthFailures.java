@@ -12,8 +12,9 @@ package org.tstrans.rtp;
  * first answer after {@link MountRules#setChallenge} changed the scheme or the realm does.
  *
  * <p>A rate signal: an unauthenticated peer can raise it at will (three refused answers per
- * connection under Basic, two under Digest after the bare first challenge, any number of
- * connections), and a peer that holds one valid credential resets its strikes with it and
+ * connection under Basic or Digest: a Digest peer can take its nonce from a stale challenge,
+ * which is no strike; any number of connections), and a peer that holds one valid credential
+ * resets its strikes with it and
  * can try other credentials without bound on one connection. A lock-out built on one name's
  * count can therefore be triggered against that name's owner.
  *
