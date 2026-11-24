@@ -192,11 +192,16 @@ pub(crate) fn write_subtitle_pes(
 /// Per ETSI EN 300 472 §4.2, a DVB teletext PES is composed of:
 /// * a fixed 45-byte PES header (`HEADER_TOTAL`),
 /// * an optional auto-prepended `data_identifier` byte (`0x10`) when the
-///   caller's first payload byte is not already in the `0x10..=0x1F`
-///   range mandated by EN 300 472 §4.4.1,
+///   caller's first payload byte is not already an identifier (see
+///   [`dvb_teletext_will_auto_prepend`]),
 /// * the caller's payload, and
-/// * tail stuffing padding the PES to exactly `N * 184` bytes (one TS
-///   payload area per packet, no adaptation field).
+/// * tail stuffing data units padding the PES to exactly `N * 184` bytes
+///   (one TS payload area per packet, no adaptation field).
+///
+/// A stuffing data unit is at least two bytes (id and length), so a size
+/// that would leave exactly one byte spare takes one more packet. At the
+/// 16-bit cap that packet does not fit: that one size is refused although a
+/// one-byte-larger payload (an exact fit) is accepted.
 ///
 /// The wire `PES_packet_length` field (ISO/IEC 13818-1 §2.4.3.7) is a
 /// 16-bit big-endian unsigned and equals `total_pes_bytes - 6`. This
@@ -206,8 +211,7 @@ pub(crate) fn write_subtitle_pes(
 /// safely `u16::try_from(...).expect(...)` the cast.
 ///
 /// `auto_prepend` mirrors the writer's own auto-prepend decision: pass
-/// `true` when the caller's first payload byte is NOT in `0x10..=0x1F`
-/// (forcing the writer to insert a `0x10`), `false` otherwise. The
+/// [`dvb_teletext_will_auto_prepend`]'s answer for the payload. The
 /// boundary differs by 1 byte across this flag because the prepended
 /// byte counts toward `useful`.
 pub(super) fn dvb_teletext_total_pes_bytes(
@@ -218,7 +222,11 @@ pub(super) fn dvb_teletext_total_pes_bytes(
     const TS_PAYLOAD_PER_PKT: usize = 184;
     let auto_id_byte = usize::from(auto_prepend);
     let useful = HEADER_TOTAL + auto_id_byte + payload_len;
-    let n = useful.div_ceil(TS_PAYLOAD_PER_PKT).max(1);
+    let mut n = useful.div_ceil(TS_PAYLOAD_PER_PKT).max(1);
+    // One spare byte cannot hold a stuffing data unit (id + length).
+    if n * TS_PAYLOAD_PER_PKT - useful == 1 {
+        n += 1;
+    }
     let total_pes_bytes = n * TS_PAYLOAD_PER_PKT;
     // PES_packet_length = total_pes_bytes - 6 must fit in u16.
     if total_pes_bytes < 6 || total_pes_bytes - 6 > u16::MAX as usize {
@@ -229,12 +237,17 @@ pub(super) fn dvb_teletext_total_pes_bytes(
 }
 
 /// Caller-side helper: does `write_dvb_teletext_pes` auto-prepend a
-/// `data_identifier` byte for this payload? EN 300 472 §4.4.1 mandates
-/// the first payload byte be in `0x10..=0x1F`; the writer inserts `0x10`
-/// when the caller has not. Exposed at module scope so `push_subtitle_to`
+/// `data_identifier` byte for this payload? The PES data field starts with
+/// ONE `data_identifier`: `0x10..=0x1F` (EBU data) or `0x80..=0xFF` (user
+/// defined, EN 300 472 §4.4 Table 3). A first byte in either range is taken
+/// as the caller's identifier; any other first byte gets `0x10` in front.
+/// `0xFF` is the exception: it is also the stuffing data unit's id, which a
+/// caller that left the identifier out may start with, so a user-defined
+/// identifier `0xFF` cannot be expressed. A first byte in the reserved
+/// ranges is not validated. Exposed at module scope so `push_subtitle_to`
 /// can compute the same flag the writer will use when sizing the PES.
 pub(super) fn dvb_teletext_will_auto_prepend(payload: &[u8]) -> bool {
-    !matches!(payload.first(), Some(0x10..=0x1F))
+    !matches!(payload.first(), Some(0x10..=0x1F | 0x80..=0xFE))
 }
 
 /// Write a complete DVB teletext PES packet per ETSI EN 300 472 §4.2 + §4.4.
@@ -244,15 +257,18 @@ pub(super) fn dvb_teletext_will_auto_prepend(payload: &[u8]) -> bool {
 ///   stuffing(31×0xFF)`.
 /// - `PES_header_data_length = 0x24` (36 — covers 5 PTS bytes + 31 stuffing
 ///   bytes).
-/// - PES payload begins with a `data_identifier` byte ∈ `0x10..=0x1F`
-///   (EN 300 472 §4.4.1). If `payload[0]` is not in that range, `0x10`
-///   (EBU teletext) is auto-prepended to mirror gst-tsmux
+/// - The PES data field begins with ONE `data_identifier` byte (EN 300 472
+///   §4.3, §4.4), followed by data units. If `payload[0]` is not an
+///   identifier (see [`dvb_teletext_will_auto_prepend`]), `0x10` (EBU
+///   teletext) is auto-prepended to mirror gst-tsmux
 ///   (`gstbasetsmuxttxt.c:100-103`). Without this byte ffmpeg's
 ///   `ff_data_identifier_is_teletext()` probe rejects the stream.
-/// - Tail stuffing past the caller's data_units is itself a sequence of
-///   `data_unit_id=0xFF` stuffing_data_units per EN 300 472 §4.4 — each
-///   is 46 bytes: `[0xFF, 0x2C (=44), 0x00 × 44]`. ffmpeg's `dvbtxt.c:40-44`
-///   probe rejects raw-0xFF stuffing.
+/// - Tail stuffing past the caller's data units is itself a sequence of
+///   whole stuffing DATA UNITS (`data_unit_id = 0xFF`, EN 300 472 §4.4):
+///   46-byte units `[0xFF, 0x2C (=44), 0x00 × 44]`, then one shorter unit
+///   for what is left, or one 47-byte unit (length `0x2D`) where a 46-byte
+///   unit would leave a single byte. ffmpeg's `dvbtxt.c:40-44` probe
+///   rejects raw-0xFF stuffing.
 /// - `PES_packet_length = (N × 184) − 6`, where
 ///   `N = ceil((45 + auto_id_byte + payload.len()) / 184)`. The PES
 ///   packet is exactly `N × 184` bytes, with stuffing data_units padding
@@ -321,31 +337,20 @@ fn write_dvb_teletext_pes(out: &mut Vec<u8>, pts_90khz: i64, payload: &[u8]) {
     // Caller's data_units (or first byte = caller's data_identifier
     // followed by data_units).
     out.extend_from_slice(payload);
-    // Tail stuffing per EN 300 472 §4.4 — emit whole stuffing_data_units
-    // until we reach `total_pes_bytes`. The PES byte total is always a
-    // multiple of 184 by construction; each stuffing unit is 46 bytes.
-    // 184 / 46 = 4 exactly, so whole units always fit. If a partial unit
-    // is needed at the end (auto_id_byte+payload misaligns), emit
-    // [0xFF, length=remaining-2, 0x00 × (remaining-2)] as a single
-    // shorter stuffing_data_unit (EN 300 472 §4.4 permits any length
-    // 0..=44 in the data_unit_length field).
-    while out.len() + STUFFING_DATA_UNIT.len() <= total_pes_bytes {
+    // Tail stuffing per EN 300 472 §4.4: whole stuffing data units up to
+    // `total_pes_bytes`. A unit is at least 2 bytes (id + length); the
+    // total never leaves 1 byte spare, and a 46-byte unit is not written
+    // where it would leave 1, so the last unit takes 2 to 47 bytes.
+    let mut remaining = total_pes_bytes - out.len();
+    while remaining >= STUFFING_DATA_UNIT.len() && remaining - STUFFING_DATA_UNIT.len() != 1 {
         out.extend_from_slice(&STUFFING_DATA_UNIT);
+        remaining -= STUFFING_DATA_UNIT.len();
     }
-    let remaining = total_pes_bytes - out.len();
+    debug_assert_ne!(remaining, 1);
     if remaining > 0 {
-        // Partial stuffing data_unit: at minimum 2 bytes (id + length),
-        // up to 46.
-        if remaining >= 2 {
-            out.push(0xFF); // data_unit_id
-            out.push((remaining - 2) as u8); // data_unit_length
-            out.resize(out.len() + (remaining - 2), 0x00);
-        } else {
-            // remaining == 1 — pad with a single 0xFF byte. Belt-and-
-            // suspenders; never fires in practice since total_pes_bytes
-            // is always N × 184.
-            out.push(0xFF);
-        }
+        out.push(0xFF); // data_unit_id
+        out.push((remaining - 2) as u8); // data_unit_length
+        out.resize(out.len() + (remaining - 2), 0x00);
     }
     debug_assert_eq!(out.len(), total_pes_bytes);
 }
@@ -859,5 +864,39 @@ mod tests {
             "stuffing payload is 44 zero bytes, got {:?}",
             &out[51..51 + 44]
         );
+    }
+
+    #[test]
+    fn teletext_total_and_tail_agree_for_every_payload_length() {
+        // For every payload length, with and without the prepended
+        // identifier: either the size function refuses (above the 16-bit
+        // cap, or the one size that would leave a single spare byte), or
+        // the writer fills exactly the total it returns and the bytes after
+        // the payload are whole stuffing data units.
+        let mut payload = vec![0u8; 65_460];
+        let mut out = Vec::with_capacity(357 * 184);
+        for first in [0x02u8, 0x10] {
+            payload[0] = first;
+            for len in 0..=payload.len() {
+                let data = &payload[..len];
+                let prepend = dvb_teletext_will_auto_prepend(data);
+                let useful = 45 + usize::from(prepend) + len;
+                let Some(total) = dvb_teletext_total_pes_bytes(len, prepend) else {
+                    assert!(useful > 356 * 184 || useful == 356 * 184 - 1, "len {len}");
+                    continue;
+                };
+                out.clear();
+                write_dvb_teletext_pes(&mut out, 90_000, data);
+                assert_eq!(out.len(), total, "len {len} first 0x{first:02X}");
+                assert_eq!(total % 184, 0, "len {len}");
+                let mut i = useful;
+                while i < total {
+                    assert_eq!(out[i], 0xFF, "len {len}: stuffing unit id at {i}");
+                    assert!(i + 2 <= total, "len {len}: a lone byte at {i}");
+                    i += 2 + usize::from(out[i + 1]);
+                }
+                assert_eq!(i, total, "len {len}: the last unit overruns the PES");
+            }
+        }
     }
 }
