@@ -405,9 +405,11 @@ with tio.transmux("in.ts", "out.ts", atomic=True) as tx:
 ```
 
 Strict by default: streams the muxer cannot represent (DVB
-subtitling/teletext, and unknown streams whose stream type is carried in
-sections: 0x05, 0x13, 0x16, 0x2C, 0x2F, 0x30) raise `MuxError` naming the
-offenders; a config error tied to one PID also sets `MuxError.pid`.
+subtitling/teletext, and unknown streams of the six stream types H.222.0's
+Table 2-34 names as carrying sections: 0x05, 0x13, 0x16, 0x2C, 0x2F, 0x30)
+raise `MuxError` naming the offenders (other section-carried types, the
+DSM-CC types 0x0A to 0x0D and 0x17 to 0x19 and SCTE 35's 0x86, are copied
+as PES data streams); a config error tied to one PID also sets `MuxError.pid`.
 A synchronous KLV event's `metadata_service_id` is passed on, so the
 output's AU cells carry the service id the copied PMT entry declares.
 Other private/application data streams (unknown stream types) pass through

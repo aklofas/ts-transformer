@@ -192,8 +192,13 @@ entirely.
 The function maps each demuxed `StreamKind` to the closest representable
 muxer stream. Kinds that have no lossless mux representation are strict
 offenders — the function fails unless you pass them in `drop` to exclude
-them: DVB subtitling/teletext, and an `Unknown` stream whose stream type
-carries sections.
+them: DVB subtitling/teletext, and an `Unknown` stream of one of the six
+stream types H.222.0's Table 2-34 names as carrying sections. Other
+section-carried types (the DSM-CC types 0x0A to 0x0D and 0x17 to 0x19,
+SCTE 35's 0x86) are not refused: such a stream becomes a Data stream
+written as PES, so a relay must leave its PID out itself. To leave out
+one PID only, remove it from the `ProgramMap`'s `streams` (a public
+field) before the conversion.
 
 | Demuxed `StreamKind` (PMT `stream_type`) | Rebuilt as | Notes |
 |---|---|---|
@@ -211,7 +216,7 @@ carries sections.
 | `Subtitle(WebVttInTs)` — `0x06` + `VTTC` registration | `add_subtitle(pid, SubtitleCodec::WebVttInTs)` | Registration descriptor auto-re-emitted. |
 | `Subtitle(DvbSubtitling)` / `Subtitle(DvbTeletext)` | **error (`ConfigInvalid`)** | DVB descriptor params (language, page IDs) are not recoverable from the PMT entry alone. Pass `StreamKindTag::Subtitle` in `drop` to exclude all subtitle streams. |
 | `Unknown(stream_type)` | `add_data(pid, stream_type, carries_pts=true)` | PES pass-through keeping the raw PMT `stream_type` byte; the stream's PMT descriptors are preserved verbatim on the rebuilt PMT. `carries_pts` is true, like synchronous KLV. Pass `StreamKindTag::Unknown` in `drop` to exclude private data streams you don't want to carry. |
-| `Unknown(0x05 / 0x13 / 0x16 / 0x2C / 0x2F / 0x30)` | **error (`ConfigInvalid`)** | These stream types carry sections (H.222.0 Table 2-34) and the muxer writes PES. Pass `StreamKindTag::Unknown` in `drop`, which also drops the source's PES private data streams. |
+| `Unknown(0x05 / 0x13 / 0x16 / 0x2C / 0x2F / 0x30)` | **error (`ConfigInvalid`)** | H.222.0's Table 2-34 names these six types as carrying sections, and the muxer writes PES. Remove that PID from `pm.streams` before the conversion, or pass `StreamKindTag::Unknown` in `drop`, which also drops the source's PES private data streams. Other section-carried types (DSM-CC 0x0A to 0x0D and 0x17 to 0x19, SCTE 35's 0x86) are not refused and are mapped by the row above. |
 
 What the conversion does not carry: the PMT's program_info loop, the PAT's
 `transport_stream_id` and the table versions. Add program descriptors by hand

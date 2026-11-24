@@ -210,7 +210,10 @@ pub enum StreamSpec {
     /// typed bytes (0x1B/0x24/0x33/0x15/0x03/0x04/0x0F/0x11/0x81) and
     /// 0x06 with classifying markers (subtitling/teletext tags or
     /// AV01/VTTC/GA94/KLVA registrations). Use the typed `StreamSpec`
-    /// variants for those.
+    /// variants for those. It also rejects the six stream types H.222.0's
+    /// Table 2-34 names as carrying sections (0x05, 0x13, 0x16, 0x2C, 0x2F,
+    /// 0x30); other section-carried types (the DSM-CC types 0x0A to 0x0D
+    /// and 0x17 to 0x19, SCTE 35's 0x86) are accepted and written as PES.
     Data {
         /// PID. Must be in `0x0010..=0x1FFE`, distinct from other stream PIDs.
         pid: u16,

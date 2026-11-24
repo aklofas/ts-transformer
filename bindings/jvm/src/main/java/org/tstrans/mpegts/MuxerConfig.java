@@ -325,9 +325,11 @@ public final class MuxerConfig {
          * private_stream_1). {@code streamType} is the raw PMT stream_type byte
          * (0..=255). It must not classify as a typed kind (e.g. 0x1B H.264), and a
          * 0x06 stream must not carry a classifying descriptor (e.g. KLVA
-         * registration), and the stream types H.222.0 carries in sections
-         * (0x05, 0x13, 0x16, 0x2C, 0x2F, 0x30) cannot carry PES — all are
-         * rejected at {@code new Muxer(...)} with {@code CONFIG_INVALID}. Push-time payloads pass through verbatim — no
+         * registration), and the six stream types H.222.0's Table 2-34 names as
+         * carrying sections (0x05, 0x13, 0x16, 0x2C, 0x2F, 0x30) cannot carry PES — all are
+         * rejected at {@code new Muxer(...)} with {@code CONFIG_INVALID}. Other section-carried
+         * types (the DSM-CC types 0x0A to 0x0D and 0x17 to 0x19, SCTE 35's 0x86) are accepted
+         * and written as PES. Push-time payloads pass through verbatim — no
          * AU-cell wrap, no framing (unlike {@link #addKlv KLV}).
          *
          * @param carriesPts whether pushed PTS values are written to PES headers
