@@ -64,13 +64,13 @@
  * Minor version of the C ABI contract. See [`TST_ABI_VERSION_MAJOR`]
  * for the bump policy.
  *
- * Cbindgen emits this as `#define TST_ABI_VERSION_MINOR 32` in the
+ * Cbindgen emits this as `#define TST_ABI_VERSION_MINOR 33` in the
  * generated header. Runtime accessor: [`tst_get_abi_version_minor`].
  *
  * What each minor added is recorded once, in the repository's
  * `docs/reference/binding-authors.md` § "Versioning".
  */
-#define TST_ABI_VERSION_MINOR 32
+#define TST_ABI_VERSION_MINOR 33
 
 #define TST_CODEC_KIND_AUDIO 3
 
@@ -5483,6 +5483,23 @@ int tst_mux_config_set_program_descriptors(struct tst_mux_config_t *cfg,
  int tst_mux_config_set_psi_interval_ms(struct tst_mux_config_t *p, uint32_t ms);
 
 /**
+ * Set the version number the PAT and every PMT start at. Default 0. Must
+ * be in range 0..=31; an out-of-range value is reported when the muxer or
+ * sender is opened. Each table counts on from it modulo 32 when it
+ * changes. A producer that replaces another on one channel picks a value
+ * different from every version the previous muxer last sent on the PAT
+ * and on each PMT PID this one reuses (the previous highest plus one is
+ * the simple case), so that a receiver reads its tables as new. Mirrors
+ * `MuxerConfig::psi_version_base`.
+ *
+ * # Safety
+ *
+ * `p` must be NULL or a live pointer from `tst_mux_config_new` that no
+ * other thread is using. NULL returns `TST_E_INVALID_CONFIG`.
+ */
+ int tst_mux_config_set_psi_version_base(struct tst_mux_config_t *p, uint8_t version);
+
+/**
  * Set per-stream PMT descriptors for the specified data stream.
  *
  * `data` is a handle previously returned by `tst_mux_config_add_data_stream`.
@@ -5534,6 +5551,18 @@ int tst_mux_config_set_stream_descriptors_for_video(struct tst_mux_config_t *cfg
                                                     const uint8_t *tlv_bytes,
                                                     size_t tlv_total_len,
                                                     size_t tlv_count);
+
+/**
+ * Set the PAT's `transport_stream_id` (applies to the whole stream).
+ * Default 1; every 16-bit value is valid. Mirrors
+ * `MuxerConfig::transport_stream_id`.
+ *
+ * # Safety
+ *
+ * `p` must be NULL or a live pointer from `tst_mux_config_new` that no
+ * other thread is using. NULL returns `TST_E_INVALID_CONFIG`.
+ */
+ int tst_mux_config_set_transport_stream_id(struct tst_mux_config_t *p, uint16_t id);
 
 #if defined(TST_HAS_HLS)
 /**

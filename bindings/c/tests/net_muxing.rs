@@ -21,6 +21,8 @@ mod codec_stats;
 mod data_stream;
 #[path = "muxing/descriptor_tlv.rs"]
 mod descriptor_tlv;
+#[path = "muxing/identity.rs"]
+mod identity;
 #[path = "muxing/demux_config_av1_parity.rs"]
 mod demux_config_av1_parity;
 #[path = "muxing/multi_program.rs"]
