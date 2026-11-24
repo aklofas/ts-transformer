@@ -60,13 +60,15 @@ pub(crate) fn handle_not_valid_in_state(req: &RtspRequest) -> RtspResponse {
     error_response(req, 455, "Method Not Valid in This State")
 }
 
-/// Build a 401 Unauthorized response with a fresh `WWW-Authenticate`
-/// challenge in `scheme` and `realm`, the pair the request was checked
-/// under, so a `Require` path is challenged even on a server without a
-/// builder credential. Mutates `session.auth_nonce` if `stale = true`
-/// (rotates the nonce for a stale-challenge retry per RFC 7616 §3.5). Also
-/// resets `session.auth_nc_hwm` to 0 when the nonce is rotated so nc
-/// tracking starts fresh for the new nonce.
+/// Build a 401 Unauthorized response with a `WWW-Authenticate` challenge
+/// in `scheme` and `realm`, the pair the request was checked under, so a
+/// `Require` path is challenged even on a server without a builder
+/// credential. With `stale` (a Digest answer that did not carry this
+/// connection's nonce) the challenge offers a new nonce and ends in
+/// `stale=true`, which tells the client to answer again with the same
+/// credential (RFC 7616 §3.3): `session.auth_nonce` is replaced and
+/// `session.auth_nc_hwm` reset to 0, so nc tracking starts fresh for the
+/// new nonce. No other challenge carries a `stale` parameter.
 pub(crate) fn challenge_response(
     req: &RtspRequest,
     session: &mut ServerSessionState,
@@ -82,7 +84,11 @@ pub(crate) fn challenge_response(
         session.auth_nonce = crate::rtsp::server::auth::generate_nonce();
         session.auth_nc_hwm = 0;
     }
-    let challenge = build_challenge(scheme, realm, &session.auth_nonce);
+    let mut challenge = build_challenge(scheme, realm, &session.auth_nonce);
+    if stale {
+        // A token, never a quoted string (RFC 7616 §3.3).
+        challenge.push_str(", stale=true");
+    }
     response
         .headers
         .insert("www-authenticate".into(), challenge);
@@ -248,15 +254,16 @@ pub(crate) fn authorize_request(
             Ok(())
         }
         Err(AuthVerifyError::StaleNonce) => {
-            // A 401 with a fresh nonce (the old one is rotated out). The
-            // challenge carries no `stale=` parameter, so the client cannot
-            // tell this 401 from a refused credential.
+            // A 401 with a new nonce and `stale=true`: the client is told to
+            // answer again with the credential it has. Nothing was checked
+            // but the nonce, so the session loop counts no strike for it.
+            session.stale_challenged = true;
             Err(challenge_response(req, session, true, scheme, realm))
         }
         Err(_) => {
             // A credential that was sent and refused counts on the rule; the
             // first challenge every client gets (no header) and a stale
-            // nonce (re-challenged, not a guess) do not.
+            // nonce (challenged again above, not a guess) do not.
             if auth_header.is_some() {
                 decision.count_refused_credential(dir);
             }
@@ -1351,6 +1358,203 @@ mod tests {
             }),
             "an answer for the old realm"
         );
+    }
+
+    /// The whole challenge of a 401, by what the request's `Authorization`
+    /// header held. A Digest header that does not carry the connection's
+    /// nonce is offered a new nonce with `stale=true`, in the same text
+    /// whatever else it holds (the nonce is checked before the user is
+    /// looked up), so `stale` tells a peer nothing about a user name or a
+    /// password. Every other 401 keeps the connection's nonce and carries no
+    /// `stale` parameter.
+    #[test]
+    fn only_an_answer_under_another_nonce_is_challenged_with_stale_true() {
+        use crate::rtsp::server::mount_rules::{MountCredential, MountPolicy, MountRule};
+        use secrecy::SecretString;
+        const URI: &str = "rtsp://127.0.0.1:8554/live";
+        const OTHER: &str = "not-this-sessions";
+        let state = crate::rtsp::server::test_state();
+        state
+            .mount_rules
+            .set(
+                "/live",
+                MountRule::both(MountPolicy::Require(vec![MountCredential::new(
+                    "viewer",
+                    SecretString::new("pw".into()),
+                )])),
+            )
+            .unwrap();
+        // (what, method, the Authorization header given the session's nonce,
+        // whether the 401 is the stale one).
+        type Header = fn(&str) -> Option<String>;
+        let rows: [(&str, RtspMethod, Header, bool); 13] = [
+            ("no header", RtspMethod::Describe, |_| None, false),
+            (
+                "another nonce, the right password",
+                RtspMethod::Describe,
+                |_| Some(digest_answer("viewer", "pw", "DESCRIBE", URI, OTHER)),
+                true,
+            ),
+            (
+                "another nonce, a wrong password",
+                RtspMethod::Describe,
+                |_| Some(digest_answer("viewer", "nope", "DESCRIBE", URI, OTHER)),
+                true,
+            ),
+            (
+                "another nonce, an unlisted user",
+                RtspMethod::Describe,
+                |_| Some(digest_answer("nobody", "pw", "DESCRIBE", URI, OTHER)),
+                true,
+            ),
+            (
+                "another nonce in a malformed header",
+                RtspMethod::Describe,
+                |_| {
+                    Some(format!(
+                        "Digest username=\"viewer\", nonce=\"{OTHER}\", nc=zz"
+                    ))
+                },
+                true,
+            ),
+            (
+                "another nonce and another realm",
+                RtspMethod::Describe,
+                |_| Some(format!("Digest realm=\"elsewhere\", nonce=\"{OTHER}\"")),
+                true,
+            ),
+            (
+                "a Digest header without a nonce",
+                RtspMethod::Describe,
+                |_| Some("Digest garbage".into()),
+                true,
+            ),
+            (
+                "another nonce on ANNOUNCE",
+                RtspMethod::Announce,
+                |_| Some(digest_answer("viewer", "pw", "ANNOUNCE", URI, OTHER)),
+                true,
+            ),
+            (
+                "the nonce, a wrong password",
+                RtspMethod::Describe,
+                |n| Some(digest_answer("viewer", "nope", "DESCRIBE", URI, n)),
+                false,
+            ),
+            (
+                "the nonce, an unlisted user",
+                RtspMethod::Describe,
+                |n| Some(digest_answer("nobody", "pw", "DESCRIBE", URI, n)),
+                false,
+            ),
+            (
+                "the nonce in a malformed header",
+                RtspMethod::Describe,
+                |n| Some(format!("Digest username=\"viewer\", nonce=\"{n}\", nc=zz")),
+                false,
+            ),
+            (
+                "the nonce, a wrong password on ANNOUNCE",
+                RtspMethod::Announce,
+                |n| Some(digest_answer("viewer", "nope", "ANNOUNCE", URI, n)),
+                false,
+            ),
+            (
+                "a Basic header",
+                RtspMethod::Describe,
+                |_| Some("Basic dmlld2VyOnB3".into()),
+                false,
+            ),
+        ];
+        for (what, method, header, stale) in rows {
+            let mut session = ServerSessionState::new();
+            let issued = session.auth_nonce.clone();
+            let mut req = make_req(method, URI);
+            if let Some(h) = header(&issued) {
+                req.headers.insert("authorization".into(), h);
+            }
+            let resp = crate::rtsp::server::session::dispatch(&req, &state, &mut session);
+            assert_eq!(resp.status, 401, "{what}");
+            let now = &session.auth_nonce;
+            let want = if stale {
+                assert_ne!(now, &issued, "{what}: the nonce was not replaced");
+                format!(
+                    "Digest realm=\"tstrans\", nonce=\"{now}\", algorithm=MD5, qop=\"auth\", stale=true"
+                )
+            } else {
+                assert_eq!(now, &issued, "{what}: the nonce was replaced");
+                format!("Digest realm=\"tstrans\", nonce=\"{now}\", algorithm=MD5, qop=\"auth\"")
+            };
+            assert_eq!(resp.headers["www-authenticate"], want, "{what}");
+        }
+
+        // A nonce count replayed under the connection's own nonce is a
+        // refused answer, not a stale one.
+        let mut session = ServerSessionState::new();
+        let issued = session.auth_nonce.clone();
+        let mut req = make_req(RtspMethod::Describe, URI);
+        req.headers.insert(
+            "authorization".into(),
+            digest_answer("viewer", "pw", "DESCRIBE", URI, &issued),
+        );
+        let resp = crate::rtsp::server::session::dispatch(&req, &state, &mut session);
+        assert_eq!(resp.status, 404, "admitted; no such mount");
+        let resp = crate::rtsp::server::session::dispatch(&req, &state, &mut session);
+        assert_eq!(resp.status, 401, "the replayed count");
+        assert_eq!(
+            resp.headers["www-authenticate"],
+            format!("Digest realm=\"tstrans\", nonce=\"{issued}\", algorithm=MD5, qop=\"auth\""),
+            "the replayed count"
+        );
+
+        // The server's own credential under SHA-256, on a server that also
+        // takes answers without `qop`: the stale challenge is the ordinary
+        // one of that server plus `stale=true`, for every gated method.
+        let mut builder =
+            crate::rtsp::server::builder::RtspServerBuilder::new("rtsp://127.0.0.1:0").unwrap();
+        builder.auth_digest_sha256("lab", "admin", SecretString::new("secret".into()));
+        builder.accept_digest_without_qop(true);
+        let state = crate::rtsp::server::test_state_with(builder);
+        for method in [
+            RtspMethod::Describe,
+            RtspMethod::Announce,
+            RtspMethod::Setup,
+            RtspMethod::Play,
+            RtspMethod::Record,
+            RtspMethod::Pause,
+            RtspMethod::Teardown,
+        ] {
+            let mut session = ServerSessionState::new();
+            let issued = session.auth_nonce.clone();
+            let mut req = make_req(method, URI);
+            let resp = crate::rtsp::server::session::dispatch(&req, &state, &mut session);
+            assert_eq!(
+                resp.headers["www-authenticate"],
+                format!(
+                    "Digest realm=\"lab\", nonce=\"{issued}\", algorithm=SHA-256, qop=\"auth\""
+                ),
+                "{method:?}: the first challenge"
+            );
+            // The RFC 2069 form: no `qop`, `nc` or `cnonce`.
+            req.headers.insert(
+                "authorization".into(),
+                format!(
+                    "Digest username=\"admin\", realm=\"lab\", nonce=\"{OTHER}\", uri=\"{URI}\", \
+                     response=\"00\""
+                ),
+            );
+            let resp = crate::rtsp::server::session::dispatch(&req, &state, &mut session);
+            assert_eq!(resp.status, 401, "{method:?}");
+            assert_ne!(session.auth_nonce, issued, "{method:?}");
+            assert_eq!(
+                resp.headers["www-authenticate"],
+                format!(
+                    "Digest realm=\"lab\", nonce=\"{}\", algorithm=SHA-256, qop=\"auth\", stale=true",
+                    session.auth_nonce
+                ),
+                "{method:?}: an answer under another nonce"
+            );
+        }
     }
 
     #[test]

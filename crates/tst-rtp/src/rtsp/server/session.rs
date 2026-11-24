@@ -348,8 +348,9 @@ pub(crate) enum Role {
 /// address, and the connection's [`Role`].
 pub struct ServerSessionState {
     /// Nonce for Digest auth — generated per connection and emitted in
-    /// every WWW-Authenticate; rotated by `challenge_response` on a
-    /// stale re-challenge (which also resets `auth_nc_hwm`).
+    /// every WWW-Authenticate; replaced by `challenge_response` when it
+    /// answers a Digest header under another nonce with `stale=true` (which
+    /// also resets `auth_nc_hwm`).
     pub auth_nonce: String,
     /// Digest nc (nonce-count) high-water mark for replay detection.
     /// Tracks the highest nc observed/consumed under the
@@ -358,7 +359,9 @@ pub struct ServerSessionState {
     /// can never be replayed. Reset to 0 whenever the nonce is rotated.
     pub(crate) auth_nc_hwm: u32,
     /// Count of consecutive 401-bounced auth requests on this connection
-    /// since the last successful authentication. Increments on every 401;
+    /// since the last successful authentication. Increments on every 401
+    /// but the one that answers a stale nonce ([`Self::stale_challenged`]),
+    /// which leaves the count as it is;
     /// resets to 0 on a successful (2xx) response to a request that passed a
     /// credential check (DESCRIBE/SETUP/PLAY/PAUSE/TEARDOWN/ANNOUNCE/RECORD
     /// under a `Require` or builder-auth `Inherit` policy; never `Open`). Non-auth-gated methods
@@ -372,6 +375,11 @@ pub struct ServerSessionState {
     /// dispatch. An `Open` mount or credential-less `Inherit` leaves it false,
     /// so its 2xx does not reset [`Self::auth_failures`].
     pub(crate) request_authenticated: bool,
+    /// Set by the auth check when the request in flight carried a Digest
+    /// answer under another nonce than this connection's and was challenged
+    /// with `stale=true`; cleared before each dispatch. That 401 asks the
+    /// client to answer again, so it is no strike in [`Self::auth_failures`].
+    pub(crate) stale_challenged: bool,
     /// CancellationToken for the per-peer fanout task. PAUSE cancels + replaces
     /// with a fresh token so a subsequent PLAY can re-spawn, and so does a
     /// mount rule's refusal that ends the role; TEARDOWN cancels it without
@@ -419,6 +427,7 @@ impl ServerSessionState {
             auth_nc_hwm: 0,
             auth_failures: 0,
             request_authenticated: false,
+            stale_challenged: false,
             peer_cancel: tokio_util::sync::CancellationToken::new(),
             retired_fanouts: Vec::new(),
             writer: None,
@@ -1011,6 +1020,7 @@ where
             buf.drain(..consumed);
             rtsp_consumed = true;
             session.request_authenticated = false;
+            session.stale_challenged = false;
             let response = dispatch(&req, &state, &mut session);
             if session.session_id().is_some() {
                 admission_deadline = None;
@@ -1081,7 +1091,11 @@ where
             if session.close_after_reply {
                 return Ok(());
             }
-            if response.status == 401 {
+            // The 401 that says "answer again under the new nonce" refuses no
+            // credential: it neither raises the count nor resets it. Before
+            // a session the admission deadline still closes a peer that
+            // sends nothing else.
+            if response.status == 401 && !session.stale_challenged {
                 session.auth_failures = session.auth_failures.saturating_add(1);
                 if session.auth_failures >= 3 {
                     tracing::warn!(
@@ -2167,6 +2181,71 @@ mod session_tests {
         assert!(
             closed_at >= Duration::from_secs(29) && closed_at <= Duration::from_secs(32),
             "closed {closed_at:?} after it opened; the admission deadline is 30 s"
+        );
+    }
+
+    /// A 401 that answers a stale nonce is not a strike, and it does not
+    /// hold a connection either: a peer that sends nothing but Digest
+    /// answers under a nonce the server never issued, one every 7 s, is
+    /// re-challenged each time (five times, past the three-401 close) and
+    /// closed at the admission deadline, 30 s after the connection opened.
+    #[tokio::test(start_paused = true)]
+    async fn stale_nonce_answers_alone_do_not_hold_a_connection_past_the_admission_deadline() {
+        use std::time::Duration;
+
+        let mut builder =
+            crate::rtsp::server::builder::RtspServerBuilder::new("rtsp://127.0.0.1:0").unwrap();
+        builder.auth_digest_md5(
+            "test",
+            "user",
+            secrecy::SecretString::from("secret".to_owned()),
+        );
+        let state = crate::rtsp::server::test_state_with(builder);
+        let (mut c, task) = duplex_session(state.clone());
+        let t0 = tokio::time::Instant::now();
+        let mut rechallenged = 0;
+        let mut closed_at = None;
+        for cseq in 1..=7u32 {
+            // Every 7 s, so no request falls on the 30 s mark itself.
+            if cseq > 1
+                && duplex_closed_within(&mut c, Duration::from_secs(7))
+                    .await
+                    .is_some()
+            {
+                closed_at = Some(t0.elapsed());
+                break;
+            }
+            let r = duplex_exchange(
+                &mut c,
+                &format!(
+                    "DESCRIBE rtsp://127.0.0.1/none RTSP/1.0\r\nCSeq: {cseq}\r\nAuthorization: \
+                     Digest username=\"user\", realm=\"test\", nonce=\"never-issued\", \
+                     uri=\"rtsp://127.0.0.1/none\", response=\"00\"\r\n\r\n"
+                ),
+            )
+            .await;
+            assert!(
+                r.starts_with("RTSP/1.0 401") && r.contains(", stale=true\r\n"),
+                "request {cseq}: {r}"
+            );
+            rechallenged += 1;
+        }
+        let closed_at = closed_at.expect("a connection of stale answers outlived 42 s");
+        assert!(
+            closed_at >= Duration::from_secs(29) && closed_at <= Duration::from_secs(32),
+            "closed {closed_at:?} after it opened, after {rechallenged} stale answers; the \
+             admission deadline is 30 s"
+        );
+        assert_eq!(rechallenged, 5, "one answer every 7 s until the deadline");
+        task.await
+            .expect("the session task panicked")
+            .expect("the session ended with an error");
+        assert_eq!(
+            state
+                .active_sessions
+                .load(std::sync::atomic::Ordering::Relaxed),
+            0,
+            "the session slot was not released"
         );
     }
 
