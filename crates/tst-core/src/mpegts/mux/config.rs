@@ -154,6 +154,30 @@ pub struct MuxerConfig {
     /// 200 ms; use `tick`.
     pub psi_interval_ms: u32,
 
+    /// The PAT's `transport_stream_id`. Default 1. Every 16-bit value is
+    /// valid (H.222.0 §2.4.4.6: a label the user defines). A
+    /// [`Muxer::reconfigure`](crate::mpegts::mux::Muxer::reconfigure)
+    /// cannot change it.
+    pub transport_stream_id: u16,
+
+    /// The version number the PAT and every PMT PID start at. Default 0.
+    /// Validation 0..=31. Each table counts on from it modulo 32 when it
+    /// changes; a PMT PID placed again continues from its last version. A
+    /// [`Muxer::reconfigure`](crate::mpegts::mux::Muxer::reconfigure)
+    /// cannot change the base.
+    ///
+    /// For a producer that replaces another on one channel, so that a
+    /// receiver reads its tables as new: any value different from every
+    /// version the previous muxer last sent on the PAT and on each PMT PID
+    /// this one reuses; the previous highest plus one is the simple case.
+    /// One base serves the PAT and every PMT; per-table bases are not
+    /// offered. This library's demuxer reads a replacement as new when
+    /// either the base or the
+    /// [`transport_stream_id`](Self::transport_stream_id) differs from the
+    /// previous producer's; with both equal, a replacement that changes a
+    /// reused PMT is not seen and its new streams are lost.
+    pub psi_version_base: u8,
+
     /// Maximum buffered TS packets before push returns `BufferFull`.
     /// Default 10000 (~1.88 MB, ~600 ms at 25 Mbps). Validation: >= 10.
     pub buffer_packets: usize,
@@ -197,6 +221,8 @@ impl Default for MuxerConfig {
             pcr_interval_ms: 40,
             pcr_lead_ms: 100,
             psi_interval_ms: 100,
+            transport_stream_id: 1,
+            psi_version_base: 0,
             buffer_packets: 10_000,
             av1_carriage: Av1CarriageMode::Mpeg2TsBinding,
         }
@@ -929,6 +955,11 @@ impl MuxerConfig {
                 "psi_interval_ms must be <= 200 when a program carries KLV",
             ));
         }
+        if self.psi_version_base > 31 {
+            return Err(MuxError::InvalidConfig(
+                "psi_version_base must be in 0..=31",
+            ));
+        }
         if self.buffer_packets < 10 {
             return Err(MuxError::InvalidConfig("buffer_packets must be >= 10"));
         }
@@ -981,6 +1012,8 @@ pub struct MuxerConfigBuilder {
     pcr_interval_ms: Option<u32>,
     pcr_lead_ms: Option<u32>,
     psi_interval_ms: Option<u32>,
+    transport_stream_id: Option<u16>,
+    psi_version_base: Option<u8>,
     buffer_packets: Option<usize>,
     av1_carriage: Option<Av1CarriageMode>,
 }
@@ -1010,6 +1043,19 @@ impl MuxerConfigBuilder {
 
     pub fn psi_interval_ms(&mut self, ms: u32) -> &mut Self {
         self.psi_interval_ms = Some(ms);
+        self
+    }
+
+    /// Set [`MuxerConfig::transport_stream_id`]. Default 1.
+    pub fn transport_stream_id(&mut self, id: u16) -> &mut Self {
+        self.transport_stream_id = Some(id);
+        self
+    }
+
+    /// Set [`MuxerConfig::psi_version_base`]: the version the PAT and every
+    /// PMT PID start at. Default 0; `0..=31`.
+    pub fn psi_version_base(&mut self, version: u8) -> &mut Self {
+        self.psi_version_base = Some(version);
         self
     }
 
@@ -1043,6 +1089,8 @@ impl MuxerConfigBuilder {
             pcr_interval_ms: self.pcr_interval_ms.unwrap_or(40),
             pcr_lead_ms: self.pcr_lead_ms.unwrap_or(100),
             psi_interval_ms: self.psi_interval_ms.unwrap_or(100),
+            transport_stream_id: self.transport_stream_id.unwrap_or(1),
+            psi_version_base: self.psi_version_base.unwrap_or(0),
             buffer_packets: self.buffer_packets.unwrap_or(10_000),
             av1_carriage: self.av1_carriage.unwrap_or_default(),
         };

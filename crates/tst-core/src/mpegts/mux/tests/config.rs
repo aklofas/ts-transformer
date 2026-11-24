@@ -173,6 +173,34 @@ fn rejects_psi_interval_too_small() {
     assert!(matches!(cfg.validate(), Err(MuxError::InvalidConfig(_))));
 }
 
+/// A PSI version number is five bits.
+#[test]
+fn rejects_a_psi_version_base_above_31() {
+    for base in [32, 255] {
+        let mut b = MuxerConfig::builder();
+        b.add_program(MuxerConfig::default().programs[0].clone())
+            .psi_version_base(base);
+        assert!(matches!(
+            b.build(),
+            Err(MuxError::InvalidConfig(
+                "psi_version_base must be in 0..=31"
+            ))
+        ));
+    }
+    for base in [0, 7, 31] {
+        let mut b = MuxerConfig::builder();
+        b.add_program(MuxerConfig::default().programs[0].clone())
+            .psi_version_base(base);
+        assert_eq!(b.build().unwrap().psi_version_base, base);
+    }
+    for id in [0, 0xFFFF] {
+        let mut b = MuxerConfig::builder();
+        b.add_program(MuxerConfig::default().programs[0].clone())
+            .transport_stream_id(id);
+        assert_eq!(b.build().unwrap().transport_stream_id, id);
+    }
+}
+
 #[test]
 fn rejects_buffer_too_small() {
     let cfg = MuxerConfig {

@@ -338,7 +338,13 @@ impl Muxer {
         // receivers after a single PSI interval.
         let mut pat = [0u8; 188];
         let pat_entries = self.pat_entries();
-        write_pat_packet(&mut pat, &pat_entries, self.pat_version, &mut self.counters);
+        write_pat_packet(
+            &mut pat,
+            &pat_entries,
+            self.config.transport_stream_id,
+            self.pat_version,
+            &mut self.counters,
+        );
         self.queue.push_back(pat);
 
         // One PMT per live program — iterate the full slot set so every live

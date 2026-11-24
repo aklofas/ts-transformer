@@ -201,8 +201,9 @@ impl Muxer {
     /// 3. A matched program whose resolved PCR PID changed while the old
     ///    PCR PID's stream stays in the program.
     /// 4. Any non-program field of `MuxerConfig` (`pcr_interval_ms`,
-    ///    `pcr_lead_ms`, `psi_interval_ms`, `buffer_packets`,
-    ///    `av1_carriage`) differs from the running value.
+    ///    `pcr_lead_ms`, `psi_interval_ms`, `transport_stream_id`,
+    ///    `psi_version_base`, `buffer_packets`, `av1_carriage`) differs
+    ///    from the running value.
     ///
     /// A refused call leaves the muxer exactly as it was.
     ///
@@ -230,7 +231,8 @@ impl Muxer {
     /// list keeps it. A live program's PMT version increments (mod 32) when
     /// its rendered PMT changed. PMT versions are kept per PMT PID for the
     /// muxer's lifetime, so a program placed on a previously used PMT PID
-    /// continues from that PID's last version + 1. A removed ES PID's
+    /// continues from that PID's last version + 1; a PMT PID never used
+    /// starts at [`MuxerConfig::psi_version_base`]. A removed ES PID's
     /// continuity counter restarts at 0, and so does the counter of every
     /// PID a new stream is placed on; PMT PID counters continue.
     ///
@@ -380,7 +382,7 @@ impl Muxer {
                 let version = self
                     .pmt_versions_by_pid
                     .get(&prog.pmt_pid)
-                    .map_or(0, |v| (v + 1) & 0x1F);
+                    .map_or(self.config.psi_version_base, |v| (v + 1) & 0x1F);
                 self.pmt_versions_by_pid.insert(prog.pmt_pid, version);
                 slot.pmt_version = version;
             }
@@ -567,6 +569,16 @@ impl Muxer {
             Some((
                 "psi_interval_ms",
                 format!("{} to {}", old.psi_interval_ms, new.psi_interval_ms),
+            ))
+        } else if old.transport_stream_id != new.transport_stream_id {
+            Some((
+                "transport_stream_id",
+                format!("{} to {}", old.transport_stream_id, new.transport_stream_id),
+            ))
+        } else if old.psi_version_base != new.psi_version_base {
+            Some((
+                "psi_version_base",
+                format!("{} to {}", old.psi_version_base, new.psi_version_base),
             ))
         } else if old.buffer_packets != new.buffer_packets {
             Some((

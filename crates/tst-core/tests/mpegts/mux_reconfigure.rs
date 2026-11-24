@@ -679,3 +679,155 @@ fn handles_follow_program_order_after_pure_reorder() {
     assert_eq!(m.klv_stream_handle(0), Some(p2.1));
     assert_eq!(m.video_stream_handle(0), Some(p2.0));
 }
+
+/// The first PAT and PMT of a default muxer, every byte of both packets.
+#[test]
+fn the_default_identity_is_transport_stream_id_1_and_version_0() {
+    let mut m = Muxer::new(MuxerConfig::default()).unwrap();
+    m.push_video(&h264_au(100, true), Pts90khz::new(0), true)
+        .unwrap();
+    let out = drain_mux(&mut m);
+    let pkts: Vec<&[u8]> = out.chunks(188).collect();
+    let pat: &[u8] = &[
+        0x47, 0x40, 0x00, 0x10, 0x00, 0x00, 0xB0, 0x0D, 0x00, 0x01, 0xC1, 0x00, 0x00, 0x00, 0x01,
+        0xF0, 0x00, 0x2A, 0xB1, 0x04, 0xB2,
+    ];
+    let pmt: &[u8] = &[
+        0x47, 0x50, 0x00, 0x10, 0x00, 0x02, 0xB0, 0x1D, 0x00, 0x01, 0xC1, 0x00, 0x00, 0xF0, 0x11,
+        0xF0, 0x00, 0x1B, 0xF0, 0x11, 0xF0, 0x00, 0x06, 0xF0, 0x31, 0xF0, 0x06, 0x05, 0x04, 0x4B,
+        0x4C, 0x56, 0x41, 0x44, 0x55, 0x53, 0x36,
+    ];
+    for (pkt, section) in [(pkts[0], pat), (pkts[1], pmt)] {
+        assert_eq!(&pkt[..section.len()], section);
+        assert!(pkt[section.len()..].iter().all(|&b| b == 0xFF));
+    }
+}
+
+fn identity(
+    transport_stream_id: u16,
+    psi_version_base: u8,
+    programs: Vec<MuxerProgramConfig>,
+) -> MuxerConfig {
+    let mut b = MuxerConfig::builder();
+    b.transport_stream_id(transport_stream_id)
+        .psi_version_base(psi_version_base);
+    for p in programs {
+        b.add_program(p);
+    }
+    b.build().unwrap()
+}
+
+/// The PAT's `transport_stream_id`.
+fn pat_transport_stream_id(pkt: &[u8]) -> u16 {
+    u16::from_be_bytes([pkt[8], pkt[9]])
+}
+
+/// One video AU on program 1 at step `i`, then the PSI versions of the PAT
+/// and of the PMT PIDs 0x1000 and 0x1100 in what it queued.
+fn versions_after_push(m: &mut Muxer, i: i64) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
+    let (v, _) = handles(m, 1);
+    m.push_video_to(v, &h264_au(100, true), Pts90khz::new(i * STEP), true)
+        .unwrap();
+    let out = drain_mux(m);
+    (
+        versions_on(&out, 0),
+        versions_on(&out, 0x1000),
+        versions_on(&out, 0x1100),
+    )
+}
+
+#[test]
+fn a_muxer_starts_its_tables_at_the_configured_transport_stream_id_and_version() {
+    let mut m = Muxer::new(identity(0x1234, 7, vec![visible().build()])).unwrap();
+    let (v, _) = handles(&m, 1);
+    m.push_video_to(v, &h264_au(100, true), Pts90khz::new(0), true)
+        .unwrap();
+    let out = drain_mux(&mut m);
+    let pat = packets_on(&out, 0);
+    assert_eq!(pat.len(), 1);
+    assert_eq!(pat_transport_stream_id(pat[0]), 0x1234);
+    assert_eq!(psi_version(pat[0]), 7);
+    assert_eq!(versions_on(&out, 0x1000), vec![7]);
+}
+
+#[test]
+fn a_new_pmt_pid_starts_at_the_version_base_and_a_changed_table_counts_on_from_it() {
+    let mut m = Muxer::new(identity(0x1234, 7, vec![visible().build()])).unwrap();
+    versions_after_push(&mut m, 0);
+
+    let two = identity(0x1234, 7, vec![visible().build(), thermal().build()]);
+    m.reconfigure(two.clone()).unwrap();
+    assert_eq!(versions_after_push(&mut m, 1), (vec![8], vec![7], vec![7]));
+
+    let mut moved = MuxerProgramConfigBuilder::new(1, 0x1000);
+    moved.add_video(0x1012, VideoCodec::H264);
+    moved.add_klv(0x1031, KlvStreamType::SynchronousMetadata, true);
+    let changed = identity(0x1234, 7, vec![moved.build(), thermal().build()]);
+    m.reconfigure(changed.clone()).unwrap();
+    assert_eq!(versions_after_push(&mut m, 2), (vec![8], vec![8], vec![7]));
+
+    m.reconfigure(changed).unwrap();
+    assert_eq!(versions_after_push(&mut m, 3), (vec![8], vec![8], vec![7]));
+}
+
+#[test]
+fn the_pat_version_wraps_from_a_base_of_31() {
+    let mut m = Muxer::new(identity(1, 31, vec![visible().build()])).unwrap();
+    assert_eq!(versions_after_push(&mut m, 0), (vec![31], vec![31], vec![]));
+    m.reconfigure(identity(1, 31, vec![visible().build(), thermal().build()]))
+        .unwrap();
+    assert_eq!(
+        versions_after_push(&mut m, 1),
+        (vec![0], vec![31], vec![31])
+    );
+}
+
+/// Program 2 is removed and placed again on its PMT PID: that PID goes on
+/// from the version it last carried, not from the base.
+#[test]
+fn a_pmt_pid_used_again_counts_on_from_its_last_version() {
+    let both = || identity(1, 5, vec![visible().build(), thermal().build()]);
+    let mut m = Muxer::new(both()).unwrap();
+    assert_eq!(versions_after_push(&mut m, 0), (vec![5], vec![5], vec![5]));
+    m.reconfigure(identity(1, 5, vec![visible().build()]))
+        .unwrap();
+    assert_eq!(versions_after_push(&mut m, 1), (vec![6], vec![5], vec![]));
+    m.reconfigure(both()).unwrap();
+    assert_eq!(versions_after_push(&mut m, 2), (vec![7], vec![5], vec![6]));
+}
+
+#[test]
+fn reconfigure_refuses_a_changed_transport_stream_id_or_version_base() {
+    let running = || identity(0x1234, 7, vec![visible().build()]);
+    for (changed, reason) in [
+        (
+            identity(0x1235, 7, vec![visible().build()]),
+            "reconfigure: transport_stream_id changes from 4660 to 4661; only the program list \
+             can change in place, so build a new muxer to change transport_stream_id",
+        ),
+        (
+            identity(0x1234, 8, vec![visible().build()]),
+            "reconfigure: psi_version_base changes from 7 to 8; only the program list can \
+             change in place, so build a new muxer to change psi_version_base",
+        ),
+    ] {
+        let mut control = Muxer::new(running()).unwrap();
+        let mut refused = Muxer::new(running()).unwrap();
+        let targets = [(handles(&control, 1), 0)];
+        push_steps(&mut control, &targets, 0, 3);
+        push_steps(&mut refused, &targets, 0, 3);
+        let mut a = drain_mux(&mut control);
+        let mut b = drain_mux(&mut refused);
+
+        match refused.reconfigure(changed).unwrap_err() {
+            MuxError::ConfigInvalid { reason: got } => assert_eq!(got, reason),
+            other => panic!("{other:?}"),
+        }
+
+        push_steps(&mut control, &targets, 3, 3);
+        push_steps(&mut refused, &targets, 3, 3);
+        a.extend(drain_mux(&mut control));
+        b.extend(drain_mux(&mut refused));
+        assert_eq!(a, b);
+    }
+}
