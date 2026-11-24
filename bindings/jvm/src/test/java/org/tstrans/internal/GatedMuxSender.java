@@ -21,6 +21,7 @@ public final class GatedMuxSender extends MuxSender {
             config.programNumber(), config.pmtPid(), config.pcrPid(),
             config.pcrIntervalMs(), config.pcrLeadMs(), config.psiIntervalMs(),
             config.bufferPackets(), config.av1Carriage().code(),
+            config.transportStreamId(), config.psiVersionBase(),
             config.streamPids(), config.streamKinds(), config.streamCodecs(),
             config.streamTypeCodes(), config.streamCarriesPts(),
             config.dataDescBytes(), config.dataDescLens()));
@@ -28,6 +29,7 @@ public final class GatedMuxSender extends MuxSender {
 
     private static native long nOpen(int programNumber, int pmtPid, int pcrPid,
         int pcrIntervalMs, int pcrLeadMs, int psiIntervalMs, int bufferPackets, int av1Carriage,
+        int transportStreamId, int psiVersionBase,
         int[] streamPids, int[] streamKinds, int[] streamCodecs, int[] streamTypeCodes,
         boolean[] streamCarriesPts, byte[] dataDescBytes, int[] dataDescLens);
 }

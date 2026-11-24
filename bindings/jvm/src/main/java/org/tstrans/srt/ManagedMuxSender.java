@@ -127,6 +127,7 @@ public final class ManagedMuxSender extends NativeHandle {
             programConfig.pcrIntervalMs(), programConfig.pcrLeadMs(),
             programConfig.psiIntervalMs(),
             programConfig.bufferPackets(), programConfig.av1Carriage().code(),
+            programConfig.transportStreamId(), programConfig.psiVersionBase(),
             programConfig.streamPids(), programConfig.streamKinds(),
             programConfig.streamCodecs(), programConfig.streamTypeCodes(),
             programConfig.streamCarriesPts(),
@@ -165,6 +166,7 @@ public final class ManagedMuxSender extends NativeHandle {
             config.programNumber(), config.pmtPid(), config.pcrPid(),
             config.pcrIntervalMs(), config.pcrLeadMs(), config.psiIntervalMs(),
             config.bufferPackets(), config.av1Carriage().code(),
+            config.transportStreamId(), config.psiVersionBase(),
             config.streamPids(), config.streamKinds(), config.streamCodecs(),
             config.streamTypeCodes(), config.streamCarriesPts(),
             config.dataDescBytes(), config.dataDescLens());
@@ -566,6 +568,7 @@ public final class ManagedMuxSender extends NativeHandle {
 
     private static native long nFromUrl(String url, int programNumber, int pmtPid, int pcrPid,
         int pcrIntervalMs, int pcrLeadMs, int psiIntervalMs, int bufferPackets, int av1Carriage,
+        int transportStreamId, int psiVersionBase,
         int[] streamPids, int[] streamKinds, int[] streamCodecs, int[] streamTypeCodes,
         boolean[] streamCarriesPts,
         byte[] dataDescBytes, int[] dataDescLens,
@@ -576,7 +579,8 @@ public final class ManagedMuxSender extends NativeHandle {
 
     private static native void nReconfigure(long handle, int programNumber, int pmtPid,
         int pcrPid, int pcrIntervalMs, int pcrLeadMs, int psiIntervalMs, int bufferPackets,
-        int av1Carriage, int[] streamPids, int[] streamKinds, int[] streamCodecs,
+        int av1Carriage, int transportStreamId, int psiVersionBase,
+        int[] streamPids, int[] streamKinds, int[] streamCodecs,
         int[] streamTypeCodes, boolean[] streamCarriesPts, byte[] dataDescBytes,
         int[] dataDescLens) throws MuxException, SrtException;
 

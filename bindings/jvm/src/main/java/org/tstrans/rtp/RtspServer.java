@@ -153,6 +153,7 @@ public final class RtspServer extends NativeHandle {
             programConfig.pcrIntervalMs(), programConfig.pcrLeadMs(),
             programConfig.psiIntervalMs(),
             programConfig.bufferPackets(), programConfig.av1Carriage().code(),
+            programConfig.transportStreamId(), programConfig.psiVersionBase(),
             programConfig.streamPids(), programConfig.streamKinds(),
             programConfig.streamCodecs(), programConfig.streamTypeCodes(),
             programConfig.streamCarriesPts(),
@@ -190,6 +191,7 @@ public final class RtspServer extends NativeHandle {
             programConfig.pcrIntervalMs(), programConfig.pcrLeadMs(),
             programConfig.psiIntervalMs(),
             programConfig.bufferPackets(), programConfig.av1Carriage().code(),
+            programConfig.transportStreamId(), programConfig.psiVersionBase(),
             programConfig.streamPids(), programConfig.streamKinds(),
             programConfig.streamCodecs(), programConfig.streamTypeCodes(),
             programConfig.streamCarriesPts(),
@@ -381,13 +383,15 @@ public final class RtspServer extends NativeHandle {
     private static native void nClose(long handle);
     private static native long nAddUnicastMount(long serverHandle, String path,
         int programNumber, int pmtPid, int pcrPid, int pcrIntervalMs, int pcrLeadMs,
-        int psiIntervalMs, int bufferPackets, int av1Carriage, int[] streamPids, int[] streamKinds,
+        int psiIntervalMs, int bufferPackets, int av1Carriage, int transportStreamId,
+        int psiVersionBase, int[] streamPids, int[] streamKinds,
         int[] streamCodecs, int[] streamTypeCodes, boolean[] streamCarriesPts,
         byte[] dataDescBytes, int[] dataDescLens)
         throws RtspException, MuxException;
     private static native long nAddMulticastMount(long serverHandle, String path, String group,
         int port, int ttl, String iface, int programNumber, int pmtPid, int pcrPid,
         int pcrIntervalMs, int pcrLeadMs, int psiIntervalMs, int bufferPackets, int av1Carriage,
+        int transportStreamId, int psiVersionBase,
         int[] streamPids, int[] streamKinds, int[] streamCodecs, int[] streamTypeCodes,
         boolean[] streamCarriesPts,
         byte[] dataDescBytes, int[] dataDescLens) throws RtspException, MuxException;

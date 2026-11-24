@@ -420,7 +420,8 @@ public final class RtspPushSession extends NativeHandle {
         // is claimed only once the native has taken it.
         long h = nIntoMuxSender(peekHandle(), config.programNumber(), config.pmtPid(),
             config.pcrPid(), config.pcrIntervalMs(), config.pcrLeadMs(), config.psiIntervalMs(),
-            config.bufferPackets(), config.av1Carriage().code(), config.streamPids(),
+            config.bufferPackets(), config.av1Carriage().code(),
+            config.transportStreamId(), config.psiVersionBase(), config.streamPids(),
             config.streamKinds(), config.streamCodecs(), config.streamTypeCodes(),
             config.streamCarriesPts(), config.dataDescBytes(), config.dataDescLens());
         consumeHandle();
@@ -509,7 +510,8 @@ public final class RtspPushSession extends NativeHandle {
     private static native boolean nIsSessionAlive(long handle);
     private static native long nIntoMuxSender(long handle, int programNumber, int pmtPid,
         int pcrPid, int pcrIntervalMs, int pcrLeadMs, int psiIntervalMs, int bufferPackets,
-        int av1Carriage, int[] streamPids, int[] streamKinds, int[] streamCodecs,
+        int av1Carriage, int transportStreamId, int psiVersionBase,
+        int[] streamPids, int[] streamKinds, int[] streamCodecs,
         int[] streamTypeCodes, boolean[] streamCarriesPts, byte[] dataDescBytes,
         int[] dataDescLens) throws RtspException, MuxException;
     private static native long nIntoSender(long handle) throws RtspException;

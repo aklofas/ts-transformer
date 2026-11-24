@@ -48,7 +48,7 @@ public final class Muxer extends NativeHandle {
         setHandle(nOpen(
             cfg.programNumber(), cfg.pmtPid(), cfg.pcrPid(),
             cfg.pcrIntervalMs(), cfg.pcrLeadMs(), cfg.psiIntervalMs(), cfg.bufferPackets(),
-            cfg.av1Carriage().code(),
+            cfg.av1Carriage().code(), cfg.transportStreamId(), cfg.psiVersionBase(),
             cfg.streamPids(), cfg.streamKinds(), cfg.streamCodecs(),
             cfg.streamTypeCodes(), cfg.streamCarriesPts(),
             cfg.dataDescBytes(), cfg.dataDescLens()));
@@ -89,7 +89,7 @@ public final class Muxer extends NativeHandle {
         nReconfigure(peekHandle(),
             cfg.programNumber(), cfg.pmtPid(), cfg.pcrPid(),
             cfg.pcrIntervalMs(), cfg.pcrLeadMs(), cfg.psiIntervalMs(), cfg.bufferPackets(),
-            av1,
+            av1, cfg.transportStreamId(), cfg.psiVersionBase(),
             cfg.streamPids(), cfg.streamKinds(), cfg.streamCodecs(),
             cfg.streamTypeCodes(), cfg.streamCarriesPts(),
             cfg.dataDescBytes(), cfg.dataDescLens());
@@ -551,13 +551,14 @@ public final class Muxer extends NativeHandle {
 
     private static native long nOpen(int programNumber, int pmtPid, int pcrPid,
             int pcrIntervalMs, int pcrLeadMs, int psiIntervalMs, int bufferPackets,
-            int av1Carriage,
+            int av1Carriage, int transportStreamId, int psiVersionBase,
             int[] streamPids, int[] streamKinds, int[] streamCodecs,
             int[] streamTypeCodes, boolean[] streamCarriesPts,
             byte[] dataDescBytes, int[] dataDescLens) throws MuxException;
     private static native void nReconfigure(long handle, int programNumber, int pmtPid,
         int pcrPid, int pcrIntervalMs, int pcrLeadMs, int psiIntervalMs, int bufferPackets,
-        int av1Carriage, int[] streamPids, int[] streamKinds, int[] streamCodecs,
+        int av1Carriage, int transportStreamId, int psiVersionBase,
+        int[] streamPids, int[] streamKinds, int[] streamCodecs,
         int[] streamTypeCodes, boolean[] streamCarriesPts, byte[] dataDescBytes,
         int[] dataDescLens) throws MuxException;
     private static native void nPushVideo(long handle, byte[] nal, long pts, boolean keyFrame)
