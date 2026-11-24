@@ -1128,3 +1128,31 @@ fn e2e_klva_dedup_no_auto_emit_duplicate() {
         klv_out.raw_descriptors
     );
 }
+
+#[test]
+fn section_stream_in_program_map_fails_conversion_unless_dropped() {
+    // Stream type 0x05 carries private_sections; the muxer writes PES on a
+    // Data stream, so the bridge names the source stream as one it cannot
+    // represent instead of building a PID that would lie about its payload.
+    let p = pm(
+        0x100,
+        0x101,
+        vec![
+            stream(0x101, 0x1B, DemuxKind::Video(DemuxVideo::H264)),
+            stream(0x300, 0x05, DemuxKind::Unknown(0x05)),
+        ],
+    );
+    match MuxerConfig::from_program_map(&p, &[]) {
+        Err(MuxError::ConfigInvalid { reason }) => {
+            assert!(
+                reason.contains("streams the muxer cannot represent: pid 0x0300"),
+                "{reason}"
+            );
+            assert!(reason.contains("pass their kinds in `drop`"), "{reason}");
+        }
+        other => panic!("expected ConfigInvalid, got {other:?}"),
+    }
+    let cfg = MuxerConfig::from_program_map(&p, &[StreamKindTag::Unknown])
+        .expect("dropping Unknown converts");
+    assert!(cfg.programs[0].streams.iter().all(|s| spec_pid(s) != 0x300));
+}

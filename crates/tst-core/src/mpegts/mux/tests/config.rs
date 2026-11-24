@@ -641,3 +641,24 @@ fn invalid_language_code_names_the_code_as_text() {
         "invalid ISO 639-2 language code \"\\x00\\x01g\" (must be 3 ASCII letters)"
     );
 }
+
+#[test]
+fn data_stream_rejects_section_only_stream_types() {
+    for st in [0x05u8, 0x13, 0x16, 0x2C, 0x2F, 0x30] {
+        match build_cfg(data_prog(st, vec![])) {
+            Err(MuxError::ConfigInvalid { reason }) => {
+                assert!(reason.contains("sections"), "0x{st:02X}: {reason}");
+                assert!(reason.contains(&format!("0x{st:02X}")), "{reason}");
+            }
+            other => panic!("0x{st:02X}: expected ConfigInvalid, got {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn data_stream_accepts_private_pes_types() {
+    for st in [0x06u8, 0x80, 0x00, 0x0B, 0x0C, 0x0D, 0x14] {
+        let cfg = build_cfg(data_prog(st, vec![]));
+        assert!(cfg.is_ok(), "0x{st:02X}: {:?}", cfg.err());
+    }
+}
