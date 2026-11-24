@@ -615,7 +615,9 @@ impl PyRtspServer {
     /// an invalid auth realm, an empty auth user name, a `BasicAuth` user
     /// name that contains `:`, or a `bind_addr` that carries a user name or
     /// a password: the server's credential is `auth`, never the bind
-    /// address; the error text names neither).
+    /// address; the error text names neither; or a `bind_addr` that carries
+    /// a path other than `/` or a query: mounts are added with the
+    /// `add_*_mount` calls and UDP media is chosen with `allow_udp_media`).
     ///
     /// The GIL is released while the server is built and started. Returns
     /// once the listener reports its bind (i.e. `local_addr()` is

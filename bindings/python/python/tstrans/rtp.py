@@ -167,7 +167,9 @@ class RtspServerConfig:
     """
 
     bind_addr: str = "0.0.0.0:8554"
-    """Bind URL or `host:port` (the latter assumed `rtsp://`)."""
+    """Bind URL or `host:port` (the latter assumed `rtsp://`). It says only
+    where to listen: `RtspServer.start` refuses one that carries a path
+    other than `/`, a query, or a user name or a password."""
 
     auth: Optional[Union[BasicAuth, DigestAuth]] = None
     """Optional Basic / Digest auth challenge. `None` allows anonymous

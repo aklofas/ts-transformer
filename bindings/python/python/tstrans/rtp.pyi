@@ -1034,6 +1034,10 @@ class MountRuleAuthFailures:
 class RtspServerConfig:
     """Pure-Python frozen dataclass — configuration for `RtspServer.start`.
 
+    `bind_addr` is a bind URL or `host:port` (taken as `rtsp://`). It says
+    only where to listen: `RtspServer.start` refuses one that carries a
+    path other than `/`, a query, or a user name or a password.
+
     `auth` accepts the same `BasicAuth` / `DigestAuth` PyClass instances
     that the client side uses.
 
