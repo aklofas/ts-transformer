@@ -288,15 +288,15 @@ sha256 = "a5c3e6fddced9fa48e37d5202bbea082dcc6f7eaf0732d5835955fc424ac9eb8"
 
 [[file]]
 path = "crates/tst-integration/tests/fixtures/scenarios/aac-audio-only/input.ts"
-sha256 = "6a798979997bfce5de717777194d1a20bfbefee4dd1bc0639825fd0dd638b63b"
+sha256 = "cb8f0e594a6eebf5a180b380cd64f5ad2d1994f7490e37b89dc25e1f5316a621"
 
 [[file]]
 path = "crates/tst-integration/tests/fixtures/scenarios/audio-klv-roundtrip/golden.json"
-sha256 = "0c832a3fe346b135e155851848260e398ddf80108d186dd577c0d8d9c044df2b"
+sha256 = "801d5280b1d9d555be425d16d98e051eb1a6a7e9c31a01917394a1f4180d3307"
 
 [[file]]
 path = "crates/tst-integration/tests/fixtures/scenarios/audio-klv-roundtrip/output.ts"
-sha256 = "6230143a1e2721217c9f95b7e6c62e3c3506689207af0546dfbe7e597b37fdec"
+sha256 = "ecdf1834c76f1d06ded6df0692e456b1330a83bc7e7ab0225bd4c89b0a7494ae"
 
 [[file]]
 path = "crates/tst-integration/tests/fixtures/scenarios/audio-video-mp/golden.json"
@@ -304,7 +304,7 @@ sha256 = "22e32a1fa9a8569376dbbc408c49d06888b06df0f7d5e36f5dc45997bbcf5e4b"
 
 [[file]]
 path = "crates/tst-integration/tests/fixtures/scenarios/audio-video-mp/input.ts"
-sha256 = "8297488e8551d26cf6760334467e59e94444cbd834d5f34fc10bd0d6c7764317"
+sha256 = "36a84fe42ad72a6f986e5c2df9cb44f583957fb206e513e0c2de3ab992bba690"
 
 [[file]]
 path = "crates/tst-integration/tests/fixtures/scenarios/av1-registration-desc/golden.json"
@@ -312,7 +312,7 @@ sha256 = "4f2537e68bad3cd9a8c358d9a8c9585e52c28b3ae02047864cb9b00f27670848"
 
 [[file]]
 path = "crates/tst-integration/tests/fixtures/scenarios/av1-registration-desc/input.ts"
-sha256 = "d6e176252d3765ba31256a8bb0291ef9ce6c33b37838424e0f0e67f7af291c8c"
+sha256 = "3e65a6d62f58320ced4007492430857314f1b4faa021cf64485ae5234870f5c6"
 
 [[file]]
 path = "crates/tst-integration/tests/fixtures/scenarios/cancelled-recv-kind/golden.json"
@@ -324,11 +324,11 @@ sha256 = "99c6629972e06f534a75af35581a2474401a3e060a281ae70d6c2418cb755780"
 
 [[file]]
 path = "crates/tst-integration/tests/fixtures/scenarios/damaged-pes-lenient/golden.json"
-sha256 = "a1b5f8a1a5c96ee4e638f51c96b1890411c20d99161adedbc0d679dbaa501ed4"
+sha256 = "8e26f39f247866f64edeac2e4e520cdaaafabc10197be81011cd1ac34fe05af6"
 
 [[file]]
 path = "crates/tst-integration/tests/fixtures/scenarios/damaged-pes-lenient/input.ts"
-sha256 = "b3fa4cff3b2817f2686fdcaa890f2ae6e50dacc44b0b61abb9d061d0708a8f78"
+sha256 = "dec9997ba308e82353a441b280eb38dfb8419004cf3c6215aa18658309b675a0"
 
 [[file]]
 path = "crates/tst-integration/tests/fixtures/scenarios/demux-receiver-stats/golden.json"
@@ -392,7 +392,7 @@ sha256 = "451ce9fdb01bafcb80d3ae077d07ebbc2a42247f3e6cb3635c559659a89a5100"
 
 [[file]]
 path = "crates/tst-integration/tests/fixtures/scenarios/h265-klv-mp/input.ts"
-sha256 = "44e5c2aeaac49cb228db5bf2f1377d75a40f07b2bf485e3b35981d5f7c8925dd"
+sha256 = "9d4450e7b015dd91281e914bd27efafe2b9ca4f0abfb9c942e7ca80a0782614f"
 
 [[file]]
 path = "crates/tst-integration/tests/fixtures/scenarios/malformed-pes-lenient/golden.json"
@@ -412,11 +412,11 @@ sha256 = "637525b5bf575a8a337f838ccd9495d589198ad6c2dfd0d6c563ff7b60551341"
 
 [[file]]
 path = "crates/tst-integration/tests/fixtures/scenarios/muxer-reconfigure/golden.json"
-sha256 = "ad0c63b86dfc24bfebcc137926d4edb1e5c27572f1c584daa4de00e020c2a4c4"
+sha256 = "44cc17a58afa8af87ff5231894cf137ca0ffcd7afc70fba4d78af57fae8eeff0"
 
 [[file]]
 path = "crates/tst-integration/tests/fixtures/scenarios/muxer-reconfigure/output.ts"
-sha256 = "72dc04e6e3d8f480a044c76407d6a8d3cc81b24c6947b7e30cd992d922cb8f80"
+sha256 = "e2923f28a44ea5a91e12ae148506c35efdb0e8d0c51974ea66d04b462d10dd0d"
 
 [[file]]
 path = "crates/tst-integration/tests/fixtures/scenarios/peer-reset-recv-kind/golden.json"
@@ -432,7 +432,7 @@ sha256 = "b5e3698c28427e0ab7628eb2c0c90148005a2caf0591bce480b6b2f51dece08c"
 
 [[file]]
 path = "crates/tst-integration/tests/fixtures/scenarios/pts-spacing-exceeded/input.ts"
-sha256 = "01999181afe5f8a311154f79acaa70ffd2a8a5e01089d48a0307ead7722ffa8d"
+sha256 = "1db4f2def83ad7695527939fab73818e66881ef2de07e24d81fae05a16ee04d2"
 
 [[file]]
 path = "crates/tst-integration/tests/fixtures/scenarios/scenarios.toml"
