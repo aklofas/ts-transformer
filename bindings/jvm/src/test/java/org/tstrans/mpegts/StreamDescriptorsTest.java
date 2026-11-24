@@ -113,6 +113,21 @@ class StreamDescriptorsTest {
     }
 
     @Test
+    void aRegistrationOtherThanKlvaOnAKlvStreamIsRefused() {
+        byte[] abcd = {0x05, 0x04, 'A', 'B', 'C', 'D'};
+        for (KlvStreamType type : KlvStreamType.values()) {
+            MuxerConfig cfg = MuxerConfig.builder()
+                .addVideo(0x1011, VideoCodec.H264)
+                .addKlv(0x1012, type, true)
+                .streamDescriptorsForKlv(0, one(abcd))
+                .build();
+            MuxException e = assertThrows(MuxException.class, () -> new Muxer(cfg).close(),
+                type.toString());
+            assertEquals(MuxException.Kind.CONFIG_INVALID, e.kind());
+        }
+    }
+
+    @Test
     void twoSynchronousKlvStreamsWithServiceIdsBuild() throws Exception {
         MuxerConfig cfg = MuxerConfig.builder()
             .addVideo(0x1011, VideoCodec.H264)

@@ -199,4 +199,29 @@ class MuxerConfigTest {
                 .transportStreamId(5).psiVersionBase(3).build());
         }
     }
+
+    @Test
+    void aDataStreamOfASectionCarriedTypeIsConfigInvalid() {
+        for (int type : new int[] {0x05, 0x13, 0x16, 0x2C, 0x2F, 0x30}) {
+            MuxerConfig cfg = MuxerConfig.builder().addVideo(0x1011, VideoCodec.H264)
+                .addData(0x1020, type, false).build();
+            org.tstrans.MuxException e = assertThrows(org.tstrans.MuxException.class,
+                () -> new Muxer(cfg).close(), "stream type 0x" + Integer.toHexString(type));
+            assertEquals(org.tstrans.MuxException.Kind.CONFIG_INVALID, e.kind());
+        }
+    }
+
+    @Test
+    void aPsiIntervalAbove200WithKlvIsConfigInvalid() throws Exception {
+        MuxerConfig.Builder b = MuxerConfig.builder().addVideo(0x1011, VideoCodec.H264)
+            .addKlv(0x1012, KlvStreamType.PRIVATE_DATA, true);
+        MuxerConfig over = b.psiIntervalMs(201).build();
+        org.tstrans.MuxException e = assertThrows(org.tstrans.MuxException.class,
+            () -> new Muxer(over).close());
+        assertEquals(org.tstrans.MuxException.Kind.CONFIG_INVALID, e.kind());
+        new Muxer(b.psiIntervalMs(200).build()).close();
+        // Without KLV the bound does not apply.
+        new Muxer(MuxerConfig.builder().addVideo(0x1011, VideoCodec.H264)
+            .psiIntervalMs(201).build()).close();
+    }
 }
