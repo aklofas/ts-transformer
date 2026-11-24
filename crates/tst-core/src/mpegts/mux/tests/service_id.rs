@@ -3,6 +3,7 @@
 use super::*;
 use crate::mpegts::common::Pts90khz;
 use crate::mpegts::descriptors::metadata_klva;
+use crate::test_prelude::*;
 
 const KLV: &[u8] = &[0x06, 0x0E, 0x2B, 0x34, 0x01, 0x00];
 
