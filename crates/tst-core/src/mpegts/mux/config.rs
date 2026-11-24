@@ -645,8 +645,18 @@ impl MuxerConfig {
                         return Err(MuxError::SubtitlePidUsedAsPcrPid { pid: *pid });
                     }
                     match codec {
-                        SubtitleCodec::DvbSubtitling { language, .. } => {
+                        SubtitleCodec::DvbSubtitling {
+                            language,
+                            subtitling_type,
+                            ..
+                        } => {
                             validate_language_code(*language)?;
+                            if !matches!(subtitling_type, 0x10..=0x16 | 0x20..=0x26) {
+                                return Err(MuxError::UnassignedSubtitleType {
+                                    descriptor_tag: 0x59,
+                                    value: *subtitling_type,
+                                });
+                            }
                         }
                         SubtitleCodec::DvbTeletext {
                             language,
@@ -667,6 +677,12 @@ impl MuxerConfig {
                                     field: TeletextField::TeletextType,
                                     value: *teletext_type,
                                     max: 0x1F,
+                                });
+                            }
+                            if !(0x01..=0x05).contains(teletext_type) {
+                                return Err(MuxError::UnassignedSubtitleType {
+                                    descriptor_tag: 0x56,
+                                    value: *teletext_type,
                                 });
                             }
                         }

@@ -2306,7 +2306,7 @@ mod tests {
         use tst_test_helpers::errors::{every_demux_error, every_mux_error, every_transport_error};
 
         let muxes = every_mux_error();
-        assert_eq!(muxes.len(), 38);
+        assert_eq!(muxes.len(), 39);
         for m in muxes {
             let e = MuxSenderError::from(m.clone());
             let shell = e.kind();

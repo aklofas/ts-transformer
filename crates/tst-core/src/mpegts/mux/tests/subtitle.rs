@@ -847,3 +847,80 @@ fn subtitle_auto_emit_fires_when_caller_supplies_unrelated_descriptors() {
         "auto-emit must fire when caller-supplied descriptors don't include a subtitle codec marker"
     );
 }
+
+fn build_with_subtitle(codec: SubtitleCodec) -> Result<MuxerConfig, MuxError> {
+    let mut prog = MuxerProgramConfigBuilder::new(1, 0x100);
+    prog.add_video(0x101, VideoCodec::H264);
+    prog.add_subtitle(0x200, codec);
+    let mut b = MuxerConfig::builder();
+    b.add_program(prog.build());
+    b.build()
+}
+
+fn subtitling_of_type(subtitling_type: u8) -> SubtitleCodec {
+    SubtitleCodec::DvbSubtitling {
+        language: *b"eng",
+        subtitling_type,
+        composition_page_id: 1,
+        ancillary_page_id: 1,
+    }
+}
+
+fn teletext_of_type(teletext_type: u8) -> SubtitleCodec {
+    SubtitleCodec::DvbTeletext {
+        language: *b"eng",
+        teletext_type,
+        magazine_number: 0,
+        page_number: 0x88,
+    }
+}
+
+#[test]
+fn reserved_subtitling_and_teletext_types_are_refused() {
+    for value in [0x00u8, 0x03, 0x0F, 0x17, 0x1F, 0x27, 0x2F, 0x30, 0xFF] {
+        assert_eq!(
+            build_with_subtitle(subtitling_of_type(value)).unwrap_err(),
+            MuxError::UnassignedSubtitleType {
+                descriptor_tag: 0x59,
+                value
+            },
+            "subtitling_type 0x{value:02X}"
+        );
+    }
+    for value in [0x00u8, 0x06, 0x1F] {
+        assert_eq!(
+            build_with_subtitle(teletext_of_type(value)).unwrap_err(),
+            MuxError::UnassignedSubtitleType {
+                descriptor_tag: 0x56,
+                value
+            },
+            "teletext_type 0x{value:02X}"
+        );
+    }
+    // A value the 5-bit field cannot hold is a different fault.
+    assert_eq!(
+        build_with_subtitle(teletext_of_type(0x20)).unwrap_err(),
+        MuxError::InvalidTeletextField {
+            field: TeletextField::TeletextType,
+            value: 32,
+            max: 31
+        }
+    );
+    for value in (0x10u8..=0x16).chain(0x20..=0x26) {
+        let r = build_with_subtitle(subtitling_of_type(value));
+        assert!(r.is_ok(), "subtitling_type 0x{value:02X}: {r:?}");
+    }
+    for value in 0x01u8..=0x05 {
+        let r = build_with_subtitle(teletext_of_type(value));
+        assert!(r.is_ok(), "teletext_type 0x{value:02X}: {r:?}");
+    }
+}
+
+#[test]
+fn unassigned_subtitle_type_is_a_config_error() {
+    let e = MuxError::UnassignedSubtitleType {
+        descriptor_tag: 0x59,
+        value: 0x03,
+    };
+    assert_eq!(e.kind(), crate::error::MuxErrorKind::ConfigInvalid);
+}

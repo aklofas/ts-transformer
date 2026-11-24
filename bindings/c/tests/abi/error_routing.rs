@@ -560,7 +560,7 @@ fn tst_e_code_values_match_documented_discriminants() {
 #[test]
 fn live_mux_sender_and_offline_muxer_agree_on_every_mux_error() {
     let all = tst_test_helpers::errors::every_mux_error();
-    assert_eq!(all.len(), 38);
+    assert_eq!(all.len(), 39);
     let mut diffs = Vec::new();
     for m in all {
         reset();

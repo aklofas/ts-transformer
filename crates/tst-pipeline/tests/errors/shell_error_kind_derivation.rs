@@ -98,6 +98,13 @@ fn mux_rows() -> Vec<(MuxError, ShellErrorKind)> {
             ConfigInvalid,
         ),
         (
+            MuxError::UnassignedSubtitleType {
+                descriptor_tag: 0x59,
+                value: 0x03,
+            },
+            ConfigInvalid,
+        ),
+        (
             MuxError::PmtTooLarge {
                 used_bytes: 200,
                 max_bytes: 183,

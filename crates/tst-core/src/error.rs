@@ -617,6 +617,17 @@ pub enum MuxError {
         max: u8,
     },
 
+    /// `MuxerConfig::validate` rejects a DVB subtitling type (descriptor tag
+    /// `0x59`, EN 300 468 Table 26) outside `0x10..=0x16` / `0x20..=0x26`, or
+    /// a teletext type (tag `0x56`, EN 300 468 Table 102) outside
+    /// `0x01..=0x05`: values the standard does not assign. A code a later
+    /// edition assigns goes through a raw descriptor override.
+    #[error(
+        "DVB {} type 0x{value:02X} is not assigned by EN 300 468",
+        if *.descriptor_tag == 0x59 { "subtitling" } else { "teletext" }
+    )]
+    UnassignedSubtitleType { descriptor_tag: u8, value: u8 },
+
     /// `MuxerConfig::validate` rejected a configuration whose total PMT
     /// section length wouldn't fit in a single TS packet. `used_bytes`
     /// is the estimated full PMT section size (header + program-level
@@ -909,6 +920,7 @@ impl MuxError {
             MuxError::ConfigInvalid { .. } => ConfigInvalid,
             MuxError::InvalidLanguageCode { .. } => ConfigInvalid,
             MuxError::InvalidTeletextField { .. } => ConfigInvalid,
+            MuxError::UnassignedSubtitleType { .. } => ConfigInvalid,
             MuxError::TooManyVideoStreams { .. } => ConfigInvalid,
             MuxError::TooManyKlvStreams { .. } => ConfigInvalid,
             MuxError::TooManyAudioStreams { .. } => ConfigInvalid,
