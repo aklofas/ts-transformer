@@ -258,6 +258,8 @@ pub unsafe extern "C" fn tst_mux_publisher_send_video(
 /// ITU-T H.222.0 V9 §2.12.4.2; do not pre-wrap. `stream_index` is the
 /// metadata service id written into the Metadata AU cell for synchronous
 /// carriage; it is ignored for PrivateData and does not select a stream.
+/// On a synchronous stream whose descriptors do not declare that service id
+/// the push is refused with `TST_E_INVALID_USAGE` and queues nothing.
 /// `pts` is in 90 kHz ticks.
 ///
 /// Returns 0 on success, a negative `TST_E_*` code on failure.

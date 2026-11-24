@@ -4379,8 +4379,11 @@ int tst_managed_mux_sender_send_data_to(struct tst_managed_mux_sender_t *p,
  * Set bytes**, muxer auto-wraps the AU cell for SynchronousMetadata
  * streams. Do not pre-wrap.
  *
- * `pts_90khz` is the presentation timestamp in 90 kHz ticks. The current
- * API uses `metadata_service_id = 0x00`.
+ * `pts_90khz` is the presentation timestamp in 90 kHz ticks.
+ *
+ * A C push always names metadata service 0: on a synchronous KLV stream
+ * whose descriptors do not declare service 0 the push is refused with
+ * `TST_E_INVALID_USAGE` and queues nothing.
  *
  * Single-stream form: see `tst_managed_mux_sender_send_klv_to` for the
  * multi-stream variant.
@@ -4421,6 +4424,10 @@ int tst_managed_mux_sender_send_klv(struct tst_managed_mux_sender_t *p,
  *
  * On a single-stream sender, prefer `tst_managed_mux_sender_send_klv` —
  * same effect, no handle required.
+ *
+ * A C push always names metadata service 0: on a synchronous KLV stream
+ * whose descriptors do not declare service 0 the push is refused with
+ * `TST_E_INVALID_USAGE` and queues nothing.
  *
  * After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
  * bytes are still buffered; a call already past its send when the
@@ -5698,6 +5705,8 @@ int tst_mux_publisher_send_audio(struct TstMuxPublisher *p,
  * ITU-T H.222.0 V9 §2.12.4.2; do not pre-wrap. `stream_index` is the
  * metadata service id written into the Metadata AU cell for synchronous
  * carriage; it is ignored for PrivateData and does not select a stream.
+ * On a synchronous stream whose descriptors do not declare that service id
+ * the push is refused with `TST_E_INVALID_USAGE` and queues nothing.
  * `pts` is in 90 kHz ticks.
  *
  * Returns 0 on success, a negative `TST_E_*` code on failure.
@@ -6072,9 +6081,11 @@ int tst_mux_sender_send_data_to(struct tst_mux_sender_t *p,
  * streams configured as `TST_KLV_STREAM_TYPE_PRIVATE_DATA`, the payload
  * is emitted as-is.
  *
- * `pts_90khz` is the presentation timestamp in 90 kHz ticks. The current
- * API uses `metadata_service_id = 0x00` per ST 1402.2 App. B Table 2; a
- * future entry will expose the field explicitly.
+ * `pts_90khz` is the presentation timestamp in 90 kHz ticks.
+ *
+ * A C push always names metadata service 0: on a synchronous KLV stream
+ * whose descriptors do not declare service 0 the push is refused with
+ * `TST_E_INVALID_USAGE` and queues nothing.
  *
  * Single-stream form: the mux sender must have exactly one KLV stream
  * configured. Multi-stream callers use `tst_mux_sender_send_klv_to` with
@@ -6089,7 +6100,8 @@ int tst_mux_sender_send_data_to(struct tst_mux_sender_t *p,
  * Routed through `tst_get_last_error()` via the inner `MuxSender`
  * shell's `record_shell_error`. Common codes:
  *
- * - `TST_E_INVALID_USAGE` — no KLV stream configured or ambiguous target.
+ * - `TST_E_INVALID_USAGE` — no KLV stream configured, ambiguous target, or
+ *   a synchronous stream that does not declare metadata service 0.
  * - `TST_E_KLV_TOO_LARGE` — payload exceeds the per-frame KLV size limit.
  * - `TST_E_TRANSPORT` — transport-layer failure (closed, timeout, broken pipe).
  * - `TST_E_INVALID_CONFIG` — `klv` is null with non-zero `len`.
@@ -6117,6 +6129,10 @@ int tst_mux_sender_send_klv(struct tst_mux_sender_t *p,
  *
  * On a single-stream sender, prefer `tst_mux_sender_send_klv` — same
  * effect, no handle required.
+ *
+ * A C push always names metadata service 0: on a synchronous KLV stream
+ * whose descriptors do not declare service 0 the push is refused with
+ * `TST_E_INVALID_USAGE` and queues nothing.
  *
  * After `_cancel`, this call returns `TST_E_CLOSED` even when packets or
  * bytes are still buffered; a call already past its send when the
@@ -9989,8 +10005,12 @@ int tst_rtsp_mount_push_data_to(struct TstRtspMountHandle *handle,
  * `klv` must point to **raw MISB Local Set bytes**. For streams configured
  * as `TST_KLV_STREAM_TYPE_SYNCHRONOUS_METADATA`, the muxer prepends a
  * 5-byte `Metadata_AU_cell` header per ITU-T H.222.0 V9 §2.12.4.2.
- * **Do not pre-wrap the AU cell on the caller side.** The current API uses
- * `metadata_service_id = 0x00` per ST 1402.2 App. B Table 2.
+ * **Do not pre-wrap the AU cell on the caller side.**
+ *
+ * A C push always names metadata service 0: on a synchronous KLV stream
+ * whose descriptors do not declare service 0 the push is refused with
+ * `TST_E_RTSP_MOUNT` (the mount's code for every muxer error) and queues
+ * nothing.
  *
  * Returns `0` on success, `TST_E_CLOSED` after `tst_rtsp_mount_cancel`,
  * once `tst_rtsp_server_remove_mount` removed the mount, or once the
@@ -10020,6 +10040,11 @@ int tst_rtsp_mount_push_klv(struct TstRtspMountHandle *handle,
  * §2.12.4.2. **Do not pre-wrap on the caller side.**
  *
  * On a single-stream mount, prefer `tst_rtsp_mount_push_klv`.
+ *
+ * A C push always names metadata service 0: on a synchronous KLV stream
+ * whose descriptors do not declare service 0 the push is refused with
+ * `TST_E_RTSP_MOUNT` (the mount's code for every muxer error) and queues
+ * nothing.
  *
  * Returns the codes `tst_rtsp_mount_push_klv` returns.
  *
