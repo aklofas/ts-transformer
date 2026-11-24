@@ -185,6 +185,8 @@ pub tst_rtp::error::RtspServerError::InvalidMountPath::detail: alloc::string::St
 pub tst_rtp::error::RtspServerError::InvalidMulticastGroup
 pub tst_rtp::error::RtspServerError::InvalidMulticastGroup::addr: alloc::string::String
 pub tst_rtp::error::RtspServerError::InvalidMulticastGroup::detail: alloc::string::String
+pub tst_rtp::error::RtspServerError::InvalidServerConfig
+pub tst_rtp::error::RtspServerError::InvalidServerConfig::detail: alloc::string::String
 pub tst_rtp::error::RtspServerError::Io(core::io::error::ErrorKind)
 pub tst_rtp::error::RtspServerError::MountNotFound
 pub tst_rtp::error::RtspServerError::MountNotFound::path: alloc::string::String
@@ -2172,6 +2174,8 @@ pub tst_rtp::RtspServerError::InvalidMountPath::detail: alloc::string::String
 pub tst_rtp::RtspServerError::InvalidMulticastGroup
 pub tst_rtp::RtspServerError::InvalidMulticastGroup::addr: alloc::string::String
 pub tst_rtp::RtspServerError::InvalidMulticastGroup::detail: alloc::string::String
+pub tst_rtp::RtspServerError::InvalidServerConfig
+pub tst_rtp::RtspServerError::InvalidServerConfig::detail: alloc::string::String
 pub tst_rtp::RtspServerError::Io(core::io::error::ErrorKind)
 pub tst_rtp::RtspServerError::MountNotFound
 pub tst_rtp::RtspServerError::MountNotFound::path: alloc::string::String

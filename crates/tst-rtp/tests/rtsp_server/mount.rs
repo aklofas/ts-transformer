@@ -30,6 +30,19 @@ fn add_mount_rejects_duplicate_path() {
     assert!(matches!(e, RtspServerError::DuplicateMount { .. }));
 }
 
+/// A muxer configuration the mount cannot use is a refused MOUNT: the
+/// server itself was built and stays usable.
+#[test]
+fn add_mount_refuses_a_muxer_config_as_a_mount_error() {
+    let server = RtspServer::bind("rtsp://127.0.0.1:0").unwrap();
+    let mut cfg = make_muxer_cfg();
+    cfg.programs.clear();
+    let e = server.add_mount("/live", cfg).unwrap_err();
+    assert!(matches!(e, RtspServerError::InvalidConfig { .. }), "{e:?}");
+    assert!(e.to_string().starts_with("invalid mount config"), "{e}");
+    server.add_mount("/live", make_muxer_cfg()).unwrap();
+}
+
 #[test]
 fn add_multicast_mount_returns_handle_with_multicast_kind() {
     let server = RtspServer::bind("rtsp://127.0.0.1:0").unwrap();

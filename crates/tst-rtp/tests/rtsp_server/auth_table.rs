@@ -287,7 +287,7 @@ fn an_empty_user_name_is_refused_where_it_is_configured() {
             _ => b.auth_digest_sha256(REALM, "", pw("secret")),
         };
         assert!(
-            matches!(b.build(), Err(RtspServerError::InvalidConfig { .. })),
+            matches!(b.build(), Err(RtspServerError::InvalidServerConfig { .. })),
             "{scheme:?}: build() takes an empty user name"
         );
     }
