@@ -121,8 +121,9 @@ pub(crate) fn build_challenge(scheme: AuthScheme, realm: &str, nonce: &str) -> S
 /// For Digest auth, `expected_nonce` is the value the server most
 /// recently emitted in `WWW-Authenticate: ... nonce=...` for this
 /// session. Mismatches surface as `AuthVerifyError::StaleNonce`, which
-/// the request handler answers with a fresh nonce in a new challenge
-/// (without a `stale=` parameter).
+/// the request handler answers with a fresh nonce in a new challenge that
+/// ends in `stale=true`; that 401 is not counted toward the close of the
+/// connection after three 401s.
 ///
 /// `nc_hwm` is the per-session nonce-count high-water mark used to
 /// reject nc replays. It advances whenever a structurally valid Digest
@@ -329,8 +330,8 @@ fn verify_digest(
         // captured Authorization header can never be replayed regardless of
         // which check it failed. The cost — an unauthenticated peer can burn
         // nc values — is bounded by the auth_failures counter (connection
-        // closes after 3 401s without an authenticated 2xx between them) and
-        // by the hwm reset on nonce rotation.
+        // closes after 3 such 401s without an authenticated 2xx between them)
+        // and by the hwm reset on nonce rotation.
         *nc_hwm = nc_val;
     }
 

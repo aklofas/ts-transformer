@@ -2053,3 +2053,248 @@ fn an_answer_for_the_old_challenge_is_refused_after_set_challenge() {
     assert_eq!(status(&r), 200, "an answer in the new challenge: {r}");
     server.stop().unwrap();
 }
+
+/// A Digest MD5 `Authorization` line under a nonce no connection was
+/// offered.
+fn stale_digest_md5(realm: &str, user: &str, password: &str, method: &str, uri: &str) -> String {
+    let never_issued = format!("Digest realm=\"{realm}\", nonce=\"never-issued\"");
+    digest_md5(&never_issued, &Cell::new(0), user, password, method, uri)
+}
+
+/// The challenge of a 401.
+fn challenge_of(r: &str) -> String {
+    assert_eq!(status(r), 401, "{r}");
+    try_header(r, "WWW-Authenticate")
+        .expect("a challenge")
+        .to_owned()
+}
+
+/// A Digest answer under a nonce the connection was not offered is
+/// challenged again with a new nonce and `stale=true`, the same reply
+/// whatever user and password it names, and that 401 is no strike: four in
+/// a row leave the connection open. It clears no strike either: with a
+/// stale answer after each of the first two, the third refused password
+/// still closes the connection. The same for the server's own credential
+/// and for a rule's, whose refused-credential count leaves the stale
+/// answers out.
+#[test]
+fn a_stale_nonce_is_challenged_with_stale_true_and_is_no_strike() {
+    for on_rule in [false, true] {
+        let mut b = RtspServerBuilder::new("rtsp://127.0.0.1:0").unwrap();
+        let (realm, user, password) = if on_rule {
+            ("tstrans", "viewer", "pw")
+        } else {
+            b.auth_digest_md5("realm", "admin", pw("secret"));
+            ("realm", "admin", "secret")
+        };
+        let server = started_with_mount(b);
+        if on_rule {
+            server
+                .mount_rules()
+                .set(
+                    "/a",
+                    MountRule::both(MountPolicy::Require(vec![cred(user, password)])),
+                )
+                .unwrap();
+        }
+        let port = server.local_addr().unwrap().port();
+        let uri = format!("rtsp://127.0.0.1:{port}/a");
+        let describe = |tcp: &mut TcpStream, auth: &str| {
+            request(
+                tcp,
+                &format!("DESCRIBE {uri} RTSP/1.0\r\nCSeq: 1\r\n{auth}\r\n"),
+            )
+        };
+        let stale =
+            |user: &str, password: &str| stale_digest_md5(realm, user, password, "DESCRIBE", &uri);
+
+        let mut tcp = connect(port);
+        let mut challenge = String::new();
+        let mut replies = Vec::new();
+        for (u, p) in [
+            (user, password),
+            (user, "nope"),
+            ("nobody", password),
+            ("", password),
+        ] {
+            let r = describe(&mut tcp, &stale(u, p));
+            let next = challenge_of(&r);
+            let nonce = challenge_param(&next, "nonce").unwrap();
+            assert_eq!(
+                next,
+                format!(
+                    "Digest realm=\"{realm}\", nonce=\"{nonce}\", algorithm=MD5, qop=\"auth\", stale=true"
+                ),
+                "on_rule={on_rule}, user {u:?}"
+            );
+            assert_ne!(
+                challenge_param(&challenge, "nonce"),
+                Some(nonce.clone()),
+                "on_rule={on_rule}, user {u:?}: the nonce was offered before"
+            );
+            // The server writes its headers in no fixed order.
+            let mut lines: Vec<String> = r.lines().map(|l| l.replace(&nonce, "N")).collect();
+            lines.sort();
+            replies.push(lines);
+            challenge = next;
+        }
+        assert!(
+            replies.iter().all(|r| r == &replies[0]),
+            "on_rule={on_rule}: the stale reply depends on the credential: {replies:#?}"
+        );
+
+        for strike in 1..=3 {
+            let wrong = digest_md5(&challenge, &Cell::new(0), user, "nope", "DESCRIBE", &uri);
+            let refused = challenge_of(&describe(&mut tcp, &wrong));
+            assert_eq!(
+                refused,
+                challenge.trim_end_matches(", stale=true"),
+                "on_rule={on_rule}, strike {strike}: a refused password keeps the nonce and is not stale"
+            );
+            if strike < 3 {
+                challenge = challenge_of(&describe(&mut tcp, &stale(user, password)));
+                assert!(challenge.ends_with(", stale=true"), "{challenge}");
+            }
+        }
+        use std::io::Read as _;
+        let mut rest = [0u8; 16];
+        let closed = match tcp.read(&mut rest) {
+            Ok(n) => n == 0,
+            // Windows reports the server's close as an abort.
+            Err(e) => matches!(
+                e.kind(),
+                std::io::ErrorKind::ConnectionReset
+                    | std::io::ErrorKind::ConnectionAborted
+                    | std::io::ErrorKind::BrokenPipe
+            ),
+        };
+        assert!(
+            closed,
+            "on_rule={on_rule}: the third refused password did not close the connection"
+        );
+        if on_rule {
+            assert_eq!(
+                server.mount_rules().auth_failures("/a").map(|c| c.read),
+                Some(3),
+                "a stale answer is not a refused credential"
+            );
+        }
+        server.stop().unwrap();
+    }
+}
+
+/// What RFC 7616 asks of a client that reads `stale=true` works at any
+/// point: it answers again under the new nonce with the same credential
+/// and is admitted. A reader keeps its role through four stale PLAYs.
+#[test]
+fn an_answer_to_the_stale_challenge_is_admitted_and_a_reader_keeps_its_role() {
+    let mut b = RtspServerBuilder::new("rtsp://127.0.0.1:0").unwrap();
+    b.auth_digest_md5("realm", "admin", pw("secret"));
+    let server = started_with_mount(b);
+    let port = server.local_addr().unwrap().port();
+    let uri = format!("rtsp://127.0.0.1:{port}/a");
+    let track = format!("{uri}/trackID=0");
+    let setup = |tcp: &mut TcpStream, auth: &str| {
+        request(
+            tcp,
+            &format!(
+                "SETUP {track} RTSP/1.0\r\nCSeq: 1\r\n{auth}Transport: RTP/AVP/TCP;unicast;interleaved=0-1\r\n\r\n"
+            ),
+        )
+    };
+    let play = |tcp: &mut TcpStream, sid: &str, auth: &str| {
+        request(
+            tcp,
+            &format!("PLAY {uri} RTSP/1.0\r\nCSeq: 2\r\nSession: {sid}\r\n{auth}\r\n"),
+        )
+    };
+
+    // The connection's first request already answers under another nonce.
+    let mut tcp = connect(port);
+    let stale = stale_digest_md5("realm", "admin", "secret", "SETUP", &track);
+    let challenge = challenge_of(&setup(&mut tcp, &stale));
+    assert!(challenge.ends_with(", stale=true"), "{challenge}");
+    let answer = digest_md5(
+        &challenge,
+        &Cell::new(0),
+        "admin",
+        "secret",
+        "SETUP",
+        &track,
+    );
+    let r = setup(&mut tcp, &answer);
+    assert_eq!(status(&r), 200, "the answer under the new nonce: {r}");
+    let sid = session_id(&r);
+
+    let mut challenge = String::new();
+    for _ in 0..4 {
+        let stale = stale_digest_md5("realm", "admin", "secret", "PLAY", &uri);
+        challenge = challenge_of(&play(&mut tcp, &sid, &stale));
+        assert!(challenge.ends_with(", stale=true"), "{challenge}");
+    }
+    let answer = digest_md5(&challenge, &Cell::new(0), "admin", "secret", "PLAY", &uri);
+    let r = play(&mut tcp, &sid, &answer);
+    assert_eq!(
+        status(&r),
+        200,
+        "the reader plays after four stale PLAYs: {r}"
+    );
+    drop(tcp);
+    server.stop().unwrap();
+}
+
+/// The publish side: ANNOUNCE and RECORD under another nonce are challenged
+/// as stale, four times each, none a strike, and the publisher's answer
+/// under the new nonce is admitted.
+#[test]
+fn a_publishers_stale_nonce_is_challenged_with_stale_true_and_is_no_strike() {
+    let server = started(RtspServerBuilder::new("rtsp://127.0.0.1:0").unwrap());
+    let mount = server.add_publish_mount("/amber").unwrap();
+    server
+        .mount_rules()
+        .set(
+            "/amber",
+            publish_rule(MountPolicy::Require(vec![cred("amber", "pw")])),
+        )
+        .unwrap();
+    let port = server.local_addr().unwrap().port();
+    let uri = format!("rtsp://127.0.0.1:{port}/amber");
+    let track = format!("{uri}/streamid=0");
+    let stale = |method: &str| stale_digest_md5("tstrans", "amber", "pw", method, &uri);
+
+    let mut tcp = connect(port);
+    let mut challenge = String::new();
+    for _ in 0..4 {
+        challenge = challenge_of(&announce(&mut tcp, &uri, 1, &stale("ANNOUNCE")));
+        assert!(challenge.ends_with(", stale=true"), "{challenge}");
+        assert!(mount.publisher().is_none());
+    }
+    let nc = Cell::new(0);
+    let answer = digest_md5(&challenge, &nc, "amber", "pw", "ANNOUNCE", &uri);
+    let r = announce(&mut tcp, &uri, 2, &answer);
+    assert_eq!(status(&r), 200, "{r}");
+    let answer = digest_md5(&challenge, &nc, "amber", "pw", "SETUP", &track);
+    let r = setup_record(&mut tcp, &track, 3, &answer);
+    assert_eq!(status(&r), 200, "{r}");
+    let sid = session_id(&r);
+    let record = |tcp: &mut TcpStream, auth: &str| {
+        request(
+            tcp,
+            &format!("RECORD {uri} RTSP/1.0\r\nCSeq: 4\r\nSession: {sid}\r\n{auth}\r\n"),
+        )
+    };
+    for _ in 0..4 {
+        challenge = challenge_of(&record(&mut tcp, &stale("RECORD")));
+        assert!(challenge.ends_with(", stale=true"), "{challenge}");
+    }
+    let answer = digest_md5(&challenge, &Cell::new(0), "amber", "pw", "RECORD", &uri);
+    let r = record(&mut tcp, &answer);
+    assert_eq!(
+        status(&r),
+        200,
+        "the publisher records after four stale RECORDs: {r}"
+    );
+    assert!(mount.publisher().is_some());
+    drop(tcp);
+    server.stop().unwrap();
+}

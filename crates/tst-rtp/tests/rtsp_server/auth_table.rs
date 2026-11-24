@@ -433,6 +433,11 @@ fn malformed_authorization_headers_are_challenged_again() {
     for (label, authorization) in &basic_rows {
         let response = answer_to(&basic, authorization.as_deref());
         assert_challenged(&response, "Basic", label);
+        assert_eq!(
+            header(&response, "WWW-Authenticate"),
+            "Basic realm=\"table\"",
+            "{label}"
+        );
     }
     // Control: the right pair is admitted, so the refusals above are about
     // the headers.
@@ -484,7 +489,8 @@ fn malformed_authorization_headers_are_challenged_again() {
     // The nonce belongs to the connection: every new connection is offered
     // one never offered before, and a refused answer is challenged again
     // with that same nonce, except a Digest answer whose nonce is not the
-    // connection's, which is taken as stale and challenged with a new one.
+    // connection's, which is taken as stale and challenged with a new one
+    // and `stale=true`. No other challenge carries a `stale` parameter.
     // (`Digest ` with nothing after it arrives trimmed to a bare scheme
     // word, so it is refused as another scheme, not as stale.)
     let stale_rows = ["garbage after the scheme"];
@@ -509,7 +515,18 @@ fn malformed_authorization_headers_are_challenged_again() {
             );
         } else {
             assert_challenged(&response, "Digest", label);
-            let again = param(header(&response, "WWW-Authenticate"), "nonce");
+            let challenge = header(&response, "WWW-Authenticate");
+            assert_eq!(
+                challenge.ends_with(", stale=true"),
+                stale_rows.contains(label),
+                "{label}: {challenge}"
+            );
+            assert_eq!(
+                challenge.contains("stale"),
+                stale_rows.contains(label),
+                "{label}: {challenge}"
+            );
+            let again = param(challenge, "nonce");
             if stale_rows.contains(label) {
                 assert!(
                     nonces_seen.insert(again.clone()),

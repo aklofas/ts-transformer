@@ -235,6 +235,11 @@ pub enum MountRuleError {
 /// `Refuse` rule's status never count. An honest client's first answer after
 /// [`MountRules::set_challenge`] changed the scheme or the realm does.
 ///
+/// A stale nonce is answered 401 with a new nonce and `stale=true`, which
+/// tells the client to answer again with the credential it has (RFC 7616
+/// §3.3). That 401 is not one of the three that close a connection either,
+/// and it clears none of them.
+///
 /// A rate signal: an unauthenticated peer can raise it at will (three
 /// refused answers per connection under Basic, two under Digest after the
 /// bare first challenge, any number of connections), and a peer that holds
