@@ -901,6 +901,10 @@ class _MetadataEvent(DemuxEvent):
     # populates these explicitly).
     was_reassembled: bool = False
     cell_count: int = 1
+    # The AU cell's `metadata_service_id` (H.222.0 §2.12.4.2) on a
+    # synchronous metadata event; `None` on an asynchronous or unknown
+    # one, which has no AU cell.
+    metadata_service_id: Optional[int] = None
 
     def parse(self, *, strict: bool = False):
         """Opt-in: decode `payload` into a typed KLV set, dispatched by

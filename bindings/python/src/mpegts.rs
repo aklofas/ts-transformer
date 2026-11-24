@@ -814,16 +814,18 @@ fn convert_metadata_event(
     let stream_py = build_stream_id(py, mpegts, stream)?;
     let pts_py = pts_to_py(py, mpegts, pts)?;
     let kind_py = metadata_kind_to_py(py, mpegts, kind)?;
-    // Extract the new multi-cell reassembly fields when present.
-    // Single-cell + non-KlvSyncAuCell paths default to (false, 1).
-    let (was_reassembled, cell_count) = match kind {
+    // Extract the AU cell's fields when present. Single-cell +
+    // non-KlvSyncAuCell paths default to (false, 1); only an AU cell
+    // carries a metadata_service_id.
+    let (was_reassembled, cell_count, metadata_service_id) = match kind {
         MetadataKind::KlvSyncAuCell {
             was_reassembled,
             cell_count,
+            metadata_service_id,
             ..
-        } => (*was_reassembled, *cell_count),
-        MetadataKind::KlvAsync => (false, 1u32),
-        MetadataKind::Unknown(_) => (false, 1u32),
+        } => (*was_reassembled, *cell_count, Some(*metadata_service_id)),
+        MetadataKind::KlvAsync => (false, 1u32, None),
+        MetadataKind::Unknown(_) => (false, 1u32, None),
     };
     let cls = mpegts
         .getattr(intern!(py, "DemuxEvent"))?
@@ -835,6 +837,7 @@ fn convert_metadata_event(
     kwargs.set_item("payload", PyBytes::new(py, payload))?;
     kwargs.set_item("was_reassembled", was_reassembled)?;
     kwargs.set_item("cell_count", cell_count)?;
+    kwargs.set_item("metadata_service_id", metadata_service_id)?;
     Ok(cls.call((), Some(&kwargs))?.into())
 }
 

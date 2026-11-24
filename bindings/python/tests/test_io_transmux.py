@@ -759,3 +759,41 @@ def test_transmux_atomic_in_place_rewrite_is_allowed(tmp_path):
         for ev in tx:
             tx.write(ev)
     assert _collect(src) == before
+
+
+def test_transmux_mirrors_a_non_zero_metadata_service_id(tmp_path):
+    """A source whose synchronous KLV stream declares and carries metadata
+    service 3: the output keeps service 3 in its PMT and in every AU cell."""
+    src, dst = tmp_path / "src.ts", tmp_path / "out.ts"
+    cfg = (
+        MuxerConfigBuilder()
+        .add_program(
+            MuxerProgramConfigBuilder(1, 0x100)
+            .add_video(0x101, VideoCodec.H264)
+            .add_klv(0x102, KlvStreamType.SYNCHRONOUS_METADATA, carries_pts=True)
+            .stream_descriptors_for_klv(0, [b"\x26\x09\x01\x00\xffKLVA\x03\x0f"])
+            .build()
+        )
+        .build()
+    )
+    mux = Muxer(cfg)
+    with mux.write_file(src) as proxy:
+        for i, (au, key) in enumerate(zip(ORIG_AUS, KEY_FRAMES)):
+            pts = Pts90khz.from_raw(PTS0 + i * PTS_STEP)
+            proxy.push_video(au, pts=pts, key_frame=key)
+            proxy.push_klv(_make_klv_bytes(47.6097), pts=pts, metadata_service_id=3)
+
+    with tio.transmux(src, dst) as tx:
+        for ev in tx:
+            tx.write(ev)
+
+    def services(path: Path) -> list:
+        return [
+            ev.metadata_service_id
+            for ev in tio.parse_file(path)
+            if isinstance(ev, DemuxEvent.Metadata)
+        ]
+
+    assert services(src) == [3, 3, 3]
+    assert services(dst) == [3, 3, 3]
+    assert _collect(dst) == _collect(src)

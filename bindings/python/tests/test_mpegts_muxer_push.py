@@ -1517,3 +1517,36 @@ def test_an_rtsp_mount_reports_an_undeclared_service_as_a_mount_error():
         with pytest.raises(RtspError) as ei:
             mount.push_klv(_KLV_LS, pts=Pts90khz.from_raw(3_000), metadata_service_id=3)
         assert ei.value.kind is RtspErrorKind.MOUNT
+
+
+def test_sync_klv_event_carries_the_metadata_service_id():
+    from tstrans.mpegts import Demuxer, DemuxEvent, KlvStreamType, MetadataKindTag
+
+    m = Muxer(_sync_klv_config(_METADATA_KLVA_3))
+    m.push_video(b"\x00\x00\x00\x01\x65\x88\x84\x00", pts=Pts90khz.from_raw(90_000), key_frame=True)
+    m.push_klv(_KLV_LS, pts=Pts90khz.from_raw(90_000), metadata_service_id=3)
+    m.push_video(b"\x00\x00\x00\x01\x41\x9a\x00", pts=Pts90khz.from_raw(93_000))
+
+    prog = (
+        MuxerProgramConfigBuilder(2, 0x200)
+        .add_video(0x201, VideoCodec.H264)
+        .add_klv(0x202, KlvStreamType.PRIVATE_DATA, carries_pts=False)
+        .build()
+    )
+    a = Muxer(MuxerConfigBuilder().add_program(prog).build())
+    a.push_video(b"\x00\x00\x00\x01\x65\x88\x84\x00", pts=Pts90khz.from_raw(90_000), key_frame=True)
+    a.push_klv(_KLV_LS, pts=Pts90khz.from_raw(90_000), metadata_service_id=3)
+    a.push_video(b"\x00\x00\x00\x01\x41\x9a\x00", pts=Pts90khz.from_raw(93_000))
+
+    for muxer, kind, service in (
+        (m, MetadataKindTag.KLV_SYNC_AU_CELL, 3),
+        (a, MetadataKindTag.KLV_ASYNC, None),
+    ):
+        buf = bytearray(muxer.pending_packets() * 188)
+        d = Demuxer()
+        d.feed(bytes(buf[: muxer.pull(buf)]))
+        d.flush()
+        events = [e for e in d if isinstance(e, DemuxEvent.Metadata)]
+        assert len(events) == 1
+        assert events[0].kind is kind
+        assert events[0].metadata_service_id == service
