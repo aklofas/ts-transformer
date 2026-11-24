@@ -76,6 +76,11 @@ use crate::panic::ffi_catch;
 /// and `tst_rtsp_server_builder_start` refuses it (NULL, last-error
 /// `TST_E_INVALID_CONFIG`). Configure the server's credential with
 /// `_auth_basic` or `_auth_digest_*`.
+/// The URL says only where to listen: one that carries a path other than
+/// `/`, or a query (an empty `?` included), is taken by this call and
+/// refused by `tst_rtsp_server_builder_start` in the same way. Add mounts
+/// with the `tst_rtsp_server_add_*_mount` calls; whether media may go over
+/// UDP is `tst_rtsp_server_builder_allow_udp_media`, not `?transport=`.
 ///
 /// Auth, TLS, session limits, and drain policy may be set with the
 /// `_auth_*`, `_tls_cert_pem`, `_max_sessions`, `_session_timeout`,
@@ -128,8 +133,8 @@ pub unsafe extern "C" fn tst_rtsp_server_builder_new(
 /// Replaces the address set at `tst_rtsp_server_builder_new` time.  Call
 /// this to redirect the server to a different interface or port without
 /// allocating a new builder. As for `_new`, a URL that carries a user name
-/// or a password is taken here and refused by
-/// `tst_rtsp_server_builder_start` (`TST_E_INVALID_CONFIG`).
+/// or a password, a path other than `/`, or a query is taken here and
+/// refused by `tst_rtsp_server_builder_start` (`TST_E_INVALID_CONFIG`).
 ///
 /// No-op (with last-error set to `TST_E_INVALID_CONFIG`) if `builder` is
 /// NULL, `addr` is NULL, or the URL fails to parse.
@@ -820,6 +825,67 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// A bind URL with a path or a query parses, so `_new` and `_bind` take
+    /// it; the server's build refuses it, through either door.
+    #[test]
+    fn a_bind_url_with_a_path_or_a_query_is_refused_at_start() {
+        let cases = [
+            ("rtsp://127.0.0.1:0/live", "path"),
+            ("rtsps://127.0.0.1:0/live", "path"),
+            ("rtsp://127.0.0.1:0?transport=tcp", "query"),
+            ("rtsps://127.0.0.1:0?transport=udp", "query"),
+            ("rtsp://127.0.0.1:0?", "query"),
+        ];
+        for (url, what) in cases {
+            let through_new = new_builder(url);
+            let through_bind = new_builder("rtsp://127.0.0.1:0");
+            let bound = std::ffi::CString::new(url).unwrap();
+            crate::error::clear_last_error_for_test();
+            unsafe { tst_rtsp_server_builder_bind(through_bind, bound.as_ptr()) };
+            assert_eq!(crate::error::test_last_error_code(), 0, "_bind took {url}");
+            for b in [through_new, through_bind] {
+                let msg = refused_at_start(b, what);
+                assert!(msg.contains("bind URL"), "{url}: {msg}");
+            }
+        }
+    }
+
+    /// A key no RTSP URL knows never reaches the build: the parse refuses
+    /// it in `_new`, and in `_bind`, which then keeps the earlier URL.
+    #[test]
+    fn a_bind_url_with_an_unknown_query_key_is_a_parse_error() {
+        let bad = c"rtsp://127.0.0.1:0?mount=live";
+        crate::error::clear_last_error_for_test();
+        let b = unsafe { tst_rtsp_server_builder_new(bad.as_ptr()) };
+        assert!(b.is_null());
+        assert_eq!(
+            crate::error::test_last_error_code(),
+            TstError::InvalidConfig as i32
+        );
+        let msg = crate::error::test_last_error_msg();
+        assert!(msg.contains("URL parse error"), "{msg}");
+
+        let b = new_builder("rtsp://127.0.0.1:0");
+        crate::error::clear_last_error_for_test();
+        unsafe { tst_rtsp_server_builder_bind(b, bad.as_ptr()) };
+        assert_eq!(
+            crate::error::test_last_error_code(),
+            TstError::InvalidConfig as i32
+        );
+        let server = unsafe { crate::rtsp::server::start::tst_rtsp_server_builder_start(b) };
+        assert!(!server.is_null(), "{}", crate::error::test_last_error_msg());
+        unsafe { crate::rtsp::server::stop::tst_rtsp_server_free(server) };
+    }
+
+    /// A bare `/` is no path: such a bind URL starts a server.
+    #[test]
+    fn a_bind_url_with_a_bare_slash_starts() {
+        let b = new_builder("rtsp://127.0.0.1:0/");
+        let server = unsafe { crate::rtsp::server::start::tst_rtsp_server_builder_start(b) };
+        assert!(!server.is_null(), "{}", crate::error::test_last_error_msg());
+        unsafe { crate::rtsp::server::stop::tst_rtsp_server_free(server) };
     }
 
     #[test]
