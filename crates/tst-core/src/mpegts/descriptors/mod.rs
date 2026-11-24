@@ -233,17 +233,23 @@ pub fn descriptor_with_tag_unchecked(tag: u8, payload: &[u8]) -> Result<Vec<u8>,
 /// `stream_content` values `0x1..=0x8`; non-legacy content values may
 /// carry a distinct `ext` nibble.
 ///
-/// `text` is UTF-8; receivers conventionally treat the body as
-/// language-coded per the descriptor's `iso_639_language_code` field.
+/// `text` is coded per EN 300 468 Annex A: ASCII text whose first byte
+/// is `0x20` or above is written as it is (the default table reads it
+/// the same); any other text (a non-ASCII character anywhere, or a first
+/// byte below `0x20`) is written as UTF-8 behind the one-byte selector
+/// `0x15`. Table A.3's UTF-8 row names the Basic Multilingual Plane; a
+/// receiver may not render characters outside it.
 ///
 /// # Errors
 ///
 /// - [`DescriptorError::InvalidComponent`] when either nibble exceeds
 ///   `0xF`, or when `stream_content ∈ 0x1..=0x8` and `stream_content_ext
 ///   != 0xF` (EN 300 468 §6.2.8 requires `ext=0xF` for legacy content).
-/// - [`DescriptorError::TooLarge`] when `text.len() > 249`
-///   (255-byte `descriptor_length` ceiling minus 6 bytes of leading
-///   fields = 249 bytes of text).
+/// - [`DescriptorError::TooLarge`] when `text.len()` (in UTF-8 bytes)
+///   is over 249 for text written as it is, or over 248 for text written
+///   behind the selector (255-byte `descriptor_length` ceiling minus 6
+///   bytes of leading fields, minus the selector byte). Text over the
+///   cap is refused whole, never cut.
 pub fn component(
     stream_content_ext: u8,
     stream_content: u8,
@@ -265,17 +271,24 @@ pub fn component(
         });
     }
     // Cap on text: 255 (descriptor_length) - 6 (stream_content_ext/content +
-    // component_type + component_tag + 3 language bytes) = 249.
+    // component_type + component_tag + 3 language bytes) = 249, one less
+    // when the selector byte goes in front.
     const COMPONENT_TEXT_MAX: usize = 249;
     let text_bytes = text.as_bytes();
-    if text_bytes.len() > COMPONENT_TEXT_MAX {
+    // EN 300 468 Annex A: a first byte of 0x20..=0xFF selects the default
+    // (Latin) table and a first byte below 0x20 is itself a selector, so
+    // UTF-8 text is written behind 0x15 unless it is ASCII that starts at
+    // 0x20 or above.
+    let selector = !text.is_ascii() || text_bytes.first().is_some_and(|b| *b < 0x20);
+    let max = COMPONENT_TEXT_MAX - usize::from(selector);
+    if text_bytes.len() > max {
         return Err(DescriptorError::TooLarge {
             tag: 0x50,
             len: text_bytes.len(),
-            max: COMPONENT_TEXT_MAX,
+            max,
         });
     }
-    let body_len = 6 + text_bytes.len();
+    let body_len = 6 + usize::from(selector) + text_bytes.len();
     let mut out = Vec::with_capacity(2 + body_len);
     out.push(0x50);
     out.push(body_len as u8);
@@ -283,6 +296,9 @@ pub fn component(
     out.push(component_type);
     out.push(component_tag);
     out.extend_from_slice(&iso_639_language);
+    if selector {
+        out.push(0x15); // EN 300 468 Table A.3: UTF-8
+    }
     out.extend_from_slice(text_bytes);
     Ok(out)
 }
@@ -810,6 +826,100 @@ mod tests {
         assert_eq!(bytes[0], 0x50);
         assert_eq!(bytes[1], 255); // body length at u8 ceiling
         assert_eq!(bytes.len(), 2 + 255);
+    }
+
+    #[test]
+    fn component_text_with_non_ascii_gets_utf8_selector() {
+        // EN 300 468 Annex A: a first byte 0x20..=0xFF means the default
+        // (Latin) table, so UTF-8 text needs the 0x15 selector in front.
+        let bytes = component(0xF, 0x05, 0x01, 0x42, *b"eng", "Caméra").expect("within cap");
+        assert_eq!(
+            bytes,
+            vec![
+                0x50, 0x0e, 0xf5, 0x01, 0x42, 0x65, 0x6e, 0x67, 0x15, 0x43, 0x61, 0x6d, 0xc3, 0xa9,
+                0x72, 0x61
+            ]
+        );
+    }
+
+    #[test]
+    fn component_text_starting_with_a_control_byte_gets_utf8_selector() {
+        // A first byte below 0x20 would itself be read as a table selector.
+        let bytes = component(0xF, 0x05, 0x01, 0x42, *b"eng", "\u{1}x").expect("within cap");
+        assert_eq!(bytes[1], 6 + 1 + 2);
+        assert_eq!(&bytes[8..], &[0x15, 0x01, b'x']);
+        let bytes = component(0xF, 0x05, 0x01, 0x42, *b"eng", "\u{15}x").expect("within cap");
+        assert_eq!(&bytes[8..], &[0x15, 0x15, b'x']);
+    }
+
+    #[test]
+    fn component_utf8_text_cap_is_one_byte_smaller() {
+        // 'é' is two bytes: 124 of them plus one 'A' = 249 bytes of text.
+        let text = alloc::format!("{}A", "é".repeat(124));
+        assert_eq!(text.len(), 249);
+        let err = component(0xF, 0x09, 0x00, 0x42, *b"eng", &text).unwrap_err();
+        assert_eq!(
+            err,
+            DescriptorError::TooLarge {
+                tag: 0x50,
+                len: 249,
+                max: 248,
+            }
+        );
+        let text = "é".repeat(124);
+        assert_eq!(text.len(), 248);
+        let bytes = component(0xF, 0x09, 0x00, 0x42, *b"eng", &text).expect("248 bytes fit");
+        assert_eq!(bytes[1], 255);
+        assert_eq!(bytes[8], 0x15);
+        assert_eq!(bytes.len(), 2 + 255);
+        // A 4-byte character across the cap is refused whole, never cut.
+        let text = alloc::format!("{}🛰", "A".repeat(245));
+        assert_eq!(text.len(), 249);
+        assert_eq!(
+            component(0xF, 0x09, 0x00, 0x42, *b"eng", &text).unwrap_err(),
+            DescriptorError::TooLarge {
+                tag: 0x50,
+                len: 249,
+                max: 248,
+            }
+        );
+    }
+
+    #[test]
+    fn component_ascii_text_is_unchanged() {
+        let bytes = component(0xF, 0x09, 0x00, 0x42, *b"eng", "EO 1080p").expect("within cap");
+        assert_eq!(bytes[1], 6 + 8);
+        assert_eq!(&bytes[8..], b"EO 1080p");
+        let bytes = component(0xF, 0x09, 0x00, 0x42, *b"eng", "").expect("empty text");
+        assert_eq!(bytes, vec![0x50, 6, 0xF9, 0x00, 0x42, b'e', b'n', b'g']);
+        let text = "A".repeat(249);
+        let bytes = component(0xF, 0x09, 0x00, 0x42, *b"eng", &text).expect("249 ASCII bytes");
+        assert_eq!(bytes[1], 255);
+        assert_eq!(bytes[8], b'A');
+    }
+
+    #[test]
+    fn component_text_round_trips_through_the_label_decoder() {
+        use crate::mpegts::demux::low_level::{extract_user_label, walk_descriptors};
+        for text in [
+            "Camera",
+            "Caméra",
+            "Café EO",
+            "École",
+            "日本語",
+            "EO/IR 🛰",
+            "\u{1}x",
+            "\u{15}x",
+            "\u{80}",
+        ] {
+            let bytes = component(0xF, 0x05, 0x01, 0x42, *b"eng", text).expect("within cap");
+            let descs = walk_descriptors(&bytes).expect("one whole descriptor");
+            assert_eq!(
+                extract_user_label(&descs).as_deref(),
+                Some(text),
+                "text {text:?}"
+            );
+        }
     }
 
     #[test]
