@@ -36,3 +36,9 @@ workload = "muxer_new"
 since = "v0.9.0"
 max_growth_percent = 6
 reason = "0.10.0's Muxer::reconfigure keeps a slot table, PAT and PMT versions and a PMT identity per program"
+
+[[accepted]]
+workload = "mux_push_klv_1k"
+since = "v0.10.0"
+max_growth_percent = 4
+reason = "0.11.0's muxer conformance work on each push: the per-program PSI anchor, the adaptation field's ES-priority flag and the synchronous-KLV service-id check, on top of the PCR clock that follows decode time"
