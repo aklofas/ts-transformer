@@ -1986,6 +1986,12 @@ pub tst_core::error::MuxError::TooManySubtitleStreams::count: usize
 pub tst_core::error::MuxError::TooManyVideoStreams
 pub tst_core::error::MuxError::TooManyVideoStreams::cap: usize
 pub tst_core::error::MuxError::TooManyVideoStreams::count: usize
+pub tst_core::error::MuxError::UnassignedSubtitleType
+pub tst_core::error::MuxError::UnassignedSubtitleType::descriptor_tag: u8
+pub tst_core::error::MuxError::UnassignedSubtitleType::value: u8
+pub tst_core::error::MuxError::UndeclaredMetadataService
+pub tst_core::error::MuxError::UndeclaredMetadataService::pid: u16
+pub tst_core::error::MuxError::UndeclaredMetadataService::service_id: u8
 impl tst_core::error::MuxError
 pub fn tst_core::error::MuxError::kind(&self) -> tst_core::error::MuxErrorKind
 impl core::clone::Clone for tst_core::error::MuxError
@@ -6804,6 +6810,8 @@ pub tst_core::mpegts::mux::MuxerConfig::pcr_interval_ms: u32
 pub tst_core::mpegts::mux::MuxerConfig::pcr_lead_ms: u32
 pub tst_core::mpegts::mux::MuxerConfig::programs: alloc::vec::Vec<tst_core::mpegts::mux::MuxerProgramConfig>
 pub tst_core::mpegts::mux::MuxerConfig::psi_interval_ms: u32
+pub tst_core::mpegts::mux::MuxerConfig::psi_version_base: u8
+pub tst_core::mpegts::mux::MuxerConfig::transport_stream_id: u16
 impl tst_core::mpegts::mux::MuxerConfig
 pub fn tst_core::mpegts::mux::MuxerConfig::builder() -> tst_core::mpegts::mux::MuxerConfigBuilder
 pub fn tst_core::mpegts::mux::MuxerConfig::from_program_map(&tst_core::mpegts::demux::event::ProgramMap, &[tst_core::mpegts::demux::event::StreamKindTag]) -> core::result::Result<tst_core::mpegts::mux::MuxerConfig, tst_core::error::MuxError>
@@ -6830,6 +6838,8 @@ pub fn tst_core::mpegts::mux::MuxerConfigBuilder::build(&self) -> core::result::
 pub fn tst_core::mpegts::mux::MuxerConfigBuilder::pcr_interval_ms(&mut self, u32) -> &mut Self
 pub fn tst_core::mpegts::mux::MuxerConfigBuilder::pcr_lead_ms(&mut self, u32) -> &mut Self
 pub fn tst_core::mpegts::mux::MuxerConfigBuilder::psi_interval_ms(&mut self, u32) -> &mut Self
+pub fn tst_core::mpegts::mux::MuxerConfigBuilder::psi_version_base(&mut self, u8) -> &mut Self
+pub fn tst_core::mpegts::mux::MuxerConfigBuilder::transport_stream_id(&mut self, u16) -> &mut Self
 impl core::default::Default for tst_core::mpegts::mux::MuxerConfigBuilder
 pub fn tst_core::mpegts::mux::MuxerConfigBuilder::default() -> tst_core::mpegts::mux::MuxerConfigBuilder
 impl core::fmt::Debug for tst_core::mpegts::mux::MuxerConfigBuilder
@@ -7994,6 +8004,12 @@ pub tst_core::MuxError::TooManySubtitleStreams::count: usize
 pub tst_core::MuxError::TooManyVideoStreams
 pub tst_core::MuxError::TooManyVideoStreams::cap: usize
 pub tst_core::MuxError::TooManyVideoStreams::count: usize
+pub tst_core::MuxError::UnassignedSubtitleType
+pub tst_core::MuxError::UnassignedSubtitleType::descriptor_tag: u8
+pub tst_core::MuxError::UnassignedSubtitleType::value: u8
+pub tst_core::MuxError::UndeclaredMetadataService
+pub tst_core::MuxError::UndeclaredMetadataService::pid: u16
+pub tst_core::MuxError::UndeclaredMetadataService::service_id: u8
 impl tst_core::error::MuxError
 pub fn tst_core::error::MuxError::kind(&self) -> tst_core::error::MuxErrorKind
 impl core::clone::Clone for tst_core::error::MuxError
