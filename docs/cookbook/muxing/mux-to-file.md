@@ -25,8 +25,10 @@ fn main() -> std::io::Result<()> {
         let nal = vec![0x00, 0x00, 0x00, 0x01, 0x65, 0xAA];
         let klv = vec![0x06, 0x0E, 0x2B, 0x34, /* ... */];
         mux.push_video(&nal, Pts90khz::new(pts), i == 0).expect("push_video");
-        // metadata_service_id=0x00 is the ST 1402.2 App. B Table 2 default;
-        // override to mirror a non-default metadata_klva(svc) PMT descriptor.
+        // metadata_service_id=0x00 is the ST 1402.2 App. B Table 2 default.
+        // On a synchronous KLV stream it must be a service the stream's
+        // metadata_klva(svc) descriptor declares, or the push is refused;
+        // the default config's KLV stream is asynchronous and ignores it.
         mux.push_klv(&klv, Pts90khz::new(pts), /*metadata_service_id=*/ 0x00).expect("push_klv");
         loop {
             let n = mux.pull(&mut buf);
