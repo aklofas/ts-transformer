@@ -59,6 +59,20 @@
 //! ```
 //! You should see PIDs 0x1000, 0x1011, 0x1031 owned by program 1 and
 //! PIDs 0x1100, 0x1111, 0x1131 owned by program 2.
+//!
+//! Check the same from the middle of the file: a receiver that tunes in
+//! late must still find both programs, so each program's PAT and PMT have
+//! to keep repeating on that program's own clock:
+//! ```text
+//! half=$(( $(stat -c %s output.ts) / 2 / 188 * 188 ))
+//! tail -c +$(( half + 1 )) output.ts > second-half.ts
+//! ffprobe -show_programs second-half.ts 2>/dev/null | grep -E "program_num|nb_streams"
+//! ```
+//!
+//! This example pushes all of input 1 and then all of input 2, so the
+//! output holds program 1's stretch followed by program 2's. A live
+//! aggregator interleaves the two inputs by time instead, pushing each
+//! access unit as it arrives.
 
 use std::env;
 use std::fs;
