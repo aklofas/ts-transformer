@@ -2002,42 +2002,28 @@ mod tests {
 
     #[test]
     fn multi_descriptor_0x06_emits_subtitle_ambiguous() {
-        use crate::mpegts::mux::{
-            MuxerConfig, MuxerProgramConfigBuilder, SubtitleCodec as MuxSubtitleCodec,
-            VideoCodec as MuxVideoCodec,
-        };
-
-        // Caller supplies BOTH a subtitling_descriptor (0x59) and a
-        // VTTC registration_descriptor on the same WebVTT subtitle PID.
-        // The mux auto-emit suppresses on either marker, so caller has
-        // to bypass that path by stuffing both into the descriptor list
-        // directly. Two recognized subtitle codec markers on the same
-        // 0x06 PID — the classifier still picks subtitling per first-match
+        // A PMT whose 0x06 PID carries BOTH a subtitling_descriptor (0x59)
+        // and a VTTC registration_descriptor: two recognized subtitle codec
+        // markers. The classifier still picks subtitling per first-match
         // priority, and the demuxer surfaces the ambiguity for diagnostics.
+        // The PMT is built by hand: the muxer refuses to write it.
         // subtitling_descriptor body: ISO 639 lang (3) + subtitling_type
         // (1) + composition_page_id (2) + ancillary_page_id (2).
-        let subtitling_tlv = vec![0x59u8, 0x08, b'e', b'n', b'g', 0x10, 0x00, 0x01, 0x00, 0x01];
+        let subtitling_tlv = [0x59u8, 0x08, b'e', b'n', b'g', 0x10, 0x00, 0x01, 0x00, 0x01];
         // registration_descriptor body: 4-byte format_identifier "VTTC".
-        let vttc_tlv = vec![0x05u8, 0x04, b'V', b'T', b'T', b'C'];
-        let cfg = {
-            let mut prog = MuxerProgramConfigBuilder::new(1, 0x1000);
-            prog.add_video(0x101, MuxVideoCodec::H264);
-            prog.add_subtitle(0x200, MuxSubtitleCodec::WebVttInTs);
-            prog.stream_descriptors_for_subtitle(0, vec![subtitling_tlv, vttc_tlv])
-                .unwrap();
-            let mut b = MuxerConfig::builder();
-            b.add_program(prog.build());
-            b.build().unwrap()
-        };
-        let mut muxer = crate::mpegts::mux::Muxer::new(cfg).unwrap();
-        // Push something to force PSI emission.
-        let h = muxer.subtitle_handles()[0];
-        muxer
-            .push_subtitle_to(h, Pts90khz::new(90_000), b"WEBVTT\n\nx\n")
-            .unwrap();
-        let mut buf = vec![0u8; 188 * 64];
-        let n = muxer.pull(&mut buf);
-        buf.truncate(n);
+        let vttc_tlv = [0x05u8, 0x04, b'V', b'T', b'T', b'C'];
+        let es_info: Vec<u8> = [&subtitling_tlv[..], &vttc_tlv[..]].concat();
+        let pmt = crate::mpegts::demux::test_support::build_pmt_section(
+            1,
+            0x101,
+            0,
+            &[],
+            &[(0x1B, 0x101, &[][..]), (0x06, 0x200, &es_info[..])],
+        );
+        let mut buf = pat_packet_with_programs(&[(1, 0x1000)], 0);
+        buf.extend_from_slice(&crate::mpegts::demux::test_support::psi_packet(
+            0x1000, &pmt, 0,
+        ));
 
         let mut demuxer = Demuxer::new();
         demuxer.feed(&buf).unwrap();

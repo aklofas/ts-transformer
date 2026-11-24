@@ -165,24 +165,27 @@ fn family_a_hdmv_video_registration_round_trips() {
     assert_eq!(&r.data[4..], &[0xFF, 0x1B, 0x44, 0x3F]);
 }
 
-#[tracing_test::traced_test]
 #[test]
-fn non_klva_registration_on_klv_pid_logs_warning() {
-    let cfg = {
-        let mut prog = MuxerProgramConfigBuilder::new(1, 0x1000);
-        prog.add_video(0x100, VideoCodec::H264);
-        prog.add_klv(0x101, KlvStreamType::PrivateData, false);
-        prog.stream_descriptors_for_klv(
-            0,
-            vec![descriptors::registration(*b"VEND", &[]).expect("within cap")],
-        )
-        .unwrap();
-        let mut b = MuxerConfig::builder();
-        b.add_program(prog.build());
-        b.build().unwrap()
-    };
-    let _ = Muxer::new(cfg).unwrap();
-    assert!(logs_contain("non-KLVA format_identifier"));
+fn a_non_klva_registration_on_a_klv_pid_is_refused() {
+    // The caller's registration would replace the automatic KLVA one, and
+    // receivers would no longer recognize the stream as KLV.
+    let mut prog = MuxerProgramConfigBuilder::new(1, 0x1000);
+    prog.add_video(0x100, VideoCodec::H264);
+    prog.add_klv(0x101, KlvStreamType::PrivateData, false);
+    prog.stream_descriptors_for_klv(
+        0,
+        vec![descriptors::registration(*b"VEND", &[]).expect("within cap")],
+    )
+    .unwrap();
+    let mut b = MuxerConfig::builder();
+    b.add_program(prog.build());
+    match b.build() {
+        Err(tst_core::MuxError::ConfigInvalid { reason }) => {
+            assert!(reason.contains("0x0101"), "{reason}");
+            assert!(reason.contains("KLVA"), "{reason}");
+        }
+        other => panic!("expected ConfigInvalid, got {other:?}"),
+    }
 }
 
 #[test]
