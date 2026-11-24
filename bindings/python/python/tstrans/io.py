@@ -343,8 +343,11 @@ def transmux(
     with no PSI yields no events and produces NO output file.
 
     Strict by default: streams the muxer cannot represent (DVB
-    subtitling/teletext) fail the conversion with `MuxError` naming the
-    offenders. Private/application data streams (unknown stream types)
+    subtitling/teletext, and unknown streams whose stream type is carried
+    in sections: 0x05, 0x13, 0x16, 0x2C, 0x2F, 0x30) fail the conversion
+    with `MuxError` naming the offenders. The source's program_info loop,
+    transport_stream_id and table versions are not carried. Other
+    private/application data streams (unknown stream types)
     pass through byte-faithfully: `from_program_map` reproduces their
     PMT entry (raw stream_type byte + descriptor loop verbatim) and
     each `UnknownSample` payload is re-emitted as-is via

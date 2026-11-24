@@ -501,3 +501,92 @@ def test_psi_version_base_above_31_is_config_invalid():
         MuxerConfigBuilder().transport_stream_id(0x10000)
     with pytest.raises(OverflowError):
         MuxerConfigBuilder().transport_stream_id(-1)
+
+
+# --- Refusals of the muxer configuration, each with its kind ---
+
+
+def _video_program() -> MuxerProgramConfigBuilder:
+    return MuxerProgramConfigBuilder(1, 0x100).add_video(0x101, VideoCodec.H264)
+
+
+def _refused(prog) -> MuxError:
+    with pytest.raises(MuxError) as ei:
+        MuxerConfigBuilder().add_program(prog).build()
+    return ei.value
+
+
+def test_a_malformed_program_descriptor_is_config_invalid():
+    for descs in ([b"\x05\x04"], [b"\x05"], [b"\x05\xff"], [b"\x05\x02KLVA"], [b""]):
+        err = _refused(_video_program().program_descriptors(descs).build())
+        assert err.kind is MuxErrorKind.CONFIG_INVALID, descs
+        assert "program" in str(err)
+
+
+def test_a_section_only_data_stream_type_is_config_invalid():
+    for st in (0x05, 0x13, 0x16, 0x2C, 0x2F, 0x30):
+        err = _refused(_video_program().add_data(0x1F0, st, carries_pts=True).build())
+        assert err.kind is MuxErrorKind.CONFIG_INVALID, hex(st)
+
+
+def test_from_program_map_refuses_a_section_only_stream_unless_dropped():
+    from tstrans.mpegts import ProgramMap, StreamInfo, StreamKindTag
+
+    video = StreamInfo(
+        pid=0x101, stream_type=0x1B, kind=StreamKindTag.VIDEO,
+        codec=VideoCodec.H264, program_number=1,
+    )
+    sections = StreamInfo(
+        pid=0x1F1, stream_type=0x05, kind=StreamKindTag.UNKNOWN,
+        codec=None, program_number=1,
+    )
+    pm = ProgramMap(
+        program_number=1, pcr_pid=0x101, pmt_pid=0x100,
+        streams=(video, sections), klv_links=(),
+    )
+    with pytest.raises(MuxError) as ei:
+        MuxerConfig.from_program_map(pm)
+    assert ei.value.kind is MuxErrorKind.CONFIG_INVALID
+    assert "0x01F1" in str(ei.value)
+
+    cfg = MuxerConfig.from_program_map(pm, drop=[StreamKindTag.UNKNOWN])
+    assert [s.pid for s in cfg.programs[0].streams] == [0x101]
+
+
+def test_a_non_ascii_audio_language_is_config_invalid():
+    prog = _video_program().add_audio_with_language(0x102, AudioCodec.AAC, language=b"\x00\x01\x02").build()
+    assert _refused(prog).kind is MuxErrorKind.CONFIG_INVALID
+
+
+def test_a_non_klva_registration_on_a_klv_stream_is_config_invalid():
+    prog = (
+        _video_program()
+        .add_klv(0x102, KlvStreamType.SYNCHRONOUS_METADATA, carries_pts=True)
+        .stream_descriptors_for_klv(0, [b"\x05\x04ABCD"])
+        .build()
+    )
+    err = _refused(prog)
+    assert err.kind is MuxErrorKind.CONFIG_INVALID
+    assert "0x0102" in str(err)
+
+
+def test_an_unassigned_dvb_subtitling_type_is_config_invalid():
+    from tstrans.mpegts import DvbSubtitlingConfig
+
+    sub = DvbSubtitlingConfig(
+        language=b"eng", subtitling_type=0x03,
+        composition_page_id=1, ancillary_page_id=1,
+    )
+    assert _refused(_video_program().add_subtitle(0x200, sub).build()).kind is MuxErrorKind.CONFIG_INVALID
+
+
+def test_a_psi_interval_over_200_with_klv_is_config_invalid():
+    prog = _video_program().add_klv(0x102, KlvStreamType.PRIVATE_DATA, carries_pts=False).build()
+    assert MuxerConfigBuilder().add_program(prog).psi_interval_ms(200).build().psi_interval_ms == 200
+    with pytest.raises(MuxError) as ei:
+        MuxerConfigBuilder().add_program(prog).psi_interval_ms(201).build()
+    assert ei.value.kind is MuxErrorKind.CONFIG_INVALID
+    assert "psi_interval_ms" in str(ei.value)
+    # Without KLV the bound does not apply.
+    plain = _video_program().build()
+    assert MuxerConfigBuilder().add_program(plain).psi_interval_ms(201).build().psi_interval_ms == 201
