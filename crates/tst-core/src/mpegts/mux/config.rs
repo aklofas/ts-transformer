@@ -318,8 +318,8 @@ impl MuxerConfig {
     /// - **Source descriptors the muxer refuses**: the conversion fails with
     ///   the `ConfigInvalid` of [`validate`](Self::validate), naming the PID,
     ///   when a copied stream loop could not replace the muxer's own
-    ///   signalling: a registration other than a 4-byte `KLVA` on a KLV
-    ///   stream; on synchronous KLV a `metadata_descriptor` cut before its
+    ///   signalling: a registration whose format identifier is not `KLVA` on
+    ///   a KLV stream; on synchronous KLV a `metadata_descriptor` cut before its
     ///   `metadata_service_id`, or more than one or a malformed
     ///   `metadata_std_descriptor`; an `AV01` registration with more than 4
     ///   body bytes; a subtitle marker of another codec, or one with partial
@@ -1487,12 +1487,15 @@ fn validate_signalling_overrides(spec: &StreamSpec, descs: &[Vec<u8>]) -> Result
     };
     match spec {
         StreamSpec::Klv { stream_type, .. } => {
+            // Additional identification info behind the format identifier
+            // is allowed (H.222.0 2.6.8) and the demuxer reads such a stream
+            // as KLV, so only the identifier itself is checked.
             if descs
                 .iter()
-                .any(|d| d[0] == 0x05 && d[..] != [0x05, 0x04, b'K', b'L', b'V', b'A'])
+                .any(|d| d[0] == 0x05 && d.get(2..6) != Some(b"KLVA".as_slice()))
             {
                 return Err(refuse(
-                    "a registration_descriptor on a KLV stream must be the 4-byte \
+                    "a registration_descriptor on a KLV stream must carry the \
                      format_identifier \"KLVA\" (ST 1402)",
                 ));
             }
