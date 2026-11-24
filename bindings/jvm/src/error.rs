@@ -665,7 +665,9 @@ mod tests {
         for (d, n) in [
             (Domain::Srt, 11),
             (Domain::Rtp, 13),
-            (Domain::Rtsp, 11), // + CLOSED (a cancelled control call, a consumed data plane)
+            // + CLOSED (a cancelled control call, a consumed data plane),
+            // + CONFIG_INVALID (a server configuration the build refuses)
+            (Domain::Rtsp, 12),
             (Domain::Demux, 4),
             (Domain::Mux, 9),
             (Domain::KlvDecode, 7),
