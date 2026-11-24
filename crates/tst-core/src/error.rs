@@ -601,8 +601,11 @@ pub enum MuxError {
     KlvPidUsedAsPcrPid { pid: u16 },
 
     /// `MuxerConfig::validate` rejects ISO 639-2 language codes that aren't
-    /// 3 lowercase ASCII bytes.
-    #[error("invalid ISO 639-2 language code: {code:02x?} (must be 3 lowercase ASCII bytes)")]
+    /// 3 ASCII letters (either case).
+    #[error(
+        "invalid ISO 639-2 language code \"{}\" (must be 3 ASCII letters)",
+        .code.escape_ascii()
+    )]
     InvalidLanguageCode { code: [u8; 3] },
 
     /// `MuxerConfig::validate` rejects DVB teletext field values that exceed
