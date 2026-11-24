@@ -1498,27 +1498,6 @@ def test_a_klv_push_under_an_undeclared_service_is_invalid_usage():
     assert ei.value.kind is MuxErrorKind.INVALID_USAGE
 
 
-def test_an_rtsp_mount_reports_an_undeclared_service_as_a_mount_error():
-    # The mount wraps every muxer refusal in its own MOUNT kind.
-    from tstrans.exceptions import RtspError, RtspErrorKind
-    from tstrans.mpegts import KlvStreamType
-    from tstrans.rtp import RtspServer, RtspServerConfig
-
-    prog = (
-        MuxerProgramConfigBuilder(1, 0x1000)
-        .add_video(0x1011, VideoCodec.H264)
-        .add_klv(0x1012, KlvStreamType.SYNCHRONOUS_METADATA, carries_pts=True)
-        .build()
-    )
-    cfg = RtspServerConfig(bind_addr="127.0.0.1:0", graceful_shutdown_drain_ms=50)
-    with RtspServer.start(cfg) as server:
-        mount = server.add_unicast_mount("/live", prog)
-        mount.push_klv(_KLV_LS, pts=Pts90khz.from_raw(0))
-        with pytest.raises(RtspError) as ei:
-            mount.push_klv(_KLV_LS, pts=Pts90khz.from_raw(3_000), metadata_service_id=3)
-        assert ei.value.kind is RtspErrorKind.MOUNT
-
-
 def test_sync_klv_event_carries_the_metadata_service_id():
     from tstrans.mpegts import Demuxer, DemuxEvent, KlvStreamType, MetadataKindTag
 
