@@ -500,3 +500,11 @@ mod tests_stats;
 #[cfg(test)]
 #[path = "tests/reconfigure.rs"]
 mod tests_reconfigure;
+
+#[cfg(test)]
+#[path = "tests/video_wire.rs"]
+mod tests_video_wire;
+
+#[cfg(test)]
+#[path = "tests/service_id.rs"]
+mod tests_service_id;
