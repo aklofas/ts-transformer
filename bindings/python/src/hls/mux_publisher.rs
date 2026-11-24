@@ -237,7 +237,10 @@ impl PyMuxPublisher {
 
     /// Push one KLV blob. `stream_index` is the metadata service id written
     /// into the Metadata AU cell for synchronous carriage; it is ignored for
-    /// PrivateData and does not select a stream.
+    /// PrivateData and does not select a stream. On a synchronous stream
+    /// whose descriptors do not declare that service id (the automatic
+    /// descriptor declares 0) the push raises `MuxError(INVALID_USAGE)` and
+    /// queues nothing.
     #[pyo3(signature = (klv, *, pts, stream_index = 0))]
     fn push_klv(
         &self,

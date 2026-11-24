@@ -415,7 +415,11 @@ class Transmuxer:
       passed on, so the output's AU cells carry the source's service id,
       which the copied PMT entry declares; the muxer refuses a source
       unit whose id its own PMT entry does not declare (`MuxError`,
-      INVALID_USAGE).
+      INVALID_USAGE). So a source whose AU cells carry a service id its
+      PMT does not declare (this library's muxer up to 0.10.0 wrote such
+      streams when pushed a non-zero id without declaring it) makes
+      `transmux` raise at its first such unit; copy it with a demux and
+      mux loop of your own that pushes the declared id.
     - Subtitle → `push_subtitle_to(handle, payload, pts)` (kept
       CEA-708/WebVTT streams; DVB offenders must be dropped or fail
       config).
