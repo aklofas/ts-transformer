@@ -173,7 +173,8 @@ public final class Transport extends NativeHandle {
         // Claimed after the native takes the connection, as intoDemuxReceiver(DemuxerConfig).
         long h = nIntoMuxSender(peekHandle(), cfg.programNumber(), cfg.pmtPid(), cfg.pcrPid(),
             cfg.pcrIntervalMs(), cfg.pcrLeadMs(), cfg.psiIntervalMs(), cfg.bufferPackets(),
-            av1, cfg.streamPids(), cfg.streamKinds(), cfg.streamCodecs(),
+            av1, cfg.transportStreamId(), cfg.psiVersionBase(),
+            cfg.streamPids(), cfg.streamKinds(), cfg.streamCodecs(),
             cfg.streamTypeCodes(), cfg.streamCarriesPts(), cfg.dataDescBytes(), cfg.dataDescLens());
         consumeHandle();
         return ShellAdapters.muxSender(h);
@@ -200,7 +201,8 @@ public final class Transport extends NativeHandle {
 
     private static native long nIntoMuxSender(long handle, int programNumber, int pmtPid,
         int pcrPid, int pcrIntervalMs, int pcrLeadMs, int psiIntervalMs, int bufferPackets,
-        int av1Carriage, int[] streamPids, int[] streamKinds, int[] streamCodecs,
+        int av1Carriage, int transportStreamId, int psiVersionBase,
+        int[] streamPids, int[] streamKinds, int[] streamCodecs,
         int[] streamTypeCodes, boolean[] streamCarriesPts, byte[] dataDescBytes,
         int[] dataDescLens) throws MuxException;
 }

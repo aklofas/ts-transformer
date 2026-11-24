@@ -77,6 +77,8 @@ jni_native! {
         psi_interval_ms: jint,
         buffer_packets: jint,
         av1_carriage: jint,
+        transport_stream_id: jint,
+        psi_version_base: jint,
         stream_pids: JIntArray<'local>,
         stream_kinds: JIntArray<'local>,
         stream_codecs: JIntArray<'local>,
@@ -97,6 +99,8 @@ jni_native! {
             psi_interval_ms,
             buffer_packets,
             av1_carriage,
+            transport_stream_id,
+            psi_version_base,
             &stream_pids,
             &stream_kinds,
             &stream_codecs,
@@ -137,6 +141,8 @@ jni_native! {
         psi_interval_ms: jint,
         buffer_packets: jint,
         av1_carriage: jint,
+        transport_stream_id: jint,
+        psi_version_base: jint,
         stream_pids: JIntArray<'local>,
         stream_kinds: JIntArray<'local>,
         stream_codecs: JIntArray<'local>,
@@ -155,6 +161,8 @@ jni_native! {
             psi_interval_ms,
             buffer_packets,
             av1_carriage,
+            transport_stream_id,
+            psi_version_base,
             &stream_pids,
             &stream_kinds,
             &stream_codecs,
@@ -199,6 +207,8 @@ pub(crate) fn build_muxer_config_from_arrays<'local>(
     psi_interval_ms: jint,
     buffer_packets: jint,
     av1_carriage: jint,
+    transport_stream_id: jint,
+    psi_version_base: jint,
     stream_pids: &JIntArray<'local>,
     stream_kinds: &JIntArray<'local>,
     stream_codecs: &JIntArray<'local>,
@@ -348,6 +358,17 @@ pub(crate) fn build_muxer_config_from_arrays<'local>(
         return Err(());
     };
     b.av1_carriage(carriage);
+    // The Java builder range-checks both; a value that still does not fit is
+    // refused here rather than truncated.
+    let Ok(tsid) = crate::jutil::checked_u16(env, transport_stream_id as i64, "transportStreamId")
+    else {
+        return Err(());
+    };
+    let Ok(base) = crate::jutil::checked_u8(env, psi_version_base as i64, "psiVersionBase") else {
+        return Err(());
+    };
+    b.transport_stream_id(tsid);
+    b.psi_version_base(base);
     match b.build() {
         Ok(c) => Ok(c),
         Err(e) => {

@@ -47,6 +47,8 @@ public final class MuxerConfig {
     private final int psiIntervalMs;
     private final int bufferPackets;
     private final Av1CarriageMode av1Carriage;
+    private final int transportStreamId;
+    private final int psiVersionBase;
     private final int[] streamPids;
     private final int[] streamKinds;     // KIND_* per stream
     private final int[] streamCodecs;    // codec code() per kind; -1 for KLV/DATA
@@ -69,6 +71,8 @@ public final class MuxerConfig {
         this.psiIntervalMs = b.psiIntervalMs;
         this.bufferPackets = b.bufferPackets;
         this.av1Carriage = b.av1Carriage;
+        this.transportStreamId = b.transportStreamId;
+        this.psiVersionBase = b.psiVersionBase;
         int n = b.pids.size();
         this.streamPids = new int[n];
         this.streamKinds = new int[n];
@@ -126,6 +130,10 @@ public final class MuxerConfig {
     public int psiIntervalMs() { return psiIntervalMs; }
     public int bufferPackets() { return bufferPackets; }
     public Av1CarriageMode av1Carriage() { return av1Carriage; }
+    /** The PAT's {@code transport_stream_id} (default 1). */
+    public int transportStreamId() { return transportStreamId; }
+    /** The version the PAT and every PMT start at (default 0, valid 0..=31). */
+    public int psiVersionBase() { return psiVersionBase; }
     public int[] streamPids() { return streamPids.clone(); }
     public int[] streamKinds() { return streamKinds.clone(); }
     public int[] streamCodecs() { return streamCodecs.clone(); }
@@ -145,7 +153,8 @@ public final class MuxerConfig {
      * Fluent builder for {@link MuxerConfig}. Defaults mirror
      * {@code tst_core::mpegts::mux::MuxerConfig::default()} scalars
      * (pcrIntervalMs=40, pcrLeadMs=100, psiIntervalMs=100, bufferPackets=10000,
-     * av1Carriage=MPEG2_TS_BINDING). {@code programNumber}/{@code pmtPid} are
+     * av1Carriage=MPEG2_TS_BINDING, transportStreamId=1, psiVersionBase=0).
+     * {@code programNumber}/{@code pmtPid} are
      * single-valued (one program).
      */
     public static final class Builder {
@@ -157,6 +166,8 @@ public final class MuxerConfig {
         private int psiIntervalMs = 100;
         private int bufferPackets = 10_000;
         private Av1CarriageMode av1Carriage = Av1CarriageMode.MPEG2_TS_BINDING;
+        private int transportStreamId = 1;
+        private int psiVersionBase = 0;
         private final List<Integer> pids = new ArrayList<>();
         private final List<Integer> kinds = new ArrayList<>();
         private final List<Integer> codecs = new ArrayList<>();
@@ -221,6 +232,38 @@ public final class MuxerConfig {
         public Builder bufferPackets(int v) { this.bufferPackets = v; return this; }
         public Builder av1Carriage(Av1CarriageMode v) {
             this.av1Carriage = Objects.requireNonNull(v, "av1Carriage");
+            return this;
+        }
+        /**
+         * The PAT's {@code transport_stream_id} (default 1). Every 16-bit value
+         * is valid; {@link Muxer#reconfigure} cannot change it.
+         *
+         * @throws IllegalArgumentException if {@code v} is outside 0..=0xFFFF
+         */
+        public Builder transportStreamId(int v) {
+            if (v < 0 || v > 0xFFFF) {
+                throw new IllegalArgumentException(
+                    "transportStreamId must be in 0..=0xFFFF, got " + v);
+            }
+            this.transportStreamId = v;
+            return this;
+        }
+        /**
+         * The version number the PAT and every PMT start at (default 0). Each
+         * table counts on from it modulo 32 when it changes; {@link Muxer#reconfigure}
+         * cannot change the base. A producer that replaces another on one channel
+         * picks a base different from every version the previous muxer last sent
+         * on the PAT and on each PMT PID it reuses (the previous highest plus one
+         * is the simple case), so that a receiver reads its tables as new.
+         *
+         * @throws IllegalArgumentException if {@code v} is outside 0..=31
+         */
+        public Builder psiVersionBase(int v) {
+            if (v < 0 || v > 31) {
+                throw new IllegalArgumentException(
+                    "psiVersionBase must be in 0..=31, got " + v);
+            }
+            this.psiVersionBase = v;
             return this;
         }
 

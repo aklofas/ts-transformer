@@ -218,7 +218,12 @@ PMT-size budget, sync-KLV-without-PTS, a data `streamType` that would classify
 as a typed kind, …) runs in the native `Muxer` constructor and surfaces as
 `MuxException(CONFIG_INVALID)`. The muxer's PCR runs 100 ms behind each access
 unit's decode time; `MuxerConfig.Builder.pcrLeadMs(ms)` sets another lead
-(0 to 1000).
+(0 to 1000). `transportStreamId(int)` sets the PAT's transport stream id
+(default 1, any 16-bit value) and `psiVersionBase(int)` the version the PAT and
+the PMT start at (default 0, 0 to 31): a producer that replaces another on one
+channel picks a base different from the versions the previous muxer last sent,
+so that a receiver reads its tables as new. Both setters throw
+`IllegalArgumentException` outside their range.
 
 `Muxer.reconfigure(MuxerConfig)` replaces the running program in place: streams
 match by PID, and one whose stream type and codec are unchanged keeps its handle,
@@ -228,7 +233,7 @@ slot (a new stream takes the slot that last carried its PID, else any freed
 one), so re-read the handles from the `*Handles()` getters after each call. A config that moves a PMT PID, changes a
 PID's stream type or codec, moves a PID to another program number, or changes a
 muxer-wide setting (`pcrIntervalMs`, `pcrLeadMs`, `psiIntervalMs`,
-`bufferPackets`, `av1Carriage`) throws `MuxException(CONFIG_INVALID)` and
+`bufferPackets`, `av1Carriage`, `transportStreamId`, `psiVersionBase`) throws `MuxException(CONFIG_INVALID)` and
 changes nothing. The single-program config means the program list itself cannot
 grow here; the Rust and Python muxers take several programs.
 

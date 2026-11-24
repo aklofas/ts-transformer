@@ -34,6 +34,7 @@ class MuxerConfigOrdinalTest {
             N_OPEN = Muxer.class.getDeclaredMethod("nOpen",
                     int.class, int.class, int.class,
                     int.class, int.class, int.class, int.class, int.class,
+                    int.class, int.class,
                     int[].class, int[].class, int[].class, int[].class,
                     boolean[].class, byte[].class, int[].class);
             N_OPEN.setAccessible(true);
@@ -52,6 +53,12 @@ class MuxerConfigOrdinalTest {
     private static void invokeNOpen(
             int av1Carriage, int streamKind, int streamCodec, int streamTypeCode)
             throws Throwable {
+        invokeNOpen(av1Carriage, 1, 0, streamKind, streamCodec, streamTypeCode);
+    }
+
+    private static void invokeNOpen(int av1Carriage, int transportStreamId,
+            int psiVersionBase, int streamKind, int streamCodec, int streamTypeCode)
+            throws Throwable {
         try {
             N_OPEN.invoke(null,
                     /* programNumber  */ 1,
@@ -62,6 +69,8 @@ class MuxerConfigOrdinalTest {
                     /* psiIntervalMs  */ 100,
                     /* bufferPackets  */ 10_000,
                     /* av1Carriage    */ av1Carriage,
+                    /* transportStreamId */ transportStreamId,
+                    /* psiVersionBase */ psiVersionBase,
                     /* streamPids     */ new int[]{0x1011},
                     /* streamKinds    */ new int[]{streamKind},
                     /* streamCodecs   */ new int[]{streamCodec},
@@ -110,6 +119,20 @@ class MuxerConfigOrdinalTest {
                 () -> invokeNOpen(99, MuxerConfig.KIND_VIDEO, 0, -1));
         assertEquals(MuxException.Kind.CONFIG_INVALID, ex.kind(),
                 "out-of-range Av1CarriageMode ordinal must yield CONFIG_INVALID");
+    }
+
+    @Test
+    void theIdentityValuesFollowTheAv1CarriageInThatOrder() throws Throwable {
+        // A transport stream id of 0xFFFF is valid and a version base of 32 is
+        // the core's CONFIG_INVALID. With the two positions swapped the base
+        // would read 0xFFFF, which does not fit a byte: IllegalArgumentException.
+        MuxException ex = assertThrows(MuxException.class,
+                () -> invokeNOpen(0, 0xFFFF, 32, MuxerConfig.KIND_VIDEO, 0, -1));
+        assertEquals(MuxException.Kind.CONFIG_INVALID, ex.kind());
+        assertTrue(ex.getMessage().contains("psi_version_base"), ex.getMessage());
+        IllegalArgumentException tsid = assertThrows(IllegalArgumentException.class,
+                () -> invokeNOpen(0, 0x10000, 0, MuxerConfig.KIND_VIDEO, 0, -1));
+        assertTrue(tsid.getMessage().contains("transportStreamId"), tsid.getMessage());
     }
 
     // ── valid boundary ordinals (must NOT throw) ─────────────────────────────
