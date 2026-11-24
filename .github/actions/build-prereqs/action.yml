@@ -104,7 +104,10 @@ runs:
         # package fetched its zip from sourceforge, which 404/522'd on
         # 2026-10-01 and failed this step twice (run 36819765562) — one
         # external single point of failure removed.
-        python -m pip install --require-hashes -r scripts/ci/requirements-build-tools.txt
+        # RUSTUP_AUTO_INSTALL=0: pip asks `rustc --version` and kills it after
+        # half a second; without it that call starts rustup's install of the
+        # pinned toolchain here and cuts it off (see install-build-tools.sh).
+        RUSTUP_AUTO_INSTALL=0 python -m pip install --require-hashes -r scripts/ci/requirements-build-tools.txt
         # ripgrep: the pinned upstream release, checksum-verified. `gh` and
         # GITHUB_TOKEN are present on every hosted runner. The script adds
         # its directory to GITHUB_PATH; read it back for the check below.

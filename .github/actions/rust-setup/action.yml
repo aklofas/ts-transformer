@@ -72,6 +72,23 @@ runs:
         # preinstalled clippy mid-build.
         if [ "$MODE" != none ]; then echo "RUSTUP_TOOLCHAIN=$channel" >> "$GITHUB_ENV"; fi
         echo "rust-setup: channel $channel, toolchain mode $MODE"
+    # A tool that asks `rustc` or `cargo` for its version inside the checkout
+    # before this point makes rustup start installing the pinned toolchain; if
+    # the tool gives up and kills it, the install below cannot repair what is
+    # left ("recovering from a partially installed toolchain", then "detected
+    # conflict: 'bin/cargo-clippy'"). Removing any copy first makes the install
+    # a clean one. RUSTUP_AUTO_INSTALL=0 keeps these two calls from starting
+    # an install themselves.
+    - if: inputs.toolchain == 'pinned'
+      shell: bash
+      name: Remove any copy of the pinned toolchain
+      env:
+        CHANNEL: ${{ steps.channel.outputs.channel }}
+        RUSTUP_AUTO_INSTALL: '0'
+      run: |
+        command -v rustup >/dev/null 2>&1 || { echo "rust-setup: no rustup yet, nothing to remove"; exit 0; }
+        rustup --version
+        rustup toolchain uninstall "$CHANNEL"
     - if: inputs.toolchain == 'pinned'
       uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
       with:

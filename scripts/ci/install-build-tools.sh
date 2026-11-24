@@ -25,6 +25,13 @@ done
 here="$(CDPATH='' cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 python3 -m venv "$venv"
 
+# pip asks `rustc --version` for its User-Agent and kills it after half a
+# second. Run inside the checkout before the pinned toolchain exists, that
+# call makes rustup start installing the toolchain and cuts it off part-way;
+# the job's own install then fails on what was left ("detected conflict:
+# 'bin/cargo-clippy'"). With this set, rustup answers "not installed" at once.
+export RUSTUP_AUTO_INSTALL=0
+
 attempt=1
 while :; do
   if ${bound[@]+"${bound[@]}"} "$venv/bin/pip" install --require-hashes -r "$here/requirements-build-tools.txt"; then
