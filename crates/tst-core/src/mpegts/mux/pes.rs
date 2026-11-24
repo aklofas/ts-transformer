@@ -67,6 +67,8 @@ pub(crate) enum PesPtsField {
     /// streams with B-frames) per ISO/IEC 13818-1 §2.4.3.6. Emits
     /// `PTS_DTS_flags = '11'` and writes 10 bytes (5-byte PTS with
     /// marker_high `0b0011` + 5-byte DTS with marker_high `0b0001`).
+    /// When the two are equal modulo 2^33 the writer emits the
+    /// [`Self::PtsOnly`] form instead (H.222.0 §2.7.5).
     PtsAndDts { pts: Pts90khz, dts: Pts90khz },
 }
 
@@ -82,7 +84,8 @@ pub(crate) struct PesFlags {
     /// one logical access unit (a complete subtitle composition page, KLV
     /// access unit, AAC ADTS frame, etc.). Required for AC-3 (ATSC A/52
     /// §A.6.3), DVB-sub (EN 300 743 §6.2), DVB-teletext (EN 300 472 §4.2),
-    /// metadata streams (H.222.0 V9 §2.12.4.1), AV1 (binding §3.4).
+    /// metadata streams (H.222.0 V9 §2.12.4.1), AV1 (binding §3.4), H.265
+    /// and H.266 (TS 101 154 §4.1.6.9).
     pub data_alignment_indicator: bool,
 }
 
@@ -403,6 +406,14 @@ pub(crate) fn write_pes_header(
     flags: PesFlags,
 ) -> usize {
     debug_assert!(out.len() >= MAX_PES_HEADER_SIZE);
+    // H.222.0 §2.7.5: a DTS appears only when it differs from the PTS, and
+    // the two are compared as the 33-bit values the header carries.
+    let pts_field = match pts_field {
+        PesPtsField::PtsAndDts { pts, dts } if pts.masked_33bit() == dts.masked_33bit() => {
+            PesPtsField::PtsOnly(pts)
+        }
+        other => other,
+    };
 
     // flags2 high two bits = PTS_DTS_flags per ISO/IEC 13818-1 §2.4.3.6:
     //   '00' — neither PTS nor DTS present

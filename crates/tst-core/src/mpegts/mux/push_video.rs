@@ -171,8 +171,9 @@ impl Muxer {
     ///
     /// Emits PES with `PTS_DTS_flags = '11'` per ISO/IEC 13818-1 §2.4.3.6 —
     /// 10 bytes of PES header data carrying both PTS (composition time)
-    /// and DTS (decode time). When `pts == dts`, prefer
-    /// [`Self::push_video_to`] for the smaller 5-byte PTS-only encoding.
+    /// and DTS (decode time). When `pts` and `dts` are equal modulo 2^33
+    /// the header carries the PTS only (`PTS_DTS_flags = '10'`, 5 bytes),
+    /// as H.222.0 §2.7.5 asks, exactly as [`Self::push_video_to`] writes it.
     ///
     /// **Caller invariant:** `dts <= pts` per §2.4.3.6 (decode order precedes
     /// composition order). The muxer does not enforce this — receivers
@@ -339,6 +340,9 @@ impl Muxer {
     ///
     /// `InvalidNal` and `InvalidAv1Obu` are never raised on this path — the
     /// bytes are emitted verbatim with no Annex-B/OBU validation or framing.
+    /// For H.265, H.266 and AV1 the PES header states that the payload
+    /// starts an access unit; the caller of a wire push passes one whole
+    /// access unit from its first byte.
     pub fn push_video_wire_to(
         &mut self,
         handle: VideoStreamHandle,
@@ -370,6 +374,9 @@ impl Muxer {
     ///
     /// `InvalidNal` and `InvalidAv1Obu` are never raised on this path — the
     /// bytes are emitted verbatim with no Annex-B/OBU validation or framing.
+    /// For H.265, H.266 and AV1 the PES header states that the payload
+    /// starts an access unit; the caller of a wire push passes one whole
+    /// access unit from its first byte.
     pub fn push_video_wire_to_with_dts(
         &mut self,
         handle: VideoStreamHandle,
@@ -441,8 +448,8 @@ impl Muxer {
         // - §3.2 `ts_open_bitstream_unit()` framing — applied in
         //   `Mpeg2TsBinding` mode via [`wrap_av1_obus_binding`]; raw OBUs
         //   in `InteropRawObu` mode.
-        // H.222.0 §2.4.3.7 leaves the alignment bit codec-defined for
-        // H.264 / H.265 / H.266 — keep them unset.
+        // TS 101 154 §4.1.6.9 requires the alignment bit for H.265 and
+        // H.266 (one access unit per PES); H.264 leaves it unset.
         //
         // `av1_binding` keys off the CARRIAGE configuration, not the input
         // form — a Wire-form binding-AV1 push still emits stream_id 0xBD.
@@ -454,7 +461,10 @@ impl Muxer {
             STREAM_ID_VIDEO
         };
         let pes_flags = PesFlags {
-            data_alignment_indicator: matches!(codec, VideoCodec::Av1),
+            data_alignment_indicator: matches!(
+                codec,
+                VideoCodec::Av1 | VideoCodec::H265 | VideoCodec::H266
+            ),
         };
         let mut header = [0u8; MAX_PES_HEADER_SIZE];
         let header_len = write_pes_header(&mut header, stream_id, pts_field, None, pes_flags);
