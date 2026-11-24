@@ -36,8 +36,9 @@
 //! `RtspServerError` maps through the shared kind table
 //! (`From<RtspServerError>` in `tst-rtp`'s `binding_kind.rs`) via
 //! `crate::error::record_with_context`: started twice / not started is
-//! `TST_E_RTSP_SERVER` (-24), a TLS failure is `TST_E_RTSP_TLS` (-21), and
-//! I/O, URL and mount errors take their own RTSP kinds. The detail string
+//! `TST_E_RTSP_SERVER` (-24), a TLS failure is `TST_E_RTSP_TLS` (-21), a
+//! setting of the builder that the build refuses is `TST_E_INVALID_CONFIG`
+//! (-1), and I/O, URL and mount errors take their own RTSP kinds. The detail string
 //! from the Rust `Display` impl is forwarded into the thread-local last-error message.
 
 use crate::error::{TstError, set_last_error};
@@ -59,7 +60,10 @@ use crate::rtsp::server::types::TstRtspServer;
 /// On success the `builder` pointer is consumed (freed). On failure the
 /// builder is also freed; check `tst_get_last_error()` for the negative
 /// `TST_E_*` code and `tst_get_last_error_str()` for a human-readable
-/// message.
+/// message. A setting of the builder that the build refuses (a bind URL
+/// that carries a user name or a password, an `_auth_basic` user name that
+/// contains `:`, an empty `_auth_*` user name) reads `TST_E_INVALID_CONFIG`
+/// with a message that starts "invalid server config".
 ///
 /// Returns a non-NULL `tst_rtsp_server_t*` on success, NULL on failure.
 /// The returned pointer must eventually be freed:

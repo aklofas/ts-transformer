@@ -10534,7 +10534,7 @@ void tst_rtsp_server_builder_accept_unregistered_publishers(struct TstRtspServer
  * `RtspServerBuilder::auth_basic` behavior).
  *
  * A user name that contains `:` is refused by
- * `tst_rtsp_server_builder_start` (NULL, last-error `TST_E_RTSP_MOUNT`):
+ * `tst_rtsp_server_builder_start` (NULL, last-error `TST_E_INVALID_CONFIG`):
  * Basic authentication cannot carry it (RFC 7617 §2).
  *
  * No-op (with last-error set to `TST_E_INVALID_CONFIG`) if `builder`,
@@ -10618,7 +10618,7 @@ void tst_rtsp_server_builder_auth_digest_sha256(struct TstRtspServerBuilder *bui
  * this to redirect the server to a different interface or port without
  * allocating a new builder. As for `_new`, a URL that carries a user name
  * or a password is taken here and refused by
- * `tst_rtsp_server_builder_start` (`TST_E_RTSP_MOUNT`).
+ * `tst_rtsp_server_builder_start` (`TST_E_INVALID_CONFIG`).
  *
  * No-op (with last-error set to `TST_E_INVALID_CONFIG`) if `builder` is
  * NULL, `addr` is NULL, or the URL fails to parse.
@@ -10791,7 +10791,7 @@ void tst_rtsp_server_builder_graceful_shutdown_drain_ms(struct TstRtspServerBuil
  * step because the OS kernel, not a resolver, performs the actual bind.
  * A bind URL must not carry a user name or a password: this call takes it,
  * and `tst_rtsp_server_builder_start` refuses it (NULL, last-error
- * `TST_E_RTSP_MOUNT`). Configure the server's credential with
+ * `TST_E_INVALID_CONFIG`). Configure the server's credential with
  * `_auth_basic` or `_auth_digest_*`.
  *
  * Auth, TLS, session limits, and drain policy may be set with the
@@ -10880,7 +10880,10 @@ void tst_rtsp_server_builder_publish_idle_timeout(struct TstRtspServerBuilder *b
  * On success the `builder` pointer is consumed (freed). On failure the
  * builder is also freed; check `tst_get_last_error()` for the negative
  * `TST_E_*` code and `tst_get_last_error_str()` for a human-readable
- * message.
+ * message. A setting of the builder that the build refuses (a bind URL
+ * that carries a user name or a password, an `_auth_basic` user name that
+ * contains `:`, an empty `_auth_*` user name) reads `TST_E_INVALID_CONFIG`
+ * with a message that starts "invalid server config".
  *
  * Returns a non-NULL `tst_rtsp_server_t*` on success, NULL on failure.
  * The returned pointer must eventually be freed:

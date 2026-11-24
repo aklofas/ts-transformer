@@ -1093,9 +1093,8 @@ mod tests {
     }
 
     /// A server that does not allow UDP media takes no multicast mount: the
-    /// refusal comes before any socket, with the code every configuration
-    /// the server refuses reads in C (the binding kind table puts a
-    /// server's `InvalidConfig` with the mount errors).
+    /// refusal comes before any socket, with the mount code (the server
+    /// itself was built; it is the mount that is refused).
     #[test]
     fn a_multicast_mount_is_refused_where_udp_media_is_off() {
         let b = TstRtspServerBuilder::from_url("rtsp://127.0.0.1:0").expect("test url parses");
