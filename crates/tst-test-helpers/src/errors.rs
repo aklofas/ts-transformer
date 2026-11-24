@@ -12,7 +12,7 @@ use tst_core::error::{DemuxError, MuxError};
 use tst_core::mpegts::mux::{MuxStreamKind, TeletextField};
 use tst_core::transport::{BrokenCause, TransportError};
 
-/// All 38 `MuxError` variants, in `crates/tst-core/src/error.rs` order.
+/// All 39 `MuxError` variants, in `crates/tst-core/src/error.rs` order.
 pub fn every_mux_error() -> Vec<MuxError> {
     vec![
         MuxError::InvalidConfig("bad"),
@@ -50,6 +50,10 @@ pub fn every_mux_error() -> Vec<MuxError> {
             field: TeletextField::MagazineNumber,
             value: 9,
             max: 8,
+        },
+        MuxError::UnassignedSubtitleType {
+            descriptor_tag: 0x59,
+            value: 0x03,
         },
         MuxError::PmtTooLarge {
             used_bytes: 2,
@@ -250,7 +254,7 @@ mod tests {
 
     #[test]
     fn every_mux_error_sample_count_is_pinned() {
-        assert_eq!(every_mux_error().len(), 38);
+        assert_eq!(every_mux_error().len(), 39);
     }
 
     #[test]

@@ -44,9 +44,12 @@ pub enum SubtitleCodec {
     DvbSubtitling {
         /// ISO 639-2 language code, lowercase ASCII (e.g. *b"eng").
         language: [u8; 3],
-        /// ETSI EN 300 468 Table 26. Common values: 0x10 (DVB sub,
-        /// no AR signalling), 0x11 (DVB sub for 4:3 aspect ratio),
-        /// 0x14 (DVB sub for display on a high definition monitor).
+        /// ETSI EN 300 468 Table 26 (`stream_content` 0x03): the assigned
+        /// DVB subtitle codes are `0x10..=0x16` and `0x20..=0x26` (hard of
+        /// hearing); `validate` refuses every other value. Common values:
+        /// 0x10 (DVB sub, no AR signalling), 0x11 (DVB sub for 4:3 aspect
+        /// ratio), 0x14 (DVB sub for display on a high definition monitor).
+        /// A code a later edition assigns: use a raw descriptor override.
         subtitling_type: u8,
         /// Composition page identifier (0..=0xFFFF).
         composition_page_id: u16,
@@ -57,9 +60,13 @@ pub enum SubtitleCodec {
     DvbTeletext {
         /// ISO 639-2 language code, lowercase ASCII.
         language: [u8; 3],
-        /// 5-bit teletext_type. Common values: 0x01 (initial page),
-        /// 0x02 (subtitle page), 0x04 (programme schedule),
-        /// 0x05 (hearing-impaired subtitle).
+        /// 5-bit teletext_type, ETSI EN 300 468 Table 102: the assigned
+        /// codes are `0x01..=0x05`; `validate` refuses `0x00` and
+        /// `0x06..=0x1F`, and a value above `0x1F` does not fit the field.
+        /// Values: 0x01 (initial page), 0x02 (subtitle page), 0x03
+        /// (additional information page), 0x04 (programme schedule),
+        /// 0x05 (hearing-impaired subtitle). A code a later edition
+        /// assigns: use a raw descriptor override.
         teletext_type: u8,
         /// Magazine number, 0..=7. (3-bit field.)
         magazine_number: u8,

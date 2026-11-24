@@ -105,6 +105,17 @@ fn invalid_teletext_field_routes_to_config_invalid() {
 }
 
 #[test]
+fn unassigned_subtitle_type_routes_to_config_invalid() {
+    assert_kind(
+        MuxError::UnassignedSubtitleType {
+            descriptor_tag: 0x59,
+            value: 0x03,
+        },
+        MuxErrorKind::ConfigInvalid,
+    );
+}
+
+#[test]
 fn too_many_video_streams_routes_to_config_invalid() {
     assert_kind(
         MuxError::TooManyVideoStreams { count: 17, cap: 16 },

@@ -1089,6 +1089,13 @@ mod tests {
                 TstError::InvalidConfig,
             ),
             (
+                MuxError::UnassignedSubtitleType {
+                    descriptor_tag: 0x56,
+                    value: 0x00,
+                },
+                TstError::InvalidConfig,
+            ),
+            (
                 MuxError::NoPcrEligibleStream { program_number: 1 },
                 TstError::InvalidConfig,
             ),
