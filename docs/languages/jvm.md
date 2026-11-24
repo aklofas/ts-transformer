@@ -384,7 +384,7 @@ below) restarts the unwrap timeline from the next `ProgramMap`.
 - `Audio(StreamId stream, long pts, Long dts, AudioCodec codec, ByteBuffer raw)` — the raw encoded audio ES; call `parse()` to obtain typed `List<AudioFrame>` on demand (see [Typed sample payloads](#typed-sample-payloads)).
 - `Subtitle(StreamId stream, long pts, Long dts, SubtitleCodec codec, ByteBuffer payload)`
 - `UnknownSample(StreamId stream, long pts, Long dts, int streamType, ByteBuffer payload)`
-- `Metadata(StreamId stream, long pts, MetadataKind kind, ByteBuffer payload, boolean wasReassembled, int cellCount)` — KLV.
+- `Metadata(StreamId stream, long pts, MetadataKind kind, ByteBuffer payload, boolean wasReassembled, int cellCount, OptionalInt metadataServiceId)` — KLV; `metadataServiceId` is the AU cell's service id on synchronous KLV (pass it to `pushKlv` when remuxing) and empty otherwise.
 - `NonConformant(StreamId stream, String issue, NonConformantKind kind, MultiCellAuReason multiCellAuReason, CellFragmentIndication observedCfi, CellFragmentIndication treatedAs)`
 - `Discontinuity(StreamId stream, DiscontinuityKind kind)`
 - `ReconnectDiscontinuity()`

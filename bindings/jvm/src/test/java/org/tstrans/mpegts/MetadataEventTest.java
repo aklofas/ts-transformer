@@ -6,6 +6,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.OptionalInt;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -67,5 +68,68 @@ class MetadataEventTest {
         byte[] ul = new byte[4];
         m.payload().duplicate().get(ul);
         assertArrayEquals(new byte[] {0x06, 0x0e, 0x2b, 0x34}, ul, "KLV UAS Datalink UL prefix");
+    }
+
+    // A whole KLV local set (16-byte UL key, length, value): the demuxer reads an
+    // asynchronous PES as metadata only when it starts with such a key.
+    private static final byte[] KLV = {
+        0x06, 0x0e, 0x2b, 0x34, 0x02, 0x0b, 0x01, 0x01,
+        0x0e, 0x01, 0x03, 0x01, 0x01, 0x00, 0x00, 0x00,
+        0x03, 0x02, 0x01, 0x02,
+    };
+
+    /** Mux one video frame and one KLV unit pushed with {@code serviceId}, demux, return the KLV events. */
+    private static List<DemuxEvent.Metadata> muxAndDemux(MuxerConfig cfg, int serviceId)
+            throws Exception {
+        byte[] ts;
+        try (Muxer m = new Muxer(cfg)) {
+            m.pushVideo(org.tstrans.TestSupport.syntheticH264Idr(), 90_000L, true);
+            m.pushKlv(KLV, 90_000L, serviceId);
+            m.pushVideo(org.tstrans.TestSupport.syntheticH264Idr(), 93_000L, false);
+            // A second unit: a PES whose length the demuxer cannot know ends at
+            // the next start on its PID.
+            m.pushKlv(KLV, 93_000L, serviceId);
+            ts = org.tstrans.TestSupport.drain(m);
+        }
+        List<DemuxEvent.Metadata> out = new ArrayList<>();
+        for (DemuxEvent e : org.tstrans.TestSupport.demuxAll(ts)) {
+            if (e instanceof DemuxEvent.Metadata md) out.add(md);
+        }
+        return out;
+    }
+
+    @Test
+    void aSyncKlvEventCarriesItsMetadataServiceId() throws Exception {
+        byte[] service3 = {0x26, 0x09, 0x01, 0x00, (byte) 0xFF, 'K', 'L', 'V', 'A', 3, 0x0F};
+        MuxerConfig cfg = MuxerConfig.builder().pmtPid(0x100)
+            .addVideo(0x101, VideoCodec.H264)
+            .addKlv(0x102, KlvStreamType.SYNCHRONOUS_METADATA, true)
+            .streamDescriptorsForKlv(0, new byte[][] {service3}).build();
+        List<DemuxEvent.Metadata> events = muxAndDemux(cfg, 3);
+        assertFalse(events.isEmpty());
+        for (DemuxEvent.Metadata e : events) {
+            assertEquals(MetadataKind.KLV_SYNC_AU_CELL, e.kind());
+            assertEquals(OptionalInt.of(3), e.metadataServiceId());
+        }
+    }
+
+    @Test
+    void anAsyncKlvEventHasNoMetadataServiceId() throws Exception {
+        MuxerConfig cfg = MuxerConfig.builder().pmtPid(0x100)
+            .addVideo(0x101, VideoCodec.H264)
+            .addKlv(0x102, KlvStreamType.PRIVATE_DATA, true).build();
+        List<DemuxEvent.Metadata> events = muxAndDemux(cfg, 0);
+        assertFalse(events.isEmpty());
+        for (DemuxEvent.Metadata e : events) {
+            assertEquals(MetadataKind.KLV_ASYNC, e.kind());
+            assertEquals(OptionalInt.empty(), e.metadataServiceId());
+        }
+    }
+
+    @Test
+    void theSixArgumentConstructorGivesAnEmptyServiceId() {
+        DemuxEvent.Metadata m = new DemuxEvent.Metadata(new StreamId(0x102, new StreamKind.KlvSync(null), 1), 0L,
+            MetadataKind.KLV_SYNC_AU_CELL, java.nio.ByteBuffer.wrap(KLV), false, 1);
+        assertEquals(OptionalInt.empty(), m.metadataServiceId());
     }
 }
