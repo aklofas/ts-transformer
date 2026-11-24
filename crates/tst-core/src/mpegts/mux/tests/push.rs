@@ -180,7 +180,7 @@ fn buffer_full_does_not_modify_state() {
     assert_eq!(mux.pull(&mut buf), 0);
     // The program clock did not move either.
     let slot = &mux.slots[0];
-    assert_eq!(slot.psi_last, None);
+    assert_eq!(slot.psi_last, super::slot::PsiAnchor::Due);
     assert_eq!(slot.clock, None);
     assert_eq!(slot.pcr_stream, super::slot::PcrStream::Silent);
     assert!(slot.since_pcr_push.is_empty());

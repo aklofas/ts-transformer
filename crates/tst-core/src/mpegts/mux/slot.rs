@@ -33,9 +33,8 @@ pub(super) struct ProgramSlot {
     pub(super) pmt_version: u8,
     /// `pmt_identity_key` as of that version, to detect a changed PMT.
     pub(super) pmt_identity: Vec<u8>,
-    /// Program clock at the last PSI emission, 33-bit 90 kHz. None until
-    /// first, and after `request_psi`.
-    pub(super) psi_last: Option<u64>,
+    /// When this program's next PSI set is due.
+    pub(super) psi_last: PsiAnchor,
     /// The program clock: the base of the last PCR sent, 33-bit 90 kHz.
     /// None until first.
     pub(super) clock: Option<u64>,
@@ -61,6 +60,23 @@ pub(super) struct ProgramSlot {
     /// stream slot still names the PID it carried; they are overwritten on
     /// re-placement.
     pub(super) placed_pids: BTreeMap<u16, (MuxStreamKind, usize)>,
+}
+
+/// Where a program stands between two PSI sets. A set is the PAT and every
+/// live PMT, whichever program's push sent it, but each program measures
+/// the interval on its own clock: two programs' clocks need not be on one
+/// timeline, so one program's clock is never compared with another's.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum PsiAnchor {
+    /// No set since the muxer was built, `request_psi` or a reconfigure:
+    /// this program's next push or tick sends one.
+    Due,
+    /// Another program's push sent a set. This program's next push or tick
+    /// sends none and takes its own clock as the anchor.
+    SetSeen,
+    /// This program's clock (33-bit, 90 kHz) when it sent a set, or at its
+    /// first push or tick after another program's set.
+    At(u64),
 }
 
 /// What the muxer knows about a program's PCR stream. It has no wall clock,
@@ -112,7 +128,7 @@ impl ProgramSlot {
             data: data.into_iter().map(Some).collect(),
             pcr_pid,
             pmt_descriptor_cache,
-            psi_last: None,
+            psi_last: PsiAnchor::Due,
             clock: None,
             pcr_stream: PcrStream::Silent,
             since_pcr_push: Vec::new(),
@@ -136,7 +152,7 @@ impl ProgramSlot {
             pmt_descriptor_cache: Vec::new(),
             pmt_version: 0,
             pmt_identity: Vec::new(),
-            psi_last: None,
+            psi_last: PsiAnchor::Due,
             clock: None,
             pcr_stream: PcrStream::Silent,
             since_pcr_push: Vec::new(),

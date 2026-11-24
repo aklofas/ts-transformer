@@ -8,12 +8,15 @@
 //! clock without touching state; `reserve_preamble` checks the result against
 //! the buffer and only then commits it, so a refused push changes nothing.
 //!
-//! PSI rides the same clock: one PAT + one PMT per live program whenever the
-//! clock has advanced `psi_interval_ms` since the last set.
+//! PSI rides the same clock: a set is one PAT + one PMT per live program,
+//! sent by a push whose program's clock has advanced `psi_interval_ms` since
+//! that program's anchor. The pusher's anchor becomes its clock; every other
+//! program takes its own clock as its anchor at its next push, so no
+//! program's clock is ever compared with another's.
 
 use super::Muxer;
 use super::psi::{PmtStreamEntry, write_pat_packet, write_pmt_packet};
-use super::slot::PcrStream;
+use super::slot::{PcrStream, PsiAnchor};
 use super::state::pmt_stream_type_byte;
 use super::ts::{AdaptationField, write_pcr_only_packet};
 use crate::error::MuxError;
@@ -57,6 +60,8 @@ struct ClockStep {
     /// The program clock after the push.
     clock: u64,
     psi: bool,
+    /// No set goes out; the program takes `clock` as its PSI anchor.
+    psi_anchor: bool,
     /// A PCR-only packet goes out on the PCR PID before the payload.
     pcr_only: bool,
     /// The push's first packet carries the PCR.
@@ -152,13 +157,19 @@ impl Muxer {
             }
             None => (candidate, true, false),
         };
-        let psi = restart
-            || slot
-                .psi_last
-                .is_none_or(|last| pts_diff_33bit(new_clock, last) >= self.psi_interval_90khz);
+        let (psi, psi_anchor) = match slot.psi_last {
+            _ if restart => (true, false),
+            PsiAnchor::Due => (true, false),
+            PsiAnchor::SetSeen => (false, true),
+            PsiAnchor::At(last) => (
+                pts_diff_33bit(new_clock, last) >= self.psi_interval_90khz,
+                false,
+            ),
+        };
         ClockStep {
             clock: new_clock,
             psi,
+            psi_anchor,
             pcr_only: pcr_due && (tick || (!on_pcr && !live)),
             first_pcr: on_pcr && !tick && (pcr_due || force_pcr),
             restart,
@@ -250,7 +261,9 @@ impl Muxer {
     #[inline(always)]
     fn commit_clock(&mut self, prog_idx: usize, step: &ClockStep) -> ClockPlan {
         if step.psi {
-            self.emit_psi(step.clock);
+            self.emit_psi(prog_idx, step.clock);
+        } else if step.psi_anchor {
+            self.slots[prog_idx].psi_last = PsiAnchor::At(step.clock);
         }
         let pcr = Pcr27mhz::new(step.clock * 300);
         if step.pcr_only {
@@ -314,9 +327,10 @@ impl Muxer {
         }
     }
 
-    /// Queue one PAT and one PMT per live program, and record `clock` as the
-    /// time of every program's last PSI.
-    fn emit_psi(&mut self, clock: u64) {
+    /// Queue one PAT and one PMT per live program; program `prog_idx`, whose
+    /// push sent them, takes `clock` as its anchor, and every other program
+    /// takes its own clock at its next push.
+    fn emit_psi(&mut self, prog_idx: usize, clock: u64) {
         // Emit one PAT that lists all live programs, then one PMT per live
         // program.
         // The PAT is emitted on every PSI tick regardless of which program
@@ -356,11 +370,16 @@ impl Muxer {
             self.queue.push_back(pmt);
         }
 
-        // Every program's PMT just went out, so every slot is stamped: a
-        // slot left at `None` would read as due on its next push and re-send
-        // the whole set.
-        for slot in self.slots.iter_mut() {
-            slot.psi_last = Some(clock);
+        // Every program's PMT just went out, so no slot may stay due: one
+        // left `Due` would re-send the whole set at its next push. The others
+        // are not given `clock`, which is on the pusher's timeline, not
+        // theirs.
+        for (i, slot) in self.slots.iter_mut().enumerate() {
+            slot.psi_last = if i == prog_idx {
+                PsiAnchor::At(clock)
+            } else {
+                PsiAnchor::SetSeen
+            };
         }
     }
 }

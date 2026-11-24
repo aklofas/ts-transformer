@@ -593,3 +593,364 @@ fn psi_emit_updates_psi_last_for_all_programs() {
          psi_last must be updated for all programs on emit (got {pat_count} PATs)"
     );
 }
+
+// ---------------------------------------------------------------------------
+// PSI on each program's own clock. The schedules below run on one time line;
+// every program's stamps follow it at a fixed offset (its epoch), so a gap on
+// the schedule is also a gap on the stamps of a program that kept pushing.
+// ---------------------------------------------------------------------------
+
+const MS: i64 = 90;
+const SEC: i64 = 90_000;
+/// 25 access units a second.
+const FRAME: i64 = 40 * MS;
+const E0: i64 = 20 * SEC;
+
+fn pmt_pid_of(prog: usize) -> u16 {
+    0x1000 + 0x100 * prog as u16
+}
+
+/// `n` programs of one H.264 stream each (program `i`: number `i + 1`, PMT
+/// PID `0x1000 + 0x100 * i`, video PID `0x1011 + 0x100 * i`); program 0 also
+/// carries synchronous KLV on `0x1031` when `klv_on_first` is set.
+fn video_programs(n: usize, psi_interval_ms: u32, klv_on_first: bool) -> MuxerConfig {
+    let mut b = MuxerConfig::builder();
+    b.psi_interval_ms(psi_interval_ms);
+    for i in 0..n {
+        let mut prog = MuxerProgramConfigBuilder::new(i as u16 + 1, pmt_pid_of(i));
+        prog.add_video(pmt_pid_of(i) + 0x11, VideoCodec::H264);
+        if klv_on_first && i == 0 {
+            prog.add_klv(0x1031, KlvStreamType::SynchronousMetadata, true);
+            prog.stream_descriptors_for_klv(
+                0,
+                vec![tst_core::mpegts::descriptors::metadata_klva(0)],
+            )
+            .unwrap();
+        }
+        b.add_program(prog.build());
+    }
+    b.build().unwrap()
+}
+
+#[derive(Clone, Copy)]
+enum Act {
+    Video(usize, i64),
+    Klv(usize, i64),
+    Tick(usize, i64),
+}
+
+/// One action at schedule time `at`; at equal times the lower `order` runs
+/// first.
+#[derive(Clone, Copy)]
+struct Ev {
+    at: i64,
+    order: i64,
+    act: Act,
+}
+
+/// Video pushes of `prog` at schedule times `from, from + step, …` below
+/// `to`, stamped `at + epoch` modulo 2^33.
+fn video_every(prog: usize, epoch: i64, step: i64, from: i64, to: i64, order: i64) -> Vec<Ev> {
+    (0..)
+        .map(|i| from + i * step)
+        .take_while(|at| *at < to)
+        .map(|at| Ev {
+            at,
+            order,
+            act: Act::Video(prog, (at + epoch).rem_euclid(1 << 33)),
+        })
+        .collect()
+}
+
+/// Run the actions in schedule order; per action, its time and the bytes it
+/// put out.
+fn run_schedule(config: MuxerConfig, mut evs: Vec<Ev>) -> Vec<(i64, Vec<u8>)> {
+    evs.sort_by_key(|e| (e.at, e.order));
+    let mut mux = Muxer::new(config).unwrap();
+    let mut first_video = std::collections::HashSet::new();
+    evs.iter()
+        .map(|e| {
+            match e.act {
+                Act::Video(p, ts) => {
+                    let key = first_video.insert(p);
+                    let h = mux.video_handles_for_program(p as u16 + 1).unwrap()[0];
+                    let au = synthetic_nal::h264_au(400, key);
+                    mux.push_video_to(h, &au, Pts90khz::new(ts), key).unwrap();
+                }
+                Act::Klv(p, ts) => {
+                    let h = mux.klv_handles_for_program(p as u16 + 1).unwrap()[0];
+                    let record: Vec<u8> = (0..60u8).collect();
+                    mux.push_klv_to(h, &record, Pts90khz::new(ts), 0).unwrap();
+                }
+                Act::Tick(p, now) => mux.tick(p as u16 + 1, Pts90khz::new(now)).unwrap(),
+            }
+            (e.at, drain_all(&mut mux))
+        })
+        .collect()
+}
+
+fn carries_pid(bytes: &[u8], pid: u16) -> bool {
+    bytes
+        .chunks_exact(188)
+        .any(|p| ((u16::from(p[1]) & 0x1F) << 8 | u16::from(p[2])) == pid)
+}
+
+/// The stretches, in milliseconds of the schedule, between two successive
+/// actions that put out a packet on `pmt_pid`, and from the last of them to
+/// the last action.
+fn psi_gaps(out: &[(i64, Vec<u8>)], pmt_pid: u16) -> Vec<i64> {
+    let at: Vec<i64> = out
+        .iter()
+        .filter(|(_, bytes)| carries_pid(bytes, pmt_pid))
+        .map(|(t, _)| *t)
+        .collect();
+    let end = out.last().map_or(0, |(t, _)| *t);
+    let mut gaps: Vec<i64> = at.windows(2).map(|w| (w[1] - w[0]) / MS).collect();
+    gaps.extend(at.last().map(|l| (end - l) / MS));
+    gaps
+}
+
+fn longest(gaps: &[i64]) -> i64 {
+    gaps.iter().copied().max().unwrap_or(i64::MAX)
+}
+
+#[test]
+fn a_stopped_program_ahead_does_not_stall_the_others_psi() {
+    // Program 2's stamps are five seconds above program 1's; it stops at 3 s.
+    let evs = [
+        video_every(0, E0, FRAME, 0, 10 * SEC, 0),
+        video_every(1, E0 + 5 * SEC, FRAME, 0, 3 * SEC, 1),
+    ]
+    .concat();
+    let out = run_schedule(video_programs(2, 100, false), evs);
+    let gap = longest(&psi_gaps(&out, pmt_pid_of(0)));
+    assert!(gap <= 120, "program 1 went {gap} ms without its PMT");
+}
+
+#[test]
+fn a_slow_program_ahead_does_not_slow_the_others_psi() {
+    // Program 2 pushes at a tenth of program 1's rate, five seconds above it.
+    let evs = [
+        video_every(0, E0, FRAME, 0, 10 * SEC, 0),
+        video_every(1, E0 + 5 * SEC, 10 * FRAME, 0, 10 * SEC, 1),
+    ]
+    .concat();
+    let out = run_schedule(video_programs(2, 100, false), evs);
+    let gap = longest(&psi_gaps(&out, pmt_pid_of(0)));
+    assert!(gap <= 120, "program 1 went {gap} ms without its PMT");
+}
+
+#[test]
+fn a_held_clock_on_one_program_does_not_hold_the_others_psi() {
+    // Program 1, five seconds above program 2, steps back 900 ms at 3 s: its
+    // clock is held (a step under a second is not a new time base).
+    let evs = [
+        video_every(0, E0 + 5 * SEC, FRAME, 0, 3 * SEC, 0),
+        video_every(0, E0 + 5 * SEC - 900 * MS, FRAME, 3 * SEC, 10 * SEC, 0),
+        video_every(1, E0, FRAME, 0, 10 * SEC, 1),
+    ]
+    .concat();
+    let out = run_schedule(video_programs(2, 100, false), evs);
+    let gap = longest(&psi_gaps(&out, pmt_pid_of(1)));
+    assert!(gap <= 120, "program 2 went {gap} ms without its PMT");
+}
+
+#[test]
+fn a_tick_on_any_program_keeps_psi_repeating() {
+    // As the slow program ahead above, with ticks on the program BEHIND
+    // between its pushes.
+    let mut evs = [
+        video_every(0, E0, FRAME, 0, 10 * SEC, 0),
+        video_every(1, E0 + 5 * SEC, 10 * FRAME, 0, 10 * SEC, 1),
+    ]
+    .concat();
+    evs.extend((0..250).map(|i| {
+        let at = 20 * MS + i * FRAME;
+        Ev {
+            at,
+            order: 2,
+            act: Act::Tick(0, at + E0),
+        }
+    }));
+    let out = run_schedule(video_programs(2, 100, false), evs);
+    let gap = longest(&psi_gaps(&out, pmt_pid_of(0)));
+    assert!(gap <= 100, "program 1 went {gap} ms without its PMT");
+}
+
+#[test]
+fn a_second_program_ahead_sends_no_second_set() {
+    use tst_core::mpegts::mux::VideoStreamHandle;
+    let config = video_programs(2, 100, false);
+    let mut mux = Muxer::new(config.clone()).unwrap();
+    let au = synthetic_nal::h264_au(64, true);
+    let round = |mux: &mut Muxer, at: i64| -> (bool, bool) {
+        mux.push_video_to(
+            VideoStreamHandle::pack(0, 0),
+            &au,
+            Pts90khz::new(E0 + at),
+            true,
+        )
+        .unwrap();
+        let first = carries_pid(&drain_all(mux), 0);
+        // Program 2's stamps are five seconds above program 1's.
+        let ahead = E0 + 5 * SEC + at;
+        mux.push_video_to(
+            VideoStreamHandle::pack(1, 0),
+            &au,
+            Pts90khz::new(ahead),
+            true,
+        )
+        .unwrap();
+        (first, carries_pid(&drain_all(mux), 0))
+    };
+    assert_eq!(round(&mut mux, 0), (true, false), "after Muxer::new");
+    mux.request_psi();
+    assert_eq!(round(&mut mux, 3_600), (true, false), "after request_psi");
+    mux.reconfigure(config).unwrap();
+    assert_eq!(round(&mut mux, 7_200), (true, false), "after reconfigure");
+}
+
+#[test]
+fn a_second_program_pushed_after_the_first_ended_still_gets_psi() {
+    // One input muxed twice, one program after the other with the same
+    // stamps: all of program 1 (5 s), then all of program 2.
+    let evs = [
+        video_every(0, E0, FRAME, 0, 5 * SEC, 0),
+        video_every(1, E0 - 5 * SEC, FRAME, 5 * SEC, 10 * SEC, 1),
+    ]
+    .concat();
+    let out = run_schedule(video_programs(2, 100, false), evs);
+    let second_half_sets = out
+        .iter()
+        .filter(|(at, bytes)| *at >= 5 * SEC && carries_pid(bytes, 0))
+        .count();
+    assert!(
+        second_half_sets > 0,
+        "{second_half_sets} sets in the second half"
+    );
+    let gap = longest(&psi_gaps(&out, pmt_pid_of(1)));
+    assert!(gap <= 200, "program 2 went {gap} ms without its PMT");
+}
+
+#[test]
+fn psi_gap_at_a_hand_over_is_at_most_the_interval_in_whole_pushes_plus_one_push() {
+    let bound =
+        |interval_ms: i64, step_ms: i64| (interval_ms + step_ms - 1) / step_ms * step_ms + step_ms;
+    // Program 1 (25 units a second) stops at 3 s; program 2, on the same
+    // time line, pushes every 400 ms and takes over.
+    let evs = [
+        video_every(0, E0, FRAME, 0, 3 * SEC, 0),
+        video_every(1, E0, 10 * FRAME, 0, 10 * SEC, 1),
+    ]
+    .concat();
+    let gap = longest(&psi_gaps(
+        &run_schedule(video_programs(2, 100, false), evs),
+        0x1000,
+    ));
+    assert!(gap <= bound(100, 400));
+    assert_eq!(gap, 720);
+    // The same with program 2 at one unit a second.
+    let evs = [
+        video_every(0, E0, FRAME, 0, 3 * SEC, 0),
+        video_every(1, E0, SEC, 0, 10 * SEC, 1),
+    ]
+    .concat();
+    let gap = longest(&psi_gaps(
+        &run_schedule(video_programs(2, 100, false), evs),
+        0x1000,
+    ));
+    assert!(gap <= bound(100, 1_000));
+    assert_eq!(gap, 1_120);
+    // Program 1 (video and synchronous KLV, 25 units a second, its stamps
+    // 2^32 + 2 s above program 2's) stops at about 6 s; program 2 pushes at
+    // one unit a second and goes first at equal times. The bound is tight.
+    let epoch_1 = 4_296_949_276;
+    let mut evs = video_every(0, epoch_1, FRAME, 0, 540_630, 1);
+    evs.extend(
+        video_every(0, epoch_1, FRAME, 0, 540_630, 11)
+            .into_iter()
+            .map(|e| match e.act {
+                Act::Video(p, ts) => Ev {
+                    act: Act::Klv(p, ts),
+                    ..e
+                },
+                _ => e,
+            }),
+    );
+    evs.extend(video_every(1, 1_800_000, SEC, 0, 10 * SEC, 0));
+    let gap = longest(&psi_gaps(
+        &run_schedule(video_programs(2, 100, true), evs),
+        0x1000,
+    ));
+    assert!(gap <= bound(100, 1_000));
+    assert_eq!(gap, 2_000);
+}
+
+#[test]
+fn a_hand_over_onto_a_held_clock_waits_for_the_stamps_to_catch_up() {
+    // Program 1, far ahead, stops at 1 s; at that moment program 2's stamps
+    // step back by less than a second, which holds its clock, and its PSI
+    // with it, until the stamps catch up.
+    let gap_for = |back: i64| {
+        let evs = [
+            video_every(0, 900_000_000, FRAME, 0, SEC, 0),
+            video_every(1, SEC + 20 * MS, FRAME, 0, SEC, 1),
+            video_every(1, SEC + 20 * MS - back, FRAME, SEC, 6 * SEC, 1),
+        ]
+        .concat();
+        longest(&psi_gaps(
+            &run_schedule(video_programs(2, 100, false), evs),
+            0x1000,
+        ))
+    };
+    assert_eq!(gap_for(0), 120);
+    assert_eq!(gap_for(300 * MS), 400);
+    assert_eq!(gap_for(900 * MS), 1_000);
+}
+
+#[test]
+fn three_programs_that_each_pass_the_interval_at_every_push_send_one_set_a_round() {
+    let interval = 100 * MS;
+    let run = |epochs: [i64; 3]| {
+        let mut mux = Muxer::new(video_programs(3, 100, false)).unwrap();
+        let au = synthetic_nal::h264_au(64, false);
+        let mut rounds = Vec::new();
+        for round in 0..100i64 {
+            let mut senders = Vec::new();
+            let mut pmts = 0;
+            for (p, epoch) in epochs.iter().enumerate() {
+                let h = mux.video_handles_for_program(p as u16 + 1).unwrap()[0];
+                let ts = (epoch + round * interval).rem_euclid(1 << 33);
+                mux.push_video_to(h, &au, Pts90khz::new(ts), false).unwrap();
+                let bytes = drain_all(&mut mux);
+                let pats = bytes
+                    .chunks_exact(188)
+                    .filter(|k| k[1] & 0x1F == 0 && k[2] == 0)
+                    .count();
+                if pats > 0 {
+                    assert_eq!(pats, 1);
+                    senders.push(p);
+                    pmts += (0..3)
+                        .filter(|q| carries_pid(&bytes, pmt_pid_of(*q)))
+                        .count();
+                }
+            }
+            rounds.push((senders, pmts));
+        }
+        rounds
+    };
+    for epochs in [
+        [E0, E0 + 5 * SEC, E0 + 10 * SEC],
+        [E0, E0 + (1 << 32), E0 + (1 << 32) + 5 * SEC],
+    ] {
+        let rounds = run(epochs);
+        for (round, (senders, pmts)) in rounds.iter().enumerate() {
+            assert_eq!(
+                senders,
+                &vec![0],
+                "round {round}: sets sent by programs {senders:?}"
+            );
+            assert_eq!(*pmts, 3, "round {round}");
+        }
+    }
+}
