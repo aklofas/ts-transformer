@@ -251,7 +251,7 @@ fn pmt_too_large_routes_to_config_invalid() {
     );
 }
 
-// === InvalidUsage (8 variants) ===
+// === InvalidUsage (9 variants) ===
 
 #[test]
 fn invalid_stream_handle_routes_to_invalid_usage() {
@@ -323,6 +323,17 @@ fn abs_index_out_of_range_routes_to_invalid_usage() {
             abs_idx: 99,
             len: 3,
             program_number: 1,
+        },
+        MuxErrorKind::InvalidUsage,
+    );
+}
+
+#[test]
+fn undeclared_metadata_service_routes_to_invalid_usage() {
+    assert_kind(
+        MuxError::UndeclaredMetadataService {
+            pid: 0x101,
+            service_id: 3,
         },
         MuxErrorKind::InvalidUsage,
     );

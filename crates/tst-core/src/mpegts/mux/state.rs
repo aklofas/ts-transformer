@@ -29,6 +29,9 @@ pub(super) struct KlvStreamState {
     pub(super) pid: u16,
     pub(super) stream_type: KlvStreamType,
     pub(super) carries_pts: bool,
+    /// The `metadata_service_id`s this stream's PMT entry declares (empty for
+    /// asynchronous KLV, which carries no `metadata_descriptor`).
+    pub(super) declared_service_ids: Vec<u8>,
 }
 
 /// Per-audio-stream cached state.
@@ -417,7 +420,8 @@ pub(super) fn collect_stream_states(
     let klv: Vec<KlvStreamState> = prog
         .streams
         .iter()
-        .filter_map(|s| match s {
+        .enumerate()
+        .filter_map(|(i, s)| match s {
             StreamSpec::Klv {
                 pid,
                 stream_type,
@@ -426,6 +430,7 @@ pub(super) fn collect_stream_states(
                 pid: *pid,
                 stream_type: *stream_type,
                 carries_pts: *carries_pts,
+                declared_service_ids: declared_metadata_service_ids(prog, i),
             }),
             _ => None,
         })
@@ -590,10 +595,11 @@ pub(super) fn build_pmt_descriptor_cache(prog: &MuxerProgramConfig) -> Vec<Vec<u
         // 0x26) for each metadata service plus a single
         // metadata_std_descriptor (tag 0x27), both inside the metadata
         // ES descriptor loop. These sit alongside the KLVA registration
-        // above (ffmpeg/TSDuck consume both). service_id 0 matches
-        // push_klv's default AU-cell metadata_service_id; a caller using
-        // a non-zero service_id supplies its own metadata_klva, which
-        // suppresses the auto-emit per-tag below. Async KLV (0x06) does
+        // above (ffmpeg/TSDuck consume both). The automatic descriptor
+        // declares service 0; a caller's metadata_descriptors (e.g.
+        // metadata_klva) suppress it per-tag below and declare their own
+        // ids. push_klv_to refuses a synchronous push whose id the stream
+        // does not declare. Async KLV (0x06) does
         // NOT carry these — RP 217 / ST 1402.2 §9.4.2 require only KLVA.
         // The metadata_std values are literal STD parameters (§2.6.63), so
         // they declare a buffer and input rate that hold a maximal PES.

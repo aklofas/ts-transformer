@@ -173,6 +173,13 @@ fn mux_rows() -> Vec<(MuxError, ShellErrorKind)> {
             },
             ConfigInvalid,
         ),
+        (
+            MuxError::UndeclaredMetadataService {
+                pid: 0x101,
+                service_id: 3,
+            },
+            ConfigInvalid,
+        ),
     ]
 }
 

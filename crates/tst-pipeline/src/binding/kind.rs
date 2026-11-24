@@ -879,7 +879,8 @@ fn mux_diagnostics(e: &MuxError) -> Diagnostics {
         | MuxError::KlvPidUsedAsPcrPid { pid }
         | MuxError::DuplicatePmtPid { pid, .. }
         | MuxError::DuplicatePidAcrossPrograms { pid, .. }
-        | MuxError::DataPidUsedAsPcrPid { pid } => Some(*pid),
+        | MuxError::DataPidUsedAsPcrPid { pid }
+        | MuxError::UndeclaredMetadataService { pid, .. } => Some(*pid),
         _ => None,
     };
     Diagnostics {
@@ -1722,6 +1723,16 @@ mod tests {
     }
 
     #[test]
+    fn an_undeclared_metadata_service_carries_its_pid() {
+        let b = BindingError::from(MuxError::UndeclaredMetadataService {
+            pid: 0x0101,
+            service_id: 3,
+        });
+        assert_eq!(b.kind, BindingErrorKind::InvalidUsage);
+        assert_eq!(b.diagnostics.pid, Some(0x0101));
+    }
+
+    #[test]
     fn send_errors_carry_input_consumed_and_the_source_detail() {
         let e = MuxSenderError::from(broken()).with_input_consumed(true);
         let b = BindingError::from(e);
@@ -2306,7 +2317,7 @@ mod tests {
         use tst_test_helpers::errors::{every_demux_error, every_mux_error, every_transport_error};
 
         let muxes = every_mux_error();
-        assert_eq!(muxes.len(), 39);
+        assert_eq!(muxes.len(), 40);
         for m in muxes {
             let e = MuxSenderError::from(m.clone());
             let shell = e.kind();
