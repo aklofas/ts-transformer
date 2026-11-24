@@ -712,14 +712,21 @@ therefore accept the stream.
 `Muxer::push_klv*` and `MuxSender::send_klv*` take a
 `metadata_service_id: u8` parameter that lands in the AU cell header
 (per H.222.0 § 2.12.4.2 + ST 1402.2 App. B Table 2). The spec default
-is `0x00` — pass that unless you have a specific reason to use a
-non-zero service_id (typically: mirroring a `metadata_klva(service_id)`
-PMT descriptor's `service_id` byte so receivers see consistent values
-across the PMT advertisement and the wire AU cell).
+is `0x00` — pass that unless the stream declares another service.
 
-The parameter is silently ignored on `KlvStreamType::PrivateData`
+On a sync stream (`SynchronousMetadata`) the id is checked at the push:
+it must be one that a `metadata_descriptor` (tag `0x26`) of that stream's
+PMT entry declares. The automatic descriptor declares `0x00`; declare
+another with `metadata_klva(service_id)` through
+`stream_descriptors_for_klv`. A push naming an undeclared id is refused
+with `MuxError::UndeclaredMetadataService { pid, service_id }` (kind
+`InvalidUsage`; C `TST_E_INVALID_USAGE`, Python and JVM `INVALID_USAGE`)
+before anything is queued, since the AU cell would contradict the PMT.
+A remuxer passes each source unit's own id, which the demuxer reports on
+the synchronous metadata event. A C push always names service `0x00`.
+
+The parameter is ignored on `KlvStreamType::PrivateData`
 streams — those pass payload through verbatim with no AU cell wrap.
-Sync streams (`SynchronousMetadata`) consume it.
 
 ### Multi-cell (fragmented) AUs
 
@@ -771,11 +778,14 @@ gate KLV classification on the descriptor regardless of stream_type
 (tag `0x26`) doesn't *replace* KLVA; both descriptors coexist on the
 PMT entry.
 
-Suppression rule: caller-supplied `registration_descriptor` (any
-`format_identifier`) on the KLV PID via `stream_descriptors_for_klv`
-suppresses the auto-emit. A non-`KLVA` caller-supplied Registration
-logs a `tracing::warn!` since receivers may not classify the stream
-as KLV.
+Suppression rule: a caller-supplied `registration_descriptor` on the
+KLV PID via `stream_descriptors_for_klv` suppresses the auto-emit. It
+must carry `format_identifier = "KLVA"` (additional identification info
+after it is allowed): a Registration with any other identifier on a KLV
+stream is refused at build with `ConfigInvalid`, since receivers would
+not classify the stream as KLV. A private label goes in a user-private
+descriptor (tag `0xFF`, `desc::user_private`). Until 0.10.0 such a
+Registration was written as given, with a warning.
 
 ## Substrate walking
 

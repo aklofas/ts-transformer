@@ -78,6 +78,8 @@ pub struct MuxerConfig {
     pub pcr_interval_ms: u32,
     pub pcr_lead_ms: u32,
     pub psi_interval_ms: u32,
+    pub transport_stream_id: u16,
+    pub psi_version_base: u8,
     pub buffer_packets: usize,
     pub av1_carriage: Av1CarriageMode,
 }
@@ -133,7 +135,7 @@ FFI-binding semantics. Methods (all in `tst_core::mpegts::mux`):
 - `add_subtitle(&mut self, pid: u16, codec: SubtitleCodec) -> &mut Self`
 - `add_data(&mut self, pid: u16, stream_type: u8, carries_pts: bool) -> &mut Self`
 - `pcr_pid(&mut self, pid: u16) -> &mut Self`
-- `program_descriptors(&mut self, descs: Vec<Vec<u8>>) -> &mut Self`
+- `program_descriptors(&mut self, descs: Vec<Vec<u8>>) -> &mut Self` (each element one whole descriptor; an empty or malformed one is refused at build with `ConfigInvalid`)
 - `stream_descriptors_for_{video,klv,audio,subtitle,data,stream}(&mut self, idx: usize, descs: Vec<Vec<u8>>) -> Result<&mut Self, MuxError>`
 - `build(&self) -> MuxerProgramConfig`
 
@@ -143,6 +145,8 @@ FFI-binding semantics. Methods (all in `tst_core::mpegts::mux`):
 - `pcr_interval_ms(&mut self, ms: u32) -> &mut Self`
 - `pcr_lead_ms(&mut self, ms: u32) -> &mut Self`
 - `psi_interval_ms(&mut self, ms: u32) -> &mut Self`
+- `transport_stream_id(&mut self, id: u16) -> &mut Self`
+- `psi_version_base(&mut self, version: u8) -> &mut Self`
 - `buffer_packets(&mut self, n: usize) -> &mut Self`
 - `av1_carriage(&mut self, mode: Av1CarriageMode) -> &mut Self`
 - `build(&self) -> Result<MuxerConfig, MuxError>` — runs
@@ -188,7 +192,8 @@ entirely.
 The function maps each demuxed `StreamKind` to the closest representable
 muxer stream. Kinds that have no lossless mux representation are strict
 offenders — the function fails unless you pass them in `drop` to exclude
-them; DVB subtitling/teletext are the only such kinds.
+them: DVB subtitling/teletext, and an `Unknown` stream whose stream type
+carries sections.
 
 | Demuxed `StreamKind` (PMT `stream_type`) | Rebuilt as | Notes |
 |---|---|---|
@@ -206,6 +211,22 @@ them; DVB subtitling/teletext are the only such kinds.
 | `Subtitle(WebVttInTs)` — `0x06` + `VTTC` registration | `add_subtitle(pid, SubtitleCodec::WebVttInTs)` | Registration descriptor auto-re-emitted. |
 | `Subtitle(DvbSubtitling)` / `Subtitle(DvbTeletext)` | **error (`ConfigInvalid`)** | DVB descriptor params (language, page IDs) are not recoverable from the PMT entry alone. Pass `StreamKindTag::Subtitle` in `drop` to exclude all subtitle streams. |
 | `Unknown(stream_type)` | `add_data(pid, stream_type, carries_pts=true)` | PES pass-through keeping the raw PMT `stream_type` byte; the stream's PMT descriptors are preserved verbatim on the rebuilt PMT. `carries_pts` is true, like synchronous KLV. Pass `StreamKindTag::Unknown` in `drop` to exclude private data streams you don't want to carry. |
+| `Unknown(0x05 / 0x13 / 0x16 / 0x2C / 0x2F / 0x30)` | **error (`ConfigInvalid`)** | These stream types carry sections (H.222.0 Table 2-34) and the muxer writes PES. Pass `StreamKindTag::Unknown` in `drop`, which also drops the source's PES private data streams. |
+
+What the conversion does not carry: the PMT's program_info loop, the PAT's
+`transport_stream_id` and the table versions. Add program descriptors by hand
+through `MuxerProgramConfig::program_descriptors`, and set
+`transport_stream_id` / `psi_version_base` on the returned config if the
+output must keep or replace the source's.
+
+A copied stream loop is checked as a caller's descriptors are (see
+[Auto-emit and conflict suppression](#auto-emit-and-conflict-suppression)): the
+conversion fails with `ConfigInvalid`, naming the PID, when a source
+descriptor cannot do the job of the signalling it replaces (a registration
+other than `KLVA` on a KLV stream, a cut `metadata_descriptor` or a malformed
+`metadata_std_descriptor` on synchronous KLV, an `AV01` registration with
+more than 4 body bytes, a subtitle marker of another codec or with partial
+entries). Build such a program by hand, without that descriptor.
 
 A source with two synchronous KLV streams that do not declare distinct
 `metadata_service_id`s is refused with `ConfigInvalid`; build the config by
@@ -363,9 +384,12 @@ non-`StreamKindTag` entries in `drop`. Field values outside their wire range
 | `VideoCodec` variant | PMT `stream_type` byte | Notes |
 | --- | --- | --- |
 | `VideoCodec::H264` | `0x1B` | Annex-B framing on `push_video`. |
-| `VideoCodec::H265` | `0x24` | Annex-B framing on `push_video`. |
-| `VideoCodec::H266` | `0x33` | Annex-B framing on `push_video`. |
-| `VideoCodec::Av1` | `0x06` | OBU-framed (`obu_has_size_field = 1`); auto-emitted AV01 `registration_descriptor` per AV1-in-MPEG-2-TS binding §2.1. |
+| `VideoCodec::H265` | `0x24` | Annex-B framing on `push_video`. Each PES sets `data_alignment_indicator` (TS 101 154 §4.1.6.9). |
+| `VideoCodec::H266` | `0x33` | Annex-B framing on `push_video`. Each PES sets `data_alignment_indicator` (TS 101 154 §4.1.6.9). |
+| `VideoCodec::Av1` | `0x06` | OBU-framed (`obu_has_size_field = 1`); auto-emitted AV01 `registration_descriptor` per AV1-in-MPEG-2-TS binding §2.1. In the binding carriage (the default) a push that is not a sequence of whole OBUs, each with a size field, is refused with `MuxError::InvalidAv1Obu`. |
+
+A video push whose DTS equals its PTS is written with the PTS only
+(H.222.0 §2.7.5), so a receiver reads no DTS for it.
 
 All four are first-class. `reconfigure` refuses a codec change on a kept
 PID. To switch codecs mid-stream, declare the new codec on a fresh PID in
@@ -561,7 +585,9 @@ Rust API only; the C, Python and JVM bindings do not expose it yet.
 
 ## PSI cadence
 
-`psi_interval_ms` defaults to `100` (validated `>= 10`). PAT and PMT
+`psi_interval_ms` defaults to `100` (validated `>= 10`, and `<= 200` when
+any program carries a KLV stream, as the default configuration does: ST 1402
+asks for the PAT and PMT more than four times a second). PAT and PMT
 emit together at this interval — they are coupled by construction,
 not separately configurable. The 100 ms default matches measured
 baselines from real-world STANAG 4609 captures, where five of six
@@ -572,11 +598,30 @@ PSI rides the program clock described under
 has advanced `psi_interval_ms` since the last PAT and PMT, compared
 modulo 2^33, so the rollover every 26.5 hours does not suppress it. A
 backward PTS (B-frames pushed in decode order) holds the clock and does
-not retrigger PSI. A timeline restart sends PSI at once. In a
-multi-program muxer one PAT/PMT set serves every program and is stamped
-with the clock of the program whose push sent it, so programs on
-timelines far apart share the cadence of the one that is ahead; if that
-one stops, call `request_psi` or the others wait for its stamp.
+not retrigger PSI. A timeline restart sends PSI at once.
+
+Each program measures the interval on its own clock. A set is one PAT and
+one PMT per live program, whichever program's push sent it, so programs on
+timelines far apart no longer wait for the one that is ahead, and a program
+that is slow or stops does not hold back the others. The effective interval
+is the first whole number of the pushing program's push steps at or above
+`psi_interval_ms` (120 ms at 25 units a second for the default of 100).
+When a slower program takes over sending the sets, while it pushes with
+stamps that advance, the first gap can reach that program's interval in
+whole push steps plus one more step; for a program whose push step changes,
+the gap is at most the interval plus twice its largest step. `tick` on such
+a program removes the gap. A backward step under one second holds that
+program's clock, and its PSI with it, for the size of the step.
+
+The PAT carries `MuxerConfig::transport_stream_id` (default 1), and the PAT
+and every PMT start at version `MuxerConfig::psi_version_base` (default 0,
+`0..=31`) and count on from it modulo 32 when they change. A producer that
+replaces another on one channel sets a base different from every version
+the previous producer last sent on the PAT and on each PMT PID it reuses
+(the previous highest plus one is the simple case), so that a receiver reads
+its tables as new; this library's demuxer also reads a different
+`transport_stream_id` as a new producer. Neither can change in a
+`reconfigure`.
 
 ## Bitrate budgeting
 
@@ -623,7 +668,10 @@ Required:
 - `key_frame: true` should correspond to IDR (H.264) or
   `IDR_W_RADL` / `IDR_N_LP` (H.265). The muxer sets
   `random_access_indicator` in the adaptation field of the first TS
-  packet of the resulting PES.
+  packet of the resulting PES. An AV1 key frame in the binding carriage
+  also sets `elementary_stream_priority_indicator` there when that packet
+  holds the start of the access unit's first frame-header or frame OBU
+  (binding §3.4).
 - `push_klv`'s `pts_90khz` is written to the PES header only when the
   KLV stream was configured with `carries_pts: true`. Either way it
   is the push's time for the program clock: while the PCR stream is
@@ -635,9 +683,12 @@ Required:
   configured `KlvStreamType` is `SynchronousMetadata` (stream_type
   0x15). `PrivateData` (stream_type 0x06) streams pass payload through
   verbatim with no AU cell wrap, so the parameter is silently ignored
-  on that path. Spec default is `0x00`. Mirror a non-default
-  `metadata_klva(svc)` PMT descriptor's `service_id` if you need
-  consistency between the PMT advertisement and the wire AU cell.
+  on that path. Spec default is `0x00`. On a synchronous stream the id
+  must be one that a `metadata_descriptor` of that stream's PMT entry
+  declares (the automatic descriptor declares `0x00`; declare another with
+  `metadata_klva(svc)`): a push naming any other id is refused with
+  `MuxError::UndeclaredMetadataService { pid, service_id }` (kind
+  `InvalidUsage`) before anything is queued.
 - KLV blobs are bounded by `PES_packet_length` (`u16`) — `65532`
   bytes without PTS, `65527` bytes with. On a `SynchronousMetadata`
   stream the 5-byte AU cell header counts against the same limit, and
@@ -941,15 +992,31 @@ indexing use `stream_descriptors_for_stream(absolute_idx, ...)`.
 
 The muxer auto-emits Registration `KLVA` (tag 0x05) on every KLV PID,
 `PrivateData` and `SynchronousMetadata` alike. If the caller supplies
-their own Registration descriptor on the same PID (any
-`format_identifier`), the auto-emit is suppressed — TSDuck and
-ffprobe both flag duplicate Registration descriptors as malformed.
+their own Registration descriptor on the same PID, the auto-emit is
+suppressed — TSDuck and ffprobe both flag duplicate Registration
+descriptors as malformed. The same holds for the other automatic
+descriptors (the synchronous KLV `metadata_descriptor` and
+`metadata_std_descriptor`, `AV01`, the subtitle markers).
 
-If the caller's Registration on a KLV PID has a non-`KLVA`
-`format_identifier` (e.g., a vendor-specific KLV transport tag),
-the muxer emits a `tracing::warn!` since receivers that look for
-the standard `KLVA` registration will not recognize the stream as
-KLV. The PMT bytes still go out as the caller specified.
+A caller descriptor that takes the place of automatic signalling must be
+able to do that signalling's job, or receivers misread or lose the stream,
+so `MuxerConfig::validate` refuses it with `ConfigInvalid`, naming the PID:
+
+- on a KLV stream, a Registration whose `format_identifier` is not `KLVA`
+  (a private label goes in a user-private descriptor instead, for example
+  `desc::user_private`, tag 0xFF); additional identification info after
+  `KLVA` is allowed;
+- on a synchronous KLV stream, a `metadata_descriptor` (0x26) that ends
+  before its `metadata_service_id`, and a second `metadata_std_descriptor`
+  (0x27) or one whose body is not 9 bytes;
+- on an AV1 stream, an `AV01` Registration with more than 4 body bytes;
+- on a subtitle stream, a marker of another subtitle codec than the one
+  configured, and a DVB subtitling (0x59) or teletext (0x56 / 0x46)
+  descriptor that is empty or holds a partial entry (8 and 5 bytes per
+  entry).
+
+Until 0.10.0 a non-`KLVA` Registration on a KLV PID was written as given,
+with a warning; it is now refused.
 
 ### PMT size limits
 
@@ -1098,7 +1165,8 @@ program and PID:
 - a kept program whose `pmt_pid` changed, or whose PCR PID changed while
   the old PCR stream stays in the program;
 - a change to any field outside the program list (`pcr_interval_ms`,
-  `pcr_lead_ms`, `psi_interval_ms`, `buffer_packets`, `av1_carriage`).
+  `pcr_lead_ms`, `psi_interval_ms`, `transport_stream_id`,
+  `psi_version_base`, `buffer_packets`, `av1_carriage`).
 
 A refused call leaves the muxer exactly as it was, still running on the old
 config.
@@ -1256,6 +1324,16 @@ AC-3 sync, MP2 frame header). One PES per `push_audio` call; bundle
 multiple frames per call for tighter PES grouping if your bitrate
 warrants it.
 
+An AAC push that starts at a random access point sets
+`random_access_indicator` on the TS packet that starts its PES (TS 101 154
+§4.1.5.1): every ADTS push, and a LATM push only when its first LOAS frame
+carries its `StreamMuxConfig`. On a program whose PCR PID is the AAC PID
+that packet also carries a PCR, so such a program sends a PCR with every
+such push: on an advancing timeline each is `pcr_lead_ms` below its PES
+start; while a backward step under one second holds the clock, those PCRs
+repeat the held value until the stamps catch up. MP2 and AC-3 are
+unchanged.
+
 For multi-stream programs (≤16 audio streams per program), use
 `push_audio_to(handle, pts, frames)` with handles from
 `Muxer::audio_handles()` or `audio_handles_for_program()`. The bare
@@ -1286,8 +1364,10 @@ b.add_program(prog.build());
 let cfg = b.build()?;
 ```
 
-The plain `add_audio(pid, codec)` form keeps `language: None` and
-emits no descriptor. Suppression: caller-supplied
+The code is three ASCII letters (either case); any other byte, padding
+such as `*b"en "` included, is refused at build with
+`MuxError::InvalidLanguageCode`. The plain `add_audio(pid, codec)` form
+keeps `language: None` and emits no descriptor. Suppression: caller-supplied
 tag-`0x0A` via `stream_descriptors_for_audio` wins (their language code
 overrides; no double-emit).
 
@@ -1408,10 +1488,18 @@ muxer prepends/appends the envelope.
   end_of_PES_data_field_marker(0xFF)` per ETSI EN 300 743 §6.2. Pass
   raw segment bytes (each starting with sync_byte `0x0F`).
 - **`DvbTeletext`** — emits the 45-byte stuffed PES header
-  (`PES_header_data_length=0x24`) and pads the PES tail with `0xFF`
-  stuffing to reach `(N × 184) − 6` total `PES_packet_length` per ETSI
-  EN 300 472 §4.2. Pass raw teletext data unit bytes (each starting
-  with `data_identifier`).
+  (`PES_header_data_length=0x24`), and the PES data field starts with ONE
+  `data_identifier` (EN 300 472 §4.4): the caller's first payload byte
+  when it is one (`0x10..=0x1F`, or a user-defined `0x80..=0xFE`), else
+  the muxer writes `0x10` before the payload. The tail up to
+  `(N × 184) − 6` total `PES_packet_length` is whole stuffing data units
+  (`data_unit_id` `0xFF`), never bare `0xFF` bytes (EN 300 472 §4.2).
+  Pass the identifier (optional) followed by whole teletext data units.
+  `0xFF` cannot be passed as a user-defined identifier (it reads as the
+  stuffing unit id). The one payload size whose PES would leave a single
+  spare byte at the 16-bit length cap is refused with `SubtitleTooLarge`
+  (65 457 bytes when the muxer writes the identifier, 65 458 with the
+  caller's).
 - **`Cea708Standalone`** and **`WebVttInTs`** — informal industry
   conventions with no spec-defined envelope; the muxer passes payload
   through unchanged.
@@ -1421,7 +1509,7 @@ muxer prepends/appends the envelope.
 - ≤16 subtitle streams per program (`MAX_SUBTITLE_STREAMS_PER_PROGRAM`).
 - Subtitle PIDs cannot serve as the PCR PID — too sparse for PCR pacing.
 - `push_subtitle` payload max: 65527 bytes (PES packet length budget).
-- DVB-teletext `magazine_number` ∈ 0..=7; `teletext_type` ∈ 0..=0x1F; ISO 639-2 language codes are 3 ASCII alphabetic bytes (per EN 300 468 §6.2.41/§6.2.43; both lowercase and uppercase accepted).
+- DVB subtitling `subtitling_type` ∈ `0x10..=0x16` / `0x20..=0x26` and DVB-teletext `teletext_type` ∈ `0x01..=0x05` (the codes EN 300 468 assigns; another is refused with `MuxError::UnassignedSubtitleType`, a teletext type above 0x1F with `InvalidTeletextField`; use a raw descriptor override for a code a later edition assigns); DVB-teletext `magazine_number` ∈ 0..=7; ISO 639-2 language codes are 3 ASCII alphabetic bytes (per EN 300 468 §6.2.41/§6.2.43; both lowercase and uppercase accepted).
 
 ### Multi-stream and multi-program
 
