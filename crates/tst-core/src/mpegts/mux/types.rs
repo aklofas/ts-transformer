@@ -42,7 +42,7 @@ pub enum SubtitleCodec {
     /// DVB subtitling (bitmap-shaped). Per ETSI EN 300 468 §6.2.41 +
     /// ETSI EN 300 743.
     DvbSubtitling {
-        /// ISO 639-2 language code, lowercase ASCII (e.g. *b"eng").
+        /// ISO 639-2 language code: three ASCII letters (e.g. *b"eng").
         language: [u8; 3],
         /// ETSI EN 300 468 Table 26 (`stream_content` 0x03): the assigned
         /// DVB subtitle codes are `0x10..=0x16` and `0x20..=0x26` (hard of
@@ -58,7 +58,7 @@ pub enum SubtitleCodec {
     },
     /// DVB teletext. Per ETSI EN 300 468 §6.2.43 + ETSI EN 300 706.
     DvbTeletext {
-        /// ISO 639-2 language code, lowercase ASCII.
+        /// ISO 639-2 language code: three ASCII letters.
         language: [u8; 3],
         /// 5-bit teletext_type, ETSI EN 300 468 Table 102: the assigned
         /// codes are `0x01..=0x05`; `validate` refuses `0x00` and
@@ -147,8 +147,9 @@ impl core::fmt::Display for TeletextField {
 
 /// One elementary stream in the muxer's output TS.
 ///
-/// [`MuxerConfig::validate`](crate::mpegts::mux::MuxerConfig::validate) caps at 16 video + 16 KLV streams, with at least
-/// one of either kind required.
+/// [`MuxerConfig::validate`](crate::mpegts::mux::MuxerConfig::validate) caps each program at 16 streams of each
+/// kind (video, KLV, audio, subtitle, data) and requires at least one video or
+/// audio stream per program (the PCR carrier).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StreamSpec {
     Video {

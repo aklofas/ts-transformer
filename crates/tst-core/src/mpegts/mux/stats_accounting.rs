@@ -2,9 +2,9 @@
 //!
 //! Owns `MuxerStats` (the public snapshot struct) and the three public
 //! accessor methods (`stats`, `reset_stats`, `stream_codec_stats`). The
-//! per-PID counter-bump helpers (`bump_video_counters` /
-//! `bump_klv_counters` / `bump_audio_counters`) are shared free functions
-//! in `mpegts::stats` (also used by the demuxer's stats accounting).
+//! per-PID codec-counter helpers (`bump_video_counters` /
+//! `bump_klv_counters` / `bump_audio_counters`) are free functions in
+//! `mpegts::stats` called by the muxer's push paths.
 //!
 //! The `Muxer` struct's `ts_packets_emitted` / `ts_bytes_emitted` /
 //! `per_stream` / `stream_codec_counters` fields back this module's
@@ -25,7 +25,8 @@ crate::binding_record! {
     /// construction (or the last [`Muxer::reset_stats`] call).
     ///
     /// `per_stream` is keyed by PID. Entries are created eagerly at
-    /// [`Muxer::new`] for every configured video and KLV stream so callers
+    /// [`Muxer::new`] for every configured stream (video, KLV, audio,
+    /// subtitle and data) so callers
     /// can always index by a known PID without first checking for key
     /// presence. [`Muxer::reconfigure`] adds entries for new PIDs and never
     /// removes one: the entry of a removed PID stays frozen under its PID

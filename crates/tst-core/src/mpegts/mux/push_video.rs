@@ -47,6 +47,10 @@ impl Muxer {
     /// - [`MuxError::InvalidNal`] if `nal` does not begin with an Annex-B
     ///   start code (H.264 / H.265 / H.266 only — AV1 OBU payloads route
     ///   through `push_video_to` and skip this check).
+    /// - [`MuxError::InvalidAv1Obu`] for an AV1 stream, as on
+    ///   [`Self::push_video_to`]: in the MPEG-2 TS binding carriage (the
+    ///   default) a non-empty `nal` that is not a sequence of whole OBUs,
+    ///   each with `obu_has_size_field = 1`, is refused and nothing is queued.
     /// - [`MuxError::BufferFull`] if the resulting TS packets would exceed
     ///   `MuxerConfig::buffer_packets`.
     pub fn push_video(

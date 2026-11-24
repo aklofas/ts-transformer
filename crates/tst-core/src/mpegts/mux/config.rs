@@ -1187,8 +1187,9 @@ impl MuxerProgramConfigBuilder {
 
     /// Like [`add_audio`][Self::add_audio] but emits an
     /// `iso_639_language_descriptor` (ISO/IEC 13818-1 §2.6.18) on the PMT
-    /// entry. Three-byte ISO 639-2 language code, lowercase ASCII
-    /// (e.g. `*b"eng"`, `*b"deu"`, `*b"jpn"`). `audio_type` is set to
+    /// entry. Three-byte ISO 639-2 language code: three ASCII letters
+    /// (e.g. `*b"eng"`, `*b"deu"`, `*b"jpn"`; anything else is refused at
+    /// build with `InvalidLanguageCode`). `audio_type` is set to
     /// `0x00` (undefined / clean main) per §2.6.19 Table 2-83.
     ///
     /// For richer audio_type semantics or multi-language tracks, supply

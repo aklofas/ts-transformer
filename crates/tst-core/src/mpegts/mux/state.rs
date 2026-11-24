@@ -392,8 +392,8 @@ pub(super) fn ts_packets_for(payload_size: usize) -> usize {
     payload_size.div_ceil(184).max(1) + 1
 }
 
-/// Collect per-stream-class state vectors for one program. Single-pass over
-/// `prog.streams`.
+/// Collect per-stream-class state vectors for one program: one filtered pass
+/// over `prog.streams` per stream class.
 // One Vec per stream class, consumed positionally by `ProgramSlot::from_program` —
 // a named struct would only be destructured straight back into fields.
 #[allow(clippy::type_complexity)]

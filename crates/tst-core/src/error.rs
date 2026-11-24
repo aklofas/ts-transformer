@@ -518,11 +518,12 @@ pub enum MuxError {
     #[error("audio frames too large: {size} bytes, max {max}")]
     AudioTooLarge { size: usize, max: usize },
 
-    /// Caller passed a `VideoStreamHandle` / `KlvStreamHandle` that doesn't
-    /// match a configured stream on this `Muxer`. Handles are obtained from
-    /// `Muxer::video_handles()` / `klv_handles()` and are tied to the
-    /// muxer that produced them — passing one from a different muxer is
-    /// also rejected here.
+    /// Caller passed a stream handle whose index addresses no configured
+    /// stream on this `Muxer`. Handles are obtained from
+    /// `Muxer::video_handles()` / `klv_handles()` (and the other kinds'
+    /// accessors) and carry indexes only: a handle from another muxer with
+    /// the same layout is accepted and addresses this muxer's stream at the
+    /// same position. Only an out-of-range index is refused here.
     #[error("invalid {kind} stream handle (index {index}) — not a configured stream")]
     InvalidStreamHandle { kind: MuxStreamKind, index: usize },
 
@@ -774,7 +775,7 @@ pub enum MuxError {
 /// The 5-variant set is the **inner-tier** coarse classification of muxer
 /// failures: a JNI/UniFFI/pure-C binding author pattern-matches on this enum
 /// to map muxer failures into a language-native exception hierarchy without
-/// enumerating the 38 underlying [`MuxError`] variants. For spec-aware
+/// enumerating the 40 underlying [`MuxError`] variants. For spec-aware
 /// diagnostic code (KLV-handling, DVB-subtitling, descriptor validation),
 /// match on the full [`MuxError`] variant set directly.
 ///
@@ -839,13 +840,13 @@ pub enum MuxErrorKind {
     ///
     /// **Action:** the offered config was refused and the muxer is
     /// unchanged: `new` built nothing, `reconfigure` left the running
-    /// config in place. Fix the config and retry the call. The 21
+    /// config in place. Fix the config and retry the call. The 22
     /// `MuxError` variants in this category collectively cover every
     /// `MuxerConfig::validate()` rejection path.
     ConfigInvalid,
 
     /// Caller is using the muxer API incorrectly on a successfully-built
-    /// muxer. Includes passing a stream handle from a different muxer
+    /// muxer. Includes passing a stream handle whose index is out of range
     /// ([`MuxError::InvalidStreamHandle`]), invoking the single-target
     /// shorthand on a multi-stream muxer
     /// ([`MuxError::AmbiguousTarget`]), invoking shorthand with no
@@ -929,7 +930,7 @@ impl MuxError {
             // Muxer queue at capacity; retry after drain.
             MuxError::BufferFull { .. } => Backpressure,
 
-            // === ConfigInvalid (21 variants) ===
+            // === ConfigInvalid (22 variants) ===
             // MuxerConfig::validate() rejected the construction-time config.
             MuxError::InvalidConfig(_) => ConfigInvalid,
             MuxError::ConfigInvalid { .. } => ConfigInvalid,

@@ -1,13 +1,10 @@
-//! MuxSender-side MPEG-TS muxer.
+//! MPEG-TS muxer.
 //!
-//! The public surface is `Muxer`, `MuxerConfig`, `VideoCodec`,
-//! `KlvStreamType`. Internal helpers live in `ts`, `psi`, `pes` submodules.
-//!
-//! Re-export note: `Muxer`, `VideoCodec`, and `KlvStreamType` are re-exported
-//! at the crate root (`tst_core::Muxer` etc.). `MuxerConfig` deliberately is
-//! not — callers reach it via `mpegts::mux::MuxerConfig` so the construction
-//! site is visually distinct from the SRT `SocketConfig` / `ListenerConfig`
-//! already at the crate root. Don't "symmetry-fix" this.
+//! The public surface is reached through this module's path:
+//! `tst_core::mpegts::mux::{Muxer, MuxerConfig, VideoCodec, KlvStreamType}`
+//! and the other configuration and handle types; none of them is also
+//! reachable from the crate root (the error type is: `tst_core::MuxError`).
+//! Internal helpers live in the `ts`, `psi` and `pes` submodules.
 
 pub(crate) mod pes;
 pub(crate) mod psi;
