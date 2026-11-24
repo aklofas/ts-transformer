@@ -3,6 +3,7 @@
 use super::pes::{PesFlags, PesPtsField, write_pes_header};
 use super::*;
 use crate::mpegts::common::Pts90khz;
+use crate::mpegts::stats::StreamCodecStats;
 
 const VIDEO_PID: u16 = 0x101;
 const TWO_POW_33: i64 = 1 << 33;
@@ -225,4 +226,56 @@ fn av1_binding_never_panics_on_arbitrary_bytes() {
         while m.pull(&mut buf) > 0 {}
     }
     assert!(accepted > 0 && refused > 0, "{accepted} / {refused}");
+}
+
+// ── The OBU statistic of a wire push ──────────────────────────────────────
+
+fn obus_counted(m: &Muxer) -> u64 {
+    match m.stream_codec_stats(VIDEO_PID) {
+        Some(StreamCodecStats::Video { nals_or_obus, .. }) => nals_or_obus,
+        other => panic!("no video statistics: {other:?}"),
+    }
+}
+
+#[test]
+fn av1_binding_wire_push_counts_ts_obus() {
+    // The binding's framing: one `00 00 01` per OBU. A whole OBU that ends
+    // in a zero byte puts `00 00 00 01` on the wire: still one start code.
+    let two = [
+        0x00, 0x00, 0x01, 0x12, 0x00, 0x00, 0x00, 0x01, 0x32, 0x04, 0x10, 0x00, 0x00, 0x03, 0x00,
+    ];
+    let five: Vec<u8> = [0x00, 0x00, 0x01, 0x12, 0x00].repeat(5);
+    for (wire, obus) in [(&two[..], 2), (&five[..], 5)] {
+        let mut m = one_video_muxer(VideoCodec::Av1, None);
+        let h = m.video_stream_handle(0).unwrap();
+        m.push_video_wire_to(h, wire, Pts90khz::new(90_000), true)
+            .unwrap();
+        assert_eq!(obus_counted(&m), obus, "{wire:02x?}");
+    }
+
+    // Wire bytes without the framing count no OBU and are still sent.
+    let mut m = one_video_muxer(VideoCodec::Av1, None);
+    let h = m.video_stream_handle(0).unwrap();
+    m.push_video_wire_to(h, &TWO_OBU_AU, Pts90khz::new(90_000), true)
+        .unwrap();
+    assert_eq!(obus_counted(&m), 0);
+    let pes = video_pes(&mut m);
+    assert_eq!(&pes[14..22], &TWO_OBU_AU);
+}
+
+#[test]
+fn av1_interop_raw_obu_pushes_count_walked_obus() {
+    // Raw OBUs carry no start codes: the count walks their size fields,
+    // for the wire and the elementary form alike.
+    for wire in [false, true] {
+        let mut m = one_video_muxer(VideoCodec::Av1, Some(Av1CarriageMode::InteropRawObu));
+        let h = m.video_stream_handle(0).unwrap();
+        let pts = Pts90khz::new(90_000);
+        if wire {
+            m.push_video_wire_to(h, &TWO_OBU_AU, pts, true).unwrap();
+        } else {
+            m.push_video_to(h, &TWO_OBU_AU, pts, true).unwrap();
+        }
+        assert_eq!(obus_counted(&m), 2, "wire={wire}");
+    }
 }

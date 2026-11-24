@@ -537,9 +537,13 @@ impl Muxer {
         // clean caller-supplied signal for random-access (no NAL inspection
         // required). The NAL-unit count is of the caller-supplied AU bytes
         // regardless of carriage mode; an AU that was not validated above
-        // (AV1, wire form) is walked here.
-        let nals_count =
-            validated_nal_units.unwrap_or_else(|| crate::codec::util::count_nal_units(nal, codec));
+        // (AV1, wire form) is walked here. A binding-mode AV1 wire push is
+        // already framed: one `00 00 01` start code per OBU (binding §3.2).
+        let nals_count = if av1_binding && matches!(form, VideoInputForm::Wire) {
+            crate::codec::annexb::start_codes(nal).count() as u64
+        } else {
+            validated_nal_units.unwrap_or_else(|| crate::codec::util::count_nal_units(nal, codec))
+        };
         let ra_count = u64::from(key_frame);
         crate::mpegts::stats::bump_video_counters(
             &mut self.stream_codec_counters,
