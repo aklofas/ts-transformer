@@ -10883,7 +10883,7 @@ void tst_rtsp_server_builder_publish_idle_timeout(struct TstRtspServerBuilder *b
  * message. A setting of the builder that the build refuses (a bind URL
  * that carries a user name or a password, an `_auth_basic` user name that
  * contains `:`, an empty `_auth_*` user name) reads `TST_E_INVALID_CONFIG`
- * with a message that starts "invalid server config".
+ * with a message that contains "invalid server config".
  *
  * Returns a non-NULL `tst_rtsp_server_t*` on success, NULL on failure.
  * The returned pointer must eventually be freed:

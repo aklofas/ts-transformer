@@ -21,7 +21,7 @@ impl From<RtpConnectError> for BindingError {
     }
 }
 
-/// RTSP keeps its ten-name classification, and the finer bucket wins:
+/// RTSP keeps its own classification, and the finer bucket wins:
 /// 401/404 are `AUTH_REQUIRED`/`NOT_FOUND`, `AuthUnsupported` is
 /// `AUTH_REQUIRED`, the four SDP-media variants are `NOT_FOUND`.
 /// `LocalCancel` is the one-cancel-outcome kind

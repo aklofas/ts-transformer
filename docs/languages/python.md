@@ -1595,7 +1595,9 @@ The surface:
   guards the first ANNOUNCE. A path rule's `Inherit` side uses the table's default rule; the default's `Inherit` uses the server-wide builder setting (`auth_*`). A bad path raises
   `RtspError(MOUNT)`; `MountPolicy.require()` with no credentials raises
   `ValueError` before the server is consulted; a credential with an empty
-  username is refused by the server with `RtspError(MOUNT)`.
+  username is refused by the server with `RtspError(MOUNT)` (the same rule
+  given as the config's `default_mount_rule` is refused by `start()` with
+  `RtspError(CONFIG_INVALID)`).
   `set_challenge` sets the scheme and realm of every 401 the server sends,
   also on a server whose config carries `auth`; that credential is then
   checked in the new scheme. A user name that contains `:` cannot
