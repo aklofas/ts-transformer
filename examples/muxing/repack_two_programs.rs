@@ -64,7 +64,9 @@ use std::env;
 use std::fs;
 use std::io::Write;
 use tst_core::codec::NalUnit;
-use tst_core::mpegts::demux::{DemuxEvent, Demuxer, SamplePayload, VideoPayload, split_video};
+use tst_core::mpegts::demux::{
+    DemuxEvent, Demuxer, MetadataKind, SamplePayload, VideoPayload, split_video,
+};
 use tst_core::mpegts::mux::{
     KlvStreamType, Muxer, MuxerConfig, MuxerProgramConfigBuilder, VideoCodec,
 };
@@ -293,14 +295,23 @@ fn repack_event(
             // They may not decode correctly at the receiver if the stream_type
             // in the output PMT doesn't match, but including them avoids
             // silently dropping vendor-specific metadata.
-            let _ = kind; // provenance noted above; not used for routing
-            // `metadata_service_id` goes into the AU cell header per H.222.0
-            // §2.12.4.2 / ST 1402.2 App. B Table 2 for SynchronousMetadata
-            // streams (stream_type 0x15); silently ignored for PrivateData
-            // streams (0x06) and for the transparent repack case here.
-            // Spec default is 0x00; use non-zero only when mirroring a
-            // metadata_klva() PMT descriptor `service_id` from the source.
-            muxer.push_klv_to(klv_handle, &payload, pts, 0x00)?;
+            //
+            // `metadata_service_id` is written into every AU cell header of a
+            // SynchronousMetadata output stream (stream_type 0x15, H.222.0
+            // §2.12.4.2 / ST 1402.2 App. B Table 2), and a push there must
+            // name a service that stream's PMT entry declares, else the
+            // muxer refuses it. PrivateData streams (0x06), as configured
+            // here, ignore it. Passing the source cell's own id keeps the
+            // source's service if the output is made synchronous and
+            // declares it with `metadata_klva(id)`; async KLV has service 0.
+            let metadata_service_id = match kind {
+                MetadataKind::KlvSyncAuCell {
+                    metadata_service_id,
+                    ..
+                } => metadata_service_id,
+                _ => 0x00,
+            };
+            muxer.push_klv_to(klv_handle, &payload, pts, metadata_service_id)?;
         }
 
         // ── Everything else is ignored ────────────────────────────────────────
