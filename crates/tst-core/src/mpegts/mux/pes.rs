@@ -1,9 +1,11 @@
 //! PES (Packetized Elementary Stream) header packing.
 //!
 //! Five call shapes on the muxer hot path:
-//! - Video: stream_id 0xE0, PTS only, PES_packet_length = 0 (unbounded).
-//!   AV1 sets data_alignment_indicator=1 per binding §3.4; other video codecs
-//!   leave it 0 (H.222.0 §2.4.3.7 codec-defined).
+//! - Video: stream_id 0xE0, the PTS, and the DTS when it differs from the
+//!   PTS (H.222.0 §2.7.5); PES_packet_length = 0 (unbounded).
+//!   data_alignment_indicator=1 for AV1 (binding §3.4) and for H.265 / H.266
+//!   (TS 101 154 §4.1.6.9); H.264 leaves it 0 (H.222.0 §2.4.3.7
+//!   codec-defined).
 //! - KLV synchronous (stream_type 0x15): stream_id 0xFC, PTS only, bounded,
 //!   data_alignment=1 per H.222.0 V9 §2.12.4.1. 0xFC is reserved for
 //!   *metadata streams* (Table 2-22) and must only be used with stream_type 0x15.
