@@ -251,7 +251,7 @@ impl Muxer {
     /// decodable without prior segments).
     pub fn request_psi(&mut self) {
         for slot in &mut self.slots {
-            slot.psi_last = None;
+            slot.psi_last = slot::PsiAnchor::Due;
         }
     }
 
