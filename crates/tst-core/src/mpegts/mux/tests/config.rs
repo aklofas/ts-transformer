@@ -662,3 +662,100 @@ fn data_stream_accepts_private_pes_types() {
         assert!(cfg.is_ok(), "0x{st:02X}: {:?}", cfg.err());
     }
 }
+
+/// One program: video 0x101 plus, when `klv` is given, a KLV stream 0x102.
+fn program_with_klv(
+    number: u16,
+    pmt_pid: u16,
+    pids: u16,
+    klv: Option<KlvStreamType>,
+) -> MuxerProgramConfig {
+    let mut prog = MuxerProgramConfigBuilder::new(number, pmt_pid);
+    prog.add_video(pids + 1, VideoCodec::H264);
+    if let Some(st) = klv {
+        prog.add_klv(pids + 2, st, st == KlvStreamType::SynchronousMetadata);
+    }
+    prog.build()
+}
+
+fn with_psi_interval(ms: u32, programs: Vec<MuxerProgramConfig>) -> Result<MuxerConfig, MuxError> {
+    let mut b = MuxerConfig::builder();
+    for p in programs {
+        b.add_program(p);
+    }
+    b.psi_interval_ms(ms);
+    b.build()
+}
+
+#[test]
+fn rejects_a_psi_interval_above_200_ms_when_a_program_carries_klv() {
+    for klv in [
+        KlvStreamType::SynchronousMetadata,
+        KlvStreamType::PrivateData,
+    ] {
+        let one = || vec![program_with_klv(1, 0x1000, 0x100, Some(klv))];
+        assert!(
+            matches!(
+                with_psi_interval(201, one()),
+                Err(MuxError::InvalidConfig(_))
+            ),
+            "{klv:?}"
+        );
+        let r = with_psi_interval(200, one());
+        assert!(r.is_ok(), "{klv:?}: {r:?}");
+    }
+    // The default configuration declares an asynchronous KLV stream.
+    let raised = |ms| MuxerConfig {
+        psi_interval_ms: ms,
+        ..Default::default()
+    };
+    assert!(matches!(
+        raised(201).validate(),
+        Err(MuxError::InvalidConfig(_))
+    ));
+    assert!(raised(200).validate().is_ok());
+    // Without KLV in any program the interval is not bounded above.
+    for ms in [201, 60_000] {
+        let r = with_psi_interval(
+            ms,
+            vec![
+                program_with_klv(1, 0x1000, 0x100, None),
+                program_with_klv(2, 0x1100, 0x200, None),
+            ],
+        );
+        assert!(r.is_ok(), "{ms}: {r:?}");
+    }
+    // A KLV stream in the second program only is enough.
+    assert!(matches!(
+        with_psi_interval(
+            201,
+            vec![
+                program_with_klv(1, 0x1000, 0x100, None),
+                program_with_klv(2, 0x1100, 0x200, Some(KlvStreamType::PrivateData)),
+            ],
+        ),
+        Err(MuxError::InvalidConfig(_))
+    ));
+}
+
+#[test]
+fn reconfigure_refuses_adding_klv_above_the_psi_bound() {
+    let without = with_psi_interval(1_000, vec![program_with_klv(1, 0x1000, 0x100, None)]).unwrap();
+    let mut m = Muxer::new(without.clone()).unwrap();
+    let with = MuxerConfig {
+        programs: vec![program_with_klv(
+            1,
+            0x1000,
+            0x100,
+            Some(KlvStreamType::SynchronousMetadata),
+        )],
+        ..without.clone()
+    };
+    let r = m.reconfigure(with);
+    assert!(matches!(r, Err(MuxError::InvalidConfig(_))), "{r:?}");
+    assert_eq!(
+        format!("{:?}", m.config),
+        format!("{without:?}"),
+        "a refused reconfigure leaves the muxer unchanged"
+    );
+}
