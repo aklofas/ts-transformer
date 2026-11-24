@@ -278,12 +278,13 @@ connection's current nonce, malformed or not) and a `Refuse` status never
 count. A stale nonce is answered `401` with a new nonce and `stale=true`: the
 client answers again with the credential it has, and that `401` is not one of
 the three that close a connection. A request for a path without a rule
-counts on the default rule, so a peer cannot create a counter; `set` on a path keeps its counts, `remove` and
-`clear` drop them.
+counts on the default rule, so a peer cannot create a counter; `set` on a
+path keeps its counts, `remove` and `clear` drop them.
 
 Read the counts as a rate, not as a reason to lock a name: anyone can raise
-them (three refused answers per connection under Basic, two under Digest
-after the bare first challenge, on as many connections as they like), so a
+them (three refused answers per connection under Basic or Digest: a Digest
+peer can take its nonce from a stale challenge, which is no strike; on as
+many connections as they like), so a
 lock-out built on one name's count can be set off against that name's owner.
 A peer that holds one valid credential resets its strikes with it and can try
 other credentials without bound on one connection: the count is the only sign
