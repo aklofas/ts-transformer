@@ -20,6 +20,7 @@ d="$3"; mkdir -p "$d/bin"
 cat > "$d/bin/pip" <<'PIP'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$TMP/pip.log"
+printf 'RUSTUP_AUTO_INSTALL=%s\n' "${RUSTUP_AUTO_INSTALL-unset}" >> "$TMP/pip-env.log"
 n="$(cat "$TMP/pip-fail")"
 if [ "$n" -gt 0 ]; then echo $((n - 1)) > "$TMP/pip-fail"; echo "network error" >&2; exit 1; fi
 PIP
@@ -56,6 +57,8 @@ run "$TMP/tools:$BASH_DIR:/usr/bin:/bin"
 grep -q -- 'install --require-hashes -r .*scripts/ci/requirements-build-tools.txt' "$TMP/pip.log" || fail "case 1 pip arguments"
 [ "$(cat "$TMP/sleep.log")" = "sleep 20" ] || fail "case 1 wait"
 grep -q '1.12.1' "$TMP/out" || fail "case 1 meson version not printed"
+# pip's `rustc --version` probe must not start a toolchain install
+[ "$(sort -u "$TMP/pip-env.log")" = "RUSTUP_AUTO_INSTALL=0" ] || fail "case 1 pip ran with: $(sort -u "$TMP/pip-env.log")"
 
 # 2: only meson is linked into the bin directory, which goes on the path file
 [ "$(ls "$TMP/rt/build-tools-bin")" = "meson" ] || fail "case 2 bin dir holds: $(ls "$TMP/rt/build-tools-bin")"
