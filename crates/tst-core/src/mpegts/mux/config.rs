@@ -270,6 +270,15 @@ impl MuxerConfig {
     ///   by hand through
     ///   [`MuxerProgramConfig::program_descriptors`] on the returned
     ///   config.
+    /// - **Source descriptors the muxer refuses**: the conversion fails with
+    ///   the `ConfigInvalid` of [`validate`](Self::validate), naming the PID,
+    ///   when a copied stream loop could not replace the muxer's own
+    ///   signalling: a registration other than a 4-byte `KLVA` on a KLV
+    ///   stream; on synchronous KLV a `metadata_descriptor` cut before its
+    ///   `metadata_service_id`, or more than one or a malformed
+    ///   `metadata_std_descriptor`; an `AV01` registration with more than 4
+    ///   body bytes; a subtitle marker of another codec, or one with partial
+    ///   entries. Build such a program by hand, without that descriptor.
     /// - **PCR copy rule**: the demuxed `pcr_pid` is copied iff it equals
     ///   the PID of a kept video or audio stream. KLV, data, and subtitle
     ///   PIDs are PCR-ineligible — the PCR pin is not copied (an explicit
