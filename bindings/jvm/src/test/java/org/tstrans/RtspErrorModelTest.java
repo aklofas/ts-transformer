@@ -12,15 +12,17 @@ class RtspErrorModelTest {
      * bucket ({@code AuthUnsupported} → {@code AUTH_REQUIRED}, the four
      * SDP-media errors → {@code NOT_FOUND}). {@code CLOSED} added for 0.7.0:
      * a cancelled control-plane call and a consumed data plane.
+     * {@code CONFIG_INVALID} added for 0.11.0: a server configuration the build refuses.
      */
     @Test void kindMembersMatchTheRtspDomain() {
         Set<String> expected = Set.of("PROTOCOL", "AUTH_FAILED", "AUTH_REQUIRED", "NOT_FOUND",
-            "UNSUPPORTED_TRANSPORT", "TLS", "IO", "TIMEOUT", "SERVER", "MOUNT", "CLOSED");
+            "UNSUPPORTED_TRANSPORT", "TLS", "IO", "TIMEOUT", "SERVER", "MOUNT", "CLOSED",
+            "CONFIG_INVALID");
         Set<String> actual = Arrays.stream(RtspException.Kind.values())
             .map(Enum::name)
             .collect(Collectors.toSet());
         assertEquals(expected, actual);
-        assertEquals(11, RtspException.Kind.values().length);
+        assertEquals(12, RtspException.Kind.values().length);
     }
     @Test void carriesKindAndMessage() {
         var e = new RtspException(RtspException.Kind.TLS, "boom");
