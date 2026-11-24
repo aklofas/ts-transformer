@@ -123,4 +123,47 @@ class MuxerTest {
             m.pushKlvTo(h, new byte[] {1}, 0, 255);
         }
     }
+
+    private static final byte[] KLV = {1, 2, 3};
+
+    @Test
+    void aSynchronousKlvPushUnderAnUndeclaredServiceIsInvalidUsage() throws Exception {
+        MuxerConfig automatic = MuxerConfig.builder().pmtPid(0x100)
+            .addVideo(0x101, VideoCodec.H264)
+            .addKlv(0x102, KlvStreamType.SYNCHRONOUS_METADATA, true).build();
+        // The automatic metadata_descriptor declares service 0.
+        try (Muxer m = new Muxer(automatic)) {
+            m.pushVideo(syntheticH264Idr(), 0L, true);
+            m.pushKlv(KLV, 0L, 0);
+            long before = m.pendingPackets();
+            MuxException e = assertThrows(MuxException.class, () -> m.pushKlv(KLV, 0L, 3));
+            assertEquals(MuxException.Kind.INVALID_USAGE, e.kind());
+            assertEquals(before, m.pendingPackets(), "a refused push queues nothing");
+        }
+        // A caller metadata_descriptor for service 3 replaces the automatic one.
+        byte[] service3 = {0x26, 0x09, 0x01, 0x00, (byte) 0xFF, 'K', 'L', 'V', 'A', 3, 0x0F};
+        MuxerConfig declared = MuxerConfig.builder().pmtPid(0x100)
+            .addVideo(0x101, VideoCodec.H264)
+            .addKlv(0x102, KlvStreamType.SYNCHRONOUS_METADATA, true)
+            .streamDescriptorsForKlv(0, new byte[][] {service3}).build();
+        try (Muxer m = new Muxer(declared)) {
+            KlvStreamHandle h = m.klvHandles().get(0);
+            m.pushKlvTo(h, KLV, 0L, 3);
+            MuxException e = assertThrows(MuxException.class, () -> m.pushKlvTo(h, KLV, 0L, 0));
+            assertEquals(MuxException.Kind.INVALID_USAGE, e.kind());
+        }
+    }
+
+    @Test
+    void aTruncatedAv1ObuIsInvalidAv1Obu() throws Exception {
+        MuxerConfig cfg = MuxerConfig.builder().pmtPid(0x100)
+            .addVideo(0x101, VideoCodec.AV1).build();
+        try (Muxer m = new Muxer(cfg)) {
+            // A sequence header OBU whose size field is missing.
+            MuxException e = assertThrows(MuxException.class,
+                () -> m.pushVideo(new byte[] {0x0A}, 0L, true));
+            assertEquals(MuxException.Kind.INVALID_AV1_OBU, e.kind());
+            assertEquals(0, m.pendingPackets(), "a refused push queues nothing");
+        }
+    }
 }

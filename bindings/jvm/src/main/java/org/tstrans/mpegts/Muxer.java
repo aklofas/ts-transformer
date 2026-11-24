@@ -145,9 +145,12 @@ public final class Muxer extends NativeHandle {
      *
      * @param klv               raw KLV LS bytes
      * @param pts               90&nbsp;kHz presentation timestamp
-     * @param metadataServiceId metadata service selector (0 for the common single-service case)
+     * @param metadataServiceId metadata service selector (0 for the common single-service case);
+     *     on a {@code SYNCHRONOUS_METADATA} stream it must be a service the stream's
+     *     {@code metadata_descriptor} declares (the automatic descriptor declares 0)
      * @throws MuxException {@code INPUT_MALFORMED} (too large for one PES),
-     *     {@code INVALID_USAGE} (zero or &gt;1 KLV stream), or {@code BACKPRESSURE}.
+     *     {@code INVALID_USAGE} (zero or &gt;1 KLV stream, or a synchronous push
+     *     naming an undeclared service; nothing is queued), or {@code BACKPRESSURE}.
      */
     public void pushKlv(byte[] klv, long pts, int metadataServiceId) throws MuxException {
         ensureOpen("Muxer is closed");
@@ -366,9 +369,12 @@ public final class Muxer extends NativeHandle {
      * @param h                 handle of the target KLV stream (from this muxer)
      * @param klv               raw KLV LS bytes
      * @param pts               90&nbsp;kHz presentation timestamp
-     * @param metadataServiceId metadata service selector (0 for the common case)
-     * @throws MuxException {@code INVALID_USAGE} (malformed or out-of-range handle),
-     *     {@code INPUT_MALFORMED} (too large for one PES), or {@code BACKPRESSURE}.
+     * @param metadataServiceId metadata service selector (0 for the common case); on a
+     *     {@code SYNCHRONOUS_METADATA} stream it must be a declared service, as for
+     *     {@link #pushKlv}
+     * @throws MuxException {@code INVALID_USAGE} (malformed or out-of-range handle, or a
+     *     synchronous push naming an undeclared service), {@code INPUT_MALFORMED} (too
+     *     large for one PES), or {@code BACKPRESSURE}.
      */
     public void pushKlvTo(KlvStreamHandle h, byte[] klv, long pts, int metadataServiceId)
             throws MuxException {

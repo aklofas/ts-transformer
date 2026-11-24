@@ -127,6 +127,11 @@ public final class MuxerConfig {
      * time.
      */
     public int pcrLeadMs() { return pcrLeadMs; }
+    /**
+     * How often the PAT and PMT repeat, in milliseconds of the program's own
+     * timeline (default 100; at least 10, and at most 200 when the program
+     * carries a KLV stream).
+     */
     public int psiIntervalMs() { return psiIntervalMs; }
     public int bufferPackets() { return bufferPackets; }
     public Av1CarriageMode av1Carriage() { return av1Carriage; }
@@ -228,6 +233,12 @@ public final class MuxerConfig {
          * ({@code CONFIG_INVALID}).
          */
         public Builder pcrLeadMs(int v) { this.pcrLeadMs = v; return this; }
+        /**
+         * How often the PAT and PMT repeat, in milliseconds of the program's own
+         * timeline (default 100). At least 10, and at most 200 when the program
+         * carries a KLV stream; the range is checked at {@code new Muxer(...)}
+         * ({@code CONFIG_INVALID}).
+         */
         public Builder psiIntervalMs(int v) { this.psiIntervalMs = v; return this; }
         public Builder bufferPackets(int v) { this.bufferPackets = v; return this; }
         public Builder av1Carriage(Av1CarriageMode v) {
@@ -314,8 +325,9 @@ public final class MuxerConfig {
          * private_stream_1). {@code streamType} is the raw PMT stream_type byte
          * (0..=255). It must not classify as a typed kind (e.g. 0x1B H.264), and a
          * 0x06 stream must not carry a classifying descriptor (e.g. KLVA
-         * registration) — both are rejected at {@code new Muxer(...)} with
-         * {@code CONFIG_INVALID}. Push-time payloads pass through verbatim — no
+         * registration), and the stream types H.222.0 carries in sections
+         * (0x05, 0x13, 0x16, 0x2C, 0x2F, 0x30) cannot carry PES — all are
+         * rejected at {@code new Muxer(...)} with {@code CONFIG_INVALID}. Push-time payloads pass through verbatim — no
          * AU-cell wrap, no framing (unlike {@link #addKlv KLV}).
          *
          * @param carriesPts whether pushed PTS values are written to PES headers
