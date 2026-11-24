@@ -74,9 +74,13 @@ impl Muxer {
     ///   `PES_packet_length` (max 65527 bytes for CEA-708 / WebVTT
     ///   passthrough, 65524 raw bytes for DVB-sub after the 3-byte
     ///   EN 300 743 §6.2 envelope; DVB-teletext caps at 65458 when the writer
-    ///   auto-prepends the EN 300 472 §4.4.1 `data_identifier` byte and
-    ///   65459 when the caller's first payload byte is already in
-    ///   `0x10..=0x1F`).
+    ///   auto-prepends the EN 300 472 §4.4 `data_identifier` byte and
+    ///   65459 when the caller's first payload byte is already an
+    ///   identifier, `0x10..=0x1F` or `0x80..=0xFE`). One teletext size just
+    ///   below each cap (65457 with the prepend, 65458 without) is refused
+    ///   as well, with `max` one smaller: its PES would leave a single spare
+    ///   byte, which no stuffing data unit can fill, and one more packet
+    ///   does not fit the 16-bit length.
     /// - [`MuxError::BufferFull`] if the resulting TS packets would exceed
     ///   `MuxerConfig::buffer_packets`.
     pub fn push_subtitle_to(
@@ -126,8 +130,10 @@ impl Muxer {
         //   `PES_packet_length` is `N*184 - 6` and must fit in u16, so the
         //   max acceptable payload is whatever fits inside `dvb_teletext_
         //   total_pes_bytes(...) ≤ 65541`. Auto-prepend of `0x10` (when the
-        //   caller's first byte is not already in `0x10..=0x1F`) costs 1
+        //   caller's first byte is not already a data identifier) costs 1
         //   byte of headroom: 65458 max with auto-prepend, 65459 without.
+        //   One size below each (65457 / 65458) is refused too: it would
+        //   leave one spare byte, which no stuffing data unit can fill.
         // - Other codecs: standard 14-byte header (3 byte prefix + flags(3) +
         //   PTS(5)), so PES_packet_length covers flags(3) + PTS(5) + envelope
         //   + payload.
@@ -138,8 +144,14 @@ impl Muxer {
                 // `auto_prepend` flag so the error reports a useful max.
                 // Per EN 300 472 §4.2 + H.222.0 §2.4.3.7: max total_pes_bytes
                 // = 356*184 = 65504; subtract HEADER(45) and the auto-prepend
-                // byte (if any) to recover max payload.
-                let max = 65504 - 45 - usize::from(auto_prepend);
+                // byte (if any) to recover max payload. For the one size
+                // just below it the largest accepted payload is one smaller.
+                let exact_fit = 65504 - 45 - usize::from(auto_prepend);
+                let max = if payload.len() == exact_fit - 1 {
+                    exact_fit - 2
+                } else {
+                    exact_fit
+                };
                 return Err(MuxError::SubtitleTooLarge {
                     size: payload.len(),
                     max,

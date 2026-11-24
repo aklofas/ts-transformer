@@ -283,6 +283,31 @@ fn dvb_teletext_near_boundary_pes_packet_length_matches_formula() {
     );
 }
 
+/// The one payload size per prepend case whose PES would leave exactly one
+/// spare byte at the last packet the 16-bit `PES_packet_length` allows: a
+/// stuffing unit needs two bytes and there is no room for another packet.
+/// The refusal reports the largest smaller size, which is accepted.
+#[test]
+fn teletext_remainder_one_at_the_size_cap_is_refused() {
+    for (size, first) in [(65_458usize, 0x10u8), (65_457, 0x02)] {
+        let mut payload = vec![0u8; size];
+        payload[0] = first;
+        let mut mux = teletext_muxer();
+        let pending = mux.pending_packets();
+        assert_eq!(
+            mux.push_subtitle(Pts90khz::new(90_000), &payload),
+            Err(MuxError::SubtitleTooLarge {
+                size,
+                max: size - 1
+            }),
+            "first byte 0x{first:02X}"
+        );
+        assert_eq!(mux.pending_packets(), pending, "nothing queued");
+        mux.push_subtitle(Pts90khz::new(90_000), &payload[..size - 1])
+            .expect("the reported maximum is accepted");
+    }
+}
+
 // ── Handle accessors ──────────────────────────────────────────────────────
 
 #[test]
