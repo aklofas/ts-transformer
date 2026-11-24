@@ -674,6 +674,21 @@ impl RtspServer {
                     .into(),
             });
         }
+        // A bind URL says where to listen and nothing else. A path would
+        // read like a mount and a query like a setting, and the server takes
+        // neither from it: `?transport=tcp` would not make it TCP-only.
+        if !matches!(b.bind_url.path.as_str(), "" | "/") {
+            return Err(RtspServerError::InvalidServerConfig {
+                detail: "bind URL: must not carry a path (add mounts with the mount calls)".into(),
+            });
+        }
+        if b.bind_url.has_query() {
+            return Err(RtspServerError::InvalidServerConfig {
+                detail: "bind URL: must not carry a query (its keys are a client's; \
+                         whether media may go over UDP is allow_udp_media, not transport=)"
+                    .into(),
+            });
+        }
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .worker_threads(2)
@@ -730,8 +745,8 @@ impl RtspServer {
         self.state.mount_rules.clone()
     }
 
-    /// Convenience: `RtspServerBuilder::new(url)?.build()`. The URL's path
-    /// and query are ignored (see [`RtspServerBuilder::new`]).
+    /// Convenience: `RtspServerBuilder::new(url)?.build()`. A URL that
+    /// carries a path or a query is refused (see [`RtspServerBuilder::new`]).
     pub fn bind(url: &str) -> Result<Self, RtspServerError> {
         RtspServerBuilder::new(url)?.build()
     }

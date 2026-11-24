@@ -531,6 +531,11 @@ pub enum RtspTransportPref {
 #[derive(Debug, Clone)]
 pub struct RtspUrl {
     scheme: RtspScheme,
+    /// The parsed text carried a query (a `?`, even with nothing after it).
+    /// Its keys are applied to the fields below and not kept; a server
+    /// reads none of them and refuses a bind URL that has one.
+    #[cfg(feature = "rtsp-server")]
+    has_query: bool,
     /// Host as written in the URL (literal IP or domain). Parsed lazily
     /// by the RTSP client at connect time.
     pub host: String,
@@ -611,6 +616,10 @@ impl RtspUrl {
 
         let mut url = RtspUrl {
             scheme,
+            // The scheme holds no `?`, so one anywhere is where the parser
+            // split the query off.
+            #[cfg(feature = "rtsp-server")]
+            has_query: s.contains('?'),
             host: parsed.host.to_string(),
             port,
             path: parsed.path.to_string(),
@@ -650,6 +659,12 @@ impl RtspUrl {
     #[must_use]
     pub fn scheme(&self) -> RtspScheme {
         self.scheme
+    }
+
+    /// Whether the parsed text carried a query, an empty one included.
+    #[cfg(feature = "rtsp-server")]
+    pub(crate) fn has_query(&self) -> bool {
+        self.has_query
     }
 
     /// Render the URL string suitable for the Digest `uri=` parameter
