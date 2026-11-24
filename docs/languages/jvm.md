@@ -2888,7 +2888,8 @@ The surface:
   `RtspException` of kind `MOUNT`; `MountPolicy.require()` with no credentials
   throws `IllegalArgumentException` before the server is consulted; a
   credential with an empty username is refused by the server with kind
-  `MOUNT`. From the moment `stop()` or `close()` begins, and after the hard
+  `MOUNT` (the same rule given as the config's `defaultMountRule` is refused
+  by `start()` with kind `CONFIG_INVALID`). From the moment `stop()` or `close()` begins, and after the hard
   cancel, an edit throws kind `CLOSED`; `size()` still answers. A server nobody edits behaves as before; see the
   [publish-ingest recipe](/docs/cookbook/receiving/rtsp-publish-ingest.md#per-name-credentials-and-refusing-a-publisher)
   for when a change takes effect.

@@ -429,7 +429,7 @@ Return codes worth branching on:
 | `TST_E_CLOSED` (−7) | `tst_rtsp_mount_push_*`, `tst_rtsp_mount_flush` | The mount was removed with `tst_rtsp_server_remove_mount`, or the server ended; the handle's getters still answer. |
 | `TST_E_END_OF_STREAM` (−12) | `tst_rtp_demux_receiver_next_event` | The mount ended after its recording publisher left with end-on-exit on, or was closed by `tst_rtsp_server_remove_mount`, `tst_rtsp_server_stop` or the hard cancel; what was already queued is delivered first. |
 | `TST_E_RTSP_MOUNT` (−25) | `_add_publish_mount`, `_remove_mount` | Duplicate or invalid path, or no mount registered at the path. |
-| `TST_E_INVALID_CONFIG` (−1) | `tst_rtsp_server_builder_start` (NULL) | A setting of the server that its build refuses: a bind URL that carries a user name or a password (`_new` and `_bind` take it), an empty `_auth_*` user name, or a `_auth_basic` user name that contains `:`. The text starts "invalid server config" and names the field, never the value. |
+| `TST_E_INVALID_CONFIG` (−1) | `tst_rtsp_server_builder_start` (NULL) | A setting of the server that its build refuses: a bind URL that carries a user name or a password (`_new` and `_bind` take it), an empty `_auth_*` user name, or a `_auth_basic` user name that contains `:`. The text contains "invalid server config" and names the field, never the value. |
 | `TST_E_RTSP_MOUNT` (−25) | `tst_rtsp_server_add_multicast_mount` (NULL) | The server does not allow UDP media (an `rtsps://` server unless `tst_rtsp_server_builder_allow_udp_media(builder, true)`). |
 
 Rules the types do not enforce:
