@@ -128,7 +128,7 @@ pub fn registration(
 /// Metadata descriptor (tag 0x26) — H.222.0 §2.6.60 — for KLV PIDs
 /// carried as `stream_type=0x15` (Metadata in PES). Hard-coded to the
 /// canonical KLVA shape:
-///   metadata_application_format = 0x0100 (User defined)
+///   metadata_application_format = 0x0100 (General, ST 1402 Table 4)
 ///   metadata_format             = 0xFF (defined by format_identifier)
 ///   metadata_format_identifier  = 0x4B4C5641 ("KLVA")
 ///   metadata_service_id         = service_id (caller; 0 is universal)
@@ -161,8 +161,8 @@ pub fn metadata_std(input_leak_rate: u32, buffer_size: u32, output_leak_rate: u3
     ]
 }
 
-/// User-private descriptor (tag 0xFF). ISO/IEC 13818-1 reserves tag
-/// 0xFF, but real-world ARS-shape senders use it as the de-facto
+/// User-private descriptor (tag 0xFF). Tags 64 to 255 are user private
+/// (H.222.0 Table 2-45); real-world ARS-shape senders use 0xFF as the
 /// per-stream label slot (e.g. `"VIDEO-ARS"`, `"KLV_SYNC"`,
 /// `"JSONCMD"`).
 ///

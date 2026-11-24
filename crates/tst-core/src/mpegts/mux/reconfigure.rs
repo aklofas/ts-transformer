@@ -185,7 +185,8 @@ impl Muxer {
     /// `stream_type` byte and its codec / KLV stream type are unchanged;
     /// the rest of its spec and its descriptors may change (that program's
     /// PMT then changes). A survivor keeps its handle, its continuity
-    /// counter and its program's PCR and PSI cadence timers. Packets already
+    /// counter and its program's clock (the PCR carries on). Every
+    /// program's PSI timer is reset: see Wire. Packets already
     /// queued, including those of a removed program, still drain.
     ///
     /// # Refusals
