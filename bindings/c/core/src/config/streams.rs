@@ -165,8 +165,11 @@ pub unsafe extern "C" fn tst_mux_config_add_klv_stream(
 /// Unknown under the demux cascade (no typed stream_type codepoints, no
 /// classifying descriptors) — that anti-masquerade rule is enforced at
 /// `_open` time (config validation), not here. The six stream types
-/// H.222.0 carries in sections (0x05, 0x13, 0x16, 0x2C, 0x2F, 0x30) are
-/// refused there too (`TST_E_INVALID_CONFIG`): a data stream emits PES.
+/// H.222.0's Table 2-34 names as carrying sections (0x05, 0x13, 0x16,
+/// 0x2C, 0x2F, 0x30) are refused there too (`TST_E_INVALID_CONFIG`): a
+/// data stream emits PES. Other section-carried types (the DSM-CC types
+/// 0x0A to 0x0D and 0x17 to 0x19, SCTE 35's 0x86) are accepted and
+/// written as PES.
 ///
 /// `carries_pts`: when `true` the PES header carries the PTS passed to
 /// each `push_data_to`; when `false` the PES omits the PTS field entirely.

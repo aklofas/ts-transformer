@@ -343,10 +343,14 @@ def transmux(
     with no PSI yields no events and produces NO output file.
 
     Strict by default: streams the muxer cannot represent (DVB
-    subtitling/teletext, and unknown streams whose stream type is carried
-    in sections: 0x05, 0x13, 0x16, 0x2C, 0x2F, 0x30) fail the conversion
-    with `MuxError` naming the offenders. The source's program_info loop,
-    transport_stream_id and table versions are not carried. Other
+    subtitling/teletext, and unknown streams of the six stream types
+    H.222.0's Table 2-34 names as carrying sections: 0x05, 0x13, 0x16,
+    0x2C, 0x2F, 0x30) fail the conversion with `MuxError` naming the
+    offenders. Other section-carried types (the DSM-CC types 0x0A to 0x0D
+    and 0x17 to 0x19, SCTE 35's 0x86) are not refused and are copied as
+    PES data streams; `drop=[StreamKindTag.UNKNOWN]` leaves them out.
+    The source's program_info loop, transport_stream_id and table
+    versions are not carried. Other
     private/application data streams (unknown stream types)
     pass through byte-faithfully: `from_program_map` reproduces their
     PMT entry (raw stream_type byte + descriptor loop verbatim) and

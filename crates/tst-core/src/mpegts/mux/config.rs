@@ -255,17 +255,23 @@ impl MuxerConfig {
     /// Strict by default: any stream the muxer cannot represent — DVB
     /// subtitling/teletext streams (whose per-stream parameters such as
     /// language and page IDs are not recoverable from the PMT entry
-    /// alone), and unknown streams whose stream type is carried in
-    /// sections (0x05, 0x13, 0x16, 0x2C, 0x2F, 0x30: a Data stream writes
-    /// PES) — fails the conversion with
+    /// alone), and unknown streams of the six stream types H.222.0's
+    /// Table 2-34 names as carrying sections (0x05, 0x13, 0x16, 0x2C, 0x2F,
+    /// 0x30: a Data stream writes PES) — fails the conversion with
     /// [`MuxError::ConfigInvalid`](crate::error::MuxError::ConfigInvalid)
-    /// naming every offender. Pass the offenders' kinds in `drop` (e.g.
-    /// `&[StreamKindTag::Subtitle]`) to exclude those streams instead; see
+    /// naming every offender. Other section-carried types (the DSM-CC
+    /// types 0x0A to 0x0D and 0x17 to 0x19, SCTE 35's 0x86) are NOT
+    /// refused: such a stream becomes a Data stream written as PES, so a
+    /// relay must leave its PID out itself. Pass the offenders' kinds in
+    /// `drop` (e.g. `&[StreamKindTag::Subtitle]`) to exclude those streams
+    /// instead; see
     /// [`StreamKindTag`](crate::mpegts::demux::StreamKindTag). The filter
     /// is kind-coarse: `StreamKindTag::Subtitle` drops every subtitle
     /// stream, including representable CEA-708 / WebVTT ones, not just the
     /// DVB offenders. Likewise `StreamKindTag::Unknown` excludes every
-    /// unknown-stream-type stream instead of mapping it to a Data spec.
+    /// unknown-stream-type stream instead of mapping it to a Data spec. To
+    /// leave out one PID only, remove it from `pm.streams` (a public field)
+    /// before the conversion.
     ///
     /// # Mapping rules
     ///
@@ -1237,7 +1243,11 @@ impl MuxerProgramConfigBuilder {
     ///
     /// The `(stream_type, descriptors)` pair must classify as Unknown on
     /// the demux side (no typed stream_type bytes, no classifying 0x06
-    /// markers); the rule is enforced at validate/build time.
+    /// markers), and `stream_type` must not be one of the six types
+    /// H.222.0's Table 2-34 names as carrying sections (0x05, 0x13, 0x16,
+    /// 0x2C, 0x2F, 0x30); both rules are enforced at validate/build time.
+    /// Other section-carried types (the DSM-CC types 0x0A to 0x0D and 0x17
+    /// to 0x19, SCTE 35's 0x86) are not refused and are written as PES.
     pub fn add_data(&mut self, pid: u16, stream_type: u8, carries_pts: bool) -> &mut Self {
         self.program.streams.push(StreamSpec::Data {
             pid,
@@ -1577,7 +1587,9 @@ fn validate_signalling_overrides(spec: &StreamSpec, descs: &[Vec<u8>]) -> Result
     Ok(())
 }
 
-/// H.222.0 Table 2-34 stream types whose payload is sections, never PES.
+/// The six stream types H.222.0's Table 2-34 names as carrying sections. Not
+/// every section-carried type: the DSM-CC types and SCTE 35's 0x86 are not
+/// listed.
 const SECTION_STREAM_TYPES: [u8; 6] = [0x05, 0x13, 0x16, 0x2C, 0x2F, 0x30];
 
 /// ISO 639-2 language codes per ETSI EN 300 468 §6.2.41/§6.2.43 ride the
