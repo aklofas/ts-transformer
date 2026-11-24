@@ -521,7 +521,17 @@ impl Muxer {
         // (as TSDuck and ffmpeg do): tune-in point and clock sample coincide.
         let plan =
             self.reserve_preamble(prog_idx, decode_ts, video_pid, video_packets, key_frame)?;
-        let first_af = plan.first_af(key_frame);
+        let mut first_af = plan.first_af(key_frame);
+        // AV1 MPEG-2 TS binding §3.4: the adaptation field that carries a
+        // key frame's random access indicator also sets the ES priority bit
+        // when this packet holds the first start code of the frame data
+        // (read as the first frame-header or frame OBU). The bit can only
+        // be set on the first packet, so the scan stops at its payload.
+        if av1_binding && key_frame {
+            let af_len = if first_af.pcr.is_some() { 8 } else { 2 };
+            let window = 184 - af_len - header_len;
+            first_af.es_priority = first_frame_obu_start(payload_bytes, window).is_some();
+        }
         self.drain_pes_scratch(video_pid, first_af);
 
         // Count on the Ok path only — after all early-returns above.
@@ -554,4 +564,15 @@ impl Muxer {
 
         Ok(())
     }
+}
+
+/// Offset of the first `00 00 01` in a binding-framed AV1 payload that opens
+/// a frame-header (type 3) or frame (type 6) OBU, looking only at start
+/// codes that end within the first `window` bytes. The OBU header byte that
+/// follows may lie past the window; nothing past `window + 1` is read.
+fn first_frame_obu_start(payload: &[u8], window: usize) -> Option<usize> {
+    let scanned = &payload[..payload.len().min(window + 1)];
+    scanned
+        .windows(4)
+        .position(|w| w[..3] == [0x00, 0x00, 0x01] && matches!((w[3] >> 3) & 0x0F, 3 | 6))
 }
