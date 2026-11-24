@@ -10617,8 +10617,8 @@ void tst_rtsp_server_builder_auth_digest_sha256(struct TstRtspServerBuilder *bui
  * Replaces the address set at `tst_rtsp_server_builder_new` time.  Call
  * this to redirect the server to a different interface or port without
  * allocating a new builder. As for `_new`, a URL that carries a user name
- * or a password is taken here and refused by
- * `tst_rtsp_server_builder_start` (`TST_E_INVALID_CONFIG`).
+ * or a password, a path other than `/`, or a query is taken here and
+ * refused by `tst_rtsp_server_builder_start` (`TST_E_INVALID_CONFIG`).
  *
  * No-op (with last-error set to `TST_E_INVALID_CONFIG`) if `builder` is
  * NULL, `addr` is NULL, or the URL fails to parse.
@@ -10793,6 +10793,11 @@ void tst_rtsp_server_builder_graceful_shutdown_drain_ms(struct TstRtspServerBuil
  * and `tst_rtsp_server_builder_start` refuses it (NULL, last-error
  * `TST_E_INVALID_CONFIG`). Configure the server's credential with
  * `_auth_basic` or `_auth_digest_*`.
+ * The URL says only where to listen: one that carries a path other than
+ * `/`, or a query (an empty `?` included), is taken by this call and
+ * refused by `tst_rtsp_server_builder_start` in the same way. Add mounts
+ * with the `tst_rtsp_server_add_*_mount` calls; whether media may go over
+ * UDP is `tst_rtsp_server_builder_allow_udp_media`, not `?transport=`.
  *
  * Auth, TLS, session limits, and drain policy may be set with the
  * `_auth_*`, `_tls_cert_pem`, `_max_sessions`, `_session_timeout`,
@@ -10881,9 +10886,10 @@ void tst_rtsp_server_builder_publish_idle_timeout(struct TstRtspServerBuilder *b
  * builder is also freed; check `tst_get_last_error()` for the negative
  * `TST_E_*` code and `tst_get_last_error_str()` for a human-readable
  * message. A setting of the builder that the build refuses (a bind URL
- * that carries a user name or a password, an `_auth_basic` user name that
- * contains `:`, an empty `_auth_*` user name) reads `TST_E_INVALID_CONFIG`
- * with a message that contains "invalid server config".
+ * that carries a user name or a password, a path other than `/` or a
+ * query; an `_auth_basic` user name that contains `:`; an empty `_auth_*`
+ * user name) reads `TST_E_INVALID_CONFIG` with a message that contains
+ * "invalid server config".
  *
  * Returns a non-NULL `tst_rtsp_server_t*` on success, NULL on failure.
  * The returned pointer must eventually be freed:

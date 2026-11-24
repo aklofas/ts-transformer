@@ -61,9 +61,10 @@ use crate::rtsp::server::types::TstRtspServer;
 /// builder is also freed; check `tst_get_last_error()` for the negative
 /// `TST_E_*` code and `tst_get_last_error_str()` for a human-readable
 /// message. A setting of the builder that the build refuses (a bind URL
-/// that carries a user name or a password, an `_auth_basic` user name that
-/// contains `:`, an empty `_auth_*` user name) reads `TST_E_INVALID_CONFIG`
-/// with a message that contains "invalid server config".
+/// that carries a user name or a password, a path other than `/` or a
+/// query; an `_auth_basic` user name that contains `:`; an empty `_auth_*`
+/// user name) reads `TST_E_INVALID_CONFIG` with a message that contains
+/// "invalid server config".
 ///
 /// Returns a non-NULL `tst_rtsp_server_t*` on success, NULL on failure.
 /// The returned pointer must eventually be freed:
