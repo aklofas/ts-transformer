@@ -656,6 +656,26 @@ impl MuxerConfig {
                 }
             }
 
+            // The program_info loop is a descriptor loop too (H.222.0
+            // Table 2-33): one bad element makes readers drop the whole PMT.
+            for (di, tlv) in prog.program_descriptors.iter().enumerate() {
+                let reason = if tlv.len() < 2 {
+                    Some("descriptor TLV must be at least 2 bytes (tag + length)")
+                } else if tlv[1] as usize != tlv.len() - 2 {
+                    Some("length byte does not match payload length")
+                } else {
+                    None
+                };
+                if let Some(reason) = reason {
+                    return Err(MuxError::ConfigInvalid {
+                        reason: format!(
+                            "program {} program_descriptors[{di}]: {reason}",
+                            prog.program_number
+                        ),
+                    });
+                }
+            }
+
             // stream_descriptors length match + per-TLV well-formedness.
             if prog.stream_descriptors.len() != prog.streams.len() {
                 return Err(MuxError::ConfigInvalid {
