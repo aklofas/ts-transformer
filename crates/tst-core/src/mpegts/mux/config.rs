@@ -132,6 +132,11 @@ pub struct MuxerConfig {
     /// PCR just below 2^33 that wraps to zero when the decode time
     /// reaches the lead. `0` writes PCR = decode time; it does not restore
     /// the PCR = PTS output of 0.10.0 and earlier.
+    ///
+    /// On a program whose PCR PID is an AAC audio PID every AAC push that
+    /// starts at a random access point carries a PCR; while a backward step
+    /// under one second holds the clock, those PCRs repeat the held value
+    /// until the stamps catch up.
     pub pcr_lead_ms: u32,
 
     /// PAT/PMT re-emission interval, in milliseconds. Default 100.
@@ -142,16 +147,14 @@ pub struct MuxerConfig {
     /// PAT and one PMT per live program, whichever program's push sent it.
     /// The effective interval is the first whole number of the pushing
     /// program's push steps at or above this value (120 ms at 25 units a
-    /// second for the default of 100). While a program pushes with stamps
-    /// that advance, when a slower program takes over sending the sets, the
-    /// first gap can reach that program's interval in whole push steps plus
-    /// one more step; `tick` on that program removes it. A backward step
-    /// under one second holds that program's clock, and its PSI with it,
-    /// for the size of the step.
-    ///
-    /// The bound is on the configured value: a PCR stream that pushes every
-    /// 125 ms or slower still sends fewer than five sets a second at
-    /// 200 ms; use `tick`.
+    /// second for the default of 100), so the 200 ms bound is on the
+    /// configured value: a program whose PCR stream pushes every 125 ms or
+    /// slower still sends fewer than five sets a second at 200 ms. When a
+    /// slower program takes over sending the sets, while it pushes with
+    /// stamps that advance, the first gap can reach that program's interval
+    /// in whole push steps plus one more step. `tick` on such a program
+    /// removes both. A backward step under one second holds that program's
+    /// clock, and its PSI with it, for the size of the step.
     pub psi_interval_ms: u32,
 
     /// The PAT's `transport_stream_id`. Default 1. Every 16-bit value is
