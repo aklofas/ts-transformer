@@ -616,6 +616,57 @@ pub unsafe extern "C" fn tst_mux_config_set_psi_interval_ms(
     })
 }
 
+/// Set the PAT's `transport_stream_id` (applies to the whole stream).
+/// Default 1; every 16-bit value is valid. Mirrors
+/// `MuxerConfig::transport_stream_id`.
+///
+/// # Safety
+///
+/// `p` must be NULL or a live pointer from `tst_mux_config_new` that no
+/// other thread is using. NULL returns `TST_E_INVALID_CONFIG`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tst_mux_config_set_transport_stream_id(
+    p: *mut TstMuxConfig,
+    id: u16,
+) -> crate::c_types::c_int {
+    ffi_catch(TstError::Internal as i32, || {
+        let Some(cfg) = (unsafe { p.as_mut() }) else {
+            set_last_error(TstError::InvalidConfig, "null config pointer");
+            return TstError::InvalidConfig as i32;
+        };
+        cfg.transport_stream_id = Some(id);
+        0
+    })
+}
+
+/// Set the version number the PAT and every PMT start at. Default 0. Must
+/// be in range 0..=31; an out-of-range value is reported when the muxer or
+/// sender is opened. Each table counts on from it modulo 32 when it
+/// changes. A producer that replaces another on one channel picks a value
+/// different from every version the previous muxer last sent on the PAT
+/// and on each PMT PID this one reuses (the previous highest plus one is
+/// the simple case), so that a receiver reads its tables as new. Mirrors
+/// `MuxerConfig::psi_version_base`.
+///
+/// # Safety
+///
+/// `p` must be NULL or a live pointer from `tst_mux_config_new` that no
+/// other thread is using. NULL returns `TST_E_INVALID_CONFIG`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tst_mux_config_set_psi_version_base(
+    p: *mut TstMuxConfig,
+    version: u8,
+) -> crate::c_types::c_int {
+    ffi_catch(TstError::Internal as i32, || {
+        let Some(cfg) = (unsafe { p.as_mut() }) else {
+            set_last_error(TstError::InvalidConfig, "null config pointer");
+            return TstError::InvalidConfig as i32;
+        };
+        cfg.psi_version_base = Some(version);
+        0
+    })
+}
+
 /// Set the TS-packet output buffer capacity. Default 10000 (~1.88 MB).
 /// Must be >= 10.
 #[unsafe(no_mangle)]

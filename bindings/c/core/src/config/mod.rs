@@ -52,6 +52,7 @@ pub use streams::{
     tst_mux_config_add_video_stream, tst_mux_config_set_av1_carriage,
     tst_mux_config_set_buffer_packets, tst_mux_config_set_pcr_interval_ms,
     tst_mux_config_set_pcr_lead_ms, tst_mux_config_set_pcr_pid, tst_mux_config_set_psi_interval_ms,
+    tst_mux_config_set_psi_version_base, tst_mux_config_set_transport_stream_id,
 };
 
 use crate::panic::ffi_catch;
@@ -100,6 +101,8 @@ pub struct TstMuxConfig {
     pub(crate) pcr_interval_ms: Option<u32>,
     pub(crate) pcr_lead_ms: Option<u32>,
     pub(crate) psi_interval_ms: Option<u32>,
+    pub(crate) transport_stream_id: Option<u16>,
+    pub(crate) psi_version_base: Option<u8>,
     pub(crate) buffer_packets: Option<usize>,
     /// AV1 PES carriage mode. `None` = use `MuxerConfig` default
     /// (`Mpeg2TsBinding`). Set via `tst_mux_config_set_av1_carriage`.
@@ -121,6 +124,12 @@ impl TstMuxConfig {
             cfg.pcr_lead_ms = ms;
         }
         cfg.psi_interval_ms = self.psi_interval_ms.unwrap_or(100);
+        if let Some(id) = self.transport_stream_id {
+            cfg.transport_stream_id = id;
+        }
+        if let Some(version) = self.psi_version_base {
+            cfg.psi_version_base = version;
+        }
         cfg.buffer_packets = self.buffer_packets.unwrap_or(10_000);
         if let Some(mode) = self.av1_carriage {
             cfg.av1_carriage = mode;
@@ -143,6 +152,8 @@ pub unsafe extern "C" fn tst_mux_config_new() -> *mut TstMuxConfig {
             pcr_interval_ms: None,
             pcr_lead_ms: None,
             psi_interval_ms: None,
+            transport_stream_id: None,
+            psi_version_base: None,
             buffer_packets: None,
             av1_carriage: None,
         }))
