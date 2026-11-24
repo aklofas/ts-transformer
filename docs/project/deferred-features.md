@@ -1628,22 +1628,6 @@ mean **Deferred**. An entry whose feature has shipped must never read
   a program on a live muxer or mux sender without restarting the output
   (a sensor announced and withdrawn while the main video runs).
 
-## Per-program PSI cadence
-
-- **Status:** Deferred. A PSI tick sends the PAT and the PMT of every
-  live program, and stamps every program with the clock of the program
-  whose push triggered it. Programs on unrelated timelines therefore
-  share one PSI cadence, driven by whichever pushes. If the program
-  whose timeline is ahead stops pushing, the others send no PAT or PMT
-  until their own clocks pass the last stamp, or until `request_psi` is
-  called. Programs on one timeline, the usual case, are not affected.
-- **Why deferred:** Sending the PAT with one program's PMT changes the
-  multi-program byte shape, and `Muxer::reconfigure` documents and tests
-  "the new PAT and every live PMT" on the push after the call.
-- **Trigger to revisit:** A multi-program consumer whose programs run on
-  timelines far enough apart that one program's PSI interval is visibly
-  wrong.
-
 ## RTCP receiver reports to RTSP publishers
 
 - **Status:** Deferred. A publisher pushing into `RtspServer` (ANNOUNCE /
