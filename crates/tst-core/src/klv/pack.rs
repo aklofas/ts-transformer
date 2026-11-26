@@ -464,6 +464,32 @@ mod tests {
     }
 
     #[test]
+    fn wide_tag_items_in_a_row_are_all_skipped() {
+        // Three wide-tag items (each empty) and the items of both widths
+        // after them: every wide one is stepped over, in one call.
+        let wide_empty = concat(&[WIDE_TAGS[0], &[0x00]]);
+        let wide_long = concat(&[WIDE_TAGS[1], &[0x01, 0x42]]);
+        let body = concat(&[&wide_empty, &wide_long, &wide_empty, &[0x08, 0x01, 0x04]]);
+        let mut it = Iter::local_set(&body);
+        assert_eq!(
+            it.next().unwrap().unwrap(),
+            RawField {
+                tag: 8,
+                value: &[0x04]
+            }
+        );
+        assert!(it.next().is_none());
+        assert_eq!(
+            crate::klv::st0806::decode(&body).unwrap().rvt_ls_version,
+            Some(4)
+        );
+        // A set that ends in wide-tag items ends with them.
+        let tail = concat(&[&[0x08, 0x01, 0x04], &wide_empty, &wide_long]);
+        let fields: Vec<RawField> = Iter::local_set(&tail).collect::<Result<_, _>>().unwrap();
+        assert_eq!(fields.len(), 1);
+    }
+
+    #[test]
     fn a_truncated_wide_tag_is_still_truncated() {
         for body in [
             &[0x90, 0x80][..],
