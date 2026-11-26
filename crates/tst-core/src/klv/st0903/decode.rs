@@ -838,9 +838,12 @@ fn decode_vtarget_series_strict(
 ///   its value), [`KlvDecodeError::DuplicateTag`] with tag 1 (a second
 ///   one, at its start), [`KlvDecodeError::Tag1NotLast`] and
 ///   [`KlvDecodeError::ChecksumMismatch`], judged in that order.
-/// - [`KlvDecodeError::NonCanonicalTag`] at the item's start for a Tag 1
-///   written with a padding group (`80 01`): a BER-OID never starts with
-///   `0x80` (ST 0107.5 §6.3.1), so it is no checksum item.
+/// - [`KlvDecodeError::MalformedTag`] at the start of an item whose tag
+///   [`decode`] cannot read (more than five padding groups before it).
+///
+/// A Tag 1 written with a padding group (`80 01`) is the checksum, as the
+/// lenient ST 0601 and RVT decoders read it: it is verified, and it fills
+/// [`VmtiLs::checksum`]. [`decode_standalone_strict`] refuses it.
 pub fn decode_standalone(bytes: &[u8]) -> Result<VmtiLs, KlvDecodeError> {
     let (body, _) = standalone_body(bytes, false)?;
     decode(body)
@@ -856,12 +859,17 @@ pub fn decode_standalone(bytes: &[u8]) -> Result<VmtiLs, KlvDecodeError> {
 /// is one ST 1204 accepts (§10.1.13). These mirror
 /// [`super::encode_standalone_strict_compliance`]. The outer length must
 /// take its fewest bytes (ST 0107.5 §6.3.2; [`KlvDecodeError::NonCanonicalLength`]),
-/// as `st0601::decode_strict_compliance` reads it.
+/// and no tag may start with a padding group (ST 0107.5 §6.3.1: a BER-OID
+/// never starts with `0x80`), the checksum's `80 01` included, which
+/// [`decode_standalone`] accepts: both as `st0601::decode_strict_compliance`
+/// reads them.
 ///
 /// # Errors
 /// Those of [`decode_standalone`] and [`decode_strict`], plus
 /// [`KlvDecodeError::St0903MissingRequiredTag`] for a missing standalone
-/// item and [`KlvDecodeError::ComplianceViolation`] for the other rules.
+/// item and [`KlvDecodeError::ComplianceViolation`] for the other rules. A
+/// padded tag is [`KlvDecodeError::NonCanonicalTag`] at the item's start,
+/// reported before the checksum is judged.
 pub fn decode_standalone_strict(bytes: &[u8]) -> Result<VmtiLs, KlvDecodeError> {
     let (body, base) = standalone_body(bytes, true)?;
     let strict = decode_strict_at(body, base)?;
@@ -891,7 +899,9 @@ pub fn decode_standalone_strict(bytes: &[u8]) -> Result<VmtiLs, KlvDecodeError> 
 fn standalone_body(bytes: &[u8], strict: bool) -> Result<(&[u8], usize), KlvDecodeError> {
     use crate::klv::UniversalLabel;
     use crate::klv::checksum::checksum_running_sum_16;
-    use crate::klv::length::{read_ber, read_ber_strict, rebase_offset};
+    use crate::klv::length::{
+        read_ber, read_ber_oid, read_ber_oid_strict, read_ber_strict, rebase_offset, skip_ber_oid,
+    };
 
     let Some((label, rest)) = bytes.split_first_chunk::<16>() else {
         return Err(KlvDecodeError::Truncated {
@@ -927,32 +937,33 @@ fn standalone_body(bytes: &[u8], strict: bool) -> Result<(&[u8], usize), KlvDeco
     };
 
     // Every Tag 1 is found before one is judged. The walk keeps where each
-    // item starts (the iterator does not), and reads a tag of any width: a
-    // wide one is no checksum.
+    // item starts (the iterator does not) and reads each tag with the reader
+    // the body's decoder uses, so the item verified here is the item that
+    // decoder reads as Tag 1: the lenient one takes a padded `80 01` for the
+    // checksum, as the ST 0601 and RVT decoders do; the strict one refuses a
+    // tag that starts with a padding group (ST 0107.5 §6.3.1). A tag wider
+    // than 32 bits is an unknown item, stepped over.
+    let read_tag = if strict {
+        read_ber_oid_strict
+    } else {
+        read_ber_oid
+    };
     let mut first = None; // where the first one's value starts
     let mut malformed = None; // the first one not two bytes wide: value start, width
     let mut second = None; // where the second item starts
     let mut item_start = 0;
     while item_start < body.len() {
         let item = &body[item_start..];
-        let Some(tag_len) = item.iter().position(|b| b & 0x80 == 0).map(|i| i + 1) else {
-            return Err(KlvDecodeError::Truncated {
-                offset: base + body.len(),
-                needed: 1,
-                have: 0,
-            });
+        let rebased = |mut e| {
+            rebase_offset(&mut e, base + item_start);
+            e
         };
-        let tag = item[..tag_len]
-            .iter()
-            .fold(0u64, |t, b| t.saturating_mul(128) | u64::from(b & 0x7F));
-        // A BER-OID never starts with 0x80 (ST 0107.5 §6.3.1): a padded
-        // Tag 1 is no checksum item, and the decoders would not read it as
-        // one alike (the iterator stops at a tag over five bytes).
-        if tag == 1 && tag_len > 1 {
-            return Err(KlvDecodeError::NonCanonicalTag {
-                offset: base + item_start,
-            });
-        }
+        let tag = match read_tag(item) {
+            Ok((tag, _)) => Some(tag),
+            Err(KlvDecodeError::LengthOverflow { .. }) => None,
+            Err(e) => return Err(rebased(e)),
+        };
+        let tag_len = item.len() - skip_ber_oid(item).map_err(rebased)?.len();
         let (len, value) = read_ber(&item[tag_len..]).map_err(|mut e| {
             rebase_offset(&mut e, base + item_start + tag_len);
             e
@@ -965,7 +976,7 @@ fn standalone_body(bytes: &[u8], strict: bool) -> Result<(&[u8], usize), KlvDeco
                 have: value.len(),
             });
         }
-        if tag == 1 {
+        if tag == Some(1) {
             if len != 2 && malformed.is_none() {
                 malformed = Some((value_at, len));
             }

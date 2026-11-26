@@ -524,6 +524,23 @@ fn decode_standalone_accepts_independent_crc_vector() {
 }
 
 #[test]
+fn a_padded_crc_tag_is_the_crc() {
+    // `80 01` is Tag 1 written with a padding group: this lenient decode
+    // reads it as the CRC item, verifies it and fills `crc32` from it.
+    let mut v = RVT_LS_UL.0.to_vec();
+    v.extend_from_slice(&[10, 0x08, 0x01, 0x04, 0x80, 0x01, 0x04]);
+    let crc = crate::mpegts::common::crc32::crc32_mpeg2(&v);
+    v.extend_from_slice(&crc.to_be_bytes());
+    let ls = decode_standalone(&v).unwrap();
+    assert_eq!((ls.crc32, ls.rvt_ls_version), (Some(crc), Some(4)));
+    *v.last_mut().unwrap() ^= 1;
+    assert!(matches!(
+        decode_standalone(&v),
+        Err(KlvDecodeError::Crc32Mismatch { .. })
+    ));
+}
+
+#[test]
 fn decode_standalone_rejects_item_after_crc() {
     let timestamp = [0x02, 0x08, 0, 6, 0x0A, 0x2D, 0x8A, 0xB4, 0x00, 0x00];
     let v = rvt_set_with_crc_then(&[0x08, 0x01, 0x04], &timestamp);

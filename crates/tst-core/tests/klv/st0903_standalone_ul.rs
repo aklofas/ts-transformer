@@ -244,30 +244,71 @@ fn decode_standalone_rejects_a_wrong_width_checksum() {
     ));
 }
 
+/// `packet(items ++ <padding groups> 01 02 <sum>)`: a checksum whose tag is
+/// written with `padding` leading `0x80` bytes, and the sum.
+fn padded_checksum(items: &[u8], padding: usize) -> (Vec<u8>, u16) {
+    let mut body = items.to_vec();
+    body.extend(std::iter::repeat_n(0x80, padding));
+    body.extend_from_slice(&[0x01, 0x02, 0x00, 0x00]);
+    let mut bytes = packet(&body);
+    let at = bytes.len() - 2;
+    let sum = checksum_running_sum_16(&bytes[..at]);
+    bytes[at..].copy_from_slice(&sum.to_be_bytes());
+    (bytes, sum)
+}
+
 #[test]
-fn a_padded_checksum_tag_is_refused() {
-    // ST 0107.5 §6.3.1: a BER-OID never starts with 0x80, so a Tag 1
-    // written with padding is not a checksum item; both decoders refuse it
-    // at the item's start (the body at 17, the item at 23), however wide.
-    for padding in [1usize, 11] {
-        let mut body = vec![0x04, 0x01, 0x06, 0x06, 0x01, 0x00];
-        body.extend(std::iter::repeat_n(0x80, padding));
-        body.extend_from_slice(&[0x01, 0x02, 0x00, 0x00]);
-        let mut bytes = packet(&body);
-        let at = bytes.len() - 2;
-        let sum = checksum_running_sum_16(&bytes[..at]);
-        bytes[at..].copy_from_slice(&sum.to_be_bytes());
-        for decode in [st0903::decode_standalone, st0903::decode_standalone_strict] {
-            assert!(
-                matches!(
-                    decode(&bytes),
-                    Err(KlvDecodeError::NonCanonicalTag { offset: 23 })
-                ),
-                "{padding} padding bytes: {:?}",
-                decode(&bytes)
-            );
-        }
+fn a_padded_checksum_tag_is_the_checksum_for_the_lenient_decode_only() {
+    // `80 01` is Tag 1 written with a padding group. The lenient decode
+    // reads it as the checksum, as the ST 0601 and RVT decoders do, with
+    // the reader the body's decoder uses: the item that is verified is the
+    // item that fills `checksum`. Up to five groups are still that tag.
+    let items = [0x04, 0x01, 0x06, 0x06, 0x01, 0x00];
+    for padding in [1usize, 5] {
+        let (bytes, sum) = padded_checksum(&items, padding);
+        let ls = st0903::decode_standalone(&bytes)
+            .unwrap_or_else(|e| panic!("{padding} padding bytes: {e:?}"));
+        assert_eq!(ls.checksum, Some(sum));
+        assert_eq!(ls.version_number, Some(6));
+        assert!(ls.field_errors.is_empty(), "{:?}", ls.field_errors);
+        // It is verified, and counted, as any checksum item.
+        let mut wrong = bytes.clone();
+        *wrong.last_mut().unwrap() ^= 1;
+        assert!(matches!(
+            st0903::decode_standalone(&wrong),
+            Err(KlvDecodeError::ChecksumMismatch { .. })
+        ));
     }
+    let (two, _) = padded_checksum(&[0x04, 0x01, 0x06, 0x01, 0x02, 0xCC, 0xCC], 1);
+    assert!(matches!(
+        st0903::decode_standalone(&two),
+        Err(KlvDecodeError::DuplicateTag { tag: 1, offset: 24 })
+    ));
+    // The strict decode refuses the padded tag at the item's start (the
+    // body at 17, the item at 23): a BER-OID never starts with 0x80 (ST
+    // 0107.5 §6.3.1), as `st0601::decode_strict_compliance` refuses it.
+    for padding in [1usize, 5, 11] {
+        let (bytes, _) = padded_checksum(&items, padding);
+        assert!(
+            matches!(
+                st0903::decode_standalone_strict(&bytes),
+                Err(KlvDecodeError::NonCanonicalTag { offset: 23 })
+            ),
+            "{padding} padding bytes: {:?}",
+            st0903::decode_standalone_strict(&bytes)
+        );
+    }
+    // A tag of more groups than any decoder of the body reads is no item at
+    // all: the lenient decode refuses the set where the tag starts.
+    let (bytes, _) = padded_checksum(&items, 11);
+    assert!(
+        matches!(
+            st0903::decode_standalone(&bytes),
+            Err(KlvDecodeError::MalformedTag { offset: 23 })
+        ),
+        "{:?}",
+        st0903::decode_standalone(&bytes)
+    );
 }
 
 #[test]

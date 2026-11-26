@@ -86,7 +86,9 @@ pub fn decode(bytes: &[u8]) -> Result<RvtLs, KlvDecodeError> {
 ///
 /// The CRC covers every byte from the start of the UL up to (but not
 /// including) the CRC's own 4 value bytes, and must be the set's one, last
-/// item (ST 0806.4-03 / -04). Absence of
+/// item (ST 0806.4-03 / -04). A Tag 1 written with a padding group
+/// (`80 01`) is the CRC item too, as the lenient ST 0601 and VMTI decoders
+/// read a checksum tag written so. Absence of
 /// Tag 1 is not an error: an embedded RVT LS is not required to carry
 /// one, and this function accepts standalone captures that omit it too.
 /// ST 0806.4 does not explicitly state whether the covered span includes
