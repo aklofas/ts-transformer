@@ -121,3 +121,108 @@ def test_custom_config_geoid_undulation_marshals_to_msl_altitude():
     cfg = CotConfig(geoid_undulation_m=24.5)
     xml = platform_position_xml(record, config=cfg, generated_us=GENERATED_US)
     assert 'hae="1524.5"' in xml
+
+
+# ---------------------------------------------------------------------------
+# Well-formed XML: refused characters, the producer name, TAB / LF / CR
+# ---------------------------------------------------------------------------
+
+_CONVERTERS = (platform_position_xml, sensor_point_of_interest_xml)
+
+
+def _xml_forbidden(c: str) -> bool:
+    cp = ord(c)
+    return cp <= 0x8 or cp in (0xB, 0xC) or 0xE <= cp <= 0x1F or cp in (0xFFFE, 0xFFFF)
+
+
+def _parse(xml: str) -> dict[str, dict[str, str]]:
+    """Parses `xml` plainly and namespace-aware; returns each element's attributes."""
+    import xml.parsers.expat
+
+    seen: dict[str, dict[str, str]] = {}
+
+    def start(name: str, attrs: dict[str, str]) -> None:
+        seen[name] = attrs
+
+    plain = xml.parsers.expat.ParserCreate()
+    plain.StartElementHandler = start
+    plain.Parse(xml.encode("utf-8"), True)
+    names: list[str] = []
+    ns = xml.parsers.expat.ParserCreate(namespace_separator="|")
+    ns.StartElementHandler = lambda name, attrs: names.append(name)
+    ns.Parse(xml.encode("utf-8"), True)
+    assert "_flow-tags_" in names, names
+    return seen
+
+
+@pytest.mark.parametrize(
+    ("overrides", "field"),
+    [
+        ({"mission_id": "M\0"}, "Mission ID"),
+        ({"mission_id": "A\x01"}, "Mission ID"),
+        ({"mission_id": "x￾"}, "Mission ID"),
+        ({"platform_designation": "P￿"}, "Platform Designation"),
+        ({"image_source_sensor": "E\x1bO"}, "Image Source Sensor"),
+    ],
+)
+def test_cot_rejects_xml_illegal_chars(overrides: dict[str, object], field: str):
+    record = _fixture(**overrides)
+    for convert in _CONVERTERS:
+        with pytest.raises(ValueError, match=f"^{field} holds a character that XML 1.0 does not allow$"):
+            convert(record, generated_us=GENERATED_US)
+    cfg = CotConfig(platform_type="a-f-\x02")
+    for convert in _CONVERTERS:
+        with pytest.raises(ValueError, match="^platform_type holds"):
+            convert(_fixture(), config=cfg, generated_us=GENERATED_US)
+
+
+@pytest.mark.parametrize(
+    "producer",
+    ["bad name", "1abc", "", "ns:tag", 'x="1"/><evil a', "xmlns", "XMLfoo", "a퟿b", "⁰", "a·b"],
+)
+def test_cot_rejects_a_producer_that_is_not_an_xml_name(producer: str):
+    cfg = CotConfig(producer=producer)
+    for convert in _CONVERTERS:
+        with pytest.raises(ValueError, match="producer name is not an allowed XML name"):
+            convert(_fixture(), config=cfg, generated_us=GENERATED_US)
+
+
+def test_cot_output_parses():
+    # Every event a converter returns parses, plainly and namespace-aware, and
+    # gives back the value that went in, TAB / LF / CR included.
+    probes = [chr(cp) for cp in range(0xA1)] + ["퟿", "", "�", "￾", "￿", "\U00010000", "\U0010ffff"]
+    returned = 0
+    for c in probes:
+        value = f"a{c}b"
+        for name, overrides, cfg in (
+            ("mission_id", {"mission_id": value}, CotConfig()),
+            ("platform_designation", {"platform_designation": value}, CotConfig()),
+            ("image_source_sensor", {"image_source_sensor": value}, CotConfig()),
+            ("how", {}, CotConfig(how=value)),
+            ("platform_type", {}, CotConfig(platform_type=value)),
+        ):
+            for convert in _CONVERTERS:
+                try:
+                    xml = convert(_fixture(**overrides), config=cfg, generated_us=GENERATED_US)
+                except ValueError:
+                    assert _xml_forbidden(c), f"U+{ord(c):04X} in {name}"
+                    continue
+                assert not _xml_forbidden(c), f"U+{ord(c):04X} in {name} returned"
+                attrs = _parse(xml)
+                returned += 1
+                if name == "mission_id":
+                    assert attrs["event"]["uid"].startswith(f"PRED01_{value}")
+                if name == "how":
+                    assert attrs["event"]["how"] == value
+    for producer in ("ST0601CoT", "_x-1.2"):
+        for convert in _CONVERTERS:
+            attrs = _parse(convert(_fixture(), config=CotConfig(producer=producer), generated_us=GENERATED_US))
+            assert producer in attrs["_flow-tags_"]
+    assert returned > 0
+
+
+def test_cot_keeps_tab_lf_cr_through_a_parser():
+    record = _fixture(mission_id="a\tb\nc\rd")
+    attrs = _parse(platform_position_xml(record, generated_us=GENERATED_US))
+    assert attrs["event"]["uid"] == "PRED01_a\tb\nc\rd"
+    assert platform_uid(record) == "PRED01_a\tb\nc\rd"

@@ -185,6 +185,84 @@ class St0805Test {
     }
 
     // -----------------------------------------------------------------------
+    // Well-formed XML: refused characters, the producer name, TAB / LF / CR
+    // -----------------------------------------------------------------------
+
+    /** {@link #fixture()} with the three uid parts (Tags 10, 3, 11) given. */
+    private static UasDatalinkLs fixtureWithUidParts(String tag10, String tag3, String tag11) {
+        return new UasDatalinkLs.Builder()
+                .universalLabel(ByteBuffer.wrap(Klv.st0601Ul()))
+                .timestampUs(798_039_894_000_000L)
+                .platformDesignation(tag10)
+                .missionId(tag3)
+                .imageSourceSensor(tag11)
+                .sensorLatDeg(34.05)
+                .sensorLonDeg(-118.25)
+                .sensorEllipsoidHeightM(1524.0)
+                .platformHeadingDeg(90.0)
+                .sensorRelAzDeg(300.0)
+                .targetLocationLatDeg(34.10)
+                .targetLocationLonDeg(-118.20)
+                .targetLocationElevM(250.0)
+                .build();
+    }
+
+    private static void assertBothRefuse(UasDatalinkLs rec, CotConfig cfg, String message) {
+        IllegalArgumentException p = assertThrows(IllegalArgumentException.class,
+                () -> Klv.platformPositionXml(rec, cfg, GENERATED_US));
+        assertEquals(message, p.getMessage());
+        IllegalArgumentException s = assertThrows(IllegalArgumentException.class,
+                () -> Klv.sensorPointOfInterestXml(rec, cfg, GENERATED_US));
+        assertEquals(message, s.getMessage());
+    }
+
+    @Test
+    void cotRejectsXmlIllegalChars() {
+        String[][] cases = {
+            {"PRED01", "M\0", "EO", "Mission ID"},
+            {"PRED01", "A\u0001", "EO", "Mission ID"},
+            {"PRED01", "x\uFFFE", "EO", "Mission ID"},
+            {"P\uFFFF", "M05", "EO", "Platform Designation"},
+            {"PRED01", "M05", "E\u001BO", "Image Source Sensor"},
+        };
+        for (String[] c : cases) {
+            assertBothRefuse(fixtureWithUidParts(c[0], c[1], c[2]), CotConfig.defaults(),
+                    c[3] + " holds a character that XML 1.0 does not allow");
+        }
+        assertBothRefuse(fixture(), CotConfig.builder().platformType("a-f-\u0002").build(),
+                "platform_type holds a character that XML 1.0 does not allow");
+    }
+
+    @Test
+    void cotRejectsAProducerThatIsNotAnXmlName() {
+        String[] bad = {"bad name", "1abc", "", "ns:tag", "x=\"1\"/><evil a", "xmlns", "XMLfoo",
+            "a\uD7FFb", "\u2070", "a\u00B7b"};
+        for (String producer : bad) {
+            assertBothRefuse(fixture(), CotConfig.builder().producer(producer).build(),
+                    "the CoT producer name is not an allowed XML name");
+        }
+        String xml = Klv.platformPositionXml(fixture(),
+                CotConfig.builder().producer("_x-1.2").build(), GENERATED_US);
+        assertTrue(xml.contains("<_flow-tags_ _x-1.2=\""), xml);
+    }
+
+    @Test
+    void cotKeepsTabLfCrThroughANamespaceAwareParser() throws Exception {
+        UasDatalinkLs rec = fixtureWithUidParts("PRED01", "a\tb\nc\rd", "EO");
+        javax.xml.parsers.DocumentBuilderFactory f = javax.xml.parsers.DocumentBuilderFactory.newInstance();
+        f.setNamespaceAware(true);
+        for (String xml : new String[] {
+                Klv.platformPositionXml(rec, GENERATED_US),
+                Klv.sensorPointOfInterestXml(rec, GENERATED_US)}) {
+            org.w3c.dom.Document doc = f.newDocumentBuilder()
+                    .parse(new java.io.ByteArrayInputStream(xml.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+            String uid = doc.getDocumentElement().getAttribute("uid");
+            assertTrue(uid.startsWith("PRED01_a\tb\nc\rd"), uid);
+            assertEquals(1, doc.getElementsByTagName("_flow-tags_").getLength());
+        }
+    }
+
+    // -----------------------------------------------------------------------
     // CotConfig marshaling (Java -> Rust field extraction)
     // -----------------------------------------------------------------------
 

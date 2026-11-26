@@ -71,9 +71,10 @@ crate::binding_record! {
         @[py_default("5_000_000")]
         pub update_interval_us: u64,
         /// XML attribute name stamped in `<detail><_flow-tags_ .../>`. Written
-        /// verbatim as an XML `Name` production (an attribute name, not a
-        /// value) — it must be a syntactically valid XML Name. It is neither
-        /// validated nor escaped; an invalid value produces malformed XML.
+        /// verbatim as an attribute name, not a value, so it must be one: an
+        /// ASCII letter or `_`, then ASCII letters, digits, `_`, `.` or `-`,
+        /// not starting with `xml` in any case. Any other value makes both
+        /// converters refuse with `CotError::InvalidProducerName`.
         @[py_default("\"ST0601CoT\"")]
         pub producer: String,
         /// Geoid undulation (HAE − MSL) applied when only an MSL-referenced
@@ -140,8 +141,13 @@ pub fn spi_uid(ls: &UasDatalinkLs) -> Result<String, CotError> {
     Ok(format!("{tag10}_{tag3}_{tag11}"))
 }
 
-/// Escapes the five predefined XML entities (`& < > " '`) in `s`.
-fn xml_escape(s: &str) -> String {
+/// `s` written as an XML 1.0 attribute value: the five predefined entities
+/// (`& < > " '`) escaped, TAB, LF and CR as character references (a parser
+/// would read them back as spaces otherwise), and a character XML 1.0 does
+/// not allow anywhere (U+0000 to U+001F but those three, U+FFFE, U+FFFF)
+/// refused under the name of the `field` it came from. Never stripped: a
+/// value that cannot be written is not written.
+fn xml_attr(field: &'static str, s: &str) -> Result<String, CotError> {
     let mut out = String::with_capacity(s.len());
     for c in s.chars() {
         match c {
@@ -150,10 +156,45 @@ fn xml_escape(s: &str) -> String {
             '>' => out.push_str("&gt;"),
             '"' => out.push_str("&quot;"),
             '\'' => out.push_str("&apos;"),
+            '\t' => out.push_str("&#9;"),
+            '\n' => out.push_str("&#10;"),
+            '\r' => out.push_str("&#13;"),
+            '\u{0}'..='\u{1F}' | '\u{FFFE}' | '\u{FFFF}' => {
+                return Err(CotError::InvalidXmlChar { field });
+            }
             _ => out.push(c),
         }
     }
-    out
+    Ok(out)
+}
+
+/// The producer is written as an attribute NAME, so it must be one: an
+/// ASCII letter or `_`, then letters, digits, `_`, `.` or `-`. A colon
+/// would bind a namespace prefix, and a name starting with `xml` (any case)
+/// is reserved by XML 1.0 §2.3 (`xmlns` declares a namespace).
+fn check_producer(s: &str) -> Result<(), CotError> {
+    let bytes = s.as_bytes();
+    let starts_ok = matches!(bytes.first(), Some(b'A'..=b'Z' | b'a'..=b'z' | b'_'));
+    let rest_ok = bytes
+        .iter()
+        .all(|b| matches!(b, b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'_' | b'.' | b'-'));
+    let reserved = bytes.len() >= 3 && bytes[..3].eq_ignore_ascii_case(b"xml");
+    if starts_ok && rest_ok && !reserved {
+        Ok(())
+    } else {
+        Err(CotError::InvalidProducerName)
+    }
+}
+
+/// Checks each part of a uid under its own item name, before the parts are
+/// joined (an error on the joined uid could not say which item it came from).
+fn check_uid_parts(parts: &[(&'static str, Option<&str>)]) -> Result<(), CotError> {
+    for &(field, part) in parts {
+        if let Some(part) = part {
+            xml_attr(field, part)?;
+        }
+    }
+    Ok(())
 }
 
 /// Formats a POSIX-epoch microsecond timestamp (ST 0601 Tag 2 / MISB
@@ -240,13 +281,22 @@ fn hae_from_msl(msl: Option<f64>, cfg: &CotConfig) -> Option<f64> {
 ///
 /// # Errors
 /// [`CotError::MissingField`] when a KLV tag the mapping requires (uid
-/// components, timestamp, sensor position, altitude) is absent from `ls`.
+/// components, timestamp, sensor position, altitude) is absent from `ls`;
+/// [`CotError::InvalidXmlChar`] when a string written into the event holds a
+/// character XML 1.0 does not allow (the error names the item or the
+/// [`CotConfig`] field); [`CotError::InvalidProducerName`] when
+/// [`CotConfig::producer`] is not an allowed attribute name.
 pub fn platform_position_xml(
     ls: &UasDatalinkLs,
     cfg: &CotConfig,
     generated_us: u64,
 ) -> Result<String, CotError> {
+    check_producer(&cfg.producer)?;
     let uid = platform_uid(ls)?;
+    check_uid_parts(&[
+        ("Platform Designation", ls.platform_designation.as_deref()),
+        ("Mission ID", ls.mission_id.as_deref()),
+    ])?;
     let timestamp_us = ls.timestamp_us.ok_or(CotError::MissingField {
         tag: 2,
         name: "Precision Time Stamp",
@@ -288,7 +338,8 @@ pub fn platform_position_xml(
                 s.push_str(&format!(r#" vfov="{vfov}""#));
             }
             if let Some(model) = ls.image_source_sensor.as_deref() {
-                s.push_str(&format!(r#" model="{}""#, xml_escape(model)));
+                let model = xml_attr("Image Source Sensor", model)?;
+                s.push_str(&format!(r#" model="{model}""#));
             }
             if let Some(range) = ls.slant_range_m {
                 s.push_str(&format!(r#" range="{range}""#));
@@ -307,11 +358,12 @@ pub fn platform_position_xml(
             r#"<point lat="{lat}" lon="{lon}" hae="{hae}" ce="{sentinel}" le="{sentinel}"/>"#,
             r#"<detail><_flow-tags_ {producer}="{generated}"/>{sensor}</detail></event>"#,
         ),
-        uid = xml_escape(&uid),
-        ptype = xml_escape(&cfg.platform_type),
+        // The uid's parts were checked above, so it cannot fail here.
+        uid = xml_attr("uid", &uid)?,
+        ptype = xml_attr("platform_type", &cfg.platform_type)?,
         time = time,
         stale = stale,
-        how = xml_escape(&cfg.how),
+        how = xml_attr("how", &cfg.how)?,
         lat = lat,
         lon = lon,
         hae = hae,
@@ -344,14 +396,21 @@ pub fn platform_position_xml(
 /// # Errors
 /// [`CotError::MissingField`] when a KLV tag the mapping requires (uid
 /// components, timestamp, an aimpoint position pair, that pair's
-/// elevation) is absent from `ls`.
+/// elevation) is absent from `ls`; [`CotError::InvalidXmlChar`] and
+/// [`CotError::InvalidProducerName`] as for [`platform_position_xml`].
 pub fn sensor_point_of_interest_xml(
     ls: &UasDatalinkLs,
     cfg: &CotConfig,
     generated_us: u64,
 ) -> Result<String, CotError> {
+    check_producer(&cfg.producer)?;
     let uid = spi_uid(ls)?;
     let platform_uid = platform_uid(ls)?;
+    check_uid_parts(&[
+        ("Platform Designation", ls.platform_designation.as_deref()),
+        ("Mission ID", ls.mission_id.as_deref()),
+        ("Image Source Sensor", ls.image_source_sensor.as_deref()),
+    ])?;
     let timestamp_us = ls.timestamp_us.ok_or(CotError::MissingField {
         tag: 2,
         name: "Precision Time Stamp",
@@ -403,11 +462,12 @@ pub fn sensor_point_of_interest_xml(
             r#"<detail><_flow-tags_ {producer}="{generated}"/>"#,
             r#"<link relation="p-p" type="{ptype}" uid="{platform_uid}"/></detail></event>"#,
         ),
-        uid = xml_escape(&uid),
+        // The uids' parts were checked above, so neither can fail here.
+        uid = xml_attr("uid", &uid)?,
         spi_type = SPI_TYPE,
         time = time,
         stale = stale,
-        how = xml_escape(&cfg.how),
+        how = xml_attr("how", &cfg.how)?,
         lat = lat,
         lon = lon,
         hae = hae,
@@ -415,8 +475,8 @@ pub fn sensor_point_of_interest_xml(
         le = le,
         producer = cfg.producer,
         generated = generated,
-        ptype = xml_escape(&cfg.platform_type),
-        platform_uid = xml_escape(&platform_uid),
+        ptype = xml_attr("platform_type", &cfg.platform_type)?,
+        platform_uid = xml_attr("uid", &platform_uid)?,
     ))
 }
 
@@ -453,9 +513,9 @@ mod tests {
     }
 
     #[test]
-    fn xml_escape_covers_five_entities() {
+    fn xml_attr_escapes_the_five_entities() {
         assert_eq!(
-            xml_escape("a&b<c>d\"e'f"),
+            xml_attr("Mission ID", "a&b<c>d\"e'f").unwrap(),
             "a&amp;b&lt;c&gt;d&quot;e&apos;f"
         );
     }
@@ -599,6 +659,165 @@ mod tests {
         };
         let xml = platform_position_xml(&ls, &cfg, 798_039_895_000_000).unwrap();
         assert!(xml.contains(r#"hae="1524.5""#));
+    }
+
+    /// The characters XML 1.0 (§2.2, `Char`) does not allow anywhere in a
+    /// document; TAB, LF and CR are allowed and written as references.
+    fn xml_forbidden(c: char) -> bool {
+        matches!(c, '\u{0}'..='\u{8}' | '\u{B}' | '\u{C}' | '\u{E}'..='\u{1F}' | '\u{FFFE}' | '\u{FFFF}')
+    }
+
+    /// Puts a hostile value into one record field.
+    type EditRecord = fn(&mut UasDatalinkLs);
+    /// Puts a hostile string into one field of the record or of the config.
+    type EditInput = fn(&mut UasDatalinkLs, &mut CotConfig, String);
+
+    fn both_events(ls: &UasDatalinkLs, cfg: &CotConfig) -> [Result<String, CotError>; 2] {
+        [
+            platform_position_xml(ls, cfg, 798_039_895_000_000),
+            sensor_point_of_interest_xml(ls, cfg, 798_039_895_000_000),
+        ]
+    }
+
+    #[test]
+    fn cot_rejects_xml_illegal_chars() {
+        // Each hostile string is checked under the name of the item it came
+        // from, before the uid parts are joined.
+        let cases: [(EditRecord, &str); 5] = [
+            (|ls| ls.mission_id = Some("M\0".into()), "Mission ID"),
+            (|ls| ls.mission_id = Some("A\u{1}".into()), "Mission ID"),
+            (|ls| ls.mission_id = Some("x\u{FFFE}".into()), "Mission ID"),
+            (
+                |ls| ls.platform_designation = Some("P\u{FFFF}".into()),
+                "Platform Designation",
+            ),
+            (
+                |ls| ls.image_source_sensor = Some("E\u{1B}O".into()),
+                "Image Source Sensor",
+            ),
+        ];
+        for (set, field) in cases {
+            let mut ls = fixture();
+            set(&mut ls);
+            for out in both_events(&ls, &CotConfig::default()) {
+                assert!(
+                    matches!(out, Err(CotError::InvalidXmlChar { field: f }) if f == field),
+                    "{field}: {out:?}"
+                );
+            }
+        }
+        let cfg = CotConfig {
+            platform_type: "a-f-\u{2}".into(),
+            ..CotConfig::default()
+        };
+        for out in both_events(&fixture(), &cfg) {
+            assert!(matches!(
+                out,
+                Err(CotError::InvalidXmlChar {
+                    field: "platform_type"
+                })
+            ));
+        }
+
+        // Every code point of U+0000 to U+00A0 and the edges of the Char
+        // ranges, in each string that reaches an attribute.
+        let probes = (0u32..=0xA0)
+            .chain([0xD7FF, 0xE000, 0xFFFD, 0xFFFE, 0xFFFF, 0x1_0000, 0x10_FFFF])
+            .filter_map(char::from_u32);
+        for c in probes {
+            let s = format!("a{c}b");
+            let fields: [(&str, EditInput); 5] = [
+                ("Platform Designation", |ls, _, s| {
+                    ls.platform_designation = Some(s)
+                }),
+                ("Mission ID", |ls, _, s| ls.mission_id = Some(s)),
+                ("Image Source Sensor", |ls, _, s| {
+                    ls.image_source_sensor = Some(s)
+                }),
+                ("how", |_, cfg, s| cfg.how = s),
+                ("platform_type", |_, cfg, s| cfg.platform_type = s),
+            ];
+            for (field, set) in fields {
+                let mut ls = fixture();
+                let mut cfg = CotConfig::default();
+                set(&mut ls, &mut cfg, s.clone());
+                for out in both_events(&ls, &cfg) {
+                    if xml_forbidden(c) {
+                        assert!(
+                            matches!(out, Err(CotError::InvalidXmlChar { field: f }) if f == field),
+                            "U+{:04X} in {field}: {out:?}",
+                            c as u32
+                        );
+                    } else {
+                        let xml =
+                            out.unwrap_or_else(|e| panic!("U+{:04X} in {field}: {e:?}", c as u32));
+                        assert!(!xml.chars().any(xml_forbidden));
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn cot_rejects_a_producer_that_is_not_an_xml_name() {
+        for bad in [
+            "bad name",
+            "1abc",
+            "",
+            "-a",
+            ".a",
+            "ns:tag",
+            "x=\"1\"/><evil a",
+            "xmlns",
+            "XMLfoo",
+            "xMl",
+            "a\u{D7FF}b",
+            "\u{2070}",
+            "a\u{B7}b",
+            "a\u{0}",
+        ] {
+            let cfg = CotConfig {
+                producer: bad.into(),
+                ..CotConfig::default()
+            };
+            for out in both_events(&fixture(), &cfg) {
+                assert!(
+                    matches!(out, Err(CotError::InvalidProducerName)),
+                    "{bad:?}: {out:?}"
+                );
+            }
+        }
+        for good in ["ST0601CoT", "_x-1.2", "Z", "xm", "my.xml"] {
+            let cfg = CotConfig {
+                producer: good.into(),
+                ..CotConfig::default()
+            };
+            for out in both_events(&fixture(), &cfg) {
+                assert!(
+                    out.unwrap().contains(&format!("<_flow-tags_ {good}=\"")),
+                    "{good:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn cot_keeps_tab_lf_cr_as_character_references() {
+        let mut ls = fixture();
+        ls.mission_id = Some("a\tb\nc\rd".into());
+        let [platform, spi] = both_events(&ls, &CotConfig::default());
+        assert!(
+            platform
+                .unwrap()
+                .contains(r#"uid="PRED01_a&#9;b&#10;c&#13;d""#)
+        );
+        let spi = spi.unwrap();
+        assert!(spi.contains(r#"uid="PRED01_a&#9;b&#10;c&#13;d_EO""#));
+        assert!(spi.contains(
+            r#"<link relation="p-p" type="a-f-A-M-F" uid="PRED01_a&#9;b&#10;c&#13;d"/>"#
+        ));
+        // The uid functions are not XML: they return the text as it came.
+        assert_eq!(platform_uid(&ls).unwrap(), "PRED01_a\tb\nc\rd");
     }
 
     #[test]
