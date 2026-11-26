@@ -2,7 +2,7 @@
 
 import pytest
 
-from tstrans.exceptions import KlvEncodeError, KlvEncodeErrorKind
+from tstrans.exceptions import KlvEncodeError, KlvEncodeErrorKind, KlvError, KlvErrorKind
 from tstrans.klv import (
     ST_0601_UL,
     IcingDetected,
@@ -102,6 +102,22 @@ def test_encode_strict_compliance_missing_mandatory_raises():
     with pytest.raises(KlvEncodeError) as ei:
         encode_uas_datalink_strict_compliance(rec)
     assert ei.value.kind is KlvEncodeErrorKind.MISSING_MANDATORY_ITEM
+
+
+def test_strict_compliance_refuses_a_value_outside_its_items_rules():
+    # Wavelength id 0 means "no active wavelength": ST 0601.17-38 keeps it
+    # alone in the list. The ordinary encoder writes it; the compliance
+    # encoder refuses it with the item's tag, the compliance decoder too.
+    rec = UasDatalinkLs(timestamp_us=42, active_wavelengths=(0, 2))
+    written = encode_uas_datalink(rec)
+    with pytest.raises(KlvEncodeError) as ei:
+        encode_uas_datalink_strict_compliance(rec)
+    assert ei.value.kind is KlvEncodeErrorKind.OUT_OF_RANGE
+    assert ei.value.tag == 121
+    with pytest.raises(KlvError) as di:
+        decode_uas_datalink(written, compliance=True)
+    assert di.value.kind is KlvErrorKind.MALFORMED_BYTES
+    assert "tag 121" in str(di.value)
 
 
 # ---------------------------------------------------------------------------
