@@ -239,13 +239,7 @@ impl super::demuxer::Demuxer {
                     if is_damage_reason(reason) {
                         drop_next_complete = Some(pid);
                     } else {
-                        // Unparseable: no `Complete` follows, so the PES and
-                        // any cell of the AU in progress it carried are lost,
-                        // and with them the LOAS record position.
-                        if let Some(state) = self.pid_state.get_mut(&pid) {
-                            state.forget_latm_position();
-                        }
-                        self.discard_au_in_progress(pid);
+                        self.unparseable_pes_dropped(pid);
                     }
                 }
             }
@@ -290,6 +284,17 @@ impl super::demuxer::Demuxer {
                 self.record_discontinuity(stream, DiscontinuityKind::PesTotalOversize);
             }
         }
+    }
+
+    /// An unparseable PES on `pid`: no `Complete` follows, so the PES and
+    /// any cell of the AU in progress it carried are lost, and with them the
+    /// LOAS record position.
+    #[cold]
+    fn unparseable_pes_dropped(&mut self, pid: u16) {
+        if let Some(state) = self.pid_state.get_mut(&pid) {
+            state.forget_latm_position();
+        }
+        self.discard_au_in_progress(pid);
     }
 
     /// A zero-length PES on a PID that is not video.
