@@ -18,10 +18,11 @@
 //! The driver restricts its input domain to finite `min < max`: this is the
 //! fuzz target's own constraint to keep round-trip tolerance meaningful, not a
 //! mirror of the library precondition. The library rejects NaN params (where
-//! `partial_cmp` returns `None`) and `min >= max`, but accepts ±∞ params
-//! (e.g. `−∞ < +∞` satisfies `partial_cmp`). The driver also skips the
-//! round-trip probes when `sF = 2^(dPow − bPow)` overflows to `+∞` (tiny
-//! span), since in that case no round-trip tolerance can be stated.
+//! `partial_cmp` returns `None`), `min >= max`, and ±∞ params by their
+//! unusable scale (`−∞ < +∞` satisfies `partial_cmp`). The driver also skips the
+//! round-trip probes when `sF = 2^(dPow − bPow)` or its inverse is not a
+//! positive finite number (a tiny span overflows `sF` to `+∞`), parameters
+//! both library functions refuse as `InvalidImapbParams`.
 
 #![no_main]
 use libfuzzer_sys::fuzz_target;
@@ -55,18 +56,24 @@ fuzz_target!(|data: &[u8]| {
         let _ = decode_imapb(&p, &payload[..length]);
     }
 
-    // Compute scale factor for the round-trip probes. Bail if sF is
-    // non-finite or zero: a tiny span overflows sF to +∞ (the primary
-    // case); the s_f <= 0.0 arm is a safety net for extreme-magnitude
-    // spans where max − min itself overflows f64 arithmetic.
+    // Compute scale factor for the round-trip probes. Bail where the
+    // library refuses the parameters (`InvalidImapbParams`): sF or 1/sF is
+    // not a positive finite number — a tiny span overflows sF to +∞, a
+    // span that overflows f64 makes it 0.
     // NOTE: keep this bPow/sF derivation in sync with `ImapbParams::sf()`
-    // in imapb.rs; a drift here surfaces as a loud false-positive crash,
-    // not a silent gap.
+    // and `ImapbParams::scale()` in imapb.rs (the exponent is corrected by
+    // one where `log2` rounds across a power of two); a drift here surfaces
+    // as a loud false-positive crash, not a silent gap.
     let span = max - min;
-    let b_pow = span.log2().ceil();
+    let mut b_pow = span.log2().ceil();
+    if 2f64.powf(b_pow) < span {
+        b_pow += 1.0;
+    } else if 2f64.powf(b_pow - 1.0) >= span {
+        b_pow -= 1.0;
+    }
     let d_pow = (8 * length as i32 - 1) as f64;
     let s_f = 2f64.powf(d_pow - b_pow);
-    if !s_f.is_finite() || s_f <= 0.0 {
+    if !s_f.is_finite() || s_f <= 0.0 || !(1.0 / s_f).is_finite() {
         return;
     }
     // sR = 1/sF = one quantisation step (max round-trip error from floor()).

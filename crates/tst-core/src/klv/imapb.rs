@@ -56,20 +56,48 @@ impl ImapbParams {
     /// / `KlvFieldError::InvalidImapbParams` before invoking `sf()`.
     fn sf(&self) -> f64 {
         let span = self.max - self.min;
-        let b_pow = FloatExt::ceil(FloatExt::log2(span));
+        // `bPow = ceiling(log2(b − a))` (§7.1.2): `log2` rounds, so a span a
+        // few ulp above 2^k reads exactly k; correct the exponent by one so
+        // that 2^(bPow−1) < span <= 2^bPow.
+        let mut b_pow = FloatExt::ceil(FloatExt::log2(span));
+        if FloatExt::powf(2f64, b_pow) < span {
+            b_pow += 1.0;
+        } else if FloatExt::powf(2f64, b_pow - 1.0) >= span {
+            b_pow -= 1.0;
+        }
         let d_pow = (8 * self.length as i32 - 1) as f64;
         FloatExt::powf(2f64, d_pow - b_pow)
     }
 
+    /// The scale factor and Zoffset, computed once per call; `None` when
+    /// `sF` or `sR = 1/sF` is not a positive finite number (a span so small
+    /// that `sF` overflows, or so large that it is 0), so no value maps.
+    fn scale(&self) -> Option<(f64, f64)> {
+        let sf = self.sf();
+        if !(sf.is_finite() && sf > 0.0 && (1.0 / sf).is_finite()) {
+            return None;
+        }
+        Some((sf, self.z_offset(sf)))
+    }
+
     /// Zero-Point offset per ST 1201.5 §7.1.2 step 6.
     /// Only nonzero when the range straddles zero (`min < 0 < max`).
-    fn z_offset(&self) -> f64 {
+    fn z_offset(&self, sf: f64) -> f64 {
         if self.min < 0.0 && self.max > 0.0 {
-            let scaled = self.sf() * self.min;
+            let scaled = sf * self.min;
             scaled - FloatExt::floor(scaled)
         } else {
             0.0
         }
+    }
+
+    /// The lowest value of the bottom bucket: wire 0 reads as
+    /// `min − sR·Zoffset` by the reverse formula (§7.2.2 step 3a), less the
+    /// float noise of that arithmetic. Decode reads a value down to here as
+    /// a value; encode writes a value in `[bottom, min)` as `min`.
+    fn bottom(&self, sf: f64, z_offset: f64) -> f64 {
+        let fp_eps = (self.max - self.min).abs() * f64::EPSILON * 8.0;
+        self.min - (1.0 / sf) * z_offset - fp_eps
     }
 }
 
@@ -88,7 +116,10 @@ impl ImapbParams {
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[non_exhaustive]
 pub enum DecodedImapb {
-    /// Normal-range decode succeeded and the result falls within `[min, max]`.
+    /// Normal-range decode succeeded and the result falls within `[min, max]`,
+    /// or, for wire 0 of a range that straddles zero, at most `sR·Zoffset`
+    /// below `min` (the reverse formula of ST 1201.5 §7.2.2 step 3a: the
+    /// bottom bucket). [`encode_imapb`] writes such a value back as wire 0.
     Value(f64),
     /// An ST 1201.5 §7.2.3 special value (infinity / NaN family / MISB
     /// overflow signal / user-defined). See [`ImapbSpecial`].
@@ -153,7 +184,14 @@ pub fn encode_imapb(p: &ImapbParams, value: f64, out: &mut [u8]) -> Result<(), K
             got: out.len(),
         });
     }
-    if !value.is_finite() || value < p.min || value > p.max {
+    let Some((sf, z_offset)) = p.scale() else {
+        return Err(KlvEncodeError::InvalidImapbParams {
+            min: p.min,
+            max: p.max,
+            length: p.length as u8,
+        });
+    };
+    if !value.is_finite() || value < p.bottom(sf, z_offset) || value > p.max {
         return Err(KlvEncodeError::OutOfRange {
             tag: 0,
             value,
@@ -162,9 +200,12 @@ pub fn encode_imapb(p: &ImapbParams, value: f64, out: &mut [u8]) -> Result<(), K
             hint: None,
         });
     }
+    // A value in the bottom bucket below `min` (what wire 0 decodes to) is
+    // written as `min`, wire 0.
+    let value = if value < p.min { p.min } else { value };
     // ST 1201.5 §7.2.1 step 4a: y = truncate(sF*(x - min) + Zoffset).
-    // `truncate` = `.floor()` for x >= min (which the bounds check above guarantees).
-    let y_f = p.sf() * (value - p.min) + p.z_offset();
+    // `truncate` = `.floor()` for x >= min (which the clamp above guarantees).
+    let y_f = sf * (value - p.min) + z_offset;
     let y = FloatExt::floor(y_f) as u64;
     let mask = if p.length == 8 {
         u64::MAX
@@ -192,7 +233,8 @@ pub fn encode_imapb(p: &ImapbParams, value: f64, out: &mut [u8]) -> Result<(), K
 ///
 /// Otherwise the normal-range reverse map
 /// `value = sR · (y − Zoffset) + min` is applied, and the result is
-/// bounds-checked against `[min, max]`. Values that fall outside the
+/// bounds-checked against `[min, max]`, the bottom bucket below `min`
+/// included (see [`DecodedImapb::Value`]). Values that fall outside the
 /// configured range (the inter-band reserved integer space per §8.6
 /// Eq.12) are returned as [`OutOfRange`] carrying the raw arithmetic
 /// decode.
@@ -202,7 +244,9 @@ pub fn encode_imapb(p: &ImapbParams, value: f64, out: &mut [u8]) -> Result<(), K
 /// - [`KlvFieldError::UnsupportedImapbLength`] when `length` is outside
 ///   `1..=8` (substrate caps at L=8 because internal arithmetic uses `u64`).
 /// - [`KlvFieldError::InvalidImapbParams`] when `min >= max` (ST 1201.5 §6
-///   precondition; the §8.9 scale-factor derivation is undefined otherwise).
+///   precondition; the §8.9 scale-factor derivation is undefined otherwise),
+///   or when the scale factor or its inverse is not a positive finite
+///   number (a span too small or too large for `f64`).
 /// - [`KlvFieldError::InvalidLength`] when `bytes.len() != length`.
 ///
 /// Note that special values and out-of-range bit patterns are **not**
@@ -237,6 +281,13 @@ pub fn decode_imapb(p: &ImapbParams, bytes: &[u8]) -> Result<DecodedImapb, KlvFi
             got: bytes.len(),
         });
     }
+    let Some((sf, z_offset)) = p.scale() else {
+        return Err(KlvFieldError::InvalidImapbParams {
+            min: p.min,
+            max: p.max,
+            length: p.length as u8,
+        });
+    };
     // Read L bytes as unsigned BE.
     let mut y: u64 = 0;
     for &b in bytes {
@@ -256,13 +307,9 @@ pub fn decode_imapb(p: &ImapbParams, bytes: &[u8]) -> Result<DecodedImapb, KlvFi
         });
     }
 
-    // Normal-range reverse map: x = sR * (y - Zoffset) + min.
-    // `sf` is cached because it is used again for y_max below. `z_offset` is
-    // called through its accessor (not derived from the cached `sf`) so its
-    // value stays byte-identical to the encoder's own computation — single
-    // source of truth, no formula duplication.
-    let sf = p.sf();
-    let z_offset = p.z_offset();
+    // Normal-range reverse map: x = sR * (y - Zoffset) + min. `sf` and
+    // `z_offset` come from `scale`, as in the encoder, so both sides use the
+    // same numbers.
     let s_r = 1.0 / sf;
     let value = s_r * (y as f64 - z_offset) + p.min;
 
@@ -290,17 +337,11 @@ pub fn decode_imapb(p: &ImapbParams, bytes: &[u8]) -> Result<DecodedImapb, KlvFi
         return Ok(DecodedImapb::OutOfRange { decoded: value });
     }
 
-    // Lower-bound check: Zoffset rounding may push decode of y=0 slightly
-    // below min by up to one quantization step. Keep a float-epsilon
-    // tolerance here (the integer-domain fix above covers the upper side).
-    //
-    // `s_r = 1 / sF = 2^(bPow−dPow)` (ST 1201.5 §8.9), which equals the
-    // quantization step. f64 ULP propagation through sR*(y−Zoffset)+min
-    // is covered by the fp_eps term.
-    let scale = s_r;
-    let fp_eps = (p.max - p.min).abs() * f64::EPSILON * 8.0;
-    let epsilon = scale.max(fp_eps);
-    if value < p.min - epsilon {
+    // Lower-bound check: the bottom bucket of a range that straddles zero
+    // reads below `min`, down to `min − sR·Zoffset` for y = 0 (the reverse
+    // formula, kept as ST 1201.5 §7.2.2 defines it); `bottom` adds the
+    // float noise of that arithmetic, the same band the encoder accepts.
+    if value < p.bottom(sf, z_offset) {
         return Ok(DecodedImapb::OutOfRange { decoded: value });
     }
 
@@ -1090,6 +1131,125 @@ mod tests {
                     );
                 }
             }
+        }
+    }
+
+    /// The bottom bucket of a range that straddles zero reads, by ST 1201.5
+    /// §7.2.2 step 3a `x = sR·(y − Zoffset) + a`, as `min − sR·Zoffset` for
+    /// wire 0; that value is the bucket's own, so it re-encodes to wire 0.
+    #[test]
+    fn bottom_bucket_follows_the_reverse_formula_and_re_encodes() {
+        // IMAPB(-1000, 1000, 1): bPow 11, sF = 2^-4, sR = 16, Zoffset 0.5.
+        let p = ImapbParams {
+            min: -1000.0,
+            max: 1000.0,
+            length: 1,
+        };
+        assert_eq!(decode_imapb(&p, &[0x00]), Ok(DecodedImapb::Value(-1008.0)));
+        let mut out = [0xAAu8; 1];
+        encode_imapb(&p, -1008.0, &mut out).unwrap();
+        assert_eq!(out, [0x00]);
+
+        // IMAPB(-19.2, 19.2, 3), the VTarget offsets of ST 0903.6:
+        // bPow 6, sF = 2^17, Zoffset 0.6.
+        let p = ImapbParams {
+            min: -19.2,
+            max: 19.2,
+            length: 3,
+        };
+        let v = decode_imapb(&p, &[0x00, 0x00, 0x00])
+            .unwrap()
+            .value()
+            .unwrap();
+        assert_eq!(v, -19.20000457763672);
+        let mut out = [0xAAu8; 3];
+        encode_imapb(&p, v, &mut out).unwrap();
+        assert_eq!(out, [0x00, 0x00, 0x00]);
+    }
+
+    #[test]
+    fn the_tolerance_is_the_bucket_not_a_whole_step() {
+        // IMAPB(0, 1000, 1) does not straddle zero: Zoffset 0, sR = 8, so
+        // nothing decodes below `min` and half a step below is refused.
+        let p = ImapbParams {
+            min: 0.0,
+            max: 1000.0,
+            length: 1,
+        };
+        assert_eq!(decode_imapb(&p, &[0x00]), Ok(DecodedImapb::Value(0.0)));
+        let mut out = [0u8; 1];
+        assert!(matches!(
+            encode_imapb(&p, -4.0, &mut out),
+            Err(KlvEncodeError::OutOfRange { .. })
+        ));
+
+        // IMAPB(-1000, 1000, 1): the bucket below `min` is [-1008, -1000).
+        let p = ImapbParams {
+            min: -1000.0,
+            max: 1000.0,
+            length: 1,
+        };
+        let mut out = [0xAAu8; 1];
+        encode_imapb(&p, -1007.5, &mut out).unwrap();
+        assert_eq!(out, [0x00]);
+    }
+
+    #[test]
+    fn a_value_below_the_bucket_is_still_refused() {
+        // IMAPB(-1000, 1000, 1): -1012 lies within one step (16) of `min`
+        // but below the bucket's bottom -1008; -1017 lies below both.
+        let p = ImapbParams {
+            min: -1000.0,
+            max: 1000.0,
+            length: 1,
+        };
+        for v in [-1012.0, -1017.0] {
+            let mut out = [0u8; 1];
+            assert!(
+                matches!(
+                    encode_imapb(&p, v, &mut out),
+                    Err(KlvEncodeError::OutOfRange { .. })
+                ),
+                "{v}"
+            );
+        }
+    }
+
+    #[test]
+    fn scale_exponent_is_exact_just_above_a_power_of_two() {
+        // A span one ulp above 16: `bPow = ceiling(log2(b - a))` is 5
+        // (ST 1201.5 §7.1.2), though `log2` rounds the span to exactly 4.
+        let p = ImapbParams {
+            min: 0.0,
+            max: f64::from_bits(16f64.to_bits() + 1),
+            length: 2,
+        };
+        let mut out = [0u8; 2];
+        encode_imapb(&p, p.max, &mut out).unwrap();
+        assert_eq!(out, [0x40, 0x00]);
+    }
+
+    #[test]
+    fn unrepresentable_scale_is_invalid_params() {
+        // sF overflows to infinity for a tiny span, and is 0 for a span that
+        // overflows: neither maps a value.
+        for (min, max, length) in [(0.0, f64::MIN_POSITIVE, 1), (-f64::MAX, f64::MAX, 8)] {
+            let p = ImapbParams { min, max, length };
+            let mut out = [0u8; 8];
+            assert!(
+                matches!(
+                    encode_imapb(&p, 0.0, &mut out),
+                    Err(KlvEncodeError::InvalidImapbParams { .. })
+                ),
+                "encode [{min}, {max}] L={length}"
+            );
+            assert!(
+                matches!(
+                    decode_imapb(&p, &out[..length]),
+                    Err(KlvFieldError::InvalidImapbParams { .. })
+                ),
+                "decode [{min}, {max}] L={length}"
+            );
         }
     }
 }
