@@ -439,11 +439,13 @@ pub fn has_klva_registration(descs: &[RawDescriptor]) -> bool {
 ///      source.
 ///      Text starting at 0x20 or above is in the default table 00 (Figure
 ///      A.1: ISO/IEC 6937 with the euro sign at 0xA4) and is decoded by it:
-///      a non-spacing accent (0xC1..=0xCF) and the letter after it are one
-///      precomposed character; a control code (0x80..=0x9F), a code the
-///      table leaves empty, or an accent that is last or not followed by a
-///      letter it has a precomposed character with makes the text
-///      undecodable. One deviation from Annex A: default-table text that is
+///      a byte below 0x80 is read as ASCII, the C0 codes and 0x7F included,
+///      which the figure leaves empty; a non-spacing accent (0xC1..=0xCF)
+///      and the letter after it are one precomposed character; a control
+///      code (0x80..=0x9F), any other code the table leaves empty, or an
+///      accent that is last or not followed by a letter it has a precomposed
+///      character with makes the text undecodable.
+///      One deviation from Annex A: default-table text that is
 ///      well-formed UTF-8 as a whole is read as UTF-8, so a label written as
 ///      UTF-8 without the 0x15 selector reads as written. Table 00 text that
 ///      is also well-formed UTF-8 is misread by that rule: a character coded
@@ -1388,9 +1390,10 @@ mod label_tests {
         }
     }
 
-    /// Each byte of table 00 alone. Bytes below 0x80 are ASCII, 0x80..=0x9F
-    /// are control codes, row 0xC0 holds the accents (never alone), and a
-    /// code Figure A.1 leaves empty is refused.
+    /// Each byte of table 00 alone. Bytes below 0x80 are ASCII, 0x7F
+    /// included although Figure A.1 leaves it empty, 0x80..=0x9F are control
+    /// codes, row 0xC0 holds the accents (never alone), and any other code
+    /// Figure A.1 leaves empty is refused.
     #[test]
     fn every_default_table_byte_decodes_or_is_refused() {
         // EN 300 468 Figure A.1, rows 0xA0 to 0xF0: the code point printed
