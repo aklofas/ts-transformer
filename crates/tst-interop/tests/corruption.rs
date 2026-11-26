@@ -443,8 +443,13 @@ fn every_class_is_attributed_across_a_seed_sweep() {
     assert!(leads_excused >= 1, "no run of the sweep excused a lead");
 }
 
-/// Seeds per (profile, class) in the sweep below.
-const LEAD_SWEEP_SEEDS: u64 = 8;
+/// Seeds per (profile, class) in the sweep below: 1 to 8, and 13, whose
+/// [`Class::Truncate`] run leaves a lead the excusal must cover on five
+/// profiles (`baseline`, `klv-sync`, `pcr-tight`, `pcr-sparse`,
+/// `pts-rollover`; measured over seeds 1 to 64). The guard at the sweep's end
+/// asks for three excused leads, so a byte shift in one profile's stream
+/// cannot leave it with none.
+const LEAD_SWEEP_SEEDS: &[u64] = &[1, 2, 3, 4, 5, 6, 7, 8, 13];
 
 /// The soak draws its profiles from the whole registry, so the PCR lead
 /// floor has to hold under every class on every profile, not on `baseline`
@@ -466,7 +471,7 @@ fn the_pcr_lead_floor_survives_every_class_on_every_profile() {
     for p in profiles::all() {
         let bytes = gen_bytes(p, &format!("lead-sweep-{}", p.name));
         for class in Class::ALL {
-            for seed in 1..=LEAD_SWEEP_SEEDS {
+            for &seed in LEAD_SWEEP_SEEDS {
                 let (wire, header, injections) = tap(&bytes, &forced(class), seed);
                 let r = judge(&wire, p, Some(&(header, injections.clone())));
                 let lead: Vec<&String> = r
@@ -488,7 +493,10 @@ fn the_pcr_lead_floor_survives_every_class_on_every_profile() {
             }
         }
     }
-    assert!(excused >= 1, "no run of the sweep excused a lead");
+    assert!(
+        excused >= 3,
+        "{excused} lead(s) excused over the sweep, expected at least 3"
+    );
 }
 
 /// Seeds of the realistic sweep below. Chosen so that the runs between them
