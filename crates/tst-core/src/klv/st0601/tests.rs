@@ -5358,6 +5358,27 @@ fn sdcc_placement_takes_a_bounded_number_of_steps_per_item_and_row() {
     assert!(steps <= bound(&rec), "{steps} steps, bound {}", bound(&rec));
 }
 
+#[test]
+fn an_sdcc_pack_that_extends_a_group_taken_forward_follows_it_at_once() {
+    // The second pack refines the unknown item the first took forward, and
+    // Item 14: it is written right after the first, before Item 6, which
+    // the encoder would write next.
+    let source = sdcc_set(&[
+        I(2),
+        I(5),
+        Sdcc::Raw(tlv(150, &[0x01])),
+        P(2),
+        I(14),
+        P(2),
+        I(6),
+        I(65),
+    ]);
+    let rec = decode(&source).unwrap();
+    assert_eq!(rows(&rec), [vec![5, 150], vec![150, 14]]);
+    assert_eq!(encode_to_vec(&rec).unwrap(), source);
+    assert_eq!(encode_strict_compliance(&rec).unwrap(), source);
+}
+
 /// A small seeded generator for the placement properties below.
 struct Seeded(u64);
 
