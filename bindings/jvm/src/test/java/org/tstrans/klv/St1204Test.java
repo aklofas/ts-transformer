@@ -515,8 +515,22 @@ class St1204Test {
             var e = assertThrows(IllegalArgumentException.class, () -> Klv.encodeCoreId(c));
             assertTrue(e.getMessage().contains("version"), e.getMessage());
         }
-        CoreId ok = new CoreId(255, id.sensorType(), id.sensorId(), id.platformType(),
+        // A version that fits a byte but is not 1 is refused as decode refuses it.
+        CoreId v255 = new CoreId(255, id.sensorType(), id.sensorId(), id.platformType(),
             id.platformId(), id.windowId(), id.minorId());
-        assertNotNull(Klv.encodeCoreId(ok), "the byte boundary is accepted");
+        var e = assertThrows(IllegalArgumentException.class, () -> Klv.encodeCoreId(v255));
+        assertTrue(e.getMessage().contains("version"), e.getMessage());
+    }
+
+    @Test
+    void encodeRefusesWhatDecodeRefuses() throws KlvDecodeException {
+        CoreId id = Klv.decodeCoreId(TABLE7);
+        CoreId empty = new CoreId(1, null, null, null, null, null, null);
+        var e = assertThrows(IllegalArgumentException.class, () -> Klv.encodeCoreId(empty));
+        assertTrue(e.getMessage().contains("usage"), e.getMessage());
+        CoreId minorWithSensor = new CoreId(1, id.sensorType(), id.sensorId(), id.platformType(),
+            id.platformId(), id.windowId(), new byte[16]);
+        assertThrows(IllegalArgumentException.class, () -> Klv.encodeCoreId(minorWithSensor));
+        assertArrayEquals(TABLE7, Klv.encodeCoreId(id), "a valid identifier encodes as before");
     }
 }

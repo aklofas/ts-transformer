@@ -477,13 +477,15 @@ public final class Klv {
      * Encode a {@link CoreId} to its binary wire form (ST 1204.3 §7.3).
      *
      * <p>Returns the two-byte header (version + usage) followed by the UUIDs in
-     * EBNF order: sensor, platform, window, minor. Encoding is infallible;
-     * the caller is responsible for maintaining the ST 1204.3 EBNF constraint
-     * ({@code minorId} must be {@code null} when any other UUID field is present).
-     * Mirrors tst-py's {@code encode_core_id(id)}.
+     * EBNF order: sensor, platform, window, minor. An identifier that
+     * {@link #decodeCoreId(byte[])} would refuse is refused here: a version
+     * other than 1, no UUID at all, or {@code minorId} together with another
+     * UUID (ST 1204.3 §7.3.1). Mirrors tst-py's {@code encode_core_id(id)}.
      *
      * @param id the Core Identifier to encode
      * @return binary wire bytes (no UL / outer BER length)
+     * @throws IllegalArgumentException for an identifier {@code decodeCoreId}
+     *         would refuse, or a version outside a byte
      * @throws NullPointerException if {@code id} is {@code null}
      */
     public static byte[] encodeCoreId(CoreId id) {

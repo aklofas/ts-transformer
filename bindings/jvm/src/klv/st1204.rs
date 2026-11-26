@@ -11,7 +11,8 @@
 //! maps `St1204Error` to `KlvDecodeException`, and constructs the `CoreId` record.
 //!
 //! `encodeCoreIdNative(CoreId) -> byte[]` — reads the record fields, builds a Rust
-//! `CoreId` via `CoreId::new`, calls `encode_to_vec` (infallible).
+//! `CoreId` via `CoreId::new`, calls `encode_checked`: an identifier `decode`
+//! would refuse throws `IllegalArgumentException`.
 //!
 //! `coreIdTextNative(CoreId) -> String` — same read path, calls `Display`.
 //!
@@ -29,7 +30,7 @@ use jni::objects::{JByteArray, JObject, JValue};
 use jni::strings::JNIString;
 use jni::sys::jobject;
 use tst_core::klv::st0601::{MismmsViolation, validate_mismms};
-use tst_core::klv::st1204::{CoreId, IdType, St1204Error, decode, encode_to_vec};
+use tst_core::klv::st1204::{CoreId, IdType, St1204Error, decode, encode_checked};
 
 use crate::error::throw_klv_decode;
 use crate::jutil::require_non_null;
@@ -379,9 +380,10 @@ jni_native! {
 jni_native! {
     /// `org.tstrans.klv.Klv.encodeCoreIdNative(CoreId) -> byte[]`
     ///
-    /// Encodes a `CoreId` record to its binary wire form. Infallible on the Rust
-    /// side; throws `RuntimeException` only on JNI-level failures (field reads or
-    /// byte-array allocation).
+    /// Encodes a `CoreId` record to its binary wire form. Throws
+    /// `IllegalArgumentException` for an identifier `decode` would refuse, and
+    /// `RuntimeException` on JNI-level failures (field reads or byte-array
+    /// allocation).
     fn Java_org_tstrans_klv_Klv_encodeCoreIdNative<'local>(
         env,
         _c,
@@ -394,7 +396,16 @@ jni_native! {
         }
         match read_core_id(env, &id) {
             Ok(rust_id) => {
-                let wire = encode_to_vec(&rust_id);
+                let wire = match encode_checked(&rust_id) {
+                    Ok(w) => w,
+                    Err(e) => {
+                        let _ = env.throw_new(
+                            FindClass(jni_str!("java/lang/IllegalArgumentException")),
+                            JNIString::from(e.to_string()),
+                        );
+                        return JObject::null().into_raw();
+                    }
+                };
                 match env.byte_array_from_slice(&wire) {
                     Ok(arr) => arr.into_raw(),
                     Err(e) => {

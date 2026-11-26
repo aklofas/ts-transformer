@@ -66,7 +66,9 @@ use tst_core::klv::st1010::{
     decode_sdcc_flp as decode_st1010_sdcc_flp,
     encode_sdcc_flp_mode2 as encode_st1010_sdcc_flp_mode2,
 };
-use tst_core::klv::st1204::{St1204Error, decode as decode_st1204, encode_to_vec as encode_st1204};
+use tst_core::klv::st1204::{
+    St1204Error, decode as decode_st1204, encode_checked as encode_st1204_checked,
+};
 
 use crate::errors::{klv_encode_error_to_pyerr, make_kinded_error};
 
@@ -687,11 +689,13 @@ fn decode_core_id_py(py: Python<'_>, buf: &[u8]) -> PyResult<Py<PyAny>> {
 }
 
 /// Encode a Python `CoreId` to its binary wire form. Returns `bytes`.
+/// Raises `KlvError` for an identifier `decode_core_id` would refuse
+/// (a version other than 1, no UUID, a minor identifier with another UUID).
 #[pyfunction]
 #[pyo3(name = "encode_core_id")]
 fn encode_core_id_py(py: Python<'_>, core_id: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
     let rust_id = crate::generated::st1204::core_id_from_py(core_id)?;
-    let bytes = encode_st1204(&rust_id);
+    let bytes = encode_st1204_checked(&rust_id).map_err(|e| st1204_error_to_pyerr(py, e))?;
     Ok(pyo3::types::PyBytes::new(py, &bytes).unbind().into())
 }
 

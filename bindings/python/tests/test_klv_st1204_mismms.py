@@ -74,6 +74,20 @@ def test_encode_core_id_round_trip():
     assert encoded == TABLE7
 
 
+def test_encode_core_id_refuses_what_decode_refuses():
+    # An empty identifier, version 2 and a minor identifier beside a sensor:
+    # decode_core_id refuses each, so encode_core_id does not write them.
+    cid = decode_core_id(TABLE7)
+    for bad in (
+        CoreId(version=1),
+        CoreId(version=2, sensor=cid.sensor, platform=cid.platform),
+        CoreId(version=1, sensor=cid.sensor, minor=bytes(16)),
+    ):
+        with pytest.raises(KlvError) as excinfo:
+            encode_core_id(bad)
+        assert excinfo.value.kind.name == "MALFORMED_BYTES"
+
+
 # ---------------------------------------------------------------------------
 # core_id_text
 # ---------------------------------------------------------------------------
