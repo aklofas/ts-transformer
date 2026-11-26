@@ -32,6 +32,7 @@
 //! fixed-precision formatter.
 
 use super::st0601::UasDatalinkLs;
+use super::st0601::model::ViewItem;
 use crate::error::CotError;
 use alloc::format;
 use alloc::string::String;
@@ -77,8 +78,12 @@ crate::binding_record! {
         /// converters refuse with `CotError::InvalidProducerName`.
         @[py_default("\"ST0601CoT\"")]
         pub producer: String,
-        /// Geoid undulation (HAE − MSL) applied when only an MSL-referenced
-        /// altitude tag is available. Absent emits the MSL value as-is.
+        /// Geoid undulation (HAE − MSL) applied when the height comes from an
+        /// MSL-referenced item (Items 15, 25, 42). Absent emits the MSL value
+        /// as the HAE: an approximation off by the geoid undulation (tens of
+        /// metres), which `platform_position_xml_with` /
+        /// `sensor_point_of_interest_xml_with` with `MslFallback::Refuse`
+        /// refuse instead.
         pub geoid_undulation_m: Option<f64>,
         /// CoT `how` attribute. ST 0805.1 §5 fixes this at `m-p`
         /// (machine-passed) for both event types.
@@ -240,16 +245,59 @@ fn civil_from_days(days: i64) -> (i64, u32, u32) {
     (y + i64::from(m <= 2), m, d)
 }
 
-/// Applies the configured geoid undulation (HAE = MSL + N) to an
-/// MSL-referenced altitude/elevation tag, when the caller has supplied one
-/// via [`CotConfig::geoid_undulation_m`]. `None` passes the MSL value
-/// through as-is — the documented datum caveat used when no undulation
-/// value is available (item 7 of the mapping analysis).
-fn hae_from_msl(msl: Option<f64>, cfg: &CotConfig) -> Option<f64> {
-    msl.map(|v| match cfg.geoid_undulation_m {
-        Some(n) => v + n,
-        None => v,
-    })
+/// What the CoT converters do with an MSL height (Items 15, 25, 42) when
+/// [`CotConfig::geoid_undulation_m`] is not set: ST 0805.1 asks for a height
+/// above the ellipsoid and supplies no geoid model.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum MslFallback {
+    /// Write the MSL value as the HAE (an approximation off by the geoid
+    /// undulation). What [`platform_position_xml`] and
+    /// [`sensor_point_of_interest_xml`] do.
+    #[default]
+    PassThrough,
+    /// Refuse with [`CotError::MslWithoutUndulation`] naming the MSL item.
+    Refuse,
+}
+
+/// Applies the configured geoid undulation (HAE = MSL + N) to the value of
+/// the MSL-referenced item `tag`. Without an undulation the MSL value passes
+/// through as the HAE, or is refused under [`MslFallback::Refuse`].
+fn hae_from_msl(
+    msl: f64,
+    tag: u32,
+    cfg: &CotConfig,
+    fallback: MslFallback,
+) -> Result<f64, CotError> {
+    match (cfg.geoid_undulation_m, fallback) {
+        (Some(n), _) => Ok(msl + n),
+        (None, MslFallback::Refuse) => Err(CotError::MslWithoutUndulation { tag }),
+        (None, _) => Ok(msl),
+    }
+}
+
+/// A height from a view chain (the composite views' rule: an item sent as
+/// "no value" ends the chain), as HAE. `absent` is the error when no item of
+/// the chain is on the record; `msl_tag` is the chain's MSL item.
+fn chain_hae(
+    item: ViewItem,
+    msl_tag: u32,
+    absent: CotError,
+    cfg: &CotConfig,
+    fallback: MslFallback,
+) -> Result<f64, CotError> {
+    match item {
+        ViewItem::Value { tag, value } if tag == msl_tag => hae_from_msl(value, tag, cfg, fallback),
+        ViewItem::Value { value, .. } => Ok(value),
+        ViewItem::SentAsNoValue { tag } => Err(CotError::MissingField {
+            tag,
+            name: u8::try_from(tag)
+                .ok()
+                .and_then(super::st0601::tags::lookup)
+                .map_or("", |t| t.name),
+        }),
+        ViewItem::Absent => Err(absent),
+    }
 }
 
 /// Serializes a **Platform Position** CoT event (ST 0805.1 §5 Table 1) from
@@ -271,7 +319,11 @@ fn hae_from_msl(msl: Option<f64>, cfg: &CotConfig) -> Option<f64> {
 /// back to the MSL-referenced Sensor True Altitude (Tag 15), adjusted by
 /// [`CotConfig::geoid_undulation_m`] when the caller has supplied one
 /// (item 7 of the mapping analysis — ST 0805.1 requires an MSL→HAE
-/// conversion but supplies no geoid model).
+/// conversion but supplies no geoid model); without one the MSL value is
+/// written as the HAE ([`platform_position_xml_with`] can refuse instead).
+/// This is the chain of [`UasDatalinkLs::sensor_position`]: an item of it
+/// sent as "no value" (a sentinel or an IMAPB special) ends it, and the
+/// event is refused with [`CotError::MissingField`] naming that item.
 ///
 /// The `sensor` sub-element is omitted entirely when either Tag 5
 /// (Platform Heading Angle) or Tag 18 (Sensor Relative Azimuth Angle) is
@@ -291,6 +343,23 @@ pub fn platform_position_xml(
     cfg: &CotConfig,
     generated_us: u64,
 ) -> Result<String, CotError> {
+    platform_position_xml_with(ls, cfg, generated_us, MslFallback::PassThrough)
+}
+
+/// [`platform_position_xml`] with a choice of what an MSL-only height does:
+/// under [`MslFallback::Refuse`] a record whose height comes from Item 15
+/// while no [`CotConfig::geoid_undulation_m`] is set is refused with
+/// [`CotError::MslWithoutUndulation`] `{ tag: 15 }` instead of writing the
+/// MSL value as the HAE.
+///
+/// # Errors
+/// As [`platform_position_xml`], and [`CotError::MslWithoutUndulation`].
+pub fn platform_position_xml_with(
+    ls: &UasDatalinkLs,
+    cfg: &CotConfig,
+    generated_us: u64,
+    fallback: MslFallback,
+) -> Result<String, CotError> {
     check_producer(&cfg.producer)?;
     let uid = platform_uid(ls)?;
     check_uid_parts(&[
@@ -309,14 +378,16 @@ pub fn platform_position_xml(
         tag: 14,
         name: "Sensor Longitude",
     })?;
-    let hae = ls
-        .sensor_ellipsoid_height_extended_m
-        .or(ls.sensor_ellipsoid_height_m)
-        .or_else(|| hae_from_msl(ls.sensor_alt_m, cfg))
-        .ok_or(CotError::MissingField {
+    let hae = chain_hae(
+        ls.sensor_height_item(),
+        15,
+        CotError::MissingField {
             tag: 15,
             name: "Sensor True Altitude",
-        })?;
+        },
+        cfg,
+        fallback,
+    )?;
 
     let time = iso8601_us(timestamp_us);
     let stale = iso8601_us(timestamp_us.saturating_add(cfg.update_interval_us));
@@ -386,7 +457,10 @@ pub fn platform_position_xml(
 /// Target Location Elevation (Tag 42, MSL, +[`CotConfig::geoid_undulation_m`])
 /// when Target Location supplies the position, else the HAE-native Frame
 /// Center Ellipsoid Height (Tag 78) when present, else Frame Center
-/// Elevation (Tag 25, MSL, +geoid undulation).
+/// Elevation (Tag 25, MSL, +geoid undulation) — the chain of
+/// [`UasDatalinkLs::frame_center`]. Without an undulation an MSL value is
+/// written as the HAE ([`sensor_point_of_interest_xml_with`] can refuse
+/// instead).
 ///
 /// `point/@ce`/`@le` divide Tags 45/46 (CE90/LE90) by the spec-exact
 /// constants `2.146`/`1.645` to convert to CoT's 1σ convention, falling
@@ -403,6 +477,23 @@ pub fn sensor_point_of_interest_xml(
     cfg: &CotConfig,
     generated_us: u64,
 ) -> Result<String, CotError> {
+    sensor_point_of_interest_xml_with(ls, cfg, generated_us, MslFallback::PassThrough)
+}
+
+/// [`sensor_point_of_interest_xml`] with a choice of what an MSL-only height
+/// does: under [`MslFallback::Refuse`] a record whose aimpoint height comes
+/// from Item 42 or Item 25 while no [`CotConfig::geoid_undulation_m`] is set
+/// is refused with [`CotError::MslWithoutUndulation`] naming that item.
+///
+/// # Errors
+/// As [`sensor_point_of_interest_xml`], and
+/// [`CotError::MslWithoutUndulation`].
+pub fn sensor_point_of_interest_xml_with(
+    ls: &UasDatalinkLs,
+    cfg: &CotConfig,
+    generated_us: u64,
+    fallback: MslFallback,
+) -> Result<String, CotError> {
     check_producer(&cfg.producer)?;
     let uid = spi_uid(ls)?;
     let platform_uid = platform_uid(ls)?;
@@ -416,29 +507,31 @@ pub fn sensor_point_of_interest_xml(
         name: "Precision Time Stamp",
     })?;
 
-    let (lat, lon, hae) = if let (Some(lat), Some(lon)) =
-        (ls.target_location_lat_deg, ls.target_location_lon_deg)
-    {
-        let hae = hae_from_msl(ls.target_location_elev_m, cfg).ok_or(CotError::MissingField {
-            tag: 42,
-            name: "Target Location Elevation",
-        })?;
-        (lat, lon, hae)
-    } else if let (Some(lat), Some(lon)) = (ls.frame_center_lat_deg, ls.frame_center_lon_deg) {
-        let hae = ls
-            .frame_center_ellipsoid_height_m
-            .or_else(|| hae_from_msl(ls.frame_center_elev_m, cfg))
-            .ok_or(CotError::MissingField {
-                tag: 25,
-                name: "Frame Center Elevation",
+    let (lat, lon, hae) =
+        if let (Some(lat), Some(lon)) = (ls.target_location_lat_deg, ls.target_location_lon_deg) {
+            let elev = ls.target_location_elev_m.ok_or(CotError::MissingField {
+                tag: 42,
+                name: "Target Location Elevation",
             })?;
-        (lat, lon, hae)
-    } else {
-        return Err(CotError::MissingField {
-            tag: 23,
-            name: "Frame Center Latitude",
-        });
-    };
+            (lat, lon, hae_from_msl(elev, 42, cfg, fallback)?)
+        } else if let (Some(lat), Some(lon)) = (ls.frame_center_lat_deg, ls.frame_center_lon_deg) {
+            let hae = chain_hae(
+                ls.frame_center_height_item(),
+                25,
+                CotError::MissingField {
+                    tag: 25,
+                    name: "Frame Center Elevation",
+                },
+                cfg,
+                fallback,
+            )?;
+            (lat, lon, hae)
+        } else {
+            return Err(CotError::MissingField {
+                tag: 23,
+                name: "Frame Center Latitude",
+            });
+        };
 
     let ce = match ls.target_error_ce90_m {
         Some(v) => format!("{}", v / CE90_TO_1SIGMA),
@@ -818,6 +911,158 @@ mod tests {
         ));
         // The uid functions are not XML: they return the text as it came.
         assert_eq!(platform_uid(&ls).unwrap(), "PRED01_a\tb\nc\rd");
+    }
+
+    /// Only Item 15 for the platform; only Item 42 (target location) or only
+    /// Item 25 (frame centre) for the aimpoint: every height is MSL.
+    fn msl_only() -> UasDatalinkLs {
+        let mut ls = fixture();
+        ls.sensor_ellipsoid_height_m = None;
+        ls.sensor_alt_m = Some(1500.0);
+        ls
+    }
+
+    fn msl_only_frame_center() -> UasDatalinkLs {
+        let mut ls = msl_only();
+        ls.target_location_lat_deg = None;
+        ls.target_location_lon_deg = None;
+        ls.target_location_elev_m = None;
+        ls.frame_center_lat_deg = Some(34.2);
+        ls.frame_center_lon_deg = Some(-118.3);
+        ls.frame_center_elev_m = Some(100.0);
+        ls
+    }
+
+    #[test]
+    fn cot_without_any_height_item_refuses() {
+        let mut ls = fixture();
+        ls.sensor_ellipsoid_height_m = None;
+        assert!(matches!(
+            platform_position_xml(&ls, &CotConfig::default(), 0),
+            Err(CotError::MissingField { tag: 15, .. })
+        ));
+        let mut ls = msl_only_frame_center();
+        ls.frame_center_elev_m = None;
+        assert!(matches!(
+            sensor_point_of_interest_xml(&ls, &CotConfig::default(), 0),
+            Err(CotError::MissingField { tag: 25, .. })
+        ));
+        let mut ls = fixture();
+        ls.target_location_elev_m = None;
+        assert!(matches!(
+            sensor_point_of_interest_xml(&ls, &CotConfig::default(), 0),
+            Err(CotError::MissingField { tag: 42, .. })
+        ));
+    }
+
+    #[test]
+    fn refuse_fallback_errors_on_msl_only_platform_height() {
+        assert!(matches!(
+            platform_position_xml_with(&msl_only(), &CotConfig::default(), 0, MslFallback::Refuse),
+            Err(CotError::MslWithoutUndulation { tag: 15 })
+        ));
+    }
+
+    #[test]
+    fn refuse_fallback_errors_on_msl_only_spi() {
+        assert!(matches!(
+            sensor_point_of_interest_xml_with(
+                &msl_only_frame_center(),
+                &CotConfig::default(),
+                0,
+                MslFallback::Refuse
+            ),
+            Err(CotError::MslWithoutUndulation { tag: 25 })
+        ));
+        assert!(matches!(
+            sensor_point_of_interest_xml_with(
+                &msl_only(),
+                &CotConfig::default(),
+                0,
+                MslFallback::Refuse
+            ),
+            Err(CotError::MslWithoutUndulation { tag: 42 })
+        ));
+    }
+
+    #[test]
+    fn refuse_passes_with_hae_or_undulation() {
+        let mut ls = msl_only();
+        ls.sensor_ellipsoid_height_m = Some(1470.0);
+        let xml =
+            platform_position_xml_with(&ls, &CotConfig::default(), 0, MslFallback::Refuse).unwrap();
+        assert!(xml.contains(r#"hae="1470""#), "{xml}");
+        let mut ls = msl_only_frame_center();
+        ls.frame_center_ellipsoid_height_m = Some(77.0);
+        let xml =
+            sensor_point_of_interest_xml_with(&ls, &CotConfig::default(), 0, MslFallback::Refuse)
+                .unwrap();
+        assert!(xml.contains(r#"hae="77""#), "{xml}");
+        let cfg = CotConfig {
+            geoid_undulation_m: Some(20.0),
+            ..CotConfig::default()
+        };
+        let xml =
+            sensor_point_of_interest_xml_with(&msl_only(), &cfg, 0, MslFallback::Refuse).unwrap();
+        assert!(xml.contains(r#"hae="270""#), "{xml}");
+        let xml = platform_position_xml_with(&msl_only(), &cfg, 0, MslFallback::Refuse).unwrap();
+        assert!(xml.contains(r#"hae="1520""#), "{xml}");
+    }
+
+    #[test]
+    fn default_cot_keeps_msl_pass_through_golden() {
+        let golden = concat!(
+            r#"<?xml version='1.0' standalone='yes'?>"#,
+            r#"<event version="2.0" uid="PRED01_M05" type="a-f-A-M-F" "#,
+            r#"time="1995-04-16T13:44:54.000000Z" start="1995-04-16T13:44:54.000000Z" "#,
+            r#"stale="1995-04-16T13:44:59.000000Z" how="m-p">"#,
+            r#"<point lat="34.05" lon="-118.25" hae="1500" ce="9999999" le="9999999"/>"#,
+            r#"<detail><_flow-tags_ ST0601CoT="1995-04-16T13:44:55.000000Z"/>"#,
+            r#"<sensor azimuth="30" fov="2.5" vfov="1.9" model="EO" range="12000"/>"#,
+            r#"</detail></event>"#,
+        );
+        let cfg = CotConfig::default();
+        assert_eq!(
+            platform_position_xml(&msl_only(), &cfg, 798_039_895_000_000).unwrap(),
+            golden
+        );
+        assert_eq!(
+            platform_position_xml_with(
+                &msl_only(),
+                &cfg,
+                798_039_895_000_000,
+                MslFallback::PassThrough
+            )
+            .unwrap(),
+            golden
+        );
+        let spi = sensor_point_of_interest_xml(&msl_only(), &cfg, 0).unwrap();
+        assert!(spi.contains(r#"hae="250""#), "{spi}");
+    }
+
+    #[test]
+    fn cot_height_follows_the_view_chain() {
+        // Item 104 sent as IMAP_BELOW_MINIMUM ends the height's chain, as it
+        // ends the composite view: the event is refused naming Item 104, and
+        // Item 75 is not used.
+        for value in [None, Some(-900.0)] {
+            let mut ls = fixture();
+            ls.sensor_ellipsoid_height_m = Some(1470.0);
+            ls.sensor_ellipsoid_height_extended_m = value;
+            ls.imapb_specials = alloc::vec![(104, crate::klv::ImapbSpecial::BelowMin)];
+            for fallback in [MslFallback::PassThrough, MslFallback::Refuse] {
+                assert!(
+                    matches!(
+                        platform_position_xml_with(&ls, &CotConfig::default(), 0, fallback),
+                        Err(CotError::MissingField {
+                            tag: 104,
+                            name: "Sensor Ellipsoid Height Extended"
+                        })
+                    ),
+                    "{value:?} {fallback:?}"
+                );
+            }
+        }
     }
 
     #[test]
