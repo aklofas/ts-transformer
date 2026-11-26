@@ -2,15 +2,16 @@
 
 use crate::error::KlvEncodeError;
 use crate::klv::checksum::checksum_running_sum_16;
+use crate::klv::imapb::ImapbSpecial;
 use crate::klv::length::{ber_len, ber_oid_len, write_ber};
 use crate::klv::pack::{emit_ber_oid_tlv, is_typed_tag};
+use alloc::borrow::Cow;
 use alloc::vec::Vec;
 
 use super::mapping::encode_fixed_range;
 use super::model::{EncodeConfig, OutOfRangePolicy, UasDatalinkLs};
 use super::packs;
 use super::tags::{Encoding, FieldValue, LinearRange, TAGS, TagSpec, lookup as lookup_tag};
-use crate::klv::imapb::ImapbSpecial;
 
 /// Encode a UAS Datalink Local Set into the caller-provided buffer per
 /// MISB ST 0601. Returns the number of bytes written.
@@ -368,14 +369,17 @@ fn signal_bytes(spec: &TagSpec, signal: Signal) -> Result<Vec<u8>, KlvEncodeErro
 /// [`resolve`] does not replay (its field holds a value that wins, or the
 /// entry is of the wrong kind for its row) is skipped.
 fn each_replayed_signal(record: &UasDatalinkLs, mut visit: impl FnMut(&TagSpec, Signal)) {
-    for tag in last_per_tag(&record.sentinel_tags, |&t| t) {
+    if record.sentinel_tags.is_empty() && record.imapb_specials.is_empty() {
+        return;
+    }
+    for &tag in last_per_tag(&record.sentinel_tags, |&t| t).iter() {
         if let Some(spec) = u8::try_from(tag).ok().and_then(lookup_tag)
             && resolve(record, spec) == Some(ItemSource::Sentinel)
         {
             visit(spec, Signal::Sentinel);
         }
     }
-    for (tag, _) in last_per_tag(&record.imapb_specials, |e| e.0) {
+    for &(tag, _) in last_per_tag(&record.imapb_specials, |e| e.0).iter() {
         if let Some(spec) = u8::try_from(tag).ok().and_then(lookup_tag)
             && let Some(ItemSource::Special(special)) = resolve(record, spec)
         {
@@ -387,9 +391,9 @@ fn each_replayed_signal(record: &UasDatalinkLs, mut visit: impl FnMut(&TagSpec, 
 /// The entries of `entries` that are the last for their tag, in list
 /// order. A tag above 255 names no typed row, so it is left out. Linear in
 /// the list: one pass from the end with a bit per tag.
-fn last_per_tag<T: Copy>(entries: &[T], tag_of: impl Fn(&T) -> u32) -> Vec<T> {
+fn last_per_tag<T: Copy>(entries: &[T], tag_of: impl Fn(&T) -> u32) -> Cow<'_, [T]> {
     if entries.len() < 2 {
-        return entries.to_vec();
+        return Cow::Borrowed(entries);
     }
     let mut seen = [0u64; 4];
     let mut kept: Vec<T> = Vec::new();
@@ -404,7 +408,7 @@ fn last_per_tag<T: Copy>(entries: &[T], tag_of: impl Fn(&T) -> u32) -> Vec<T> {
         }
     }
     kept.reverse();
-    kept
+    Cow::Owned(kept)
 }
 
 /// Visit each typed field that will be emitted, calling `visit(tag_id, value_len)`.
@@ -425,13 +429,10 @@ pub(super) fn each_typed_field<F: FnMut(u8, usize)>(
             // Tags 102 and 115 are multi-instance: their loops follow.
             pack_len(record, spec.id)
         } else {
-            // The checksum row has no accessor; the caller appends it.
-            if spec.get.is_none() {
-                continue;
-            }
             match written_value(record, spec) {
                 Some(v) => Some(scalar_len(spec, &v)),
-                // Tag 65 is auto-emitted when the record leaves it unset.
+                // Tag 65 is auto-emitted when the record leaves it unset; the
+                // checksum row has no accessor and the caller appends it.
                 None if spec.id == 65 => Some(1),
                 None => None,
             }
