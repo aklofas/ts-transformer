@@ -1557,17 +1557,90 @@ public record UasDatalinkLs(
     // Composite accessor methods
     // -----------------------------------------------------------------------
 
+    // The composite views follow the Rust crate's rule: each component comes
+    // from the first item of its chain that holds a value, most preferred
+    // first; an item sent as "no value" (a sentinel or an IMAPB special the
+    // encoder would write) ends the chain and the view is empty.
+
     /**
-     * Return the sensor position when all three underlying fields are present.
-     * Mirrors tst-py's {@code sensor_position()}.
+     * A sentinel entry marks "no value" only on a signed linear item of 2 or 4
+     * bytes (the ones the encoder writes a sentinel for): of the items the views
+     * read, Items 6, 7 and 82 to 91.
+     */
+    private static boolean takesASentinel(int tag) {
+        return tag == 6 || tag == 7 || (tag >= 82 && tag <= 91);
+    }
+
+    private boolean sentAsNoValue(int tag, Double value) {
+        if (tag == 104) {
+            // Item 104 is the one IMAPB item the views read: range -900 to 40000.
+            String last = null;
+            for (ImapbSpecialEntry e : imapbSpecials) {
+                if (e.tag() == tag) {
+                    last = e.code();
+                }
+            }
+            if (last == null) {
+                return false;
+            }
+            if (value == null) {
+                return true;
+            }
+            return (last.equals("below_min") && value == -900.0)
+                    || (last.equals("above_max") && value == 40_000.0);
+        }
+        return value == null && takesASentinel(tag) && sentinelTags.contains((long) tag);
+    }
+
+    /** {tag, value} of the first item of the chain that holds a value, or null. */
+    private double[] viewItem(int[] tags, Double[] values) {
+        for (int i = 0; i < tags.length; i++) {
+            if (sentAsNoValue(tags[i], values[i])) {
+                return null;
+            }
+            if (values[i] != null) {
+                return new double[] {tags[i], values[i]};
+            }
+        }
+        return null;
+    }
+
+    private double[] sensorHeight() {
+        return viewItem(new int[] {104, 75, 15},
+                new Double[] {sensorEllipsoidHeightExtendedM, sensorEllipsoidHeightM, sensorAltM});
+    }
+
+    private double[] frameCenterHeight() {
+        return viewItem(new int[] {78, 25}, new Double[] {frameCenterEllipsoidHeightM, frameCenterElevM});
+    }
+
+    /**
+     * Return the sensor position: latitude and longitude (Items 13, 14) with the
+     * first height of Items 104, 75 (ellipsoid) and 15 (MSL); {@link
+     * #sensorPositionDatum()} says which. An item sent as "no value" ends the
+     * height's chain. Mirrors tst-py's {@code sensor_position()}.
      *
      * @return {@link GeoPoint} with lat/lon/alt, or {@link Optional#empty()}
      */
     public Optional<GeoPoint> sensorPosition() {
-        if (sensorLatDeg != null && sensorLonDeg != null && sensorAltM != null) {
-            return Optional.of(new GeoPoint(sensorLatDeg, sensorLonDeg, sensorAltM));
+        double[] h = sensorHeight();
+        if (sensorLatDeg == null || sensorLonDeg == null || h == null) {
+            return Optional.empty();
         }
-        return Optional.empty();
+        return Optional.of(new GeoPoint(sensorLatDeg, sensorLonDeg, h[1]));
+    }
+
+    /**
+     * The datum of {@link #sensorPosition()}'s altitude; empty exactly when that
+     * view is empty. Mirrors tst-py's {@code sensor_position_datum()}.
+     *
+     * @return {@link AltitudeDatum#HAE} or {@link AltitudeDatum#MSL}, or empty
+     */
+    public Optional<AltitudeDatum> sensorPositionDatum() {
+        if (sensorPosition().isEmpty()) {
+            return Optional.empty();
+        }
+        return Optional.of(sensorHeight()[0] == 15 ? AltitudeDatum.MSL : AltitudeDatum.HAE);
     }
 
     /**
@@ -1598,71 +1671,94 @@ public record UasDatalinkLs(
     }
 
     /**
-     * Return the platform attitude when all three underlying fields are present.
-     * Uses platform heading/pitch/roll (tags 5/6/7). Mirrors tst-py's
+     * Return the platform attitude: heading (Item 5) with pitch and roll from the
+     * full-range Items 90 / 91, else Items 6 / 7. Mirrors tst-py's
      * {@code platform_attitude()}.
      *
      * @return {@link Attitude} with heading/pitch/roll in degrees, or empty
      */
     public Optional<Attitude> platformAttitude() {
-        if (platformHeadingDeg != null && platformPitchDeg != null && platformRollDeg != null) {
-            return Optional.of(new Attitude(platformHeadingDeg, platformPitchDeg, platformRollDeg));
+        double[] pitch = viewItem(new int[] {90, 6}, new Double[] {platformPitchFullDeg, platformPitchDeg});
+        double[] roll = viewItem(new int[] {91, 7}, new Double[] {platformRollFullDeg, platformRollDeg});
+        if (platformHeadingDeg == null || pitch == null || roll == null) {
+            return Optional.empty();
         }
-        return Optional.empty();
+        return Optional.of(new Attitude(platformHeadingDeg, pitch[1], roll[1]));
     }
 
     /**
-     * Return the frame center when all three underlying fields are present.
-     * Mirrors tst-py's {@code frame_center()}.
+     * Return the frame center: latitude and longitude (Items 23, 24) with the
+     * first height of Items 78 (ellipsoid) and 25 (MSL); {@link
+     * #frameCenterDatum()} says which. Mirrors tst-py's {@code frame_center()}.
      *
      * @return {@link GeoPoint} with lat/lon/elev, or empty
      */
     public Optional<GeoPoint> frameCenter() {
-        if (frameCenterLatDeg != null && frameCenterLonDeg != null && frameCenterElevM != null) {
-            return Optional.of(new GeoPoint(frameCenterLatDeg, frameCenterLonDeg, frameCenterElevM));
+        double[] h = frameCenterHeight();
+        if (frameCenterLatDeg == null || frameCenterLonDeg == null || h == null) {
+            return Optional.empty();
         }
-        return Optional.empty();
+        return Optional.of(new GeoPoint(frameCenterLatDeg, frameCenterLonDeg, h[1]));
     }
 
     /**
-     * Return the sensor footprint corners. Prefers the absolute corner tags
-     * (82–89) when all eight are present; falls back to frame-center + offset
-     * tags (26–33) when all eight offsets and both frame-center lat/lon are
-     * present; otherwise returns empty. Mirrors tst-py's {@code corners()}.
+     * The datum of {@link #frameCenter()}'s altitude; empty exactly when that
+     * view is empty. Mirrors tst-py's {@code frame_center_datum()}.
+     *
+     * @return {@link AltitudeDatum#HAE} or {@link AltitudeDatum#MSL}, or empty
+     */
+    public Optional<AltitudeDatum> frameCenterDatum() {
+        if (frameCenter().isEmpty()) {
+            return Optional.empty();
+        }
+        return Optional.of(frameCenterHeight()[0] == 25 ? AltitudeDatum.MSL : AltitudeDatum.HAE);
+    }
+
+    /**
+     * Return the sensor footprint corners, each on its own: its full-range pair
+     * (Items 82 to 89) when both are present, else the frame center plus its
+     * offsets (Items 26 to 33). A full-range item sent as "no value" (Off-Earth)
+     * ends that corner, and so the view. An offset corner's longitude is folded
+     * into (-180, 180]. Mirrors tst-py's {@code corners()}.
      *
      * @return {@link Corners} with four {@link LatLon} points, or empty
      */
     public Optional<Corners> corners() {
-        // Prefer absolute (tags 82-89) when fully populated.
-        if (cornerLatP1Deg != null && cornerLonP1Deg != null
-                && cornerLatP2Deg != null && cornerLonP2Deg != null
-                && cornerLatP3Deg != null && cornerLonP3Deg != null
-                && cornerLatP4Deg != null && cornerLonP4Deg != null) {
-            return Optional.of(new Corners(
-                    new LatLon(cornerLatP1Deg, cornerLonP1Deg),
-                    new LatLon(cornerLatP2Deg, cornerLonP2Deg),
-                    new LatLon(cornerLatP3Deg, cornerLonP3Deg),
-                    new LatLon(cornerLatP4Deg, cornerLonP4Deg)
-            ));
-        }
-        // Fall back to offsets + frame center.
-        if (frameCenterLatDeg == null || frameCenterLonDeg == null) {
+        LatLon p1 = corner(82, cornerLatP1Deg, cornerLonP1Deg, cornerLatOffsetP1Deg, cornerLonOffsetP1Deg);
+        LatLon p2 = corner(84, cornerLatP2Deg, cornerLonP2Deg, cornerLatOffsetP2Deg, cornerLonOffsetP2Deg);
+        LatLon p3 = corner(86, cornerLatP3Deg, cornerLonP3Deg, cornerLatOffsetP3Deg, cornerLonOffsetP3Deg);
+        LatLon p4 = corner(88, cornerLatP4Deg, cornerLonP4Deg, cornerLatOffsetP4Deg, cornerLonOffsetP4Deg);
+        if (p1 == null || p2 == null || p3 == null || p4 == null) {
             return Optional.empty();
         }
-        if (cornerLatOffsetP1Deg == null || cornerLonOffsetP1Deg == null
-                || cornerLatOffsetP2Deg == null || cornerLonOffsetP2Deg == null
-                || cornerLatOffsetP3Deg == null || cornerLonOffsetP3Deg == null
-                || cornerLatOffsetP4Deg == null || cornerLonOffsetP4Deg == null) {
-            return Optional.empty();
+        return Optional.of(new Corners(p1, p2, p3, p4));
+    }
+
+    private LatLon corner(int latTag, Double lat, Double lon, Double latOffset, Double lonOffset) {
+        if (sentAsNoValue(latTag, lat) || sentAsNoValue(latTag + 1, lon)) {
+            return null;
         }
-        double lat0 = frameCenterLatDeg;
-        double lon0 = frameCenterLonDeg;
-        return Optional.of(new Corners(
-                new LatLon(lat0 + cornerLatOffsetP1Deg, lon0 + cornerLonOffsetP1Deg),
-                new LatLon(lat0 + cornerLatOffsetP2Deg, lon0 + cornerLonOffsetP2Deg),
-                new LatLon(lat0 + cornerLatOffsetP3Deg, lon0 + cornerLonOffsetP3Deg),
-                new LatLon(lat0 + cornerLatOffsetP4Deg, lon0 + cornerLonOffsetP4Deg)
-        ));
+        if (lat != null && lon != null) {
+            return new LatLon(lat, lon);
+        }
+        if (frameCenterLatDeg == null || frameCenterLonDeg == null
+                || latOffset == null || lonOffset == null) {
+            return null;
+        }
+        return new LatLon(frameCenterLatDeg + latOffset, wrapLonDeg(frameCenterLonDeg + lonOffset));
+    }
+
+    /**
+     * A corner longitude folded into (-180, 180]; a sum already inside, or one
+     * that is not finite, is returned as it is (folding it would cost an ulp).
+     */
+    private static double wrapLonDeg(double x) {
+        if (!Double.isFinite(x) || (x > -180.0 && x <= 180.0)) {
+            return x;
+        }
+        double r = (x + 180.0) % 360.0;
+        double w = (r < 0.0 ? r + 360.0 : r) - 180.0;
+        return w == -180.0 ? 180.0 : w;
     }
 
     // -----------------------------------------------------------------------

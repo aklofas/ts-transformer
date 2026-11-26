@@ -1405,4 +1405,220 @@ class St0601Test {
                 .build());
         assertWireContains(wire, "7e0105", "Tag 126 SensorControlMode=AutoHoldingPosition");
     }
+
+    // -----------------------------------------------------------------------
+    // The views, against the case table the Rust and Python suites read too
+    // -----------------------------------------------------------------------
+
+    private static final java.nio.file.Path CASE_TABLE = java.nio.file.Path.of(
+            System.getProperty("user.dir"), "..", "..",
+            "crates", "tst-core", "tests", "fixtures", "st0601", "composite-views.json");
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void compositeViewsFollowTheCaseTable() throws Exception {
+        String text = java.nio.file.Files.readString(CASE_TABLE);
+        java.util.Map<String, Object> doc = (java.util.Map<String, Object>) CaseTableJson.parse(text);
+        java.util.List<Object> rows = (java.util.List<Object>) doc.get("rows");
+        assertFalse(rows.isEmpty());
+        for (Object r : rows) {
+            java.util.Map<String, Object> row = (java.util.Map<String, Object>) r;
+            String name = (String) row.get("name");
+            UasDatalinkLs rec = caseRecord(row);
+            double tol = row.containsKey("tolerance") ? (Double) row.get("tolerance") : 0.0;
+            java.util.Map<String, Object> expect = (java.util.Map<String, Object>) row.get("expect");
+            for (java.util.Map.Entry<String, Object> e : expect.entrySet()) {
+                String view = e.getKey();
+                Object want = e.getValue();
+                if (view.endsWith("_datum")) {
+                    Optional<AltitudeDatum> d = view.equals("sensor_position_datum")
+                            ? rec.sensorPositionDatum() : rec.frameCenterDatum();
+                    String got = d.map(x -> x == AltitudeDatum.HAE ? "hae" : "msl").orElse(null);
+                    assertEquals(want, got, name + ": " + view);
+                    continue;
+                }
+                double[] got = caseView(rec, view);
+                if (want == null) {
+                    assertNull(got, name + ": " + view);
+                    continue;
+                }
+                assertNotNull(got, name + ": " + view);
+                java.util.List<Double> w = new java.util.ArrayList<>();
+                for (Object item : (java.util.List<Object>) want) {
+                    if (item instanceof java.util.List<?> pair) {
+                        for (Object x : pair) {
+                            w.add((Double) x);
+                        }
+                    } else {
+                        w.add((Double) item);
+                    }
+                }
+                assertEquals(w.size(), got.length, name + ": " + view);
+                for (int i = 0; i < got.length; i++) {
+                    if (tol == 0.0) {
+                        assertEquals(w.get(i), got[i], name + ": " + view + "[" + i + "]");
+                    } else {
+                        assertEquals(w.get(i), got[i], tol, name + ": " + view + "[" + i + "]");
+                    }
+                }
+            }
+        }
+    }
+
+    @Test
+    void nonFiniteOffsetsComeBackAsThemselves() {
+        for (double offset : new double[] {Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY, Double.NaN}) {
+            UasDatalinkLs rec = new UasDatalinkLs.Builder()
+                    .universalLabel(java.nio.ByteBuffer.wrap(Klv.st0601Ul()))
+                    .frameCenterLatDeg(10.0).frameCenterLonDeg(170.0)
+                    .cornerLatOffsetP1Deg(0.0).cornerLonOffsetP1Deg(offset)
+                    .cornerLatOffsetP2Deg(0.0).cornerLonOffsetP2Deg(offset)
+                    .cornerLatOffsetP3Deg(0.0).cornerLonOffsetP3Deg(offset)
+                    .cornerLatOffsetP4Deg(0.0).cornerLonOffsetP4Deg(offset)
+                    .build();
+            Corners c = rec.corners().orElseThrow();
+            for (LatLon p : new LatLon[] {c.p1(), c.p2(), c.p3(), c.p4()}) {
+                assertEquals(offset, p.lonDeg(), "offset " + offset);
+            }
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static UasDatalinkLs caseRecord(java.util.Map<String, Object> row) throws Exception {
+        UasDatalinkLs.Builder b = new UasDatalinkLs.Builder()
+                .universalLabel(java.nio.ByteBuffer.wrap(Klv.st0601Ul()));
+        for (java.util.Map.Entry<String, Object> f : ((java.util.Map<String, Object>) row.get("fields")).entrySet()) {
+            StringBuilder camel = new StringBuilder();
+            boolean up = false;
+            for (char ch : f.getKey().toCharArray()) {
+                if (ch == '_') {
+                    up = true;
+                } else {
+                    camel.append(up ? Character.toUpperCase(ch) : ch);
+                    up = false;
+                }
+            }
+            UasDatalinkLs.Builder.class.getMethod(camel.toString(), double.class).invoke(b, (Double) f.getValue());
+        }
+        java.util.List<Long> sentinels = new java.util.ArrayList<>();
+        for (Object t : (java.util.List<Object>) row.getOrDefault("sentinel_tags", java.util.List.of())) {
+            sentinels.add(((Double) t).longValue());
+        }
+        java.util.List<ImapbSpecialEntry> specials = new java.util.ArrayList<>();
+        for (Object e : (java.util.List<Object>) row.getOrDefault("imapb_specials", java.util.List.of())) {
+            java.util.List<Object> entry = (java.util.List<Object>) e;
+            specials.add(new ImapbSpecialEntry(((Double) entry.get(0)).intValue(), (String) entry.get(1),
+                    ((Double) entry.get(2)).longValue()));
+        }
+        return b.sentinelTags(sentinels).imapbSpecials(specials).build();
+    }
+
+    private static double[] caseView(UasDatalinkLs rec, String view) {
+        switch (view) {
+            case "platform_attitude":
+                return rec.platformAttitude().map(a -> new double[] {a.headingDeg(), a.pitchDeg(), a.rollDeg()})
+                        .orElse(null);
+            case "sensor_position":
+                return rec.sensorPosition().map(p -> new double[] {p.latDeg(), p.lonDeg(), p.altM()}).orElse(null);
+            case "frame_center":
+                return rec.frameCenter().map(p -> new double[] {p.latDeg(), p.lonDeg(), p.altM()}).orElse(null);
+            case "corners":
+                return rec.corners().map(c -> new double[] {
+                    c.p1().latDeg(), c.p1().lonDeg(), c.p2().latDeg(), c.p2().lonDeg(),
+                    c.p3().latDeg(), c.p3().lonDeg(), c.p4().latDeg(), c.p4().lonDeg()}).orElse(null);
+            default:
+                throw new AssertionError("unknown view " + view);
+        }
+    }
+
+    /** Reads the case table: objects, arrays, strings without escapes, numbers, null. */
+    private static final class CaseTableJson {
+        private final String s;
+        private int i;
+
+        private CaseTableJson(String s) {
+            this.s = s;
+        }
+
+        static Object parse(String text) {
+            CaseTableJson j = new CaseTableJson(text);
+            Object v = j.value();
+            j.skip();
+            if (j.i != text.length()) {
+                throw new AssertionError("case table: trailing text at " + j.i);
+            }
+            return v;
+        }
+
+        private void skip() {
+            while (i < s.length() && Character.isWhitespace(s.charAt(i))) {
+                i++;
+            }
+        }
+
+        private Object value() {
+            skip();
+            char c = s.charAt(i);
+            if (c == '{') {
+                java.util.Map<String, Object> m = new java.util.LinkedHashMap<>();
+                i++;
+                skip();
+                if (s.charAt(i) == '}') {
+                    i++;
+                    return m;
+                }
+                while (true) {
+                    skip();
+                    String k = (String) value();
+                    skip();
+                    expect(':');
+                    m.put(k, value());
+                    skip();
+                    if (s.charAt(i++) == '}') {
+                        return m;
+                    }
+                }
+            }
+            if (c == '[') {
+                java.util.List<Object> l = new java.util.ArrayList<>();
+                i++;
+                skip();
+                if (s.charAt(i) == ']') {
+                    i++;
+                    return l;
+                }
+                while (true) {
+                    l.add(value());
+                    skip();
+                    if (s.charAt(i++) == ']') {
+                        return l;
+                    }
+                }
+            }
+            if (c == '"') {
+                int end = s.indexOf('"', i + 1);
+                String v = s.substring(i + 1, end);
+                if (v.indexOf('\\') >= 0) {
+                    throw new AssertionError("case table: an escape in a string at " + i);
+                }
+                i = end + 1;
+                return v;
+            }
+            if (s.startsWith("null", i)) {
+                i += 4;
+                return null;
+            }
+            int start = i;
+            while (i < s.length() && "+-.0123456789eE".indexOf(s.charAt(i)) >= 0) {
+                i++;
+            }
+            return Double.valueOf(s.substring(start, i));
+        }
+
+        private void expect(char c) {
+            if (s.charAt(i++) != c) {
+                throw new AssertionError("case table: expected '" + c + "' at " + (i - 1));
+            }
+        }
+    }
 }
