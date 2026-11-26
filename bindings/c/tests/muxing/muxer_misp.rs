@@ -7,6 +7,8 @@
 //!   - `tst_muxer_push_video_misp_to_with_dts` emits PTS_DTS_flags=0b11.
 //!   - `misp_kind=2` (out of range) returns `TST_E_MISP_TIME` (-45).
 //!   - `tst_misp_time_extract` on an access unit without a MISP SEI returns 1.
+//!   - `tst_misp_time_extract` finds a MISP SEI message behind a message of
+//!     payload type 128 in the same SEI NAL unit.
 
 use crate::muxing_common::{drain_mux, find_pes_start};
 use tstrans::config::{
@@ -242,4 +244,62 @@ fn extract_absent_returns_one_on_plain_au() {
     assert_eq!(rc, 1, "expected 1 (absent) for plain IDR NAL, got {rc}");
     // Out-params must be untouched on absent.
     assert_eq!(out_kind, 0xFF, "out_kind should be untouched on absent");
+}
+
+/// An access unit whose SEI NAL unit holds a message of payload type 4, then
+/// one of payload type 128 (H.265 `structure_of_pictures_info`; its first
+/// byte `0x80` also reads as a stop bit), then the MISP message.
+fn sei_after_type_128_message(codec: TstVideoCodec) -> Vec<u8> {
+    let h265_uuid: [u8; 16] = [
+        0xa8, 0x68, 0x7d, 0xd4, 0xd7, 0x59, 0x37, 0x58, 0xa5, 0xce, 0xf0, 0x33, 0x8b, 0x65, 0x45,
+        0xf1,
+    ];
+    let mut au = vec![0x00, 0x00, 0x00, 0x01];
+    match codec {
+        TstVideoCodec::H264 => au.push(0x06),
+        _ => au.extend_from_slice(&[0x4E, 0x01]),
+    }
+    au.extend_from_slice(&[0x04, 0x01, 0x55, 0x80, 0x02, 0x11, 0x22, 0x05, 28]);
+    match codec {
+        TstVideoCodec::H264 => au.extend_from_slice(b"MISPmicrosectime"),
+        _ => au.extend_from_slice(&h265_uuid),
+    }
+    // time_status 0x1F, value 0x0102030405060708 in four 2-byte groups with a
+    // 0xFF guard byte after each of the first three, then the stop byte.
+    au.extend_from_slice(&[
+        0x1F, 0x01, 0x02, 0xFF, 0x03, 0x04, 0xFF, 0x05, 0x06, 0xFF, 0x07, 0x08, 0x80,
+    ]);
+    match codec {
+        TstVideoCodec::H264 => au.extend_from_slice(&[0x00, 0x00, 0x00, 0x01, 0x65, 0xAA]),
+        _ => au.extend_from_slice(&[0x00, 0x00, 0x00, 0x01, 0x26, 0x01, 0xAA]),
+    }
+    au
+}
+
+#[test]
+fn misp_time_extract_after_type_128_message() {
+    for codec in [TstVideoCodec::H264, TstVideoCodec::H265] {
+        let au = sei_after_type_128_message(codec);
+        let mut out_kind: u8 = 0xFF;
+        let mut out_time_status: u8 = 0;
+        let mut out_value: u64 = 0;
+        let rc = unsafe {
+            tst_misp_time_extract(
+                au.as_ptr(),
+                au.len(),
+                codec as i32,
+                &mut out_kind,
+                &mut out_time_status,
+                &mut out_value,
+            )
+        };
+        assert_eq!(
+            rc, 0,
+            "codec {}: expected 0 (found), got {rc}",
+            codec as i32
+        );
+        assert_eq!(out_kind, 0, "micro");
+        assert_eq!(out_time_status, 0x1F);
+        assert_eq!(out_value, 0x0102_0304_0506_0708);
+    }
 }
