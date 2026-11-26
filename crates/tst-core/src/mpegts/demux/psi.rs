@@ -463,6 +463,8 @@ pub fn has_klva_registration(descs: &[RawDescriptor]) -> bool {
 ///      free-text labels in the common shapes we see).
 ///   4. ISO 639 Language descriptor (tag 0x0A) — first 3 bytes are an
 ///      ISO 639-2 language code.
+///   5. User-private descriptor (tag 0xFF) — its whole body as UTF-8, with
+///      NUL padding and surrounding whitespace trimmed.
 ///
 /// Returns `None` if no usable descriptor is found. Truncated /
 /// malformed bodies fall through to the next descriptor.
