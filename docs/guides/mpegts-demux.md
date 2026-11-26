@@ -170,13 +170,13 @@ call's input stay buffered for the next `feed`, and feeding may go on (see
 [Lenient vs. strict modes](#lenient-vs-strict-modes)).
 
 Use one of `feed` and `feed_aligned` per stream. `feed_aligned` discards
-everything an earlier `feed` left buffered: a partial packet, the whole
-packets behind a packet whose `feed` returned an error, a resync candidate
-not yet confirmed. No event reports the discard; on a PID whose continuity
-counter the demuxer already follows, the next packet shows the lost ones
-as a continuity jump. Switch to `feed_aligned` only after a `feed` that
-returned `Ok` with its bytes ending on a packet boundary and no stray bytes
-between packets.
+whatever `feed` still holds, and no event reports it (on a PID whose
+continuity counter the demuxer already follows, the next packet shows the
+lost packets as a continuity jump). Switch to `feed_aligned` only when
+`feed` holds nothing, that is, when every byte given to `feed` so far
+formed whole packets back to back. After a stray byte, even one in an
+earlier call, `feed` holds whole packets until it has confirmed the next
+packet boundary.
 
 **Sync-ingress ceiling.** Before the demuxer acquires its first sync
 lock, `feed` buffers incoming bytes to scan for the `0x47` sync byte.
@@ -461,9 +461,12 @@ without the increment; for a source that follows the rule the two are
 equal.
 
 **A PID that leaves hands out its unit.** When a PMT takes a PID out of its
-program or changes its stream type, when a PAT drops a program or moves it
-to another PMT PID, and when the transport stream id changes, each PID that
-leaves first hands out the PES it holds, as `flush` would, in ascending PID
+program or makes it another kind of stream (the kind the demuxer derives
+from the stream type and its descriptors: 0x06 with a `KLVA` registration
+becoming 0x06 with a subtitling descriptor is one, 0x03 becoming 0x04, both
+MPEG audio, is not), when a PAT drops a program or moves it to another PMT
+PID, and when the transport stream id changes, each PID that leaves first
+hands out the PES it holds, as `flush` would, in ascending PID
 order and before the `ProgramMap` that announces the change (a PAT that
 only drops a program announces nothing). An unbounded video PES is handed
 out as far as it arrived and nothing marks it short, as at `flush`; a
@@ -473,7 +476,7 @@ dropped without an issue. Under a strict mode that
 rejects the verdict (`Full` for that `MalformedPes`, `TimingOnly` for, say,
 a synchronous-KLV unit without a PTS), the `feed` that carried the change
 returns `StrictRejection` and the change is applied all the same. A PID
-that stays with its stream type keeps its unit in progress, and so does
+that stays the same kind of stream keeps its unit in progress, and so does
 every PID when only the `PCR_PID` moves. `reset_sync` (and so a
 `ManagedDemuxReceiver`'s reconnect) discards the units in flight instead.
 
