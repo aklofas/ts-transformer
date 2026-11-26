@@ -3,7 +3,6 @@
 //! and the encode-side `EncodeConfig`.
 
 use crate::error::KlvFieldError;
-use crate::klv::imapb::ImapbSpecial;
 use crate::klv::pack::OwnedRawField;
 use crate::klv::universal_label::UniversalLabel;
 use alloc::string::String;
@@ -1276,33 +1275,10 @@ pub struct Corners {
 /// longitude is folded into (-180, 180].
 impl UasDatalinkLs {
     /// `true` when the encoder writes `tag`'s sentinel or IMAPB special,
-    /// not a value: its field is unset and it has an entry the encoder
-    /// writes, or its field still equals the range end that its last
-    /// `BelowMin` / `AboveMax` entry signals (where a decoder puts it).
+    /// not a value: the encoder's own rule, so a view and a decode of the
+    /// encoder's output agree on what was sent as "no value".
     fn sent_as_no_value(&self, tag: u32) -> bool {
-        let Some(spec) = u8::try_from(tag).ok().and_then(super::tags::lookup) else {
-            return false;
-        };
-        let field = spec.get_f64(self);
-        if let super::tags::Encoding::Imapb { min, max, .. } = spec.encoding {
-            let Some(&(_, special)) = self.imapb_specials.iter().rev().find(|(t, _)| *t == tag)
-            else {
-                return false;
-            };
-            return match field {
-                None => true,
-                Some(v) => match special {
-                    ImapbSpecial::BelowMin => v == min,
-                    ImapbSpecial::AboveMax => v == max,
-                    _ => false,
-                },
-            };
-        }
-        field.is_none()
-            && spec
-                .range
-                .is_some_and(|r| r.signed && matches!(r.byte_length, 2 | 4))
-            && self.sentinel_tags.contains(&tag)
+        u8::try_from(tag).is_ok_and(|tag| super::encode::is_signalled(self, tag))
     }
 
     fn view_item(&self, chain: &[(u32, Option<f64>)]) -> ViewItem {
