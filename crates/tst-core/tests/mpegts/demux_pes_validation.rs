@@ -678,27 +678,56 @@ fn demux_c11_latm_false_candidate_is_dropped_without_an_issue() {
     assert!(latm_framing_issues(&events).is_empty(), "{events:?}");
 }
 
-/// Once a tentative candidate is confirmed, the carry is enforced. PES 1: 300
-/// zeros. PES 2: 100 zeros + header(1500) + 297 bytes (tentative Body(1203)).
-/// PES 3: 1203 zeros + header(500) + 20 bytes (confirms at 1203; walk leaves
-/// Body(480)). PES 4: 530 zeros — no syncword at 480 → MissingSyncword at once.
-/// The assertion pins WHERE: the LatmFraming event's index in `events` is
-/// greater than the index of the third Sample on 0x150, so an issue raised
-/// at PES 2 (before the candidate is confirmed) does not pass.
+/// Once a candidate is confirmed, the carry is enforced. PES 1: 300 zeros.
+/// PES 2: 100 zeros + header(1500) + 297 bytes (a candidate owing 1203).
+/// PES 3: 1203 zeros + header(500) + 20 bytes (the candidate passes its
+/// boundary and owes 480: a provisional position). PES 4: 480 zeros +
+/// header(200) + 47 bytes (it passes its next boundary: confirmed, owing
+/// 153). PES 5: 530 zeros, no syncword at 153: MissingSyncword at once.
+/// The assertion pins WHERE: after the fourth Sample on 0x150, so an issue
+/// raised while the position was provisional does not pass.
 #[test]
 fn demux_c11_latm_confirmed_tentative_carry_is_enforced() {
     let pes2 = zeros_then(100, &build_valid_loas_record(1500)[..300]);
     let pes3 = zeros_then(1203, &build_valid_loas_record(500)[..23]);
-    let events = latm_pes_events(&[vec![0u8; 300], pes2, pes3, vec![0u8; 530]]);
+    let pes4 = zeros_then(480, &build_valid_loas_record(200)[..50]);
+    let events = latm_pes_events(&[vec![0u8; 300], pes2, pes3, pes4, vec![0u8; 530]]);
     let issues = latm_framing_issues(&events);
     assert_eq!(issues.len(), 1, "{events:?}");
     assert_eq!(issues[0].1, LatmFramingKind::MissingSyncword, "{events:?}");
     let samples = latm_sample_indices(&events);
-    assert!(samples.len() >= 3, "{events:?}");
+    assert!(samples.len() >= 4, "{events:?}");
     assert!(
-        issues[0].0 > samples[2],
-        "raised on PES 4, after the third Sample: {events:?}"
+        issues[0].0 > samples[3],
+        "raised on PES 5, after the fourth Sample: {events:?}"
     );
+}
+
+/// A candidate confirmed at one boundary is only provisional: when the next
+/// boundary lacks the syncword it is dropped without an issue, and the
+/// candidates followed beside it go on. PES 3 passes two candidates, one at
+/// 1203 (owing 480) and one at 50 (owing 930); PES 4 (530 zeros) refutes the
+/// first and keeps the second, which PES 5 confirms (owing 250), so PES 6,
+/// without a syncword at 250, is flagged at once. Dropped with the first,
+/// the second would have been found again in PES 5 only as a fresh
+/// candidate, refuted in PES 6 without an issue.
+#[test]
+fn a_provisional_position_that_fails_is_dropped_and_the_candidates_beside_it_go_on() {
+    let pes2 = zeros_then(100, &build_valid_loas_record(1500)[..300]);
+    let mut pes3 = zeros_then(50, &build_valid_loas_record(100));
+    pes3.extend_from_slice(&build_valid_loas_record(2000)[..1050]);
+    pes3.extend_from_slice(&build_valid_loas_record(500)[..23]);
+    assert_eq!(pes3.len(), 1226);
+    let pes5 = zeros_then(400, &build_valid_loas_record(300)[..53]);
+    let events = latm_pes_events(&[
+        vec![0u8; 300],
+        pes2,
+        pes3,
+        vec![0u8; 530],
+        pes5,
+        vec![0u8; 300],
+    ]);
+    assert_eq!(latm_issue_pes(&events), [6], "{events:?}");
 }
 
 /// A LATM PID that never carries a LOAS syncword is flagged even with
@@ -836,4 +865,343 @@ fn demux_c11_latm_strict_full_suppresses_sample() {
         !sample_seen,
         "strict mode must suppress the LATM Sample, got {events:?}"
     );
+}
+
+// =====================================================================
+// AAC-LATM resync: several syncword candidates followed at once
+// =====================================================================
+
+/// xorshift64, for random record bodies reproducible from a seed written in
+/// the test.
+struct XorShift(u64);
+
+impl XorShift {
+    fn next(&mut self) -> u64 {
+        self.0 ^= self.0 << 13;
+        self.0 ^= self.0 >> 7;
+        self.0 ^= self.0 << 17;
+        self.0
+    }
+}
+
+/// `records` sound LOAS records of `record` bytes with random bodies, as a
+/// receiver that tunes in at a random offset of the first record sees them.
+fn sound_loas_stream_joined_mid_record(seed: u64, record: usize, records: usize) -> Vec<u8> {
+    let mut rng = XorShift(seed);
+    let body = record - 3;
+    let mut stream = Vec::with_capacity(record * records);
+    for _ in 0..records {
+        stream.extend_from_slice(&[0x56, 0xE0 | ((body >> 8) as u8 & 0x1F), body as u8]);
+        stream.extend((0..body).map(|_| rng.next() as u8));
+    }
+    let join = (rng.next() % record as u64) as usize;
+    stream.split_off(join)
+}
+
+/// The seed of stream `i` of the sweep's cell (`record`, `pes_len`).
+fn sweep_seed(record: usize, pes_len: usize, i: u64) -> u64 {
+    0x9E37_79B9_7F4A_7C15 ^ ((record as u64) << 40 | (pes_len as u64) << 20 | i)
+}
+
+/// `stream` cut into PES payloads of `pes_len` bytes.
+fn cut_into_pes(stream: &[u8], pes_len: usize) -> Vec<Vec<u8>> {
+    stream.chunks(pes_len).map(<[u8]>::to_vec).collect()
+}
+
+/// For each `LatmFraming` issue, the 1-based index of the PES that raised it
+/// (a PES's issue is queued before its Sample).
+fn latm_issue_pes(events: &[DemuxEvent]) -> Vec<usize> {
+    let samples = latm_sample_indices(events);
+    latm_framing_issues(events)
+        .iter()
+        .map(|&(at, _)| samples.iter().filter(|&&s| s < at).count() + 1)
+        .collect()
+}
+
+/// A receiver that joins a sound stream of 8 000-byte records in the middle
+/// of a record, with random record bodies (a false syncword candidate about
+/// every 2 048 bytes, most of them declaring a record that runs past the
+/// PES), finds the records without raising an issue.
+#[test]
+fn a_sound_stream_of_large_records_joined_mid_record_raises_no_issue() {
+    // The sweep's first seed of this cell that 0.10.0 flagged (at PES 127).
+    let stream = sound_loas_stream_joined_mid_record(sweep_seed(8000, 170, 5), 8000, 40);
+    let events = latm_pes_events(&cut_into_pes(&stream, 170));
+    assert!(
+        latm_framing_issues(&events).is_empty(),
+        "{:?}",
+        latm_framing_issues(&events)
+    );
+}
+
+/// Sound streams of four record sizes in three PES sizes, joined mid-record:
+/// no issue in any of the 240 (seeds fixed; a red seed is a finding).
+#[test]
+fn sound_streams_joined_mid_record_raise_no_issue() {
+    let mut red = Vec::new();
+    for record in [300, 1500, 4000, 8000] {
+        for pes_len in [170, 1000, 2900] {
+            for i in 0..20 {
+                let stream =
+                    sound_loas_stream_joined_mid_record(sweep_seed(record, pes_len, i), record, 40);
+                let events = latm_pes_events(&cut_into_pes(&stream, pes_len));
+                if !latm_framing_issues(&events).is_empty() {
+                    red.push((record, pes_len, i, latm_issue_pes(&events)));
+                }
+            }
+        }
+    }
+    assert!(red.is_empty(), "(record, PES, seed, issue PES): {red:?}");
+}
+
+/// Not LOAS: every 100-byte PES holds a syncword candidate whose record would
+/// run 8 194 bytes past it, so a candidate is always pending. The PID is
+/// flagged once, by the PES that takes the payload counted since the join
+/// past three record lengths (24 585 bytes): PES 246.
+#[test]
+fn a_pid_of_past_the_end_candidates_is_flagged_within_a_bounded_number_of_bytes() {
+    let mut junk = vec![0u8; 100];
+    junk[40..43].copy_from_slice(&[0x56, 0xFF, 0xFF]);
+    let events = latm_pes_events(&vec![junk; 400]);
+    assert_eq!(latm_issue_pes(&events), [246], "{events:?}");
+    assert_eq!(
+        latm_framing_issues(&events)[0].1,
+        LatmFramingKind::MissingSyncword
+    );
+}
+
+/// The same with the candidate in every second PES only.
+#[test]
+fn a_pid_with_a_past_the_end_candidate_in_every_second_pes_is_flagged_once() {
+    let mut junk = vec![0u8; 100];
+    junk[40..43].copy_from_slice(&[0x56, 0xFF, 0xFF]);
+    let payloads: Vec<Vec<u8>> = (0..400)
+        .map(|i| {
+            if i % 2 == 0 {
+                junk.clone()
+            } else {
+                vec![0u8; 100]
+            }
+        })
+        .collect();
+    let events = latm_pes_events(&payloads);
+    assert_eq!(latm_issue_pes(&events), [246], "{events:?}");
+}
+
+/// The same with a lone `0x56` as every PES's last byte: a header that would
+/// continue into the next PES, refuted there each time.
+#[test]
+fn a_pid_whose_pes_all_end_in_a_lone_first_header_byte_is_flagged_once() {
+    let mut tail = vec![0u8; 100];
+    tail[99] = 0x56;
+    let events = latm_pes_events(&vec![tail; 400]);
+    assert_eq!(latm_issue_pes(&events), [246], "{events:?}");
+}
+
+/// Without any candidate the PID is flagged as soon as the bytes counted
+/// pass one record length (8 194): PES 82 of 100 bytes.
+#[test]
+fn a_pid_without_any_candidate_is_flagged_after_one_record_length() {
+    let events = latm_pes_events(&vec![vec![0u8; 100]; 400]);
+    assert_eq!(latm_issue_pes(&events), [82], "{events:?}");
+}
+
+/// A sound stream of 7 000-byte records in 1 000-byte PES whose bodies are
+/// full of false syncwords (`56 E0 10`, each refuted where its record ends),
+/// joined mid-record: no issue.
+#[test]
+fn a_sound_stream_whose_record_bodies_are_full_of_false_syncwords_raises_no_issue() {
+    let mut body = Vec::new();
+    while body.len() < 6997 {
+        body.extend_from_slice(&[0x56, 0xE0, 0x10, 0x00, 0x00, 0x00, 0x00]);
+    }
+    body.truncate(6997);
+    let mut stream = Vec::new();
+    for _ in 0..12 {
+        stream.extend_from_slice(&[0x56, 0xE0 | (6997u16 >> 8) as u8, 6997u16 as u8]);
+        stream.extend_from_slice(&body);
+    }
+    let events = latm_pes_events(&cut_into_pes(&stream[3500..], 1000));
+    assert!(latm_framing_issues(&events).is_empty(), "{events:?}");
+}
+
+/// While the position is unknown, a PES that starts with a syncword but does
+/// not announce alignment is a candidate like any other: PES 2 opens with an
+/// empty record and a header whose record runs 161 bytes into PES 3, where no
+/// syncword follows, so it is dropped without an issue. Taken as a record
+/// start, PES 2 would make that boundary a missing syncword.
+#[test]
+fn a_syncword_at_the_start_of_an_unaligned_pes_is_not_trusted_while_unsynced() {
+    let mut pes2 = vec![0x56, 0xE0, 0x00, 0x56, 0xE0, 0xFF];
+    pes2.resize(100, 0);
+    let events = latm_pes_events(&[vec![0u8; 100], pes2, vec![0u8; 300]]);
+    assert!(latm_framing_issues(&events).is_empty(), "{events:?}");
+}
+
+/// Mux `payloads` as consecutive AAC-LATM PES on PID 0x150 and demux them
+/// without the second TS packet of every PES `lose` picks; every event.
+fn latm_pes_events_losing(payloads: &[Vec<u8>], lose: impl Fn(usize) -> bool) -> Vec<DemuxEvent> {
+    let cfg = {
+        let mut prog = MuxerProgramConfigBuilder::new(1, 0x100);
+        prog.add_video(0x101, VideoCodec::H264);
+        prog.add_audio(0x150, AudioCodec::AacLatm);
+        let mut b = MuxerConfig::builder();
+        b.add_program(prog.build());
+        b.build().unwrap()
+    };
+    let mut mux = Muxer::new(cfg).unwrap();
+    let audio_handle = mux.audio_handles()[0];
+    for (i, payload) in payloads.iter().enumerate() {
+        mux.push_audio_to(
+            audio_handle,
+            Pts90khz::new(90_000 + i as i64 * 1_920),
+            payload,
+        )
+        .unwrap();
+    }
+    let bytes = drain_all(&mut mux);
+    let mut kept = Vec::with_capacity(bytes.len());
+    let (mut pes, mut in_pes) = (0usize, 0usize);
+    for pkt in bytes.chunks_exact(188) {
+        let pid = (u16::from(pkt[1] & 0x1F) << 8) | u16::from(pkt[2]);
+        if pid == 0x150 {
+            if pkt[1] & 0x40 != 0 {
+                pes += 1;
+                in_pes = 0;
+            }
+            in_pes += 1;
+            if in_pes == 2 && lose(pes - 1) {
+                continue;
+            }
+        }
+        kept.extend_from_slice(pkt);
+    }
+    let mut demux = Demuxer::new();
+    demux.feed(&kept).unwrap();
+    demux.flush();
+    let mut events = Vec::new();
+    while let Some(e) = demux.next_event() {
+        events.push(e);
+    }
+    events
+}
+
+/// A loss (here a TS packet of every second 1 000-byte PES) leaves the record
+/// position unknown and starts the count again: a sound stream of 1 500-byte
+/// records that loses a PES every 2 000 bytes never stays unsynced long
+/// enough to be judged, so it raises no issue.
+#[test]
+fn a_sound_stream_that_loses_a_pes_every_two_thousand_bytes_raises_no_issue() {
+    let mut stream = Vec::new();
+    for _ in 0..60 {
+        stream.extend(build_valid_loas_record(1497));
+    }
+    let events = latm_pes_events_losing(&cut_into_pes(&stream, 1000), |i| i % 2 == 1);
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, DemuxEvent::Discontinuity { stream, .. } if stream.pid == 0x150)),
+        "the losses report themselves: {events:?}"
+    );
+    assert!(
+        latm_framing_issues(&events).is_empty(),
+        "{:?}",
+        latm_framing_issues(&events)
+    );
+}
+
+/// A muxer for program 1: video on 0x101 and, when `audio` is set, that codec
+/// on 0x150; its PSI versions start at `version`.
+fn latm_program_muxer(version: u8, audio: Option<AudioCodec>) -> Muxer {
+    let mut prog = MuxerProgramConfigBuilder::new(1, 0x100);
+    prog.add_video(0x101, VideoCodec::H264);
+    if let Some(codec) = audio {
+        prog.add_audio(0x150, codec);
+    }
+    let mut b = MuxerConfig::builder();
+    b.add_program(prog.build());
+    b.psi_version_base(version);
+    Muxer::new(b.build().unwrap()).unwrap()
+}
+
+/// `payloads` muxed as AAC-LATM PES on 0x150 by `mux`.
+fn latm_pes_bytes(mux: &mut Muxer, payloads: &[Vec<u8>]) -> Vec<u8> {
+    let audio_handle = mux.audio_handles()[0];
+    for (i, payload) in payloads.iter().enumerate() {
+        mux.push_audio_to(
+            audio_handle,
+            Pts90khz::new(90_000 + i as i64 * 1_920),
+            payload,
+        )
+        .unwrap();
+    }
+    drain_all(mux)
+}
+
+/// What the LOAS search of PID 0x150 held does not outlive the PID's state:
+/// `reset_sync`, a PMT that drops the PID and one that changes its stream
+/// type away from 0x11 each end it. Two observations per way: (1) an issue
+/// already raised does not keep the next stretch from raising its own; (2) a
+/// candidate that passed one record boundary before does not get confirmed
+/// by the next PES (it would then make the boundary after that a missing
+/// syncword at once).
+#[test]
+fn the_loas_search_state_goes_with_the_pid() {
+    // (2): PES A passes a candidate at 10 that owes 93 bytes; PES B carries
+    // a record at 93 owing 193 more; PES C has no syncword at 193.
+    let mut pes_a = zeros_then(10, &build_valid_loas_record(20));
+    pes_a.extend_from_slice(&build_valid_loas_record(100)[..10]);
+    let mut pes_b = zeros_then(93, &build_valid_loas_record(30));
+    pes_b.extend_from_slice(&build_valid_loas_record(200)[..10]);
+    let pes_c = vec![0u8; 300];
+    let candidate_free = vec![vec![0u8; 100]; 90];
+    for way in ["reset_sync", "pmt drops the pid", "pmt retypes the pid"] {
+        for (before, after, want) in [
+            (candidate_free.clone(), candidate_free.clone(), 2),
+            (vec![pes_a.clone()], vec![pes_b.clone(), pes_c.clone()], 0),
+        ] {
+            let mut demux = Demuxer::new();
+            let mut events = Vec::new();
+            demux
+                .feed(&latm_pes_bytes(
+                    &mut latm_program_muxer(0, Some(AudioCodec::AacLatm)),
+                    &before,
+                ))
+                .unwrap();
+            // `reset_sync` also drops the queued events.
+            while let Some(e) = demux.next_event() {
+                events.push(e);
+            }
+            match way {
+                "reset_sync" => demux.reset_sync(),
+                _ => {
+                    let audio = (way == "pmt retypes the pid").then_some(AudioCodec::Aac);
+                    let mut between = latm_program_muxer(1, audio);
+                    between
+                        .push_video(
+                            &crate::common::synthetic::synthetic_h264_au(),
+                            Pts90khz::new(900_000),
+                            true,
+                        )
+                        .unwrap();
+                    demux.feed(&drain_all(&mut between)).unwrap();
+                }
+            }
+            demux
+                .feed(&latm_pes_bytes(
+                    &mut latm_program_muxer(2, Some(AudioCodec::AacLatm)),
+                    &after,
+                ))
+                .unwrap();
+            demux.flush();
+            while let Some(e) = demux.next_event() {
+                events.push(e);
+            }
+            assert_eq!(
+                latm_framing_issues(&events).len(),
+                want,
+                "{way}: {events:?}"
+            );
+        }
+    }
 }

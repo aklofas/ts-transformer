@@ -45,6 +45,7 @@
 //! Strict mode (`StrictMode::Full`): the `Sample` event is suppressed
 //! and the issue propagates as `DemuxError::StrictRejection`.
 
+use alloc::boxed::Box;
 use alloc::vec::Vec;
 
 /// First wire byte of the 11-bit LOAS syncword (`0x2B7 >> 3`).
@@ -93,6 +94,11 @@ pub enum LatmFramingKind {
 /// On failure returns the specific [`LatmFramingKind`] so the caller can
 /// route to the appropriate `NonConformantIssue` variant.
 ///
+/// `pes_payload` must be a complete PES payload: only its first record is
+/// checked, against the bytes given, so part of a payload reports
+/// `AudioMuxLengthOverrun` (or `Truncated`) for a record that is whole on
+/// the wire.
+///
 /// # Spec reference
 ///
 /// - ISO/IEC 14496-3 §1.7.2 — LOAS syncword + length.
@@ -122,87 +128,361 @@ pub fn validate_latm_sync(pes_payload: &[u8]) -> Result<u16, LatmFramingKind> {
 /// `audioMuxLengthBytes` of at most `0x1FFF`.
 pub(crate) const MAX_LOAS_RECORD_BYTES: usize = 3 + 0x1FFF;
 
-/// What a resync on a PES that may open inside a record found
-/// ([`resync_loas`]).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum LoasResync {
-    /// A whole record follows the first unrefuted candidate and the walk
-    /// from it succeeds: the walk's carry (see [`walk_loas`]).
-    Confirmed(Option<LoasCarry>),
-    /// The first unrefuted candidate's record, or its header, runs past the
-    /// PES: what it would owe the next PES, which confirms or refutes it.
-    Unconfirmed(LoasCarry),
-    /// Every candidate within the first [`MAX_LOAS_RECORD_BYTES`] bytes, if
-    /// any, is refuted inside the PES: its record fits but the walk from it
-    /// fails.
-    NoCandidate,
+/// How many syncword candidates a PID's resync follows at once
+/// ([`LoasSearch`]). Random record bodies hold a false candidate about every
+/// 2 048 bytes, and one lives until its record would end, so a few are
+/// pending at a time; a full set ignores a newcomer.
+pub(crate) const LOAS_CANDIDATES: usize = 16;
+
+/// Payload bytes a PID may stay unsynced whatever its candidates promise. A
+/// LOAS record starts within one record length of where the position was
+/// lost; it passes its first boundary within one more record and is
+/// confirmed at the next, so a sound stream is synced within three record
+/// lengths (3 bytes more for a header split across PES).
+pub(crate) const LOAS_UNSYNCED_BOUND: usize = 3 * MAX_LOAS_RECORD_BYTES + 3;
+
+/// The LOAS framing state of one AAC-LATM PID (ISO/IEC 14496-3 §1.7.2: a
+/// record, and its header, may continue into the next PES).
+///
+/// - Position known: the carry of the last walk is followed, and a record
+///   boundary without a syncword is an issue at once.
+/// - Position unknown (a PID's first PES, after a loss, after a walk that
+///   ended on a record boundary): a PES with `data_alignment_indicator` set,
+///   an explicit promise of a record start, is walked from 0, a missing
+///   syncword flagged at once. Any other PES may open inside a record, even
+///   when it starts with a syncword, and feeds the [`LoasSearch`].
+///
+/// A position known after a boundary without a syncword is lost, and the
+/// unsynced stretch that follows has had its issue.
+#[derive(Debug, Default)]
+pub(crate) struct LoasFraming {
+    /// What the last record still owes the next PES; `None` = unknown.
+    position: Option<LoasCarry>,
+    /// The resync, while the position is unknown; `None` when nothing is
+    /// held or counted.
+    search: Option<Box<LoasSearch>>,
 }
 
-/// Resync on a PES that may open inside a record. Candidates (a byte-aligned
-/// syncword) are searched only within the first [`MAX_LOAS_RECORD_BYTES`]
-/// bytes: the tail of a record carried in from an earlier PES is never
-/// longer than that. A false `0x56 0b111x_xxxx` pair in a record's tail
-/// usually carries a bogus length that runs past the PES, so a candidate is
-/// trusted only when a whole record follows it inside the payload and the
-/// walk from it succeeds; a candidate refuted that way is skipped for the
-/// next one. One whose record runs past the PES is reported `Unconfirmed`,
-/// for the next PES to settle. A lone `0x56` in the last byte is a candidate
-/// whose header continues into the next PES.
-pub(crate) fn resync_loas(payload: &[u8]) -> LoasResync {
-    resync_loas_counting(payload, &mut 0)
-}
-
-/// [`resync_loas`], adding to `steps` each record boundary it walks.
-fn resync_loas_counting(payload: &[u8], steps: &mut usize) -> LoasResync {
-    // Record boundaries a refuted walk passed through, one bit per payload
-    // offset: a walk reaching one fails the same way, so each boundary is
-    // walked at most once and the search stays linear in the payload.
-    let mut refuted: Vec<u64> = Vec::new();
-    let is_refuted = |refuted: &[u64], pos: usize| refuted[pos / 64] & (1 << (pos % 64)) != 0;
-    let mut visited = Vec::new();
-    for at in 0..payload.len().min(MAX_LOAS_RECORD_BYTES) {
-        let rest = &payload[at..];
-        if !opens_loas_header(rest) {
-            continue;
-        }
-        if rest.len() < 3 {
-            return match split_header_carry(rest) {
-                Ok(Some(carry)) => LoasResync::Unconfirmed(carry),
-                _ => LoasResync::NoCandidate,
-            };
-        }
-        let first_record_end = at + 3 + record_body_len(rest);
-        if first_record_end > payload.len() {
-            return LoasResync::Unconfirmed(LoasCarry::Body(first_record_end - payload.len()));
-        }
-        if refuted.is_empty() {
-            refuted.resize(payload.len().div_ceil(64), 0);
-        }
-        // The walk visits each record boundary from `at` until one is
-        // refuted or lacks the syncword.
-        visited.clear();
-        let mut pos = at;
-        while pos < payload.len() - 2
-            && !is_refuted(&refuted, pos)
-            && starts_with_loas_sync(&payload[pos..])
-        {
-            visited.push(pos);
-            pos += 3 + record_body_len(&payload[pos..]);
-        }
-        *steps += visited.len();
-        let reached_refuted = pos < payload.len() && is_refuted(&refuted, pos);
-        if !reached_refuted {
-            // The same boundaries again, to the walk's verdict.
-            *steps += visited.len();
-            if let Ok(carry) = walk_loas(payload, at) {
-                return LoasResync::Confirmed(carry);
+impl LoasFraming {
+    /// Walk one PES payload; the framing violation to report, if any.
+    /// `aligned` is the PES's `data_alignment_indicator`.
+    pub(crate) fn feed(&mut self, payload: &[u8], aligned: bool) -> Option<LatmFramingKind> {
+        let len = payload.len();
+        let start = match self.position.take() {
+            Some(carry) => match carry.resolve(payload) {
+                Ok(LoasCarry::Body(n)) if len <= n => {
+                    self.position = Some(LoasCarry::Body(n - len));
+                    return None;
+                }
+                Ok(LoasCarry::Body(n)) => n,
+                Ok(header) => {
+                    self.position = Some(header);
+                    return None;
+                }
+                Err(kind) => return Some(self.lost_at_once(len, kind)),
+            },
+            None if aligned => 0,
+            None => {
+                let search = self.search.get_or_insert_with(Box::default);
+                return match search.feed(payload) {
+                    LoasSettle::Confirmed(carry) => {
+                        self.position = carry;
+                        self.search = None;
+                        None
+                    }
+                    LoasSettle::Unsynced => None,
+                    LoasSettle::NotLoas => Some(LatmFramingKind::MissingSyncword),
+                };
             }
-        }
-        for &p in &visited {
-            refuted[p / 64] |= 1 << (p % 64);
+        };
+        match walk_loas(payload, start) {
+            Ok(carry) => {
+                self.position = carry;
+                self.search = None;
+                None
+            }
+            Err(kind) => Some(self.lost_at_once(len, kind)),
         }
     }
-    LoasResync::NoCandidate
+
+    /// Bytes of the PID were lost: the position is unknown, the candidates
+    /// are dropped and the count starts again. Kept across a loss, the count
+    /// would flag a sound stream that loses a PES more often than every few
+    /// records; a PID that is not LOAS and loses as often is not flagged,
+    /// and each of its losses reports itself.
+    pub(crate) fn forget(&mut self) {
+        self.position = None;
+        self.search = None;
+    }
+
+    /// `true` when nothing is known, held or counted.
+    pub(crate) fn is_clear(&self) -> bool {
+        self.position.is_none() && self.search.is_none()
+    }
+
+    /// A state with a known position and a search, for tests that need
+    /// every per-PID field set.
+    #[cfg(test)]
+    pub(crate) fn populated_for_test() -> Self {
+        Self {
+            position: Some(LoasCarry::Body(7)),
+            search: Some(Box::default()),
+        }
+    }
+
+    /// A boundary of this PES lacks the syncword, reported at once: the
+    /// position is lost, and the stretch this PES starts or continues has
+    /// had its issue.
+    fn lost_at_once(&mut self, len: usize, kind: LatmFramingKind) -> LatmFramingKind {
+        let search = self.search.get_or_insert_with(Box::default);
+        search.unsynced_bytes = search.unsynced_bytes.saturating_add(len);
+        search.raised = true;
+        kind
+    }
+}
+
+/// The resync of a PID whose LOAS position is unknown. Every byte-aligned
+/// syncword candidate within the first [`MAX_LOAS_RECORD_BYTES`] bytes of a
+/// PES (the tail of a record carried in from an earlier PES is never longer),
+/// and a lone `0x56` as its last byte, is followed to the record boundary it
+/// predicts, up to [`LOAS_CANDIDATES`] at once.
+///
+/// A candidate passes a boundary when a header sits there and the walk from
+/// it to the end of that PES succeeds; one whose first record fits inside the
+/// PES it is found in is walked there. A candidate that fails is dropped
+/// silently. Its first pass makes a candidate a provisional position; its
+/// second confirms it, which ends the search. A false candidate passes a
+/// boundary about once in 2 048, and a false confirmation clears the genuine
+/// candidate and makes the next boundary a missing syncword, so one pass is
+/// not trusted.
+///
+/// Every payload byte since the position was lost is counted. While no
+/// provisional position is held, the stretch is judged not LOAS, with one
+/// `MissingSyncword` and nothing more until the search ends, when the count
+/// passes one record length with no candidate pending, or passes
+/// [`LOAS_UNSYNCED_BOUND`] whatever is pending.
+///
+/// Work per PES is linear in its length: the walks of one PES share a set of
+/// the boundaries already walked, and a walk that reaches one ends as the
+/// earlier walk did, so no boundary is walked twice.
+#[derive(Debug)]
+struct LoasSearch {
+    /// The candidates followed, `held[..held_len]`.
+    held: [LoasCandidate; LOAS_CANDIDATES],
+    held_len: usize,
+    /// Payload bytes since the position was lost.
+    unsynced_bytes: usize,
+    /// This stretch's issue was raised.
+    raised: bool,
+    /// Record boundaries walked in the current PES, one bit per payload
+    /// offset; kept to reuse the allocation.
+    walked: Vec<u64>,
+}
+
+impl Default for LoasSearch {
+    fn default() -> Self {
+        Self {
+            held: [LoasCandidate::pending(LoasCarry::Body(0)); LOAS_CANDIDATES],
+            held_len: 0,
+            unsynced_bytes: 0,
+            raised: false,
+            walked: Vec::new(),
+        }
+    }
+}
+
+/// One syncword candidate of a [`LoasSearch`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct LoasCandidate {
+    /// What its record, or its header, still owes the next PES.
+    carry: LoasCarry,
+    /// It passed one record boundary: a provisional position.
+    passed: bool,
+}
+
+impl LoasCandidate {
+    fn pending(carry: LoasCarry) -> Self {
+        Self {
+            carry,
+            passed: false,
+        }
+    }
+
+    /// Passed a boundary; the walk from it ended with `carry` (`None`: on a
+    /// record boundary, so the next one is the next PES's first byte).
+    fn passed(carry: Option<LoasCarry>) -> Self {
+        Self {
+            carry: carry.unwrap_or(LoasCarry::Body(0)),
+            passed: true,
+        }
+    }
+}
+
+/// What one PES did to a [`LoasSearch`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LoasSettle {
+    /// A provisional position passed its second boundary: the walk's carry
+    /// (see [`walk_loas`]). The search is over.
+    Confirmed(Option<LoasCarry>),
+    /// Still searching.
+    Unsynced,
+    /// The stretch is judged not LOAS: report `MissingSyncword`, once.
+    NotLoas,
+}
+
+/// How a walk over one PES ended ([`walk_unwalked`]).
+enum Walked {
+    /// It reached the end of the payload: its carry (see [`walk_loas`]).
+    Ends(Option<LoasCarry>),
+    /// A boundary lacks the syncword.
+    Refuted,
+    /// It reached a boundary an earlier walk of this payload took, so it
+    /// ends as that one did: its candidate is that one's duplicate, or is
+    /// refuted with it.
+    Joined,
+}
+
+impl LoasSearch {
+    /// Settle the held candidates against the next PES payload, scan it for
+    /// new ones, and count it.
+    fn feed(&mut self, payload: &[u8]) -> LoasSettle {
+        self.feed_counting(payload, &mut 0)
+    }
+
+    /// [`Self::feed`], adding to `steps` each record boundary it walks.
+    fn feed_counting(&mut self, payload: &[u8], steps: &mut usize) -> LoasSettle {
+        let mut walked = core::mem::take(&mut self.walked);
+        walked.clear();
+        walked.resize(payload.len().div_ceil(64), 0);
+        let mut walks = 0;
+        let confirmed = self.settle(payload, &mut walked, &mut walks);
+        self.walked = walked;
+        debug_assert!(walks <= payload.len(), "a boundary was walked twice");
+        debug_assert!(self.held_len <= LOAS_CANDIDATES);
+        *steps += walks;
+        if let Some(carry) = confirmed {
+            return LoasSettle::Confirmed(carry);
+        }
+        self.unsynced_bytes = self.unsynced_bytes.saturating_add(payload.len());
+        let held = &self.held[..self.held_len];
+        if self.raised || held.iter().any(|c| c.passed) {
+            return LoasSettle::Unsynced;
+        }
+        let not_loas = (self.unsynced_bytes > MAX_LOAS_RECORD_BYTES && held.is_empty())
+            || self.unsynced_bytes > LOAS_UNSYNCED_BOUND;
+        if not_loas {
+            self.raised = true;
+            return LoasSettle::NotLoas;
+        }
+        LoasSettle::Unsynced
+    }
+
+    /// Settle the held candidates and scan `payload` for new ones; the carry
+    /// of the provisional position it confirms, if any.
+    fn settle(
+        &mut self,
+        payload: &[u8],
+        walked: &mut [u64],
+        steps: &mut usize,
+    ) -> Option<Option<LoasCarry>> {
+        let len = payload.len();
+        let (held, held_len) = (self.held, core::mem::take(&mut self.held_len));
+        let held = &held[..held_len];
+        // Provisional positions first: a candidate whose walk joins an
+        // earlier one's is dropped as its duplicate, so it must not be the
+        // one that has passed a boundary.
+        for c in held
+            .iter()
+            .filter(|c| c.passed)
+            .chain(held.iter().filter(|c| !c.passed))
+        {
+            let boundary = match c.carry.resolve(payload) {
+                Ok(LoasCarry::Body(n)) if len <= n => {
+                    self.hold(LoasCandidate {
+                        carry: LoasCarry::Body(n - len),
+                        ..*c
+                    });
+                    continue;
+                }
+                Ok(LoasCarry::Body(n)) => n,
+                Ok(header) => {
+                    self.hold(LoasCandidate {
+                        carry: header,
+                        ..*c
+                    });
+                    continue;
+                }
+                Err(_) => continue,
+            };
+            match walk_unwalked(payload, boundary, walked, steps) {
+                Walked::Ends(carry) if c.passed => return Some(carry),
+                Walked::Ends(carry) => self.hold(LoasCandidate::passed(carry)),
+                Walked::Refuted | Walked::Joined => {}
+            }
+        }
+        for at in 0..len.min(MAX_LOAS_RECORD_BYTES) {
+            let rest = &payload[at..];
+            if !opens_loas_header(rest) {
+                continue;
+            }
+            if rest.len() < 3 {
+                if let Ok(Some(carry)) = split_header_carry(rest) {
+                    self.hold(LoasCandidate::pending(carry));
+                }
+                continue;
+            }
+            let first_record_end = at + 3 + record_body_len(rest);
+            if first_record_end > len {
+                self.hold(LoasCandidate::pending(LoasCarry::Body(
+                    first_record_end - len,
+                )));
+            } else if let Walked::Ends(carry) = walk_unwalked(payload, at, walked, steps) {
+                self.hold(LoasCandidate::passed(carry));
+            }
+        }
+        None
+    }
+
+    /// Follow `candidate` too, unless the set is full. Two candidates that
+    /// owe the same bytes have one future: they are held as one.
+    fn hold(&mut self, candidate: LoasCandidate) {
+        let held = &mut self.held[..self.held_len];
+        if let Some(same) = held.iter_mut().find(|h| h.carry == candidate.carry) {
+            same.passed |= candidate.passed;
+        } else if self.held_len < LOAS_CANDIDATES {
+            self.held[self.held_len] = candidate;
+            self.held_len += 1;
+        }
+    }
+}
+
+/// [`walk_loas`] from `start`, stopping at a boundary `walked` marks and
+/// marking (and adding to `steps`) each one it takes.
+fn walk_unwalked(payload: &[u8], start: usize, walked: &mut [u64], steps: &mut usize) -> Walked {
+    let mut pos = start;
+    while let Some(rest) = payload.get(pos..).filter(|r| !r.is_empty()) {
+        let (word, bit) = (pos / 64, 1u64 << (pos % 64));
+        if walked[word] & bit != 0 {
+            return Walked::Joined;
+        }
+        walked[word] |= bit;
+        *steps += 1;
+        if rest.len() < 3 {
+            return match split_header_carry(rest) {
+                Ok(carry) => Walked::Ends(carry),
+                Err(_) => Walked::Refuted,
+            };
+        }
+        if !starts_with_loas_sync(rest) {
+            return Walked::Refuted;
+        }
+        pos += 3 + record_body_len(rest);
+    }
+    Walked::Ends(
+        pos.checked_sub(payload.len())
+            .filter(|&n| n > 0)
+            .map(LoasCarry::Body),
+    )
 }
 
 /// The 13-bit `audioMuxLengthBytes` of the LOAS header `header` opens.
@@ -387,60 +667,100 @@ mod tests {
         );
     }
 
-    #[test]
-    fn resync_loas_looks_only_within_one_record() {
-        let mut buf = vec![0x00; MAX_LOAS_RECORD_BYTES - 1];
-        buf.extend_from_slice(&build_loas_record(0));
-        assert_eq!(resync_loas(&buf), LoasResync::Confirmed(None));
-        buf.insert(0, 0x00);
-        assert_eq!(resync_loas(&buf), LoasResync::NoCandidate);
+    /// What `search` holds, as `(carry, passed)`.
+    fn held(search: &LoasSearch) -> Vec<(LoasCarry, bool)> {
+        search.held[..search.held_len]
+            .iter()
+            .map(|c| (c.carry, c.passed))
+            .collect()
+    }
+
+    /// A fresh search fed `payload` as one PES: what it settled and holds.
+    fn search_one(payload: &[u8]) -> (LoasSettle, Vec<(LoasCarry, bool)>) {
+        let mut search = LoasSearch::default();
+        let settled = search.feed(payload);
+        (settled, held(&search))
+    }
+
+    /// `pes`, fed in turn to a fresh `LoasFraming` (no PES aligned): the
+    /// issues raised and the state after the last.
+    fn frame_all(pes: &[&[u8]]) -> (Vec<LatmFramingKind>, LoasFraming) {
+        let mut framing = LoasFraming::default();
+        let issues = pes.iter().filter_map(|p| framing.feed(p, false)).collect();
+        (issues, framing)
+    }
+
+    /// `records` records of `len` body bytes back to back.
+    fn loas_stream(len: u16, records: usize) -> Vec<u8> {
+        (0..records).flat_map(|_| build_loas_record(len)).collect()
     }
 
     #[test]
-    fn resync_loas_trusts_a_candidate_only_when_a_whole_record_follows() {
+    fn loas_search_looks_only_within_one_record() {
+        let mut buf = vec![0x00; MAX_LOAS_RECORD_BYTES - 1];
+        buf.extend_from_slice(&build_loas_record(0));
+        assert_eq!(
+            search_one(&buf),
+            (LoasSettle::Unsynced, vec![(LoasCarry::Body(0), true)])
+        );
+        // Nothing in the window: more than one record length without a
+        // candidate is not LOAS.
+        buf.insert(0, 0x00);
+        assert_eq!(search_one(&buf), (LoasSettle::NotLoas, vec![]));
+    }
+
+    #[test]
+    fn loas_search_passes_a_candidate_only_when_a_whole_record_follows() {
         let mut buf = vec![0x00; 4];
         buf.extend_from_slice(&build_loas_record(8));
-        assert_eq!(resync_loas(&buf), LoasResync::Confirmed(None));
+        assert_eq!(search_one(&buf).1, [(LoasCarry::Body(0), true)]);
         buf.extend_from_slice(&build_loas_record(50)[..20]);
-        assert_eq!(
-            resync_loas(&buf),
-            LoasResync::Confirmed(Some(LoasCarry::Body(33)))
-        );
+        assert_eq!(search_one(&buf).1, [(LoasCarry::Body(33), true)]);
         // A pair whose length (0xFF) runs past the payload: 4 + 3 + 0xFF =
-        // 262 against a 19-byte payload.
+        // 262 against a 19-byte payload, held pending; the scan goes on to
+        // the whole record after it.
         let mut tail = vec![0x00; 4];
         tail.extend_from_slice(&[0x56, 0xE0, 0xFF, 0x00]);
         tail.extend_from_slice(&build_loas_record(8));
         assert_eq!(
-            resync_loas(&tail),
-            LoasResync::Unconfirmed(LoasCarry::Body(262 - tail.len()))
+            search_one(&tail).1,
+            [
+                (LoasCarry::Body(262 - tail.len()), false),
+                (LoasCarry::Body(0), true)
+            ]
         );
         // A candidate in the last two bytes: its header continues.
         assert_eq!(
-            resync_loas(&[0x00, 0x56, 0xE0]),
-            LoasResync::Unconfirmed(LoasCarry::Header {
-                bytes: [0x56, 0xE0],
-                len: 2
-            })
+            search_one(&[0x00, 0x56, 0xE0]).1,
+            [(
+                LoasCarry::Header {
+                    bytes: [0x56, 0xE0],
+                    len: 2
+                },
+                false
+            )]
         );
         assert_eq!(
-            resync_loas(&[0x00, 0x00, 0x56]),
-            LoasResync::Unconfirmed(LoasCarry::Header {
-                bytes: [0x56, 0x00],
-                len: 1
-            })
+            search_one(&[0x00, 0x00, 0x56]).1,
+            [(
+                LoasCarry::Header {
+                    bytes: [0x56, 0x00],
+                    len: 1
+                },
+                false
+            )]
         );
-        assert_eq!(resync_loas(&[0x00; 64]), LoasResync::NoCandidate);
+        assert_eq!(search_one(&[0x00; 64]).1, []);
         // The first record fits but no syncword follows it: refuted.
         let mut refuted = vec![0x00; 4];
         refuted.extend_from_slice(&[0x56, 0xE0, 0x02, 0x00, 0x00, 0x11, 0x22, 0x33]);
-        assert_eq!(resync_loas(&refuted), LoasResync::NoCandidate);
+        assert_eq!(search_one(&refuted).1, []);
     }
 
     /// A refuted candidate in a record's tail does not end the search: the
     /// first real record later in the window is found.
     #[test]
-    fn resync_loas_searches_past_a_refuted_candidate() {
+    fn loas_search_searches_past_a_refuted_candidate() {
         // A 100-byte tail whose false pair at offset 4 declares a 2-byte
         // record ending at 9, where no syncword follows; then nine records.
         let mut buf = vec![0x00; 100];
@@ -449,42 +769,38 @@ mod tests {
             buf.extend_from_slice(&build_loas_record(1000));
         }
         assert_eq!(buf.len(), 9127);
-        assert_eq!(resync_loas(&buf), LoasResync::Confirmed(None));
+        assert_eq!(search_one(&buf).1, [(LoasCarry::Body(0), true)]);
         // Past a refuted candidate, a later one whose record runs past the
         // payload is held for the next PES.
         buf.truncate(100);
         buf.extend_from_slice(&build_loas_record(1000)[..500]);
-        assert_eq!(
-            resync_loas(&buf),
-            LoasResync::Unconfirmed(LoasCarry::Body(503))
-        );
+        assert_eq!(search_one(&buf).1, [(LoasCarry::Body(503), false)]);
     }
 
     /// A 64 KiB chain of empty records ending in junk offers a candidate
     /// every third byte of the window, each one refuted at the end of the
-    /// same chain: the boundary memo walks the chain once, not once per
-    /// candidate.
+    /// same chain: the walks share the boundaries already taken, so the
+    /// chain is walked once, not once per candidate.
     #[test]
-    fn resync_loas_walks_a_refuted_chain_once() {
+    fn loas_search_walks_a_refuted_chain_once() {
         let mut buf = Vec::new();
         while buf.len() + 3 <= 65_532 {
             buf.extend_from_slice(&[0x56, 0xE0, 0x00]);
         }
         buf.resize(65_536, 0x00);
+        let mut search = LoasSearch::default();
         let mut steps = 0;
-        assert_eq!(
-            resync_loas_counting(&buf, &mut steps),
-            LoasResync::NoCandidate
-        );
-        // One pass over 21 844 boundaries, plus the walk that refutes it;
-        // a walk per candidate would be about 2 700 times that.
-        assert_eq!(steps, 2 * 21_844);
+        assert_eq!(search.feed_counting(&buf, &mut steps), LoasSettle::NotLoas);
+        assert_eq!(held(&search), []);
+        // The 21 844 boundaries of the chain and the one that refutes it; a
+        // walk per candidate would be about 2 700 times that.
+        assert_eq!(steps, 21_845);
     }
 
     /// Candidates are still searched only in the first
     /// `MAX_LOAS_RECORD_BYTES` bytes, however many are refuted on the way.
     #[test]
-    fn resync_loas_keeps_its_window_past_refuted_candidates() {
+    fn loas_search_keeps_its_window_past_refuted_candidates() {
         let mut buf = Vec::new();
         while buf.len() + 4 <= MAX_LOAS_RECORD_BYTES {
             // A 0-length record at each candidate, then a non-syncword byte.
@@ -492,7 +808,168 @@ mod tests {
         }
         buf.resize(MAX_LOAS_RECORD_BYTES, 0x00);
         buf.extend_from_slice(&build_loas_record(8));
-        assert_eq!(resync_loas(&buf), LoasResync::NoCandidate);
+        assert_eq!(search_one(&buf).1, []);
+    }
+
+    /// A header split 1 + 2 and 2 + 1 over two PES, on a stream joined
+    /// inside a record: found, passed and confirmed, with no issue.
+    #[test]
+    fn a_header_split_over_two_pes_is_followed_either_way() {
+        let stream = loas_stream(40, 10);
+        for header_bytes_in_first in [1, 2] {
+            let cut = 43 + header_bytes_in_first;
+            let rest = &stream[cut..];
+            let (issues, framing) = frame_all(&[&stream[10..cut], &rest[..60], &rest[60..120]]);
+            assert_eq!(issues, [], "{header_bytes_in_first}");
+            assert!(framing.position.is_some() && framing.search.is_none());
+        }
+    }
+
+    /// A record that ends exactly where its PES ends passes, and its next
+    /// boundary is the next PES's first byte.
+    #[test]
+    fn a_record_ending_exactly_at_a_pes_end_is_tested_at_the_next_pes_start() {
+        let first = zeros_then_record(10, 20);
+        assert_eq!(search_one(&first).1, [(LoasCarry::Body(0), true)]);
+        let mut second = build_loas_record(30);
+        second.extend_from_slice(&build_loas_record(30)[..10]);
+        let (issues, framing) = frame_all(&[&first, &second]);
+        assert_eq!(issues, []);
+        assert_eq!(framing.position, Some(LoasCarry::Body(23)));
+        let (issues, framing) = frame_all(&[&first, &[0x00; 40]]);
+        assert_eq!(issues, []);
+        assert!(framing.position.is_none());
+    }
+
+    /// PES of one, two and three bytes: headers split every way, still found.
+    #[test]
+    fn pes_of_one_two_and_three_bytes_find_the_records() {
+        let stream = loas_stream(20, 50);
+        for pes_len in [1, 2, 3] {
+            let pes: Vec<&[u8]> = stream[5..].chunks(pes_len).collect();
+            let (issues, framing) = frame_all(&pes);
+            assert_eq!(issues, [], "{pes_len}");
+            assert!(framing.search.is_none(), "{pes_len}: confirmed");
+        }
+    }
+
+    /// A join exactly at a record boundary: the record there is a candidate
+    /// like any other, confirmed at its second boundary.
+    #[test]
+    fn a_join_at_a_record_boundary_is_confirmed_at_its_second_boundary() {
+        let stream = loas_stream(20, 10);
+        let mut framing = LoasFraming::default();
+        assert_eq!(framing.feed(&stream[..30], false), None);
+        assert!(framing.position.is_none(), "one boundary is provisional");
+        assert_eq!(framing.feed(&stream[30..60], false), None);
+        assert_eq!(framing.position, Some(LoasCarry::Body(9)));
+        assert!(framing.search.is_none());
+    }
+
+    /// The set holds at most `LOAS_CANDIDATES`; a newcomer to a full set is
+    /// ignored, and a candidate refuted at its boundary frees its slot.
+    #[test]
+    fn a_refuted_candidate_frees_its_slot() {
+        // 18 candidates whose records run 8 194 bytes from their header.
+        let mut first = vec![0x00; 100];
+        for at in (0..90).step_by(5) {
+            first[at..at + 3].copy_from_slice(&[0x56, 0xFF, 0xFF]);
+        }
+        let mut search = LoasSearch::default();
+        assert_eq!(search.feed(&first), LoasSettle::Unsynced);
+        let carries: Vec<_> = held(&search).iter().map(|h| h.0).collect();
+        let want: Vec<_> = (0..80)
+            .step_by(5)
+            .map(|at| LoasCarry::Body(at + MAX_LOAS_RECORD_BYTES - 100))
+            .collect();
+        assert_eq!(carries, want, "the first 16 are held, the last 2 ignored");
+        // The next PES refutes all 16 where their records end, and offers
+        // one more past them.
+        let mut second = vec![0x00; MAX_LOAS_RECORD_BYTES];
+        second[8180..8183].copy_from_slice(&[0x56, 0xFF, 0xFF]);
+        assert_eq!(search.feed(&second), LoasSettle::Unsynced);
+        assert_eq!(
+            held(&search),
+            [(
+                LoasCarry::Body(8180 + 3 + 0x1FFF - MAX_LOAS_RECORD_BYTES),
+                false
+            )]
+        );
+    }
+
+    /// A confirmation ends the search: the set and the count go with it.
+    #[test]
+    fn a_confirmation_clears_the_set_and_zeroes_the_count() {
+        let mut busy = vec![0x00; 400];
+        busy[40..43].copy_from_slice(&[0x56, 0xFF, 0xFF]);
+        busy[300..].copy_from_slice(&loas_stream(97, 1));
+        let mut framing = LoasFraming::default();
+        assert_eq!(framing.feed(&[0x00; 8000], false), None);
+        assert_eq!(framing.feed(&busy, false), None);
+        let search = framing.search.as_ref().expect("searching");
+        assert_eq!(search.unsynced_bytes, 8400);
+        assert_eq!(search.held_len, 2);
+        // The record at 300 ended on the PES's end: its next boundary is
+        // here, and so is the one after.
+        assert_eq!(framing.feed(&loas_stream(10, 3), false), None);
+        assert!(framing.search.is_none());
+        // The PID's next unsynced stretch is counted from 0.
+        for _ in 0..8 {
+            assert_eq!(framing.feed(&[0x00; 1000], false), None);
+        }
+        assert_eq!(
+            framing.search.as_ref().map(|s| s.unsynced_bytes),
+            Some(8000)
+        );
+    }
+
+    /// A loss drops the position, the candidates and the count.
+    #[test]
+    fn a_loss_drops_the_pending_candidates() {
+        let mut busy = vec![0x00; 100];
+        busy[40..43].copy_from_slice(&[0x56, 0xFF, 0xFF]);
+        let mut framing = LoasFraming::default();
+        assert_eq!(framing.feed(&busy, false), None);
+        assert_eq!(framing.search.as_ref().map(|s| s.held_len), Some(1));
+        framing.forget();
+        assert!(framing.is_clear());
+    }
+
+    /// Bodies that keep the set full of long-lived false candidates (abuse):
+    /// one issue for the stretch, the set never over `LOAS_CANDIDATES`, and
+    /// no PES walks more boundaries than it has bytes.
+    #[test]
+    fn a_full_candidate_set_costs_at_most_one_issue_per_stretch() {
+        // Twenty candidates a PES whose records run past it, then in every
+        // fourth PES a run of empty records ending in junk: dense walks.
+        let mut full = vec![0x00; 100];
+        for at in (0..100).step_by(5) {
+            full[at..at + 3].copy_from_slice(&[0x56, 0xFF, 0xFF]);
+        }
+        let mut chains = Vec::new();
+        while chains.len() < 96 {
+            chains.extend_from_slice(&[0x56, 0xE0, 0x00]);
+        }
+        chains.resize(100, 0x11);
+        let mut search = LoasSearch::default();
+        let mut issues = 0;
+        for i in 0..1000 {
+            let pes = if i % 4 == 3 { &chains } else { &full };
+            let mut steps = 0;
+            if search.feed_counting(pes, &mut steps) == LoasSettle::NotLoas {
+                issues += 1;
+            }
+            assert!(steps <= pes.len(), "PES {i}: {steps} steps");
+            assert!(search.held_len <= LOAS_CANDIDATES);
+        }
+        assert_eq!(issues, 1);
+    }
+
+    /// `zeros` zero bytes, then one record of `len` body bytes.
+    fn zeros_then_record(zeros: usize, len: u16) -> Vec<u8> {
+        let mut out = vec![0x00; zeros];
+        out.extend_from_slice(&build_loas_record(len));
+        out
     }
 
     #[test]
