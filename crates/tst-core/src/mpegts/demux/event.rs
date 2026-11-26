@@ -723,16 +723,21 @@ pub enum NonConformantIssue {
     /// - at once, for a record boundary that holds no syncword where the
     ///   position is known, or in a PES with `data_alignment_indicator` set,
     ///   which is walked from its first byte while the position is unknown;
-    /// - while the position is unknown (a PID's first PES, after a loss),
-    ///   once per unsynced stretch and not after an issue raised at once in
-    ///   it: when the payload since the loss passes one record length (8 194
+    /// - while the position is unknown (a PID's first PES; after a loss,
+    ///   `reset_sync`, a retirement or a change of the PID's kind; after a
+    ///   boundary without a syncword was reported), once per unsynced
+    ///   stretch and not after an issue raised at once in it: when the
+    ///   payload since the position was lost passes one record length (8 194
     ///   bytes) with no syncword candidate pending, or three record lengths
     ///   and 3 bytes (24 585 bytes) whatever is pending. A candidate that has
     ///   passed one record boundary defers this to its next boundary, until
     ///   the first such candidate of the stretch has failed.
     ///
-    /// A loss (a continuity gap, a damaged or dropped PES, a signalled
-    /// discontinuity) starts the count again.
+    /// A record that ends exactly at the end of a PES leaves the position
+    /// known: the next PES is walked from its first byte (the AudioSyncStream
+    /// is one run of records, ISO/IEC 14496-3 Table 1.36). A loss (a
+    /// continuity gap, a damaged or dropped PES, a signalled discontinuity)
+    /// starts the count again.
     ///
     /// `kind` carries the specific violation;
     /// see [`crate::codec::aac::latm::LatmFramingKind`].

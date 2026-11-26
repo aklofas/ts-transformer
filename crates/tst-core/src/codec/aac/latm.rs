@@ -152,9 +152,13 @@ pub(crate) const LOAS_UNSYNCED_BOUND: usize = 3 * MAX_LOAS_RECORD_BYTES + 3;
 /// record, and its header, may continue into the next PES).
 ///
 /// - Position known: the carry of the last walk is followed, and a record
-///   boundary without a syncword is an issue at once.
-/// - Position unknown (a PID's first PES, after a loss, after a walk that
-///   ended on a record boundary): a PES with `data_alignment_indicator` set,
+///   boundary without a syncword is an issue at once. A walk that ends
+///   exactly on its PES's end leaves the next record starting at the next
+///   PES's first byte (the AudioSyncStream is one run of records, ISO/IEC
+///   14496-3 Table 1.36), so that PES is walked from there.
+/// - Position unknown (a PID's first PES; after a loss, `reset_sync`, a
+///   retirement or a change of the PID's kind; after a boundary without a
+///   syncword was reported): a PES with `data_alignment_indicator` set,
 ///   an explicit promise of a record start, is walked from 0, a missing
 ///   syncword flagged at once. Any other PES may open inside a record, even
 ///   when it starts with a syncword, and feeds the [`LoasSearch`].
@@ -193,7 +197,7 @@ impl LoasFraming {
                 let search = self.search.get_or_insert_with(Box::default);
                 return match search.feed(payload) {
                     LoasSettle::Confirmed(carry) => {
-                        self.position = carry;
+                        self.position = Some(carry.unwrap_or(LoasCarry::Body(0)));
                         self.search = None;
                         None
                     }
@@ -204,7 +208,7 @@ impl LoasFraming {
         };
         match walk_loas(payload, start) {
             Ok(carry) => {
-                self.position = carry;
+                self.position = Some(carry.unwrap_or(LoasCarry::Body(0)));
                 self.search = None;
                 None
             }
@@ -576,8 +580,8 @@ fn split_header_carry(rest: &[u8]) -> Result<Option<LoasCarry>, LatmFramingKind>
 ///
 /// - `Ok(Some(carry))`: the last record, or its header, continues into the
 ///   next PES.
-/// - `Ok(None)`: the walk ended on a record boundary; the next PES's
-///   position in the stream is unknown.
+/// - `Ok(None)`: the walk ended exactly at the end of the payload: the next
+///   record starts with the next PES.
 /// - `Err(MissingSyncword)`: a record boundary lacks the syncword.
 ///
 /// Every record advances at least 3 bytes, so the walk is bounded by the
@@ -931,8 +935,14 @@ mod tests {
         // here, and so is the one after.
         assert_eq!(framing.feed(&loas_stream(10, 3), false), None);
         assert!(framing.search.is_none());
-        // The PID's next unsynced stretch is counted from 0.
-        for _ in 0..8 {
+        // The confirming walk ended on the PES's end, so the next PES opens
+        // on a known boundary: one without a syncword is reported at once,
+        // and the unsynced stretch it starts is counted from that PES.
+        assert_eq!(
+            framing.feed(&[0x00; 1000], false),
+            Some(LatmFramingKind::MissingSyncword)
+        );
+        for _ in 0..7 {
             assert_eq!(framing.feed(&[0x00; 1000], false), None);
         }
         assert_eq!(

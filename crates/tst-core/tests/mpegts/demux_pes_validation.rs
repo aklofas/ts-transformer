@@ -1033,6 +1033,80 @@ fn a_provisional_position_renewed_every_eightieth_pes_does_not_keep_a_pid_unflag
     assert_eq!(latm_issue_pes(&events), [246]);
 }
 
+/// One LOAS record with `body` as its `audioMuxElement`.
+fn loas_record_with(body: &[u8]) -> Vec<u8> {
+    let n = body.len();
+    let mut out = vec![0x56, 0xE0 | ((n >> 8) as u8 & 0x1F), n as u8];
+    out.extend_from_slice(body);
+    out
+}
+
+/// This library's muxer writes each AAC-LATM push as one PES without
+/// `data_alignment_indicator`, so every PES ends on a record boundary and
+/// the next starts on one (the AudioSyncStream is one run of records,
+/// ISO/IEC 14496-3 Table 1.36). One push of 120 carries a corrupted record:
+/// a length that ends inside the next record, a junk tail after the
+/// records, or a length that runs past the push. Each is reported, once.
+#[test]
+fn a_corrupted_record_in_this_muxers_latm_output_is_reported() {
+    for seed in 1..=6u64 {
+        let mut rng = XorShift(0x1A7E_0000_0000 ^ seed);
+        let bad_at = 40 + (rng.next() % 40) as usize;
+        let payloads: Vec<Vec<u8>> = (0..120)
+            .map(|i| {
+                let mut push = Vec::new();
+                for _ in 0..1 + rng.next() % 3 {
+                    let n = 50 + (rng.next() % 650) as usize;
+                    let body: Vec<u8> = (0..n).map(|_| rng.next() as u8).collect();
+                    push.extend(loas_record_with(&body));
+                }
+                if i == bad_at {
+                    match seed % 3 {
+                        0 => push[2] ^= 0x21,
+                        1 => push.extend_from_slice(&[0x12, 0x34, 0x56, 0x78]),
+                        _ => push[1] |= 0x1F,
+                    }
+                }
+                push
+            })
+            .collect();
+        let events = latm_pes_events(&payloads);
+        let issues = latm_framing_issues(&events);
+        assert_eq!(issues.len(), 1, "seed {seed}, push {bad_at}: {issues:?}");
+        assert_eq!(issues[0].1, LatmFramingKind::MissingSyncword);
+    }
+}
+
+/// 200 unaligned PES of one to four whole records each; the first record's
+/// length in PES 100 is corrupted. The last record of PES 99 ended on that
+/// PES's end, so PES 100 opens on a known boundary and is walked from its
+/// first byte: the corrupted length is reported where its record would end,
+/// by PES 100, or by PES 101 when the new length runs past PES 100.
+#[test]
+fn a_corrupted_record_length_in_an_unaligned_pes_is_reported() {
+    for seed in 1..=4u64 {
+        let mut rng = XorShift(0xC0DE_0000_0000 ^ seed);
+        let per_pes = 1 + (rng.next() % 4) as usize;
+        let mut payloads: Vec<Vec<u8>> = (0..200)
+            .map(|_| {
+                let mut pes = Vec::new();
+                for _ in 0..per_pes {
+                    let n = 100 + (rng.next() % 700) as usize;
+                    let body: Vec<u8> = (0..n).map(|_| rng.next() as u8).collect();
+                    pes.extend(loas_record_with(&body));
+                }
+                pes
+            })
+            .collect();
+        payloads[99][2] ^= 0x5A;
+        let corrupted = &payloads[99];
+        let end = 3 + ((usize::from(corrupted[1] & 0x1F) << 8) | usize::from(corrupted[2]));
+        let reported_by = if end > corrupted.len() { 101 } else { 100 };
+        let events = latm_pes_events(&payloads);
+        assert_eq!(latm_issue_pes(&events), [reported_by], "seed {seed}");
+    }
+}
+
 /// Without any candidate the PID is flagged as soon as the bytes counted
 /// pass one record length (8 194): PES 82 of 100 bytes.
 #[test]
