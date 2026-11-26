@@ -2330,7 +2330,7 @@ impl Scenario for DemuxReceiverStatsScenario {
     }
 }
 
-/// The `demux-receiver-stats` input: PAT, PMT version 0, five H.264 PES (two
+/// The `demux-receiver-stats` input: PAT, PMT version 0, six H.264 PES (two
 /// with malformed marker bits, the last after a continuity-counter jump),
 /// PAT, PMT version 1, one more PES, then a PMT still at version 1 that adds
 /// a second H.264 stream, and a PES with malformed marker bits on that
