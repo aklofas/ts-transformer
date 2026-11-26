@@ -253,10 +253,14 @@ impl Demuxer {
     /// `MalformedPes` included, is queued as its `NonConformant` event and
     /// fails no later packet.
     ///
-    /// When a PAT or PMT takes PIDs out of a program or changes a PID's
-    /// stream type, each such PID first hands out the PES it holds, as
-    /// [`flush`](Self::flush) would, in ascending PID order and before the
-    /// `ProgramMap` that announces the change. A strict verdict this raises
+    /// When a PAT takes a program's PIDs out, or a PMT takes PIDs out of its
+    /// program or demuxes a PID as another kind of stream (another stream
+    /// type or a descriptor that decides it: stream type 0x06 with `KLVA`
+    /// becoming 0x06 with a subtitling descriptor is one, 0x03 becoming
+    /// 0x04, both MPEG audio, is not), each such PID first hands out the PES
+    /// it holds, as [`flush`](Self::flush) would, in ascending PID order,
+    /// before the `ProgramMap` that announces a PMT's change. A strict
+    /// verdict this raises
     /// (under `StrictMode::Full` a short unit's `MalformedPes`, under
     /// `StrictMode::TimingOnly` for example a synchronous-KLV unit without a
     /// PTS) is queued as its `NonConformant` event and returned as
@@ -495,9 +499,14 @@ impl Demuxer {
     /// whose `feed` returned an error, a resync candidate not yet confirmed.
     /// No event reports the discard; on a PID whose continuity counter the
     /// demuxer already follows, the next packet shows the lost ones as a
-    /// continuity jump. Use one of the two calls per stream, or switch to
-    /// `feed_aligned` only after a `feed` that returned `Ok` with its bytes
-    /// ending on a packet boundary and no stray bytes between packets.
+    /// continuity jump.
+    ///
+    /// Use one of the two calls per stream. Switch to `feed_aligned` only
+    /// when `feed` holds nothing: every byte given to `feed` so far formed
+    /// whole packets back to back. After a stray byte, even one in an
+    /// earlier call, `feed` holds whole packets until it has confirmed the
+    /// next packet boundary, so a `feed` that returned `Ok` with its own
+    /// bytes ending on a packet boundary may still be holding some.
     pub fn feed_aligned(&mut self, pkt: &[u8; 188]) -> Result<(), DemuxError> {
         if pkt[0] != crate::mpegts::common::TS_SYNC_BYTE {
             return Err(DemuxError::Unrecoverable { after_bytes: 0 });
@@ -1236,6 +1245,52 @@ mod tests {
         d.feed(&one_packet_pes(3)).unwrap();
         d.flush();
         assert_eq!(samples_on_0x101(&drain_all_events(&mut d)), 4);
+    }
+
+    /// Stray bytes in an earlier `feed` leave `feed` holding whole packets
+    /// until it has confirmed the next boundary: a later `feed` that
+    /// returns `Ok` with its own bytes ending on a packet boundary does not
+    /// make a switch to `feed_aligned` safe.
+    #[test]
+    fn feed_aligned_after_stray_bytes_in_an_earlier_feed_discards_the_packets_feed_holds() {
+        let mut d = demuxer_with_streams(
+            DemuxerConfig::builder().build(),
+            0x101,
+            &[(0x80, 0x101, &[])],
+        );
+        drain_all_events(&mut d);
+        d.feed(&one_packet_pes(0)).unwrap();
+        d.feed(&[0x00; 10]).unwrap();
+        let mut two = one_packet_pes(1).to_vec();
+        two.extend_from_slice(&one_packet_pes(2));
+        d.feed(&two).unwrap();
+        d.feed_aligned(&one_packet_pes(3)).unwrap();
+        let events = drain_all_events(&mut d);
+        let pts: Vec<i64> = events
+            .iter()
+            .filter_map(|e| match e {
+                DemuxEvent::Sample { stream, pts, .. } if stream.pid == 0x101 => {
+                    Some(pts.as_ticks())
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(pts, [90_000, 99_000], "{events:?}");
+        let jumps: Vec<_> = events
+            .iter()
+            .filter_map(|e| match e {
+                DemuxEvent::Discontinuity { kind, .. } => Some(*kind),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            jumps,
+            [DiscontinuityKind::ContinuityJump {
+                expected: 1,
+                observed: 3
+            }],
+            "{events:?}"
+        );
     }
 
     /// A version change that keeps a PID keeps the metadata access unit in
