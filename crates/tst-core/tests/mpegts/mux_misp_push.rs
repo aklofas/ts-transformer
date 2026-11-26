@@ -182,7 +182,7 @@ fn misp_push_with_dts_round_trips() {
     let mut mux = Muxer::new(cfg).unwrap();
     let handle = mux.video_handles()[0];
 
-    let ts = MispTimestamp::micros(42, 0x00);
+    let ts = MispTimestamp::micros(42, 0x1F);
     let au = h264_keyframe_au();
     let pts = Pts90khz::new(90_000);
     let dts = Pts90khz::new(87_000);
@@ -234,6 +234,46 @@ fn misp_push_rejects_no_vcl() {
         ),
         "expected MispTime(NoVclNal), got {err:?}"
     );
+}
+
+/// A Time Status whose reserved bits are not `11111` refuses the push
+/// before anything is muxed: the next push and the output are those of a
+/// run that never made the refused push.
+#[test]
+fn a_refused_misp_push_leaves_the_muxer_as_before() {
+    let cfg = || {
+        let mut prog = MuxerProgramConfigBuilder::new(1, 0x1000);
+        prog.add_video(0x1011, VideoCodec::H264);
+        let mut b = MuxerConfig::builder();
+        b.add_program(prog.build());
+        b.build().unwrap()
+    };
+    let au = h264_keyframe_au();
+    let push = |mux: &mut Muxer, pts: u64, status: u8| {
+        let handle = mux.video_handles()[0];
+        let ts = MispTimestamp::micros(pts, status);
+        mux.push_video_misp_to(handle, &au, Pts90khz::new(pts as i64), true, &ts)
+    };
+
+    let mut refused = Muxer::new(cfg()).unwrap();
+    push(&mut refused, 90_000, 0x1F).unwrap();
+    for status in [0x00, 0x80, 0x0F] {
+        let err = push(&mut refused, 93_000, status).unwrap_err();
+        assert_eq!(err.kind(), MuxErrorKind::InputMalformed);
+        assert!(
+            matches!(
+                err,
+                MuxError::MispTime(misp_time::MispTimeError::InvalidTimeStatus { status: s }) if s == status
+            ),
+            "{err:?}"
+        );
+    }
+    push(&mut refused, 96_000, 0x9F).unwrap();
+
+    let mut clean = Muxer::new(cfg()).unwrap();
+    push(&mut clean, 90_000, 0x1F).unwrap();
+    push(&mut clean, 96_000, 0x9F).unwrap();
+    assert_eq!(drain_all(&mut refused), drain_all(&mut clean));
 }
 
 #[test]

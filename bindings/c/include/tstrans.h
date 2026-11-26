@@ -6515,13 +6515,16 @@ int tst_muxer_push_video(struct tst_muxer_t *p,
  *
  * `misp_kind`: 0 = microsecond Precision Time Stamp (H.264 and H.265),
  * 1 = nanosecond (H.265-only per ST 0604.6 §12.2).
- * `time_status` is the MISB ST 0603 status byte; `value` is the
- * timestamp in the kind's unit.
+ * `time_status` is the MISB ST 0603 status byte (ST 0603.5 Table 3: bit 7
+ * 0 = Locked, 1 = Lock Unknown; bit 6 Normal / Discontinuity; bit 5
+ * Forward / Reverse; bits 4-0 reserved, `11111`): `0x1F` is locked, `0x9F`
+ * lock unknown. `value` is the timestamp in the kind's unit.
  *
  * # Errors
  *
  * - `TST_E_MISP_TIME` — nano on H.264, AV1/H.266 stream, no VCL NAL,
- *   or `misp_kind` out of range (not 0 or 1).
+ *   `misp_kind` out of range (not 0 or 1), or a `time_status` whose low
+ *   five bits are not `11111`.
  * - plus everything `tst_muxer_push_video_to` raises.
  */
 
@@ -6546,7 +6549,8 @@ int tst_muxer_push_video_misp_to(struct tst_muxer_t *p,
  * # Errors
  *
  * - `TST_E_MISP_TIME` — nano on H.264, AV1/H.266 stream, no VCL NAL,
- *   or `misp_kind` out of range.
+ *   `misp_kind` out of range, or a `time_status` whose low five bits are
+ *   not `11111`.
  * - plus everything `tst_muxer_push_video_to_with_dts` raises.
  */
 

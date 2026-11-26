@@ -96,7 +96,8 @@ fn extract_au_from_ts(ts_bytes: &[u8], pid: u16) -> Vec<u8> {
 fn push_video_misp_to_round_trip_extract() {
     let (mux, video_handle) = unsafe { open_h264_muxer() };
 
-    // Push with a microsecond MISP timestamp: kind=0, status=0xA0, value=1234567890.
+    // Push with a microsecond MISP timestamp: kind=0, status=0xBF (lock unknown,
+    // reverse; reserved bits 11111), value=1234567890.
     let rc = unsafe {
         tst_muxer_push_video_misp_to(
             mux,
@@ -106,7 +107,7 @@ fn push_video_misp_to_round_trip_extract() {
             /*pts_90khz=*/ 9000,
             /*key_frame=*/ true,
             /*misp_kind=*/ 0,
-            /*time_status=*/ 0xA0,
+            /*time_status=*/ 0xBF,
             /*value=*/ 1234567890,
         )
     };
@@ -137,7 +138,7 @@ fn push_video_misp_to_round_trip_extract() {
         "tst_misp_time_extract returned {rc} (expected 0 = found)"
     );
     assert_eq!(out_kind, 0, "expected microsecond kind (0)");
-    assert_eq!(out_time_status, 0xA0, "time_status round-trip failed");
+    assert_eq!(out_time_status, 0xBF, "time_status round-trip failed");
     assert_eq!(out_value, 1234567890, "value round-trip failed");
 
     unsafe { tst_muxer_close(mux) };
@@ -158,7 +159,7 @@ fn push_video_misp_to_with_dts_emits_pts_dts_flags_11() {
             /*dts_90khz=*/ 6000,
             /*key_frame=*/ true,
             /*misp_kind=*/ 0,
-            /*time_status=*/ 0x00,
+            /*time_status=*/ 0x1F,
             /*value=*/ 999,
         )
     };
@@ -212,7 +213,7 @@ fn push_video_misp_invalid_kind_returns_misp_time_error() {
             /*pts_90khz=*/ 9000,
             /*key_frame=*/ true,
             /*misp_kind=*/ 2, // out of range
-            /*time_status=*/ 0x00,
+            /*time_status=*/ 0x1F,
             /*value=*/ 0,
         )
     };
@@ -221,6 +222,35 @@ fn push_video_misp_invalid_kind_returns_misp_time_error() {
         TstError::MispTime as i32,
         "expected TST_E_MISP_TIME (-45), got {rc}"
     );
+
+    unsafe { tst_muxer_close(mux) };
+}
+
+#[test]
+fn push_video_misp_with_reserved_status_bits_returns_misp_time_error() {
+    // ST 0603.5 Table 3: bits 4-0 of the Time Status are reserved `11111`.
+    let (mux, video_handle) = unsafe { open_h264_muxer() };
+    for status in [0x00u8, 0x80, 0xE0, 0x0F] {
+        let rc = unsafe {
+            tst_muxer_push_video_misp_to(
+                mux,
+                video_handle,
+                NAL_IDR.as_ptr(),
+                NAL_IDR.len(),
+                /*pts_90khz=*/ 9000,
+                /*key_frame=*/ true,
+                /*misp_kind=*/ 0,
+                /*time_status=*/ status,
+                /*value=*/ 0,
+            )
+        };
+        assert_eq!(
+            rc,
+            TstError::MispTime as i32,
+            "status {status:#04x}: expected TST_E_MISP_TIME (-45), got {rc}"
+        );
+    }
+    assert!(drain_mux(mux).is_empty(), "a refused push queues nothing");
 
     unsafe { tst_muxer_close(mux) };
 }

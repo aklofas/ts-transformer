@@ -53,8 +53,12 @@ crate::binding_record! {
         /// Which time base the value carries: microseconds or nanoseconds since
         /// the MISP epoch.
         pub kind: MispTimeKind,
-        /// MISB ST 0603 Time Status byte (0x00 = unknown); the same byte as in ST
-        /// 0605 Class 0 packs.
+        /// MISB ST 0603 Time Status byte (ST 0603.5 Table 3): bit 7 0 = Locked,
+        /// 1 = Lock Unknown; bit 6 0 = Normal, 1 = Discontinuity; bit 5 0 =
+        /// Forward, 1 = Reverse; bits 4 to 0 reserved, `11111`. So `0x1F` is
+        /// locked and `0x9F` lock unknown; a status whose low five bits are not
+        /// `11111` is refused when the time stamp is written into an SEI. The
+        /// same byte as in ST 0605 Class 0 packs.
         pub time_status: u8,
         /// Micro: microseconds since the MISP epoch. Nano: nanoseconds.
         pub value: u64,
@@ -79,6 +83,12 @@ impl MispTimestamp {
             value: value_ns,
         }
     }
+
+    /// `true` when the Time Status byte's reserved bits 4 to 0 are `11111`
+    /// (ST 0603.5 Table 3): the statuses an SEI can be built with.
+    pub fn time_status_is_valid(&self) -> bool {
+        self.time_status & 0x1F == 0x1F
+    }
 }
 
 /// Why a MISP SEI could not be built or spliced.
@@ -95,6 +105,12 @@ pub enum MispTimeError {
     /// The access unit contains no VCL NAL to anchor the SEI in front of.
     #[error("access unit contains no VCL NAL unit to place the MISP SEI before")]
     NoVclNal,
+    /// The Time Status byte's reserved bits 4 to 0 are not `11111`
+    /// (ST 0603.5 Table 3); `status` is the byte given.
+    #[error(
+        "MISP Time Status {status:#04x} has reserved bits 4-0 not equal to 11111 (ST 0603.5 Table 3)"
+    )]
+    InvalidTimeStatus { status: u8 },
 }
 
 /// Why a present MISP SEI payload failed to parse (absence is `Ok(None)`).
@@ -127,12 +143,19 @@ pub fn identifier_for(
 
 /// Assemble the 28-byte ST 0604.6 SEI payload (Table 2): identifier,
 /// Time Status, then the 8-byte big-endian value as four 2-byte groups
-/// with a `0xFF` guard byte after each of the first three groups.
+/// with a `0xFF` guard byte after each of the first three groups. A Time
+/// Status whose reserved bits are not `11111` is refused before any byte
+/// is written, after the codec and kind are judged.
 pub(crate) fn sei_payload(
     codec: VideoCodec,
     ts: &MispTimestamp,
 ) -> Result<[u8; 28], MispTimeError> {
     let id = identifier_for(codec, ts.kind)?;
+    if !ts.time_status_is_valid() {
+        return Err(MispTimeError::InvalidTimeStatus {
+            status: ts.time_status,
+        });
+    }
     let v = ts.value.to_be_bytes();
     let mut out = [0u8; 28];
     out[..16].copy_from_slice(id);
@@ -681,12 +704,129 @@ mod tests {
     }
 
     #[test]
+    fn build_sei_refuses_reserved_time_status_bits() {
+        for status in [0x00, 0x80, 0x0F, 0x1E] {
+            for (codec, ts) in [
+                (VideoCodec::H264, MispTimestamp::micros(1, status)),
+                (VideoCodec::H265, MispTimestamp::micros(1, status)),
+                (VideoCodec::H265, MispTimestamp::nanos(1, status)),
+            ] {
+                assert_eq!(
+                    build_sei_nal(codec, &ts),
+                    Err(MispTimeError::InvalidTimeStatus { status }),
+                    "{codec:?} {status:#04x}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn nano_on_h264_with_a_bad_status_reports_the_codec() {
+        // The codec is judged before the status.
+        assert_eq!(
+            build_sei_nal(VideoCodec::H264, &MispTimestamp::nanos(1, 0x00)),
+            Err(MispTimeError::NanoUnsupportedForCodec {
+                codec: VideoCodec::H264
+            })
+        );
+        assert_eq!(
+            build_sei_nal(VideoCodec::Av1, &MispTimestamp::micros(1, 0x00)),
+            Err(MispTimeError::UnsupportedCodec {
+                codec: VideoCodec::Av1
+            })
+        );
+    }
+
+    #[test]
+    fn valid_status_payload_is_byte_identical() {
+        // The 28 payload bytes for three valid statuses, as the library wrote
+        // them before statuses were checked (ST 0604.6 Table 2).
+        let value = 0x0102_0304_0506_0708;
+        for (status, codec, kind, id) in [
+            (
+                0x1F,
+                VideoCodec::H264,
+                MispTimeKind::Micro,
+                &MISP_MICROSEC_ID_H264,
+            ),
+            (
+                0x9F,
+                VideoCodec::H265,
+                MispTimeKind::Micro,
+                &MISP_MICROSEC_ID_H265,
+            ),
+            (
+                0xFF,
+                VideoCodec::H265,
+                MispTimeKind::Nano,
+                &MISP_NANOSEC_ID_H265,
+            ),
+        ] {
+            let ts = MispTimestamp {
+                kind,
+                time_status: status,
+                value,
+            };
+            let mut golden = id.to_vec();
+            golden.extend_from_slice(&[
+                status, 0x01, 0x02, 0xFF, 0x03, 0x04, 0xFF, 0x05, 0x06, 0xFF, 0x07, 0x08,
+            ]);
+            assert_eq!(sei_payload(codec, &ts).unwrap().to_vec(), golden);
+        }
+    }
+
+    #[test]
+    fn time_status_is_valid_reads_the_reserved_bits() {
+        for (status, valid) in [
+            (0x00, false),
+            (0x0F, false),
+            (0x80, false),
+            (0x1F, true),
+            (0x9F, true),
+            (0xFF, true),
+        ] {
+            assert_eq!(
+                MispTimestamp::micros(0, status).time_status_is_valid(),
+                valid,
+                "{status:#04x}"
+            );
+        }
+    }
+
+    #[test]
+    fn extract_returns_invalid_status_unchanged() {
+        // A stream from another producer may carry a status this library
+        // refuses to write: extraction still reads it as it is.
+        let mut payload = vec![0x00];
+        payload.extend_from_slice(&[
+            0x01, 0x02, 0xFF, 0x03, 0x04, 0xFF, 0x05, 0x06, 0xFF, 0x07, 0x08,
+        ]);
+        let nal = build_user_data_unregistered_sei_nal(
+            VideoCodec::H264,
+            &MISP_MICROSEC_ID_H264,
+            &payload,
+        )
+        .unwrap();
+        let mut au = vec![0, 0, 0, 1];
+        au.extend_from_slice(&nal);
+        au.extend_from_slice(&[0, 0, 0, 1, 0x65, 0x88]);
+        let ts = extract(&au, VideoCodec::H264).unwrap().unwrap();
+        assert_eq!(ts.time_status, 0x00);
+        assert_eq!(ts.value, 0x0102_0304_0506_0708);
+    }
+
+    #[test]
     fn build_sei_nal_escapes_zero_run() {
-        // status 0x00 + value MSBs 0x00 0x00 forms 00 00 00 inside the
-        // payload -> the escaper MUST fire (identifier ends with 'e').
-        let ts = MispTimestamp::micros(0x0000_0000_0000_0000, 0x00);
-        let nal = build_sei_nal(VideoCodec::H264, &ts).unwrap();
-        assert!(nal.len() > 3 + 28 + 1, "escapes must lengthen the NAL");
+        // A payload with a zero run: the escaper MUST fire. (A MISP payload
+        // with a valid status never holds one: the status is at least 0x1F
+        // and a 0xFF guard follows every two value bytes.)
+        let nal = build_user_data_unregistered_sei_nal(
+            VideoCodec::H264,
+            &MISP_MICROSEC_ID_H264,
+            &[0x00, 0x00, 0x00, 0x00, 0x01],
+        )
+        .unwrap();
+        assert!(nal.len() > 3 + 16 + 5 + 1, "escapes must lengthen the NAL");
         // No unescaped start-code-like sequence may remain anywhere.
         assert!(
             !nal.windows(3)
@@ -914,7 +1054,7 @@ mod tests {
                 VideoCodec::H264,
                 MispTimestamp::micros(0x0005_F5E1_0000_0001, 0x1F),
             ),
-            (VideoCodec::H265, MispTimestamp::micros(42, 0x00)),
+            (VideoCodec::H265, MispTimestamp::micros(42, 0x1F)),
             (VideoCodec::H265, MispTimestamp::nanos(u64::MAX, 0x9F)),
         ] {
             let sei = build_sei_nal(codec, &ts).unwrap();
@@ -965,11 +1105,23 @@ mod tests {
 
     #[test]
     fn extract_survives_escaped_payload() {
-        // The all-zero timestamp forces emulation-prevention bytes on
-        // build; extract must transparently strip them.
-        let ts = MispTimestamp::micros(0, 0x00);
-        let sei = build_sei_nal(VideoCodec::H264, &ts).unwrap();
+        // Another producer's status 0x00 with an all-zero value puts zero
+        // runs into the payload, so its NAL carries emulation-prevention
+        // bytes; extract must transparently strip them. Built by hand: this
+        // library refuses to write that status.
+        let mut payload = [0u8; 12];
+        payload[3] = 0xFF;
+        payload[6] = 0xFF;
+        payload[9] = 0xFF;
+        let sei = build_user_data_unregistered_sei_nal(
+            VideoCodec::H264,
+            &MISP_MICROSEC_ID_H264,
+            &payload,
+        )
+        .unwrap();
+        assert!(sei.len() > 3 + 28 + 1, "the payload must have been escaped");
         let au = insert_sei_before_first_vcl(&h264_au(&[0x65]), &sei, VideoCodec::H264).unwrap();
+        let ts = MispTimestamp::micros(0, 0x00);
         assert_eq!(extract(&au, VideoCodec::H264).unwrap(), Some(ts));
     }
 
