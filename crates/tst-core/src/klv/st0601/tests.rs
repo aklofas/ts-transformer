@@ -3941,7 +3941,12 @@ fn a_lone_checksum_and_bytes_past_the_declared_length_still_decode() {
 /// Item 2, then `items`, then Item 65 (version 19) and a correct final
 /// checksum: the first of `items` starts at offset 27.
 fn compliance_set(items: &[u8]) -> Vec<u8> {
-    let body = [&TIMESTAMP_ITEM[..], items, &[0x41, 0x01, 0x13, 0x01, 0x02, 0, 0]].concat();
+    let body = [
+        &TIMESTAMP_ITEM[..],
+        items,
+        &[0x41, 0x01, 0x13, 0x01, 0x02, 0, 0],
+    ]
+    .concat();
     let mut buf = st0601_set(&body);
     let at = buf.len() - 2;
     put_checksum(&mut buf, at);
@@ -3953,7 +3958,8 @@ fn compliance_set(items: &[u8]) -> Vec<u8> {
 fn profile_rows() -> Vec<(u32, Vec<u8>)> {
     let mut zero_length_item_2 = st0601_set(&[0x02, 0x00, 0x41, 0x01, 0x13, 0x01, 0x02, 0, 0]);
     put_checksum(&mut zero_length_item_2, 24);
-    let mut zero_length_item_65 = st0601_set(&[&TIMESTAMP_ITEM[..], &[0x41, 0x00, 0x01, 0x02, 0, 0]].concat());
+    let mut zero_length_item_65 =
+        st0601_set(&[&TIMESTAMP_ITEM[..], &[0x41, 0x00, 0x01, 0x02, 0, 0]].concat());
     put_checksum(&mut zero_length_item_65, 31);
     let seven_byte_time = [&[0x01, 0x01, b'A'][..], &[0x01; 7]].concat();
     vec![
@@ -3996,7 +4002,11 @@ fn compliance_decode_refuses_each_profile_row() {
 #[test]
 fn decode_strict_still_accepts_profile_violations() {
     for (tag, set) in profile_rows() {
-        assert!(decode_strict(&set).is_ok(), "Item {tag}: {:?}", decode_strict(&set).err());
+        assert!(
+            decode_strict(&set).is_ok(),
+            "Item {tag}: {:?}",
+            decode_strict(&set).err()
+        );
     }
 }
 
@@ -4026,11 +4036,20 @@ fn compliance_encode_refuses_each_profile_row() {
         end_lon_deg: None,
     };
     let rows: Vec<(u32, UasDatalinkLs)> = vec![
-        (121, UasDatalinkLs { active_wavelengths: Some(vec![0, 2]), ..base() }),
+        (
+            121,
+            UasDatalinkLs {
+                active_wavelengths: Some(vec![0, 2]),
+                ..base()
+            },
+        ),
         (
             143,
             UasDatalinkLs {
-                metadata_substream_id: Some(MetadataSubstreamId { local_id: 1, uuid: None }),
+                metadata_substream_id: Some(MetadataSubstreamId {
+                    local_id: 1,
+                    uuid: None,
+                }),
                 ..base()
             },
         ),
@@ -4044,13 +4063,40 @@ fn compliance_encode_refuses_each_profile_row() {
                 ..base()
             },
         ),
-        (124, UasDatalinkLs { positioning_method_source: Some(0), ..base() }),
-        (47, UasDatalinkLs { generic_flag_data: Some(0x80), ..base() }),
-        (125, UasDatalinkLs { platform_status: Some(PlatformStatus::Other(255)), ..base() }),
-        (81, UasDatalinkLs { image_horizon: Some(horizon), ..base() }),
+        (
+            124,
+            UasDatalinkLs {
+                positioning_method_source: Some(0),
+                ..base()
+            },
+        ),
+        (
+            47,
+            UasDatalinkLs {
+                generic_flag_data: Some(0x80),
+                ..base()
+            },
+        ),
+        (
+            125,
+            UasDatalinkLs {
+                platform_status: Some(PlatformStatus::Other(255)),
+                ..base()
+            },
+        ),
+        (
+            81,
+            UasDatalinkLs {
+                image_horizon: Some(horizon),
+                ..base()
+            },
+        ),
     ];
     for (tag, rec) in rows {
-        assert!(encode_to_vec(&rec).is_ok(), "the ordinary encoder writes Item {tag}");
+        assert!(
+            encode_to_vec(&rec).is_ok(),
+            "the ordinary encoder writes Item {tag}"
+        );
         match encode_strict_compliance(&rec) {
             Err(KlvEncodeError::InvalidFieldValue { tag: got, reason }) => {
                 assert_eq!(got, tag, "{reason}");

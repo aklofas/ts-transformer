@@ -177,8 +177,8 @@ pub fn encode_strict_compliance(record: &UasDatalinkLs) -> Result<Vec<u8>, KlvEn
     let out = encode_to_vec(&r)?;
     // The per-item rules are the compliance decode's, judged on the bytes
     // this encoder wrote, so the pair agrees by construction.
-    let (len, after_len) = crate::klv::length::read_ber(&out[16..])
-        .expect("the encoder writes a valid outer length");
+    let (len, after_len) =
+        crate::klv::length::read_ber(&out[16..]).expect("the encoder writes a valid outer length");
     for f in crate::klv::pack::Iter::local_set(&after_len[..len]) {
         let f = f.expect("the encoder writes a valid body");
         if let Some(reason) = super::decode::profile_violation(f.tag, f.value) {
