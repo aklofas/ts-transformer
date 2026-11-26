@@ -135,8 +135,8 @@ def _xml_forbidden(c: str) -> bool:
     return cp <= 0x8 or cp in (0xB, 0xC) or 0xE <= cp <= 0x1F or cp in (0xFFFE, 0xFFFF)
 
 
-def _parse(xml: str) -> dict[str, dict[str, str]]:
-    """Parses `xml` plainly and namespace-aware; returns each element's attributes."""
+def _parse(doc: str) -> dict[str, dict[str, str]]:
+    """Parses `doc` plainly and namespace-aware; returns each element's attributes."""
     import xml.parsers.expat
 
     seen: dict[str, dict[str, str]] = {}
@@ -146,11 +146,11 @@ def _parse(xml: str) -> dict[str, dict[str, str]]:
 
     plain = xml.parsers.expat.ParserCreate()
     plain.StartElementHandler = start
-    plain.Parse(xml.encode("utf-8"), True)
+    plain.Parse(doc.encode("utf-8"), True)
     names: list[str] = []
     ns = xml.parsers.expat.ParserCreate(namespace_separator="|")
     ns.StartElementHandler = lambda name, attrs: names.append(name)
-    ns.Parse(xml.encode("utf-8"), True)
+    ns.Parse(doc.encode("utf-8"), True)
     assert "_flow-tags_" in names, names
     return seen
 
