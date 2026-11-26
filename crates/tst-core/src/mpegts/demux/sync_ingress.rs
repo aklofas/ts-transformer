@@ -72,7 +72,9 @@ impl super::demuxer::Demuxer {
     /// elementary stream — common in broadcast and hardware muxes) has no
     /// stream entry, so fall back to an anonymous id whose
     /// `program_number` is the program that declared `pid` as its
-    /// `PCR_PID` (0 if none has).
+    /// `PCR_PID` (0 if none has). Out of line: only an issue on a PCR asks,
+    /// and the lookups would otherwise sit in the per-packet path.
+    #[cold]
     pub(super) fn pcr_stream_id(&self, pid: u16) -> StreamId {
         self.lookup_stream(pid)
             .unwrap_or_else(|| StreamId::anonymous(pid, self.pcr_program_of(pid).unwrap_or(0)))
@@ -193,7 +195,8 @@ impl super::demuxer::Demuxer {
     /// `pcr_pid`, so the first PTS on the new time base is not judged against
     /// the old one. A PES already in flight started on the old clock: it
     /// keeps the old baseline, and the baseline is dropped once it ends
-    /// (`settle_after_pes`).
+    /// (`settle_after_pes`). Out of line: a new time base is rare.
+    #[cold]
     pub(super) fn forget_program_pts(&mut self, pcr_pid: u16) {
         let Self {
             programs,
