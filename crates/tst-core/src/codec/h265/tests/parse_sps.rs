@@ -456,6 +456,31 @@ fn build_synthetic_sps_with_vui_opts(
     write_rps: impl Fn(&mut BitWriter),
     chroma_loc: Option<(u32, u32)>,
 ) -> Vec<u8> {
+    build_synthetic_sps_with(
+        write_rps,
+        SynthSpsOpts {
+            chroma_loc,
+            ..Default::default()
+        },
+    )
+}
+
+/// The options of [`build_synthetic_sps_with`]; the default is the fixture
+/// [`build_synthetic_sps`] describes.
+#[derive(Default)]
+pub(super) struct SynthSpsOpts {
+    /// `Some((top, bottom))`: `chroma_loc_info_present_flag = 1`.
+    pub chroma_loc: Option<(u32, u32)>,
+    /// 4:4:4 with `separate_colour_plane_flag = 1` instead of 4:2:0.
+    pub separate_colour_planes: bool,
+}
+
+/// The synthetic SPS of [`build_synthetic_sps`] with the given options. The
+/// output is RBSP without emulation prevention: callers escape it.
+pub(super) fn build_synthetic_sps_with(
+    write_rps: impl Fn(&mut BitWriter),
+    opts: SynthSpsOpts,
+) -> Vec<u8> {
     let mut bw = BitWriter::new();
 
     // §7.3.2.2 SPS header.
@@ -479,8 +504,13 @@ fn build_synthetic_sps_with_vui_opts(
 
     // §7.3.2.2 continues.
     bw.write_ue(0); // sps_seq_parameter_set_id
-    bw.write_ue(1); // chroma_format_idc = 1 (4:2:0)
-    // separate_colour_plane_flag not coded (chroma_format_idc != 3).
+    if opts.separate_colour_planes {
+        bw.write_ue(3); // chroma_format_idc = 3 (4:4:4)
+        bw.write(1, 1); // separate_colour_plane_flag = 1
+    } else {
+        bw.write_ue(1); // chroma_format_idc = 1 (4:2:0)
+        // separate_colour_plane_flag not coded (chroma_format_idc != 3).
+    }
     bw.write_ue(1920); // pic_width_in_luma_samples
     bw.write_ue(1088); // pic_height_in_luma_samples
     bw.write(1, 1); // conformance_window_flag = 1
@@ -529,7 +559,7 @@ fn build_synthetic_sps_with_vui_opts(
     bw.write(1, 8); // colour_primaries = 1 (BT.709)
     bw.write(1, 8); // transfer_characteristics = 1 (BT.709)
     bw.write(1, 8); // matrix_coeffs = 1 (BT.709)
-    match chroma_loc {
+    match opts.chroma_loc {
         Some((top, bottom)) => {
             bw.write(1, 1); // chroma_loc_info_present_flag = 1
             bw.write_ue(top); // chroma_sample_loc_type_top_field

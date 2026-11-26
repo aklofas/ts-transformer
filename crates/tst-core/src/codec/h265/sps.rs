@@ -73,6 +73,12 @@ crate::binding_record! {
         /// `log2_max_pic_order_cnt_lsb_minus4` (H.265 §7.4.3.2.1). The bit width
         /// of `pic_order_cnt_lsb` in slice headers equals this value plus 4.
         pub log2_max_pic_order_cnt_lsb_minus4: u8,
+        /// `separate_colour_plane_flag` (H.265 §7.4.3.2.1): the three colour
+        /// components of a 4:4:4 stream are coded as separate planes, and the
+        /// first segment of every slice carries `colour_plane_id`. `false` when
+        /// the SPS does not signal the flag. Read by the light slice-header
+        /// parser.
+        @[skip] pub separate_colour_plane: bool,
         /// The original RBSP bytes as supplied to the parser.
         pub raw_rbsp: Vec<u8>,
     }
@@ -302,6 +308,7 @@ pub fn parse_sps(rbsp: &[u8]) -> Result<H265Sps, CodecParseError> {
         crop_top: crop_y_top,
         crop_bottom: crop_y_bottom,
         log2_max_pic_order_cnt_lsb_minus4: log2_max_pic_order_cnt_lsb_minus4 as u8,
+        separate_colour_plane: separate_colour_plane_flag,
         raw_rbsp: rbsp.to_vec(),
     })
 }

@@ -24,9 +24,12 @@ crate::binding_record! {
         pub slice_type: H265SliceType,
         /// `slice_pic_parameter_set_id` — links this slice to a PPS.
         pub pps_id: u8,
-        /// `pic_order_cnt_lsb` read using the bit width from the supplied SPS
-        /// (`log2_max_pic_order_cnt_lsb_minus4 + 4`). 0 for IDR slices (implicit
-        /// per spec); absent when no SPS context was supplied.
+        /// `slice_pic_order_cnt_lsb` read using the bit width from the supplied
+        /// SPS (`log2_max_pic_order_cnt_lsb_minus4 + 4`). 0 for every segment of
+        /// an IDR picture (implicit per spec). Absent when no SPS context was
+        /// supplied, and for a non-IDR continuation segment (`first_in_pic`
+        /// false): its POC follows `slice_segment_address`, whose width needs
+        /// the PPS.
         pub pic_order_cnt_lsb: Option<u16>,
         /// True when `nal_unit_type` is IDR_W_RADL (19) or IDR_N_LP (20).
         pub idr: bool,
@@ -78,28 +81,40 @@ const fn is_irap_nal(nal_unit_type: u8) -> bool {
 /// `first_slice_segment_in_pic_flag`, optionally `no_output_of_prior_pics_flag`
 /// (IRAP only), `slice_pic_parameter_set_id`, and `slice_type` (first-segment
 /// slices only), then optionally `pic_order_cnt_lsb` when an SPS context is
-/// available.
+/// available: on a first segment, behind `colour_plane_id` when the SPS has
+/// `separate_colour_plane`; a non-IDR continuation segment reports none.
 ///
 /// `nal_unit_type` is the 6-bit NAL unit type from the NAL header byte pair
-/// — used to derive `idr` and to gate IRAP-specific fields.
+/// — used to derive `idr` and to gate IRAP-specific fields. A value above 63
+/// is refused.
 ///
 /// # Known limitation
 ///
-/// This parser assumes `num_extra_slice_header_bits == 0` (the PPS default).
-/// Streams where the PPS overrides this will be silently mis-parsed. Full
-/// slice header support requires PPS context and is deferred.
+/// This parser takes two PPS fields at their defaults:
+/// `num_extra_slice_header_bits == 0` (no `slice_reserved_flag` bits) and
+/// `output_flag_present_flag == 0` (no `pic_output_flag`). Streams where the
+/// PPS sets either will be silently mis-parsed. Full slice header support
+/// requires PPS context and is deferred.
 ///
 /// # Errors
 ///
 /// Returns [`CodecParseError::TruncatedRbsp`] when `rbsp` is too short.
 /// Returns [`CodecParseError::InvalidGolomb`] on a malformed Exp-Golomb
-/// codeword. Returns [`CodecParseError::ReservedValue`] when `slice_type`
-/// or `slice_pic_parameter_set_id` is out of range.
+/// codeword. Returns [`CodecParseError::ReservedValue`] when `nal_unit_type`
+/// is above 63 (before any bit is read), or `slice_type` or
+/// `slice_pic_parameter_set_id` is out of range.
 pub fn parse_slice_header_light(
     rbsp: &[u8],
     sps: Option<&H265Sps>,
     nal_unit_type: u8,
 ) -> Result<H265SliceHeaderLight, CodecParseError> {
+    // `nal_unit_type` is a 6-bit field (H.265 §7.3.1.2).
+    if nal_unit_type > 63 {
+        return Err(CodecParseError::ReservedValue {
+            field: "nal_unit_type",
+            value: u32::from(nal_unit_type),
+        });
+    }
     let mut br = BitReader::new(rbsp);
     let first_slice_segment_in_pic_flag = br.read_u(1)? == 1;
     if is_irap_nal(nal_unit_type) {
@@ -130,17 +145,24 @@ pub fn parse_slice_header_light(
         H265SliceType::I
     };
 
-    let pic_order_cnt_lsb = if let Some(sps) = sps {
-        // pic_order_cnt_lsb is present in all non-IDR slice headers.
-        // For IDR slices it is implicitly 0 per H.265 §8.3.1.
-        if is_idr(VideoCodec::H265, nal_unit_type) {
-            Some(0)
-        } else {
+    let pic_order_cnt_lsb = match sps {
+        None => None,
+        // For IDR pictures it is implicitly 0 per H.265 §8.3.1, in every
+        // segment.
+        Some(_) if is_idr(VideoCodec::H265, nal_unit_type) => Some(0),
+        // A continuation segment's POC follows slice_segment_address, whose
+        // width needs the PPS: the bits here are not a POC.
+        Some(_) if !first_slice_segment_in_pic_flag => None,
+        Some(sps) => {
+            // H.265 §7.3.6.1: pic_output_flag (absent: output_flag_present_flag
+            // assumed 0), then colour_plane_id u(2) under separate colour
+            // planes, then slice_pic_order_cnt_lsb.
+            if sps.separate_colour_plane {
+                br.skip(2)?;
+            }
             let bits = sps.log2_max_pic_order_cnt_lsb_minus4 as u32 + 4;
             Some(br.read_u(bits)? as u16)
         }
-    } else {
-        None
     };
 
     Ok(H265SliceHeaderLight {
