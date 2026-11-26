@@ -4443,3 +4443,75 @@ fn is_signalled_follows_what_the_encoder_writes() {
     assert!(!is_signalled(&rec, 15));
     assert!(!is_signalled(&rec, 2));
 }
+
+// ---------------------------------------------------------------------------
+// MISMMS presence: an item the encoder writes as a sentinel or special is present
+// ---------------------------------------------------------------------------
+
+fn full_fixture() -> UasDatalinkLs {
+    decode(include_bytes!(
+        "../../../tests/fixtures/st0601/synthetic_full.klv"
+    ))
+    .unwrap()
+}
+
+fn mismms_missing(rec: &UasDatalinkLs) -> Vec<u8> {
+    super::mismms::validate_mismms(rec)
+        .into_iter()
+        .filter_map(|v| match v {
+            super::mismms::MismmsViolation::MissingItem { tag, .. } => Some(tag),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn mismms_counts_a_sentinel_item_as_present() {
+    let mut rec = full_fixture();
+    assert!(!mismms_missing(&rec).contains(&23));
+    rec.frame_center_lat_deg = None;
+    rec.sentinel_tags.push(23);
+    assert!(
+        !mismms_missing(&rec).contains(&23),
+        "{:?}",
+        mismms_missing(&rec)
+    );
+}
+
+#[test]
+fn mismms_counts_a_signalled_item_in_an_alternation_group() {
+    // Platform pitch is Item 6 or Item 90: Item 6 sent only as a sentinel.
+    let mut rec = full_fixture();
+    rec.platform_pitch_deg = None;
+    rec.platform_pitch_full_deg = None;
+    assert!(mismms_missing(&rec).contains(&6));
+    rec.sentinel_tags.push(6);
+    assert!(
+        !mismms_missing(&rec).contains(&6),
+        "{:?}",
+        mismms_missing(&rec)
+    );
+}
+
+#[test]
+fn mismms_still_reports_an_entry_of_the_wrong_kind() {
+    // An IMAP special for the linear Item 23 is never written: still missing.
+    let mut rec = full_fixture();
+    rec.frame_center_lat_deg = None;
+    rec.imapb_specials
+        .push((23, crate::klv::imapb::ImapbSpecial::BelowMin));
+    assert!(mismms_missing(&rec).contains(&23));
+}
+
+#[test]
+fn mismms_counts_a_special_item_as_present() {
+    // Sensor altitude is Item 15, 75 or 104: Item 104 sent only as a special.
+    let mut rec = full_fixture();
+    rec.sensor_alt_m = None;
+    rec.sensor_ellipsoid_height_m = None;
+    rec.sensor_ellipsoid_height_extended_m = None;
+    assert!(mismms_missing(&rec).contains(&15));
+    rec.imapb_specials
+        .push((104, crate::klv::imapb::ImapbSpecial::AboveMax));
+    assert!(!mismms_missing(&rec).contains(&15), "{:?}", mismms_missing(&rec));
+}

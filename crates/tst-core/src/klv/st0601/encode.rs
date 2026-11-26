@@ -194,9 +194,12 @@ pub fn encoded_len(record: &UasDatalinkLs) -> usize {
     encoded_len_with(record, &EncodeConfig::default())
 }
 
-pub fn encoded_len_with(record: &UasDatalinkLs, opts: &EncodeConfig) -> usize {
+pub fn encoded_len_with(record: &UasDatalinkLs, _opts: &EncodeConfig) -> usize {
     let mut body_len = 0usize;
-    each_typed_field(record, opts, |tag, value_len| {
+    // No setting of the configuration changes a length: the label is 16
+    // bytes, the version one byte, and a value is sized at its row's length
+    // under every out-of-range policy.
+    each_typed_field(record, |tag, value_len| {
         body_len += ber_oid_len(tag as u32) + ber_len(value_len) + value_len;
     });
     body_len += replayed_signals_len(record);
@@ -261,13 +264,6 @@ pub(super) fn resolve(record: &UasDatalinkLs, spec: &TagSpec) -> Option<ItemSour
 
 /// `true` when [`resolve`] writes a sentinel or an IMAP special for the
 /// item `tag`: the item is on the wire, sent as no value.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "MISMMS presence and the composite views call it next"
-    )
-)]
 pub(crate) fn is_signalled(record: &UasDatalinkLs, tag: u8) -> bool {
     lookup_tag(tag).is_some_and(|spec| {
         matches!(
@@ -408,11 +404,7 @@ fn last_per_tag<T: Copy>(entries: &[T], tag_of: impl Fn(&T) -> u32) -> Cow<'_, [
 /// fallback emission. Do NOT reuse this visitor for `patch()` sizing —
 /// `patch()` never auto-injects Tag 65 (it builds output `Vec`s
 /// directly and never calls this).
-pub(super) fn each_typed_field<F: FnMut(u8, usize)>(
-    record: &UasDatalinkLs,
-    _opts: &EncodeConfig,
-    mut visit: F,
-) {
+pub(super) fn each_typed_field<F: FnMut(u8, usize)>(record: &UasDatalinkLs, mut visit: F) {
     for spec in TAGS {
         let len = if spec.encoding == Encoding::Pack {
             // Tags 102 and 115 are multi-instance: their loops follow.

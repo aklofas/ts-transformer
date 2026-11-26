@@ -41,8 +41,8 @@
 //! but are NOT enforced by this function.
 
 use crate::klv::st0102;
-use crate::klv::st0601::encode::each_typed_field;
-use crate::klv::st0601::model::{EncodeConfig, UasDatalinkLs};
+use crate::klv::st0601::encode::{each_typed_field, is_signalled};
+use crate::klv::st0601::model::UasDatalinkLs;
 use alloc::vec::Vec;
 
 // ============================================================================
@@ -218,12 +218,10 @@ pub fn validate_mismms(record: &UasDatalinkLs) -> Vec<MismmsViolation> {
 
     // ----------------------------------------------------------------
     // Step 1: collect present typed tags via the encode visitor.
-    // EncodeConfig::default() is fine — _opts is unused in the visitor.
     // Zero-length typed values do NOT satisfy presence.
     // ----------------------------------------------------------------
-    let opts = EncodeConfig::default();
     let mut typed_present: [bool; 256] = [false; 256];
-    each_typed_field(record, &opts, |tag, len| {
+    each_typed_field(record, |tag, len| {
         if len == 0 {
             // Zero-length typed value — record violation but do not set presence.
             violations.push(MismmsViolation::ZeroLengthItem { tag });
@@ -235,6 +233,20 @@ pub fn validate_mismms(record: &UasDatalinkLs) -> Vec<MismmsViolation> {
     // Tag 65 is auto-emitted by the visitor (auto_version branch); exclude it
     // from the presence map so it cannot contaminate MISMMS checks.
     typed_present[65] = false;
+    // An item the encoder writes as a sentinel or an IMAP special is on the
+    // wire too: present, sent as no value.
+    let signalled = record
+        .sentinel_tags
+        .iter()
+        .copied()
+        .chain(record.imapb_specials.iter().map(|e| e.0));
+    for tag in signalled {
+        if let Ok(tag) = u8::try_from(tag)
+            && is_signalled(record, tag)
+        {
+            typed_present[usize::from(tag)] = true;
+        }
+    }
 
     // ----------------------------------------------------------------
     // Step 2: collect unknown tags — track presence and zero-length.
