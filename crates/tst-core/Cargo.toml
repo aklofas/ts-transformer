@@ -13,8 +13,10 @@ categories   = ["multimedia::video", "parser-implementations", "no-std"]
 [features]
 default = ["std", "file"]
 # `std` pulls in everything that needs the standard library: file I/O,
-# the net helpers, the thread/Barrier cancel path, and the std-only
-# serialization deps. Without it the crate is #![no_std] + alloc.
+# the net helpers, the std::sync-based cancel slot and transport handles,
+# and wall-clock stats stamps. It also enables `serde_json`, `toml` and
+# serde's `std`, which no library code uses (the codec conformance tests
+# and a maintainer tool do). Without it the crate is #![no_std] + alloc.
 std  = ["file", "serde/std", "tracing/std", "dep:serde_json", "dep:toml", "portable-atomic/std", "dep:socket2", "dep:libc"]
 file = ["std"]  # std::fs-using helpers in io_file (must imply std)
 # The transport conformance kit (`transport::conformance`): test

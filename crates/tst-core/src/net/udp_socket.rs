@@ -11,8 +11,10 @@
 //! - Multicast send knobs (TTL + iface, IPv4 + IPv6)
 //! - Multicast recv group join (IPv4 + IPv6)
 //!
-//! All multicast iface/hop helpers that require raw `setsockopt` are
-//! `cfg(unix)` — the non-Unix paths return
+//! The IPv4 multicast interface is set on Unix (raw `setsockopt`) and on
+//! Windows (socket2); the IPv6 multicast hop limit is Unix-only. Where a
+//! knob has no implementation (the hop limit off Unix, the interface on a
+//! target that is neither Unix nor Windows) it returns
 //! `io::Error::new(ErrorKind::Unsupported, …)`.
 
 use crate::cancel::CANCEL_POLL_INTERVAL;
@@ -209,9 +211,12 @@ fn warn_if_clamped(opt: &str, sysctl: &str, requested: usize, effective: usize) 
 ///
 /// IPv4 TTL uses stable `std::net::UdpSocket::set_multicast_ttl_v4`.
 /// IPv6 hop limit and IPv4 `IP_MULTICAST_IF` are not exposed on stable
-/// std at the workspace MSRV — we drop to `libc::setsockopt` on Unix and
-/// surface `io::ErrorKind::Unsupported` on non-Unix platforms when an
-/// IPv6 mcast hop or `iface=` knob is requested.
+/// std at the workspace MSRV: on Unix both go through `libc::setsockopt`;
+/// on Windows the IPv4 interface goes through socket2 and the IPv6 hop
+/// limit returns `io::ErrorKind::Unsupported`, as both do on any other
+/// target. The hop limit is set for every IPv6 group (to
+/// [`MCAST_DEFAULT_TTL`] when `ttl` is `None`), so off Unix an IPv6 group
+/// is refused whatever the knobs.
 pub fn apply_multicast_send_knobs(
     socket: &UdpSocket,
     group: IpAddr,

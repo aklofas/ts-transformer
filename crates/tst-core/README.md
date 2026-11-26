@@ -2,15 +2,18 @@
 
 Pure MPEG-TS mux/demux, KLV (MISB ST 0601 and friends), codec
 parameter-set parsers (H.264/H.265/H.266/AV1), and the
-`Transport`/`RecvTransport` trait contracts. No network I/O, no threads,
-no transport implementations; `no_std` + `alloc` with
-`default-features = false` (the default `std` feature adds file I/O and
-the cancel plumbing).
+`Transport`/`RecvTransport` trait contracts. The engine itself opens no
+socket and starts no thread, and the crate holds no transport
+implementation; it is `no_std` + `alloc` with `default-features = false`.
+The default `std` feature adds file I/O, the socket helpers the transport
+crates share (`net::udp_socket`, and `net::tls` with the `tls` feature),
+the std-only cancel slot (`cancel::CancelSlot`) and wall-clock
+`last_seen` stamps in the stream statistics.
 
 This is the substrate every other `tst-*` crate builds on — transport
 implementations (`tst-srt`, `tst-udp`, `tst-tcp`, `tst-rtp`, `tst-hls`,
-`tst-rist`) and the pipeline shells (`tst-pipeline`) depend on it, not
-the other way around. See the [docs landing
+`tst-rist`, `tst-webrtc`) and the pipeline shells (`tst-pipeline`) depend
+on it, not the other way around. See the [docs landing
 page](https://github.com/aklofas/ts-transformer/blob/main/docs/index.md)
 for the full guide set.
 

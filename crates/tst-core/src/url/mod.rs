@@ -3,13 +3,13 @@
 //! **Stability: Stable** — see the
 //! [API stability reference](https://github.com/aklofas/ts-transformer/blob/main/docs/reference/api-stability.md).
 //!
-//! Today's consumers: [`tst_srt::url`](https://docs.rs/tst-srt) and (soon)
-//! `tst_rtp::url`. The module deliberately knows nothing about transport
+//! Every transport crate, `tst-pipeline` and the C, Python and JVM bindings
+//! use it. The module deliberately knows nothing about transport
 //! semantics — it parses the scheme/authority/path/query structure and
 //! leaves scheme-specific key recognition to each transport crate.
 //!
-//! Hand-rolled (no `url` crate dependency). Our schemes (`srt://`, `rtp://`,
-//! `rtsp://`, `rtsps://`) all use the same simple shape:
+//! Hand-rolled (no `url` crate dependency). [`parse_url`] splits one simple
+//! shape:
 //!
 //! ```text
 //! scheme://[user[:password]@]host[:port][/path][?query]

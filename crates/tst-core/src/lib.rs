@@ -40,8 +40,11 @@
 //! # Cargo features
 //!
 //! - `std` (default-on) — pulls in the standard library: the `net`
-//!   helpers, the blocking thread/`Barrier` cancel path, and JSON/TOML
-//!   (`serde_json`/`toml`) export. With `--no-default-features` the crate
+//!   socket helpers, `cancel::CancelSlot` (it holds a `std::sync::Mutex`),
+//!   `transport::EndReasonHandle` and the source-address types
+//!   (`transport::SourcePin` and its handles) with the transport methods
+//!   that return them, and wall-clock `last_seen` stamps in the stream
+//!   statistics. With `--no-default-features` the crate
 //!   is `#![no_std]` + `alloc`: MPEG-TS mux/demux, KLV, the codec parsers
 //!   (H.264/H.265/H.266/AV1 parameter sets, MPEG audio, AAC, AC-3), and the
 //!   transport traits all compile for bare-metal / FreeRTOS targets. The
