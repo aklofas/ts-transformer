@@ -138,9 +138,9 @@ impl SdccFlp {
 /// the Parse Control declares neither standard deviations nor correlations,
 /// `Slen==0 && Clen==0`, which ST 1010.2-12 forbids).
 /// [`KlvFieldError::OutOfRange`] when the Matrix Size exceeds 256, the
-/// largest matrix this decoder reconstructs, or when an ST 1201 correlation
-/// is an IMAP special value or lies outside `[-1, 1]` (it carries no
-/// correlation).
+/// largest matrix this decoder reconstructs, or when a correlation lies
+/// outside `[-1, 1]`, is an ST 1201 IMAP special value or a non-finite
+/// IEEE value (it carries no correlation).
 /// [`KlvFieldError::InvalidFormat`] when the Mode 2 Parse Control sets a
 /// bit ST 1010.3 Table 2 reserves (Byte 1 bit 6, Byte 2 bits 5 to 7), or
 /// the Bit Vector marks every slot (ST 1010.2-11) or sets a padding bit.
@@ -599,14 +599,15 @@ fn std_dev_unsupported(len: usize) -> KlvFieldError {
     }
 }
 
-/// Decode one correlation-coefficient value. IEEE binary32/binary64 by
+/// Decode one correlation-coefficient value. IEEE binary16/32/64 by
 /// length, or ST 1201 IMAPB(-1.0, 1.0, `clen`) when `cf_imap`. Unlike std
 /// devs, the correlation IMAPB range is spec-fixed (§6.3.2.3), so this
 /// path never hits the "unknown range" problem.
 ///
-/// An IMAPB special value or out-of-range wire pattern carries no
-/// correlation and is refused (`OutOfRange`; a special reports NaN): read
-/// as `0.0` it would claim "no correlation" (§8.102.1).
+/// In either form a value outside `[-1, 1]`, an IMAPB special value or a
+/// non-finite IEEE value carries no correlation and is refused
+/// (`OutOfRange`; an IMAPB special reports NaN): read as `0.0` it would
+/// claim "no correlation" (§8.102.1).
 fn decode_correlation(raw: &[u8], cf_imap: bool, clen: usize) -> Result<f64, KlvFieldError> {
     if cf_imap {
         let params = ImapbParams {
@@ -627,7 +628,19 @@ fn decode_correlation(raw: &[u8], cf_imap: bool, clen: usize) -> Result<f64, Klv
             }),
         }
     } else {
-        decode_ieee_be(raw).ok_or_else(|| std_dev_unsupported(raw.len()))
+        let v = decode_ieee_be(raw).ok_or_else(|| std_dev_unsupported(raw.len()))?;
+        // The same range as the mapped form: a correlation is in [-1, 1];
+        // a non-finite value (NaN, an infinity) carries none.
+        if (-1.0..=1.0).contains(&v) {
+            Ok(v)
+        } else {
+            Err(KlvFieldError::OutOfRange {
+                tag: 0,
+                value: v,
+                min: -1.0,
+                max: 1.0,
+            })
+        }
     }
 }
 
@@ -1089,6 +1102,56 @@ mod tests {
         // N=2, one IEEE correlation 0.5 as binary16 (38 00): 82 00 = Cf 0, Clen 2, Slen 0.
         let m = decode_sdcc_flp(&hex("02 82 00 3800")).unwrap();
         assert_eq!(m.correlations, alloc::vec![0.5]);
+    }
+
+    #[test]
+    fn an_ieee_correlation_outside_minus_one_to_one_is_refused() {
+        // A correlation is in [-1, 1] whatever its coding (ST 1010.3
+        // §6.3.2.3); a non-finite IEEE value carries no correlation, as an
+        // ST 1201 special does not. N=2, Mode 2, Cf=0 (IEEE), Slen 0.
+        for (pc, corr) in [
+            ("82 00", "4000"),             // binary16 2.0
+            ("84 00", "BFC00000"),         // binary32 -1.5
+            ("84 00", "7FC00000"),         // binary32 NaN
+            ("84 00", "7F800000"),         // binary32 +infinity
+            ("88 00", "FFF0000000000000"), // binary64 -infinity
+        ] {
+            let bytes = hex(&alloc::format!("02 {pc} {corr}"));
+            let err = decode_sdcc_flp(&bytes).unwrap_err();
+            assert!(
+                matches!(
+                    err,
+                    KlvFieldError::OutOfRange {
+                        min: -1.0,
+                        max: 1.0,
+                        ..
+                    }
+                ),
+                "{corr}: {err:?}"
+            );
+        }
+        for (pc, corr, v) in [
+            ("82 00", "3C00", 1.0),
+            ("84 00", "BF800000", -1.0),
+            ("88 00", "3FE0000000000000", 0.5),
+        ] {
+            let bytes = hex(&alloc::format!("02 {pc} {corr}"));
+            assert_eq!(
+                decode_sdcc_flp(&bytes).unwrap().correlations,
+                alloc::vec![v]
+            );
+        }
+        // The encoder cannot write such a value: its correlations are
+        // ST 1201-mapped, which refuses them.
+        for rho in [2.0, -1.5, f64::NAN, f64::INFINITY] {
+            assert!(
+                matches!(
+                    encode_sdcc_flp_mode2(&[1.0, 1.0], &[rho], 2),
+                    Err(KlvEncodeError::OutOfRange { .. })
+                ),
+                "{rho}"
+            );
+        }
     }
 
     #[test]
