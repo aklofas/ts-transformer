@@ -165,6 +165,11 @@ import java.util.Optional;
  *     m, wire length 1..=8 bytes (encode emits 3 bytes). Extended-range twin of {@code
  *     targetWidthM} (Item 22, uint16, [0, 10000] m) — see that field's docs for the ST 0601.19
  *     extended-representation precedence rule (prefer this field).
+ *
+ *     This and the thirteen fields after it (Items 96 to 134) are the IMAPB items. A decode gives
+ *     such a field its range's minimum or maximum when the item was sent as the overflow signal
+ *     {@code BelowMin} or {@code AboveMax}, and lists the signal in a signal, not a measurement,
+ *     and is written back as the signal.
  * @param densityAltitudeExtendedM Item 103: Density Altitude Extended — ST 1201.5 IMAPB range
  *     [-900, 40000] m, wire length 1..=8 bytes (encode emits 3 bytes). Extended-range twin of
  *     {@code densityAltitudeM} (Item 38, uint16, [-900, 19000] m) — see that field's docs for the
@@ -172,7 +177,10 @@ import java.util.Optional;
  * @param sensorEllipsoidHeightExtendedM Item 104: Sensor Ellipsoid Height Extended — ST 1201.5
  *     IMAPB range [-900, 40000] m, wire length 1..=8 bytes (encode emits 3 bytes). Extended-range
  *     twin of {@code sensorEllipsoidHeightM} (Item 75, uint16, [-900, 19000] m) — see that field's
- *     docs for the ST 0601.19 extended-representation precedence rule (prefer this field).
+ *     docs for the ST 0601.19 extended-representation precedence rule (prefer this field). When the
+ *     item was sent as an overflow signal the field holds a range end (see {@code imapbSpecials})
+ *     while {@code sensor_position} and the CoT converters take the item as sent with no value: the
+ *     view is {@code None} although this field holds a number.
  * @param alternatePlatformEllipsoidHeightExtendedM Item 105: Alternate Platform Ellipsoid Height
  *     Extended — ST 1201.5 IMAPB range [-900, 40000] m, wire length 1..=8 bytes (encode emits 3
  *     bytes). Extended-range twin of {@code alternatePlatformEllipsoidHeightM} (Item 76, uint16,
@@ -298,20 +306,22 @@ import java.util.Optional;
  * @param sdccFlps Item 102: SDCC-FLP (Standard Deviation and Correlation Coefficient,
  *     Floating-Point). MULTI-INSTANCE per ST 0601.19 Table 1 ("Multiples Allowed" = Yes) — the
  *     "Refined Source List" binding: every wire occurrence appends one {@code SdccFlpField},
- *     capturing which preceding items it refines. See {@code SdccFlpField} for the capture rule and
- *     where the encoder writes each occurrence.
+ *     capturing which preceding items it refines (a zero-length Item 102 is "unknown" and appends
+ *     none). See {@code SdccFlpField} for the capture rule, for where the encoder writes each
+ *     occurrence, and for what it does with one it cannot place.
  * @param unknown Every tag the typed set does not model, preserved as raw bytes per the ST 0107.5
  *     §6 future-proof skip rule. An entry whose tag a typed field owns, or Tag 1, 2 or 65, is
  *     refused on encode ({@code ReservedTagInUnknown}). An item whose tag is wider than 32 bits is
- *     stepped over by {@code decode} and {@code decode_strict} and not kept here; {@code
- *     decode_strict_compliance} refuses the set, and {@code patch} copies such an item as it is.
+ *     stepped over by the lenient and the strict decoder and not kept here; the strict compliance
+ *     decoder refuses the set, and a patch copies such an item as it is.
  * @param fieldErrors Per-field decode failures. Every decode collects them, the strict ones too:
- *     {@code decode_strict} and {@code decode_strict_compliance} return {@code Ok} with this list
- *     filled for a value that breaks none of the rules they check (an item of the wrong length, for
+ *     the strict decoder and the strict compliance decoder return {@code Ok} with this list filled
+ *     for a value that breaks none of the rules they check (an item of the wrong length, for
  *     example). A parser diagnostic: it is not re-encoded. A zero-length optional item is "unknown"
- *     (ST 0107.5 §6.3.4): the field stays unset and no error is recorded. When a single-use tag
- *     repeats, the last occurrence wins and earlier ones leave no trace in the typed field, {@code
- *     sentinelTags} or {@code imapbSpecials}.
+ *     (ST 0107.5 §6.3.4): the field stays unset (a zero-length Item 102 or 115 adds no entry to its
+ *     list) and no error is recorded. When a single-use tag repeats, the last occurrence wins and
+ *     earlier ones leave no trace in the typed field, {@code sentinelTags} or {@code
+ *     imapbSpecials}.
  * @param sentinelTags Tags whose wire value was the INT_MIN sentinel for their signed linear
  *     mapping. INT_MIN is a spec-defined signal (not an error), so the corresponding typed field is
  *     left as {@code None} and the tag is recorded here instead of in {@code fieldErrors}.
@@ -323,30 +333,42 @@ import java.util.Optional;
  *     (a populated field always wins), and only for a signed linear row (its INT_MIN sentinel, at
  *     the row's width); an entry for any other row writes nothing. A tag listed more than once is
  *     written once, at its last entry. The encoder writes the single-use typed fields in ascending
- *     tag order, then the Item 102 packs (each moved after the items it refines: see {@code
- *     SdccFlpField}) and the Item 115 commands, then the replayed sentinels in list order, then the
- *     other replayed IMAP specials (see {@code imapbSpecials}), then {@code unknown} fields in
- *     caller order; it adds Tag 65 (version) when the record has none, and the trailing checksum.
- *     The sentinel round-trips; the bytes need not match the input's.
+ *     tag order (an IMAPB overflow signal among them, at its item's place: see {@code
+ *     imapbSpecials}), then the Item 102 packs that could not be placed (a placed one follows the
+ *     items it refines, which it takes with it: see {@code SdccFlpField}) and the Item 115
+ *     commands, then the replayed sentinels in list order, then the other replayed IMAP specials,
+ *     then {@code unknown} fields in caller order; it adds Tag 65 (version) when the record has
+ *     none, and the trailing checksum. The sentinel round-trips; the bytes need not match the
+ *     input's.
+ *
+ *     The composite views and the CoT converters take an item the encoder would write as its
+ *     sentinel as sent with no value: a view that prefers such an item is {@code None}.
  * @param imapbSpecials Tags whose ST 1201.5 IMAPB wire value decoded to a spec-defined special
  *     value (§7.2.3 — {@code +∞}/{@code −∞}, NaN families, the MISB-defined {@code BelowMin}/{@code
  *     AboveMax} overflow signals, or a user-defined signal) rather than a normal-range float. The
  *     tag+special pair is recorded here and the typed field is left absent, except for the two
  *     overflow signals (below). Use {@code ImapbSpecial} to inspect which special was signaled.
  *
- *     **Encode semantics:** an entry is written only while the item's typed field is {@code None},
- *     and only for an IMAPB row, at the shortest length from the item's default to its maximum that
- *     holds the special's payload (a special no length of the item holds fails with {@code
- *     OutOfRange} naming the item); an entry for any other row writes nothing. A tag listed more
- *     than once is written once, with its LAST special.
+ *     **Encode semantics:** one item per tag is written, for the tag's LAST entry, and only for an
+ *     IMAPB row (an entry for any other row writes nothing), at the shortest length from the item's
+ *     default to its maximum that holds the special's payload (a special no length of the item
+ *     holds fails with {@code OutOfRange} naming the item). A special other than the two overflow
+ *     signals is written only while the item's typed field is {@code None} (a populated field wins
+ *     and the entry writes nothing), after the typed fields.
  *
- *     **The two overflow signals** are the exception: {@code BelowMin} and {@code AboveMax} (ST
- *     1201.5 §7.2.3.1; ST 0601.19 says nothing more of them) give the typed field the item's range
- *     minimum or maximum, and the entry is kept. An encode writes the signal back at the item's
- *     place, whether the field still equals that end or is unset, and writes the value once the
- *     field holds anything else. Every other special is written after the typed fields. A value
- *     decoded from the bottom bucket below the minimum (a length shorter than the item's default,
- *     for a range that straddles zero) is stored as the minimum.
+ *     **The two overflow signals** are read and written differently. A decode of {@code BelowMin}
+ *     or {@code AboveMax} (ST 1201.5 §7.2.3.1; ST 0601.19 says nothing more of them) gives the
+ *     typed field the item's range minimum or maximum and keeps the entry here. So a field that
+ *     holds its range end while the tag's last entry is the matching signal (the minimum with
+ *     {@code BelowMin}, the maximum with {@code AboveMax}) is a signal, not a measurement: an
+ *     encode writes the SIGNAL, at the item's place among the typed fields, and the composite views
+ *     and the CoT converters take the item as sent with no value (a view can be {@code None} while
+ *     the field holds a number). The signal is written at the same place when the field is unset.
+ *     Once the field holds any other value, the value is written and the entry writes nothing. To
+ *     write a measured value that IS the range end, remove the tag's entries from this list.
+ *
+ *     A value decoded from the bottom bucket below the minimum (a length shorter than the item's
+ *     default, for a range that straddles zero) is stored as the minimum.
  *
  *     **Decode semantics for the two IMAPB outcomes NOT carried here:** a wire integer in ST
  *     1201.5's reserved-but-unrecognized special-value space ({@code ReservedSpecial}) or one that

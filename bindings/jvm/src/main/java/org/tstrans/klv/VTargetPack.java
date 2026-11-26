@@ -52,17 +52,23 @@ import java.util.List;
  *     range.
  * @param centroidLatOffset Tag 10 {@code targetLocationOffsetLat} per §10.2.2.11 — IMAPB(-19.2°,
  *     19.2°, 3 bytes).
+ *
+ *     An item sent as an ST 1201 special (ST 0903.6 §9.1.1: "below minimum", "above maximum",
+ *     "Invalid") is legal and leaves this field unset. The lenient decode lists it in {@code
+ *     fieldErrors}; the encoders write only a set field, so they do not write the special back (the
+ *     ST 0601 record keeps a list for that; this one has none). The same holds for Tags 11 to 16.
  * @param centroidLonOffset Tag 11 {@code targetLocationOffsetLon} per §10.2.2.12 — IMAPB(-19.2°,
- *     19.2°, 3).
- * @param centroidHae Tag 12 {@code targetHae} per §10.2.2.13 — IMAPB(-900 m, 19000 m, 2).
+ *     19.2°, 3). Unset for a special, see {@code centroidLatOffset}.
+ * @param centroidHae Tag 12 {@code targetHae} per §10.2.2.13 — IMAPB(-900 m, 19000 m, 2). Unset for
+ *     a special, see {@code centroidLatOffset}.
  * @param bboxTopLeftLatOffset Tag 13 {@code boundingBoxTopLeftLatOffset} per §10.2.2.14 —
- *     IMAPB(-19.2°, 19.2°, 3).
+ *     IMAPB(-19.2°, 19.2°, 3). Unset for a special, see {@code centroidLatOffset}.
  * @param bboxTopLeftLonOffset Tag 14 {@code boundingBoxTopLeftLonOffset} per §10.2.2.15 —
- *     IMAPB(-19.2°, 19.2°, 3).
+ *     IMAPB(-19.2°, 19.2°, 3). Unset for a special, see {@code centroidLatOffset}.
  * @param bboxBottomRightLatOffset Tag 15 {@code boundingBoxBottomRightLatOffset} per §10.2.2.16 —
- *     IMAPB(-19.2°, 19.2°, 3).
+ *     IMAPB(-19.2°, 19.2°, 3). Unset for a special, see {@code centroidLatOffset}.
  * @param bboxBottomRightLonOffset Tag 16 {@code boundingBoxBottomRightLonOffset} per §10.2.2.17 —
- *     IMAPB(-19.2°, 19.2°, 3).
+ *     IMAPB(-19.2°, 19.2°, 3). Unset for a special, see {@code centroidLatOffset}.
  * @param targetLocation Tag 17 {@code targetLocation} per §10.2.2.18 — Defined Length Truncation
  *     Pack pass-through bytes (typed inner deferred).
  * @param geospatialContourSeries Tag 18 {@code geospatialContourSeries} per §10.2.2.19 — Series of
@@ -92,8 +98,10 @@ import java.util.List;
  *     pass-through bytes (typed inner deferred).
  * @param unknown Tags not in the pack tag table (deprecated 21/102/103, future additions).
  *     Preserved per ST 0107.5 §6 future-proof skip rule.
- * @param fieldErrors Per-field validation errors (e.g. malformed IMAPB) accumulated during lenient
- *     decode. The other typed sets collect the same diagnostic in their own {@code fieldErrors}.
+ * @param fieldErrors What the lenient decode met in this pack's items and no encoder writes back:
+ *     an item that does not decode (a wrong length, a reserved IMAPB pattern), and an item sent as
+ *     an ST 1201 special, a legal value listed as an out-of-range entry with its tag. The field of
+ *     each is unset. The strict decoders leave the list empty; the encoders do not read it.
  */
 public record VTargetPack(
         long targetId,

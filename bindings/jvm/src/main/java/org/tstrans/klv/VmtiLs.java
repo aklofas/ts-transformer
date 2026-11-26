@@ -11,8 +11,8 @@ import java.util.List;
  * numTargetsReported} (Item 6, ST 0903.4-19); a standalone one also the checksum, {@code
  * precisionTimeStamp}, both fields of view and {@code miisId} (ST 0903.4-15, ST 0903.6-117, -122,
  * -123, -125). Lenient decode tolerates a missing required item and surfaces per-field decode
- * failures in {@code fieldErrors}; {@code decode_strict} refuses a set without Item 4 or 6, and
- * {@code decode_standalone_strict} a standalone one without the others.
+ * failures in {@code fieldErrors}; the strict decoders refuse a set without Item 4 or 6, and the
+ * standalone strict decoder a standalone one without the others.
  *
  * {@code algorithmSeries} and {@code ontologySeries} are top-level nested LS pass-through bytes
  * (typed inner layers deferred); {@code miisId} is the MISB ST 1204 Motion Imagery Identification
@@ -32,6 +32,20 @@ import java.util.List;
  * @param versionNumber Tag 4 {@code vmtiLsVersionNum} per ST 0903.6 §10.1.4 — V2 (1..=2 wire bytes,
  *     value range 1..=65535) packed BE with leading zeros stripped. Tracks the spec revision the
  *     encoder followed (e.g. 6 for ST 0903.6).
+ * @param horizontalFov Tag 11 {@code vmtiHorizontalFov} per ST 0903.6 §10.1.11, in degrees
+ *     (IMAPB(0, 180, 2)).
+ *
+ *     An item sent as an ST 1201 special (ST 0903.6 §9.1.1: "below minimum", "above maximum",
+ *     "Invalid") is legal and leaves this field unset. The lenient decode lists it in {@code
+ *     fieldErrors}; the encoders write only a set field, so they do not write the special back (the
+ *     ST 0601 record keeps a list for that; this one has none).
+ * @param verticalFov Tag 12 {@code vmtiVerticalFov} per ST 0903.6 §10.1.12, in degrees (IMAPB(0,
+ *     180, 2)). Unset for a special, as {@code horizontalFov}.
+ * @param fieldErrors What the lenient decode met in the top-level items and no encoder writes back:
+ *     an item that does not decode, an item sent as an ST 1201 special (a legal value, listed as an
+ *     out-of-range entry with its tag), a framing error (tag 0, or tag 101 inside the series). A
+ *     pack's own items are listed in that pack's {@code fieldErrors}. The strict decoders leave the
+ *     list empty; the encoders do not read it.
  */
 public record VmtiLs(
         Integer checksum,

@@ -16,30 +16,44 @@ import java.util.List;
  * fits the pack's own bytes (Parse Control plus the ST 1010 size bound); otherwise the occurrence
  * is recorded as a {@code TruncatedField} and not captured. The ordinary encoders write
  * caller-supplied {@code sdcc_flps} bytes verbatim, so a pack whose matrix cannot fit is written
- * and a decode then records that field error; {@code encode_strict_compliance} refuses it.
+ * and a decode then records that field error; the strict compliance encoder refuses it.
  *
  * **Capture semantics (decode):** {@code precedingTags} is the {@code N} wire-order item tags —
  * known or unknown, but never another Tag 102 — immediately before this occurrence, where {@code N}
- * is this pack's own parsed matrix size (fewer if the Local Set had fewer prior items). An item
- * stepped over for a tag wider than 32 bits is not one of them.
+ * is this pack's own parsed matrix size. There are fewer when the Local Set had fewer prior items,
+ * and when one of the {@code N} items before the pack was stepped over for a tag wider than 32
+ * bits: that item cannot be named, so the rows are only the items after it. A zero-length Item 102
+ * is "unknown" (ST 0107.5 §6.3.4) and is not captured.
  *
  * **Encode:** each occurrence is written right after the items its {@code precedingTags} name, in
- * that order (ST 0601.19 §8.102.1). The items are written in the encoder's order and a pack takes
- * the items it names forward to the first of them; a pack whose rows begin with the last items
- * written follows them with the rest of its items; a pack whose rows are the last items written
- * follows at once, so two packs after one item keep their order and a pack inside the rows of a
- * later, wider pack keeps its place. A set whose items are in the encoder's order is re-encoded
- * with every pack where it was. An occurrence that cannot be placed (a named item is not in the
- * record, {@code precedingTags} is empty, one of its items is already written and not among the
- * last items written, its rows would put another item before Item 2, or a capture shorter than its
- * matrix does not name the start of the set) is written after the typed items, where 0.10.0 wrote
- * every occurrence; {@code encode_strict_compliance} refuses it, and refuses a pack whose header ST
- * 1010 does not define. For a tag that repeats, a row takes the first instance not yet written.
- * Edit a named item and the pack describes the new value: that is the caller's business.
+ * that order (ST 0601.19 §8.102.1). The rows of the packs, read in the list's order, say which item
+ * directly follows which; items linked that way form a block, written where the encoder would write
+ * the first of its items (the single-use fields are written in ascending tag order), and each pack
+ * follows the item of its last row. So a set that came in any order, whose packs each follow the
+ * items they refine, keeps every pack with its rows after a decode and an encode, also when packs
+ * share items, and a set whose items are in the encoder's order is re-encoded with every pack where
+ * it was. For a tag the set carries more than once (an unknown tag, or Item 115) the rows do not
+ * say which of its items is meant: a row takes the item its pack's other rows fit, or the first one
+ * no row has named, and such a set can end with a pack that is not placed.
+ *
+ * **An occurrence that cannot be placed** is still written by the ordinary encoders, after the
+ * single-use typed fields, where 0.10.0 wrote every occurrence; a decoder of that output takes the
+ * items before it there as its rows, so the pack then states accuracies for items it never refined,
+ * and the next encode keeps it with those rows. The strict compliance encoder refuses the record
+ * instead (and refuses a pack whose header ST 1010 does not define). An occurrence cannot be placed
+ * when {@code precedingTags} is empty (except that a matrix of size 0, which refines nothing, is
+ * accepted by the strict encoder where it stands); when a named item is not written (its field is
+ * unset, as after a decode of a zero-length item, and no sentinel or special is replayed for it) or
+ * is named more often than the record has items of that tag; when its rows contradict an occurrence
+ * before it in the list (another item already follows, or precedes, one of its items); when its
+ * rows would put an item before Item 2; and when it has fewer rows than its matrix size and they
+ * are not the start of the set. Edit a named item and the pack describes the new value: that is the
+ * caller's business.
  *
  * @param precedingTags Wire-order item tags immediately preceding this occurrence (see struct doc
  *     for the capture rule). Empty for a matrix of size 0 or an occurrence no item precedes; fewer
- *     than the matrix size when fewer items precede it (legal, if degenerate, and not an error).
+ *     than the matrix size when fewer items precede it, or fewer since an item stepped over for its
+ *     tag (legal, if degenerate, and not an error).
  * @param bytes Raw SDCC-FLP pack bytes, exactly as they appeared on the wire — decode with the ST
  *     1010 SDCC-FLP decoder.
  */
