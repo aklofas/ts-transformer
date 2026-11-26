@@ -423,16 +423,18 @@ fn craft_high_sps_with_constraints_and_timing(
     bw.bytes
 }
 
-/// High (profile_idc=100) with constraint_set1_flag=1 (bit 6, mask
-/// 0b0100_0000) is read as B-frameless.
+/// H.264 §7.4.2.1.1: constraint_set1_flag=1 (bit 6, mask 0b0100_0000) says
+/// the sequence obeys the Main profile's constraints (§A.2.2), and Main allows
+/// B slices: a High SPS with only that flag and no `bitstream_restriction` may
+/// have B-frames.
 #[test]
-fn extract_has_b_frames_false_for_constrained_high() {
+fn a_high_sps_declaring_main_compatibility_may_have_b_frames() {
     let rbsp = craft_high_sps_with_constraints_and_timing(0b0100_0000, None);
-    let sps = parse_sps(&rbsp).expect("parse constrained-high SPS");
+    let sps = parse_sps(&rbsp).expect("parse a High SPS with constraint_set1_flag");
     assert_eq!(sps.profile_idc, 100);
     assert!(
-        !sps.has_b_frames,
-        "Constrained High (constraint_set1_flag=1) excludes B-frames per H.264 §A.2"
+        sps.has_b_frames,
+        "constraint_set1_flag (Main compatibility) does not exclude B slices"
     );
 }
 

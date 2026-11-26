@@ -575,9 +575,7 @@ fn compute_has_b_frames(profile_idc: u8, constraint_set_flags: u8, vui: &VuiOut)
     if matches!(profile_idc, 77 | 88 | 100) && flag5 {
         return false;
     }
-    // High (100) with constraint_set1_flag = 1 is also read as B-frameless.
-    if profile_idc == 100 && constraint_set_flags & 0b0100_0000 != 0 {
-        return false;
-    }
+    // constraint_set1_flag = 1 says the sequence obeys the Main profile's
+    // constraints (§A.2.2), which allow B slices: it decides nothing here.
     true
 }

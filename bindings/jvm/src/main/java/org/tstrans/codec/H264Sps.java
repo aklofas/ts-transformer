@@ -22,9 +22,8 @@ import java.nio.ByteBuffer;
  *     or {@code time_scale} is zero, and when {@code 2 * num_units_in_tick} does not fit 32 bits.
  * @param fixedFrameRate True when {@code fixed_frame_rate_flag=1} in the VUI.
  * @param hasBFrames True when the stream may contain B-frames. A heuristic: the VUI {@code
- *     max_num_reorder_frames} decides when present; otherwise Baseline, Main / Extended / High with
- *     {@code constraint_set5_flag}, and High with {@code constraint_set1_flag} are B-frameless;
- *     every other profile may have B-frames.
+ *     max_num_reorder_frames} decides when present; otherwise Baseline and Main / Extended / High
+ *     with {@code constraint_set5_flag} are B-frameless; every other profile may have B-frames.
  * @param color VUI colour info: present when the VUI signals any of {@code video_signal_type} (with
  *     or without a colour description), the chroma sample locations or the aspect ratio; absent
  *     otherwise.
