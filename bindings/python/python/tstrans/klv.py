@@ -42,6 +42,7 @@ Symmetric `encode_*` entry points live alongside the decoders.
 """
 
 import enum
+import math
 from dataclasses import dataclass, replace
 
 
@@ -587,6 +588,33 @@ class GeoPoint:
     lat_deg: float
     lon_deg: float
     alt_m: float
+
+
+class AltitudeDatum(enum.Enum):
+    """The vertical datum of a composite view's ``alt_m``: which kind of
+    item the view took the height from."""
+
+    HAE = "hae"
+    """Height above the WGS 84 ellipsoid (Items 75, 78, 104)."""
+    MSL = "msl"
+    """Height above mean sea level (Items 15, 25)."""
+
+
+# The composite views read these items. A sentinel entry marks "no value"
+# only on a signed linear item of 2 or 4 bytes (the ones the encoder writes a
+# sentinel for); Item 104 is the one IMAPB item, with its range ends.
+_VIEW_SENTINEL_TAGS = frozenset({6, 7, *range(82, 92)})
+_VIEW_IMAPB_RANGES = {104: (-900.0, 40000.0)}
+
+
+def _wrap_lon_deg(x: float) -> float:
+    """A corner longitude folded into (-180, 180]; a sum already inside, or
+    one that is not finite, is returned as it is."""
+    if not math.isfinite(x) or -180.0 < x <= 180.0:
+        return x
+    r = math.fmod(x + 180.0, 360.0)
+    w = (r + 360.0 if r < 0.0 else r) - 180.0
+    return 180.0 if w == -180.0 else w
 
 
 @dataclass(frozen=True, slots=True)
@@ -1715,18 +1743,63 @@ class UasDatalinkLs:
         the copy."""
         return replace(self, **changes)
 
-    def sensor_position(self) -> GeoPoint | None:
-        if (
-            self.sensor_lat_deg is not None
-            and self.sensor_lon_deg is not None
-            and self.sensor_alt_m is not None
-        ):
-            return GeoPoint(
-                lat_deg=self.sensor_lat_deg,
-                lon_deg=self.sensor_lon_deg,
-                alt_m=self.sensor_alt_m,
+    # The composite views follow the Rust crate's rule: each component comes
+    # from the first item of its chain that holds a value, most preferred
+    # first; an item sent as "no value" (a sentinel or an IMAPB special the
+    # encoder would write) ends the chain and the view is None.
+
+    def _sent_as_no_value(self, tag: int, value: float | None) -> bool:
+        if tag in _VIEW_IMAPB_RANGES:
+            lo, hi = _VIEW_IMAPB_RANGES[tag]
+            codes = [code for t, code, _ in self.imapb_specials if t == tag]
+            if not codes:
+                return False
+            if value is None:
+                return True
+            return (codes[-1] == "below_min" and value == lo) or (
+                codes[-1] == "above_max" and value == hi
             )
+        return value is None and tag in _VIEW_SENTINEL_TAGS and tag in self.sentinel_tags
+
+    def _view_item(self, chain: tuple[tuple[int, float | None], ...]) -> tuple[int, float] | None:
+        for tag, value in chain:
+            if self._sent_as_no_value(tag, value):
+                return None
+            if value is not None:
+                return (tag, value)
         return None
+
+    def _sensor_height(self) -> tuple[int, float] | None:
+        return self._view_item(
+            (
+                (104, self.sensor_ellipsoid_height_extended_m),
+                (75, self.sensor_ellipsoid_height_m),
+                (15, self.sensor_alt_m),
+            )
+        )
+
+    def _frame_center_height(self) -> tuple[int, float] | None:
+        return self._view_item(
+            ((78, self.frame_center_ellipsoid_height_m), (25, self.frame_center_elev_m))
+        )
+
+    def sensor_position(self) -> GeoPoint | None:
+        """Sensor latitude and longitude (Items 13, 14) with the first height
+        of Items 104, 75 (ellipsoid) and 15 (MSL); ``sensor_position_datum()``
+        says which."""
+        height = self._sensor_height()
+        if self.sensor_lat_deg is None or self.sensor_lon_deg is None or height is None:
+            return None
+        return GeoPoint(lat_deg=self.sensor_lat_deg, lon_deg=self.sensor_lon_deg, alt_m=height[1])
+
+    def sensor_position_datum(self) -> AltitudeDatum | None:
+        """The datum of ``sensor_position()``'s ``alt_m``; None exactly when
+        that view is None."""
+        if self.sensor_position() is None:
+            return None
+        height = self._sensor_height()
+        assert height is not None
+        return AltitudeDatum.MSL if height[0] == 15 else AltitudeDatum.HAE
 
     def sensor_attitude(self) -> Attitude | None:
         if (
@@ -1750,73 +1823,86 @@ class UasDatalinkLs:
         return None
 
     def platform_attitude(self) -> Attitude | None:
-        if (
-            self.platform_heading_deg is not None
-            and self.platform_pitch_deg is not None
-            and self.platform_roll_deg is not None
-        ):
-            return Attitude(
-                heading_deg=self.platform_heading_deg,
-                pitch_deg=self.platform_pitch_deg,
-                roll_deg=self.platform_roll_deg,
-            )
-        return None
+        """Platform heading (Item 5) with pitch and roll from the full-range
+        Items 90 / 91, else Items 6 / 7."""
+        pitch = self._view_item(((90, self.platform_pitch_full_deg), (6, self.platform_pitch_deg)))
+        roll = self._view_item(((91, self.platform_roll_full_deg), (7, self.platform_roll_deg)))
+        if self.platform_heading_deg is None or pitch is None or roll is None:
+            return None
+        return Attitude(heading_deg=self.platform_heading_deg, pitch_deg=pitch[1], roll_deg=roll[1])
 
     def frame_center(self) -> GeoPoint | None:
-        if (
-            self.frame_center_lat_deg is not None
-            and self.frame_center_lon_deg is not None
-            and self.frame_center_elev_m is not None
-        ):
-            return GeoPoint(
-                lat_deg=self.frame_center_lat_deg,
-                lon_deg=self.frame_center_lon_deg,
-                alt_m=self.frame_center_elev_m,
-            )
-        return None
+        """Frame centre latitude and longitude (Items 23, 24) with the first
+        height of Items 78 (ellipsoid) and 25 (MSL); ``frame_center_datum()``
+        says which."""
+        height = self._frame_center_height()
+        if self.frame_center_lat_deg is None or self.frame_center_lon_deg is None or height is None:
+            return None
+        return GeoPoint(
+            lat_deg=self.frame_center_lat_deg, lon_deg=self.frame_center_lon_deg, alt_m=height[1]
+        )
+
+    def frame_center_datum(self) -> AltitudeDatum | None:
+        """The datum of ``frame_center()``'s ``alt_m``; None exactly when that
+        view is None."""
+        if self.frame_center() is None:
+            return None
+        height = self._frame_center_height()
+        assert height is not None
+        return AltitudeDatum.MSL if height[0] == 25 else AltitudeDatum.HAE
 
     def corners(self) -> Corners | None:
-        # Prefer absolute (tags 82-89) when fully populated.
-        absolute = (
-            self.corner_lat_p1_deg,
-            self.corner_lon_p1_deg,
-            self.corner_lat_p2_deg,
-            self.corner_lon_p2_deg,
-            self.corner_lat_p3_deg,
-            self.corner_lon_p3_deg,
-            self.corner_lat_p4_deg,
-            self.corner_lon_p4_deg,
-        )
-        if all(v is not None for v in absolute):
-            return Corners(
-                p1=(absolute[0], absolute[1]),  # type: ignore[arg-type]
-                p2=(absolute[2], absolute[3]),  # type: ignore[arg-type]
-                p3=(absolute[4], absolute[5]),  # type: ignore[arg-type]
-                p4=(absolute[6], absolute[7]),  # type: ignore[arg-type]
+        """The four corners, each on its own: its full-range pair (Items 82 to
+        89) when both are set, else the frame centre plus its offsets (Items
+        26 to 33). A full-range item sent as "no value" (Off-Earth) ends that
+        corner, and so the view."""
+
+        def point(
+            lat_tag: int,
+            full: tuple[float | None, float | None],
+            offset: tuple[float | None, float | None],
+        ) -> tuple[float, float] | None:
+            if self._sent_as_no_value(lat_tag, full[0]) or self._sent_as_no_value(
+                lat_tag + 1, full[1]
+            ):
+                return None
+            if full[0] is not None and full[1] is not None:
+                return (full[0], full[1])
+            if (
+                self.frame_center_lat_deg is None
+                or self.frame_center_lon_deg is None
+                or offset[0] is None
+                or offset[1] is None
+            ):
+                return None
+            return (
+                self.frame_center_lat_deg + offset[0],
+                _wrap_lon_deg(self.frame_center_lon_deg + offset[1]),
             )
-        # Fall back to offsets + frame center.
-        if self.frame_center_lat_deg is None or self.frame_center_lon_deg is None:
-            return None
-        offsets = (
-            self.corner_lat_offset_p1_deg,
-            self.corner_lon_offset_p1_deg,
-            self.corner_lat_offset_p2_deg,
-            self.corner_lon_offset_p2_deg,
-            self.corner_lat_offset_p3_deg,
-            self.corner_lon_offset_p3_deg,
-            self.corner_lat_offset_p4_deg,
-            self.corner_lon_offset_p4_deg,
+
+        p1 = point(
+            82,
+            (self.corner_lat_p1_deg, self.corner_lon_p1_deg),
+            (self.corner_lat_offset_p1_deg, self.corner_lon_offset_p1_deg),
         )
-        if not all(v is not None for v in offsets):
-            return None
-        lat0 = self.frame_center_lat_deg
-        lon0 = self.frame_center_lon_deg
-        return Corners(
-            p1=(lat0 + offsets[0], lon0 + offsets[1]),  # type: ignore[operator]
-            p2=(lat0 + offsets[2], lon0 + offsets[3]),  # type: ignore[operator]
-            p3=(lat0 + offsets[4], lon0 + offsets[5]),  # type: ignore[operator]
-            p4=(lat0 + offsets[6], lon0 + offsets[7]),  # type: ignore[operator]
+        p2 = point(
+            84,
+            (self.corner_lat_p2_deg, self.corner_lon_p2_deg),
+            (self.corner_lat_offset_p2_deg, self.corner_lon_offset_p2_deg),
         )
+        p3 = point(
+            86,
+            (self.corner_lat_p3_deg, self.corner_lon_p3_deg),
+            (self.corner_lat_offset_p3_deg, self.corner_lon_offset_p3_deg),
+        )
+        p4 = point(
+            88,
+            (self.corner_lat_p4_deg, self.corner_lon_p4_deg),
+            (self.corner_lat_offset_p4_deg, self.corner_lon_offset_p4_deg),
+        )
+        if p1 is None or p2 is None or p3 is None or p4 is None:
+            return None
+        return Corners(p1=p1, p2=p2, p3=p3, p4=p4)
 
 
 # Spec-compat alias.
@@ -2515,6 +2601,7 @@ __all__: list[str] = [
     "encode_vmti_strict_compliance",
     "encode_vmti_standalone_strict_compliance",
     "GeoPoint",
+    "AltitudeDatum",
     "Attitude",
     "FieldOfView",
     "Corners",

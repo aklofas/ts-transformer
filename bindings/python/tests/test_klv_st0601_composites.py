@@ -3,10 +3,13 @@ Integration via `UasDatalinkLs.sensor_position()` etc. is tested in
 test_klv_st0601.py."""
 
 import dataclasses
+import json
+import math
+import pathlib
 
 import pytest
 
-from tstrans.klv import Attitude, Corners, FieldOfView, GeoPoint
+from tstrans.klv import AltitudeDatum, Attitude, Corners, FieldOfView, GeoPoint, UasDatalinkLs
 
 
 def test_geopoint_construction():
@@ -67,3 +70,69 @@ def test_geopoint_pattern_match():
             assert (lat, lon, alt) == (34.0, -118.0, 100.0)
         case _:
             pytest.fail("did not match")
+
+
+# ---------------------------------------------------------------------------
+# The views, against the case table the Rust and JVM suites read too
+# ---------------------------------------------------------------------------
+
+_TABLE = (
+    pathlib.Path(__file__).resolve().parents[3]
+    / "crates/tst-core/tests/fixtures/st0601/composite-views.json"
+)
+_ROWS = json.loads(_TABLE.read_text())["rows"]
+
+
+def _view(record: UasDatalinkLs, view: str) -> object:
+    if view == "platform_attitude":
+        a = record.platform_attitude()
+        return None if a is None else [a.heading_deg, a.pitch_deg, a.roll_deg]
+    if view in ("sensor_position", "frame_center"):
+        p = getattr(record, view)()
+        return None if p is None else [p.lat_deg, p.lon_deg, p.alt_m]
+    if view == "corners":
+        c = record.corners()
+        return None if c is None else [list(c.p1), list(c.p2), list(c.p3), list(c.p4)]
+    if view in ("sensor_position_datum", "frame_center_datum"):
+        d = getattr(record, view)()
+        assert d is None or isinstance(d, AltitudeDatum)
+        return None if d is None else d.value
+    raise AssertionError(f"unknown view {view}")
+
+
+def _flat(v: object) -> list[float]:
+    return [x for item in v for x in (item if isinstance(item, list) else [item])]  # type: ignore[union-attr]
+
+
+@pytest.mark.parametrize("row", _ROWS, ids=[r["name"] for r in _ROWS])
+def test_composite_views_follow_the_case_table(row: dict):
+    record = UasDatalinkLs(
+        **row["fields"],
+        sentinel_tags=tuple(row.get("sentinel_tags", ())),
+        imapb_specials=tuple(tuple(e) for e in row.get("imapb_specials", ())),
+    )
+    tol = row.get("tolerance", 0.0)
+    for view, want in row["expect"].items():
+        got = _view(record, view)
+        if want is None or isinstance(want, str):
+            assert got == want, (row["name"], view, got)
+            continue
+        assert got is not None, (row["name"], view)
+        g, w = _flat(got), _flat(want)
+        assert len(g) == len(w), (row["name"], view)
+        for a, b in zip(g, w):
+            assert (a == b) if tol == 0.0 else abs(a - b) <= tol, (row["name"], view, got, want)
+
+
+def test_non_finite_offsets_come_back_as_themselves():
+    for offset in (math.inf, -math.inf, math.nan):
+        record = UasDatalinkLs(
+            frame_center_lat_deg=10.0,
+            frame_center_lon_deg=170.0,
+            **{f"corner_lat_offset_p{i}_deg": 0.0 for i in range(1, 5)},
+            **{f"corner_lon_offset_p{i}_deg": offset for i in range(1, 5)},
+        )
+        c = record.corners()
+        assert c is not None
+        for lon in (c.p1[1], c.p2[1], c.p3[1], c.p4[1]):
+            assert (math.isnan(lon) and math.isnan(offset)) or lon == offset
