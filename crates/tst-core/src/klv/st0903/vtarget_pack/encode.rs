@@ -11,7 +11,7 @@ use alloc::vec::Vec;
 /// ST 0107.5 §6.
 pub(crate) fn write_pack(pack: &VTargetPack, out: &mut Vec<u8>) -> Result<usize, KlvEncodeError> {
     use crate::klv::length::write_ber_oid_u64;
-    use crate::klv::pack::{emit_ber_oid_tlv, is_typed_tag};
+    use crate::klv::pack::{emit_one_byte_tlv, is_typed_tag};
     use crate::klv::st0903::emit::{emit_imapb_n, emit_tlv, emit_var, emit_var_u64};
 
     // Per-class wire-width caps. Encode must enforce these so the encoder
@@ -181,12 +181,9 @@ pub(crate) fn write_pack(pack: &VTargetPack, out: &mut Vec<u8>) -> Result<usize,
         emit_tlv(out, 107, bytes)?;
     }
 
-    // Unknown tags preserved last (ST 0107.5 §6). Tag IDs use multi-
-    // byte BER-OID per ST 0107.5 §6.3.1 for values ≥ 128, so a future
-    // ST 0903.7+ pack tag in the unknown bucket round-trips losslessly.
-    // Tags 1..=107 (the §10.2 typed universe) are all ≤ 127 and encode
-    // as a single byte, byte-identical to a raw single-byte tag.
-    // `encoded_len` mirrors this via `ber_oid_len(field.tag)`.
+    // Unknown tags preserved last (ST 0107.5 §6), each as the one tag
+    // byte the pack's syntax has (ST 0903.6 §10.2 → §9.2: label byte 6 =
+    // 0x03); a tag above 255 cannot be written in a pack.
     for field in &pack.unknown {
         // Reject reserved/typed pack tags before emitting. Without this
         // guard, a caller-constructed typed tag (e.g. Tag 5 = Confidence
@@ -196,7 +193,7 @@ pub(crate) fn write_pack(pack: &VTargetPack, out: &mut Vec<u8>) -> Result<usize,
         if is_typed_tag(field.tag, super::model::pack_lookup) {
             return Err(KlvEncodeError::ReservedTagInUnknown { tag: field.tag });
         }
-        emit_ber_oid_tlv(field.tag, &field.value, out)?;
+        emit_one_byte_tlv(field.tag, &field.value, out)?;
     }
 
     Ok(out.len() - start)
@@ -205,7 +202,7 @@ pub(crate) fn write_pack(pack: &VTargetPack, out: &mut Vec<u8>) -> Result<usize,
 /// Number of bytes `pack` would occupy when encoded. Mirrors
 /// `write_pack`'s field-by-field structure.
 pub(crate) fn encoded_len(pack: &VTargetPack) -> usize {
-    use crate::klv::length::{ber_len, ber_oid_len, ber_oid_len_u64, var_uint_min_len};
+    use crate::klv::length::{ber_len, ber_oid_len_u64, var_uint_min_len};
 
     fn tlv_len(value_len: usize) -> usize {
         1 /* tag */ + ber_len(value_len) + value_len
@@ -293,12 +290,9 @@ pub(crate) fn encoded_len(pack: &VTargetPack) -> usize {
     if let Some(ref b) = pack.vobject_series {
         total += tlv_len(b.len());
     }
-    // Unknown tags use BER-OID tag + BER length + value (mirrors
-    // `write_pack`). For tags ≤ 127 (the §10.2 typed universe),
-    // `ber_oid_len(tag) == 1` so this collapses to the same byte
-    // count as `tlv_len(value.len())`.
+    // Unknown tags: one tag byte + BER length + value (mirrors `write_pack`).
     for field in &pack.unknown {
-        total += ber_oid_len(field.tag) + ber_len(field.value.len()) + field.value.len();
+        total += tlv_len(field.value.len());
     }
     total
 }

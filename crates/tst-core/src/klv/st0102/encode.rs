@@ -14,8 +14,11 @@ use alloc::vec::Vec;
 /// - [`KlvEncodeError::RecordTooLarge`] if any individual TLV's
 ///   declared length would overflow BER encoding (in practice,
 ///   a value > 2^64 bytes — guards against pathological input).
+/// - [`KlvEncodeError::TagNotOneByte`] if an `unknown` tag is above 255:
+///   the set's tags are one byte (SMPTE ST 336 Table 5).
 pub fn encode(record: &SecurityLs, out: &mut [u8]) -> Result<usize, KlvEncodeError> {
-    use crate::klv::length::{write_ber, write_ber_oid};
+    use crate::klv::length::write_ber;
+    use crate::klv::pack::one_byte_tag;
 
     let needed = encoded_len(record);
     if out.len() < needed {
@@ -26,11 +29,8 @@ pub fn encode(record: &SecurityLs, out: &mut [u8]) -> Result<usize, KlvEncodeErr
     }
 
     let mut pos = 0usize;
-    // Defined ST 0102 LS tags are all ≤ 127 (single-byte BER-OID); a
-    // dedicated single-byte writer keeps the call sites concise. The
-    // multi-byte BER-OID path is reserved for the `unknown` loop
-    // below — see comment there for why round-tripping multi-byte
-    // tags matters for forward-compat.
+    // Every tag of the set is one byte (SMPTE ST 336 Table 5: the label's
+    // byte 6 is 0x03), defined and unknown alike.
     let emit =
         |out: &mut [u8], pos: &mut usize, tag: u8, value: &[u8]| -> Result<(), KlvEncodeError> {
             out[*pos] = tag;
@@ -105,13 +105,9 @@ pub fn encode(record: &SecurityLs, out: &mut [u8]) -> Result<usize, KlvEncodeErr
         emit(out, &mut pos, 24, str_wire(s))?;
     }
 
-    // Emit unknown tags last to preserve forward-compat. Tags above
-    // 127 use multi-byte BER-OID encoding per ST 0107 §6.3.1 (also
-    // SMPTE ST 336 §6) — write them via `write_ber_oid` so future
-    // ST 0102 security-marking extensions (which the decoder already
-    // preserves in `unknown`) survive an encode/decode round-trip.
-    // `encoded_len` sizes via `ber_oid_len(tag)` to keep the
-    // buffer-size precheck consistent.
+    // Emit unknown tags last to preserve forward-compat: a tag the
+    // decoder preserved in `unknown` (0 to 255) is written back as its
+    // one tag byte; a tag above 255 cannot be written in this set.
     for u in record.unknown.iter() {
         // Reject reserved/typed tags before emitting. Without this guard,
         // a caller-constructed typed tag (e.g. Tag 3 = Classifying Country)
@@ -121,14 +117,7 @@ pub fn encode(record: &SecurityLs, out: &mut [u8]) -> Result<usize, KlvEncodeErr
         if is_typed_tag(u.tag, super::tags::lookup) {
             return Err(KlvEncodeError::ReservedTagInUnknown { tag: u.tag });
         }
-        let n =
-            write_ber_oid(u.tag, &mut out[pos..]).map_err(|_| KlvEncodeError::RecordTooLarge)?;
-        pos += n;
-        let n = write_ber(u.value.len(), &mut out[pos..])
-            .map_err(|_| KlvEncodeError::RecordTooLarge)?;
-        pos += n;
-        out[pos..pos + u.value.len()].copy_from_slice(&u.value);
-        pos += u.value.len();
+        emit(out, &mut pos, one_byte_tag(u.tag)?, &u.value)?;
     }
 
     Ok(pos)
@@ -211,7 +200,7 @@ pub fn encode_strict_compliance(record: &SecurityLs) -> Result<Vec<u8>, KlvEncod
 
 /// Pre-compute the encoded length for a given record.
 pub fn encoded_len(record: &SecurityLs) -> usize {
-    use crate::klv::length::{ber_len, ber_oid_len};
+    use crate::klv::length::ber_len;
 
     let mut total = 0usize;
     let mut add = |value_len: usize| {
@@ -276,11 +265,9 @@ pub fn encoded_len(record: &SecurityLs) -> usize {
     }
 
     for u in record.unknown.iter() {
-        // Re-emit unknown tags verbatim with multi-byte BER-OID support
-        // per ST 0107 §6.3.1. The decoder already preserves any
-        // forward-compat tag in `unknown`; sizing via `ber_oid_len`
-        // ensures encode round-trip stays lossless for tags > 127.
-        total += ber_oid_len(u.tag) + ber_len(u.value.len()) + u.value.len();
+        // One tag byte, as for every defined tag (a tag above 255 is
+        // refused by `encode`).
+        add(u.value.len());
     }
 
     total

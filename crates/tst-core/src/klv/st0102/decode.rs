@@ -80,7 +80,7 @@ pub fn decode(buf: &[u8]) -> Result<SecurityLs, KlvDecodeError> {
 /// Strict decode — rejects spec-violating input (missing required
 /// tags, unknown enum codepoints, [`OmittedValueXX`] reserved
 /// codepoints, malformed UTF-16, duplicate tags, wrong fixed-length
-/// values, and non-canonical BER tag/length encodings per ST 0107.5
+/// values, and non-canonical BER length encodings per ST 0107.5
 /// §6.3). Unknown tags are still preserved in `unknown` per ST
 /// 0107.5 §6 future-proof skip rule (matches
 /// `klv::st0601::decode_strict_compliance` posture).
@@ -90,12 +90,14 @@ pub fn decode_strict(buf: &[u8]) -> Result<SecurityLs, KlvDecodeError> {
     decode_inner(buf, /* strict = */ true)
 }
 
-/// ST 0107.5 §6.3: reject non-canonical BER tag/length encodings across the
-/// flat ST 0102 local set, preserving buffer-relative offsets. The typed
-/// decode that follows reuses the permissive `Iter` — by this point the
-/// bytes have already cleared the strict-BER gate.
+/// ST 0107.5 §6.3: reject non-canonical BER length encodings across the
+/// flat ST 0102 local set, preserving buffer-relative offsets. The set's
+/// tags are one byte (SMPTE ST 336 Table 5, label byte 6 = `0x03`), so
+/// only the length has a canonical form. The typed decode that follows
+/// reuses the permissive `Iter` — by this point the bytes have already
+/// cleared the strict-BER gate.
 fn strict_ber_walk(buf: &[u8]) -> Result<(), KlvDecodeError> {
-    use crate::klv::length::read_strict_tlv;
+    use crate::klv::length::{read_ber_strict, rebase_offset};
     let mut rest = buf;
     let mut offset = 0usize;
     // ST 0107.5 §6.3.4: each item at most once per set. Checked here, where
@@ -104,7 +106,12 @@ fn strict_ber_walk(buf: &[u8]) -> Result<(), KlvDecodeError> {
     let mut seen: hashbrown::HashSet<u32> = hashbrown::HashSet::new();
     while !rest.is_empty() {
         let item_start = offset;
-        let (tag, len, consumed, after_len) = read_strict_tlv(rest, item_start)?;
+        let tag = u32::from(rest[0]);
+        let (len, after_len) = read_ber_strict(&rest[1..]).map_err(|mut e| {
+            rebase_offset(&mut e, item_start + 1);
+            e
+        })?;
+        let consumed = rest.len() - after_len.len();
         if !seen.insert(tag) {
             return Err(KlvDecodeError::DuplicateTag {
                 tag,
@@ -132,21 +139,11 @@ fn decode_inner(buf: &[u8], strict: bool) -> Result<SecurityLs, KlvDecodeError> 
 
     let mut record = SecurityLs::default();
 
-    for r in Iter::local_set(buf) {
+    for r in Iter::local_set_one_byte(buf) {
         let f = r?;
 
-        let tag_u8 = match u8::try_from(f.tag) {
-            Ok(t) => t,
-            Err(_) => {
-                // Tag > 255: shouldn't happen in ST 0102 LS but
-                // tolerated as forward-compat unknown.
-                record.unknown.push(OwnedRawField {
-                    tag: f.tag,
-                    value: f.value.to_vec(),
-                });
-                continue;
-            }
-        };
+        // A one-byte tag: the iterator never yields a tag above 255.
+        let tag_u8 = f.tag as u8;
 
         let spec = match lookup(tag_u8) {
             Some(s) => s,

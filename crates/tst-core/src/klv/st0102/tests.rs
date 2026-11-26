@@ -9,8 +9,7 @@ use crate::klv::st0102::enums::{
 };
 use crate::test_prelude::*;
 
-/// Build a single-tag LS body: tag (BER-OID, 1 byte for tags ≤ 127),
-/// length (BER), value bytes.
+/// Build an LS body: per item the one tag byte, length (BER), value bytes.
 fn build_record(tags: &[(u8, &[u8])]) -> Vec<u8> {
     let mut out = Vec::new();
     for (tag, value) in tags {
@@ -535,11 +534,11 @@ fn strict_rejects_truncated_value() {
 }
 
 #[test]
-fn unknown_tags_above_127_preserved_via_ber_oid_on_encode() {
+fn unknown_tags_above_127_preserved_on_encode() {
     // ST 0102 LS may grow new tags > 127 in future revisions; the
-    // lenient decoder already preserves them per ST 0107.5 §6, and
-    // encode emits multi-byte BER-OID per ST 0107 §6.3.1 so the
-    // round-trip stays lossless.
+    // lenient decoder preserves them per ST 0107.5 §6, and encode
+    // writes them back as the one-byte tags the set's label declares,
+    // so the round-trip stays lossless.
     let r = SecurityLs {
         security_classification: Some(SecurityClassification::Unclassified),
         unknown: vec![
@@ -558,8 +557,7 @@ fn unknown_tags_above_127_preserved_via_ber_oid_on_encode() {
     let n = encoded_len(&r);
     let bytes = encode_to_vec(&r).unwrap();
 
-    // encoded_len + encode agree on size (both account for the
-    // multi-byte BER-OID encoding of tags > 127).
+    // encoded_len + encode agree on size.
     assert_eq!(n, bytes.len());
 
     let decoded = decode(&bytes).unwrap();
@@ -574,10 +572,163 @@ fn unknown_tags_above_127_preserved_via_ber_oid_on_encode() {
     assert_eq!(decoded.unknown[1].value, b"other");
 }
 
-crate::klv::ber_oid_unknown_tag_tests!(SecurityLs {
-    security_classification: Some(SecurityClassification::Unclassified),
-    ..Default::default()
-});
+// The Security Metadata LS label is `06 0E 2B 34 02 03 …`: byte 6 = 0x03
+// declares one-byte local tags (SMPTE ST 336 Table 5), so a tag is one
+// byte 0x00 to 0xFF and the length that follows is BER.
+
+#[test]
+fn security_unknown_high_tags_are_one_byte() {
+    for (tag, byte) in [(127u32, 0x7Fu8), (128, 0x80), (200, 0xC8), (255, 0xFF)] {
+        let r = SecurityLs {
+            security_classification: Some(SecurityClassification::Unclassified),
+            unknown: vec![OwnedRawField {
+                tag,
+                value: vec![0xAA],
+            }],
+            ..Default::default()
+        };
+        let bytes = encode_to_vec(&r).unwrap();
+        assert_eq!(bytes, [0x01, 0x01, 0x01, byte, 0x01, 0xAA], "tag {tag}");
+        assert_eq!(encoded_len(&r), bytes.len(), "tag {tag}: encoded_len");
+        assert_eq!(decode(&bytes).unwrap().unknown, r.unknown, "tag {tag}");
+    }
+}
+
+#[test]
+fn security_one_byte_unknown_then_known_item() {
+    // Tag 0x80 (128), length 1, then Tag 1 (classification) = 0x05.
+    let r = decode(&[0x80, 0x01, 0x42, 0x01, 0x01, 0x05]).unwrap();
+    assert_eq!(
+        r.unknown,
+        vec![OwnedRawField {
+            tag: 128,
+            value: vec![0x42],
+        }]
+    );
+    assert_eq!(
+        r.security_classification,
+        Some(SecurityClassification::TopSecret)
+    );
+}
+
+#[test]
+fn unknown_tag_above_255_is_refused() {
+    for tag in [256u32, 16384] {
+        let r = SecurityLs {
+            unknown: vec![OwnedRawField {
+                tag,
+                value: vec![0xAA],
+            }],
+            ..Default::default()
+        };
+        let err = encode_to_vec(&r).unwrap_err();
+        assert!(
+            matches!(err, KlvEncodeError::TagNotOneByte { tag: t } if t == tag),
+            "tag {tag}: {err:?}"
+        );
+    }
+}
+
+#[test]
+fn security_ls_defined_tags_decode_unchanged_under_one_byte_syntax() {
+    // Every defined tag is below 128, where a one-byte tag and a BER-OID
+    // tag are the same byte: the full record's bytes and its decode do not
+    // depend on the tag syntax, alone and nested in ST 0601 Tag 48.
+    let original = SecurityLs {
+        security_classification: Some(SecurityClassification::TopSecret),
+        classifying_country_coding_method: Some(ClassifyingCountryCodingMethod::Iso3166ThreeLetter),
+        classifying_country: Some("//USA".to_string()),
+        sci_shi_info: Some("HCS".to_string()),
+        caveats: Some("FOUO".to_string()),
+        releasing_instructions: Some("USA".to_string()),
+        classified_by: Some("ID-1".to_string()),
+        derived_from: Some("Src".to_string()),
+        classification_reason: Some("1.4".to_string()),
+        declassification_date: Some("20351231".to_string()),
+        classification_marking_system: Some("CAPCO".to_string()),
+        object_country_coding_method: Some(ObjectCountryCodingMethod::Iso3166ThreeLetter),
+        object_country_codes: Some("USA".to_string()),
+        classification_comments: Some("Cmt".to_string()),
+        version: Some(12),
+        classifying_country_coding_method_version_date: Some("2025-01-15".to_string()),
+        object_country_coding_method_version_date: Some("2025-01-15".to_string()),
+        unknown: Vec::new(),
+        field_errors: Vec::new(),
+    };
+    let expected = build_record(&[
+        (1, &[0x05]),
+        (2, &[0x02]),
+        (3, b"//USA"),
+        (4, b"HCS"),
+        (5, b"FOUO"),
+        (6, b"USA"),
+        (7, b"ID-1"),
+        (8, b"Src"),
+        (9, b"1.4"),
+        (10, b"20351231"),
+        (11, b"CAPCO"),
+        (12, &[0x02]),
+        (13, &[0xFE, 0xFF, 0x00, b'U', 0x00, b'S', 0x00, b'A']),
+        (14, b"Cmt"),
+        (22, &[0x00, 0x0C]),
+        (23, b"2025-01-15"),
+        (24, b"2025-01-15"),
+    ]);
+    let bytes = encode_to_vec(&original).unwrap();
+    assert_eq!(bytes, expected);
+    assert_eq!(decode(&bytes).unwrap(), original);
+    assert_eq!(decode_strict(&bytes).unwrap(), original);
+
+    let parent = crate::klv::st0601::UasDatalinkLs {
+        timestamp_us: Some(1_700_000_000_000_000),
+        security_local_set: Some(bytes.clone()),
+        ..Default::default()
+    };
+    let parent_bytes = crate::klv::st0601::encode_to_vec(&parent).unwrap();
+    let inner = crate::klv::st0601::decode(&parent_bytes)
+        .unwrap()
+        .security_local_set
+        .expect("Tag 48 survives the parent round trip");
+    assert_eq!(inner, bytes);
+    assert_eq!(decode(&inner).unwrap(), original);
+}
+
+#[test]
+fn a_0_10_0_two_byte_tag_is_truncated() {
+    // 0.10.0 wrote unknown tag 128 as the BER-OID `81 00`. Read with
+    // one-byte tags, `81 00` is tag 129 with an empty value, and the
+    // length byte that follows becomes a tag whose length overruns the set.
+    let written_by_0_10_0 = [
+        0x01, 0x01, 0x01, // classification
+        0x81, 0x00, 0x01, 0x42, // unknown tag 128 = 'B', two-byte tag
+        0x16, 0x02, 0x00, 0x0C, // version 12
+    ];
+    let err = decode(&written_by_0_10_0).unwrap_err();
+    assert!(matches!(err, KlvDecodeError::Truncated { .. }), "{err:?}");
+}
+
+#[test]
+fn a_0_10_0_two_byte_tag_can_read_as_other_items() {
+    // 0.10.0's two-byte tag `81 00` for unknown tag 128 with the value
+    // `02 01 05` reads, with one-byte tags, as unknown tag 129 (empty)
+    // followed by a typed Tag 3 (Classifying Country) holding `01 05`.
+    let written_by_0_10_0 = [
+        0x01, 0x01, 0x01, // classification
+        0x81, 0x00, 0x03, 0x02, 0x01, 0x05, // unknown tag 128, two-byte tag
+        0x16, 0x02, 0x00, 0x0C, // version 12
+    ];
+    let r = decode(&written_by_0_10_0).unwrap();
+    assert_eq!(
+        r.unknown,
+        vec![OwnedRawField {
+            tag: 129,
+            value: Vec::new(),
+        }]
+    );
+    assert_eq!(r.classifying_country.as_deref(), Some("\u{1}\u{5}"));
+    assert_eq!(r.version, Some(12));
+    assert!(r.field_errors.is_empty());
+}
 
 // ------------------------------------------------------------------
 // Unknown-bucket typed-tag guard tests.
@@ -629,17 +780,6 @@ fn decode_strict_rejects_non_canonical_length() {
     let result = decode_strict(&buf);
     assert!(
         matches!(result, Err(KlvDecodeError::NonCanonicalLength { .. })),
-        "got {result:?}"
-    );
-}
-
-#[test]
-fn decode_strict_rejects_non_canonical_tag() {
-    // BER-OID tag with a leading 0x80 continuation byte (non-canonical zero).
-    let buf = [0x80, 0x01, 0x00];
-    let result = decode_strict(&buf);
-    assert!(
-        matches!(result, Err(KlvDecodeError::NonCanonicalTag { .. })),
         "got {result:?}"
     );
 }

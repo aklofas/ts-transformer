@@ -56,23 +56,35 @@ impl OwnedRawField {
 /// Iterator over a KLV body (post-UL, post-outer-length). Crate-internal:
 /// the typed decoders (`klv::st0601`, `klv::st0102`, `klv::st0605`,
 /// `klv::st0806`, `klv::st0903`) are the consumer-facing API; this is
-/// BER/length-prefix substrate. Local-set form only (1-byte tag + BER-OID
-/// length); a future ST 0905 universal-set decoder would need a separate
-/// iterator.
+/// BER/length-prefix substrate. Local-set form only (a BER-OID or a
+/// one-byte tag, then a BER length); a future ST 0905 universal-set decoder
+/// would need a separate iterator.
 pub(crate) struct Iter<'a> {
     buf: &'a [u8],
     offset: usize,
     finished: bool,
+    one_byte: bool,
 }
 
 impl<'a> Iter<'a> {
-    /// Iterate a local-set body: 1-byte tag + BER-OID length, repeating.
+    /// Iterate a local-set body: BER-OID tag + BER length, repeating.
     /// Caller is responsible for stripping the outer UL + total length first.
     pub(crate) fn local_set(buf: &'a [u8]) -> Self {
         Self {
             buf,
             offset: 0,
             finished: false,
+            one_byte: false,
+        }
+    }
+
+    /// Iterate a local-set body whose label declares one-byte tags (SMPTE
+    /// ST 336 Table 5, registry designator `0x03`: the Security Metadata LS
+    /// and the VTarget Pack): every tag byte `0x00` to `0xFF` is the tag.
+    pub(crate) fn local_set_one_byte(buf: &'a [u8]) -> Self {
+        Self {
+            one_byte: true,
+            ..Self::local_set(buf)
         }
     }
 }
@@ -92,12 +104,17 @@ impl<'a> Iter<'a> {
     fn next_local_set(&mut self) -> Option<Result<RawField<'a>, KlvDecodeError>> {
         let start = self.offset;
         let rest = &self.buf[start..];
-        let (tag, after_tag) = match read_ber_oid(rest) {
-            Ok(v) => v,
-            Err(mut e) => {
-                crate::klv::length::rebase_offset(&mut e, start);
-                self.finished = true;
-                return Some(Err(e));
+        let (tag, after_tag) = if self.one_byte {
+            // `next` only calls here with at least one byte left.
+            (u32::from(rest[0]), &rest[1..])
+        } else {
+            match read_ber_oid(rest) {
+                Ok(v) => v,
+                Err(mut e) => {
+                    crate::klv::length::rebase_offset(&mut e, start);
+                    self.finished = true;
+                    return Some(Err(e));
+                }
             }
         };
         let consumed_tag = rest.len() - after_tag.len();
@@ -158,6 +175,28 @@ pub(crate) fn emit_ber_oid_tlv(
     let mut tag_buf = [0u8; 8]; // u32 fits in at most 5 BER-OID bytes; 8 ≥ 5
     let n = write_ber_oid(tag, &mut tag_buf)?;
     out.extend_from_slice(&tag_buf[..n]);
+    let mut len_buf = [0u8; 9]; // BER length: 1 flag byte + up to 8 value bytes
+    let m = write_ber(value.len(), &mut len_buf)?;
+    out.extend_from_slice(&len_buf[..m]);
+    out.extend_from_slice(value);
+    Ok(())
+}
+
+/// The tag byte of a set whose label declares one-byte tags (SMPTE ST 336
+/// Table 5, registry designator `0x03`); a tag above 255 has no such byte.
+pub(crate) fn one_byte_tag(tag: u32) -> Result<u8, KlvEncodeError> {
+    u8::try_from(tag).map_err(|_| KlvEncodeError::TagNotOneByte { tag })
+}
+
+/// Emit a single one-byte-tagged TLV into a `Vec<u8>`: the tag byte,
+/// `BER-length(value.len())`, `value`. Refuses a tag above 255 with
+/// [`KlvEncodeError::TagNotOneByte`].
+pub(crate) fn emit_one_byte_tlv(
+    tag: u32,
+    value: &[u8],
+    out: &mut Vec<u8>,
+) -> Result<(), KlvEncodeError> {
+    out.push(one_byte_tag(tag)?);
     let mut len_buf = [0u8; 9]; // BER length: 1 flag byte + up to 8 value bytes
     let m = write_ber(value.len(), &mut len_buf)?;
     out.extend_from_slice(&len_buf[..m]);

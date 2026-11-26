@@ -19,16 +19,9 @@ fuzz_target!(|data: &[u8]| {
         return;
     };
 
-    // Round-trip is only well-defined when no `unknown` field has a
-    // BER-OID multi-byte tag (> 127). The ST 0102 encoder intentionally
-    // drops multi-byte unknown tags (klv/st0102/mod.rs §481-493: forward-
-    // compat decoder accepts what the encoder cannot emit). Skip those
-    // inputs; they're out of round-trip scope.
-    if ls1.unknown.iter().any(|u| u.tag > 127) {
-        return;
-    }
-
-    // decode → encode → decode must yield an equal SecurityLs.
+    // decode → encode → decode must yield an equal SecurityLs. The set's
+    // tags are one byte, so every decoded unknown tag (0 to 255) is one
+    // the encoder writes back.
     let bytes = match encode_to_vec(&ls1) {
         Ok(b) => b,
         Err(_) => return, // encode-after-decode failure is a different

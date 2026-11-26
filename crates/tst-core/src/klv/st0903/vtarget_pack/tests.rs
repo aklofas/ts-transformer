@@ -181,11 +181,9 @@ fn lenient_read_pack_still_rejects_framing_errors() {
 #[test]
 fn unknown_tags_preserved() {
     // Build by hand: target_id=1, then unknown tag 200 with 3 bytes [0xAA 0xBB
-    // 0xCC]. Tag 200 is BER-OID-encoded as 0x81 0x48 per ST 0107.5 §6.3.1 (the
-    // body walker reads tags as BER-OID, so multi-byte tag IDs need their
-    // proper encoding on the wire — a raw 0xC8 byte would be parsed as a
-    // continuation prefix and misframe the BER length).
-    let bytes = [0x01u8, 0x81, 0x48, 3, 0xAA, 0xBB, 0xCC];
+    // 0xCC]. The pack's tags are one byte (ST 0903.6 §10.2 follows the
+    // embedded-LS rule of §9.2, byte 6 = 0x03), so tag 200 is the byte 0xC8.
+    let bytes = [0x01u8, 0xC8, 3, 0xAA, 0xBB, 0xCC];
     let (decoded, _) = read_pack(&bytes).unwrap();
     assert_eq!(decoded.target_id, 1);
     assert_eq!(decoded.unknown.len(), 1);
@@ -270,18 +268,12 @@ fn round_trip_with_unknown_preserved() {
     assert_eq!(decoded.unknown[0].tag, 200);
 }
 
-/// The LS body walker reads tags as BER-OID per ST 0107.5 §6.3.1, so a
-/// future ST 0903.7+ pack tag ≥ 128 (which encodes as multi-byte BER-OID)
-/// survives the inner walk. A walker reading tags as `cursor[0]` would
-/// misframe the first continuation byte (0x81 0x..) as the BER length.
-///
-/// Verifies the two BER-OID size boundaries that matter for forward-
-/// compat: 128 (smallest multi-byte: 0x81 0x00) and 16384 (smallest
-/// three-byte: 0x81 0x80 0x00). Tags 127 and 16383 stay one-/two-byte
-/// respectively but bracket the boundary symmetrically.
+/// The pack's tags are one byte (ST 0903.6 §10.2, §9.2: byte 6 = 0x03),
+/// so a future pack tag from 128 to 255 is written and read as that byte:
+/// 127 and 128 bracket the old BER-OID boundary, 255 is the last tag.
 #[test]
-fn unknown_tag_multibyte_ber_oid_round_trips() {
-    for tag in [127u32, 128, 16383, 16384] {
+fn unknown_tag_one_byte_round_trips() {
+    for tag in [127u32, 128, 200, 255] {
         let mut pack = VTargetPack {
             target_id: 1,
             ..Default::default()
@@ -292,6 +284,12 @@ fn unknown_tag_multibyte_ber_oid_round_trips() {
         });
         let mut bytes = Vec::new();
         write_pack(&pack, &mut bytes).unwrap();
+        assert_eq!(
+            bytes,
+            [0x01, tag as u8, 0x03, 0xAA, 0xBB, 0xCC],
+            "tag {tag}: one tag byte"
+        );
+        assert_eq!(encoded_len(&pack), bytes.len(), "tag {tag}: encoded_len");
         let (decoded, _) = read_pack(&bytes).unwrap();
         assert_eq!(
             decoded.unknown.len(),
@@ -307,6 +305,52 @@ fn unknown_tag_multibyte_ber_oid_round_trips() {
             vec![0xAA, 0xBB, 0xCC],
             "tag {tag}: value bytes corrupted"
         );
+    }
+}
+
+#[test]
+fn unknown_tag_above_255_is_refused() {
+    for tag in [256u32, 16384] {
+        let mut pack = VTargetPack {
+            target_id: 1,
+            ..Default::default()
+        };
+        pack.unknown.push(OwnedRawField {
+            tag,
+            value: vec![0xAA],
+        });
+        let err = write_pack(&pack, &mut Vec::new()).unwrap_err();
+        assert!(
+            matches!(err, KlvEncodeError::TagNotOneByte { tag: t } if t == tag),
+            "tag {tag}: {err:?}"
+        );
+    }
+}
+
+#[test]
+fn vtarget_pack_one_byte_unknown_tag_keeps_the_series() {
+    // A VMTI set (version 6, one target reported) whose Tag 101 series holds
+    // one pack: target 1, priority 27, and unknown tag 200 written as the
+    // one byte 0xC8, as the pack's one-byte tag syntax has it.
+    let body = [
+        0x04, 0x01, 0x06, // version
+        0x06, 0x01, 0x01, // targets reported
+        0x65, 0x08, // Tag 101, the VTarget series
+        0x07, 0x01, 0x04, 0x01, 0x1B, 0xC8, 0x01, 0xAA, // one pack
+    ];
+    let expected_unknown = vec![OwnedRawField {
+        tag: 200,
+        value: vec![0xAA],
+    }];
+    for (mode, decoded) in [
+        ("lenient", crate::klv::st0903::decode(&body).unwrap()),
+        ("strict", crate::klv::st0903::decode_strict(&body).unwrap()),
+    ] {
+        assert!(decoded.field_errors.is_empty(), "{mode}: {decoded:?}");
+        assert_eq!(decoded.targets.len(), 1, "{mode}");
+        assert_eq!(decoded.targets[0].target_id, 1, "{mode}");
+        assert_eq!(decoded.targets[0].priority, Some(27), "{mode}");
+        assert_eq!(decoded.targets[0].unknown, expected_unknown, "{mode}");
     }
 }
 

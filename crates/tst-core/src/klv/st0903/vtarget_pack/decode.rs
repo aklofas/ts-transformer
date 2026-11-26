@@ -9,14 +9,11 @@ use crate::error::KlvFieldError;
 /// Wire form per ST 0903.6 §10.2 Table 10:
 /// - Leading BER-OID `targetId` (no Tag, per §10.2.2.1).
 /// - Then a Local Set–encoded body where each field is
-///   `[BER-OID tag][BER short/long length][value bytes]` per
-///   ST 0107.5 §6.3.1.
+///   `[one-byte tag][BER short/long length][value bytes]`: §10.2 follows
+///   the embedded-LS rule of §9.2 (label byte 6 = `0x03`, one-byte tags).
 ///
-/// Tags 1..=107 (the §10.2 typed universe) all fit in a single BER-OID
-/// byte (`write_ber_oid(N) == [N]` for `N ≤ 127`), so legacy wire bytes
-/// parse byte-identical. A future ST 0903.7+ pack tag ≥ 128 would
-/// encode as multi-byte BER-OID — the walker decodes it correctly and
-/// preserves it as a forward-compat unknown.
+/// A future pack tag from 128 to 255 is one byte too, and is preserved
+/// as a forward-compat unknown.
 ///
 /// Unknown / deprecated tags (e.g. 21, 102, 103) are preserved in
 /// `pack.unknown` per ST 0107.5 §6 future-proof skip rule.
@@ -32,7 +29,7 @@ pub(crate) fn read_pack_strict(bytes: &[u8]) -> Result<(VTargetPack, usize), VTa
 }
 
 fn read_pack_inner(bytes: &[u8], strict: bool) -> Result<(VTargetPack, usize), VTargetPackError> {
-    use crate::klv::length::{read_ber, read_ber_oid, read_ber_oid_u64};
+    use crate::klv::length::{read_ber, read_ber_oid_u64};
 
     // 1. Read the leading BER-OID Target ID (u64 — up to 10 BER-OID bytes).
     let (target_id, rest) =
@@ -44,22 +41,14 @@ fn read_pack_inner(bytes: &[u8], strict: bool) -> Result<(VTargetPack, usize), V
         ..Default::default()
     };
 
-    // 2. Walk the LS-encoded body. Each field is a BER-OID tag per
-    //    ST 0107.5 §6.3.1 + BER-encoded length + value. Mirrors the
-    //    top-level ST 0903 walker and the sibling ST 0102
-    //    / ST 0601 walkers.
+    // 2. Walk the LS-encoded body. Each field is a one-byte tag
+    //    (ST 0903.6 §10.2 → §9.2) + BER-encoded length + value.
     let mut cursor = rest;
     let mut consumed = header_consumed;
     while !cursor.is_empty() {
-        let (tag, after_tag) = read_ber_oid(cursor).map_err(|_| {
-            // We don't know the tag yet — surface tag=0 as the closest
-            // available sentinel. Production wire shouldn't trip this
-            // (BER-OID needs a continuation-byte stream to fail).
-            VTargetPackError::TruncatedField { tag: 0 }
-        })?;
-        let tag_consumed = cursor.len() - after_tag.len();
-        cursor = after_tag;
-        consumed += tag_consumed;
+        let tag = u32::from(cursor[0]);
+        cursor = &cursor[1..];
+        consumed += 1;
 
         let (declared_len, after_len) =
             read_ber(cursor).map_err(|_| VTargetPackError::TruncatedField { tag })?;
@@ -122,24 +111,14 @@ fn field_error(e: VTargetPackError, got: usize) -> KlvFieldError {
 /// Unknown / deprecated tags fall through to `pack.unknown` per
 /// ST 0107.5 §6.
 ///
-/// `tag` arrives as BER-OID-decoded `u32`. Tags > 0xFF (future ST
-/// 0903.7+ multi-byte BER-OID) are preserved in `pack.unknown` per
-/// ST 0107.5 §6; the typed table only covers the u8 universe.
+/// `tag` is the field's one tag byte, widened to the `u32` the error
+/// and `unknown` types carry.
 fn decode_field(tag: u32, value: &[u8], pack: &mut VTargetPack) -> Result<(), VTargetPackError> {
     use crate::klv::imapb::{ImapbParams, decode_imapb};
     use crate::klv::pack::OwnedRawField;
 
-    // Forward-compat tags (≥ 128 in BER-OID) — preserve verbatim.
-    // The typed table only covers tag IDs ≤ 127 (the §10.2 universe
-    // tops out at 107), so a multi-byte BER-OID tag from a future spec
-    // bumps directly to `unknown` without spec-table lookup.
-    let Ok(tag_u8) = u8::try_from(tag) else {
-        pack.unknown.push(OwnedRawField {
-            tag,
-            value: value.to_vec(),
-        });
-        return Ok(());
-    };
+    // The walker reads one tag byte, so the tag is never above 255.
+    let tag_u8 = tag as u8;
 
     let Some(spec) = pack_lookup(tag_u8) else {
         // ST 0107.5 §6 skip rule — preserve unknown / deprecated tags.
