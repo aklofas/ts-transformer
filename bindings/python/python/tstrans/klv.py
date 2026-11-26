@@ -568,6 +568,7 @@ Klv0903 = VmtiLs
 
 
 decode_vmti = _native_mod.decode_vmti
+decode_vmti_standalone = _native_mod.decode_vmti_standalone
 encode_vmti = _native_mod.encode_vmti
 encode_vmti_standalone = _native_mod.encode_vmti_standalone
 encode_vmti_strict_compliance = _native_mod.encode_vmti_strict_compliance
@@ -2409,8 +2410,14 @@ def _rvt_mgrs_string(
     """Reconstruct a 15-char MGRS string (zone zero-padded to 2, 3-char
     band+grid, easting/northing zero-padded to 5) — pure-Python port of
     the Rust `RvtLs::aircraft_mgrs`/`frame_center_mgrs` helper. `None` if
-    any of the four components is missing."""
+    any of the four components is missing, or if the zone or the band and
+    grid square is not one ST 0806.4 Table 8-1 defines (zone 1 to 60; three
+    letters A to Z without I and O): a decoded record keeps such a value."""
     if zone is None or band_grid is None or easting is None or northing is None:
+        return None
+    if not 1 <= zone <= 60:
+        return None
+    if len(band_grid) != 3 or not all("A" <= c <= "Z" and c not in "IO" for c in band_grid):
         return None
     return f"{zone:02d}{band_grid}{easting:05d}{northing:05d}"
 
@@ -2601,6 +2608,7 @@ __all__: list[str] = [
     "VmtiLs",
     "Klv0903",
     "decode_vmti",
+    "decode_vmti_standalone",
     "encode_vmti",
     "encode_vmti_standalone",
     "encode_vmti_strict_compliance",

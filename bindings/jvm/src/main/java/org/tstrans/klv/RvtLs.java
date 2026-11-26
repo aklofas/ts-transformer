@@ -257,17 +257,21 @@ public record RvtLs(
      * 5. Pure-Java port of the Rust {@code RvtLs::aircraft_mgrs} helper.
      *
      * @return the composite MGRS string, or {@code null} if any of the four
-     *         components is missing
+     *         components is missing, or the zone or the band and grid square is
+     *         not one ST 0806.4 Table 8-1 defines (zone 1 to 60; three letters A
+     *         to Z without I and O): a decoded record keeps such a value
      */
     public String aircraftMgrs() {
         return mgrsString(aircraftMgrsZone, aircraftMgrsBandGrid, aircraftMgrsEastingM, aircraftMgrsNorthingM);
     }
 
     /**
-     * Frame-center MGRS string (Tags 18-21), same layout as {@link #aircraftMgrs()}.
+     * Frame-center MGRS string (Tags 18-21), same layout and rule as
+     * {@link #aircraftMgrs()}.
      *
      * @return the composite MGRS string, or {@code null} if any of the four
-     *         components is missing
+     *         components is missing or the zone or band and grid square is not
+     *         one ST 0806.4 defines
      */
     public String frameCenterMgrs() {
         return mgrsString(frameCenterMgrsZone, frameCenterMgrsBandGrid, frameCenterMgrsEastingM, frameCenterMgrsNorthingM);
@@ -277,6 +281,23 @@ public record RvtLs(
         if (zone == null || bandGrid == null || easting == null || northing == null) {
             return null;
         }
+        if (zone < 1 || zone > 60 || !isMgrsBandGrid(bandGrid)) {
+            return null;
+        }
         return String.format("%02d%s%05d%05d", zone, bandGrid, easting, northing);
+    }
+
+    /** Three letters A to Z, I and O omitted (ST 0806.4 Table 8-1 Items 15, 19). */
+    private static boolean isMgrsBandGrid(String bandGrid) {
+        if (bandGrid.length() != 3) {
+            return false;
+        }
+        for (int i = 0; i < 3; i++) {
+            char c = bandGrid.charAt(i);
+            if (c < 'A' || c > 'Z' || c == 'I' || c == 'O') {
+                return false;
+            }
+        }
+        return true;
     }
 }
