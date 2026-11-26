@@ -78,6 +78,12 @@
       "expect": {"corners": null}
     },
     {
+      "name": "corners_do_not_fall_back_through_off_earth_full_corner: a full-range longitude as its sentinel",
+      "fields": {"corner_lat_p1_deg": 1.0, "corner_lat_p2_deg": 3.0, "corner_lon_p2_deg": 4.0, "corner_lat_p3_deg": 5.0, "corner_lon_p3_deg": 6.0, "corner_lat_p4_deg": 7.0, "corner_lon_p4_deg": 8.0, "frame_center_lat_deg": 20.0, "frame_center_lon_deg": 30.0, "corner_lat_offset_p1_deg": 0.02, "corner_lon_offset_p1_deg": 0.02, "corner_lat_offset_p2_deg": 0.02, "corner_lon_offset_p2_deg": 0.02, "corner_lat_offset_p3_deg": 0.02, "corner_lon_offset_p3_deg": 0.02, "corner_lat_offset_p4_deg": 0.02, "corner_lon_offset_p4_deg": 0.02},
+      "sentinel_tags": [83],
+      "expect": {"corners": null}
+    },
+    {
       "name": "corners_wrap_longitude_across_the_antimeridian",
       "fields": {"frame_center_lat_deg": 10.0, "frame_center_lon_deg": 179.9, "corner_lat_offset_p1_deg": 0.0, "corner_lon_offset_p1_deg": 0.2, "corner_lat_offset_p2_deg": 0.0, "corner_lon_offset_p2_deg": -0.2, "corner_lat_offset_p3_deg": 0.0, "corner_lon_offset_p3_deg": 0.2, "corner_lat_offset_p4_deg": 0.0, "corner_lon_offset_p4_deg": -0.2},
       "tolerance": 1e-9,

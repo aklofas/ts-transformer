@@ -228,7 +228,7 @@ sha256 = "ad694b1b7e526a9b49fbe8fcffe055b1b9d90d0070b03bdc6967ed4e144c6473"
 
 [[file]]
 path = "crates/tst-core/tests/fixtures/st0601/composite-views.json"
-sha256 = "6819b953c19e7e19a5e65f54d9fc3c84cdd360ca8b4d17fd97d51183e2c7a47e"
+sha256 = "30333192c751dd2f6586092ffe4471b75db180138c258d2d207f274e74a5cfee"
 
 [[file]]
 path = "crates/tst-core/tests/fixtures/st0601/synthetic_field_errors.klv"
