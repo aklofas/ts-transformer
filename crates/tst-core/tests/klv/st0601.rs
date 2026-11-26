@@ -153,6 +153,25 @@ fn fixture_nondefault_family_version_is_accepted() {
 }
 
 #[test]
+fn committed_st0601_fixtures_still_decode() {
+    // Each committed fixture carries one checksum, as its final item.
+    for name in [
+        "synthetic_minimal.klv",
+        "synthetic_full.klv",
+        "synthetic_funky_ul.klv",
+    ] {
+        let bytes = load_fixture(name);
+        let checked = decode(&bytes).unwrap_or_else(|e| panic!("decode {name}: {e:?}"));
+        let strict =
+            decode_strict(&bytes).unwrap_or_else(|e| panic!("decode_strict {name}: {e:?}"));
+        let unchecked =
+            decode_unchecked(&bytes).unwrap_or_else(|e| panic!("decode_unchecked {name}: {e:?}"));
+        assert_eq!(checked, strict, "{name}");
+        assert_eq!(checked, unchecked, "{name}");
+    }
+}
+
+#[test]
 fn fixture_field_errors_decodes() {
     let bytes = load_fixture("synthetic_field_errors.klv");
     let parsed = decode(&bytes).unwrap();

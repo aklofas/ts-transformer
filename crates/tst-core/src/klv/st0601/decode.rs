@@ -24,6 +24,25 @@ use super::tags::{Encoding, FieldValue, TagSpec, lookup};
 /// ST 0601 family UL pattern, or [`decode_strict_compliance`] to enforce
 /// the spec's mandatory tag-ordering rules.
 ///
+/// The checksum covers every item: the set must carry exactly one Tag 1,
+/// as its final item, ending at the declared length (ST 0601.8-11). A set
+/// whose producer puts the checksum elsewhere, repeats it or leaves it out
+/// is refused; [`decode_unchecked`] reads such a set without verifying it.
+///
+/// # Errors
+/// The structural variants ([`KlvDecodeError::Truncated`],
+/// [`KlvDecodeError::MalformedLength`], [`KlvDecodeError::MalformedTag`],
+/// [`KlvDecodeError::LengthOverflow`]), and for the checksum, in this
+/// order:
+/// - [`KlvDecodeError::MissingChecksum`] when the set has no Tag 1;
+/// - [`KlvDecodeError::MalformedChecksum`] when a Tag 1 value is not two
+///   bytes (reported at the first such item, in every mode);
+/// - [`KlvDecodeError::DuplicateTag`] with `tag: 1` at the start of the
+///   second Tag 1 item when there is more than one;
+/// - [`KlvDecodeError::Tag1NotLast`] when an item follows the checksum;
+/// - [`KlvDecodeError::ChecksumMismatch`] when the checksum does not match
+///   the recomputed running sum.
+///
 /// # Example — decode a fixture and inspect typed fields
 ///
 /// ```
@@ -69,26 +88,31 @@ pub fn decode(buf: &[u8]) -> Result<UasDatalinkLs, KlvDecodeError> {
 /// are known to be intra-sender consistent (e.g. fixture round-trips
 /// in tests).
 ///
+/// It is also the way to read a set whose producer puts the checksum
+/// mid-body, repeats it or leaves it out, which the verifying decodes
+/// refuse: the items after a mid-body checksum are not covered by any sum.
+///
 /// # Errors
 /// Returns the same structural [`KlvDecodeError`] variants as
 /// [`decode`] — [`KlvDecodeError::Truncated`],
 /// [`KlvDecodeError::MalformedLength`], [`KlvDecodeError::MalformedTag`],
-/// [`KlvDecodeError::LengthOverflow`] — but never
-/// [`KlvDecodeError::ChecksumMismatch`] or
-/// [`KlvDecodeError::UnexpectedUniversalLabel`].
+/// [`KlvDecodeError::LengthOverflow`] — and
+/// [`KlvDecodeError::MalformedChecksum`] for a Tag 1 value that is not two
+/// bytes, but never [`KlvDecodeError::ChecksumMismatch`],
+/// [`KlvDecodeError::MissingChecksum`], [`KlvDecodeError::Tag1NotLast`],
+/// a `DuplicateTag` for Tag 1 or [`KlvDecodeError::UnexpectedUniversalLabel`].
 pub fn decode_unchecked(buf: &[u8]) -> Result<UasDatalinkLs, KlvDecodeError> {
     decode_inner(buf, false, false)
 }
 
 /// Strict decode: verify the running-sum 16 checksum (Tag 1) AND require
 /// the buffer's 16-byte UL to fall within the ST 0601-family UL pattern.
+/// The checksum rule is [`decode`]'s: one Tag 1, the final item.
 ///
 /// # Errors
-/// In addition to the structural variants from [`decode`]:
-/// - [`KlvDecodeError::ChecksumMismatch`] when the declared Tag 1 value
-///   does not match the recomputed running-sum.
-/// - [`KlvDecodeError::UnexpectedUniversalLabel`] when the leading
-///   16-byte UL is not in the ST 0601 family.
+/// Every variant from [`decode`], checksum rule included, and
+/// [`KlvDecodeError::UnexpectedUniversalLabel`] when the leading 16-byte
+/// UL is not in the ST 0601 family.
 pub fn decode_strict(buf: &[u8]) -> Result<UasDatalinkLs, KlvDecodeError> {
     decode_inner(buf, true, true)
 }
@@ -288,7 +312,7 @@ fn decode_inner(
         ..UasDatalinkLs::default()
     };
     let mut record = fresh_record();
-    let mut declared_checksum: Option<(u16, usize)> = None; // (value, offset_into_buf_of_value)
+    let mut declared_checksum = DeclaredChecksum::default();
 
     // Last-duplicate-wins: only the last occurrence of a single-use tag is
     // applied. A packet almost never repeats one, so the first walk applies
@@ -304,7 +328,7 @@ fn decode_inner(
         None,
     )? {
         record = fresh_record();
-        declared_checksum = None;
+        declared_checksum = DeclaredChecksum::default();
         let last_ordinal = last_ordinals(body);
         walk_items(
             buf,
@@ -316,27 +340,52 @@ fn decode_inner(
         )?;
     }
 
+    // ST 0601.8-11: the checksum is the final item, so a set has one, and
+    // nothing after it escapes the sum. `decode_unchecked` skips these checks.
     if verify_checksum {
-        if let Some((expected, value_offset)) = declared_checksum {
-            let computed = crate::klv::checksum::checksum_running_sum_16(&buf[..value_offset]);
-            if computed != expected {
-                return Err(KlvDecodeError::ChecksumMismatch {
-                    expected,
-                    found: computed,
-                });
-            }
-        } else {
-            // ST 0601 mandates Tag 1; treat absence as a structural error in
-            // verifying modes. Permissive `decode_unchecked` skips this check.
-            return Err(KlvDecodeError::Truncated {
+        let Some((expected, value_offset)) = declared_checksum.last else {
+            return Err(KlvDecodeError::MissingChecksum {
                 offset: body_offset,
-                needed: 3,
-                have: 0,
+            });
+        };
+        if let Some(offset) = declared_checksum.second_at {
+            return Err(KlvDecodeError::DuplicateTag { tag: 1, offset });
+        }
+        if value_offset + 2 != body_offset + declared_len {
+            return Err(KlvDecodeError::Tag1NotLast);
+        }
+        let computed = crate::klv::checksum::checksum_running_sum_16(&buf[..value_offset]);
+        if computed != expected {
+            return Err(KlvDecodeError::ChecksumMismatch {
+                expected,
+                found: computed,
             });
         }
     }
 
     Ok(record)
+}
+
+/// The checksum items (Tag 1) a walk met: the last one's value and the
+/// buffer offset of that value, and the buffer offset where the second one's
+/// item starts when there is more than one.
+#[derive(Debug, Default)]
+pub(super) struct DeclaredChecksum {
+    last: Option<(u16, usize)>,
+    second_at: Option<usize>,
+}
+
+/// The offset in `body` where the item with wire index `index` starts: the
+/// end of the item before it. Only a repeated checksum needs it.
+#[cold]
+fn item_start(body: &[u8], index: usize) -> usize {
+    Iter::local_set(body)
+        .take(index)
+        .map_while(Result::ok)
+        .last()
+        .map_or(0, |f| {
+            (f.value.as_ptr() as usize - body.as_ptr() as usize) + f.value.len()
+        })
 }
 
 /// `true` for a tag the once-per-packet rule covers: a defined item other
@@ -362,7 +411,8 @@ pub(super) fn last_ordinals(body: &[u8]) -> [u32; 256] {
 }
 
 /// Walk the items of `body` into `record`, which the caller hands over
-/// fresh, and store the declared checksum when Tag 1 is present.
+/// fresh, and note every checksum item (Tag 1) in `declared_checksum`; a
+/// checksum that is not two bytes wide fails the walk in every mode.
 ///
 /// Without `last_ordinal` every item is applied in wire order and the walk
 /// returns `Ok(false)` at the first repeat of a single-use tag, leaving
@@ -374,7 +424,7 @@ pub(super) fn walk_items(
     body: &[u8],
     body_offset: usize,
     record: &mut UasDatalinkLs,
-    declared_checksum: &mut Option<(u16, usize)>,
+    declared_checksum: &mut DeclaredChecksum,
     last_ordinal: Option<&[u32; 256]>,
 ) -> Result<bool, KlvDecodeError> {
     // Wire-order item tags seen so far (Tag 102's "Refined Source List"
@@ -419,21 +469,23 @@ pub(super) fn walk_items(
         if f.tag == 1 {
             // Checksum: capture for later verification.
             // Byte offset of f.value within buf — used both to report a
-            // buffer-absolute `Truncated.offset` below and to bound the
-            // checksum coverage span. `f.value` is always a subslice of
+            // buffer-absolute `MalformedChecksum.offset` below and to bound
+            // the checksum coverage span. `f.value` is always a subslice of
             // `body`, itself a subslice of `buf`, so the subtraction is
             // in-range even when the value is empty.
             let value_offset_in_buf =
                 (f.value.as_ptr() as usize).wrapping_sub(buf.as_ptr() as usize);
             if f.value.len() != 2 {
-                return Err(KlvDecodeError::Truncated {
+                return Err(KlvDecodeError::MalformedChecksum {
                     offset: value_offset_in_buf,
-                    needed: 2,
-                    have: f.value.len(),
+                    got: f.value.len(),
                 });
             }
             let cksum = u16::from_be_bytes([f.value[0], f.value[1]]);
-            *declared_checksum = Some((cksum, value_offset_in_buf));
+            if declared_checksum.last.is_some() && declared_checksum.second_at.is_none() {
+                declared_checksum.second_at = Some(body_offset + item_start(body, i));
+            }
+            declared_checksum.last = Some((cksum, value_offset_in_buf));
             continue;
         }
         if let Err(field_err) = apply_tag(record, &f, &mut tags_seen) {

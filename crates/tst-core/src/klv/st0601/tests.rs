@@ -3671,10 +3671,10 @@ fn ls_item(tag: u32, value: &[u8]) -> Vec<u8> {
 /// floats): the single walk (`None` when it stops at a repeat) and the
 /// two-pass walk.
 fn both_walks(body: &[u8]) -> (Option<String>, String) {
-    use super::decode::{last_ordinals, walk_items};
+    use super::decode::{DeclaredChecksum, last_ordinals, walk_items};
     let walk = |last_ordinal: Option<&[u32; 256]>| {
         let mut record = UasDatalinkLs::default();
-        let mut checksum = None;
+        let mut checksum = DeclaredChecksum::default();
         let finished = walk_items(body, body, 0, &mut record, &mut checksum, last_ordinal);
         (finished, format!("{record:?} {checksum:?}"))
     };
@@ -3756,4 +3756,180 @@ proptest::proptest! {
             proptest::prop_assert!(tags.len() < n, "declined without a repeated single-use tag");
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// The verifying decodes: one checksum, the final item (ST 0601.8-11)
+// ---------------------------------------------------------------------------
+
+/// UL, a short-form outer length and `body` as given: no checksum is added.
+fn st0601_set(body: &[u8]) -> Vec<u8> {
+    assert!(body.len() < 128, "short-form outer length only");
+    let mut buf = UniversalLabel::ST_0601_LS.0.to_vec();
+    buf.push(body.len() as u8);
+    buf.extend_from_slice(body);
+    buf
+}
+
+/// Write the running sum of `buf[..value_offset]` at `value_offset`.
+fn put_checksum(buf: &mut [u8], value_offset: usize) {
+    let sum = checksum_running_sum_16(&buf[..value_offset]);
+    buf[value_offset..value_offset + 2].copy_from_slice(&sum.to_be_bytes());
+}
+
+/// Item 2 with a timestamp of 42 µs: ten bytes, at buffer offsets 17 to 26.
+const TIMESTAMP_ITEM: [u8; 10] = [0x02, 0x08, 0, 0, 0, 0, 0, 0, 0, 0x2A];
+
+/// Item 2, a correct checksum, then Item 13 (45°) that no checksum covers.
+fn mid_body_checksum_set() -> Vec<u8> {
+    let body = [
+        &TIMESTAMP_ITEM[..],
+        &[0x01, 0x02, 0, 0],
+        &[&[0x0D, 0x04][..], &enc_lat(45.0)].concat(),
+    ]
+    .concat();
+    let mut buf = st0601_set(&body);
+    put_checksum(&mut buf, 29);
+    buf
+}
+
+fn verifying_errors(buf: &[u8]) -> [String; 2] {
+    [
+        format!("{:?}", decode(buf).map(|_| ())),
+        format!("{:?}", decode_strict(buf).map(|_| ())),
+    ]
+}
+
+#[test]
+fn verifying_decode_rejects_item_after_checksum() {
+    let tag1_not_last = "Err(Tag1NotLast)".to_owned();
+    assert_eq!(
+        verifying_errors(&mid_body_checksum_set()),
+        [tag1_not_last.clone(), tag1_not_last.clone()]
+    );
+    // A zero-length item after the checksum is an item after it too.
+    let mut buf = st0601_set(&[&TIMESTAMP_ITEM[..], &[0x01, 0x02, 0, 0, 0x0D, 0x00]].concat());
+    put_checksum(&mut buf, 29);
+    assert_eq!(
+        verifying_errors(&buf),
+        [tag1_not_last.clone(), tag1_not_last]
+    );
+}
+
+#[test]
+fn verifying_decode_rejects_second_checksum() {
+    // The first checksum is wrong, the second right: the second item starts
+    // at 31 whether its length is short form (`01 02`) or long form
+    // (`01 81 02`), so the offset is the item's start, not its value's.
+    let duplicate = "Err(DuplicateTag { tag: 1, offset: 31 })".to_owned();
+    for (second, value_offset) in [
+        (&[0x01, 0x02, 0, 0][..], 33),
+        (&[0x01, 0x81, 0x02, 0, 0], 34),
+    ] {
+        let mut buf =
+            st0601_set(&[&TIMESTAMP_ITEM[..], &[0x01, 0x02, 0xAA, 0xAA], second].concat());
+        put_checksum(&mut buf, value_offset);
+        assert_eq!(
+            verifying_errors(&buf),
+            [duplicate.clone(), duplicate.clone()],
+            "second checksum {second:02X?}"
+        );
+    }
+    // Three checksums, each right for its own position: the second is reported.
+    let mut buf = st0601_set(&[&TIMESTAMP_ITEM[..], &[0x01, 0x02, 0, 0].repeat(3)].concat());
+    for value_offset in [29, 33, 37] {
+        put_checksum(&mut buf, value_offset);
+    }
+    assert_eq!(verifying_errors(&buf), [duplicate.clone(), duplicate]);
+}
+
+#[test]
+fn missing_checksum_is_missing_required_tag() {
+    for body in [&[][..], &TIMESTAMP_ITEM[..]] {
+        let buf = st0601_set(body);
+        for e in [decode(&buf).unwrap_err(), decode_strict(&buf).unwrap_err()] {
+            assert_eq!(
+                format!("{e:?}"),
+                "MissingChecksum { offset: 17 }",
+                "body {body:02X?}"
+            );
+            assert_eq!(
+                e.kind(),
+                crate::error::KlvDecodeErrorKind::MissingRequiredTag
+            );
+        }
+    }
+}
+
+#[test]
+fn wrong_width_checksum_is_malformed() {
+    // A one-byte and a three-byte checksum, and a one-byte checksum before
+    // a correct final one: the width is judged in every mode, at the first.
+    let mut before_a_good_one = st0601_set(&[0x01, 0x01, 0xAA, 0x01, 0x02, 0, 0]);
+    put_checksum(&mut before_a_good_one, 22);
+    for (buf, got) in [
+        (st0601_set(&[0x01, 0x01, 0xAA]), 1),
+        (st0601_set(&[0x01, 0x03, 0xAA, 0xBB, 0xCC]), 3),
+        (before_a_good_one, 1),
+    ] {
+        let want = format!("Err(MalformedChecksum {{ offset: 19, got: {got} }})");
+        for (mode, got) in [
+            ("decode", format!("{:?}", decode(&buf).map(|_| ()))),
+            (
+                "decode_strict",
+                format!("{:?}", decode_strict(&buf).map(|_| ())),
+            ),
+            (
+                "decode_unchecked",
+                format!("{:?}", decode_unchecked(&buf).map(|_| ())),
+            ),
+        ] {
+            assert_eq!(got, want, "{mode} {buf:02X?}");
+        }
+    }
+}
+
+#[test]
+fn decode_unchecked_still_accepts_a_mid_body_checksum() {
+    let rec = decode_unchecked(&mid_body_checksum_set()).unwrap();
+    assert_eq!(rec.timestamp_us, Some(42));
+    assert!((rec.sensor_lat_deg.unwrap() - 45.0).abs() < 1e-6);
+}
+
+#[test]
+fn a_declared_length_ending_inside_the_checksum_stays_truncated() {
+    // The buffer holds the whole checksum item; the declared length stops
+    // one or two bytes short of its end.
+    let mut whole = st0601_set(&[&TIMESTAMP_ITEM[..], &[0x01, 0x02, 0, 0]].concat());
+    put_checksum(&mut whole, 29);
+    for have in [1usize, 0] {
+        let mut buf = whole.clone();
+        buf[16] = (12 + have) as u8;
+        let want = format!("Err(Truncated {{ offset: 29, needed: 2, have: {have} }})");
+        for got in [
+            format!("{:?}", decode(&buf).map(|_| ())),
+            format!("{:?}", decode_strict(&buf).map(|_| ())),
+            format!("{:?}", decode_unchecked(&buf).map(|_| ())),
+        ] {
+            assert_eq!(got, want);
+        }
+    }
+}
+
+#[test]
+fn a_lone_checksum_and_bytes_past_the_declared_length_still_decode() {
+    let mut lone = st0601_set(&[0x01, 0x02, 0, 0]);
+    put_checksum(&mut lone, 19);
+    assert_eq!(
+        verifying_errors(&lone),
+        ["Ok(())".to_owned(), "Ok(())".to_owned()]
+    );
+    // Bytes after the declared outer length are not part of the set.
+    let mut trailing = st0601_set(&[&TIMESTAMP_ITEM[..], &[0x01, 0x02, 0, 0]].concat());
+    put_checksum(&mut trailing, 29);
+    trailing.extend_from_slice(&[0x0D, 0x00]);
+    assert_eq!(
+        verifying_errors(&trailing),
+        ["Ok(())".to_owned(), "Ok(())".to_owned()]
+    );
 }

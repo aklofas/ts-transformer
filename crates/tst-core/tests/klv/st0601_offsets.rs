@@ -95,9 +95,9 @@ fn permissive_reports_absolute_offset_for_truncated_value() {
 #[test]
 fn tag1_length_mismatch_reports_absolute_value_offset() {
     // Tag 1 (checksum) must carry exactly 2 value bytes. Here it declares
-    // len=1, so the mismatch is reported against the value's own start:
-    // body offset 2 (tag byte, length byte, then value), i.e.
-    // absolute offset = 17 (UL + outer length byte) + 2 = 19.
+    // len=1, so the item is a malformed checksum, reported against the
+    // value's own start: body offset 2 (tag byte, length byte, then value),
+    // i.e. absolute offset = 17 (UL + outer length byte) + 2 = 19.
     // Checked on both the verifying and the permissive entry points —
     // the Tag 1 arm runs before any checksum verification.
     let buf = st0601_plus(&[0x01, 0x01, 0xAA]);
@@ -109,14 +109,7 @@ fn tag1_length_mismatch_reports_absolute_value_offset() {
         ),
     ] {
         assert!(
-            matches!(
-                e,
-                KlvDecodeError::Truncated {
-                    offset: 19,
-                    needed: 2,
-                    have: 1
-                }
-            ),
+            matches!(e, KlvDecodeError::MalformedChecksum { offset: 19, got: 1 }),
             "{name} {e:?}"
         );
     }
