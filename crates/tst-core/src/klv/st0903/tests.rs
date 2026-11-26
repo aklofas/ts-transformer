@@ -1827,3 +1827,87 @@ fn strict_vmti_refuses_zero_where_the_range_starts_at_one() {
     };
     assert_strict_accepts(&ones, "ones");
 }
+
+#[test]
+fn strict_encode_refuses_a_repeated_unknown_tag() {
+    // ST 0903.5-98: an item once per Local Set instance, in a VTarget pack
+    // and at the top level alike; strict decode refuses the repeat.
+    let twice = |tag| {
+        vec![
+            OwnedRawField {
+                tag,
+                value: vec![0xAA],
+            },
+            OwnedRawField {
+                tag,
+                value: vec![0xBB],
+            },
+        ]
+    };
+    let mut in_pack = full_standalone_ls();
+    in_pack.targets[0].unknown = twice(127);
+    let mut at_top = full_standalone_ls();
+    at_top.unknown = twice(100);
+    for (ls, tag) in [(&in_pack, 127u32), (&at_top, 100)] {
+        for encode in strict_encoders() {
+            let err = encode(ls).unwrap_err();
+            assert!(
+                matches!(err, KlvEncodeError::InvalidFieldValue { tag: t, .. } if t == tag),
+                "tag {tag}: {err:?}"
+            );
+        }
+        let body = encode_to_vec(ls).expect("the ordinary encoder still writes it");
+        assert!(
+            decode_strict(&body).is_err(),
+            "tag {tag}: strict decode refuses it"
+        );
+    }
+    // Two different unknown tags are fine.
+    let mut two = full_standalone_ls();
+    two.targets[0].unknown = vec![
+        OwnedRawField {
+            tag: 126,
+            value: vec![0xAA],
+        },
+        OwnedRawField {
+            tag: 127,
+            value: vec![0xBB],
+        },
+    ];
+    for encode in strict_encoders() {
+        encode(&two).expect("distinct unknown tags");
+    }
+}
+
+#[test]
+fn vmti_encoders_name_the_item_of_an_out_of_range_imapb_value() {
+    // The shared IMAPB encoder knows no tag; the VMTI emitter names the
+    // item, so tag 0 means only the targetId.
+    type Set = fn(&mut VmtiLs);
+    let cases: [(u32, Set); 9] = [
+        (11, |ls| ls.horizontal_fov = Some(181.0)),
+        (12, |ls| ls.vertical_fov = Some(f64::NAN)),
+        (10, |ls| ls.targets[0].centroid_lat_offset = Some(20.0)),
+        (11, |ls| ls.targets[0].centroid_lon_offset = Some(-20.0)),
+        (12, |ls| ls.targets[0].centroid_hae = Some(19_001.0)),
+        (13, |ls| {
+            ls.targets[0].bbox_top_left_lat_offset = Some(f64::INFINITY)
+        }),
+        (14, |ls| ls.targets[0].bbox_top_left_lon_offset = Some(20.0)),
+        (15, |ls| {
+            ls.targets[0].bbox_bottom_right_lat_offset = Some(20.0)
+        }),
+        (16, |ls| {
+            ls.targets[0].bbox_bottom_right_lon_offset = Some(20.0)
+        }),
+    ];
+    for (tag, set) in cases {
+        let mut ls = full_standalone_ls();
+        set(&mut ls);
+        let err = encode_to_vec(&ls).unwrap_err();
+        assert!(
+            matches!(err, KlvEncodeError::OutOfRange { tag: t, .. } if t == tag),
+            "tag {tag}: {err:?}"
+        );
+    }
+}

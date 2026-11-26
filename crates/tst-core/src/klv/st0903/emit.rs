@@ -47,6 +47,22 @@ pub(super) fn emit_imapb_n(
     length: usize,
 ) -> Result<(), KlvEncodeError> {
     let mut buf = vec![0u8; length];
-    encode_imapb(&ImapbParams { min, max, length }, value, &mut buf)?;
+    // `encode_imapb` knows no tag: a value out of range names this item.
+    encode_imapb(&ImapbParams { min, max, length }, value, &mut buf).map_err(|e| match e {
+        KlvEncodeError::OutOfRange {
+            value,
+            min,
+            max,
+            hint,
+            ..
+        } => KlvEncodeError::OutOfRange {
+            tag: u32::from(tag),
+            value,
+            min,
+            max,
+            hint,
+        },
+        e => e,
+    })?;
     emit_tlv(out, tag, &buf)
 }

@@ -354,6 +354,12 @@ pub fn encoded_len(ls: &VmtiLs) -> usize {
 /// Active-Moving or Active-Stopped target needs a centroid, a row and
 /// column, or both bounding-box corners (ST 0903.6-127, -128).
 ///
+/// **Repeats:** an unknown tag at most once at the top level and in each
+/// pack (ST 0903.5-98), as `decode_strict` reads them.
+///
+/// [`super::decode_strict`] refuses the same records; for a record with
+/// several defects the two may name different ones.
+///
 /// Parent-relative offset tags (10/11/13/14/15/16) are **allowed** in
 /// embedded mode — they reference the parent ST 0601 telemetry frame. Use
 /// [`encode_standalone_strict_compliance`] for standalone carriage which
@@ -450,6 +456,13 @@ fn refuse(violation: Option<rules::Violation>) -> Result<(), KlvEncodeError> {
 fn validate_vtargets(ls: &VmtiLs) -> Result<(), KlvEncodeError> {
     use crate::klv::st0903::vtarget_pack::{vtarget_u8_in_range, vtarget_u8_range};
 
+    // ST 0903.5-98: an item once per Local Set instance; `decode_strict`
+    // refuses a repeated unknown tag too.
+    let mut top = alloc::collections::BTreeSet::new();
+    if let Some(f) = ls.unknown.iter().find(|f| !top.insert(f.tag)) {
+        return Err(repeated(f.tag));
+    }
+
     // The two name caps count characters (V32, V128), as `decode_strict`
     // does.
     if ls
@@ -490,6 +503,17 @@ fn validate_vtargets(ls: &VmtiLs) -> Result<(), KlvEncodeError> {
                 target_id: pack.target_id,
             });
         }
+        // A pack's tags are one byte; one above 255 is the encoder's
+        // `TagNotOneByte`.
+        let mut seen = [false; 256];
+        if let Some(f) = pack.unknown.iter().find(|f| {
+            usize::try_from(f.tag)
+                .ok()
+                .and_then(|i| seen.get_mut(i))
+                .is_some_and(|s| core::mem::replace(s, true))
+        }) {
+            return Err(repeated(f.tag));
+        }
         for (tag, v) in [
             (4, pack.priority),
             (5, pack.confidence_level),
@@ -516,6 +540,14 @@ fn validate_vtargets(ls: &VmtiLs) -> Result<(), KlvEncodeError> {
         }
     }
     Ok(())
+}
+
+/// The strict encoders' refusal of a repeated item (ST 0903.5-98).
+fn repeated(tag: u32) -> KlvEncodeError {
+    KlvEncodeError::InvalidFieldValue {
+        tag,
+        reason: "an item appears twice in one Local Set (ST 0903.5-98)",
+    }
 }
 
 /// Validate constraints that apply only to STANDALONE VMTI carriage.
