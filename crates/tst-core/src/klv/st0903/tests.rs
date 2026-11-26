@@ -194,22 +194,15 @@ fn decode_pass_through_tags() {
 
 #[test]
 fn decode_zero_length_imapb_does_not_panic() {
-    // Regression: Tag 11 with BER length 0 must surface
-    // InvalidLength in field_errors, not panic. Without the
-    // hardcoded `length=2` guard, `decode_imapb` calls
-    // `read_signed_be(&[])` which underflows `n*8-1` at n==0.
+    // Regression: Tag 11 with BER length 0 must not reach `decode_imapb`
+    // (`read_signed_be(&[])` underflows `n*8-1` at n==0). A zero-length
+    // item means "unknown" (ST 0107.4-17): the field stays unset and no
+    // error is recorded.
     let mut bytes = minimal_ls_bytes();
     bytes.extend_from_slice(&[11, 0]); // tag 11, length 0
     let ls = decode(&bytes).unwrap();
     assert!(ls.horizontal_fov.is_none());
-    assert!(ls.field_errors.iter().any(|e| matches!(
-        e,
-        KlvFieldError::InvalidLength {
-            tag: 11,
-            expected: 2,
-            got: 0
-        }
-    )));
+    assert!(ls.field_errors.is_empty(), "{:?}", ls.field_errors);
 }
 
 #[test]
@@ -322,18 +315,26 @@ fn strict_decode_unknown_tag_preserved() {
 
 #[test]
 fn strict_decode_zero_length_imapb_rejected() {
-    // Strict mode must surface IMAPB-length errors as Err, not
-    // accept them silently. Lenient surfaces in field_errors.
+    // A zero-length item means "unknown" (ST 0107.4-17): strict mode
+    // accepts it for an optional item and reads a required one as
+    // missing. A wrong non-zero IMAPB length is still refused.
     let mut bytes = minimal_strict_ls_bytes();
     bytes.extend_from_slice(&[11, 0]); // tag 11, BER length 0
-    let err = decode_strict(&bytes).unwrap_err();
+    let ls = decode_strict(&bytes).unwrap();
+    assert!(ls.horizontal_fov.is_none());
     assert!(matches!(
-        err,
-        KlvDecodeError::FieldError(KlvFieldError::InvalidLength {
+        decode_strict(&[4, 1, 6, 6, 0, 11, 2, 0x2D, 0x00]),
+        Err(KlvDecodeError::St0903MissingRequiredTag { tag: 6 })
+    ));
+    let mut wrong = minimal_strict_ls_bytes();
+    wrong.extend_from_slice(&[11, 1, 0x2D]);
+    assert!(matches!(
+        decode_strict(&wrong),
+        Err(KlvDecodeError::FieldError(KlvFieldError::InvalidLength {
             tag: 11,
             expected: 2,
-            got: 0
-        })
+            got: 1
+        }))
     ));
 }
 
@@ -1242,4 +1243,87 @@ fn strict_encode_mirrors_the_vtarget_u8_ranges() {
             encode(&with(tag, good)).unwrap_or_else(|e| panic!("tag {tag} = {good}: {e:?}"));
         }
     }
+}
+
+// ------------------------------------------------------------------
+// Zero-length items and the empty string (ST 0107.4-17, ST 0107.5
+// §6.3.3.2).
+// ------------------------------------------------------------------
+
+#[test]
+fn vmti_zero_length_items_are_unknown() {
+    // `03 00` and `08 00`: a zero-length item says "value unknown".
+    let bytes = [0x03, 0x00, 0x04, 0x01, 0x06, 0x06, 0x01, 0x00, 0x08, 0x00];
+    for ls in [decode(&bytes).unwrap(), decode_strict(&bytes).unwrap()] {
+        assert_eq!(ls.vmti_system_name, None);
+        assert_eq!(ls.frame_width, None);
+        assert_eq!(ls.version_number, Some(6));
+        assert!(ls.field_errors.is_empty(), "{:?}", ls.field_errors);
+    }
+}
+
+#[test]
+fn vmti_one_nul_string_is_empty() {
+    let mut bytes = minimal_strict_ls_bytes();
+    bytes.extend_from_slice(&[0x03, 0x01, 0x00, 0x0A, 0x01, 0x00]);
+    for ls in [decode(&bytes).unwrap(), decode_strict(&bytes).unwrap()] {
+        assert_eq!(ls.vmti_system_name.as_deref(), Some(""));
+        assert_eq!(ls.source_sensor.as_deref(), Some(""));
+    }
+}
+
+#[test]
+fn vmti_empty_string_is_written_as_one_nul() {
+    let ls = VmtiLs {
+        vmti_system_name: Some(String::new()),
+        source_sensor: Some(String::new()),
+        ..Default::default()
+    };
+    let bytes = encode_to_vec(&ls).unwrap();
+    assert_eq!(bytes, [0x03, 0x01, 0x00, 0x0A, 0x01, 0x00]);
+    assert_eq!(encoded_len(&ls), bytes.len());
+    assert_eq!(decode(&bytes).unwrap(), ls);
+}
+
+#[test]
+fn vmti_strict_zero_length_required_item_is_missing() {
+    assert!(matches!(
+        decode_strict(&[0x04, 0x00, 0x06, 0x01, 0x00]),
+        Err(KlvDecodeError::St0903MissingRequiredTag { tag: 4 })
+    ));
+    assert!(matches!(
+        decode_strict(&[0x04, 0x01, 0x06, 0x06, 0x00]),
+        Err(KlvDecodeError::St0903MissingRequiredTag { tag: 6 })
+    ));
+}
+
+#[test]
+fn a_zero_length_duplicate_after_a_value_unsets_it() {
+    // The last occurrence of a tag decides, a zero-length one too.
+    let bytes = [
+        0x03, 0x02, b'a', b'b', 0x08, 0x01, 0x05, 0x03, 0x00, 0x08, 0x00,
+    ];
+    let ls = decode(&bytes).unwrap();
+    assert_eq!(ls.vmti_system_name, None);
+    assert_eq!(ls.frame_width, None);
+    assert!(ls.field_errors.is_empty(), "{:?}", ls.field_errors);
+    assert!(matches!(
+        decode_strict(&bytes),
+        Err(KlvDecodeError::DuplicateTag { tag: 3, offset: 7 })
+    ));
+}
+
+#[test]
+fn a_zero_length_duplicate_before_a_value_keeps_it() {
+    let bytes = [
+        0x03, 0x00, 0x08, 0x00, 0x03, 0x02, b'a', b'b', 0x08, 0x01, 0x05,
+    ];
+    let ls = decode(&bytes).unwrap();
+    assert_eq!(ls.vmti_system_name.as_deref(), Some("ab"));
+    assert_eq!(ls.frame_width, Some(5));
+    assert!(ls.field_errors.is_empty(), "{:?}", ls.field_errors);
+    assert!(matches!(
+        decode_strict(&bytes),
+        Err(KlvDecodeError::DuplicateTag { tag: 3, offset: 4 })
+    ));
 }

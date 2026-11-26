@@ -55,7 +55,7 @@ pub fn encode(ls: &VmtiLs, out: &mut Vec<u8>) -> Result<(), KlvEncodeError> {
         emit_tlv(out, 2, &v.to_be_bytes())?;
     }
     if let Some(ref s) = ls.vmti_system_name {
-        emit_tlv(out, 3, s.as_bytes())?;
+        emit_tlv(out, 3, string_value(s))?;
     }
     if let Some(v) = ls.version_number {
         emit_var(out, 4, v as u32)?;
@@ -73,7 +73,7 @@ pub fn encode(ls: &VmtiLs, out: &mut Vec<u8>) -> Result<(), KlvEncodeError> {
         emit_v3(out, 9, v)?;
     }
     if let Some(ref s) = ls.source_sensor {
-        emit_tlv(out, 10, s.as_bytes())?;
+        emit_tlv(out, 10, string_value(s))?;
     }
     // Top-level FOV tags use IMAPB(0, 180, 2) per §10.1.11 + §10.1.12.
     if let Some(v) = ls.horizontal_fov {
@@ -127,6 +127,12 @@ pub fn encode(ls: &VmtiLs, out: &mut Vec<u8>) -> Result<(), KlvEncodeError> {
     }
 
     Ok(())
+}
+
+/// The value bytes of a string item. The empty string is one NUL (ST
+/// 0107.5 §6.3.3.2): a zero-length item means "unknown" (ST 0107.4-17).
+fn string_value(s: &str) -> &[u8] {
+    if s.is_empty() { &[0] } else { s.as_bytes() }
 }
 
 /// Items 5, 6, 8 and 9 are V3 (ST 0903.6 §10.1): a value above 2^24 − 1
@@ -260,7 +266,7 @@ pub fn encoded_len(ls: &VmtiLs) -> usize {
         total += tlv_len(8);
     }
     if let Some(ref s) = ls.vmti_system_name {
-        total += tlv_len(s.len());
+        total += tlv_len(string_value(s).len());
     }
     if let Some(v) = ls.version_number {
         total += tlv_len(var_uint_min_len(v as u64));
@@ -278,7 +284,7 @@ pub fn encoded_len(ls: &VmtiLs) -> usize {
         total += tlv_len(var_uint_min_len(v as u64));
     }
     if let Some(ref s) = ls.source_sensor {
-        total += tlv_len(s.len());
+        total += tlv_len(string_value(s).len());
     }
     if ls.horizontal_fov.is_some() {
         total += tlv_len(2);

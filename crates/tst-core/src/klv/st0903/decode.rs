@@ -6,7 +6,7 @@ use crate::klv::pack::OwnedRawField;
 use crate::klv::st0903::model::VmtiLs;
 use crate::klv::st0903::tags::{Encoding, TAGS, lookup};
 use crate::klv::st0903::vtarget_pack;
-use alloc::string::ToString;
+use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
 /// Lenient decode of a VMTI Local Set body per ST 0903.6 §10.1.
@@ -16,7 +16,9 @@ use alloc::vec::Vec;
 /// bytes are accumulated in [`VmtiLs::field_errors`] without aborting the
 /// walk. Tags not in the §10.1 schema (unknown / deprecated, e.g. Tag 7)
 /// are preserved in [`VmtiLs::unknown`] per ST 0107.5 §6 future-proof skip
-/// rule.
+/// rule. A zero-length item means "unknown" (ST 0107.4-17): its field
+/// is left unset, with no field error; one NUL is the empty string
+/// (ST 0107.5 §6.3.3.2).
 ///
 /// Tags are walked as BER-OID per ST 0107.5 §6.3.1 — defined tags 1..=103
 /// fit in one byte (`write_ber_oid(N) == [N]` for `N ≤ 127`), but a future
@@ -82,6 +84,14 @@ pub fn decode(bytes: &[u8]) -> Result<VmtiLs, KlvDecodeError> {
             });
             continue;
         };
+
+        // ST 0107.4-17: a zero-length item means "value unknown". It is
+        // an occurrence of its tag like any other, so as the last one it
+        // leaves the field unset.
+        if value.is_empty() {
+            clear_item(&mut ls, tag);
+            continue;
+        }
 
         match spec.encoding {
             Encoding::U16Be => {
@@ -173,7 +183,7 @@ pub fn decode(bytes: &[u8]) -> Result<VmtiLs, KlvDecodeError> {
                         got: s.chars().count(),
                     });
                 }
-                let owned = s.to_string();
+                let owned = string_item(s);
                 match tag {
                     3 => ls.vmti_system_name = Some(owned),
                     10 => ls.source_sensor = Some(owned),
@@ -251,6 +261,38 @@ pub fn decode(bytes: &[u8]) -> Result<VmtiLs, KlvDecodeError> {
     Ok(ls)
 }
 
+/// The value of a string item: one NUL is the empty string (ST 0107.5
+/// §6.3.3.2).
+fn string_item(s: &str) -> String {
+    if s == "\0" {
+        String::new()
+    } else {
+        s.to_string()
+    }
+}
+
+/// Unset the field of the typed top-level item `tag`.
+fn clear_item(ls: &mut VmtiLs, tag: u8) {
+    match tag {
+        1 => ls.checksum = None,
+        2 => ls.precision_time_stamp = None,
+        3 => ls.vmti_system_name = None,
+        4 => ls.version_number = None,
+        5 => ls.total_targets_in_frame = None,
+        6 => ls.num_targets_reported = None,
+        8 => ls.frame_width = None,
+        9 => ls.frame_height = None,
+        10 => ls.source_sensor = None,
+        11 => ls.horizontal_fov = None,
+        12 => ls.vertical_fov = None,
+        13 => ls.miis_id = None,
+        101 => ls.targets.clear(),
+        102 => ls.algorithm_series = None,
+        103 => ls.ontology_series = None,
+        _ => unreachable!("clear_item missing typed tag {tag}"),
+    }
+}
+
 /// Walk a VTargetSeries (Tag 101) payload, dispatching each
 /// BER-length-prefixed pack to [`vtarget_pack::read_pack`]. Pack-level
 /// failures are recorded in `field_errors` as `OutOfRange` placeholders
@@ -307,9 +349,11 @@ fn decode_vtarget_series(
 /// Rejects spec-violating input rather than recovering: missing
 /// unconditionally-required tags (Tags 4 and 6 per ST 0903.5-99 +
 /// ST 0903.4-19), duplicate tags, malformed UTF-8, IMAPB length
-/// mismatches, VarUint length-zero / overflow, U16Be / U64Be wrong
-/// width, BER framing failures, and pack-level malformations
+/// mismatches, VarUint overflow, U16Be / U64Be wrong width, BER framing failures, and pack-level malformations
 /// (routed via [`KlvDecodeError::St0903InvalidVTargetPack`]).
+///
+/// A zero-length item means "unknown" (ST 0107.4-17): accepted for an
+/// optional item, and a required item sent so is missing.
 ///
 /// Unknown tags are still preserved in [`VmtiLs::unknown`] per
 /// ST 0107.5 §6 future-proof skip rule (strict mode is about
@@ -353,6 +397,9 @@ pub fn decode_strict(bytes: &[u8]) -> Result<VmtiLs, KlvDecodeError> {
     // but tracks all tag IDs in a `Vec<u32>`. ST 0903's strict dispatch
     // is single-pass so we keep both checks inline.
     let mut seen_u8 = [false; 256];
+    // An item is present when it is on the wire with a value; `seen_u8`
+    // also counts a zero-length one, for the duplicate check.
+    let mut present = [false; 256];
     let mut seen_other: hashbrown::HashSet<u32> = hashbrown::HashSet::new();
     let mut cursor = bytes;
     // `offset` tracks the start of the current item in `bytes` so
@@ -412,6 +459,14 @@ pub fn decode_strict(bytes: &[u8]) -> Result<VmtiLs, KlvDecodeError> {
             });
             continue;
         };
+
+        // ST 0107.4-17: a zero-length item means "value unknown": the
+        // field stays unset and the item is not present for the
+        // required-item check.
+        if value.is_empty() {
+            continue;
+        }
+        present[tag as usize] = true;
 
         match spec.encoding {
             Encoding::U16Be => {
@@ -475,7 +530,7 @@ pub fn decode_strict(bytes: &[u8]) -> Result<VmtiLs, KlvDecodeError> {
                         got: s.chars().count(),
                     }));
                 }
-                let owned = s.to_string();
+                let owned = string_item(s);
                 match tag {
                     3 => ls.vmti_system_name = Some(owned),
                     10 => ls.source_sensor = Some(owned),
@@ -532,9 +587,8 @@ pub fn decode_strict(bytes: &[u8]) -> Result<VmtiLs, KlvDecodeError> {
     }
 
     // Required-tag validation: required = {4, 6}.
-    // Both are typed (u8) tags so `seen_u8` is the right index.
     for spec in TAGS {
-        if spec.required && !seen_u8[spec.id as usize] {
+        if spec.required && !present[spec.id as usize] {
             return Err(KlvDecodeError::St0903MissingRequiredTag { tag: spec.id });
         }
     }
