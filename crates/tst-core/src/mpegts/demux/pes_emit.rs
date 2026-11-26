@@ -1113,8 +1113,8 @@ impl super::demuxer::Demuxer {
                 //
                 // §6.2 Table 3 binds DVB-subtitle data_identifier to exactly
                 // 0x20. The strip helper distinguishes Conformant (== 0x20),
-                // NonConformantDataId (in the legacy permissive range
-                // 0x20..=0x3F | 0x70..=0x7F but != 0x20), and Malformed
+                // NonConformantDataId (in this demuxer's tolerance window
+                // 0x20..=0x3F | 0x70..=0x7F, but != 0x20), and Malformed
                 // (anything else). For NonConformantDataId, lenient mode
                 // strips + emits the sample alongside the
                 // DvbSubDataIdentifier issue; strict mode suppresses the

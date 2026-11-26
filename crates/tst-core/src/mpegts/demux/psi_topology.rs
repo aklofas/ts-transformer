@@ -1806,7 +1806,7 @@ mod tests {
 
     // Same invariant through the other door: the program leaves the PAT.
     #[test]
-    fn pat_removing_a_program_leaves_no_entry_for_its_pids() {
+    fn pat_removing_a_program_leaves_only_its_pids_counters() {
         let pat_pkt = wrap_section_in_ts_packet(0x0000, &build_pat_section(1, 0, &[(1, 0x1000)]));
         let pmt_v0 = build_pmt_section(1, 0x0101, 0, &[(0x1B, 0x0101)]);
         let mut demux = Demuxer::new();

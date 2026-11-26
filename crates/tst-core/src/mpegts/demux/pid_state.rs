@@ -10,9 +10,10 @@
 //!
 //! An AAC-LATM PID's LOAS framing state is one `LoasFraming`
 //! (`codec::aac::latm`): the record position while it is known, or the
-//! resync that looks for it (at most 16 syncword candidates and a count of
-//! the payload bytes since the position was lost), boxed and present only
-//! while the position is unknown. A loss (a continuity gap, a damaged or
+//! resync that looks for it (at most 16 syncword candidates, a count of the
+//! payload bytes since the position was lost, and whether the stretch was
+//! flagged and whether a provisional position failed in it), boxed and
+//! present only while the position is unknown. A loss (a continuity gap, a damaged or
 //! dropped PES, a signalled discontinuity), `reset_sync`, a retirement and a
 //! change of stream type drop it, so the resync starts again from nothing.
 //!

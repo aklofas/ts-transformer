@@ -24,10 +24,9 @@ pub enum DemuxEvent {
     /// the same. A program that the PAT drops and lists again or moves to
     /// another PMT PID, and every program after a new `transport_stream_id`,
     /// starts again from its first PMT; a PAT emits no event of its own.
-    /// Each PID the change
-    /// takes out of a program, or whose stream type it changes, hands out
-    /// the PES it held before this event. Carries declared linkage info with
-    /// provenance.
+    /// Each PID the change takes out of a program, or that it makes another
+    /// kind of stream, hands out the PES it held before this event. Carries
+    /// declared linkage info with provenance.
     ProgramMap(ProgramMap),
 
     /// Generic elementary-stream sample. Covers video today; reserves
@@ -465,10 +464,11 @@ pub enum NonConformantIssue {
     ///   counts); the other two kinds are as under `Off`.
     /// - `Full`: damage and a header that does not parse make the call
     ///   return [`DemuxError::MalformedPes`](crate::error::DemuxError::MalformedPes),
-    ///   and no event is queued for it; a damaged PES's events are dropped
-    ///   and its timing kept. A subtitle data field of the wrong shape is
-    ///   queued as this event, its sample is dropped and the call returns
-    ///   `DemuxError::StrictRejection`. Both errors are resumable.
+    ///   and no event is queued for that one (a second `MalformedPes` of
+    ///   the same packet is queued as this event); a damaged PES's events
+    ///   are dropped and its timing kept. A subtitle data field of the wrong
+    ///   shape is queued as this event, its sample is dropped and the call
+    ///   returns `DemuxError::StrictRejection`. Both errors are resumable.
     ///
     /// At [`Demuxer::flush`](crate::mpegts::demux::Demuxer::flush), and for
     /// the PES a PID that leaves a program hands out, damage is queued as
@@ -576,7 +576,8 @@ pub enum NonConformantIssue {
     /// DVB-subtitle PES_data_field carries a `data_identifier` byte other
     /// than `0x20`. Per ETSI EN 300 743 §6.2 Table 3 the binding for
     /// DVB subtitling streams is exactly `0x20`, the only conformant value.
-    /// This issue is raised for a byte in `0x20..=0x3F | 0x70..=0x7F`, a
+    /// This issue is raised for a byte other than `0x20` in
+    /// `0x20..=0x3F | 0x70..=0x7F`, a
     /// tolerance window of this demuxer for envelopes whose shape is
     /// otherwise right; no clause of EN 300 743 gives those ranges. A byte
     /// outside them makes the envelope malformed: [`Self::MalformedPes`] is
