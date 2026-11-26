@@ -5709,3 +5709,117 @@ fn item_2_stays_first_and_strict_output_passes_the_compliance_decode() {
         "{with_item_2} {naming_item_2} {accepted}"
     );
 }
+
+/// One signal has one place: an overflow signal is written at its item's
+/// place whether its field is unset or holds the range end (what a decode
+/// of the signal leaves); any other special follows the typed items.
+#[test]
+fn an_overflow_signal_of_an_unset_field_is_written_at_its_items_place() {
+    use crate::klv::imapb::ImapbSpecial as Sp;
+    // Item 109 (Range To Recovery Location) is written before Item 113.
+    let rec = |special| UasDatalinkLs {
+        altitude_agl_m: Some(100.0),
+        imapb_specials: vec![(109, special)],
+        ..timestamped()
+    };
+    for (special, first_byte) in [(Sp::BelowMin, 0xE0), (Sp::AboveMax, 0xE1)] {
+        let out = encode_to_vec(&rec(special)).unwrap();
+        assert_eq!(wire_tags(&out), [2, 65, 109, 113, 1], "{special:?}");
+        assert_eq!(items_with_tag(&out, 109), [vec![first_byte, 0, 0]]);
+        assert_eq!(encoded_len(&rec(special)), out.len());
+        // The decoded record holds the range end and the entry: the same bytes.
+        let back = decode(&out).unwrap();
+        assert!(back.range_to_recovery_km.is_some(), "{special:?}");
+        assert_eq!(encode_to_vec(&back).unwrap(), out, "{special:?}");
+    }
+    let out = encode_to_vec(&rec(Sp::PositiveInfinity)).unwrap();
+    assert_eq!(wire_tags(&out), [2, 65, 113, 109, 1]);
+    assert_eq!(encode_to_vec(&decode(&out).unwrap()).unwrap(), out);
+}
+
+/// Over generated records of every state the rule for an item's bytes
+/// knows (an IMAPB or signed linear field unset, inside its range or at
+/// either end, with up to three sentinel and special entries, beside other
+/// items and a pack that names them): the encoder's output decodes to a
+/// record that encodes to the same bytes.
+#[test]
+fn a_reencode_of_the_encoders_own_output_is_byte_identical() {
+    use crate::klv::imapb::ImapbSpecial as Sp;
+    let specials = [
+        Sp::BelowMin,
+        Sp::AboveMax,
+        Sp::BelowMin,
+        Sp::AboveMax,
+        Sp::PositiveInfinity,
+        Sp::NegativeQuietNaN { nan_id: 1 },
+        Sp::UserDefined { signal: 5 },
+    ];
+    let rows: Vec<&TagSpec> = TAGS
+        .iter()
+        .filter(|s| {
+            matches!(s.encoding, Encoding::Imapb { .. }) || s.range.is_some_and(|r| r.signed)
+        })
+        .collect();
+    let mut g = Seeded(0x1201_0601_1201_0601);
+    let (mut unset_overflow, mut at_end, mut with_pack) = (0, 0, 0);
+    for case in 0..4000 {
+        let mut rec = timestamped();
+        let mut signalled = Vec::new();
+        for _ in 0..1 + g.below(4) {
+            let spec = rows[g.below(rows.len())];
+            let tag = u32::from(spec.id);
+            let (min, max) = match spec.encoding {
+                Encoding::Imapb { min, max, .. } => (min, max),
+                _ => spec.range.map(|r| (r.min, r.max)).unwrap(),
+            };
+            match g.below(4) {
+                0 => {}
+                1 => spec.set_f64(&mut rec, min + (max - min) / 4.0),
+                2 => spec.set_f64(&mut rec, min),
+                _ => spec.set_f64(&mut rec, max),
+            }
+            for _ in 0..g.below(4) {
+                if g.below(4) == 0 {
+                    rec.sentinel_tags.push(tag);
+                } else {
+                    rec.imapb_specials
+                        .push((tag, specials[g.below(specials.len())]));
+                }
+            }
+            signalled.push(tag);
+        }
+        if g.below(3) == 0 {
+            // A pack that refines the items above, if the encoder writes them.
+            signalled.dedup();
+            rec.sdcc_flps.push(SdccFlpField {
+                bytes: sdcc_pack(signalled.len() as u8),
+                preceding_tags: signalled,
+            });
+            with_pack += 1;
+        }
+        for &(tag, special) in &rec.imapb_specials {
+            let spec = rows.iter().find(|s| u32::from(s.id) == tag).unwrap();
+            let last = rec.imapb_specials.iter().rev().find(|e| e.0 == tag);
+            if last == Some(&(tag, special)) && matches!(special, Sp::BelowMin | Sp::AboveMax) {
+                match spec.get.and_then(|get| get(&rec)) {
+                    None => unset_overflow += 1,
+                    Some(_) => at_end += 1,
+                }
+            }
+        }
+        let out = encode_to_vec(&rec).unwrap();
+        let back = decode(&out).unwrap();
+        assert_eq!(
+            wire_tags(&encode_to_vec(&back).unwrap()),
+            wire_tags(&out),
+            "case {case}: {:?} {:?}",
+            rec.sentinel_tags,
+            rec.imapb_specials
+        );
+        assert_eq!(encode_to_vec(&back).unwrap(), out, "case {case}");
+    }
+    assert!(
+        unset_overflow > 300 && at_end > 300 && with_pack > 300,
+        "{unset_overflow} {at_end} {with_pack}"
+    );
+}

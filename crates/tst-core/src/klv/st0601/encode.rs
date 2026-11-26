@@ -265,6 +265,18 @@ pub(super) enum Signal {
     Special(ImapbSpecial),
 }
 
+impl Signal {
+    /// `true` for the two overflow signals, `BelowMin` and `AboveMax`: the
+    /// ones a decode reads as the range end and an encode writes at the
+    /// item's place.
+    fn is_overflow(self) -> bool {
+        matches!(
+            self,
+            Signal::Special(ImapbSpecial::BelowMin | ImapbSpecial::AboveMax)
+        )
+    }
+}
+
 /// Which bytes the item `spec` gets from `record`: the one rule sizing,
 /// writing and every other writer of ST 0601 items follow.
 ///
@@ -283,7 +295,10 @@ pub(super) enum Signal {
 /// minimum while the tag's last special is `BelowMin`, or its maximum while
 /// the last is `AboveMax` (what a decode of that signal leaves), is written
 /// as that signal, at the item's place among the typed fields; a value the
-/// caller changed is written as the value.
+/// caller changed is written as the value. An unset field's `BelowMin` or
+/// `AboveMax` is written at the item's place too: one signal has one place,
+/// whichever of the two states the record is in. Every other replayed
+/// signal follows the typed fields.
 pub(super) fn resolve(record: &UasDatalinkLs, spec: &TagSpec) -> Option<ItemSource> {
     if let Some(v) = spec.get.and_then(|get| get(record)) {
         return Some(match replayed_overflow_signal(record, spec, &v) {
@@ -425,7 +440,9 @@ fn signal_bytes(spec: &TagSpec, signal: Signal) -> Result<Vec<u8>, KlvEncodeErro
 /// [`resolve`] does not replay (its field holds a value that wins, or the
 /// entry is of the wrong kind for its row) is skipped, and so is an
 /// overflow signal that stands for its populated field: the typed pass
-/// writes that one at the item's place.
+/// writes that one at the item's place. The overflow signal of an unset
+/// field is visited (it is sized here) and written at the item's place
+/// too, by [`insert_unset_overflow_signals`].
 fn each_replayed_signal(record: &UasDatalinkLs, mut visit: impl FnMut(&TagSpec, Signal)) {
     for &tag in last_per_tag(&record.sentinel_tags, |&t| t).iter() {
         if let Some(spec) = u8::try_from(tag).ok().and_then(lookup_tag)
@@ -834,11 +851,47 @@ fn encode_value_or_overflow_signal(
     }
 }
 
+/// Write each overflow signal `record` replays for an unset field
+/// ([`resolve`]) into `typed`, the single-instance items just written in
+/// ascending tag order, at its item's place: before the first item of a
+/// higher tag. That is where the signal of a field that holds the range end
+/// is written, so a decode and re-encode leaves the item where it is. Out
+/// of line and after the fact, so the per-row loop of a record without
+/// specials stays as it is.
+#[inline(never)]
+fn insert_unset_overflow_signals(
+    record: &UasDatalinkLs,
+    typed: &mut Vec<u8>,
+) -> Result<(), KlvEncodeError> {
+    let mut result = Ok(());
+    each_replayed_signal(record, |spec, signal| {
+        if result.is_err() || !signal.is_overflow() {
+            return;
+        }
+        let tag = u32::from(spec.id);
+        // One item: the tag, a length byte and the row's few value bytes.
+        let mut item = Vec::new();
+        result =
+            signal_bytes(spec, signal).and_then(|bytes| emit_ber_oid_tlv(tag, &bytes, &mut item));
+        // The end of the last item whose tag is below this one.
+        let at = Iter::local_set(typed)
+            .map(|f| f.expect("the encoder writes a valid body"))
+            .take_while(|f| f.tag < tag)
+            .last()
+            .map_or(0, |f| {
+                (f.value.as_ptr() as usize - typed.as_ptr() as usize) + f.value.len()
+            });
+        typed.splice(at..at, item);
+    });
+    result
+}
+
 fn write_typed_fields(
     record: &UasDatalinkLs,
     opts: &EncodeConfig,
     body: &mut Vec<u8>,
 ) -> Result<(), KlvEncodeError> {
+    debug_assert!(body.is_empty(), "the typed fields open the body");
     for spec in TAGS {
         if spec.id == 1 {
             continue;
@@ -854,6 +907,9 @@ fn write_typed_fields(
         {
             emit_ber_oid_tlv(spec.id as u32, &value, body)?;
         }
+    }
+    if !record.imapb_specials.is_empty() {
+        insert_unset_overflow_signals(record, body)?;
     }
     // Tag 102 (SDCC-FLP) is MULTI-INSTANCE — one TLV per
     // `record.sdcc_flps` entry, emitted verbatim (the raw captured
@@ -889,8 +945,9 @@ fn replayed_signals_len(record: &UasDatalinkLs) -> usize {
     len
 }
 
-/// Write each signal [`each_replayed_signal`] visits, after the typed
-/// fields: one TLV per tag, at the shortest width that holds it.
+/// Write each signal [`each_replayed_signal`] visits but the overflow
+/// signals, after the typed fields: one TLV per tag, at the shortest width
+/// that holds it.
 fn write_replayed_signals(
     record: &UasDatalinkLs,
     body: &mut Vec<u8>,
@@ -900,7 +957,8 @@ fn write_replayed_signals(
     }
     let mut result = Ok(());
     each_replayed_signal(record, |spec, signal| {
-        if result.is_ok() {
+        // An overflow signal is at its item's place among the typed fields.
+        if result.is_ok() && !signal.is_overflow() {
             result = signal_bytes(spec, signal)
                 .and_then(|bytes| emit_ber_oid_tlv(u32::from(spec.id), &bytes, body));
         }
