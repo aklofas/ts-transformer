@@ -437,8 +437,21 @@ pub fn has_klva_registration(descs: &[RawDescriptor]) -> bool {
 ///      values), the multi-byte selectors 0x11..=0x14, any other selector,
 ///      and text the selector cannot be decoded as fall through to the next
 ///      source.
-///      Text starting at 0x20 or above is the default table,
-///      read as UTF-8.
+///      Text starting at 0x20 or above is in the default table 00 (Figure
+///      A.1: ISO/IEC 6937 with the euro sign at 0xA4) and is decoded by it:
+///      a non-spacing accent (0xC1..=0xCF) and the letter after it are one
+///      precomposed character; a control code (0x80..=0x9F), a code the
+///      table leaves empty, or an accent that is last or not followed by a
+///      letter it has a precomposed character with makes the text
+///      undecodable. One deviation from Annex A: default-table text that is
+///      well-formed UTF-8 as a whole is read as UTF-8, so a label written as
+///      UTF-8 without the 0x15 selector reads as written. Table 00 text that
+///      is also well-formed UTF-8 is misread by that rule: a character coded
+///      0xD0..=0xDF followed by one coded 0xA0..=0xBF, one coded 0xE0..=0xEF
+///      (not 0xED) followed by two, or one coded 0xF0..=0xF3 followed by
+///      three, is read as the UTF-8 character those bytes form (`D3 A0`, "©"
+///      and a no-break space, reads as "Ӡ"); a text is misread when every
+///      byte of it over 0x7F belongs to such a run.
 ///   2. Stream Identifier descriptor (tag 0x52, ETSI EN 300 468 §6.2.40) —
 ///      single `component_tag` byte rendered as `"tag=NN"`.
 ///   3. Metadata descriptor (tag 0x26) — when present, label is `"KLV"`
@@ -450,7 +463,7 @@ pub fn has_klva_registration(descs: &[RawDescriptor]) -> bool {
 /// Returns `None` if no usable descriptor is found. Truncated /
 /// malformed bodies fall through to the next descriptor.
 pub fn extract_user_label(descs: &[RawDescriptor]) -> Option<String> {
-    // 1. Component descriptor — UTF-8 free text after the 6-byte header.
+    // 1. Component descriptor — DVB text after the 6-byte header.
     if let Some(d) = descs.iter().find(|d| d.tag == 0x50)
         && d.data.len() > 6
         && let Some(s) = dvb_text(&d.data[6..])
@@ -495,14 +508,15 @@ pub fn extract_user_label(descs: &[RawDescriptor]) -> Option<String> {
 }
 
 /// Decodes DVB text per the EN 300 468 Annex A.2 character-table selector:
-/// the default table and 0x15 as UTF-8, the ISO 8859 selectors (Tables A.3
+/// the default table by table 00 (as UTF-8 when the whole text is
+/// well-formed UTF-8), 0x15 as UTF-8, the ISO 8859 selectors (Tables A.3
 /// and A.4, reserved values excluded) when the text is ASCII. `None` for a
 /// reserved selector, the multi-byte selectors 0x11..=0x14, any other
 /// selector, or text that cannot be decoded without transcoding.
 fn dvb_text(bytes: &[u8]) -> Option<String> {
     let (&first, rest) = bytes.split_first()?;
     let text = match first {
-        0x20.. => bytes,
+        0x20.. => return default_table_text(bytes),
         0x15 => rest,
         // Table A.4: 0x00 then the ISO/IEC 8859 part; 0x0C and every other
         // value are reserved.
@@ -526,6 +540,116 @@ fn dvb_text(bytes: &[u8]) -> Option<String> {
     };
     core::str::from_utf8(text).ok().map(str::to_string)
 }
+
+/// A default-table text: UTF-8 when the whole text is well-formed UTF-8 (the
+/// deviation [`extract_user_label`] documents), else table 00.
+fn default_table_text(bytes: &[u8]) -> Option<String> {
+    match core::str::from_utf8(bytes) {
+        Ok(text) => Some(text.to_string()),
+        Err(_) => table_00_text(bytes),
+    }
+}
+
+/// Decodes `bytes` by EN 300 468 table 00 (Figure A.1): a byte below 0x80 as
+/// ASCII, a non-spacing accent and the letter after it as the precomposed
+/// character, any other byte by `TABLE_00_HIGH`. `None` for a control code
+/// (0x80..=0x9F), a code the table leaves empty, or an accent that is last or
+/// is not followed by a letter `TABLE_00_ACCENTED` pairs it with.
+fn table_00_text(bytes: &[u8]) -> Option<String> {
+    let mut text = String::with_capacity(bytes.len());
+    let mut bytes = bytes.iter().copied();
+    while let Some(b) = bytes.next() {
+        let c = match b {
+            0x00..=0x7F => char::from(b),
+            0x80..=0x9F => return None,
+            // The accent comes first and marks the letter after it.
+            0xC1..=0xC8 | 0xCA | 0xCB | 0xCD..=0xCF => {
+                let letter = bytes.next()?;
+                let &(_, letters, marked) = TABLE_00_ACCENTED.iter().find(|row| row.0 == b)?;
+                let i = letters.bytes().position(|l| l == letter)?;
+                marked.chars().nth(i)?
+            }
+            0xA0..=0xFF => match TABLE_00_HIGH[usize::from(b - 0xA0)] {
+                '\0' => return None,
+                c => c,
+            },
+        };
+        text.push(c);
+    }
+    Some(text)
+}
+
+/// EN 300 468 Figure A.1, table 00 (ISO/IEC 6937 with the euro sign at
+/// 0xA4): the character of each byte 0xA0..=0xFF, `'\0'` where the figure
+/// has none. Row 0xC0 holds the non-spacing accents, which never stand alone
+/// (see `TABLE_00_ACCENTED`).
+const TABLE_00_HIGH: [char; 96] = [
+    // 0xA0
+    '\u{00A0}', '\u{00A1}', '\u{00A2}', '\u{00A3}', '\u{20AC}', '\u{00A5}', '\0', '\u{00A7}',
+    '\u{00A4}', '\u{2018}', '\u{201C}', '\u{00AB}', '\u{2190}', '\u{2191}', '\u{2192}', '\u{2193}',
+    // 0xB0
+    '\u{00B0}', '\u{00B1}', '\u{00B2}', '\u{00B3}', '\u{00D7}', '\u{00B5}', '\u{00B6}', '\u{00B7}',
+    '\u{00F7}', '\u{2019}', '\u{201D}', '\u{00BB}', '\u{00BC}', '\u{00BD}', '\u{00BE}', '\u{00BF}',
+    // 0xC0
+    '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0',
+    // 0xD0
+    '\u{2015}', '\u{00B9}', '\u{00AE}', '\u{00A9}', '\u{2122}', '\u{266A}', '\u{00AC}', '\u{00A6}',
+    '\0', '\0', '\0', '\0', '\u{215B}', '\u{215C}', '\u{215D}', '\u{215E}',
+    // 0xE0
+    '\u{2126}', '\u{00C6}', '\u{0110}', '\u{00AA}', '\u{0126}', '\0', '\u{0132}', '\u{013F}',
+    '\u{0141}', '\u{00D8}', '\u{0152}', '\u{00BA}', '\u{00DE}', '\u{0166}', '\u{014A}', '\u{0149}',
+    // 0xF0
+    '\u{0138}', '\u{00E6}', '\u{0111}', '\u{00F0}', '\u{0127}', '\u{0131}', '\u{0133}', '\u{0140}',
+    '\u{0142}', '\u{00F8}', '\u{0153}', '\u{00DF}', '\u{00FE}', '\u{0167}', '\u{014B}', '\u{00AD}',
+];
+
+/// Table 00's non-spacing accents (row 0xC0 of Figure A.1): each accent byte
+/// with the ASCII letters that have a precomposed Unicode character for that
+/// accent, and those characters in the same order.
+const TABLE_00_ACCENTED: [(u8, &str, &str); 13] = [
+    // grave accent
+    (0xC1, "AEINOUWYaeinouwy", "ÀÈÌǸÒÙẀỲàèìǹòùẁỳ"),
+    // acute accent
+    (
+        0xC2,
+        "ACEGIKLMNOPRSUWYZacegiklmnoprsuwyz",
+        "ÁĆÉǴÍḰĹḾŃÓṔŔŚÚẂÝŹáćéǵíḱĺḿńóṕŕśúẃýź",
+    ),
+    // circumflex accent
+    (
+        0xC3,
+        "ACEGHIJOSUWYZaceghijosuwyz",
+        "ÂĈÊĜĤÎĴÔŜÛŴŶẐâĉêĝĥîĵôŝûŵŷẑ",
+    ),
+    // tilde
+    (0xC4, "AEINOUVYaeinouvy", "ÃẼĨÑÕŨṼỸãẽĩñõũṽỹ"),
+    // macron
+    (0xC5, "AEGIOUYaegiouy", "ĀĒḠĪŌŪȲāēḡīōūȳ"),
+    // breve
+    (0xC6, "AEGIOUaegiou", "ĂĔĞĬŎŬăĕğĭŏŭ"),
+    // dot above
+    (
+        0xC7,
+        "ABCDEFGHIMNOPRSTWXYZabcdefghmnoprstwxyz",
+        "ȦḂĊḊĖḞĠḢİṀṄȮṖṘṠṪẆẊẎŻȧḃċḋėḟġḣṁṅȯṗṙṡṫẇẋẏż",
+    ),
+    // diaeresis
+    (0xC8, "AEHIOUWXYaehiotuwxy", "ÄËḦÏÖÜẄẌŸäëḧïöẗüẅẍÿ"),
+    // ring above
+    (0xCA, "AUauwy", "ÅŮåůẘẙ"),
+    // cedilla
+    (0xCB, "CDEGHKLNRSTcdeghklnrst", "ÇḐȨĢḨĶĻŅŖŞŢçḑȩģḩķļņŗşţ"),
+    // double acute accent
+    (0xCD, "OUou", "ŐŰőű"),
+    // ogonek
+    (0xCE, "AEIOUaeiou", "ĄĘĮǪŲąęįǫų"),
+    // caron
+    (
+        0xCF,
+        "ACDEGHIKLNORSTUZacdeghijklnorstuz",
+        "ǍČĎĚǦȞǏǨĽŇǑŘŠŤǓŽǎčďěǧȟǐǰǩľňǒřšťǔž",
+    ),
+];
 
 fn ascii_string(ascii: &[u8]) -> String {
     ascii.iter().map(|&b| char::from(b)).collect()
@@ -1233,6 +1357,236 @@ mod label_tests {
                 "{text:02X?}"
             );
         }
+    }
+
+    /// EN 300 468 Annex A.2: a first byte of 0x20 or above selects table 00
+    /// (Figure A.1, ISO/IEC 6937 with the euro sign at 0xA4), whose accents
+    /// come before the letter they mark.
+    #[test]
+    fn default_table_text_is_iso_6937() {
+        for (text, label) in [
+            (&[0x43, 0x61, 0x66, 0xC2, 0x65][..], "Café"),
+            (&[0x41, 0xA3][..], "A£"),
+            (
+                &[0xCA, b'A', b'n', b'g', b's', b't', b'r', 0xC8, b'o', b'm'][..],
+                "Ångström",
+            ),
+            (&[0xA4, b'5'][..], "€5"),
+        ] {
+            assert_eq!(
+                label_or_next_source(text).as_deref(),
+                Some(label),
+                "{text:02X?}"
+            );
+        }
+    }
+
+    /// Each byte of table 00 alone. Bytes below 0x80 are ASCII, 0x80..=0x9F
+    /// are control codes, row 0xC0 holds the accents (never alone), and a
+    /// code Figure A.1 leaves empty is refused.
+    #[test]
+    fn every_default_table_byte_decodes_or_is_refused() {
+        // EN 300 468 Figure A.1, rows 0xA0 to 0xF0: the code point printed
+        // under each glyph, 0 where the figure has none or holds an accent.
+        const FIGURE_A1: [[u32; 16]; 6] = [
+            [
+                0x00A0, 0x00A1, 0x00A2, 0x00A3, 0x20AC, 0x00A5, 0, 0x00A7, 0x00A4, 0x2018, 0x201C,
+                0x00AB, 0x2190, 0x2191, 0x2192, 0x2193,
+            ],
+            [
+                0x00B0, 0x00B1, 0x00B2, 0x00B3, 0x00D7, 0x00B5, 0x00B6, 0x00B7, 0x00F7, 0x2019,
+                0x201D, 0x00BB, 0x00BC, 0x00BD, 0x00BE, 0x00BF,
+            ],
+            [0; 16],
+            [
+                0x2015, 0x00B9, 0x00AE, 0x00A9, 0x2122, 0x266A, 0x00AC, 0x00A6, 0, 0, 0, 0, 0x215B,
+                0x215C, 0x215D, 0x215E,
+            ],
+            [
+                0x2126, 0x00C6, 0x0110, 0x00AA, 0x0126, 0, 0x0132, 0x013F, 0x0141, 0x00D8, 0x0152,
+                0x00BA, 0x00DE, 0x0166, 0x014A, 0x0149,
+            ],
+            [
+                0x0138, 0x00E6, 0x0111, 0x00F0, 0x0127, 0x0131, 0x0133, 0x0140, 0x0142, 0x00F8,
+                0x0153, 0x00DF, 0x00FE, 0x0167, 0x014B, 0x00AD,
+            ],
+        ];
+        for b in 0x20..=0xFFu8 {
+            let expected = match b {
+                0x20..=0x7F => Some(char::from(b)),
+                0x80..=0x9F => None,
+                _ => match FIGURE_A1[usize::from(b - 0xA0) / 16][usize::from(b % 16)] {
+                    0 => None,
+                    cp => char::from_u32(cp),
+                },
+            };
+            assert_eq!(dvb_text(&[b]), expected.map(String::from), "0x{b:02X}");
+        }
+        // The euro sign Figure A.1 adds at 0xA4, and the currency sign at 0xA8.
+        assert_eq!(dvb_text(&[0xA4]).as_deref(), Some("\u{20AC}"));
+        assert_eq!(dvb_text(&[0xA8]).as_deref(), Some("\u{A4}"));
+    }
+
+    /// Row 0xC0 of table 00 holds 13 non-spacing accents (0xC0, 0xC9 and
+    /// 0xCC are empty). An accent and the letter after it are one character,
+    /// the precomposed one; anything else after an accent is refused.
+    #[test]
+    fn an_accent_combines_with_the_letter_that_follows() {
+        for (bytes, label) in [
+            ([0xC1, b'a'], "à"),
+            ([0xC2, b'e'], "é"),
+            ([0xC3, b'o'], "ô"),
+            ([0xC4, b'n'], "ñ"),
+            ([0xC5, b'a'], "ā"),
+            ([0xC6, b'g'], "ğ"),
+            ([0xC7, b'z'], "ż"),
+            ([0xC8, b'u'], "ü"),
+            ([0xCA, b'A'], "Å"),
+            ([0xCB, b'c'], "ç"),
+            ([0xCD, b'o'], "ő"),
+            ([0xCE, b'a'], "ą"),
+            ([0xCF, b'c'], "č"),
+        ] {
+            assert_eq!(dvb_text(&bytes).as_deref(), Some(label), "{bytes:02X?}");
+        }
+        // Every byte of row 0xC0 before every ASCII letter: 251 pairs have a
+        // precomposed character.
+        let mut combined = 0;
+        for accent in 0xC0..=0xCFu8 {
+            for letter in (b'A'..=b'Z').chain(b'a'..=b'z') {
+                if let Some(text) = dvb_text(&[accent, letter]) {
+                    assert_eq!(text.chars().count(), 1, "{accent:02X} {letter:02X}");
+                    combined += 1;
+                }
+            }
+        }
+        assert_eq!(combined, 251);
+        for bytes in [
+            &[b'a', 0xC2][..],       // an accent as the last byte
+            &[0xC2][..],             // an accent alone
+            &[0xC2, 0xC2, b'e'][..], // two accents in a row
+            &[0xC2, b' ', b'e'][..], // an accent before a space
+            &[0xC2, b'1'][..],       // an accent before a digit
+            &[0xC2, 0xE1][..],       // an accent before a letter outside ASCII
+            &[0xC2, b'b'][..],       // no precomposed b with acute
+            &[0xC8, b'q'][..],       // no precomposed q with diaeresis
+            &[0xC0, b'a'][..],       // the empty codes of row 0xC0
+            &[0xC9, b'a'][..],
+            &[0xCC, b'a'][..],
+        ] {
+            assert_eq!(dvb_text(bytes), None, "{bytes:02X?}");
+        }
+    }
+
+    /// Labels and their UTF-8 bytes, written out.
+    const UTF8_LABELS: [(&[u8], &str); 5] = [
+        (&[0x43, 0x61, 0x66, 0xC3, 0xA9], "Café"),
+        (&[0x43, 0x61, 0x66, 0xC3, 0xA9, 0x20, 0x45, 0x4F], "Café EO"),
+        (&[0xC3, 0x89, 0x63, 0x6F, 0x6C, 0x65], "École"),
+        (
+            &[0xE6, 0x97, 0xA5, 0xE6, 0x9C, 0xAC, 0xE8, 0xAA, 0x9E],
+            "日本語",
+        ),
+        (
+            &[0x45, 0x4F, 0x2F, 0x49, 0x52, 0x20, 0xF0, 0x9F, 0x9B, 0xB0],
+            "EO/IR 🛰",
+        ),
+    ];
+
+    /// A default-table text that is well-formed UTF-8 as a whole is read as
+    /// UTF-8: the bytes a writer puts in the default table when it writes
+    /// UTF-8 with no selector, as this crate's `descriptors::component` did
+    /// up to 0.10.0.
+    #[test]
+    fn default_table_text_that_is_well_formed_utf8_is_read_as_utf8() {
+        for (text, label) in UTF8_LABELS {
+            assert_eq!(text, label.as_bytes());
+            assert_eq!(label_or_next_source(text).as_deref(), Some(label));
+        }
+    }
+
+    /// The same texts behind the UTF-8 selector 0x15, as
+    /// `descriptors::component` writes text that is not ASCII.
+    #[test]
+    fn a_label_written_with_the_utf8_selector_reads_the_same() {
+        for (text, label) in UTF8_LABELS {
+            let mut selected = vec![0x15];
+            selected.extend_from_slice(text);
+            assert_eq!(label_or_next_source(&selected).as_deref(), Some(label));
+        }
+    }
+
+    #[test]
+    fn a_label_written_by_the_component_helper_reads_back() {
+        let bytes =
+            crate::mpegts::descriptors::component(0xF, 0x05, 0x01, 0x42, *b"eng", "Café EO")
+                .expect("within cap");
+        assert_eq!(
+            &bytes[8..],
+            &[0x15, 0x43, 0x61, 0x66, 0xC3, 0xA9, 0x20, 0x45, 0x4F]
+        );
+        let descs = crate::mpegts::demux::low_level::walk_descriptors(&bytes)
+            .expect("one whole descriptor");
+        assert_eq!(extract_user_label(&descs).as_deref(), Some("Café EO"));
+    }
+
+    /// What the UTF-8 rule costs, enumerated: every UTF-8 character of two,
+    /// three or four bytes whose bytes are also table 00 text. A UTF-8 text is
+    /// ASCII and such characters, and a character's table 00 reading does not
+    /// depend on its neighbours (its last byte is no accent, and an accent as
+    /// its first byte would need a letter after it), so these are every text
+    /// the rule reads differently from table 00.
+    #[test]
+    fn the_documented_misreads_are_exactly_these() {
+        // The runs `extract_user_label` names: a character coded 0xD0..=0xDF,
+        // 0xE0..=0xEF (not 0xED) or 0xF0..=0xF3, then one, two or three coded
+        // 0xA0..=0xBF; 0xA6, 0xD8..=0xDB and 0xE5 code none.
+        let coded = |b: u8| !matches!(b, 0xA6 | 0xD8..=0xDB | 0xE5);
+        let documented = |run: &[u8]| {
+            let (&lead, tail) = run.split_first().expect("two bytes or more");
+            let lead_ok = match tail.len() {
+                1 => (0xD0..=0xDF).contains(&lead),
+                2 => (0xE0..=0xEF).contains(&lead) && lead != 0xED,
+                _ => (0xF0..=0xF3).contains(&lead),
+            };
+            lead_ok && coded(lead) && tail.iter().all(|&b| (0xA0..=0xBF).contains(&b) && coded(b))
+        };
+        let mut misread = [0usize; 3];
+        let mut buf = [0u8; 4];
+        for (len, leads) in [(2, 0xC0..=0xDFu8), (3, 0xE0..=0xEF), (4, 0xF0..=0xF7)] {
+            for lead in leads {
+                for tail in 0..(1u32 << (6 * (len - 1))) {
+                    buf[0] = lead;
+                    for (i, b) in buf[1..len].iter_mut().enumerate() {
+                        *b = 0x80 | ((tail >> (6 * i)) & 0x3F) as u8;
+                    }
+                    let run = &buf[..len];
+                    let Ok(utf8) = core::str::from_utf8(run) else {
+                        continue;
+                    };
+                    let table_00 = table_00_text(run).is_some();
+                    assert_eq!(table_00, documented(run), "{run:02X?}");
+                    if table_00 {
+                        assert_eq!(dvb_text(run).as_deref(), Some(utf8), "{run:02X?}");
+                        misread[len - 2] += 1;
+                    }
+                }
+            }
+        }
+        assert_eq!(misread, [372, 13_454, 119_164]);
+        // Two runs with ASCII between them: the whole text is UTF-8.
+        assert_eq!(
+            dvb_text(&[0xD3, 0xA0, b'2', b'0', 0xE1, 0xA0, 0xB0]).as_deref(),
+            Some("\u{4E0}20\u{1830}")
+        );
+        // One stray byte makes the whole text table 00: "Café " written as
+        // UTF-8 and then 0xA3 is refused (0xC3 is the circumflex, 0xA9 no
+        // letter), and a run is read byte by byte.
+        assert_eq!(dvb_text(&[0x43, 0x61, 0x66, 0xC3, 0xA9, 0x20, 0xA3]), None);
+        assert_eq!(
+            dvb_text(&[0xD3, 0xA0, b'2', 0xA3]).as_deref(),
+            Some("©\u{A0}2£")
+        );
     }
 
     #[test]
