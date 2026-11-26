@@ -48,7 +48,7 @@ crate::binding_record! {
         /// does not read the picture header.
         pub pic_order_cnt_lsb: Option<u16>,
         /// True when `nal_unit_type` is IDR_W_RADL (7) or IDR_N_LP (8) per H.266
-        /// V4 Table 5. This field is accurate.
+        /// V4 Table 5: read from the NAL unit type, not a sentinel.
         pub idr: bool,
         /// The raw RBSP bytes as supplied to the parser — preserved for
         /// downstream parsers that need fields beyond what this light subset

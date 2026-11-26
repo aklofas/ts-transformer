@@ -78,7 +78,8 @@ public final class Codec {
      * is read from the bitstream using the bit width
      * {@code log2MaxFrameNumMinus4 + 4}; when null, {@code frameNum} is null.
      * {@code nalUnitType} is the 5-bit NAL type ({@code & 0x1F}) used to derive
-     * {@code idr} ({@code == 5}).
+     * {@code idr} ({@code == 5}); a value from 32 to 255 throws
+     * {@link CodecParseException}.
      *
      * @param rbsp        the slice NAL RBSP body
      * @param sps         SPS context, or {@code null}
@@ -163,11 +164,13 @@ public final class Codec {
      * Parse a light H.265 slice segment header from a slice NAL's RBSP body.
      *
      * <p>{@code sps} is optional SPS context — when non-null,
-     * {@code picOrderCntLsb} is read from the bitstream using the bit width
-     * {@code log2MaxPicOrderCntLsbMinus4 + 4}; when null, {@code picOrderCntLsb}
-     * is null. {@code nalUnitType} is the 6-bit NAL type used to derive
+     * {@code picOrderCntLsb} is read from the first slice segment of a non-IDR
+     * picture using the bit width {@code log2MaxPicOrderCntLsbMinus4 + 4}; it
+     * is 0 for an IDR picture and null for a continuation segment of a non-IDR
+     * picture. When {@code sps} is null, {@code picOrderCntLsb} is null.
+     * {@code nalUnitType} is the 6-bit NAL type used to derive
      * {@code idr} (IDR_W_RADL=19 or IDR_N_LP=20) and to gate IRAP-specific
-     * fields.
+     * fields; a value from 64 to 255 throws {@link CodecParseException}.
      *
      * @param rbsp        the slice NAL RBSP body
      * @param sps         SPS context, or {@code null}
@@ -257,8 +260,8 @@ public final class Codec {
      * {@code rawRbsp} is not parsed. {@code picOrderCntLsb} is always null: VVC
      * codes the POC in the picture header, IDR pictures included, and this
      * parser does not read it. {@code nalUnitType} is the NAL type used to
-     * derive {@code idr} (IDR_W_RADL=7 or IDR_N_LP=8); a value above 31 throws
-     * {@link CodecParseException}. Note: {@code sliceType} and {@code ppsId}
+     * derive {@code idr} (IDR_W_RADL=7 or IDR_N_LP=8); a value from 32 to 255
+     * throws {@link CodecParseException}. Note: {@code sliceType} and {@code ppsId}
      * are returned as sentinels ({@code I} / {@code 0}) — see
      * {@link H266SliceHeaderLight}.
      *

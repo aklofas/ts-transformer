@@ -91,7 +91,7 @@ crate::binding_record! {
     }
 }
 
-/// One H.264 or H.265 NAL unit. Codec-tagged so wrapped languages
+/// One H.264, H.265 or H.266 NAL unit. Codec-tagged so wrapped languages
 /// (Kotlin, Swift, Java) get idiomatic `when`/`switch` exhaustiveness.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NalUnit {

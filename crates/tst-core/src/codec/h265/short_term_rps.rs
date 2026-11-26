@@ -7,7 +7,7 @@
 //! long-term-ref-pic and VUI fields that live after the RPS region.
 //!
 //! Mirrors ffmpeg's `ff_hevc_decode_short_term_rps`
-//! (`libavcodec/hevc/ps.c:1493-1503` in the audited tree). Keeps
+//! (`libavcodec/hevc/ps.c:1493-1503`). Keeps
 //! `DeltaPocS0` / `DeltaPocS1` per RPS index: a predicted RPS
 //! (`inter_ref_pic_set_prediction_flag`) reads one flag pair per entry of its
 //! reference plus one, and holds only the entries equations (7-61) / (7-62)

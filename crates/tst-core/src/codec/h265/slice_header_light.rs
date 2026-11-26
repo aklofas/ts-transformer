@@ -147,8 +147,8 @@ pub fn parse_slice_header_light(
 
     let pic_order_cnt_lsb = match sps {
         None => None,
-        // For IDR pictures it is implicitly 0 per H.265 §8.3.1, in every
-        // segment.
+        // An IDR picture's slice_pic_order_cnt_lsb is absent and inferred to
+        // be 0 (H.265 §7.4.7.1), in every segment.
         Some(_) if is_idr(VideoCodec::H265, nal_unit_type) => Some(0),
         // A continuation segment's POC follows slice_segment_address, whose
         // width needs the PPS: the bits here are not a POC.

@@ -302,11 +302,11 @@ pub struct ParameterSets {
 ///   always empty (H.264 has no VPS NAL type).
 /// - **H.265**: `nal_type = (byte0 >> 1) & 0x3F`; VPS = 32, SPS = 33,
 ///   PPS = 34.
-/// - **H.266**: not implemented — always returns an empty
-///   [`ParameterSets`]. (H.266's own scheme would be VPS = 14, SPS = 15,
-///   PPS = 16 under the same `(byte0 >> 1) & 0x3F` shift, but this helper
-///   targets H.264/HEVC only; wire H.266 up when it gets a VideoToolbox
-///   consumer.)
+/// - **H.266**: not classified: always returns an empty
+///   [`ParameterSets`], whatever the access unit holds. (H.266 carries its
+///   type in the second header byte, `(byte1 >> 3) & 0x1F`, see
+///   [`crate::codec::nal::nal_unit_type`]; this helper serves the H.264 and
+///   HEVC VideoToolbox calls only.)
 /// - **AV1**: OBU-framed, not NAL-framed — always returns an empty
 ///   [`ParameterSets`].
 ///

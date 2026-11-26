@@ -17,7 +17,8 @@
 //! ### Slice-header SPS context
 //!
 //! `parse_slice_header_light` needs a `&tst_core H264Sps` only to read
-//! `frame_num`'s bit width (`log2_max_frame_num_minus4 + 4`). The Java
+//! `frame_num`: its bit width (`log2_max_frame_num_minus4 + 4`) and whether
+//! `colour_plane_id` comes before it (`separate_colour_plane`). The Java
 //! `H264Sps` record cannot hold the Rust struct, so when the caller passes a
 //! non-null `sps` we re-`parse_sps(sps.rawRbsp())` to recover an equivalent
 //! Rust SPS context. This matches what tst-py effectively passes (its stored
@@ -148,8 +149,9 @@ jni_native! {
         };
 
         // SPS context: re-parse the Java SPS's rawRbsp to recover the equivalent
-        // Rust `H264Sps` (only `log2_max_frame_num_minus4` is consulted). A null
-        // `sps` means no context → `frame_num` stays None. See the module doc.
+        // Rust `H264Sps` (only `log2_max_frame_num_minus4` and
+        // `separate_colour_plane` are consulted). A null `sps` means no
+        // context → `frame_num` stays None. See the module doc.
         let sps_ctx: Option<H264Sps> = if sps.is_null() {
             None
         } else {

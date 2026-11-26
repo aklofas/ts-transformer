@@ -757,8 +757,8 @@ mod tests {
 
     /// The parser reads the header's syntax and does not police Layer II's
     /// bitrate / mode pairs: stereo at 32 / 48 / 56 / 80 kbit/s and single
-    /// channel at 224 / 256 / 320 / 384 kbit/s parse as written (ffmpeg's
-    /// MP2 encoder writes such pairs and its decoder plays them).
+    /// channel at 224 / 256 / 320 / 384 kbit/s parse as written (ffmpeg
+    /// 6.1's MP2 encoder writes seven of these eight pairs).
     #[test]
     fn layer2_bitrate_mode_pairs_are_read_as_written() {
         // MPEG-1 Layer II, no CRC, 44.1 kHz; byte 3 carries the mode.

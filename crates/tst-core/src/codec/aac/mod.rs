@@ -212,7 +212,7 @@ crate::binding_record! {
         pub samples_per_frame: u16,
         /// Number of raw data blocks in the frame (logical, not wire value).
         pub num_raw_data_blocks: u8,
-        /// True when a 16-bit CRC follows the 7-byte fixed header.
+        /// True when the header carries `crc_check` (`protection_absent = 0`).
         pub has_crc: bool,
         /// MPEG version (MPEG-2 or MPEG-4).
         pub mpeg_version: MpegVersion,

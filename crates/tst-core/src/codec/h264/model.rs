@@ -40,9 +40,10 @@ crate::binding_record! {
         /// True when `fixed_frame_rate_flag=1` in the VUI.
         pub fixed_frame_rate: bool,
         /// True when the stream may contain B-frames. A heuristic: the VUI
-        /// `max_num_reorder_frames` decides when present; otherwise Baseline and
-        /// the constrained High subsets are B-frameless and every other profile
-        /// may have B-frames.
+        /// `max_num_reorder_frames` decides when present; otherwise Baseline,
+        /// Main / Extended / High with `constraint_set5_flag`, and High with
+        /// `constraint_set1_flag` are B-frameless; every other profile may have
+        /// B-frames.
         pub has_b_frames: bool,
         /// VUI colour info: present when the VUI signals any of
         /// `video_signal_type` (with or without a colour description), the
