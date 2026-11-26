@@ -82,6 +82,8 @@ fn field_error_kind_and_tag(fe: &RustKlvFieldError) -> (&'static str, u32) {
         RustKlvFieldError::TruncatedField { tag } => ("TRUNCATED_FIELD", *tag),
         RustKlvFieldError::UnsupportedImapbLength { .. } => ("UNSUPPORTED_IMAPB_LENGTH", 0),
         RustKlvFieldError::InvalidImapbParams { .. } => ("INVALID_IMAPB_PARAMS", 0),
+        RustKlvFieldError::NonAsciiText { tag } => ("INVALID_CODEPOINT", *tag),
+        RustKlvFieldError::InvalidFormat { tag } => ("OUT_OF_RANGE", *tag),
         _ => ("INVALID_LENGTH", 0),
     }
 }
@@ -621,6 +623,21 @@ mod tests {
         want.extend_from_slice(&554u16.to_be_bytes());
         want.extend_from_slice(&2u32.to_be_bytes());
         assert_eq!(addr_bytes(a), want);
+    }
+
+    /// The two text and format field errors keep their tag under an existing
+    /// `KlvFieldErrorKind` name instead of the wildcard's `INVALID_LENGTH`, 0.
+    #[test]
+    fn the_text_and_format_field_errors_keep_their_tag() {
+        use super::{RustKlvFieldError, field_error_kind_and_tag};
+        assert_eq!(
+            field_error_kind_and_tag(&RustKlvFieldError::NonAsciiText { tag: 5 }),
+            ("INVALID_CODEPOINT", 5)
+        );
+        assert_eq!(
+            field_error_kind_and_tag(&RustKlvFieldError::InvalidFormat { tag: 130 }),
+            ("OUT_OF_RANGE", 130)
+        );
     }
 
     #[test]

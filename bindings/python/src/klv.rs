@@ -160,6 +160,8 @@ fn convert_field_error(py: Python<'_>, fe: &RustKlvFieldError) -> PyResult<Py<Py
         RustKlvFieldError::TruncatedField { tag } => ("TRUNCATED_FIELD", *tag),
         RustKlvFieldError::UnsupportedImapbLength { .. } => ("UNSUPPORTED_IMAPB_LENGTH", 0),
         RustKlvFieldError::InvalidImapbParams { .. } => ("INVALID_IMAPB_PARAMS", 0),
+        RustKlvFieldError::NonAsciiText { tag } => ("INVALID_CODEPOINT", *tag),
+        RustKlvFieldError::InvalidFormat { tag } => ("OUT_OF_RANGE", *tag),
         _ => ("INVALID_LENGTH", 0),
     };
     let kind_value = kind_enum.getattr(variant)?;

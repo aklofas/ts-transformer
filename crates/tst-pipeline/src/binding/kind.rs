@@ -902,7 +902,8 @@ fn demux_diagnostics(e: &DemuxError) -> Diagnostics {
 
 fn klv_decode_diagnostics(e: &KlvDecodeError) -> Diagnostics {
     let (tag, offset) = match e {
-        KlvDecodeError::DuplicateTag { tag, offset } => {
+        KlvDecodeError::DuplicateTag { tag, offset }
+        | KlvDecodeError::ComplianceViolation { tag, offset, .. } => {
             (Some(u64::from(*tag)), Some(int_usize(*offset)))
         }
         KlvDecodeError::St0102MissingRequiredTag { tag }
@@ -912,6 +913,8 @@ fn klv_decode_diagnostics(e: &KlvDecodeError) -> Diagnostics {
         | KlvDecodeError::MalformedTag { offset }
         | KlvDecodeError::NonCanonicalLength { offset }
         | KlvDecodeError::NonCanonicalTag { offset }
+        | KlvDecodeError::MissingChecksum { offset }
+        | KlvDecodeError::MalformedChecksum { offset, .. }
         | KlvDecodeError::St0903InvalidVTargetPack { offset, .. } => {
             (None, Some(int_usize(*offset)))
         }
@@ -930,7 +933,10 @@ fn klv_encode_diagnostics(e: &KlvEncodeError) -> Diagnostics {
         KlvEncodeError::OutOfRange { tag, .. }
         | KlvEncodeError::StringTooLong { tag, .. }
         | KlvEncodeError::ReservedTagInUnknown { tag }
-        | KlvEncodeError::ForbiddenStandaloneOffset { tag } => Some(u64::from(*tag)),
+        | KlvEncodeError::ForbiddenStandaloneOffset { tag }
+        | KlvEncodeError::InvalidFieldValue { tag, .. }
+        | KlvEncodeError::ValueTooLong { tag, .. }
+        | KlvEncodeError::TagNotOneByte { tag } => Some(u64::from(*tag)),
         KlvEncodeError::MissingMandatoryItem { tag, .. } => Some(u64::from(*tag)),
         KlvEncodeError::VTargetPackEmpty { target_id }
         | KlvEncodeError::DuplicateTargetId { target_id } => Some(*target_id),
@@ -2251,6 +2257,74 @@ mod tests {
             kind_of_klv_field(&F::InvalidUtf8 { tag: 2 }),
             K::KlvDecodeMalformedBytes
         );
+    }
+
+    /// The checksum, compliance and item-value refusals reach the hosts
+    /// with their kind and with the tag and offset they carry.
+    #[test]
+    fn klv_diagnostics_carry_the_tag_and_offset_of_every_new_variant() {
+        use BindingErrorKind as K;
+        use tst_core::error::{KlvDecodeError as D, KlvEncodeError as E};
+        let decode = [
+            (
+                D::MissingChecksum { offset: 17 },
+                K::KlvDecodeMissingRequiredTag,
+                None,
+                Some(17),
+            ),
+            (
+                D::MalformedChecksum { offset: 19, got: 1 },
+                K::KlvDecodeMalformedBytes,
+                None,
+                Some(19),
+            ),
+            (
+                D::ComplianceViolation {
+                    tag: 115,
+                    offset: 27,
+                    reason: "Command Time is 8 bytes",
+                },
+                K::KlvDecodeMalformedBytes,
+                Some(115),
+                Some(27),
+            ),
+        ];
+        for (e, kind, tag, offset) in decode {
+            let what = format!("{e:?}");
+            let b = BindingError::from(e);
+            assert_eq!(b.kind, kind, "{what}");
+            assert_eq!(
+                (b.diagnostics.tag, b.diagnostics.offset),
+                (tag, offset),
+                "{what}"
+            );
+        }
+        let encode = [
+            (
+                E::InvalidFieldValue {
+                    tag: 130,
+                    reason: "a location needs all three coordinates",
+                },
+                K::KlvEncodeOutOfRange,
+                130,
+            ),
+            (
+                E::ValueTooLong { tag: 94, max: 50 },
+                K::KlvEncodeStringTooLong,
+                94,
+            ),
+            (
+                E::TagNotOneByte { tag: 256 },
+                K::KlvEncodeReservedTagInUnknown,
+                256,
+            ),
+        ];
+        for (e, kind, tag) in encode {
+            let what = format!("{e:?}");
+            let b = BindingError::from(e);
+            assert_eq!(b.kind, kind, "{what}");
+            assert_eq!(b.diagnostics.tag, Some(tag), "{what}");
+        }
     }
 
     #[test]

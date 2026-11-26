@@ -84,6 +84,17 @@ pub enum KlvDecodeError {
     #[error("Tag 1 (checksum) must be the last element per ST 0601.8-11")]
     Tag1NotLast,
 
+    /// A verifying decode found no checksum item (Tag 1) in the set.
+    /// `offset` is buffer-relative.
+    #[error("no checksum (Tag 1) in the set at offset {offset}")]
+    MissingChecksum { offset: usize },
+
+    /// The checksum item (Tag 1) does not have its set's width. `offset`
+    /// is the buffer-relative start of the item's value; `got` is the
+    /// value's length.
+    #[error("checksum (Tag 1) at offset {offset} has {got} value bytes, not its set's width")]
+    MalformedChecksum { offset: usize, got: usize },
+
     #[error("Tag 65 (UAS LS Version) is required per ST 0601.8-12")]
     MissingTag65,
 
@@ -105,6 +116,16 @@ pub enum KlvDecodeError {
     St0903InvalidVTargetPack {
         offset: usize,
         reason: crate::klv::st0903::vtarget_pack::VTargetPackError,
+    },
+
+    /// A strict decode found an item that its standard does not allow
+    /// there, or with that value. `offset` is buffer-relative; `reason`
+    /// names the rule.
+    #[error("tag {tag} at offset {offset} does not conform: {reason}")]
+    ComplianceViolation {
+        tag: u32,
+        offset: usize,
+        reason: &'static str,
     },
 
     /// A field-level validation error promoted to a fatal decode error.
@@ -159,6 +180,7 @@ impl KlvDecodeError {
             KlvDecodeError::DuplicateTag { .. } => KlvDecodeErrorKind::DuplicateTag,
             KlvDecodeError::Tag2NotFirst
             | KlvDecodeError::Tag1NotLast
+            | KlvDecodeError::MissingChecksum { .. }
             | KlvDecodeError::MissingTag65
             | KlvDecodeError::St0102MissingRequiredTag { .. }
             | KlvDecodeError::St0903MissingRequiredTag { .. } => {
@@ -170,7 +192,9 @@ impl KlvDecodeError {
             | KlvDecodeError::TrailingBytes { .. }
             | KlvDecodeError::BadTimeStampPackLength { .. }
             | KlvDecodeError::ReservedBitsInvalid { .. }
+            | KlvDecodeError::MalformedChecksum { .. }
             | KlvDecodeError::St0903InvalidVTargetPack { .. }
+            | KlvDecodeError::ComplianceViolation { .. }
             | KlvDecodeError::FieldError(_) => KlvDecodeErrorKind::Malformed,
         }
     }
@@ -271,6 +295,21 @@ pub enum KlvEncodeError {
     /// corresponding typed field.
     #[error("tag {tag} is reserved or modeled by the typed encoder and cannot appear in `unknown`")]
     ReservedTagInUnknown { tag: u32 },
+
+    /// A value its item's definition does not allow (a code outside the
+    /// item's table, text outside the item's character set, a relation
+    /// between items the standard requires). `reason` names the rule.
+    #[error("the value of tag {tag} is not allowed: {reason}")]
+    InvalidFieldValue { tag: u32, reason: &'static str },
+
+    /// A variable-length value that needs more bytes than its item allows.
+    #[error("the value of tag {tag} needs more than the {max} bytes its item allows")]
+    ValueTooLong { tag: u32, max: usize },
+
+    /// A tag above 255 in a set whose tags are one byte (the Security
+    /// Local Set, the VTarget Pack).
+    #[error("tag {tag} does not fit the set's one-byte tag (at most 255)")]
+    TagNotOneByte { tag: u32 },
 }
 
 /// The category of a [`KlvEncodeError`], for exhaustive matching.
@@ -286,9 +325,9 @@ pub enum KlvEncodeErrorKind {
     BufferTooSmall,
     /// [`KlvEncodeError::RecordTooLarge`].
     RecordTooLarge,
-    /// [`KlvEncodeError::OutOfRange`].
+    /// [`KlvEncodeError::OutOfRange`] and [`KlvEncodeError::InvalidFieldValue`].
     OutOfRange,
-    /// [`KlvEncodeError::StringTooLong`].
+    /// [`KlvEncodeError::StringTooLong`] and [`KlvEncodeError::ValueTooLong`].
     StringTooLong,
     /// [`KlvEncodeError::UnsupportedImapbLength`].
     UnsupportedImapbLength,
@@ -296,7 +335,7 @@ pub enum KlvEncodeErrorKind {
     InvalidImapbParams,
     /// [`KlvEncodeError::MissingMandatoryItem`].
     MissingMandatoryItem,
-    /// [`KlvEncodeError::ReservedTagInUnknown`].
+    /// [`KlvEncodeError::ReservedTagInUnknown`] and [`KlvEncodeError::TagNotOneByte`].
     ReservedTagInUnknown,
     /// [`KlvEncodeError::VTargetPackEmpty`].
     VTargetPackEmpty,
@@ -314,14 +353,20 @@ impl KlvEncodeError {
         match self {
             KlvEncodeError::BufferTooSmall { .. } => KlvEncodeErrorKind::BufferTooSmall,
             KlvEncodeError::RecordTooLarge => KlvEncodeErrorKind::RecordTooLarge,
-            KlvEncodeError::OutOfRange { .. } => KlvEncodeErrorKind::OutOfRange,
-            KlvEncodeError::StringTooLong { .. } => KlvEncodeErrorKind::StringTooLong,
+            KlvEncodeError::OutOfRange { .. } | KlvEncodeError::InvalidFieldValue { .. } => {
+                KlvEncodeErrorKind::OutOfRange
+            }
+            KlvEncodeError::StringTooLong { .. } | KlvEncodeError::ValueTooLong { .. } => {
+                KlvEncodeErrorKind::StringTooLong
+            }
             KlvEncodeError::UnsupportedImapbLength { .. } => {
                 KlvEncodeErrorKind::UnsupportedImapbLength
             }
             KlvEncodeError::InvalidImapbParams { .. } => KlvEncodeErrorKind::InvalidImapbParams,
             KlvEncodeError::MissingMandatoryItem { .. } => KlvEncodeErrorKind::MissingMandatoryItem,
-            KlvEncodeError::ReservedTagInUnknown { .. } => KlvEncodeErrorKind::ReservedTagInUnknown,
+            KlvEncodeError::ReservedTagInUnknown { .. } | KlvEncodeError::TagNotOneByte { .. } => {
+                KlvEncodeErrorKind::ReservedTagInUnknown
+            }
             KlvEncodeError::VTargetPackEmpty { .. } => KlvEncodeErrorKind::VTargetPackEmpty,
             KlvEncodeError::DuplicateTargetId { .. } => KlvEncodeErrorKind::DuplicateTargetId,
             KlvEncodeError::ForbiddenStandaloneOffset { .. } => {
@@ -333,7 +378,7 @@ impl KlvEncodeError {
 
 /// Error from [`crate::klv::st0805`]: a KLV tag required by MISB ST 0805.1's
 /// field mapping for the requested CoT event is missing from the input
-/// record.
+/// record, or the event cannot be written as the requested XML.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 #[non_exhaustive]
 pub enum CotError {
@@ -342,6 +387,20 @@ pub enum CotError {
     /// mandatory per event type.
     #[error("KLV tag {tag} ({name}) required for CoT conversion is missing")]
     MissingField { tag: u32, name: &'static str },
+
+    /// A character XML 1.0 does not allow is in the named input field.
+    #[error("{field} holds a character that XML 1.0 does not allow")]
+    InvalidXmlChar { field: &'static str },
+
+    /// The configured producer cannot be written as an XML name.
+    #[error("the CoT producer name is not an allowed XML name")]
+    InvalidProducerName,
+
+    /// Only an MSL altitude is available where the conversion was asked
+    /// for a height above the ellipsoid. `tag` is the ST 0601 tag of the
+    /// MSL item.
+    #[error("KLV tag {tag} is an MSL altitude, not the HAE the conversion requires")]
+    MslWithoutUndulation { tag: u32 },
 }
 
 /// Error from [`crate::klv::st0601::patch`]: either the input local set
@@ -419,6 +478,17 @@ pub enum KlvFieldError {
         "IMAPB params violate ST 1201.5 §6 preconditions: min={min}, max={max}, length={length} (require min < max and length in 1..=8)"
     )]
     InvalidImapbParams { min: f64, max: f64, length: u8 },
+
+    /// Text with a character outside ISO/IEC 646 (seven-bit ASCII) in an
+    /// item whose standard requires it.
+    #[error("tag {tag}: text is not ISO/IEC 646")]
+    NonAsciiText { tag: u32 },
+
+    /// A value that does not have the format or the domain its item
+    /// defines (a malformed date, a reserved bit set, a pattern the item
+    /// does not allow).
+    #[error("tag {tag}: value does not have the format its item defines")]
+    InvalidFormat { tag: u32 },
 }
 
 /// The category of a [`KlvFieldError`], for exhaustive matching.
@@ -449,7 +519,9 @@ impl KlvFieldError {
             | KlvFieldError::InvalidUtf16 { .. }
             | KlvFieldError::InvalidCodepoint { .. }
             | KlvFieldError::UnsupportedImapbLength { .. }
-            | KlvFieldError::InvalidImapbParams { .. } => KlvFieldErrorKind::Malformed,
+            | KlvFieldError::InvalidImapbParams { .. }
+            | KlvFieldError::NonAsciiText { .. }
+            | KlvFieldError::InvalidFormat { .. } => KlvFieldErrorKind::Malformed,
         }
     }
 }
@@ -1052,6 +1124,59 @@ mod tests {
             .kind(),
             DemuxErrorKind::SyncBufExhausted
         );
+    }
+
+    /// The checksum, compliance, item-value and text refusals reuse the
+    /// existing kinds, so no binding kind table grows.
+    #[test]
+    fn new_klv_variants_map_onto_existing_kinds() {
+        let decode = [
+            (
+                KlvDecodeError::MissingChecksum { offset: 17 },
+                KlvDecodeErrorKind::MissingRequiredTag,
+            ),
+            (
+                KlvDecodeError::MalformedChecksum { offset: 19, got: 1 },
+                KlvDecodeErrorKind::Malformed,
+            ),
+            (
+                KlvDecodeError::ComplianceViolation {
+                    tag: 115,
+                    offset: 27,
+                    reason: "Command Time is 8 bytes",
+                },
+                KlvDecodeErrorKind::Malformed,
+            ),
+        ];
+        for (e, want) in decode {
+            assert_eq!(e.kind(), want, "{e:?}");
+        }
+        let encode = [
+            (
+                KlvEncodeError::InvalidFieldValue {
+                    tag: 130,
+                    reason: "a location needs all three coordinates",
+                },
+                KlvEncodeErrorKind::OutOfRange,
+            ),
+            (
+                KlvEncodeError::ValueTooLong { tag: 94, max: 50 },
+                KlvEncodeErrorKind::StringTooLong,
+            ),
+            (
+                KlvEncodeError::TagNotOneByte { tag: 256 },
+                KlvEncodeErrorKind::ReservedTagInUnknown,
+            ),
+        ];
+        for (e, want) in encode {
+            assert_eq!(e.kind(), want, "{e:?}");
+        }
+        for e in [
+            KlvFieldError::NonAsciiText { tag: 5 },
+            KlvFieldError::InvalidFormat { tag: 10 },
+        ] {
+            assert_eq!(e.kind(), KlvFieldErrorKind::Malformed, "{e:?}");
+        }
     }
 }
 
