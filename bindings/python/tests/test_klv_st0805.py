@@ -226,3 +226,22 @@ def test_cot_keeps_tab_lf_cr_through_a_parser():
     attrs = _parse(platform_position_xml(record, generated_us=GENERATED_US))
     assert attrs["event"]["uid"] == "PRED01_a\tb\nc\rd"
     assert platform_uid(record) == "PRED01_a\tb\nc\rd"
+
+
+# ---------------------------------------------------------------------------
+# require_hae: refuse an MSL height written as the HAE
+# ---------------------------------------------------------------------------
+
+
+def test_require_hae_refuses_an_msl_only_height():
+    record = _fixture(sensor_ellipsoid_height_m=None, sensor_alt_m=1500.0)
+    with pytest.raises(ValueError, match="^KLV tag 15 is an MSL altitude"):
+        platform_position_xml(record, generated_us=GENERATED_US, require_hae=True)
+    # The aimpoint's height is the MSL Target Location Elevation (Item 42).
+    with pytest.raises(ValueError, match="^KLV tag 42 is an MSL altitude"):
+        sensor_point_of_interest_xml(record, generated_us=GENERATED_US, require_hae=True)
+    # The default keeps the pass-through; an undulation satisfies require_hae.
+    assert 'hae="1500"' in platform_position_xml(record, generated_us=GENERATED_US)
+    cfg = CotConfig(geoid_undulation_m=20.0)
+    xml = platform_position_xml(record, config=cfg, generated_us=GENERATED_US, require_hae=True)
+    assert 'hae="1520"' in xml

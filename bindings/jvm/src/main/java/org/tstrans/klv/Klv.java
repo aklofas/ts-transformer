@@ -719,7 +719,29 @@ public final class Klv {
      * @throws NullPointerException if {@code record} or {@code config} is {@code null}
      */
     public static String platformPositionXml(UasDatalinkLs record, CotConfig config, long generatedUs) {
-        return platformPositionXmlNative(record, config, generatedUs);
+        return platformPositionXml(record, config, generatedUs, false);
+    }
+
+    /**
+     * {@link #platformPositionXml(UasDatalinkLs, CotConfig, long)} with a
+     * choice of what an MSL-only height does. Without
+     * {@link CotConfig#geoidUndulationM()} the MSL Sensor True Altitude (Tag
+     * 15) is written as the HAE; {@code requireHae = true} refuses that
+     * instead. Mirrors tst-py's {@code platform_position_xml(..., require_hae=True)}.
+     *
+     * @param record      the UAS Datalink LS to convert
+     * @param config      the CoT conversion configuration
+     * @param generatedUs see {@link #platformPositionXml(UasDatalinkLs, long)}
+     * @param requireHae  {@code true} to refuse an MSL height written as the HAE
+     * @return the serialized CoT event XML
+     * @throws IllegalArgumentException naming the missing KLV tag when a
+     *         mapping-required field is absent from {@code record}, and naming
+     *         the MSL item when {@code requireHae} refuses it
+     * @throws NullPointerException if {@code record} or {@code config} is {@code null}
+     */
+    public static String platformPositionXml(
+            UasDatalinkLs record, CotConfig config, long generatedUs, boolean requireHae) {
+        return platformPositionXmlNative(record, config, generatedUs, requireHae);
     }
 
     /**
@@ -757,7 +779,30 @@ public final class Klv {
      * @throws NullPointerException if {@code record} or {@code config} is {@code null}
      */
     public static String sensorPointOfInterestXml(UasDatalinkLs record, CotConfig config, long generatedUs) {
-        return sensorPointOfInterestXmlNative(record, config, generatedUs);
+        return sensorPointOfInterestXml(record, config, generatedUs, false);
+    }
+
+    /**
+     * {@link #sensorPointOfInterestXml(UasDatalinkLs, CotConfig, long)} with a
+     * choice of what an MSL-only height does: {@code requireHae = true}
+     * refuses an aimpoint height from the MSL Target Location Elevation (Tag
+     * 42) or Frame Center Elevation (Tag 25) when no
+     * {@link CotConfig#geoidUndulationM()} is set. Mirrors tst-py's
+     * {@code sensor_point_of_interest_xml(..., require_hae=True)}.
+     *
+     * @param record      the UAS Datalink LS to convert
+     * @param config      the CoT conversion configuration
+     * @param generatedUs see {@link #platformPositionXml(UasDatalinkLs, long)}
+     * @param requireHae  {@code true} to refuse an MSL height written as the HAE
+     * @return the serialized CoT event XML
+     * @throws IllegalArgumentException naming the missing KLV tag when a
+     *         mapping-required field is absent from {@code record}, and naming
+     *         the MSL item when {@code requireHae} refuses it
+     * @throws NullPointerException if {@code record} or {@code config} is {@code null}
+     */
+    public static String sensorPointOfInterestXml(
+            UasDatalinkLs record, CotConfig config, long generatedUs, boolean requireHae) {
+        return sensorPointOfInterestXmlNative(record, config, generatedUs, requireHae);
     }
 
     /**
@@ -790,10 +835,10 @@ public final class Klv {
     }
 
     private static native String platformPositionXmlNative(
-            UasDatalinkLs record, CotConfig config, long generatedUs);
+            UasDatalinkLs record, CotConfig config, long generatedUs, boolean requireHae);
 
     private static native String sensorPointOfInterestXmlNative(
-            UasDatalinkLs record, CotConfig config, long generatedUs);
+            UasDatalinkLs record, CotConfig config, long generatedUs, boolean requireHae);
 
     private static native String platformUidNative(UasDatalinkLs record);
 

@@ -41,7 +41,8 @@ use jni::strings::JNIString;
 use jni::sys::{jlong, jobject};
 use tst_core::error::CotError;
 use tst_core::klv::st0805::{
-    platform_position_xml, platform_uid, sensor_point_of_interest_xml, spi_uid,
+    MslFallback, platform_position_xml_with, platform_uid, sensor_point_of_interest_xml_with,
+    spi_uid,
 };
 
 use crate::jutil::require_non_null;
@@ -75,16 +76,26 @@ fn new_string_or_throw(env: &mut Env<'_>, s: &str, caller: &str) -> jobject {
     }
 }
 
+/// The Java `requireHae` argument as the Rust switch.
+fn msl_fallback(require_hae: bool) -> MslFallback {
+    if require_hae {
+        MslFallback::Refuse
+    } else {
+        MslFallback::PassThrough
+    }
+}
+
 // ── JNI entry points ─────────────────────────────────────────────────────────
 
 jni_native! {
-    /// `org.tstrans.klv.Klv.platformPositionXmlNative(UasDatalinkLs, CotConfig, long) -> String`
+    /// `org.tstrans.klv.Klv.platformPositionXmlNative(UasDatalinkLs, CotConfig, long, boolean) -> String`
     fn Java_org_tstrans_klv_Klv_platformPositionXmlNative<'local>(
         env,
         _c,
         record: JObject<'local>,
         config: JObject<'local>,
         generated_us: jlong,
+        require_hae: jni::sys::jboolean,
     ) -> jobject = std::ptr::null_mut() => {
         // Null args must throw NPE, never fall into the readers' silent
         // Err(NullPtr)-with-no-pending-exception path (see require_non_null).
@@ -103,7 +114,7 @@ jni_native! {
         };
         // Bit pattern: Java has no unsigned long, so a negative value is a large unsigned time.
         let generated_us = generated_us as u64;
-        match platform_position_xml(&rust_rec, &cfg, generated_us) {
+        match platform_position_xml_with(&rust_rec, &cfg, generated_us, msl_fallback(require_hae)) {
             Ok(xml) => new_string_or_throw(env, &xml, "platformPositionXmlNative"),
             Err(e) => {
                 throw_cot_error(env, &e);
@@ -114,13 +125,14 @@ jni_native! {
 }
 
 jni_native! {
-    /// `org.tstrans.klv.Klv.sensorPointOfInterestXmlNative(UasDatalinkLs, CotConfig, long) -> String`
+    /// `org.tstrans.klv.Klv.sensorPointOfInterestXmlNative(UasDatalinkLs, CotConfig, long, boolean) -> String`
     fn Java_org_tstrans_klv_Klv_sensorPointOfInterestXmlNative<'local>(
         env,
         _c,
         record: JObject<'local>,
         config: JObject<'local>,
         generated_us: jlong,
+        require_hae: jni::sys::jboolean,
     ) -> jobject = std::ptr::null_mut() => {
         // Same NPE-first contract as platformPositionXmlNative above.
         if require_non_null(env, &record, "record").is_err()
@@ -138,7 +150,12 @@ jni_native! {
         };
         // Bit pattern: Java has no unsigned long, so a negative value is a large unsigned time.
         let generated_us = generated_us as u64;
-        match sensor_point_of_interest_xml(&rust_rec, &cfg, generated_us) {
+        match sensor_point_of_interest_xml_with(
+            &rust_rec,
+            &cfg,
+            generated_us,
+            msl_fallback(require_hae),
+        ) {
             Ok(xml) => new_string_or_throw(env, &xml, "sensorPointOfInterestXmlNative"),
             Err(e) => {
                 throw_cot_error(env, &e);

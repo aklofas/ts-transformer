@@ -263,6 +263,37 @@ class St0805Test {
     }
 
     // -----------------------------------------------------------------------
+    // requireHae: refuse an MSL height written as the HAE
+    // -----------------------------------------------------------------------
+
+    @Test
+    void requireHaeRefusesAnMslOnlyHeight() {
+        UasDatalinkLs rec = new UasDatalinkLs.Builder()
+                .universalLabel(ByteBuffer.wrap(Klv.st0601Ul()))
+                .timestampUs(798_039_894_000_000L)
+                .platformDesignation("PRED01")
+                .missionId("M05")
+                .imageSourceSensor("EO")
+                .sensorLatDeg(34.05)
+                .sensorLonDeg(-118.25)
+                .sensorAltM(1500.0)
+                .targetLocationLatDeg(34.10)
+                .targetLocationLonDeg(-118.20)
+                .targetLocationElevM(250.0)
+                .build();
+        CotConfig cfg = CotConfig.defaults();
+        IllegalArgumentException p = assertThrows(IllegalArgumentException.class,
+                () -> Klv.platformPositionXml(rec, cfg, GENERATED_US, true));
+        assertEquals("KLV tag 15 is an MSL altitude, not the HAE the conversion requires", p.getMessage());
+        IllegalArgumentException s = assertThrows(IllegalArgumentException.class,
+                () -> Klv.sensorPointOfInterestXml(rec, cfg, GENERATED_US, true));
+        assertEquals("KLV tag 42 is an MSL altitude, not the HAE the conversion requires", s.getMessage());
+        assertTrue(Klv.platformPositionXml(rec, cfg, GENERATED_US, false).contains("hae=\"1500\""));
+        CotConfig withN = CotConfig.builder().geoidUndulationM(20.0).build();
+        assertTrue(Klv.platformPositionXml(rec, withN, GENERATED_US, true).contains("hae=\"1520\""));
+    }
+
+    // -----------------------------------------------------------------------
     // CotConfig marshaling (Java -> Rust field extraction)
     // -----------------------------------------------------------------------
 

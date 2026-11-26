@@ -46,9 +46,11 @@ use tst_core::klv::st0601::{
 };
 use tst_core::klv::st0605::{decode as decode_st0605, encode as encode_st0605};
 use tst_core::klv::st0805::{
-    CotConfig as RustCotConfig, platform_position_xml as st0805_platform_position_xml,
+    CotConfig as RustCotConfig, MslFallback,
+    platform_position_xml_with as st0805_platform_position_xml_with,
     platform_uid as st0805_platform_uid,
-    sensor_point_of_interest_xml as st0805_sensor_point_of_interest_xml, spi_uid as st0805_spi_uid,
+    sensor_point_of_interest_xml_with as st0805_sensor_point_of_interest_xml_with,
+    spi_uid as st0805_spi_uid,
 };
 use tst_core::klv::st0806::{
     decode as decode_st0806, decode_standalone as decode_st0806_standalone,
@@ -844,22 +846,36 @@ fn cot_config_from_py(config: Option<&Bound<'_, PyAny>>) -> PyResult<RustCotConf
 /// deterministic (a replayed-file CoT run must be byte-identical to a live
 /// one). `config` defaults to `CotConfig()` when omitted.
 ///
+/// Without `config.geoid_undulation_m` an MSL height (Item 15) is written
+/// as the HAE; `require_hae=True` refuses that instead.
+///
 /// Raises `ValueError` naming the missing KLV tag when a mapping-required
 /// field (uid components, timestamp, sensor position, altitude) is absent
-/// from `record`.
+/// from `record`, and naming the MSL item under `require_hae=True`.
 #[pyfunction]
 #[pyo3(
     name = "platform_position_xml",
-    signature = (record, *, config = None, generated_us)
+    signature = (record, *, config = None, generated_us, require_hae = false)
 )]
 fn platform_position_xml_py(
     record: &Bound<'_, PyAny>,
     config: Option<&Bound<'_, PyAny>>,
     generated_us: u64,
+    require_hae: bool,
 ) -> PyResult<String> {
     let ls = crate::generated::st0601::uas_datalink_ls_from_py(record)?;
     let cfg = cot_config_from_py(config)?;
-    st0805_platform_position_xml(&ls, &cfg, generated_us).map_err(cot_error_to_pyerr)
+    st0805_platform_position_xml_with(&ls, &cfg, generated_us, msl_fallback(require_hae))
+        .map_err(cot_error_to_pyerr)
+}
+
+/// `require_hae` as the Rust switch.
+fn msl_fallback(require_hae: bool) -> MslFallback {
+    if require_hae {
+        MslFallback::Refuse
+    } else {
+        MslFallback::PassThrough
+    }
 }
 
 /// Serialize a Sensor Point of Interest CoT event (ST 0805.1 §5 Table 2)
@@ -869,20 +885,23 @@ fn platform_position_xml_py(
 ///
 /// Raises `ValueError` naming the missing KLV tag when a mapping-required
 /// field (uid components, timestamp, an aimpoint position pair, that
-/// pair's elevation) is absent from `record`.
+/// pair's elevation) is absent from `record`, and naming the MSL item
+/// (Item 42 or 25) under `require_hae=True`.
 #[pyfunction]
 #[pyo3(
     name = "sensor_point_of_interest_xml",
-    signature = (record, *, config = None, generated_us)
+    signature = (record, *, config = None, generated_us, require_hae = false)
 )]
 fn sensor_point_of_interest_xml_py(
     record: &Bound<'_, PyAny>,
     config: Option<&Bound<'_, PyAny>>,
     generated_us: u64,
+    require_hae: bool,
 ) -> PyResult<String> {
     let ls = crate::generated::st0601::uas_datalink_ls_from_py(record)?;
     let cfg = cot_config_from_py(config)?;
-    st0805_sensor_point_of_interest_xml(&ls, &cfg, generated_us).map_err(cot_error_to_pyerr)
+    st0805_sensor_point_of_interest_xml_with(&ls, &cfg, generated_us, msl_fallback(require_hae))
+        .map_err(cot_error_to_pyerr)
 }
 
 /// Deterministic Platform Position `uid`: `"{tag10}_{tag3}"` (ST 0805.1 §5
