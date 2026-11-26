@@ -13,6 +13,17 @@ use super::sequence_header::parse_sequence_header;
 /// Other OBU types (TemporalDelimiter, TileGroup, Metadata, RedundantFrameHeader,
 /// TileList, Padding) pass through unparsed and are not recorded — they're
 /// payload-only or not load-bearing for metadata extraction.
+///
+/// The result holds the headers met in THIS call. `frame_headers` gets one
+/// entry per frame header OBU (type 3 or 6) that parsed under the most recent
+/// sequence header that parsed in the same call. It is not a count of decoded
+/// or displayed frames: a `show_existing_frame` header is an entry (with
+/// [`Av1FrameHeaderLight::FRAME_TYPE_UNKNOWN`]), each spatial or temporal
+/// layer has its own, and a stream that repeats type 3 gets one entry per
+/// copy. A sequence header that fails to parse (truncated, or a value out of
+/// its range) is recorded in `unparseable` and the previous one stays
+/// current; a frame header with no sequence header earlier in the same call
+/// is recorded in `unparseable`.
 pub fn parse_obu_stream(obus: &[Obu]) -> Av1ObuStream {
     let mut sequence_headers: Vec<Av1SequenceHeader> = Vec::new();
     let mut frame_headers: Vec<Av1FrameHeaderLight> = Vec::new();
@@ -150,5 +161,50 @@ mod tests {
         assert_eq!(stream.sequence_headers.len(), 0);
         assert_eq!(stream.frame_headers.len(), 0);
         assert!(stream.unparseable.is_empty());
+    }
+
+    fn obu(obu_type: u8, payload: Vec<u8>) -> Obu {
+        Obu {
+            obu_type,
+            extension: None,
+            payload: payload.into(),
+        }
+    }
+
+    /// A redundant frame header (type 7) repeats a frame header for loss
+    /// resilience: it is skipped, so one frame header gives one entry.
+    #[test]
+    fn a_redundant_frame_header_adds_no_entry() {
+        let obus = vec![
+            obu(1, minimal_seq_header_body()),
+            obu(3, keyframe_body()),
+            obu(4, vec![0x00]),
+            obu(7, keyframe_body()),
+            obu(4, vec![0x00]),
+        ];
+        let stream = parse_obu_stream(&obus);
+        assert_eq!(stream.frame_headers.len(), 1);
+        assert!(stream.unparseable.is_empty());
+    }
+
+    /// A sequence header that fails to parse is recorded and does not
+    /// replace the one before it: the frame header after it still parses.
+    #[test]
+    fn a_failed_sequence_header_keeps_the_previous_one() {
+        let truncated = minimal_seq_header_body()[..3].to_vec();
+        let obus = vec![
+            obu(1, minimal_seq_header_body()),
+            obu(1, truncated),
+            obu(3, keyframe_body()),
+        ];
+        let stream = parse_obu_stream(&obus);
+        assert_eq!(stream.sequence_headers.len(), 1);
+        assert_eq!(stream.unparseable.len(), 1);
+        assert!(matches!(
+            stream.unparseable[0],
+            (1, CodecParseError::TruncatedRbsp { .. })
+        ));
+        assert_eq!(stream.frame_headers.len(), 1);
+        assert_eq!(stream.frame_headers[0].frame_type, 0);
     }
 }
