@@ -33,8 +33,9 @@ crate::binding_record! {
 /// cursor lands at the next SPS/VPS field correctly.
 ///
 /// Pre-condition: `out` is already default-initialized; this function
-/// overwrites the headline fields when `profile_tier_present_flag` is
-/// true and leaves them at their default-zero values otherwise.
+/// overwrites `general_profile_idc` and `general_tier_flag` when
+/// `profile_tier_present_flag` is true (they keep their default zero
+/// otherwise) and always reads `general_level_idc`.
 pub(crate) fn parse_into(
     br: &mut BitReader<'_>,
     profile_tier_present_flag: bool,

@@ -47,6 +47,30 @@ fn minimal_sps_rbsp_full(
     conf_window: Option<(u32, u32, u32, u32)>,
     vui_extra_padding_bytes: usize,
 ) -> Vec<u8> {
+    if vui_extra_padding_bytes > 0 {
+        // vui_parameters(): 8 flag bits (all zero), then a 0xFF tail.
+        let mut payload = vec![0x00u8];
+        payload.extend(core::iter::repeat_n(0xFF, vui_extra_padding_bytes));
+        minimal_sps_rbsp_ext(
+            bitdepth_minus8,
+            conf_window,
+            Some((vui_extra_padding_bytes as u32, &payload)),
+            false,
+        )
+    } else {
+        minimal_sps_rbsp_ext(bitdepth_minus8, conf_window, None, false)
+    }
+}
+
+/// `vui = Some((size_minus1, payload_rbsp_bytes))` writes the flag,
+/// `ue(size_minus1)`, the alignment zeros, then the payload bytes verbatim;
+/// `explicit_scaling_list` sets `sps_explicit_scaling_list_enabled_flag`.
+fn minimal_sps_rbsp_ext(
+    bitdepth_minus8: u32,
+    conf_window: Option<(u32, u32, u32, u32)>,
+    vui: Option<(u32, &[u8])>,
+    explicit_scaling_list: bool,
+) -> Vec<u8> {
     let mut bw = BitWriter::new();
 
     // §7.3.2.4 SPS header.
@@ -212,8 +236,8 @@ fn minimal_sps_rbsp_full(
     bw.write(0, 1); // sps_ibc_enabled_flag = 0
     // (ibc=0 → no six_minus_max_num_ibc field)
     bw.write(0, 1); // sps_ladf_enabled_flag = 0
-    bw.write(0, 1); // sps_explicit_scaling_list_enabled_flag = 0
-    // (explicit_scaling=0 → no scaling list fields)
+    bw.write(u64::from(explicit_scaling_list), 1); // sps_explicit_scaling_list_enabled_flag
+    // (explicit_scaling=1 is refused right after this flag)
     // lfnst=0, explicit_scaling=0 → no lfnst_disabled flag.
     // act=0, explicit_scaling=0 → no act_disabled flag.
     bw.write(0, 1); // sps_dep_quant_enabled_flag = 0
@@ -225,24 +249,16 @@ fn minimal_sps_rbsp_full(
     // (timing_hrd=0 → no general_timing_hrd_parameters call)
 
     bw.write(0, 1); // sps_field_seq_flag = 0
-    if vui_extra_padding_bytes > 0 {
+    if let Some((size_minus1, payload)) = vui {
         bw.write(1, 1); // sps_vui_parameters_present_flag = 1
-        // §7.3.2.4: vui_payload_size_minus1 ue(v). 1 byte of VUI flags +
-        // `vui_extra_padding_bytes` of tail = total bytes - 1.
-        let total_bytes = 1 + vui_extra_padding_bytes;
-        bw.write_ue((total_bytes - 1) as u32);
+        bw.write_ue(size_minus1); // sps_vui_payload_size_minus1
         // §7.3.2.4: while(!byte_aligned()) sps_vui_alignment_zero_bit f(1).
         while !bw.pos.is_multiple_of(8) {
             bw.write(0, 1);
         }
-        // vui_parameters(): 8 flag bits (all zero) — see H.274 §7.2.
-        // 4 source flags + aspect_ratio_present + overscan_present +
-        // colour_description_present + chroma_loc_present.
-        bw.write(0, 8);
-        // Tail padding: fill with 0xFF so a mis-framed parser reads
-        // sps_extension_flag = 1 (which fails downstream rbsp_trailing_bits).
-        for _ in 0..vui_extra_padding_bytes {
-            bw.write(0xFF, 8);
+        // vui_payload(): the payload's RBSP bytes as given.
+        for b in payload {
+            bw.write(u64::from(*b), 8);
         }
     } else {
         bw.write(0, 1); // sps_vui_parameters_present_flag = 0
@@ -487,6 +503,34 @@ fn vui_tail_padding_consumed_before_extension_flag() {
 /// 1-bit drift would mis-frame `num_units_in_tick` (a u(32)) and either
 /// produce garbage timing or trigger `TruncatedRbsp` near the RBSP end.
 fn sps_rbsp_with_two_entry_short_term_rps_and_timing_hrd() -> Vec<u8> {
+    sps_rbsp_with_rps_and_timing(H266TimingRplOpts::default())
+}
+
+/// The fields `sps_rbsp_with_rps_and_timing` varies. The default is the
+/// two-entry short-term RPS at 1 / 30 described above.
+struct H266TimingRplOpts {
+    num_units_in_tick: u32,
+    time_scale: u32,
+    elemental_duration_minus1: u32,
+    log2_max_poc_lsb_minus4: u32,
+    /// `Some(lsb)`: the one L0 entry is a long-term entry coded in the SPS
+    /// (`ltrp_in_header_flag = 0`) with `rpls_poc_lsb_lt = lsb`.
+    long_term_entry_lsb: Option<u32>,
+}
+
+impl Default for H266TimingRplOpts {
+    fn default() -> Self {
+        Self {
+            num_units_in_tick: 1,
+            time_scale: 30,
+            elemental_duration_minus1: 0,
+            log2_max_poc_lsb_minus4: 0,
+            long_term_entry_lsb: None,
+        }
+    }
+}
+
+fn sps_rbsp_with_rps_and_timing(opts: H266TimingRplOpts) -> Vec<u8> {
     let mut bw = BitWriter::new();
 
     // §7.3.2.4 SPS header — same layout as `minimal_sps_rbsp_full`.
@@ -518,7 +562,7 @@ fn sps_rbsp_with_two_entry_short_term_rps_and_timing_hrd() -> Vec<u8> {
     // ── body walk — mirrors `walk_sps_body` order ───────────────────────────
     bw.write(0, 1); // sps_entropy_coding_sync_enabled_flag
     bw.write(0, 1); // sps_entry_point_offsets_present_flag
-    bw.write(0, 4); // sps_log2_max_pic_order_cnt_lsb_minus4
+    bw.write(opts.log2_max_poc_lsb_minus4.into(), 4); // sps_log2_max_pic_order_cnt_lsb_minus4
     bw.write(0, 1); // sps_poc_msb_cycle_flag
     bw.write(0, 2); // sps_num_extra_ph_bytes
     bw.write(0, 2); // sps_num_extra_sh_bytes
@@ -560,7 +604,7 @@ fn sps_rbsp_with_two_entry_short_term_rps_and_timing_hrd() -> Vec<u8> {
     // every entry — AbsDeltaPocSt = abs_delta_poc_st + 1 always.
     bw.write(0, 1); // sps_weighted_pred_flag = 0
     bw.write(0, 1); // sps_weighted_bipred_flag = 0
-    bw.write(0, 1); // sps_long_term_ref_pics_flag = 0
+    bw.write(u64::from(opts.long_term_entry_lsb.is_some()), 1); // sps_long_term_ref_pics_flag
     // vps_id == 0 → sps_inter_layer_prediction_enabled_flag NOT coded
     bw.write(0, 1); // sps_idr_rpl_present_flag
     bw.write(0, 1); // sps_rpl1_same_as_rpl0_flag = 0 → two RPL directions
@@ -568,16 +612,23 @@ fn sps_rbsp_with_two_entry_short_term_rps_and_timing_hrd() -> Vec<u8> {
     // L0: one RPS struct with two short-term entries.
     bw.write_ue(1); // sps_num_ref_pic_lists[0] = 1
     // ref_pic_list_struct(0, 0):
-    bw.write_ue(2); // num_ref_entries = 2
-    // long_term_ref_pics_flag=0 → ltrp_in_header_flag NOT coded.
-    // inter_layer_pred_enabled_flag=0 → inter_layer_ref_pic_flag NOT coded.
-    // long_term_ref_pics_flag=0 → st_ref_pic_flag inferred 1.
-    // Entry 0: abs_delta_poc_st = 0, AbsDeltaPocSt = 1 → sign coded.
-    bw.write_ue(0); // abs_delta_poc_st[0]
-    bw.write(0, 1); // strp_entry_sign_flag[0]
-    // Entry 1: abs_delta_poc_st = 0; spec says AbsDeltaPocSt = 1 → sign coded.
-    bw.write_ue(0); // abs_delta_poc_st[1]
-    bw.write(0, 1); // strp_entry_sign_flag[1]
+    if let Some(lsb) = opts.long_term_entry_lsb {
+        bw.write_ue(1); // num_ref_entries = 1
+        bw.write(0, 1); // ltrp_in_header_flag = 0: the entry is coded here
+        bw.write(0, 1); // st_ref_pic_flag[0] = 0: a long-term entry
+        bw.write(lsb.into(), opts.log2_max_poc_lsb_minus4 + 4); // rpls_poc_lsb_lt[0]
+    } else {
+        bw.write_ue(2); // num_ref_entries = 2
+        // long_term_ref_pics_flag=0 → ltrp_in_header_flag NOT coded.
+        // inter_layer_pred_enabled_flag=0 → inter_layer_ref_pic_flag NOT coded.
+        // long_term_ref_pics_flag=0 → st_ref_pic_flag inferred 1.
+        // Entry 0: abs_delta_poc_st = 0, AbsDeltaPocSt = 1 → sign coded.
+        bw.write_ue(0); // abs_delta_poc_st[0]
+        bw.write(0, 1); // strp_entry_sign_flag[0]
+        // Entry 1: abs_delta_poc_st = 0; spec says AbsDeltaPocSt = 1 → sign coded.
+        bw.write_ue(0); // abs_delta_poc_st[1]
+        bw.write(0, 1); // strp_entry_sign_flag[1]
+    }
     // L1: no RPS structs.
     bw.write_ue(0); // sps_num_ref_pic_lists[1] = 0
 
@@ -615,8 +666,8 @@ fn sps_rbsp_with_two_entry_short_term_rps_and_timing_hrd() -> Vec<u8> {
     // ptl_dpb_hrd_params_present_flag=1 → timing_hrd flag present.
     bw.write(1, 1); // sps_timing_hrd_params_present_flag = 1
     // §7.3.5.1 general_timing_hrd_parameters().
-    bw.write(1, 32); // num_units_in_tick = 1
-    bw.write(30, 32); // time_scale = 30 → 30 fps
+    bw.write(opts.num_units_in_tick.into(), 32); // num_units_in_tick
+    bw.write(opts.time_scale.into(), 32); // time_scale
     bw.write(0, 1); // general_nal_hrd_params_present_flag
     bw.write(0, 1); // general_vcl_hrd_params_present_flag
     // Both 0 → no further general_timing_hrd fields.
@@ -624,7 +675,7 @@ fn sps_rbsp_with_two_entry_short_term_rps_and_timing_hrd() -> Vec<u8> {
     // sublayer_cpb_params_present_flag; first_sub_layer = 0.
     // Loop 0..=0:
     bw.write(1, 1); // fixed_pic_rate_general_flag = 1 → infer within_cvs=true
-    bw.write_ue(0); // elemental_duration_in_tc_minus1
+    bw.write_ue(opts.elemental_duration_minus1); // elemental_duration_in_tc_minus1
     // No sublayer_hrd_parameters (neither nal_hrd nor vcl_hrd present).
 
     bw.write(0, 1); // sps_field_seq_flag
@@ -668,4 +719,93 @@ fn h266_abs_delta_poc_st_predicate_matches_spec_no_weighted_pred() {
         "frame_rate must surface as 30/1 from num_units_in_tick=1, time_scale=30 — \
          1-bit cursor drift after the RPS walk would mis-frame these reads"
     );
+}
+
+/// A long-term entry coded in the SPS's own list (`ltrp_in_header_flag = 0`)
+/// is read (`rpls_poc_lsb_lt`, `sps_log2_max_pic_order_cnt_lsb_minus4 + 4`
+/// bits, H.266 §7.3.10): the fields after the lists are framed right.
+#[test]
+fn sps_with_in_sps_long_term_rpl_entry_parses() {
+    let rbsp = sps_rbsp_with_rps_and_timing(H266TimingRplOpts {
+        log2_max_poc_lsb_minus4: 4,
+        long_term_entry_lsb: Some(0xA5),
+        ..Default::default()
+    });
+    let sps = parse_sps(&escape_emulation(&rbsp)).expect("long-term RPL entry in SPS");
+    assert_eq!(sps.frame_rate, Some(Rational { num: 30, den: 1 }));
+}
+
+/// A fixed picture rate spans `elemental_duration_in_tc_minus1 + 1` clock
+/// ticks (H.266 §7.4.6.2): 60 ticks a second, two per picture.
+#[test]
+fn frame_rate_divides_by_elemental_duration() {
+    let rbsp = sps_rbsp_with_rps_and_timing(H266TimingRplOpts {
+        time_scale: 60,
+        elemental_duration_minus1: 1,
+        ..Default::default()
+    });
+    assert_eq!(
+        parse_sps(&escape_emulation(&rbsp)).unwrap().frame_rate,
+        Some(Rational { num: 30, den: 1 })
+    );
+}
+
+/// `elemental_duration_in_tc_minus1 = 0` keeps the pair as coded, unreduced.
+#[test]
+fn a_zero_elemental_duration_keeps_the_unreduced_pair() {
+    let rbsp = sps_rbsp_with_rps_and_timing(H266TimingRplOpts {
+        num_units_in_tick: 2002,
+        time_scale: 60000,
+        ..Default::default()
+    });
+    assert_eq!(
+        parse_sps(&escape_emulation(&rbsp)).unwrap().frame_rate,
+        Some(Rational {
+            num: 60000,
+            den: 2002
+        })
+    );
+}
+
+/// `num_units_in_tick * (elemental_duration_in_tc_minus1 + 1)` that does
+/// not fit 32 bits after reduction gives no rate, never a truncated one.
+#[test]
+fn a_rate_that_does_not_fit_after_reduction_is_none() {
+    let rbsp = sps_rbsp_with_rps_and_timing(H266TimingRplOpts {
+        num_units_in_tick: u32::MAX,
+        time_scale: 1,
+        elemental_duration_minus1: 1,
+        ..Default::default()
+    });
+    assert_eq!(
+        parse_sps(&escape_emulation(&rbsp)).unwrap().frame_rate,
+        None
+    );
+}
+
+/// A zero clock gives no rate, with and without an elemental duration.
+#[test]
+fn a_zero_time_scale_gives_no_frame_rate() {
+    for elemental_duration_minus1 in [0, 1] {
+        let rbsp = sps_rbsp_with_rps_and_timing(H266TimingRplOpts {
+            time_scale: 0,
+            elemental_duration_minus1,
+            ..Default::default()
+        });
+        assert_eq!(
+            parse_sps(&escape_emulation(&rbsp)).unwrap().frame_rate,
+            None,
+            "elemental_duration_in_tc_minus1 = {elemental_duration_minus1}"
+        );
+    }
+}
+
+/// `sps_explicit_scaling_list_enabled_flag = 1` is refused: the scaling
+/// list data is not walked.
+#[test]
+fn explicit_scaling_list_sps_is_rejected() {
+    assert!(matches!(
+        parse_sps(&minimal_sps_rbsp_ext(0, None, None, true)),
+        Err(CodecParseError::UnsupportedProfile { profile_idc: 0 })
+    ));
 }

@@ -32,12 +32,18 @@ crate::binding_record! {
         /// Chroma bit depth. Equal to `bit_depth_luma` per H.266 V4 §7.4.3.4
         /// (single `sps_bitdepth_minus8` field covers both planes).
         pub bit_depth_chroma: u8,
-        /// VUI colour info, or absent when the VUI is absent or
-        /// `colour_description` is not present. Decoded per H.274 §7.2
-        /// (codec-independent colour registry).
+        /// VUI colour info: present when the VUI signals any of a colour
+        /// description, the chroma sample locations or the aspect ratio;
+        /// absent otherwise and when the SPS has no VUI. Decoded per H.274
+        /// §7.2 (codec-independent colour registry).
         @[java("color")] pub color_info: Option<ColorInfo>,
-        /// Frame rate as a rational number, or absent when the timing HRD
-        /// parameters are absent. In H.266, timing lives in
+        /// Frame rate as a rational number: `time_scale / num_units_in_tick`
+        /// as coded; when the highest sublayer has a fixed picture rate with
+        /// `elemental_duration_in_tc_minus1` above 0, that pair divided by
+        /// `elemental_duration_in_tc_minus1 + 1` and reduced (H.266
+        /// §7.4.6.2). Absent when the timing HRD parameters are absent, when
+        /// either timing field is zero, and when the reduced pair does not fit
+        /// 32 bits. In H.266, timing lives in
         /// `general_timing_hrd_parameters()` (§7.3.5.1), not the VUI.
         pub frame_rate: Option<Rational>,
         /// Luma-sample conformance-window crop offsets per H.266 §7.4.3.4.
@@ -242,7 +248,7 @@ fn walk_sps_body(
     let _entry_point_offsets_present_flag = br.read_bool()?;
 
     // §7.3.2.4 — POC config.
-    let _log2_max_pic_order_cnt_lsb_minus4 = br.read_u(4)?; // u(4)
+    let log2_max_pic_order_cnt_lsb_minus4 = br.read_u(4)?; // u(4)
     let poc_msb_cycle_flag = br.read_bool()?;
     if poc_msb_cycle_flag {
         let _poc_msb_cycle_len_minus1 = br.read_ue()?;
@@ -329,7 +335,7 @@ fn walk_sps_body(
         let _explicit_mts_intra_enabled_flag = br.read_bool()?;
         let _explicit_mts_inter_enabled_flag = br.read_bool()?;
     }
-    let lfnst_enabled_flag = br.read_bool()?;
+    let _lfnst_enabled_flag = br.read_bool()?;
 
     // §7.3.2.4 — chroma QP table (present when chroma_format_idc != 0).
     let _joint_cbcr_enabled_flag = if chroma_format_idc != 0 {
@@ -393,6 +399,7 @@ fn walk_sps_body(
                 inter_layer_pred_enabled_flag,
                 weighted_pred_flag,
                 weighted_bipred_flag,
+                log2_max_pic_order_cnt_lsb_minus4 + 4,
             )?;
         }
     }
@@ -458,7 +465,7 @@ fn walk_sps_body(
     }
 
     let palette_enabled_flag = br.read_bool()?;
-    let act_enabled_flag = if chroma_format_idc == 3 && !max_luma_transform_size_64_flag {
+    let _act_enabled_flag = if chroma_format_idc == 3 && !max_luma_transform_size_64_flag {
         br.read_bool()? // sps_act_enabled_flag
     } else {
         false
@@ -490,18 +497,6 @@ fn walk_sps_body(
             profile_idc: 0, // profile_idc not relevant here; bail is structural
         });
     }
-    // These two flags are conditional on lfnst/act enabled AND explicit
-    // scaling list enabled — both false since we bailed above if the latter
-    // was set; but read the guard conditions correctly for any future path.
-    if lfnst_enabled_flag && sps_explicit_scaling_list_enabled_flag {
-        let _scaling_matrix_for_lfnst_disabled_flag = br.read_bool()?;
-    }
-    if act_enabled_flag && sps_explicit_scaling_list_enabled_flag {
-        let _scaling_matrix_for_alternative_colour_space_disabled_flag = br.read_bool()?;
-        // sps_scaling_matrix_designated_colour_space_flag is gated on the
-        // flag just read, which we can't know here (already bailed before
-        // it becomes relevant in the flag-true path).
-    }
 
     let _dep_quant_enabled_flag = br.read_bool()?;
     let _sign_data_hiding_enabled_flag = br.read_bool()?;
@@ -530,13 +525,22 @@ fn walk_sps_body(
     if ptl_dpb_hrd_present {
         let timing_hrd_params_present_flag = br.read_bool()?;
         if timing_hrd_params_present_flag
-            && let Some((num_units, time_scale)) =
+            && let Some((num_units, time_scale, duration_minus1)) =
                 walk_timing_hrd_parameters(br, max_sublayers_minus1)?
         {
-            frame_rate = Some(Rational {
-                num: time_scale,
-                den: num_units,
-            });
+            // §7.4.6.2: a fixed picture rate spans
+            // elemental_duration_in_tc_minus1 + 1 clock ticks. A duration of
+            // one tick keeps the pair as coded.
+            frame_rate = match duration_minus1 {
+                Some(d) if d > 0 => crate::codec::reduced_rational(
+                    u64::from(time_scale),
+                    u64::from(num_units) * (u64::from(d) + 1),
+                ),
+                _ => Some(Rational {
+                    num: time_scale,
+                    den: num_units,
+                }),
+            };
         }
     }
 
@@ -621,12 +625,15 @@ fn walk_dpb_parameters(
 /// `ols_timing_hrd_parameters(firstSubLayer, sps_max_sublayers_minus1)`
 /// (§7.3.5.2). Called only when `sps_timing_hrd_params_present_flag = 1`.
 ///
-/// Returns `Some((num_units_in_tick, time_scale))` for frame_rate recovery
-/// when the values are non-zero; `None` otherwise.
+/// Returns `Some((num_units_in_tick, time_scale, duration_minus1))` for
+/// frame_rate recovery when both clock values are non-zero; `None`
+/// otherwise. `duration_minus1` is the highest sublayer's
+/// `elemental_duration_in_tc_minus1`, `None` when its picture rate is not
+/// fixed.
 fn walk_timing_hrd_parameters(
     br: &mut BitReader<'_>,
     max_sublayers_minus1: u8,
-) -> Result<Option<(u32, u32)>, CodecParseError> {
+) -> Result<Option<(u32, u32, Option<u32>)>, CodecParseError> {
     // §7.3.5.1 general_timing_hrd_parameters().
     let num_units_in_tick = br.read_u(32)?;
     let time_scale = br.read_u(32)?;
@@ -661,7 +668,8 @@ fn walk_timing_hrd_parameters(
     } else {
         max_sublayers_minus1
     };
-    for _ in first_sub_layer..=max_sublayers_minus1 {
+    let mut top_duration_minus1 = None;
+    for i in first_sub_layer..=max_sublayers_minus1 {
         let fixed_pic_rate_general_flag = br.read_bool()?;
         let fixed_pic_rate_within_cvs_flag = if !fixed_pic_rate_general_flag {
             br.read_bool()?
@@ -669,7 +677,10 @@ fn walk_timing_hrd_parameters(
             true
         };
         if fixed_pic_rate_within_cvs_flag {
-            let _elemental_duration_in_tc_minus1 = br.read_ue()?;
+            let elemental_duration_in_tc_minus1 = br.read_ue()?;
+            if i == max_sublayers_minus1 {
+                top_duration_minus1 = Some(elemental_duration_in_tc_minus1);
+            }
         } else if (general_nal_hrd_params_present_flag || general_vcl_hrd_params_present_flag)
             && hrd_cpb_cnt_minus1 == 0
         {
@@ -694,7 +705,7 @@ fn walk_timing_hrd_parameters(
     }
     // Both values must be non-zero for a valid frame_rate ratio.
     let timing = if num_units_in_tick > 0 && time_scale > 0 {
-        Some((num_units_in_tick, time_scale))
+        Some((num_units_in_tick, time_scale, top_duration_minus1))
     } else {
         None
     };
@@ -723,12 +734,10 @@ fn walk_sublayer_hrd_parameters(
 
 /// Walk `ref_pic_list_struct(listIdx, rplsIdx)` per §7.3.10.
 ///
-/// Advances the cursor past one reference picture list structure.
-/// Long-term ref-pic entries that signal `rpls_poc_lsb_lt` require a variable
-/// bit width (`u(v)` with width derived from `sps_log2_max_pic_order_cnt_lsb_minus4`);
-/// since that width is not passed into this helper, the long-term non-in-header
-/// path bails to `UnsupportedProfile`. In practice `sps_long_term_ref_pics_flag`
-/// is `false` on VVenC default output so this path is never taken on real fixtures.
+/// Advances the cursor past one reference picture list structure. A
+/// long-term entry coded in the list (`ltrp_in_header_flag = 0`) carries
+/// `rpls_poc_lsb_lt` of `poc_lsb_bits` bits
+/// (`sps_log2_max_pic_order_cnt_lsb_minus4 + 4`).
 ///
 /// `weighted_pred_flag` and `weighted_bipred_flag` gate the `AbsDeltaPocSt`
 /// +1 fallback per H.266 V4 §7.4.9 equation (150). Cross-checked against
@@ -747,6 +756,7 @@ fn walk_ref_pic_list_struct(
     inter_layer_pred_enabled_flag: bool,
     weighted_pred_flag: bool,
     weighted_bipred_flag: bool,
+    poc_lsb_bits: u32,
 ) -> Result<(), CodecParseError> {
     let num_ref_entries = br.read_ue()?;
     // ltrp_in_header_flag: present when long_term_ref_pics_flag is true,
@@ -795,10 +805,8 @@ fn walk_ref_pic_list_struct(
             } else if ltrp_in_header_flag {
                 // Long-term entry signalled in slice header — no bits here.
             } else {
-                // Long-term entry signalled in RPLS — requires poc_lsb_lt of
-                // width `log2_max_pic_order_cnt_lsb_minus4 + 4` bits. We don't
-                // thread that width through the call stack, so bail here.
-                return Err(CodecParseError::UnsupportedProfile { profile_idc: 0 });
+                // Long-term entry signalled in the list: rpls_poc_lsb_lt u(v).
+                let _rpls_poc_lsb_lt = br.read_u(poc_lsb_bits)?;
             }
         } else {
             // Inter-layer ref-pic: ilrp_idx ue(v).
