@@ -1988,8 +1988,9 @@ and the two below.
   lower-level `klv::st1010::encode_sdcc_flp_mode2` writes one
   self-contained pack from caller-supplied slices and knows nothing of
   the Local Set around it. For a tag that repeats (an unknown tag,
-  Item 115) `preceding_tags` names tags, not instances, so the encoder
-  places a pack after the first instance not yet written.
+  Item 115) `preceding_tags` names tags, not items, so the rows do not
+  say which item a pack refines, and such a set can end with a pack
+  that is not placed.
 - **Why deferred:** A caller that builds a record today pairs the pack
   from `encode_sdcc_flp_mode2` with the `preceding_tags` it refines,
   and the encoder places it. A builder, and the two checks, need the
@@ -2009,8 +2010,11 @@ and the two below.
 - **Why deferred:** Keeping it needs a record field per set (a list of
   tags sent as unknown), a signature change for every typed record and
   its Python and JVM twins, and an encoder rule for a tag that is both
-  in the list and set; nothing a decoder hands out depends on the
-  difference.
+  in the list and set. It would also let an ST 0601 Item 102 pack that
+  names such an item be written after it: today the item is not
+  written, so the pack cannot be placed, the ordinary encoders write it
+  after the typed items and `encode_strict_compliance` refuses the
+  record.
 - **Trigger to revisit:** A relay that must re-emit a producer's
   explicit "unknown" items, or a consumer that needs to tell "sent as
   unknown" from "not sent".
@@ -2019,15 +2023,18 @@ and the two below.
 
 - **Status:** Not implemented. An ST 1201 IMAP special value (an
   out-of-range signal, "Invalid", an infinity, NaN) in a VTarget Pack's
-  IMAPB item or in VMTI Item 11 or 12 decodes as an unset field with no
-  error (ST 0903.6 §9.1.1 sends the signal in place of the
-  measurement), so a re-encode leaves the item out, and the strict
-  encoders refuse a record whose special was a mandatory item's or a
-  pack's only value. ST 0601 keeps its specials in
-  `UasDatalinkLs::imapb_specials`; VMTI has no such field.
+  IMAPB item or in VMTI Item 11 or 12 leaves its field unset (ST 0903.6
+  §9.1.1 sends the signal in place of the measurement); the lenient
+  decode lists it in `field_errors` as `KlvFieldError::OutOfRange`, the
+  strict decode accepts it, and no encoder writes it back: a re-encode
+  leaves the item out, and the strict encoders refuse a record whose
+  special was a mandatory item's or a pack's only value. ST 0601 keeps
+  its specials in `UasDatalinkLs::imapb_specials` and writes them back;
+  VMTI has no such field.
 - **Why deferred:** A field like ST 0601's on `VmtiLs` and
-  `VTargetPack` changes both records and their Python and JVM twins. A
-  relay forwards the original bytes meanwhile.
+  `VTargetPack` (written back at the item's place, as ST 0601 does)
+  changes both records and their Python and JVM twins. A relay forwards
+  the original bytes meanwhile.
 - **Trigger to revisit:** A VMTI relay that must re-encode records
   whose producer sends IMAP specials.
 
@@ -2038,7 +2045,9 @@ and the two below.
   `st0903::decode`) step over an unknown item whose BER-OID tag is wider
   than 32 bits (ST 0107.3-04) and drop it: it is not in the record's
   `unknown` list, a re-encode leaves it out, and nothing counts how
-  many were skipped. `st0601::patch` copies such an item as it was;
+  many were skipped; an ST 0601 Item 102 pack's rows end at such an
+  item, so a pack that refines items before it has fewer rows than its
+  matrix and cannot be placed. `st0601::patch` copies such an item as it was;
   `st0601::decode_strict_compliance` and `st0903::decode_strict` refuse
   it. The Security Metadata Local Set and the VTarget Pack use one-byte
   tags and cannot carry one.
