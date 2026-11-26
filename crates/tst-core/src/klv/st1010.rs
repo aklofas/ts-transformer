@@ -43,8 +43,9 @@
 //! **Mode 2** (two bytes, adds runtime format selection):
 //! byte 1 `[F1:7][R:6][CS:5][Cf:4][Clen:3-0]`,
 //! byte 2 `[F2:7][R:6][R:5][Sf:4][Slen:3-0]`.
-//! `Sf`/`Cf`: `0` = IEEE float (binary32 for `len==4`, binary64 for
-//! `len==8`; other lengths are undefined and rejected), `1` = ST 1201
+//! `Sf`/`Cf`: `0` = IEEE float (binary16 for `len==2`, binary32 for
+//! `len==4`, binary64 for `len==8`, ST 0107.5-20; other lengths are
+//! undefined and rejected), `1` = ST 1201
 //! IMAPB. The correlation IMAPB range is always fixed at `[-1.0, 1.0]`
 //! (§6.3.2.3); the standard-deviation IMAPB range is Parent-Document-
 //! defined and therefore **unknown to this decoder** — an `Sf=1` std-dev
@@ -62,7 +63,8 @@
 use alloc::vec::Vec;
 
 use crate::error::{KlvDecodeError, KlvEncodeError, KlvFieldError};
-use crate::klv::imapb::{ImapbParams, decode_imapb, encode_imapb};
+use crate::float_ext::FloatExt;
+use crate::klv::imapb::{DecodedImapb, ImapbParams, decode_imapb, encode_imapb};
 use crate::klv::length::{read_ber_oid, write_ber_oid};
 
 crate::binding_record! {
@@ -136,36 +138,33 @@ impl SdccFlp {
 /// the Parse Control declares neither standard deviations nor correlations,
 /// `Slen==0 && Clen==0`, which ST 1010.2-12 forbids).
 /// [`KlvFieldError::OutOfRange`] when the Matrix Size exceeds 256, the
-/// largest matrix this decoder reconstructs.
+/// largest matrix this decoder reconstructs, or when an ST 1201 correlation
+/// is an IMAP special value or lies outside `[-1, 1]` (it carries no
+/// correlation).
+/// [`KlvFieldError::InvalidFormat`] when the Mode 2 Parse Control sets a
+/// bit ST 1010.3 Table 2 reserves (Byte 1 bit 6, Byte 2 bits 5 to 7), or
+/// the Bit Vector marks every slot (ST 1010.2-11) or sets a padding bit.
 /// IMAPB-substrate errors from correlation decode ([`decode_imapb`])
 /// propagate as-is.
 pub fn decode_sdcc_flp(bytes: &[u8]) -> Result<SdccFlp, KlvFieldError> {
-    // Element 1: Matrix Size (BER-OID; §6.3.3).
-    let (n_raw, mut rest) = read_ber_oid(bytes).map_err(substrate_err)?;
-    let n = n_raw as usize;
-
-    // Element 2: Parse Control (§6.3.2). Mode is signaled by bit7 of the
-    // first PC byte: 0 => Mode 1 (one byte), 1 => Mode 2 (two bytes).
-    let (pc1_buf, r) = take(rest, 1)?;
-    rest = r;
-    let pc1 = pc1_buf[0];
-    let (cs, cf_imap, clen, sf_imap, slen) = if pc1 & 0x80 == 0 {
-        let slen = ((pc1 >> 4) & 0x07) as usize;
-        let cs = (pc1 >> 3) & 0x01 != 0;
-        let clen = (pc1 & 0x07) as usize;
-        // Mode 1: correlation format always ST 1201; std-dev format
-        // assumed IEEE (see module doc).
-        (cs, true, clen, false, slen)
-    } else {
-        let (pc2_buf, r) = take(rest, 1)?;
-        rest = r;
-        parse_mode2(pc1, pc2_buf[0])
-    };
-
-    // Bound N *before* any allocation sized by it — see
-    // `check_matrix_size_fits`. Must run ahead of every `corr_slots(n)`
-    // usize computation below (32-bit targets overflow it for large N).
-    check_matrix_size_fits(n_raw, rest.len(), slen, clen, cs)?;
+    // Elements 1 and 2, with N bounded *before* any allocation sized by it
+    // (`read_sdcc_header` runs `check_matrix_size_fits`, ahead of every
+    // `corr_slots(n)` usize computation below: 32-bit targets overflow it
+    // for large N).
+    let (header, mut rest) = read_sdcc_header(bytes)?;
+    if header.reserved_bits {
+        return Err(KlvFieldError::InvalidFormat { tag: 0 });
+    }
+    let SdccHeader {
+        n,
+        cs,
+        cf_imap,
+        clen,
+        sf_imap,
+        slen,
+        ..
+    } = header;
+    let n = n as usize;
 
     // Element 3: Bit Vector (iff CS==1; §6.3.4). Read unconditionally on
     // `cs` per the Table-4 element order — independent of Clen, which is
@@ -180,6 +179,14 @@ pub fn decode_sdcc_flp(bytes: &[u8]) -> Result<SdccFlp, KlvFieldError> {
     } else {
         &[][..]
     };
+    // ST 1010.2-11: a Bit Vector conveys a sparse matrix only, never every
+    // slot; §6.3.4: it ends in zero padding.
+    if cs {
+        let set = |k: usize| (bitvec[k / 8] >> (7 - (k % 8))) & 1 != 0;
+        if (m > 0 && (0..m).all(set)) || (m..v_bytes * 8).any(set) {
+            return Err(KlvFieldError::InvalidFormat { tag: 0 });
+        }
+    }
 
     // Element 4: Standard Deviation values (§6.3.2.3) — N × Slen bytes,
     // present iff Slen>0.
@@ -264,8 +271,9 @@ pub fn decode_sdcc_flp(bytes: &[u8]) -> Result<SdccFlp, KlvFieldError> {
 ///
 /// # Errors
 ///
-/// [`KlvEncodeError::OutOfRange`] if `correlations.len()` doesn't match the
-/// matrix size implied by `std_devs`. [`KlvEncodeError::UnsupportedImapbLength`]
+/// [`KlvEncodeError::OutOfRange`] if `std_devs.len()` exceeds 256 (the
+/// largest matrix [`decode_sdcc_flp`] reads), or if `correlations.len()`
+/// doesn't match the matrix size implied by `std_devs`. [`KlvEncodeError::UnsupportedImapbLength`]
 /// if `clen` is outside `1..=8` (the IMAPB substrate cap — Mode 2's `Clen`
 /// field allows up to 15, but no in-tree caller needs more than 8).
 /// [`KlvEncodeError::OutOfRange`] also propagates from [`encode_imapb`] if
@@ -276,6 +284,19 @@ pub fn encode_sdcc_flp_mode2(
     clen: usize,
 ) -> Result<Vec<u8>, KlvEncodeError> {
     let n = std_devs.len();
+    // The largest matrix `decode_sdcc_flp` reads; checked before
+    // `corr_slots(n)`, whose product wraps a 32-bit usize for large n.
+    if n as u64 > MAX_MATRIX_SIZE {
+        return Err(KlvEncodeError::OutOfRange {
+            tag: 0,
+            value: n as f64,
+            min: 0.0,
+            max: MAX_MATRIX_SIZE as f64,
+            hint: Some(
+                "the matrix size (std_devs.len()) is at most 256, the largest decode_sdcc_flp reads",
+            ),
+        });
+    }
     let m = corr_slots(n);
     if correlations.len() != m {
         return Err(KlvEncodeError::OutOfRange {
@@ -451,15 +472,64 @@ fn triangle_slot(i: usize, j: usize, n: usize) -> usize {
     offset + (j - i - 1)
 }
 
+/// Elements 1 and 2 of an SDCC-FLP pack: the Matrix Size and the Parse
+/// Control (§6.3.2, §6.3.3).
+pub(crate) struct SdccHeader {
+    pub(crate) n: u32,
+    pub(crate) cs: bool,
+    pub(crate) cf_imap: bool,
+    pub(crate) clen: usize,
+    pub(crate) sf_imap: bool,
+    pub(crate) slen: usize,
+    /// A bit ST 1010.3 Table 2 reserves in Mode 2 is set: Byte 1 bit 6, or
+    /// Byte 2 bit 7 (F2, zero in Mode 2) or bits 5 and 6.
+    pub(crate) reserved_bits: bool,
+}
+
+/// The one reader of an SDCC-FLP header, for [`decode_sdcc_flp`] (which
+/// refuses a reserved bit) and [`peek_matrix_size`] (which takes N whatever
+/// the reserved bits say). Reads Elements 1 and 2 and bounds N by
+/// [`check_matrix_size_fits`] against the bytes after them; returns the
+/// header and those bytes.
+pub(crate) fn read_sdcc_header(bytes: &[u8]) -> Result<(SdccHeader, &[u8]), KlvFieldError> {
+    // Element 1: Matrix Size (BER-OID; §6.3.3).
+    let (n, rest) = read_ber_oid(bytes).map_err(substrate_err)?;
+    // Element 2: Parse Control (§6.3.2). Mode is signaled by bit7 of the
+    // first PC byte: 0 => Mode 1 (one byte), 1 => Mode 2 (two bytes).
+    let (pc1_buf, mut rest) = take(rest, 1)?;
+    let pc1 = pc1_buf[0];
+    let header = if pc1 & 0x80 == 0 {
+        // Mode 1: correlation format always ST 1201; std-dev format
+        // assumed IEEE (see module doc). Mode 1 reserves no bit.
+        SdccHeader {
+            n,
+            cs: (pc1 >> 3) & 0x01 != 0,
+            cf_imap: true,
+            clen: (pc1 & 0x07) as usize,
+            sf_imap: false,
+            slen: ((pc1 >> 4) & 0x07) as usize,
+            reserved_bits: false,
+        }
+    } else {
+        let (pc2_buf, r) = take(rest, 1)?;
+        rest = r;
+        parse_mode2(n, pc1, pc2_buf[0])
+    };
+    check_matrix_size_fits(n, rest.len(), header.slen, header.clen, header.cs)?;
+    Ok((header, rest))
+}
+
 /// Decode Mode 2's two-byte Parse Control (§6.3.2.2 Fig 8 / Table 2).
-/// Returns `(cs, cf_imap, clen, sf_imap, slen)`.
-pub(crate) fn parse_mode2(b1: u8, b2: u8) -> (bool, bool, usize, bool, usize) {
-    let cs = (b1 >> 5) & 0x01 != 0;
-    let cf_imap = (b1 >> 4) & 0x01 != 0;
-    let clen = (b1 & 0x0F) as usize;
-    let sf_imap = (b2 >> 4) & 0x01 != 0;
-    let slen = (b2 & 0x0F) as usize;
-    (cs, cf_imap, clen, sf_imap, slen)
+pub(crate) fn parse_mode2(n: u32, b1: u8, b2: u8) -> SdccHeader {
+    SdccHeader {
+        n,
+        cs: (b1 >> 5) & 0x01 != 0,
+        cf_imap: (b1 >> 4) & 0x01 != 0,
+        clen: (b1 & 0x0F) as usize,
+        sf_imap: (b2 >> 4) & 0x01 != 0,
+        slen: (b2 & 0x0F) as usize,
+        reserved_bits: b1 & 0x40 != 0 || b2 & 0xE0 != 0,
+    }
 }
 
 /// Extract the presence bits for `n(n-1)/2` correlation slots from a Bit
@@ -484,23 +554,10 @@ pub(crate) fn bit_vector_slots(bitvec: &[u8], n: usize) -> Vec<bool> {
 /// Control, or a size the pack cannot hold or that exceeds
 /// [`MAX_MATRIX_SIZE`]; Elements 3–5 are not validated here.
 pub(crate) fn peek_matrix_size(bytes: &[u8]) -> Option<usize> {
-    let (n_raw, rest) = read_ber_oid(bytes).ok()?;
-    let (pc1, rest) = rest.split_first()?;
-    let (cs, clen, slen, rest) = if pc1 & 0x80 == 0 {
-        // Mode 1 (one byte): same field layout as `decode_sdcc_flp`.
-        (
-            (pc1 >> 3) & 0x01 != 0,
-            (pc1 & 0x07) as usize,
-            ((pc1 >> 4) & 0x07) as usize,
-            rest,
-        )
-    } else {
-        let (pc2, rest) = rest.split_first()?;
-        let (cs, _cf_imap, clen, _sf_imap, slen) = parse_mode2(*pc1, *pc2);
-        (cs, clen, slen, rest)
-    };
-    check_matrix_size_fits(n_raw, rest.len(), slen, clen, cs).ok()?;
-    Some(n_raw as usize)
+    // A reserved Parse Control bit does not stop the capture: the pack is
+    // copied as it came, and `decode_sdcc_flp` is where it is refused.
+    let (header, _) = read_sdcc_header(bytes).ok()?;
+    Some(header.n as usize)
 }
 
 /// Row-major (i<j) presence bit vector, MSB-first, `ceil(len/8)` bytes —
@@ -547,11 +604,9 @@ fn std_dev_unsupported(len: usize) -> KlvFieldError {
 /// devs, the correlation IMAPB range is spec-fixed (§6.3.2.3), so this
 /// path never hits the "unknown range" problem.
 ///
-/// A foreign producer's IMAPB special/out-of-range wire pattern decodes as
-/// `0.0` — correlations already carry "0.0 means no correlation" as their
-/// spec-defined absent-value semantic (§8.102.1), so collapsing an
-/// unusual signal into that same value is a documented, deliberate
-/// simplification rather than a silent data-corruption risk.
+/// An IMAPB special value or out-of-range wire pattern carries no
+/// correlation and is refused (`OutOfRange`; a special reports NaN): read
+/// as `0.0` it would claim "no correlation" (§8.102.1).
 fn decode_correlation(raw: &[u8], cf_imap: bool, clen: usize) -> Result<f64, KlvFieldError> {
     if cf_imap {
         let params = ImapbParams {
@@ -559,21 +614,49 @@ fn decode_correlation(raw: &[u8], cf_imap: bool, clen: usize) -> Result<f64, Klv
             max: 1.0,
             length: clen,
         };
-        Ok(decode_imapb(&params, raw)?.value().unwrap_or(0.0))
+        match decode_imapb(&params, raw)? {
+            DecodedImapb::Value(v) => Ok(v),
+            other => Err(KlvFieldError::OutOfRange {
+                tag: 0,
+                value: match other {
+                    DecodedImapb::OutOfRange { decoded } => decoded,
+                    _ => f64::NAN,
+                },
+                min: -1.0,
+                max: 1.0,
+            }),
+        }
     } else {
         decode_ieee_be(raw).ok_or_else(|| std_dev_unsupported(raw.len()))
     }
 }
 
-/// IEEE-754 big-endian decode for the two lengths the spec's format notes
-/// define: 4 bytes (binary32) or 8 bytes (binary64). Any other length is
-/// undefined by ST 1010.3 and returns `None`.
+/// IEEE-754 big-endian decode for the three lengths ST 0107.5-20 allows:
+/// 2 bytes (binary16), 4 bytes (binary32) or 8 bytes (binary64). Any other
+/// length returns `None`.
 fn decode_ieee_be(bytes: &[u8]) -> Option<f64> {
     match bytes.len() {
+        2 => Some(binary16_to_f64(u16::from_be_bytes([bytes[0], bytes[1]]))),
         4 => Some(f32::from_be_bytes(bytes.try_into().unwrap()) as f64),
         8 => Some(f64::from_be_bytes(bytes.try_into().unwrap())),
         _ => None,
     }
+}
+
+/// IEEE 754 binary16 (1 sign, 5 exponent, 10 fraction bits), by hand:
+/// `core` has no `f16` conversion on the toolchain this crate pins.
+fn binary16_to_f64(h: u16) -> f64 {
+    let sign = if h & 0x8000 != 0 { -1.0 } else { 1.0 };
+    let exp = i32::from((h >> 10) & 0x1F);
+    let frac = f64::from(h & 0x03FF);
+    let magnitude = match exp {
+        // Zero and subnormals: frac · 2^-24.
+        0 => frac * FloatExt::powf(2f64, -24.0),
+        31 if frac == 0.0 => f64::INFINITY,
+        31 => f64::NAN,
+        e => (1.0 + frac / 1024.0) * FloatExt::powf(2f64, f64::from(e - 15)),
+    };
+    sign * magnitude
 }
 
 /// Take exactly `n` bytes off the front of `buf`, or a truncation error.
@@ -616,7 +699,11 @@ mod tests {
         // hand-derivable without a bit vector).
         // Fig 9 (Mode 2): 0xB3 0x08 -> sparse, Cf=ST1201, Clen 3, Sf=IEEE, Slen 8.
         // Pinned indirectly by the goldens; direct unit tests target the (private) pc parser:
-        assert_eq!(parse_mode2(0xB3, 0x08), (true, true, 3, false, 8)); // (cs, cf_imap, clen, sf_imap, slen)
+        let h = parse_mode2(3, 0xB3, 0x08);
+        assert_eq!(
+            (h.cs, h.cf_imap, h.clen, h.sf_imap, h.slen, h.reserved_bits),
+            (true, true, 3, false, 8, false)
+        );
     }
 
     #[test]
@@ -775,16 +862,26 @@ mod tests {
     }
 
     #[test]
-    fn sdcc_correlation_special_folds_to_zero() {
+    fn sdcc_special_correlation_is_refused() {
         // N=2, Mode 2, cs=false, cf_imap=true (IMAPB), Clen=4, Slen=0.
-        // Correlation bytes E0 00 00 00 = ImapbSpecial::BelowMin, which
-        // `decode_correlation`'s documented fold collapses to 0.0 (the
-        // "no correlation" absent-value semantic, §8.102.1) rather than
-        // propagating an OutOfRange/Special distinction this pack format
-        // has no slot for.
-        let bytes = hex("02 94 00 E0000000");
-        let m = decode_sdcc_flp(&bytes).unwrap();
-        assert_eq!(m.correlations, alloc::vec![0.0]);
+        // Correlation bytes E0 00 00 00 (ST 1201 "below minimum") and
+        // D0 00 00 00 (a quiet NaN) carry no correlation value: refused,
+        // not read as 0.0 (which means "no correlation", §8.102.1).
+        for corr in ["E0000000", "D0000000"] {
+            let bytes = hex(&alloc::format!("02 94 00 {corr}"));
+            let err = decode_sdcc_flp(&bytes).unwrap_err();
+            assert!(
+                matches!(
+                    err,
+                    KlvFieldError::OutOfRange {
+                        min: -1.0,
+                        max: 1.0,
+                        ..
+                    }
+                ),
+                "{corr}: {err:?}"
+            );
+        }
     }
 
     #[test]
@@ -978,5 +1075,146 @@ mod tests {
         // Mode 1 with Slen = 1 (0x10): N std-dev bytes must fit.
         assert_eq!(peek_matrix_size(&[0x03, 0x10, 0xAA, 0xBB, 0xCC]), Some(3));
         assert_eq!(peek_matrix_size(&[0x03, 0x10, 0xAA, 0xBB]), None);
+    }
+
+    /// ST 0107.5-20: an IEEE value is binary16, binary32 or binary64.
+    #[test]
+    fn sdcc_binary16_values_decode() {
+        // N=1, one standard deviation 1.0 as binary16 (3C 00): Mode 2
+        // (80 02: Clen 0, Slen 2) and Mode 1 (20: Slen 2, Clen 0).
+        for bytes in [hex("01 80 02 3C00"), hex("01 20 3C00")] {
+            let m = decode_sdcc_flp(&bytes).unwrap();
+            assert_eq!(m.std_devs, alloc::vec![1.0], "{bytes:02X?}");
+        }
+        // N=2, one IEEE correlation 0.5 as binary16 (38 00): 82 00 = Cf 0, Clen 2, Slen 0.
+        let m = decode_sdcc_flp(&hex("02 82 00 3800")).unwrap();
+        assert_eq!(m.correlations, alloc::vec![0.5]);
+    }
+
+    #[test]
+    fn sdcc_binary16_never_panics() {
+        // IEEE 754 binary16 values with known meanings, then every input.
+        for (h, v) in [
+            (0x3C00u16, 1.0f64),
+            (0xC000, -2.0),
+            (0x7BFF, 65504.0),
+            (0x0400, 6.103515625e-5),
+            (0x0001, 5.960464477539063e-8),
+            (0x03FF, 6.097555160522461e-5),
+            (0x0000, 0.0),
+            (0x7C00, f64::INFINITY),
+            (0xFC00, f64::NEG_INFINITY),
+        ] {
+            assert_eq!(decode_ieee_be(&h.to_be_bytes()), Some(v), "{h:04X}");
+        }
+        assert!(decode_ieee_be(&[0x80, 0x00]).unwrap().is_sign_negative());
+        for h in [0x7C01u16, 0x7E00, 0xFE00, 0xFFFF] {
+            assert!(
+                decode_ieee_be(&h.to_be_bytes()).unwrap().is_nan(),
+                "{h:04X}"
+            );
+        }
+        for h in 0..=u16::MAX {
+            let v = decode_ieee_be(&h.to_be_bytes()).expect("two bytes are binary16");
+            // binary16 widens exactly to binary32: the bits agree with the
+            // f32 the same value narrows to.
+            if v.is_finite() {
+                assert_eq!(f64::from(v as f32), v, "{h:04X}");
+            }
+        }
+    }
+
+    #[test]
+    fn sdcc_reserved_parse_control_bits_are_refused() {
+        // ST 1010.3 Table 2, Mode 2: Byte 1 bit 6 is reserved (zero), Byte 2
+        // bit 7 (F2) is zero, Byte 2 bits 5 and 6 are reserved (zero).
+        for pc in ["C0 04", "80 84", "80 24", "80 44"] {
+            let bytes = hex(&alloc::format!("01 {pc} 3F800000"));
+            assert_eq!(
+                decode_sdcc_flp(&bytes),
+                Err(KlvFieldError::InvalidFormat { tag: 0 }),
+                "{pc}"
+            );
+        }
+        assert!(decode_sdcc_flp(&hex("01 80 04 3F800000")).is_ok());
+    }
+
+    #[test]
+    fn sdcc_full_or_padded_bit_vector_is_refused() {
+        // N=3 (3 slots), sparse (A4 00: CS 1, Cf 0, Clen 4, Slen 0).
+        // ST 1010.2-11: a Bit Vector marking every slot conveys a full
+        // matrix; its bits after the last slot are zero padding (§6.3.4).
+        let full = hex("03 A4 00 E0 3F000000 3E800000 BF000000");
+        let padded = hex("03 A4 00 50 3E800000");
+        for bytes in [full, padded] {
+            assert_eq!(
+                decode_sdcc_flp(&bytes),
+                Err(KlvFieldError::InvalidFormat { tag: 0 }),
+                "{bytes:02X?}"
+            );
+        }
+        let sparse = decode_sdcc_flp(&hex("03 A4 00 40 3E800000")).unwrap();
+        assert_eq!(sparse.correlation_present, alloc::vec![false, true, false]);
+    }
+
+    #[test]
+    fn the_encoder_refuses_a_matrix_the_decoder_cannot_read() {
+        let n = MAX_MATRIX_SIZE as usize + 1;
+        let std_devs = alloc::vec![1.0; n];
+        let correlations = alloc::vec![0.0; corr_slots(n)];
+        let err = encode_sdcc_flp_mode2(&std_devs, &correlations, 2).unwrap_err();
+        assert!(
+            matches!(err, KlvEncodeError::OutOfRange { max, .. } if max == 256.0),
+            "{err:?}"
+        );
+        let at = MAX_MATRIX_SIZE as usize;
+        let bytes =
+            encode_sdcc_flp_mode2(&alloc::vec![1.0; at], &alloc::vec![0.0; corr_slots(at)], 2)
+                .unwrap();
+        assert_eq!(decode_sdcc_flp(&bytes).unwrap().matrix_size, 256);
+    }
+
+    #[test]
+    fn the_size_check_runs_before_the_slot_product() {
+        // 65 537 standard deviations and no correlations: the matrix size is
+        // refused before corr_slots(N) (which wraps a 32-bit usize) is
+        // compared with the correlation count.
+        let err = encode_sdcc_flp_mode2(&alloc::vec![1.0; 65_537], &[], 2).unwrap_err();
+        match err {
+            KlvEncodeError::OutOfRange {
+                value, max, hint, ..
+            } => {
+                assert_eq!(max, 256.0);
+                assert_eq!(value, 65_537.0);
+                assert!(hint.is_some_and(|h| h.contains("matrix size")), "{hint:?}");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn lenient_st0601_capture_keeps_a_pack_with_reserved_bits() {
+        // A set of Items 2 and 13 and one Item 102 whose pack (N = 1, so it
+        // refines Item 13) has Byte 1 bit 6 set: the lenient ST 0601 decode
+        // captures and keeps it; decode_sdcc_flp is where it is refused.
+        let pack = hex("01 C0 04 3F800000");
+        let ul = crate::klv::universal_label::UniversalLabel::ST_0601_LS.0;
+        let mut body = hex("02 08 0000000000000001 0D 04 00000000");
+        body.push(102);
+        body.push(pack.len() as u8);
+        body.extend_from_slice(&pack);
+        body.extend_from_slice(&[0x01, 0x02]);
+        let mut packet = ul.to_vec();
+        packet.push((body.len() + 2) as u8);
+        packet.extend_from_slice(&body);
+        let sum = crate::klv::checksum::checksum_running_sum_16(&packet);
+        packet.extend_from_slice(&sum.to_be_bytes());
+
+        let r = crate::klv::st0601::decode(&packet).unwrap();
+        assert!(r.field_errors.is_empty(), "{:?}", r.field_errors);
+        assert_eq!(r.sdcc_flps.len(), 1);
+        assert_eq!(r.sdcc_flps[0].preceding_tags, alloc::vec![13]);
+        assert_eq!(r.sdcc_flps[0].bytes, pack);
+        assert_eq!(peek_matrix_size(&pack), Some(1));
     }
 }
