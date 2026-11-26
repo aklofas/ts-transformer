@@ -332,11 +332,11 @@ sha256 = "dec9997ba308e82353a441b280eb38dfb8419004cf3c6215aa18658309b675a0"
 
 [[file]]
 path = "crates/tst-integration/tests/fixtures/scenarios/demux-receiver-stats/golden.json"
-sha256 = "1278d452a97583006d154b7e5d023d201552b29e0ee96a9ca80775a417de0b0a"
+sha256 = "19422da4c2135639e6cfa3f13d4b17c92e8b4f7b32db2ca74e9d84c4fd31e373"
 
 [[file]]
 path = "crates/tst-integration/tests/fixtures/scenarios/demux-receiver-stats/input.ts"
-sha256 = "3ea321d1a5f84e64c9e96016bdbab48a4602d6e7f1aefb081eb9e5f5d0f7466b"
+sha256 = "4a8139bd9fcea973227ef381e205732b0891227b374760177f27e128249b6ca7"
 
 [[file]]
 path = "crates/tst-integration/tests/fixtures/scenarios/drop-idempotence/golden.json"

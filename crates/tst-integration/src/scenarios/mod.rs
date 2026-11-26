@@ -2287,12 +2287,13 @@ impl Scenario for PeerResetRecvKind {
 /// and closes. The golden is `extensions.stats`, keyed by the Rust field
 /// names; `core` is empty.
 ///
-/// The input moves every counter off zero, and the two demuxer diagnostics to
-/// different values, so a binding that swaps or drops one is caught: two PMT
-/// versions (`program_maps_seen` = `pmt_versions_seen` = 2, equal by
-/// definition), one continuity-counter jump (`discontinuities` = 1) and
-/// `nonconformant` = 3: two PES with malformed marker bits, and the PES the
-/// jump cuts short.
+/// The input moves every counter off zero, and every two counters to
+/// different values, so a binding that swaps or drops one is caught: three
+/// applied PMTs (`program_maps_seen` = 3), of which two carried a version
+/// the program had not held (`pmt_versions_seen` = 2: the third changes the
+/// streams without the version increment H.222.0 requires), one
+/// continuity-counter jump (`discontinuities` = 1) and `nonconformant` = 4:
+/// three PES with malformed marker bits, and the PES the jump cuts short.
 ///
 /// This generator NEVER reads from testfiles/ or local/ directories.
 struct DemuxReceiverStatsScenario;
@@ -2331,14 +2332,18 @@ impl Scenario for DemuxReceiverStatsScenario {
 
 /// The `demux-receiver-stats` input: PAT, PMT version 0, five H.264 PES (two
 /// with malformed marker bits, the last after a continuity-counter jump),
-/// PAT, PMT version 1, one more PES. Continuity counters are correct
-/// everywhere else.
+/// PAT, PMT version 1, one more PES, then a PMT still at version 1 that adds
+/// a second H.264 stream, and a PES with malformed marker bits on that
+/// stream. Continuity counters are correct everywhere else.
 fn demux_receiver_stats_input() -> Vec<u8> {
     const PMT_PID: u16 = 0x0100;
     const VIDEO_PID: u16 = 0x0101;
+    const SECOND_VIDEO_PID: u16 = 0x0102;
     let pat = build_pat_section(0x0001, 0x0001, PMT_PID);
     let pmt = |version| build_pmt_section_version(0x0001, VIDEO_PID, VIDEO_PID, 0x1B, version);
     let pes = |malformed, cc| ts_packet_cc(VIDEO_PID, true, &build_pes_h264(malformed), cc);
+    let pmt_with_second_stream =
+        build_pmt_section_two_streams(0x0001, VIDEO_PID, VIDEO_PID, SECOND_VIDEO_PID, 0x1B, 1);
 
     let mut out = Vec::new();
     out.extend(ts_psi_packet_cc(0x0000, &pat, 0));
@@ -2352,6 +2357,13 @@ fn demux_receiver_stats_input() -> Vec<u8> {
     out.extend(ts_psi_packet_cc(0x0000, &pat, 1));
     out.extend(ts_psi_packet_cc(PMT_PID, &pmt(1), 1));
     out.extend(pes(false, 8));
+    out.extend(ts_psi_packet_cc(PMT_PID, &pmt_with_second_stream, 2));
+    out.extend(ts_packet_cc(
+        SECOND_VIDEO_PID,
+        true,
+        &build_pes_h264(true),
+        0,
+    ));
     out
 }
 
@@ -2707,6 +2719,30 @@ fn build_pmt_section_version(
     sec
 }
 
+/// [`build_pmt_section_version`] with a second elementary stream of the same
+/// `stream_type` on `second_es_pid`, with a valid CRC.
+fn build_pmt_section_two_streams(
+    program_number: u16,
+    pcr_pid: u16,
+    es_pid: u16,
+    second_es_pid: u16,
+    stream_type: u8,
+    version: u8,
+) -> Vec<u8> {
+    let mut sec = build_pmt_section_version(program_number, pcr_pid, es_pid, stream_type, version);
+    sec.truncate(sec.len() - 4); // the CRC is computed again below
+    sec.push(stream_type);
+    let es_pid_field: u16 = 0xE000 | (second_es_pid & 0x1FFF);
+    sec.extend_from_slice(&es_pid_field.to_be_bytes());
+    sec.extend_from_slice(&[0xF0, 0x00]); // reserved + ES_info_length = 0
+    // section_length counts the bytes after itself, the CRC included.
+    let section_length = (sec.len() - 3 + 4) as u16;
+    sec[1] = 0xB0 | ((section_length >> 8) as u8 & 0x0F);
+    sec[2] = section_length as u8;
+    append_crc(&mut sec);
+    sec
+}
+
 /// Build a minimal H.264 video PES packet.
 ///
 /// `malformed_flags1`: when `true`, sets the `flags1` byte (PES byte 6) to
@@ -2861,17 +2897,19 @@ mod tests {
         let s = demux_receiver_stats_of(&input);
         assert_eq!(s.bytes_received, input.len() as u64);
         assert_eq!(s.bytes_received, s.packets_received * 188);
-        // The two PMT counters are equal by definition; every other pair
-        // differs, so a binding that swaps two of them is caught.
-        assert_eq!(s.program_maps_seen, s.pmt_versions_seen);
+        // Three applied PMTs, the third at the version before it: the two PMT
+        // counters differ by that one change.
+        assert_eq!((s.program_maps_seen, s.pmt_versions_seen), (3, 2), "{s:?}");
+        // Every pair differs, so a binding that swaps two of them is caught.
         let distinct: std::collections::BTreeSet<u64> = [
             s.packets_received,
             s.program_maps_seen,
+            s.pmt_versions_seen,
             s.discontinuities,
             s.nonconformant,
         ]
         .into();
-        assert_eq!(distinct.len(), 4, "{s:?}");
+        assert_eq!(distinct.len(), 5, "{s:?}");
         assert!(!distinct.contains(&0), "{s:?}");
     }
 

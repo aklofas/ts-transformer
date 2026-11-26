@@ -5,12 +5,12 @@
   "extensions": {
     "contract": "demux_receiver_stats",
     "stats": {
-      "bytes_received": 2068,
+      "bytes_received": 2444,
       "discontinuities": 1,
-      "nonconformant": 3,
-      "packets_received": 11,
+      "nonconformant": 4,
+      "packets_received": 13,
       "pmt_versions_seen": 2,
-      "program_maps_seen": 2
+      "program_maps_seen": 3
     }
   }
 }
