@@ -607,15 +607,15 @@ class St0601PacksTest {
         // jutil::read_long_list helper, which applies its own per-item frame.
         //
         // NOTE: `precedingTags` is a DECODE-DERIVED capture, not literal
-        // wire data — the Rust SdccFlpField rustdoc's "ascending-order
-        // emission caveat" says encode only ever re-emits `bytes`
-        // verbatim, never `precedingTags` itself (decode recomputes it
-        // fresh from whatever wire-order tags actually precede the
-        // occurrence). So a hand-constructed 64-entry list is not expected
-        // to survive unchanged; what this test proves is that
-        // `Klv.encodeUasDatalink` (which reads it back via
+        // wire data: encode writes `bytes` verbatim and uses `precedingTags`
+        // only to place the pack right after the items it names (decode
+        // recomputes it fresh from whatever wire-order tags actually precede
+        // the occurrence). These 64 invented tags name no item of the record,
+        // so the pack cannot be placed and is written after the typed items,
+        // and the list is not expected to survive unchanged; what this test
+        // proves is that `Klv.encodeUasDatalink` (which reads it back via
         // `read_sdcc_flp_field`) does not crash the JVM, and that `bytes`
-        // (which IS re-emitted verbatim) does survive.
+        // (which IS written verbatim) does survive.
         List<Long> preceding = new ArrayList<>();
         for (long i = 0; i < 64; i++) {
             preceding.add(i);
