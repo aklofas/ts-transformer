@@ -646,14 +646,17 @@ fn build_synthetic_sps_with_one_rps_and_vui() -> Vec<u8> {
 /// Synthetic SPS RBSP with two RPSes where the second uses
 /// `inter_ref_pic_set_prediction_flag=1`.
 ///
-/// rps_idx=0: explicit, num_negative=2, num_positive=0 → NumDeltaPocs[0]=2.
+/// rps_idx=0: explicit, num_negative=2, num_positive=0 → DeltaPocS0 = {-1, -2},
+///   NumDeltaPocs[0]=2.
 /// rps_idx=1: inter, delta_idx_minus1=0 (references rps 0), delta_rps_sign=0,
-///   abs_delta_rps_minus1=ue(0)=0. Then 3 iterations (0..=NumDeltaPocs[0]=2):
-///   - j=0: used=1 (copy), use_delta implicit true → count 1.
-///   - j=1: used=1 → count 2.
-///   - j=2: used=0, use_delta=1 → count 3.
+///   abs_delta_rps_minus1=ue(0)=0, so deltaRps = +1. Then 3 iterations
+///   (0..=NumDeltaPocs[0]=2):
+///   - j=0: used=1, but -1 + 1 = 0: no entry (equations 7-61 / 7-62).
+///   - j=1: used=1 → -2 + 1 = -1 in DeltaPocS0.
+///   - j=2 (the reference picture itself): used=0, use_delta=1 → +1 in
+///     DeltaPocS1.
 ///
-/// NumDeltaPocs[1] = 3.
+/// NumDeltaPocs[1] = 2.
 fn build_synthetic_sps_with_inter_predicted_rps() -> Vec<u8> {
     build_synthetic_sps(|bw| {
         bw.write_ue(2); // num_short_term_ref_pic_sets = 2
