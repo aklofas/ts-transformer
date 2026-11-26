@@ -922,6 +922,9 @@ fn check_string(tag: u32, s: &str, enc: &Encoding) -> Result<(), KlvEncodeError>
 /// `strip_opt_str` line whenever a new ST 0601 string tag is typed (a
 /// review caught six missing entries when tags 70/106-108/129/135 were
 /// typed). Pinned by the `strict_encode_sanitizes_all_string_fields` test.
+/// The strings inside packs follow (pinned by
+/// `strict_encode_sanitises_pack_strings`); a pack string that cleans to
+/// `""` keeps the zero-length encoding it then has.
 pub(crate) fn sanitize_strings_st0601(r: &mut super::model::UasDatalinkLs) {
     strip_opt_str(&mut r.mission_id);
     strip_opt_str(&mut r.platform_tail_number);
@@ -935,6 +938,30 @@ pub(crate) fn sanitize_strings_st0601(r: &mut super::model::UasDatalinkLs) {
     strip_opt_str(&mut r.broadcast_source);
     strip_opt_str(&mut r.target_id);
     strip_opt_str(&mut r.communications_method);
+    for c in &mut r.control_commands {
+        c.command = sanitize_st0107_string(&c.command);
+    }
+    if let Some(cc) = &mut r.country_codes {
+        for code in [&mut cc.overflight, &mut cc.operator, &mut cc.manufacture] {
+            strip_opt_str(code);
+            // A country code is written length-prefixed: "" is length 0,
+            // which reads back as an unknown code.
+            if code.as_deref() == Some("") {
+                *code = None;
+            }
+        }
+    }
+    for w in r.wavelengths_list.iter_mut().flatten() {
+        w.name = sanitize_st0107_string(&w.name);
+    }
+    if let Some(list) = &mut r.payload_list {
+        for p in &mut list.records {
+            p.name = sanitize_st0107_string(&p.name);
+        }
+    }
+    for w in r.weapons_stores.iter_mut().flatten() {
+        w.weapon_type = sanitize_st0107_string(&w.weapon_type);
+    }
 }
 
 fn strip_opt_str(s: &mut Option<alloc::string::String>) {

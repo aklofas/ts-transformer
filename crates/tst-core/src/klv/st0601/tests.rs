@@ -4519,3 +4519,61 @@ fn mismms_counts_a_special_item_as_present() {
         mismms_missing(&rec)
     );
 }
+
+// ---------------------------------------------------------------------------
+// The strict encoder cleans the strings inside packs too (ST 0107.3-12, -13)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn strict_encode_sanitises_pack_strings() {
+    use super::packs::{CountryCodes, PayloadList, PayloadRecord, WavelengthRecord, WeaponsStore};
+    let rec = UasDatalinkLs {
+        control_commands: vec![ControlCommand {
+            id: 1,
+            command: " A\u{1}B ".into(),
+            time_us: None,
+        }],
+        country_codes: Some(CountryCodes {
+            coding_method: 1,
+            overflight: Some("\tCAN\u{7}".into()),
+            operator: Some(" \u{1} ".into()),
+            manufacture: Some("FRA ".into()),
+        }),
+        wavelengths_list: Some(vec![WavelengthRecord {
+            id: 21,
+            min_nm: 400.0,
+            max_nm: 700.0,
+            name: " IR\u{2} ".into(),
+        }]),
+        payload_list: Some(PayloadList {
+            count: 1,
+            records: vec![PayloadRecord {
+                id: 0,
+                payload_type: PayloadType::ElectroOptical,
+                name: "\u{1}EO ".into(),
+            }],
+        }),
+        weapons_stores: Some(vec![WeaponsStore {
+            station_id: 1,
+            hardpoint_id: 1,
+            carriage_id: 0,
+            store_id: 0,
+            status_raw: 0,
+            weapon_type: " GBU\u{7f}".into(),
+        }]),
+        ..timestamped()
+    };
+    let back = decode_strict_compliance(&encode_strict_compliance(&rec).unwrap()).unwrap();
+    assert_eq!(back.control_commands[0].command, "AB");
+    let cc = back.country_codes.unwrap();
+    assert_eq!(cc.overflight.as_deref(), Some("CAN"));
+    // A code that cleans to "" is unknown: written with length 0.
+    assert_eq!(cc.operator, None);
+    assert_eq!(cc.manufacture.as_deref(), Some("FRA"));
+    assert_eq!(back.wavelengths_list.unwrap()[0].name, "IR");
+    assert_eq!(back.payload_list.unwrap().records[0].name, "EO");
+    assert_eq!(back.weapons_stores.unwrap()[0].weapon_type, "GBU");
+    // The ordinary encoder writes the strings as given.
+    let as_given = decode(&encode_to_vec(&rec).unwrap()).unwrap();
+    assert_eq!(as_given.control_commands[0].command, " A\u{1}B ");
+}
