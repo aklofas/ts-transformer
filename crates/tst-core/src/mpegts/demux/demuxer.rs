@@ -657,11 +657,8 @@ impl Demuxer {
             Ok(p) => p,
             Err(TsParseError::BadAdaptationLength) => {
                 let pid = u16::from_be_bytes([buf[1] & 0x1F, buf[2]]);
-                let stream = self
-                    .lookup_stream(pid)
-                    .unwrap_or_else(|| StreamId::anonymous(pid, 0));
-                self.queue_nonconformant(
-                    stream,
+                self.queue_packet_issue(
+                    pid,
                     NonConformantIssue::AdaptationFieldMalformed {
                         pid,
                         kind: AdaptationFieldKind::BadLengthForControl,
@@ -677,11 +674,8 @@ impl Demuxer {
         // parse state. Drop entirely and surface the drop as non-conformant
         // so consumers can correlate with downstream parse failures.
         if pkt.transport_error_indicator {
-            let stream = self
-                .lookup_stream(pkt.pid)
-                .unwrap_or_else(|| StreamId::anonymous(pkt.pid, 0));
-            self.queue_nonconformant(
-                stream,
+            self.queue_packet_issue(
+                pkt.pid,
                 NonConformantIssue::TransportErrorPacket { pid: pkt.pid },
             );
             return Ok(());
@@ -696,11 +690,8 @@ impl Demuxer {
         // payload routed) and surface UnsupportedScrambling so consumers can
         // distinguish "unsupported scrambling" from "random corruption".
         if pkt.transport_scrambling_control != 0 {
-            let stream = self
-                .lookup_stream(pkt.pid)
-                .unwrap_or_else(|| StreamId::anonymous(pkt.pid, 0));
-            self.queue_nonconformant(
-                stream,
+            self.queue_packet_issue(
+                pkt.pid,
                 NonConformantIssue::UnsupportedScrambling {
                     pid: pkt.pid,
                     control: pkt.transport_scrambling_control,
@@ -713,11 +704,8 @@ impl Demuxer {
         // construction; BadLengthForControl / ShortPcr may still carry a
         // routable payload — continue best-effort (lenient).
         if let Some(kind) = pkt.adaptation_malformed {
-            let stream = self
-                .lookup_stream(pkt.pid)
-                .unwrap_or_else(|| StreamId::anonymous(pkt.pid, 0));
-            self.queue_nonconformant(
-                stream,
+            self.queue_packet_issue(
+                pkt.pid,
                 NonConformantIssue::AdaptationFieldMalformed { pid: pkt.pid, kind },
             );
         }
@@ -771,6 +759,18 @@ impl Demuxer {
             self.handle_pes_packet(&pkt, kind)?;
         }
         Ok(())
+    }
+
+    /// Queue `issue` for a packet on `pid` that is dropped or not fully
+    /// routed, under the PID's stream or the anonymous id of program 0. Out
+    /// of line: such packets are rare, and the lookup would otherwise sit in
+    /// the per-packet path.
+    #[cold]
+    fn queue_packet_issue(&mut self, pid: u16, issue: NonConformantIssue) {
+        let stream = self
+            .lookup_stream(pid)
+            .unwrap_or_else(|| StreamId::anonymous(pid, 0));
+        self.queue_nonconformant(stream, issue);
     }
 
     pub(super) fn lookup_stream(&self, pid: u16) -> Option<StreamId> {
