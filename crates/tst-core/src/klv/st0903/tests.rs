@@ -1750,7 +1750,8 @@ fn strict_vmti_refuses_zero_where_the_range_starts_at_one() {
     // Version (§10.1.4), frame width and height (§10.1.8, .9: "do not use
     // a value of zero"), pixel numbers, row and column (§10.2.2.2 to .4,
     // .20, .21).
-    let cases: [(u32, fn(&mut VmtiLs)); 8] = [
+    type Set = fn(&mut VmtiLs);
+    let cases: [(u32, Set); 8] = [
         (4, |ls| ls.version_number = Some(0)),
         (8, |ls| ls.frame_width = Some(0)),
         (9, |ls| ls.frame_height = Some(0)),
