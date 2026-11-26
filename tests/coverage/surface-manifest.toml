@@ -345,6 +345,15 @@ tier = "A"
 [[surface]]
 kind = "rust"
 crate = "tst-core"
+item = "tst_core::codec::h264::H264Sps::separate_colour_plane"
+owning_tests = ["crates/tst-core/src/codec/h264/tests/parse.rs"]
+bindings = ["python:n/a(the record carries raw_rbsp; the light parser re-parses it)", "java:n/a(the record carries rawRbsp; the light parser re-parses it)", "c:deferred(no codec parameter-set parsers in the C ABI)", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-core"
 item = "tst_core::codec::h264::parse_pps"
 owning_tests = ["crates/tst-core/tests/codec/codec_parameter_sets.rs"]
 bindings = ["python:parse_h264_pps", "java:org.tstrans.codec.Codec.parseH264Pps", "c:unaudited", "swift:deferred", "kotlin:deferred"]
@@ -375,6 +384,15 @@ crate = "tst-core"
 item = "tst_core::codec::h265::parse_sps"
 owning_tests = ["crates/tst-core/tests/codec/codec_parameter_sets.rs"]
 bindings = ["python:parse_h265_sps", "java:org.tstrans.codec.Codec.parseH265Sps", "c:unaudited", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-core"
+item = "tst_core::codec::h265::H265Sps::separate_colour_plane"
+owning_tests = ["crates/tst-core/src/codec/h265/tests/parse_sps.rs", "crates/tst-core/src/codec/h265/tests/slice_header_light.rs"]
+bindings = ["python:n/a(the record carries raw_rbsp; the light parser re-parses it)", "java:n/a(the record carries rawRbsp; the light parser re-parses it)", "c:deferred(no codec parameter-set parsers in the C ABI)", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -474,6 +492,15 @@ crate = "tst-core"
 item = "tst_core::codec::av1::parse_frame_header_light"
 owning_tests = ["crates/tst-core/tests/codec/av1_codec_integration.rs"]
 bindings = ["python:parse_av1_frame_header_light", "java:org.tstrans.codec.Codec.parseAv1FrameHeaderLight", "c:unaudited", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-core"
+item = "tst_core::codec::av1::Av1FrameHeaderLight::FRAME_TYPE_UNKNOWN"
+owning_tests = ["crates/tst-core/src/codec/av1/decode/frame_header.rs"]
+bindings = ["python:Av1FrameHeaderLight.frame_type", "java:org.tstrans.codec.Av1FrameHeaderLight", "c:deferred(no AV1 frame-header parser in the C ABI)", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 

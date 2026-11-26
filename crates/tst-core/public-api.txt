@@ -367,6 +367,8 @@ pub tst_core::codec::av1::Av1FrameHeaderLight::frame_type: u8
 pub tst_core::codec::av1::Av1FrameHeaderLight::raw: alloc::vec::Vec<u8>
 pub tst_core::codec::av1::Av1FrameHeaderLight::show_existing_frame: bool
 pub tst_core::codec::av1::Av1FrameHeaderLight::show_frame: bool
+impl tst_core::codec::av1::Av1FrameHeaderLight
+pub const tst_core::codec::av1::Av1FrameHeaderLight::FRAME_TYPE_UNKNOWN: u8
 impl core::clone::Clone for tst_core::codec::av1::Av1FrameHeaderLight
 pub fn tst_core::codec::av1::Av1FrameHeaderLight::clone(&self) -> tst_core::codec::av1::Av1FrameHeaderLight
 impl core::cmp::Eq for tst_core::codec::av1::Av1FrameHeaderLight
@@ -556,6 +558,7 @@ pub tst_core::codec::h264::H264Sps::level_idc: u8
 pub tst_core::codec::h264::H264Sps::log2_max_frame_num_minus4: u8
 pub tst_core::codec::h264::H264Sps::profile_idc: u8
 pub tst_core::codec::h264::H264Sps::raw_rbsp: alloc::vec::Vec<u8>
+pub tst_core::codec::h264::H264Sps::separate_colour_plane: bool
 pub tst_core::codec::h264::H264Sps::seq_parameter_set_id: u8
 pub tst_core::codec::h264::H264Sps::width: u32
 impl tst_core::codec::h264::H264Sps
@@ -713,6 +716,7 @@ pub tst_core::codec::h265::H265Sps::height: u32
 pub tst_core::codec::h265::H265Sps::log2_max_pic_order_cnt_lsb_minus4: u8
 pub tst_core::codec::h265::H265Sps::max_sub_layers_minus1: u8
 pub tst_core::codec::h265::H265Sps::raw_rbsp: alloc::vec::Vec<u8>
+pub tst_core::codec::h265::H265Sps::separate_colour_plane: bool
 pub tst_core::codec::h265::H265Sps::sps_seq_parameter_set_id: u8
 pub tst_core::codec::h265::H265Sps::sps_video_parameter_set_id: u8
 pub tst_core::codec::h265::H265Sps::width: u32
