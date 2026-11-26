@@ -571,14 +571,14 @@ fn walk_sps_body(
         // u32::MAX bits. The tail-skip loop below compares against `br.position()`
         // (a u32), so such an end is unreachable in a valid bitstream — reject it
         // with ReservedValue rather than spinning the loop to EOF.
-        let vui_end_bits: u64 = (vui_start_bits as u64) + (payload_size_bytes as u64) * 8;
+        let vui_end_bits: u64 = vui_start_bits + (payload_size_bytes as u64) * 8;
         if vui_end_bits > u32::MAX as u64 {
             return Err(CodecParseError::ReservedValue {
                 field: "vui_payload_size_minus1",
                 value: vui_payload_size_minus1 as u32,
             });
         }
-        while (br.position() as u64) < vui_end_bits {
+        while br.position() < vui_end_bits {
             // Consume the optional extension+marker+pad tail. We do not
             // interpret the bits — H.266 §7.3.2.21 reserves them for future
             // use and §7.4.2.21's `more_data_in_payload()` test allows

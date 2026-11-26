@@ -485,10 +485,52 @@ pub(crate) fn validate_bit_depth_minus8(
     Ok(8 + value as u8)
 }
 
+/// `num / den` in lowest terms, when the reduced pair fits [`Rational`].
+/// `None` for a zero numerator or denominator (no picture rate) and for a
+/// pair that does not fit 32 bits after reduction (never truncated).
+pub(crate) fn reduced_rational(num: u64, den: u64) -> Option<Rational> {
+    if num == 0 || den == 0 {
+        return None;
+    }
+    let (mut a, mut b) = (num, den);
+    while b != 0 {
+        (a, b) = (b, a % b);
+    }
+    // Both are non-zero, so the gcd `a` is at least 1.
+    Some(Rational {
+        num: u32::try_from(num / a).ok()?,
+        den: u32::try_from(den / a).ok()?,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::test_prelude::*;
+
+    #[test]
+    fn reduced_rational_reduces_and_rejects_overflow() {
+        assert_eq!(
+            reduced_rational(60000, 2002),
+            Some(Rational {
+                num: 30000,
+                den: 1001
+            })
+        );
+        assert_eq!(reduced_rational(30, 0), None);
+        assert_eq!(reduced_rational(0, 1001), None);
+        assert_eq!(reduced_rational(1 << 32, 1), None);
+        // Reduced to 2^32 / 3: still too wide.
+        assert_eq!(reduced_rational(2 * (1 << 32), 2 * 3), None);
+        // Fits only after reduction.
+        assert_eq!(
+            reduced_rational(4 * u64::from(u32::MAX), 4),
+            Some(Rational {
+                num: u32::MAX,
+                den: 1
+            })
+        );
+    }
 
     #[test]
     fn codec_parse_error_kind_is_exhaustive() {

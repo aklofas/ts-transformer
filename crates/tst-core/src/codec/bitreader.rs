@@ -20,17 +20,40 @@ use crate::codec::CodecParseError;
 #[doc(hidden)]
 pub struct BitReader<'a> {
     bytes: &'a [u8],
-    /// Bit position within the input, counting bits skipped over EP bytes
-    /// as if they were not there.
-    bit_pos: u32,
+    /// Physical bit position within the input: the bits of every skipped
+    /// emulation-prevention byte are counted. 64 bits wide, so a cursor past
+    /// 2^32 bits reports truncation instead of wrapping to the buffer's start.
+    bit_pos: u64,
+    /// `true`: a `03` after `00 00` is an emulation-prevention byte and is
+    /// skipped.
+    escaped: bool,
+}
+
+/// A cursor position as the `u32` the error type carries, saturating.
+fn offset_u32(pos: u64) -> u32 {
+    u32::try_from(pos).unwrap_or(u32::MAX)
 }
 
 impl<'a> BitReader<'a> {
     pub fn new(bytes: &'a [u8]) -> Self {
-        Self { bytes, bit_pos: 0 }
+        Self {
+            bytes,
+            bit_pos: 0,
+            escaped: true,
+        }
     }
 
-    pub fn position(&self) -> u32 {
+    #[cfg(test)]
+    fn at_bit_for_test(bytes: &'a [u8], bit_pos: u64) -> Self {
+        Self {
+            bit_pos,
+            ..Self::new(bytes)
+        }
+    }
+
+    /// Physical bit offset into the input, skipped emulation-prevention
+    /// bytes included.
+    pub fn position(&self) -> u64 {
         self.bit_pos
     }
 
@@ -57,11 +80,17 @@ impl<'a> BitReader<'a> {
 
     fn read_one_bit(&mut self) -> Result<u8, CodecParseError> {
         loop {
-            let byte_idx = (self.bit_pos / 8) as usize;
+            let Ok(byte_idx) = usize::try_from(self.bit_pos / 8) else {
+                return Err(CodecParseError::TruncatedRbsp {
+                    offset_bits: offset_u32(self.bit_pos),
+                    needed_bits: 1,
+                });
+            };
             let bit_in_byte = self.bit_pos % 8;
             // EP-byte detection: at the start of a byte, if the prior two
             // bytes are 00 00 and the current byte is 03, skip it.
             if bit_in_byte == 0
+                && self.escaped
                 && byte_idx >= 2
                 && self.bytes.get(byte_idx) == Some(&0x03)
                 && self.bytes.get(byte_idx - 1) == Some(&0x00)
@@ -73,7 +102,7 @@ impl<'a> BitReader<'a> {
             let b = self
                 .byte_at(byte_idx)
                 .ok_or(CodecParseError::TruncatedRbsp {
-                    offset_bits: self.bit_pos,
+                    offset_bits: offset_u32(self.bit_pos),
                     needed_bits: 1,
                 })?;
             let bit = (b >> (7 - bit_in_byte)) & 1;
@@ -92,7 +121,9 @@ impl<'a> BitReader<'a> {
             // zeros = 31, suffix = 2^31 − 1). zeros = 32 makes `1u32 << 32`
             // undefined behavior (panics in debug, wraps in release).
             if zeros >= 32 {
-                return Err(CodecParseError::InvalidGolomb { offset_bits: start });
+                return Err(CodecParseError::InvalidGolomb {
+                    offset_bits: offset_u32(start),
+                });
             }
             let b = self.read_one_bit()?;
             if b == 1 {
@@ -150,6 +181,20 @@ impl<'a> BitReader<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A cursor past bit 2^32 reports truncation; it does not wrap to byte 0.
+    #[test]
+    fn cursor_past_u32_range_reports_truncation_without_wrapping() {
+        let bytes = [0xFF, 0xFF, 0xFF, 0xFF];
+        let mut br = BitReader::at_bit_for_test(&bytes, (1u64 << 32) + 3);
+        match br.read_bool() {
+            Err(CodecParseError::TruncatedRbsp {
+                offset_bits,
+                needed_bits: 1,
+            }) => assert_eq!(offset_bits, u32::MAX),
+            other => panic!("expected a saturated TruncatedRbsp, got {other:?}"),
+        }
+    }
 
     #[test]
     fn read_u_basic() {

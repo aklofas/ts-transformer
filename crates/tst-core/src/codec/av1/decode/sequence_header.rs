@@ -77,16 +77,9 @@ pub fn parse_sequence_header(payload: &[u8]) -> Result<Av1SequenceHeader, CodecP
                 let num_ticks_per_picture_minus_1 = br.uvlc()?; // u64
                 let ticks = num_ticks_per_picture_minus_1.saturating_add(1);
                 if let Some(den_u64) = u64::from(num_units_in_display_tick).checked_mul(ticks) {
-                    let g = gcd(u64::from(time_scale), den_u64).max(1);
-                    let num = u64::from(time_scale) / g;
-                    let den = den_u64 / g;
                     // Surface only when the reduced rational fits u32 Rational;
                     // otherwise leave None rather than truncate silently.
-                    if let (Ok(num), Ok(den)) = (u32::try_from(num), u32::try_from(den))
-                        && den != 0
-                    {
-                        frame_rate = Some(Rational { num, den });
-                    }
+                    frame_rate = crate::codec::reduced_rational(u64::from(time_scale), den_u64);
                 }
             }
             // (When equal_picture_interval is false the stream asserts no
@@ -321,15 +314,4 @@ pub fn parse_sequence_header(payload: &[u8]) -> Result<Av1SequenceHeader, CodecP
         frame_rate,
         raw: payload.to_vec(),
     })
-}
-
-/// Euclid GCD for reducing the frame-rate rational. Both AV1 timing
-/// integers are 32-bit; the product is computed in u64.
-fn gcd(mut a: u64, mut b: u64) -> u64 {
-    while b != 0 {
-        let t = b;
-        b = a % b;
-        a = t;
-    }
-    a
 }

@@ -730,3 +730,45 @@ fn hostile_frame_crop_is_rejected_at_parse_time() {
         }
     }
 }
+
+/// Baseline SPS with `pic_order_cnt_type` 1 and `cycle` reference-frame offsets.
+fn craft_baseline_sps_poc_type1(cycle: u32) -> Vec<u8> {
+    let mut bw = BitWriter::new();
+    bw.write(66, 8); // profile_idc = Baseline
+    bw.write(0, 8); // constraint_set flags + reserved_zero_2bits
+    bw.write(40, 8); // level_idc 4.0
+    bw.write_ue(0); // seq_parameter_set_id
+    bw.write_ue(0); // log2_max_frame_num_minus4
+    bw.write_ue(1); // pic_order_cnt_type = 1
+    bw.write(0, 1); // delta_pic_order_always_zero_flag
+    bw.write_ue(0); // offset_for_non_ref_pic = se(0)
+    bw.write_ue(0); // offset_for_top_to_bottom_field = se(0)
+    bw.write_ue(cycle); // num_ref_frames_in_pic_order_cnt_cycle
+    for _ in 0..cycle {
+        bw.write_ue(0); // offset_for_ref_frame = se(0)
+    }
+    bw.write_ue(1); // max_num_ref_frames
+    bw.write(0, 1); // gaps_in_frame_num_value_allowed_flag
+    bw.write_ue(19); // pic_width_in_mbs_minus1 → 320
+    bw.write_ue(14); // pic_height_in_map_units_minus1 → 240
+    bw.write(1, 1); // frame_mbs_only_flag
+    bw.write(0, 1); // direct_8x8_inference_flag
+    bw.write(0, 1); // frame_cropping_flag
+    bw.write(0, 1); // vui_parameters_present_flag
+    bw.end_rbsp();
+    escape_emulation(&bw.bytes)
+}
+
+/// H.264 §7.4.2.1.1: num_ref_frames_in_pic_order_cnt_cycle shall be in 0..=255.
+#[test]
+fn poc_cycle_count_above_255_is_rejected() {
+    let sps = parse_sps(&craft_baseline_sps_poc_type1(255)).expect("255 is in range");
+    assert_eq!((sps.width, sps.height), (320, 240));
+    match parse_sps(&craft_baseline_sps_poc_type1(256)) {
+        Err(CodecParseError::ReservedValue { field, value }) => {
+            assert_eq!(field, "num_ref_frames_in_pic_order_cnt_cycle");
+            assert_eq!(value, 256);
+        }
+        other => panic!("256 must be refused, got {other:?}"),
+    }
+}

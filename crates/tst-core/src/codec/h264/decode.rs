@@ -252,7 +252,9 @@ pub fn parse_sps(rbsp: &[u8]) -> Result<H264Sps, CodecParseError> {
             let _delta_pic_order_always_zero_flag = br.read_bool()?;
             let _offset_for_non_ref_pic = br.read_se()?;
             let _offset_for_top_to_bottom_field = br.read_se()?;
-            let num_ref_frames_in_pic_order_cnt_cycle = br.read_ue()?;
+            // H.264 §7.4.2.1.1: num_ref_frames_in_pic_order_cnt_cycle ∈ [0, 255].
+            let num_ref_frames_in_pic_order_cnt_cycle =
+                br.read_ue_max("num_ref_frames_in_pic_order_cnt_cycle", 255)?;
             for _ in 0..num_ref_frames_in_pic_order_cnt_cycle {
                 let _offset_for_ref_frame = br.read_se()?;
             }
