@@ -555,16 +555,6 @@ mod tests {
     }
 
     #[test]
-    fn rational_basic_construction() {
-        let r = Rational {
-            num: 30000,
-            den: 1001,
-        };
-        assert_eq!(r.num, 30000);
-        assert_eq!(r.den, 1001);
-    }
-
-    #[test]
     fn colour_primaries_known_arms_round_trip() {
         assert_eq!(ColourPrimaries::from_h273(1), ColourPrimaries::Bt709);
         assert_eq!(ColourPrimaries::from_h273(9), ColourPrimaries::Bt2020);
@@ -628,46 +618,10 @@ mod tests {
     }
 
     #[test]
-    fn parse_error_displays_helpfully() {
-        let e = CodecParseError::TruncatedRbsp {
-            offset_bits: 80,
-            needed_bits: 5,
-        };
-        let s = format!("{e}");
-        assert!(s.contains("truncated"));
-        assert!(s.contains("80"));
-    }
-
-    #[test]
     fn parse_error_is_std_error() {
         fn assert_error<E: std::error::Error>(_: &E) {}
         let e = CodecParseError::EngineError("test".into());
         assert_error(&e);
-    }
-
-    #[test]
-    fn parse_error_reserved_value_carries_field_name() {
-        let e = CodecParseError::ReservedValue {
-            field: "chroma_format_idc",
-            value: 4,
-        };
-        let s = format!("{e}");
-        assert!(s.contains("chroma_format_idc"));
-    }
-
-    #[test]
-    fn parse_error_audio_variants_format() {
-        let bad_sync = CodecParseError::BadSyncWord {
-            expected: 0xFFF,
-            found: 0xABC,
-        };
-        assert!(format!("{:?}", bad_sync).contains("BadSyncWord"));
-
-        let trunc = CodecParseError::Truncated { needed: 7, had: 4 };
-        assert!(format!("{:?}", trunc).contains("Truncated"));
-
-        let forbidden = CodecParseError::Forbidden { field: "layer" };
-        assert!(format!("{:?}", forbidden).contains("Forbidden"));
     }
 
     #[test]

@@ -346,37 +346,28 @@ fn classify_parameter_set(nal: &[u8], codec: VideoCodec, sets: &mut ParameterSet
 mod tests {
     use super::*;
 
-    // The pre-refactor body, kept verbatim as a differential oracle.
-    fn old_classify_parameter_set(nal: &[u8], codec: VideoCodec, sets: &mut ParameterSets) {
-        let Some(&byte0) = nal.first() else {
-            return;
-        };
-        match codec {
-            VideoCodec::H264 => match byte0 & 0x1F {
-                7 => sets.sps.push(nal.to_vec()),
-                8 => sets.pps.push(nal.to_vec()),
-                _ => {}
-            },
-            VideoCodec::H265 => match (byte0 >> 1) & 0x3F {
-                32 => sets.vps.push(nal.to_vec()),
-                33 => sets.sps.push(nal.to_vec()),
-                34 => sets.pps.push(nal.to_vec()),
-                _ => {}
-            },
-            VideoCodec::H266 | VideoCodec::Av1 => {
-                unreachable!("filtered out by extract_parameter_sets before this is called")
-            }
-        }
-    }
-
-    proptest::proptest! {
-        #[test]
-        fn classify_matches_the_old_table(nal in proptest::collection::vec(proptest::num::u8::ANY, 0..4), h265 in proptest::bool::ANY) {
-            let codec = if h265 { VideoCodec::H265 } else { VideoCodec::H264 };
-            let (mut a, mut b) = (ParameterSets::default(), ParameterSets::default());
-            classify_parameter_set(&nal, codec, &mut a);
-            old_classify_parameter_set(&nal, codec, &mut b);
-            proptest::prop_assert_eq!((a.sps, a.pps, a.vps), (b.sps, b.pps, b.vps));
+    /// H.264 §7.4.1 Table 7-1 (SPS 7, PPS 8) and H.265 §7.4.2.2 Table 7-1 (VPS 32, SPS 33, PPS 34).
+    #[test]
+    fn classify_parameter_set_by_spec_header_bytes() {
+        let cases: &[(VideoCodec, &[u8], (usize, usize, usize))] = &[
+            (VideoCodec::H264, &[0x67, 0xAA], (1, 0, 0)),
+            (VideoCodec::H264, &[0x27, 0xAA], (1, 0, 0)), // nal_ref_idc 1
+            (VideoCodec::H264, &[0x68, 0xAA], (0, 1, 0)),
+            (VideoCodec::H264, &[0x65, 0xAA], (0, 0, 0)),
+            (VideoCodec::H265, &[0x40, 0x01], (0, 0, 1)),
+            (VideoCodec::H265, &[0x42, 0x01], (1, 0, 0)),
+            (VideoCodec::H265, &[0x44, 0x01], (0, 1, 0)),
+            (VideoCodec::H265, &[0x26, 0x01], (0, 0, 0)),
+            (VideoCodec::H264, &[], (0, 0, 0)),
+        ];
+        for (codec, nal, (sps, pps, vps)) in cases {
+            let mut s = ParameterSets::default();
+            classify_parameter_set(nal, *codec, &mut s);
+            assert_eq!(
+                (s.sps.len(), s.pps.len(), s.vps.len()),
+                (*sps, *pps, *vps),
+                "{codec:?} {nal:02X?}"
+            );
         }
     }
 
