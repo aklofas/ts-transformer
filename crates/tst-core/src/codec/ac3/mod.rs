@@ -4,12 +4,14 @@
 //! [API stability reference](https://github.com/aklofas/ts-transformer/blob/main/docs/reference/api-stability.md).
 //!
 //! Stateless, minimal parser for the syncinfo + first few bsi fields of
-//! an AC-3 elementary stream, used by the muxer to derive the mandatory
-//! `AC-3_audio_stream_descriptor` (ATSC A/52 §A.4.3 + Table A4.1) and
-//! by the demuxer to check the two syncword bytes of a PES carrying
-//! `data_alignment_indicator = 1` per ATSC A/52:2018 §A.6.3 (which
-//! requires the payload to be byte-aligned to a syncframe, not one
-//! syncframe per PES).
+//! an AC-3 elementary stream. No production code calls
+//! [`parse_syncframe`]: the muxer writes a fixed
+//! `AC-3_audio_stream_descriptor` (ATSC A/52 §A.4.3 + Table A4.1) and does
+//! not derive it from a syncframe (a caller who wants the exact fields
+//! parses one here and builds the descriptor with
+//! [`crate::mpegts::descriptors::ac3_audio_stream_descriptor`]), and the
+//! demuxer checks the two syncword bytes of a PES carrying
+//! `data_alignment_indicator = 1` (ATSC A/52:2018 §A.6.3) itself.
 //!
 //! ## Spec coverage
 //!
@@ -26,15 +28,15 @@
 //! ## Not parsed (deferred)
 //!
 //! - dialnorm, compr, langcod, audprodie, time codes, addbsi — bsi tail
-//!   fields after lfeon. The descriptor fields the muxer needs
+//!   fields after lfeon. The `AC-3_audio_stream_descriptor` fields
 //!   (sample_rate_code / bit_rate_code / surround_mode / bsmod /
 //!   num_channels) are all available from the syncinfo + first few bsi
 //!   bits.
 //! - audblk / auxdata / errorcheck — block-level audio data and CRCs.
 //! - E-AC-3 (Annex E) — extension to AC-3, signalled by bsid 11..=16
-//!   (9/10 are alternative bitstreams). `parse_syncframe` rejects bsid >= 9 as
-//!   unsupported; if E-AC-3 support is needed, add a separate parser
-//!   keyed on bsid.
+//!   (an Annex E decoder mutes 9, 10 and above 16). `parse_syncframe`
+//!   rejects bsid >= 9 as unsupported; if E-AC-3 support is needed, add a
+//!   separate parser keyed on bsid.
 
 mod decode;
 #[cfg(test)]

@@ -189,26 +189,29 @@ fn build_h264_keyframe_au(_frame_num: i64) -> Vec<u8> {
 /// MP2 (MPEG-1 Audio Layer II) frame structure:
 ///   - 11 sync bits (all 1)
 ///   - 2 version bits (11 = MPEG-1)
-///   - 2 layer bits (01 = Layer II)
+///   - 2 layer bits (10 = Layer II)
 ///   - 1 protection bit (1 = no CRC)
-///   - 4 bitrate index bits (1011 = 192 kbps)
+///   - 4 bitrate index bits (1011 = 224 kbps for Layer II)
 ///   - 2 sample rate bits (00 = 44.1 kHz)
 ///   - 1 padding bit
 ///   - 1 private bit
+///   - 2 mode bits (11 = single channel), then mode extension, copyright,
+///     original and emphasis
 ///   - Followed by the frame payload (silence for this example).
 ///
 /// This is a synthetic placeholder — real code gets frames from an encoder
 /// like libtwolame or ffmpeg's libavcodec.
 fn build_mp2_silent_frame() -> Vec<u8> {
     // MP2 header: 0xFF 0xFD 0xB0 0xC4 encodes:
-    //   sync=0xFFF (11 ones)
+    //   sync=0x7FF (11 ones)
     //   version=11 (MPEG-1)
-    //   layer=01 (Layer II)
+    //   layer=10 (Layer II)
     //   protection=1 (no CRC)
-    //   bitrate=1011 (192 kbps)
+    //   bitrate=1011 (224 kbps in the Layer II column)
     //   samplerate=00 (44.1 kHz)
     //   padding=0
     //   private=0
+    //   mode=11 (single channel; byte 3 = 0xC4 also sets original=1)
     // Then 140 bytes of silence (zero payload for this example).
     let mut frame = vec![0xFF, 0xFD, 0xB0, 0xC4];
     frame.extend(std::iter::repeat_n(0u8, 140));

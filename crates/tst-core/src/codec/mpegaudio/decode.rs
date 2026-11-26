@@ -746,4 +746,39 @@ mod tests {
         // Verify the body was actually copied into owned storage.
         assert_eq!(owned.body, payload);
     }
+
+    #[test]
+    fn mpeg2_5_layer3_8khz_frame_length() {
+        let f = parse_header(&[0xFF, 0xE3, 0x18, 0xC0]).unwrap();
+        assert_eq!(f.version, Version::Mpeg2_5);
+        assert_eq!(f.sample_rate_hz, 8_000);
+        assert_eq!(f.frame_length_bytes, 72);
+    }
+
+    /// The parser reads the header's syntax and does not police Layer II's
+    /// bitrate / mode pairs: stereo at 32 / 48 / 56 / 80 kbit/s and single
+    /// channel at 224 / 256 / 320 / 384 kbit/s parse as written (ffmpeg's
+    /// MP2 encoder writes such pairs and its decoder plays them).
+    #[test]
+    fn layer2_bitrate_mode_pairs_are_read_as_written() {
+        // MPEG-1 Layer II, no CRC, 44.1 kHz; byte 3 carries the mode.
+        for (index, kbps, mode_byte, channels) in [
+            (1u8, 32u32, 0x00u8, 2u8),
+            (2, 48, 0x00, 2),
+            (3, 56, 0x00, 2),
+            (5, 80, 0x00, 2),
+            (11, 224, 0xC0, 1),
+            (12, 256, 0xC0, 1),
+            (13, 320, 0xC0, 1),
+            (14, 384, 0xC0, 1),
+        ] {
+            let h = parse_header(&[0xFF, 0xFD, index << 4, mode_byte]).unwrap();
+            assert_eq!(h.layer, Layer::II);
+            assert_eq!(
+                (h.bitrate_kbps, h.channels),
+                (kbps, channels),
+                "index {index}"
+            );
+        }
+    }
 }

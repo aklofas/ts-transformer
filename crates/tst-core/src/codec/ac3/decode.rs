@@ -26,9 +26,10 @@ pub struct Ac3SyncInfo {
     /// (rejected as `ReservedValue`).
     pub frmsizecod: u8,
     /// `bsid` — 5-bit bitstream identification per A/52 §5.4.2.1.
-    /// `8` is the canonical value for AC-3 conformant to A/52:2018.
-    /// Values `0..=8` are AC-3; `9` and `10` are alternative bitstreams;
-    /// `11..=16` are E-AC-3 per Annex E. This parser rejects `>= 9` as
+    /// `8` is the canonical value for AC-3 conformant to A/52:2018; `6`
+    /// marks the alternate bit stream syntax of Annex D. Values `0..=8` are
+    /// AC-3; `11..=16` are E-AC-3 per Annex E, whose decoder mutes `9`,
+    /// `10` and values above `16`. This parser rejects `>= 9` as
     /// `UnsupportedProfile` — E-AC-3 needs a separate decoder.
     pub bsid: u8,
     /// `bsmod` — 3-bit bitstream mode (service type) per A/52 Table 5.7.

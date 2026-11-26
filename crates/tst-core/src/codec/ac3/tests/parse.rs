@@ -194,3 +194,22 @@ fn parse_eac3_bsid_11_with_reserved_frmsizecod_returns_unsupported_profile_not_r
         "expected UnsupportedProfile(11), got {err:?}"
     );
 }
+
+/// Literal bytes, not the helper: `bsid` 6 (A/52 Annex D's alternate
+/// syntax) with `acmod` 0 (1+1) and 1 (1/0), each with the LFE bit set.
+#[test]
+fn parse_bsid6_and_acmod_0_and_1_literal_headers() {
+    // Byte 6: acmod (3 bits), then lfeon (no mix-level bits for these modes).
+    let dual = [0x0B, 0x77, 0x00, 0x00, 0x08, 0x30, 0b0001_0000];
+    let i = parse_syncframe(&dual).unwrap();
+    assert_eq!(
+        (i.bsid, i.acmod, i.num_full_bandwidth_channels, i.lfeon),
+        (6, 0, 2, true)
+    );
+    let mono = [0x0B, 0x77, 0x00, 0x00, 0x08, 0x30, 0b0011_0000];
+    let i = parse_syncframe(&mono).unwrap();
+    assert_eq!(
+        (i.acmod, i.num_full_bandwidth_channels, i.lfeon),
+        (1, 1, true)
+    );
+}

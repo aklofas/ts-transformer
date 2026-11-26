@@ -21,6 +21,13 @@
 //! - Psychoacoustic model fields.
 //! - ID3 / APEv2 tag detection (tag bytes are surfaced as parse errors
 //!   and terminate the iterator).
+//!
+//! ## Not checked
+//!
+//! - Layer II's allowed bitrate / mode pairs (ISO/IEC 11172-3 §2.4.2.3,
+//!   Table 3-B.2). The parser reads the header's syntax and does not
+//!   police the pair: a pair the table does not allow is parsed as
+//!   written.
 
 mod decode;
 mod model;
