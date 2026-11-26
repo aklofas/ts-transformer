@@ -251,14 +251,14 @@ pub fn insert_sei_before_first_vcl(
     sei_nal: &[u8],
     codec: VideoCodec,
 ) -> Result<Vec<u8>, MispTimeError> {
-    let at = first_vcl_prefix_offset(au, codec).ok_or(MispTimeError::NoVclNal)?;
-    // The SEI is the access unit's first NAL unit when no start code comes
-    // before the first VCL unit's.
-    let first = start_codes(&au[..at]).next().is_none();
-    let prefix: &[u8] = if first { &[0, 0, 0, 1] } else { &[0, 0, 1] };
-    let mut out = Vec::with_capacity(au.len() + prefix.len() + sei_nal.len());
+    let (at, first) = first_vcl_prefix_offset(au, codec).ok_or(MispTimeError::NoVclNal)?;
+    let mut out = Vec::with_capacity(au.len() + 4 + sei_nal.len());
     out.extend_from_slice(&au[..at]);
-    out.extend_from_slice(prefix);
+    // The access unit's first NAL unit has a zero_byte (Annex B).
+    if first {
+        out.push(0);
+    }
+    out.extend_from_slice(&[0, 0, 1]);
     match h265_temporal_id_plus1(au, at, codec) {
         Some(tid_plus1) => extend_with_temporal_id(&mut out, sei_nal, tid_plus1),
         None => out.extend_from_slice(sei_nal),
@@ -485,24 +485,25 @@ fn scan_sei_nal(
 }
 
 /// Byte offset of the START-CODE PREFIX of the first VCL NAL in an
-/// Annex-B AU, or `None` when no VCL NAL is present. VCL = H.264
+/// Annex-B AU, and whether that start code is the AU's first (no NAL unit
+/// comes before it), or `None` when no VCL NAL is present. VCL = H.264
 /// `nal_unit_type` 1..=5 (§7.4.1); H.265 `nal_unit_type` 0..=31
 /// (§7.4.2.2, all VCL types are < 32). Only H.264/H.265 reach this —
 /// build_sei_nal() has already rejected other codecs.
-fn first_vcl_prefix_offset(au: &[u8], codec: VideoCodec) -> Option<usize> {
+fn first_vcl_prefix_offset(au: &[u8], codec: VideoCodec) -> Option<(usize, bool)> {
     // Only H.264/H.265 carry a MISP SEI; build_sei_nal rejects the others.
     if !matches!(codec, VideoCodec::H264 | VideoCodec::H265) {
         return None;
     }
     let header = crate::codec::nal::header_len(codec)?;
-    crate::codec::annexb::start_codes(au).find_map(|sc| {
+    start_codes(au).enumerate().find_map(|(i, sc)| {
         let nal = &au[sc.data_start..];
         // The whole header must be present: a truncated H.265 tail is never VCL.
         if nal.len() < header {
             return None;
         }
         let nal_type = crate::codec::nal::nal_unit_type(codec, nal)?;
-        crate::codec::nal::is_vcl(codec, nal_type).then_some(sc.prefix_start)
+        crate::codec::nal::is_vcl(codec, nal_type).then_some((sc.prefix_start, i == 0))
     })
 }
 
@@ -557,7 +558,12 @@ mod tests {
             h265 in proptest::bool::ANY,
         ) {
             let codec = if h265 { VideoCodec::H265 } else { VideoCodec::H264 };
-            proptest::prop_assert_eq!(first_vcl_prefix_offset(&buf, codec), old_first_vcl_prefix_offset(&buf, codec));
+            let found = first_vcl_prefix_offset(&buf, codec);
+            proptest::prop_assert_eq!(found.map(|(at, _)| at), old_first_vcl_prefix_offset(&buf, codec));
+            // The flag is "no start code comes before the first VCL unit's".
+            if let Some((at, first)) = found {
+                proptest::prop_assert_eq!(first, start_codes(&buf[..at]).next().is_none());
+            }
         }
     }
     // Minimal Annex-B AU builders for splice tests.
