@@ -233,6 +233,13 @@ fn apply_rvt_tag(record: &mut RvtLs, f: &RawField<'_>) -> Result<(), KlvFieldErr
         record.unknown.push(OwnedRawField::from(f.clone()));
         return Ok(());
     };
+    // ST 0107.4-17: a zero-length item means "unknown". It is an occurrence
+    // of its tag, so it unsets a value an earlier duplicate gave. (A
+    // zero-length nested set goes to its own reader below.)
+    if f.value.is_empty() && !matches!(spec.encoding, RvtEncoding::Nested) {
+        unset(record, tag_u8);
+        return Ok(());
+    }
     match spec.encoding {
         RvtEncoding::U8 => {
             let v = read_u8(f, tag)?;
@@ -402,8 +409,9 @@ fn apply_aoi_tag(aoi: &mut RvtAoi, f: &RawField<'_>) -> Result<(), KlvFieldError
 
 /// Decode a User Defined Local Set (ST 0806.4 Table 8-4), the value of an
 /// RVT Tag 11 occurrence: exactly two items (Tag 1 the packed
-/// data-type/numeric-id byte, Tag 2 the payload). `None` on any
-/// structural malformation OR a missing mandatory item — the caller
+/// data-type/numeric-id byte, Tag 2 the payload, which may be empty).
+/// `None` on any structural malformation OR a missing mandatory item —
+/// either of the two (ST 0806.4-21, -22) — the caller
 /// records that as a [`KlvFieldError::TruncatedField`] on Tag 11 and
 /// skips the item; unlike [`RvtPoi`]/[`RvtAoi`] this type carries no
 /// `field_errors`/`unknown` sink of its own to partially populate.
@@ -423,10 +431,37 @@ fn decode_user_defined(bytes: &[u8]) -> Option<RvtUserData> {
             _ => {} // Table 8-4 defines exactly these two items.
         }
     }
+    // ST 0806.4-21 / -22: both items are mandatory; an empty but present
+    // User Data item is a payload of no bytes.
     Some(RvtUserData {
         numeric_id_raw: numeric_id_raw?,
-        data: data.unwrap_or_default(),
+        data: data?,
     })
+}
+
+/// Clear the field of a defined top-level scalar or text tag.
+fn unset(record: &mut RvtLs, tag: u8) {
+    match tag {
+        1 => record.crc32 = None,
+        2 => record.timestamp_us = None,
+        3 => record.platform_true_airspeed = None,
+        4 => record.platform_indicated_airspeed = None,
+        5 => record.telemetry_accuracy_indicator = None,
+        6 => record.frag_circle_radius_m = None,
+        7 => record.frame_code = None,
+        8 => record.rvt_ls_version = None,
+        9 => record.video_data_rate = None,
+        10 => record.digital_video_file_format = None,
+        14 => record.aircraft_mgrs_zone = None,
+        15 => record.aircraft_mgrs_band_grid = None,
+        16 => record.aircraft_mgrs_easting_m = None,
+        17 => record.aircraft_mgrs_northing_m = None,
+        18 => record.frame_center_mgrs_zone = None,
+        19 => record.frame_center_mgrs_band_grid = None,
+        20 => record.frame_center_mgrs_easting_m = None,
+        21 => record.frame_center_mgrs_northing_m = None,
+        _ => unreachable!("tags.rs defines no other scalar or text tag"),
+    }
 }
 
 fn read_u8(f: &RawField<'_>, tag: u32) -> Result<u8, KlvFieldError> {

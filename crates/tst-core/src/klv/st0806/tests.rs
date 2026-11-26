@@ -3,7 +3,7 @@
 //! exercises).
 
 use super::*;
-use crate::error::{KlvDecodeError, KlvEncodeError};
+use crate::error::{KlvDecodeError, KlvEncodeError, KlvFieldError};
 use crate::klv::pack::OwnedRawField;
 use crate::klv::st0806::model::*;
 
@@ -574,4 +574,61 @@ fn decode_standalone_without_crc_is_still_accepted() {
     let mut v = RVT_LS_UL.0.to_vec();
     v.extend_from_slice(&[0x03, 0x08, 0x01, 0x04]);
     assert_eq!(decode_standalone(&v).unwrap().rvt_ls_version, Some(4));
+}
+
+// ST 0107.4-17: a zero-length item means "unknown". It is an occurrence of
+// its tag, so the last-duplicate rule applies to it as to any value.
+
+#[test]
+fn rvt_zero_length_scalar_is_unknown() {
+    // Tag 3 (true airspeed) zero-length, then Tag 8 (version) 4.
+    let ls = decode(&[0x03, 0x00, 0x08, 0x01, 0x04]).unwrap();
+    assert_eq!(ls.platform_true_airspeed, None);
+    assert_eq!(ls.rvt_ls_version, Some(4));
+    assert!(ls.field_errors.is_empty(), "{:?}", ls.field_errors);
+}
+
+#[test]
+fn rvt_user_defined_set_without_item_2_is_refused() {
+    // ST 0806.4-22: a User Defined LS carries its User Data (Tag 2).
+    let ls = decode(&[0x0B, 0x03, 0x01, 0x01, 0x85]).unwrap();
+    assert!(ls.user_defined.is_empty());
+    assert_eq!(
+        ls.field_errors,
+        alloc::vec![KlvFieldError::TruncatedField { tag: 11 }]
+    );
+}
+
+#[test]
+fn rvt_user_defined_set_with_present_empty_item_2_decodes() {
+    let ls = decode(&[0x0B, 0x05, 0x01, 0x01, 0x85, 0x02, 0x00]).unwrap();
+    assert_eq!(
+        ls.user_defined,
+        alloc::vec![RvtUserData {
+            numeric_id_raw: 0x85,
+            data: alloc::vec![],
+        }]
+    );
+    assert!(ls.field_errors.is_empty());
+}
+
+#[test]
+fn a_zero_length_duplicate_after_a_value_unsets_it() {
+    let ls = decode(&[0x03, 0x02, 0x00, 0x64, 0x03, 0x00]).unwrap();
+    assert_eq!(ls.platform_true_airspeed, None);
+    let mut b = alloc::vec![0x02, 0x08];
+    b.extend_from_slice(&1_700_000_000_000_000u64.to_be_bytes());
+    b.extend_from_slice(&[0x02, 0x00]);
+    assert_eq!(decode(&b).unwrap().timestamp_us, None);
+    let ls = decode(&[0x0A, 0x03, b'm', b'p', b'4', 0x0A, 0x00]).unwrap();
+    assert_eq!(ls.digital_video_file_format, None);
+    assert!(ls.field_errors.is_empty());
+}
+
+#[test]
+fn a_zero_length_duplicate_before_a_value_keeps_it() {
+    let ls = decode(&[0x03, 0x00, 0x03, 0x02, 0x00, 0x64]).unwrap();
+    assert_eq!(ls.platform_true_airspeed, Some(100));
+    let ls = decode(&[0x0E, 0x00, 0x0E, 0x01, 18]).unwrap();
+    assert_eq!(ls.aircraft_mgrs_zone, Some(18));
 }
