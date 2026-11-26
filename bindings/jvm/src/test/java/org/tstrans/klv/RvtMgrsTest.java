@@ -2,6 +2,7 @@ package org.tstrans.klv;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import java.util.Locale;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.tstrans.KlvDecodeException;
@@ -38,6 +39,28 @@ class RvtMgrsTest {
         RvtLs ls = Klv.decodeRvt(mgrsBody(18, "TWL"));
         assertEquals("18TWL8040012000", ls.aircraftMgrs());
         assertEquals(15, ls.aircraftMgrs().length());
+    }
+
+    @Test
+    void theCompositeHasAsciiDigitsWhateverTheDefaultLocale() throws KlvDecodeException {
+        // An MGRS string is ASCII (the Rust and Python accessors write it so);
+        // a default locale with its own digits must not change it.
+        Locale saved = Locale.getDefault();
+        try {
+            Locale.setDefault(Locale.forLanguageTag("ar-SA-u-nu-arab"));
+            assertNotEquals("07", String.format("%02d", 7), "the locale formats with its own digits");
+            RvtLs ls = Klv.decodeRvt(mgrsBody(7, "TWL"));
+            assertEquals("07TWL8040012000", ls.aircraftMgrs());
+            RvtLs fc = new RvtLs.Builder()
+                    .frameCenterMgrsZone(7)
+                    .frameCenterMgrsBandGrid("TWL")
+                    .frameCenterMgrsEastingM(123L)
+                    .frameCenterMgrsNorthingM(45L)
+                    .build();
+            assertEquals("07TWL0012300045", fc.frameCenterMgrs());
+        } finally {
+            Locale.setDefault(saved);
+        }
     }
 
     @Test

@@ -284,7 +284,8 @@ public record RvtLs(
         if (zone < 1 || zone > 60 || !isMgrsBandGrid(bandGrid)) {
             return null;
         }
-        return String.format("%02d%s%05d%05d", zone, bandGrid, easting, northing);
+        // Locale.ROOT: an MGRS string has ASCII digits, whatever the default locale's are.
+        return String.format(java.util.Locale.ROOT, "%02d%s%05d%05d", zone, bandGrid, easting, northing);
     }
 
     /** Three letters A to Z, I and O omitted (ST 0806.4 Table 8-1 Items 15, 19). */
