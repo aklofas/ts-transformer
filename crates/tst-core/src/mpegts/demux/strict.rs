@@ -8,6 +8,10 @@ use crate::mpegts::demux::event::NonConformantIssue;
 /// "strict means strict-everything" mode would be unusable on most live
 /// data). The categories let consumers fail on timing while tolerating
 /// descriptor omissions, or vice versa.
+///
+/// An error [`feed`](crate::mpegts::demux::Demuxer::feed) returns under a
+/// strict mode is resumable: the packet that raised it was processed in full,
+/// the timing state is intact, and feeding may go on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum StrictMode {
     /// Lenient — `NonConformant` events surface as data; receive loop

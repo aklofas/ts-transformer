@@ -202,6 +202,9 @@ impl super::demuxer::Demuxer {
         // before the first outcome of the PES that starts in this packet, or
         // after the loop when there is none.
         let settles = pkt.payload_unit_start;
+        // A strict mode's first error of the packet, returned once every
+        // outcome of the packet is processed.
+        let mut first_err: Option<crate::error::DemuxError> = None;
         let mut drop_next_complete: Option<u16> = None;
         let mut damage_next_complete: Option<(u16, &'static str)> = None;
         for (idx, outcome) in outcomes.into_iter().enumerate() {
@@ -266,21 +269,24 @@ impl super::demuxer::Demuxer {
                 }
                 ReassemblyOutcome::Malformed { pid, reason } => {
                     // Wire order with the completions beside it: a lenient
-                    // demuxer queues the NonConformant and keeps going; a
-                    // strict one returns the error here and the remaining
-                    // outcomes of this packet go with it (strict is fatal
-                    // for the stream anyway).
+                    // demuxer queues the NonConformant and keeps going. A
+                    // strict one keeps going too and returns the error after
+                    // the loop: a caller may feed on, so the dropped PES's
+                    // timing, a pending reset and the packet's other units
+                    // must not be lost with it. One error is returned per
+                    // packet; a later one is queued as its event.
                     if let Err(err) = self.surface_malformed_pes(pid, reason) {
-                        // The same rule on the early return: the PUSI still
-                        // ends the PES in flight, so settle a pending
-                        // time-base reset first and a caller that keeps
-                        // feeding is judged on the new clock. The PES is
-                        // never walked, so the AU in progress goes with it.
-                        if settles {
-                            self.settle_after_pes(pkt.pid);
+                        if first_err.is_none() {
+                            first_err = Some(err);
+                        } else {
+                            let stream = self.lookup_stream(pid).unwrap_or_else(|| {
+                                StreamId::anonymous(pid, self.program_number_for_pid(pid))
+                            });
+                            self.queue_nonconformant(
+                                stream,
+                                NonConformantIssue::MalformedPes { pid, reason },
+                            );
                         }
-                        self.discard_au_in_progress(pid);
-                        return Err(err);
                     }
                     if is_damage_reason(reason) {
                         drop_next_complete = Some(pid);
@@ -295,7 +301,7 @@ impl super::demuxer::Demuxer {
         if settles {
             self.settle_after_pes(pkt.pid);
         }
-        Ok(())
+        first_err.map_or(Ok(()), Err)
     }
 
     /// Emit the events of one completed PES. `damage` (lenient mode only)
@@ -3752,6 +3758,338 @@ mod tests {
         assert!(
             r.is_ok(),
             "Full must not reject VBI data on a 0x46-only PID: {r:?}"
+        );
+    }
+
+    /// Feed `pkts` one at a time and go on after each error, as a caller of
+    /// a strict demuxer may; then flush. Returns every error and every event.
+    fn feed_on_after_errors(
+        d: &mut Demuxer,
+        pkts: &[[u8; 188]],
+    ) -> (Vec<DemuxError>, Vec<DemuxEvent>) {
+        let errors = pkts
+            .iter()
+            .filter_map(|p| d.feed_aligned(p).err())
+            .collect();
+        d.flush();
+        (errors, drain_all_events(d))
+    }
+
+    /// Packetize `pes` on `pid` from `*cc` and advance `*cc` past it.
+    fn next_packets(pid: u16, cc: &mut u8, pes: &[u8]) -> Vec<[u8; 188]> {
+        let pkts = pes_to_packets(pid, *cc, pes);
+        *cc = cc.wrapping_add(pkts.len() as u8) & 0x0F;
+        pkts
+    }
+
+    fn sample_pts(ev: &[DemuxEvent], pid: u16) -> Vec<i64> {
+        ev.iter()
+            .filter_map(|e| match e {
+                DemuxEvent::Sample { stream, pts, .. } if stream.pid == pid => Some(pts.as_ticks()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// A bounded PES whose header overruns its own `PES_packet_length`: it
+    /// completes in the packet that starts it and fails to parse.
+    const UNPARSEABLE_AUDIO_PES: [u8; 10] =
+        [0x00, 0x00, 0x01, 0xC0, 0x00, 0x04, 0x80, 0x80, 0x05, 0x21];
+    const UNPARSEABLE_REASON: &str = "PES too short for declared header_data_length";
+
+    /// H.222.0 §2.7.4: a strict error for a damaged PES still records that
+    /// PES's PTS, so the PTS-less PES after it is judged from it and not
+    /// from the PES before the damage (70 000 is 10 000 after the damaged
+    /// PES, 70 000 after the first).
+    #[test]
+    fn a_full_mode_damage_error_keeps_the_dropped_pes_timing() {
+        let mut d = demuxer_with_streams(
+            DemuxerConfig::builder().strict(StrictMode::Full).build(),
+            0x1FFE,
+            &[(0x1B, 0x100, &[])],
+        );
+        let nal: &[u8] = &[0, 0, 0, 1, 0x41, 1, 2, 3];
+        let video = |pts| pes_bytes(0xE0, pts, None, true, nal, false);
+        let mut cc = 0;
+        let mut pkts = next_packets(0x100, &mut cc, &video(Some(0)));
+        let mut damaged = next_packets(
+            0x100,
+            &mut cc,
+            &pes_bytes(0xE0, Some(60_000), None, true, &[0x11; 400], false),
+        );
+        assert_eq!(damaged.len(), 3);
+        damaged.remove(1);
+        pkts.extend(damaged);
+        for pts in [None, Some(70_000), Some(73_000)] {
+            pkts.extend(next_packets(0x100, &mut cc, &video(pts)));
+        }
+        let (errors, ev) = feed_on_after_errors(&mut d, &pkts);
+        assert!(
+            matches!(&errors[..], [DemuxError::MalformedPes { pid: 0x100, reason }] if *reason == DAMAGE_CC_GAP),
+            "{errors:?}"
+        );
+        assert!(
+            !issues(&ev)
+                .iter()
+                .any(|i| matches!(i, NonConformantIssue::MissingRequiredPts { .. })),
+            "{ev:?}"
+        );
+    }
+
+    /// The packet that ends a damaged bounded PES also holds a whole bounded
+    /// PES: that PES is delivered while the packet's `feed` returns the
+    /// damage error.
+    #[test]
+    fn a_full_mode_damage_error_keeps_the_unit_that_ends_in_the_same_packet() {
+        let mut d = audio_demuxer(StrictMode::Full);
+        let audio = |pts, es: &[u8]| pes_bytes(0xC0, Some(pts), None, true, es, true);
+        let mut cc = 0;
+        let mut pkts = next_packets(0x101, &mut cc, &audio(1_000, &[0xAA; 20]));
+        let mut damaged = next_packets(0x101, &mut cc, &audio(4_000, &[0xBB; 400]));
+        damaged.remove(1);
+        pkts.extend(damaged);
+        let closing = next_packets(0x101, &mut cc, &audio(7_000, &[0xCC; 20]));
+        assert_eq!(closing.len(), 1);
+        pkts.extend(closing);
+        pkts.extend(next_packets(0x101, &mut cc, &audio(10_000, &[0xDD; 20])));
+        let (errors, ev) = feed_on_after_errors(&mut d, &pkts);
+        assert!(
+            matches!(&errors[..], [DemuxError::MalformedPes { pid: 0x101, reason }] if *reason == DAMAGE_CC_GAP),
+            "{errors:?}"
+        );
+        assert_eq!(sample_pts(&ev, 0x101), [1_000, 7_000, 10_000], "{ev:?}");
+    }
+
+    /// The same as the CC-gap case for a bounded PES that ends short of its
+    /// `PES_packet_length` with no gap: its PTS is recorded.
+    #[test]
+    fn a_short_bounded_pes_under_full_keeps_its_timing() {
+        let mut d = audio_demuxer(StrictMode::Full);
+        // Two packets each, so the PUSI that ends the short PES does not
+        // also end the PTS-less one.
+        let audio = |pts| pes_bytes(0xC0, pts, None, true, &[0xAA; 300], true);
+        let mut cc = 0;
+        let mut pkts = next_packets(0x101, &mut cc, &audio(Some(0)));
+        let mut short = pes_bytes(0xC0, Some(60_000), None, true, &[0xBB; 400], true);
+        short.truncate(2 * 184);
+        pkts.extend(next_packets(0x101, &mut cc, &short));
+        for pts in [None, Some(70_000), Some(73_000)] {
+            pkts.extend(next_packets(0x101, &mut cc, &audio(pts)));
+        }
+        let (errors, ev) = feed_on_after_errors(&mut d, &pkts);
+        assert!(
+            matches!(&errors[..], [DemuxError::MalformedPes { pid: 0x101, reason }] if *reason == DAMAGE_SHORT_PES),
+            "{errors:?}"
+        );
+        assert!(
+            !issues(&ev)
+                .iter()
+                .any(|i| matches!(i, NonConformantIssue::MissingRequiredPts { .. })),
+            "{ev:?}"
+        );
+        assert_eq!(sample_pts(&ev, 0x101), [0, 0, 70_000, 73_000], "{ev:?}");
+    }
+
+    /// An unparseable PES closed by a PUSI whose packet holds a whole PES:
+    /// the AU it interrupted is discarded (H.222.0 §2.12.4.2), the whole PES
+    /// is delivered, and feeding goes on.
+    #[test]
+    fn an_unparseable_pes_under_full_discards_the_unit_in_progress_and_goes_on() {
+        use crate::mpegts::au_cell::{AuCellHeader, CellFragmentIndication};
+        use crate::mpegts::demux::test_support::au_cell_pes_packets;
+        let mut d = demuxer_with_streams(
+            DemuxerConfig::builder().strict(StrictMode::Full).build(),
+            0x103,
+            &[(0x15, 0x103, &crate::mpegts::descriptors::metadata_klva(0))],
+        );
+        let cell = |sequence_number, cell_fragment_indication| AuCellHeader {
+            metadata_service_id: 0,
+            sequence_number,
+            cell_fragment_indication,
+            decoder_config_flag: false,
+            random_access_indicator: true,
+        };
+        let mut pkts = au_cell_pes_packets(
+            0x103,
+            0,
+            cell(0, CellFragmentIndication::First),
+            &synth_klv_record(8),
+        );
+        // Ten bytes of a PES whose header promises more: closed by the next
+        // PUSI, it cannot be parsed.
+        pkts.push(ts_packet(&PktSpec {
+            pid: 0x103,
+            cc: 1,
+            pusi: true,
+            payload: &[0x00, 0x00, 0x01, 0xFC, 0x00, 0x40, 0x84, 0x80, 0x05, 0x21],
+            ..Default::default()
+        }));
+        let closing = au_cell_pes_packets(
+            0x103,
+            2,
+            cell(1, CellFragmentIndication::Complete),
+            &synth_klv_record(8),
+        );
+        assert_eq!(closing.len(), 1);
+        pkts.extend(closing);
+        let err = feed_packets(&mut d, &pkts).unwrap_err();
+        assert!(
+            matches!(err, DemuxError::MalformedPes { pid: 0x103, reason } if reason == UNPARSEABLE_REASON),
+            "{err:?}"
+        );
+        let ev = drain_all_events(&mut d);
+        assert!(
+            issues(&ev).iter().any(|i| matches!(
+                i,
+                NonConformantIssue::MultiCellAu {
+                    pid: 0x103,
+                    reason: MultiCellAuReason::SequenceGap,
+                    ..
+                }
+            )),
+            "{ev:?}"
+        );
+        let metadata = |ev: &[DemuxEvent]| {
+            ev.iter()
+                .filter(|e| matches!(e, DemuxEvent::Metadata { stream, .. } if stream.pid == 0x103))
+                .count()
+        };
+        assert_eq!(metadata(&ev), 1, "{ev:?}");
+        let later = au_cell_pes_packets(
+            0x103,
+            3,
+            cell(2, CellFragmentIndication::Complete),
+            &synth_klv_record(8),
+        );
+        assert!(feed_packets(&mut d, &later).is_ok());
+        assert_eq!(metadata(&drain_all_events(&mut d)), 1);
+    }
+
+    /// A damaged PES closed by a packet that also holds an unparseable one:
+    /// the packet's first error is returned and the second is queued as its
+    /// event.
+    #[test]
+    fn two_rejections_in_one_packet_return_the_first_and_queue_the_second() {
+        let mut d = audio_demuxer(StrictMode::Full);
+        let mut cc = 0;
+        let mut damaged = next_packets(0x101, &mut cc, &three_packet_pes(90_000));
+        damaged.remove(1);
+        feed_packets(&mut d, &damaged).unwrap();
+        let closing = ts_packet(&PktSpec {
+            pid: 0x101,
+            cc,
+            pusi: true,
+            payload: &UNPARSEABLE_AUDIO_PES,
+            ..Default::default()
+        });
+        let err = d.feed_aligned(&closing).unwrap_err();
+        assert!(
+            matches!(err, DemuxError::MalformedPes { pid: 0x101, reason } if reason == DAMAGE_CC_GAP),
+            "{err:?}"
+        );
+        let ev = drain_all_events(&mut d);
+        assert!(marker_index(&ev, UNPARSEABLE_REASON).is_some(), "{ev:?}");
+        assert!(marker_index(&ev, DAMAGE_CC_GAP).is_none(), "{ev:?}");
+        cc = (cc + 1) & 0x0F;
+        let later = next_packets(0x101, &mut cc, &three_packet_pes(92_000));
+        assert!(feed_packets(&mut d, &later).is_ok());
+        assert_eq!(sample_pts(&drain_all_events(&mut d), 0x101), [92_000]);
+    }
+
+    /// A `MalformedPes` of a packet is returned in preference to any other
+    /// verdict of that packet, here a backward PTS completed before it; the
+    /// other verdict is queued as its event and fails no later packet.
+    #[test]
+    fn a_malformed_pes_is_returned_in_preference_to_an_earlier_verdict_of_its_packet() {
+        let mut d = demuxer_with_streams(
+            DemuxerConfig::builder().strict(StrictMode::Full).build(),
+            0x1FFE,
+            &[(0x1B, 0x100, &[])],
+        );
+        let nal: &[u8] = &[0, 0, 0, 1, 0x41, 1, 2, 3];
+        let mut cc = 0;
+        let mut pkts = next_packets(
+            0x100,
+            &mut cc,
+            &pes_bytes(0xE0, Some(900_000), None, true, nal, false),
+        );
+        pkts.extend(next_packets(
+            0x100,
+            &mut cc,
+            &pes_bytes(0xE0, Some(0), None, true, nal, false),
+        ));
+        feed_packets(&mut d, &pkts).unwrap();
+        let mut bad = UNPARSEABLE_AUDIO_PES;
+        bad[3] = 0xE0;
+        let closing = ts_packet(&PktSpec {
+            pid: 0x100,
+            cc,
+            pusi: true,
+            payload: &bad,
+            ..Default::default()
+        });
+        let err = d.feed_aligned(&closing).unwrap_err();
+        assert!(
+            matches!(err, DemuxError::MalformedPes { pid: 0x100, reason } if reason == UNPARSEABLE_REASON),
+            "{err:?}"
+        );
+        assert!(
+            issues(&drain_all_events(&mut d))
+                .iter()
+                .any(|i| matches!(i, NonConformantIssue::PtsAnomaly { .. }))
+        );
+        cc = (cc + 1) & 0x0F;
+        let later = next_packets(
+            0x100,
+            &mut cc,
+            &pes_bytes(0xE0, Some(3_000), None, true, nal, true),
+        );
+        assert!(feed_packets(&mut d, &later).is_ok());
+    }
+
+    /// The PUSI that ends a damaged PES straddling a time-base reset also
+    /// holds a whole PES on the new clock: the reset is settled once, after
+    /// the damaged PES's timing and before the new PES, so the new PES is
+    /// delivered and is no backward step.
+    #[test]
+    fn a_damaged_pes_across_a_time_base_reset_settles_it_once_under_full() {
+        let mut d = audio_demuxer(StrictMode::Full);
+        let pcr = |disc, v| {
+            ts_packet(&PktSpec {
+                pid: 0x101,
+                discontinuity: disc,
+                pcr: Some(v),
+                ..Default::default()
+            })
+        };
+        let mut cc = 0;
+        let mut pkts = vec![pcr(false, 0)];
+        pkts.extend(audio_pes(&mut cc, Some(900_000)));
+        let damaged = next_packets(0x101, &mut cc, &three_packet_pes(903_000));
+        pkts.push(damaged[0]);
+        // H.222.0 §2.4.3.5: a new time base with the old-clock PES in flight.
+        // The flag also forgets the counter, so the lost packet shows as a
+        // PES that ends short.
+        pkts.push(pcr(true, 2_700_000_000));
+        pkts.push(damaged[2]);
+        feed_packets(&mut d, &pkts).unwrap();
+        let mut closing = audio_pes(&mut cc, Some(90_000));
+        assert_eq!(closing.len(), 1);
+        let err = d.feed_aligned(&closing.remove(0)).unwrap_err();
+        assert!(
+            matches!(err, DemuxError::MalformedPes { pid: 0x101, reason } if reason == DAMAGE_SHORT_PES),
+            "{err:?}"
+        );
+        let later = audio_pes(&mut cc, Some(93_000));
+        assert!(feed_packets(&mut d, &later).is_ok());
+        d.flush();
+        let ev = drain_all_events(&mut d);
+        assert_eq!(sample_pts(&ev, 0x101), [900_000, 90_000, 93_000], "{ev:?}");
+        assert!(
+            !issues(&ev)
+                .iter()
+                .any(|i| matches!(i, NonConformantIssue::PtsAnomaly { .. })),
+            "{ev:?}"
         );
     }
 }
