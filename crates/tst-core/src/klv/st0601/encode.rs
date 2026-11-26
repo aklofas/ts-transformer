@@ -199,11 +199,7 @@ pub fn encoded_len_with(record: &UasDatalinkLs, opts: &EncodeConfig) -> usize {
     each_typed_field(record, opts, |tag, value_len| {
         body_len += ber_oid_len(tag as u32) + ber_len(value_len) + value_len;
     });
-    // The replayed signals, as `write_replayed_signals` writes them.
-    each_replayed_signal(record, |spec, signal| {
-        let vlen = signal_len(spec, signal);
-        body_len += ber_oid_len(u32::from(spec.id)) + ber_len(vlen) + vlen;
-    });
+    body_len += replayed_signals_len(record);
     for f in &record.unknown {
         body_len += ber_oid_len(f.tag) + ber_len(f.value.len()) + f.value.len();
     }
@@ -233,7 +229,10 @@ pub(super) enum Signal {
 /// Which bytes the item `spec` gets from `record`: the one rule sizing,
 /// writing and every other writer of ST 0601 items follow.
 ///
-/// A populated typed field is written as its value ([`written_value`]).
+/// A populated typed field is written as its value: the per-row paths of
+/// sizing and writing (`each_typed_field`, `encode_tag_value`) take that
+/// half of the rule straight from the row's getter, and look at the signal
+/// lists only through [`each_replayed_signal`].
 /// An unset one replays the record's entry of the row's kind, if it has
 /// one: the INT_MIN sentinel for a signed linear row listed in
 /// `sentinel_tags`, the LAST special listed for an IMAPB row in
@@ -241,7 +240,7 @@ pub(super) enum Signal {
 /// a sentinel for an IMAPB or unsigned row, either for a pack row or an
 /// unknown tag) is never written.
 pub(super) fn resolve(record: &UasDatalinkLs, spec: &TagSpec) -> Option<ItemSource> {
-    if let Some(v) = written_value(record, spec) {
+    if let Some(v) = spec.get.and_then(|get| get(record)) {
         return Some(ItemSource::Value(v));
     }
     let tag = u32::from(spec.id);
@@ -258,13 +257,6 @@ pub(super) fn resolve(record: &UasDatalinkLs, spec: &TagSpec) -> Option<ItemSour
             .then_some(ItemSource::Sentinel),
         _ => None,
     }
-}
-
-/// The value [`resolve`] writes for a scalar row, without looking at the
-/// signal lists: the typed field when it is populated. The per-row path of
-/// sizing and writing calls this, and the signal lists only for an entry.
-pub(super) fn written_value(record: &UasDatalinkLs, spec: &TagSpec) -> Option<FieldValue> {
-    spec.get.and_then(|get| get(record))
 }
 
 /// `true` when [`resolve`] writes a sentinel or an IMAP special for the
@@ -369,9 +361,6 @@ fn signal_bytes(spec: &TagSpec, signal: Signal) -> Result<Vec<u8>, KlvEncodeErro
 /// [`resolve`] does not replay (its field holds a value that wins, or the
 /// entry is of the wrong kind for its row) is skipped.
 fn each_replayed_signal(record: &UasDatalinkLs, mut visit: impl FnMut(&TagSpec, Signal)) {
-    if record.sentinel_tags.is_empty() && record.imapb_specials.is_empty() {
-        return;
-    }
     for &tag in last_per_tag(&record.sentinel_tags, |&t| t).iter() {
         if let Some(spec) = u8::try_from(tag).ok().and_then(lookup_tag)
             && resolve(record, spec) == Some(ItemSource::Sentinel)
@@ -429,10 +418,12 @@ pub(super) fn each_typed_field<F: FnMut(u8, usize)>(
             // Tags 102 and 115 are multi-instance: their loops follow.
             pack_len(record, spec.id)
         } else {
-            match written_value(record, spec) {
+            // The checksum row has no accessor; the caller appends it.
+            let Some(get) = spec.get else { continue };
+            // A populated field is written as its value (`resolve`).
+            match get(record) {
                 Some(v) => Some(scalar_len(spec, &v)),
-                // Tag 65 is auto-emitted when the record leaves it unset; the
-                // checksum row has no accessor and the caller appends it.
+                // Tag 65 is auto-emitted when the record leaves it unset.
                 None if spec.id == 65 => Some(1),
                 None => None,
             }
@@ -745,7 +736,12 @@ pub(super) fn encode_tag_value(
     if spec.encoding == Encoding::Pack {
         return pack_value(record, spec.id);
     }
-    match written_value(record, spec) {
+    // The checksum row has no accessor; the caller appends it.
+    let Some(get) = spec.get else {
+        return Ok(None);
+    };
+    // A populated field is written as its value (`resolve`).
+    match get(record) {
         Some(v) => encode_scalar(spec, &v, policy).map(Some),
         None if spec.id == 65 => Ok(version_fallback.map(|v| vec![v])),
         None => Ok(None),
@@ -793,12 +789,30 @@ fn write_typed_fields(
     write_replayed_signals(record, body)
 }
 
+/// The TLV bytes of the replayed signals, as [`write_replayed_signals`]
+/// writes them. Out of line: most records replay none, and the per-row
+/// sizing loop stays as small as it is without signals.
+#[inline(never)]
+fn replayed_signals_len(record: &UasDatalinkLs) -> usize {
+    let mut len = 0;
+    if !record.sentinel_tags.is_empty() || !record.imapb_specials.is_empty() {
+        each_replayed_signal(record, |spec, signal| {
+            let vlen = signal_len(spec, signal);
+            len += ber_oid_len(u32::from(spec.id)) + ber_len(vlen) + vlen;
+        });
+    }
+    len
+}
+
 /// Write each signal [`each_replayed_signal`] visits, after the typed
 /// fields: one TLV per tag, at the shortest width that holds it.
 fn write_replayed_signals(
     record: &UasDatalinkLs,
     body: &mut Vec<u8>,
 ) -> Result<(), KlvEncodeError> {
+    if record.sentinel_tags.is_empty() && record.imapb_specials.is_empty() {
+        return Ok(());
+    }
     let mut result = Ok(());
     each_replayed_signal(record, |spec, signal| {
         if result.is_ok() {
