@@ -664,13 +664,13 @@ crate::binding_record! {
     /// present; only the trailing `hae` is truncatable.
     ///
     /// So a site is written with both coordinates (and its height when it
-    /// has one) or, when all three are `None`, as an unknown site of length
+    /// has one) or, when all three are unset, as an unknown site of length
     /// 0. A height or one coordinate without both coordinates is refused on
-    /// encode (`InvalidFieldValue` with the item's tag): the standard has no
-    /// wire form for it. On decode, a site whose latitude or longitude is a
-    /// special or reserved IMAP pattern is an unknown site (`None`) with one
-    /// `InvalidFormat` field error naming the item; a height sent as such a
-    /// pattern reads `None`.
+    /// encode, naming the item's tag: the standard has no wire form for it.
+    /// On decode, a site whose latitude or longitude is a special or
+    /// reserved IMAP pattern is an unknown site (the location is unset) with
+    /// one field error naming the item; a height sent as such a pattern is
+    /// unset.
     #[derive(Debug, Clone, Copy, PartialEq, Default)]
     pub struct Location {
         pub lat_deg: Option<f64>,

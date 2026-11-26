@@ -75,15 +75,14 @@ crate::binding_record! {
         /// verbatim as an attribute name, not a value, so it must be one: an
         /// ASCII letter or `_`, then ASCII letters, digits, `_`, `.` or `-`,
         /// not starting with `xml` in any case. Any other value makes both
-        /// converters refuse with `CotError::InvalidProducerName`.
+        /// converters refuse the conversion.
         @[py_default("\"ST0601CoT\"")]
         pub producer: String,
         /// Geoid undulation (HAE − MSL) applied when the height comes from an
         /// MSL-referenced item (Items 15, 25, 42). Absent emits the MSL value
         /// as the HAE: an approximation off by the geoid undulation (tens of
-        /// metres), which `platform_position_xml_with` /
-        /// `sensor_point_of_interest_xml_with` with `MslFallback::Refuse`
-        /// refuse instead.
+        /// metres), which the converters refuse instead when the caller asks
+        /// them to refuse an MSL height.
         pub geoid_undulation_m: Option<f64>,
         /// CoT `how` attribute. ST 0805.1 §5 fixes this at `m-p`
         /// (machine-passed) for both event types.

@@ -69,7 +69,8 @@ crate::binding_record! {
         /// Raw bytes — decode/inspect via [`crate::klv::st1204`]. At most
         /// 50 bytes (ST 0601.19 §8.94 Max Length, which the standard calls a
         /// recommended maximum and this library enforces): a longer value is
-        /// refused on encode (`ValueTooLong`) and is a field error on decode.
+        /// refused on encode as longer than its item allows, and is a field
+        /// error on decode.
         @[custom] pub miis_core_id: Option<Vec<u8>>,
         /// Item 50: Platform Angle of Attack — encode range [-20, 20] deg (int16).
         pub platform_angle_of_attack_deg: Option<f64>,
@@ -305,7 +306,7 @@ crate::binding_record! {
         /// this field). When the item was sent as an overflow signal the
         /// field holds a range end (see [`Self::imapb_specials`]) while
         /// [`Self::sensor_position`] and the CoT converters take the item
-        /// as sent with no value: the view is `None` although this field
+        /// as sent with no value: the view has no value although this field
         /// holds a number.
         pub sensor_ellipsoid_height_extended_m: Option<f64>,
         /// Item 105: Alternate Platform Ellipsoid Height Extended —
@@ -564,14 +565,14 @@ crate::binding_record! {
 
         /// Tags whose wire value was the INT_MIN sentinel for their signed linear
         /// mapping. INT_MIN is a spec-defined signal (not an error), so the
-        /// corresponding typed field is left as `None` and the tag is recorded
+        /// corresponding typed field is left unset and the tag is recorded
         /// here instead of in `field_errors`.
         ///
         /// Use [`crate::klv::st0601::st0601_sentinel_meaning`] to look up the
         /// spec-defined meaning for each tag (Out of Range / Reserved / N/A).
         ///
         /// **Encode semantics:** an entry is written only while the item's typed
-        /// field is `None` (a populated field always wins), and only for a
+        /// field is unset (a populated field always wins), and only for a
         /// signed linear row (its INT_MIN sentinel, at the row's width); an
         /// entry for any other row writes nothing. A tag listed more than once
         /// is written once, at its last entry. The encoder writes the
@@ -588,7 +589,7 @@ crate::binding_record! {
         ///
         /// The composite views and the CoT converters take an item the
         /// encoder would write as its sentinel as sent with no value: a view
-        /// that prefers such an item is `None`.
+        /// that prefers such an item has no value.
         @[custom] pub sentinel_tags: Vec<u32>,
 
         /// Tags whose ST 1201.5 IMAPB wire value decoded to a spec-defined
@@ -606,7 +607,7 @@ crate::binding_record! {
         /// its maximum that holds the special's payload (a special no length
         /// of the item holds fails with `OutOfRange` naming the item). A
         /// special other than the two overflow signals is written only while
-        /// the item's typed field is `None` (a populated field wins and the
+        /// the item's typed field is unset (a populated field wins and the
         /// entry writes nothing), after the typed fields.
         ///
         /// **The two overflow signals** are read and written differently.
@@ -618,7 +619,7 @@ crate::binding_record! {
         /// is a signal, not a measurement: an encode writes the SIGNAL, at the
         /// item's place among the typed fields, and the composite views and
         /// the CoT converters take the item as sent with no value (a view can
-        /// be `None` while the field holds a number). The signal is written
+        /// have no value while the field holds a number). The signal is written
         /// at the same place when the field is unset. Once the field holds
         /// any other value, the value is written and the entry writes
         /// nothing. To write a measured value that IS the range end, remove
@@ -684,10 +685,18 @@ crate::binding_record! {
     /// follow the items they refine, keeps every pack with its rows after a
     /// decode and an encode, also when packs share items, and a set whose
     /// items are in the encoder's order is re-encoded with every pack where
-    /// it was. For a tag the set carries more than once (an unknown tag, or
-    /// Item 115) the rows do not say which of its items is meant: a row
+    /// it was: both for every pack that has rows and names no tag the set
+    /// carries more than once (a pack of matrix size 0 names no item and is
+    /// written after the typed fields). For a tag the set carries more than
+    /// once (an unknown tag, or Item 115) a row names the tag, not the item,
+    /// so the encoder cannot know which occurrence a pack followed: a row
     /// takes the item its pack's other rows fit, or the first one no row has
-    /// named, and such a set can end with a pack that is not placed.
+    /// named, so the pack is written after the first item of that tag its
+    /// other rows fit, which need not be the one it followed, and the strict
+    /// compliance encoder does not refuse that; such a set can also end with
+    /// a pack that is not placed. A relay that must keep such a pack with
+    /// its item forwards the original bytes, or patches them, which keeps
+    /// every item where it is.
     ///
     /// **An occurrence that cannot be placed** is still written by the
     /// ordinary encoders, after the single-use typed fields, where 0.10.0
@@ -705,8 +714,9 @@ crate::binding_record! {
     /// it in the list (another item already follows, or precedes, one of
     /// its items); when its rows would put an item before Item 2; and when
     /// it has fewer rows than its matrix size and they are not the start of
-    /// the set. Edit a named item and the pack describes the new value: that
-    /// is the caller's business.
+    /// the set. Edit an item a pack refines and the pack, written after it,
+    /// now refines the new value with the old value's accuracies: that is
+    /// the caller's business.
     #[derive(Debug, Clone, PartialEq)]
     pub struct SdccFlpField {
         /// Wire-order item tags immediately preceding this occurrence (see
