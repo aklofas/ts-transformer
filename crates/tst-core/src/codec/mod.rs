@@ -520,6 +520,7 @@ mod tests {
         assert_eq!(reduced_rational(30, 0), None);
         assert_eq!(reduced_rational(0, 1001), None);
         assert_eq!(reduced_rational(1 << 32, 1), None);
+        assert_eq!(reduced_rational(1, 1 << 32), None);
         // Reduced to 2^32 / 3: still too wide.
         assert_eq!(reduced_rational(2 * (1 << 32), 2 * 3), None);
         // Fits only after reduction.
