@@ -13,6 +13,9 @@
 //!           bit 7 = 1 → SPS-context path;
 //!                        log2_max_frame_num_minus4 = sel % 13  (→ 0..=12,
 //!                        folding the full byte — not just low bits)
+//!           bit 1     → SPS-context path only: 0 = Baseline SPS,
+//!                        1 = High 4:4:4 SPS with separate_colour_plane_flag
+//!                        (the slice header then carries colour_plane_id)
 //!           bit 0     → nal_unit_type: 0=non-IDR (type 1), 1=IDR (type 5)
 //! [1..]   slice RBSP bytes (fuzz-driven)
 //! ```
@@ -63,17 +66,31 @@ fn bits_to_bytes(bits: &[bool]) -> Vec<u8> {
         .collect()
 }
 
-/// Build a minimal H.264 Baseline SPS RBSP for a given
-/// `log2_max_frame_num_minus4` ∈ 0..=12. The output always passes
-/// `parse_sps` — Baseline (profile_idc=66) has no chroma-info block,
-/// and all other fields are set to their smallest valid values.
-fn minimal_sps_rbsp(log2: u8) -> Vec<u8> {
+/// Build a minimal H.264 SPS RBSP for a given `log2_max_frame_num_minus4`
+/// ∈ 0..=12: Baseline (profile_idc=66, no chroma-info block), or with
+/// `separate_planes` High 4:4:4 Predictive (profile_idc=244) with
+/// `separate_colour_plane_flag = 1`. The output always passes `parse_sps`;
+/// all other fields are set to their smallest valid values.
+fn minimal_sps_rbsp(log2: u8, separate_planes: bool) -> Vec<u8> {
     let mut b: Vec<bool> = Vec::new();
-    push_u8_bits(&mut b, 66); // profile_idc = 66 (Baseline)
-    push_u8_bits(&mut b, 0xC0); // constraint_set0 + constraint_set1 flags
+    if separate_planes {
+        push_u8_bits(&mut b, 244); // profile_idc = 244 (High 4:4:4 Predictive)
+        push_u8_bits(&mut b, 0); // constraint flags
+    } else {
+        push_u8_bits(&mut b, 66); // profile_idc = 66 (Baseline)
+        push_u8_bits(&mut b, 0xC0); // constraint_set0 + constraint_set1 flags
+    }
     push_u8_bits(&mut b, 30); // level_idc = 30 (level 3.0)
     push_ue_bits(&mut b, 0); // seq_parameter_set_id = 0
-    // Baseline not in high-profile family → no chroma_format / bit_depth block.
+    if separate_planes {
+        push_ue_bits(&mut b, 3); // chroma_format_idc = 3 (4:4:4)
+        b.push(true); // separate_colour_plane_flag = 1
+        push_ue_bits(&mut b, 0); // bit_depth_luma_minus8 = 0
+        push_ue_bits(&mut b, 0); // bit_depth_chroma_minus8 = 0
+        b.push(false); // qpprime_y_zero_transform_bypass_flag = 0
+        b.push(false); // seq_scaling_matrix_present_flag = 0
+    }
+    // (Baseline is not in the high-profile family: no chroma_format / bit_depth block.)
     push_ue_bits(&mut b, u32::from(log2)); // log2_max_frame_num_minus4
     push_ue_bits(&mut b, 0); // pic_order_cnt_type = 0
     push_ue_bits(&mut b, 0); // log2_max_pic_order_cnt_lsb_minus4 = 0
@@ -105,10 +122,12 @@ fuzz_target!(|data: &[u8]| {
         let _ = parse_slice_header_light(rbsp, None, nal_type);
     } else {
         // SPS-context path — exercises the frame_num read_u(bits) call with
-        // fuzz-chosen bit-width bits = log2 + 4 ∈ 4..=16.
+        // fuzz-chosen bit-width bits = log2 + 4 ∈ 4..=16, behind the
+        // colour_plane_id skip when bit 1 asks for separate colour planes.
         // `sel % 13` folds the full selector byte (0..=255) to 0..=12.
         let log2 = sel % 13;
-        let sps_rbsp = minimal_sps_rbsp(log2);
+        let separate_planes = sel & 0b10 != 0;
+        let sps_rbsp = minimal_sps_rbsp(log2, separate_planes);
         // Safety net: if parse_sps rejects the synthesized bytes the if-let
         // below silently falls through — every exec is crash-free but the
         // Some(&sps) branch is never taken (coverage theater).
@@ -116,9 +135,13 @@ fuzz_target!(|data: &[u8]| {
         // this fires on the very first exec if synthesis breaks.
         debug_assert!(
             parse_sps(&sps_rbsp).is_ok(),
-            "minimal_sps_rbsp({log2}) rejected by parse_sps — SPS-context branch is dead"
+            "minimal_sps_rbsp({log2}, {separate_planes}) rejected by parse_sps — SPS-context branch is dead"
         );
         if let Ok(sps) = parse_sps(&sps_rbsp) {
+            debug_assert_eq!(
+                sps.separate_colour_plane, separate_planes,
+                "the colour-plane arm must reach the colour_plane_id skip"
+            );
             let _ = parse_slice_header_light(rbsp, Some(&sps), nal_type);
         }
     }
