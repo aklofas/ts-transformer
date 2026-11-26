@@ -217,4 +217,27 @@ class H265Test {
         assertEquals(1, ps.spsById().size());
         assertEquals(0, ps.vpsById().size());
     }
+
+    @Test
+    void aLonePpsGivesEmptyResults() throws CodecParseException {
+        // One call is one snapshot: a PPS whose SPS is not in the call is dropped.
+        H265ParameterSets ps =
+                Codec.parseH265ParameterSets(List.of(NalUnit.h265(34, 0, 1, PPS_1080P_MAIN40)));
+        assertTrue(ps.vpsById().isEmpty());
+        assertTrue(ps.spsById().isEmpty());
+        assertTrue(ps.ppsById().isEmpty());
+    }
+
+    @Test
+    void continuationSegmentHasNoPoc() throws CodecParseException {
+        // TRAIL_R (1), first_slice_segment_in_pic_flag = 0, pps id 0: the bits
+        // that follow start slice_segment_address, whose width needs the PPS,
+        // so no POC is read.
+        H265Sps sps = Codec.parseH265Sps(SPS_1080P_MAIN40);
+        H265SliceHeaderLight h =
+                Codec.parseH265SliceHeaderLight(unsigned(0x6A, 0x80), sps, 1);
+        assertFalse(h.firstInPic());
+        assertFalse(h.idr());
+        assertNull(h.picOrderCntLsb());
+    }
 }

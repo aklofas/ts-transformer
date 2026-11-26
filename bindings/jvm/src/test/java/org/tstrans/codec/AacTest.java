@@ -72,4 +72,21 @@ class AacTest {
         assertEquals(1, good.size());
         assertSame(AacProfile.LC, good.get(0).profile());
     }
+
+    @Test
+    void protectedMultiBlockRawHeader() throws CodecParseException {
+        // MPEG-2 AAC-LC, 44100 Hz, stereo, protection_absent = 0, two raw data
+        // blocks (wire value 1), frame_length 64: the 7 fixed and variable
+        // header bytes, one raw_data_block_position word and the CRC word.
+        byte[] frame = new byte[64];
+        byte[] header = unsigned(0xFF, 0xF8, 0x50, 0x80, 0x08, 0x1F, 0xFD);
+        System.arraycopy(header, 0, frame, 0, header.length);
+        List<AdtsFrame> frames = Codec.parseAacFrames(frame);
+        assertEquals(1, frames.size());
+        AdtsFrame f = frames.get(0);
+        assertTrue(f.hasCrc());
+        assertEquals(2, f.numRawDataBlocks());
+        assertEquals(11, f.rawHeader().remaining());
+        assertEquals(64, f.frameLengthBytes());
+    }
 }

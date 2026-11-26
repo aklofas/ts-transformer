@@ -167,4 +167,46 @@ class MuxerMispTest {
             assertEquals(0, drain(m).length, "a rejected push queues nothing");
         }
     }
+
+    /**
+     * An access unit whose SEI NAL unit holds a message of payload type 4,
+     * then one of payload type 128 (H.265 {@code structure_of_pictures_info};
+     * its first byte {@code 0x80} also reads as a stop bit), then the MISP
+     * message: the timestamp behind the type-128 message is found.
+     */
+    private static byte[] seiAfterType128Message(VideoCodec codec, byte[] uuid) {
+        java.io.ByteArrayOutputStream au = new java.io.ByteArrayOutputStream();
+        au.writeBytes(new byte[] {0, 0, 0, 1});
+        if (codec == VideoCodec.H264) {
+            au.write(0x06);
+        } else {
+            au.writeBytes(new byte[] {0x4E, 0x01});
+        }
+        au.writeBytes(new byte[] {0x04, 0x01, 0x55, (byte) 0x80, 0x02, 0x11, 0x22, 0x05, 28});
+        au.writeBytes(uuid);
+        // time_status 0x1F, value 0x0102030405060708 in four 2-byte groups
+        // with a 0xFF guard byte after each of the first three.
+        au.writeBytes(new byte[] {
+            0x1F, 0x01, 0x02, (byte) 0xFF, 0x03, 0x04, (byte) 0xFF,
+            0x05, 0x06, (byte) 0xFF, 0x07, 0x08, (byte) 0x80});
+        if (codec == VideoCodec.H264) {
+            au.writeBytes(new byte[] {0, 0, 0, 1, 0x65, (byte) 0xAA});
+        } else {
+            au.writeBytes(new byte[] {0, 0, 0, 1, 0x26, 0x01, (byte) 0xAA});
+        }
+        return au.toByteArray();
+    }
+
+    @Test
+    void extractFindsMispAfterType128Message() throws Exception {
+        byte[] h264Uuid = "MISPmicrosectime".getBytes(java.nio.charset.StandardCharsets.US_ASCII);
+        byte[] h265Uuid = {
+            (byte) 0xa8, 0x68, 0x7d, (byte) 0xd4, (byte) 0xd7, 0x59, 0x37, 0x58,
+            (byte) 0xa5, (byte) 0xce, (byte) 0xf0, 0x33, (byte) 0x8b, 0x65, 0x45, (byte) 0xf1};
+        MispTimestamp want = MispTimestamp.micros(0x0102_0304_0506_0708L, 0x1F);
+        assertEquals(want, MispTimestamp.extract(
+                seiAfterType128Message(VideoCodec.H264, h264Uuid), VideoCodec.H264));
+        assertEquals(want, MispTimestamp.extract(
+                seiAfterType128Message(VideoCodec.H265, h265Uuid), VideoCodec.H265));
+    }
 }

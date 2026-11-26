@@ -34,4 +34,26 @@ class CodecByteArgumentTest {
             rejects(() -> Codec.parseH266SliceHeaderLight(SLICE, null, bad));
         }
     }
+
+    private static void refusedAsReserved(org.junit.jupiter.api.function.Executable call) {
+        var e = assertThrows(org.tstrans.CodecParseException.class, call);
+        assertSame(org.tstrans.CodecParseException.Kind.RESERVED_VALUE, e.kind());
+    }
+
+    @Test
+    void anImpossibleNalUnitTypeIsRefused() throws Exception {
+        // nal_unit_type is u(5) in H.264 and H.266 and u(6) in H.265.
+        for (int t = 32; t <= 255; t++) {
+            final int bad = t;
+            refusedAsReserved(() -> Codec.parseH264SliceHeaderLight(H264_IDR, null, bad));
+            refusedAsReserved(() -> Codec.parseH266SliceHeaderLight(SLICE, null, bad));
+        }
+        for (int t = 64; t <= 255; t++) {
+            final int bad = t;
+            refusedAsReserved(() -> Codec.parseH265SliceHeaderLight(SLICE, null, bad));
+        }
+        assertNotNull(Codec.parseH264SliceHeaderLight(H264_IDR, null, 31));
+        assertNotNull(Codec.parseH265SliceHeaderLight(SLICE, null, 63));
+        assertNotNull(Codec.parseH266SliceHeaderLight(SLICE, null, 31));
+    }
 }

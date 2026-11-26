@@ -183,4 +183,26 @@ class H266Test {
         assertEquals(1, ps.spses().size());
         assertEquals(0, ps.vpses().size());
     }
+
+    @Test
+    void aSliceHeaderIgnoresAnSpsRecordWithoutBytes() throws CodecParseException {
+        // A record built without rawRbsp: the light parser reads no SPS field,
+        // so the call parses the slice header as it does with no SPS.
+        H266Sps noBytes = new H266Sps.Builder().build();
+        H266SliceHeaderLight h = Codec.parseH266SliceHeaderLight(IDR_SLICE, noBytes, 7);
+        assertNotNull(h);
+        assertTrue(h.idr());
+        assertTrue(h.firstInPic());
+        assertNull(h.picOrderCntLsb());
+    }
+
+    @Test
+    void aLonePpsGivesEmptyResults() throws CodecParseException {
+        // One call is one snapshot: a PPS whose SPS is not in the call is dropped.
+        H266ParameterSets ps =
+                Codec.parseH266ParameterSets(List.of(NalUnit.h266(16, 0, 1, PPS_320X240)));
+        assertTrue(ps.vpses().isEmpty());
+        assertTrue(ps.spses().isEmpty());
+        assertTrue(ps.ppses().isEmpty());
+    }
 }

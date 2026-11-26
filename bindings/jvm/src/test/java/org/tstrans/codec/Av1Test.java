@@ -138,4 +138,14 @@ class Av1Test {
         assertTrue(stream.frameHeaders().isEmpty());
         assertTrue(stream.unparseable().isEmpty());
     }
+
+    @Test
+    void showExistingFrameTypeIsUnknown() throws CodecParseException {
+        // show_existing_frame = 1, frame_to_show_map_idx = 0: the shown frame's
+        // type lives in reference state the parser does not keep.
+        Av1SequenceHeader seq = Codec.parseAv1SequenceHeader(SEQ_HEADER_320X240);
+        Av1FrameHeaderLight fh = Codec.parseAv1FrameHeaderLight(unsigned(0x80), seq);
+        assertTrue(fh.showExistingFrame());
+        assertEquals(255, fh.frameType());
+    }
 }
