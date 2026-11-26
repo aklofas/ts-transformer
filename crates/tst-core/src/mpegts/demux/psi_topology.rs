@@ -704,6 +704,29 @@ impl super::demuxer::Demuxer {
             });
         }
 
+        // A PMT version bump may drop or reassign elementary PIDs. Work out
+        // what changed and apply it in one place: a PID the prior version
+        // owned that is gone from the new stream set loses ALL its per-PID
+        // state (the same cleanup PAT program removal performs), so it can no
+        // longer route stale PES, timing, or stats; a PID that persists under
+        // a different kind loses its PES buffer and timing baselines (a
+        // partial video PES buffered before the bump must not be emitted
+        // under the new kind, and stale CC / PTS baselines would produce false
+        // anomaly events on the first post-bump packet); kinds and owners are
+        // set for every accepted (new and persisting) stream.
+        let diff = self.pmt_topology_diff(pmt.pcr_pid, program_number, &stream_infos);
+        // A PID that leaves or changes kind first hands out the unit it
+        // holds, as `flush` would, under the identity it has until the diff
+        // is applied: the old layout's units come before this PMT's own
+        // issues below and before the `ProgramMap` that announces it.
+        self.release_leaving_pids(
+            diff.retired
+                .iter()
+                .chain(&diff.kind_changed)
+                .copied()
+                .collect(),
+        );
+
         // Emit collision NonConformant events.
         for (stream_id, issue) in collision_issues {
             self.queue_nonconformant(stream_id, issue);
@@ -754,28 +777,6 @@ impl super::demuxer::Demuxer {
                 );
             }
         }
-
-        // A PMT version bump may drop or reassign elementary PIDs. Work out
-        // what changed and apply it in one place: a PID the prior version
-        // owned that is gone from the new stream set loses ALL its per-PID
-        // state (the same cleanup PAT program removal performs), so it can no
-        // longer route stale PES, timing, or stats; a PID that persists under
-        // a different kind loses its PES buffer and timing baselines (a
-        // partial video PES buffered before the bump must not be emitted
-        // under the new kind, and stale CC / PTS baselines would produce false
-        // anomaly events on the first post-bump packet); kinds and owners are
-        // set for every accepted (new and persisting) stream.
-        let diff = self.pmt_topology_diff(pmt.pcr_pid, program_number, &stream_infos);
-        // A PID that leaves or changes kind first hands out the unit it
-        // holds, as `flush` would, under the identity it has until the diff
-        // is applied and before the `ProgramMap` that announces the change.
-        self.release_leaving_pids(
-            diff.retired
-                .iter()
-                .chain(&diff.kind_changed)
-                .copied()
-                .collect(),
-        );
 
         // Build klv_links from the accepted streams.
         let prog_map = self.build_program_map(pmt_pid, &pmt, program_number, &stream_infos);
@@ -4033,6 +4034,41 @@ mod tests {
         let unit = samples_at(&f.events, 3_000)[0].0;
         let map = nth_map(&f.events, 1).expect("the second ProgramMap");
         assert!(unit < map, "the unit before the ProgramMap: {:?}", f.events);
+    }
+
+    /// The units of the old layout come first, then what the new PMT says
+    /// about its own streams, then the `ProgramMap`: a retyped PID's old-kind
+    /// unit never follows an issue that already names its new kind.
+    #[test]
+    fn a_leaving_unit_comes_before_the_new_pmts_own_issues() {
+        let mut f = feed_with_one_video_pid();
+        f.pes(0x100, &video_pes_in_flight(3_000)).unwrap();
+        let before = f.events.len();
+        // 0x100 becomes private data with a truncated AV1 registration.
+        let truncated_av01: &[u8] = &[0x05, 0x02, b'A', b'V'];
+        f.section(
+            0x1000,
+            &build_pmt_section_with(1, 0x100, 1, &[], &[(0x06, 0x100, truncated_av01)]),
+        )
+        .unwrap();
+        let order: Vec<&str> = f.events[before..]
+            .iter()
+            .map(|e| match e {
+                DemuxEvent::Sample { stream, .. } if stream.kind == H264 => "old unit",
+                DemuxEvent::NonConformant {
+                    issue: NonConformantIssue::Av1RegistrationMalformed { pid: 0x100 },
+                    ..
+                } => "new PMT's issue",
+                DemuxEvent::ProgramMap(_) => "ProgramMap",
+                _ => "other",
+            })
+            .collect();
+        assert_eq!(
+            order,
+            ["old unit", "new PMT's issue", "ProgramMap"],
+            "{:?}",
+            &f.events[before..]
+        );
     }
 
     #[test]
