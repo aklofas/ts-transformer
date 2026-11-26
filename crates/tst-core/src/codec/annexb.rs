@@ -2,12 +2,17 @@
 //! start code (`00 00 01` or `00 00 00 01`) is, and the NAL units between
 //! them. `no_std`, allocation-free.
 //!
-//! The one scan every Annex-B consumer in the crate runs: the demuxer's NAL
-//! splitter, the length-prefixed converter, the muxer's input validation,
-//! NAL counting and the MISP SEI splice. Each layers its own acceptance
-//! rule on top (the muxer rejects empty NAL units and a trailing partial
-//! start code; the counter calls a buffer with no start code one NAL); the
-//! scan itself is defined once, here.
+//! The scan the demuxer's NAL splitter, the length-prefixed converter, the
+//! muxer's input validation, NAL counting and the MISP SEI splice run
+//! (`misp_time::extract` keeps a byte-wise walk of its own). Each layers
+//! its own acceptance rule on top (the muxer rejects empty NAL units and a
+//! trailing partial start code; the counter calls a buffer with no start
+//! code one NAL; the converters refuse an empty NAL unit); the scan itself
+//! is defined once, here.
+//!
+//! A NAL unit ends at its last non-zero byte. The zero bytes between it and
+//! the next start code, or the end of the buffer, are the byte stream's
+//! `trailing_zero_8bits` (Annex B): framing, not NAL data.
 
 use alloc::vec::Vec;
 
@@ -115,10 +120,22 @@ fn find_three_byte_code(buf: &[u8], from: usize) -> Option<usize> {
     (pos..buf.len()).find(|&at| starts_code(at))
 }
 
+/// `nal` without the zero bytes at its end: the `trailing_zero_8bits` that
+/// follow a NAL unit on the byte stream (Annex B). No NAL unit's last byte
+/// is `0x00` (H.264 §7.4.1, H.265 and H.266 §7.4.2.1): an RBSP that ends
+/// in a `cabac_zero_word` is closed by that word's `0x03`.
+pub(crate) fn trim_trailing_zero_8bits(nal: &[u8]) -> &[u8] {
+    let len = nal.iter().rposition(|&b| b != 0).map_or(0, |last| last + 1);
+    &nal[..len]
+}
+
 /// Iterate the NAL units of an Annex-B buffer: each item is one NAL unit
 /// with its header and without its start code, the byte slice between one
 /// start code's `data_start` and the next start code's `prefix_start` (or the
-/// end of `buf` for the last NAL).
+/// end of `buf` for the last NAL) without the zero bytes at its end
+/// (`trailing_zero_8bits`, which are framing). An empty NAL unit (two
+/// adjacent start codes, a trailing bare one, or a unit of only zero bytes)
+/// is yielded as an empty slice.
 ///
 /// Allocation-free — it holds one [`StartCodes`] walk and one lookahead
 /// match, so callers that only need the NAL bytes (not their offsets)
@@ -162,7 +179,7 @@ impl<'a> Iterator for Nals<'a> {
                 self.buf.len()
             }
         };
-        Some(&self.buf[current.data_start..end])
+        Some(trim_trailing_zero_8bits(&self.buf[current.data_start..end]))
     }
 }
 
@@ -364,13 +381,22 @@ mod tests {
             let codes = bytewise_start_codes(&buf);
             let mut expected: Vec<&[u8]> = codes
                 .windows(2)
-                .map(|w| &buf[w[0].data_start..w[1].prefix_start])
+                .map(|w| without_trailing_zeros(&buf[w[0].data_start..w[1].prefix_start]))
                 .collect();
             if let Some(last) = codes.last() {
-                expected.push(&buf[last.data_start..]);
+                expected.push(without_trailing_zeros(&buf[last.data_start..]));
             }
             proptest::prop_assert_eq!(nal_bodies(&buf), expected);
         }
+    }
+
+    /// `span` without the zero bytes at its end, written apart from the
+    /// code under test: the oracle for a NAL unit's bytes.
+    fn without_trailing_zeros(mut span: &[u8]) -> &[u8] {
+        while let [rest @ .., 0] = span {
+            span = rest;
+        }
+        span
     }
 
     /// `nals` must slice exactly what pairing consecutive `start_codes`
@@ -378,6 +404,54 @@ mod tests {
     /// `prefix_start`, so no inter-NAL prefix bytes bleed into a body.
     fn nal_bodies(buf: &[u8]) -> Vec<&[u8]> {
         nals(buf).collect()
+    }
+
+    /// Zero bytes between a NAL unit and the next start code, or at the end
+    /// of the buffer, are framing (Annex B `trailing_zero_8bits`): no NAL
+    /// unit's last byte is `0x00` (H.264 §7.4.1).
+    #[test]
+    fn nals_excludes_trailing_zero_8bits() {
+        let buf = [
+            0x00, 0x00, 0x01, 0x41, 0x80, 0x00, // one zero before a 4-byte code
+            0x00, 0x00, 0x00, 0x01, 0x41, 0x81, 0x00, // one zero at the end
+        ];
+        assert_eq!(nal_bodies(&buf), vec![&[0x41, 0x80][..], &[0x41, 0x81][..]]);
+
+        // `00 00 03 00` before a 4-byte code loses only its last zero;
+        // zeros inside a NAL unit stay.
+        let buf = [
+            0x00, 0x00, 0x01, 0x65, 0x88, 0x00, 0x00, 0x03, 0x00, // ends in 00 00 03 00
+            0x00, 0x00, 0x00, 0x01, 0x41, 0x00, 0x00, 0x02, 0x80, // zeros inside
+        ];
+        assert_eq!(
+            nal_bodies(&buf),
+            vec![
+                &[0x65, 0x88, 0x00, 0x00, 0x03][..],
+                &[0x41, 0x00, 0x00, 0x02, 0x80][..]
+            ]
+        );
+
+        // A megabyte of zero padding between two units.
+        let mut buf = vec![0x00, 0x00, 0x01, 0x41, 0x80];
+        buf.resize(buf.len() + (1 << 20), 0x00);
+        buf.extend_from_slice(&[0x00, 0x00, 0x01, 0x41, 0x81]);
+        assert_eq!(nal_bodies(&buf), vec![&[0x41, 0x80][..], &[0x41, 0x81][..]]);
+    }
+
+    /// A `cabac_zero_word` is `00 00 03` in the NAL unit: a unit that ends in
+    /// one keeps every byte, at the end of the buffer and before a 4-byte
+    /// start code.
+    #[test]
+    fn nals_keeps_a_trailing_cabac_zero_word() {
+        let buf = [0x00, 0x00, 0x01, 0x65, 0x88, 0x00, 0x00, 0x03];
+        assert_eq!(nal_bodies(&buf), vec![&[0x65, 0x88, 0x00, 0x00, 0x03][..]]);
+        let buf = [
+            0x00, 0x00, 0x01, 0x65, 0x88, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0x01, 0x41, 0x80,
+        ];
+        assert_eq!(
+            nal_bodies(&buf),
+            vec![&[0x65, 0x88, 0x00, 0x00, 0x03][..], &[0x41, 0x80][..]]
+        );
     }
 
     #[test]
@@ -411,7 +485,8 @@ mod tests {
     }
 
     /// The lazy walk and the collected one are the same walk: pairing
-    /// `start_codes` by hand must reproduce `nals` byte for byte.
+    /// `start_codes` by hand, less each span's trailing zero bytes, must
+    /// reproduce `nals` byte for byte.
     #[test]
     fn nals_matches_pairing_start_codes_by_hand() {
         let buf = [
@@ -421,11 +496,12 @@ mod tests {
         let codes = start_code_vec(&buf);
         let mut expected: Vec<&[u8]> = codes
             .windows(2)
-            .map(|w| &buf[w[0].data_start..w[1].prefix_start])
+            .map(|w| without_trailing_zeros(&buf[w[0].data_start..w[1].prefix_start]))
             .collect();
         if let Some(&last) = codes.last() {
-            expected.push(&buf[last.data_start..]);
+            expected.push(without_trailing_zeros(&buf[last.data_start..]));
         }
+        assert_eq!(expected, [&[0x67, 0xAA][..], &[0x65][..], &[0x68][..]]);
         assert_eq!(nal_bodies(&buf), expected);
     }
 }

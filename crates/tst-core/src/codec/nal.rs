@@ -3,7 +3,8 @@
 //! the slice-header parsers and the RTP packetizers share. `no_std`.
 //!
 //! Every function takes a NAL unit that starts with its header and has no
-//! Annex-B start code (what [`crate::codec::annexb::nals`] yields).
+//! Annex-B start code and no trailing zero bytes (what
+//! [`crate::codec::annexb::nals`] yields).
 
 use crate::codec::VideoCodec;
 

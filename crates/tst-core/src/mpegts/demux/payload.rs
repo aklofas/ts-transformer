@@ -1,6 +1,6 @@
 //! ES payload parsers: H.264 / H.265 NAL split, KLV unwrap.
 
-use crate::codec::annexb::start_code_vec;
+use crate::codec::annexb::{start_code_vec, trim_trailing_zero_8bits};
 use crate::codec::av1::decode::leb128::read_leb128;
 use crate::codec::{NalUnit, Obu, ObuExtension, VideoCodec};
 use crate::mpegts::demux::event::{
@@ -33,16 +33,23 @@ pub fn split_nals(
         // `data_start` is the offset of the first NAL byte after this NAL's
         // start-code prefix; `prefix_start` of the next entry is where the
         // following NAL's start-code begins. Slicing `[data_start..prefix_start]`
-        // yields exactly this NAL's bytes with no inter-NAL prefix bleed.
+        // yields exactly this NAL's bytes with no inter-NAL prefix bleed; the
+        // zero bytes at its end are the byte stream's trailing_zero_8bits.
         let data_start = win[0].data_start;
-        let nal_end = win[1].prefix_start;
+        let nal_end =
+            data_start + trim_trailing_zero_8bits(&bytes[data_start..win[1].prefix_start]).len();
         if let Some(unit) = parse_one_nal(es_payload, data_start, nal_end, codec, &mut issues) {
             out.push(unit);
         }
     }
     if let Some(&last) = starts.last()
-        && let Some(unit) =
-            parse_one_nal(es_payload, last.data_start, bytes.len(), codec, &mut issues)
+        && let Some(unit) = parse_one_nal(
+            es_payload,
+            last.data_start,
+            last.data_start + trim_trailing_zero_8bits(&bytes[last.data_start..]).len(),
+            codec,
+            &mut issues,
+        )
     {
         out.push(unit);
     }
@@ -1619,6 +1626,69 @@ mod tests {
                 codec: VideoCodec::H265,
                 kind: NalHeaderKind::Truncated
             }]
+        );
+    }
+
+    /// The zero bytes after a NAL unit are framing: they are in no payload,
+    /// and a unit that is only zero bytes is an empty, truncated one.
+    #[test]
+    fn split_nals_excludes_trailing_zero_8bits() {
+        use crate::mpegts::common::Av1CarriageMode;
+        let payload_lens = |raw: &[u8], codec| {
+            let (payload, issues) = split_video(
+                &SharedBytes::from_vec(raw.to_vec()),
+                codec,
+                Av1CarriageMode::default(),
+            );
+            let VideoPayload::Nals(nals) = payload else {
+                panic!("NAL units expected");
+            };
+            let lens: Vec<usize> = nals
+                .iter()
+                .map(|nal| match nal {
+                    NalUnit::H264 { payload, .. } | NalUnit::H265 { payload, .. } => payload.len(),
+                    other => panic!("unexpected unit {other:?}"),
+                })
+                .collect();
+            (lens, issues)
+        };
+
+        // One zero before a 4-byte code, one at the end.
+        let raw = [
+            0x00, 0x00, 0x01, 0x41, 0x80, 0x00, 0x00, 0x00, 0x00, 0x01, 0x41, 0x81, 0x00,
+        ];
+        assert_eq!(payload_lens(&raw, VideoCodec::H264), (vec![1, 1], vec![]));
+
+        // A unit of one zero byte before a 4-byte code is dropped.
+        let raw = [
+            0x00, 0x00, 0x01, 0x41, 0x80, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x01, 0x41,
+            0x81,
+        ];
+        assert_eq!(
+            payload_lens(&raw, VideoCodec::H264),
+            (
+                vec![1, 1],
+                vec![NonConformantIssue::NalHeader {
+                    codec: VideoCodec::H264,
+                    kind: NalHeaderKind::Truncated
+                }]
+            )
+        );
+
+        // An H.265 `02 00` before a 4-byte code: its zero is framing, so
+        // what is left is half a header.
+        let raw = [
+            0x00, 0x00, 0x01, 0x02, 0x00, 0x00, 0x00, 0x00, 0x01, 0x26, 0x01, 0xAF,
+        ];
+        assert_eq!(
+            payload_lens(&raw, VideoCodec::H265),
+            (
+                vec![1],
+                vec![NonConformantIssue::NalHeader {
+                    codec: VideoCodec::H265,
+                    kind: NalHeaderKind::Truncated
+                }]
+            )
         );
     }
 }

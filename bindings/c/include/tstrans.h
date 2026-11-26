@@ -2540,7 +2540,11 @@ extern "C" {
  * `out_len` is NULL, `annexb` is NULL with `annexb_len > 0`, or
  * `length_size` is not 1, 2, or 4. Returns `TST_E_TOO_LARGE` (-6)
  * without touching `*out_len` if a single NAL's byte length exceeds
- * what `length_size` bytes can encode.
+ * what `length_size` bytes can encode. Returns `TST_E_INVALID_NAL` (-2)
+ * without touching `*out_len` if a NAL unit is empty (two adjacent start
+ * codes, a trailing bare one, or a unit of only zero bytes). The zero
+ * bytes after a NAL unit are framing (Annex B `trailing_zero_8bits`) and
+ * are not written.
  *
  * # Safety
  *

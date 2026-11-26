@@ -12,8 +12,9 @@ pub const MIN_MAX_PAYLOAD: usize = 3;
 /// Packetize one access unit.
 ///
 /// `nals` are its NAL units in decoding order, each starting with its
-/// 1-byte header and without a start code — what
-/// `tst_core::codec::annexb::nals` yields. A NAL unit of at most
+/// 1-byte header, without a start code and without the zero bytes that
+/// follow it on the byte stream — what `tst_core::codec::annexb::nals`
+/// yields. A NAL unit of at most
 /// `max_payload` bytes travels whole; a larger one becomes FU-A fragments
 /// of at most `max_payload` bytes each. Empty NAL units are skipped. The
 /// last chunk carries the marker bit; an access unit with no non-empty NAL

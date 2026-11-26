@@ -47,6 +47,14 @@ fn max_encodable_len(length_size: u8) -> Result<u32, CodecParseError> {
 /// otherwise. If any single NAL's byte length exceeds what `length_size`
 /// bytes can encode, returns [`CodecParseError::NalLengthOverflow`].
 ///
+/// A NAL unit ends at its last non-zero byte: the zero bytes before the
+/// next start code or the end of `annexb` are the byte stream's
+/// `trailing_zero_8bits` (Annex B) and are not written. An empty NAL unit
+/// (two adjacent start codes, a trailing bare one, or a unit of only zero
+/// bytes) is refused with [`CodecParseError::Truncated`]
+/// `{ needed: 1, had: 0 }` (C: `TST_E_INVALID_NAL`): a NAL unit holds at
+/// least its header.
+///
 /// Bytes in `annexb` before the first start code (if any) are not part of
 /// any NAL and are dropped, matching how [`crate::mpegts::demux`] itself
 /// scans Annex B. An `annexb` with no start code at all yields an empty
@@ -144,6 +152,11 @@ fn length_prefixed_nal_len(
     length_size: u8,
     max_len: u32,
 ) -> Result<usize, CodecParseError> {
+    // `nals` has already cut the zero bytes off, so a unit of only zero
+    // bytes arrives here empty, like one between adjacent start codes.
+    if nal.is_empty() {
+        return Err(CodecParseError::Truncated { needed: 1, had: 0 });
+    }
     if nal.len() as u64 > max_len as u64 {
         return Err(CodecParseError::NalLengthOverflow {
             nal_len: saturating_u32(nal.len()),
@@ -207,7 +220,9 @@ fn write_nals(annexb: &[u8], length_size: u8, out: &mut [u8]) -> Result<usize, C
 /// `length_size` must be 1, 2, or 4 — [`CodecParseError::InvalidLengthSize`]
 /// otherwise. If `data` ends mid-length-prefix or mid-NAL (fewer bytes
 /// remain than the just-read length declares), returns
-/// [`CodecParseError::Truncated`].
+/// [`CodecParseError::Truncated`]; a length of zero is
+/// [`CodecParseError::Truncated`] `{ needed: 1, had: 0 }` (a NAL unit holds
+/// at least its header).
 ///
 /// Inverse of [`annexb_to_length_prefixed`] up to start-code width
 /// normalization: a 3-byte Annex-B start code round-trips through this
@@ -231,6 +246,9 @@ pub fn length_prefixed_to_annexb(data: &[u8], length_size: u8) -> Result<Vec<u8>
 
         let remaining = data.len() - pos;
         let nal_len = nal_len as usize;
+        if nal_len == 0 {
+            return Err(CodecParseError::Truncated { needed: 1, had: 0 });
+        }
         if remaining < nal_len {
             return Err(CodecParseError::Truncated {
                 needed: nal_len as u32,
@@ -409,9 +427,10 @@ mod tests {
                 4,
             ),
             (
-                // Back-to-back start codes: the first delimits a
-                // zero-length NAL, which must still be sized and written
-                // as a bare length prefix with no body.
+                // Back-to-back start codes: the first delimits an empty
+                // NAL unit, which all three refuse alike with
+                // `Truncated { needed: 1, had: 0 }`
+                // (`an_empty_or_all_zero_nal_is_refused` pins the error).
                 "adjacent start codes (empty NAL)",
                 vec![0x00, 0x00, 0x01, 0x00, 0x00, 0x01, 0x41],
                 4,
@@ -501,6 +520,77 @@ mod tests {
                     "{name}: a refused _into wrote into the buffer"
                 );
             }
+        }
+    }
+
+    /// The zero bytes after a NAL unit are framing, not NAL bytes: they are
+    /// not counted in its length.
+    #[test]
+    fn length_prefixed_conversion_drops_trailing_zero_8bits() {
+        let annexb = [0x00, 0x00, 0x00, 0x01, 0x09, 0x10, 0x00, 0x00, 0x00];
+        let expected = [0x00, 0x00, 0x00, 0x02, 0x09, 0x10];
+        assert_eq!(annexb_to_length_prefixed_len(&annexb, 4), Ok(6));
+        assert_eq!(annexb_to_length_prefixed(&annexb, 4).unwrap(), expected);
+        let mut out = [0xCDu8; 9];
+        assert_eq!(annexb_to_length_prefixed_into(&annexb, 4, &mut out), Ok(6));
+        assert_eq!(&out[..6], &expected);
+    }
+
+    #[test]
+    fn extracted_parameter_sets_exclude_framing_zeros() {
+        let annexb = [
+            0x00, 0x00, 0x00, 0x01, 0x67, 0x80, 0x00, 0x00, 0x00, // SPS, three zeros
+            0x00, 0x00, 0x00, 0x01, 0x68, 0x80, 0x00, 0x00, // PPS, two zeros at the end
+        ];
+        let sets = extract_parameter_sets(&annexb, VideoCodec::H264);
+        assert_eq!(sets.sps, vec![vec![0x67, 0x80]]);
+        assert_eq!(sets.pps, vec![vec![0x68, 0x80]]);
+    }
+
+    /// A NAL unit is at least its header: an empty unit, and one of only
+    /// zero bytes (all framing), is refused in both directions.
+    #[test]
+    fn an_empty_or_all_zero_nal_is_refused() {
+        const REFUSED: CodecParseError = CodecParseError::Truncated { needed: 1, had: 0 };
+        for (name, annexb) in [
+            (
+                "two adjacent start codes",
+                &[0x00, 0x00, 0x01, 0x00, 0x00, 0x01, 0x41][..],
+            ),
+            (
+                "a trailing bare start code",
+                &[0x00, 0x00, 0x01, 0x41, 0x80, 0x00, 0x00, 0x01][..],
+            ),
+            ("a lone start code", &[0x00, 0x00, 0x01][..]),
+            (
+                "a NAL unit of one zero byte before a 4-byte code",
+                &[0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x01, 0x41, 0x81][..],
+            ),
+        ] {
+            assert_eq!(
+                annexb_to_length_prefixed_len(annexb, 4),
+                Err(REFUSED),
+                "{name}: _len"
+            );
+            assert_eq!(
+                annexb_to_length_prefixed(annexb, 4),
+                Err(REFUSED),
+                "{name}: Vec"
+            );
+            let mut out = [0xCDu8; 32];
+            assert_eq!(
+                annexb_to_length_prefixed_into(annexb, 4, &mut out),
+                Err(REFUSED),
+                "{name}: _into"
+            );
+            assert_eq!(out, [0xCDu8; 32], "{name}: a refused _into wrote");
+        }
+        for (length_size, zero_length) in [(1, &[0x00][..]), (2, &[0x00, 0x00]), (4, &[0; 4])] {
+            assert_eq!(
+                length_prefixed_to_annexb(zero_length, length_size),
+                Err(REFUSED),
+                "a zero length at width {length_size}"
+            );
         }
     }
 

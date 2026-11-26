@@ -398,3 +398,51 @@ fn sizing_answer_records_buffer_full_as_last_error() {
         assert!(!last_error_msg().is_empty(), "detail message recorded");
     }
 }
+
+/// The zero bytes after a NAL unit are framing, not NAL bytes: they are
+/// not counted in its length.
+#[test]
+fn annexb_to_length_prefixed_drops_trailing_zero_8bits() {
+    let annexb = [0x00u8, 0x00, 0x00, 0x01, 0x09, 0x10, 0x00, 0x00, 0x00];
+    unsafe {
+        let mut out_buf = [0xCDu8; 16];
+        let mut out_len: usize = 0;
+        let rc = tst_annexb_to_length_prefixed(
+            annexb.as_ptr(),
+            annexb.len(),
+            4,
+            out_buf.as_mut_ptr(),
+            out_buf.len(),
+            &mut out_len,
+        );
+        assert_eq!(rc, 0, "{}", last_error_msg());
+        assert_eq!(out_len, 6);
+        assert_eq!(&out_buf[..6], &[0x00, 0x00, 0x00, 0x02, 0x09, 0x10]);
+    }
+}
+
+/// An empty NAL unit (two adjacent start codes) is malformed input, as
+/// the muxer reports it, and the size is never answered for it.
+#[test]
+fn annexb_to_length_prefixed_refuses_an_empty_nal() {
+    let annexb = [0x00u8, 0x00, 0x01, 0x00, 0x00, 0x01, 0x41, 0x80];
+    let mut out_buf = [0u8; 16];
+    unsafe {
+        // The sizing query and the write refuse alike.
+        for out in [std::ptr::null_mut(), out_buf.as_mut_ptr()] {
+            let mut out_len: usize = 0xDEAD_BEEF;
+            let rc = tst_annexb_to_length_prefixed(
+                annexb.as_ptr(),
+                annexb.len(),
+                4,
+                out,
+                16,
+                &mut out_len,
+            );
+            assert_eq!(rc, TstError::InvalidNal as i32, "{}", last_error_msg());
+            assert_eq!(tst_get_last_error(), TstError::InvalidNal as i32);
+            assert_eq!(out_len, 0xDEAD_BEEF, "out_len was written on refusal");
+        }
+    }
+    assert_eq!(out_buf, [0u8; 16]);
+}

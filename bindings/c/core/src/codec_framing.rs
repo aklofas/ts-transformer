@@ -32,17 +32,20 @@ use crate::error::{TstError, set_last_error};
 /// Map a [`CodecParseError`] raised by
 /// [`nal_framing::annexb_to_length_prefixed_len`] /
 /// [`nal_framing::annexb_to_length_prefixed_into`] to a `TstError` and
-/// record it. Only [`CodecParseError::InvalidLengthSize`] and
-/// [`CodecParseError::NalLengthOverflow`] can ever reach it: those two
-/// are all the sizing pass can raise (see its doc), and the one extra
-/// error the writing pass has — [`CodecParseError::BufferTooSmall`] — is
-/// pre-empted by the `out_cap` check that guards it. The wildcard arm
-/// exists only to satisfy `#[non_exhaustive]` match exhaustiveness and
-/// is not expected to fire.
+/// record it. Only [`CodecParseError::InvalidLengthSize`],
+/// [`CodecParseError::NalLengthOverflow`] and, for an empty NAL unit,
+/// [`CodecParseError::Truncated`] can ever reach it: those three are all
+/// the sizing pass can raise (see its doc), and the one extra error the
+/// writing pass has — [`CodecParseError::BufferTooSmall`] — is pre-empted
+/// by the `out_cap` check that guards it. The wildcard arm exists only to
+/// satisfy `#[non_exhaustive]` match exhaustiveness and is not expected to
+/// fire.
 fn record_nal_framing_error(e: &CodecParseError) -> i32 {
     let code = match e {
         CodecParseError::InvalidLengthSize { .. } => TstError::InvalidConfig,
         CodecParseError::NalLengthOverflow { .. } => TstError::TooLarge,
+        // What the muxer returns for the same access unit.
+        CodecParseError::Truncated { .. } => TstError::InvalidNal,
         _ => TstError::Internal,
     };
     set_last_error(code, &e.to_string());
@@ -77,7 +80,11 @@ fn ranges_overlap(a: *const u8, a_len: usize, b: *const u8, b_len: usize) -> boo
 /// `out_len` is NULL, `annexb` is NULL with `annexb_len > 0`, or
 /// `length_size` is not 1, 2, or 4. Returns `TST_E_TOO_LARGE` (-6)
 /// without touching `*out_len` if a single NAL's byte length exceeds
-/// what `length_size` bytes can encode.
+/// what `length_size` bytes can encode. Returns `TST_E_INVALID_NAL` (-2)
+/// without touching `*out_len` if a NAL unit is empty (two adjacent start
+/// codes, a trailing bare one, or a unit of only zero bytes). The zero
+/// bytes after a NAL unit are framing (Annex B `trailing_zero_8bits`) and
+/// are not written.
 ///
 /// # Safety
 ///

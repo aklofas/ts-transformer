@@ -6,9 +6,9 @@ use tst_core::mpegts::common::Pts90khz;
 use tst_webrtc::mount::MediaMsg;
 use tst_webrtc::{KlvCarriage, MountConfig, MountHandle, PushError, VideoCodec};
 
-const SPS: &[u8] = &[0, 0, 0, 1, 0x67, 0x42, 0xC0, 0x1E, 0xD9, 0x00];
+const SPS: &[u8] = &[0, 0, 0, 1, 0x67, 0x42, 0xC0, 0x1E, 0xD9, 0x80];
 const PPS: &[u8] = &[0, 0, 0, 1, 0x68, 0xCE, 0x38, 0x80];
-const IDR: &[u8] = &[0, 0, 1, 0x65, 0x88, 0x84, 0x00];
+const IDR: &[u8] = &[0, 0, 1, 0x65, 0x88, 0x84, 0x80];
 const P: &[u8] = &[0, 0, 1, 0x41, 0x9A, 0x01];
 
 fn au(parts: &[&[u8]]) -> Vec<u8> {
