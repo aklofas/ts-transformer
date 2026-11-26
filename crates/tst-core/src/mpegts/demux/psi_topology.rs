@@ -413,6 +413,7 @@ impl super::demuxer::Demuxer {
                     program_number,
                     pmt_pid,
                     pmt_version: None,
+                    pmt_crc: None,
                     pcr_pid: None,
                     streams: Vec::new(),
                     klv_mismatch_coalesce: HashSet::new(),
@@ -564,9 +565,17 @@ impl super::demuxer::Demuxer {
 
         // Validate fixed/reserved PSI syntax fields.
         self.check_psi_syntax(pmt_pid, 0x02, section);
-        // Dedup: re-emit only if version changed or first ever.
+        // A repeat of the applied PMT: same version_number AND same CRC_32.
+        // The version alone is not the content: a source that changes the
+        // PMT without the increment H.222.0 §2.4.4.9 requires (two streams
+        // spliced into one, a publisher that changes its tracks) would stay
+        // invisible. `parse_pmt` has checked the CRC in every configuration,
+        // so an equal version and CRC means equal bytes short of a deliberate
+        // collision, which buys only the version-only rule for that section.
+        let section_crc = applied_section_crc(section);
         if let Some(tracker) = self.programs.get(&program_number)
             && Some(pmt.version) == tracker.pmt_version
+            && section_crc == tracker.pmt_crc
         {
             return;
         }
@@ -758,6 +767,7 @@ impl super::demuxer::Demuxer {
             .get_mut(&program_number)
             .expect("checked above");
         tracker.pmt_version = Some(pmt.version);
+        tracker.pmt_crc = section_crc;
         tracker.pcr_pid = Some(pmt.pcr_pid);
         for old in &tracker.streams {
             self.pid_owner.remove(&old.pid);
@@ -906,6 +916,16 @@ impl super::demuxer::Demuxer {
     }
 }
 
+/// The CRC_32 that closes a section `parse_pmt` accepted: the four bytes
+/// before `3 + section_length`, the ones its check covered.
+fn applied_section_crc(section: &[u8]) -> Option<u32> {
+    let section_length =
+        (usize::from(*section.get(1)? & 0x0F) << 8) | usize::from(*section.get(2)?);
+    let end = 3 + section_length;
+    let crc: [u8; 4] = section.get(end.checked_sub(4)?..end)?.try_into().ok()?;
+    Some(u32::from_be_bytes(crc))
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::demuxer::Demuxer;
@@ -920,6 +940,7 @@ mod tests {
         pat_packet_with_programs, pat_packet_with_programs_cc, payload_packet_for_test,
         pmt_packet_for_test, pmt_packet_for_test_cc, pmt_packet_with_multi_section,
     };
+    use alloc::string::String;
     use alloc::vec::Vec;
 
     use crate::mpegts::demux::test_support::{
@@ -3229,5 +3250,602 @@ mod tests {
             "{:?}",
             d.programs.keys()
         );
+    }
+
+    /// Feeds sections, raw PSI packets and PES, each packet with the next
+    /// continuity counter of its PID (a repeated counter reads as a
+    /// duplicate packet), and keeps every event drained so far.
+    struct Feed {
+        d: Demuxer,
+        cc: hashbrown::HashMap<u16, u8>,
+        events: Vec<DemuxEvent>,
+    }
+
+    impl Feed {
+        fn new(cfg: DemuxerConfig) -> Self {
+            Self {
+                d: Demuxer::with_config(cfg),
+                cc: hashbrown::HashMap::new(),
+                events: Vec::new(),
+            }
+        }
+
+        fn next_cc(&mut self, pid: u16) -> u8 {
+            let cc = self.cc.entry(pid).or_insert(0);
+            let now = *cc;
+            *cc = (now + 1) & 0x0F;
+            now
+        }
+
+        fn section(&mut self, pid: u16, section: &[u8]) -> Result<(), crate::error::DemuxError> {
+            let cc = self.next_cc(pid);
+            let r = self.d.feed(&psi_packet(pid, section, cc));
+            self.drain();
+            r
+        }
+
+        /// One packet on `pid` carrying `payload` as given (a PSI payload
+        /// with or without its `pointer_field`), 0xFF after it.
+        fn psi_payload(
+            &mut self,
+            pid: u16,
+            pusi: bool,
+            payload: &[u8],
+        ) -> Result<(), crate::error::DemuxError> {
+            let mut pkt = vec![0xFFu8; 188];
+            pkt[0] = 0x47;
+            pkt[1] = if pusi { 0x40 } else { 0x00 } | ((pid >> 8) as u8 & 0x1F);
+            pkt[2] = (pid & 0xFF) as u8;
+            pkt[3] = 0x10 | self.next_cc(pid);
+            pkt[4..4 + payload.len()].copy_from_slice(payload);
+            let r = self.d.feed(&pkt);
+            self.drain();
+            r
+        }
+
+        fn pes(&mut self, pid: u16, pes: &[u8]) -> Result<(), crate::error::DemuxError> {
+            let first = self.next_cc(pid);
+            let pkts = crate::mpegts::demux::test_support::pes_to_packets(pid, first, pes);
+            for _ in 1..pkts.len() {
+                self.next_cc(pid);
+            }
+            let mut r = Ok(());
+            for p in &pkts {
+                if let Err(e) = self.d.feed_aligned(p) {
+                    r = r.and(Err(e));
+                }
+                self.drain();
+            }
+            r
+        }
+
+        fn flush(&mut self) {
+            self.d.flush();
+            self.drain();
+        }
+
+        fn drain(&mut self) {
+            while let Some(e) = self.d.next_event() {
+                self.events.push(e);
+            }
+        }
+
+        fn maps(&self) -> Vec<&super::ProgramMap> {
+            self.events
+                .iter()
+                .filter_map(|e| match e {
+                    DemuxEvent::ProgramMap(m) => Some(m),
+                    _ => None,
+                })
+                .collect()
+        }
+    }
+
+    /// The PIDs a `ProgramMap` declares, ascending.
+    fn map_pids(map: &super::ProgramMap) -> Vec<u16> {
+        let mut pids: Vec<u16> = map.streams.iter().map(|s| s.pid).collect();
+        pids.sort_unstable();
+        pids
+    }
+
+    /// PAT (program 1 on PMT PID 0x1000) and PMT v0 declaring H.264 on 0x100,
+    /// the PCR on 0x100.
+    fn feed_with_one_video_pid() -> Feed {
+        let mut f = Feed::new(DemuxerConfig::default());
+        f.section(0x0000, &build_pat_section(1, 0, &[(1, 0x1000)]))
+            .unwrap();
+        f.section(0x1000, &build_pmt_section(1, 0x100, 0, &[(0x1B, 0x100)]))
+            .unwrap();
+        f
+    }
+
+    #[test]
+    fn a_same_version_pmt_with_another_layout_is_adopted() {
+        use crate::mpegts::demux::test_support::pes_bytes;
+        let mut f = feed_with_one_video_pid();
+        f.section(0x1000, &build_pmt_section(1, 0x200, 0, &[(0x1B, 0x200)]))
+            .unwrap();
+        f.pes(
+            0x200,
+            &pes_bytes(0xE0, Some(9_000), None, true, &[0x5A; 300], false),
+        )
+        .unwrap();
+        f.flush();
+        let maps = f.maps();
+        assert_eq!(maps.len(), 2, "{:?}", f.events);
+        assert_eq!(map_pids(maps[1]), [0x200]);
+        let samples = f
+            .events
+            .iter()
+            .filter(|e| matches!(e, DemuxEvent::Sample { stream, .. } if stream.pid == 0x200))
+            .count();
+        assert_eq!(samples, 1, "{:?}", f.events);
+    }
+
+    /// Two sources of this library's muxer, both writing PMT version 0:
+    /// the first with video on 0x100, the second with video on 0x200 and
+    /// synchronous KLV on 0x201. `units` access units each.
+    fn two_muxer_stream(units: i64) -> Vec<u8> {
+        use crate::mpegts::mux::{
+            KlvStreamType, Muxer, MuxerConfig, MuxerProgramConfigBuilder,
+            VideoCodec as MuxVideoCodec,
+        };
+        use tst_test_helpers::synthetic_nal::h264_au;
+        let klv: &[u8] = &[
+            0x06, 0x0E, 0x2B, 0x34, 0x02, 0x0B, 0x01, 0x01, 0x0E, 0x01, 0x03, 0x01, 0x01, 0x00,
+            0x00, 0x00, 0x00,
+        ];
+        let first = {
+            let mut prog = MuxerProgramConfigBuilder::new(1, 0x1000);
+            prog.add_video(0x100, MuxVideoCodec::H264);
+            let mut b = MuxerConfig::builder();
+            b.add_program(prog.build());
+            b.build().unwrap()
+        };
+        let second = {
+            let mut prog = MuxerProgramConfigBuilder::new(1, 0x1000);
+            prog.add_video(0x200, MuxVideoCodec::H264);
+            prog.add_klv(0x201, KlvStreamType::SynchronousMetadata, true);
+            let mut b = MuxerConfig::builder();
+            b.add_program(prog.build());
+            b.build().unwrap()
+        };
+        let mut out = Vec::new();
+        for (cfg, with_klv) in [(first, false), (second, true)] {
+            let mut mux = Muxer::new(cfg).unwrap();
+            for i in 0..units {
+                let pts = Pts90khz::new(i * 3_600);
+                mux.push_video(&h264_au(400, i == 0), pts, i == 0).unwrap();
+                if with_klv {
+                    mux.push_klv(klv, pts, 0).unwrap();
+                }
+            }
+            let mut buf = vec![0u8; 188 * 4096];
+            let n = mux.pull(&mut buf);
+            assert!(n < buf.len(), "pull buffer too small");
+            out.extend_from_slice(&buf[..n]);
+        }
+        out
+    }
+
+    /// `(video units on 0x100, video units on 0x200, KLV units on 0x201)`.
+    fn units_per_source(events: &[DemuxEvent]) -> (usize, usize, usize) {
+        let count = |pid: u16| {
+            events
+                .iter()
+                .filter(|e| match e {
+                    DemuxEvent::Sample { stream, .. } | DemuxEvent::Metadata { stream, .. } => {
+                        stream.pid == pid
+                    }
+                    _ => false,
+                })
+                .count()
+        };
+        (count(0x100), count(0x200), count(0x201))
+    }
+
+    #[test]
+    fn two_muxers_with_different_programs_reach_one_demuxer() {
+        let mut d = Demuxer::new();
+        d.feed(&two_muxer_stream(60)).unwrap();
+        d.flush();
+        let events = drain_events(&mut d);
+        let (_, video, klv) = units_per_source(&events);
+        assert_eq!((video, klv), (60, 60), "the second source's units");
+    }
+
+    /// One step of a PMT identity case.
+    enum Step {
+        Section(u16, Vec<u8>),
+        /// A packet whose payload is given as is (`pusi`, payload).
+        Payload(u16, bool, Vec<u8>),
+        ResetStats,
+        ResetSync,
+    }
+
+    /// PAT v0 {program 1 on 0x1000} then PMT v0 {H.264 0x100, PCR 0x100}.
+    fn start_one_video_pid() -> Vec<Step> {
+        vec![
+            Step::Section(0x0000, build_pat_section(1, 0, &[(1, 0x1000)])),
+            Step::Section(0x1000, build_pmt_section(1, 0x100, 0, &[(0x1B, 0x100)])),
+        ]
+    }
+
+    /// PAT v0 {programs 1 and 2, both on PMT PID 0x1000}.
+    fn start_two_programs_on_one_pmt_pid() -> Vec<Step> {
+        vec![Step::Section(
+            0x0000,
+            build_pat_section(1, 0, &[(1, 0x1000), (2, 0x1000)]),
+        )]
+    }
+
+    fn pmt1(version: u8, streams: &[(u8, u16)]) -> Step {
+        Step::Section(0x1000, build_pmt_section(1, 0x100, version, streams))
+    }
+
+    fn with_bad_crc(mut section: Vec<u8>) -> Vec<u8> {
+        let last = section.len() - 1;
+        section[last] ^= 0x01;
+        section
+    }
+
+    /// `section` with byte `at` replaced by `f(byte)` and its CRC redone.
+    fn edited(mut section: Vec<u8>, at: usize, f: impl Fn(u8) -> u8) -> Vec<u8> {
+        section[at] = f(section[at]);
+        recrc(&mut section);
+        section
+    }
+
+    #[test]
+    fn the_pmt_identity_classes() {
+        let video = |pid: u16| [(0x1B, pid)];
+        let applied = build_pmt_section(1, 0x100, 0, &video(0x100));
+        let other = build_pmt_section(1, 0x100, 0, &video(0x200));
+        let lang: &[u8] = &[0x0A, 0x04, b'e', b'n', b'g', 0x00];
+        let ident: &[u8] = &[0x52, 0x01, 0x07];
+        let both = [ident, lang].concat();
+        let both_reordered = [lang, ident].concat();
+        let cases: Vec<(&str, Vec<Step>, usize, Vec<u16>)> = vec![
+            ("C1", vec![pmt1(0, &video(0x100))], 1, vec![0x100]),
+            (
+                "C2b",
+                vec![Step::Section(
+                    0x1000,
+                    build_pmt_section_with(1, 0x100, 0, &[], &[(0x1B, 0x100, ident)]),
+                )],
+                2,
+                vec![0x100],
+            ),
+            (
+                "C2c",
+                vec![Step::Section(
+                    0x1000,
+                    build_pmt_section(1, 0x101, 0, &video(0x100)),
+                )],
+                2,
+                vec![0x100],
+            ),
+            ("C3", vec![pmt1(1, &video(0x100))], 2, vec![0x100]),
+            (
+                "C4",
+                vec![
+                    Step::Section(0x0000, build_pat_section(1, 1, &[(1, 0x1000)])),
+                    pmt1(0, &video(0x200)),
+                ],
+                2,
+                vec![0x200],
+            ),
+            (
+                "C6",
+                vec![Step::Section(0x1000, with_bad_crc(other.clone()))],
+                1,
+                vec![0x100],
+            ),
+            (
+                "C6b",
+                vec![Step::Section(0x1000, {
+                    let mut s = applied.clone();
+                    s[14] ^= 0x01;
+                    s
+                })],
+                1,
+                vec![0x100],
+            ),
+            (
+                "C7",
+                vec![Step::Section(
+                    0x1000,
+                    edited(other.clone(), 5, |b| b & !0x01),
+                )],
+                1,
+                vec![0x100],
+            ),
+            (
+                "C7b",
+                vec![Step::Section(
+                    0x1000,
+                    edited(build_pmt_section(1, 0x100, 1, &video(0x200)), 5, |b| {
+                        b & !0x01
+                    }),
+                )],
+                1,
+                vec![0x100],
+            ),
+            (
+                "C8",
+                vec![Step::Section(0x1000, edited(other.clone(), 7, |_| 1))],
+                1,
+                vec![0x100],
+            ),
+            (
+                "C8b",
+                vec![
+                    Step::Section(
+                        0x0000,
+                        crate::mpegts::demux::test_support::build_pat_section_numbered(
+                            1,
+                            0,
+                            0,
+                            1,
+                            &[(1, 0x1000)],
+                        ),
+                    ),
+                    Step::Section(
+                        0x0000,
+                        crate::mpegts::demux::test_support::build_pat_section_numbered(
+                            1,
+                            0,
+                            1,
+                            1,
+                            &[(2, 0x1100)],
+                        ),
+                    ),
+                    pmt1(0, &video(0x100)),
+                    Step::Section(0x1100, build_pmt_section(2, 0x300, 0, &video(0x300))),
+                ],
+                2,
+                vec![0x300],
+            ),
+            (
+                "N1a",
+                vec![Step::Payload(
+                    0x1000,
+                    true,
+                    [&[3u8, 0xAA, 0xBB, 0xCC][..], &applied].concat(),
+                )],
+                1,
+                vec![0x100],
+            ),
+            (
+                "N1b",
+                vec![
+                    Step::Payload(0x1000, true, [&[0u8][..], &applied[..10]].concat()),
+                    Step::Payload(0x1000, false, applied[10..].to_vec()),
+                ],
+                1,
+                vec![0x100],
+            ),
+            (
+                "N2",
+                vec![
+                    Step::Section(
+                        0x1000,
+                        build_pmt_section_with(1, 0x100, 0, &[], &[(0x1B, 0x100, &both)]),
+                    ),
+                    Step::Section(
+                        0x1000,
+                        build_pmt_section_with(1, 0x100, 0, &[], &[(0x1B, 0x100, &both_reordered)]),
+                    ),
+                ],
+                3,
+                vec![0x100],
+            ),
+            (
+                "N3",
+                vec![
+                    Step::Section(0x1000, with_bad_crc(other.clone())),
+                    Step::Section(0x1000, applied.clone()),
+                ],
+                1,
+                vec![0x100],
+            ),
+            (
+                "N4",
+                vec![
+                    Step::Section(0x1000, with_bad_crc(other.clone())),
+                    Step::Section(0x1000, other.clone()),
+                ],
+                2,
+                vec![0x200],
+            ),
+            (
+                "N5",
+                vec![
+                    Step::Section(0x1000, edited(other.clone(), 5, |b| b & !0x01)),
+                    Step::Section(0x1000, other.clone()),
+                ],
+                2,
+                vec![0x200],
+            ),
+            (
+                "N6",
+                vec![
+                    Step::Section(0x1000, edited(other.clone(), 7, |_| 1)),
+                    Step::Section(0x1000, other.clone()),
+                ],
+                2,
+                vec![0x200],
+            ),
+            (
+                "N7",
+                vec![
+                    Step::Section(0x0000, build_pat_section(1, 1, &[])),
+                    Step::Section(0x0000, build_pat_section(1, 2, &[(1, 0x1000)])),
+                    Step::Section(0x1000, applied.clone()),
+                ],
+                2,
+                vec![0x100],
+            ),
+            (
+                "N8",
+                vec![
+                    Step::Section(0x0000, build_pat_section(1, 1, &[(1, 0x1000), (2, 0x1100)])),
+                    Step::Section(0x1000, applied.clone()),
+                    Step::Section(0x0000, build_pat_section(1, 2, &[(1, 0x1000)])),
+                    Step::Section(0x1000, applied.clone()),
+                ],
+                1,
+                vec![0x100],
+            ),
+            (
+                "N10",
+                vec![
+                    Step::Section(0x0000, build_pat_section(1, 1, &[(1, 0x1001)])),
+                    Step::Section(0x1001, applied.clone()),
+                ],
+                2,
+                vec![0x100],
+            ),
+            (
+                "N11",
+                vec![
+                    pmt1(31, &video(0x200)),
+                    pmt1(0, &video(0x300)),
+                    pmt1(31, &video(0x200)),
+                    pmt1(0, &video(0x100)),
+                ],
+                5,
+                vec![0x100],
+            ),
+            (
+                "N13 repeat",
+                vec![Step::ResetStats, Step::Section(0x1000, applied.clone())],
+                1,
+                vec![0x100],
+            ),
+            (
+                "N13 change",
+                vec![Step::ResetStats, Step::Section(0x1000, other.clone())],
+                2,
+                vec![0x200],
+            ),
+            (
+                "N14",
+                vec![
+                    Step::ResetSync,
+                    Step::Section(0x0000, build_pat_section(1, 0, &[(1, 0x1000)])),
+                    Step::Section(0x1000, applied.clone()),
+                ],
+                2,
+                vec![0x100],
+            ),
+        ];
+        // Cases with their own start: two programs on one PMT PID.
+        let two_programs: Vec<(&str, Vec<Step>, usize, Vec<u16>)> = vec![
+            (
+                "C10",
+                vec![
+                    Step::Section(0x1000, applied.clone()),
+                    Step::Section(0x1000, build_pmt_section(2, 0x200, 0, &video(0x200))),
+                    Step::Section(0x1000, build_pmt_section(2, 0x200, 0, &video(0x201))),
+                    Step::Section(0x1000, applied.clone()),
+                ],
+                3,
+                vec![0x201],
+            ),
+            (
+                "N9",
+                vec![
+                    Step::Section(0x1000, applied.clone()),
+                    Step::Section(0x1000, build_pmt_section(2, 0x200, 0, &video(0x200))),
+                    Step::Section(0x1000, build_pmt_section(1, 0x100, 0, &video(0x101))),
+                    Step::Section(0x1000, build_pmt_section(2, 0x200, 0, &video(0x200))),
+                    Step::Section(0x1000, applied.clone()),
+                    Step::Section(0x1000, build_pmt_section(2, 0x200, 0, &video(0x201))),
+                ],
+                5,
+                vec![0x201],
+            ),
+        ];
+        let mut wrong = Vec::new();
+        let run = |name: &str,
+                   start: Vec<Step>,
+                   steps: Vec<Step>,
+                   maps: usize,
+                   pids: Vec<u16>,
+                   wrong: &mut Vec<String>| {
+            let mut f = Feed::new(DemuxerConfig::default());
+            for step in start.into_iter().chain(steps) {
+                match step {
+                    Step::Section(pid, s) => f.section(pid, &s).unwrap(),
+                    Step::Payload(pid, pusi, p) => f.psi_payload(pid, pusi, &p).unwrap(),
+                    Step::ResetStats => f.d.reset_stats(),
+                    Step::ResetSync => f.d.reset_sync(),
+                }
+            }
+            let got = f.maps();
+            let last = got.last().map(|m| map_pids(m)).unwrap_or_default();
+            if got.len() != maps || last != pids {
+                wrong.push(format!(
+                    "{name}: {} maps, last {last:x?} (expected {maps}, {pids:x?})",
+                    got.len()
+                ));
+            }
+        };
+        for (name, steps, maps, pids) in cases {
+            run(name, start_one_video_pid(), steps, maps, pids, &mut wrong);
+        }
+        for (name, steps, maps, pids) in two_programs {
+            run(
+                name,
+                start_two_programs_on_one_pmt_pid(),
+                steps,
+                maps,
+                pids,
+                &mut wrong,
+            );
+        }
+        assert!(wrong.is_empty(), "{wrong:#?}");
+    }
+
+    #[test]
+    fn two_layouts_alternating_at_one_version_are_each_applied() {
+        let mut f = feed_with_one_video_pid();
+        for i in 0..6 {
+            let pid = if i % 2 == 0 { 0x200 } else { 0x100 };
+            f.section(0x1000, &build_pmt_section(1, 0x100, 0, &[(0x1B, pid)]))
+                .unwrap();
+        }
+        let maps: Vec<Vec<u16>> = f.maps().into_iter().map(map_pids).collect();
+        assert_eq!(
+            maps,
+            [
+                [0x100],
+                [0x200],
+                [0x100],
+                [0x200],
+                [0x100],
+                [0x200],
+                [0x100]
+            ]
+        );
+    }
+
+    #[test]
+    fn a_refused_pmt_does_not_change_the_applied_identity() {
+        let mut f = feed_with_one_video_pid();
+        f.section(
+            0x1000,
+            &with_bad_crc(build_pmt_section(1, 0x100, 0, &[(0x1B, 0x200)])),
+        )
+        .unwrap();
+        f.section(0x1000, &build_pmt_section(1, 0x100, 0, &[(0x1B, 0x100)]))
+            .unwrap();
+        assert!(
+            issues(&f.events).contains(&NonConformantIssue::PsiChecksumMismatch { pid: 0x1000 }),
+            "{:?}",
+            f.events
+        );
+        assert_eq!(f.maps().len(), 1, "{:?}", f.events);
     }
 }

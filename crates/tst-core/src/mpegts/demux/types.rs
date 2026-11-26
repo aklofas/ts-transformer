@@ -338,6 +338,9 @@ pub(crate) struct ProgramTracker {
     /// may share one (H.222.0 §2.4.4.8).
     pub pmt_pid: u16,
     pub pmt_version: Option<u8>,
+    /// CRC_32 of the applied PMT section: with `pmt_version`, the identity
+    /// a repeat must match.
+    pub pmt_crc: Option<u32>,
     pub pcr_pid: Option<u16>,
     pub streams: Vec<StreamInfo>,
     /// PIDs that have already had a KLV stream-type-mismatch nonconformant
