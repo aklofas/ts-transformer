@@ -56,14 +56,18 @@ impl ImapbParams {
     /// / `KlvFieldError::InvalidImapbParams` before invoking `sf()`.
     fn sf(&self) -> f64 {
         let span = self.max - self.min;
-        // `bPow = ceiling(log2(b − a))` (§7.1.2): `log2` rounds, so a span a
-        // few ulp above 2^k reads exactly k; correct the exponent by one so
-        // that 2^(bPow−1) < span <= 2^bPow.
-        let mut b_pow = FloatExt::ceil(FloatExt::log2(span));
-        if FloatExt::powf(2f64, b_pow) < span {
-            b_pow += 1.0;
-        } else if FloatExt::powf(2f64, b_pow - 1.0) >= span {
-            b_pow -= 1.0;
+        // `bPow = ceiling(log2(b − a))` (§7.1.2). `log2` rounds, so a span a
+        // few ulp above 2^k can read exactly k; a result that is not an
+        // integer has the right ceiling. An integer one is checked against
+        // the span's own bits: 2^e · 1.f lies above 2^e when f is not 0.
+        let log = FloatExt::log2(span);
+        let mut b_pow = FloatExt::ceil(log);
+        if log == b_pow {
+            let bits = span.to_bits();
+            let exponent = ((bits >> 52) & 0x7FF) as f64 - 1023.0;
+            if exponent == b_pow && bits & 0x000F_FFFF_FFFF_FFFF != 0 {
+                b_pow += 1.0;
+            }
         }
         let d_pow = (8 * self.length as i32 - 1) as f64;
         FloatExt::powf(2f64, d_pow - b_pow)

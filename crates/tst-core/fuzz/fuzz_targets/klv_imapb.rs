@@ -62,14 +62,17 @@ fuzz_target!(|data: &[u8]| {
     // span that overflows f64 makes it 0.
     // NOTE: keep this bPow/sF derivation in sync with `ImapbParams::sf()`
     // and `ImapbParams::scale()` in imapb.rs (the exponent is corrected by
-    // one where `log2` rounds across a power of two); a drift here surfaces
+    // one where `log2` rounds a span just above 2^k to k); a drift here surfaces
     // as a loud false-positive crash, not a silent gap.
     let span = max - min;
-    let mut b_pow = span.log2().ceil();
-    if 2f64.powf(b_pow) < span {
-        b_pow += 1.0;
-    } else if 2f64.powf(b_pow - 1.0) >= span {
-        b_pow -= 1.0;
+    let log = span.log2();
+    let mut b_pow = log.ceil();
+    if log == b_pow {
+        let bits = span.to_bits();
+        let exponent = ((bits >> 52) & 0x7FF) as f64 - 1023.0;
+        if exponent == b_pow && bits & 0x000F_FFFF_FFFF_FFFF != 0 {
+            b_pow += 1.0;
+        }
     }
     let d_pow = (8 * length as i32 - 1) as f64;
     let s_f = 2f64.powf(d_pow - b_pow);
