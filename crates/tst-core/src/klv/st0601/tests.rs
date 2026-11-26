@@ -5600,3 +5600,83 @@ fn placement_only_reorders_and_strict_output_has_every_pack_after_its_rows() {
         "{accepted} {refused} {moved}"
     );
 }
+
+/// Item 2 is the first item of every set (ST 0601.8-09): a pack whose rows
+/// would put another item in front of it cannot be placed.
+#[test]
+fn an_sdcc_pack_never_moves_another_item_in_front_of_item_2() {
+    let rec = |rows: &[u32]| UasDatalinkLs {
+        platform_heading_deg: Some(90.0),
+        sdcc_flps: vec![SdccFlpField {
+            preceding_tags: rows.to_vec(),
+            bytes: sdcc_pack(2),
+        }],
+        ..timestamped()
+    };
+    // Item 2 as a later row: the pack is written after the typed items,
+    // where 0.10.0 wrote it, and the strict encoder refuses it.
+    for rows in [[5, 2], [65, 2]] {
+        let rec = rec(&rows);
+        assert_eq!(
+            wire_tags(&encode_to_vec(&rec).unwrap()),
+            [2, 5, 65, 102, 1],
+            "{rows:?}"
+        );
+        assert!(
+            matches!(
+                encode_strict_compliance(&rec),
+                Err(KlvEncodeError::InvalidFieldValue { tag: 102, .. })
+            ),
+            "{rows:?}"
+        );
+    }
+    // Item 2 as the first row, or not named: placed.
+    for (rows, order) in [
+        ([2, 5], [2, 5, 102, 65, 1]),
+        ([5, 65], [2, 5, 65, 102, 1]),
+        ([2, 65], [2, 65, 102, 5, 1]),
+    ] {
+        let rec = rec(&rows);
+        assert_eq!(wire_tags(&encode_to_vec(&rec).unwrap()), order, "{rows:?}");
+        let strict = encode_strict_compliance(&rec).unwrap();
+        assert_eq!(wire_tags(&strict), order, "{rows:?}");
+        assert!(decode_strict_compliance(&strict).is_ok(), "{rows:?}");
+    }
+}
+
+/// Over generated records: whatever the packs name, the ordinary encoder
+/// writes Item 2 first when the record has one, and what the strict encoder
+/// writes its own compliance decode accepts.
+#[test]
+fn item_2_stays_first_and_strict_output_passes_the_compliance_decode() {
+    let mut g = Seeded(0x0002_0102_0002_0102);
+    let (mut with_item_2, mut naming_item_2, mut accepted) = (0, 0, 0);
+    for case in 0..4000 {
+        let rec = random_record_with_packs(&mut g);
+        let out = encode_to_vec(&rec).unwrap();
+        if rec.timestamp_us.is_some() {
+            with_item_2 += 1;
+            naming_item_2 += usize::from(rows(&rec).iter().any(|r| r.contains(&2)));
+            assert_eq!(
+                wire_tags(&out).first(),
+                Some(&2),
+                "case {case}: {:?}",
+                rows(&rec)
+            );
+        }
+        if let Ok(strict) = encode_strict_compliance(&rec) {
+            accepted += 1;
+            let decoded = decode_strict_compliance(&strict).map(|_| ());
+            assert!(
+                decoded.is_ok(),
+                "case {case}: {decoded:?} for {:?} in {:?}",
+                rows(&rec),
+                wire_tags(&strict)
+            );
+        }
+    }
+    assert!(
+        with_item_2 > 3000 && naming_item_2 > 1000 && accepted > 1000,
+        "{with_item_2} {naming_item_2} {accepted}"
+    );
+}

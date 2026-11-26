@@ -1151,6 +1151,12 @@ struct TagItems {
 /// unwritten item. So `TagItems::next` and a count are all a tag needs, and
 /// a row takes its item in one step.
 ///
+/// Item 2 stays the first item of the set (ST 0601.8-09). It is the first
+/// item of the walk, so until it is written only occurrences that name it
+/// are tried, and such a try takes it as its first row, before any other
+/// item, or writes nothing (`take_forward`): an occurrence with Item 2 at
+/// a later row is not placed.
+///
 /// Work: `write` runs once per item, `take_forward` once per occurrence and
 /// in time linear in its rows, and each occurrence sits in one `anchored`,
 /// one `opens` and one `closes` list, each emptied when it is read. That is
@@ -1335,7 +1341,13 @@ impl<'a> SdccPlacer<'a> {
         self.step(3 * rows.len());
         let mut j = rows.len();
         while j > 0 {
-            match self.tags.get_mut(&rows[j - 1]) {
+            let tag = rows[j - 1];
+            // Item 2 keeps the first place of the set (ST 0601.8-09): a row
+            // takes it forward only as the pack's first row.
+            if tag == 2 && j != 1 {
+                break;
+            }
+            match self.tags.get_mut(&tag) {
                 Some(t) if t.claimed < t.unwritten => t.claimed += 1,
                 _ => break,
             }
@@ -1403,9 +1415,9 @@ impl<'a> SdccPlacer<'a> {
 ///
 /// An occurrence that cannot be placed (a named item is not in the record,
 /// `preceding_tags` is empty, its rows are neither unwritten nor the last
-/// items written when it is tried, or the rows a short capture names are
-/// not the start of the set) is written where it was, after the typed
-/// items; under `strict` it is refused, unless it is a matrix of size 0
+/// items written when it is tried, they would put another item in front of
+/// Item 2, or the rows a short capture names are not the start of the set)
+/// is written where it was, after the typed items; under `strict` it is refused, unless it is a matrix of size 0
 /// naming nothing.
 fn place_sdcc_packs(
     record: &UasDatalinkLs,
