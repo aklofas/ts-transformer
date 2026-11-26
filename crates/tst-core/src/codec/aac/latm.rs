@@ -272,7 +272,9 @@ impl LoasFraming {
 ///
 /// Work per PES is linear in its length: the walks of one PES share a set of
 /// the boundaries already walked, and a walk that reaches one ends as the
-/// earlier walk did, so no boundary is walked twice.
+/// earlier walk did, so no boundary is walked twice. That set lives only
+/// while the PES is settled; between PES a search holds its candidates and
+/// two counters.
 #[derive(Debug)]
 struct LoasSearch {
     /// The candidates followed, `held[..held_len]`.
@@ -285,9 +287,6 @@ struct LoasSearch {
     /// A provisional position failed in this stretch: no candidate defers
     /// the judgement any more.
     provisional_failed: bool,
-    /// Record boundaries walked in the current PES, one bit per payload
-    /// offset; kept to reuse the allocation.
-    walked: Vec<u64>,
 }
 
 impl Default for LoasSearch {
@@ -298,7 +297,6 @@ impl Default for LoasSearch {
             unsynced_bytes: 0,
             raised: false,
             provisional_failed: false,
-            walked: Vec::new(),
         }
     }
 }
@@ -363,12 +361,9 @@ impl LoasSearch {
 
     /// [`Self::feed`], adding to `steps` each record boundary it walks.
     fn feed_counting(&mut self, payload: &[u8], steps: &mut usize) -> LoasSettle {
-        let mut walked = core::mem::take(&mut self.walked);
-        walked.clear();
-        walked.resize(payload.len().div_ceil(64), 0);
+        let mut walked: Vec<u64> = alloc::vec![0; payload.len().div_ceil(64)];
         let mut walks = 0;
         let confirmed = self.settle(payload, &mut walked, &mut walks);
-        self.walked = walked;
         debug_assert!(walks <= payload.len(), "a boundary was walked twice");
         debug_assert!(self.held_len <= LOAS_CANDIDATES);
         *steps += walks;
@@ -1017,6 +1012,18 @@ mod tests {
         assert_eq!(
             search.feed(&pes),
             LoasSettle::Confirmed(Some(LoasCarry::Body(60)))
+        );
+    }
+
+    /// Between PES a search holds its candidates and its counters, nothing
+    /// that grows with the PES it saw: a stream declaring many AAC-LATM PIDs
+    /// that never sync holds the candidates of each and no more.
+    #[test]
+    fn a_search_holds_only_its_candidates_and_counters_between_pes() {
+        let words = 3 * core::mem::size_of::<usize>();
+        assert!(
+            core::mem::size_of::<LoasSearch>()
+                <= core::mem::size_of::<[LoasCandidate; LOAS_CANDIDATES]>() + words
         );
     }
 
