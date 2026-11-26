@@ -407,10 +407,18 @@ fn validate_vtargets(ls: &VmtiLs) -> Result<(), KlvEncodeError> {
 
     // The two name caps count characters (V32, V128), as `decode_strict`
     // does.
-    if ls.vmti_system_name.as_ref().is_some_and(|s| s.chars().count() > 32) {
+    if ls
+        .vmti_system_name
+        .as_ref()
+        .is_some_and(|s| s.chars().count() > 32)
+    {
         return Err(KlvEncodeError::StringTooLong { tag: 3, max: 32 });
     }
-    if ls.source_sensor.as_ref().is_some_and(|s| s.chars().count() > 128) {
+    if ls
+        .source_sensor
+        .as_ref()
+        .is_some_and(|s| s.chars().count() > 128)
+    {
         return Err(KlvEncodeError::StringTooLong { tag: 10, max: 128 });
     }
 

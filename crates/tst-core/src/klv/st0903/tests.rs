@@ -1103,8 +1103,11 @@ fn precision_time_stamp_u64_max_round_trips() {
 // The strict encoders write only what `decode_strict` accepts.
 // ------------------------------------------------------------------
 
+/// An encoder of a whole VMTI record.
+type Encoder = fn(&VmtiLs) -> Result<Vec<u8>, KlvEncodeError>;
+
 /// Both strict encoders, so a rule is checked on each.
-fn strict_encoders() -> [fn(&VmtiLs) -> Result<Vec<u8>, KlvEncodeError>; 2] {
+fn strict_encoders() -> [Encoder; 2] {
     [
         encode_strict_compliance,
         encode_standalone_strict_compliance,
@@ -1162,7 +1165,7 @@ fn every_vmti_encoder_refuses_a_v3_value_above_24_bits() {
         }
         ls
     };
-    let encoders: [fn(&VmtiLs) -> Result<Vec<u8>, KlvEncodeError>; 4] = [
+    let encoders: [Encoder; 4] = [
         encode_to_vec,
         encode_to_vec_standalone,
         encode_strict_compliance,
@@ -1184,7 +1187,11 @@ fn every_vmti_encoder_refuses_a_v3_value_above_24_bits() {
             Err(KlvEncodeError::OutOfRange { tag: t, .. }) if t == tag
         ));
         let decoded = decode(&encode_to_vec(&set(tag, 0x00FF_FFFF)).unwrap()).unwrap();
-        assert!(decoded.field_errors.is_empty(), "{:?}", decoded.field_errors);
+        assert!(
+            decoded.field_errors.is_empty(),
+            "{:?}",
+            decoded.field_errors
+        );
     }
 }
 
