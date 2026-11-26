@@ -3696,7 +3696,12 @@ fn repeated_sdcc_history_cannot_expand_quadratically() {
         wrap_st0601(&body)
     }
     for n in [256usize, 512] {
-        let decoded = decode_strict_compliance(&wire(n)).expect("framing and checksum are valid");
+        // The compliance decode refuses the set for the first such pack.
+        assert!(matches!(
+            decode_strict_compliance(&wire(n)),
+            Err(KlvDecodeError::ComplianceViolation { tag: 102, .. })
+        ));
+        let decoded = decode_strict(&wire(n)).expect("framing and checksum are valid");
         assert!(
             decoded.sdcc_flps.is_empty(),
             "n={n}: {} occurrences captured",
@@ -6206,5 +6211,123 @@ fn a_stepped_over_wide_tag_ends_a_packs_rows() {
     assert_eq!(
         wire_tags(&encode_strict_compliance(&rec).unwrap()),
         [2, 13, 14, 102, 15, 102, 65, 1]
+    );
+}
+
+/// A pack with a given first byte run, as Item 102 of a set that is
+/// otherwise conformant.
+fn set_with_pack(pack: &[u8]) -> Vec<u8> {
+    sdcc_set(&[I(2), I(13), Sdcc::Raw(tlv(102, pack)), I(65)])
+}
+
+/// The strict pair agrees on Item 102: what one side refuses for the pack's
+/// header the other refuses for the same reason.
+#[test]
+fn the_strict_pair_agrees_on_an_sdcc_header_st1010_does_not_define() {
+    let undefined = "the SDCC-FLP header is not one ST 1010 defines";
+    // A reserved Parse Control bit; a Parse Control cut off after its first
+    // byte; a matrix of 300, above what ST 1010 bounds.
+    let mut wide = vec![0x82, 0x2C, 0x80, 0x01];
+    wide.extend(vec![0u8; 300]);
+    for pack in [
+        vec![0x01, 0xC0, 0x04, 0x3F, 0x80, 0x00, 0x00],
+        vec![0x01, 0x80],
+        wide,
+    ] {
+        let source = set_with_pack(&pack);
+        assert!(
+            matches!(
+                decode_strict_compliance(&source),
+                Err(KlvDecodeError::ComplianceViolation { tag: 102, reason, .. }) if reason == undefined
+            ),
+            "{:02X?}: {:?}",
+            &pack[..2],
+            decode_strict_compliance(&source).map(|_| ())
+        );
+        let rec = UasDatalinkLs {
+            sensor_lat_deg: Some(10.0),
+            sdcc_flps: vec![SdccFlpField {
+                preceding_tags: vec![13],
+                bytes: pack.clone(),
+            }],
+            ..timestamped()
+        };
+        assert!(
+            matches!(
+                encode_strict_compliance(&rec),
+                Err(KlvEncodeError::InvalidFieldValue { tag: 102, reason }) if reason == undefined
+            ),
+            "{:02X?}",
+            &pack[..2]
+        );
+    }
+    // A header ST 1010 defines passes both.
+    let source = set_with_pack(&sdcc_pack(1));
+    let rec = decode_strict_compliance(&source).unwrap();
+    assert_eq!(encode_strict_compliance(&rec).unwrap(), source);
+}
+
+/// Over generated sets with every kind of pack: what the strict decoder
+/// accepts the strict encoder writes back, unless a pack cannot be placed
+/// (the one refusal of the encoder that is about the record, not about an
+/// item: its `# Errors` names it); and what the strict encoder writes the
+/// strict decoder accepts.
+#[test]
+fn what_the_strict_decoder_accepts_the_strict_encoder_writes() {
+    let reference: Vec<u32> = sdcc_reference_items().iter().map(|(t, _)| *t).collect();
+    let packs: [&[u8]; 6] = [
+        &[0x01, 0x80, 0x04, 0x3F, 0x80, 0x00, 0x00],
+        &[
+            0x02, 0x80, 0x04, 0x3F, 0x80, 0x00, 0x00, 0x3F, 0x80, 0x00, 0x00,
+        ],
+        &[0x01, 0xC0, 0x04, 0x3F, 0x80, 0x00, 0x00],
+        &[0x01, 0x40, 0x3F, 0x80, 0x00, 0x00],
+        &[0x01, 0x80],
+        &[0x00, 0x80, 0x04],
+    ];
+    let mut g = Seeded(0x0102_1010_0102_1010);
+    let (mut both, mut refused, mut unplaced) = (0, 0, 0);
+    for case in 0..4000 {
+        let mut parts = vec![I(2)];
+        for &tag in &reference[1..] {
+            match g.below(8) {
+                0 => {}
+                // Sent zero-length: unknown, and not written back.
+                1 if tag != 65 => parts.push(Sdcc::Raw(vec![tag as u8, 0x00])),
+                _ => parts.push(I(tag)),
+            }
+            if g.below(4) == 0 {
+                parts.push(Sdcc::Raw(tlv(102, packs[g.below(packs.len())])));
+            }
+        }
+        if !parts.iter().any(|p| matches!(p, Sdcc::Item(65))) {
+            parts.push(I(65));
+        }
+        let source = sdcc_set(&parts);
+        match decode_strict_compliance(&source) {
+            Ok(rec) => match encode_strict_compliance(&rec) {
+                Ok(out) => {
+                    both += 1;
+                    assert!(decode_strict_compliance(&out).is_ok(), "case {case}");
+                }
+                Err(e) => {
+                    unplaced += 1;
+                    assert!(
+                        matches!(
+                            e,
+                            KlvEncodeError::InvalidFieldValue { tag: 102, reason }
+                                if reason.starts_with("an SDCC-FLP follows the items it refines")
+                        ),
+                        "case {case}: {e:?} for {:?}",
+                        rows(&rec)
+                    );
+                }
+            },
+            Err(_) => refused += 1,
+        }
+    }
+    assert!(
+        both > 500 && refused > 500 && unplaced > 100,
+        "{both} {refused} {unplaced}"
     );
 }

@@ -229,18 +229,13 @@ pub fn encode_strict_compliance(record: &UasDatalinkLs) -> Result<Vec<u8>, KlvEn
     // "" encodes as [0x00].
     let mut r = record.clone();
     sanitize_strings_st0601(&mut r);
-    // An SDCC-FLP is written as its bytes came: they must hold a header
-    // ST 1010 defines, with no reserved bit set and a matrix it bounds.
-    for f in &r.sdcc_flps {
-        match crate::klv::st1010::read_sdcc_header(&f.bytes) {
-            Ok((header, _)) if !header.reserved_bits => {}
-            _ => {
-                return Err(KlvEncodeError::InvalidFieldValue {
-                    tag: 102,
-                    reason: "the SDCC-FLP header is not one ST 1010 defines",
-                });
-            }
-        }
+    // An entry without bytes would be written as a zero-length Item 102,
+    // which is no pack: a decode reads it as "unknown" and drops it.
+    if r.sdcc_flps.iter().any(|f| f.bytes.is_empty()) {
+        return Err(KlvEncodeError::InvalidFieldValue {
+            tag: 102,
+            reason: "the SDCC-FLP header is not one ST 1010 defines",
+        });
     }
     let out = encode_to_vec_into(&r, &EncodeConfig::default(), true)?;
     // The per-item rules are the compliance decode's, judged on the bytes

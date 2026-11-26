@@ -342,11 +342,22 @@ pub(super) fn profile_violation(tag: u32, value: &[u8]) -> Option<&'static str> 
             .take(4)
             .any(|&pct| pct > 100)
             .then_some("Image Horizon Pixel Pack coordinates are percentages, 0 to 100"),
+        // A zero-length item is "unknown" and adds no occurrence.
+        102 if value.is_empty() => None,
         102 => {
-            let (_, rest) = crate::klv::length::read_ber_oid_u64(value).ok()?;
-            rest.first()
-                .is_some_and(|pc| pc & 0x80 == 0)
-                .then_some("an SDCC-FLP uses Mode 2 Parse Control (ST 0601.10-22)")
+            let mode_1 = crate::klv::length::read_ber_oid_u64(value)
+                .is_ok_and(|(_, rest)| rest.first().is_some_and(|pc| pc & 0x80 == 0));
+            if mode_1 {
+                Some("an SDCC-FLP uses Mode 2 Parse Control (ST 0601.10-22)")
+            } else {
+                // The pack is kept and written as its bytes came: they must
+                // hold a header ST 1010 defines, with no reserved bit set
+                // and a matrix it bounds.
+                match crate::klv::st1010::read_sdcc_header(value) {
+                    Ok((header, _)) if !header.reserved_bits => None,
+                    _ => Some("the SDCC-FLP header is not one ST 1010 defines"),
+                }
+            }
         }
         115 => match packs::control_command_time_len(value) {
             Some(0 | 8) | None => None,
