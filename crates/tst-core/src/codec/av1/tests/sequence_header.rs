@@ -267,7 +267,7 @@ fn reduced_still_picture_header_payload() -> Vec<u8> {
     bw.write(0, 1); // color_range
     bw.write(0, 2); // chroma_sample_position
     bw.write(0, 1); // separate_uv_delta_q
-    // reduced → film_grain_params_present NOT coded.
+    bw.write(0, 1); // film_grain_params_present (§5.5.1: coded here too)
     bw.bytes
 }
 
@@ -521,4 +521,81 @@ fn timing_info_zero_time_scale_is_reserved() {
         ),
         "expected ReservedValue for time_scale=0, got {r:?}"
     );
+}
+
+/// AV1 §5.5.1: `film_grain_params_present` is coded for a reduced
+/// still-picture header too. The fixture's fields before it fill 48 bits, so
+/// its first six bytes end exactly before the bit.
+#[test]
+fn reduced_still_picture_header_requires_film_grain_bit() {
+    let full = reduced_still_picture_header_payload();
+    assert_eq!(full.len(), 7);
+    assert!(parse_sequence_header(&full).is_ok());
+    let r = parse_sequence_header(&full[..6]);
+    assert!(
+        matches!(r, Err(CodecParseError::TruncatedRbsp { .. })),
+        "got {:?}",
+        r.map(|s| (s.max_frame_width, s.reduced_still_picture_header))
+    );
+}
+
+/// AV1 §6.4.3: `num_ticks_per_picture_minus_1` is in `0..=(1 << 32) - 2`;
+/// uvlc's `(1 << 32) - 1` (32 leading zeros) is out of range, the largest
+/// value 31 zeros can code is in it.
+#[test]
+fn timing_with_uvlc_sentinel_is_rejected() {
+    let mut bw = BitWriter::new();
+    write_timing_prefix(&mut bw, 1, 60);
+    bw.write(0, 32);
+    bw.write(1, 1);
+    write_timing_suffix(&mut bw);
+    let r = parse_sequence_header(&bw.bytes);
+    assert!(
+        matches!(
+            r,
+            Err(CodecParseError::ReservedValue {
+                field: "num_ticks_per_picture_minus_1",
+                value: u32::MAX,
+            })
+        ),
+        "got {:?}",
+        r.map(|s| s.frame_rate)
+    );
+
+    // 31 zeros, the terminator, 31 value bits of 1: (1 << 32) - 2 ticks
+    // minus one, so 60 / (2^32 - 1) = 4 / 286331153.
+    let mut bw = BitWriter::new();
+    write_timing_prefix(&mut bw, 1, 60);
+    bw.write(0, 31);
+    bw.write(1, 1);
+    bw.write((1u64 << 31) - 1, 31);
+    write_timing_suffix(&mut bw);
+    let seq = parse_sequence_header(&bw.bytes).expect("the largest tick count parses");
+    let fr = seq.frame_rate.expect("frame_rate");
+    assert_eq!((fr.num, fr.den), (4, 286_331_153));
+}
+
+/// 33 or more leading zeros: the terminator must not be read as the next
+/// field (40 zeros used to give a header of 2 x 1 pixels).
+#[test]
+fn timing_with_33_zero_uvlc_is_rejected_not_misparsed() {
+    for zeros in [33u32, 40] {
+        let mut bw = BitWriter::new();
+        write_timing_prefix(&mut bw, 1, 60);
+        bw.write(0, zeros);
+        bw.write(1, 1);
+        write_timing_suffix(&mut bw);
+        let r = parse_sequence_header(&bw.bytes);
+        assert!(
+            matches!(
+                r,
+                Err(CodecParseError::ReservedValue {
+                    field: "num_ticks_per_picture_minus_1",
+                    ..
+                })
+            ),
+            "{zeros} zeros: got {:?}",
+            r.map(|s| (s.frame_rate, s.max_frame_width, s.max_frame_height))
+        );
+    }
 }

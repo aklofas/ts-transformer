@@ -50,36 +50,18 @@ impl<'a> Av1BitReader<'a> {
 
     /// `uvlc()` per AV1 §4.10.3.
     ///
-    /// Read leading zero bits until 1; let `n` be the count. Then
-    /// read `n` more bits as unsigned `extra`. Result is
-    /// `(1 << n) - 1 + extra`. If leading zeros >= 32, return the
-    /// spec sentinel `2^32 - 1`.
-    ///
-    /// The cursor advances past the marker `1` bit in both paths
-    /// (normal value and overflow sentinel). Per AV1 §4.10.3 the marker
-    /// is part of the encoded form regardless of which branch the value
-    /// falls into; consuming it preserves bit-stream sync for any
-    /// trailing bits the caller reads next.
+    /// Read zero bits up to and including the terminating `1`; let `n` be
+    /// the number of zeros. With `n >= 32` the result is `(1 << 32) - 1` and
+    /// no value bits are read; otherwise read `n` bits as unsigned `extra`
+    /// and return `(1 << n) - 1 + extra`. A buffer that ends before the `1`
+    /// is `TruncatedRbsp`.
     pub fn uvlc(&mut self) -> Result<u64, CodecParseError> {
         let mut leading_zeros = 0usize;
-        let mut saw_terminator = false;
-        while leading_zeros < 32 {
-            let bit = self.f(1)?;
-            if bit == 1 {
-                saw_terminator = true;
-                break;
-            }
+        // Bounded by the buffer: `f(1)` fails at its end.
+        while self.f(1)? == 0 {
             leading_zeros += 1;
         }
-        if !saw_terminator {
-            // 32 leading zeros encountered. The spec still requires a
-            // terminating marker `1`-bit even on this overflow path —
-            // consume it so the cursor stays aligned for any bits the
-            // caller reads next. Pre-fix the loop exited without
-            // consuming the marker, leaving the cursor 1 bit short and
-            // causing every subsequent f(n) to read the wrong bit.
-            let _ = self.f(1)?;
-            // Spec: return 2^32 - 1 (the "infinity" / overflow sentinel).
+        if leading_zeros >= 32 {
             return Ok((1u64 << 32) - 1);
         }
         let extra = if leading_zeros == 0 {
@@ -169,6 +151,39 @@ mod tests {
             next, 0,
             "post-uvlc cursor must be past the marker bit (pre-fix returned 1)"
         );
+    }
+
+    /// AV1 §4.10.3: `leadingZeros` counts every zero before the `1`, and 32
+    /// or more give `(1 << 32) - 1` with no value bits read: the bit after
+    /// the terminator is the caller's.
+    #[test]
+    fn uvlc_33_zeros_consumes_through_the_terminator() {
+        // 33 zeros, the terminator, then `10` for the caller: a reader that
+        // stops at 32 zeros, with or without taking one more bit, reads
+        // `01` or `11` there.
+        let mut br = Av1BitReader::new(&[0, 0, 0, 0, 0b0110_0000]);
+        assert_eq!(br.uvlc().unwrap(), (1u64 << 32) - 1);
+        assert_eq!(br.f(2).unwrap(), 0b10);
+    }
+
+    #[test]
+    fn uvlc_31_zeros_reads_31_value_bits() {
+        // 31 zeros, the terminator, 31 value bits of 1: 2^31 - 1 + 2^31 - 1.
+        let bytes = [0, 0, 0, 0b0000_0001, 0xFF, 0xFF, 0xFF, 0xFE];
+        let mut br = Av1BitReader::new(&bytes);
+        assert_eq!(br.uvlc().unwrap(), (1u64 << 32) - 2);
+        assert_eq!(br.f(1).unwrap(), 0);
+    }
+
+    #[test]
+    fn uvlc_without_terminator_is_truncated() {
+        for len in [4usize, 5, 8] {
+            let r = Av1BitReader::new(&vec![0; len]).uvlc();
+            assert!(
+                matches!(r, Err(CodecParseError::TruncatedRbsp { .. })),
+                "{len} zero bytes: got {r:?}"
+            );
+        }
     }
 
     #[test]

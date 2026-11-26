@@ -75,6 +75,14 @@ pub fn parse_sequence_header(payload: &[u8]) -> Result<Av1SequenceHeader, CodecP
                 // and reported time_scale / num_units, overstating the rate
                 // by (ticks_minus_1 + 1)x.
                 let num_ticks_per_picture_minus_1 = br.uvlc()?; // u64
+                // §6.4.3: the range is 0..=(1 << 32) - 2; uvlc's (1 << 32) - 1
+                // means 32 or more leading zeros.
+                if num_ticks_per_picture_minus_1 == (1u64 << 32) - 1 {
+                    return Err(CodecParseError::ReservedValue {
+                        field: "num_ticks_per_picture_minus_1",
+                        value: u32::MAX,
+                    });
+                }
                 let ticks = num_ticks_per_picture_minus_1.saturating_add(1);
                 if let Some(den_u64) = u64::from(num_units_in_display_tick).checked_mul(ticks) {
                     // Surface only when the reduced rational fits u32 Rational;
@@ -292,9 +300,8 @@ pub fn parse_sequence_header(payload: &[u8]) -> Result<Av1SequenceHeader, CodecP
         sample_aspect_ratio: None,
     });
 
-    if !reduced_still_picture_header {
-        let _film_grain_params_present = br.f(1)?;
-    }
+    // §5.5.1: coded for every sequence header, the reduced one included.
+    let _film_grain_params_present = br.f(1)?;
 
     // Suppress unused-warning paths the compiler can't see through.
     let _ = (timing_info_present, initial_display_delay_present);
