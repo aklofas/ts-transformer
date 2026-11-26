@@ -19,10 +19,6 @@
 //!           bit 0     → nal_unit_type: 0=non-IDR (type 1), 1=IDR (type 5)
 //! [1..]   slice RBSP bytes (fuzz-driven)
 //! ```
-//!
-//! // TODO(h265): H.265 parse_slice_header_light has the same
-//! // log2_max_pic_order_cnt_lsb_minus4 SPS-context gap; deferred —
-//! // H.265 SPS synthesis needs profile_tier_level + sub-layer arrays.
 
 use libfuzzer_sys::fuzz_target;
 use tst_core::codec::h264::{parse_slice_header_light, parse_sps};
