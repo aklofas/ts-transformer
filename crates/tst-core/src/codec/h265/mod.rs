@@ -58,7 +58,13 @@ use crate::codec::NalUnit;
 use alloc::collections::BTreeMap;
 
 crate::binding_record! {
-    /// All VPS, SPS, and PPS NAL units parsed from a slice.
+    /// The VPS, SPS and PPS NAL units parsed by one `parse_parameter_sets` call.
+    ///
+    /// One call is one snapshot of the NAL units it is given. A PPS whose SPS
+    /// is not in the call, or whose SPS failed to parse in the call, is dropped;
+    /// when the call holds several SPS with one id, the last one that parsed is
+    /// used. A call that holds only a lone PPS returns `Ok` with empty results,
+    /// not an error: parse a lone PPS with `parse_pps`.
     #[must_use]
     #[derive(Debug, Clone, PartialEq, Eq, Default)]
     #[non_exhaustive]
@@ -75,6 +81,12 @@ crate::binding_record! {
 /// Parse all VPS/SPS/PPS NAL units from a slice. See [`crate::codec`]
 /// crate root for the partial-success-tolerant behavior. Returns Ok with
 /// empty maps when no parameter set NALs are present.
+///
+/// One call is one snapshot of the NAL units it is given. A PPS whose SPS
+/// is not in the call, or whose SPS failed to parse in the call, is dropped;
+/// when the call holds several SPS with one id, the last one that parsed is
+/// used. A call that holds only a lone PPS returns `Ok` with empty results,
+/// not an error: parse a lone PPS with `parse_pps`.
 pub fn parse_parameter_sets(nals: &[NalUnit]) -> Result<H265ParameterSets, CodecParseError> {
     let mut out = H265ParameterSets::default();
     let mut had_param_set = false;
@@ -130,5 +142,23 @@ pub fn parse_parameter_sets(nals: &[NalUnit]) -> Result<H265ParameterSets, Codec
             "every parameter set NAL in the input failed to parse".into(),
         ));
     }
+
+    // A PPS is usable only with its SPS (H.265 §7.4.3.3.1): drop one whose
+    // `pps_seq_parameter_set_id` names no SPS parsed in this call, as the
+    // H.264 collector does.
+    let sps_ids = &out.sps_by_id;
+    out.pps_by_id.retain(|pps_id, pps| {
+        if sps_ids.contains_key(&pps.pps_seq_parameter_set_id) {
+            true
+        } else {
+            tracing::warn!(
+                target: "tst_core::codec::h265",
+                pps_id = *pps_id,
+                sps_id = pps.pps_seq_parameter_set_id,
+                "dropping PPS that references SPS id not in input"
+            );
+            false
+        }
+    });
     Ok(out)
 }

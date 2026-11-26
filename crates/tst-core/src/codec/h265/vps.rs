@@ -28,8 +28,9 @@ crate::binding_record! {
         pub general_tier_flag: bool,
         /// `general_level_idc` decoded from the VPS profile_tier_level block.
         pub general_level_idc: u8,
-        /// 32-bit `general_profile_compatibility_flags` per H.265 §7.3.3 — bit
-        /// `i` set means the stream conforms to profile `i`. See the SPS for the
+        /// 32-bit `general_profile_compatibility_flags` per H.265 §7.3.3, MSB
+        /// first: spec flag `j` (set when the stream conforms to profile `j`) is
+        /// numeric bit `31 - j`, `flags & (1 << (31 - j))`. See the SPS for the
         /// disambiguation rationale (Main vs Main10 vs Main10-Intra).
         pub general_profile_compatibility_flags: u32,
         /// `general_progressive_source_flag` (§7.4.4).

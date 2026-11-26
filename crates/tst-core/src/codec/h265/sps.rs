@@ -28,9 +28,11 @@ crate::binding_record! {
         pub general_tier_flag: bool,
         /// `general_level_idc` — e.g. 120 for Level 4.0, 150 for Level 5.0.
         pub general_level_idc: u8,
-        /// 32-bit `general_profile_compatibility_flags` per H.265 §7.3.3 — bit
-        /// `i` set means the stream conforms to profile `i`. Real Main10 streams
-        /// often have `general_profile_idc=1` (Main) but bit 2 set; ffmpeg
+        /// 32-bit `general_profile_compatibility_flags` per H.265 §7.3.3, MSB
+        /// first: spec flag `j` (`general_profile_compatibility_flag[j]`, set
+        /// when the stream conforms to profile `j`) is numeric bit `31 - j`,
+        /// `flags & (1 << (31 - j))`. Real Main10 streams often have
+        /// `general_profile_idc=1` (Main) but flag 2 (`1 << 29`) set; ffmpeg
         /// `hevc/ps.c:267-270` uses this to disambiguate Main vs Main10 vs
         /// Main10-Intra. Surfaced here so consumers can do the same.
         pub general_profile_compatibility_flags: u32,
@@ -59,8 +61,9 @@ crate::binding_record! {
         /// timing is absent, when either timing field is zero, and when the
         /// reduced pair does not fit 32 bits.
         pub frame_rate: Option<Rational>,
-        /// VUI colour info, or absent when the VUI or
-        /// `video_signal_type_present_flag` is absent.
+        /// VUI colour info: present when the VUI signals any of
+        /// `video_signal_type` (with or without a colour description), the
+        /// chroma sample locations or the aspect ratio; absent otherwise.
         pub color: Option<ColorInfo>,
         /// Luma-sample crop offsets applied to the coded picture dimensions to
         /// produce `width`/`height`. Computed from `conformance_window_flag` +

@@ -99,8 +99,8 @@ fn parse_sps_surfaces_conformance_window_offsets_invariant() {
 #[test]
 fn parse_sps_1080p_has_bottom_crop() {
     // The 1080p HEVC Main fixture is coded as 1920×1088 and signals
-    // `conformance_window_flag` with `conf_win_bottom_offset = 2`
-    // chroma units. 4:2:0 → SubHeightC = 2 → crop_bottom = 4 luma
+    // `conformance_window_flag` with `conf_win_bottom_offset = 4`
+    // chroma units. 4:2:0 → SubHeightC = 2 → crop_bottom = 8 luma
     // samples (the parser computes `sub_h * conf_win_bottom_offset`).
     // After crop: 1080. Other three offsets are zero.
     let sps = parse_sps(SPS_1080P_MAIN40).expect("parse");
