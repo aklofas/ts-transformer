@@ -430,10 +430,13 @@ pub fn has_klva_registration(descs: &[RawDescriptor]) -> bool {
 ///   1. Component descriptor (tag 0x50, ETSI EN 300 468 §6.2.8) — body
 ///      starting at offset 6 is free text. A leading character-table
 ///      selector (EN 300 468 Annex A.2, Table A.3) is consumed: 0x15
-///      selects UTF-8, and the ISO 8859 selectors (0x01..=0x0B, 0x10) are
-///      accepted only when the text is ASCII (no transcoding). The
-///      multi-byte selectors 0x11..=0x14, any other selector, and text the
-///      selector cannot be decoded as fall through to the next source.
+///      selects UTF-8, and the ISO 8859 selectors (0x01..=0x07,
+///      0x09..=0x0B, and 0x10 0x00 with a third byte of 0x01..=0x0B or
+///      0x0D..=0x0F, Table A.4) are accepted only when the text is ASCII
+///      (no transcoding). The reserved selectors (0x08, the other 0x10
+///      values), the multi-byte selectors 0x11..=0x14, any other selector,
+///      and text the selector cannot be decoded as fall through to the next
+///      source.
 ///      Text starting at 0x20 or above is the default table,
 ///      read as UTF-8.
 ///   2. Stream Identifier descriptor (tag 0x52, ETSI EN 300 468 §6.2.40) —
@@ -492,21 +495,27 @@ pub fn extract_user_label(descs: &[RawDescriptor]) -> Option<String> {
 }
 
 /// Decodes DVB text per the EN 300 468 Annex A.2 character-table selector:
-/// the default table and 0x15 as UTF-8, the ISO 8859 selectors (0x01..=0x0B,
-/// 0x10) when the text is ASCII. `None` for the multi-byte selectors
-/// 0x11..=0x14, any other selector, or text that cannot be decoded without
-/// transcoding.
+/// the default table and 0x15 as UTF-8, the ISO 8859 selectors (Tables A.3
+/// and A.4, reserved values excluded) when the text is ASCII. `None` for a
+/// reserved selector, the multi-byte selectors 0x11..=0x14, any other
+/// selector, or text that cannot be decoded without transcoding.
 fn dvb_text(bytes: &[u8]) -> Option<String> {
     let (&first, rest) = bytes.split_first()?;
     let text = match first {
         0x20.. => bytes,
         0x15 => rest,
+        // Table A.4: 0x00 then the ISO/IEC 8859 part; 0x0C and every other
+        // value are reserved.
         0x10 => {
-            let text = bytes.get(3..)?;
+            let text = match bytes.get(1..)? {
+                [0x00, 0x01..=0x0B | 0x0D..=0x0F, text @ ..] => text,
+                _ => return None,
+            };
             return text.is_ascii().then(|| ascii_string(text));
         }
         // ISO/IEC 8859-5..15: an ASCII remainder reads the same in each.
-        0x01..=0x0B => {
+        // 0x08 is reserved (Table A.3).
+        0x01..=0x07 | 0x09..=0x0B => {
             return rest.is_ascii().then(|| ascii_string(rest));
         }
         // Table A.3: 0x11 ISO/IEC 10646 (two bytes per character), 0x12
@@ -1158,6 +1167,70 @@ mod label_tests {
                 extract_user_label(&descs).as_deref(),
                 Some("eng"),
                 "selector 0x{selector:02X}"
+            );
+        }
+    }
+
+    /// The label of a component descriptor with `text`, followed by an ISO 639
+    /// descriptor: "eng" means the text was not decoded.
+    fn label_or_next_source(text: &[u8]) -> Option<String> {
+        let mut descs = component_with_text(text);
+        descs.push(RawDescriptor {
+            tag: 0x0A,
+            data: vec![b'e', b'n', b'g', 0x00],
+        });
+        extract_user_label(&descs)
+    }
+
+    /// EN 300 468 Table A.3: 0x08 is reserved (it was ISO/IEC 8859-12, which
+    /// was never published).
+    #[test]
+    fn the_reserved_selector_0x08_is_not_decoded() {
+        assert_eq!(
+            label_or_next_source(&[0x08, b'A', b'B']).as_deref(),
+            Some("eng")
+        );
+    }
+
+    /// EN 300 468 Table A.4: after 0x10 the second byte is 0x00 and the third
+    /// names ISO/IEC 8859-1..=11 or 13..=15; 0x00, 0x0C, 0x10 and above, and
+    /// any second byte but 0x00 are reserved.
+    #[test]
+    fn a_0x10_selector_with_a_reserved_table_is_not_decoded() {
+        for (second, third) in [(0x00, 0x0C), (0x00, 0x00), (0x12, 0x34), (0x00, 0x10)] {
+            assert_eq!(
+                label_or_next_source(&[0x10, second, third, b'A', b'B']).as_deref(),
+                Some("eng"),
+                "10 {second:02X} {third:02X}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_0x10_selector_with_a_listed_table_is_decoded() {
+        for third in (0x01..=0x0B).chain(0x0D..=0x0F) {
+            assert_eq!(
+                label_or_next_source(&[0x10, 0x00, third, b'A', b'B']).as_deref(),
+                Some("AB"),
+                "10 00 {third:02X}"
+            );
+        }
+    }
+
+    /// A selector with nothing behind it is an empty text: the label comes
+    /// from the next source.
+    #[test]
+    fn a_selector_without_text_is_not_decoded() {
+        for text in [
+            &[0x15][..],
+            &[0x05][..],
+            &[0x10, 0x00, 0x01][..],
+            &[0x08][..],
+        ] {
+            assert_eq!(
+                label_or_next_source(text).as_deref(),
+                Some("eng"),
+                "{text:02X?}"
             );
         }
     }
