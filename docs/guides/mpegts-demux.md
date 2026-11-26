@@ -578,8 +578,10 @@ position across PES and raises
 
 A loss (a continuity gap, a damaged or dropped PES, a signalled
 discontinuity) starts the count again. A stream whose record bodies carry
-byte-aligned syncword patterns at short intervals can still be misread
-after a join, with one `MissingSyncword`. `Full` fails `feed` and drops
+byte-aligned syncword patterns at short intervals can still be misread,
+after a join and again after each misreading, each time with one
+`MissingSyncword` (26 of 117 such synthetic streams were, with 1 to 14
+issues each). `Full` fails `feed` and drops
 the `Sample`; the other modes deliver it beside the issue.
 
 ## What gets parsed vs. passed through
