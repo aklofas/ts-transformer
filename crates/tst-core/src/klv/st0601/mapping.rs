@@ -308,7 +308,7 @@ fn read_unsigned_be(bytes: &[u8]) -> u64 {
 mod tests {
     use super::*;
 
-    // --- KLV-3: write_signed_be ≡ write_unsigned_be(v as u64) ---
+    // --- write_signed_be ≡ write_unsigned_be(v as u64) ---
     //
     // Proves the per-slot `(value >> shift) & 0xFF` already extracts the
     // correct two's-complement byte, so the old `mask` computation was dead.

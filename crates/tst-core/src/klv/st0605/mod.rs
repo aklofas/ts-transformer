@@ -23,10 +23,11 @@
 //! body. Reserved-bit validation is caller-opt-in via
 //! [`TimeStatus::reserved_bits_valid`].
 //!
-//! **Deferred:** the ST 0605.7 Nano Precision Time Stamp Pack
-//! (tag 0x06 0x0E…0x0F, nanosecond resolution, 10-byte body) is not
-//! yet implemented. The current decoder handles only the standard
-//! 9-byte Precision Time Stamp Pack. See
+//! **Deferred:** the Nano Precision Time Stamp Pack of ST 0605.10 §8
+//! (key `06 0E 2B 34 02 05 01 01 0E 01 03 03 01 00 00 00`, a 9-byte value
+//! of the Time Status and an 8-byte nanosecond count) is not yet
+//! implemented. The current decoder handles only the Precision Time
+//! Stamp Pack. See
 //! `docs/project/deferred-features.md` → "ST 0605 Nano Precision
 //! Time Stamp Pack".
 

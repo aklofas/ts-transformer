@@ -30,7 +30,8 @@
 //!
 //! ## Spec coverage
 //!
-//! **Standard:** MISB ST 1204.3 §7.3 MIIS Core Identifier Binary Format.
+//! **Standard:** MISB ST 1204.3 §7.4.1 Binary Format of the MIIS Core
+//! Identifier.
 //!
 //! **Version:** only version 1 (`0x01`) is accepted; any other byte value —
 //! including multi-byte BER-OID forms (high-bit set) — returns
@@ -46,7 +47,8 @@
 //!
 //! **EBNF rule:** a Minor Core Id (`minor` present) must have sensor,
 //! platform, and window all absent. Usage byte `0x00` (all-None) is
-//! invalid per ST 1204.3 §7.3.1. Reserved bits b7 or b0 set → error.
+//! invalid per the Usage Value rule of ST 1204.3 §7.1. Reserved bits b7
+//! or b0 set → error (§7.3.1 Table 3).
 
 use alloc::vec::Vec;
 use core::fmt;
@@ -70,7 +72,7 @@ pub enum IdType {
 }
 
 crate::binding_record! {
-    /// A decoded MIIS Core Identifier (ST 1204.3 §7.3).
+    /// A decoded MIIS Core Identifier (ST 1204.3 §7.4.1).
     ///
     /// Contains the raw version byte plus up to four optional UUID components.
     /// The EBNF constraint — `minor` XOR any-of-(sensor/platform/window) — is
@@ -97,7 +99,7 @@ crate::binding_record! {
         @[custom]
         pub window: Option<[u8; 16]>,
         /// Minor Core Identifier UUID. When present, sensor/platform/window
-        /// must all be `None` (ST 1204.3 §7.3.1 EBNF rule).
+        /// must all be `None` (the EBNF of ST 1204.3 §7.1).
         @[custom]
         pub minor: Option<[u8; 16]>,
     }
@@ -275,8 +277,8 @@ fn read_uuid(buf: &[u8], pos: &mut usize) -> Result<[u8; 16], St1204Error> {
 impl CoreId {
     /// Checks what [`decode`] checks of an identifier's fields: the version
     /// is `1`, at least one UUID is present, and a minor identifier stands
-    /// alone (ST 1204.3 §7.3.1). An identifier that passes encodes to bytes
-    /// [`decode`] reads back as the same value.
+    /// alone (the EBNF of ST 1204.3 §7.1). An identifier that passes encodes
+    /// to bytes [`decode`] reads back as the same value.
     ///
     /// # Errors
     /// [`St1204Error::UnsupportedVersion`] for a version other than `1`;

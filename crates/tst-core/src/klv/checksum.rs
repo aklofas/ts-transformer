@@ -1,4 +1,4 @@
-//! ST 0601 §6.3 16-bit running-sum checksum.
+//! ST 0601 §6.6 16-bit running-sum checksum.
 //!
 //! **Stability: Stable** — see the
 //! [API stability reference](https://github.com/aklofas/ts-transformer/blob/main/docs/reference/api-stability.md).

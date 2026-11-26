@@ -9,16 +9,19 @@ use alloc::vec::Vec;
 crate::binding_record! {
     /// MISB ST 0903.6 VMTI (Video Moving Target Indicator) Local Set typed view.
     ///
-    /// Required tags per ST 0903.6 §6 Table 1: `precision_time_stamp`,
-    /// `vmti_system_name` (when applicable), `version_number`, `frame_width`,
-    /// `frame_height`. Lenient decode tolerates missing required tags and
-    /// surfaces per-field decode failures in `field_errors`; strict decode
-    /// rejects missing required tags.
+    /// Every instance carries `version_number` (Item 4, ST 0903.5-99) and
+    /// `num_targets_reported` (Item 6, ST 0903.4-19); a standalone one also
+    /// the checksum, `precision_time_stamp`, both fields of view and `miis_id`
+    /// (ST 0903.4-15, ST 0903.6-117, -122, -123, -125). Lenient decode
+    /// tolerates a missing required item and surfaces per-field decode
+    /// failures in `field_errors`; `decode_strict` refuses a set without
+    /// Item 4 or 6, and `decode_standalone_strict` a standalone one without
+    /// the others.
     ///
     /// `algorithm_series` and `ontology_series` are top-level nested LS
     /// pass-through bytes (typed inner layers deferred); `miis_id` is the MISB
-    /// ST 1204 Minor Item Identification System Core Identifier, also
-    /// pass-through bytes (typed layer deferred).
+    /// ST 1204 Motion Imagery Identification System (MIIS) Core Identifier,
+    /// also pass-through bytes, which [`crate::klv::st1204::decode`] reads.
     #[must_use]
     #[derive(Debug, Clone, Default)]
     pub struct VmtiLs {

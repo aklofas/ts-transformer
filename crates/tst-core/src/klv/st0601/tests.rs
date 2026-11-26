@@ -1489,7 +1489,7 @@ fn decode_strict_compliance_rejects_non_canonical_per_item_tag() {
 
 #[test]
 fn encode_strict_rejects_missing_tag_2() {
-    // ST 0601.13-22: Tag 2 (Precision Time Stamp) is mandatory in every
+    // ST 0601.8-09: Item 2 (Precision Time Stamp) is mandatory in every
     // conformant LS instance. Strict-encode must refuse a record where
     // it is absent.
     let r = UasDatalinkLs {

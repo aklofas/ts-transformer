@@ -27,8 +27,7 @@ use alloc::vec::Vec;
 /// Fields are emitted in ascending tag order (2, 3, 4, 5, 6, 8, 9, 10,
 /// 11, 12, 13, 101, 102, 103); Tag 7 (`motionImageryFrameNumber`) is
 /// deprecated in v6 and never emitted. Preserved `unknown` tags are
-/// appended last per ST 0107.5 §6 (single-byte tag IDs only — the
-/// VMTI LS spec keeps tags ≤107).
+/// appended last, each with its BER-OID tag (ST 0107.5 §6; ST 0903.6 §9.2).
 ///
 /// Round-trip property: `decode(encode_to_vec(&ls)?)?` reproduces all
 /// typed fields and preserved unknowns of `ls` (modulo IMAPB
@@ -39,8 +38,9 @@ use alloc::vec::Vec;
 /// # Errors
 /// - [`KlvEncodeError::OutOfRange`] if `horizontal_fov` /
 ///   `vertical_fov` (or any per-target IMAPB float field) falls
-///   outside its declared range, or if Item 5, 6, 8 or 9 is above
-///   16 777 215 (V3: three bytes).
+///   outside its declared range (with that item's tag), or if Item 5, 6,
+///   8 or 9 is above 16 777 215 (V3: three bytes), and with tag 0 for a
+///   `target_id` of 2^63 or more (ST 0903.6 Table 10: V9).
 /// - [`KlvEncodeError::RecordTooLarge`] if a TLV's declared length
 ///   would overflow BER encoding.
 pub fn encode(ls: &VmtiLs, out: &mut Vec<u8>) -> Result<(), KlvEncodeError> {

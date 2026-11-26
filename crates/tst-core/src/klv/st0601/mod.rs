@@ -7,17 +7,20 @@
 //! directly. Composite types (`GeoPoint`, `Attitude`, `FieldOfView`,
 //! `Corners`) are derived read-only views layered on top.
 //!
-//! Three decode entry points:
-//! - [`decode`] — verifies checksum, accepts any UL.
+//! Four decode entry points:
+//! - [`decode`] — verifies the checksum (one Tag 1, the final item),
+//!   accepts any UL.
 //! - [`decode_unchecked`] — skips checksum verification (useful for known-
 //!   broken-checksum captures), accepts any UL.
 //! - [`decode_strict`] — verifies checksum + requires the ST 0601 family UL
 //!   pattern.
-//! - [`decode_strict_compliance`] — adds full ST 0107.5 conformance checks
-//!   on top of `decode_strict`.
+//! - [`decode_strict_compliance`] — adds the rules it lists (item order,
+//!   canonical BER, the item profile and coded-value domains) on top of
+//!   `decode_strict`; its `Ok` promises those rules only.
 //!
 //! - [`patch`] — byte-faithful tag-level patching: re-encode only the
-//!   edited tags, copy every other TLV verbatim, recompute the checksum.
+//!   edited tags, copy every other TLV verbatim, recompute the checksum; a
+//!   new Item 2 goes first.
 //!
 //! ## Spec coverage
 //!
@@ -103,13 +106,15 @@
 //! apply downstream-specific typed parsers.
 //!
 //! **Decode modes:**
-//! - [`decode`] — verifies running-sum checksum; accepts any UL.
+//! - [`decode`] — verifies the running-sum checksum, the single final
+//!   item; accepts any UL.
 //! - [`decode_unchecked`] — skips checksum verification (useful for
 //!   known-broken-checksum captures from older encoders).
 //! - [`decode_strict`] — checksum + ST 0601 family UL pattern
 //!   requirement.
-//! - [`decode_strict_compliance`] — adds full ST 0107.5 conformance
-//!   checks (BER canonicality, no duplicate tags, etc.).
+//! - [`decode_strict_compliance`] — adds the rules it lists (BER
+//!   canonicality, no duplicate typed tags, the item order, profile and
+//!   coded-value domains); `Ok` promises those rules only.
 //!
 //! **Deferred:** interior typing of the six remaining named-but-opaque
 //! nested local sets above (tags 95, 97–101). Tag 73 (RVT / ST 0806) is

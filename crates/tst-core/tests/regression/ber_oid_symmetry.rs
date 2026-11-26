@@ -3,13 +3,13 @@
 //!
 //!   - ST 0601 strict-mode duplicate-tag + canonical BER
 //!   - ST 0601 encode reserved-tag filter
-//!   - ST 0102 BER-OID encode
-//!   - ST 0903 BER-OID walker + VTargetPack inner walk
+//!   - ST 0102 one-byte tag encode
+//!   - ST 0903 BER-OID walker + VTargetPack one-byte-tag inner walk
 //!
 //! Spec references:
 //!   ST 0107.5 §6.3.1  BER-OID canonical encoding ("0x80 forbidden as first byte")
 //!   ST 0107.5 §6.3.2  BER length canonical encoding ("fewest bytes")
-//!   ST 0601.13 §6.2 + ST 0601.24 §6  reserved structural tags 1, 2, 65
+//!   ST 0601.8-09, -11, -12  the mandatory structural Items 2, 1, 65
 //!   ST 0903.6  §10.1  typed VMTI tag table
 //!   ST 0102.12 §6.7   Security Metadata LS required-tag table
 
@@ -342,10 +342,11 @@ fn st0601_strict_compliance_rejects_non_canonical_length_in_body_st0107_5_6_3_2(
 // ST 0102 — BER-OID encode + round-trip
 // ============================================================================
 
-/// The ST 0102 encoder MUST round-trip a multi-byte BER-OID `unknown`
-/// tag (tag ≥ 128); a hard-coded single-byte tag write would silently
-/// truncate tag > 127. Construct a SecurityLs with required tags + an
-/// unknown tag at id 200 and confirm round-trip preserves it.
+/// The ST 0102 encoder round-trips an `unknown` tag above 127: the
+/// Security Local Set's tags are one byte (its label's byte 6 is 0x03, ST
+/// 0102.12 §6.7), so tag 200 is written as 0xC8. Construct a SecurityLs
+/// with required tags + an unknown tag at id 200 and confirm round-trip
+/// preserves it.
 #[test]
 fn st0102_encode_round_trips_multibyte_ber_oid_unknown_tag_e4_fix() {
     let mut security = SecurityLs {
@@ -357,7 +358,7 @@ fn st0102_encode_round_trips_multibyte_ber_oid_unknown_tag_e4_fix() {
         version: Some(12),
         ..Default::default()
     };
-    // Forward-compat tag at id 200 (multi-byte BER-OID: [0x81, 0x48]).
+    // Forward-compat tag at id 200 (the one byte 0xC8).
     security.unknown.push(OwnedRawField {
         tag: 200,
         value: vec![0xCA, 0xFE, 0xBA, 0xBE],
@@ -484,8 +485,8 @@ fn st0903_round_trips_multibyte_ber_oid_unknown_tag_e5() {
     assert_eq!(preserved.value, &[0x11, 0x22, 0x33]);
 }
 
-/// VTargetPack inner walker preserves
-/// multi-byte BER-OID unknown tags on each per-target pack.
+/// VTargetPack inner walker preserves an unknown tag above 127 (one
+/// byte in a pack, ST 0903.6 §9.2) on each per-target pack.
 #[test]
 fn st0903_vtarget_pack_round_trips_multibyte_ber_oid_unknown_tag_e5_followup() {
     let pack = st0903::VTargetPack {

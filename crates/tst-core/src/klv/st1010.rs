@@ -207,17 +207,16 @@ pub fn decode_sdcc_flp(bytes: &[u8]) -> Result<SdccFlp, KlvFieldError> {
     // already bounds `m` at Parse-Control time (to at most `remaining*8`
     // in sparse mode, and to `corr_slots(MAX_MATRIX_SIZE)` always), so the
     // `present`/`correlations` allocations below can never
-    // themselves abort the process — but per this project's precedent
-    // (the H.264 `max_au_bytes` arc), invalid input should never pay even
-    // a bounded allocation before failing. A truncated payload can still
+    // themselves abort the process — but invalid input should never pay
+    // even a bounded allocation before failing. A truncated payload can still
     // declare, via the Bit Vector, more present slots than the buffer has
     // correlation bytes for. Count the *meaningful* popcount (bits past
     // slot `m-1` are wire padding, not slots) without allocating, and
     // reject before the m-sized vecs below if the buffer can't possibly
     // hold `popcount * clen` correlation bytes. (Full mode needs no
     // analogous check: `check_matrix_size_fits` already bounds `m` itself
-    // against `clen` before `m` is even computed at line ~164, i.e.
-    // before any allocation — verified, not just assumed.)
+    // against `clen` before `m` is even computed, i.e. before any
+    // allocation.)
     if cs && clen > 0 {
         let popcount = (0..m)
             .filter(|&k| (bitvec[k / 8] >> (7 - (k % 8))) & 1 != 0)

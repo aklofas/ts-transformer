@@ -9,9 +9,9 @@
 //! **Sensor Point of Interest** (SPI) event (the sensor's ground aimpoint),
 //! linked back to the platform event via `detail/link`.
 //!
-//! Per §1, the spec deliberately forbids UUIDs for `uid` — CoT generated
-//! from a replayed file must be byte-identical to CoT generated live, and a
-//! UUID minted after the fact would differ run to run. `uid` is instead a
+//! Per its Scope (§1), ST 0805.1 does not recommend UUIDs for `uid`: CoT
+//! generated later from a file should be the same as CoT generated live, and
+//! a UUID generated after the fact would differ. `uid` is instead a
 //! deterministic concatenation of KLV tags: [`platform_uid`] =
 //! `"{tag10}_{tag3}"`, [`spi_uid`] = `"{tag10}_{tag3}_{tag11}"`.
 //!
@@ -318,8 +318,8 @@ fn chain_hae(
 /// (Tag 75)**. Only when neither is present does it fall
 /// back to the MSL-referenced Sensor True Altitude (Tag 15), adjusted by
 /// [`CotConfig::geoid_undulation_m`] when the caller has supplied one
-/// (item 7 of the mapping analysis — ST 0805.1 requires an MSL→HAE
-/// conversion but supplies no geoid model); without one the MSL value is
+/// (ST 0805.1 requires an MSL→HAE conversion but supplies no geoid
+/// model); without one the MSL value is
 /// written as the HAE ([`platform_position_xml_with`] can refuse instead).
 /// This is the chain of [`UasDatalinkLs::sensor_position`]: an item of it
 /// sent as "no value" (a sentinel or an IMAPB special) ends it, and the

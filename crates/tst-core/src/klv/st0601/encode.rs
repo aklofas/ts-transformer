@@ -20,6 +20,33 @@ use super::tags::{Encoding, FieldValue, LinearRange, TAGS, TagSpec, lookup as lo
 /// Use [`encode_to_vec`] to allocate a fresh `Vec<u8>` instead;
 /// [`encoded_len`] sizes a buffer in advance.
 ///
+/// # What the encoders write, and what the strict pair adds
+///
+/// The ordinary encoders ([`encode`], [`encode_with`], [`encode_to_vec`],
+/// [`encode_to_vec_with`]) write each field as given: no string is cleaned
+/// of the characters ST 0107.5 §6.3.3.2 removes, the strings inside packs
+/// included, and an item the compliance decode refuses by its item profile
+/// or coded-value domain is written. They refuse a value outside its range
+/// (under the default policy), a value over its item's cap, a typed or
+/// structural tag in `unknown`, and a location with a height or one
+/// coordinate but not both (see the errors below). An Item 102 pack goes
+/// after the items it refines, or after the typed items when it cannot be
+/// placed (see [`SdccFlpField`](super::SdccFlpField)).
+///
+/// [`encode_strict_compliance`] cleans every string, the strings inside
+/// packs too (ST 0107.3-12, -13), and refuses a record without Item 2, an
+/// item the item profile or a coded-value domain refuses, an SDCC-FLP
+/// header ST 1010 does not define and an Item 102 pack it cannot place.
+///
+/// On the decode side the verifying decodes ([`decode`](super::decode()),
+/// [`super::decode_strict`], [`super::decode_strict_compliance`]) require
+/// one checksum, the final item (ST 0601.8-11).
+/// [`super::decode_strict_compliance`]'s `Ok` promises the rules it lists
+/// and nothing more: a value that breaks none of them but does not decode
+/// is in [`UasDatalinkLs::field_errors`]. The decoders take strings as
+/// written, at the top level and inside packs: none checks or cleans them.
+/// [`patch`](super::patch()) writes a new Item 2 first (ST 0601.8-09).
+///
 /// # Errors
 /// - [`KlvEncodeError::BufferTooSmall`] if `out.len()` is less than the
 ///   required encoded length (call [`encoded_len`] first).
@@ -160,12 +187,13 @@ fn encode_to_vec_into(
 /// [`super::decode_strict_compliance`], which already rejects on-the-wire
 /// instances missing the same mandatory items.
 ///
-/// Per MISB ST 0601.13 §6 (and re-affirmed by ST 0601.24 §6 and
-/// ST 0107.5 §6.2 — Local Set conformance rules), every conformant ST
-/// 0601 instance must carry Tag 2 (Precision Time Stamp). Tag 1
-/// (Checksum) and Tag 65 (LS Version Number) are also mandatory but are
-/// auto-emitted by this encoder, so the only caller-supplied mandatory
-/// item this function gates is Tag 2.
+/// ST 0601.19 makes three items mandatory in every instance: Item 2
+/// (Precision Time Stamp) as the first item (ST 0601.8-09), Item 1
+/// (Checksum) as the final one (ST 0601.8-11) and Item 65 (LS Version
+/// Number, ST 0601.8-12). This encoder writes Items 1 and 65 itself, so
+/// the only caller-supplied mandatory item this function gates is Item 2.
+/// It also cleans the strings and refuses what the compliance decode
+/// refuses: see [`encode`] for what each encoder writes.
 ///
 /// # Errors
 ///
@@ -178,14 +206,16 @@ fn encode_to_vec_into(
 ///   coded-value domains (for example wavelength id 0 beside another id,
 ///   a root Metadata Substream ID, a Mode 1 SDCC-FLP, a zero Positioning
 ///   Method Source, a reserved Generic Flag Data bit, a Platform Status
-///   code above 12 or an Image Horizon coordinate above 100 %).
+///   code above 12 or an Image Horizon coordinate above 100 %), and with
+///   `tag: 102` for an SDCC-FLP whose header ST 1010 does not define or an
+///   Item 102 pack that cannot be placed after the items it refines.
 /// - All [`KlvEncodeError`] variants that [`encode_to_vec`] can return,
 ///   surfaced verbatim from the underlying encode path once the strict
 ///   precondition gate passes.
 pub fn encode_strict_compliance(record: &UasDatalinkLs) -> Result<Vec<u8>, KlvEncodeError> {
-    // The only caller-supplied mandatory item under ST 0601.13-22 +
-    // ST 0107.5 §6.2 — Tags 1 + 65 auto-emit (see encode.rs:45-73 +
-    // 119-166), so they cannot be missing here.
+    // Item 2 is the only mandatory item the caller supplies (ST
+    // 0601.8-09): the encoder writes Items 1 and 65 itself, so they cannot
+    // be missing here.
     if record.timestamp_us.is_none() {
         return Err(KlvEncodeError::MissingMandatoryItem {
             tag: 2,

@@ -162,9 +162,9 @@ pub fn decode_strict(buf: &[u8]) -> Result<UasDatalinkLs, KlvDecodeError> {
 /// list too.
 ///
 /// Use this only when validating compliance against published
-/// captures or reference test vectors. Real-world captures from the
-/// corpus often violate -09/-11/-12/-24 in benign ways; prefer `decode`
-/// for production parsing.
+/// captures or reference test vectors: a producer that leaves out Item 65
+/// (ST 0601.8-12), for example, is refused here and read by [`decode`];
+/// prefer `decode` for production parsing.
 ///
 /// # Errors
 /// In addition to all variants from [`decode_strict`]:
