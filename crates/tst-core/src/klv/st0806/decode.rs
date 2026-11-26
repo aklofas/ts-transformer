@@ -3,6 +3,7 @@
 
 use alloc::borrow::ToOwned;
 use alloc::string::String;
+use alloc::vec::Vec;
 
 use crate::error::{KlvDecodeError, KlvFieldError};
 use crate::klv::length::read_ber;
@@ -78,8 +79,8 @@ pub fn decode(bytes: &[u8]) -> Result<RvtLs, KlvDecodeError> {
 /// present.
 ///
 /// The CRC covers every byte from the start of the UL up to (but not
-/// including) the CRC's own 4 value bytes — the last well-formed Tag 1
-/// occurrence wins if the (non-conformant) input repeats it. Absence of
+/// including) the CRC's own 4 value bytes, and must be the set's one, last
+/// item (ST 0806.4-03 / -04). Absence of
 /// Tag 1 is not an error: an embedded RVT LS is not required to carry
 /// one, and this function accepts standalone captures that omit it too.
 /// ST 0806.4 does not explicitly state whether the covered span includes
@@ -93,6 +94,11 @@ pub fn decode(bytes: &[u8]) -> Result<RvtLs, KlvDecodeError> {
 ///   the declared BER length runs past the buffer.
 /// - [`KlvDecodeError::UnexpectedUniversalLabel`] if the leading 16
 ///   bytes are not [`super::RVT_LS_UL`].
+/// - [`KlvDecodeError::MalformedChecksum`] if a Tag 1 item's value is not
+///   4 bytes (`offset` = its value's).
+/// - [`KlvDecodeError::DuplicateTag`] with `tag: 1` at the second Tag 1
+///   item's start.
+/// - [`KlvDecodeError::Tag1NotLast`] if an item follows the Tag 1 item.
 /// - [`KlvDecodeError::Crc32Mismatch`] if a declared Tag 1 value does
 ///   not match the recomputed CRC-32/MPEG-2.
 /// - Any structural error surfaced while locating Tag 1, or from
@@ -132,52 +138,78 @@ pub fn decode_standalone(bytes: &[u8]) -> Result<RvtLs, KlvDecodeError> {
     }
     let body = &after_len[..declared_len];
 
-    // Locate the last well-formed Tag 1 (CRC) occurrence and verify it
-    // covers every byte of `bytes` up to (not including) its own 4 value
-    // bytes. A Tag 1 occurrence with the wrong length is left for the
-    // body decode below to report as a field_errors entry rather than
-    // aborting the standalone CRC check here.
-    let mut declared_crc: Option<(u32, usize)> = None; // (value, offset of value bytes within `bytes`)
+    // Collect every Tag 1 (CRC) item first, then judge them in one order
+    // (ST 0806.4-03 / -04): a wrong width, a second CRC, a CRC that is not
+    // the set's last item, then the value. Judging each one as it is met
+    // would report "not last" for a set that has two.
+    // (end of the item before it, value offset, value length), in `bytes`.
+    let mut crcs: Vec<(usize, usize, usize)> = Vec::new();
+    let mut prev_end = body_offset;
     for r in Iter::local_set(body) {
         let f = r.map_err(|mut e| {
             crate::klv::length::rebase_offset(&mut e, body_offset);
             e
         })?;
-        if f.tag == 1 && f.value.len() == 4 {
-            let mut a = [0u8; 4];
-            a.copy_from_slice(f.value);
-            // `f.value` is guaranteed by `Iter::local_set(body)` to be a
-            // subslice of `body` itself, so this subtraction can't
-            // underflow. `body_offset` (computed above from slice lengths,
-            // no pointer math) is `body`'s own start within `bytes`, so
-            // summing the two gives the value bytes' offset in `bytes`
-            // without diffing pointers across the `bytes`/`after_len`/
-            // `body` slicing chain.
-            let offset_in_body = (f.value.as_ptr() as usize) - (body.as_ptr() as usize);
-            let value_offset = body_offset + offset_in_body;
-            declared_crc = Some((u32::from_be_bytes(a), value_offset));
+        // `f.value` is guaranteed by `Iter::local_set(body)` to be a
+        // subslice of `body` itself, so this subtraction can't underflow.
+        // `body_offset` (computed above from slice lengths, no pointer
+        // math) is `body`'s own start within `bytes`, so summing the two
+        // gives the value bytes' offset in `bytes` without diffing pointers
+        // across the `bytes`/`after_len`/`body` slicing chain.
+        let value_offset = body_offset + ((f.value.as_ptr() as usize) - (body.as_ptr() as usize));
+        if f.tag == 1 {
+            crcs.push((prev_end, value_offset, f.value.len()));
         }
+        prev_end = value_offset + f.value.len();
     }
-    if let Some((expected, value_offset)) = declared_crc {
-        // Defensive bounds check: `value_offset + 4 <= bytes.len()` always
-        // holds today (the 4 CRC value bytes are themselves inside
-        // `bytes`), but skip verification rather than panic on a future
-        // refactor that breaks the invariant above.
-        let in_bounds = value_offset
-            .checked_add(4)
-            .is_some_and(|end| end <= bytes.len());
-        if in_bounds {
-            let computed = crate::mpegts::common::crc32::crc32_mpeg2(&bytes[..value_offset]);
-            if computed != expected {
-                return Err(KlvDecodeError::Crc32Mismatch {
-                    expected,
-                    found: computed,
-                });
-            }
+    if let Some(&(_, value_offset, got)) = crcs.iter().find(|c| c.2 != 4) {
+        return Err(KlvDecodeError::MalformedChecksum {
+            offset: value_offset,
+            got,
+        });
+    }
+    if let Some(&(prev_end, value_offset, _)) = crcs.get(1) {
+        return Err(KlvDecodeError::DuplicateTag {
+            tag: 1,
+            offset: item_start(bytes, prev_end, value_offset),
+        });
+    }
+    if let Some(&(_, value_offset, _)) = crcs.first() {
+        if value_offset + 4 != body_offset + body.len() {
+            return Err(KlvDecodeError::Tag1NotLast);
+        }
+        let mut a = [0u8; 4];
+        a.copy_from_slice(&bytes[value_offset..value_offset + 4]);
+        let expected = u32::from_be_bytes(a);
+        let computed = crate::mpegts::common::crc32::crc32_mpeg2(&bytes[..value_offset]);
+        if computed != expected {
+            return Err(KlvDecodeError::Crc32Mismatch {
+                expected,
+                found: computed,
+            });
         }
     }
 
     decode(body)
+}
+
+/// The start, in `bytes`, of the item whose value begins at `value_offset`:
+/// the item headers are walked from `from`, the end of the item the
+/// iterator returned before it (wide-tag items it stepped over may lie
+/// between). The framing was read once already, so every read succeeds.
+fn item_start(bytes: &[u8], mut from: usize, value_offset: usize) -> usize {
+    use crate::klv::length::skip_ber_oid;
+    while let Ok(after_tag) = skip_ber_oid(&bytes[from..]) {
+        let Ok((len, after_len)) = read_ber(after_tag) else {
+            break;
+        };
+        let value_at = bytes.len() - after_len.len();
+        if value_at >= value_offset {
+            break;
+        }
+        from = value_at + len;
+    }
+    from
 }
 
 /// Apply one top-level RVT LS tag (Table 8-1) to `record`. Mirrors

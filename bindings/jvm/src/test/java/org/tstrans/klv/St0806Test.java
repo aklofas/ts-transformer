@@ -201,6 +201,42 @@ class St0806Test {
         assertTrue(ex.getMessage().contains(String.format("computed 0x%08x", recomputed)));
     }
 
+    // ST 0806.4-03 / -04: one checksum, the last item. Each case is a valid
+    // standalone set (timestamp, then the CRC item 01 04 <4 bytes>, the outer
+    // length at byte 16) changed in one place.
+
+    private static byte[] withLength(byte[] set, int delta, byte[] tail) {
+        byte[] out = cat(set, tail);
+        out[16] = (byte) (set[16] + delta);
+        return out;
+    }
+
+    @Test
+    void decodeRvtStandaloneRefusesAnItemAfterTheCrc() throws KlvEncodeException {
+        byte[] good = Klv.encodeRvtStandalone(new RvtLs.Builder().timestampUs(1L).build());
+        byte[] bad = withLength(good, 3, new byte[] {0x08, 0x01, 0x04});
+        KlvDecodeException ex = assertThrows(KlvDecodeException.class, () -> Klv.decodeRvtStandalone(bad));
+        assertEquals(KlvDecodeException.Kind.MISSING_REQUIRED_TAG, ex.kind());
+    }
+
+    @Test
+    void decodeRvtStandaloneRefusesASecondCrc() throws KlvEncodeException {
+        byte[] good = Klv.encodeRvtStandalone(new RvtLs.Builder().timestampUs(1L).build());
+        byte[] bad = withLength(good, 6, new byte[] {0x01, 0x04, 0, 0, 0, 0});
+        KlvDecodeException ex = assertThrows(KlvDecodeException.class, () -> Klv.decodeRvtStandalone(bad));
+        assertEquals(KlvDecodeException.Kind.DUPLICATE_TAG, ex.kind());
+    }
+
+    @Test
+    void decodeRvtStandaloneRefusesAThreeByteCrc() throws KlvEncodeException {
+        byte[] good = Klv.encodeRvtStandalone(new RvtLs.Builder().timestampUs(1L).build());
+        byte[] head = java.util.Arrays.copyOf(good, good.length - 6);
+        byte[] crc = java.util.Arrays.copyOfRange(good, good.length - 4, good.length - 1);
+        byte[] bad = withLength(head, -1, cat(new byte[] {0x01, 0x03}, crc));
+        KlvDecodeException ex = assertThrows(KlvDecodeException.class, () -> Klv.decodeRvtStandalone(bad));
+        assertEquals(KlvDecodeException.Kind.MALFORMED_BYTES, ex.kind());
+    }
+
     @Test
     void decodeRvtStandaloneBadUniversalLabelThrows() {
         byte[] bad = cat(new byte[16], new byte[]{0x00});

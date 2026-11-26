@@ -191,6 +191,35 @@ def test_decode_rvt_standalone_crc_mismatch_raises():
     assert f"computed {recomputed:#010x}" in excinfo.value.message
 
 
+# ST 0806.4-03 / -04: one checksum, the last item. Each case is a valid
+# standalone set (timestamp, then the CRC item 01 04 <4 bytes>, the outer
+# length at byte 16) changed in one place.
+
+
+def test_decode_rvt_standalone_refuses_an_item_after_the_crc():
+    good = encode_rvt_standalone(RvtLs(timestamp_us=1))
+    bad = good[:16] + bytes([good[16] + 3]) + good[17:] + bytes.fromhex("080104")
+    with pytest.raises(KlvError) as excinfo:
+        decode_rvt_standalone(bad)
+    assert excinfo.value.kind == KlvErrorKind.MISSING_REQUIRED_TAG
+
+
+def test_decode_rvt_standalone_refuses_a_second_crc():
+    good = encode_rvt_standalone(RvtLs(timestamp_us=1))
+    bad = good[:16] + bytes([good[16] + 6]) + good[17:] + bytes.fromhex("010400000000")
+    with pytest.raises(KlvError) as excinfo:
+        decode_rvt_standalone(bad)
+    assert excinfo.value.kind == KlvErrorKind.DUPLICATE_TAG
+
+
+def test_decode_rvt_standalone_refuses_a_three_byte_crc():
+    good = encode_rvt_standalone(RvtLs(timestamp_us=1))
+    bad = good[:16] + bytes([good[16] - 1]) + good[17:-6] + bytes([0x01, 0x03]) + good[-4:-1]
+    with pytest.raises(KlvError) as excinfo:
+        decode_rvt_standalone(bad)
+    assert excinfo.value.kind == KlvErrorKind.MALFORMED_BYTES
+
+
 def test_decode_rvt_standalone_bad_universal_label_raises():
     with pytest.raises(KlvError):
         decode_rvt_standalone(bytes(16) + bytes([0x00]))

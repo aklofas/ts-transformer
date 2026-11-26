@@ -3,7 +3,7 @@
 //! exercises).
 
 use super::*;
-use crate::error::KlvEncodeError;
+use crate::error::{KlvDecodeError, KlvEncodeError};
 use crate::klv::pack::OwnedRawField;
 use crate::klv::st0806::model::*;
 
@@ -493,4 +493,85 @@ fn a_decoded_bad_mgrs_component_is_refused_on_reencode_and_the_original_bytes_st
         ..ls
     };
     assert!(encode_to_vec(&cleared).is_ok());
+}
+
+// ST 0806.4-03 / -04: a standalone RVT set carries one checksum, the last
+// item of the set; the CRC-32 covers the set from its key to the CRC's value.
+
+/// A standalone RVT set: the key, the length, `items`, a CRC item computed
+/// over everything before its value, then `after`.
+fn rvt_set_with_crc_then(items: &[u8], after: &[u8]) -> alloc::vec::Vec<u8> {
+    let mut out = RVT_LS_UL.0.to_vec();
+    let body_len = items.len() + 6 + after.len();
+    assert!(body_len < 0x80, "fixture stays in BER short form");
+    out.push(body_len as u8);
+    out.extend_from_slice(items);
+    out.extend_from_slice(&[0x01, 0x04]);
+    let crc = crate::mpegts::common::crc32::crc32_mpeg2(&out);
+    out.extend_from_slice(&crc.to_be_bytes());
+    out.extend_from_slice(after);
+    out
+}
+
+#[test]
+fn decode_standalone_accepts_independent_crc_vector() {
+    // The jMISB vector: version 4 and the CRC 82 35 32 10.
+    let mut v = RVT_LS_UL.0.to_vec();
+    v.extend_from_slice(&[0x09, 0x08, 0x01, 0x04, 0x01, 0x04, 0x82, 0x35, 0x32, 0x10]);
+    assert_eq!(decode_standalone(&v).unwrap().rvt_ls_version, Some(4));
+}
+
+#[test]
+fn decode_standalone_rejects_item_after_crc() {
+    let timestamp = [0x02, 0x08, 0, 6, 0x0A, 0x2D, 0x8A, 0xB4, 0x00, 0x00];
+    let v = rvt_set_with_crc_then(&[0x08, 0x01, 0x04], &timestamp);
+    let err = decode_standalone(&v).unwrap_err();
+    assert!(matches!(err, KlvDecodeError::Tag1NotLast), "{err:?}");
+}
+
+#[test]
+fn decode_standalone_rejects_second_crc() {
+    // A first CRC item that is wrong, then a right one ending the set: the
+    // second is reported at its item's start (16 + 1 + 3 + 6 = 26).
+    let v = rvt_set_with_crc_then(&[0x08, 0x01, 0x04, 0x01, 0x04, 0xDE, 0xAD, 0xBE, 0xEF], &[]);
+    let err = decode_standalone(&v).unwrap_err();
+    assert!(
+        matches!(err, KlvDecodeError::DuplicateTag { tag: 1, offset: 26 }),
+        "{err:?}"
+    );
+    // The same with the second CRC's length in long form (81 04): its item
+    // still starts at 26, three bytes before its value.
+    let mut v = RVT_LS_UL.0.to_vec();
+    v.extend_from_slice(&[
+        16, 0x08, 0x01, 0x04, 0x01, 0x04, 0xDE, 0xAD, 0xBE, 0xEF, 0x01, 0x81, 0x04,
+    ]);
+    let crc = crate::mpegts::common::crc32::crc32_mpeg2(&v);
+    v.extend_from_slice(&crc.to_be_bytes());
+    let err = decode_standalone(&v).unwrap_err();
+    assert!(
+        matches!(err, KlvDecodeError::DuplicateTag { tag: 1, offset: 26 }),
+        "long form: {err:?}"
+    );
+}
+
+#[test]
+fn decode_standalone_rejects_a_three_byte_crc() {
+    // Version 4, then a CRC item of three bytes, its value at 16 + 1 + 3 + 2.
+    let mut v = RVT_LS_UL.0.to_vec();
+    v.extend_from_slice(&[0x08, 0x08, 0x01, 0x04, 0x01, 0x03, 0xAA, 0xBB, 0xCC]);
+    let err = decode_standalone(&v).unwrap_err();
+    assert!(
+        matches!(
+            err,
+            KlvDecodeError::MalformedChecksum { offset: 22, got: 3 }
+        ),
+        "{err:?}"
+    );
+}
+
+#[test]
+fn decode_standalone_without_crc_is_still_accepted() {
+    let mut v = RVT_LS_UL.0.to_vec();
+    v.extend_from_slice(&[0x03, 0x08, 0x01, 0x04]);
+    assert_eq!(decode_standalone(&v).unwrap().rvt_ls_version, Some(4));
 }
