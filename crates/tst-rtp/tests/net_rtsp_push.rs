@@ -24,6 +24,8 @@ mod es_h264;
 mod es_h264_klv;
 #[path = "rtsp_push/mp2t.rs"]
 mod mp2t;
+#[path = "rtsp_push/publisher_change.rs"]
+mod publisher_change;
 #[path = "rtsp_push/refusals.rs"]
 mod refusals;
 #[path = "rtsp_push/shells.rs"]
