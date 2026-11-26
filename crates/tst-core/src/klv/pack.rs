@@ -56,14 +56,13 @@ impl OwnedRawField {
 /// Iterator over a KLV body (post-UL, post-outer-length). Crate-internal:
 /// the typed decoders (`klv::st0601`, `klv::st0102`, `klv::st0605`,
 /// `klv::st0806`, `klv::st0903`) are the consumer-facing API; this is
-/// BER/length-prefix substrate. Local-set form only (a BER-OID or a
-/// one-byte tag, then a BER length); a future ST 0905 universal-set decoder
-/// would need a separate iterator.
-pub(crate) struct Iter<'a> {
+/// BER/length-prefix substrate. Local-set form only (a BER-OID tag, or a
+/// one-byte tag when `ONE_BYTE`, then a BER length); a future ST 0905
+/// universal-set decoder would need a separate iterator.
+pub(crate) struct Iter<'a, const ONE_BYTE: bool = false> {
     buf: &'a [u8],
     offset: usize,
     finished: bool,
-    one_byte: bool,
 }
 
 impl<'a> Iter<'a> {
@@ -74,24 +73,30 @@ impl<'a> Iter<'a> {
             buf,
             offset: 0,
             finished: false,
-            one_byte: false,
         }
     }
+}
 
+impl<'a> Iter<'a, true> {
     /// Iterate a local-set body whose label declares one-byte tags (SMPTE
     /// ST 336 Table 5, registry designator `0x03`: the Security Metadata LS
     /// and the VTarget Pack): every tag byte `0x00` to `0xFF` is the tag.
     pub(crate) fn local_set_one_byte(buf: &'a [u8]) -> Self {
         Self {
-            one_byte: true,
-            ..Self::local_set(buf)
+            buf,
+            offset: 0,
+            finished: false,
         }
     }
 }
 
-impl<'a> Iterator for Iter<'a> {
+impl<'a, const ONE_BYTE: bool> Iterator for Iter<'a, ONE_BYTE> {
     type Item = Result<RawField<'a>, KlvDecodeError>;
 
+    // One out-of-line step per item, with the item's reading inlined into
+    // it: the instruction counts of the KLV decode workloads
+    // (`benches/ir.rs`) are lowest with this split.
+    #[inline(never)]
     fn next(&mut self) -> Option<Self::Item> {
         if self.finished || self.offset >= self.buf.len() {
             return None;
@@ -100,56 +105,88 @@ impl<'a> Iterator for Iter<'a> {
     }
 }
 
-impl<'a> Iter<'a> {
+impl<'a, const ONE_BYTE: bool> Iter<'a, ONE_BYTE> {
+    #[inline(always)]
     fn next_local_set(&mut self) -> Option<Result<RawField<'a>, KlvDecodeError>> {
-        loop {
-            let start = self.offset;
-            let rest = &self.buf[start..];
-            let (tag, after_tag) = if self.one_byte {
-                // Called only with at least one byte left.
-                (u32::from(rest[0]), &rest[1..])
-            } else {
-                match read_ber_oid(rest) {
-                    Ok(v) => v,
-                    // A tag wider than 32 bits is unknown to every set, and
-                    // ST 0107.3-04 has a decoder skip an unknown item.
-                    Err(KlvDecodeError::LengthOverflow { .. }) => {
-                        if let Some(e) = self.skip_wide_item(start) {
-                            return Some(Err(e));
-                        }
-                        if self.offset >= self.buf.len() {
-                            return None;
-                        }
-                        continue;
-                    }
-                    Err(mut e) => {
-                        crate::klv::length::rebase_offset(&mut e, start);
-                        self.finished = true;
-                        return Some(Err(e));
-                    }
-                }
-            };
-            let consumed_tag = rest.len() - after_tag.len();
-            let (len, after_len) = match read_ber(after_tag) {
+        let start = self.offset;
+        let rest = &self.buf[start..];
+        let (tag, after_tag) = if ONE_BYTE {
+            // `next` only calls here with at least one byte left.
+            (u32::from(rest[0]), &rest[1..])
+        } else {
+            match read_ber_oid(rest) {
                 Ok(v) => v,
+                // A tag wider than 32 bits is unknown to every set, and
+                // ST 0107.3-04 has a decoder skip an unknown item.
+                Err(KlvDecodeError::LengthOverflow { .. }) => {
+                    return self.next_after_wide_items(start);
+                }
                 Err(mut e) => {
-                    crate::klv::length::rebase_offset(&mut e, start + consumed_tag);
+                    crate::klv::length::rebase_offset(&mut e, start);
                     self.finished = true;
                     return Some(Err(e));
                 }
-            };
-            let consumed_len = after_tag.len() - after_len.len();
-            if after_len.len() < len {
-                self.finished = true;
-                return Some(Err(KlvDecodeError::Truncated {
-                    offset: start + consumed_tag + consumed_len,
-                    needed: len,
-                    have: after_len.len(),
-                }));
             }
-            let value = &after_len[..len];
-            self.offset = start + consumed_tag + consumed_len + len;
-            return Some(Ok(RawField { tag, value }));
+        };
+        self.read_value(start, tag, after_tag)
+    }
+
+    /// The rest of the item at `start` once its tag is read: the BER
+    /// length and the value.
+    #[inline(always)]
+    fn read_value(
+        &mut self,
+        start: usize,
+        tag: u32,
+        after_tag: &'a [u8],
+    ) -> Option<Result<RawField<'a>, KlvDecodeError>> {
+        let consumed_tag = self.buf.len() - start - after_tag.len();
+        let (len, after_len) = match read_ber(after_tag) {
+            Ok(v) => v,
+            Err(mut e) => {
+                crate::klv::length::rebase_offset(&mut e, start + consumed_tag);
+                self.finished = true;
+                return Some(Err(e));
+            }
+        };
+        let consumed_len = after_tag.len() - after_len.len();
+        if after_len.len() < len {
+            self.finished = true;
+            return Some(Err(KlvDecodeError::Truncated {
+                offset: start + consumed_tag + consumed_len,
+                needed: len,
+                have: after_len.len(),
+            }));
+        }
+        let value = &after_len[..len];
+        self.offset = start + consumed_tag + consumed_len + len;
+        Some(Ok(RawField { tag, value }))
+    }
+
+    /// Step over the wide-tag item at `start` and every one right after it,
+    /// then read the item that follows them. Kept off the inner loop.
+    #[cold]
+    fn next_after_wide_items(
+        &mut self,
+        mut start: usize,
+    ) -> Option<Result<RawField<'a>, KlvDecodeError>> {
+        loop {
+            if let Some(e) = self.skip_wide_item(start) {
+                return Some(Err(e));
+            }
+            start = self.offset;
+            if start >= self.buf.len() {
+                return None;
+            }
+            match read_ber_oid(&self.buf[start..]) {
+                Ok((tag, after_tag)) => return self.read_value(start, tag, after_tag),
+                Err(KlvDecodeError::LengthOverflow { .. }) => {}
+                Err(mut e) => {
+                    crate::klv::length::rebase_offset(&mut e, start);
+                    self.finished = true;
+                    return Some(Err(e));
+                }
+            }
         }
     }
 
