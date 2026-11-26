@@ -135,21 +135,19 @@ fn st0903_10_1_11_horizontal_fov_180_deg_boundary() {
 // Interaction between FOV tags and IMAPB special values
 // ============================================================================
 //
-// The lenient ST 0903 walker (`klv::st0903::decode::decode`) maps every
-// non-Value DecodedImapb result to `field_errors.push(InvalidLength)`
-// and continues. This is documented in the walker source as the
-// integration choice: "the lenient top-level walker treats special
-// values and out-of-range as 'field unavailable'." Tests below
-// confirm that contract holds for the FOV tags specifically (since
-// they're the only top-level IMAPB tags in the VMTI LS).
+// ST 0903.6 §9.1.1 sends an ST 1201 special value (an out-of-range
+// signal, "Invalid") in place of the measurement: the lenient ST 0903
+// walker (`klv::st0903::decode::decode`) leaves the field unset with no
+// field error. A pattern outside the special-value space that decodes
+// past the range is still a field error. Tests below pin both for the
+// FOV tags (the only top-level IMAPB tags in the VMTI LS).
 
 /// Inject a hand-built §7.2.3 Table 2 BelowMin signal (byte0=0xE0)
-/// into Tag 11 (`horizontal_fov`). The lenient walker should NOT
-/// populate `horizontal_fov` (since it can't synthesize a concrete
-/// f64) but should record a `field_errors` entry instead of failing
-/// the whole record.
+/// into Tag 11 (`horizontal_fov`). The lenient walker leaves
+/// `horizontal_fov` unset (it cannot synthesize a concrete f64) and
+/// records no error: the signal is a legal value.
 #[test]
-fn st0903_lenient_walker_treats_below_min_signal_as_field_error() {
+fn st0903_lenient_walker_treats_below_min_signal_as_unset() {
     // Hand-build a minimal embedded-VMTI body with Tag 11 carrying
     // the §7.2.3 Table 2 BelowMin pattern.
     // Body structure: [tag=0x0B] [len=0x02] [value 0xE0 0x00].
@@ -160,11 +158,8 @@ fn st0903_lenient_walker_treats_below_min_signal_as_field_error() {
         "BelowMin signal must not synthesize a concrete f64"
     );
     assert!(
-        decoded
-            .field_errors
-            .iter()
-            .any(|e| matches!(e, KlvFieldError::InvalidLength { tag: 11, .. })),
-        "expected InvalidLength field_error for tag 11 (lenient mapping), got {:?}",
+        decoded.field_errors.is_empty(),
+        "a special is a legal value, got {:?}",
         decoded.field_errors
     );
 }
@@ -172,16 +167,13 @@ fn st0903_lenient_walker_treats_below_min_signal_as_field_error() {
 /// Inject a §7.2.3 Table 2 PositiveInfinity signal (byte0=0xC8) into
 /// Tag 12 (`vertical_fov`). Same lenient-walker contract.
 #[test]
-fn st0903_lenient_walker_treats_positive_infinity_signal_as_field_error() {
+fn st0903_lenient_walker_treats_positive_infinity_signal_as_unset() {
     let body = [0x0C, 0x02, 0xC8, 0x00];
     let decoded = st0903::decode(&body).unwrap();
     assert_eq!(decoded.vertical_fov, None);
     assert!(
-        decoded
-            .field_errors
-            .iter()
-            .any(|e| matches!(e, KlvFieldError::InvalidLength { tag: 12, .. })),
-        "expected InvalidLength field_error for tag 12, got {:?}",
+        decoded.field_errors.is_empty(),
+        "a special is a legal value, got {:?}",
         decoded.field_errors
     );
 }

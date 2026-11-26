@@ -26,7 +26,18 @@ pub(crate) fn write_pack(pack: &VTargetPack, out: &mut Vec<u8>) -> Result<usize,
 
     let start = out.len();
 
-    // 1. BER-OID Target ID — u64 needs up to 10 BER-OID bytes (ceil(64/7)).
+    // 1. BER-OID Target ID. Table 10 makes it V9: 63 bits, so an id of
+    //    2^63 or more has no wire form (and no JVM `long` carries it).
+    const TARGET_ID_MAX: u64 = (1 << 63) - 1;
+    if pack.target_id > TARGET_ID_MAX {
+        return Err(KlvEncodeError::OutOfRange {
+            tag: 0,
+            value: pack.target_id as f64,
+            min: 0.0,
+            max: TARGET_ID_MAX as f64,
+            hint: Some("the targetId (tag 0: it has no tag) is BER-OID V9, at most 2^63 - 1"),
+        });
+    }
     let mut buf = [0u8; 10];
     let n = write_ber_oid_u64(pack.target_id, &mut buf)?;
     out.extend_from_slice(&buf[..n]);

@@ -23,18 +23,37 @@ pub(crate) fn read_pack(bytes: &[u8]) -> Result<(VTargetPack, usize), VTargetPac
 
 /// Strict variant of [`read_pack`]: the first per-field value error
 /// aborts with the typed [`VTargetPackError`] instead of landing in
-/// `field_errors`. Framing errors abort in both modes.
+/// `field_errors`. Framing errors abort in both modes. Strict also
+/// refuses a targetId over nine bytes or padded, a pack with no item, a
+/// repeated item (known or unknown), a length not in its shortest form and
+/// a one-byte item outside its range.
 pub(crate) fn read_pack_strict(bytes: &[u8]) -> Result<(VTargetPack, usize), VTargetPackError> {
     read_pack_inner(bytes, /* strict = */ true)
 }
 
 fn read_pack_inner(bytes: &[u8], strict: bool) -> Result<(VTargetPack, usize), VTargetPackError> {
-    use crate::klv::length::{read_ber, read_ber_oid_u64};
+    use crate::error::KlvDecodeError;
+    use crate::klv::length::{read_ber, read_ber_oid_u64, read_ber_strict};
 
     // 1. Read the leading BER-OID Target ID (u64 — up to 10 BER-OID bytes).
     let (target_id, rest) =
         read_ber_oid_u64(bytes).map_err(|_| VTargetPackError::TruncatedTargetId)?;
     let header_consumed = bytes.len() - rest.len();
+    if strict {
+        // Table 10: the targetId is BER-OID V9, and a BER-OID has no
+        // leading padding group.
+        if header_consumed > 9 {
+            return Err(VTargetPackError::TargetIdTooWide);
+        }
+        if bytes[0] == 0x80 {
+            return Err(VTargetPackError::NonCanonicalLength { tag: 0 });
+        }
+        if rest.is_empty() {
+            return Err(VTargetPackError::Empty);
+        }
+    }
+    // Strict: every tag once per pack (ST 0903.5-98).
+    let mut seen = [false; 256];
 
     let mut pack = VTargetPack {
         target_id,
@@ -46,12 +65,24 @@ fn read_pack_inner(bytes: &[u8], strict: bool) -> Result<(VTargetPack, usize), V
     let mut cursor = rest;
     let mut consumed = header_consumed;
     while !cursor.is_empty() {
-        let tag = u32::from(cursor[0]);
+        let tag_byte = cursor[0];
+        let tag = u32::from(tag_byte);
         cursor = &cursor[1..];
         consumed += 1;
 
-        let (declared_len, after_len) =
-            read_ber(cursor).map_err(|_| VTargetPackError::TruncatedField { tag })?;
+        let (declared_len, after_len) = if strict {
+            read_ber_strict(cursor).map_err(|e| match e {
+                KlvDecodeError::NonCanonicalLength { .. } => {
+                    VTargetPackError::NonCanonicalLength { tag }
+                }
+                _ => VTargetPackError::TruncatedField { tag },
+            })?
+        } else {
+            read_ber(cursor).map_err(|_| VTargetPackError::TruncatedField { tag })?
+        };
+        if strict && core::mem::replace(&mut seen[usize::from(tag_byte)], true) {
+            return Err(VTargetPackError::DuplicateTag { tag });
+        }
         let len_consumed = cursor.len() - after_len.len();
         cursor = after_len;
         consumed += len_consumed;
@@ -67,7 +98,7 @@ fn read_pack_inner(bytes: &[u8], strict: bool) -> Result<(VTargetPack, usize), V
         cursor = &cursor[declared_len..];
         consumed += declared_len;
 
-        if let Err(e) = decode_field(tag, value, &mut pack) {
+        if let Err(e) = decode_field(tag, value, &mut pack, strict) {
             if strict {
                 return Err(e);
             }
@@ -98,11 +129,17 @@ fn field_error(e: VTargetPackError, got: usize) -> KlvFieldError {
             got,
         },
         VTargetPackError::TruncatedField { tag } => KlvFieldError::TruncatedField { tag },
-        // Framing errors never reach here — `read_pack_inner` returns them
-        // before `decode_field` runs.
-        VTargetPackError::TruncatedTargetId | VTargetPackError::LengthOverrun { .. } => {
-            KlvFieldError::TruncatedField { tag: 0 }
-        }
+        // Framing and strict-only errors never reach here:
+        // `read_pack_inner` returns them before `decode_field` runs, or in
+        // strict mode only.
+        VTargetPackError::TruncatedTargetId
+        | VTargetPackError::LengthOverrun { .. }
+        | VTargetPackError::DuplicateTag { .. }
+        | VTargetPackError::NonCanonicalLength { .. }
+        | VTargetPackError::Empty
+        | VTargetPackError::TargetIdTooWide
+        | VTargetPackError::ValueOutOfRange { .. }
+        | VTargetPackError::DuplicateTargetId { .. } => KlvFieldError::TruncatedField { tag: 0 },
     }
 }
 
@@ -113,8 +150,13 @@ fn field_error(e: VTargetPackError, got: usize) -> KlvFieldError {
 ///
 /// `tag` is the field's one tag byte, widened to the `u32` the error
 /// and `unknown` types carry.
-fn decode_field(tag: u32, value: &[u8], pack: &mut VTargetPack) -> Result<(), VTargetPackError> {
-    use crate::klv::imapb::{ImapbParams, decode_imapb};
+fn decode_field(
+    tag: u32,
+    value: &[u8],
+    pack: &mut VTargetPack,
+    strict: bool,
+) -> Result<(), VTargetPackError> {
+    use crate::klv::imapb::{DecodedImapb, ImapbParams, decode_imapb};
     use crate::klv::pack::OwnedRawField;
 
     // The walker reads one tag byte, so the tag is never above 255.
@@ -139,6 +181,9 @@ fn decode_field(tag: u32, value: &[u8], pack: &mut VTargetPack) -> Result<(), VT
                 });
             }
             let v = value[0];
+            if strict && !super::model::vtarget_u8_in_range(tag, v) {
+                return Err(VTargetPackError::ValueOutOfRange { tag, value: v });
+            }
             match tag_u8 {
                 4 => pack.priority = Some(v),
                 5 => pack.confidence_level = Some(v),
@@ -188,24 +233,26 @@ fn decode_field(tag: u32, value: &[u8], pack: &mut VTargetPack) -> Result<(), VT
             // pack tags use 3-byte IMAPB per §10.2.2.11–.17.
             let length = if tag_u8 == 12 { 2 } else { 3 };
             let params = ImapbParams { min, max, length };
-            // decode_imapb returns DecodedImapb (ST 1201.5 §7.2.2/.3
-            // special values + bounds check). VTargetPack treats every
-            // non-Value result as MalformedImapb — special-value
-            // signaling at the per-target pack layer isn't a use case
-            // the API surfaces today; callers needing to differentiate
-            // can pattern-match the enum directly.
-            let v = decode_imapb(&params, value)
+            // ST 0903.6 §9.1.1: IMAP_BELOW_MINIMUM, IMAP_ABOVE_MAXIMUM and
+            // the "Invalid" user-defined special (0xC1) are sent in place
+            // of the measurement, and every ST 1201 special is a legal
+            // value: the item is valid and its field holds no measurement.
+            // A reserved pattern or an out-of-range result is refused.
+            let v = match decode_imapb(&params, value)
                 .map_err(|_| VTargetPackError::MalformedImapb { tag })?
-                .value()
-                .ok_or(VTargetPackError::MalformedImapb { tag })?;
+            {
+                DecodedImapb::Value(v) => Some(v),
+                DecodedImapb::Special(_) => None,
+                _ => return Err(VTargetPackError::MalformedImapb { tag }),
+            };
             match tag_u8 {
-                10 => pack.centroid_lat_offset = Some(v),
-                11 => pack.centroid_lon_offset = Some(v),
-                12 => pack.centroid_hae = Some(v),
-                13 => pack.bbox_top_left_lat_offset = Some(v),
-                14 => pack.bbox_top_left_lon_offset = Some(v),
-                15 => pack.bbox_bottom_right_lat_offset = Some(v),
-                16 => pack.bbox_bottom_right_lon_offset = Some(v),
+                10 => pack.centroid_lat_offset = v,
+                11 => pack.centroid_lon_offset = v,
+                12 => pack.centroid_hae = v,
+                13 => pack.bbox_top_left_lat_offset = v,
+                14 => pack.bbox_top_left_lon_offset = v,
+                15 => pack.bbox_bottom_right_lat_offset = v,
+                16 => pack.bbox_bottom_right_lon_offset = v,
                 _ => unreachable!("ImapbF64 dispatch missing tag {tag_u8}"),
             }
         }

@@ -43,7 +43,7 @@ use alloc::vec::Vec;
 /// malformations on the parent LS are non-fatal in lenient mode and
 /// are captured in [`VmtiLs::field_errors`] instead.
 pub fn decode(bytes: &[u8]) -> Result<VmtiLs, KlvDecodeError> {
-    use crate::klv::imapb::{ImapbParams, decode_imapb};
+    use crate::klv::imapb::{DecodedImapb, ImapbParams, decode_imapb};
     use crate::klv::pack::Iter;
 
     let mut ls = VmtiLs::default();
@@ -213,25 +213,14 @@ pub fn decode(bytes: &[u8]) -> Result<VmtiLs, KlvDecodeError> {
                     max,
                     length: expected_len,
                 };
-                // decode_imapb returns DecodedImapb (special values + bounds
-                // check per ST 1201.5 §7.2.2 step 1 + §7.2.3). The lenient
-                // top-level walker treats special values and out-of-range as
-                // "field unavailable" — surface InvalidLength as a generic
-                // field error and continue. Sites that want to differentiate
-                // +∞ / NaN / BelowMin / AboveMax can pattern-match the enum.
+                // ST 0903.6 §9.1.1: an ST 1201 special (an out-of-range
+                // signal, "Invalid") is sent in place of the measurement:
+                // a legal value that leaves the field unset. A reserved
+                // pattern or an out-of-range result is a field error.
                 let v = match decode_imapb(&params, value) {
-                    Ok(decoded) => match decoded.value() {
-                        Some(v) => v,
-                        None => {
-                            ls.field_errors.push(KlvFieldError::InvalidLength {
-                                tag: tag as u32,
-                                expected: expected_len,
-                                got: value.len(),
-                            });
-                            continue;
-                        }
-                    },
-                    Err(_) => {
+                    Ok(DecodedImapb::Value(v)) => Some(v),
+                    Ok(DecodedImapb::Special(_)) => None,
+                    _ => {
                         ls.field_errors.push(KlvFieldError::InvalidLength {
                             tag: tag as u32,
                             expected: expected_len,
@@ -241,8 +230,8 @@ pub fn decode(bytes: &[u8]) -> Result<VmtiLs, KlvDecodeError> {
                     }
                 };
                 match tag {
-                    11 => ls.horizontal_fov = Some(v),
-                    12 => ls.vertical_fov = Some(v),
+                    11 => ls.horizontal_fov = v,
+                    12 => ls.vertical_fov = v,
                     _ => unreachable!("ImapbF64 dispatch missing tag {tag}"),
                 }
             }
@@ -386,7 +375,7 @@ fn decode_vtarget_series(
 /// - [`KlvDecodeError::NonCanonicalLength`] if a TLV uses a non-
 ///   canonical BER length encoding.
 pub fn decode_strict(bytes: &[u8]) -> Result<VmtiLs, KlvDecodeError> {
-    use crate::klv::imapb::{ImapbParams, decode_imapb};
+    use crate::klv::imapb::{DecodedImapb, ImapbParams, decode_imapb};
     use crate::klv::length::read_strict_tlv;
 
     let mut ls = VmtiLs::default();
@@ -553,21 +542,24 @@ pub fn decode_strict(bytes: &[u8]) -> Result<VmtiLs, KlvDecodeError> {
                     max,
                     length: expected_len,
                 };
-                // Strict mode rejects special values + out-of-range as
-                // InvalidLength (the most caller-friendly map onto existing
-                // error vocabulary). Future tightening could promote these
-                // to dedicated KlvFieldError variants.
-                let decoded = decode_imapb(&params, value).map_err(KlvDecodeError::FieldError)?;
-                let v = decoded.value().ok_or(KlvDecodeError::FieldError(
-                    KlvFieldError::InvalidLength {
-                        tag: tag as u32,
-                        expected: expected_len,
-                        got: value.len(),
-                    },
-                ))?;
+                // ST 0903.6 §9.1.1: an ST 1201 special is a legal value
+                // that leaves the field unset. A reserved pattern or an
+                // out-of-range result is refused as `InvalidLength` (the
+                // nearest existing error).
+                let v = match decode_imapb(&params, value).map_err(KlvDecodeError::FieldError)? {
+                    DecodedImapb::Value(v) => Some(v),
+                    DecodedImapb::Special(_) => None,
+                    _ => {
+                        return Err(KlvDecodeError::FieldError(KlvFieldError::InvalidLength {
+                            tag: tag as u32,
+                            expected: expected_len,
+                            got: value.len(),
+                        }));
+                    }
+                };
                 match tag {
-                    11 => ls.horizontal_fov = Some(v),
-                    12 => ls.vertical_fov = Some(v),
+                    11 => ls.horizontal_fov = v,
+                    12 => ls.vertical_fov = v,
                     _ => unreachable!("ImapbF64 dispatch missing tag {tag}"),
                 }
             }
@@ -609,6 +601,9 @@ fn decode_vtarget_series_strict(
     use crate::klv::length::{read_ber_strict, rebase_offset};
 
     let mut targets = Vec::new();
+    // ST 0903.6-126: a targetId once per series. A set, so a long series
+    // costs no scan per pack.
+    let mut ids = alloc::collections::BTreeSet::new();
     let mut cursor = series_bytes;
     let mut offset = base;
     while !cursor.is_empty() {
@@ -634,6 +629,14 @@ fn decode_vtarget_series_strict(
 
         let (pack, _) = vtarget_pack::read_pack_strict(pack_bytes)
             .map_err(|reason| KlvDecodeError::St0903InvalidVTargetPack { offset, reason })?;
+        if !ids.insert(pack.target_id) {
+            return Err(KlvDecodeError::St0903InvalidVTargetPack {
+                offset,
+                reason: vtarget_pack::VTargetPackError::DuplicateTargetId {
+                    target_id: pack.target_id,
+                },
+            });
+        }
         targets.push(pack);
         offset += pack_len;
     }

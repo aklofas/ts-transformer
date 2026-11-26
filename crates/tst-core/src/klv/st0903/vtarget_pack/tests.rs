@@ -634,12 +634,12 @@ fn u64_typed_fields_never_silently_truncate_on_encode() {
     use super::decode::read_pack;
     use super::encode::write_pack;
 
-    // ── target_id at u64::MAX: BER-OID lossless ──────────────────────
-    // write_ber_oid_u64(u64::MAX) needs exactly 10 bytes (ceil(64/7));
-    // the buf in write_pack is [0u8; 10] — fits exactly.
+    // ── target_id: V9 BER-OID (Table 10), 63 bits ────────────────────
+    // 2^63 - 1 takes exactly nine BER-OID bytes and round-trips; u64::MAX
+    // has no V9 form and is refused, never truncated.
     {
         let p = VTargetPack {
-            target_id: u64::MAX,
+            target_id: i64::MAX as u64,
             centroid_pixel: Some(1), // ≥1 TLV item required beyond targetId
             ..Default::default()
         };
@@ -649,8 +649,17 @@ fn u64_typed_fields_never_silently_truncate_on_encode() {
         assert_eq!(n, buf.len());
         assert_eq!(
             decoded.target_id,
-            u64::MAX,
-            "target_id u64::MAX must round-trip losslessly via BER-OID"
+            i64::MAX as u64,
+            "target_id 2^63 - 1 must round-trip losslessly via BER-OID"
+        );
+        let too_wide = VTargetPack {
+            target_id: u64::MAX,
+            ..p
+        };
+        let err = write_pack(&too_wide, &mut Vec::new()).unwrap_err();
+        assert!(
+            matches!(err, KlvEncodeError::OutOfRange { tag: 0, .. }),
+            "target_id u64::MAX: expected OutOfRange, got {err:?}"
         );
     }
 

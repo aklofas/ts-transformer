@@ -756,8 +756,8 @@ proptest! {
         targets in proptest::collection::vec(
             (
                 (
-                    // target_id: u64 BER-OID (spec §10.2.2.1: up to 9 bytes ≈ 63-bit)
-                    any::<u64>(),
+                    // target_id: BER-OID V9 (Table 10): 63 bits
+                    0u64..=i64::MAX as u64,
                     // V6 pixel fields: up to 6 wire bytes (max 2^48-1)
                     proptest::option::of(0u64..=(1u64 << 48) - 1),
                     proptest::option::of(0u64..=(1u64 << 48) - 1),

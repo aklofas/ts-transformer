@@ -7,7 +7,7 @@ use super::encode::{
 use super::model::VmtiLs;
 use crate::error::{KlvDecodeError, KlvEncodeError, KlvFieldError};
 use crate::klv::pack::OwnedRawField;
-use crate::klv::st0903::vtarget_pack::VTargetPack;
+use crate::klv::st0903::vtarget_pack::{VTargetPack, VTargetPackError};
 use crate::test_prelude::*;
 
 /// Build a minimal LS containing only Tag 1 (Checksum) + Tag 2 (PTS)
@@ -1326,4 +1326,231 @@ fn a_zero_length_duplicate_before_a_value_keeps_it() {
         decode_strict(&bytes),
         Err(KlvDecodeError::DuplicateTag { tag: 3, offset: 4 })
     ));
+}
+
+// ------------------------------------------------------------------
+// VTarget strict validation and the legal IMAP specials.
+// ------------------------------------------------------------------
+
+/// A strict-minimal VMTI body whose Item 101 holds `packs`, each
+/// BER-length-prefixed as the series frames them.
+fn with_packs(packs: &[&[u8]]) -> Vec<u8> {
+    let mut series = Vec::new();
+    for p in packs {
+        series.push(p.len() as u8);
+        series.extend_from_slice(p);
+    }
+    let mut bytes = minimal_strict_ls_bytes();
+    bytes.push(101);
+    bytes.push(series.len() as u8);
+    bytes.extend_from_slice(&series);
+    bytes
+}
+
+/// The `VTargetPackError` strict decode reports for `bytes`.
+fn strict_pack_error(bytes: &[u8]) -> VTargetPackError {
+    match decode_strict(bytes) {
+        Err(KlvDecodeError::St0903InvalidVTargetPack { reason, .. }) => reason,
+        other => panic!("expected a VTarget pack refusal, got {other:?}"),
+    }
+}
+
+#[test]
+fn vtarget_strict_refuses_a_repeated_item() {
+    // ST 0903.5-98: an item at most once per Local Set instance.
+    let bytes = with_packs(&[&[0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x02]]);
+    assert_eq!(
+        strict_pack_error(&bytes),
+        VTargetPackError::DuplicateTag { tag: 1 }
+    );
+    let ls = decode(&bytes).unwrap();
+    assert_eq!(
+        ls.targets[0].centroid_pixel,
+        Some(2),
+        "lenient: the last wins"
+    );
+}
+
+#[test]
+fn vtarget_strict_refuses_a_repeated_unknown_tag() {
+    let bytes = with_packs(&[&[0x01, 0x7F, 0x01, 0xAA, 0x7F, 0x01, 0xBB]]);
+    assert_eq!(
+        strict_pack_error(&bytes),
+        VTargetPackError::DuplicateTag { tag: 127 }
+    );
+    assert_eq!(decode(&bytes).unwrap().targets[0].unknown.len(), 2);
+}
+
+#[test]
+fn vtarget_strict_refuses_a_non_canonical_length() {
+    let bytes = with_packs(&[&[0x01, 0x01, 0x81, 0x01, 0x05]]);
+    assert_eq!(
+        strict_pack_error(&bytes),
+        VTargetPackError::NonCanonicalLength { tag: 1 }
+    );
+    assert_eq!(decode(&bytes).unwrap().targets[0].centroid_pixel, Some(5));
+}
+
+#[test]
+fn vtarget_strict_refuses_an_empty_pack() {
+    // ST 0903.4-10: at least one item follows the targetId.
+    let bytes = with_packs(&[&[0x01]]);
+    assert_eq!(strict_pack_error(&bytes), VTargetPackError::Empty);
+    assert_eq!(decode(&bytes).unwrap().targets[0].target_id, 1);
+}
+
+#[test]
+fn vmti_strict_refuses_a_repeated_target_id() {
+    // ST 0903.6-126: a targetId once per series.
+    let bytes = with_packs(&[&[0x01, 0x01, 0x01, 0x05], &[0x01, 0x01, 0x01, 0x06]]);
+    assert_eq!(
+        strict_pack_error(&bytes),
+        VTargetPackError::DuplicateTargetId { target_id: 1 }
+    );
+    assert_eq!(decode(&bytes).unwrap().targets.len(), 2);
+}
+
+#[test]
+fn vtarget_strict_refuses_a_wide_or_padded_target_id() {
+    // Table 10: the targetId is BER-OID V9, at most nine bytes; a leading
+    // 0x80 group is padding.
+    let ten = [
+        0x81, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x01, 0x01, 0x01, 0x05,
+    ];
+    let wide = with_packs(&[&ten]);
+    assert_eq!(strict_pack_error(&wide), VTargetPackError::TargetIdTooWide);
+    assert_eq!(decode(&wide).unwrap().targets[0].target_id, (1 << 63) + 1);
+    let padded = with_packs(&[&[0x80, 0x01, 0x01, 0x01, 0x05]]);
+    assert_eq!(
+        strict_pack_error(&padded),
+        VTargetPackError::NonCanonicalLength { tag: 0 }
+    );
+    assert_eq!(decode(&padded).unwrap().targets[0].target_id, 1);
+    // Nine bytes, no padding: the largest id the set can carry.
+    let nine = [
+        0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x7F, 0x01, 0x01, 0x05,
+    ];
+    let ls = decode_strict(&with_packs(&[&nine])).unwrap();
+    assert_eq!(ls.targets[0].target_id, (1 << 63) - 1);
+}
+
+#[test]
+fn vtarget_strict_refuses_out_of_range_u8_values() {
+    for (tag, v) in [(4u8, 0u8), (5, 101), (7, 0), (7, 101), (23, 5)] {
+        let bytes = with_packs(&[&[0x01, tag, 0x01, v]]);
+        assert_eq!(
+            strict_pack_error(&bytes),
+            VTargetPackError::ValueOutOfRange {
+                tag: u32::from(tag),
+                value: v
+            },
+            "tag {tag} = {v}"
+        );
+        assert_eq!(decode(&bytes).unwrap().targets.len(), 1, "lenient keeps it");
+    }
+    for (tag, v) in [
+        (4u8, 1u8),
+        (4, 255),
+        (5, 0),
+        (5, 100),
+        (7, 1),
+        (7, 100),
+        (23, 4),
+    ] {
+        let ls = decode_strict(&with_packs(&[&[0x01, tag, 0x01, v]]))
+            .unwrap_or_else(|e| panic!("tag {tag} = {v}: {e:?}"));
+        assert_eq!(ls.targets.len(), 1);
+    }
+}
+
+#[test]
+fn vmti_specials_decode_without_error_and_unset() {
+    // ST 0903.6 §9.1.1: IMAP_ABOVE_MAXIMUM is sent in place of the
+    // measurement, and 0xC1 padded to the item's length is "Invalid".
+    let pack = [0x01, 0x0C, 0x02, 0xE1, 0x00, 0x0D, 0x03, 0xC1, 0x00, 0x00];
+    let mut bytes = with_packs(&[&pack]);
+    bytes.extend_from_slice(&[0x0B, 0x02, 0xE1, 0x00]);
+    for ls in [decode(&bytes).unwrap(), decode_strict(&bytes).unwrap()] {
+        assert_eq!(ls.horizontal_fov, None);
+        assert!(ls.field_errors.is_empty(), "{:?}", ls.field_errors);
+        let t = &ls.targets[0];
+        assert_eq!(t.centroid_hae, None);
+        assert_eq!(t.bbox_top_left_lat_offset, None);
+        assert!(t.field_errors.is_empty(), "{:?}", t.field_errors);
+    }
+}
+
+#[test]
+fn a_special_after_a_value_unsets_it() {
+    // The last occurrence decides; a special leaves no measurement.
+    let bytes = [0x0B, 0x02, 0x2D, 0x00, 0x0B, 0x02, 0xE1, 0x00];
+    let ls = decode(&bytes).unwrap();
+    assert_eq!(ls.horizontal_fov, None);
+    let pack = [0x01, 0x0C, 0x02, 0x10, 0x00, 0x0C, 0x02, 0xE0, 0x00];
+    let ls = decode(&with_packs(&[&pack])).unwrap();
+    assert_eq!(ls.targets[0].centroid_hae, None);
+}
+
+#[test]
+fn the_reserved_special_pattern_is_still_refused() {
+    let pack = [0x01, 0x0C, 0x02, 0xE7, 0x00];
+    let bytes = with_packs(&[&pack]);
+    assert_eq!(
+        strict_pack_error(&bytes),
+        VTargetPackError::MalformedImapb { tag: 12 }
+    );
+    let ls = decode(&bytes).unwrap();
+    assert_eq!(ls.targets[0].field_errors.len(), 1);
+    let mut top = minimal_strict_ls_bytes();
+    top.extend_from_slice(&[0x0B, 0x02, 0xE7, 0x00]);
+    assert!(decode_strict(&top).is_err());
+    assert_eq!(decode(&top).unwrap().field_errors.len(), 1);
+}
+
+#[test]
+fn vtarget_encode_refuses_a_target_id_of_2_pow_63() {
+    // Table 10: V9 is 63 bits; the JVM `long` cannot carry more either.
+    let with_id = |target_id: u64| VmtiLs {
+        targets: vec![VTargetPack {
+            target_id,
+            centroid_pixel: Some(100),
+            ..Default::default()
+        }],
+        ..full_standalone_ls()
+    };
+    let encoders: [Encoder; 4] = [
+        encode_to_vec,
+        encode_to_vec_standalone,
+        encode_strict_compliance,
+        encode_standalone_strict_compliance,
+    ];
+    for encode in encoders {
+        for id in [1u64 << 63, u64::MAX] {
+            let err = encode(&with_id(id)).unwrap_err();
+            assert!(
+                matches!(err, KlvEncodeError::OutOfRange { tag: 0, .. }),
+                "{id}: {err:?}"
+            );
+        }
+        encode(&with_id((1 << 63) - 1)).expect("2^63 - 1 is nine BER-OID bytes");
+    }
+}
+
+#[test]
+fn a_decoded_target_id_of_2_pow_63_is_refused_on_reencode_and_the_original_bytes_still_decode() {
+    // The lenient decoder keeps a ten-byte targetId; no encoder writes it
+    // back. A relay forwards the original bytes, or drops the target.
+    let ten = [
+        0x81, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x00, 0x01, 0x01, 0x05,
+    ];
+    let bytes = with_packs(&[&ten]);
+    let mut ls = decode(&bytes).unwrap();
+    assert_eq!(ls.targets[0].target_id, 1 << 63);
+    assert!(matches!(
+        encode_to_vec(&ls),
+        Err(KlvEncodeError::OutOfRange { tag: 0, .. })
+    ));
+    assert_eq!(decode(&bytes).unwrap(), ls);
+    ls.targets.clear();
+    encode_to_vec(&ls).expect("without the target the record re-encodes");
 }

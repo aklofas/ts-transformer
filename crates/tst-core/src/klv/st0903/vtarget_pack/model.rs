@@ -283,6 +283,30 @@ pub enum VTargetPackError {
     },
     #[error("VTargetPack tag {tag}: malformed IMAPB value")]
     MalformedImapb { tag: u32 },
+    /// Strict decode: an item appears twice in one pack, known or
+    /// unknown (ST 0903.5-98).
+    #[error("VTargetPack tag {tag}: item appears twice")]
+    DuplicateTag { tag: u32 },
+    /// Strict decode: a length not in its shortest BER form. `tag` 0 is
+    /// the targetId, which has no tag: its BER-OID starts with a padding
+    /// group (`0x80`).
+    #[error("VTargetPack tag {tag}: length not in its shortest form")]
+    NonCanonicalLength { tag: u32 },
+    /// Strict decode: no item follows the targetId (ST 0903.4-10).
+    #[error("VTargetPack holds no item after its targetId")]
+    Empty,
+    /// Strict decode: the targetId takes more than the nine BER-OID bytes
+    /// of Table 10's V9.
+    #[error("VTargetPack targetId is wider than 9 bytes")]
+    TargetIdTooWide,
+    /// Strict decode: a one-byte item holds a value its item does not
+    /// allow (§10.2.2.5, .6, .8, Table 5).
+    #[error("VTargetPack tag {tag}: value {value} is outside the item's range")]
+    ValueOutOfRange { tag: u32, value: u8 },
+    /// Strict decode: a targetId appears twice in one VTarget Series
+    /// (ST 0903.6-126).
+    #[error("VTargetPack targetId {target_id} appears twice in the series")]
+    DuplicateTargetId { target_id: u64 },
     #[error("VTargetPack tag {tag}: invalid value length {got} (expected {expected})")]
     InvalidLength {
         tag: u32,

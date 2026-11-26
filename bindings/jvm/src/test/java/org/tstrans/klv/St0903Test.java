@@ -517,4 +517,20 @@ class St0903Test {
         assertEquals(Long.valueOf(u32MaxRow),      p.centroidPixRow(),       "centroidPixRow (V4 max)");
         assertEquals(Long.valueOf(u32MaxRow - 1L), p.centroidPixCol(),       "centroidPixCol (V4 max-1)");
     }
+
+    @Test
+    void negativeTargetIdIsRefusedOnEncode() {
+        // A negative long is a targetId of 2^63 or more on the native side:
+        // ST 0903.6 Table 10's V9 holds 63 bits, so every encoder refuses it.
+        VTargetPack pack = new VTargetPack.Builder().targetId(-1L).priority(1).build();
+        VmtiLs vmti = new VmtiLs.Builder()
+                .versionNumber(6)
+                .targets(java.util.List.of(pack))
+                .build();
+        KlvEncodeException ex = assertThrows(KlvEncodeException.class, () -> Klv.encodeVmti(vmti));
+        assertEquals(KlvEncodeException.Kind.OUT_OF_RANGE, ex.kind());
+        VTargetPack largest = new VTargetPack.Builder().targetId(Long.MAX_VALUE).priority(1).build();
+        VmtiLs ok = new VmtiLs.Builder().versionNumber(6).targets(java.util.List.of(largest)).build();
+        assertDoesNotThrow(() -> Klv.encodeVmti(ok));
+    }
 }
