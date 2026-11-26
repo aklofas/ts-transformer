@@ -240,7 +240,11 @@ impl super::demuxer::Demuxer {
                         drop_next_complete = Some(pid);
                     } else {
                         // Unparseable: no `Complete` follows, so the PES and
-                        // any cell of the AU in progress it carried are lost.
+                        // any cell of the AU in progress it carried are lost,
+                        // and with them the LOAS record position.
+                        if let Some(state) = self.pid_state.get_mut(&pid) {
+                            state.forget_latm_position();
+                        }
                         self.discard_au_in_progress(pid);
                     }
                 }
@@ -298,7 +302,11 @@ impl super::demuxer::Demuxer {
             stream,
             NonConformantIssue::ZeroLengthPesNonVideo { pid, stream_id },
         );
-        // The partial is dropped with its cells.
+        // The partial is dropped with its cells, and its bytes with the LOAS
+        // record position.
+        if let Some(state) = self.pid_state.get_mut(&pid) {
+            state.forget_latm_position();
+        }
         self.discard_au_in_progress(pid);
     }
 

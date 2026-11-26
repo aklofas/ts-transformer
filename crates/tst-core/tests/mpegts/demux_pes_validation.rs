@@ -1339,3 +1339,120 @@ fn the_loas_search_state_goes_with_the_pid() {
         }
     }
 }
+
+/// Mux `payloads` as consecutive AAC-LATM PES on PID 0x150, let `edit`
+/// change the PES header in the first TS packet of PES `k` (it gets the
+/// packet's payload, which starts with that header), and demux; every event.
+fn latm_pes_events_editing(
+    payloads: &[Vec<u8>],
+    k: usize,
+    edit: impl Fn(&mut [u8]),
+) -> Vec<DemuxEvent> {
+    let mut mux = latm_program_muxer(0, Some(AudioCodec::AacLatm));
+    let mut bytes = latm_pes_bytes(&mut mux, payloads);
+    let mut pes = 0usize;
+    for pkt in bytes.chunks_exact_mut(188) {
+        let pid = (u16::from(pkt[1] & 0x1F) << 8) | u16::from(pkt[2]);
+        if pid != 0x150 || pkt[1] & 0x40 == 0 {
+            continue;
+        }
+        if pes == k {
+            let start = if pkt[3] & 0x20 != 0 {
+                5 + usize::from(pkt[4])
+            } else {
+                4
+            };
+            edit(&mut pkt[start..]);
+        }
+        pes += 1;
+    }
+    let mut demux = Demuxer::new();
+    demux.feed(&bytes).unwrap();
+    demux.flush();
+    let mut events = Vec::new();
+    while let Some(e) = demux.next_event() {
+        events.push(e);
+    }
+    events
+}
+
+/// A sound stream of 1 000-byte records in 500-byte PES, with the PES that
+/// is dropped (PES index 20) starting either on a record boundary or 37
+/// bytes into a record, and ending 60 bytes into the record after: the
+/// payloads and the dropped PES's index.
+fn sound_stream_with_a_pes_to_drop(before_on_a_record_end: bool) -> (Vec<Vec<u8>>, usize) {
+    let mut stream = Vec::new();
+    for _ in 0..30 {
+        stream.extend(build_valid_loas_record(997));
+    }
+    let k_start = if before_on_a_record_end {
+        10_000
+    } else {
+        10_037
+    };
+    let mut payloads = cut_into_pes(&stream[..k_start], 500);
+    let k = payloads.len();
+    payloads.push(stream[k_start..11_060].to_vec());
+    payloads.extend(cut_into_pes(&stream[11_060..], 500));
+    (payloads, k)
+}
+
+fn issue_on_0x150(events: &[DemuxEvent], want: impl Fn(&NonConformantIssue) -> bool) -> bool {
+    events.iter().any(|e| {
+        matches!(e, DemuxEvent::NonConformant { stream, issue } if stream.pid == 0x150 && want(issue))
+    })
+}
+
+/// A PES dropped for a zero `PES_packet_length` (not video) lost its bytes:
+/// the LOAS position is forgotten as at any other loss, so the PES after it,
+/// which opens 60 bytes into a record, is resynced, not walked from the
+/// stale position. Whether the PES before the drop ended on a record end
+/// (the position known at its next byte) or inside a record: no
+/// `LatmFraming` issue, as for the same PES lost to a continuity gap.
+#[test]
+fn a_pes_dropped_for_a_zero_length_forgets_the_loas_position() {
+    for before_on_a_record_end in [true, false] {
+        let (payloads, k) = sound_stream_with_a_pes_to_drop(before_on_a_record_end);
+        let events = latm_pes_events_editing(&payloads, k, |pes| pes[4..6].fill(0));
+        assert!(
+            issue_on_0x150(&events, |i| matches!(
+                i,
+                NonConformantIssue::ZeroLengthPesNonVideo { .. }
+            )),
+            "the PES is dropped for its zero length: {events:?}"
+        );
+        assert!(
+            latm_framing_issues(&events).is_empty(),
+            "{before_on_a_record_end}: {:?}",
+            latm_issue_pes(&events)
+        );
+        let control = latm_pes_events_losing(&payloads, |i| i == k);
+        assert!(
+            latm_framing_issues(&control).is_empty(),
+            "{before_on_a_record_end}"
+        );
+    }
+}
+
+/// A PES dropped as unparseable (start code `00 00 02`) lost its bytes too:
+/// the LOAS position is forgotten, and the PES after it raises no
+/// `LatmFraming` issue.
+#[test]
+fn an_unparseable_pes_forgets_the_loas_position() {
+    for before_on_a_record_end in [true, false] {
+        let (payloads, k) = sound_stream_with_a_pes_to_drop(before_on_a_record_end);
+        let events = latm_pes_events_editing(&payloads, k, |pes| pes[2] = 0x02);
+        assert!(
+            issue_on_0x150(&events, |i| matches!(
+                i,
+                NonConformantIssue::MalformedPes { .. }
+            )),
+            "the PES is dropped as unparseable: {events:?}"
+        );
+        assert!(
+            latm_framing_issues(&events).is_empty(),
+            "{before_on_a_record_end}: {:?}",
+            latm_issue_pes(&events)
+        );
+    }
+}
