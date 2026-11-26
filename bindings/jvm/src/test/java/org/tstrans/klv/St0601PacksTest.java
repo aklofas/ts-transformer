@@ -571,11 +571,20 @@ class St0601PacksTest {
 
     @Test
     void sdccMalformedHeaderIsFieldErrorNotException() throws KlvDecodeException {
-        // A truncated BER-OID Matrix Size (empty value) cannot be peeked for
-        // N — the occurrence is dropped into fieldErrors, not thrown.
-        UasDatalinkLs rec = decodeSingleTlv(102, new byte[0]);
+        // A Matrix Size and nothing after it cannot be peeked for N — the
+        // occurrence is dropped into fieldErrors, not thrown.
+        UasDatalinkLs rec = decodeSingleTlv(102, new byte[] {0x03});
         assertTrue(rec.sdccFlps().isEmpty());
         assertEquals(1, rec.fieldErrors().size());
+    }
+
+    @Test
+    void sdccZeroLengthItemIsUnknown() throws KlvDecodeException {
+        // A zero-length item is "unknown" (ST 0107.5 §6.3.4): no occurrence
+        // and no field error, for Item 102 as for every other item.
+        UasDatalinkLs rec = decodeSingleTlv(102, new byte[0]);
+        assertTrue(rec.sdccFlps().isEmpty());
+        assertTrue(rec.fieldErrors().isEmpty());
     }
 
     @Test

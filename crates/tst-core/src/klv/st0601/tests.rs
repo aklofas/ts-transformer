@@ -3666,7 +3666,9 @@ fn pack_sdcc_positional_capture() {
 /// zero-length window.
 #[test]
 fn pack_sdcc_malformed_header_is_field_error_not_panic() {
-    let ls = decode_with_single_tlv(102, &[]);
+    // A Matrix Size and nothing after it. (A zero-length Item 102 is
+    // "unknown": `a_zero_length_item_102_or_115_is_unknown`.)
+    let ls = decode_with_single_tlv(102, &[0x03]);
     assert!(ls.sdcc_flps.is_empty());
     assert_eq!(ls.field_errors.len(), 1);
 }
@@ -6127,6 +6129,39 @@ fn sdcc_packs_that_share_items_place_in_bounded_steps() {
         );
         let out = encode_to_vec(&rec).unwrap();
         assert!(every_pack_follows_its_rows(&rec, &out), "{name}");
+    }
+}
+
+/// ST 0107.5 §6.3.4: a zero-length item is "unknown", whatever the item:
+/// Items 102 and 115 too.
+#[test]
+fn a_zero_length_item_102_or_115_is_unknown() {
+    for tag in [102, 115] {
+        let source = wrap_st0601(
+            &[
+                &TIMESTAMP_ITEM[..],
+                &tlv(13, &enc_lat(45.0)),
+                &tlv(tag, &[]),
+            ]
+            .concat(),
+        );
+        for rec in [decode(&source).unwrap(), decode_strict(&source).unwrap()] {
+            assert!(
+                rec.field_errors.is_empty(),
+                "Item {tag}: {:?}",
+                rec.field_errors
+            );
+            assert!(
+                rec.sdcc_flps.is_empty() && rec.control_commands.is_empty(),
+                "Item {tag}"
+            );
+            assert_eq!(rec.sensor_lat_deg.map(f64::round), Some(45.0), "Item {tag}");
+            assert_eq!(
+                wire_tags(&encode_to_vec(&rec).unwrap()),
+                [2, 13, 65, 1],
+                "Item {tag}"
+            );
+        }
     }
 }
 

@@ -651,9 +651,9 @@ fn apply_tag(
         return Ok(());
     };
     // ST 0107.5 §6.3.4: a zero-length optional item means "unknown" — the
-    // field stays unset and no error is raised. Items 2 and 65 are
-    // mandatory; 102 and 115 are multi-instance and keep their handlers.
-    if f.value.is_empty() && !matches!(tag, 2 | 65 | 102 | 115) {
+    // field stays unset and no error is raised; a zero-length Item 102 or
+    // 115 adds no occurrence. Items 2 and 65 are mandatory.
+    if f.value.is_empty() && !matches!(tag, 2 | 65) {
         return Ok(());
     }
     match (spec.encoding, tag) {

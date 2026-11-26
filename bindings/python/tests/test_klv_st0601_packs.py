@@ -510,11 +510,19 @@ def test_sdcc_positional_capture():
 
 
 def test_sdcc_malformed_header_is_field_error_not_exception():
-    # A truncated BER-OID Matrix Size (empty value) cannot be peeked for
-    # N — the occurrence is dropped into field_errors, not raised.
-    rec = _decode_single_tlv(102, b"")
+    # A Matrix Size and nothing after it cannot be peeked for N — the
+    # occurrence is dropped into field_errors, not raised.
+    rec = _decode_single_tlv(102, b"\x03")
     assert rec.sdcc_flps == ()
     assert len(rec.field_errors) == 1
+
+
+def test_sdcc_zero_length_item_is_unknown():
+    # A zero-length item is "unknown" (ST 0107.5 §6.3.4): no occurrence and
+    # no field error, for Item 102 as for every other item.
+    rec = _decode_single_tlv(102, b"")
+    assert rec.sdcc_flps == ()
+    assert len(rec.field_errors) == 0
 
 
 def test_sdcc_tag_dropped_from_unknown_on_the_python_boundary():
