@@ -47,6 +47,18 @@ use super::tags::{Encoding, FieldValue, LinearRange, TAGS, TagSpec, lookup as lo
 /// written, at the top level and inside packs: none checks or cleans them.
 /// [`patch`](super::patch()) writes a new Item 2 first (ST 0601.8-09).
 ///
+/// # Encoding the encoder's own output again
+///
+/// A decode of what an encoder wrote encodes to the same bytes, with three
+/// exceptions. An Item 102 pack that could not be placed is written after
+/// the typed fields; a decode gives it the items before it there as its
+/// rows, and the next encode places it after those, which can move it and
+/// the packs around it. When the packs name a tag the set carries more than
+/// once, the rows do not say which of its items is meant, and the second
+/// encode can choose another (see [`SdccFlpField`](super::SdccFlpField) for
+/// both). A View Domain (Item 142) that holds none of its three pairs is
+/// written zero-length, which reads back as an unset field.
+///
 /// # Errors
 /// - [`KlvEncodeError::BufferTooSmall`] if `out.len()` is less than the
 ///   required encoded length (call [`encoded_len`] first).

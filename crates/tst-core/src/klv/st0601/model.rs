@@ -282,6 +282,13 @@ crate::binding_record! {
         /// Extended-range twin of [`Self::target_width_m`] (Item 22, uint16,
         /// [0, 10000] m) — see that field's docs for the ST 0601.19
         /// extended-representation precedence rule (prefer this field).
+        ///
+        /// This and the thirteen fields after it (Items 96 to 134) are the
+        /// IMAPB items. A decode gives such a field its range's minimum or
+        /// maximum when the item was sent as the overflow signal
+        /// `BelowMin` or `AboveMax`, and lists the signal in
+        /// [`Self::imapb_specials`]: beside its entry there a range end is
+        /// a signal, not a measurement, and is written back as the signal.
         pub target_width_extended_m: Option<f64>,
         /// Item 103: Density Altitude Extended — ST 1201.5 IMAPB range
         /// [-900, 40000] m, wire length 1..=8 bytes (encode emits 3 bytes).
@@ -295,7 +302,11 @@ crate::binding_record! {
         /// Extended-range twin of [`Self::sensor_ellipsoid_height_m`]
         /// (Item 75, uint16, [-900, 19000] m) — see that field's docs for
         /// the ST 0601.19 extended-representation precedence rule (prefer
-        /// this field).
+        /// this field). When the item was sent as an overflow signal the
+        /// field holds a range end (see [`Self::imapb_specials`]) while
+        /// [`Self::sensor_position`] and the CoT converters take the item
+        /// as sent with no value: the view is `None` although this field
+        /// holds a number.
         pub sensor_ellipsoid_height_extended_m: Option<f64>,
         /// Item 105: Alternate Platform Ellipsoid Height Extended —
         /// ST 1201.5 IMAPB range [-900, 40000] m, wire length 1..=8 bytes
@@ -524,8 +535,10 @@ crate::binding_record! {
         /// Coefficient, Floating-Point). MULTI-INSTANCE per ST 0601.19
         /// Table 1 ("Multiples Allowed" = Yes) — the "Refined Source List"
         /// binding: every wire occurrence appends one [`SdccFlpField`],
-        /// capturing which preceding items it refines. See [`SdccFlpField`]
-        /// for the capture rule and where the encoder writes each occurrence.
+        /// capturing which preceding items it refines (a zero-length Item
+        /// 102 is "unknown" and appends none). See [`SdccFlpField`] for the
+        /// capture rule, for where the encoder writes each occurrence, and
+        /// for what it does with one it cannot place.
         pub sdcc_flps: Vec<SdccFlpField>,
 
         // Pass-through
@@ -542,7 +555,8 @@ crate::binding_record! {
         /// with this list filled for a value that breaks none of the rules
         /// they check (an item of the wrong length, for example). A parser
         /// diagnostic: it is not re-encoded. A zero-length optional item is "unknown" (ST 0107.5
-        /// §6.3.4): the field stays unset and no error is recorded. When a
+        /// §6.3.4): the field stays unset (a zero-length Item 102 or 115
+        /// adds no entry to its list) and no error is recorded. When a
         /// single-use tag repeats, the last occurrence wins and earlier ones
         /// leave no trace in the typed field, `sentinel_tags` or
         /// `imapb_specials`.
@@ -561,13 +575,20 @@ crate::binding_record! {
         /// signed linear row (its INT_MIN sentinel, at the row's width); an
         /// entry for any other row writes nothing. A tag listed more than once
         /// is written once, at its last entry. The encoder writes the
-        /// single-use typed fields in ascending tag order, then the Item 102
-        /// packs (each moved after the items it refines: see [`SdccFlpField`])
-        /// and the Item 115 commands, then the replayed sentinels in list order,
-        /// then the other replayed IMAP specials (see [`Self::imapb_specials`]),
-        /// then `unknown` fields in caller order; it adds Tag 65 (version) when
-        /// the record has none, and the trailing checksum. The sentinel
-        /// round-trips; the bytes need not match the input's.
+        /// single-use typed fields in ascending tag order (an IMAPB overflow
+        /// signal among them, at its item's place: see
+        /// [`Self::imapb_specials`]), then the Item 102 packs that could not
+        /// be placed (a placed one follows the items it refines, which it
+        /// takes with it: see [`SdccFlpField`]) and the Item 115 commands,
+        /// then the replayed sentinels in list order, then the other
+        /// replayed IMAP specials, then `unknown` fields in caller order; it
+        /// adds Tag 65 (version) when the record has none, and the trailing
+        /// checksum. The sentinel round-trips; the bytes need not match the
+        /// input's.
+        ///
+        /// The composite views and the CoT converters take an item the
+        /// encoder would write as its sentinel as sent with no value: a view
+        /// that prefers such an item is `None`.
         @[custom] pub sentinel_tags: Vec<u32>,
 
         /// Tags whose ST 1201.5 IMAPB wire value decoded to a spec-defined
@@ -579,23 +600,33 @@ crate::binding_record! {
         /// [`crate::klv::ImapbSpecial`] to inspect which special was
         /// signaled.
         ///
-        /// **Encode semantics:** an entry is written only while the item's typed
-        /// field is `None`, and only for an IMAPB row, at the shortest length
-        /// from the item's default to its maximum that holds the special's
-        /// payload (a special no length of the item holds fails with
-        /// `OutOfRange` naming the item); an entry for any other row writes
-        /// nothing. A tag listed more than once is written once, with its LAST
-        /// special.
+        /// **Encode semantics:** one item per tag is written, for the tag's
+        /// LAST entry, and only for an IMAPB row (an entry for any other row
+        /// writes nothing), at the shortest length from the item's default to
+        /// its maximum that holds the special's payload (a special no length
+        /// of the item holds fails with `OutOfRange` naming the item). A
+        /// special other than the two overflow signals is written only while
+        /// the item's typed field is `None` (a populated field wins and the
+        /// entry writes nothing), after the typed fields.
         ///
-        /// **The two overflow signals** are the exception: `BelowMin` and
-        /// `AboveMax` (ST 1201.5 §7.2.3.1; ST 0601.19 says nothing more of
-        /// them) give the typed field the item's range minimum or maximum, and
-        /// the entry is kept. An encode writes the signal back at the item's
-        /// place, whether the field still equals that end or is unset, and
-        /// writes the value once the field holds anything else. Every other
-        /// special is written after the typed fields. A value decoded from the
-        /// bottom bucket below the minimum (a length shorter than the item's
-        /// default, for a range that straddles zero) is stored as the minimum.
+        /// **The two overflow signals** are read and written differently.
+        /// A decode of `BelowMin` or `AboveMax` (ST 1201.5 §7.2.3.1; ST
+        /// 0601.19 says nothing more of them) gives the typed field the item's
+        /// range minimum or maximum and keeps the entry here. So a field that
+        /// holds its range end while the tag's last entry is the matching
+        /// signal (the minimum with `BelowMin`, the maximum with `AboveMax`)
+        /// is a signal, not a measurement: an encode writes the SIGNAL, at the
+        /// item's place among the typed fields, and the composite views and
+        /// the CoT converters take the item as sent with no value (a view can
+        /// be `None` while the field holds a number). The signal is written
+        /// at the same place when the field is unset. Once the field holds
+        /// any other value, the value is written and the entry writes
+        /// nothing. To write a measured value that IS the range end, remove
+        /// the tag's entries from this list.
+        ///
+        /// A value decoded from the bottom bucket below the minimum (a length
+        /// shorter than the item's default, for a range that straddles zero)
+        /// is stored as the minimum.
         ///
         /// **Decode semantics for the two IMAPB outcomes NOT carried here:**
         /// a wire integer in ST 1201.5's reserved-but-unrecognized
@@ -637,33 +668,52 @@ crate::binding_record! {
     /// **Capture semantics (decode):** `preceding_tags` is the `N` wire-order
     /// item tags — known or unknown, but never another Tag 102 — immediately
     /// before this occurrence, where `N` is this pack's own parsed matrix
-    /// size (fewer if the Local Set had fewer prior items). An item stepped
-    /// over for a tag wider than 32 bits is not one of them.
+    /// size. There are fewer when the Local Set had fewer prior items, and
+    /// when one of the `N` items before the pack was stepped over for a tag
+    /// wider than 32 bits: that item cannot be named, so the rows are only
+    /// the items after it. A zero-length Item 102 is "unknown" (ST 0107.5
+    /// §6.3.4) and is not captured.
     ///
     /// **Encode:** each occurrence is written right after the items its
-    /// `preceding_tags` name, in that order (ST 0601.19 §8.102.1). The items
-    /// are written in the encoder's order and a pack takes the items it names
-    /// forward to the first of them; a pack whose rows begin with the last
-    /// items written follows them with the rest of its items; a pack whose
-    /// rows are the last items written follows at once, so two packs after
-    /// one item keep their order and a pack inside the rows of a later, wider
-    /// pack keeps its place. A set whose items are in the encoder's order is
-    /// re-encoded with every pack where it was. An occurrence that cannot be
-    /// placed (a named item is not in the record, `preceding_tags` is empty,
-    /// one of its items is already written and not among the last items
-    /// written, its rows would put another item before Item 2, or a capture
-    /// shorter than its matrix does not name the start of the set) is written
-    /// after the typed items, where 0.10.0 wrote every occurrence;
-    /// `encode_strict_compliance` refuses it, and refuses a pack whose header
-    /// ST 1010 does not define. For a tag that repeats, a row takes the first
-    /// instance not yet written. Edit a named item and the pack describes the
-    /// new value: that is the caller's business.
+    /// `preceding_tags` name, in that order (ST 0601.19 §8.102.1). The rows
+    /// of the packs, read in the list's order, say which item directly
+    /// follows which; items linked that way form a block, written where the
+    /// encoder would write the first of its items (the single-use fields
+    /// are written in ascending tag order), and each pack follows the item
+    /// of its last row. So a set that came in any order, whose packs each
+    /// follow the items they refine, keeps every pack with its rows after a
+    /// decode and an encode, also when packs share items, and a set whose
+    /// items are in the encoder's order is re-encoded with every pack where
+    /// it was. For a tag the set carries more than once (an unknown tag, or
+    /// Item 115) the rows do not say which of its items is meant: a row
+    /// takes the item its pack's other rows fit, or the first one no row has
+    /// named, and such a set can end with a pack that is not placed.
+    ///
+    /// **An occurrence that cannot be placed** is still written by the
+    /// ordinary encoders, after the single-use typed fields, where 0.10.0
+    /// wrote every occurrence; a decoder of that output takes the items
+    /// before it there as its rows, so the pack then states accuracies for
+    /// items it never refined, and the next encode keeps it with those
+    /// rows. `encode_strict_compliance` refuses the record instead (and
+    /// refuses a pack whose header ST 1010 does not define). An occurrence
+    /// cannot be placed when `preceding_tags` is empty (except that a matrix
+    /// of size 0, which refines nothing, is accepted by the strict encoder
+    /// where it stands); when a named item is not written (its field is
+    /// unset, as after a decode of a zero-length item, and no sentinel or
+    /// special is replayed for it) or is named more often than the record
+    /// has items of that tag; when its rows contradict an occurrence before
+    /// it in the list (another item already follows, or precedes, one of
+    /// its items); when its rows would put an item before Item 2; and when
+    /// it has fewer rows than its matrix size and they are not the start of
+    /// the set. Edit a named item and the pack describes the new value: that
+    /// is the caller's business.
     #[derive(Debug, Clone, PartialEq)]
     pub struct SdccFlpField {
         /// Wire-order item tags immediately preceding this occurrence (see
         /// struct doc for the capture rule). Empty for a matrix of size 0 or
         /// an occurrence no item precedes; fewer than the matrix size when
-        /// fewer items precede it (legal, if degenerate, and not an error).
+        /// fewer items precede it, or fewer since an item stepped over for
+        /// its tag (legal, if degenerate, and not an error).
         pub preceding_tags: Vec<u32>,
         /// Raw SDCC-FLP pack bytes, exactly as they appeared on the wire —
         /// decode with the ST 1010 SDCC-FLP decoder.
@@ -1307,8 +1357,11 @@ pub struct Corners {
 /// (Items 26 to 33). An item sent as "no value" (a sentinel, or an IMAPB
 /// special: see [`UasDatalinkLs::sentinel_tags`] and
 /// [`UasDatalinkLs::imapb_specials`]) ends its chain: the view is `None`,
-/// it does not fall back to a less preferred item. An offset corner's
-/// longitude is folded into (-180, 180].
+/// it does not fall back to a less preferred item. That includes an item
+/// sent as an overflow signal, whose field holds the range end beside its
+/// entry: the view is `None` while the field holds a number (Item 104 in
+/// [`UasDatalinkLs::sensor_position`]). An offset corner's longitude is
+/// folded into (-180, 180].
 impl UasDatalinkLs {
     /// `true` when the encoder writes `tag`'s sentinel or IMAPB special,
     /// not a value: the encoder's own rule, so a view and a decode of the
@@ -1348,7 +1401,10 @@ impl UasDatalinkLs {
 
     /// Sensor latitude and longitude (Items 13, 14) with the first height
     /// of Items 104, 75, 15; [`Self::sensor_position_datum`] says which
-    /// datum `alt_m` is in.
+    /// datum `alt_m` is in. An Item 104 sent as an overflow signal is sent
+    /// with no value: the view is `None`, although
+    /// [`Self::sensor_ellipsoid_height_extended_m`] then holds the range
+    /// end (see [`Self::imapb_specials`]).
     pub fn sensor_position(&self) -> Option<GeoPoint> {
         Some(GeoPoint {
             lat_deg: self.sensor_lat_deg?,
