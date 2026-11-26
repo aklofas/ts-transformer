@@ -1989,14 +1989,21 @@ and the two below.
   self-contained pack from caller-supplied slices and knows nothing of
   the Local Set around it. For a tag that repeats (an unknown tag,
   Item 115) `preceding_tags` names tags, not items, so the rows do not
-  say which item a pack refines, and such a set can end with a pack
-  that is not placed.
+  say which item a pack refines: the encoder writes the pack after the
+  first item of that tag its other rows fit, which need not be the one
+  it followed (the strict encoder accepts that), and such a set can end
+  with a pack that is not placed. Recording which occurrence a pack
+  refines is not built either: it needs a new field on the record, like
+  the other record fields this page defers.
 - **Why deferred:** A caller that builds a record today pairs the pack
   from `encode_sdcc_flp_mode2` with the `preceding_tags` it refines,
-  and the encoder places it. A builder, and the two checks, need the
-  model to say which item instances a pack refines; no consumer has
-  asked to construct SDCC-FLP occurrences rather than replay captured
-  ones.
+  and the encoder places it. A builder, the two checks and a pack that
+  stays with one occurrence of a repeated tag need the model to say
+  which item instances a pack refines (a new public field on
+  `SdccFlpField` and its Python and JVM records); no consumer has asked
+  to construct SDCC-FLP occurrences rather than replay captured ones. A
+  relay keeps such a pack with its item meanwhile by forwarding the
+  original bytes or by using `patch`, which moves no item.
 - **Trigger to revisit:** A consumer constructs ST 0601 records with
   SDCC-FLP occurrences for items it chooses, or reports a pack whose
   matrix does not match the items it names.
