@@ -3,6 +3,9 @@
 //! `nDecodeVmti(byte[], boolean strict) -> VmtiLs` calls
 //! `tst_core::klv::st0903::decode` (lenient) or `decode_strict` and builds the
 //! Java record with the generated `build_vmti_ls`.
+//! `nDecodeVmtiStandalone(byte[], boolean strict) -> VmtiLs` does the same
+//! for a standalone packet through `decode_standalone` /
+//! `decode_standalone_strict`, which verify its checksum.
 //!
 //! `nEncodeVmti(VmtiLs) -> byte[]` reads the record with the generated
 //! `read_vmti_ls`, calls `encode_to_vec` (embedded body, no UL, no Tag 1
@@ -24,11 +27,52 @@ use jni::objects::{JByteArray, JObject};
 use jni::strings::JNIString;
 use jni::sys::jobject;
 use tst_core::klv::st0903::{
-    decode as decode_lenient, decode_strict, encode_standalone_strict_compliance,
-    encode_strict_compliance, encode_to_vec, encode_to_vec_standalone,
+    decode as decode_lenient, decode_standalone, decode_standalone_strict, decode_strict,
+    encode_standalone_strict_compliance, encode_strict_compliance, encode_to_vec,
+    encode_to_vec_standalone,
 };
 
 use crate::error::{map_klv_decode_error, map_klv_encode_error};
+
+jni_native! {
+    /// `org.tstrans.klv.Klv.nDecodeVmtiStandalone(byte[], boolean) -> VmtiLs`
+    ///
+    /// Decodes a standalone VMTI packet (`[UL][BER length][body]`), verifying
+    /// its checksum; strict when `strict = true`. On failure, throws a
+    /// `KlvDecodeException` and returns null.
+    fn Java_org_tstrans_klv_Klv_nDecodeVmtiStandalone<'local>(
+        env,
+        _c,
+        buf: JByteArray<'local>,
+        strict: jni::sys::jboolean,
+    ) -> jobject = std::ptr::null_mut() => {
+        let bytes = match env.convert_byte_array(&buf) {
+            Ok(b) => b,
+            Err(e) => {
+                let _ = env.throw_new(
+                    FindClass(jni_str!("java/lang/RuntimeException")),
+                    JNIString::from(format!("nDecodeVmtiStandalone: byte[] read failed: {e}")),
+                );
+                return JObject::null().into_raw();
+            }
+        };
+        let result = if strict {
+            decode_standalone_strict(&bytes)
+        } else {
+            decode_standalone(&bytes)
+        };
+        match result {
+            Ok(vmti) => match crate::generated::st0903::build_vmti_ls(env, &vmti) {
+                Ok(obj) => obj.into_raw(),
+                Err(_) => JObject::null().into_raw(),
+            },
+            Err(e) => {
+                map_klv_decode_error(env, &e);
+                JObject::null().into_raw()
+            }
+        }
+    }
+}
 
 // -----------------------------------------------------------------------
 // Decode entry point

@@ -222,6 +222,30 @@ public final class Klv {
     }
 
     /**
+     * Decode a standalone ST 0903 VMTI packet and verify its checksum.
+     *
+     * <p>{@code buf} is the whole packet: the 16-byte VMTI Universal Label, the
+     * BER length and the body, which must end with exactly one two-byte Tag 1
+     * equal to the running 16-bit sum from the label up to its value (ST
+     * 0903.6-119). When {@code strict = true}, also the strict body rules and
+     * those of standalone carriage (Items 2, 11, 12 and 13 present, no offset
+     * item in a pack, a located active target, a Core Identifier ST 1204
+     * accepts). The decode twin of {@link #encodeVmtiStandalone(VmtiLs)}.
+     * Mirrors tst-py's {@code decode_vmti_standalone(buf, strict=...)}.
+     *
+     * @param buf    the standalone packet
+     * @param strict {@code true} for the strict form
+     * @return the decoded {@link VmtiLs}
+     * @throws org.tstrans.KlvDecodeException if the packet is rejected (kind
+     *         {@code CHECKSUM_MISMATCH} for a wrong checksum, {@code
+     *         BAD_UNIVERSAL_LABEL} for another label)
+     */
+    public static VmtiLs decodeVmtiStandalone(byte[] buf, boolean strict)
+            throws org.tstrans.KlvDecodeException {
+        return nDecodeVmtiStandalone(buf, strict);
+    }
+
+    /**
      * Encode a {@link VmtiLs} to ST 0903 body bytes (embedded form).
      *
      * <p>Returns body-only bytes — no Universal Label, no outer BER length, and
@@ -299,6 +323,9 @@ public final class Klv {
     }
 
     private static native VmtiLs nDecodeVmti(byte[] buf, boolean strict)
+            throws org.tstrans.KlvDecodeException;
+
+    private static native VmtiLs nDecodeVmtiStandalone(byte[] buf, boolean strict)
             throws org.tstrans.KlvDecodeException;
 
     private static native byte[] nEncodeVmti(VmtiLs record) throws org.tstrans.KlvEncodeException;
