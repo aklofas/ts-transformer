@@ -243,7 +243,9 @@ pub(super) enum Signal {
 /// a sentinel for an IMAPB or unsigned row, either for a pack row or an
 /// unknown tag) is never written.
 pub(super) fn resolve(record: &UasDatalinkLs, spec: &TagSpec) -> Option<ItemSource> {
-    if let Some(v) = spec.get.and_then(|get| get(record)) {
+    if let Some(v) = spec.get.and_then(|get| get(record))
+        && !replays_overflow_signal(record, spec, &v)
+    {
         return Some(ItemSource::Value(v));
     }
     let tag = u32::from(spec.id);
@@ -259,6 +261,27 @@ pub(super) fn resolve(record: &UasDatalinkLs, spec: &TagSpec) -> Option<ItemSour
             .contains(&tag)
             .then_some(ItemSource::Sentinel),
         _ => None,
+    }
+}
+
+/// `true` when the populated field `v` of an IMAPB row is written as the
+/// overflow signal the record carries for it: `v` is the range's minimum
+/// and the tag's last special is `BelowMin`, or its maximum and the last is
+/// `AboveMax` (the state a decode of such a signal leaves). A value the
+/// caller changed is written as the value.
+#[inline]
+fn replays_overflow_signal(record: &UasDatalinkLs, spec: &TagSpec, v: &FieldValue) -> bool {
+    let (&FieldValue::F64(x), Encoding::Imapb { min, max, .. }) = (v, spec.encoding) else {
+        return false;
+    };
+    if x != min && x != max {
+        return false;
+    }
+    let tag = u32::from(spec.id);
+    match record.imapb_specials.iter().rev().find(|e| e.0 == tag) {
+        Some(&(_, ImapbSpecial::BelowMin)) => x == min,
+        Some(&(_, ImapbSpecial::AboveMax)) => x == max,
+        _ => false,
     }
 }
 
@@ -414,7 +437,8 @@ pub(super) fn each_typed_field<F: FnMut(u8, usize)>(record: &UasDatalinkLs, mut 
             let Some(get) = spec.get else { continue };
             // A populated field is written as its value (`resolve`).
             match get(record) {
-                Some(v) => Some(scalar_len(spec, &v)),
+                Some(v) if !replays_overflow_signal(record, spec, &v) => Some(scalar_len(spec, &v)),
+                Some(_) => None,
                 // Tag 65 is auto-emitted when the record leaves it unset.
                 None if spec.id == 65 => Some(1),
                 None => None,
@@ -734,7 +758,10 @@ pub(super) fn encode_tag_value(
     };
     // A populated field is written as its value (`resolve`).
     match get(record) {
-        Some(v) => encode_scalar(spec, &v, policy).map(Some),
+        Some(v) if !replays_overflow_signal(record, spec, &v) => {
+            encode_scalar(spec, &v, policy).map(Some)
+        }
+        Some(_) => Ok(None),
         None if spec.id == 65 => Ok(version_fallback.map(|v| vec![v])),
         None => Ok(None),
     }
@@ -845,10 +872,13 @@ fn encode_ranged(
 
 /// Encode one ST 1201.5 IMAPB extended-range field — the IMAPB
 /// sibling of `encode_ranged`. In-range values encode normally at
-/// `default_len`; out-of-range values either error (default policy) or,
-/// under [`OutOfRangePolicy::Indicator`], emit the tag's `BelowMin` /
-/// `AboveMax` special at `default_len` instead. Non-finite input always
-/// errors regardless of policy.
+/// `default_len`, and so does a value in the band the substrate takes just
+/// below `min` (the range's bottom bucket at that length, at least a float
+/// tolerance wide), which is written as `min` under every policy;
+/// out-of-range values either error (default policy) or, under
+/// [`OutOfRangePolicy::Indicator`], emit the tag's `BelowMin` / `AboveMax`
+/// special at `default_len` instead. Non-finite input always errors
+/// regardless of policy.
 fn encode_imapb_field(
     v: f64,
     tag: u32,
@@ -858,14 +888,17 @@ fn encode_imapb_field(
     policy: OutOfRangePolicy,
 ) -> Result<Vec<u8>, KlvEncodeError> {
     let mut buf = vec![0u8; default_len];
-    if v.is_finite() && v >= min && v <= max {
-        let p = crate::klv::imapb::ImapbParams {
-            min,
-            max,
-            length: default_len,
-        };
-        crate::klv::imapb::encode_imapb(&p, v, &mut buf)?;
-        return Ok(buf);
+    let p = crate::klv::imapb::ImapbParams {
+        min,
+        max,
+        length: default_len,
+    };
+    match crate::klv::imapb::encode_imapb(&p, v, &mut buf) {
+        Ok(()) => return Ok(buf),
+        // Outside what the substrate writes: below its band, above `max`,
+        // or not finite.
+        Err(KlvEncodeError::OutOfRange { .. }) => {}
+        Err(e) => return Err(e),
     }
     if policy == OutOfRangePolicy::Indicator && v.is_finite() {
         let special = if v < min {

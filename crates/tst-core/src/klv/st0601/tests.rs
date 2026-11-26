@@ -2318,17 +2318,23 @@ fn imapb_variable_length_decode_and_specials() {
     // Any length 1..=max_len decodes (2-byte Tag 104 value):
     let ls = decode_with_single_tlv(104, &[0x2F, 0x92]);
     assert!(ls.sensor_ellipsoid_height_extended_m.is_some());
-    // ST 1201 AboveMax special (0xE1, zero-filled) -> side channel, field None:
+    // ST 1201 AboveMax overflow signal (0xE1, zero-filled): the field reads
+    // the range's maximum, and the signal is kept beside it:
     let ls = decode_with_single_tlv(104, &[0xE1, 0x00, 0x00]);
-    assert_eq!(ls.sensor_ellipsoid_height_extended_m, None);
+    assert_eq!(ls.sensor_ellipsoid_height_extended_m, Some(40_000.0));
     assert_eq!(
         ls.imapb_specials,
         vec![(104u32, crate::klv::ImapbSpecial::AboveMax)]
     );
     assert!(ls.field_errors.is_empty());
-    // Specials re-emit on encode when the field stays None (value wins otherwise):
+    // The signal is written back while the field still holds that end:
     let out = crate::klv::st0601::encode_to_vec(&ls).unwrap();
     assert_eq!(tlv_value(&out, 104), Some(vec![0xE1, 0x00, 0x00]));
+    // Any other special leaves the field unset, and is written back too:
+    let ls = decode_with_single_tlv(104, &[0xC8, 0x00, 0x00]);
+    assert_eq!(ls.sensor_ellipsoid_height_extended_m, None);
+    let out = crate::klv::st0601::encode_to_vec(&ls).unwrap();
+    assert_eq!(tlv_value(&out, 104), Some(vec![0xC8, 0x00, 0x00]));
 }
 
 /// The two non-conformant IMAPB decode outcomes — a top-two-bits-set
@@ -4714,5 +4720,159 @@ fn a_decoded_location_with_a_special_coordinate_is_an_unknown_site() {
             format!("{:?}", rec.field_errors),
             "[InvalidFormat { tag: 130 }]"
         );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The IMAPB overflow signals read as the range end (ST 1201.5 §7.2.3); the
+// bottom bucket and the band below the minimum
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_below_minimum_signal_reads_as_the_range_minimum_and_is_written_back() {
+    // Item 109, Range To Recovery Location, IMAPB(0, 21000) of 3 bytes.
+    let rec = decode_with_single_tlv(109, &[0xE0, 0x00, 0x00]);
+    assert_eq!(rec.range_to_recovery_km, Some(0.0));
+    assert_eq!(
+        rec.imapb_specials,
+        [(109, crate::klv::imapb::ImapbSpecial::BelowMin)]
+    );
+    assert!(rec.field_errors.is_empty());
+    assert_eq!(
+        items_with_tag(&encode_to_vec(&rec).unwrap(), 109),
+        [vec![0xE0, 0, 0]]
+    );
+}
+
+#[test]
+fn an_above_maximum_signal_reads_as_the_range_maximum_and_is_written_back() {
+    let rec = decode_with_single_tlv(109, &[0xE1, 0x00, 0x00]);
+    assert_eq!(rec.range_to_recovery_km, Some(21_000.0));
+    assert_eq!(
+        rec.imapb_specials,
+        [(109, crate::klv::imapb::ImapbSpecial::AboveMax)]
+    );
+    assert_eq!(
+        items_with_tag(&encode_to_vec(&rec).unwrap(), 109),
+        [vec![0xE1, 0, 0]]
+    );
+}
+
+#[test]
+fn a_changed_value_beats_the_replayed_signal() {
+    let mut rec = decode_with_single_tlv(109, &[0xE0, 0x00, 0x00]);
+    rec.range_to_recovery_km = Some(5.0);
+    let back = decode(&encode_to_vec(&rec).unwrap()).unwrap();
+    assert!((back.range_to_recovery_km.unwrap() - 5.0).abs() < 0.01);
+    assert!(back.imapb_specials.is_empty());
+    // The matching end only: a below-minimum entry beside the maximum is a value.
+    rec.range_to_recovery_km = Some(21_000.0);
+    let back = decode(&encode_to_vec(&rec).unwrap()).unwrap();
+    assert_eq!(back.range_to_recovery_km, Some(21_000.0));
+    assert!(back.imapb_specials.is_empty());
+}
+
+#[test]
+fn a_signal_with_the_field_cleared_is_still_written() {
+    let mut rec = decode_with_single_tlv(109, &[0xE0, 0x00, 0x00]);
+    rec.range_to_recovery_km = None;
+    assert_eq!(
+        items_with_tag(&encode_to_vec(&rec).unwrap(), 109),
+        [vec![0xE0, 0, 0]]
+    );
+}
+
+#[test]
+fn an_item_117_sent_at_one_byte_reencodes() {
+    // Item 117, Sensor Azimuth Rate, IMAPB(-1000, 1000), default length 2.
+    // At one byte wire 0 is the bottom bucket, which the reverse formula
+    // puts 8 below the minimum: the item reads the minimum.
+    let rec = decode_with_single_tlv(117, &[0x00]);
+    assert_eq!(rec.sensor_azimuth_rate_dps, Some(-1000.0));
+    assert!(rec.field_errors.is_empty());
+    let out = encode_to_vec(&rec).unwrap();
+    assert_eq!(items_with_tag(&out, 117), [vec![0x00, 0x00]]);
+}
+
+#[test]
+fn a_value_in_the_tolerance_band_is_written_as_the_minimum() {
+    // Half a float tolerance below Item 117's minimum: at the default length
+    // the bottom bucket is that tolerance wide, and the value is wire 0.
+    for policy in [OutOfRangePolicy::Error, OutOfRangePolicy::Indicator] {
+        let rec = UasDatalinkLs {
+            sensor_azimuth_rate_dps: Some(-1000.0 - 1.7e-12),
+            ..timestamped()
+        };
+        let cfg = EncodeConfig {
+            out_of_range_policy: policy,
+            ..EncodeConfig::default()
+        };
+        let out = encode_to_vec_with(&rec, &cfg).unwrap();
+        assert_eq!(items_with_tag(&out, 117), [vec![0x00, 0x00]], "{policy:?}");
+    }
+}
+
+#[test]
+fn an_imapb_value_decoded_at_any_length_re_encodes_within_one_step() {
+    use crate::klv::imapb::{DecodedImapb, ImapbParams, decode_imapb};
+    // Every wire value at one byte, an even spread of 500 at each longer
+    // length, for the 14 IMAPB rows.
+    for spec in TAGS
+        .iter()
+        .filter(|s| matches!(s.encoding, Encoding::Imapb { .. }))
+    {
+        let Encoding::Imapb {
+            min,
+            max,
+            max_len,
+            default_len,
+        } = spec.encoding
+        else {
+            unreachable!()
+        };
+        let at_default = |wire: u64| {
+            let p = ImapbParams {
+                min,
+                max,
+                length: default_len,
+            };
+            match decode_imapb(&p, &wire.to_be_bytes()[8 - default_len..]).unwrap() {
+                DecodedImapb::Value(v) => v,
+                other => panic!("{other:?}"),
+            }
+        };
+        let step = at_default(1) - at_default(0);
+        for len in 1..=max_len {
+            let top = (1u128 << (8 * len)) - 1;
+            let samples: Vec<u64> = if len == 1 {
+                (0..256).collect()
+            } else {
+                (0..500u128).map(|i| (i * top / 499) as u64).collect()
+            };
+            for wire in samples {
+                let bytes = wire.to_be_bytes()[8 - len..].to_vec();
+                let rec = decode(&wrap_st0601(&tlv(spec.id, &bytes))).unwrap();
+                let Some(v) = spec.get_f64(&rec) else {
+                    continue;
+                };
+                if !rec.imapb_specials.is_empty() {
+                    continue;
+                }
+                let out = encode_to_vec(&rec)
+                    .unwrap_or_else(|e| panic!("Item {} {bytes:02X?}: {e:?}", spec.id));
+                let back = spec.get_f64(&decode(&out).unwrap()).unwrap();
+                assert!(
+                    (back - v).abs() <= step * (1.0 + 1e-9),
+                    "Item {} {bytes:02X?}: {v} came back as {back}",
+                    spec.id
+                );
+                if len == default_len {
+                    assert_eq!(
+                        items_with_tag(&out, u32::from(spec.id)),
+                        core::slice::from_ref(&bytes)
+                    );
+                }
+            }
+        }
     }
 }

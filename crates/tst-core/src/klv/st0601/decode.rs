@@ -665,8 +665,9 @@ pub(super) const MIIS_CORE_ID_MAX_LEN: usize = 50;
 
 /// Decode a scalar row's wire value by its encoding. `None` means the
 /// field stays unset: an absent string, an INT_MIN sentinel (recorded in
-/// `sentinel_tags`) or an IMAPB special value (recorded in
-/// `imapb_specials`).
+/// `sentinel_tags`) or an IMAPB special value other than the two overflow
+/// signals (recorded in `imapb_specials`; `BelowMin` and `AboveMax` are
+/// recorded there too and read as the range's minimum and maximum).
 fn decode_scalar(
     spec: &TagSpec,
     f: &crate::klv::pack::RawField<'_>,
@@ -792,10 +793,20 @@ fn decode_scalar(
                 length: f.value.len(),
             };
             match crate::klv::imapb::decode_imapb(&params, f.value)? {
-                crate::klv::imapb::DecodedImapb::Value(v) => FieldValue::F64(v),
+                // Below `min` is only the bottom bucket of a range that
+                // straddles zero (wire 0 by the reverse formula): the value
+                // the producer coded lay in `[min, min + step)`.
+                crate::klv::imapb::DecodedImapb::Value(v) => FieldValue::F64(v.max(min)),
+                // ST 1201.5 §7.2.3: where the invoking standard says nothing,
+                // the overflow signals stand for the range's end. The entry is
+                // kept, so the signal is written back while the field holds it.
                 crate::klv::imapb::DecodedImapb::Special(s) => {
                     record.imapb_specials.push((tag, s));
-                    return Ok(None);
+                    match s {
+                        crate::klv::imapb::ImapbSpecial::BelowMin => FieldValue::F64(min),
+                        crate::klv::imapb::ImapbSpecial::AboveMax => FieldValue::F64(max),
+                        _ => return Ok(None),
+                    }
                 }
                 // Both non-conformant outcomes below are producer errors
                 // from this typed consumer's view (see the
