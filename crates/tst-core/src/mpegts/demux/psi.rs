@@ -441,10 +441,12 @@ pub fn has_klva_registration(descs: &[RawDescriptor]) -> bool {
 ///      A.1: ISO/IEC 6937 with the euro sign at 0xA4) and is decoded by it:
 ///      a byte below 0x80 is read as ASCII, the C0 codes and 0x7F included,
 ///      which the figure leaves empty; a non-spacing accent (0xC1..=0xCF)
-///      and the letter after it are one precomposed character; a control
-///      code (0x80..=0x9F), any other code the table leaves empty, or an
-///      accent that is last or not followed by a letter it has a precomposed
-///      character with makes the text undecodable.
+///      and the letter after it are one precomposed character, accepted for
+///      every ASCII letter Unicode has a precomposed character for with that
+///      accent, a superset of ISO/IEC 6937's own repertoire; a control code
+///      (0x80..=0x9F), any other code the table leaves empty, or an accent
+///      that is last or not followed by such a letter makes the text
+///      undecodable.
 ///      One deviation from Annex A: default-table text that is
 ///      well-formed UTF-8 as a whole is read as UTF-8, so a label written as
 ///      UTF-8 without the 0x15 selector reads as written. Table 00 text that
