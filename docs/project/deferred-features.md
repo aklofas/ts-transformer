@@ -368,9 +368,10 @@ mean **Deferred**. An entry whose feature has shipped must never read
 
 - **Status:** Consumer-side dispatch. Consumers carrying VMTI on its
   own KLV PID match `data.starts_with(&klv::st0903::VMTI_LS_UL)`
-  themselves and call `klv::st0903::decode` on the inner bytes (after
-  stripping the 16-byte UL prefix and reading the BER outer length).
-  The demuxer's `MetadataKind` enum has no VMTI-aware variant.
+  themselves and call `klv::st0903::decode_standalone` (or
+  `decode_standalone_strict`) on the packet, which reads the label and
+  the BER outer length and verifies the checksum. The demuxer's
+  `MetadataKind` enum has no VMTI-aware variant.
 - **Why deferred:** Adding `MetadataKind::VmtiLs` to the demuxer event
   surface makes the demuxer typed-set-aware — and that's a slippery
   slope (do we then add `MetadataKind::SecurityLs`,
@@ -1970,34 +1971,109 @@ and the two below.
 
 - **Status:** Deferred — covered by "CoT→KLV reverse conversion" above.
 
-## SDCC-FLP wire-adjacency preservation on encode
+## A typed SDCC-FLP builder for ST 0601 Item 102
 
 - **Status:** Not implemented. `UasDatalinkLs::sdcc_flps` (ST 0601 Tag
-  102, MULTI-INSTANCE) captures each wire occurrence as raw pack bytes
-  plus its `preceding_tags` — the Local Set item tags the occurrence
-  refines, per the "Refined Source List" binding (ST 0601.19 §8.102).
-  On encode, `write_typed_fields` re-emits every `sdcc_flps` entry
-  verbatim but groups all occurrences together at Tag 102's
-  ascending-tag-order position in the body — it does not reproduce the
-  original interleaving with each occurrence's `preceding_tags` (see
-  the `SdccFlpField` "Ascending-order emission caveat" rustdoc in
-  `klv::st0601::model`). `preceding_tags` still records what the
-  original wire order was; the pack bytes themselves stay byte-exact.
-  The lower-level `klv::st1010::encode_sdcc_flp_mode2` pack encoder has
-  no adjacency concept at all — it emits one self-contained pack from
-  caller-supplied std-dev/correlation slices with no notion of a
-  surrounding Local Set.
-- **Why deferred:** Conformant SDCC emission with arbitrary member
-  sets — constructing a fresh `UasDatalinkLs` (rather than replaying a
-  captured one) with SDCC-FLP occurrences correctly interleaved at the
-  wire positions of the items they refine — would need new encoder
-  plumbing to place each Tag 102 TLV mid-body instead of at the fixed
-  post-typed-fields position `write_typed_fields` uses today. No
-  consumer has asked for constructed (as opposed to captured/replayed)
-  SDCC-FLP emission.
-- **Trigger to revisit:** A consumer needs to construct — not just
-  decode-then-replay — an ST 0601 record with SDCC-FLP occurrences
-  correctly interleaved with the Local Set items they refine.
+  102, MULTI-INSTANCE) holds each occurrence as raw pack bytes plus its
+  `preceding_tags`, the items the occurrence refines (the "Refined
+  Source List" binding, ST 0601.19 §8.102). The encoders write each
+  occurrence right after the items its `preceding_tags` name, and
+  `encode_strict_compliance` refuses an occurrence it cannot place there
+  or whose header ST 1010 does not define (see the `SdccFlpField`
+  rustdoc in `klv::st0601::model`). What is not built: a typed builder
+  that takes standard deviations and correlations for named items and
+  returns the pack and its position; a check that a pack's matrix size
+  equals the number of items it names; and the ST 0601.19 Table 1
+  check of which items an SDCC-FLP may refine ("SDCC FLP" = Y). The
+  lower-level `klv::st1010::encode_sdcc_flp_mode2` writes one
+  self-contained pack from caller-supplied slices and knows nothing of
+  the Local Set around it. For a tag that repeats (an unknown tag,
+  Item 115) `preceding_tags` names tags, not instances, so the encoder
+  places a pack after the first instance not yet written.
+- **Why deferred:** A caller that builds a record today pairs the pack
+  from `encode_sdcc_flp_mode2` with the `preceding_tags` it refines,
+  and the encoder places it. A builder, and the two checks, need the
+  model to say which item instances a pack refines; no consumer has
+  asked to construct SDCC-FLP occurrences rather than replay captured
+  ones.
+- **Trigger to revisit:** A consumer constructs ST 0601 records with
+  SDCC-FLP occurrences for items it chooses, or reports a pack whose
+  matrix does not match the items it names.
+
+## Explicit "unknown" items that survive a re-encode
+
+- **Status:** Not implemented. A zero-length KLV item means "unknown"
+  (ST 0107.4-16, -17): the typed decoders leave its field unset, the
+  same state as an item that was never sent, so a re-encode leaves the
+  item out instead of writing it again as zero-length.
+- **Why deferred:** Keeping it needs a record field per set (a list of
+  tags sent as unknown), a signature change for every typed record and
+  its Python and JVM twins, and an encoder rule for a tag that is both
+  in the list and set; nothing a decoder hands out depends on the
+  difference.
+- **Trigger to revisit:** A relay that must re-emit a producer's
+  explicit "unknown" items, or a consumer that needs to tell "sent as
+  unknown" from "not sent".
+
+## VTarget Pack and VMTI IMAP specials kept across a re-encode
+
+- **Status:** Not implemented. An ST 1201 IMAP special value (an
+  out-of-range signal, "Invalid", an infinity, NaN) in a VTarget Pack's
+  IMAPB item or in VMTI Item 11 or 12 decodes as an unset field with no
+  error (ST 0903.6 §9.1.1 sends the signal in place of the
+  measurement), so a re-encode leaves the item out, and the strict
+  encoders refuse a record whose special was a mandatory item's or a
+  pack's only value. ST 0601 keeps its specials in
+  `UasDatalinkLs::imapb_specials`; VMTI has no such field.
+- **Why deferred:** A field like ST 0601's on `VmtiLs` and
+  `VTargetPack` changes both records and their Python and JVM twins. A
+  relay forwards the original bytes meanwhile.
+- **Trigger to revisit:** A VMTI relay that must re-encode records
+  whose producer sends IMAP specials.
+
+## Unknown KLV tags wider than 32 bits: kept, or counted
+
+- **Status:** Not implemented. The lenient KLV decoders (`st0601`
+  `decode`, `decode_unchecked`, `decode_strict`; `st0806::decode`;
+  `st0903::decode`) step over an unknown item whose BER-OID tag is wider
+  than 32 bits (ST 0107.3-04) and drop it: it is not in the record's
+  `unknown` list, a re-encode leaves it out, and nothing counts how
+  many were skipped. `st0601::patch` copies such an item as it was;
+  `st0601::decode_strict_compliance` and `st0903::decode_strict` refuse
+  it. The Security Metadata Local Set and the VTarget Pack use one-byte
+  tags and cannot carry one.
+- **Why deferred:** `OwnedRawField::tag` is a `u32`; a lossless form
+  needs a wider tag type or a second list in every typed record, and a
+  count needs a record field. No producer sends such tags today.
+- **Trigger to revisit:** A producer that sends a defined item with a
+  tag wider than 32 bits, or a consumer that needs to know a set held
+  items it could not keep.
+
+## A datum field on `GeoPoint`
+
+- **Status:** Not implemented. The composite views' `GeoPoint::alt_m`
+  is above the ellipsoid or above mean sea level depending on the item
+  it came from; `UasDatalinkLs::sensor_position_datum()` and
+  `frame_center_datum()` (Python, JVM the same) say which, beside the
+  view.
+- **Why deferred:** A field on `GeoPoint` changes a public struct, its
+  Python and JVM records and every caller that builds one; the two
+  accessors answer the question without that.
+- **Trigger to revisit:** The next break of `GeoPoint` for another
+  reason, or a consumer that passes views around without their record.
+
+## The MSL fallback as a `CotConfig` field
+
+- **Status:** Not implemented. Whether the CoT converters may write an
+  MSL height as the HAE is chosen per call: `st0805::MslFallback` and
+  `platform_position_xml_with` / `sensor_point_of_interest_xml_with`
+  (Python `require_hae=True`, JVM `requireHae` overloads); the existing
+  functions keep the pass-through.
+- **Why deferred:** A field on `CotConfig` changes a public struct and
+  its Python and JVM records; the per-call choice serves the callers
+  that need it.
+- **Trigger to revisit:** The next break of `CotConfig` for another
+  reason.
 
 ## ST 0903 VTrack standalone LS
 
