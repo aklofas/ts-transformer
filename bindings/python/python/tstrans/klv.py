@@ -2083,8 +2083,13 @@ def patch_uas_datalink(raw: bytes, edits: UasDatalinkLs | dict[str, object]) -> 
     (e.g. ``{"corner_lat_p1_deg": 33.99}``) or a partial
     ``UasDatalinkLs`` itself — ``None`` fields leave the input
     untouched. Tags outside the typed model can be replaced through the
-    ``unknown`` field: ``{"unknown": ((200, b"..."),)}``. Edited tags
-    absent from the input are inserted before the trailing checksum.
+    ``unknown`` field: ``{"unknown": ((200, b"..."),)}``. An edit is
+    what the encoder writes for the item: a set field's value, or the
+    sentinel or IMAP special that a ``sentinel_tags`` /
+    ``imapb_specials`` entry replays for an unset field. An existing
+    item is never moved; a new Item 2 (Precision Time Stamp) is written
+    first (ST 0601.8-09), the other edited tags absent from the input
+    are inserted in tag order before the trailing checksum.
     Bytes after the declared outer length are preserved verbatim.
     ``universal_label`` and ``declared_version`` are accepted but
     ignored — the input's 16-byte UL is always copied verbatim.

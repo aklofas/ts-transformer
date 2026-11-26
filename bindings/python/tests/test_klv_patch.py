@@ -66,3 +66,22 @@ def test_patch_out_of_range_value_raises_encode_error():
     raw = klv.encode_uas_datalink(_base_ls())
     with pytest.raises(KlvEncodeError):
         klv.patch_uas_datalink(raw, {"corner_lat_p1_deg": 999.0})
+
+
+def test_patch_applies_a_sentinel_edit():
+    # An edit record's sentinel entry for an unset field is written in place
+    # as the row's INT_MIN sentinel (the encoder's bytes for it).
+    raw = klv.encode_uas_datalink(_base_ls())
+    out = klv.patch_uas_datalink(raw, {"sentinel_tags": (23,)})
+    back = klv.decode_uas_datalink(out)
+    assert back.frame_center_lat_deg is None
+    assert back.sentinel_tags == (23,)
+    assert bytes([23, 4, 0x80, 0, 0, 0]) in out
+
+
+def test_patch_writes_a_new_timestamp_first():
+    raw = klv.encode_uas_datalink(_base_ls(timestamp_us=None))
+    out = klv.patch_uas_datalink(raw, {"timestamp_us": 1_700_000_000_000_000})
+    # The body starts right after the 16-byte UL and a one-byte length.
+    assert out[17] == 2
+    assert klv.decode_uas_datalink(out).timestamp_us == 1_700_000_000_000_000
