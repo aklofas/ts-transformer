@@ -1856,7 +1856,14 @@ class UasDatalinkLs:
         """The four corners, each on its own: its full-range pair (Items 82 to
         89) when both are set, else the frame centre plus its offsets (Items
         26 to 33). A full-range item sent as "no value" (Off-Earth) ends that
-        corner, and so the view."""
+        corner, and so the view.
+
+        The pair decides: a corner with only one of its two full-range items
+        takes BOTH coordinates from the frame centre and the offsets, and the
+        one full-range item is not used. This is a choice: ST 0601.8-16
+        ("shall use the full-range representation and ignore the
+        range-restricted representation when both exist") could also be read
+        per item, taking each coordinate from its own item."""
 
         def point(
             lat_tag: int,

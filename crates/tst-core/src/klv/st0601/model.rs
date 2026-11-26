@@ -1385,6 +1385,13 @@ impl UasDatalinkLs {
     /// 89) when both are on the record, else the frame centre plus its
     /// offsets (Items 26 to 33). A full-range item sent as "no value"
     /// (Off-Earth) ends that corner, and so the view.
+    ///
+    /// The pair decides: a corner with only one of its two full-range
+    /// items takes BOTH coordinates from the frame centre and the offsets,
+    /// and the one full-range item is not used. This is a choice: ST
+    /// 0601.8-16 ("shall use the full-range representation and ignore the
+    /// range-restricted representation when both exist") could also be
+    /// read per item, taking each coordinate from its own item.
     pub fn corners(&self) -> Option<Corners> {
         let point =
             |lat_tag: u32, full: (Option<f64>, Option<f64>), offset: (Option<f64>, Option<f64>)| {

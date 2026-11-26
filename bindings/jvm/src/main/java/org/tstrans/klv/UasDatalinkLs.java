@@ -1721,6 +1721,13 @@ public record UasDatalinkLs(
      * ends that corner, and so the view. An offset corner's longitude is folded
      * into (-180, 180]. Mirrors tst-py's {@code corners()}.
      *
+     * <p>The pair decides: a corner with only one of its two full-range items
+     * takes BOTH coordinates from the frame center and the offsets, and the one
+     * full-range item is not used. This is a choice: ST 0601.8-16 ("shall use the
+     * full-range representation and ignore the range-restricted representation
+     * when both exist") could also be read per item, taking each coordinate from
+     * its own item.
+     *
      * @return {@link Corners} with four {@link LatLon} points, or empty
      */
     public Optional<Corners> corners() {
