@@ -376,3 +376,56 @@ fn st0601_tag94_absent_when_field_none() {
         "Tag 94 must be absent when miis_core_id is None"
     );
 }
+
+// -------- Item 102 placement stays linear in its occurrences --------
+
+#[test]
+fn many_sdcc_occurrences_place_in_linear_time() {
+    use std::time::{Duration, Instant};
+    use tst_core::klv::st0601::SdccFlpField;
+    // `n` occurrences, each refining the same three items: each is written
+    // after them, the first by taking them forward, the rest at once.
+    let record = |n: usize| {
+        let mut pack = vec![3u8, 0x80, 0x04];
+        pack.extend([0x3F, 0x80, 0x00, 0x00].repeat(3));
+        UasDatalinkLs {
+            timestamp_us: Some(1),
+            sensor_lat_deg: Some(10.0),
+            sensor_lon_deg: Some(20.0),
+            sensor_alt_m: Some(100.0),
+            sdcc_flps: vec![
+                SdccFlpField {
+                    preceding_tags: vec![13, 14, 15],
+                    bytes: pack,
+                };
+                n
+            ],
+            ..UasDatalinkLs::default()
+        }
+    };
+    // The best of five runs per size, per occurrence.
+    let per_occurrence = |n: usize| {
+        let rec = record(n);
+        let best = (0..5)
+            .map(|_| {
+                let t = Instant::now();
+                let out = encode_to_vec(&rec).expect("encode");
+                let took = t.elapsed();
+                assert_eq!(decode(&out).expect("decode").sdcc_flps.len(), n);
+                took
+            })
+            .min()
+            .unwrap_or(Duration::ZERO);
+        best.as_secs_f64() / n as f64
+    };
+    let small = per_occurrence(256);
+    let large = per_occurrence(4096);
+    // Linear: about 1 (16 times the occurrences in 16 times the time);
+    // quadratic: about 16.
+    assert!(
+        large < small * 8.0,
+        "{:.0} ns per occurrence at 4096 against {:.0} ns at 256",
+        large * 1e9,
+        small * 1e9
+    );
+}

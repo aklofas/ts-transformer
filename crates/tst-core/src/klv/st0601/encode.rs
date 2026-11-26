@@ -4,8 +4,9 @@ use crate::error::KlvEncodeError;
 use crate::klv::checksum::checksum_running_sum_16;
 use crate::klv::imapb::ImapbSpecial;
 use crate::klv::length::{ber_len, ber_oid_len, write_ber};
-use crate::klv::pack::{emit_ber_oid_tlv, is_typed_tag};
+use crate::klv::pack::{Iter, emit_ber_oid_tlv, is_typed_tag};
 use alloc::borrow::Cow;
+use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
 
 use super::mapping::encode_fixed_range;
@@ -58,10 +59,24 @@ pub fn encode_with(
     opts: &EncodeConfig,
     out: &mut [u8],
 ) -> Result<usize, KlvEncodeError> {
+    encode_into(record, opts, out, false)
+}
+
+/// [`encode_with`]; `strict` refuses an Item 102 occurrence that cannot be
+/// placed after the items it refines ([`place_sdcc_packs`]).
+fn encode_into(
+    record: &UasDatalinkLs,
+    opts: &EncodeConfig,
+    out: &mut [u8],
+    strict: bool,
+) -> Result<usize, KlvEncodeError> {
     // Build the inner body into a temporary Vec, then assemble UL + BER length + body + checksum.
     let mut body: Vec<u8> = Vec::with_capacity(256);
     write_typed_fields(record, opts, &mut body)?;
     write_unknown_fields(record, &mut body)?;
+    if !record.sdcc_flps.is_empty() {
+        body = place_sdcc_packs(record, &body, strict)?;
+    }
 
     // Reserve room for Tag 1 (checksum) — 4 bytes (tag=1, len-byte=1, value=2).
     let body_len_with_checksum = body.len() + 4;
@@ -125,9 +140,17 @@ pub fn encode_to_vec_with(
     record: &UasDatalinkLs,
     opts: &EncodeConfig,
 ) -> Result<Vec<u8>, KlvEncodeError> {
+    encode_to_vec_into(record, opts, false)
+}
+
+fn encode_to_vec_into(
+    record: &UasDatalinkLs,
+    opts: &EncodeConfig,
+    strict: bool,
+) -> Result<Vec<u8>, KlvEncodeError> {
     let n = encoded_len_with(record, opts);
     let mut buf = vec![0u8; n];
-    let written = encode_with(record, opts, &mut buf)?;
+    let written = encode_into(record, opts, &mut buf, strict)?;
     buf.truncate(written);
     Ok(buf)
 }
@@ -176,7 +199,20 @@ pub fn encode_strict_compliance(record: &UasDatalinkLs) -> Result<Vec<u8>, KlvEn
     // "" encodes as [0x00].
     let mut r = record.clone();
     sanitize_strings_st0601(&mut r);
-    let out = encode_to_vec(&r)?;
+    // An SDCC-FLP is written as its bytes came: they must hold a header
+    // ST 1010 defines, with no reserved bit set and a matrix it bounds.
+    for f in &r.sdcc_flps {
+        match crate::klv::st1010::read_sdcc_header(&f.bytes) {
+            Ok((header, _)) if !header.reserved_bits => {}
+            _ => {
+                return Err(KlvEncodeError::InvalidFieldValue {
+                    tag: 102,
+                    reason: "the SDCC-FLP header is not one ST 1010 defines",
+                });
+            }
+        }
+    }
+    let out = encode_to_vec_into(&r, &EncodeConfig::default(), true)?;
     // The per-item rules are the compliance decode's, judged on the bytes
     // this encoder wrote, so the pair agrees by construction.
     let (len, after_len) =
@@ -821,10 +857,9 @@ fn write_typed_fields(
     }
     // Tag 102 (SDCC-FLP) is MULTI-INSTANCE — one TLV per
     // `record.sdcc_flps` entry, emitted verbatim (the raw captured
-    // bytes, not re-derived from a parsed `SdccFlp`). Ascending-order
-    // emission caveat: see `SdccFlpField`'s doc — grouping every
-    // occurrence together here does not reproduce the original wire
-    // interleaving with the Local Set items named in `preceding_tags`.
+    // bytes, not re-derived from a parsed `SdccFlp`). Written together
+    // here; `place_sdcc_packs` then moves each after the items its
+    // `preceding_tags` name.
     for field in &record.sdcc_flps {
         emit_ber_oid_tlv(102, &field.bytes, body)?;
     }
@@ -1053,4 +1088,267 @@ pub(crate) fn sanitize_st0107_string(s: &str) -> alloc::string::String {
 
 fn is_st0107_control_char(c: char) -> bool {
     matches!(c, '\x00'..='\x08' | '\x0B' | '\x0C' | '\x0E'..='\x1F' | '\x7F')
+}
+
+// ---------------------------------------------------------------------------
+// Item 102: each SDCC-FLP after the items it refines (ST 0601.19 §8.102.1:
+// "the Refined Source List values are written into the UAS Datalink Local
+// Set immediately followed by the SDCC-FLP")
+// ---------------------------------------------------------------------------
+
+/// One entry of a placed body: an item of the body, or occurrence `k` of
+/// Item 102.
+#[derive(Debug, Clone, Copy)]
+enum Placed {
+    Item(usize),
+    Pack(usize),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Occurrence {
+    Pending,
+    Placed,
+    /// Written where the encoder writes every Item 102 without placement:
+    /// after the typed items.
+    Fallback,
+}
+
+struct SdccPlacer<'a> {
+    /// The body's items other than Item 102, each as its whole TLV, in the
+    /// order the encoder wrote them.
+    items: Vec<(u32, &'a [u8])>,
+    used: Vec<bool>,
+    /// Per tag: the indexes of its items in `items`, and a cursor past
+    /// those already written.
+    by_tag: BTreeMap<u32, (Vec<usize>, usize)>,
+    /// The tags written so far, the packs left out.
+    written: Vec<u32>,
+    plan: Vec<Placed>,
+}
+
+impl SdccPlacer<'_> {
+    fn write_item(&mut self, i: usize) {
+        self.used[i] = true;
+        self.written.push(self.items[i].0);
+        self.plan.push(Placed::Item(i));
+    }
+
+    /// The first item of `tag` not yet written and not in `picks`.
+    fn next_unused(&mut self, tag: u32, picks: &[usize]) -> Option<usize> {
+        let (list, cursor) = self.by_tag.get_mut(&tag)?;
+        while *cursor < list.len() && self.used[list[*cursor]] {
+            *cursor += 1;
+        }
+        list[*cursor..]
+            .iter()
+            .copied()
+            .find(|i| !self.used[*i] && !picks.contains(i))
+    }
+
+    /// Write occurrence `k` here if the items right before it can be made
+    /// exactly `rows`: a tail of what is written (non-empty when
+    /// `overlap_only`) followed by items not yet written, taken forward in
+    /// `rows` order.
+    fn try_place(
+        &mut self,
+        k: usize,
+        rows: &[u32],
+        matrix_size: Option<usize>,
+        overlap_only: bool,
+    ) -> bool {
+        if rows.is_empty() {
+            return false;
+        }
+        // Fewer rows than the matrix has: the decoder met the pack that
+        // close to the start of the set, so nothing comes before its rows.
+        let short = matrix_size.is_some_and(|n| rows.len() < n);
+        let most = rows.len().min(self.written.len());
+        for j in (0..=most).rev() {
+            if overlap_only && j == 0 {
+                break;
+            }
+            if self.written[self.written.len() - j..] != rows[..j]
+                || (short && j != self.written.len())
+            {
+                continue;
+            }
+            let mut picks = Vec::with_capacity(rows.len() - j);
+            for &tag in &rows[j..] {
+                match self.next_unused(tag, &picks) {
+                    Some(i) => picks.push(i),
+                    None => break,
+                }
+            }
+            if picks.len() != rows.len() - j {
+                continue;
+            }
+            for i in picks {
+                self.write_item(i);
+            }
+            self.plan.push(Placed::Pack(k));
+            return true;
+        }
+        false
+    }
+}
+
+/// The first occurrence still pending in `waiting`'s list for `tag`.
+fn first_pending(
+    waiting: &mut BTreeMap<u32, (Vec<usize>, usize)>,
+    tag: u32,
+    state: &[Occurrence],
+) -> Option<usize> {
+    let (list, cursor) = waiting.get_mut(&tag)?;
+    while *cursor < list.len() && state[list[*cursor]] != Occurrence::Pending {
+        *cursor += 1;
+    }
+    list.get(*cursor).copied()
+}
+
+/// Reorder `body` (the encoder's output, every Item 102 together after the
+/// typed items) so that each occurrence follows the items its
+/// `preceding_tags` name, in that order.
+///
+/// The items are walked in the order the encoder wrote them. At the first
+/// item an occurrence names, its other named items are taken forward and
+/// the pack follows them; an occurrence whose first rows are the items just
+/// written (a pack refining the items of the one before plus more) follows
+/// at once. An occurrence that cannot be placed (a named item is not in the
+/// record, `preceding_tags` is empty, or the rows a short capture names are
+/// not the start of the set) is written where it was, after the typed
+/// items; under `strict` it is refused, unless it is a matrix of size 0
+/// naming nothing. Linear in the items and the named tags, for an index
+/// per tag of the items and of the occurrences waiting for it.
+fn place_sdcc_packs(
+    record: &UasDatalinkLs,
+    body: &[u8],
+    strict: bool,
+) -> Result<Vec<u8>, KlvEncodeError> {
+    let occ = &record.sdcc_flps;
+    let mut items: Vec<(u32, &[u8])> = Vec::new();
+    let mut packs: Vec<&[u8]> = Vec::with_capacity(occ.len());
+    // The index in `items` of the first item the encoder wrote after the
+    // packs.
+    let mut after_packs = None;
+    let mut start = 0;
+    for f in Iter::local_set(body) {
+        let f = f.expect("the encoder writes a valid body");
+        let end = (f.value.as_ptr() as usize - body.as_ptr() as usize) + f.value.len();
+        if f.tag == 102 {
+            after_packs.get_or_insert(items.len());
+            packs.push(&body[start..end]);
+        } else {
+            items.push((f.tag, &body[start..end]));
+        }
+        start = end;
+    }
+    let after_packs = after_packs.unwrap_or(items.len());
+    let sizes: Vec<Option<usize>> = occ
+        .iter()
+        .map(|f| crate::klv::st1010::peek_matrix_size(&f.bytes))
+        .collect();
+    let mut by_tag: BTreeMap<u32, (Vec<usize>, usize)> = BTreeMap::new();
+    for (i, &(tag, _)) in items.iter().enumerate() {
+        by_tag.entry(tag).or_default().0.push(i);
+    }
+    let mut waiting: BTreeMap<u32, (Vec<usize>, usize)> = BTreeMap::new();
+    for (k, f) in occ.iter().enumerate() {
+        for &tag in &f.preceding_tags {
+            let list = &mut waiting.entry(tag).or_default().0;
+            if list.last() != Some(&k) {
+                list.push(k);
+            }
+        }
+    }
+    let mut state = vec![Occurrence::Pending; occ.len()];
+    let mut pl = SdccPlacer {
+        used: vec![false; items.len()],
+        items,
+        by_tag,
+        written: Vec::new(),
+        plan: Vec::new(),
+    };
+    let mut i = 0;
+    while i < pl.items.len() {
+        if pl.used[i] {
+            i += 1;
+            continue;
+        }
+        let Some(k) = first_pending(&mut waiting, pl.items[i].0, &state) else {
+            pl.write_item(i);
+            i += 1;
+            continue;
+        };
+        // Item `i` is looked at again: placing `k` may not have written it.
+        if !pl.try_place(k, &occ[k].preceding_tags, sizes[k], false) {
+            state[k] = Occurrence::Fallback;
+            continue;
+        }
+        state[k] = Occurrence::Placed;
+        // The occurrences whose first rows end with the item just written.
+        while let Some(&last) = pl.written.last() {
+            let mut placed = false;
+            if let Some((list, _)) = waiting.get(&last) {
+                for &k2 in list {
+                    if state[k2] == Occurrence::Pending
+                        && pl.try_place(k2, &occ[k2].preceding_tags, sizes[k2], true)
+                    {
+                        state[k2] = Occurrence::Placed;
+                        placed = true;
+                        if pl.written.last() != Some(&last) {
+                            break;
+                        }
+                    }
+                }
+            }
+            if !placed {
+                break;
+            }
+        }
+    }
+    for k in 0..occ.len() {
+        // An occurrence whose rows are the last items of the set.
+        if state[k] == Occurrence::Pending
+            && pl.try_place(k, &occ[k].preceding_tags, sizes[k], true)
+        {
+            state[k] = Occurrence::Placed;
+        }
+        if state[k] != Occurrence::Placed {
+            state[k] = Occurrence::Fallback;
+            if strict && !(occ[k].preceding_tags.is_empty() && sizes[k] == Some(0)) {
+                return Err(KlvEncodeError::InvalidFieldValue {
+                    tag: 102,
+                    reason: "an SDCC-FLP follows the items it refines (ST 0601.19 §8.102.1)",
+                });
+            }
+        }
+    }
+    // The fallback position: after the last typed item and the packs that
+    // follow it.
+    let mut at = pl
+        .plan
+        .iter()
+        .rposition(|e| matches!(e, Placed::Item(i) if *i < after_packs))
+        .map_or(0, |p| p + 1);
+    while matches!(pl.plan.get(at), Some(Placed::Pack(_))) {
+        at += 1;
+    }
+    let mut out = Vec::with_capacity(body.len());
+    for (p, e) in pl.plan.iter().enumerate() {
+        if p == at {
+            for k in (0..occ.len()).filter(|&k| state[k] == Occurrence::Fallback) {
+                out.extend_from_slice(packs[k]);
+            }
+        }
+        match *e {
+            Placed::Item(i) => out.extend_from_slice(pl.items[i].1),
+            Placed::Pack(k) => out.extend_from_slice(packs[k]),
+        }
+    }
+    if at >= pl.plan.len() {
+        for k in (0..occ.len()).filter(|&k| state[k] == Occurrence::Fallback) {
+            out.extend_from_slice(packs[k]);
+        }
+    }
+    Ok(out)
 }

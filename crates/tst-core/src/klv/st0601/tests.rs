@@ -4897,3 +4897,368 @@ fn an_imapb_value_decoded_at_any_length_re_encodes_within_one_step() {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// Item 102: each SDCC-FLP after the items it refines (ST 0601.19 §8.102.1)
+// ---------------------------------------------------------------------------
+
+/// A Mode 2 SDCC-FLP of matrix size `n` with binary32 standard deviations
+/// and no correlations.
+fn sdcc_pack(n: u8) -> Vec<u8> {
+    let mut pack = vec![n, 0x80, 0x04];
+    pack.extend([0x3F, 0x80, 0x00, 0x00].repeat(usize::from(n)));
+    pack
+}
+
+/// The canonical TLV the encoder writes for each typed item of this record.
+fn sdcc_reference_items() -> Vec<(u32, Vec<u8>)> {
+    let rec = UasDatalinkLs {
+        timestamp_us: Some(1),
+        mission_id: Some("M".into()),
+        platform_heading_deg: Some(10.0),
+        platform_pitch_deg: Some(1.0),
+        platform_roll_deg: Some(1.0),
+        sensor_lat_deg: Some(10.0),
+        sensor_lon_deg: Some(20.0),
+        sensor_alt_m: Some(100.0),
+        frame_center_lat_deg: Some(10.1),
+        frame_center_lon_deg: Some(20.1),
+        ..Default::default()
+    };
+    let out = encode_to_vec(&rec).unwrap();
+    let (len, body) = crate::klv::length::read_ber(&out[16..]).unwrap();
+    let mut start = 0;
+    let body = &body[..len - 4];
+    crate::klv::pack::Iter::local_set(body)
+        .map(|f| {
+            let f = f.unwrap();
+            let end = (f.value.as_ptr() as usize - body.as_ptr() as usize) + f.value.len();
+            let item = (f.tag, body[start..end].to_vec());
+            start = end;
+            item
+        })
+        .collect()
+}
+
+/// One element of a hand-built set: an item by tag, raw bytes, or a pack.
+enum Sdcc {
+    Item(u32),
+    Raw(Vec<u8>),
+    Pack(u8),
+}
+
+/// A set of `parts` in the order given, with a correct final checksum.
+fn sdcc_set(parts: &[Sdcc]) -> Vec<u8> {
+    let reference = sdcc_reference_items();
+    let body: Vec<u8> = parts
+        .iter()
+        .flat_map(|p| match p {
+            Sdcc::Item(tag) => reference.iter().find(|(t, _)| t == tag).unwrap().1.clone(),
+            Sdcc::Raw(bytes) => bytes.clone(),
+            Sdcc::Pack(n) => tlv(102, &sdcc_pack(*n)),
+        })
+        .collect();
+    wrap_st0601(&body)
+}
+
+/// The tags of an encoded set's body in wire order, `102` for a pack.
+fn wire_tags(encoded: &[u8]) -> Vec<u32> {
+    let (len, body) = crate::klv::length::read_ber(&encoded[16..]).unwrap();
+    crate::klv::pack::Iter::local_set(&body[..len])
+        .map(|f| f.unwrap().tag)
+        .collect()
+}
+
+fn rows(rec: &UasDatalinkLs) -> Vec<Vec<u32>> {
+    rec.sdcc_flps
+        .iter()
+        .map(|f| f.preceding_tags.clone())
+        .collect()
+}
+
+use Sdcc::{Item as I, Pack as P};
+
+#[test]
+fn a_reencoded_sdcc_pack_still_follows_the_items_it_refines() {
+    let source = sdcc_set(&[
+        I(2),
+        I(3),
+        I(5),
+        I(6),
+        I(7),
+        I(13),
+        I(14),
+        I(15),
+        P(3),
+        I(23),
+        I(24),
+        I(65),
+    ]);
+    let rec = decode(&source).unwrap();
+    assert_eq!(rows(&rec), [vec![13, 14, 15]]);
+    assert_eq!(encode_to_vec(&rec).unwrap(), source);
+    assert_eq!(encode_strict_compliance(&rec).unwrap(), source);
+}
+
+#[test]
+fn two_sdcc_packs_in_an_ascending_set_keep_their_places() {
+    let source = sdcc_set(&[
+        I(2),
+        I(3),
+        I(5),
+        I(6),
+        I(7),
+        P(2),
+        I(13),
+        I(14),
+        I(15),
+        P(3),
+        I(23),
+        I(24),
+        I(65),
+    ]);
+    let rec = decode(&source).unwrap();
+    assert_eq!(rows(&rec), [vec![6, 7], vec![13, 14, 15]]);
+    assert_eq!(encode_to_vec(&rec).unwrap(), source);
+    assert_eq!(encode_strict_compliance(&rec).unwrap(), source);
+}
+
+#[test]
+fn an_sdcc_group_out_of_order_moves_to_its_first_item() {
+    // Items 14, 13, 5 then the pack: the group moves, in its own order, to
+    // where Item 5 is written.
+    let source = sdcc_set(&[
+        I(2),
+        I(3),
+        I(14),
+        I(13),
+        I(5),
+        P(3),
+        I(6),
+        I(7),
+        I(15),
+        I(65),
+    ]);
+    let rec = decode(&source).unwrap();
+    let out = encode_to_vec(&rec).unwrap();
+    assert_eq!(wire_tags(&out), [2, 3, 14, 13, 5, 102, 6, 7, 15, 65, 1]);
+    assert_eq!(rows(&decode(&out).unwrap()), [vec![14, 13, 5]]);
+    assert!(encode_strict_compliance(&rec).is_ok());
+}
+
+#[test]
+fn an_sdcc_pack_refining_the_items_of_the_one_before_follows_it() {
+    let source = sdcc_set(&[I(2), I(13), I(14), P(2), I(15), P(3), I(65)]);
+    let rec = decode(&source).unwrap();
+    assert_eq!(rows(&rec), [vec![13, 14], vec![13, 14, 15]]);
+    assert_eq!(encode_to_vec(&rec).unwrap(), source);
+    assert_eq!(encode_strict_compliance(&rec).unwrap(), source);
+}
+
+#[test]
+fn sdcc_groups_in_descending_order_are_each_kept() {
+    let source = sdcc_set(&[I(2), I(23), I(24), P(2), I(13), I(14), P(2), I(65)]);
+    let rec = decode(&source).unwrap();
+    let out = encode_to_vec(&rec).unwrap();
+    assert_eq!(wire_tags(&out), [2, 13, 14, 102, 23, 24, 102, 65, 1]);
+    // The two occurrences change places, each still with its own items.
+    assert_eq!(rows(&decode(&out).unwrap()), [vec![13, 14], vec![23, 24]]);
+}
+
+#[test]
+fn an_sdcc_pack_with_fewer_items_before_it_than_its_matrix_size_is_kept() {
+    let source = sdcc_set(&[I(2), I(13), P(3), I(14), I(65)]);
+    let rec = decode(&source).unwrap();
+    assert_eq!(rows(&rec), [vec![2, 13]]);
+    assert_eq!(encode_to_vec(&rec).unwrap(), source);
+    assert_eq!(encode_strict_compliance(&rec).unwrap(), source);
+}
+
+#[test]
+fn an_sdcc_pack_before_every_item_is_written_after_the_typed_items_or_refused() {
+    // With an unknown item, which the encoder writes after the typed ones:
+    // the pack goes between them.
+    let source = sdcc_set(&[P(2), I(2), I(13), Sdcc::Raw(tlv(150, &[0x01])), I(65)]);
+    let rec = decode(&source).unwrap();
+    assert_eq!(rows(&rec), [Vec::<u32>::new()]);
+    assert_eq!(
+        wire_tags(&encode_to_vec(&rec).unwrap()),
+        [2, 13, 65, 102, 150, 1]
+    );
+    assert!(matches!(
+        encode_strict_compliance(&rec),
+        Err(KlvEncodeError::InvalidFieldValue { tag: 102, .. })
+    ));
+}
+
+#[test]
+fn an_sdcc_pack_of_matrix_size_zero_names_nothing_and_is_accepted() {
+    let rec = UasDatalinkLs {
+        sdcc_flps: vec![SdccFlpField {
+            preceding_tags: vec![],
+            bytes: vec![0x00, 0x80, 0x04],
+        }],
+        ..timestamped()
+    };
+    assert_eq!(wire_tags(&encode_to_vec(&rec).unwrap()), [2, 65, 102, 1]);
+    assert!(encode_strict_compliance(&rec).is_ok());
+}
+
+#[test]
+fn an_sdcc_group_with_an_unknown_tag_is_kept() {
+    let unknown = tlv(150, &[0x01, 0x02]);
+    let source = sdcc_set(&[I(2), I(13), Sdcc::Raw(unknown), P(2), I(14), I(65)]);
+    let rec = decode(&source).unwrap();
+    assert_eq!(rows(&rec), [vec![13, 150]]);
+    assert_eq!(encode_to_vec(&rec).unwrap(), source);
+}
+
+#[test]
+fn an_sdcc_group_with_a_sentinel_item_is_kept() {
+    let sentinel = vec![0x0D, 0x04, 0x80, 0x00, 0x00, 0x00];
+    let source = sdcc_set(&[I(2), Sdcc::Raw(sentinel), I(14), P(2), I(15), I(65)]);
+    let rec = decode(&source).unwrap();
+    assert_eq!(rec.sentinel_tags, [13]);
+    let out = encode_to_vec(&rec).unwrap();
+    assert_eq!(rows(&decode(&out).unwrap()), [vec![13, 14]]);
+    assert!(encode_strict_compliance(&rec).is_ok());
+}
+
+#[test]
+fn an_sdcc_group_with_a_zero_length_item_is_written_after_the_typed_items_or_refused() {
+    // A zero-length item is "unknown" and not written again: the pack's
+    // row has no item.
+    let source = sdcc_set(&[I(2), Sdcc::Raw(vec![0x0D, 0x00]), I(14), P(2), I(15), I(65)]);
+    let rec = decode(&source).unwrap();
+    assert_eq!(rows(&rec), [vec![13, 14]]);
+    assert_eq!(
+        wire_tags(&encode_to_vec(&rec).unwrap()),
+        [2, 14, 15, 65, 102, 1]
+    );
+    assert!(matches!(
+        encode_strict_compliance(&rec),
+        Err(KlvEncodeError::InvalidFieldValue { tag: 102, .. })
+    ));
+}
+
+#[test]
+fn an_sdcc_group_whose_item_the_caller_edits_is_kept() {
+    let source = sdcc_set(&[I(2), I(13), I(14), P(2), I(65)]);
+    let mut rec = decode(&source).unwrap();
+    rec.sensor_lat_deg = Some(11.0);
+    let out = encode_to_vec(&rec).unwrap();
+    assert_eq!(wire_tags(&out), [2, 13, 14, 102, 65, 1]);
+    assert!(encode_strict_compliance(&rec).is_ok());
+}
+
+#[test]
+fn an_sdcc_group_whose_item_the_caller_removes_is_written_after_the_typed_items_or_refused() {
+    let source = sdcc_set(&[I(2), I(13), I(14), P(2), I(65)]);
+    let mut rec = decode(&source).unwrap();
+    rec.sensor_lon_deg = None;
+    assert_eq!(
+        wire_tags(&encode_to_vec(&rec).unwrap()),
+        [2, 13, 65, 102, 1]
+    );
+    assert!(matches!(
+        encode_strict_compliance(&rec),
+        Err(KlvEncodeError::InvalidFieldValue { tag: 102, .. })
+    ));
+}
+
+#[test]
+fn an_item_the_caller_adds_inside_an_sdcc_group_goes_after_the_pack() {
+    let source = sdcc_set(&[I(2), I(13), I(15), P(2), I(65)]);
+    let mut rec = decode(&source).unwrap();
+    rec.sensor_lon_deg = Some(20.0);
+    let out = encode_to_vec(&rec).unwrap();
+    assert_eq!(wire_tags(&out), [2, 13, 15, 102, 14, 65, 1]);
+    assert_eq!(rows(&decode(&out).unwrap()), [vec![13, 15]]);
+}
+
+#[test]
+fn a_built_sdcc_pack_naming_set_fields_is_placed_after_them() {
+    let mut rec = decode(&sdcc_set(&[I(2), I(13), I(14), I(15), I(23), I(65)])).unwrap();
+    rec.sdcc_flps.push(SdccFlpField {
+        preceding_tags: vec![13, 14, 15],
+        bytes: sdcc_pack(3),
+    });
+    let out = encode_to_vec(&rec).unwrap();
+    assert_eq!(wire_tags(&out), [2, 13, 14, 15, 102, 23, 65, 1]);
+    assert!(encode_strict_compliance(&rec).is_ok());
+}
+
+#[test]
+fn a_built_sdcc_pack_naming_nothing_is_written_after_the_typed_items_or_refused() {
+    let rec = UasDatalinkLs {
+        sensor_lat_deg: Some(10.0),
+        sdcc_flps: vec![SdccFlpField {
+            preceding_tags: vec![],
+            bytes: sdcc_pack(1),
+        }],
+        ..timestamped()
+    };
+    assert_eq!(
+        wire_tags(&encode_to_vec(&rec).unwrap()),
+        [2, 13, 65, 102, 1]
+    );
+    assert!(matches!(
+        encode_strict_compliance(&rec),
+        Err(KlvEncodeError::InvalidFieldValue { tag: 102, .. })
+    ));
+}
+
+#[test]
+fn strict_encode_refuses_a_pack_the_sdcc_reader_refuses() {
+    // A reserved Parse Control bit (byte 1 bit 6), then a matrix of 300
+    // (above the 256 the reader bounds) that the bytes would hold.
+    let reserved = vec![0x01, 0xC0, 0x04, 0x3F, 0x80, 0x00, 0x00];
+    let mut wide = vec![0x82, 0x2C, 0x80, 0x01];
+    wide.extend(vec![0u8; 300]);
+    for bytes in [reserved, wide] {
+        let rec = UasDatalinkLs {
+            sensor_lat_deg: Some(10.0),
+            sdcc_flps: vec![SdccFlpField {
+                preceding_tags: vec![13],
+                bytes: bytes.clone(),
+            }],
+            ..timestamped()
+        };
+        assert!(
+            matches!(
+                encode_strict_compliance(&rec),
+                Err(KlvEncodeError::InvalidFieldValue { tag: 102, .. })
+            ),
+            "{:02X?}",
+            &bytes[..4]
+        );
+        assert!(encode_to_vec(&rec).is_ok());
+    }
+}
+
+#[test]
+fn a_pack_after_a_skipped_wide_tag_is_placed_or_refused() {
+    // An unknown tag wider than 32 bits inside the group is stepped over
+    // and dropped on decode: the pack's rows are the items around it.
+    let wide = [&[0x90, 0x80, 0x80, 0x80, 0x80, 0x00][..], &[0x01, 0xAA]].concat();
+    let source = sdcc_set(&[I(2), I(13), Sdcc::Raw(wide), I(14), P(2), I(65)]);
+    let rec = decode(&source).unwrap();
+    assert_eq!(rows(&rec), [vec![13, 14]]);
+    let out = encode_to_vec(&rec).unwrap();
+    assert_eq!(wire_tags(&out), [2, 13, 14, 102, 65, 1]);
+    assert!(encode_strict_compliance(&rec).is_ok());
+    // A pack that named only the wide item has no row to follow.
+    let source = sdcc_set(&[
+        I(2),
+        I(13),
+        Sdcc::Raw([&[0x90, 0x80, 0x80, 0x80, 0x80, 0x00][..], &[0x01, 0xAA]].concat()),
+        P(1),
+        I(65),
+    ]);
+    let rec = decode(&source).unwrap();
+    assert_eq!(rows(&rec), [vec![13]]);
+    assert_eq!(
+        wire_tags(&encode_to_vec(&rec).unwrap()),
+        [2, 13, 102, 65, 1]
+    );
+}
