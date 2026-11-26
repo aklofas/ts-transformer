@@ -2611,7 +2611,7 @@ what the record's field holds: an ST 0601 IMAPB item sent as
 `IMAP_BELOW_MINIMUM` or `IMAP_ABOVE_MAXIMUM` holds that end of its
 range (the signal stays in the `imapb_specials` column), an item sent as
 another special or as a sentinel is empty, and a VMTI item sent as an
-IMAP special is empty with no `field_errors` entry.
+IMAP special is empty and listed in `field_errors` (kind `OUT_OF_RANGE`).
 
 **ST 0903 (VmtiLs) supports two modes:**
 

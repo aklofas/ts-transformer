@@ -152,7 +152,8 @@ captures violate them in benign ways, which is why the compliance rung
 is opt-in. `decode_strict_compliance` also checks each item's profile
 and coded values (an 8-byte Item 2 and a 1-byte Item 65, the codes the
 standard defines in Items 34, 47, 63, 77, 125 and 126, the Image
-Horizon percentages, a Mode 2 SDCC-FLP, an 8-byte Control Command time,
+Horizon percentages, a Mode 2 SDCC-FLP whose header ST 1010 defines, an
+8-byte Control Command time,
 the wavelength and positioning-source rules, no Item 143 at the root)
 and refuses a breach with `KlvDecodeError::ComplianceViolation { tag,
 offset, reason }`. Its `Ok` promises these rules only: a value that
@@ -223,9 +224,12 @@ caller doesn't have to spell out the partial-presence cases. An item
 sent as "no value" (a sentinel, or an IMAPB special: see
 `sentinel_tags` and `imapb_specials`) ends its chain: the view is
 `None`, it does not fall back to a less preferred item, so a full-range
-corner sent as Off-Earth ends `corners()`. A view's height is above the
-ellipsoid whenever the record carries an ellipsoid item; read the datum
-before you compare it with an MSL height.
+corner sent as Off-Earth ends `corners()`. An IMAPB overflow signal
+counts as "no value" although the decode leaves the range end in its
+field (below), so a view can be `None` while the field holds a number.
+A view's height is above the ellipsoid whenever the record carries an
+ellipsoid item; read the datum before you compare it with an MSL
+height.
 
 > **Python:** the typed sets are frozen dataclasses — attribute
 > assignment raises `FrozenInstanceError`. Use
@@ -256,7 +260,13 @@ while the field is unset or still holds that end, and the value once
 the field holds anything else; every other special and every sentinel
 is written after the typed items, and only for a field that is unset.
 A tag with several entries is written once, for its last entry. The
-composite views and CoT take none of these as a value.
+composite views and CoT take none of these as a value. So a field that
+holds its range end while the tag's last entry is the matching signal
+(the minimum with `BelowMin`, the maximum with `AboveMax`) is a signal,
+not a measurement: it is written back as the signal, and a view that
+prefers the item is `None` while the field holds a number. To write a
+measured value that IS the range end, remove the tag's entries from
+`imapb_specials`.
 
 Per-field decode errors. When one tag's value is malformed (wrong
 length, invalid UTF-8, out-of-range mapped float), the decoder records
@@ -268,8 +278,9 @@ verifying decoders, missing mandatory tags under
 
 A zero-length known optional ST 0601 item means "unknown": its typed field
 stays unset, with no `field_errors` entry and no copy in `unknown`. Tags 2
-and 65 keep mandatory-field validation; repeatable Tags 102 and 115 keep
-their own handlers. For a repeated single-use typed tag, only the last wire
+and 65 keep mandatory-field validation; a zero-length Item 102 or 115
+adds no entry to `sdcc_flps` or `control_commands`. For a repeated
+single-use typed tag, only the last wire
 occurrence is decoded, even if it is empty or malformed.
 `decode_strict_compliance` rejects duplicate typed tags except 102 and 115,
 which allow multiple instances. An encoded empty optional value can
@@ -405,7 +416,8 @@ The producer contract, in short:
   ST 0107.3-12 / -13 ask.
 - **The decoders**: `decode` and `decode_strict` require one final
   checksum; `decode_strict_compliance` adds the ordering, presence and
-  profile rules above, and does not check the strings inside packs.
+  profile rules above (an SDCC-FLP header ST 1010 defines among them),
+  and does not check the strings inside packs.
 - **`patch`** writes a time stamp it adds first (ST 0601.8-09) and never
   moves an item already in the input.
 
@@ -454,7 +466,12 @@ leaves unset are applied too, with the bytes the encoder writes. Tags
 outside the typed model can be replaced via the
 `unknown` field (`{"unknown": ((tag, value_bytes),)}`). Editing a tag
 canonicalizes that one TLV's encoding even when the value is
-unchanged. Deleting a tag is not supported. `patch`'s time is not
+unchanged. A tag named in the edit's `unknown` more than once is edited
+with its first entry, which is written into every occurrence of the tag
+in the input: with a decoded copy of an input that repeats an unknown
+tag with different values as the edit, the later occurrences take the
+first one's value (remove the tag from the edit's `unknown` to keep
+them). Deleting a tag is not supported. `patch`'s time is not
 quadratic in the number of distinct tags, also when the edit is a
 decoded copy of the input with one field changed.
 
@@ -531,7 +548,9 @@ Two decode entry points:
 
 A zero-length item means "unknown" (ST 0107.4-17): its field stays
 unset, it unsets a value an earlier occurrence of its tag gave, and
-`decode_strict` reports a zero-length required item as missing.
+`decode_strict` reports a zero-length required item as missing. The last
+occurrence of a repeated tag decides: one that does not decode leaves
+the field unset beside its `field_errors` entry.
 
 The Security Metadata Local Set uses one-byte tags, as its label
 declares (SMPTE ST 336 Table 5): an unknown tag of 128 to 255 is read
@@ -644,11 +663,14 @@ if data.starts_with(&st0903::VMTI_LS_UL) {
 ```
 
 A standalone packet carries exactly one checksum (Tag 1), two bytes
-wide, written as the one byte `01`, as its last item; anything else
-fails with `MissingChecksum`, `MalformedChecksum`, `DuplicateTag`,
-`Tag1NotLast` or `NonCanonicalTag`, and a wrong sum with
-`ChecksumMismatch`. `decode_standalone_strict` adds `decode_strict`'s
-rules, an outer length in its fewest bytes, and the standalone ones:
+wide, as its last item; anything else fails with `MissingChecksum`,
+`MalformedChecksum`, `DuplicateTag` or `Tag1NotLast`, and a wrong sum
+with `ChecksumMismatch`. `decode_standalone` reads a checksum tag
+written with a padding group (`80 01`) as the checksum, as
+`st0601::decode` and `st0806::decode_standalone` do;
+`decode_standalone_strict` refuses it with `NonCanonicalTag` before it
+judges the checksum, and adds `decode_strict`'s rules, an outer length
+in its fewest bytes, and the standalone ones:
 Items 2, 11, 12 and 13 present, no parent-relative offset item in a
 VTarget Pack (ST 0903.6-116), a location on every Active-Moving,
 Active-Stopped or Active-Coasting target (ST 0903.6-130) and a Core
@@ -682,15 +704,21 @@ outside its range, a pixel number without a frame width, a row without
 its column, an Active-Moving or Active-Stopped target with no centroid,
 no row and column and not both bounding-box corners.
 
-In both decoders a zero-length top-level item means "unknown" (its
-field unset, no field error; inside a VTarget Pack a zero-length item
-of fixed length is still a field error), one NUL reads as `""` (the
-encoders write `Some("")` that way), and an ST 1201 IMAP special in a
-VTarget Pack's IMAPB item or in Item 11 or 12 decodes without error and
-leaves the field unset: ST 0903.6 §9.1.1 sends the signal in place of
-the measurement. Such a field has no value, so the strict encoders
-refuse a record whose special was a mandatory item's or a pack's only
-value; a relay forwards the original bytes.
+In both decoders a zero-length item, at the top level and inside a
+VTarget Pack, means "unknown" (its field unset, no field error;
+`decode_strict` refuses only a zero-length Item 4 or 6), the last
+occurrence of a repeated tag decides (one that does not decode leaves
+the field unset beside its field error), and one NUL reads as `""` (the
+encoders write `Some("")` that way). An ST 1201 IMAP special in a
+VTarget Pack's IMAPB item or in Item 11 or 12 is legal and leaves the
+field unset (ST 0903.6 §9.1.1 sends the signal in place of the
+measurement): `decode` lists it in `field_errors` as
+`KlvFieldError::OutOfRange` with the item's tag and the side of the
+range it signals (NaN when it names none), and `decode_strict` accepts
+it and lists nothing. No encoder writes such a special back, unlike
+ST 0601, which keeps a list of them: the strict encoders refuse a
+record whose special was a mandatory item's or a pack's only value, and
+a relay forwards the original bytes.
 
 ### Encoding
 
@@ -729,9 +757,12 @@ else the set fails with `Tag1NotLast`, `DuplicateTag` or
 embedded (Tag 73) body form is not required to carry Tag 1, and `decode`
 (the body-only entry point) never verifies it even when present.
 
-A zero-length item means "unknown": its field stays unset (it unsets a
-value an earlier occurrence gave), and a zero-length POI, AOI or User
-Defined set adds no entry; a User Defined set without its User Data
+A zero-length item, at the top level and inside a POI or AOI set,
+means "unknown": its field stays unset, with no field error (it unsets
+a value or a sentinel an earlier occurrence gave), and a zero-length
+POI, AOI or User Defined set adds no entry. The last occurrence of a
+repeated tag decides: one that does not decode leaves the field unset
+beside its field error. A User Defined set without its User Data
 item is a `field_errors` entry. The encoders refuse non-ASCII text in
 the ISO 7 items (Items 10, 15, 19 and the POI and AOI texts), an MGRS
 zone outside 1 to 60 and a latitude band and grid square that is not
@@ -807,11 +838,15 @@ plus `geoid_undulation_m`) when present; falling back to Frame Center, it
 prefers the HAE-native Frame Center Ellipsoid Height (Item 78) over Frame
 Center Elevation (Item 25, MSL plus `geoid_undulation_m`).
 
-The heights follow the composite views' chains, so an item sent as "no
-value" ends the chain: a record whose Item 104 is sent as an IMAPB
-special has no platform height, and the Platform Position conversion
-refuses it with `CotError::MissingField { tag: 104 }` rather than use
-Item 75. Without `geoid_undulation_m`, an MSL height is written as the
+The platform's height follows the sensor position's chain (Item 104,
+then 75, then 15), so an item sent as "no value" ends it: a record
+whose Item 104 is sent as an IMAPB special has no platform height, and
+the Platform Position conversion refuses it with
+`CotError::MissingField { tag: 104 }` rather than use Item 75. The
+Sensor Point of Interest's choice between Target Location and Frame
+Center reads the fields alone: a Target Location latitude or longitude
+sent as its "error" sentinel leaves its field unset, so the event falls
+through to the Frame Center, with the Frame Center's height. Without `geoid_undulation_m`, an MSL height is written as the
 HAE as it is; `platform_position_xml_with` and
 `sensor_point_of_interest_xml_with` with `MslFallback::Refuse` (Python
 `require_hae=True`, JVM the `requireHae` overloads) refuse that instead,
@@ -851,20 +886,32 @@ the only mode ST 0601 permits — and picks the sparse Bit Vector
 encoding automatically per the spec's Appendix A cost model; it
 refuses more than 256 standard deviations.
 
+On decode, a pack's `preceding_tags` are the items right before it, as
+many as its matrix size, fewer when fewer items precede it or when one
+of them was stepped over for a tag wider than 32 bits (the rows end
+there); a zero-length Item 102 is "unknown" and is not captured.
+
 On encode, each `sdcc_flps` entry is written right after the items its
-`preceding_tags` name (ST 0601.19 §8.102.1): the items are written in
-the encoder's order and a pack takes the items it names forward to the
-first of them, so a set whose items come in the encoder's order is
-re-encoded with every pack where it was, byte for byte. A pack that
-cannot be placed (a named item is not in the record, `preceding_tags`
-is empty, one of its items is already written and is not among the
-last items written, its rows would put another item before Item 2, or
-a capture shorter than its matrix does not name the start of the set)
-is written after the typed items, and `encode_strict_compliance`
-refuses it, as it refuses a pack whose header ST 1010 does not define.
-For a tag that repeats, a row names the tag, not the instance: it takes
-the first instance not yet written. If you edit an item a pack refines,
-the pack still describes the old value: that is the caller's business.
+`preceding_tags` name (ST 0601.19 §8.102.1): the rows of the packs link
+the items they name into blocks, each block is written where the
+encoder writes the first of its items, and each pack follows the item of
+its last row. So a set that came in any order, whose packs each follow
+the items they refine, keeps every pack with its rows after a decode
+and an encode, also when packs share items. A pack that cannot be
+placed (`preceding_tags` is empty; a named item is not written, for
+example one sent zero-length, or is named more often than the record
+has items of its tag; its rows contradict an earlier pack's; they would
+put an item before Item 2; or it has fewer rows than its matrix and
+they are not the start of the set) is written after the typed items,
+where 0.10.0 wrote every pack: a decoder of that output takes the items
+before it there as its rows, so the pack then states accuracies for
+items it never refined. `encode_strict_compliance` refuses such a
+record, as it refuses a pack whose header ST 1010 does not define, and
+`decode_strict_compliance` refuses that header too. For a tag the set
+carries more than once, a row names the tag, not the item, and such a
+set can end with a pack that is not placed. If you edit an item a pack
+refines, the pack still describes the old value: that is the caller's
+business.
 
 ```rust
 use tst_core::klv::st0601::UasDatalinkLs;

@@ -99,7 +99,10 @@ Center) — see the precedence table in
 [guides/klv.md](/docs/guides/klv.md#cursor-on-target-st-0805) rather
 than duplicating it here. An item sent as "no value" (Item 104 as an
 IMAPB special) ends the chain: the Platform Position event is refused
-with `MissingField { tag: 104 }`, not taken from Item 75.
+with `MissingField { tag: 104 }`, not taken from Item 75. The Sensor
+Point of Interest's position is chosen from the fields alone: a Target
+Location sent as its "error" sentinel leaves its fields unset, so the
+event falls through to the Frame Center.
 
 **An MSL height without an undulation:** with no
 `CotConfig::geoid_undulation_m`, an MSL height (Item 15; Item 42 or 25
