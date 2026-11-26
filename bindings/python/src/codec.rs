@@ -602,7 +602,8 @@ fn parse_h264_parameter_sets_py(
 ///
 /// `nal_unit_type` is the 5-bit NAL type from the NAL header (`& 0x1F`) —
 /// used to derive `H264SliceHeaderLight.idr` (`== 5`) without re-parsing. A
-/// value from 32 to 255 raises `CodecError`.
+/// value from 32 to 255 raises `CodecError`; a value outside 0 to 255 raises
+/// `OverflowError`.
 ///
 /// Raises `CodecError` on parse failure.
 #[pyfunction]
@@ -759,7 +760,8 @@ fn parse_h265_parameter_sets_py(
 ///
 /// `nal_unit_type` is the 6-bit NAL type from the NAL header
 /// — used to derive `idr` (IDR_W_RADL=19 or IDR_N_LP=20) and to gate
-/// IRAP-specific fields. A value from 64 to 255 raises `CodecError`.
+/// IRAP-specific fields. A value from 64 to 255 raises `CodecError`; a value
+/// outside 0 to 255 raises `OverflowError`.
 ///
 /// Raises `CodecError` on parse failure.
 #[pyfunction]
@@ -914,7 +916,8 @@ fn parse_h266_parameter_sets_py(
 ///
 /// `nal_unit_type` is the 5-bit NAL type from the H.266 NAL header — used to
 /// derive `idr` (IDR_W_RADL=7 or IDR_N_LP=8 per H.266 V4 Table 5). A value
-/// from 32 to 255 raises `CodecError`.
+/// from 32 to 255 raises `CodecError`; a value outside 0 to 255 raises
+/// `OverflowError`.
 ///
 /// # Sentinel values
 ///

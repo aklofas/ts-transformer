@@ -93,7 +93,8 @@ impl H266Sps {
 /// as `codec::h265::parse_sps`.
 ///
 /// The VUI is parsed inside its declared `sps_vui_payload_size_minus1 + 1`
-/// RBSP bytes (H.266 §7.3.2.21). A size above 1023, a non-zero
+/// RBSP bytes (H.266 §7.3.2.21). A `sps_vui_payload_size_minus1` above 1023
+/// (a VUI over 1 024 bytes), a non-zero
 /// `sps_vui_alignment_zero_bit` and a tail without its
 /// `vui_payload_bit_equal_to_one` are refused as `ReservedValue`; a VUI that
 /// needs more bits than its payload holds is `TruncatedRbsp`. An error raised

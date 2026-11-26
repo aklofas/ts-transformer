@@ -231,7 +231,7 @@ pub fn build_sei_nal(codec: VideoCodec, ts: &MispTimestamp) -> Result<Vec<u8>, M
 /// NAL unit (after any AUD and parameter sets).
 ///
 /// The SEI goes behind a 4-byte start code when it becomes the access
-/// unit's first NAL unit (the `zero_byte` of H.264 and H.265 §B.1.2), a
+/// unit's first NAL unit (the `zero_byte`: H.264 §B.1.2, H.265 §B.2.2), a
 /// 3-byte one otherwise. H.265: each inserted SEI NAL unit (PREFIX_SEI or
 /// SUFFIX_SEI) takes the TemporalId of the access unit's first VCL NAL unit
 /// when that unit's header is whole and valid (§7.4.2.2: an SEI NAL unit's
@@ -749,7 +749,7 @@ mod tests {
 
     /// An SEI that becomes the access unit's first NAL unit takes a 4-byte
     /// start code: the first NAL unit of an access unit has a `zero_byte`
-    /// (H.264 and H.265 §B.1.2).
+    /// (H.264 §B.1.2, H.265 §B.2.2).
     #[test]
     fn sei_spliced_as_first_nal_carries_zero_byte() {
         let au = h264_au(&[0x41]); // one non-IDR slice

@@ -1520,9 +1520,9 @@ pub struct Av1ObuStream {
     /// All successfully parsed Frame Header OBUs (type 3 or 6) in encounter
     /// order. Its length counts parsed frame headers, not decoded or
     /// displayed frames: a `show_existing_frame` header is an entry, each
-    /// spatial or temporal layer has its own, a stream that repeats type 3
-    /// gets one entry per copy, and redundant frame headers (type 7) are
-    /// skipped.
+    /// spatial or temporal layer has its own, redundant copies (type 7) are
+    /// skipped, and a non-conformant stream that repeats type 3 gets one
+    /// entry per copy.
     pub frame_headers: Vec<Av1FrameHeaderLight>,
     /// `(obu_type, error)` for each OBU that failed to parse. Frame header
     /// OBUs that arrive before a sequence header land here too, with a

@@ -86,6 +86,7 @@ public final class Codec {
      * @param nalUnitType the 5-bit NAL unit type
      * @return the parsed light slice header
      * @throws CodecParseException on a malformed or truncated bitstream
+     * @throws IllegalArgumentException if {@code nalUnitType} is outside 0 to 255
      */
     public static H264SliceHeaderLight parseH264SliceHeaderLight(
             byte[] rbsp, H264Sps sps, int nalUnitType) throws CodecParseException {
@@ -177,6 +178,7 @@ public final class Codec {
      * @param nalUnitType the 6-bit NAL unit type
      * @return the parsed light slice header
      * @throws CodecParseException on a malformed or truncated bitstream
+     * @throws IllegalArgumentException if {@code nalUnitType} is outside 0 to 255
      */
     public static H265SliceHeaderLight parseH265SliceHeaderLight(
             byte[] rbsp, H265Sps sps, int nalUnitType) throws CodecParseException {
@@ -270,6 +272,7 @@ public final class Codec {
      * @param nalUnitType the NAL unit type
      * @return the parsed light slice header
      * @throws CodecParseException on a malformed or truncated bitstream
+     * @throws IllegalArgumentException if {@code nalUnitType} is outside 0 to 255
      */
     public static H266SliceHeaderLight parseH266SliceHeaderLight(
             byte[] rbsp, H266Sps sps, int nalUnitType) throws CodecParseException {

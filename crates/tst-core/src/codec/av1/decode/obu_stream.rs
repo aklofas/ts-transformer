@@ -19,8 +19,9 @@ use super::sequence_header::parse_sequence_header;
 /// sequence header that parsed in the same call. It is not a count of decoded
 /// or displayed frames: a `show_existing_frame` header is an entry (with
 /// [`Av1FrameHeaderLight::FRAME_TYPE_UNKNOWN`]), each spatial or temporal
-/// layer has its own, and a stream that repeats type 3 gets one entry per
-/// copy. A sequence header that fails to parse (truncated, or a value out of
+/// layer has its own, redundant copies (type 7) are skipped, and a
+/// non-conformant stream that repeats type 3 gets one entry per copy. A
+/// sequence header that fails to parse (truncated, or a value out of
 /// its range) is recorded in `unparseable` and the previous one stays
 /// current; a frame header with no sequence header earlier in the same call
 /// is recorded in `unparseable`.
