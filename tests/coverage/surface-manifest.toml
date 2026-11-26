@@ -201,6 +201,24 @@ tier = "A"
 [[surface]]
 kind = "rust"
 crate = "tst-core"
+item = "tst_core::UasDatalinkLs::sensor_position_datum"
+owning_tests = ["crates/tst-core/tests/klv/st0601_views.rs"]
+bindings = ["python:tstrans.klv.UasDatalinkLs.sensor_position_datum", "java:org.tstrans.klv.UasDatalinkLs.sensorPositionDatum", "c:deferred(the C geometry reads Items 15 and 25 as they are)", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-core"
+item = "tst_core::UasDatalinkLs::frame_center_datum"
+owning_tests = ["crates/tst-core/tests/klv/st0601_views.rs"]
+bindings = ["python:tstrans.klv.UasDatalinkLs.frame_center_datum", "java:org.tstrans.klv.UasDatalinkLs.frameCenterDatum", "c:deferred(the C geometry reads Items 15 and 25 as they are)", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-core"
 item = "tst_core::klv::st0102::encode_strict_compliance"
 owning_tests = ["crates/tst-core/tests/klv/st0102_via_st0601.rs"]
 bindings = ["python:encode_security_strict_compliance", "java:org.tstrans.klv.Klv.encodeSecurityStrictCompliance", "c:unaudited", "swift:deferred", "kotlin:deferred"]
@@ -285,6 +303,24 @@ crate = "tst-core"
 item = "tst_core::klv::st0903::decode_strict"
 owning_tests = ["crates/tst-core/tests/klv/st0903_via_st0601.rs"]
 bindings = ["python:decode_vmti", "java:org.tstrans.klv.Klv.decodeVmti", "c:unaudited", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-core"
+item = "tst_core::klv::st0903::decode_standalone"
+owning_tests = ["crates/tst-core/tests/klv/st0903_standalone_ul.rs"]
+bindings = ["python:decode_vmti_standalone", "java:org.tstrans.klv.Klv.decodeVmtiStandalone", "c:deferred(the C ABI types ST 0601 only)", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+kind = "rust"
+crate = "tst-core"
+item = "tst_core::klv::st0903::decode_standalone_strict"
+owning_tests = ["crates/tst-core/tests/klv/st0903_standalone_ul.rs"]
+bindings = ["python:decode_vmti_standalone", "java:org.tstrans.klv.Klv.decodeVmtiStandalone", "c:deferred(the C ABI types ST 0601 only)", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -597,6 +633,14 @@ crate = "tst-core"
 item = "tst_core::codec::misp_time::MispTimestamp::nanos"
 owning_tests = ["crates/tst-core/src/codec/misp_time.rs"]
 bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
+tier = "B"
+
+[[surface]]
+kind = "rust"
+crate = "tst-core"
+item = "tst_core::codec::misp_time::MispTimestamp::time_status_is_valid"
+owning_tests = ["crates/tst-core/src/codec/misp_time.rs"]
+bindings = ["c:n/a(the MISP pushes check the status; no binding exposes the check alone)", "python:n/a(the MISP pushes check the status; no binding exposes the check alone)", "java:n/a(the MISP pushes check the status; no binding exposes the check alone)", "swift:deferred", "kotlin:deferred"]
 tier = "B"
 
 [[surface]]
@@ -3589,6 +3633,20 @@ scenario_ids = []
 tier = "A"
 
 [[surface]]
+item = "tst_core::klv::st1204::encode_checked"
+owning_tests = ["crates/tst-core/src/klv/st1204/mod.rs"]
+bindings = ["c:deferred(the C ABI types ST 0601 only)", "python:encode_core_id", "java:org.tstrans.klv.Klv.encodeCoreId", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+item = "tst_core::klv::st1204::CoreId::validate"
+owning_tests = ["crates/tst-core/src/klv/st1204/mod.rs"]
+bindings = ["c:deferred(the C ABI types ST 0601 only)", "python:n/a(encode_core_id calls it; no binding exposes it alone)", "java:n/a(Klv.encodeCoreId calls it; no binding exposes it alone)", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
 item = "tst_core::klv::st1204::check_value"
 owning_tests = ["crates/tst-core/src/klv/st1204/mod.rs"]
 bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
@@ -3657,6 +3715,13 @@ scenario_ids = []
 tier = "A"
 
 [[surface]]
+item = "tst_core::klv::st0805::platform_position_xml_with"
+owning_tests = ["crates/tst-core/src/klv/st0805.rs"]
+bindings = ["c:deferred(no CoT conversion in the C ABI)", "python:tstrans.klv.platform_position_xml", "java:org.tstrans.klv.Klv.platformPositionXml", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
 item = "tst_core::klv::st0805::platform_uid"
 owning_tests = ["crates/tst-core/src/klv/st0805.rs"]
 bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
@@ -3667,6 +3732,13 @@ tier = "A"
 item = "tst_core::klv::st0805::sensor_point_of_interest_xml"
 owning_tests = ["crates/tst-core/src/klv/st0805.rs"]
 bindings = ["c:unaudited", "python:unaudited", "java:unaudited", "swift:deferred", "kotlin:deferred"]
+scenario_ids = []
+tier = "A"
+
+[[surface]]
+item = "tst_core::klv::st0805::sensor_point_of_interest_xml_with"
+owning_tests = ["crates/tst-core/src/klv/st0805.rs"]
+bindings = ["c:deferred(no CoT conversion in the C ABI)", "python:tstrans.klv.sensor_point_of_interest_xml", "java:org.tstrans.klv.Klv.sensorPointOfInterestXml", "swift:deferred", "kotlin:deferred"]
 scenario_ids = []
 tier = "A"
 
@@ -3686,12 +3758,20 @@ item = "tst_core::klv::platform_position_xml"
 reason = "top-level re-export of tst_core::klv::st0805::platform_position_xml; see that entry for coverage"
 
 [[exempt]]
+item = "tst_core::klv::platform_position_xml_with"
+reason = "top-level re-export of tst_core::klv::st0805::platform_position_xml_with; see that entry for coverage"
+
+[[exempt]]
 item = "tst_core::klv::platform_uid"
 reason = "top-level re-export of tst_core::klv::st0805::platform_uid; see that entry for coverage"
 
 [[exempt]]
 item = "tst_core::klv::sensor_point_of_interest_xml"
 reason = "top-level re-export of tst_core::klv::st0805::sensor_point_of_interest_xml; see that entry for coverage"
+
+[[exempt]]
+item = "tst_core::klv::sensor_point_of_interest_xml_with"
+reason = "top-level re-export of tst_core::klv::st0805::sensor_point_of_interest_xml_with; see that entry for coverage"
 
 [[exempt]]
 item = "tst_core::klv::spi_uid"

@@ -935,6 +935,8 @@ pub fn tst_core::codec::h266::parse_sps(&[u8]) -> core::result::Result<tst_core:
 pub fn tst_core::codec::h266::parse_vps(&[u8]) -> core::result::Result<tst_core::codec::h266::H266Vps, tst_core::codec::CodecParseError>
 pub mod tst_core::codec::misp_time
 #[non_exhaustive] pub enum tst_core::codec::misp_time::MispTimeError
+pub tst_core::codec::misp_time::MispTimeError::InvalidTimeStatus
+pub tst_core::codec::misp_time::MispTimeError::InvalidTimeStatus::status: u8
 pub tst_core::codec::misp_time::MispTimeError::NanoUnsupportedForCodec
 pub tst_core::codec::misp_time::MispTimeError::NanoUnsupportedForCodec::codec: tst_core::codec::VideoCodec
 pub tst_core::codec::misp_time::MispTimeError::NoVclNal
@@ -1009,6 +1011,7 @@ pub tst_core::codec::misp_time::MispTimestamp::value: u64
 impl tst_core::codec::misp_time::MispTimestamp
 pub fn tst_core::codec::misp_time::MispTimestamp::micros(u64, u8) -> Self
 pub fn tst_core::codec::misp_time::MispTimestamp::nanos(u64, u8) -> Self
+pub fn tst_core::codec::misp_time::MispTimestamp::time_status_is_valid(&self) -> bool
 impl core::clone::Clone for tst_core::codec::misp_time::MispTimestamp
 pub fn tst_core::codec::misp_time::MispTimestamp::clone(&self) -> tst_core::codec::misp_time::MispTimestamp
 impl core::cmp::Eq for tst_core::codec::misp_time::MispTimestamp
@@ -1571,9 +1574,14 @@ impl core::panic::unwind_safe::RefUnwindSafe for tst_core::codec::Rational
 impl core::panic::unwind_safe::UnwindSafe for tst_core::codec::Rational
 pub mod tst_core::error
 #[non_exhaustive] pub enum tst_core::error::CotError
+pub tst_core::error::CotError::InvalidProducerName
+pub tst_core::error::CotError::InvalidXmlChar
+pub tst_core::error::CotError::InvalidXmlChar::field: &'static str
 pub tst_core::error::CotError::MissingField
 pub tst_core::error::CotError::MissingField::name: &'static str
 pub tst_core::error::CotError::MissingField::tag: u32
+pub tst_core::error::CotError::MslWithoutUndulation
+pub tst_core::error::CotError::MslWithoutUndulation::tag: u32
 impl core::clone::Clone for tst_core::error::CotError
 pub fn tst_core::error::CotError::clone(&self) -> tst_core::error::CotError
 impl core::cmp::Eq for tst_core::error::CotError
@@ -1651,6 +1659,10 @@ pub tst_core::error::KlvDecodeError::BadTimeStampPackLength::got: usize
 pub tst_core::error::KlvDecodeError::ChecksumMismatch
 pub tst_core::error::KlvDecodeError::ChecksumMismatch::expected: u16
 pub tst_core::error::KlvDecodeError::ChecksumMismatch::found: u16
+pub tst_core::error::KlvDecodeError::ComplianceViolation
+pub tst_core::error::KlvDecodeError::ComplianceViolation::offset: usize
+pub tst_core::error::KlvDecodeError::ComplianceViolation::reason: &'static str
+pub tst_core::error::KlvDecodeError::ComplianceViolation::tag: u32
 pub tst_core::error::KlvDecodeError::Crc32Mismatch
 pub tst_core::error::KlvDecodeError::Crc32Mismatch::expected: u32
 pub tst_core::error::KlvDecodeError::Crc32Mismatch::found: u32
@@ -1660,10 +1672,15 @@ pub tst_core::error::KlvDecodeError::DuplicateTag::tag: u32
 pub tst_core::error::KlvDecodeError::FieldError(tst_core::error::KlvFieldError)
 pub tst_core::error::KlvDecodeError::LengthOverflow
 pub tst_core::error::KlvDecodeError::LengthOverflow::value: u64
+pub tst_core::error::KlvDecodeError::MalformedChecksum
+pub tst_core::error::KlvDecodeError::MalformedChecksum::got: usize
+pub tst_core::error::KlvDecodeError::MalformedChecksum::offset: usize
 pub tst_core::error::KlvDecodeError::MalformedLength
 pub tst_core::error::KlvDecodeError::MalformedLength::offset: usize
 pub tst_core::error::KlvDecodeError::MalformedTag
 pub tst_core::error::KlvDecodeError::MalformedTag::offset: usize
+pub tst_core::error::KlvDecodeError::MissingChecksum
+pub tst_core::error::KlvDecodeError::MissingChecksum::offset: usize
 pub tst_core::error::KlvDecodeError::MissingTag65
 pub tst_core::error::KlvDecodeError::NonCanonicalLength
 pub tst_core::error::KlvDecodeError::NonCanonicalLength::offset: usize
@@ -1741,6 +1758,9 @@ pub tst_core::error::KlvEncodeError::DuplicateTargetId
 pub tst_core::error::KlvEncodeError::DuplicateTargetId::target_id: u64
 pub tst_core::error::KlvEncodeError::ForbiddenStandaloneOffset
 pub tst_core::error::KlvEncodeError::ForbiddenStandaloneOffset::tag: u32
+pub tst_core::error::KlvEncodeError::InvalidFieldValue
+pub tst_core::error::KlvEncodeError::InvalidFieldValue::reason: &'static str
+pub tst_core::error::KlvEncodeError::InvalidFieldValue::tag: u32
 pub tst_core::error::KlvEncodeError::InvalidImapbParams
 pub tst_core::error::KlvEncodeError::InvalidImapbParams::length: u8
 pub tst_core::error::KlvEncodeError::InvalidImapbParams::max: f64
@@ -1760,10 +1780,15 @@ pub tst_core::error::KlvEncodeError::ReservedTagInUnknown::tag: u32
 pub tst_core::error::KlvEncodeError::StringTooLong
 pub tst_core::error::KlvEncodeError::StringTooLong::max: usize
 pub tst_core::error::KlvEncodeError::StringTooLong::tag: u32
+pub tst_core::error::KlvEncodeError::TagNotOneByte
+pub tst_core::error::KlvEncodeError::TagNotOneByte::tag: u32
 pub tst_core::error::KlvEncodeError::UnsupportedImapbLength
 pub tst_core::error::KlvEncodeError::UnsupportedImapbLength::length: usize
 pub tst_core::error::KlvEncodeError::VTargetPackEmpty
 pub tst_core::error::KlvEncodeError::VTargetPackEmpty::target_id: u64
+pub tst_core::error::KlvEncodeError::ValueTooLong
+pub tst_core::error::KlvEncodeError::ValueTooLong::max: usize
+pub tst_core::error::KlvEncodeError::ValueTooLong::tag: u32
 impl tst_core::error::KlvEncodeError
 pub fn tst_core::error::KlvEncodeError::kind(&self) -> tst_core::error::KlvEncodeErrorKind
 impl core::convert::From<tst_core::error::KlvEncodeError> for tst_core::error::KlvPatchError
@@ -1814,6 +1839,8 @@ impl core::panic::unwind_safe::UnwindSafe for tst_core::error::KlvEncodeErrorKin
 pub tst_core::error::KlvFieldError::InvalidCodepoint
 pub tst_core::error::KlvFieldError::InvalidCodepoint::tag: u32
 pub tst_core::error::KlvFieldError::InvalidCodepoint::value: u8
+pub tst_core::error::KlvFieldError::InvalidFormat
+pub tst_core::error::KlvFieldError::InvalidFormat::tag: u32
 pub tst_core::error::KlvFieldError::InvalidImapbParams
 pub tst_core::error::KlvFieldError::InvalidImapbParams::length: u8
 pub tst_core::error::KlvFieldError::InvalidImapbParams::max: f64
@@ -1826,6 +1853,8 @@ pub tst_core::error::KlvFieldError::InvalidUtf16
 pub tst_core::error::KlvFieldError::InvalidUtf16::tag: u32
 pub tst_core::error::KlvFieldError::InvalidUtf8
 pub tst_core::error::KlvFieldError::InvalidUtf8::tag: u32
+pub tst_core::error::KlvFieldError::NonAsciiText
+pub tst_core::error::KlvFieldError::NonAsciiText::tag: u32
 pub tst_core::error::KlvFieldError::OutOfRange
 pub tst_core::error::KlvFieldError::OutOfRange::max: f64
 pub tst_core::error::KlvFieldError::OutOfRange::min: f64
@@ -2351,6 +2380,25 @@ pub fn tst_core::klv::st0102::encode_strict_compliance(&tst_core::klv::SecurityL
 pub fn tst_core::klv::st0102::encode_to_vec(&tst_core::klv::SecurityLs) -> core::result::Result<alloc::vec::Vec<u8>, tst_core::error::KlvEncodeError>
 pub fn tst_core::klv::st0102::encoded_len(&tst_core::klv::SecurityLs) -> usize
 pub mod tst_core::klv::st0601
+#[non_exhaustive] pub enum tst_core::klv::st0601::AltitudeDatum
+pub tst_core::klv::st0601::AltitudeDatum::Hae
+pub tst_core::klv::st0601::AltitudeDatum::Msl
+impl core::clone::Clone for tst_core::klv::st0601::AltitudeDatum
+pub fn tst_core::klv::st0601::AltitudeDatum::clone(&self) -> tst_core::klv::st0601::AltitudeDatum
+impl core::cmp::Eq for tst_core::klv::st0601::AltitudeDatum
+impl core::cmp::PartialEq for tst_core::klv::st0601::AltitudeDatum
+pub fn tst_core::klv::st0601::AltitudeDatum::eq(&self, &tst_core::klv::st0601::AltitudeDatum) -> bool
+impl core::fmt::Debug for tst_core::klv::st0601::AltitudeDatum
+pub fn tst_core::klv::st0601::AltitudeDatum::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for tst_core::klv::st0601::AltitudeDatum
+impl core::marker::StructuralPartialEq for tst_core::klv::st0601::AltitudeDatum
+impl core::marker::Freeze for tst_core::klv::st0601::AltitudeDatum
+impl core::marker::Send for tst_core::klv::st0601::AltitudeDatum
+impl core::marker::Sync for tst_core::klv::st0601::AltitudeDatum
+impl core::marker::Unpin for tst_core::klv::st0601::AltitudeDatum
+impl core::marker::UnsafeUnpin for tst_core::klv::st0601::AltitudeDatum
+impl core::panic::unwind_safe::RefUnwindSafe for tst_core::klv::st0601::AltitudeDatum
+impl core::panic::unwind_safe::UnwindSafe for tst_core::klv::st0601::AltitudeDatum
 #[non_exhaustive] pub enum tst_core::klv::st0601::IcingDetected
 pub tst_core::klv::st0601::IcingDetected::DetectorOff
 pub tst_core::klv::st0601::IcingDetected::IcingDetected
@@ -3044,10 +3092,12 @@ pub tst_core::klv::st0601::UasDatalinkLs::zoom_percentage: core::option::Option<
 impl tst_core::UasDatalinkLs
 pub fn tst_core::UasDatalinkLs::corners(&self) -> core::option::Option<tst_core::klv::st0601::Corners>
 pub fn tst_core::UasDatalinkLs::frame_center(&self) -> core::option::Option<tst_core::klv::st0601::GeoPoint>
+pub fn tst_core::UasDatalinkLs::frame_center_datum(&self) -> core::option::Option<tst_core::klv::st0601::AltitudeDatum>
 pub fn tst_core::UasDatalinkLs::platform_attitude(&self) -> core::option::Option<tst_core::klv::st0601::Attitude>
 pub fn tst_core::UasDatalinkLs::sensor_attitude(&self) -> core::option::Option<tst_core::klv::st0601::Attitude>
 pub fn tst_core::UasDatalinkLs::sensor_fov(&self) -> core::option::Option<tst_core::klv::st0601::FieldOfView>
 pub fn tst_core::UasDatalinkLs::sensor_position(&self) -> core::option::Option<tst_core::klv::st0601::GeoPoint>
+pub fn tst_core::UasDatalinkLs::sensor_position_datum(&self) -> core::option::Option<tst_core::klv::st0601::AltitudeDatum>
 impl core::clone::Clone for tst_core::UasDatalinkLs
 pub fn tst_core::UasDatalinkLs::clone(&self) -> tst_core::UasDatalinkLs
 impl core::cmp::PartialEq for tst_core::UasDatalinkLs
@@ -3229,6 +3279,27 @@ impl core::panic::unwind_safe::UnwindSafe for tst_core::klv::TimeStatus
 pub fn tst_core::klv::st0605::decode(&[u8]) -> core::result::Result<tst_core::klv::PrecisionTimeStampPack, tst_core::error::KlvDecodeError>
 pub fn tst_core::klv::st0605::encode(&tst_core::klv::PrecisionTimeStampPack) -> [u8; 26]
 pub mod tst_core::klv::st0805
+#[non_exhaustive] pub enum tst_core::klv::st0805::MslFallback
+pub tst_core::klv::st0805::MslFallback::PassThrough
+pub tst_core::klv::st0805::MslFallback::Refuse
+impl core::clone::Clone for tst_core::klv::st0805::MslFallback
+pub fn tst_core::klv::st0805::MslFallback::clone(&self) -> tst_core::klv::st0805::MslFallback
+impl core::cmp::Eq for tst_core::klv::st0805::MslFallback
+impl core::cmp::PartialEq for tst_core::klv::st0805::MslFallback
+pub fn tst_core::klv::st0805::MslFallback::eq(&self, &tst_core::klv::st0805::MslFallback) -> bool
+impl core::default::Default for tst_core::klv::st0805::MslFallback
+pub fn tst_core::klv::st0805::MslFallback::default() -> tst_core::klv::st0805::MslFallback
+impl core::fmt::Debug for tst_core::klv::st0805::MslFallback
+pub fn tst_core::klv::st0805::MslFallback::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for tst_core::klv::st0805::MslFallback
+impl core::marker::StructuralPartialEq for tst_core::klv::st0805::MslFallback
+impl core::marker::Freeze for tst_core::klv::st0805::MslFallback
+impl core::marker::Send for tst_core::klv::st0805::MslFallback
+impl core::marker::Sync for tst_core::klv::st0805::MslFallback
+impl core::marker::Unpin for tst_core::klv::st0805::MslFallback
+impl core::marker::UnsafeUnpin for tst_core::klv::st0805::MslFallback
+impl core::panic::unwind_safe::RefUnwindSafe for tst_core::klv::st0805::MslFallback
+impl core::panic::unwind_safe::UnwindSafe for tst_core::klv::st0805::MslFallback
 pub struct tst_core::klv::st0805::CotConfig
 pub tst_core::klv::st0805::CotConfig::geoid_undulation_m: core::option::Option<f64>
 pub tst_core::klv::st0805::CotConfig::how: alloc::string::String
@@ -3252,8 +3323,10 @@ impl core::marker::UnsafeUnpin for tst_core::klv::st0805::CotConfig
 impl core::panic::unwind_safe::RefUnwindSafe for tst_core::klv::st0805::CotConfig
 impl core::panic::unwind_safe::UnwindSafe for tst_core::klv::st0805::CotConfig
 pub fn tst_core::klv::st0805::platform_position_xml(&tst_core::UasDatalinkLs, &tst_core::klv::st0805::CotConfig, u64) -> core::result::Result<alloc::string::String, tst_core::error::CotError>
+pub fn tst_core::klv::st0805::platform_position_xml_with(&tst_core::UasDatalinkLs, &tst_core::klv::st0805::CotConfig, u64, tst_core::klv::st0805::MslFallback) -> core::result::Result<alloc::string::String, tst_core::error::CotError>
 pub fn tst_core::klv::st0805::platform_uid(&tst_core::UasDatalinkLs) -> core::result::Result<alloc::string::String, tst_core::error::CotError>
 pub fn tst_core::klv::st0805::sensor_point_of_interest_xml(&tst_core::UasDatalinkLs, &tst_core::klv::st0805::CotConfig, u64) -> core::result::Result<alloc::string::String, tst_core::error::CotError>
+pub fn tst_core::klv::st0805::sensor_point_of_interest_xml_with(&tst_core::UasDatalinkLs, &tst_core::klv::st0805::CotConfig, u64, tst_core::klv::st0805::MslFallback) -> core::result::Result<alloc::string::String, tst_core::error::CotError>
 pub fn tst_core::klv::st0805::spi_uid(&tst_core::UasDatalinkLs) -> core::result::Result<alloc::string::String, tst_core::error::CotError>
 pub mod tst_core::klv::st0806
 #[non_exhaustive] pub enum tst_core::klv::st0806::RvtAoiType
@@ -3465,6 +3538,11 @@ pub fn tst_core::klv::st0806::encode_to_vec(&tst_core::klv::RvtLs) -> core::resu
 pub fn tst_core::klv::st0806::encode_to_vec_standalone(&tst_core::klv::RvtLs) -> core::result::Result<alloc::vec::Vec<u8>, tst_core::error::KlvEncodeError>
 pub mod tst_core::klv::st0903
 #[non_exhaustive] pub enum tst_core::klv::st0903::VTargetPackError
+pub tst_core::klv::st0903::VTargetPackError::DuplicateTag
+pub tst_core::klv::st0903::VTargetPackError::DuplicateTag::tag: u32
+pub tst_core::klv::st0903::VTargetPackError::DuplicateTargetId
+pub tst_core::klv::st0903::VTargetPackError::DuplicateTargetId::target_id: u64
+pub tst_core::klv::st0903::VTargetPackError::Empty
 pub tst_core::klv::st0903::VTargetPackError::InvalidLength
 pub tst_core::klv::st0903::VTargetPackError::InvalidLength::expected: usize
 pub tst_core::klv::st0903::VTargetPackError::InvalidLength::got: usize
@@ -3475,9 +3553,15 @@ pub tst_core::klv::st0903::VTargetPackError::LengthOverrun::declared: usize
 pub tst_core::klv::st0903::VTargetPackError::LengthOverrun::tag: u32
 pub tst_core::klv::st0903::VTargetPackError::MalformedImapb
 pub tst_core::klv::st0903::VTargetPackError::MalformedImapb::tag: u32
+pub tst_core::klv::st0903::VTargetPackError::NonCanonicalLength
+pub tst_core::klv::st0903::VTargetPackError::NonCanonicalLength::tag: u32
+pub tst_core::klv::st0903::VTargetPackError::TargetIdTooWide
 pub tst_core::klv::st0903::VTargetPackError::TruncatedField
 pub tst_core::klv::st0903::VTargetPackError::TruncatedField::tag: u32
 pub tst_core::klv::st0903::VTargetPackError::TruncatedTargetId
+pub tst_core::klv::st0903::VTargetPackError::ValueOutOfRange
+pub tst_core::klv::st0903::VTargetPackError::ValueOutOfRange::tag: u32
+pub tst_core::klv::st0903::VTargetPackError::ValueOutOfRange::value: u8
 impl core::clone::Clone for tst_core::klv::VTargetPackError
 pub fn tst_core::klv::VTargetPackError::clone(&self) -> tst_core::klv::VTargetPackError
 impl core::cmp::Eq for tst_core::klv::VTargetPackError
@@ -3578,6 +3662,8 @@ impl core::panic::unwind_safe::RefUnwindSafe for tst_core::klv::VmtiLs
 impl core::panic::unwind_safe::UnwindSafe for tst_core::klv::VmtiLs
 pub const tst_core::klv::st0903::VMTI_LS_UL: [u8; 16]
 pub fn tst_core::klv::st0903::decode(&[u8]) -> core::result::Result<tst_core::klv::VmtiLs, tst_core::error::KlvDecodeError>
+pub fn tst_core::klv::st0903::decode_standalone(&[u8]) -> core::result::Result<tst_core::klv::VmtiLs, tst_core::error::KlvDecodeError>
+pub fn tst_core::klv::st0903::decode_standalone_strict(&[u8]) -> core::result::Result<tst_core::klv::VmtiLs, tst_core::error::KlvDecodeError>
 pub fn tst_core::klv::st0903::decode_strict(&[u8]) -> core::result::Result<tst_core::klv::VmtiLs, tst_core::error::KlvDecodeError>
 pub fn tst_core::klv::st0903::encode(&tst_core::klv::VmtiLs, &mut alloc::vec::Vec<u8>) -> core::result::Result<(), tst_core::error::KlvEncodeError>
 pub fn tst_core::klv::st0903::encode_standalone(&tst_core::klv::VmtiLs, &mut [u8]) -> core::result::Result<usize, tst_core::error::KlvEncodeError>
@@ -3664,6 +3750,8 @@ pub tst_core::klv::st1204::CoreId::version: u8
 pub tst_core::klv::st1204::CoreId::window: core::option::Option<[u8; 16]>
 impl tst_core::klv::st1204::CoreId
 pub fn tst_core::klv::st1204::CoreId::new(u8, core::option::Option<(tst_core::klv::st1204::IdType, [u8; 16])>, core::option::Option<(tst_core::klv::st1204::IdType, [u8; 16])>, core::option::Option<[u8; 16]>, core::option::Option<[u8; 16]>) -> Self
+impl tst_core::klv::st1204::CoreId
+pub fn tst_core::klv::st1204::CoreId::validate(&self) -> core::result::Result<(), tst_core::klv::st1204::St1204Error>
 impl core::clone::Clone for tst_core::klv::st1204::CoreId
 pub fn tst_core::klv::st1204::CoreId::clone(&self) -> tst_core::klv::st1204::CoreId
 impl core::cmp::Eq for tst_core::klv::st1204::CoreId
@@ -3685,6 +3773,7 @@ impl core::panic::unwind_safe::RefUnwindSafe for tst_core::klv::st1204::CoreId
 impl core::panic::unwind_safe::UnwindSafe for tst_core::klv::st1204::CoreId
 pub fn tst_core::klv::st1204::check_value(impl core::iter::traits::iterator::Iterator<Item = char>) -> u8
 pub fn tst_core::klv::st1204::decode(&[u8]) -> core::result::Result<tst_core::klv::st1204::CoreId, tst_core::klv::st1204::St1204Error>
+pub fn tst_core::klv::st1204::encode_checked(&tst_core::klv::st1204::CoreId) -> core::result::Result<alloc::vec::Vec<u8>, tst_core::klv::st1204::St1204Error>
 pub fn tst_core::klv::st1204::encode_to_vec(&tst_core::klv::st1204::CoreId) -> alloc::vec::Vec<u8>
 pub mod tst_core::klv::universal_label
 pub struct tst_core::klv::universal_label::UniversalLabel(pub [u8; 16])
@@ -3790,6 +3879,27 @@ impl core::marker::Unpin for tst_core::klv::imapb::ImapbSpecial
 impl core::marker::UnsafeUnpin for tst_core::klv::imapb::ImapbSpecial
 impl core::panic::unwind_safe::RefUnwindSafe for tst_core::klv::imapb::ImapbSpecial
 impl core::panic::unwind_safe::UnwindSafe for tst_core::klv::imapb::ImapbSpecial
+#[non_exhaustive] pub enum tst_core::klv::MslFallback
+pub tst_core::klv::MslFallback::PassThrough
+pub tst_core::klv::MslFallback::Refuse
+impl core::clone::Clone for tst_core::klv::st0805::MslFallback
+pub fn tst_core::klv::st0805::MslFallback::clone(&self) -> tst_core::klv::st0805::MslFallback
+impl core::cmp::Eq for tst_core::klv::st0805::MslFallback
+impl core::cmp::PartialEq for tst_core::klv::st0805::MslFallback
+pub fn tst_core::klv::st0805::MslFallback::eq(&self, &tst_core::klv::st0805::MslFallback) -> bool
+impl core::default::Default for tst_core::klv::st0805::MslFallback
+pub fn tst_core::klv::st0805::MslFallback::default() -> tst_core::klv::st0805::MslFallback
+impl core::fmt::Debug for tst_core::klv::st0805::MslFallback
+pub fn tst_core::klv::st0805::MslFallback::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for tst_core::klv::st0805::MslFallback
+impl core::marker::StructuralPartialEq for tst_core::klv::st0805::MslFallback
+impl core::marker::Freeze for tst_core::klv::st0805::MslFallback
+impl core::marker::Send for tst_core::klv::st0805::MslFallback
+impl core::marker::Sync for tst_core::klv::st0805::MslFallback
+impl core::marker::Unpin for tst_core::klv::st0805::MslFallback
+impl core::marker::UnsafeUnpin for tst_core::klv::st0805::MslFallback
+impl core::panic::unwind_safe::RefUnwindSafe for tst_core::klv::st0805::MslFallback
+impl core::panic::unwind_safe::UnwindSafe for tst_core::klv::st0805::MslFallback
 pub enum tst_core::klv::ObjectCountryCodingMethod
 pub tst_core::klv::ObjectCountryCodingMethod::Fips104FourLetter
 pub tst_core::klv::ObjectCountryCodingMethod::Fips104TwoLetter
@@ -3929,6 +4039,11 @@ impl core::marker::UnsafeUnpin for tst_core::klv::SecurityClassification
 impl core::panic::unwind_safe::RefUnwindSafe for tst_core::klv::SecurityClassification
 impl core::panic::unwind_safe::UnwindSafe for tst_core::klv::SecurityClassification
 #[non_exhaustive] pub enum tst_core::klv::VTargetPackError
+pub tst_core::klv::VTargetPackError::DuplicateTag
+pub tst_core::klv::VTargetPackError::DuplicateTag::tag: u32
+pub tst_core::klv::VTargetPackError::DuplicateTargetId
+pub tst_core::klv::VTargetPackError::DuplicateTargetId::target_id: u64
+pub tst_core::klv::VTargetPackError::Empty
 pub tst_core::klv::VTargetPackError::InvalidLength
 pub tst_core::klv::VTargetPackError::InvalidLength::expected: usize
 pub tst_core::klv::VTargetPackError::InvalidLength::got: usize
@@ -3939,9 +4054,15 @@ pub tst_core::klv::VTargetPackError::LengthOverrun::declared: usize
 pub tst_core::klv::VTargetPackError::LengthOverrun::tag: u32
 pub tst_core::klv::VTargetPackError::MalformedImapb
 pub tst_core::klv::VTargetPackError::MalformedImapb::tag: u32
+pub tst_core::klv::VTargetPackError::NonCanonicalLength
+pub tst_core::klv::VTargetPackError::NonCanonicalLength::tag: u32
+pub tst_core::klv::VTargetPackError::TargetIdTooWide
 pub tst_core::klv::VTargetPackError::TruncatedField
 pub tst_core::klv::VTargetPackError::TruncatedField::tag: u32
 pub tst_core::klv::VTargetPackError::TruncatedTargetId
+pub tst_core::klv::VTargetPackError::ValueOutOfRange
+pub tst_core::klv::VTargetPackError::ValueOutOfRange::tag: u32
+pub tst_core::klv::VTargetPackError::ValueOutOfRange::value: u8
 impl core::clone::Clone for tst_core::klv::VTargetPackError
 pub fn tst_core::klv::VTargetPackError::clone(&self) -> tst_core::klv::VTargetPackError
 impl core::cmp::Eq for tst_core::klv::VTargetPackError
@@ -4376,8 +4497,10 @@ pub const tst_core::klv::VMTI_LS_UL: [u8; 16]
 pub fn tst_core::klv::decode_sdcc_flp(&[u8]) -> core::result::Result<tst_core::klv::st1010::SdccFlp, tst_core::error::KlvFieldError>
 pub fn tst_core::klv::encode_sdcc_flp_mode2(&[f64], &[f64], usize) -> core::result::Result<alloc::vec::Vec<u8>, tst_core::error::KlvEncodeError>
 pub fn tst_core::klv::platform_position_xml(&tst_core::UasDatalinkLs, &tst_core::klv::st0805::CotConfig, u64) -> core::result::Result<alloc::string::String, tst_core::error::CotError>
+pub fn tst_core::klv::platform_position_xml_with(&tst_core::UasDatalinkLs, &tst_core::klv::st0805::CotConfig, u64, tst_core::klv::st0805::MslFallback) -> core::result::Result<alloc::string::String, tst_core::error::CotError>
 pub fn tst_core::klv::platform_uid(&tst_core::UasDatalinkLs) -> core::result::Result<alloc::string::String, tst_core::error::CotError>
 pub fn tst_core::klv::sensor_point_of_interest_xml(&tst_core::UasDatalinkLs, &tst_core::klv::st0805::CotConfig, u64) -> core::result::Result<alloc::string::String, tst_core::error::CotError>
+pub fn tst_core::klv::sensor_point_of_interest_xml_with(&tst_core::UasDatalinkLs, &tst_core::klv::st0805::CotConfig, u64, tst_core::klv::st0805::MslFallback) -> core::result::Result<alloc::string::String, tst_core::error::CotError>
 pub fn tst_core::klv::spi_uid(&tst_core::UasDatalinkLs) -> core::result::Result<alloc::string::String, tst_core::error::CotError>
 pub mod tst_core::mpegts
 pub mod tst_core::mpegts::au_cell
@@ -7688,9 +7811,14 @@ impl core::marker::UnsafeUnpin for tst_core::transport::BrokenCause
 impl core::panic::unwind_safe::RefUnwindSafe for tst_core::transport::BrokenCause
 impl core::panic::unwind_safe::UnwindSafe for tst_core::transport::BrokenCause
 #[non_exhaustive] pub enum tst_core::CotError
+pub tst_core::CotError::InvalidProducerName
+pub tst_core::CotError::InvalidXmlChar
+pub tst_core::CotError::InvalidXmlChar::field: &'static str
 pub tst_core::CotError::MissingField
 pub tst_core::CotError::MissingField::name: &'static str
 pub tst_core::CotError::MissingField::tag: u32
+pub tst_core::CotError::MslWithoutUndulation
+pub tst_core::CotError::MslWithoutUndulation::tag: u32
 impl core::clone::Clone for tst_core::error::CotError
 pub fn tst_core::error::CotError::clone(&self) -> tst_core::error::CotError
 impl core::cmp::Eq for tst_core::error::CotError
@@ -7745,6 +7873,10 @@ pub tst_core::KlvDecodeError::BadTimeStampPackLength::got: usize
 pub tst_core::KlvDecodeError::ChecksumMismatch
 pub tst_core::KlvDecodeError::ChecksumMismatch::expected: u16
 pub tst_core::KlvDecodeError::ChecksumMismatch::found: u16
+pub tst_core::KlvDecodeError::ComplianceViolation
+pub tst_core::KlvDecodeError::ComplianceViolation::offset: usize
+pub tst_core::KlvDecodeError::ComplianceViolation::reason: &'static str
+pub tst_core::KlvDecodeError::ComplianceViolation::tag: u32
 pub tst_core::KlvDecodeError::Crc32Mismatch
 pub tst_core::KlvDecodeError::Crc32Mismatch::expected: u32
 pub tst_core::KlvDecodeError::Crc32Mismatch::found: u32
@@ -7754,10 +7886,15 @@ pub tst_core::KlvDecodeError::DuplicateTag::tag: u32
 pub tst_core::KlvDecodeError::FieldError(tst_core::error::KlvFieldError)
 pub tst_core::KlvDecodeError::LengthOverflow
 pub tst_core::KlvDecodeError::LengthOverflow::value: u64
+pub tst_core::KlvDecodeError::MalformedChecksum
+pub tst_core::KlvDecodeError::MalformedChecksum::got: usize
+pub tst_core::KlvDecodeError::MalformedChecksum::offset: usize
 pub tst_core::KlvDecodeError::MalformedLength
 pub tst_core::KlvDecodeError::MalformedLength::offset: usize
 pub tst_core::KlvDecodeError::MalformedTag
 pub tst_core::KlvDecodeError::MalformedTag::offset: usize
+pub tst_core::KlvDecodeError::MissingChecksum
+pub tst_core::KlvDecodeError::MissingChecksum::offset: usize
 pub tst_core::KlvDecodeError::MissingTag65
 pub tst_core::KlvDecodeError::NonCanonicalLength
 pub tst_core::KlvDecodeError::NonCanonicalLength::offset: usize
@@ -7810,6 +7947,9 @@ pub tst_core::KlvEncodeError::DuplicateTargetId
 pub tst_core::KlvEncodeError::DuplicateTargetId::target_id: u64
 pub tst_core::KlvEncodeError::ForbiddenStandaloneOffset
 pub tst_core::KlvEncodeError::ForbiddenStandaloneOffset::tag: u32
+pub tst_core::KlvEncodeError::InvalidFieldValue
+pub tst_core::KlvEncodeError::InvalidFieldValue::reason: &'static str
+pub tst_core::KlvEncodeError::InvalidFieldValue::tag: u32
 pub tst_core::KlvEncodeError::InvalidImapbParams
 pub tst_core::KlvEncodeError::InvalidImapbParams::length: u8
 pub tst_core::KlvEncodeError::InvalidImapbParams::max: f64
@@ -7829,10 +7969,15 @@ pub tst_core::KlvEncodeError::ReservedTagInUnknown::tag: u32
 pub tst_core::KlvEncodeError::StringTooLong
 pub tst_core::KlvEncodeError::StringTooLong::max: usize
 pub tst_core::KlvEncodeError::StringTooLong::tag: u32
+pub tst_core::KlvEncodeError::TagNotOneByte
+pub tst_core::KlvEncodeError::TagNotOneByte::tag: u32
 pub tst_core::KlvEncodeError::UnsupportedImapbLength
 pub tst_core::KlvEncodeError::UnsupportedImapbLength::length: usize
 pub tst_core::KlvEncodeError::VTargetPackEmpty
 pub tst_core::KlvEncodeError::VTargetPackEmpty::target_id: u64
+pub tst_core::KlvEncodeError::ValueTooLong
+pub tst_core::KlvEncodeError::ValueTooLong::max: usize
+pub tst_core::KlvEncodeError::ValueTooLong::tag: u32
 impl tst_core::error::KlvEncodeError
 pub fn tst_core::error::KlvEncodeError::kind(&self) -> tst_core::error::KlvEncodeErrorKind
 impl core::convert::From<tst_core::error::KlvEncodeError> for tst_core::error::KlvPatchError
@@ -7853,6 +7998,8 @@ impl core::panic::unwind_safe::UnwindSafe for tst_core::error::KlvEncodeError
 pub tst_core::KlvFieldError::InvalidCodepoint
 pub tst_core::KlvFieldError::InvalidCodepoint::tag: u32
 pub tst_core::KlvFieldError::InvalidCodepoint::value: u8
+pub tst_core::KlvFieldError::InvalidFormat
+pub tst_core::KlvFieldError::InvalidFormat::tag: u32
 pub tst_core::KlvFieldError::InvalidImapbParams
 pub tst_core::KlvFieldError::InvalidImapbParams::length: u8
 pub tst_core::KlvFieldError::InvalidImapbParams::max: f64
@@ -7865,6 +8012,8 @@ pub tst_core::KlvFieldError::InvalidUtf16
 pub tst_core::KlvFieldError::InvalidUtf16::tag: u32
 pub tst_core::KlvFieldError::InvalidUtf8
 pub tst_core::KlvFieldError::InvalidUtf8::tag: u32
+pub tst_core::KlvFieldError::NonAsciiText
+pub tst_core::KlvFieldError::NonAsciiText::tag: u32
 pub tst_core::KlvFieldError::OutOfRange
 pub tst_core::KlvFieldError::OutOfRange::max: f64
 pub tst_core::KlvFieldError::OutOfRange::min: f64
@@ -8363,10 +8512,12 @@ pub tst_core::UasDatalinkLs::zoom_percentage: core::option::Option<f64>
 impl tst_core::UasDatalinkLs
 pub fn tst_core::UasDatalinkLs::corners(&self) -> core::option::Option<tst_core::klv::st0601::Corners>
 pub fn tst_core::UasDatalinkLs::frame_center(&self) -> core::option::Option<tst_core::klv::st0601::GeoPoint>
+pub fn tst_core::UasDatalinkLs::frame_center_datum(&self) -> core::option::Option<tst_core::klv::st0601::AltitudeDatum>
 pub fn tst_core::UasDatalinkLs::platform_attitude(&self) -> core::option::Option<tst_core::klv::st0601::Attitude>
 pub fn tst_core::UasDatalinkLs::sensor_attitude(&self) -> core::option::Option<tst_core::klv::st0601::Attitude>
 pub fn tst_core::UasDatalinkLs::sensor_fov(&self) -> core::option::Option<tst_core::klv::st0601::FieldOfView>
 pub fn tst_core::UasDatalinkLs::sensor_position(&self) -> core::option::Option<tst_core::klv::st0601::GeoPoint>
+pub fn tst_core::UasDatalinkLs::sensor_position_datum(&self) -> core::option::Option<tst_core::klv::st0601::AltitudeDatum>
 impl core::clone::Clone for tst_core::UasDatalinkLs
 pub fn tst_core::UasDatalinkLs::clone(&self) -> tst_core::UasDatalinkLs
 impl core::cmp::PartialEq for tst_core::UasDatalinkLs

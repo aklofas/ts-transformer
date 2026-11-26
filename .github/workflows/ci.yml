@@ -929,7 +929,8 @@ jobs:
           # 247->250: +SlotRefused, Peek, ParkingEvent.
           # 250->251: +tst_rtp::PushCloseOutcome.
           # 251->252: +MountRuleAuthFailures.
-          BASELINE=252
+          # 252->254: +AltitudeDatum, MslFallback.
+          BASELINE=254
           OBSERVED=$(rg -c '^\s*#\[non_exhaustive\]' crates/ bindings/ --type rust | awk -F: '{sum += $2} END {print sum}')
           if [ "$OBSERVED" -lt "$BASELINE" ]; then
             echo "non_exhaustive count regressed: expected >= $BASELINE, observed $OBSERVED" >&2
