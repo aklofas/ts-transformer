@@ -6,7 +6,7 @@ use crate::klv::imapb::ImapbSpecial;
 use crate::klv::length::{ber_len, ber_oid_len, write_ber};
 use crate::klv::pack::{Iter, emit_ber_oid_tlv, is_typed_tag};
 use alloc::borrow::Cow;
-use alloc::collections::BTreeMap;
+use alloc::collections::{BTreeMap, VecDeque};
 use alloc::vec::Vec;
 
 use super::mapping::encode_fixed_range;
@@ -1113,242 +1113,317 @@ enum Occurrence {
     Fallback,
 }
 
-struct SdccPlacer<'a> {
-    /// The body's items other than Item 102, each as its whole TLV, in the
-    /// order the encoder wrote them.
-    items: Vec<(u32, &'a [u8])>,
-    used: Vec<bool>,
-    /// Per tag: the indexes of its items in `items`, and a cursor past
-    /// those already written.
-    by_tag: BTreeMap<u32, (Vec<usize>, usize)>,
-    /// The tags written so far, the packs left out.
-    written: Vec<u32>,
-    plan: Vec<Placed>,
+/// What the placement keeps for a tag that has items in the body.
+#[derive(Default)]
+struct TagItems {
+    /// The tag's first item in the encoder's order.
+    first: usize,
+    /// Its first item not yet written.
+    next: Option<usize>,
+    /// How many of its items are not yet written, and how many of those the
+    /// occurrence being tried has claimed for its rows.
+    unwritten: usize,
+    claimed: usize,
+    /// The occurrences to try when the walk reaches `first`: of the items
+    /// they name it is the first in the encoder's order.
+    anchored: Vec<usize>,
+    /// The occurrences whose first row is this tag, and those whose last
+    /// row is: both until the tag's first item is written.
+    opens: Vec<usize>,
+    closes: Vec<usize>,
 }
 
-impl SdccPlacer<'_> {
-    fn write_item(&mut self, i: usize) {
-        self.used[i] = true;
-        self.written.push(self.items[i].0);
-        self.plan.push(Placed::Item(i));
+/// Places each occurrence of Item 102 after the items its `preceding_tags`
+/// (its rows) name.
+///
+/// The items are written in the encoder's order, except that an occurrence
+/// takes the items of its rows forward to where it is written. Each
+/// occurrence gets ONE try at that ([`Self::take_forward`]), at the earlier
+/// of two moments: the walk reaches the first item, in the encoder's order,
+/// that it names; or another occurrence has just taken the item of its
+/// first row forward (a pack that refines the last items of the pack before
+/// it, and more). Before that, a pack whose rows are already the last items
+/// written is written at once ([`Self::write`]): one look per occurrence,
+/// when the first item of its last row's tag is written.
+///
+/// Invariant: of a tag's items, the written ones are the first in the
+/// encoder's order, because the walk and a row both write a tag's first
+/// unwritten item. So `TagItems::next` and a count are all a tag needs, and
+/// a row takes its item in one step.
+///
+/// Work: `write` runs once per item, `take_forward` once per occurrence and
+/// in time linear in its rows, and each occurrence sits in one `anchored`,
+/// one `opens` and one `closes` list, each emptied when it is read. That is
+/// a fixed number of steps (each at most one lookup in the tag map) per
+/// item, per row and per occurrence.
+///
+/// Memory: every collection holds one entry per item of the body or per
+/// occurrence of the record; a row is only read, and nothing is sized by a
+/// count that a pack's bytes claim.
+struct SdccPlacer<'a> {
+    occ: &'a [super::model::SdccFlpField],
+    /// The body's items other than Item 102, each as its whole TLV, in the
+    /// order the encoder wrote them, and whether each is written.
+    items: Vec<(u32, &'a [u8])>,
+    used: Vec<bool>,
+    /// Per item: the next item of the same tag.
+    next_of_tag: Vec<Option<usize>>,
+    /// The occurrences' TLVs.
+    packs: Vec<&'a [u8]>,
+    /// The index in `items` of the first item the encoder wrote after the
+    /// packs.
+    after_packs: usize,
+    tags: BTreeMap<u32, TagItems>,
+    state: Vec<Occurrence>,
+    /// Per occurrence: the matrix size its bytes give.
+    sizes: Vec<Option<usize>>,
+    /// The occurrences waiting for their try, first in first out.
+    due: VecDeque<usize>,
+    /// The tags of the items written so far.
+    written: Vec<u32>,
+    plan: Vec<Placed>,
+    #[cfg(test)]
+    steps: usize,
+}
+
+impl<'a> SdccPlacer<'a> {
+    fn new(occ: &'a [super::model::SdccFlpField], body: &'a [u8]) -> Self {
+        let mut items: Vec<(u32, &[u8])> = Vec::new();
+        let mut packs: Vec<&[u8]> = Vec::with_capacity(occ.len());
+        let mut after_packs = None;
+        let mut start = 0;
+        for f in Iter::local_set(body) {
+            let f = f.expect("the encoder writes a valid body");
+            let end = (f.value.as_ptr() as usize - body.as_ptr() as usize) + f.value.len();
+            if f.tag == 102 {
+                after_packs.get_or_insert(items.len());
+                packs.push(&body[start..end]);
+            } else {
+                items.push((f.tag, &body[start..end]));
+            }
+            start = end;
+        }
+        let mut tags: BTreeMap<u32, TagItems> = BTreeMap::new();
+        let mut next_of_tag = vec![None; items.len()];
+        for (i, &(tag, _)) in items.iter().enumerate().rev() {
+            let t = tags.entry(tag).or_default();
+            next_of_tag[i] = t.next.replace(i);
+            t.first = i;
+            t.unwritten += 1;
+        }
+        let mut state = vec![Occurrence::Pending; occ.len()];
+        for (k, f) in occ.iter().enumerate() {
+            let rows = &f.preceding_tags;
+            // The first item, in the encoder's order, that the rows name,
+            // with its tag; none when a row names a tag without an item.
+            let anchor = rows.iter().try_fold((usize::MAX, 0), |first, tag| {
+                Some(first.min((tags.get(tag)?.first, *tag)))
+            });
+            let (Some((_, anchor)), [open, .., close] | [open @ close]) = (anchor, &rows[..])
+            else {
+                // No rows, or a row without an item: it cannot be placed.
+                state[k] = Occurrence::Fallback;
+                continue;
+            };
+            let has_items = "a tag the rows name has items";
+            tags.get_mut(&anchor).expect(has_items).anchored.push(k);
+            tags.get_mut(open).expect(has_items).opens.push(k);
+            tags.get_mut(close).expect(has_items).closes.push(k);
+        }
+        Self {
+            occ,
+            used: vec![false; items.len()],
+            after_packs: after_packs.unwrap_or(items.len()),
+            items,
+            next_of_tag,
+            packs,
+            tags,
+            state,
+            sizes: occ
+                .iter()
+                .map(|f| crate::klv::st1010::peek_matrix_size(&f.bytes))
+                .collect(),
+            due: VecDeque::new(),
+            written: Vec::new(),
+            plan: Vec::new(),
+            #[cfg(test)]
+            steps: occ.iter().map(|f| f.preceding_tags.len()).sum(),
+        }
     }
 
-    /// The first item of `tag` not yet written and not in `picks`.
-    fn next_unused(&mut self, tag: u32, picks: &[usize]) -> Option<usize> {
-        let (list, cursor) = self.by_tag.get_mut(&tag)?;
-        while *cursor < list.len() && self.used[list[*cursor]] {
-            *cursor += 1;
+    /// Count `n` steps of work (tests bound the total).
+    #[inline(always)]
+    fn step(&mut self, n: usize) {
+        #[cfg(test)]
+        {
+            self.steps += n;
         }
-        list[*cursor..]
-            .iter()
-            .copied()
-            .find(|i| !self.used[*i] && !picks.contains(i))
+        #[cfg(not(test))]
+        let _ = n;
+    }
+
+    /// Walk the items in the encoder's order and decide every occurrence.
+    fn run(&mut self) {
+        for i in 0..self.items.len() {
+            self.step(1);
+            if let Some(t) = self.tags.get_mut(&self.items[i].0)
+                && t.first == i
+            {
+                self.due.extend(core::mem::take(&mut t.anchored));
+            }
+            self.try_due();
+            if !self.used[i] {
+                self.write(i);
+            }
+        }
+    }
+
+    /// Give each occurrence that is due its one try; a placement can make
+    /// more occurrences due.
+    fn try_due(&mut self) {
+        while let Some(k) = self.due.pop_front() {
+            self.step(1);
+            if self.state[k] == Occurrence::Pending && !self.take_forward(k) {
+                self.state[k] = Occurrence::Fallback;
+            }
+        }
+    }
+
+    /// Write item `i`, then every pending occurrence whose rows are now the
+    /// last items written; the occurrences that open with this tag are due.
+    fn write(&mut self, i: usize) {
+        let tag = self.items[i].0;
+        self.used[i] = true;
+        self.written.push(tag);
+        self.plan.push(Placed::Item(i));
+        let t = self.tags.get_mut(&tag).expect("every item's tag is mapped");
+        debug_assert_eq!(t.next, Some(i), "a tag's items are written in order");
+        t.next = self.next_of_tag[i];
+        t.unwritten -= 1;
+        self.due.extend(core::mem::take(&mut t.opens));
+        for k in core::mem::take(&mut t.closes) {
+            let rows = &self.occ[k].preceding_tags;
+            self.step(1 + rows.len());
+            if self.state[k] == Occurrence::Pending
+                && self.written.ends_with(rows)
+                && self.at_start_if_short(k, rows.len())
+            {
+                self.place(k);
+            }
+        }
+    }
+
+    /// An occurrence with fewer rows than its matrix has was met that close
+    /// to the start of the set: nothing comes before its rows, so those
+    /// that are written (`rows_written` of them) are all that is written.
+    fn at_start_if_short(&self, k: usize, rows_written: usize) -> bool {
+        let short = self.sizes[k].is_some_and(|n| self.occ[k].preceding_tags.len() < n);
+        !short || rows_written == self.written.len()
+    }
+
+    fn place(&mut self, k: usize) {
+        self.state[k] = Occurrence::Placed;
+        self.plan.push(Placed::Pack(k));
     }
 
     /// Write occurrence `k` here if the items right before it can be made
-    /// exactly `rows`: a tail of what is written (non-empty when
-    /// `overlap_only`) followed by items not yet written, taken forward in
-    /// `rows` order.
-    fn try_place(
-        &mut self,
-        k: usize,
-        rows: &[u32],
-        matrix_size: Option<usize>,
-        overlap_only: bool,
-    ) -> bool {
-        if rows.is_empty() {
-            return false;
+    /// exactly its rows: the first `j` rows are the last items written, and
+    /// each row from `j` on takes the first unwritten item of its tag.
+    /// `j` is the lowest split whose later rows all find an item.
+    fn take_forward(&mut self, k: usize) -> bool {
+        let rows = &self.occ[k].preceding_tags;
+        self.step(3 * rows.len());
+        let mut j = rows.len();
+        while j > 0 {
+            match self.tags.get_mut(&rows[j - 1]) {
+                Some(t) if t.claimed < t.unwritten => t.claimed += 1,
+                _ => break,
+            }
+            j -= 1;
         }
-        // Fewer rows than the matrix has: the decoder met the pack that
-        // close to the start of the set, so nothing comes before its rows.
-        let short = matrix_size.is_some_and(|n| rows.len() < n);
-        let most = rows.len().min(self.written.len());
-        for j in (0..=most).rev() {
-            if overlap_only && j == 0 {
-                break;
+        let fits = self.written.ends_with(&rows[..j]) && self.at_start_if_short(k, j);
+        for tag in &rows[j..] {
+            let t = self.tags.get_mut(tag).expect("claimed above");
+            t.claimed -= 1;
+            let next = t.next;
+            if fits {
+                self.write(next.expect("claimed above"));
             }
-            if self.written[self.written.len() - j..] != rows[..j]
-                || (short && j != self.written.len())
-            {
-                continue;
-            }
-            let mut picks = Vec::with_capacity(rows.len() - j);
-            for &tag in &rows[j..] {
-                match self.next_unused(tag, &picks) {
-                    Some(i) => picks.push(i),
-                    None => break,
+        }
+        if fits && self.state[k] == Occurrence::Pending {
+            self.place(k);
+        }
+        fits
+    }
+
+    /// The placed body. An occurrence that was not placed is written where
+    /// the encoder writes every Item 102 without placement: after the last
+    /// typed item and the packs that follow it. Under `strict` it is
+    /// refused, unless it is a matrix of size 0 naming nothing.
+    fn finish(self, body_len: usize, strict: bool) -> Result<Vec<u8>, KlvEncodeError> {
+        let fallback = |k: &usize| self.state[*k] != Occurrence::Placed;
+        if strict
+            && (0..self.occ.len())
+                .filter(fallback)
+                .any(|k| !(self.occ[k].preceding_tags.is_empty() && self.sizes[k] == Some(0)))
+        {
+            return Err(KlvEncodeError::InvalidFieldValue {
+                tag: 102,
+                reason: "an SDCC-FLP follows the items it refines (ST 0601.19 §8.102.1)",
+            });
+        }
+        let mut at = self
+            .plan
+            .iter()
+            .rposition(|e| matches!(e, Placed::Item(i) if *i < self.after_packs))
+            .map_or(0, |p| p + 1);
+        while matches!(self.plan.get(at), Some(Placed::Pack(_))) {
+            at += 1;
+        }
+        let mut out = Vec::with_capacity(body_len);
+        for p in 0..=self.plan.len() {
+            if p == at {
+                for k in (0..self.occ.len()).filter(fallback) {
+                    out.extend_from_slice(self.packs[k]);
                 }
             }
-            if picks.len() != rows.len() - j {
-                continue;
+            match self.plan.get(p) {
+                Some(&Placed::Item(i)) => out.extend_from_slice(self.items[i].1),
+                Some(&Placed::Pack(k)) => out.extend_from_slice(self.packs[k]),
+                None => {}
             }
-            for i in picks {
-                self.write_item(i);
-            }
-            self.plan.push(Placed::Pack(k));
-            return true;
         }
-        false
+        Ok(out)
     }
-}
-
-/// The first occurrence still pending in `waiting`'s list for `tag`.
-fn first_pending(
-    waiting: &mut BTreeMap<u32, (Vec<usize>, usize)>,
-    tag: u32,
-    state: &[Occurrence],
-) -> Option<usize> {
-    let (list, cursor) = waiting.get_mut(&tag)?;
-    while *cursor < list.len() && state[list[*cursor]] != Occurrence::Pending {
-        *cursor += 1;
-    }
-    list.get(*cursor).copied()
 }
 
 /// Reorder `body` (the encoder's output, every Item 102 together after the
 /// typed items) so that each occurrence follows the items its
-/// `preceding_tags` name, in that order.
+/// `preceding_tags` name, in that order ([`SdccPlacer`]).
 ///
-/// The items are walked in the order the encoder wrote them. At the first
-/// item an occurrence names, its other named items are taken forward and
-/// the pack follows them; an occurrence whose first rows are the items just
-/// written (a pack refining the items of the one before plus more) follows
-/// at once. An occurrence that cannot be placed (a named item is not in the
-/// record, `preceding_tags` is empty, or the rows a short capture names are
+/// An occurrence that cannot be placed (a named item is not in the record,
+/// `preceding_tags` is empty, its rows are neither unwritten nor the last
+/// items written when it is tried, or the rows a short capture names are
 /// not the start of the set) is written where it was, after the typed
 /// items; under `strict` it is refused, unless it is a matrix of size 0
-/// naming nothing. Linear in the items and the named tags, for an index
-/// per tag of the items and of the occurrences waiting for it.
+/// naming nothing.
 fn place_sdcc_packs(
     record: &UasDatalinkLs,
     body: &[u8],
     strict: bool,
 ) -> Result<Vec<u8>, KlvEncodeError> {
-    let occ = &record.sdcc_flps;
-    let mut items: Vec<(u32, &[u8])> = Vec::new();
-    let mut packs: Vec<&[u8]> = Vec::with_capacity(occ.len());
-    // The index in `items` of the first item the encoder wrote after the
-    // packs.
-    let mut after_packs = None;
-    let mut start = 0;
-    for f in Iter::local_set(body) {
-        let f = f.expect("the encoder writes a valid body");
-        let end = (f.value.as_ptr() as usize - body.as_ptr() as usize) + f.value.len();
-        if f.tag == 102 {
-            after_packs.get_or_insert(items.len());
-            packs.push(&body[start..end]);
-        } else {
-            items.push((f.tag, &body[start..end]));
-        }
-        start = end;
-    }
-    let after_packs = after_packs.unwrap_or(items.len());
-    let sizes: Vec<Option<usize>> = occ
-        .iter()
-        .map(|f| crate::klv::st1010::peek_matrix_size(&f.bytes))
-        .collect();
-    let mut by_tag: BTreeMap<u32, (Vec<usize>, usize)> = BTreeMap::new();
-    for (i, &(tag, _)) in items.iter().enumerate() {
-        by_tag.entry(tag).or_default().0.push(i);
-    }
-    let mut waiting: BTreeMap<u32, (Vec<usize>, usize)> = BTreeMap::new();
-    for (k, f) in occ.iter().enumerate() {
-        for &tag in &f.preceding_tags {
-            let list = &mut waiting.entry(tag).or_default().0;
-            if list.last() != Some(&k) {
-                list.push(k);
-            }
-        }
-    }
-    let mut state = vec![Occurrence::Pending; occ.len()];
-    let mut pl = SdccPlacer {
-        used: vec![false; items.len()],
-        items,
-        by_tag,
-        written: Vec::new(),
-        plan: Vec::new(),
-    };
-    let mut i = 0;
-    while i < pl.items.len() {
-        if pl.used[i] {
-            i += 1;
-            continue;
-        }
-        let Some(k) = first_pending(&mut waiting, pl.items[i].0, &state) else {
-            pl.write_item(i);
-            i += 1;
-            continue;
-        };
-        // Item `i` is looked at again: placing `k` may not have written it.
-        if !pl.try_place(k, &occ[k].preceding_tags, sizes[k], false) {
-            state[k] = Occurrence::Fallback;
-            continue;
-        }
-        state[k] = Occurrence::Placed;
-        // The occurrences whose first rows end with the item just written.
-        while let Some(&last) = pl.written.last() {
-            let mut placed = false;
-            if let Some((list, _)) = waiting.get(&last) {
-                for &k2 in list {
-                    if state[k2] == Occurrence::Pending
-                        && pl.try_place(k2, &occ[k2].preceding_tags, sizes[k2], true)
-                    {
-                        state[k2] = Occurrence::Placed;
-                        placed = true;
-                        if pl.written.last() != Some(&last) {
-                            break;
-                        }
-                    }
-                }
-            }
-            if !placed {
-                break;
-            }
-        }
-    }
-    for k in 0..occ.len() {
-        // An occurrence whose rows are the last items of the set.
-        if state[k] == Occurrence::Pending
-            && pl.try_place(k, &occ[k].preceding_tags, sizes[k], true)
-        {
-            state[k] = Occurrence::Placed;
-        }
-        if state[k] != Occurrence::Placed {
-            state[k] = Occurrence::Fallback;
-            if strict && !(occ[k].preceding_tags.is_empty() && sizes[k] == Some(0)) {
-                return Err(KlvEncodeError::InvalidFieldValue {
-                    tag: 102,
-                    reason: "an SDCC-FLP follows the items it refines (ST 0601.19 §8.102.1)",
-                });
-            }
-        }
-    }
-    // The fallback position: after the last typed item and the packs that
-    // follow it.
-    let mut at = pl
-        .plan
-        .iter()
-        .rposition(|e| matches!(e, Placed::Item(i) if *i < after_packs))
-        .map_or(0, |p| p + 1);
-    while matches!(pl.plan.get(at), Some(Placed::Pack(_))) {
-        at += 1;
-    }
-    let mut out = Vec::with_capacity(body.len());
-    for (p, e) in pl.plan.iter().enumerate() {
-        if p == at {
-            for k in (0..occ.len()).filter(|&k| state[k] == Occurrence::Fallback) {
-                out.extend_from_slice(packs[k]);
-            }
-        }
-        match *e {
-            Placed::Item(i) => out.extend_from_slice(pl.items[i].1),
-            Placed::Pack(k) => out.extend_from_slice(packs[k]),
-        }
-    }
-    if at >= pl.plan.len() {
-        for k in (0..occ.len()).filter(|&k| state[k] == Occurrence::Fallback) {
-            out.extend_from_slice(packs[k]);
-        }
-    }
-    Ok(out)
+    let mut placer = SdccPlacer::new(&record.sdcc_flps, body);
+    placer.run();
+    placer.finish(body.len(), strict)
+}
+
+/// The steps the Item 102 placement takes for `record`.
+#[cfg(test)]
+pub(super) fn sdcc_placement_steps(record: &UasDatalinkLs) -> usize {
+    let mut body = Vec::new();
+    write_typed_fields(record, &EncodeConfig::default(), &mut body).expect("encodes");
+    write_unknown_fields(record, &mut body).expect("encodes");
+    let mut placer = SdccPlacer::new(&record.sdcc_flps, &body);
+    placer.run();
+    placer.steps
 }

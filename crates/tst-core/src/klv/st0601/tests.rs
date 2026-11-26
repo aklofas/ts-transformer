@@ -1,7 +1,7 @@
 use super::decode::{decode, decode_strict, decode_strict_compliance, decode_unchecked};
 use super::encode::{
     encode, encode_strict_compliance, encode_to_vec, encode_to_vec_with, encode_with, encoded_len,
-    encoded_len_with,
+    encoded_len_with, sdcc_placement_steps,
 };
 use super::model::{
     EncodeConfig, IcingDetected, OperationalMode, OutOfRangePolicy, PlatformStatus, SdccFlpField,
@@ -5260,5 +5260,322 @@ fn a_pack_after_a_skipped_wide_tag_is_placed_or_refused() {
     assert_eq!(
         wire_tags(&encode_to_vec(&rec).unwrap()),
         [2, 13, 102, 65, 1]
+    );
+}
+
+/// What a decode hands out for `groups` groups of `n` zero-length items of
+/// one unknown tag, each group followed by a pack of matrix size `n`: the
+/// items, and per pack `n` rows of the group's tag. `one_tag`: every group
+/// uses the same tag.
+fn repeated_tag_groups(groups: usize, n: usize, one_tag: bool) -> UasDatalinkLs {
+    let mut rec = timestamped();
+    let mut size = [0u8; 5];
+    let size_len = crate::klv::length::write_ber_oid(n as u32, &mut size).unwrap();
+    let mut pack = size[..size_len].to_vec();
+    pack.extend([0x80, 0x04]);
+    pack.extend([0x3F, 0x80, 0x00, 0x00].repeat(n));
+    for g in 0..groups {
+        let tag = if one_tag { 200 } else { 200 + g as u32 };
+        rec.unknown.extend((0..n).map(|_| OwnedRawField {
+            tag,
+            value: Vec::new(),
+        }));
+        rec.sdcc_flps.push(SdccFlpField {
+            preceding_tags: vec![tag; n],
+            bytes: pack.clone(),
+        });
+    }
+    rec
+}
+
+/// The placement's work is bounded by what the record carries: a fixed
+/// number of steps per item, per row and per occurrence, whatever the rows
+/// name.
+#[test]
+fn sdcc_placement_takes_a_bounded_number_of_steps_per_item_and_row() {
+    let bound = |rec: &UasDatalinkLs| {
+        // Items 2 and 65, the unknown items and the typed ones set below.
+        let items = 5 + rec.unknown.len();
+        let rows: usize = rec.sdcc_flps.iter().map(|f| f.preceding_tags.len()).sum();
+        8 * (items + rows + rec.sdcc_flps.len())
+    };
+    // Packs that each name the 256 items of one repeated tag, the most a
+    // decoded pack names.
+    for (groups, one_tag) in [(1, false), (36, false), (36, true), (128, false)] {
+        let rec = repeated_tag_groups(groups, 256, one_tag);
+        let steps = sdcc_placement_steps(&rec);
+        assert!(
+            steps <= bound(&rec),
+            "{groups} groups of 256 (one tag: {one_tag}): {steps} steps, bound {}",
+            bound(&rec)
+        );
+        let out = encode_to_vec(&rec).unwrap();
+        assert_eq!(rows(&decode(&out).unwrap()), rows(&rec));
+        assert!(encode_strict_compliance(&rec).is_ok());
+    }
+    // 4 096 occurrences refining the same three items.
+    let rec = UasDatalinkLs {
+        sensor_lat_deg: Some(10.0),
+        sensor_lon_deg: Some(20.0),
+        sensor_alt_m: Some(100.0),
+        sdcc_flps: vec![
+            SdccFlpField {
+                preceding_tags: vec![13, 14, 15],
+                bytes: sdcc_pack(3),
+            };
+            4096
+        ],
+        ..timestamped()
+    };
+    let steps = sdcc_placement_steps(&rec);
+    assert!(steps <= bound(&rec), "{steps} steps, bound {}", bound(&rec));
+    // 1 024 occurrences that each take an item of tag 200 forward, beside
+    // 1 024 that end with that tag and can never be placed.
+    let mut rec = timestamped();
+    for g in 0..1024u32 {
+        rec.unknown.push(OwnedRawField {
+            tag: 2000 + g,
+            value: Vec::new(),
+        });
+        rec.unknown.push(OwnedRawField {
+            tag: 200,
+            value: Vec::new(),
+        });
+        rec.sdcc_flps.push(SdccFlpField {
+            preceding_tags: vec![2000 + g, 200],
+            bytes: sdcc_pack(2),
+        });
+        rec.sdcc_flps.push(SdccFlpField {
+            preceding_tags: vec![150, 200],
+            bytes: sdcc_pack(2),
+        });
+    }
+    rec.unknown.push(OwnedRawField {
+        tag: 150,
+        value: Vec::new(),
+    });
+    let steps = sdcc_placement_steps(&rec);
+    assert!(steps <= bound(&rec), "{steps} steps, bound {}", bound(&rec));
+}
+
+/// A small seeded generator for the placement properties below.
+struct Seeded(u64);
+
+impl Seeded {
+    fn below(&mut self, n: usize) -> usize {
+        self.0 ^= self.0 << 13;
+        self.0 ^= self.0 >> 7;
+        self.0 ^= self.0 << 17;
+        (self.0 % n as u64) as usize
+    }
+}
+
+/// A set that carries its items in the order the encoder writes them, with
+/// packs after any of them, each refining the items right before it, is
+/// re-encoded to the bytes it came in: every pack keeps its place, also a
+/// pack inside the rows of a later, wider one, and two packs after one item.
+#[test]
+fn a_set_in_the_encoders_order_with_packs_re_encodes_to_the_same_bytes() {
+    let reference: Vec<u32> = sdcc_reference_items().iter().map(|(t, _)| *t).collect();
+    let mut g = Seeded(0x0601_0102_0601_0102);
+    let (mut packs, mut short, mut nested) = (0, 0, 0);
+    for case in 0..1500 {
+        // Items 2 and 65 (the encoder always writes them) and two thirds
+        // of the others.
+        let tags: Vec<u32> = reference
+            .iter()
+            .copied()
+            .filter(|&t| t == 2 || t == 65 || g.below(3) != 0)
+            .collect();
+        let mut parts = Vec::new();
+        let mut order = Vec::new();
+        // The item where the latest pack's rows begin.
+        let mut reach = usize::MAX;
+        for (at, &tag) in tags.iter().enumerate() {
+            parts.push(I(tag));
+            order.push(tag);
+            // Up to two packs after the item, each of matrix size 1 to 4:
+            // the rows are that many items, or every item so far when there
+            // are fewer (a capture shorter than its matrix).
+            for _ in 0..[0, 0, 1, 1, 2][g.below(5)] {
+                let n = 1 + g.below(4);
+                parts.push(P(n as u8));
+                order.push(102);
+                packs += 1;
+                short += usize::from(n > at + 1);
+                let begins = (at + 1).saturating_sub(n);
+                nested += usize::from(begins < reach && reach != usize::MAX);
+                reach = begins;
+            }
+        }
+        let source = sdcc_set(&parts);
+        let rec = decode(&source).unwrap();
+        assert_eq!(
+            wire_tags(&encode_to_vec(&rec).unwrap()),
+            wire_tags(&source),
+            "case {case}"
+        );
+        assert_eq!(
+            encode_to_vec(&rec).unwrap(),
+            source,
+            "case {case}: {order:?}"
+        );
+        assert_eq!(
+            encode_strict_compliance(&rec).unwrap(),
+            source,
+            "case {case}: {order:?}"
+        );
+    }
+    // The generator met each shape often.
+    assert!(
+        packs > 3000 && short > 300 && nested > 300,
+        "{packs} {short} {nested}"
+    );
+}
+
+/// A record for the placement properties: Item 2 (mostly), Item 65 and a
+/// random choice of typed items, a sentinel item, repeated unknown tags and
+/// Item 115s, with up to four packs whose rows are drawn from tags the
+/// record has or lacks, Item 2 at any row, and repeats. The first standard
+/// deviation of pack `k` is `k + 1`, so each pack's bytes are its own.
+fn random_record_with_packs(g: &mut Seeded) -> UasDatalinkLs {
+    let mut rec = UasDatalinkLs {
+        timestamp_us: (g.below(8) != 0).then_some(1),
+        mission_id: (g.below(2) == 0).then(|| "M".into()),
+        platform_heading_deg: (g.below(2) == 0).then_some(10.0),
+        platform_pitch_deg: (g.below(2) == 0).then_some(1.0),
+        platform_roll_deg: (g.below(2) == 0).then_some(1.0),
+        sensor_lat_deg: (g.below(2) == 0).then_some(10.0),
+        sensor_lon_deg: (g.below(2) == 0).then_some(20.0),
+        sensor_alt_m: (g.below(2) == 0).then_some(100.0),
+        frame_center_lat_deg: (g.below(2) == 0).then_some(10.1),
+        ..Default::default()
+    };
+    if rec.sensor_lat_deg.is_none() && g.below(2) == 0 {
+        rec.sentinel_tags.push(13);
+    }
+    for n in 0..g.below(5) {
+        rec.unknown.push(OwnedRawField {
+            tag: [150, 150, 200, 300][g.below(4)],
+            value: vec![n as u8],
+        });
+    }
+    for id in 0..g.below(3) {
+        rec.control_commands.push(ControlCommand {
+            id: id as u64,
+            command: "C".into(),
+            time_us: None,
+        });
+    }
+    const ROW_TAGS: [u32; 19] = [
+        2, 2, 3, 5, 6, 7, 13, 14, 15, 23, 65, 115, 150, 150, 200, 300, 99, 1, 102,
+    ];
+    for k in 0..g.below(5) {
+        let rows: Vec<u32> = (0..g.below(5))
+            .map(|_| ROW_TAGS[g.below(ROW_TAGS.len())])
+            .collect();
+        // Mostly a matrix of as many rows; sometimes one more (a capture
+        // shorter than its matrix).
+        let n = rows.len() + usize::from(g.below(6) == 0);
+        let mut bytes = sdcc_pack(n as u8);
+        if n > 0 {
+            bytes[3..7].copy_from_slice(&(k as f32 + 1.0).to_be_bytes());
+        }
+        rec.sdcc_flps.push(SdccFlpField {
+            preceding_tags: rows,
+            bytes,
+        });
+    }
+    rec
+}
+
+/// The whole TLVs of an encoded set's body, in wire order.
+fn wire_items(encoded: &[u8]) -> Vec<(u32, Vec<u8>)> {
+    let (len, body) = crate::klv::length::read_ber(&encoded[16..]).unwrap();
+    let body = &body[..len];
+    let mut start = 0;
+    crate::klv::pack::Iter::local_set(body)
+        .map(|f| {
+            let f = f.unwrap();
+            let end = (f.value.as_ptr() as usize - body.as_ptr() as usize) + f.value.len();
+            let item = (f.tag, body[start..end].to_vec());
+            start = end;
+            item
+        })
+        .collect()
+}
+
+/// `true` when every pack of `encoded` follows exactly the rows `rec` gives
+/// it: the items right before it carry its rows' tags, in order, and a pack
+/// with fewer rows than its matrix has nothing else before it.
+fn every_pack_follows_its_rows(rec: &UasDatalinkLs, encoded: &[u8]) -> bool {
+    let mut before: Vec<u32> = Vec::new();
+    wire_items(encoded).iter().all(|(tag, item)| {
+        if *tag != 102 {
+            before.push(*tag);
+            return true;
+        }
+        let f = rec
+            .sdcc_flps
+            .iter()
+            .find(|f| item.ends_with(&f.bytes))
+            .expect("a pack of the record");
+        let rows = &f.preceding_tags;
+        let short = rows.len() < usize::from(f.bytes[0]);
+        before.ends_with(rows) && (!short || before.len() == rows.len())
+    })
+}
+
+/// Over generated records: the placement only reorders the items, and a
+/// record the strict encoder accepts has every pack after exactly its rows.
+#[test]
+fn placement_only_reorders_and_strict_output_has_every_pack_after_its_rows() {
+    let mut g = Seeded(0x0102_0601_0102_0601);
+    let (mut accepted, mut refused, mut moved) = (0, 0, 0);
+    for case in 0..4000 {
+        let rec = random_record_with_packs(&mut g);
+        let out = encode_to_vec(&rec).unwrap();
+        // The same record with no rows: every pack where 0.10.0 wrote it.
+        let mut unplaced = rec.clone();
+        for f in &mut unplaced.sdcc_flps {
+            f.preceding_tags.clear();
+        }
+        let unplaced = encode_to_vec(&unplaced).unwrap();
+        moved += usize::from(out != unplaced);
+        let sorted = |encoded: &[u8]| {
+            let mut items = wire_items(encoded);
+            items.pop(); // the checksum
+            items.sort();
+            items
+        };
+        assert_eq!(sorted(&out), sorted(&unplaced), "case {case}: {rec:?}");
+        assert_eq!(encoded_len(&rec), out.len(), "case {case}");
+        assert!(decode(&out).is_ok(), "case {case}");
+        match encode_strict_compliance(&rec) {
+            Ok(strict) => {
+                accepted += usize::from(!rec.sdcc_flps.is_empty());
+                assert!(
+                    every_pack_follows_its_rows(&rec, &strict),
+                    "case {case}: {:?} in {:?}",
+                    rows(&rec),
+                    wire_tags(&strict)
+                );
+            }
+            Err(e) => {
+                refused += 1;
+                assert!(
+                    matches!(
+                        e,
+                        KlvEncodeError::InvalidFieldValue { tag: 102, .. }
+                            | KlvEncodeError::MissingMandatoryItem { tag: 2, .. }
+                    ),
+                    "case {case}: {e:?}"
+                );
+            }
+        }
+    }
+    assert!(
+        accepted > 300 && refused > 300 && moved > 300,
+        "{accepted} {refused} {moved}"
     );
 }
