@@ -115,6 +115,10 @@ path = "crates/tst-core/tests/fixtures/codec/h266/h266_320x240_main10_vps.bin"
 sha256 = "fcf0a6c700dd13e274b6fba8deea8dd9b26e4eedde3495717cac8408c9c5177f"
 
 [[file]]
+path = "crates/tst-core/tests/fixtures/codec/h266/h266_320x240_vvenc_vui_sps.bin"
+sha256 = "b124812aa20c2cf734a086a90f7e97ae9c10389643f7fcc770eb0034836b777f"
+
+[[file]]
 path = "crates/tst-core/tests/fixtures/conformance/.gitignore"
 sha256 = "67e310bfdf7b13dae6eb348ef8fa375bfc44e34cf14cd9e56849a422da648e28"
 
@@ -480,11 +484,11 @@ sha256 = "05ec07d16607f935d32674bb53a87a1748f749d7baa55fa6f66404e3b01f9909"
 
 [[file]]
 path = "crates/tst-integration/tests/fixtures/scenarios/video-misp-roundtrip/golden.json"
-sha256 = "d76f2006cae65431fedaa83465fa7394d58ff1d7e45bdeb20d9b2d1c4d388a82"
+sha256 = "73ed92c41b4c8d520e3f810399e139c245e96c45d27e946311b526bafdab4849"
 
 [[file]]
 path = "crates/tst-integration/tests/fixtures/scenarios/video-misp-roundtrip/output.ts"
-sha256 = "8731645b17eee79272343082fe4f3b8b371a6912f5cc1d692f881ea45f4086ec"
+sha256 = "e62ee94186025e2263972900f6e736ecbcbcb00b0c9c4799b716d6b39cb888cc"
 
 [[file]]
 path = "crates/tst-integration/tests/fixtures/scenarios/video-roundtrip/golden.json"
