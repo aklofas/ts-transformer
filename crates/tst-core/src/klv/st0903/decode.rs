@@ -19,7 +19,9 @@ use core::ops::Range;
 /// are preserved in [`VmtiLs::unknown`] per ST 0107.5 §6 future-proof skip
 /// rule. A zero-length item means "unknown" (ST 0107.4-17): its field
 /// is left unset, with no field error, at the top level and inside a
-/// VTarget pack; one NUL is the empty string (ST 0107.5 §6.3.3.2).
+/// VTarget pack; one NUL is the empty string (ST 0107.5 §6.3.3.2). Of a
+/// repeated tag the last occurrence decides: when that one is zero-length
+/// or does not decode, the field is unset (an earlier value does not stay).
 ///
 /// Tags are walked as BER-OID per ST 0107.5 §6.3.1 — defined tags 1..=103
 /// fit in one byte (`write_ber_oid(N) == [N]` for `N ≤ 127`), but a future
@@ -97,11 +99,15 @@ pub fn decode(bytes: &[u8]) -> Result<VmtiLs, KlvDecodeError> {
         match spec.encoding {
             Encoding::U16Be => {
                 if value.len() != 2 {
-                    ls.field_errors.push(KlvFieldError::InvalidLength {
-                        tag: tag as u32,
-                        expected: 2,
-                        got: value.len(),
-                    });
+                    reject(
+                        &mut ls,
+                        tag,
+                        KlvFieldError::InvalidLength {
+                            tag: tag as u32,
+                            expected: 2,
+                            got: value.len(),
+                        },
+                    );
                     continue;
                 }
                 let v = u16::from_be_bytes([value[0], value[1]]);
@@ -110,11 +116,15 @@ pub fn decode(bytes: &[u8]) -> Result<VmtiLs, KlvDecodeError> {
             }
             Encoding::U64Be => {
                 if value.len() != 8 {
-                    ls.field_errors.push(KlvFieldError::InvalidLength {
-                        tag: tag as u32,
-                        expected: 8,
-                        got: value.len(),
-                    });
+                    reject(
+                        &mut ls,
+                        tag,
+                        KlvFieldError::InvalidLength {
+                            tag: tag as u32,
+                            expected: 8,
+                            got: value.len(),
+                        },
+                    );
                     continue;
                 }
                 // Defense-in-depth: the upstream length check above
@@ -126,8 +136,11 @@ pub fn decode(bytes: &[u8]) -> Result<VmtiLs, KlvDecodeError> {
                 let arr: [u8; 8] = match value.try_into() {
                     Ok(a) => a,
                     Err(_) => {
-                        ls.field_errors
-                            .push(KlvFieldError::TruncatedField { tag: tag as u32 });
+                        reject(
+                            &mut ls,
+                            tag,
+                            KlvFieldError::TruncatedField { tag: tag as u32 },
+                        );
                         continue;
                     }
                 };
@@ -136,11 +149,15 @@ pub fn decode(bytes: &[u8]) -> Result<VmtiLs, KlvDecodeError> {
             }
             Encoding::VarUint { max_bytes } => {
                 if value.is_empty() || value.len() > max_bytes as usize {
-                    ls.field_errors.push(KlvFieldError::InvalidLength {
-                        tag: tag as u32,
-                        expected: max_bytes as usize,
-                        got: value.len(),
-                    });
+                    reject(
+                        &mut ls,
+                        tag,
+                        KlvFieldError::InvalidLength {
+                            tag: tag as u32,
+                            expected: max_bytes as usize,
+                            got: value.len(),
+                        },
+                    );
                     continue;
                 }
                 let v = match crate::klv::length::read_var_uint(
@@ -150,8 +167,11 @@ pub fn decode(bytes: &[u8]) -> Result<VmtiLs, KlvDecodeError> {
                 ) {
                     Ok(v) => v as u32,
                     Err(_) => {
-                        ls.field_errors
-                            .push(KlvFieldError::TruncatedField { tag: tag as u32 });
+                        reject(
+                            &mut ls,
+                            tag,
+                            KlvFieldError::TruncatedField { tag: tag as u32 },
+                        );
                         continue;
                     }
                 };
@@ -168,8 +188,7 @@ pub fn decode(bytes: &[u8]) -> Result<VmtiLs, KlvDecodeError> {
                 let s = match core::str::from_utf8(value) {
                     Ok(s) => s,
                     Err(_) => {
-                        ls.field_errors
-                            .push(KlvFieldError::InvalidUtf8 { tag: tag as u32 });
+                        reject(&mut ls, tag, KlvFieldError::InvalidUtf8 { tag: tag as u32 });
                         continue;
                     }
                 };
@@ -202,11 +221,15 @@ pub fn decode(bytes: &[u8]) -> Result<VmtiLs, KlvDecodeError> {
                 // pattern in `vtarget_pack::decode_field`.
                 let expected_len = 2;
                 if value.len() != expected_len {
-                    ls.field_errors.push(KlvFieldError::InvalidLength {
-                        tag: tag as u32,
-                        expected: expected_len,
-                        got: value.len(),
-                    });
+                    reject(
+                        &mut ls,
+                        tag,
+                        KlvFieldError::InvalidLength {
+                            tag: tag as u32,
+                            expected: expected_len,
+                            got: value.len(),
+                        },
+                    );
                     continue;
                 }
                 let params = ImapbParams {
@@ -222,11 +245,15 @@ pub fn decode(bytes: &[u8]) -> Result<VmtiLs, KlvDecodeError> {
                     Ok(DecodedImapb::Value(v)) => Some(v),
                     Ok(DecodedImapb::Special(_)) => None,
                     _ => {
-                        ls.field_errors.push(KlvFieldError::InvalidLength {
-                            tag: tag as u32,
-                            expected: expected_len,
-                            got: value.len(),
-                        });
+                        reject(
+                            &mut ls,
+                            tag,
+                            KlvFieldError::InvalidLength {
+                                tag: tag as u32,
+                                expected: expected_len,
+                                got: value.len(),
+                            },
+                        );
                         continue;
                     }
                 };
@@ -259,6 +286,16 @@ fn string_item(s: &str) -> String {
     } else {
         s.to_string()
     }
+}
+
+/// A lenient decode's answer to an occurrence of the typed top-level item
+/// `tag` that does not decode: the field error, and the field unset. The
+/// last occurrence of a tag decides, so a value an earlier one gave does not
+/// stay.
+#[cold]
+fn reject(ls: &mut VmtiLs, tag: u8, e: KlvFieldError) {
+    clear_item(ls, tag);
+    ls.field_errors.push(e);
 }
 
 /// Unset the field of the typed top-level item `tag`.

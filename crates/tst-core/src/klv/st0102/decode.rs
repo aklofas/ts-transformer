@@ -19,6 +19,9 @@ use alloc::string::{String, ToString};
 /// 0107.4-17), and Tag 13 UTF-16 decode failures, text that is not UTF-8
 /// and a wrong-length enum or version are demoted to
 /// [`SecurityLs::field_errors`] rather than failing the whole record.
+/// Of a repeated tag the last occurrence decides: when that one is
+/// zero-length or does not decode, the field is unset (an earlier value
+/// does not stay).
 /// Use [`decode_strict`] for spec-conformance validation.
 ///
 /// # Example — sibling-layer decode from a parent ST 0601 record
@@ -182,7 +185,7 @@ fn decode_inner(buf: &[u8], strict: bool) -> Result<SecurityLs, KlvDecodeError> 
                     if strict {
                         return Err(KlvDecodeError::FieldError(e));
                     }
-                    record.field_errors.push(e);
+                    reject(&mut record, tag_u8, e);
                     continue;
                 }
                 let b = f.value[0];
@@ -236,7 +239,7 @@ fn decode_inner(buf: &[u8], strict: bool) -> Result<SecurityLs, KlvDecodeError> 
                     if strict {
                         return Err(KlvDecodeError::FieldError(e));
                     }
-                    record.field_errors.push(e);
+                    reject(&mut record, tag_u8, e);
                     continue;
                 }
                 debug_assert_eq!(tag_u8, 22);
@@ -254,7 +257,7 @@ fn decode_inner(buf: &[u8], strict: bool) -> Result<SecurityLs, KlvDecodeError> 
                             if strict {
                                 return Err(KlvDecodeError::FieldError(e));
                             }
-                            record.field_errors.push(e);
+                            reject(&mut record, tag_u8, e);
                             continue;
                         }
                     };
@@ -312,9 +315,11 @@ fn decode_inner(buf: &[u8], strict: bool) -> Result<SecurityLs, KlvDecodeError> 
                             // preserved — re-emitting malformed Tag 13 wouldn't
                             // help any consumer; the caller wanting byte-level
                             // access goes through klv::pack::Iter directly.
-                            record
-                                .field_errors
-                                .push(KlvFieldError::InvalidUtf16 { tag: f.tag });
+                            reject(
+                                &mut record,
+                                tag_u8,
+                                KlvFieldError::InvalidUtf16 { tag: f.tag },
+                            );
                         }
                     }
                 }
@@ -340,6 +345,16 @@ fn decode_inner(buf: &[u8], strict: bool) -> Result<SecurityLs, KlvDecodeError> 
     }
 
     Ok(record)
+}
+
+/// A lenient decode's answer to an occurrence of the defined tag `tag` that
+/// does not decode: the field error, and the field unset. The last
+/// occurrence of a tag decides, so a value an earlier one gave does not
+/// stay.
+#[cold]
+fn reject(record: &mut SecurityLs, tag: u8, e: KlvFieldError) {
+    unset(record, tag);
+    record.field_errors.push(e);
 }
 
 /// Clear the typed field of `tag` (a defined tag of the set).

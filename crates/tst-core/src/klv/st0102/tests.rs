@@ -1242,3 +1242,43 @@ fn strict_encode_refuses_what_strict_decode_refuses() {
     let bytes = encode_strict_compliance(&good).unwrap();
     assert_eq!(decode_strict(&bytes).unwrap(), good);
 }
+
+#[test]
+fn a_duplicate_that_does_not_decode_unsets_the_earlier_value() {
+    use crate::error::KlvFieldError;
+    // The last occurrence of a tag decides, as in ST 0601: when it does
+    // not decode, the field is unset and its field error recorded.
+    // Tag 1 (a code): one byte, then two.
+    let r = decode(&[0x01, 0x01, 0x02, 0x01, 0x02, 0x01, 0x01]).unwrap();
+    assert_eq!(r.security_classification, None);
+    assert_eq!(
+        r.field_errors,
+        [KlvFieldError::InvalidLength {
+            tag: 1,
+            expected: 1,
+            got: 2
+        }]
+    );
+    // Tag 22 (the version): two bytes, then one.
+    let r = decode(&[0x16, 0x02, 0x00, 0x0C, 0x16, 0x01, 0x0C]).unwrap();
+    assert_eq!(r.version, None);
+    assert_eq!(r.field_errors.len(), 1);
+    // Tag 3 (text): "US", then a byte that is not UTF-8.
+    let r = decode(&[0x03, 0x02, b'U', b'S', 0x03, 0x01, 0xFF]).unwrap();
+    assert_eq!(r.classifying_country, None);
+    assert_eq!(r.field_errors, [KlvFieldError::InvalidUtf8 { tag: 3 }]);
+    // Tag 13 (UTF-16): "U", then an odd number of bytes.
+    let r = decode(&[
+        0x0D, 0x04, 0xFE, 0xFF, 0x00, b'U', 0x0D, 0x03, 0xFE, 0xFF, 0x00,
+    ])
+    .unwrap();
+    assert_eq!(r.object_country_codes, None);
+    assert_eq!(r.field_errors, [KlvFieldError::InvalidUtf16 { tag: 13 }]);
+    // The other order: the good occurrence is the last, and decides.
+    let r = decode(&[0x01, 0x02, 0x01, 0x01, 0x01, 0x01, 0x02]).unwrap();
+    assert_eq!(
+        r.security_classification,
+        Some(SecurityClassification::Restricted)
+    );
+    assert_eq!(r.field_errors.len(), 1);
+}

@@ -54,7 +54,10 @@ pub(super) const ALT_RANGE: LinearRange = LinearRange {
 /// rather than failing the enclosing decode. A zero-length item is
 /// "unknown" (ST 0107.4-17), at the top level and inside a Point or Area of
 /// Interest set: it unsets its field and is no field error, and a
-/// zero-length nested set adds no entry and no field error.
+/// zero-length nested set adds no entry and no field error. Of a repeated
+/// tag the last occurrence decides: when that one is zero-length or does not
+/// decode, the field is unset (an earlier value does not stay); the nested
+/// sets are multi-use, each occurrence adds its entry.
 ///
 /// Tag 1 (CRC-32/MPEG-2), if present, is captured into [`RvtLs::crc32`]
 /// but **not verified**: the checksum's spec coverage is "the entire LS
@@ -236,13 +239,15 @@ fn apply_rvt_tag(record: &mut RvtLs, f: &RawField<'_>) -> Result<(), KlvFieldErr
         record.unknown.push(OwnedRawField::from(f.clone()));
         return Ok(());
     };
-    // ST 0107.4-17: a zero-length item means "unknown". It is an occurrence
-    // of its tag, so it unsets a value an earlier duplicate gave; a
-    // zero-length nested set (User Defined, POI, AOI) adds no entry.
+    // The last occurrence of a tag decides its field, so each one unsets it
+    // first: it stays unset for a zero-length item (ST 0107.4-17: "unknown",
+    // no field error) and for a value that does not decode. A nested set
+    // (User Defined, POI, AOI) is a multi-use item; a zero-length one adds
+    // no entry.
+    if !matches!(spec.encoding, RvtEncoding::Nested) {
+        unset(record, tag_u8);
+    }
     if f.value.is_empty() {
-        if !matches!(spec.encoding, RvtEncoding::Nested) {
-            unset(record, tag_u8);
-        }
         return Ok(());
     }
     match spec.encoding {
@@ -343,10 +348,12 @@ fn decode_poi(bytes: &[u8]) -> Option<RvtPoi> {
 
 fn apply_poi_tag(poi: &mut RvtPoi, f: &RawField<'_>) -> Result<(), KlvFieldError> {
     let tag = f.tag;
-    // ST 0107.4-17: a zero-length item means "unknown", inside this set as
-    // at the top level: it unsets its field and is no field error.
+    // The last occurrence of a tag decides its field, so each one unsets it
+    // first, inside this set as at the top level: it stays unset for a
+    // zero-length item (ST 0107.4-17: "unknown", no field error) and for a
+    // value that does not decode.
+    unset_poi(poi, tag);
     if f.value.is_empty() && matches!(tag, 1..=10) {
-        unset_poi(poi, tag);
         return Ok(());
     }
     match tag {
@@ -390,10 +397,10 @@ fn decode_aoi(bytes: &[u8]) -> Option<RvtAoi> {
 
 fn apply_aoi_tag(aoi: &mut RvtAoi, f: &RawField<'_>) -> Result<(), KlvFieldError> {
     let tag = f.tag;
-    // ST 0107.4-17: a zero-length item means "unknown", as in a Point of
+    // The last occurrence of a tag decides its field, as in a Point of
     // Interest set.
+    unset_aoi(aoi, tag);
     if f.value.is_empty() && matches!(tag, 1..=10) {
-        unset_aoi(aoi, tag);
         return Ok(());
     }
     match tag {

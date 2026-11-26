@@ -107,7 +107,10 @@ fn read_pack_inner(bytes: &[u8], strict: bool) -> Result<(VTargetPack, usize), V
                 return Err(e);
             }
             // Lenient: record and keep walking — the sibling convention
-            // (`SecurityLs::field_errors`, `VmtiLs::field_errors`).
+            // (`SecurityLs::field_errors`, `VmtiLs::field_errors`). The last
+            // occurrence of a tag decides, so a value an earlier one gave
+            // does not stay (only a defined item is refused).
+            unset(&mut pack, tag_byte);
             pack.field_errors.push(field_error(e, value.len()));
         }
     }

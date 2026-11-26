@@ -873,3 +873,52 @@ fn a_zero_length_pack_item_after_a_value_unsets_it() {
     assert_eq!(pack.priority, Some(7));
     assert!(pack.field_errors.is_empty(), "{:?}", pack.field_errors);
 }
+
+#[test]
+fn a_duplicate_pack_item_that_does_not_decode_unsets_the_earlier_value() {
+    // The last occurrence of a tag decides, as in ST 0601: when it does
+    // not decode, the field is unset and its field error recorded. One
+    // item of each encoding that can fail: Item 5 (one byte) then two
+    // bytes; Item 1 (V6) then seven; Item 8 (colour) then two; Item 12
+    // (IMAPB) then a reserved pattern.
+    let bytes = [
+        0x01, 0x05, 0x01, 50, 0x01, 0x01, 0x09, 0x08, 0x03, 1, 2, 3, 0x0C, 0x02, 0x10, 0x00, 0x05,
+        0x02, 0, 0, 0x01, 0x07, 1, 1, 1, 1, 1, 1, 1, 0x08, 0x02, 1, 2, 0x0C, 0x02, 0xE7, 0x00,
+        0x04, 0x01, 0x07,
+    ];
+    let (pack, _) = read_pack(&bytes).unwrap();
+    assert_eq!(pack.confidence_level, None);
+    assert_eq!(pack.centroid_pixel, None);
+    assert_eq!(pack.target_color, None);
+    assert_eq!(pack.centroid_hae, None);
+    assert_eq!(pack.priority, Some(7));
+    assert_eq!(
+        pack.field_errors,
+        [
+            KlvFieldError::InvalidLength {
+                tag: 5,
+                expected: 1,
+                got: 2
+            },
+            KlvFieldError::InvalidLength {
+                tag: 1,
+                expected: 6,
+                got: 7
+            },
+            KlvFieldError::InvalidLength {
+                tag: 8,
+                expected: 3,
+                got: 2
+            },
+            KlvFieldError::InvalidLength {
+                tag: 12,
+                expected: 2,
+                got: 2
+            },
+        ]
+    );
+    // The other order: the good occurrence is the last, and decides.
+    let (pack, _) = read_pack(&[0x01, 0x05, 0x02, 0, 0, 0x05, 0x01, 50]).unwrap();
+    assert_eq!(pack.confidence_level, Some(50));
+    assert_eq!(pack.field_errors.len(), 1);
+}

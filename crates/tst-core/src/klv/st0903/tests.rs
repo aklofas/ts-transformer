@@ -1396,6 +1396,40 @@ fn a_zero_length_duplicate_before_a_value_keeps_it() {
     ));
 }
 
+#[test]
+fn a_duplicate_that_does_not_decode_unsets_the_earlier_value() {
+    // The last occurrence of a tag decides, as in ST 0601: when it does
+    // not decode, the field is unset and its field error recorded. One
+    // item per way a top-level item can fail: the checksum (Tag 1) and the
+    // time stamp (Tag 2) at a wrong width, the version (Tag 4, V2) in three
+    // bytes, a name (Tag 3) that is not UTF-8, a field of view (Tag 11) in
+    // one byte and another (Tag 12) as a reserved IMAPB pattern.
+    let mut bytes = minimal_ls_bytes();
+    bytes.extend_from_slice(&[0x03, 0x02, b'a', b'b', 0x0B, 0x02, 0x2D, 0x00]);
+    bytes.extend_from_slice(&[0x0C, 0x02, 0x2D, 0x00]);
+    let good = decode(&bytes).unwrap();
+    assert!(good.field_errors.is_empty(), "{:?}", good.field_errors);
+    assert!(good.checksum.is_some() && good.precision_time_stamp.is_some());
+    assert!(good.horizontal_fov.is_some() && good.vertical_fov.is_some());
+    bytes.extend_from_slice(&[0x01, 0x01, 0x00, 0x02, 0x01, 0x00, 0x04, 0x03, 0, 0, 1]);
+    bytes.extend_from_slice(&[0x03, 0x01, 0xFF, 0x0B, 0x01, 0x2D, 0x0C, 0x02, 0xE7, 0x00]);
+    let ls = decode(&bytes).unwrap();
+    assert_eq!(ls, VmtiLs::default());
+    let tags: Vec<u32> = ls
+        .field_errors
+        .iter()
+        .map(|e| match e {
+            KlvFieldError::InvalidLength { tag, .. } | KlvFieldError::InvalidUtf8 { tag } => *tag,
+            other => panic!("{other:?}"),
+        })
+        .collect();
+    assert_eq!(tags, [1, 2, 4, 3, 11, 12]);
+    // The other order: the good occurrence is the last, and decides.
+    let ls = decode(&[0x04, 0x03, 0, 0, 1, 0x04, 0x01, 0x06]).unwrap();
+    assert_eq!(ls.version_number, Some(6));
+    assert_eq!(ls.field_errors.len(), 1);
+}
+
 // ------------------------------------------------------------------
 // VTarget strict validation and the legal IMAP specials.
 // ------------------------------------------------------------------

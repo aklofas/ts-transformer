@@ -795,3 +795,71 @@ fn a_zero_length_poi_or_aoi_item_after_a_value_unsets_it() {
     let ls = decode(&[0x0D, 0x08, 0x04, 0x04, 0x80, 0x00, 0x00, 0x00, 0x04, 0x00]).unwrap();
     assert_eq!(ls.areas_of_interest, [RvtAoi::default()]);
 }
+
+#[test]
+fn a_duplicate_that_does_not_decode_unsets_the_earlier_value() {
+    // The last occurrence of a tag decides, as in ST 0601: when it does
+    // not decode, the field is unset and its field error recorded.
+    // Tag 8 (one byte): a value, then two bytes.
+    let ls = decode(&[0x08, 0x01, 0x04, 0x08, 0x02, 0x00, 0x00]).unwrap();
+    assert_eq!(ls.rvt_ls_version, None);
+    assert_eq!(
+        ls.field_errors,
+        [KlvFieldError::InvalidLength {
+            tag: 8,
+            expected: 1,
+            got: 2
+        }]
+    );
+    // Tag 10 (text): "mp4", then a byte that is not UTF-8.
+    let ls = decode(&[0x0A, 0x03, b'm', b'p', b'4', 0x0A, 0x01, 0xFF]).unwrap();
+    assert_eq!(ls.digital_video_file_format, None);
+    assert_eq!(ls.field_errors, [KlvFieldError::InvalidUtf8 { tag: 10 }]);
+    // The other order: the good occurrence is the last, and decides.
+    let ls = decode(&[0x08, 0x02, 0x00, 0x00, 0x08, 0x01, 0x04]).unwrap();
+    assert_eq!(ls.rvt_ls_version, Some(4));
+    assert_eq!(ls.field_errors.len(), 1);
+
+    // Inside a Point of Interest set: the number, then one byte of it; a
+    // latitude, then three bytes of one.
+    let set = [
+        0x01, 0x02, 0x00, 0x07, 0x02, 0x04, 0x40, 0x00, 0x00, 0x00, 0x01, 0x01, 0x07, 0x02, 0x03,
+        0x40, 0x00, 0x00,
+    ];
+    let mut body = alloc::vec![0x0C, set.len() as u8];
+    body.extend_from_slice(&set);
+    let poi = &decode(&body).unwrap().points_of_interest[0];
+    assert_eq!((poi.number, poi.lat_deg), (None, None));
+    assert_eq!(poi.field_errors.len(), 2, "{:?}", poi.field_errors);
+    // Inside an Area of Interest set: the number and a corner latitude.
+    let mut body = alloc::vec![0x0D, set.len() as u8];
+    body.extend_from_slice(&set);
+    let aoi = &decode(&body).unwrap().areas_of_interest[0];
+    assert_eq!((aoi.number, aoi.corner_lat_p1_deg), (None, None));
+    assert_eq!(aoi.field_errors.len(), 2, "{:?}", aoi.field_errors);
+
+    // A latitude, then the "error" sentinel: the sentinel is what was sent
+    // last; and a sentinel, then a latitude that does not decode: neither.
+    let ls = decode(&[
+        0x0C, 0x0C, 0x02, 0x04, 0x40, 0x00, 0x00, 0x00, 0x02, 0x04, 0x80, 0x00, 0x00, 0x00,
+    ])
+    .unwrap();
+    let poi = &ls.points_of_interest[0];
+    assert_eq!(
+        (poi.lat_deg, poi.sentinel_tags.as_slice()),
+        (None, &[2][..])
+    );
+    let ls = decode(&[
+        0x0C, 0x0B, 0x02, 0x04, 0x80, 0x00, 0x00, 0x00, 0x02, 0x03, 0x40, 0x00, 0x00,
+    ])
+    .unwrap();
+    let poi = &ls.points_of_interest[0];
+    assert!(poi.lat_deg.is_none() && poi.sentinel_tags.is_empty());
+    assert_eq!(poi.field_errors.len(), 1);
+
+    // A nested set is a multi-use item: one that does not decode leaves
+    // the entries before it.
+    let ls = decode(&[0x0C, 0x04, 0x01, 0x02, 0x00, 0x07, 0x0C, 0x01, 0x01]).unwrap();
+    assert_eq!(ls.points_of_interest.len(), 1);
+    assert_eq!(ls.field_errors, [KlvFieldError::TruncatedField { tag: 12 }]);
+}
