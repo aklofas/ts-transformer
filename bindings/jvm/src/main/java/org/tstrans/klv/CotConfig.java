@@ -14,11 +14,14 @@ package org.tstrans.klv;
  *     defines {@code stale} as "time of next message" but gives no concrete interval — this default
  *     is an implementation choice, not a spec value.
  * @param producer XML attribute name stamped in {@code <detail><_flow-tags_ .../>}. Written
- *     verbatim as an XML {@code Name} production (an attribute name, not a value) — it must be a
- *     syntactically valid XML Name. It is neither validated nor escaped; an invalid value produces
- *     malformed XML.
- * @param geoidUndulationM Geoid undulation (HAE − MSL) applied when only an MSL-referenced altitude
- *     tag is available. Absent emits the MSL value as-is.
+ *     verbatim as an attribute name, not a value, so it must be one: an ASCII letter or {@code _},
+ *     then ASCII letters, digits, {@code _}, {@code .} or {@code -}, not starting with {@code xml}
+ *     in any case. Any other value makes both converters refuse with {@code InvalidProducerName}.
+ * @param geoidUndulationM Geoid undulation (HAE − MSL) applied when the height comes from an
+ *     MSL-referenced item (Items 15, 25, 42). Absent emits the MSL value as the HAE: an
+ *     approximation off by the geoid undulation (tens of metres), which {@code
+ *     platform_position_xml_with} / {@code sensor_point_of_interest_xml_with} with {@code Refuse}
+ *     refuse instead.
  * @param how CoT {@code how} attribute. ST 0805.1 §5 fixes this at {@code m-p} (machine-passed) for
  *     both event types.
  */

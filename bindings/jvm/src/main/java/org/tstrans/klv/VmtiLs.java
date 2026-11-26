@@ -7,14 +7,16 @@ import java.util.List;
 /**
  * MISB ST 0903.6 VMTI (Video Moving Target Indicator) Local Set typed view.
  *
- * Required tags per ST 0903.6 §6 Table 1: {@code precisionTimeStamp}, {@code vmtiSystemName} (when
- * applicable), {@code versionNumber}, {@code frameWidth}, {@code frameHeight}. Lenient decode
- * tolerates missing required tags and surfaces per-field decode failures in {@code fieldErrors};
- * strict decode rejects missing required tags.
+ * Every instance carries {@code versionNumber} (Item 4, ST 0903.5-99) and {@code
+ * numTargetsReported} (Item 6, ST 0903.4-19); a standalone one also the checksum, {@code
+ * precisionTimeStamp}, both fields of view and {@code miisId} (ST 0903.4-15, ST 0903.6-117, -122,
+ * -123, -125). Lenient decode tolerates a missing required item and surfaces per-field decode
+ * failures in {@code fieldErrors}; {@code decode_strict} refuses a set without Item 4 or 6, and
+ * {@code decode_standalone_strict} a standalone one without the others.
  *
  * {@code algorithmSeries} and {@code ontologySeries} are top-level nested LS pass-through bytes
- * (typed inner layers deferred); {@code miisId} is the MISB ST 1204 Minor Item Identification
- * System Core Identifier, also pass-through bytes (typed layer deferred).
+ * (typed inner layers deferred); {@code miisId} is the MISB ST 1204 Motion Imagery Identification
+ * System (MIIS) Core Identifier, also pass-through bytes, which {@code decode} reads.
  *
  * Unsigned 64-bit values are carried as the bit pattern of a signed {@code long}: a value of 2^63
  * or more reads as negative.

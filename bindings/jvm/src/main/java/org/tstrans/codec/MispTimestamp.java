@@ -14,8 +14,11 @@ import org.tstrans.CodecParseException;
  * or more reads as negative.
  *
  * @param kind Which time base the value carries: microseconds or nanoseconds since the MISP epoch.
- * @param timeStatus MISB ST 0603 Time Status byte (0x00 = unknown); the same byte as in ST 0605
- *     Class 0 packs.
+ * @param timeStatus MISB ST 0603 Time Status byte (ST 0603.5 Table 3): bit 7 0 = Locked, 1 = Lock
+ *     Unknown; bit 6 0 = Normal, 1 = Discontinuity; bit 5 0 = Forward, 1 = Reverse; bits 4 to 0
+ *     reserved, {@code 11111}. So {@code 0x1F} is locked and {@code 0x9F} lock unknown; a status
+ *     whose low five bits are not {@code 11111} is refused when the time stamp is written into an
+ *     SEI. The same byte as in ST 0605 Class 0 packs.
  * @param value Micro: microseconds since the MISP epoch. Nano: nanoseconds.
  */
 public record MispTimestamp(MispTimeKind kind, int timeStatus, long value) {

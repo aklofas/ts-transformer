@@ -229,8 +229,12 @@ pub struct MispTimestamp {
     /// Which time base the value carries: microseconds or nanoseconds since
     /// the MISP epoch.
     pub kind: crate::codec::MispTimeKindPy,
-    /// MISB ST 0603 Time Status byte (0x00 = unknown); the same byte as in
-    /// ST 0605 Class 0 packs.
+    /// MISB ST 0603 Time Status byte (ST 0603.5 Table 3): bit 7 0 = Locked,
+    /// 1 = Lock Unknown; bit 6 0 = Normal, 1 = Discontinuity; bit 5 0 =
+    /// Forward, 1 = Reverse; bits 4 to 0 reserved, `11111`. So `0x1F` is
+    /// locked and `0x9F` lock unknown; a status whose low five bits are not
+    /// `11111` is refused when the time stamp is written into an SEI. The
+    /// same byte as in ST 0605 Class 0 packs.
     pub time_status: u8,
     /// Micro: microseconds since the MISP epoch. Nano: nanoseconds.
     pub value: u64,

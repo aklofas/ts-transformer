@@ -346,8 +346,9 @@ class VTargetPack:
     """MISB ST 0903.6 §10.2 Table 10 — typed VTargetPack.
 
     The wire form is a leading BER-OID-encoded ``targetId`` (no Tag — per
-    §10.2.2.1 "has no Tag") followed by a Local Set–encoded body using
-    BER-OID tag + BER short/long length + value tuples.
+    §10.2.2.1 "has no Tag") followed by a Local Set–encoded body of one-byte
+    tag + BER short/long length + value items (ST 0903.6 §9.2: every Local
+    Set inside the VMTI LS uses one-byte tags).
 
     ``target_id`` is an unsigned 64-bit integer decoded from the BER-OID
     Target ID (≈ 63 bits per ST 0903.6 §10.2.2.1; spec allows up to 9 wire
@@ -509,16 +510,19 @@ class VmtiLs:
     """MISB ST 0903.6 VMTI (Video Moving Target Indicator) Local Set typed
     view.
 
-    Required tags per ST 0903.6 §6 Table 1: ``precision_time_stamp``,
-    ``vmti_system_name`` (when applicable), ``version_number``,
-    ``frame_width``, ``frame_height``. Lenient decode tolerates missing
-    required tags and surfaces per-field decode failures in
-    ``field_errors``; strict decode rejects missing required tags.
+    Every instance carries ``version_number`` (Item 4, ST 0903.5-99) and
+    ``num_targets_reported`` (Item 6, ST 0903.4-19); a standalone one also
+    the checksum, ``precision_time_stamp``, both fields of view and
+    ``miis_id`` (ST 0903.4-15, ST 0903.6-117, -122, -123, -125). Lenient
+    decode tolerates a missing required item and surfaces per-field decode
+    failures in ``field_errors``; ``decode_strict`` refuses a set without
+    Item 4 or 6, and ``decode_standalone_strict`` a standalone one without
+    the others.
 
     ``algorithm_series`` and ``ontology_series`` are top-level nested LS
     pass-through bytes (typed inner layers deferred); ``miis_id`` is the
-    MISB ST 1204 Minor Item Identification System Core Identifier, also
-    pass-through bytes (typed layer deferred).
+    MISB ST 1204 Motion Imagery Identification System (MIIS) Core
+    Identifier, also pass-through bytes, which ``decode`` reads.
 
     - ``checksum`` — Tag 1 (checkSum) per ST 0903.6 §10.1.1. Populated on
       decode for observability on standalone-VMTI captures. Encode-side
@@ -789,9 +793,10 @@ class ControlCommand:
 
     - ``id`` — BER-OID command id.
     - ``command`` — Command text, UTF-8, at most 127 bytes.
-    - ``time_us`` — Time the command was issued/executed, microseconds —
-      MISB var-length truncatable trailing field (present iff the wire pack
-      has trailing bytes after ``command``)."""
+    - ``time_us`` — Time the command was issued/executed, microseconds — a
+      uint64 of 8 bytes (ST 0601.19 §8.115 Table 7), present iff the wire
+      pack has trailing bytes after ``command``. Shorter times from older
+      encoders are read too."""
 
     id: int
     command: str
@@ -908,17 +913,14 @@ class Location:
     Altitude AGL). ``lat``/``lon`` are mandatory once any bytes are present;
     only the trailing ``hae`` is truncatable.
 
-    **Encode semantics for an interior-absent field** (e.g. ``lat: None``
-    while ``hae: Some(..)``): IMAPB has no INT_MIN-style sentinel of its
-    own, so this repurposes the ST 1201.5 special-value space — specifically
-    a user-defined special with signal 0 — as an "absent" filler at that
-    field's wire position, matching decode, which maps ANY
-    special/reserved/out-of-range pattern back to ``None``. This is
-    spec-legal (§7.2.3's special-value space is defined at the IMAPB layer,
-    independent of the ST 0601 item using it) even though it is not itself a
-    case ST 0601.19 §8.130 describes — the spec only ever truncates ``hae``
-    from the end, never leaves ``lat``/``lon`` absent with ``hae`` present.
-    Only a trailing ``None`` (or all three ``None``) truncates the pack."""
+    So a site is written with both coordinates (and its height when it has
+    one) or, when all three are ``None``, as an unknown site of length 0. A
+    height or one coordinate without both coordinates is refused on encode
+    (``InvalidFieldValue`` with the item's tag): the standard has no wire
+    form for it. On decode, a site whose latitude or longitude is a special
+    or reserved IMAP pattern is an unknown site (``None``) with one
+    ``InvalidFormat`` field error naming the item; a height sent as such a
+    pattern reads ``None``."""
 
     lat_deg: float | None = None
     lon_deg: float | None = None
@@ -1108,29 +1110,41 @@ class SdccFlpField:
     still round-trips byte-exact even when the library cannot parse its
     interior — provided its declared matrix size fits the pack's own bytes
     (Parse Control plus the ST 1010 size bound); otherwise the occurrence is
-    recorded as a ``TruncatedField`` and not captured. The encoder still
-    emits caller-supplied ``sdcc_flps`` bytes verbatim, so a caller who
-    supplies a pack whose matrix cannot fit will see it rejected on decode.
+    recorded as a ``TruncatedField`` and not captured. The ordinary encoders
+    write caller-supplied ``sdcc_flps`` bytes verbatim, so a pack whose
+    matrix cannot fit is written and a decode then records that field error;
+    ``encode_strict_compliance`` refuses it.
 
     **Capture semantics (decode):** ``preceding_tags`` is the ``N``
     wire-order item tags — known or unknown, but never another Tag 102 —
     immediately before this occurrence, where ``N`` is this pack's own
-    parsed matrix size (fewer if the Local Set had fewer prior items).
+    parsed matrix size (fewer if the Local Set had fewer prior items). An
+    item stepped over for a tag wider than 32 bits is not one of them.
 
-    **Ascending-order emission caveat (encode):** every ``sdcc_flps`` entry
-    is re-emitted verbatim from one place in tag-ascending order, grouping
-    all occurrences together. This means the original interleaving with
-    ``preceding_tags`` (e.g. tags 13/14/15 followed by one Tag 102
-    occurrence, then tags 5/6/7 followed by another) is generally NOT
-    reproduced on re-encode — the re-encoded wire carries both occurrences
-    back to back instead. ``preceding_tags`` therefore records the original
-    wire order, not a guarantee about the re-encoded one; the pack ``bytes``
-    themselves are still byte-exact.
+    **Encode:** each occurrence is written right after the items its
+    ``preceding_tags`` name, in that order (ST 0601.19 §8.102.1). The items
+    are written in the encoder's order and a pack takes the items it names
+    forward to the first of them; a pack whose rows begin with the last
+    items written follows them with the rest of its items; a pack whose rows
+    are the last items written follows at once, so two packs after one item
+    keep their order and a pack inside the rows of a later, wider pack keeps
+    its place. A set whose items are in the encoder's order is re-encoded
+    with every pack where it was. An occurrence that cannot be placed (a
+    named item is not in the record, ``preceding_tags`` is empty, one of its
+    items is already written and not among the last items written, its rows
+    would put another item before Item 2, or a capture shorter than its
+    matrix does not name the start of the set) is written after the typed
+    items, where 0.10.0 wrote every occurrence; ``encode_strict_compliance``
+    refuses it, and refuses a pack whose header ST 1010 does not define. For
+    a tag that repeats, a row takes the first instance not yet written. Edit
+    a named item and the pack describes the new value: that is the caller's
+    business.
 
     - ``preceding_tags`` — Wire-order item tags immediately preceding this
-      occurrence (see struct doc for the capture rule). Empty if this
-      occurrence had no preceding items (matrix size 0, or fewer prior items
-      than the matrix size — spec-legal-but-degenerate, not an error).
+      occurrence (see struct doc for the capture rule). Empty for a matrix
+      of size 0 or an occurrence no item precedes; fewer than the matrix
+      size when fewer items precede it (legal, if degenerate, and not an
+      error).
     - ``bytes`` — Raw SDCC-FLP pack bytes, exactly as they appeared on the
       wire — decode with the ST 1010 SDCC-FLP decoder."""
 
@@ -1156,7 +1170,9 @@ class UasDatalinkLs:
 
     The composite views (sensor position, platform and sensor attitude,
     field of view, frame center and corners) are accessors that return
-    nothing when any of the fields they combine is absent.
+    nothing when a component they combine is absent or was sent as "no
+    value"; where the standard has two items for a component they prefer the
+    full-range, extended or ellipsoid one.
 
     - ``universal_label`` — The 16-byte SMPTE universal label that opens the
       local set.
@@ -1180,7 +1196,10 @@ class UasDatalinkLs:
       encode range [-90, 90] deg (int32). Full-range twin of
       ``platform_roll_deg`` (Item 7, ±50°).
     - ``miis_core_id`` — Item 94: MIIS Core Identifier (MISB ST 1204 binary
-      format). Raw bytes — decode/inspect via ``st1204``.
+      format). Raw bytes — decode/inspect via ``st1204``. At most 50 bytes
+      (ST 0601.19 §8.94 Max Length, which the standard calls a recommended
+      maximum and this library enforces): a longer value is refused on
+      encode (``ValueTooLong``) and is a field error on decode.
     - ``platform_angle_of_attack_deg`` — Item 50: Platform Angle of Attack —
       encode range [-20, 20] deg (int16).
     - ``sensor_lat_deg`` — Item 13: Sensor Latitude — encode range [-90, 90]
@@ -1525,48 +1544,66 @@ class UasDatalinkLs:
       ("Multiples Allowed" = Yes) — the "Refined Source List" binding: every
       wire occurrence appends one ``SdccFlpField``, capturing which
       preceding items it refines. See ``SdccFlpField`` for the capture rule
-      and the encode-side adjacency caveat.
+      and where the encoder writes each occurrence.
     - ``unknown`` — Every tag the typed set does not model, preserved as raw
       bytes per the ST 0107.5 §6 future-proof skip rule. An entry whose tag
-      a typed field owns is dropped on encode: the typed field wins.
-    - ``field_errors`` — Per-field decode failures collected by a lenient
-      decode; a strict decode returns an error instead. A parser diagnostic:
-      it is not re-encoded. A zero-length optional item is "unknown" (ST
-      0107.5 §6.3.4): the field stays unset and no error is recorded. When a
-      single-use tag repeats, the last occurrence wins and earlier ones
-      leave no trace in the typed field, ``sentinel_tags`` or
-      ``imapb_specials``.
+      a typed field owns, or Tag 1, 2 or 65, is refused on encode
+      (``ReservedTagInUnknown``). An item whose tag is wider than 32 bits is
+      stepped over by ``decode`` and ``decode_strict`` and not kept here;
+      ``decode_strict_compliance`` refuses the set, and ``patch`` copies
+      such an item as it is.
+    - ``field_errors`` — Per-field decode failures. Every decode collects
+      them, the strict ones too: ``decode_strict`` and
+      ``decode_strict_compliance`` return ``Ok`` with this list filled for a
+      value that breaks none of the rules they check (an item of the wrong
+      length, for example). A parser diagnostic: it is not re-encoded. A
+      zero-length optional item is "unknown" (ST 0107.5 §6.3.4): the field
+      stays unset and no error is recorded. When a single-use tag repeats,
+      the last occurrence wins and earlier ones leave no trace in the typed
+      field, ``sentinel_tags`` or ``imapb_specials``.
     - ``sentinel_tags`` — Tags whose wire value was the INT_MIN sentinel for
       their signed linear mapping. INT_MIN is a spec-defined signal (not an
       error), so the corresponding typed field is left as ``None`` and the
       tag is recorded here instead of in ``field_errors``. Use
       ``st0601_sentinel_meaning`` to look up the spec-defined meaning for
-      each tag (Out of Range / Reserved / N/A). **Encode semantics:**
-      encoding a record that carries sentinel tags re-emits the INT_MIN
-      bytes for each sentinel tag whose typed field is ``None``. If the
-      typed field is ``Some(v)``, the value ``v`` is encoded instead — a
-      non-None field always wins over a ``sentinel_tags`` entry. The encoder
-      also auto-injects Tag 65 (version) and the trailing checksum, so the
-      output byte sequence is not guaranteed to match the original wire
-      input byte-for-byte; the sentinel value round-trips, but the emission
-      order is: typed fields in ascending tag order, then ``sentinel_tags``
-      entries, then ``unknown`` fields in caller order.
+      each tag (Out of Range / Reserved / N/A). **Encode semantics:** an
+      entry is written only while the item's typed field is ``None`` (a
+      populated field always wins), and only for a signed linear row (its
+      INT_MIN sentinel, at the row's width); an entry for any other row
+      writes nothing. A tag listed more than once is written once, at its
+      last entry. The encoder writes the single-use typed fields in
+      ascending tag order, then the Item 102 packs (each moved after the
+      items it refines: see ``SdccFlpField``) and the Item 115 commands,
+      then the replayed sentinels in list order, then the other replayed
+      IMAP specials (see ``imapb_specials``), then ``unknown`` fields in
+      caller order; it adds Tag 65 (version) when the record has none, and
+      the trailing checksum. The sentinel round-trips; the bytes need not
+      match the input's.
     - ``imapb_specials`` — Tags whose ST 1201.5 IMAPB wire value decoded to
       a spec-defined special value (§7.2.3 — ``+∞``/``−∞``, NaN families,
       the MISB-defined ``BelowMin``/``AboveMax`` overflow signals, or a
-      user-defined signal) rather than a normal-range float. The
-      corresponding typed field is left absent and the tag+special pair is
-      recorded here instead. Use ``ImapbSpecial`` to inspect which special
-      was signaled. **Encode semantics:** mirrors ``sentinel_tags`` —
-      encoding a record re-emits the special's bytes (at the tag's
-      ``default_len``) for each ``(tag, special)`` entry whose typed field
-      is currently ``None``. If the typed field is ``Some(v)``, the value
-      wins and the special entry is not re-emitted. Entries whose tag is not
-      an IMAPB-encoded item are silently skipped on encode. **Decode
-      semantics for the two IMAPB outcomes NOT carried here:** a wire
-      integer in ST 1201.5's reserved-but-unrecognized special-value space
-      (``ReservedSpecial``) or one that arithmetic-decodes outside the tag's
-      ``[min, max]`` (``OutOfRange``) are both treated as producer
+      user-defined signal) rather than a normal-range float. The tag+special
+      pair is recorded here and the typed field is left absent, except for
+      the two overflow signals (below). Use ``ImapbSpecial`` to inspect
+      which special was signaled. **Encode semantics:** an entry is written
+      only while the item's typed field is ``None``, and only for an IMAPB
+      row, at the shortest length from the item's default to its maximum
+      that holds the special's payload (a special no length of the item
+      holds fails with ``OutOfRange`` naming the item); an entry for any
+      other row writes nothing. A tag listed more than once is written once,
+      with its LAST special. **The two overflow signals** are the exception:
+      ``BelowMin`` and ``AboveMax`` (ST 1201.5 §7.2.3.1; ST 0601.19 says
+      nothing more of them) give the typed field the item's range minimum or
+      maximum, and the entry is kept. An encode writes the signal back at
+      the item's place, whether the field still equals that end or is unset,
+      and writes the value once the field holds anything else. Every other
+      special is written after the typed fields. A value decoded from the
+      bottom bucket below the minimum (a length shorter than the item's
+      default, for a range that straddles zero) is stored as the minimum.
+      **Decode semantics for the two IMAPB outcomes NOT carried here:** a
+      wire integer in ST 1201.5's reserved-but-unrecognized special-value
+      space (``ReservedSpecial``) or one that arithmetic-decodes outside the
+      tag's ``[min, max]`` (``OutOfRange``) are both treated as producer
       non-conformance from this typed consumer's view: they are NOT pushed
       here, and the raw wire bytes are NOT preserved. Instead they are
       recorded in ``field_errors`` as ``OutOfRange`` — with a NaN value for
@@ -1944,7 +1981,7 @@ class IdType(enum.Enum):
 # BEGIN GENERATED by print-records (CoreId); do not edit
 @dataclass(frozen=True, slots=True)
 class CoreId:
-    """A decoded MIIS Core Identifier (ST 1204.3 §7.3).
+    """A decoded MIIS Core Identifier (ST 1204.3 §7.4.1).
 
     Contains the raw version byte plus up to four optional UUID components.
     The EBNF constraint — ``minor`` XOR any-of-(sensor/platform/window) — is
@@ -1962,8 +1999,8 @@ class CoreId:
     - ``window`` — Window UUID, if present. Window has no type bits — its
       presence is indicated by usage-byte bit b2.
     - ``minor`` — Minor Core Identifier UUID. When present,
-      sensor/platform/window must all be ``None`` (ST 1204.3 §7.3.1 EBNF
-      rule)."""
+      sensor/platform/window must all be ``None`` (the EBNF of ST 1204.3
+      §7.1)."""
 
     version: int
     sensor: tuple[IdType, bytes] | None = None
@@ -2566,13 +2603,15 @@ class CotConfig:
       but gives no concrete interval — this default is an implementation
       choice, not a spec value.
     - ``producer`` — XML attribute name stamped in ``<detail><_flow-tags_
-      .../>``. Written verbatim as an XML ``Name`` production (an attribute
-      name, not a value) — it must be a syntactically valid XML Name. It is
-      neither validated nor escaped; an invalid value produces malformed
-      XML.
-    - ``geoid_undulation_m`` — Geoid undulation (HAE − MSL) applied when
-      only an MSL-referenced altitude tag is available. Absent emits the MSL
-      value as-is.
+      .../>``. Written verbatim as an attribute name, not a value, so it
+      must be one: an ASCII letter or ``_``, then ASCII letters, digits,
+      ``_``, ``.`` or ``-``, not starting with ``xml`` in any case. Any
+      other value makes both converters refuse with ``InvalidProducerName``.
+    - ``geoid_undulation_m`` — Geoid undulation (HAE − MSL) applied when the
+      height comes from an MSL-referenced item (Items 15, 25, 42). Absent
+      emits the MSL value as the HAE: an approximation off by the geoid
+      undulation (tens of metres), which ``platform_position_xml_with`` /
+      ``sensor_point_of_interest_xml_with`` with ``Refuse`` refuse instead.
     - ``how`` — CoT ``how`` attribute. ST 0805.1 §5 fixes this at ``m-p``
       (machine-passed) for both event types."""
 

@@ -8,7 +8,8 @@ import java.util.List;
  * MISB ST 0903.6 §10.2 Table 10 — typed VTargetPack.
  *
  * The wire form is a leading BER-OID-encoded {@code targetId} (no Tag — per §10.2.2.1 "has no Tag")
- * followed by a Local Set–encoded body using BER-OID tag + BER short/long length + value tuples.
+ * followed by a Local Set–encoded body of one-byte tag + BER short/long length + value items (ST
+ * 0903.6 §9.2: every Local Set inside the VMTI LS uses one-byte tags).
  *
  * {@code targetId} is an unsigned 64-bit integer decoded from the BER-OID Target ID (≈ 63 bits per
  * ST 0903.6 §10.2.2.1; spec allows up to 9 wire bytes, V9 in §10.2 Table 10). The pixel-number

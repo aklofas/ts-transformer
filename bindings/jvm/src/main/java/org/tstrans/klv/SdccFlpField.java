@@ -14,25 +14,32 @@ import java.util.List;
  * rather than a parsed {@code SdccFlp} so a malformed or foreign-encoder pack still round-trips
  * byte-exact even when the library cannot parse its interior — provided its declared matrix size
  * fits the pack's own bytes (Parse Control plus the ST 1010 size bound); otherwise the occurrence
- * is recorded as a {@code TruncatedField} and not captured. The encoder still emits caller-supplied
- * {@code sdcc_flps} bytes verbatim, so a caller who supplies a pack whose matrix cannot fit will
- * see it rejected on decode.
+ * is recorded as a {@code TruncatedField} and not captured. The ordinary encoders write
+ * caller-supplied {@code sdcc_flps} bytes verbatim, so a pack whose matrix cannot fit is written
+ * and a decode then records that field error; {@code encode_strict_compliance} refuses it.
  *
  * **Capture semantics (decode):** {@code precedingTags} is the {@code N} wire-order item tags —
  * known or unknown, but never another Tag 102 — immediately before this occurrence, where {@code N}
- * is this pack's own parsed matrix size (fewer if the Local Set had fewer prior items).
+ * is this pack's own parsed matrix size (fewer if the Local Set had fewer prior items). An item
+ * stepped over for a tag wider than 32 bits is not one of them.
  *
- * **Ascending-order emission caveat (encode):** every {@code sdcc_flps} entry is re-emitted
- * verbatim from one place in tag-ascending order, grouping all occurrences together. This means the
- * original interleaving with {@code precedingTags} (e.g. tags 13/14/15 followed by one Tag 102
- * occurrence, then tags 5/6/7 followed by another) is generally NOT reproduced on re-encode — the
- * re-encoded wire carries both occurrences back to back instead. {@code precedingTags} therefore
- * records the original wire order, not a guarantee about the re-encoded one; the pack {@code bytes}
- * themselves are still byte-exact.
+ * **Encode:** each occurrence is written right after the items its {@code precedingTags} name, in
+ * that order (ST 0601.19 §8.102.1). The items are written in the encoder's order and a pack takes
+ * the items it names forward to the first of them; a pack whose rows begin with the last items
+ * written follows them with the rest of its items; a pack whose rows are the last items written
+ * follows at once, so two packs after one item keep their order and a pack inside the rows of a
+ * later, wider pack keeps its place. A set whose items are in the encoder's order is re-encoded
+ * with every pack where it was. An occurrence that cannot be placed (a named item is not in the
+ * record, {@code precedingTags} is empty, one of its items is already written and not among the
+ * last items written, its rows would put another item before Item 2, or a capture shorter than its
+ * matrix does not name the start of the set) is written after the typed items, where 0.10.0 wrote
+ * every occurrence; {@code encode_strict_compliance} refuses it, and refuses a pack whose header ST
+ * 1010 does not define. For a tag that repeats, a row takes the first instance not yet written.
+ * Edit a named item and the pack describes the new value: that is the caller's business.
  *
  * @param precedingTags Wire-order item tags immediately preceding this occurrence (see struct doc
- *     for the capture rule). Empty if this occurrence had no preceding items (matrix size 0, or
- *     fewer prior items than the matrix size — spec-legal-but-degenerate, not an error).
+ *     for the capture rule). Empty for a matrix of size 0 or an occurrence no item precedes; fewer
+ *     than the matrix size when fewer items precede it (legal, if degenerate, and not an error).
  * @param bytes Raw SDCC-FLP pack bytes, exactly as they appeared on the wire — decode with the ST
  *     1010 SDCC-FLP decoder.
  */
