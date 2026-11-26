@@ -1098,3 +1098,141 @@ fn precision_time_stamp_u64_max_round_trips() {
         "precision_time_stamp u64::MAX must round-trip losslessly as 8-byte BE"
     );
 }
+
+// ------------------------------------------------------------------
+// The strict encoders write only what `decode_strict` accepts.
+// ------------------------------------------------------------------
+
+/// Both strict encoders, so a rule is checked on each.
+fn strict_encoders() -> [fn(&VmtiLs) -> Result<Vec<u8>, KlvEncodeError>; 2] {
+    [
+        encode_strict_compliance,
+        encode_standalone_strict_compliance,
+    ]
+}
+
+#[test]
+fn strict_encode_refuses_names_strict_decode_refuses() {
+    // ST 0903.6 §10.1.3 (V32) and §10.1.10 (V128) count characters.
+    let name = |s: String| VmtiLs {
+        vmti_system_name: Some(s),
+        ..full_standalone_ls()
+    };
+    let sensor = |s: String| VmtiLs {
+        source_sensor: Some(s),
+        ..full_standalone_ls()
+    };
+    for encode in strict_encoders() {
+        assert!(
+            matches!(
+                encode(&name("a".repeat(33))),
+                Err(KlvEncodeError::StringTooLong { tag: 3, max: 32 })
+            ),
+            "33 characters"
+        );
+        assert!(
+            matches!(
+                encode(&sensor("a".repeat(129))),
+                Err(KlvEncodeError::StringTooLong { tag: 10, max: 128 })
+            ),
+            "129 characters"
+        );
+        // 32 two-byte characters are 64 bytes and still 32 characters.
+        encode(&name("é".repeat(32))).expect("32 characters pass");
+        encode(&sensor("é".repeat(128))).expect("128 characters pass");
+    }
+    let body = encode_strict_compliance(&name("é".repeat(32))).unwrap();
+    let decoded = decode_strict(&body).expect("strict decode accepts what strict encode wrote");
+    assert_eq!(decoded.vmti_system_name, Some("é".repeat(32)));
+}
+
+#[test]
+fn every_vmti_encoder_refuses_a_v3_value_above_24_bits() {
+    // Items 5, 6, 8 and 9 are V3 (ST 0903.6 §10.1): at most three bytes,
+    // which is what both decoders read.
+    let set = |tag: u32, v: u32| {
+        let mut ls = full_standalone_ls();
+        ls.frame_width = Some(1920);
+        match tag {
+            5 => ls.total_targets_in_frame = Some(v),
+            6 => ls.num_targets_reported = Some(v),
+            8 => ls.frame_width = Some(v),
+            9 => ls.frame_height = Some(v),
+            _ => unreachable!(),
+        }
+        ls
+    };
+    let encoders: [fn(&VmtiLs) -> Result<Vec<u8>, KlvEncodeError>; 4] = [
+        encode_to_vec,
+        encode_to_vec_standalone,
+        encode_strict_compliance,
+        encode_standalone_strict_compliance,
+    ];
+    for tag in [5u32, 6, 8, 9] {
+        for encode in encoders {
+            let err = encode(&set(tag, 0x0100_0000)).unwrap_err();
+            assert!(
+                matches!(err, KlvEncodeError::OutOfRange { tag: t, max, .. } if t == tag && max == 16_777_215.0),
+                "tag {tag}: {err:?}"
+            );
+            let bytes = encode(&set(tag, 0x00FF_FFFF)).expect("2^24 - 1 fits three bytes");
+            assert!(!bytes.is_empty());
+        }
+        let mut buf = vec![0u8; 256];
+        assert!(matches!(
+            super::encode::encode_standalone(&set(tag, 0x0100_0000), &mut buf),
+            Err(KlvEncodeError::OutOfRange { tag: t, .. }) if t == tag
+        ));
+        let decoded = decode(&encode_to_vec(&set(tag, 0x00FF_FFFF)).unwrap()).unwrap();
+        assert!(decoded.field_errors.is_empty(), "{:?}", decoded.field_errors);
+    }
+}
+
+#[test]
+fn strict_encode_mirrors_the_vtarget_u8_ranges() {
+    // ST 0903.6 §10.2.2.5 (priority 1 to 255), §10.2.2.6 (confidence 0 to
+    // 100), §10.2.2.8 (percentage 1 to 100), Table 5 (detection status 0
+    // to 4).
+    let with = |tag: u32, v: u8| {
+        let mut pack = VTargetPack {
+            target_id: 1,
+            centroid_pixel: Some(100),
+            ..Default::default()
+        };
+        match tag {
+            4 => pack.priority = Some(v),
+            5 => pack.confidence_level = Some(v),
+            7 => pack.percentage_of_target_pixels = Some(v),
+            23 => pack.detection_status = Some(v),
+            _ => unreachable!(),
+        }
+        VmtiLs {
+            targets: vec![pack],
+            ..full_standalone_ls()
+        }
+    };
+    for (tag, bad) in [(4u32, 0u8), (5, 101), (7, 0), (7, 101), (23, 5)] {
+        for encode in strict_encoders() {
+            let err = encode(&with(tag, bad)).unwrap_err();
+            assert!(
+                matches!(err, KlvEncodeError::OutOfRange { tag: t, .. } if t == tag),
+                "tag {tag} = {bad}: {err:?}"
+            );
+        }
+        encode_to_vec(&with(tag, bad)).expect("the ordinary encoder still writes it");
+    }
+    for (tag, good) in [
+        (4u32, 1u8),
+        (4, 255),
+        (5, 0),
+        (5, 100),
+        (7, 1),
+        (7, 100),
+        (23, 0),
+        (23, 4),
+    ] {
+        for encode in strict_encoders() {
+            encode(&with(tag, good)).unwrap_or_else(|e| panic!("tag {tag} = {good}: {e:?}"));
+        }
+    }
+}

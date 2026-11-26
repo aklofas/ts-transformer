@@ -39,7 +39,8 @@ use alloc::vec::Vec;
 /// # Errors
 /// - [`KlvEncodeError::OutOfRange`] if `horizontal_fov` /
 ///   `vertical_fov` (or any per-target IMAPB float field) falls
-///   outside its declared range.
+///   outside its declared range, or if Item 5, 6, 8 or 9 is above
+///   16 777 215 (V3: three bytes).
 /// - [`KlvEncodeError::RecordTooLarge`] if a TLV's declared length
 ///   would overflow BER encoding.
 pub fn encode(ls: &VmtiLs, out: &mut Vec<u8>) -> Result<(), KlvEncodeError> {
@@ -60,16 +61,16 @@ pub fn encode(ls: &VmtiLs, out: &mut Vec<u8>) -> Result<(), KlvEncodeError> {
         emit_var(out, 4, v as u32)?;
     }
     if let Some(v) = ls.total_targets_in_frame {
-        emit_var(out, 5, v)?;
+        emit_v3(out, 5, v)?;
     }
     if let Some(v) = ls.num_targets_reported {
-        emit_var(out, 6, v)?;
+        emit_v3(out, 6, v)?;
     }
     if let Some(v) = ls.frame_width {
-        emit_var(out, 8, v)?;
+        emit_v3(out, 8, v)?;
     }
     if let Some(v) = ls.frame_height {
-        emit_var(out, 9, v)?;
+        emit_v3(out, 9, v)?;
     }
     if let Some(ref s) = ls.source_sensor {
         emit_tlv(out, 10, s.as_bytes())?;
@@ -126,6 +127,22 @@ pub fn encode(ls: &VmtiLs, out: &mut Vec<u8>) -> Result<(), KlvEncodeError> {
     }
 
     Ok(())
+}
+
+/// Items 5, 6, 8 and 9 are V3 (ST 0903.6 §10.1): a value above 2^24 − 1
+/// would need a fourth byte, which no decoder of the set reads.
+fn emit_v3(out: &mut Vec<u8>, tag: u8, v: u32) -> Result<(), KlvEncodeError> {
+    const V3_MAX: u32 = (1 << 24) - 1;
+    if v > V3_MAX {
+        return Err(KlvEncodeError::OutOfRange {
+            tag: u32::from(tag),
+            value: f64::from(v),
+            min: 0.0,
+            max: f64::from(V3_MAX),
+            hint: None,
+        });
+    }
+    crate::klv::st0903::emit::emit_var(out, tag, v)
 }
 
 /// Encode a VMTI Local Set into a fresh `Vec<u8>`. Convenience over
@@ -317,6 +334,12 @@ pub fn encoded_len(ls: &VmtiLs) -> usize {
 ///   (ST 0903.4-10); empty packs → [`KlvEncodeError::VTargetPackEmpty`].
 /// - `target_id` values must be unique across `ls.targets`
 ///   (ST 0903.6-126); duplicates → [`KlvEncodeError::DuplicateTargetId`].
+/// - `priority`, `confidence_level`, `percentage_of_target_pixels` and
+///   `detection_status` must hold a value ST 0903.6 allows (§10.2.2.5,
+///   .6, .8, Table 5).
+///
+/// **Strings:** `vmti_system_name` at most 32 characters, `source_sensor`
+/// at most 128 (§10.1.3, §10.1.10), as [`super::decode_strict`] reads them.
 ///
 /// Parent-relative offset tags (10/11/13/14/15/16) are **allowed** in
 /// embedded mode — they reference the parent ST 0601 telemetry frame. Use
@@ -329,6 +352,9 @@ pub fn encoded_len(ls: &VmtiLs) -> usize {
 ///   `num_targets_reported` is `None`.
 /// - [`KlvEncodeError::VTargetPackEmpty`] if any pack has no TLV items.
 /// - [`KlvEncodeError::DuplicateTargetId`] if any `target_id` repeats.
+/// - [`KlvEncodeError::StringTooLong`] for a name over its cap.
+/// - [`KlvEncodeError::OutOfRange`] for a one-byte pack item outside its
+///   range.
 /// - All [`KlvEncodeError`] variants from [`encode_to_vec`] once the
 ///   precondition gate passes.
 pub fn encode_strict_compliance(ls: &VmtiLs) -> Result<Vec<u8>, KlvEncodeError> {
@@ -377,6 +403,17 @@ pub fn encode_standalone_strict_compliance(ls: &VmtiLs) -> Result<Vec<u8>, KlvEn
 /// - Every VTargetPack has ≥1 TLV item (ST 0903.4-10).
 /// - All `target_id` values are unique (ST 0903.6-126).
 fn validate_vtargets(ls: &VmtiLs) -> Result<(), KlvEncodeError> {
+    use crate::klv::st0903::vtarget_pack::{vtarget_u8_in_range, vtarget_u8_range};
+
+    // The two name caps count characters (V32, V128), as `decode_strict`
+    // does.
+    if ls.vmti_system_name.as_ref().is_some_and(|s| s.chars().count() > 32) {
+        return Err(KlvEncodeError::StringTooLong { tag: 3, max: 32 });
+    }
+    if ls.source_sensor.as_ref().is_some_and(|s| s.chars().count() > 128) {
+        return Err(KlvEncodeError::StringTooLong { tag: 10, max: 128 });
+    }
+
     // Required top-level items: {4, 6} — matches the `required: true`
     // flags in `tags.rs` (confirmed by `required_tags_match_spec` test).
     if ls.version_number.is_none() {
@@ -399,6 +436,25 @@ fn validate_vtargets(ls: &VmtiLs) -> Result<(), KlvEncodeError> {
             return Err(KlvEncodeError::VTargetPackEmpty {
                 target_id: pack.target_id,
             });
+        }
+        for (tag, v) in [
+            (4, pack.priority),
+            (5, pack.confidence_level),
+            (7, pack.percentage_of_target_pixels),
+            (23, pack.detection_status),
+        ] {
+            if let Some(v) = v
+                && !vtarget_u8_in_range(tag, v)
+            {
+                let range = vtarget_u8_range(tag);
+                return Err(KlvEncodeError::OutOfRange {
+                    tag,
+                    value: f64::from(v),
+                    min: f64::from(*range.start()),
+                    max: f64::from(*range.end()),
+                    hint: None,
+                });
+            }
         }
         if !seen_ids.insert(pack.target_id) {
             return Err(KlvEncodeError::DuplicateTargetId {

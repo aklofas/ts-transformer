@@ -242,6 +242,25 @@ pub(crate) const PACK_TAGS: &[PackTagSpec] = &[
     },
 ];
 
+/// The values ST 0903.6 allows in the four one-byte items: priority 1 to
+/// 255 (§10.2.2.5), confidence 0 to 100 (§10.2.2.6), percentage 1 to 100
+/// (§10.2.2.8), detection status 0 to 4 (Table 5). Read by strict decode
+/// and by the strict encoders, so the two agree.
+pub(crate) fn vtarget_u8_range(tag: u32) -> core::ops::RangeInclusive<u8> {
+    match tag {
+        4 => 1..=255,
+        5 => 0..=100,
+        7 => 1..=100,
+        23 => 0..=4,
+        _ => 0..=255,
+    }
+}
+
+/// Whether `v` is a value ST 0903.6 allows in the one-byte item `tag`.
+pub(crate) fn vtarget_u8_in_range(tag: u32, v: u8) -> bool {
+    vtarget_u8_range(tag).contains(&v)
+}
+
 pub(crate) fn pack_lookup(tag: u8) -> Option<&'static PackTagSpec> {
     PACK_TAGS.iter().find(|t| t.id == tag)
 }

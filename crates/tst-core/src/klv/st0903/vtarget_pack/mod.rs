@@ -14,3 +14,4 @@ mod tests;
 pub(crate) use decode::{read_pack, read_pack_strict};
 pub(crate) use encode::{encoded_len, write_pack};
 pub use model::{VTargetPack, VTargetPackError};
+pub(crate) use model::{vtarget_u8_in_range, vtarget_u8_range};
