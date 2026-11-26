@@ -207,7 +207,7 @@ Fix: point `output_dir` at a private directory (for example mode 0700 or
 
 **`decode_strict_compliance` rejects**
 
-The record violates one of ST 0601.8-09 / -11 / -12's mandatory rules: Tag 2 (timestamp) must be the first element, Tag 1 (checksum) must be the last element, Tag 65 (UAS LS Version) must be present. The corresponding `KlvDecodeError` variants are `Tag2NotFirst`, `Tag1NotLast`, and `MissingTag65`. `KlvDecodeError::ComplianceViolation { tag, offset, reason }` (Python and JVM kind `MALFORMED_BYTES`) names an item that breaks its profile or coded values (an Item 2 that is not 8 bytes, an undefined code, a Control Command time that is not 8 bytes, …); `reason` says which rule.
+The record violates one of ST 0601.8-09 / -11 / -12's mandatory rules: Tag 2 (timestamp) must be the first element, Tag 1 (checksum) must be the last element, Tag 65 (UAS LS Version) must be present. The corresponding `KlvDecodeError` variants are `Tag2NotFirst`, `Tag1NotLast`, and `MissingTag65`. `KlvDecodeError::ComplianceViolation { tag, offset, reason }` (Python and JVM kind `MALFORMED_BYTES`) names an item that breaks its profile or coded values (an Item 2 that is not 8 bytes, an undefined code, a Control Command time that is present and not 8 bytes, …); `reason` says which rule.
 
 Fix: walk the strictness ladder — fall back to `decode_strict` (validates UL family + checksum but not ordering) or plain `decode` (validates checksum only) to inspect the record despite non-compliance. If the producer is yours, fix the producer to emit the mandatory tags in the correct order. Worked example: [../examples/klv-metadata/klv_decode_file.rs](../examples/klv-metadata/klv_decode_file.rs).
 
@@ -237,7 +237,7 @@ Fix: this is almost always a producer bug; fix the producer.
 
 **A decoded KLV record is refused on re-encode**
 
-The lenient decoders keep some values the encoders refuse, so that a relay reading untrusted metadata loses nothing: a VMTI `target_id` of 2^63 or more (from a ten-byte targetId: `OutOfRange` with tag 0), non-ASCII text in an RVT ISO 7 item, an RVT MGRS zone outside 1 to 60 or a band and grid square the standard does not define (`InvalidFieldValue` or `OutOfRange` naming the item).
+The lenient decoders keep some values the encoders refuse, so that the decoded record shows what the producer sent: a VMTI `target_id` of 2^63 or more (from a ten-byte targetId: `OutOfRange` with tag 0), non-ASCII text in an RVT ISO 7 item, an RVT MGRS zone outside 1 to 60 or a band and grid square the standard does not define (`InvalidFieldValue` or `OutOfRange` naming the item).
 
 Fix: forward the original bytes, or clear the field (drop the target, clear the zone, the band or the text) before the encode.
 

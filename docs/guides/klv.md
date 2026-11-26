@@ -152,8 +152,8 @@ captures violate them in benign ways, which is why the compliance rung
 is opt-in. `decode_strict_compliance` also checks each item's profile
 and coded values (an 8-byte Item 2 and a 1-byte Item 65, the codes the
 standard defines in Items 34, 47, 63, 77, 125 and 126, the Image
-Horizon percentages, a Mode 2 SDCC-FLP whose header ST 1010 defines, an
-8-byte Control Command time,
+Horizon percentages, a Mode 2 SDCC-FLP whose header ST 1010 defines, a
+Control Command time of 8 bytes when the command has one,
 the wavelength and positioning-source rules, no Item 143 at the root)
 and refuses a breach with `KlvDecodeError::ComplianceViolation { tag,
 offset, reason }`. Its `Ok` promises these rules only: a value that
@@ -227,9 +227,16 @@ sent as "no value" (a sentinel, or an IMAPB special: see
 corner sent as Off-Earth ends `corners()`. An IMAPB overflow signal
 counts as "no value" although the decode leaves the range end in its
 field (below), so a view can be `None` while the field holds a number.
-A view's height is above the ellipsoid whenever the record carries an
-ellipsoid item; read the datum before you compare it with an MSL
-height.
+A display that wants a height then reads the next item of the chain
+itself (Item 75, then 15, for the sensor), or takes the view of a copy
+of the record whose signalled field is set to `None` and whose entry
+for that tag is removed from `imapb_specials`. A view's height is above
+the ellipsoid whenever the record carries an ellipsoid item; read the
+datum before you compare it with an MSL height. C's
+`tst_st0601_geometry` reports Items 6, 7, 15 and 25 as they are, so its
+platform pitch and roll and its heights differ from the views' for a
+record that carries the full-range or the ellipsoid items; only its
+corners follow the views' per-corner rule.
 
 > **Python:** the typed sets are frozen dataclasses — attribute
 > assignment raises `FrozenInstanceError`. Use
@@ -272,9 +279,10 @@ Per-field decode errors. When one tag's value is malformed (wrong
 length, invalid UTF-8, out-of-range mapped float), the decoder records
 a `KlvFieldError` in `record.field_errors` and continues with the rest
 of the record. The whole-record decode only fails on structural problems
-(truncated buffer, malformed BER length, checksum mismatch under
-verifying decoders, missing mandatory tags under
-`decode_strict_compliance`).
+(truncated buffer, malformed BER length; a checksum that is not two
+bytes wide, in every decode; under the verifying decoders a checksum
+that is missing, repeated, not the last item or wrong; missing mandatory
+tags under `decode_strict_compliance`).
 
 A zero-length known optional ST 0601 item means "unknown": its typed field
 stays unset, with no `field_errors` entry and no copy in `unknown`. Tags 2
@@ -548,9 +556,10 @@ Two decode entry points:
 
 A zero-length item means "unknown" (ST 0107.4-17): its field stays
 unset, it unsets a value an earlier occurrence of its tag gave, and
-`decode_strict` reports a zero-length required item as missing. The last
-occurrence of a repeated tag decides: one that does not decode leaves
-the field unset beside its `field_errors` entry.
+`decode_strict` reports a zero-length required item as missing. In
+`decode` the last occurrence of a repeated tag decides: one that does
+not decode leaves the field unset beside its `field_errors` entry;
+`decode_strict` refuses a repeated defined tag.
 
 The Security Metadata Local Set uses one-byte tags, as its label
 declares (SMPTE ST 336 Table 5): an unknown tag of 128 to 255 is read
@@ -706,10 +715,11 @@ no row and column and not both bounding-box corners.
 
 In both decoders a zero-length item, at the top level and inside a
 VTarget Pack, means "unknown" (its field unset, no field error;
-`decode_strict` refuses only a zero-length Item 4 or 6), the last
-occurrence of a repeated tag decides (one that does not decode leaves
-the field unset beside its field error), and one NUL reads as `""` (the
-encoders write `Some("")` that way). An ST 1201 IMAP special in a
+`decode_strict` refuses only a zero-length Item 4 or 6), and one NUL
+reads as `""` (the encoders write `Some("")` that way). In `decode` the
+last occurrence of a repeated tag decides (one that does not decode
+leaves the field unset beside its field error); `decode_strict` refuses
+a repeated item. An ST 1201 IMAP special in a
 VTarget Pack's IMAPB item or in Item 11 or 12 is legal and leaves the
 field unset (ST 0903.6 §9.1.1 sends the signal in place of the
 measurement): `decode` lists it in `field_errors` as
@@ -897,7 +907,9 @@ the items they name into blocks, each block is written where the
 encoder writes the first of its items, and each pack follows the item of
 its last row. So a set that came in any order, whose packs each follow
 the items they refine, keeps every pack with its rows after a decode
-and an encode, also when packs share items. A pack that cannot be
+and an encode, also when packs share items, as long as no pack names a
+tag the set carries more than once. A pack of matrix size 0 names no
+item and is written after the typed items. A pack that cannot be
 placed (`preceding_tags` is empty; a named item is not written, for
 example one sent zero-length, or is named more often than the record
 has items of its tag; its rows contradict an earlier pack's; they would
@@ -908,10 +920,15 @@ before it there as its rows, so the pack then states accuracies for
 items it never refined. `encode_strict_compliance` refuses such a
 record, as it refuses a pack whose header ST 1010 does not define, and
 `decode_strict_compliance` refuses that header too. For a tag the set
-carries more than once, a row names the tag, not the item, and such a
-set can end with a pack that is not placed. If you edit an item a pack
-refines, the pack still describes the old value: that is the caller's
-business.
+carries more than once (an unknown tag, Item 115), a row names the tag,
+not the item: the encoder writes the pack after the first item of that
+tag its other rows fit, which need not be the one it followed, and the
+strict encoder does not refuse that; such a set can also end with a
+pack that is not placed. A relay that must keep such a pack with its
+item forwards the original bytes, or uses `patch`, which keeps every
+item where it is. Edit an item a pack refines and the pack, written
+after it, now refines the new value with the old value's accuracies:
+that is the caller's business.
 
 ```rust
 use tst_core::klv::st0601::UasDatalinkLs;
@@ -1165,7 +1182,8 @@ Each item below maps to an entry in
   "unknown" items, VMTI IMAP specials, unknown tags wider than 32 bits
   (or a count of them), a datum field on `GeoPoint` and the MSL fallback
   as a `CotConfig` field; and a typed SDCC-FLP builder for ST 0601
-  Item 102. See [project/deferred-features.md](/docs/project/deferred-features.md).
+  Item 102, with a record of which occurrence of a repeated tag a pack
+  refines. See [project/deferred-features.md](/docs/project/deferred-features.md).
 
 ## See also
 
