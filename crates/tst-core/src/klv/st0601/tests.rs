@@ -5435,33 +5435,6 @@ fn strict_encode_refuses_a_pack_the_sdcc_reader_refuses() {
     }
 }
 
-#[test]
-fn a_pack_after_a_skipped_wide_tag_is_placed_or_refused() {
-    // An unknown tag wider than 32 bits inside the group is stepped over
-    // and dropped on decode: the pack's rows are the items around it.
-    let wide = [&[0x90, 0x80, 0x80, 0x80, 0x80, 0x00][..], &[0x01, 0xAA]].concat();
-    let source = sdcc_set(&[I(2), I(13), Sdcc::Raw(wide), I(14), P(2), I(65)]);
-    let rec = decode(&source).unwrap();
-    assert_eq!(rows(&rec), [vec![13, 14]]);
-    let out = encode_to_vec(&rec).unwrap();
-    assert_eq!(wire_tags(&out), [2, 13, 14, 102, 65, 1]);
-    assert!(encode_strict_compliance(&rec).is_ok());
-    // A pack that named only the wide item has no row to follow.
-    let source = sdcc_set(&[
-        I(2),
-        I(13),
-        Sdcc::Raw([&[0x90, 0x80, 0x80, 0x80, 0x80, 0x00][..], &[0x01, 0xAA]].concat()),
-        P(1),
-        I(65),
-    ]);
-    let rec = decode(&source).unwrap();
-    assert_eq!(rows(&rec), [vec![13]]);
-    assert_eq!(
-        wire_tags(&encode_to_vec(&rec).unwrap()),
-        [2, 13, 102, 65, 1]
-    );
-}
-
 /// What a decode hands out for `groups` groups of `n` zero-length items of
 /// one unknown tag, each group followed by a pack of matrix size `n`: the
 /// items, and per pack `n` rows of the group's tag. `one_tag`: every group
@@ -6155,4 +6128,48 @@ fn sdcc_packs_that_share_items_place_in_bounded_steps() {
         let out = encode_to_vec(&rec).unwrap();
         assert!(every_pack_follows_its_rows(&rec, &out), "{name}");
     }
+}
+
+/// An item whose tag is wider than 32 bits is stepped over and cannot be
+/// named: a pack's rows end there. The pack then has fewer rows than its
+/// matrix and they are not the start of the set, so it cannot be placed.
+#[test]
+fn a_stepped_over_wide_tag_ends_a_packs_rows() {
+    let wide = || Sdcc::Raw([&[0x90, 0x80, 0x80, 0x80, 0x80, 0x00][..], &[0x01, 0xAA]].concat());
+    // (the set, the rows of its pack)
+    let cases: [(Vec<Sdcc>, Vec<u32>); 4] = [
+        (vec![I(2), I(13), wide(), I(14), P(2), I(65)], vec![14]),
+        (vec![I(2), I(13), wide(), P(2), I(65)], vec![]),
+        (vec![I(2), I(13), wide(), wide(), P(1), I(65)], vec![]),
+        (
+            vec![I(2), I(13), wide(), I(14), I(15), P(3), I(65)],
+            vec![14, 15],
+        ),
+    ];
+    for (parts, expected) in cases {
+        let rec = decode(&sdcc_set(&parts)).unwrap();
+        assert_eq!(rows(&rec), core::slice::from_ref(&expected));
+        // Written after the typed items, or refused.
+        let out = encode_to_vec(&rec).unwrap();
+        assert_eq!(
+            wire_tags(&out)[wire_tags(&out).len() - 2..],
+            [102, 1],
+            "{expected:?}"
+        );
+        assert!(
+            matches!(
+                encode_strict_compliance(&rec),
+                Err(KlvEncodeError::InvalidFieldValue { tag: 102, .. })
+            ),
+            "{expected:?}"
+        );
+    }
+    // A wide item before the items a pack refines changes nothing.
+    let source = sdcc_set(&[I(2), wide(), I(13), I(14), P(2), I(15), P(1), I(65)]);
+    let rec = decode(&source).unwrap();
+    assert_eq!(rows(&rec), [vec![13, 14], vec![15]]);
+    assert_eq!(
+        wire_tags(&encode_strict_compliance(&rec).unwrap()),
+        [2, 13, 14, 102, 15, 102, 65, 1]
+    );
 }

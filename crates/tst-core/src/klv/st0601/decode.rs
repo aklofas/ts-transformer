@@ -440,6 +440,10 @@ fn decode_inner(
         )?;
     }
 
+    if !record.sdcc_flps.is_empty() {
+        end_rows_at_wide_tags(body, &mut record);
+    }
+
     // ST 0601.8-11: the checksum is the final item, so a set has one, and
     // nothing after it escapes the sum. `decode_unchecked` skips these checks.
     if verify_checksum {
@@ -867,6 +871,54 @@ fn decode_scalar(
         Encoding::Pack => return Ok(None),
     };
     Ok(Some(value))
+}
+
+/// Cut the rows of each captured Item 102 at the latest item before it
+/// that the walk stepped over (a tag wider than 32 bits). Such an item
+/// cannot be named, and the items before it are not the ones right before
+/// the pack: the pack keeps the rows after it, fewer than its matrix has.
+/// The walk's tag list does not know of stepped-over items; this second
+/// pass over the body's items does. Only for a set with Item 102.
+#[cold]
+#[inline(never)]
+fn end_rows_at_wide_tags(body: &[u8], record: &mut UasDatalinkLs) {
+    let mut packs = record.sdcc_flps.iter_mut();
+    // The items since the latest stepped-over one; none met so far.
+    let mut since_wide = usize::MAX;
+    let mut rest = body;
+    while !rest.is_empty() {
+        let (tag, after_tag) = match read_ber_oid(rest) {
+            Ok((tag, after_tag)) => (Some(tag), after_tag),
+            Err(KlvDecodeError::LengthOverflow { .. }) => match skip_ber_oid(rest) {
+                Ok(after_tag) => (None, after_tag),
+                Err(_) => return,
+            },
+            Err(_) => return,
+        };
+        // The walk read every item, so each is whole.
+        let Ok((len, after_len)) = read_ber(after_tag) else {
+            return;
+        };
+        let Some(value) = after_len.get(..len) else {
+            return;
+        };
+        rest = &after_len[len..];
+        match tag {
+            None => since_wide = 0,
+            // The checksum is not an item a pack refines.
+            Some(1) => {}
+            // The occurrences `apply_tag` captured, in the same order.
+            Some(102) => {
+                if crate::klv::st1010::peek_matrix_size(value).is_some()
+                    && let Some(pack) = packs.next()
+                {
+                    let rows = &mut pack.preceding_tags;
+                    rows.drain(..rows.len().saturating_sub(since_wide));
+                }
+            }
+            Some(_) => since_wide = since_wide.saturating_add(1),
+        }
+    }
 }
 
 /// Tags 102 and 115 — MULTI-INSTANCE (ST 0601.19 Table 1 "Multiples
