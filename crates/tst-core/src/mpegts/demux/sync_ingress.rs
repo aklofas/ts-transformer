@@ -122,8 +122,11 @@ impl super::demuxer::Demuxer {
             self.queue_nonconformant(stream, NonConformantIssue::PcrMalformed { kind });
         }
         // Only a packet with a PCR or the flag needs the declaration, so the
-        // program scan stays off the per-packet path.
+        // program scan stays off the per-packet path. A PMT names 0x1FFF to
+        // say the program has no PCR (H.222.0 §2.4.4.9), so the null PID is
+        // never a declared clock.
         let declared = (pkt.pcr_27mhz.is_some() || pkt.discontinuity_indicator)
+            && pkt.pid != pid::NULL
             && self.programs.values().any(|t| t.pcr_pid == Some(pkt.pid));
         // H.222.0 §2.4.3.5: `discontinuity_indicator = 1` on the PCR_PID means
         // the next PCR on that PID samples a new system time clock. That PCR
@@ -273,9 +276,11 @@ impl super::demuxer::Demuxer {
         // (0x1FFF) packets is undefined and MUST NOT be validated. Null packets
         // are >50% of bytes in CBR feeds, so tracking them would grow
         // `pid_state` with a sentinel entry that's never useful and could
-        // spuriously fire ContinuityJump. PCR tracking is intentionally NOT
-        // skipped — PCR may legitimately ride null packets per §2.4.3.5 — that
-        // path lives in `check_pcr` and is keyed on `pcr_27mhz.is_some()`.
+        // spuriously fire ContinuityJump. A null packet carries no adaptation
+        // field (§2.4.3.3) and `PCR_PID = 0x1FFF` in a PMT means the program
+        // has no PCR (§2.4.4.9), so no clock is read from this PID either
+        // (`check_pcr` excludes it), and its discontinuity flag is not
+        // reported.
         if pkt.pid == pid::NULL {
             return Continuity {
                 jumped: false,
@@ -483,11 +488,12 @@ mod tests {
     use super::super::demuxer::Demuxer;
     use crate::mpegts::common::pid;
     use crate::mpegts::demux::test_support::{
-        PktSpec, build_pmt_section, demuxer_with_streams, drain_all_events,
-        pat_packet_with_programs, psi_packet, ts_packet,
+        PktSpec, build_pmt_section, demuxer_with_streams, drain_all_events, issues,
+        pat_packet_with_programs, pes_bytes, pes_to_packets, psi_packet, ts_packet,
     };
     use crate::mpegts::demux::{
-        DemuxEvent, DemuxerConfig, DiscontinuityKind, StreamId, StreamKind, VideoCodec,
+        DemuxEvent, DemuxerConfig, DiscontinuityKind, NonConformantIssue, StreamId, StreamKind,
+        StrictMode, VideoCodec,
     };
     use crate::test_prelude::*;
 
@@ -649,6 +655,43 @@ mod tests {
             ),
             (1, 0, 0, 1)
         );
+    }
+
+    /// H.222.0 §2.4.4.9: `PCR_PID = 0x1FFF` means the program has no PCR,
+    /// and a null packet carries no adaptation field (§2.4.3.3). PCRs on
+    /// null packets are then no clock: they raise no anomaly and leave the
+    /// program's PTS history alone.
+    #[test]
+    fn a_pcr_on_null_packets_is_not_a_clock_when_the_pmt_declares_no_pcr() {
+        for mode in [StrictMode::Off, StrictMode::TimingOnly] {
+            let mut d = demuxer_with_streams(
+                DemuxerConfig::builder().strict(mode).build(),
+                pid::NULL,
+                &[(0x0F, 0x101, &[])],
+            );
+            let pes = pes_bytes(0xC0, Some(900_000), None, true, &[0xAA; 20], true);
+            for p in pes_to_packets(0x101, 0, &pes) {
+                d.feed_aligned(&p).unwrap();
+            }
+            drain_all_events(&mut d);
+            // 1.0 s, 1.04 s, 0.2 s, then a 100 s jump.
+            for pcr_ms in [1_000, 1_040, 200, 100_200] {
+                let pkt = ts_packet(&PktSpec {
+                    pid: pid::NULL,
+                    pcr: Some(pcr_ms * 27_000),
+                    ..Default::default()
+                });
+                assert!(d.feed_aligned(&pkt).is_ok(), "{mode:?}");
+            }
+            let ev = drain_all_events(&mut d);
+            assert!(
+                !issues(&ev)
+                    .iter()
+                    .any(|i| matches!(i, NonConformantIssue::PcrAnomaly { .. })),
+                "{mode:?}: {ev:?}"
+            );
+            assert_eq!(d.pid_state[&0x101].last_pts, Some(900_000), "{mode:?}");
+        }
     }
 
     /// Which flagged packets report a `Discontinuity`: a packet on a stream
