@@ -16,6 +16,7 @@
 //! (ST 0604 defines no carriage for them).
 
 use crate::codec::VideoCodec;
+use crate::codec::annexb::start_codes;
 use alloc::vec::Vec;
 
 /// ST 0604.6 §7.1 Table 1 — H.262/H.264 Precision Time Stamp Identifier.
@@ -173,7 +174,8 @@ pub fn append_rbsp_escaped(out: &mut Vec<u8>, rbsp: &[u8]) {
 /// `rbsp_trailing_bits` and emulation prevention.
 ///
 /// Returns the bare NAL: header (H.264 type 6, `nal_ref_idc` 0; H.265
-/// PREFIX_SEI type 39, layer 0, `nuh_temporal_id_plus1` 1) plus escaped
+/// PREFIX_SEI type 39, layer 0, `nuh_temporal_id_plus1` 1, which
+/// [`insert_sei_before_first_vcl`] sets to the access unit's) plus escaped
 /// RBSP, no start code. The MISP timestamp SEI ([`build_sei_nal`]) is this
 /// message with the ST 0604 identifier as the UUID.
 ///
@@ -213,9 +215,9 @@ pub fn build_user_data_unregistered_sei_nal(
 /// Build the complete MISP-timestamp SEI NAL for one access unit.
 ///
 /// Returns the bare NAL bytes (header + escaped RBSP, NO Annex-B start
-/// code — the splice site supplies a 3-byte `00 00 01` prefix). H.264
-/// gets `nal_unit_type=6` (`nal_ref_idc=0`); H.265 gets PREFIX_SEI
-/// (type 39, `nuh_layer_id=0`, `nuh_temporal_id_plus1=1`). The SEI
+/// code — the splice site, [`insert_sei_before_first_vcl`], supplies the
+/// start code). H.264 gets `nal_unit_type=6` (`nal_ref_idc=0`); H.265 gets
+/// PREFIX_SEI (type 39, `nuh_layer_id=0`, `nuh_temporal_id_plus1=1`). The SEI
 /// message is `user_data_unregistered` (payloadType 5) with the fixed
 /// 28-byte ST 0604 payload.
 pub fn build_sei_nal(codec: VideoCodec, ts: &MispTimestamp) -> Result<Vec<u8>, MispTimeError> {
@@ -226,11 +228,19 @@ pub fn build_sei_nal(codec: VideoCodec, ts: &MispTimestamp) -> Result<Vec<u8>, M
 }
 
 /// Splice a SEI NAL unit into an Annex-B access unit, before its first VCL
-/// NAL unit (after any AUD and parameter sets), behind a 3-byte start code.
+/// NAL unit (after any AUD and parameter sets).
+///
+/// The SEI goes behind a 4-byte start code when it becomes the access
+/// unit's first NAL unit (the `zero_byte` of H.264 and H.265 §B.1.2), a
+/// 3-byte one otherwise. H.265: each inserted SEI NAL unit (PREFIX_SEI or
+/// SUFFIX_SEI) takes the TemporalId of the access unit's first VCL NAL unit
+/// when that unit's header is whole and valid (§7.4.2.2: an SEI NAL unit's
+/// TemporalId is at least its access unit's); otherwise it keeps its own.
+/// No other byte of `sei_nal` changes.
 ///
 /// `sei_nal` is a bare NAL (header + escaped RBSP, no start code), as
-/// [`build_sei_nal`] and [`build_user_data_unregistered_sei_nal`] return.
-/// H.264 and H.265 only.
+/// [`build_sei_nal`] and [`build_user_data_unregistered_sei_nal`] return,
+/// or several joined by start codes. H.264 and H.265 only.
 ///
 /// # Errors
 ///
@@ -242,12 +252,63 @@ pub fn insert_sei_before_first_vcl(
     codec: VideoCodec,
 ) -> Result<Vec<u8>, MispTimeError> {
     let at = first_vcl_prefix_offset(au, codec).ok_or(MispTimeError::NoVclNal)?;
-    let mut out = Vec::with_capacity(au.len() + 3 + sei_nal.len());
+    // The SEI is the access unit's first NAL unit when no start code comes
+    // before the first VCL unit's.
+    let first = start_codes(&au[..at]).next().is_none();
+    let prefix: &[u8] = if first { &[0, 0, 0, 1] } else { &[0, 0, 1] };
+    let mut out = Vec::with_capacity(au.len() + prefix.len() + sei_nal.len());
     out.extend_from_slice(&au[..at]);
-    out.extend_from_slice(&[0, 0, 1]);
-    out.extend_from_slice(sei_nal);
+    out.extend_from_slice(prefix);
+    match h265_temporal_id_plus1(au, at, codec) {
+        Some(tid_plus1) => extend_with_temporal_id(&mut out, sei_nal, tid_plus1),
+        None => out.extend_from_slice(sei_nal),
+    }
     out.extend_from_slice(&au[at..]);
     Ok(out)
+}
+
+/// The `nuh_temporal_id_plus1` of the H.265 VCL NAL unit whose start code
+/// begins at `at`, when it is one a NAL unit may carry; `None` for H.264.
+/// A non-zero second header byte cannot be a byte of the next start code,
+/// so a non-zero value also proves the header is whole inside the unit.
+fn h265_temporal_id_plus1(au: &[u8], at: usize, codec: VideoCodec) -> Option<u8> {
+    if codec != VideoCodec::H265 {
+        return None;
+    }
+    // `at` begins a 3- or 4-byte start code; the NAL header follows it.
+    let header = at + if au[at + 2] == 0 { 4 } else { 3 };
+    au.get(header + 1)
+        .map(|b| b & 0x07)
+        .filter(|&tid_plus1| tid_plus1 != 0)
+}
+
+/// Append `block` (one H.265 NAL unit, or several joined by start codes) to
+/// `out`, with `nuh_temporal_id_plus1` set to `tid_plus1` in each PREFIX_SEI
+/// or SUFFIX_SEI unit that holds both header bytes. The patch is made while
+/// copying: no other byte changes.
+fn extend_with_temporal_id(out: &mut Vec<u8>, block: &[u8], tid_plus1: u8) {
+    let mut codes = start_codes(block);
+    let mut copied = 0;
+    let mut unit = 0;
+    loop {
+        let next = codes.next();
+        let end = next.map_or(block.len(), |code| code.prefix_start);
+        if end - unit >= 2
+            && matches!(
+                crate::codec::nal::nal_unit_type(VideoCodec::H265, &block[unit..end]),
+                Some(39 | 40)
+            )
+        {
+            out.extend_from_slice(&block[copied..=unit]);
+            out.push((block[unit + 1] & 0xF8) | tid_plus1);
+            copied = unit + 2;
+        }
+        match next {
+            Some(code) => unit = code.data_start,
+            None => break,
+        }
+    }
+    out.extend_from_slice(&block[copied..]);
 }
 
 /// Extract the first MISP timestamp SEI from an Annex-B access unit.
@@ -642,15 +703,6 @@ mod tests {
     }
 
     #[test]
-    fn splice_before_lone_vcl() {
-        let au = h264_au(&[0x41]); // type 1 non-IDR slice, nal_ref_idc=2
-        let sei = build_sei_nal(VideoCodec::H264, &MispTimestamp::micros(1, 0x1F)).unwrap();
-        let out = insert_sei_before_first_vcl(&au, &sei, VideoCodec::H264).unwrap();
-        assert_eq!(&out[..3], &[0, 0, 1]); // SEI first (3-byte prefix)
-        assert_eq!(&out[3..3 + sei.len()], &sei[..]);
-    }
-
-    #[test]
     fn splice_h265_vcl_detection() {
         // H.265 IDR_W_RADL = type 19 -> header byte (19 << 1) = 0x26, 0x01.
         let mut au = Vec::new();
@@ -660,6 +712,183 @@ mod tests {
         let out = insert_sei_before_first_vcl(&au, &sei, VideoCodec::H265).unwrap();
         assert_eq!(&out[..7], &au[..7]);
         assert_eq!(&out[7..10], &[0, 0, 1]);
+    }
+
+    /// The builder's MISP SEI NAL unit for `codec`.
+    fn misp_sei(codec: VideoCodec) -> Vec<u8> {
+        build_sei_nal(codec, &MispTimestamp::micros(1, 0x1F)).unwrap()
+    }
+
+    /// An H.265 access unit: one NAL unit per two-byte header, each with a
+    /// one-byte body, behind 4-byte start codes.
+    fn h265_au(headers: &[[u8; 2]]) -> Vec<u8> {
+        let mut v = Vec::new();
+        for h in headers {
+            v.extend_from_slice(&[0, 0, 0, 1, h[0], h[1], 0xAF]);
+        }
+        v
+    }
+
+    /// The SEI NAL units of an access unit, in order.
+    fn sei_units(au: &[u8], codec: VideoCodec) -> Vec<&[u8]> {
+        crate::codec::annexb::nals(au)
+            .filter(|nal| {
+                matches!(
+                    (codec, crate::codec::nal::nal_unit_type(codec, nal)),
+                    (VideoCodec::H264, Some(6)) | (VideoCodec::H265, Some(39 | 40))
+                )
+            })
+            .collect()
+    }
+
+    /// An SEI that becomes the access unit's first NAL unit takes a 4-byte
+    /// start code: the first NAL unit of an access unit has a `zero_byte`
+    /// (H.264 and H.265 §B.1.2).
+    #[test]
+    fn sei_spliced_as_first_nal_carries_zero_byte() {
+        let au = h264_au(&[0x41]); // one non-IDR slice
+        let sei = misp_sei(VideoCodec::H264);
+        let out = insert_sei_before_first_vcl(&au, &sei, VideoCodec::H264).unwrap();
+        let mut expected = vec![0, 0, 0, 1];
+        expected.extend_from_slice(&sei);
+        expected.extend_from_slice(&au);
+        assert_eq!(out, expected);
+    }
+
+    #[test]
+    fn sei_after_aud_keeps_three_byte_prefix() {
+        let au = h264_au(&[0x09, 0x41]);
+        let sei = misp_sei(VideoCodec::H264);
+        let out = insert_sei_before_first_vcl(&au, &sei, VideoCodec::H264).unwrap();
+        let mut expected = au[..7].to_vec();
+        expected.extend_from_slice(&[0, 0, 1]);
+        expected.extend_from_slice(&sei);
+        expected.extend_from_slice(&au[7..]);
+        assert_eq!(out, expected);
+    }
+
+    /// An SEI NAL unit's TemporalId is at least its access unit's (H.265
+    /// §7.4.2.2): the inserted SEI takes the first slice's.
+    #[test]
+    fn h265_sei_takes_the_access_unit_temporal_id() {
+        let au = h265_au(&[[0x02, 0x02]]); // TRAIL_R, TemporalId 1
+        let sei = misp_sei(VideoCodec::H265);
+        let out = insert_sei_before_first_vcl(&au, &sei, VideoCodec::H265).unwrap();
+        let mut expected = vec![0, 0, 0, 1, 0x4E, 0x02];
+        expected.extend_from_slice(&sei[2..]);
+        expected.extend_from_slice(&au);
+        assert_eq!(out, expected);
+    }
+
+    #[test]
+    fn h265_layer_zero_sei_header_unchanged() {
+        let au = h265_au(&[[0x40, 0x01], [0x26, 0x01]]); // VPS, IDR_W_RADL
+        let sei = misp_sei(VideoCodec::H265);
+        let out = insert_sei_before_first_vcl(&au, &sei, VideoCodec::H265).unwrap();
+        let mut expected = au[..7].to_vec();
+        expected.extend_from_slice(&[0, 0, 1]);
+        expected.extend_from_slice(&sei);
+        expected.extend_from_slice(&au[7..]);
+        assert_eq!(&sei[..2], &[0x4E, 0x01]);
+        assert_eq!(out, expected);
+    }
+
+    /// Several SEI NAL units joined by start codes and inserted in one call
+    /// (what a WHEP mount does): each SEI unit, prefix (type 39) or suffix
+    /// (type 40), takes the TemporalId; any other unit in the block keeps
+    /// its header.
+    #[test]
+    fn h265_joined_sei_block_all_take_the_temporal_id() {
+        let uuid = [0x11; 16];
+        let one = build_user_data_unregistered_sei_nal(VideoCodec::H265, &uuid, b"one").unwrap();
+        let two = build_user_data_unregistered_sei_nal(VideoCodec::H265, &uuid, b"two").unwrap();
+        let mut suffix = two.clone();
+        suffix[0] = 0x50; // SUFFIX_SEI, type 40
+        let aud: &[u8] = &[0x46, 0x01, 0x50]; // AUD, type 35
+        let au = h265_au(&[[0x02, 0x03]]); // TRAIL_R, TemporalId 2
+        let headers = |units: &[&[u8]], join: &[u8]| -> Vec<[u8; 2]> {
+            let out =
+                insert_sei_before_first_vcl(&au, &units.join(join), VideoCodec::H265).unwrap();
+            crate::codec::annexb::nals(&out)
+                .map(|nal| [nal[0], nal[1]])
+                .collect()
+        };
+        assert_eq!(
+            headers(&[&one, &two], &[0, 0, 1]),
+            [[0x4E, 0x03], [0x4E, 0x03], [0x02, 0x03]]
+        );
+        assert_eq!(
+            headers(&[&one, aud, &suffix], &[0, 0, 1]),
+            [[0x4E, 0x03], [0x46, 0x01], [0x50, 0x03], [0x02, 0x03]]
+        );
+        assert_eq!(
+            headers(&[&one, &two, &suffix], &[0, 0, 0, 1]),
+            [[0x4E, 0x03], [0x4E, 0x03], [0x50, 0x03], [0x02, 0x03]]
+        );
+    }
+
+    /// The first slice's `nuh_temporal_id_plus1` is copied only when it is
+    /// a value a NAL unit may carry: never the forbidden 0, never a byte of
+    /// the next start code read as a header.
+    #[test]
+    fn h265_sei_keeps_its_temporal_id_when_the_slice_header_is_invalid() {
+        let sei = misp_sei(VideoCodec::H265);
+        for (name, au) in [
+            (
+                "nuh_temporal_id_plus1 0",
+                vec![0, 0, 0, 1, 0x02, 0x00, 0xAF],
+            ),
+            (
+                "a one-byte VCL unit before a start code",
+                vec![0, 0, 1, 0x02, 0, 0, 1, 0x02, 0x03, 0xAA],
+            ),
+        ] {
+            let out = insert_sei_before_first_vcl(&au, &sei, VideoCodec::H265).unwrap();
+            assert_eq!(sei_units(&out, VideoCodec::H265), [&sei[..]], "{name}");
+        }
+    }
+
+    /// The SEI message itself is never touched: from each inserted unit's
+    /// payload type to its end, the bytes are what the builder returned.
+    #[test]
+    fn the_inserted_sei_message_bytes_equal_the_builders() {
+        let uuid = [0x11; 16];
+        let h264 = misp_sei(VideoCodec::H264);
+        let h265 = misp_sei(VideoCodec::H265);
+        // Zero bytes in the payload make the builder escape them.
+        let one = build_user_data_unregistered_sei_nal(VideoCodec::H265, &uuid, &[0; 40]).unwrap();
+        let two = build_user_data_unregistered_sei_nal(VideoCodec::H265, &uuid, b"two").unwrap();
+        let block = [one.as_slice(), &two].join(&[0u8, 0, 1][..]);
+        for (codec, inserted, built, au) in [
+            (VideoCodec::H264, &h264, vec![&h264], h264_au(&[0x41])),
+            (VideoCodec::H264, &h264, vec![&h264], h264_au(&[0x09, 0x65])),
+            (
+                VideoCodec::H265,
+                &h265,
+                vec![&h265],
+                h265_au(&[[0x02, 0x03]]),
+            ),
+            (
+                VideoCodec::H265,
+                &h265,
+                vec![&h265],
+                h265_au(&[[0x40, 0x01], [0x26, 0x01]]),
+            ),
+            (
+                VideoCodec::H265,
+                &block,
+                vec![&one, &two],
+                h265_au(&[[0x02, 0x03]]),
+            ),
+        ] {
+            let header = crate::codec::nal::header_len(codec).unwrap();
+            let out = insert_sei_before_first_vcl(&au, inserted, codec).unwrap();
+            let got = sei_units(&out, codec);
+            assert_eq!(got.len(), built.len(), "{codec:?}");
+            for (got, built) in got.iter().zip(built) {
+                assert_eq!(&got[header..], &built[header..], "{codec:?}");
+            }
+        }
     }
 
     #[test]

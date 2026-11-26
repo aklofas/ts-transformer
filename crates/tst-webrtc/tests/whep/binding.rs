@@ -460,3 +460,41 @@ fn concurrent_pushes_are_queued_in_clock_order() {
         assert!(own.windows(2).all(|w| w[0] < w[1]), "lane {lane}");
     }
 }
+
+/// An H.265 access unit above temporal layer 0: the KLV SEI spliced into it
+/// carries the access unit's TemporalId in its NAL header (H.265 §7.4.2.2);
+/// the SEI message, and with it the record and its PTS, is unchanged.
+#[test]
+fn an_h265_klv_sei_takes_the_access_units_temporal_id() {
+    let mut cfg = MountConfig::default();
+    cfg.video = VideoCodec::H265;
+    let (m, rx) = MountHandle::for_test(cfg);
+    m.push_video(
+        &au(&[H265_VPS, H265_SPS, H265_PPS, H265_CRA]),
+        Pts90khz::new(0),
+        true,
+    )
+    .unwrap();
+    let _ = next_frame(&rx);
+    m.push_klv(b"\x06\x0e\x2b\x34rec1", Pts90khz::new(3000), 0)
+        .unwrap();
+    // A TRAIL_R slice (type 1) at TemporalId 2: `nuh_temporal_id_plus1` 3.
+    m.push_video(
+        &[0, 0, 1, 0x02, 0x03, 0xAF, 0x05],
+        Pts90khz::new(3000),
+        false,
+    )
+    .unwrap();
+    let f = next_frame(&rx);
+    let sei = f
+        .payloads
+        .iter()
+        .map(|p| p.payload.as_slice())
+        .find(|nal| (nal[0] >> 1) & 0x3F == 39)
+        .expect("the KLV SEI");
+    assert_eq!(&sei[..2], &[0x4E, 0x03]);
+    let seis = tst_webrtc::sei::extract_klv_seis(&rejoin(&f), VideoCodec::H265);
+    assert_eq!(seis.len(), 1);
+    assert_eq!(seis[0].klv, b"\x06\x0e\x2b\x34rec1");
+    assert_eq!(seis[0].klv_pts_90k, 3000);
+}

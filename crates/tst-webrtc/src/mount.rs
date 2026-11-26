@@ -744,7 +744,8 @@ impl MountHandle {
                     // Fails only for an access unit without a slice,
                     // excluded above. `seis` joins every NAL unit with a
                     // start code, so this one byte splice inserts all of
-                    // them before the first slice.
+                    // them before the first slice and, on H.265, gives
+                    // each the access unit's TemporalId.
                     if let Ok(spliced) = insert_sei_before_first_vcl(&buf, &seis, codec) {
                         buf = spliced;
                     }

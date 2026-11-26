@@ -124,6 +124,47 @@ fn misp_push_round_trips_and_orders_sei() {
     );
 }
 
+/// An H.265 access unit at TemporalId 1 (`nuh_temporal_id_plus1` 2): the
+/// MISP SEI the muxer inserts carries that TemporalId (H.265 §7.4.2.2).
+#[test]
+fn h265_misp_push_on_temporal_layer_1_au_sets_sei_temporal_id() {
+    let cfg = {
+        let mut prog = MuxerProgramConfigBuilder::new(1, 0x1000);
+        prog.add_video(0x1011, VideoCodec::H265);
+        let mut b = MuxerConfig::builder();
+        b.add_program(prog.build());
+        b.build().unwrap()
+    };
+    let mut mux = Muxer::new(cfg).unwrap();
+    let handle = mux.video_handles()[0];
+    let ts = MispTimestamp::micros(0x0005_F5E1_0000_0001, 0x1F);
+    // One TRAIL_R slice (type 1) at TemporalId 1.
+    let au = [0x00, 0x00, 0x00, 0x01, 0x02, 0x02, 0xAF, 0x80];
+    mux.push_video_misp_to(handle, &au, Pts90khz::new(90_000), false, &ts)
+        .unwrap();
+
+    let mut demux = Demuxer::with_config(DemuxerConfig::builder().build());
+    demux.feed(&drain_all(&mut mux)).unwrap();
+    demux.flush();
+    let mut video_raw = None;
+    while let Some(event) = demux.next_event() {
+        if let DemuxEvent::Sample {
+            payload: SamplePayload::Video { raw, .. },
+            ..
+        } = event
+        {
+            video_raw = Some(raw);
+        }
+    }
+    let raw = video_raw.expect("expected a video sample from demux");
+
+    let sei = tst_core::codec::annexb::nals(&raw)
+        .find(|nal| tst_core::codec::nal::nal_unit_type(VideoCodec::H265, nal) == Some(39))
+        .expect("the inserted PREFIX_SEI");
+    assert_eq!(&sei[..2], &[0x4E, 0x02]);
+    assert_eq!(misp_time::extract(&raw, VideoCodec::H265), Ok(Some(ts)));
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // DTS variant smoke test
 // ─────────────────────────────────────────────────────────────────────────────

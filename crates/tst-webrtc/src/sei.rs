@@ -14,8 +14,11 @@
 //! | `rbsp_trailing_bits` | 1 | `0x80` |
 //!
 //! The RBSP is emulation-prevention escaped and follows the codec's SEI NAL
-//! header: H.264 `0x06` (type 6, `nal_ref_idc` 0) or H.265 `[0x4E, 0x01]`
-//! (PREFIX_SEI type 39, layer 0, `nuh_temporal_id_plus1` 1).
+//! header: H.264 `0x06` (type 6, `nal_ref_idc` 0) or H.265
+//! `[0x4E, tid + 1]` (PREFIX_SEI type 39, layer 0, and the TemporalId of the
+//! access unit it is spliced into; [`build_klv_sei_nal`] builds it with
+//! `nuh_temporal_id_plus1` 1). The SEI message is the same in every access
+//! unit.
 
 use tst_core::codec::annexb::nals;
 use tst_core::codec::misp_time::{MispTimeError, build_user_data_unregistered_sei_nal};
