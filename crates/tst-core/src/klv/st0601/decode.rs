@@ -2,7 +2,10 @@
 //! lenient/strict/compliance lineage.
 
 use crate::error::{KlvDecodeError, KlvFieldError};
-use crate::klv::length::{read_ber, read_ber_strict, read_strict_tlv, read_var_int, read_var_uint};
+use crate::klv::length::{
+    read_ber, read_ber_oid, read_ber_strict, read_strict_tlv, read_var_int, read_var_uint,
+    skip_ber_oid,
+};
 use crate::klv::pack::{Iter, OwnedRawField};
 use crate::klv::universal_label::UniversalLabel;
 use alloc::borrow::ToOwned;
@@ -473,16 +476,29 @@ pub(super) struct DeclaredChecksum {
 }
 
 /// The offset in `body` where the item with wire index `index` starts: the
-/// end of the item before it. Only a repeated checksum needs it.
+/// end of the item the walk met before it, past every item between the two
+/// that the walk steps over without handing it out (a tag wider than 32
+/// bits). Only a repeated checksum needs it.
 #[cold]
 fn item_start(body: &[u8], index: usize) -> usize {
-    Iter::local_set(body)
+    let mut start = Iter::local_set(body)
         .take(index)
         .map_while(Result::ok)
         .last()
         .map_or(0, |f| {
             (f.value.as_ptr() as usize - body.as_ptr() as usize) + f.value.len()
-        })
+        });
+    while let Err(KlvDecodeError::LengthOverflow { .. }) = read_ber_oid(&body[start..]) {
+        // The walk reached item `index`, so each item before it is whole.
+        let Some((len, after_len)) = skip_ber_oid(&body[start..])
+            .ok()
+            .and_then(|after_tag| read_ber(after_tag).ok())
+        else {
+            break;
+        };
+        start = body.len() - after_len.len() + len;
+    }
+    start
 }
 
 /// `true` for a tag the once-per-packet rule covers: a defined item other

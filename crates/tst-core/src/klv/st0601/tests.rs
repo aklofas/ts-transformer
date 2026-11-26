@@ -3872,6 +3872,35 @@ fn verifying_decode_rejects_second_checksum() {
 }
 
 #[test]
+fn a_second_checksum_after_a_skipped_wide_tag_reports_its_own_start() {
+    // An unknown item whose tag is wider than 32 bits (eight bytes here) is
+    // stepped over and never handed out. One or two of them sit between the
+    // first checksum (27 to 30) and the second, which starts after them.
+    let wide = [0x90, 0x80, 0x80, 0x80, 0x80, 0x00, 0x01, 0xAA];
+    for wides in [1, 2] {
+        let start = 31 + 8 * wides;
+        for second in [&[0x01, 0x02, 0, 0][..], &[0x01, 0x81, 0x02, 0, 0]] {
+            let mut buf = st0601_set(
+                &[
+                    &TIMESTAMP_ITEM[..],
+                    &[0x01, 0x02, 0xAA, 0xAA],
+                    &wide.repeat(wides),
+                    second,
+                ]
+                .concat(),
+            );
+            put_checksum(&mut buf, start + second.len() - 2);
+            let duplicate = format!("Err(DuplicateTag {{ tag: 1, offset: {start} }})");
+            assert_eq!(
+                verifying_errors(&buf),
+                [duplicate.clone(), duplicate],
+                "{wides} wide items, second checksum {second:02X?}"
+            );
+        }
+    }
+}
+
+#[test]
 fn missing_checksum_is_missing_required_tag() {
     for body in [&[][..], &TIMESTAMP_ITEM[..]] {
         let buf = st0601_set(body);
