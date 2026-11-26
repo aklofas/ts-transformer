@@ -546,12 +546,12 @@ crate::binding_record! {
         /// ST 0107.5 §6 future-proof skip rule. An entry whose tag a typed field
         /// owns, or Tag 1, 2 or 65, is refused on encode
         /// (`ReservedTagInUnknown`). An item whose tag is wider than 32 bits is
-        /// stepped over by `decode` and `decode_strict` and not kept here;
-        /// `decode_strict_compliance` refuses the set, and `patch` copies such
+        /// stepped over by the lenient and the strict decoder and not kept here;
+        /// the strict compliance decoder refuses the set, and a patch copies such
         /// an item as it is.
         @[custom] pub unknown: Vec<OwnedRawField>,
         /// Per-field decode failures. Every decode collects them, the strict
-        /// ones too: `decode_strict` and `decode_strict_compliance` return `Ok`
+        /// ones too: the strict decoder and the strict compliance decoder return `Ok`
         /// with this list filled for a value that breaks none of the rules
         /// they check (an item of the wrong length, for example). A parser
         /// diagnostic: it is not re-encoded. A zero-length optional item is "unknown" (ST 0107.5
@@ -663,7 +663,7 @@ crate::binding_record! {
     /// [`crate::error::KlvFieldError::TruncatedField`] and not captured. The
     /// ordinary encoders write caller-supplied `sdcc_flps` bytes verbatim, so
     /// a pack whose matrix cannot fit is written and a decode then records
-    /// that field error; `encode_strict_compliance` refuses it.
+    /// that field error; the strict compliance encoder refuses it.
     ///
     /// **Capture semantics (decode):** `preceding_tags` is the `N` wire-order
     /// item tags — known or unknown, but never another Tag 102 — immediately
@@ -694,7 +694,7 @@ crate::binding_record! {
     /// wrote every occurrence; a decoder of that output takes the items
     /// before it there as its rows, so the pack then states accuracies for
     /// items it never refined, and the next encode keeps it with those
-    /// rows. `encode_strict_compliance` refuses the record instead (and
+    /// rows. The strict compliance encoder refuses the record instead (and
     /// refuses a pack whose header ST 1010 does not define). An occurrence
     /// cannot be placed when `preceding_tags` is empty (except that a matrix
     /// of size 0, which refines nothing, is accepted by the strict encoder
