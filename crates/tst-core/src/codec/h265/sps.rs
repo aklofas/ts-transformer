@@ -50,7 +50,14 @@ crate::binding_record! {
         pub chroma_format: ChromaFormat,
         /// `sps_max_sub_layers_minus1` — max sub-layer temporal scalability.
         pub max_sub_layers_minus1: u8,
-        /// Frame rate as a rational number, or absent when VUI timing is absent.
+        /// Frame rate as a rational number: `vui_time_scale /
+        /// vui_num_units_in_tick` as signalled (not reduced); when
+        /// `vui_poc_proportional_to_timing_flag` signals more than one clock
+        /// tick per POC step, that pair divided by
+        /// `vui_num_ticks_poc_diff_one_minus1 + 1` and reduced (H.265 §E.3.1;
+        /// this takes POC to advance by 1 per output picture). Absent when VUI
+        /// timing is absent, when either timing field is zero, and when the
+        /// reduced pair does not fit 32 bits.
         pub frame_rate: Option<Rational>,
         /// VUI colour info, or absent when the VUI or
         /// `video_signal_type_present_flag` is absent.

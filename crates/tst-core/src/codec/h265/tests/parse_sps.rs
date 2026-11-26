@@ -2,7 +2,8 @@
 
 use crate::codec::h265::parse_sps;
 use crate::codec::{
-    ChromaFormat, CodecParseError, ColourPrimaries, MatrixCoefficients, TransferCharacteristics,
+    ChromaFormat, CodecParseError, ColourPrimaries, MatrixCoefficients, Rational,
+    TransferCharacteristics,
 };
 use crate::test_prelude::*;
 
@@ -467,12 +468,30 @@ fn build_synthetic_sps_with_vui_opts(
 
 /// The options of [`build_synthetic_sps_with`]; the default is the fixture
 /// [`build_synthetic_sps`] describes.
-#[derive(Default)]
 pub(super) struct SynthSpsOpts {
     /// `Some((top, bottom))`: `chroma_loc_info_present_flag = 1`.
     pub chroma_loc: Option<(u32, u32)>,
     /// 4:4:4 with `separate_colour_plane_flag = 1` instead of 4:2:0.
     pub separate_colour_planes: bool,
+    /// `vui_num_units_in_tick`.
+    pub num_units_in_tick: u32,
+    /// `vui_time_scale`.
+    pub time_scale: u32,
+    /// `Some(k)`: `vui_poc_proportional_to_timing_flag = 1` with
+    /// `vui_num_ticks_poc_diff_one_minus1 = k`.
+    pub poc_ticks_minus1: Option<u32>,
+}
+
+impl Default for SynthSpsOpts {
+    fn default() -> Self {
+        Self {
+            chroma_loc: None,
+            separate_colour_planes: false,
+            num_units_in_tick: 1001,
+            time_scale: 30000,
+            poc_ticks_minus1: None,
+        }
+    }
 }
 
 /// The synthetic SPS of [`build_synthetic_sps`] with the given options. The
@@ -573,9 +592,15 @@ pub(super) fn build_synthetic_sps_with(
     bw.write(0, 1); // default_display_window_flag = 0
     // vui_timing_info_present_flag = 1 so frame_rate is emitted.
     bw.write(1, 1);
-    bw.write(1001, 32); // num_units_in_tick = 1001
-    bw.write(30000, 32); // time_scale = 30000 → ~29.97 fps
-    bw.write(0, 1); // vui_poc_proportional_to_timing_flag = 0
+    bw.write(opts.num_units_in_tick.into(), 32); // default 1001
+    bw.write(opts.time_scale.into(), 32); // default 30000 → ~29.97 fps
+    match opts.poc_ticks_minus1 {
+        Some(k) => {
+            bw.write(1, 1); // vui_poc_proportional_to_timing_flag = 1
+            bw.write_ue(k); // vui_num_ticks_poc_diff_one_minus1
+        }
+        None => bw.write(0, 1), // vui_poc_proportional_to_timing_flag = 0
+    }
 
     bw.bytes
 }
@@ -926,4 +951,62 @@ fn parse_sps_walks_past_num_st_rps_and_populates_vui() {
         "VUI timing populated after RPS walk"
     );
     assert!(sps.color.is_some(), "VUI color populated after RPS walk");
+}
+
+/// The frame rate of a synthetic SPS with the given VUI timing fields.
+fn frame_rate_with(
+    num_units_in_tick: u32,
+    time_scale: u32,
+    poc_ticks_minus1: Option<u32>,
+) -> Option<Rational> {
+    let rbsp = build_synthetic_sps_with(
+        |bw| bw.write_ue(0),
+        SynthSpsOpts {
+            num_units_in_tick,
+            time_scale,
+            poc_ticks_minus1,
+            ..Default::default()
+        },
+    );
+    parse_sps(&escape_emulation(&rbsp)).unwrap().frame_rate
+}
+
+/// H.265 §E.3.1: with `vui_poc_proportional_to_timing_flag`, a POC step of 1
+/// lasts `vui_num_ticks_poc_diff_one_minus1 + 1` clock ticks.
+#[test]
+fn frame_rate_divides_by_ticks_per_poc_step() {
+    assert_eq!(
+        frame_rate_with(1001, 60000, Some(1)),
+        Some(Rational {
+            num: 30000,
+            den: 1001
+        })
+    );
+}
+
+/// One tick per POC step, and no POC-proportional timing at all, keep the
+/// clock-tick pair as signalled: not reduced.
+#[test]
+fn one_tick_per_poc_step_keeps_the_unreduced_pair() {
+    let unreduced = Some(Rational {
+        num: 60000,
+        den: 2002,
+    });
+    assert_eq!(frame_rate_with(2002, 60000, Some(0)), unreduced);
+    assert_eq!(frame_rate_with(2002, 60000, None), unreduced);
+}
+
+/// §E.3.1: `vui_time_scale` shall be greater than 0; a zero clock gives no rate,
+/// with or without a multiplier.
+#[test]
+fn a_zero_time_scale_gives_no_frame_rate() {
+    assert_eq!(frame_rate_with(1001, 0, None), None);
+    assert_eq!(frame_rate_with(1001, 0, Some(1)), None);
+}
+
+/// `1001 * 2^23` is coprime with 30001 and above 2^32: no 32-bit pair holds the
+/// rate, so none is reported (never a truncated one).
+#[test]
+fn a_rate_that_does_not_fit_after_reduction_is_none() {
+    assert_eq!(frame_rate_with(1001, 30001, Some((1 << 23) - 1)), None);
 }

@@ -6,7 +6,7 @@ use crate::codec::CodecParseError;
 use crate::codec::bitreader::BitReader;
 use crate::codec::{
     ColorInfo, ColourPrimaries, MatrixCoefficients, Rational, TransferCharacteristics,
-    aspect_ratio_idc_to_sar, read_h273_colour,
+    aspect_ratio_idc_to_sar, read_h273_colour, reduced_rational,
 };
 
 pub(crate) struct VuiOut {
@@ -82,12 +82,6 @@ pub(crate) fn parse(
     if vui_timing_info_present_flag {
         let num_units_in_tick = br.read_u(32)?;
         let time_scale = br.read_u(32)?;
-        if num_units_in_tick > 0 {
-            frame_rate = Some(Rational {
-                num: time_scale,
-                den: num_units_in_tick,
-            });
-        }
         // PARTIAL-PARSE NOTE: this function does NOT read beyond the
         // vui_timing_info block (no vui_hrd_parameters, no bitstream_restriction).
         // That is intentional — only frame-rate and color metadata are surfaced.
@@ -96,16 +90,34 @@ pub(crate) fn parse(
         // bit cursor. If a future change adds post-VUI reads to parse_sps, this
         // parser must be extended to consume the skipped fields first.
         //
-        // Within the timing block, consume the two trailing fields
+        // Within the timing block, the two trailing fields
         // (vui_poc_proportional_to_timing_flag and the conditional
-        // vui_num_ticks_poc_diff_one_minus1) for consistency with the
-        // spec layout — omitting them would leave the cursor inside the
-        // timing block, which is relevant if the partial-parse scope above
-        // is ever widened.
+        // vui_num_ticks_poc_diff_one_minus1) are read: the rate needs them.
         let poc_proportional = br.read_bool()?; // vui_poc_proportional_to_timing_flag
-        if poc_proportional {
-            let _ = br.read_ue()?; // vui_num_ticks_poc_diff_one_minus1
-        }
+        let ticks_per_poc_step_minus1 = if poc_proportional {
+            br.read_ue()? // vui_num_ticks_poc_diff_one_minus1
+        } else {
+            0
+        };
+        // H.265 §E.3.1: a clock tick lasts num_units_in_tick / time_scale
+        // seconds, and with POC-proportional timing a POC step of 1 lasts
+        // ticks_per_poc_step_minus1 + 1 ticks. The rate below takes one POC
+        // step per output picture. time_scale shall be greater than 0.
+        frame_rate = if num_units_in_tick == 0 || time_scale == 0 {
+            None
+        } else if ticks_per_poc_step_minus1 == 0 {
+            // One tick per picture: the signalled pair, not reduced.
+            Some(Rational {
+                num: time_scale,
+                den: num_units_in_tick,
+            })
+        } else {
+            // At most (2^32 - 1) * 2^32: no u64 overflow.
+            reduced_rational(
+                u64::from(time_scale),
+                u64::from(num_units_in_tick) * (u64::from(ticks_per_poc_step_minus1) + 1),
+            )
+        };
     }
 
     let color = if video_signal_type_present_flag
