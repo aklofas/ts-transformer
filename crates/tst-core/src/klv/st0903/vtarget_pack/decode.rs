@@ -109,6 +109,17 @@ fn read_pack_inner(bytes: &[u8], strict: bool) -> Result<(VTargetPack, usize), V
         cursor = &cursor[declared_len..];
         consumed += declared_len;
 
+        // ST 0107.4-17: a zero-length item means "value unknown". It is an
+        // occurrence of its tag like any other, so as the last one it leaves
+        // the field unset. Tested here, where the length is read: in the
+        // field reader the test costs the VMTI decode workload
+        // (`benches/ir.rs`) six instructions an item. An unknown item of no
+        // bytes goes on to `pack.unknown`.
+        if declared_len == 0 && pack_lookup(tag_byte).is_some() {
+            unset(&mut pack, tag_byte);
+            continue;
+        }
+
         if let Err(e) = decode_field(tag, value, &mut pack, strict) {
             if strict {
                 return Err(e);
@@ -201,14 +212,6 @@ fn decode_field(
         });
         return Ok(());
     };
-
-    // ST 0107.4-17: a zero-length item means "value unknown". It is an
-    // occurrence of its tag like any other, so as the last one it leaves
-    // the field unset.
-    if value.is_empty() {
-        unset(pack, tag_u8);
-        return Ok(());
-    }
 
     match spec.encoding {
         PackEncoding::U8 => {
