@@ -256,11 +256,19 @@ impl LoasFraming {
 /// candidate and makes the next boundary a missing syncword, so one pass is
 /// not trusted.
 ///
-/// Every payload byte since the position was lost is counted. While no
-/// provisional position is held, the stretch is judged not LOAS, with one
-/// `MissingSyncword` and nothing more until the search ends, when the count
-/// passes one record length with no candidate pending, or passes
-/// [`LOAS_UNSYNCED_BOUND`] whatever is pending.
+/// Every payload byte since the position was lost is counted, and the
+/// stretch is judged not LOAS, with one `MissingSyncword` and nothing more
+/// until the search ends, when the count passes one record length with no
+/// candidate pending, or passes [`LOAS_UNSYNCED_BOUND`] whatever is pending.
+/// A provisional position defers the judgement until its next boundary (a
+/// sound PES longer than the bound may hold the record a join found), but
+/// only until the first provisional position of the stretch has failed:
+/// from then the bound applies whatever is held, so deferring cannot be
+/// renewed. Whatever the stream, a stretch that no candidate confirms is
+/// therefore flagged by the PES that takes the count past the bound, or, if
+/// a provisional position is pending then and none has failed, by the PES
+/// that holds the next boundary of the earliest one, which lies less than
+/// one record length (8 194 bytes) past the PES that made it provisional.
 ///
 /// Work per PES is linear in its length: the walks of one PES share a set of
 /// the boundaries already walked, and a walk that reaches one ends as the
@@ -274,6 +282,9 @@ struct LoasSearch {
     unsynced_bytes: usize,
     /// This stretch's issue was raised.
     raised: bool,
+    /// A provisional position failed in this stretch: no candidate defers
+    /// the judgement any more.
+    provisional_failed: bool,
     /// Record boundaries walked in the current PES, one bit per payload
     /// offset; kept to reuse the allocation.
     walked: Vec<u64>,
@@ -286,6 +297,7 @@ impl Default for LoasSearch {
             held_len: 0,
             unsynced_bytes: 0,
             raised: false,
+            provisional_failed: false,
             walked: Vec::new(),
         }
     }
@@ -365,7 +377,8 @@ impl LoasSearch {
         }
         self.unsynced_bytes = self.unsynced_bytes.saturating_add(payload.len());
         let held = &self.held[..self.held_len];
-        if self.raised || held.iter().any(|c| c.passed) {
+        let deferred = !self.provisional_failed && held.iter().any(|c| c.passed);
+        if self.raised || deferred {
             return LoasSettle::Unsynced;
         }
         let not_loas = (self.unsynced_bytes > MAX_LOAS_RECORD_BYTES && held.is_empty())
@@ -412,12 +425,15 @@ impl LoasSearch {
                     });
                     continue;
                 }
-                Err(_) => continue,
+                Err(_) => {
+                    self.provisional_failed |= c.passed;
+                    continue;
+                }
             };
             match walk_unwalked(payload, boundary, walked, steps) {
                 Walked::Ends(carry) if c.passed => return Some(carry),
                 Walked::Ends(carry) => self.hold(LoasCandidate::passed(carry)),
-                Walked::Refuted | Walked::Joined => {}
+                Walked::Refuted | Walked::Joined => self.provisional_failed |= c.passed,
             }
         }
         for at in 0..len.min(MAX_LOAS_RECORD_BYTES) {

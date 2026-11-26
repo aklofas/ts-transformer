@@ -998,6 +998,41 @@ fn a_pid_whose_pes_all_end_in_a_lone_first_header_byte_is_flagged_once() {
     assert_eq!(latm_issue_pes(&events), [246], "{events:?}");
 }
 
+/// Not LOAS, but every 100-byte PES ends in an empty record (`56 E0 00`, or
+/// `56 E0 00 56` with a header begun after it) that passes as a provisional
+/// position and fails at the next PES. Once a provisional position has
+/// failed, the hard bound applies whatever is held: flagged once, by the PES
+/// that takes the count past 24 585 bytes (PES 246).
+#[test]
+fn a_provisional_position_renewed_at_every_pes_end_does_not_keep_a_pid_unflagged() {
+    for tail in [&[0x56, 0xE0, 0x00][..], &[0x56, 0xE0, 0x00, 0x56][..]] {
+        let mut pes = vec![0u8; 100];
+        pes[100 - tail.len()..].copy_from_slice(tail);
+        let events = latm_pes_events(&vec![pes; 2000]);
+        assert_eq!(latm_issue_pes(&events), [246], "{tail:02X?}");
+    }
+}
+
+/// Not LOAS: one 6-byte pattern every 80th PES of 100 zero bytes (an empty
+/// record, then a header that passes at its boundary and owes 8 107 bytes)
+/// keeps a provisional position pending most of the time; the first one
+/// fails 82 PES on, and from then the hard bound applies: flagged once, by
+/// PES 246.
+#[test]
+fn a_provisional_position_renewed_every_eightieth_pes_does_not_keep_a_pid_unflagged() {
+    let payloads: Vec<Vec<u8>> = (0..2000)
+        .map(|i| {
+            let mut pes = vec![0u8; 100];
+            if i % 80 == 0 {
+                pes[10..16].copy_from_slice(&[0x56, 0xE0, 0x00, 0x56, 0xFF, 0xFF]);
+            }
+            pes
+        })
+        .collect();
+    let events = latm_pes_events(&payloads);
+    assert_eq!(latm_issue_pes(&events), [246]);
+}
+
 /// Without any candidate the PID is flagged as soon as the bytes counted
 /// pass one record length (8 194): PES 82 of 100 bytes.
 #[test]
