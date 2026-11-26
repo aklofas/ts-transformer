@@ -355,8 +355,8 @@ impl super::demuxer::Demuxer {
                     // be re-inserted with the identical value — skipping the
                     // tail is a no-op for it.)
                     //
-                    // Lost bytes leave the LOAS record position unknown;
-                    // `latm_unsynced_bytes` stays, a gap is more evidence of trouble.
+                    // Lost bytes leave the LOAS record position unknown, and
+                    // the resync starts again (`PidState::forget_latm_position`).
                     state.forget_latm_position();
                     let stream = state.stream_id(pkt.pid);
                     self.record_continuity_jump(stream, expected, pkt.continuity_counter);
@@ -391,8 +391,8 @@ impl super::demuxer::Demuxer {
             // consumers, so emitting both would double-count.
             if expected != pkt.continuity_counter && !pkt.discontinuity_indicator {
                 jump = Some(expected);
-                // Lost bytes leave the LOAS record position unknown;
-                // `latm_unsynced_bytes` stays, a gap is more evidence of trouble.
+                // Lost bytes leave the LOAS record position unknown, and the
+                // resync starts again (`PidState::forget_latm_position`).
                 state.forget_latm_position();
             }
         } else {

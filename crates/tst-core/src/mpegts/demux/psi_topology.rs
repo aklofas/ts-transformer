@@ -1762,11 +1762,11 @@ mod tests {
         );
     }
 
-    // The invariant the four teardown fixes restored by hand: once a PMT
-    // retires a PID, NOTHING about it survives — no `PidState` entry and no
-    // reassembler buffer.
+    // Once a PMT retires a PID, only its lifetime counters survive (until
+    // `reset_stats`): every other `PidState` field is cleared and no
+    // reassembler buffer is left.
     #[test]
-    fn pmt_retiring_a_pid_leaves_no_entry_anywhere() {
+    fn pmt_retiring_a_pid_leaves_only_its_counters() {
         let pat_pkt = wrap_section_in_ts_packet(0x0000, &build_pat_section(1, 0, &[(1, 0x1000)]));
         let pmt_v0 = build_pmt_section(1, 0x0101, 0, &[(0x1B, 0x0101), (0x03, 0x0102)]);
         let mut demux = Demuxer::new();

@@ -152,7 +152,11 @@ pub struct Demuxer {
     /// Per-PID Metadata AU cell reassembler. Accumulates fragmented sync-
     /// metadata cells (H.222.0 §2.12.4.2 First/Middle/Last) into complete
     /// AUs. Single-cell (`Complete`) AUs pass through unchanged. Cleared
-    /// wholesale on [`Self::reset_sync`] and on PMT version change.
+    /// wholesale on [`Self::reset_sync`]; per PID when a PMT retires or
+    /// retypes that PID or its program leaves the PAT, once the PES the PID
+    /// holds was handed out as at [`Self::flush`]: an AU still incomplete
+    /// then is dropped without an issue. A version change that keeps a PID
+    /// keeps its AU in progress.
     pub(super) au_reassembler: crate::mpegts::demux::au_reassemble::AuCellReassembler,
     /// Multi-section PAT reassembler. Buffers sections of one
     /// PAT table by `(tsid, version, current_next)` key and fires atomically

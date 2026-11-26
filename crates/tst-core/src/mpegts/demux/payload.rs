@@ -718,9 +718,10 @@ pub(crate) fn iter_au_cells_with_end(
 /// * `Conformant` — `data_identifier == 0x20`, `subtitle_stream_id == 0x00`,
 ///   end marker present. Strip and emit.
 /// * `NonConformantDataId` — envelope is well-formed (stream_id + marker
-///   match) but `data_identifier` falls in the legacy permissive carriage
-///   range (`0x20..=0x3F | 0x70..=0x7F` per EN 300 743 §7.1) other than the
-///   exact `0x20` required by §6.2 Table 3. Stripping still produces
+///   match) but `data_identifier` is not the `0x20` §6.2 Table 3 requires
+///   while it falls in `0x20..=0x3F | 0x70..=0x7F`, this demuxer's own
+///   tolerance window for envelopes whose shape is otherwise right (no
+///   clause of EN 300 743 gives those ranges). Stripping still produces
 ///   sensible segment bytes; caller decides whether to emit a sample.
 /// * `Malformed` — envelope shape doesn't match (too short, bad stream_id,
 ///   missing end marker, or data_identifier completely outside the
@@ -730,9 +731,10 @@ pub(crate) fn iter_au_cells_with_end(
 pub(crate) enum DvbSubStripResult<'a> {
     /// Conformant envelope per EN 300 743 §6.2 Table 3.
     Conformant(&'a [u8]),
-    /// Envelope well-formed but `data_identifier != 0x20`. The legacy
-    /// permissive range (`0x20..=0x3F | 0x70..=0x7F`) is accepted here so
-    /// the caller can choose strict reject vs. lenient pass-through.
+    /// Envelope well-formed but `data_identifier != 0x20`. The tolerance
+    /// window (`0x20..=0x3F | 0x70..=0x7F`, this demuxer's own, from no
+    /// clause) is accepted here so the caller can choose strict reject vs.
+    /// lenient pass-through.
     NonConformantDataId { observed: u8, stripped: &'a [u8] },
     /// Envelope shape invalid — caller should fall back to passthrough.
     Malformed,
@@ -1157,9 +1159,9 @@ mod tests {
 
     #[test]
     fn strip_dvb_sub_envelope_hd_range_is_non_conformant_data_id() {
-        // 0x70..=0x7F is the legacy permissive HD-subtitle range per
-        // EN 300 743 §7.1, but §6.2 Table 3 binds DVB-subtitle to exactly
-        // 0x20. Surface as NonConformantDataId so caller (strict vs lenient)
+        // 0x70..=0x7F is inside this demuxer's tolerance window (from no
+        // clause), but §6.2 Table 3 binds DVB-subtitle to exactly 0x20.
+        // Surface as NonConformantDataId so caller (strict vs lenient)
         // decides whether to emit the sample.
         let wrapped = [0x70, 0x00, 0x0F, 0x10, 0xFF];
         assert_eq!(
@@ -1196,7 +1198,7 @@ mod tests {
     #[test]
     fn strip_dvb_sub_envelope_rejects_bad_data_identifier() {
         // 0x40 is outside both 0x20..=0x3F and 0x70..=0x7F — Malformed (not
-        // even in the legacy permissive range).
+        // even in the tolerance window).
         assert_eq!(
             strip_dvb_sub_envelope(&[0x40, 0x00, 0xAB, 0xFF]),
             DvbSubStripResult::Malformed

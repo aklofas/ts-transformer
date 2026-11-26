@@ -2,9 +2,19 @@
 //!
 //! Everything the demuxer remembers about one PID lives in one [`PidState`]
 //! entry of `Demuxer::pid_state`. A PID that leaves the topology is therefore
-//! removed with ONE `remove` (plus the reassembler's own buffer, which is a
-//! standalone machine) instead of a hand-kept list of maps, so a new per-PID
-//! field cannot be forgotten at teardown.
+//! retired in ONE place ([`PidState::retire`]): everything but its lifetime
+//! counters is dropped, and the entry is removed once it is vacant
+//! ([`PidState::is_vacant`]); the PES and AU cell reassemblers drop their
+//! own buffers for it. One map instead of a hand-kept list of maps, so a new
+//! per-PID field cannot be forgotten at teardown.
+//!
+//! An AAC-LATM PID's LOAS framing state is one `LoasFraming`
+//! (`codec::aac::latm`): the record position while it is known, or the
+//! resync that looks for it (at most 16 syncword candidates and a count of
+//! the payload bytes since the position was lost), boxed and present only
+//! while the position is unknown. A loss (a continuity gap, a damaged or
+//! dropped PES, a signalled discontinuity), `reset_sync`, a retirement and a
+//! change of stream type drop it, so the resync starts again from nothing.
 //!
 //! PSI topology changes are reported as a [`TopologyDiff`]; the coordinator
 //! applies it in one place (`Demuxer::apply_topology_diff`).

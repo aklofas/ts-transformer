@@ -227,7 +227,8 @@ impl super::demuxer::Demuxer {
                 ReassemblyOutcome::Overflow { pid } => {
                     // A cap drop loses bytes without a continuity gap, so the
                     // LOAS record position is unknown (ISO/IEC 14496-3
-                    // §1.7.2); `latm_unsynced_bytes` stays, as for the other losses.
+                    // §1.7.2) and the resync starts again, as for the other
+                    // losses (`PidState::forget_latm_position`).
                     if let Some(state) = self.pid_state.get_mut(&pid) {
                         state.forget_latm_position();
                     }
@@ -547,8 +548,9 @@ impl super::demuxer::Demuxer {
             // No events to stamp: the returned timestamps go unused.
             let _ = self.record_pes_timing(&pes, stream);
         }
-        // Its payload is not walked, so the LOAS record position is lost.
-        // `latm_unsynced_bytes` stays: lost bytes are more evidence of trouble.
+        // Its payload is not walked: lost bytes leave the LOAS record
+        // position unknown, and the resync starts again
+        // (`PidState::forget_latm_position`).
         if let Some(state) = self.pid_state.get_mut(&pes.pid) {
             state.forget_latm_position();
         }

@@ -18,8 +18,16 @@ pub use crate::mpegts::demux::ts::{AdaptationFieldKind, PcrMalformedKind};
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum DemuxEvent {
-    /// PSI topology — emitted on PAT/PMT discovery and on each PSI
-    /// version-bump. Carries declared linkage info with provenance.
+    /// PSI topology: emitted for a program's first PMT and for every later
+    /// PMT whose version or content differs from the applied one; a source
+    /// that changes a PMT without incrementing its version is followed all
+    /// the same. A program that the PAT drops and lists again or moves to
+    /// another PMT PID, and every program after a new `transport_stream_id`,
+    /// starts again from its first PMT; a PAT emits no event of its own.
+    /// Each PID the change
+    /// takes out of a program, or whose stream type it changes, hands out
+    /// the PES it held before this event. Carries declared linkage info with
+    /// provenance.
     ProgramMap(ProgramMap),
 
     /// Generic elementary-stream sample. Covers video today; reserves
@@ -440,8 +448,34 @@ pub enum NonConformantIssue {
     /// `DemuxException.Kind::UNEXPECTED_EOF` in the Python binding).
     #[error("PUSI packet arrived mid-PES")]
     PusiMidPes,
-    /// PES header parse failed. Lenient mode: receiver continues parsing
-    /// subsequent packets. Strict modes: escalates to `DemuxError`.
+    /// A PES that arrived damaged, whose header does not parse, or whose
+    /// subtitle data field breaks its standard. `reason` says which: a
+    /// continuity gap inside the PES or a bounded PES that ended short of
+    /// `PES_packet_length` (damage), what failed in the header, or a DVB
+    /// subtitle envelope (EN 300 743 §6.2) or teletext data field
+    /// (EN 300 472) of the wrong shape.
+    ///
+    /// What each [`StrictMode`](crate::mpegts::demux::StrictMode) does with
+    /// it inside `feed` and `feed_aligned`:
+    /// - `Off`: queued as this event. A damaged PES is still delivered, right
+    ///   after it, with the bytes that arrived; a subtitle PES is delivered
+    ///   as it arrived; a PES whose header does not parse is lost.
+    /// - `DescriptorsOnly` and `TimingOnly` do not reject the issue and queue
+    ///   it as this event, but drop a damaged PES's events (its timing still
+    ///   counts); the other two kinds are as under `Off`.
+    /// - `Full`: damage and a header that does not parse make the call
+    ///   return [`DemuxError::MalformedPes`](crate::error::DemuxError::MalformedPes),
+    ///   and no event is queued for it; a damaged PES's events are dropped
+    ///   and its timing kept. A subtitle data field of the wrong shape is
+    ///   queued as this event, its sample is dropped and the call returns
+    ///   `DemuxError::StrictRejection`. Both errors are resumable.
+    ///
+    /// At [`Demuxer::flush`](crate::mpegts::demux::Demuxer::flush), and for
+    /// the PES a PID that leaves a program hands out, damage is queued as
+    /// this event in every mode and the PES is delivered or dropped as
+    /// above (under `Full` the `feed` that carried the change returns it as
+    /// `DemuxError::StrictRejection`; `flush` returns nothing); a PES whose
+    /// header does not parse is dropped there without it.
     #[error("malformed PES on PID 0x{pid:04X}: {reason}")]
     MalformedPes { pid: u16, reason: &'static str },
     /// A PMT introduced a stream PID that's already bound to a different
@@ -541,10 +575,12 @@ pub enum NonConformantIssue {
 
     /// DVB-subtitle PES_data_field carries a `data_identifier` byte other
     /// than `0x20`. Per ETSI EN 300 743 §6.2 Table 3 the binding for
-    /// DVB subtitling streams is exactly `0x20`. The broader range
-    /// `0x20..=0x3F | 0x70..=0x7F` cited by EN 300 743 §7.1 covers
-    /// PES_data_field carriage in general (with extensions for future use);
-    /// for DVB-subtitle PIDs specifically, only `0x20` is conformant.
+    /// DVB subtitling streams is exactly `0x20`, the only conformant value.
+    /// This issue is raised for a byte in `0x20..=0x3F | 0x70..=0x7F`, a
+    /// tolerance window of this demuxer for envelopes whose shape is
+    /// otherwise right; no clause of EN 300 743 gives those ranges. A byte
+    /// outside them makes the envelope malformed: [`Self::MalformedPes`] is
+    /// raised instead.
     ///
     /// `observed` is the byte found at offset 0 of the PES payload — useful
     /// for telemetry (e.g., distinguishing "off-by-one in caller's encoder"
@@ -719,7 +755,7 @@ pub enum NonConformantIssue {
     /// `dropped_bytes` is the cumulative inner-byte count discarded
     /// (useful for telemetry — quantifies what was lost).
     ///
-    /// On the happy path (reassembly succeeded → `DemuxEvent::Sample`
+    /// On the happy path (reassembly succeeded → `DemuxEvent::Metadata`
     /// with `MetadataKind::KlvSyncAuCell { was_reassembled: true, .. }`)
     /// this event is NOT emitted.
     #[error(fmt = fmt_multi_cell_au)]
@@ -1057,7 +1093,15 @@ pub enum DiscontinuityKind {
     PesOversize { pid: u16 },
     /// Aggregate PES-reassembly cap exceeded across all PIDs.
     PesTotalOversize,
-    /// `discontinuity_indicator` set in the adaptation field.
+    /// `discontinuity_indicator` set in the adaptation field. Reported for
+    /// each packet whose flag is set (a spec duplicate of a payload packet
+    /// excepted): on a PID that carries a stream, under that stream; on a
+    /// PID that carries no stream but that a program declares as its
+    /// `PCR_PID` (H.222.0 §2.4.3.5: the program's next PCR samples a new
+    /// time base), under an anonymous stream id with that PID and the
+    /// lowest-numbered program that declares it, the identity a
+    /// `PcrAnomaly` on that PID carries. A flag on a PID no program
+    /// declares, and on the null PID 0x1FFF, is not reported.
     AdaptationFieldFlag,
 }
 
