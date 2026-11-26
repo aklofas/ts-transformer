@@ -5,7 +5,7 @@ use crate::error::{KlvDecodeError, KlvFieldError};
 use crate::klv::pack::OwnedRawField;
 use crate::klv::st0903::model::VmtiLs;
 use crate::klv::st0903::tags::{Encoding, TAGS, lookup};
-use crate::klv::st0903::vtarget_pack;
+use crate::klv::st0903::{rules, vtarget_pack};
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
@@ -344,6 +344,13 @@ fn decode_vtarget_series(
 /// A zero-length item means "unknown" (ST 0107.4-17): accepted for an
 /// optional item, and a required item sent so is missing.
 ///
+/// **Record rules** (as the strict encoders apply them): no zero where an
+/// item's range starts at one, a pixel number needs the frame width, a
+/// row needs its column and the reverse, an Active-Moving or
+/// Active-Stopped target needs a position; each refusal is
+/// [`KlvDecodeError::ComplianceViolation`] at the pack's or the item's
+/// offset.
+///
 /// Unknown tags are still preserved in [`VmtiLs::unknown`] per
 /// ST 0107.5 §6 future-proof skip rule (strict mode is about
 /// codepoint legality, not future-spec rejection).
@@ -390,6 +397,10 @@ pub fn decode_strict(bytes: &[u8]) -> Result<VmtiLs, KlvDecodeError> {
     // also counts a zero-length one, for the duplicate check.
     let mut present = [false; 256];
     let mut seen_other: hashbrown::HashSet<u32> = hashbrown::HashSet::new();
+    // Where the top-level items a record rule can name start (4, 8, 9,
+    // 13), and where each pack of the series starts.
+    let mut at = [0usize; 14];
+    let mut pack_offsets = Vec::new();
     let mut cursor = bytes;
     // `offset` tracks the start of the current item in `bytes` so
     // framing errors and duplicate-tag errors surface a useful
@@ -456,6 +467,9 @@ pub fn decode_strict(bytes: &[u8]) -> Result<VmtiLs, KlvDecodeError> {
             continue;
         }
         present[tag as usize] = true;
+        if let Some(slot) = at.get_mut(tag as usize) {
+            *slot = item_start;
+        }
 
         match spec.encoding {
             Encoding::U16Be => {
@@ -569,13 +583,20 @@ pub fn decode_strict(bytes: &[u8]) -> Result<VmtiLs, KlvDecodeError> {
                     // `item_start + consumed` = buffer offset of `value[0]`,
                     // so series-internal errors report buffer-absolute
                     // offsets.
-                    ls.targets = decode_vtarget_series_strict(value, item_start + consumed)?;
+                    (ls.targets, pack_offsets) =
+                        decode_vtarget_series_strict(value, item_start + consumed)?;
                 }
                 102 => ls.algorithm_series = Some(value.to_vec()),
                 103 => ls.ontology_series = Some(value.to_vec()),
                 _ => unreachable!("RawBytes dispatch missing tag {tag}"),
             },
         }
+    }
+
+    // The record rules, after every item's own checks and before the
+    // required items.
+    if let Some(v) = rules::first_violation(&ls) {
+        return Err(compliance_violation(v, &at, &pack_offsets));
     }
 
     // Required-tag validation: required = {4, 6}.
@@ -588,19 +609,42 @@ pub fn decode_strict(bytes: &[u8]) -> Result<VmtiLs, KlvDecodeError> {
     Ok(ls)
 }
 
+/// The strict decoders' error for a record rule, at the start of the pack
+/// or the top-level item it names.
+fn compliance_violation(
+    v: rules::Violation,
+    at: &[usize; 14],
+    pack_offsets: &[usize],
+) -> KlvDecodeError {
+    let offset = match v.target {
+        Some(i) => pack_offsets[i],
+        None => at[v.tag as usize],
+    };
+    let reason = match v.rule {
+        rules::Rule::Zero { .. } => rules::ZERO,
+        rules::Rule::Relation(reason) => reason,
+    };
+    KlvDecodeError::ComplianceViolation {
+        tag: v.tag,
+        offset,
+        reason,
+    }
+}
+
 /// Strict variant of [`decode_vtarget_series`]: framing failures and
 /// pack-level malformations abort with an `Err`. The pack-level error
 /// is routed via the typed [`KlvDecodeError::St0903InvalidVTargetPack`]
 /// arm carrying the underlying [`VTargetPackError`]. `base` is the
 /// buffer offset of `series_bytes[0]`; every offset this function
-/// surfaces is buffer-absolute.
+/// surfaces is buffer-absolute. Returns the packs and where each starts.
 fn decode_vtarget_series_strict(
     series_bytes: &[u8],
     base: usize,
-) -> Result<Vec<vtarget_pack::VTargetPack>, KlvDecodeError> {
+) -> Result<(Vec<vtarget_pack::VTargetPack>, Vec<usize>), KlvDecodeError> {
     use crate::klv::length::{read_ber_strict, rebase_offset};
 
     let mut targets = Vec::new();
+    let mut offsets = Vec::new();
     // ST 0903.6-126: a targetId once per series. A set, so a long series
     // costs no scan per pack.
     let mut ids = alloc::collections::BTreeSet::new();
@@ -638,7 +682,8 @@ fn decode_vtarget_series_strict(
             });
         }
         targets.push(pack);
+        offsets.push(offset);
         offset += pack_len;
     }
-    Ok(targets)
+    Ok((targets, offsets))
 }

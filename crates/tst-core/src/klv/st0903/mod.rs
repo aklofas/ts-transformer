@@ -112,6 +112,8 @@ pub(crate) mod vtarget_pack;
 #[cfg(test)]
 mod tests;
 
+mod rules;
+
 pub use decode::{decode, decode_strict};
 pub use encode::{
     encode, encode_standalone, encode_standalone_strict_compliance, encode_strict_compliance,

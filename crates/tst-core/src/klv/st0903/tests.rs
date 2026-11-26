@@ -892,15 +892,24 @@ fn encode_allows_truly_unknown_tag_in_vtargetpack_unknown() {
 // encode_strict_compliance + encode_standalone_strict_compliance tests.
 // ------------------------------------------------------------------
 
-/// Helper: a VmtiLs satisfying standalone-required fields (tags 2+4+6+11+12+13).
+/// An MIIS Core Identifier `st1204::decode` accepts (34 bytes).
+const CORE_ID: [u8; 34] = [
+    0x01, 0x70, 0xF5, 0x92, 0xF0, 0x23, 0x73, 0x36, 0x4A, 0xF8, 0xAA, 0x91, 0x62, 0xC0, 0x0F, 0x2E,
+    0xB2, 0xDA, 0x16, 0xB7, 0x43, 0x41, 0x00, 0x08, 0x41, 0xA0, 0xBE, 0x36, 0x5B, 0x5A, 0xB9, 0x6A,
+    0x36, 0x45,
+];
+
+/// Helper: a VmtiLs satisfying standalone-required fields (tags 2+4+6+11+12+13),
+/// with the frame width its pixel number needs (ST 0903.6-121).
 fn full_standalone_ls() -> VmtiLs {
     VmtiLs {
         precision_time_stamp: Some(1_700_000_000_000_000),
         version_number: Some(6),
         num_targets_reported: Some(1),
+        frame_width: Some(1920),
         horizontal_fov: Some(45.0),
         vertical_fov: Some(30.0),
-        miis_id: Some(vec![0x11, 0x22, 0x33]),
+        miis_id: Some(CORE_ID.to_vec()),
         targets: vec![VTargetPack {
             target_id: 1,
             centroid_pixel: Some(100),
@@ -1205,6 +1214,7 @@ fn strict_encode_mirrors_the_vtarget_u8_ranges() {
         let mut pack = VTargetPack {
             target_id: 1,
             centroid_pixel: Some(100),
+            target_location: Some(vec![0x01]),
             ..Default::default()
         };
         match tag {
@@ -1428,7 +1438,7 @@ fn vtarget_strict_refuses_a_wide_or_padded_target_id() {
     assert_eq!(decode(&padded).unwrap().targets[0].target_id, 1);
     // Nine bytes, no padding: the largest id the set can carry.
     let nine = [
-        0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x7F, 0x01, 0x01, 0x05,
+        0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x7F, 0x04, 0x01, 0x05,
     ];
     let ls = decode_strict(&with_packs(&[&nine])).unwrap();
     assert_eq!(ls.targets[0].target_id, (1 << 63) - 1);
@@ -1553,4 +1563,266 @@ fn a_decoded_target_id_of_2_pow_63_is_refused_on_reencode_and_the_original_bytes
     assert_eq!(decode(&bytes).unwrap(), ls);
     ls.targets.clear();
     encode_to_vec(&ls).expect("without the target the record re-encodes");
+}
+
+// ------------------------------------------------------------------
+// The relational rules, in both strict encoders and `decode_strict`.
+// ------------------------------------------------------------------
+
+/// `full_standalone_ls` with one pack built by `f`.
+fn with_target(f: impl FnOnce(&mut VTargetPack)) -> VmtiLs {
+    let mut pack = VTargetPack {
+        target_id: 1,
+        ..Default::default()
+    };
+    f(&mut pack);
+    VmtiLs {
+        targets: vec![pack],
+        ..full_standalone_ls()
+    }
+}
+
+/// Both strict encoders refuse `ls` with `InvalidFieldValue { tag }`, and
+/// `decode_strict` refuses what the ordinary encoder writes of it with
+/// `ComplianceViolation { tag }`.
+fn assert_strict_refuses(ls: &VmtiLs, tag: u32, what: &str) {
+    for encode in strict_encoders() {
+        let err = encode(ls).unwrap_err();
+        assert!(
+            matches!(err, KlvEncodeError::InvalidFieldValue { tag: t, .. } if t == tag),
+            "{what}: {err:?}"
+        );
+    }
+    let err = decode_strict(&encode_to_vec(ls).unwrap()).unwrap_err();
+    assert!(
+        matches!(err, KlvDecodeError::ComplianceViolation { tag: t, .. } if t == tag),
+        "{what}: {err:?}"
+    );
+}
+
+/// Both strict encoders and `decode_strict` accept `ls`.
+fn assert_strict_accepts(ls: &VmtiLs, what: &str) {
+    for encode in strict_encoders() {
+        encode(ls).unwrap_or_else(|e| panic!("{what}: {e:?}"));
+    }
+    let decoded =
+        decode_strict(&encode_to_vec(ls).unwrap()).unwrap_or_else(|e| panic!("{what}: {e:?}"));
+    assert_eq!(decoded.targets, ls.targets, "{what}");
+}
+
+#[test]
+fn strict_vmti_refuses_a_pixel_number_without_a_frame_width() {
+    // ST 0903.6-121.
+    for tag in [1u32, 2, 3] {
+        let mut ls = with_target(|t| match tag {
+            1 => t.centroid_pixel = Some(100),
+            2 => t.bbox_top_left_pixel = Some(100),
+            _ => t.bbox_bottom_right_pixel = Some(100),
+        });
+        ls.frame_width = None;
+        assert_strict_refuses(&ls, tag, "no frame width");
+        ls.frame_width = Some(1920);
+        assert_strict_accepts(&ls, "with a frame width");
+    }
+}
+
+#[test]
+fn strict_vmti_refuses_a_row_without_its_column() {
+    // ST 0903.4-37 and -38.
+    let row = with_target(|t| t.centroid_pix_row = Some(5));
+    assert_strict_refuses(&row, 19, "a row alone");
+    let col = with_target(|t| t.centroid_pix_col = Some(5));
+    assert_strict_refuses(&col, 20, "a column alone");
+    let both = with_target(|t| {
+        t.centroid_pix_row = Some(5);
+        t.centroid_pix_col = Some(6);
+    });
+    assert_strict_accepts(&both, "row and column");
+    // The offset is the pack's, buffer-relative: the series value starts
+    // at 8 and its first pack after one length byte.
+    let mut bytes = minimal_strict_ls_bytes();
+    bytes.extend_from_slice(&[101, 5, 4, 0x01, 19, 1, 5]);
+    assert!(matches!(
+        decode_strict(&bytes),
+        Err(KlvDecodeError::ComplianceViolation {
+            tag: 19,
+            offset: 9,
+            ..
+        })
+    ));
+}
+
+#[test]
+fn strict_vmti_refuses_an_active_target_without_a_position() {
+    // ST 0903.6-127 (Active-Moving) and -128 (Active-Stopped).
+    for status in [1u8, 3] {
+        let bare = with_target(|t| {
+            t.detection_status = Some(status);
+            t.target_location = Some(vec![0x01]);
+        });
+        assert_strict_refuses(&bare, 23, "no position");
+        let one_corner = with_target(|t| {
+            t.detection_status = Some(status);
+            t.target_location = Some(vec![0x01]);
+            t.bbox_top_left_pixel = Some(10);
+        });
+        assert_strict_refuses(&one_corner, 23, "one corner");
+        let forms: [fn(&mut VTargetPack); 3] = [
+            |t| t.centroid_pixel = Some(10),
+            |t| {
+                t.centroid_pix_row = Some(2);
+                t.centroid_pix_col = Some(3);
+            },
+            |t| {
+                t.bbox_top_left_pixel = Some(10);
+                t.bbox_bottom_right_pixel = Some(20);
+            },
+        ];
+        for form in forms {
+            let ls = with_target(|t| {
+                t.detection_status = Some(status);
+                t.target_location = Some(vec![0x01]);
+                form(t);
+            });
+            assert_strict_accepts(&ls, "a position form");
+        }
+    }
+    // Inactive (0), Dropped (2) and Active-Coasting (4) need no position.
+    for status in [0u8, 2, 4] {
+        let ls = with_target(|t| {
+            t.detection_status = Some(status);
+            t.target_location = Some(vec![0x01]);
+        });
+        assert_strict_accepts(&ls, "a status that needs no position");
+    }
+}
+
+#[test]
+fn strict_standalone_vmti_refuses_an_active_target_without_a_location() {
+    // ST 0903.6-130: standalone carriage only.
+    for status in [1u8, 3, 4] {
+        let ls = with_target(|t| {
+            t.detection_status = Some(status);
+            t.centroid_pixel = Some(10);
+        });
+        let err = encode_standalone_strict_compliance(&ls).unwrap_err();
+        assert!(
+            matches!(err, KlvEncodeError::InvalidFieldValue { tag: 23, .. }),
+            "status {status}: {err:?}"
+        );
+        encode_strict_compliance(&ls).expect("embedded carriage has no such rule");
+        let empty = with_target(|t| {
+            t.detection_status = Some(status);
+            t.centroid_pixel = Some(10);
+            t.target_location = Some(vec![]);
+        });
+        assert!(matches!(
+            encode_standalone_strict_compliance(&empty),
+            Err(KlvEncodeError::InvalidFieldValue { tag: 23, .. })
+        ));
+        let located = with_target(|t| {
+            t.detection_status = Some(status);
+            t.centroid_pixel = Some(10);
+            t.target_location = Some(vec![0x01]);
+        });
+        encode_standalone_strict_compliance(&located).expect("with a location");
+    }
+}
+
+#[test]
+fn strict_standalone_vmti_refuses_a_core_identifier_st1204_does_not_accept() {
+    for id in [vec![0x01, 0x00], vec![]] {
+        let ls = VmtiLs {
+            miis_id: Some(id.clone()),
+            ..full_standalone_ls()
+        };
+        let err = encode_standalone_strict_compliance(&ls).unwrap_err();
+        assert!(
+            matches!(err, KlvEncodeError::InvalidFieldValue { tag: 13, .. }),
+            "{id:02x?}: {err:?}"
+        );
+    }
+    encode_standalone_strict_compliance(&full_standalone_ls()).expect("an ST 1204 identifier");
+}
+
+#[test]
+fn strict_vmti_refuses_zero_where_the_range_starts_at_one() {
+    // Version (§10.1.4), frame width and height (§10.1.8, .9: "do not use
+    // a value of zero"), pixel numbers, row and column (§10.2.2.2 to .4,
+    // .20, .21).
+    let cases: [(u32, fn(&mut VmtiLs)); 8] = [
+        (4, |ls| ls.version_number = Some(0)),
+        (8, |ls| ls.frame_width = Some(0)),
+        (9, |ls| ls.frame_height = Some(0)),
+        (1, |ls| ls.targets[0].centroid_pixel = Some(0)),
+        (2, |ls| ls.targets[0].bbox_top_left_pixel = Some(0)),
+        (3, |ls| ls.targets[0].bbox_bottom_right_pixel = Some(0)),
+        (19, |ls| {
+            ls.targets[0].centroid_pix_row = Some(0);
+            ls.targets[0].centroid_pix_col = Some(1);
+        }),
+        (20, |ls| {
+            ls.targets[0].centroid_pix_row = Some(1);
+            ls.targets[0].centroid_pix_col = Some(0);
+        }),
+    ];
+    for (tag, set) in cases {
+        let mut ls = full_standalone_ls();
+        set(&mut ls);
+        for encode in strict_encoders() {
+            let err = encode(&ls).unwrap_err();
+            assert!(
+                matches!(err, KlvEncodeError::OutOfRange { tag: t, min, .. } if t == tag && min == 1.0),
+                "tag {tag}: {err:?}"
+            );
+        }
+        let err = decode_strict(&encode_to_vec(&ls).unwrap()).unwrap_err();
+        assert!(
+            matches!(err, KlvDecodeError::ComplianceViolation { tag: t, .. } if t == tag),
+            "tag {tag}: {err:?}"
+        );
+    }
+    // Priority and percentage (§10.2.2.5, .8) through the one-byte table.
+    for (tag, set) in [
+        (
+            4u32,
+            (|t: &mut VTargetPack| t.priority = Some(0)) as fn(&mut VTargetPack),
+        ),
+        (7, |t| t.percentage_of_target_pixels = Some(0)),
+    ] {
+        let ls = with_target(|t| {
+            t.centroid_pixel = Some(10);
+            set(t);
+        });
+        for encode in strict_encoders() {
+            assert!(matches!(
+                encode(&ls),
+                Err(KlvEncodeError::OutOfRange { tag: t, min, .. }) if t == tag && min == 1.0
+            ));
+        }
+        assert!(matches!(
+            decode_strict(&encode_to_vec(&ls).unwrap()),
+            Err(KlvDecodeError::St0903InvalidVTargetPack {
+                reason: VTargetPackError::ValueOutOfRange { tag: t, value: 0 },
+                ..
+            }) if t == tag
+        ));
+    }
+    // One is in range everywhere.
+    let mut ones = full_standalone_ls();
+    ones.version_number = Some(1);
+    ones.frame_width = Some(1);
+    ones.frame_height = Some(1);
+    ones.targets[0] = VTargetPack {
+        target_id: 1,
+        centroid_pixel: Some(1),
+        bbox_top_left_pixel: Some(1),
+        bbox_bottom_right_pixel: Some(1),
+        centroid_pix_row: Some(1),
+        centroid_pix_col: Some(1),
+        priority: Some(1),
+        percentage_of_target_pixels: Some(1),
+        ..Default::default()
+    };
+    assert_strict_accepts(&ones, "ones");
 }

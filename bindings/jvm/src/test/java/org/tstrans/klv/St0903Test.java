@@ -424,14 +424,16 @@ class St0903Test {
 
     @Test
     void encodeVmtiStandaloneStrictComplianceSucceedsWithValidRecord() throws KlvDecodeException, KlvEncodeException {
-        // Provide all standalone-required items (Tags 2/4/6/11/12/13) with no offset tags.
+        // Provide all standalone-required items (Tags 2/4/6/11/12/13) with no offset tags,
+        // and an MIIS Core Identifier ST 1204 accepts.
         VmtiLs rec = new VmtiLs.Builder()
                 .versionNumber(6)
                 .numTargetsReported(0L)
                 .precisionTimeStamp(1_700_000_000_000_000L)
                 .horizontalFov(30.0)
                 .verticalFov(20.0)
-                .miisId(java.nio.ByteBuffer.wrap(new byte[]{0x01, 0x02, 0x03, 0x04}))
+                .miisId(java.nio.ByteBuffer.wrap(HexFormat.of().parseHex(
+                        "0170F592F02373364AF8AA9162C00F2EB2DA16B74341000841A0BE365B5AB96A3645")))
                 .build();
         byte[] wire = assertDoesNotThrow(() -> Klv.encodeVmtiStandaloneStrictCompliance(rec));
         assertNotNull(wire);

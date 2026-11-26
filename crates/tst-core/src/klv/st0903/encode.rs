@@ -5,7 +5,7 @@
 use crate::error::KlvEncodeError;
 use crate::klv::pack::{emit_ber_oid_tlv, is_typed_tag};
 use crate::klv::st0903::model::VmtiLs;
-use crate::klv::st0903::{VMTI_LS_UL, vtarget_pack};
+use crate::klv::st0903::{VMTI_LS_UL, rules, vtarget_pack};
 use alloc::vec::Vec;
 
 /// Encode a VMTI Local Set **body** (no UL prefix, no outer BER length,
@@ -347,6 +347,13 @@ pub fn encoded_len(ls: &VmtiLs) -> usize {
 /// **Strings:** `vmti_system_name` at most 32 characters, `source_sensor`
 /// at most 128 (§10.1.3, §10.1.10), as [`super::decode_strict`] reads them.
 ///
+/// **Record rules** (after the checks above): no zero where an item's
+/// range starts at one (version, frame width and height, pixel numbers,
+/// row, column); a pixel number needs the frame width (ST 0903.6-121); a
+/// row needs its column and the reverse (ST 0903.4-37, -38); an
+/// Active-Moving or Active-Stopped target needs a centroid, a row and
+/// column, or both bounding-box corners (ST 0903.6-127, -128).
+///
 /// Parent-relative offset tags (10/11/13/14/15/16) are **allowed** in
 /// embedded mode — they reference the parent ST 0601 telemetry frame. Use
 /// [`encode_standalone_strict_compliance`] for standalone carriage which
@@ -360,12 +367,17 @@ pub fn encoded_len(ls: &VmtiLs) -> usize {
 /// - [`KlvEncodeError::DuplicateTargetId`] if any `target_id` repeats.
 /// - [`KlvEncodeError::StringTooLong`] for a name over its cap.
 /// - [`KlvEncodeError::OutOfRange`] for a one-byte pack item outside its
-///   range.
+///   range, or a zero where the range starts at one.
+/// - [`KlvEncodeError::InvalidFieldValue`] for a record rule's missing
+///   companion item.
 /// - All [`KlvEncodeError`] variants from [`encode_to_vec`] once the
 ///   precondition gate passes.
 pub fn encode_strict_compliance(ls: &VmtiLs) -> Result<Vec<u8>, KlvEncodeError> {
     validate_vtargets(ls)?;
-    encode_to_vec(ls)
+    // Every item's own checks (in the encoder too) before the record rules.
+    let bytes = encode_to_vec(ls)?;
+    refuse(rules::first_violation(ls))?;
+    Ok(bytes)
 }
 
 /// Encode a VMTI Local Set as a standalone wire record with strict
@@ -389,6 +401,10 @@ pub fn encode_strict_compliance(ls: &VmtiLs) -> Result<Vec<u8>, KlvEncodeError> 
 /// parent) must be absent from every [`VTargetPack`](vtarget_pack::VTargetPack) in `ls.targets`.
 /// Tag 12 (`centroid_hae`) is absolute height — not forbidden.
 ///
+/// **Then:** an Active-Moving, Active-Stopped or Active-Coasting target
+/// needs a `target_location` (ST 0903.6-130), and `miis_id` must be an
+/// identifier [`crate::klv::st1204::decode`] accepts (§10.1.13).
+///
 /// # Errors
 ///
 /// All errors from [`encode_strict_compliance`], plus:
@@ -396,10 +412,33 @@ pub fn encode_strict_compliance(ls: &VmtiLs) -> Result<Vec<u8>, KlvEncodeError> 
 ///   required items (tags 2/11/12/13).
 /// - [`KlvEncodeError::ForbiddenStandaloneOffset`] if any pack carries
 ///   an offset tag.
+/// - [`KlvEncodeError::InvalidFieldValue`] for a target without its
+///   location, or an identifier ST 1204 does not accept.
 pub fn encode_standalone_strict_compliance(ls: &VmtiLs) -> Result<Vec<u8>, KlvEncodeError> {
     validate_vtargets(ls)?;
     validate_standalone(ls)?;
-    encode_to_vec_standalone(ls)
+    let bytes = encode_to_vec_standalone(ls)?;
+    refuse(rules::first_violation(ls))?;
+    refuse(rules::first_standalone_violation(ls))?;
+    Ok(bytes)
+}
+
+/// The encoder's error for a record rule: a zero where the range starts at
+/// one is out of range, a missing companion item an invalid value.
+fn refuse(violation: Option<rules::Violation>) -> Result<(), KlvEncodeError> {
+    let Some(v) = violation else {
+        return Ok(());
+    };
+    Err(match v.rule {
+        rules::Rule::Zero { max } => KlvEncodeError::OutOfRange {
+            tag: v.tag,
+            value: 0.0,
+            min: 1.0,
+            max,
+            hint: None,
+        },
+        rules::Rule::Relation(reason) => KlvEncodeError::InvalidFieldValue { tag: v.tag, reason },
+    })
 }
 
 /// Validate per-target constraints required in BOTH embedded and standalone

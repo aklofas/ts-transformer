@@ -73,6 +73,7 @@ def _minimal_embedded_record() -> VmtiLs:
     return VmtiLs(
         version_number=6,
         num_targets_reported=1,
+        frame_width=1920,  # a pixel number needs it (ST 0903.6-121)
         targets=(VTargetPack(target_id=1, centroid_pixel=100),),
     )
 
@@ -172,15 +173,21 @@ def test_encode_vmti_strict_compliance_valid_record_succeeds():
 # ---------------------------------------------------------------------------
 
 
+_CORE_ID = bytes.fromhex(
+    "0170F592F02373364AF8AA9162C00F2EB2DA16B74341000841A0BE365B5AB96A3645"
+)
+
+
 def _full_standalone_record() -> VmtiLs:
-    """VmtiLs satisfying all standalone required tags (2,4,6,11,12,13)."""
+    """VmtiLs satisfying all standalone required tags (2,4,6,11,12,13), with
+    an MIIS Core Identifier ST 1204 accepts."""
     return VmtiLs(
         version_number=6,
         num_targets_reported=0,
         precision_time_stamp=1_700_000_000_000_000,
         horizontal_fov=45.0,
         vertical_fov=30.0,
-        miis_id=b"\x00" * 16,
+        miis_id=_CORE_ID,
     )
 
 
