@@ -41,6 +41,13 @@ doc               = false
 bench             = false
 
 [[bin]]
+name              = "demux_latm_pes"
+path              = "fuzz_targets/demux_latm_pes.rs"
+test              = false
+doc               = false
+bench             = false
+
+[[bin]]
 name              = "demux_pes_reassembly"
 path              = "fuzz_targets/demux_pes_reassembly.rs"
 test              = false

@@ -26,6 +26,7 @@ names hinting at what code path they exercise (e.g. `pat_real`,
 | Directory | Contents |
 |---|---|
 | `demux_feed/` | Regression-fixture-derived; aac_adts, aac_latm, ac3, mp2, subtitle_with_klv |
+| `demux_latm_pes/` | AAC-LATM payloads: a sound LOAS stream joined mid-record, one whose record bodies are full of false syncwords, and two PIDs that are not LOAS (past-the-end candidates; chains of empty records ending in junk) |
 | `demux_pes_reassembly/` | PES boundary / reassembly edge cases |
 | `demux_psi/` | PAT/PMT real and malformed section headers |
 | `klv_st0601_decode/` | Synthetic ST 0601 packets (minimal, full, funky UL, field errors) |

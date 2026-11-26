@@ -16,6 +16,10 @@ name = "demux_feed"
 
 [[target]]
 crate = "tst-core"
+name = "demux_latm_pes"
+
+[[target]]
+crate = "tst-core"
 name = "demux_pes_reassembly"
 
 [[target]]
