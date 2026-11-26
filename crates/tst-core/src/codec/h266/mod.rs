@@ -59,6 +59,12 @@ use alloc::vec::Vec;
 /// VPS / SPS / PPS by id. Partial-success-tolerant: bad NALs emit
 /// `tracing::warn!` and are skipped; `Err` only when every parameter-set
 /// NAL fails.
+///
+/// One call is one snapshot of the NAL units it is given. A PPS whose SPS
+/// is not in the call, or whose SPS failed to parse in the call, is dropped;
+/// when the call holds several SPS with one id, the last one that parsed is
+/// used. A call that holds only a lone PPS returns `Ok` with empty results,
+/// not an error: parse a lone PPS with `parse_pps`.
 pub fn parse_parameter_sets(nals: &[NalUnit]) -> Result<H266ParameterSets, CodecParseError> {
     let mut vpses: BTreeMap<u8, H266Vps> = BTreeMap::new();
     let mut spses: BTreeMap<u8, H266Sps> = BTreeMap::new();
@@ -115,6 +121,22 @@ pub fn parse_parameter_sets(nals: &[NalUnit]) -> Result<H266ParameterSets, Codec
             "all H.266 parameter-set NALs failed to parse".into(),
         ));
     }
+    // A PPS is usable only with its SPS (H.266 §7.4.3.5): drop one whose
+    // `pps_seq_parameter_set_id` names no SPS parsed in this call, as the
+    // H.264 collector does.
+    ppses.retain(|pps_id, pps| {
+        if spses.contains_key(&pps.sps_id) {
+            true
+        } else {
+            tracing::warn!(
+                target: "tst_core::codec::h266",
+                pps_id = *pps_id,
+                sps_id = pps.sps_id,
+                "dropping PPS that references SPS id not in input"
+            );
+            false
+        }
+    });
     Ok(H266ParameterSets {
         vpses: vpses.into_values().collect(),
         spses: spses.into_values().collect(),
@@ -123,20 +145,29 @@ pub fn parse_parameter_sets(nals: &[NalUnit]) -> Result<H266ParameterSets, Codec
 }
 
 crate::binding_record! {
-    /// All VPS, SPS, and PPS NAL units parsed from a sequence.
+    /// The VPS, SPS and PPS NAL units parsed by one `parse_parameter_sets` call.
     ///
     /// Unlike the H.265 version, which is keyed by id, H.266 parameter sets are
     /// ordered lists: look one up by its own id field (`vps_id`, `sps_id`,
     /// `pps_id`).
+    ///
+    /// One call is one snapshot of the NAL units it is given. A PPS whose SPS
+    /// is not in the call, or whose SPS failed to parse in the call, is dropped;
+    /// when the call holds several SPS with one id, the last one that parsed is
+    /// used. A call that holds only a lone PPS returns `Ok` with empty results,
+    /// not an error: parse a lone PPS with `parse_pps`.
     #[must_use]
     #[non_exhaustive]
     #[derive(Debug, Clone, PartialEq, Eq)]
     pub struct H266ParameterSets {
-        /// The parsed VPS NAL units, in the order they were parsed.
+        /// The parsed VPS NAL units: the last parsed value per id, in
+        /// ascending id order.
         pub vpses: Vec<H266Vps>,
-        /// The parsed SPS NAL units, in the order they were parsed.
+        /// The parsed SPS NAL units: the last parsed value per id, in
+        /// ascending id order.
         pub spses: Vec<H266Sps>,
-        /// The parsed PPS NAL units, in the order they were parsed.
+        /// The parsed PPS NAL units: the last parsed value per id, in
+        /// ascending id order.
         pub ppses: Vec<H266Pps>,
     }
 }
