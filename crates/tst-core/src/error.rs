@@ -218,7 +218,9 @@ pub enum KlvEncodeError {
         hint: Option<&'static str>,
     },
 
-    #[error("string field for tag {tag} exceeds {max} bytes")]
+    /// `max` is in the unit the item's standard counts: bytes, or
+    /// characters for an item whose cap is a character count.
+    #[error("the value of tag {tag} is longer than its item allows ({max})")]
     StringTooLong { tag: u32, max: usize },
 
     /// `ImapbParams::length` outside the supported range `1..=8`.
