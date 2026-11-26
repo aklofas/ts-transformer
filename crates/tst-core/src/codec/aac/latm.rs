@@ -965,6 +965,45 @@ mod tests {
         assert_eq!(issues, 1);
     }
 
+    /// A PES longer than the hard bound that holds whole records after a
+    /// join: its candidate passes there and is provisional, so the bytes it
+    /// adds are not judged, and the next PES confirms it.
+    #[test]
+    fn a_long_pes_of_whole_records_is_not_judged_while_its_candidate_is_provisional() {
+        let mut long = vec![0x00; 100];
+        while long.len() < LOAS_UNSYNCED_BOUND + 1_000 {
+            long.extend_from_slice(&build_loas_record(997));
+        }
+        long.extend_from_slice(&build_loas_record(997)[..500]);
+        let mut framing = LoasFraming::default();
+        assert_eq!(framing.feed(&long, false), None);
+        assert!(framing.position.is_none(), "provisional");
+        let mut next = build_loas_record(997)[500..].to_vec();
+        next.extend_from_slice(&build_loas_record(997)[..100]);
+        assert_eq!(framing.feed(&next, false), None);
+        assert_eq!(framing.position, Some(LoasCarry::Body(900)));
+    }
+
+    /// A pending candidate whose walk joins a provisional position's is
+    /// that position's duplicate: the position is walked first and confirmed,
+    /// and the duplicate does not take its place as a once-passed candidate.
+    #[test]
+    fn a_candidate_that_joins_a_provisional_position_does_not_take_its_place() {
+        let mut search = LoasSearch::default();
+        search.held[0] = LoasCandidate::pending(LoasCarry::Body(20));
+        search.held[1] = LoasCandidate::passed(Some(LoasCarry::Body(50)));
+        search.held_len = 2;
+        // 20: a record to 50; 50: a record to 100; 100: one past the PES.
+        let mut pes = vec![0x00; 20];
+        pes.extend_from_slice(&build_loas_record(27));
+        pes.extend_from_slice(&build_loas_record(47));
+        pes.extend_from_slice(&build_loas_record(97)[..40]);
+        assert_eq!(
+            search.feed(&pes),
+            LoasSettle::Confirmed(Some(LoasCarry::Body(60)))
+        );
+    }
+
     /// `zeros` zero bytes, then one record of `len` body bytes.
     fn zeros_then_record(zeros: usize, len: u16) -> Vec<u8> {
         let mut out = vec![0x00; zeros];

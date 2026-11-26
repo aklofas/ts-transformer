@@ -1038,6 +1038,31 @@ fn a_syncword_at_the_start_of_an_unaligned_pes_is_not_trusted_while_unsynced() {
     assert!(latm_framing_issues(&events).is_empty(), "{events:?}");
 }
 
+/// Every 500-byte PES of a sound stream of 1 000-byte records, joined
+/// mid-record, opens with a false candidate (`56 FF FF` inside a record
+/// body, declaring a record of 8 194 bytes), and every second PES holds a
+/// record start after it. The scan goes on past a candidate whose record
+/// runs past the PES, so the records are found; stopping there, only false
+/// candidates would be followed and the stream would be flagged at the
+/// hard bound.
+#[test]
+fn a_false_candidate_ahead_of_the_record_start_in_every_pes_does_not_hide_it() {
+    let mut stream = Vec::new();
+    for _ in 0..40 {
+        stream.extend(build_valid_loas_record(997));
+    }
+    let mut joined = stream.split_off(250);
+    for pes_start in (0..joined.len()).step_by(500) {
+        joined[pes_start..pes_start + 3].copy_from_slice(&[0x56, 0xFF, 0xFF]);
+    }
+    let events = latm_pes_events(&cut_into_pes(&joined, 500));
+    assert!(
+        latm_framing_issues(&events).is_empty(),
+        "{:?}",
+        latm_issue_pes(&events)
+    );
+}
+
 /// Mux `payloads` as consecutive AAC-LATM PES on PID 0x150 and demux them
 /// without the second TS packet of every PES `lose` picks; every event.
 fn latm_pes_events_losing(payloads: &[Vec<u8>], lose: impl Fn(usize) -> bool) -> Vec<DemuxEvent> {
