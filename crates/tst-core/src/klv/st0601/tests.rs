@@ -6359,3 +6359,35 @@ fn sdcc_rows_that_would_close_a_chain_on_itself_are_not_placed() {
         );
     }
 }
+
+/// Two items of one unknown tag: the rows do not name which is meant, so
+/// the order of the choices decides. Each of these sets is in an order its
+/// packs fit, and is re-encoded to its bytes.
+#[test]
+fn sdcc_rows_tell_two_items_of_one_tag_apart_where_they_can() {
+    let unknown = |value: u8| Sdcc::Raw(tlv(150, &[value]));
+    // The second pack's rows go on (Item 65) as the block of the first
+    // does behind its item of tag 150: that item is meant, not the other.
+    let joins = sdcc_set(&[I(2), I(14), unknown(1), I(65), P(2), P(3), unknown(2)]);
+    // The third pack starts at the item of tag 150 that ends the first
+    // pack's block; the fourth takes the other one.
+    let goes_on = sdcc_set(&[
+        I(2),
+        I(5),
+        unknown(1),
+        P(2),
+        I(13),
+        P(1),
+        I(14),
+        P(3),
+        unknown(2),
+        I(15),
+        P(2),
+        I(65),
+    ]);
+    for (name, source) in [("joins", joins), ("goes on", goes_on)] {
+        let rec = decode(&source).unwrap();
+        assert_eq!(encode_to_vec(&rec).unwrap(), source, "{name}");
+        assert_eq!(encode_strict_compliance(&rec).unwrap(), source, "{name}");
+    }
+}
