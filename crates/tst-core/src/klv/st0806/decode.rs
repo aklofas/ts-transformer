@@ -51,7 +51,9 @@ pub(super) const ALT_RANGE: LinearRange = LinearRange {
 /// collected in [`RvtLs::field_errors`] instead of aborting the whole
 /// record, and a malformed nested Local Set (Tag 11/12/13) is skipped —
 /// recorded as a [`KlvFieldError::TruncatedField`] on the *parent* tag —
-/// rather than failing the enclosing decode.
+/// rather than failing the enclosing decode. A zero-length item is
+/// "unknown" (ST 0107.4-17): it unsets its field, and a zero-length nested
+/// set adds no entry and no field error.
 ///
 /// Tag 1 (CRC-32/MPEG-2), if present, is captured into [`RvtLs::crc32`]
 /// but **not verified**: the checksum's spec coverage is "the entire LS
@@ -234,10 +236,12 @@ fn apply_rvt_tag(record: &mut RvtLs, f: &RawField<'_>) -> Result<(), KlvFieldErr
         return Ok(());
     };
     // ST 0107.4-17: a zero-length item means "unknown". It is an occurrence
-    // of its tag, so it unsets a value an earlier duplicate gave. (A
-    // zero-length nested set goes to its own reader below.)
-    if f.value.is_empty() && !matches!(spec.encoding, RvtEncoding::Nested) {
-        unset(record, tag_u8);
+    // of its tag, so it unsets a value an earlier duplicate gave; a
+    // zero-length nested set (User Defined, POI, AOI) adds no entry.
+    if f.value.is_empty() {
+        if !matches!(spec.encoding, RvtEncoding::Nested) {
+            unset(record, tag_u8);
+        }
         return Ok(());
     }
     match spec.encoding {

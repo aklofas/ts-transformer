@@ -731,3 +731,21 @@ fn an_over_long_mgrs_band_keeps_the_error_0_10_0_gave_it() {
         Err(KlvEncodeError::OutOfRange { tag: 16, .. })
     ));
 }
+
+#[test]
+fn a_zero_length_poi_or_aoi_set_adds_no_entry() {
+    // A zero-length nested set is "unknown" (ST 0107.4-17), as a zero-length
+    // item is: no entry, no field error.
+    let mut body = alloc::vec![0x02, 0x08];
+    body.extend_from_slice(&1_700_000_000_000_000u64.to_be_bytes());
+    body.extend_from_slice(&[0x0C, 0x00, 0x0D, 0x00, 0x0B, 0x00, 0x08, 0x01, 0x04]);
+    let ls = decode(&body).unwrap();
+    assert!(ls.points_of_interest.is_empty());
+    assert!(ls.areas_of_interest.is_empty());
+    assert!(ls.user_defined.is_empty());
+    assert!(ls.field_errors.is_empty(), "{:?}", ls.field_errors);
+    assert_eq!(ls.rvt_ls_version, Some(4));
+    // What decodes re-encodes.
+    let bytes = encode_to_vec(&ls).unwrap();
+    assert_eq!(decode(&bytes).unwrap(), ls);
+}
