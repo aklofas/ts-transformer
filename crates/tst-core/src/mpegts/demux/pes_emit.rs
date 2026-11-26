@@ -269,26 +269,7 @@ impl super::demuxer::Demuxer {
                     damage_next_complete = Some((pid, reason));
                 }
                 ReassemblyOutcome::Malformed { pid, reason } => {
-                    // Wire order with the completions beside it: a lenient
-                    // demuxer queues the NonConformant and keeps going. A
-                    // strict one keeps going too and returns the error after
-                    // the loop: a caller may feed on, so the dropped PES's
-                    // timing, a pending reset and the packet's other units
-                    // must not be lost with it. One error is returned per
-                    // packet; a later one is queued as its event.
-                    if let Err(err) = self.surface_malformed_pes(pid, reason) {
-                        if first_err.is_none() {
-                            first_err = Some(err);
-                        } else {
-                            let stream = self.lookup_stream(pid).unwrap_or_else(|| {
-                                StreamId::anonymous(pid, self.program_number_for_pid(pid))
-                            });
-                            self.queue_nonconformant(
-                                stream,
-                                NonConformantIssue::MalformedPes { pid, reason },
-                            );
-                        }
-                    }
+                    self.surface_malformed_outcome(pid, reason, &mut first_err);
                     if is_damage_reason(reason) {
                         drop_next_complete = Some(pid);
                     } else {
@@ -303,6 +284,34 @@ impl super::demuxer::Demuxer {
             self.settle_after_pes(pkt.pid);
         }
         first_err.map_or(Ok(()), Err)
+    }
+
+    /// Surface a `Malformed` outcome of the packet being handled. Wire order
+    /// with the completions beside it: a lenient demuxer queues the
+    /// NonConformant and keeps going. A strict one keeps going too and the
+    /// error is returned after the packet's loop: a caller may feed on, so
+    /// the dropped PES's timing, a pending reset and the packet's other
+    /// units must not be lost with it. One error is returned per packet
+    /// (`first_err`); a later one is queued as its event. Out of line: a
+    /// malformed PES is rare, and its lookups would otherwise sit in the
+    /// per-packet path.
+    #[cold]
+    fn surface_malformed_outcome(
+        &mut self,
+        pid: u16,
+        reason: &'static str,
+        first_err: &mut Option<crate::error::DemuxError>,
+    ) {
+        if let Err(err) = self.surface_malformed_pes(pid, reason) {
+            if first_err.is_none() {
+                *first_err = Some(err);
+            } else {
+                let stream = self
+                    .lookup_stream(pid)
+                    .unwrap_or_else(|| StreamId::anonymous(pid, self.program_number_for_pid(pid)));
+                self.queue_nonconformant(stream, NonConformantIssue::MalformedPes { pid, reason });
+            }
+        }
     }
 
     /// Emit the events of one completed PES. `damage` (lenient mode only)
