@@ -1,4 +1,4 @@
-//! Minimal LATM/LOAS sync validator.
+//! LATM/LOAS framing: the sync validator, and the demuxer's LOAS resync.
 //!
 //! Spec: ISO/IEC 14496-3 §1.7 (LATM / LOAS framing) — referenced by
 //! ITU-T H.222.0 Table 2-34 stream_type `0x11` (`AudioAacLatm`).
@@ -22,8 +22,12 @@
 //!                                    low 5 bits = top of length)
 //! ```
 //!
-//! This module only validates the LOAS sync word and length-fits check.
-//! Full `audioMuxElement` decode (per ISO/IEC 14496-3 §1.7.3) is deferred
+//! The public [`validate_latm_sync`] checks the LOAS syncword and the
+//! length of a PES payload's first record. The crate-private rest is the
+//! demuxer's: the walk over a PES's records, and the resync that finds the
+//! record position of an AAC-LATM PID after a join or a loss and decides
+//! when a PID is not LOAS. Full `audioMuxElement` decode (per ISO/IEC
+//! 14496-3 §1.7.3) is deferred
 //! — consumers needing AudioSpecificConfig + raw_data_block walks must
 //! integrate a downstream decoder (e.g. ffmpeg).
 //!
