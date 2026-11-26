@@ -68,7 +68,7 @@ class MuxerMispTest {
      */
     @Test
     void pushVideoMispToWithDtsRoundTrips() throws Exception {
-        MispTimestamp input = MispTimestamp.micros(42L, 0x00);
+        MispTimestamp input = MispTimestamp.micros(42L, 0x1F);
 
         MuxerConfig cfg = MuxerConfig.builder()
             .addVideo(0x100, VideoCodec.H264)
@@ -147,10 +147,27 @@ class MuxerMispTest {
         assertEquals(0x3F, micro.timeStatus());
         assertEquals(1000L, micro.value());
 
-        MispTimestamp nano = MispTimestamp.nanos(999L, 0x01);
+        MispTimestamp nano = MispTimestamp.nanos(999L, 0x9F);
         assertEquals(MispTimeKind.NANO, nano.kind());
-        assertEquals(0x01, nano.timeStatus());
+        assertEquals(0x9F, nano.timeStatus());
         assertEquals(999L, nano.value());
+    }
+
+    @Test
+    void pushVideoMispToRefusesReservedTimeStatusBits() throws Exception {
+        // ST 0603.5 Table 3: the Time Status's bits 4-0 are reserved `11111`.
+        MuxerConfig cfg = MuxerConfig.builder().addVideo(0x100, VideoCodec.H264).build();
+        try (Muxer m = new Muxer(cfg)) {
+            VideoStreamHandle h = m.videoStreamHandle(0).orElseThrow();
+            for (int bad : new int[] {0x00, 0x80, 0xE0, 0x0F}) {
+                MispTimestamp ts = MispTimestamp.micros(1L, bad);
+                MuxException e = assertThrows(MuxException.class,
+                    () -> m.pushVideoMispTo(h, syntheticH264IdrPrefix(), 9000L, true, ts));
+                assertEquals(MuxException.Kind.MISP_TIME, e.kind());
+                assertTrue(e.getMessage().contains("reserved bits 4-0"), e.getMessage());
+            }
+            assertEquals(0, drain(m).length, "a refused push queues nothing");
+        }
     }
 
     @Test

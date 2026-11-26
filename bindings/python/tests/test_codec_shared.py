@@ -106,9 +106,9 @@ def test_misp_timestamp_micros_staticmethod():
 def test_misp_timestamp_nanos_staticmethod():
     from tstrans.codec import MispTimestamp, MispTimeKind
 
-    ts = MispTimestamp.nanos(99999, 0x00)
+    ts = MispTimestamp.nanos(99999, 0x9F)
     assert ts.kind == MispTimeKind.NANO
-    assert ts.time_status == 0x00
+    assert ts.time_status == 0x9F
     assert ts.value == 99999
 
 
@@ -124,7 +124,7 @@ def test_misp_timestamp_new_constructor():
 def test_misp_timestamp_repr():
     from tstrans.codec import MispTimestamp, MispTimeKind
 
-    ts = MispTimestamp.micros(1, 0)
+    ts = MispTimestamp.micros(1, 0x1F)
     r = repr(ts)
     assert "MispTimestamp" in r
 

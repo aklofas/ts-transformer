@@ -829,7 +829,7 @@ def test_push_video_misp_needs_one_video_stream(tmp_path: object) -> None:
             H264_KEY_AU,
             pts=Pts90khz.from_raw(0),
             key_frame=True,
-            misp=MispTimestamp.micros(1, 0),
+            misp=MispTimestamp.micros(1, 0x1F),
         )
     assert ei.value.kind == MuxErrorKind.INVALID_USAGE
     mp.finish_into_publisher().finish()

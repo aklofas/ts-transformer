@@ -1292,18 +1292,41 @@ def test_push_video_misp_to_nano_on_h264_raises():
     nano_ts = MispTimestamp.nanos(12345, 0x00)
     m = Muxer(_simple_config())
     handle = m.video_handles()[0]
-    with pytest.raises(MuxError) as ei:
+    # The codec is judged before the (here also invalid) Time Status.
+    with pytest.raises(MuxError, match="H.265-only") as ei:
         m.push_video_misp_to(
             handle, _h264_idr_au(), pts=Pts90khz.from_raw(900_000), misp=nano_ts
         )
     assert ei.value.kind is MuxErrorKind.MISP_TIME
 
 
+def test_push_video_misp_to_refuses_reserved_time_status_bits():
+    """ST 0603.5 Table 3: the Time Status's bits 4-0 are reserved `11111`;
+    a status without them is refused and nothing is muxed."""
+    from tstrans.codec import MispTimestamp
+
+    m = Muxer(_simple_config())
+    handle = m.video_handles()[0]
+    for status in (0x00, 0x80, 0xE0, 0x0F):
+        with pytest.raises(MuxError, match="reserved bits 4-0") as ei:
+            m.push_video_misp_to(
+                handle,
+                _h264_idr_au(),
+                pts=Pts90khz.from_raw(900_000),
+                misp=MispTimestamp.micros(1, status),
+            )
+        assert ei.value.kind is MuxErrorKind.MISP_TIME
+    # A repaired status (`status | 0x1F`) is accepted.
+    m.push_video_misp_to(
+        handle, _h264_idr_au(), pts=Pts90khz.from_raw(900_000), misp=MispTimestamp.micros(1, 0x80 | 0x1F)
+    )
+
+
 def test_push_video_misp_to_with_dts():
     """push_video_misp_to accepts an optional dts kwarg and emits TS."""
     from tstrans.codec import MispTimestamp
 
-    ts_in = MispTimestamp.micros(42, 0x00)
+    ts_in = MispTimestamp.micros(42, 0x1F)
     m = Muxer(_simple_config())
     handle = m.video_handles()[0]
     m.push_video_misp_to(

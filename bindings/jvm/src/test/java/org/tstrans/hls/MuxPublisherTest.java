@@ -211,7 +211,7 @@ class MuxPublisherTest {
     void pushVideoMispRefusesANanoTimestampOnH264(@TempDir Path dir) throws Exception {
         try (MuxPublisher mp = MuxPublisher.withConfigHls(pub(dir, HlsMode.LIVE), video())) {
             MuxException ex = assertThrows(MuxException.class, () -> mp.pushVideoMisp(
-                syntheticH264IdrPrefix(), 0L, true, MispTimestamp.nanos(1L, 0)));
+                syntheticH264IdrPrefix(), 0L, true, MispTimestamp.nanos(1L, 0x1F)));
             assertEquals(MuxException.Kind.MISP_TIME, ex.kind());
         }
     }
