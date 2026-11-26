@@ -489,6 +489,7 @@ mod tests {
     use crate::mpegts::demux::{
         DemuxEvent, DemuxerConfig, DiscontinuityKind, StreamId, StreamKind, VideoCodec,
     };
+    use crate::test_prelude::*;
 
     /// Build a payload-only TS packet on the given `pid` with CC=0.
     /// Mirrors `payload_packet_for_test` in `demuxer.rs` tests.
