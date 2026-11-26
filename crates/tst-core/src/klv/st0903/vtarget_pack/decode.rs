@@ -111,6 +111,23 @@ fn read_pack_inner(bytes: &[u8], strict: bool) -> Result<(VTargetPack, usize), V
     Ok((pack, consumed))
 }
 
+/// The first item of `bytes`, a pack [`read_pack_strict`] accepted, that
+/// standalone carriage omits (ST 0903.6-116: Items 10, 11, 13 to 16), as
+/// it is on the wire, whatever value it holds.
+pub(crate) fn first_standalone_offset_item(bytes: &[u8]) -> Option<u32> {
+    use crate::klv::length::{read_ber, read_ber_oid_u64};
+
+    let (_, mut cursor) = read_ber_oid_u64(bytes).ok()?;
+    while let Some((&tag, rest)) = cursor.split_first() {
+        if matches!(tag, 10 | 11 | 13..=16) {
+            return Some(u32::from(tag));
+        }
+        let (len, value) = read_ber(rest).ok()?;
+        cursor = value.get(len..)?;
+    }
+    None
+}
+
 /// Project a per-field [`VTargetPackError`] onto the shared
 /// [`KlvFieldError`] vocabulary `field_errors` carries. `got` is the
 /// field's wire value length. IMAPB failures map to `InvalidLength`

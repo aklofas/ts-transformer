@@ -44,8 +44,9 @@
 //!    LS with [`VMTI_LS_UL`] as the 16-byte UL prefix. Consumer pattern:
 //!    ```ignore
 //!    if data.starts_with(&klv::st0903::VMTI_LS_UL) {
-//!        let (_outer_len, body) = klv::length::read_ber(&data[16..])?;
-//!        let vmti = klv::st0903::decode(body)?;
+//!        // Checks the label and the checksum, and reads only the bytes
+//!        // the outer length declares.
+//!        let vmti = klv::st0903::decode_standalone(data)?;
 //!        // ...
 //!    }
 //!    ```
@@ -114,7 +115,7 @@ mod tests;
 
 mod rules;
 
-pub use decode::{decode, decode_strict};
+pub use decode::{decode, decode_standalone, decode_standalone_strict, decode_strict};
 pub use encode::{
     encode, encode_standalone, encode_standalone_strict_compliance, encode_strict_compliance,
     encode_to_vec, encode_to_vec_standalone, encoded_len, encoded_len_standalone,

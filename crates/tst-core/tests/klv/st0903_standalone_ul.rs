@@ -6,6 +6,8 @@
 //! ST 0601 stream) can dispatch via the `VMTI_LS_UL` constant without
 //! the demuxer needing to be VMTI-aware.
 
+use tst_core::error::KlvDecodeError;
+use tst_core::klv::checksum::checksum_running_sum_16;
 use tst_core::klv::{length, st0903};
 
 #[test]
@@ -93,4 +95,264 @@ fn standalone_ul_with_strict_decode() {
     let decoded = st0903::decode_strict(inner).unwrap();
     assert_eq!(decoded.version_number, Some(6));
     assert_eq!(decoded.num_targets_reported, Some(0));
+}
+
+// ------------------------------------------------------------------
+// The checksum-verifying standalone decoders.
+// ------------------------------------------------------------------
+
+/// The jMISB standalone VMTI test vector: system name "DSTO_ADSS_VMTI",
+/// version 4, checksum `9F97`, no Item 6.
+const JMISB_VECTOR: [u8; 40] = [
+    0x06, 0x0E, 0x2B, 0x34, 0x02, 0x0B, 0x01, 0x01, 0x0E, 0x01, 0x03, 0x03, 0x06, 0x00, 0x00, 0x00,
+    0x17, 0x03, 0x0E, b'D', b'S', b'T', b'O', b'_', b'A', b'D', b'S', b'S', b'_', b'V', b'M', b'T',
+    b'I', 0x04, 0x01, 0x04, 0x01, 0x02, 0x9F, 0x97,
+];
+
+/// An MIIS Core Identifier `st1204::decode` accepts.
+const CORE_ID: [u8; 34] = [
+    0x01, 0x70, 0xF5, 0x92, 0xF0, 0x23, 0x73, 0x36, 0x4A, 0xF8, 0xAA, 0x91, 0x62, 0xC0, 0x0F, 0x2E,
+    0xB2, 0xDA, 0x16, 0xB7, 0x43, 0x41, 0x00, 0x08, 0x41, 0xA0, 0xBE, 0x36, 0x5B, 0x5A, 0xB9, 0x6A,
+    0x36, 0x45,
+];
+
+/// `[VMTI_LS_UL][BER length][body]`, as given.
+fn packet(body: &[u8]) -> Vec<u8> {
+    let mut out = st0903::VMTI_LS_UL.to_vec();
+    let mut len_buf = [0u8; 9];
+    let n = length::write_ber(body.len(), &mut len_buf).unwrap();
+    out.extend_from_slice(&len_buf[..n]);
+    out.extend_from_slice(body);
+    out
+}
+
+/// `packet(body ++ 01 02 <sum>)` with the sum ST 0903.6-119 defines.
+fn checksummed(body: &[u8]) -> Vec<u8> {
+    let mut with = body.to_vec();
+    with.extend_from_slice(&[0x01, 0x02, 0x00, 0x00]);
+    let mut out = packet(&with);
+    let at = out.len() - 2;
+    let sum = checksum_running_sum_16(&out[..at]);
+    out[at..].copy_from_slice(&sum.to_be_bytes());
+    out
+}
+
+/// A record every strict standalone rule accepts.
+fn standalone_record() -> st0903::VmtiLs {
+    st0903::VmtiLs {
+        precision_time_stamp: Some(1_700_000_000_000_000),
+        version_number: Some(6),
+        num_targets_reported: Some(1),
+        frame_width: Some(1920),
+        horizontal_fov: Some(45.0),
+        vertical_fov: Some(30.0),
+        miis_id: Some(CORE_ID.to_vec()),
+        targets: vec![st0903::VTargetPack {
+            target_id: 1,
+            centroid_pixel: Some(100),
+            detection_status: Some(1),
+            target_location: Some(vec![0x01]),
+            ..Default::default()
+        }],
+        ..Default::default()
+    }
+}
+
+#[test]
+fn decode_standalone_accepts_independent_vector() {
+    let ls = st0903::decode_standalone(&JMISB_VECTOR).unwrap();
+    assert_eq!(ls.vmti_system_name.as_deref(), Some("DSTO_ADSS_VMTI"));
+    assert_eq!(ls.version_number, Some(4));
+    assert_eq!(ls.checksum, Some(0x9F97));
+    // The vector has no Item 6, which the strict form requires.
+    assert!(matches!(
+        st0903::decode_standalone_strict(&JMISB_VECTOR),
+        Err(KlvDecodeError::St0903MissingRequiredTag { tag: 6 })
+    ));
+}
+
+#[test]
+fn decode_standalone_rejects_bad_checksum() {
+    let mut bad = JMISB_VECTOR;
+    bad[20] ^= 1;
+    assert!(matches!(
+        st0903::decode_standalone(&bad),
+        Err(KlvDecodeError::ChecksumMismatch {
+            expected: 0x9F97,
+            ..
+        })
+    ));
+    assert!(matches!(
+        st0903::decode_standalone_strict(&bad),
+        Err(KlvDecodeError::ChecksumMismatch { .. })
+    ));
+}
+
+#[test]
+fn decode_standalone_rejects_a_missing_checksum() {
+    // The body starts after the label and one length byte: offset 17.
+    let bytes = packet(&[0x04, 0x01, 0x06, 0x06, 0x01, 0x00]);
+    assert!(matches!(
+        st0903::decode_standalone(&bytes),
+        Err(KlvDecodeError::MissingChecksum { offset: 17 })
+    ));
+}
+
+#[test]
+fn decode_standalone_rejects_a_checksum_that_is_not_last() {
+    let bytes = packet(&[0x01, 0x02, 0x00, 0x00, 0x04, 0x01, 0x06]);
+    assert!(matches!(
+        st0903::decode_standalone(&bytes),
+        Err(KlvDecodeError::Tag1NotLast)
+    ));
+}
+
+#[test]
+fn decode_standalone_rejects_a_second_checksum() {
+    // A second Tag 1 is reported at its ITEM start, whatever form its
+    // length has: body at 17, the first Tag 1 at 23, the second at 27.
+    for second in [
+        &[0x01, 0x02, 0xCC, 0xCC][..],
+        &[0x01, 0x81, 0x02, 0xCC, 0xCC],
+    ] {
+        let mut body = vec![0x04, 0x01, 0x06, 0x06, 0x01, 0x00, 0x01, 0x02, 0xCC, 0xCC];
+        body.extend_from_slice(second);
+        assert!(
+            matches!(
+                st0903::decode_standalone(&packet(&body)),
+                Err(KlvDecodeError::DuplicateTag { tag: 1, offset: 27 })
+            ),
+            "{second:02x?}"
+        );
+    }
+}
+
+#[test]
+fn decode_standalone_rejects_a_wrong_width_checksum() {
+    // A wrong width is judged before a second Tag 1; the offset is the
+    // value's.
+    let body = [0x04, 0x01, 0x06, 0x01, 0x01, 0xCC, 0x01, 0x02, 0xCC, 0xCC];
+    assert!(matches!(
+        st0903::decode_standalone(&packet(&body)),
+        Err(KlvDecodeError::MalformedChecksum { offset: 22, got: 1 })
+    ));
+}
+
+#[test]
+fn decode_standalone_strict_accepts_our_strict_output() {
+    let ls = standalone_record();
+    let bytes = st0903::encode_standalone_strict_compliance(&ls).unwrap();
+    let decoded = st0903::decode_standalone_strict(&bytes).unwrap();
+    assert_eq!(decoded.targets, ls.targets);
+    assert_eq!(decoded.miis_id, ls.miis_id);
+    assert!(decoded.checksum.is_some());
+    assert_eq!(st0903::decode_standalone(&bytes).unwrap(), decoded);
+}
+
+#[test]
+fn the_standalone_presence_gate_counts_a_special_as_present() {
+    // Item 11 = IMAP_ABOVE_MAXIMUM (ST 0903.6 §9.1.1): on the wire with a
+    // value, so present, though its field holds no measurement.
+    let mut ls = standalone_record();
+    ls.horizontal_fov = None;
+    let mut body = st0903::encode_to_vec(&ls).unwrap();
+    body.extend_from_slice(&[0x0B, 0x02, 0xE1, 0x00]);
+    let decoded = st0903::decode_standalone_strict(&checksummed(&body)).unwrap();
+    assert_eq!(decoded.horizontal_fov, None);
+    // Absent, or zero-length ("unknown"), it is missing.
+    let without = st0903::encode_to_vec(&ls).unwrap();
+    for bytes in [checksummed(&without), {
+        let mut b = without.clone();
+        b.extend_from_slice(&[0x0B, 0x00]);
+        checksummed(&b)
+    }] {
+        assert!(matches!(
+            st0903::decode_standalone_strict(&bytes),
+            Err(KlvDecodeError::St0903MissingRequiredTag { tag: 11 })
+        ));
+    }
+}
+
+#[test]
+fn decode_standalone_strict_refuses_an_offset_item() {
+    // ST 0903.6-116: standalone carriage omits Items 10, 11, 13 to 16 of
+    // a pack, whatever they hold ("Invalid", 0xC1, included).
+    let mut ls = standalone_record();
+    ls.targets[0].bbox_top_left_lon_offset = Some(1.0);
+    let bytes = st0903::encode_to_vec_standalone(&ls).unwrap();
+    assert!(matches!(
+        st0903::decode_standalone_strict(&bytes),
+        Err(KlvDecodeError::ComplianceViolation { tag: 14, .. })
+    ));
+    let lenient = st0903::decode_standalone(&bytes).expect("the lenient form has no such rule");
+    assert!(lenient.targets[0].bbox_top_left_lon_offset.is_some());
+    let mut ls = standalone_record();
+    ls.targets.clear();
+    ls.num_targets_reported = Some(1);
+    let mut body = st0903::encode_to_vec(&ls).unwrap();
+    // One pack: targetId 1, Item 4 = 5, Item 10 = C1 00 00.
+    body.extend_from_slice(&[
+        0x65, 0x0A, 0x09, 0x01, 0x04, 0x01, 0x05, 0x0A, 0x03, 0xC1, 0x00, 0x00,
+    ]);
+    assert!(matches!(
+        st0903::decode_standalone_strict(&checksummed(&body)),
+        Err(KlvDecodeError::ComplianceViolation { tag: 10, .. })
+    ));
+}
+
+#[test]
+fn decode_standalone_strict_refuses_an_active_target_without_a_location() {
+    // ST 0903.6-130.
+    for status in [1u8, 3, 4] {
+        let mut ls = standalone_record();
+        ls.targets[0].detection_status = Some(status);
+        ls.targets[0].target_location = None;
+        let bytes = st0903::encode_to_vec_standalone(&ls).unwrap();
+        assert!(
+            matches!(
+                st0903::decode_standalone_strict(&bytes),
+                Err(KlvDecodeError::ComplianceViolation { tag: 23, .. })
+            ),
+            "status {status}"
+        );
+        let lenient = st0903::decode_standalone(&bytes).unwrap();
+        assert_eq!(lenient.targets[0].detection_status, Some(status));
+    }
+}
+
+#[test]
+fn decode_standalone_strict_refuses_a_core_identifier_st1204_does_not_accept() {
+    let mut ls = standalone_record();
+    ls.miis_id = Some(vec![0x01, 0x00]);
+    let bytes = st0903::encode_to_vec_standalone(&ls).unwrap();
+    assert!(matches!(
+        st0903::decode_standalone_strict(&bytes),
+        Err(KlvDecodeError::ComplianceViolation { tag: 13, .. })
+    ));
+}
+
+#[test]
+fn the_label_must_be_the_vmti_label() {
+    let mut other = JMISB_VECTOR;
+    other[15] = 0x01;
+    for decode in [st0903::decode_standalone, st0903::decode_standalone_strict] {
+        assert!(matches!(
+            decode(&other),
+            Err(KlvDecodeError::UnexpectedUniversalLabel { .. })
+        ));
+        assert!(matches!(
+            decode(&JMISB_VECTOR[..10]),
+            Err(KlvDecodeError::Truncated { offset: 0, .. })
+        ));
+    }
+}
+
+#[test]
+fn our_standalone_output_passes_decode_standalone() {
+    // The fuzz oracle's claim, on two records: a sparse one and a full one.
+    for ls in [st0903::VmtiLs::default(), standalone_record()] {
+        let bytes = st0903::encode_to_vec_standalone(&ls).unwrap();
+        let decoded = st0903::decode_standalone(&bytes).unwrap();
+        assert_eq!(decoded.version_number, ls.version_number);
+    }
 }

@@ -5,16 +5,23 @@
 //! inputs that decode successfully, `encode_to_vec` followed by a
 //! second `decode` must yield an equal `VmtiLs` (modulo Tag 1
 //! checksum, which `encode_to_vec` intentionally drops — the muxer
-//! handles it externally).
+//! handles it externally). The standalone decoders get the same input,
+//! and what `encode_to_vec_standalone` writes must pass
+//! `decode_standalone`.
 
 #![no_main]
 use libfuzzer_sys::fuzz_target;
-use tst_core::klv::st0903::{decode, decode_strict, encode_strict_compliance, encode_to_vec};
+use tst_core::klv::st0903::{
+    decode, decode_standalone, decode_standalone_strict, decode_strict, encode_strict_compliance,
+    encode_to_vec, encode_to_vec_standalone,
+};
 
 fuzz_target!(|data: &[u8]| {
     // Lenient + strict decoders: panic-freedom probe (preserves
     // pre-Phase-6 coverage on decode_strict).
     let _ = decode_strict(data);
+    let _ = decode_standalone(data);
+    let _ = decode_standalone_strict(data);
     let Ok(mut ls1) = decode(data) else {
         return;
     };
@@ -23,6 +30,11 @@ fuzz_target!(|data: &[u8]| {
     // exercises MissingMandatoryItem / structural guard paths that `encode_to_vec`
     // does not reach. May Err on incomplete records; must never panic.
     let _ = encode_strict_compliance(&ls1);
+
+    // Our own standalone output verifies.
+    if let Ok(standalone) = encode_to_vec_standalone(&ls1) {
+        decode_standalone(&standalone).expect("our standalone output must verify");
+    }
 
     // Round-trip: decode → encode → decode must yield an equal VmtiLs.
     // `field_errors` is excluded from PartialEq (manual impl) since

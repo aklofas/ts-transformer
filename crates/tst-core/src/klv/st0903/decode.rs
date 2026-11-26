@@ -8,6 +8,7 @@ use crate::klv::st0903::tags::{Encoding, TAGS, lookup};
 use crate::klv::st0903::{rules, vtarget_pack};
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
+use core::ops::Range;
 
 /// Lenient decode of a VMTI Local Set body per ST 0903.6 §10.1.
 ///
@@ -360,8 +361,7 @@ fn decode_vtarget_series(
 /// required for standalone-VMTI per ST 0903.6-119, prohibited for
 /// embedded per -120; Tag 2 PTS required for standalone per -117;
 /// Tags 11/12/13 conditional). `decode_strict` does NOT enforce these
-/// rules — consumers needing carriage-aware validation can post-
-/// validate after a successful decode.
+/// rules: [`decode_standalone_strict`] does, for a standalone packet.
 ///
 /// **UTF-8 char-cap.** Strict rejects strings exceeding the spec's
 /// `max_chars` (Tag 3 V32, Tag 10 V128). Lenient accepts but surfaces
@@ -382,6 +382,23 @@ fn decode_vtarget_series(
 /// - [`KlvDecodeError::NonCanonicalLength`] if a TLV uses a non-
 ///   canonical BER length encoding.
 pub fn decode_strict(bytes: &[u8]) -> Result<VmtiLs, KlvDecodeError> {
+    decode_strict_at(bytes, 0).map(|body| body.ls)
+}
+
+/// A body strict decode accepted, with what the standalone rules read.
+struct StrictBody {
+    ls: VmtiLs,
+    /// The top-level items on the wire with a value.
+    present: [bool; 256],
+    /// Where the top-level items a record rule can name start.
+    at: [usize; 14],
+    /// Where each pack of the series lies.
+    packs: Vec<Range<usize>>,
+}
+
+/// [`decode_strict`] of `bytes`, which start at `base` in the caller's
+/// buffer: every offset it reports is the caller's.
+fn decode_strict_at(bytes: &[u8], base: usize) -> Result<StrictBody, KlvDecodeError> {
     use crate::klv::imapb::{DecodedImapb, ImapbParams, decode_imapb};
     use crate::klv::length::read_strict_tlv;
 
@@ -400,12 +417,12 @@ pub fn decode_strict(bytes: &[u8]) -> Result<VmtiLs, KlvDecodeError> {
     // Where the top-level items a record rule can name start (4, 8, 9,
     // 13), and where each pack of the series starts.
     let mut at = [0usize; 14];
-    let mut pack_offsets = Vec::new();
+    let mut packs = Vec::new();
     let mut cursor = bytes;
     // `offset` tracks the start of the current item in `bytes` so
     // framing errors and duplicate-tag errors surface a useful
     // `offset` field (the ST 0601 strict walker uses the same scheme).
-    let mut offset = 0usize;
+    let mut offset = base;
 
     while !cursor.is_empty() {
         let item_start = offset;
@@ -583,7 +600,7 @@ pub fn decode_strict(bytes: &[u8]) -> Result<VmtiLs, KlvDecodeError> {
                     // `item_start + consumed` = buffer offset of `value[0]`,
                     // so series-internal errors report buffer-absolute
                     // offsets.
-                    (ls.targets, pack_offsets) =
+                    (ls.targets, packs) =
                         decode_vtarget_series_strict(value, item_start + consumed)?;
                 }
                 102 => ls.algorithm_series = Some(value.to_vec()),
@@ -596,7 +613,7 @@ pub fn decode_strict(bytes: &[u8]) -> Result<VmtiLs, KlvDecodeError> {
     // The record rules, after every item's own checks and before the
     // required items.
     if let Some(v) = rules::first_violation(&ls) {
-        return Err(compliance_violation(v, &at, &pack_offsets));
+        return Err(compliance_violation(v, &at, &packs));
     }
 
     // Required-tag validation: required = {4, 6}.
@@ -606,7 +623,12 @@ pub fn decode_strict(bytes: &[u8]) -> Result<VmtiLs, KlvDecodeError> {
         }
     }
 
-    Ok(ls)
+    Ok(StrictBody {
+        ls,
+        present,
+        at,
+        packs,
+    })
 }
 
 /// The strict decoders' error for a record rule, at the start of the pack
@@ -614,10 +636,10 @@ pub fn decode_strict(bytes: &[u8]) -> Result<VmtiLs, KlvDecodeError> {
 fn compliance_violation(
     v: rules::Violation,
     at: &[usize; 14],
-    pack_offsets: &[usize],
+    packs: &[Range<usize>],
 ) -> KlvDecodeError {
     let offset = match v.target {
-        Some(i) => pack_offsets[i],
+        Some(i) => packs[i].start,
         None => at[v.tag as usize],
     };
     let reason = match v.rule {
@@ -636,11 +658,11 @@ fn compliance_violation(
 /// is routed via the typed [`KlvDecodeError::St0903InvalidVTargetPack`]
 /// arm carrying the underlying [`VTargetPackError`]. `base` is the
 /// buffer offset of `series_bytes[0]`; every offset this function
-/// surfaces is buffer-absolute. Returns the packs and where each starts.
+/// surfaces is buffer-absolute. Returns the packs and where each lies.
 fn decode_vtarget_series_strict(
     series_bytes: &[u8],
     base: usize,
-) -> Result<(Vec<vtarget_pack::VTargetPack>, Vec<usize>), KlvDecodeError> {
+) -> Result<(Vec<vtarget_pack::VTargetPack>, Vec<Range<usize>>), KlvDecodeError> {
     use crate::klv::length::{read_ber_strict, rebase_offset};
 
     let mut targets = Vec::new();
@@ -682,8 +704,173 @@ fn decode_vtarget_series_strict(
             });
         }
         targets.push(pack);
-        offsets.push(offset);
+        offsets.push(offset..offset + pack_len);
         offset += pack_len;
     }
     Ok((targets, offsets))
+}
+
+/// Decode a standalone VMTI packet, `[VMTI_LS_UL][BER length][body]`, and
+/// verify its checksum (ST 0903.4-15, -17, ST 0903.6-119): the body must
+/// hold exactly one Tag 1, as its last item, two bytes wide, equal to the
+/// running 16-bit sum of every byte from the label up to that value. Then
+/// the body is decoded as [`decode`] does. Bytes after the declared
+/// length are not read.
+///
+/// This is the decode twin of [`super::encode_to_vec_standalone`]; for an
+/// embedded set (no label, no checksum) use [`decode`].
+///
+/// # Errors
+/// - [`KlvDecodeError::Truncated`] if the packet is shorter than its label
+///   or than its declared length, or an item runs past the body.
+/// - [`KlvDecodeError::UnexpectedUniversalLabel`] if the label is not
+///   [`super::VMTI_LS_UL`].
+/// - [`KlvDecodeError::MissingChecksum`] (the body's offset),
+///   [`KlvDecodeError::MalformedChecksum`] (a Tag 1 not two bytes wide, at
+///   its value), [`KlvDecodeError::DuplicateTag`] with tag 1 (a second
+///   one, at its start), [`KlvDecodeError::Tag1NotLast`] and
+///   [`KlvDecodeError::ChecksumMismatch`], judged in that order.
+pub fn decode_standalone(bytes: &[u8]) -> Result<VmtiLs, KlvDecodeError> {
+    let (body, _) = standalone_body(bytes)?;
+    decode(body)
+}
+
+/// [`decode_standalone`] with every rule of [`decode_strict`] on the body,
+/// then the rules of standalone carriage: Items 2, 11, 12 and 13 present
+/// (ST 0903.6-117, -122, -123, -125; present means on the wire with a
+/// value, so an IMAP special in Item 11 or 12 counts), no
+/// parent-relative offset item in a pack (Items 10, 11, 13 to 16,
+/// ST 0903.6-116, whatever value they hold), a target that is active or
+/// coasting has a location (ST 0903.6-130), and the MIIS Core Identifier
+/// is one ST 1204 accepts (§10.1.13). These mirror
+/// [`super::encode_standalone_strict_compliance`].
+///
+/// # Errors
+/// Those of [`decode_standalone`] and [`decode_strict`], plus
+/// [`KlvDecodeError::St0903MissingRequiredTag`] for a missing standalone
+/// item and [`KlvDecodeError::ComplianceViolation`] for the other rules.
+pub fn decode_standalone_strict(bytes: &[u8]) -> Result<VmtiLs, KlvDecodeError> {
+    let (body, base) = standalone_body(bytes)?;
+    let strict = decode_strict_at(body, base)?;
+    for tag in [2u8, 11, 12, 13] {
+        if !strict.present[usize::from(tag)] {
+            return Err(KlvDecodeError::St0903MissingRequiredTag { tag });
+        }
+    }
+    for pack in &strict.packs {
+        if let Some(tag) = vtarget_pack::first_standalone_offset_item(&bytes[pack.clone()]) {
+            return Err(KlvDecodeError::ComplianceViolation {
+                tag,
+                offset: pack.start,
+                reason: "standalone carriage omits a pack's parent-relative offsets (ST 0903.6-116)",
+            });
+        }
+    }
+    if let Some(v) = rules::first_standalone_violation(&strict.ls) {
+        return Err(compliance_violation(v, &strict.at, &strict.packs));
+    }
+    Ok(strict.ls)
+}
+
+/// The label, the body the outer length bounds, and the checksum of a
+/// standalone packet (see [`decode_standalone`]). Returns the body and
+/// where it starts in `bytes`.
+fn standalone_body(bytes: &[u8]) -> Result<(&[u8], usize), KlvDecodeError> {
+    use crate::klv::UniversalLabel;
+    use crate::klv::checksum::checksum_running_sum_16;
+    use crate::klv::length::{read_ber, rebase_offset};
+
+    let Some((label, rest)) = bytes.split_first_chunk::<16>() else {
+        return Err(KlvDecodeError::Truncated {
+            offset: 0,
+            needed: 16,
+            have: bytes.len(),
+        });
+    };
+    if *label != super::VMTI_LS_UL {
+        return Err(KlvDecodeError::UnexpectedUniversalLabel {
+            expected: UniversalLabel::new(super::VMTI_LS_UL),
+            found: UniversalLabel::new(*label),
+        });
+    }
+    let (declared, after_len) = read_ber(rest).map_err(|mut e| {
+        rebase_offset(&mut e, 16);
+        e
+    })?;
+    let base = bytes.len() - after_len.len();
+    let Some(body) = after_len.get(..declared) else {
+        return Err(KlvDecodeError::Truncated {
+            offset: base,
+            needed: declared,
+            have: after_len.len(),
+        });
+    };
+
+    // Every Tag 1 is found before one is judged. The walk keeps where each
+    // item starts (the iterator does not), and reads a tag of any width: a
+    // wide one is no checksum.
+    let mut first = None; // where the first one's value starts
+    let mut malformed = None; // the first one not two bytes wide: value start, width
+    let mut second = None; // where the second item starts
+    let mut item_start = 0;
+    while item_start < body.len() {
+        let item = &body[item_start..];
+        let Some(tag_len) = item.iter().position(|b| b & 0x80 == 0).map(|i| i + 1) else {
+            return Err(KlvDecodeError::Truncated {
+                offset: base + body.len(),
+                needed: 1,
+                have: 0,
+            });
+        };
+        let tag = item[..tag_len]
+            .iter()
+            .fold(0u64, |t, b| t.saturating_mul(128) | u64::from(b & 0x7F));
+        let (len, value) = read_ber(&item[tag_len..]).map_err(|mut e| {
+            rebase_offset(&mut e, base + item_start + tag_len);
+            e
+        })?;
+        let value_at = body.len() - value.len();
+        if value.len() < len {
+            return Err(KlvDecodeError::Truncated {
+                offset: base + value_at,
+                needed: len,
+                have: value.len(),
+            });
+        }
+        if tag == 1 {
+            if len != 2 && malformed.is_none() {
+                malformed = Some((value_at, len));
+            }
+            if first.is_none() {
+                first = Some(value_at);
+            } else if second.is_none() {
+                second = Some(item_start);
+            }
+        }
+        item_start = value_at + len;
+    }
+    let Some(value_at) = first else {
+        return Err(KlvDecodeError::MissingChecksum { offset: base });
+    };
+    if let Some((at, got)) = malformed {
+        return Err(KlvDecodeError::MalformedChecksum {
+            offset: base + at,
+            got,
+        });
+    }
+    if let Some(at) = second {
+        return Err(KlvDecodeError::DuplicateTag {
+            tag: 1,
+            offset: base + at,
+        });
+    }
+    if value_at + 2 != body.len() {
+        return Err(KlvDecodeError::Tag1NotLast);
+    }
+    let expected = u16::from_be_bytes([body[value_at], body[value_at + 1]]);
+    let found = checksum_running_sum_16(&bytes[..base + value_at]);
+    if found != expected {
+        return Err(KlvDecodeError::ChecksumMismatch { expected, found });
+    }
+    Ok((body, base))
 }
