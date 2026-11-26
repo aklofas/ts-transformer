@@ -3546,9 +3546,14 @@ mod tests {
         let both = [ident, lang].concat();
         let both_reordered = [lang, ident].concat();
         let cases: Vec<(&str, Vec<Step>, usize, Vec<u16>)> = vec![
-            ("C1", vec![pmt1(0, &video(0x100))], 1, vec![0x100]),
             (
-                "C2b",
+                "same version, same bytes",
+                vec![pmt1(0, &video(0x100))],
+                1,
+                vec![0x100],
+            ),
+            (
+                "same version, a descriptor added",
                 vec![Step::Section(
                     0x1000,
                     build_pmt_section_with(1, 0x100, 0, &[], &[(0x1B, 0x100, ident)]),
@@ -3557,7 +3562,7 @@ mod tests {
                 vec![0x100],
             ),
             (
-                "C2c",
+                "same version, the PCR PID moved",
                 vec![Step::Section(
                     0x1000,
                     build_pmt_section(1, 0x101, 0, &video(0x100)),
@@ -3565,9 +3570,14 @@ mod tests {
                 2,
                 vec![0x100],
             ),
-            ("C3", vec![pmt1(1, &video(0x100))], 2, vec![0x100]),
             (
-                "C4",
+                "a new version, same streams",
+                vec![pmt1(1, &video(0x100))],
+                2,
+                vec![0x100],
+            ),
+            (
+                "only the PAT's version rose, then a same-version PMT with another stream",
                 vec![
                     Step::Section(0x0000, build_pat_section(1, 1, &[(1, 0x1000)])),
                     pmt1(0, &video(0x200)),
@@ -3576,13 +3586,13 @@ mod tests {
                 vec![0x200],
             ),
             (
-                "C6",
+                "same version, another stream, CRC wrong",
                 vec![Step::Section(0x1000, with_bad_crc(other.clone()))],
                 1,
                 vec![0x100],
             ),
             (
-                "C6b",
+                "the applied section with one bit flipped, CRC not redone",
                 vec![Step::Section(0x1000, {
                     let mut s = applied.clone();
                     s[14] ^= 0x01;
@@ -3592,7 +3602,7 @@ mod tests {
                 vec![0x100],
             ),
             (
-                "C7",
+                "current_next_indicator 0, same version, another stream",
                 vec![Step::Section(
                     0x1000,
                     edited(other.clone(), 5, |b| b & !0x01),
@@ -3601,7 +3611,7 @@ mod tests {
                 vec![0x100],
             ),
             (
-                "C7b",
+                "current_next_indicator 0 at the next version",
                 vec![Step::Section(
                     0x1000,
                     edited(build_pmt_section(1, 0x100, 1, &video(0x200)), 5, |b| {
@@ -3612,13 +3622,13 @@ mod tests {
                 vec![0x100],
             ),
             (
-                "C8",
+                "a PMT claiming two sections",
                 vec![Step::Section(0x1000, edited(other.clone(), 7, |_| 1))],
                 1,
                 vec![0x100],
             ),
             (
-                "C8b",
+                "a two-section PAT adds program 2, program 1's PMT repeats",
                 vec![
                     Step::Section(
                         0x0000,
@@ -3647,7 +3657,7 @@ mod tests {
                 vec![0x300],
             ),
             (
-                "N1a",
+                "the applied section behind a pointer_field of 3",
                 vec![Step::Payload(
                     0x1000,
                     true,
@@ -3657,7 +3667,7 @@ mod tests {
                 vec![0x100],
             ),
             (
-                "N1b",
+                "the applied section split over two packets",
                 vec![
                     Step::Payload(0x1000, true, [&[0u8][..], &applied[..10]].concat()),
                     Step::Payload(0x1000, false, applied[10..].to_vec()),
@@ -3666,7 +3676,7 @@ mod tests {
                 vec![0x100],
             ),
             (
-                "N2",
+                "same version, descriptors added, then reordered",
                 vec![
                     Step::Section(
                         0x1000,
@@ -3681,7 +3691,7 @@ mod tests {
                 vec![0x100],
             ),
             (
-                "N3",
+                "CRC wrong at the applied version, then the applied section",
                 vec![
                     Step::Section(0x1000, with_bad_crc(other.clone())),
                     Step::Section(0x1000, applied.clone()),
@@ -3690,7 +3700,7 @@ mod tests {
                 vec![0x100],
             ),
             (
-                "N4",
+                "CRC wrong at the applied version, then that section with a good CRC",
                 vec![
                     Step::Section(0x1000, with_bad_crc(other.clone())),
                     Step::Section(0x1000, other.clone()),
@@ -3699,7 +3709,7 @@ mod tests {
                 vec![0x200],
             ),
             (
-                "N5",
+                "current_next_indicator 0, then the same section as current",
                 vec![
                     Step::Section(0x1000, edited(other.clone(), 5, |b| b & !0x01)),
                     Step::Section(0x1000, other.clone()),
@@ -3708,7 +3718,7 @@ mod tests {
                 vec![0x200],
             ),
             (
-                "N6",
+                "a PMT claiming two sections, then the same streams in one",
                 vec![
                     Step::Section(0x1000, edited(other.clone(), 7, |_| 1)),
                     Step::Section(0x1000, other.clone()),
@@ -3717,7 +3727,7 @@ mod tests {
                 vec![0x200],
             ),
             (
-                "N7",
+                "the PAT drops program 1 and lists it again, then the applied section",
                 vec![
                     Step::Section(0x0000, build_pat_section(1, 1, &[])),
                     Step::Section(0x0000, build_pat_section(1, 2, &[(1, 0x1000)])),
@@ -3727,7 +3737,7 @@ mod tests {
                 vec![0x100],
             ),
             (
-                "N8",
+                "the PAT adds and drops program 2, program 1's section unchanged",
                 vec![
                     Step::Section(0x0000, build_pat_section(1, 1, &[(1, 0x1000), (2, 0x1100)])),
                     Step::Section(0x1000, applied.clone()),
@@ -3738,7 +3748,7 @@ mod tests {
                 vec![0x100],
             ),
             (
-                "N10",
+                "the PMT PID moves, the applied section on the new PID",
                 vec![
                     Step::Section(0x0000, build_pat_section(1, 1, &[(1, 0x1001)])),
                     Step::Section(0x1001, applied.clone()),
@@ -3747,7 +3757,7 @@ mod tests {
                 vec![0x100],
             ),
             (
-                "N11",
+                "versions 31, 0, 31, 0, back to the first section",
                 vec![
                     pmt1(31, &video(0x200)),
                     pmt1(0, &video(0x300)),
@@ -3758,19 +3768,19 @@ mod tests {
                 vec![0x100],
             ),
             (
-                "N13 repeat",
+                "reset_stats, then the applied section",
                 vec![Step::ResetStats, Step::Section(0x1000, applied.clone())],
                 1,
                 vec![0x100],
             ),
             (
-                "N13 change",
+                "reset_stats, then same version with another stream",
                 vec![Step::ResetStats, Step::Section(0x1000, other.clone())],
                 2,
                 vec![0x200],
             ),
             (
-                "N14",
+                "reset_sync, then the PAT and the applied section",
                 vec![
                     Step::ResetSync,
                     Step::Section(0x0000, build_pat_section(1, 0, &[(1, 0x1000)])),
@@ -3783,7 +3793,7 @@ mod tests {
         // Cases with their own start: two programs on one PMT PID.
         let two_programs: Vec<(&str, Vec<Step>, usize, Vec<u16>)> = vec![
             (
-                "C10",
+                "two programs on one PMT PID, only program 2's section changes",
                 vec![
                     Step::Section(0x1000, applied.clone()),
                     Step::Section(0x1000, build_pmt_section(2, 0x200, 0, &video(0x200))),
@@ -3794,7 +3804,7 @@ mod tests {
                 vec![0x201],
             ),
             (
-                "N9",
+                "two programs on one PMT PID, each alternating at one version",
                 vec![
                     Step::Section(0x1000, applied.clone()),
                     Step::Section(0x1000, build_pmt_section(2, 0x200, 0, &video(0x200))),
