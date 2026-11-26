@@ -999,6 +999,26 @@ mod tests {
         assert_eq!(framing.position, Some(LoasCarry::Body(900)));
     }
 
+    /// Only a provisional position that fails ends the deferral: the same
+    /// long PES after a PES whose candidate it refutes (a byte of a record
+    /// body where that candidate's record would end) is still not judged.
+    #[test]
+    fn a_refuted_candidate_does_not_end_the_deferral_of_a_provisional_position() {
+        let mut first = vec![0x00; 100];
+        first[..3].copy_from_slice(&[0x56, 0xFF, 0xFF]);
+        let mut long = vec![0x00; 100];
+        while long.len() < LOAS_UNSYNCED_BOUND + 1_000 {
+            long.extend_from_slice(&build_loas_record(997));
+        }
+        long.extend_from_slice(&build_loas_record(997)[..500]);
+        let mut framing = LoasFraming::default();
+        assert_eq!(framing.feed(&first, false), None);
+        assert_eq!(framing.feed(&long, false), None);
+        let search = framing.search.as_ref().expect("searching");
+        assert_eq!(held(search), [(LoasCarry::Body(500), true)]);
+        assert!(!search.provisional_failed);
+    }
+
     /// A pending candidate whose walk joins a provisional position's is
     /// that position's duplicate: the position is walked first and confirmed,
     /// and the duplicate does not take its place as a once-passed candidate.
