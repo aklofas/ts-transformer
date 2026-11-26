@@ -57,7 +57,9 @@ use tst_core::klv::st0806::{
     encode_to_vec as encode_st0806, encode_to_vec_standalone as encode_st0806_standalone,
 };
 use tst_core::klv::st0903::{
-    decode as decode_st0903_lenient, decode_strict as decode_st0903_strict,
+    decode as decode_st0903_lenient, decode_standalone as decode_st0903_standalone,
+    decode_standalone_strict as decode_st0903_standalone_strict,
+    decode_strict as decode_st0903_strict,
     encode_standalone_strict_compliance as encode_st0903_standalone_strict_compliance,
     encode_strict_compliance as encode_st0903_strict_compliance, encode_to_vec as encode_st0903,
     encode_to_vec_standalone as encode_st0903_standalone,
@@ -366,6 +368,26 @@ fn decode_vmti_py(py: Python<'_>, buf: &[u8], strict: bool) -> PyResult<Py<PyAny
         decode_st0903_strict(buf)
     } else {
         decode_st0903_lenient(buf)
+    };
+    match result {
+        Ok(vmti) => crate::generated::st0903::vmti_ls_to_py(py, &vmti),
+        Err(e) => Err(klv_decode_error_to_pyerr(py, e)),
+    }
+}
+
+/// Decode a standalone VMTI packet: 16-byte VMTI UL + BER length + body,
+/// verifying its checksum (Tag 1: one, the last item, two bytes, the running
+/// 16-bit sum from the label up to its value). With `strict=True`, also the
+/// strict body rules and those of standalone carriage. Raises
+/// `KlvError(CHECKSUM_MISMATCH)` on a bad checksum, `KlvError
+/// (BAD_UNIVERSAL_LABEL)` on another label.
+#[pyfunction]
+#[pyo3(name = "decode_vmti_standalone", signature = (buf, *, strict = false))]
+fn decode_vmti_standalone_py(py: Python<'_>, buf: &[u8], strict: bool) -> PyResult<Py<PyAny>> {
+    let result = if strict {
+        decode_st0903_standalone_strict(buf)
+    } else {
+        decode_st0903_standalone(buf)
     };
     match result {
         Ok(vmti) => crate::generated::st0903::vmti_ls_to_py(py, &vmti),
@@ -938,6 +960,7 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(decode_precision_timestamp_py, m)?)?;
     m.add_function(wrap_pyfunction!(decode_security_py, m)?)?;
     m.add_function(wrap_pyfunction!(decode_vmti_py, m)?)?;
+    m.add_function(wrap_pyfunction!(decode_vmti_standalone_py, m)?)?;
     m.add_function(wrap_pyfunction!(decode_uas_datalink_py, m)?)?;
     m.add_function(wrap_pyfunction!(encode_uas_datalink_py, m)?)?;
     m.add_function(wrap_pyfunction!(
