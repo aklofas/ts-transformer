@@ -3,7 +3,7 @@
 import pytest
 
 from tstrans import klv
-from tstrans.exceptions import KlvEncodeError, KlvError
+from tstrans.exceptions import KlvEncodeError, KlvError, KlvErrorKind
 
 
 def _base_ls(**overrides):
@@ -85,3 +85,16 @@ def test_patch_writes_a_new_timestamp_first():
     # The body starts right after the 16-byte UL and a one-byte length.
     assert out[17] == 2
     assert klv.decode_uas_datalink(out).timestamp_us == 1_700_000_000_000_000
+
+
+def test_patch_reports_a_wrong_width_checksum_as_the_decoders_do():
+    # A three-byte checksum value: patch reports it as every decode does.
+    ul = klv.encode_uas_datalink(_base_ls())[:16]
+    body = bytes([3, 2]) + b"M1" + bytes([1, 3, 0xAA, 0xBB, 0xCC])
+    raw = ul + bytes([len(body)]) + body
+    with pytest.raises(KlvError) as decoded:
+        klv.decode_uas_datalink(raw)
+    with pytest.raises(KlvError) as patched:
+        klv.patch_uas_datalink(raw, {"timestamp_us": 1_700_000_000_000_000})
+    assert decoded.value.kind is KlvErrorKind.MALFORMED_BYTES
+    assert patched.value.kind is KlvErrorKind.MALFORMED_BYTES

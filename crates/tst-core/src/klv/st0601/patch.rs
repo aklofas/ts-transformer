@@ -8,7 +8,7 @@
 //! decode→modify→re-encode normalizes TLV order and re-encodes every
 //! IMAPB float, which this avoids.
 
-use alloc::collections::BTreeSet;
+use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::vec::Vec;
 
 use crate::error::{KlvDecodeError, KlvEncodeError, KlvPatchError};
@@ -127,7 +127,9 @@ fn edit_value(edits: &UasDatalinkLs, spec: &TagSpec) -> Result<Option<Vec<u8>>, 
 ///
 /// # Errors
 /// [`KlvPatchError::Decode`] when the input cannot be walked
-/// (truncated / malformed tag / malformed length);
+/// (truncated / malformed tag / malformed length), or holds a checksum
+/// that is not two bytes wide ([`KlvDecodeError::MalformedChecksum`], as
+/// the decoders report it);
 /// [`KlvPatchError::Encode`] when an edited value cannot be encoded
 /// (out of range, string too long, reserved tag in `unknown`).
 pub fn patch(raw: &[u8], edits: &UasDatalinkLs) -> Result<Vec<u8>, KlvPatchError> {
@@ -168,6 +170,14 @@ pub fn patch(raw: &[u8], edits: &UasDatalinkLs) -> Result<Vec<u8>, KlvPatchError
     // byte spans, non-canonical length encodings included.
     let mut new_body: Vec<u8> = Vec::with_capacity(body.len() + 64);
     let mut seen = SeenTags::new();
+    // The edit's unknown items by tag, the FIRST per tag, built once: one
+    // entry per unknown item of the edit. A decoded set used as the edit
+    // carries every unknown item of the input, and a list scanned per
+    // input item made that walk quadratic.
+    let mut unknown_edits: BTreeMap<u32, &[u8]> = BTreeMap::new();
+    for f in &edits.unknown {
+        unknown_edits.entry(f.tag).or_insert(&f.value);
+    }
     // (offset in new_body, header byte count) of the LAST tag-1 TLV;
     // its 2-byte value is recomputed after assembly.
     let mut checksum_slot: Option<(usize, usize)> = None;
@@ -208,12 +218,11 @@ pub fn patch(raw: &[u8], edits: &UasDatalinkLs) -> Result<Vec<u8>, KlvPatchError
         seen.insert(tag);
 
         if tag == 1 {
-            // Mirror decode_inner: a checksum value must be 2 bytes.
+            // As every decode reports it: a checksum value must be 2 bytes.
             if vlen != 2 {
-                return Err(KlvPatchError::Decode(KlvDecodeError::Truncated {
+                return Err(KlvPatchError::Decode(KlvDecodeError::MalformedChecksum {
                     offset: body_offset + pos + header_len,
-                    needed: 2,
-                    have: vlen,
+                    got: vlen,
                 }));
             }
             if pos + header_len + vlen == body.len() {
@@ -233,8 +242,8 @@ pub fn patch(raw: &[u8], edits: &UasDatalinkLs) -> Result<Vec<u8>, KlvPatchError
                 Some(value) => emit_ber_oid_tlv(tag, &value, &mut new_body)?,
                 None => new_body.extend_from_slice(tlv),
             }
-        } else if let Some(f) = edits.unknown.iter().find(|f| f.tag == tag) {
-            emit_ber_oid_tlv(tag, &f.value, &mut new_body)?;
+        } else if let Some(value) = unknown_edits.get(&tag) {
+            emit_ber_oid_tlv(tag, value, &mut new_body)?;
         } else {
             new_body.extend_from_slice(tlv);
         }

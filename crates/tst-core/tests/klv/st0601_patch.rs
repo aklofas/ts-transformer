@@ -4,6 +4,7 @@
 
 use std::time::{Duration, Instant};
 
+use tst_core::error::{KlvDecodeError, KlvPatchError};
 use tst_core::klv::ImapbSpecial;
 use tst_core::klv::checksum::checksum_running_sum_16;
 use tst_core::klv::st0601::{
@@ -202,21 +203,70 @@ fn many_unknown_tags(n: u32) -> Vec<u8> {
 #[test]
 fn patch_many_distinct_unknown_tags_is_linear() {
     // Four times the tags takes about four times as long when the walk is
-    // linear; a walk that compares each tag with every tag seen so far
-    // takes about sixteen times as long.
-    let small = many_unknown_tags(1 << 15);
-    let large = many_unknown_tags(1 << 17);
-    let edits = UasDatalinkLs::default();
-    let t_small = best_of_three(|| {
-        patch(&small, &edits).unwrap();
-    });
-    let t_large = best_of_three(|| {
-        patch(&large, &edits).unwrap();
-    });
-    let ratio = t_large.as_secs_f64() / t_small.as_secs_f64();
+    // linear; a walk that compares each tag with every tag seen so far, or
+    // looks each one up in a list of the edit's unknown items, takes about
+    // sixteen times as long. Two edits: an empty one, and the decoded set
+    // itself (decode, change a field, patch: the edit then carries every
+    // unknown item of the input).
+    let ratio = |small_n: u32, large_n: u32, edit_of: &dyn Fn(&[u8]) -> UasDatalinkLs| {
+        let (small, large) = (many_unknown_tags(small_n), many_unknown_tags(large_n));
+        let (small_edit, large_edit) = (edit_of(&small), edit_of(&large));
+        let t_small = best_of_three(|| {
+            patch(&small, &small_edit).unwrap();
+        });
+        let t_large = best_of_three(|| {
+            patch(&large, &large_edit).unwrap();
+        });
+        (
+            t_large.as_secs_f64() / t_small.as_secs_f64(),
+            t_small,
+            t_large,
+        )
+    };
+    let (r, t_small, t_large) = ratio(1 << 15, 1 << 17, &|_| UasDatalinkLs::default());
     assert!(
-        ratio < 8.0,
-        "2^17 tags took {t_large:?}, 2^15 took {t_small:?}: ratio {ratio:.1}"
+        r < 8.0,
+        "an empty edit: 2^17 tags took {t_large:?}, 2^15 took {t_small:?}: ratio {r:.1}"
+    );
+    let decoded = |set: &[u8]| UasDatalinkLs {
+        platform_heading_deg: Some(12.0),
+        ..decode_unchecked(set).unwrap()
+    };
+    let (r, t_small, t_large) = ratio(1 << 13, 1 << 15, &decoded);
+    assert!(
+        r < 8.0,
+        "the decoded set as the edit: 2^15 tags took {t_large:?}, 2^13 took {t_small:?}: ratio {r:.1}"
+    );
+}
+
+#[test]
+fn patch_reports_a_wrong_width_checksum_as_the_decoders_do() {
+    // A three-byte checksum: every decode reports it as a malformed
+    // checksum at its value, and so does patch.
+    let mut body = vec![MISSION.0, MISSION.1.len() as u8];
+    body.extend_from_slice(MISSION.1);
+    body.extend_from_slice(&[0x01, 0x03, 0xAA, 0xBB, 0xCC]);
+    let mut raw = UL.to_vec();
+    raw.push(body.len() as u8);
+    raw.extend_from_slice(&body);
+    let decoded = decode_unchecked(&raw).unwrap_err();
+    assert!(
+        matches!(
+            decoded,
+            KlvDecodeError::MalformedChecksum { offset: 23, got: 3 }
+        ),
+        "{decoded:?}"
+    );
+    let patched = patch(&raw, &timestamp_edit());
+    assert!(
+        matches!(
+            patched,
+            Err(KlvPatchError::Decode(KlvDecodeError::MalformedChecksum {
+                offset: 23,
+                got: 3
+            }))
+        ),
+        "{patched:?}"
     );
 }
 
