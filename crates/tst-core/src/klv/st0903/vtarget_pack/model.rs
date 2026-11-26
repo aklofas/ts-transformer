@@ -454,10 +454,9 @@ crate::binding_record! {
         /// What the lenient decode met in this pack's items and no encoder
         /// writes back: an item that does not decode (a wrong length, a
         /// reserved IMAPB pattern), and an item sent as an ST 1201 special,
-        /// a legal value listed as `OutOfRange` with its tag and range (the
-        /// value is negative or positive infinity for the side the special
-        /// signals, NaN otherwise). The field of each is unset. Strict
-        /// decode leaves the list empty; the encoders do not read it.
+        /// a legal value listed as an out-of-range entry with its tag. The
+        /// field of each is unset. The strict decoders leave the list empty;
+        /// the encoders do not read it.
         @[custom]
         pub field_errors: Vec<crate::error::KlvFieldError>,
     }

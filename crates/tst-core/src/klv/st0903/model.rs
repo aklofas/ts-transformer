@@ -14,9 +14,9 @@ crate::binding_record! {
     /// the checksum, `precision_time_stamp`, both fields of view and `miis_id`
     /// (ST 0903.4-15, ST 0903.6-117, -122, -123, -125). Lenient decode
     /// tolerates a missing required item and surfaces per-field decode
-    /// failures in `field_errors`; `decode_strict` refuses a set without
-    /// Item 4 or 6, and `decode_standalone_strict` a standalone one without
-    /// the others.
+    /// failures in `field_errors`; the strict decoders refuse a set without
+    /// Item 4 or 6, and the standalone strict decoder a standalone one
+    /// without the others.
     ///
     /// `algorithm_series` and `ontology_series` are top-level nested LS
     /// pass-through bytes (typed inner layers deferred); `miis_id` is the MISB
@@ -70,10 +70,10 @@ crate::binding_record! {
         @[custom] pub unknown: Vec<OwnedRawField>,
         /// What the lenient decode met in the top-level items and no encoder
         /// writes back: an item that does not decode, an item sent as an
-        /// ST 1201 special (a legal value, listed as `OutOfRange` with its
-        /// tag and range), a framing error (tag 0, or tag 101 inside the
+        /// ST 1201 special (a legal value, listed as an out-of-range entry
+        /// with its tag), a framing error (tag 0, or tag 101 inside the
         /// series). A pack's own items are listed in that pack's
-        /// `field_errors`. Strict decode leaves the list empty; the
+        /// `field_errors`. The strict decoders leave the list empty; the
         /// encoders do not read it.
         @[custom] pub field_errors: Vec<KlvFieldError>,
     }
