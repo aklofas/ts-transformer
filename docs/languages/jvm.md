@@ -443,13 +443,16 @@ if (e instanceof DemuxEvent.Metadata m) {
     if (Klv.isSt0601Family(klvBytes)) {
         UasDatalinkLs ls = Klv.decodeUasDatalink(klvBytes);  // throws KlvDecodeException
 
-        // Composite accessor: sensor GPS position (lat/lon/alt).
+        // Composite accessor: sensor GPS position (lat/lon/alt). The height
+        // is above the ellipsoid (Item 104 or 75) or above mean sea level
+        // (Item 15): sensorPositionDatum() says which.
         ls.sensorPosition().ifPresent(pos ->
-            System.out.printf("sensor: %.6f, %.6f, %.1fm%n",
-                pos.latDeg(), pos.lonDeg(), pos.altM()));
+            System.out.printf("sensor: %.6f, %.6f, %.1fm %s%n",
+                pos.latDeg(), pos.lonDeg(), pos.altM(),
+                ls.sensorPositionDatum().orElseThrow()));
 
-        // Composite accessor: frame-center coordinates (falls back to
-        // offset calculations when absolute coordinates are absent).
+        // Composite accessor: frame-center coordinates, with the height of
+        // Item 78 (ellipsoid) or else 25 (MSL): frameCenterDatum() says which.
         ls.frameCenter().ifPresent(fc ->
             System.out.printf("frame center: %.6f, %.6f%n",
                 fc.latDeg(), fc.lonDeg()));
@@ -574,6 +577,10 @@ System.out.println(vmtiLenient.targets().size() + " targets");
 
 byte[] body = Klv.encodeVmti(vmtiLenient);               // body only (no UL / BER / checksum)
 byte[] framed = Klv.encodeVmtiStandalone(vmtiLenient);   // full [UL][BER][body][Tag1 checksum]
+
+// A standalone packet (VMTI on its own KLV PID): the label and the BER
+// length are read and the checksum verified; true adds the strict rules.
+VmtiLs standalone = Klv.decodeVmtiStandalone(framed, false);
 ```
 
 **ST 0806 — RVT (Remote Video Terminal) Local Set** (body bytes carried in
@@ -609,16 +616,23 @@ String spiXml = Klv.sensorPointOfInterestXml(ls, generatedUs);
 
 CotConfig cfg = CotConfig.builder().platformType("a-f-A-M-H").build();
 String customXml = Klv.platformPositionXml(ls, cfg, generatedUs);      // explicit CotConfig
+// requireHae = true: refuse an MSL height written as the HAE when cfg
+// has no geoid undulation, instead of writing it as it is.
+String haeOnly = Klv.platformPositionXml(ls, cfg, generatedUs, true);
 ```
 
 `generatedUs` (POSIX epoch microseconds) is a required argument, not
 sampled internally — a replayed-file CoT run must be byte-identical to a
 live one (ST 0805.1 §1). Both conversions throw unchecked
 `IllegalArgumentException` naming the missing KLV tag when a
-mapping-required field is absent from `ls`. `CotConfig.producer` is an
-XML attribute *name* stamped verbatim into `<detail><_flow-tags_ .../>` —
-a Name production (an attribute name, not a value): neither validated
-nor escaped, so an invalid value produces malformed XML.
+mapping-required field is absent from `ls` or was sent as "no value" (an
+Item 104 sent as an IMAPB special ends the platform height's chain),
+when a string holds a character XML 1.0 does not allow (so every
+returned document parses), and, with `requireHae`, naming the MSL item.
+`CotConfig.producer` is an XML attribute *name* stamped into
+`<detail><_flow-tags_ .../>`: an ASCII letter or `_` followed by
+letters, digits, `_`, `.` or `-`, not starting with `xml`; any other
+value throws `IllegalArgumentException`.
 
 **ST 1010 — SDCC-FLP error covariance** (general-purpose; carried inside
 ST 0601 Tag 102, but not ST 0601-specific):
@@ -3295,7 +3309,9 @@ back.finish();                                          // or back.finishServing
 (a MISB ST 0604 MISP timestamp SEI spliced before the first VCL NAL) and
 `pushData(data, pts)` (a data stream's PES pass-through); like
 `pushVideoWithDts`, each needs exactly one stream of its kind in the config
-(else `MuxException(INVALID_USAGE)`). `MuxPublisher.stats()` never waits for a
+(else `MuxException(INVALID_USAGE)`). A MISP push refuses a Time Status
+whose bits 4 to 0 are not `11111` (`0x1F` locked, `0x9F` lock unknown)
+with `MuxException(MISP_TIME)`. `MuxPublisher.stats()` never waits for a
 push running on another thread; `publisherStats()` does (the publisher's own
 record lives behind the shell). Both throw `IllegalStateException` once the
 shell is closed or finished.

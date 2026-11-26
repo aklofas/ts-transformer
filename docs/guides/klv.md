@@ -133,14 +133,30 @@ before returning a `UasDatalinkLs`:
 | `decode` | Yes | No | No | Default — accept any UL, reject corrupted bytes |
 | `decode_unchecked` | No | No | No | Diagnostic — bypass checksum to inspect malformed payloads |
 | `decode_strict` | Yes | Yes (ST 0601 family) | No | Reject non-ST-0601 records |
-| `decode_strict_compliance` | Yes | Yes | Yes (ST 0601.8 §10.3.1, §10.3.2, §10.3.3) | Production validation |
+| `decode_strict_compliance` | Yes | Yes | Yes (ST 0601.8 §10.3.1, §10.3.2, §10.3.3, and the item profile) | Production validation |
+
+Every rung that checks the checksum requires exactly one, two bytes
+wide, as the set's last item. `decode` and `decode_strict` refuse a set
+without one with `KlvDecodeError::MissingChecksum`, a second one with
+`DuplicateTag { tag: 1 }` at its start and an item after it with
+`Tag1NotLast`; a checksum of another width is `MalformedChecksum` there
+and in `decode_unchecked`, which otherwise verifies nothing.
+`decode_strict_compliance` refuses the same sets with its own ordering
+checks first (a set without a checksum is `Tag1NotLast` there).
 
 The "compliance rules" column refers to ST 0601.8 §10.3 mandatory
 ordering: Tag 2 (Precision Time Stamp) first, Tag 1 (Checksum) last,
 Tag 65 (UAS LS Version Number) present. These hardened in ST 0601.8 and
 remain mandatory through ST 0601.9 / .11 / .12 / .19 — many older
 captures violate them in benign ways, which is why the compliance rung
-is opt-in.
+is opt-in. `decode_strict_compliance` also checks each item's profile
+and coded values (an 8-byte Item 2 and a 1-byte Item 65, the codes the
+standard defines in Items 34, 47, 63, 77, 125 and 126, the Image
+Horizon percentages, a Mode 2 SDCC-FLP, an 8-byte Control Command time,
+the wavelength and positioning-source rules, no Item 143 at the root)
+and refuses a breach with `KlvDecodeError::ComplianceViolation { tag,
+offset, reason }`. Its `Ok` promises these rules only: a value that
+fails its own item's decode is still a `field_errors` entry.
 
 The recommended pattern is to walk the ladder top-down — try
 `decode_strict_compliance` first, fall back through `decode_strict`,
@@ -181,17 +197,35 @@ parsed Universal Label and a declared version byte read from the UL.
 Composite views are derived read-only methods that combine several typed
 fields into a more meaningful shape:
 
-- `sensor_position() -> Option<GeoPoint>` — combines Tags 13 / 14 / 15.
+- `sensor_position() -> Option<GeoPoint>` — Tags 13 / 14 with the first
+  height of Tag 104, 75 (both above the ellipsoid) and 15 (above mean
+  sea level); `sensor_position_datum()` says which datum `alt_m` is in
+  (`AltitudeDatum::Hae` or `Msl`).
 - `sensor_attitude() -> Option<Attitude>` — combines Tags 18 / 19 / 20.
 - `sensor_fov() -> Option<FieldOfView>` — combines Tags 16 / 17.
-- `platform_attitude() -> Option<Attitude>` — combines Tags 5 / 6 / 7.
-- `frame_center() -> Option<GeoPoint>` — combines Tags 23 / 24 / 25.
-- `corners() -> Option<Corners>` — prefers absolute Tags 82-89 when
-  fully populated, else falls back to offset Tags 26-33 plus frame
-  center.
+- `platform_attitude() -> Option<Attitude>` — Tag 5 with the pitch and
+  roll of the full-range Tags 90 / 91, else Tags 6 / 7.
+- `frame_center() -> Option<GeoPoint>` — Tags 23 / 24 with the height
+  of Tag 78 (ellipsoid), else Tag 25 (mean sea level);
+  `frame_center_datum()` says which.
+- `corners() -> Option<Corners>` — decides each corner on its own: its
+  full-range pair (Tags 82-89) when both are present, else the frame
+  center plus that corner's offsets (Tags 26-33), with the longitude
+  folded into (-180, 180]. A corner with only one of its full-range
+  pair takes both coordinates from the offsets (a choice: ST 0601.8-16
+  could also be read per item).
 
-Each composite returns `None` if any constituent field is missing — so a
-caller doesn't have to spell out the partial-presence cases.
+This is the standard's order: the full-range item over the restricted
+one (ST 0601.8-16), the ellipsoid height over the MSL one (ST
+0601.8-17), the extended item over its twin (ST 0601.9-20 / -21). Each
+composite returns `None` if any constituent field is missing — so a
+caller doesn't have to spell out the partial-presence cases. An item
+sent as "no value" (a sentinel, or an IMAPB special: see
+`sentinel_tags` and `imapb_specials`) ends its chain: the view is
+`None`, it does not fall back to a less preferred item, so a full-range
+corner sent as Off-Earth ends `corners()`. A view's height is above the
+ellipsoid whenever the record carries an ellipsoid item; read the datum
+before you compare it with an MSL height.
 
 > **Python:** the typed sets are frozen dataclasses — attribute
 > assignment raises `FrozenInstanceError`. Use
@@ -207,7 +241,22 @@ Unknown-tag pass-through. Any tag not in the typed table lives in
 rule. This is what lets a record produced by a newer ST 0601 revision
 round-trip through an older decoder without losing data — the
 unrecognized tags survive in `unknown` and are re-emitted by
-`encode_to_vec`.
+`encode_to_vec`. The one exception is an item whose tag is wider than
+32 bits: the lenient decoders step over it and do not keep it
+(`decode_strict_compliance` refuses it, `patch` copies it).
+
+Sentinels and IMAP specials. An item sent as its sentinel ("no value",
+Off-Earth, out of range) leaves its field unset and its tag in
+`sentinel_tags`; an IMAPB item sent as an ST 1201 special keeps the
+special in `imapb_specials`. `IMAP_BELOW_MINIMUM` and
+`IMAP_ABOVE_MAXIMUM` set the field to that end of the item's range
+(ST 1201.5 §7.2.3) and every other special leaves it unset. An encode
+writes a below-minimum or above-maximum signal back at the item's place
+while the field is unset or still holds that end, and the value once
+the field holds anything else; every other special and every sentinel
+is written after the typed items, and only for a field that is unset.
+A tag with several entries is written once, for its last entry. The
+composite views and CoT take none of these as a value.
 
 Per-field decode errors. When one tag's value is malformed (wrong
 length, invalid UTF-8, out-of-range mapped float), the decoder records
@@ -336,6 +385,30 @@ this when you want a single round-trip invariant — "if it encodes,
 `decode_strict_compliance` will accept it." Auto-emission of Tag 1
 (checksum) and Tag 65 (LS Version) is unchanged.
 
+The producer contract, in short:
+
+- **The ordinary encoders** (`encode`, `encode_with`, `encode_to_vec`)
+  write what the record holds. They refuse a value outside its item's
+  range (unless `OutOfRangePolicy::Indicator`), a string or value longer
+  than its item allows (Item 94 over 50 bytes, Item 127 over 16),
+  a `Location` (Items 130, 141) with a height or one coordinate but not
+  both coordinates, and a typed or structural tag in `unknown`. They
+  write Item 2 first, Item 115's Command Time as 8 bytes (ST 0601.19
+  Table 7), each Item 102 pack right after the items its
+  `preceding_tags` name (one they cannot place goes after the typed
+  items), and the checksum last.
+- **`encode_strict_compliance`** also requires Item 2, refuses an item
+  `decode_strict_compliance` would refuse by its profile or coded
+  values (`KlvEncodeError::InvalidFieldValue { tag, reason }`), refuses
+  an Item 102 pack it cannot place or whose header ST 1010 does not
+  define, and cleans every string, those inside packs included, as
+  ST 0107.3-12 / -13 ask.
+- **The decoders**: `decode` and `decode_strict` require one final
+  checksum; `decode_strict_compliance` adds the ordering, presence and
+  profile rules above, and does not check the strings inside packs.
+- **`patch`** writes a time stamp it adds first (ST 0601.8-09) and never
+  moves an item already in the input.
+
 `encode_to_vec` remains the lenient path: it produces conformant bytes
 when the caller has set the conventional fields, but it does not gate
 on every ST 0601.8-mandated item.
@@ -374,10 +447,16 @@ unmodeled tags, non-canonical length encodings, bytes after the
 declared outer length — is copied byte-for-byte in original order,
 and the Tag 1 checksum is recomputed (only if the input carries one).
 Edited tags absent from the input are inserted before the trailing
-checksum. Tags outside the typed model can be replaced via the
+checksum, except a time stamp (Tag 2), which is inserted as the set's
+first item (ST 0601.8-09); an item already in the input is never moved.
+An edit's `sentinel_tags` and `imapb_specials` entries for fields it
+leaves unset are applied too, with the bytes the encoder writes. Tags
+outside the typed model can be replaced via the
 `unknown` field (`{"unknown": ((tag, value_bytes),)}`). Editing a tag
 canonicalizes that one TLV's encoding even when the value is
-unchanged. Deleting a tag is not supported.
+unchanged. Deleting a tag is not supported. `patch`'s time is not
+quadratic in the number of distinct tags, also when the edit is a
+decoded copy of the input with one field changed.
 
 ## ST 0605 Precision Time Stamp Pack
 
@@ -435,16 +514,38 @@ Two decode entry points:
 
 - `decode(bytes)` — **lenient.** Tolerates missing tags, unknown enum
   codepoints (decoded as `Unknown(u8)`), unknown LS tags (preserved in
-  `unknown: Vec<OwnedRawField>`), malformed UTF-16 on Tag 13 (signaled
-  via `field_errors: Vec<KlvFieldError>`).
+  `unknown: Vec<OwnedRawField>`), malformed UTF-16 on Tag 13, invalid
+  UTF-8 in a text item and an enumerated or version item of the wrong
+  length (each signaled via `field_errors: Vec<KlvFieldError>`, the rest
+  of the set decoded).
 - `decode_strict(bytes)` — **strict.** Rejects records missing any of
   the spec-mandatory tags (1, 2, 3, 12, 13, 22), rejects unknown enum
   codepoints and `OmittedValueXX` reserved slots on Tags 1/2/12,
-  rejects malformed UTF-16 on Tag 13, rejects duplicate tags. Unknown
-  LS tags are still preserved per ST 0107.5 §6 future-proof skip rule
-  (matches `klv::st0601::decode_strict_compliance` posture).
+  rejects malformed UTF-16 on Tag 13, rejects a repeated defined tag,
+  rejects non-ASCII text in the items ST 0102 codes in ISO/IEC 646
+  (`KlvFieldError::NonAsciiText`) and a date not written `YYYYMMDD`
+  (Tag 10) or `YYYY-MM-DD` (Tags 23, 24) (`KlvFieldError::InvalidFormat`).
+  Unknown LS tags, repeated ones included, are still preserved per
+  ST 0107.5 §6 future-proof skip rule (matches
+  `klv::st0601::decode_strict_compliance` posture).
 
-Encode is symmetric (`encode`, `encode_to_vec`, `encoded_len`). Tag 13
+A zero-length item means "unknown" (ST 0107.4-17): its field stays
+unset, it unsets a value an earlier occurrence of its tag gave, and
+`decode_strict` reports a zero-length required item as missing.
+
+The Security Metadata Local Set uses one-byte tags, as its label
+declares (SMPTE ST 336 Table 5): an unknown tag of 128 to 255 is read
+and written as one byte, and the encoders refuse an unknown tag above
+255 with `KlvEncodeError::TagNotOneByte`. 0.10.0 wrote such a tag as a
+two-byte BER-OID; bytes it wrote for a set holding one decode as
+different items (the classification among them) or fail: re-encode
+such sets from the record.
+
+Encode is symmetric (`encode`, `encode_to_vec`, `encoded_len`).
+`encode_strict_compliance` refuses what `decode_strict` would refuse
+(non-ASCII ISO 646 text, a malformed date) and an undefined
+classification or country coding method code, with
+`KlvEncodeError::InvalidFieldValue`. Tag 13
 (Object Country Codes) is RFC 2781 UTF-16 — encode emits BE BOM +
 UTF-16 BE; decode accepts either endianness via BOM or defaults to BE
 per RFC 2781 §4.3.
@@ -455,7 +556,8 @@ per RFC 2781 §4.3.
   STANAG 1059 / CAPCO tables — codes pass through as `String`
   verbatim.
 - Calendar parsing of date fields (Tag 10 "YYYYMMDD", Tags 23/24
-  "YYYY-MM-DD") — pass through as `String`.
+  "YYYY-MM-DD") — pass through as `String`; the strict paths check
+  only the shape (digits and dashes), not the calendar.
 
 See `examples/klv-metadata/decode_security_metadata.rs` for a runnable file walker
 that demonstrates the sibling-layer composition pattern end-to-end.
@@ -479,9 +581,16 @@ captures, or standalone on its own KLV PID.
   pixel row/col, target location DLP, geospatial contour series.
 - `decode` (lenient) + `decode_strict` (rejects missing required tags
   per ST 0903.6 §10.1.4 + §10.1.6 + duplicates + malformed values).
+- `decode_standalone` + `decode_standalone_strict` for a standalone
+  packet (the label, a BER length, the body), with its checksum
+  verified.
 - Symmetric `encode` / `encode_to_vec` / `encoded_len` for synthetic
-  fixture generation and round-trip testing.
+  fixture generation and round-trip testing, the standalone encoders,
+  and the two strict ones.
 - `VMTI_LS_UL` constant for standalone-PID consumers.
+
+The VTarget Pack uses one-byte tags (ST 0903.6 §9.2, §10.2): an unknown
+tag of 128 to 255 is one byte, and the encoders refuse one above 255.
 
 Seven nested/sibling Local Sets — `VMask`, `VTracker`, `VChip`,
 `VChipSeries`, `VObjectSeries` (per-target) plus `Algorithm Series`
@@ -518,25 +627,34 @@ revisions don't ripple into ST 0601 parsing.
 ### Standalone-PID pattern
 
 For VMTI on its own KLV PID (separate from any ST 0601 stream),
-match the AU-cell payload bytes against `VMTI_LS_UL`:
+match the AU-cell payload bytes against `VMTI_LS_UL` and decode the
+packet with `decode_standalone`, which reads the label and the BER
+length and verifies the checksum:
 
 ```rust,no_run
-use tst_core::klv::{length, st0903};
+use tst_core::klv::st0903;
 
 # fn handle(data: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
 if data.starts_with(&st0903::VMTI_LS_UL) {
-    let after_ul = &data[16..];
-    let (declared_len, after_len) = length::read_ber(after_ul)?;
-    // A truncated record can declare more bytes than it carries.
-    let inner = after_len
-        .get(..declared_len)
-        .ok_or("VMTI value shorter than its BER length")?;
-    let vmti = st0903::decode(inner)?;
+    let vmti = st0903::decode_standalone(data)?;
     // ...
 }
 # Ok(())
 # }
 ```
+
+A standalone packet carries exactly one checksum (Tag 1), two bytes
+wide, written as the one byte `01`, as its last item; anything else
+fails with `MissingChecksum`, `MalformedChecksum`, `DuplicateTag`,
+`Tag1NotLast` or `NonCanonicalTag`, and a wrong sum with
+`ChecksumMismatch`. `decode_standalone_strict` adds `decode_strict`'s
+rules, an outer length in its fewest bytes, and the standalone ones:
+Items 2, 11, 12 and 13 present, no parent-relative offset item in a
+VTarget Pack (ST 0903.6-116), a location on every Active-Moving,
+Active-Stopped or Active-Coasting target (ST 0903.6-130) and a Core
+Identifier `st1204::decode` accepts. Python
+`klv.decode_vmti_standalone(buf, strict=False)` and JVM
+`Klv.decodeVmtiStandalone(buf, strict)` are the bindings' twins.
 
 The demuxer remains UL-agnostic; consumer-side dispatch keeps new
 typed-set additions from creating coupling load on the demuxer.
@@ -556,14 +674,37 @@ typed-set additions from creating coupling load on the demuxer.
 
 `decode_strict` does NOT enforce conditional-required tags (Tags 1,
 2, 11, 12, 13 are required only for specific carriage paths per
-ST 0903.6-117/-119/-120). Consumers needing carriage-aware validation
-post-validate after a successful decode.
+ST 0903.6-117/-119/-120); `decode_standalone_strict` does, for the
+standalone path. `decode_strict` does refuse what the strict encoders
+refuse between items: a repeated item or targetId, a length not in its
+fewest bytes, a pack with nothing after its targetId, a one-byte value
+outside its range, a pixel number without a frame width, a row without
+its column, an Active-Moving or Active-Stopped target with no centroid,
+no row and column and not both bounding-box corners.
+
+In both decoders a zero-length top-level item means "unknown" (its
+field unset, no field error; inside a VTarget Pack a zero-length item
+of fixed length is still a field error), one NUL reads as `""` (the
+encoders write `Some("")` that way), and an ST 1201 IMAP special in a
+VTarget Pack's IMAPB item or in Item 11 or 12 decodes without error and
+leaves the field unset: ST 0903.6 §9.1.1 sends the signal in place of
+the measurement. Such a field has no value, so the strict encoders
+refuse a record whose special was a mandatory item's or a pack's only
+value; a relay forwards the original bytes.
 
 ### Encoding
 
 `encode_to_vec(&ls)` produces wire-format bytes; `encoded_len(&ls)`
 predicts the length without serializing. Round-trip is bit-identical
-for all spec-conformant input (modulo IMAPB quantization).
+for all spec-conformant input (modulo IMAPB quantization). Every
+encoder refuses a value above 16 777 215 in Items 5, 6, 8 and 9 and a
+`target_id` of 2^63 or more (`OutOfRange`; tag 0 is the targetId): the
+lenient decoder reads a ten-byte targetId, so a record decoded from one
+does not re-encode, and a relay forwards the original bytes or drops
+the target. `encode_strict_compliance` and
+`encode_standalone_strict_compliance` refuse what `decode_strict` and
+`decode_standalone_strict` refuse; with two defects in one record the
+encoder and the decoder may name different ones.
 
 ### Universal Set form
 
@@ -581,9 +722,24 @@ is a sibling-layer module, same pattern as `klv::st0102`/`klv::st0903`:
 
 RVT is also standalone-capable: its own 16-byte Universal Label
 (`RVT_LS_UL`) plus a Tag 1 CRC-32/MPEG-2 checksum. `decode_standalone`
-parses the UL-framed wire form and verifies the CRC when present; the
+parses the UL-framed wire form and verifies the CRC when present: it
+must then be the set's one last item, 4 bytes wide (ST 0806.4-03, -04),
+else the set fails with `Tag1NotLast`, `DuplicateTag` or
+`MalformedChecksum`; a set without a CRC item is accepted. The
 embedded (Tag 73) body form is not required to carry Tag 1, and `decode`
 (the body-only entry point) never verifies it even when present.
+
+A zero-length item means "unknown": its field stays unset (it unsets a
+value an earlier occurrence gave), and a zero-length POI, AOI or User
+Defined set adds no entry; a User Defined set without its User Data
+item is a `field_errors` entry. The encoders refuse non-ASCII text in
+the ISO 7 items (Items 10, 15, 19 and the POI and AOI texts), an MGRS
+zone outside 1 to 60 and a latitude band and grid square that is not
+three letters A to Z without I and O (a polar position, with no zone,
+is accepted); `aircraft_mgrs()` and `frame_center_mgrs()` are `None`
+for such a decoded component. The decoders still read such values, so
+a record decoded from them is refused on re-encode: a relay forwards
+the original bytes or clears the field.
 
 ```rust
 use tst_core::klv::{st0601, st0806};
@@ -651,6 +807,25 @@ plus `geoid_undulation_m`) when present; falling back to Frame Center, it
 prefers the HAE-native Frame Center Ellipsoid Height (Item 78) over Frame
 Center Elevation (Item 25, MSL plus `geoid_undulation_m`).
 
+The heights follow the composite views' chains, so an item sent as "no
+value" ends the chain: a record whose Item 104 is sent as an IMAPB
+special has no platform height, and the Platform Position conversion
+refuses it with `CotError::MissingField { tag: 104 }` rather than use
+Item 75. Without `geoid_undulation_m`, an MSL height is written as the
+HAE as it is; `platform_position_xml_with` and
+`sensor_point_of_interest_xml_with` with `MslFallback::Refuse` (Python
+`require_hae=True`, JVM the `requireHae` overloads) refuse that instead,
+with `CotError::MslWithoutUndulation { tag }`.
+
+Every document the converters return is well-formed XML. A string that
+holds a character XML 1.0 does not allow (U+0000 to U+001F except TAB,
+LF and CR; U+FFFE; U+FFFF) is refused with
+`CotError::InvalidXmlChar { field }`, naming the item or the
+configuration field it came from; TAB, LF and CR are written as
+`&#9;`, `&#10;` and `&#13;`. `CotConfig::producer` must be an ASCII
+letter or `_` followed by letters, digits, `_`, `.` or `-`, and must not
+start with `xml` in any case (`CotError::InvalidProducerName`).
+
 ## SDCC error covariance (ST 1010)
 
 MISB ST 1010.3 SDCC-FLP is a general-purpose standard-deviation +
@@ -664,9 +839,32 @@ triangle — `SdccFlp::correlation(i, j)` indexes either).
 
 Decode handles both wire modes: Mode 1 (one-byte Parse Control; ST 0601
 never emits it) and Mode 2 (two-byte Parse Control; mandatory for
-ST 0601 per ST 0601.10-22). `encode_sdcc_flp_mode2` is Mode-2-only —
+ST 0601 per ST 0601.10-22), and IEEE values of 2, 4 or 8 bytes. It
+refuses a Mode 2 Parse Control bit that ST 1010.3 Table 2 reserves, a
+Bit Vector that marks every slot or sets a padding bit
+(`KlvFieldError::InvalidFormat`), a Matrix Size above 256, and a
+correlation outside -1 to 1, sent as an ST 1201 special, or coded as an
+IEEE value that is not finite (`OutOfRange`). The lenient ST 0601
+decode keeps such a pack's bytes in `sdcc_flps` all the same.
+`encode_sdcc_flp_mode2` is Mode-2-only —
 the only mode ST 0601 permits — and picks the sparse Bit Vector
-encoding automatically per the spec's Appendix A cost model.
+encoding automatically per the spec's Appendix A cost model; it
+refuses more than 256 standard deviations.
+
+On encode, each `sdcc_flps` entry is written right after the items its
+`preceding_tags` name (ST 0601.19 §8.102.1): the items are written in
+the encoder's order and a pack takes the items it names forward to the
+first of them, so a set whose items come in the encoder's order is
+re-encoded with every pack where it was, byte for byte. A pack that
+cannot be placed (a named item is not in the record, `preceding_tags`
+is empty, one of its items is already written and is not among the
+last items written, its rows would put another item before Item 2, or
+a capture shorter than its matrix does not name the start of the set)
+is written after the typed items, and `encode_strict_compliance`
+refuses it, as it refuses a pack whose header ST 1010 does not define.
+For a tag that repeats, a row names the tag, not the instance: it takes
+the first instance not yet written. If you edit an item a pack refines,
+the pack still describes the old value: that is the caller's business.
 
 ```rust
 use tst_core::klv::st0601::UasDatalinkLs;
@@ -916,6 +1114,11 @@ Each item below maps to an entry in
 - Streaming / chunked decode — today is buffer-in / buffer-out; a
   growable streaming decoder lands behind an explicit consumer ask.
   See [project/deferred-features.md](/docs/project/deferred-features.md).
+- Record fields that would keep more across a re-encode: explicit
+  "unknown" items, VMTI IMAP specials, unknown tags wider than 32 bits
+  (or a count of them), a datum field on `GeoPoint` and the MSL fallback
+  as a `CotConfig` field; and a typed SDCC-FLP builder for ST 0601
+  Item 102. See [project/deferred-features.md](/docs/project/deferred-features.md).
 
 ## See also
 

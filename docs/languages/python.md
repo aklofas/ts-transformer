@@ -230,13 +230,27 @@ for pts, record in extract_klv("capture.ts", parsed=True, with_pts=True):
         if pos is not None:
             print(
                 f"{pts.ms}ms platform={record.platform_designation} "
-                f"@ {pos.lat_deg:.5f},{pos.lon_deg:.5f} alt={pos.alt_m:.1f}m"
+                f"@ {pos.lat_deg:.5f},{pos.lon_deg:.5f} "
+                f"alt={pos.alt_m:.1f}m {record.sensor_position_datum().name}"
             )
 
 # Or dispatch a single record by UL
 record = parse_klv_universal(raw_klv_bytes)
 # record is UasDatalinkLs | SecurityLs | PrecisionTimeStampPack | VmtiLs | None
 ```
+
+A composite view's height is above the ellipsoid whenever the record
+carries an ellipsoid item (Item 104 or 75 for `sensor_position()`,
+Item 78 for `frame_center()`) and above mean sea level otherwise:
+`sensor_position_datum()` and `frame_center_datum()` return
+`AltitudeDatum.HAE` or `AltitudeDatum.MSL`, and `None` exactly when the
+view is `None`. The views follow the Rust crate's rules (see
+[guides/klv.md](/docs/guides/klv.md#typed-st-0601--uasdatalinkls)).
+
+A standalone VMTI packet (VMTI on its own KLV PID) is decoded with
+`decode_vmti_standalone(buf, strict=False)`, which reads the label and
+the BER length and verifies the checksum; `decode_vmti` takes an
+embedded body (ST 0601 Item 74).
 
 For the common ST-0601-only case there is a dedicated iterator that
 also carries each record's file-order KLV index (it counts every KLV
@@ -277,9 +291,13 @@ one-way `platform_position_xml` / `sensor_point_of_interest_xml` ST 0805.1
 KLV → Cursor-on-Target conversion, configured via the `CotConfig` dataclass
 (a plain `dataclasses.dataclass`, not a PyO3 type — same pattern as
 `DemuxerConfig`). `CotConfig.producer` is an XML attribute *name* stamped
-verbatim into `<detail><_flow-tags_ .../>` — a Name production (an
-attribute name, not a value), neither validated nor escaped, so an
-invalid value produces malformed XML.
+into `<detail><_flow-tags_ .../>`: an ASCII letter or `_` followed by
+letters, digits, `_`, `.` or `-`, not starting with `xml`; any other
+value raises `ValueError`. A string that XML 1.0 cannot carry raises
+`ValueError` too, so every returned document parses. Pass
+`require_hae=True` (keyword-only) to either converter to raise
+`ValueError` instead of writing an MSL height as the HAE when
+`CotConfig.geoid_undulation_m` is not set.
 
 ```python
 from tstrans.klv import decode_rvt, decode_sdcc_flp, platform_position_xml
@@ -301,7 +319,8 @@ xml = platform_position_xml(record, generated_us=generated_us)
 `decode_rvt` / `decode_sdcc_flp` raise `tstrans.exceptions.KlvError` on
 malformed bytes, same as the core four. `platform_position_xml` /
 `sensor_point_of_interest_xml` raise `ValueError` (not `KlvError`) when a
-required source KLV tag is absent from `record`.
+required source KLV tag is absent from `record` or was sent as "no value"
+(an Item 104 sent as an IMAPB special ends the platform height's chain).
 
 ### DemuxEvent variant reference
 
@@ -2263,6 +2282,9 @@ call on an RTSP mount.
 `mp.push_video_misp(nal, pts=..., key_frame=..., misp=MispTimestamp.micros(us, status))`
 splices an ST 0604 MISP timestamp SEI before the first VCL NAL unit, like
 `Muxer.push_video_misp_to`; it needs exactly one configured video stream.
+`status` is the ST 0603 Time Status byte, whose bits 4 to 0 are `11111`
+(`0x1F` locked, `0x9F` lock unknown); any other byte raises `MuxError`
+with kind `MISP_TIME`.
 
 `HlsPublisher.local_addr()` is the server's `(host, port)` and `local_port()`
 its port; both are `None` for a publisher built with `.no_server()`.
@@ -2584,7 +2606,12 @@ variant name string (e.g. `"FullyEncrypted"`). Per-field parse errors
 (`KlvFieldError` entries) collapse to a single string `field_errors`
 column using a `|` joiner with the per-error format
 `tag<N>:<kind>:<message>` — the `|` (not `,`) joiner keeps the column
-parseable even when an error `message` contains commas.
+parseable even when an error `message` contains commas. A column holds
+what the record's field holds: an ST 0601 IMAPB item sent as
+`IMAP_BELOW_MINIMUM` or `IMAP_ABOVE_MAXIMUM` holds that end of its
+range (the signal stays in the `imapb_specials` column), an item sent as
+another special or as a sentinel is empty, and a VMTI item sent as an
+IMAP special is empty with no `field_errors` entry.
 
 **ST 0903 (VmtiLs) supports two modes:**
 

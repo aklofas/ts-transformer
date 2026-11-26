@@ -69,12 +69,20 @@ with the platform that reported it. Call `platform_uid(ls)` /
 `spi_uid(ls)` directly if you only need the id strings (e.g. to key a
 lookup table) without generating XML.
 
-**`CotConfig.producer` is an XML `Name`, not a value:** per the source
-docstring, `producer` is "written verbatim as an XML `Name` production
-(an attribute *name*, not an *value*) — it must be a syntactically
-valid XML Name. It is neither validated nor escaped; an invalid value
-produces malformed XML." Stick to an identifier-shaped string (letters,
-digits, `-`/`_`/`.`, not starting with a digit).
+**`CotConfig.producer` is an XML attribute name, not a value:** it must
+be an ASCII letter or `_` followed by letters, digits, `_`, `.` or `-`,
+and must not start with `xml` in any case. Any other value is refused
+with `CotError::InvalidProducerName` (Python `ValueError`, JVM
+`IllegalArgumentException`); the default `ST0601CoT` passes.
+
+**Every document parses:** a string from the record or the
+configuration that holds a character XML 1.0 does not allow (U+0000 to
+U+001F except TAB, LF and CR; U+FFFE; U+FFFF) is refused with
+`CotError::InvalidXmlChar { field }`, which names the item ("Mission
+ID", …) or the configuration field. TAB, LF and CR are written as
+character references and survive an XML parser. The KLV decoders keep
+control characters in strings, so clean them first if your producer
+sends them.
 
 **Determinism / replay:** `generated_us` is a caller-supplied argument,
 never sampled internally, and attribute order in the emitted XML is
@@ -89,7 +97,17 @@ before it reaches the wire.
 HAE-native extended tag, SPI prefers Target Location over Frame
 Center) — see the precedence table in
 [guides/klv.md](/docs/guides/klv.md#cursor-on-target-st-0805) rather
-than duplicating it here.
+than duplicating it here. An item sent as "no value" (Item 104 as an
+IMAPB special) ends the chain: the Platform Position event is refused
+with `MissingField { tag: 104 }`, not taken from Item 75.
+
+**An MSL height without an undulation:** with no
+`CotConfig::geoid_undulation_m`, an MSL height (Item 15; Item 42 or 25
+for the aimpoint) is written as the HAE as it is. To refuse instead,
+call `platform_position_xml_with` / `sensor_point_of_interest_xml_with`
+with `MslFallback::Refuse` (Python `require_hae=True`, JVM the
+`requireHae` overloads): such an event fails with
+`CotError::MslWithoutUndulation { tag }`.
 
 **Missing fields fail closed:** both functions return
 `CotError::MissingField { tag, name }` (Rust) / raise the mapped

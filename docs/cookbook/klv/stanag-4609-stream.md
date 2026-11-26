@@ -23,15 +23,18 @@ beyond a plain H.264 + KLV stream:
    receiver whether the clock is locked to an absolute time reference. Bit 7
    is `0` for locked and bits 4–0 are reserved as `11111`, so pass `0x1F`
    (locked) or `0x9F` (lock unknown) as `time_status` to
-   `MispTimestamp::micros`; the library writes the byte unchanged.
+   `MispTimestamp::micros`; the library writes the byte unchanged, and
+   refuses a byte whose bits 4–0 are not `11111`
+   (`MispTimeError::InvalidTimeStatus`; `0x00` is not "unknown").
 3. **ST 0902 Minimum Metadata Set (MISMMS) compliance** — each of the 23
    items in ST 0902.8 Table 1 must be reported at least once every 30
    seconds. `validate_mismms` checks that one record carries all of them
    before you encode.
 4. **ST 0601 strict-compliance encoding** — `encode_strict_compliance`
-   requires Tag 2 (Precision Time Stamp) and cleans string fields per
-   ST 0107, then encodes as `encode_to_vec` does, which already rejects
-   values outside their ST 0601 wire range.
+   requires Tag 2 (Precision Time Stamp), refuses an item whose profile
+   or coded value `decode_strict_compliance` would refuse, and cleans
+   string fields per ST 0107, then encodes as `encode_to_vec` does,
+   which already rejects values outside their ST 0601 wire range.
 
 One of those items is the **MIIS Core Identifier** (ST 1204.3, ST 0601
 Tag 94), which MISP also requires on its own. It lets a receiving archive
@@ -43,7 +46,7 @@ system correlate streams from the same physical sensor or platform.
 use std::time::SystemTime;
 use tst_core::codec::misp_time::MispTimestamp;
 use tst_core::klv::st0601::{UasDatalinkLs, encode_strict_compliance, validate_mismms};
-use tst_core::klv::st1204::{CoreId, IdType, encode_to_vec as encode_core_id};
+use tst_core::klv::st1204::{CoreId, IdType, encode_checked};
 use tst_core::mpegts::common::Pts90khz;
 use tst_core::mpegts::mux::{
     KlvStreamType, Muxer, MuxerConfig, MuxerProgramConfigBuilder, VideoCodec,
@@ -88,8 +91,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // (version, sensor, platform, window, minor).
     let core_id = CoreId::new(1, Some((IdType::Physical, sensor_uuid)), None, None, None);
     // Wire format: a sequence of 16-byte UUID blocks preceded by a 1-byte
-    // version + 1-byte usage flag.  encode_to_vec handles the framing.
-    let core_id_bytes = encode_core_id(&core_id);
+    // version + 1-byte usage flag.  encode_checked handles the framing and
+    // refuses an identifier st1204::decode would refuse (a version other
+    // than 1, no UUID, a minor ID beside another UUID).
+    let core_id_bytes = encode_checked(&core_id)?;
 
     // ── Per-frame encode loop ────────────────────────────────────────────────
 
@@ -292,9 +297,11 @@ does not track inter-record cadence (the 30-second MISMMS reporting cadence
 is a stream-level requirement not checked here — see the
 [MISMMS cadence tracker](/docs/project/deferred-features.md) entry).
 
-**Tag 94 Core ID:** `encode_core_id` encodes a `CoreId` into 18, 34 or 50
+**Tag 94 Core ID:** `encode_checked` (Python `encode_core_id`, JVM
+`Klv.encodeCoreId`) encodes a `CoreId` into 18, 34 or 50
 bytes of binary wire format (1 version + 1 usage + one to three 16-byte UUID
-blocks). Assign
+blocks), and refuses an identifier `decode` would refuse; the Rust
+`encode_to_vec` writes any `CoreId` unchecked. Assign
 it to `UasDatalinkLs::miis_core_id` as a `Vec<u8>`. Use a stable UUID per
 physical sensor — changing it across sessions breaks archive correlation.
 

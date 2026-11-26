@@ -125,11 +125,11 @@ for field in ls.sdcc_flps:
 `bindings/python/python/tstrans/klv.py` (Python) for the type name:
 
 - `ViewDomain` (Item 142) — up to three `(start, range)` azimuth/elevation/roll pairs.
-- `CountryCodes` (Item 122) and `AirbaseLocations` (Item 130) — flight-plan context packs.
+- `CountryCodes` (Item 122) and `AirbaseLocations` (Item 130) — flight-plan context packs. A `Location` (Items 130, 141) has both coordinates or none: a decoded site whose latitude or longitude is a special or reserved value is `None` with an `InvalidFormat` entry in `field_errors`, and the encoders refuse a site with a height or one coordinate but not both. Item 122's coding method is an integer of 1 to 8 bytes; another width is a `field_errors` entry.
 - `PayloadList` (Item 138) / `active_payloads` (Item 139 bitmask) — onboard payload inventory + which are active.
 - `WavelengthRecord` list (Item 128) / `active_wavelengths` (Item 121 BER-OID list) — sensor wavelength catalog + which are active.
 - `SensorFrameRate` (Item 127) and `MetadataSubstreamId` (Item 143) — stream-shape packs.
-- `ControlCommand` (Item 115, multi-instance) plus `control_command_verification` (Item 116) — command/ack pairing.
+- `ControlCommand` (Item 115, multi-instance) plus `control_command_verification` (Item 116) — command/ack pairing. The encoders write the command's `time_us` as 8 bytes (ST 0601.19 Table 7); `decode` reads 1 to 8.
 - `ImageHorizonPixels` (Item 81) — horizon-line pixel pack for image-processing consumers.
 
 **Weapons Stores status accessors:** `WeaponsStore::status_raw` packs

@@ -207,15 +207,21 @@ Fix: point `output_dir` at a private directory (for example mode 0700 or
 
 **`decode_strict_compliance` rejects**
 
-The record violates one of ST 0601.8-09 / -11 / -12's mandatory rules: Tag 2 (timestamp) must be the first element, Tag 1 (checksum) must be the last element, Tag 65 (UAS LS Version) must be present. The corresponding `KlvDecodeError` variants are `Tag2NotFirst`, `Tag1NotLast`, and `MissingTag65`.
+The record violates one of ST 0601.8-09 / -11 / -12's mandatory rules: Tag 2 (timestamp) must be the first element, Tag 1 (checksum) must be the last element, Tag 65 (UAS LS Version) must be present. The corresponding `KlvDecodeError` variants are `Tag2NotFirst`, `Tag1NotLast`, and `MissingTag65`. `KlvDecodeError::ComplianceViolation { tag, offset, reason }` (Python and JVM kind `MALFORMED_BYTES`) names an item that breaks its profile or coded values (an Item 2 that is not 8 bytes, an undefined code, a Control Command time that is not 8 bytes, …); `reason` says which rule.
 
 Fix: walk the strictness ladder — fall back to `decode_strict` (validates UL family + checksum but not ordering) or plain `decode` (validates checksum only) to inspect the record despite non-compliance. If the producer is yours, fix the producer to emit the mandatory tags in the correct order. Worked example: [../examples/klv-metadata/klv_decode_file.rs](../examples/klv-metadata/klv_decode_file.rs).
 
 **`decode` rejects with `KlvDecodeError::ChecksumMismatch`**
 
-Either Tag 1 (checksum) wasn't emitted by the producer, or the bytes were corrupted in transit.
+The producer wrote a wrong checksum, or the bytes were corrupted in transit.
 
 Fix: try `decode_unchecked` to get a parsed record without checksum validation. If `decode_unchecked` returns sensible values, transit corruption is the likely cause. If it returns nonsense values (out-of-range coordinates, truncated strings), the producer is broken — investigate that side instead.
+
+**`decode` rejects with `MissingChecksum`, `Tag1NotLast`, `DuplicateTag { tag: 1 }` or `MalformedChecksum`**
+
+`decode` and `decode_strict` require exactly one checksum (Tag 1), two bytes wide, as the set's last item. `MissingChecksum { offset }`: the producer wrote none (Python and JVM kind `MISSING_REQUIRED_TAG`). `Tag1NotLast`: an item follows the checksum; the bindings read it as `MISSING_REQUIRED_TAG` too, and it carries no offset. `DuplicateTag { tag: 1, offset }`: a second checksum, at its start (`DUPLICATE_TAG`). `MalformedChecksum { offset, got }`: a checksum of `got` bytes (`MALFORMED_BYTES`), refused by `decode_unchecked` as well. C reports all of them as `TST_E_KLV_DECODE`; its last-error message says which.
+
+Fix: this is a producer bug. In Rust, `decode_unchecked` still reads a set whose checksum is missing, repeated or followed by other items. A standalone VMTI packet (`st0903::decode_standalone`) and a standalone RVT set (`st0806::decode_standalone`) follow the same rule for their own checksum; a standalone RVT set without a CRC item is accepted.
 
 **`decode_strict` rejects with `KlvDecodeError::UnexpectedUniversalLabel`**
 
@@ -225,9 +231,21 @@ Fix: use plain `decode` (no UL family check) if you're handling non-ST-0601 reco
 
 **`KlvDecodeError::DuplicateTag`**
 
-The record repeats a tag in its top-level list. For ST 0601, only `decode_strict_compliance` refuses a repeated single-use tag (Tags 102 and 115 allow several); `decode_strict`, `decode` and `decode_unchecked` keep the last occurrence. ST 0102 and ST 0903 strict decode refuse duplicates too.
+The record repeats a tag in its top-level list. For ST 0601, only `decode_strict_compliance` refuses a repeated single-use tag (Tags 102 and 115 allow several); `decode_strict`, `decode` and `decode_unchecked` keep the last occurrence, except for the checksum (Tag 1), which `decode` and `decode_strict` refuse a second time. ST 0102 and ST 0903 strict decode refuse a repeated defined tag too; ST 0102's accepts a repeated unknown tag, ST 0903's refuses any repeat inside a VTarget Pack (`St0903InvalidVTargetPack`).
 
 Fix: this is almost always a producer bug; fix the producer.
+
+**A decoded KLV record is refused on re-encode**
+
+The lenient decoders keep some values the encoders refuse, so that a relay reading untrusted metadata loses nothing: a VMTI `target_id` of 2^63 or more (from a ten-byte targetId: `OutOfRange` with tag 0), non-ASCII text in an RVT ISO 7 item, an RVT MGRS zone outside 1 to 60 or a band and grid square the standard does not define (`InvalidFieldValue` or `OutOfRange` naming the item).
+
+Fix: forward the original bytes, or clear the field (drop the target, clear the zone, the band or the text) before the encode.
+
+**CoT conversion refuses with `MissingField { tag: 104 }` although Item 75 is set**
+
+The record sends Item 104 as an IMAPB special. The CoT heights follow the composite views' chain (Item 104, then 75, then 15), and an item sent as "no value" ends it instead of falling back.
+
+Fix: skip the packet, or, when Item 75 is the height you want, convert a copy of the record with `sensor_ellipsoid_height_extended_m` set to `None` and Item 104's entry removed from `imapb_specials` (a below-minimum or above-maximum signal leaves the field at its range end).
 
 **`NonConformantIssue::MultiCellAu` events on a sync KLV PID**
 
