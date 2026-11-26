@@ -177,6 +177,19 @@ def test_control_command_with_time_us_round_trips():
     assert back.control_commands == rec.control_commands
 
 
+def test_control_command_time_is_written_as_eight_bytes():
+    # ST 0601.19 §8.115 Table 7: Command Time is a uint64 of 8 bytes, its
+    # leading zero byte kept.
+    rec = UasDatalinkLs(
+        control_commands=(
+            ControlCommand(id=5, command="Fly to Waypoint 1", time_us=1_587_194_489_117_472),
+        )
+    )
+    assert _find_tag_value_bytes(encode_uas_datalink(rec), 115) == (
+        _hex("05 11") + b"Fly to Waypoint 1" + _hex("00 05 A3 8B 83 B6 9B 20")
+    )
+
+
 def test_control_command_verification_and_active_wavelengths_id_lists():
     rec116 = _decode_single_tlv(116, bytes([0x03, 0x07]))
     assert rec116.control_command_verification == (3, 7)

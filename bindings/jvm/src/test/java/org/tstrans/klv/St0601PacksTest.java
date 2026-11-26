@@ -237,6 +237,21 @@ class St0601PacksTest {
     }
 
     @Test
+    void controlCommandTimeIsWrittenAsEightBytes() throws KlvEncodeException {
+        // ST 0601.19 §8.115 Table 7: Command Time is a uint64 of 8 bytes, its
+        // leading zero byte kept.
+        UasDatalinkLs rec = new UasDatalinkLs.Builder()
+                .universalLabel(ByteBuffer.wrap(UL))
+                .controlCommands(List.of(
+                        new ControlCommand(5, "Fly to Waypoint 1", 1_587_194_489_117_472L)))
+                .build();
+        assertArrayEquals(
+                concat(hex("05 11"), "Fly to Waypoint 1".getBytes(java.nio.charset.StandardCharsets.US_ASCII),
+                        hex("00 05 A3 8B 83 B6 9B 20")),
+                reencodedTagValue(115, rec));
+    }
+
+    @Test
     void controlCommandVerificationAndActiveWavelengthsIdLists() throws KlvDecodeException, KlvEncodeException {
         UasDatalinkLs rec116 = decodeSingleTlv(116, hex("03 07"));
         assertEquals(List.of(3L, 7L), rec116.controlCommandVerification());
