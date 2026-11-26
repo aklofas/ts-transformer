@@ -1212,8 +1212,8 @@ struct TagItems {
 /// Item 2 stays the first item of the set (ST 0601.8-09). It is the first
 /// item of the walk, so until it is written only occurrences that name it
 /// are tried, and such a try takes it as its first row, before any other
-/// item, or writes nothing (`take_forward`): an occurrence with Item 2 at
-/// a later row is not placed.
+/// item, or writes nothing (`take_forward`): an occurrence that would need
+/// Item 2 after another item is not placed.
 ///
 /// Work: `write` runs once per item, `take_forward` once per occurrence and
 /// in time linear in its rows, and each occurrence sits in one `anchored`,
@@ -1245,6 +1245,9 @@ struct SdccPlacer<'a> {
     due: VecDeque<usize>,
     /// The tags of the items written so far.
     written: Vec<u32>,
+    /// Scratch of [`Self::overlap`], kept between tries: one entry per row
+    /// of the occurrence being tried.
+    border: Vec<usize>,
     plan: Vec<Placed>,
     #[cfg(test)]
     steps: usize,
@@ -1309,6 +1312,7 @@ impl<'a> SdccPlacer<'a> {
                 .collect(),
             due: VecDeque::new(),
             written: Vec::new(),
+            border: Vec::new(),
             plan: Vec::new(),
             #[cfg(test)]
             steps: occ.iter().map(|f| f.preceding_tags.len()).sum(),
@@ -1390,29 +1394,69 @@ impl<'a> SdccPlacer<'a> {
         self.plan.push(Placed::Pack(k));
     }
 
+    /// How many of the first `rows` the items written end with: the longest
+    /// start of `rows` that is the end of what is written. One pass over
+    /// the rows and one over as many written tags (Knuth, Morris and
+    /// Pratt's matching), whatever repeats in either.
+    fn overlap(&mut self, rows: &[u32]) -> usize {
+        // `border[i]`: the length of the longest proper start of
+        // `rows[..=i]` that is also its end. One entry per row.
+        let mut border = core::mem::take(&mut self.border);
+        border.clear();
+        border.resize(rows.len(), 0);
+        let mut j = 0;
+        for i in 1..rows.len() {
+            self.step(1);
+            while j > 0 && rows[i] != rows[j] {
+                self.step(1);
+                j = border[j - 1];
+            }
+            j += usize::from(rows[i] == rows[j]);
+            border[i] = j;
+        }
+        // `j`: how many of the first rows the tags read so far end with.
+        let mut j = 0;
+        for at in self.written.len().saturating_sub(rows.len())..self.written.len() {
+            self.step(1);
+            let tag = self.written[at];
+            if j == rows.len() {
+                j = border[j - 1];
+            }
+            while j > 0 && tag != rows[j] {
+                self.step(1);
+                j = border[j - 1];
+            }
+            j += usize::from(tag == rows[j]);
+        }
+        self.border = border;
+        j
+    }
+
     /// Write occurrence `k` here if the items right before it can be made
-    /// exactly its rows: the first `j` rows are the last items written, and
-    /// each row from `j` on takes the first unwritten item of its tag.
-    /// `j` is the lowest split whose later rows all find an item.
+    /// exactly its rows: its first `j` rows are the last items written, as
+    /// many as that can be, and each row from `j` on takes the first
+    /// unwritten item of its tag. A longer overlap needs fewer items, so no
+    /// other split can work where this one does not.
     fn take_forward(&mut self, k: usize) -> bool {
         let rows = &self.occ[k].preceding_tags;
-        self.step(3 * rows.len());
-        let mut j = rows.len();
-        while j > 0 {
-            let tag = rows[j - 1];
+        let j = self.overlap(rows);
+        let mut fits = self.at_start_if_short(k, j);
+        let mut claimed = j;
+        while fits && claimed < rows.len() {
+            self.step(1);
+            let tag = rows[claimed];
             // Item 2 keeps the first place of the set (ST 0601.8-09): a row
             // takes it forward only as the pack's first row.
-            if tag == 2 && j != 1 {
-                break;
-            }
-            match self.tags.get_mut(&tag) {
-                Some(t) if t.claimed < t.unwritten => t.claimed += 1,
-                _ => break,
-            }
-            j -= 1;
+            fits = !(tag == 2 && claimed != 0)
+                && self.tags.get_mut(&tag).is_some_and(|t| {
+                    let free = t.claimed < t.unwritten;
+                    t.claimed += usize::from(free);
+                    free
+                });
+            claimed += usize::from(fits);
         }
-        let fits = self.written.ends_with(&rows[..j]) && self.at_start_if_short(k, j);
-        for tag in &rows[j..] {
+        for tag in &rows[j..claimed] {
+            self.step(1);
             let t = self.tags.get_mut(tag).expect("claimed above");
             t.claimed -= 1;
             let next = t.next;

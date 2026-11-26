@@ -5408,6 +5408,36 @@ fn an_sdcc_pack_that_extends_a_group_taken_forward_follows_it_at_once() {
     assert_eq!(encode_strict_compliance(&rec).unwrap(), source);
 }
 
+#[test]
+fn an_sdcc_pack_overlaps_the_items_written_before_it_takes_another_of_a_repeated_tag() {
+    // Two items of tag 150. The first pack takes the first forward; the
+    // second pack's rows start with the items just written, so it follows
+    // with Item 300 and leaves the other item of tag 150 where it is.
+    for second_matrix in [3, 4] {
+        let mut rec = timestamped();
+        for (tag, value) in [(150, 1), (300, 2), (150, 3)] {
+            rec.unknown.push(OwnedRawField {
+                tag,
+                value: vec![value],
+            });
+        }
+        rec.sdcc_flps = vec![
+            SdccFlpField {
+                preceding_tags: vec![2, 150],
+                bytes: sdcc_pack(2),
+            },
+            SdccFlpField {
+                preceding_tags: vec![2, 150, 300],
+                bytes: sdcc_pack(second_matrix),
+            },
+        ];
+        let out = encode_strict_compliance(&rec).unwrap();
+        assert_eq!(wire_tags(&out), [2, 150, 102, 300, 102, 65, 150, 1]);
+        assert_eq!(encode_to_vec(&rec).unwrap(), out);
+        assert_eq!(rows(&decode(&out).unwrap()), rows(&rec));
+    }
+}
+
 /// A small seeded generator for the placement properties below.
 struct Seeded(u64);
 
