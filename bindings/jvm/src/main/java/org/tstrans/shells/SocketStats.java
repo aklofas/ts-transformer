@@ -10,6 +10,11 @@ package org.tstrans.shells;
  * SRT-specific extras (estimated bandwidth, the symmetric send/recv-side loss split) read the SRT
  * stats of an {@code srt://} shell.
  *
+ * {@code rttUs}, the three bandwidth fields and the two buffer fields are gauges (a current
+ * estimate or reading); every other field is a cumulative counter. The counters are kept by the
+ * transport that fills them, and reading them resets nothing; a managed shell reads the transport
+ * of its current connection, so they start again after each reconnect.
+ *
  * Unsigned 64-bit values are carried as the bit pattern of a signed {@code long}: a value of 2^63
  * or more reads as negative.
  *

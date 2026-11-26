@@ -8,23 +8,49 @@ use alloc::string::String;
 
 /// Per-stream counters. Used at every site that emits or receives TS
 /// elementary streams. PID is identity; `stream_type` is the PMT byte
-/// (or `0x00` for PSI PIDs); `label` is None unless a PMT user-label
-/// descriptor or a hardcoded PSI label populates it.
+/// (or `0x00` for a PID no PMT declares as a stream); `label` names a
+/// subtitle stream's codec and is `None` on every other PID.
+///
+/// `items`, `bytes` and `discontinuities` are counters: they only grow
+/// until `reset_stats`. The muxer's `reset_stats` zeroes them and keeps
+/// every entry (and its `last_seen`); the demuxer's drops every entry, and
+/// a PID's entry is created again by its next event. A PID that leaves the
+/// demuxer's topology keeps its entry until then, and `Demuxer::reset_sync`
+/// keeps the entries too.
 #[must_use]
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct StreamStats {
+    /// The PID: the entry's identity, not a counter.
     pub pid: u16,
+    /// The PMT `stream_type` byte that declares the PID (on the demuxer,
+    /// the latest PMT's), or `0x00` for a PID no PMT declares as a stream:
+    /// a PSI PID, a PID that carries only a program's PCR. Not a counter.
     pub stream_type: StreamTypeCode,
     /// Program number from the PAT/PMT that owns this stream. `0` for PSI
     /// PIDs (PAT, PMT) and for streams that were created before a PMT arrived.
+    /// Not a counter.
     pub program_number: u16,
+    /// The codec's name on a subtitle PID (`"DVB-Subtitling"`,
+    /// `"DVB-Teletext"`, `"CEA-708-Standalone"`, `"WebVTT-in-TS"`): the
+    /// muxer sets it when it is built, the demuxer at the PID's first
+    /// subtitle sample. `None` on every other PID.
     pub label: Option<String>,
+    /// Units through this site, a counter. Muxer: one per push on the PID.
+    /// Demuxer: one per `Sample` or `Metadata` event the PID delivers (a
+    /// subtitle PES whose sample a strict mode drops still counts).
     pub items: u64,
+    /// Bytes of those units, a counter, without PES or TS framing: the
+    /// elementary-stream bytes pushed (muxer); the PES payload delivered
+    /// (demuxer; for a synchronous metadata access unit, its payload
+    /// without the cell headers).
     pub bytes: u64,
+    /// `DemuxEvent::Discontinuity` events reported under this PID, a
+    /// counter. The muxer reports none and reads `0`.
     pub discontinuities: u64,
     /// Wall-clock time this stream last carried an item through this
     /// component (mux: last push; demux: last emitted item). `None` = never.
+    /// A timestamp, not a counter: the muxer's `reset_stats` keeps it.
     ///
     /// `std`-only: no wall clock exists under `no_std` (the field is absent
     /// entirely on that build).
@@ -103,6 +129,13 @@ pub fn demux_subtitle_codec_label(
 ///   audio PIDs whose codec lacks a frame iterator: LATM, AC-3).
 /// * `Some(Video / Klv / Audio)` — PID is known and counters apply.
 ///
+/// The demuxer creates a PID's counters at the first unit it counts, so a
+/// video PID reads `Some(Unknown)` there until its first random-access
+/// unit, and an audio PID until its first counted frame. Every field is a
+/// counter that only grows. `reset_stats` drops them: the muxer then
+/// answers `Some(Unknown)` for the PID and the demuxer `None`, until the
+/// PID counts again.
+///
 /// `#[non_exhaustive]` on the enum + every variant so additive counters
 /// land without a major bump.
 #[non_exhaustive]
@@ -114,12 +147,18 @@ pub enum StreamCodecStats {
     /// H.264 / H.265 / H.266 (NALs) or AV1 (OBUs).
     #[non_exhaustive]
     Video {
-        /// Total NAL units (H.264/H.265/H.266) or OBUs (AV1) across all
-        /// access units on this PID. Caller derives NALs/AU as
-        /// `nals_or_obus / items` where `items` is read from the unified
-        /// [`StreamStats`].
+        /// NAL units (H.264/H.265/H.266) or OBUs (AV1), a counter.
+        ///
+        /// Sender side: counted in each pushed access unit; the caller
+        /// derives NALs/AU as `nals_or_obus / items` where `items` is read
+        /// from the unified [`StreamStats`].
+        ///
+        /// Receiver side: always 0. The demuxer hands out whole access
+        /// units and does not split them; count them with
+        /// [`count_nal_units`](crate::codec::util::count_nal_units) on the
+        /// `Sample` payloads.
         nals_or_obus: u64,
-        /// Access units that are random-access points.
+        /// Access units that are random-access points, a counter.
         ///
         /// Sender side: counts pushes where `key_frame == true`
         /// (caller-supplied flag on `Muxer::push_video` /
@@ -134,16 +173,18 @@ pub enum StreamCodecStats {
     /// registration-descriptor private data).
     #[non_exhaustive]
     Klv {
-        /// Total KLV LDS records observed on this PID.
+        /// KLV records on this PID, a counter.
         ///
         /// Sender side: increments per `Muxer::push_klv` call (the
         /// muxer's contract is one record per call; the variant is
         /// surfaced for receiver-side symmetry and to give a stable
         /// counter surface if the muxer ever grows a batch API).
         ///
-        /// Receiver side: increments per `DemuxEvent::Metadata` event
-        /// emitted on this PID (today's demuxer emits one event per PES;
-        /// see the module-level note for forward-compat behavior).
+        /// Receiver side: increments once per `DemuxEvent::Metadata` event
+        /// on this PID: one per completed metadata access unit on a
+        /// synchronous stream (an access unit may span PES packets, and
+        /// one PES packet may complete several), one per PES on an
+        /// asynchronous stream.
         records: u64,
     },
     /// Audio stream — only populated for MP2 + AAC-ADTS codecs in v1.
@@ -153,7 +194,7 @@ pub enum StreamCodecStats {
     /// today (tracked in `deferred-features.md`).
     #[non_exhaustive]
     Audio {
-        /// Audio frames observed on this PID, iterated via
+        /// Audio frames on this PID, a counter, iterated via
         /// [`crate::codec::aac::frames`] (for AAC-ADTS) or
         /// [`crate::codec::mpegaudio::frames`] (for MP2). Truncated /
         /// bad-sync tail frames are skipped (counter only counts the
@@ -236,8 +277,9 @@ impl StreamCodecCounters {
 }
 
 /// Lazily creates a video [`StreamCodecCounters`] entry for `pid` and
-/// accumulates the given deltas. Shared by `Muxer` and `Demuxer`, which
-/// each keep their own `stream_codec_counters` map.
+/// accumulates the given deltas. The muxer's: the demuxer keeps its
+/// counters in its per-PID state and goes through
+/// [`StreamCodecCounters::add_video`] directly.
 pub(crate) fn bump_video_counters(
     counters: &mut alloc::collections::BTreeMap<u16, StreamCodecCounters>,
     pid: u16,
@@ -251,7 +293,8 @@ pub(crate) fn bump_video_counters(
 }
 
 /// Lazily creates a KLV [`StreamCodecCounters`] entry for `pid` and
-/// accumulates `records_delta`. Shared by `Muxer` and `Demuxer`.
+/// accumulates `records_delta`. The muxer's, as
+/// [`bump_video_counters`].
 pub(crate) fn bump_klv_counters(
     counters: &mut alloc::collections::BTreeMap<u16, StreamCodecCounters>,
     pid: u16,
@@ -264,7 +307,8 @@ pub(crate) fn bump_klv_counters(
 }
 
 /// Lazily creates an audio [`StreamCodecCounters`] entry for `pid` and
-/// accumulates `frames_delta`. Shared by `Muxer` and `Demuxer`.
+/// accumulates `frames_delta`. The muxer's, as
+/// [`bump_video_counters`].
 pub(crate) fn bump_audio_counters(
     counters: &mut alloc::collections::BTreeMap<u16, StreamCodecCounters>,
     pid: u16,

@@ -13,6 +13,13 @@ use pyo3::prelude::*;
 /// particular value reports `0`. For the SRT-specific extras (estimated
 /// bandwidth, the symmetric send/recv-side loss split) read the SRT stats
 /// of an `srt://` shell.
+///
+/// `rtt_us`, the three bandwidth fields and the two buffer fields are
+/// gauges (a current estimate or reading); every other field is a
+/// cumulative counter. The counters are kept by the transport that fills
+/// them, and reading them resets nothing; a managed shell reads the
+/// transport of its current connection, so they start again after each
+/// reconnect.
 #[pyclass(
     frozen,
     from_py_object,

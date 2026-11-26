@@ -1308,6 +1308,113 @@ mod tests {
         );
     }
 
+    /// The sender counts the NAL units it was pushed; the receiver hands out
+    /// whole access units and counts none.
+    #[test]
+    fn the_demuxer_reports_no_nal_count() {
+        use crate::mpegts::mux::{
+            Muxer, MuxerConfig, MuxerProgramConfigBuilder, VideoCodec as MuxVideoCodec,
+        };
+        use crate::mpegts::stats::StreamCodecStats;
+        let cfg = {
+            let mut prog = MuxerProgramConfigBuilder::new(1, 0x1000);
+            prog.add_video(0x100, MuxVideoCodec::H264);
+            let mut b = MuxerConfig::builder();
+            b.add_program(prog.build());
+            b.build().unwrap()
+        };
+        let mut mux = Muxer::new(cfg).unwrap();
+        // Two NAL units per access unit (an access unit delimiter and filler
+        // data), each a key frame so the receiver's video counters exist.
+        let au = [0, 0, 0, 1, 0x09, 0x10, 0, 0, 0, 1, 0x0C, 0xFF, 0xFF];
+        let mut ts = Vec::new();
+        let mut buf = vec![0u8; 188 * 32];
+        for i in 0..3 {
+            mux.push_video(&au, Pts90khz::new(9_000 + 3_000 * i), true)
+                .unwrap();
+            let n = mux.pull(&mut buf);
+            ts.extend_from_slice(&buf[..n]);
+        }
+        let mut d = Demuxer::new();
+        d.feed(&ts).unwrap();
+        d.flush();
+        let events = drain_all_events(&mut d);
+        let units = events
+            .iter()
+            .filter(|e| matches!(e, DemuxEvent::Sample { stream, .. } if stream.pid == 0x100))
+            .count();
+        assert_eq!(units, 3, "{events:?}");
+        let counts = |s: Option<StreamCodecStats>| match s {
+            Some(StreamCodecStats::Video {
+                nals_or_obus,
+                random_access_aus,
+                ..
+            }) => Some((nals_or_obus, random_access_aus)),
+            _ => None,
+        };
+        assert_eq!(counts(mux.stream_codec_stats(0x100)), Some((6, 3)));
+        assert_eq!(counts(d.stream_codec_stats(0x100)), Some((0, 3)));
+    }
+
+    /// `records` counts `Metadata` events: one PES completing two access
+    /// units gives two, an access unit spanning two PES gives one.
+    #[test]
+    fn klv_records_count_metadata_events() {
+        use crate::mpegts::au_cell::CellFragmentIndication::{self, Complete, First, Last};
+        use crate::mpegts::au_cell::{AuCellHeader, write_metadata_au_cell};
+        use crate::mpegts::stats::StreamCodecStats;
+        let cells = |list: &[(u8, CellFragmentIndication, &[u8])]| {
+            let mut v = Vec::new();
+            for &(seq, cfi, payload) in list {
+                let header = AuCellHeader {
+                    metadata_service_id: 0,
+                    sequence_number: seq,
+                    cell_fragment_indication: cfi,
+                    decoder_config_flag: false,
+                    random_access_indicator: true,
+                };
+                write_metadata_au_cell(&mut v, header, payload).unwrap();
+            }
+            v
+        };
+        let mut d = demuxer_with_streams(
+            DemuxerConfig::default(),
+            0x100,
+            &[(0x1B, 0x100, &[]), (0x15, 0x101, &[])],
+        );
+        let pes = [
+            cells(&[(0, Complete, b"one"), (1, Complete, b"two")]),
+            cells(&[(2, First, b"thr")]),
+            cells(&[(3, Last, b"ee")]),
+        ];
+        for (cc, body) in pes.iter().enumerate() {
+            let bytes = pes_bytes(0xFC, Some(90_000), None, true, body, true);
+            feed_packets(&mut d, &pes_to_packets(0x101, cc as u8, &bytes)).unwrap();
+        }
+        d.flush();
+        let events = drain_all_events(&mut d);
+        let metas: Vec<_> = events
+            .iter()
+            .filter_map(|e| match e {
+                DemuxEvent::Metadata {
+                    stream, payload, ..
+                } if stream.pid == 0x101 => Some(payload.to_vec()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            metas,
+            vec![b"one".to_vec(), b"two".to_vec(), b"three".to_vec()],
+            "{events:?}"
+        );
+        match d.stream_codec_stats(0x101) {
+            Some(StreamCodecStats::Klv { records, .. }) => {
+                assert_eq!(records, metas.len() as u64)
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
     #[test]
     fn builder_carries_defaults() {
         let d = Demuxer::with_config(DemuxerConfig::builder().build());

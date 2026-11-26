@@ -18,16 +18,19 @@ use pyo3::prelude::*;
 )]
 #[derive(Debug, Clone, Copy)]
 pub struct MuxerStats {
-    /// Total 188-byte TS packets drained from the muxer.
+    /// Total 188-byte TS packets drained from the muxer. A counter;
+    /// `reset_stats` zeroes it.
     pub ts_packets_emitted: u64,
     /// Total bytes drained from the muxer: 188 for every packet in
-    /// `ts_packets_emitted`.
+    /// `ts_packets_emitted`. A counter; `reset_stats` zeroes it.
     pub ts_bytes_emitted: u64,
-    /// Number of programs (PAT entries) in this muxer's configuration.
+    /// Number of programs (PAT entries) in this muxer's configuration. A
+    /// gauge of the live configuration; `reset_stats` leaves it.
     pub programs_configured: u32,
     /// Number of subtitle streams configured across all programs in this
     /// muxer. Counts the subtitle entries of the muxer configuration's
-    /// programs.
+    /// programs. A gauge of the live configuration; `reset_stats` leaves
+    /// it.
     pub subtitle_streams_configured: u32,
     /// Pushes on a PID other than the program's PCR PID (KLV, audio, data,
     /// subtitle) whose PTS was already behind the PCR. Such a unit is still
@@ -35,7 +38,7 @@ pub struct MuxerStats {
     /// receiver may drop it. A stream whose PES carries no PTS is never
     /// counted. With `pcr_lead_ms = 0` the PCR is the PCR stream's own
     /// decode time, so every unit stamped earlier than the access unit
-    /// pushed before it counts.
+    /// pushed before it counts. A counter; `reset_stats` zeroes it.
     pub late_metadata_pushes: u64,
 }
 

@@ -1696,6 +1696,11 @@ typedef struct tst_codec_stats_unknown_t {
 } tst_codec_stats_unknown_t;
 
 typedef struct tst_codec_stats_video_t {
+  /**
+   * NAL units (H.264/H.265/H.266) or OBUs (AV1), a counter. Sender
+   * side: counted in each pushed access unit. Receiver side: always 0;
+   * the demuxer hands out whole access units and does not split them.
+   */
   uint64_t nals_or_obus;
   uint64_t random_access_aus;
 } tst_codec_stats_video_t;

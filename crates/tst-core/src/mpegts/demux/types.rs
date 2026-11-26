@@ -20,8 +20,11 @@ crate::binding_record! {
     /// [`Demuxer`](crate::mpegts::demux::Demuxer) directly.
     ///
     /// Per-stream entries are created lazily as events are emitted — the
-    /// receiver discovers topology rather than configuring it up front. PSI
-    /// PIDs (PAT 0x0000, active PMT PID) get hardcoded labels "PAT" / "PMT".
+    /// receiver discovers topology rather than configuring it up front.
+    ///
+    /// The counters only grow until [`Demuxer::reset_stats`](crate::mpegts::demux::Demuxer::reset_stats)
+    /// zeroes them; [`Demuxer::reset_sync`](crate::mpegts::demux::Demuxer::reset_sync)
+    /// keeps them. `programs_seen` is a gauge.
     #[must_use]
     #[non_exhaustive]
     #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -38,28 +41,34 @@ crate::binding_record! {
         /// one stream. A counter; `reset_stats` zeroes it and keeps the
         /// applied tables, so a repeat after it counts nothing.
         pub pmt_versions_seen: u64,
-        /// Total discontinuity events emitted across all PIDs.
+        /// Discontinuity events emitted across all PIDs. A counter;
+        /// `reset_stats` zeroes it.
         pub discontinuities: u64,
-        /// Total non-conformant events emitted across all PIDs.
+        /// Non-conformant events queued across all PIDs (an issue returned
+        /// as a `feed` error without an event is not counted). A counter;
+        /// `reset_stats` zeroes it.
         pub nonconformant: u64,
         /// Number of programs currently tracked (entries in the PAT that have
         /// been received). Reflects the live PAT — increases when a PAT version
-        /// bump adds a program, decreases when one is removed.
+        /// bump adds a program, decreases when one is removed. A gauge;
+        /// `reset_stats` leaves it.
         pub programs_seen: u32,
         /// Number of distinct subtitle PIDs the demuxer has seen at least one
         /// PES sample for. Increments on the first `SamplePayload::Subtitle`
-        /// event per PID; resets to zero when the stats are reset.
+        /// event per PID. A counter; `reset_stats` zeroes it, and each PID
+        /// counts again at its next subtitle sample.
         pub subtitle_streams_seen: u32,
         /// Number of times the opt-in PTS/DTS unwrap
         /// ([`DemuxerConfig::unwrap_timestamps`]) re-anchored a dormant PID
         /// onto its program's running clock instead of trusting the PID's
         /// own (ambiguous) 33-bit delta — see the "Dormant PIDs" paragraph on
-        /// that field. Zero while the knob is off. Resets when the stats are reset.
+        /// that field. Zero while the knob is off. A counter; resets when the
+        /// stats are reset, not at `reset_sync`.
         @[skip]
         pub unwrap_reanchors: u64,
-        /// Per-PID counters. Keys are PIDs. Entries are created on first event
-        /// for a given PID; PSI PIDs (0x0000 for PAT, the PMT PID) are added
-        /// with fixed "PAT"/"PMT" labels when a `ProgramMap` event fires.
+        /// Per-PID counters. Keys are PIDs. Entries are created at the first
+        /// item or discontinuity reported under a PID, stay after the PID
+        /// leaves the topology, and are dropped by `reset_stats`.
         @[skip]
         pub per_stream: BTreeMap<u16, crate::mpegts::stats::StreamStats>,
     }

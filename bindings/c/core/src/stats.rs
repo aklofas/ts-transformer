@@ -569,6 +569,9 @@ pub struct TstCodecStatsUnknown {}
 #[repr(C)]
 #[derive(Copy, Clone, Default)]
 pub struct TstCodecStatsVideo {
+    /// NAL units (H.264/H.265/H.266) or OBUs (AV1), a counter. Sender
+    /// side: counted in each pushed access unit. Receiver side: always 0;
+    /// the demuxer hands out whole access units and does not split them.
     pub nals_or_obus: u64,
     pub random_access_aus: u64,
 }
