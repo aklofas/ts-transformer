@@ -4513,5 +4513,9 @@ fn mismms_counts_a_special_item_as_present() {
     assert!(mismms_missing(&rec).contains(&15));
     rec.imapb_specials
         .push((104, crate::klv::imapb::ImapbSpecial::AboveMax));
-    assert!(!mismms_missing(&rec).contains(&15), "{:?}", mismms_missing(&rec));
+    assert!(
+        !mismms_missing(&rec).contains(&15),
+        "{:?}",
+        mismms_missing(&rec)
+    );
 }
