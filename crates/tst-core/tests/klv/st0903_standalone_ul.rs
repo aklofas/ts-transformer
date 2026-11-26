@@ -236,6 +236,58 @@ fn decode_standalone_rejects_a_wrong_width_checksum() {
         st0903::decode_standalone(&packet(&body)),
         Err(KlvDecodeError::MalformedChecksum { offset: 22, got: 1 })
     ));
+    // Also when the wrong one comes second: every Tag 1's width is judged.
+    let body = [0x04, 0x01, 0x06, 0x01, 0x02, 0xCC, 0xCC, 0x01, 0x01, 0xCC];
+    assert!(matches!(
+        st0903::decode_standalone(&packet(&body)),
+        Err(KlvDecodeError::MalformedChecksum { offset: 26, got: 1 })
+    ));
+}
+
+#[test]
+fn a_padded_checksum_tag_is_refused() {
+    // ST 0107.5 §6.3.1: a BER-OID never starts with 0x80, so a Tag 1
+    // written with padding is not a checksum item; both decoders refuse it
+    // at the item's start (the body at 17, the item at 23), however wide.
+    for padding in [1usize, 11] {
+        let mut body = vec![0x04, 0x01, 0x06, 0x06, 0x01, 0x00];
+        body.extend(std::iter::repeat_n(0x80, padding));
+        body.extend_from_slice(&[0x01, 0x02, 0x00, 0x00]);
+        let mut bytes = packet(&body);
+        let at = bytes.len() - 2;
+        let sum = checksum_running_sum_16(&bytes[..at]);
+        bytes[at..].copy_from_slice(&sum.to_be_bytes());
+        for decode in [st0903::decode_standalone, st0903::decode_standalone_strict] {
+            assert!(
+                matches!(
+                    decode(&bytes),
+                    Err(KlvDecodeError::NonCanonicalTag { offset: 23 })
+                ),
+                "{padding} padding bytes: {:?}",
+                decode(&bytes)
+            );
+        }
+    }
+}
+
+#[test]
+fn decode_standalone_strict_refuses_a_non_canonical_outer_length() {
+    // As `st0601::decode_strict_compliance` does: the outer length in its
+    // fewest bytes (ST 0107.5 §6.3.2). The lenient form accepts it.
+    let bytes = st0903::encode_to_vec_standalone(&standalone_record()).unwrap();
+    assert!(bytes[16] < 0x80, "short form on the wire");
+    let mut long = bytes[..16].to_vec();
+    long.extend_from_slice(&[0x81, bytes[16]]);
+    long.extend_from_slice(&bytes[17..]);
+    let at = long.len() - 2;
+    let sum = checksum_running_sum_16(&long[..at]);
+    long[at..].copy_from_slice(&sum.to_be_bytes());
+    let lenient = st0903::decode_standalone(&long).expect("the lenient form reads any BER length");
+    assert_eq!(lenient.version_number, Some(6));
+    assert!(matches!(
+        st0903::decode_standalone_strict(&long),
+        Err(KlvDecodeError::NonCanonicalLength { offset: 16 })
+    ));
 }
 
 #[test]
@@ -277,27 +329,44 @@ fn the_standalone_presence_gate_counts_a_special_as_present() {
 fn decode_standalone_strict_refuses_an_offset_item() {
     // ST 0903.6-116: standalone carriage omits Items 10, 11, 13 to 16 of
     // a pack, whatever they hold ("Invalid", 0xC1, included).
-    let mut ls = standalone_record();
-    ls.targets[0].bbox_top_left_lon_offset = Some(1.0);
-    let bytes = st0903::encode_to_vec_standalone(&ls).unwrap();
-    assert!(matches!(
-        st0903::decode_standalone_strict(&bytes),
-        Err(KlvDecodeError::ComplianceViolation { tag: 14, .. })
-    ));
-    let lenient = st0903::decode_standalone(&bytes).expect("the lenient form has no such rule");
-    assert!(lenient.targets[0].bbox_top_left_lon_offset.is_some());
-    let mut ls = standalone_record();
-    ls.targets.clear();
-    ls.num_targets_reported = Some(1);
-    let mut body = st0903::encode_to_vec(&ls).unwrap();
-    // One pack: targetId 1, Item 4 = 5, Item 10 = C1 00 00.
-    body.extend_from_slice(&[
-        0x65, 0x0A, 0x09, 0x01, 0x04, 0x01, 0x05, 0x0A, 0x03, 0xC1, 0x00, 0x00,
-    ]);
-    assert!(matches!(
-        st0903::decode_standalone_strict(&checksummed(&body)),
-        Err(KlvDecodeError::ComplianceViolation { tag: 10, .. })
-    ));
+    type Set = fn(&mut st0903::VTargetPack);
+    let items: [(u32, Set); 6] = [
+        (10, |t| t.centroid_lat_offset = Some(1.0)),
+        (11, |t| t.centroid_lon_offset = Some(1.0)),
+        (13, |t| t.bbox_top_left_lat_offset = Some(1.0)),
+        (14, |t| t.bbox_top_left_lon_offset = Some(1.0)),
+        (15, |t| t.bbox_bottom_right_lat_offset = Some(1.0)),
+        (16, |t| t.bbox_bottom_right_lon_offset = Some(1.0)),
+    ];
+    for (tag, set) in items {
+        let mut ls = standalone_record();
+        set(&mut ls.targets[0]);
+        let bytes = st0903::encode_to_vec_standalone(&ls).unwrap();
+        assert!(
+            matches!(
+                st0903::decode_standalone_strict(&bytes),
+                Err(KlvDecodeError::ComplianceViolation { tag: t, .. }) if t == tag
+            ),
+            "Item {tag} with a value"
+        );
+        let lenient = st0903::decode_standalone(&bytes).expect("the lenient form has no such rule");
+        assert_eq!(lenient.targets[0], ls.targets[0]);
+
+        let mut ls = standalone_record();
+        ls.targets.clear();
+        ls.num_targets_reported = Some(1);
+        let mut body = st0903::encode_to_vec(&ls).unwrap();
+        // One pack: targetId 1, Item 4 = 5, the offset item = C1 00 00.
+        body.extend_from_slice(&[0x65, 0x0A, 0x09, 0x01, 0x04, 0x01, 0x05, tag as u8, 0x03]);
+        body.extend_from_slice(&[0xC1, 0x00, 0x00]);
+        assert!(
+            matches!(
+                st0903::decode_standalone_strict(&checksummed(&body)),
+                Err(KlvDecodeError::ComplianceViolation { tag: t, .. }) if t == tag
+            ),
+            "Item {tag} holding the Invalid special"
+        );
+    }
 }
 
 #[test]

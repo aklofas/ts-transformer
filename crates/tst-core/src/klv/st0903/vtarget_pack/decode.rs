@@ -17,6 +17,10 @@ use crate::error::KlvFieldError;
 ///
 /// Unknown / deprecated tags (e.g. 21, 102, 103) are preserved in
 /// `pack.unknown` per ST 0107.5 §6 future-proof skip rule.
+///
+/// A zero-length item is not read as "unknown" here (ST 0107.4-17), unlike
+/// the top level: one of fixed length is a field error, and the strict
+/// reader refuses it.
 pub(crate) fn read_pack(bytes: &[u8]) -> Result<(VTargetPack, usize), VTargetPackError> {
     read_pack_inner(bytes, /* strict = */ false)
 }

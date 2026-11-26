@@ -19,7 +19,8 @@ use core::ops::Range;
 /// are preserved in [`VmtiLs::unknown`] per ST 0107.5 §6 future-proof skip
 /// rule. A zero-length item means "unknown" (ST 0107.4-17): its field
 /// is left unset, with no field error; one NUL is the empty string
-/// (ST 0107.5 §6.3.3.2).
+/// (ST 0107.5 §6.3.3.2). Inside a VTarget pack this is not so yet: a
+/// zero-length item of fixed length there is a field error of the pack.
 ///
 /// Tags are walked as BER-OID per ST 0107.5 §6.3.1 — defined tags 1..=103
 /// fit in one byte (`write_ber_oid(N) == [N]` for `N ≤ 127`), but a future
@@ -343,14 +344,21 @@ fn decode_vtarget_series(
 /// (routed via [`KlvDecodeError::St0903InvalidVTargetPack`]).
 ///
 /// A zero-length item means "unknown" (ST 0107.4-17): accepted for an
-/// optional item, and a required item sent so is missing.
+/// optional item, and a required item sent so is missing. Inside a
+/// VTarget pack a zero-length item of fixed length is refused instead.
 ///
 /// **Record rules** (as the strict encoders apply them): no zero where an
 /// item's range starts at one, a pixel number needs the frame width, a
 /// row needs its column and the reverse, an Active-Moving or
 /// Active-Stopped target needs a position; each refusal is
 /// [`KlvDecodeError::ComplianceViolation`] at the pack's or the item's
-/// offset.
+/// offset. The strict encoders refuse the same records, but for a record
+/// with several defects the two may name different ones.
+///
+/// An IMAP special decodes to an unset field, so the strict encoders can
+/// refuse a record this function accepted, when a special was the only
+/// value of a mandatory item or of its pack (`MissingMandatoryItem`,
+/// `VTargetPackEmpty`): a relay forwards the original bytes.
 ///
 /// Unknown tags are still preserved in [`VmtiLs::unknown`] per
 /// ST 0107.5 §6 future-proof skip rule (strict mode is about
@@ -730,8 +738,11 @@ fn decode_vtarget_series_strict(
 ///   its value), [`KlvDecodeError::DuplicateTag`] with tag 1 (a second
 ///   one, at its start), [`KlvDecodeError::Tag1NotLast`] and
 ///   [`KlvDecodeError::ChecksumMismatch`], judged in that order.
+/// - [`KlvDecodeError::NonCanonicalTag`] at the item's start for a Tag 1
+///   written with a padding group (`80 01`): a BER-OID never starts with
+///   `0x80` (ST 0107.5 §6.3.1), so it is no checksum item.
 pub fn decode_standalone(bytes: &[u8]) -> Result<VmtiLs, KlvDecodeError> {
-    let (body, _) = standalone_body(bytes)?;
+    let (body, _) = standalone_body(bytes, false)?;
     decode(body)
 }
 
@@ -743,14 +754,16 @@ pub fn decode_standalone(bytes: &[u8]) -> Result<VmtiLs, KlvDecodeError> {
 /// ST 0903.6-116, whatever value they hold), a target that is active or
 /// coasting has a location (ST 0903.6-130), and the MIIS Core Identifier
 /// is one ST 1204 accepts (§10.1.13). These mirror
-/// [`super::encode_standalone_strict_compliance`].
+/// [`super::encode_standalone_strict_compliance`]. The outer length must
+/// take its fewest bytes (ST 0107.5 §6.3.2; [`KlvDecodeError::NonCanonicalLength`]),
+/// as `st0601::decode_strict_compliance` reads it.
 ///
 /// # Errors
 /// Those of [`decode_standalone`] and [`decode_strict`], plus
 /// [`KlvDecodeError::St0903MissingRequiredTag`] for a missing standalone
 /// item and [`KlvDecodeError::ComplianceViolation`] for the other rules.
 pub fn decode_standalone_strict(bytes: &[u8]) -> Result<VmtiLs, KlvDecodeError> {
-    let (body, base) = standalone_body(bytes)?;
+    let (body, base) = standalone_body(bytes, true)?;
     let strict = decode_strict_at(body, base)?;
     for tag in [2u8, 11, 12, 13] {
         if !strict.present[usize::from(tag)] {
@@ -775,10 +788,10 @@ pub fn decode_standalone_strict(bytes: &[u8]) -> Result<VmtiLs, KlvDecodeError> 
 /// The label, the body the outer length bounds, and the checksum of a
 /// standalone packet (see [`decode_standalone`]). Returns the body and
 /// where it starts in `bytes`.
-fn standalone_body(bytes: &[u8]) -> Result<(&[u8], usize), KlvDecodeError> {
+fn standalone_body(bytes: &[u8], strict: bool) -> Result<(&[u8], usize), KlvDecodeError> {
     use crate::klv::UniversalLabel;
     use crate::klv::checksum::checksum_running_sum_16;
-    use crate::klv::length::{read_ber, rebase_offset};
+    use crate::klv::length::{read_ber, read_ber_strict, rebase_offset};
 
     let Some((label, rest)) = bytes.split_first_chunk::<16>() else {
         return Err(KlvDecodeError::Truncated {
@@ -793,7 +806,14 @@ fn standalone_body(bytes: &[u8]) -> Result<(&[u8], usize), KlvDecodeError> {
             found: UniversalLabel::new(*label),
         });
     }
-    let (declared, after_len) = read_ber(rest).map_err(|mut e| {
+    // Strict: the outer length in its fewest bytes (ST 0107.5 §6.3.2), as
+    // `st0601::decode_strict_compliance` reads it.
+    let outer = if strict {
+        read_ber_strict(rest)
+    } else {
+        read_ber(rest)
+    };
+    let (declared, after_len) = outer.map_err(|mut e| {
         rebase_offset(&mut e, 16);
         e
     })?;
@@ -825,6 +845,14 @@ fn standalone_body(bytes: &[u8]) -> Result<(&[u8], usize), KlvDecodeError> {
         let tag = item[..tag_len]
             .iter()
             .fold(0u64, |t, b| t.saturating_mul(128) | u64::from(b & 0x7F));
+        // A BER-OID never starts with 0x80 (ST 0107.5 §6.3.1): a padded
+        // Tag 1 is no checksum item, and the decoders would not read it as
+        // one alike (the iterator stops at a tag over five bytes).
+        if tag == 1 && tag_len > 1 {
+            return Err(KlvDecodeError::NonCanonicalTag {
+                offset: base + item_start,
+            });
+        }
         let (len, value) = read_ber(&item[tag_len..]).map_err(|mut e| {
             rebase_offset(&mut e, base + item_start + tag_len);
             e
