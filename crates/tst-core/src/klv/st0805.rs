@@ -462,6 +462,14 @@ pub fn platform_position_xml_with(
 /// written as the HAE ([`sensor_point_of_interest_xml_with`] can refuse
 /// instead).
 ///
+/// The choice between the two positions reads the fields alone. A Target
+/// Location latitude or longitude sent as its "error" sentinel leaves its
+/// field unset (the tag is in [`UasDatalinkLs::sentinel_tags`]), so the
+/// event falls through to the Frame Center, with the Frame Center's
+/// height: it does not say that the producer sent a Target Location without
+/// a value. The composite views of the record end their chain at an item
+/// sent so; this position does not.
+///
 /// `point/@ce`/`@le` divide Tags 45/46 (CE90/LE90) by the spec-exact
 /// constants `2.146`/`1.645` to convert to CoT's 1σ convention, falling
 /// back to the `9999999` "no value given" sentinel when the source tag is
