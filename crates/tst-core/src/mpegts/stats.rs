@@ -14,9 +14,9 @@ use alloc::string::String;
 /// `items`, `bytes` and `discontinuities` are counters: they only grow
 /// until `reset_stats`. The muxer's `reset_stats` zeroes them and keeps
 /// every entry (and its `last_seen`); the demuxer's drops every entry, and
-/// a PID's entry is created again by its next event. A PID that leaves the
-/// demuxer's topology keeps its entry until then, and `Demuxer::reset_sync`
-/// keeps the entries too.
+/// a PID's entry is created again by its next unit or discontinuity. A PID
+/// that leaves the demuxer's topology keeps its entry until then, and
+/// `Demuxer::reset_sync` keeps the entries too.
 #[must_use]
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 #[non_exhaustive]
@@ -27,9 +27,11 @@ pub struct StreamStats {
     /// the latest PMT's), or `0x00` for a PID no PMT declares as a stream:
     /// a PSI PID, a PID that carries only a program's PCR. Not a counter.
     pub stream_type: StreamTypeCode,
-    /// Program number from the PAT/PMT that owns this stream. `0` for PSI
-    /// PIDs (PAT, PMT) and for streams that were created before a PMT arrived.
-    /// Not a counter.
+    /// The program that owns the PID at this site: on the muxer the
+    /// configured program; on the demuxer the program whose PMT declares (or
+    /// last declared) the stream, or, for a PID that carries only a PCR (a
+    /// PMT PID included), the lowest-numbered program that declares it as
+    /// its `PCR_PID`; `0` when no program owns it. Not a counter.
     pub program_number: u16,
     /// The codec's name on a subtitle PID (`"DVB-Subtitling"`,
     /// `"DVB-Teletext"`, `"CEA-708-Standalone"`, `"WebVTT-in-TS"`): the
@@ -37,13 +39,16 @@ pub struct StreamStats {
     /// subtitle sample. `None` on every other PID.
     pub label: Option<String>,
     /// Units through this site, a counter. Muxer: one per push on the PID.
-    /// Demuxer: one per `Sample` or `Metadata` event the PID delivers (a
-    /// subtitle PES whose sample a strict mode drops still counts).
+    /// Demuxer: one per `Sample` or `Metadata` event the PID delivers, and
+    /// one for a subtitle or audio PES whose sample a strict mode drops (a
+    /// subtitle data-field or alignment issue, a missing AC-3 syncword, an
+    /// AAC-LATM framing issue).
     pub items: u64,
     /// Bytes of those units, a counter, without PES or TS framing: the
-    /// elementary-stream bytes pushed (muxer); the PES payload delivered
-    /// (demuxer; for a synchronous metadata access unit, its payload
-    /// without the cell headers).
+    /// elementary-stream bytes pushed (muxer); the PES payload (demuxer; for
+    /// a DVB subtitle the whole PES_data_field with its envelope, though the
+    /// `Sample` carries only the segments; for a synchronous metadata access
+    /// unit, its payload without the cell headers).
     pub bytes: u64,
     /// `DemuxEvent::Discontinuity` events reported under this PID, a
     /// counter. The muxer reports none and reads `0`.
@@ -129,12 +134,13 @@ pub fn demux_subtitle_codec_label(
 ///   audio PIDs whose codec lacks a frame iterator: LATM, AC-3).
 /// * `Some(Video / Klv / Audio)` — PID is known and counters apply.
 ///
-/// The demuxer creates a PID's counters at the first unit it counts, so a
-/// video PID reads `Some(Unknown)` there until its first random-access
-/// unit, and an audio PID until its first counted frame. Every field is a
-/// counter that only grows. `reset_stats` drops them: the muxer then
-/// answers `Some(Unknown)` for the PID and the demuxer `None`, until the
-/// PID counts again.
+/// The demuxer creates a PID's entry at its first unit or discontinuity and
+/// its counters at the first unit it counts: a video PID reads `None` until
+/// its first unit or discontinuity, then `Some(Unknown)` until its first
+/// random-access unit, and an audio PID `Some(Unknown)` until its first
+/// counted frame. Every field is a counter that only grows. `reset_stats`
+/// drops them: the muxer then answers `Some(Unknown)` for the PID and the
+/// demuxer `None`, until the PID counts again.
 ///
 /// `#[non_exhaustive]` on the enum + every variant so additive counters
 /// land without a major bump.
@@ -181,10 +187,11 @@ pub enum StreamCodecStats {
         /// counter surface if the muxer ever grows a batch API).
         ///
         /// Receiver side: increments once per `DemuxEvent::Metadata` event
-        /// on this PID: one per completed metadata access unit on a
-        /// synchronous stream (an access unit may span PES packets, and
-        /// one PES packet may complete several), one per PES on an
-        /// asynchronous stream.
+        /// on this PID: one per completed access unit for a PES carried in
+        /// metadata AU cells (an access unit may span PES packets, and one
+        /// PES packet may complete several), one for a PES that starts with
+        /// a bare KLV key instead (one event with the whole payload),
+        /// whichever KLV stream type the PMT declares.
         records: u64,
     },
     /// Audio stream — only populated for MP2 + AAC-ADTS codecs in v1.
