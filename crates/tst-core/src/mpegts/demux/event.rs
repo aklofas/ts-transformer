@@ -713,10 +713,26 @@ pub enum NonConformantIssue {
     #[error(fmt = fmt_av1_obu_header)]
     Av1ObuHeader { pid: u16, kind: Av1ObuHeaderKind },
 
-    /// AAC-LATM PES (stream_type `0x11`) framing violation. Per ISO/IEC 14496-3
-    /// §1.7 + H.222.0 Table 2-34, each PES on a LATM-advertising PID MUST begin
-    /// with a 24-bit LOAS header (`syncword=0x2B7` + 13-bit
-    /// `audioMuxLengthBytes`).
+    /// AAC-LATM PES (stream_type `0x11`) framing violation. An AAC-LATM PID
+    /// carries LOAS records (ISO/IEC 14496-3 §1.7.2, H.222.0 Table 2-34), each
+    /// opened by a 24-bit header (`syncword=0x2B7` + 13-bit
+    /// `audioMuxLengthBytes`); a record, and its header, may continue into
+    /// the next PES, and a PES without `data_alignment_indicator` may open
+    /// inside a record. The demuxer follows the record position across PES
+    /// and reports only `MissingSyncword`:
+    /// - at once, for a record boundary that holds no syncword where the
+    ///   position is known, or in a PES with `data_alignment_indicator` set,
+    ///   which is walked from its first byte while the position is unknown;
+    /// - while the position is unknown (a PID's first PES, after a loss),
+    ///   once per unsynced stretch and not after an issue raised at once in
+    ///   it: when the payload since the loss passes one record length (8 194
+    ///   bytes) with no syncword candidate pending, or three record lengths
+    ///   and 3 bytes (24 585 bytes) whatever is pending. A candidate that has
+    ///   passed one record boundary defers this to its next boundary, until
+    ///   the first such candidate of the stretch has failed.
+    ///
+    /// A loss (a continuity gap, a damaged or dropped PES, a signalled
+    /// discontinuity) starts the count again.
     ///
     /// `kind` carries the specific violation;
     /// see [`crate::codec::aac::latm::LatmFramingKind`].

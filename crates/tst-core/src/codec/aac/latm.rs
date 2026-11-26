@@ -34,12 +34,15 @@
 //! ## Rationale
 //!
 //! Without sync validation, a demuxer that advertises `stream_type=0x11`
-//! (AAC-LATM) lets malformed LATM streams (truncated PES, wrong syncword,
-//! audio shipped without LATM wrapping on a 0x11 PID) silently produce
-//! `Sample` events with garbage payload. Downstream decoders then report
-//! cryptic parse errors that don't correlate back to the
-//! conformance bug. This validator surfaces the framing violation as
-//! [`crate::mpegts::demux::NonConformantIssue::LatmFraming`].
+//! (AAC-LATM) lets malformed LATM streams (wrong syncword, audio shipped
+//! without LATM wrapping on a 0x11 PID) silently produce `Sample` events
+//! with garbage payload. Downstream decoders then report cryptic parse
+//! errors that don't correlate back to the conformance bug. The demuxer
+//! follows each AAC-LATM PID's record position across PES and surfaces a
+//! missing syncword as
+//! [`crate::mpegts::demux::NonConformantIssue::LatmFraming`] (that variant
+//! says when); a record or a header that continues into the next PES is
+//! not a fault (ISO/IEC 14496-3 §1.7.2).
 //!
 //! ## Lenient vs. strict LATM validation
 //!
