@@ -390,6 +390,34 @@ class St0601PacksTest {
     }
 
     @Test
+    void aLocationWithOneCoordinateIsRefused() {
+        // ST 0601.19 Table 16: a site has both coordinates, or none.
+        UasDatalinkLs rec = new UasDatalinkLs.Builder()
+                .universalLabel(ByteBuffer.wrap(UL))
+                .airbaseLocations(new AirbaseLocations(new Location(38.8, null, 100.0), null))
+                .build();
+        KlvEncodeException ex = assertThrows(KlvEncodeException.class, () -> Klv.encodeUasDatalink(rec));
+        assertEquals(KlvEncodeException.Kind.OUT_OF_RANGE, ex.kind());
+        assertEquals(java.util.Optional.of(130L), ex.tag());
+    }
+
+    @Test
+    void aDecodedLocationWithASpecialCoordinateIsAnUnknownSite() throws KlvDecodeException {
+        // Section 8.130's example with the take-off latitude sent as IMAP_BELOW_MINIMUM.
+        byte[] v = hex("0B406BC20919BDA554070E000B40783CB819A2927407C600");
+        v[1] = (byte) 0xE0;
+        v[2] = 0;
+        v[3] = 0;
+        v[4] = 0;
+        UasDatalinkLs rec = decodeSingleTlv(130, v);
+        assertNull(rec.airbaseLocations().takeOff());
+        assertEquals(38.939353, rec.airbaseLocations().recovery().latDeg(), 1e-4);
+        assertEquals(1, rec.fieldErrors().size());
+        assertEquals(KlvFieldErrorKind.OUT_OF_RANGE, rec.fieldErrors().get(0).kind());
+        assertEquals(130L, rec.fieldErrors().get(0).tag());
+    }
+
+    @Test
     void payloadListVector() throws KlvDecodeException, KlvEncodeException {
         byte[] v = hex(
                 "03 12 0000 0F56 4953 204E 6F73 6520 4361 6D65 7261"

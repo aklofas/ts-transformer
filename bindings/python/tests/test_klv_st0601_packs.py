@@ -319,6 +319,33 @@ def test_airbase_locations_recovery_omitted_defaults_to_take_off():
     assert _reencoded_tag_value(130, rec) == v
 
 
+def test_a_location_with_one_coordinate_is_refused():
+    # ST 0601.19 Table 16: a site has both coordinates, or none.
+    from tstrans.exceptions import KlvEncodeErrorKind
+
+    rec = UasDatalinkLs(
+        airbase_locations=AirbaseLocations(
+            take_off=Location(lat_deg=38.8, hae_m=100.0), recovery=None
+        )
+    )
+    with pytest.raises(KlvEncodeError) as ei:
+        encode_uas_datalink(rec)
+    assert ei.value.kind is KlvEncodeErrorKind.OUT_OF_RANGE
+    assert ei.value.tag == 130
+
+
+def test_a_decoded_location_with_a_special_coordinate_is_an_unknown_site():
+    # §8.130's example with the take-off latitude sent as IMAP_BELOW_MINIMUM.
+    from tstrans.klv import KlvFieldErrorKind
+
+    v = bytearray(_hex("0B406BC20919BDA554070E000B40783CB819A2927407C600"))
+    v[1:5] = b"\xe0\x00\x00\x00"
+    rec = _decode_single_tlv(130, bytes(v))
+    assert rec.airbase_locations.take_off is None
+    assert abs(rec.airbase_locations.recovery.lat_deg - 38.939353) < 1e-4
+    assert [(e.kind, e.tag) for e in rec.field_errors] == [(KlvFieldErrorKind.OUT_OF_RANGE, 130)]
+
+
 def test_payload_list_vector():
     v = _hex(
         """
