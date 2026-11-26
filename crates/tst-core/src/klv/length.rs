@@ -97,6 +97,21 @@ pub fn read_ber_oid(buf: &[u8]) -> Result<(u32, &[u8]), KlvDecodeError> {
     }
 }
 
+/// Step over one BER-OID of any width (the bytes up to and including the
+/// first without the continuation bit). Returns the bytes after it, or
+/// `Truncated` when `buf` ends inside it. For a tag too wide for
+/// [`read_ber_oid`]'s `u32`, which a decoder skips as an unknown item.
+pub(crate) fn skip_ber_oid(buf: &[u8]) -> Result<&[u8], KlvDecodeError> {
+    match buf.iter().position(|b| b & 0x80 == 0) {
+        Some(i) => Ok(&buf[i + 1..]),
+        None => Err(KlvDecodeError::Truncated {
+            offset: buf.len(),
+            needed: 1,
+            have: 0,
+        }),
+    }
+}
+
 /// Strict variant of [`read_ber_oid`] that rejects non-canonical encodings
 /// per MISB ST 0107.5 §6.3.1 (PDF p.4): "ASN.1 forbids the use of `0x80`
 /// in the first byte of a BER-OID value." A leading `0x80` is the

@@ -12,7 +12,9 @@ use alloc::vec::Vec;
 
 use crate::error::{KlvDecodeError, KlvEncodeError, KlvPatchError};
 use crate::klv::checksum::checksum_running_sum_16;
-use crate::klv::length::{read_ber, read_ber_oid, rebase_offset, write_ber, write_ber_oid};
+use crate::klv::length::{
+    read_ber, read_ber_oid, rebase_offset, skip_ber_oid, write_ber, write_ber_oid,
+};
 
 use super::encode::encode_tag_value;
 use super::model::{OutOfRangePolicy, UasDatalinkLs};
@@ -136,8 +138,16 @@ pub fn patch(raw: &[u8], edits: &UasDatalinkLs) -> Result<Vec<u8>, KlvPatchError
     let mut pos = 0usize;
     while pos < body.len() {
         let rest = &body[pos..];
-        let (tag, after_tag) =
-            read_ber_oid(rest).map_err(|e| rebase_decode_error_offset(e, body_offset + pos))?;
+        // A tag wider than 32 bits (`None`) is an unknown item lenient
+        // decode steps over; it is copied verbatim below.
+        let (tag, after_tag) = match read_ber_oid(rest) {
+            Ok((tag, after_tag)) => (Some(tag), after_tag),
+            Err(KlvDecodeError::LengthOverflow { .. }) => (
+                None,
+                skip_ber_oid(rest).map_err(|e| rebase_decode_error_offset(e, body_offset + pos))?,
+            ),
+            Err(e) => return Err(rebase_decode_error_offset(e, body_offset + pos).into()),
+        };
         let consumed_tag = rest.len() - after_tag.len();
         let (vlen, after_vlen) = read_ber(after_tag)
             .map_err(|e| rebase_decode_error_offset(e, body_offset + pos + consumed_tag))?;
@@ -150,6 +160,11 @@ pub fn patch(raw: &[u8], edits: &UasDatalinkLs) -> Result<Vec<u8>, KlvPatchError
             }));
         }
         let tlv = &rest[..header_len + vlen];
+        let Some(tag) = tag else {
+            new_body.extend_from_slice(tlv);
+            pos += header_len + vlen;
+            continue;
+        };
         if !seen.contains(&tag) {
             seen.push(tag);
         }

@@ -102,42 +102,91 @@ impl<'a> Iterator for Iter<'a> {
 
 impl<'a> Iter<'a> {
     fn next_local_set(&mut self) -> Option<Result<RawField<'a>, KlvDecodeError>> {
-        let start = self.offset;
-        let rest = &self.buf[start..];
-        let (tag, after_tag) = if self.one_byte {
-            // `next` only calls here with at least one byte left.
-            (u32::from(rest[0]), &rest[1..])
-        } else {
-            match read_ber_oid(rest) {
+        loop {
+            let start = self.offset;
+            let rest = &self.buf[start..];
+            let (tag, after_tag) = if self.one_byte {
+                // Called only with at least one byte left.
+                (u32::from(rest[0]), &rest[1..])
+            } else {
+                match read_ber_oid(rest) {
+                    Ok(v) => v,
+                    // A tag wider than 32 bits is unknown to every set, and
+                    // ST 0107.3-04 has a decoder skip an unknown item.
+                    Err(KlvDecodeError::LengthOverflow { .. }) => {
+                        if let Some(e) = self.skip_wide_item(start) {
+                            return Some(Err(e));
+                        }
+                        if self.offset >= self.buf.len() {
+                            return None;
+                        }
+                        continue;
+                    }
+                    Err(mut e) => {
+                        crate::klv::length::rebase_offset(&mut e, start);
+                        self.finished = true;
+                        return Some(Err(e));
+                    }
+                }
+            };
+            let consumed_tag = rest.len() - after_tag.len();
+            let (len, after_len) = match read_ber(after_tag) {
                 Ok(v) => v,
                 Err(mut e) => {
-                    crate::klv::length::rebase_offset(&mut e, start);
+                    crate::klv::length::rebase_offset(&mut e, start + consumed_tag);
                     self.finished = true;
                     return Some(Err(e));
                 }
-            }
-        };
-        let consumed_tag = rest.len() - after_tag.len();
-        let (len, after_len) = match read_ber(after_tag) {
-            Ok(v) => v,
-            Err(mut e) => {
-                crate::klv::length::rebase_offset(&mut e, start + consumed_tag);
+            };
+            let consumed_len = after_tag.len() - after_len.len();
+            if after_len.len() < len {
                 self.finished = true;
-                return Some(Err(e));
+                return Some(Err(KlvDecodeError::Truncated {
+                    offset: start + consumed_tag + consumed_len,
+                    needed: len,
+                    have: after_len.len(),
+                }));
             }
-        };
-        let consumed_len = after_tag.len() - after_len.len();
-        if after_len.len() < len {
-            self.finished = true;
-            return Some(Err(KlvDecodeError::Truncated {
-                offset: start + consumed_tag + consumed_len,
-                needed: len,
-                have: after_len.len(),
-            }));
+            let value = &after_len[..len];
+            self.offset = start + consumed_tag + consumed_len + len;
+            return Some(Ok(RawField { tag, value }));
         }
-        let value = &after_len[..len];
-        self.offset = start + consumed_tag + consumed_len + len;
-        Some(Ok(RawField { tag, value }))
+    }
+
+    /// Step over the item at `start`, whose BER-OID tag is wider than 32
+    /// bits: the item is dropped (nothing can carry its tag). Returns the
+    /// framing error, buffer-relative, when the item runs past the buffer.
+    #[cold]
+    fn skip_wide_item(&mut self, start: usize) -> Option<KlvDecodeError> {
+        use crate::klv::length::{rebase_offset, skip_ber_oid};
+        let rest = &self.buf[start..];
+        let framed = skip_ber_oid(rest).and_then(|after_tag| {
+            let tag_len = rest.len() - after_tag.len();
+            let (len, after_len) = read_ber(after_tag).map_err(|mut e| {
+                rebase_offset(&mut e, tag_len);
+                e
+            })?;
+            let header_len = rest.len() - after_len.len();
+            if after_len.len() < len {
+                return Err(KlvDecodeError::Truncated {
+                    offset: header_len,
+                    needed: len,
+                    have: after_len.len(),
+                });
+            }
+            Ok(header_len + len)
+        });
+        match framed {
+            Ok(item_len) => {
+                self.offset = start + item_len;
+                None
+            }
+            Err(mut e) => {
+                rebase_offset(&mut e, start);
+                self.finished = true;
+                Some(e)
+            }
+        }
     }
 }
 
@@ -305,6 +354,164 @@ mod tests {
         assert!(
             matches!(e, KlvDecodeError::MalformedLength { offset: 4 }),
             "got {e:?}"
+        );
+    }
+
+    /// A tag of 2^32 (`90 80 80 80 00`) and an 11-byte tag: both are
+    /// well-formed BER-OID values wider than the `u32` a tag is read into.
+    const WIDE_TAGS: [&[u8]; 2] = [
+        &[0x90, 0x80, 0x80, 0x80, 0x00],
+        &[
+            0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x7F,
+        ],
+    ];
+
+    fn concat(parts: &[&[u8]]) -> Vec<u8> {
+        parts.concat()
+    }
+
+    /// An ST 0601 packet: the UL, a short-form length, `items`, and a
+    /// checksum over every byte before its value (ST 0601 §6.5).
+    fn st0601_packet(items: &[&[u8]]) -> Vec<u8> {
+        let ul = crate::klv::universal_label::UniversalLabel::ST_0601_LS.0;
+        let mut body = items.concat();
+        body.extend_from_slice(&[0x01, 0x02]);
+        let mut out = ul.to_vec();
+        out.push((body.len() + 2) as u8);
+        out.extend_from_slice(&body);
+        let sum = crate::klv::checksum::checksum_running_sum_16(&out);
+        out.extend_from_slice(&sum.to_be_bytes());
+        out
+    }
+
+    #[test]
+    fn lenient_decoders_skip_an_unknown_tag_wider_than_32_bits() {
+        // ST 0107.3-04: a decoder skips an unknown item; a tag that does
+        // not fit 32 bits is unknown to every set and is dropped.
+        for wide in WIDE_TAGS {
+            let item = concat(&[wide, &[0x01, 0x42]]);
+
+            let body = concat(&[&item, &[0x08, 0x01, 0x04]]);
+            let fields: Vec<RawField> = Iter::local_set(&body).collect::<Result<_, _>>().unwrap();
+            assert_eq!(
+                fields,
+                vec![RawField {
+                    tag: 8,
+                    value: &[0x04]
+                }],
+                "{wide:02X?}"
+            );
+
+            let rvt = crate::klv::st0806::decode(&body).unwrap();
+            assert_eq!(rvt.rvt_ls_version, Some(4), "{wide:02X?}");
+
+            let vmti = crate::klv::st0903::decode(&concat(&[&item, &[0x04, 0x01, 0x05]])).unwrap();
+            assert_eq!(vmti.version_number, Some(5), "{wide:02X?}");
+            assert!(vmti.field_errors.is_empty(), "{wide:02X?}: {vmti:?}");
+
+            let packet = st0601_packet(&[
+                &[0x02, 0x08, 0, 0, 0, 0, 0, 0, 0, 0x01],
+                &item,
+                &[0x41, 0x01, 0x13],
+            ]);
+            for (mode, decoded) in [
+                ("decode", crate::klv::st0601::decode(&packet)),
+                ("decode_strict", crate::klv::st0601::decode_strict(&packet)),
+            ] {
+                let r = decoded.unwrap_or_else(|e| panic!("{mode} {wide:02X?}: {e:?}"));
+                assert_eq!(r.timestamp_us, Some(1), "{mode}");
+                assert_eq!(r.uas_ls_version, Some(19), "{mode}");
+                assert!(r.unknown.is_empty(), "{mode}: {:?}", r.unknown);
+            }
+        }
+    }
+
+    #[test]
+    fn a_truncated_wide_tag_is_still_truncated() {
+        for body in [
+            &[0x90, 0x80][..],
+            &[0x90, 0x80, 0x80, 0x80, 0x80],
+            &[0x90, 0x80, 0x80, 0x80, 0x00, 0x05, 0x42],
+        ] {
+            let mut it = Iter::local_set(body);
+            let err = it.next().unwrap().unwrap_err();
+            assert!(
+                matches!(err, KlvDecodeError::Truncated { .. }),
+                "{body:02X?}: {err:?}"
+            );
+            assert!(it.next().is_none(), "{body:02X?}: finished after error");
+        }
+    }
+
+    #[test]
+    fn patch_copies_a_wide_unknown_tag_verbatim() {
+        // Timestamp 1, the item `90 80 80 80 00 01 42`, version 19, checksum.
+        let input = [
+            0x06, 0x0E, 0x2B, 0x34, 0x02, 0x0B, 0x01, 0x01, 0x0E, 0x01, 0x03, 0x01, 0x01, 0x00,
+            0x00, 0x00, 0x18, 0x02, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x90,
+            0x80, 0x80, 0x80, 0x00, 0x01, 0x42, 0x41, 0x01, 0x13, 0x01, 0x02, 0xBF, 0xA6,
+        ];
+        let out = crate::klv::st0601::patch(&input, &crate::klv::st0601::UasDatalinkLs::default())
+            .unwrap();
+        assert_eq!(out, input);
+    }
+
+    #[test]
+    fn compliance_decode_still_refuses_a_wide_tag() {
+        let item = concat(&[WIDE_TAGS[0], &[0x01, 0x42]]);
+        let packet = st0601_packet(&[
+            &[0x02, 0x08, 0, 0, 0, 0, 0, 0, 0, 0x01],
+            &item,
+            &[0x41, 0x01, 0x13],
+        ]);
+        let err = crate::klv::st0601::decode_strict_compliance(&packet).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                KlvDecodeError::LengthOverflow {
+                    value: 4_294_967_296
+                }
+            ),
+            "{err:?}"
+        );
+        let err =
+            crate::klv::st0903::decode_strict(&concat(&[&item, &[0x04, 0x01, 0x05]])).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                KlvDecodeError::LengthOverflow {
+                    value: 4_294_967_296
+                }
+            ),
+            "{err:?}"
+        );
+    }
+
+    #[test]
+    fn the_largest_32_bit_tag_is_still_kept() {
+        let body = [0x8F, 0xFF, 0xFF, 0xFF, 0x7F, 0x01, 0x42, 0x08, 0x01, 0x04];
+        let fields: Vec<RawField> = Iter::local_set(&body).collect::<Result<_, _>>().unwrap();
+        assert_eq!(
+            fields,
+            vec![
+                RawField {
+                    tag: u32::MAX,
+                    value: &[0x42],
+                },
+                RawField {
+                    tag: 8,
+                    value: &[0x04],
+                },
+            ]
+        );
+        let packet = st0601_packet(&[&[0x02, 0x08, 0, 0, 0, 0, 0, 0, 0, 0x01], &body[..7]]);
+        let r = crate::klv::st0601::decode(&packet).unwrap();
+        assert_eq!(
+            r.unknown,
+            vec![OwnedRawField {
+                tag: u32::MAX,
+                value: vec![0x42],
+            }]
         );
     }
 
