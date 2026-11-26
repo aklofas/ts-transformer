@@ -349,7 +349,9 @@ mod tests {
     /// H.264 §7.4.1 Table 7-1 (SPS 7, PPS 8) and H.265 §7.4.2.2 Table 7-1 (VPS 32, SPS 33, PPS 34).
     #[test]
     fn classify_parameter_set_by_spec_header_bytes() {
-        let cases: &[(VideoCodec, &[u8], (usize, usize, usize))] = &[
+        /// A codec, a NAL unit, and the (SPS, PPS, VPS) counts it adds.
+        type Case = (VideoCodec, &'static [u8], (usize, usize, usize));
+        let cases: &[Case] = &[
             (VideoCodec::H264, &[0x67, 0xAA], (1, 0, 0)),
             (VideoCodec::H264, &[0x27, 0xAA], (1, 0, 0)), // nal_ref_idc 1
             (VideoCodec::H264, &[0x68, 0xAA], (0, 1, 0)),
