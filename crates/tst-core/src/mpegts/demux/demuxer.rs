@@ -974,10 +974,12 @@ impl Demuxer {
     /// the 3-state [`Self::stream_codec_stats`] accessor symmetric across
     /// reset — an unseen PID returns `None` both before AND after.
     ///
-    /// Counters only: topology caches (the PAT and PMT versions, the
+    /// Counters only: topology caches (the applied PAT and PMTs, the
     /// declared streams) and in-flight reassembly are untouched, so a PMT
     /// repeat after this call is still a repeat — no `ProgramMap`, no
-    /// `pmt_versions_seen` increment. Only a real version change counts.
+    /// count. A PMT whose version or content changed counts in
+    /// `program_maps_seen`, and in `pmt_versions_seen` only when its
+    /// version moved.
     pub fn reset_stats(&mut self) {
         self.program_maps_seen = 0;
         self.pmt_versions_seen = 0;

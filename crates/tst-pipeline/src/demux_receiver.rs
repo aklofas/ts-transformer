@@ -735,16 +735,20 @@ tst_core::binding_record! {
         /// Aligned 188-byte TS packets the receiver took from its transport.
         /// A stats reset zeroes it.
         pub packets_received: u64,
-        /// Program maps the demuxer reported: one each time a program's PMT
-        /// version changes, the first sighting included. A stats reset
-        /// zeroes it.
+        /// Program maps the demuxer reported: one for the first PMT of each
+        /// program and one for every later PMT whose version or content
+        /// differs from the applied one. A stats reset zeroes it.
         pub program_maps_seen: u64,
-        /// PMT versions taken: one each time a program's PMT version
-        /// changes, the first sighting included, so a version that comes
-        /// back counts again and two programs count one each; the same
-        /// count as `program_maps_seen`. A stats reset zeroes it and keeps
-        /// the known versions; a managed receiver's reconnect forgets them,
-        /// so the next PMT after it counts even at the same version.
+        /// Those program maps whose PMT carried a `version_number`
+        /// different from the program's previous one, a program's first
+        /// PMT included, so a version that comes back counts again and two
+        /// programs count one each. Never larger than `program_maps_seen`;
+        /// the difference counts PMTs that changed their content without
+        /// the version increment H.222.0 requires, as when two sources are
+        /// spliced into one stream. A stats reset zeroes it and keeps the
+        /// applied tables, so a repeat after it counts nothing; a managed
+        /// receiver's reconnect forgets them, so the next PMT after it
+        /// counts even at the same version.
         pub pmt_versions_seen: u64,
         /// Discontinuities the demuxer reported, over every PID. A stats
         /// reset zeroes it.
@@ -1006,6 +1010,76 @@ mod stats_tests {
         assert_eq!(st.nonconformant, 4, "{st:?}");
         assert_eq!(st.packets_received, n, "{st:?}");
         assert_eq!(st.bytes_received, n * 188, "{st:?}");
+    }
+
+    /// A version-0 PMT of program 1 with its one H.264 stream (and the PCR)
+    /// on `pid`.
+    fn pmt_packet_on(pid: u16, cc: u8) -> Vec<u8> {
+        let section = [
+            0x02,
+            0xB0,
+            18,
+            0x00,
+            0x01,
+            0xC1,
+            0x00,
+            0x00,
+            0xE0 | (pid >> 8) as u8,
+            pid as u8,
+            0xF0,
+            0x00,
+            0x1B,
+            0xE0 | (pid >> 8) as u8,
+            pid as u8,
+            0xF0,
+            0x00,
+        ];
+        psi_packet(PMT_PID, &section, cc, false)
+    }
+
+    #[test]
+    fn a_same_version_pmt_change_reaches_the_receiver_and_its_counters() {
+        use tst_core::mpegts::demux::DemuxEvent;
+        const OTHER_PID: u16 = 0x0201;
+        // A bounded video PES with PTS 0 and an access unit delimiter.
+        let pes = [
+            0x00, 0x00, 0x01, 0xE0, 0x00, 14, 0x80, 0x80, 0x05, 0x21, 0x00, 0x01, 0x00, 0x01, 0x00,
+            0x00, 0x00, 0x01, 0x09, 0xF0,
+        ];
+        let capture = [
+            pat_packet(),
+            pmt_packet_on(VIDEO_PID, 0),
+            pmt_packet_on(OTHER_PID, 1),
+            ts_packet(OTHER_PID, &pes, true, 0),
+        ];
+        let mut r = DemuxReceiver::new(CannedRecv {
+            chunks: capture.into_iter().collect(),
+            alive: true,
+        });
+        let mut events = Vec::new();
+        while let Ok(Some(e)) = r.recv_event() {
+            events.push(e);
+        }
+        let maps: Vec<u16> = events
+            .iter()
+            .filter_map(|e| match e {
+                DemuxEvent::ProgramMap(m) => Some(m.streams[0].pid),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(maps, [VIDEO_PID, OTHER_PID], "{events:?}");
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, DemuxEvent::Sample { stream, .. } if stream.pid == OTHER_PID)),
+            "{events:?}"
+        );
+        let st = r.stats();
+        assert_eq!(
+            (st.program_maps_seen, st.pmt_versions_seen),
+            (2, 1),
+            "{st:?}"
+        );
     }
 
     #[test]

@@ -26,12 +26,17 @@ crate::binding_record! {
     #[non_exhaustive]
     #[derive(Debug, Clone, Default, PartialEq, Eq)]
     pub struct DemuxerStats {
-        /// Number of `ProgramMap` events emitted (one per PMT version seen).
+        /// Number of `ProgramMap` events emitted: one for the first PMT of
+        /// each program and one for every later PMT whose version or content
+        /// differs from the applied one. A counter; `reset_stats` zeroes it.
         pub program_maps_seen: u64,
-        /// Number of distinct PMT version_number values seen, including the
-        /// initial sighting. `reset_stats` zeroes the counter but keeps the PMT
-        /// topology, so a repeat of the already-known version is not counted;
-        /// only a new `version_number` increments it.
+        /// Number of those events whose PMT carried a `version_number`
+        /// different from the program's previous one, a program's first PMT
+        /// included. Never larger than `program_maps_seen`; the difference
+        /// counts PMTs that changed their content without the version
+        /// increment H.222.0 requires, as when two sources are spliced into
+        /// one stream. A counter; `reset_stats` zeroes it and keeps the
+        /// applied tables, so a repeat after it counts nothing.
         pub pmt_versions_seen: u64,
         /// Total discontinuity events emitted across all PIDs.
         pub discontinuities: u64,

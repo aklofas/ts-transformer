@@ -766,6 +766,7 @@ impl super::demuxer::Demuxer {
             .programs
             .get_mut(&program_number)
             .expect("checked above");
+        let version_changed = tracker.pmt_version != Some(pmt.version);
         tracker.pmt_version = Some(pmt.version);
         tracker.pmt_crc = section_crc;
         tracker.pcr_pid = Some(pmt.pcr_pid);
@@ -782,10 +783,15 @@ impl super::demuxer::Demuxer {
         // PID's history only if no program still declares it.
         self.apply_topology_diff(diff);
 
-        // Emit ProgramMap event.
+        // Emit ProgramMap event. Every applied PMT is a program map; only
+        // one whose version_number moved (or a program's first) is a
+        // version, so the difference counts content changes a source made
+        // without the increment.
         self.queue.push_back(DemuxEvent::ProgramMap(prog_map));
         self.program_maps_seen += 1;
-        self.pmt_versions_seen += 1;
+        if version_changed {
+            self.pmt_versions_seen += 1;
+        }
     }
 
     /// Build a `ProgramMap` event payload from a parsed PMT and the accepted
@@ -3847,5 +3853,66 @@ mod tests {
             f.events
         );
         assert_eq!(f.maps().len(), 1, "{:?}", f.events);
+    }
+
+    /// `(program_maps_seen, pmt_versions_seen)`.
+    fn pmt_counters(f: &Feed) -> (u64, u64) {
+        let st = f.d.stats();
+        (st.program_maps_seen, st.pmt_versions_seen)
+    }
+
+    #[test]
+    fn a_same_version_pmt_change_counts_a_program_map_and_no_version() {
+        let mut f = feed_with_one_video_pid();
+        f.section(0x1000, &build_pmt_section(1, 0x100, 0, &[(0x1B, 0x200)]))
+            .unwrap();
+        assert_eq!(pmt_counters(&f), (2, 1));
+    }
+
+    #[test]
+    fn a_version_that_comes_back_counts_again() {
+        let mut f = feed_with_one_video_pid();
+        f.section(0x1000, &build_pmt_section(1, 0x100, 1, &[(0x1B, 0x200)]))
+            .unwrap();
+        f.section(0x1000, &build_pmt_section(1, 0x100, 0, &[(0x1B, 0x300)]))
+            .unwrap();
+        assert_eq!(pmt_counters(&f), (3, 3));
+    }
+
+    #[test]
+    fn two_programs_at_version_zero_count_two() {
+        let mut f = Feed::new(DemuxerConfig::default());
+        f.section(
+            0x0000,
+            &build_pat_section(1, 0, &[(1, 0x1000), (2, 0x1100)]),
+        )
+        .unwrap();
+        f.section(0x1000, &build_pmt_section(1, 0x100, 0, &[(0x1B, 0x100)]))
+            .unwrap();
+        f.section(0x1100, &build_pmt_section(2, 0x200, 0, &[(0x1B, 0x200)]))
+            .unwrap();
+        assert_eq!(pmt_counters(&f), (2, 2));
+    }
+
+    #[test]
+    fn a_rebuilt_tracker_counts_its_first_pmt() {
+        let mut f = feed_with_one_video_pid();
+        f.section(0x0000, &build_pat_section(1, 1, &[(1, 0x1001)]))
+            .unwrap();
+        f.section(0x1001, &build_pmt_section(1, 0x100, 0, &[(0x1B, 0x100)]))
+            .unwrap();
+        assert_eq!(pmt_counters(&f), (2, 2));
+    }
+
+    #[test]
+    fn reset_stats_keeps_the_applied_identity() {
+        let mut f = feed_with_one_video_pid();
+        f.d.reset_stats();
+        f.section(0x1000, &build_pmt_section(1, 0x100, 0, &[(0x1B, 0x100)]))
+            .unwrap();
+        assert_eq!(pmt_counters(&f), (0, 0), "a repeat after the reset");
+        f.section(0x1000, &build_pmt_section(1, 0x100, 0, &[(0x1B, 0x200)]))
+            .unwrap();
+        assert_eq!(pmt_counters(&f), (1, 0), "a same-version change after it");
     }
 }

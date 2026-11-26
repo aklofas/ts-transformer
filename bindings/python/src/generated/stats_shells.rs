@@ -130,16 +130,19 @@ pub struct DemuxReceiverStats {
     /// Aligned 188-byte TS packets the receiver took from its transport. A
     /// stats reset zeroes it.
     pub packets_received: u64,
-    /// Program maps the demuxer reported: one each time a program's PMT
-    /// version changes, the first sighting included. A stats reset zeroes
-    /// it.
+    /// Program maps the demuxer reported: one for the first PMT of each
+    /// program and one for every later PMT whose version or content differs
+    /// from the applied one. A stats reset zeroes it.
     pub program_maps_seen: u64,
-    /// PMT versions taken: one each time a program's PMT version changes,
-    /// the first sighting included, so a version that comes back counts
-    /// again and two programs count one each; the same count as
-    /// `program_maps_seen`. A stats reset zeroes it and keeps the known
-    /// versions; a managed receiver's reconnect forgets them, so the next
-    /// PMT after it counts even at the same version.
+    /// Those program maps whose PMT carried a `version_number` different
+    /// from the program's previous one, a program's first PMT included, so
+    /// a version that comes back counts again and two programs count one
+    /// each. Never larger than `program_maps_seen`; the difference counts
+    /// PMTs that changed their content without the version increment
+    /// H.222.0 requires, as when two sources are spliced into one stream. A
+    /// stats reset zeroes it and keeps the applied tables, so a repeat
+    /// after it counts nothing; a managed receiver's reconnect forgets
+    /// them, so the next PMT after it counts even at the same version.
     pub pmt_versions_seen: u64,
     /// Discontinuities the demuxer reported, over every PID. A stats reset
     /// zeroes it.

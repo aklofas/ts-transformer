@@ -9,10 +9,15 @@ package org.tstrans.mpegts;
  * Unsigned 64-bit values are carried as the bit pattern of a signed {@code long}: a value of 2^63
  * or more reads as negative.
  *
- * @param programMapsSeen Number of {@code ProgramMap} events emitted (one per PMT version seen).
- * @param pmtVersionsSeen Number of distinct PMT version_number values seen, including the initial
- *     sighting. {@code reset_stats} zeroes the counter but keeps the PMT topology, so a repeat of
- *     the already-known version is not counted; only a new {@code version_number} increments it.
+ * @param programMapsSeen Number of {@code ProgramMap} events emitted: one for the first PMT of each
+ *     program and one for every later PMT whose version or content differs from the applied one. A
+ *     counter; {@code reset_stats} zeroes it.
+ * @param pmtVersionsSeen Number of those events whose PMT carried a {@code version_number}
+ *     different from the program's previous one, a program's first PMT included. Never larger than
+ *     {@code programMapsSeen}; the difference counts PMTs that changed their content without the
+ *     version increment H.222.0 requires, as when two sources are spliced into one stream. A
+ *     counter; {@code reset_stats} zeroes it and keeps the applied tables, so a repeat after it
+ *     counts nothing.
  * @param discontinuities Total discontinuity events emitted across all PIDs.
  * @param nonconformant Total non-conformant events emitted across all PIDs.
  * @param programsSeen Number of programs currently tracked (entries in the PAT that have been

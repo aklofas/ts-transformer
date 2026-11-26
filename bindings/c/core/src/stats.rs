@@ -209,8 +209,12 @@ impl From<&tst_pipeline::ReceiverStats> for TstReceiverStats {
 /// * `bytes_received` / `packets_received` — application-level totals
 ///   from the inner `Receiver` (one 188-byte packet per success).
 /// * `program_maps_seen` / `pmt_versions_seen` — PSI topology counters.
-///   `program_maps_seen` increments on every PMT emission; `pmt_versions_seen`
-///   only on a `version_number` bump (PMT churn detector).
+///   `program_maps_seen` counts every applied PMT: a program's first and
+///   every later one whose version or content differs from the applied one
+///   (one `TST_EVENT_KIND_PROGRAM_MAP` each); `pmt_versions_seen` counts those
+///   whose `version_number` differs from the program's previous one, the
+///   first included. The difference counts PMTs that changed without the
+///   version increment H.222.0 requires (two sources spliced into one).
 /// * `discontinuities` — sum across all PIDs of `DemuxEvent::Discontinuity`
 ///   emissions (continuity-counter jumps, PES oversize, etc).
 /// * `nonconformant` — sum across all PIDs of `DemuxEvent::NonConformant`
