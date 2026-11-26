@@ -447,15 +447,25 @@ pub fn has_klva_registration(descs: &[RawDescriptor]) -> bool {
 ///      (0x80..=0x9F), any other code the table leaves empty, or an accent
 ///      that is last or not followed by such a letter makes the text
 ///      undecodable.
-///      One deviation from Annex A: default-table text that is
-///      well-formed UTF-8 as a whole is read as UTF-8, so a label written as
-///      UTF-8 without the 0x15 selector reads as written. Table 00 text that
-///      is also well-formed UTF-8 is misread by that rule: a character coded
-///      0xD0..=0xDF followed by one coded 0xA0..=0xBF, one coded 0xE0..=0xEF
-///      (not 0xED) followed by two, or one coded 0xF0..=0xF3 followed by
-///      three, is read as the UTF-8 character those bytes form (`D3 A0`, "©"
-///      and a no-break space, reads as "Ӡ"); a text is misread when every
-///      byte of it over 0x7F belongs to such a run.
+///      Where this differs from Annex A, one deviation and two limits:
+///      - The deviation: default-table text that is well-formed UTF-8 as a
+///        whole is read as UTF-8, so a label written as UTF-8 without the
+///        0x15 selector reads as written. Table 00 text that is also
+///        well-formed UTF-8 is misread by that rule: a character coded
+///        0xD0..=0xDF followed by one coded 0xA0..=0xBF, one coded
+///        0xE0..=0xEF (not 0xED) followed by two, or one coded 0xF0..=0xF3
+///        followed by three, is read as the UTF-8 character those bytes form
+///        (`D3 A0`, "©" and a no-break space, reads as "Ӡ"); a text is
+///        misread when every byte of it over 0x7F belongs to such a run.
+///      - The control codes of Annex A.1 are not interpreted. In a one-byte
+///        table a code 0x80..=0x9F (0x86 and 0x87 character emphasis on and
+///        off, 0x8A CR/LF, the reserved and the user-defined ones) makes the
+///        whole text undecodable, so a component text that uses emphasis or
+///        a line break gives no label from this descriptor; in text read as
+///        UTF-8 their UTF-8 forms arrive as the characters U+0080..=U+009F.
+///      - The ISO 8859 tables are not transcoded: under their selectors only
+///        an ASCII text is read, and a text with any byte over 0x7F is
+///        undecodable.
 ///   2. Stream Identifier descriptor (tag 0x52, ETSI EN 300 468 §6.2.40) —
 ///      single `component_tag` byte rendered as `"tag=NN"`.
 ///   3. Metadata descriptor (tag 0x26) — when present, label is `"KLV"`
