@@ -32,9 +32,15 @@ import java.util.List;
  * follows the item of its last row. So a set that came in any order, whose packs each follow the
  * items they refine, keeps every pack with its rows after a decode and an encode, also when packs
  * share items, and a set whose items are in the encoder's order is re-encoded with every pack where
- * it was. For a tag the set carries more than once (an unknown tag, or Item 115) the rows do not
- * say which of its items is meant: a row takes the item its pack's other rows fit, or the first one
- * no row has named, and such a set can end with a pack that is not placed.
+ * it was: both for every pack that has rows and names no tag the set carries more than once (a pack
+ * of matrix size 0 names no item and is written after the typed fields). For a tag the set carries
+ * more than once (an unknown tag, or Item 115) a row names the tag, not the item, so the encoder
+ * cannot know which occurrence a pack followed: a row takes the item its pack's other rows fit, or
+ * the first one no row has named, so the pack is written after the first item of that tag its other
+ * rows fit, which need not be the one it followed, and the strict compliance encoder does not
+ * refuse that; such a set can also end with a pack that is not placed. A relay that must keep such
+ * a pack with its item forwards the original bytes, or patches them, which keeps every item where
+ * it is.
  *
  * **An occurrence that cannot be placed** is still written by the ordinary encoders, after the
  * single-use typed fields, where 0.10.0 wrote every occurrence; a decoder of that output takes the
@@ -47,8 +53,8 @@ import java.util.List;
  * is named more often than the record has items of that tag; when its rows contradict an occurrence
  * before it in the list (another item already follows, or precedes, one of its items); when its
  * rows would put an item before Item 2; and when it has fewer rows than its matrix size and they
- * are not the start of the set. Edit a named item and the pack describes the new value: that is the
- * caller's business.
+ * are not the start of the set. Edit an item a pack refines and the pack, written after it, now
+ * refines the new value with the old value's accuracies: that is the caller's business.
  *
  * @param precedingTags Wire-order item tags immediately preceding this occurrence (see struct doc
  *     for the capture rule). Empty for a matrix of size 0 or an occurrence no item precedes; fewer

@@ -37,7 +37,7 @@ import java.util.Optional;
  * @param miisCoreId Item 94: MIIS Core Identifier (MISB ST 1204 binary format). Raw bytes —
  *     decode/inspect via {@code st1204}. At most 50 bytes (ST 0601.19 §8.94 Max Length, which the
  *     standard calls a recommended maximum and this library enforces): a longer value is refused on
- *     encode ({@code ValueTooLong}) and is a field error on decode.
+ *     encode as longer than its item allows, and is a field error on decode.
  * @param platformAngleOfAttackDeg Item 50: Platform Angle of Attack — encode range [-20, 20] deg
  *     (int16).
  * @param sensorLatDeg Item 13: Sensor Latitude — encode range [-90, 90] deg (int32).
@@ -180,7 +180,7 @@ import java.util.Optional;
  *     docs for the ST 0601.19 extended-representation precedence rule (prefer this field). When the
  *     item was sent as an overflow signal the field holds a range end (see {@code imapbSpecials})
  *     while {@code sensor_position} and the CoT converters take the item as sent with no value: the
- *     view is {@code None} although this field holds a number.
+ *     view has no value although this field holds a number.
  * @param alternatePlatformEllipsoidHeightExtendedM Item 105: Alternate Platform Ellipsoid Height
  *     Extended — ST 1201.5 IMAPB range [-900, 40000] m, wire length 1..=8 bytes (encode emits 3
  *     bytes). Extended-range twin of {@code alternatePlatformEllipsoidHeightM} (Item 76, uint16,
@@ -324,14 +324,14 @@ import java.util.Optional;
  *     imapbSpecials}.
  * @param sentinelTags Tags whose wire value was the INT_MIN sentinel for their signed linear
  *     mapping. INT_MIN is a spec-defined signal (not an error), so the corresponding typed field is
- *     left as {@code None} and the tag is recorded here instead of in {@code fieldErrors}.
+ *     left unset and the tag is recorded here instead of in {@code fieldErrors}.
  *
  *     Use {@code st0601_sentinel_meaning} to look up the spec-defined meaning for each tag (Out of
  *     Range / Reserved / N/A).
  *
- *     **Encode semantics:** an entry is written only while the item's typed field is {@code None}
- *     (a populated field always wins), and only for a signed linear row (its INT_MIN sentinel, at
- *     the row's width); an entry for any other row writes nothing. A tag listed more than once is
+ *     **Encode semantics:** an entry is written only while the item's typed field is unset (a
+ *     populated field always wins), and only for a signed linear row (its INT_MIN sentinel, at the
+ *     row's width); an entry for any other row writes nothing. A tag listed more than once is
  *     written once, at its last entry. The encoder writes the single-use typed fields in ascending
  *     tag order (an IMAPB overflow signal among them, at its item's place: see {@code
  *     imapbSpecials}), then the Item 102 packs that could not be placed (a placed one follows the
@@ -342,7 +342,7 @@ import java.util.Optional;
  *     input's.
  *
  *     The composite views and the CoT converters take an item the encoder would write as its
- *     sentinel as sent with no value: a view that prefers such an item is {@code None}.
+ *     sentinel as sent with no value: a view that prefers such an item has no value.
  * @param imapbSpecials Tags whose ST 1201.5 IMAPB wire value decoded to a spec-defined special
  *     value (§7.2.3 — {@code +∞}/{@code −∞}, NaN families, the MISB-defined {@code BelowMin}/{@code
  *     AboveMax} overflow signals, or a user-defined signal) rather than a normal-range float. The
@@ -353,8 +353,8 @@ import java.util.Optional;
  *     IMAPB row (an entry for any other row writes nothing), at the shortest length from the item's
  *     default to its maximum that holds the special's payload (a special no length of the item
  *     holds fails with {@code OutOfRange} naming the item). A special other than the two overflow
- *     signals is written only while the item's typed field is {@code None} (a populated field wins
- *     and the entry writes nothing), after the typed fields.
+ *     signals is written only while the item's typed field is unset (a populated field wins and the
+ *     entry writes nothing), after the typed fields.
  *
  *     **The two overflow signals** are read and written differently. A decode of {@code BelowMin}
  *     or {@code AboveMax} (ST 1201.5 §7.2.3.1; ST 0601.19 says nothing more of them) gives the
@@ -362,7 +362,7 @@ import java.util.Optional;
  *     holds its range end while the tag's last entry is the matching signal (the minimum with
  *     {@code BelowMin}, the maximum with {@code AboveMax}) is a signal, not a measurement: an
  *     encode writes the SIGNAL, at the item's place among the typed fields, and the composite views
- *     and the CoT converters take the item as sent with no value (a view can be {@code None} while
+ *     and the CoT converters take the item as sent with no value (a view can have no value while
  *     the field holds a number). The signal is written at the same place when the field is unset.
  *     Once the field holds any other value, the value is written and the entry writes nothing. To
  *     write a measured value that IS the range end, remove the tag's entries from this list.

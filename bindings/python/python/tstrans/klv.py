@@ -941,13 +941,12 @@ class Location:
     only the trailing ``hae`` is truncatable.
 
     So a site is written with both coordinates (and its height when it has
-    one) or, when all three are ``None``, as an unknown site of length 0. A
-    height or one coordinate without both coordinates is refused on encode
-    (``InvalidFieldValue`` with the item's tag): the standard has no wire
-    form for it. On decode, a site whose latitude or longitude is a special
-    or reserved IMAP pattern is an unknown site (``None``) with one
-    ``InvalidFormat`` field error naming the item; a height sent as such a
-    pattern reads ``None``."""
+    one) or, when all three are unset, as an unknown site of length 0. A
+    height or one coordinate without both coordinates is refused on encode,
+    naming the item's tag: the standard has no wire form for it. On decode,
+    a site whose latitude or longitude is a special or reserved IMAP pattern
+    is an unknown site (the location is unset) with one field error naming
+    the item; a height sent as such a pattern is unset."""
 
     lat_deg: float | None = None
     lon_deg: float | None = None
@@ -1160,11 +1159,18 @@ class SdccFlpField:
     a set that came in any order, whose packs each follow the items they
     refine, keeps every pack with its rows after a decode and an encode,
     also when packs share items, and a set whose items are in the encoder's
-    order is re-encoded with every pack where it was. For a tag the set
-    carries more than once (an unknown tag, or Item 115) the rows do not say
-    which of its items is meant: a row takes the item its pack's other rows
-    fit, or the first one no row has named, and such a set can end with a
-    pack that is not placed.
+    order is re-encoded with every pack where it was: both for every pack
+    that has rows and names no tag the set carries more than once (a pack of
+    matrix size 0 names no item and is written after the typed fields). For
+    a tag the set carries more than once (an unknown tag, or Item 115) a row
+    names the tag, not the item, so the encoder cannot know which occurrence
+    a pack followed: a row takes the item its pack's other rows fit, or the
+    first one no row has named, so the pack is written after the first item
+    of that tag its other rows fit, which need not be the one it followed,
+    and the strict compliance encoder does not refuse that; such a set can
+    also end with a pack that is not placed. A relay that must keep such a
+    pack with its item forwards the original bytes, or patches them, which
+    keeps every item where it is.
 
     **An occurrence that cannot be placed** is still written by the ordinary
     encoders, after the single-use typed fields, where 0.10.0 wrote every
@@ -1181,8 +1187,9 @@ class SdccFlpField:
     contradict an occurrence before it in the list (another item already
     follows, or precedes, one of its items); when its rows would put an item
     before Item 2; and when it has fewer rows than its matrix size and they
-    are not the start of the set. Edit a named item and the pack describes
-    the new value: that is the caller's business.
+    are not the start of the set. Edit an item a pack refines and the pack,
+    written after it, now refines the new value with the old value's
+    accuracies: that is the caller's business.
 
     - ``preceding_tags`` — Wire-order item tags immediately preceding this
       occurrence (see struct doc for the capture rule). Empty for a matrix
@@ -1243,7 +1250,7 @@ class UasDatalinkLs:
       format). Raw bytes — decode/inspect via ``st1204``. At most 50 bytes
       (ST 0601.19 §8.94 Max Length, which the standard calls a recommended
       maximum and this library enforces): a longer value is refused on
-      encode (``ValueTooLong``) and is a field error on decode.
+      encode as longer than its item allows, and is a field error on decode.
     - ``platform_angle_of_attack_deg`` — Item 50: Platform Angle of Attack —
       encode range [-20, 20] deg (int16).
     - ``sensor_lat_deg`` — Item 13: Sensor Latitude — encode range [-90, 90]
@@ -1439,7 +1446,7 @@ class UasDatalinkLs:
       precedence rule (prefer this field). When the item was sent as an
       overflow signal the field holds a range end (see ``imapb_specials``)
       while ``sensor_position`` and the CoT converters take the item as sent
-      with no value: the view is ``None`` although this field holds a
+      with no value: the view has no value although this field holds a
       number.
     - ``alternate_platform_ellipsoid_height_extended_m`` — Item 105:
       Alternate Platform Ellipsoid Height Extended — ST 1201.5 IMAPB range
@@ -1619,11 +1626,11 @@ class UasDatalinkLs:
       or ``imapb_specials``.
     - ``sentinel_tags`` — Tags whose wire value was the INT_MIN sentinel for
       their signed linear mapping. INT_MIN is a spec-defined signal (not an
-      error), so the corresponding typed field is left as ``None`` and the
-      tag is recorded here instead of in ``field_errors``. Use
+      error), so the corresponding typed field is left unset and the tag is
+      recorded here instead of in ``field_errors``. Use
       ``st0601_sentinel_meaning`` to look up the spec-defined meaning for
       each tag (Out of Range / Reserved / N/A). **Encode semantics:** an
-      entry is written only while the item's typed field is ``None`` (a
+      entry is written only while the item's typed field is unset (a
       populated field always wins), and only for a signed linear row (its
       INT_MIN sentinel, at the row's width); an entry for any other row
       writes nothing. A tag listed more than once is written once, at its
@@ -1638,7 +1645,7 @@ class UasDatalinkLs:
       sentinel round-trips; the bytes need not match the input's. The
       composite views and the CoT converters take an item the encoder would
       write as its sentinel as sent with no value: a view that prefers such
-      an item is ``None``.
+      an item has no value.
     - ``imapb_specials`` — Tags whose ST 1201.5 IMAPB wire value decoded to
       a spec-defined special value (§7.2.3 — ``+∞``/``−∞``, NaN families,
       the MISB-defined ``BelowMin``/``AboveMax`` overflow signals, or a
@@ -1651,19 +1658,19 @@ class UasDatalinkLs:
       item's default to its maximum that holds the special's payload (a
       special no length of the item holds fails with ``OutOfRange`` naming
       the item). A special other than the two overflow signals is written
-      only while the item's typed field is ``None`` (a populated field wins
-      and the entry writes nothing), after the typed fields. **The two
-      overflow signals** are read and written differently. A decode of
-      ``BelowMin`` or ``AboveMax`` (ST 1201.5 §7.2.3.1; ST 0601.19 says
-      nothing more of them) gives the typed field the item's range minimum
-      or maximum and keeps the entry here. So a field that holds its range
-      end while the tag's last entry is the matching signal (the minimum
-      with ``BelowMin``, the maximum with ``AboveMax``) is a signal, not a
+      only while the item's typed field is unset (a populated field wins and
+      the entry writes nothing), after the typed fields. **The two overflow
+      signals** are read and written differently. A decode of ``BelowMin``
+      or ``AboveMax`` (ST 1201.5 §7.2.3.1; ST 0601.19 says nothing more of
+      them) gives the typed field the item's range minimum or maximum and
+      keeps the entry here. So a field that holds its range end while the
+      tag's last entry is the matching signal (the minimum with
+      ``BelowMin``, the maximum with ``AboveMax``) is a signal, not a
       measurement: an encode writes the SIGNAL, at the item's place among
       the typed fields, and the composite views and the CoT converters take
-      the item as sent with no value (a view can be ``None`` while the field
-      holds a number). The signal is written at the same place when the
-      field is unset. Once the field holds any other value, the value is
+      the item as sent with no value (a view can have no value while the
+      field holds a number). The signal is written at the same place when
+      the field is unset. Once the field holds any other value, the value is
       written and the entry writes nothing. To write a measured value that
       IS the range end, remove the tag's entries from this list. A value
       decoded from the bottom bucket below the minimum (a length shorter
@@ -2203,7 +2210,12 @@ def patch_uas_datalink(raw: bytes, edits: UasDatalinkLs | dict[str, object]) -> 
     ``imapb_specials`` entry replays for an unset field. An existing
     item is never moved; a new Item 2 (Precision Time Stamp) is written
     first (ST 0601.8-09), the other edited tags absent from the input
-    are inserted in tag order before the trailing checksum.
+    are inserted in tag order before the trailing checksum. A tag named
+    in the edit's ``unknown`` more than once is edited with its first
+    entry, which is written into every occurrence of the tag in the
+    input: with a decoded copy of an input that repeats an unknown tag
+    with different values as the edit, remove that tag from the edit's
+    ``unknown`` to keep them.
     Bytes after the declared outer length are preserved verbatim.
     ``universal_label`` and ``declared_version`` are accepted but
     ignored — the input's 16-byte UL is always copied verbatim.
@@ -2215,7 +2227,8 @@ def patch_uas_datalink(raw: bytes, edits: UasDatalinkLs | dict[str, object]) -> 
     encodings all survive verbatim. (Editing a tag canonicalizes that
     one TLV's encoding, even if the new value equals the old.)
 
-    Raises ``KlvError`` for a malformed input local set and
+    Raises ``KlvError`` for a malformed input local set (kind
+    ``MALFORMED_BYTES`` for a checksum that is not two bytes wide) and
     ``KlvEncodeError`` for an edit value that cannot be encoded
     (out-of-range, string too long, typed tag in ``unknown``).
     """
@@ -2627,7 +2640,9 @@ class RvtLs:
     @property
     def aircraft_mgrs(self) -> str | None:
         """Reconstructed 15-char aircraft MGRS string (Tags 14-17), or
-        `None` if any component is missing."""
+        `None` if any component is missing, or the zone or the band and
+        grid square is not one ST 0806.4 Table 8-1 defines (a zone of 1 to
+        60; three letters A to Z without I and O)."""
         return _rvt_mgrs_string(
             self.aircraft_mgrs_zone,
             self.aircraft_mgrs_band_grid,
@@ -2638,7 +2653,7 @@ class RvtLs:
     @property
     def frame_center_mgrs(self) -> str | None:
         """Reconstructed 15-char frame-center MGRS string (Tags 18-21),
-        same layout as `aircraft_mgrs`."""
+        same layout and the same `None` cases as `aircraft_mgrs`."""
         return _rvt_mgrs_string(
             self.frame_center_mgrs_zone,
             self.frame_center_mgrs_band_grid,
@@ -2675,12 +2690,12 @@ class CotConfig:
       .../>``. Written verbatim as an attribute name, not a value, so it
       must be one: an ASCII letter or ``_``, then ASCII letters, digits,
       ``_``, ``.`` or ``-``, not starting with ``xml`` in any case. Any
-      other value makes both converters refuse with ``InvalidProducerName``.
+      other value makes both converters refuse the conversion.
     - ``geoid_undulation_m`` — Geoid undulation (HAE − MSL) applied when the
       height comes from an MSL-referenced item (Items 15, 25, 42). Absent
       emits the MSL value as the HAE: an approximation off by the geoid
-      undulation (tens of metres), which ``platform_position_xml_with`` /
-      ``sensor_point_of_interest_xml_with`` with ``Refuse`` refuse instead.
+      undulation (tens of metres), which the converters refuse instead when
+      the caller asks them to refuse an MSL height.
     - ``how`` — CoT ``how`` attribute. ST 0805.1 §5 fixes this at ``m-p``
       (machine-passed) for both event types."""
 

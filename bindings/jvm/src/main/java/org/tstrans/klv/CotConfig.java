@@ -16,12 +16,11 @@ package org.tstrans.klv;
  * @param producer XML attribute name stamped in {@code <detail><_flow-tags_ .../>}. Written
  *     verbatim as an attribute name, not a value, so it must be one: an ASCII letter or {@code _},
  *     then ASCII letters, digits, {@code _}, {@code .} or {@code -}, not starting with {@code xml}
- *     in any case. Any other value makes both converters refuse with {@code InvalidProducerName}.
+ *     in any case. Any other value makes both converters refuse the conversion.
  * @param geoidUndulationM Geoid undulation (HAE − MSL) applied when the height comes from an
  *     MSL-referenced item (Items 15, 25, 42). Absent emits the MSL value as the HAE: an
- *     approximation off by the geoid undulation (tens of metres), which {@code
- *     platform_position_xml_with} / {@code sensor_point_of_interest_xml_with} with {@code Refuse}
- *     refuse instead.
+ *     approximation off by the geoid undulation (tens of metres), which the converters refuse
+ *     instead when the caller asks them to refuse an MSL height.
  * @param how CoT {@code how} attribute. ST 0805.1 §5 fixes this at {@code m-p} (machine-passed) for
  *     both event types.
  */
