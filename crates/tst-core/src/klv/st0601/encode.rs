@@ -242,11 +242,18 @@ pub(super) enum Signal {
 /// `imapb_specials`. An entry of another kind (a special for a linear row,
 /// a sentinel for an IMAPB or unsigned row, either for a pack row or an
 /// unknown tag) is never written.
+///
+/// One exception to the value: an IMAPB field that holds its range's
+/// minimum while the tag's last special is `BelowMin`, or its maximum while
+/// the last is `AboveMax` (what a decode of that signal leaves), is written
+/// as that signal, at the item's place among the typed fields; a value the
+/// caller changed is written as the value.
 pub(super) fn resolve(record: &UasDatalinkLs, spec: &TagSpec) -> Option<ItemSource> {
-    if let Some(v) = spec.get.and_then(|get| get(record))
-        && !replays_overflow_signal(record, spec, &v)
-    {
-        return Some(ItemSource::Value(v));
+    if let Some(v) = spec.get.and_then(|get| get(record)) {
+        return Some(match replayed_overflow_signal(record, spec, &v) {
+            Some(signal) => ItemSource::Special(signal),
+            None => ItemSource::Value(v),
+        });
     }
     let tag = u32::from(spec.id);
     match spec.encoding {
@@ -264,24 +271,26 @@ pub(super) fn resolve(record: &UasDatalinkLs, spec: &TagSpec) -> Option<ItemSour
     }
 }
 
-/// `true` when the populated field `v` of an IMAPB row is written as the
-/// overflow signal the record carries for it: `v` is the range's minimum
-/// and the tag's last special is `BelowMin`, or its maximum and the last is
-/// `AboveMax` (the state a decode of such a signal leaves). A value the
-/// caller changed is written as the value.
-#[inline]
-fn replays_overflow_signal(record: &UasDatalinkLs, spec: &TagSpec, v: &FieldValue) -> bool {
+/// The overflow signal written in place of the populated field `v` of an
+/// IMAPB row ([`resolve`]'s exception): `BelowMin` when `v` is the range's
+/// minimum and the tag's last special is `BelowMin`, `AboveMax` for the
+/// maximum; `None` otherwise.
+fn replayed_overflow_signal(
+    record: &UasDatalinkLs,
+    spec: &TagSpec,
+    v: &FieldValue,
+) -> Option<ImapbSpecial> {
     let (&FieldValue::F64(x), Encoding::Imapb { min, max, .. }) = (v, spec.encoding) else {
-        return false;
+        return None;
     };
     if x != min && x != max {
-        return false;
+        return None;
     }
     let tag = u32::from(spec.id);
     match record.imapb_specials.iter().rev().find(|e| e.0 == tag) {
-        Some(&(_, ImapbSpecial::BelowMin)) => x == min,
-        Some(&(_, ImapbSpecial::AboveMax)) => x == max,
-        _ => false,
+        Some(&(_, s @ ImapbSpecial::BelowMin)) if x == min => Some(s),
+        Some(&(_, s @ ImapbSpecial::AboveMax)) if x == max => Some(s),
+        _ => None,
     }
 }
 
@@ -378,7 +387,9 @@ fn signal_bytes(spec: &TagSpec, signal: Signal) -> Result<Vec<u8>, KlvEncodeErro
 /// specials in `imapb_specials` order, each at its tag's LAST entry (the
 /// one a decode of a set that carried the tag twice keeps). An entry
 /// [`resolve`] does not replay (its field holds a value that wins, or the
-/// entry is of the wrong kind for its row) is skipped.
+/// entry is of the wrong kind for its row) is skipped, and so is an
+/// overflow signal that stands for its populated field: the typed pass
+/// writes that one at the item's place.
 fn each_replayed_signal(record: &UasDatalinkLs, mut visit: impl FnMut(&TagSpec, Signal)) {
     for &tag in last_per_tag(&record.sentinel_tags, |&t| t).iter() {
         if let Some(spec) = u8::try_from(tag).ok().and_then(lookup_tag)
@@ -389,6 +400,7 @@ fn each_replayed_signal(record: &UasDatalinkLs, mut visit: impl FnMut(&TagSpec, 
     }
     for &(tag, _) in last_per_tag(&record.imapb_specials, |e| e.0).iter() {
         if let Some(spec) = u8::try_from(tag).ok().and_then(lookup_tag)
+            && spec.get.is_some_and(|get| get(record).is_none())
             && let Some(ItemSource::Special(special)) = resolve(record, spec)
         {
             visit(spec, Signal::Special(special));
@@ -435,10 +447,11 @@ pub(super) fn each_typed_field<F: FnMut(u8, usize)>(record: &UasDatalinkLs, mut 
         } else {
             // The checksum row has no accessor; the caller appends it.
             let Some(get) = spec.get else { continue };
-            // A populated field is written as its value (`resolve`).
+            // A populated field is written as its value, or (`resolve`'s
+            // exception) as the overflow signal at its place: the two have
+            // the row's default length.
             match get(record) {
-                Some(v) if !replays_overflow_signal(record, spec, &v) => Some(scalar_len(spec, &v)),
-                Some(_) => None,
+                Some(v) => Some(scalar_len(spec, &v)),
                 // Tag 65 is auto-emitted when the record leaves it unset.
                 None if spec.id == 65 => Some(1),
                 None => None,
@@ -756,14 +769,32 @@ pub(super) fn encode_tag_value(
     let Some(get) = spec.get else {
         return Ok(None);
     };
-    // A populated field is written as its value (`resolve`).
+    // A populated field is written as its value, or (`resolve`'s exception)
+    // as the overflow signal at its place.
     match get(record) {
-        Some(v) if !replays_overflow_signal(record, spec, &v) => {
-            encode_scalar(spec, &v, policy).map(Some)
+        Some(v) if !record.imapb_specials.is_empty() => {
+            encode_value_or_overflow_signal(record, spec, &v, policy).map(Some)
         }
-        Some(_) => Ok(None),
+        Some(v) => encode_scalar(spec, &v, policy).map(Some),
         None if spec.id == 65 => Ok(version_fallback.map(|v| vec![v])),
         None => Ok(None),
+    }
+}
+
+/// [`encode_tag_value`] for a populated field of a record that carries IMAP
+/// specials: the overflow signal [`resolve`] writes in place of the value,
+/// or the value. Out of line, so the per-item path of a record without
+/// specials stays as it is.
+#[inline(never)]
+fn encode_value_or_overflow_signal(
+    record: &UasDatalinkLs,
+    spec: &TagSpec,
+    v: &FieldValue,
+    policy: OutOfRangePolicy,
+) -> Result<Vec<u8>, KlvEncodeError> {
+    match replayed_overflow_signal(record, spec, v) {
+        Some(signal) => imapb_special_value_bytes(spec, signal),
+        None => encode_scalar(spec, v, policy),
     }
 }
 

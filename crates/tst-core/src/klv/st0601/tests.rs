@@ -4742,6 +4742,27 @@ fn a_below_minimum_signal_reads_as_the_range_minimum_and_is_written_back() {
         items_with_tag(&encode_to_vec(&rec).unwrap(), 109),
         [vec![0xE0, 0, 0]]
     );
+    // The signal is written at the item's place among the typed items: a
+    // set in the encoder's own order re-encodes to the same bytes.
+    let altitude_agl = items_with_tag(
+        &encode_to_vec(&UasDatalinkLs {
+            altitude_agl_m: Some(100.0),
+            ..Default::default()
+        })
+        .unwrap(),
+        113,
+    )
+    .remove(0);
+    let source = wrap_st0601(
+        &[
+            &TIMESTAMP_ITEM[..],
+            &[0x41, 0x01, 0x13],
+            &[0x6D, 0x03, 0xE0, 0x00, 0x00],
+            &tlv(113, &altitude_agl),
+        ]
+        .concat(),
+    );
+    assert_eq!(encode_to_vec(&decode(&source).unwrap()).unwrap(), source);
 }
 
 #[test]
