@@ -348,7 +348,7 @@ fn st0601_strict_compliance_rejects_non_canonical_length_in_body_st0107_5_6_3_2(
 /// with required tags + an unknown tag at id 200 and confirm round-trip
 /// preserves it.
 #[test]
-fn st0102_encode_round_trips_multibyte_ber_oid_unknown_tag_e4_fix() {
+fn st0102_encode_round_trips_an_unknown_tag_above_127() {
     let mut security = SecurityLs {
         security_classification: Some(SecurityClassification::Unclassified),
         classifying_country_coding_method: Some(ClassifyingCountryCodingMethod::Iso3166ThreeLetter),
@@ -488,7 +488,7 @@ fn st0903_round_trips_multibyte_ber_oid_unknown_tag_e5() {
 /// VTargetPack inner walker preserves an unknown tag above 127 (one
 /// byte in a pack, ST 0903.6 §9.2) on each per-target pack.
 #[test]
-fn st0903_vtarget_pack_round_trips_multibyte_ber_oid_unknown_tag_e5_followup() {
+fn st0903_vtarget_pack_round_trips_an_unknown_tag_above_127() {
     let pack = st0903::VTargetPack {
         target_id: 42,
         priority: Some(1),
