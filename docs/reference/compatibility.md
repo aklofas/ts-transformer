@@ -384,15 +384,19 @@ coarser grain to avoid drifting per-tag detail out of sync).
 
 Composite views layered on top: `GeoPoint`, `Attitude`, `FieldOfView`,
 `Corners`. They surface `None` if any constituent typed field is missing.
+They prefer the full-range, extended and ellipsoid items (ST 0601.8-16,
+-17, ST 0601.9-20/-21), say the height's datum through
+`sensor_position_datum()` / `frame_center_datum()`, decide each corner
+on its own, and end at an item sent as a sentinel or IMAPB special.
 
 ### Decode entry points
 
 | Entry point | Checksum | UL gating | Structural rules |
 | --- | --- | --- | --- |
-| `klv::st0601::decode` | ✅ verified | accepts any UL | ❌ |
-| `klv::st0601::decode_unchecked` | ❌ skipped | accepts any UL | ❌ |
-| `klv::st0601::decode_strict` | ✅ verified | requires ST 0601 family | ❌ |
-| `klv::st0601::decode_strict_compliance` | ✅ verified | requires ST 0601 family | ✅ -09/-11/-12 |
+| `klv::st0601::decode` | ✅ verified: one, last | accepts any UL | ❌ |
+| `klv::st0601::decode_unchecked` | ❌ skipped (width checked) | accepts any UL | ❌ |
+| `klv::st0601::decode_strict` | ✅ verified: one, last | requires ST 0601 family | ❌ |
+| `klv::st0601::decode_strict_compliance` | ✅ verified: one, last | requires ST 0601 family | ✅ -09/-11/-12, item profile and coded values |
 
 ---
 
@@ -414,9 +418,9 @@ Composite views layered on top: `GeoPoint`, `Attitude`, `FieldOfView`,
 | --- | --- | --- |
 | VMTI Local Set decode/encode (ST 0903.6) | ✅ Full | Typed top-level `VmtiLs` + per-target `VTargetPack`; 7 nested/sibling LSes (`VMask`, `VTracker`, `VChip`, `VChipSeries`, `VObjectSeries`, Algorithm Series, Ontology Series) pass-through. Universal Set form deferred. |
 | Sibling-layer composition with `klv::st0601` | ✅ Full | ST 0601 Tag 74 stays `Option<Vec<u8>>`; consumers call `klv::st0903::decode` on inner bytes (no coupling between parent and inner decoders). |
-| Standalone-PID dispatch | ✅ Full | `VMTI_LS_UL` 16-byte UL constant exposed for VMTI on its own KLV PID (separate from any ST 0601 stream). |
+| Standalone-PID dispatch | ✅ Full | `VMTI_LS_UL` 16-byte UL constant exposed for VMTI on its own KLV PID (separate from any ST 0601 stream); `decode_standalone` / `decode_standalone_strict` decode such a packet and verify its checksum. |
 | `decode` (lenient) | ✅ Full | Tolerates missing tags, malformed sub-records (in `field_errors`), unknown tags (in `unknown` per ST 0107.5 §6). |
-| `decode_strict` | ✅ Full | Rejects missing required tags (Tag 4 / Tag 6), duplicates, malformed UTF-8, malformed packs (`KlvDecodeError::St0903InvalidVTargetPack`). Conditional-required tags (1, 2, 11, 12, 13) NOT enforced — carriage-aware validation is consumer-side. |
+| `decode_strict` | ✅ Full | Rejects missing required tags (Tag 4 / Tag 6), duplicates, malformed UTF-8, malformed packs (`KlvDecodeError::St0903InvalidVTargetPack`), and the rules between items the strict encoders apply (`ComplianceViolation`). Conditional-required tags (1, 2, 11, 12, 13) NOT enforced — `decode_standalone_strict` enforces them for the standalone path. |
 
 ---
 

@@ -47,7 +47,9 @@ Class 1 Motion Imagery in an MPEG-2 Transport Stream (MISP-2015.1-50).
 - **A valid ST 0603 Time Status byte.** The library writes the byte you pass
   unchanged. Bits 4–0 are reserved and must be `11111`, and bit 7 is `0` when
   the clock is locked: `0x1F` = locked, `0x9F` = lock unknown (both with
-  normal, forward time).
+  normal, forward time). A MISP push refuses a byte whose bits 4–0 are not
+  `11111` (`MispTimeError::InvalidTimeStatus`; C `TST_E_MISP_TIME`, Python
+  and JVM kind `MISP_TIME`) and muxes nothing of that access unit.
 - **One timestamp representation per stream** (MISP-2018.1-98): micro or nano,
   never both.
 - **The Minimum Metadata Set** (MISP-2015.1-75): every
