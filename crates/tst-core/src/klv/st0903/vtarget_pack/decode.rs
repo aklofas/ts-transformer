@@ -18,9 +18,9 @@ use crate::error::KlvFieldError;
 /// Unknown / deprecated tags (e.g. 21, 102, 103) are preserved in
 /// `pack.unknown` per ST 0107.5 §6 future-proof skip rule.
 ///
-/// A zero-length item is not read as "unknown" here (ST 0107.4-17), unlike
-/// the top level: one of fixed length is a field error, and the strict
-/// reader refuses it.
+/// A zero-length item means "unknown" (ST 0107.4-17), as at the top level:
+/// its field is unset, with no field error. No pack item is mandatory
+/// (ST 0903.6 §10.2), so the strict reader accepts it too.
 pub(crate) fn read_pack(bytes: &[u8]) -> Result<(VTargetPack, usize), VTargetPackError> {
     read_pack_inner(bytes, /* strict = */ false)
 }
@@ -192,6 +192,14 @@ fn decode_field(
         return Ok(());
     };
 
+    // ST 0107.4-17: a zero-length item means "value unknown". It is an
+    // occurrence of its tag like any other, so as the last one it leaves
+    // the field unset.
+    if value.is_empty() {
+        unset(pack, tag_u8);
+        return Ok(());
+    }
+
     match spec.encoding {
         PackEncoding::U8 => {
             if value.len() != 1 {
@@ -292,4 +300,38 @@ fn decode_field(
         }
     }
     Ok(())
+}
+
+/// Unset the field of the defined pack item `tag`.
+fn unset(pack: &mut VTargetPack, tag: u8) {
+    match tag {
+        1 => pack.centroid_pixel = None,
+        2 => pack.bbox_top_left_pixel = None,
+        3 => pack.bbox_bottom_right_pixel = None,
+        4 => pack.priority = None,
+        5 => pack.confidence_level = None,
+        6 => pack.history = None,
+        7 => pack.percentage_of_target_pixels = None,
+        8 => pack.target_color = None,
+        9 => pack.target_intensity = None,
+        10 => pack.centroid_lat_offset = None,
+        11 => pack.centroid_lon_offset = None,
+        12 => pack.centroid_hae = None,
+        13 => pack.bbox_top_left_lat_offset = None,
+        14 => pack.bbox_top_left_lon_offset = None,
+        15 => pack.bbox_bottom_right_lat_offset = None,
+        16 => pack.bbox_bottom_right_lon_offset = None,
+        17 => pack.target_location = None,
+        18 => pack.geospatial_contour_series = None,
+        19 => pack.centroid_pix_row = None,
+        20 => pack.centroid_pix_col = None,
+        22 => pack.algorithm_id = None,
+        23 => pack.detection_status = None,
+        101 => pack.vmask = None,
+        104 => pack.vtracker = None,
+        105 => pack.vchip = None,
+        106 => pack.vchip_series = None,
+        107 => pack.vobject_series = None,
+        _ => unreachable!("unset missing pack tag {tag}"),
+    }
 }

@@ -18,9 +18,8 @@ use core::ops::Range;
 /// walk. Tags not in the §10.1 schema (unknown / deprecated, e.g. Tag 7)
 /// are preserved in [`VmtiLs::unknown`] per ST 0107.5 §6 future-proof skip
 /// rule. A zero-length item means "unknown" (ST 0107.4-17): its field
-/// is left unset, with no field error; one NUL is the empty string
-/// (ST 0107.5 §6.3.3.2). Inside a VTarget pack this is not so yet: a
-/// zero-length item of fixed length there is a field error of the pack.
+/// is left unset, with no field error, at the top level and inside a
+/// VTarget pack; one NUL is the empty string (ST 0107.5 §6.3.3.2).
 ///
 /// Tags are walked as BER-OID per ST 0107.5 §6.3.1 — defined tags 1..=103
 /// fit in one byte (`write_ber_oid(N) == [N]` for `N ≤ 127`), but a future
@@ -344,8 +343,9 @@ fn decode_vtarget_series(
 /// (routed via [`KlvDecodeError::St0903InvalidVTargetPack`]).
 ///
 /// A zero-length item means "unknown" (ST 0107.4-17): accepted for an
-/// optional item, and a required item sent so is missing. Inside a
-/// VTarget pack a zero-length item of fixed length is refused instead.
+/// optional item, and a required item sent so is missing (ST 0107.4-16).
+/// No item of a VTarget pack is required (ST 0903.6 §10.2), so there it is
+/// always accepted.
 ///
 /// **Record rules** (as the strict encoders apply them): no zero where an
 /// item's range starts at one, a pixel number needs the frame width, a
@@ -355,10 +355,11 @@ fn decode_vtarget_series(
 /// offset. The strict encoders refuse the same records, but for a record
 /// with several defects the two may name different ones.
 ///
-/// An IMAP special decodes to an unset field, so the strict encoders can
-/// refuse a record this function accepted, when a special was the only
-/// value of a mandatory item or of its pack (`MissingMandatoryItem`,
-/// `VTargetPackEmpty`): a relay forwards the original bytes.
+/// An IMAP special and a zero-length item decode to an unset field, so the
+/// strict encoders can refuse a record this function accepted, when a
+/// special was the only value of a mandatory item, or such items were all
+/// a pack held (`MissingMandatoryItem`, `VTargetPackEmpty`): a relay
+/// forwards the original bytes.
 ///
 /// Unknown tags are still preserved in [`VmtiLs::unknown`] per
 /// ST 0107.5 §6 future-proof skip rule (strict mode is about

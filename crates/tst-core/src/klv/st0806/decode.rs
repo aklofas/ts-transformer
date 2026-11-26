@@ -52,8 +52,9 @@ pub(super) const ALT_RANGE: LinearRange = LinearRange {
 /// record, and a malformed nested Local Set (Tag 11/12/13) is skipped —
 /// recorded as a [`KlvFieldError::TruncatedField`] on the *parent* tag —
 /// rather than failing the enclosing decode. A zero-length item is
-/// "unknown" (ST 0107.4-17): it unsets its field, and a zero-length nested
-/// set adds no entry and no field error.
+/// "unknown" (ST 0107.4-17), at the top level and inside a Point or Area of
+/// Interest set: it unsets its field and is no field error, and a
+/// zero-length nested set adds no entry and no field error.
 ///
 /// Tag 1 (CRC-32/MPEG-2), if present, is captured into [`RvtLs::crc32`]
 /// but **not verified**: the checksum's spec coverage is "the entire LS
@@ -342,6 +343,12 @@ fn decode_poi(bytes: &[u8]) -> Option<RvtPoi> {
 
 fn apply_poi_tag(poi: &mut RvtPoi, f: &RawField<'_>) -> Result<(), KlvFieldError> {
     let tag = f.tag;
+    // ST 0107.4-17: a zero-length item means "unknown", inside this set as
+    // at the top level: it unsets its field and is no field error.
+    if f.value.is_empty() && matches!(tag, 1..=10) {
+        unset_poi(poi, tag);
+        return Ok(());
+    }
     match tag {
         1 => poi.number = Some(read_u16(f, tag)?),
         2 => match decode_fixed_range(&LAT_RANGE, tag, f.value)? {
@@ -383,6 +390,12 @@ fn decode_aoi(bytes: &[u8]) -> Option<RvtAoi> {
 
 fn apply_aoi_tag(aoi: &mut RvtAoi, f: &RawField<'_>) -> Result<(), KlvFieldError> {
     let tag = f.tag;
+    // ST 0107.4-17: a zero-length item means "unknown", as in a Point of
+    // Interest set.
+    if f.value.is_empty() && matches!(tag, 1..=10) {
+        unset_aoi(aoi, tag);
+        return Ok(());
+    }
     match tag {
         1 => aoi.number = Some(read_u16(f, tag)?),
         2 => match decode_fixed_range(&LAT_RANGE, tag, f.value)? {
@@ -441,6 +454,44 @@ fn decode_user_defined(bytes: &[u8]) -> Option<RvtUserData> {
         numeric_id_raw: numeric_id_raw?,
         data: data?,
     })
+}
+
+/// Clear what an earlier occurrence of the Point of Interest item `tag`
+/// left: its field, and its "error" sentinel entry.
+fn unset_poi(poi: &mut RvtPoi, tag: u32) {
+    match tag {
+        1 => poi.number = None,
+        2 => poi.lat_deg = None,
+        3 => poi.lon_deg = None,
+        4 => poi.alt_m = None,
+        5 => poi.poi_type = None,
+        6 => poi.text = None,
+        7 => poi.source_icon = None,
+        8 => poi.source_id = None,
+        9 => poi.label = None,
+        10 => poi.operation_id = None,
+        _ => {}
+    }
+    poi.sentinel_tags.retain(|&t| t != tag);
+}
+
+/// Clear what an earlier occurrence of the Area of Interest item `tag`
+/// left: its field, and its "error" sentinel entry.
+fn unset_aoi(aoi: &mut RvtAoi, tag: u32) {
+    match tag {
+        1 => aoi.number = None,
+        2 => aoi.corner_lat_p1_deg = None,
+        3 => aoi.corner_lon_p1_deg = None,
+        4 => aoi.corner_lat_p3_deg = None,
+        5 => aoi.corner_lon_p3_deg = None,
+        6 => aoi.aoi_type = None,
+        7 => aoi.text = None,
+        8 => aoi.source_id = None,
+        9 => aoi.label = None,
+        10 => aoi.operation_id = None,
+        _ => {}
+    }
+    aoi.sentinel_tags.retain(|&t| t != tag);
 }
 
 /// Clear the field of a defined top-level scalar or text tag.

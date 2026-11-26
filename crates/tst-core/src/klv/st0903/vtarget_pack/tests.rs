@@ -827,3 +827,49 @@ fn u64_typed_fields_never_silently_truncate_on_encode() {
         );
     }
 }
+
+// ST 0107.4-17 inside the pack, as at the top level of the VMTI LS.
+
+#[test]
+fn a_zero_length_pack_item_is_unknown() {
+    // Every defined item, of every encoding: its field stays unset, and no
+    // field error is recorded. No pack item is mandatory (ST 0903.6 §10.2:
+    // the "other TLV items are optional"), so the strict reader accepts it.
+    for spec in PACK_TAGS {
+        let bytes = [0x01, spec.id, 0x00];
+        for read in [read_pack, read_pack_strict] {
+            let (pack, consumed) =
+                read(&bytes).unwrap_or_else(|e| panic!("item {}: {e:?}", spec.id));
+            assert_eq!(consumed, 3);
+            assert_eq!(
+                pack,
+                VTargetPack {
+                    target_id: 1,
+                    ..Default::default()
+                },
+                "item {}",
+                spec.id
+            );
+            assert!(pack.field_errors.is_empty(), "item {}", spec.id);
+        }
+    }
+    // An unknown item of no bytes is kept as it is.
+    let (pack, _) = read_pack(&[0x01, 21, 0x00]).unwrap();
+    assert_eq!(pack.unknown.len(), 1);
+}
+
+#[test]
+fn a_zero_length_pack_item_after_a_value_unsets_it() {
+    // It is an occurrence of its tag: the value before it does not stay.
+    // Item 5 (one byte), Item 1 (variable), Item 17 (raw bytes).
+    let bytes = [
+        0x01, 0x05, 0x01, 50, 0x01, 0x01, 0x09, 0x11, 0x02, 0xAA, 0xBB, 0x05, 0x00, 0x01, 0x00,
+        0x11, 0x00, 0x04, 0x01, 0x07,
+    ];
+    let (pack, _) = read_pack(&bytes).unwrap();
+    assert_eq!(pack.confidence_level, None);
+    assert_eq!(pack.centroid_pixel, None);
+    assert_eq!(pack.target_location, None);
+    assert_eq!(pack.priority, Some(7));
+    assert!(pack.field_errors.is_empty(), "{:?}", pack.field_errors);
+}

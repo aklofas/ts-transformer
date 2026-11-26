@@ -749,3 +749,49 @@ fn a_zero_length_poi_or_aoi_set_adds_no_entry() {
     let bytes = encode_to_vec(&ls).unwrap();
     assert_eq!(decode(&bytes).unwrap(), ls);
 }
+
+#[test]
+fn a_zero_length_item_in_a_poi_or_aoi_set_is_unknown() {
+    // ST 0107.4-17 inside a nested set as at the top level: the field is
+    // unset and no field error is recorded, for every defined item.
+    for tag in 1..=10u8 {
+        let ls = decode(&[0x0C, 0x02, tag, 0x00, 0x0D, 0x02, tag, 0x00]).unwrap();
+        assert_eq!(ls.points_of_interest, [RvtPoi::default()], "POI item {tag}");
+        assert_eq!(ls.areas_of_interest, [RvtAoi::default()], "AOI item {tag}");
+        assert!(ls.field_errors.is_empty(), "item {tag}");
+    }
+    // An unknown item of no bytes is kept as it is.
+    let ls = decode(&[0x0C, 0x02, 0x28, 0x00]).unwrap();
+    assert_eq!(ls.points_of_interest[0].unknown.len(), 1);
+}
+
+#[test]
+fn a_zero_length_poi_or_aoi_item_after_a_value_unsets_it() {
+    // It is an occurrence of its tag: the value before it does not stay.
+    // Number 7, type 1, then both of no bytes; the text stays.
+    let set = [
+        0x01, 0x02, 0x00, 0x07, 0x05, 0x01, 0x01, 0x06, 0x01, b'A', 0x01, 0x00, 0x05, 0x00,
+    ];
+    let mut body = alloc::vec![0x0C, set.len() as u8];
+    body.extend_from_slice(&set);
+    let poi = &decode(&body).unwrap().points_of_interest[0];
+    assert_eq!((poi.number, poi.poi_type), (None, None));
+    assert_eq!(poi.text.as_deref(), Some("A"));
+    assert!(poi.field_errors.is_empty(), "{:?}", poi.field_errors);
+    // The same items of an AOI: number (Tag 1) and type (Tag 6).
+    let set = [
+        0x01, 0x02, 0x00, 0x07, 0x06, 0x01, 0x01, 0x07, 0x01, b'A', 0x01, 0x00, 0x06, 0x00,
+    ];
+    let mut body = alloc::vec![0x0D, set.len() as u8];
+    body.extend_from_slice(&set);
+    let aoi = &decode(&body).unwrap().areas_of_interest[0];
+    assert_eq!((aoi.number, aoi.aoi_type), (None, None));
+    assert_eq!(aoi.text.as_deref(), Some("A"));
+    assert!(aoi.field_errors.is_empty(), "{:?}", aoi.field_errors);
+    // A latitude sent as the "error" sentinel, then of no bytes: neither a
+    // value nor the sentinel is left to write back.
+    let ls = decode(&[0x0C, 0x08, 0x02, 0x04, 0x80, 0x00, 0x00, 0x00, 0x02, 0x00]).unwrap();
+    assert_eq!(ls.points_of_interest, [RvtPoi::default()]);
+    let ls = decode(&[0x0D, 0x08, 0x04, 0x04, 0x80, 0x00, 0x00, 0x00, 0x04, 0x00]).unwrap();
+    assert_eq!(ls.areas_of_interest, [RvtAoi::default()]);
+}
