@@ -942,7 +942,7 @@ mod tests {
     /// it; applying the bound makes N = 66 (binary32) `TruncatedField`
     /// although all 264 value bytes are present.
     #[test]
-    fn r10_02_complete_stddev_only_mode2_matrix_is_not_truncated() {
+    fn complete_stddev_only_mode2_matrix_is_not_truncated() {
         for n in [65usize, 66] {
             let bytes = stddev_only_pack(n, &[0x80, 0x04], &1.0f32.to_be_bytes());
             assert_stddev_only_decodes(n, &bytes, "Mode2 f32");
@@ -950,7 +950,7 @@ mod tests {
     }
 
     #[test]
-    fn r10_02_complete_stddev_only_mode1_matrix_is_not_truncated() {
+    fn complete_stddev_only_mode1_matrix_is_not_truncated() {
         // Mode 1 PC 0x40: Slen = 4, CS = 0, Clen = 0 (std devs assumed IEEE).
         for n in [65usize, 66] {
             let bytes = stddev_only_pack(n, &[0x40], &1.0f32.to_be_bytes());
@@ -959,7 +959,7 @@ mod tests {
     }
 
     #[test]
-    fn r10_02_complete_stddev_only_mode2_f64_matrix_is_not_truncated() {
+    fn complete_stddev_only_mode2_f64_matrix_is_not_truncated() {
         // Binary64 crosses the old bound at 129/130; N >= 128 needs a
         // two-byte BER-OID.
         for n in [129usize, 130] {
@@ -981,7 +981,7 @@ mod tests {
     /// this is the only wire bound on N — without it the peek would accept
     /// any N up to the ceiling from a one-byte Bit Vector.
     #[test]
-    fn r10_02_sparse_pack_is_bounded_by_its_bit_vector() {
+    fn sparse_pack_is_bounded_by_its_bit_vector() {
         // Mode 2 PC A4 00: CS = 1, Cf = 0 (IEEE), Clen = 4, Slen = 0.
         let short = hex("05 A4 00 00"); // one Bit Vector byte of two
         assert!(matches!(
@@ -1002,7 +1002,7 @@ mod tests {
     }
 
     #[test]
-    fn r10_02_peek_matrix_size_accepts_complete_stddev_only_packs() {
+    fn peek_matrix_size_accepts_complete_stddev_only_packs() {
         for n in [65usize, 66] {
             let bytes = stddev_only_pack(n, &[0x80, 0x04], &1.0f32.to_be_bytes());
             assert_eq!(peek_matrix_size(&bytes), Some(n), "peek Mode2 N={n}");
@@ -1016,7 +1016,7 @@ mod tests {
     /// `OutOfRange` (not `TruncatedField` — every value byte is present),
     /// in both the decoder and the peek.
     #[test]
-    fn r10_02_matrix_size_above_ceiling_is_out_of_range() {
+    fn matrix_size_above_ceiling_is_out_of_range() {
         let max = MAX_MATRIX_SIZE as usize;
         let at = stddev_only_pack(max, &[0x80, 0x04], &1.0f32.to_be_bytes());
         assert_stddev_only_decodes(max, &at, "Mode2 f32 at the ceiling");
@@ -1043,7 +1043,7 @@ mod tests {
     /// parameters" — a Parse Control with Slen = Clen = 0 is malformed in
     /// either mode, with or without the CS bit, whatever bytes follow.
     #[test]
-    fn r10_02_pack_with_no_data_is_rejected() {
+    fn pack_with_no_data_is_rejected() {
         for bytes in [
             hex("01 00"),       // Mode 1, N = 1
             hex("03 00 00"),    // Mode 1, N = 3, one trailing byte

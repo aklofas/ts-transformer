@@ -2210,15 +2210,6 @@ pub(super) mod tests {
     use super::*;
 
     #[test]
-    fn unique_tag_ids() {
-        let mut ids: Vec<u8> = TAGS.iter().map(|t| t.id).collect();
-        ids.sort_unstable();
-        let mut dedup = ids.clone();
-        dedup.dedup();
-        assert_eq!(ids, dedup, "duplicate tag IDs in TAGS");
-    }
-
-    #[test]
     fn ranged_encodings_have_range() {
         for spec in TAGS {
             match spec.encoding {
@@ -2344,13 +2335,11 @@ pub(super) mod tests {
     }
 
     /// Every ranged-or-IMAPB row (tag 1 excluded: raw U16, not a float
-    /// field) has float accessors, and `TAGS` is strictly tag-ascending
-    /// with no tag listed twice. `lookup` finds every row and nothing else.
+    /// field) has float accessors, and `lookup` finds every row and nothing
+    /// else. That `TAGS` is strictly tag-ascending with no tag listed twice
+    /// is checked when [`INDEX`] is built, at compile time.
     #[test]
-    fn tags_table_ascending_and_ranged_rows_carry_float_accessors() {
-        for w in TAGS.windows(2) {
-            assert!(w[0].id < w[1].id, "TAGS must be strictly tag-ascending");
-        }
+    fn ranged_rows_carry_float_accessors_and_lookup_finds_every_row() {
         let ranged = TAGS.iter().filter(|s| is_ranged(s)).count();
         assert_eq!(ranged, 83, "69 LinearRange rows plus 14 IMAPB rows");
         let mut r = UasDatalinkLs::default();
