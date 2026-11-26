@@ -737,7 +737,9 @@ pub enum NonConformantIssue {
     /// known: the next PES is walked from its first byte (the AudioSyncStream
     /// is one run of records, ISO/IEC 14496-3 Table 1.36). A loss (a
     /// continuity gap, a damaged or dropped PES, a signalled discontinuity)
-    /// starts the count again.
+    /// starts the count again. A stream whose record bodies carry
+    /// byte-aligned syncword patterns at short intervals can still be
+    /// misread after a join, with one `MissingSyncword`.
     ///
     /// `kind` carries the specific violation;
     /// see [`crate::codec::aac::latm::LatmFramingKind`].
