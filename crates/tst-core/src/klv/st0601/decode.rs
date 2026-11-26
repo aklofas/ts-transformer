@@ -144,7 +144,10 @@ pub fn decode_strict(buf: &[u8]) -> Result<UasDatalinkLs, KlvDecodeError> {
 ///   [`KlvDecodeError::NonCanonicalTag`] / [`KlvDecodeError::NonCanonicalLength`].
 /// - The item profile: Item 2 is 8 bytes and Item 65 one byte (a
 ///   zero-length item is "unknown" and does not stand for either); an
-///   SDCC-FLP (Item 102) uses Mode 2 Parse Control (ST 0601.10-22); a
+///   SDCC-FLP (Item 102) uses Mode 2 Parse Control (ST 0601.10-22) and
+///   has a header ST 1010 defines (no reserved Parse Control bit, a matrix
+///   size its bytes hold and ST 1010 bounds; a zero-length Item 102 is
+///   "unknown"); a
 ///   Control Command (Item 115) carries no Command Time or an 8-byte one;
 ///   wavelength id 0 is alone in the Active Wavelength List (Item 121,
 ///   ST 0601.17-38); no Metadata Substream ID (Item 143) at the root
@@ -318,7 +321,8 @@ fn strict_body_walk(
 /// The per-item rules of the compliance profile (ST 0601.19 and the
 /// ST 0107 rules it invokes): why `value` breaks the rule for `tag`, or
 /// `None` when it breaks none. A value too short to judge is left to the
-/// typed decode, which reports it in `field_errors`.
+/// typed decode, which reports it in `field_errors`; an Item 102 pack cut
+/// short in its header is judged: that is no header ST 1010 defines.
 pub(super) fn profile_violation(tag: u32, value: &[u8]) -> Option<&'static str> {
     // A one-byte coded value above the item's last defined code.
     let code_above = |max: u8, reason| (value.len() == 1 && value[0] > max).then_some(reason);
