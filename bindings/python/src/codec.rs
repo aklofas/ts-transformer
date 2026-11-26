@@ -906,12 +906,13 @@ fn parse_h266_parameter_sets_py(
 /// `rbsp` carries the RBSP body of a slice NAL — Annex B start code and NAL
 /// header (2 bytes) stripped, emulation-prevention bytes preserved.
 ///
-/// `sps` is optional SPS context — accepted for API symmetry with the H.264 /
-/// H.265 counterparts, but currently unused. Pass ``None`` in all cases.
+/// `sps` is accepted and ignored (kept for symmetry with the H.264 / H.265
+/// counterparts): the light parser reads no SPS field, so its bytes are not
+/// parsed.
 ///
 /// `nal_unit_type` is the 5-bit NAL type from the H.266 NAL header — used to
-/// derive `idr` (IDR_W_RADL=7 or IDR_N_LP=8 per H.266 V4 Table 5) and
-/// `pic_order_cnt_lsb` for IDR slices.
+/// derive `idr` (IDR_W_RADL=7 or IDR_N_LP=8 per H.266 V4 Table 5). A value
+/// above 31 raises `CodecError`.
 ///
 /// # Sentinel values
 ///
@@ -919,8 +920,10 @@ fn parse_h266_parameter_sets_py(
 /// and ``H266SliceHeaderLight.pps_id`` always returns ``0`` regardless of
 /// the bitstream content. Accurate extraction requires walking
 /// ``picture_header_rbsp()``, whose length is governed by SPS / PPS context
-/// fields that this light parser does not carry. Only ``idr``,
-/// ``first_in_pic``, and ``pic_order_cnt_lsb`` (for IDR slices) are accurate.
+/// fields that this light parser does not carry. ``pic_order_cnt_lsb`` is
+/// always ``None``: VVC codes the POC in the picture header, IDR pictures
+/// included, and this parser does not read it. Only ``idr`` and
+/// ``first_in_pic`` (``sh_picture_header_in_slice_header_flag``) are read.
 ///
 /// Raises `CodecError` on parse failure.
 #[pyfunction]
@@ -931,13 +934,9 @@ fn parse_h266_slice_header_light_py(
     sps: Option<&H266Sps>,
     nal_unit_type: u8,
 ) -> PyResult<H266SliceHeaderLight> {
-    // The generated SPS keeps its raw bytes, not the Rust record: parse them
-    // again for the context (the parse is deterministic).
-    let ctx = sps
-        .map(|s| rust_parse_h266_sps(&s.raw_rbsp.0))
-        .transpose()
-        .map_err(|e| crate::errors::codec_parse_error_to_pyerr(py, &e, "h266"))?;
-    rust_parse_h266_slice_header_light(rbsp, ctx.as_ref(), nal_unit_type)
+    // The light parser reads no SPS field: the argument is not parsed.
+    let _ = sps;
+    rust_parse_h266_slice_header_light(rbsp, None, nal_unit_type)
         .map(|r| H266SliceHeaderLight::from(&r))
         .map_err(|e| crate::errors::codec_parse_error_to_pyerr(py, &e, "h266"))
 }

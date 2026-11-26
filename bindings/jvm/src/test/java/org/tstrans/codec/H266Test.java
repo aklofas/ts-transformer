@@ -9,6 +9,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.tstrans.TestSupport.unsigned;
 
+import java.nio.ByteBuffer;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.tstrans.CodecParseException;
@@ -109,7 +110,7 @@ class H266Test {
         assertTrue(h.firstInPic());
         assertSame(H266SliceType.I, h.sliceType()); // sentinel
         assertEquals(0, h.ppsId()); // sentinel
-        assertEquals(Integer.valueOf(0), h.picOrderCntLsb()); // IDR implicit POC=0
+        assertNull(h.picOrderCntLsb()); // the POC is in the picture header
         assertTrue(h.idr());
     }
 
@@ -119,17 +120,28 @@ class H266Test {
         H266SliceHeaderLight h = Codec.parseH266SliceHeaderLight(IDR_SLICE, null, 0);
         assertFalse(h.idr());
         assertTrue(h.firstInPic());
-        assertNull(h.picOrderCntLsb()); // non-IDR POC requires SPS context
+        assertNull(h.picOrderCntLsb()); // the POC is in the picture header
     }
 
     @Test
     void parseSliceHeaderLightWithSpsContext() throws CodecParseException {
-        // Passing SPS context re-parses its rawRbsp for the POC bit-width;
-        // for IDR the value is still implicitly 0.
+        // An SPS argument is accepted and ignored.
         H266Sps sps = Codec.parseH266Sps(SPS_320X240_MAIN10);
         H266SliceHeaderLight h = Codec.parseH266SliceHeaderLight(IDR_SLICE, sps, 8);
-        assertEquals(Integer.valueOf(0), h.picOrderCntLsb());
+        assertNull(h.picOrderCntLsb());
         assertTrue(h.idr());
+    }
+
+    @Test
+    void aSliceHeaderIgnoresAnUnparsableSps() throws CodecParseException {
+        // The light parser reads no SPS field, so the record's bytes are not
+        // parsed: one byte is no SPS.
+        H266Sps notAnSps =
+                new H266Sps.Builder().rawRbsp(ByteBuffer.wrap(new byte[] {0x01})).build();
+        H266SliceHeaderLight h = Codec.parseH266SliceHeaderLight(IDR_SLICE, notAnSps, 7);
+        assertTrue(h.idr());
+        assertTrue(h.firstInPic());
+        assertNull(h.picOrderCntLsb());
     }
 
     @Test

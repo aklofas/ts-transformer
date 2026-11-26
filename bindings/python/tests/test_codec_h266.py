@@ -5,9 +5,10 @@ tests — extracted from the on-disk binaries at
 ``crates/tst-core/tests/fixtures/codec/h266/``.
 
 Note: H.266 SliceHeaderLight returns SENTINEL values for ``slice_type``
-(always ``H266SliceType.I``) and ``pps_id`` (always 0). Only ``idr``,
-``first_in_pic``, and ``pic_order_cnt_lsb`` are accurate — the sentinel
-constraint is documented on ``H266SliceHeaderLight`` and is tested here.
+(always ``H266SliceType.I``) and ``pps_id`` (always 0), and no
+``pic_order_cnt_lsb`` (the POC is in the picture header). Only ``idr`` and
+``first_in_pic`` are read — the sentinel constraint is documented on
+``H266SliceHeaderLight`` and is tested here.
 """
 
 import pytest
@@ -346,13 +347,13 @@ def test_parse_h266_slice_header_light_pps_id_sentinel():
 
 
 def test_parse_h266_slice_header_light_pic_order_cnt_idr():
-    """pic_order_cnt_lsb is Some(0) for IDR slices (implicit per H.266 spec)."""
+    """pic_order_cnt_lsb is None for IDR slices too: VVC codes the POC in the picture header."""
     sh = parse_h266_slice_header_light(SLICE_HEADER_IDR_BYTES, sps=None, nal_unit_type=7)
-    assert sh.pic_order_cnt_lsb == 0
+    assert sh.pic_order_cnt_lsb is None
 
 
 def test_parse_h266_slice_header_light_pic_order_cnt_non_idr():
-    """pic_order_cnt_lsb is None for non-IDR slices (SPS context required)."""
+    """pic_order_cnt_lsb is None for non-IDR slices (the POC is in the picture header)."""
     sh = parse_h266_slice_header_light(SLICE_HEADER_IDR_BYTES, sps=None, nal_unit_type=0)
     assert sh.pic_order_cnt_lsb is None
 

@@ -252,16 +252,18 @@ public final class Codec {
     /**
      * Parse a light H.266 / VVC slice header from a slice NAL's RBSP body.
      *
-     * <p>{@code sps} is optional SPS context — when non-null, it is used to
-     * recover the {@code picOrderCntLsb} bit width for the (deferred) non-IDR
-     * path; when null, {@code picOrderCntLsb} is null for non-IDR slices.
-     * {@code nalUnitType} is the NAL type used to derive {@code idr}
-     * (IDR_W_RADL=7 or IDR_N_LP=8). Note: {@code sliceType} and {@code ppsId}
+     * <p>{@code sps} is accepted and ignored (kept for symmetry with the H.264 /
+     * H.265 counterparts): the light parser reads no SPS field, so its
+     * {@code rawRbsp} is not parsed. {@code picOrderCntLsb} is always null: VVC
+     * codes the POC in the picture header, IDR pictures included, and this
+     * parser does not read it. {@code nalUnitType} is the NAL type used to
+     * derive {@code idr} (IDR_W_RADL=7 or IDR_N_LP=8); a value above 31 throws
+     * {@link CodecParseException}. Note: {@code sliceType} and {@code ppsId}
      * are returned as sentinels ({@code I} / {@code 0}) — see
      * {@link H266SliceHeaderLight}.
      *
      * @param rbsp        the slice NAL RBSP body
-     * @param sps         SPS context, or {@code null}
+     * @param sps         accepted and ignored; may be {@code null}
      * @param nalUnitType the NAL unit type
      * @return the parsed light slice header
      * @throws CodecParseException on a malformed or truncated bitstream

@@ -25,12 +25,9 @@
 //!
 //! ### Slice-header SPS context
 //!
-//! `parse_slice_header_light` accepts an optional `&tst_core H266Sps`. The Java
-//! `H266Sps` record cannot hold the Rust struct, so when the caller passes a
-//! non-null `sps` we re-`parse_sps(sps.rawRbsp())` to recover an equivalent Rust
-//! SPS context — same pattern as the H.265 module. The H.266 light parser only
-//! consults the SPS for the POC bit width on the (deferred) non-IDR path; IDR
-//! POC stays implicit 0.
+//! `parse_slice_header_light` accepts an optional `&tst_core H266Sps` and reads
+//! no field of it, so the Java `sps` argument is accepted and ignored: its
+//! `rawRbsp` is not parsed and `None` is passed.
 
 use crate::jutil::FindClass;
 use crate::panic::jni_native;
@@ -42,8 +39,7 @@ use jni::strings::JNIString;
 use jni::sys::{jint, jobject};
 use tst_core::codec::NalUnit;
 use tst_core::codec::h266::{
-    H266SliceType, H266Sps, parse_parameter_sets, parse_pps, parse_slice_header_light, parse_sps,
-    parse_vps,
+    H266SliceType, parse_parameter_sets, parse_pps, parse_slice_header_light, parse_sps, parse_vps,
 };
 
 use crate::error::map_codec_parse_error;
@@ -150,7 +146,7 @@ jni_native! {
         env,
         _class,
         rbsp: JByteArray<'local>,
-        sps: JObject<'local>,
+        _sps: JObject<'local>,
         nal_unit_type: jint,
     ) -> jobject = std::ptr::null_mut() => {
         let bytes = match env.convert_byte_array(&rbsp) {
@@ -158,35 +154,12 @@ jni_native! {
             Err(_) => return JObject::null().into_raw(),
         };
 
-        // SPS context: re-parse the Java SPS's rawRbsp to recover the equivalent
-        // Rust `H266Sps`. A null `sps` means no context. See the module doc.
-        let sps_ctx: Option<H266Sps> = if sps.is_null() {
-            None
-        } else {
-            let buf = match env.call_method(&sps, jni_str!("rawRbsp"), jni_sig!("()Ljava/nio/ByteBuffer;"), &[]) {
-                Ok(v) => match v.l() {
-                    Ok(o) => o,
-                    Err(_) => return JObject::null().into_raw(),
-                },
-                Err(_) => return JObject::null().into_raw(),
-            };
-            let sps_bytes = match read_byte_buffer(env, &buf) {
-                Ok(b) => b,
-                Err(_) => return JObject::null().into_raw(),
-            };
-            match parse_sps(&sps_bytes) {
-                Ok(s) => Some(s),
-                Err(e) => {
-                    map_codec_parse_error(env, &e, "h266");
-                    return JObject::null().into_raw();
-                }
-            }
-        };
-
+        // The light parser reads no SPS field: `sps` is not parsed. See the
+        // module doc.
         let Ok(nut) = crate::jutil::checked_u8(env, nal_unit_type as i64, "nalUnitType") else {
             return JObject::null().into_raw();
         };
-        match parse_slice_header_light(&bytes, sps_ctx.as_ref(), nut) {
+        match parse_slice_header_light(&bytes, None, nut) {
             Ok(h) => match build_h266_slice_header_light(env, &h) {
                 Ok(obj) => obj.into_raw(),
                 Err(_) => JObject::null().into_raw(),
