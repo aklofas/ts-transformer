@@ -54,8 +54,10 @@ fn main() -> std::io::Result<()> {
         prog.add_video(0x1011, VideoCodec::H264); // EO (visible-light)
         // Tag 0xFF (user_private) is the de-facto label slot used in the
         // wild — it's ISO-reserved, but real-world senders of this shape
-        // put the human-readable stream name here. Our own Demuxer's
-        // `extract_user_label` reads it first.
+        // put the human-readable stream name here. Our own demuxer's
+        // `extract_user_label` reads it last, when none of the conformant
+        // sources before it (a component, stream identifier, metadata or
+        // ISO 639 language descriptor) gives a label.
         // TSDuck will flag it as "Forbidden Descriptor Id 0xFF" — that's
         // expected; the bytes are still parsed. See
         // docs/guides/mpegts-mux.md for the full descriptor builder menu

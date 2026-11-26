@@ -126,9 +126,11 @@ Runnable: [../examples/receiving/demux_to_events.rs](/examples/receiving/demux_t
 The complete enum / struct definitions live in
 [../crates/tst-core/src/mpegts/demux/event.rs](/crates/tst-core/src/mpegts/demux/event.rs).
 
-**Event variants in brief.** `DemuxEvent::ProgramMap` arrives when the
-demuxer first sees a PAT/PMT or on any PSI version bump, and carries the
-full declared stream topology including `klv_links`. `DemuxEvent::Sample`
+**Event variants in brief.** `DemuxEvent::ProgramMap` arrives for a
+program's first PMT and for every later PMT whose version or content
+differs from the applied one (see "A PMT is followed by its content"
+below), and carries the full declared stream topology including
+`klv_links`. `DemuxEvent::Sample`
 carries one reassembled elementary-stream access unit (video, audio,
 subtitle, or unknown) tagged by `StreamId` and `SamplePayload` variant.
 `DemuxEvent::Metadata` carries KLV — both sync AU-cell
@@ -158,10 +160,23 @@ Demuxer::reset_sync(&mut self)                          -> ()
 `feed` accepts arbitrary byte slices — the demuxer handles sync
 recovery internally. It can return `DemuxError::Unrecoverable` (no TS
 sync byte within the search window — ~6 KiB by default — which usually
-means the input isn't TS at all), `DemuxError::MalformedPes` (a PES header
-that is structurally impossible), `DemuxError::StrictRejection` (a
-strict-mode-rejected `NonConformant` issue surfaced as a fatal error), or
-`DemuxError::SyncBufExhausted` (see the sync-ingress ceiling below).
+means the input isn't TS at all), `DemuxError::MalformedPes` (under
+`StrictMode::Full`, a PES the packet ended damaged or unparseable),
+`DemuxError::StrictRejection` (a strict-mode-rejected `NonConformant`
+issue surfaced as an error), or `DemuxError::SyncBufExhausted` (see the
+sync-ingress ceiling below). A strict-mode error is resumable: the packet
+that raised it was processed in full, the whole packets after it in the
+call's input stay buffered for the next `feed`, and feeding may go on (see
+[Lenient vs. strict modes](#lenient-vs-strict-modes)).
+
+Use one of `feed` and `feed_aligned` per stream. `feed_aligned` discards
+everything an earlier `feed` left buffered: a partial packet, the whole
+packets behind a packet whose `feed` returned an error, a resync candidate
+not yet confirmed. No event reports the discard; on a PID whose continuity
+counter the demuxer already follows, the next packet shows the lost ones
+as a continuity jump. Switch to `feed_aligned` only after a `feed` that
+returned `Ok` with its bytes ending on a packet boundary and no stray bytes
+between packets.
 
 **Sync-ingress ceiling.** Before the demuxer acquires its first sync
 lock, `feed` buffers incoming bytes to scan for the `0x47` sync byte.
@@ -235,16 +250,18 @@ pending event queue — so nothing from a dead connection splices into the
 next one. `ManagedDemuxReceiver` calls it on reconnect, which forces a
 fresh `0x47` sync hunt and a fresh PAT/PMT on the new transport. The
 `DemuxerConfig` and the stats counters are preserved (reset stats with
-`reset_stats`). `reset_stats` clears counters only: the PAT and PMT
-version caches, the declared streams and in-flight reassembly are
-untouched, so a PMT repeat after it is still a repeat. Most direct callers should not need this — call it only
+`reset_stats`). `reset_stats` clears counters only: the applied PAT and
+PMTs, the declared streams and in-flight reassembly are untouched, so a
+PMT repeat after it is still a repeat. Most direct callers should not need this — call it only
 when the byte stream is known to have a hard discontinuity that can't be
 diagnosed from PCR or CC alone.
 
 `DemuxerStats::per_stream` reports each PID's PMT `stream_type` byte and
 keeps its lifetime counters after the PID leaves the PMT, until
 `reset_stats`. A PID that a later PMT re-declares under another codec
-family restarts its codec counters.
+family restarts its codec counters. A PID that carries only a program's
+PCR gets an entry when a `discontinuity_indicator` on it is reported
+(stream type 0, no items, its discontinuity count).
 
 ```rust,no_run
 use tst_core::mpegts::demux::Demuxer;
@@ -287,8 +304,18 @@ A PES the demuxer found damaged (see `MalformedPes` under Robustness
 behaviours) is dropped by `TimingOnly` and `DescriptorsOnly` rather than
 delivered, but it still updates the PTS baseline and spacing run: damage
 costs the delivery, not the timing. `Full` fails `feed` with
-`DemuxError::MalformedPes` instead. A strict verdict covers only the
-packet that raised it.
+`DemuxError::MalformedPes` instead, and keeps that PES's timing too. A
+strict verdict covers only the packet that raised it, and the error is
+resumable: that packet was processed in full (its other units are
+delivered, the timing of a damaged PES that was dropped is recorded, a
+pending time-base reset is settled once), and feeding may go on. A
+`MalformedPes` of a packet is returned in preference to any other verdict
+of that packet and is not also queued as a `NonConformant` event; every
+other verdict of the packet, a second `MalformedPes` included, is queued as
+its `NonConformant` event and fails no later packet. A short unit that a
+leaving PID hands out (see "A PID that leaves hands out its unit" below)
+reaches a `Full` caller as `DemuxError::StrictRejection`, with its
+`NonConformant` event queued, not as `MalformedPes`.
 
 In strict mode, the rejected `NonConformant` event is still pushed onto
 the event queue *before* the error returns from `feed`. This means a
@@ -414,6 +441,42 @@ PID's sections to each program by `program_number`, so one program's
 version change does not hide another's. A PAT is treated as new when
 its transport stream id, version or CRC differs.
 
+**A PMT is followed by its content.** A PMT section is a repeat only when
+its `version_number` and its CRC_32 both equal those of the PMT the
+program has applied. Any other PMT that passes the checks is applied and
+reported with a `ProgramMap`, so a source that changes its PMT without the
+version increment H.222.0 §2.4.4.10 asks for (two streams spliced into one,
+an RTSP publish mount whose next publisher has other tracks) is followed.
+The applied section again behind another `pointer_field`, or split over
+packets differently, is a repeat; the same streams with descriptors added,
+reordered or a moved `PCR_PID` is a change. A section that is refused (a
+CRC failure, `current_next_indicator` 0, a PMT of more than one section)
+leaves the applied PMT in place. A program that the PAT drops and lists
+again, or moves to another PMT PID, and every program after a new
+`transport_stream_id`, starts again from its first PMT.
+`DemuxerStats::program_maps_seen` counts every applied PMT and
+`pmt_versions_seen` only those whose version moved (a program's first PMT
+included), so their difference is the number of PMT changes a source made
+without the increment; for a source that follows the rule the two are
+equal.
+
+**A PID that leaves hands out its unit.** When a PMT takes a PID out of its
+program or changes its stream type, when a PAT drops a program or moves it
+to another PMT PID, and when the transport stream id changes, each PID that
+leaves first hands out the PES it holds, as `flush` would, in ascending PID
+order and before the `ProgramMap` that announces the change (a PAT that
+only drops a program announces nothing). An unbounded video PES is handed
+out as far as it arrived and nothing marks it short, as at `flush`; a
+bounded PES that is short is marked with `MalformedPes`, as at `flush`; a
+synchronous-KLV access unit whose cells are still incomplete after that is
+dropped without an issue. Under a strict mode that
+rejects the verdict (`Full` for that `MalformedPes`, `TimingOnly` for, say,
+a synchronous-KLV unit without a PTS), the `feed` that carried the change
+returns `StrictRejection` and the change is applied all the same. A PID
+that stays with its stream type keeps its unit in progress, and so does
+every PID when only the `PCR_PID` moves. `reset_sync` (and so a
+`ManagedDemuxReceiver`'s reconnect) discards the units in flight instead.
+
 **Oversize PES.** A PES grows past the per-PID or total cap. The demuxer
 drops the partial bytes, emits `DiscontinuityKind::PesOversize { pid }` (or
 `PesTotalOversize`), and resumes on the next PUSI for that PID.
@@ -449,11 +512,21 @@ Strict (`TimingOnly` or `Full`) converts to `StrictRejection`.
 relative to the previous. The demuxer emits
 `NonConformantIssue::PcrAnomaly { delta }` (delta in 27 MHz ticks)
 and continues. Reported only on a PMT-declared `PCR_PID`; a PCR on an
-undeclared PID is ignored rather than tracked. A discontinuity the
+undeclared PID is ignored rather than tracked. A PMT whose `PCR_PID` is
+0x1FFF declares no PCR (H.222.0 §2.4.4.10): the demuxer reads no clock
+from null packets, and it does not examine a PCR field on a null packet at
+all, so a malformed one raises no `PcrMalformed` either. A discontinuity the
 stream signals (the adaptation-field `discontinuity_indicator`) is
 legal: it reseeds the PCR check and resets the PTS baselines instead of
 raising an anomaly. A PES still in flight when it arrives is judged on
-the old clock, and the PTS baseline clears when that PES completes. A per-PID backward PTS
+the old clock, and the PTS baseline clears when that PES completes. The
+flag is reported as `Discontinuity { kind: AdaptationFieldFlag }` under
+the stream of its PID, and on a PID that a program declares as its
+`PCR_PID` and that carries no stream, under an anonymous stream id (that
+PID, and the lowest-numbered program that declares it, the identity a
+`PcrAnomaly` there carries), so a reset signalled on a PID that carries
+only the PCR is seen like any other. A flag on a PID no program declares,
+and on PID 0x1FFF, is not reported. A per-PID backward PTS
 step of more than one second
 (90 000 ticks, computed 33-bit-wrap-aware) is a separate variant,
 `NonConformantIssue::PtsAnomaly { delta }` (delta in 90 kHz ticks, negative).
@@ -655,10 +728,26 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 In priority order:
 
-1. Component descriptor (tag 0x50) — text after the 6-byte header. A
-   leading EN 300 468 character-table selector is honoured: 0x15 (UTF-8)
-   is decoded, the ISO 8859 selectors only when the text is ASCII, and the
-   multi-byte selectors 0x11–0x14 fall through to the next source.
+1. Component descriptor (tag 0x50) — text after the 6-byte header,
+   decoded by EN 300 468 Annex A. Text with no selector (first byte 0x20 or
+   above) is in the default table 00, ISO/IEC 6937 with the euro sign at
+   0xA4: a byte below 0x80 reads as ASCII; a non-spacing accent byte
+   (0xC1–0xCF) and the letter after it are one precomposed character (every
+   ASCII letter Unicode has a precomposed character for with that accent is
+   accepted, a superset of ISO/IEC 6937's own pairs); a control code
+   (0x80–0x9F), a code the table leaves empty, or an accent that is last or
+   not followed by such a letter makes the text undecodable. One deviation
+   from Annex A: default-table text that is well-formed UTF-8 as a whole is
+   read as UTF-8, so a label written as UTF-8 without a selector still
+   reads as written. Table-00 text in which every byte over 0x7F belongs to
+   a run of one byte 0xD0–0xDF and one byte 0xA0–0xBF, one byte 0xE0–0xEF
+   (not 0xED) and two, or one byte 0xF0–0xF3 and three, is therefore read
+   as UTF-8 instead (`D3 A0`, "©" and a no-break space, reads as "Ӡ"). A
+   leading selector is honoured: 0x15 (UTF-8) is decoded; the ISO 8859
+   selectors (0x01–0x07, 0x09–0x0B, and 0x10 0x00 followed by 0x01–0x0B or
+   0x0D–0x0F) only when the text is ASCII; the reserved selectors (0x08,
+   any other 0x10 value), the multi-byte selectors 0x11–0x14 and any other
+   selector fall through to the next source.
 2. Stream Identifier descriptor (tag 0x52) — formatted as `tag=N`.
 3. Metadata descriptor (tag 0x26) — generic `"KLV"` label.
 4. ISO 639 Language (tag 0x0A) — 3-byte language code.
@@ -666,8 +755,8 @@ In priority order:
    with ARS-shape senders that use tag 0xFF as the de-facto label slot).
 
 Conformant descriptors win when present. If none of these match,
-returns `None` — the demuxer-side stats label stays unset for that
-PID.
+returns `None`. The demuxer does not call it: `StreamStats::label` holds
+only a subtitle PID's codec name.
 
 ## Pairing is a consumer concern
 
@@ -911,8 +1000,9 @@ Two more examples drive `Demuxer` directly:
 ## Multi-program parsing
 
 A multi-program TS is parsed transparently — `Demuxer` tracks each program in
-its PAT and emits one `ProgramMap` event per program (plus on PMT version
-bumps and PAT version bumps that add programs).
+its PAT and emits one `ProgramMap` event per program (plus one for every
+later PMT whose version or content changes, and one for each program a
+later PAT adds, when its PMT arrives).
 
 ```rust,no_run
 use tst_core::mpegts::demux::{DemuxEvent, Demuxer};
@@ -942,12 +1032,15 @@ fn main() {
 
 ### PAT version diffing
 
-When the PAT version bumps, the demuxer compares the new program list against
-the previous one:
+When a new PAT arrives (another version, program list or transport stream
+id), the demuxer compares the new program list against the previous one:
 
-- Programs that disappeared have their tracker dropped and their PIDs cleaned
+- Programs that disappeared, or whose PMT moved to another PID, first hand
+  out the unit each PID they own holds (see "A PID that leaves hands out
+  its unit" above), then have their tracker dropped and their PIDs cleaned
   from the per-PID stream-kind cache. Subsequent PES on those PIDs is silently
-  dropped (the demuxer no longer knows what to do with them).
+  dropped (the demuxer no longer knows what to do with them). A new
+  transport stream id retires every program this way.
 - New programs get an empty tracker; the next PMT to arrive on the new PMT PID
   populates it and triggers a `ProgramMap` event.
 
@@ -957,8 +1050,8 @@ ISO 13818-1 technically allows the same PID to appear in multiple programs
 (different programs, different meanings). The demuxer requires uniqueness —
 when a PMT introduces a PID already bound to another program, it emits
 `NonConformantIssue::PidReusedAcrossPrograms` and keeps the first-program-wins
-binding. The second program's tracker records the colliding stream's
-`StreamInfo` entry, but PES packets on that PID continue to dispatch to the
+binding. The colliding entry is left out of the second program's
+`ProgramMap`, and PES packets on that PID continue to dispatch to the
 first program.
 
 ## What's deferred
