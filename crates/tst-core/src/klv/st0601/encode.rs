@@ -1182,13 +1182,22 @@ struct TagItems {
     /// occurrence being tried has claimed for its rows.
     unwritten: usize,
     claimed: usize,
-    /// The occurrences to try when the walk reaches `first`: of the items
-    /// they name it is the first in the encoder's order.
-    anchored: Vec<usize>,
-    /// The occurrences whose first row is this tag, and those whose last
+    /// The first occurrence of each list this tag heads.
+    lists: OccurrenceLists,
+}
+
+/// Three lists of occurrences, each in the record's order: as a tag's
+/// field the first occurrence of each, as an occurrence's (in
+/// `SdccPlacer::next_in`) the one after it in the list it is in.
+#[derive(Clone, Copy, Default)]
+struct OccurrenceLists {
+    /// The occurrences to try when the walk reaches the tag's first item:
+    /// of the items they name it is the first in the encoder's order.
+    anchored: Option<usize>,
+    /// The occurrences whose first row is the tag, and those whose last
     /// row is: both until the tag's first item is written.
-    opens: Vec<usize>,
-    closes: Vec<usize>,
+    opens: Option<usize>,
+    closes: Option<usize>,
 }
 
 /// Places each occurrence of Item 102 after the items its `preceding_tags`
@@ -1217,7 +1226,7 @@ struct TagItems {
 ///
 /// Work: `write` runs once per item, `take_forward` once per occurrence and
 /// in time linear in its rows, and each occurrence sits in one `anchored`,
-/// one `opens` and one `closes` list, each emptied when it is read. That is
+/// one `opens` and one `closes` list, each taken whole when it is read. That is
 /// a fixed number of steps (each at most one lookup in the tag map) per
 /// item, per row and per occurrence.
 ///
@@ -1239,6 +1248,8 @@ struct SdccPlacer<'a> {
     after_packs: usize,
     tags: BTreeMap<u32, TagItems>,
     state: Vec<Occurrence>,
+    /// Per occurrence: the next one in each list it is in.
+    next_in: Vec<OccurrenceLists>,
     /// Per occurrence: the matrix size its bytes give.
     sizes: Vec<Option<usize>>,
     /// The occurrences waiting for their try, first in first out.
@@ -1279,7 +1290,10 @@ impl<'a> SdccPlacer<'a> {
             t.unwritten += 1;
         }
         let mut state = vec![Occurrence::Pending; occ.len()];
-        for (k, f) in occ.iter().enumerate() {
+        let mut next_in = vec![OccurrenceLists::default(); occ.len()];
+        // From the last occurrence to the first, each put in front: the
+        // lists come out in the record's order.
+        for (k, f) in occ.iter().enumerate().rev() {
             let rows = &f.preceding_tags;
             // The first item, in the encoder's order, that the rows name,
             // with its tag; none when a row names a tag without an item.
@@ -1293,9 +1307,12 @@ impl<'a> SdccPlacer<'a> {
                 continue;
             };
             let has_items = "a tag the rows name has items";
-            tags.get_mut(&anchor).expect(has_items).anchored.push(k);
-            tags.get_mut(open).expect(has_items).opens.push(k);
-            tags.get_mut(close).expect(has_items).closes.push(k);
+            let anchored = &mut tags.get_mut(&anchor).expect(has_items).lists.anchored;
+            next_in[k].anchored = anchored.replace(k);
+            let opens = &mut tags.get_mut(open).expect(has_items).lists.opens;
+            next_in[k].opens = opens.replace(k);
+            let closes = &mut tags.get_mut(close).expect(has_items).lists.closes;
+            next_in[k].closes = closes.replace(k);
         }
         Self {
             occ,
@@ -1306,6 +1323,7 @@ impl<'a> SdccPlacer<'a> {
             packs,
             tags,
             state,
+            next_in,
             sizes: occ
                 .iter()
                 .map(|f| crate::klv::st1010::peek_matrix_size(&f.bytes))
@@ -1337,7 +1355,11 @@ impl<'a> SdccPlacer<'a> {
             if let Some(t) = self.tags.get_mut(&self.items[i].0)
                 && t.first == i
             {
-                self.due.extend(core::mem::take(&mut t.anchored));
+                let mut anchored = t.lists.anchored.take();
+                while let Some(k) = anchored {
+                    self.due.push_back(k);
+                    anchored = self.next_in[k].anchored;
+                }
             }
             self.try_due();
             if !self.used[i] {
@@ -1368,8 +1390,12 @@ impl<'a> SdccPlacer<'a> {
         debug_assert_eq!(t.next, Some(i), "a tag's items are written in order");
         t.next = self.next_of_tag[i];
         t.unwritten -= 1;
-        self.due.extend(core::mem::take(&mut t.opens));
-        for k in core::mem::take(&mut t.closes) {
+        let (mut opens, mut closes) = (t.lists.opens.take(), t.lists.closes.take());
+        while let Some(k) = opens {
+            self.due.push_back(k);
+            opens = self.next_in[k].opens;
+        }
+        while let Some(k) = closes {
             let rows = &self.occ[k].preceding_tags;
             self.step(1 + rows.len());
             if self.state[k] == Occurrence::Pending
@@ -1378,6 +1404,7 @@ impl<'a> SdccPlacer<'a> {
             {
                 self.place(k);
             }
+            closes = self.next_in[k].closes;
         }
     }
 
