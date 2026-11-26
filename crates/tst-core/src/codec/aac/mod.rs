@@ -134,9 +134,9 @@ pub struct AdtsFrame<'a> {
 }
 
 impl<'a> AdtsFrame<'a> {
-    /// Full-frame slice (header + body). `raw_header` is the first 7
-    /// (no CRC) or 9 (with CRC) bytes of this slice copied for
-    /// ownership convenience.
+    /// Full-frame slice (header + body). `raw_header` is the header's
+    /// bytes at the start of this slice (7 without CRC; with CRC 9 + 2 per
+    /// extra raw data block), copied for ownership convenience.
     pub fn bytes(&self) -> &'a [u8] {
         self.body
     }
@@ -216,7 +216,8 @@ crate::binding_record! {
         pub has_crc: bool,
         /// MPEG version (MPEG-2 or MPEG-4).
         pub mpeg_version: MpegVersion,
-        /// Raw ADTS header bytes (7 bytes without CRC, 9 with CRC).
+        /// Raw ADTS header bytes: 7 without CRC; with CRC 9 + 2 per extra
+        /// raw data block (the `raw_data_block_position` words, then the CRC).
         pub raw_header: Vec<u8>,
         /// The full frame bytes (header and body).
         @[java("payload")] pub body: Vec<u8>,

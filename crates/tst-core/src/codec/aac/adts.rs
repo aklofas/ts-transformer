@@ -6,7 +6,8 @@ use super::tables::{decode_channels, decode_profile, decode_sample_rate};
 use super::{AacChannelLayout, AacProfile, MpegVersion};
 use crate::codec::CodecParseError;
 
-/// Decoded view of the 7- or 9-byte ADTS header (no body slice yet).
+/// Decoded view of the ADTS header (no body slice yet): 7 bytes, or with CRC
+/// 9 + 2 per extra raw data block.
 #[derive(Debug)]
 pub(super) struct Header {
     pub profile: AacProfile,
@@ -21,9 +22,10 @@ pub(super) struct Header {
     pub raw_header_len: usize,
 }
 
-/// Decode a 7- or 9-byte ADTS header.
+/// Decode an ADTS header.
 ///
-/// Field layout (MSB first), 7 bytes total (9 with CRC):
+/// Field layout (MSB first), 7 bytes total (with CRC, 9 + 2 per extra raw
+/// data block: the `raw_data_block_position` words, then `crc_check`):
 ///   syncword:                12 bits (must be 0xFFF)
 ///   ID (mpeg_version):        1 bit  (0 = MPEG-4, 1 = MPEG-2)
 ///   layer:                    2 bits (must be 0b00)
@@ -102,11 +104,17 @@ pub(super) fn parse_header(bytes: &[u8]) -> Result<Header, CodecParseError> {
     let num_raw_data_blocks = num_blocks_wire + 1;
     let samples_per_frame = 1024u16 * num_raw_data_blocks as u16;
 
-    let raw_header_len: usize = if has_crc { 9 } else { 7 };
+    // ISO/IEC 13818-7 Table 6: with CRC, one 16-bit raw_data_block_position
+    // per extra raw data block precedes the 16-bit crc_check.
+    let raw_header_len: usize = if has_crc {
+        9 + 2 * num_blocks_wire as usize
+    } else {
+        7
+    };
 
-    if has_crc && bytes.len() < 9 {
+    if bytes.len() < raw_header_len {
         return Err(CodecParseError::Truncated {
-            needed: 9,
+            needed: raw_header_len as u32,
             had: bytes.len() as u32,
         });
     }
@@ -311,6 +319,80 @@ mod tests {
             let h = parse_header(&bytes).unwrap();
             assert_eq!(h.mpeg_version, MpegVersion::Mpeg2);
             assert_eq!(h.profile, expected, "profile_bits={profile_bits}");
+        }
+    }
+
+    /// ISO/IEC 13818-7 Table 6: with `protection_absent = 0` one 16-bit
+    /// `raw_data_block_position` per extra raw data block precedes the
+    /// 16-bit `crc_check`.
+    #[test]
+    fn protected_multi_block_header_length_counts_block_positions() {
+        for (wire, want) in [(0u8, 9usize), (1, 11), (2, 13), (3, 15)] {
+            let mut b = build_header(1, 4, 2, 64, wire, false);
+            b.resize(64, 0);
+            assert_eq!(
+                parse_header(&b).unwrap().raw_header_len,
+                want,
+                "blocks wire {wire}"
+            );
+        }
+        for wire in 0u8..=3 {
+            let mut b = build_header(1, 4, 2, 64, wire, true);
+            b.resize(64, 0);
+            assert_eq!(
+                parse_header(&b).unwrap().raw_header_len,
+                7,
+                "no CRC, blocks wire {wire}"
+            );
+        }
+    }
+
+    #[test]
+    fn protected_header_longer_than_frame_is_truncated() {
+        // Three extra blocks: the header is 15 bytes; the frame says 13.
+        let mut b = build_header(1, 4, 2, 13, 3, false);
+        b.resize(64, 0);
+        let r = parse_header(&b).map(|h| h.raw_header_len);
+        assert!(
+            matches!(
+                r,
+                Err(CodecParseError::Truncated {
+                    needed: 15,
+                    had: 13
+                })
+            ),
+            "got {r:?}"
+        );
+        // A frame exactly as long as its header is accepted.
+        let mut b = build_header(1, 4, 2, 15, 3, false);
+        b.resize(15, 0);
+        assert_eq!(parse_header(&b).unwrap().raw_header_len, 15);
+    }
+
+    #[test]
+    fn a_protected_multi_block_header_in_a_short_buffer_is_truncated() {
+        let mut b = build_header(1, 4, 2, 10, 1, false);
+        b.resize(10, 0);
+        let r = parse_header(&b).map(|h| h.raw_header_len);
+        assert!(
+            matches!(
+                r,
+                Err(CodecParseError::Truncated {
+                    needed: 11,
+                    had: 10
+                })
+            ),
+            "got {r:?}"
+        );
+        // The buffer, not the frame length, is what runs short here.
+        for len in 9..15 {
+            let mut b = build_header(1, 4, 2, 64, 3, false);
+            b.resize(len, 0);
+            let r = parse_header(&b).map(|h| h.raw_header_len);
+            assert!(
+                matches!(r, Err(CodecParseError::Truncated { needed: 15, had }) if had as usize == len),
+                "buffer {len}: got {r:?}"
+            );
         }
     }
 }
