@@ -268,8 +268,15 @@ pub(crate) fn py_to_unknown(
 // ---------------------------------------------------------------------------
 
 /// Decode an ST 0102 Security LS. `buf` is **body-only** (no UL / outer
-/// BER length wrapper). With `strict=True`, rejects missing required
-/// tags + unknown codepoints + non-canonical BER + malformed UTF-16.
+/// BER length wrapper). The lenient form records a malformed item in
+/// `.field_errors` and decodes the rest; a zero-length item is "unknown"
+/// and the last occurrence of a repeated tag decides. With `strict=True`,
+/// raises `KlvError` with kind `MISSING_REQUIRED_TAG` for a missing
+/// required tag (a zero-length one counts as missing), `DUPLICATE_TAG`
+/// for a repeated defined tag, and `MALFORMED_BYTES` for an unknown
+/// codepoint, a non-canonical BER length, malformed UTF-16, non-ASCII
+/// text in an ISO 646 item, or a date not written `YYYYMMDD` (Tag 10) or
+/// `YYYY-MM-DD` (Tags 23, 24).
 #[pyfunction]
 #[pyo3(name = "decode_security", signature = (buf, *, strict = false))]
 fn decode_security_py(py: Python<'_>, buf: &[u8], strict: bool) -> PyResult<Py<PyAny>> {
@@ -320,7 +327,9 @@ pub(crate) fn enum_field_to_u64(p: &Bound<'_, PyAny>) -> PyResult<u64> {
 
 /// Encode a Python `SecurityLs` to wire bytes (lenient — emits only the
 /// populated fields, no mandatory-tag enforcement). Returns `bytes`
-/// containing the ST 0102 body (no outer UL / BER length wrapper).
+/// containing the ST 0102 body (no outer UL / BER length wrapper). The
+/// set's tags are one byte: raises `KlvEncodeError` with kind
+/// `RESERVED_TAG_IN_UNKNOWN` for an unknown tag above 255.
 #[pyfunction]
 #[pyo3(name = "encode_security")]
 fn encode_security_py(py: Python<'_>, record: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
@@ -353,8 +362,21 @@ fn encode_precision_timestamp_py(py: Python<'_>, pack: &Bound<'_, PyAny>) -> PyR
 // ---------------------------------------------------------------------------
 
 /// Decode an ST 0903 VMTI LS. `buf` is **body-only** (no UL / outer
-/// BER length wrapper). With `strict=True`, rejects missing required
-/// tags per ST 0903.6 §6 Table 1, duplicate tags, malformed UTF-8.
+/// BER length wrapper). The lenient form records a malformed item in
+/// `.field_errors`; a zero-length item, at the top level or in a VTarget
+/// pack, is "unknown"; the last occurrence of a repeated tag decides; and
+/// an item sent as an ST 1201 special leaves its field `None` and is
+/// listed in `.field_errors` with kind `OUT_OF_RANGE` (no encoder writes
+/// it back). With `strict=True`, raises `KlvError` with kind
+/// `MISSING_REQUIRED_TAG` for a missing Item 4 or 6 (a zero-length one
+/// counts as missing), `DUPLICATE_TAG` for a repeated top-level item, and
+/// `MALFORMED_BYTES` for malformed UTF-8, a malformed VTarget pack (a
+/// repeated item, a length not in its fewest bytes, nothing after the
+/// targetId, a targetId wider than 9 bytes or padded, a one-byte value
+/// outside its range), a targetId repeated in the series, and a record
+/// that breaks a rule between items (a zero where a range starts at one,
+/// a pixel number without a frame width, a row without its column, an
+/// active target without a position).
 #[pyfunction]
 #[pyo3(name = "decode_vmti", signature = (buf, *, strict = false))]
 fn decode_vmti_py(py: Python<'_>, buf: &[u8], strict: bool) -> PyResult<Py<PyAny>> {
@@ -378,9 +400,14 @@ fn decode_vmti_py(py: Python<'_>, buf: &[u8], strict: bool) -> PyResult<Py<PyAny
 /// Decode a standalone VMTI packet: 16-byte VMTI UL + BER length + body,
 /// verifying its checksum (Tag 1: one, the last item, two bytes, the running
 /// 16-bit sum from the label up to its value). With `strict=True`, also the
-/// strict body rules and those of standalone carriage. Raises
-/// `KlvError(CHECKSUM_MISMATCH)` on a bad checksum, `KlvError
-/// (BAD_UNIVERSAL_LABEL)` on another label.
+/// strict body rules and those of standalone carriage. Raises `KlvError`
+/// with kind `CHECKSUM_MISMATCH` on a bad checksum, `BAD_UNIVERSAL_LABEL`
+/// on another label, `MISSING_REQUIRED_TAG` for no checksum or one that
+/// is not the last item, `DUPLICATE_TAG` for two, and `MALFORMED_BYTES`
+/// for one that is not two bytes wide. A checksum tag written with a
+/// padding group is read as the checksum; with `strict=True` it is
+/// refused (`MALFORMED_BYTES`), as is an outer length not in its fewest
+/// bytes.
 #[pyfunction]
 #[pyo3(name = "decode_vmti_standalone", signature = (buf, *, strict = false))]
 fn decode_vmti_standalone_py(py: Python<'_>, buf: &[u8], strict: bool) -> PyResult<Py<PyAny>> {
@@ -402,7 +429,10 @@ fn decode_vmti_standalone_py(py: Python<'_>, buf: &[u8], strict: bool) -> PyResu
 /// Encode a Python `VmtiLs` to wire bytes — VMTI LS **body only** (no UL
 /// / outer BER length wrapper / no Tag 1 checksum per ST 0903.6-120).
 /// Use for embedded-VMTI carried inside MPEG-TS via tst-pipeline. Returns
-/// `bytes`.
+/// `bytes`. Raises `KlvEncodeError` with kind `OUT_OF_RANGE` for Item 5,
+/// 6, 8 or 9 above 16 777 215 or a `target_id` of 2**63 or more (as a
+/// lenient decode of a ten-byte targetId gives), and
+/// `RESERVED_TAG_IN_UNKNOWN` for an unknown pack tag above 255.
 #[pyfunction]
 #[pyo3(name = "encode_vmti")]
 fn encode_vmti_py(py: Python<'_>, record: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
@@ -415,7 +445,7 @@ fn encode_vmti_py(py: Python<'_>, record: &Bound<'_, PyAny>) -> PyResult<Py<PyAn
 /// `[VMTI_LS_UL:16][outer BER length][body][Tag 1 checkSum TLV]` per
 /// ST 0903.4-17 / ST 0903.6-119. The Tag 1 checksum is computed from
 /// the assembled framing; any value in `VmtiLs.checksum` is ignored.
-/// Returns `bytes`.
+/// Returns `bytes`. Raises `KlvEncodeError` as `encode_vmti` does.
 #[pyfunction]
 #[pyo3(name = "encode_vmti_standalone")]
 fn encode_vmti_standalone_py(py: Python<'_>, record: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
@@ -429,7 +459,11 @@ fn encode_vmti_standalone_py(py: Python<'_>, record: &Bound<'_, PyAny>) -> PyRes
 /// ST 0102.12 — requires Tags 1 (Security Classification), 2 (Country
 /// Coding Method), 3 (Classifying Country), 12 (Object Country Coding
 /// Method), 13 (Object Country Codes), and 22 (Version). Raises
-/// `KlvEncodeError(MISSING_MANDATORY_ITEM)` if any required tag is absent.
+/// `KlvEncodeError` with kind `MISSING_MANDATORY_ITEM` if any required tag
+/// is absent, and `OUT_OF_RANGE` for non-ASCII text in an ISO 646 item, a
+/// date not written `YYYYMMDD` / `YYYY-MM-DD`, or a classification or
+/// country coding method code ST 0102 does not define: what it writes,
+/// `decode_security(buf, strict=True)` reads.
 #[pyfunction]
 #[pyo3(name = "encode_security_strict_compliance")]
 fn encode_security_strict_compliance_py(
@@ -445,7 +479,14 @@ fn encode_security_strict_compliance_py(
 /// Encode a Python `VmtiLs` to wire bytes with strict compliance for
 /// **embedded** VMTI carriage — requires Tags 4 (version) and 6
 /// (num_targets_reported); all VTargetPacks must be non-empty and have
-/// unique target_ids. Raises `KlvEncodeError` on validation failure.
+/// unique target_ids. Raises `KlvEncodeError` with kind
+/// `MISSING_MANDATORY_ITEM`, `V_TARGET_PACK_EMPTY` or
+/// `DUPLICATE_TARGET_ID` for those, `STRING_TOO_LONG` for a
+/// `vmti_system_name` over 32 characters or a `source_sensor` over 128,
+/// and `OUT_OF_RANGE` for a value outside its range, a rule between items
+/// that `decode_vmti(buf, strict=True)` checks, or an unknown tag repeated
+/// in a pack or at the top level, besides what `encode_vmti` raises: what
+/// it writes, the strict decode reads.
 #[pyfunction]
 #[pyo3(name = "encode_vmti_strict_compliance")]
 fn encode_vmti_strict_compliance_py(
@@ -462,7 +503,10 @@ fn encode_vmti_strict_compliance_py(
 /// compliance — all checks from `encode_vmti_strict_compliance` plus
 /// standalone-required Tags 2 (precision_time_stamp), 11 (horizontal_fov),
 /// 12 (vertical_fov), 13 (miis_id), and forbids per-pack offset tags
-/// (10/11/13/14/15/16). Raises `KlvEncodeError` on validation failure.
+/// (10/11/13/14/15/16). Raises `KlvEncodeError` as
+/// `encode_vmti_strict_compliance` does, and with kind `OUT_OF_RANGE`
+/// for an active target without a `target_location` or a `miis_id` that
+/// `decode_core_id` refuses.
 #[pyfunction]
 #[pyo3(name = "encode_vmti_standalone_strict_compliance")]
 fn encode_vmti_standalone_strict_compliance_py(
@@ -539,11 +583,18 @@ fn encode_sdcc_flp_mode2_py(
 /// payload starting with the 16-byte Universal Label.
 ///
 /// - Default (lenient): any 16-byte UL accepted, checksum verified,
-///   field-level malformations collected in `.field_errors`.
+///   field-level malformations collected in `.field_errors`. The checksum
+///   must be the set's one last item, two bytes wide: `KlvError` with
+///   kind `MISSING_REQUIRED_TAG` for none or one that is not last,
+///   `DUPLICATE_TAG` for two, `MALFORMED_BYTES` for another width,
+///   `CHECKSUM_MISMATCH` for a wrong sum.
 /// - `strict=True`: also requires the ST 0601 family UL pattern.
 /// - `compliance=True`: also enforces Tag 2 first / Tag 1 last /
-///   Tag 65 present / no duplicate tags / canonical BER. Implies
-///   `strict=True`.
+///   Tag 65 present / no duplicate tags / canonical BER, and each item's
+///   profile and coded values (an 8-byte Item 2, a 1-byte Item 65, the
+///   codes the standard defines, an SDCC-FLP in Mode 2 with a header
+///   ST 1010 defines, a Control Command time of 8 bytes when present:
+///   kind `MALFORMED_BYTES`). Implies `strict=True`.
 #[pyfunction]
 #[pyo3(
     name = "decode_uas_datalink",
@@ -628,7 +679,11 @@ impl From<PyOutOfRangePolicy> for RustOutOfRangePolicy {
 ///
 /// The optional keyword-only `out_of_range_policy` (default: `ERROR`) controls
 /// how values outside their ST 0601 mapped range are handled — see
-/// `OutOfRangePolicy` for details.
+/// `OutOfRangePolicy` for details. Also raises `KlvEncodeError` with kind
+/// `STRING_TOO_LONG` for a `miis_core_id` over 50 bytes or a
+/// `sensor_frame_rate` whose values need more than 16 bytes, and
+/// `OUT_OF_RANGE` for a `Location` that has a height or one coordinate but
+/// not both coordinates.
 #[pyfunction]
 #[pyo3(name = "encode_uas_datalink", signature = (record, *, out_of_range_policy = None))]
 fn encode_uas_datalink_py(
@@ -649,7 +704,13 @@ fn encode_uas_datalink_py(
 /// Encode a Python `UasDatalinkLs` to wire bytes with strict compliance
 /// per ST 0601.19 — requires Tag 2 (precision timestamp), Tag 1
 /// (checksum slot — synthesized), and Tag 65 (version). Raises
-/// `KlvEncodeError(MISSING_MANDATORY_ITEM)` if a required tag is absent.
+/// `KlvEncodeError` with kind `MISSING_MANDATORY_ITEM` if a required tag
+/// is absent, and `OUT_OF_RANGE` for an item
+/// `decode_uas_datalink(buf, compliance=True)` would refuse by its profile
+/// or coded values, an Item 102 pack it cannot place after the items it
+/// names, or an SDCC-FLP header ST 1010 does not define, besides what
+/// `encode_uas_datalink` raises. It cleans every string, those inside
+/// packs included (ST 0107.3-12, -13).
 #[pyfunction]
 #[pyo3(name = "encode_uas_datalink_strict_compliance")]
 fn encode_uas_datalink_strict_compliance_py(
@@ -820,9 +881,12 @@ fn decode_rvt_py(py: Python<'_>, buf: &[u8]) -> PyResult<Py<PyAny>> {
 }
 
 /// Decode a standalone RVT Local Set: 16-byte UL + BER length + body,
-/// verifying the CRC-32/MPEG-2 checksum (Tag 1) when present. Raises
-/// `KlvError(CHECKSUM_MISMATCH)` on a bad CRC, `KlvError
-/// (BAD_UNIVERSAL_LABEL)` on a mismatched UL.
+/// verifying the CRC-32/MPEG-2 checksum (Tag 1) when present. The CRC
+/// item must be the set's one last item, 4 bytes wide. Raises `KlvError`
+/// with kind `CHECKSUM_MISMATCH` on a bad CRC, `BAD_UNIVERSAL_LABEL` on a
+/// mismatched UL, `MISSING_REQUIRED_TAG` for a CRC item an item follows,
+/// `DUPLICATE_TAG` for two, and `MALFORMED_BYTES` for one that is not
+/// 4 bytes. A set without a CRC item is accepted.
 #[pyfunction]
 #[pyo3(name = "decode_rvt_standalone")]
 fn decode_rvt_standalone_py(py: Python<'_>, buf: &[u8]) -> PyResult<Py<PyAny>> {
@@ -834,7 +898,11 @@ fn decode_rvt_standalone_py(py: Python<'_>, buf: &[u8]) -> PyResult<Py<PyAny>> {
 
 /// Encode a Python `RvtLs` to wire bytes — RVT LS **body only** (no UL /
 /// outer BER length wrapper / no Tag 1 CRC). Use for embedded RVT carried
-/// in ST 0601 Tag 73. Returns `bytes`.
+/// in ST 0601 Tag 73. Returns `bytes`. Raises `KlvEncodeError` with kind
+/// `OUT_OF_RANGE` for non-ASCII text in an ISO 7 item (Items 10, 15, 19
+/// and the text items of a POI or AOI set), an MGRS zone outside 1 to 60,
+/// or a latitude band and grid square that is not three letters A to Z
+/// without I and O.
 #[pyfunction]
 #[pyo3(name = "encode_rvt")]
 fn encode_rvt_py(py: Python<'_>, record: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
@@ -846,7 +914,8 @@ fn encode_rvt_py(py: Python<'_>, record: &Bound<'_, PyAny>) -> PyResult<Py<PyAny
 /// Encode a Python `RvtLs` as a standalone RVT record:
 /// `[RVT_LS_UL:16][outer BER length][Tag 2 timestamp first][body][Tag 1
 /// CRC-32/MPEG-2 last]` per ST 0806.4-02/-04. Raises `KlvEncodeError`
-/// with `tag=2` if `timestamp_us` is unset. Returns `bytes`.
+/// with `tag=2` if `timestamp_us` is unset, and as `encode_rvt` does.
+/// Returns `bytes`.
 #[pyfunction]
 #[pyo3(name = "encode_rvt_standalone")]
 fn encode_rvt_standalone_py(py: Python<'_>, record: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
@@ -892,7 +961,10 @@ fn cot_config_from_py(config: Option<&Bound<'_, PyAny>>) -> PyResult<RustCotConf
 ///
 /// Raises `ValueError` naming the missing KLV tag when a mapping-required
 /// field (uid components, timestamp, sensor position, altitude) is absent
-/// from `record`, and naming the MSL item under `require_hae=True`.
+/// from `record` or was sent as no value (an Item 104 sent as an IMAPB
+/// special), naming the MSL item under `require_hae=True`, and when a
+/// string of the record or of `config` holds a character XML 1.0 does not
+/// allow or `config.producer` is not an allowed attribute name.
 #[pyfunction]
 #[pyo3(
     name = "platform_position_xml",
@@ -926,8 +998,10 @@ fn msl_fallback(require_hae: bool) -> MslFallback {
 ///
 /// Raises `ValueError` naming the missing KLV tag when a mapping-required
 /// field (uid components, timestamp, an aimpoint position pair, that
-/// pair's elevation) is absent from `record`, and naming the MSL item
-/// (Item 42 or 25) under `require_hae=True`.
+/// pair's elevation) is absent from `record`, naming the MSL item
+/// (Item 42 or 25) under `require_hae=True`, and when a string of the
+/// record or of `config` holds a character XML 1.0 does not allow or
+/// `config.producer` is not an allowed attribute name.
 #[pyfunction]
 #[pyo3(
     name = "sensor_point_of_interest_xml",

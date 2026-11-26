@@ -108,8 +108,11 @@ public final class Klv {
      *
      * <p>{@code buf} is body-only — no Universal Label or outer BER length wrapper.
      * Lenient mode tolerates missing required tags, unknown enum codepoints
-     * (surfaced as null typed accessors with raw code preserved), and malformed
-     * Tag 13 UTF-16 (surfaced in {@link SecurityLs#fieldErrors()}).
+     * (surfaced as null typed accessors with raw code preserved), malformed
+     * Tag 13 UTF-16, invalid UTF-8 in a text item and an enumerated or version
+     * item of the wrong length (each surfaced in {@link SecurityLs#fieldErrors()},
+     * the rest of the set decoded). A zero-length item is "unknown" and the last
+     * occurrence of a repeated tag decides.
      * Mirrors tst-py's {@code decode_security(buf)}.
      *
      * @param buf ST 0102 body bytes (no UL / outer BER length)
@@ -125,15 +128,20 @@ public final class Klv {
      * Decode an ST 0102 Security Metadata LS body with optional strict mode.
      *
      * <p>{@code buf} is body-only — no Universal Label or outer BER length wrapper.
-     * When {@code strict = true}, rejects missing required tags (1, 2, 3, 12, 13, 22),
-     * unknown enum codepoints, omitted-value codepoints, non-canonical BER, and
-     * malformed UTF-16. Mirrors tst-py's {@code decode_security(buf, strict=True)}.
+     * When {@code strict = true}, rejects missing required tags (1, 2, 3, 12, 13, 22;
+     * a zero-length one counts as missing), a repeated defined tag, unknown enum
+     * codepoints, omitted-value codepoints, non-canonical BER, malformed UTF-16,
+     * non-ASCII text in an ISO 646 item, and a date not written {@code YYYYMMDD}
+     * (Tag 10) or {@code YYYY-MM-DD} (Tags 23, 24). Mirrors tst-py's
+     * {@code decode_security(buf, strict=True)}.
      *
      * @param buf    ST 0102 body bytes (no UL / outer BER length)
      * @param strict {@code true} for strict validation; {@code false} for lenient
      * @return the decoded {@link SecurityLs}
-     * @throws org.tstrans.KlvDecodeException if the buffer is rejected (including missing
-     *                                        required tags in strict mode)
+     * @throws org.tstrans.KlvDecodeException if the buffer is rejected: in strict mode
+     *         kind {@code MISSING_REQUIRED_TAG} for a missing required tag,
+     *         {@code DUPLICATE_TAG} for a repeated defined tag, {@code MALFORMED_BYTES}
+     *         for the other refusals
      */
     public static SecurityLs decodeSecurity(byte[] buf, boolean strict)
             throws org.tstrans.KlvDecodeException {
@@ -150,7 +158,9 @@ public final class Klv {
      *
      * @param record the Security LS to encode
      * @return ST 0102 body bytes
-     * @throws org.tstrans.KlvEncodeException if any field value is out of range
+     * @throws org.tstrans.KlvEncodeException if any field value is out of range, and with
+     *         kind {@code RESERVED_TAG_IN_UNKNOWN} for an unknown tag above 255 (the set's
+     *         tags are one byte)
      */
     public static byte[] encodeSecurity(SecurityLs record)
             throws org.tstrans.KlvEncodeException {
@@ -167,7 +177,11 @@ public final class Klv {
      * @param record the Security LS to encode
      * @return ST 0102 body bytes
      * @throws org.tstrans.KlvEncodeException with {@code kind = MISSING_MANDATORY_ITEM}
-     *                                        if a required tag is absent
+     *         if a required tag is absent, and {@code kind = OUT_OF_RANGE} for non-ASCII
+     *         text in an ISO 646 item, a date not written {@code YYYYMMDD} /
+     *         {@code YYYY-MM-DD}, or a classification or country coding method code
+     *         ST 0102 does not define: what it writes,
+     *         {@link #decodeSecurity(byte[], boolean)} with {@code strict = true} reads
      */
     public static byte[] encodeSecurityStrictCompliance(SecurityLs record)
             throws org.tstrans.KlvEncodeException {
@@ -192,8 +206,11 @@ public final class Klv {
      *
      * <p>{@code buf} is body-only — no Universal Label or outer BER length wrapper.
      * Lenient mode tolerates missing required tags and surfaces per-field decode
-     * failures in {@link VmtiLs#fieldErrors()}. Mirrors tst-py's
-     * {@code decode_vmti(buf)}.
+     * failures in {@link VmtiLs#fieldErrors()}. A zero-length item, at the top level
+     * or in a VTarget pack, is "unknown"; the last occurrence of a repeated tag
+     * decides; an item sent as an ST 1201 special leaves its field {@code null} and
+     * is listed in {@link VmtiLs#fieldErrors()} with kind {@code OUT_OF_RANGE} (no
+     * encoder writes it back). Mirrors tst-py's {@code decode_vmti(buf)}.
      *
      * @param buf ST 0903 body bytes (no UL / outer BER length)
      * @return the decoded {@link VmtiLs}
@@ -207,9 +224,15 @@ public final class Klv {
      * Decode an ST 0903 VMTI LS body with optional strict mode.
      *
      * <p>{@code buf} is body-only — no Universal Label or outer BER length wrapper.
-     * When {@code strict = true}, rejects missing required tags per ST 0903.6 §6
-     * Table 1, duplicate tags, and malformed UTF-8. Mirrors tst-py's
-     * {@code decode_vmti(buf, strict=True)}.
+     * When {@code strict = true}, rejects a missing Item 4 or 6 (a zero-length one
+     * counts as missing; kind {@code MISSING_REQUIRED_TAG}), a repeated top-level item
+     * ({@code DUPLICATE_TAG}), and with kind {@code MALFORMED_BYTES} malformed UTF-8, a
+     * malformed VTarget pack (a repeated item, a length not in its fewest bytes,
+     * nothing after the targetId, a targetId wider than 9 bytes or padded, a one-byte
+     * value outside its range), a targetId repeated in the series, and a record that
+     * breaks a rule between items (a zero where a range starts at one, a pixel number
+     * without a frame width, a row without its column, an active target without a
+     * position). Mirrors tst-py's {@code decode_vmti(buf, strict=True)}.
      *
      * @param buf    ST 0903 body bytes (no UL / outer BER length)
      * @param strict {@code true} for strict validation; {@code false} for lenient
@@ -238,7 +261,12 @@ public final class Klv {
      * @return the decoded {@link VmtiLs}
      * @throws org.tstrans.KlvDecodeException if the packet is rejected (kind
      *         {@code CHECKSUM_MISMATCH} for a wrong checksum, {@code
-     *         BAD_UNIVERSAL_LABEL} for another label)
+     *         BAD_UNIVERSAL_LABEL} for another label, {@code MISSING_REQUIRED_TAG}
+     *         for no checksum or one that is not the last item, {@code DUPLICATE_TAG}
+     *         for two, {@code MALFORMED_BYTES} for one not two bytes wide). A checksum
+     *         tag written with a padding group is read as the checksum; with
+     *         {@code strict = true} it is refused ({@code MALFORMED_BYTES}), as is an
+     *         outer length not in its fewest bytes
      */
     public static VmtiLs decodeVmtiStandalone(byte[] buf, boolean strict)
             throws org.tstrans.KlvDecodeException {
@@ -256,7 +284,11 @@ public final class Klv {
      *
      * @param record the VMTI LS to encode
      * @return ST 0903 embedded body bytes
-     * @throws org.tstrans.KlvEncodeException if any field value is out of range
+     * @throws org.tstrans.KlvEncodeException if any field value is out of range (kind
+     *         {@code OUT_OF_RANGE}, also for Item 5, 6, 8 or 9 above 16 777 215 and a
+     *         negative {@link VTargetPack#targetId()}, that is 2^63 or more unsigned),
+     *         and with kind {@code RESERVED_TAG_IN_UNKNOWN} for an unknown pack tag
+     *         above 255
      */
     public static byte[] encodeVmti(VmtiLs record) throws org.tstrans.KlvEncodeException {
         return nEncodeVmti(record);
@@ -273,7 +305,7 @@ public final class Klv {
      *
      * @param record the VMTI LS to encode
      * @return the full standalone VMTI wire record
-     * @throws org.tstrans.KlvEncodeException if any field value is out of range
+     * @throws org.tstrans.KlvEncodeException as {@link #encodeVmti(VmtiLs)} does
      */
     public static byte[] encodeVmtiStandalone(VmtiLs record) throws org.tstrans.KlvEncodeException {
         return nEncodeVmtiStandalone(record);
@@ -294,7 +326,15 @@ public final class Klv {
      *                                        {@code kind = V_TARGET_PACK_EMPTY} if a pack has
      *                                        no TLV items, or
      *                                        {@code kind = DUPLICATE_TARGET_ID} if target IDs
-     *                                        are not unique
+     *                                        are not unique, {@code kind = STRING_TOO_LONG}
+     *                                        for a system name over 32 characters or a
+     *                                        source sensor over 128, {@code kind =
+     *                                        OUT_OF_RANGE} for a value outside its range, a
+     *                                        rule between items the strict decode checks,
+     *                                        or an unknown tag repeated in a pack or at the
+     *                                        top level, besides what {@link
+     *                                        #encodeVmti(VmtiLs)} throws: what it writes,
+     *                                        the strict decode reads
      */
     public static byte[] encodeVmtiStrictCompliance(VmtiLs record)
             throws org.tstrans.KlvEncodeException {
@@ -315,7 +355,12 @@ public final class Klv {
      * @throws org.tstrans.KlvEncodeException with {@code kind = MISSING_MANDATORY_ITEM} if a
      *                                        required item is absent, or
      *                                        {@code kind = FORBIDDEN_STANDALONE_OFFSET} if any
-     *                                        pack carries a forbidden offset tag
+     *                                        pack carries a forbidden offset tag, {@code
+     *                                        kind = OUT_OF_RANGE} for an active target
+     *                                        without a target location or a MIIS id
+     *                                        {@link #decodeCoreId(byte[])} refuses, and as
+     *                                        {@link #encodeVmtiStrictCompliance(VmtiLs)}
+     *                                        does
      */
     public static byte[] encodeVmtiStandaloneStrictCompliance(VmtiLs record)
             throws org.tstrans.KlvEncodeException {
@@ -348,12 +393,16 @@ public final class Klv {
      *
      * <p>{@code buf} is the full wire-format payload starting with the 16-byte
      * Universal Label. Lenient mode accepts any 16-byte UL, verifies the checksum,
-     * and collects per-field decode failures in {@link UasDatalinkLs#fieldErrors()}.
-     * Mirrors tst-py's {@code decode_uas_datalink(buf)}.
+     * which must be the set's one last item, two bytes wide, and collects per-field
+     * decode failures in {@link UasDatalinkLs#fieldErrors()}. Mirrors tst-py's
+     * {@code decode_uas_datalink(buf)}.
      *
      * @param buf full ST 0601 wire bytes (UL + BER length + body)
      * @return the decoded {@link UasDatalinkLs}
-     * @throws org.tstrans.KlvDecodeException if the buffer is structurally malformed
+     * @throws org.tstrans.KlvDecodeException if the buffer is structurally malformed: kind
+     *         {@code MISSING_REQUIRED_TAG} for no checksum or one that is not the last
+     *         item, {@code DUPLICATE_TAG} for two, {@code MALFORMED_BYTES} for one not
+     *         two bytes wide, {@code CHECKSUM_MISMATCH} for a wrong sum
      */
     public static UasDatalinkLs decodeUasDatalink(byte[] buf)
             throws org.tstrans.KlvDecodeException {
@@ -364,8 +413,13 @@ public final class Klv {
      * Decode an ST 0601 UAS Datalink LS with optional strict / compliance mode.
      *
      * <p>{@code buf} is the full wire-format payload starting with the 16-byte UL.
+     * Every mode verifies the checksum as {@link #decodeUasDatalink(byte[])} does.
      * When {@code compliance = true}, also enforces Tag 2 first / Tag 1 last /
-     * Tag 65 present / no duplicate tags / canonical BER (implies {@code strict}).
+     * Tag 65 present / no duplicate tags / canonical BER, and each item's profile
+     * and coded values (an 8-byte Item 2, a 1-byte Item 65, the codes the standard
+     * defines, an SDCC-FLP in Mode 2 with a header ST 1010 defines, a Control
+     * Command time of 8 bytes when present: kind {@code MALFORMED_BYTES})
+     * (implies {@code strict}).
      * When {@code strict = true} only, requires the ST 0601 family UL pattern.
      * Mirrors tst-py's {@code decode_uas_datalink(buf, strict=True, compliance=True)}.
      *
@@ -391,7 +445,11 @@ public final class Klv {
      *
      * @param record the UAS Datalink LS to encode
      * @return ST 0601 wire bytes
-     * @throws org.tstrans.KlvEncodeException if any field value is out of range
+     * @throws org.tstrans.KlvEncodeException if any field value is out of range, with kind
+     *         {@code STRING_TOO_LONG} for a MIIS Core Identifier over 50 bytes or a
+     *         sensor frame rate whose values need more than 16 bytes, and with kind
+     *         {@code OUT_OF_RANGE} for a {@link Location} that has a height or one
+     *         coordinate but not both coordinates
      */
     public static byte[] encodeUasDatalink(UasDatalinkLs record)
             throws org.tstrans.KlvEncodeException {
@@ -418,7 +476,9 @@ public final class Klv {
      * @param policy how to handle out-of-range field values
      * @return ST 0601 wire bytes
      * @throws org.tstrans.KlvEncodeException if any field value is out of range
-     *                                        (and not eligible for INDICATOR)
+     *                                        (and not eligible for INDICATOR), and as
+     *                                        {@link #encodeUasDatalink(UasDatalinkLs)}
+     *                                        does
      */
     public static byte[] encodeUasDatalink(UasDatalinkLs record, OutOfRangePolicy policy)
             throws org.tstrans.KlvEncodeException {
@@ -439,7 +499,12 @@ public final class Klv {
      * @param record the UAS Datalink LS to encode
      * @return ST 0601 wire bytes with checksum
      * @throws org.tstrans.KlvEncodeException with {@code kind = MISSING_MANDATORY_ITEM}
-     *                                        if a required tag is absent
+     *         if a required tag is absent, and with {@code kind = OUT_OF_RANGE} for an item
+     *         {@link #decodeUasDatalink(byte[], boolean, boolean)} with {@code compliance}
+     *         would refuse by its profile or coded values, an Item 102 pack it cannot
+     *         place after the items it names, or an SDCC-FLP header ST 1010 does not
+     *         define, besides what {@link #encodeUasDatalink(UasDatalinkLs)} throws. It
+     *         cleans every string, those inside packs included (ST 0107.3-12, -13)
      */
     public static byte[] encodeUasDatalinkStrictCompliance(UasDatalinkLs record)
             throws org.tstrans.KlvEncodeException {
@@ -668,9 +733,11 @@ public final class Klv {
      * @param buf the full standalone RVT wire record (UL + BER length + body)
      * @return the decoded {@link RvtLs}
      * @throws org.tstrans.KlvDecodeException with {@code kind = BAD_UNIVERSAL_LABEL} if the
-     *         leading 16 bytes are not the RVT LS UL, or
+     *         leading 16 bytes are not the RVT LS UL,
      *         {@code kind = CHECKSUM_MISMATCH} if a declared Tag 1 value does not match
-     *         the recomputed CRC-32/MPEG-2
+     *         the recomputed CRC-32/MPEG-2, {@code kind = MISSING_REQUIRED_TAG} if an
+     *         item follows the CRC item, {@code kind = DUPLICATE_TAG} for two CRC items,
+     *         or {@code kind = MALFORMED_BYTES} for one that is not 4 bytes
      */
     public static RvtLs decodeRvtStandalone(byte[] buf) throws org.tstrans.KlvDecodeException {
         return nDecodeRvtStandalone(buf);
@@ -690,7 +757,10 @@ public final class Klv {
      * @return ST 0806.4 embedded body bytes
      * @throws org.tstrans.KlvEncodeException if a nested {@link RvtPoi}/{@link RvtAoi} omits a
      *         mandatory item, a string field exceeds its byte cap, or an MGRS
-     *         easting/northing exceeds 99,999
+     *         easting/northing exceeds 99,999, and with kind {@code OUT_OF_RANGE} for
+     *         non-ASCII text in an ISO 7 item (Items 10, 15, 19 and the text items of a
+     *         POI or AOI set), an MGRS zone outside 1 to 60, or a latitude band and grid
+     *         square that is not three letters A to Z without I and O
      */
     public static byte[] encodeRvt(RvtLs record) throws org.tstrans.KlvEncodeException {
         return nEncodeRvt(record);
@@ -740,7 +810,11 @@ public final class Klv {
      * @return the serialized CoT event XML
      * @throws IllegalArgumentException naming the missing KLV tag when a
      *         mapping-required field (uid components, timestamp, sensor
-     *         position, altitude) is absent from {@code record}
+     *         position, altitude) is absent from {@code record} or was sent as
+     *         no value (an Item 104 sent as an IMAPB special), and when a string
+     *         of the record or the configuration holds a character XML 1.0 does
+     *         not allow or {@link CotConfig#producer()} is not an allowed
+     *         attribute name
      * @throws NullPointerException if {@code record} is {@code null}
      */
     public static String platformPositionXml(UasDatalinkLs record, long generatedUs) {
@@ -758,7 +832,11 @@ public final class Klv {
      * @return the serialized CoT event XML
      * @throws IllegalArgumentException naming the missing KLV tag when a
      *         mapping-required field (uid components, timestamp, sensor
-     *         position, altitude) is absent from {@code record}
+     *         position, altitude) is absent from {@code record} or was sent as
+     *         no value (an Item 104 sent as an IMAPB special), and when a string
+     *         of the record or the configuration holds a character XML 1.0 does
+     *         not allow or {@link CotConfig#producer()} is not an allowed
+     *         attribute name
      * @throws NullPointerException if {@code record} or {@code config} is {@code null}
      */
     public static String platformPositionXml(UasDatalinkLs record, CotConfig config, long generatedUs) {
@@ -778,8 +856,12 @@ public final class Klv {
      * @param requireHae  {@code true} to refuse an MSL height written as the HAE
      * @return the serialized CoT event XML
      * @throws IllegalArgumentException naming the missing KLV tag when a
-     *         mapping-required field is absent from {@code record}, and naming
-     *         the MSL item when {@code requireHae} refuses it
+     *         mapping-required field is absent from {@code record} or was sent
+     *         as no value (an Item 104 sent as an IMAPB special), naming the MSL
+     *         item when {@code requireHae} refuses it, and when a string of the
+     *         record or the configuration holds a character XML 1.0 does not
+     *         allow or {@link CotConfig#producer()} is not an allowed attribute
+     *         name
      * @throws NullPointerException if {@code record} or {@code config} is {@code null}
      */
     public static String platformPositionXml(
@@ -798,7 +880,10 @@ public final class Klv {
      * @return the serialized CoT event XML
      * @throws IllegalArgumentException naming the missing KLV tag when a
      *         mapping-required field (uid components, timestamp, an aimpoint
-     *         position pair, that pair's elevation) is absent from {@code record}
+     *         position pair, that pair's elevation) is absent from
+     *         {@code record}, and when a string of the record or the
+     *         configuration holds a character XML 1.0 does not allow or
+     *         {@link CotConfig#producer()} is not an allowed attribute name
      * @throws NullPointerException if {@code record} is {@code null}
      */
     public static String sensorPointOfInterestXml(UasDatalinkLs record, long generatedUs) {
@@ -818,7 +903,10 @@ public final class Klv {
      * @return the serialized CoT event XML
      * @throws IllegalArgumentException naming the missing KLV tag when a
      *         mapping-required field (uid components, timestamp, an aimpoint
-     *         position pair, that pair's elevation) is absent from {@code record}
+     *         position pair, that pair's elevation) is absent from
+     *         {@code record}, and when a string of the record or the
+     *         configuration holds a character XML 1.0 does not allow or
+     *         {@link CotConfig#producer()} is not an allowed attribute name
      * @throws NullPointerException if {@code record} or {@code config} is {@code null}
      */
     public static String sensorPointOfInterestXml(UasDatalinkLs record, CotConfig config, long generatedUs) {
@@ -840,7 +928,10 @@ public final class Klv {
      * @return the serialized CoT event XML
      * @throws IllegalArgumentException naming the missing KLV tag when a
      *         mapping-required field is absent from {@code record}, and naming
-     *         the MSL item when {@code requireHae} refuses it
+     *         the MSL item when {@code requireHae} refuses it, and when a string
+     *         of the record or the configuration holds a character XML 1.0 does
+     *         not allow or {@link CotConfig#producer()} is not an allowed
+     *         attribute name
      * @throws NullPointerException if {@code record} or {@code config} is {@code null}
      */
     public static String sensorPointOfInterestXml(
