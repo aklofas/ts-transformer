@@ -666,9 +666,10 @@ fn apply_tag(
         return Ok(());
     };
     // ST 0107.5 §6.3.4: a zero-length optional item means "unknown" — the
-    // field stays unset and no error is raised; a zero-length Item 102 or
-    // 115 adds no occurrence. Items 2 and 65 are mandatory.
-    if f.value.is_empty() && !matches!(tag, 2 | 65) {
+    // field stays unset and no error is raised. Items 2 and 65 are
+    // mandatory; 102 and 115 are multi-instance and have the same rule in
+    // their own handler.
+    if f.value.is_empty() && !matches!(tag, 2 | 65 | 102 | 115) {
         return Ok(());
     }
     match (spec.encoding, tag) {
@@ -937,13 +938,21 @@ fn end_rows_at_wide_tags(body: &[u8], record: &mut UasDatalinkLs) {
 }
 
 /// Tags 102 and 115 — MULTI-INSTANCE (ST 0601.19 Table 1 "Multiples
-/// Allowed" = Yes): every occurrence appends, it never overwrites.
+/// Allowed" = Yes): every occurrence appends, it never overwrites. Out of
+/// line: few sets carry either item, and the walk's per-item path is
+/// shorter without this body in it (`benches/ir.rs`, `st0601_decode`).
+#[inline(never)]
 fn apply_multi_instance(
     record: &mut UasDatalinkLs,
     f: &crate::klv::pack::RawField<'_>,
     tags_seen: &[u32],
 ) -> Result<(), KlvFieldError> {
     let tag = f.tag;
+    // ST 0107.5 §6.3.4: a zero-length item is "unknown": it adds no
+    // occurrence and is no error.
+    if f.value.is_empty() {
+        return Ok(());
+    }
     match tag {
         // Positional capture, not a full `st1010::decode_sdcc_flp`
         // parse: `peek_matrix_size` reads the Matrix Size (Element 1)
