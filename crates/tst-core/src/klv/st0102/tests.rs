@@ -908,6 +908,90 @@ fn st0102_empty_string_encodes_as_nul_and_round_trips() {
     );
 }
 
+// ST 0107.4-17: a zero-length item means "unknown". It is an occurrence of
+// its tag, so the last-duplicate rule applies to it as to any value.
+
+#[test]
+fn st0102_zero_length_optional_item_is_unknown() {
+    // Tag 1 (classification) and Tag 22 (version), both zero-length.
+    let r = decode(&[0x01, 0x00, 0x16, 0x00]).unwrap();
+    assert_eq!(r.security_classification, None);
+    assert_eq!(r.version, None);
+    assert!(r.field_errors.is_empty(), "{:?}", r.field_errors);
+}
+
+#[test]
+fn st0102_strict_zero_length_required_item_is_missing() {
+    let err = decode_strict(&[0x01, 0x00]).unwrap_err();
+    assert!(
+        matches!(err, KlvDecodeError::St0102MissingRequiredTag { tag: 1 }),
+        "{err:?}"
+    );
+}
+
+#[test]
+fn st0102_lenient_wrong_length_enum_is_a_field_error() {
+    // Tag 1 with two bytes, then a version: the set decodes, the
+    // classification is unset and reported, the version kept.
+    let r = decode(&[0x01, 0x02, 0x00, 0x00, 0x16, 0x02, 0x00, 0x0C]).unwrap();
+    assert_eq!(r.security_classification, None);
+    assert_eq!(r.version, Some(12));
+    assert_eq!(
+        r.field_errors,
+        vec![crate::error::KlvFieldError::InvalidLength {
+            tag: 1,
+            expected: 1,
+            got: 2,
+        }]
+    );
+    // A wrong-length version likewise.
+    let r = decode(&[0x16, 0x01, 0x0C]).unwrap();
+    assert_eq!(r.version, None);
+    assert_eq!(
+        r.field_errors,
+        vec![crate::error::KlvFieldError::InvalidLength {
+            tag: 22,
+            expected: 2,
+            got: 1,
+        }]
+    );
+    // Strict decode still refuses it.
+    assert!(matches!(
+        decode_strict(&[0x01, 0x02, 0x00, 0x00]).unwrap_err(),
+        KlvDecodeError::FieldError(crate::error::KlvFieldError::InvalidLength { tag: 1, .. })
+    ));
+}
+
+#[test]
+fn a_zero_length_duplicate_after_a_value_unsets_it() {
+    let r = decode(&[0x05, 0x03, b'a', b'b', b'c', 0x05, 0x00]).unwrap();
+    assert_eq!(r.caveats, None);
+    let r = decode(&[0x01, 0x01, 0x01, 0x01, 0x00]).unwrap();
+    assert_eq!(r.security_classification, None);
+    let r = decode(&[0x16, 0x02, 0x00, 0x0C, 0x16, 0x00]).unwrap();
+    assert_eq!(r.version, None);
+    let r = decode(&[0x0D, 0x04, 0xFE, 0xFF, 0x00, b'U', 0x0D, 0x00]).unwrap();
+    assert_eq!(r.object_country_codes, None);
+    // Strict decode refuses the repeat, as for any repeated tag.
+    assert!(matches!(
+        decode_strict(&[0x05, 0x03, b'a', b'b', b'c', 0x05, 0x00]).unwrap_err(),
+        KlvDecodeError::DuplicateTag { tag: 5, offset: 5 }
+    ));
+}
+
+#[test]
+fn a_zero_length_duplicate_before_a_value_keeps_it() {
+    let r = decode(&[0x05, 0x00, 0x05, 0x03, b'a', b'b', b'c']).unwrap();
+    assert_eq!(r.caveats.as_deref(), Some("abc"));
+    let r = decode(&[0x01, 0x00, 0x01, 0x01, 0x05]).unwrap();
+    assert_eq!(
+        r.security_classification,
+        Some(SecurityClassification::TopSecret)
+    );
+    let r = decode(&[0x16, 0x00, 0x16, 0x02, 0x00, 0x0C]).unwrap();
+    assert_eq!(r.version, Some(12));
+}
+
 #[test]
 fn st0102_length0_string_decodes_as_absent() {
     // Tag 5 (caveats) with length 0: [0x05, 0x00]

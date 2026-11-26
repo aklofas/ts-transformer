@@ -15,8 +15,10 @@ use alloc::string::{String, ToString};
 /// Lenient: missing tags are tolerated (the typed surface is
 /// `Option<T>`-shaped throughout), unknown tags are preserved verbatim
 /// in [`SecurityLs::unknown`], unknown enum codepoints surface as
-/// `Unknown(u8)`, and Tag 13 UTF-16 decode failures are demoted to
-/// [`SecurityLs::field_errors`] rather than failing the whole record.
+/// `Unknown(u8)`, a zero-length item is "unknown" (its field unset, ST
+/// 0107.4-17), and Tag 13 UTF-16 decode failures and a wrong-length enum
+/// or version are demoted to [`SecurityLs::field_errors`] rather than
+/// failing the whole record.
 /// Use [`decode_strict`] for spec-conformance validation.
 ///
 /// # Example — sibling-layer decode from a parent ST 0601 record
@@ -157,14 +159,27 @@ fn decode_inner(buf: &[u8], strict: bool) -> Result<SecurityLs, KlvDecodeError> 
             }
         };
 
+        // ST 0107.4-17 / ST 0107.5 §6.3.3.2: a zero-length value is
+        // "unknown". It is an occurrence of its tag: a value before it is
+        // overwritten as by any later duplicate.
+        if f.value.is_empty() {
+            unset(&mut record, tag_u8);
+            continue;
+        }
+
         match spec.encoding {
             Encoding::U8Enum => {
                 if f.value.len() != 1 {
-                    return Err(KlvDecodeError::FieldError(KlvFieldError::InvalidLength {
+                    let e = KlvFieldError::InvalidLength {
                         tag: f.tag,
                         expected: 1,
                         got: f.value.len(),
-                    }));
+                    };
+                    if strict {
+                        return Err(KlvDecodeError::FieldError(e));
+                    }
+                    record.field_errors.push(e);
+                    continue;
                 }
                 let b = f.value[0];
                 match tag_u8 {
@@ -209,21 +224,22 @@ fn decode_inner(buf: &[u8], strict: bool) -> Result<SecurityLs, KlvDecodeError> 
             }
             Encoding::U16Be => {
                 if f.value.len() != 2 {
-                    return Err(KlvDecodeError::FieldError(KlvFieldError::InvalidLength {
+                    let e = KlvFieldError::InvalidLength {
                         tag: f.tag,
                         expected: 2,
                         got: f.value.len(),
-                    }));
+                    };
+                    if strict {
+                        return Err(KlvDecodeError::FieldError(e));
+                    }
+                    record.field_errors.push(e);
+                    continue;
                 }
                 debug_assert_eq!(tag_u8, 22);
                 record.version = Some(u16::from_be_bytes([f.value[0], f.value[1]]));
             }
             Encoding::Iso646 | Encoding::FixedAscii { .. } => {
-                // ST 0107.5 §6.3.3.2: length-0 value = "Unknown" (field absent);
-                // single NUL byte = empty string "".
-                if f.value.is_empty() {
-                    continue; // absent; leave field as None
-                }
+                // ST 0107.5 §6.3.3.2: a single NUL byte = empty string "".
                 let s = if f.value == [0x00] {
                     String::new() // empty string signal; skip FixedAscii length check
                 } else {
@@ -265,10 +281,6 @@ fn decode_inner(buf: &[u8], strict: bool) -> Result<SecurityLs, KlvDecodeError> 
             }
             Encoding::Utf16Bom => {
                 debug_assert_eq!(tag_u8, 13);
-                // ST 0107.5 §6.3.3.2: length-0 value = field absent.
-                if f.value.is_empty() {
-                    continue;
-                }
                 match decode_utf16_bom(f.value) {
                     Ok(s) => record.object_country_codes = Some(s),
                     Err(()) => {
@@ -310,4 +322,28 @@ fn decode_inner(buf: &[u8], strict: bool) -> Result<SecurityLs, KlvDecodeError> 
     }
 
     Ok(record)
+}
+
+/// Clear the typed field of `tag` (a defined tag of the set).
+fn unset(record: &mut SecurityLs, tag: u8) {
+    match tag {
+        1 => record.security_classification = None,
+        2 => record.classifying_country_coding_method = None,
+        3 => record.classifying_country = None,
+        4 => record.sci_shi_info = None,
+        5 => record.caveats = None,
+        6 => record.releasing_instructions = None,
+        7 => record.classified_by = None,
+        8 => record.derived_from = None,
+        9 => record.classification_reason = None,
+        10 => record.declassification_date = None,
+        11 => record.classification_marking_system = None,
+        12 => record.object_country_coding_method = None,
+        13 => record.object_country_codes = None,
+        14 => record.classification_comments = None,
+        22 => record.version = None,
+        23 => record.classifying_country_coding_method_version_date = None,
+        24 => record.object_country_coding_method_version_date = None,
+        _ => unreachable!("tags.rs defines no other tag"),
+    }
 }
