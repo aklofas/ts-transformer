@@ -478,9 +478,10 @@ from the stream type and its descriptors: 0x06 with a `KLVA` registration
 becoming 0x06 with a subtitling descriptor is one, 0x03 becoming 0x04, both
 MPEG audio, is not), when a PAT drops a program or moves it to another PMT
 PID, and when the transport stream id changes, each PID that leaves first
-hands out the PES it holds, as `flush` would, in ascending PID
-order and before the `ProgramMap` that announces the change (a PAT that
-only drops a program announces nothing). An unbounded video PES is handed
+hands out the PES it holds, as `flush` would, in ascending PID order:
+before any issue the new PMT raises about its own streams and before the
+`ProgramMap` that announces the change (a PAT that only drops a program
+announces nothing). An unbounded video PES is handed
 out as far as it arrived and nothing marks it short, as at `flush`; a
 bounded PES that is short is marked with `MalformedPes`, as at `flush`; a
 synchronous-KLV access unit whose cells are still incomplete after that is
