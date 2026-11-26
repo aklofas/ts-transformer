@@ -6331,3 +6331,31 @@ fn what_the_strict_decoder_accepts_the_strict_encoder_writes() {
         "{both} {refused} {unplaced}"
     );
 }
+
+/// Rows that would put an item both before and after another are not
+/// placed: the first pack keeps its rows, the second is written after the
+/// typed items or refused.
+#[test]
+fn sdcc_rows_that_would_close_a_chain_on_itself_are_not_placed() {
+    let mut rec = decode(&sdcc_set(&[I(2), I(13), I(14), P(2), I(65)])).unwrap();
+    for rows in [vec![14, 13], vec![14, 15, 13]] {
+        rec.sensor_alt_m = Some(100.0);
+        rec.sdcc_flps.truncate(1);
+        rec.sdcc_flps.push(SdccFlpField {
+            bytes: sdcc_pack(rows.len() as u8),
+            preceding_tags: rows.clone(),
+        });
+        assert_eq!(
+            wire_tags(&encode_to_vec(&rec).unwrap()),
+            [2, 13, 14, 102, 15, 65, 102, 1],
+            "{rows:?}"
+        );
+        assert!(
+            matches!(
+                encode_strict_compliance(&rec),
+                Err(KlvEncodeError::InvalidFieldValue { tag: 102, .. })
+            ),
+            "{rows:?}"
+        );
+    }
+}
