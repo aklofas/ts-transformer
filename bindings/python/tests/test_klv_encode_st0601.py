@@ -579,12 +579,15 @@ def test_sensor_control_mode_unknown_int_round_trip():
 
 
 def test_imapb_specials_payload_less_code_round_trips():
-    """tag 113 (altitude_agl_m) carrying the BelowMin special: the typed
-    field stays None and the special re-appears in imapb_specials."""
+    """tag 113 (altitude_agl_m, range [-900, 40000]) carrying the BelowMin
+    special: the decoded field reads the range's minimum (ST 1201.5 §7.2.3)
+    and the special re-appears in imapb_specials."""
     rec = UasDatalinkLs(imapb_specials=((113, "below_min", 0),))
     back = decode_uas_datalink(encode_uas_datalink(rec))
-    assert back.altitude_agl_m is None
+    assert back.altitude_agl_m == -900.0
     assert (113, "below_min", 0) in back.imapb_specials
+    # Written back as the signal while the field still holds that end.
+    assert _find_tag_value_bytes(encode_uas_datalink(back), 113) == b"\xe0\x00\x00"
 
 
 def test_imapb_specials_payload_carrying_code_round_trips_losslessly():
@@ -639,16 +642,21 @@ def test_imapb_specials_invalid_code_raises_value_error():
         encode_uas_datalink(rec)
 
 
-def test_imapb_specials_payload_too_large_for_tag_default_len_raises():
-    """A payload that doesn't fit the tag's `8*default_len - 5` available
-    bits is rejected by the Rust `encode_imapb_special` (KlvEncodeError,
-    OutOfRange) — this is real Rust-side validation, not something the
-    Python inverse translator invents. Tag 112 (platform_course_angle_deg)
-    has default_len=2, so payload bits = 8*2-5 = 11 -> max valid payload
-    2047; 99999 doesn't fit."""
+def test_imapb_specials_payload_wider_than_default_len_is_written_at_its_width():
+    """Tag 112 (platform_course_angle_deg) has default_len=2, so 8*2-5 = 11
+    payload bits: a NaN-id of 99999 needs 17, and is written at three bytes,
+    the shortest length of the item that holds it (the Rust
+    `encode_imapb_special` decides, not the Python translator). A payload no
+    length of the item holds (2^59 needs 60 bits; eight bytes hold 59) is
+    refused, naming the item."""
     rec = UasDatalinkLs(imapb_specials=((112, "pos_quiet_nan", 99999),))
-    with pytest.raises(KlvEncodeError):
-        encode_uas_datalink(rec)
+    written = encode_uas_datalink(rec)
+    assert len(_find_tag_value_bytes(written, 112)) == 3
+    assert decode_uas_datalink(written).imapb_specials == rec.imapb_specials
+    too_wide = UasDatalinkLs(imapb_specials=((112, "pos_quiet_nan", 1 << 59),))
+    with pytest.raises(KlvEncodeError) as ei:
+        encode_uas_datalink(too_wide)
+    assert ei.value.tag == 112
 
 
 # ---------------------------------------------------------------------------
@@ -670,5 +678,5 @@ def test_encode_imapb_out_of_range_indicator_policy():
     # (ST 1201.5 §7.2.3 Table 3).
     assert _find_tag_value_bytes(raw, 113) == b"\xe1\x00\x00"
     back = decode_uas_datalink(raw)
-    assert back.altitude_agl_m is None, "IMAPB special field must be None after decode"
+    assert back.altitude_agl_m == 40_000.0, "the AboveMax signal reads the range's maximum"
     assert (113, "above_max", 0) in back.imapb_specials
