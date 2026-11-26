@@ -263,3 +263,12 @@ def test_parse_av1_obu_stream_metadata_obu_skipped():
     assert len(stream.sequence_headers) == 0
     assert len(stream.frame_headers) == 0
     assert len(stream.unparseable) == 0
+
+
+def test_show_existing_frame_type_unknown():
+    """A show_existing_frame header reports frame_type 255: the shown frame's
+    type lives in reference state the parser does not keep."""
+    seq = _make_seq()
+    fh = parse_av1_frame_header_light(SHOW_EXISTING_FRAME_HEADER, seq)
+    assert fh.show_existing_frame is True
+    assert fh.frame_type == 255

@@ -392,3 +392,12 @@ def test_h266_slice_type_variants():
     assert H266SliceType.P is not None
     assert H266SliceType.B is not None
     assert H266SliceType.Unknown is not None
+
+
+def test_a_lone_pps_gives_empty_results():
+    """One call is one snapshot: a PPS whose SPS is not in the call is dropped."""
+    pps_nal = NalUnit.h266(nal_type=16, layer_id=0, temporal_id_plus1=1, payload=PPS_MAIN10_BYTES)
+    ps = parse_h266_parameter_sets([pps_nal])
+    assert len(ps.vpses) == 0
+    assert len(ps.spses) == 0
+    assert len(ps.ppses) == 0

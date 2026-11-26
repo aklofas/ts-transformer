@@ -434,3 +434,23 @@ def test_h265_slice_type_variants():
     assert H265SliceType.P is not None
     assert H265SliceType.B is not None
     assert H265SliceType.Unknown is not None
+
+
+def test_a_lone_pps_gives_empty_results():
+    """One call is one snapshot: a PPS whose SPS is not in the call is dropped."""
+    pps_nal = NalUnit.h265(nal_type=34, layer_id=0, temporal_id_plus1=1, payload=PPS_MAIN40_BYTES)
+    ps = parse_h265_parameter_sets([pps_nal])
+    assert len(ps.vps_by_id) == 0
+    assert len(ps.sps_by_id) == 0
+    assert len(ps.pps_by_id) == 0
+
+
+def test_h265_continuation_segment_has_no_poc():
+    """TRAIL_R (1), first_slice_segment_in_pic_flag = 0, pps id 0: the bits
+    that follow start slice_segment_address, whose width needs the PPS, so no
+    POC is read."""
+    sps = parse_h265_sps(SPS_MAIN40_BYTES)
+    sh = parse_h265_slice_header_light(bytes([0x6A, 0x80]), sps=sps, nal_unit_type=1)
+    assert sh.first_in_pic is False
+    assert sh.idr is False
+    assert sh.pic_order_cnt_lsb is None

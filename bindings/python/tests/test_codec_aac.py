@@ -303,3 +303,17 @@ def test_iter_aac_frames_with_resync_never_raises():
     """Resync iterator never raises on bad input."""
     frames = list(iter_aac_frames_with_resync(NO_SYNC))
     assert frames == []
+
+
+def test_protected_multi_block_adts_raw_header():
+    """MPEG-2 AAC-LC, 44100 Hz, stereo, protection_absent = 0, two raw data
+    blocks (wire value 1), frame_length 64: the 7 fixed and variable header
+    bytes, one raw_data_block_position word and the CRC word."""
+    frame = bytes.fromhex("fff85080081ffd") + bytes(57)
+    frames = parse_aac_frames(frame)
+    assert len(frames) == 1
+    f = frames[0]
+    assert f.has_crc is True
+    assert f.num_raw_data_blocks == 2
+    assert len(bytes(f.raw_header)) == 11
+    assert f.frame_length_bytes == 64

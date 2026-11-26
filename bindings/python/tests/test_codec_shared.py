@@ -169,3 +169,56 @@ def test_extract_misp_timestamp_malformed_raises():
     au = b"\x00\x00\x01" + nal_body
     with pytest.raises(ValueError):
         extract_misp_timestamp(au, VideoCodec.H264)
+
+
+def _sei_after_type_128_message(codec_is_h264: bool) -> bytes:
+    """An access unit whose SEI NAL unit holds a message of payload type 4,
+    then one of payload type 128 (H.265 ``structure_of_pictures_info``; its
+    first byte ``0x80`` also reads as a stop bit), then the MISP message."""
+    if codec_is_h264:
+        header, uuid, slice_ = b"\x06", b"MISPmicrosectime", b"\x00\x00\x00\x01\x65\xaa"
+    else:
+        header = b"\x4e\x01"
+        uuid = bytes.fromhex("a8687dd4d7593758a5cef0338b6545f1")
+        slice_ = b"\x00\x00\x00\x01\x26\x01\xaa"
+    rbsp = (
+        bytes([0x04, 0x01, 0x55, 0x80, 0x02, 0x11, 0x22, 0x05, 28])
+        + uuid
+        # time_status 0x1F, value 0x0102030405060708 in four 2-byte groups
+        # with a 0xFF guard byte after each of the first three.
+        + bytes([0x1F, 0x01, 0x02, 0xFF, 0x03, 0x04, 0xFF, 0x05, 0x06, 0xFF, 0x07, 0x08])
+        + b"\x80"
+    )
+    return b"\x00\x00\x00\x01" + header + rbsp + slice_
+
+
+def test_extract_misp_after_type_128_message():
+    from tstrans.codec import MispTimestamp, extract_misp_timestamp
+    from tstrans.mpegts import VideoCodec
+
+    want = MispTimestamp.micros(0x0102030405060708, 0x1F)
+    assert extract_misp_timestamp(_sei_after_type_128_message(True), VideoCodec.H264) == want
+    assert extract_misp_timestamp(_sei_after_type_128_message(False), VideoCodec.H265) == want
+
+
+def test_light_slice_header_refuses_an_impossible_nal_unit_type():
+    """nal_unit_type is u(5) in H.264 and H.266 and u(6) in H.265."""
+    from tstrans.codec import (
+        parse_h264_slice_header_light,
+        parse_h265_slice_header_light,
+        parse_h266_slice_header_light,
+    )
+    from tstrans.exceptions import CodecError, CodecErrorKind
+
+    slice_ = bytes([0x88, 0x80, 0x00, 0x00])
+    cases = [
+        (parse_h264_slice_header_light, range(32, 256), 31),
+        (parse_h265_slice_header_light, range(64, 256), 63),
+        (parse_h266_slice_header_light, range(32, 256), 31),
+    ]
+    for parse, refused, highest in cases:
+        for nal_unit_type in refused:
+            with pytest.raises(CodecError) as exc_info:
+                parse(slice_, None, nal_unit_type)
+            assert exc_info.value.kind is CodecErrorKind.RESERVED_VALUE
+        assert parse(slice_, None, highest) is not None

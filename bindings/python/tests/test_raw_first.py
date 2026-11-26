@@ -704,3 +704,12 @@ def test_subtitle_event_demuxer_path_lazy():
             found = True
             break
     assert found, "expected at least one DemuxEvent.Subtitle in the synthetic TS"
+
+
+def test_split_units_excludes_trailing_zero_8bits():
+    # The zero bytes after a NAL unit (before a 4-byte start code, and at the
+    # end of the buffer) are Annex B trailing_zero_8bits, not NAL bytes.
+    au = b"\x00\x00\x00\x01\x67\xaa\x00\x00\x00\x00\x01\x65\xbb\x00\x00"
+    units, issues = codec.split_units(au, VideoCodec.H264)
+    assert issues == []
+    assert [bytes(u.payload) for u in units] == [b"\xaa", b"\xbb"]
