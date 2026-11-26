@@ -204,7 +204,9 @@ pub(crate) struct TagSpec {
 }
 
 impl TagSpec {
-    /// The `Option<f64>` view of a ranged or IMAPB row's field.
+    /// The `Option<f64>` view of a ranged or IMAPB row's field. Tests only:
+    /// the encoder decides through `encode::resolve`.
+    #[cfg(test)]
     pub(crate) fn get_f64(&self, r: &UasDatalinkLs) -> Option<f64> {
         match self.get?(r)? {
             FieldValue::F64(v) => Some(v),

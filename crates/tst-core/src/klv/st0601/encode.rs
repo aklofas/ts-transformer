@@ -10,6 +10,7 @@ use super::mapping::encode_fixed_range;
 use super::model::{EncodeConfig, OutOfRangePolicy, UasDatalinkLs};
 use super::packs;
 use super::tags::{Encoding, FieldValue, LinearRange, TAGS, TagSpec, lookup as lookup_tag};
+use crate::klv::imapb::ImapbSpecial;
 
 /// Encode a UAS Datalink Local Set into the caller-provided buffer per
 /// MISB ST 0601. Returns the number of bytes written.
@@ -197,18 +198,11 @@ pub fn encoded_len_with(record: &UasDatalinkLs, opts: &EncodeConfig) -> usize {
     each_typed_field(record, opts, |tag, value_len| {
         body_len += ber_oid_len(tag as u32) + ber_len(value_len) + value_len;
     });
-    // Sentinel tags: each tag in `sentinel_tags` whose typed field is None
-    // re-emits INT_MIN bytes. Value wins: a populated field is already
-    // counted by `each_typed_field` above.
-    for &st in &record.sentinel_tags {
-        body_len += sentinel_field_len(record, st);
-    }
-    // IMAPB specials: each (tag, special) in `imapb_specials` whose typed
-    // field is None re-emits the special's bytes. Value wins: a populated
-    // field is already counted by `each_typed_field` above.
-    for &(tag, _) in &record.imapb_specials {
-        body_len += imapb_special_field_len(record, tag);
-    }
+    // The replayed signals, as `write_replayed_signals` writes them.
+    each_replayed_signal(record, |spec, signal| {
+        let vlen = signal_len(spec, signal);
+        body_len += ber_oid_len(u32::from(spec.id)) + ber_len(vlen) + vlen;
+    });
     for f in &record.unknown {
         body_len += ber_oid_len(f.tag) + ber_len(f.value.len()) + f.value.len();
     }
@@ -216,48 +210,201 @@ pub fn encoded_len_with(record: &UasDatalinkLs, opts: &EncodeConfig) -> usize {
     16 + ber_len(body_len_with_checksum) + body_len_with_checksum
 }
 
-/// Return the TLV byte size that a sentinel entry for `tag` contributes, or
-/// 0 if the tag is not a signed ranged field, is unrecognized, or its typed
-/// field is already populated (value wins over the sentinel).
-fn sentinel_field_len(record: &UasDatalinkLs, tag: u32) -> usize {
-    let Ok(tag_u8) = u8::try_from(tag) else {
-        return 0;
-    };
-    let Some(spec) = lookup_tag(tag_u8) else {
-        return 0;
-    };
-    let Some(ref range) = spec.range else {
-        return 0;
-    };
-    if !range.signed {
-        return 0;
-    }
-    // Value wins: if the typed field is populated, it is already counted.
-    if spec.get_f64(record).is_some() {
-        return 0;
-    }
-    let vlen = range.byte_length;
-    ber_oid_len(tag) + ber_len(vlen) + vlen
+/// Where an item's bytes come from: its typed field, or a signal the
+/// record replays for it from `sentinel_tags` or `imapb_specials`.
+#[derive(Debug, Clone, PartialEq)]
+pub(super) enum ItemSource {
+    /// The typed field, written as its value.
+    Value(FieldValue),
+    /// The row's INT_MIN sentinel.
+    Sentinel,
+    /// An ST 1201 special value.
+    Special(ImapbSpecial),
 }
 
-/// Return the TLV byte size that an IMAPB special entry for `tag`
-/// contributes, or 0 if the tag is not IMAPB-encoded, is unrecognized, or
-/// its typed field is already populated (value wins over the special).
-/// Sibling of `sentinel_field_len` for the IMAPB fields.
-fn imapb_special_field_len(record: &UasDatalinkLs, tag: u32) -> usize {
-    let Ok(tag_u8) = u8::try_from(tag) else {
-        return 0;
-    };
-    let Some(spec) = lookup_tag(tag_u8) else {
-        return 0;
-    };
-    let Encoding::Imapb { default_len, .. } = spec.encoding else {
-        return 0;
-    };
-    if spec.get_f64(record).is_some() {
-        return 0;
+/// A replayed signal: the row's sentinel or one IMAP special.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(super) enum Signal {
+    Sentinel,
+    Special(ImapbSpecial),
+}
+
+/// Which bytes the item `spec` gets from `record`: the one rule sizing,
+/// writing and every other writer of ST 0601 items follow.
+///
+/// A populated typed field is written as its value ([`written_value`]).
+/// An unset one replays the record's entry of the row's kind, if it has
+/// one: the INT_MIN sentinel for a signed linear row listed in
+/// `sentinel_tags`, the LAST special listed for an IMAPB row in
+/// `imapb_specials`. An entry of another kind (a special for a linear row,
+/// a sentinel for an IMAPB or unsigned row, either for a pack row or an
+/// unknown tag) is never written.
+pub(super) fn resolve(record: &UasDatalinkLs, spec: &TagSpec) -> Option<ItemSource> {
+    if let Some(v) = written_value(record, spec) {
+        return Some(ItemSource::Value(v));
     }
-    ber_oid_len(tag) + ber_len(default_len) + default_len
+    let tag = u32::from(spec.id);
+    match spec.encoding {
+        Encoding::Imapb { .. } => record
+            .imapb_specials
+            .iter()
+            .rev()
+            .find(|e| e.0 == tag)
+            .map(|&(_, special)| ItemSource::Special(special)),
+        _ if spec.range.as_ref().is_some_and(|r| r.signed) => record
+            .sentinel_tags
+            .contains(&tag)
+            .then_some(ItemSource::Sentinel),
+        _ => None,
+    }
+}
+
+/// The value [`resolve`] writes for a scalar row, without looking at the
+/// signal lists: the typed field when it is populated. The per-row path of
+/// sizing and writing calls this, and the signal lists only for an entry.
+pub(super) fn written_value(record: &UasDatalinkLs, spec: &TagSpec) -> Option<FieldValue> {
+    spec.get.and_then(|get| get(record))
+}
+
+/// `true` when [`resolve`] writes a sentinel or an IMAP special for the
+/// item `tag`: the item is on the wire, sent as no value.
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "MISMMS presence and the composite views call it next"
+    )
+)]
+pub(crate) fn is_signalled(record: &UasDatalinkLs, tag: u8) -> bool {
+    lookup_tag(tag).is_some_and(|spec| {
+        matches!(
+            resolve(record, spec),
+            Some(ItemSource::Sentinel | ItemSource::Special(_))
+        )
+    })
+}
+
+/// The INT_MIN sentinel of a signed linear row, at the row's width.
+pub(super) fn sentinel_value_bytes(spec: &TagSpec) -> Vec<u8> {
+    let width = linear_range(spec).byte_length;
+    let mut bytes = vec![0u8; width];
+    bytes[0] = 0x80;
+    bytes
+}
+
+/// The special's bytes for an IMAPB row at the shortest length, from the
+/// row's default length up to its maximum, that holds the special's
+/// payload.
+///
+/// # Errors
+/// [`KlvEncodeError::OutOfRange`] with the row's tag when no length of the
+/// row holds the payload.
+pub(super) fn imapb_special_value_bytes(
+    spec: &TagSpec,
+    special: ImapbSpecial,
+) -> Result<Vec<u8>, KlvEncodeError> {
+    let Encoding::Imapb {
+        default_len,
+        max_len,
+        ..
+    } = spec.encoding
+    else {
+        unreachable!("only an IMAPB row has IMAP specials")
+    };
+    for len in default_len..max_len {
+        let mut buf = vec![0u8; len];
+        if crate::klv::imapb::encode_imapb_special(special, len, &mut buf).is_ok() {
+            return Ok(buf);
+        }
+    }
+    let mut buf = vec![0u8; max_len];
+    crate::klv::imapb::encode_imapb_special(special, max_len, &mut buf).map_err(|e| match e {
+        KlvEncodeError::OutOfRange {
+            value,
+            min,
+            max,
+            hint,
+            ..
+        } => KlvEncodeError::OutOfRange {
+            tag: u32::from(spec.id),
+            value,
+            min,
+            max,
+            hint,
+        },
+        e => e,
+    })?;
+    Ok(buf)
+}
+
+/// The value length of a replayed signal, as [`signal_bytes`] writes it; a
+/// special no length holds is sized at the row's default and fails when
+/// written.
+fn signal_len(spec: &TagSpec, signal: Signal) -> usize {
+    match signal {
+        Signal::Sentinel => linear_range(spec).byte_length,
+        Signal::Special(special) => match imapb_special_value_bytes(spec, special) {
+            Ok(bytes) => bytes.len(),
+            Err(_) => match spec.encoding {
+                Encoding::Imapb { default_len, .. } => default_len,
+                _ => unreachable!("only an IMAPB row has IMAP specials"),
+            },
+        },
+    }
+}
+
+/// The value bytes of a replayed signal.
+fn signal_bytes(spec: &TagSpec, signal: Signal) -> Result<Vec<u8>, KlvEncodeError> {
+    match signal {
+        Signal::Sentinel => Ok(sentinel_value_bytes(spec)),
+        Signal::Special(special) => imapb_special_value_bytes(spec, special),
+    }
+}
+
+/// Visit every signal the record replays, once per tag, in the order the
+/// encoder writes them: the sentinels in `sentinel_tags` order, then the
+/// specials in `imapb_specials` order, each at its tag's LAST entry (the
+/// one a decode of a set that carried the tag twice keeps). An entry
+/// [`resolve`] does not replay (its field holds a value that wins, or the
+/// entry is of the wrong kind for its row) is skipped.
+fn each_replayed_signal(record: &UasDatalinkLs, mut visit: impl FnMut(&TagSpec, Signal)) {
+    for tag in last_per_tag(&record.sentinel_tags, |&t| t) {
+        if let Some(spec) = u8::try_from(tag).ok().and_then(lookup_tag)
+            && resolve(record, spec) == Some(ItemSource::Sentinel)
+        {
+            visit(spec, Signal::Sentinel);
+        }
+    }
+    for (tag, _) in last_per_tag(&record.imapb_specials, |e| e.0) {
+        if let Some(spec) = u8::try_from(tag).ok().and_then(lookup_tag)
+            && let Some(ItemSource::Special(special)) = resolve(record, spec)
+        {
+            visit(spec, Signal::Special(special));
+        }
+    }
+}
+
+/// The entries of `entries` that are the last for their tag, in list
+/// order. A tag above 255 names no typed row, so it is left out. Linear in
+/// the list: one pass from the end with a bit per tag.
+fn last_per_tag<T: Copy>(entries: &[T], tag_of: impl Fn(&T) -> u32) -> Vec<T> {
+    if entries.len() < 2 {
+        return entries.to_vec();
+    }
+    let mut seen = [0u64; 4];
+    let mut kept: Vec<T> = Vec::new();
+    for e in entries.iter().rev() {
+        let Ok(t) = u8::try_from(tag_of(e)) else {
+            continue;
+        };
+        let (word, bit) = (usize::from(t >> 6), 1u64 << (t & 63));
+        if seen[word] & bit == 0 {
+            seen[word] |= bit;
+            kept.push(*e);
+        }
+    }
+    kept.reverse();
+    kept
 }
 
 /// Visit each typed field that will be emitted, calling `visit(tag_id, value_len)`.
@@ -279,8 +426,10 @@ pub(super) fn each_typed_field<F: FnMut(u8, usize)>(
             pack_len(record, spec.id)
         } else {
             // The checksum row has no accessor; the caller appends it.
-            let Some(get) = spec.get else { continue };
-            match get(record) {
+            if spec.get.is_none() {
+                continue;
+            }
+            match written_value(record, spec) {
                 Some(v) => Some(scalar_len(spec, &v)),
                 // Tag 65 is auto-emitted when the record leaves it unset.
                 None if spec.id == 65 => Some(1),
@@ -376,7 +525,9 @@ fn encode_scalar(
             _ => wrong_variant(spec),
         },
         Encoding::RawBytes => match v {
-            FieldValue::Bytes(b) if spec.id == 94 && b.len() > super::decode::MIIS_CORE_ID_MAX_LEN => {
+            FieldValue::Bytes(b)
+                if spec.id == 94 && b.len() > super::decode::MIIS_CORE_ID_MAX_LEN =>
+            {
                 return Err(KlvEncodeError::ValueTooLong {
                     tag: 94,
                     max: super::decode::MIIS_CORE_ID_MAX_LEN,
@@ -593,11 +744,7 @@ pub(super) fn encode_tag_value(
     if spec.encoding == Encoding::Pack {
         return pack_value(record, spec.id);
     }
-    // The checksum row has no accessor; the caller appends it.
-    let Some(get) = spec.get else {
-        return Ok(None);
-    };
-    match get(record) {
+    match written_value(record, spec) {
         Some(v) => encode_scalar(spec, &v, policy).map(Some),
         None if spec.id == 65 => Ok(version_fallback.map(|v| vec![v])),
         None => Ok(None),
@@ -642,70 +789,23 @@ fn write_typed_fields(
         packs::emit_control_command(cmd, &mut buf)?;
         emit_ber_oid_tlv(115, &buf, body)?;
     }
-    write_sentinel_tags(record, body)?;
-    write_imapb_specials(record, body)?;
-    Ok(())
+    write_replayed_signals(record, body)
 }
 
-/// Emit INT_MIN bytes for each tag in `record.sentinel_tags` whose typed
-/// field is currently `None`. If the typed field is `Some(v)`, `encode_tag_value`
-/// has already emitted it above (value wins over the sentinel entry).
-fn write_sentinel_tags(record: &UasDatalinkLs, body: &mut Vec<u8>) -> Result<(), KlvEncodeError> {
-    for &st in &record.sentinel_tags {
-        let Ok(tag_u8) = u8::try_from(st) else {
-            continue;
-        };
-        let Some(spec) = lookup_tag(tag_u8) else {
-            continue;
-        };
-        let Some(ref range) = spec.range else {
-            continue;
-        };
-        if !range.signed {
-            continue;
+/// Write each signal [`each_replayed_signal`] visits, after the typed
+/// fields: one TLV per tag, at the shortest width that holds it.
+fn write_replayed_signals(
+    record: &UasDatalinkLs,
+    body: &mut Vec<u8>,
+) -> Result<(), KlvEncodeError> {
+    let mut result = Ok(());
+    each_replayed_signal(record, |spec, signal| {
+        if result.is_ok() {
+            result = signal_bytes(spec, signal)
+                .and_then(|bytes| emit_ber_oid_tlv(u32::from(spec.id), &bytes, body));
         }
-        // Value wins: only re-emit the sentinel when the typed field is absent.
-        if spec.get_f64(record).is_some() {
-            continue;
-        }
-        // INT_MIN for this field width: 2-byte → 0x8000, 4-byte → 0x80000000.
-        let int_min_value: i64 = match range.byte_length {
-            2 => i64::from(i16::MIN),
-            4 => i64::from(i32::MIN),
-            _ => continue,
-        };
-        let all_bytes = int_min_value.to_be_bytes();
-        let sentinel_bytes = &all_bytes[8 - range.byte_length..];
-        emit_ber_oid_tlv(st, sentinel_bytes, body)?;
-    }
-    Ok(())
-}
-
-/// Emit the ST 1201.5 special-value bytes for each `(tag, special)` in
-/// `record.imapb_specials` whose typed field is currently `None`. If the
-/// typed field is `Some(v)`, `encode_tag_value` has already emitted it
-/// above (value wins over the special entry) — mirror of
-/// `write_sentinel_tags` for the IMAPB fields.
-fn write_imapb_specials(record: &UasDatalinkLs, body: &mut Vec<u8>) -> Result<(), KlvEncodeError> {
-    for &(tag, special) in &record.imapb_specials {
-        let Ok(tag_u8) = u8::try_from(tag) else {
-            continue;
-        };
-        let Some(spec) = lookup_tag(tag_u8) else {
-            continue;
-        };
-        let Encoding::Imapb { default_len, .. } = spec.encoding else {
-            continue;
-        };
-        // Value wins: only re-emit the special when the typed field is absent.
-        if spec.get_f64(record).is_some() {
-            continue;
-        }
-        let mut buf = vec![0u8; default_len];
-        crate::klv::imapb::encode_imapb_special(special, default_len, &mut buf)?;
-        emit_ber_oid_tlv(tag, &buf, body)?;
-    }
-    Ok(())
+    });
+    result
 }
 
 fn write_unknown_fields(record: &UasDatalinkLs, body: &mut Vec<u8>) -> Result<(), KlvEncodeError> {

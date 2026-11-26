@@ -4179,7 +4179,10 @@ fn item_122_coding_method_is_at_most_eight_bytes_and_not_empty() {
     // bytes, followed here by an overflight country code "USA".
     let usa = [0x03, b'U', b'S', b'A'];
     let method = |field: &[u8]| decode(&wrap_st0601(&tlv(122, &[field, &usa].concat()))).unwrap();
-    for (field, got) in [(vec![0x00], 0usize), ([&[0x09, 0x01][..], &[0; 7], &[0x02]].concat(), 9)] {
+    for (field, got) in [
+        (vec![0x00], 0usize),
+        ([&[0x09, 0x01][..], &[0; 7], &[0x02]].concat(), 9),
+    ] {
         let rec = method(&field);
         assert_eq!(rec.country_codes, None, "{got}-byte method");
         assert_eq!(
@@ -4189,4 +4192,254 @@ fn item_122_coding_method_is_at_most_eight_bytes_and_not_empty() {
     }
     let rec = method(&[0x01, 0x0E]);
     assert_eq!(rec.country_codes.map(|c| c.coding_method), Some(14));
+}
+
+// ---------------------------------------------------------------------------
+// Sentinels and IMAP specials: one TLV per tag, at a width that holds it
+// ---------------------------------------------------------------------------
+
+fn timestamped() -> UasDatalinkLs {
+    UasDatalinkLs {
+        timestamp_us: Some(1),
+        ..Default::default()
+    }
+}
+
+/// The TLVs of an encoded set's body with tag `tag`, in wire order.
+fn items_with_tag(encoded: &[u8], tag: u32) -> Vec<Vec<u8>> {
+    let (len, body) = crate::klv::length::read_ber(&encoded[16..]).unwrap();
+    crate::klv::pack::Iter::local_set(&body[..len])
+        .map(Result::unwrap)
+        .filter(|f| f.tag == tag)
+        .map(|f| f.value.to_vec())
+        .collect()
+}
+
+#[test]
+fn duplicate_sentinel_entries_emit_one_tlv() {
+    let rec = UasDatalinkLs {
+        sentinel_tags: vec![6, 6],
+        ..timestamped()
+    };
+    let out = encode_to_vec(&rec).unwrap();
+    assert_eq!(items_with_tag(&out, 6), [vec![0x80, 0x00]]);
+    assert_eq!(encoded_len(&rec), 38);
+    assert_eq!(out.len(), 38);
+    assert!(decode_strict_compliance(&out).is_ok());
+}
+
+#[test]
+fn duplicate_imapb_special_entries_emit_one_tlv() {
+    use crate::klv::imapb::ImapbSpecial::{AboveMax, BelowMin};
+    // The last entry per tag is the one written, as a decode of a set that
+    // carried the tag twice keeps its last occurrence.
+    for (entries, want) in [
+        (vec![(104, AboveMax), (104, AboveMax)], [0xE1, 0, 0]),
+        (vec![(104, BelowMin), (104, AboveMax)], [0xE1, 0, 0]),
+        (vec![(104, AboveMax), (104, BelowMin)], [0xE0, 0, 0]),
+    ] {
+        let rec = UasDatalinkLs {
+            imapb_specials: entries.clone(),
+            ..timestamped()
+        };
+        let out = encode_to_vec(&rec).unwrap();
+        assert_eq!(items_with_tag(&out, 104), [want.to_vec()], "{entries:?}");
+        assert_eq!(encoded_len(&rec), out.len());
+        assert!(decode_strict_compliance(&out).is_ok());
+    }
+}
+
+#[test]
+fn wide_imapb_special_replays_at_its_own_width() {
+    // A user-defined signal of 2^19 needs four bytes: three hold 19 payload
+    // bits, one short.
+    let source = wrap_st0601(
+        &[
+            &TIMESTAMP_ITEM[..],
+            &[0x41, 0x01, 0x13],
+            &[0x68, 0x04, 0xC0, 0x08, 0x00, 0x00],
+        ]
+        .concat(),
+    );
+    let rec = decode(&source).unwrap();
+    assert_eq!(
+        rec.imapb_specials,
+        [(
+            104,
+            crate::klv::imapb::ImapbSpecial::UserDefined { signal: 1 << 19 }
+        )]
+    );
+    assert_eq!(encode_to_vec(&rec).unwrap(), source);
+    assert_eq!(encoded_len(&rec), source.len());
+}
+
+#[test]
+fn typed_value_wins_over_redundant_special() {
+    // Item 104's value 100 m is not a range end: the value is written and
+    // the entry is not.
+    let mut rec = UasDatalinkLs {
+        imapb_specials: vec![(104, crate::klv::imapb::ImapbSpecial::BelowMin)],
+        ..timestamped()
+    };
+    rec.sensor_ellipsoid_height_extended_m = Some(100.0);
+    let out = encode_to_vec(&rec).unwrap();
+    let written = items_with_tag(&out, 104);
+    assert_eq!(written.len(), 1);
+    assert_ne!(written[0][0], 0xE0);
+    let back = decode(&out).unwrap();
+    assert!((back.sensor_ellipsoid_height_extended_m.unwrap() - 100.0).abs() < 1.0);
+    assert!(back.imapb_specials.is_empty());
+}
+
+#[test]
+fn encoded_len_equals_written_length_for_every_replay_class() {
+    use crate::klv::imapb::ImapbSpecial as Sp;
+    let specials = [
+        Sp::BelowMin,
+        Sp::AboveMax,
+        Sp::PositiveInfinity,
+        Sp::NegativeInfinity,
+        Sp::PositiveQuietNaN { nan_id: 1 },
+        Sp::NegativeQuietNaN { nan_id: 0 },
+        Sp::PositiveSignalingNaN { signal: 1 },
+        Sp::NegativeSignalingNaN { signal: 2 },
+        // Payloads that need three, four and eight bytes.
+        Sp::UserDefined { signal: 5 },
+        Sp::UserDefined { signal: 1 << 19 },
+        Sp::UserDefined { signal: 1 << 58 },
+    ];
+    // (class, record, true when some width of the row holds every entry)
+    let mut classes: Vec<(String, UasDatalinkLs, bool)> = Vec::new();
+    let with = |f: &dyn Fn(&mut UasDatalinkLs)| {
+        let mut r = timestamped();
+        f(&mut r);
+        r
+    };
+    for spec in TAGS
+        .iter()
+        .filter(|s| matches!(s.encoding, Encoding::Imapb { .. }))
+    {
+        let Encoding::Imapb {
+            min, max, max_len, ..
+        } = spec.encoding
+        else {
+            unreachable!()
+        };
+        let tag = u32::from(spec.id);
+        let mid = min + (max - min) / 2.0;
+        classes.push((
+            format!("{tag} value"),
+            with(&|r| spec.set_f64(r, mid)),
+            true,
+        ));
+        for s in specials {
+            let fits = !matches!(s, Sp::UserDefined { signal } if signal >= 1 << (8 * max_len - 5));
+            classes.push((
+                format!("{tag} {s:?}"),
+                with(&|r| r.imapb_specials.push((tag, s))),
+                fits,
+            ));
+        }
+        classes.push((
+            format!("{tag} min + BelowMin"),
+            with(&|r| {
+                spec.set_f64(r, min);
+                r.imapb_specials.push((tag, Sp::BelowMin));
+            }),
+            true,
+        ));
+        classes.push((
+            format!("{tag} max + AboveMax"),
+            with(&|r| {
+                spec.set_f64(r, max);
+                r.imapb_specials.push((tag, Sp::AboveMax));
+            }),
+            true,
+        ));
+        classes.push((
+            format!("{tag} mid + BelowMin"),
+            with(&|r| {
+                spec.set_f64(r, mid);
+                r.imapb_specials.push((tag, Sp::BelowMin));
+            }),
+            true,
+        ));
+        classes.push((
+            format!("{tag} two entries"),
+            with(&|r| {
+                r.imapb_specials
+                    .extend([(tag, Sp::BelowMin), (tag, Sp::AboveMax)])
+            }),
+            true,
+        ));
+        classes.push((
+            format!("{tag} a sentinel on an IMAPB row"),
+            with(&|r| r.sentinel_tags.push(tag)),
+            true,
+        ));
+    }
+    // A signed linear row (Item 13), an unknown tag and a pack tag.
+    for (class, r) in [
+        ("13 sentinel", with(&|r| r.sentinel_tags.push(13))),
+        (
+            "13 value + sentinel",
+            with(&|r| {
+                r.sensor_lat_deg = Some(10.0);
+                r.sentinel_tags.push(13);
+            }),
+        ),
+        (
+            "13 sentinel twice",
+            with(&|r| r.sentinel_tags.extend([13, 13])),
+        ),
+        (
+            "13 an IMAP special on a linear row",
+            with(&|r| r.imapb_specials.push((13, Sp::BelowMin))),
+        ),
+        ("an unknown tag", with(&|r| r.sentinel_tags.push(200))),
+        (
+            "a tag above 255",
+            with(&|r| r.imapb_specials.push((300, Sp::BelowMin))),
+        ),
+        ("a pack tag", with(&|r| r.sentinel_tags.push(81))),
+    ] {
+        classes.push((class.to_owned(), r, true));
+    }
+    for (class, rec, fits) in &classes {
+        match encode_to_vec(rec) {
+            Ok(out) => {
+                assert!(fits, "{class}: no width holds the entry, yet it encoded");
+                assert_eq!(encoded_len(rec), out.len(), "{class}");
+            }
+            Err(KlvEncodeError::OutOfRange { tag, .. }) if !fits => {
+                assert_eq!(
+                    Some(tag),
+                    rec.imapb_specials.first().map(|e| e.0),
+                    "{class}"
+                );
+            }
+            Err(e) => panic!("{class}: {e:?}"),
+        }
+    }
+}
+
+#[test]
+fn is_signalled_follows_what_the_encoder_writes() {
+    use super::encode::is_signalled;
+    use crate::klv::imapb::ImapbSpecial::BelowMin;
+    let mut rec = UasDatalinkLs {
+        sentinel_tags: vec![13, 23],
+        imapb_specials: vec![(104, BelowMin), (13, BelowMin)],
+        ..timestamped()
+    };
+    rec.frame_center_lat_deg = Some(1.0);
+    // Item 13: a sentinel for a signed linear row, field unset.
+    assert!(is_signalled(&rec, 13));
+    // Item 23: its value wins over the redundant sentinel.
+    assert!(!is_signalled(&rec, 23));
+    // Item 104: an IMAP special for an IMAPB row, field unset.
+    assert!(is_signalled(&rec, 104));
+    // Item 15 has no entry; Item 2 is not a signalling row.
+    assert!(!is_signalled(&rec, 15));
+    assert!(!is_signalled(&rec, 2));
 }
