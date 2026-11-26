@@ -138,8 +138,11 @@ subtitle, or unknown) tagged by `StreamId` and `SamplePayload` variant.
 (`MetadataKind::KlvAsync`) — tagged with the KLV PTS and unwrapped
 payload. In the Python binding, `DemuxEvent.Klv` is a same-object
 deprecated alias for `DemuxEvent.Metadata` (to be removed at 1.0);
-in Rust the variant is `Metadata` only. `DemuxEvent::Discontinuity` signals a CC
-jump or PES overflow on a specific PID. `DemuxEvent::NonConformant`
+in Rust the variant is `Metadata` only. `DemuxEvent::Discontinuity` signals,
+on a specific PID, a continuity-counter jump (`ContinuityJump`), a partial
+PES dropped at the per-PID or the total reassembly cap (`PesOversize`,
+`PesTotalOversize`), or a set `discontinuity_indicator` (`AdaptationFieldFlag`,
+also on a PID that carries only a program's PCR). `DemuxEvent::NonConformant`
 surfaces a spec violation that the demuxer tolerated in lenient mode.
 `DemuxEvent::ReconnectDiscontinuity` is injected only by
 `ManagedDemuxReceiver` after a transport reconnect to signal a hard
@@ -439,7 +442,8 @@ kept for non-exhaustive-enum binary-compatibility parity only.)
 PMT PID in the PAT (H.222.0 §2.4.4.8). The demuxer routes the shared
 PID's sections to each program by `program_number`, so one program's
 version change does not hide another's. A PAT is treated as new when
-its transport stream id, version or CRC differs.
+its transport stream id, its version or its program list (the entries of
+all its sections together) differs from the applied PAT's.
 
 **A PMT is followed by its content.** A PMT section is a repeat only when
 its `version_number` and its CRC_32 both equal those of the PMT the
