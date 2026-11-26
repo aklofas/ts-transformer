@@ -89,4 +89,12 @@ mod tests {
         // sum = 0x4663
         assert_eq!(checksum_running_sum_16(&ul), 0x4663);
     }
+
+    /// ST 0601.19 §8.1.1.2, "Sample Checksum Data": the 64 bits
+    /// `060E 2B34 0200 81BB` sum to the final checksum `B4FD`.
+    #[test]
+    fn running_sum_matches_spec_sample() {
+        let sample = [0x06, 0x0E, 0x2B, 0x34, 0x02, 0x00, 0x81, 0xBB];
+        assert_eq!(checksum_running_sum_16(&sample), 0xB4FD);
+    }
 }

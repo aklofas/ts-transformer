@@ -30,7 +30,7 @@ fn default_uses_st0601_ul() {
 }
 
 #[test]
-fn sensor_position_requires_all_three() {
+fn sensor_position_needs_a_latitude_a_longitude_and_a_height() {
     let mut r = UasDatalinkLs::default();
     assert!(r.sensor_position().is_none());
     r.sensor_lat_deg = Some(45.0);
@@ -773,6 +773,163 @@ fn every_typed_tag_round_trips() {
             spec.id,
             spec.name,
             back.field_errors
+        );
+    }
+}
+
+/// The 14 IMAPB items as ST 0601.19 §8 defines them: tag, minimum,
+/// maximum, and the length of the item's example, which the encoder
+/// writes (each item's Length is "Variable"). Kept apart from `TAGS`, so
+/// that a row there that differs from the standard fails the tests below.
+const ST0601_IMAPB_ITEMS: [(u8, f64, f64, usize); 14] = [
+    (96, 0.0, 1_500_000.0, 3),  // §8.96 Target Width Extended
+    (103, -900.0, 40_000.0, 3), // §8.103 Density Altitude Extended
+    (104, -900.0, 40_000.0, 3), // §8.104 Sensor Ellipsoid Height Extended
+    (105, -900.0, 40_000.0, 3), // §8.105 Alternate Platform Ellipsoid Height Extended
+    (109, 0.0, 21_000.0, 3),    // §8.109 Range To Recovery Location
+    (112, 0.0, 360.0, 2),       // §8.112 Platform Course Angle
+    (113, -900.0, 40_000.0, 3), // §8.113 Altitude AGL
+    (114, -900.0, 40_000.0, 3), // §8.114 Radar Altimeter
+    (117, -1000.0, 1000.0, 2),  // §8.117 Sensor Azimuth Rate
+    (118, -1000.0, 1000.0, 3),  // §8.118 Sensor Elevation Rate
+    (119, -1000.0, 1000.0, 2),  // §8.119 Sensor Roll Rate
+    (120, 0.0, 100.0, 2),       // §8.120 On-board MI Storage Percent Full
+    (132, 1.0, 99_999.0, 3),    // §8.132 Transmission Frequency
+    (134, 0.0, 100.0, 2),       // §8.134 Zoom Percentage
+];
+
+/// ST 1201.5 §7.1.2 for IMAPB(a, b, L): the reverse scale sR (one step)
+/// and Zoffset.
+fn st1201_step_and_zoffset(a: f64, b: f64, len: usize) -> (f64, f64) {
+    let b_pow = libm::ceil(libm::log2(b - a));
+    let d_pow = (8 * len - 1) as f64;
+    let s_f = libm::pow(2.0, d_pow - b_pow);
+    let z_offset = if a < 0.0 && b > 0.0 {
+        s_f * a - libm::floor(s_f * a)
+    } else {
+        0.0
+    };
+    (libm::pow(2.0, b_pow - d_pow), z_offset)
+}
+
+/// ST 1201.5 §7.2.2 step 3 for the normal value `bytes`: x = sR * (y -
+/// Zoffset) + a.
+fn st1201_reverse(a: f64, b: f64, bytes: &[u8]) -> f64 {
+    let (s_r, z_offset) = st1201_step_and_zoffset(a, b, bytes.len());
+    let y = bytes
+        .iter()
+        .fold(0u64, |y, &byte| (y << 8) | u64::from(byte));
+    s_r * (y as f64 - z_offset) + a
+}
+
+/// The floating-point slack of a value near `a`, `b`.
+fn float_slack(a: f64, b: f64) -> f64 {
+    4.0 * f64::EPSILON * libm::fmax(libm::fmax(libm::fabs(a), libm::fabs(b)), b - a)
+}
+
+proptest::proptest! {
+    /// Every IMAPB item with a value anywhere in its range: the encoder
+    /// writes the item at the standard's length, those bytes map back
+    /// (ST 1201.5 §7.2.2) to at most one step below the value (§7.2.1
+    /// truncates), and the decoder reads what that reverse mapping gives.
+    #[test]
+    fn every_imapb_row_round_trips_within_its_st1201_step(
+        which in 0usize..14,
+        t in 0.0f64..=1.0,
+    ) {
+        let (tag, min, max, len) = ST0601_IMAPB_ITEMS[which];
+        let x = min + t * (max - min);
+        let spec = super::tags::lookup(tag).expect("an IMAPB row");
+        let mut record = UasDatalinkLs::default();
+        spec.set_f64(&mut record, x);
+        let encoded = encode_to_vec(&record).unwrap();
+        let value = tlv_value(&encoded, tag).expect("the item is written");
+        proptest::prop_assert_eq!(value.len(), len, "tag {} length", tag);
+        let (step, _) = st1201_step_and_zoffset(min, max, len);
+        let slack = float_slack(min, max);
+        let mapped = st1201_reverse(min, max, &value);
+        proptest::prop_assert!(
+            mapped <= x + slack && x - mapped < step + slack,
+            "tag {}: {} written as {:02X?}, which maps to {}", tag, x, value, mapped
+        );
+        let got = spec.get_f64(&decode(&encoded).unwrap()).expect("decoded");
+        proptest::prop_assert!(
+            libm::fabs(got - mapped) <= slack,
+            "tag {}: read {}, the standard maps {:02X?} to {}", tag, got, value, mapped
+        );
+    }
+}
+
+/// Every IMAPB item writes its range's minimum as zeros and its maximum
+/// within one step, and refuses one step beyond either end: ST 1201.5
+/// §7.2.1 has no normal value outside [a, b], and the default policy
+/// refuses what it would signal.
+#[test]
+fn every_imapb_row_takes_its_range_ends_and_refuses_one_step_beyond() {
+    for (tag, min, max, len) in ST0601_IMAPB_ITEMS {
+        let spec = super::tags::lookup(tag).expect("an IMAPB row");
+        let (step, _) = st1201_step_and_zoffset(min, max, len);
+        for x in [min, max] {
+            let mut record = UasDatalinkLs::default();
+            spec.set_f64(&mut record, x);
+            let encoded = encode_to_vec(&record)
+                .unwrap_or_else(|e| panic!("tag {tag}: {x} is in range: {e:?}"));
+            let value = tlv_value(&encoded, tag).expect("the item is written");
+            assert_eq!(value.len(), len, "tag {tag}: {x}");
+            if x == min {
+                assert!(value.iter().all(|&b| b == 0), "tag {tag}: {value:02X?}");
+            }
+            let mapped = st1201_reverse(min, max, &value);
+            assert!(
+                x - mapped < step + float_slack(min, max),
+                "tag {tag}: {x} → {mapped}"
+            );
+        }
+        for x in [min - step, max + step] {
+            let mut record = UasDatalinkLs::default();
+            spec.set_f64(&mut record, x);
+            let refused = encode_to_vec(&record);
+            assert!(
+                matches!(refused, Err(KlvEncodeError::OutOfRange { tag: t, .. }) if t == u32::from(tag)),
+                "tag {tag}: {x} is out of range: {refused:?}"
+            );
+        }
+    }
+}
+
+/// Every IMAPB item sent in one byte reads as ST 1201.5 §7.2.2 maps that
+/// byte, for every normal value (the top two bits not both set) up to the
+/// range's maximum. For a range that straddles zero the bottom bucket
+/// (byte 0) maps below the minimum, by Zoffset steps: it reads as the
+/// minimum, and it is the only byte below it.
+#[test]
+fn every_imapb_row_reads_a_one_byte_item_as_st1201_maps_it() {
+    for (tag, min, max, _) in ST0601_IMAPB_ITEMS {
+        let spec = super::tags::lookup(tag).expect("an IMAPB row");
+        let slack = float_slack(min, max);
+        let mut below = 0;
+        for y in 0u8..0xC0 {
+            let mapped = st1201_reverse(min, max, &[y]);
+            if mapped > max {
+                continue;
+            }
+            let want = if mapped < min {
+                below += 1;
+                min
+            } else {
+                mapped
+            };
+            let ls = decode_with_single_tlv_ber_oid(u32::from(tag), &[y]);
+            let got = spec.get_f64(&ls);
+            assert!(
+                got.is_some_and(|got| libm::fabs(got - want) <= slack),
+                "tag {tag}, byte {y:02X}: read {got:?}, the standard maps it to {mapped}"
+            );
+        }
+        assert_eq!(
+            below,
+            usize::from(min < 0.0 && max > 0.0),
+            "tag {tag}: bytes below the minimum"
         );
     }
 }
@@ -3098,12 +3255,10 @@ fn pack_country_codes_truncation_cases() {
     assert_eq!(tlv_value(&re_encoded2, 122), Some(v2));
 }
 
-/// ST 0601.19 §8.128 worked example (transcribed from the cached spec
-/// PDF): one Wavelength Record, id=21 ("NNIR"), min/max raw-IMAPB bytes
-/// `0x000007D0`/`0x00000FA0` under IMAPB(0,1e9,4). Per the controller's
-/// note, assert the field equals OUR OWN standalone `decode_imapb` of
-/// those same raw bytes (cross-check), not the spec prose's "1000/2000
-/// nm" reading.
+/// ST 0601.19 §8.128's example: the Wavelength Record "21, 1000, 2000,
+/// NNIR" is `0D15 0000 07D0 0000 0FA0 4E4E 4952`. Min and max are
+/// IMAPB(0, 1e9, 4) (§8.128.1), whose step is 2^-1 nm (ST 1201.5 §7.1.2:
+/// bPow 30, dPow 31).
 #[test]
 fn pack_wavelengths_list_vector() {
     let v = hex("0D 15 0000 07D0 0000 0FA0 4E4E 4952");
@@ -3114,22 +3269,21 @@ fn pack_wavelengths_list_vector() {
     let w = &list[0];
     assert_eq!(w.id, 21);
     assert_eq!(w.name, "NNIR");
-
-    let imapb_params = crate::klv::imapb::ImapbParams {
-        min: 0.0,
-        max: 1e9,
-        length: 4,
-    };
-    let expect_field =
-        |bytes: &[u8]| match crate::klv::imapb::decode_imapb(&imapb_params, bytes).unwrap() {
-            crate::klv::imapb::DecodedImapb::Value(x) => x,
-            other => panic!("expected Value, got {other:?}"),
-        };
-    assert_eq!(w.min_nm, expect_field(&hex("000007D0")));
-    assert_eq!(w.max_nm, expect_field(&hex("00000FA0")));
+    assert!((w.min_nm - 1000.0).abs() <= 0.5, "min {}", w.min_nm);
+    assert!((w.max_nm - 2000.0).abs() <= 0.5, "max {}", w.max_nm);
 
     let re_encoded = encode_with_field(|r| r.wavelengths_list = Some(list.clone()));
-    assert_eq!(tlv_value(&re_encoded, 128), Some(v));
+    assert_eq!(tlv_value(&re_encoded, 128), Some(v.clone()));
+    // The example's values, not the decoded ones, give the same bytes.
+    let built = encode_with_field(|r| {
+        r.wavelengths_list = Some(vec![super::packs::WavelengthRecord {
+            id: 21,
+            min_nm: 1000.0,
+            max_nm: 2000.0,
+            name: "NNIR".to_string(),
+        }])
+    });
+    assert_eq!(tlv_value(&built, 128), Some(v));
 }
 
 /// ST 0601.19 §8.130 worked example (transcribed from the cached spec
@@ -3842,6 +3996,22 @@ fn verifying_decode_rejects_item_after_checksum() {
         verifying_errors(&buf),
         [tag1_not_last.clone(), tag1_not_last]
     );
+}
+
+/// An unknown item whose tag is wider than 32 bits is stepped over and
+/// dropped, but it is still an item: after the checksum it breaks ST
+/// 0601.8-11 as any other item does.
+#[test]
+fn a_wide_tag_item_after_the_checksum_is_an_item_after_it() {
+    let wide = [0x90, 0x80, 0x80, 0x80, 0x80, 0x00, 0x01, 0xAA];
+    let mut buf = st0601_set(&[&TIMESTAMP_ITEM[..], &[0x01, 0x02, 0, 0], &wide].concat());
+    put_checksum(&mut buf, 29);
+    let tag1_not_last = "Err(Tag1NotLast)".to_owned();
+    assert_eq!(
+        verifying_errors(&buf),
+        [tag1_not_last.clone(), tag1_not_last]
+    );
+    assert!(decode_strict_compliance(&buf).is_err());
 }
 
 #[test]

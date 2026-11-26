@@ -354,14 +354,11 @@ fn vtarget_pack_one_byte_unknown_tag_keeps_the_series() {
     }
 }
 
-/// BER-OID-encoded tag IDs ≤ 127 are byte-identical to raw single-byte tags.
-/// Every §10.2 typed pack tag fits in this range (highest is 107), so legacy
-/// wire bytes encode bit-for-bit unchanged. This regression-pins the
-/// backward-compat guarantee for the §10.2.2 typed dispatch tags (4 U8 tags
-/// spot-checked: 4 priority, 5 confidence, 7 percentage, 23 detection; plus the
-/// BER-OID Target ID = 7 leading byte).
+/// Every §10.2.2 pack tag is one byte (the highest is 107): four one-byte
+/// items (4 priority, 5 confidence, 7 percentage, 23 detection status)
+/// behind the one-byte BER-OID targetId 7.
 #[test]
-fn defined_pack_tags_byte_identical_pre_and_post_e5_followup() {
+fn defined_pack_tags_are_written_as_one_byte_tags() {
     let pack = VTargetPack {
         target_id: 7,
         priority: Some(2),
@@ -383,10 +380,94 @@ fn defined_pack_tags_byte_identical_pre_and_post_e5_followup() {
         0x07, 0x01, 0x3C, // Tag 7 percentage (0x3C = 60)
         0x17, 0x01, 0x01, // Tag 23 detection_status
     ];
-    assert_eq!(
-        bytes, expected,
-        "single-byte BER-OID emit drifted from pre-fix byte layout for typed tags"
+    assert_eq!(bytes, expected);
+}
+
+/// The example values of ST 0903.6 §10.2.2.1 to §10.2.2.17 give the
+/// example encodings printed there: targetId 1234 is the BER-OID `89 52`,
+/// each item is the tag, length and value of its example, and those bytes
+/// decode to the example values (the IMAPB items within one step of ST
+/// 1201.5 §7.1.2: 2^-17 degrees for IMAPB(-19.2, 19.2, 3), 1 m for
+/// IMAPB(-900, 19000, 2)).
+#[test]
+fn vtarget_pack_items_match_the_standards_examples() {
+    let pack = VTargetPack {
+        target_id: 1234,
+        centroid_pixel: Some(409_600),
+        bbox_top_left_pixel: Some(409_600),
+        bbox_bottom_right_pixel: Some(409_600),
+        priority: Some(27),
+        confidence_level: Some(80),
+        history: Some(2765),
+        percentage_of_target_pixels: Some(50),
+        target_color: Some([218, 165, 32]),
+        target_intensity: Some(13_140),
+        centroid_lat_offset: Some(10.0),
+        centroid_lon_offset: Some(12.0),
+        centroid_hae: Some(10_000.0),
+        bbox_top_left_lat_offset: Some(10.0),
+        bbox_top_left_lon_offset: Some(10.0),
+        bbox_bottom_right_lat_offset: Some(10.0),
+        bbox_bottom_right_lon_offset: Some(10.0),
+        ..Default::default()
+    };
+    let parts: &[&[u8]] = &[
+        &[0x89, 0x52],
+        &[0x01, 0x03, 0x06, 0x40, 0x00],
+        &[0x02, 0x03, 0x06, 0x40, 0x00],
+        &[0x03, 0x03, 0x06, 0x40, 0x00],
+        &[0x04, 0x01, 0x1B],
+        &[0x05, 0x01, 0x50],
+        &[0x06, 0x02, 0x0A, 0xCD],
+        &[0x07, 0x01, 0x32],
+        &[0x08, 0x03, 0xDA, 0xA5, 0x20],
+        &[0x09, 0x02, 0x33, 0x54],
+        &[0x0A, 0x03, 0x3A, 0x66, 0x67],
+        &[0x0B, 0x03, 0x3E, 0x66, 0x67],
+        &[0x0C, 0x02, 0x2A, 0x94],
+        &[0x0D, 0x03, 0x3A, 0x66, 0x67],
+        &[0x0E, 0x03, 0x3A, 0x66, 0x67],
+        &[0x0F, 0x03, 0x3A, 0x66, 0x67],
+        &[0x10, 0x03, 0x3A, 0x66, 0x67],
+    ];
+    let want = parts.concat();
+    let mut bytes = Vec::new();
+    write_pack(&pack, &mut bytes).unwrap();
+    assert_eq!(bytes, want);
+
+    let (decoded, n) = read_pack(&want).unwrap();
+    assert_eq!(n, want.len());
+    assert!(
+        decoded.field_errors.is_empty(),
+        "{:?}",
+        decoded.field_errors
     );
+    let offset_step = 1.0 / 131_072.0;
+    for (got, want) in [
+        (decoded.centroid_lat_offset, 10.0),
+        (decoded.centroid_lon_offset, 12.0),
+        (decoded.bbox_top_left_lat_offset, 10.0),
+        (decoded.bbox_top_left_lon_offset, 10.0),
+        (decoded.bbox_bottom_right_lat_offset, 10.0),
+        (decoded.bbox_bottom_right_lon_offset, 10.0),
+    ] {
+        assert!(
+            (got.unwrap() - want).abs() <= offset_step,
+            "{got:?} vs {want}"
+        );
+    }
+    assert!((decoded.centroid_hae.unwrap() - 10_000.0).abs() <= 1.0);
+    let floats_cleared = |p: VTargetPack| VTargetPack {
+        centroid_lat_offset: None,
+        centroid_lon_offset: None,
+        centroid_hae: None,
+        bbox_top_left_lat_offset: None,
+        bbox_top_left_lon_offset: None,
+        bbox_bottom_right_lat_offset: None,
+        bbox_bottom_right_lon_offset: None,
+        ..p
+    };
+    assert_eq!(floats_cleared(decoded), floats_cleared(pack));
 }
 
 // -------- u64 field round-trip tests --------

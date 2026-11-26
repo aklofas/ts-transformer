@@ -289,99 +289,85 @@ use tst_core::klv::st0601::{self, UasDatalinkLs};
 // through `encode_to_vec` + `decode` but with a different comparison
 // shape, so we keep them as distinct proptests for readable failures.
 
-/// One ranged ST 0601 tag: its wire width in bytes, IMAPB range, and
-/// accessors for the typed field.
-struct ImapbTag {
+/// One linearly mapped ST 0601 item: ST 0601.19 §8 spreads [min, max]
+/// over a `width`-byte unsigned integer (0 to 2^(8w) - 1) or a signed one
+/// (-(2^(8w-1) - 1) to 2^(8w-1) - 1, the lowest value reserved), and the
+/// accessors for its typed field.
+struct LinearTag {
     id: u8,
     width: usize,
+    signed: bool,
     min: f64,
     max: f64,
     set: fn(&mut UasDatalinkLs, f64),
     get: fn(&UasDatalinkLs) -> Option<f64>,
 }
 
-/// Eight representative tags covering signed/unsigned and 2- and 4-byte widths.
-fn imapb_tags() -> [ImapbTag; 8] {
+impl LinearTag {
+    /// One step of the item's mapping.
+    fn step(&self) -> f64 {
+        let codes = 2f64.powi(8 * self.width as i32) - if self.signed { 2.0 } else { 1.0 };
+        (self.max - self.min) / codes
+    }
+}
+
+macro_rules! linear_tag {
+    ($id:expr, $width:expr, $signed:expr, $min:expr, $max:expr, $field:ident) => {
+        LinearTag {
+            id: $id,
+            width: $width,
+            signed: $signed,
+            min: $min,
+            max: $max,
+            set: |r, v| r.$field = Some(v),
+            get: |r| r.$field,
+        }
+    };
+}
+
+/// Linear items with their ST 0601.19 §8 format rows: the 2-byte ones of
+/// both signs (heading, pitch, true altitude with its offset range, angle
+/// of attack) and every 4-byte one.
+fn linear_tags() -> [LinearTag; 29] {
+    const U: bool = false;
+    const S: bool = true;
     [
-        // Tag 5: platform_heading_angle 0..360 (u16 → 2 bytes, ST 0601 §item5)
-        ImapbTag {
-            id: 5,
-            width: 2,
-            min: 0.0,
-            max: 360.0,
-            set: |r, v| r.platform_heading_deg = Some(v),
-            get: |r| r.platform_heading_deg,
-        },
-        // Tag 6: platform_pitch_angle ±20° (i16 → 2 bytes)
-        ImapbTag {
-            id: 6,
-            width: 2,
-            min: -20.0,
-            max: 20.0,
-            set: |r, v| r.platform_pitch_deg = Some(v),
-            get: |r| r.platform_pitch_deg,
-        },
-        // Tag 13: sensor_latitude ±90° (i32 → 4 bytes)
-        ImapbTag {
-            id: 13,
-            width: 4,
-            min: -90.0,
-            max: 90.0,
-            set: |r, v| r.sensor_lat_deg = Some(v),
-            get: |r| r.sensor_lat_deg,
-        },
-        // Tag 14: sensor_longitude ±180° (i32 → 4 bytes)
-        ImapbTag {
-            id: 14,
-            width: 4,
-            min: -180.0,
-            max: 180.0,
-            set: |r, v| r.sensor_lon_deg = Some(v),
-            get: |r| r.sensor_lon_deg,
-        },
-        // Tag 15: sensor_altitude_m -900..19000 (u16 → 2 bytes, asymmetric range)
-        ImapbTag {
-            id: 15,
-            width: 2,
-            min: -900.0,
-            max: 19000.0,
-            set: |r, v| r.sensor_alt_m = Some(v),
-            get: |r| r.sensor_alt_m,
-        },
-        // Tag 21: slant_range 0..5,000,000 m (u32 → 4 bytes, large unsigned range)
-        ImapbTag {
-            id: 21,
-            width: 4,
-            min: 0.0,
-            max: 5_000_000.0,
-            set: |r, v| r.slant_range_m = Some(v),
-            get: |r| r.slant_range_m,
-        },
-        // Tag 90: platform_pitch_full ±90° (i32 → 4 bytes)
-        ImapbTag {
-            id: 90,
-            width: 4,
-            min: -90.0,
-            max: 90.0,
-            set: |r, v| r.platform_pitch_full_deg = Some(v),
-            get: |r| r.platform_pitch_full_deg,
-        },
-        // Tag 50: platform_angle_of_attack ±20° (i16 → 2 bytes)
-        ImapbTag {
-            id: 50,
-            width: 2,
-            min: -20.0,
-            max: 20.0,
-            set: |r, v| r.platform_angle_of_attack_deg = Some(v),
-            get: |r| r.platform_angle_of_attack_deg,
-        },
+        linear_tag!(5, 2, U, 0.0, 360.0, platform_heading_deg),
+        linear_tag!(6, 2, S, -20.0, 20.0, platform_pitch_deg),
+        linear_tag!(13, 4, S, -90.0, 90.0, sensor_lat_deg),
+        linear_tag!(14, 4, S, -180.0, 180.0, sensor_lon_deg),
+        linear_tag!(15, 2, U, -900.0, 19000.0, sensor_alt_m),
+        linear_tag!(18, 4, U, 0.0, 360.0, sensor_rel_az_deg),
+        linear_tag!(19, 4, S, -180.0, 180.0, sensor_rel_el_deg),
+        linear_tag!(20, 4, U, 0.0, 360.0, sensor_rel_roll_deg),
+        linear_tag!(21, 4, U, 0.0, 5_000_000.0, slant_range_m),
+        linear_tag!(23, 4, S, -90.0, 90.0, frame_center_lat_deg),
+        linear_tag!(24, 4, S, -180.0, 180.0, frame_center_lon_deg),
+        linear_tag!(40, 4, S, -90.0, 90.0, target_location_lat_deg),
+        linear_tag!(41, 4, S, -180.0, 180.0, target_location_lon_deg),
+        linear_tag!(50, 2, S, -20.0, 20.0, platform_angle_of_attack_deg),
+        linear_tag!(57, 4, U, 0.0, 5_000_000.0, ground_range_m),
+        linear_tag!(67, 4, S, -90.0, 90.0, alternate_platform_lat_deg),
+        linear_tag!(68, 4, S, -180.0, 180.0, alternate_platform_lon_deg),
+        linear_tag!(82, 4, S, -90.0, 90.0, corner_lat_p1_deg),
+        linear_tag!(83, 4, S, -180.0, 180.0, corner_lon_p1_deg),
+        linear_tag!(84, 4, S, -90.0, 90.0, corner_lat_p2_deg),
+        linear_tag!(85, 4, S, -180.0, 180.0, corner_lon_p2_deg),
+        linear_tag!(86, 4, S, -90.0, 90.0, corner_lat_p3_deg),
+        linear_tag!(87, 4, S, -180.0, 180.0, corner_lon_p3_deg),
+        linear_tag!(88, 4, S, -90.0, 90.0, corner_lat_p4_deg),
+        linear_tag!(89, 4, S, -180.0, 180.0, corner_lon_p4_deg),
+        linear_tag!(90, 4, S, -90.0, 90.0, platform_pitch_full_deg),
+        linear_tag!(91, 4, S, -90.0, 90.0, platform_roll_full_deg),
+        linear_tag!(92, 4, S, -90.0, 90.0, platform_angle_of_attack_full_deg),
+        linear_tag!(93, 4, S, -180.0, 180.0, platform_sideslip_full_deg),
     ]
 }
 
 #[test]
 fn a_two_byte_grid_value_fails_the_four_byte_latitude_tolerance() {
-    let tag = imapb_tags().into_iter().find(|t| t.id == 13).unwrap();
-    let tol = imapb_tol(tag.min, tag.max, tag.width).tol;
+    let tag = linear_tags().into_iter().find(|t| t.id == 13).unwrap();
+    let tol = tag.step();
     assert!(
         0.0078125 > tol,
         "latitude tolerance {tol} must be the 4-byte step"
@@ -494,27 +480,21 @@ proptest! {
         );
     }
 
-    /// IMAPB f64 tags: pick one ranged tag uniformly, encode value at
-    /// random `t ∈ [0,1]` lerped into the tag's [min, max] range,
-    /// decode, assert within IMAPB tolerance.
+    /// Linear items: pick one of `linear_tags()`, encode a value at
+    /// random `t ∈ [0,1]` lerped into the item's [min, max] range,
+    /// decode, assert within one step of the item's mapping.
     ///
-    /// Tolerance is `common::imapb_tol`, shared with
-    /// `klv/proptest.rs::imapb_roundtrip`: max of (quantization scale,
-    /// f64 ULP × span/magnitude × safety factor). Its doc comment carries
-    /// the rationale.
-    ///
-    /// `which` indexes into the ranged-tag table built below. The
-    /// table is a hand-curated subset covering both IMAPB encodings
-    /// commonly used (signed +/- ranges and unsigned 0..N ranges) and
-    /// the three integer widths in play (i8, i16, i32, u8, u16, u32).
-    /// Full coverage of every tag is the job of `every_typed_tag_round_trips`
-    /// (st0601/mod.rs:1498); this proptest's job is value-space.
+    /// Every typed item with one sample value is
+    /// `every_typed_tag_round_trips` (in the crate's `st0601` tests), and
+    /// the 14 IMAPB items' value space is
+    /// `every_imapb_row_round_trips_within_its_st1201_step` there; this
+    /// proptest's job is the linear items' value space.
     #[test]
-    fn st0601_imapb_tag_value_space_roundtrip(
-        which in 0usize..8,
+    fn st0601_linear_tag_value_space_roundtrip(
+        which in 0usize..29,
         t in 0.0f64..=1.0,
     ) {
-        let tags = imapb_tags();
+        let tags = linear_tags();
         let tag = &tags[which];
         let value = tag.min + t * (tag.max - tag.min);
 
@@ -525,10 +505,9 @@ proptest! {
         let decoded = st0601::decode(&buf).expect("decode");
         let got = (tag.get)(&decoded).expect("field must be present after round-trip");
 
-        // IMAPB tolerance derivation: see the `imapb_tol` helper in
-        // `common`; each row carries its own wire width so a 4-byte tag is
+        // Each row carries its own width and sign, so a 4-byte item is
         // held to the 4-byte step.
-        let tol = imapb_tol(tag.min, tag.max, tag.width).tol;
+        let tol = tag.step();
 
         prop_assert!(
             (got - value).abs() <= tol,

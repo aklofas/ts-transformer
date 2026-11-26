@@ -517,28 +517,27 @@ mod tests {
         assert_eq!(&buf[..n], &[0x81, 0x00]);
     }
 
-    // --- KLV-2: write_ber_oid delegates to write_ber_oid_u64 (boundary) ---
-
+    /// The bytes ST 0107.5 §6.3.1 gives a tag: seven bits per byte, most
+    /// significant group first, the top bit set on every byte but the
+    /// last. u32::MAX is 4 + 7 + 7 + 7 + 7 bits: `0F` then four full groups;
+    /// 2^32 is a 1 in the fifth group from the end.
     #[test]
-    fn write_ber_oid_matches_u64_sibling_at_u32_boundary() {
-        // write_ber_oid(v) must produce the same bytes as write_ber_oid_u64(v as u64)
-        // for the two sentinel values: u32::MAX (max u32) and u32::MAX+1=2^32 (u64-only).
-        for v in [0u32, 1u32, 0x7Fu32, 0x80u32, u32::MAX - 1, u32::MAX] {
-            let mut buf32 = [0u8; 8];
-            let mut buf64 = [0u8; 8];
-            let n32 = write_ber_oid(v, &mut buf32).unwrap();
-            let n64 = write_ber_oid_u64(v as u64, &mut buf64).unwrap();
-            assert_eq!(n32, n64, "byte count mismatch for v={v}");
-            assert_eq!(
-                &buf32[..n32],
-                &buf64[..n64],
-                "byte content mismatch for v={v}"
-            );
+    fn ber_oid_writer_boundary_bytes() {
+        let cases: [(u64, &[u8]); 4] = [
+            (0x7F, &[0x7F]),
+            (0x80, &[0x81, 0x00]),
+            (u64::from(u32::MAX), &[0x8F, 0xFF, 0xFF, 0xFF, 0x7F]),
+            (1 << 32, &[0x90, 0x80, 0x80, 0x80, 0x00]),
+        ];
+        for (v, want) in cases {
+            let mut buf = [0u8; 10];
+            let n = write_ber_oid_u64(v, &mut buf).unwrap();
+            assert_eq!(&buf[..n], want, "write_ber_oid_u64({v:#X})");
+            if let Ok(v32) = u32::try_from(v) {
+                let n = write_ber_oid(v32, &mut buf).unwrap();
+                assert_eq!(&buf[..n], want, "write_ber_oid({v:#X})");
+            }
         }
-        // Also check that 2^32 is beyond u32 range: u64 encodes it in 5 bytes.
-        let mut buf = [0u8; 8];
-        let n = write_ber_oid_u64(u32::MAX as u64 + 1, &mut buf).unwrap();
-        assert_eq!(n, 5);
     }
 
     #[test]
@@ -629,10 +628,19 @@ mod tests {
 
     #[test]
     fn ber_strict_rejects_long_form_with_leading_zero() {
-        // 0x82 0x00 0x10 = long-form value 16 with overlong encoding.
-        let buf = [0x82, 0x00, 0x10];
-        let err = read_ber_strict(&buf).unwrap_err();
-        assert!(matches!(err, KlvDecodeError::NonCanonicalLength { .. }));
+        // ST 0107.5 §6.3.2's own example: 128 padded with zeros, `83 00 00
+        // 80`, where `81 80` is the fewest bytes; `82 00 80` pads it by one.
+        // The value needs the long form, so only the leading zero (at
+        // offset 1) breaks the rule.
+        for buf in [&[0x82, 0x00, 0x80][..], &[0x83, 0x00, 0x00, 0x80]] {
+            let err = read_ber_strict(buf).unwrap_err();
+            assert!(
+                matches!(err, KlvDecodeError::NonCanonicalLength { offset: 1 }),
+                "{buf:02X?}: {err:?}"
+            );
+            let (v, _) = read_ber(buf).unwrap();
+            assert_eq!(v, 128, "{buf:02X?}");
+        }
     }
 
     #[test]

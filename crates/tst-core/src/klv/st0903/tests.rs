@@ -708,12 +708,10 @@ fn encoded_len_standalone_matches_encode_standalone() {
 // 16384) that the migration unlocks for forward-compat tags. Mirrors
 // the ST 0102 BER-OID test suite (`unknown_tag_*_round_trips_*_byte_ber_oid`).
 
-/// Byte-identical encode for the typed universe: a maximally-populated
-/// LS using only defined tags 1..=103 emits the same wire bytes as
-/// single-byte tags because BER-OID(N) == [N] for N ≤ 127, so legacy
-/// emission is unchanged.
+/// Every defined tag (1 to 103) is written as its one BER-OID byte: a
+/// maximally-populated LS starts `02 08`, as ST 0903.6 §10.1.2's example.
 #[test]
-fn defined_tags_byte_identical_pre_and_post_e5() {
+fn defined_tags_are_written_as_one_byte_tags() {
     use crate::klv::st0903::vtarget_pack::VTargetPack;
 
     let ls = VmtiLs {
@@ -751,6 +749,66 @@ fn defined_tags_byte_identical_pre_and_post_e5() {
     assert_eq!(decoded.vmti_system_name.as_deref(), Some("test-cam"));
     assert_eq!(decoded.num_targets_reported, Some(2));
     assert!(decoded.unknown.is_empty());
+}
+
+/// The example values of ST 0903.6 §10.1.2 to §10.1.12 give the example
+/// items printed there, and those items decode to the example values (the
+/// two fields of view within one step of IMAPB(0, 180, 2), 2^-7 degrees).
+#[test]
+fn vmti_ls_items_match_the_standards_examples() {
+    let ls = VmtiLs {
+        precision_time_stamp: Some(987_654_321_000_000),
+        vmti_system_name: Some("DSTO_ADSS_VMTI".to_string()),
+        version_number: Some(6),
+        total_targets_in_frame: Some(28),
+        num_targets_reported: Some(14),
+        frame_width: Some(1920),
+        frame_height: Some(1080),
+        source_sensor: Some("EO Nose".to_string()),
+        horizontal_fov: Some(12.5),
+        vertical_fov: Some(10.0),
+        ..Default::default()
+    };
+    let items: &[&[u8]] = &[
+        &[0x02, 0x08, 0x00, 0x03, 0x82, 0x44, 0x30, 0xF6, 0xCE, 0x40],
+        &[
+            0x03, 0x0E, 0x44, 0x53, 0x54, 0x4F, 0x5F, 0x41, 0x44, 0x53, 0x53, 0x5F, 0x56, 0x4D,
+            0x54, 0x49,
+        ],
+        &[0x04, 0x01, 0x06],
+        &[0x05, 0x01, 0x1C],
+        &[0x06, 0x01, 0x0E],
+        &[0x08, 0x02, 0x07, 0x80],
+        &[0x09, 0x02, 0x04, 0x38],
+        &[0x0A, 0x07, 0x45, 0x4F, 0x20, 0x4E, 0x6F, 0x73, 0x65],
+        &[0x0B, 0x02, 0x06, 0x40],
+        &[0x0C, 0x02, 0x05, 0x00],
+    ];
+    let body = items.concat();
+    assert_eq!(encode_to_vec(&ls).unwrap(), body);
+    let decoded = decode(&body).unwrap();
+    assert!(
+        decoded.field_errors.is_empty(),
+        "{:?}",
+        decoded.field_errors
+    );
+    let step = 1.0 / 128.0;
+    for (got, want) in [(decoded.horizontal_fov, 12.5), (decoded.vertical_fov, 10.0)] {
+        assert!((got.unwrap() - want).abs() <= step, "{got:?} vs {want}");
+    }
+    let fov_free = VmtiLs {
+        horizontal_fov: None,
+        vertical_fov: None,
+        ..decoded
+    };
+    assert_eq!(
+        fov_free,
+        VmtiLs {
+            horizontal_fov: None,
+            vertical_fov: None,
+            ..ls
+        }
+    );
 }
 
 crate::klv::ber_oid_unknown_tag_tests!(VmtiLs {

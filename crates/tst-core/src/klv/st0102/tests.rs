@@ -268,12 +268,11 @@ fn round_trip_utf16_normalizes_to_be() {
     let decoded = decode(&buf).unwrap();
     assert_eq!(decoded.object_country_codes.as_deref(), Some("FR"));
 
-    // Re-encode and verify BE BOM normalization.
+    // Re-encoded big-endian: ST 0102.12's Tag 13 is RFC 2781 UTF-16, here
+    // the byte order mark U+FEFF as `FE FF`, then 'F' (U+0046) and 'R'
+    // (U+0052) as big-endian code units, six value bytes.
     let bytes = encode_to_vec(&decoded).unwrap();
-    // Tag 13 byte + BER-len(1 byte) + BOM(0xFE 0xFF) + 'F' BE +
-    // 'R' BE — verify the BOM bytes appear at the expected offset.
-    // We don't decode BER here; the round-trip via decode below
-    // is the primary correctness check.
+    assert_eq!(bytes, [0x0D, 0x06, 0xFE, 0xFF, 0x00, 0x46, 0x00, 0x52]);
     let redecoded = decode(&bytes).unwrap();
     assert_eq!(redecoded, decoded);
 }
