@@ -77,22 +77,32 @@ impl H264SliceType {
 /// NAL header byte stripped, emulation-prevention bytes preserved (matches
 /// `NalUnit::H264 { payload }`). The light parser reads only
 /// `first_mb_in_slice`, `slice_type`, and `pic_parameter_set_id` at minimum,
-/// then optionally `frame_num` when an SPS context is available.
+/// then optionally `frame_num` when an SPS context is available (behind
+/// `colour_plane_id` when the SPS has `separate_colour_plane`).
 ///
 /// `nal_unit_type` is the 5-bit NAL type from the NAL header (`& 0x1F`) — used
-/// to derive `idr` (`== 5`) without re-parsing.
+/// to derive `idr` (`== 5`) without re-parsing. A caller passing the whole
+/// header byte must mask it: a value above 31 is refused.
 ///
 /// # Errors
 ///
 /// Returns [`CodecParseError::TruncatedRbsp`] when `rbsp` is too short to hold
 /// even the mandatory ue(v) fields. Returns [`CodecParseError::InvalidGolomb`]
 /// on a malformed Exp-Golomb codeword. Returns [`CodecParseError::ReservedValue`]
-/// when `pic_parameter_set_id` is out of u8 range.
+/// when `nal_unit_type` is above 31 (before any bit is read) or
+/// `pic_parameter_set_id` is out of u8 range.
 pub fn parse_slice_header_light(
     rbsp: &[u8],
     sps: Option<&H264Sps>,
     nal_unit_type: u8,
 ) -> Result<H264SliceHeaderLight, CodecParseError> {
+    // `nal_unit_type` is a 5-bit field (H.264 §7.3.1).
+    if nal_unit_type > 31 {
+        return Err(CodecParseError::ReservedValue {
+            field: "nal_unit_type",
+            value: u32::from(nal_unit_type),
+        });
+    }
     let mut br = BitReader::new(rbsp);
     let first_mb_in_slice = br.read_ue()?;
     let slice_type_raw = br.read_ue()?;
@@ -104,6 +114,11 @@ pub fn parse_slice_header_light(
     })?;
 
     let frame_num = if let Some(sps) = sps {
+        // H.264 §7.3.3: `colour_plane_id u(2)` precedes frame_num when the
+        // SPS codes the colour planes separately.
+        if sps.separate_colour_plane {
+            br.skip(2)?;
+        }
         // H.264 §7.4.3: frame_num is u(v) where the bit width equals
         // log2_max_frame_num_minus4 + 4 (from the referenced SPS).
         let bits = (sps.log2_max_frame_num_minus4 as u32) + 4;

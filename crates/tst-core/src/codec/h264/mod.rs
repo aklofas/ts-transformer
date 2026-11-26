@@ -20,7 +20,9 @@
 //!
 //! - VUI HRD parameters (CBR/VBR signalling).
 //! - SEI messages (user data, picture timing, mastering display).
-//! - Slice headers.
+//! - Full slice headers ([`parse_slice_header_light`] reads the light
+//!   subset: `first_mb_in_slice`, `slice_type`, `pic_parameter_set_id`,
+//!   `frame_num`).
 //! - SVC / MVC extension SPSes (`subset_seq_parameter_set_rbsp`).
 
 mod decode;

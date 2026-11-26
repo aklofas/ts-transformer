@@ -32,7 +32,10 @@ crate::binding_record! {
         pub chroma_format: ChromaFormat,
         /// True for progressive encoding (`frame_mbs_only_flag=1`).
         pub frame_mbs_only: bool,
-        /// Frame rate as a rational number, or absent when the VUI is absent.
+        /// Frame rate as a rational number: `time_scale / (2 * num_units_in_tick)`,
+        /// not reduced. Absent when the VUI or its timing info is absent, when
+        /// `num_units_in_tick` or `time_scale` is zero, and when
+        /// `2 * num_units_in_tick` does not fit 32 bits.
         pub frame_rate: Option<Rational>,
         /// True when `fixed_frame_rate_flag=1` in the VUI.
         pub fixed_frame_rate: bool,
@@ -41,8 +44,9 @@ crate::binding_record! {
         /// the constrained High subsets are B-frameless and every other profile
         /// may have B-frames.
         pub has_b_frames: bool,
-        /// VUI colour info, or absent when the VUI is absent or
-        /// `video_signal_type` is not present.
+        /// VUI colour info: present when the VUI signals any of
+        /// `video_signal_type` (with or without a colour description), the
+        /// chroma sample locations or the aspect ratio; absent otherwise.
         pub color: Option<ColorInfo>,
         /// Luma-sample crop offsets applied to the coded dimensions to produce
         /// `width`/`height`. Per H.264 §6.4: stored crop offsets are in chroma
@@ -63,6 +67,11 @@ crate::binding_record! {
         /// `frame_num` in slice headers equals this + 4. Surfaced for the light
         /// slice-header parser.
         pub log2_max_frame_num_minus4: u8,
+        /// `separate_colour_plane_flag` (H.264 §7.4.2.1.1): the three colour
+        /// components of a 4:4:4 stream are coded as separate planes, and every
+        /// slice header carries `colour_plane_id`. `false` when the SPS does not
+        /// signal the flag. Read by the light slice-header parser.
+        @[skip] pub separate_colour_plane: bool,
         /// The original RBSP bytes as supplied to the parser.
         pub raw_rbsp: Vec<u8>,
     }
@@ -113,7 +122,13 @@ pub enum EntropyCodingMode {
 }
 
 crate::binding_record! {
-    /// All SPS and PPS NAL units parsed from a single access unit.
+    /// The SPS and PPS NAL units parsed by one `parse_parameter_sets` call.
+    ///
+    /// One call is one snapshot of the NAL units it is given. A PPS whose SPS
+    /// is not in the call, or whose SPS failed to parse in the call, is dropped;
+    /// when the call holds several SPS with one id, the last one that parsed is
+    /// used. A call that holds only a lone PPS returns `Ok` with empty results,
+    /// not an error: parse a lone PPS with `parse_pps`.
     #[must_use]
     #[derive(Debug, Clone, PartialEq, Eq, Default)]
     #[non_exhaustive]

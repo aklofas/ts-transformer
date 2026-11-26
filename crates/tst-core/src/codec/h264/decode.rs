@@ -5,7 +5,7 @@ use crate::codec::NalUnit;
 use crate::codec::bitreader::BitReader;
 use crate::codec::{
     ChromaFormat, CodecParseError, ColorInfo, ColourPrimaries, MatrixCoefficients, Rational,
-    TransferCharacteristics, aspect_ratio_idc_to_sar, read_h273_colour, validate_bit_depth_minus8,
+    TransferCharacteristics, aspect_ratio_idc_to_sar, read_h273_colour,
 };
 
 /// Parse all SPS/PPS NAL units from a slice of [`NalUnit`]s.
@@ -21,6 +21,12 @@ use crate::codec::{
 /// refer to an SPS active in the stream. PPSes whose referenced SPS is
 /// absent from the input emit a `tracing::warn!` and are dropped from
 /// the output.
+///
+/// One call is one snapshot of the NAL units it is given. A PPS whose SPS
+/// is not in the call, or whose SPS failed to parse in the call, is dropped;
+/// when the call holds several SPS with one id, the last one that parsed is
+/// used. A call that holds only a lone PPS returns `Ok` with empty results,
+/// not an error: parse a lone PPS with `parse_pps`.
 pub fn parse_parameter_sets(nals: &[NalUnit]) -> Result<H264ParameterSets, CodecParseError> {
     let mut out = H264ParameterSets::default();
     let mut had_param_set = false;
@@ -216,16 +222,15 @@ pub fn parse_sps(rbsp: &[u8]) -> Result<H264Sps, CodecParseError> {
     let mut chroma_format_idc: u32 = 1;
     let mut bit_depth_luma: u8 = 8;
     let mut bit_depth_chroma: u8 = 8;
+    let mut separate_colour_plane = false;
     if profile_has_chroma_info(profile_idc) {
         chroma_format_idc = br.read_ue()?;
         if chroma_format_idc == 3 {
-            let _separate_colour_plane_flag = br.read_bool()?;
+            separate_colour_plane = br.read_bool()?;
         }
-        let bit_depth_luma_minus8 = br.read_ue()?;
-        bit_depth_luma = validate_bit_depth_minus8("bit_depth_luma_minus8", bit_depth_luma_minus8)?;
-        let bit_depth_chroma_minus8 = br.read_ue()?;
-        bit_depth_chroma =
-            validate_bit_depth_minus8("bit_depth_chroma_minus8", bit_depth_chroma_minus8)?;
+        // H.264 §7.4.2.1.1: both bit depths minus 8 ∈ [0, 6].
+        bit_depth_luma = 8 + br.read_ue_max("bit_depth_luma_minus8", 6)? as u8;
+        bit_depth_chroma = 8 + br.read_ue_max("bit_depth_chroma_minus8", 6)? as u8;
         let _qpprime_y_zero_transform_bypass_flag = br.read_bool()?;
         let seq_scaling_matrix_present_flag = br.read_bool()?;
         if seq_scaling_matrix_present_flag {
@@ -356,6 +361,7 @@ pub fn parse_sps(rbsp: &[u8]) -> Result<H264Sps, CodecParseError> {
         crop_top,
         crop_bottom,
         log2_max_frame_num_minus4,
+        separate_colour_plane,
         raw_rbsp: rbsp.to_vec(),
     })
 }
@@ -466,8 +472,9 @@ fn parse_vui(br: &mut BitReader<'_>) -> Result<VuiOut, CodecParseError> {
         // nonsense ratio. Also guard num_units_in_tick == 0: that would
         // produce den == 0, a ÷0 hazard for consumers. Mirrors H.265 §E.2.1
         // (h265/vui.rs: `if num_units_in_tick > 0`).
+        // §E.2.1: time_scale shall be greater than 0; a zero clock has no rate.
         let den = num_units_in_tick.saturating_mul(2);
-        if num_units_in_tick > 0 && den != u32::MAX {
+        if num_units_in_tick > 0 && den != u32::MAX && time_scale > 0 {
             frame_rate = Some(Rational {
                 num: time_scale,
                 den,
@@ -556,23 +563,21 @@ fn compute_has_b_frames(profile_idc: u8, constraint_set_flags: u8, vui: &VuiOut)
     if profile_idc == 66 {
         return false;
     }
-    // H.264 §A.2: profile_idc=100 (High) admits two B-frameless subsets
-    // distinguished by constraint flags:
-    //   - Constrained High: constraint_set1_flag = 1
-    //   - Constrained-Baseline-lifted-to-High:
-    //       constraint_set4_flag = 1 AND constraint_set5_flag = 1
     // The constraint_set_flags byte is MSB-first per §7.3.2.1.1: bit 7 =
-    // constraint_set0_flag, ..., bit 2 = constraint_set5_flag. Narrowed to
-    // profile_idc == 100 because the same constraint bits carry different
-    // semantics on other profile_idc values (e.g. constraint_set1_flag on
-    // Baseline (66) signals Main compatibility, not "no B-frames").
-    if profile_idc == 100 {
-        let flag1 = constraint_set_flags & 0b0100_0000 != 0;
-        let flag4 = constraint_set_flags & 0b0000_1000 != 0;
-        let flag5 = constraint_set_flags & 0b0000_0100 != 0;
-        if flag1 || (flag4 && flag5) {
-            return false;
-        }
+    // constraint_set0_flag, ..., bit 2 = constraint_set5_flag. The same bits
+    // carry different semantics on different profile_idc values, so each rule
+    // names its profiles.
+    //
+    // H.264 §7.4.2.1.1: on Main (77), Extended (88) and High (100),
+    // constraint_set5_flag = 1 says B slice types are not present (this
+    // includes Constrained High, which also sets constraint_set4_flag).
+    let flag5 = constraint_set_flags & 0b0000_0100 != 0;
+    if matches!(profile_idc, 77 | 88 | 100) && flag5 {
+        return false;
+    }
+    // High (100) with constraint_set1_flag = 1 is also read as B-frameless.
+    if profile_idc == 100 && constraint_set_flags & 0b0100_0000 != 0 {
+        return false;
     }
     true
 }

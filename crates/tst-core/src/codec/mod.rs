@@ -469,12 +469,13 @@ pub(crate) fn read_h273_colour(
     Ok((primaries, transfer, matrix))
 }
 
-/// Validate `bit_depth_*_minus8` per H.264 / H.265 / H.266: the normative
+/// Validate `bit_depth_*_minus8` per H.265 / H.266: the normative
 /// syntax range is `0..=8` (bit_depth ∈ 8..=16). A value greater than 8 is
 /// out-of-spec (a malformed or fuzzed parameter set), not a real codec.
 ///
 /// Returns `8 + value as u8` on success, [`CodecParseError::ReservedValue`]
-/// otherwise. All paths (H.264 / H.265 / H.266) use the same hand-rolled check here.
+/// otherwise. H.265 and H.266 use this check; H.264 bounds its depths at 6
+/// (§7.4.2.1.1) in its own parser.
 pub(crate) fn validate_bit_depth_minus8(
     field: &'static str,
     value: u32,

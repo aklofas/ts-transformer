@@ -1,10 +1,11 @@
 //! H.264 parameter-set parser tests.
 
 use crate::codec::NalUnit;
-use crate::codec::h264::{parse_parameter_sets, parse_pps, parse_sps};
+use crate::codec::h264::{parse_parameter_sets, parse_pps, parse_slice_header_light, parse_sps};
 use crate::codec::test_util::{BitWriter, escape_emulation};
 use crate::codec::{
-    ChromaFormat, CodecParseError, ColourPrimaries, MatrixCoefficients, TransferCharacteristics,
+    ChromaFormat, CodecParseError, ColourPrimaries, MatrixCoefficients, Rational,
+    TransferCharacteristics,
 };
 use crate::test_prelude::*;
 
@@ -262,12 +263,10 @@ fn craft_high_sps_with_chroma_format_idc(idc: u32) -> Vec<u8> {
     bw.bytes
 }
 
-/// Per H.264 V15 §7.4.2.1.1, `chroma_format_idc` shall be in 0..=3.
-/// `h264-reader 0.8` surfaces out-of-range values as
-/// `ChromaFormat::Invalid(u32)`. The current `convert_sps` arm silently
-/// coerces to `Yuv420`, producing a `H264Sps` with cropping math that
-/// disagrees with the (also wrong) chroma_format. This test pins the
-/// spec-correct behavior: reject with `CodecParseError::ReservedValue`.
+/// Per H.264 V15 §7.4.2.1.1, `chroma_format_idc` shall be in 0..=3. An
+/// out-of-range value must not be coerced to `Yuv420` (the cropping math
+/// would then disagree with the stream): it is refused with
+/// `CodecParseError::ReservedValue`.
 #[test]
 fn chroma_format_idc_5_rejected_with_reserved_value() {
     let rbsp = craft_high_sps_with_chroma_format_idc(5);
@@ -362,9 +361,8 @@ fn parse_parameter_sets_with_pps_referencing_missing_sps_drops_pps() {
     );
 }
 
-// --- H264-RV4 + H264-RV7 regression tests ---
-// RV4: constraint flags consulted in B-frame detection (profile_idc=100).
-// RV7: frame_rate overflow when 2 * num_units_in_tick overflows u32.
+// --- B-frame detection from the constraint flags (profile_idc=100), and
+// the frame rate when 2 * num_units_in_tick overflows u32 ---
 
 /// Hand-craft a High-profile (profile_idc=100) SPS RBSP with caller-supplied
 /// `constraint_set_flags` byte (MSB-first per H.264 §7.3.2.1.1: bit 7 =
@@ -410,12 +408,8 @@ fn craft_high_sps_with_constraints_and_timing(
         bw.write(0, 1); // chroma_loc_info_present_flag = 0
         bw.write(1, 1); // timing_info_present_flag = 1
         bw.write(units.into(), 32); // num_units_in_tick (CALLER-SUPPLIED)
-        // time_scale chosen to avoid 24 leading-zero bits (which can
-        // produce 0x00 0x00 0x00 in the byte-stream that
-        // ByteReader::without_skip rejects per RBSP emulation-prevention
-        // semantics). 0x4000_001E retains frame-rate semantics for any
-        // test that asserts on the value; for overflow tests the value
-        // is irrelevant.
+        // time_scale: any non-zero value; the tests that use this builder
+        // assert on the units' edge cases only.
         bw.write(0x4000_001E, 32); // time_scale
         bw.write(1, 1); // fixed_frame_rate_flag = 1
         bw.write(0, 1); // nal_hrd_parameters_present_flag = 0
@@ -429,9 +423,8 @@ fn craft_high_sps_with_constraints_and_timing(
     bw.bytes
 }
 
-/// H264-RV4: Constrained High (profile_idc=100 + constraint_set1_flag=1)
-/// per H.264 §A.2 excludes B-frames. h264-reader's `ConstraintFlags::flag1()`
-/// corresponds to constraint_set1_flag (bit 6, mask 0b0100_0000).
+/// High (profile_idc=100) with constraint_set1_flag=1 (bit 6, mask
+/// 0b0100_0000) is read as B-frameless.
 #[test]
 fn extract_has_b_frames_false_for_constrained_high() {
     let rbsp = craft_high_sps_with_constraints_and_timing(0b0100_0000, None);
@@ -443,10 +436,9 @@ fn extract_has_b_frames_false_for_constrained_high() {
     );
 }
 
-/// H264-RV4: Constrained-Baseline-lifted-to-High (profile_idc=100 +
-/// constraint_set4_flag=1 + constraint_set5_flag=1) per H.264 §A.2
-/// excludes B-frames. h264-reader's `flag4()`/`flag5()` correspond to
-/// constraint_set4/5_flag (bits 3/2, masks 0b0000_1000 / 0b0000_0100).
+/// Constrained High (profile_idc=100 + constraint_set4_flag=1 +
+/// constraint_set5_flag=1, H.264 §A.2.4.2) excludes B-frames.
+/// constraint_set4/5_flag are bits 3/2 (masks 0b0000_1000 / 0b0000_0100).
 #[test]
 fn extract_has_b_frames_false_for_constrained_baseline_lifted_high() {
     // constraint_set4_flag=1 | constraint_set5_flag=1 = 0b0000_1100
@@ -459,7 +451,7 @@ fn extract_has_b_frames_false_for_constrained_baseline_lifted_high() {
     );
 }
 
-/// H264-RV4: Regression guard — unconstrained High (profile_idc=100 with
+/// Regression guard — unconstrained High (profile_idc=100 with
 /// all constraint flags clear) MUST still report `has_b_frames=true`.
 /// Catches over-broad narrowing of the constraint-flag check.
 #[test]
@@ -474,19 +466,14 @@ fn extract_has_b_frames_true_for_unconstrained_high() {
     );
 }
 
-/// H264-RV7: `CodecParseError` rustdoc promises non-panicking parse. A
+/// `CodecParseError` rustdoc promises non-panicking parse. A
 /// stream with a num_units_in_tick value such that `2 * num_units_in_tick`
 /// overflows u32 previously panicked in debug builds. The
 /// `saturating_mul(2)` fix should treat the result as unknowable and
 /// surface `frame_rate: None` rather than emit a nonsense ratio.
 ///
-/// Test value note: We use `0xFFFF_FFFE` (u32::MAX - 1) instead of u32::MAX
-/// directly so the encoded 32-bit `num_units_in_tick` field carries no
-/// three-consecutive-zero-byte sequence — `ByteReader::without_skip` still
-/// validates RBSP emulation-prevention semantics, and a hand-crafted
-/// fixture with raw 0x00 0x00 0x00 anywhere in the payload would fail to
-/// parse for unrelated reasons. Both values saturate `* 2` identically, so
-/// the fix's None-on-saturation behavior is exercised either way.
+/// Test value note: `0xFFFF_FFFE` (u32::MAX - 1) and u32::MAX saturate
+/// `* 2` identically, so either exercises the None-on-saturation behavior.
 #[test]
 fn num_units_in_tick_overflow_no_panic() {
     let rbsp = craft_high_sps_with_constraints_and_timing(0, Some(0xFFFF_FFFE));
@@ -770,5 +757,194 @@ fn poc_cycle_count_above_255_is_rejected() {
             assert_eq!(value, 256);
         }
         other => panic!("256 must be refused, got {other:?}"),
+    }
+}
+
+/// High-profile SPS with a caller-chosen chroma format, separate-colour-plane
+/// flag and bit depths; `log2_max_frame_num_minus4 = 0`, so `frame_num` is 4 bits.
+fn craft_high_sps(
+    chroma_format_idc: u32,
+    separate_colour_plane: bool,
+    luma_minus8: u32,
+    chroma_minus8: u32,
+) -> Vec<u8> {
+    let mut bw = BitWriter::new();
+    bw.write(100, 8); // profile_idc = High
+    bw.write(0, 8); // constraint_set flags + reserved_zero_2bits
+    bw.write(40, 8); // level_idc 4.0
+    bw.write_ue(0); // seq_parameter_set_id
+    bw.write_ue(chroma_format_idc);
+    if chroma_format_idc == 3 {
+        bw.write(u64::from(separate_colour_plane), 1); // separate_colour_plane_flag
+    }
+    bw.write_ue(luma_minus8); // bit_depth_luma_minus8
+    bw.write_ue(chroma_minus8); // bit_depth_chroma_minus8
+    bw.write(0, 1); // qpprime_y_zero_transform_bypass_flag
+    bw.write(0, 1); // seq_scaling_matrix_present_flag
+    bw.write_ue(0); // log2_max_frame_num_minus4
+    bw.write_ue(0); // pic_order_cnt_type = 0
+    bw.write_ue(0); // log2_max_pic_order_cnt_lsb_minus4
+    bw.write_ue(1); // max_num_ref_frames
+    bw.write(0, 1); // gaps_in_frame_num_value_allowed_flag
+    bw.write_ue(19); // pic_width_in_mbs_minus1 → 320
+    bw.write_ue(14); // pic_height_in_map_units_minus1 → 240
+    bw.write(1, 1); // frame_mbs_only_flag
+    bw.write(0, 1); // direct_8x8_inference_flag
+    bw.write(0, 1); // frame_cropping_flag
+    bw.write(0, 1); // vui_parameters_present_flag
+    bw.end_rbsp();
+    escape_emulation(&bw.bytes)
+}
+
+/// An SPS of any profile with a caller-chosen constraint byte and no VUI, so
+/// `has_b_frames` comes from the profile and the constraint flags alone.
+fn craft_sps_with_constraints(profile_idc: u8, constraint_flags: u8) -> Vec<u8> {
+    let mut bw = BitWriter::new();
+    bw.write(profile_idc.into(), 8);
+    bw.write(constraint_flags.into(), 8);
+    bw.write(40, 8); // level_idc 4.0
+    bw.write_ue(0); // seq_parameter_set_id
+    if matches!(
+        profile_idc,
+        100 | 110 | 122 | 244 | 44 | 83 | 86 | 118 | 128 | 138 | 139 | 134 | 135
+    ) {
+        bw.write_ue(1); // chroma_format_idc = 4:2:0
+        bw.write_ue(0); // bit_depth_luma_minus8
+        bw.write_ue(0); // bit_depth_chroma_minus8
+        bw.write(0, 1); // qpprime_y_zero_transform_bypass_flag
+        bw.write(0, 1); // seq_scaling_matrix_present_flag
+    }
+    bw.write_ue(0); // log2_max_frame_num_minus4
+    bw.write_ue(0); // pic_order_cnt_type = 0
+    bw.write_ue(0); // log2_max_pic_order_cnt_lsb_minus4
+    bw.write_ue(1); // max_num_ref_frames
+    bw.write(0, 1); // gaps_in_frame_num_value_allowed_flag
+    bw.write_ue(19); // pic_width_in_mbs_minus1
+    bw.write_ue(14); // pic_height_in_map_units_minus1
+    bw.write(1, 1); // frame_mbs_only_flag
+    bw.write(0, 1); // direct_8x8_inference_flag
+    bw.write(0, 1); // frame_cropping_flag
+    bw.write(0, 1); // vui_parameters_present_flag
+    bw.end_rbsp();
+    escape_emulation(&bw.bytes)
+}
+
+/// Baseline SPS whose VUI carries only the timing fields.
+fn craft_sps_with_timing(num_units_in_tick: u32, time_scale: u32) -> Vec<u8> {
+    let mut bw = BitWriter::new();
+    bw.write(66, 8); // profile_idc = Baseline
+    bw.write(0, 8); // constraint_set flags + reserved_zero_2bits
+    bw.write(40, 8); // level_idc 4.0
+    bw.write_ue(0); // seq_parameter_set_id
+    bw.write_ue(0); // log2_max_frame_num_minus4
+    bw.write_ue(0); // pic_order_cnt_type = 0
+    bw.write_ue(0); // log2_max_pic_order_cnt_lsb_minus4
+    bw.write_ue(1); // max_num_ref_frames
+    bw.write(0, 1); // gaps_in_frame_num_value_allowed_flag
+    bw.write_ue(19); // pic_width_in_mbs_minus1
+    bw.write_ue(14); // pic_height_in_map_units_minus1
+    bw.write(1, 1); // frame_mbs_only_flag
+    bw.write(0, 1); // direct_8x8_inference_flag
+    bw.write(0, 1); // frame_cropping_flag
+    bw.write(1, 1); // vui_parameters_present_flag
+    bw.write(0, 4); // aspect_ratio, overscan, video_signal_type, chroma_loc: absent
+    bw.write(1, 1); // timing_info_present_flag
+    bw.write(num_units_in_tick.into(), 32);
+    bw.write(time_scale.into(), 32);
+    bw.write(1, 1); // fixed_frame_rate_flag
+    bw.write(0, 4); // nal_hrd, vcl_hrd, pic_struct, bitstream_restriction: absent
+    bw.end_rbsp();
+    escape_emulation(&bw.bytes)
+}
+
+/// H.264 §7.3.3: with `separate_colour_plane_flag` the slice header carries
+/// `colour_plane_id u(2)` before `frame_num`. The slice bytes `EC C0` read
+/// `first_mb_in_slice = 0`, `slice_type = 0`, `pic_parameter_set_id = 0`,
+/// then `01` and `1001`: `frame_num` 9 behind a colour plane id, or 6 when
+/// the next four bits are `frame_num` directly.
+#[test]
+fn light_slice_header_skips_colour_plane_id() {
+    for (chroma_format_idc, what) in [(1, "4:2:0"), (3, "4:4:4 without separate planes")] {
+        let sps = parse_sps(&craft_high_sps(chroma_format_idc, false, 0, 0)).unwrap();
+        assert!(!sps.separate_colour_plane, "{what}");
+        let sh = parse_slice_header_light(&[0xEC, 0xC0], Some(&sps), 1).unwrap();
+        assert_eq!(sh.frame_num, Some(6), "{what}");
+    }
+    let sps = parse_sps(&craft_high_sps(3, true, 0, 0)).unwrap();
+    assert!(sps.separate_colour_plane);
+    let sh = parse_slice_header_light(&[0xEC, 0xC0], Some(&sps), 1).unwrap();
+    assert_eq!(sh.frame_num, Some(9));
+}
+
+/// H.264 §7.4.2.1.1: `bit_depth_luma_minus8` and `bit_depth_chroma_minus8`
+/// shall be in 0..=6.
+#[test]
+fn avc_bit_depth_minus8_bound_is_six() {
+    let sps = parse_sps(&craft_high_sps(1, false, 6, 6)).unwrap();
+    assert_eq!((sps.bit_depth_luma, sps.bit_depth_chroma), (14, 14));
+    for (luma, chroma, field, value) in [
+        (7, 0, "bit_depth_luma_minus8", 7),
+        (8, 0, "bit_depth_luma_minus8", 8),
+        (0, 7, "bit_depth_chroma_minus8", 7),
+        (0, 8, "bit_depth_chroma_minus8", 8),
+    ] {
+        match parse_sps(&craft_high_sps(1, false, luma, chroma)) {
+            Err(CodecParseError::ReservedValue { field: f, value: v }) => {
+                assert_eq!((f, v), (field, value))
+            }
+            other => panic!("({luma}, {chroma}) must be refused, got {other:?}"),
+        }
+    }
+}
+
+/// H.264 §7.4.2.1.1: on profiles 77, 88 and 100, `constraint_set5_flag = 1`
+/// says no B slices are present.
+#[test]
+fn extract_has_b_frames_false_for_set5_alone_on_77_88_100() {
+    for profile in [77u8, 88, 100] {
+        let sps = parse_sps(&craft_sps_with_constraints(profile, 0b0000_0100)).unwrap();
+        assert!(!sps.has_b_frames, "profile {profile}");
+    }
+}
+
+/// The flag has other meanings on other profiles, and without it these
+/// profiles may carry B slices.
+#[test]
+fn extract_has_b_frames_true_without_set5_or_on_other_profiles() {
+    for profile in [77u8, 88, 100] {
+        let sps = parse_sps(&craft_sps_with_constraints(profile, 0)).unwrap();
+        assert!(sps.has_b_frames, "profile {profile}");
+    }
+    let sps = parse_sps(&craft_sps_with_constraints(110, 0b0000_0100)).unwrap();
+    assert!(sps.has_b_frames, "profile 110");
+}
+
+/// H.264 §E.2.1: `time_scale` shall be greater than 0; a zero clock gives no
+/// rate.
+#[test]
+fn a_zero_time_scale_gives_no_frame_rate() {
+    assert_eq!(
+        parse_sps(&craft_sps_with_timing(1, 60)).unwrap().frame_rate,
+        Some(Rational { num: 60, den: 2 })
+    );
+    assert_eq!(
+        parse_sps(&craft_sps_with_timing(1, 0)).unwrap().frame_rate,
+        None
+    );
+}
+
+/// `nal_unit_type` is a 5-bit field: a value above 31 is refused before any
+/// bit of the slice header is read.
+#[test]
+fn a_nal_unit_type_over_31_is_refused() {
+    let rbsp = [0x88, 0x80]; // first_mb_in_slice 0, slice_type 7 (I), pps 0
+    assert!(parse_slice_header_light(&rbsp, None, 31).is_ok());
+    for bytes in [&rbsp[..], &[]] {
+        match parse_slice_header_light(bytes, None, 32) {
+            Err(CodecParseError::ReservedValue { field, value }) => {
+                assert_eq!((field, value), ("nal_unit_type", 32))
+            }
+            other => panic!("32 must be refused, got {other:?}"),
+        }
     }
 }
