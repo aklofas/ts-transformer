@@ -481,7 +481,10 @@ PID, and when the transport stream id changes, each PID that leaves first
 hands out the PES it holds, as `flush` would, in ascending PID order:
 before any issue the new PMT raises about its own streams and before the
 `ProgramMap` that announces the change (a PAT that only drops a program
-announces nothing). An unbounded video PES is handed
+announces nothing). An issue about the PMT section itself, `PsiSyntax`, is
+raised when the section arrives, before the units, for every PMT section
+that passes its CRC check and names a program the PAT places on its PID, a
+repeat included. An unbounded video PES is handed
 out as far as it arrived and nothing marks it short, as at `flush`; a
 bounded PES that is short is marked with `MalformedPes`, as at `flush`; a
 synchronous-KLV access unit whose cells are still incomplete after that is
