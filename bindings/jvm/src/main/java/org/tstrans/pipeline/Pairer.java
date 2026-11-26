@@ -13,10 +13,10 @@ import org.tstrans.mpegts.DemuxerStats;
  * consumer owns concurrency (the {@code org.tstrans.mpegts.Demuxer} contract).
  *
  * <p>A signalled discontinuity in the bytes (a set {@code discontinuity_indicator} on
- * the video PID, the KLV PID, or the program's PCR PID when it also carries a stream)
- * starts a new time base, and nothing pairs across it: the KLV samples held from
- * before it leave as {@code UnpairedKlv}, and a sample right after it that still
- * carries the old clock leaves unpaired. One limit: the old clock's samples still in
+ * the video PID, the KLV PID, or the video program's PCR PID, whether or not that PID
+ * carries a stream) starts a new time base, and nothing pairs across it: the KLV
+ * samples held from before it leave as {@code UnpairedKlv}, and a sample right after
+ * it that still carries the old clock leaves unpaired. One limit: the old clock's samples still in
  * flight behind the boundary are not marked, only the first on each PID leaves
  * unpaired, so with KLV muxed more than one sample behind its video and a new clock
  * within the pairing tolerance of the old one, a later old-clock KLV sample can still
