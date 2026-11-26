@@ -482,8 +482,11 @@ mean **Deferred**. An entry whose feature has shipped must never read
   per-frame display size) is not in scope.
 - **Why deferred:** Crosses into "you want a decoder." The light
   scope covers keyframe detection — the load-bearing use case for
-  metadata extraction: keyframe gating reads
-  `frame_type == KEY && show_frame && !show_existing_frame`.
+  metadata extraction: keyframe gating reads `frame_type == KEY &&
+  show_frame` (a key frame random access point, AV1 §7.6.2); a delayed
+  random access point (a key frame with `show_frame = 0`) and the
+  `show_existing_frame` header that later shows it (`frame_type` 255) are
+  not recognised.
 - **Trigger to revisit:** A consumer shipping per-frame display-time,
   per-frame aspect-ratio, or `film_grain_params` consumption.
 

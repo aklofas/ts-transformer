@@ -565,7 +565,8 @@ fixed picture rate and the value is above 0), and `parse_h266_vui` walks the
 VUI syntax H.266 takes from H.274 §7.2 to recover `ColorInfo` (primaries +
 transfer + matrix via H.273). Long-term entries coded in the SPS's reference
 picture lists are read. The VUI is read inside its declared
-`sps_vui_payload_size_minus1 + 1` RBSP bytes; a size above 1023, a set
+`sps_vui_payload_size_minus1 + 1` RBSP bytes; a `sps_vui_payload_size_minus1`
+above 1023 (a VUI over 1 024 bytes), a set
 `sps_vui_alignment_zero_bit` or a tail without its marker bit is refused. The
 light slice header reports no `pic_order_cnt_lsb` (the POC is in the picture
 header) and refuses a `nal_unit_type` above 31. APS NALs (types 17 / 18), Picture Header

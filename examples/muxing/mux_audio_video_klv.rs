@@ -212,6 +212,10 @@ fn build_mp2_silent_frame() -> Vec<u8> {
     //   padding=0
     //   private=0
     //   mode=11 (single channel; byte 3 = 0xC4 also sets original=1)
+    // 224 kbit/s in single-channel mode is a pair ISO/IEC 11172-3 does not
+    // allow for Layer II (§2.4.2.3 points to Annex B, Table 3-B.2): libtwolame
+    // refuses to encode it. The parser reads the header as written, so the
+    // example still muxes; a real stream takes its header from its encoder.
     // Then 140 bytes of silence (zero payload for this example).
     let mut frame = vec![0xFF, 0xFD, 0xB0, 0xC4];
     frame.extend(std::iter::repeat_n(0u8, 140));

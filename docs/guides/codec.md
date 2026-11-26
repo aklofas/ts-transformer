@@ -113,6 +113,7 @@ while let Some(ev) = dx.next_event() {
 | `chroma_format` | `ChromaFormat` | `Yuv420` / `Yuv422` / `Yuv444` / `Monochrome`. |
 | `color` | `Option<ColorInfo>` | VUI color information (`primaries`, `transfer`, `matrix`, `full_range`, `chroma_loc`, `sample_aspect_ratio`). `None` when the VUI signals none of video signal type, chroma location or aspect ratio. |
 | `frame_rate` | `Option<Rational>` | Derived from VUI `timing_info`: `time_scale / (2 × num_units_in_tick)`, not reduced. `None` when the timing info is absent, when either field is zero, and when `2 × num_units_in_tick` does not fit 32 bits. |
+| `has_b_frames` | `bool` | The VUI's `max_num_reorder_frames` decides when present (`> 0`); otherwise a heuristic: Baseline, and Main / Extended / High with `constraint_set5_flag`, are B-frameless, and every other profile may have B-frames. |
 | `raw_rbsp` | `Vec<u8>` | The input bytes verbatim (emulation-prevention bytes included). |
 
 **`H264Pps` key fields:** `pic_parameter_set_id`, `seq_parameter_set_id`, `entropy_coding_mode` (`Cavlc` or `Cabac`), `raw_rbsp`.
@@ -235,7 +236,8 @@ while let Some(ev) = dx.next_event() {
 - Long-term entries coded in the SPS's reference picture lists
   (`ltrp_in_header_flag = 0`) are walked.
 - The VUI is read inside its declared `sps_vui_payload_size_minus1 + 1` RBSP
-  bytes. A size above 1023, a set `sps_vui_alignment_zero_bit` or a VUI tail
+  bytes. A `sps_vui_payload_size_minus1` above 1023 (a VUI over 1 024 bytes),
+  a set `sps_vui_alignment_zero_bit` or a VUI tail
   without its `vui_payload_bit_equal_to_one` is refused with `ReservedValue`;
   a VUI that needs more bits than its size is `TruncatedRbsp`.
 - `parse_parameter_sets` drops a PPS whose SPS is not in the same call (see
@@ -466,6 +468,13 @@ a decoder init call (e.g. Apple VideoToolbox's
 scans a `Sample`'s raw Annex-B bytes directly — the same `raw` field passed to
 `split_video`, no need to call it first — and returns VPS/SPS/PPS as complete
 NALs with the header byte(s) already included.
+
+**Length-prefixed framing** (the ISO/IEC 14496-15 AVCC / HVCC sample format
+VideoToolbox expects): `nal_framing::annexb_to_length_prefixed` (C
+`tst_annexb_to_length_prefixed`) writes each NAL unit without the zero bytes
+that follow it and refuses an empty unit, or one of only zero bytes, with
+`CodecParseError::Truncated { needed: 1, had: 0 }` (C `TST_E_INVALID_NAL`);
+`length_prefixed_to_annexb` goes back the other way and refuses a zero length.
 
 ## Shared types
 
