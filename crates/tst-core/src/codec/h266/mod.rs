@@ -145,7 +145,7 @@ pub fn parse_parameter_sets(nals: &[NalUnit]) -> Result<H266ParameterSets, Codec
 }
 
 crate::binding_record! {
-    /// The VPS, SPS and PPS NAL units parsed by one `parse_parameter_sets` call.
+    /// The VPS, SPS and PPS NAL units parsed by one parameter-set collector call.
     ///
     /// Unlike the H.265 version, which is keyed by id, H.266 parameter sets are
     /// ordered lists: look one up by its own id field (`vps_id`, `sps_id`,
@@ -154,8 +154,8 @@ crate::binding_record! {
     /// One call is one snapshot of the NAL units it is given. A PPS whose SPS
     /// is not in the call, or whose SPS failed to parse in the call, is dropped;
     /// when the call holds several SPS with one id, the last one that parsed is
-    /// used. A call that holds only a lone PPS returns `Ok` with empty results,
-    /// not an error: parse a lone PPS with `parse_pps`.
+    /// used. A call that holds only a lone PPS gives empty results, not an
+    /// error: a lone PPS is parsed with the PPS parser.
     #[must_use]
     #[non_exhaustive]
     #[derive(Debug, Clone, PartialEq, Eq)]

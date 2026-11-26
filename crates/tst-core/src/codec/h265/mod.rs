@@ -58,13 +58,13 @@ use crate::codec::NalUnit;
 use alloc::collections::BTreeMap;
 
 crate::binding_record! {
-    /// The VPS, SPS and PPS NAL units parsed by one `parse_parameter_sets` call.
+    /// The VPS, SPS and PPS NAL units parsed by one parameter-set collector call.
     ///
     /// One call is one snapshot of the NAL units it is given. A PPS whose SPS
     /// is not in the call, or whose SPS failed to parse in the call, is dropped;
     /// when the call holds several SPS with one id, the last one that parsed is
-    /// used. A call that holds only a lone PPS returns `Ok` with empty results,
-    /// not an error: parse a lone PPS with `parse_pps`.
+    /// used. A call that holds only a lone PPS gives empty results, not an
+    /// error: a lone PPS is parsed with the PPS parser.
     #[must_use]
     #[derive(Debug, Clone, PartialEq, Eq, Default)]
     #[non_exhaustive]
