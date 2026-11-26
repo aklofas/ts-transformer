@@ -1224,15 +1224,17 @@ class St0601Test {
 
     @Test
     void imapbSpecialsPayloadLessCodeRoundTrips() throws KlvDecodeException, KlvEncodeException {
-        // tag 113 (altitudeAglM) carrying the BelowMin special: the typed
-        // field stays null and the special re-appears in imapbSpecials.
+        // tag 113 (altitudeAglM) carrying the BelowMin special: a decoder puts
+        // the range's minimum into the typed field and keeps the special in
+        // imapbSpecials, and that record re-encodes to the signal again.
         UasDatalinkLs rec = new UasDatalinkLs.Builder()
                 .universalLabel(bareUl())
                 .imapbSpecials(java.util.List.of(new ImapbSpecialEntry(113, "below_min", 0L)))
                 .build();
         UasDatalinkLs back = Klv.decodeUasDatalink(Klv.encodeUasDatalink(rec));
-        assertNull(back.altitudeAglM());
+        assertEquals(-900.0, back.altitudeAglM());
         assertTrue(back.imapbSpecials().contains(new ImapbSpecialEntry(113, "below_min", 0L)));
+        assertWireContains(Klv.encodeUasDatalink(back), "7103e00000", "Tag 113 BelowMin replayed");
     }
 
     @Test
@@ -1299,14 +1301,26 @@ class St0601Test {
     }
 
     @Test
-    void imapbSpecialsPayloadTooLargeForDefaultLenThrows() {
-        // Tag 112 (platformCourseAngleDeg) default_len=2 -> payload bits =
-        // 8*2-5 = 11, max valid payload 2047; 99999 doesn't fit.
+    void imapbSpecialsPayloadWiderThanDefaultLenIsWrittenAtItsWidth()
+            throws KlvDecodeException, KlvEncodeException {
+        // Tag 112 (platformCourseAngleDeg) default_len=2 -> 8*2-5 = 11 payload
+        // bits; a NaN-id of 99999 needs 17 and is written at three bytes, the
+        // shortest length of the item that holds it. A payload no length of
+        // the item holds (2^59 needs 60 bits; eight bytes hold 59) is refused,
+        // naming the item.
         UasDatalinkLs rec = new UasDatalinkLs.Builder()
                 .universalLabel(bareUl())
                 .imapbSpecials(java.util.List.of(new ImapbSpecialEntry(112, "pos_quiet_nan", 99999L)))
                 .build();
-        assertThrows(KlvEncodeException.class, () -> Klv.encodeUasDatalink(rec));
+        byte[] wire = Klv.encodeUasDatalink(rec);
+        assertWireContains(wire, "7003d1869f", "Tag 112 three-byte positive quiet NaN");
+        assertEquals(rec.imapbSpecials(), Klv.decodeUasDatalink(wire).imapbSpecials());
+        UasDatalinkLs tooWide = new UasDatalinkLs.Builder()
+                .universalLabel(bareUl())
+                .imapbSpecials(java.util.List.of(new ImapbSpecialEntry(112, "pos_quiet_nan", 1L << 59)))
+                .build();
+        KlvEncodeException e = assertThrows(KlvEncodeException.class, () -> Klv.encodeUasDatalink(tooWide));
+        assertEquals(java.util.Optional.of(112L), e.tag());
     }
 
     // -----------------------------------------------------------------------
@@ -1329,7 +1343,7 @@ class St0601Test {
         byte[] raw = Klv.encodeUasDatalink(rec, OutOfRangePolicy.INDICATOR);
         assertWireContains(raw, "7103e10000", "Tag 113 AboveMax IMAPB indicator");
         UasDatalinkLs back = Klv.decodeUasDatalink(raw);
-        assertNull(back.altitudeAglM(), "IMAPB special field must be null after decode");
+        assertEquals(40_000.0, back.altitudeAglM(), "an AboveMax signal decodes to the range's maximum");
     }
 
     // -----------------------------------------------------------------------
