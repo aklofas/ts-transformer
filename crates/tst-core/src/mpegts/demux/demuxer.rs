@@ -235,6 +235,31 @@ impl Demuxer {
     ///
     /// # Errors
     ///
+    /// `Err(DemuxError::StrictRejection(_))` and, under
+    /// [`StrictMode::Full`], `Err(DemuxError::MalformedPes { .. })` stop at
+    /// the packet that raised them. They are resumable: that packet was
+    /// processed in full (its other units are delivered, the timing of a
+    /// damaged PES that was dropped is recorded, a pending time-base reset is
+    /// settled once), and the demuxer may be fed on. The whole packets after
+    /// it in this call's input stay buffered, and the next `feed` processes
+    /// them before its own bytes (a [`feed_aligned`](Self::feed_aligned)
+    /// discards them). A `MalformedPes` of a packet is returned in preference
+    /// to any other verdict of that packet and is not also queued as a
+    /// `NonConformant` event; every other verdict of the packet, a second
+    /// `MalformedPes` included, is queued as its `NonConformant` event and
+    /// fails no later packet.
+    ///
+    /// When a PAT or PMT takes PIDs out of a program or changes a PID's
+    /// stream type, each such PID first hands out the PES it holds, as
+    /// [`flush`](Self::flush) would, in ascending PID order and before the
+    /// `ProgramMap` that announces the change. A strict verdict this raises
+    /// (under `StrictMode::Full` a short unit's `MalformedPes`, under
+    /// `StrictMode::TimingOnly` for example a synchronous-KLV unit without a
+    /// PTS) is queued as its `NonConformant` event and returned as
+    /// `StrictRejection` by the call that carried the change, and the change
+    /// is applied all the same. [`reset_sync`](Self::reset_sync) discards
+    /// the PES in flight instead.
+    ///
     /// `Err(DemuxError::Unrecoverable { after_bytes })` closes one
     /// sync-search window: more than `SYNC_SEARCH_WINDOW` (32 × 188 =
     /// 6,016) bytes were scanned without a confirmed packet boundary. The
@@ -436,11 +461,13 @@ impl Demuxer {
     /// Returns `Err(DemuxError::Unrecoverable { after_bytes: 0 })` if
     /// `pkt[0] != 0x47` — the caller violated the alignment contract.
     /// Otherwise it returns `StrictRejection` when the configured strict
-    /// mode rejects a `NonConformantIssue` raised by this packet, and
-    /// `MalformedPes` when a strict mode rejects a malformed PES header. In
-    /// lenient mode (the default) `MalformedPes` is converted to a
+    /// mode rejects a `NonConformantIssue` raised by this packet, and, under
+    /// [`StrictMode::Full`], `MalformedPes` for a PES this packet ended
+    /// damaged or unparseable. Below `Full` a `MalformedPes` is queued as a
     /// `NonConformant` event so a single corrupt PES doesn't tear down the
-    /// receive loop.
+    /// receive loop. Both errors are resumable, as for
+    /// [`feed`](Self::feed), and both follow its rules for the verdicts of
+    /// one packet and for the unit a leaving PID hands out.
     /// The `SyncBufExhausted` and `Unrecoverable { after_bytes > 0 }` variants
     /// cannot be returned by this method (no sync buffer is involved).
     ///
@@ -459,8 +486,14 @@ impl Demuxer {
     /// while let Some(_event) = d.next_event() { /* handle */ }
     /// ```
     ///
-    /// An aligned packet discards a partial packet buffered by an earlier
-    /// [`feed`](Self::feed), which could not be continued across it.
+    /// An aligned packet discards everything an earlier [`feed`](Self::feed)
+    /// left buffered: a partial packet, the whole packets behind a packet
+    /// whose `feed` returned an error, a resync candidate not yet confirmed.
+    /// No event reports the discard; on a PID whose continuity counter the
+    /// demuxer already follows, the next packet shows the lost ones as a
+    /// continuity jump. Use one of the two calls per stream, or switch to
+    /// `feed_aligned` only after a `feed` that returned `Ok` with its bytes
+    /// ending on a packet boundary and no stray bytes between packets.
     pub fn feed_aligned(&mut self, pkt: &[u8; 188]) -> Result<(), DemuxError> {
         if pkt[0] != crate::mpegts::common::TS_SYNC_BYTE {
             return Err(DemuxError::Unrecoverable { after_bytes: 0 });
@@ -1147,6 +1180,127 @@ mod tests {
                 |e| matches!(e, DemuxEvent::Discontinuity { stream, .. } if stream.pid == 0x101)
             ),
             "{ev:?}"
+        );
+    }
+
+    /// One bounded one-packet PES on PID 0x101 (stream type 0x80).
+    fn one_packet_pes(cc: u8) -> [u8; 188] {
+        let pes = pes_bytes(
+            0xBD,
+            Some(90_000 + 3_000 * u64::from(cc)),
+            None,
+            true,
+            &[0x55; 20],
+            true,
+        );
+        pes_to_packets(0x101, cc, &pes)[0]
+    }
+
+    /// Under `StrictMode::Full`, one `feed` of a packet the mode refuses
+    /// (adaptation_field_control `00`) and three whole PES behind it: the
+    /// call returns the refusal and leaves the three packets buffered.
+    fn full_demuxer_after_a_refused_feed() -> Demuxer {
+        let mut d = full_demuxer(&[(0x80, 0x101, &[])], 0x101);
+        let mut input = vec![0x47, 0x01, 0x01, 0x00];
+        input.resize(188, 0xFF);
+        for cc in 0..3 {
+            input.extend_from_slice(&one_packet_pes(cc));
+        }
+        let err = d.feed(&input).unwrap_err();
+        assert!(matches!(err, DemuxError::StrictRejection(_)), "{err:?}");
+        d
+    }
+
+    fn samples_on_0x101(events: &[DemuxEvent]) -> usize {
+        events
+            .iter()
+            .filter(|e| matches!(e, DemuxEvent::Sample { stream, .. } if stream.pid == 0x101))
+            .count()
+    }
+
+    #[test]
+    fn feed_aligned_after_a_failed_feed_discards_the_whole_packets_it_left_buffered() {
+        let mut d = full_demuxer_after_a_refused_feed();
+        d.feed_aligned(&one_packet_pes(3)).unwrap();
+        d.flush();
+        assert_eq!(samples_on_0x101(&drain_all_events(&mut d)), 1);
+    }
+
+    #[test]
+    fn feed_after_a_failed_feed_processes_the_packets_it_left_buffered() {
+        let mut d = full_demuxer_after_a_refused_feed();
+        d.feed(&one_packet_pes(3)).unwrap();
+        d.flush();
+        assert_eq!(samples_on_0x101(&drain_all_events(&mut d)), 4);
+    }
+
+    /// A version change that keeps a PID keeps the metadata access unit in
+    /// progress on it: only a PID that leaves or changes kind loses it.
+    #[test]
+    fn pmt_bump_of_the_same_program_keeps_an_unchanged_pids_in_flight_au() {
+        use crate::mpegts::au_cell::AuCellHeader;
+        use crate::mpegts::au_cell::CellFragmentIndication::{self, First, Last};
+        use crate::mpegts::demux::event::MetadataKind;
+        use crate::mpegts::demux::test_support::{
+            au_cell_pes_packets, build_pmt_section, psi_packet,
+        };
+        let cell = |cc: u8, seq: u8, cfi: CellFragmentIndication, payload: &[u8]| {
+            let header = AuCellHeader {
+                metadata_service_id: 0,
+                sequence_number: seq,
+                cell_fragment_indication: cfi,
+                decoder_config_flag: false,
+                random_access_indicator: true,
+            };
+            au_cell_pes_packets(0x101, cc, header, payload)
+        };
+        let mut d = demuxer_with_streams(
+            DemuxerConfig::default(),
+            0x100,
+            &[(0x1B, 0x100, &[]), (0x15, 0x101, &[])],
+        );
+        feed_packets(&mut d, &cell(0, 0, First, b"ab")).unwrap();
+        // Version 0 -> 1 of the same program: 0x101 stays sync KLV, a stream
+        // is added.
+        let v1 = build_pmt_section(
+            1,
+            0x100,
+            1,
+            &[],
+            &[(0x1B, 0x100, &[]), (0x15, 0x101, &[]), (0x0F, 0x102, &[])],
+        );
+        d.feed(&psi_packet(0x1000, &v1, 1)).unwrap();
+        feed_packets(&mut d, &cell(1, 1, Last, b"cd")).unwrap();
+        d.flush();
+
+        let events = drain_all_events(&mut d);
+        let metas: Vec<_> = events
+            .iter()
+            .filter_map(|e| match e {
+                DemuxEvent::Metadata {
+                    stream,
+                    kind:
+                        MetadataKind::KlvSyncAuCell {
+                            was_reassembled,
+                            cell_count,
+                            ..
+                        },
+                    payload,
+                    ..
+                } if stream.pid == 0x101 => Some((*was_reassembled, *cell_count, payload.clone())),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(metas, vec![(true, 2, b"abcd".to_vec())], "{events:?}");
+        assert!(
+            !events.iter().any(|e| matches!(
+                e,
+                DemuxEvent::NonConformant {
+                    issue: NonConformantIssue::MultiCellAu { .. },
+                    ..
+                }
+            )),
+            "{events:?}"
         );
     }
 
