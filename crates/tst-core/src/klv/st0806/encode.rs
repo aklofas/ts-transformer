@@ -104,16 +104,6 @@ fn write_body(ls: &RvtLs, out: &mut Vec<u8>) -> Result<(), KlvEncodeError> {
     emit_u8(8, ls.rvt_ls_version, out)?;
     emit_u32(9, ls.video_data_rate, out)?;
     emit_iso7(10, ls.digital_video_file_format.as_deref(), 127, out)?;
-    check_mgrs(
-        14,
-        ls.aircraft_mgrs_zone,
-        ls.aircraft_mgrs_band_grid.as_deref(),
-    )?;
-    check_mgrs(
-        18,
-        ls.frame_center_mgrs_zone,
-        ls.frame_center_mgrs_band_grid.as_deref(),
-    )?;
     emit_u8(14, ls.aircraft_mgrs_zone, out)?;
     emit_iso7(15, ls.aircraft_mgrs_band_grid.as_deref(), 3, out)?;
     emit_u24(16, ls.aircraft_mgrs_easting_m, out)?;
@@ -146,6 +136,19 @@ fn write_body(ls: &RvtLs, out: &mut Vec<u8>) -> Result<(), KlvEncodeError> {
         }
         emit_ber_oid_tlv(f.tag, &f.value, out)?;
     }
+    // After every refusal of the items above, so that a set refused before
+    // the MGRS components were checked keeps that refusal (an over-long
+    // band and grid square stays StringTooLong).
+    check_mgrs(
+        14,
+        ls.aircraft_mgrs_zone,
+        ls.aircraft_mgrs_band_grid.as_deref(),
+    )?;
+    check_mgrs(
+        18,
+        ls.frame_center_mgrs_zone,
+        ls.frame_center_mgrs_band_grid.as_deref(),
+    )?;
     Ok(())
 }
 

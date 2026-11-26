@@ -419,7 +419,9 @@ fn the_rvt_encoder_refuses_an_mgrs_zone_outside_1_to_60() {
 
 #[test]
 fn the_rvt_encoder_refuses_a_band_and_grid_square_that_is_not_three_letters() {
-    for band_grid in ["T", "TW", "TWNA", "tw1", "TIO", "TWO", "Té", "TW1"] {
+    // A band over its 3-byte cap keeps 0.10.0's StringTooLong (pinned by
+    // an_over_long_mgrs_band_keeps_the_error_0_10_0_gave_it).
+    for band_grid in ["T", "TW", "tw1", "TIO", "TWO", "Té", "TW1"] {
         let r = encode_to_vec(&rvt_with_mgrs(Some(18), band_grid));
         assert!(
             matches!(r, Err(KlvEncodeError::InvalidFieldValue { tag: 15, .. })),
@@ -696,4 +698,36 @@ fn a_decoded_non_ascii_iso7_text_is_refused_on_reencode_and_the_original_bytes_s
         ..ls
     };
     assert!(encode_to_vec(&cleared).is_ok());
+}
+
+#[test]
+fn an_over_long_mgrs_band_keeps_the_error_0_10_0_gave_it() {
+    // 0.10.0 refused a band and grid square over its 3-byte cap with
+    // StringTooLong, whatever the zone; the MGRS checks run after every
+    // refusal 0.10.0 made, so that input keeps its error.
+    for zone in [Some(18u8), Some(0)] {
+        let r = encode_to_vec(&rvt_with_mgrs(zone, "TWLX"));
+        assert!(
+            matches!(r, Err(KlvEncodeError::StringTooLong { tag: 15, max: 3 })),
+            "zone {zone:?}: {r:?}"
+        );
+    }
+    let frame_center = RvtLs {
+        frame_center_mgrs_zone: Some(61),
+        frame_center_mgrs_band_grid: Some("日本".into()),
+        ..Default::default()
+    };
+    assert!(matches!(
+        encode_to_vec(&frame_center),
+        Err(KlvEncodeError::StringTooLong { tag: 19, max: 3 })
+    ));
+    // An easting over 99 999 (refused by 0.10.0) beside a bad zone.
+    let ls = RvtLs {
+        aircraft_mgrs_easting_m: Some(100_000),
+        ..rvt_with_mgrs(Some(0), "TWN")
+    };
+    assert!(matches!(
+        encode_to_vec(&ls),
+        Err(KlvEncodeError::OutOfRange { tag: 16, .. })
+    ));
 }
