@@ -224,44 +224,10 @@ impl super::demuxer::Demuxer {
                     let gap = damage.and_then(|_| self.pes.take_gap(pes.pid));
                     self.handle_complete_pes(pes, damage, gap);
                 }
-                ReassemblyOutcome::Overflow { pid } => {
-                    // A cap drop loses bytes without a continuity gap, so the
-                    // LOAS record position is unknown (ISO/IEC 14496-3
-                    // §1.7.2) and the resync starts again, as for the other
-                    // losses (`PidState::forget_latm_position`).
-                    if let Some(state) = self.pid_state.get_mut(&pid) {
-                        state.forget_latm_position();
-                    }
-                    // The dropped PES may hold a cell of the AU in progress.
-                    self.discard_au_in_progress(pid);
-                    if let Some(stream) = self.lookup_stream(pid) {
-                        self.record_discontinuity(stream, DiscontinuityKind::PesOversize { pid });
-                    }
-                }
-                ReassemblyOutcome::OverflowTotal => {
-                    // The aggregate cap drops the partials of every PID, so
-                    // each of them lost a PES.
-                    for pid in self.pes.take_total_overflow_pids() {
-                        // As for `Overflow`: the record position is unknown.
-                        if let Some(state) = self.pid_state.get_mut(&pid) {
-                            state.forget_latm_position();
-                        }
-                        self.discard_au_in_progress(pid);
-                        if let Some(stream) = self.lookup_stream(pid) {
-                            self.record_discontinuity(stream, DiscontinuityKind::PesTotalOversize);
-                        }
-                    }
-                }
+                ReassemblyOutcome::Overflow { pid } => self.pes_overflowed(pid),
+                ReassemblyOutcome::OverflowTotal => self.pes_total_overflowed(),
                 ReassemblyOutcome::ZeroLengthNonVideo { pid, stream_id } => {
-                    let stream = self.lookup_stream(pid).unwrap_or_else(|| {
-                        StreamId::anonymous(pid, self.program_number_for_pid(pid))
-                    });
-                    self.queue_nonconformant(
-                        stream,
-                        NonConformantIssue::ZeroLengthPesNonVideo { pid, stream_id },
-                    );
-                    // The partial is dropped with its cells.
-                    self.discard_au_in_progress(pid);
+                    self.zero_length_pes_dropped(pid, stream_id);
                 }
                 ReassemblyOutcome::Malformed { pid, reason }
                     if is_damage_reason(reason) && self.options.strict == StrictMode::Off =>
@@ -284,6 +250,56 @@ impl super::demuxer::Demuxer {
             self.settle_after_pes(pkt.pid);
         }
         first_err.map_or(Ok(()), Err)
+    }
+
+    /// A PES on `pid` dropped by the per-PID cap. Out of line, as the other
+    /// rare outcomes of `handle_pes_packet`: their lookups would otherwise
+    /// sit in the per-packet path.
+    #[cold]
+    fn pes_overflowed(&mut self, pid: u16) {
+        // A cap drop loses bytes without a continuity gap, so the LOAS
+        // record position is unknown (ISO/IEC 14496-3 §1.7.2) and the resync
+        // starts again, as for the other losses
+        // (`PidState::forget_latm_position`).
+        if let Some(state) = self.pid_state.get_mut(&pid) {
+            state.forget_latm_position();
+        }
+        // The dropped PES may hold a cell of the AU in progress.
+        self.discard_au_in_progress(pid);
+        if let Some(stream) = self.lookup_stream(pid) {
+            self.record_discontinuity(stream, DiscontinuityKind::PesOversize { pid });
+        }
+    }
+
+    /// The PES in flight on every PID dropped by the aggregate cap.
+    #[cold]
+    fn pes_total_overflowed(&mut self) {
+        // The aggregate cap drops the partials of every PID, so each of them
+        // lost a PES.
+        for pid in self.pes.take_total_overflow_pids() {
+            // As for `Overflow`: the record position is unknown.
+            if let Some(state) = self.pid_state.get_mut(&pid) {
+                state.forget_latm_position();
+            }
+            self.discard_au_in_progress(pid);
+            if let Some(stream) = self.lookup_stream(pid) {
+                self.record_discontinuity(stream, DiscontinuityKind::PesTotalOversize);
+            }
+        }
+    }
+
+    /// A zero-length PES on a PID that is not video.
+    #[cold]
+    fn zero_length_pes_dropped(&mut self, pid: u16, stream_id: u8) {
+        let stream = self
+            .lookup_stream(pid)
+            .unwrap_or_else(|| StreamId::anonymous(pid, self.program_number_for_pid(pid)));
+        self.queue_nonconformant(
+            stream,
+            NonConformantIssue::ZeroLengthPesNonVideo { pid, stream_id },
+        );
+        // The partial is dropped with its cells.
+        self.discard_au_in_progress(pid);
     }
 
     /// Surface a `Malformed` outcome of the packet being handled. Wire order
