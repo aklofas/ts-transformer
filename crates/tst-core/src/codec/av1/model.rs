@@ -37,9 +37,11 @@ crate::binding_record! {
         /// wrapper is kept for `ColorInfo` parity with the H.26x parsers and for
         /// forward-compatibility with future error-recovery paths.
         pub color_info: Option<ColorInfo>,
-        /// Frame rate as a rational number, derived from `time_scale /
-        /// num_units_in_display_tick` when `timing_info_present_flag == 1` and
-        /// `equal_picture_interval == 1`; otherwise absent.
+        /// Frame rate as a rational number, `time_scale /
+        /// (num_units_in_display_tick * (num_ticks_per_picture_minus_1 + 1))`
+        /// reduced, when `timing_info_present_flag == 1` and
+        /// `equal_picture_interval == 1`; absent otherwise, and when the
+        /// reduced pair does not fit 32 bits.
         pub frame_rate: Option<Rational>,
         /// The original payload bytes as passed to the parser.
         pub raw: Vec<u8>,
@@ -56,8 +58,10 @@ crate::binding_record! {
     #[non_exhaustive]
     #[derive(Debug, Clone, PartialEq, Eq)]
     pub struct Av1FrameHeaderLight {
-        /// `frame_type` per AV1 §5.9.1: 0=KEY_FRAME, 1=INTER_FRAME,
-        /// 2=INTRA_ONLY_FRAME, 3=SWITCH_FRAME.
+        /// `frame_type` per AV1 §5.9.2: 0=KEY_FRAME, 1=INTER_FRAME,
+        /// 2=INTRA_ONLY_FRAME, 3=SWITCH_FRAME; 255 when `show_existing_frame`
+        /// is set (the shown frame's type lives in reference state, which
+        /// this parser does not keep).
         pub frame_type: u8,
         /// True when the decoded frame is displayed immediately.
         pub show_frame: bool,
@@ -73,19 +77,36 @@ crate::binding_record! {
     }
 }
 
+impl Av1FrameHeaderLight {
+    /// The `frame_type` of a `show_existing_frame` header: the shown frame's
+    /// type lives in reference state, which this parser does not keep.
+    pub const FRAME_TYPE_UNKNOWN: u8 = 0xFF;
+}
+
 crate::binding_record! {
     /// Aggregate of all typed structs extracted from a sequence of AV1 OBUs.
     ///
     /// Build a list of OBUs, then call the OBU-stream parser to populate the
     /// three fields. Partial-success-tolerant: OBUs that fail to parse accumulate
     /// in `unparseable` rather than aborting the walk.
+    ///
+    /// The lists hold the headers met in one call, not frames: a frame header
+    /// is parsed under the most recent sequence header that parsed in the same
+    /// call, and a sequence header that fails to parse (truncated, or a value
+    /// out of its range) is recorded in `unparseable` while the previous one
+    /// stays current.
     #[must_use]
     #[non_exhaustive]
     #[derive(Debug, Clone, PartialEq, Eq)]
     pub struct Av1ObuStream {
         /// All successfully parsed Sequence Header OBUs in encounter order.
         pub sequence_headers: Vec<Av1SequenceHeader>,
-        /// All successfully parsed Frame Header OBUs in encounter order.
+        /// All successfully parsed Frame Header OBUs (type 3 or 6) in
+        /// encounter order. Its length counts parsed frame headers, not
+        /// decoded or displayed frames: a `show_existing_frame` header is an
+        /// entry, each spatial or temporal layer has its own, a stream that
+        /// repeats type 3 gets one entry per copy, and redundant frame
+        /// headers (type 7) are skipped.
         pub frame_headers: Vec<Av1FrameHeaderLight>,
         /// `(obu_type, error)` for each OBU that failed to parse. Frame header
         /// OBUs that arrive before a sequence header land here too, with a

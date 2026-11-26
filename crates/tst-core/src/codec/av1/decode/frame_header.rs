@@ -7,7 +7,9 @@ use crate::codec::av1::model::{Av1FrameHeaderLight, Av1SequenceHeader};
 /// Parse an AV1 Frame Header OBU body (light scope). Per AV1 spec §5.9.1.
 ///
 /// Light scope: extracts `frame_type` + `show_frame` + `show_existing_frame`
-/// only. Per-frame size override is always None — full decode would
+/// only. A `show_existing_frame` header reports
+/// [`Av1FrameHeaderLight::FRAME_TYPE_UNKNOWN`]: the shown frame's type is
+/// reference state. Per-frame size override is always None — full decode would
 /// require reference-frame management beyond this parser's scope. See
 /// `docs/project/deferred-features.md`.
 pub fn parse_frame_header_light(
@@ -33,7 +35,7 @@ pub fn parse_frame_header_light(
         // Spec §5.9.2: frame_to_show_map_idx u(3) follows; we don't
         // surface it. Return early with show_frame=true (implicit).
         return Ok(Av1FrameHeaderLight {
-            frame_type: 0, // not encoded in this path; sentinel value
+            frame_type: Av1FrameHeaderLight::FRAME_TYPE_UNKNOWN,
             show_frame: true,
             show_existing_frame: true,
             frame_size: None,
@@ -105,6 +107,18 @@ mod tests {
         assert!(fh.show_existing_frame);
         assert!(fh.show_frame); // implied true for show_existing_frame
         assert_eq!(fh.frame_size, None);
+    }
+
+    /// AV1 §5.9.2: with `show_existing_frame` the type is
+    /// `RefFrameType[frame_to_show_map_idx]`, reference state this parser
+    /// does not keep. Payload: show_existing_frame = 1,
+    /// frame_to_show_map_idx = 2.
+    #[test]
+    fn show_existing_frame_reports_unknown_type_not_key() {
+        let fh = parse_frame_header_light(&[0b1010_0000], &dummy_seq()).unwrap();
+        assert!(fh.show_existing_frame && fh.show_frame);
+        assert_eq!(Av1FrameHeaderLight::FRAME_TYPE_UNKNOWN, 0xFF);
+        assert_eq!(fh.frame_type, Av1FrameHeaderLight::FRAME_TYPE_UNKNOWN);
     }
 
     #[test]
