@@ -34,6 +34,8 @@ use super::model::{RVT_LS_UL, RvtAoi, RvtLs, RvtPoi, RvtUserData};
 ///   (value wins over the sentinel when both are given).
 /// - [`KlvEncodeError::StringTooLong`] if an ISO-7 string field exceeds
 ///   its Table 8-1/8-2/8-3 byte cap.
+/// - [`KlvEncodeError::InvalidFieldValue`] if an ISO-7 string field holds a
+///   character that is not ASCII.
 /// - [`KlvEncodeError::OutOfRange`] if a MGRS easting/northing (uint24)
 ///   exceeds 99,999, an MGRS zone is outside 1 to 60, or a POI
 ///   lat/lon/altitude value cannot be mapped into its declared range.
@@ -407,7 +409,8 @@ fn check_mgrs(
 }
 
 /// Emit an ISO-7 (ASCII) string tag. `KlvEncodeError::StringTooLong` if
-/// `v` exceeds `max_bytes`.
+/// `v` exceeds `max_bytes`, `KlvEncodeError::InvalidFieldValue` if it is
+/// not ASCII (ISO-7 is ISO/IEC 646).
 fn emit_iso7(
     tag: u32,
     v: Option<&str>,
@@ -419,6 +422,12 @@ fn emit_iso7(
         return Err(KlvEncodeError::StringTooLong {
             tag,
             max: max_bytes,
+        });
+    }
+    if !s.is_ascii() {
+        return Err(KlvEncodeError::InvalidFieldValue {
+            tag,
+            reason: "ISO-7 text must be ASCII",
         });
     }
     emit_ber_oid_tlv(tag, s.as_bytes(), out)

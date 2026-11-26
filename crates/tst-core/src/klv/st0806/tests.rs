@@ -632,3 +632,68 @@ fn a_zero_length_duplicate_before_a_value_keeps_it() {
     let ls = decode(&[0x0E, 0x00, 0x0E, 0x01, 18]).unwrap();
     assert_eq!(ls.aircraft_mgrs_zone, Some(18));
 }
+
+// ST 0806.4: the text items are ISO-7 (ISO/IEC 646, ASCII).
+
+fn rvt_with_poi_text(text: &str) -> RvtLs {
+    RvtLs {
+        timestamp_us: Some(1_700_000_000_000_000),
+        points_of_interest: alloc::vec![RvtPoi {
+            number: Some(7),
+            lat_deg: Some(45.0),
+            lon_deg: Some(-90.0),
+            text: Some(text.into()),
+            ..Default::default()
+        }],
+        ..Default::default()
+    }
+}
+
+#[test]
+fn rvt_encoders_refuse_non_ascii_iso7_text() {
+    let ls = rvt_with_poi_text("é");
+    for (form, r) in [
+        ("body", encode_to_vec(&ls)),
+        ("standalone", encode_to_vec_standalone(&ls)),
+    ] {
+        assert!(
+            matches!(r, Err(KlvEncodeError::InvalidFieldValue { tag: 6, .. })),
+            "{form}: {r:?}"
+        );
+    }
+    let top = RvtLs {
+        digital_video_file_format: Some("mp4é".into()),
+        ..Default::default()
+    };
+    assert!(matches!(
+        encode_to_vec(&top),
+        Err(KlvEncodeError::InvalidFieldValue { tag: 10, .. })
+    ));
+    let bytes = encode_to_vec(&rvt_with_poi_text("plain")).unwrap();
+    assert_eq!(
+        decode(&bytes).unwrap().points_of_interest[0]
+            .text
+            .as_deref(),
+        Some("plain")
+    );
+}
+
+#[test]
+fn a_decoded_non_ascii_iso7_text_is_refused_on_reencode_and_the_original_bytes_still_decode() {
+    // The lenient decode keeps the UTF-8 a producer wrote; a relay that
+    // re-encodes gets the refusal for that set and can forward the original
+    // bytes, which still decode, or clear the text.
+    let original = [0x0A, 0x02, 0xC3, 0xA9, 0x08, 0x01, 0x04]; // Tag 10 "é", version 4
+    let ls = decode(&original).unwrap();
+    assert_eq!(ls.digital_video_file_format.as_deref(), Some("é"));
+    assert!(matches!(
+        encode_to_vec(&ls),
+        Err(KlvEncodeError::InvalidFieldValue { tag: 10, .. })
+    ));
+    assert_eq!(decode(&original).unwrap(), ls);
+    let cleared = RvtLs {
+        digital_video_file_format: None,
+        ..ls
+    };
+    assert!(encode_to_vec(&cleared).is_ok());
+}
