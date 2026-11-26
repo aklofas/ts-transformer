@@ -116,8 +116,13 @@ impl super::demuxer::Demuxer {
         // dropped the decoded value (`pcr_27mhz = None`) and recorded the
         // reason in `pcr_malformed`. Surface that here as a separate issue
         // so lenient receivers see the corruption while strict-mode timing
-        // categories escalate to StrictRejection.
-        if let Some(kind) = pkt.pcr_malformed {
+        // categories escalate to StrictRejection. A null packet is the
+        // exception: it carries no adaptation field (H.222.0 §2.4.3.3), so
+        // nothing in one is evidence about a clock, and a PCR field on PID
+        // 0x1FFF is not examined, malformed or not.
+        if let Some(kind) = pkt.pcr_malformed
+            && pkt.pid != pid::NULL
+        {
             let stream = self.pcr_stream_id(pkt.pid);
             self.queue_nonconformant(stream, NonConformantIssue::PcrMalformed { kind });
         }
@@ -486,14 +491,15 @@ fn pcr_masked_identical(a: &[u8; 188], b: &[u8; 188]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::super::demuxer::Demuxer;
+    use crate::error::DemuxError;
     use crate::mpegts::common::pid;
     use crate::mpegts::demux::test_support::{
         PktSpec, build_pmt_section, demuxer_with_streams, drain_all_events, issues,
         pat_packet_with_programs, pes_bytes, pes_to_packets, psi_packet, ts_packet,
     };
     use crate::mpegts::demux::{
-        DemuxEvent, DemuxerConfig, DiscontinuityKind, NonConformantIssue, StreamId, StreamKind,
-        StrictMode, VideoCodec,
+        DemuxEvent, DemuxerConfig, DiscontinuityKind, NonConformantIssue, PcrMalformedKind,
+        StreamId, StreamKind, StrictMode, VideoCodec,
     };
     use crate::test_prelude::*;
 
@@ -691,6 +697,85 @@ mod tests {
                 "{mode:?}: {ev:?}"
             );
             assert_eq!(d.pid_state[&0x101].last_pts, Some(900_000), "{mode:?}");
+        }
+    }
+
+    const ALL_MODES: [StrictMode; 4] = [
+        StrictMode::Off,
+        StrictMode::TimingOnly,
+        StrictMode::DescriptorsOnly,
+        StrictMode::Full,
+    ];
+
+    /// An adaptation-only packet on `pid` whose PCR field has its six
+    /// reserved bits cleared.
+    fn malformed_pcr_packet(pid: u16) -> [u8; 188] {
+        let mut pkt = ts_packet(&PktSpec {
+            pid,
+            pcr: Some(27_000_000),
+            ..Default::default()
+        });
+        pkt[10] &= !0x7E;
+        pkt
+    }
+
+    /// A null packet carries no adaptation field (H.222.0 §2.4.3.3), so a
+    /// PCR field on one is no evidence about a clock: malformed, it raises
+    /// nothing in any mode, whether a PMT names 0x1FFF as its `PCR_PID` or
+    /// another PID.
+    #[test]
+    fn a_malformed_pcr_on_a_null_packet_raises_nothing() {
+        let mut wrong = Vec::new();
+        for pcr_pid in [pid::NULL, 0x100] {
+            for mode in ALL_MODES {
+                let mut d = demuxer_with_streams(
+                    DemuxerConfig::builder().strict(mode).build(),
+                    pcr_pid,
+                    &[(0x1B, 0x100, &[])],
+                );
+                drain_all_events(&mut d);
+                let fed = d.feed_aligned(&malformed_pcr_packet(pid::NULL));
+                let raised = issues(&drain_all_events(&mut d));
+                if fed.is_err() || !raised.is_empty() {
+                    wrong.push(format!(
+                        "PCR_PID {pcr_pid:#x}, {mode:?}: {fed:?}, {raised:?}"
+                    ));
+                }
+            }
+        }
+        assert!(wrong.is_empty(), "{wrong:#?}");
+    }
+
+    /// A malformed PCR field on any other PID is reported, on the program's
+    /// `PCR_PID` and on a PID no program declares, and ends the `feed` in
+    /// the modes that reject `PcrMalformed`.
+    #[test]
+    fn a_malformed_pcr_on_any_other_pid_is_reported() {
+        for pkt_pid in [0x100, 0x0234] {
+            for mode in ALL_MODES {
+                let mut d = demuxer_with_streams(
+                    DemuxerConfig::builder().strict(mode).build(),
+                    0x100,
+                    &[(0x1B, 0x100, &[])],
+                );
+                drain_all_events(&mut d);
+                let fed = d.feed_aligned(&malformed_pcr_packet(pkt_pid));
+                let ev = drain_all_events(&mut d);
+                let rejects = matches!(mode, StrictMode::TimingOnly | StrictMode::Full);
+                match (&fed, rejects) {
+                    (Ok(()), false) => {}
+                    (Err(DemuxError::StrictRejection(why)), true)
+                        if why.starts_with("PcrMalformed") => {}
+                    _ => panic!("PID {pkt_pid:#x}, {mode:?}: {fed:?}"),
+                }
+                assert_eq!(
+                    issues(&ev),
+                    [NonConformantIssue::PcrMalformed {
+                        kind: PcrMalformedKind::InvalidReservedBits
+                    }],
+                    "PID {pkt_pid:#x}, {mode:?}"
+                );
+            }
         }
     }
 
