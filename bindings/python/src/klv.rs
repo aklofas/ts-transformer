@@ -487,7 +487,17 @@ fn encode_vmti_standalone_strict_compliance_py(
 /// framing and no leading Universal Label. General-purpose: not
 /// ST 0601-specific (see `SdccFlp`'s docstring for the ST 0601 Tag 102
 /// "Refined Source List" carriage, which is a separate concern captured
-/// in `UasDatalinkLs.sdcc_flps` / `SdccFlpField`).
+/// in `UasDatalinkLs.sdcc_flps` / `SdccFlpField`). Standard deviations
+/// and IEEE-coded correlations may be binary16, binary32 or binary64.
+///
+/// Raises `KlvError` with kind `TRUNCATED_SET` for a buffer shorter than
+/// the pack its Parse Control declares, and `MALFORMED_BYTES` for bytes
+/// left after the pack, a Mode 2 Parse Control bit that ST 1010.3 Table 2
+/// reserves, a Parse Control that declares neither standard deviations
+/// nor correlations, IMAP-coded standard deviations (their range is the
+/// parent document's), a Bit Vector that marks every slot or sets a
+/// padding bit, a Matrix Size above 256, or a correlation outside -1 to 1,
+/// an ST 1201 IMAP special value or a non-finite IEEE value.
 #[pyfunction]
 #[pyo3(name = "decode_sdcc_flp")]
 fn decode_sdcc_flp_py(py: Python<'_>, buf: &[u8]) -> PyResult<Py<PyAny>> {
@@ -503,6 +513,11 @@ fn decode_sdcc_flp_py(py: Python<'_>, buf: &[u8]) -> PyResult<Py<PyAny>> {
 /// `len(correlations)` must equal `len(std_devs) * (len(std_devs) - 1) / 2`
 /// (the upper-triangle slot count), in row-major (i<j) order. Returns
 /// `bytes`.
+///
+/// Raises `KlvEncodeError` with kind `OUT_OF_RANGE` for more than 256
+/// standard deviations (the largest matrix `decode_sdcc_flp` reads), a
+/// correlation count that does not match, or a correlation outside
+/// -1.0 to 1.0, and `UNSUPPORTED_IMAPB_LENGTH` for a `clen` outside 1 to 8.
 #[pyfunction]
 #[pyo3(name = "encode_sdcc_flp_mode2")]
 fn encode_sdcc_flp_mode2_py(

@@ -580,10 +580,21 @@ public final class Klv {
      * <p>{@code buf} is the pack bytes starting at Element 1 (Matrix Size) —
      * no outer TLV framing and no leading Universal Label. General-purpose:
      * not ST 0601-specific. Mirrors tst-py's {@code decode_sdcc_flp(buf)}.
+     * Standard deviations and IEEE-coded correlations may be binary16,
+     * binary32 or binary64.
      *
      * @param buf raw SDCC-FLP pack bytes
      * @return the decoded {@link SdccFlp}
-     * @throws org.tstrans.KlvDecodeException if the buffer is truncated or malformed
+     * @throws org.tstrans.KlvDecodeException with kind {@code TRUNCATED_SET}
+     *         for a buffer shorter than the pack its Parse Control declares,
+     *         and {@code MALFORMED_BYTES} for bytes left after the pack, a
+     *         Mode 2 Parse Control bit that ST 1010.3 Table 2 reserves, a
+     *         Parse Control that declares neither standard deviations nor
+     *         correlations, IMAP-coded standard deviations (their range is
+     *         the parent document's), a Bit Vector that marks every slot or
+     *         sets a padding bit, a Matrix Size above 256, or a correlation
+     *         outside -1 to 1, an ST 1201 IMAP special value or a non-finite
+     *         IEEE value
      */
     public static SdccFlp decodeSdccFlp(byte[] buf) throws org.tstrans.KlvDecodeException {
         return decodeSdccFlpNative(buf);
@@ -605,10 +616,13 @@ public final class Klv {
      * @param correlations upper-triangle &rho; values, row-major (i&lt;j)
      * @param clen         IMAPB byte length for the correlation values, {@code 1..=8}
      * @return the encoded pack bytes
-     * @throws org.tstrans.KlvEncodeException if {@code correlations.length}
-     *         doesn't match the matrix size implied by {@code stdDevs}, if
-     *         {@code clen} is outside {@code 1..=8}, or if any correlation
-     *         is outside {@code [-1.0, 1.0]}
+     * @throws org.tstrans.KlvEncodeException with kind {@code OUT_OF_RANGE}
+     *         for more than 256 standard deviations (the largest matrix
+     *         {@link #decodeSdccFlp} reads), a {@code correlations.length}
+     *         that doesn't match the matrix size implied by {@code stdDevs},
+     *         or a correlation outside {@code [-1.0, 1.0]}, and
+     *         {@code UNSUPPORTED_IMAPB_LENGTH} for a {@code clen} outside
+     *         {@code 1..=8}
      */
     public static byte[] encodeSdccFlpMode2(double[] stdDevs, double[] correlations, int clen)
             throws org.tstrans.KlvEncodeException {
