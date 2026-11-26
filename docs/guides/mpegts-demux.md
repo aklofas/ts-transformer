@@ -547,6 +547,38 @@ step of more than one second
 (90 000 ticks, computed 33-bit-wrap-aware) is a separate variant,
 `NonConformantIssue::PtsAnomaly { delta }` (delta in 90 kHz ticks, negative).
 
+**AAC-LATM framing.** An AAC-LATM PID (stream type 0x11) carries LOAS
+records, each opened by a 3-byte header (the syncword 0x2B7 and the
+record's length, at most 8 194 bytes with the header); a record, and its
+header, may continue into the next PES. The demuxer follows the record
+position across PES and raises
+`NonConformantIssue::LatmFraming { MissingSyncword }`:
+
+- at once, for a record boundary without a syncword where the position is
+  known, and for a PES with `data_alignment_indicator` set that does not
+  start with one while the position is unknown (such a PES is walked from
+  its first byte). A record that ends exactly at the end of a PES leaves
+  the position known (the stream is one run of records, ISO/IEC 14496-3
+  Table 1.36), so the next PES is walked from its first byte and a
+  corrupted record in the middle of a stream is reported at once;
+- while the position is unknown (a PID's first PES; after a loss,
+  `reset_sync`, a retirement or a change of the PID's kind; after a
+  boundary without a syncword was reported), once per unsynced stretch
+  and not after an issue raised at once in it. The demuxer looks for the
+  position among the syncword candidates of the PES that follow, up to 16
+  at once, and trusts one after it has passed two record boundaries. The
+  stretch is flagged when the payload since the position was lost passes
+  one record length (8 194 bytes) with no candidate pending, or three
+  record lengths and 3 bytes (24 585 bytes) whatever is pending; a
+  candidate that has passed one boundary defers that to its next boundary,
+  until the first such candidate of the stretch has failed.
+
+A loss (a continuity gap, a damaged or dropped PES, a signalled
+discontinuity) starts the count again. A stream whose record bodies carry
+byte-aligned syncword patterns at short intervals can still be misread
+after a join, with one `MissingSyncword`. `Full` fails `feed` and drops
+the `Sample`; the other modes deliver it beside the issue.
+
 ## What gets parsed vs. passed through
 
 Some payloads the demuxer fully types; others it surfaces verbatim so
