@@ -1099,3 +1099,147 @@ fn st0102_default_encode_does_not_strip_control_chars() {
         "default encode must NOT strip control chars"
     );
 }
+
+// ------------------------------------------------------------------
+// The strict paths agree with each other and with ISO/IEC 646.
+// ------------------------------------------------------------------
+
+#[test]
+fn strict_decode_accepts_a_repeated_unknown_tag() {
+    // ST 0107.3-04: a decoder skips unknown items, so their repetition is
+    // not a defect of the set; a repeated defined tag still is.
+    let mut bytes = encode_to_vec(&build_minimal_required_record()).unwrap();
+    bytes.extend_from_slice(&[0x63, 0x01, 0xAA, 0x63, 0x01, 0xBB]);
+    let r = decode_strict(&bytes).unwrap();
+    assert_eq!(
+        r.unknown,
+        vec![
+            OwnedRawField {
+                tag: 99,
+                value: vec![0xAA],
+            },
+            OwnedRawField {
+                tag: 99,
+                value: vec![0xBB],
+            },
+        ]
+    );
+    let mut repeated = encode_to_vec(&build_minimal_required_record()).unwrap();
+    repeated.extend_from_slice(&[0x01, 0x01, 0x01]);
+    assert!(matches!(
+        decode_strict(&repeated).unwrap_err(),
+        KlvDecodeError::DuplicateTag { tag: 1, .. }
+    ));
+}
+
+#[test]
+fn strict_decode_refuses_non_ascii_iso646_text() {
+    let mut bytes = encode_to_vec(&build_minimal_required_record()).unwrap();
+    bytes.extend_from_slice(&[0x05, 0x02, 0xC3, 0xA9]); // caveats "é"
+    assert!(matches!(
+        decode_strict(&bytes).unwrap_err(),
+        KlvDecodeError::FieldError(crate::error::KlvFieldError::NonAsciiText { tag: 5 })
+    ));
+    // The lenient decode keeps the text as the producer wrote it.
+    assert_eq!(decode(&bytes).unwrap().caveats.as_deref(), Some("é"));
+}
+
+#[test]
+fn lenient_decode_keeps_a_set_with_invalid_utf8() {
+    // Classification SECRET (0x04), then caveats holding the byte FF.
+    let r = decode(&[0x01, 0x01, 0x04, 0x05, 0x01, 0xFF]).unwrap();
+    assert_eq!(
+        r.security_classification,
+        Some(SecurityClassification::Secret)
+    );
+    assert_eq!(r.caveats, None);
+    assert_eq!(
+        r.field_errors,
+        vec![crate::error::KlvFieldError::InvalidUtf8 { tag: 5 }]
+    );
+    // Strict decode still refuses it.
+    assert!(matches!(
+        decode_strict(&[0x01, 0x01, 0x04, 0x05, 0x01, 0xFF]).unwrap_err(),
+        KlvDecodeError::FieldError(crate::error::KlvFieldError::InvalidUtf8 { tag: 5 })
+    ));
+}
+
+#[test]
+fn strict_decode_refuses_a_malformed_date() {
+    // ST 0102.12 Table 2: Tag 10 is YYYYMMDD, Tags 23 and 24 YYYY-MM-DD.
+    for (tag, date) in [
+        (10u8, &b"2026AB01"[..]),
+        (23, b"2026/01/01"),
+        (24, b"2026-0101-"),
+    ] {
+        let mut bytes = encode_to_vec(&build_minimal_required_record()).unwrap();
+        bytes.push(tag);
+        bytes.push(date.len() as u8);
+        bytes.extend_from_slice(date);
+        let err = decode_strict(&bytes).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                KlvDecodeError::FieldError(crate::error::KlvFieldError::InvalidFormat { tag: t })
+                    if t == u32::from(tag)
+            ),
+            "tag {tag}: {err:?}"
+        );
+    }
+    // The check is of the shape, not the calendar.
+    let mut bytes = encode_to_vec(&build_minimal_required_record()).unwrap();
+    bytes.extend_from_slice(&[0x0A, 0x08]);
+    bytes.extend_from_slice(b"99999999");
+    assert!(decode_strict(&bytes).is_ok());
+}
+
+#[test]
+fn strict_encode_refuses_what_strict_decode_refuses() {
+    let cases: [(u32, SecurityLs); 4] = [
+        (
+            1,
+            SecurityLs {
+                security_classification: Some(SecurityClassification::from_wire(0xFA)),
+                ..minimal_strict_record()
+            },
+        ),
+        (
+            10,
+            SecurityLs {
+                declassification_date: Some("2".to_owned()),
+                ..minimal_strict_record()
+            },
+        ),
+        (
+            10,
+            SecurityLs {
+                declassification_date: Some("2026AB01".to_owned()),
+                ..minimal_strict_record()
+            },
+        ),
+        (
+            5,
+            SecurityLs {
+                caveats: Some("é".to_owned()),
+                ..minimal_strict_record()
+            },
+        ),
+    ];
+    for (tag, record) in cases {
+        let err = encode_strict_compliance(&record).unwrap_err();
+        assert!(
+            matches!(err, KlvEncodeError::InvalidFieldValue { tag: t, .. } if t == tag),
+            "tag {tag}: {err:?}"
+        );
+        // What the encoder refuses, strict decode refuses too.
+        let written = encode_to_vec(&record).unwrap();
+        assert!(decode_strict(&written).is_err(), "tag {tag}");
+    }
+    let good = SecurityLs {
+        declassification_date: Some("20351231".to_owned()),
+        classifying_country_coding_method_version_date: Some("2025-01-15".to_owned()),
+        ..minimal_strict_record()
+    };
+    let bytes = encode_strict_compliance(&good).unwrap();
+    assert_eq!(decode_strict(&bytes).unwrap(), good);
+}

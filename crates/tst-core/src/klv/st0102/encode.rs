@@ -149,14 +149,18 @@ pub fn encode_to_vec(record: &SecurityLs) -> Result<Vec<u8>, KlvEncodeError> {
 /// Required-tag order matches `REQUIRED_TAGS` (`[1,2,3,12,13,22]`);
 /// the first absent tag wins so callers get a deterministic error.
 ///
-/// Strict-encoded output always passes [`crate::klv::st0102::decode_strict`]
-/// (symmetric contract: required field present on encode ↔ not rejected
-/// by decode).
+/// Strict-encoded output always passes [`crate::klv::st0102::decode_strict`]:
+/// the encoder refuses what strict decode refuses (an undefined
+/// classification or coding-method code, text that is not ISO/IEC 646, a
+/// date not shaped `YYYYMMDD` / `YYYY-MM-DD`).
 ///
 /// # Errors
 ///
 /// - [`KlvEncodeError::MissingMandatoryItem`] with `tag` and `name` for
 ///   the first required tag whose `Option` field is `None`.
+/// - [`KlvEncodeError::InvalidFieldValue`] with the `tag` of the first
+///   field (in tag order, after the string clean-up below) whose value
+///   strict decode refuses.
 /// - All [`KlvEncodeError`] variants that [`encode_to_vec`] can return,
 ///   surfaced verbatim once the strict precondition gate passes.
 pub fn encode_strict_compliance(record: &SecurityLs) -> Result<Vec<u8>, KlvEncodeError> {
@@ -195,7 +199,78 @@ pub fn encode_strict_compliance(record: &SecurityLs) -> Result<Vec<u8>, KlvEncod
     // "" encodes as [0x00].
     let mut r = record.clone();
     sanitize_strings_st0102(&mut r);
+    validate_strict(&r)?;
     encode_to_vec(&r)
+}
+
+/// The date shape of ST 0102.12 Table 2: `YYYYMMDD` for Tag 10,
+/// `YYYY-MM-DD` for Tags 23 and 24; any other tag passes. A shape check
+/// only (`99999999` passes), shared by strict decode and strict encode.
+pub(super) fn is_fixed_date(tag: u8, s: &str) -> bool {
+    let b = s.as_bytes();
+    let digits = |r: core::ops::Range<usize>| b[r].iter().all(u8::is_ascii_digit);
+    match tag {
+        10 => b.len() == 8 && digits(0..8),
+        23 | 24 => {
+            b.len() == 10
+                && digits(0..4)
+                && b[4] == b'-'
+                && digits(5..7)
+                && b[7] == b'-'
+                && digits(8..10)
+        }
+        _ => true,
+    }
+}
+
+/// Refuse, for `encode_strict_compliance`, a field `decode_strict` would
+/// refuse: an undefined code in Tags 1, 2, 12; non-ASCII text; a date not
+/// of its shape. An empty string is written as the NUL signal, which
+/// strict decode reads as "" without a shape check.
+fn validate_strict(r: &SecurityLs) -> Result<(), KlvEncodeError> {
+    let refuse = |tag: u32, reason: &'static str| -> Result<(), KlvEncodeError> {
+        Err(KlvEncodeError::InvalidFieldValue { tag, reason })
+    };
+    let text = |tag: u8, value: &Option<alloc::string::String>| {
+        let Some(s) = value else { return Ok(()) };
+        if !s.is_ascii() {
+            return refuse(u32::from(tag), "ISO/IEC 646 text must be ASCII");
+        }
+        if !s.is_empty() && !is_fixed_date(tag, s) {
+            return refuse(
+                u32::from(tag),
+                "a date must be YYYYMMDD (Tag 10) or YYYY-MM-DD",
+            );
+        }
+        Ok(())
+    };
+    if r.security_classification
+        .is_some_and(|v| !v.is_known_codepoint())
+    {
+        return refuse(1, "not a defined classification");
+    }
+    if r.classifying_country_coding_method
+        .is_some_and(|v| !v.is_known_codepoint())
+    {
+        return refuse(2, "not a defined coding method");
+    }
+    text(3, &r.classifying_country)?;
+    text(4, &r.sci_shi_info)?;
+    text(5, &r.caveats)?;
+    text(6, &r.releasing_instructions)?;
+    text(7, &r.classified_by)?;
+    text(8, &r.derived_from)?;
+    text(9, &r.classification_reason)?;
+    text(10, &r.declassification_date)?;
+    text(11, &r.classification_marking_system)?;
+    if r.object_country_coding_method
+        .is_some_and(|v| !v.is_known_codepoint())
+    {
+        return refuse(12, "not a defined coding method");
+    }
+    text(14, &r.classification_comments)?;
+    text(23, &r.classifying_country_coding_method_version_date)?;
+    text(24, &r.object_country_coding_method_version_date)
 }
 
 /// Pre-compute the encoded length for a given record.

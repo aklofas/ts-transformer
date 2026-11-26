@@ -125,6 +125,22 @@ def test_encode_security_strict_compliance_missing_tag22_raises():
     assert ei.value.tag == 22
 
 
+def test_encode_security_strict_compliance_refuses_non_ascii_text_with_its_tag():
+    rec = SecurityLs(
+        security_classification=SecurityClassification.UNCLASSIFIED,
+        classifying_country_coding_method=ClassifyingCountryCodingMethod.ISO_3166_TWO_LETTER,
+        classifying_country="//US",
+        object_country_coding_method=ObjectCountryCodingMethod.ISO_3166_NUMERIC,
+        object_country_codes="US",
+        version=12,
+        caveats="\u00e9",
+    )
+    with pytest.raises(KlvEncodeError) as ei:
+        encode_security_strict_compliance(rec)
+    assert ei.value.kind is KlvEncodeErrorKind.OUT_OF_RANGE
+    assert ei.value.tag == 5
+
+
 def test_encode_security_strict_compliance_full_record_succeeds():
     rec = _full_security_record()
     out = encode_security_strict_compliance(rec)

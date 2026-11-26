@@ -355,4 +355,37 @@ class St0102Test {
         System.arraycopy(value, 0, out, 2, value.length);
         return out;
     }
+
+    // -----------------------------------------------------------------------
+    // ISO/IEC 646 text: the lenient decode reports it, the strict encoder
+    // refuses it with its tag
+    // -----------------------------------------------------------------------
+
+    @Test
+    void decodeLenientKeepsASetWithInvalidUtf8() throws KlvDecodeException {
+        // Classification SECRET, then caveats holding the byte FF.
+        SecurityLs s = Klv.decodeSecurity(new byte[]{0x01, 0x01, 0x04, 0x05, 0x01, (byte) 0xFF});
+        assertEquals(Optional.of(SecurityClassification.SECRET), s.securityClassification());
+        assertNull(s.caveats());
+        assertEquals(1, s.fieldErrors().size());
+        assertEquals(KlvFieldErrorKind.INVALID_UTF8, s.fieldErrors().get(0).kind());
+        assertEquals(5L, s.fieldErrors().get(0).tag());
+    }
+
+    @Test
+    void encodeSecurityStrictComplianceRefusesNonAsciiTextWithItsTag() {
+        SecurityLs rec = new SecurityLs.Builder()
+                .securityClassificationCode(SecurityClassification.UNCLASSIFIED.code())
+                .classifyingCountryCodingMethodCode(ClassifyingCountryCodingMethod.ISO_3166_TWO_LETTER.code())
+                .classifyingCountry("//US")
+                .objectCountryCodingMethodCode(ObjectCountryCodingMethod.ISO_3166_TWO_LETTER.code())
+                .objectCountryCodes("US")
+                .version(12)
+                .caveats("\u00e9")
+                .build();
+        KlvEncodeException ex = assertThrows(KlvEncodeException.class,
+                () -> Klv.encodeSecurityStrictCompliance(rec));
+        assertEquals(KlvEncodeException.Kind.OUT_OF_RANGE, ex.kind());
+        assertEquals(Optional.of(5L), ex.tag());
+    }
 }

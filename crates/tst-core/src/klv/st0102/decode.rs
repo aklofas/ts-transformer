@@ -16,9 +16,9 @@ use alloc::string::{String, ToString};
 /// `Option<T>`-shaped throughout), unknown tags are preserved verbatim
 /// in [`SecurityLs::unknown`], unknown enum codepoints surface as
 /// `Unknown(u8)`, a zero-length item is "unknown" (its field unset, ST
-/// 0107.4-17), and Tag 13 UTF-16 decode failures and a wrong-length enum
-/// or version are demoted to [`SecurityLs::field_errors`] rather than
-/// failing the whole record.
+/// 0107.4-17), and Tag 13 UTF-16 decode failures, text that is not UTF-8
+/// and a wrong-length enum or version are demoted to
+/// [`SecurityLs::field_errors`] rather than failing the whole record.
 /// Use [`decode_strict`] for spec-conformance validation.
 ///
 /// # Example — sibling-layer decode from a parent ST 0601 record
@@ -81,10 +81,13 @@ pub fn decode(buf: &[u8]) -> Result<SecurityLs, KlvDecodeError> {
 
 /// Strict decode — rejects spec-violating input (missing required
 /// tags, unknown enum codepoints, [`OmittedValueXX`] reserved
-/// codepoints, malformed UTF-16, duplicate tags, wrong fixed-length
-/// values, and non-canonical BER length encodings per ST 0107.5
-/// §6.3). Unknown tags are still preserved in `unknown` per ST
-/// 0107.5 §6 future-proof skip rule (matches
+/// codepoints, malformed UTF-16, text that is not ISO/IEC 646 (ASCII),
+/// a date not shaped `YYYYMMDD` (Tag 10) or `YYYY-MM-DD` (Tags 23 and
+/// 24; the shape only, so `99999999` passes), duplicate defined tags,
+/// wrong fixed-length values, and non-canonical BER length encodings per
+/// ST 0107.5 §6.3). Unknown tags are still preserved in `unknown` per ST
+/// 0107.5 §6 future-proof skip rule, a repeated one included (ST
+/// 0107.3-04: unknown items are skipped; matches
 /// `klv::st0601::decode_strict_compliance` posture).
 ///
 /// [`OmittedValueXX`]: ClassifyingCountryCodingMethod::OmittedValue08
@@ -104,7 +107,8 @@ fn strict_ber_walk(buf: &[u8]) -> Result<(), KlvDecodeError> {
     let mut offset = 0usize;
     // ST 0107.5 §6.3.4: each item at most once per set. Checked here, where
     // the item's buffer-relative start is known, so `offset` points at the
-    // repeated tag byte.
+    // repeated tag byte. Only for defined tags: an unknown item is skipped
+    // (ST 0107.3-04), so its repetition is no defect of the set.
     let mut seen: hashbrown::HashSet<u32> = hashbrown::HashSet::new();
     while !rest.is_empty() {
         let item_start = offset;
@@ -114,7 +118,7 @@ fn strict_ber_walk(buf: &[u8]) -> Result<(), KlvDecodeError> {
             e
         })?;
         let consumed = rest.len() - after_len.len();
-        if !seen.insert(tag) {
+        if lookup(rest[0]).is_some() && !seen.insert(tag) {
             return Err(KlvDecodeError::DuplicateTag {
                 tag,
                 offset: item_start,
@@ -246,20 +250,34 @@ fn decode_inner(buf: &[u8], strict: bool) -> Result<SecurityLs, KlvDecodeError> 
                     let parsed = match core::str::from_utf8(f.value) {
                         Ok(s) => s.to_string(),
                         Err(_) => {
-                            return Err(KlvDecodeError::FieldError(KlvFieldError::InvalidUtf8 {
+                            let e = KlvFieldError::InvalidUtf8 { tag: f.tag };
+                            if strict {
+                                return Err(KlvDecodeError::FieldError(e));
+                            }
+                            record.field_errors.push(e);
+                            continue;
+                        }
+                    };
+                    if strict && !parsed.is_ascii() {
+                        return Err(KlvDecodeError::FieldError(KlvFieldError::NonAsciiText {
+                            tag: f.tag,
+                        }));
+                    }
+                    if let Encoding::FixedAscii { expected_len } = spec.encoding
+                        && strict
+                    {
+                        if parsed.len() != expected_len {
+                            return Err(KlvDecodeError::FieldError(KlvFieldError::InvalidLength {
+                                tag: f.tag,
+                                expected: expected_len,
+                                got: parsed.len(),
+                            }));
+                        }
+                        if !super::encode::is_fixed_date(tag_u8, &parsed) {
+                            return Err(KlvDecodeError::FieldError(KlvFieldError::InvalidFormat {
                                 tag: f.tag,
                             }));
                         }
-                    };
-                    if let Encoding::FixedAscii { expected_len } = spec.encoding
-                        && strict
-                        && parsed.len() != expected_len
-                    {
-                        return Err(KlvDecodeError::FieldError(KlvFieldError::InvalidLength {
-                            tag: f.tag,
-                            expected: expected_len,
-                            got: parsed.len(),
-                        }));
                     }
                     parsed
                 };

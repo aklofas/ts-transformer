@@ -10,6 +10,7 @@ from tstrans.exceptions import KlvError, KlvErrorKind
 from tstrans.klv import (
     ClassifyingCountryCodingMethod,
     Klv0102,
+    KlvFieldErrorKind,
     ObjectCountryCodingMethod,
     SecurityClassification,
     SecurityLs,
@@ -132,3 +133,19 @@ def test_decode_security_strict_rejects_non_canonical_length():
     assert excinfo.value.kind == KlvErrorKind.MALFORMED_BYTES, (
         f"expected MALFORMED_BYTES, got {excinfo.value.kind}"
     )
+
+
+def test_decode_lenient_keeps_a_set_with_invalid_utf8():
+    # Classification SECRET, then caveats holding the byte FF: the set
+    # decodes, the text is reported with its tag (ISO/IEC 646 is ASCII).
+    body = _tlv(1, bytes([SecurityClassification.SECRET.value])) + _tlv(5, b"\xff")
+    sec = decode_security(body)
+    assert sec.security_classification == SecurityClassification.SECRET
+    assert sec.caveats is None
+    assert [(fe.kind, fe.tag) for fe in sec.field_errors] == [(KlvFieldErrorKind.INVALID_UTF8, 5)]
+
+
+def test_decode_strict_refuses_non_ascii_text():
+    with pytest.raises(KlvError) as excinfo:
+        decode_security(_minimal_security_body() + _tlv(5, "\u00e9".encode()), strict=True)
+    assert excinfo.value.kind == KlvErrorKind.MALFORMED_BYTES
