@@ -6,7 +6,7 @@ use crate::klv::imapb::ImapbSpecial;
 use crate::klv::length::{ber_len, ber_oid_len, write_ber};
 use crate::klv::pack::{Iter, emit_ber_oid_tlv, is_typed_tag};
 use alloc::borrow::Cow;
-use alloc::collections::{BTreeMap, VecDeque};
+use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
 
 use super::mapping::encode_fixed_range;
@@ -1192,104 +1192,109 @@ enum Placed {
     Pack(usize),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-enum Occurrence {
-    Pending,
-    Placed,
-    /// Written where the encoder writes every Item 102 without placement:
-    /// after the typed items.
-    Fallback,
+/// What the placement keeps for one item of the body.
+#[derive(Clone, Copy)]
+struct Linked {
+    /// The items linked directly before and after this one.
+    before: Option<usize>,
+    after: Option<usize>,
+    /// For the first and the last item of a chain: its other end.
+    far_end: usize,
+    /// The next item of the same tag, in the encoder's order.
+    next_of_tag: Option<usize>,
+    /// A row of a placed occurrence names the item.
+    named: bool,
+    /// The occurrence, counted from one, whose rows last took the item.
+    taken_by: usize,
+    /// The first placed occurrence that follows the item.
+    first_pack: Option<usize>,
+    written: bool,
 }
 
 /// What the placement keeps for a tag that has items in the body.
 #[derive(Default)]
 struct TagItems {
-    /// The tag's first item in the encoder's order.
-    first: usize,
-    /// Its first item not yet written.
-    next: Option<usize>,
-    /// How many of its items are not yet written, and how many of those the
-    /// occurrence being tried has claimed for its rows.
-    unwritten: usize,
-    claimed: usize,
-    /// The first occurrence of each list this tag heads.
-    lists: OccurrenceLists,
-}
-
-/// Three lists of occurrences, each in the record's order: as a tag's
-/// field the first occurrence of each, as an occurrence's (in
-/// `SdccPlacer::next_in`) the one after it in the list it is in.
-#[derive(Clone, Copy, Default)]
-struct OccurrenceLists {
-    /// The occurrences to try when the walk reaches the tag's first item:
-    /// of the items they name it is the first in the encoder's order.
-    anchored: Option<usize>,
-    /// The occurrences whose first row is the tag, and those whose last
-    /// row is: both until the tag's first item is written.
-    opens: Option<usize>,
-    closes: Option<usize>,
+    /// The tag's first item no row has named yet; `fresh_now` is the same
+    /// while one occurrence is being linked, moved past the items its rows
+    /// have taken.
+    fresh: Option<usize>,
+    fresh_now: Option<usize>,
+    /// From here on the tag's items are searched for one that no item is
+    /// linked in front of. Only moves forward.
+    open_from: Option<usize>,
+    /// The item of this tag that the latest row of a placed occurrence
+    /// named.
+    latest: Option<usize>,
 }
 
 /// Places each occurrence of Item 102 after the items its `preceding_tags`
 /// (its rows) name.
 ///
-/// The items are written in the encoder's order, except that an occurrence
-/// takes the items of its rows forward to where it is written. Each
-/// occurrence gets ONE try at that ([`Self::take_forward`]), at the earlier
-/// of two moments: the walk reaches the first item, in the encoder's order,
-/// that it names; or another occurrence has just taken the item of its
-/// first row forward (a pack that refines the last items of the pack before
-/// it, and more). Before that, a pack whose rows are already the last items
-/// written is written at once ([`Self::write`]): one look per occurrence,
-/// when the first item of its last row's tag is written.
+/// The rows of a pack say which item directly follows which. Read in the
+/// record's order, pack by pack, they link the items into chains
+/// ([`Self::link`]); a chain is written as one block, where the encoder
+/// writes the first of its items, and each pack follows the item of its
+/// last row ([`Self::write`]). So the rows of every placed pack are the
+/// items right before it, whatever other packs share those items, and a
+/// set that came in any order whose packs each follow the items they
+/// refine keeps every pack with its rows.
 ///
-/// Invariant: of a tag's items, the written ones are the first in the
-/// encoder's order, because the walk and a row both write a tag's first
-/// unwritten item. So `TagItems::next` and a count are all a tag needs, and
-/// a row takes its item in one step.
+/// A row finds its item in one step. As many leading rows as possible are
+/// the last items of the chain the pack before ended in
+/// ([`Self::overlap`]). After that a row takes the item linked after the
+/// item of the row before; at the end of a chain it takes an item to link
+/// there ([`Self::item_to_link`]: the start of another chain or an item
+/// no row has named); a first row takes the item a row named last when
+/// that still ends its chain, else an item no row has named, else the
+/// item a row named last. With one item per tag there is nothing to
+/// choose; the order of these choices is what tells two items of one tag
+/// apart, as well as the rows can.
 ///
-/// Item 2 stays the first item of the set (ST 0601.8-09). It is the first
-/// item of the walk, so until it is written only occurrences that name it
-/// are tried, and such a try takes it as its first row, before any other
-/// item, or writes nothing (`take_forward`): an occurrence that would need
-/// Item 2 after another item is not placed.
+/// Invariants: an item has at most one item linked before and one after
+/// it and no chain closes on itself, so a chain is a line; a link is
+/// never removed, so a placed pack keeps its rows; of a tag's items the
+/// named ones are the first in the encoder's order; nothing is ever
+/// linked in front of Item 2, which the encoder writes first (ST
+/// 0601.8-09), so its chain is the first block.
 ///
-/// Work: `write` runs once per item, `take_forward` once per occurrence and
-/// in time linear in its rows, and each occurrence sits in one `anchored`,
-/// one `opens` and one `closes` list, each taken whole when it is read. That is
-/// a fixed number of steps (each at most one lookup in the tag map) per
-/// item, per row and per occurrence.
+/// Work: one pass over an occurrence's rows to find its items, one to
+/// link them, one over as many items of the latest chain for the overlap,
+/// and one visit per item and per pack to write; `open_from` only moves
+/// forward. That is a fixed number of steps (each at most one lookup in
+/// the tag map) per item, per row and per occurrence.
 ///
-/// Memory: every collection holds one entry per item of the body or per
-/// occurrence of the record; a row is only read, and nothing is sized by a
-/// count that a pack's bytes claim.
+/// Memory: one entry per item of the body or per occurrence of the
+/// record, and three scratch lists of one entry per row of the occurrence
+/// being linked; a row is only read, and nothing is sized by a count that
+/// a pack's bytes claim.
 struct SdccPlacer<'a> {
     occ: &'a [super::model::SdccFlpField],
     /// The body's items other than Item 102, each as its whole TLV, in the
-    /// order the encoder wrote them, and whether each is written.
+    /// order the encoder wrote them.
     items: Vec<(u32, &'a [u8])>,
-    used: Vec<bool>,
-    /// Per item: the next item of the same tag.
-    next_of_tag: Vec<Option<usize>>,
+    linked: Vec<Linked>,
     /// The occurrences' TLVs.
     packs: Vec<&'a [u8]>,
     /// The index in `items` of the first item the encoder wrote after the
     /// packs.
     after_packs: usize,
     tags: BTreeMap<u32, TagItems>,
-    state: Vec<Occurrence>,
-    /// Per occurrence: the next one in each list it is in.
-    next_in: Vec<OccurrenceLists>,
-    /// Per occurrence: the matrix size its bytes give.
+    /// Per occurrence: the matrix size its bytes give, the item it follows
+    /// once placed, and the next occurrence that follows the same item.
     sizes: Vec<Option<usize>>,
-    /// The occurrences waiting for their try, first in first out.
-    due: VecDeque<usize>,
-    /// The tags of the items written so far.
-    written: Vec<u32>,
-    /// Scratch of [`Self::overlap`], kept between tries: one entry per row
-    /// of the occurrence being tried.
+    follows: Vec<Option<usize>>,
+    next_pack: Vec<Option<usize>>,
+    /// The item of the last row of the latest placed occurrence.
+    latest_end: Option<usize>,
+    /// Scratch, one entry per row of the occurrence being linked: the item
+    /// of each row, the latest chain's last items, and [`Self::overlap`]'s
+    /// table.
+    path: Vec<usize>,
+    tail: Vec<usize>,
     border: Vec<usize>,
+    /// The body in its new order, and how many of its entries are packs.
     plan: Vec<Placed>,
+    packs_planned: usize,
     #[cfg(test)]
     steps: usize,
 }
@@ -1312,58 +1317,45 @@ impl<'a> SdccPlacer<'a> {
             start = end;
         }
         let mut tags: BTreeMap<u32, TagItems> = BTreeMap::new();
-        let mut next_of_tag = vec![None; items.len()];
+        let mut linked: Vec<Linked> = (0..items.len())
+            .map(|i| Linked {
+                before: None,
+                after: None,
+                far_end: i,
+                next_of_tag: None,
+                named: false,
+                taken_by: 0,
+                first_pack: None,
+                written: false,
+            })
+            .collect();
         for (i, &(tag, _)) in items.iter().enumerate().rev() {
             let t = tags.entry(tag).or_default();
-            next_of_tag[i] = t.next.replace(i);
-            t.first = i;
-            t.unwritten += 1;
-        }
-        let mut state = vec![Occurrence::Pending; occ.len()];
-        let mut next_in = vec![OccurrenceLists::default(); occ.len()];
-        // From the last occurrence to the first, each put in front: the
-        // lists come out in the record's order.
-        for (k, f) in occ.iter().enumerate().rev() {
-            let rows = &f.preceding_tags;
-            // The first item, in the encoder's order, that the rows name,
-            // with its tag; none when a row names a tag without an item.
-            let anchor = rows.iter().try_fold((usize::MAX, 0), |first, tag| {
-                Some(first.min((tags.get(tag)?.first, *tag)))
-            });
-            let (Some((_, anchor)), [open, .., close] | [open @ close]) = (anchor, &rows[..])
-            else {
-                // No rows, or a row without an item: it cannot be placed.
-                state[k] = Occurrence::Fallback;
-                continue;
-            };
-            let has_items = "a tag the rows name has items";
-            let anchored = &mut tags.get_mut(&anchor).expect(has_items).lists.anchored;
-            next_in[k].anchored = anchored.replace(k);
-            let opens = &mut tags.get_mut(open).expect(has_items).lists.opens;
-            next_in[k].opens = opens.replace(k);
-            let closes = &mut tags.get_mut(close).expect(has_items).lists.closes;
-            next_in[k].closes = closes.replace(k);
+            linked[i].next_of_tag = t.fresh.replace(i);
+            t.fresh_now = t.fresh;
+            t.open_from = t.fresh;
         }
         Self {
             occ,
-            used: vec![false; items.len()],
             after_packs: after_packs.unwrap_or(items.len()),
             items,
-            next_of_tag,
+            linked,
             packs,
             tags,
-            state,
-            next_in,
             sizes: occ
                 .iter()
                 .map(|f| crate::klv::st1010::peek_matrix_size(&f.bytes))
                 .collect(),
-            due: VecDeque::new(),
-            written: Vec::new(),
+            follows: vec![None; occ.len()],
+            next_pack: vec![None; occ.len()],
+            latest_end: None,
+            path: Vec::new(),
+            tail: Vec::new(),
             border: Vec::new(),
             plan: Vec::new(),
+            packs_planned: 0,
             #[cfg(test)]
-            steps: occ.iter().map(|f| f.preceding_tags.len()).sum(),
+            steps: 0,
         }
     }
 
@@ -1378,86 +1370,182 @@ impl<'a> SdccPlacer<'a> {
         let _ = n;
     }
 
-    /// Walk the items in the encoder's order and decide every occurrence.
+    /// Link the items by the rows of every occurrence, in the record's
+    /// order, then write the chains.
     fn run(&mut self) {
+        for k in 0..self.occ.len() {
+            self.step(1);
+            self.link(k);
+        }
+        // From the last occurrence to the first, each put in front: the
+        // packs after one item come out in the record's order.
+        for k in (0..self.occ.len()).rev() {
+            if let Some(item) = self.follows[k] {
+                self.next_pack[k] = self.linked[item].first_pack.replace(k);
+            }
+        }
         for i in 0..self.items.len() {
             self.step(1);
-            if let Some(t) = self.tags.get_mut(&self.items[i].0)
-                && t.first == i
-            {
-                let mut anchored = t.lists.anchored.take();
-                while let Some(k) = anchored {
-                    self.due.push_back(k);
-                    anchored = self.next_in[k].anchored;
-                }
-            }
-            self.try_due();
-            if !self.used[i] {
+            if !self.linked[i].written {
                 self.write(i);
             }
         }
     }
 
-    /// Give each occurrence that is due its one try; a placement can make
-    /// more occurrences due.
-    fn try_due(&mut self) {
-        while let Some(k) = self.due.pop_front() {
+    /// Find the item of each row of occurrence `k` and link each to the
+    /// next; the occurrence then follows the item of its last row. When a
+    /// row finds no item nothing is linked and the occurrence is not
+    /// placed.
+    fn link(&mut self, k: usize) {
+        let rows = &self.occ[k].preceding_tags;
+        let mut path = core::mem::take(&mut self.path);
+        path.clear();
+        let found = self.find_items(k, rows, &mut path);
+        for (i, tag) in rows.iter().enumerate() {
             self.step(1);
-            if self.state[k] == Occurrence::Pending && !self.take_forward(k) {
-                self.state[k] = Occurrence::Fallback;
+            // A tag without an item has no entry: the search ended there.
+            let Some(t) = self.tags.get_mut(tag) else {
+                break;
+            };
+            if found {
+                t.fresh = t.fresh_now;
+                t.latest = Some(path[i]);
+            } else {
+                t.fresh_now = t.fresh;
             }
         }
+        if found {
+            for i in 0..path.len() {
+                let item = path[i];
+                self.linked[item].named = true;
+                if let Some(&next) = path.get(i + 1)
+                    && self.linked[item].after.is_none()
+                {
+                    // `item` ends a chain and `next` starts one: one chain.
+                    let (first, last) = (self.linked[item].far_end, self.linked[next].far_end);
+                    self.linked[item].after = Some(next);
+                    self.linked[next].before = Some(item);
+                    self.linked[first].far_end = last;
+                    self.linked[last].far_end = first;
+                }
+            }
+            self.follows[k] = path.last().copied();
+            self.latest_end = self.follows[k];
+        }
+        self.path = path;
     }
 
-    /// Write item `i`, then every pending occurrence whose rows are now the
-    /// last items written; the occurrences that open with this tag are due.
-    fn write(&mut self, i: usize) {
-        let tag = self.items[i].0;
-        self.used[i] = true;
-        self.written.push(tag);
-        self.plan.push(Placed::Item(i));
-        let t = self.tags.get_mut(&tag).expect("every item's tag is mapped");
-        debug_assert_eq!(t.next, Some(i), "a tag's items are written in order");
-        t.next = self.next_of_tag[i];
-        t.unwritten -= 1;
-        let (mut opens, mut closes) = (t.lists.opens.take(), t.lists.closes.take());
-        while let Some(k) = opens {
-            self.due.push_back(k);
-            opens = self.next_in[k].opens;
+    /// The item of each row of `rows`, into `path`; `false` when a row has
+    /// none (the tag has no item left to take, the item linked after the
+    /// row before has another tag, an item would be taken twice, the link
+    /// would close a chain on itself or put an item in front of Item 2).
+    fn find_items(&mut self, k: usize, rows: &[u32], path: &mut Vec<usize>) -> bool {
+        if rows.is_empty() {
+            return false;
         }
-        while let Some(k) = closes {
-            let rows = &self.occ[k].preceding_tags;
-            self.step(1 + rows.len());
-            if self.state[k] == Occurrence::Pending
-                && self.written.ends_with(rows)
-                && self.at_start_if_short(k, rows.len())
+        self.overlap(rows, path);
+        // The first item of the chain the path is in, known from the first
+        // time the path leaves a chain's end.
+        let mut chain_start = None;
+        for at in 0..rows.len() {
+            self.step(1);
+            let tag = rows[at];
+            let item = if at < path.len() {
+                Some(path[at])
+            } else if let Some(&before) = path.last() {
+                match self.linked[before].after {
+                    Some(after) => Some(after),
+                    None => {
+                        let start = *chain_start.get_or_insert(self.linked[before].far_end);
+                        self.item_to_link(tag, start, rows.get(at + 1).copied())
+                    }
+                }
+            } else {
+                // The item a row named last when it still ends its chain
+                // (this pack goes on from there), else an item no row has
+                // named, else that item wherever it is in its chain.
+                let t = self.tags.get(&tag);
+                t.and_then(|t| {
+                    let ends_chain = |i: &usize| self.linked[*i].after.is_none();
+                    t.latest.filter(ends_chain).or(t.fresh_now).or(t.latest)
+                })
+            };
+            let Some(item) = item else {
+                return false;
+            };
+            if self.items[item].0 != tag || self.linked[item].taken_by == k + 1 {
+                return false;
+            }
+            self.linked[item].taken_by = k + 1;
+            if let Some(t) = self.tags.get_mut(&tag)
+                && t.fresh_now == Some(item)
             {
-                self.place(k);
+                t.fresh_now = self.linked[item].next_of_tag;
             }
-            closes = self.next_in[k].closes;
+            if at >= path.len() {
+                path.push(item);
+            }
         }
+        true
     }
 
-    /// An occurrence with fewer rows than its matrix has was met that close
-    /// to the start of the set: nothing comes before its rows, so those
-    /// that are written (`rows_written` of them) are all that is written.
-    fn at_start_if_short(&self, k: usize, rows_written: usize) -> bool {
-        let short = self.sizes[k].is_some_and(|n| self.occ[k].preceding_tags.len() < n);
-        !short || rows_written == self.written.len()
+    /// An item of `tag` to link after the end of a chain that starts with
+    /// `chain_start`, when the row after it names `next_row`: the start of
+    /// another chain, when that chain goes on with the tag of the next row
+    /// (the two chains are one); else the tag's first item no row has
+    /// named; else its first item with nothing linked in front. Never the
+    /// chain's own start.
+    fn item_to_link(
+        &mut self,
+        tag: u32,
+        chain_start: usize,
+        next_row: Option<u32>,
+    ) -> Option<usize> {
+        // Item 2 keeps the first place of the set (ST 0601.8-09): it is
+        // never linked after another item.
+        if tag == 2 {
+            return None;
+        }
+        let t = self.tags.get_mut(&tag)?;
+        while let Some(item) = t.open_from
+            && self.linked[item].before.is_some()
+        {
+            #[cfg(test)]
+            {
+                self.steps += 1;
+            }
+            t.open_from = self.linked[item].next_of_tag;
+        }
+        let open = t.open_from.filter(|&item| item != chain_start);
+        let goes_on = open
+            .and_then(|item| self.linked[item].after)
+            .is_some_and(|after| next_row == Some(self.items[after].0));
+        if goes_on { open } else { t.fresh_now.or(open) }
     }
 
-    fn place(&mut self, k: usize) {
-        self.state[k] = Occurrence::Placed;
-        self.plan.push(Placed::Pack(k));
-    }
-
-    /// How many of the first `rows` the items written end with: the longest
-    /// start of `rows` that is the end of what is written. One pass over
-    /// the rows and one over as many written tags (Knuth, Morris and
-    /// Pratt's matching), whatever repeats in either.
-    fn overlap(&mut self, rows: &[u32]) -> usize {
+    /// Put into `path` the items of the leading rows that the chain of the
+    /// latest placed occurrence ends with: the longest start of `rows` that
+    /// is the end of that chain up to the occurrence's last item. One pass
+    /// over the rows and one over as many of the chain's items (Knuth,
+    /// Morris and Pratt's matching), whatever repeats in either.
+    fn overlap(&mut self, rows: &[u32], path: &mut Vec<usize>) {
+        // The chain's last items, the latest first.
+        let mut tail = core::mem::take(&mut self.tail);
+        tail.clear();
+        let mut item = self.latest_end;
+        while let Some(i) = item
+            && tail.len() < rows.len()
+        {
+            self.step(1);
+            tail.push(i);
+            item = self.linked[i].before;
+        }
+        if tail.is_empty() {
+            self.tail = tail;
+            return;
+        }
         // `border[i]`: the length of the longest proper start of
-        // `rows[..=i]` that is also its end. One entry per row.
+        // `rows[..=i]` that is also its end.
         let mut border = core::mem::take(&mut self.border);
         border.clear();
         border.resize(rows.len(), 0);
@@ -1473,9 +1561,9 @@ impl<'a> SdccPlacer<'a> {
         }
         // `j`: how many of the first rows the tags read so far end with.
         let mut j = 0;
-        for at in self.written.len().saturating_sub(rows.len())..self.written.len() {
+        for &i in tail.iter().rev() {
             self.step(1);
-            let tag = self.written[at];
+            let tag = self.items[i].0;
             if j == rows.len() {
                 j = border[j - 1];
             }
@@ -1485,46 +1573,41 @@ impl<'a> SdccPlacer<'a> {
             }
             j += usize::from(tag == rows[j]);
         }
+        path.extend(tail[..j].iter().rev());
+        self.tail = tail;
         self.border = border;
-        j
     }
 
-    /// Write occurrence `k` here if the items right before it can be made
-    /// exactly its rows: its first `j` rows are the last items written, as
-    /// many as that can be, and each row from `j` on takes the first
-    /// unwritten item of its tag. A longer overlap needs fewer items, so no
-    /// other split can work where this one does not.
-    fn take_forward(&mut self, k: usize) -> bool {
-        let rows = &self.occ[k].preceding_tags;
-        let j = self.overlap(rows);
-        let mut fits = self.at_start_if_short(k, j);
-        let mut claimed = j;
-        while fits && claimed < rows.len() {
+    /// Write the chain item `i` is in, from its first item to its last,
+    /// each item followed by the packs placed after it. A pack with fewer
+    /// rows than its matrix has was met that close to the start of the set:
+    /// it is placed only where nothing but its rows comes before it.
+    fn write(&mut self, i: usize) {
+        let mut item = i;
+        while let Some(before) = self.linked[item].before {
             self.step(1);
-            let tag = rows[claimed];
-            // Item 2 keeps the first place of the set (ST 0601.8-09): a row
-            // takes it forward only as the pack's first row.
-            fits = !(tag == 2 && claimed != 0)
-                && self.tags.get_mut(&tag).is_some_and(|t| {
-                    let free = t.claimed < t.unwritten;
-                    t.claimed += usize::from(free);
-                    free
-                });
-            claimed += usize::from(fits);
+            item = before;
         }
-        for tag in &rows[j..claimed] {
+        let mut next = Some(item);
+        while let Some(item) = next {
             self.step(1);
-            let t = self.tags.get_mut(tag).expect("claimed above");
-            t.claimed -= 1;
-            let next = t.next;
-            if fits {
-                self.write(next.expect("claimed above"));
+            self.linked[item].written = true;
+            self.plan.push(Placed::Item(item));
+            let written = self.plan.len() - self.packs_planned;
+            let mut pack = self.linked[item].first_pack;
+            while let Some(k) = pack {
+                self.step(1);
+                let rows = self.occ[k].preceding_tags.len();
+                if self.sizes[k].is_some_and(|n| rows < n) && rows != written {
+                    self.follows[k] = None;
+                } else {
+                    self.plan.push(Placed::Pack(k));
+                    self.packs_planned += 1;
+                }
+                pack = self.next_pack[k];
             }
+            next = self.linked[item].after;
         }
-        if fits && self.state[k] == Occurrence::Pending {
-            self.place(k);
-        }
-        fits
     }
 
     /// The placed body. An occurrence that was not placed is written where
@@ -1532,7 +1615,7 @@ impl<'a> SdccPlacer<'a> {
     /// typed item and the packs that follow it. Under `strict` it is
     /// refused, unless it is a matrix of size 0 naming nothing.
     fn finish(self, body_len: usize, strict: bool) -> Result<Vec<u8>, KlvEncodeError> {
-        let fallback = |k: &usize| self.state[*k] != Occurrence::Placed;
+        let fallback = |k: &usize| self.follows[*k].is_none();
         if strict
             && (0..self.occ.len())
                 .filter(fallback)
@@ -1572,12 +1655,15 @@ impl<'a> SdccPlacer<'a> {
 /// typed items) so that each occurrence follows the items its
 /// `preceding_tags` name, in that order ([`SdccPlacer`]).
 ///
-/// An occurrence that cannot be placed (a named item is not in the record,
-/// `preceding_tags` is empty, its rows are neither unwritten nor the last
-/// items written when it is tried, they would put another item in front of
-/// Item 2, or the rows a short capture names are not the start of the set)
-/// is written where it was, after the typed items; under `strict` it is refused, unless it is a matrix of size 0
-/// naming nothing.
+/// An occurrence that cannot be placed is written where it was, after the
+/// typed items; under `strict` it is refused, unless it is a matrix of size
+/// 0 naming nothing. That is an occurrence without rows; one that names a
+/// tag the body has no item of, or names it more often than the body has
+/// items; one whose rows contradict the links of the occurrences before it
+/// (another item already follows the item of one of its rows, or precedes
+/// the item of a later row); one whose rows would put an item in front of
+/// Item 2; and one with fewer rows than its matrix has whose rows are not
+/// the start of the set.
 fn place_sdcc_packs(
     record: &UasDatalinkLs,
     body: &[u8],

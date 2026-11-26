@@ -5529,7 +5529,8 @@ fn sdcc_placement_takes_a_bounded_number_of_steps_per_item_and_row() {
     let steps = sdcc_placement_steps(&rec);
     assert!(steps <= bound(&rec), "{steps} steps, bound {}", bound(&rec));
     // 1 024 occurrences that each take an item of tag 200 forward, beside
-    // 1 024 that end with that tag and can never be placed.
+    // 1 024 that end with that tag and name an item written after all of
+    // them.
     let mut rec = timestamped();
     for g in 0..1024u32 {
         rec.unknown.push(OwnedRawField {
@@ -6022,4 +6023,136 @@ fn a_reencode_of_the_encoders_own_output_is_byte_identical() {
         unset_overflow > 300 && at_end > 300 && with_pack > 300,
         "{unset_overflow} {at_end} {with_pack}"
     );
+}
+
+/// Two packs that share an item, in an order the encoder would not choose:
+/// the rows say which item directly follows which, so both keep their rows.
+#[test]
+fn two_sdcc_packs_that_share_an_item_keep_their_rows() {
+    let source = sdcc_set(&[I(2), I(23), I(13), I(14), P(3), I(5), P(3), I(65)]);
+    let rec = decode(&source).unwrap();
+    assert_eq!(rows(&rec), [vec![23, 13, 14], vec![13, 14, 5]]);
+    // The four items are one block, written where the encoder writes the
+    // first of them (Item 5): here that is the order they came in.
+    assert_eq!(encode_to_vec(&rec).unwrap(), source);
+    assert_eq!(encode_strict_compliance(&rec).unwrap(), source);
+}
+
+/// The items of a set in ANY order (Item 2 first), with packs after any of
+/// them, each refining the one to four items before it or every item so
+/// far: a decode and an encode keep every pack with its rows, the strict
+/// encoder accepts the record, and the encoder's output is re-encoded to
+/// the same bytes.
+#[test]
+fn a_set_in_any_order_keeps_every_pack_with_its_rows() {
+    let reference: Vec<u32> = sdcc_reference_items().iter().map(|(t, _)| *t).collect();
+    let mut g = Seeded(0x0601_1010_0601_1010);
+    let sorted = |rec: &UasDatalinkLs| {
+        let mut packs: Vec<(Vec<u32>, Vec<u8>)> = rec
+            .sdcc_flps
+            .iter()
+            .map(|f| (f.preceding_tags.clone(), f.bytes.clone()))
+            .collect();
+        packs.sort();
+        packs
+    };
+    let (mut packs, mut shared, mut moved) = (0, 0, 0);
+    for case in 0..3000 {
+        // Item 2, then the others shuffled, an unknown item among them.
+        let mut tags: Vec<u32> = reference
+            .iter()
+            .copied()
+            .filter(|&t| t != 2 && (t == 65 || g.below(3) != 0))
+            .collect();
+        tags.push(150);
+        for i in (1..tags.len()).rev() {
+            tags.swap(i, g.below(i + 1));
+        }
+        tags.insert(0, 2);
+        let mut parts = Vec::new();
+        let mut order = Vec::new();
+        // The first item the latest pack refines.
+        let mut reach = usize::MAX;
+        for (at, &tag) in tags.iter().enumerate() {
+            parts.push(if tag == 150 {
+                Sdcc::Raw(tlv(150, &[0x01]))
+            } else {
+                I(tag)
+            });
+            order.push(tag);
+            for _ in 0..[0, 0, 1, 1, 2][g.below(5)] {
+                let n = 1 + g.below(4);
+                parts.push(P(n as u8));
+                order.push(102);
+                packs += 1;
+                let begins = (at + 1).saturating_sub(n);
+                shared += usize::from(reach != usize::MAX && begins < at && reach <= at);
+                reach = reach.min(begins);
+            }
+        }
+        let source = sdcc_set(&parts);
+        let rec = decode(&source).unwrap();
+        let out = encode_to_vec(&rec).unwrap();
+        moved += usize::from(out != source);
+        let back = decode(&out).unwrap();
+        assert_eq!(sorted(&back), sorted(&rec), "case {case}: {order:?}");
+        assert_eq!(encode_to_vec(&back).unwrap(), out, "case {case}: {order:?}");
+        let strict = encode_strict_compliance(&rec).unwrap();
+        assert_eq!(strict, out, "case {case}: {order:?}");
+        assert!(decode_strict_compliance(&strict).is_ok(), "case {case}");
+    }
+    assert!(
+        packs > 6000 && shared > 1000 && moved > 1000,
+        "{packs} {shared} {moved}"
+    );
+}
+
+/// Packs whose rows overlap item by item, and a pack that joins blocks
+/// written before it: the work stays bounded per item, row and occurrence.
+#[test]
+fn sdcc_packs_that_share_items_place_in_bounded_steps() {
+    let bound = |rec: &UasDatalinkLs| {
+        let items = 2 + rec.unknown.len();
+        let rows: usize = rec.sdcc_flps.iter().map(|f| f.preceding_tags.len()).sum();
+        8 * (items + rows + rec.sdcc_flps.len())
+    };
+    let unknown = |tag: u32| OwnedRawField {
+        tag,
+        value: Vec::new(),
+    };
+    // The first standard deviation is the pack's number: its bytes are its own.
+    let pack = |number: u32, rows: Vec<u32>| {
+        let mut bytes = sdcc_pack(rows.len().min(255) as u8);
+        bytes[3..7].copy_from_slice(&(number as f32 + 1.0).to_be_bytes());
+        SdccFlpField {
+            bytes,
+            preceding_tags: rows,
+        }
+    };
+    // 2 048 items of their own tags, in descending tag order; pack `k`
+    // refines the 64 items that end with item `k`: each shares 63 items
+    // with the one before it.
+    let mut sliding = timestamped();
+    sliding.unknown = (0..2048u32).rev().map(|i| unknown(1000 + i)).collect();
+    sliding.sdcc_flps = (63..2048u32)
+        .map(|k| pack(k, (k - 63..=k).map(|i| 1000 + (2047 - i)).collect()))
+        .collect();
+    // 1 024 packs of one item each, then one pack that refines all 1 024
+    // items: it joins the 1 024 blocks into one.
+    let mut joining = timestamped();
+    joining.unknown = (0..1024u32).map(|i| unknown(1000 + i)).collect();
+    joining.sdcc_flps = (0..1024u32).map(|i| pack(i, vec![1000 + i])).collect();
+    joining
+        .sdcc_flps
+        .push(pack(1024, (0..1024u32).rev().map(|i| 1000 + i).collect()));
+    for (name, rec) in [("sliding", sliding), ("joining", joining)] {
+        let steps = sdcc_placement_steps(&rec);
+        assert!(
+            steps <= bound(&rec),
+            "{name}: {steps} steps, bound {}",
+            bound(&rec)
+        );
+        let out = encode_to_vec(&rec).unwrap();
+        assert!(every_pack_follows_its_rows(&rec, &out), "{name}");
+    }
 }
