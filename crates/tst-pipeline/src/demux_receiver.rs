@@ -431,8 +431,9 @@ impl<R: RecvTransport> DemuxReceiver<R> {
     /// (`NonConformantIssue::MalformedPes { pid, reason }`) and the receive
     /// loop continues — a single corrupt PES on one PID no longer tears down
     /// the receiver. In strict modes that reject `MalformedPes` (today
-    /// `StrictMode::Full`), the error propagates with `kind` `InputMalformed`
-    /// and terminates the loop.
+    /// `StrictMode::Full`), that call returns the error with `kind`
+    /// `InputMalformed` instead of the damaged PES's events; it is not an
+    /// end: the next call goes on with the packets after it.
     ///
     /// # C ABI
     ///
@@ -1035,6 +1036,56 @@ mod stats_tests {
             0x00,
         ];
         psi_packet(PMT_PID, &section, cc, false)
+    }
+
+    /// One packet on `VIDEO_PID`: a bounded H.264 PES with PTS `pts` whose
+    /// `PES_packet_length` promises `missing` bytes more than the packet
+    /// carries, so the next PUSI ends it short.
+    fn bounded_video_pes(pts: u64, missing: usize, cc: u8) -> Vec<u8> {
+        let es = [0x00, 0x00, 0x00, 0x01, 0x09, 0xF0];
+        let mut pes = vec![0x00, 0x00, 0x01, 0xE0];
+        pes.extend_from_slice(&((8 + es.len() + missing) as u16).to_be_bytes());
+        pes.extend_from_slice(&[0x80, 0x80, 0x05]);
+        pes.extend_from_slice(&[
+            0x21 | (((pts >> 30) as u8 & 0x07) << 1),
+            (pts >> 22) as u8,
+            0x01 | (((pts >> 15) as u8 & 0x7F) << 1),
+            (pts >> 7) as u8,
+            0x01 | ((pts as u8 & 0x7F) << 1),
+        ]);
+        pes.extend_from_slice(&es);
+        ts_packet(VIDEO_PID, &pes, true, cc)
+    }
+
+    #[test]
+    fn a_full_mode_damaged_pes_is_one_error_and_the_next_call_goes_on() {
+        use tst_core::mpegts::demux::{DemuxEvent, DemuxerConfig, StrictMode};
+        let mut capture = vec![pat_packet(), pmt_packet(0, 0, false)];
+        for (cc, pts, missing) in [(0u8, 1_000u64, 0usize), (1, 2_000, 200), (2, 3_000, 0)] {
+            capture.push(bounded_video_pes(pts, missing, cc));
+        }
+        let mut cfg = DemuxerConfig::builder();
+        cfg.strict(StrictMode::Full);
+        let mut r = DemuxReceiver::with_demux_options(
+            CannedRecv {
+                chunks: capture.into_iter().collect(),
+                alive: true,
+            },
+            cfg.build(),
+        );
+        let mut seen = Vec::new();
+        loop {
+            match r.recv_event() {
+                Ok(Some(DemuxEvent::Sample { pts, .. })) => {
+                    seen.push(format!("{}", pts.as_ticks()))
+                }
+                Ok(Some(_)) => {}
+                Ok(None) => break,
+                Err(e) if e.kind == ShellErrorKind::InputMalformed => seen.push("error".into()),
+                Err(e) => panic!("{e:?}"),
+            }
+        }
+        assert_eq!(seen, ["1000", "error", "3000"]);
     }
 
     #[test]
