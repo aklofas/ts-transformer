@@ -1159,18 +1159,18 @@ class SdccFlpField:
     a set that came in any order, whose packs each follow the items they
     refine, keeps every pack with its rows after a decode and an encode,
     also when packs share items, and a set whose items are in the encoder's
-    order is re-encoded with every pack where it was: both for every pack
-    that has rows and names no tag the set carries more than once (a pack of
-    matrix size 0 names no item and is written after the typed fields). For
-    a tag the set carries more than once (an unknown tag, or Item 115) a row
-    names the tag, not the item, so the encoder cannot know which occurrence
-    a pack followed: a row takes the item its pack's other rows fit, or the
-    first one no row has named, so the pack is written after the first item
-    of that tag its other rows fit, which need not be the one it followed,
-    and the strict compliance encoder does not refuse that; such a set can
-    also end with a pack that is not placed. A relay that must keep such a
-    pack with its item forwards the original bytes, or patches them, which
-    keeps every item where it is.
+    order is re-encoded with every pack where it was. Both hold for every
+    pack that has rows and names no tag the set carries more than once (a
+    pack of matrix size 0 names no item and is written after the typed
+    fields). For a tag the set carries more than once (an unknown tag, or
+    Item 115) a row names the tag, not the item, so the encoder cannot know
+    which occurrence a pack followed: a row takes the item its pack's other
+    rows fit, or the first one no row has named, so the pack is written
+    after the first item of that tag its other rows fit, which need not be
+    the one it followed, and the strict compliance encoder does not refuse
+    that; such a set can also end with a pack that is not placed. A relay
+    that must keep such a pack with its item forwards the original bytes, or
+    patches them, which keeps every item where it is.
 
     **An occurrence that cannot be placed** is still written by the ordinary
     encoders, after the single-use typed fields, where 0.10.0 wrote every
