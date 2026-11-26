@@ -338,6 +338,22 @@ fn a_view_equals_the_view_after_an_encode_and_decode() {
             },
         ),
         (
+            "Item 104 at its minimum with a BelowMin entry",
+            UasDatalinkLs {
+                sensor_ellipsoid_height_extended_m: Some(-900.0),
+                imapb_specials: vec![(104, ImapbSpecial::BelowMin)],
+                ..base.clone()
+            },
+        ),
+        (
+            "Item 104 at its maximum with an AboveMax entry",
+            UasDatalinkLs {
+                sensor_ellipsoid_height_extended_m: Some(40_000.0),
+                imapb_specials: vec![(104, ImapbSpecial::AboveMax)],
+                ..base.clone()
+            },
+        ),
+        (
             "Item 104 one step inside its minimum with a BelowMin entry",
             UasDatalinkLs {
                 sensor_ellipsoid_height_extended_m: Some(-900.0 + 1.0 / 128.0),
