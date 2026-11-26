@@ -33,7 +33,10 @@ fuzz_target!(|data: &[u8]| {
         return;
     }
     let sps = parse_sps(SPS_1080P_MAIN40);
-    debug_assert!(sps.is_ok(), "the fixture SPS must parse: SPS-context branch is dead");
+    debug_assert!(
+        sps.is_ok(),
+        "the fixture SPS must parse: SPS-context branch is dead"
+    );
     let Ok(mut sps) = sps else {
         return;
     };
