@@ -346,7 +346,18 @@ impl SensorFrameRate {
     }
 }
 
+/// Item 127's Max Length (ST 0601.19 §8.127): the standard calls the column
+/// a recommended maximum; this library reads it as the item's cap.
+const SENSOR_FRAME_RATE_MAX_LEN: usize = 16;
+
 pub(crate) fn parse_sensor_frame_rate(bytes: &[u8]) -> Result<SensorFrameRate, KlvFieldError> {
+    if bytes.len() > SENSOR_FRAME_RATE_MAX_LEN {
+        return Err(KlvFieldError::InvalidLength {
+            tag: 127,
+            expected: SENSOR_FRAME_RATE_MAX_LEN,
+            got: bytes.len(),
+        });
+    }
     let (numerator, rest) = read_ber_oid_u64(bytes).map_err(truncated(127))?;
     let denominator = if rest.is_empty() {
         1
@@ -382,6 +393,12 @@ pub(crate) fn emit_sensor_frame_rate(
     fr: &SensorFrameRate,
     out: &mut Vec<u8>,
 ) -> Result<(), KlvEncodeError> {
+    if sensor_frame_rate_len(fr) > SENSOR_FRAME_RATE_MAX_LEN {
+        return Err(KlvEncodeError::ValueTooLong {
+            tag: 127,
+            max: SENSOR_FRAME_RATE_MAX_LEN,
+        });
+    }
     let mut buf = [0u8; 10];
     let n = write_ber_oid_u64(fr.numerator, &mut buf)?;
     out.extend_from_slice(&buf[..n]);
@@ -461,11 +478,6 @@ fn read_len_prefixed(bytes: &[u8], tag: u32) -> Result<(&[u8], &[u8]), KlvFieldE
         return Err(KlvFieldError::TruncatedField { tag });
     }
     Ok((&rest[..len], &rest[len..]))
-}
-
-/// Accumulate a byte slice as a big-endian unsigned integer (empty ⇒ 0).
-fn be_uint(bytes: &[u8]) -> u64 {
-    bytes.iter().fold(0u64, |acc, &b| (acc << 8) | u64::from(b))
 }
 
 /// Interpret a `[BER length][value bytes]` UTF-8 field: length 0 means
@@ -565,7 +577,8 @@ fn country_codes_last_some(cc: &CountryCodes) -> Option<usize> {
 
 pub(crate) fn parse_country_codes(bytes: &[u8]) -> Result<CountryCodes, KlvFieldError> {
     let (coding_bytes, rest) = read_len_prefixed(bytes, 122)?;
-    let coding_method = be_uint(coding_bytes);
+    // The Country Coding Method is an integer of 1 to 8 bytes.
+    let coding_method = read_var_uint(coding_bytes, 8, 122)?;
     let (overflight_bytes, rest) = read_len_prefixed(rest, 122)?;
     let overflight = len_prefixed_utf8(overflight_bytes, 122)?;
     let mut cc = CountryCodes {

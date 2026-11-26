@@ -470,15 +470,28 @@ proptest! {
     }
 
     /// Tag 94 miis_core_id opaque pass-through — mirrors the Tag 74 vmti
-    /// pattern; the ST 1204 binary payload is carried verbatim.
+    /// pattern; the ST 1204 binary payload is carried verbatim up to the
+    /// item's Max Length of 50 bytes, and a longer one is refused.
     #[test]
     fn st0601_miis_core_id_passthrough_roundtrip(
-        bytes in proptest::collection::vec(any::<u8>(), 1..=64),
+        bytes in proptest::collection::vec(any::<u8>(), 1..=50),
+        extra in proptest::collection::vec(any::<u8>(), 1..=14),
     ) {
         let record = UasDatalinkLs { miis_core_id: Some(bytes.clone()), ..Default::default() };
         let buf = st0601::encode_to_vec(&record).expect("encode");
         let decoded = st0601::decode(&buf).expect("decode");
         prop_assert_eq!(decoded.miis_core_id.as_deref(), Some(bytes.as_slice()));
+        // 51 to 64 bytes: the drawn value padded to the cap, then `extra`.
+        let mut long = bytes;
+        long.resize(50, 0xA5);
+        long.extend(extra);
+        let over = UasDatalinkLs { miis_core_id: Some(long), ..Default::default() };
+        let refused = st0601::encode_to_vec(&over);
+        prop_assert!(
+            matches!(refused, Err(tst_core::KlvEncodeError::ValueTooLong { tag: 94, max: 50 })),
+            "{:?}",
+            refused
+        );
     }
 
     /// IMAPB f64 tags: pick one ranged tag uniformly, encode value at

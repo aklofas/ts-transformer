@@ -660,6 +660,9 @@ fn apply_tag(
     })
 }
 
+/// The longest MIIS Core Identifier (Item 94) this library reads or writes.
+pub(super) const MIIS_CORE_ID_MAX_LEN: usize = 50;
+
 /// Decode a scalar row's wire value by its encoding. `None` means the
 /// field stays unset: an absent string, an INT_MIN sentinel (recorded in
 /// `sentinel_tags`) or an IMAPB special value (recorded in
@@ -739,7 +742,19 @@ fn decode_scalar(
                     .to_owned()
             })
         }
-        Encoding::RawBytes => FieldValue::Bytes(f.value.to_vec()),
+        Encoding::RawBytes => {
+            // Item 94's Max Length is 50 (ST 0601.19 §8.94). The standard
+            // calls the column a recommended maximum; this library reads it
+            // as the item's cap.
+            if tag == 94 && f.value.len() > MIIS_CORE_ID_MAX_LEN {
+                return Err(KlvFieldError::InvalidLength {
+                    tag,
+                    expected: MIIS_CORE_ID_MAX_LEN,
+                    got: f.value.len(),
+                });
+            }
+            FieldValue::Bytes(f.value.to_vec())
+        }
         Encoding::U8Range
         | Encoding::U16Range
         | Encoding::I16Range

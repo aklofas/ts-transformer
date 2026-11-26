@@ -376,6 +376,12 @@ fn encode_scalar(
             _ => wrong_variant(spec),
         },
         Encoding::RawBytes => match v {
+            FieldValue::Bytes(b) if spec.id == 94 && b.len() > super::decode::MIIS_CORE_ID_MAX_LEN => {
+                return Err(KlvEncodeError::ValueTooLong {
+                    tag: 94,
+                    max: super::decode::MIIS_CORE_ID_MAX_LEN,
+                });
+            }
             FieldValue::Bytes(b) => b.clone(),
             _ => wrong_variant(spec),
         },

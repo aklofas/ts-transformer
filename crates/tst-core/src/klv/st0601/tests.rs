@@ -4105,3 +4105,88 @@ fn compliance_encode_refuses_each_profile_row() {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// Length caps: Items 94 and 127; Item 122's coding method
+// ---------------------------------------------------------------------------
+
+#[test]
+fn item_94_over_fifty_bytes_is_refused() {
+    // ST 0601.19 §8.94 gives a Max Length of 50.
+    let at_cap = UasDatalinkLs {
+        miis_core_id: Some(vec![0xA5; 50]),
+        ..Default::default()
+    };
+    let back = decode(&encode_to_vec(&at_cap).unwrap()).unwrap();
+    assert_eq!(back.miis_core_id, at_cap.miis_core_id);
+    let over = UasDatalinkLs {
+        miis_core_id: Some(vec![0xA5; 51]),
+        ..Default::default()
+    };
+    assert_eq!(
+        format!("{:?}", encode_to_vec(&over)),
+        "Err(ValueTooLong { tag: 94, max: 50 })"
+    );
+    for got in [51usize, 200] {
+        let rec = decode(&wrap_st0601(&tlv(94, &vec![0xA5; got]))).unwrap();
+        assert_eq!(rec.miis_core_id, None, "{got} bytes");
+        assert_eq!(
+            format!("{:?}", rec.field_errors),
+            format!("[InvalidLength {{ tag: 94, expected: 50, got: {got} }}]")
+        );
+    }
+}
+
+#[test]
+fn item_127_over_sixteen_bytes_is_refused() {
+    // ST 0601.19 §8.127 gives a Max Length of 16: two BER-OID values of
+    // eight bytes each fit, one more byte does not.
+    let at_cap = SensorFrameRate {
+        numerator: (1 << 56) - 1,
+        denominator: (1 << 56) - 1,
+    };
+    let rec = UasDatalinkLs {
+        sensor_frame_rate: Some(at_cap),
+        ..Default::default()
+    };
+    let back = decode(&encode_to_vec(&rec).unwrap()).unwrap();
+    assert_eq!(back.sensor_frame_rate, Some(at_cap));
+    let over = UasDatalinkLs {
+        sensor_frame_rate: Some(SensorFrameRate {
+            numerator: 1 << 56,
+            denominator: (1 << 56) - 1,
+        }),
+        ..Default::default()
+    };
+    assert_eq!(
+        format!("{:?}", encode_to_vec(&over)),
+        "Err(ValueTooLong { tag: 127, max: 16 })"
+    );
+    // The same 17 bytes on the wire: a field error, the field unset.
+    let mut wire = vec![0x81, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x00];
+    wire.extend([0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x7F]);
+    let rec = decode(&wrap_st0601(&tlv(127, &wire))).unwrap();
+    assert_eq!(rec.sensor_frame_rate, None);
+    assert_eq!(
+        format!("{:?}", rec.field_errors),
+        "[InvalidLength { tag: 127, expected: 16, got: 17 }]"
+    );
+}
+
+#[test]
+fn item_122_coding_method_is_at_most_eight_bytes_and_not_empty() {
+    // The coding method is its own `[length][integer]` field of up to 8
+    // bytes, followed here by an overflight country code "USA".
+    let usa = [0x03, b'U', b'S', b'A'];
+    let method = |field: &[u8]| decode(&wrap_st0601(&tlv(122, &[field, &usa].concat()))).unwrap();
+    for (field, got) in [(vec![0x00], 0usize), ([&[0x09, 0x01][..], &[0; 7], &[0x02]].concat(), 9)] {
+        let rec = method(&field);
+        assert_eq!(rec.country_codes, None, "{got}-byte method");
+        assert_eq!(
+            format!("{:?}", rec.field_errors),
+            format!("[InvalidLength {{ tag: 122, expected: 8, got: {got} }}]")
+        );
+    }
+    let rec = method(&[0x01, 0x0E]);
+    assert_eq!(rec.country_codes.map(|c| c.coding_method), Some(14));
+}
