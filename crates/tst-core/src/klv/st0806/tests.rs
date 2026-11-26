@@ -3,6 +3,7 @@
 //! exercises).
 
 use super::*;
+use crate::error::KlvEncodeError;
 use crate::klv::pack::OwnedRawField;
 use crate::klv::st0806::model::*;
 
@@ -368,4 +369,128 @@ fn rvt_uls_are_pairwise_distinct_and_pinned_at_byte_12() {
             );
         }
     }
+}
+
+// ST 0806.4 Table 8-1, Items 14/15 and 18/19: the MGRS zone is a UTM zone
+// 01 to 60; the band and grid square are three letters, A to Z without I
+// and O. A polar (UPS, bands A, B, Y, Z) position has no zone.
+
+fn rvt_with_mgrs(zone: Option<u8>, band_grid: &str) -> RvtLs {
+    RvtLs {
+        timestamp_us: Some(1_700_000_000_000_000),
+        aircraft_mgrs_zone: zone,
+        aircraft_mgrs_band_grid: Some(band_grid.into()),
+        aircraft_mgrs_easting_m: Some(80_400),
+        aircraft_mgrs_northing_m: Some(12_000),
+        ..Default::default()
+    }
+}
+
+#[test]
+fn the_rvt_encoder_refuses_an_mgrs_zone_outside_1_to_60() {
+    for zone in [0u8, 61, 255] {
+        let ls = rvt_with_mgrs(Some(zone), "TWN");
+        for (form, r) in [
+            ("body", encode_to_vec(&ls)),
+            ("standalone", encode_to_vec_standalone(&ls)),
+        ] {
+            assert!(
+                matches!(r, Err(KlvEncodeError::OutOfRange { tag: 14, .. })),
+                "zone {zone} {form}: {r:?}"
+            );
+        }
+        let frame_center = RvtLs {
+            frame_center_mgrs_zone: Some(zone),
+            ..Default::default()
+        };
+        assert!(
+            matches!(
+                encode_to_vec(&frame_center),
+                Err(KlvEncodeError::OutOfRange { tag: 18, .. })
+            ),
+            "frame center zone {zone}"
+        );
+    }
+    for zone in [1u8, 60] {
+        let bytes = encode_to_vec(&rvt_with_mgrs(Some(zone), "TWN")).unwrap();
+        assert_eq!(decode(&bytes).unwrap().aircraft_mgrs_zone, Some(zone));
+    }
+}
+
+#[test]
+fn the_rvt_encoder_refuses_a_band_and_grid_square_that_is_not_three_letters() {
+    for band_grid in ["T", "TW", "TWNA", "tw1", "TIO", "TWO", "Té", "TW1"] {
+        let r = encode_to_vec(&rvt_with_mgrs(Some(18), band_grid));
+        assert!(
+            matches!(r, Err(KlvEncodeError::InvalidFieldValue { tag: 15, .. })),
+            "{band_grid:?}: {r:?}"
+        );
+        let frame_center = RvtLs {
+            frame_center_mgrs_band_grid: Some(band_grid.into()),
+            ..Default::default()
+        };
+        let r = encode_to_vec(&frame_center);
+        assert!(
+            matches!(r, Err(KlvEncodeError::InvalidFieldValue { tag: 19, .. })),
+            "frame center {band_grid:?}: {r:?}"
+        );
+    }
+}
+
+#[test]
+fn a_polar_position_without_a_zone_is_accepted() {
+    let ls = rvt_with_mgrs(None, "AZN");
+    let bytes = encode_to_vec(&ls).unwrap();
+    let back = decode(&bytes).unwrap();
+    assert_eq!(back.aircraft_mgrs_zone, None);
+    assert_eq!(back.aircraft_mgrs_band_grid.as_deref(), Some("AZN"));
+    assert_eq!(back.aircraft_mgrs(), None);
+}
+
+#[test]
+fn mgrs_accessors_return_none_for_a_bad_decoded_component() {
+    // The lenient decode keeps what the producer wrote; the accessors build
+    // a string only from components the standard allows.
+    let item = |zone: u8, band: &[u8; 3]| {
+        let mut b = alloc::vec![0x0E, 0x01, zone, 0x0F, 0x03];
+        b.extend_from_slice(band);
+        b.extend_from_slice(&[0x10, 0x03, 0x01, 0x3A, 0x10, 0x11, 0x03, 0x00, 0x2E, 0xE0]);
+        b
+    };
+    for (zone, band) in [(0u8, b"TWL"), (61, b"TWL"), (18, b"tw1"), (18, b"TIO")] {
+        let ls = decode(&item(zone, band)).unwrap();
+        assert_eq!(ls.aircraft_mgrs(), None, "zone {zone} band {band:?}");
+    }
+    let ls = decode(&item(18, b"TWL")).unwrap();
+    assert_eq!(ls.aircraft_mgrs().as_deref(), Some("18TWL8040012000"));
+    let frame_center = RvtLs {
+        frame_center_mgrs_zone: Some(0),
+        frame_center_mgrs_band_grid: Some("TWL".into()),
+        frame_center_mgrs_easting_m: Some(1),
+        frame_center_mgrs_northing_m: Some(2),
+        ..Default::default()
+    };
+    assert_eq!(frame_center.frame_center_mgrs(), None);
+}
+
+#[test]
+fn a_decoded_bad_mgrs_component_is_refused_on_reencode_and_the_original_bytes_still_decode() {
+    // A relay that decodes untrusted RVT and re-encodes gets the refusal for
+    // that set; the original bytes still decode, so it can forward them or
+    // clear the field and re-encode.
+    let original = [
+        0x02, 0x08, 0, 6, 0x0A, 0x2D, 0x8A, 0xB4, 0x00, 0x00, 0x0E, 0x01, 0x00,
+    ];
+    let ls = decode(&original).unwrap();
+    assert_eq!(ls.aircraft_mgrs_zone, Some(0));
+    assert!(matches!(
+        encode_to_vec(&ls),
+        Err(KlvEncodeError::OutOfRange { tag: 14, .. })
+    ));
+    assert_eq!(decode(&original).unwrap(), ls);
+    let cleared = RvtLs {
+        aircraft_mgrs_zone: None,
+        ..ls
+    };
+    assert!(encode_to_vec(&cleared).is_ok());
 }

@@ -315,7 +315,9 @@ crate::binding_record! {
 impl RvtLs {
     /// Reconstruct the 15-char aircraft MGRS string (zone zero-padded to 2,
     /// band+grid 3 chars, easting/northing zero-padded to 5), or None when
-    /// any of the four components is missing.
+    /// any of the four components is missing or is not one ST 0806.4 allows
+    /// (a zone outside 1 to 60; a band and grid square that is not three
+    /// letters A to Z without I and O).
     #[must_use]
     pub fn aircraft_mgrs(&self) -> Option<String> {
         mgrs_string(
@@ -344,10 +346,29 @@ fn mgrs_string(
     northing: Option<u32>,
 ) -> Option<String> {
     use alloc::format;
+    let (zone, band_grid) = (zone?, band_grid?);
+    if !is_mgrs_zone(zone) || !is_mgrs_band_grid(band_grid) {
+        return None;
+    }
     Some(format!(
-        "{:02}{}{:05}{:05}",
-        zone?, band_grid?, easting?, northing?
+        "{zone:02}{band_grid}{:05}{:05}",
+        easting?, northing?
     ))
+}
+
+/// An MGRS zone as ST 0806.4 Table 8-1 Items 14 and 18 define it: UTM
+/// zone 01 to 60.
+pub(crate) fn is_mgrs_zone(zone: u8) -> bool {
+    (1..=60).contains(&zone)
+}
+
+/// An MGRS latitude band and grid square as ST 0806.4 Table 8-1 Items 15
+/// and 19 define them: three letters A to Z, I and O omitted.
+pub(crate) fn is_mgrs_band_grid(band_grid: &str) -> bool {
+    band_grid.len() == 3
+        && band_grid
+            .bytes()
+            .all(|c| c.is_ascii_uppercase() && c != b'I' && c != b'O')
 }
 
 #[cfg(test)]

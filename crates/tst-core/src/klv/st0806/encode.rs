@@ -35,8 +35,11 @@ use super::model::{RVT_LS_UL, RvtAoi, RvtLs, RvtPoi, RvtUserData};
 /// - [`KlvEncodeError::StringTooLong`] if an ISO-7 string field exceeds
 ///   its Table 8-1/8-2/8-3 byte cap.
 /// - [`KlvEncodeError::OutOfRange`] if a MGRS easting/northing (uint24)
-///   exceeds 99,999, or a POI lat/lon/altitude value cannot be mapped
-///   into its declared range.
+///   exceeds 99,999, an MGRS zone is outside 1 to 60, or a POI
+///   lat/lon/altitude value cannot be mapped into its declared range.
+/// - [`KlvEncodeError::InvalidFieldValue`] if an MGRS latitude band and
+///   grid square is not three letters A to Z without I and O (ST 0806.4
+///   Table 8-1, Items 15 and 19).
 /// - [`KlvEncodeError::ReservedTagInUnknown`] if `ls.unknown` (or a
 ///   nested [`RvtPoi::unknown`] / [`RvtAoi::unknown`]) carries a tag
 ///   already covered by a typed field — emitting it would produce a
@@ -99,6 +102,16 @@ fn write_body(ls: &RvtLs, out: &mut Vec<u8>) -> Result<(), KlvEncodeError> {
     emit_u8(8, ls.rvt_ls_version, out)?;
     emit_u32(9, ls.video_data_rate, out)?;
     emit_iso7(10, ls.digital_video_file_format.as_deref(), 127, out)?;
+    check_mgrs(
+        14,
+        ls.aircraft_mgrs_zone,
+        ls.aircraft_mgrs_band_grid.as_deref(),
+    )?;
+    check_mgrs(
+        18,
+        ls.frame_center_mgrs_zone,
+        ls.frame_center_mgrs_band_grid.as_deref(),
+    )?;
     emit_u8(14, ls.aircraft_mgrs_zone, out)?;
     emit_iso7(15, ls.aircraft_mgrs_band_grid.as_deref(), 3, out)?;
     emit_u24(16, ls.aircraft_mgrs_easting_m, out)?;
@@ -360,6 +373,37 @@ fn emit_u24(tag: u32, v: Option<u32>, out: &mut Vec<u8>) -> Result<(), KlvEncode
         });
     }
     emit_ber_oid_tlv(tag, &v.to_be_bytes()[1..], out)
+}
+
+/// Refuse an MGRS zone (Item `zone_tag`) outside 1 to 60 and a band and
+/// grid square (Item `zone_tag + 1`) that is not three letters A to Z
+/// without I and O (ST 0806.4 Table 8-1). A polar position has no zone.
+fn check_mgrs(
+    zone_tag: u32,
+    zone: Option<u8>,
+    band_grid: Option<&str>,
+) -> Result<(), KlvEncodeError> {
+    use super::model::{is_mgrs_band_grid, is_mgrs_zone};
+    if let Some(z) = zone
+        && !is_mgrs_zone(z)
+    {
+        return Err(KlvEncodeError::OutOfRange {
+            tag: zone_tag,
+            value: f64::from(z),
+            min: 1.0,
+            max: 60.0,
+            hint: Some("an MGRS zone is a UTM zone, 01 to 60"),
+        });
+    }
+    if let Some(s) = band_grid
+        && !is_mgrs_band_grid(s)
+    {
+        return Err(KlvEncodeError::InvalidFieldValue {
+            tag: zone_tag + 1,
+            reason: "an MGRS latitude band and grid square are three letters A to Z without I and O",
+        });
+    }
+    Ok(())
 }
 
 /// Emit an ISO-7 (ASCII) string tag. `KlvEncodeError::StringTooLong` if
