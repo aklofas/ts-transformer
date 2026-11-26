@@ -412,7 +412,8 @@ correctly, and emits
 `NonConformantIssue::StreamTypeMismatch{Sync,Async}On*Pid`. To avoid
 flooding the event stream when a stream emits the same mismatch on
 every record (often thousands), the issue is coalesced to one event
-per (PID, PMT version) — re-arms on PMT version bump.
+per PID for each applied PMT, and fires again after every PMT the demuxer
+applies (a new version or new content).
 
 **Continuity-counter jumps (CC discontinuities).** When the per-PID CC
 skips a value, the demuxer emits `DiscontinuityKind::ContinuityJump
@@ -462,7 +463,14 @@ again, or moves to another PMT PID, and every program after a new
 `pmt_versions_seen` only those whose version moved (a program's first PMT
 included), so their difference is the number of PMT changes a source made
 without the increment; for a source that follows the rule the two are
-equal.
+equal. A source that alternates two different PMTs for one program at one
+version (two muxers' output merged onto one PMT PID) is off H.222.0, and
+the demuxer now follows every switch: a `ProgramMap` each time, the PIDs of
+the layout left out leave (handing out their units in flight), and their
+units that arrive while the other layout is applied are dropped, so each
+source's units are cut at the switches (about half of each in an even
+merge). 0.10.0 kept the first layout and never saw the second.
+`program_maps_seen` running away from `pmt_versions_seen` is the sign.
 
 **A PID that leaves hands out its unit.** When a PMT takes a PID out of its
 program or makes it another kind of stream (the kind the demuxer derives
@@ -743,18 +751,26 @@ In priority order:
    ASCII letter Unicode has a precomposed character for with that accent is
    accepted, a superset of ISO/IEC 6937's own pairs); a control code
    (0x80–0x9F), a code the table leaves empty, or an accent that is last or
-   not followed by such a letter makes the text undecodable. One deviation
-   from Annex A: default-table text that is well-formed UTF-8 as a whole is
-   read as UTF-8, so a label written as UTF-8 without a selector still
-   reads as written. Table-00 text in which every byte over 0x7F belongs to
-   a run of one byte 0xD0–0xDF and one byte 0xA0–0xBF, one byte 0xE0–0xEF
-   (not 0xED) and two, or one byte 0xF0–0xF3 and three, is therefore read
-   as UTF-8 instead (`D3 A0`, "©" and a no-break space, reads as "Ӡ"). A
-   leading selector is honoured: 0x15 (UTF-8) is decoded; the ISO 8859
-   selectors (0x01–0x07, 0x09–0x0B, and 0x10 0x00 followed by 0x01–0x0B or
+   not followed by such a letter makes the text undecodable. A leading
+   selector is honoured: 0x15 (UTF-8) is decoded; the ISO 8859 selectors
+   (0x01–0x07, 0x09–0x0B, and 0x10 0x00 followed by 0x01–0x0B or
    0x0D–0x0F) only when the text is ASCII; the reserved selectors (0x08,
    any other 0x10 value), the multi-byte selectors 0x11–0x14 and any other
-   selector fall through to the next source.
+   selector fall through to the next source. Where this differs from
+   Annex A, one deviation and two limits:
+   - Default-table text that is well-formed UTF-8 as a whole is read as
+     UTF-8, so a label written as UTF-8 without a selector still reads as
+     written. Table-00 text in which every byte over 0x7F belongs to a run
+     of one byte 0xD0–0xDF and one byte 0xA0–0xBF, one byte 0xE0–0xEF (not
+     0xED) and two, or one byte 0xF0–0xF3 and three, is therefore read as
+     UTF-8 instead (`D3 A0`, "©" and a no-break space, reads as "Ӡ").
+   - The control codes of Annex A.1 (0x80–0x9F in a one-byte table:
+     character emphasis on and off, CR/LF, the user-defined codes) are not
+     interpreted: a one-byte-table text that holds one gives no label from
+     this descriptor, unless the deviation above reads it as UTF-8. A text
+     read as UTF-8 keeps their UTF-8 forms as U+0080–U+009F.
+   - The ISO 8859 tables are not transcoded: a text behind one of their
+     selectors gives a label only when it is ASCII.
 2. Stream Identifier descriptor (tag 0x52) — formatted as `tag=N`.
 3. Metadata descriptor (tag 0x26) — generic `"KLV"` label.
 4. ISO 639 Language (tag 0x0A) — 3-byte language code.

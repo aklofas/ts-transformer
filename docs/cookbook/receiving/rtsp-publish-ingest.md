@@ -133,10 +133,12 @@ shows as a new `DemuxEvent::ProgramMap`, also when both PMTs carry the same
 version number, as the server's re-muxer writes them (always version 0): the
 previous publisher's units on the PIDs that leave are handed out before
 it, and the next publisher's units follow on its own PIDs. A PID that both
-publishers use stays one stream: the unit the previous publisher left in
-flight on it is delivered after the new program map. A `Pairer` follows
-one video PID and one KLV PID and passes units on other PIDs through
-unpaired, so build a new one for the PIDs a new `ProgramMap` names. To
+publishers use for the same kind of stream stays one stream: the unit the
+previous publisher left in flight on it is delivered after the new program
+map; one whose kind of stream changes (H.264, then H.265 on the same PID)
+hands that unit out before it. A `Pairer` follows one video PID and one
+KLV PID and passes units on other PIDs through as `PassThrough`, so build
+a new one for the PIDs a new `ProgramMap` names. To
 give each publisher a transport and a demuxer of its own instead, turn
 end-on-exit on (below) and add the mount again for each publisher.
 `PublishMountHandle::publisher()` names the
