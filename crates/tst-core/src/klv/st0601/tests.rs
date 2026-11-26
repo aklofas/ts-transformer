@@ -6391,3 +6391,16 @@ fn sdcc_rows_tell_two_items_of_one_tag_apart_where_they_can() {
         assert_eq!(encode_strict_compliance(&rec).unwrap(), source, "{name}");
     }
 }
+
+/// Two packs that refine the same three items of one unknown tag: the
+/// second pack's rows are the items the first one ended with, all three,
+/// not the last of them and two more.
+#[test]
+fn two_sdcc_packs_after_the_same_items_of_one_tag_both_follow_them() {
+    let unknown = |value: u8| Sdcc::Raw(tlv(150, &[value]));
+    let source = sdcc_set(&[I(2), I(65), unknown(1), unknown(2), unknown(3), P(3), P(3)]);
+    let rec = decode(&source).unwrap();
+    assert_eq!(rows(&rec), [vec![150, 150, 150], vec![150, 150, 150]]);
+    assert_eq!(encode_to_vec(&rec).unwrap(), source);
+    assert_eq!(encode_strict_compliance(&rec).unwrap(), source);
+}
