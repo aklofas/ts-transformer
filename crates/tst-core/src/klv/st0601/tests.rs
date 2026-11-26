@@ -4577,3 +4577,23 @@ fn strict_encode_sanitises_pack_strings() {
     let as_given = decode(&encode_to_vec(&rec).unwrap()).unwrap();
     assert_eq!(as_given.control_commands[0].command, " A\u{1}B ");
 }
+
+#[test]
+fn strict_encode_drops_a_trailing_country_code_that_cleans_to_empty() {
+    // An operator code of blanks and control characters is unknown after
+    // cleaning: with no manufacturer code after it, nothing is written for it.
+    let rec = UasDatalinkLs {
+        country_codes: Some(super::packs::CountryCodes {
+            coding_method: 1,
+            overflight: Some("CAN".into()),
+            operator: Some(" \u{1} ".into()),
+            manufacture: None,
+        }),
+        ..timestamped()
+    };
+    let out = encode_strict_compliance(&rec).unwrap();
+    assert_eq!(
+        items_with_tag(&out, 122),
+        [vec![0x01, 0x01, 0x03, b'C', b'A', b'N']]
+    );
+}
