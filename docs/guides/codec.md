@@ -112,7 +112,7 @@ while let Some(ev) = dx.next_event() {
 | `bit_depth_luma` / `bit_depth_chroma` | `u8` | 8 for most streams; 10 for HDR. |
 | `chroma_format` | `ChromaFormat` | `Yuv420` / `Yuv422` / `Yuv444` / `Monochrome`. |
 | `color` | `Option<ColorInfo>` | VUI color information (`primaries`, `transfer`, `matrix`, `full_range`, `chroma_loc`, `sample_aspect_ratio`). `None` when the VUI signals none of video signal type, chroma location or aspect ratio. |
-| `frame_rate` | `Option<Rational>` | Derived from VUI `timing_info` (`num_units_in_tick` + `time_scale`). `None` when absent. |
+| `frame_rate` | `Option<Rational>` | Derived from VUI `timing_info`: `time_scale / (2 × num_units_in_tick)`, not reduced. `None` when the timing info is absent, when either field is zero, and when `2 × num_units_in_tick` does not fit 32 bits. |
 | `raw_rbsp` | `Vec<u8>` | The input bytes verbatim (emulation-prevention bytes included). |
 
 **`H264Pps` key fields:** `pic_parameter_set_id`, `seq_parameter_set_id`, `entropy_coding_mode` (`Cavlc` or `Cabac`), `raw_rbsp`.
@@ -159,6 +159,12 @@ while let Some(ev) = dx.next_event() {
 color / frame_rate shape as `H264Sps`, plus `general_profile_idc`,
 `general_tier_flag`, `general_level_idc`, `max_sub_layers_minus1`.
 `general_level_idc` is `level × 30` — level 4.0 is stored as 120.
+`frame_rate` is `vui_time_scale / vui_num_units_in_tick` as coded; when
+`vui_poc_proportional_to_timing_flag` signals more than one clock tick per
+POC step, that pair is divided by `vui_num_ticks_poc_diff_one_minus1 + 1` and
+reduced (this takes POC to advance by 1 per output picture). It is `None` when
+the VUI timing is absent, when either timing field is zero, and when the
+reduced pair does not fit 32 bits.
 
 **`H265Pps` key fields:** `pps_pic_parameter_set_id`, `pps_seq_parameter_set_id`.
 
@@ -221,7 +227,25 @@ while let Some(ev) = dx.next_event() {
 - `color_info` comes from the VUI and is `None` when
   `sps_vui_parameters_present_flag` is unset; `frame_rate` comes from
   `general_timing_hrd_parameters()` (H.266 moved timing out of the VUI) and
-  is `None` when no timing/HRD parameters are present.
+  is `None` when no timing/HRD parameters are present. When the highest
+  sublayer has a fixed picture rate with an `elemental_duration_in_tc_minus1`
+  above 0, `time_scale / num_units_in_tick` is divided by
+  `elemental_duration_in_tc_minus1 + 1` and reduced; a zero timing field, or a
+  reduced pair that does not fit 32 bits, gives `None`.
+- Long-term entries coded in the SPS's reference picture lists
+  (`ltrp_in_header_flag = 0`) are walked.
+- The VUI is read inside its declared `sps_vui_payload_size_minus1 + 1` RBSP
+  bytes. A size above 1023, a set `sps_vui_alignment_zero_bit` or a VUI tail
+  without its `vui_payload_bit_equal_to_one` is refused with `ReservedValue`;
+  a VUI that needs more bits than its size is `TruncatedRbsp`.
+- `parse_parameter_sets` drops a PPS whose SPS is not in the same call (see
+  [Error handling](#error-handling)), and its `vpses` / `spses` / `ppses`
+  lists are in ascending id order.
+- `parse_slice_header_light` reports no `pic_order_cnt_lsb`: VVC codes the
+  POC in the picture header for every picture, IDR included. `first_in_pic`
+  is `sh_picture_header_in_slice_header_flag`: `true` means the picture
+  header is in this slice header; `false` does not mean "not the first slice
+  of the picture".
 - See [project/deferred-features.md](/docs/project/deferred-features.md).
 
 ## AV1 quick start
@@ -279,8 +303,10 @@ while let Some(ev) = dx.next_event() {
 `color_info: Option<ColorInfo>`, `frame_rate: Option<Rational>`, `raw`.
 
 **`Av1FrameHeaderLight` key fields:** `frame_type` (0 = KEY,
-1 = INTER, 2 = INTRA_ONLY, 3 = SWITCH), `show_frame`,
-`show_existing_frame`, `frame_size: Option<(u32, u32)>`. The size field
+1 = INTER, 2 = INTRA_ONLY, 3 = SWITCH; 255 =
+`Av1FrameHeaderLight::FRAME_TYPE_UNKNOWN` when `show_existing_frame` is set:
+the shown frame's type lives in reference state this parser does not keep),
+`show_frame`, `show_existing_frame`, `frame_size: Option<(u32, u32)>`. The size field
 is always `None` in this slice — full per-frame decode would require
 reference-frame management beyond the parser's scope.
 
@@ -288,7 +314,14 @@ reference-frame management beyond the parser's scope.
 `sequence_headers` and `frame_headers` collected from the input OBUs, plus
 `unparseable` (`(obu_type, CodecParseError)` for each OBU that failed). Use it
 when you want a single call against an AU's OBU list rather than walking
-individual OBUs.
+individual OBUs. It holds the headers met in one call: `frame_headers` has one
+entry per frame header OBU (type 3 or 6) that parsed under the most recent
+sequence header that parsed in the same call. It is not a count of frames: a
+`show_existing_frame` header is an entry with `frame_type` 255
+(`FRAME_TYPE_UNKNOWN`), each spatial or temporal layer has its own, and
+redundant frame headers (type 7) are skipped. A sequence header that fails to
+parse, truncated or with a value out of its range, goes to `unparseable` and
+the previous one stays current.
 
 ### Known limitations
 
@@ -306,7 +339,11 @@ All parse functions return `Result<T, CodecParseError>`. The two tiers:
 - **`parse_parameter_sets`** is partial-success-tolerant. If some NALs parse
   correctly and some don't, the correctly-parsed ones fill the output maps and
   bad NALs emit `tracing::warn!` and are skipped. The function only returns
-  `Err` if every parameter-set NAL in the input failed.
+  `Err` if every parameter-set NAL in the input failed. One call is one
+  snapshot of the NAL units it is given: a PPS whose SPS is not in the call,
+  or whose SPS failed to parse in the call, is dropped; when the call holds
+  several SPS with one id, the last one that parsed is used. A call that
+  holds only a lone PPS returns `Ok` with empty results, not an error.
 - **`parse_sps` / `parse_pps` / `parse_vps`** are strict: they return `Err` on
   the first parsing failure.
 
@@ -323,7 +360,9 @@ the short-term reference-picture-set walker does handle
 `parse_parameter_sets` is safe to call on every `Sample` event, including
 P-frames and B-frames. Non-SPS/PPS NALs are silently skipped. The return
 value for a P-frame is `Ok(H264ParameterSets { sps_by_id: {}, pps_by_id: {} })`.
-No warnings are emitted.
+No warnings are emitted. A PPS that arrives in a later sample than its SPS is
+dropped by that call (one call is one snapshot): a per-sample caller passes
+the SPS along with it, or parses a lone PPS with `parse_pps`.
 
 ## Cross-frame tracking
 

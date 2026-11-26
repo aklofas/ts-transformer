@@ -542,7 +542,12 @@ per-set functions. 13/13 corpus fixtures matched ffprobe.
 `num_short_term_ref_pic_sets > 0` SPSes; tracks `NumDeltaPocs[]` for
 `inter_ref_pic_set_prediction_flag` inheritance. VUI timing (§E.2.1) is
 fully walked — `frame_rate` is recovered from `num_units_in_tick` /
-`time_scale` when `vui_timing_info_present_flag = 1`. Known limitation:
+`time_scale` when `vui_timing_info_present_flag = 1`, and divided by
+`vui_num_ticks_poc_diff_one_minus1 + 1` (then reduced) when
+`vui_poc_proportional_to_timing_flag` signals more than one clock tick per
+POC step (§E.3.1; this takes POC to advance by 1 per output picture); a zero
+timing field, or a reduced pair that does not fit 32 bits, gives no rate.
+Known limitation:
 bails with `CodecParseError::EngineError` on
 `sps_scaling_list_data_present_flag = 1` SPSes — a parser gap (the
 `scaling_list_data()` syntax at H.265 §7.3.4 is not yet walked), not a
@@ -554,19 +559,30 @@ this flag.
 (entropy_coding_sync, POC config, partition constraints, ref_pic_list_struct,
 virtual boundaries, general_timing_hrd_parameters) recovers `frame_rate`
 (from `num_units_in_tick` + `time_scale` in `general_timing_hrd_parameters`
-— H.266 moves timing OUT of VUI vs. H.265), and `parse_h266_vui` walks the
+— H.266 moves timing OUT of VUI vs. H.265; divided by the highest sublayer's
+`elemental_duration_in_tc_minus1 + 1`, then reduced, when that sublayer has a
+fixed picture rate and the value is above 0), and `parse_h266_vui` walks the
 VUI syntax H.266 takes from H.274 §7.2 to recover `ColorInfo` (primaries +
-transfer + matrix via H.273). APS NALs (types 17 / 18), Picture Header
+transfer + matrix via H.273). Long-term entries coded in the SPS's reference
+picture lists are read. The VUI is read inside its declared
+`sps_vui_payload_size_minus1 + 1` RBSP bytes; a size above 1023, a set
+`sps_vui_alignment_zero_bit` or a tail without its marker bit is refused. The
+light slice header reports no `pic_order_cnt_lsb` (the POC is in the picture
+header) and refuses a `nal_unit_type` above 31. APS NALs (types 17 / 18), Picture Header
 NALs (type 19), and multi-layer streams (`nuh_layer_id != 0`) pass through
 unparsed. Bails `UnsupportedProfile` on
 `sps_subpic_info_present_flag = 1` / `sps_scaling_list_data_present_flag = 1`
 (rare; not in reference encoder defaults). Empirical note: real VVenC
 default-preset output does NOT emit a VUI block — `color_info` stays `None`
-on those fixtures (recovery happens via the SPS body, not VUI).
+on those fixtures (recovery happens via the SPS body, not VUI); with `-vui 1`
+VVenC 1.14.0 writes one (fixture `h266_320x240_vvenc_vui_sps.bin`: BT.709,
+full range, chroma location 0, SAR 12:11).
 
 **AV1 notes:** OBU-shaped (not NAL-shaped); `parse_sequence_header` /
 `parse_frame_header_light` / `parse_obu_stream`. `Av1FrameHeaderLight`
-surfaces `frame_type` + `show_frame` + `show_existing_frame` only;
+surfaces `frame_type` + `show_frame` + `show_existing_frame` only
+(`frame_type` is 255, `Av1FrameHeaderLight::FRAME_TYPE_UNKNOWN`, for a
+`show_existing_frame` header);
 `frame_size` is always `None` (full per-frame decode requires reference-
 frame management beyond this parser's scope). Operating points beyond 0
 walked but not surfaced. Tile Group / Metadata / Padding OBUs pass through

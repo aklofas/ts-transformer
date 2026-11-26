@@ -111,7 +111,7 @@ Runnable: [../examples/receiving/demux_to_events.rs](/examples/receiving/demux_t
 | `SubtitleCodec` | `DvbSubtitling`, `DvbTeletext`, `Cea708Standalone` (separate ES, "GA94"), `WebVttInTs` ("VTTC"). |
 | `SamplePayload` | `Video { codec, raw, random_access_indicator, av1_carriage }`, `Audio { codec, frames }`, `Subtitle { codec, payload }`, `Unknown { stream_type, raw }`. **Raw-first:** `raw` is the exact encoded access unit (a `SharedBytes`); call `split_video(&raw, codec, av1_carriage.unwrap_or_default())` to split it into a `VideoPayload` — `Nals(Vec<NalUnit>)` for H.264 / H.265 / H.266 or `Obus(Vec<Obu>)` for AV1. |
 | `split_video` / `split_video_strict` | `split_video(raw: &SharedBytes, codec: VideoCodec, av1_carriage: Av1CarriageMode) -> (VideoPayload, Vec<NonConformantIssue>)` — opt-in split of a raw video AU into NAL/OBU units (lenient; ES-conformance findings come back in the issue list). `split_video_strict` returns `Err(NonConformantIssue)` on the first issue. |
-| `NalUnit` | `H264 { nal_type, ref_idc, payload }` / `H265 { nal_type, layer_id, temporal_id_plus1, payload }` / `H266 { nal_type, layer_id, temporal_id_plus1, payload }`. `payload` is the NAL body after the header, emulation-prevention bytes kept; the Annex-B start code and the NAL header bytes are stripped (the header fields carry their values). |
+| `NalUnit` | `H264 { nal_type, ref_idc, payload }` / `H265 { nal_type, layer_id, temporal_id_plus1, payload }` / `H266 { nal_type, layer_id, temporal_id_plus1, payload }`. `payload` is the NAL body after the header, emulation-prevention bytes kept; the Annex-B start code, the NAL header bytes and the zero bytes that follow the unit (`trailing_zero_8bits`) are stripped (the header fields carry their values). |
 | `Obu` | AV1 OBU: `{ obu_type, extension: Option<ObuExtension>, payload }`. Header byte + optional extension byte + LEB128 `obu_size` consumed; `payload` is OBU body bytes. `obu_type` = 1 SequenceHeader / 2 TemporalDelimiter / 3 FrameHeader / 6 Frame / etc. (AV1 §5.3.2). |
 | `MetadataKind` | `KlvSyncAuCell { metadata_service_id, sequence_number, cell_fragment_indication, decoder_config_flag, random_access_indicator, was_reassembled, cell_count }` (first 5 fields per H.222.0 § 2.12.4.2 Table 2-156, AU cell unwrapped; `was_reassembled` / `cell_count` describe multi-cell reassembly), `KlvAsync` (bare LS), `Unknown(u8)`. |
 | `ProgramMap` | `{ program_number, pcr_pid, pmt_pid, streams: Vec<StreamInfo>, klv_links: Vec<KlvLink> }`. `pmt_pid` is the PAT-declared PID carrying this program's PMT; needed to reconstruct a muxer config via `MuxerConfig::from_program_map`. |
@@ -868,7 +868,8 @@ directly.
 `SamplePayload::Video.raw` *is* the Annex-B access unit (start codes intact) —
 but once you split it with `split_video(&raw, codec, av1_carriage.unwrap_or_default())`, each
 `NalUnit::H264` / `NalUnit::H265` carries the NAL body only: the Annex-B
-start code and the NAL header bytes have been stripped (the header lives in
+start code, the NAL header bytes and the zero bytes that follow the unit
+(`trailing_zero_8bits`) have been stripped (the header lives in
 the variant's fields), and emulation-prevention bytes are kept, so the body
 is not RBSP. To write split NALs back to an Annex-B sink, emit a start code,
 the header rebuilt from the fields, then `payload` (or just forward `raw`,

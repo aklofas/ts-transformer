@@ -18,6 +18,18 @@ Each fixture's expected parsed values come from the encoder parameters:
 Note H.265 `general_level_idc` is in units of 30 × level (so level 4.0
 is `level_idc=120`, level 5.0 is `level_idc=150`).
 
+`h266/h266_320x240_vvenc_vui_sps.bin` is the RBSP of an H.266 SPS that
+carries a VUI (2-byte NAL header stripped, emulation-prevention bytes
+kept). VVenC 1.14.0 wrote it from three frames of 8-bit 4:2:0 input (their
+content does not change the SPS) with `vvencFFapp --SourceWidth=320
+--SourceHeight=240 --InputBitDepth 8 --FrameRate=30 --FramesToBeEncoded=3
+-vui 1 --AspectRatioInfoPresent 1 --AspectRatioIdc 2
+--ColourDescriptionPresent 1 --ColourPrimaries bt709
+--TransferCharacteristics bt709 --MatrixCoefficients bt709 --VideoFullRange
+1 --ChromaLocInfoPresent 1`. Its values (320×240, 30/1, BT.709, full range,
+chroma location 0, SAR 12:11) are what `real_vvenc_sps_with_vui_parses`
+expects. `_regen.sh` does not produce it.
+
 To regenerate any of these fixtures, run `./_regen.sh` in this
 directory. The script extracts SPS/PPS (and VPS for H.265) RBSP
 bytes from FFmpeg-produced encoded streams.

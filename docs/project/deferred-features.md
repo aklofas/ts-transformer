@@ -473,14 +473,17 @@ mean **Deferred**. An entry whose feature has shipped must never read
 ## AV1 full Frame Header parsing
 
 - **Status:** Deferred. `codec::av1::parse_frame_header_light` ships
-  surfacing `frame_type` (KEY / INTER / INTRA_ONLY / SWITCH),
-  `show_frame`, and `show_existing_frame`. Full Frame Header parsing
+  surfacing `frame_type` (KEY / INTER / INTRA_ONLY / SWITCH, or
+  `Av1FrameHeaderLight::FRAME_TYPE_UNKNOWN` = 255 for a
+  `show_existing_frame` header, whose shown frame's type lives in
+  reference state the parser does not keep), `show_frame`, and
+  `show_existing_frame`. Full Frame Header parsing
   (reference frame management, segmentation, loop filter, film grain,
   per-frame display size) is not in scope.
 - **Why deferred:** Crosses into "you want a decoder." The light
   scope covers keyframe detection — the load-bearing use case for
-  metadata extraction — and the cookbook recipes route off
-  `frame_type == KEY` + `show_frame` for keyframe gating today.
+  metadata extraction: keyframe gating reads
+  `frame_type == KEY && show_frame && !show_existing_frame`.
 - **Trigger to revisit:** A consumer shipping per-frame display-time,
   per-frame aspect-ratio, or `film_grain_params` consumption.
 
