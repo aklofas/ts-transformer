@@ -125,15 +125,21 @@ live publisher answers `403 Forbidden` and leaves the first publisher
 streaming. When the publisher ends (TEARDOWN, a dropped connection, the session
 timeout, or the optional publish idle timeout below), the mount goes idle and its `generation` counter goes up by one.
 By default the application transport stays open and silent; the next publisher on that
-name feeds the same transport. A next publisher with the same tracks shows
-as ordinary continuity discontinuities at the change. A next publisher with
-other tracks is not seen by a demuxer that has seen the first (no event, no
-sample) when both PMTs carry the same version number, which the server's
-re-muxer (version 0, like this library's muxer) always does: a demuxer
-takes a PMT with the version it already holds as a repeat. Use one mount
-name per track layout, or turn end-on-exit on (below) and add the mount
-again for each publisher, so that each gets a transport and a demuxer of
-its own. `PublishMountHandle::publisher()` names the
+name feeds the same transport, so a demuxer reading it sees the publishers
+one after the other. A next publisher with the same tracks shows as
+ordinary continuity discontinuities at the change, under the one program
+map. A next publisher with other tracks (other PIDs, a track more or less)
+shows as a new `DemuxEvent::ProgramMap`, also when both PMTs carry the same
+version number, as the server's re-muxer writes them (always version 0): the
+previous publisher's units on the PIDs that leave are handed out before
+it, and the next publisher's units follow on its own PIDs. A PID that both
+publishers use stays one stream: the unit the previous publisher left in
+flight on it is delivered after the new program map. A `Pairer` follows
+one video PID and one KLV PID and passes units on other PIDs through
+unpaired, so build a new one for the PIDs a new `ProgramMap` names. To
+give each publisher a transport and a demuxer of its own instead, turn
+end-on-exit on (below) and add the mount again for each publisher.
+`PublishMountHandle::publisher()` names the
 current publisher (control-connection address, shape, start time, generation)
 or returns `None` while the mount is idle.
 
