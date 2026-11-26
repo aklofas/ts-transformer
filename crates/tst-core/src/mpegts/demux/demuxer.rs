@@ -544,14 +544,35 @@ impl Demuxer {
     ///
     /// `tst_demuxer_flush` — see `bindings/c/include/tstrans.h`.
     pub fn flush(&mut self) {
-        // Same marking as `handle_pes_packet`, but `flush` cannot fail:
-        // lenient mode queues `MalformedPes` directly before the damaged
-        // sample; a strict mode queues it and drops the sample, keeping its
-        // timing. A partial that fails to parse is dropped silently, as it
-        // always was at flush.
+        let outcomes = self.pes.drain_partial_outcomes();
+        self.release_partial_pes(outcomes);
+        self.fatal = None;
+    }
+
+    /// Before `pids` leave the topology or change kind, hand out the PES each
+    /// holds as [`flush`](Self::flush) would, in ascending PID order and
+    /// under the identity the PID has now. A strict verdict this raises is
+    /// kept for the `feed` that brought the change to return.
+    pub(super) fn release_leaving_pids(&mut self, mut pids: Vec<u16>) {
+        pids.sort_unstable();
+        pids.dedup();
+        for pid in pids {
+            let outcomes = self.pes.finish_pid(pid);
+            self.release_partial_pes(outcomes);
+        }
+    }
+
+    /// The events of partial PES that ended without their next PUSI, for
+    /// [`flush`](Self::flush) and for a PID that leaves.
+    fn release_partial_pes(&mut self, outcomes: Vec<ReassemblyOutcome>) {
+        // Same marking as `handle_pes_packet`, but nothing here returns an
+        // error: lenient mode queues `MalformedPes` directly before the
+        // damaged sample; a strict mode queues it and drops the sample,
+        // keeping its timing. A partial that fails to parse is dropped
+        // silently, as it always was at flush.
         let mut drop_next_complete: Option<u16> = None;
         let mut damage_next_complete: Option<(u16, &'static str)> = None;
-        for outcome in self.pes.drain_partial_outcomes() {
+        for outcome in outcomes {
             match outcome {
                 ReassemblyOutcome::Complete(pes) => {
                     if drop_next_complete == Some(pes.pid) {
@@ -583,7 +604,6 @@ impl Demuxer {
                 _ => {}
             }
         }
-        self.fatal = None;
     }
 
     fn process_packet(&mut self, buf: &[u8; 188]) -> Result<(), DemuxError> {

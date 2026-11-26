@@ -371,6 +371,15 @@ impl super::demuxer::Demuxer {
             })
             .map(|(program_number, _)| *program_number)
             .collect();
+        // The PIDs the removed programs own leave with them (the loop below
+        // retires exactly these): each first hands out the unit it holds, as
+        // `flush` would, while its program and identity are still in place.
+        let leaving: Vec<u16> = removed
+            .iter()
+            .filter_map(|n| self.programs.get(n))
+            .flat_map(|t| t.streams.iter().map(|s| s.pid))
+            .collect();
+        self.release_leaving_pids(leaving);
         let mut diff = TopologyDiff::default();
         for program_number in removed {
             if let Some(tracker) = self.programs.remove(&program_number) {
@@ -757,6 +766,16 @@ impl super::demuxer::Demuxer {
         // anomaly events on the first post-bump packet); kinds and owners are
         // set for every accepted (new and persisting) stream.
         let diff = self.pmt_topology_diff(pmt.pcr_pid, program_number, &stream_infos);
+        // A PID that leaves or changes kind first hands out the unit it
+        // holds, as `flush` would, under the identity it has until the diff
+        // is applied and before the `ProgramMap` that announces the change.
+        self.release_leaving_pids(
+            diff.retired
+                .iter()
+                .chain(&diff.kind_changed)
+                .copied()
+                .collect(),
+        );
 
         // Build klv_links from the accepted streams.
         let prog_map = self.build_program_map(pmt_pid, &pmt, program_number, &stream_infos);
@@ -3310,13 +3329,24 @@ mod tests {
         }
 
         fn pes(&mut self, pid: u16, pes: &[u8]) -> Result<(), crate::error::DemuxError> {
+            let pkts = self.pes_packets(pid, pes);
+            self.feed_all(&pkts)
+        }
+
+        /// `pes` as TS packets on `pid`, their continuity counters taken.
+        fn pes_packets(&mut self, pid: u16, pes: &[u8]) -> Vec<[u8; 188]> {
             let first = self.next_cc(pid);
             let pkts = crate::mpegts::demux::test_support::pes_to_packets(pid, first, pes);
             for _ in 1..pkts.len() {
                 self.next_cc(pid);
             }
+            pkts
+        }
+
+        /// Feeds every packet; the first error, if any, is returned.
+        fn feed_all(&mut self, pkts: &[[u8; 188]]) -> Result<(), crate::error::DemuxError> {
             let mut r = Ok(());
-            for p in &pkts {
+            for p in pkts {
                 if let Err(e) = self.d.feed_aligned(p) {
                     r = r.and(Err(e));
                 }
@@ -3357,7 +3387,11 @@ mod tests {
     /// PAT (program 1 on PMT PID 0x1000) and PMT v0 declaring H.264 on 0x100,
     /// the PCR on 0x100.
     fn feed_with_one_video_pid() -> Feed {
-        let mut f = Feed::new(DemuxerConfig::default());
+        feed_with_one_video_pid_in(DemuxerConfig::default())
+    }
+
+    fn feed_with_one_video_pid_in(cfg: DemuxerConfig) -> Feed {
+        let mut f = Feed::new(cfg);
         f.section(0x0000, &build_pat_section(1, 0, &[(1, 0x1000)]))
             .unwrap();
         f.section(0x1000, &build_pmt_section(1, 0x100, 0, &[(0x1B, 0x100)]))
@@ -3914,5 +3948,532 @@ mod tests {
         f.section(0x1000, &build_pmt_section(1, 0x100, 0, &[(0x1B, 0x200)]))
             .unwrap();
         assert_eq!(pmt_counters(&f), (1, 0), "a same-version change after it");
+    }
+
+    /// An unbounded H.264 PES with PTS `pts` and 300 payload bytes: two
+    /// packets, in flight until the next PUSI on its PID or a flush.
+    fn video_pes_in_flight(pts: u64) -> Vec<u8> {
+        crate::mpegts::demux::test_support::pes_bytes(
+            0xE0,
+            Some(pts),
+            None,
+            true,
+            &[0xAA; 300],
+            false,
+        )
+    }
+
+    /// The samples with PTS `pts`: `(event index, pid, kind, program,
+    /// payload length)`.
+    fn samples_at(events: &[DemuxEvent], pts: i64) -> Vec<(usize, u16, StreamKind, u16, usize)> {
+        use super::super::event::SamplePayload;
+        events
+            .iter()
+            .enumerate()
+            .filter_map(|(i, e)| match e {
+                DemuxEvent::Sample {
+                    stream,
+                    pts: p,
+                    payload,
+                    ..
+                } if p.as_ticks() == pts => {
+                    let len = match payload {
+                        SamplePayload::Video { raw, .. } => raw.len(),
+                        _ => 0,
+                    };
+                    Some((i, stream.pid, stream.kind, stream.program_number, len))
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// `(pid, kind, program, payload length)` of each sample with PTS `pts`.
+    fn units_at(events: &[DemuxEvent], pts: i64) -> Vec<(u16, StreamKind, u16, usize)> {
+        samples_at(events, pts)
+            .into_iter()
+            .map(|(_, pid, kind, program, len)| (pid, kind, program, len))
+            .collect()
+    }
+
+    /// Index of the `n`th `ProgramMap` event, counting from 0.
+    fn nth_map(events: &[DemuxEvent], n: usize) -> Option<usize> {
+        events
+            .iter()
+            .enumerate()
+            .filter(|(_, e)| matches!(e, DemuxEvent::ProgramMap(_)))
+            .nth(n)
+            .map(|(i, _)| i)
+    }
+
+    const H264: StreamKind = StreamKind::Video(crate::codec::VideoCodec::H264);
+
+    #[test]
+    fn a_pid_that_leaves_the_program_hands_out_its_unit_in_flight() {
+        let mut f = feed_with_one_video_pid();
+        f.pes(0x100, &video_pes_in_flight(3_000)).unwrap();
+        f.section(0x1000, &build_pmt_section(1, 0x200, 1, &[(0x1B, 0x200)]))
+            .unwrap();
+        assert_eq!(
+            units_at(&f.events, 3_000),
+            [(0x100, H264, 1, 300)],
+            "{:?}",
+            f.events
+        );
+        let unit = samples_at(&f.events, 3_000)[0].0;
+        let map = nth_map(&f.events, 1).expect("the second ProgramMap");
+        assert!(unit < map, "the unit before the ProgramMap: {:?}", f.events);
+    }
+
+    #[test]
+    fn the_first_sources_last_unit_arrives_before_the_second_sources_program_map() {
+        let mut d = Demuxer::new();
+        d.feed(&two_muxer_stream(60)).unwrap();
+        d.flush();
+        let events = drain_events(&mut d);
+        assert_eq!(units_per_source(&events), (60, 60, 60));
+        let last_of_first = events
+            .iter()
+            .rposition(|e| matches!(e, DemuxEvent::Sample { stream, .. } if stream.pid == 0x100))
+            .unwrap();
+        let map = nth_map(&events, 1).expect("the second source's ProgramMap");
+        assert!(last_of_first < map);
+    }
+
+    #[test]
+    fn every_way_a_pid_leaves_hands_out_its_unit() {
+        type Trigger = fn(&mut Feed);
+        // (case, the change, whether a ProgramMap announces it)
+        let rows: [(&str, Trigger, bool); 6] = [
+            (
+                "a new PMT version",
+                |f| {
+                    f.section(0x1000, &build_pmt_section(1, 0x200, 1, &[(0x1B, 0x200)]))
+                        .unwrap()
+                },
+                true,
+            ),
+            (
+                "a same-version PMT with other content",
+                |f| {
+                    f.section(0x1000, &build_pmt_section(1, 0x200, 0, &[(0x1B, 0x200)]))
+                        .unwrap()
+                },
+                true,
+            ),
+            (
+                "a stream type change on a kept PID",
+                |f| {
+                    f.section(0x1000, &build_pmt_section(1, 0x100, 1, &[(0x24, 0x100)]))
+                        .unwrap()
+                },
+                true,
+            ),
+            (
+                "the program removed from the PAT",
+                |f| f.section(0x0000, &build_pat_section(1, 1, &[])).unwrap(),
+                false,
+            ),
+            (
+                "the PAT moving the program to another PMT PID",
+                |f| {
+                    f.section(0x0000, &build_pat_section(1, 1, &[(1, 0x1001)]))
+                        .unwrap();
+                    f.section(0x1001, &build_pmt_section(1, 0x200, 0, &[(0x1B, 0x200)]))
+                        .unwrap();
+                },
+                true,
+            ),
+            (
+                "a transport stream id change",
+                |f| {
+                    f.section(0x0000, &build_pat_section(2, 0, &[(1, 0x1000)]))
+                        .unwrap();
+                    f.section(0x1000, &build_pmt_section(1, 0x200, 0, &[(0x1B, 0x200)]))
+                        .unwrap();
+                },
+                true,
+            ),
+        ];
+        for (name, change, announced) in rows {
+            let mut f = feed_with_one_video_pid();
+            f.pes(0x100, &video_pes_in_flight(3_000)).unwrap();
+            change(&mut f);
+            assert_eq!(
+                units_at(&f.events, 3_000),
+                [(0x100, H264, 1, 300)],
+                "{name}: {:?}",
+                f.events
+            );
+            if announced {
+                let unit = samples_at(&f.events, 3_000)[0].0;
+                let map = nth_map(&f.events, 1).expect("the announcing ProgramMap");
+                assert!(unit < map, "{name}: the unit first: {:?}", f.events);
+            }
+        }
+
+        // Six programs leave in one PAT: their units come out in ascending
+        // PID order, not in the order the programs are held.
+        let mut f = Feed::new(DemuxerConfig::default());
+        let video = [0x160u16, 0x110, 0x150, 0x120, 0x140, 0x130, 0x170];
+        let programs: Vec<(u16, u16)> = (1..=7).map(|n| (n, 0x1000 + n)).collect();
+        f.section(0x0000, &build_pat_section(1, 0, &programs))
+            .unwrap();
+        for (&(n, pmt_pid), &pid) in programs.iter().zip(&video) {
+            f.section(pmt_pid, &build_pmt_section(n, pid, 0, &[(0x1B, pid)]))
+                .unwrap();
+        }
+        for &pid in &video {
+            f.pes(pid, &video_pes_in_flight(u64::from(pid))).unwrap();
+        }
+        let before = f.events.len();
+        f.section(0x0000, &build_pat_section(1, 1, &[(7, 0x1007)]))
+            .unwrap();
+        let order: Vec<u16> = f.events[before..]
+            .iter()
+            .filter_map(|e| match e {
+                DemuxEvent::Sample { stream, .. } => Some(stream.pid),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(order, [0x110, 0x120, 0x130, 0x140, 0x150, 0x160]);
+
+        // A PID the leaving program lists but a surviving program owns does
+        // not leave: nothing is handed out on it, and its unit completes
+        // whole at its next PUSI.
+        let mut f = Feed::new(DemuxerConfig::default());
+        f.section(
+            0x0000,
+            &build_pat_section(1, 0, &[(1, 0x1000), (2, 0x1100)]),
+        )
+        .unwrap();
+        f.section(0x1100, &build_pmt_section(2, 0x500, 0, &[(0x1B, 0x500)]))
+            .unwrap();
+        f.section(
+            0x1000,
+            &build_pmt_section(1, 0x100, 0, &[(0x1B, 0x100), (0x1B, 0x500)]),
+        )
+        .unwrap();
+        f.pes(0x100, &video_pes_in_flight(3_000)).unwrap();
+        f.pes(0x500, &video_pes_in_flight(5_000)).unwrap();
+        f.section(0x0000, &build_pat_section(1, 1, &[(2, 0x1100)]))
+            .unwrap();
+        assert_eq!(units_at(&f.events, 3_000), [(0x100, H264, 1, 300)]);
+        assert!(units_at(&f.events, 5_000).is_empty(), "{:?}", f.events);
+        f.pes(0x500, &video_pes_in_flight(6_000)).unwrap();
+        assert_eq!(units_at(&f.events, 5_000), [(0x500, H264, 2, 300)]);
+        assert!(
+            !issues(&f.events)
+                .iter()
+                .any(|i| matches!(i, NonConformantIssue::MalformedPes { .. })),
+            "{:?}",
+            f.events
+        );
+    }
+
+    #[test]
+    fn what_does_not_hand_out() {
+        use crate::mpegts::au_cell::CellFragmentIndication::{First, Last};
+        use crate::mpegts::demux::event::MetadataKind;
+        type Trigger = fn(&mut Feed);
+        let rows: [(&str, Trigger); 2] = [
+            ("a PMT repeat", |f| {
+                f.section(0x1000, &build_pmt_section(1, 0x100, 0, &[(0x1B, 0x100)]))
+                    .unwrap()
+            }),
+            ("a moved PCR PID alone", |f| {
+                f.section(0x1000, &build_pmt_section(1, 0x101, 1, &[(0x1B, 0x100)]))
+                    .unwrap()
+            }),
+        ];
+        for (name, change) in rows {
+            let mut f = feed_with_one_video_pid();
+            f.pes(0x100, &video_pes_in_flight(3_000)).unwrap();
+            change(&mut f);
+            assert!(units_at(&f.events, 3_000).is_empty(), "{name}");
+            f.pes(0x100, &video_pes_in_flight(6_000)).unwrap();
+            assert_eq!(
+                units_at(&f.events, 3_000),
+                [(0x100, H264, 1, 300)],
+                "{name}: the unit completes whole"
+            );
+        }
+
+        // A new version of the SAME program that keeps a video and a KLV PID
+        // with their types: the video PES in flight and the KLV access unit
+        // half assembled (its second cell's PES in flight) both complete.
+        let klva = crate::mpegts::descriptors::metadata_klva(0);
+        let cell_pes = |seq: u8, cfi, payload: &[u8]| {
+            let mut cell = Vec::new();
+            crate::mpegts::au_cell::write_metadata_au_cell(&mut cell, au_cell(seq, cfi), payload)
+                .unwrap();
+            crate::mpegts::demux::test_support::pes_bytes(
+                0xFC,
+                Some(90_000),
+                None,
+                true,
+                &cell,
+                true,
+            )
+        };
+        let mut f = Feed::new(DemuxerConfig::default());
+        f.section(0x0000, &build_pat_section(1, 0, &[(1, 0x1000)]))
+            .unwrap();
+        f.section(
+            0x1000,
+            &build_pmt_section_with(
+                1,
+                0x100,
+                0,
+                &[],
+                &[(0x1B, 0x100, &[]), (0x15, 0x101, &klva)],
+            ),
+        )
+        .unwrap();
+        f.pes(0x101, &cell_pes(0, First, b"ab")).unwrap();
+        let last = f.pes_packets(0x101, &cell_pes(1, Last, &[0x5A; 300]));
+        assert_eq!(last.len(), 2, "the second cell's PES spans two packets");
+        f.feed_all(&last[..1]).unwrap();
+        f.pes(0x100, &video_pes_in_flight(3_000)).unwrap();
+        f.section(
+            0x1000,
+            &build_pmt_section_with(
+                1,
+                0x100,
+                1,
+                &[],
+                &[(0x1B, 0x100, &[]), (0x15, 0x101, &klva), (0x0F, 0x102, &[])],
+            ),
+        )
+        .unwrap();
+        assert!(units_at(&f.events, 3_000).is_empty(), "{:?}", f.events);
+        f.feed_all(&last[1..]).unwrap();
+        f.pes(0x100, &video_pes_in_flight(6_000)).unwrap();
+        assert_eq!(units_at(&f.events, 3_000), [(0x100, H264, 1, 300)]);
+        let metas: Vec<(bool, usize)> = f
+            .events
+            .iter()
+            .filter_map(|e| match e {
+                DemuxEvent::Metadata {
+                    kind:
+                        MetadataKind::KlvSyncAuCell {
+                            was_reassembled, ..
+                        },
+                    payload,
+                    ..
+                } => Some((*was_reassembled, payload.len())),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(metas, [(true, 302)], "{:?}", f.events);
+        assert!(
+            !issues(&f.events).iter().any(|i| matches!(
+                i,
+                NonConformantIssue::MalformedPes { .. } | NonConformantIssue::MultiCellAu { .. }
+            )),
+            "{:?}",
+            f.events
+        );
+
+        // `reset_sync` forgets the unit in flight: it is never handed out.
+        let mut f = feed_with_one_video_pid();
+        f.pes(0x100, &video_pes_in_flight(3_000)).unwrap();
+        f.d.reset_sync();
+        f.section(0x0000, &build_pat_section(1, 0, &[(1, 0x1000)]))
+            .unwrap();
+        f.section(0x1000, &build_pmt_section(1, 0x100, 0, &[(0x1B, 0x100)]))
+            .unwrap();
+        f.flush();
+        assert!(units_at(&f.events, 3_000).is_empty(), "{:?}", f.events);
+    }
+
+    /// The events of `pid` (its samples and its non-conformant inputs).
+    fn events_of(events: &[DemuxEvent], pid: u16) -> Vec<DemuxEvent> {
+        events
+            .iter()
+            .filter(|e| match e {
+                DemuxEvent::Sample { stream, .. } | DemuxEvent::NonConformant { stream, .. } => {
+                    stream.pid == pid
+                }
+                _ => false,
+            })
+            .cloned()
+            .collect()
+    }
+
+    fn strict(mode: StrictMode) -> DemuxerConfig {
+        let mut b = DemuxerConfig::builder();
+        b.strict(mode);
+        b.build()
+    }
+
+    #[test]
+    fn a_short_bounded_pes_on_a_leaving_pid_is_marked_as_at_flush() {
+        use crate::mpegts::demux::pes::DAMAGE_SHORT_PES;
+        let short = crate::mpegts::demux::test_support::pes_bytes(
+            0xE0,
+            Some(3_000),
+            None,
+            true,
+            &[0xAA; 500],
+            true,
+        );
+        for mode in [
+            StrictMode::Off,
+            StrictMode::TimingOnly,
+            StrictMode::DescriptorsOnly,
+            StrictMode::Full,
+        ] {
+            let mut at_flush = feed_with_one_video_pid_in(strict(mode));
+            let pkts = at_flush.pes_packets(0x100, &short);
+            at_flush.feed_all(&pkts[..1]).unwrap();
+            let before = at_flush.events.len();
+            at_flush.flush();
+            let expected = events_of(&at_flush.events[before..], 0x100);
+
+            let mut leaving = feed_with_one_video_pid_in(strict(mode));
+            let pkts = leaving.pes_packets(0x100, &short);
+            leaving.feed_all(&pkts[..1]).unwrap();
+            let before = leaving.events.len();
+            let _ = leaving.section(0x1000, &build_pmt_section(1, 0x200, 1, &[(0x1B, 0x200)]));
+            assert_eq!(
+                events_of(&leaving.events[before..], 0x100),
+                expected,
+                "{mode:?}"
+            );
+            assert!(
+                matches!(
+                    expected.first(),
+                    Some(DemuxEvent::NonConformant {
+                        issue: NonConformantIssue::MalformedPes { reason, .. },
+                        ..
+                    }) if *reason == DAMAGE_SHORT_PES
+                ),
+                "{mode:?}: {expected:?}"
+            );
+            if mode == StrictMode::Off {
+                assert_eq!(units_at(&expected, 3_000), [(0x100, H264, 1, 170)]);
+            }
+        }
+    }
+
+    #[test]
+    fn a_strict_verdict_from_a_leaving_unit_is_reported_and_the_pmt_is_applied() {
+        use crate::error::DemuxError;
+        use crate::mpegts::demux::test_support::pes_bytes;
+        let klva = crate::mpegts::descriptors::metadata_klva(0);
+        // A bounded PES of which only the first packet arrives: a short
+        // video unit, or a short synchronous-KLV unit without a PTS.
+        let video = pes_bytes(0xE0, Some(3_000), None, true, &[0xAA; 500], true);
+        let klv = pes_bytes(0xFC, None, None, true, &[0x5A; 500], true);
+        // (mode, the leaving PID carries KLV, the verdict `feed` returns)
+        let rows: [(StrictMode, bool, Option<&str>); 4] = [
+            (StrictMode::Off, false, None),
+            (StrictMode::DescriptorsOnly, false, None),
+            (StrictMode::TimingOnly, true, Some("MissingRequiredPts")),
+            (StrictMode::Full, false, Some("MalformedPes")),
+        ];
+        for (mode, with_klv, verdict) in rows {
+            let mut f = Feed::new(strict(mode));
+            f.section(0x0000, &build_pat_section(1, 0, &[(1, 0x1000)]))
+                .unwrap();
+            f.section(
+                0x1000,
+                &build_pmt_section_with(
+                    1,
+                    0x100,
+                    0,
+                    &[],
+                    &[(0x1B, 0x100, &[]), (0x15, 0x101, &klva)],
+                ),
+            )
+            .unwrap();
+            let (pid, pes) = if with_klv {
+                (0x101, &klv)
+            } else {
+                (0x100, &video)
+            };
+            let pkts = f.pes_packets(pid, pes);
+            f.feed_all(&pkts[..1]).unwrap();
+            let r = f.section(
+                0x1000,
+                &build_pmt_section_with(1, 0x200, 1, &[], &[(0x1B, 0x200, &[])]),
+            );
+            match (verdict, &r) {
+                (None, Ok(())) => {}
+                (Some(name), Err(DemuxError::StrictRejection(s))) if s.contains(name) => {}
+                _ => panic!("{mode:?}: {r:?}, expected {verdict:?}: {:?}", f.events),
+            }
+            assert!(
+                issues(&f.events).contains(&NonConformantIssue::MalformedPes {
+                    pid,
+                    reason: crate::mpegts::demux::pes::DAMAGE_SHORT_PES,
+                }),
+                "{mode:?}: {:?}",
+                f.events
+            );
+            let maps = f.maps();
+            assert_eq!(maps.len(), 2, "{mode:?}: the PMT is applied");
+            assert_eq!(map_pids(maps[1]), [0x200]);
+            f.d.feed(&crate::mpegts::demux::test_support::payload_packet_for_test(0x1FFF, 0))
+                .unwrap_or_else(|e| panic!("{mode:?}: the verdict outlived its packet: {e:?}"));
+        }
+    }
+
+    #[test]
+    fn flush_after_a_retirement_hands_nothing_out_twice() {
+        let mut f = feed_with_one_video_pid();
+        f.pes(0x100, &video_pes_in_flight(3_000)).unwrap();
+        f.section(0x1000, &build_pmt_section(1, 0x200, 1, &[(0x1B, 0x200)]))
+            .unwrap();
+        assert!(
+            !f.d.pes.has_pid(0x100),
+            "the released PES left the reassembler"
+        );
+        let before = f.events.len();
+        f.flush();
+        assert_eq!(units_at(&f.events, 3_000), [(0x100, H264, 1, 300)]);
+        assert!(
+            events_of(&f.events[before..], 0x100).is_empty(),
+            "{:?}",
+            f.events
+        );
+    }
+
+    #[test]
+    fn a_pid_retired_and_added_in_a_loop_hands_out_one_unit_per_change_and_holds_nothing() {
+        let pid_of = |i: u64| if i.is_multiple_of(2) { 0x100 } else { 0x200 };
+        let mut f = feed_with_one_video_pid();
+        for i in 0..1_000u64 {
+            f.pes(pid_of(i), &video_pes_in_flight((i + 1) * 3_000))
+                .unwrap();
+            f.section(
+                0x1000,
+                &build_pmt_section(1, 0x100, 0, &[(0x1B, pid_of(i + 1))]),
+            )
+            .unwrap();
+        }
+        let handed: Vec<(i64, u16)> = f
+            .events
+            .iter()
+            .filter_map(|e| match e {
+                DemuxEvent::Sample { stream, pts, .. } => Some((pts.as_ticks(), stream.pid)),
+                _ => None,
+            })
+            .collect();
+        let expected: Vec<(i64, u16)> = (0..1_000u64)
+            .map(|i| (((i + 1) * 3_000) as i64, pid_of(i)))
+            .collect();
+        assert_eq!(handed, expected);
+        assert_eq!(f.maps().len(), 1_001);
+        // A, B, A with media: each change hands its unit out between the
+        // ProgramMap before it and the one that announces it.
+        for n in 0..3usize {
+            let unit = samples_at(&f.events, ((n as i64) + 1) * 3_000)[0].0;
+            assert!(nth_map(&f.events, n).unwrap() < unit);
+            assert!(unit < nth_map(&f.events, n + 1).unwrap());
+        }
+        assert!(!f.d.pes.has_pid(0x100) && !f.d.pes.has_pid(0x200));
+        assert_eq!(f.d.pes.buffered_bytes(), 0);
     }
 }

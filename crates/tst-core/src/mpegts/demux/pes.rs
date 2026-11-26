@@ -379,6 +379,18 @@ impl Reassembler {
         core::mem::take(&mut self.dropped_on_total)
     }
 
+    /// End the PES in flight on `pid` as a drain at end of stream would: its
+    /// outcomes, none when nothing is in flight.
+    pub(crate) fn finish_pid(&mut self, pid: u16) -> Vec<ReassemblyOutcome> {
+        self.finished_gaps.clear();
+        let mut out = Vec::new();
+        if let Some(part) = self.by_pid.remove(&pid) {
+            self.total_buffered = self.total_buffered.saturating_sub(part.buf.len());
+            self.finish(pid, part, &mut out);
+        }
+        out
+    }
+
     /// Drop any partial PES state buffered for `pid` without emitting it.
     /// Used by the demuxer when PAT removes a program — per-PID reassembly
     /// state for that program's PIDs is no longer reachable (no PSI binding
