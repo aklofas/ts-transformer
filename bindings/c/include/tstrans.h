@@ -1764,7 +1764,11 @@ typedef struct tst_stream_stats_t {
    */
   uint8_t _pad[3];
   /**
-   * Program number from the PAT that owns this stream. 0 for PSI PIDs.
+   * The program that owns the PID: on the muxer the configured program;
+   * on the demuxer the program whose PMT declares (or last declared) the
+   * stream, or, for a PID that carries only a PCR (a PMT PID included),
+   * the lowest-numbered program that declares it as its `PCR_PID`; 0 when
+   * no program owns it.
    */
   uint16_t program_number;
   /**

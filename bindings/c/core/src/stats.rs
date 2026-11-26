@@ -38,7 +38,11 @@ pub struct TstStreamStats {
     pub stream_type: u8,
     /// Alignment padding bridging stream_type → program_number.
     pub _pad: [u8; 3],
-    /// Program number from the PAT that owns this stream. 0 for PSI PIDs.
+    /// The program that owns the PID: on the muxer the configured program;
+    /// on the demuxer the program whose PMT declares (or last declared) the
+    /// stream, or, for a PID that carries only a PCR (a PMT PID included),
+    /// the lowest-numbered program that declares it as its `PCR_PID`; 0 when
+    /// no program owns it.
     pub program_number: u16,
     /// NUL-terminated UTF-8. `label[0]==0` means None. Truncated at 63
     /// bytes (first 63 + NUL).
