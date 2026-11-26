@@ -169,7 +169,10 @@ static const char *alignment_name(enum tst_rtsp_clock_alignment a) {
  * ready.  The receiver outlives publisher churn: when a publisher leaves,
  * the receiver goes quiet; when the next one arrives on the same name,
  * bytes resume and the demuxer reports ordinary continuity
- * discontinuities.  It ends in exactly one of two ways:
+ * discontinuities when its tracks are the same, or a new
+ * TST_EVENT_KIND_PROGRAM_MAP event when they differ (after the previous
+ * publisher's last units on the PIDs that leave).  It ends in exactly one
+ * of two ways:
  *
  *   TST_E_END_OF_STREAM (-12) — the mount was CLOSED: removed with
  *       `tst_rtsp_server_remove_mount`, or the server stopped.  What was
@@ -222,9 +225,10 @@ static void *demux_thread(void *arg) {
                 break;
 
             case TST_EVENT_KIND_DISCONTINUITY:
-                /* A publisher change shows up here as continuity breaks on
-                 * each PID.  Which publisher a frame came from is on the
-                 * mount: `tst_rtsp_publish_mount_publisher_info` and
+                /* A publisher change with the same tracks shows up here as
+                 * continuity breaks on each PID.  Which publisher a frame
+                 * came from is on the mount:
+                 * `tst_rtsp_publish_mount_publisher_info` and
                  * `_generation`. */
                 printf("[%s] discontinuity PID=0x%04X kind=%d\n", slot->path,
                        ev.u.discontinuity.pid, ev.u.discontinuity.discontinuity_kind);

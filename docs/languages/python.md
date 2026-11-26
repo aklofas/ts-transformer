@@ -1655,7 +1655,9 @@ Rules the types do not enforce:
 - **Receiver across publishers.** With end-on-exit off (the default), the
   receiver outlives publisher churn: between publishers it stays open and
   silent, and the next publisher's bytes arrive as ordinary continuity
-  discontinuities.
+  discontinuities when its tracks are the same; with other tracks they
+  arrive as a new `DemuxEvent.ProgramMap`, after the previous publisher's
+  last units on the PIDs that leave.
 - **Every shutdown ends the mounts.** `stop()`, the `with` exit and
   `cancel_handle().cancel()` end every publish mount's receiver and wake a
   parked `next_publisher` with `RtspError(CLOSED)` (the hard cancel within
