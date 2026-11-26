@@ -272,13 +272,46 @@ fn read_uuid(buf: &[u8], pos: &mut usize) -> Result<[u8; 16], St1204Error> {
 
 // ── encode ────────────────────────────────────────────────────────────────────
 
-/// Encode a [`CoreId`] into its binary wire form.
+impl CoreId {
+    /// Checks what [`decode`] checks of an identifier's fields: the version
+    /// is `1`, at least one UUID is present, and a minor identifier stands
+    /// alone (ST 1204.3 §7.3.1). An identifier that passes encodes to bytes
+    /// [`decode`] reads back as the same value.
+    ///
+    /// # Errors
+    /// [`St1204Error::UnsupportedVersion`] for a version other than `1`;
+    /// [`St1204Error::InvalidUsage`] for no UUID at all, or a minor
+    /// identifier together with a sensor, platform or window UUID.
+    pub fn validate(&self) -> Result<(), St1204Error> {
+        if self.version != 1 {
+            return Err(St1204Error::UnsupportedVersion(self.version));
+        }
+        let fcid = self.sensor.is_some() || self.platform.is_some() || self.window.is_some();
+        if fcid == self.minor.is_some() {
+            return Err(St1204Error::InvalidUsage);
+        }
+        Ok(())
+    }
+}
+
+/// [`encode_to_vec`] for an identifier [`CoreId::validate`] accepts: what it
+/// writes, [`decode`] reads back. The bindings encode through this.
+///
+/// # Errors
+/// As [`CoreId::validate`]; nothing is written for a refused identifier.
+pub fn encode_checked(id: &CoreId) -> Result<Vec<u8>, St1204Error> {
+    id.validate()?;
+    Ok(encode_to_vec(id))
+}
+
+/// Encode a [`CoreId`] into its binary wire form, unchecked.
 ///
 /// The caller is responsible for upholding the ST 1204.3 EBNF constraint:
 /// [`CoreId::minor`] must be `None` when any of sensor/platform/window is
 /// present, and vice-versa. Passing a [`CoreId`] that violates this
-/// constraint produces bytes that [`decode`] will reject with
-/// [`St1204Error::InvalidUsage`].
+/// constraint (or has a version other than `1`) produces bytes that
+/// [`decode`] will reject; [`encode_checked`] refuses such an identifier
+/// instead.
 ///
 /// Returns the two-byte header (version + usage) followed by the UUIDs in
 /// EBNF order: sensor, platform, window, minor.
@@ -553,6 +586,59 @@ mod tests {
         0x2E, 0xB2, 0xDA, 0x16, 0xB7, 0x43, 0x41, 0x00, 0x08, 0x41, 0xA0, 0xBE, 0x36, 0x5B, 0x5A,
         0xB9, 0x6A, 0x36, 0x45,
     ];
+
+    #[test]
+    fn encode_checked_refuses_what_decode_refuses() {
+        let empty = CoreId::default();
+        assert_eq!(
+            decode(&encode_to_vec(&empty)),
+            Err(St1204Error::InvalidUsage)
+        );
+        assert_eq!(encode_checked(&empty), Err(St1204Error::InvalidUsage));
+
+        let mut v2 = decode(&TABLE7).unwrap();
+        v2.version = 2;
+        assert_eq!(
+            decode(&encode_to_vec(&v2)),
+            Err(St1204Error::UnsupportedVersion(2))
+        );
+        assert_eq!(encode_checked(&v2), Err(St1204Error::UnsupportedVersion(2)));
+        v2.version = 255;
+        assert_eq!(
+            encode_checked(&v2),
+            Err(St1204Error::UnsupportedVersion(255))
+        );
+
+        let mut both = decode(&TABLE7).unwrap();
+        both.minor = Some([0x11; 16]);
+        assert_eq!(
+            decode(&encode_to_vec(&both)),
+            Err(St1204Error::InvalidUsage)
+        );
+        assert_eq!(encode_checked(&both), Err(St1204Error::InvalidUsage));
+        both.sensor = None;
+        both.platform = None;
+        both.window = Some([0x22; 16]);
+        assert_eq!(encode_checked(&both), Err(St1204Error::InvalidUsage));
+    }
+
+    #[test]
+    fn encode_checked_matches_encode_to_vec_for_a_valid_id() {
+        let minor = CoreId {
+            minor: Some([0x33; 16]),
+            ..CoreId::default()
+        };
+        let window = CoreId {
+            window: Some([0x44; 16]),
+            ..CoreId::default()
+        };
+        for id in [decode(&TABLE7).unwrap(), minor, window] {
+            assert_eq!(id.validate(), Ok(()));
+            let bytes = encode_checked(&id).unwrap();
+            assert_eq!(bytes, encode_to_vec(&id));
+            assert_eq!(decode(&bytes).unwrap(), id);
+        }
+    }
 
     #[test]
     fn decode_table7_example() {
