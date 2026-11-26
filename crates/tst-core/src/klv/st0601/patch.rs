@@ -114,7 +114,12 @@ fn edit_value(edits: &UasDatalinkLs, spec: &TagSpec) -> Result<Option<Vec<u8>>, 
 /// - `edits.unknown` re-encodes those tags with the given value bytes
 ///   (the escape hatch for tags outside the typed model); naming a
 ///   typed/reserved tag there is rejected with
-///   [`KlvEncodeError::ReservedTagInUnknown`].
+///   [`KlvEncodeError::ReservedTagInUnknown`]. A tag named there more than
+///   once is edited with its FIRST entry, which is written into every
+///   occurrence of the tag in the input. So for an input that repeats an
+///   unknown tag with different values, `patch(raw, &decode(raw)?)` is not
+///   the identity: the later occurrences take the first one's value. Remove
+///   the tag from `edits.unknown` to keep them.
 /// - Tag 65 is NOT auto-injected (unlike `encode_with`); deleting a
 ///   tag is not supported.
 /// - **Exception:** Tag 115 (Control Command,
