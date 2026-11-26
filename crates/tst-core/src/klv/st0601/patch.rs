@@ -8,17 +8,19 @@
 //! decode→modify→re-encode normalizes TLV order and re-encodes every
 //! IMAPB float, which this avoids.
 
+use alloc::collections::BTreeSet;
 use alloc::vec::Vec;
 
 use crate::error::{KlvDecodeError, KlvEncodeError, KlvPatchError};
 use crate::klv::checksum::checksum_running_sum_16;
-use crate::klv::length::{
-    read_ber, read_ber_oid, rebase_offset, skip_ber_oid, write_ber, write_ber_oid,
-};
+use crate::klv::length::{read_ber, read_ber_oid, rebase_offset, skip_ber_oid, write_ber};
+use crate::klv::pack::emit_ber_oid_tlv;
 
-use super::encode::encode_tag_value;
+use super::encode::{
+    ItemSource, encode_tag_value, imapb_special_value_bytes, resolve, sentinel_value_bytes,
+};
 use super::model::{OutOfRangePolicy, UasDatalinkLs};
-use super::tags::TAGS;
+use super::tags::{TAGS, TagSpec, lookup};
 
 /// By-value adapter over [`rebase_offset`](crate::klv::length::rebase_offset)
 /// for the `map_err` chains below:
@@ -28,16 +30,52 @@ fn rebase_decode_error_offset(mut e: KlvDecodeError, base: usize) -> KlvDecodeEr
     e
 }
 
-/// Append one canonical `[BER-OID tag][BER length][value]` TLV.
-fn emit_tlv(tag: u32, value: &[u8], body: &mut Vec<u8>) -> Result<(), KlvEncodeError> {
-    let mut tag_buf = [0u8; 8];
-    let n = write_ber_oid(tag, &mut tag_buf)?;
-    body.extend_from_slice(&tag_buf[..n]);
-    let mut len_buf = [0u8; 16];
-    let m = write_ber(value.len(), &mut len_buf)?;
-    body.extend_from_slice(&len_buf[..m]);
-    body.extend_from_slice(value);
-    Ok(())
+/// The tags met in the input: a bitmap for the one-byte tags, a set for
+/// the rest, so the walk stays linear in the number of distinct tags (a
+/// list scanned per item made it quadratic for a peer's set).
+struct SeenTags {
+    low: [bool; 256],
+    high: BTreeSet<u32>,
+}
+
+impl SeenTags {
+    fn new() -> Self {
+        Self {
+            low: [false; 256],
+            high: BTreeSet::new(),
+        }
+    }
+
+    fn insert(&mut self, tag: u32) {
+        match usize::try_from(tag) {
+            Ok(i) if i < 256 => self.low[i] = true,
+            _ => {
+                self.high.insert(tag);
+            }
+        }
+    }
+
+    fn contains(&self, tag: u32) -> bool {
+        match usize::try_from(tag) {
+            Ok(i) if i < 256 => self.low[i],
+            _ => self.high.contains(&tag),
+        }
+    }
+}
+
+/// The bytes the edit record gives the typed item `spec`, as the encoder
+/// writes them: its value, or the sentinel or IMAP special it replays;
+/// `None` when the edit leaves the item alone.
+fn edit_value(edits: &UasDatalinkLs, spec: &TagSpec) -> Result<Option<Vec<u8>>, KlvEncodeError> {
+    // patch keeps strict range behavior; policy is an encode-entry option
+    if let Some(value) = encode_tag_value(edits, spec, None, OutOfRangePolicy::Error)? {
+        return Ok(Some(value));
+    }
+    match resolve(edits, spec) {
+        Some(ItemSource::Sentinel) => Ok(Some(sentinel_value_bytes(spec))),
+        Some(ItemSource::Special(special)) => imapb_special_value_bytes(spec, special).map(Some),
+        _ => Ok(None),
+    }
 }
 
 /// Patch named tags in a raw ST 0601 local set; every other TLV is
@@ -46,11 +84,16 @@ fn emit_tlv(tag: u32, value: &[u8], body: &mut Vec<u8>) -> Result<(), KlvEncodeE
 /// are re-encoded, `None` fields leave the input untouched.
 ///
 /// Semantics:
+/// - An edit is what the encoder writes for the item: a set field's value,
+///   or the sentinel or IMAP special an entry of `edits.sentinel_tags` /
+///   `edits.imapb_specials` replays for an unset field.
 /// - An edited tag PRESENT in the input is re-encoded in place (every
-///   occurrence, if the input carries non-compliant duplicates).
-/// - An edited tag ABSENT from the input is inserted before the
-///   trailing checksum (typed tags in table order, then
-///   `edits.unknown` in given order) — at the end if there is none.
+///   occurrence, if the input carries non-compliant duplicates); an
+///   existing item is never moved.
+/// - A new Item 2 (Precision Time Stamp) is written first (ST 0601.8-09);
+///   the other new items are appended in tag order before the trailing
+///   checksum (typed tags in table order, then `edits.unknown` in given
+///   order) — at the end if there is none.
 /// - Re-encoding an edited tag emits a CANONICAL tag/length encoding
 ///   for that TLV — editing a tag whose input encoding was
 ///   non-canonical is not a byte-level no-op, even when the new value
@@ -124,10 +167,7 @@ pub fn patch(raw: &[u8], edits: &UasDatalinkLs) -> Result<Vec<u8>, KlvPatchError
     // Manual walk (not `pack::Iter`): verbatim copy needs the original
     // byte spans, non-canonical length encodings included.
     let mut new_body: Vec<u8> = Vec::with_capacity(body.len() + 64);
-    // Linear-scan Vec: real local sets carry at most a few dozen
-    // distinct tags, so the O(n²) worst case only degrades on
-    // adversarial (fuzz) inputs — not a hot path.
-    let mut seen: Vec<u32> = Vec::new();
+    let mut seen = SeenTags::new();
     // (offset in new_body, header byte count) of the LAST tag-1 TLV;
     // its 2-byte value is recomputed after assembly.
     let mut checksum_slot: Option<(usize, usize)> = None;
@@ -165,9 +205,7 @@ pub fn patch(raw: &[u8], edits: &UasDatalinkLs) -> Result<Vec<u8>, KlvPatchError
             pos += header_len + vlen;
             continue;
         };
-        if !seen.contains(&tag) {
-            seen.push(tag);
-        }
+        seen.insert(tag);
 
         if tag == 1 {
             // Mirror decode_inner: a checksum value must be 2 bytes.
@@ -190,14 +228,13 @@ pub fn patch(raw: &[u8], edits: &UasDatalinkLs) -> Result<Vec<u8>, KlvPatchError
                 new_body.extend_from_slice(&tlv[..header_len]);
                 new_body.extend_from_slice(&tlv[header_len..]);
             }
-        } else if let Some(spec) = TAGS.iter().find(|s| u32::from(s.id) == tag) {
-            // patch keeps strict range behavior; policy is an encode-entry option
-            match encode_tag_value(edits, spec, None, OutOfRangePolicy::Error)? {
-                Some(value) => emit_tlv(tag, &value, &mut new_body)?,
+        } else if let Some(spec) = u8::try_from(tag).ok().and_then(lookup) {
+            match edit_value(edits, spec)? {
+                Some(value) => emit_ber_oid_tlv(tag, &value, &mut new_body)?,
                 None => new_body.extend_from_slice(tlv),
             }
         } else if let Some(f) = edits.unknown.iter().find(|f| f.tag == tag) {
-            emit_tlv(tag, &f.value, &mut new_body)?;
+            emit_ber_oid_tlv(tag, &f.value, &mut new_body)?;
         } else {
             new_body.extend_from_slice(tlv);
         }
@@ -205,18 +242,30 @@ pub fn patch(raw: &[u8], edits: &UasDatalinkLs) -> Result<Vec<u8>, KlvPatchError
     }
 
     // ---- insert edited-but-absent tags ----
+    // A new Item 2 goes first (ST 0601.8-09): a checksum already copied
+    // moves with the bytes after it.
+    if !seen.contains(2)
+        && let Some(spec) = lookup(2)
+        && let Some(value) = edit_value(edits, spec)?
+    {
+        let mut first = Vec::new();
+        emit_ber_oid_tlv(2, &value, &mut first)?;
+        if let Some((slot, _)) = checksum_slot.as_mut() {
+            *slot += first.len();
+        }
+        new_body.splice(0..0, first);
+    }
     for spec in TAGS {
-        if spec.id == 1 || seen.contains(&u32::from(spec.id)) {
+        if spec.id == 1 || spec.id == 2 || seen.contains(u32::from(spec.id)) {
             continue;
         }
-        // patch keeps strict range behavior; policy is an encode-entry option
-        if let Some(value) = encode_tag_value(edits, spec, None, OutOfRangePolicy::Error)? {
-            emit_tlv(u32::from(spec.id), &value, &mut new_body)?;
+        if let Some(value) = edit_value(edits, spec)? {
+            emit_ber_oid_tlv(u32::from(spec.id), &value, &mut new_body)?;
         }
     }
     for f in &edits.unknown {
-        if !seen.contains(&f.tag) {
-            emit_tlv(f.tag, &f.value, &mut new_body)?;
+        if !seen.contains(f.tag) {
+            emit_ber_oid_tlv(f.tag, &f.value, &mut new_body)?;
         }
     }
     if let Some(header) = trailing_checksum {
