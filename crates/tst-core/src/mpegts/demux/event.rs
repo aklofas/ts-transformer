@@ -739,7 +739,8 @@ pub enum NonConformantIssue {
     /// continuity gap, a damaged or dropped PES, a signalled discontinuity)
     /// starts the count again. A stream whose record bodies carry
     /// byte-aligned syncword patterns at short intervals can still be
-    /// misread after a join, with one `MissingSyncword`.
+    /// misread, after a join and again after each misreading, each time with
+    /// one `MissingSyncword`.
     ///
     /// `kind` carries the specific violation;
     /// see [`crate::codec::aac::latm::LatmFramingKind`].

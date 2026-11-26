@@ -266,9 +266,10 @@ impl LoasFraming {
 /// boundary about once in 2 048, and a false confirmation clears the genuine
 /// candidate and makes the next boundary a missing syncword, so one pass is
 /// not trusted. A stream whose record bodies carry byte-aligned syncword
-/// patterns at short intervals can still be misread after a join: false
-/// candidates then pass two boundaries often enough for one to be
-/// confirmed, and its next boundary raises a `MissingSyncword`.
+/// patterns at short intervals can still be misread, after a join and again
+/// after each misreading: false candidates then pass two boundaries often
+/// enough for one to be confirmed, and its next boundary raises a
+/// `MissingSyncword`, which loses the position again.
 ///
 /// Every payload byte since the position was lost is counted, and the
 /// stretch is judged not LOAS, with one `MissingSyncword` and nothing more
