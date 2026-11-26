@@ -38,7 +38,7 @@ class ExtractKlvTest {
         // The shared golden's KLV is minimal_st0601_ls (a recognized ST 0601 UL with
         // an empty body). parse_klv_universal returns an empty Optional only for an
         // UNRECOGNIZED UL; the ST 0601 UL IS recognized but its empty body makes the
-        // decoder raise KlvDecodeException(TRUNCATED_SET). With skipMalformed=false
+        // decoder raise KlvDecodeException(MISSING_REQUIRED_TAG). With skipMalformed=false
         // (default) that exception must propagate (not be swallowed). Java streams
         // can't throw checked exceptions in map(), so it surfaces wrapped.
         RuntimeException ex = assertThrows(RuntimeException.class, () -> {

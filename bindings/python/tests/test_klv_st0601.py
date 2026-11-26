@@ -101,6 +101,16 @@ def test_decode_rejects_truncated():
     assert excinfo.value.kind == KlvErrorKind.TRUNCATED_SET
 
 
+def test_decode_without_checksum_is_missing_required_tag():
+    # The ST 0601 key and an empty body: the set has no checksum (Tag 1),
+    # which ST 0601 requires as its final item. The offset is the body's.
+    st0601_key = FX_MINIMAL.read_bytes()[:16]
+    with pytest.raises(KlvError) as excinfo:
+        decode_uas_datalink(st0601_key + b"\x00")
+    assert excinfo.value.kind == KlvErrorKind.MISSING_REQUIRED_TAG
+    assert "no checksum (Tag 1) in the set at offset 17" in str(excinfo.value)
+
+
 def test_uas_datalink_ls_frozen():
     rec = decode_uas_datalink(FX_FULL.read_bytes())
     with pytest.raises((AttributeError, TypeError)):

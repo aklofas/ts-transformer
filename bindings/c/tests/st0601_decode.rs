@@ -156,6 +156,25 @@ fn decode_garbage_bytes_returns_null_with_klv_decode_error() {
 }
 
 #[test]
+fn decode_without_a_checksum_names_the_missing_checksum() {
+    // The ST 0601 key and an empty body: the set has no checksum item at
+    // all. The code stays the KLV decode code; the message says what is
+    // missing.
+    let mut bytes = tst_core::klv::UniversalLabel::ST_0601_LS.0.to_vec();
+    bytes.push(0x00);
+    unsafe {
+        let p = tst_st0601_decode(bytes.as_ptr(), bytes.len());
+        assert!(p.is_null());
+        assert_eq!(tst_get_last_error(), TstError::KlvDecode as i32);
+        let msg = last_error_msg();
+        assert!(
+            msg.contains("no checksum (Tag 1) in the set at offset 17"),
+            "{msg}"
+        );
+    }
+}
+
+#[test]
 fn decode_accepts_a_universal_label_outside_the_st0601_family() {
     let mut bytes = load_fixture("synthetic_full.klv");
     let n = bytes.len();

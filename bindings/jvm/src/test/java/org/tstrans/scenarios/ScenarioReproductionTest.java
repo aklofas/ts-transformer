@@ -253,7 +253,7 @@ class ScenarioReproductionTest {
      * (empty body, NO populated tags, NO checksum). This is a structurally degenerate
      * KLV record: the empty body means the mandatory Tag-1 checksum is absent, so
      * {@code tst_core::klv::st0601::decode} (and tst-py's {@code decode_uas_datalink})
-     * both throw / raise a TRUNCATED_SET error at offset 17 ("needed 3 bytes, have 0").
+     * both throw / raise a MISSING_REQUIRED_TAG error at offset 17 ("no checksum").
      *
      * <p>Cross-binding parity assertion:
      * <ol>
@@ -261,11 +261,11 @@ class ScenarioReproductionTest {
      *       payload as an ST 0601 family record (the UL check does not require a
      *       valid body — it only inspects the 16-byte UL prefix).</li>
      *   <li>The JVM {@link Klv#decodeUasDatalink(byte[])} throws a
-     *       {@link org.tstrans.KlvDecodeException} with kind {@code TRUNCATED_SET},
-     *       matching the {@code KlvDecodeError::Truncated} that Rust and Python
-     *       produce for the same input (verified: Python also raises
-     *       {@code KlvError(TRUNCATED_SET)} with message
-     *       "buffer truncated at offset 17: needed 3 bytes, have 0").</li>
+     *       {@link org.tstrans.KlvDecodeException} with kind {@code MISSING_REQUIRED_TAG},
+     *       matching the {@code KlvDecodeError::MissingChecksum} that Rust and Python
+     *       produce for the same input (Python raises
+     *       {@code KlvError(MISSING_REQUIRED_TAG)} with message
+     *       "no checksum (Tag 1) in the set at offset 17").</li>
      * </ol>
      *
      * <p>Rich typed-field correctness is covered by {@code St0601Test} with real
@@ -314,18 +314,19 @@ class ScenarioReproductionTest {
         assertTrue(Klv.isSt0601Family(payload),
             "isSt0601Family should return true for the shared golden's KLV payload UL");
 
-        // Parity assertion 2: decodeUasDatalink throws TRUNCATED_SET for this
+        // Parity assertion 2: decodeUasDatalink throws MISSING_REQUIRED_TAG for this
         // empty-body payload, exactly as Rust's tst_core::klv::st0601::decode and
         // Python's decode_uas_datalink do.
-        // The payload is [16-byte ST 0601 UL][0x00 BER] = 17 bytes; the decoder
-        // needs the Tag-1 checksum in the body (≥3 bytes) but finds 0.
+        // The payload is [16-byte ST 0601 UL][0x00 BER] = 17 bytes; the body has no
+        // Tag-1 checksum, which ST 0601 requires as its final item.
         org.tstrans.KlvDecodeException ex = assertThrows(
             org.tstrans.KlvDecodeException.class,
             () -> Klv.decodeUasDatalink(payload),
-            "decodeUasDatalink should throw TRUNCATED_SET for the empty-body minimal LS");
-        assertEquals(org.tstrans.KlvDecodeException.Kind.TRUNCATED_SET, ex.kind(),
-            "exception kind must be TRUNCATED_SET (mirrors Rust KlvDecodeError::Truncated "
-                + "and Python KlvError(TRUNCATED_SET) for the same empty-body input)");
+            "decodeUasDatalink should throw MISSING_REQUIRED_TAG for the empty-body minimal LS");
+        assertEquals(org.tstrans.KlvDecodeException.Kind.MISSING_REQUIRED_TAG, ex.kind(),
+            "exception kind must be MISSING_REQUIRED_TAG (mirrors Rust "
+                + "KlvDecodeError::MissingChecksum and Python KlvError(MISSING_REQUIRED_TAG) "
+                + "for the same empty-body input)");
     }
 
     /**
