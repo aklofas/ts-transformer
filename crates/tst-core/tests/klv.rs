@@ -21,6 +21,10 @@ mod st0102_via_st0601;
 mod st0601;
 #[path = "klv/st0601_offsets.rs"]
 mod st0601_offsets;
+// serde_json (the case-table parser) is a std-only dependency.
+#[cfg(feature = "std")]
+#[path = "klv/st0601_views.rs"]
+mod st0601_views;
 #[path = "klv/st0903_standalone_ul.rs"]
 mod st0903_standalone_ul;
 #[path = "klv/st0903_via_st0601.rs"]

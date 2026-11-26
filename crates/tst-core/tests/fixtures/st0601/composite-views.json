@@ -1,0 +1,140 @@
+{
+  "about": "Cases for the ST 0601 composite views, read by the Rust, Python and JVM tests. `fields` sets record fields by their Rust names; `sentinel_tags` and `imapb_specials` ([tag, code, payload]) are the record's entries; `expect` names the views a row checks: platform_attitude [heading, pitch, roll], sensor_position and frame_center [lat, lon, alt], their datums hae or msl, corners [[lat, lon] x 4]; null is no view. Values compare exactly unless the row gives `tolerance`.",
+  "rows": [
+    {
+      "name": "platform_attitude_prefers_full_range_twins",
+      "fields": {"platform_heading_deg": 10.0, "platform_pitch_deg": 5.0, "platform_roll_deg": 1.0, "platform_pitch_full_deg": 4.5, "platform_roll_full_deg": 0.5},
+      "expect": {"platform_attitude": [10.0, 4.5, 0.5]}
+    },
+    {
+      "name": "platform_attitude_from_the_full_range_items_alone",
+      "fields": {"platform_heading_deg": 10.0, "platform_pitch_full_deg": 4.5, "platform_roll_full_deg": 0.5},
+      "expect": {"platform_attitude": [10.0, 4.5, 0.5]}
+    },
+    {
+      "name": "platform_attitude_from_the_short_items_unchanged",
+      "fields": {"platform_heading_deg": 10.0, "platform_pitch_deg": 5.0, "platform_roll_deg": 1.0},
+      "expect": {"platform_attitude": [10.0, 5.0, 1.0]}
+    },
+    {
+      "name": "sensor_position_prefers_hae_and_reports_datum",
+      "fields": {"sensor_lat_deg": 34.0, "sensor_lon_deg": -118.0, "sensor_alt_m": 1500.0, "sensor_ellipsoid_height_m": 1470.0, "sensor_ellipsoid_height_extended_m": 1471.0},
+      "expect": {"sensor_position": [34.0, -118.0, 1471.0], "sensor_position_datum": "hae"}
+    },
+    {
+      "name": "sensor_position_msl_only_unchanged",
+      "fields": {"sensor_lat_deg": 34.0, "sensor_lon_deg": -118.0, "sensor_alt_m": 1500.0},
+      "expect": {"sensor_position": [34.0, -118.0, 1500.0], "sensor_position_datum": "msl"}
+    },
+    {
+      "name": "sensor_position_takes_item_75_when_item_104_is_absent",
+      "fields": {"sensor_lat_deg": 34.0, "sensor_lon_deg": -118.0, "sensor_alt_m": 1500.0, "sensor_ellipsoid_height_m": 1470.0},
+      "expect": {"sensor_position": [34.0, -118.0, 1470.0], "sensor_position_datum": "hae"}
+    },
+    {
+      "name": "sensor_position_from_an_hae_item_alone",
+      "fields": {"sensor_lat_deg": 34.0, "sensor_lon_deg": -118.0, "sensor_ellipsoid_height_extended_m": 1471.0},
+      "expect": {"sensor_position": [34.0, -118.0, 1471.0], "sensor_position_datum": "hae"}
+    },
+    {
+      "name": "sensor_position_needs_latitude_and_longitude",
+      "fields": {"sensor_lat_deg": 34.0, "sensor_ellipsoid_height_extended_m": 1471.0},
+      "expect": {"sensor_position": null, "sensor_position_datum": null}
+    },
+    {
+      "name": "frame_center_prefers_hae",
+      "fields": {"frame_center_lat_deg": 34.1, "frame_center_lon_deg": -118.1, "frame_center_elev_m": 100.0, "frame_center_ellipsoid_height_m": 77.0},
+      "expect": {"frame_center": [34.1, -118.1, 77.0], "frame_center_datum": "hae"}
+    },
+    {
+      "name": "frame_center_from_the_hae_item_alone",
+      "fields": {"frame_center_lat_deg": 34.1, "frame_center_lon_deg": -118.1, "frame_center_ellipsoid_height_m": 77.0},
+      "expect": {"frame_center": [34.1, -118.1, 77.0], "frame_center_datum": "hae"}
+    },
+    {
+      "name": "frame_center_msl_only_unchanged",
+      "fields": {"frame_center_lat_deg": 34.1, "frame_center_lon_deg": -118.1, "frame_center_elev_m": 100.0},
+      "expect": {"frame_center": [34.1, -118.1, 100.0], "frame_center_datum": "msl"}
+    },
+    {
+      "name": "corners_from_the_full_range_pairs",
+      "fields": {"corner_lat_p1_deg": 1.0, "corner_lon_p1_deg": 2.0, "corner_lat_p2_deg": 3.0, "corner_lon_p2_deg": 4.0, "corner_lat_p3_deg": 5.0, "corner_lon_p3_deg": 6.0, "corner_lat_p4_deg": 7.0, "corner_lon_p4_deg": 8.0},
+      "expect": {"corners": [[1.0, 2.0], [3.0, 4.0], [5.0, 6.0], [7.0, 8.0]]}
+    },
+    {
+      "name": "corners_mix_families_per_point",
+      "fields": {"corner_lat_p1_deg": 1.0, "corner_lon_p1_deg": 2.0, "corner_lat_p2_deg": 3.0, "corner_lon_p2_deg": 4.0, "corner_lat_p3_deg": 5.0, "corner_lon_p3_deg": 6.0, "frame_center_lat_deg": 20.0, "frame_center_lon_deg": 30.0, "corner_lat_offset_p1_deg": 0.01, "corner_lon_offset_p1_deg": 0.01, "corner_lat_offset_p2_deg": 0.01, "corner_lon_offset_p2_deg": 0.01, "corner_lat_offset_p3_deg": 0.01, "corner_lon_offset_p3_deg": 0.01, "corner_lat_offset_p4_deg": 0.02, "corner_lon_offset_p4_deg": 0.02},
+      "expect": {"corners": [[1.0, 2.0], [3.0, 4.0], [5.0, 6.0], [20.02, 30.02]]}
+    },
+    {
+      "name": "corners_from_the_offsets_alone",
+      "fields": {"frame_center_lat_deg": 20.0, "frame_center_lon_deg": 30.0, "corner_lat_offset_p1_deg": 0.02, "corner_lon_offset_p1_deg": 0.02, "corner_lat_offset_p2_deg": 0.02, "corner_lon_offset_p2_deg": 0.02, "corner_lat_offset_p3_deg": 0.02, "corner_lon_offset_p3_deg": 0.02, "corner_lat_offset_p4_deg": 0.02, "corner_lon_offset_p4_deg": 0.02},
+      "expect": {"corners": [[20.02, 30.02], [20.02, 30.02], [20.02, 30.02], [20.02, 30.02]]}
+    },
+    {
+      "name": "corners_do_not_fall_back_through_off_earth_full_corner",
+      "fields": {"corner_lat_p1_deg": 1.0, "corner_lon_p1_deg": 2.0, "corner_lat_p2_deg": 3.0, "corner_lon_p2_deg": 4.0, "corner_lat_p3_deg": 5.0, "corner_lon_p3_deg": 6.0, "corner_lon_p4_deg": 8.0, "frame_center_lat_deg": 20.0, "frame_center_lon_deg": 30.0, "corner_lat_offset_p1_deg": 0.02, "corner_lon_offset_p1_deg": 0.02, "corner_lat_offset_p2_deg": 0.02, "corner_lon_offset_p2_deg": 0.02, "corner_lat_offset_p3_deg": 0.02, "corner_lon_offset_p3_deg": 0.02, "corner_lat_offset_p4_deg": 0.02, "corner_lon_offset_p4_deg": 0.02},
+      "sentinel_tags": [88],
+      "expect": {"corners": null}
+    },
+    {
+      "name": "corners_wrap_longitude_across_the_antimeridian",
+      "fields": {"frame_center_lat_deg": 10.0, "frame_center_lon_deg": 179.9, "corner_lat_offset_p1_deg": 0.0, "corner_lon_offset_p1_deg": 0.2, "corner_lat_offset_p2_deg": 0.0, "corner_lon_offset_p2_deg": -0.2, "corner_lat_offset_p3_deg": 0.0, "corner_lon_offset_p3_deg": 0.2, "corner_lat_offset_p4_deg": 0.0, "corner_lon_offset_p4_deg": -0.2},
+      "tolerance": 1e-9,
+      "expect": {"corners": [[10.0, -179.9], [10.0, 179.7], [10.0, -179.9], [10.0, 179.7]]}
+    },
+    {
+      "name": "corners_wrap_a_sum_of_exactly_minus_180_to_180",
+      "fields": {"frame_center_lat_deg": 10.0, "frame_center_lon_deg": -179.9, "corner_lat_offset_p1_deg": 0.0, "corner_lon_offset_p1_deg": -0.1, "corner_lat_offset_p2_deg": 0.0, "corner_lon_offset_p2_deg": -0.1, "corner_lat_offset_p3_deg": 0.0, "corner_lon_offset_p3_deg": -0.1, "corner_lat_offset_p4_deg": 0.0, "corner_lon_offset_p4_deg": -0.1},
+      "expect": {"corners": [[10.0, 180.0], [10.0, 180.0], [10.0, 180.0], [10.0, 180.0]]}
+    },
+    {
+      "name": "corners_keep_a_sum_of_exactly_180",
+      "fields": {"frame_center_lat_deg": 10.0, "frame_center_lon_deg": 179.9, "corner_lat_offset_p1_deg": 0.0, "corner_lon_offset_p1_deg": 0.1, "corner_lat_offset_p2_deg": 0.0, "corner_lon_offset_p2_deg": 0.1, "corner_lat_offset_p3_deg": 0.0, "corner_lon_offset_p3_deg": 0.1, "corner_lat_offset_p4_deg": 0.0, "corner_lon_offset_p4_deg": 0.1},
+      "expect": {"corners": [[10.0, 180.0], [10.0, 180.0], [10.0, 180.0], [10.0, 180.0]]}
+    },
+    {
+      "name": "a_preferred_item_sent_as_no_value_ends_the_view: Item 90 as its sentinel",
+      "fields": {"platform_heading_deg": 10.0, "platform_pitch_deg": 5.0, "platform_roll_deg": 1.0, "platform_roll_full_deg": 0.5},
+      "sentinel_tags": [90],
+      "expect": {"platform_attitude": null}
+    },
+    {
+      "name": "a_preferred_item_sent_as_no_value_ends_the_view: Item 104 at its minimum with a BelowMin entry",
+      "fields": {"sensor_lat_deg": 34.0, "sensor_lon_deg": -118.0, "sensor_alt_m": 1500.0, "sensor_ellipsoid_height_m": 1470.0, "sensor_ellipsoid_height_extended_m": -900.0},
+      "imapb_specials": [[104, "below_min", 0]],
+      "expect": {"sensor_position": null, "sensor_position_datum": null}
+    },
+    {
+      "name": "a_preferred_item_sent_as_no_value_ends_the_view: Item 104 at its maximum with an AboveMax entry",
+      "fields": {"sensor_lat_deg": 34.0, "sensor_lon_deg": -118.0, "sensor_alt_m": 1500.0, "sensor_ellipsoid_height_extended_m": 40000.0},
+      "imapb_specials": [[104, "above_max", 0]],
+      "expect": {"sensor_position": null, "sensor_position_datum": null}
+    },
+    {
+      "name": "a_preferred_item_sent_as_no_value_ends_the_view: Item 104 unset with a special entry",
+      "fields": {"sensor_lat_deg": 34.0, "sensor_lon_deg": -118.0, "sensor_alt_m": 1500.0, "sensor_ellipsoid_height_m": 1470.0},
+      "imapb_specials": [[104, "pos_infinity", 0]],
+      "expect": {"sensor_position": null, "sensor_position_datum": null}
+    },
+    {
+      "name": "a_value_wins_over_a_special_entry_it_does_not_equal",
+      "fields": {"sensor_lat_deg": 34.0, "sensor_lon_deg": -118.0, "sensor_ellipsoid_height_extended_m": 1471.0},
+      "imapb_specials": [[104, "below_min", 0]],
+      "expect": {"sensor_position": [34.0, -118.0, 1471.0], "sensor_position_datum": "hae"}
+    },
+    {
+      "name": "a_value_wins_over_a_redundant_sentinel_entry",
+      "fields": {"platform_heading_deg": 10.0, "platform_pitch_full_deg": 4.5, "platform_roll_full_deg": 0.5},
+      "sentinel_tags": [90],
+      "expect": {"platform_attitude": [10.0, 4.5, 0.5]}
+    },
+    {
+      "name": "an_entry_the_encoder_does_not_write_is_not_a_signal",
+      "fields": {"frame_center_lat_deg": 34.1, "frame_center_lon_deg": -118.1, "frame_center_elev_m": 100.0},
+      "sentinel_tags": [78],
+      "imapb_specials": [[78, "below_min", 0]],
+      "expect": {"frame_center": [34.1, -118.1, 100.0], "frame_center_datum": "msl"}
+    }
+  ]
+}

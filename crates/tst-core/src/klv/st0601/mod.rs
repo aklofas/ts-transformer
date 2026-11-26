@@ -138,9 +138,9 @@ pub use encode::{
 pub use mapping::{St0601SentinelMeaning, st0601_sentinel_meaning};
 pub use mismms::{MismmsViolation, validate_mismms};
 pub use model::{
-    Attitude, Corners, EncodeConfig, FieldOfView, GeoPoint, IcingDetected, OperationalMode,
-    OutOfRangePolicy, PlatformStatus, SdccFlpField, SensorControlMode, SensorFovName,
-    UasDatalinkLs,
+    AltitudeDatum, Attitude, Corners, EncodeConfig, FieldOfView, GeoPoint, IcingDetected,
+    OperationalMode, OutOfRangePolicy, PlatformStatus, SdccFlpField, SensorControlMode,
+    SensorFovName, UasDatalinkLs,
 };
 pub use packs::{
     AirbaseLocations, ControlCommand, CountryCodes, ImageHorizonPixels, Location,

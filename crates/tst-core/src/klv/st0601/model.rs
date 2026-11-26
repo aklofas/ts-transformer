@@ -3,6 +3,7 @@
 //! and the encode-side `EncodeConfig`.
 
 use crate::error::KlvFieldError;
+use crate::klv::imapb::ImapbSpecial;
 use crate::klv::pack::OwnedRawField;
 use crate::klv::universal_label::UniversalLabel;
 use alloc::string::String;
@@ -23,7 +24,9 @@ crate::binding_record! {
     ///
     /// The composite views (sensor position, platform and sensor attitude, field
     /// of view, frame center and corners) are accessors that return nothing when
-    /// any of the fields they combine is absent.
+    /// a component they combine is absent or was sent as "no value"; where the
+    /// standard has two items for a component they prefer the full-range,
+    /// extended or ellipsoid one.
     #[must_use]
     #[derive(Debug, Clone, PartialEq)]
     pub struct UasDatalinkLs {
@@ -1179,6 +1182,66 @@ pub struct GeoPoint {
     pub alt_m: f64,
 }
 
+/// The vertical datum of a composite view's `alt_m`: which kind of item the
+/// view took the height from.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AltitudeDatum {
+    /// Height above the WGS 84 ellipsoid (Items 75, 78, 104).
+    Hae,
+    /// Height above mean sea level (Items 15, 25).
+    Msl,
+}
+
+impl AltitudeDatum {
+    fn of(tag: u32) -> Self {
+        if tag == 15 || tag == 25 {
+            Self::Msl
+        } else {
+            Self::Hae
+        }
+    }
+}
+
+/// What a view's chain of items, most preferred first, gives.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) enum ViewItem {
+    /// The first item that holds a value.
+    Value { tag: u32, value: f64 },
+    /// An item before any value was sent as "no value": the view has none.
+    SentAsNoValue { tag: u32 },
+    /// No item of the chain is on the record.
+    Absent,
+}
+
+impl ViewItem {
+    fn value(self) -> Option<f64> {
+        match self {
+            Self::Value { value, .. } => Some(value),
+            _ => None,
+        }
+    }
+
+    fn datum(self) -> Option<AltitudeDatum> {
+        match self {
+            Self::Value { tag, .. } => Some(AltitudeDatum::of(tag)),
+            _ => None,
+        }
+    }
+}
+
+/// A corner longitude `frame centre + offset` folded into (-180, 180]. A
+/// sum already inside is returned as it is (folding it would cost an ulp),
+/// and so is a non-finite one. `f64::rem_euclid` is not in `core`.
+fn wrap_lon_deg(x: f64) -> f64 {
+    if !x.is_finite() || (x > -180.0 && x <= 180.0) {
+        return x;
+    }
+    let r = (x + 180.0) % 360.0;
+    let w = if r < 0.0 { r + 360.0 } else { r } - 180.0;
+    if w == -180.0 { 180.0 } else { w }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Attitude {
     pub heading_deg: f64,
@@ -1201,13 +1264,92 @@ pub struct Corners {
     pub p4: (f64, f64),
 }
 
+/// The composite views. Each component comes from the first item of its
+/// chain that holds a value, most preferred first: the full-range Items
+/// 90 / 91 before 6 / 7, the ellipsoid heights 104 then 75 before the MSL
+/// Item 15, the frame centre's 78 before 25, each corner's full-range pair
+/// (Items 82 to 89) before the frame centre plus that corner's offsets
+/// (Items 26 to 33). An item sent as "no value" (a sentinel, or an IMAPB
+/// special: see [`UasDatalinkLs::sentinel_tags`] and
+/// [`UasDatalinkLs::imapb_specials`]) ends its chain: the view is `None`,
+/// it does not fall back to a less preferred item. An offset corner's
+/// longitude is folded into (-180, 180].
 impl UasDatalinkLs {
+    /// `true` when the encoder writes `tag`'s sentinel or IMAPB special,
+    /// not a value: its field is unset and it has an entry the encoder
+    /// writes, or its field still equals the range end that its last
+    /// `BelowMin` / `AboveMax` entry signals (where a decoder puts it).
+    fn sent_as_no_value(&self, tag: u32) -> bool {
+        let Some(spec) = u8::try_from(tag).ok().and_then(super::tags::lookup) else {
+            return false;
+        };
+        let field = spec.get_f64(self);
+        if let super::tags::Encoding::Imapb { min, max, .. } = spec.encoding {
+            let Some(&(_, special)) = self.imapb_specials.iter().rev().find(|(t, _)| *t == tag)
+            else {
+                return false;
+            };
+            return match field {
+                None => true,
+                Some(v) => match special {
+                    ImapbSpecial::BelowMin => v == min,
+                    ImapbSpecial::AboveMax => v == max,
+                    _ => false,
+                },
+            };
+        }
+        field.is_none()
+            && spec
+                .range
+                .is_some_and(|r| r.signed && matches!(r.byte_length, 2 | 4))
+            && self.sentinel_tags.contains(&tag)
+    }
+
+    fn view_item(&self, chain: &[(u32, Option<f64>)]) -> ViewItem {
+        for &(tag, value) in chain {
+            if self.sent_as_no_value(tag) {
+                return ViewItem::SentAsNoValue { tag };
+            }
+            if let Some(value) = value {
+                return ViewItem::Value { tag, value };
+            }
+        }
+        ViewItem::Absent
+    }
+
+    /// The sensor's height: Item 104, then 75 (ellipsoid), then 15 (MSL).
+    pub(crate) fn sensor_height_item(&self) -> ViewItem {
+        self.view_item(&[
+            (104, self.sensor_ellipsoid_height_extended_m),
+            (75, self.sensor_ellipsoid_height_m),
+            (15, self.sensor_alt_m),
+        ])
+    }
+
+    /// The frame centre's height: Item 78 (ellipsoid), then 25 (MSL).
+    pub(crate) fn frame_center_height_item(&self) -> ViewItem {
+        self.view_item(&[
+            (78, self.frame_center_ellipsoid_height_m),
+            (25, self.frame_center_elev_m),
+        ])
+    }
+
+    /// Sensor latitude and longitude (Items 13, 14) with the first height
+    /// of Items 104, 75, 15; [`Self::sensor_position_datum`] says which
+    /// datum `alt_m` is in.
     pub fn sensor_position(&self) -> Option<GeoPoint> {
         Some(GeoPoint {
             lat_deg: self.sensor_lat_deg?,
             lon_deg: self.sensor_lon_deg?,
-            alt_m: self.sensor_alt_m?,
+            alt_m: self.sensor_height_item().value()?,
         })
+    }
+
+    /// The datum of [`Self::sensor_position`]'s `alt_m`; `None` exactly
+    /// when that view is `None`.
+    pub fn sensor_position_datum(&self) -> Option<AltitudeDatum> {
+        self.sensor_position()?;
+        self.sensor_height_item().datum()
     }
 
     pub fn sensor_attitude(&self) -> Option<Attitude> {
@@ -1225,65 +1367,83 @@ impl UasDatalinkLs {
         })
     }
 
+    /// Platform heading (Item 5) with pitch and roll from the full-range
+    /// Items 90 / 91, else Items 6 / 7.
     pub fn platform_attitude(&self) -> Option<Attitude> {
         Some(Attitude {
             heading_deg: self.platform_heading_deg?,
-            pitch_deg: self.platform_pitch_deg?,
-            roll_deg: self.platform_roll_deg?,
+            pitch_deg: self
+                .view_item(&[
+                    (90, self.platform_pitch_full_deg),
+                    (6, self.platform_pitch_deg),
+                ])
+                .value()?,
+            roll_deg: self
+                .view_item(&[
+                    (91, self.platform_roll_full_deg),
+                    (7, self.platform_roll_deg),
+                ])
+                .value()?,
         })
     }
 
+    /// Frame centre latitude and longitude (Items 23, 24) with the first
+    /// height of Items 78, 25; [`Self::frame_center_datum`] says which
+    /// datum `alt_m` is in.
     pub fn frame_center(&self) -> Option<GeoPoint> {
         Some(GeoPoint {
             lat_deg: self.frame_center_lat_deg?,
             lon_deg: self.frame_center_lon_deg?,
-            alt_m: self.frame_center_elev_m?,
+            alt_m: self.frame_center_height_item().value()?,
         })
     }
 
+    /// The datum of [`Self::frame_center`]'s `alt_m`; `None` exactly when
+    /// that view is `None`.
+    pub fn frame_center_datum(&self) -> Option<AltitudeDatum> {
+        self.frame_center()?;
+        self.frame_center_height_item().datum()
+    }
+
+    /// The four corners, each on its own: its full-range pair (Items 82 to
+    /// 89) when both are on the record, else the frame centre plus its
+    /// offsets (Items 26 to 33). A full-range item sent as "no value"
+    /// (Off-Earth) ends that corner, and so the view.
     pub fn corners(&self) -> Option<Corners> {
-        // Prefer absolute (tags 82-89) when fully populated.
-        if let (Some(l1), Some(o1), Some(l2), Some(o2), Some(l3), Some(o3), Some(l4), Some(o4)) = (
-            self.corner_lat_p1_deg,
-            self.corner_lon_p1_deg,
-            self.corner_lat_p2_deg,
-            self.corner_lon_p2_deg,
-            self.corner_lat_p3_deg,
-            self.corner_lon_p3_deg,
-            self.corner_lat_p4_deg,
-            self.corner_lon_p4_deg,
-        ) {
-            return Some(Corners {
-                p1: (l1, o1),
-                p2: (l2, o2),
-                p3: (l3, o3),
-                p4: (l4, o4),
-            });
-        }
-        // Fall back to offsets + frame center.
-        let lat0 = self.frame_center_lat_deg?;
-        let lon0 = self.frame_center_lon_deg?;
-        let (dl1, do1) = (
-            self.corner_lat_offset_p1_deg?,
-            self.corner_lon_offset_p1_deg?,
-        );
-        let (dl2, do2) = (
-            self.corner_lat_offset_p2_deg?,
-            self.corner_lon_offset_p2_deg?,
-        );
-        let (dl3, do3) = (
-            self.corner_lat_offset_p3_deg?,
-            self.corner_lon_offset_p3_deg?,
-        );
-        let (dl4, do4) = (
-            self.corner_lat_offset_p4_deg?,
-            self.corner_lon_offset_p4_deg?,
-        );
+        let point =
+            |lat_tag: u32, full: (Option<f64>, Option<f64>), offset: (Option<f64>, Option<f64>)| {
+                if self.sent_as_no_value(lat_tag) || self.sent_as_no_value(lat_tag + 1) {
+                    return None;
+                }
+                if let (Some(lat), Some(lon)) = full {
+                    return Some((lat, lon));
+                }
+                Some((
+                    self.frame_center_lat_deg? + offset.0?,
+                    wrap_lon_deg(self.frame_center_lon_deg? + offset.1?),
+                ))
+            };
         Some(Corners {
-            p1: (lat0 + dl1, lon0 + do1),
-            p2: (lat0 + dl2, lon0 + do2),
-            p3: (lat0 + dl3, lon0 + do3),
-            p4: (lat0 + dl4, lon0 + do4),
+            p1: point(
+                82,
+                (self.corner_lat_p1_deg, self.corner_lon_p1_deg),
+                (self.corner_lat_offset_p1_deg, self.corner_lon_offset_p1_deg),
+            )?,
+            p2: point(
+                84,
+                (self.corner_lat_p2_deg, self.corner_lon_p2_deg),
+                (self.corner_lat_offset_p2_deg, self.corner_lon_offset_p2_deg),
+            )?,
+            p3: point(
+                86,
+                (self.corner_lat_p3_deg, self.corner_lon_p3_deg),
+                (self.corner_lat_offset_p3_deg, self.corner_lon_offset_p3_deg),
+            )?,
+            p4: point(
+                88,
+                (self.corner_lat_p4_deg, self.corner_lon_p4_deg),
+                (self.corner_lat_offset_p4_deg, self.corner_lon_offset_p4_deg),
+            )?,
         })
     }
 }

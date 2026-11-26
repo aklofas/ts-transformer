@@ -28,16 +28,15 @@
 //!
 //! ## Corner geometry fallback
 //!
-//! [`tst_st0601_geometry`]'s 4 corner points prefer the full-range tag
-//! family (82-89) and fall back to offsets-from-frame-center (26-33)
-//! when only that family is populated, reusing
-//! `UasDatalinkLs::corners()` — see that method's doc for the
-//! all-or-nothing precondition on each family. When neither family
-//! resolves a complete set of 4 points, all 8 corner fields in the
-//! curated struct report `Absent` uniformly (even if some individual
-//! raw tags in the 82-89 family are actually `Sentinel` /
-//! `ImapbSpecial` on their own — query [`tst_st0601_state`] on the
-//! specific tag for that finer-grained diagnostic).
+//! [`tst_st0601_geometry`]'s 4 corner points come from
+//! `UasDatalinkLs::corners()`, which decides each point on its own: its
+//! full-range pair (82-89) when both are present, else the frame center
+//! plus that point's offsets (26-33), with the longitude folded into
+//! (-180, 180]; a full-range item sent as its Off-Earth sentinel ends that
+//! point. When any of the 4 points does not resolve, all 8 corner fields
+//! in the curated struct report `Absent` uniformly — query
+//! [`tst_st0601_state`] on the specific tag for the finer-grained
+//! diagnostic.
 
 use alloc::boxed::Box;
 use alloc::format;
@@ -335,11 +334,10 @@ fn build_geometry(ls: &UasDatalinkLs) -> TstSt0601Geometry {
     let (frame_center_elev_m, frame_center_elev_state) =
         geometry_f64(ls, TST_ST0601_TAG_FRAME_CENTER_ELEVATION);
 
-    // Corners: prefer the full tag family (82-89); `UasDatalinkLs::corners()`
-    // already implements the fall-back-to-offsets-plus-frame-center logic
-    // (all-or-nothing per family). When neither family resolves a complete
-    // set of 4 points, all 8 corner fields report Absent uniformly — see
-    // the module doc for why a partial-family case isn't split out further.
+    // Corners: `UasDatalinkLs::corners()` decides each point on its own
+    // (full-range pair, else frame center plus offsets). When any point does
+    // not resolve, all 8 corner fields report Absent uniformly — see the
+    // module doc for why a partial case isn't split out further.
     let (corners, corner_state) = match ls.corners() {
         Some(c) => (
             [
@@ -715,6 +713,47 @@ mod tests {
         assert!((geo.corner_lat_p1_deg - 38.001).abs() < 1e-3);
 
         unsafe { tst_st0601_free(p) };
+    }
+
+    #[test]
+    fn geometry_corners_are_decided_per_point() {
+        use tst_core::klv::st0601::encode_to_vec;
+        let geometry_of = |ls: &UasDatalinkLs| {
+            let bytes = encode_to_vec(ls).unwrap();
+            let p = unsafe { tst_st0601_decode(bytes.as_ptr(), bytes.len()) };
+            assert!(!p.is_null());
+            let mut geo = core::mem::MaybeUninit::<TstSt0601Geometry>::uninit();
+            assert_eq!(unsafe { tst_st0601_geometry(p, geo.as_mut_ptr()) }, 0);
+            unsafe { tst_st0601_free(p) };
+            unsafe { geo.assume_init() }
+        };
+        // Three points from their full-range pairs, the fourth from the frame
+        // center and its offsets.
+        let mut ls = UasDatalinkLs {
+            corner_lat_p1_deg: Some(1.0),
+            corner_lon_p1_deg: Some(2.0),
+            corner_lat_p2_deg: Some(3.0),
+            corner_lon_p2_deg: Some(4.0),
+            corner_lat_p3_deg: Some(5.0),
+            corner_lon_p3_deg: Some(6.0),
+            frame_center_lat_deg: Some(20.0),
+            frame_center_lon_deg: Some(30.0),
+            corner_lat_offset_p4_deg: Some(0.02),
+            corner_lon_offset_p4_deg: Some(0.02),
+            ..UasDatalinkLs::default()
+        };
+        let geo = geometry_of(&ls);
+        assert_eq!(geo.corner_lat_p1_state, TstSt0601FieldState::Present as u8);
+        assert!((geo.corner_lat_p1_deg - 1.0).abs() < 1e-6);
+        assert_eq!(geo.corner_lat_p4_state, TstSt0601FieldState::Present as u8);
+        assert!((geo.corner_lat_p4_deg - 20.02).abs() < 1e-3);
+        assert!((geo.corner_lon_p4_deg - 30.02).abs() < 1e-3);
+        // The fourth point's latitude sent as Off-Earth: no corners.
+        ls.corner_lon_p4_deg = Some(8.0);
+        ls.sentinel_tags = alloc::vec![88];
+        let geo = geometry_of(&ls);
+        assert_eq!(geo.corner_lat_p1_state, TstSt0601FieldState::Absent as u8);
+        assert_eq!(geo.corner_lon_p4_state, TstSt0601FieldState::Absent as u8);
     }
 
     #[test]
