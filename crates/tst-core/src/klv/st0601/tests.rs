@@ -3220,8 +3220,32 @@ fn pack_location_four_byte_length_rejected() {
 /// interior-absent field filled by the ST 1201.5 special-value filler
 /// and decoded straight back to `None`.
 #[test]
-fn pack_location_interior_absent_lat_or_lon_round_trips_via_filler() {
-    let al = super::packs::AirbaseLocations {
+fn pack_location_needs_both_coordinates_and_truncates_only_its_height() {
+    // The two legal shapes round-trip: both coordinates with a height, and
+    // both without one (8 bytes: the height is the pack's only truncation).
+    for hae_m in [Some(100.0), None] {
+        let site = super::packs::Location {
+            lat_deg: Some(38.8),
+            lon_deg: Some(-77.0),
+            hae_m,
+        };
+        let al = super::packs::AirbaseLocations {
+            take_off: Some(site),
+            recovery: None,
+        };
+        let encoded = encode_with_field(|r| r.airbase_locations = Some(al));
+        let take_off = decode(&encoded)
+            .unwrap()
+            .airbase_locations
+            .unwrap()
+            .take_off
+            .unwrap();
+        assert!((take_off.lat_deg.unwrap() - 38.8).abs() < 1e-3);
+        assert!((take_off.lon_deg.unwrap() + 77.0).abs() < 1e-3);
+        assert_eq!(take_off.hae_m.is_some(), hae_m.is_some());
+    }
+    // A coordinate without its pair is refused (no private filler).
+    let half = super::packs::AirbaseLocations {
         take_off: Some(super::packs::Location {
             lat_deg: Some(38.8),
             lon_deg: None,
@@ -3229,16 +3253,14 @@ fn pack_location_interior_absent_lat_or_lon_round_trips_via_filler() {
         }),
         recovery: None,
     };
-    let encoded = encode_with_field(|r| r.airbase_locations = Some(al));
-    let back = decode(&encoded).unwrap().airbase_locations.unwrap();
-    let take_off = back.take_off.unwrap();
-    assert!((take_off.lat_deg.unwrap() - 38.8).abs() < 1e-3);
-    assert_eq!(
-        take_off.lon_deg, None,
-        "interior-absent lon must round-trip via the IMAPB filler, not silently \
-         become some other value"
-    );
-    assert!((take_off.hae_m.unwrap() - 100.0).abs() < 0.1);
+    let rec = UasDatalinkLs {
+        airbase_locations: Some(half),
+        ..Default::default()
+    };
+    assert!(matches!(
+        encode_to_vec(&rec),
+        Err(KlvEncodeError::InvalidFieldValue { tag: 130, .. })
+    ));
 }
 
 /// ST 0601.19 §8.138 worked example — the 63-byte 3-record vector
@@ -4596,4 +4618,101 @@ fn strict_encode_drops_a_trailing_country_code_that_cleans_to_empty() {
         items_with_tag(&out, 122),
         [vec![0x01, 0x01, 0x03, b'C', b'A', b'N']]
     );
+}
+
+// ---------------------------------------------------------------------------
+// Locations (Items 130, 141): both coordinates or none, no private filler
+// ---------------------------------------------------------------------------
+
+/// The three location shapes the standard does not define: one coordinate
+/// with a height, one coordinate alone, a height alone.
+fn half_locations() -> [(super::packs::Location, &'static str); 3] {
+    use super::packs::Location;
+    [
+        (
+            Location {
+                lat_deg: Some(38.8),
+                lon_deg: None,
+                hae_m: Some(100.0),
+            },
+            "latitude and height",
+        ),
+        (
+            Location {
+                lat_deg: None,
+                lon_deg: Some(-77.0),
+                hae_m: None,
+            },
+            "longitude alone",
+        ),
+        (
+            Location {
+                lat_deg: None,
+                lon_deg: None,
+                hae_m: Some(100.0),
+            },
+            "height only",
+        ),
+    ]
+}
+
+#[test]
+fn a_location_with_one_coordinate_is_refused_not_filled() {
+    for (site, shape) in half_locations() {
+        let rec = UasDatalinkLs {
+            airbase_locations: Some(super::packs::AirbaseLocations {
+                take_off: Some(site),
+                recovery: None,
+            }),
+            ..timestamped()
+        };
+        for got in [encode_to_vec(&rec), encode_strict_compliance(&rec)] {
+            assert!(
+                matches!(got, Err(KlvEncodeError::InvalidFieldValue { tag: 130, .. })),
+                "{shape}: {got:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_waypoint_location_with_one_coordinate_is_refused_not_filled() {
+    for (site, shape) in half_locations() {
+        let rec = UasDatalinkLs {
+            waypoint_list: Some(vec![super::packs::Waypoint {
+                id: 1,
+                prosecution_order: 1,
+                info: None,
+                location: Some(site),
+            }]),
+            ..timestamped()
+        };
+        for got in [encode_to_vec(&rec), encode_strict_compliance(&rec)] {
+            assert!(
+                matches!(got, Err(KlvEncodeError::InvalidFieldValue { tag: 141, .. })),
+                "{shape}: {got:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_decoded_location_with_a_special_coordinate_is_an_unknown_site() {
+    // ST 0601.19 §8.130's example: take-off then recovery, 11 bytes each;
+    // the take-off latitude is bytes 1 to 4.
+    let example = hex("0B406BC20919BDA554070E000B40783CB819A2927407C600");
+    // The take-off latitude sent as IMAP_BELOW_MINIMUM, then as a reserved
+    // pattern of the +infinity family.
+    for latitude in [[0xE0, 0, 0, 0], [0xC8, 0xFF, 0xFF, 0xFF]] {
+        let mut value = example.clone();
+        value[1..5].copy_from_slice(&latitude);
+        let rec = decode(&wrap_st0601(&tlv(130, &value))).unwrap();
+        let al = rec.airbase_locations.unwrap();
+        assert_eq!(al.take_off, None, "{latitude:02X?}");
+        assert!((al.recovery.unwrap().lat_deg.unwrap() - 38.939353).abs() < 1e-4);
+        assert_eq!(
+            format!("{:?}", rec.field_errors),
+            "[InvalidFormat { tag: 130 }]"
+        );
+    }
 }

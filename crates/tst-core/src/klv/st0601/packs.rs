@@ -22,9 +22,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 
 use crate::error::{KlvDecodeError, KlvEncodeError, KlvFieldError};
-use crate::klv::imapb::{
-    DecodedImapb, ImapbParams, ImapbSpecial, decode_imapb, encode_imapb, encode_imapb_special,
-};
+use crate::klv::imapb::{DecodedImapb, ImapbParams, decode_imapb, encode_imapb};
 use crate::klv::length::{
     ber_len, ber_oid_len_u64, read_ber, read_ber_oid_u64, read_var_uint, var_uint_min_len,
     write_ber, write_ber_oid_u64, write_var_uint_min,
@@ -520,12 +518,8 @@ fn decode_imapb_required(p: &ImapbParams, bytes: &[u8], tag: u32) -> Result<f64,
 
 /// Decode an OPTIONAL IMAPB field, mapping any non-`Value` outcome
 /// (special / reserved-special / out-of-range) to `None` rather than an
-/// error. Used by [`parse_location`], which repurposes the IMAPB
-/// special-value space as a filler for an "interior absent" field a
-/// later field's presence forces onto the wire (see that function's
-/// rustdoc) — there is no separate side channel to carry which special
-/// was signaled, so any of the three non-`Value` outcomes collapses to
-/// the same `None`.
+/// error. Used by [`parse_location`] for each field of a site; a site
+/// whose latitude or longitude reads `None` is an unknown site there.
 fn decode_imapb_optional(p: &ImapbParams, bytes: &[u8]) -> Result<Option<f64>, KlvFieldError> {
     Ok(match decode_imapb(p, bytes)? {
         DecodedImapb::Value(v) => Some(v),
@@ -669,17 +663,14 @@ crate::binding_record! {
     /// 113's Altitude AGL). `lat`/`lon` are mandatory once any bytes are
     /// present; only the trailing `hae` is truncatable.
     ///
-    /// **Encode semantics for an interior-absent field** (e.g. `lat: None`
-    /// while `hae: Some(..)`): IMAPB has no INT_MIN-style sentinel of its
-    /// own, so this repurposes the ST 1201.5 special-value space —
-    /// specifically a user-defined special with signal 0 — as an
-    /// "absent" filler at that field's wire position, matching decode, which
-    /// maps ANY special/reserved/out-of-range pattern back to `None`. This is spec-legal (§7.2.3's special-value
-    /// space is defined at the IMAPB layer, independent of the ST 0601 item
-    /// using it) even though it is not itself a case ST 0601.19 §8.130
-    /// describes — the spec only ever truncates `hae` from the end, never
-    /// leaves `lat`/`lon` absent with `hae` present. Only a trailing `None`
-    /// (or all three `None`) truncates the pack.
+    /// So a site is written with both coordinates (and its height when it
+    /// has one) or, when all three are `None`, as an unknown site of length
+    /// 0. A height or one coordinate without both coordinates is refused on
+    /// encode (`InvalidFieldValue` with the item's tag): the standard has no
+    /// wire form for it. On decode, a site whose latitude or longitude is a
+    /// special or reserved IMAP pattern is an unknown site (`None`) with one
+    /// `InvalidFormat` field error naming the item; a height sent as such a
+    /// pattern reads `None`.
     #[derive(Debug, Clone, Copy, PartialEq, Default)]
     pub struct Location {
         pub lat_deg: Option<f64>,
@@ -734,27 +725,24 @@ fn is_valid_location_len(n: usize) -> bool {
 }
 
 fn emit_location_field(
-    value: Option<f64>,
+    value: f64,
     params: &ImapbParams,
     out: &mut Vec<u8>,
 ) -> Result<(), KlvEncodeError> {
     let mut buf = [0u8; 4];
-    match value {
-        Some(v) => encode_imapb(params, v, &mut buf[..params.length])?,
-        // Interior-absent filler — see the struct rustdoc. Only `lat`/
-        // `lon` can hit this arm (the pair is transmitted as a unit
-        // once either is `Some`); `hae` is only ever passed `Some` here.
-        None => encode_imapb_special(
-            ImapbSpecial::UserDefined { signal: 0 },
-            params.length,
-            &mut buf[..params.length],
-        )?,
-    }
+    encode_imapb(params, value, &mut buf[..params.length])?;
     out.extend_from_slice(&buf[..params.length]);
     Ok(())
 }
 
-pub(crate) fn parse_location(bytes: &[u8], tag: u32) -> Result<Location, KlvFieldError> {
+/// Parse a non-empty site of Item `tag`. A site whose latitude or longitude
+/// is not a value is an unknown site: `None`, with one field error in
+/// `errors`.
+pub(crate) fn parse_location(
+    bytes: &[u8],
+    tag: u32,
+    errors: &mut Vec<KlvFieldError>,
+) -> Result<Option<Location>, KlvFieldError> {
     if !is_valid_location_len(bytes.len()) {
         return Err(KlvFieldError::InvalidLength {
             tag,
@@ -763,34 +751,50 @@ pub(crate) fn parse_location(bytes: &[u8], tag: u32) -> Result<Location, KlvFiel
         });
     }
     if bytes.is_empty() {
-        return Ok(Location::default());
+        return Ok(None);
     }
     let lat_deg = decode_imapb_optional(&LOCATION_PARAMS[0], &bytes[0..4])?;
     let lon_deg = decode_imapb_optional(&LOCATION_PARAMS[1], &bytes[4..8])?;
+    if lat_deg.is_none() || lon_deg.is_none() {
+        errors.push(KlvFieldError::InvalidFormat { tag });
+        return Ok(None);
+    }
     let hae_m = if bytes.len() == 11 {
         decode_imapb_optional(&LOCATION_PARAMS[2], &bytes[8..11])?
     } else {
         None
     };
-    Ok(Location {
+    Ok(Some(Location {
         lat_deg,
         lon_deg,
         hae_m,
-    })
+    }))
 }
 
 pub(crate) fn location_len(loc: &Location) -> usize {
     location_wire_len(loc)
 }
 
-pub(crate) fn emit_location(loc: &Location, out: &mut Vec<u8>) -> Result<(), KlvEncodeError> {
-    if location_wire_len(loc) == 0 {
-        return Ok(());
-    }
-    emit_location_field(loc.lat_deg, &LOCATION_PARAMS[0], out)?;
-    emit_location_field(loc.lon_deg, &LOCATION_PARAMS[1], out)?;
+/// Write a site of Item `tag`: nothing for an unknown site, else both
+/// coordinates and the height when there is one.
+pub(crate) fn emit_location(
+    loc: &Location,
+    tag: u32,
+    out: &mut Vec<u8>,
+) -> Result<(), KlvEncodeError> {
+    let (Some(lat), Some(lon)) = (loc.lat_deg, loc.lon_deg) else {
+        if location_wire_len(loc) == 0 {
+            return Ok(());
+        }
+        return Err(KlvEncodeError::InvalidFieldValue {
+            tag,
+            reason: "a location has both coordinates, or none (ST 0601.19 Table 16)",
+        });
+    };
+    emit_location_field(lat, &LOCATION_PARAMS[0], out)?;
+    emit_location_field(lon, &LOCATION_PARAMS[1], out)?;
     if let Some(hae) = loc.hae_m {
-        emit_location_field(Some(hae), &LOCATION_PARAMS[2], out)?;
+        emit_location_field(hae, &LOCATION_PARAMS[2], out)?;
     }
     Ok(())
 }
@@ -818,13 +822,12 @@ crate::binding_record! {
     }
 }
 
-pub(crate) fn parse_airbase_locations(bytes: &[u8]) -> Result<AirbaseLocations, KlvFieldError> {
+pub(crate) fn parse_airbase_locations(
+    bytes: &[u8],
+    errors: &mut Vec<KlvFieldError>,
+) -> Result<AirbaseLocations, KlvFieldError> {
     let (loc1_bytes, rest) = read_len_prefixed(bytes, 130)?;
-    let take_off = if loc1_bytes.is_empty() {
-        None
-    } else {
-        Some(parse_location(loc1_bytes, 130)?)
-    };
+    let take_off = parse_location(loc1_bytes, 130, errors)?;
     if rest.is_empty() {
         // Recovery entirely absent -> same as take-off (§8.130.1 bullet 1).
         return Ok(AirbaseLocations {
@@ -840,11 +843,7 @@ pub(crate) fn parse_airbase_locations(bytes: &[u8]) -> Result<AirbaseLocations, 
             got: bytes.len(),
         });
     }
-    let recovery = if loc2_bytes.is_empty() {
-        None
-    } else {
-        Some(parse_location(loc2_bytes, 130)?)
-    };
+    let recovery = parse_location(loc2_bytes, 130, errors)?;
     Ok(AirbaseLocations { take_off, recovery })
 }
 
@@ -867,14 +866,14 @@ pub(crate) fn emit_airbase_locations(
     let n = write_ber(take_off_len, &mut len_buf)?;
     out.extend_from_slice(&len_buf[..n]);
     if let Some(loc) = al.take_off {
-        emit_location(&loc, out)?;
+        emit_location(&loc, 130, out)?;
     }
     if al.recovery != al.take_off {
         let recovery_len = al.recovery.map(|loc| location_len(&loc)).unwrap_or(0);
         let n2 = write_ber(recovery_len, &mut len_buf)?;
         out.extend_from_slice(&len_buf[..n2]);
         if let Some(loc) = al.recovery {
-            emit_location(&loc, out)?;
+            emit_location(&loc, 130, out)?;
         }
     }
     Ok(())
@@ -1305,7 +1304,10 @@ crate::binding_record! {
     }
 }
 
-fn parse_waypoint(bytes: &[u8]) -> Result<Waypoint, KlvFieldError> {
+fn parse_waypoint(
+    bytes: &[u8],
+    errors: &mut Vec<KlvFieldError>,
+) -> Result<Waypoint, KlvFieldError> {
     let (id, rest) = read_ber_oid_u64(bytes).map_err(truncated(141))?;
     if rest.len() < 2 {
         return Err(KlvFieldError::TruncatedField { tag: 141 });
@@ -1327,11 +1329,7 @@ fn parse_waypoint(bytes: &[u8]) -> Result<Waypoint, KlvFieldError> {
             got: rest.len(),
         });
     }
-    let location = if rest.is_empty() {
-        None
-    } else {
-        Some(parse_location(rest, 141)?)
-    };
+    let location = parse_location(rest, 141, errors)?;
     Ok(Waypoint {
         id,
         prosecution_order,
@@ -1357,19 +1355,22 @@ fn emit_waypoint(wp: &Waypoint, out: &mut Vec<u8>) -> Result<(), KlvEncodeError>
         out.extend_from_slice(&buf[..n2]);
     }
     if let Some(loc) = wp.location {
-        emit_location(&loc, out)?;
+        emit_location(&loc, 141, out)?;
     }
     Ok(())
 }
 
 /// Item 141 value: `[BER length][Waypoint]` repeated until the value
 /// bytes are exhausted.
-pub(crate) fn parse_waypoints(bytes: &[u8]) -> Result<Vec<Waypoint>, KlvFieldError> {
+pub(crate) fn parse_waypoints(
+    bytes: &[u8],
+    errors: &mut Vec<KlvFieldError>,
+) -> Result<Vec<Waypoint>, KlvFieldError> {
     let mut out = Vec::new();
     let mut rest = bytes;
     while !rest.is_empty() {
         let (rec_bytes, r) = read_len_prefixed(rest, 141)?;
-        out.push(parse_waypoint(rec_bytes)?);
+        out.push(parse_waypoint(rec_bytes, errors)?);
         rest = r;
     }
     Ok(out)

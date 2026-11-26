@@ -890,10 +890,21 @@ fn apply_pack(
         122 => record.country_codes = Some(packs::parse_country_codes(f.value)?),
         127 => record.sensor_frame_rate = Some(packs::parse_sensor_frame_rate(f.value)?),
         128 => record.wavelengths_list = Some(packs::parse_wavelengths_list(f.value)?),
-        130 => record.airbase_locations = Some(packs::parse_airbase_locations(f.value)?),
+        // A site that is not a location is an unknown site with a field
+        // error, reported only when the rest of the item decodes.
+        130 => {
+            let mut site_errors = Vec::new();
+            record.airbase_locations =
+                Some(packs::parse_airbase_locations(f.value, &mut site_errors)?);
+            record.field_errors.append(&mut site_errors);
+        }
         138 => record.payload_list = Some(packs::parse_payload_list(f.value)?),
         140 => record.weapons_stores = Some(packs::parse_weapons_stores(f.value)?),
-        141 => record.waypoint_list = Some(packs::parse_waypoints(f.value)?),
+        141 => {
+            let mut site_errors = Vec::new();
+            record.waypoint_list = Some(packs::parse_waypoints(f.value, &mut site_errors)?);
+            record.field_errors.append(&mut site_errors);
+        }
         142 => record.view_domain = Some(packs::parse_view_domain(f.value)?),
         143 => record.metadata_substream_id = Some(packs::parse_metadata_substream_id(f.value)?),
         _ => unreachable!(),
