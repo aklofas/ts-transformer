@@ -93,7 +93,9 @@ impl super::demuxer::Demuxer {
     /// the stream the PID carries, or, for a PID that carries only some
     /// program's PCR, the anonymous id `pcr_stream_id` gives it (H.222.0
     /// §2.4.3.5: the flag there signals that program's new time base).
-    /// `None` for a PID no program declares.
+    /// `None` for a PID no program declares. Out of line: the flag is rare,
+    /// and the program scan would otherwise sit in the per-packet path.
+    #[cold]
     fn flag_stream_id(&self, pid: u16, stream: Option<StreamId>) -> Option<StreamId> {
         stream.or_else(|| {
             self.pcr_program_of(pid)
