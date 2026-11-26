@@ -1321,7 +1321,14 @@ mod label_tests {
     /// any second byte but 0x00 are reserved.
     #[test]
     fn a_0x10_selector_with_a_reserved_table_is_not_decoded() {
-        for (second, third) in [(0x00, 0x0C), (0x00, 0x00), (0x12, 0x34), (0x00, 0x10)] {
+        for (second, third) in [
+            (0x00, 0x0C),
+            (0x00, 0x00),
+            (0x12, 0x34),
+            (0x00, 0x10),
+            (0x01, 0x01),
+            (0xFF, 0x05),
+        ] {
             assert_eq!(
                 label_or_next_source(&[0x10, second, third, b'A', b'B']).as_deref(),
                 Some("eng"),
