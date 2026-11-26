@@ -473,6 +473,11 @@ struct H266TimingRplOpts {
     /// `Some(lsb)`: the one L0 entry is a long-term entry coded in the SPS
     /// (`ltrp_in_header_flag = 0`) with `rpls_poc_lsb_lt = lsb`.
     long_term_entry_lsb: Option<u32>,
+    /// `Some(d0)`: two sublayers (`sps_max_sublayers_minus1 = 1`) timed apart
+    /// (`sps_sublayer_cpb_params_present_flag = 1`): sublayer 0 has a fixed
+    /// rate with `elemental_duration_in_tc_minus1 = d0`, sublayer 1 (the
+    /// highest) has `elemental_duration_minus1`.
+    lower_sublayer_duration_minus1: Option<u32>,
 }
 
 impl Default for H266TimingRplOpts {
@@ -483,17 +488,19 @@ impl Default for H266TimingRplOpts {
             elemental_duration_minus1: 0,
             log2_max_poc_lsb_minus4: 0,
             long_term_entry_lsb: None,
+            lower_sublayer_duration_minus1: None,
         }
     }
 }
 
 fn sps_rbsp_with_rps_and_timing(opts: H266TimingRplOpts) -> Vec<u8> {
     let mut bw = BitWriter::new();
+    let two_sublayers = opts.lower_sublayer_duration_minus1.is_some();
 
     // §7.3.2.4 SPS header — same layout as `minimal_sps_rbsp_full`.
     bw.write(0, 4); // sps_seq_parameter_set_id
     bw.write(0, 4); // sps_video_parameter_set_id
-    bw.write(0, 3); // sps_max_sublayers_minus1
+    bw.write(u64::from(two_sublayers), 3); // sps_max_sublayers_minus1
     bw.write(1, 2); // sps_chroma_format_idc = 1 (4:2:0)
     bw.write(0, 2); // sps_log2_ctu_size_minus5
     bw.write(1, 1); // sps_ptl_dpb_hrd_params_present_flag = 1
@@ -506,6 +513,10 @@ fn sps_rbsp_with_rps_and_timing(opts: H266TimingRplOpts) -> Vec<u8> {
     bw.write(0, 1); // ptl_multilayer_enabled_flag
     bw.write(0, 1); // gci_present_flag = 0
     bw.write(0, 5); // byte-align PTL (19 + 5 = 24 = byte boundary)
+    if two_sublayers {
+        bw.write(0, 1); // ptl_sublayer_level_present_flag[0]
+        bw.write(0, 7); // ptl_reserved_zero_bit up to the byte boundary
+    }
     bw.write(0, 8); // ptl_num_sub_profiles = 0
 
     bw.write(0, 1); // sps_gdr_enabled_flag
@@ -524,6 +535,9 @@ fn sps_rbsp_with_rps_and_timing(opts: H266TimingRplOpts) -> Vec<u8> {
     bw.write(0, 2); // sps_num_extra_ph_bytes
     bw.write(0, 2); // sps_num_extra_sh_bytes
 
+    if two_sublayers {
+        bw.write(0, 1); // sps_sublayer_dpb_params_flag = 0: the highest only
+    }
     // dpb_parameters(0, false): one iteration.
     bw.write_ue(1); // dpb_max_dec_pic_buffering_minus1[0]
     bw.write_ue(0); // dpb_max_num_reorder_pics[0]
@@ -630,7 +644,12 @@ fn sps_rbsp_with_rps_and_timing(opts: H266TimingRplOpts) -> Vec<u8> {
     // Both 0 → no further general_timing_hrd fields.
     // §7.3.5.2 ols_timing_hrd_parameters: max_sublayers_minus1=0 → no
     // sublayer_cpb_params_present_flag; first_sub_layer = 0.
-    // Loop 0..=0:
+    // Loop 0..=0 (with two sublayers: the flag = 1, then sublayer 0 first):
+    if let Some(d0) = opts.lower_sublayer_duration_minus1 {
+        bw.write(1, 1); // sps_sublayer_cpb_params_present_flag
+        bw.write(1, 1); // fixed_pic_rate_general_flag[0]
+        bw.write_ue(d0); // elemental_duration_in_tc_minus1[0]
+    }
     bw.write(1, 1); // fixed_pic_rate_general_flag = 1 → infer within_cvs=true
     bw.write_ue(opts.elemental_duration_minus1); // elemental_duration_in_tc_minus1
     // No sublayer_hrd_parameters (neither nal_hrd nor vcl_hrd present).
@@ -699,6 +718,23 @@ fn frame_rate_divides_by_elemental_duration() {
     let rbsp = sps_rbsp_with_rps_and_timing(H266TimingRplOpts {
         time_scale: 60,
         elemental_duration_minus1: 1,
+        ..Default::default()
+    });
+    assert_eq!(
+        parse_sps(&escape_emulation(&rbsp)).unwrap().frame_rate,
+        Some(Rational { num: 30, den: 1 })
+    );
+}
+
+/// The rate is the highest sublayer's: two sublayers timed apart, sublayer 0
+/// at four ticks a picture and sublayer 1 at two, 60 ticks a second: 30/1
+/// (sublayer 0's duration would give 15/1).
+#[test]
+fn the_highest_sublayers_elemental_duration_sets_the_rate() {
+    let rbsp = sps_rbsp_with_rps_and_timing(H266TimingRplOpts {
+        time_scale: 60,
+        elemental_duration_minus1: 1,
+        lower_sublayer_duration_minus1: Some(3),
         ..Default::default()
     });
     assert_eq!(
@@ -907,6 +943,23 @@ fn vui_parse_is_bounded_even_when_bytes_follow_the_sps() {
     }
 }
 
+/// The VUI payload is RBSP: its bytes `00 00 03` are data, not an
+/// emulation-prevention byte (the SPS on the wire codes them `00 00 03 03`).
+/// The colour description flag is the payload's seventh bit, so primaries 0,
+/// transfer 0, matrix 1 and full range take bits 7 to 31: the bytes
+/// `02 00 00 03`; the chroma location flag (0) and the marker are in `40`.
+#[test]
+fn a_vui_payload_holding_00_00_03_reads_the_03_as_data() {
+    let rbsp = minimal_sps_rbsp_ext(0, None, Some((4, &[0x02, 0x00, 0x00, 0x03, 0x40])), false);
+    let sps = parse_sps(&escape_emulation(&rbsp)).expect("SPS with 00 00 03 in its VUI");
+    let color = sps.color_info.expect("colour description present");
+    assert_eq!(color.primaries, ColourPrimaries::from_h273(0));
+    assert_eq!(color.transfer, TransferCharacteristics::from_h273(0));
+    assert_eq!(color.matrix, MatrixCoefficients::from_h273(1));
+    assert!(color.full_range);
+    assert_eq!(color.chroma_loc, None);
+}
+
 /// `sps_vui_alignment_zero_bit` shall be 0 (H.266 §7.4.3.4).
 #[test]
 fn a_non_zero_vui_alignment_bit_is_refused() {
@@ -927,13 +980,17 @@ fn a_non_zero_vui_alignment_bit_is_refused() {
     }
 }
 
-/// A real VUI: VVenC 1.14.0, three 320x240 frames,
-/// `-vui 1 --AspectRatioInfoPresent 1 --AspectRatioIdc 2
-/// --ColourDescriptionPresent 1 --ColourPrimaries bt709
+/// A real VUI, from VVenC 1.14.0 given three frames of 8-bit 4:2:0 input
+/// (the frames' content does not change the SPS):
+/// `vvencFFapp --InputFile=<input.yuv> --SourceWidth=320 --SourceHeight=240
+/// --InputBitDepth 8 --FrameRate=30 --FramesToBeEncoded=3
+/// --BitstreamFile=<out.266> -vui 1 --AspectRatioInfoPresent 1
+/// --AspectRatioIdc 2 --ColourDescriptionPresent 1 --ColourPrimaries bt709
 /// --TransferCharacteristics bt709 --MatrixCoefficients bt709
-/// --VideoFullRange 1 --ChromaLocInfoPresent 1`. The fixture is the SPS's
-/// RBSP (NAL header stripped, emulation-prevention bytes kept); its 6-byte
-/// VUI ends five bits before the payload's end, in its marker byte `F0`.
+/// --VideoFullRange 1 --ChromaLocInfoPresent 1` (`--FrameRate=30` gives the
+/// 30/1 below). The fixture is the SPS's RBSP (NAL header stripped,
+/// emulation-prevention bytes kept); its 6-byte VUI ends five bits before
+/// the payload's end, in its marker byte `F0`.
 #[test]
 fn real_vvenc_sps_with_vui_parses() {
     let rbsp =
