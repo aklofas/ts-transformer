@@ -203,6 +203,13 @@ include = [
     # (ABI 21, unconditional)
     "TstParamSets",
 ]
+# A parsed crate's associated constant is Rust API, not C ABI: cbindgen
+# writes it as a `<Type>_<NAME>` macro unless excluded. cbindgen 0.29 keys
+# such a constant by its name followed by its type's
+# (`Av1FrameHeaderLight::FRAME_TYPE_UNKNOWN` is `FRAME_TYPE_UNKNOWNAv1FrameHeaderLight`).
+exclude = [
+    "FRAME_TYPE_UNKNOWNAv1FrameHeaderLight",
+]
 
 [export.rename]
 # Enums (repr(C)): no _t suffix, so prefix_with_name produces clean TST_* variant prefixes

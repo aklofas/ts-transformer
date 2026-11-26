@@ -16,11 +16,16 @@ import java.nio.ByteBuffer;
  *     both luma and chroma — they are always equal.
  * @param bitDepthChroma Chroma bit depth. Equal to {@code bitDepthLuma} per H.266 V4 §7.4.3.4
  *     (single {@code sps_bitdepth_minus8} field covers both planes).
- * @param color VUI colour info, or absent when the VUI is absent or {@code colour_description} is
- *     not present. Decoded per H.274 §7.2 (codec-independent colour registry).
- * @param frameRate Frame rate as a rational number, or absent when the timing HRD parameters are
- *     absent. In H.266, timing lives in {@code general_timing_hrd_parameters()} (§7.3.5.1), not the
- *     VUI.
+ * @param color VUI colour info: present when the VUI signals any of a colour description, the
+ *     chroma sample locations or the aspect ratio; absent otherwise and when the SPS has no VUI.
+ *     Decoded per H.274 §7.2 (codec-independent colour registry).
+ * @param frameRate Frame rate as a rational number: {@code time_scale / num_units_in_tick} as
+ *     coded; when the highest sublayer has a fixed picture rate with {@code
+ *     elemental_duration_in_tc_minus1} above 0, that pair divided by {@code
+ *     elemental_duration_in_tc_minus1 + 1} and reduced (H.266 §7.4.6.2). Absent when the timing HRD
+ *     parameters are absent, when either timing field is zero, and when the reduced pair does not
+ *     fit 32 bits. In H.266, timing lives in {@code general_timing_hrd_parameters()} (§7.3.5.1),
+ *     not the VUI.
  * @param cropLeft Luma-sample conformance-window crop offsets per H.266 §7.4.3.4. {@code
  *     coded_width = width + crop_left + crop_right} (and similarly for height). Useful for sizing
  *     GPU buffers.

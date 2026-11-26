@@ -16,10 +16,11 @@ import java.nio.ByteBuffer;
  * @param generalTierFlag {@code generalTierFlag} — true = High tier, false = Main tier.
  * @param generalLevelIdc {@code generalLevelIdc} — e.g. 120 for Level 4.0, 150 for Level 5.0.
  * @param generalProfileCompatibilityFlags 32-bit {@code generalProfileCompatibilityFlags} per H.265
- *     §7.3.3 — bit {@code i} set means the stream conforms to profile {@code i}. Real Main10
- *     streams often have {@code general_profile_idc=1} (Main) but bit 2 set; ffmpeg {@code
- *     hevc/ps.c:267-270} uses this to disambiguate Main vs Main10 vs Main10-Intra. Surfaced here so
- *     consumers can do the same.
+ *     §7.3.3, MSB first: spec flag {@code j} ({@code general_profile_compatibility_flag[j]}, set
+ *     when the stream conforms to profile {@code j}) is numeric bit {@code 31 - j}, {@code flags &
+ *     (1 << (31 - j))}. Real Main10 streams often have {@code general_profile_idc=1} (Main) but
+ *     flag 2 ({@code 1 << 29}) set; ffmpeg {@code hevc/ps.c:267-270} uses this to disambiguate Main
+ *     vs Main10 vs Main10-Intra. Surfaced here so consumers can do the same.
  * @param generalProgressiveSourceFlag {@code generalProgressiveSourceFlag} (§7.4.4).
  * @param generalInterlacedSourceFlag {@code generalInterlacedSourceFlag} (§7.4.4).
  * @param generalNonPackedConstraintFlag {@code generalNonPackedConstraintFlag} (§7.4.4).
@@ -28,9 +29,15 @@ import java.nio.ByteBuffer;
  * @param bitDepthChroma Chroma bit depth (8 + {@code bit_depth_chroma_minus8}).
  * @param chromaFormat Chroma subsampling format.
  * @param maxSubLayersMinus1 {@code sps_max_sub_layers_minus1} — max sub-layer temporal scalability.
- * @param frameRate Frame rate as a rational number, or absent when VUI timing is absent.
- * @param color VUI colour info, or absent when the VUI or {@code video_signal_type_present_flag} is
- *     absent.
+ * @param frameRate Frame rate as a rational number: {@code vui_time_scale / vui_num_units_in_tick}
+ *     as signalled (not reduced); when {@code vui_poc_proportional_to_timing_flag} signals more
+ *     than one clock tick per POC step, that pair divided by {@code
+ *     vui_num_ticks_poc_diff_one_minus1 + 1} and reduced (H.265 §E.3.1; this takes POC to advance
+ *     by 1 per output picture). Absent when VUI timing is absent, when either timing field is zero,
+ *     and when the reduced pair does not fit 32 bits.
+ * @param color VUI colour info: present when the VUI signals any of {@code video_signal_type} (with
+ *     or without a colour description), the chroma sample locations or the aspect ratio; absent
+ *     otherwise.
  * @param cropLeft Luma-sample crop offsets applied to the coded picture dimensions to produce
  *     {@code width}/{@code height}. Computed from {@code conformance_window_flag} + {@code
  *     conf_win_*_offset} per H.265 §7.4.3.2.1, already multiplied by {@code SubWidthC} / {@code

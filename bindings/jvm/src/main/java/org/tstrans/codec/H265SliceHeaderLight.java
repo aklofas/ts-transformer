@@ -13,9 +13,11 @@ import java.nio.ByteBuffer;
  *     I as a conservative fallback for continuation slices, where PPS context is required to skip
  *     {@code slice_segment_address}.
  * @param ppsId {@code slice_pic_parameter_set_id} — links this slice to a PPS.
- * @param picOrderCntLsb {@code picOrderCntLsb} read using the bit width from the supplied SPS
- *     ({@code log2_max_pic_order_cnt_lsb_minus4 + 4}). 0 for IDR slices (implicit per spec); absent
- *     when no SPS context was supplied.
+ * @param picOrderCntLsb {@code slice_pic_order_cnt_lsb} read using the bit width from the supplied
+ *     SPS ({@code log2_max_pic_order_cnt_lsb_minus4 + 4}). 0 for every segment of an IDR picture
+ *     (implicit per spec). Absent when no SPS context was supplied, and for a non-IDR continuation
+ *     segment ({@code firstInPic} false): its POC follows {@code slice_segment_address}, whose
+ *     width needs the PPS.
  * @param idr True when {@code nal_unit_type} is IDR_W_RADL (19) or IDR_N_LP (20).
  * @param rawRbsp Raw RBSP bytes as supplied by the caller — preserved for downstream parsers that
  *     need fields beyond what this light subset extracts.

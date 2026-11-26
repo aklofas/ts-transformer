@@ -22,9 +22,10 @@ import java.nio.ByteBuffer;
  *     matrix} default to {@code Unspecified} per §5.5.2 and only {@code full_range} carries
  *     observed data. The {@code Option} wrapper is kept for {@code ColorInfo} parity with the H.26x
  *     parsers and for forward-compatibility with future error-recovery paths.
- * @param frameRate Frame rate as a rational number, derived from {@code time_scale /
- *     num_units_in_display_tick} when {@code timing_info_present_flag == 1} and {@code
- *     equal_picture_interval == 1}; otherwise absent.
+ * @param frameRate Frame rate as a rational number, {@code time_scale / (num_units_in_display_tick
+ *     * (num_ticks_per_picture_minus_1 + 1))} reduced, when {@code timing_info_present_flag == 1}
+ *     and {@code equal_picture_interval == 1}; absent otherwise, and when the reduced pair does not
+ *     fit 32 bits.
  * @param raw The original payload bytes as passed to the parser.
  */
 public record Av1SequenceHeader(

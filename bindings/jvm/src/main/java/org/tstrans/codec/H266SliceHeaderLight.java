@@ -8,31 +8,31 @@ import java.nio.ByteBuffer;
  * classification, extracted without walking into slice data.
  *
  * Known limitations: H.266 slice headers embed {@code picture_header_rbsp()} inline when {@code
- * picture_header_in_slice_header_flag == 1}. The length of {@code picture_header_rbsp()} is
+ * sh_picture_header_in_slice_header_flag == 1}. The length of {@code picture_header_rbsp()} is
  * determined by SPS / PPS context fields ({@code sps_subpic_info_present_flag}, {@code
  * pps_log2_ctu_size_minus5}, etc.) that this light parser does not carry. As a result {@code
  * sliceType} is always the intra slice type and {@code ppsId} is always 0, both as sentinels;
  * accurate extraction needs SPS-driven walking through {@code picture_header_rbsp()} and is
- * deferred. {@code idr} is accurate: it is derived solely from the NAL unit type (7 = IDR_W_RADL, 8
- * = IDR_N_LP). {@code firstInPic} is accurate: it is derived from {@code
- * picture_header_in_slice_header_flag}, the first bit of the slice header, which is present before
- * the deferred region. {@code picOrderCntLsb} is 0 for IDR slices (implicit per spec) and absent
- * otherwise, because accurate extraction requires the {@code sps_log2_max_pic_order_cnt_lsb_minus4}
- * field, which is deferred.
+ * deferred. {@code idr} is derived solely from the NAL unit type (7 = IDR_W_RADL, 8 = IDR_N_LP).
+ * {@code firstInPic} is {@code sh_picture_header_in_slice_header_flag}, the first bit of the slice
+ * header. {@code picOrderCntLsb} is always absent: VVC codes the POC in the picture header for
+ * every picture, IDR included (H.266 §7.3.2.8), and this parser does not read the picture header.
  *
- * @param firstInPic True when {@code picture_header_in_slice_header_flag == 1} — the picture header
- *     is embedded in this slice, marking the start of a new picture. This field is accurate.
+ * @param firstInPic {@code sh_picture_header_in_slice_header_flag}. {@code true}: the picture
+ *     header is in this slice header, so the picture is this one VCL NAL unit. {@code false}: a
+ *     separate picture header NAL unit carries the header; the first slice after it reads {@code
+ *     false} too, so {@code false} does not mean "not the first slice of the picture".
  * @param sliceType Slice type. Always the intra slice type, as a sentinel — see the struct-level
  *     limitations. Accurate extraction requires walking through {@code picture_header_rbsp()},
  *     whose length depends on SPS / PPS context fields that this light parser does not carry;
  *     deferred pending a context-tracking H.266 parser.
  * @param ppsId PPS id. Always 0, as a sentinel — see {@code sliceType} for the same reason and
  *     deferral note.
- * @param picOrderCntLsb {@code slice_pic_order_cnt_lsb}. 0 for IDR slices (implicit per spec);
- *     absent for non-IDR slices, where SPS context is required to determine the bit width. This
- *     field is accurate for IDR slices.
+ * @param picOrderCntLsb Always absent: VVC codes {@code ph_pic_order_cnt_lsb} in the picture header
+ *     for every picture, IDR included (H.266 §7.3.2.8), and this parser does not read the picture
+ *     header.
  * @param idr True when {@code nal_unit_type} is IDR_W_RADL (7) or IDR_N_LP (8) per H.266 V4 Table
- *     5. This field is accurate.
+ *     5: read from the NAL unit type, not a sentinel.
  * @param rawRbsp The raw RBSP bytes as supplied to the parser — preserved for downstream parsers
  *     that need fields beyond what this light subset extracts.
  */

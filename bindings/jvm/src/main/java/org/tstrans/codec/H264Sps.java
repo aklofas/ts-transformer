@@ -17,13 +17,17 @@ import java.nio.ByteBuffer;
  * @param bitDepthChroma Chroma bit depth (8 + {@code bit_depth_chroma_minus8}).
  * @param chromaFormat Chroma subsampling format.
  * @param frameMbsOnly True for progressive encoding ({@code frame_mbs_only_flag=1}).
- * @param frameRate Frame rate as a rational number, or absent when the VUI is absent.
+ * @param frameRate Frame rate as a rational number: {@code time_scale / (2 * num_units_in_tick)},
+ *     not reduced. Absent when the VUI or its timing info is absent, when {@code num_units_in_tick}
+ *     or {@code time_scale} is zero, and when {@code 2 * num_units_in_tick} does not fit 32 bits.
  * @param fixedFrameRate True when {@code fixed_frame_rate_flag=1} in the VUI.
  * @param hasBFrames True when the stream may contain B-frames. A heuristic: the VUI {@code
- *     max_num_reorder_frames} decides when present; otherwise Baseline and the constrained High
- *     subsets are B-frameless and every other profile may have B-frames.
- * @param color VUI colour info, or absent when the VUI is absent or {@code video_signal_type} is
- *     not present.
+ *     max_num_reorder_frames} decides when present; otherwise Baseline, Main / Extended / High with
+ *     {@code constraint_set5_flag}, and High with {@code constraint_set1_flag} are B-frameless;
+ *     every other profile may have B-frames.
+ * @param color VUI colour info: present when the VUI signals any of {@code video_signal_type} (with
+ *     or without a colour description), the chroma sample locations or the aspect ratio; absent
+ *     otherwise.
  * @param cropLeft Luma-sample crop offsets applied to the coded dimensions to produce {@code
  *     width}/{@code height}. Per H.264 §6.4: stored crop offsets are in chroma units; we surface
  *     them post-multiplication by {@code SubWidthC} / {@code SubHeightC * (2 -

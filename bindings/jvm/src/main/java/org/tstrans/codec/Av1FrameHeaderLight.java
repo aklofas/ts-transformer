@@ -10,8 +10,9 @@ import java.nio.ByteBuffer;
  * frameSize} is never set: full per-frame size extraction requires reference-frame management
  * beyond this parser's scope.
  *
- * @param frameType {@code frameType} per AV1 §5.9.1: 0=KEY_FRAME, 1=INTER_FRAME,
- *     2=INTRA_ONLY_FRAME, 3=SWITCH_FRAME.
+ * @param frameType {@code frameType} per AV1 §5.9.2: 0=KEY_FRAME, 1=INTER_FRAME,
+ *     2=INTRA_ONLY_FRAME, 3=SWITCH_FRAME; 255 when {@code showExistingFrame} is set (the shown
+ *     frame's type lives in reference state, which this parser does not keep).
  * @param showFrame True when the decoded frame is displayed immediately.
  * @param showExistingFrame True when this OBU references a previously decoded frame for display.
  * @param frameSize Per-frame size override. The current scope never sets it: the bit position of

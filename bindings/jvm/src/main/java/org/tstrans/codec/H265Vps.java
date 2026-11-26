@@ -16,8 +16,9 @@ import java.nio.ByteBuffer;
  * @param generalTierFlag {@code generalTierFlag} decoded from the VPS profile_tier_level block.
  * @param generalLevelIdc {@code generalLevelIdc} decoded from the VPS profile_tier_level block.
  * @param generalProfileCompatibilityFlags 32-bit {@code generalProfileCompatibilityFlags} per H.265
- *     §7.3.3 — bit {@code i} set means the stream conforms to profile {@code i}. See the SPS for
- *     the disambiguation rationale (Main vs Main10 vs Main10-Intra).
+ *     §7.3.3, MSB first: spec flag {@code j} (set when the stream conforms to profile {@code j}) is
+ *     numeric bit {@code 31 - j}, {@code flags & (1 << (31 - j))}. See the SPS for the
+ *     disambiguation rationale (Main vs Main10 vs Main10-Intra).
  * @param generalProgressiveSourceFlag {@code generalProgressiveSourceFlag} (§7.4.4).
  * @param generalInterlacedSourceFlag {@code generalInterlacedSourceFlag} (§7.4.4).
  * @param generalNonPackedConstraintFlag {@code generalNonPackedConstraintFlag} (§7.4.4).

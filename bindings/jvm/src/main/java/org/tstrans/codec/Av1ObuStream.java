@@ -10,8 +10,17 @@ import java.util.List;
  * Partial-success-tolerant: OBUs that fail to parse accumulate in {@code unparseable} rather than
  * aborting the walk.
  *
+ * The lists hold the headers met in one call, not frames: a frame header is parsed under the most
+ * recent sequence header that parsed in the same call, and a sequence header that fails to parse
+ * (truncated, or a value out of its range) is recorded in {@code unparseable} while the previous
+ * one stays current.
+ *
  * @param sequenceHeaders All successfully parsed Sequence Header OBUs in encounter order.
- * @param frameHeaders All successfully parsed Frame Header OBUs in encounter order.
+ * @param frameHeaders All successfully parsed Frame Header OBUs (type 3 or 6) in encounter order.
+ *     Its length counts parsed frame headers, not decoded or displayed frames: a {@code
+ *     show_existing_frame} header is an entry, each spatial or temporal layer has its own, a stream
+ *     that repeats type 3 gets one entry per copy, and redundant frame headers (type 7) are
+ *     skipped.
  * @param unparseable {@code (obu_type, error)} for each OBU that failed to parse. Frame header OBUs
  *     that arrive before a sequence header land here too, with a synthesized "frame header before
  *     sequence header" error.

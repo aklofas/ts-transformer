@@ -313,17 +313,22 @@ pub struct H264Sps {
     pub chroma_format: crate::codec::ChromaFormatPy,
     /// True for progressive encoding (`frame_mbs_only_flag=1`).
     pub frame_mbs_only: bool,
-    /// Frame rate as a rational number, or absent when the VUI is absent.
+    /// Frame rate as a rational number: `time_scale / (2 *
+    /// num_units_in_tick)`, not reduced. Absent when the VUI or its timing
+    /// info is absent, when `num_units_in_tick` or `time_scale` is zero,
+    /// and when `2 * num_units_in_tick` does not fit 32 bits.
     pub frame_rate: Option<Rational>,
     /// True when `fixed_frame_rate_flag=1` in the VUI.
     pub fixed_frame_rate: bool,
     /// True when the stream may contain B-frames. A heuristic: the VUI
-    /// `max_num_reorder_frames` decides when present; otherwise Baseline
-    /// and the constrained High subsets are B-frameless and every other
-    /// profile may have B-frames.
+    /// `max_num_reorder_frames` decides when present; otherwise Baseline,
+    /// Main / Extended / High with `constraint_set5_flag`, and High with
+    /// `constraint_set1_flag` are B-frameless; every other profile may have
+    /// B-frames.
     pub has_b_frames: bool,
-    /// VUI colour info, or absent when the VUI is absent or
-    /// `video_signal_type` is not present.
+    /// VUI colour info: present when the VUI signals any of
+    /// `video_signal_type` (with or without a colour description), the
+    /// chroma sample locations or the aspect ratio; absent otherwise.
     pub color: Option<ColorInfo>,
     /// Luma-sample crop offsets applied to the coded dimensions to produce
     /// `width`/`height`. Per H.264 §6.4: stored crop offsets are in chroma
@@ -491,7 +496,13 @@ impl From<&tst_core::codec::h264::H264SliceHeaderLight> for H264SliceHeaderLight
     }
 }
 
-/// All SPS and PPS NAL units parsed from a single access unit.
+/// The SPS and PPS NAL units parsed by one `parse_parameter_sets` call.
+///
+/// One call is one snapshot of the NAL units it is given. A PPS whose SPS
+/// is not in the call, or whose SPS failed to parse in the call, is
+/// dropped; when the call holds several SPS with one id, the last one that
+/// parsed is used. A call that holds only a lone PPS returns `Ok` with
+/// empty results, not an error: parse a lone PPS with `parse_pps`.
 #[pyclass(
     frozen,
     from_py_object,
@@ -636,11 +647,13 @@ pub struct H265Sps {
     pub general_tier_flag: bool,
     /// `general_level_idc` — e.g. 120 for Level 4.0, 150 for Level 5.0.
     pub general_level_idc: u8,
-    /// 32-bit `general_profile_compatibility_flags` per H.265 §7.3.3 — bit
-    /// `i` set means the stream conforms to profile `i`. Real Main10
-    /// streams often have `general_profile_idc=1` (Main) but bit 2 set;
-    /// ffmpeg `hevc/ps.c:267-270` uses this to disambiguate Main vs Main10
-    /// vs Main10-Intra. Surfaced here so consumers can do the same.
+    /// 32-bit `general_profile_compatibility_flags` per H.265 §7.3.3, MSB
+    /// first: spec flag `j` (`general_profile_compatibility_flag[j]`, set
+    /// when the stream conforms to profile `j`) is numeric bit `31 - j`,
+    /// `flags & (1 << (31 - j))`. Real Main10 streams often have
+    /// `general_profile_idc=1` (Main) but flag 2 (`1 << 29`) set; ffmpeg
+    /// `hevc/ps.c:267-270` uses this to disambiguate Main vs Main10 vs
+    /// Main10-Intra. Surfaced here so consumers can do the same.
     pub general_profile_compatibility_flags: u32,
     /// `general_progressive_source_flag` (§7.4.4).
     pub general_progressive_source_flag: bool,
@@ -658,11 +671,18 @@ pub struct H265Sps {
     pub chroma_format: crate::codec::ChromaFormatPy,
     /// `sps_max_sub_layers_minus1` — max sub-layer temporal scalability.
     pub max_sub_layers_minus1: u8,
-    /// Frame rate as a rational number, or absent when VUI timing is
-    /// absent.
+    /// Frame rate as a rational number: `vui_time_scale /
+    /// vui_num_units_in_tick` as signalled (not reduced); when
+    /// `vui_poc_proportional_to_timing_flag` signals more than one clock
+    /// tick per POC step, that pair divided by
+    /// `vui_num_ticks_poc_diff_one_minus1 + 1` and reduced (H.265 §E.3.1;
+    /// this takes POC to advance by 1 per output picture). Absent when VUI
+    /// timing is absent, when either timing field is zero, and when the
+    /// reduced pair does not fit 32 bits.
     pub frame_rate: Option<Rational>,
-    /// VUI colour info, or absent when the VUI or
-    /// `video_signal_type_present_flag` is absent.
+    /// VUI colour info: present when the VUI signals any of
+    /// `video_signal_type` (with or without a colour description), the
+    /// chroma sample locations or the aspect ratio; absent otherwise.
     pub color: Option<ColorInfo>,
     /// Luma-sample crop offsets applied to the coded picture dimensions to
     /// produce `width`/`height`. Computed from `conformance_window_flag` +
@@ -775,8 +795,9 @@ pub struct H265Vps {
     pub general_tier_flag: bool,
     /// `general_level_idc` decoded from the VPS profile_tier_level block.
     pub general_level_idc: u8,
-    /// 32-bit `general_profile_compatibility_flags` per H.265 §7.3.3 — bit
-    /// `i` set means the stream conforms to profile `i`. See the SPS for
+    /// 32-bit `general_profile_compatibility_flags` per H.265 §7.3.3, MSB
+    /// first: spec flag `j` (set when the stream conforms to profile `j`)
+    /// is numeric bit `31 - j`, `flags & (1 << (31 - j))`. See the SPS for
     /// the disambiguation rationale (Main vs Main10 vs Main10-Intra).
     pub general_profile_compatibility_flags: u32,
     /// `general_progressive_source_flag` (§7.4.4).
@@ -885,9 +906,12 @@ pub struct H265SliceHeaderLight {
     pub slice_type: crate::codec::H265SliceTypePy,
     /// `slice_pic_parameter_set_id` — links this slice to a PPS.
     pub pps_id: u8,
-    /// `pic_order_cnt_lsb` read using the bit width from the supplied SPS
-    /// (`log2_max_pic_order_cnt_lsb_minus4 + 4`). 0 for IDR slices
-    /// (implicit per spec); absent when no SPS context was supplied.
+    /// `slice_pic_order_cnt_lsb` read using the bit width from the supplied
+    /// SPS (`log2_max_pic_order_cnt_lsb_minus4 + 4`). 0 for every segment
+    /// of an IDR picture (implicit per spec). Absent when no SPS context
+    /// was supplied, and for a non-IDR continuation segment (`first_in_pic`
+    /// false): its POC follows `slice_segment_address`, whose width needs
+    /// the PPS.
     pub pic_order_cnt_lsb: Option<u16>,
     /// True when `nal_unit_type` is IDR_W_RADL (19) or IDR_N_LP (20).
     pub idr: bool,
@@ -919,7 +943,14 @@ impl From<&tst_core::codec::h265::H265SliceHeaderLight> for H265SliceHeaderLight
     }
 }
 
-/// All VPS, SPS, and PPS NAL units parsed from a slice.
+/// The VPS, SPS and PPS NAL units parsed by one `parse_parameter_sets`
+/// call.
+///
+/// One call is one snapshot of the NAL units it is given. A PPS whose SPS
+/// is not in the call, or whose SPS failed to parse in the call, is
+/// dropped; when the call holds several SPS with one id, the last one that
+/// parsed is used. A call that holds only a lone PPS returns `Ok` with
+/// empty results, not an error: parse a lone PPS with `parse_pps`.
 #[pyclass(
     frozen,
     from_py_object,
@@ -1046,13 +1077,19 @@ pub struct H266Sps {
     /// Chroma bit depth. Equal to `bit_depth_luma` per H.266 V4 §7.4.3.4
     /// (single `sps_bitdepth_minus8` field covers both planes).
     pub bit_depth_chroma: u8,
-    /// VUI colour info, or absent when the VUI is absent or
-    /// `colour_description` is not present. Decoded per H.274 §7.2
+    /// VUI colour info: present when the VUI signals any of a colour
+    /// description, the chroma sample locations or the aspect ratio; absent
+    /// otherwise and when the SPS has no VUI. Decoded per H.274 §7.2
     /// (codec-independent colour registry).
     pub color: Option<ColorInfo>,
-    /// Frame rate as a rational number, or absent when the timing HRD
-    /// parameters are absent. In H.266, timing lives in
-    /// `general_timing_hrd_parameters()` (§7.3.5.1), not the VUI.
+    /// Frame rate as a rational number: `time_scale / num_units_in_tick` as
+    /// coded; when the highest sublayer has a fixed picture rate with
+    /// `elemental_duration_in_tc_minus1` above 0, that pair divided by
+    /// `elemental_duration_in_tc_minus1 + 1` and reduced (H.266 §7.4.6.2).
+    /// Absent when the timing HRD parameters are absent, when either timing
+    /// field is zero, and when the reduced pair does not fit 32 bits. In
+    /// H.266, timing lives in `general_timing_hrd_parameters()` (§7.3.5.1),
+    /// not the VUI.
     pub frame_rate: Option<Rational>,
     /// Luma-sample conformance-window crop offsets per H.266 §7.4.3.4.
     /// `coded_width = width + crop_left + crop_right` (and similarly for
@@ -1200,19 +1237,18 @@ impl From<&tst_core::codec::h266::H266Pps> for H266Pps {
 /// data.
 ///
 /// Known limitations: H.266 slice headers embed `picture_header_rbsp()`
-/// inline when `picture_header_in_slice_header_flag == 1`. The length of
+/// inline when `sh_picture_header_in_slice_header_flag == 1`. The length of
 /// `picture_header_rbsp()` is determined by SPS / PPS context fields
 /// (`sps_subpic_info_present_flag`, `pps_log2_ctu_size_minus5`, etc.) that
 /// this light parser does not carry. As a result `slice_type` is always the
 /// intra slice type and `pps_id` is always 0, both as sentinels; accurate
 /// extraction needs SPS-driven walking through `picture_header_rbsp()` and
-/// is deferred. `idr` is accurate: it is derived solely from the NAL unit
-/// type (7 = IDR_W_RADL, 8 = IDR_N_LP). `first_in_pic` is accurate: it is
-/// derived from `picture_header_in_slice_header_flag`, the first bit of the
-/// slice header, which is present before the deferred region.
-/// `pic_order_cnt_lsb` is 0 for IDR slices (implicit per spec) and absent
-/// otherwise, because accurate extraction requires the
-/// `sps_log2_max_pic_order_cnt_lsb_minus4` field, which is deferred.
+/// is deferred. `idr` is derived solely from the NAL unit type (7 =
+/// IDR_W_RADL, 8 = IDR_N_LP). `first_in_pic` is
+/// `sh_picture_header_in_slice_header_flag`, the first bit of the slice
+/// header. `pic_order_cnt_lsb` is always absent: VVC codes the POC in the
+/// picture header for every picture, IDR included (H.266 §7.3.2.8), and
+/// this parser does not read the picture header.
 #[pyclass(
     frozen,
     from_py_object,
@@ -1222,9 +1258,11 @@ impl From<&tst_core::codec::h266::H266Pps> for H266Pps {
 )]
 #[derive(Debug, Clone)]
 pub struct H266SliceHeaderLight {
-    /// True when `picture_header_in_slice_header_flag == 1` — the picture
-    /// header is embedded in this slice, marking the start of a new
-    /// picture. This field is accurate.
+    /// `sh_picture_header_in_slice_header_flag`. `true`: the picture header
+    /// is in this slice header, so the picture is this one VCL NAL unit.
+    /// `false`: a separate picture header NAL unit carries the header; the
+    /// first slice after it reads `false` too, so `false` does not mean
+    /// "not the first slice of the picture".
     pub first_in_pic: bool,
     /// Slice type. Always the intra slice type, as a sentinel — see the
     /// struct-level limitations. Accurate extraction requires walking
@@ -1235,12 +1273,12 @@ pub struct H266SliceHeaderLight {
     /// PPS id. Always 0, as a sentinel — see `slice_type` for the same
     /// reason and deferral note.
     pub pps_id: u8,
-    /// `slice_pic_order_cnt_lsb`. 0 for IDR slices (implicit per spec);
-    /// absent for non-IDR slices, where SPS context is required to
-    /// determine the bit width. This field is accurate for IDR slices.
+    /// Always absent: VVC codes `ph_pic_order_cnt_lsb` in the picture
+    /// header for every picture, IDR included (H.266 §7.3.2.8), and this
+    /// parser does not read the picture header.
     pub pic_order_cnt_lsb: Option<u16>,
     /// True when `nal_unit_type` is IDR_W_RADL (7) or IDR_N_LP (8) per
-    /// H.266 V4 Table 5. This field is accurate.
+    /// H.266 V4 Table 5: read from the NAL unit type, not a sentinel.
     pub idr: bool,
     /// The raw RBSP bytes as supplied to the parser — preserved for
     /// downstream parsers that need fields beyond what this light subset
@@ -1271,11 +1309,18 @@ impl From<&tst_core::codec::h266::H266SliceHeaderLight> for H266SliceHeaderLight
     }
 }
 
-/// All VPS, SPS, and PPS NAL units parsed from a sequence.
+/// The VPS, SPS and PPS NAL units parsed by one `parse_parameter_sets`
+/// call.
 ///
 /// Unlike the H.265 version, which is keyed by id, H.266 parameter sets are
 /// ordered lists: look one up by its own id field (`vps_id`, `sps_id`,
 /// `pps_id`).
+///
+/// One call is one snapshot of the NAL units it is given. A PPS whose SPS
+/// is not in the call, or whose SPS failed to parse in the call, is
+/// dropped; when the call holds several SPS with one id, the last one that
+/// parsed is used. A call that holds only a lone PPS returns `Ok` with
+/// empty results, not an error: parse a lone PPS with `parse_pps`.
 #[pyclass(
     frozen,
     from_py_object,
@@ -1285,11 +1330,14 @@ impl From<&tst_core::codec::h266::H266SliceHeaderLight> for H266SliceHeaderLight
 )]
 #[derive(Debug, Clone)]
 pub struct H266ParameterSets {
-    /// The parsed VPS NAL units, in the order they were parsed.
+    /// The parsed VPS NAL units: the last parsed value per id, in ascending
+    /// id order.
     pub vpses: Vec<H266Vps>,
-    /// The parsed SPS NAL units, in the order they were parsed.
+    /// The parsed SPS NAL units: the last parsed value per id, in ascending
+    /// id order.
     pub spses: Vec<H266Sps>,
-    /// The parsed PPS NAL units, in the order they were parsed.
+    /// The parsed PPS NAL units: the last parsed value per id, in ascending
+    /// id order.
     pub ppses: Vec<H266Pps>,
 }
 
@@ -1353,9 +1401,11 @@ pub struct Av1SequenceHeader {
     /// wrapper is kept for `ColorInfo` parity with the H.26x parsers and
     /// for forward-compatibility with future error-recovery paths.
     pub color_info: Option<ColorInfo>,
-    /// Frame rate as a rational number, derived from `time_scale /
-    /// num_units_in_display_tick` when `timing_info_present_flag == 1` and
-    /// `equal_picture_interval == 1`; otherwise absent.
+    /// Frame rate as a rational number, `time_scale /
+    /// (num_units_in_display_tick * (num_ticks_per_picture_minus_1 + 1))`
+    /// reduced, when `timing_info_present_flag == 1` and
+    /// `equal_picture_interval == 1`; absent otherwise, and when the
+    /// reduced pair does not fit 32 bits.
     pub frame_rate: Option<Rational>,
     /// The original payload bytes as passed to the parser.
     pub raw: crate::util::HostBytes,
@@ -1405,8 +1455,10 @@ impl From<&tst_core::codec::av1::Av1SequenceHeader> for Av1SequenceHeader {
 )]
 #[derive(Debug, Clone)]
 pub struct Av1FrameHeaderLight {
-    /// `frame_type` per AV1 §5.9.1: 0=KEY_FRAME, 1=INTER_FRAME,
-    /// 2=INTRA_ONLY_FRAME, 3=SWITCH_FRAME.
+    /// `frame_type` per AV1 §5.9.2: 0=KEY_FRAME, 1=INTER_FRAME,
+    /// 2=INTRA_ONLY_FRAME, 3=SWITCH_FRAME; 255 when `show_existing_frame`
+    /// is set (the shown frame's type lives in reference state, which this
+    /// parser does not keep).
     pub frame_type: u8,
     /// True when the decoded frame is displayed immediately.
     pub show_frame: bool,
@@ -1449,6 +1501,12 @@ impl From<&tst_core::codec::av1::Av1FrameHeaderLight> for Av1FrameHeaderLight {
 /// Build a list of OBUs, then call the OBU-stream parser to populate the
 /// three fields. Partial-success-tolerant: OBUs that fail to parse
 /// accumulate in `unparseable` rather than aborting the walk.
+///
+/// The lists hold the headers met in one call, not frames: a frame header
+/// is parsed under the most recent sequence header that parsed in the same
+/// call, and a sequence header that fails to parse (truncated, or a value
+/// out of its range) is recorded in `unparseable` while the previous one
+/// stays current.
 #[pyclass(
     frozen,
     from_py_object,
@@ -1460,7 +1518,12 @@ impl From<&tst_core::codec::av1::Av1FrameHeaderLight> for Av1FrameHeaderLight {
 pub struct Av1ObuStream {
     /// All successfully parsed Sequence Header OBUs in encounter order.
     pub sequence_headers: Vec<Av1SequenceHeader>,
-    /// All successfully parsed Frame Header OBUs in encounter order.
+    /// All successfully parsed Frame Header OBUs (type 3 or 6) in encounter
+    /// order. Its length counts parsed frame headers, not decoded or
+    /// displayed frames: a `show_existing_frame` header is an entry, each
+    /// spatial or temporal layer has its own, a stream that repeats type 3
+    /// gets one entry per copy, and redundant frame headers (type 7) are
+    /// skipped.
     pub frame_headers: Vec<Av1FrameHeaderLight>,
     /// `(obu_type, error)` for each OBU that failed to parse. Frame header
     /// OBUs that arrive before a sequence header land here too, with a
@@ -1524,11 +1587,12 @@ pub struct AdtsFrame {
     pub samples_per_frame: u16,
     /// Number of raw data blocks in the frame (logical, not wire value).
     pub num_raw_data_blocks: u8,
-    /// True when a 16-bit CRC follows the 7-byte fixed header.
+    /// True when the header carries `crc_check` (`protection_absent = 0`).
     pub has_crc: bool,
     /// MPEG version (MPEG-2 or MPEG-4).
     pub mpeg_version: crate::codec::MpegVersionPy,
-    /// Raw ADTS header bytes (7 bytes without CRC, 9 with CRC).
+    /// Raw ADTS header bytes: 7 without CRC; with CRC 9 + 2 per extra raw
+    /// data block (the `raw_data_block_position` words, then the CRC).
     pub raw_header: crate::util::HostBytes,
     /// The full frame bytes (header and body).
     pub payload: crate::util::HostBytes,

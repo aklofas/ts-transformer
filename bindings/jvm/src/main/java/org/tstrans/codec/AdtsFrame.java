@@ -14,9 +14,10 @@ import java.nio.ByteBuffer;
  * @param frameLengthBytes Total frame byte count (header + body), as encoded in the ADTS header.
  * @param samplesPerFrame Number of PCM samples in the frame (1024 for standard ADTS).
  * @param numRawDataBlocks Number of raw data blocks in the frame (logical, not wire value).
- * @param hasCrc True when a 16-bit CRC follows the 7-byte fixed header.
+ * @param hasCrc True when the header carries {@code crc_check} ({@code protection_absent = 0}).
  * @param mpegVersion MPEG version (MPEG-2 or MPEG-4).
- * @param rawHeader Raw ADTS header bytes (7 bytes without CRC, 9 with CRC).
+ * @param rawHeader Raw ADTS header bytes: 7 without CRC; with CRC 9 + 2 per extra raw data block
+ *     (the {@code raw_data_block_position} words, then the CRC).
  * @param payload The full frame bytes (header and body).
  */
 public record AdtsFrame(
