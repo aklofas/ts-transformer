@@ -215,16 +215,17 @@ crate::binding_record! {
         pub id: u64,
         /// Command text, UTF-8, at most 127 bytes.
         pub command: String,
-        /// Time the command was issued/executed, microseconds — MISB
-        /// var-length truncatable trailing field (present iff the wire pack
-        /// has trailing bytes after `command`).
+        /// Time the command was issued/executed, microseconds — a uint64
+        /// of 8 bytes (ST 0601.19 §8.115 Table 7), present iff the wire
+        /// pack has trailing bytes after `command`. Shorter times from older
+        /// encoders are read too.
         pub time_us: Option<u64>,
     }
 }
 
 /// Wire shape: `id (BER-OID, M)` + `string_len (BER) + command (UTF-8,
-/// M, <=127 bytes)` + `[time_us (MISB var-length truncatable, 1..=8
-/// bytes)]`.
+/// M, <=127 bytes)` + `[time_us (uint64, 8 bytes; 1..=7 bytes from older
+/// encoders are read as well)]`.
 pub(crate) fn parse_control_command(bytes: &[u8]) -> Result<ControlCommand, KlvFieldError> {
     let (id, rest) = read_ber_oid_u64(bytes).map_err(truncated(115))?;
     let (str_len, rest) = read_ber(rest).map_err(truncated(115))?;
@@ -267,7 +268,7 @@ pub(crate) fn control_command_len(cmd: &ControlCommand) -> usize {
     ber_oid_len_u64(cmd.id)
         + ber_len(cmd.command.len())
         + cmd.command.len()
-        + cmd.time_us.map(var_uint_min_len).unwrap_or(0)
+        + if cmd.time_us.is_some() { 8 } else { 0 }
 }
 
 pub(crate) fn emit_control_command(
@@ -285,7 +286,7 @@ pub(crate) fn emit_control_command(
     out.extend_from_slice(&len_buf[..m]);
     out.extend_from_slice(cmd.command.as_bytes());
     if let Some(t) = cmd.time_us {
-        out.extend_from_slice(&write_var_uint_min(t));
+        out.extend_from_slice(&t.to_be_bytes());
     }
     Ok(())
 }
@@ -1694,6 +1695,56 @@ mod tests {
         assert_eq!(buf.len(), control_command_len(&cmd));
         let back = parse_control_command(&buf).unwrap();
         assert_eq!(back, cmd);
+    }
+
+    /// Item 115 as `encode_to_vec` writes it for `cmd`: tag and length included.
+    fn written_item_115(cmd: ControlCommand) -> Vec<u8> {
+        let rec = super::super::model::UasDatalinkLs {
+            control_commands: vec![cmd],
+            ..Default::default()
+        };
+        let bytes = super::super::encode::encode_to_vec(&rec).unwrap();
+        let at = bytes
+            .windows(2)
+            .position(|w| w[0] == 0x73 && w[1] < 0x80)
+            .expect("Item 115 is written");
+        bytes[at..at + 2 + usize::from(bytes[at + 1])].to_vec()
+    }
+
+    #[test]
+    fn control_command_time_is_eight_bytes() {
+        // ST 0601.19 §8.115 Table 7: Command Time is a uint64, 8 bytes, with
+        // its leading zero byte kept.
+        let fly = written_item_115(ControlCommand {
+            id: 5,
+            command: "Fly to Waypoint 1".into(),
+            time_us: Some(1_587_194_489_117_472),
+        });
+        let mut want = vec![0x73, 0x1B, 0x05, 0x11];
+        want.extend_from_slice(b"Fly to Waypoint 1");
+        want.extend_from_slice(&[0x00, 0x05, 0xA3, 0x8B, 0x83, 0xB6, 0x9B, 0x20]);
+        assert_eq!(fly, want);
+        let small = written_item_115(ControlCommand {
+            id: 1,
+            command: "A".into(),
+            time_us: Some(255),
+        });
+        assert_eq!(
+            small,
+            [0x73, 0x0B, 0x01, 0x01, 0x41, 0, 0, 0, 0, 0, 0, 0, 0xFF]
+        );
+    }
+
+    #[test]
+    fn parse_control_command_accepts_short_time_from_older_encoders() {
+        // Earlier releases wrote the time in its shortest form, 1 to 7 bytes.
+        for n in 1..=7usize {
+            let mut value = vec![0x01, 0x01, b'A'];
+            value.extend(core::iter::repeat_n(0x01, n));
+            let want = (0..n).fold(0u64, |acc, _| (acc << 8) | 1);
+            let cmd = parse_control_command(&value).unwrap();
+            assert_eq!(cmd.time_us, Some(want), "{n} time bytes");
+        }
     }
 
     #[test]
